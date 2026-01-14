@@ -10853,13 +10853,17 @@ bool TestCopyRects16BitTransferEmitsCopyTexture2D() {
   dst.size_bytes = size_bytes;
   dst.row_pitch = row_pitch;
   dst.slice_pitch = size_bytes;
-  dst.backing_alloc_id = 0x1234u; // required for WRITEBACK_DST
-  dst.wddm_hAllocation = 0;
 
   D3DDDI_HRESOURCE hSrc{};
   hSrc.pDrvPrivate = &src;
   D3DDDI_HRESOURCE hDst{};
   hDst.pDrvPrivate = &dst;
+
+  hr = device_test_set_resource_backing(
+      create_dev.hDevice, hDst, /*alloc_id=*/0x1234u, /*offset_bytes=*/0, /*hAllocation=*/0);
+  if (!Check(hr == S_OK, "device_test_set_resource_backing(dst)")) {
+    return false;
+  }
 
   D3D9DDIARG_COPYRECTS args{};
   args.hSrcResource = hSrc;
@@ -12662,25 +12666,31 @@ bool TestDrawStateTrackingPreSplitRetainsAllocs() {
   Resource rt{};
   rt.kind = ResourceKind::Texture2D;
   rt.handle = 0x2000u;
-  rt.backing_alloc_id = 1;
   rt.share_token = 0;
-  rt.wddm_hAllocation = 0x2000u;
 
   Resource tex{};
   tex.kind = ResourceKind::Texture2D;
   tex.handle = 0x3000u;
-  tex.backing_alloc_id = 2;
   tex.share_token = 0;
-  tex.wddm_hAllocation = 0x3000u;
 
   D3DDDI_HRESOURCE hRt{};
   hRt.pDrvPrivate = &rt;
+  hr = device_test_set_resource_backing(
+      create_dev.hDevice, hRt, /*alloc_id=*/1, /*offset_bytes=*/0, /*hAllocation=*/0x2000u);
+  if (!Check(hr == S_OK, "device_test_set_resource_backing(rt)")) {
+    return false;
+  }
   hr = cleanup.device_funcs.pfnSetRenderTarget(create_dev.hDevice, /*slot=*/0, hRt);
   if (!Check(hr == S_OK, "SetRenderTarget(state tracking RT0)")) {
     return false;
   }
   D3DDDI_HRESOURCE hTex{};
   hTex.pDrvPrivate = &tex;
+  hr = device_test_set_resource_backing(
+      create_dev.hDevice, hTex, /*alloc_id=*/2, /*offset_bytes=*/0, /*hAllocation=*/0x3000u);
+  if (!Check(hr == S_OK, "device_test_set_resource_backing(tex)")) {
+    return false;
+  }
   hr = cleanup.device_funcs.pfnSetTexture(create_dev.hDevice, /*stage=*/0, hTex);
   if (!Check(hr == S_OK, "SetTexture(state tracking TEX0)")) {
     return false;
@@ -12784,9 +12794,13 @@ bool TestBlitStateTrackingPreSplitRetainsAllocs() {
   dst.format = static_cast<D3DDDIFORMAT>(21u); // D3DFMT_A8R8G8B8
   dst.width = 64;
   dst.height = 64;
-  dst.backing_alloc_id = 1;
   dst.share_token = 0;
-  dst.wddm_hAllocation = 0x2000u;
+  D3DDDI_HRESOURCE hDst{};
+  hDst.pDrvPrivate = &dst;
+  hr = device_test_set_resource_backing(hDevice, hDst, /*alloc_id=*/1, /*offset_bytes=*/0, /*hAllocation=*/0x2000u);
+  if (!Check(hr == S_OK, "device_test_set_resource_backing(dst)")) {
+    return false;
+  }
 
   Resource src{};
   src.handle = 0x3000u;
@@ -12794,9 +12808,13 @@ bool TestBlitStateTrackingPreSplitRetainsAllocs() {
   src.format = static_cast<D3DDDIFORMAT>(21u); // D3DFMT_A8R8G8B8
   src.width = 32;
   src.height = 32;
-  src.backing_alloc_id = 2;
   src.share_token = 0;
-  src.wddm_hAllocation = 0x3000u;
+  D3DDDI_HRESOURCE hSrc{};
+  hSrc.pDrvPrivate = &src;
+  hr = device_test_set_resource_backing(hDevice, hSrc, /*alloc_id=*/2, /*offset_bytes=*/0, /*hAllocation=*/0x3000u);
+  if (!Check(hr == S_OK, "device_test_set_resource_backing(src)")) {
+    return false;
+  }
 
   RECT dst_rect{0, 0, 32, 32};
   RECT src_rect{0, 0, 32, 32};
@@ -12949,25 +12967,31 @@ bool TestRenderTargetTrackingPreSplitRetainsAllocs() {
   Resource rt0{};
   rt0.kind = ResourceKind::Texture2D;
   rt0.handle = 0x2000u;
-  rt0.backing_alloc_id = 1;
   rt0.share_token = 0;
-  rt0.wddm_hAllocation = 0x2000u;
 
   Resource rt1{};
   rt1.kind = ResourceKind::Texture2D;
   rt1.handle = 0x2001u;
-  rt1.backing_alloc_id = 2;
   rt1.share_token = 0;
-  rt1.wddm_hAllocation = 0x2001u;
 
   D3DDDI_HRESOURCE hRt0{};
   hRt0.pDrvPrivate = &rt0;
+  hr = device_test_set_resource_backing(
+      create_dev.hDevice, hRt0, /*alloc_id=*/1, /*offset_bytes=*/0, /*hAllocation=*/0x2000u);
+  if (!Check(hr == S_OK, "device_test_set_resource_backing(rt0)")) {
+    return false;
+  }
   hr = cleanup.device_funcs.pfnSetRenderTarget(create_dev.hDevice, /*slot=*/0, hRt0);
   if (!Check(hr == S_OK, "SetRenderTarget(RT0)")) {
     return false;
   }
   D3DDDI_HRESOURCE hRt1{};
   hRt1.pDrvPrivate = &rt1;
+  hr = device_test_set_resource_backing(
+      create_dev.hDevice, hRt1, /*alloc_id=*/2, /*offset_bytes=*/0, /*hAllocation=*/0x2001u);
+  if (!Check(hr == S_OK, "device_test_set_resource_backing(rt1)")) {
+    return false;
+  }
   hr = cleanup.device_funcs.pfnSetRenderTarget(create_dev.hDevice, /*slot=*/1, hRt1);
   if (!Check(hr == S_OK, "SetRenderTarget(RT1)")) {
     return false;
@@ -13084,25 +13108,31 @@ bool TestDrawStateTrackingDedupsSharedAllocIds() {
   Resource rt{};
   rt.kind = ResourceKind::Texture2D;
   rt.handle = 1;
-  rt.backing_alloc_id = 1;
   rt.share_token = 0x1122334455667788ull;
-  rt.wddm_hAllocation = 100;
 
   Resource tex{};
   tex.kind = ResourceKind::Texture2D;
   tex.handle = 2;
-  tex.backing_alloc_id = 1;
   tex.share_token = 0x1122334455667788ull;
-  tex.wddm_hAllocation = 200;
 
   D3DDDI_HRESOURCE hRt{};
   hRt.pDrvPrivate = &rt;
+  hr = device_test_set_resource_backing(
+      create_dev.hDevice, hRt, /*alloc_id=*/1, /*offset_bytes=*/0, /*hAllocation=*/100);
+  if (!Check(hr == S_OK, "device_test_set_resource_backing(dedup rt)")) {
+    return false;
+  }
   hr = cleanup.device_funcs.pfnSetRenderTarget(create_dev.hDevice, /*slot=*/0, hRt);
   if (!Check(hr == S_OK, "SetRenderTarget(dedup RT0)")) {
     return false;
   }
   D3DDDI_HRESOURCE hTex{};
   hTex.pDrvPrivate = &tex;
+  hr = device_test_set_resource_backing(
+      create_dev.hDevice, hTex, /*alloc_id=*/1, /*offset_bytes=*/0, /*hAllocation=*/200);
+  if (!Check(hr == S_OK, "device_test_set_resource_backing(dedup tex)")) {
+    return false;
+  }
   hr = cleanup.device_funcs.pfnSetTexture(create_dev.hDevice, /*stage=*/0, hTex);
   if (!Check(hr == S_OK, "SetTexture(dedup TEX0)")) {
     return false;
@@ -13254,9 +13284,7 @@ bool TestRotateResourceIdentitiesTrackingPreSplitRetainsAllocs() {
   Resource rt{};
   rt.kind = ResourceKind::Texture2D;
   rt.handle = 0x2000u;
-  rt.backing_alloc_id = 1;
   rt.share_token = 0;
-  rt.wddm_hAllocation = 0x2000u;
 
   Resource tex0{};
   tex0.kind = ResourceKind::Texture2D;
@@ -13272,14 +13300,10 @@ bool TestRotateResourceIdentitiesTrackingPreSplitRetainsAllocs() {
   tex0.row_pitch = 16u * 4u;
   tex0.slice_pitch = tex0.size_bytes;
   tex0.handle = 0x3000u;
-  tex0.backing_alloc_id = 2;
   tex0.share_token = 0;
-  tex0.wddm_hAllocation = 0x3000u;
 
   Resource tex1 = tex0;
   tex1.handle = 0x3001u;
-  tex1.backing_alloc_id = 3;
-  tex1.wddm_hAllocation = 0x3001u;
 
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
@@ -13287,6 +13311,11 @@ bool TestRotateResourceIdentitiesTrackingPreSplitRetainsAllocs() {
   }
   D3DDDI_HRESOURCE hRt{};
   hRt.pDrvPrivate = &rt;
+  hr = device_test_set_resource_backing(
+      create_dev.hDevice, hRt, /*alloc_id=*/1, /*offset_bytes=*/0, /*hAllocation=*/0x2000u);
+  if (!Check(hr == S_OK, "device_test_set_resource_backing(rotate rt)")) {
+    return false;
+  }
   hr = cleanup.device_funcs.pfnSetRenderTarget(create_dev.hDevice, /*slot=*/0, hRt);
   if (!Check(hr == S_OK, "Rotate: SetRenderTarget(RT0)")) {
     return false;
@@ -13302,6 +13331,11 @@ bool TestRotateResourceIdentitiesTrackingPreSplitRetainsAllocs() {
   }
   D3DDDI_HRESOURCE hTex0{};
   hTex0.pDrvPrivate = &tex0;
+  hr = device_test_set_resource_backing(
+      create_dev.hDevice, hTex0, /*alloc_id=*/2, /*offset_bytes=*/0, /*hAllocation=*/0x3000u);
+  if (!Check(hr == S_OK, "device_test_set_resource_backing(rotate tex0)")) {
+    return false;
+  }
   hr = cleanup.device_funcs.pfnSetTexture(create_dev.hDevice, /*stage=*/0, hTex0);
   if (!Check(hr == S_OK, "Rotate: SetTexture(stage0)")) {
     return false;
@@ -13317,6 +13351,11 @@ bool TestRotateResourceIdentitiesTrackingPreSplitRetainsAllocs() {
   D3DDDI_HRESOURCE rotate[2]{};
   rotate[0].pDrvPrivate = &tex0;
   rotate[1].pDrvPrivate = &tex1;
+  hr = device_test_set_resource_backing(
+      create_dev.hDevice, rotate[1], /*alloc_id=*/3, /*offset_bytes=*/0, /*hAllocation=*/0x3001u);
+  if (!Check(hr == S_OK, "device_test_set_resource_backing(rotate tex1)")) {
+    return false;
+  }
 
   hr = cleanup.device_funcs.pfnRotateResourceIdentities(create_dev.hDevice, rotate, 2);
   if (!Check(hr == S_OK, "RotateResourceIdentities")) {
@@ -41153,8 +41192,10 @@ bool TestGetRenderTargetData16BitEmitsDirtyRangeOrUpload() {
 
   // Case 1: host-allocated destination (backing_alloc_id==0) should emit
   // UPLOAD_RESOURCE after the CPU fallback copy.
-  dst.backing_alloc_id = 0;
-  dst.wddm_hAllocation = 0;
+  hr = device_test_set_resource_backing(create_dev.hDevice, hDst, /*alloc_id=*/0, /*offset_bytes=*/0, /*hAllocation=*/0);
+  if (!Check(hr == S_OK, "device_test_set_resource_backing(host dst)")) {
+    return false;
+  }
   std::memset(dst.storage.data(), 0, dst.storage.size());
   dev->cmd.reset();
 
@@ -41202,8 +41243,11 @@ bool TestGetRenderTargetData16BitEmitsDirtyRangeOrUpload() {
 
   // Case 2: allocation-backed destination should emit RESOURCE_DIRTY_RANGE (not
   // UPLOAD_RESOURCE) after the CPU fallback copy.
-  dst.backing_alloc_id = 0x4321u;
-  dst.wddm_hAllocation = 0x1111u;
+  hr = device_test_set_resource_backing(
+      create_dev.hDevice, hDst, /*alloc_id=*/0x4321u, /*offset_bytes=*/0, /*hAllocation=*/0x1111u);
+  if (!Check(hr == S_OK, "device_test_set_resource_backing(alloc dst)")) {
+    return false;
+  }
   std::memset(dst.storage.data(), 0, dst.storage.size());
   dev->cmd.reset();
 
@@ -41371,13 +41415,17 @@ bool TestGetRenderTargetData16BitTransferEmitsCopyTexture2D() {
   dst.size_bytes = size_bytes;
   dst.row_pitch = row_pitch;
   dst.slice_pitch = size_bytes;
-  dst.backing_alloc_id = 0x1234u; // required for WRITEBACK_DST
-  dst.wddm_hAllocation = 0; // not used in portable path
 
   D3DDDI_HRESOURCE hSrc{};
   hSrc.pDrvPrivate = &src;
   D3DDDI_HRESOURCE hDst{};
   hDst.pDrvPrivate = &dst;
+
+  hr = device_test_set_resource_backing(
+      create_dev.hDevice, hDst, /*alloc_id=*/0x1234u, /*offset_bytes=*/0, /*hAllocation=*/0);
+  if (!Check(hr == S_OK, "device_test_set_resource_backing(dst)")) {
+    return false;
+  }
 
   D3D9DDIARG_GETRENDERTARGETDATA args{};
   args.hSrcResource = hSrc;
@@ -41554,8 +41602,6 @@ bool TestGetRenderTargetDataTransferRetracksAllocationsAfterFlush() {
   src.row_pitch = kWidth * bpp;
   src.slice_pitch = src.row_pitch * kHeight;
   src.size_bytes = src.slice_pitch;
-  src.backing_alloc_id = 0x2000u;
-  src.wddm_hAllocation = 0x2000u;
 
   Resource dst{};
   dst.kind = ResourceKind::Surface;
@@ -41569,13 +41615,22 @@ bool TestGetRenderTargetDataTransferRetracksAllocationsAfterFlush() {
   dst.row_pitch = src.row_pitch;
   dst.slice_pitch = src.slice_pitch;
   dst.size_bytes = src.size_bytes;
-  dst.backing_alloc_id = 0x3000u;
-  dst.wddm_hAllocation = 0x3000u;
 
   D3DDDI_HRESOURCE hSrc{};
   hSrc.pDrvPrivate = &src;
   D3DDDI_HRESOURCE hDst{};
   hDst.pDrvPrivate = &dst;
+
+  hr = device_test_set_resource_backing(
+      create_dev.hDevice, hSrc, /*alloc_id=*/0x2000u, /*offset_bytes=*/0, /*hAllocation=*/0x2000u);
+  if (!Check(hr == S_OK, "device_test_set_resource_backing(src)")) {
+    return false;
+  }
+  hr = device_test_set_resource_backing(
+      create_dev.hDevice, hDst, /*alloc_id=*/0x3000u, /*offset_bytes=*/0, /*hAllocation=*/0x3000u);
+  if (!Check(hr == S_OK, "device_test_set_resource_backing(dst)")) {
+    return false;
+  }
 
   D3D9DDIARG_GETRENDERTARGETDATA args{};
   args.hSrcResource = hSrc;
@@ -41726,12 +41781,16 @@ bool TestGetRenderTargetData16BitTransferRejectsHostAllocatedDst() {
   dst.size_bytes = size_bytes;
   dst.row_pitch = row_pitch;
   dst.slice_pitch = size_bytes;
-  dst.backing_alloc_id = 0; // host-allocated systemmem: transfer path should reject
 
   D3DDDI_HRESOURCE hSrc{};
   hSrc.pDrvPrivate = &src;
   D3DDDI_HRESOURCE hDst{};
   hDst.pDrvPrivate = &dst;
+
+  hr = device_test_set_resource_backing(create_dev.hDevice, hDst, /*alloc_id=*/0, /*offset_bytes=*/0, /*hAllocation=*/0);
+  if (!Check(hr == S_OK, "device_test_set_resource_backing(dst)")) {
+    return false;
+  }
 
   D3D9DDIARG_GETRENDERTARGETDATA args{};
   args.hSrcResource = hSrc;
