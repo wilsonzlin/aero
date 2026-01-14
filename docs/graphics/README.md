@@ -9,6 +9,8 @@ This directory contains “graphics stack” implementation notes and bring-up c
 ## Windows 7 / AeroGPU driver stack
 
 - `aerogpu-protocols.md` — overview of the different “AeroGPU” ABIs in-tree and which one is the Win7/WDDM target.
+- `aerogpu-executor-modes.md` — how the canonical machine (`aero_machine`) drives AeroGPU submissions/fences under different host integration styles (no-op bring-up vs submission bridge vs in-process backend).
+- `aerogpu-backing-alloc-id.md` — stable Win7/WDDM 1.1 `backing_alloc_id` semantics for guest-backed resources (not “slot in the current submit’s alloc table”).
 - `win7-wddm11-aerogpu-driver.md` — WDDM 1.1 KMD+UMD architecture (adapter bring-up, memory model, submission rings, fences/interrupts, scanout/vblank).
 - `win7-aerogpu-validation.md` — Win7 driver stability checklist (TDR avoidance, vblank pacing expectations, debug playbook).
 - `win7-vblank-present-requirements.md` — minimal vblank/present timing contract needed to keep DWM (Aero) stable.
