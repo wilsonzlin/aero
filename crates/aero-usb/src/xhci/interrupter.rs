@@ -158,7 +158,8 @@ impl InterrupterRegs {
 
     pub fn write_erdp(&mut self, value: u64) {
         // Pointer is 16-byte aligned; low 4 bits are flags.
-        self.erdp = (value & !0x0f) | (value & 0x0f);
+        let ptr = value & !0x0f;
+        let mut flags = value & 0x0f;
         self.erdp_gen = self.erdp_gen.wrapping_add(1);
 
         // Minimal interrupt-ack handshake:
@@ -166,9 +167,16 @@ impl InterrupterRegs {
         // Many xHCI drivers acknowledge event interrupts by writing ERDP with the Event Handler Busy
         // (EHB) bit set, rather than explicitly clearing IMAN.IP. Treat this as an interrupt
         // acknowledgement and clear IP when EHB is written as 1.
+        //
+        // In real hardware, EHB is used as part of a handshake and is not meant to be a sticky
+        // guest-controlled flag. Model it as "write 1 to acknowledge" by not latching the bit in
+        // the stored ERDP value.
         if (value & ERDP_EHB) != 0 {
             self.iman &= !IMAN_IP;
+            flags &= !ERDP_EHB;
         }
+
+        self.erdp = ptr | flags;
     }
 
     /// Restore helpers used by snapshot loading.
@@ -192,6 +200,9 @@ impl InterrupterRegs {
     }
 
     pub(crate) fn restore_erdp(&mut self, value: u64) {
-        self.erdp = (value & !0x0f) | (value & 0x0f);
+        // EHB is a transient handshake bit; do not restore it as a sticky value.
+        let ptr = value & !0x0f;
+        let flags = (value & 0x0f) & !ERDP_EHB;
+        self.erdp = ptr | flags;
     }
 }

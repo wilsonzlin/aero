@@ -116,6 +116,8 @@ fn event_ring_erdp_ehb_write_clears_interrupt_pending() {
         4,
         (ring_base as u32) | (ERDP_EHB as u32),
     );
+    let erdp_lo = xhci.mmio_read(&mut mem, regs::REG_INTR0_ERDP_LO, 4);
+    assert_eq!(erdp_lo & (ERDP_EHB as u32), 0, "EHB should be a transient ack bit");
     assert!(!xhci.interrupter0().interrupt_pending());
     assert!(!xhci.irq_level());
 }
@@ -149,6 +151,8 @@ fn event_ring_erdp_ehb_byte_write_clears_interrupt_pending() {
     // Exercise sub-dword MMIO writes: a byte write with EHB set should still acknowledge the
     // interrupt pending latch.
     xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 1, ERDP_EHB as u32);
+    let erdp_lo = xhci.mmio_read(&mut mem, regs::REG_INTR0_ERDP_LO, 4);
+    assert_eq!(erdp_lo & (ERDP_EHB as u32), 0, "EHB should be a transient ack bit");
     assert!(!xhci.interrupter0().interrupt_pending());
     assert!(!xhci.irq_level());
 }
