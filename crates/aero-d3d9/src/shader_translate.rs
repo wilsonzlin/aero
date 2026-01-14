@@ -300,11 +300,15 @@ fn expected_operand_count_range(opcode: u16) -> Option<(usize, usize)> {
         0x000F => (2, 2), // log
         0x0012 => (4, 4), // lrp
         0x0013 => (2, 2), // frc
+        0x001B => (2, 2), // loop aL, i#
         0x0020 => (3, 3), // pow
+        0x0026 => (1, 1), // rep i#
         0x0028 => (1, 1), // if
         0x0029 => (2, 2), // ifc
+        0x002D => (2, 2), // breakc src0, src1 (compare op encoded in opcode token)
         0x0042 => (3, 3), // texld dst, coord, sampler
         0x0051 => (5, 5), // def
+        0x0052 => (5, 5), // defi
         0x0053 => (2, 2), // defb
         0x0054 => (3, 3), // seq
         0x0055 => (3, 3), // sne

@@ -1102,6 +1102,23 @@ fn assemble_ps3_predicated_lrp_operand_count_len() -> Vec<u32> {
     out
 }
 
+fn assemble_ps3_rep_operand_count_len() -> Vec<u32> {
+    // ps_3_0:
+    //   rep i0
+    //   endrep
+    //   end
+    //
+    // Encoded using operand-count length fields (excluding the opcode token).
+    let mut out = vec![0xFFFF0300];
+    // rep i0
+    out.extend(enc_inst_operand_count_len(0x0026, &[enc_src(7, 0, 0xE4)]));
+    // endrep
+    out.extend(enc_inst_operand_count_len(0x0027, &[]));
+    // end
+    out.push(0x0000FFFF);
+    out
+}
+
 fn assemble_vs2_passthrough_operand_count_len() -> Vec<u32> {
     // vs_2_0: mov oPos, v0; end (operand-count length encoding).
     let mut out = vec![0xFFFE0200];
@@ -2445,6 +2462,32 @@ fn translate_entrypoint_accepts_operand_count_length_encoding() {
         translated.backend,
         shader_translate::ShaderTranslateBackend::Sm3
     );
+
+    let module = naga::front::wgsl::parse_str(&translated.wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+    assert!(translated.wgsl.contains("@fragment"));
+    assert_eq!(translated.entry_point, "fs_main");
+}
+
+#[test]
+fn translate_entrypoint_accepts_operand_count_length_encoding_with_rep() {
+    // Regression: the operand-count length normalization heuristic should understand `rep`, so
+    // operand-count-encoded token streams that mostly consist of control flow still translate.
+    let ps_bytes = to_bytes(&assemble_ps3_rep_operand_count_len());
+    let translated =
+        shader_translate::translate_d3d9_shader_to_wgsl(&ps_bytes, shader::WgslOptions::default())
+            .unwrap();
+    assert_eq!(
+        translated.backend,
+        shader_translate::ShaderTranslateBackend::Sm3
+    );
+
+    assert!(translated.wgsl.contains("_aero_rep_count"), "{}", translated.wgsl);
 
     let module = naga::front::wgsl::parse_str(&translated.wgsl).expect("wgsl parse");
     naga::valid::Validator::new(
