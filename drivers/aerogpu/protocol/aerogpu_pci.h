@@ -68,6 +68,15 @@ extern "C" {
 #define AEROGPU_PCI_BAR0_INDEX 0u
 #define AEROGPU_PCI_BAR0_SIZE_BYTES (64u * 1024u)
 
+/*
+ * BAR1: Prefetchable MMIO VRAM aperture.
+ *
+ * This backs the legacy VGA window and VBE linear framebuffer (LFB) mapping used by the canonical
+ * machine, and may also be used for future WDDM-visible VRAM allocations.
+ */
+#define AEROGPU_PCI_BAR1_INDEX 1u
+#define AEROGPU_PCI_BAR1_SIZE_BYTES (64u * 1024u * 1024u)
+
 /* ------------------------------ MMIO registers --------------------------- */
 
 /*

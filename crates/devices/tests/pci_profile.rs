@@ -144,9 +144,14 @@ fn aerogpu_profile_matches_protocol_constants() {
         u64::from(protocol_pci::AEROGPU_PCI_BAR0_SIZE_BYTES)
     );
 
-    // BAR1 (VRAM aperture) is not part of the stable PCI/MMIO ABI header yet, but it is part of
-    // the canonical machine contract. Keep its size stable.
-    assert_eq!(AEROGPU_VRAM_SIZE, 64 * 1024 * 1024);
+    assert_eq!(
+        u32::from(AEROGPU_BAR1_VRAM_INDEX),
+        protocol_pci::AEROGPU_PCI_BAR1_INDEX
+    );
+    assert_eq!(
+        AEROGPU_VRAM_SIZE,
+        u64::from(protocol_pci::AEROGPU_PCI_BAR1_SIZE_BYTES)
+    );
 }
 
 #[test]

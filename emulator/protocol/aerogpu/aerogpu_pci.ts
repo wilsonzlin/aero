@@ -53,6 +53,9 @@ export const AEROGPU_PCI_PROG_IF = 0x00;
 export const AEROGPU_PCI_BAR0_INDEX = 0;
 export const AEROGPU_PCI_BAR0_SIZE_BYTES = 64 * 1024;
 
+export const AEROGPU_PCI_BAR1_INDEX = 1;
+export const AEROGPU_PCI_BAR1_SIZE_BYTES = 64 * 1024 * 1024;
+
 /* ------------------------------ MMIO registers ---------------------------- */
 
 export const AEROGPU_MMIO_REG_MAGIC = 0x0000;

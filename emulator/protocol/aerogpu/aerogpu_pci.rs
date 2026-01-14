@@ -58,6 +58,9 @@ pub const AEROGPU_PCI_PROG_IF: u8 = 0x00;
 pub const AEROGPU_PCI_BAR0_INDEX: u32 = 0;
 pub const AEROGPU_PCI_BAR0_SIZE_BYTES: u32 = 64 * 1024;
 
+pub const AEROGPU_PCI_BAR1_INDEX: u32 = 1;
+pub const AEROGPU_PCI_BAR1_SIZE_BYTES: u32 = 64 * 1024 * 1024;
+
 /* ------------------------------ MMIO registers ---------------------------- */
 
 pub const AEROGPU_MMIO_REG_MAGIC: u32 = 0x0000;
