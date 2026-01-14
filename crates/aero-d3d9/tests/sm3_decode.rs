@@ -201,6 +201,40 @@ fn decode_mova_pixel_shader_dest_is_addr() {
 }
 
 #[test]
+fn decode_predicated_mova_with_prefix_predicate_token() {
+    // ps_3_0:
+    //   (p0.x) mova a0.x, c0
+    //
+    // Some token streams encode the predicate token as a *prefix* operand (before dst/src). The
+    // decoder is intended to accept both prefix and suffix predicate forms.
+    let pred_token = src_token(19, 0, 0x00, 0); // p0.x
+    let tokens = vec![
+        version_token(ShaderStage::Pixel, 3, 0),
+        opcode_token(46, 3) | 0x1000_0000, // predicated, 3 operand tokens after opcode
+        pred_token,
+        dst_token(3, 0, 0x1),     // a0.x (regtype 3)
+        src_token(2, 0, 0xE4, 0), // c0
+        0x0000_FFFF,
+    ];
+
+    let shader = decode_u32_tokens(&tokens).unwrap();
+    let mova = &shader.instructions[0];
+    assert_eq!(mova.opcode, Opcode::Mova);
+    assert!(mova.predicate.is_some());
+    assert_eq!(
+        mova.predicate.as_ref().unwrap().reg.file,
+        RegisterFile::Predicate
+    );
+
+    let dst = match &mova.operands[0] {
+        Operand::Dst(dst) => dst,
+        _ => panic!("expected dst operand"),
+    };
+    assert_eq!(dst.reg.file, RegisterFile::Addr);
+    assert_eq!(dst.reg.index, 0);
+}
+
+#[test]
 fn decode_predicated_instruction() {
     // add (p0) r0, r0, c0
     let pred_token = src_token(19, 0, 0x00, 0); // p0.x
