@@ -20,6 +20,7 @@ profiles match the contract.
 
 from __future__ import annotations
 
+import difflib
 import json
 import re
 import sys
@@ -163,6 +164,71 @@ def strip_inf_comment_lines(text: str) -> str:
     """Remove full-line INF comments (`; ...`) from `text`."""
 
     return "\n".join(line for line in text.splitlines() if not line.lstrip().startswith(";"))
+
+
+def inf_functional_bytes(path: Path) -> bytes:
+    """
+    Return the INF content starting from the first section header line.
+
+    This intentionally ignores the leading comment/banner block so a legacy alias
+    INF can use a different filename header while still enforcing byte-for-byte
+    equality of all functional sections/keys.
+    """
+
+    data = path.read_bytes()
+    lines = data.splitlines(keepends=True)
+
+    for i, line in enumerate(lines):
+        stripped = line.lstrip(b" \t")
+
+        # First section header (e.g. "[Version]") starts the functional region.
+        if stripped.startswith(b"["):
+            return b"".join(lines[i:])
+
+        # Ignore leading comments and blank lines.
+        if stripped.startswith(b";") or stripped in (b"\n", b"\r\n", b"\r"):
+            continue
+
+        # Unexpected preamble content (not comment, not blank, not section):
+        # treat it as functional to avoid masking drift.
+        return b"".join(lines[i:])
+
+    raise RuntimeError(f"{path}: could not find a section header (e.g. [Version])")
+
+
+def check_inf_alias_drift(*, canonical: Path, alias: Path, repo_root: Path, label: str) -> str | None:
+    try:
+        canonical_body = inf_functional_bytes(canonical)
+    except Exception as e:
+        return f"{label}: failed to read canonical INF functional bytes: {e}"
+
+    try:
+        alias_body = inf_functional_bytes(alias)
+    except Exception as e:
+        return f"{label}: failed to read alias INF functional bytes: {e}"
+
+    if canonical_body == alias_body:
+        return None
+
+    canonical_lines = canonical_body.decode("utf-8", errors="replace").splitlines(keepends=True)
+    alias_lines = alias_body.decode("utf-8", errors="replace").splitlines(keepends=True)
+
+    canonical_label = str(canonical.relative_to(repo_root))
+    alias_label = str(alias.relative_to(repo_root))
+
+    diff = difflib.unified_diff(
+        canonical_lines,
+        alias_lines,
+        fromfile=canonical_label,
+        tofile=alias_label,
+        lineterm="\n",
+    )
+
+    return (
+        f"{label}: INF alias drift detected.\n"
+        "The alias INF must match the canonical INF from [Version] onward.\n\n"
+        + "".join(diff)
+    )
 
 
 def parse_contract_major_version(md: str) -> int:
@@ -2831,6 +2897,30 @@ def main() -> None:
                             [kb_entry.raw_line, ms_entry.raw_line, fb_entry.raw_line],
                         )
                     )
+
+    # ---------------------------------------------------------------------
+    # 6) INF alias drift guardrails (legacy filename aliases must stay in sync).
+    # ---------------------------------------------------------------------
+    virtio_input_inf_dir = REPO_ROOT / "drivers/windows7/virtio-input/inf"
+    virtio_input_canonical = virtio_input_inf_dir / "aero_virtio_input.inf"
+    virtio_input_alias_enabled = virtio_input_inf_dir / "virtio-input.inf"
+    virtio_input_alias_disabled = virtio_input_inf_dir / "virtio-input.inf.disabled"
+    if virtio_input_alias_enabled.exists():
+        virtio_input_alias = virtio_input_alias_enabled
+    elif virtio_input_alias_disabled.exists():
+        virtio_input_alias = virtio_input_alias_disabled
+    else:
+        virtio_input_alias = None
+
+    if virtio_input_alias is not None:
+        drift = check_inf_alias_drift(
+            canonical=virtio_input_canonical,
+            alias=virtio_input_alias,
+            repo_root=REPO_ROOT,
+            label="virtio-input",
+        )
+        if drift:
+            errors.append(drift)
 
     if errors:
         print("\n\n".join(errors), file=sys.stderr)

@@ -73,23 +73,24 @@ aero_virtio_input.sys = 1
 ; devices often report `REV_00` by default; for contract-v1 testing under QEMU,
 ; pass `x-pci-revision=0x01` (and preferably `disable-legacy=on`).
 ;
-; QEMU virtio-input devices that should match this INF include:
-;   - virtio-keyboard-pci
-;   - virtio-mouse-pci
+; This INF includes explicit model lines for the Aero contract v1 keyboard/mouse
+; virtio-input functions (SUBSYS_0010 and SUBSYS_0011), plus a revision-gated
+; fallback entry (`PCI\VEN_1AF4&DEV_1052&REV_01`) so Aero can still bind the
+; driver (with a generic Device Manager name) when subsystem IDs are not exposed.
 ;
-; For tablet-style virtio-input devices (`virtio-tablet-pci` / EV_ABS), use the
+; For tablet-style virtio-input devices (absolute pointer / EV_ABS), use the
 ; separate `aero_virtio_tablet.inf` so keyboard/mouse bindings remain strict.
 ;
 ; If your device enumerates with a different DEV id, add it here.
 ; You can confirm in Device Manager -> Details -> Hardware Ids.
 
 [Aero.NTx86]
-%AeroVirtioInput.DeviceDesc%       = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&REV_01
+%AeroVirtioInput.DeviceDesc%    = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&REV_01
 %AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
 %AeroVirtioMouse.DeviceDesc%    = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
 
 [Aero.NTamd64]
-%AeroVirtioInput.DeviceDesc%       = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&REV_01
+%AeroVirtioInput.DeviceDesc%    = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&REV_01
 %AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
 %AeroVirtioMouse.DeviceDesc%    = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
 
