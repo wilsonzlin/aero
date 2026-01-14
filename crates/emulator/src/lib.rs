@@ -33,8 +33,21 @@ use emulator::io::audio;
 fn main() {}
 ```
 
+## VirtIO device models
+
+VirtIO devices (including `virtio-input`) are implemented in `crates/aero-virtio` and wired up by the
+canonical machine in `crates/aero-machine`.
+
+The `emulator` crate intentionally does **not** expose the old `emulator::io::virtio` module to avoid
+contract drift between in-tree device models and the canonical `aero-virtio` implementations.
+
 ```compile_fail
 use emulator::io::virtio;
+fn main() {}
+```
+
+```compile_fail
+use emulator::io::virtio::devices::input;
 fn main() {}
 ```
 "#
