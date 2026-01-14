@@ -1478,8 +1478,8 @@ bool TestSetTextureStageStateUpdatesPsForTex1NoDiffuseFvfs() {
       }
     }
 
-    const auto SetTextureStageState = [&](uint32_t stage, uint32_t state, uint32_t value,
-                                          const char* msg) -> bool {
+    // Validate SetTextureStageState does not fail for supported TEX1-without-diffuse paths.
+    const auto SetTextureStageState = [&](uint32_t stage, uint32_t state, uint32_t value, const char* msg) -> bool {
       HRESULT hr2 = S_OK;
       if (cleanup.device_funcs.pfnSetTextureStageState) {
         hr2 = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, stage, state, value);
@@ -1572,8 +1572,7 @@ bool TestSetTextureStageStateUpdatesPsForTex1NoDiffuseFvfs() {
       }
     }
 
-    const auto SetTextureStageState = [&](uint32_t stage, uint32_t state, uint32_t value,
-                                          const char* msg) -> bool {
+    const auto SetTextureStageState = [&](uint32_t stage, uint32_t state, uint32_t value, const char* msg) -> bool {
       HRESULT hr2 = S_OK;
       if (cleanup.device_funcs.pfnSetTextureStageState) {
         hr2 = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, stage, state, value);
