@@ -210,6 +210,7 @@ fn compute_pipeline_is_gated_by_capabilities() {
     let key = ComputePipelineKey {
         shader: 0x1234,
         layout: PipelineLayoutKey::empty(),
+        entry_point: "cs_main",
     };
 
     let err = cache

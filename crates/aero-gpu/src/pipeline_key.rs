@@ -239,6 +239,12 @@ pub struct RenderPipelineKey {
 pub struct ComputePipelineKey {
     pub shader: ShaderHash,
     pub layout: PipelineLayoutKey,
+    /// Entry point within the WGSL shader module.
+    ///
+    /// A single WGSL compute module may expose multiple entry points (e.g. a main prepass plus a
+    /// small finalize pass). Include the entry point in the cache key so the pipeline cache can
+    /// store distinct `wgpu::ComputePipeline`s for each entry point.
+    pub entry_point: &'static str,
 }
 
 #[cfg(test)]

@@ -2468,6 +2468,7 @@ mod tests {
             let key = ComputePipelineKey {
                 shader: shader_hash,
                 layout: PipelineLayoutKey::empty(),
+                entry_point: "cs_main",
             };
             let err = rt
                 .pipelines

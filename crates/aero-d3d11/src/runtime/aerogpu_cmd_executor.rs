@@ -181,8 +181,10 @@ const GEOMETRY_PREPASS_EXPANDED_VERTEX_STRIDE_BYTES: u64 =
     (1u64 + EXPANDED_VERTEX_MAX_VARYINGS as u64) * 16;
 // Use the indexed-indirect layout size since it is a strict superset of `DrawIndirectArgs`.
 const GEOMETRY_PREPASS_INDIRECT_ARGS_SIZE_BYTES: u64 = DrawIndexedIndirectArgs::SIZE_BYTES;
-const GEOMETRY_PREPASS_COUNTER_SIZE_BYTES: u64 = 4; // 1x u32
-                                                    // `vec4<f32>` color + `vec4<u32>` counts.
+// Counter block for compute-based GS/HS/DS emulation. Sized to match
+// `runtime::gs_translate::GsPrepassCounters` (4x u32 / 16 bytes).
+const GEOMETRY_PREPASS_COUNTER_SIZE_BYTES: u64 = 16;
+// `vec4<f32>` color + `vec4<u32>` counts.
 const GEOMETRY_PREPASS_PARAMS_SIZE_BYTES: u64 = 32;
 
 #[cfg(test)]
@@ -3424,6 +3426,7 @@ impl AerogpuD3d11Executor {
             let key = ComputePipelineKey {
                 shader: cs_hash,
                 layout: fill_layout_key.clone(),
+                entry_point: "cs_main",
             };
             let pipeline = self
                 .pipeline_cache
@@ -3493,6 +3496,15 @@ impl AerogpuD3d11Executor {
             .expansion_scratch
             .alloc_indirect_draw_indexed(&self.device)
             .map_err(|e| anyhow!("GS prepass: alloc indirect args buffer: {e}"))?;
+        let counter_alloc = self
+            .expansion_scratch
+            .alloc_gs_prepass_counters(&self.device)
+            .map_err(|e| anyhow!("GS prepass: alloc counter buffer: {e}"))?;
+        self.queue.write_buffer(
+            counter_alloc.buffer.as_ref(),
+            counter_alloc.offset,
+            &[0u8; GEOMETRY_PREPASS_COUNTER_SIZE_BYTES as usize],
+        );
 
         // GS prepass params: {primitive_count, instance_count, first_instance, pad}.
         let mut params_bytes = [0u8; 16];
@@ -3517,7 +3529,9 @@ impl AerogpuD3d11Executor {
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: false },
                     has_dynamic_offset: false,
-                    min_binding_size: wgpu::BufferSize::new(expanded_vertex_size),
+                    min_binding_size: wgpu::BufferSize::new(
+                        GEOMETRY_PREPASS_EXPANDED_VERTEX_STRIDE_BYTES,
+                    ),
                 },
                 count: None,
             },
@@ -3527,7 +3541,7 @@ impl AerogpuD3d11Executor {
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: false },
                     has_dynamic_offset: false,
-                    min_binding_size: wgpu::BufferSize::new(expanded_index_size),
+                    min_binding_size: wgpu::BufferSize::new(4),
                 },
                 count: None,
             },
@@ -3537,14 +3551,22 @@ impl AerogpuD3d11Executor {
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: false },
                     has_dynamic_offset: false,
-                    min_binding_size: wgpu::BufferSize::new(core::mem::size_of::<
-                        DrawIndexedIndirectArgs,
-                    >() as u64),
+                    min_binding_size: wgpu::BufferSize::new(GEOMETRY_PREPASS_INDIRECT_ARGS_SIZE_BYTES),
                 },
                 count: None,
             },
             wgpu::BindGroupLayoutEntry {
                 binding: 3,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(GEOMETRY_PREPASS_COUNTER_SIZE_BYTES),
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 4,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
@@ -3554,12 +3576,12 @@ impl AerogpuD3d11Executor {
                 count: None,
             },
             wgpu::BindGroupLayoutEntry {
-                binding: 4,
+                binding: 5,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: false,
-                    min_binding_size: wgpu::BufferSize::new(gs_inputs_size),
+                    min_binding_size: wgpu::BufferSize::new(16),
                 },
                 count: None,
             },
@@ -3598,13 +3620,21 @@ impl AerogpuD3d11Executor {
                 wgpu::BindGroupEntry {
                     binding: 3,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: counter_alloc.buffer.as_ref(),
+                        offset: counter_alloc.offset,
+                        size: wgpu::BufferSize::new(GEOMETRY_PREPASS_COUNTER_SIZE_BYTES),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: params_alloc.buffer.as_ref(),
                         offset: params_alloc.offset,
                         size: wgpu::BufferSize::new(params_alloc.size),
                     }),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 4,
+                    binding: 5,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: &gs_inputs_buffer,
                         offset: 0,
@@ -3625,18 +3655,21 @@ impl AerogpuD3d11Executor {
         );
 
         let gs_pipeline_ptr = {
+            let entry_point = gs_shader.entry_point;
             let key = ComputePipelineKey {
                 shader: gs_shader.wgsl_hash,
                 layout: gs_layout_key.clone(),
+                entry_point,
             };
+            let pipeline_layout = gs_pipeline_layout.clone();
             let pipeline = self
                 .pipeline_cache
                 .get_or_create_compute_pipeline(&self.device, key, move |device, cs| {
                     device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                         label: Some("aerogpu_cmd gs prepass compute pipeline"),
-                        layout: Some(gs_pipeline_layout.as_ref()),
+                        layout: Some(pipeline_layout.as_ref()),
                         module: cs,
-                        entry_point: gs_shader.entry_point,
+                        entry_point,
                         compilation_options: wgpu::PipelineCompilationOptions::default(),
                     })
                 })
@@ -3645,13 +3678,45 @@ impl AerogpuD3d11Executor {
         };
         let gs_pipeline = unsafe { &*gs_pipeline_ptr };
 
+        let gs_finalize_pipeline_ptr = {
+            let key = ComputePipelineKey {
+                shader: gs_shader.wgsl_hash,
+                layout: gs_layout_key.clone(),
+                entry_point: "cs_finalize",
+            };
+            let pipeline_layout = gs_pipeline_layout.clone();
+            let pipeline = self
+                .pipeline_cache
+                .get_or_create_compute_pipeline(&self.device, key, move |device, cs| {
+                    device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                        label: Some("aerogpu_cmd gs prepass finalize compute pipeline"),
+                        layout: Some(pipeline_layout.as_ref()),
+                        module: cs,
+                        entry_point: "cs_finalize",
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    })
+                })
+                .map_err(|e| anyhow!("wgpu pipeline cache: {e:?}"))?;
+            pipeline as *const wgpu::ComputePipeline
+        };
+        let gs_finalize_pipeline = unsafe { &*gs_finalize_pipeline_ptr };
+
         self.encoder_has_commands = true;
-        {
+        if primitive_count != 0 {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("aerogpu_cmd gs prepass compute pass"),
                 timestamp_writes: None,
             });
             pass.set_pipeline(gs_pipeline);
+            pass.set_bind_group(0, &gs_bg, &[]);
+            pass.dispatch_workgroups(primitive_count, 1, 1);
+        }
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("aerogpu_cmd gs prepass finalize compute pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(gs_finalize_pipeline);
             pass.set_bind_group(0, &gs_bg, &[]);
             pass.dispatch_workgroups(1, 1, 1);
         }
@@ -4017,6 +4082,11 @@ impl AerogpuD3d11Executor {
             }
         }
 
+        // Scratch allocations that are bound as uniform buffers must respect WebGPU's uniform buffer
+        // offset alignment.
+        let uniform_align =
+            (self.device.limits().min_uniform_buffer_offset_alignment as u64).max(1);
+
         // Prepare compute prepass output buffers.
         let patchlist_only_emulation = matches!(
             self.state.primitive_topology,
@@ -4094,8 +4164,15 @@ impl AerogpuD3d11Executor {
                 .map_err(|e| anyhow!("geometry prepass: alloc indirect args buffer: {e}"))?;
             let counter_alloc = self
                 .expansion_scratch
-                .alloc_counter_u32(&self.device)
+                .alloc_gs_prepass_counters(&self.device)
                 .map_err(|e| anyhow!("geometry prepass: alloc counter buffer: {e}"))?;
+            // Clear counters before dispatch so the placeholder/GS prepasses have deterministic
+            // behavior.
+            self.queue.write_buffer(
+                counter_alloc.buffer.as_ref(),
+                counter_alloc.offset,
+                &[0u8; GEOMETRY_PREPASS_COUNTER_SIZE_BYTES as usize],
+            );
 
             // Default placeholder color: solid red.
             let mut params_bytes = [0u8; GEOMETRY_PREPASS_PARAMS_SIZE_BYTES as usize];
@@ -4687,6 +4764,7 @@ impl AerogpuD3d11Executor {
                 let key = ComputePipelineKey {
                     shader: cs_hash,
                     layout: compute_layout_key.clone(),
+                    entry_point: "cs_main",
                 };
                 let pipeline = self
                     .pipeline_cache
@@ -11678,6 +11756,7 @@ impl AerogpuD3d11Executor {
             let key = ComputePipelineKey {
                 shader: cs.wgsl_hash,
                 layout: layout_key.clone(),
+                entry_point,
             };
             let pipeline = self
                 .pipeline_cache
@@ -16192,6 +16271,7 @@ mod tests {
             let key = ComputePipelineKey {
                 shader: shader_hash,
                 layout: PipelineLayoutKey::empty(),
+                entry_point: "cs_main",
             };
             let err = exec
                 .pipeline_cache
@@ -17320,6 +17400,7 @@ fn main() {{
             let key = ComputePipelineKey {
                 shader: cs_hash,
                 layout: PipelineLayoutKey::empty(),
+                entry_point: "cs_main",
             };
             let err = exec
                 .pipeline_cache

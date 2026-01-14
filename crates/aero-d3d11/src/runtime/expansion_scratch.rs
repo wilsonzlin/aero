@@ -460,6 +460,18 @@ impl ExpansionScratchAllocator {
         self.alloc_inner(device, 4, 4)
     }
 
+    /// Allocate a small counter block for GS/HS/DS-style compute expansion passes.
+    ///
+    /// This is sized to hold a few `u32`/`atomic<u32>` counters (currently 16 bytes) without
+    /// overlapping other scratch allocations, even when the compute shader binds the counter range
+    /// with a larger `BufferBinding::size`.
+    pub fn alloc_gs_prepass_counters(
+        &mut self,
+        device: &wgpu::Device,
+    ) -> Result<ExpansionScratchAlloc, ExpansionScratchError> {
+        self.alloc_inner(device, 16, 4)
+    }
+
     pub fn alloc_metadata(
         &mut self,
         device: &wgpu::Device,

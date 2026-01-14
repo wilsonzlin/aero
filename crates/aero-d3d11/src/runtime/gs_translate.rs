@@ -263,8 +263,9 @@ pub struct GsPrepassTranslation {
 /// - `@group(0) @binding(0)` expanded vertices buffer (`ExpandedVertexBuffer`, read_write)
 /// - `@group(0) @binding(1)` expanded indices buffer (`U32Buffer`, read_write)
 /// - `@group(0) @binding(2)` indirect args buffer (`DrawIndexedIndirectArgs`, read_write)
-/// - `@group(0) @binding(3)` uniform params (`GsPrepassParams`)
-/// - `@group(0) @binding(4)` GS input payload (`Vec4F32Buffer`, read)
+/// - `@group(0) @binding(3)` atomic counters (`GsPrepassCounters`, read_write)
+/// - `@group(0) @binding(4)` uniform params (`GsPrepassParams`)
+/// - `@group(0) @binding(5)` GS input payload (`Vec4F32Buffer`, read)
 pub fn translate_gs_module_to_wgsl_compute_prepass(
     module: &Sm4Module,
 ) -> Result<String, GsTranslateError> {
@@ -571,6 +572,17 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
     w.line("};");
     w.line("");
 
+    w.line("struct GsPrepassCounters {");
+    w.indent();
+    w.line("vertex_count: atomic<u32>,");
+    w.line("index_count: atomic<u32>,");
+    w.line("// Set to non-zero when any invocation detects OOB/overflow.");
+    w.line("overflow: atomic<u32>,");
+    w.line("_pad0: u32,");
+    w.dedent();
+    w.line("};");
+    w.line("");
+
     // Uniform parameters are padded to 16 bytes (WebGPU uniform layout rules).
     w.line("struct GsPrepassParams {");
     w.indent();
@@ -599,8 +611,9 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
     w.line("@group(0) @binding(0) var<storage, read_write> out_vertices: ExpandedVertexBuffer;");
     w.line("@group(0) @binding(1) var<storage, read_write> out_indices: U32Buffer;");
     w.line("@group(0) @binding(2) var<storage, read_write> out_indirect: DrawIndexedIndirectArgs;");
-    w.line("@group(0) @binding(3) var<uniform> params: GsPrepassParams;");
-    w.line("@group(0) @binding(4) var<storage, read> gs_inputs: Vec4F32Buffer;");
+    w.line("@group(0) @binding(3) var<storage, read_write> counters: GsPrepassCounters;");
+    w.line("@group(0) @binding(4) var<uniform> params: GsPrepassParams;");
+    w.line("@group(0) @binding(5) var<storage, read> gs_inputs: Vec4F32Buffer;");
     w.line("");
 
     // GS input helper (v#[]).
@@ -633,8 +646,6 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
     w.indent();
     w.line("o0: vec4<f32>,");
     w.line("o1: vec4<f32>,");
-    w.line("out_vertex_count: ptr<function, u32>,");
-    w.line("out_index_count: ptr<function, u32>,");
     w.line("emitted_count: ptr<function, u32>,");
     w.line("strip_len: ptr<function, u32>,");
     w.line("strip_prev0: ptr<function, u32>,");
@@ -644,12 +655,14 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
     w.line(") {");
     w.indent();
     w.line("if (*overflow) { return; }");
+    w.line("if (atomicLoad(&counters.overflow) != 0u) { *overflow = true; return; }");
     w.line("if (*emitted_count >= GS_MAX_VERTEX_COUNT) { return; }");
     w.line("");
-    w.line("let vtx_idx = *out_vertex_count;");
+    w.line("let vtx_idx = atomicAdd(&counters.vertex_count, 1u);");
     w.line("let vtx_cap = arrayLength(&out_vertices.data);");
     w.line("if (vtx_idx >= vtx_cap) {");
     w.indent();
+    w.line("atomicOr(&counters.overflow, 1u);");
     w.line("*overflow = true;");
     w.line("return;");
     w.dedent();
@@ -657,21 +670,20 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
     w.line("");
     w.line("out_vertices.data[vtx_idx].pos = o0;");
     w.line("out_vertices.data[vtx_idx].o1 = o1;");
-    w.line("*out_vertex_count = vtx_idx + 1u;");
     w.line("");
     match output_topology_kind {
         OutputTopologyKind::PointList => {
             w.line("// Point list index emission.");
-            w.line("let base = *out_index_count;");
+            w.line("let base = atomicAdd(&counters.index_count, 1u);");
             w.line("let idx_cap = arrayLength(&out_indices.data);");
             w.line("if (base >= idx_cap) {");
             w.indent();
+            w.line("atomicOr(&counters.overflow, 1u);");
             w.line("*overflow = true;");
             w.line("return;");
             w.dedent();
             w.line("}");
             w.line("out_indices.data[base] = vtx_idx;");
-            w.line("*out_index_count = base + 1u;");
         }
         OutputTopologyKind::LineStrip => {
             w.line("// Line strip -> line list index emission.");
@@ -681,17 +693,17 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
             w.dedent();
             w.line("} else {");
             w.indent();
-            w.line("let base = *out_index_count;");
+            w.line("let base = atomicAdd(&counters.index_count, 2u);");
             w.line("let idx_cap = arrayLength(&out_indices.data);");
             w.line("if (base + 1u >= idx_cap) {");
             w.indent();
+            w.line("atomicOr(&counters.overflow, 1u);");
             w.line("*overflow = true;");
             w.line("return;");
             w.dedent();
             w.line("}");
             w.line("out_indices.data[base] = *strip_prev0;");
             w.line("out_indices.data[base + 1u] = vtx_idx;");
-            w.line("*out_index_count = base + 2u;");
             w.line("");
             w.line("// Advance strip assembly window.");
             w.line("*strip_prev0 = vtx_idx;");
@@ -725,10 +737,11 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
             w.dedent();
             w.line("}");
             w.line("");
-            w.line("let base = *out_index_count;");
+            w.line("let base = atomicAdd(&counters.index_count, 3u);");
             w.line("let idx_cap = arrayLength(&out_indices.data);");
             w.line("if (base + 2u >= idx_cap) {");
             w.indent();
+            w.line("atomicOr(&counters.overflow, 1u);");
             w.line("*overflow = true;");
             w.line("return;");
             w.dedent();
@@ -736,7 +749,6 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
             w.line("out_indices.data[base] = a;");
             w.line("out_indices.data[base + 1u] = b;");
             w.line("out_indices.data[base + 2u] = vtx_idx;");
-            w.line("*out_index_count = base + 3u;");
             w.line("");
             w.line("// Advance strip assembly window.");
             w.line("*strip_prev0 = *strip_prev1;");
@@ -756,13 +768,12 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
     w.indent();
     w.line("prim_id: u32,");
     w.line("gs_instance_id_in: u32,");
-    w.line("out_vertex_count: ptr<function, u32>,");
-    w.line("out_index_count: ptr<function, u32>,");
     w.line("overflow: ptr<function, bool>,");
     w.dedent();
     w.line(") {");
     w.indent();
     w.line("if (*overflow) { return; }");
+    w.line("if (atomicLoad(&counters.overflow) != 0u) { *overflow = true; return; }");
     w.line("");
 
     for i in 0..temp_reg_count {
@@ -873,14 +884,14 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
                 emit_write_masked(&mut w, inst_index, "max", dst.reg, dst.mask, rhs)?;
             }
             Sm4Inst::Emit { stream: _ } => {
-                w.line("gs_emit(o0, o1, out_vertex_count, out_index_count, &emitted_count, &strip_len, &strip_prev0, &strip_prev1, overflow); // emit");
+                w.line("gs_emit(o0, o1, &emitted_count, &strip_len, &strip_prev0, &strip_prev1, overflow); // emit");
             }
             Sm4Inst::Cut { stream: _ } => {
                 w.line("gs_cut(&strip_len); // cut");
             }
             Sm4Inst::EmitThenCut { stream: _ } => {
                 w.line(
-                    "gs_emit(o0, o1, out_vertex_count, out_index_count, &emitted_count, &strip_len, &strip_prev0, &strip_prev1, overflow); // emitthen_cut",
+                    "gs_emit(o0, o1, &emitted_count, &strip_len, &strip_prev0, &strip_prev1, overflow); // emitthen_cut",
                 );
                 w.line("gs_cut(&strip_len); // emitthen_cut");
             }
@@ -900,47 +911,55 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
     w.line("}");
     w.line("");
 
-    // Compute entry point.
+    // Compute entry point: one invocation per input primitive.
     w.line("@compute @workgroup_size(1)");
     w.line(&format!(
         "fn {entry_point}(@builtin(global_invocation_id) id: vec3<u32>) {{"
     ));
     w.indent();
-    w.line("if (id.x != 0u) { return; }");
+    w.line("let prim_id: u32 = id.x;");
+    w.line("if (prim_id >= params.primitive_count) { return; }");
     w.line("");
-    w.line("var out_vertex_count: u32 = 0u;");
-    w.line("var out_index_count: u32 = 0u;");
     w.line("var overflow: bool = false;");
-    w.line("");
-    w.line(
-        "for (var prim_id: u32 = 0u; prim_id < params.primitive_count; prim_id = prim_id + 1u) {",
-    );
-    w.indent();
     w.line(
         "for (var gs_instance_id: u32 = 0u; gs_instance_id < GS_INSTANCE_COUNT; gs_instance_id = gs_instance_id + 1u) {",
     );
     w.indent();
-    w.line("gs_exec_primitive(prim_id, gs_instance_id, &out_vertex_count, &out_index_count, &overflow);");
+    w.line("gs_exec_primitive(prim_id, gs_instance_id, &overflow);");
     w.line("if (overflow) { break; }");
     w.dedent();
     w.line("}");
-    w.line("if (overflow) { break; }");
     w.dedent();
     w.line("}");
     w.line("");
+
+    // Finalize pass: writes indirect args exactly once after the main prepass has completed.
+    //
+    // The executor should dispatch this with `dispatch_workgroups(1, 1, 1)` after running `cs_main`
+    // for all primitives.
+    w.line("@compute @workgroup_size(1)");
+    w.line("fn cs_finalize(@builtin(global_invocation_id) id: vec3<u32>) {");
+    w.indent();
+    w.line("if (id.x != 0u) { return; }");
+    w.line("let overflow: bool = atomicLoad(&counters.overflow) != 0u;");
     w.line("if (overflow) {");
     w.indent();
     w.line("out_indirect.index_count = 0u;");
+    w.line("out_indirect.instance_count = 0u;");
+    w.line("out_indirect.first_index = 0u;");
+    w.line("out_indirect.base_vertex = 0;");
+    w.line("out_indirect.first_instance = 0u;");
     w.dedent();
     w.line("} else {");
     w.indent();
+    w.line("let out_index_count: u32 = atomicLoad(&counters.index_count);");
     w.line("out_indirect.index_count = out_index_count;");
-    w.dedent();
-    w.line("}");
     w.line("out_indirect.instance_count = params.instance_count;");
     w.line("out_indirect.first_index = 0u;");
     w.line("out_indirect.base_vertex = 0;");
     w.line("out_indirect.first_instance = params.first_instance;");
+    w.dedent();
+    w.line("}");
     w.dedent();
     w.line("}");
 

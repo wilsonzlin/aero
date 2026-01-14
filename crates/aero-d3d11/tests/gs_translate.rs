@@ -666,6 +666,32 @@ fn sm4_gs_emit_cut_fixture_translates() {
 }
 
 #[test]
+fn gs_translate_parallelizes_cs_main_and_uses_atomics() {
+    const DXBC: &[u8] = include_bytes!("fixtures/gs_emit_cut.dxbc");
+
+    let program = Sm4Program::parse_from_dxbc_bytes(DXBC).expect("SM4 parse");
+    let module = decode_program(&program).expect("decode");
+    let wgsl = translate_gs_module_to_wgsl_compute_prepass(&module).expect("translate");
+
+    assert!(
+        wgsl.contains(
+            "fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {\n  let prim_id: u32 = id.x;"
+        ),
+        "expected cs_main to treat global_invocation_id.x as prim_id (no single-thread guard):\n{wgsl}"
+    );
+    assert!(
+        !wgsl.contains("for (var prim_id: u32 = 0u; prim_id < params.primitive_count"),
+        "expected cs_main to process exactly one primitive per invocation (no prim_id loop):\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("atomicAdd"),
+        "expected translated WGSL to use atomic counters for append allocation:\n{wgsl}"
+    );
+
+    assert_wgsl_validates(&wgsl);
+}
+
+#[test]
 fn sm5_gs_emit_stream_cut_stream_fixture_rejects_nonzero_stream() {
     const DXBC: &[u8] = include_bytes!("fixtures/gs_emit_stream_cut_stream.dxbc");
 
