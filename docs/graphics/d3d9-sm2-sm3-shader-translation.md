@@ -61,7 +61,10 @@ rather than `if (p0) { ... }` to satisfy naga uniformity validation.
 - `crates/aero-d3d9/tests/sm3_wgsl_tex.rs` (additional sampler-type coverage)
 
 **Binding contract (AeroGPU + translators):**
-- `@group(0)` — constants buffer shared by VS/PS
+- `@group(0)` — constants shared by VS/PS (packed for stable bindings across stages)
+  - `@binding(0)` — float4 constants (`c#`)
+  - `@binding(1)` — int4 constants (`i#`)
+  - `@binding(2)` — bool constants (`b#`, stored as `vec4<u32>` per register)
 - `@group(1)` — VS samplers/textures
 - `@group(2)` — PS samplers/textures
 - For sampler `sN`, bindings are `(2*N, 2*N+1)` for `(texture, sampler)`

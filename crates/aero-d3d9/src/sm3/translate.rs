@@ -138,7 +138,10 @@ pub enum TranslateError {
 /// - a raw D3D9 DWORD token stream (starts with a version token like `0xFFFE0200`).
 ///
 /// Returned WGSL uses the fixed bind group layout expected by the AeroGPU D3D9 executor:
-/// - group(0): `@binding(0)` is the packed constants buffer (`array<vec4<f32>, 512>`)
+/// - group(0): shader constants shared by VS/PS (packed to keep bindings stable across stages)
+///   - `@binding(0)`: float4 constants (`c#`) as `array<vec4<f32>, 512>`
+///   - `@binding(1)`: int4 constants (`i#`) as `array<vec4<i32>, 512>`
+///   - `@binding(2)`: bool constants (`b#`) as `array<vec4<u32>, 512>`
 /// - group(1): vertex shader samplers, bindings `(2*s, 2*s+1)` for D3D9 sampler register `s#`
 /// - group(2): pixel shader samplers, bindings `(2*s, 2*s+1)` for D3D9 sampler register `s#`
 pub fn translate_dxbc_to_wgsl(bytes: &[u8]) -> Result<TranslatedShader, TranslateError> {
