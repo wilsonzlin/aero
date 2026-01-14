@@ -443,6 +443,62 @@ fn status_read_while_slave_absent_selected_does_not_ack_master_irq() {
 }
 
 #[test]
+fn ata_taskfile_writes_to_absent_slave_are_ignored() {
+    let capacity = 2 * SECTOR_SIZE as u64;
+    let mut disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+
+    let sector0 = vec![0x11u8; SECTOR_SIZE];
+    let sector1 = vec![0x22u8; SECTOR_SIZE];
+    disk.write_sectors(0, &sector0).unwrap();
+    disk.write_sectors(1, &sector1).unwrap();
+
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut()
+        .controller
+        .attach_primary_master_ata(AtaDrive::new(Box::new(disk)).unwrap());
+    ide.borrow_mut().config_mut().set_command(0x0001); // IO decode
+
+    let mut io = IoPortBus::new();
+    register_piix3_ide_ports(&mut io, ide.clone());
+
+    // Program a READ SECTORS command (LBA 0, 1 sector) while the master is selected, but do not
+    // issue the command yet.
+    io.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    io.write(PRIMARY_PORTS.cmd_base + 2, 1, 1);
+    io.write(PRIMARY_PORTS.cmd_base + 3, 1, 0);
+    io.write(PRIMARY_PORTS.cmd_base + 4, 1, 0);
+    io.write(PRIMARY_PORTS.cmd_base + 5, 1, 0);
+
+    // Select the absent slave and attempt to clobber the taskfile (LBA 1). These writes must be
+    // ignored so they cannot perturb the master's pending register image.
+    io.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xF0);
+    io.write(PRIMARY_PORTS.cmd_base + 2, 1, 1);
+    io.write(PRIMARY_PORTS.cmd_base + 3, 1, 1);
+    io.write(PRIMARY_PORTS.cmd_base + 4, 1, 0);
+    io.write(PRIMARY_PORTS.cmd_base + 5, 1, 0);
+    io.write(PRIMARY_PORTS.cmd_base + 7, 1, 0x20); // READ SECTORS (must be ignored)
+    assert!(
+        !ide.borrow().controller.primary_irq_pending(),
+        "command to absent slave should not raise an IRQ"
+    );
+
+    // Switch back to master and issue the command. It should still read LBA 0.
+    io.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    io.write(PRIMARY_PORTS.cmd_base + 7, 1, 0x20);
+
+    let mut out = [0u8; SECTOR_SIZE];
+    for i in 0..(SECTOR_SIZE / 2) {
+        let w = io.read(PRIMARY_PORTS.cmd_base, 2) as u16;
+        out[i * 2..i * 2 + 2].copy_from_slice(&w.to_le_bytes());
+    }
+    assert_eq!(&out[..], &sector0[..]);
+    assert_ne!(&out[..], &sector1[..]);
+
+    let _ = io.read(PRIMARY_PORTS.cmd_base + 7, 1);
+    assert!(!ide.borrow().controller.primary_irq_pending());
+}
+
+#[test]
 fn drive_address_master_present_is_stable_and_nonzero() {
     let capacity = 4 * SECTOR_SIZE as u64;
     let disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
