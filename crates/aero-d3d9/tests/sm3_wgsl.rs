@@ -492,6 +492,96 @@ fn wgsl_dcl_1d_sampler_emits_texture_1d_and_x_coord() {
 }
 
 #[test]
+fn wgsl_dcl_cube_sampler_texldp_emits_projective_divide_xyz() {
+    // ps_3_0:
+    //   dcl_cube s0
+    //   texldp r0, c0, s0
+    //   mov oC0, r0
+    //   end
+    let tokens = vec![
+        version_token(ShaderStage::Pixel, 3, 0),
+        // dcl_cube s0
+        opcode_token(31, 1) | (3u32 << 16),
+        dst_token(10, 0, 0xF),
+        // texldp r0, c0, s0 (project flag is opcode_token[16])
+        opcode_token(66, 3) | (1u32 << 16),
+        dst_token(0, 0, 0xF),
+        src_token(2, 0, 0xE4, 0),
+        src_token(10, 0, 0xE4, 0),
+        // mov oC0, r0
+        opcode_token(1, 2),
+        dst_token(8, 0, 0xF),
+        src_token(0, 0, 0xE4, 0),
+        // end
+        0x0000_FFFF,
+    ];
+
+    let decoded = decode_u32_tokens(&tokens).unwrap();
+    let ir = build_ir(&decoded).unwrap();
+    verify_ir(&ir).unwrap();
+
+    let wgsl = generate_wgsl(&ir).unwrap().wgsl;
+    assert!(wgsl.contains("textureSample("), "{wgsl}");
+    assert!(
+        wgsl.contains("textureSample(tex0, samp0, ((c0).xyz / (c0).w))"),
+        "{wgsl}"
+    );
+
+    let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+}
+
+#[test]
+fn wgsl_dcl_volume_sampler_texldp_emits_projective_divide_xyz() {
+    // ps_3_0:
+    //   dcl_volume s0
+    //   texldp r0, c0, s0
+    //   mov oC0, r0
+    //   end
+    let tokens = vec![
+        version_token(ShaderStage::Pixel, 3, 0),
+        // dcl_volume s0
+        opcode_token(31, 1) | (4u32 << 16),
+        dst_token(10, 0, 0xF),
+        // texldp r0, c0, s0 (project flag is opcode_token[16])
+        opcode_token(66, 3) | (1u32 << 16),
+        dst_token(0, 0, 0xF),
+        src_token(2, 0, 0xE4, 0),
+        src_token(10, 0, 0xE4, 0),
+        // mov oC0, r0
+        opcode_token(1, 2),
+        dst_token(8, 0, 0xF),
+        src_token(0, 0, 0xE4, 0),
+        // end
+        0x0000_FFFF,
+    ];
+
+    let decoded = decode_u32_tokens(&tokens).unwrap();
+    let ir = build_ir(&decoded).unwrap();
+    verify_ir(&ir).unwrap();
+
+    let wgsl = generate_wgsl(&ir).unwrap().wgsl;
+    assert!(wgsl.contains("textureSample("), "{wgsl}");
+    assert!(
+        wgsl.contains("textureSample(tex0, samp0, ((c0).xyz / (c0).w))"),
+        "{wgsl}"
+    );
+
+    let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+}
+
+#[test]
 fn wgsl_texldp_emits_projective_divide() {
     // ps_2_0:
     //   texldp r0, c0, s0
@@ -565,6 +655,106 @@ fn wgsl_texldd_emits_texture_sample_grad() {
 
     let wgsl = generate_wgsl(&ir).unwrap().wgsl;
     assert!(wgsl.contains("textureSampleGrad("), "{wgsl}");
+
+    let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+}
+
+#[test]
+fn wgsl_dcl_cube_sampler_texldd_emits_texture_sample_grad_xyz() {
+    // ps_3_0:
+    //   dcl_cube s0
+    //   texldd r0, c0, c1, c2, s0
+    //   mov oC0, r0
+    //   end
+    let tokens = vec![
+        version_token(ShaderStage::Pixel, 3, 0),
+        // dcl_cube s0
+        opcode_token(31, 1) | (3u32 << 16),
+        dst_token(10, 0, 0xF),
+        // texldd r0, c0, c1, c2, s0
+        opcode_token(77, 5),
+        dst_token(0, 0, 0xF),
+        src_token(2, 0, 0xE4, 0),
+        src_token(2, 1, 0xE4, 0),
+        src_token(2, 2, 0xE4, 0),
+        src_token(10, 0, 0xE4, 0),
+        // mov oC0, r0
+        opcode_token(1, 2),
+        dst_token(8, 0, 0xF),
+        src_token(0, 0, 0xE4, 0),
+        // end
+        0x0000_FFFF,
+    ];
+
+    let decoded = decode_u32_tokens(&tokens).unwrap();
+    assert!(decoded
+        .instructions
+        .iter()
+        .any(|i| i.opcode == Opcode::TexLdd));
+    let ir = build_ir(&decoded).unwrap();
+    verify_ir(&ir).unwrap();
+
+    let wgsl = generate_wgsl(&ir).unwrap().wgsl;
+    assert!(
+        wgsl.contains("textureSampleGrad(tex0, samp0, (c0).xyz, (c1).xyz, (c2).xyz)"),
+        "{wgsl}"
+    );
+
+    let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+}
+
+#[test]
+fn wgsl_dcl_volume_sampler_texldd_emits_texture_sample_grad_xyz() {
+    // ps_3_0:
+    //   dcl_volume s0
+    //   texldd r0, c0, c1, c2, s0
+    //   mov oC0, r0
+    //   end
+    let tokens = vec![
+        version_token(ShaderStage::Pixel, 3, 0),
+        // dcl_volume s0
+        opcode_token(31, 1) | (4u32 << 16),
+        dst_token(10, 0, 0xF),
+        // texldd r0, c0, c1, c2, s0
+        opcode_token(77, 5),
+        dst_token(0, 0, 0xF),
+        src_token(2, 0, 0xE4, 0),
+        src_token(2, 1, 0xE4, 0),
+        src_token(2, 2, 0xE4, 0),
+        src_token(10, 0, 0xE4, 0),
+        // mov oC0, r0
+        opcode_token(1, 2),
+        dst_token(8, 0, 0xF),
+        src_token(0, 0, 0xE4, 0),
+        // end
+        0x0000_FFFF,
+    ];
+
+    let decoded = decode_u32_tokens(&tokens).unwrap();
+    assert!(decoded
+        .instructions
+        .iter()
+        .any(|i| i.opcode == Opcode::TexLdd));
+    let ir = build_ir(&decoded).unwrap();
+    verify_ir(&ir).unwrap();
+
+    let wgsl = generate_wgsl(&ir).unwrap().wgsl;
+    assert!(
+        wgsl.contains("textureSampleGrad(tex0, samp0, (c0).xyz, (c1).xyz, (c2).xyz)"),
+        "{wgsl}"
+    );
 
     let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
     naga::valid::Validator::new(
