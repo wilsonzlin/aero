@@ -235,6 +235,9 @@ async function attachHdd(machine: MachineHandle, plan: MachineBootDiskPlan, meta
     const blockSizeBytes =
       (await tryReadAerosparseBlockSizeBytesFromOpfs(overlayPath)) ?? DEFAULT_PRIMARY_HDD_OVERLAY_BLOCK_SIZE_BYTES;
     await callMaybeAsync(setPrimaryCow as (...args: unknown[]) => unknown, machine, [plan.opfsPath, overlayPath, blockSizeBytes]);
+    // Best-effort overlay ref: ensure snapshots record the base/overlay paths even if
+    // `set_primary_hdd_opfs_cow` does not populate `DISKS` overlay refs in this WASM build.
+    setAhciPort0DiskOverlayRef(machine, plan.opfsPath, overlayPath);
     return;
   }
 

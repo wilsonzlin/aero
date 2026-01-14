@@ -354,4 +354,29 @@ describe("runtime/machine_disk_attach (Machine attach method selection)", () => 
       DEFAULT_PRIMARY_HDD_OVERLAY_BLOCK_SIZE_BYTES,
     );
   });
+
+  it("sets the AHCI port0 overlay ref after attaching via set_primary_hdd_opfs_cow", async () => {
+    const meta = hddMetaRaw();
+    const plan = planMachineBootDiskAttachment(meta, "hdd");
+
+    const calls: string[] = [];
+    const set_primary_hdd_opfs_cow = vi.fn(async (_base: string, _overlay: string, _blockSizeBytes: number) => {
+      calls.push("cow");
+    });
+    const set_ahci_port0_disk_overlay_ref = vi.fn((_base: string, _overlay: string) => {
+      calls.push("set-ref");
+    });
+
+    const machine = {
+      set_primary_hdd_opfs_cow,
+      set_ahci_port0_disk_overlay_ref,
+    } as unknown as MachineHandle;
+
+    await attachMachineBootDisk(machine, "hdd", meta);
+
+    const expectedOverlay = `${OPFS_DISKS_PATH}/${meta.id}.overlay.aerospar`;
+    expect(set_primary_hdd_opfs_cow).toHaveBeenCalledWith(plan.opfsPath, expectedOverlay, DEFAULT_PRIMARY_HDD_OVERLAY_BLOCK_SIZE_BYTES);
+    expect(set_ahci_port0_disk_overlay_ref).toHaveBeenCalledWith(plan.opfsPath, expectedOverlay);
+    expect(calls).toEqual(["cow", "set-ref"]);
+  });
 });
