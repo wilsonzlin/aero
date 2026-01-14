@@ -241,12 +241,33 @@ def main() -> int:
         )
 
     if violations:
+        has_forbidden_deps = any("forbidden" in v for v in violations)
+        has_manifest_errors = any(("invalid TOML" in v) or ("failed to read" in v) for v in violations)
+
+        if has_forbidden_deps:
+            sys.stderr.write(
+                "Found forbidden `emulator` crate dependencies. `crates/emulator` is legacy/compat; "
+                "canonical VM wiring is `crates/aero-machine`.\n"
+            )
+            if has_manifest_errors:
+                sys.stderr.write(
+                    "Note: one or more workspace Cargo.toml files failed to parse/read; fix them so "
+                    "this guardrail can fully evaluate the workspace.\n\n"
+                )
+            else:
+                sys.stderr.write("\n")
+        else:
+            # Keep the message accurate: malformed manifests should fail CI, but they are not the
+            # same as (and can mask) forbidden dependency edges.
+            sys.stderr.write(
+                "Emulator dependency guardrail could not complete because some workspace Cargo.toml "
+                "files failed to parse/read.\n\n"
+            )
+
         sys.stderr.write(
-            "Found forbidden `emulator` crate dependencies. `crates/emulator` is legacy/compat; "
-            "canonical VM wiring is `crates/aero-machine`.\n\n"
+            "\n".join(violations)
+            + "\n"
         )
-        sys.stderr.write("\n".join(violations))
-        sys.stderr.write("\n")
         return 1
 
     return 0
