@@ -327,15 +327,20 @@ async function main(): Promise<void> {
     // Capture the latest metrics message so tests can assert outputSource/scanout telemetry.
     //
     // The GPU worker only emits metrics while processing ticks, so keep sending ticks until we
-    // observe at least one metrics snapshot (bounded).
+    // observe a snapshot that reflects active WDDM scanout (bounded).
     {
+      const metricsOk = (m: any): boolean => {
+        return !!m && m.outputSource === "wddm_scanout" && m.scanout?.source === SCANOUT_SOURCE_WDDM;
+      };
       const deadline = performance.now() + 2000;
-      while (!lastMetrics && performance.now() < deadline) {
+      while (!metricsOk(lastMetrics) && performance.now() < deadline) {
         worker.postMessage({ ...GPU_MESSAGE_BASE, type: "tick", frameTimeMs: performance.now() });
         await sleep(20);
       }
-      if (!lastMetrics) {
-        throw new Error("Timed out waiting for GPU metrics message (outputSource/scanout telemetry)");
+      if (!metricsOk(lastMetrics)) {
+        throw new Error(
+          `Timed out waiting for WDDM scanout metrics snapshot (got outputSource=${String(lastMetrics?.outputSource ?? "none")} scanout.source=${String(lastMetrics?.scanout?.source ?? "none")})`,
+        );
       }
     }
 
