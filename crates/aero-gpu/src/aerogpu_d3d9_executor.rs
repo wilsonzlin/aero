@@ -2886,18 +2886,22 @@ impl AerogpuD3d9Executor {
 
         // Shader translation can surface sampler texture types via SM3 `dcl_*` declarations.
         //
-        // The D3D9 command stream currently only supports binding 2D/cube textures. Reject shaders
-        // that declare other sampler dimensions, even if they do not issue any texture sampling
-        // instructions.
+        // The executor can satisfy non-2D sampler bindings by falling back to dummy texture views
+        // for unsupported resource types, but still validate the declared texture type encoding to
+        // avoid accepting unknown dimensions.
         for (&sampler, &ty) in &cached.sampler_texture_types {
-            match ty {
-                TextureType::Texture2D | TextureType::TextureCube => {}
-                other => {
-                    return Err(AerogpuD3d9Error::ShaderTranslation(format!(
-                        "unsupported sampler texture type {other:?} (s{sampler})"
-                    )));
-                }
+            if matches!(
+                ty,
+                TextureType::Texture1D
+                    | TextureType::Texture2D
+                    | TextureType::Texture3D
+                    | TextureType::TextureCube
+            ) {
+                continue;
             }
+            return Err(AerogpuD3d9Error::ShaderTranslation(format!(
+                "unsupported sampler texture type {ty:?} (s{sampler})"
+            )));
         }
 
         let wgsl = cached.wgsl.clone();
@@ -2977,14 +2981,18 @@ impl AerogpuD3d9Executor {
                     .map_err(|e| e.to_string())?;
 
                     for (&sampler, &ty) in &translated.sampler_texture_types {
-                        match ty {
-                            TextureType::Texture2D | TextureType::TextureCube => {}
-                            other => {
-                                return Err(format!(
-                                    "unsupported sampler texture type {other:?} (s{sampler})"
-                                ));
-                            }
+                        if matches!(
+                            ty,
+                            TextureType::Texture1D
+                                | TextureType::Texture2D
+                                | TextureType::Texture3D
+                                | TextureType::TextureCube
+                        ) {
+                            continue;
                         }
+                        return Err(format!(
+                            "unsupported sampler texture type {ty:?} (s{sampler})"
+                        ));
                     }
 
                     if translated.backend == ShaderTranslateBackend::LegacyFallback {
