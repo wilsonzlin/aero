@@ -2,7 +2,7 @@ use std::fs;
 
 use aero_d3d11::{
     parse_signatures, translate_sm4_module_to_wgsl, BindingKind, BufferKind, DxbcFile, ShaderStage,
-    Sm4Decl, Sm4Inst, Sm4Program, WriteMask,
+    OperandModifier, Sm4Decl, Sm4Inst, Sm4Program, SrcKind, Swizzle, WriteMask,
 };
 use aero_d3d11::sm4::decode_program;
 use aero_d3d11::binding_model::BINDING_BASE_UAV;
@@ -35,35 +35,54 @@ fn decodes_and_translates_compute_uav_store_fixture() {
 
     let module = decode_program(&program).expect("SM5 decode failed");
 
-    assert!(
-        module
-            .decls
-            .iter()
-            .any(|d| matches!(d, Sm4Decl::ThreadGroupSize { x: 1, y: 1, z: 1 })),
-        "expected module to contain dcl_thread_group 1,1,1"
-    );
-    assert!(
-        module.decls.iter().any(|d| matches!(
-            d,
+    assert_eq!(
+        module.decls,
+        vec![
+            Sm4Decl::ThreadGroupSize { x: 1, y: 1, z: 1 },
             Sm4Decl::UavBuffer {
                 slot: 0,
                 stride: 0,
-                kind: BufferKind::Raw
-            }
-        )),
-        "expected module to contain dcl_uav_raw u0"
+                kind: BufferKind::Raw,
+            },
+        ],
+        "expected fixture to decode into the exact decl list we hand-authored"
     );
+
+    let [store, Sm4Inst::Ret] = module.instructions.as_slice() else {
+        panic!(
+            "expected fixture to decode into [store_raw, ret] instructions; got: {:?}",
+            module.instructions
+        );
+    };
+    let Sm4Inst::StoreRaw {
+        uav,
+        addr,
+        value,
+        mask,
+    } = store
+    else {
+        panic!("expected first instruction to be StoreRaw; got: {store:?}");
+    };
+    assert_eq!(uav.slot, 0);
+    assert_eq!(*mask, WriteMask::X);
     assert!(
-        module.instructions.iter().any(|i| matches!(
-            i,
-            Sm4Inst::StoreRaw {
-                uav,
-                mask: WriteMask::X,
-                ..
-            } if uav.slot == 0
-        )),
-        "expected module to contain store_raw u0.x ..."
+        matches!(
+            addr.kind,
+            SrcKind::ImmediateF32(bits) if bits == [0u32; 4]
+        ),
+        "expected store_raw addr to be immediate 0"
     );
+    assert_eq!(addr.swizzle, Swizzle::XYZW);
+    assert_eq!(addr.modifier, OperandModifier::None);
+    assert!(
+        matches!(
+            value.kind,
+            SrcKind::ImmediateF32(bits) if bits == [0x12345678u32; 4]
+        ),
+        "expected store_raw value to be immediate 0x12345678"
+    );
+    assert_eq!(value.swizzle, Swizzle::XYZW);
+    assert_eq!(value.modifier, OperandModifier::None);
 
     let signatures = parse_signatures(&dxbc).expect("signature parsing failed");
     let translated =
@@ -72,6 +91,7 @@ fn decodes_and_translates_compute_uav_store_fixture() {
     assert_wgsl_validates(&translated.wgsl);
     assert!(translated.wgsl.contains("@compute"));
     assert!(translated.wgsl.contains("@workgroup_size(1, 1, 1)"));
+    assert_eq!(translated.stage, ShaderStage::Compute);
 
     let uav_binding = translated
         .reflection
