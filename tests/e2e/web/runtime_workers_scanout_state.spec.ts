@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import type { SetBootDisksMessage } from "../../../web/src/runtime/boot_disks_protocol";
 
 test("runtime workers: gpu worker presents ScanoutState framebuffer (B8G8R8X8 -> RGBA)", async ({ page, browserName }) => {
   test.skip(browserName !== "chromium", "OffscreenCanvas + WebGL2-in-worker coverage is Chromium-only for now.");
@@ -27,9 +28,9 @@ test("runtime workers: gpu worker presents ScanoutState framebuffer (B8G8R8X8 ->
       activeDiskImage: null,
       logLevel: "info",
     } as const;
-
+ 
     coordinator.start(config as any);
-    coordinator.getIoWorker()?.postMessage({ type: "setBootDisks", mounts: {}, hdd: null, cd: null });
+    coordinator.getIoWorker()?.postMessage({ type: "setBootDisks", mounts: {}, hdd: null, cd: null } satisfies SetBootDisksMessage);
 
     const gpuWorker = coordinator.getWorker("gpu");
     const frameStateSab = coordinator.getFrameStateSab();

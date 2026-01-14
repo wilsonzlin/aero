@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { perf } from "../perf/perf";
 import type { DiskImageMetadata } from "../storage/metadata";
 import { WorkerCoordinator } from "./coordinator";
+import type { SetBootDisksMessage } from "./boot_disks_protocol";
 import { allocateSharedMemorySegments, createSharedMemoryViews } from "./shared_layout";
 
 class MockWorker {
@@ -86,19 +87,22 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
     const cpuWorker = (coordinator as any).workers.cpu.worker as MockWorker;
     const ioWorker = (coordinator as any).workers.io.worker as MockWorker;
 
+    const expectedCpuMessage = {
+      type: "setBootDisks",
+      mounts: { hddId: "hdd1", cdId: "cd1" },
+      hdd,
+      cd,
+    } satisfies SetBootDisksMessage;
+    const expectedIoMessage = { ...expectedCpuMessage, hdd: null, cd: null } satisfies SetBootDisksMessage;
+
     expect(cpuWorker.posted).toContainEqual({
-      message: {
-        type: "setBootDisks",
-        mounts: { hddId: "hdd1", cdId: "cd1" },
-        hdd,
-        cd,
-      },
+      message: expectedCpuMessage,
       transfer: undefined,
     });
 
     // IO worker must not receive disk metadata in machine runtime mode (avoid OPFS double-open).
     expect(ioWorker.posted).toContainEqual({
-      message: { type: "setBootDisks", mounts: { hddId: "hdd1", cdId: "cd1" }, hdd: null, cd: null },
+      message: expectedIoMessage,
       transfer: undefined,
     });
 
@@ -109,12 +113,7 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
     const restartedCpuWorker = (coordinator as any).workers.cpu.worker as MockWorker;
     expect(restartedCpuWorker).not.toBe(cpuWorker);
     expect(restartedCpuWorker.posted).toContainEqual({
-      message: {
-        type: "setBootDisks",
-        mounts: { hddId: "hdd1", cdId: "cd1" },
-        hdd,
-        cd,
-      },
+      message: expectedCpuMessage,
       transfer: undefined,
     });
   });
@@ -153,13 +152,15 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
     (coordinator as any).spawnWorker("io", segments);
     const ioWorker = (coordinator as any).workers.io.worker as MockWorker;
 
+    const expectedIoMessage = {
+      type: "setBootDisks",
+      mounts: { hddId: "hdd1", cdId: "cd1" },
+      hdd,
+      cd,
+    } satisfies SetBootDisksMessage;
+
     expect(ioWorker.posted).toContainEqual({
-      message: {
-        type: "setBootDisks",
-        mounts: { hddId: "hdd1", cdId: "cd1" },
-        hdd,
-        cd,
-      },
+      message: expectedIoMessage,
       transfer: undefined,
     });
 
@@ -169,12 +170,7 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
     const restartedIoWorker = (coordinator as any).workers.io.worker as MockWorker;
     expect(restartedIoWorker).not.toBe(ioWorker);
     expect(restartedIoWorker.posted).toContainEqual({
-      message: {
-        type: "setBootDisks",
-        mounts: { hddId: "hdd1", cdId: "cd1" },
-        hdd,
-        cd,
-      },
+      message: expectedIoMessage,
       transfer: undefined,
     });
   });
