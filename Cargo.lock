@@ -671,6 +671,7 @@ dependencies = [
 name = "aero-shared"
 version = "0.1.0"
 dependencies = [
+ "aero-protocol",
  "loom",
 ]
 

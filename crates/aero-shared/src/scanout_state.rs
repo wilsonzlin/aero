@@ -25,7 +25,10 @@ pub const SCANOUT_SOURCE_LEGACY_TEXT: u32 = 0;
 pub const SCANOUT_SOURCE_LEGACY_VBE_LFB: u32 = 1;
 pub const SCANOUT_SOURCE_WDDM: u32 = 2;
 
-pub const SCANOUT_FORMAT_B8G8R8X8: u32 = 0;
+/// Scanout format values use the AeroGPU `AerogpuFormat` (`u32`) discriminants.
+///
+/// This must stay in sync with `aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat`.
+pub const SCANOUT_FORMAT_B8G8R8X8: u32 = 2;
 
 /// Internal bit used to mark `generation` as "being updated".
 ///
@@ -59,6 +62,7 @@ pub struct ScanoutStateUpdate {
     pub width: u32,
     pub height: u32,
     pub pitch_bytes: u32,
+    /// Pixel format stored as an AeroGPU `AerogpuFormat` (`u32`) discriminant.
     pub format: u32,
 }
 
@@ -71,6 +75,7 @@ pub struct ScanoutStateSnapshot {
     pub width: u32,
     pub height: u32,
     pub pitch_bytes: u32,
+    /// Pixel format stored as an AeroGPU `AerogpuFormat` (`u32`) discriminant.
     pub format: u32,
 }
 
@@ -94,6 +99,7 @@ pub struct ScanoutState {
     pub width: AtomicU32,
     pub height: AtomicU32,
     pub pitch_bytes: AtomicU32,
+    /// Pixel format stored as an AeroGPU `AerogpuFormat` (`u32`) discriminant.
     pub format: AtomicU32,
 }
 
@@ -228,6 +234,8 @@ fn test_yield() {}
 mod tests {
     use super::*;
 
+    use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
+
     use std::sync::atomic::AtomicBool;
     use std::sync::Arc;
     use std::thread;
@@ -275,6 +283,17 @@ mod tests {
         assert_eq!(
             field_offset(core::ptr::addr_of!(state.format)),
             header_index::FORMAT * 4
+        );
+    }
+
+    #[test]
+    fn scanout_format_constants_match_aerogpu_format_discriminants() {
+        // 0 is reserved by the AeroGPU protocol for "Invalid", so scanout format values must not
+        // use custom numbering.
+        assert_eq!(AerogpuFormat::Invalid as u32, 0);
+        assert_eq!(
+            SCANOUT_FORMAT_B8G8R8X8,
+            AerogpuFormat::B8G8R8X8Unorm as u32
         );
     }
 

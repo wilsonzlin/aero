@@ -10,3 +10,6 @@ loom = ["dep:loom"]
 
 [dependencies]
 loom = { version = "0.7", optional = true }
+
+[dev-dependencies]
+aero-protocol = { path = "../../emulator/protocol" }
