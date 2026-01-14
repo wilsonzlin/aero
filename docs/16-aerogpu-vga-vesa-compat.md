@@ -499,8 +499,9 @@ For `ScanoutState.source = Wddm` (`SCANOUT_SOURCE_WDDM`), the worker:
      (`vramU8`) at offset `base_paddr - vramBasePaddr`.
    - Otherwise treat it as guest RAM and use `guestRangeInBounds` + `guestPaddrToRamOffset` to
      translate it into an offset into `guestU8`.
-4. Converts the scanout surface to packed RGBA8 for the canvas (currently treating scanout as
-   opaque for X8 formats (alpha forced to `0xFF`), but preserves alpha for A8 formats.
+4. Converts the scanout surface to a tightly-packed RGBA8 buffer for presentation:
+   - X8 formats force `alpha=0xFF` (fully opaque); A8 formats preserve alpha.
+   - For `*_SRGB` scanout formats, the GPU worker decodes sRGB→linear after swizzle so blending/presentation happens in linear space.
 
 This same “VRAM aperture fast-path” idea is also used for WDDM hardware cursor surfaces (which are
 often allocated in VRAM).
