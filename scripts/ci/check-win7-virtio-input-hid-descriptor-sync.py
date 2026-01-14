@@ -26,6 +26,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
 
 @dataclass(frozen=True)
 class DescriptorSpec:
@@ -276,15 +278,19 @@ def extract_enum_int_literal(text: str, name: str) -> int:
 
 
 def main() -> int:
-    descriptor_c = Path("drivers/windows7/virtio-input/src/descriptor.c")
-    hidtest_c = Path("drivers/windows7/virtio-input/tools/hidtest/main.c")
-    hid_translate_h = Path("drivers/windows7/virtio-input/src/hid_translate.h")
+    descriptor_c = REPO_ROOT / "drivers/windows7/virtio-input/src/descriptor.c"
+    hidtest_c = REPO_ROOT / "drivers/windows7/virtio-input/tools/hidtest/main.c"
+    hid_translate_h = REPO_ROOT / "drivers/windows7/virtio-input/src/hid_translate.h"
 
     missing = [p for p in (descriptor_c, hidtest_c, hid_translate_h) if not p.exists()]
     if missing:
         print("error: missing expected files:")
         for p in missing:
-            print(f"  - {p}")
+            try:
+                p_rel = p.relative_to(REPO_ROOT)
+            except ValueError:
+                p_rel = p
+            print(f"  - {p_rel}")
         return 2
 
     descriptor_text = descriptor_c.read_text(encoding="utf-8", errors="replace")
@@ -551,4 +557,9 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except ValueError as e:
+        # Keep failures readable in CI logs (no stack trace for pattern mismatch).
+        print(f"error: {e}")
+        raise SystemExit(2)
