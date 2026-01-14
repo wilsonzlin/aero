@@ -267,6 +267,51 @@ describe("RemoteStreamingDisk (IndexedDB cache)", () => {
     mock.restore();
   });
 
+  it("falls back to cache-disabled mode when OPFS cache init fails and IndexedDB is unavailable", async () => {
+    const blockSize = 1024 * 1024;
+    const cacheLimitBytes = blockSize * 8;
+    const image = makeTestImage(blockSize * 2);
+    const mock = installMockRangeFetch(image, { etag: '"e1"' });
+    const originalIndexedDB = (globalThis as any).indexedDB;
+
+    const openOpfsSpy = vi.spyOn(RemoteCacheManager, "openOpfs").mockRejectedValue(new Error("OPFS unavailable"));
+    const idbOpenSpy = vi.spyOn(IdbRemoteChunkCache, "open");
+
+    // Simulate environments without IndexedDB (e.g. older webviews / sandboxed contexts). The disk
+    // should still open and read correctly, just without caching.
+    (globalThis as any).indexedDB = undefined;
+
+    let disk: RemoteStreamingDisk | null = null;
+    try {
+      disk = await RemoteStreamingDisk.open("https://example.test/disk.img", {
+        blockSize,
+        cacheBackend: "opfs",
+        cacheLimitBytes,
+        prefetchSequentialBlocks: 0,
+      });
+
+      expect(openOpfsSpy).toHaveBeenCalled();
+      expect(idbOpenSpy).not.toHaveBeenCalled();
+
+      expect(disk.getTelemetrySnapshot().cacheLimitBytes).toBe(0);
+
+      const before = mock.stats.chunkRangeCalls;
+      const first = await disk.read(0, 16);
+      expect(Array.from(first)).toEqual(Array.from(image.subarray(0, 16)));
+      expect(mock.stats.chunkRangeCalls).toBe(before + 1);
+
+      const beforeSecond = mock.stats.chunkRangeCalls;
+      const second = await disk.read(0, 16);
+      expect(Array.from(second)).toEqual(Array.from(image.subarray(0, 16)));
+      // Cache disabled -> must refetch.
+      expect(mock.stats.chunkRangeCalls).toBe(beforeSecond + 1);
+    } finally {
+      disk?.close();
+      mock.restore();
+      (globalThis as any).indexedDB = originalIndexedDB;
+    }
+  });
+
   it("tolerates IndexedDB quota errors when persisting cached blocks", async () => {
     const blockSize = 1024 * 1024;
     const cacheLimitBytes = blockSize * 8;
