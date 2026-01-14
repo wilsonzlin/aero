@@ -5382,6 +5382,7 @@ static VirtioInputEventsTestResult VirtioInputEventsTest(Logger& log, const Virt
 
   if (out.reason.empty()) {
     out.reason = "timeout";
+    if (out.win32_error == ERROR_SUCCESS) out.win32_error = ERROR_TIMEOUT;
   }
   return out;
 }
@@ -5727,6 +5728,7 @@ static VirtioInputTabletEventsTestResult VirtioInputTabletEventsTest(Logger& log
   const std::wstring tablet_path = input.tablet_device_path;
   if (tablet_path.empty()) {
     out.reason = "missing_tablet_device";
+    out.win32_error = ERROR_NOT_FOUND;
     return out;
   }
 
@@ -5749,6 +5751,7 @@ static VirtioInputTabletEventsTestResult VirtioInputTabletEventsTest(Logger& log
   const auto layout_opt = ParseTabletHidReportLayout(*report_desc);
   if (!layout_opt.has_value() || !layout_opt->have_left) {
     out.reason = "unsupported_report_descriptor";
+    out.win32_error = ERROR_NOT_SUPPORTED;
     return out;
   }
   const TabletHidReportLayout layout = *layout_opt;
@@ -5756,6 +5759,7 @@ static VirtioInputTabletEventsTestResult VirtioInputTabletEventsTest(Logger& log
     // Contract: the virtio-input tablet descriptor uses Report ID 4. Enforce this so we catch regressions
     // where the tablet enumerates as a mouse/relative pointer.
     out.reason = "unexpected_report_id";
+    out.win32_error = ERROR_INVALID_DATA;
     return out;
   }
 
@@ -5815,7 +5819,10 @@ static VirtioInputTabletEventsTestResult VirtioInputTabletEventsTest(Logger& log
   tablet.CancelAndClose();
 
   if (out.ok) return out;
-  if (out.reason.empty()) out.reason = "timeout";
+  if (out.reason.empty()) {
+    out.reason = "timeout";
+    if (out.win32_error == ERROR_SUCCESS) out.win32_error = ERROR_TIMEOUT;
+  }
   return out;
 }
 
@@ -5869,6 +5876,7 @@ static VirtioInputMediaKeysTestResult VirtioInputMediaKeysTest(Logger& log, cons
 
   if (consumer_path.empty()) {
     out.reason = "missing_consumer_device";
+    out.win32_error = ERROR_NOT_FOUND;
     return out;
   }
 
@@ -5929,7 +5937,10 @@ static VirtioInputMediaKeysTestResult VirtioInputMediaKeysTest(Logger& log, cons
   reader.CancelAndClose();
 
   if (out.ok) return out;
-  if (out.reason.empty()) out.reason = "timeout";
+  if (out.reason.empty()) {
+    out.reason = "timeout";
+    if (out.win32_error == ERROR_SUCCESS) out.win32_error = ERROR_TIMEOUT;
+  }
   return out;
 }
 
