@@ -316,6 +316,8 @@ Tip: keyboard LED output reports exercise the **statusq** (driver → device) pa
 
 To stress backpressure/coalescing, use `hidtest.exe --keyboard --led-spam N` (alternates `0` and `0x1F` by default; override the "on" mask via `--led 0xMASK` / `--led-hidd` / `--led-ioctl-set-output`) and watch `hidtest.exe --counters`.
 
+Tip: `hidtest.exe --keyboard --state` / `--state-json` shows the driver’s statusq/LED configuration (`StatusQActive`, `StatusQDropOnFull`, and `KeyboardLedSupportedMask`).
+
 After the driver is installed and confirmed working, you can optionally disable PS/2 in QEMU (`-machine ...,i8042=off`) to ensure you are not accidentally testing the emulated PS/2 devices. Only do this once you have a known-good virtio-input driver; otherwise you may lose input in the guest.
 
 ### 3.4 Expected pass/fail signals (Windows 7)
