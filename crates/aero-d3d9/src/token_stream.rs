@@ -133,7 +133,7 @@ fn score_sm2_sm3_length_encoding(
             // fields that could otherwise be misclassified as operand-count encoding.
             //
             // Skip opcodes that legitimately include immediate values.
-            if !matches!(opcode, 0x0051 | 0x0052 | 0x0053) && operand_len > 0 {
+            if !matches!(opcode, 0x0051..=0x0053) && operand_len > 0 {
                 let last_operand = read_token_u32_le(token_stream, idx + total_len - 1)?;
                 let last_opcode = (last_operand & 0xFFFF) as u16;
                 if matches!(last_opcode, 0xFFFF | 0xFFFE) {
