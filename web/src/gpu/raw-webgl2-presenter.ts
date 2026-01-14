@@ -201,10 +201,16 @@ export class RawWebGL2Presenter {
       flipY: opts.flipY ?? false,
     };
 
+    const commonCtxAttrs: WebGLContextAttributes = {
+      antialias: false,
+      depth: false,
+      stencil: false,
+      preserveDrawingBuffer: false,
+    };
     const ctxAttrs: WebGLContextAttributes =
       this.opts.alphaMode === "opaque"
-        ? { alpha: false, premultipliedAlpha: false }
-        : { alpha: true, premultipliedAlpha: true };
+        ? { ...commonCtxAttrs, alpha: false, premultipliedAlpha: false }
+        : { ...commonCtxAttrs, alpha: true, premultipliedAlpha: true };
 
     const gl = canvas.getContext("webgl2", ctxAttrs);
     if (!gl) throw new Error("WebGL2 not supported");
