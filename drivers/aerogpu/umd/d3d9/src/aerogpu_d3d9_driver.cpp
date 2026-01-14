@@ -16398,7 +16398,7 @@ void d3d9_write_handle(HandleT* out, void* pDrvPrivate) {
 //   - When `D3DRS_LIGHTING` is enabled for the `D3DFVF_XYZ | D3DFVF_NORMAL{,DIFFUSE}{,TEX1}`
 //     bring-up subset, the fixed-function fallback binds a lit VS variant and
 //     computes a lit diffuse color (without requiring per-vertex diffuse). It
-//     consumes an additional reserved lighting constant block (`c244..c253`)
+//     consumes an additional reserved lighting constant block (`c208..c236`)
 //     uploaded by `ensure_fixedfunc_lighting_constants_locked()`.
 // - Pre-transformed `D3DFVF_XYZRHW*` vertices are converted from screen-space
 //   `XYZRHW` (`POSITIONT`) to clip-space on the CPU at draw time
@@ -25804,7 +25804,7 @@ struct aerogpu_d3d9_impl_pfnGetRasterStatus<Ret(*)(Args...)> {
 //   variants that read `WORLD0 * VIEW * PROJECTION` from a reserved high VS constant
 //   range (`c240..c243`) uploaded by `ensure_fixedfunc_wvp_constants_locked()`.
 // - The minimal lighting subset (`D3DFVF_XYZ | D3DFVF_NORMAL{,DIFFUSE}{,TEX1}`)
-//   also consumes WORLD/VIEW for normal transform (uploaded in c244..c246).
+//   also consumes WORLD/VIEW for normal transform (uploaded in c208..c210).
 //
 // Keep these outside the WDK-only DDI block so they are available in portable
 // builds (Linux/CI) and in Windows portable builds that do not use WDK headers.

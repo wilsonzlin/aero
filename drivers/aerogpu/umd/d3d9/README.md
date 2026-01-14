@@ -429,7 +429,7 @@ Code anchors (see `src/aerogpu_d3d9_driver.cpp` unless noted):
 - Fixed-function shader token streams: `src/aerogpu_d3d9_fixedfunc_shaders.h` (`fixedfunc::kVsPassthroughPosColor`, `fixedfunc::kVsPassthroughPosColorTex1`, `fixedfunc::kVsWvpPosColor`, `fixedfunc::kVsWvpPosColorTex0`, `fixedfunc::kVsTransformPosWhiteTex1`, etc)
 - XYZRHW conversion path: `fixedfunc_fvf_is_xyzrhw()` + `convert_xyzrhw_to_clipspace_locked()`
 - Fixed-function WVP VS constant upload: `fixedfunc_fvf_needs_matrix()` + `ensure_fixedfunc_wvp_constants_locked()` (`WORLD0*VIEW*PROJECTION` into reserved `c240..c243`)
-- Fixed-function lighting VS constant upload (NORMAL variants): `ensure_fixedfunc_lighting_constants_locked()` (reserved `c244..c253` constant block when `D3DRS_LIGHTING` is enabled)
+- Fixed-function lighting VS constant upload (NORMAL variants): `ensure_fixedfunc_lighting_constants_locked()` (reserved `c208..c236` constant block when `D3DRS_LIGHTING` is enabled)
 - FVF selection paths: `device_set_fvf()` and the `SetVertexDecl` pattern detection in `device_set_vertex_decl()`
   - `device_set_fvf()` synthesizes/binds an internal vertex declaration for each supported fixed-function FVF
     (see supported combinations above), so the draw path can bind a known input layout.
@@ -472,11 +472,12 @@ Implementation notes (bring-up):
   compute a lit diffuse color without per-vertex diffuse.
 - Supported FVFs can be selected via either `SetFVF` (internal declaration synthesized) or `SetVertexDecl` (UMD infers an
   implied FVF from common declaration layouts in `device_set_vertex_decl()`).
-- For untransformed `D3DFVF_XYZ*` fixed-function FVFs, the fixed-function fallback uses small internal vertex shader
+  - For untransformed `D3DFVF_XYZ*` fixed-function FVFs, the fixed-function fallback uses small internal vertex shader
   variants that apply `WORLD0*VIEW*PROJECTION` from a reserved VS constant range (`c240..c243`) uploaded by
   `ensure_fixedfunc_wvp_constants_locked()`.
-  - When fixed-function WVP rendering is active, `SetTransform`/`MultiplyTransform` may also upload the constants eagerly
-    (not just at draw time) so the next draw does not redundantly re-upload unchanged constants.
+  - When the **full fixed-function pipeline** is active (no user shaders bound), `SetTransform`/`MultiplyTransform` may
+    also upload the constants eagerly (not just at draw time) so the next draw does not redundantly re-upload unchanged
+    constants.
   - `D3DFVF_XYZ | D3DFVF_DIFFUSE` uses `fixedfunc::kVsWvpPosColor`.
   - `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1` uses `fixedfunc::kVsWvpPosColorTex0`.
   - `D3DFVF_XYZ | D3DFVF_TEX1` (no diffuse) uses `fixedfunc::kVsTransformPosWhiteTex1`.
@@ -484,7 +485,7 @@ Implementation notes (bring-up):
     or `fixedfunc::kVsWvpLitPosNormal{,Tex1}` when `D3DRS_LIGHTING` is enabled.
   - For `D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_DIFFUSE{,TEX1}`, the fixed-function fallback selects a normal-aware WVP VS
     variant. When `D3DRS_LIGHTING` is enabled, it uses the lit variant and uploads a reserved lighting constant block
-    (`c244..c253`) via `ensure_fixedfunc_lighting_constants_locked()`.
+    (`c208..c236`) via `ensure_fixedfunc_lighting_constants_locked()`.
   - The reserved constant ranges are intentionally high so they are unlikely to collide with app/user shader constants when
     switching between fixed-function and programmable paths.
     - Even so, when switching back to fixed-function WVP (and lit `NORMAL` variants) the UMD forces a re-upload

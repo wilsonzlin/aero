@@ -341,17 +341,17 @@ static constexpr uint32_t kVsWvpPosNormalWhiteTex0[] = {
 //   dp4 oPos.y, v0, c241
 //   dp4 oPos.z, v0, c242
 //   dp4 oPos.w, v0, c243
-//   dp3 r0.x, v1, c244      ; normal.x (view space)
-//   dp3 r0.y, v1, c245      ; normal.y
-//   dp3 r0.z, v1, c246      ; normal.z
+//   dp3 r0.x, v1, c208      ; normal.x (view space)
+//   dp3 r0.y, v1, c209      ; normal.y
+//   dp3 r0.z, v1, c210      ; normal.z
 //   dp3 r1, r0, r0          ; length^2
 //   rsq r1, r1              ; 1/sqrt(len2)
 //   mul r0, r0, r1          ; normalize
-//   dp3 r2, r0, c247        ; ndotl
+//   dp3 r2, r0, c211        ; ndotl (directional light slot0: vertex->light)
 //   max r2, r2, c254        ; clamp to 0
-//   mul r3, c248, c250      ; lightDiffuse * materialDiffuse
+//   mul r3, c212, c233      ; lightDiffuse * materialDiffuse
 //   mul r3, r3, r2          ; * ndotl
-//   mul r4, c253, c251      ; globalAmbient * materialAmbient
+//   mul r4, c236, c234      ; globalAmbient * materialAmbient
 //   add r5, r3, r4          ; diffuse + ambient
 //   mov_sat oD0, r5
 //   mov oT0, v0
@@ -389,17 +389,17 @@ static constexpr uint32_t kVsWvpLitPosNormal[] = {
     0x04000008u, // dp3
     0x00010000u, // r0.x
     0x10E40001u, // v1.xyz (normal)
-    0x20E400F4u, // c244.xyz
+    0x20E400D0u, // c208.xyz
 
     0x04000008u, // dp3
     0x00020000u, // r0.y
     0x10E40001u, // v1.xyz
-    0x20E400F5u, // c245.xyz
+    0x20E400D1u, // c209.xyz
 
     0x04000008u, // dp3
     0x00040000u, // r0.z
     0x10E40001u, // v1.xyz
-    0x20E400F6u, // c246.xyz
+    0x20E400D2u, // c210.xyz
 
     0x04000008u, // dp3
     0x000F0001u, // r1.xyzw
@@ -418,7 +418,7 @@ static constexpr uint32_t kVsWvpLitPosNormal[] = {
     0x04000008u, // dp3
     0x000F0002u, // r2.xyzw
     0x00E40000u, // r0.xyzw
-    0x20E400F7u, // c247.xyz
+    0x20E400D3u, // c211.xyz
 
     0x0400000Bu, // max (3 operands)
     0x000F0002u, // r2.xyzw
@@ -427,8 +427,8 @@ static constexpr uint32_t kVsWvpLitPosNormal[] = {
 
     0x04000005u, // mul
     0x000F0003u, // r3.xyzw
-    0x20E400F8u, // c248.xyzw
-    0x20E400FAu, // c250.xyzw
+    0x20E400D4u, // c212.xyzw
+    0x20E400E9u, // c233.xyzw
 
     0x04000005u, // mul
     0x000F0003u, // r3.xyzw
@@ -437,8 +437,8 @@ static constexpr uint32_t kVsWvpLitPosNormal[] = {
 
     0x04000005u, // mul
     0x000F0004u, // r4.xyzw
-    0x20E400FDu, // c253.xyzw
-    0x20E400FBu, // c251.xyzw
+    0x20E400ECu, // c236.xyzw
+    0x20E400EAu, // c234.xyzw
 
     0x04000002u, // add
     0x000F0005u, // r5.xyzw
@@ -490,17 +490,17 @@ static constexpr uint32_t kVsWvpLitPosNormalTex1[] = {
     0x04000008u, // dp3
     0x00010000u, // r0.x
     0x10E40001u, // v1.xyz
-    0x20E400F4u, // c244.xyz
+    0x20E400D0u, // c208.xyz
 
     0x04000008u, // dp3
     0x00020000u, // r0.y
     0x10E40001u, // v1.xyz
-    0x20E400F5u, // c245.xyz
+    0x20E400D1u, // c209.xyz
 
     0x04000008u, // dp3
     0x00040000u, // r0.z
     0x10E40001u, // v1.xyz
-    0x20E400F6u, // c246.xyz
+    0x20E400D2u, // c210.xyz
 
     0x04000008u, // dp3
     0x000F0001u, // r1.xyzw
@@ -519,7 +519,7 @@ static constexpr uint32_t kVsWvpLitPosNormalTex1[] = {
     0x04000008u, // dp3
     0x000F0002u, // r2.xyzw
     0x00E40000u, // r0.xyzw
-    0x20E400F7u, // c247.xyz
+    0x20E400D3u, // c211.xyz
 
     0x0400000Bu, // max
     0x000F0002u, // r2.xyzw
@@ -528,8 +528,8 @@ static constexpr uint32_t kVsWvpLitPosNormalTex1[] = {
 
     0x04000005u, // mul
     0x000F0003u, // r3.xyzw
-    0x20E400F8u, // c248.xyzw
-    0x20E400FAu, // c250.xyzw
+    0x20E400D4u, // c212.xyzw
+    0x20E400E9u, // c233.xyzw
 
     0x04000005u, // mul
     0x000F0003u, // r3.xyzw
@@ -538,8 +538,8 @@ static constexpr uint32_t kVsWvpLitPosNormalTex1[] = {
 
     0x04000005u, // mul
     0x000F0004u, // r4.xyzw
-    0x20E400FDu, // c253.xyzw
-    0x20E400FBu, // c251.xyzw
+    0x20E400ECu, // c236.xyzw
+    0x20E400EAu, // c234.xyzw
 
     0x04000002u, // add
     0x000F0005u, // r5.xyzw

@@ -28,7 +28,7 @@ The matrix is computed from cached `Device::transform_matrices[...]` (`WORLD0`, 
 `ensure_fixedfunc_wvp_constants_locked()` into a reserved constant range:
 
 - Constant range: `c240..c243` (`kFixedfuncMatrixStartRegister = 240`)
-- Uploads are gated by `Device::fixedfunc_matrix_dirty` and occur at draw time and/or eagerly when `SetTransform`/`MultiplyTransform` updates relevant matrices while fixed-function WVP rendering is active.
+- Uploads are gated by `Device::fixedfunc_matrix_dirty` and occur at draw time and/or eagerly when `SetTransform`/`MultiplyTransform` updates relevant matrices while the **full fixed-function pipeline** is active (no user shaders bound).
 - The cached matrices are row-major (`D3DMATRIX`); the upload transposes to column vectors so `dp4(v, cN)` computes row-vector multiplication.
 - The constants live in a high register range so they are unlikely to collide with app/user shader constants when switching between fixed-function and programmable paths.
   - Even so, the UMD will proactively mark `fixedfunc_matrix_dirty` when switching back to fixed-function WVP vertex shaders so the constants are re-uploaded (user shaders may have written overlapping VS constant registers).
@@ -44,7 +44,7 @@ This covers the fixed-function FVFs:
 - `D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_DIFFUSE` (VS WVP constants; optional fixed-function lighting)
 - `D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_DIFFUSE | D3DFVF_TEX1` (VS WVP constants; optional fixed-function lighting)
 
-When `D3DRS_LIGHTING` is enabled for the `NORMAL` variants, the UMD additionally uploads a reserved fixed-function lighting constant block (`c244..c253`; `kFixedfuncLightingStartRegister = 244`) via `ensure_fixedfunc_lighting_constants_locked()` (normal transform, light 0, material, global ambient).
+When `D3DRS_LIGHTING` is enabled for the `NORMAL` variants, the UMD additionally uploads a reserved fixed-function lighting constant block (`c208..c236`; `kFixedfuncLightingStartRegister = 208`) via `ensure_fixedfunc_lighting_constants_locked()` (world*view columns 0..2, packed light subset, material, global ambient).
 
 - Uploads are gated by `Device::fixedfunc_lighting_dirty` and occur at draw time when a lit fixed-function VS variant is active.
 - Like the WVP constants, this uses a high constant range to reduce collisions with app/user VS constants. Even so, the UMD will mark `fixedfunc_lighting_dirty` when user shaders or `SetShaderConstF` write overlapping registers so the constants are refreshed when switching back to the lit fixed-function path.
@@ -118,7 +118,7 @@ Independently of draw-time WVP, `pfnProcessVertices` has a bring-up fixed-functi
     `fixedfunc::kVsWvpPosNormalDiffuse{,Tex1}`, `fixedfunc::kVsWvpLitPosNormalDiffuse{,Tex1}` (`drivers/aerogpu/umd/d3d9/src/aerogpu_d3d9_fixedfunc_shaders.h`)
 - Draw-time fixed-function constant upload (untransformed `D3DFVF_XYZ*` fixed-function paths):
   - `ensure_fixedfunc_wvp_constants_locked()` + `emit_set_shader_constants_f_locked()` (`AEROGPU_CMD_SET_SHADER_CONSTANTS_F`)
-  - `ensure_fixedfunc_lighting_constants_locked()` (fixed-function lighting `c244..c253` constant block for `D3DFVF_XYZ | D3DFVF_NORMAL{,DIFFUSE}{,TEX1}` when `D3DRS_LIGHTING` is enabled)
+  - `ensure_fixedfunc_lighting_constants_locked()` (fixed-function lighting `c208..c236` constant block for `D3DFVF_XYZ | D3DFVF_NORMAL{,DIFFUSE}{,TEX1}` when `D3DRS_LIGHTING` is enabled)
 - CPU conversions for pre-transformed `XYZRHW*` draws:
   - `convert_xyzrhw_to_clipspace_locked()` (`XYZRHW`/`POSITIONT` → clip-space for pre-transformed fixed-function draws)
 - Existing CPU vertex processing:

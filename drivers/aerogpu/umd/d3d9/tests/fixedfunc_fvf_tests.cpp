@@ -7833,7 +7833,6 @@ bool TestFvfXyzNormalEmitsLightingConstants() {
              "WVP constant upload emitted once")) {
     return false;
   }
-
   // Fixed-function lighting constants are uploaded as a single contiguous block
   // (see `kFixedfuncLightingStartRegister`/`kFixedfuncLightingVec4Count` in the
   // driver). Keep local constants here so tests remain portable (they build
