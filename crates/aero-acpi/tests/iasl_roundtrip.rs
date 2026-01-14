@@ -78,6 +78,58 @@ fn find_generated_dsl(temp_dir: &Path) -> io::Result<PathBuf> {
     }
 }
 
+fn extract_braced_block<'a>(src: &'a str, keyword: &str) -> Option<&'a str> {
+    // Find the first occurrence of `keyword`, then return the `{ ... }` block that immediately
+    // follows it (with nested brace matching).
+    let start = src.find(keyword)?;
+    let after = &src[start..];
+    let brace_start_rel = after.find('{')?;
+    let brace_start = start + brace_start_rel;
+
+    let mut depth = 0usize;
+    for (idx_rel, ch) in src[brace_start..].char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    let end = brace_start + idx_rel + 1;
+                    return Some(&src[brace_start..end]);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    None
+}
+
+fn disassemble_dsdt_to_dsl(cfg: &AcpiConfig, label: &str) -> String {
+    let placement = AcpiPlacement::default();
+    let tables = AcpiTables::build(cfg, placement);
+
+    let tempdir = tempfile::Builder::new()
+        .prefix(&format!("aero-acpi-iasl-dsl-{label}-"))
+        .tempdir()
+        .expect("create tempdir");
+    let temp_path = tempdir.path();
+
+    let dsdt_aml_path = temp_path.join("dsdt.aml");
+    fs::write(&dsdt_aml_path, &tables.dsdt).expect("write dsdt.aml");
+
+    let disasm = run_iasl(temp_path, &["-d", "dsdt.aml"])
+        .unwrap_or_else(|err| panic!("failed to spawn `iasl -d dsdt.aml`: {err}"));
+    if !disasm.status.success() {
+        panic!(
+            "`iasl -d dsdt.aml` failed\n{}\n(temp dir: {})",
+            fmt_output(&disasm),
+            temp_path.display()
+        );
+    }
+
+    let dsdt_dsl = find_generated_dsl(temp_path).expect("locate dsdt.dsl");
+    fs::read_to_string(dsdt_dsl).expect("read dsdt.dsl")
+}
 fn dsdt_iasl_roundtrip(cfg: &AcpiConfig, label: &str) {
     let placement = AcpiPlacement::default();
     let tables = AcpiTables::build(cfg, placement);
@@ -157,5 +209,28 @@ fn dsdt_iasl_roundtrip_handles_ecam_disabled_and_enabled_variants() {
             ..Default::default()
         },
         "ecam-enabled",
+    );
+}
+
+#[test]
+fn dsdt_iasl_disassembly_shows_pci0_mmio_as_cacheable_readwrite_resource_producer() {
+    if !iasl_available() {
+        eprintln!("skipping: `iasl` not found in PATH");
+        return;
+    }
+
+    let dsl = disassemble_dsdt_to_dsl(&AcpiConfig::default(), "default");
+    let pci0_block =
+        extract_braced_block(&dsl, "Device (PCI0)").expect("failed to locate PCI0 device block");
+
+    // The PCI root bridge MMIO window should disassemble as a ResourceProducer, and must be
+    // ReadWrite (not ReadOnly) for Windows 7 PCI resource allocation correctness.
+    assert!(
+        pci0_block.contains("DWordMemory (ResourceProducer"),
+        "expected PCI0._CRS MMIO window to disassemble as ResourceProducer"
+    );
+    assert!(
+        pci0_block.contains("Cacheable, ReadWrite"),
+        "expected PCI0._CRS MMIO window to disassemble as Cacheable, ReadWrite"
     );
 }
