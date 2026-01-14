@@ -64,9 +64,16 @@ Regression tests:
 - `crates/aero-machine/tests/machine_xhci.rs` asserts machine-level PCI/MMIO integration semantics
   for xHCI (PCI identity, `COMMAND.MEM` gating for MMIO, `RUN/STOP` toggling `USBSTS.HCHALTED`, and
   MSI/MSI-X behavior).
+- `crates/aero-machine/tests/machine_xhci_usb_attach_at_path.rs` asserts that host USB topology
+  mutation helpers (attach/detach) work as expected for xHCI (including across machine reset).
+- `crates/aero-machine/tests/machine_xhci_snapshot.rs` asserts snapshot/restore integration for xHCI
+  at the machine level (including xHCI state roundtripping and sub-ms tick remainder behavior).
 - `crates/aero-usb/tests/xhci_detach_pending_endpoints.rs` asserts that detaching a device clears
   any pending endpoint activations/doorbells so re-attaching at the same topology path does not
   spuriously consume TRBs without a new doorbell.
+- `crates/aero-usb/tests/xhci_configure_endpoint_clears_pending_doorbells.rs` asserts that
+  `Configure Endpoint` drop/deconfigure clears any pending endpoint doorbells so endpoints can be
+  re-doorbelled after reconfiguration.
 
 ---
 
@@ -530,11 +537,14 @@ Rust xHCI-focused tests commonly live under:
 - `crates/aero-usb/tests/xhci_supported_protocol.rs`
 - `crates/aero-usb/tests/xhci_ports.rs`
 - `crates/aero-usb/tests/xhci_detach_pending_endpoints.rs` (detach clears pending doorbell work)
+- `crates/aero-usb/tests/xhci_configure_endpoint_clears_pending_doorbells.rs` (Configure Endpoint clears pending doorbells)
 - `crates/aero-usb/tests/xhci_snapshot_*.rs` (snapshot/restore, legacy compatibility, determinism)
 - `crates/aero-usb/tests/xhci_interrupt_in.rs`
 - `crates/aero-usb/tests/xhci_control_*.rs` (EP0 control transfer behavior)
 - `crates/aero-usb/tests/xhci_webusb_passthrough.rs`
 - `crates/aero-machine/tests/machine_xhci.rs` (machine-level PCI/MMIO integration)
+- `crates/aero-machine/tests/machine_xhci_usb_attach_at_path.rs` (machine-level host attach/detach integration)
+- `crates/aero-machine/tests/machine_xhci_snapshot.rs` (machine-level snapshot/restore integration)
 - `crates/aero-machine/tests/xhci_snapshot.rs` (machine-level snapshot/restore integration)
 - `crates/emulator/tests/xhci_mmio_gating.rs` (emulator-side PCI/MMIO/BME gating; requires `--features legacy-usb-xhci`)
 
