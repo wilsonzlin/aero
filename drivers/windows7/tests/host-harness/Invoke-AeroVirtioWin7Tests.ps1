@@ -797,6 +797,8 @@ function Wait-AeroSelftestResult {
   $blkResizeRequested = $false
   $sawVirtioInputPass = $false
   $sawVirtioInputFail = $false
+  $sawVirtioInputBindPass = $false
+  $sawVirtioInputBindFail = $false
   $virtioInputMarkerTime = $null
   $sawVirtioInputEventsReady = $false
   $sawVirtioInputEventsPass = $false
@@ -950,6 +952,12 @@ function Wait-AeroSelftestResult {
       if (-not $sawVirtioInputFail -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input\|FAIL") {
         $sawVirtioInputFail = $true
         if ($null -eq $virtioInputMarkerTime) { $virtioInputMarkerTime = [DateTime]::UtcNow }
+      }
+      if (-not $sawVirtioInputBindPass -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input-bind\|PASS") {
+        $sawVirtioInputBindPass = $true
+      }
+      if (-not $sawVirtioInputBindFail -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input-bind\|FAIL") {
+        $sawVirtioInputBindFail = $true
       }
       if (-not $sawVirtioInputEventsReady -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input-events\|READY") {
         $sawVirtioInputEventsReady = $true
@@ -1139,6 +1147,12 @@ function Wait-AeroSelftestResult {
           }
           if (-not $sawVirtioInputPass) {
             return @{ Result = "MISSING_VIRTIO_INPUT"; Tail = $tail }
+          }
+          if ($sawVirtioInputBindFail) {
+            return @{ Result = "VIRTIO_INPUT_BIND_FAILED"; Tail = $tail }
+          }
+          if (-not $sawVirtioInputBindPass) {
+            return @{ Result = "MISSING_VIRTIO_INPUT_BIND"; Tail = $tail }
           }
 
           # Also ensure the virtio-snd markers are present (playback + capture), so older selftest binaries
@@ -5127,8 +5141,24 @@ try {
       }
       $scriptExitCode = 1
     }
+    "MISSING_VIRTIO_INPUT_BIND" {
+      Write-Host "FAIL: MISSING_VIRTIO_INPUT_BIND: selftest RESULT=PASS but did not emit virtio-input-bind test marker"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
     "VIRTIO_INPUT_MSIX_REQUIRED" {
       Write-Host "FAIL: VIRTIO_INPUT_MSIX_REQUIRED: virtio-input-msix marker did not report mode=msix while -RequireVirtioInputMsix was enabled"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "VIRTIO_INPUT_BIND_FAILED" {
+      Write-Host "FAIL: VIRTIO_INPUT_BIND_FAILED: selftest RESULT=PASS but virtio-input-bind test reported FAIL"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue

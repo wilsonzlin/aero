@@ -923,6 +923,7 @@ only if you explicitly want the base image to be mutated.
   - When `RESULT|PASS` is seen, the harness also requires that the guest emitted per-test markers for:
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS`
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS`
+    - `AERO_VIRTIO_SELFTEST|TEST|virtio-input-bind|PASS`
     - (only when virtio-input event injection is enabled via `-WithInputEvents`/`--with-input-events` or implied by wheel/extended flags)
       `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS`
     - (only when wheel injection is enabled via `-WithInputWheel` / `--with-input-wheel`) `AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|PASS`

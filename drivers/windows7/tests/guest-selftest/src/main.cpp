@@ -3287,6 +3287,12 @@ struct VirtioInputTestResult {
   int consumer_collections = 0;
   int mouse_collections = 0;
   int tablet_collections = 0;
+  // Underlying virtio-input PCI function binding validation (service name + PnP health).
+  int pci_devices = 0;
+  int pci_wrong_service = 0;
+  int pci_missing_service = 0;
+  int pci_problem = 0;
+  bool pci_binding_ok = false;
   // Best-effort: capture at least one interface path for each virtio-input HID class device so optional
   // end-to-end input report tests can open them.
   std::wstring keyboard_device_path;
@@ -3295,6 +3301,124 @@ struct VirtioInputTestResult {
   std::wstring tablet_device_path;
   std::string reason;
 };
+
+static constexpr const wchar_t kVirtioInputExpectedService[] = L"aero_virtio_input";
+
+struct VirtioInputPciBindingCheckResult {
+  bool ok = false;
+  int devices = 0;
+  int wrong_service = 0;
+  int missing_service = 0;
+  int problem = 0;
+};
+
+static VirtioInputPciBindingCheckResult CheckVirtioInputPciBinding(Logger& log) {
+  VirtioInputPciBindingCheckResult out{};
+
+  const std::vector<DevNodeMatch> matches =
+      FindPresentDevNodesByHwidSubstrings(L"PCI", {L"PCI\\VEN_1AF4&DEV_1052"});
+  out.devices = static_cast<int>(matches.size());
+
+  HDEVINFO devinfo = SetupDiCreateDeviceInfoList(nullptr, nullptr);
+  if (devinfo == INVALID_HANDLE_VALUE) {
+    log.Logf("virtio-input-bind: SetupDiCreateDeviceInfoList failed: %lu", GetLastError());
+  }
+
+  for (const auto& m : matches) {
+    std::wstring instance = m.instance_id;
+    std::wstring service;
+    std::vector<std::wstring> hwids;
+    std::wstring desc;
+    bool has_rev01 = false;
+
+    if (!instance.empty() && devinfo != INVALID_HANDLE_VALUE) {
+      SP_DEVINFO_DATA dev{};
+      dev.cbSize = sizeof(dev);
+      if (SetupDiOpenDeviceInfoW(devinfo, instance.c_str(), nullptr, 0, &dev)) {
+        hwids = GetDevicePropertyMultiSz(devinfo, &dev, SPDRP_HARDWAREID);
+        for (const auto& id : hwids) {
+          if (ContainsInsensitive(id, L"&REV_01")) {
+            has_rev01 = true;
+            break;
+          }
+        }
+        if (auto friendly = GetDevicePropertyString(devinfo, &dev, SPDRP_FRIENDLYNAME)) {
+          desc = *friendly;
+        } else if (auto dev_desc = GetDevicePropertyString(devinfo, &dev, SPDRP_DEVICEDESC)) {
+          desc = *dev_desc;
+        }
+        if (auto svc = GetDevicePropertyString(devinfo, &dev, SPDRP_SERVICE)) {
+          service = *svc;
+        }
+      } else {
+        log.Logf("virtio-input-bind: SetupDiOpenDeviceInfo failed instance_id=%s err=%lu",
+                 WideToUtf8(instance).c_str(), GetLastError());
+      }
+    }
+
+    const bool has_service = !service.empty();
+    const bool service_ok = has_service && EqualsInsensitive(service, kVirtioInputExpectedService);
+    if (!has_service) {
+      out.missing_service++;
+    } else if (!service_ok) {
+      out.wrong_service++;
+    }
+
+    ULONG status = 0;
+    ULONG problem = 0;
+    CONFIGRET cr = CR_SUCCESS;
+    if (m.devinst != 0) {
+      cr = CM_Get_DevNode_Status(&status, &problem, m.devinst, 0);
+    } else {
+      cr = CR_FAILURE;
+    }
+
+    const DWORD problem_code = (cr == CR_SUCCESS) ? static_cast<DWORD>(problem) : MAXDWORD;
+    const ULONG cm_status = (cr == CR_SUCCESS) ? status : 0;
+    const bool problem_ok = (cr == CR_SUCCESS) && (problem_code == 0) && ((cm_status & DN_HAS_PROBLEM) == 0);
+    if (!problem_ok) {
+      out.problem++;
+    }
+
+    // Emit diagnostics for each matched PCI function so service/binding issues are actionable when running the host
+    // harness against an image with a different virtio-input driver installed.
+    log.Logf("virtio-input-bind: pci device instance_id=%s name=%s service=%s rev01=%d cm_status=0x%08lx(%s) cm_problem=%lu(%s: %s)",
+             WideToUtf8(instance).c_str(), WideToUtf8(desc).c_str(), WideToUtf8(service).c_str(),
+             has_rev01 ? 1 : 0, static_cast<unsigned long>(cm_status),
+             CmStatusFlagsToString(cm_status).c_str(), static_cast<unsigned long>(problem_code),
+             CmProblemCodeToName(problem_code), CmProblemCodeToMeaning(problem_code));
+
+    if (!has_rev01) {
+      log.Logf(
+          "virtio-input-bind: pci device pnp_id=%s missing REV_01 (Aero contract v1 expects REV_01; QEMU needs x-pci-revision=0x01)",
+          WideToUtf8(instance).c_str());
+    }
+    if (!has_service) {
+      log.Logf("virtio-input-bind: pci device pnp_id=%s has no bound service (expected %s)",
+               WideToUtf8(instance).c_str(), WideToUtf8(kVirtioInputExpectedService).c_str());
+    } else if (!service_ok) {
+      log.Logf("virtio-input-bind: pci device pnp_id=%s bound_service=%s (expected %s)",
+               WideToUtf8(instance).c_str(), WideToUtf8(service).c_str(),
+               WideToUtf8(kVirtioInputExpectedService).c_str());
+    }
+    if (!problem_ok) {
+      log.Logf("virtio-input-bind: pci device pnp_id=%s has ConfigManagerErrorCode=%lu (%s: %s)",
+               WideToUtf8(instance).c_str(), static_cast<unsigned long>(problem_code),
+               CmProblemCodeToName(problem_code), CmProblemCodeToMeaning(problem_code));
+    }
+  }
+
+  if (devinfo != INVALID_HANDLE_VALUE) {
+    SetupDiDestroyDeviceInfoList(devinfo);
+  }
+
+  out.ok = (out.devices > 0) && (out.wrong_service == 0) && (out.missing_service == 0) && (out.problem == 0);
+  if (!out.ok) {
+    log.LogLine("virtio-input-bind: one or more virtio-input PCI devices are not healthy and bound to aero_virtio_input");
+  }
+
+  return out;
+}
 
 static bool IsVirtioInputHardwareId(const std::vector<std::wstring>& hwids) {
   for (const auto& id : hwids) {
@@ -3680,6 +3804,13 @@ static HidReportDescriptorSummary SummarizeHidReportDescriptor(const std::vector
 static VirtioInputTestResult VirtioInputTest(Logger& log) {
   VirtioInputTestResult out{};
 
+  const auto pci_binding = CheckVirtioInputPciBinding(log);
+  out.pci_devices = pci_binding.devices;
+  out.pci_wrong_service = pci_binding.wrong_service;
+  out.pci_missing_service = pci_binding.missing_service;
+  out.pci_problem = pci_binding.problem;
+  out.pci_binding_ok = pci_binding.ok;
+
   // {4D1E55B2-F16F-11CF-88CB-001111000030}
   static const GUID kHidInterfaceGuid = {0x4D1E55B2,
                                          0xF16F,
@@ -3835,6 +3966,20 @@ static VirtioInputTestResult VirtioInputTest(Logger& log) {
   }
 
   out.ok = true;
+  if (!out.pci_binding_ok) {
+    out.ok = false;
+    if (out.pci_devices <= 0) {
+      out.reason = "pci_device_missing";
+    } else if (out.pci_wrong_service > 0) {
+      out.reason = "wrong_service";
+    } else if (out.pci_missing_service > 0) {
+      out.reason = "driver_not_bound";
+    } else if (out.pci_problem > 0) {
+      out.reason = "device_error";
+    } else {
+      out.reason = "driver_not_bound";
+    }
+  }
   return out;
 }
 
@@ -9556,6 +9701,13 @@ int wmain(int argc, wchar_t** argv) {
           : IrqFieldsForTestMarker({L"PCI\\VEN_1AF4&DEV_1052", L"PCI\\VEN_1AF4&DEV_1011"},
                                    {L"VID_1AF4&PID_0001", L"VID_1AF4&PID_0002", L"VID_1AF4&PID_0003",
                                     L"VID_1AF4&PID_1052", L"VID_1AF4&PID_1011"});
+  if (input.pci_binding_ok) {
+    log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-input-bind|PASS|devices=%d", input.pci_devices);
+  } else {
+    log.Logf(
+        "AERO_VIRTIO_SELFTEST|TEST|virtio-input-bind|FAIL|devices=%d|wrong_service=%d|missing_service=%d|problem=%d",
+        input.pci_devices, input.pci_wrong_service, input.pci_missing_service, input.pci_problem);
+  }
   log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-input|%s|devices=%d|keyboard_devices=%d|"
            "consumer_devices=%d|mouse_devices=%d|ambiguous_devices=%d|unknown_devices=%d|"
            "keyboard_collections=%d|consumer_collections=%d|mouse_collections=%d|tablet_devices=%d|"

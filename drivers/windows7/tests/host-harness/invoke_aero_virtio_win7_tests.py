@@ -50,8 +50,8 @@ It:
   (unix socket on POSIX; TCP loopback fallback on Windows)
 - tails the serial log until it sees AERO_VIRTIO_SELFTEST|RESULT|PASS/FAIL
   - in default (non-transitional) mode, a PASS result also requires per-test markers for virtio-blk, virtio-input,
-     virtio-snd (PASS or SKIP), virtio-snd-capture (PASS or SKIP), virtio-snd-duplex (PASS or SKIP), virtio-net,
-     and virtio-net-udp so older selftest binaries cannot accidentally pass
+     virtio-input-bind, virtio-snd (PASS or SKIP), virtio-snd-capture (PASS or SKIP), virtio-snd-duplex (PASS or SKIP),
+     virtio-net, and virtio-net-udp so older selftest binaries cannot accidentally pass
   - when --with-virtio-snd is enabled, virtio-snd, virtio-snd-capture, and virtio-snd-duplex must PASS (not SKIP)
   - when --with-snd-buffer-limits is enabled, virtio-snd-buffer-limits must PASS (not FAIL/SKIP/missing)
   - when --with-input-events (alias: --with-virtio-input-events) is enabled, virtio-input-events must PASS (not FAIL/missing)
@@ -3409,6 +3409,8 @@ def main() -> int:
             blk_resize_requested = False
             saw_virtio_input_pass = False
             saw_virtio_input_fail = False
+            saw_virtio_input_bind_pass = False
+            saw_virtio_input_bind_fail = False
             virtio_input_marker_time: Optional[float] = None
             saw_virtio_input_events_ready = False
             saw_virtio_input_events_pass = False
@@ -3541,6 +3543,16 @@ def main() -> int:
                         saw_virtio_input_fail = True
                         if virtio_input_marker_time is None:
                             virtio_input_marker_time = time.monotonic()
+                    if (
+                        not saw_virtio_input_bind_pass
+                        and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-bind|PASS" in tail
+                    ):
+                        saw_virtio_input_bind_pass = True
+                    if (
+                        not saw_virtio_input_bind_fail
+                        and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-bind|FAIL" in tail
+                    ):
+                        saw_virtio_input_bind_fail = True
                     if (
                         not saw_virtio_input_events_ready
                         and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|READY" in tail
@@ -3962,6 +3974,27 @@ def main() -> int:
                             if not saw_virtio_input_pass:
                                 print(
                                     "FAIL: MISSING_VIRTIO_INPUT: selftest RESULT=PASS but did not emit virtio-input test marker",
+                                    file=sys.stderr,
+                                )
+                                _print_tail(serial_log)
+                                result_code = 1
+                                break
+                            bind_fail = _check_required_virtio_input_bind_marker(
+                                require_per_test_markers=require_per_test_markers,
+                                saw_pass=saw_virtio_input_bind_pass,
+                                saw_fail=saw_virtio_input_bind_fail,
+                            )
+                            if bind_fail == "VIRTIO_INPUT_BIND_FAILED":
+                                print(
+                                    "FAIL: VIRTIO_INPUT_BIND_FAILED: selftest RESULT=PASS but virtio-input-bind test reported FAIL",
+                                    file=sys.stderr,
+                                )
+                                _print_tail(serial_log)
+                                result_code = 1
+                                break
+                            if bind_fail == "MISSING_VIRTIO_INPUT_BIND":
+                                print(
+                                    "FAIL: MISSING_VIRTIO_INPUT_BIND: selftest RESULT=PASS but did not emit virtio-input-bind test marker",
                                     file=sys.stderr,
                                 )
                                 _print_tail(serial_log)
@@ -4901,6 +4934,16 @@ def main() -> int:
                         if not saw_virtio_input_fail and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input|FAIL" in tail:
                             saw_virtio_input_fail = True
                         if (
+                            not saw_virtio_input_bind_pass
+                            and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-bind|PASS" in tail
+                        ):
+                            saw_virtio_input_bind_pass = True
+                        if (
+                            not saw_virtio_input_bind_fail
+                            and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-bind|FAIL" in tail
+                        ):
+                            saw_virtio_input_bind_fail = True
+                        if (
                             not saw_virtio_input_events_ready
                             and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|READY" in tail
                         ):
@@ -5155,6 +5198,27 @@ def main() -> int:
                                 if not saw_virtio_input_pass:
                                     print(
                                         "FAIL: MISSING_VIRTIO_INPUT: selftest RESULT=PASS but did not emit virtio-input test marker",
+                                        file=sys.stderr,
+                                    )
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
+                                bind_fail = _check_required_virtio_input_bind_marker(
+                                    require_per_test_markers=require_per_test_markers,
+                                    saw_pass=saw_virtio_input_bind_pass,
+                                    saw_fail=saw_virtio_input_bind_fail,
+                                )
+                                if bind_fail == "VIRTIO_INPUT_BIND_FAILED":
+                                    print(
+                                        "FAIL: VIRTIO_INPUT_BIND_FAILED: selftest RESULT=PASS but virtio-input-bind test reported FAIL",
+                                        file=sys.stderr,
+                                    )
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
+                                if bind_fail == "MISSING_VIRTIO_INPUT_BIND":
+                                    print(
+                                        "FAIL: MISSING_VIRTIO_INPUT_BIND: selftest RESULT=PASS but did not emit virtio-input-bind test marker",
                                         file=sys.stderr,
                                     )
                                     _print_tail(serial_log)
@@ -6150,6 +6214,26 @@ def _compute_wave_metrics_16bit_equiv(
 
 def _sanitize_marker_value(value: str) -> str:
     return value.replace("|", "/").replace("\n", " ").replace("\r", " ").strip()
+
+
+def _check_required_virtio_input_bind_marker(
+    *,
+    require_per_test_markers: bool,
+    saw_pass: bool,
+    saw_fail: bool,
+) -> Optional[str]:
+    """
+    Return a failure token when `virtio-input-bind` is required but missing/failed.
+
+    This exists so unit tests can validate strict-marker behavior without invoking QEMU.
+    """
+    if not require_per_test_markers:
+        return None
+    if saw_fail:
+        return "VIRTIO_INPUT_BIND_FAILED"
+    if not saw_pass:
+        return "MISSING_VIRTIO_INPUT_BIND"
+    return None
 
 
 def _try_extract_last_marker_line(tail: bytes, prefix: bytes) -> Optional[str]:
