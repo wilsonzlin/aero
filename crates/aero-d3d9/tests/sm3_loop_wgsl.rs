@@ -103,7 +103,7 @@ fn lowers_loop_with_defi_to_bounded_wgsl() {
     // Ensure `aL` is initialized from i0.x and used for relative constant addressing.
     assert!(wgsl.contains("aL.x = (i0).x;"), "{wgsl}");
     assert!(
-        wgsl.contains("constants.c[CONST_BASE + u32(clamp(i32(1) + (aL.x)"),
+        wgsl.contains("aero_read_const(u32(clamp(i32(1) + (aL.x)"),
         "{wgsl}"
     );
 

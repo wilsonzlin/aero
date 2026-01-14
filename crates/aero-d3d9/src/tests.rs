@@ -297,13 +297,13 @@ fn assemble_ps_with_unknown_opcode() -> Vec<u32> {
     // ps_2_0
     let mut out = vec![0xFFFF0200];
     // mov oC0, c0
-    out.extend(enc_inst_sm3(
+    out.extend(enc_inst(
         0x0001,
         &[enc_dst(8, 0, 0xF), enc_src(2, 0, 0xE4)],
     ));
     // Unknown opcode with 0 operands. The legacy translator skips this, while the SM3 decoder
     // errors out with "unsupported opcode".
-    out.extend(enc_inst_sm3(0x1234, &[]));
+    out.extend(enc_inst(0x1234, &[]));
     out.push(0x0000FFFF);
     out
 }

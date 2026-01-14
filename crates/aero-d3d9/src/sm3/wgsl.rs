@@ -758,16 +758,18 @@ fn src_expr(
                 "u32(clamp(i32({}) + ({}.{comp}), 0, 255))",
                 src.reg.index, rel_reg
             );
-            let mut expr = format!("constants.c[CONST_BASE + {idx_expr}]");
-            // `def c#` defines behave like constant-register writes that occur before shader
-            // execution. They must override the uniform constant buffer even for relative indexing.
+            // Embedded `def c#` constants must override the uniform constant buffer even for
+            // relative indexing (`cN[a0.x]`). Naively encoding this as a nested `select(...)` chain
+            // per access can cause WGSL output to balloon to enormous sizes for shaders that
+            // combine many `def`s with heavy relative constant addressing.
             //
-            // Model this by selecting the embedded value when the computed constant index matches
-            // a defined register.
-            for def_idx in f32_defs.keys() {
-                expr = format!("select({expr}, c{def_idx}, ({idx_expr} == {def_idx}u))");
+            // Instead, when there are embedded constant defs we route the lookup through a helper
+            // function that performs the override selection once.
+            if f32_defs.is_empty() {
+                format!("constants.c[CONST_BASE + {idx_expr}]")
+            } else {
+                format!("aero_read_const({idx_expr})")
             }
-            expr
         } else {
             reg_var_name(&src.reg)?
         }
@@ -2043,20 +2045,37 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
     };
     let _ = writeln!(wgsl, "const CONST_BASE: u32 = {}u;\n", const_base);
 
-    let emit_const_decls = |wgsl: &mut String| {
-        // Embedded float constants (`def c#`). These behave like constant-register writes that occur
-        // before shader execution and must override the uniform constant buffer even when accessed
-        // via relative indexing (`cN[a0.x]`).
+    // Embedded float constants (`def c#`). These behave like constant-register writes that occur
+    // before shader execution and must override the uniform constant buffer even when accessed via
+    // relative indexing (`cN[a0.x]`).
+    //
+    // Declare them as module-scope `const` so that helper functions (used for relative indexing)
+    // can reference them without capturing function-local variables.
+    if !f32_defs.is_empty() {
         for (idx, value) in &f32_defs {
             let _ = writeln!(
                 wgsl,
-                "  let c{idx}: vec4<f32> = vec4<f32>({}, {}, {}, {});",
+                "const c{idx}: vec4<f32> = vec4<f32>({}, {}, {}, {});",
                 format_f32(value[0]),
                 format_f32(value[1]),
                 format_f32(value[2]),
                 format_f32(value[3])
             );
         }
+        wgsl.push('\n');
+
+        // Helper for relative constant addressing that applies `def` overrides without inflating
+        // WGSL size linearly with `(#relative accesses * #defs)`.
+        wgsl.push_str("fn aero_read_const(idx_in: u32) -> vec4<f32> {\n");
+        wgsl.push_str("  let idx: u32 = min(idx_in, 255u);\n");
+        for def_idx in f32_defs.keys() {
+            let _ = writeln!(wgsl, "  if (idx == {def_idx}u) {{ return c{def_idx}; }}");
+        }
+        wgsl.push_str("  return constants.c[CONST_BASE + idx];\n");
+        wgsl.push_str("}\n\n");
+    }
+
+    let emit_const_decls = |wgsl: &mut String| {
         // Non-embedded float constants come from the uniform constant buffer.
         for idx in &usage.float_consts {
             if f32_defs.contains_key(idx) {
