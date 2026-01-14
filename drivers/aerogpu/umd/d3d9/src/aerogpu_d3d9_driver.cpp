@@ -9120,7 +9120,13 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
   const uint32_t create_size_bytes = d3d9_resource_size(*pCreateResource);
   const uint32_t create_width = d3d9_resource_width(*pCreateResource);
   const uint32_t create_height = d3d9_resource_height(*pCreateResource);
-  const uint32_t create_depth = std::max(1u, d3d9_resource_depth(*pCreateResource));
+  uint32_t create_depth = std::max(1u, d3d9_resource_depth(*pCreateResource));
+  if (create_size_bytes == 0 && create_type_u32 == kD3dRTypeCubeTexture) {
+    // D3DRTYPE_CUBETEXTURE always has 6 faces. Some runtime/header combinations
+    // do not provide a meaningful Depth field for cube resources, so normalize
+    // it here to the array-layer count expected by the AeroGPU host executor.
+    create_depth = 6;
+  }
 
   uint32_t mip_levels = std::max(1u, requested_mip_levels);
   if (!wants_shared &&
@@ -9901,6 +9907,13 @@ static HRESULT device_open_resource_impl(
   res->pool = d3d9_resource_pool(*pOpenResource);
   const uint32_t open_size_bytes = d3d9_resource_size(*pOpenResource);
   const uint32_t requested_mip_levels = d3d9_resource_mip_levels(*pOpenResource);
+
+  if (open_size_bytes == 0 && res->type == kD3dRTypeCubeTexture) {
+    // Mirror CreateResource normalization: treat cube textures as arrays with 6
+    // layers, even if the runtime did not populate Depth in the OpenResource DDI
+    // struct.
+    res->depth = 6;
+  }
 
   uint32_t mip_levels = std::max(1u, requested_mip_levels);
   if (open_size_bytes == 0 &&

@@ -4249,6 +4249,132 @@ bool TestCreateResourceArrayTextureEmitsArrayLayers() {
   return true;
 }
 
+bool TestCreateResourceCubeTextureTypeEmitsArrayLayers() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3DDDI_HRESOURCE hResource{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_resource = false;
+
+    ~Cleanup() {
+      if (has_resource && device_funcs.pfnDestroyResource) {
+        device_funcs.pfnDestroyResource(hDevice, hResource);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  if (!Check(open.hAdapter.pDrvPrivate != nullptr, "OpenAdapter2 returned adapter handle")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+  ScopedDeviceCmdVectorReset cmd_reset(dev);
+
+  // Bind a span-backed command buffer so we can validate CREATE_TEXTURE2D output.
+  std::vector<uint8_t> dma(4096, 0);
+  dev->cmd.set_span(dma.data(), dma.size());
+  dev->cmd.reset();
+
+  // D3DRESOURCETYPE::D3DRTYPE_CUBETEXTURE == 5.
+  constexpr uint32_t kD3dRTypeCubeTexture = 5u;
+
+  D3D9DDIARG_CREATERESOURCE create_res{};
+  create_res.type = kD3dRTypeCubeTexture;
+  create_res.format = 22u; // D3DFMT_X8R8G8B8
+  create_res.width = 64;
+  create_res.height = 64;
+  // D3D9 runtimes differ in whether they populate the Depth field for cube
+  // textures. The UMD normalizes cube textures to 6 array layers.
+  create_res.depth = 1;
+  create_res.mip_levels = 1;
+  create_res.usage = 0;
+  create_res.pool = 0; // default pool
+  create_res.size = 0;
+  create_res.hResource.pDrvPrivate = nullptr;
+  create_res.pSharedHandle = nullptr;
+  create_res.pPrivateDriverData = nullptr;
+  create_res.PrivateDriverDataSize = 0;
+  create_res.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_res);
+  if (!Check(hr == S_OK, "CreateResource(cube texture)")) {
+    return false;
+  }
+  cleanup.hResource = create_res.hResource;
+  cleanup.has_resource = true;
+
+  auto* res = reinterpret_cast<Resource*>(create_res.hResource.pDrvPrivate);
+  if (!Check(res != nullptr, "resource pointer")) {
+    return false;
+  }
+  if (!Check(res->type == kD3dRTypeCubeTexture, "resource stores type==CUBETEXTURE")) {
+    return false;
+  }
+  if (!Check(res->depth == 6u, "resource normalizes cube texture depth to 6")) {
+    return false;
+  }
+  if (!Check(res->size_bytes == res->slice_pitch * res->depth, "resource size_bytes includes cube faces")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  if (!Check(ValidateStream(dma.data(), dma.size()), "stream validates")) {
+    return false;
+  }
+
+  const CmdLoc create_loc = FindLastOpcode(dma.data(), dma.size(), AEROGPU_CMD_CREATE_TEXTURE2D);
+  if (!Check(create_loc.hdr != nullptr, "CREATE_TEXTURE2D emitted")) {
+    return false;
+  }
+  const auto* cmd = reinterpret_cast<const aerogpu_cmd_create_texture2d*>(create_loc.hdr);
+  if (!Check(cmd->array_layers == 6u, "CREATE_TEXTURE2D array_layers==6")) {
+    return false;
+  }
+
+  // Make cleanup safe: switch back to vector mode so subsequent destroy calls
+  // can't fail due to span-buffer capacity constraints.
+  dev->cmd.set_vector();
+  return true;
+}
+
 bool TestCreateResourceCubeTextureRequiresSquare() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
@@ -29600,6 +29726,7 @@ int main() {
   failures += !aerogpu::TestLockSizeZeroClampsToArraySubresource();
   failures += !aerogpu::TestLockSizeZeroClampsToArraySubresourceFromInteriorOffset();
   failures += !aerogpu::TestCreateResourceArrayTextureEmitsArrayLayers();
+  failures += !aerogpu::TestCreateResourceCubeTextureTypeEmitsArrayLayers();
   failures += !aerogpu::TestCreateResourceCubeTextureRequiresSquare();
   failures += !aerogpu::TestCreateResourceMipLevelsZeroAllocatesFullMipChainForArrayTexture();
   failures += !aerogpu::TestLockInfersMipLevelPitchFromOffsetBytes();
