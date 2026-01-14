@@ -731,11 +731,17 @@ fn scan_src_operand(
                 other => {
                     // Keep this non-exhaustive: new `RegFile` variants should not break GS
                     // translation compilation; instead they should yield a descriptive runtime error.
-                    let msg = match other {
-                        RegFile::OutputDepth => {
-                            "RegFile::OutputDepth is not supported in GS prepass".to_owned()
+                    let msg = {
+                        // `RegFile` currently has a fixed set of variants, so the fallback arm is
+                        // unreachable today. Keep it anyway so future variants degrade into a
+                        // descriptive runtime error rather than a compiler error.
+                        #[allow(unreachable_patterns)]
+                        match other {
+                            RegFile::OutputDepth => {
+                                "RegFile::OutputDepth is not supported in GS prepass".to_owned()
+                            }
+                            _ => format!("unsupported source register file {other:?}"),
                         }
-                        _ => format!("unsupported source register file {other:?}"),
                     };
                     return Err(GsTranslateError::UnsupportedOperand {
                         inst_index,
