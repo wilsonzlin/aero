@@ -26,9 +26,9 @@ func TestWebRTCDataChannel_OversizeMessageNotDelivered(t *testing.T) {
 		WebRTCSCTPMaxReceiveBufferBytes: 4 * 1024,
 	}
 
-	api, err := NewAPI(cfg)
+	api, err := newAPI(cfg)
 	if err != nil {
-		t.Fatalf("NewAPI: %v", err)
+		t.Fatalf("newAPI: %v", err)
 	}
 
 	serverPC, err := api.NewPeerConnection(webrtc.Configuration{})

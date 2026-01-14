@@ -1,4 +1,4 @@
-package webrtcpeer
+package main
 
 import (
 	"fmt"
@@ -11,7 +11,7 @@ import (
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/config"
 )
 
-func newAPI(cfg config.Config) (*webrtc.API, error) {
+func newWebRTCAPI(cfg config.Config) (*webrtc.API, error) {
 	se := webrtc.SettingEngine{}
 	if err := applyNetworkSettings(&se, cfg); err != nil {
 		return nil, err
@@ -154,53 +154,4 @@ func setSettingEngineUint(se *webrtc.SettingEngine, methodNames []string, v uint
 		}
 	}
 	return fmt.Errorf("SettingEngine missing method(s) %v", methodNames)
-}
-
-// configuredSCTPMaxMessageSize returns the SettingEngine-configured SCTP max
-// message size for an API created via webrtc.NewAPI.
-//
-// Pion does not currently expose this value directly on *webrtc.API. We use
-// reflection so other parts of the relay can enforce this as an application
-// layer guardrail (e.g. close sessions that receive oversized DataChannel
-// messages).
-func configuredSCTPMaxMessageSize(api *webrtc.API) int {
-	if api == nil {
-		return 0
-	}
-	// API is a concrete struct type; reflect on the pointer.
-	apiV := reflect.ValueOf(api)
-	if apiV.Kind() != reflect.Ptr || apiV.IsNil() {
-		return 0
-	}
-	apiV = apiV.Elem()
-	if apiV.Kind() != reflect.Struct {
-		return 0
-	}
-
-	seV := apiV.FieldByName("settingEngine")
-	if !seV.IsValid() || seV.Kind() != reflect.Ptr || seV.IsNil() {
-		return 0
-	}
-	seV = seV.Elem()
-	if seV.Kind() != reflect.Struct {
-		return 0
-	}
-
-	sctpV := seV.FieldByName("sctp")
-	if !sctpV.IsValid() || sctpV.Kind() != reflect.Struct {
-		return 0
-	}
-	maxV := sctpV.FieldByName("maxMessageSize")
-	if !maxV.IsValid() {
-		return 0
-	}
-
-	switch maxV.Kind() {
-	case reflect.Uint, reflect.Uint32, reflect.Uint64, reflect.Uint16, reflect.Uint8:
-		return int(maxV.Uint())
-	case reflect.Int, reflect.Int32, reflect.Int64, reflect.Int16, reflect.Int8:
-		return int(maxV.Int())
-	default:
-		return 0
-	}
 }

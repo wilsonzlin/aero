@@ -8,11 +8,11 @@ import (
 
 func TestConfiguredSCTPMaxMessageSize_ReflectsSettingEngine(t *testing.T) {
 	want := 1234
-	api, err := NewAPI(config.Config{
+	api, err := newAPI(config.Config{
 		WebRTCDataChannelMaxMessageBytes: want,
 	})
 	if err != nil {
-		t.Fatalf("NewAPI: %v", err)
+		t.Fatalf("newAPI: %v", err)
 	}
 
 	if got := configuredSCTPMaxMessageSize(api); got != want {

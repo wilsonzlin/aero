@@ -18,7 +18,6 @@ import (
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/policy"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/relay"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/signaling"
-	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/webrtcpeer"
 )
 
 var (
@@ -47,7 +46,7 @@ func main() {
 	// Construct the WebRTC API early so misconfigurations are caught on startup.
 	// This does not start any networking; ICE sockets are only created once we
 	// start creating PeerConnections.
-	api, err := webrtcpeer.NewAPI(cfg)
+	api, err := newWebRTCAPI(cfg)
 	if err != nil {
 		logger.Error("failed to configure webrtc", "err", err)
 		os.Exit(2)

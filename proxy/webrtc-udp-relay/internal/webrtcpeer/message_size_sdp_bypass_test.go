@@ -27,9 +27,9 @@ func TestWebRTCDataChannel_OversizeMessage_IgnoresSDP_ClosesSession(t *testing.T
 		WebRTCSCTPMaxReceiveBufferBytes:  1 << 20,
 	}
 
-	api, err := NewAPI(cfg)
+	api, err := newAPI(cfg)
 	if err != nil {
-		t.Fatalf("NewAPI: %v", err)
+		t.Fatalf("newAPI: %v", err)
 	}
 
 	m := &metrics.Metrics{}
@@ -116,9 +116,9 @@ func TestWebRTCDataChannel_OversizeL2Message_IgnoresSDP_ClosesSession(t *testing
 		WebRTCSCTPMaxReceiveBufferBytes:  1 << 20,
 	}
 
-	api, err := NewAPI(cfg)
+	api, err := newAPI(cfg)
 	if err != nil {
-		t.Fatalf("NewAPI: %v", err)
+		t.Fatalf("newAPI: %v", err)
 	}
 
 	wsURL, backendConnected := newHoldingL2Backend(t)

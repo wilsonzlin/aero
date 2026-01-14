@@ -13,14 +13,14 @@ import (
 )
 
 func TestSession_RejectsOversizedUDPDataChannelMessage_Metrics(t *testing.T) {
-	api, err := NewAPI(config.Config{
+	api, err := newAPI(config.Config{
 		// Ensure pion advertises a large max message size so the (pion-based) client
 		// will actually send our oversized message.
 		WebRTCDataChannelMaxMessageBytes: 1 << 30,
 		WebRTCSCTPMaxReceiveBufferBytes:  1 << 20,
 	})
 	if err != nil {
-		t.Fatalf("NewAPI: %v", err)
+		t.Fatalf("newAPI: %v", err)
 	}
 
 	m := &metrics.Metrics{}

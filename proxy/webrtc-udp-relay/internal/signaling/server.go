@@ -31,8 +31,9 @@ type Config struct {
 	Sessions *relay.SessionManager
 
 	// WebRTC is the server-side pion API to use for constructing PeerConnections.
-	// It is recommended to use webrtcpeer.NewAPI(cfg) so SettingEngine restrictions
-	// (port ranges, NAT 1:1 IPs, listen IP filters) apply.
+	// It is recommended to configure this API using cfg so that
+	// webrtc.SettingEngine restrictions (port ranges, NAT 1:1 IPs, listen IP
+	// filters, SCTP caps) apply.
 	WebRTC *webrtc.API
 
 	// ICEServers is the list of ICE servers (STUN/TURN) to use when constructing
@@ -77,7 +78,7 @@ type Config struct {
 
 	// WebRTCDataChannelMaxMessageBytes bounds inbound WebRTC DataChannel messages.
 	// It should match the pion SettingEngine SCTP max message size configuration
-	// (see webrtcpeer.NewAPI).
+	// used by the server-side WebRTC API.
 	WebRTCDataChannelMaxMessageBytes int
 }
 
