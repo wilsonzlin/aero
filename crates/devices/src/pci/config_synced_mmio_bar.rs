@@ -110,6 +110,9 @@ impl<T: PciDevice> PciConfigSyncedMmioBar<T> {
 
                 // Write Message Control last so the enabled bit is only observed after
                 // address/data are synchronized.
+                //
+                // Only change the MSI Enable bit; preserve read-only capability bits (64-bit,
+                // per-vector masking, etc.).
                 let new_ctrl = if enabled { ctrl | 0x0001 } else { ctrl & !0x0001 };
                 cfg.write(base + 0x02, 2, u32::from(new_ctrl));
             }
@@ -176,8 +179,9 @@ fn all_ones(size: usize) -> u64 {
 mod tests {
     use super::PciConfigSyncedMmioBar;
     use crate::pci::msi::PCI_CAP_ID_MSI;
+    use crate::pci::msix::PCI_CAP_ID_MSIX;
     use crate::pci::{PciBarDefinition, PciBdf, PciConfigPorts, PciConfigSpace, PciDevice};
-    use crate::pci::MsiCapability;
+    use crate::pci::{MsiCapability, MsixCapability};
     use memory::MmioHandler;
     use std::cell::RefCell;
     use std::rc::Rc;
@@ -348,6 +352,7 @@ mod tests {
                     },
                 );
                 config.add_capability(Box::new(MsiCapability::new()));
+                config.add_capability(Box::new(MsiCapability::new()));
                 Self { config }
             }
         }
@@ -456,6 +461,233 @@ mod tests {
         assert!(dev.msi_enabled, "device model should observe MSI enable from platform config");
         assert_eq!(dev.msi_addr, 0xfee0_0000);
         assert_eq!(dev.msi_data, 0x0045);
+    }
+
+    #[test]
+    fn pci_config_synced_mmio_bar_syncs_msi_state_before_mmio_access() {
+        let bdf = PciBdf::new(0, 6, 0);
+        let bar = 0;
+
+        struct CanonicalCfgDev {
+            config: PciConfigSpace,
+        }
+
+        impl CanonicalCfgDev {
+            fn new(bar: u8) -> Self {
+                let mut config = PciConfigSpace::new(0x1234, 0x5678);
+                config.set_bar_definition(
+                    bar,
+                    PciBarDefinition::Mmio32 {
+                        size: 0x1000,
+                        prefetchable: false,
+                    },
+                );
+                // Use a 32-bit MSI capability with no per-vector mask/pending bits to ensure the
+                // wrapper does not assume the 64-bit capability layout.
+                config.add_capability(Box::new(MsiCapability::new_with_config(false, false)));
+                Self { config }
+            }
+        }
+
+        impl PciDevice for CanonicalCfgDev {
+            fn config(&self) -> &PciConfigSpace {
+                &self.config
+            }
+
+            fn config_mut(&mut self) -> &mut PciConfigSpace {
+                &mut self.config
+            }
+        }
+
+        struct MmioDev {
+            config: PciConfigSpace,
+        }
+
+        impl MmioDev {
+            fn new(bar: u8) -> Self {
+                let mut config = PciConfigSpace::new(0xabcd, 0xef01);
+                config.set_bar_definition(
+                    bar,
+                    PciBarDefinition::Mmio32 {
+                        size: 0x1000,
+                        prefetchable: false,
+                    },
+                );
+                config.add_capability(Box::new(MsiCapability::new_with_config(false, false)));
+                // Start with decoding disabled so we can observe the wrapper's sync behavior.
+                config.set_command(0);
+                Self { config }
+            }
+        }
+
+        impl PciDevice for MmioDev {
+            fn config(&self) -> &PciConfigSpace {
+                &self.config
+            }
+
+            fn config_mut(&mut self) -> &mut PciConfigSpace {
+                &mut self.config
+            }
+        }
+
+        impl MmioHandler for MmioDev {
+            fn read(&mut self, _offset: u64, _size: usize) -> u64 {
+                0
+            }
+
+            fn write(&mut self, _offset: u64, _size: usize, _value: u64) {}
+        }
+
+        let pci_cfg = Rc::new(RefCell::new(PciConfigPorts::new()));
+        pci_cfg
+            .borrow_mut()
+            .bus_mut()
+            .add_device(bdf, Box::new(CanonicalCfgDev::new(bar)));
+
+        // Program MSI in the canonical config space.
+        {
+            let mut pci_cfg = pci_cfg.borrow_mut();
+            let cfg = pci_cfg
+                .bus_mut()
+                .device_config_mut(bdf)
+                .expect("missing canonical config device");
+            cfg.set_command(0x2);
+            cfg.set_bar_base(bar, 0x1234_0000);
+
+            let cap = cfg
+                .find_capability(PCI_CAP_ID_MSI)
+                .expect("canonical config should contain MSI")
+                as u16;
+            cfg.write(cap + 0x04, 4, 0xfee0_0000);
+            cfg.write(cap + 0x08, 2, 0x0045);
+            let ctrl = cfg.read(cap + 0x02, 2) as u16;
+            cfg.write(cap + 0x02, 2, u32::from(ctrl | 0x0001));
+        }
+
+        let dev = Rc::new(RefCell::new(MmioDev::new(bar)));
+        let mut mmio = PciConfigSyncedMmioBar::new(pci_cfg.clone(), dev.clone(), bdf, bar);
+
+        // Trigger synchronization.
+        mmio.read(0, 4);
+
+        // MSI state should now be visible in the MMIO device model's config space.
+        let mut dev = dev.borrow_mut();
+        let msi = dev
+            .config_mut()
+            .capability::<MsiCapability>()
+            .expect("device model should have MSI capability");
+        assert!(msi.enabled());
+        assert_eq!(msi.message_address(), 0xfee0_0000);
+        assert_eq!(msi.message_data(), 0x0045);
+    }
+
+    #[test]
+    fn pci_config_synced_mmio_bar_syncs_msix_enable_bits_before_mmio_access() {
+        let bdf = PciBdf::new(0, 5, 0);
+        let bar = 0;
+
+        struct CanonicalCfgDev {
+            config: PciConfigSpace,
+        }
+
+        impl CanonicalCfgDev {
+            fn new(bar: u8) -> Self {
+                let mut config = PciConfigSpace::new(0x1234, 0x5678);
+                config.set_bar_definition(
+                    bar,
+                    PciBarDefinition::Mmio32 {
+                        size: 0x4000,
+                        prefetchable: false,
+                    },
+                );
+                config.add_capability(Box::new(MsixCapability::new(1, 0, 0, 0, 0x1000)));
+                Self { config }
+            }
+        }
+
+        impl PciDevice for CanonicalCfgDev {
+            fn config(&self) -> &PciConfigSpace {
+                &self.config
+            }
+
+            fn config_mut(&mut self) -> &mut PciConfigSpace {
+                &mut self.config
+            }
+        }
+
+        struct MmioDev {
+            config: PciConfigSpace,
+        }
+
+        impl MmioDev {
+            fn new(bar: u8) -> Self {
+                let mut config = PciConfigSpace::new(0xabcd, 0xef01);
+                config.set_bar_definition(
+                    bar,
+                    PciBarDefinition::Mmio32 {
+                        size: 0x4000,
+                        prefetchable: false,
+                    },
+                );
+                config.add_capability(Box::new(MsixCapability::new(1, 0, 0, 0, 0x1000)));
+                config.set_command(0);
+                Self { config }
+            }
+        }
+
+        impl PciDevice for MmioDev {
+            fn config(&self) -> &PciConfigSpace {
+                &self.config
+            }
+
+            fn config_mut(&mut self) -> &mut PciConfigSpace {
+                &mut self.config
+            }
+        }
+
+        impl MmioHandler for MmioDev {
+            fn read(&mut self, _offset: u64, _size: usize) -> u64 {
+                0
+            }
+
+            fn write(&mut self, _offset: u64, _size: usize, _value: u64) {}
+        }
+
+        let pci_cfg = Rc::new(RefCell::new(PciConfigPorts::new()));
+        pci_cfg
+            .borrow_mut()
+            .bus_mut()
+            .add_device(bdf, Box::new(CanonicalCfgDev::new(bar)));
+
+        // Enable MSI-X in the canonical config space (also set Function Mask to ensure it syncs).
+        {
+            let mut pci_cfg = pci_cfg.borrow_mut();
+            let cfg = pci_cfg
+                .bus_mut()
+                .device_config_mut(bdf)
+                .expect("missing canonical config device");
+            cfg.set_command(0x2);
+            cfg.set_bar_base(bar, 0x1234_0000);
+
+            let cap = cfg
+                .find_capability(PCI_CAP_ID_MSIX)
+                .expect("canonical config should contain MSI-X")
+                as u16;
+            let ctrl = cfg.read(cap + 0x02, 2) as u16;
+            cfg.write(cap + 0x02, 2, u32::from(ctrl | (1 << 15) | (1 << 14)));
+        }
+
+        let dev = Rc::new(RefCell::new(MmioDev::new(bar)));
+        let mut mmio = PciConfigSyncedMmioBar::new(pci_cfg.clone(), dev.clone(), bdf, bar);
+        mmio.read(0, 4);
+
+        let mut dev = dev.borrow_mut();
+        let msix = dev
+            .config_mut()
+            .capability::<MsixCapability>()
+            .expect("device model should have MSI-X capability");
+        assert!(msix.enabled());
+        assert!(msix.function_masked());
     }
 
     #[test]
