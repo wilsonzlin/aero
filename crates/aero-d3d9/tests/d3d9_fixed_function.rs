@@ -206,6 +206,7 @@ fn shader_cache_hits_on_identical_state() {
             alpha_arg0: TextureArg::Current,
             alpha_arg1: TextureArg::Diffuse,
             alpha_arg2: TextureArg::Current,
+            texcoord_index: None,
             result_target: TextureResultTarget::Current,
         },
         stage1: TextureStageState::default(),
@@ -338,6 +339,7 @@ fn render_transformed_textured_quad() {
             alpha_arg0: TextureArg::Current,
             alpha_arg1: TextureArg::Texture,
             alpha_arg2: TextureArg::Current,
+            texcoord_index: None,
             result_target: TextureResultTarget::Current,
         },
         stage1: TextureStageState::default(),
@@ -643,6 +645,7 @@ fn render_vertex_color_modulation() {
             alpha_arg0: TextureArg::Current,
             alpha_arg1: TextureArg::Texture,
             alpha_arg2: TextureArg::Diffuse,
+            texcoord_index: None,
             result_target: TextureResultTarget::Current,
         },
         stage1: TextureStageState::default(),
@@ -954,6 +957,7 @@ fn render_alpha_test_with_blending() {
             alpha_arg0: TextureArg::Current,
             alpha_arg1: TextureArg::Diffuse,
             alpha_arg2: TextureArg::Current,
+            texcoord_index: None,
             result_target: TextureResultTarget::Current,
         },
         stage1: TextureStageState::default(),
@@ -1284,6 +1288,7 @@ fn render_directional_lighting_diffuse_only() {
         alpha_arg0: TextureArg::Current,
         alpha_arg1: TextureArg::Diffuse,
         alpha_arg2: TextureArg::Current,
+        texcoord_index: None,
         result_target: TextureResultTarget::Current,
     };
 
@@ -1802,6 +1807,7 @@ fn render_two_stage_texture_ops_modulate_add_subtract() {
                 alpha_arg0: TextureArg::Current,
                 alpha_arg1: TextureArg::Texture,
                 alpha_arg2: TextureArg::Current,
+                texcoord_index: None,
                 result_target: TextureResultTarget::Current,
             },
             stage1: TextureStageState {
@@ -1813,6 +1819,7 @@ fn render_two_stage_texture_ops_modulate_add_subtract() {
                 alpha_arg0: TextureArg::Current,
                 alpha_arg1: TextureArg::Current,
                 alpha_arg2: TextureArg::Current,
+                texcoord_index: None,
                 result_target: TextureResultTarget::Current,
             },
             alpha_test: AlphaTestState::default(),
@@ -2119,6 +2126,7 @@ fn render_two_stage_dotproduct3() {
             alpha_arg0: TextureArg::Current,
             alpha_arg1: TextureArg::Texture,
             alpha_arg2: TextureArg::Current,
+            texcoord_index: None,
             result_target: TextureResultTarget::Current,
         },
         stage1: TextureStageState {
@@ -2130,6 +2138,7 @@ fn render_two_stage_dotproduct3() {
             alpha_arg0: TextureArg::Current,
             alpha_arg1: TextureArg::Current,
             alpha_arg2: TextureArg::Current,
+            texcoord_index: None,
             result_target: TextureResultTarget::Current,
         },
         alpha_test: AlphaTestState::default(),
@@ -2443,6 +2452,7 @@ fn render_two_stage_blend_alpha_ops() {
                 alpha_arg0: TextureArg::Current,
                 alpha_arg1: TextureArg::Texture,
                 alpha_arg2: TextureArg::Current,
+                texcoord_index: None,
                 result_target: TextureResultTarget::Current,
             },
             stage1: TextureStageState {
@@ -2454,6 +2464,7 @@ fn render_two_stage_blend_alpha_ops() {
                 alpha_arg0: TextureArg::Current,
                 alpha_arg1: TextureArg::Current,
                 alpha_arg2: TextureArg::Current,
+                texcoord_index: None,
                 result_target: TextureResultTarget::Current,
             },
             alpha_test: AlphaTestState::default(),
@@ -2761,6 +2772,7 @@ fn render_fixed_function_uniform_sources_and_flags() {
         alpha_arg0: TextureArg::Current,
         alpha_arg1: TextureArg::Texture,
         alpha_arg2: TextureArg::Current,
+        texcoord_index: None,
         result_target: TextureResultTarget::Current,
     };
 
@@ -2792,6 +2804,7 @@ fn render_fixed_function_uniform_sources_and_flags() {
                     alpha_arg0: TextureArg::Current,
                     alpha_arg1: TextureArg::Current,
                     alpha_arg2: TextureArg::TextureFactor,
+                    texcoord_index: None,
                     result_target: TextureResultTarget::Current,
                 },
                 ..desc_base.clone()
@@ -2813,6 +2826,7 @@ fn render_fixed_function_uniform_sources_and_flags() {
                     alpha_arg0: TextureArg::Current,
                     alpha_arg1: TextureArg::Current,
                     alpha_arg2: TextureArg::Factor,
+                    texcoord_index: None,
                     result_target: TextureResultTarget::Current,
                 },
                 ..desc_base.clone()
@@ -2833,6 +2847,7 @@ fn render_fixed_function_uniform_sources_and_flags() {
                     alpha_arg0: TextureArg::Current,
                     alpha_arg1: TextureArg::Diffuse,
                     alpha_arg2: TextureArg::Current,
+                    texcoord_index: None,
                     result_target: TextureResultTarget::Current,
                 },
                 ..desc_base.clone()
@@ -2934,6 +2949,382 @@ fn render_fixed_function_uniform_sources_and_flags() {
             3,
         );
     }
+}
+
+#[test]
+fn render_texcoord_index_override() {
+    let Some((device, queue)) = request_device() else {
+        return;
+    };
+
+    #[repr(C)]
+    #[derive(Clone, Copy, Pod, Zeroable)]
+    struct Vertex {
+        pos: [f32; 3],
+        tex0: [f32; 2],
+        tex1: [f32; 2],
+    }
+
+    let width = 4;
+    let height = 4;
+
+    let make_target = |label: &str| {
+        let tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(label),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = tex.create_view(&Default::default());
+        (tex, view)
+    };
+
+    let (target_default, view_default) = make_target("target-default");
+    let (target_override, view_override) = make_target("target-override");
+
+    // 2x2 texture with left column = red, right column = green (both rows identical). This makes
+    // it easy to distinguish which `u` coordinate was used without relying on `v` orientation.
+    let tex0 = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("tex0"),
+        size: wgpu::Extent3d {
+            width: 2,
+            height: 2,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    queue.write_texture(
+        wgpu::ImageCopyTexture {
+            texture: &tex0,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        &[
+            255, 0, 0, 255, 0, 255, 0, 255, // row 0: red, green
+            255, 0, 0, 255, 0, 255, 0, 255, // row 1: red, green
+        ],
+        wgpu::ImageDataLayout {
+            offset: 0,
+            bytes_per_row: Some(8),
+            rows_per_image: Some(2),
+        },
+        wgpu::Extent3d {
+            width: 2,
+            height: 2,
+            depth_or_array_layers: 1,
+        },
+    );
+    let tex0_view = tex0.create_view(&Default::default());
+
+    // Stage1 is disabled, but the fixed-function shaders always declare/bind tex1 + samp1.
+    // Reuse tex0 for simplicity.
+    let tex1_view = tex0.create_view(&Default::default());
+
+    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("nearest"),
+        mag_filter: wgpu::FilterMode::Nearest,
+        min_filter: wgpu::FilterMode::Nearest,
+        ..Default::default()
+    });
+
+    let globals = FixedFunctionGlobals {
+        world_view_proj: FixedFunctionGlobals::identity().world_view_proj,
+        viewport: [0.0, 0.0, width as f32, height as f32],
+        ..FixedFunctionGlobals::identity()
+    };
+    let globals_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("globals"),
+        contents: globals.as_bytes(),
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
+
+    let globals_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("globals-bgl"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }],
+    });
+    let globals_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("globals-bg"),
+        layout: &globals_bgl,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: globals_buf.as_entire_binding(),
+        }],
+    });
+
+    let tex_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("tex-bgl"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 3,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+        ],
+    });
+    let tex_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("tex-bg"),
+        layout: &tex_bgl,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&tex0_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(&sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::TextureView(&tex1_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: wgpu::BindingResource::Sampler(&sampler),
+            },
+        ],
+    });
+
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("pipeline-layout"),
+        bind_group_layouts: &[&globals_bgl, &tex_bgl],
+        push_constant_ranges: &[],
+    });
+
+    let left_uv = [0.25, 0.5];
+    let right_uv = [0.75, 0.5];
+    let verts = [
+        Vertex {
+            pos: [-1.0, -1.0, 0.0],
+            tex0: left_uv,
+            tex1: right_uv,
+        },
+        Vertex {
+            pos: [-1.0, 1.0, 0.0],
+            tex0: left_uv,
+            tex1: right_uv,
+        },
+        Vertex {
+            pos: [1.0, 1.0, 0.0],
+            tex0: left_uv,
+            tex1: right_uv,
+        },
+        Vertex {
+            pos: [-1.0, -1.0, 0.0],
+            tex0: left_uv,
+            tex1: right_uv,
+        },
+        Vertex {
+            pos: [1.0, 1.0, 0.0],
+            tex0: left_uv,
+            tex1: right_uv,
+        },
+        Vertex {
+            pos: [1.0, -1.0, 0.0],
+            tex0: left_uv,
+            tex1: right_uv,
+        },
+    ];
+    let vb = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("vb"),
+        contents: bytemuck::cast_slice(&verts),
+        usage: wgpu::BufferUsages::VERTEX,
+    });
+
+    let mk_desc = |texcoord_index| FixedFunctionShaderDesc {
+        fvf: Fvf(Fvf::XYZ | (2 << 8)),
+        stage0: TextureStageState {
+            color_op: TextureOp::SelectArg1,
+            color_arg0: TextureArg::Current,
+            color_arg1: TextureArg::Texture,
+            color_arg2: TextureArg::Current,
+            alpha_op: TextureOp::SelectArg1,
+            alpha_arg0: TextureArg::Current,
+            alpha_arg1: TextureArg::Texture,
+            alpha_arg2: TextureArg::Current,
+            texcoord_index,
+            result_target: TextureResultTarget::Current,
+        },
+        stage1: TextureStageState::default(),
+        alpha_test: AlphaTestState::default(),
+        fog: FogState::default(),
+        lighting: LightingState::default(),
+    };
+
+    let desc_default = mk_desc(None);
+    let desc_override = mk_desc(Some(1));
+
+    let shaders_default = aero_d3d9::fixed_function::shader_gen::generate_fixed_function_shaders(&desc_default);
+    let shaders_override =
+        aero_d3d9::fixed_function::shader_gen::generate_fixed_function_shaders(&desc_override);
+
+    let vs_default = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("vs-default"),
+        source: wgpu::ShaderSource::Wgsl(shaders_default.vertex_wgsl.clone().into()),
+    });
+    let fs_default = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("fs-default"),
+        source: wgpu::ShaderSource::Wgsl(shaders_default.fragment_wgsl.clone().into()),
+    });
+    let vs_override = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("vs-override"),
+        source: wgpu::ShaderSource::Wgsl(shaders_override.vertex_wgsl.clone().into()),
+    });
+    let fs_override = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("fs-override"),
+        source: wgpu::ShaderSource::Wgsl(shaders_override.fragment_wgsl.clone().into()),
+    });
+
+    let pipeline_default = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("pipeline-default"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &vs_default,
+            entry_point: "vs_main",
+            buffers: &[shaders_default.vertex_buffer_layout()],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &fs_default,
+            entry_point: "fs_main",
+            targets: &[Some(wgpu::ColorTargetState {
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+    });
+    let pipeline_override = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("pipeline-override"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &vs_override,
+            entry_point: "vs_main",
+            buffers: &[shaders_override.vertex_buffer_layout()],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &fs_override,
+            entry_point: "fs_main",
+            targets: &[Some(wgpu::ColorTargetState {
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+    });
+
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("render-encoder"),
+    });
+    {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("pass-default"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &view_default,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            occlusion_query_set: None,
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(&pipeline_default);
+        pass.set_bind_group(0, &globals_bg, &[]);
+        pass.set_bind_group(1, &tex_bg, &[]);
+        pass.set_vertex_buffer(0, vb.slice(..));
+        pass.draw(0..6, 0..1);
+    }
+    {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("pass-override"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &view_override,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            occlusion_query_set: None,
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(&pipeline_override);
+        pass.set_bind_group(0, &globals_bg, &[]);
+        pass.set_bind_group(1, &tex_bg, &[]);
+        pass.set_vertex_buffer(0, vb.slice(..));
+        pass.draw(0..6, 0..1);
+    }
+    queue.submit([encoder.finish()]);
+
+    let pixels_default = readback_rgba8(&device, &queue, &target_default, width, height);
+    let pixels_override = readback_rgba8(&device, &queue, &target_override, width, height);
+
+    assert_rgba_approx(pixel_at_rgba(&pixels_default, width, 1, 1), [255, 0, 0, 255], 2);
+    assert_rgba_approx(pixel_at_rgba(&pixels_override, width, 1, 1), [0, 255, 0, 255], 2);
 }
 
 #[test]
@@ -3174,6 +3565,7 @@ fn render_two_stage_result_to_temp_then_add() {
             alpha_arg0: TextureArg::Current,
             alpha_arg1: TextureArg::Texture,
             alpha_arg2: TextureArg::Current,
+            texcoord_index: None,
             result_target: TextureResultTarget::Temp,
         },
         stage1: TextureStageState {
@@ -3185,6 +3577,7 @@ fn render_two_stage_result_to_temp_then_add() {
             alpha_arg0: TextureArg::Current,
             alpha_arg1: TextureArg::Current,
             alpha_arg2: TextureArg::Current,
+            texcoord_index: None,
             result_target: TextureResultTarget::Current,
         },
         alpha_test: AlphaTestState::default(),

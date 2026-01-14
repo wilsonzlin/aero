@@ -1,9 +1,9 @@
 ---
 source: crates/aero-d3d9/tests/fixed_function_wgsl_snapshots.rs
-assertion_line: 37
+assertion_line: 38
 expression: shaders_snapshot(&desc)
 ---
-// hash: 0xb18fd4f7147b3684
+// hash: 0x8194ad6652930bac
 
 // --- vertex.wgsl ---
 

@@ -129,6 +129,10 @@ pub struct TextureStageState {
     pub alpha_arg0: TextureArg,
     pub alpha_arg1: TextureArg,
     pub alpha_arg2: TextureArg,
+    /// Selects which `TEXCOORDn` varying is used for this stage's texture lookup.
+    ///
+    /// `None` means "use the stage index" (D3D9's default `D3DTSS_TEXCOORDINDEX` value).
+    pub texcoord_index: Option<u8>,
     pub result_target: TextureResultTarget,
 }
 
@@ -143,6 +147,7 @@ impl Default for TextureStageState {
             alpha_arg0: TextureArg::Current,
             alpha_arg1: TextureArg::Current,
             alpha_arg2: TextureArg::Current,
+            texcoord_index: None,
             result_target: TextureResultTarget::Current,
         }
     }

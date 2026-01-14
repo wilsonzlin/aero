@@ -115,6 +115,7 @@ impl FixedFunctionShaderDesc {
             write_tex_arg(hash, stage.alpha_arg0);
             write_tex_arg(hash, stage.alpha_arg1);
             write_tex_arg(hash, stage.alpha_arg2);
+            write_u8(hash, stage.texcoord_index.unwrap_or(0xFF));
             write_u8(hash, stage.result_target as u8);
         }
 
@@ -399,12 +400,19 @@ fn emit_tss_stage(
     };
 
     if stage_uses_texture(stage) {
-        // Default texcoord mapping: TEXCOORDn feeds stage n. If the vertex format provides fewer
-        // sets than stages, fall back to TEXCOORD0 (common for UI that reuses the same UVs).
+        // Default texcoord mapping: TEXCOORDn feeds stage n. This can be overridden with
+        // `D3DTSS_TEXCOORDINDEX`; we only support the common "pass-through another set of
+        // texcoords" behavior here.
+        //
+        // If the vertex format provides fewer sets than requested, fall back to TEXCOORD0 (common
+        // for UI that reuses the same UVs).
+        let texcoord_index = stage
+            .texcoord_index
+            .unwrap_or(stage_index as u8) as usize;
         let uv_expr = if layout.texcoords.is_empty() {
             "vec2<f32>(0.0, 0.0)".to_string()
-        } else if stage_index < layout.texcoords.len() {
-            format!("input.tex{}.xy", stage_index)
+        } else if texcoord_index < layout.texcoords.len() {
+            format!("input.tex{}.xy", texcoord_index)
         } else {
             "input.tex0.xy".to_string()
         };
