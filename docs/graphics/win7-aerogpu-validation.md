@@ -73,6 +73,7 @@ can locate the most relevant outputs without additional heuristics.
  - CI-staged packages: `out\\packages\\aerogpu\\x64\\tools\\win7_dbgctl\\bin\\aerogpu_dbgctl.exe` (and `...\\x86\\...`)
 
 If you prefer `--dbgctl=aerogpu_dbgctl.exe`, copy the tool next to `bin\\aerogpu_test_runner.exe`.
+Use `--dbgctl-timeout-ms=NNNN` to bound how long the suite runner will wait for the dbgctl process itself (default: 5000ms).
 
 ---
 
