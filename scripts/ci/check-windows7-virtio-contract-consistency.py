@@ -343,7 +343,7 @@ def check_inf_alias_drift(*, canonical: Path, alias: Path, repo_root: Path, labe
         alias_lines,
         fromfile=canonical_label,
         tofile=alias_label,
-        lineterm="",
+        lineterm="\n",
     )
 
     return f"{label}: INF alias drift detected (expected byte-identical from the first section header onward):\n" + "".join(
