@@ -1381,7 +1381,7 @@ struct AerogpuExpandParams {
   uint32_t vertex_count;
   uint32_t index_count; // 0 for Draw
 
-  // Indexed draw metadata.
+  // Draw metadata.
   uint32_t instance_count;
   uint32_t index_format;      // enum aerogpu_index_format (valid only for DrawIndexed)
   uint32_t index_offset_bytes; // IA index-buffer binding offset in bytes (optional; see note below)
@@ -1401,6 +1401,19 @@ WGSL-side, this is typically declared as:
 struct ExpandParams { /* same fields */ }
 @group(3) @binding(256) var<uniform> params: ExpandParams;
 ```
+
+**Vertex pulling compatibility note (internal layout)**
+
+The `vb[8]` array is intentionally a fixed-size array that matches WebGPU’s baseline vertex-buffer
+limit (`MAX_WGPU_VERTEX_BUFFERS = 8`). This makes the `ExpandParams` uniform layout stable across
+draws, and ensures the draw-parameter tail (`first_vertex/first_instance/base_vertex/first_index`)
+is always at a fixed byte offset.
+
+For draws that use fewer than 8 vertex buffers after slot compaction, the runtime MUST:
+
+- Set unused `vb[i].{base_offset_bytes,stride_bytes} = 0`, and
+- Bind the corresponding `vb{i}` storage bindings (`@binding(257 + i)`) to a small dummy buffer so
+  the bind group layout remains stable.
 
 Note: D3D11 index-buffer binding offsets are not guaranteed to be 256-byte aligned, so for compute
 index pulling it is often simplest to fold the IA index-buffer byte offset into `first_index` on
@@ -1425,6 +1438,10 @@ struct IndexPullingParams {
 @group(3) @binding(265) var<uniform> ip: IndexPullingParams;
 @group(3) @binding(266) var<storage, read> index_words: array<u32>;
 ```
+
+For non-indexed draws, implementations that use a stable internal bind group layout SHOULD still
+bind a zeroed `IndexPullingParams` and a dummy `index_words` buffer; the compute kernels will not
+read them when `draw_kind == Draw`.
 
 **`counters` layout (concrete; `@binding(273)`)**
 
