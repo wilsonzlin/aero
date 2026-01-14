@@ -2039,6 +2039,127 @@ fn virtio_snd_pci_bridge_eventq_retains_event_when_first_buffer_is_not_write_onl
 }
 
 #[wasm_bindgen_test]
+fn virtio_snd_pci_bridge_eventq_buffers_are_bounded_by_queue_size() {
+    // Synthetic guest RAM region outside the wasm heap.
+    let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x20000);
+    let guest = common::GuestRegion {
+        base: guest_base,
+        size: guest_size,
+    };
+
+    let mut bridge =
+        VirtioSndPciBridge::new(guest_base, guest_size, None).expect("VirtioSndPciBridge::new");
+    // Enable MMIO decoding + bus mastering so the device can DMA.
+    bridge.set_pci_command(0x0006);
+
+    // BAR0 layout is fixed by `aero_virtio::pci::VirtioPciDevice`.
+    const COMMON: u32 = 0x0000;
+    const NOTIFY: u32 = 0x1000;
+
+    // Minimal virtio feature negotiation (accept everything offered).
+    bridge.mmio_write(COMMON + 0x14, 1, u32::from(VIRTIO_STATUS_ACKNOWLEDGE));
+    bridge.mmio_write(
+        COMMON + 0x14,
+        1,
+        u32::from(VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER),
+    );
+
+    bridge.mmio_write(COMMON, 4, 0); // device_feature_select
+    let f0 = bridge.mmio_read(COMMON + 0x04, 4);
+    bridge.mmio_write(COMMON + 0x08, 4, 0); // driver_feature_select
+    bridge.mmio_write(COMMON + 0x0c, 4, f0); // driver_features
+
+    bridge.mmio_write(COMMON, 4, 1);
+    let f1 = bridge.mmio_read(COMMON + 0x04, 4);
+    bridge.mmio_write(COMMON + 0x08, 4, 1);
+    bridge.mmio_write(COMMON + 0x0c, 4, f1);
+
+    bridge.mmio_write(
+        COMMON + 0x14,
+        1,
+        u32::from(VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK),
+    );
+    bridge.mmio_write(
+        COMMON + 0x14,
+        1,
+        u32::from(
+            VIRTIO_STATUS_ACKNOWLEDGE
+                | VIRTIO_STATUS_DRIVER
+                | VIRTIO_STATUS_FEATURES_OK
+                | VIRTIO_STATUS_DRIVER_OK,
+        ),
+    );
+
+    // Configure event queue 1 (virtio-snd).
+    bridge.mmio_write(COMMON + 0x16, 2, u32::from(VIRTIO_SND_QUEUE_EVENT)); // queue_select
+    let qsz = bridge.mmio_read(COMMON + 0x18, 2) as u16;
+    assert!(qsz >= 8, "expected event queue size >= 8");
+
+    let desc_table = 0x1000u32;
+    let avail = 0x2000u32;
+    let used = 0x3000u32;
+    let buf_base = 0x4000u32;
+
+    bridge.mmio_write(COMMON + 0x20, 4, desc_table);
+    bridge.mmio_write(COMMON + 0x24, 4, 0);
+    bridge.mmio_write(COMMON + 0x28, 4, avail);
+    bridge.mmio_write(COMMON + 0x2c, 4, 0);
+    bridge.mmio_write(COMMON + 0x30, 4, used);
+    bridge.mmio_write(COMMON + 0x34, 4, 0);
+    bridge.mmio_write(COMMON + 0x1c, 2, 1); // queue_enable
+
+    // Initialize qsz event buffers.
+    for i in 0..qsz {
+        let buf = buf_base + u32::from(i) * 0x10;
+        guest.fill(buf, 8, 0xAA);
+        write_desc(
+            &guest,
+            desc_table,
+            i,
+            buf as u64,
+            8,
+            VIRTQ_DESC_F_WRITE,
+            0,
+        );
+        guest.write_u16(avail + 4 + u32::from(i) * 2, i);
+    }
+
+    // Malicious: claim there are qsz + 10 available entries, causing the transport to re-consume
+    // stale ring entries once it wraps.
+    let extra = 10u16;
+    guest.write_u16(avail, 0);
+    guest.write_u16(avail + 2, qsz + extra);
+    guest.write_u16(used, 0);
+    guest.write_u16(used + 2, 0);
+
+    // Notify queue 1. This will cache qsz buffers without completing them.
+    let notify_off = bridge.mmio_read(COMMON + 0x1e, 2);
+    bridge.mmio_write(
+        NOTIFY + notify_off * 4,
+        2,
+        u32::from(VIRTIO_SND_QUEUE_EVENT),
+    );
+
+    assert_eq!(
+        guest.read_u16(used + 2),
+        0,
+        "without queued events, cached buffers should not produce used entries"
+    );
+
+    // Poll again: the additional (wrapped) entries should be rejected with used.len=0 once the
+    // device's internal event buffer queue is full.
+    bridge.poll();
+
+    assert_eq!(guest.read_u16(used + 2), extra);
+    for i in 0..extra {
+        let id = guest.read_u32(used + 4 + u32::from(i) * 8);
+        let len = guest.read_u32(used + 8 + u32::from(i) * 8);
+        assert_eq!(id, u32::from(i));
+        assert_eq!(len, 0);
+    }
+}
+
+#[wasm_bindgen_test]
 fn virtio_snd_pci_bridge_delivers_multiple_speaker_jack_events_into_cached_eventq_buffers_on_poll()
 {
     // Synthetic guest RAM region outside the wasm heap.
