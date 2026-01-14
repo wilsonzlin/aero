@@ -52,6 +52,15 @@ class VirtioIrqMarkerTests(unittest.TestCase):
         self.assertEqual(out["virtio-net"]["mode"], "msix")
         self.assertEqual(out["virtio-net"]["vectors"], "4")
 
+    def test_parses_crlf_and_cr_newlines(self) -> None:
+        tail = (
+            b"virtio-net-irq|INFO|mode=msix|vectors=4\r\n"
+            b"virtio-blk-irq|WARN|mode=intx|reason=msi_disabled\r"
+        )
+        out = self.harness._parse_virtio_irq_markers(tail)
+        self.assertEqual(out["virtio-net"]["mode"], "msix")
+        self.assertEqual(out["virtio-blk"]["mode"], "intx")
+
     def test_uses_last_marker_per_device(self) -> None:
         tail = (
             b"virtio-net-irq|INFO|mode=msi|vectors=1\n"
