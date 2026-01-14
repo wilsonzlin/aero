@@ -30,9 +30,12 @@ Status:
   and some host-side topology/WebUSB hooks). Doorbell-driven EP0 control transfers can execute,
   doorbell 0-driven command ring processing exists for a limited subset of commands, and doorbelled
   bulk/interrupt endpoints can execute Normal TRBs when endpoint contexts are configured (via a
-  bounded transfer executor); however, full xHCI command coverage (e.g. `Reset Device`, `Force Event`),
-  TRB types, and state-machine/scheduling behavior remain incomplete, so treat it as bring-up quality
-  and incomplete.
+  bounded transfer executor). `XhciController::tick_1ms` (alias `tick_1ms_and_service_event_ring`)
+  advances time/MFINDEX, executes transfer work, processes doorbell 0-kicked command ring work, and
+  drains the event ring, so command-ring progress does not require further MMIO after doorbell 0 as
+  long as the integration is calling the 1ms tick (and DMA/BME is enabled). However, full xHCI
+  command coverage (e.g. `Reset Device`, `Force Event`), TRB types, and state-machine/scheduling
+  behavior remain incomplete, so treat it as bring-up quality and incomplete.
 
 > Canonical USB stack selection: see [ADR 0015](./adr/0015-canonical-usb-stack.md) (`crates/aero-usb` + `crates/aero-wasm` + `web/`).
 
@@ -223,13 +226,17 @@ spec), so treat the implementation as “bring-up” quality rather than a compl
       - USB Legacy Support (BIOS owned cleared, OS owned set), and
       - Supported Protocol (USB 2.0 + speed IDs) sized to `port_count`.
     - Operational registers (subset): USBCMD, USBSTS, PAGESIZE, DNCTRL, CRCR, DCBAAP, CONFIG.
-    - Runtime registers (subset): MFINDEX, and Interrupter 0 regs (`IMAN`, `IMOD`, `ERSTSZ`, `ERSTBA`, `ERDP`).
+    - Runtime registers (subset): MFINDEX (advances **8 microframes per 1ms tick**, wraps to **14 bits**),
+      and Interrupter 0 regs (`IMAN`, `IMOD`, `ERSTSZ`, `ERSTBA`, `ERDP`).
   - DBOFF/RTSOFF report realistic offsets. The doorbell array is **partially** implemented:
     - command ring doorbell (doorbell 0) is latched; while the controller is running it triggers
       bounded command ring processing (`No-Op`, `Enable Slot`, `Disable Slot`, `Address Device`,
       `Configure Endpoint`, `Evaluate Context`, `Stop Endpoint`, `Reset Endpoint`,
       `Set TR Dequeue Pointer`; most other commands complete with TRB Error) and queues
-      `Command Completion Event` TRBs.
+      `Command Completion Event` TRBs. Command ring processing is also performed on the controller’s
+      1ms tick (`XhciController::tick_1ms`, alias `tick_1ms_and_service_event_ring`), so once doorbell
+      0 is rung the controller can continue making progress without further MMIO as long as the
+      integration is calling the tick and DMA (PCI BME) is enabled.
     - device endpoint doorbells are latched and can drive bounded transfer execution:
       - endpoint 0 control transfers (Setup/Data/Status TRBs), and
       - bulk/interrupt endpoints via Normal TRBs (via `transfer::XhciTransferExecutor`).
@@ -255,9 +262,10 @@ spec), so treat the implementation as “bring-up” quality rather than a compl
   - Enforces **PCI BME DMA gating** by swapping the memory bus implementation when bus mastering is
     disabled (the controller still updates register state, but must not touch guest RAM).
   - `step_frames()` advances controller time; when BME is enabled it also executes pending transfer
-    ring work (endpoint 0 control + bulk/interrupt Normal TRBs) and drains queued events
-    (`XhciController::tick_1ms`). When BME is disabled, `step_frames()` still advances port/reset
-    timers so operations like PORTSC reset completion can make forward progress.
+    ring work, processes doorbell 0-kicked command ring work, and drains queued events
+    (`XhciController::tick_1ms`, alias `tick_1ms_and_service_event_ring`). When BME is disabled,
+    `step_frames()` still advances port/reset timers so operations like PORTSC reset completion can
+    make forward progress.
   - `poll()` drains any queued event TRBs into the guest event ring (`XhciController::service_event_ring`);
     DMA is gated on BME.
   - WebUSB passthrough device APIs (`set_connected`, `drain_actions`, `push_completion`, `reset`,
@@ -294,6 +302,8 @@ command/event behavior:
   (via `RingCursor`) and queues `Command Completion Event` TRBs for a small subset of commands used
   during bring-up: `No-Op`, `Enable Slot`, `Disable Slot`, `Address Device`, `Configure Endpoint`,
   `Evaluate Context`, and endpoint commands `Stop Endpoint`, `Reset Endpoint`, `Set TR Dequeue Pointer`.
+  The doorbell 0 “kick” persists (`cmd_kick`), so subsequent MMIO accesses and periodic `tick_1ms`
+  calls can continue processing until the ring appears empty.
   These events are delivered to the guest only once the event ring is
   configured and `service_event_ring` is called (e.g. via the WASM bridge `step_frames()`/`poll()`
   hook).
@@ -338,10 +348,11 @@ guest transfer ring:
 This engine is currently a standalone transfer-plane component used by tests; `XhciController` has
 its own minimal doorbell-driven endpoint-0 executor (driven by slot doorbells +
 `XhciController::tick()`), so `Ep0TransferEngine` is not wired into the guest-visible MMIO model.
-Note: the web/WASM bridge’s `step_frames()` path runs the DMA-capable
-`XhciController::tick_1ms` when PCI BME is enabled (and `tick_1ms_no_dma` when BME is disabled), so
-doorbelled endpoint transfers (endpoint 0 + bulk/interrupt Normal TRBs) can make forward progress
-and queued events are drained into the guest-configured event ring.
+Note: the web/WASM bridge’s `step_frames()` path runs the DMA-capable `XhciController::tick_1ms`
+(aka `tick_1ms_and_service_event_ring`) when PCI BME is enabled (and `tick_1ms_no_dma` when BME is
+disabled), so doorbelled endpoint transfers (endpoint 0 + bulk/interrupt Normal TRBs) can make
+forward progress, doorbell 0-kicked command ring work can continue across ticks, and queued events
+are drained into the guest-configured event ring.
 
 ### Device model layer
 
@@ -380,8 +391,8 @@ Dedicated EP0 unit tests also exist:
 - Better transfer scheduling/performance for bulk/interrupt endpoints (today execution is
   intentionally bounded to keep guest-induced work finite).
 - More complete event-ring servicing / “main loop” integration in wrappers: regularly call
-  `tick_1ms` (or `tick_1ms_and_service_event_ring`) so port timers, transfers, and event delivery
-  make forward progress, with DMA gated on PCI BME.
+  `tick_1ms` (alias `tick_1ms_and_service_event_ring`) or equivalent so port timers, transfer
+  execution, command ring work, and event delivery make forward progress, with DMA gated on PCI BME.
 - Wiring xHCI into the canonical machine/topology (native). (PCI identity is already aligned across
   web + native via the QEMU-style `1b36:000d` profile.)
 
@@ -479,9 +490,10 @@ USB-related unit tests commonly live under:
 Rust xHCI-focused tests commonly live under:
 
 - `crates/aero-usb/tests/xhci_controller_mmio.rs`
-- `crates/aero-usb/tests/xhci_command_ring_tick.rs`
 - `crates/aero-usb/tests/xhci_event_ring.rs`
 - `crates/aero-usb/tests/xhci_trb_ring.rs`
+- `crates/aero-usb/tests/xhci_command_ring.rs`
+- `crates/aero-usb/tests/xhci_command_ring_tick.rs`
 - `crates/aero-usb/tests/xhci_context_parse.rs`
 - `crates/aero-usb/tests/xhci_extcaps.rs`
 - `crates/aero-usb/tests/xhci_supported_protocol.rs`
