@@ -507,6 +507,10 @@ HID report verification) by setting the workflow input `with_virtio_input_events
 This requires a guest image provisioned with `--test-input-events` (for example via
 `New-AeroWin7TestImage.ps1 -TestInputEvents`) so the guest selftest enables the `virtio-input-events` read loop.
 
+To also exercise the virtio-input tablet (absolute pointer) end-to-end path, set the workflow input
+`with_virtio_input_tablet_events=true`. This requires a guest image provisioned with `--test-input-tablet-events`
+(alias: `--test-tablet-events`) so the guest selftest enables the `virtio-input-tablet-events` read loop.
+
 ### Invoking the workflow
 
 1. Place your prepared Windows 7 image somewhere on the runner (example: `/var/lib/aero/win7/win7-aero-tests.qcow2`).
