@@ -6708,6 +6708,96 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn verify_http_manifest_url_fails_fast_without_fetching_other_chunks() -> Result<()> {
+        use std::sync::Mutex;
+
+        let chunk_size: u64 = 1024;
+        let chunk1 = vec![b'b'; 512];
+        let total_size = chunk_size + (chunk1.len() as u64);
+
+        let manifest = ManifestV1 {
+            schema: MANIFEST_SCHEMA.to_string(),
+            image_id: "demo".to_string(),
+            version: "v1".to_string(),
+            mime_type: CHUNK_MIME_TYPE.to_string(),
+            total_size,
+            chunk_size,
+            chunk_count: chunk_count(total_size, chunk_size),
+            chunk_index_width: CHUNK_INDEX_WIDTH as u32,
+            chunks: None,
+        };
+        let manifest_bytes = serde_json::to_vec_pretty(&manifest).context("serialize manifest")?;
+
+        let requests: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let requests_for_responder = Arc::clone(&requests);
+
+        let responder: Arc<
+            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>)
+                + Send
+                + Sync
+                + 'static,
+        > = Arc::new(move |req: TestHttpRequest| {
+            requests_for_responder
+                .lock()
+                .expect("lock requests")
+                .push(req.path.clone());
+
+            match req.path.as_str() {
+                "/manifest.json" => (200, Vec::new(), manifest_bytes.clone()),
+                "/meta.json" => (404, Vec::new(), b"not found".to_vec()),
+                // Make the first chunk missing so verification fails immediately.
+                "/chunks/00000000.bin" => (404, Vec::new(), b"not found".to_vec()),
+                // This chunk should never be fetched when fail-fast is working (concurrency=1).
+                "/chunks/00000001.bin" => (200, Vec::new(), chunk1.clone()),
+                _ => (404, Vec::new(), b"not found".to_vec()),
+            }
+        });
+
+        let (base_url, shutdown_tx, server_handle) = start_test_http_server(responder).await?;
+
+        let result = verify(VerifyArgs {
+            manifest_url: Some(format!("{base_url}/manifest.json")),
+            manifest_file: None,
+            header: Vec::new(),
+            bucket: None,
+            prefix: None,
+            manifest_key: None,
+            image_id: None,
+            image_version: None,
+            endpoint: None,
+            force_path_style: false,
+            region: "us-east-1".to_string(),
+            concurrency: 1,
+            retries: 1,
+            max_chunks: MAX_CHUNKS,
+            chunk_sample: None,
+            chunk_sample_seed: None,
+        })
+        .await;
+
+        let _ = shutdown_tx.send(());
+        let _ = server_handle.await;
+
+        let err = result.expect_err("expected verify failure");
+        assert!(
+            err.to_string().contains("chunk 0"),
+            "unexpected error message: {err}"
+        );
+
+        let requests = requests.lock().expect("lock requests");
+        assert!(
+            requests.iter().any(|p| p == "/chunks/00000000.bin"),
+            "expected chunk 0 request; saw: {requests:?}"
+        );
+        assert!(
+            !requests.iter().any(|p| p == "/chunks/00000001.bin"),
+            "expected verifier to fail fast and not fetch chunk 1; saw: {requests:?}"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn verify_http_preserves_manifest_query_for_chunks() -> Result<()> {
         let chunk_size: u64 = 1024;
         let chunk0 = vec![b'a'; chunk_size as usize];
