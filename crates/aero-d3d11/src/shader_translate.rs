@@ -687,6 +687,35 @@ fn translate_hs(
     w.line("@group(0) @binding(1) var<storage, read_write> hs_out_cp: HsRegBuffer;");
     w.line("@group(0) @binding(2) var<storage, read_write> hs_out_pc: HsRegBuffer;");
     w.line("");
+    // Bounds-checked accessors for runtime-sized HS scratch buffers.
+    //
+    // Note: Unlike fixed-size `array<T, N>`, runtime-sized arrays allow `arrayLength()` queries.
+    // These helpers keep the generated WGSL well-defined even if the host provides conservative
+    // allocations or runs with robust buffer access disabled.
+    w.line("fn hs_load_in(idx: u32) -> vec4<f32> {");
+    w.indent();
+    w.line("let len = arrayLength(&hs_in.data);");
+    w.line("if (idx >= len) { return vec4<f32>(0.0); }");
+    w.line("return hs_in.data[idx];");
+    w.dedent();
+    w.line("}");
+    w.line("");
+    w.line("fn hs_store_out_cp(idx: u32, value: vec4<f32>) {");
+    w.indent();
+    w.line("let len = arrayLength(&hs_out_cp.data);");
+    w.line("if (idx >= len) { return; }");
+    w.line("hs_out_cp.data[idx] = value;");
+    w.dedent();
+    w.line("}");
+    w.line("");
+    w.line("fn hs_store_out_pc(idx: u32, value: vec4<f32>) {");
+    w.indent();
+    w.line("let len = arrayLength(&hs_out_pc.data);");
+    w.line("if (idx >= len) { return; }");
+    w.line("hs_out_pc.data[idx] = value;");
+    w.dedent();
+    w.line("}");
+    w.line("");
 
     resources.emit_decls(&mut w, ShaderStage::Hull)?;
 
@@ -728,7 +757,9 @@ fn translate_hs(
 
     w.line("");
     for &reg in io_cp.outputs.keys() {
-        w.line(&format!("hs_out_cp.data[hs_out_base + {reg}u] = o{reg};"));
+        w.line(&format!(
+            "hs_store_out_cp(hs_out_base + {reg}u, o{reg});"
+        ));
     }
     w.dedent();
     w.line("}");
@@ -756,7 +787,9 @@ fn translate_hs(
 
     w.line("");
     for &reg in io_pc.outputs.keys() {
-        w.line(&format!("hs_out_pc.data[hs_out_base + {reg}u] = o{reg};"));
+        w.line(&format!(
+            "hs_store_out_pc(hs_out_base + {reg}u, o{reg});"
+        ));
     }
     w.dedent();
     w.line("}");
@@ -2276,10 +2309,11 @@ impl IoMaps {
                     },
                 )?;
                 // HS inputs are provided via an emulated "patch buffer" (storage buffer) and are
-                // modeled as full `vec4<f32>` registers. Apply the signature mask so missing
-                // components follow D3D's default-fill rules.
+                // modeled as full `vec4<f32>` registers. Use a bounds-checked helper to avoid
+                // undefined behaviour if the runtime provides a smaller scratch allocation than
+                // the shader expects.
                 Ok(apply_sig_mask_to_vec4(
-                    &format!("hs_in.data[hs_in_base + {reg}u]"),
+                    &format!("hs_load_in(hs_in_base + {reg}u)"),
                     p.param.mask,
                 ))
             }
