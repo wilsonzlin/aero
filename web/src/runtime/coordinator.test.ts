@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { perf } from "../perf/perf";
 import { WorkerCoordinator } from "./coordinator";
 import { MessageType } from "./protocol";
-import { allocateSharedMemorySegments, createSharedMemoryViews } from "./shared_layout";
+import { createIoIpcSab, createSharedMemoryViews } from "./shared_layout";
+import { allocateHarnessSharedMemorySegments } from "./harness_shared_memory";
 import type { DiskImageMetadata } from "../storage/metadata";
 import {
   SCANOUT_SOURCE_LEGACY_TEXT,
@@ -43,6 +44,14 @@ describe("runtime/coordinator", () => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const originalWorker = (globalThis as any).Worker as unknown;
   const TEST_VRAM_MIB = 1;
+  const allocateTestSegments = () =>
+    allocateHarnessSharedMemorySegments({
+      guestRamBytes: 1 * 1024 * 1024,
+      sharedFramebuffer: new SharedArrayBuffer(8),
+      sharedFramebufferOffsetBytes: 0,
+      ioIpc: createIoIpcSab(),
+      vramBytes: TEST_VRAM_MIB * 1024 * 1024,
+    });
   const dummyHdd = (): DiskImageMetadata => ({
     source: "local",
     id: "disk.img",
@@ -77,7 +86,7 @@ describe("runtime/coordinator", () => {
 
   it("can spawn the net worker role without throwing", () => {
     const coordinator = new WorkerCoordinator();
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: TEST_VRAM_MIB });
+    const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
 
     // Wire the shared memory view manually so we can call the private spawnWorker
@@ -90,7 +99,7 @@ describe("runtime/coordinator", () => {
 
   it("spawns the machine CPU worker entrypoint when vmRuntime=machine", () => {
     const coordinator = new WorkerCoordinator();
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: TEST_VRAM_MIB });
+    const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
     (coordinator as any).shared = shared;
     (coordinator as any).activeConfig = {
@@ -119,7 +128,7 @@ describe("runtime/coordinator", () => {
 
   it("restarts the VM when virtioNetMode changes (PCI contract change)", () => {
     const coordinator = new WorkerCoordinator();
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: TEST_VRAM_MIB });
+    const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
     (coordinator as any).shared = shared;
     (coordinator as any).activeConfig = {
@@ -153,7 +162,7 @@ describe("runtime/coordinator", () => {
 
   it("restarts the VM when virtioInputMode changes (PCI contract change)", () => {
     const coordinator = new WorkerCoordinator();
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: TEST_VRAM_MIB });
+    const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
     (coordinator as any).shared = shared;
     (coordinator as any).activeConfig = {
@@ -189,7 +198,7 @@ describe("runtime/coordinator", () => {
 
   it("restarts the VM when virtioSndMode changes (PCI contract change)", () => {
     const coordinator = new WorkerCoordinator();
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: TEST_VRAM_MIB });
+    const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
     (coordinator as any).shared = shared;
     (coordinator as any).activeConfig = {
@@ -225,7 +234,7 @@ describe("runtime/coordinator", () => {
 
   it("restarts the VM when vramMiB changes (BAR1 VRAM layout change)", () => {
     const coordinator = new WorkerCoordinator();
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: TEST_VRAM_MIB });
+    const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
     (coordinator as any).shared = shared;
     (coordinator as any).activeConfig = {
@@ -257,7 +266,7 @@ describe("runtime/coordinator", () => {
 
   it("restarts the VM when vmRuntime changes (legacy → machine)", () => {
     const coordinator = new WorkerCoordinator();
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: TEST_VRAM_MIB });
+    const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
     (coordinator as any).shared = shared;
     (coordinator as any).activeConfig = {
@@ -291,7 +300,7 @@ describe("runtime/coordinator", () => {
 
   it("restarts the VM when vmRuntime changes (machine → legacy)", () => {
     const coordinator = new WorkerCoordinator();
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: TEST_VRAM_MIB });
+    const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
     (coordinator as any).shared = shared;
     (coordinator as any).activeConfig = {
@@ -325,7 +334,7 @@ describe("runtime/coordinator", () => {
 
   it("does not restart when vmRuntime becomes explicit legacy (undefined → legacy) during other config updates", () => {
     const coordinator = new WorkerCoordinator();
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: TEST_VRAM_MIB });
+    const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
     (coordinator as any).shared = shared;
     // Older/compat configs may omit vmRuntime; treat that as legacy.
@@ -421,7 +430,7 @@ describe("runtime/coordinator", () => {
       jit_dynamic_wasm: true,
     };
 
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: TEST_VRAM_MIB });
+    const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
     // Manually wire up a running coordinator without invoking `start()` so this
     // unit test stays lightweight (no WASM precompile attempts).
@@ -444,7 +453,7 @@ describe("runtime/coordinator", () => {
 
   it("forwards audio/mic rings to CPU only in legacy demo mode by default (SPSC)", () => {
     const coordinator = new WorkerCoordinator();
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: TEST_VRAM_MIB });
+    const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
     (coordinator as any).shared = shared;
     (coordinator as any).activeConfig = {
@@ -485,7 +494,7 @@ describe("runtime/coordinator", () => {
 
   it("does not treat activeDiskImage as a VM-mode toggle for audio/mic ring routing (deprecated)", () => {
     const coordinator = new WorkerCoordinator();
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: TEST_VRAM_MIB });
+    const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
     (coordinator as any).shared = shared;
     (coordinator as any).activeConfig = {
@@ -526,7 +535,7 @@ describe("runtime/coordinator", () => {
 
   it("forwards audio/mic rings to IO only in legacy VM mode by default (SPSC)", () => {
     const coordinator = new WorkerCoordinator();
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: TEST_VRAM_MIB });
+    const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
     (coordinator as any).shared = shared;
     (coordinator as any).activeConfig = {
@@ -575,7 +584,7 @@ describe("runtime/coordinator", () => {
     "forwards audio/mic rings to CPU only in machine runtime by default (SPSC, activeDiskImage=%s)",
     (activeDiskImage) => {
       const coordinator = new WorkerCoordinator();
-      const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: TEST_VRAM_MIB });
+      const segments = allocateTestSegments();
       const shared = createSharedMemoryViews(segments);
       (coordinator as any).shared = shared;
       (coordinator as any).activeConfig = {
@@ -617,7 +626,7 @@ describe("runtime/coordinator", () => {
 
   it("can re-route audio ring ownership via setAudioRingBufferOwner", () => {
     const coordinator = new WorkerCoordinator();
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: TEST_VRAM_MIB });
+    const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
     (coordinator as any).shared = shared;
     (coordinator as any).activeConfig = {
@@ -655,7 +664,7 @@ describe("runtime/coordinator", () => {
 
   it("can re-route microphone ring ownership via setMicrophoneRingBufferOwner", () => {
     const coordinator = new WorkerCoordinator();
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: TEST_VRAM_MIB });
+    const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
     (coordinator as any).shared = shared;
     (coordinator as any).activeConfig = {
@@ -693,7 +702,7 @@ describe("runtime/coordinator", () => {
 
   it("sends net.trace.enable to the net worker when enabling net tracing", () => {
     const coordinator = new WorkerCoordinator();
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: TEST_VRAM_MIB });
+    const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
     (coordinator as any).shared = shared;
     (coordinator as any).spawnWorker("net", segments);
@@ -713,7 +722,7 @@ describe("runtime/coordinator", () => {
 
   it("roundtrips net.trace.take_pcapng request/response through the coordinator", async () => {
     const coordinator = new WorkerCoordinator();
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: TEST_VRAM_MIB });
+    const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
     (coordinator as any).shared = shared;
     (coordinator as any).spawnWorker("net", segments);
@@ -742,7 +751,7 @@ describe("runtime/coordinator", () => {
 
   it("roundtrips net.trace.export_pcapng request/response through the coordinator", async () => {
     const coordinator = new WorkerCoordinator();
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: TEST_VRAM_MIB });
+    const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
     (coordinator as any).shared = shared;
     (coordinator as any).spawnWorker("net", segments);
@@ -771,7 +780,7 @@ describe("runtime/coordinator", () => {
 
   it("roundtrips net.trace.status request/response through the coordinator", async () => {
     const coordinator = new WorkerCoordinator();
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: TEST_VRAM_MIB });
+    const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
     (coordinator as any).shared = shared;
     (coordinator as any).spawnWorker("net", segments);
@@ -808,7 +817,7 @@ describe("runtime/coordinator", () => {
 
   it("rejects pending net trace requests when the net worker is terminated", async () => {
     const coordinator = new WorkerCoordinator();
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: TEST_VRAM_MIB });
+    const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
     (coordinator as any).shared = shared;
     (coordinator as any).spawnWorker("net", segments);
@@ -821,7 +830,7 @@ describe("runtime/coordinator", () => {
 
   it("rejects pending net trace stats requests when the net worker is terminated", async () => {
     const coordinator = new WorkerCoordinator();
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: TEST_VRAM_MIB });
+    const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
     (coordinator as any).shared = shared;
     (coordinator as any).spawnWorker("net", segments);
@@ -834,7 +843,7 @@ describe("runtime/coordinator", () => {
 
   it("enforces SPSC ownership when switching audio/mic ring buffer attachments between workers", () => {
     const coordinator = new WorkerCoordinator();
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: TEST_VRAM_MIB });
+    const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
     (coordinator as any).shared = shared;
     (coordinator as any).spawnWorker("cpu", segments);
@@ -908,7 +917,7 @@ describe("runtime/coordinator", () => {
 
   it("does not re-sync audio/mic ring attachments when a non-audio worker reports READY", () => {
     const coordinator = new WorkerCoordinator();
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: TEST_VRAM_MIB });
+    const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
     (coordinator as any).shared = shared;
     (coordinator as any).activeConfig = {
@@ -947,7 +956,7 @@ describe("runtime/coordinator", () => {
 
   it("re-syncs audio/mic ring attachments only to the worker that reported READY", () => {
     const coordinator = new WorkerCoordinator();
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: TEST_VRAM_MIB });
+    const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
     (coordinator as any).shared = shared;
     (coordinator as any).activeConfig = {
@@ -997,7 +1006,7 @@ describe("runtime/coordinator", () => {
 
   it("does not re-send audio/mic ring attachments on unrelated config updates", () => {
     const coordinator = new WorkerCoordinator();
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: TEST_VRAM_MIB });
+    const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
     (coordinator as any).shared = shared;
     const baseConfig = {
@@ -1037,7 +1046,7 @@ describe("runtime/coordinator", () => {
 
   it("resets scanoutState back to legacy on VM reset (shared memory preserved)", () => {
     const coordinator = new WorkerCoordinator();
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: TEST_VRAM_MIB });
+    const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
     (coordinator as any).shared = shared;
     (coordinator as any).activeConfig = {

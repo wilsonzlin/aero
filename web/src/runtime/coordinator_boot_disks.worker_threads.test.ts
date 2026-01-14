@@ -4,7 +4,8 @@ import { perf } from "../perf/perf";
 import type { DiskImageMetadata } from "../storage/metadata";
 import { WorkerCoordinator } from "./coordinator";
 import type { SetBootDisksMessage } from "./boot_disks_protocol";
-import { allocateSharedMemorySegments, createSharedMemoryViews } from "./shared_layout";
+import { createIoIpcSab, createSharedMemoryViews } from "./shared_layout";
+import { allocateHarnessSharedMemorySegments } from "./harness_shared_memory";
 
 class MockWorker {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -47,10 +48,20 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
     return { ...meta, source: "local" };
   }
 
+  function allocateTestSegments() {
+    return allocateHarnessSharedMemorySegments({
+      guestRamBytes: 1 * 1024 * 1024,
+      sharedFramebuffer: new SharedArrayBuffer(8),
+      sharedFramebufferOffsetBytes: 0,
+      ioIpc: createIoIpcSab(),
+      vramBytes: 0,
+    });
+  }
+
   it("resends boot disk selection to the CPU worker when vmRuntime=machine and the worker restarts", () => {
     const coordinator = new WorkerCoordinator();
 
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 0 });
+    const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
     // Manually wire shared memory so we can spawn workers without invoking `start()`.
     (coordinator as any).shared = shared;
@@ -121,7 +132,7 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
   it("resends boot disk selection to the IO worker when vmRuntime=legacy and the worker restarts", () => {
     const coordinator = new WorkerCoordinator();
 
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 0 });
+    const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
     (coordinator as any).shared = shared;
     (coordinator as any).activeConfig = { vmRuntime: "legacy" };
