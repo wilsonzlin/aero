@@ -7570,11 +7570,19 @@ static VirtioNetLinkFlapTestResult VirtioNetLinkFlapTest(Logger& log, const Opti
   const DWORD down_start = GetTickCount();
   const DWORD down_deadline = down_start + 30000;
   bool saw_down = false;
+  int down_samples = 0;
   while (static_cast<int32_t>(GetTickCount() - down_deadline) < 0) {
     bool up = false;
     std::wstring friendly;
     (void)FindIpv4AddressForAdapterGuid(adapter.instance_id, &up, &friendly);
+    // Require multiple consecutive "down" observations to reduce false positives from transient
+    // adapter enumeration failures during link transitions.
     if (!up) {
+      down_samples++;
+    } else {
+      down_samples = 0;
+    }
+    if (down_samples >= 2) {
       saw_down = true;
       break;
     }
