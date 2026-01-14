@@ -964,7 +964,7 @@ pub fn mem_store_u32(offset: u32, value: u32) {
         #[cfg(target_feature = "atomics")]
         {
             use core::sync::atomic::{AtomicU8, Ordering};
-            let dst = offset as *const AtomicU8;
+            let dst: *mut AtomicU8 = core::ptr::with_exposed_provenance_mut(offset as usize);
             let bytes = value.to_le_bytes();
             for (i, byte) in bytes.into_iter().enumerate() {
                 // Safety: the caller is responsible for providing a valid linear-memory offset;
@@ -975,7 +975,8 @@ pub fn mem_store_u32(offset: u32, value: u32) {
 
         #[cfg(not(target_feature = "atomics"))]
         unsafe {
-            core::ptr::write_unaligned(offset as *mut u32, value);
+            let dst: *mut u32 = core::ptr::with_exposed_provenance_mut(offset as usize);
+            core::ptr::write_unaligned(dst, value);
         }
     }
     #[cfg(not(target_arch = "wasm32"))]
@@ -994,7 +995,7 @@ pub fn mem_load_u32(offset: u32) -> u32 {
         #[cfg(target_feature = "atomics")]
         {
             use core::sync::atomic::{AtomicU8, Ordering};
-            let src = offset as *const AtomicU8;
+            let src: *const AtomicU8 = core::ptr::with_exposed_provenance(offset as usize);
             // Safety: the caller is responsible for providing a valid linear-memory offset;
             // `AtomicU8` has alignment 1.
             let bytes = unsafe {
@@ -1010,7 +1011,8 @@ pub fn mem_load_u32(offset: u32) -> u32 {
 
         #[cfg(not(target_feature = "atomics"))]
         unsafe {
-            core::ptr::read_unaligned(offset as *const u32)
+            let src: *const u32 = core::ptr::with_exposed_provenance(offset as usize);
+            core::ptr::read_unaligned(src)
         }
     }
     #[cfg(not(target_arch = "wasm32"))]
@@ -3116,7 +3118,9 @@ impl CpuWorkerDemo {
 
             // Safety: the caller provides an in-bounds region in linear memory.
             let shared = unsafe {
-                SharedFramebuffer::from_raw_parts(framebuffer_offset_bytes as *mut u8, layout)
+                let framebuffer_ptr: *mut u8 =
+                    core::ptr::with_exposed_provenance_mut(framebuffer_offset_bytes as usize);
+                SharedFramebuffer::from_raw_parts(framebuffer_ptr, layout)
             }
             .map_err(|e| JsValue::from_str(&format!("Invalid shared framebuffer base: {e}")))?;
             // The JS runtime may have already initialized the header (and in the
@@ -3144,7 +3148,8 @@ impl CpuWorkerDemo {
 
             // Reset the demo guest counter so tests can make deterministic assertions.
             unsafe {
-                let counter_ptr = guest_counter_offset_bytes as *mut AtomicU32;
+                let counter_ptr: *mut AtomicU32 =
+                    core::ptr::with_exposed_provenance_mut(guest_counter_offset_bytes as usize);
                 (*counter_ptr).store(0, Ordering::SeqCst);
             }
 
@@ -3169,7 +3174,8 @@ impl CpuWorkerDemo {
     pub fn tick(&self, _now_ms: f64) -> u32 {
         #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
         unsafe {
-            let counter_ptr = self.guest_counter_offset_bytes as *const AtomicU32;
+            let counter_ptr: *const AtomicU32 =
+                core::ptr::with_exposed_provenance(self.guest_counter_offset_bytes as usize);
             (*counter_ptr)
                 .fetch_add(1, Ordering::SeqCst)
                 .wrapping_add(1)
@@ -5298,7 +5304,8 @@ impl Machine {
         // - The web runtime allocates at least `RUNTIME_RESERVED_BYTES` of linear memory.
         // - The wasm-side runtime allocator leaves a tail guard so this region does not overlap heap allocations.
         // - The region is treated as a plain `u32` array (Atomics-compatible) by both Rust and JS.
-        unsafe { &*(offset as *const ScanoutState) }
+        let ptr: *const ScanoutState = core::ptr::with_exposed_provenance(offset as usize);
+        unsafe { &*ptr }
     }
 
     // -------------------------------------------------------------------------
@@ -5364,9 +5371,11 @@ impl Machine {
     ))]
     fn cursor_state_ref() -> &'static CursorState {
         Self::ensure_runtime_reserved_floor_for_scanout_state();
+        let offset = Self::cursor_state_offset_bytes();
         // Safety: same argument as `scanout_state_ref()`; cursor state is placed in the same
         // allocator-excluded tail guard region inside wasm linear memory.
-        unsafe { &*(Self::cursor_state_offset_bytes() as *const CursorState) }
+        let ptr: *const CursorState = core::ptr::with_exposed_provenance(offset as usize);
+        unsafe { &*ptr }
     }
 
     #[cfg(all(
