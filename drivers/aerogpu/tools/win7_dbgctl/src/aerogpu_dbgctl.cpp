@@ -10919,7 +10919,7 @@ int wmain(int argc, wchar_t **argv) {
                              dumpLastCmdAllocOutPath, dumpLastCmdForce, &json);
       break;
     case CMD_READ_GPA:
-      rc = DoReadGpaJson(&f, open.hAdapter, readGpa, readGpaSizeBytes, readGpaOutFile, &json);
+      rc = DoReadGpaJson(&f, open.hAdapter, readGpa, readGpaSizeBytes, readGpaOutPath, &json);
       break;
     case CMD_WATCH_FENCE:
       rc = DoWatchFenceJson(&f, open.hAdapter, watchSamples, watchIntervalMs, timeoutMsSet ? timeoutMs : 0, &json);
