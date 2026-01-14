@@ -22,6 +22,13 @@ fn edid_includes_1024x768_dtd() {
     );
 }
 
+#[test]
+fn read_edid_returns_none_for_extension_blocks() {
+    // The generated EDID advertises 0 extension blocks, so only block 0 should exist.
+    assert!(aero_edid::read_edid(1).is_none());
+    assert!(aero_edid::read_edid(2).is_none());
+}
+
 fn checksum_ok(edid: &[u8; aero_edid::EDID_BLOCK_SIZE]) -> bool {
     edid.iter()
         .fold(0u8, |acc, &b| acc.wrapping_add(b))

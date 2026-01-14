@@ -678,6 +678,21 @@ mod tests {
             let off = 38 + i * 2;
             assert_eq!([edid[off], edid[off + 1]], [0x01, 0x01]);
         }
+
+        // Range limits descriptor should be the legacy baseline for the default mode.
+        let range = parse_range_limits_descriptor(&edid[90..108]).expect("range limits missing");
+        assert_eq!(
+            range,
+            RangeLimitsDescriptor {
+                min_v_rate_hz: 50,
+                max_v_rate_hz: 75,
+                min_h_rate_khz: 30,
+                max_h_rate_khz: 80,
+                max_pixel_clock_10mhz: 8,
+            }
+        );
+        // Reserved tail bytes must be zero.
+        assert_eq!(&edid[100..108], &[0u8; 8]);
     }
 
     #[test]
