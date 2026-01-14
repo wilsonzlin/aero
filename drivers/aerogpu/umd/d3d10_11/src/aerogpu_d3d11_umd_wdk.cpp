@@ -2036,8 +2036,63 @@ static bool UnmapLocked(Device* dev, Resource* res) {
   }
 
   const bool is_write = (res->mapped_map_type != kD3D11MapRead);
+  bool dirty_emitted_on_unmap = false;
+  bool dirty_failed_on_unmap = false;
   if (res->mapped_wddm_ptr && res->mapped_wddm_allocation) {
+    if (is_write && res->mapped_size != 0 && res->backing_alloc_id != 0) {
+      // For guest-backed resources, ensure we can record RESOURCE_DIRTY_RANGE
+      // before committing the CPU-written bytes into our software shadow copy.
+      //
+      // If we cannot record the dirty range due to OOM, roll back any command
+      // buffer/alloc-list changes and restore the guest allocation contents from
+      // the shadow copy, so the host and guest do not diverge.
+      const auto cmd_checkpoint = dev->cmd.checkpoint();
+      const WddmAllocListCheckpoint alloc_checkpoint(dev);
+      TrackWddmAllocForSubmitLocked(dev, res, /*write=*/false);
+      if (!dev->wddm_submit_allocation_list_oom) {
+        auto* dirty =
+            dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+        if (dirty) {
+          dirty->resource_handle = res->handle;
+          dirty->reserved0 = 0;
+          dirty->offset_bytes = res->mapped_offset;
+          dirty->size_bytes = res->mapped_size;
+          dirty_emitted_on_unmap = true;
+        }
+      }
+      if (!dirty_emitted_on_unmap) {
+        dirty_failed_on_unmap = true;
+        dev->cmd.rollback(cmd_checkpoint);
+        alloc_checkpoint.rollback();
+
+        // Best-effort rollback: restore the allocation bytes from the existing
+        // shadow copy. This keeps guest memory consistent with the host-visible
+        // contents even if we cannot notify the host of the CPU write.
+        if (!res->storage.empty()) {
+          const uint64_t off = res->mapped_offset;
+          const uint64_t size = res->mapped_size;
+          if (off <= static_cast<uint64_t>(SIZE_MAX) && off <= res->storage.size()) {
+            const size_t off_sz = static_cast<size_t>(off);
+            const size_t remaining = res->storage.size() - off_sz;
+            const size_t copy_bytes = static_cast<size_t>(std::min<uint64_t>(size, remaining));
+            if (copy_bytes) {
+              uint8_t* dst = static_cast<uint8_t*>(res->mapped_wddm_ptr) + off_sz;
+              const uint8_t* src = res->storage.data() + off_sz;
+              std::memcpy(dst, src, copy_bytes);
+            }
+          }
+        }
+
+        SetError(dev, E_OUTOFMEMORY);
+      }
+    }
+
     if (is_write && !res->storage.empty()) {
+      if (dirty_failed_on_unmap && res->backing_alloc_id != 0) {
+        // We restored the allocation from the pre-map shadow copy above; keep
+        // the shadow copy unchanged.
+        goto UnlockMappedAllocation;
+      }
       const uint8_t* src_base = static_cast<const uint8_t*>(res->mapped_wddm_ptr);
       const uint64_t off = res->mapped_offset;
       const uint64_t size = res->mapped_size;
@@ -2098,6 +2153,7 @@ static bool UnmapLocked(Device* dev, Resource* res) {
       }
     }
 
+  UnlockMappedAllocation:
     const auto* cb = reinterpret_cast<const D3DDDI_DEVICECALLBACKS*>(dev->runtime_ddi_callbacks);
     const auto* cb_device = reinterpret_cast<const D3D11DDI_DEVICECALLBACKS*>(dev->runtime_callbacks);
     if (cb && cb->pfnUnlockCb) {
@@ -2138,7 +2194,12 @@ static bool UnmapLocked(Device* dev, Resource* res) {
       // For guest-backed resources, only report the mapped subresource region as
       // dirty. Do not expand to LockCb's SlicePitch, which describes mip0 and
       // can overlap other subresources in our packed layout.
-      EmitDirtyRangeLocked(dev, res, res->mapped_offset, res->mapped_size);
+      //
+      // If we already emitted (or failed to emit) a dirty range while the
+      // allocation was still mapped, do not emit another one here.
+      if (!dirty_emitted_on_unmap && !dirty_failed_on_unmap) {
+        EmitDirtyRangeLocked(dev, res, res->mapped_offset, res->mapped_size);
+      }
     } else if (!res->storage.empty()) {
       (void)EmitUploadLocked(dev, res, res->mapped_offset, res->mapped_size);
     }
@@ -10899,11 +10960,12 @@ static HRESULT MapLocked11(Device* dev,
       }
     } else if (!is_guest_backed) {
       std::memcpy(lock.pData, res->storage.data(), res->storage.size());
-    } else if (want_read) {
+    } else if (want_read || (want_write && res->usage == kD3D11UsageStaging)) {
       // Guest-backed resources are updated by writing directly into the backing
       // allocation (and emitting RESOURCE_DIRTY_RANGE). Avoid overwriting the
       // runtime allocation contents with shadow storage; instead refresh the
-      // shadow copy for any Map() that reads.
+      // shadow copy for Map() calls that need existing contents (READ or staging
+      // WRITE paths that may be followed by an OOM rollback on Unmap).
       if (res->kind == ResourceKind::Texture2D) {
         const uint32_t src_pitch = (mapped_row_pitch != 0) ? mapped_row_pitch : sub_layout.row_pitch_bytes;
         const uint32_t dst_pitch = sub_layout.row_pitch_bytes;

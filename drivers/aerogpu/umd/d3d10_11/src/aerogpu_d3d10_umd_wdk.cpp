@@ -1776,6 +1776,30 @@ static void TrackStagingWriteLocked(AeroGpuDevice* dev, AeroGpuResource* dst, Se
   }
 }
 
+struct WddmAllocListCheckpoint {
+  AeroGpuDevice* dev = nullptr;
+  size_t size = 0;
+  bool oom = false;
+
+  explicit WddmAllocListCheckpoint(AeroGpuDevice* d) : dev(d) {
+    if (!dev) {
+      return;
+    }
+    size = dev->wddm_submit_allocation_handles.size();
+    oom = dev->wddm_submit_allocation_list_oom;
+  }
+
+  void rollback() const {
+    if (!dev) {
+      return;
+    }
+    if (dev->wddm_submit_allocation_handles.size() > size) {
+      dev->wddm_submit_allocation_handles.resize(size);
+    }
+    dev->wddm_submit_allocation_list_oom = oom;
+  }
+};
+
 static void TrackWddmAllocForSubmitLocked(AeroGpuDevice* dev, const AeroGpuResource* res, bool write) {
   D3D10DDI_HDEVICE hDevice{};
   hDevice.pDrvPrivate = dev;
@@ -3992,7 +4016,7 @@ HRESULT APIENTRY Map(D3D10DDI_HDEVICE hDevice, D3D10DDIARG_MAP* pMap) {
           continue;
         }
 
-        if (want_read) {
+        if (want_read || (want_write && res->usage == kD3D10UsageStaging)) {
           std::memcpy(dst_storage + off_storage, dst_wddm + off_wddm, tex_row_bytes);
         }
       }
@@ -4015,7 +4039,7 @@ HRESULT APIENTRY Map(D3D10DDI_HDEVICE hDevice, D3D10DDIARG_MAP* pMap) {
                         copy_bytes);
           }
         }
-      } else if (want_read) {
+      } else if (want_read || (want_write && res->usage == kD3D10UsageStaging)) {
         if (map_offset <= res->storage.size()) {
           const size_t remaining = res->storage.size() - static_cast<size_t>(map_offset);
           const size_t copy_bytes = static_cast<size_t>(std::min<uint64_t>(map_size, remaining));
@@ -4053,9 +4077,79 @@ void unmap_resource_locked(D3D10DDI_HDEVICE hDevice, AeroGpuDevice* dev, AeroGpu
     return;
   }
 
+  bool dirty_emitted_on_unmap = false;
+  bool dirty_failed_on_unmap = false;
+  uint64_t upload_offset = res->mapped_offset;
+  uint64_t upload_size_storage = res->mapped_size;
+  bool emit_ok = (res->mapped_write && res->mapped_size != 0);
+  if (emit_ok && res->kind == ResourceKind::Buffer) {
+    const uint64_t end = res->mapped_offset + res->mapped_size;
+    if (end < res->mapped_offset) {
+      SetError(hDevice, E_INVALIDARG);
+      emit_ok = false;
+    }
+    if (emit_ok) {
+      upload_offset = res->mapped_offset & ~3ull;
+      const uint64_t upload_end = AlignUpU64(end, 4);
+      upload_size_storage = upload_end - upload_offset;
+    }
+  }
+  if (emit_ok && !res->storage.empty()) {
+    if (upload_offset > static_cast<uint64_t>(res->storage.size())) {
+      SetError(hDevice, E_INVALIDARG);
+      emit_ok = false;
+    }
+    if (emit_ok) {
+      const size_t remaining = res->storage.size() - static_cast<size_t>(upload_offset);
+      if (upload_size_storage > static_cast<uint64_t>(remaining)) {
+        SetError(hDevice, E_INVALIDARG);
+        emit_ok = false;
+      } else if (upload_size_storage > static_cast<uint64_t>(SIZE_MAX)) {
+        SetError(hDevice, E_OUTOFMEMORY);
+        emit_ok = false;
+      }
+    }
+  }
+
   HRESULT copy_back_hr = S_OK;
   if (res->mapped_wddm_ptr && res->mapped_wddm_allocation) {
-    if (res->mapped_write && !res->storage.empty() && res->mapped_size) {
+    if (emit_ok && res->mapped_write && res->mapped_size != 0 && res->backing_alloc_id != 0) {
+      // Guest-backed resources: record the dirty range before committing the
+      // CPU-written bytes into the software shadow copy. If we cannot record the
+      // dirty range due to OOM, restore the guest allocation bytes from the
+      // shadow copy so the host and guest do not diverge.
+      const auto cmd_checkpoint = dev->cmd.checkpoint();
+      const WddmAllocListCheckpoint alloc_checkpoint(dev);
+      TrackWddmAllocForSubmitLocked(dev, res, /*write=*/false);
+      if (!dev->wddm_submit_allocation_list_oom) {
+        auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+        if (cmd) {
+          cmd->resource_handle = res->handle;
+          cmd->reserved0 = 0;
+          cmd->offset_bytes = upload_offset;
+          cmd->size_bytes = upload_size_storage;
+          dirty_emitted_on_unmap = true;
+        }
+      }
+      if (!dirty_emitted_on_unmap) {
+        dirty_failed_on_unmap = true;
+        dev->cmd.rollback(cmd_checkpoint);
+        alloc_checkpoint.rollback();
+
+        if (!res->storage.empty() &&
+            upload_offset <= static_cast<uint64_t>(SIZE_MAX) &&
+            upload_size_storage <= static_cast<uint64_t>(SIZE_MAX) &&
+            upload_offset + upload_size_storage <= static_cast<uint64_t>(res->storage.size())) {
+          const size_t off = static_cast<size_t>(upload_offset);
+          const size_t sz = static_cast<size_t>(upload_size_storage);
+          uint8_t* dst_bytes = static_cast<uint8_t*>(res->mapped_wddm_ptr);
+          std::memcpy(dst_bytes + off, res->storage.data() + off, sz);
+        }
+        SetError(hDevice, E_OUTOFMEMORY);
+      }
+    }
+
+    if (!dirty_failed_on_unmap && res->mapped_write && !res->storage.empty() && res->mapped_size) {
       if (res->kind == ResourceKind::Texture2D) {
         do {
            if (subresource >= res->tex2d_subresources.size()) {
@@ -4147,43 +4241,13 @@ void unmap_resource_locked(D3D10DDI_HDEVICE hDevice, AeroGpuDevice* dev, AeroGpu
     SetError(hDevice, copy_back_hr);
   }
 
-  if (res->mapped_write && res->mapped_size != 0) {
-    uint64_t upload_offset = res->mapped_offset;
-    uint64_t upload_size_storage = res->mapped_size;
-    bool emit_ok = true;
-    if (res->kind == ResourceKind::Buffer) {
-      const uint64_t end = res->mapped_offset + res->mapped_size;
-      if (end < res->mapped_offset) {
-        SetError(hDevice, E_INVALIDARG);
-        emit_ok = false;
-      }
-      if (emit_ok) {
-        upload_offset = res->mapped_offset & ~3ull;
-        const uint64_t upload_end = AlignUpU64(end, 4);
-        upload_size_storage = upload_end - upload_offset;
-      }
-    }
-
-    if (emit_ok && !res->storage.empty()) {
-      if (upload_offset > static_cast<uint64_t>(res->storage.size())) {
-        SetError(hDevice, E_INVALIDARG);
-        emit_ok = false;
-      }
-      if (emit_ok) {
-        const size_t remaining = res->storage.size() - static_cast<size_t>(upload_offset);
-        if (upload_size_storage > static_cast<uint64_t>(remaining)) {
-          SetError(hDevice, E_INVALIDARG);
-          emit_ok = false;
-        } else if (upload_size_storage > static_cast<uint64_t>(SIZE_MAX)) {
-          SetError(hDevice, E_OUTOFMEMORY);
-          emit_ok = false;
-        }
-      }
-    }
-
-    if (emit_ok) {
-      if (res->backing_alloc_id != 0) {
-        // RESOURCE_DIRTY_RANGE causes the host to read the guest allocation to update the host copy.
+  if (emit_ok) {
+    if (res->backing_alloc_id != 0) {
+      // RESOURCE_DIRTY_RANGE causes the host to read the guest allocation to update the host copy.
+      //
+      // If we already emitted (or failed to emit) a dirty range while the
+      // allocation was still mapped, do not emit another one here.
+      if (!dirty_emitted_on_unmap && !dirty_failed_on_unmap) {
         TrackWddmAllocForSubmitLocked(dev, res, /*write=*/false);
         auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
         if (!cmd) {
@@ -4198,9 +4262,9 @@ void unmap_resource_locked(D3D10DDI_HDEVICE hDevice, AeroGpuDevice* dev, AeroGpu
           // layout when the WDDM allocation pitch differs.
           cmd->size_bytes = upload_size_storage;
         }
-      } else {
-        EmitUploadLocked(hDevice, dev, res, upload_offset, upload_size_storage);
       }
+    } else {
+      EmitUploadLocked(hDevice, dev, res, upload_offset, upload_size_storage);
     }
   }
 
