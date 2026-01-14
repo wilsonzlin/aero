@@ -3871,8 +3871,12 @@ function renderAudioPanel(): HTMLElement {
         await configInitPromise;
         const base = configManager.getState().effective;
         // This audio-only debug path does not need a large guest RAM allocation or a VRAM aperture.
-        // Keep allocations small so Playwright runs don't reserve hundreds of MiB per page.
-        workerCoordinator.start({ ...base, guestMemoryMiB: Math.min(base.guestMemoryMiB, 16), vramMiB: 0 });
+        // Keep allocations tiny so dev/harness pages don't reserve hundreds of MiB per tab.
+        //
+        // Note: the worker runtime always reserves a fixed wasm32 runtime region (see
+        // `web/src/runtime/shared_layout.ts`), so keeping `guestMemoryMiB` at the minimum
+        // still has a meaningful impact on total SharedArrayBuffer pressure in CI.
+        workerCoordinator.start({ ...base, guestMemoryMiB: 1, vramMiB: 0 });
       } catch (err) {
         status.textContent = err instanceof Error ? err.message : String(err);
         return;
@@ -4310,11 +4314,11 @@ function renderAudioPanel(): HTMLElement {
         await configInitPromise;
         const base = configManager.getState().effective;
         // This debug path does not need a full guest RAM allocation or VRAM aperture; keep it
-        // small so Playwright runs don't reserve hundreds of MiB per page.
+        // tiny so dev/harness pages don't reserve hundreds of MiB per tab.
         workerCoordinator.start({
           ...base,
           enableWorkers: true,
-          guestMemoryMiB: Math.min(base.guestMemoryMiB, 16),
+          guestMemoryMiB: 1,
           vramMiB: 0,
         });
 
@@ -7387,10 +7391,11 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
 
         // When no boot disks are mounted, the workers panel runs in a lightweight demo mode
         // (shared framebuffer + input capture). Avoid reserving a full VM-sized guest RAM/VRAM
-        // allocation so Playwright smoke tests don't OOM.
+        // allocation so Playwright smoke tests don't OOM (and so the legacy demo does not
+        // accidentally embed large shared buffers into the shared WebAssembly.Memory).
         const isDemoMode = !selection.hdd && !selection.cd;
         const startConfig = isDemoMode
-          ? { ...config, guestMemoryMiB: Math.min(config.guestMemoryMiB, 16), vramMiB: 0 }
+          ? { ...config, guestMemoryMiB: 1, vramMiB: 0 }
           : config;
 
         workerCoordinator.start(startConfig, { platformFeatures });
