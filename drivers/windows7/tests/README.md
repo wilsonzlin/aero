@@ -212,8 +212,8 @@ configuration.
     - Guest marker: `AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|PASS/FAIL/SKIP|mode=...|messages=...|config_vector=...|rx_vector=...|tx_vector=...`
     - Host marker: `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_MSIX|PASS/FAIL/SKIP|mode=...|messages=...|config_vector=...|rx_vector=...|tx_vector=...`
   - virtio-snd:
-    - Guest marker: `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|PASS/FAIL/SKIP|mode=...|messages=...|config_vector=...|queue0_vector=...|...`
-    - Host marker: `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_MSIX|PASS/FAIL/SKIP|mode=...|messages=...|config_vector=...|queue0_vector=...|...`
+    - Guest marker: `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|PASS/SKIP|mode=...|messages=...|config_vector=...|queue0_vector=...|...`
+    - Host marker: `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_MSIX|PASS/SKIP|mode=...|messages=...|config_vector=...|queue0_vector=...|...`
   - virtio-input:
     - Guest marker: `AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|PASS/FAIL/SKIP|mode=...|messages=...|mapping=...|...`
     - Host marker: `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MSIX|PASS/FAIL/SKIP|mode=...|messages=...|mapping=...|...`
