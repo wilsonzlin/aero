@@ -842,6 +842,12 @@ HKR,Parameters,AllowPollingOnly,0x00010001,0
 Notes:
 
 * `MessageNumberLimit` is a request; Windows may allocate fewer messages.
+* `HKR` in a `.NT.HW` section is relative to the device instance’s **Device Parameters** key:
+  * `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Parameters`
+  * The bring-up toggles above therefore live under:
+    * `...\Device Parameters\Parameters\ForceNullBackend`
+    * `...\Device Parameters\Parameters\AllowPollingOnly`
+  * Find `<DeviceInstancePath>` via **Device Manager → device → Details → “Device instance path”**.
 * When message interrupts are used, drivers must still program virtio MSI-X routing (`msix_config`, `queue_msix_vector`).
   - On Aero contract devices, if MSI-X is enabled at the PCI layer but a virtio MSI-X selector remains
     `VIRTIO_PCI_MSI_NO_VECTOR` (`0xFFFF`) (or the MSI-X entry is masked/unprogrammed), interrupts for that source are

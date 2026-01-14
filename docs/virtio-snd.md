@@ -278,8 +278,12 @@ Windows 7 does not ship a virtio-snd driver. Expected options:
       `VIRTIO_PCI_MSI_NO_VECTOR` (`0xFFFF`) (or the MSI-X entry is masked/unprogrammed), interrupts for that source are
       **suppressed** (no MSI-X message and no INTx fallback). Drivers must not rely on “INTx fallback” unless MSI-X is
       actually disabled and INTx resources are in use.
-  - Optional bring-up: if neither MSI/MSI-X nor INTx can be connected, the driver can run in polling-only mode when
-    `AllowPollingOnly=1` is set under the device instance registry key (intended for early device-model bring-up).
+  - Optional bring-up toggles (per-device registry, intended for early device-model bring-up):
+    - `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Parameters\Parameters\AllowPollingOnly` (`REG_DWORD`)
+      - `1`: allow polling-only mode if no usable interrupt resource can be connected (neither MSI/MSI-X nor INTx)
+    - `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Parameters\Parameters\ForceNullBackend` (`REG_DWORD`)
+      - `1`: force the silent null backend and allow `START_DEVICE` to succeed even when virtio transport bring-up fails
+    - Find `<DeviceInstancePath>` via **Device Manager → device → Details → “Device instance path”**.
 - Distribute as **test-signed**:
   - Enable test mode in the guest (`bcdedit /set testsigning on`).
   - Install the test certificate into the guest's trusted store.
