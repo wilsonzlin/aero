@@ -1,5 +1,5 @@
 use aero_machine::{Machine, MachineConfig};
-use firmware::smbios::{find_eps, parse_eps_table_info, validate_eps_checksum};
+use firmware::smbios::{find_eps, parse_eps_table_info, parse_structures, validate_eps_checksum};
 use pretty_assertions::assert_eq;
 
 fn boot_sector() -> [u8; 512] {
@@ -7,39 +7,6 @@ fn boot_sector() -> [u8; 512] {
     sector[510] = 0x55;
     sector[511] = 0xAA;
     sector
-}
-
-fn find_type1_uuid(table: &[u8]) -> Option<[u8; 16]> {
-    let mut i = 0usize;
-    while i < table.len() {
-        let ty = table.get(i).copied()?;
-        let len = table.get(i + 1).copied()? as usize;
-        let formatted = table.get(i..i + len)?;
-
-        if ty == 1 {
-            // SMBIOS Type 1 UUID lives at offset 8 and is 16 bytes long.
-            return formatted.get(8..24)?.try_into().ok();
-        }
-
-        // Skip strings.
-        let mut j = i + len;
-        loop {
-            if j + 1 >= table.len() {
-                return None;
-            }
-            if table[j] == 0 && table[j + 1] == 0 {
-                j += 2;
-                break;
-            }
-            j += 1;
-        }
-
-        i = j;
-        if ty == 127 {
-            break;
-        }
-    }
-    None
 }
 
 fn fnv1a_128(bytes: &[u8]) -> u128 {
@@ -97,7 +64,12 @@ fn smbios_system_uuid_uses_machine_config_seed() {
     let table_info = parse_eps_table_info(&eps).expect("invalid SMBIOS EPS");
     let table = m.read_physical_bytes(table_info.table_addr, table_info.table_len);
 
-    let uuid = find_type1_uuid(&table).expect("Type 1 UUID missing from SMBIOS table");
+    let structures = parse_structures(&table);
+    let type1 = structures
+        .iter()
+        .find(|s| s.header.ty == 1)
+        .expect("Type 1 missing from SMBIOS table");
+    let uuid: [u8; 16] = type1.formatted[8..24].try_into().unwrap();
     let expected = expected_smbios_uuid(ram_size_bytes, 1, seed);
     assert_eq!(uuid, expected);
 }

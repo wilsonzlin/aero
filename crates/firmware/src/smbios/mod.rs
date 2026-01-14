@@ -13,7 +13,7 @@ use crate::memory::MemoryBus;
 
 pub use scan::{
     find_eps, parse_eps_table_info, parse_structure_headers, parse_structure_types,
-    validate_eps_checksum, EpsTableInfo, SmbiosStructureHeader,
+    parse_structures, validate_eps_checksum, EpsTableInfo, SmbiosStructure, SmbiosStructureHeader,
 };
 
 /// Configuration for SMBIOS table generation.
@@ -96,51 +96,13 @@ mod tests {
         assert!(validate_eps_checksum(&eps));
     }
 
-    #[derive(Debug)]
-    struct ParsedStructure {
-        ty: u8,
-        formatted: Vec<u8>,
-    }
-
-    fn parse_eps(mem: &mut VecMemory, eps_addr: u32) -> (u32, u16) {
+    fn read_smbios_table(mem: &mut VecMemory, eps_addr: u32) -> Vec<u8> {
         let mut eps = [0u8; builder::EPS_LENGTH as usize];
         mem.read_physical(eps_addr as u64, &mut eps);
-        assert_eq!(&eps[0..4], b"_SM_");
-        assert!(validate_eps_checksum(&eps));
-
-        let table_len = u16::from_le_bytes([eps[0x16], eps[0x17]]);
-        let table_addr = u32::from_le_bytes([eps[0x18], eps[0x19], eps[0x1A], eps[0x1B]]);
-        (table_addr, table_len)
-    }
-
-    fn parse_table(table: &[u8]) -> Vec<ParsedStructure> {
-        let mut out = Vec::new();
-        let mut i = 0usize;
-        while i < table.len() {
-            let ty = table[i];
-            let len = table[i + 1] as usize;
-            let formatted = table[i..i + len].to_vec();
-            let mut j = i + len;
-
-            // Skip strings (we only need formatted fields for these tests).
-            loop {
-                if j + 1 >= table.len() {
-                    panic!("unterminated string-set");
-                }
-                if table[j] == 0 && table[j + 1] == 0 {
-                    j += 2;
-                    break;
-                }
-                j += 1;
-            }
-
-            out.push(ParsedStructure { ty, formatted });
-            i = j;
-            if ty == 127 {
-                break;
-            }
-        }
-        out
+        let table_info = parse_eps_table_info(&eps).expect("invalid SMBIOS EPS");
+        let mut table = vec![0u8; table_info.table_len];
+        mem.read_physical(table_info.table_addr, &mut table);
+        table
     }
 
     #[test]
@@ -148,16 +110,15 @@ mod tests {
         fn read_type1_uuid(mem: &mut VecMemory, cfg: SmbiosConfig) -> [u8; 16] {
             write_bda_ebda_segment(mem, 0x9FC0);
             let eps_addr = SmbiosTables::build_and_write(&cfg, mem);
-            let (table_addr, table_len) = parse_eps(mem, eps_addr);
-            let mut table = vec![0u8; table_len as usize];
-            mem.read_physical(table_addr as u64, &mut table);
-            let structures = parse_table(&table);
+            let table = read_smbios_table(mem, eps_addr);
+            let structures = parse_structures(&table);
             let type1 = structures
                 .iter()
-                .find(|s| s.ty == 1)
+                .find(|s| s.header.ty == 1)
                 .expect("type 1 missing");
 
-            // SMBIOS Type 1 UUID field is at offset 8 and is 16 bytes long.
+            // SMBIOS Type 1 UUID field is at offset 8 and is 16 bytes long (relative to the start
+            // of the formatted section, which includes the 4-byte structure header).
             type1.formatted[8..24].try_into().unwrap()
         }
 
@@ -198,15 +159,12 @@ mod tests {
         };
         let eps_addr = SmbiosTables::build_and_write(&config, &mut mem);
 
-        let (table_addr, table_len) = parse_eps(&mut mem, eps_addr);
-        let mut table = vec![0u8; table_len as usize];
-        mem.read_physical(table_addr as u64, &mut table);
-
-        let structures = parse_table(&table);
+        let table = read_smbios_table(&mut mem, eps_addr);
+        let structures = parse_structures(&table);
 
         let type16 = structures
             .iter()
-            .find(|s| s.ty == 16)
+            .find(|s| s.header.ty == 16)
             .expect("type 16 missing");
         let max_capacity_kb = u32::from_le_bytes([
             type16.formatted[7],
@@ -218,14 +176,14 @@ mod tests {
 
         let type17 = structures
             .iter()
-            .find(|s| s.ty == 17)
+            .find(|s| s.header.ty == 17)
             .expect("type 17 missing");
         let size_mb = u16::from_le_bytes([type17.formatted[12], type17.formatted[13]]);
         assert_eq!(u64::from(size_mb), config.ram_bytes / (1024 * 1024));
 
         let type19 = structures
             .iter()
-            .find(|s| s.ty == 19)
+            .find(|s| s.header.ty == 19)
             .expect("type 19 missing");
         let start_kb = u32::from_le_bytes([
             type19.formatted[4],

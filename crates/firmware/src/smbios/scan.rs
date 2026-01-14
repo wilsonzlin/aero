@@ -45,6 +45,19 @@ pub struct SmbiosStructureHeader {
     pub handle: u16,
 }
 
+/// Parsed SMBIOS structure record.
+///
+/// This is a view over the raw table bytes. `formatted` always includes the 4-byte
+/// structure header (`type`, `len`, `handle`) as required by the SMBIOS spec.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SmbiosStructure<'a> {
+    pub header: SmbiosStructureHeader,
+    /// Formatted section bytes (`header.len` bytes total, including the header).
+    pub formatted: &'a [u8],
+    /// Raw string-set bytes following `formatted`, including the terminating double-NUL.
+    pub strings: &'a [u8],
+}
+
 /// Scan guest memory for an SMBIOS 2.x Entry Point Structure (EPS) and return
 /// its physical address.
 ///
@@ -187,6 +200,17 @@ pub fn parse_structure_types(table: &[u8]) -> Vec<u8> {
 /// The parser stops after the first Type 127 ("End-of-table") structure, or
 /// earlier if the input is malformed/truncated.
 pub fn parse_structure_headers(table: &[u8]) -> Vec<SmbiosStructureHeader> {
+    parse_structures(table)
+        .into_iter()
+        .map(|s| s.header)
+        .collect()
+}
+
+/// Walk an SMBIOS structure table and return parsed structures.
+///
+/// The parser stops after the first Type 127 ("End-of-table") structure, or
+/// earlier if the input is malformed/truncated.
+pub fn parse_structures<'a>(table: &'a [u8]) -> Vec<SmbiosStructure<'a>> {
     let mut out = Vec::new();
     let mut i = 0usize;
 
@@ -229,7 +253,11 @@ pub fn parse_structure_headers(table: &[u8]) -> Vec<SmbiosStructureHeader> {
             break;
         }
 
-        out.push(SmbiosStructureHeader { ty, len, handle });
+        out.push(SmbiosStructure {
+            header: SmbiosStructureHeader { ty, len, handle },
+            formatted: &table[i..formatted_end],
+            strings: &table[formatted_end..j],
+        });
         i = j;
 
         if ty == 127 {
@@ -261,5 +289,13 @@ mod tests {
             0x41, 0x42, 0x43, // string data without terminator
         ];
         assert!(parse_structure_types(&table).is_empty());
+
+        // Valid minimal structure with empty string-set.
+        let table = [0u8, 4, 0, 0, 0, 0, 127, 4, 0, 0, 0, 0];
+        let structs = parse_structures(&table);
+        assert_eq!(structs.len(), 2);
+        assert_eq!(structs[0].header.ty, 0);
+        assert_eq!(structs[0].strings, &[0, 0]);
+        assert_eq!(structs[1].header.ty, 127);
     }
 }

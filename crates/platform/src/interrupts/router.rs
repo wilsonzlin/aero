@@ -1601,9 +1601,12 @@ mod tests {
 
         let seen = Arc::new(Mutex::new(Vec::<aero_interrupts::apic::Icr>::new()));
         let seen_clone = seen.clone();
-        ints.register_icr_notifier(1, Arc::new(move |icr| {
-            seen_clone.lock().unwrap().push(icr);
-        }));
+        ints.register_icr_notifier(
+            1,
+            Arc::new(move |icr| {
+                seen_clone.lock().unwrap().push(icr);
+            }),
+        );
 
         // Send fixed IPI vector 0x40 from LAPIC1 -> destination 0.
         ints.lapic_mmio_write_for_apic(1, 0x310, &((0u32 << 24).to_le_bytes()));
@@ -1635,6 +1638,7 @@ mod tests {
 
         assert_eq!(ints.lapics[0].get_pending_vector(), None);
         assert_eq!(ints.lapics[1].get_pending_vector(), Some(vector as u8));
+    }
 
         // Acknowledge the interrupt on the destination LAPIC to clear its pending state.
         ints.acknowledge_for_apic(1, vector as u8);
@@ -1697,9 +1701,12 @@ mod tests {
 
         let seen = Arc::new(Mutex::new(Vec::<aero_interrupts::apic::Icr>::new()));
         let seen_clone = seen.clone();
-        ints.register_icr_notifier(0, Arc::new(move |icr| {
-            seen_clone.lock().unwrap().push(icr);
-        }));
+        ints.register_icr_notifier(
+            0,
+            Arc::new(move |icr| {
+                seen_clone.lock().unwrap().push(icr);
+            }),
+        );
 
         ints.reset();
 
