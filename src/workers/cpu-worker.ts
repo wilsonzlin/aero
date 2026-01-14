@@ -32,6 +32,7 @@ type CpuWorkerToMainMessage =
       runtime_installed_table_index: number | null;
       rollback_ok: boolean;
       bigint_imports_ok: boolean;
+      code_version_table_configured: boolean;
       // i64/BigInt ABI smoke info (observed via `globalThis.__aero_jit_call`).
       jit_return_type: string | null;
       jit_return_is_sentinel: boolean;
@@ -422,6 +423,8 @@ async function runTieredVm(iterations: number, threshold: number) {
   const jitTlbFlagExec = (readMaybeU32(jitAbi, 'jit_tlb_flag_exec') ?? 4) >>> 0;
   const jitTlbFlagIsRam = (readMaybeU32(jitAbi, 'jit_tlb_flag_is_ram') ?? 8) >>> 0;
   const pageShift = (readMaybeU32(jitAbi, 'page_shift') ?? 12) >>> 0;
+  const pageShiftBig = BigInt(pageShift);
+  const pageSizeBig = 1n << pageShiftBig;
   let tier2CtxBytes = readMaybeU32(jitAbi, 'tier2_ctx_size') ?? 0;
   const tier2CtxOffset = readMaybeU32(jitAbi, 'tier2_ctx_offset');
   let commitFlagOffset = readMaybeU32(jitAbi, 'commit_flag_offset') ?? 0;
@@ -588,8 +591,8 @@ async function runTieredVm(iterations: number, threshold: number) {
     return;
   }
 
+  const expectedTier2CtxOffset = (cpu_state_size + derivedJitCtxTotalBytes) >>> 0;
   if (tier2CtxOffset !== undefined) {
-    const expectedTier2CtxOffset = (cpu_state_size + derivedJitCtxTotalBytes) >>> 0;
     const gotTier2CtxOffset = tier2CtxOffset >>> 0;
     if (gotTier2CtxOffset !== expectedTier2CtxOffset) {
       postToMain({
@@ -604,6 +607,30 @@ async function runTieredVm(iterations: number, threshold: number) {
       return;
     }
   }
+
+  const resolvedTier2CtxOffset = (tier2CtxOffset !== undefined ? (tier2CtxOffset >>> 0) : expectedTier2CtxOffset) >>> 0;
+  const abiCodeVersionTablePtrOffset = readMaybeU32(jitAbi, 'code_version_table_ptr_offset');
+  const abiCodeVersionTableLenOffset = readMaybeU32(jitAbi, 'code_version_table_len_offset');
+  const hasAbiCodeVersionOffsets =
+    abiCodeVersionTablePtrOffset !== undefined &&
+    abiCodeVersionTableLenOffset !== undefined &&
+    (abiCodeVersionTablePtrOffset >>> 0) !== 0 &&
+    (abiCodeVersionTableLenOffset >>> 0) !== 0;
+  const candidateCodeVersionTablePtrOffset = hasAbiCodeVersionOffsets
+    ? (abiCodeVersionTablePtrOffset! >>> 0)
+    : ((resolvedTier2CtxOffset + 4) >>> 0);
+  const candidateCodeVersionTableLenOffset = hasAbiCodeVersionOffsets
+    ? (abiCodeVersionTableLenOffset! >>> 0)
+    : ((resolvedTier2CtxOffset + 8) >>> 0);
+  const codeVersionTableOffsetsValid =
+    (candidateCodeVersionTablePtrOffset & 3) === 0 &&
+    (candidateCodeVersionTableLenOffset & 3) === 0 &&
+    candidateCodeVersionTablePtrOffset >= expectedTier2CtxOffset &&
+    candidateCodeVersionTableLenOffset >= expectedTier2CtxOffset &&
+    candidateCodeVersionTablePtrOffset + 4 <= commitFlagOffset &&
+    candidateCodeVersionTableLenOffset + 4 <= commitFlagOffset;
+  const codeVersionTablePtrOffset = codeVersionTableOffsetsValid ? candidateCodeVersionTablePtrOffset : null;
+  const codeVersionTableLenOffset = codeVersionTableOffsetsValid ? candidateCodeVersionTableLenOffset : null;
 
   const desiredGuestBytes = DEFAULT_GUEST_RAM_BYTES;
   const layout = api.guest_ram_layout(desiredGuestBytes);
@@ -690,6 +717,178 @@ async function runTieredVm(iterations: number, threshold: number) {
     memU8 = new Uint8Array(memory.buffer);
   };
 
+  // ---------------------------------------------------------------------------
+  // Shared code-version table (CVT-WASM-001).
+  // ---------------------------------------------------------------------------
+  //
+  // Newer WASM builds expose a dense `[u32]` page-version table in linear memory. The tiered VM
+  // publishes it via two `u32` fields (relative to `cpuPtr`) so JS can bump code page versions
+  // without calling back into WASM for every committed store.
+  //
+  // This worker caches the ptr/len + a `Uint32Array` view when possible. If the table is
+  // unavailable (ptr/len == 0), we fall back to the legacy `vm.on_guest_write` callback when
+  // available.
+  let cachedCodeVersionCpuPtr: number | null = null;
+  let codeVersionTablePtr = 0;
+  let codeVersionTableLen = 0;
+  let codeVersionTableU32: Uint32Array | null = null;
+  let codeVersionTableU32Buffer: ArrayBufferLike | null = null;
+
+  const codeVersionTableUseAtomics = (): boolean => {
+    // `Atomics` is required for SharedArrayBuffer; check defensively for older browsers/tests.
+    return (
+      typeof Atomics !== 'undefined' &&
+      typeof SharedArrayBuffer !== 'undefined' &&
+      memory.buffer instanceof SharedArrayBuffer
+    );
+  };
+
+  const refreshCodeVersionTableView = (): void => {
+    if (!codeVersionTablePtr || !codeVersionTableLen) {
+      codeVersionTableU32 = null;
+      codeVersionTableU32Buffer = null;
+      return;
+    }
+
+    if (
+      codeVersionTableU32 &&
+      codeVersionTableU32Buffer === memory.buffer &&
+      codeVersionTableU32.byteOffset === codeVersionTablePtr &&
+      codeVersionTableU32.length === codeVersionTableLen
+    ) {
+      return;
+    }
+
+    if ((codeVersionTablePtr & 3) !== 0) {
+      codeVersionTableU32 = null;
+      codeVersionTableU32Buffer = null;
+      return;
+    }
+
+    const endByte = BigInt(codeVersionTablePtr) + BigInt(codeVersionTableLen) * 4n;
+    if (endByte > BigInt(memory.buffer.byteLength)) {
+      codeVersionTableU32 = null;
+      codeVersionTableU32Buffer = null;
+      return;
+    }
+
+    try {
+      codeVersionTableU32 = new Uint32Array(memory.buffer, codeVersionTablePtr, codeVersionTableLen);
+      codeVersionTableU32Buffer = memory.buffer;
+    } catch {
+      codeVersionTableU32 = null;
+      codeVersionTableU32Buffer = null;
+    }
+  };
+
+  const refreshCodeVersionTableFromCpu = (cpuPtr: number): void => {
+    if (codeVersionTablePtrOffset === null || codeVersionTableLenOffset === null) return;
+
+    refreshMemU8();
+
+    const cpuPtrU32 = cpuPtr >>> 0;
+    let ptr = 0;
+    let len = 0;
+    try {
+      ptr = dv.getUint32(cpuPtrU32 + codeVersionTablePtrOffset, true) >>> 0;
+      len = dv.getUint32(cpuPtrU32 + codeVersionTableLenOffset, true) >>> 0;
+    } catch {
+      return;
+    }
+
+    const candidateValid = (() => {
+      if (!ptr || !len) return false;
+      if ((ptr & 3) !== 0) return false;
+      const endByte = BigInt(ptr) + BigInt(len) * 4n;
+      return endByte <= BigInt(memory.buffer.byteLength);
+    })();
+
+    if (!candidateValid) {
+      // Only clear the cached table if the CPU pointer that used to own it is reporting it as
+      // invalid. Ignore invalid headers from synthetic `__aero_jit_call` invocations that use a
+      // scratch cpuPtr (BigInt ABI tests, rollback tests, etc).
+      if (cachedCodeVersionCpuPtr === cpuPtrU32) {
+        codeVersionTablePtr = 0;
+        codeVersionTableLen = 0;
+        codeVersionTableU32 = null;
+        codeVersionTableU32Buffer = null;
+      }
+      return;
+    }
+
+    cachedCodeVersionCpuPtr = cpuPtrU32;
+    if (codeVersionTablePtr !== ptr || codeVersionTableLen !== len) {
+      codeVersionTablePtr = ptr;
+      codeVersionTableLen = len;
+      // Force recreation.
+      codeVersionTableU32Buffer = null;
+    }
+
+    refreshCodeVersionTableView();
+  };
+
+  const ensureCodeVersionTableView = (): Uint32Array | null => {
+    refreshMemU8();
+
+    // If `memory.grow()` swapped the backing store, refresh the view.
+    if (codeVersionTableU32 && codeVersionTableU32Buffer !== memory.buffer) {
+      codeVersionTableU32Buffer = null;
+    }
+    if (!codeVersionTableU32 || codeVersionTableU32Buffer === null) {
+      refreshCodeVersionTableView();
+    }
+
+    return codeVersionTableU32;
+  };
+
+  const readCodePageVersion = (page: bigint): bigint => {
+    const table = ensureCodeVersionTableView();
+    if (!table) return 0n;
+    const idxBig = asU64(page);
+    const len = codeVersionTableLen >>> 0;
+    if (idxBig >= BigInt(len)) return 0n;
+    const idx = Number(idxBig);
+    const raw = codeVersionTableUseAtomics() ? Atomics.load(table, idx) : table[idx]!;
+    return BigInt(raw >>> 0);
+  };
+
+  const bumpCodeVersions = (paddr: bigint, lenBytes: number): void => {
+    const table = ensureCodeVersionTableView();
+    if (!table) return;
+    const n = lenBytes >>> 0;
+    if (n === 0) return;
+
+    const start = asU64(paddr);
+    const u64MaxPlusOne = 0x1_0000_0000_0000_0000n;
+    let endExclusive = start + BigInt(n);
+    if (endExclusive > u64MaxPlusOne) endExclusive = u64MaxPlusOne;
+    const endInclusive = endExclusive - 1n;
+
+    const startPage = start >> pageShiftBig;
+    const endPage = endInclusive >> pageShiftBig;
+    const tableLenBig = BigInt(codeVersionTableLen >>> 0);
+    if (tableLenBig === 0n || startPage >= tableLenBig) return;
+    const clampedEndPage = endPage >= tableLenBig ? tableLenBig - 1n : endPage;
+
+    const startIdx = Number(startPage);
+    const endIdx = Number(clampedEndPage);
+    if (startIdx > endIdx) return;
+
+    if (codeVersionTableUseAtomics()) {
+      for (let i = startIdx; i <= endIdx; i++) Atomics.add(table, i, 1);
+    } else {
+      for (let i = startIdx; i <= endIdx; i++) table[i] = (table[i]! + 1) >>> 0;
+    }
+  };
+
+  const bumpOrNotifyGuestWrite = (paddr: bigint, lenBytes: number): void => {
+    if (ensureCodeVersionTableView()) {
+      bumpCodeVersions(paddr, lenBytes);
+      return;
+    }
+    if (onGuestWrite) onGuestWrite(paddr, lenBytes);
+  };
+
   globalThis.__aero_jit_call = (
     tableIndex: number,
     cpuPtr: number,
@@ -701,6 +900,7 @@ async function runTieredVm(iterations: number, threshold: number) {
     }
 
     refreshMemU8();
+    refreshCodeVersionTableFromCpu(cpuPtr);
 
     const commitFlagAddr = (cpuPtr + commitFlagOffset) >>> 0;
     // Default to "committed". Rollback paths clear this before returning so the WASM tiered VM can
@@ -750,11 +950,11 @@ async function runTieredVm(iterations: number, threshold: number) {
       }
       memU8.set(cpuSnapshot, cpuPtr);
       dv.setUint32(commitFlagAddr, 0, true);
-    } else if (writeLog.length && onGuestWrite) {
+    } else if (writeLog.length) {
       // Notify the tiered runtime of committed guest writes so it can bump code page versions for
       // self-modifying code invalidation. We intentionally skip this on rolled-back exits.
       for (const entry of writeLog) {
-        onGuestWrite(entry.paddr, entry.size);
+        bumpOrNotifyGuestWrite(entry.paddr, entry.size);
       }
     }
 
@@ -917,11 +1117,8 @@ async function runTieredVm(iterations: number, threshold: number) {
     logWrite(linear, 1, paddrU64);
     dv.setUint8(linear, value & 0xff);
     // If the helper is used outside a JIT block (unlikely), still bump code versions.
-    if (!activeWriteLog && onGuestWrite) onGuestWrite(paddrU64, 1);
+    if (!activeWriteLog) bumpOrNotifyGuestWrite(paddrU64, 1);
   };
-
-  const pageShiftBig = BigInt(pageShift);
-  const pageSizeBig = 1n << pageShiftBig;
 
   // Tier-1 imports required by generated blocks (even if the smoke block doesn't use them).
   const env = {
@@ -931,7 +1128,10 @@ async function runTieredVm(iterations: number, threshold: number) {
     mem_read_u32: (_cpuPtr: number, addr: bigint) => readGuestU32(addr) | 0,
     mem_read_u64: (_cpuPtr: number, addr: bigint) => asI64(readGuestU64(addr)),
     // Tier-2 codegen may optionally import this for code-version guards. It returns a u32 encoded as i64.
-    code_page_version: (_cpuPtr: number, _page: bigint) => 0n,
+    code_page_version: (cpuPtr: number, page: bigint) => {
+      refreshCodeVersionTableFromCpu(cpuPtr);
+      return readCodePageVersion(page);
+    },
     mem_write_u8: (_cpuPtr: number, addr: bigint, value: number) => {
       writeGuestU8(addr, value);
     },
@@ -942,7 +1142,7 @@ async function runTieredVm(iterations: number, threshold: number) {
       if (linear !== null) {
         logWrite(linear, 2, paddrU64);
         dv.setUint16(linear, value & 0xffff, true);
-        if (!activeWriteLog && onGuestWrite) onGuestWrite(paddrU64, 2);
+        if (!activeWriteLog) bumpOrNotifyGuestWrite(paddrU64, 2);
         return;
       }
       writeGuestU8(paddrU64, value);
@@ -955,7 +1155,7 @@ async function runTieredVm(iterations: number, threshold: number) {
       if (linear !== null) {
         logWrite(linear, 4, paddrU64);
         dv.setUint32(linear, value >>> 0, true);
-        if (!activeWriteLog && onGuestWrite) onGuestWrite(paddrU64, 4);
+        if (!activeWriteLog) bumpOrNotifyGuestWrite(paddrU64, 4);
         return;
       }
       writeGuestU8(paddrU64, value);
@@ -970,7 +1170,7 @@ async function runTieredVm(iterations: number, threshold: number) {
       if (linear !== null) {
         logWrite(linear, 8, paddrU64);
         dv.setBigUint64(linear, asU64(value), true);
-        if (!activeWriteLog && onGuestWrite) onGuestWrite(paddrU64, 8);
+        if (!activeWriteLog) bumpOrNotifyGuestWrite(paddrU64, 8);
         return;
       }
       // Fallback: bytewise write (for hole straddles / oob).
@@ -1513,12 +1713,12 @@ async function runTieredVm(iterations: number, threshold: number) {
       // Patch the guest code bytes in-place (modify the `add eax, imm8` immediate from 1 -> 2).
       const patched = new Uint8Array([0x66, 0x83, 0xc0, 0x02, 0xeb, 0xfa]);
       new Uint8Array(memory.buffer).set(patched, guest_base + ENTRY_RIP);
-      if (!onGuestWrite) {
+      if (!ensureCodeVersionTableView() && !onGuestWrite) {
         throw new Error(
-          'WasmTieredVm.on_guest_write/jit_on_guest_write is unavailable; cannot test self-modifying code invalidation',
+          'Cannot bump code page versions (missing shared code-version table and WasmTieredVm.on_guest_write/jit_on_guest_write)',
         );
       }
-      onGuestWrite(BigInt(ENTRY_RIP), patched.byteLength);
+      bumpOrNotifyGuestWrite(BigInt(ENTRY_RIP), patched.byteLength);
 
       let sawRecompileRequest = false;
 
@@ -1636,12 +1836,12 @@ async function runTieredVm(iterations: number, threshold: number) {
     // Wait for the JIT worker to reach the barrier (sets the slot to `id`).
     Atomics.wait(sync, 0, 0, 5_000);
     const seen = Atomics.load(sync, 0);
-    if (seen === staleJob.id) {
-      // Mutate one byte of guest code and bump the page-version tracker.
-      const u8 = new Uint8Array(memory.buffer);
-      u8[guest_base + STALE_RIP] ^= 0x01;
-      if (onGuestWrite) onGuestWrite(BigInt(STALE_RIP), 1);
-    }
+      if (seen === staleJob.id) {
+        // Mutate one byte of guest code and bump the page-version tracker.
+        const u8 = new Uint8Array(memory.buffer);
+        u8[guest_base + STALE_RIP] ^= 0x01;
+        bumpOrNotifyGuestWrite(BigInt(STALE_RIP), 1);
+      }
 
     // Release the JIT worker to respond.
     Atomics.store(sync, 0, -staleJob.id);
@@ -1679,8 +1879,8 @@ async function runTieredVm(iterations: number, threshold: number) {
     // Seed guest code bytes at 0x3000.
     new Uint8Array(memory.buffer).set(code, guest_base + STALE_RACE_RIP);
 
-    if (!onGuestWrite) {
-      throw new Error('on_guest_write is unavailable; cannot run stale race test');
+    if (!ensureCodeVersionTableView() && !onGuestWrite) {
+      throw new Error('Cannot bump code page versions (missing code-version table and on_guest_write); cannot run stale race test');
     }
 
     if (guest_base < DEBUG_SYNC_TAIL_GUARD_BYTES) {
@@ -1706,7 +1906,7 @@ async function runTieredVm(iterations: number, threshold: number) {
     // Mutate guest bytes and bump page versions so jobA is stale.
     const u8 = new Uint8Array(memory.buffer);
     u8[guest_base + STALE_RACE_RIP] ^= 0x01;
-    onGuestWrite(BigInt(STALE_RACE_RIP), 1);
+    bumpOrNotifyGuestWrite(BigInt(STALE_RACE_RIP), 1);
 
     // Compile job B on worker 2 with a fresh meta snapshot.
     const jobB = startCompileOn(jitWorker2, STALE_RACE_RIP, { max_bytes: DEFAULT_MAX_BYTES });
@@ -1749,6 +1949,7 @@ async function runTieredVm(iterations: number, threshold: number) {
     runtime_installed_table_index: runtimeInstalledTableIndex,
     rollback_ok,
     bigint_imports_ok,
+    code_version_table_configured: ensureCodeVersionTableView() !== null,
     jit_return_type: lastJitReturnType,
     jit_return_is_sentinel: lastJitReturnIsSentinel,
     stale_install_rejected,
