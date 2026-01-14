@@ -245,9 +245,9 @@ For each entrypoint:
 - **Can be deferred:** Advanced power states, multiple nodes/engines, MSI/MSI-X (use line-based if simplest).
  
 #### `DxgkDdiStopDevice`
-  
+   
 - **Purpose:** Stop hardware access during PnP stop/remove.
-- **AeroGPU MVP behavior:** Disable interrupts (clear `AEROGPU_MMIO_REG_IRQ_ENABLE`), stop vblank timer (in emulator), free ring allocations, unmap MMIO.
+- **AeroGPU MVP behavior:** Disable interrupts (clear `AEROGPU_MMIO_REG_IRQ_ENABLE`), stop vblank generation, free ring allocations, unmap MMIO.
 - **Can be deferred:** Sophisticated draining; MVP may force-reset the virtual GPU.
  
 #### `DxgkDdiRemoveDevice`
@@ -351,7 +351,7 @@ For each entrypoint:
 - **Can be deferred:** Dynamic scaling/rotation.
  
 #### `DxgkDdiSetVidPnSourceAddress`
-    
+     
 - **Purpose:** Point scanout at a given primary surface allocation (flip).
 - **AeroGPU MVP behavior:**
   - Resolve the allocation’s guest physical base address (GPA). For MVP, ensure scanout allocations are physically contiguous so they can be described by a single GPA range.
@@ -359,13 +359,13 @@ For each entrypoint:
     - `AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_LO/HI`
     - `AEROGPU_MMIO_REG_SCANOUT0_PITCH_BYTES`
     - `AEROGPU_MMIO_REG_SCANOUT0_FORMAT`
-  - This becomes the source the emulator displays to the host canvas.
+  - This becomes the source the host device model displays (e.g. `aero_machine::Machine::display_present()` reads the framebuffer from guest memory).
 - **Can be deferred:** Multi-plane overlay, stereo, rotation.
   
 #### `DxgkDdiSetVidPnSourceVisibility`
   
 - **Purpose:** Enable/disable scanout for a source (blanking).
-- **AeroGPU MVP behavior:** Set/clear `AEROGPU_MMIO_REG_SCANOUT0_ENABLE` (1/0); emulator will present black when not visible.
+- **AeroGPU MVP behavior:** Set/clear `AEROGPU_MMIO_REG_SCANOUT0_ENABLE` (1/0); host presentation should render a blank frame when not visible.
 - **Can be deferred:** DPMS, advanced power gating.
  
 #### `DxgkDdiQueryVidPnHardwareCapability`
@@ -573,13 +573,13 @@ See:
 - **Purpose:** Provide cursor bitmap/shape to hardware.
 - **AeroGPU MVP behavior:**
   - Store cursor image in a small internal buffer (or a dedicated “cursor allocation” in system memory).
-  - If `AEROGPU_FEATURE_CURSOR` is set, program cursor registers (`AEROGPU_MMIO_REG_CURSOR_*`) so the emulator can composite the cursor in scanout.
+  - If `AEROGPU_FEATURE_CURSOR` is set, program cursor registers (`AEROGPU_MMIO_REG_CURSOR_*`) so the host presentation layer can composite the cursor in scanout.
 - **Can be deferred:** Color cursor formats beyond ARGB, animated cursor.
   
 #### `DxgkDdiSetPointerPosition`
   
 - **Purpose:** Update cursor position/visibility.
-- **AeroGPU MVP behavior:** Write cursor position (`AEROGPU_MMIO_REG_CURSOR_X/Y`) and visibility (`AEROGPU_MMIO_REG_CURSOR_ENABLE`) to MMIO; emulator composites.
+- **AeroGPU MVP behavior:** Write cursor position (`AEROGPU_MMIO_REG_CURSOR_X/Y`) and visibility (`AEROGPU_MMIO_REG_CURSOR_ENABLE`) to MMIO; host composites.
 - **Can be deferred:** Multi-monitor cursor constraints.
  
 ---
@@ -688,24 +688,24 @@ MVP assumes:
 - One scanout surface active at a time.
  
 ### 6.2 How scanout is updated
-  
+   
 Windows flips/sets scanout via `DxgkDdiSetVidPnSourceAddress`. In our driver:
-  
+   
 1. dxgkrnl passes the primary allocation handle and presentation parameters.
 2. KMD resolves that allocation to:
    - guest physical base address (GPA) (for MVP, scanout allocations are physically contiguous)
    - pitch
    - pixel format
 3. KMD programs scanout0 MMIO registers (`AEROGPU_MMIO_REG_SCANOUT0_*`) with this info.
-4. Emulator reads scanout surface from guest memory and displays it.
+4. Host reads scanout surface from guest memory and displays it (e.g. `aero_machine::Machine::display_present()` in the canonical machine).
  
 ### 6.3 Vblank simulation (DWM stability)
    
 DWM’s scheduling expects periodic vblank events. Because AeroGPU is virtual:
   
-- The emulator will generate a **fixed-rate vblank tick** (default 60Hz) using its host timer.
+- The device model will generate a **fixed-rate vblank tick** (default 60Hz) using its host timer.
 - On each vblank tick:
-  - Emulator raises the AeroGPU interrupt
+  - Host raises the AeroGPU interrupt
   - KMD `InterruptRoutine` reports a vblank interrupt for Source 0 (backed by `AEROGPU_IRQ_SCANOUT_VBLANK`)
  
 `GetScanLine` may be implemented as:
