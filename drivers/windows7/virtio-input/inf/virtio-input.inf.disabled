@@ -13,7 +13,7 @@
 ;   - This file is a legacy filename alias kept for compatibility.
 ;   - It is allowed to diverge from the canonical INF only in the models sections
 ;     (`[Aero.NTx86]` / `[Aero.NTamd64]`) to add the opt-in strict, revision-gated
-;     generic fallback HWID (no SUBSYS).
+;     generic fallback HWID (no SUBSYS): `PCI\VEN_1AF4&DEV_1052&REV_01`.
 ;   - Outside those models sections, from the first section header (typically
 ;     `[Version]`) onward, it must remain byte-for-byte identical to the canonical
 ;     INF.
