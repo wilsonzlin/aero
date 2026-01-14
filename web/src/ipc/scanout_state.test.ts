@@ -3,7 +3,10 @@ import { describe, expect, it } from "vitest";
 import { Worker, type WorkerOptions } from "node:worker_threads";
 
 import {
+  SCANOUT_FORMAT_B8G8R8A8,
   SCANOUT_FORMAT_B8G8R8X8,
+  SCANOUT_FORMAT_B8G8R8A8_SRGB,
+  SCANOUT_FORMAT_B8G8R8X8_SRGB,
   SCANOUT_SOURCE_WDDM,
   SCANOUT_STATE_GENERATION_BUSY_BIT,
   SCANOUT_STATE_BYTE_LEN,
@@ -14,6 +17,7 @@ import {
   trySnapshotScanoutState,
   wrapScanoutState,
 } from "./scanout_state";
+import { AerogpuFormat } from "../../../emulator/protocol/aerogpu/aerogpu_pci";
 
 describe("ipc/scanout_state", () => {
   it("publishScanoutState + snapshotScanoutState roundtrips values", () => {
@@ -36,6 +40,13 @@ describe("ipc/scanout_state", () => {
     expect((snap.generation & SCANOUT_STATE_GENERATION_BUSY_BIT) >>> 0).toBe(0);
     expect(snap.generation >>> 0).toBe(generation >>> 0);
     expect(snap).toEqual({ generation: generation >>> 0, ...update });
+  });
+
+  it("scanout format constants match AerogpuFormat discriminants", () => {
+    expect(SCANOUT_FORMAT_B8G8R8X8).toBe(AerogpuFormat.B8G8R8X8Unorm);
+    expect(SCANOUT_FORMAT_B8G8R8A8).toBe(AerogpuFormat.B8G8R8A8Unorm);
+    expect(SCANOUT_FORMAT_B8G8R8X8_SRGB).toBe(AerogpuFormat.B8G8R8X8UnormSrgb);
+    expect(SCANOUT_FORMAT_B8G8R8A8_SRGB).toBe(AerogpuFormat.B8G8R8A8UnormSrgb);
   });
 
   it("wrapScanoutState validates bounds and 4-byte alignment", () => {
