@@ -2206,6 +2206,14 @@ impl AerogpuD3d11Executor {
     }
 
     #[doc(hidden)]
+    pub fn shader_wgsl_source(&self, shader_id: u32) -> Option<&str> {
+        self.resources
+            .shaders
+            .get(&shader_id)
+            .map(|s| s.wgsl_source.as_str())
+    }
+
+    #[doc(hidden)]
     pub fn binding_state(&self) -> &BindingState {
         &self.bindings
     }
@@ -16465,22 +16473,49 @@ fn ds_eval(patch_id: u32, domain: vec3<f32>, _local_vertex: u32) -> AeroDsOut {
                 }
             }
             ShaderStage::Hull | ShaderStage::Domain => {
-                // Placeholder tessellation path: accept these shaders by handle, but do not attempt
-                // to translate yet.
-                (
-                    format!("@compute @workgroup_size(1)\nfn {entry_point}() {{}}\n"),
-                    ShaderReflection {
-                        // Best-effort reflection: HS/DS shaders are accepted but not executed yet,
-                        // so a reflection failure should not prevent shader creation.
-                        bindings: crate::sm4::decode_program(&program)
-                            .ok()
-                            .and_then(|module| {
-                                crate::shader_translate::reflect_resource_bindings(&module).ok()
-                            })
-                            .unwrap_or_default(),
-                        ..Default::default()
-                    },
-                )
+                // Tessellation stages (HS/DS) are accepted by handle even when we cannot translate
+                // their DXBC yet (some guest shaders omit signatures or use an unsupported SM5 token
+                // encoding).
+                //
+                // When signature chunks are available and the SM4/5 token stream decodes, try to
+                // translate HS/DS into WGSL compute shaders. Fall back to a no-op placeholder so
+                // shader creation stays robust for bring-up.
+                if signature_driven {
+                    match try_translate_sm4_signature_driven(&dxbc, &program, &signatures) {
+                        Ok(translated) => (translated.wgsl, translated.reflection),
+                        Err(_err) => (
+                            format!("@compute @workgroup_size(1)\nfn {entry_point}() {{}}\n"),
+                            ShaderReflection {
+                                // Best-effort reflection: HS/DS shaders are accepted but not
+                                // executed yet, so a reflection failure should not prevent shader
+                                // creation.
+                                bindings: crate::sm4::decode_program(&program)
+                                    .ok()
+                                    .and_then(|module| {
+                                        crate::shader_translate::reflect_resource_bindings(&module)
+                                            .ok()
+                                    })
+                                    .unwrap_or_default(),
+                                ..Default::default()
+                            },
+                        ),
+                    }
+                } else {
+                    (
+                        format!("@compute @workgroup_size(1)\nfn {entry_point}() {{}}\n"),
+                        ShaderReflection {
+                            // Best-effort reflection: HS/DS shaders are accepted but not executed
+                            // yet, so a reflection failure should not prevent shader creation.
+                            bindings: crate::sm4::decode_program(&program)
+                                .ok()
+                                .and_then(|module| {
+                                    crate::shader_translate::reflect_resource_bindings(&module).ok()
+                                })
+                                .unwrap_or_default(),
+                            ..Default::default()
+                        },
+                    )
+                }
             }
             ShaderStage::Vertex | ShaderStage::Pixel | ShaderStage::Compute => {
                 if signature_driven {

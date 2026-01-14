@@ -6,6 +6,9 @@ use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::AerogpuShaderStageEx;
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 
+const HS_RET: &[u8] = include_bytes!("fixtures/hs_ret.dxbc");
+const DS_RET: &[u8] = include_bytes!("fixtures/ds_ret.dxbc");
+
 fn build_dxbc(chunks: &[(FourCC, Vec<u8>)]) -> Vec<u8> {
     dxbc_test_utils::build_container_owned(chunks)
 }
@@ -144,6 +147,47 @@ fn aerogpu_cmd_create_shader_dxbc_stage_ex_stage_mismatch_includes_stage_ex() {
         assert!(
             msg.contains("stage_ex=4"),
             "expected stage_ex value in error message, got: {msg}"
+        );
+    });
+}
+
+#[test]
+fn aerogpu_cmd_create_shader_dxbc_stage_ex_translates_hs_ds_when_signatures_present() {
+    pollster::block_on(async {
+        let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+            Ok(exec) => exec,
+            Err(e) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                return;
+            }
+        };
+
+        const HS_SHADER: u32 = 1;
+        const DS_SHADER: u32 = 2;
+
+        let mut writer = AerogpuCmdWriter::new();
+        writer.create_shader_dxbc_ex(HS_SHADER, AerogpuShaderStageEx::Hull, HS_RET);
+        writer.create_shader_dxbc_ex(DS_SHADER, AerogpuShaderStageEx::Domain, DS_RET);
+        let stream = writer.finish();
+
+        let mut guest_mem = VecGuestMemory::new(0);
+        exec.execute_cmd_stream(&stream, None, &mut guest_mem)
+            .expect("command stream should execute");
+
+        let hs_wgsl = exec
+            .shader_wgsl_source(HS_SHADER)
+            .expect("HS shader should exist after CREATE_SHADER_DXBC");
+        assert!(
+            hs_wgsl.contains("fn hs_patch_constants"),
+            "expected translated HS WGSL to include patch-constant entry point:\n{hs_wgsl}"
+        );
+
+        let ds_wgsl = exec
+            .shader_wgsl_source(DS_SHADER)
+            .expect("DS shader should exist after CREATE_SHADER_DXBC");
+        assert!(
+            ds_wgsl.contains("ds_in_cp"),
+            "expected translated DS WGSL to include control-point input buffer plumbing:\n{ds_wgsl}"
         );
     });
 }
