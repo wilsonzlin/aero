@@ -3165,8 +3165,18 @@ impl Machine {
                 if let Some(v) = get_bool("enable_uhci")? {
                     cfg.enable_uhci = v;
                 }
+                let mut enable_vga_set = false;
                 if let Some(v) = get_bool("enable_vga")? {
                     cfg.enable_vga = v;
+                    enable_vga_set = true;
+                }
+                if let Some(v) = get_bool("enable_aerogpu")? {
+                    cfg.enable_aerogpu = v;
+                }
+                // If callers request AeroGPU without explicitly specifying VGA, disable VGA by
+                // default to avoid conflicting scanout/device paths.
+                if cfg.enable_aerogpu && !enable_vga_set {
+                    cfg.enable_vga = false;
                 }
                 if let Some(v) = get_bool("enable_serial")? {
                     cfg.enable_serial = v;

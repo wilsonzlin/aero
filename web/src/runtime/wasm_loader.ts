@@ -1443,6 +1443,14 @@ export interface WasmApi {
          */
         new_with_cpu_count?: (ramSizeBytes: number, cpuCount: number) => MachineHandle;
         /**
+         * Construct a machine with an options object that can override the default device set.
+         *
+         * This preserves the existing `new(ramSizeBytes)` behavior when `options` is omitted.
+         *
+         * Optional for older WASM builds.
+         */
+        new_with_options?: (ramSizeBytes: number, options?: unknown) => MachineHandle;
+        /**
          * Stable snapshot `disk_id` helpers for the canonical Win7 storage topology.
          *
          * Optional for older WASM builds.
