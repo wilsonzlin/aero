@@ -919,7 +919,7 @@ The guest emits one of:
 - `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|PASS|performed=1|counter_before=...|counter_after=...`
 - `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|SKIP|reason=flag_not_set` (test not enabled / guest not provisioned; older selftests may emit `...|SKIP|flag_not_set`)
 - `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|SKIP|reason=not_supported` (miniport does not support the reset IOCTL; older selftests may emit `...|SKIP|not_supported`)
-- `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|FAIL|reason=...|err=...`
+- `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|FAIL|reason=...|err=...` (older selftests may emit `...|FAIL|<reason>|err=...` with no `reason=` field)
 
 The harness also mirrors the final guest result marker into a stable host marker for log scraping/debugging:
 

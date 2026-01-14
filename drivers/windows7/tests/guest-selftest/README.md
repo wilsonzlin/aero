@@ -57,7 +57,7 @@ For the consolidated virtio-input end-to-end validation plan (device model + dri
         (older selftest binaries may emit `...|SKIP|flag_not_set`)
       - `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|SKIP|reason=not_supported` when the miniport reports the reset IOCTL
         is not supported
-      - `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|FAIL|reason=...|err=...` on failure
+      - `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|FAIL|reason=...|err=...` on failure (older selftests may emit `...|FAIL|<reason>|err=...` with no `reason=` field)
     - Intended to be paired with host-harness gating:
       - PowerShell: `Invoke-AeroVirtioWin7Tests.ps1 -WithBlkReset`
       - Python: `invoke_aero_virtio_win7_tests.py --with-blk-reset`
