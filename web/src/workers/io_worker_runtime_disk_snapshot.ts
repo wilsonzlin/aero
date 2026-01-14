@@ -73,8 +73,10 @@ export async function restoreRuntimeDiskWorkerSnapshotFromDeviceBlobs(opts: {
 } | null> {
   const state = findRuntimeDiskWorkerSnapshotDeviceBlob(opts.devices);
   if (!state) return null;
-  await opts.diskClient.restoreFromSnapshot(state);
+  // Decode before handing off to `RuntimeDiskClient.restoreFromSnapshot`, which may transfer
+  // (detach) the underlying ArrayBuffer for zero-copy IPC.
   const { activeDisk, cdDisk } = decodeRuntimeDiskWorkerSnapshotActiveDisks(state);
+  // Use a copy so that callers (and cached `restoredDevices`) retain the original bytes.
+  await opts.diskClient.restoreFromSnapshot(state.slice());
   return { state, activeDisk, cdDisk };
 }
-

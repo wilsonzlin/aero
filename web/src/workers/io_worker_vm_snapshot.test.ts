@@ -868,9 +868,15 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
         },
       ],
     });
+    const diskStateCopy = diskState.slice();
+    let restoredPayload: Uint8Array | null = null;
     const diskClient = {
       prepareSnapshot: vi.fn(async () => diskState),
-      restoreFromSnapshot: vi.fn(async () => undefined),
+      restoreFromSnapshot: vi.fn(async (state: Uint8Array) => {
+        // Simulate `RuntimeDiskClient` transfer semantics (buffer detaches after postMessage).
+        restoredPayload = state.slice();
+        structuredClone(state.buffer as ArrayBuffer, { transfer: [state.buffer as ArrayBuffer] });
+      }),
     };
 
     const devices: Array<{ kind: string; bytes: Uint8Array }> = [];
@@ -880,7 +886,9 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
 
     const restored = await restoreRuntimeDiskWorkerSnapshotFromDeviceBlobs({ devices, diskClient });
     expect(diskClient.restoreFromSnapshot).toHaveBeenCalledTimes(1);
-    expect(diskClient.restoreFromSnapshot).toHaveBeenCalledWith(diskState);
+    expect(restoredPayload).toEqual(diskStateCopy);
+    // The device blob stored in `devices` should not be detached by restore.
+    expect(devices[0]!.bytes).toEqual(diskStateCopy);
     expect(restored).toMatchObject({ state: diskState });
     expect(restored?.activeDisk).toEqual({ handle: 1, sectorSize: 512, capacityBytes: 1024, readOnly: false });
     expect(restored?.cdDisk).toBeNull();
