@@ -39,16 +39,16 @@ type DestinationPolicy struct {
 	// When false, the policy denies at minimum the ranges documented in README.md.
 	AllowPrivateNetworks bool
 
-	AllowCIDRs []*net.IPNet
-	DenyCIDRs  []*net.IPNet
+	allowCIDRs []*net.IPNet
+	denyCIDRs  []*net.IPNet
 
-	AllowPorts []PortRange
-	DenyPorts  []PortRange
+	allowPorts []portRange
+	denyPorts  []portRange
 }
 
-type PortRange struct {
-	Start uint16
-	End   uint16
+type portRange struct {
+	start uint16
+	end   uint16
 }
 
 func NewProductionDestinationPolicy() *DestinationPolicy {
@@ -95,7 +95,7 @@ func NewDestinationPolicyFromEnv() (*DestinationPolicy, error) {
 		if err != nil {
 			return nil, fmt.Errorf("destination policy: invalid ALLOW_UDP_CIDRS: %w", err)
 		}
-		p.AllowCIDRs = nets
+		p.allowCIDRs = nets
 	}
 
 	if v := strings.TrimSpace(os.Getenv("DENY_UDP_CIDRS")); v != "" {
@@ -103,7 +103,7 @@ func NewDestinationPolicyFromEnv() (*DestinationPolicy, error) {
 		if err != nil {
 			return nil, fmt.Errorf("destination policy: invalid DENY_UDP_CIDRS: %w", err)
 		}
-		p.DenyCIDRs = nets
+		p.denyCIDRs = nets
 	}
 
 	if v := strings.TrimSpace(os.Getenv("ALLOW_UDP_PORTS")); v != "" {
@@ -111,7 +111,7 @@ func NewDestinationPolicyFromEnv() (*DestinationPolicy, error) {
 		if err != nil {
 			return nil, fmt.Errorf("destination policy: invalid ALLOW_UDP_PORTS: %w", err)
 		}
-		p.AllowPorts = ranges
+		p.allowPorts = ranges
 	}
 
 	if v := strings.TrimSpace(os.Getenv("DENY_UDP_PORTS")); v != "" {
@@ -119,7 +119,7 @@ func NewDestinationPolicyFromEnv() (*DestinationPolicy, error) {
 		if err != nil {
 			return nil, fmt.Errorf("destination policy: invalid DENY_UDP_PORTS: %w", err)
 		}
-		p.DenyPorts = ranges
+		p.denyPorts = ranges
 	}
 
 	return p, nil
@@ -136,10 +136,10 @@ func (p *DestinationPolicy) AllowUDP(remoteIP net.IP, remotePort uint16) error {
 		return errors.New("destination policy: remote port 0 is invalid")
 	}
 
-	if portInRanges(remotePort, p.DenyPorts) {
+	if portInRanges(remotePort, p.denyPorts) {
 		return fmt.Errorf("destination policy: UDP port %d denied", remotePort)
 	}
-	if len(p.AllowPorts) > 0 && !portInRanges(remotePort, p.AllowPorts) {
+	if len(p.allowPorts) > 0 && !portInRanges(remotePort, p.allowPorts) {
 		return fmt.Errorf("destination policy: UDP port %d not in allowlist", remotePort)
 	}
 
@@ -171,12 +171,12 @@ func (p *DestinationPolicy) AllowUDP(remoteIP net.IP, remotePort uint16) error {
 		}
 	}
 
-	if ipInNets(ip, p.DenyCIDRs) {
+	if ipInNets(ip, p.denyCIDRs) {
 		return fmt.Errorf("destination policy: UDP destination %s denied by CIDR rule", remoteIP.String())
 	}
 
-	if len(p.AllowCIDRs) > 0 {
-		if ipInNets(ip, p.AllowCIDRs) {
+	if len(p.allowCIDRs) > 0 {
+		if ipInNets(ip, p.allowCIDRs) {
 			return nil
 		}
 		return fmt.Errorf("destination policy: UDP destination %s not in allowlist", remoteIP.String())
@@ -213,8 +213,8 @@ func parseCIDRList(v string) ([]*net.IPNet, error) {
 	return out, nil
 }
 
-func parsePortRangeList(v string) ([]PortRange, error) {
-	var out []PortRange
+func parsePortRangeList(v string) ([]portRange, error) {
+	var out []portRange
 	for _, raw := range strings.Split(v, ",") {
 		raw = strings.TrimSpace(raw)
 		if raw == "" {
@@ -235,7 +235,7 @@ func parsePortRangeList(v string) ([]PortRange, error) {
 				return nil, fmt.Errorf("invalid port range %q: start > end", raw)
 			}
 		}
-		out = append(out, PortRange{Start: start, End: end})
+		out = append(out, portRange{start: start, end: end})
 	}
 	return out, nil
 }
@@ -254,9 +254,9 @@ func parsePort(v string) (uint16, error) {
 	return uint16(n), nil
 }
 
-func portInRanges(port uint16, ranges []PortRange) bool {
+func portInRanges(port uint16, ranges []portRange) bool {
 	for _, r := range ranges {
-		if port >= r.Start && port <= r.End {
+		if port >= r.start && port <= r.end {
 			return true
 		}
 	}

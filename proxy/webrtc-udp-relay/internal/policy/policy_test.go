@@ -9,8 +9,8 @@ func TestCIDRPrecedence_DenyOverridesAllow(t *testing.T) {
 	p := &DestinationPolicy{
 		DefaultAllow:         false,
 		AllowPrivateNetworks: true,
-		AllowCIDRs:           []*net.IPNet{mustCIDR("1.1.1.0/24")},
-		DenyCIDRs:            []*net.IPNet{mustCIDR("1.1.1.1/32")},
+		allowCIDRs:           []*net.IPNet{mustCIDR("1.1.1.0/24")},
+		denyCIDRs:            []*net.IPNet{mustCIDR("1.1.1.1/32")},
 	}
 	if err := p.AllowUDP(net.ParseIP("1.1.1.1"), 53); err == nil {
 		t.Fatalf("expected deny to override allow")
@@ -21,7 +21,7 @@ func TestCIDRAllowOnlyMode(t *testing.T) {
 	p := &DestinationPolicy{
 		DefaultAllow:         false,
 		AllowPrivateNetworks: true,
-		AllowCIDRs:           []*net.IPNet{mustCIDR("8.8.8.0/24")},
+		allowCIDRs:           []*net.IPNet{mustCIDR("8.8.8.0/24")},
 	}
 
 	if err := p.AllowUDP(net.ParseIP("8.8.8.8"), 53); err != nil {
@@ -56,8 +56,8 @@ func TestPortAllowDeny(t *testing.T) {
 	p := &DestinationPolicy{
 		DefaultAllow:         true,
 		AllowPrivateNetworks: true,
-		AllowPorts:           []PortRange{{Start: 53, End: 53}},
-		DenyPorts:            []PortRange{{Start: 53, End: 53}},
+		allowPorts:           []portRange{{start: 53, end: 53}},
+		denyPorts:            []portRange{{start: 53, end: 53}},
 	}
 	if err := p.AllowUDP(net.ParseIP("8.8.8.8"), 53); err == nil {
 		t.Fatalf("expected deny port to override allow")
@@ -66,7 +66,7 @@ func TestPortAllowDeny(t *testing.T) {
 	p = &DestinationPolicy{
 		DefaultAllow:         true,
 		AllowPrivateNetworks: true,
-		AllowPorts:           []PortRange{{Start: 53, End: 53}},
+		allowPorts:           []portRange{{start: 53, end: 53}},
 	}
 	if err := p.AllowUDP(net.ParseIP("8.8.8.8"), 53); err != nil {
 		t.Fatalf("expected allowed port, got %v", err)
@@ -80,8 +80,8 @@ func TestCIDRIPv6AllowlistAndDenylist(t *testing.T) {
 	p := &DestinationPolicy{
 		DefaultAllow:         false,
 		AllowPrivateNetworks: true,
-		AllowCIDRs:           []*net.IPNet{mustCIDR("2001:db8::/32")},
-		DenyCIDRs:            []*net.IPNet{mustCIDR("2001:db8::1/128")},
+		allowCIDRs:           []*net.IPNet{mustCIDR("2001:db8::/32")},
+		denyCIDRs:            []*net.IPNet{mustCIDR("2001:db8::1/128")},
 	}
 
 	if err := p.AllowUDP(net.ParseIP("2001:db8::1"), 53); err == nil {
