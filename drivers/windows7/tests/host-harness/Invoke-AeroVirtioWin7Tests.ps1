@@ -709,21 +709,6 @@ function Try-HandleAeroHttpRequest {
         }
       }
 
-      if (-not [string]::IsNullOrWhiteSpace($HttpLogPath)) {
-        try {
-          $logMethod = if ([string]::IsNullOrEmpty($method)) { "?" } else { $method }
-          $logPath = if ([string]::IsNullOrEmpty($reqPath)) { "-" } else { $reqPath }
-          $logBytes = if ($isHead) { 0 } else { $bodyBytes.Length }
-          $line = "$logMethod $logPath $statusCode $logBytes`n"
-          $dir = [System.IO.Path]::GetDirectoryName($HttpLogPath)
-          if (-not [string]::IsNullOrEmpty($dir)) {
-            [void][System.IO.Directory]::CreateDirectory($dir)
-          }
-          $enc = [System.Text.UTF8Encoding]::new($false)
-          [System.IO.File]::AppendAllText($HttpLogPath, $line, $enc)
-        } catch { }
-      }
-
       $hdrLines = @(
         $statusLine,
         "Content-Type: $contentType",
