@@ -1007,10 +1007,26 @@ fn ds_eval(patch_id: u32, domain: vec3<f32>, _local_vertex: u32) -> AeroDsOut {
             let ds_pipeline = DomainEvalPipeline::new(&device, &ds_module, &ds_domain_bgl);
             let ds_internal_bg = ds_pipeline.create_internal_bind_group(
                 &device,
-                &patch_meta,
-                &hs_control_points,
-                &hs_patch_constants,
-                &expanded_vertices,
+                wgpu::BufferBinding {
+                    buffer: &patch_meta,
+                    offset: 0,
+                    size: None,
+                },
+                wgpu::BufferBinding {
+                    buffer: &hs_control_points,
+                    offset: 0,
+                    size: None,
+                },
+                wgpu::BufferBinding {
+                    buffer: &hs_patch_constants,
+                    offset: 0,
+                    size: None,
+                },
+                wgpu::BufferBinding {
+                    buffer: &expanded_vertices,
+                    offset: 0,
+                    size: None,
+                },
             );
 
             // Encode passes + readback copies.

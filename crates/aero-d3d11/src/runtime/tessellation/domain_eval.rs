@@ -233,10 +233,10 @@ impl DomainEvalPipeline {
     pub fn create_internal_bind_group(
         &self,
         device: &wgpu::Device,
-        patch_meta: &wgpu::Buffer,
-        hs_control_points: &wgpu::Buffer,
-        hs_patch_constants: &wgpu::Buffer,
-        out_vertices: &wgpu::Buffer,
+        patch_meta: wgpu::BufferBinding<'_>,
+        hs_control_points: wgpu::BufferBinding<'_>,
+        hs_patch_constants: wgpu::BufferBinding<'_>,
+        out_vertices: wgpu::BufferBinding<'_>,
     ) -> wgpu::BindGroup {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("aero tess domain eval internal bg"),
@@ -244,19 +244,19 @@ impl DomainEvalPipeline {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: DOMAIN_EVAL_BINDING_PATCH_META,
-                    resource: patch_meta.as_entire_binding(),
+                    resource: wgpu::BindingResource::Buffer(patch_meta),
                 },
                 wgpu::BindGroupEntry {
                     binding: DOMAIN_EVAL_BINDING_HS_CONTROL_POINTS,
-                    resource: hs_control_points.as_entire_binding(),
+                    resource: wgpu::BindingResource::Buffer(hs_control_points),
                 },
                 wgpu::BindGroupEntry {
                     binding: DOMAIN_EVAL_BINDING_HS_PATCH_CONSTANTS,
-                    resource: hs_patch_constants.as_entire_binding(),
+                    resource: wgpu::BindingResource::Buffer(hs_patch_constants),
                 },
                 wgpu::BindGroupEntry {
                     binding: DOMAIN_EVAL_BINDING_OUT_VERTICES,
-                    resource: out_vertices.as_entire_binding(),
+                    resource: wgpu::BindingResource::Buffer(out_vertices),
                 },
             ],
         })
