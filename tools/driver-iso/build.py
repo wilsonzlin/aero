@@ -11,9 +11,6 @@ import tempfile
 from pathlib import Path
 
 
-REQUIRED_PACKAGE_IDS = ("virtio-blk", "virtio-net")
-
-
 def _load_manifest(path: Path) -> dict:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
@@ -61,6 +58,65 @@ def _find_iso_tool() -> tuple[str, list[str]]:
     )
 
 
+def _cargo_exists() -> bool:
+    return shutil.which("cargo") is not None
+
+
+def _parse_source_date_epoch(value: str, *, source: str) -> int:
+    try:
+        return int(value.strip())
+    except ValueError:
+        raise SystemExit(f"invalid {source} (expected integer seconds): {value!r}")
+
+
+def _resolve_source_date_epoch(cli_value: int | None) -> int:
+    if cli_value is not None:
+        return cli_value
+    env_val = os.environ.get("SOURCE_DATE_EPOCH")
+    if env_val is not None and env_val.strip() != "":
+        return _parse_source_date_epoch(env_val, source="SOURCE_DATE_EPOCH")
+    return 0
+
+
+def _build_iso_with_aero_iso(
+    repo_root: Path,
+    stage_root: Path,
+    out_path: Path,
+    label: str,
+    source_date_epoch: int,
+) -> None:
+    cargo = shutil.which("cargo")
+    if not cargo:
+        raise SystemExit("cargo not found; required for --backend rust (or auto with cargo available)")
+
+    cargo_toml = repo_root / "tools/packaging/aero_packager/Cargo.toml"
+    if not cargo_toml.is_file():
+        raise SystemExit(f"aero_iso Cargo.toml not found: {cargo_toml}")
+
+    subprocess.run(
+        [
+            cargo,
+            "run",
+            "--quiet",
+            "--locked",
+            "--manifest-path",
+            str(cargo_toml),
+            "--bin",
+            "aero_iso",
+            "--",
+            "--in-dir",
+            str(stage_root),
+            "--out-iso",
+            str(out_path),
+            "--volume-id",
+            label,
+            "--source-date-epoch",
+            str(source_date_epoch),
+        ],
+        check=True,
+    )
+
+
 def _build_iso_with_imapi(stage_root: Path, out_path: Path, label: str) -> None:
     """
     Windows fallback: build an ISO using the built-in IMAPI COM APIs.
@@ -102,28 +158,76 @@ def _arches_for_require_arch(require_arch: str) -> tuple[str, ...]:
     return (require_arch,)
 
 
+def _validate_manifest(manifest: dict) -> list[dict]:
+    if manifest.get("schema_version") != 1:
+        raise SystemExit(
+            "unsupported manifest schema_version "
+            f"(expected 1, got {manifest.get('schema_version')!r})"
+        )
+
+    packages = manifest.get("packages")
+    if not isinstance(packages, list):
+        raise SystemExit(f"invalid manifest: 'packages' must be a list (got {type(packages).__name__})")
+
+    errors: list[str] = []
+    seen: dict[tuple[str, str], int] = {}
+
+    for idx, pkg in enumerate(packages):
+        if not isinstance(pkg, dict):
+            errors.append(f"packages[{idx}]: expected object, got {type(pkg).__name__}")
+            continue
+
+        pkg_id = pkg.get("id")
+        arch = pkg.get("arch")
+        if not isinstance(pkg_id, str) or not pkg_id:
+            errors.append(f"packages[{idx}]: missing/invalid 'id'")
+            continue
+        if not isinstance(arch, str) or not arch:
+            errors.append(f"packages[{idx}]: missing/invalid 'arch' (package id={pkg_id!r})")
+            continue
+
+        key = (pkg_id, arch)
+        if key in seen:
+            other = seen[key]
+            errors.append(
+                f"duplicate package entries for (id={pkg_id!r}, arch={arch!r}): "
+                f"packages[{other}] and packages[{idx}]"
+            )
+        else:
+            seen[key] = idx
+
+        if pkg.get("required") is True:
+            inf = pkg.get("inf")
+            if not isinstance(inf, str) or not inf:
+                errors.append(f"packages[{idx}]: required package missing/invalid 'inf' (id={pkg_id!r}, arch={arch!r})")
+
+    if errors:
+        formatted = "\n".join(f"- {e}" for e in errors)
+        raise SystemExit(f"invalid manifest structure:\n{formatted}")
+
+    # Type-checked via validation above.
+    return packages  # type: ignore[return-value]
+
+
 def _validate_required_packages(manifest: dict, drivers_root: Path, require_arch: str) -> None:
     missing: list[str] = []
 
-    packages = manifest.get("packages", [])
-    for pkg_id in REQUIRED_PACKAGE_IDS:
-        for arch in _arches_for_require_arch(require_arch):
-            matches = [pkg for pkg in packages if pkg.get("id") == pkg_id and pkg.get("arch") == arch]
-            if not matches:
-                missing.append(f"{pkg_id} ({arch}): missing package entry in manifest")
-                continue
-            if len(matches) > 1:
-                missing.append(f"{pkg_id} ({arch}): multiple package entries in manifest")
-                continue
+    packages = _validate_manifest(manifest)
+    arches = set(_arches_for_require_arch(require_arch))
 
-            pkg = matches[0]
-            inf_rel = pkg.get("inf")
-            if not inf_rel:
-                missing.append(f"{pkg_id} ({arch}): missing 'inf' in manifest")
-                continue
-            inf_path = drivers_root / inf_rel
-            if not inf_path.is_file():
-                missing.append(f"{pkg_id} ({arch}): {inf_rel} not found under {drivers_root}")
+    required_pkgs: list[dict] = [
+        pkg for pkg in packages if pkg.get("required") is True and pkg.get("arch") in arches
+    ]
+    for pkg in required_pkgs:
+        pkg_id = pkg["id"]
+        arch = pkg["arch"]
+        inf_rel = pkg.get("inf")
+        if not isinstance(inf_rel, str) or not inf_rel:
+            missing.append(f"{pkg_id} ({arch}): missing/invalid 'inf' in manifest")
+            continue
+        inf_path = drivers_root / inf_rel
+        if not inf_path.is_file():
+            missing.append(f"{pkg_id} ({arch}): {inf_rel} not found under {drivers_root}")
 
     if missing:
         formatted = "\n".join(f"- {m}" for m in missing)
@@ -185,6 +289,15 @@ def main() -> int:
 
     parser = argparse.ArgumentParser(description="Build an Aero Windows virtio drivers ISO.")
     parser.add_argument(
+        "--backend",
+        choices=["auto", "rust", "external"],
+        default="auto",
+        help=(
+            "ISO authoring backend (default: auto). "
+            "auto prefers the deterministic in-tree Rust backend when cargo is available."
+        ),
+    )
+    parser.add_argument(
         "--manifest",
         type=Path,
         default=repo_root / "drivers/virtio/manifest.json",
@@ -215,6 +328,15 @@ def main() -> int:
         help="Override ISO volume label (defaults to manifest)",
     )
     parser.add_argument(
+        "--source-date-epoch",
+        type=int,
+        default=None,
+        help=(
+            "Seconds since Unix epoch used for ISO timestamps in the deterministic Rust backend. "
+            "If omitted, uses SOURCE_DATE_EPOCH when set, otherwise 0."
+        ),
+    )
+    parser.add_argument(
         "--include-manifest",
         action="store_true",
         help=(
@@ -235,12 +357,23 @@ def main() -> int:
     out_path = args.output.resolve()
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    try:
-        tool_kind, tool_cmd = _find_iso_tool()
-    except SystemExit:
-        if os.name != "nt":
-            raise
-        tool_kind, tool_cmd = ("imapi", [])
+    backend = args.backend
+    if backend == "rust" and not _cargo_exists():
+        raise SystemExit(
+            "cargo not found; required for --backend rust.\n"
+            "Hint: install Rust from https://rustup.rs/ or pass --backend external to use mkisofs/xorriso/oscdimg/IMAPI."
+        )
+    use_rust = backend == "rust" or (backend == "auto" and _cargo_exists())
+
+    tool_kind = None
+    tool_cmd: list[str] = []
+    if not use_rust:
+        try:
+            tool_kind, tool_cmd = _find_iso_tool()
+        except SystemExit:
+            if os.name != "nt":
+                raise
+            tool_kind, tool_cmd = ("imapi", [])
 
     with tempfile.TemporaryDirectory(prefix="aero-virtio-iso-") as tmp:
         stage_root = Path(tmp) / "root"
@@ -270,34 +403,39 @@ def main() -> int:
                 dest_name = "virtio-manifest.json"
             shutil.copy2(args.manifest, stage_root / dest_name)
 
-        if tool_kind == "imapi":
-            _build_iso_with_imapi(stage_root, out_path, label)
-        elif tool_kind == "oscdimg":
-            cmd = [
-                *tool_cmd,
-                "-m",
-                "-o",
-                f"-l{label}",
-                str(stage_root),
-                str(out_path),
-            ]
+        if use_rust:
+            epoch = _resolve_source_date_epoch(args.source_date_epoch)
+            _build_iso_with_aero_iso(repo_root, stage_root, out_path, label, epoch)
         else:
-            # -iso-level 3: allow files >2GB and deeper paths (harmless for small ISOs).
-            cmd = [
-                *tool_cmd,
-                "-iso-level",
-                "3",
-                "-J",
-                "-R",
-                "-V",
-                label,
-                "-o",
-                str(out_path),
-                str(stage_root),
-            ]
+            assert tool_kind is not None
+            if tool_kind == "imapi":
+                _build_iso_with_imapi(stage_root, out_path, label)
+            elif tool_kind == "oscdimg":
+                cmd = [
+                    *tool_cmd,
+                    "-m",
+                    "-o",
+                    f"-l{label}",
+                    str(stage_root),
+                    str(out_path),
+                ]
+            else:
+                # -iso-level 3: allow files >2GB and deeper paths (harmless for small ISOs).
+                cmd = [
+                    *tool_cmd,
+                    "-iso-level",
+                    "3",
+                    "-J",
+                    "-R",
+                    "-V",
+                    label,
+                    "-o",
+                    str(out_path),
+                    str(stage_root),
+                ]
 
-        if tool_kind != "imapi":
-            subprocess.run(cmd, check=True)
+            if tool_kind != "imapi":
+                subprocess.run(cmd, check=True)
 
     print(f"Wrote {out_path} (sha256={_sha256(out_path)})")
     return 0

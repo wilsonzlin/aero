@@ -242,7 +242,10 @@ This document covers both; see the sections below.
 - `tools/driver-iso/build.py` builds an ISO from a driver root directory and `drivers/virtio/manifest.json`.
 - `tools/driver-iso/verify_iso.py` verifies the ISO contains the required INF files.
 
-The builder requires an ISO authoring tool (Linux: `xorriso` preferred; also supports `genisoimage`/`mkisofs`).
+The builder prefers the deterministic in-tree Rust ISO writer (`aero_iso`) when `cargo` is available (or when `--backend rust` is used).
+If Rust/cargo is unavailable, it falls back to external ISO tooling (Linux: `xorriso`/`genisoimage`/`mkisofs`; Windows: `oscdimg` or IMAPI).
+
+For deterministic builds, set `--source-date-epoch` (or `SOURCE_DATE_EPOCH`) to a fixed value (for example, `0`).
 
 ### Multi-arch driver ISOs are recommended (x86 + amd64)
 
@@ -393,9 +396,10 @@ python .\tools\driver-iso\build.py `
 
 Notes:
 
-- `tools/driver-iso/build.py` needs an ISO authoring tool available on PATH:
+- `tools/driver-iso/build.py` prefers Rust/cargo (`--backend rust`) for deterministic ISO builds.
+  If `cargo` is unavailable, you’ll need an external ISO authoring tool:
   - Linux/WSL: `xorriso` is easiest
-  - Windows: `oscdimg.exe` (Windows ADK) is commonly used
+  - Windows: `oscdimg.exe` (Windows ADK) is commonly used (or rely on the IMAPI fallback)
 
 ### Build `aero-guest-tools.iso` from a virtio-win ISO (optional / compatibility)
 

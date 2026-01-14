@@ -27,7 +27,7 @@
     },
     {
       "id": "virtio-blk",
-      "required": false,
+      "required": true,
       "os": "win7",
       "arch": "amd64",
       "package": "viostor",
@@ -35,7 +35,7 @@
     },
     {
       "id": "virtio-net",
-      "required": false,
+      "required": true,
       "os": "win7",
       "arch": "amd64",
       "package": "netkvm",
@@ -75,4 +75,3 @@
     }
   ]
 }
-

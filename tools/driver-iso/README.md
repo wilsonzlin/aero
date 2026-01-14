@@ -11,10 +11,17 @@ You can additionally include `drivers/virtio/manifest.json` via `--include-manif
 
 ## Dependencies
 
-The builder shells out to an ISO authoring tool:
+The builder supports multiple ISO authoring backends (see `--backend`):
+
+- **Rust (preferred, deterministic):** uses the in-tree `aero_iso` tool via `cargo`.
+  - Selected by default when `cargo` is available (`--backend auto`).
+  - Use `--backend rust` to force this backend.
+  - Determinism is controlled by `--source-date-epoch` / `SOURCE_DATE_EPOCH` (defaults to `0`).
+- **External tooling (fallback):** shells out to an ISO authoring tool:
 
 - Linux: `xorriso` (preferred) or `genisoimage` / `mkisofs`
 - Windows (optional): `oscdimg` (from the Windows ADK)
+- Windows (fallback): IMAPI (built-in) when no third-party tooling is available
 
 ## Build
 
@@ -22,6 +29,16 @@ From repo root:
 
 ```bash
 python3 tools/driver-iso/build.py \
+  --drivers-root drivers/virtio/prebuilt \
+  --output dist/aero-virtio-win7-drivers.iso
+```
+
+To build a deterministic ISO (recommended):
+
+```bash
+python3 tools/driver-iso/build.py \
+  --backend rust \
+  --source-date-epoch 0 \
   --drivers-root drivers/virtio/prebuilt \
   --output dist/aero-virtio-win7-drivers.iso
 ```

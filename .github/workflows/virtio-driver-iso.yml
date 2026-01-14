@@ -16,6 +16,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -27,12 +30,28 @@ jobs:
           sudo apt-get install -y xorriso p7zip-full
           python3 -m pip install pycdlib
 
-      - name: Build sample virtio drivers ISO
+      - name: Build sample virtio drivers ISO (deterministic, Rust backend)
         run: |
           python3 tools/driver-iso/build.py \
+            --backend rust \
+            --source-date-epoch 0 \
             --drivers-root drivers/virtio/sample \
             --output dist/aero-virtio-win7-drivers-sample.iso \
             --include-manifest
+
+      - name: Determinism self-test (build ISO twice, compare SHA256)
+        run: |
+          python3 tools/driver-iso/build.py \
+            --backend rust \
+            --source-date-epoch 0 \
+            --drivers-root drivers/virtio/sample \
+            --output dist/aero-virtio-win7-drivers-sample-2.iso \
+            --include-manifest
+          h1="$(sha256sum dist/aero-virtio-win7-drivers-sample.iso | awk '{print $1}')"
+          h2="$(sha256sum dist/aero-virtio-win7-drivers-sample-2.iso | awk '{print $1}')"
+          echo "sha256 run1: $h1"
+          echo "sha256 run2: $h2"
+          test "$h1" = "$h2"
 
       - name: Verify ISO contents
         run: |
