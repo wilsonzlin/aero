@@ -30,6 +30,8 @@ const BUF_INT: u32 = 0x6000;
 
 const LINK_TERMINATE: u32 = 1 << 0;
 const LINK_TYPE_QH: u32 = 0b01 << 1;
+const LINK_TYPE_SITD: u32 = 0b10 << 1;
+const LINK_TYPE_FSTN: u32 = 0b11 << 1;
 const LINK_ADDR_MASK: u32 = 0xffff_ffe0;
 
 const QTD_TOKEN_ACTIVE: u32 = 1 << 7;
@@ -1046,6 +1048,54 @@ fn ehci_periodic_qtd_self_loop_sets_hse_and_halts() {
     let ep_char = qh_epchar(0, 1, 64);
     write_qh(&mut mem, qh, LINK_TERMINATE, ep_char, qtd);
 
+    c.mmio_write(regs::REG_PERIODICLISTBASE, 4, fl_base);
+    c.mmio_write(regs::REG_USBCMD, 4, regs::USBCMD_RS | regs::USBCMD_PSE);
+
+    c.tick_1ms(&mut mem);
+
+    let sts = c.mmio_read(regs::REG_USBSTS, 4);
+    assert_ne!(sts & regs::USBSTS_HSE, 0);
+    assert_ne!(sts & regs::USBSTS_HCHALTED, 0);
+    assert_eq!(c.mmio_read(regs::REG_USBCMD, 4) & regs::USBCMD_RS, 0);
+}
+
+#[test]
+fn ehci_periodic_sitd_self_loop_sets_hse_and_halts() {
+    let mut mem = TestMemory::new(MEM_SIZE);
+
+    let fl_base: u32 = 0x7000;
+    let sitd: u32 = 0x1800;
+
+    // Frame list entry 0 points at a siTD (type=2). The siTD's next link pointer (dword0) points
+    // back to itself.
+    mem.write_u32(fl_base, (sitd & LINK_ADDR_MASK) | LINK_TYPE_SITD);
+    mem.write_u32(sitd + 0x00, (sitd & LINK_ADDR_MASK) | LINK_TYPE_SITD);
+
+    let mut c = EhciController::new();
+    c.mmio_write(regs::REG_PERIODICLISTBASE, 4, fl_base);
+    c.mmio_write(regs::REG_USBCMD, 4, regs::USBCMD_RS | regs::USBCMD_PSE);
+
+    c.tick_1ms(&mut mem);
+
+    let sts = c.mmio_read(regs::REG_USBSTS, 4);
+    assert_ne!(sts & regs::USBSTS_HSE, 0);
+    assert_ne!(sts & regs::USBSTS_HCHALTED, 0);
+    assert_eq!(c.mmio_read(regs::REG_USBCMD, 4) & regs::USBCMD_RS, 0);
+}
+
+#[test]
+fn ehci_periodic_fstn_self_loop_sets_hse_and_halts() {
+    let mut mem = TestMemory::new(MEM_SIZE);
+
+    let fl_base: u32 = 0x7000;
+    let fstn: u32 = 0x1800;
+
+    // Frame list entry 0 points at an FSTN (type=3). The FSTN's Normal Path Link Pointer (dword0)
+    // points back to itself.
+    mem.write_u32(fl_base, (fstn & LINK_ADDR_MASK) | LINK_TYPE_FSTN);
+    mem.write_u32(fstn + 0x00, (fstn & LINK_ADDR_MASK) | LINK_TYPE_FSTN);
+
+    let mut c = EhciController::new();
     c.mmio_write(regs::REG_PERIODICLISTBASE, 4, fl_base);
     c.mmio_write(regs::REG_USBCMD, 4, regs::USBCMD_RS | regs::USBCMD_PSE);
 
