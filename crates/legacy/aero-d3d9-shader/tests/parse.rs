@@ -333,6 +333,21 @@ fn malformed_unknown_opcode_errors() {
 }
 
 #[test]
+fn malformed_unknown_opcode_specific_field_errors() {
+    // Unknown opcode should preserve the opcode-specific field (bits 16..24) in the error.
+    let words = [0xFFFE_0200, 0x00AB_7777, 0x0000_FFFF];
+    let err = D3d9Shader::parse(&words_to_bytes(&words)).unwrap_err();
+    assert_eq!(
+        err,
+        ShaderParseError::UnknownOpcode {
+            opcode: 0x7777,
+            specific: 0xAB,
+            at_token: 1,
+        }
+    );
+}
+
+#[test]
 fn malformed_invalid_register_encoding_errors() {
     // mov <dst>, <src> with an invalid/unknown register type encoding in the dst token.
     //
