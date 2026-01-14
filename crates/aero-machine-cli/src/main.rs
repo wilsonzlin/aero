@@ -103,7 +103,8 @@ mod native {
         ///
         /// Defaults to:
         /// - `hdd` when no `--install-iso` is provided
-        /// - `cd-first` when `--install-iso` is provided
+        /// - `cd-first` when both `--disk` and `--install-iso` are provided (install flow: boot CD once, then reboot into HDD)
+        /// - `cdrom` when `--install-iso` is provided without `--disk` (ISO-only boots)
         ///
         /// Note: when `--snapshot-load` is used, this only affects future guest resets. The current
         /// CPU state is restored from the snapshot and the VM is not reset.
@@ -129,12 +130,16 @@ mod native {
             .checked_mul(1024 * 1024)
             .context("RAM size overflow")?;
 
-        // By default, treat an attached install ISO as a request to boot from CD once, then allow
-        // the guest to reboot into HDD without host-side boot-drive toggling (mirrors the browser
-        // runtime's `vmRuntime="machine"` install flow).
+        // By default:
+        // - If install media + HDD are both present, boot CD once (CD-first policy) and then allow
+        //   the guest to reboot into HDD without host-side boot-drive toggling (mirrors the browser
+        //   runtime's `vmRuntime="machine"` install flow).
+        // - If only install media is present, boot from CD directly (no CD-first toggling).
         let boot_mode = args.boot.unwrap_or_else(|| {
-            if args.install_iso.is_some() {
+            if args.install_iso.is_some() && args.disk.is_some() {
                 BootMode::CdFirst
+            } else if args.install_iso.is_some() {
+                BootMode::Cdrom
             } else {
                 BootMode::Hdd
             }

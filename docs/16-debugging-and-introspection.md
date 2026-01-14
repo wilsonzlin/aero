@@ -110,6 +110,13 @@ bash ./scripts/safe-run.sh \
     --install-iso /path/to/win7.iso \
     --boot cdrom \
     --max-ms 60000
+
+# ISO-only boot (no HDD attached).
+bash ./scripts/safe-run.sh \
+  cargo run -p aero-machine-cli -- \
+    --install-iso /path/to/recovery.iso \
+    --boot cdrom \
+    --max-ms 60000
 ```
 
 Optional outputs:
