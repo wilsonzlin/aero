@@ -17992,7 +17992,7 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {{
             assert_eq!(hs_out_f32.len(), vertex_count * 4);
             for i in 0..vertex_count {
                 let base = i * 4;
-                assert_eq!(hs_out_f32[base + 0], i as f32 + 1.0);
+                assert_eq!(hs_out_f32[base], i as f32 + 1.0);
                 assert_eq!(hs_out_f32[base + 1], 2.0);
                 assert_eq!(hs_out_f32[base + 2], 3.0);
                 assert_eq!(hs_out_f32[base + 3], 4.0);
@@ -18003,7 +18003,7 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {{
             assert_eq!(patch_consts_f32.len(), patch_count_total as usize * 4);
             for p in 0..patch_count_total as usize {
                 let base = p * 4;
-                assert_eq!(patch_consts_f32[base + 0], p as f32);
+                assert_eq!(patch_consts_f32[base], p as f32);
                 assert_eq!(patch_consts_f32[base + 1], 10.0);
                 assert_eq!(patch_consts_f32[base + 2], 20.0);
                 assert_eq!(patch_consts_f32[base + 3], 30.0);
@@ -18021,7 +18021,7 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {{
             for p in 0..patch_count_total as usize {
                 let base_vec4 = p * crate::runtime::tessellation::HS_TESS_FACTOR_VEC4S_PER_PATCH as usize;
                 let base0 = base_vec4 * 4;
-                assert_eq!(tess_f32[base0 + 0], p as f32);
+                assert_eq!(tess_f32[base0], p as f32);
                 assert_eq!(tess_f32[base0 + 1], 1.0);
                 assert_eq!(tess_f32[base0 + 2], 2.0);
                 assert_eq!(tess_f32[base0 + 3], 3.0);
