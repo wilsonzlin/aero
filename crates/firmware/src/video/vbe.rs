@@ -73,7 +73,7 @@ impl VbeDevice {
     // (which use a plain `PhysicalMemory` backing) can access it without MMIO routing.
     //
     // With the default 16MiB BIOS memory size this leaves enough headroom for the largest
-    // advertised 32bpp mode (currently 1280×720×32bpp).
+    // advertised 32bpp mode (currently 1280×1024×32bpp).
     pub const LFB_BASE_DEFAULT: u32 = 0x0080_0000;
 
     pub fn new() -> Self {
@@ -124,6 +124,21 @@ impl VbeDevice {
                 rsvd_field_position: 0,
             },
             VbeMode {
+                mode: 0x112,
+                width: 640,
+                height: 480,
+                bpp: 32,
+                memory_model: 0x06, // direct color
+                red_mask_size: 8,
+                red_field_position: 16,
+                green_mask_size: 8,
+                green_field_position: 8,
+                blue_mask_size: 8,
+                blue_field_position: 0,
+                rsvd_mask_size: 8,
+                rsvd_field_position: 24,
+            },
+            VbeMode {
                 mode: 0x115,
                 width: 800,
                 height: 600,
@@ -142,6 +157,21 @@ impl VbeDevice {
                 mode: 0x118,
                 width: 1024,
                 height: 768,
+                bpp: 32,
+                memory_model: 0x06, // direct color
+                red_mask_size: 8,
+                red_field_position: 16,
+                green_mask_size: 8,
+                green_field_position: 8,
+                blue_mask_size: 8,
+                blue_field_position: 0,
+                rsvd_mask_size: 8,
+                rsvd_field_position: 24,
+            },
+            VbeMode {
+                mode: 0x11B,
+                width: 1280,
+                height: 1024,
                 bpp: 32,
                 memory_model: 0x06, // direct color
                 red_mask_size: 8,

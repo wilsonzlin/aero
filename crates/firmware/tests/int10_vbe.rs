@@ -263,6 +263,38 @@ fn int10_vbe_default_palette_matches_vga_defaults() {
 }
 
 #[test]
+fn int10_vbe_set_mode_oem_1280x720_updates_scanline_and_clears_framebuffer() {
+    let mut mem = VecMemory::new(32 * 1024 * 1024);
+    let mut bios = Bios::new(CmosRtc::new(DateTime::new(2026, 1, 1, 0, 0, 0)));
+    let mut cpu = CpuState::default();
+
+    let mode = bios.video.vbe.find_mode(0x160).expect("missing VBE mode 0x160");
+    let fb_base = VbeDevice::LFB_BASE_DEFAULT as u64;
+    let fb_size = mode.framebuffer_size_bytes() as u64;
+
+    // Touch the last byte so we can verify the clear covers the whole mode.
+    mem.write_u8(fb_base + fb_size - 1, 0xAA);
+
+    // 4F02: set mode 0x160 with clear.
+    cpu.set_ax(0x4F02);
+    cpu.set_bx(0x160 | 0x4000);
+    bios.handle_int10(&mut cpu, &mut mem);
+    assert_eq!(cpu.ax(), 0x004F);
+    assert!(!cpu.cf());
+    assert_eq!(bios.video.vbe.current_mode, Some(0x160));
+
+    assert_eq!(mem.read_u8(fb_base + fb_size - 1), 0);
+
+    // 4F06 get logical scan line length should reflect the mode's pitch.
+    cpu.set_ax(0x4F06);
+    cpu.set_bx(0x0001); // BL=1 get
+    bios.handle_int10(&mut cpu, &mut mem);
+    assert_eq!(cpu.ax(), 0x004F);
+    assert_eq!(cpu.bx(), 1280 * 4);
+    assert_eq!(cpu.cx(), 1280);
+}
+
+#[test]
 fn int10_vbe_misc_services() {
     let mut mem = VecMemory::new(32 * 1024 * 1024);
     let mut bios = Bios::new(CmosRtc::new(DateTime::new(2026, 1, 1, 0, 0, 0)));
