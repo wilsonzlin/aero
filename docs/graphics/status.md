@@ -423,7 +423,9 @@ Known gaps / limitations (enforced by code/tests):
     - `linestrip` is expanded into an indexed **line list**
     - `triangle_strip` is expanded into an indexed **triangle list**
     - Note: executor wiring is still partial; the end-to-end translated-GS prepass path is currently
-      only exercised by point-list draws and still assumes triangle-list output in some places.
+      only exercised by point-list draws. For that path, the expanded draw topology is derived from
+      the GS output topology kind (`PointList`/`LineList`/`TriangleList`, with strips expanded to
+      lists).
   - GS instancing (`dcl_gsinstancecount` / `[instance(n)]`, `SV_GSInstanceID`) is supported:
     - Test: [`crates/aero-d3d11/tests/aerogpu_cmd_gs_instance_count.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_gs_instance_count.rs)
   - No stream-out (SO / transform feedback)

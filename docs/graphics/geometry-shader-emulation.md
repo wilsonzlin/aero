@@ -179,17 +179,12 @@ Not yet supported end-to-end:
 
 ### Output topology / streams
 
-Supported end-to-end today:
+Supported end-to-end today (for the translated-GS point-list prepass path):
 
-- `trianglestrip` output, lowered to an indexed **triangle list** for rendering.
-  - Note: the executor currently renders expanded output using **TriangleList** unconditionally, so
-    non-triangle GS output topologies are not yet meaningful end-to-end.
+- `pointlist` output (indexed **point list**, rendered as `PointList`)
+- `linestrip` output, lowered to an indexed **line list** (rendered as `LineList`)
+- `trianglestrip` output, lowered to an indexed **triangle list** (rendered as `TriangleList`)
 - only **stream 0**
-
-Translator support (not yet rendered end-to-end):
-
-- `pointlist` output (indexed **point list**)
-- `linestrip` output, lowered to an indexed **line list**
 
 Not yet supported:
 
@@ -221,7 +216,10 @@ Supported instructions/opcodes:
   - `dp3`, `dp4`
   - `min`, `max`
   - `rcp`, `rsq`
-  - `and` (bitwise AND on raw 32-bit lanes)
+  - integer/bitfield ops (subset): `iadd`, `isub`, `ishl`, `ishr`, `ushr`, `imin`, `imax`, `umin`,
+    `umax`, `iabs`, `ineg`, `cmp`, `udiv`, `idiv`, `bfi`, `ubfe`, `ibfe`, `bfrev`, `countbits`,
+    `firstbit_hi`, `firstbit_lo`, `firstbit_shi`
+  - `and`/`or`/`xor`/`not` (bitwise ops on raw 32-bit lanes)
   - conversions: `itof`, `utof`, `ftoi`, `ftou`, `f32tof16`, `f16tof32`
 - **Resource reads (subset)**
   - 2D textures:
@@ -268,9 +266,9 @@ Known limitations include:
 - **No adjacency (end-to-end)**
   - `lineadj` / `triadj` inputs are not supported by the command-stream executor yet
 - **Limited output topology / payload**
-  - End-to-end, only `trianglestrip` output is supported today (the expanded draw currently renders
-    as a triangle list). Other output topologies may translate but are not wired to a matching render
-    topology yet.
+  - Output topology is limited to `pointlist`, `linestrip`, and `trianglestrip` (stream 0 only).
+    Strip topologies are lowered to list topologies for rendering (`linestrip` → line list,
+    `trianglestrip` → triangle list).
   - The expanded-vertex record stores `SV_Position` plus up to 32 `@location(N)` varyings
     (`vec4<f32>` each, indexed by location). The translated GS prepass currently only populates a
     small subset of those varying slots (default: `o1`); other varying slots default to zero.
