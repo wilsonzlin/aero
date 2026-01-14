@@ -162,6 +162,39 @@ see:
 
 ---
 
+## Browser Automation Debug API (`window.aero.debug`)
+
+The browser runtime installs a small set of automation-friendly helpers under `window.aero.debug`.
+This is intended for tests/harnesses that need a stable interface for introspecting VM runtime
+state without reaching into private coordinator fields.
+
+See:
+
+- `web/src/runtime/boot_device_backend.ts` (implementation)
+- `shared/aero_api.ts` (`AeroDebugApi` types)
+
+### Boot disk selection vs active boot device
+
+Aero distinguishes between:
+
+- **Selected boot policy** – what the host requested for the next reset (e.g. "boot CD first").
+- **Active boot device** – what firmware actually booted from in the current boot session (CD vs
+  HDD), which can differ when fallback policies are enabled.
+
+The relevant helpers are:
+
+- `window.aero.debug.getBootDisks() -> { mounts: {hddId?, cdId?}, bootDevice? } | null`
+  - Returns the current boot disk selection snapshot from the main-thread coordinator.
+  - `mounts.*Id` are DiskManager mount IDs (opaque strings).
+  - `bootDevice` is the requested policy (`"hdd"` / `"cdrom"`), which may differ from the active
+    boot source when firmware falls back.
+- `window.aero.debug.getMachineCpuActiveBootDevice() -> "hdd" | "cdrom" | null`
+  - Returns the active boot device reported by the machine CPU worker (requires
+    `vmRuntime="machine"`).
+  - `null` means unknown/unavailable (e.g. workers not running, or older builds without reporting).
+
+---
+
 ## Web Debug UI
 
 `web/debug.html` is a lightweight debug UI page intended for development. It expects the host to:
