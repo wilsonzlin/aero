@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use aero_devices::pci::capabilities::PCI_CAP_ID_VENDOR_SPECIFIC;
+use aero_devices::pci::msix::PCI_CAP_ID_MSIX;
 use aero_devices::pci::profile::{
     PciDeviceProfile, VIRTIO_BLK, VIRTIO_INPUT_KEYBOARD, VIRTIO_INPUT_MOUSE, VIRTIO_NET,
 };
@@ -173,6 +174,56 @@ fn assert_config_space_matches_profile(
         mismatches.push(format!(
             "virtio vendor-specific capability layout mismatch:\n  virtio: {virtio_caps:#?}\n  profile: {profile_caps:#?}"
         ));
+    }
+
+    // Verify that non-vendor-specific capabilities (notably MSI-X) also match the canonical
+    // profiles. Historically the profiles omitted MSI-X while the virtio transport exposed it,
+    // which made guests unable to enable MSI-X through the canonical config space.
+    let virtio_msix_off = virtio_cfg
+        .capability_list()
+        .into_iter()
+        .find(|cap| cap.id == PCI_CAP_ID_MSIX)
+        .map(|cap| cap.offset);
+    let profile_msix_off = profile_cfg
+        .capability_list()
+        .into_iter()
+        .find(|cap| cap.id == PCI_CAP_ID_MSIX)
+        .map(|cap| cap.offset);
+    if virtio_msix_off != profile_msix_off {
+        let virtio_off = virtio_msix_off
+            .map(|off| format!("0x{off:02x}"))
+            .unwrap_or_else(|| "none".to_string());
+        let profile_off = profile_msix_off
+            .map(|off| format!("0x{off:02x}"))
+            .unwrap_or_else(|| "none".to_string());
+        mismatches.push(format!(
+            "MSI-X capability offset mismatch: virtio={virtio_off} profile={profile_off}"
+        ));
+    }
+    if let (Some(virtio_msix_off), Some(profile_msix_off)) = (virtio_msix_off, profile_msix_off) {
+        let virtio_base = u16::from(virtio_msix_off);
+        let profile_base = u16::from(profile_msix_off);
+        let virtio_ctrl = read_u16(virtio_cfg, virtio_base + 0x02);
+        let profile_ctrl = read_u16(profile_cfg, profile_base + 0x02);
+        if virtio_ctrl != profile_ctrl {
+            mismatches.push(format!(
+                "MSI-X control mismatch: virtio=0x{virtio_ctrl:04x} profile=0x{profile_ctrl:04x}"
+            ));
+        }
+        let virtio_table = read_u32(virtio_cfg, virtio_base + 0x04);
+        let profile_table = read_u32(profile_cfg, profile_base + 0x04);
+        if virtio_table != profile_table {
+            mismatches.push(format!(
+                "MSI-X table register mismatch: virtio=0x{virtio_table:08x} profile=0x{profile_table:08x}"
+            ));
+        }
+        let virtio_pba = read_u32(virtio_cfg, virtio_base + 0x08);
+        let profile_pba = read_u32(profile_cfg, profile_base + 0x08);
+        if virtio_pba != profile_pba {
+            mismatches.push(format!(
+                "MSI-X PBA register mismatch: virtio=0x{virtio_pba:08x} profile=0x{profile_pba:08x}"
+            ));
+        }
     }
 
     if !mismatches.is_empty() {
