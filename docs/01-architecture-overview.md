@@ -365,7 +365,11 @@ Browsers cannot reliably allocate a single 5+GiB `SharedArrayBuffer`, and wasm32
 |--------|------|--------------|----------|----------------|
 | `guestMemory` | `WebAssembly.Memory` (`shared: true`) | **512MiB / 1GiB / 2GiB / 3GiB** (best-effort) | Guest physical RAM | Shared read/write; the only region directly accessible from wasm today |
 | `controlSab` | `SharedArrayBuffer` | ~KiB–MiB | Small status block + per-worker command/event rings (start/stop/config) | Atomics-driven ring buffer; `Atomics.wait` in workers, `Atomics.waitAsync`/polling on main |
-| `ioIpcSab` | `SharedArrayBuffer` | ~KiB–MiB | High-frequency device IPC rings (CPU/WASM ↔ IO worker, network TX/RX, etc) | AIPC header + Atomics-driven ring buffers (see `docs/ipc-protocol.md`) |
+| `ioIpcSab` | `SharedArrayBuffer` | ~KiB–MiB | High-frequency device IPC rings (CPU/WASM ↔ IO worker, network TX/RX, etc) | AIPC header + Atomics-driven ring buffers (see [`docs/ipc-protocol.md`](./ipc-protocol.md)) |
+| `vram` | `SharedArrayBuffer` | **64MiB** (default) | AeroGPU BAR1/VRAM aperture backing (MMIO window; legacy VGA/VBE and optional WDDM surfaces) | I/O worker maps it as an MMIO range; GPU worker reads it for scanout/cursor when `base_paddr` points into the VRAM aperture (see [`docs/16-aerogpu-vga-vesa-compat.md`](./16-aerogpu-vga-vesa-compat.md#vram-bar1-backing-as-a-sharedarraybuffer)) |
+| `sharedFramebuffer` | `SharedArrayBuffer` | ~MiB | CPU→GPU demo/legacy RGBA framebuffer | CPU worker writes frames; GPU worker presents |
+| `scanoutState` | `SharedArrayBuffer` | tiny | Shared scanout descriptor (`LEGACY_TEXT`/`LEGACY_VBE_LFB`/`WDDM`, `base_paddr`, width/height/pitch/format) | Lock-free seqlock-style publish/snapshot between device models and the presenter |
+| `cursorState` | `SharedArrayBuffer` | tiny | Shared hardware cursor descriptor (cursor regs + surface pointer) | Device models publish updates; GPU worker reads/presents cursor overlay |
 
 This avoids >4GiB offsets entirely: each buffer is independently addressable and can be sized/failed independently.
 
@@ -424,6 +428,7 @@ queue), while still being efficient for **SPSC** use (per-worker cmd/evt).
 │  2. Resource Allocation                                          │
 │     └─▶ Allocate shared `WebAssembly.Memory` (guest RAM, ≤ 4 GiB, configurable) │
 │     └─▶ Allocate `controlSab` (status + per-worker cmd/evt rings) + `ioIpcSab` (high-frequency AIPC) │
+│     └─▶ Allocate display-related shared buffers (`vram` BAR1 backing, `scanoutState`, `cursorState`, legacy `sharedFramebuffer`) │
 │         └─▶ Request storage access (OPFS)                        │
 │             └─▶ Load/create disk image                           │
 │                                                                  │
