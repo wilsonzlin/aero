@@ -380,6 +380,60 @@ fn error_mmio_registers_are_populated_on_decode_error_irq() {
 }
 
 #[test]
+fn error_mmio_registers_support_u64_fence_values() {
+    let mut mem = VecMemory::new(0x20_000);
+    let mut dev = new_test_device(AeroGpuDeviceConfig::default());
+
+    // Ring layout in guest memory.
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    let entry_count = 8u32;
+    let entry_stride = AeroGpuSubmitDesc::SIZE_BYTES;
+
+    // Ring header.
+    mem.write_u32(ring_gpa + RING_MAGIC_OFFSET, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa + RING_ABI_VERSION_OFFSET, dev.regs.abi_version);
+    mem.write_u32(ring_gpa + RING_SIZE_BYTES_OFFSET, ring_size);
+    mem.write_u32(ring_gpa + RING_ENTRY_COUNT_OFFSET, entry_count);
+    mem.write_u32(ring_gpa + RING_ENTRY_STRIDE_BYTES_OFFSET, entry_stride);
+    mem.write_u32(ring_gpa + RING_FLAGS_OFFSET, 0);
+    mem.write_u32(ring_gpa + RING_HEAD_OFFSET, 0); // head
+    mem.write_u32(ring_gpa + RING_TAIL_OFFSET, 1); // tail
+
+    // Submit descriptor at slot 0: inconsistent cmd stream (cmd_size != 0 but cmd_gpa == 0)
+    // triggers a decode error. Use a fence > u32::MAX to ensure the error fence HI/LO registers
+    // preserve the full 64-bit value.
+    let fence = 0x1_0000_0000u64 + 42;
+    let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    mem.write_u32(
+        desc_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET,
+        AeroGpuSubmitDesc::SIZE_BYTES,
+    ); // desc_size_bytes
+    mem.write_u32(desc_gpa + SUBMIT_DESC_FLAGS_OFFSET, 0); // flags
+    mem.write_u32(desc_gpa + SUBMIT_DESC_CONTEXT_ID_OFFSET, 0); // context_id
+    mem.write_u32(desc_gpa + SUBMIT_DESC_ENGINE_ID_OFFSET, 0); // engine_id
+    mem.write_u64(desc_gpa + SUBMIT_DESC_CMD_GPA_OFFSET, 0); // cmd_gpa
+    mem.write_u32(desc_gpa + SUBMIT_DESC_CMD_SIZE_BYTES_OFFSET, 4); // cmd_size_bytes (inconsistent)
+    mem.write_u64(desc_gpa + SUBMIT_DESC_ALLOC_TABLE_GPA_OFFSET, 0); // alloc_table_gpa
+    mem.write_u32(desc_gpa + SUBMIT_DESC_ALLOC_TABLE_SIZE_BYTES_OFFSET, 0); // alloc_table_size_bytes
+    mem.write_u64(desc_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, fence); // signal_fence
+
+    dev.mmio_write(&mut mem, mmio::RING_GPA_LO, 4, ring_gpa as u32);
+    dev.mmio_write(&mut mem, mmio::RING_GPA_HI, 4, (ring_gpa >> 32) as u32);
+    dev.mmio_write(&mut mem, mmio::RING_SIZE_BYTES, 4, ring_size);
+    dev.mmio_write(&mut mem, mmio::RING_CONTROL, 4, ring_control::ENABLE);
+
+    dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
+
+    assert_ne!(dev.regs.irq_status & irq_bits::ERROR, 0);
+
+    let error_fence = (dev.mmio_read(&mut mem, mmio::ERROR_FENCE_LO, 4) as u64)
+        | ((dev.mmio_read(&mut mem, mmio::ERROR_FENCE_HI, 4) as u64) << 32);
+    assert_eq!(error_fence, fence);
+    assert!(error_fence > u64::from(u32::MAX));
+}
+
+#[test]
 fn error_mmio_payload_is_sticky_across_irq_ack_and_overwritten_by_next_error() {
     let mut mem = VecMemory::new(0x20_000);
     let mut dev = new_test_device(AeroGpuDeviceConfig::default());
