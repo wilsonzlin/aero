@@ -102,6 +102,10 @@ For the consolidated virtio-input end-to-end validation plan (device model + dri
     - at least one **relative-mouse-only** HID device exists (X/Y reported as *Relative*)
     - additional **tablet / absolute-pointer** virtio-input HID devices are allowed and are counted separately
     - no matched HID device advertises both keyboard and mouse application collections (contract v1 expects two separate PCI functions).
+  - Emits an additional tablet enumeration marker (`virtio-input-tablet`) that is:
+    - `PASS` when at least one tablet device/application collection was detected
+    - `SKIP|not_present` when no tablet device is present
+    This marker is informational and does not affect the overall selftest PASS/FAIL.
   - Optional interrupt-mode diagnostics (`virtio-input-msix`):
     - The selftest queries the virtio-input HID minidriver for its interrupt configuration via a diagnostics IOCTL and emits:
       `AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|PASS/FAIL/SKIP|mode=<intx|msix>|messages=<n>|mapping=...|...`.
@@ -283,7 +287,7 @@ Note: For deterministic DNS testing under QEMU slirp, the default `--dns-host` i
 
 The host harness parses these markers from COM1 serial:
 
- ```
+```
   AERO_VIRTIO_SELFTEST|START|...
   # virtio-blk/virtio-net/virtio-snd/virtio-input include interrupt diagnostics (`irq_mode` / `irq_message_count`) as
   # key/value fields so the host harness can mirror them into host-side markers (VIRTIO_*_IRQ).
@@ -293,14 +297,15 @@ The host harness parses these markers from COM1 serial:
   AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|INFO|abort=0|reset_device=0|reset_bus=0|pnp=0|ioctl_reset=0|capacity_change_events=0
   AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|SKIP|flag_not_set
   AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS|...|irq_mode=msi|irq_message_count=1
+  AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet|SKIP|not_present|tablet_devices=0|tablet_collections=0
   AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|PASS|mode=msix|messages=3|mapping=per-queue|...
   AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|SKIP|flag_not_set
   AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|SKIP|flag_not_set
   AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|SKIP|flag_not_set
-
- # Optional: end-to-end virtio-blk runtime resize (requires host-side QMP resize):
- # AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|READY|disk=<N>|old_bytes=<u64>
- # AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|PASS|disk=<N>|old_bytes=<u64>|new_bytes=<u64>|elapsed_ms=<u32>
+ 
+  # Optional: end-to-end virtio-blk runtime resize (requires host-side QMP resize):
+  # AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|READY|disk=<N>|old_bytes=<u64>
+  # AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|PASS|disk=<N>|old_bytes=<u64>|new_bytes=<u64>|elapsed_ms=<u32>
 
  # Optional: end-to-end virtio-input event delivery (requires host-side QMP injection):
  # AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|READY
@@ -385,6 +390,10 @@ Notes:
       - emits `AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|PASS|...` or `...|FAIL|reason=...|...`
       - if no tablet device is present, emits `AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|SKIP|no_tablet_device`
   - The overall selftest `RESULT` is only affected by these tests when the corresponding flag/env var is enabled.
+ - The virtio-input tablet enumeration marker (`virtio-input-tablet`) is always emitted:
+   - `PASS|tablet_devices=...|tablet_collections=...` when tablet devices are detected
+   - `SKIP|not_present|tablet_devices=0|tablet_collections=0` when not present
+   It does not affect the overall selftest result.
 - If `--require-snd` / `--test-snd` is set and the PCI device is missing, the tool emits
   `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL`.
   (In this case, the capture marker uses `...|device_missing` and is `SKIP` by default unless `--require-snd-capture` is set.)

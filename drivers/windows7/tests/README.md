@@ -58,9 +58,14 @@ drivers/windows7/tests/
   - By default the guest selftest reports `virtio-input-tablet-events|SKIP|flag_not_set`; provision the guest to run the
     selftest with `--test-input-tablet-events` (alias: `--test-tablet-events`) / env var
     `AERO_VIRTIO_SELFTEST_TEST_INPUT_TABLET_EVENTS=1` / `AERO_VIRTIO_SELFTEST_TEST_TABLET_EVENTS=1` to enable it.
-  - Note: This requires a virtio-input **tablet** driver to be installed and bound in the guest. For the in-tree Aero
-    driver stack this is `drivers/windows7/virtio-input/inf/aero_virtio_tablet.inf` (it installs the shared
-    `aero_virtio_input.sys` binary but matches the tablet PCI HWID).
+  - Note: This requires that the virtio-input driver is installed and that the tablet device is bound so it exposes a
+    HID interface.
+    - For an **Aero contract tablet** (HWID `...&SUBSYS_00121AF4&REV_01`), the intended INF is
+      `drivers/windows7/virtio-input/inf/aero_virtio_tablet.inf`.
+    - For **stock QEMU** `virtio-tablet-pci` devices (which typically use non-Aero subsystem IDs), the device is expected
+      to bind via the revision-gated fallback match (`PCI\VEN_1AF4&DEV_1052&REV_01`) provided by the legacy alias INF in
+      `drivers/windows7/virtio-input/inf/` (the `*.inf.disabled` file; drop the `.disabled` suffix to enable), and the
+      driver classifies it as a tablet via `EV_BITS` (`EV_ABS` + `ABS_X`/`ABS_Y`).
 - Optionally runs a virtio-snd test (PCI detection + endpoint enumeration + short playback) when a supported virtio-snd
   device is detected (or when `--require-snd` / `--test-snd` is set).
   - Detects the virtio-snd PCI function by hardware ID:
@@ -92,6 +97,7 @@ drivers/windows7/tests/
 
       AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS|...
       AERO_VIRTIO_SELFTEST|TEST|virtio-input-bind|PASS|devices=<n>
+      AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet|SKIP|not_present|tablet_devices=0|tablet_collections=0
       AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|SKIP|flag_not_set
       AERO_VIRTIO_SELFTEST|TEST|virtio-input-media-keys|SKIP|flag_not_set
       AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|SKIP|flag_not_set

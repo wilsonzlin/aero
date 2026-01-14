@@ -672,11 +672,16 @@ To enable end-to-end testing:
 1. Provision the guest image so the scheduled selftest runs with `--test-input-tablet-events`
    (alias: `--test-tablet-events`; for example via `New-AeroWin7TestImage.ps1 -TestInputTabletEvents` / `-TestTabletEvents`,
    or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_TABLET_EVENTS=1` / `AERO_VIRTIO_SELFTEST_TEST_TABLET_EVENTS=1`).
-   - Note: This requires that the guest has a virtio-input **tablet** driver installed and bound (so the tablet exposes a
-     HID interface). For the in-tree Aero driver stack this is `drivers/windows7/virtio-input/inf/aero_virtio_tablet.inf`
-     (it installs the shared `aero_virtio_input.sys` binary but matches the tablet HWID). When provisioning via
-     `New-AeroWin7TestImage.ps1`, the tablet INF is installed by default when present; if you pass an explicit
-     `-InfAllowList`, ensure it includes `aero_virtio_tablet.inf`.
+   - Note: This requires that the virtio-input driver is installed and that the tablet device is bound so it exposes a
+     HID interface.
+     - For an **Aero contract tablet** (HWID `...&SUBSYS_00121AF4&REV_01`), the intended INF is
+       `drivers/windows7/virtio-input/inf/aero_virtio_tablet.inf`.
+     - For **stock QEMU** `virtio-tablet-pci` devices (which typically use non-Aero subsystem IDs), the device is expected
+       to bind via the revision-gated fallback match in `drivers/windows7/virtio-input/inf/aero_virtio_input.inf`
+       (`PCI\VEN_1AF4&DEV_1052&REV_01`), and the driver classifies it as a tablet via `EV_BITS` (`EV_ABS` + `ABS_X`/`ABS_Y`).
+     - When provisioning via `New-AeroWin7TestImage.ps1`, the tablet INF is installed by default when present; if you pass
+       an explicit `-InfAllowList`, ensure it includes `aero_virtio_input.inf` (and `aero_virtio_tablet.inf` if you want
+       to exercise the contract tablet binding specifically).
 2. Run the host harness with `-WithInputTabletEvents` (aliases: `-WithVirtioInputTabletEvents`, `-EnableVirtioInputTabletEvents`,
    `-WithTabletEvents`, `-EnableTabletEvents`) /
    `--with-input-tablet-events` (aliases: `--with-virtio-input-tablet-events`, `--with-tablet-events`,
