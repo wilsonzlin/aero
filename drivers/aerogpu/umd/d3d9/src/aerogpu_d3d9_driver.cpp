@@ -13763,100 +13763,151 @@ HRESULT AEROGPU_D3D9_CALL device_set_vertex_decl(
   uint32_t implied_fvf = 0;
   // Be permissive about the declaration size: some runtimes may include extra
   // padding/trailing elements beyond the first D3DDECL_END terminator.
-  if (decl && decl->blob.size() >= sizeof(D3DVERTEXELEMENT9_COMPAT) * 3) {
+  if (decl && decl->blob.size() >= sizeof(D3DVERTEXELEMENT9_COMPAT) * 2) {
     const auto* elems = reinterpret_cast<const D3DVERTEXELEMENT9_COMPAT*>(decl->blob.data());
+    const size_t count = decl->blob.size() / sizeof(D3DVERTEXELEMENT9_COMPAT);
 
     auto is_end = [](const D3DVERTEXELEMENT9_COMPAT& e) -> bool {
       return (e.Stream == 0xFF) && (e.Type == kD3dDeclTypeUnused);
     };
 
+    auto try_tex0_size_bits = [](uint8_t decl_type, uint32_t* out_bits) -> bool {
+      if (!out_bits) {
+        return false;
+      }
+      // D3DFVF_TEXCOORDSIZE* encoding: 2 bits per texcoord set starting at bit 16.
+      // 0 -> float2 (default), 1 -> float3, 2 -> float4, 3 -> float1.
+      switch (decl_type) {
+        case kD3dDeclTypeFloat1:
+          *out_bits = 3u << 16;
+          return true;
+        case kD3dDeclTypeFloat2:
+          *out_bits = 0u;
+          return true;
+        case kD3dDeclTypeFloat3:
+          *out_bits = 1u << 16;
+          return true;
+        case kD3dDeclTypeFloat4:
+          *out_bits = 2u << 16;
+          return true;
+        default:
+          return false;
+      }
+    };
+
     const auto& e0 = elems[0];
     const auto& e1 = elems[1];
-    const auto& e2 = elems[2];
+
+    // Common position encodings.
+    const bool e0_xyzw_ok = (e0.Stream == 0) && (e0.Offset == 0) && (e0.Type == kD3dDeclTypeFloat4) &&
+                            (e0.Method == kD3dDeclMethodDefault) &&
+                            (e0.Usage == kD3dDeclUsagePositionT || e0.Usage == kD3dDeclUsagePosition) &&
+                            (e0.UsageIndex == 0);
+    const bool e0_xyz_ok = (e0.Stream == 0) && (e0.Offset == 0) && (e0.Type == kD3dDeclTypeFloat3) &&
+                           (e0.Method == kD3dDeclMethodDefault) && (e0.Usage == kD3dDeclUsagePosition) &&
+                           (e0.UsageIndex == 0);
+
+    // Plain position-only decls (POSITION or POSITIONT with no additional attributes).
+    if (is_end(e1)) {
+      if (e0_xyzw_ok) {
+        implied_fvf = kD3dFvfXyzRhw;
+      }
+      if (e0_xyz_ok) {
+        implied_fvf = kD3dFvfXyz;
+      }
+    }
 
     // XYZRHW | DIFFUSE:
     //   POSITIONT float4 @0
     //   COLOR0    D3DCOLOR @16
     //   END
-    if (is_end(e2)) {
-      const bool e0_ok = (e0.Stream == 0) && (e0.Offset == 0) && (e0.Type == kD3dDeclTypeFloat4) &&
-                         (e0.Method == kD3dDeclMethodDefault) &&
-                         (e0.Usage == kD3dDeclUsagePositionT || e0.Usage == kD3dDeclUsagePosition) && (e0.UsageIndex == 0);
-      const bool e1_ok = (e1.Stream == 0) && (e1.Offset == 16) && (e1.Type == kD3dDeclTypeD3dColor) &&
-                         (e1.Method == kD3dDeclMethodDefault) && (e1.Usage == kD3dDeclUsageColor) && (e1.UsageIndex == 0);
+    if (count >= 3) {
+      const auto& e2 = elems[2];
+      if (is_end(e2)) {
+        const bool e1_ok = (e1.Stream == 0) && (e1.Offset == 16) && (e1.Type == kD3dDeclTypeD3dColor) &&
+                           (e1.Method == kD3dDeclMethodDefault) && (e1.Usage == kD3dDeclUsageColor) &&
+                           (e1.UsageIndex == 0);
 
-      if (e0_ok && e1_ok) {
-        implied_fvf = kSupportedFvfXyzrhwDiffuse;
-      }
+        if (e0_xyzw_ok && e1_ok) {
+          implied_fvf = kSupportedFvfXyzrhwDiffuse;
+        }
 
-      // XYZRHW | TEX1:
-      //   POSITIONT float4 @0
-      //   TEXCOORD0 float2 @16
-      //   END
-      const bool e1_xyzw_tex_ok = (e1.Stream == 0) && (e1.Offset == 16) && (e1.Type == kD3dDeclTypeFloat2) &&
-                                 (e1.Method == kD3dDeclMethodDefault) &&
-                                 (e1.Usage == kD3dDeclUsageTexcoord || e1.Usage == kD3dDeclUsagePosition) && (e1.UsageIndex == 0);
-      if (e0_ok && e1_xyzw_tex_ok) {
-        implied_fvf = kSupportedFvfXyzrhwTex1;
-      }
+        // XYZRHW | TEX1:
+        //   POSITIONT float4 @0
+        //   TEXCOORD0 float1/2/3/4 @16
+        //   END
+        uint32_t tex0_bits = 0;
+        const bool e1_xyzw_tex_ok = (e1.Stream == 0) && (e1.Offset == 16) &&
+                                    (e1.Method == kD3dDeclMethodDefault) &&
+                                    (e1.Usage == kD3dDeclUsageTexcoord || e1.Usage == kD3dDeclUsagePosition) &&
+                                    (e1.UsageIndex == 0) &&
+                                    try_tex0_size_bits(e1.Type, &tex0_bits);
+        if (e0_xyzw_ok && e1_xyzw_tex_ok) {
+          implied_fvf = kSupportedFvfXyzrhwTex1 | tex0_bits;
+        }
 
-      // XYZ | DIFFUSE:
-      //   POSITION float3 @0
-      //   COLOR0    D3DCOLOR @12
-      //   END
-      const bool e0_xyz_ok = (e0.Stream == 0) && (e0.Offset == 0) && (e0.Type == kD3dDeclTypeFloat3) &&
-                             (e0.Method == kD3dDeclMethodDefault) && (e0.Usage == kD3dDeclUsagePosition) && (e0.UsageIndex == 0);
-      const bool e1_xyz_ok = (e1.Stream == 0) && (e1.Offset == 12) && (e1.Type == kD3dDeclTypeD3dColor) &&
-                             (e1.Method == kD3dDeclMethodDefault) && (e1.Usage == kD3dDeclUsageColor) && (e1.UsageIndex == 0);
-      if (e0_xyz_ok && e1_xyz_ok) {
-        implied_fvf = kSupportedFvfXyzDiffuse;
-      }
+        // XYZ | DIFFUSE:
+        //   POSITION float3 @0
+        //   COLOR0    D3DCOLOR @12
+        //   END
+        const bool e1_xyz_ok = (e1.Stream == 0) && (e1.Offset == 12) && (e1.Type == kD3dDeclTypeD3dColor) &&
+                               (e1.Method == kD3dDeclMethodDefault) && (e1.Usage == kD3dDeclUsageColor) &&
+                               (e1.UsageIndex == 0);
+        if (e0_xyz_ok && e1_xyz_ok) {
+          implied_fvf = kSupportedFvfXyzDiffuse;
+        }
 
-      // XYZ | TEX1:
-      //   POSITION float3 @0
-      //   TEXCOORD0 float2 @12
-      //   END
-      const bool e1_xyz_tex_ok = (e1.Stream == 0) && (e1.Offset == 12) && (e1.Type == kD3dDeclTypeFloat2) &&
-                                 (e1.Method == kD3dDeclMethodDefault) &&
-                                 (e1.Usage == kD3dDeclUsageTexcoord || e1.Usage == kD3dDeclUsagePosition) && (e1.UsageIndex == 0);
-      if (e0_xyz_ok && e1_xyz_tex_ok) {
-        implied_fvf = kSupportedFvfXyzTex1;
+        // XYZ | TEX1:
+        //   POSITION float3 @0
+        //   TEXCOORD0 float1/2/3/4 @12
+        //   END
+        tex0_bits = 0;
+        const bool e1_xyz_tex_ok = (e1.Stream == 0) && (e1.Offset == 12) &&
+                                   (e1.Method == kD3dDeclMethodDefault) &&
+                                   (e1.Usage == kD3dDeclUsageTexcoord || e1.Usage == kD3dDeclUsagePosition) &&
+                                   (e1.UsageIndex == 0) &&
+                                   try_tex0_size_bits(e1.Type, &tex0_bits);
+        if (e0_xyz_ok && e1_xyz_tex_ok) {
+          implied_fvf = kSupportedFvfXyzTex1 | tex0_bits;
+        }
       }
     }
 
-    if (decl->blob.size() >= sizeof(D3DVERTEXELEMENT9_COMPAT) * 4) {
+    if (count >= 4) {
+      const auto& e2 = elems[2];
       const auto& e3 = elems[3];
       // XYZRHW | DIFFUSE | TEX1:
       //   POSITIONT float4 @0
       //   COLOR0    D3DCOLOR @16
-      //   TEXCOORD0 float2 @20
+      //   TEXCOORD0 float1/2/3/4 @20
       //   END
-      const bool e0_xyzw_ok = (e0.Stream == 0) && (e0.Offset == 0) && (e0.Type == kD3dDeclTypeFloat4) &&
-                              (e0.Method == kD3dDeclMethodDefault) &&
-                              (e0.Usage == kD3dDeclUsagePositionT || e0.Usage == kD3dDeclUsagePosition) && (e0.UsageIndex == 0);
       const bool e1_xyzw_ok = (e1.Stream == 0) && (e1.Offset == 16) && (e1.Type == kD3dDeclTypeD3dColor) &&
                               (e1.Method == kD3dDeclMethodDefault) && (e1.Usage == kD3dDeclUsageColor) && (e1.UsageIndex == 0);
-      const bool e2_xyzw_ok = (e2.Stream == 0) && (e2.Offset == 20) && (e2.Type == kD3dDeclTypeFloat2) &&
+      uint32_t tex0_bits = 0;
+      const bool e2_xyzw_ok = (e2.Stream == 0) && (e2.Offset == 20) &&
                               (e2.Method == kD3dDeclMethodDefault) &&
-                              (e2.Usage == kD3dDeclUsageTexcoord || e2.Usage == kD3dDeclUsagePosition) && (e2.UsageIndex == 0);
+                              (e2.Usage == kD3dDeclUsageTexcoord || e2.Usage == kD3dDeclUsagePosition) &&
+                              (e2.UsageIndex == 0) &&
+                              try_tex0_size_bits(e2.Type, &tex0_bits);
       if (e0_xyzw_ok && e1_xyzw_ok && e2_xyzw_ok && is_end(e3)) {
-        implied_fvf = kSupportedFvfXyzrhwDiffuseTex1;
+        implied_fvf = kSupportedFvfXyzrhwDiffuseTex1 | tex0_bits;
       }
 
       // XYZ | DIFFUSE | TEX1:
       //   POSITION float3 @0
       //   COLOR0    D3DCOLOR @12
-      //   TEXCOORD0 float2 @16
+      //   TEXCOORD0 float1/2/3/4 @16
       //   END
-      const bool e0_xyz_ok = (e0.Stream == 0) && (e0.Offset == 0) && (e0.Type == kD3dDeclTypeFloat3) &&
-                             (e0.Method == kD3dDeclMethodDefault) && (e0.Usage == kD3dDeclUsagePosition) && (e0.UsageIndex == 0);
       const bool e1_xyz_ok = (e1.Stream == 0) && (e1.Offset == 12) && (e1.Type == kD3dDeclTypeD3dColor) &&
                              (e1.Method == kD3dDeclMethodDefault) && (e1.Usage == kD3dDeclUsageColor) && (e1.UsageIndex == 0);
-      const bool e2_xyz_ok = (e2.Stream == 0) && (e2.Offset == 16) && (e2.Type == kD3dDeclTypeFloat2) &&
+      tex0_bits = 0;
+      const bool e2_xyz_ok = (e2.Stream == 0) && (e2.Offset == 16) &&
                              (e2.Method == kD3dDeclMethodDefault) &&
-                             (e2.Usage == kD3dDeclUsageTexcoord || e2.Usage == kD3dDeclUsagePosition) && (e2.UsageIndex == 0);
+                             (e2.Usage == kD3dDeclUsageTexcoord || e2.Usage == kD3dDeclUsagePosition) &&
+                             (e2.UsageIndex == 0) &&
+                             try_tex0_size_bits(e2.Type, &tex0_bits);
       if (e0_xyz_ok && e1_xyz_ok && e2_xyz_ok && is_end(e3)) {
-        implied_fvf = kSupportedFvfXyzDiffuseTex1;
+        implied_fvf = kSupportedFvfXyzDiffuseTex1 | tex0_bits;
       }
     }
   }
