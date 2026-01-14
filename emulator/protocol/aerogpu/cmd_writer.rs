@@ -1165,13 +1165,11 @@ impl AerogpuCmdWriter {
 
     /// Stage-ex aware variant of [`Self::set_shader_resource_buffers`].
     ///
-    /// Encodes `stage_ex` into `(shader_stage, reserved0)` using `encode_stage_ex`.
-    ///
-    /// Encoding:
-    /// - Legacy stages (Pixel/Vertex/Compute): use the legacy `shader_stage` field and keep
-    ///   `reserved0 = 0`.
-    /// - Extended stages (Geometry/Hull/Domain): set `shader_stage = COMPUTE` and write
-    ///   `reserved0 = stage_ex` (DXBC program-type 2/3/4).
+    /// Encodes `stage_ex` using the `stage_ex` ABI rules:
+    /// - Always emits `shader_stage = COMPUTE` (sentinel for "use stage_ex").
+    /// - Emits `reserved0 = stage_ex` for extended stages (Geometry/Hull/Domain; DXBC program type
+    ///   2/3/4).
+    /// - `None`/`Compute` are canonicalized to the legacy encoding (`reserved0 = 0`).
     pub fn set_shader_resource_buffers_ex(
         &mut self,
         stage_ex: AerogpuShaderStageEx,
@@ -1252,13 +1250,11 @@ impl AerogpuCmdWriter {
 
     /// Stage-ex aware variant of [`Self::set_unordered_access_buffers`].
     ///
-    /// Encodes `stage_ex` into `(shader_stage, reserved0)` using `encode_stage_ex`.
-    ///
-    /// Encoding:
-    /// - Legacy stages (Pixel/Vertex/Compute): use the legacy `shader_stage` field and keep
-    ///   `reserved0 = 0`.
-    /// - Extended stages (Geometry/Hull/Domain): set `shader_stage = COMPUTE` and write
-    ///   `reserved0 = stage_ex` (DXBC program-type 2/3/4).
+    /// Encodes `stage_ex` using the `stage_ex` ABI rules:
+    /// - Always emits `shader_stage = COMPUTE` (sentinel for "use stage_ex").
+    /// - Emits `reserved0 = stage_ex` for extended stages (Geometry/Hull/Domain; DXBC program type
+    ///   2/3/4).
+    /// - `None`/`Compute` are canonicalized to the legacy encoding (`reserved0 = 0`).
     pub fn set_unordered_access_buffers_ex(
         &mut self,
         stage_ex: AerogpuShaderStageEx,
