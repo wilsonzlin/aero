@@ -548,15 +548,89 @@ test("stage_ex encode/decode helpers follow the reserved0==0 legacy rule", () =>
   assert.equal(decodeStageEx(AerogpuShaderStage.Vertex, AerogpuShaderStageEx.Geometry), undefined);
 });
 
-test("AerogpuCmdWriter.createShaderDxbcEx rejects stageEx=Pixel (0) and does not emit a packet", () => {
+test("AerogpuCmdWriter.createShaderDxbcEx encodes stageEx=Pixel using the legacy stage field", () => {
   const w = new AerogpuCmdWriter();
-  assert.throws(
-    () => w.createShaderDxbcEx(1, AerogpuShaderStageEx.Pixel, new Uint8Array([0xaa])),
-    /cannot encode DXBC Pixel program type/,
-  );
+  const dxbc = new Uint8Array([0xaa]);
+  w.createShaderDxbcEx(1, AerogpuShaderStageEx.Pixel, dxbc);
 
   const bytes = w.finish();
-  assert.equal(bytes.byteLength, AEROGPU_CMD_STREAM_HEADER_SIZE);
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+
+  const pkt0 = AEROGPU_CMD_STREAM_HEADER_SIZE;
+  assert.equal(view.getUint32(pkt0 + AEROGPU_CMD_HDR_OFF_OPCODE, true), AerogpuCmdOpcode.CreateShaderDxbc);
+  const sizeBytes = view.getUint32(pkt0 + AEROGPU_CMD_HDR_OFF_SIZE_BYTES, true);
+  assert.equal(sizeBytes, alignUp(24 + dxbc.byteLength, 4));
+
+  assert.equal(view.getUint32(pkt0 + 8, true), 1); // shader_handle
+  assert.equal(view.getUint32(pkt0 + 12, true), AerogpuShaderStage.Pixel);
+  assert.equal(view.getUint32(pkt0 + 16, true), dxbc.byteLength);
+  assert.equal(view.getUint32(pkt0 + 20, true), 0); // reserved0
+  assert.deepEqual(bytes.subarray(pkt0 + 24, pkt0 + 24 + dxbc.byteLength), dxbc);
+});
+
+test("AerogpuCmdWriter stage_ex optional parameters encode Pixel via legacy shaderStage field", () => {
+  const w = new AerogpuCmdWriter();
+
+  // stageEx=Pixel should not produce the ambiguous encoding (shaderStage=COMPUTE, reserved0=0);
+  // it must use the legacy Pixel shaderStage field with reserved0=0.
+  w.setTexture(AerogpuShaderStage.Vertex, 0, 99, AerogpuShaderStageEx.Pixel);
+  w.setSamplers(AerogpuShaderStage.Vertex, 0, new Uint32Array([1]), AerogpuShaderStageEx.Pixel);
+  w.setConstantBuffers(
+    AerogpuShaderStage.Vertex,
+    0,
+    [{ buffer: 3, offsetBytes: 0, sizeBytes: 16 }],
+    AerogpuShaderStageEx.Pixel,
+  );
+  w.setShaderResourceBuffers(
+    AerogpuShaderStage.Vertex,
+    0,
+    [{ buffer: 4, offsetBytes: 0, sizeBytes: 32 }],
+    AerogpuShaderStageEx.Pixel,
+  );
+  w.setUnorderedAccessBuffers(
+    AerogpuShaderStage.Compute,
+    1,
+    [{ buffer: 5, offsetBytes: 4, sizeBytes: 16, initialCount: 0 }],
+    AerogpuShaderStageEx.Pixel,
+  );
+  w.setShaderConstantsF(AerogpuShaderStage.Vertex, 0, new Float32Array([1, 2, 3, 4]), AerogpuShaderStageEx.Pixel);
+
+  const bytes = w.finish();
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+
+  let cursor = AEROGPU_CMD_STREAM_HEADER_SIZE;
+
+  // SET_TEXTURE
+  assert.equal(view.getUint32(cursor + 8, true), AerogpuShaderStage.Pixel);
+  assert.equal(view.getUint32(cursor + 20, true), 0);
+  cursor += AEROGPU_CMD_SET_TEXTURE_SIZE;
+
+  // SET_SAMPLERS
+  assert.equal(view.getUint32(cursor + 8, true), AerogpuShaderStage.Pixel);
+  assert.equal(view.getUint32(cursor + 20, true), 0);
+  cursor += AEROGPU_CMD_SET_SAMPLERS_SIZE + 1 * 4;
+
+  // SET_CONSTANT_BUFFERS
+  assert.equal(view.getUint32(cursor + 8, true), AerogpuShaderStage.Pixel);
+  assert.equal(view.getUint32(cursor + 20, true), 0);
+  cursor += AEROGPU_CMD_SET_CONSTANT_BUFFERS_SIZE + 16;
+
+  // SET_SHADER_RESOURCE_BUFFERS
+  assert.equal(view.getUint32(cursor + 8, true), AerogpuShaderStage.Pixel);
+  assert.equal(view.getUint32(cursor + 20, true), 0);
+  cursor += AEROGPU_CMD_SET_SHADER_RESOURCE_BUFFERS_SIZE + 16;
+
+  // SET_UNORDERED_ACCESS_BUFFERS
+  assert.equal(view.getUint32(cursor + 8, true), AerogpuShaderStage.Pixel);
+  assert.equal(view.getUint32(cursor + 20, true), 0);
+  cursor += AEROGPU_CMD_SET_UNORDERED_ACCESS_BUFFERS_SIZE + 16;
+
+  // SET_SHADER_CONSTANTS_F
+  assert.equal(view.getUint32(cursor + 8, true), AerogpuShaderStage.Pixel);
+  assert.equal(view.getUint32(cursor + 20, true), 0);
+  cursor += AEROGPU_CMD_SET_SHADER_CONSTANTS_F_SIZE + 16;
+
+  assert.equal(cursor, bytes.byteLength);
 });
 
 test("AerogpuCmdWriter legacy binding packets keep reserved0=0", () => {
