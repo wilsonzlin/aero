@@ -204,6 +204,22 @@ fn build_fixture_cmd_stream() -> Vec<u8> {
         &payload,
     );
 
+    // CREATE_TEXTURE2D(texture_handle=0x2000, format=R8G8B8A8_UNORM).
+    let mut payload = Vec::new();
+    push_u32_le(&mut payload, 0x2000); // texture_handle
+    push_u32_le(&mut payload, 0); // usage_flags
+    push_u32_le(&mut payload, AerogpuFormat::R8G8B8A8Unorm as u32);
+    push_u32_le(&mut payload, 4); // width
+    push_u32_le(&mut payload, 4); // height
+    push_u32_le(&mut payload, 1); // mip_levels
+    push_u32_le(&mut payload, 1); // array_layers
+    push_u32_le(&mut payload, 16); // row_pitch_bytes
+    push_u32_le(&mut payload, 0); // backing_alloc_id
+    push_u32_le(&mut payload, 0); // backing_offset_bytes
+    push_u64_le(&mut payload, 0); // reserved0
+    assert_eq!(payload.len(), 48);
+    push_packet(&mut out, AerogpuCmdOpcode::CreateTexture2d as u32, &payload);
+
     // CREATE_TEXTURE_VIEW(view_handle=0x1000, texture_handle=0x2000, format=R8G8B8A8_UNORM, mip 0..1, layer 0..1).
     let mut payload = Vec::new();
     push_u32_le(&mut payload, 0x1000);
@@ -548,6 +564,11 @@ fn decodes_cmd_stream_dump_to_stable_listing() {
     assert!(listing.contains("bool_count=2"));
     assert!(listing.contains("data_len=32"));
     assert!(listing.contains("data_prefix=00000000000000000000000000000000.."));
+
+    // Texture creation packets should decode their payload fields.
+    assert!(listing.contains("CreateTexture2d"), "{listing}");
+    assert!(listing.contains("texture_handle=8192"), "{listing}"); // 0x2000
+    assert!(listing.contains("format_name=R8G8B8A8Unorm"), "{listing}");
 
     // Texture view packets should decode their payload fields.
     let format = AerogpuFormat::R8G8B8A8Unorm as u32;
@@ -897,6 +918,17 @@ fn json_listing_decodes_new_opcodes() {
         set_consts_b["decoded"]["data_prefix"],
         "00000000000000000000000000000000.."
     );
+
+    let create_texture = find_packet("CreateTexture2d");
+    assert_eq!(create_texture["decoded"]["texture_handle"], 0x2000);
+    assert_eq!(
+        create_texture["decoded"]["format"],
+        AerogpuFormat::R8G8B8A8Unorm as u32
+    );
+    assert_eq!(create_texture["decoded"]["format_name"], "R8G8B8A8Unorm");
+    assert_eq!(create_texture["decoded"]["width"], 4);
+    assert_eq!(create_texture["decoded"]["height"], 4);
+    assert_eq!(create_texture["decoded"]["row_pitch_bytes"], 16);
 
     let create_view = find_packet("CreateTextureView");
     assert_eq!(create_view["decoded"]["view_handle"], 0x1000);
