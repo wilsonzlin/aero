@@ -152,24 +152,14 @@ pub const OPCODE_USHR: u32 = 0x73;
 /// `break` (structured break out of `loop`/`switch`).
 pub const OPCODE_BREAK: u32 = 0x2d;
 /// `breakc` (structured conditional break).
-///
-/// Tokenized shader format: `D3D10_SB_OPCODE_TYPE_BREAKC`.
 pub const OPCODE_BREAKC: u32 = 0x2e;
 /// `loop` (begin structured loop).
-///
-/// Tokenized shader format: `D3D10_SB_OPCODE_TYPE_LOOP`.
 pub const OPCODE_LOOP: u32 = 0x2f;
 /// `endloop` (end structured loop).
-///
-/// Tokenized shader format: `D3D10_SB_OPCODE_TYPE_ENDLOOP`.
 pub const OPCODE_ENDLOOP: u32 = 0x30;
 /// `continue` (structured continue to the next loop iteration).
-///
-/// Tokenized shader format: `D3D10_SB_OPCODE_TYPE_CONTINUE`.
 pub const OPCODE_CONTINUE: u32 = 0x31;
 /// `continuec` (structured conditional continue).
-///
-/// Tokenized shader format: `D3D10_SB_OPCODE_TYPE_CONTINUEC`.
 pub const OPCODE_CONTINUEC: u32 = 0x32;
 /// `switch` (structured switch statement).
 pub const OPCODE_SWITCH: u32 = 0x35;
@@ -216,8 +206,6 @@ pub const OPCODE_EMITTHENCUT_STREAM: u32 = 0x44;
 pub const OPCODE_SAMPLE: u32 = 0x45;
 pub const OPCODE_SAMPLE_L: u32 = 0x46;
 /// `resinfo` (resource query; e.g. `Texture2D.GetDimensions`).
-///
-/// Upstream: `D3D10_SB_OPCODE_RESINFO`.
 pub const OPCODE_RESINFO: u32 = 0x4b;
 /// `ld` (Resource load; used by `Texture2D.Load`).
 pub const OPCODE_LD: u32 = 0x4c;
@@ -227,41 +215,23 @@ pub const OPCODE_LD: u32 = 0x4c;
 /// structural fallback path (see `sm4::decode`) to avoid relying solely on this constant.
 pub const OPCODE_LD_UAV_RAW: u32 = 0x6f;
 /// `ld_raw` (raw buffer load; `ByteAddressBuffer.Load*`).
-///
-/// Upstream: `D3D11_SB_OPCODE_LD_RAW`.
 pub const OPCODE_LD_RAW: u32 = 0x53;
 /// `ld_structured` (structured buffer load; `StructuredBuffer.Load`).
-///
-/// Upstream: `D3D11_SB_OPCODE_LD_STRUCTURED`.
 pub const OPCODE_LD_STRUCTURED: u32 = 0x54;
 /// `store_raw` (raw buffer store; `RWByteAddressBuffer.Store*`).
-///
-/// Upstream: `D3D11_SB_OPCODE_STORE_RAW`.
 pub const OPCODE_STORE_RAW: u32 = 0x56;
 /// `store_structured` (structured buffer store; `RWStructuredBuffer.Store`).
-///
-/// Upstream: `D3D11_SB_OPCODE_STORE_STRUCTURED`.
 pub const OPCODE_STORE_STRUCTURED: u32 = 0x57;
 
 /// `bfrev` (bit reverse).
-///
-/// Upstream: `D3D11_SB_OPCODE_BFREV`.
 pub const OPCODE_BFREV: u32 = 0x58;
 /// `countbits` (population count).
-///
-/// Upstream: `D3D11_SB_OPCODE_COUNTBITS`.
 pub const OPCODE_COUNTBITS: u32 = 0x59;
 /// `firstbit_hi` (find MSB set, unsigned).
-///
-/// Upstream: `D3D11_SB_OPCODE_FIRSTBIT_HI`.
 pub const OPCODE_FIRSTBIT_HI: u32 = 0x5a;
 /// `firstbit_lo` (find LSB set, unsigned).
-///
-/// Upstream: `D3D11_SB_OPCODE_FIRSTBIT_LO`.
 pub const OPCODE_FIRSTBIT_LO: u32 = 0x5b;
 /// `firstbit_shi` (find MSB differing from sign bit, signed).
-///
-/// Upstream: `D3D11_SB_OPCODE_FIRSTBIT_SHI`.
 pub const OPCODE_FIRSTBIT_SHI: u32 = 0x5c;
 
 /// `f32tof16` (convert `f32` to IEEE 754 binary16 bits; result in low 16 bits).
@@ -271,8 +241,8 @@ pub const OPCODE_F16TOF32: u32 = 0x5e;
 
 /// `sync` (SM5 barrier / thread-group synchronization).
 ///
-/// In DXBC the `sync` instruction encodes a set of barrier flags in the opcode token's
-/// "opcode-specific control" field (bits 24..=30). This is used to represent HLSL intrinsics like:
+/// In Aero's SM4 token encoding the `sync` instruction encodes a set of barrier flags in the opcode
+/// token's "opcode-specific control" field (bits 24..=30). This is used to represent HLSL intrinsics like:
 /// - `GroupMemoryBarrierWithGroupSync()`
 /// - `DeviceMemoryBarrierWithGroupSync()`
 /// - `AllMemoryBarrierWithGroupSync()`
@@ -280,7 +250,7 @@ pub const OPCODE_F16TOF32: u32 = 0x5e;
 /// - `DeviceMemoryBarrier()` / `AllMemoryBarrier()` (fence-only; no group sync)
 pub const OPCODE_SYNC: u32 = 0x5f;
 
-/// Opcode token "opcode-specific control" field (bits 24..=30).
+/// Opcode token "opcode-specific control" field (bits 24..=30) in Aero's SM4 token encoding.
 pub const OPCODE_CONTROL_SHIFT: u32 = 24;
 pub const OPCODE_CONTROL_MASK: u32 = 0x7f;
 
@@ -292,27 +262,18 @@ pub const SYNC_FLAG_THREAD_GROUP_SYNC: u32 = 0x4;
 
 // ---- Declaration opcodes (subset) ----
 //
-// Values are sourced from the D3D10/11 tokenized shader format opcode table in the
-// Windows SDK headers `d3d10tokenizedprogramformat.h` / `d3d11tokenizedprogramformat.h`.
+// Declaration opcode IDs in Aero's SM4 token encoding.
 
 /// `dcl_input v#` (register input declaration).
-///
-/// Upstream: `D3D10_SB_OPCODE_DCL_INPUT`.
 pub const OPCODE_DCL_INPUT: u32 = 0x100;
 /// `dcl_output o#` (register output declaration).
-///
-/// Upstream: `D3D10_SB_OPCODE_DCL_OUTPUT`.
 pub const OPCODE_DCL_OUTPUT: u32 = 0x101;
 /// `dcl_resource` (typed SRV resource; e.g. `Texture2D t#`).
 ///
 /// Typed resources include an extra dimension token after the resource operand (e.g. `2` for
 /// `Texture2D`).
-///
-/// Upstream: `D3D10_SB_OPCODE_DCL_RESOURCE`.
 pub const OPCODE_DCL_RESOURCE: u32 = 0x102;
 /// `dcl_sampler s#` (sampler declaration).
-///
-/// Upstream: `D3D10_SB_OPCODE_DCL_SAMPLER`.
 pub const OPCODE_DCL_SAMPLER: u32 = 0x103;
 
 /// `dcl_inputprimitive` (geometry shader input primitive).
@@ -322,33 +283,19 @@ pub const OPCODE_DCL_GS_OUTPUT_TOPOLOGY: u32 = 0x10d;
 /// `dcl_maxout` / `dcl_maxvertexcount` (geometry shader max output vertex count).
 pub const OPCODE_DCL_GS_MAX_OUTPUT_VERTEX_COUNT: u32 = 0x10e;
 /// `dcl_gsinstancecount` / geometry shader instance count (SM5).
-///
-/// Upstream: `D3D11_SB_OPCODE_DCL_GS_INSTANCE_COUNT`.
 pub const OPCODE_DCL_GS_INSTANCE_COUNT: u32 = 0x10f;
 
 /// `dcl_hs_max_tessfactor` (hull shader max tess factor).
-///
-/// Upstream: `D3D11_SB_OPCODE_DCL_HS_MAX_TESSFACTOR`.
 pub const OPCODE_DCL_HS_MAX_TESSFACTOR: u32 = 0x110;
 /// `dcl_hs_domain` (hull shader tessellation domain).
-///
-/// Upstream: `D3D11_SB_OPCODE_DCL_HS_DOMAIN`.
 pub const OPCODE_DCL_HS_DOMAIN: u32 = 0x113;
 /// `dcl_hs_partitioning` (hull shader tessellation partitioning).
-///
-/// Upstream: `D3D11_SB_OPCODE_DCL_HS_PARTITIONING`.
 pub const OPCODE_DCL_HS_PARTITIONING: u32 = 0x114;
 /// `dcl_hs_output_topology` / `dcl_hs_output_primitive` (hull shader tessellation output topology).
-///
-/// Upstream: `D3D11_SB_OPCODE_DCL_HS_OUTPUT_TOPOLOGY`.
 pub const OPCODE_DCL_HS_OUTPUT_TOPOLOGY: u32 = 0x115;
 /// `dcl_hs_output_control_point_count` (hull shader output control point count).
-///
-/// Upstream: `D3D11_SB_OPCODE_DCL_HS_OUTPUT_CONTROL_POINT_COUNT`.
 pub const OPCODE_DCL_HS_OUTPUT_CONTROL_POINT_COUNT: u32 = 0x116;
 /// `dcl_ds_domain` (domain shader tessellation domain).
-///
-/// Upstream: `D3D11_SB_OPCODE_DCL_DS_DOMAIN`.
 pub const OPCODE_DCL_DS_DOMAIN: u32 = 0x119;
 
 // Hull shader phase markers (SM5).
@@ -360,41 +307,26 @@ pub const OPCODE_HS_FORK_PHASE: u32 = 0x11b;
 pub const OPCODE_HS_JOIN_PHASE: u32 = 0x11c;
 
 /// `dcl_inputcontrolpoints` (hull/domain shader input patch control point count).
-///
-/// Upstream: `D3D11_SB_OPCODE_DCL_INPUT_CONTROL_POINT_COUNT`.
 pub const OPCODE_DCL_INPUT_CONTROL_POINT_COUNT: u32 = 0x112;
 
 /// `dcl_tessellator_domain` (tri/quad/isoline).
 ///
-/// In the tokenized DXBC format this opcode shares the same numeric value as
-/// `D3D11_SB_OPCODE_DCL_HS_DOMAIN` and historically appeared under both names in
-/// different SDK headers. Treat it as an alias so opcode IDs remain globally
-/// unique.
+/// Alias for [`OPCODE_DCL_HS_DOMAIN`] (kept for disassembly readability).
 pub const OPCODE_DCL_TESS_DOMAIN: u32 = OPCODE_DCL_HS_DOMAIN;
 /// `dcl_tessellator_partitioning` (integer/fractional_even/fractional_odd/pow2).
 pub const OPCODE_DCL_TESS_PARTITIONING: u32 = OPCODE_DCL_HS_PARTITIONING;
 /// `dcl_tessellator_output_primitive` (triangle_cw/triangle_ccw/line).
 pub const OPCODE_DCL_TESS_OUTPUT_PRIMITIVE: u32 = OPCODE_DCL_HS_OUTPUT_TOPOLOGY;
 /// `dcl_thread_group` declaration.
-///
-/// Upstream: `D3D11_SB_OPCODE_DCL_THREAD_GROUP`.
 pub const OPCODE_DCL_THREAD_GROUP: u32 = 0x11f;
 
 /// `dcl_resource_raw t#` (raw SRV buffer; `ByteAddressBuffer`).
-///
-/// Upstream: `D3D11_SB_OPCODE_DCL_RESOURCE_RAW`.
 pub const OPCODE_DCL_RESOURCE_RAW: u32 = 0x205;
 /// `dcl_resource_structured t#, stride` (structured SRV buffer; `StructuredBuffer`).
-///
-/// Upstream: `D3D11_SB_OPCODE_DCL_RESOURCE_STRUCTURED`.
 pub const OPCODE_DCL_RESOURCE_STRUCTURED: u32 = 0x206;
 /// `dcl_uav_raw u#` (raw UAV buffer; `RWByteAddressBuffer`).
-///
-/// Upstream: `D3D11_SB_OPCODE_DCL_UAV_RAW`.
 pub const OPCODE_DCL_UAV_RAW: u32 = 0x207;
 /// `dcl_uav_structured u#, stride` (structured UAV buffer; `RWStructuredBuffer`).
-///
-/// Upstream: `D3D11_SB_OPCODE_DCL_UAV_STRUCTURED`.
 pub const OPCODE_DCL_UAV_STRUCTURED: u32 = 0x208;
 
 // ---- Opcode token bitfields ----
