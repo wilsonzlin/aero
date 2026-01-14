@@ -1659,6 +1659,65 @@ fn tier1_inline_tlb_cross_page_store_fastpath_handles_noncontiguous_physical_pag
 }
 
 #[test]
+fn tier1_inline_tlb_cross_page_store_fastpath_handles_noncontiguous_physical_pages_on_prefilled_tlb_hits(
+) {
+    let addr = 0xFF9u64;
+
+    let mut b = IrBuilder::new(0x1000);
+    let a0 = b.const_int(Width::W64, addr);
+    let v0 = b.const_int(Width::W64, 0x0807_0605_0403_0201);
+    b.store(Width::W64, a0, v0);
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+
+    // Three pages so physical page 2 exists.
+    let ram = vec![0u8; 0x3000];
+
+    // Pre-fill both virtual pages into the TLB, but map the second page (vpn 1) to physical page 2.
+    let flags = TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM;
+    let page0_data = 0x0000 | flags;
+    let page1_vaddr = 0x1000u64;
+    let page1_data = 0x2000 | flags;
+
+    let (next_rip, got_cpu, got_ram, host_state, table) =
+        run_wasm_inner_with_code_version_table_and_prefilled_tlbs(
+            &block,
+            cpu,
+            ram,
+            0x3000,
+            Tier1WasmOptions {
+                inline_tlb: true,
+                inline_tlb_cross_page_fastpath: true,
+                ..Default::default()
+            },
+            4,
+            &[(addr, page0_data), (page1_vaddr, page1_data)],
+        );
+
+    assert_eq!(next_rip, 0x3000);
+    assert_eq!(got_cpu.rip, 0x3000);
+
+    assert_eq!(&got_ram[0xFF9..0x1000], &[1, 2, 3, 4, 5, 6, 7]);
+    assert_eq!(got_ram[0x2000], 8);
+    // Ensure we really used the remapped physical page for the final byte.
+    assert_eq!(got_ram[0x1000], 0);
+
+    // Code-version table bumps should target physical pages, not virtual pages, and should work on
+    // cached TLB hits (no translate calls).
+    assert_eq!(table, vec![1, 0, 1, 0]);
+
+    assert_eq!(host_state.mmio_exit_calls, 0);
+    assert_eq!(host_state.slow_mem_reads, 0);
+    assert_eq!(host_state.slow_mem_writes, 0);
+    assert_eq!(host_state.mmu_translate_calls, 0);
+}
+
+#[test]
 fn tier1_inline_tlb_cross_page_load_fastpath_wraps_u64_address_space() {
     // x86 effective addresses wrap modulo 2^64. A wide unaligned load can therefore cross the
     // u64 boundary and wrap to vaddr=0.
