@@ -106,18 +106,20 @@ You need the following tools in `PATH` (usually by opening a WDK Developer Comma
 
 The in-tree INFs intentionally match only **Aero contract v1** hardware IDs (revision-gated `REV_01`):
 
-- `inf/aero_virtio_input.inf` (keyboard/mouse; **SUBSYS-only**):
+- `inf/aero_virtio_input.inf` (keyboard/mouse + strict fallback):
   - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01` (keyboard)
   - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01` (mouse)
+  - `PCI\VEN_1AF4&DEV_1052&REV_01` (strict revision-gated generic fallback; no SUBSYS; shown as **Aero VirtIO Input Device**)
 - `inf/aero_virtio_tablet.inf` (tablet / absolute pointer):
   - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01` (tablet / absolute pointer)
-- Optional legacy filename alias: `inf/virtio-input.inf.disabled` (rename to `inf/virtio-input.inf` to enable; do **not** ship/install alongside `aero_virtio_input.inf`)
-  - Adds an opt-in revision-gated generic fallback HWID for environments that do not expose the Aero subsystem IDs:
-    - `PCI\VEN_1AF4&DEV_1052&REV_01`
+- Legacy filename alias: `inf/virtio-input.inf.disabled` (rename to `virtio-input.inf` to enable; do **not** ship/install alongside `aero_virtio_input.inf`)
+  - This is a filename-only alias for workflows/tools that reference `virtio-input.inf`.
+  - From the first section header (`[Version]`) onward, expected to be byte-for-byte identical to `inf/aero_virtio_input.inf`
+    (see `scripts/check-inf-alias.py`).
 
 The subsystem-gated IDs use distinct `DeviceDesc` strings, so the PCI functions appear as separate named devices in
 Device Manager (**Aero VirtIO Keyboard** / **Aero VirtIO Mouse** / **Aero VirtIO Tablet Device**). When binding via the
-legacy alias INF's fallback entry, Device Manager will show **Aero VirtIO Input Device**.
+generic fallback entry, Device Manager will show **Aero VirtIO Input Device**.
 
 `inf/virtio-input.inf.disabled` is a legacy filename alias for workflows that still reference `virtio-input.inf`.
 Rename it to `virtio-input.inf` to enable it, but do **not** ship/install it alongside `aero_virtio_input.inf` —
