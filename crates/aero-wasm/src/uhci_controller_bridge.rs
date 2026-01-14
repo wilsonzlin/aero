@@ -264,7 +264,7 @@ impl UhciControllerBridge {
         let was_connected = self.webusb_connected;
 
         match (was_connected, connected) {
-            (true, true) | (false, false) => {}
+            (true, true) | (false, false) => return,
             (false, true) => {
                 let dev = self
                     .webusb
@@ -284,7 +284,7 @@ impl UhciControllerBridge {
                     dev.reset();
                 }
             }
-        }
+        };
     }
 
     /// Drain queued WebUSB passthrough host actions as plain JS objects.
@@ -421,8 +421,7 @@ impl UhciControllerBridge {
         //
         // Note: the underlying `aero-usb` controller snapshot can now reconstruct common USB device
         // models on its own, but the bridge still needs an owned handle to the passthrough device.
-        let has_webusb = r.bytes(TAG_WEBUSB_DEVICE).is_some();
-        self.set_connected(has_webusb);
+        self.set_connected(r.bytes(TAG_WEBUSB_DEVICE).is_some());
 
         let ctrl_bytes = r
             .bytes(TAG_CONTROLLER)

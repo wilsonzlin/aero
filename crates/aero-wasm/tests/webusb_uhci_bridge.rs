@@ -110,57 +110,18 @@ fn install_control_in_schedule(guest_base: u32) -> u32 {
     fl_base
 }
 
+fn first_action_id(actions: &[UsbHostAction]) -> u32 {
+    match actions.first().expect("expected at least one queued UsbHostAction") {
+        UsbHostAction::ControlIn { id, .. } => *id,
+        other => panic!("expected first host action to be ControlIn, got {other:?}"),
+    }
+}
+
 #[wasm_bindgen_test]
 fn bridge_emits_host_actions_from_guest_frame_list() {
     let (guest_base, _guest_size) = common::alloc_guest_region_bytes(0x8000);
 
-    // Layout (all 16-byte aligned).
-    let fl_base = 0x1000u32;
-    let qh_addr = fl_base + 0x1000;
-    let setup_td = qh_addr + 0x20;
-    let data_td = setup_td + 0x20;
-    let status_td = data_td + 0x20;
-    let setup_buf = status_td + 0x20;
-    let data_buf = setup_buf + 0x10;
-
-    // Install frame list pointing at our single QH.
-    unsafe {
-        for i in 0..1024u32 {
-            common::write_u32(guest_base + fl_base + i * 4, qh_addr | LINK_PTR_Q);
-        }
-
-        // QH: head=terminate, element=SETUP TD.
-        common::write_u32(guest_base + qh_addr + 0x00, LINK_PTR_T);
-        common::write_u32(guest_base + qh_addr + 0x04, setup_td);
-
-        // Setup packet: GET_DESCRIPTOR (device), 8 bytes.
-        let setup_packet = [
-            0x80, // bmRequestType: device-to-host | standard | device
-            0x06, // bRequest: GET_DESCRIPTOR
-            0x00, 0x01, // wValue: (DEVICE=1)<<8 | index 0
-            0x00, 0x00, // wIndex
-            0x08, 0x00, // wLength: 8
-        ];
-        common::write_bytes(guest_base + setup_buf, &setup_packet);
-
-        // SETUP TD.
-        common::write_u32(guest_base + setup_td + 0x00, data_td);
-        common::write_u32(guest_base + setup_td + 0x04, td_ctrl(true, false));
-        common::write_u32(guest_base + setup_td + 0x08, td_token(0x2D, 0, 0, false, 8));
-        common::write_u32(guest_base + setup_td + 0x0C, setup_buf);
-
-        // DATA IN TD (will NAK until host completion is pushed).
-        common::write_u32(guest_base + data_td + 0x00, status_td);
-        common::write_u32(guest_base + data_td + 0x04, td_ctrl(true, false));
-        common::write_u32(guest_base + data_td + 0x08, td_token(0x69, 0, 0, true, 8));
-        common::write_u32(guest_base + data_td + 0x0C, data_buf);
-
-        // STATUS OUT TD (0-length, IOC).
-        common::write_u32(guest_base + status_td + 0x00, LINK_PTR_T);
-        common::write_u32(guest_base + status_td + 0x04, td_ctrl(true, true));
-        common::write_u32(guest_base + status_td + 0x08, td_token(0xE1, 0, 0, true, 0));
-        common::write_u32(guest_base + status_td + 0x0C, 0);
-    }
+    let fl_base = install_control_in_schedule(guest_base);
 
     let mut bridge = WebUsbUhciBridge::new(guest_base);
     // Enable PCI bus mastering so the bridge is allowed to DMA into the guest frame list.
@@ -402,6 +363,56 @@ fn bridge_blocks_guest_schedule_dma_until_pci_bus_master_enable() {
 }
 
 #[wasm_bindgen_test]
+fn webusb_uhci_bridge_action_ids_monotonic_across_disconnect_reconnect() {
+    let (guest_base, _guest_size) = common::alloc_guest_region_bytes(0x8000);
+    let fl_base = install_control_in_schedule(guest_base);
+
+    let mut bridge = WebUsbUhciBridge::new(guest_base);
+    // Enable PCI bus mastering so the bridge is allowed to DMA into the guest frame list.
+    bridge.set_pci_command(PCI_COMMAND_BME);
+
+    bridge.set_connected(true);
+
+    bridge.io_write(REG_FRBASEADD, 4, fl_base);
+    bridge.io_write(REG_USBINTR, 4, USBINTR_IOC);
+    bridge.io_write(REG_PORTSC1, 4, PORTSC_PR << 16);
+    bridge.step_frames(50);
+    bridge.io_write(REG_USBCMD, 4, USBCMD_RUN);
+    bridge.step_frames(1);
+
+    let drained = bridge.drain_actions().expect("drain_actions ok");
+    let actions: Vec<UsbHostAction> =
+        serde_wasm_bindgen::from_value(drained).expect("deserialize UsbHostAction[]");
+    let first_id = first_action_id(&actions);
+
+    // Simulate host disconnect handling (`web/src/usb/uhci_webusb_bridge.ts`):
+    // detach + reset (clears host state without resetting `next_id`).
+    bridge.set_connected(false);
+    bridge.reset();
+
+    // Reattach the same handle and re-run the schedule.
+    let _ = install_control_in_schedule(guest_base);
+    bridge.set_connected(true);
+
+    bridge.io_write(REG_FRBASEADD, 4, fl_base);
+    bridge.io_write(REG_USBINTR, 4, USBINTR_IOC);
+    bridge.io_write(REG_PORTSC1, 4, PORTSC_PR << 16);
+    bridge.step_frames(50);
+    bridge.io_write(REG_USBCMD, 4, USBCMD_RUN);
+    bridge.step_frames(1);
+
+    let drained = bridge.drain_actions().expect("drain_actions ok");
+    let actions: Vec<UsbHostAction> =
+        serde_wasm_bindgen::from_value(drained).expect("deserialize UsbHostAction[]");
+    let second_id = first_action_id(&actions);
+
+    assert!(
+        second_id > first_id,
+        "expected action id monotonicity across disconnect/reconnect (first_id={first_id}, second_id={second_id})"
+    );
+}
+
+#[wasm_bindgen_test]
 fn uhci_controller_bridge_emits_host_actions_on_webusb_port() {
     let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x8000);
     let fl_guest = 0x1000u32;
@@ -484,6 +495,59 @@ fn uhci_controller_bridge_emits_host_actions_on_webusb_port() {
         "expected at least one queued UsbHostAction"
     );
     assert!(matches!(actions[0], UsbHostAction::ControlIn { .. }));
+}
+
+#[wasm_bindgen_test]
+fn uhci_controller_bridge_action_ids_monotonic_across_disconnect_reconnect() {
+    let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x8000);
+    let fl_guest = install_control_in_schedule(guest_base);
+
+    let mut bridge =
+        UhciControllerBridge::new(guest_base, guest_size).expect("UhciControllerBridge::new ok");
+    bridge.set_pci_command(PCI_COMMAND_BME);
+    bridge.set_connected(true);
+
+    bridge.io_write(REG_FRBASEADD as u16, 4, fl_guest);
+    bridge.io_write(REG_USBINTR as u16, 4, USBINTR_IOC);
+    bridge.io_write(REG_PORTSC1 as u16, 4, PORTSC_PR << 16);
+    bridge.step_frames(50);
+    // The controller may still be running across disconnect/reconnect; rewrite the guest schedule
+    // after the reset window so we start from a known state and reliably re-emit a host action.
+    let _ = install_control_in_schedule(guest_base);
+    bridge.io_write(REG_USBCMD as u16, 4, USBCMD_RUN);
+    bridge.step_frames(1);
+
+    let drained = bridge.drain_actions().expect("drain_actions ok");
+    let actions: Vec<UsbHostAction> =
+        serde_wasm_bindgen::from_value(drained).expect("deserialize UsbHostAction[]");
+    let first_id = first_action_id(&actions);
+
+    // Simulate host disconnect handling (`web/src/usb/uhci_webusb_bridge.ts`):
+    bridge.set_connected(false);
+    bridge.reset();
+    // Halt the controller while we reinitialize port state so it doesn't consume/mutate the guest
+    // schedule while the device is detached/resetting.
+    bridge.io_write(REG_USBCMD as u16, 2, 0);
+
+    let _ = install_control_in_schedule(guest_base);
+    bridge.set_connected(true);
+
+    bridge.io_write(REG_FRBASEADD as u16, 4, fl_guest);
+    bridge.io_write(REG_USBINTR as u16, 4, USBINTR_IOC);
+    bridge.io_write(REG_PORTSC1 as u16, 4, PORTSC_PR << 16);
+    bridge.step_frames(50);
+    bridge.io_write(REG_USBCMD as u16, 4, USBCMD_RUN);
+    bridge.step_frames(1);
+
+    let drained = bridge.drain_actions().expect("drain_actions ok");
+    let actions: Vec<UsbHostAction> =
+        serde_wasm_bindgen::from_value(drained).expect("deserialize UsbHostAction[]");
+    let second_id = first_action_id(&actions);
+
+    assert!(
+        second_id > first_id,
+        "expected action id monotonicity across disconnect/reconnect (first_id={first_id}, second_id={second_id})"
+    );
 }
 
 #[wasm_bindgen_test]

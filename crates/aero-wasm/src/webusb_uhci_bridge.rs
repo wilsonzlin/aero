@@ -125,7 +125,7 @@ impl WebUsbUhciBridge {
         let was_connected = self.webusb_connected;
 
         match (was_connected, connected) {
-            (true, true) | (false, false) => {}
+            (true, true) | (false, false) => return,
             (false, true) => {
                 let dev = self
                     .webusb
@@ -144,7 +144,7 @@ impl WebUsbUhciBridge {
                     dev.reset();
                 }
             }
-        }
+        };
     }
 
     pub fn drain_actions(&mut self) -> Result<JsValue, JsValue> {
