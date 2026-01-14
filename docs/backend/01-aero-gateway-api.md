@@ -532,9 +532,9 @@ curl -sS \
   --output response.dns
 ```
 
-### Optional: `/dns-json` (JSON DoH convenience)
+### `/dns-json` (JSON DoH convenience)
 
-Some deployments may additionally expose a JSON endpoint intended for debugging and simple A/AAAA lookups:
+The gateway also exposes a JSON endpoint intended for debugging and simple A/AAAA lookups:
 
 - `GET /dns-json?name=example.com&type=A`
 - Response `Content-Type: application/dns-json`
@@ -560,7 +560,7 @@ Supported `type` values: `A`, `AAAA`, `CNAME` (or their numeric equivalents).
 
 `/dns-json` requests must include the `aero_session` cookie.
 
-`/dns-query` remains the canonical DoH interface and the only endpoint described by the OpenAPI spec.
+`/dns-query` remains the canonical DoH interface; `/dns-json` is a convenience endpoint intended primarily for debugging/simple lookups.
 
 ---
 
