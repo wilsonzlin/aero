@@ -140,34 +140,24 @@ impl Bios {
                             .current_mode
                             .and_then(|m| self.video.vbe.find_mode(m))
                         {
-                            let bpp = mode.bytes_per_pixel();
-                            // VBE reports scanline length in bytes, but scanout is in packed pixels.
-                            // Round up to a whole number of pixels so each row begins on a pixel
-                            // boundary.
+                            // VBE subfunction 4F06 BL=2 sets the logical scan line length in
+                            // *bytes*.
                             //
-                            // This keeps `(logical_width_pixels * bytes_per_pixel) ==
-                            // bytes_per_scan_line` for packed-pixel modes and avoids publishing
-                            // scanout descriptors with unaligned pitch.
-                            let bytes_aligned = if bpp == 0 {
-                                0
-                            } else {
-                                // Align up to a whole pixel count, then clamp to the largest value
-                                // that still fits in `u16` *and* remains whole-pixel aligned.
-                                let bpp_u32 = u32::from(bpp);
-                                let bytes_u32 = u32::from(bytes);
-                                let aligned = bytes_u32.div_ceil(bpp_u32).saturating_mul(bpp_u32);
-                                let max_aligned =
-                                    (u32::from(u16::MAX) / bpp_u32).saturating_mul(bpp_u32);
-                                aligned.min(max_aligned) as u16
-                            };
+                            // Some guests use byte-granular strides that are not representable as
+                            // `virt_width_pixels * bytes_per_pixel` (Bochs VBE_DISPI only supports
+                            // pixel-granular strides). Preserve the caller-provided byte pitch so
+                            // scanout/panning can honor odd byte strides.
+                            //
+                            // Note: the stride still must not be smaller than the minimum pitch
+                            // implied by the mode's resolution and pixel format.
                             self.video.vbe.bytes_per_scan_line =
-                                bytes_aligned.max(mode.bytes_per_scan_line());
+                                bytes.max(mode.bytes_per_scan_line());
 
-                            let pixels = if bpp == 0 {
-                                0
-                            } else {
-                                self.video.vbe.bytes_per_scan_line / bpp
-                            };
+                            let bpp = mode.bytes_per_pixel();
+                            // Derive a virtual width in pixels by flooring the byte pitch. This
+                            // matches the contract tested by `boot_int10_vbe_panning` and keeps the
+                            // value monotonic when the guest tweaks the stride.
+                            let pixels = if bpp == 0 { 0 } else { self.video.vbe.bytes_per_scan_line / bpp };
                             self.video.vbe.logical_width_pixels = pixels.max(mode.width);
                             cpu.set_bx(self.video.vbe.bytes_per_scan_line);
                             cpu.set_cx(self.video.vbe.logical_width_pixels);

@@ -104,9 +104,9 @@ fn aerogpu_scanout_disable_publishes_wddm_disabled_even_with_legacy_vbe_panning_
     // The BIOS should have published a legacy VBE scanout descriptor that includes the display start
     // offsets and byte-granular pitch.
     let bytes_per_pixel = 4u64;
-    let effective_bytes_per_scan_line =
-        u64::from(bytes_per_scan_line).div_ceil(bytes_per_pixel) * bytes_per_pixel;
-    let expected_pitch = effective_bytes_per_scan_line.max(1024u64 * bytes_per_pixel);
+    // INT 10h AX=4F06 BL=2 sets the logical scan line length in bytes. The BIOS preserves
+    // byte-granular pitches but clamps them to at least the mode's natural pitch (1024*4).
+    let expected_pitch = u64::from(bytes_per_scan_line).max(1024u64 * bytes_per_pixel);
     let expected_legacy_base =
         m.vbe_lfb_base() + u64::from(y_off) * expected_pitch + u64::from(x_off) * bytes_per_pixel;
     let snap = scanout_state.snapshot();

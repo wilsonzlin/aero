@@ -95,9 +95,10 @@ fn boot_int10_vbe_scanline_bytes_and_display_start_affect_scanout_base() {
     let bytes_per_pixel = 4u64;
     let base = m.vbe_lfb_base();
 
-    // The BIOS rounds the requested scanline length up to whole pixels (4 bytes per pixel).
+    // INT 10h AX=4F06 BL=2 sets the logical scan line length in bytes. The BIOS preserves
+    // byte-granular pitches but clamps them to at least the mode's natural pitch (1024*4).
     let effective_bytes_per_scan_line =
-        u64::from(bytes_per_scan_line).div_ceil(bytes_per_pixel) * bytes_per_pixel;
+        u64::from(bytes_per_scan_line).max(1024u64 * bytes_per_pixel);
 
     // Correct mapping per VBE contract:
     //   base = lfb_base + y_off * bytes_per_scan_line + x_off * bytes_per_pixel

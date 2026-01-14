@@ -528,7 +528,7 @@ fn int10_vbe_get_maximum_scanline_length_reports_max_scan_lines_in_dx() {
 }
 
 #[test]
-fn int10_vbe_set_scanline_length_in_bytes_rounds_to_whole_pixels() {
+fn int10_vbe_set_scanline_length_in_bytes_preserves_byte_pitch() {
     let mut mem = VecMemory::new(32 * 1024 * 1024);
     let mut bios = Bios::new(CmosRtc::new(DateTime::new(2026, 1, 1, 0, 0, 0)));
     let mut cpu = CpuState::default();
@@ -539,16 +539,16 @@ fn int10_vbe_set_scanline_length_in_bytes_rounds_to_whole_pixels() {
     bios.handle_int10(&mut cpu, &mut mem);
     assert_eq!(cpu.ax(), 0x004F);
 
-    // 4F06 BL=2: set scanline length in bytes. Use an odd byte count so the BIOS must round up
-    // to a whole number of pixels (4 bytes per pixel).
+    // 4F06 BL=2: set scanline length in bytes. Use an odd byte count so the BIOS must preserve the
+    // byte-granular stride (it is not representable as an integral number of pixels).
     cpu.set_ax(0x4F06);
     cpu.set_bx(0x0002);
     cpu.set_cx(4101);
     bios.handle_int10(&mut cpu, &mut mem);
     assert_eq!(cpu.ax(), 0x004F);
     assert!(!cpu.cf());
-    assert_eq!(cpu.bx(), 4104);
-    assert_eq!(cpu.cx(), 4104 / 4);
+    assert_eq!(cpu.bx(), 4101);
+    assert_eq!(cpu.cx(), 4101 / 4);
 
     // 4F06 BL=1: get should reflect the updated values.
     cpu.set_ax(0x4F06);
@@ -556,12 +556,12 @@ fn int10_vbe_set_scanline_length_in_bytes_rounds_to_whole_pixels() {
     bios.handle_int10(&mut cpu, &mut mem);
     assert_eq!(cpu.ax(), 0x004F);
     assert!(!cpu.cf());
-    assert_eq!(cpu.bx(), 4104);
-    assert_eq!(cpu.cx(), 4104 / 4);
+    assert_eq!(cpu.bx(), 4101);
+    assert_eq!(cpu.cx(), 4101 / 4);
 }
 
 #[test]
-fn int10_vbe_set_scanline_length_in_bytes_clamps_to_u16_while_preserving_pixel_alignment() {
+fn int10_vbe_set_scanline_length_in_bytes_clamps_to_u16_max_preserving_byte_pitch() {
     let mut mem = VecMemory::new(32 * 1024 * 1024);
     let mut bios = Bios::new(CmosRtc::new(DateTime::new(2026, 1, 1, 0, 0, 0)));
     let mut cpu = CpuState::default();
@@ -572,8 +572,8 @@ fn int10_vbe_set_scanline_length_in_bytes_clamps_to_u16_while_preserving_pixel_a
     bios.handle_int10(&mut cpu, &mut mem);
     assert_eq!(cpu.ax(), 0x004F);
 
-    // Request the largest possible CX value. The BIOS should clamp to the largest scanline length
-    // representable in `u16` while still remaining aligned to whole pixels (4 bytes per pixel).
+    // Request the largest possible CX value. The BIOS should clamp the pitch to `u16::MAX` (while
+    // still honoring that BL=2 pitches are byte-granular and do not need to align to pixels).
     cpu.set_ax(0x4F06);
     cpu.set_bx(0x0002);
     cpu.set_cx(u16::MAX);
@@ -581,9 +581,8 @@ fn int10_vbe_set_scanline_length_in_bytes_clamps_to_u16_while_preserving_pixel_a
     assert_eq!(cpu.ax(), 0x004F);
     assert!(!cpu.cf());
 
-    let max_aligned = u16::MAX - (u16::MAX % 4);
-    assert_eq!(cpu.bx(), max_aligned);
-    assert_eq!(cpu.cx(), max_aligned / 4);
+    assert_eq!(cpu.bx(), u16::MAX);
+    assert_eq!(cpu.cx(), u16::MAX / 4);
 }
 
 #[test]

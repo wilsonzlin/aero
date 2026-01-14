@@ -34,6 +34,10 @@ pub use guest_time::{GuestTime, DEFAULT_GUEST_CPU_HZ};
 pub use shared_disk::SharedDisk;
 pub use shared_iso_disk::SharedIsoDisk;
 use shared_iso_disk::SharedIsoDiskWeak;
+pub use aero_devices_gpu::{
+    AeroGpuBackendCompletion, AeroGpuBackendSubmission, AeroGpuCommandBackend,
+    ImmediateAeroGpuBackend, NullAeroGpuBackend,
+};
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -977,6 +981,7 @@ pub enum MachineError {
     XhciRequiresPcPlatform,
     AeroGpuRequiresPcPlatform,
     AeroGpuConflictsWithVga,
+    AeroGpuNotEnabled,
     E1000RequiresPcPlatform,
     VirtioNetRequiresPcPlatform,
     MultipleNicsEnabled,
@@ -1059,6 +1064,9 @@ impl fmt::Display for MachineError {
                     f,
                     "cannot enable both enable_aerogpu and enable_vga (choose exactly one GPU device)"
                 )
+            }
+            MachineError::AeroGpuNotEnabled => {
+                write!(f, "aerogpu device is not enabled (enable_aerogpu=false)")
             }
             MachineError::E1000RequiresPcPlatform => {
                 write!(f, "enable_e1000 requires enable_pc_platform=true")
@@ -6649,6 +6657,27 @@ impl Machine {
         (vendor == aero_devices::pci::profile::PCI_VENDOR_ID_AERO
             && device == aero_devices::pci::profile::PCI_DEVICE_ID_AERO_AEROGPU)
             .then_some(bdf)
+    }
+
+    /// Install/replace the host-side AeroGPU command backend.
+    ///
+    /// This backend receives submissions from the BAR0 ring (doorbells) and is responsible for
+    /// reporting fence completions back to the device model.
+    ///
+    /// Behavior:
+    /// - The selected backend is preserved across [`Machine::reset`] calls.
+    /// - Swapping the backend drops any in-flight fence tracking inside the device model; callers
+    ///   should install the backend before the guest submits work (typically immediately after
+    ///   [`Machine::new`] or after a reset).
+    pub fn aerogpu_set_backend(
+        &mut self,
+        backend: Box<dyn AeroGpuCommandBackend>,
+    ) -> Result<(), MachineError> {
+        let Some(dev) = &self.aerogpu_mmio else {
+            return Err(MachineError::AeroGpuNotEnabled);
+        };
+        dev.borrow_mut().set_backend(backend);
+        Ok(())
     }
 
     /// Install the "immediate" AeroGPU backend (headless-friendly).
