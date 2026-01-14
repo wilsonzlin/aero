@@ -1,6 +1,4 @@
 mod common;
-#[allow(dead_code)]
-mod wgpu_common;
 
 use aero_d3d11::binding_model::{BINDING_BASE_TEXTURE, BINDING_BASE_UAV};
 use aero_d3d11::{
@@ -31,7 +29,7 @@ fn compute_shader_ld_raw_reads_from_storage_buffer() {
         );
 
         let (device, queue, supports_compute) =
-            match wgpu_common::create_device_queue("aero-d3d11 ld_raw test device").await {
+            match common::wgpu::create_device_queue("aero-d3d11 ld_raw test device").await {
                 Ok(v) => v,
                 Err(err) => {
                     common::skip_or_panic(test_name, &format!("wgpu unavailable ({err:#})"));
