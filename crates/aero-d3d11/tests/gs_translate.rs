@@ -1455,6 +1455,100 @@ fn sm4_gs_movc_respects_saturate() {
 }
 
 #[test]
+fn sm4_gs_itof_translates_to_wgsl_compute_prepass() {
+    let mut tokens = base_gs_tokens();
+
+    // itof o0.xyzw, l(1, -2, 3, 0)
+    let mut inst = vec![opcode_token(OPCODE_ITOF, 0)];
+    inst.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    inst.extend_from_slice(&imm32_vec4([1u32, (-2i32) as u32, 3u32, 0u32]));
+    inst[0] = opcode_token(OPCODE_ITOF, inst.len() as u32);
+    tokens.extend_from_slice(&inst);
+
+    tokens.push(opcode_token(OPCODE_RET, 1));
+
+    let wgsl = wgsl_from_tokens(tokens);
+    assert!(
+        wgsl.contains("vec4<f32>(vec4<i32>("),
+        "expected itof to lower via WGSL i32->f32 conversion:\n{wgsl}"
+    );
+    assert_wgsl_validates(&wgsl);
+}
+
+#[test]
+fn sm4_gs_utof_translates_to_wgsl_compute_prepass() {
+    let mut tokens = base_gs_tokens();
+
+    // utof o0.xyzw, l(0, 1, 2, 0xffffffff)
+    let mut inst = vec![opcode_token(OPCODE_UTOF, 0)];
+    inst.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    inst.extend_from_slice(&imm32_vec4([0u32, 1u32, 2u32, 0xffff_ffff]));
+    inst[0] = opcode_token(OPCODE_UTOF, inst.len() as u32);
+    tokens.extend_from_slice(&inst);
+
+    tokens.push(opcode_token(OPCODE_RET, 1));
+
+    let wgsl = wgsl_from_tokens(tokens);
+    assert!(
+        wgsl.contains("vec4<f32>(vec4<u32>("),
+        "expected utof to lower via WGSL u32->f32 conversion:\n{wgsl}"
+    );
+    assert_wgsl_validates(&wgsl);
+}
+
+#[test]
+fn sm4_gs_ftoi_translates_to_wgsl_compute_prepass() {
+    let mut tokens = base_gs_tokens();
+
+    // ftoi o0.xyzw, l(1.0, -2.0, 3.5, 0.0)
+    let mut inst = vec![opcode_token(OPCODE_FTOI, 0)];
+    inst.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    inst.extend_from_slice(&imm32_vec4([
+        1.0f32.to_bits(),
+        (-2.0f32).to_bits(),
+        3.5f32.to_bits(),
+        0.0f32.to_bits(),
+    ]));
+    inst[0] = opcode_token(OPCODE_FTOI, inst.len() as u32);
+    tokens.extend_from_slice(&inst);
+
+    tokens.push(opcode_token(OPCODE_RET, 1));
+
+    let wgsl = wgsl_from_tokens(tokens);
+    assert!(
+        wgsl.contains("bitcast<vec4<f32>>(vec4<i32>("),
+        "expected ftoi to lower via WGSL vec4<i32>(...) + bitcast back to vec4<f32>:\n{wgsl}"
+    );
+    assert_wgsl_validates(&wgsl);
+}
+
+#[test]
+fn sm4_gs_ftou_translates_to_wgsl_compute_prepass() {
+    let mut tokens = base_gs_tokens();
+
+    // ftou o0.xyzw, l(1.0, 2.0, 3.5, 0.0)
+    let mut inst = vec![opcode_token(OPCODE_FTOU, 0)];
+    inst.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    inst.extend_from_slice(&imm32_vec4([
+        1.0f32.to_bits(),
+        2.0f32.to_bits(),
+        3.5f32.to_bits(),
+        0.0f32.to_bits(),
+    ]));
+    inst[0] = opcode_token(OPCODE_FTOU, inst.len() as u32);
+    tokens.extend_from_slice(&inst);
+
+    tokens.push(opcode_token(OPCODE_RET, 1));
+
+    let wgsl = wgsl_from_tokens(tokens);
+    assert!(
+        wgsl.contains("bitcast<vec4<f32>>(vec4<u32>("),
+        "expected ftou to lower via WGSL vec4<u32>(...) + bitcast back to vec4<f32>:\n{wgsl}"
+    );
+    assert_wgsl_validates(&wgsl);
+}
+
+#[test]
 fn sm4_gs_rcp_translates_to_wgsl_compute_prepass() {
     let mut tokens = base_gs_tokens();
 
