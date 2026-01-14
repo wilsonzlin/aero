@@ -14,8 +14,12 @@
 //! - `DRAW` on `PointList` can execute the translated compute prepass (when translation succeeded).
 //!
 //! Most GS/HS/DS draws still route through the built-in compute-prepass WGSL shaders
-//! (`GEOMETRY_PREPASS_CS_WGSL` / `GEOMETRY_PREPASS_CS_VERTEX_PULLING_WGSL`) used for bring-up and as a
-//! fallback for unsupported topologies/opcodes.
+//! (`GEOMETRY_PREPASS_CS_WGSL` / `GEOMETRY_PREPASS_CS_VERTEX_PULLING_WGSL`) used for bring-up and for
+//! topologies/draw paths where translated GS DXBC execution is not implemented yet.
+//!
+//! Note: if a GS DXBC blob cannot be translated by this module, the shader handle is still created,
+//! but draws with that GS bound currently return a clear error (there is not yet a “run synthetic
+//! expansion anyway” fallback for arbitrary untranslatable GS bytecode).
 //!
 //! The initial implementation is intentionally minimal and focuses on the instructions/operands
 //! required by the in-tree GS tests (float ALU ops such as `mov`/`movc`/`add`/`mul`/`mad`/`dp3`/`dp4`
