@@ -4485,11 +4485,12 @@ impl AerogpuD3d11Executor {
                 .map(|vb| vb.as_ref().map(|b| b.stride_bytes).unwrap_or(0))
                 .collect();
             let binding = InputLayoutBinding::new(&layout.layout, &slot_strides);
-            let pulling = VertexPullingLayout::new(&binding, &vs.vs_input_signature).map_err(|e| {
-                anyhow!(
+            let pulling =
+                VertexPullingLayout::new(&binding, &vs.vs_input_signature).map_err(|e| {
+                    anyhow!(
                     "failed to build vertex pulling layout for input layout {layout_handle}: {e}"
                 )
-            })?;
+                })?;
 
             // Build per-slot uniform data + buffer list in pulling-slot order.
             let mut slots: Vec<VertexPullingSlot> =
@@ -4661,7 +4662,11 @@ impl AerogpuD3d11Executor {
                     timestamp_writes: None,
                 });
                 pass.set_pipeline(hs_pipeline.pipeline());
-                pass.set_bind_group(crate::binding_model::BIND_GROUP_INTERNAL_EMULATION, &hs_bg, &[]);
+                pass.set_bind_group(
+                    crate::binding_model::BIND_GROUP_INTERNAL_EMULATION,
+                    &hs_bg,
+                    &[],
+                );
                 pass.dispatch_workgroups(control_points, patch_count_total, 1);
             }
 
@@ -4716,7 +4721,11 @@ impl AerogpuD3d11Executor {
                     timestamp_writes: None,
                 });
                 pass.set_pipeline(layout_pipeline.pipeline());
-                pass.set_bind_group(crate::binding_model::BIND_GROUP_INTERNAL_EMULATION, &layout_bg, &[]);
+                pass.set_bind_group(
+                    crate::binding_model::BIND_GROUP_INTERNAL_EMULATION,
+                    &layout_bg,
+                    &[],
+                );
                 pass.dispatch_workgroups(1, 1, 1);
             }
 
@@ -4739,7 +4748,11 @@ impl AerogpuD3d11Executor {
                     timestamp_writes: None,
                 });
                 pass.set_pipeline(ds_pipeline.pipeline());
-                pass.set_bind_group(crate::binding_model::BIND_GROUP_INTERNAL_EMULATION, &ds_bg, &[]);
+                pass.set_bind_group(
+                    crate::binding_model::BIND_GROUP_INTERNAL_EMULATION,
+                    &ds_bg,
+                    &[],
+                );
                 pass.dispatch_workgroups(patch_count_total, 1, 1);
             }
 

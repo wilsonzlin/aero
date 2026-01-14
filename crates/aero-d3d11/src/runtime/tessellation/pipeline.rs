@@ -126,7 +126,10 @@ impl TessellationPipelines {
         Ok(self.layout_pass.as_ref().expect("pipeline inserted above"))
     }
 
-    pub(crate) fn ds_passthrough(&mut self, device: &wgpu::Device) -> Result<&DsPassthroughPipeline> {
+    pub(crate) fn ds_passthrough(
+        &mut self,
+        device: &wgpu::Device,
+    ) -> Result<&DsPassthroughPipeline> {
         if self.ds_passthrough.is_none() {
             self.ds_passthrough = Some(DsPassthroughPipeline::new(device)?);
         }
@@ -472,8 +475,9 @@ impl LayoutPassPipeline {
         let meta_size = wgpu::BufferSize::new(out_patch_meta.size).ok_or_else(|| {
             anyhow!("tessellation layout pass: out_patch_meta buffer has zero size")
         })?;
-        let indirect_size = wgpu::BufferSize::new(out_indirect.size)
-            .ok_or_else(|| anyhow!("tessellation layout pass: out_indirect buffer has zero size"))?;
+        let indirect_size = wgpu::BufferSize::new(out_indirect.size).ok_or_else(|| {
+            anyhow!("tessellation layout pass: out_indirect buffer has zero size")
+        })?;
         let debug_size = wgpu::BufferSize::new(out_debug.size)
             .ok_or_else(|| anyhow!("tessellation layout pass: out_debug buffer has zero size"))?;
 

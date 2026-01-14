@@ -619,5 +619,8 @@ fn virtio_input_eventq_dma_is_gated_on_pci_bus_master_enable() {
         .device_mut::<VirtioInput>()
         .unwrap()
         .pending_events_len();
-    assert_eq!(pending, 0, "expected all pending events to be delivered once DMA is enabled");
+    assert_eq!(
+        pending, 0,
+        "expected all pending events to be delivered once DMA is enabled"
+    );
 }

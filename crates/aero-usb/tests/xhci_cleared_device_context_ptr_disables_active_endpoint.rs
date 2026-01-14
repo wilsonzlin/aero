@@ -123,7 +123,9 @@ fn xhci_cleared_dcbaa_ptr_stops_already_scheduled_endpoint() {
     assert_eq!(got2, [0u8; 8]);
 
     // Consume the transfer event for the first TD so we can assert on new events later.
-    let ev0 = ctrl.pop_pending_event().expect("expected first transfer event");
+    let ev0 = ctrl
+        .pop_pending_event()
+        .expect("expected first transfer event");
     assert_eq!(ev0.trb_type(), TrbType::TransferEvent);
 
     // Clear DCBAA[slot] back to 0. The controller must stop polling the already-scheduled endpoint
@@ -134,8 +136,7 @@ fn xhci_cleared_dcbaa_ptr_stops_already_scheduled_endpoint() {
 
     mem.read_physical(buf2, &mut got2);
     assert_eq!(
-        got2,
-        [0u8; 8],
+        got2, [0u8; 8],
         "endpoint must not DMA after DCBAA pointer becomes 0"
     );
     assert_eq!(
@@ -144,4 +145,3 @@ fn xhci_cleared_dcbaa_ptr_stops_already_scheduled_endpoint() {
         "no transfer event expected after DCBAA pointer becomes 0"
     );
 }
-
