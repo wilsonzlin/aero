@@ -9897,8 +9897,7 @@ impl AerogpuD3d11Executor {
 
         // Compute-stage DXBC frequently omits signature chunks entirely. The signature-driven
         // translator can still handle compute shaders, so only require ISGN/OSGN for VS/PS.
-        let signature_driven = stage == ShaderStage::Compute
-            || (signatures.isgn.is_some() && signatures.osgn.is_some());
+        let signature_driven = should_use_signature_driven_translator(stage, &signatures);
 
         let entry_point = match stage {
             ShaderStage::Vertex => "vs_main",
@@ -10117,9 +10116,9 @@ impl AerogpuD3d11Executor {
                         }
                     }
 
-                    // Compute shaders frequently omit signature chunks entirely.
-                    let signature_driven = stage == ShaderStage::Compute
-                        || (signatures.isgn.is_some() && signatures.osgn.is_some());
+                    // Compute shaders frequently omit signature chunks entirely. The signature-driven
+                    // translator can still handle compute shaders, so only require ISGN/OSGN for VS/PS.
+                    let signature_driven = should_use_signature_driven_translator(stage, &signatures);
 
                     let (wgsl, reflection) = if signature_driven {
                         let translated =
@@ -15250,6 +15249,17 @@ fn try_translate_sm4_signature_driven(
         .context("signature-driven SM4/5 translation")
 }
 
+fn should_use_signature_driven_translator(
+    stage: ShaderStage,
+    signatures: &crate::ShaderSignatures,
+) -> bool {
+    // Compute-stage DXBC commonly omits ISGN/OSGN entirely, but our signature-driven translator can
+    // still translate compute shaders (it derives builtins and IO from declarations / special
+    // operand types instead of the signature chunks). Keep the "bootstrap" translator as a fallback
+    // only for VS/PS shaders that truly lack signatures.
+    stage == ShaderStage::Compute || (signatures.isgn.is_some() && signatures.osgn.is_some())
+}
+
 fn align4(len: usize) -> usize {
     (len + 3) & !3
 }
@@ -15411,6 +15421,25 @@ mod tests {
             panic!("AERO_REQUIRE_WEBGPU is enabled but {test_name} cannot run: {reason}");
         }
         eprintln!("skipping {test_name}: {reason}");
+    }
+
+    #[test]
+    fn signature_driven_translation_is_enabled_for_compute_without_signatures() {
+        let signatures = crate::ShaderSignatures {
+            isgn: None,
+            osgn: None,
+            psgn: None,
+            pcsg: None,
+        };
+
+        assert!(
+            should_use_signature_driven_translator(ShaderStage::Compute, &signatures),
+            "compute shaders should use the signature-driven translator even when ISGN/OSGN are absent"
+        );
+        assert!(
+            !should_use_signature_driven_translator(ShaderStage::Vertex, &signatures),
+            "vertex shaders without ISGN/OSGN should fall back to the bootstrap translator"
+        );
     }
 
     #[allow(dead_code)]
