@@ -1,18 +1,13 @@
 mod common;
 
-use aero_gpu::backend::WgpuBackend;
 use aero_gpu::hal::*;
 use aero_gpu::GpuError;
 
 #[test]
 fn wgpu_backend_create_destroy_smoke() {
-    common::ensure_xdg_runtime_dir();
-    let mut backend = match pollster::block_on(WgpuBackend::new_headless(BackendKind::WebGpu)) {
-        Ok(backend) => backend,
-        Err(err) => {
-            common::skip_or_panic(module_path!(), &format!("wgpu backend init failed: {err}"));
-            return;
-        }
+    let mut backend = match common::wgpu_backend_webgpu(module_path!()) {
+        Some(backend) => backend,
+        None => return,
     };
 
     let buffer = backend

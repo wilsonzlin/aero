@@ -1,18 +1,13 @@
 mod common;
 
-use aero_gpu::backend::WgpuBackend;
 use aero_gpu::hal::*;
 use aero_gpu::GpuError;
 
 #[test]
 fn wgpu_backend_create_texture_rejects_excessive_mip_level_count() {
-    common::ensure_xdg_runtime_dir();
-    let mut backend = match pollster::block_on(WgpuBackend::new_headless(BackendKind::WebGpu)) {
-        Ok(backend) => backend,
-        Err(err) => {
-            common::skip_or_panic(module_path!(), &format!("wgpu backend init failed: {err}"));
-            return;
-        }
+    let mut backend = match common::wgpu_backend_webgpu(module_path!()) {
+        Some(backend) => backend,
+        None => return,
     };
 
     let err = backend
@@ -35,13 +30,9 @@ fn wgpu_backend_create_texture_rejects_excessive_mip_level_count() {
 
 #[test]
 fn wgpu_backend_create_texture_rejects_exceeding_device_limits() {
-    common::ensure_xdg_runtime_dir();
-    let mut backend = match pollster::block_on(WgpuBackend::new_headless(BackendKind::WebGpu)) {
-        Ok(backend) => backend,
-        Err(err) => {
-            common::skip_or_panic(module_path!(), &format!("wgpu backend init failed: {err}"));
-            return;
-        }
+    let mut backend = match common::wgpu_backend_webgpu(module_path!()) {
+        Some(backend) => backend,
+        None => return,
     };
     let err = backend
         .create_texture(TextureDesc {
@@ -63,13 +54,9 @@ fn wgpu_backend_create_texture_rejects_exceeding_device_limits() {
 
 #[test]
 fn wgpu_backend_create_texture_rejects_excessive_array_layers() {
-    common::ensure_xdg_runtime_dir();
-    let mut backend = match pollster::block_on(WgpuBackend::new_headless(BackendKind::WebGpu)) {
-        Ok(backend) => backend,
-        Err(err) => {
-            common::skip_or_panic(module_path!(), &format!("wgpu backend init failed: {err}"));
-            return;
-        }
+    let mut backend = match common::wgpu_backend_webgpu(module_path!()) {
+        Some(backend) => backend,
+        None => return,
     };
     let err = backend
         .create_texture(TextureDesc {
@@ -91,13 +78,9 @@ fn wgpu_backend_create_texture_rejects_excessive_array_layers() {
 
 #[test]
 fn wgpu_backend_write_texture_rejects_out_of_range_mip_level() {
-    common::ensure_xdg_runtime_dir();
-    let mut backend = match pollster::block_on(WgpuBackend::new_headless(BackendKind::WebGpu)) {
-        Ok(backend) => backend,
-        Err(err) => {
-            common::skip_or_panic(module_path!(), &format!("wgpu backend init failed: {err}"));
-            return;
-        }
+    let mut backend = match common::wgpu_backend_webgpu(module_path!()) {
+        Some(backend) => backend,
+        None => return,
     };
 
     let texture = backend

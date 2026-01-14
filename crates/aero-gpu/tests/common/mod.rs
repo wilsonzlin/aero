@@ -23,6 +23,53 @@ pub fn skip_or_panic(test_name: &str, reason: &str) {
     eprintln!("skipping {test_name}: {reason}");
 }
 
+/// Return a shared, leaked `WgpuBackend` for this integration-test binary.
+///
+/// Like [`d3d9_executor`], this avoids wgpu backend/driver instability caused by repeatedly
+/// creating/dropping `wgpu::Device`s across many `#[test]` cases in a single process.
+#[allow(dead_code)]
+#[cfg(target_arch = "wasm32")]
+pub fn wgpu_backend_webgpu(
+    test_name: &str,
+) -> Option<std::sync::MutexGuard<'static, aero_gpu::backend::WgpuBackend>> {
+    // The wgpu backend relies on JS-backed WebGPU handles on wasm32 which are not Send/Sync. Keep
+    // host-style integration tests buildable by treating them as skipped.
+    skip_or_panic(test_name, "headless wgpu backend is host-only");
+    None
+}
+
+#[allow(dead_code)]
+#[cfg(not(target_arch = "wasm32"))]
+pub fn wgpu_backend_webgpu(
+    test_name: &str,
+) -> Option<std::sync::MutexGuard<'static, aero_gpu::backend::WgpuBackend>> {
+    use std::sync::{Mutex, OnceLock};
+
+    static BACKEND: OnceLock<Result<&'static Mutex<aero_gpu::backend::WgpuBackend>, String>> =
+        OnceLock::new();
+
+    let backend = BACKEND.get_or_init(|| {
+        ensure_xdg_runtime_dir();
+        match pollster::block_on(aero_gpu::backend::WgpuBackend::new_headless(
+            aero_gpu::hal::BackendKind::WebGpu,
+        )) {
+            Ok(backend) => Ok(Box::leak(Box::new(Mutex::new(backend)))),
+            Err(err) => Err(err.to_string()),
+        }
+    });
+
+    match backend {
+        Ok(backend) => Some(backend.lock().unwrap_or_else(|poison| poison.into_inner())),
+        Err(err) => {
+            skip_or_panic(
+                test_name,
+                &format!("wgpu backend init failed: {err}"),
+            );
+            None
+        }
+    }
+}
+
 /// Return a shared, leaked D3D9 executor for this integration-test binary.
 ///
 /// Some wgpu backends/drivers have been observed to crash inside the allocator when repeatedly
