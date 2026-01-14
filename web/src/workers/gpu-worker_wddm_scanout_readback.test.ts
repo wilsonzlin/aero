@@ -14,8 +14,11 @@ import {
   SCANOUT_FORMAT_R8G8B8A8,
   SCANOUT_FORMAT_R8G8B8X8,
   SCANOUT_SOURCE_LEGACY_VBE_LFB,
+  SCANOUT_STATE_GENERATION_BUSY_BIT,
+  ScanoutStateIndex,
   SCANOUT_SOURCE_WDDM,
 } from "../ipc/scanout_state";
+import { CURSOR_STATE_GENERATION_BUSY_BIT, CursorStateIndex } from "../ipc/cursor_state";
 
 async function waitForWorkerMessage(
   worker: Worker,
@@ -1360,6 +1363,107 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
         // Row 1: blue, white.
         0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
       ]);
+    } finally {
+      await worker.terminate();
+    }
+  }, 20_000);
+
+  it("returns a stub screenshot quickly when scanout/cursor seqlock busy bits are stuck", async () => {
+    const segments = allocateHarnessSharedMemorySegments({
+      guestRamBytes: 1 * 1024 * 1024,
+      sharedFramebuffer: new SharedArrayBuffer(8),
+      sharedFramebufferOffsetBytes: 0,
+      ioIpcBytes: 0,
+      vramBytes: 0,
+    });
+    const views = createSharedMemoryViews(segments);
+
+    const scanoutWords = views.scanoutStateI32!;
+    const cursorWords = views.cursorStateI32!;
+
+    const basePaddr = 0x1000;
+    Atomics.store(scanoutWords, ScanoutStateIndex.SOURCE, SCANOUT_SOURCE_WDDM | 0);
+    Atomics.store(scanoutWords, ScanoutStateIndex.BASE_PADDR_LO, basePaddr | 0);
+    Atomics.store(scanoutWords, ScanoutStateIndex.BASE_PADDR_HI, 0);
+    Atomics.store(scanoutWords, ScanoutStateIndex.WIDTH, 1);
+    Atomics.store(scanoutWords, ScanoutStateIndex.HEIGHT, 1);
+    Atomics.store(scanoutWords, ScanoutStateIndex.PITCH_BYTES, 4);
+    Atomics.store(scanoutWords, ScanoutStateIndex.FORMAT, SCANOUT_FORMAT_B8G8R8X8 | 0);
+    // Wedge the busy bit (simulate a crashed writer holding the seqlock).
+    Atomics.store(scanoutWords, ScanoutStateIndex.GENERATION, (SCANOUT_STATE_GENERATION_BUSY_BIT | 1) | 0);
+    Atomics.store(cursorWords, CursorStateIndex.GENERATION, (CURSOR_STATE_GENERATION_BUSY_BIT | 1) | 0);
+
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./gpu-worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      const initMsg: WorkerInitMessage = {
+        kind: "init",
+        role: "gpu",
+        controlSab: segments.control,
+        guestMemory: segments.guestMemory,
+        ioIpcSab: segments.ioIpc,
+        sharedFramebuffer: segments.sharedFramebuffer,
+        sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
+        vgaFramebuffer: segments.sharedFramebuffer,
+        scanoutState: segments.scanoutState,
+        scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
+        cursorState: segments.cursorState,
+        cursorStateOffsetBytes: segments.cursorStateOffsetBytes,
+      };
+
+      worker.postMessage(initMsg);
+      await waitForWorkerMessage(
+        worker,
+        (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "gpu",
+        10_000,
+      );
+
+      const sharedFrameState = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
+      const frameState = new Int32Array(sharedFrameState);
+      Atomics.store(frameState, FRAME_STATUS_INDEX, FRAME_PRESENTED);
+      Atomics.store(frameState, FRAME_SEQ_INDEX, 0);
+
+      worker.postMessage({
+        protocol: GPU_PROTOCOL_NAME,
+        protocolVersion: GPU_PROTOCOL_VERSION,
+        type: "init",
+        sharedFrameState,
+        sharedFramebuffer: segments.sharedFramebuffer,
+        sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
+      });
+
+      await waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { protocol?: unknown; type?: unknown }).protocol === GPU_PROTOCOL_NAME && (msg as { type?: unknown }).type === "ready",
+        10_000,
+      );
+
+      const requestId = 1;
+      const shotPromise = waitForWorkerMessage(
+        worker,
+        (msg) =>
+          (msg as { protocol?: unknown; type?: unknown; requestId?: unknown }).protocol === GPU_PROTOCOL_NAME &&
+          (msg as { type?: unknown }).type === "screenshot" &&
+          (msg as { requestId?: unknown }).requestId === requestId,
+        10_000,
+      );
+      worker.postMessage({
+        protocol: GPU_PROTOCOL_NAME,
+        protocolVersion: GPU_PROTOCOL_VERSION,
+        type: "screenshot",
+        requestId,
+        includeCursor: true,
+      });
+
+      const shot = (await shotPromise) as { width: number; height: number; rgba8: ArrayBuffer };
+      expect(shot.width).toBe(1);
+      expect(shot.height).toBe(1);
+      expect(Array.from(new Uint8Array(shot.rgba8))).toEqual([0, 0, 0, 255]);
     } finally {
       await worker.terminate();
     }
