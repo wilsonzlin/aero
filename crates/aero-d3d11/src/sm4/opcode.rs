@@ -72,6 +72,8 @@ pub const OPCODE_IBFE: u32 = 0x69;
 //
 // Note: keep these distinct from the integer/bitwise arithmetic opcodes; the decoder relies on
 // unique opcode IDs.
+// These numeric IDs are expected to match the Windows SDK tokenized-program opcode table
+// (`d3d11tokenizedprogramformat.h`).
 pub const OPCODE_IEQ: u32 = 0x4d;
 pub const OPCODE_IGE: u32 = 0x4e;
 pub const OPCODE_ILT: u32 = 0x4f;
@@ -486,5 +488,36 @@ mod tests {
             opcode_name(OPCODE_EMITTHENCUT_STREAM),
             Some("emitthen_cut_stream")
         );
+    }
+
+    #[test]
+    fn integer_compare_opcodes_do_not_overlap_with_integer_bitwise_ops() {
+        use std::collections::HashSet;
+
+        let compare = [
+            OPCODE_IEQ,
+            OPCODE_IGE,
+            OPCODE_ILT,
+            OPCODE_INE,
+            OPCODE_ULT,
+            OPCODE_UGE,
+        ];
+        let bitwise = [
+            OPCODE_IADD,
+            OPCODE_ISUB,
+            OPCODE_IMUL,
+            OPCODE_AND,
+            OPCODE_OR,
+            OPCODE_XOR,
+            OPCODE_NOT,
+            OPCODE_ISHL,
+            OPCODE_ISHR,
+            OPCODE_USHR,
+        ];
+
+        let mut seen = HashSet::new();
+        for op in compare.iter().chain(bitwise.iter()) {
+            assert!(seen.insert(*op), "duplicate opcode value 0x{op:x}");
+        }
     }
 }
