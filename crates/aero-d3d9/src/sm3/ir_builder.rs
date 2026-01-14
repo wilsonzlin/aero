@@ -1396,24 +1396,24 @@ fn apply_vertex_input_remap(ir: &mut ShaderIr) -> Result<(), BuildError> {
         }
     }
 
-    // Remap all declared input registers (not just those used by the instruction stream) so
-    // downstream consumers (e.g. semantic location reflection) observe a consistent canonical
-    // mapping for every declared semantic.
-    let mut declared_vs_inputs: Vec<u32> = dcl_map.keys().copied().collect();
-    declared_vs_inputs.sort_unstable();
-    for v in declared_vs_inputs {
-        let (usage, usage_index) = dcl_map[&v];
+    // Remap only the input registers actually referenced by the instruction stream.
+    //
+    // Note: `input_dcl_order` may include declarations for unused registers. We still include them
+    // when constructing the adaptive map so the assigned locations match the `semantic_locations`
+    // reflection metadata derived from the full `dcl_*` set.
+    for v in &used_vs_inputs {
+        let (usage, usage_index) = dcl_map[v];
         let loc = map
             .location_for(usage, usage_index)
             .map_err(|e| err_internal(&format!("failed to map vertex input semantic: {e}")))?;
-        if let Some(prev_v) = used_locations.insert(loc, v) {
-            if prev_v != v {
+        if let Some(prev_v) = used_locations.insert(loc, *v) {
+            if prev_v != *v {
                 return Err(err_internal(&format!(
                     "vertex shader input DCL declarations map multiple input registers to WGSL @location({loc}): v{prev_v} and v{v}"
                 )));
             }
         }
-        remap.insert(v, loc);
+        remap.insert(*v, loc);
     }
 
     for decl in &mut ir.inputs {
