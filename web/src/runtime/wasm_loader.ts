@@ -165,12 +165,29 @@ export type MachineHandle = {
      */
     attach_install_media_iso_opfs?(path: string): Promise<void>;
     /**
+     * Legacy/alternate naming for attaching an existing OPFS-backed ISO image as canonical install
+     * media (`disk_id=1`).
+     *
+     * Some wasm builds expose this as an `_existing` variant; newer builds typically use
+     * {@link attach_install_media_iso_opfs}.
+     *
+     * Optional for older WASM builds.
+     */
+    attach_install_media_iso_opfs_existing?(path: string): Promise<void>;
+    /**
      * Alias for attaching an existing OPFS-backed ISO image as canonical install media (`disk_id=1`)
      * and recording snapshot overlay refs (DISKS entry).
      *
      * Optional for older WASM builds.
      */
     attach_install_media_iso_opfs_and_set_overlay_ref?(path: string): Promise<void>;
+    /**
+     * Legacy/alternate naming for attaching an existing OPFS-backed ISO image as canonical install
+     * media (`disk_id=1`) and recording snapshot overlay refs (DISKS entry).
+     *
+     * Optional for older WASM builds.
+     */
+    attach_install_media_iso_opfs_existing_and_set_overlay_ref?(path: string): Promise<void>;
     run_slice(maxInsts: number): { kind: number; executed: number; detail: string; free(): void };
     serial_output(): Uint8Array;
     /**

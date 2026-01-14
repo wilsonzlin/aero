@@ -126,6 +126,15 @@ async function attachCd(machine: MachineHandle, plan: MachineBootDiskPlan): Prom
   }
 
   // Back-compat: some builds expose the install-media naming.
+  if (typeof machine.attach_install_media_iso_opfs_existing_and_set_overlay_ref === "function") {
+    await machine.attach_install_media_iso_opfs_existing_and_set_overlay_ref(plan.opfsPath);
+    return;
+  }
+  if (typeof machine.attach_install_media_iso_opfs_existing === "function") {
+    await machine.attach_install_media_iso_opfs_existing(plan.opfsPath);
+    machine.set_ide_secondary_master_atapi_overlay_ref?.(plan.opfsPath, "");
+    return;
+  }
   if (typeof machine.attach_install_media_iso_opfs_and_set_overlay_ref === "function") {
     await machine.attach_install_media_iso_opfs_and_set_overlay_ref(plan.opfsPath);
     return;
@@ -166,4 +175,3 @@ export async function attachMachineBootDisks(
   }
   return { warnings };
 }
-

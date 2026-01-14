@@ -20,7 +20,9 @@ describe("runtime/wasm_loader (Machine disk overlay typings)", () => {
       reattach_restored_disks_from_opfs: async () => {},
       set_primary_hdd_opfs_cow: (_base: string, _overlay: string) => {},
       attach_install_media_iso_opfs: (_path: string) => {},
+      attach_install_media_iso_opfs_existing: (_path: string) => {},
       attach_install_media_opfs_iso: (_path: string) => {},
+      attach_install_media_iso_opfs_existing_and_set_overlay_ref: async (_path: string) => {},
       take_restored_disk_overlays: () => null,
     } as unknown as Machine;
 
@@ -53,8 +55,12 @@ describe("runtime/wasm_loader (Machine disk overlay typings)", () => {
       void machine.set_primary_hdd_opfs_cow("d.base", "d.overlay");
       // @ts-expect-error attach_install_media_iso_opfs may be undefined
       void machine.attach_install_media_iso_opfs("win7.iso");
+      // @ts-expect-error attach_install_media_iso_opfs_existing may be undefined
+      void machine.attach_install_media_iso_opfs_existing("win7.iso");
       // @ts-expect-error attach_install_media_opfs_iso may be undefined
       void machine.attach_install_media_opfs_iso("win7.iso");
+      // @ts-expect-error attach_install_media_iso_opfs_existing_and_set_overlay_ref may be undefined
+      void machine.attach_install_media_iso_opfs_existing_and_set_overlay_ref("win7.iso");
       // @ts-expect-error take_restored_disk_overlays may be undefined
       machine.take_restored_disk_overlays();
 
@@ -103,8 +109,14 @@ describe("runtime/wasm_loader (Machine disk overlay typings)", () => {
     if (machine.attach_install_media_iso_opfs) {
       void machine.attach_install_media_iso_opfs("win7.iso");
     }
+    if (machine.attach_install_media_iso_opfs_existing) {
+      void machine.attach_install_media_iso_opfs_existing("win7.iso");
+    }
     if (machine.attach_install_media_opfs_iso) {
       void machine.attach_install_media_opfs_iso("win7.iso");
+    }
+    if (machine.attach_install_media_iso_opfs_existing_and_set_overlay_ref) {
+      void machine.attach_install_media_iso_opfs_existing_and_set_overlay_ref("win7.iso");
     }
     if (machine.take_restored_disk_overlays) {
       machine.take_restored_disk_overlays();
