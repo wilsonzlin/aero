@@ -21,3 +21,4 @@ fn edid_includes_1024x768_dtd() {
         ]
     );
 }
+
