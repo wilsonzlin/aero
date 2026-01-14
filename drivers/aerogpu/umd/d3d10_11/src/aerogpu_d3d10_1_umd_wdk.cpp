@@ -7487,19 +7487,30 @@ void AEROGPU_APIENTRY IaSetTopology(D3D10DDI_HDEVICE hDevice, D3D10_DDI_PRIMITIV
   cmd->reserved0 = 0;
 }
 
-static void EmitBindShadersLocked(AeroGpuDevice* dev) {
+static bool EmitBindShadersCmdLocked(AeroGpuDevice* dev,
+                                     aerogpu_handle_t vs,
+                                     aerogpu_handle_t ps,
+                                     aerogpu_handle_t gs) {
   if (!dev) {
-    return;
+    return false;
   }
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_bind_shaders>(AEROGPU_CMD_BIND_SHADERS);
   if (!cmd) {
     set_error(dev, E_OUTOFMEMORY);
-    return;
+    return false;
   }
-  cmd->vs = dev->current_vs;
-  cmd->ps = dev->current_ps;
+  cmd->vs = vs;
+  cmd->ps = ps;
   cmd->cs = 0;
-  cmd->reserved0 = dev->current_gs;
+  cmd->reserved0 = gs;
+  return true;
+}
+
+[[maybe_unused]] static bool EmitBindShadersLocked(AeroGpuDevice* dev) {
+  if (!dev) {
+    return false;
+  }
+  return EmitBindShadersCmdLocked(dev, dev->current_vs, dev->current_ps, dev->current_gs);
 }
 
 void AEROGPU_APIENTRY VsSetShader(D3D10DDI_HDEVICE hDevice, D3D10DDI_HVERTEXSHADER hShader) {
@@ -7513,10 +7524,11 @@ void AEROGPU_APIENTRY VsSetShader(D3D10DDI_HDEVICE hDevice, D3D10DDI_HVERTEXSHAD
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
-
-  dev->current_vs = hShader.pDrvPrivate ? reinterpret_cast<AeroGpuShader*>(hShader.pDrvPrivate)->handle : 0;
-
-  EmitBindShadersLocked(dev);
+  const aerogpu_handle_t new_vs = hShader.pDrvPrivate ? reinterpret_cast<AeroGpuShader*>(hShader.pDrvPrivate)->handle : 0;
+  if (!EmitBindShadersCmdLocked(dev, new_vs, dev->current_ps, dev->current_gs)) {
+    return;
+  }
+  dev->current_vs = new_vs;
 }
 
 void AEROGPU_APIENTRY PsSetShader(D3D10DDI_HDEVICE hDevice, D3D10DDI_HPIXELSHADER hShader) {
@@ -7530,10 +7542,11 @@ void AEROGPU_APIENTRY PsSetShader(D3D10DDI_HDEVICE hDevice, D3D10DDI_HPIXELSHADE
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
-
-  dev->current_ps = hShader.pDrvPrivate ? reinterpret_cast<AeroGpuShader*>(hShader.pDrvPrivate)->handle : 0;
-
-  EmitBindShadersLocked(dev);
+  const aerogpu_handle_t new_ps = hShader.pDrvPrivate ? reinterpret_cast<AeroGpuShader*>(hShader.pDrvPrivate)->handle : 0;
+  if (!EmitBindShadersCmdLocked(dev, dev->current_vs, new_ps, dev->current_gs)) {
+    return;
+  }
+  dev->current_ps = new_ps;
 }
 
 template <typename FnPtr>
@@ -7557,9 +7570,11 @@ struct GsSetShaderImpl<void(AEROGPU_APIENTRY*)(D3D10DDI_HDEVICE, Tail...)> {
     }
 
     std::lock_guard<std::mutex> lock(dev->mutex);
-    dev->current_gs = hShader.pDrvPrivate ? reinterpret_cast<AeroGpuShader*>(hShader.pDrvPrivate)->handle : 0;
-
-    EmitBindShadersLocked(dev);
+    const aerogpu_handle_t new_gs = hShader.pDrvPrivate ? reinterpret_cast<AeroGpuShader*>(hShader.pDrvPrivate)->handle : 0;
+    if (!EmitBindShadersCmdLocked(dev, dev->current_vs, dev->current_ps, new_gs)) {
+      return;
+    }
+    dev->current_gs = new_gs;
   }
 };
 
