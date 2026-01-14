@@ -6611,6 +6611,21 @@ static NTSTATUS APIENTRY AeroGpuDdiSetVidPnSourceVisibility(_In_ const HANDLE hA
     return STATUS_SUCCESS;
 }
 
+#if DBG
+/*
+ * DBG-only scanline query telemetry.
+ *
+ * D3D9-era apps can call GetRasterStatus (DxgkDdiGetScanLine) in a tight loop to
+ * busy-wait for vblank. When vblank IRQs are enabled, the ISR maintains a cached
+ * vblank anchor so we can estimate scanline position without hammering MMIO.
+ *
+ * These counters are best-effort and intentionally global (not per-adapter). They
+ * are intended for ad-hoc performance investigations (kernel debugger / internal
+ * builds), not for stable user-mode tooling.
+ */
+static volatile LONGLONG g_AeroGpuPerfGetScanLineCacheHits = 0;
+static volatile LONGLONG g_AeroGpuPerfGetScanLineMmioPolls = 0;
+#endif
 static NTSTATUS APIENTRY AeroGpuDdiGetScanLine(_In_ const HANDLE hAdapter, _Inout_ DXGKARG_GETSCANLINE* pGetScanLine)
 {
     AEROGPU_ADAPTER* adapter = (AEROGPU_ADAPTER*)hAdapter;
@@ -6629,26 +6644,84 @@ static NTSTATUS APIENTRY AeroGpuDdiGetScanLine(_In_ const HANDLE hAdapter, _Inou
 
     const ULONGLONG now100ns = KeQueryInterruptTime();
 
-    ULONGLONG periodNs = adapter->VblankPeriodNs ? (ULONGLONG)adapter->VblankPeriodNs : (ULONGLONG)AEROGPU_VBLANK_PERIOD_NS_DEFAULT;
-    BOOLEAN haveVblankRegs = FALSE;
-    if (adapter->Bar0 && adapter->SupportsVblank &&
-        (DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange(&adapter->DevicePowerState, 0, 0) == DxgkDevicePowerStateD0 &&
-        adapter->Bar0Length >= (AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS + sizeof(ULONG))) {
-        const ULONG mmioPeriod = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS);
-        if (mmioPeriod != 0) {
-            adapter->VblankPeriodNs = mmioPeriod;
-            periodNs = (ULONGLONG)mmioPeriod;
-        } else if (periodNs == 0) {
-            periodNs = (ULONGLONG)AEROGPU_VBLANK_PERIOD_NS_DEFAULT;
-        }
-        haveVblankRegs = TRUE;
-    } else if (periodNs == 0) {
+    ULONGLONG periodNs =
+        adapter->VblankPeriodNs ? (ULONGLONG)adapter->VblankPeriodNs : (ULONGLONG)AEROGPU_VBLANK_PERIOD_NS_DEFAULT;
+    if (periodNs == 0) {
         periodNs = (ULONGLONG)AEROGPU_VBLANK_PERIOD_NS_DEFAULT;
     }
 
     ULONGLONG posNs = 0;
+    BOOLEAN usedCache = FALSE;
 
-    if (haveVblankRegs) {
+    /*
+     * Fast path: use the cached vblank anchor maintained by the vblank IRQ ISR.
+     *
+     * This avoids multiple MMIO reads per call for D3D9-era apps that poll
+     * GetRasterStatus at very high frequency.
+     */
+    {
+        const BOOLEAN poweredOn =
+            (adapter->Bar0 != NULL) &&
+            ((DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange(&adapter->DevicePowerState, 0, 0) == DxgkDevicePowerStateD0);
+
+        const ULONG irqEnableMask = AeroGpuAtomicReadU32((volatile ULONG*)&adapter->IrqEnableMask);
+        const BOOLEAN vblankIrqEnabled = (irqEnableMask & AEROGPU_IRQ_SCANOUT_VBLANK) != 0;
+
+        const ULONGLONG lastVblank100ns = AeroGpuAtomicReadU64(&adapter->LastVblankInterruptTime100ns);
+        const LONG vblankIrqCount = InterlockedCompareExchange(&adapter->IrqIsrVblankCount, 0, 0);
+
+        if (poweredOn && adapter->SupportsVblank && vblankIrqEnabled && lastVblank100ns != 0 && vblankIrqCount != 0) {
+            ULONGLONG delta100ns = (now100ns >= lastVblank100ns) ? (now100ns - lastVblank100ns) : 0;
+
+            /*
+             * Treat the cached anchor as stale if we haven't observed a vblank IRQ
+             * for "too long". This avoids reporting scanline position based on a
+             * frozen cadence when scanout/vblank is no longer ticking.
+             *
+             * Use a threshold based on the nominal vblank period, with a small
+             * absolute minimum to tolerate jitter.
+             */
+            ULONGLONG period100ns = (periodNs + 99ull) / 100ull;
+            ULONGLONG staleThreshold100ns = period100ns * 4ull;
+            const ULONGLONG minThreshold100ns = 500000ull; /* 50ms */
+            if (staleThreshold100ns < minThreshold100ns) {
+                staleThreshold100ns = minThreshold100ns;
+            }
+
+            if (delta100ns <= staleThreshold100ns) {
+                const ULONGLONG deltaNs = delta100ns * 100ull;
+                posNs = (periodNs != 0) ? (deltaNs % periodNs) : 0;
+                usedCache = TRUE;
+            }
+        }
+    }
+
+    BOOLEAN haveVblankRegs = FALSE;
+    if (!usedCache) {
+        if (adapter->Bar0 && adapter->SupportsVblank &&
+            (DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange(&adapter->DevicePowerState, 0, 0) == DxgkDevicePowerStateD0 &&
+            adapter->Bar0Length >= (AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS + sizeof(ULONG))) {
+            const ULONG mmioPeriod = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS);
+            if (mmioPeriod != 0) {
+                adapter->VblankPeriodNs = mmioPeriod;
+                periodNs = (ULONGLONG)mmioPeriod;
+            } else if (periodNs == 0) {
+                periodNs = (ULONGLONG)AEROGPU_VBLANK_PERIOD_NS_DEFAULT;
+            }
+            haveVblankRegs = TRUE;
+        } else if (periodNs == 0) {
+            periodNs = (ULONGLONG)AEROGPU_VBLANK_PERIOD_NS_DEFAULT;
+        }
+    }
+
+    if (usedCache) {
+#if DBG
+        InterlockedIncrement64(&g_AeroGpuPerfGetScanLineCacheHits);
+#endif
+    } else if (haveVblankRegs) {
+#if DBG
+        InterlockedIncrement64(&g_AeroGpuPerfGetScanLineMmioPolls);
+#endif
         ULONGLONG seq = AeroGpuReadRegU64HiLoHi(adapter,
                                                AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO,
                                                AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_HI);
