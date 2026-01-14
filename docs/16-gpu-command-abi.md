@@ -508,5 +508,11 @@ layout directly:
   - `AerogpuCmdWriter.bindShadersEx(vs, ps, cs, gs, hs, ds, mirrorGsToReserved0?)`
   - `AerogpuCmdWriter.bindShadersEx(vs, ps, cs, {gs, hs, ds}, mirrorGsToReserved0?)`
 - TypeScript (HS/DS-only convenience): `AerogpuCmdWriter.bindShadersHsDs(hs, ds)`
-- C++ (UMD `CmdStreamWriter`): `aerogpu::CmdWriter::bind_shaders_ex(vs, ps, cs, gs, hs, ds, mirror_gs_to_reserved0=false)`
-- C++ (UMD HS/DS-only convenience): `aerogpu::CmdWriter::bind_shaders_hs_ds(hs, ds)`
+- C++ (UMD cmd stream writers):
+  - `aerogpu::CmdStreamWriter::bind_shaders_ex(vs, ps, cs, gs, hs, ds, mirror_gs_to_reserved0=false)`
+  - `aerogpu::SpanCmdStreamWriter::bind_shaders_ex(vs, ps, cs, gs, hs, ds, mirror_gs_to_reserved0=false)`
+  - `aerogpu::VectorCmdStreamWriter::bind_shaders_ex(vs, ps, cs, gs, hs, ds, mirror_gs_to_reserved0=false)`
+- C++ (UMD HS/DS-only convenience):
+  - `aerogpu::CmdStreamWriter::bind_shaders_hs_ds(hs, ds)`
+  - `aerogpu::SpanCmdStreamWriter::bind_shaders_hs_ds(hs, ds)`
+  - `aerogpu::VectorCmdStreamWriter::bind_shaders_hs_ds(hs, ds)`
