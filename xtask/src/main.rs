@@ -1,3 +1,4 @@
+use std::any::Any;
 use std::env;
 use std::fs;
 use std::io;
@@ -30,9 +31,29 @@ mod tools;
 use crate::error::{Result, XtaskError};
 
 fn main() {
-    if let Err(err) = try_main() {
-        eprintln!("error: {err}");
-        std::process::exit(err.exit_code());
+    // When `cargo xtask ... --help` is piped to a command like `head`, Rust's `println!` will
+    // panic on EPIPE ("Broken pipe") once the downstream process closes stdout. Treat that as a
+    // successful early-termination instead of crashing with a noisy panic.
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        if is_broken_pipe_panic(info.payload()) {
+            return;
+        }
+        default_hook(info);
+    }));
+
+    let result = std::panic::catch_unwind(|| {
+        if let Err(err) = try_main() {
+            eprintln!("error: {err}");
+            std::process::exit(err.exit_code());
+        }
+    });
+
+    if let Err(payload) = result {
+        if is_broken_pipe_panic(payload.as_ref()) {
+            return;
+        }
+        std::panic::resume_unwind(payload);
     }
 }
 
@@ -55,6 +76,18 @@ fn try_main() -> Result<()> {
         "-h" | "--help" | "help" => help(),
         other => Err(format!("unknown xtask subcommand `{other}` (run `cargo xtask help`)").into()),
     }
+}
+
+fn is_broken_pipe_panic(payload: &(dyn Any + Send)) -> bool {
+    let msg = if let Some(s) = payload.downcast_ref::<String>() {
+        s.as_str()
+    } else if let Some(s) = payload.downcast_ref::<&str>() {
+        *s
+    } else {
+        return false;
+    };
+
+    msg.contains("failed printing to stdout") && msg.contains("Broken pipe")
 }
 
 fn help() -> Result<()> {
