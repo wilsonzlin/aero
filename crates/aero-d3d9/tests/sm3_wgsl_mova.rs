@@ -294,3 +294,67 @@ fn wgsl_mova_applies_shift_before_saturate() {
         .expect("wgsl validate");
     }
 }
+
+#[test]
+fn wgsl_relative_constant_indexing_without_defs_reads_uniform_buffer_directly() {
+    // When there are *no* embedded `def c#` constants, relative constant indexing should read
+    // directly from the uniform constant buffer (no `aero_read_const` helper needed).
+    for stage in [ShaderStage::Vertex, ShaderStage::Pixel] {
+        // mov ???, c1[a0.x]
+        let mut c1_rel = src_token(2, 1, 0xE4, 0);
+        c1_rel |= 0x0000_2000; // RELATIVE flag
+
+        let mut tokens = vec![
+            version_token(stage, 3, 0),
+            // mova a0.x, c0
+            opcode_token(46, 2),
+            dst_token(3, 0, 0x1),     // a0.x (regtype 3)
+            src_token(2, 0, 0xE4, 0), // c0
+        ];
+
+        match stage {
+            ShaderStage::Vertex => {
+                // mov oPos, c1[a0.x]
+                tokens.extend([
+                    opcode_token(1, 3),
+                    dst_token(4, 0, 0xF), // oPos
+                    c1_rel,
+                    src_token(3, 0, 0x00, 0), // a0.x (swizzle xxxx)
+                ]);
+            }
+            ShaderStage::Pixel => {
+                // mov oC0, c1[a0.x]
+                tokens.extend([
+                    opcode_token(1, 3),
+                    dst_token(8, 0, 0xF), // oC0
+                    c1_rel,
+                    src_token(3, 0, 0x00, 0), // a0.x (swizzle xxxx)
+                ]);
+            }
+        }
+
+        tokens.push(0x0000_FFFF); // end
+
+        let decoded = decode_u32_tokens(&tokens).unwrap();
+        let ir = build_ir(&decoded).unwrap();
+        verify_ir(&ir).unwrap();
+
+        let wgsl = generate_wgsl(&ir).unwrap().wgsl;
+        assert!(
+            !wgsl.contains("fn aero_read_const"),
+            "unexpected aero_read_const helper in WGSL:\n{wgsl}"
+        );
+        assert!(
+            wgsl.contains("constants.c[CONST_BASE + u32(clamp(i32(1) + (a0.x), 0, 255))]"),
+            "expected uniform-buffer constant lookup in WGSL:\n{wgsl}"
+        );
+
+        let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .expect("wgsl validate");
+    }
+}
