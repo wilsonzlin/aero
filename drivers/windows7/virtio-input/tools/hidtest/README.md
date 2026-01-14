@@ -195,6 +195,8 @@ Reset virtio-input driver diagnostic counters:
 hidtest.exe --reset-counters
 ```
 
+Note: `--reset-counters` requires opening the HID interface with write access (the tool prefers read/write but may fall back to read-only). If it fails with a “GENERIC_WRITE” message, rerun elevated and/or ensure no other process is holding the device exclusively.
+
 Tip: combine with `--counters` / `--counters-json` to verify reset immediately (the tool's own enumeration traffic is cleared by the reset):
 
 ```bat
