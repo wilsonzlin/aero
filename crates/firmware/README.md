@@ -213,15 +213,20 @@ For the canonical machine wiring / integration reference, see `crates/aero-machi
 `crates/legacy/vm` (formerly `crates/vm`) remains as a deprecated, reference-only VM stack and is
 **not built by default** (it is excluded from the workspace).
 
-## ACPI DSDT fixture (`crates/firmware/acpi/dsdt.aml`)
+## ACPI DSDT fixtures (`crates/firmware/acpi/dsdt*.aml`)
 
-This repo keeps a checked-in DSDT AML blob at `crates/firmware/acpi/dsdt.aml` for:
+This repo keeps checked-in DSDT AML blobs under `crates/firmware/acpi/` for:
 
 - ACPICA `iasl` decompile/recompile validation in CI (`scripts/validate-acpi.sh`)
 - quick manual inspection / diffing
 
+The fixtures are:
+
+- `crates/firmware/acpi/dsdt.aml` — legacy PCI root bridge (ECAM/MMCONFIG disabled)
+- `crates/firmware/acpi/dsdt_pcie.aml` — PCIe root bridge + ECAM/MMCONFIG enabled (Win7-relevant)
+
 The canonical source of truth is the `aero-acpi` Rust generator. To regenerate the checked-in
-fixture after AML changes:
+fixtures after AML changes:
 
 ```bash
 cargo xtask fixtures
@@ -233,19 +238,19 @@ To verify the fixture is up to date without modifying it:
 cargo xtask fixtures --check
 ```
 
-Or, to check just the DSDT fixture:
+Or, to check just the legacy `dsdt.aml` fixture:
 
 ```bash
 cargo run -p firmware --bin gen_dsdt --locked -- --check
 ```
 
-The `dsdt.aml` fixture is validated in CI in two ways:
+The DSDT fixtures are validated in CI in two ways:
 
 - `scripts/validate-acpi.sh` decompiles and recompiles the checked-in AML tables using ACPICA `iasl`.
-- `crates/firmware/tests/acpi_tables.rs` asserts that `crates/firmware/acpi/dsdt.aml` matches the
-  bytes produced by the `aero-acpi` Rust generator.
+- `crates/firmware/tests/acpi_tables.rs` asserts that each checked-in DSDT fixture matches the bytes
+  produced by the `aero-acpi` Rust generator.
 
-For convenience, you can also regenerate just the DSDT fixture via:
+For convenience, you can also regenerate just the legacy `dsdt.aml` fixture via:
 
 ```bash
 cargo run -p firmware --bin gen_dsdt --locked
