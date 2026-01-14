@@ -1461,9 +1461,11 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
     UINT64 availPa;
     UINT64 usedPa;
     BOOLEAN compatDeviceKind;
+    BOOLEAN strictIdName;
 
     deviceContext = VirtioInputGetDeviceContext(Device);
     compatDeviceKind = g_VioInputCompatIdName ? TRUE : FALSE;
+    strictIdName = TRUE;
 
     deviceContext->InD0 = FALSE;
     (VOID)InterlockedExchange(&deviceContext->VirtioStarted, 0);
