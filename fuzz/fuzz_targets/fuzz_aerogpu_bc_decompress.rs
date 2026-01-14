@@ -23,7 +23,7 @@ fn check_decompress_deterministic_and_len(
     width: u32,
     height: u32,
     data: &[u8],
-) {
+) -> Vec<u8> {
     let out1 = f(width, height, data);
     let out2 = f(width, height, data);
     if out1 != out2 {
@@ -54,6 +54,50 @@ fn check_decompress_deterministic_and_len(
                 );
             }
         }
+    }
+
+    out1
+}
+
+fn check_decompress_into_matches_vec(
+    name: &'static str,
+    f_into: impl Fn(u32, u32, &[u8], &mut [u8]),
+    width: u32,
+    height: u32,
+    data: &[u8],
+    out_vec: &[u8],
+) {
+    let Some(expected_len) = expected_rgba8_len(width, height) else {
+        // Overflow/rejected dims: the `*_into` variants should return early without touching the
+        // output slice.
+        let mut out = [0xAAu8; 16];
+        f_into(width, height, data, &mut out);
+        if out.iter().any(|&b| b != 0xAA) {
+            panic!("{name}: wrote to output for overflow/rejected dims");
+        }
+        return;
+    };
+
+    // If the allocating wrapper rejected the dims (returns empty vec), don't require the `*_into`
+    // behavior to match; just skip.
+    if out_vec.len() != expected_len {
+        return;
+    }
+
+    // Use guard bytes after the expected region to catch out-of-bounds writes when running under
+    // ASan (cargo-fuzz default) and to validate the function's contract of leaving extra bytes
+    // untouched.
+    const GUARD_LEN: usize = 16;
+    let mut out = vec![0u8; expected_len + GUARD_LEN];
+    out[expected_len..].fill(0xAA);
+
+    f_into(width, height, data, &mut out);
+
+    if out[expected_len..].iter().any(|&b| b != 0xAA) {
+        panic!("{name}: wrote past expected output length");
+    }
+    if &out[..expected_len] != out_vec {
+        panic!("{name}: output mismatch vs allocating variant");
     }
 }
 
@@ -106,32 +150,69 @@ fuzz_target!(|data: &[u8]| {
     let bc7_len = bc7_len.min(u.len());
     let bc7 = u.bytes(bc7_len).unwrap_or(&[]);
 
-    check_decompress_deterministic_and_len(
+    let bc1_out = check_decompress_deterministic_and_len(
         "decompress_bc1_rgba8",
         aero_gpu::bc_decompress::decompress_bc1_rgba8,
         width,
         height,
         bc1,
     );
-    check_decompress_deterministic_and_len(
+    let bc2_out = check_decompress_deterministic_and_len(
         "decompress_bc2_rgba8",
         aero_gpu::bc_decompress::decompress_bc2_rgba8,
         width,
         height,
         bc2,
     );
-    check_decompress_deterministic_and_len(
+    let bc3_out = check_decompress_deterministic_and_len(
         "decompress_bc3_rgba8",
         aero_gpu::bc_decompress::decompress_bc3_rgba8,
         width,
         height,
         bc3,
     );
-    check_decompress_deterministic_and_len(
+    let bc7_out = check_decompress_deterministic_and_len(
         "decompress_bc7_rgba8",
         aero_gpu::bc_decompress::decompress_bc7_rgba8,
         width,
         height,
         bc7,
     );
+
+    // Also exercise the `*_into` variants (caller-supplied output buffer) for small dimensions to
+    // keep fuzz iterations fast.
+    if width <= 128 && height <= 128 {
+        check_decompress_into_matches_vec(
+            "decompress_bc1_rgba8_into",
+            aero_gpu::bc_decompress::decompress_bc1_rgba8_into,
+            width,
+            height,
+            bc1,
+            &bc1_out,
+        );
+        check_decompress_into_matches_vec(
+            "decompress_bc2_rgba8_into",
+            aero_gpu::bc_decompress::decompress_bc2_rgba8_into,
+            width,
+            height,
+            bc2,
+            &bc2_out,
+        );
+        check_decompress_into_matches_vec(
+            "decompress_bc3_rgba8_into",
+            aero_gpu::bc_decompress::decompress_bc3_rgba8_into,
+            width,
+            height,
+            bc3,
+            &bc3_out,
+        );
+        check_decompress_into_matches_vec(
+            "decompress_bc7_rgba8_into",
+            aero_gpu::bc_decompress::decompress_bc7_rgba8_into,
+            width,
+            height,
+            bc7,
+            &bc7_out,
+        );
+    }
 });
