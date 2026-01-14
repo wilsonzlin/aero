@@ -11,8 +11,6 @@ pub mod disk;
 pub mod error;
 pub mod formats;
 pub mod ide;
-#[cfg(feature = "storage-device-crates")]
-pub mod nvme;
 pub mod pci_compat;
 
 pub const SECTOR_SIZE: usize = 512;

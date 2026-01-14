@@ -872,6 +872,22 @@ impl NvmeController {
     }
 
     fn enable(&mut self) {
+        // Validate CC.MPS (Memory Page Size) against CAP.MPSMIN/MPSMAX.
+        //
+        // This device model currently supports a single page size: 4KiB (MPS=0). CAP advertises
+        // this by setting both MPSMIN and MPSMAX to 0.
+        //
+        // Rejecting unsupported page sizes avoids panic paths later when the controller decodes
+        // PRPs/queue base addresses using the assumed page size.
+        let mps = (self.cc >> 7) & 0xf;
+        let mpsmin = ((self.cap >> 48) & 0xf) as u32;
+        let mpsmax = ((self.cap >> 52) & 0xf) as u32;
+        if mps < mpsmin || mps > mpsmax {
+            // Controller Fatal Status (CSTS.CFS). RDY must remain clear.
+            self.csts = 1 << 1;
+            return;
+        }
+
         // Basic validation: admin queues must be configured and page aligned.
         // NVMe AQA:
         // - bits 11:0  = ACQS (0-based)

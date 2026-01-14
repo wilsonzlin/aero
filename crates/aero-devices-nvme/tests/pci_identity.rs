@@ -54,4 +54,3 @@ fn nvme_pci_config_matches_canonical_profile_and_bar0_probing() {
     assert_eq!(dev.config_mut().read(0x10, 4), (0xdead_bee0 & addr_mask) | flags);
     assert_eq!(dev.config_mut().read(0x14, 4), 0);
 }
-
