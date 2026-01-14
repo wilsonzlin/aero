@@ -103,6 +103,14 @@ At a high level, the runtime is:
 
 The details of worker orchestration are outside the scope of this doc, but the “presentation boundary” (what memory is shared and how) is fully defined by the two structures below.
 
+## Frame pacing / “new frame” state (SharedArrayBuffer)
+
+In addition to the pixel/scanout structures, the browser runtime uses a small `SharedArrayBuffer` as a cross-thread “frame status” flag + metrics block.
+
+- Definition (indices + values): `web/src/ipc/gpu-protocol.ts` (`FRAME_STATUS_INDEX`, `FRAME_DIRTY`, `FRAME_PRESENTING`, `FRAME_PRESENTED`, plus metrics fields)
+- Main-thread scheduler that posts `tick` messages to the GPU worker based on this state (and optionally `ScanoutState`): `web/src/main/frameScheduler.ts`
+- GPU worker updates this state as it receives/presents frames: `web/src/workers/gpu-worker.ts`
+
 ## Shared-memory display path #1: `SharedFramebuffer` (double-buffered + dirty tiles)
 
 **Goal:** move pixels from the VM/CPU side to the GPU worker with minimal copying and an efficient “only upload what changed” option.
