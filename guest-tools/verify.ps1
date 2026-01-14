@@ -1226,7 +1226,7 @@ $report = @{
     schema_version = 1
     tool = @{
          name = "Aero Guest Tools Verify"
-         version = "2.5.10"
+         version = "2.5.11"
          started_utc = $started.ToUniversalTime().ToString("o")
          ended_utc = $null
          duration_ms = $null
@@ -1749,6 +1749,13 @@ try {
                             # When output dir == root, skip only known artifacts instead of skipping the whole scan.
                             if ($skipOutputRelWhenRoot -contains $rel.ToLower()) { continue }
                         }
+                        # Ignore common OS metadata files that may appear when copying the media to/from FAT/NTFS/HFS+.
+                        # These are not "mixed media" indicators and would otherwise create noisy WARNs.
+                        $relLower = $rel.ToLower()
+                        if ($relLower -eq "thumbs.db" -or $relLower.EndsWith("/thumbs.db")) { continue }
+                        if ($relLower -eq "desktop.ini" -or $relLower.EndsWith("/desktop.ini")) { continue }
+                        if ($relLower -eq ".ds_store" -or $relLower.EndsWith("/.ds_store")) { continue }
+                        if ($relLower.StartsWith("__macosx/") -or $relLower.Contains("/__macosx/")) { continue }
                         $diskFiles += $rel
                     }
 
