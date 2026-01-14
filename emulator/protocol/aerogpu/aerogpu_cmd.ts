@@ -2600,10 +2600,41 @@ export class AerogpuCmdWriter {
   }
 
   dispatch(groupCountX: number, groupCountY: number, groupCountZ: number): void {
+    this.dispatchStageEx(groupCountX, groupCountY, groupCountZ);
+  }
+
+  /**
+   * DISPATCH with an optional `stage_ex` selector encoded via the packet's `reserved0` field.
+   *
+   * This is primarily used for extended-stage compute passes (GS/HS/DS) in D3D11 command streams.
+   * For legacy compute dispatches, prefer {@link dispatch} (or omit `stageEx`).
+   */
+  dispatchStageEx(
+    groupCountX: number,
+    groupCountY: number,
+    groupCountZ: number,
+    stageEx?: AerogpuShaderStageEx | null,
+  ): void {
     const base = this.appendRaw(AerogpuCmdOpcode.Dispatch, AEROGPU_CMD_DISPATCH_SIZE);
     this.view.setUint32(base + 8, groupCountX, true);
     this.view.setUint32(base + 12, groupCountY, true);
     this.view.setUint32(base + 16, groupCountZ, true);
+    const reserved0 = encodeStageExReserved0(AerogpuShaderStage.Compute, stageEx);
+    this.view.setUint32(base + 20, reserved0, true);
+  }
+
+  /**
+   * Stage-ex aware variant of {@link dispatch}.
+   *
+   * Encodes `stageEx` into `DISPATCH.reserved0` using the stage_ex ABI rules. The caller must not
+   * pass `stageEx=0` (`AerogpuShaderStageEx.None`), which is reserved for legacy/default Compute
+   * dispatches.
+   */
+  dispatchEx(stageEx: AerogpuShaderStageEx, groupCountX: number, groupCountY: number, groupCountZ: number): void {
+    if ((stageEx >>> 0) === AerogpuShaderStageEx.None) {
+      throw new Error("DISPATCH stageEx=0 is reserved for legacy/default; omit stageEx instead");
+    }
+    this.dispatchStageEx(groupCountX, groupCountY, groupCountZ, stageEx);
   }
 
   present(scanoutId: number, flags: number): void {

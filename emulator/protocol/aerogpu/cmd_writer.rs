@@ -1840,6 +1840,23 @@ impl AerogpuCmdWriter {
     }
 
     pub fn dispatch(&mut self, group_count_x: u32, group_count_y: u32, group_count_z: u32) {
+        self.dispatch_with_stage_ex(group_count_x, group_count_y, group_count_z, None);
+    }
+
+    /// DISPATCH with an optional `stage_ex` selector encoded via the packet's `reserved0` field.
+    ///
+    /// This is primarily used for extended-stage compute passes (GS/HS/DS) in D3D11 command streams.
+    /// For legacy compute dispatches, prefer [`Self::dispatch`] (or pass `stage_ex=None`).
+    pub fn dispatch_with_stage_ex(
+        &mut self,
+        group_count_x: u32,
+        group_count_y: u32,
+        group_count_z: u32,
+        stage_ex: Option<AerogpuShaderStageEx>,
+    ) {
+        // DISPATCH has no explicit `shader_stage` field; the ABI treats its trailing `reserved0` as
+        // a stage_ex selector (same encoding as other `stage_ex`-capable packets).
+        let reserved0 = encode_stage_ex_reserved0(AerogpuShaderStage::Compute, stage_ex);
         let base = self.append_raw(AerogpuCmdOpcode::Dispatch, size_of::<AerogpuCmdDispatch>());
         self.write_u32_at(
             base + offset_of!(AerogpuCmdDispatch, group_count_x),
@@ -1852,6 +1869,31 @@ impl AerogpuCmdWriter {
         self.write_u32_at(
             base + offset_of!(AerogpuCmdDispatch, group_count_z),
             group_count_z,
+        );
+        self.write_u32_at(base + offset_of!(AerogpuCmdDispatch, reserved0), reserved0);
+    }
+
+    /// Stage-ex aware variant of [`Self::dispatch`].
+    ///
+    /// Encodes `stage_ex` into `DISPATCH.reserved0` using the `stage_ex` ABI rules. The caller must
+    /// not pass `stage_ex=0` (`AerogpuShaderStageEx::None`), which is reserved for legacy/default
+    /// Compute dispatches.
+    pub fn dispatch_ex(
+        &mut self,
+        stage_ex: AerogpuShaderStageEx,
+        group_count_x: u32,
+        group_count_y: u32,
+        group_count_z: u32,
+    ) {
+        assert!(
+            stage_ex != AerogpuShaderStageEx::None,
+            "DISPATCH stage_ex must be non-zero (0 is reserved for legacy/default)"
+        );
+        self.dispatch_with_stage_ex(
+            group_count_x,
+            group_count_y,
+            group_count_z,
+            Some(stage_ex),
         );
     }
 
