@@ -238,6 +238,29 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
     expect(coordinator.getMachineCpuBootConfig()).toEqual({ bootDrive: 0x80, cdBootDrive: 0xe0, bootFromCdIfPresent: true });
   });
 
+  it("ignores invalid machine CPU boot config reports", () => {
+    const coordinator = new WorkerCoordinator();
+
+    const segments = allocateTestSegments();
+    const shared = createSharedMemoryViews(segments);
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).activeConfig = { vmRuntime: "machine" };
+
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("cpu", segments);
+    const cpuInfo = (coordinator as unknown as CoordinatorTestHarness).workers.cpu;
+
+    expect(coordinator.getMachineCpuBootConfig()).toBe(null);
+
+    // Out-of-range bootDrive and non-boolean bootFromCdIfPresent should be rejected.
+    (coordinator as unknown as CoordinatorTestHarness).onWorkerMessage("cpu", cpuInfo.instanceId, {
+      type: "machineCpu.bootConfig",
+      bootDrive: 0x180,
+      cdBootDrive: 0xe0,
+      bootFromCdIfPresent: 1,
+    });
+    expect(coordinator.getMachineCpuBootConfig()).toBe(null);
+  });
+
   it("clears the active boot device when the VM is stopped", () => {
     const coordinator = new WorkerCoordinator();
 

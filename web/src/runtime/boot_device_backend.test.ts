@@ -70,4 +70,30 @@ describe("runtime/boot_device_backend", () => {
       }
     }
   });
+
+  it("sanitizes invalid machine CPU boot config payloads", () => {
+    const originalWindowDescriptor = Object.getOwnPropertyDescriptor(globalThis, "window");
+
+    try {
+      const win: any = { aero: { debug: {} } };
+      Object.defineProperty(globalThis, "window", { value: win, configurable: true, writable: true });
+
+      const coordinator: any = {
+        getBootDisks: () => null,
+        getMachineCpuActiveBootDevice: () => null,
+        // Invalid: bootDrive is out of range and bootFromCdIfPresent is not boolean.
+        getMachineCpuBootConfig: () => ({ bootDrive: 0x1ff, cdBootDrive: 0xe0, bootFromCdIfPresent: 1 }),
+      };
+
+      installBootDeviceBackendOnAeroGlobal(coordinator);
+
+      expect(win.aero.debug.getMachineCpuBootConfig()).toBe(null);
+    } finally {
+      if (originalWindowDescriptor) {
+        Object.defineProperty(globalThis, "window", originalWindowDescriptor);
+      } else {
+        Reflect.deleteProperty(globalThis, "window");
+      }
+    }
+  });
 });
