@@ -192,7 +192,6 @@ function makeInit(segments: SharedMemorySegments): WorkerInitMessage {
     ioIpcSab: segments.ioIpc,
     sharedFramebuffer: segments.sharedFramebuffer,
     sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
-    vgaFramebuffer: segments.sharedFramebuffer,
   };
 }
 

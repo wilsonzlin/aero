@@ -42,6 +42,12 @@ import {
 } from "./hid_input_report_ring";
 
 const LEGACY_HID_INPUT_RING_CAPACITY_BYTES = 64 * 1024;
+const DEFAULT_HID_INPUT_REPORT_RING_CAPACITY_BYTES = 2 * 1024 * 1024;
+/**
+ * Hard cap to avoid accidental multi-gigabyte SharedArrayBuffer allocations when
+ * a caller passes a bogus value.
+ */
+const MAX_HID_INPUT_REPORT_RING_CAPACITY_BYTES = 16 * 1024 * 1024;
 
 /**
  * Default capacity for the worker->main thread HID output/feature report ring.
@@ -78,6 +84,20 @@ function assertValidHidRingCapacityBytes(name: string, capacityBytes: number): n
     throw new Error(`${name} must be <= ${MAX_HID_OUTPUT_RING_CAPACITY_BYTES}`);
   }
   return alignUp(cap, HID_REPORT_RECORD_ALIGN);
+}
+
+function assertValidInputReportRingCapacityBytes(name: string, capacityBytes: number): number {
+  if (!Number.isSafeInteger(capacityBytes) || capacityBytes <= 0) {
+    throw new Error(`invalid ${name}: ${capacityBytes}`);
+  }
+  if (capacityBytes > 0xffff_ffff) {
+    throw new Error(`invalid ${name}: ${capacityBytes}`);
+  }
+  const cap = capacityBytes >>> 0;
+  if (cap > MAX_HID_INPUT_REPORT_RING_CAPACITY_BYTES) {
+    throw new Error(`${name} must be <= ${MAX_HID_INPUT_REPORT_RING_CAPACITY_BYTES}`);
+  }
+  return alignUp(cap, RECORD_ALIGN);
 }
 
 export type WebHidBrokerState = {
@@ -280,7 +300,10 @@ export class WebHidBroker {
     } = {},
   ) {
     this.manager = options.manager ?? new WebHidPassthroughManager();
-    this.#inputReportRingCapacityBytes = options.inputReportRingCapacityBytes ?? 2 * 1024 * 1024;
+    this.#inputReportRingCapacityBytes =
+      options.inputReportRingCapacityBytes === undefined
+        ? DEFAULT_HID_INPUT_REPORT_RING_CAPACITY_BYTES
+        : assertValidInputReportRingCapacityBytes("inputReportRingCapacityBytes", options.inputReportRingCapacityBytes);
     this.#outputRingCapacityBytes =
       options.outputRingCapacityBytes === undefined
         ? DEFAULT_HID_OUTPUT_RING_CAPACITY_BYTES
@@ -537,7 +560,7 @@ export class WebHidBroker {
     if (this.#inputReportRing) return;
     if (!this.#canUseSharedMemory()) return;
 
-    const cap = alignUp(this.#inputReportRingCapacityBytes >>> 0, RECORD_ALIGN);
+    const cap = this.#inputReportRingCapacityBytes;
     const sab = new SharedArrayBuffer(ringCtrl.BYTES + cap);
     new Int32Array(sab, 0, ringCtrl.WORDS).set([0, 0, 0, cap]);
     this.#inputReportRing = new RingBuffer(sab, 0);

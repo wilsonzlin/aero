@@ -130,6 +130,15 @@ describe("hid/WebHidBroker", () => {
     expect(() => new WebHidBroker({ manager, maxPendingDeviceSends: 1, maxPendingSendsPerDevice: 2 })).toThrow(/must match/);
   });
 
+  it("validates inputReportRingCapacityBytes", () => {
+    const manager = new WebHidPassthroughManager({ hid: null });
+    expect(() => new WebHidBroker({ manager, inputReportRingCapacityBytes: -1 })).toThrow(/invalid inputReportRingCapacityBytes/);
+    expect(() => new WebHidBroker({ manager, inputReportRingCapacityBytes: 0 })).toThrow(/invalid inputReportRingCapacityBytes/);
+    expect(() => new WebHidBroker({ manager, inputReportRingCapacityBytes: 17 * 1024 * 1024 })).toThrow(
+      /inputReportRingCapacityBytes must be <=/,
+    );
+  });
+
   it("waits for hid.attachResult before forwarding inputreport events to the worker port", async () => {
     const manager = new WebHidPassthroughManager({ hid: null });
     const broker = new WebHidBroker({ manager });

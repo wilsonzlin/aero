@@ -123,7 +123,6 @@ describe("workers/cpu.worker legacy framebuffer publishing", () => {
         ioIpcSab: segments.ioIpc,
         sharedFramebuffer: segments.sharedFramebuffer,
         sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
-        vgaFramebuffer: segments.sharedFramebuffer,
         scanoutState: segments.scanoutState,
         scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
         cursorState: segments.cursorState,

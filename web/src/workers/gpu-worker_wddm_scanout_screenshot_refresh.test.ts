@@ -118,7 +118,6 @@ describe("workers/gpu-worker WDDM scanout screenshot refresh", () => {
         ioIpcSab: segments.ioIpc,
         sharedFramebuffer: segments.sharedFramebuffer,
         sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
-        vgaFramebuffer: segments.sharedFramebuffer,
         scanoutState: segments.scanoutState,
         scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
       };
@@ -279,7 +278,6 @@ describe("workers/gpu-worker WDDM scanout screenshot refresh", () => {
         ioIpcSab: segments.ioIpc,
         sharedFramebuffer: segments.sharedFramebuffer,
         sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
-        vgaFramebuffer: segments.sharedFramebuffer,
         scanoutState: segments.scanoutState,
         scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
       };
