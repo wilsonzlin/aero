@@ -292,28 +292,33 @@ Alternative (if the web UI exposes it):
   - Coordinator ring attachment policy snapshot (effective/default/override owner + current attachment state)
   - WorkerCoordinator snapshot (worker states + wasm variants + last fatal/nonfatal)
   - Effective config snapshot (with sensitive fields redacted)
-- Or use **Audio → “Export audio QA bundle (tar)”** to download a single archive containing:
-  - `audio-metrics.json`
-  - `README.txt` (bundle overview + quick interpretation hints)
-  - `aero-config.json` (best-effort; effective config snapshot with sensitive fields redacted)
-  - `aero.version.json` (best-effort; build/version endpoint, when served)
-  - `host-media-devices.json` (best-effort; browser media device inventory + mic permission state; device IDs are hashed)
-  - `workers.json` (best-effort; WorkerCoordinator snapshot: worker states + wasm variants + last fatal/nonfatal errors)
-  - `serial.txt` (best-effort; guest serial output tail, if any)
-  - `audio-output-*.wav` (best-effort; snapshot of currently-buffered output ring samples, usually a few hundred ms)
-  - `audio-output-*.json` (best-effort; metadata for the output WAV snapshot: sample rate, frames captured, ring indices, and quick signal stats like RMS/peak)
-  - `microphone-buffered.wav` (best-effort; snapshot of currently-buffered mic ring samples)
-  - `microphone-buffered.json` (best-effort; metadata for the mic WAV snapshot: sample rate, samples captured, ring counters, quick signal stats like RMS/peak, and track debug info like backend/state/settings/constraints/capabilities with device IDs hashed)
-  - `audio-samples.txt` (best-effort; one-line summary of any captured WAV snapshots, including RMS/peak dBFS estimates)
-  - `hda-codec-state.json` (best-effort; requires the I/O worker)
-  - `hda-controller-state.bin` (best-effort; deterministic snapshot bytes of the HDA controller+codec state; no guest RAM)
-  - `hda-tick-stats.json` (best-effort; IO-worker tick clamp counters for the HDA wrapper; useful even when tracing is disabled)
-  - `virtio-snd-state.bin` (best-effort; deterministic snapshot bytes of the virtio-snd PCI function state, when present)
-  - `screenshot-*.png` (best-effort; requires the GPU worker)
-  - `trace.json` (best-effort; Chrome trace export; includes worker thread metadata and any recorded spans/counters if tracing was enabled)
-  - `perf-hud.json` (best-effort; on-page perf HUD capture export, if available)
+ - Or use **Audio → “Export audio QA bundle (tar)”** to download a single archive containing:
+   - `audio-metrics.json`
+   - `README.txt` (bundle overview + quick interpretation hints)
+   - `aero-config.json` (best-effort; effective config snapshot with sensitive fields redacted)
+   - `aero.version.json` (best-effort; build/version endpoint, when served)
+   - `host-media-devices.json` (best-effort; browser media device inventory + mic permission state; device IDs are hashed)
+   - `workers.json` (best-effort; WorkerCoordinator snapshot: worker states + wasm variants + last fatal/nonfatal errors)
+   - `serial.txt` (best-effort; guest serial output tail, if any)
+   - `audio-output-*.wav` (best-effort; snapshot of currently-buffered output ring samples, usually a few hundred ms)
+   - `audio-output-*.json` (best-effort; metadata for the output WAV snapshot: sample rate, frames captured, ring indices, and quick signal stats like RMS/peak)
+   - `microphone-buffered.wav` (best-effort; snapshot of currently-buffered mic ring samples)
+   - `microphone-buffered.json` (best-effort; metadata for the mic WAV snapshot: sample rate, samples captured, ring counters, quick signal stats like RMS/peak, and track debug info like backend/state/settings/constraints/capabilities with device IDs hashed)
+   - `audio-samples.txt` (best-effort; one-line summary of any captured WAV snapshots, including RMS/peak dBFS estimates)
+   - `hda-codec-state.json` (best-effort; requires the I/O worker)
+   - `hda-controller-state.bin` (best-effort; deterministic snapshot bytes of the HDA controller+codec state; no guest RAM)
+   - `hda-controller-state.json` (best-effort; metadata for `hda-controller-state.bin`)
+   - `hda-tick-stats.json` (best-effort; IO-worker tick clamp counters for the HDA wrapper; useful even when tracing is disabled)
+   - `virtio-snd-state.bin` (best-effort; deterministic snapshot bytes of the virtio-snd PCI function state, when present)
+   - `virtio-snd-state.json` (best-effort; metadata for `virtio-snd-state.bin`)
+   - `screenshot-*.png` (best-effort; requires the GPU worker)
+   - `screenshot.json` (best-effort; metadata for the screenshot export)
+   - `trace.json` (best-effort; Chrome trace export; includes worker thread metadata and any recorded spans/counters if tracing was enabled)
+   - `trace-meta.json` (best-effort; metadata for `trace.json`)
+   - `perf-hud.json` (best-effort; on-page perf HUD capture export, if available)
+   - `perf-hud-meta.json` (best-effort; metadata for `perf-hud.json`)
 
-Quick interpretation tips:
+ Quick interpretation tips:
 
 - If `writeFrameIndex` is **not** increasing: the emulator side is not producing audio (guest DMA not progressing, HDA stream not running, etc).
 - If `readFrameIndex` is **not** increasing: the AudioWorklet consumer is not running (AudioContext suspended, worklet not connected, etc).
