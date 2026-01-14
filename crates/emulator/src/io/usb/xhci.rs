@@ -150,30 +150,73 @@ impl XhciPciDevice {
 
 impl PciDevice for XhciPciDevice {
     fn config_read(&self, offset: u16, size: usize) -> u32 {
-        if offset == 0x10 && size == 4 {
-            return if self.mmio_base_probe {
-                // BAR0: MMIO window.
-                !(Self::MMIO_BAR_SIZE - 1) & 0xffff_fff0
-            } else {
-                self.mmio_base & 0xffff_fff0
-            };
+        if !matches!(size, 1 | 2 | 4) {
+            return 0;
         }
+        let Some(end) = offset.checked_add(size as u16) else {
+            return 0;
+        };
+        if end as usize > 256 {
+            return 0;
+        }
+
+        let bar_off = 0x10u16;
+        let bar_end = bar_off + 4;
+        let overlaps_bar = offset < bar_end && end > bar_off;
+
+        if overlaps_bar {
+            let mask = !(Self::MMIO_BAR_SIZE - 1) & 0xffff_fff0;
+            let bar_val = if self.mmio_base_probe { mask } else { self.mmio_base & 0xffff_fff0 };
+
+            let mut out = 0u32;
+            for i in 0..size {
+                let byte_off = offset + i as u16;
+                let byte = if (bar_off..bar_end).contains(&byte_off) {
+                    let shift = u32::from(byte_off - bar_off) * 8;
+                    (bar_val >> shift) & 0xFF
+                } else {
+                    self.config.read(byte_off, 1) & 0xFF
+                };
+                out |= byte << (8 * i);
+            }
+            return out;
+        }
+
         self.config.read(offset, size)
     }
 
     fn config_write(&mut self, offset: u16, size: usize, value: u32) {
-        if offset == 0x10 && size == 4 {
-            if value == 0xffff_ffff {
+        if !matches!(size, 1 | 2 | 4) {
+            return;
+        }
+        let Some(end) = offset.checked_add(size as u16) else {
+            return;
+        };
+        if end as usize > 256 {
+            return;
+        }
+
+        let bar_off = 0x10u16;
+        let bar_end = bar_off + 4;
+        let overlaps_bar = offset < bar_end && end > bar_off;
+
+        if overlaps_bar {
+            // PCI BAR probing uses an all-ones write to discover the size mask.
+            if offset == bar_off && size == 4 && value == 0xffff_ffff {
                 self.mmio_base_probe = true;
                 self.mmio_base = 0;
-                self.config.write(offset, size, 0);
+                self.config.write(bar_off, 4, 0);
                 return;
             }
 
             self.mmio_base_probe = false;
-            let base = value & !(Self::MMIO_BAR_SIZE - 1) & 0xffff_fff0;
+            self.config.write(offset, size, value);
+
+            let raw = self.config.read(bar_off, 4);
+            let base_mask = !(Self::MMIO_BAR_SIZE - 1) & 0xffff_fff0;
+            let base = raw & base_mask;
             self.mmio_base = base;
-            self.config.write(offset, size, base);
+            self.config.write(bar_off, 4, base);
             return;
         }
         self.config.write(offset, size, value);
@@ -250,6 +293,33 @@ mod tests {
             dev.tick_1ms(&mut mem);
         }));
         assert!(err.is_err());
+    }
+
+    #[test]
+    fn pci_bar_probe_subword_reads_return_mask_bytes() {
+        let mut dev = XhciPciDevice::new(XhciController::new(), 0x1000);
+
+        dev.config_write(0x10, 4, 0xffff_ffff);
+        let mask = dev.config_read(0x10, 4);
+        assert_eq!(mask, !(XhciPciDevice::MMIO_BAR_SIZE - 1) & 0xffff_fff0);
+
+        // Subword reads should return bytes from the probe mask (not the raw config bytes, which
+        // are cleared during probing).
+        assert_eq!(dev.config_read(0x10, 1), mask & 0xFF);
+        assert_eq!(dev.config_read(0x11, 1), (mask >> 8) & 0xFF);
+        assert_eq!(dev.config_read(0x12, 2), (mask >> 16) & 0xFFFF);
+    }
+
+    #[test]
+    fn pci_bar_subword_write_updates_mmio_base() {
+        let mut dev = XhciPciDevice::new(XhciController::new(), 0);
+
+        // Program the BAR via a 16-bit write. This must update `mmio_base` and clamp to BAR
+        // alignment.
+        dev.config_write(0x10, 2, 0x1235);
+        let expected = 0x0000_1235 & !(XhciPciDevice::MMIO_BAR_SIZE - 1) & 0xffff_fff0;
+        assert_eq!(dev.mmio_base, expected);
+        assert_eq!(dev.config_read(0x10, 4), expected);
     }
 
     #[test]
