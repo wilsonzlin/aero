@@ -1,6 +1,6 @@
 use aero_devices::pci::profile::{
     PciDeviceProfile, PCI_VENDOR_ID_VIRTIO, VIRTIO_BLK, VIRTIO_INPUT_KEYBOARD, VIRTIO_INPUT_MOUSE,
-    VIRTIO_NET, VIRTIO_SND,
+    VIRTIO_INPUT_TABLET, VIRTIO_NET, VIRTIO_SND,
 };
 use std::collections::BTreeMap;
 
@@ -711,7 +711,7 @@ fn windows_device_contract_aero_virtio_input_tablet_contract_and_inf_are_consist
                 .and_then(|v| v.as_str())
                 .expect("device entry missing pci_vendor_id"),
         ),
-        PCI_VENDOR_ID_VIRTIO
+        VIRTIO_INPUT_TABLET.vendor_id
     );
     assert_eq!(
         parse_hex_u16(
@@ -720,7 +720,15 @@ fn windows_device_contract_aero_virtio_input_tablet_contract_and_inf_are_consist
                 .and_then(|v| v.as_str())
                 .expect("device entry missing pci_device_id"),
         ),
-        0x1052
+        VIRTIO_INPUT_TABLET.device_id
+    );
+    assert_eq!(
+        VIRTIO_INPUT_TABLET.subsystem_vendor_id, PCI_VENDOR_ID_VIRTIO,
+        "tablet subsystem vendor ID must be virtio (1AF4)"
+    );
+    assert_eq!(
+        VIRTIO_INPUT_TABLET.subsystem_id, 0x0012,
+        "tablet subsystem device ID must be 0x0012"
     );
     assert_eq!(
         tablet.get("driver_service_name").and_then(|v| v.as_str()),
@@ -742,8 +750,22 @@ fn windows_device_contract_aero_virtio_input_tablet_contract_and_inf_are_consist
                 .to_string()
         })
         .collect();
-    assert_has_pattern(&patterns, "PCI\\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01");
-    assert_has_pattern(&patterns, "PCI\\VEN_1AF4&DEV_1052&SUBSYS_00121AF4");
+    let hwid_tablet_rev = format!(
+        "PCI\\VEN_{:04X}&DEV_{:04X}&SUBSYS_{:04X}{:04X}&REV_01",
+        VIRTIO_INPUT_TABLET.vendor_id,
+        VIRTIO_INPUT_TABLET.device_id,
+        VIRTIO_INPUT_TABLET.subsystem_id,
+        VIRTIO_INPUT_TABLET.subsystem_vendor_id,
+    );
+    let hwid_tablet = format!(
+        "PCI\\VEN_{:04X}&DEV_{:04X}&SUBSYS_{:04X}{:04X}",
+        VIRTIO_INPUT_TABLET.vendor_id,
+        VIRTIO_INPUT_TABLET.device_id,
+        VIRTIO_INPUT_TABLET.subsystem_id,
+        VIRTIO_INPUT_TABLET.subsystem_vendor_id,
+    );
+    assert_has_pattern(&patterns, &hwid_tablet_rev);
+    assert_has_pattern(&patterns, &hwid_tablet);
 
     let inf_path = repo_root()
         .join("drivers/windows7/virtio-input/inf")
