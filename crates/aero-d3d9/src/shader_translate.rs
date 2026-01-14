@@ -30,8 +30,10 @@ pub struct ShaderTranslation {
     /// Semantic → WGSL location mapping derived from vertex shader `dcl_*` declarations when
     /// [`ShaderTranslation::uses_semantic_locations`] is true.
     ///
-    /// Some translation paths (or legacy cached artifacts) may omit this metadata, in which case
-    /// callers should fall back to [`crate::vertex::StandardLocationMap`] for the common semantics.
+    /// This metadata is used by the host-side D3D9 executor to bind vertex buffers consistently
+    /// with the remapping performed during shader translation. Some translation paths (or legacy
+    /// cached artifacts) may omit it, in which case callers should fall back to
+    /// [`crate::vertex::StandardLocationMap`] for the common semantics.
     pub semantic_locations: Vec<shader::SemanticLocation>,
     pub used_samplers: BTreeSet<u16>,
     pub sampler_texture_types: HashMap<u16, TextureType>,

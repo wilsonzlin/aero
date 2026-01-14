@@ -962,6 +962,74 @@ fn translates_uaddc_emits_carry_and_writes_both_destinations() {
 }
 
 #[test]
+fn integer_arithmetic_sources_use_raw_bits_not_float_to_int_heuristics() {
+    // Regression test: integer arithmetic ops (uaddc/usubb/udiv/...) should treat the SM4/SM5
+    // register file as raw 32-bit lanes.
+    //
+    // Historically we had a "looks like an integer float" heuristic (based on `floor`) that
+    // attempted to recover integer values from numeric `f32` lanes. This breaks when the *raw bits*
+    // happen to look like integer-valued floats (e.g. 0x3f800000 == 1.0f).
+    let osgn_params = vec![sig_param("SV_Target", 0, 0, 0b1111)];
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (FOURCC_OSGN, build_signature_chunk(&osgn_params)),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    // 0x3f800000 is the IEEE-754 bit pattern for 1.0f. If we accidentally treat lanes as numeric
+    // floats during integer ops, this would collapse to `1u` instead of preserving the bits.
+    let a = SrcOperand {
+        kind: SrcKind::ImmediateF32([0x3f80_0000; 4]),
+        swizzle: Swizzle::XYZW,
+        modifier: OperandModifier::None,
+    };
+    let b = SrcOperand {
+        kind: SrcKind::ImmediateF32([0; 4]),
+        swizzle: Swizzle::XYZW,
+        modifier: OperandModifier::None,
+    };
+
+    let module = Sm4Module {
+        stage: ShaderStage::Pixel,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: Vec::new(),
+        instructions: vec![
+            Sm4Inst::UAddC {
+                dst_sum: dst(RegFile::Temp, 0, WriteMask::XYZW),
+                dst_carry: dst(RegFile::Temp, 1, WriteMask::XYZW),
+                a,
+                b,
+            },
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Output, 0, WriteMask::XYZW),
+                src: src_reg(RegFile::Temp, 0),
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+    assert!(
+        translated.wgsl.contains("0x3f800000u"),
+        "expected raw u32 literal bits to flow into integer op:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        !translated.wgsl.contains("floor("),
+        "expected integer ops to avoid float-to-int heuristics:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        !translated.wgsl.contains("vec4<u32>(vec4<f32>"),
+        "expected integer ops to avoid numeric `vec4<u32>(f32)` conversions:\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
 fn translates_usubb_emits_borrow_and_writes_both_destinations() {
     let osgn_params = vec![sig_param("SV_Target", 0, 0, 0b1111)];
     let dxbc_bytes = build_dxbc(&[
