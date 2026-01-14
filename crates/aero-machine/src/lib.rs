@@ -7550,10 +7550,13 @@ impl Machine {
 
             // Wrap the shared `SystemMemory` in the per-vCPU LAPIC routing adapter.
             let apic_id = (idx as u8).saturating_add(1);
-            // AP vCPUs live inside `self.ap_cpus`, so we can't hand `PerCpuSystemMemoryBus` a
-            // mutable view of the full AP slice while also holding `cpu: &mut CpuCore`. For now,
-            // AP execution is allowed to access its LAPIC MMIO page (via the platform interrupts
-            // object) but does not deliver IPIs that mutate other AP cores.
+            // Note: When executing an AP, we already hold `&mut CpuCore` for that AP. Avoid handing
+            // the per-vCPU bus a mutable slice containing the same core (which would violate
+            // Rust's aliasing rules).
+            //
+            // For now we pass an empty AP slice: AP execution can still access its LAPIC MMIO page
+            // via `interrupts`, but AP-originated INIT/SIPI that would mutate other AP cores is not
+            // modeled.
             let mut empty_ap_cpus: [CpuCore; 0] = [];
             let phys = PerCpuSystemMemoryBus::new(
                 apic_id,
