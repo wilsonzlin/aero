@@ -902,6 +902,15 @@ def scan_inf_msi_interrupt_settings(text: str, *, file: Path) -> tuple[InfMsiInt
             )
             continue
 
+        if len(parts) != 5:
+            errors.append(
+                format_error(
+                    f"{file.as_posix()}:{line_no}: MSI AddReg entry must specify exactly one numeric value:",
+                    [line],
+                )
+            )
+            continue
+
         value = _try_parse_inf_int(parts[4])
         if value is None:
             errors.append(
