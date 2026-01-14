@@ -50,6 +50,14 @@ function makeAerosparBytes(options: { diskSizeBytes: number; blockSizeBytes: num
   return out;
 }
 
+function toArrayBufferBytes(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
+  // `Blob`/`File` constructors expect ArrayBuffer-backed views, but under `ES2024.SharedMemory`
+  // libs TypeScript treats `Uint8Array` as potentially backed by `SharedArrayBuffer`.
+  return bytes.buffer instanceof ArrayBuffer
+    ? (bytes as Uint8Array<ArrayBuffer>)
+    : (new Uint8Array(bytes) as Uint8Array<ArrayBuffer>);
+}
+
 async function sendImportConvert(file: File): Promise<any> {
   vi.resetModules();
 
@@ -93,7 +101,7 @@ describe("disk_worker import_convert aerospar passthrough", () => {
   it("imports existing aerospar disks without converting", async () => {
     const logicalSize = 1024 * 1024;
     const bytes = makeAerosparBytes({ diskSizeBytes: logicalSize, blockSizeBytes: 4096 });
-    const file = new File([bytes], "already.aerospar");
+    const file = new File([toArrayBufferBytes(bytes)], "already.aerospar");
 
     const resp = await sendImportConvert(file);
     expect(resp.ok).toBe(true);

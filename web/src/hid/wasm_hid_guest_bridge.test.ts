@@ -122,6 +122,81 @@ describe("hid/WasmHidGuestBridge", () => {
     expect(bridgeInstance!.complete_feature_report_request).toHaveBeenCalledWith(99, 3, featureData);
   });
 
+  it("accepts camelCase passthrough bridge exports (backwards compatibility)", () => {
+    const ctorSpy = vi.fn();
+    const synthesizeSpy = vi.fn(() => new Uint8Array([1, 2, 3]));
+    let bridgeInstance: FakeBridge | null = null;
+
+    class FakeBridge {
+      readonly pushInputReport = vi.fn();
+      readonly drainNextOutputReport = vi.fn();
+      readonly drainNextFeatureReportRequest = vi.fn();
+      readonly completeFeatureReportRequest = vi.fn(() => true);
+      readonly failFeatureReportRequest = vi.fn(() => true);
+      readonly configured = vi.fn(() => true);
+      readonly free = vi.fn();
+
+      constructor(...args: unknown[]) {
+        ctorSpy(...args);
+        bridgeInstance = this;
+      }
+    }
+
+    const host = {
+      sendReport: vi.fn(),
+      requestFeatureReport: vi.fn(),
+      log: vi.fn(),
+      error: vi.fn(),
+    };
+
+    const topology = new UhciHidTopologyManager({ defaultHubPortCount: 16 });
+
+    const api = {
+      UsbHidPassthroughBridge: FakeBridge,
+      synthesizeWebhidReportDescriptor: synthesizeSpy,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any as WasmApi;
+
+    const guest = new WasmHidGuestBridge(api, host, topology);
+    guest.attach({
+      type: "hid.attach",
+      deviceId: 1,
+      vendorId: 0x1234,
+      productId: 0xabcd,
+      productName: "Demo",
+      guestPath: [0],
+      collections: [makeTopLevelApplicationCollection(0x01, 0x04)],
+      hasInterruptOut: true,
+    });
+
+    expect(bridgeInstance).toBeTruthy();
+    expect(synthesizeSpy).toHaveBeenCalledTimes(1);
+    expect(ctorSpy).toHaveBeenCalledTimes(1);
+
+    const inputData = new Uint8Array([9, 10]) as Uint8Array<ArrayBuffer>;
+    guest.inputReport({
+      type: "hid.inputReport",
+      deviceId: 1,
+      reportId: 7,
+      data: inputData,
+    });
+    expect(bridgeInstance!.pushInputReport).toHaveBeenCalledWith(7, inputData);
+
+    const outData = new Uint8Array([0xaa, 0xbb]);
+    bridgeInstance!.drainNextOutputReport.mockReturnValueOnce({ reportType: "output", reportId: 1, data: outData });
+    bridgeInstance!.drainNextOutputReport.mockReturnValueOnce(null);
+    bridgeInstance!.drainNextFeatureReportRequest.mockReturnValueOnce({ requestId: 99, reportId: 3 });
+    bridgeInstance!.drainNextFeatureReportRequest.mockReturnValueOnce(null);
+
+    guest.poll?.();
+    expect(host.sendReport).toHaveBeenCalledWith({ deviceId: 1, reportType: "output", reportId: 1, data: outData });
+    expect(host.requestFeatureReport).toHaveBeenCalledWith({ deviceId: 1, requestId: 99, reportId: 3 });
+
+    const featureData = new Uint8Array([1, 2, 3]);
+    expect(guest.completeFeatureReportRequest?.({ deviceId: 1, requestId: 99, reportId: 3, data: featureData })).toBe(true);
+    expect(bridgeInstance!.completeFeatureReportRequest).toHaveBeenCalledWith(99, 3, featureData);
+  });
+
   it("infers HID boot keyboard subclass/protocol for keyboard collections", () => {
     const ctorSpy = vi.fn();
     const synthesizeSpy = vi.fn(() => new Uint8Array([1, 2, 3]));

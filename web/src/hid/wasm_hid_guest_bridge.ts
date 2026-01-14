@@ -34,6 +34,57 @@ type WebHidPassthroughBridge = InstanceType<WasmApi["WebHidPassthroughBridge"]>;
 type UsbHidPassthroughBridge = InstanceType<NonNullable<WasmApi["UsbHidPassthroughBridge"]>>;
 type HidPassthroughBridge = WebHidPassthroughBridge | UsbHidPassthroughBridge;
 
+type HidPassthroughBridgeCompat = {
+  bridge: HidPassthroughBridge;
+  pushInputReport: (reportId: number, data: Uint8Array) => void;
+  drainNextOutputReport: () => { reportType: "output" | "feature"; reportId: number; data: Uint8Array } | null;
+  drainNextFeatureReportRequest?: () => unknown;
+  completeFeatureReportRequest?: (requestId: number, reportId: number, data: Uint8Array) => boolean;
+  failFeatureReportRequest?: (requestId: number, reportId: number, error?: string) => boolean;
+  configured: () => boolean;
+  free: () => void;
+};
+
+function resolveHidPassthroughBridgeCompat(bridge: HidPassthroughBridge): HidPassthroughBridgeCompat {
+  const anyBridge = bridge as unknown as Record<string, unknown>;
+
+  // Backwards compatibility: accept camelCase method names from older wasm-bindgen outputs / shims.
+  const pushInputReport = anyBridge.push_input_report ?? anyBridge.pushInputReport;
+  const drainNextOutputReport = anyBridge.drain_next_output_report ?? anyBridge.drainNextOutputReport;
+  const drainNextFeatureReportRequest =
+    anyBridge.drain_next_feature_report_request ?? anyBridge.drainNextFeatureReportRequest;
+  const completeFeatureReportRequest =
+    anyBridge.complete_feature_report_request ?? anyBridge.completeFeatureReportRequest;
+  const failFeatureReportRequest = anyBridge.fail_feature_report_request ?? anyBridge.failFeatureReportRequest;
+  const configured = anyBridge.configured;
+  const free = anyBridge.free;
+
+  if (typeof pushInputReport !== "function") throw new Error("HID passthrough bridge missing push_input_report/pushInputReport.");
+  if (typeof drainNextOutputReport !== "function")
+    throw new Error("HID passthrough bridge missing drain_next_output_report/drainNextOutputReport.");
+  if (typeof configured !== "function") throw new Error("HID passthrough bridge missing configured().");
+  if (typeof free !== "function") throw new Error("HID passthrough bridge missing free().");
+
+  return {
+    bridge,
+    pushInputReport: pushInputReport as HidPassthroughBridgeCompat["pushInputReport"],
+    drainNextOutputReport: drainNextOutputReport as HidPassthroughBridgeCompat["drainNextOutputReport"],
+    ...(typeof drainNextFeatureReportRequest === "function"
+      ? { drainNextFeatureReportRequest: drainNextFeatureReportRequest as HidPassthroughBridgeCompat["drainNextFeatureReportRequest"] }
+      : {}),
+    ...(typeof completeFeatureReportRequest === "function"
+      ? {
+          completeFeatureReportRequest: completeFeatureReportRequest as HidPassthroughBridgeCompat["completeFeatureReportRequest"],
+        }
+      : {}),
+    ...(typeof failFeatureReportRequest === "function"
+      ? { failFeatureReportRequest: failFeatureReportRequest as HidPassthroughBridgeCompat["failFeatureReportRequest"] }
+      : {}),
+    configured: configured as HidPassthroughBridgeCompat["configured"],
+    free: free as HidPassthroughBridgeCompat["free"],
+  };
+}
+
 const HID_COLLECTION_TYPE_APPLICATION = 1;
 const HID_USAGE_PAGE_GENERIC_DESKTOP = 0x01;
 const HID_USAGE_GENERIC_DESKTOP_MOUSE = 0x02;
@@ -77,7 +128,7 @@ function isFeatureReportRequest(value: unknown): value is FeatureReportRequest {
 }
 
 export class WasmHidGuestBridge implements HidGuestBridge {
-  readonly #bridges = new Map<number, HidPassthroughBridge>();
+  readonly #bridges = new Map<number, HidPassthroughBridgeCompat>();
   #api: WasmApi;
   #host: HidHostSink;
   #topology: HidTopologyManager;
@@ -95,7 +146,11 @@ export class WasmHidGuestBridge implements HidGuestBridge {
 
     try {
       const UsbBridge = this.#api.UsbHidPassthroughBridge;
-      const synthesize = this.#api.synthesize_webhid_report_descriptor;
+      const apiAny = this.#api as unknown as Record<string, unknown>;
+      const synthesize =
+        (apiAny.synthesize_webhid_report_descriptor ??
+          apiAny.synthesizeWebhidReportDescriptor ??
+          apiAny.synthesizeWebHidReportDescriptor) as WasmApi["synthesize_webhid_report_descriptor"] | undefined;
 
       let bridge: HidPassthroughBridge;
       let kind: "webhid" | "usb-hid-passthrough" = "webhid";
@@ -125,9 +180,10 @@ export class WasmHidGuestBridge implements HidGuestBridge {
         );
       }
 
-      this.#bridges.set(msg.deviceId, bridge);
+      const compat = resolveHidPassthroughBridgeCompat(bridge);
+      this.#bridges.set(msg.deviceId, compat);
       if (guestPath) {
-        this.#topology.attachDevice(msg.deviceId, guestPath, kind, bridge);
+        this.#topology.attachDevice(msg.deviceId, guestPath, kind, compat.bridge);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -143,15 +199,15 @@ export class WasmHidGuestBridge implements HidGuestBridge {
 
     this.#bridges.delete(msg.deviceId);
     try {
-      existing.free();
+      existing.free.call(existing.bridge);
     } catch {
       // ignore
     }
   }
 
   inputReport(msg: HidInputReportMessage): void {
-    const bridge = this.#bridges.get(msg.deviceId);
-    if (!bridge) return;
+    const entry = this.#bridges.get(msg.deviceId);
+    if (!entry) return;
     try {
       const data = (() => {
         if (msg.data.byteLength <= MAX_HID_INPUT_REPORT_PAYLOAD_BYTES) return msg.data;
@@ -162,7 +218,7 @@ export class WasmHidGuestBridge implements HidGuestBridge {
         out.set(msg.data.subarray(0, MAX_HID_INPUT_REPORT_PAYLOAD_BYTES));
         return out as Uint8Array<ArrayBuffer>;
       })();
-      bridge.push_input_report(msg.reportId, data);
+      entry.pushInputReport.call(entry.bridge, msg.reportId, data);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.#host.error(`WebHID push_input_report failed: ${message}`, msg.deviceId);
@@ -172,11 +228,11 @@ export class WasmHidGuestBridge implements HidGuestBridge {
   poll(): void {
     let remainingReports = MAX_HID_OUTPUT_REPORTS_PER_TICK;
     let remainingFeatureRequests = MAX_HID_FEATURE_REPORT_REQUESTS_PER_TICK;
-    for (const [deviceId, bridge] of this.#bridges) {
+    for (const [deviceId, entry] of this.#bridges) {
       if (remainingReports <= 0 && remainingFeatureRequests <= 0) return;
       let configured = false;
       try {
-        configured = bridge.configured();
+        configured = entry.configured.call(entry.bridge);
       } catch {
         configured = false;
       }
@@ -185,7 +241,7 @@ export class WasmHidGuestBridge implements HidGuestBridge {
         while (remainingReports > 0) {
           let report: { reportType: "output" | "feature"; reportId: number; data: Uint8Array } | null = null;
           try {
-            report = bridge.drain_next_output_report();
+            report = entry.drainNextOutputReport.call(entry.bridge);
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
             this.#host.error(`drain_next_output_report failed: ${message}`, deviceId);
@@ -203,15 +259,14 @@ export class WasmHidGuestBridge implements HidGuestBridge {
         }
       }
 
-      const drainFeatureReportRequest = (bridge as unknown as { drain_next_feature_report_request?: () => unknown })
-        .drain_next_feature_report_request;
+      const drainFeatureReportRequest = entry.drainNextFeatureReportRequest;
       if (typeof drainFeatureReportRequest === "function") {
         // Feature report reads are delivered over the control endpoint and can occur before the
         // guest has configured the USB device. Always drain them (independent of `configured`).
         while (remainingFeatureRequests > 0) {
           let req: FeatureReportRequest | null = null;
           try {
-            const next = drainFeatureReportRequest.call(bridge) as unknown;
+            const next = drainFeatureReportRequest.call(entry.bridge) as unknown;
             if (next === null) break;
             if (!isFeatureReportRequest(next)) break;
             req = next;
@@ -229,13 +284,12 @@ export class WasmHidGuestBridge implements HidGuestBridge {
   }
 
   completeFeatureReportRequest(msg: { deviceId: number; requestId: number; reportId: number; data: Uint8Array }): boolean {
-    const bridge = this.#bridges.get(msg.deviceId);
-    if (!bridge) return false;
-    const fn = (bridge as unknown as { complete_feature_report_request?: (requestId: number, reportId: number, data: Uint8Array) => boolean })
-      .complete_feature_report_request;
+    const entry = this.#bridges.get(msg.deviceId);
+    if (!entry) return false;
+    const fn = entry.completeFeatureReportRequest;
     if (typeof fn !== "function") return false;
     try {
-      return fn.call(bridge, msg.requestId >>> 0, msg.reportId >>> 0, msg.data);
+      return fn.call(entry.bridge, msg.requestId >>> 0, msg.reportId >>> 0, msg.data);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.#host.error(`complete_feature_report_request failed: ${message}`, msg.deviceId);
@@ -244,13 +298,12 @@ export class WasmHidGuestBridge implements HidGuestBridge {
   }
 
   failFeatureReportRequest(msg: { deviceId: number; requestId: number; reportId: number; error?: string }): boolean {
-    const bridge = this.#bridges.get(msg.deviceId);
-    if (!bridge) return false;
-    const fn = (bridge as unknown as { fail_feature_report_request?: (requestId: number, reportId: number, error?: string) => boolean })
-      .fail_feature_report_request;
+    const entry = this.#bridges.get(msg.deviceId);
+    if (!entry) return false;
+    const fn = entry.failFeatureReportRequest;
     if (typeof fn === "function") {
       try {
-        return fn.call(bridge, msg.requestId >>> 0, msg.reportId >>> 0, msg.error);
+        return fn.call(entry.bridge, msg.requestId >>> 0, msg.reportId >>> 0, msg.error);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         this.#host.error(`fail_feature_report_request failed: ${message}`, msg.deviceId);
@@ -259,12 +312,10 @@ export class WasmHidGuestBridge implements HidGuestBridge {
     }
     // Best-effort: if the WASM build doesn't expose an explicit failure method, complete with an
     // empty payload so the guest control transfer doesn't hang indefinitely.
-    const complete = (
-      bridge as unknown as { complete_feature_report_request?: (requestId: number, reportId: number, data: Uint8Array) => boolean }
-    ).complete_feature_report_request;
+    const complete = entry.completeFeatureReportRequest;
     if (typeof complete !== "function") return false;
     try {
-      return complete.call(bridge, msg.requestId >>> 0, msg.reportId >>> 0, new Uint8Array());
+      return complete.call(entry.bridge, msg.requestId >>> 0, msg.reportId >>> 0, new Uint8Array());
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.#host.error(`complete_feature_report_request (fail fallback) failed: ${message}`, msg.deviceId);
