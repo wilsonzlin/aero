@@ -48,7 +48,12 @@ Feature matrix for the Win7 WDK-backed UMDs:
   - D3D11: VS/PS/GS/CS constant buffers (supports `{FirstConstant, NumConstants}` ranges), shader-resource views, samplers; CS UAV buffers
 - Render target + depth-stencil binding (MRT up to `AEROGPU_MAX_RENDER_TARGETS`), Clear, Draw/DrawIndexed
 - Viewport + scissor (protocol supports a **single** viewport/scissor; non-trivial arrays are surfaced via `E_NOTIMPL` and applied best-effort as slot 0)
-- D3D11 compute: `CreateComputeShader` + `CsSet*` bindings + `Dispatch`
+- D3D11 compute:
+  - `CreateComputeShader` + `CsSet*` bindings + `Dispatch`
+  - Best-effort `DispatchIndirect` (reads the arg buffer from the UMD's CPU shadow storage; does not support GPU-generated indirect args)
+  - Buffer UAV utilities:
+    - `ClearUnorderedAccessViewUint` / `ClearUnorderedAccessViewFloat` (buffer UAVs only)
+    - Best-effort `CopyStructureCount` (no real UAV counter tracking yet; forwards `initial_count` when available)
 - Resource updates + readback:
   - `Map`/`Unmap` for buffers and Texture2D subresources (uploads via `AEROGPU_CMD_RESOURCE_DIRTY_RANGE` / `AEROGPU_CMD_UPLOAD_RESOURCE`)
   - Staging readback uses `AEROGPU_CMD_COPY_*` + `AEROGPU_COPY_FLAG_WRITEBACK_DST` when the host exposes `AEROGPU_FEATURE_TRANSFER` (ABI 1.1+)
