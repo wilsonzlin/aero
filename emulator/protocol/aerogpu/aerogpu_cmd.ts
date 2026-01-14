@@ -879,7 +879,8 @@ export interface AerogpuCmdBindShadersPayload {
    * Append-only extension (>= 36-byte packet):
    * - When {@link ex} is present, the trailing `{gs, hs, ds}` handles are authoritative and
    *   `reserved0` is reserved/ignored (emitters should set it to 0, but may also mirror `gs` here
-   *   for best-effort support on hosts that only understand the 24-byte packet).
+   *   for best-effort support on hosts that only understand the 24-byte packet; if mirrored, it
+   *   should match {@link ex}.gs).
    */
   reserved0: number;
   /**

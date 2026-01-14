@@ -595,7 +595,8 @@ pub struct AerogpuCmdBindShaders {
     /// - If trailing handles are present, they are decoded into [`BindShadersEx`] (`{gs, hs, ds}`)
     ///   and must take precedence.
     /// - In the extended form, this field should be 0 unless the emitter chooses to mirror `gs` here
-    ///   for best-effort compatibility; the appended `{gs, hs, ds}` handles are authoritative.
+    ///   for best-effort compatibility; if mirrored, it should match the appended `gs` handle. The
+    ///   appended `{gs, hs, ds}` handles are authoritative.
     /// - Any additional trailing bytes beyond the known fields must be ignored for forward-compat.
     pub reserved0: u32,
 }
@@ -610,7 +611,7 @@ impl AerogpuCmdBindShaders {
     ///   non-zero.
     /// - Extended encoding (`hdr.size_bytes >= 36`): `{gs, hs, ds}` are appended after the base
     ///   struct, and those appended fields are authoritative (this helper only exposes the legacy
-    ///   `reserved0` field).
+    ///   `reserved0` field; if used as a compatibility mirror, it should match the appended `gs`).
     pub const fn gs(&self) -> AerogpuHandle {
         self.reserved0
     }

@@ -576,8 +576,9 @@ AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_destroy_shader) == 16);
  * - `reserved0` remains reserved and emitters SHOULD set it to 0 for the extended packet (unless
  *   mirroring `gs` for best-effort compatibility with legacy hosts).
  * - Legacy implementations may interpret a non-zero `reserved0` as the geometry shader (`gs`)
- *   handle; for best-effort compatibility an emitter MAY duplicate `gs` into `reserved0`, but
- *   when present, the appended `{gs,hs,ds}` fields are authoritative.
+ *   handle; for best-effort compatibility an emitter MAY duplicate `gs` into `reserved0`. If it
+ *   does so, it SHOULD match the appended `gs` field, but when present, the appended `{gs,hs,ds}`
+ *   fields are authoritative.
  *
  * Any bytes beyond the appended `{gs,hs,ds}` handles are reserved for future extension and MUST
  * be ignored by readers.
@@ -601,8 +602,9 @@ struct aerogpu_cmd_bind_shaders {
    * - If `hdr.size_bytes >= sizeof(struct aerogpu_cmd_bind_shaders) + 12` (36 bytes), three
    *   additional u32 shader handles are appended immediately after this struct: `{gs, hs, ds}`.
    * - In the extended form, hosts should prefer the appended handles. Writers may also mirror `gs`
-   *   into `reserved0` for best-effort support on hosts that only understand the 24-byte packet,
-   *   but the appended handles are authoritative.
+   *   into `reserved0` for best-effort support on hosts that only understand the 24-byte packet.
+   *   If mirrored, it SHOULD match the appended `gs` field, but the appended handles are
+   *   authoritative.
    */
   uint32_t reserved0;
 };
