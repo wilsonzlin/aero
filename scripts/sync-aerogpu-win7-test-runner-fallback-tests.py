@@ -27,9 +27,19 @@ def read_manifest_tests(path: Path) -> list[str]:
     tests: list[str] = []
     for raw in path.read_text(encoding="utf-8").splitlines():
         line = raw.strip()
-        if not line or line.startswith("#") or line.startswith(";"):
+        if not line:
             continue
-        tests.append(line)
+        # Mirror the Windows-side manifest parsing logic (tokens=1 with comment guards).
+        token = line.split(None, 1)[0] if line.split(None, 1) else ""
+        if not token:
+            continue
+        # Strip UTF-8 BOM if present on the first line.
+        token = token.lstrip("\ufeff")
+        if not token:
+            continue
+        if token[0] in ("#", ";") or token.startswith("::") or token.lower() == "rem":
+            continue
+        tests.append(token)
     return tests
 
 
@@ -99,4 +109,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
