@@ -49,7 +49,12 @@ pub const CPU_STATE_SIZE: u32 = aero_cpu_core::state::CPU_STATE_SIZE as u32;
 pub const CPU_STATE_ALIGN: u32 = aero_cpu_core::state::CPU_STATE_ALIGN as u32;
 
 #[inline]
+#[track_caller]
 pub fn gpr_offset(gpr_index: usize) -> u32 {
+    assert!(
+        gpr_index < GPR_COUNT,
+        "gpr_index out of range: {gpr_index} (expected 0..{GPR_COUNT})"
+    );
     CPU_GPR_OFF[gpr_index]
 }
 
@@ -65,3 +70,20 @@ pub fn memarg(offset: u32, align: u32) -> MemArg {
 /// `access` codes passed to the `mmu_translate(cpu_ptr, jit_ctx_ptr, vaddr, access)` import.
 pub const MMU_ACCESS_READ: i32 = 0;
 pub const MMU_ACCESS_WRITE: i32 = 1;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_util::capture_panic_location;
+
+    #[test]
+    fn gpr_offset_panics_at_call_site_on_oob() {
+        let expected_file = file!();
+        let expected_line = line!() + 2;
+        let (file, line) = capture_panic_location(|| {
+            let _ = gpr_offset(GPR_COUNT);
+        });
+        assert_eq!(file, expected_file);
+        assert_eq!(line, expected_line);
+    }
+}

@@ -426,11 +426,13 @@ where
     type Cpu = Cpu;
 
     fn execute(&mut self, table_index: u32, cpu: &mut Self::Cpu) -> JitBlockExit {
-        let func = self
-            .blocks
-            .get(table_index as usize)
-            .cloned()
-            .unwrap_or_else(|| panic!("invalid JIT table index {table_index}"));
+        let func = match self.blocks.get(table_index as usize).cloned() {
+            Some(func) => func,
+            None => panic!(
+                "invalid JIT table index {table_index} (len={})",
+                self.blocks.len()
+            ),
+        };
 
         // Snapshot state so we can roll back side effects if the block performs an MMIO/runtime
         // exit. Tier-1 blocks do not currently provide deopt metadata for resuming mid-block, so
