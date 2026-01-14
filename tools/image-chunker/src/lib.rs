@@ -353,7 +353,32 @@ pub async fn publish(args: PublishArgs) -> Result<()> {
     // Keep the in-flight chunk buffer count bounded to limit memory usage. Each upload worker owns
     // at most one chunk at a time, and this bounded queue limits read-ahead in the producer loop.
     let (work_tx, work_rx) = async_channel::bounded::<ChunkJob>(args.concurrency);
-    let (result_tx, mut result_rx) = tokio::sync::mpsc::unbounded_channel::<ChunkResult>();
+    let (result_tx, result_rx) = tokio::sync::mpsc::unbounded_channel::<ChunkResult>();
+
+    // Drain chunk results concurrently so we don't buffer `ChunkResult` messages for the entire
+    // disk before constructing the manifest.
+    let checksum = args.checksum;
+    let result_collector = tokio::spawn(async move {
+        let mut sha256_by_index: Vec<Option<String>> =
+            if matches!(checksum, ChecksumAlgorithm::Sha256) {
+                vec![None; chunk_count as usize]
+            } else {
+                Vec::new()
+            };
+
+        let mut result_rx = result_rx;
+        while let Some(result) = result_rx.recv().await {
+            if matches!(checksum, ChecksumAlgorithm::Sha256) {
+                let idx: usize = result
+                    .index
+                    .try_into()
+                    .map_err(|_| anyhow!("chunk index {} does not fit into usize", result.index))?;
+                sha256_by_index[idx] = result.sha256;
+            }
+        }
+
+        Ok::<Vec<Option<String>>, anyhow::Error>(sha256_by_index)
+    });
 
     let mut workers = Vec::with_capacity(args.concurrency);
     for _ in 0..args.concurrency {
@@ -386,50 +411,78 @@ pub async fn publish(args: PublishArgs) -> Result<()> {
     }
     drop(result_tx);
 
+    let mut producer_result: Result<()> = Ok(());
     for index in 0..chunk_count {
-        let offset = index
-            .checked_mul(args.chunk_size)
-            .ok_or_else(|| anyhow!("chunk offset overflows u64"))?;
-        let expected = chunk_size_at_index(total_size, args.chunk_size, index)?;
-        let expected_usize: usize = expected
-            .try_into()
-            .map_err(|_| anyhow!("chunk size {expected} does not fit into usize"))?;
+        let offset = match index.checked_mul(args.chunk_size) {
+            Some(v) => v,
+            None => {
+                producer_result = Err(anyhow!("chunk offset overflows u64"));
+                break;
+            }
+        };
+        let expected = match chunk_size_at_index(total_size, args.chunk_size, index) {
+            Ok(v) => v,
+            Err(err) => {
+                producer_result = Err(err);
+                break;
+            }
+        };
+        let expected_usize: usize = match expected.try_into() {
+            Ok(v) => v,
+            Err(_) => {
+                producer_result = Err(anyhow!("chunk size {expected} does not fit into usize"));
+                break;
+            }
+        };
+
         let mut buf = vec![0u8; expected_usize];
-        disk.read_at(offset, &mut buf)
+        if let Err(err) = disk
+            .read_at(offset, &mut buf)
             .map_err(|e| anyhow!(e))
-            .with_context(|| format!("read chunk {index} at offset {offset}"))?;
+            .with_context(|| format!("read chunk {index} at offset {offset}"))
+        {
+            producer_result = Err(err);
+            break;
+        }
 
         let bytes = Bytes::from(buf);
-        work_tx
+        if let Err(err) = work_tx
             .send(ChunkJob { index, bytes })
             .await
-            .map_err(|err| anyhow!("internal worker channel closed unexpectedly: {err}"))?;
+            .map_err(|err| anyhow!("internal worker channel closed unexpectedly: {err}"))
+        {
+            producer_result = Err(err);
+            break;
+        }
     }
 
     drop(work_tx);
 
+    // Always await all worker tasks so we don't leave uploads running in the background if one
+    // worker errors.
+    let mut worker_result: Result<()> = Ok(());
     for handle in workers {
-        handle
-            .await
-            .map_err(|err| anyhow!("upload worker panicked: {err}"))??;
-    }
-
-    let mut sha256_by_index: Vec<Option<String>> =
-        if matches!(args.checksum, ChecksumAlgorithm::Sha256) {
-            vec![None; chunk_count as usize]
-        } else {
-            Vec::new()
-        };
-
-    while let Some(result) = result_rx.recv().await {
-        if matches!(args.checksum, ChecksumAlgorithm::Sha256) {
-            let idx: usize = result
-                .index
-                .try_into()
-                .map_err(|_| anyhow!("chunk index {} does not fit into usize", result.index))?;
-            sha256_by_index[idx] = result.sha256;
+        match handle.await {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => {
+                if worker_result.is_ok() {
+                    worker_result = Err(err);
+                }
+            }
+            Err(err) => {
+                if worker_result.is_ok() {
+                    worker_result = Err(anyhow!("upload worker panicked: {err}"));
+                }
+            }
         }
     }
+
+    let sha256_by_index = result_collector
+        .await
+        .map_err(|err| anyhow!("result collector panicked: {err}"))??;
+
+    producer_result?;
+    worker_result?;
 
     pb.finish_with_message(format!("{chunk_count}/{chunk_count} chunks"));
 

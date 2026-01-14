@@ -437,7 +437,32 @@ async fn publish(args: PublishArgs) -> Result<()> {
     // Keep the in-flight chunk buffer count bounded to cap memory: each worker owns at most one
     // chunk at a time, and this queue limits producer read-ahead.
     let (work_tx, work_rx) = async_channel::bounded::<ChunkJob>(args.concurrency);
-    let (result_tx, mut result_rx) = tokio::sync::mpsc::unbounded_channel::<ChunkResult>();
+    let (result_tx, result_rx) = tokio::sync::mpsc::unbounded_channel::<ChunkResult>();
+
+    // Drain chunk results concurrently so we don't buffer `ChunkResult` messages for the entire
+    // disk before constructing the manifest.
+    let checksum = args.checksum;
+    let result_collector = tokio::spawn(async move {
+        let mut sha256_by_index: Vec<Option<String>> =
+            if matches!(checksum, ChecksumAlgorithm::Sha256) {
+                vec![None; chunk_count as usize]
+            } else {
+                Vec::new()
+            };
+
+        let mut result_rx = result_rx;
+        while let Some(result) = result_rx.recv().await {
+            if matches!(checksum, ChecksumAlgorithm::Sha256) {
+                let idx: usize = result
+                    .index
+                    .try_into()
+                    .map_err(|_| anyhow!("chunk index {} does not fit into usize", result.index))?;
+                sha256_by_index[idx] = result.sha256;
+            }
+        }
+
+        Ok::<Vec<Option<String>>, anyhow::Error>(sha256_by_index)
+    });
 
     let mut workers = Vec::with_capacity(args.concurrency);
     for _ in 0..args.concurrency {
@@ -499,32 +524,36 @@ async fn publish(args: PublishArgs) -> Result<()> {
         Ok(())
     });
 
-    reader_handle
-        .await
-        .map_err(|err| anyhow!("disk reader panicked: {err}"))??;
+    let reader_result: Result<()> = match reader_handle.await {
+        Ok(res) => res,
+        Err(err) => Err(anyhow!("disk reader panicked: {err}")),
+    };
 
+    // Always await all worker tasks so we don't leave uploads running in the background if one
+    // worker errors.
+    let mut worker_result: Result<()> = Ok(());
     for handle in workers {
-        handle
-            .await
-            .map_err(|err| anyhow!("upload worker panicked: {err}"))??;
-    }
-
-    let mut sha256_by_index: Vec<Option<String>> =
-        if matches!(args.checksum, ChecksumAlgorithm::Sha256) {
-            vec![None; chunk_count as usize]
-        } else {
-            Vec::new()
-        };
-
-    while let Some(result) = result_rx.recv().await {
-        if matches!(args.checksum, ChecksumAlgorithm::Sha256) {
-            let idx: usize = result
-                .index
-                .try_into()
-                .map_err(|_| anyhow!("chunk index {} does not fit into usize", result.index))?;
-            sha256_by_index[idx] = result.sha256;
+        match handle.await {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => {
+                if worker_result.is_ok() {
+                    worker_result = Err(err);
+                }
+            }
+            Err(err) => {
+                if worker_result.is_ok() {
+                    worker_result = Err(anyhow!("upload worker panicked: {err}"));
+                }
+            }
         }
     }
+
+    let sha256_by_index = result_collector
+        .await
+        .map_err(|err| anyhow!("result collector panicked: {err}"))??;
+
+    reader_result?;
+    worker_result?;
 
     pb.finish_with_message(format!("{chunk_count}/{chunk_count} chunks"));
 
@@ -783,9 +812,7 @@ async fn verify_http_or_file(args: &VerifyArgs) -> Result<()> {
     }
 
     if checked != total_chunks_to_verify {
-        bail!(
-            "internal error: only checked {checked}/{total_chunks_to_verify} chunks"
-        );
+        bail!("internal error: only checked {checked}/{total_chunks_to_verify} chunks");
     }
 
     let elapsed = started_at.elapsed();
@@ -2921,7 +2948,11 @@ mod tests {
                 + Sync
                 + 'static,
         >,
-    ) -> Result<(String, tokio::sync::oneshot::Sender<()>, tokio::task::JoinHandle<()>)> {
+    ) -> Result<(
+        String,
+        tokio::sync::oneshot::Sender<()>,
+        tokio::task::JoinHandle<()>,
+    )> {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         use tokio::net::TcpListener;
 
@@ -3170,7 +3201,9 @@ mod tests {
         tmp.as_file_mut()
             .write_all(&disk.into_backend().into_vec())
             .context("write aerosparse image")?;
-        tmp.as_file_mut().flush().context("flush aerosparse image")?;
+        tmp.as_file_mut()
+            .flush()
+            .context("flush aerosparse image")?;
 
         let physical_len = tmp.as_file().metadata().context("stat temp image")?.len();
         assert!(
@@ -3204,7 +3237,7 @@ mod tests {
         footer[40..48].copy_from_slice(&virtual_size.to_be_bytes()); // original_size
         footer[48..56].copy_from_slice(&virtual_size.to_be_bytes()); // current_size
         footer[60..64].copy_from_slice(&2u32.to_be_bytes()); // disk_type fixed
-        // checksum at 64..68 (big-endian)
+                                                             // checksum at 64..68 (big-endian)
         let checksum = {
             let mut sum: u32 = 0;
             for (i, b) in footer.iter().enumerate() {
@@ -3829,7 +3862,10 @@ mod tests {
         let manifest_bytes = serde_json::to_vec_pretty(&manifest).context("serialize manifest")?;
 
         let responder: Arc<
-            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>) + Send + Sync + 'static,
+            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>)
+                + Send
+                + Sync
+                + 'static,
         > = Arc::new(move |req: TestHttpRequest| match req.path.as_str() {
             "/manifest.json" => (200, Vec::new(), manifest_bytes.clone()),
             "/chunks/00000000.bin" => (200, Vec::new(), chunk0.clone()),
@@ -3886,7 +3922,10 @@ mod tests {
         let token = "token=abc";
 
         let responder: Arc<
-            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>) + Send + Sync + 'static,
+            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>)
+                + Send
+                + Sync
+                + 'static,
         > = Arc::new(move |req: TestHttpRequest| match req.path.as_str() {
             // The query must be present on both manifest and chunk requests.
             "/manifest.json?token=abc" => (200, Vec::new(), manifest_bytes.clone()),
@@ -3894,7 +3933,9 @@ mod tests {
             "/chunks/00000001.bin?token=abc" => (200, Vec::new(), chunk1.clone()),
             // If the query is missing, make it a hard failure so the test would fail without
             // query preservation logic.
-            "/chunks/00000000.bin" | "/chunks/00000001.bin" => (401, Vec::new(), b"missing token".to_vec()),
+            "/chunks/00000000.bin" | "/chunks/00000001.bin" => {
+                (401, Vec::new(), b"missing token".to_vec())
+            }
             _ => (404, Vec::new(), b"not found".to_vec()),
         });
 
@@ -3956,7 +3997,10 @@ mod tests {
         let token = "token=abc";
 
         let responder: Arc<
-            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>) + Send + Sync + 'static,
+            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>)
+                + Send
+                + Sync
+                + 'static,
         > = Arc::new(move |req: TestHttpRequest| match req.path.as_str() {
             "/manifest.json?token=abc" => (200, Vec::new(), manifest_bytes.clone()),
             "/meta.json?token=abc" => (200, Vec::new(), meta_bytes.clone()),
@@ -4016,7 +4060,10 @@ mod tests {
         let chunk0_requests = Arc::new(AtomicU64::new(0));
 
         let responder: Arc<
-            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>) + Send + Sync + 'static,
+            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>)
+                + Send
+                + Sync
+                + 'static,
         > = {
             let manifest_requests = Arc::clone(&manifest_requests);
             let chunk0_requests = Arc::clone(&chunk0_requests);
@@ -4097,7 +4144,10 @@ mod tests {
         let chunk_requests = Arc::new(AtomicU64::new(0));
 
         let responder: Arc<
-            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>) + Send + Sync + 'static,
+            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>)
+                + Send
+                + Sync
+                + 'static,
         > = {
             let unauthorized_requests = Arc::clone(&unauthorized_requests);
             let manifest_requests = Arc::clone(&manifest_requests);
@@ -4214,7 +4264,10 @@ mod tests {
 
         let checked = Arc::new(AtomicU64::new(0));
         let responder: Arc<
-            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>) + Send + Sync + 'static,
+            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>)
+                + Send
+                + Sync
+                + 'static,
         > = {
             let checked = Arc::clone(&checked);
             Arc::new(move |req: TestHttpRequest| {
@@ -4279,10 +4332,7 @@ mod tests {
         let chunk1 = vec![b'b'; 512];
         let total_size = (chunk0.len() + chunk1.len()) as u64;
 
-        let sha256_by_index = vec![
-            Some(sha256_hex(&chunk0)),
-            Some(sha256_hex(&chunk1)),
-        ];
+        let sha256_by_index = vec![Some(sha256_hex(&chunk0)), Some(sha256_hex(&chunk1))];
         let manifest = build_manifest_v1(
             total_size,
             chunk_size,
@@ -4296,7 +4346,10 @@ mod tests {
         let chunk0_requests = Arc::new(AtomicU64::new(0));
 
         let responder: Arc<
-            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>) + Send + Sync + 'static,
+            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>)
+                + Send
+                + Sync
+                + 'static,
         > = {
             let chunk0_requests = Arc::clone(&chunk0_requests);
             Arc::new(move |req: TestHttpRequest| match req.path.as_str() {
