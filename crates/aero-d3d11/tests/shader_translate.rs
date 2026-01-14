@@ -1031,6 +1031,67 @@ fn integer_arithmetic_sources_use_raw_bits_not_float_to_int_heuristics() {
 }
 
 #[test]
+fn translates_umul_uses_raw_integer_bits_not_float_to_int_heuristics() {
+    // Regression test: integer multiply sources must be interpreted as raw u32 lane bits, not as
+    // numeric float values.
+    //
+    // This test specifically targets `umul` because it historically went through a separate
+    // `emit_src_vec4_u32_int` helper.
+    let osgn_params = vec![sig_param("SV_Target", 0, 0, 0b1111)];
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (FOURCC_OSGN, build_signature_chunk(&osgn_params)),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let module = Sm4Module {
+        stage: ShaderStage::Pixel,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: Vec::new(),
+        instructions: vec![
+            // r0 = 1.0f (bits 0x3f800000).
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Temp, 0, WriteMask::XYZW),
+                src: src_imm([1.0, 1.0, 1.0, 1.0]),
+            },
+            Sm4Inst::UMul {
+                dst_lo: dst(RegFile::Temp, 1, WriteMask::XYZW),
+                dst_hi: None,
+                a: src_reg(RegFile::Temp, 0),
+                b: src_reg(RegFile::Temp, 0),
+            },
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Output, 0, WriteMask::XYZW),
+                src: src_reg(RegFile::Temp, 1),
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+
+    // Ensure `umul` consumes the raw bits of `r0` (bitcast), not a numeric float→u32 conversion.
+    assert!(
+        translated.wgsl.contains("bitcast<vec4<u32>>(r0)"),
+        "expected umul sources to come from raw bits of r0:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        !translated.wgsl.contains("vec4<u32>(r0)"),
+        "expected umul to avoid numeric vec4<u32>(r0) conversion:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        !translated.wgsl.contains("floor("),
+        "expected umul to avoid float->int heuristics:\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
 fn translates_usubb_emits_borrow_and_writes_both_destinations() {
     let osgn_params = vec![sig_param("SV_Target", 0, 0, 0b1111)];
     let dxbc_bytes = build_dxbc(&[
