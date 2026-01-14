@@ -42,6 +42,7 @@ class VirtioNetLinkFlapGatingTests(unittest.TestCase):
         msg = h._virtio_net_link_flap_required_failure_message(tail)
         self.assertIsNotNone(msg)
         self.assertTrue(str(msg).startswith("FAIL: VIRTIO_NET_LINK_FLAP_FAILED:"))
+        self.assertIn("reason=http_get_failed", str(msg))
 
     def test_required_marker_skip(self) -> None:
         h = self.harness
@@ -60,4 +61,3 @@ class VirtioNetLinkFlapGatingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
