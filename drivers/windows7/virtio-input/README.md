@@ -516,7 +516,7 @@ Then reboot (or disable/enable the device). With the included `hidtest.exe`, you
 
 - `hidtest.exe --keyboard --state` (confirm `StatusQDropOnFull` is enabled, and that `StatusQActive=1` / `KeyboardLedSupportedMask!=0` so LED output is actually enabled)
   - Machine-readable: `hidtest.exe --keyboard --state --json` (or `--state-json`)
-- `hidtest.exe --keyboard --reset-counters` (start from a clean monotonic-counter baseline; requires write access, rerun elevated if needed)
+- `hidtest.exe --keyboard --reset-counters` (start from a clean monotonic-counter baseline; requires write access, rerun elevated if needed; add `--json` for machine-readable output)
 - `hidtest.exe --keyboard --led-cycle` (cycle the 5 HID boot keyboard LED bits: Num/Caps/Scroll/Compose/Kana)
 - `hidtest.exe --keyboard --led-spam 10000`
 - `hidtest.exe --keyboard --counters` (watch `LedWritesRequested` vs `LedWritesSubmitted`/`StatusQSubmits`, `StatusQCompletions`, and `StatusQFull`; with drop-on-full enabled also watch `VirtioStatusDrops` / `LedWritesDropped`)

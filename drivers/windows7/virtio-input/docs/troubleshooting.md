@@ -216,6 +216,7 @@ Then in the guest:
 ```bat
 hidtest.exe --keyboard --state
 hidtest.exe --keyboard --reset-counters
+hidtest.exe --keyboard --reset-counters --json
 hidtest.exe --keyboard --led-cycle
 hidtest.exe --keyboard --led-spam 10000
 hidtest.exe --keyboard --counters

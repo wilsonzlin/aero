@@ -16,6 +16,7 @@ Currently:
   - Can reset in-driver diagnostics counters during a session:
     - `DeviceIoControl(IOCTL_VIOINPUT_RESET_COUNTERS)`
     - `hidtest.exe --reset-counters` (requires write access, rerun elevated if needed)
+    - `hidtest.exe --reset-counters --json`
     - Tip: `hidtest.exe --reset-counters --counters` / `--counters --json` / `--counters-json` to reset and immediately verify that the monotonic counters are cleared.
   - Can query a virtio-input interrupt diagnostics snapshot (MSI-X vs INTx, vector routing) via:
     - `DeviceIoControl(IOCTL_VIOINPUT_QUERY_INTERRUPT_INFO)`

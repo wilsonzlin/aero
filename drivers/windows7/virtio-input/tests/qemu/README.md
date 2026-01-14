@@ -391,6 +391,7 @@ Copy `hidtest.exe` into the guest and run it from an elevated Command Prompt.
    hidtest.exe --counters
    hidtest.exe --counters --json
    hidtest.exe --reset-counters
+   hidtest.exe --reset-counters --json
 
    REM Reset and immediately verify that monotonic counters are cleared:
    hidtest.exe --reset-counters --counters
