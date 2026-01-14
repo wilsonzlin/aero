@@ -142,8 +142,8 @@ struct StateBlock {
   std::array<uint32_t, 16 * 16> sampler_state_values{};
 
   // Texture stage state (D3DTSS_*). Fixed-function; most of it is cached-only
-  // (Get* queries + state blocks), but stage0 is consulted by the UMD's minimal
-  // fixed-function fallback path to select a pixel shader variant.
+  // (Get* queries + state blocks), but stages 0..3 are consulted by the UMD's
+  // fixed-function fallback path to select/synthesize a `ps_2_0` variant.
   std::bitset<16 * 256> texture_stage_state_mask{}; // stage * 256 + state
   std::array<uint32_t, 16 * 256> texture_stage_state_values{};
 
@@ -4661,9 +4661,10 @@ constexpr uint32_t kD3dTaTFactor = 3u;       // D3DTA_TFACTOR
 constexpr uint32_t kD3dTaComplement = 0x10u;      // D3DTA_COMPLEMENT
 constexpr uint32_t kD3dTaAlphaReplicate = 0x20u;  // D3DTA_ALPHAREPLICATE
 
-// Fixed-function stage0 uses D3DRS_TEXTUREFACTOR by uploading it into a reserved
-// *high* pixel-shader constant register. This avoids clobbering app-provided PS
-// constants in the commonly used low range (especially c0).
+// Fixed-function texture stage state uses D3DRS_TEXTUREFACTOR by uploading it into
+// a reserved *high* pixel-shader constant register (c255). This avoids clobbering
+// app-provided PS constants in the commonly used low range (especially c0). The
+// same constant is reused for all fixed-function stages that reference TFACTOR.
 constexpr uint32_t kFixedfuncStage0TextureFactorPsRegister = 255u; // c255
 // Keep this in sync with the caps we advertise (MaxTextureBlendStages).
 constexpr uint32_t kFixedfuncMaxTextureStages = 4u;
@@ -6311,7 +6312,7 @@ HRESULT ensure_shader_bindings_locked(Device* dev, bool strict_draw_validation) 
     desired_vs = dev->user_vs;
     desired_ps = dev->user_ps;
   } else if (dev->user_vs && !dev->user_ps) {
-    // VS-only: fixed-function PS fallback selected from stage0 texture stage state.
+    // VS-only: fixed-function PS fallback selected from texture stage state.
     desired_vs = dev->user_vs;
     Shader** ps_slot = &dev->fixedfunc_ps_interop;
     const HRESULT ps_hr = ensure_fixedfunc_pixel_shader_locked(dev, ps_slot);
@@ -13997,8 +13998,8 @@ HRESULT AEROGPU_D3D9_CALL device_set_render_state(
     }
   }
 
-  // D3DRS_TEXTUREFACTOR is consumed by the fixed-function stage0 fallback when
-  // the texture combiners reference TFACTOR. Upload it into the reserved PS
+  // D3DRS_TEXTUREFACTOR is consumed by the fixed-function texture stage combiner
+  // fallback when the texture combiners reference TFACTOR. Upload it into the reserved PS
   // constant register (c255) on render-state updates so legacy apps that animate
   // TEXTUREFACTOR without touching stage-state still render correctly.
   constexpr uint32_t kD3dRsTextureFactor = 60u; // D3DRS_TEXTUREFACTOR
@@ -15177,8 +15178,8 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
 
     // Texture stage state (fixed function). No direct command emission; values
     // are cached so GetTextureStageState + state blocks are deterministic, and
-    // stage0 is consulted by the UMD's minimal fixed-function fallback path to
-    // select a pixel shader variant.
+    // stages 0..3 are consulted by the UMD's fixed-function fallback path to
+    // select/synthesize a pixel shader variant.
     for (uint32_t s = 0; s < 256; ++s) {
       const uint32_t idx = stage * 256u + s;
       if (!sb->texture_stage_state_mask.test(idx)) {
@@ -15531,12 +15532,12 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
         ps_slot = &dev->fixedfunc_pipelines[static_cast<size_t>(variant)].ps;
       } else {
         // Unsupported fixed-function FVF still uses a non-null shader bind pair.
-        // The fallback PS selection logic is stage0-driven (same as VS-only interop).
+        // The fallback PS selection logic is driven by texture stage state (same as VS-only interop).
         ps_slot = &dev->fixedfunc_ps_interop;
       }
     }
 
-    // Stage0 stage-state selection is guarded: if the app applied an unsupported
+    // Texture stage-state selection is guarded: if the app applied an unsupported
     // stage-state combination via a state block, tolerate the apply and fail
     // draws (not ApplyStateBlock) with INVALIDCALL.
     if (ps_slot && ps_key.supported) {
@@ -26803,7 +26804,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_texture_stage_state(
 #else
   // Portable host-side tests compile a minimal D3D9DDI_DEVICEFUNCS table which
   // does not include SetTextureStageState. Provide a small direct-call helper so
-  // tests can still exercise fixed-function stage0 PS selection behavior.
+  // tests can still exercise fixed-function PS selection behavior.
   if (!hDevice.pDrvPrivate) {
     return E_INVALIDARG;
   }
