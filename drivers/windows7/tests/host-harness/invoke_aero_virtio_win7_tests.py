@@ -2405,7 +2405,7 @@ def _virtio_net_link_flap_required_failure_message(
     Enforce that virtio-net-link-flap ran and PASSed.
 
     Returns:
-        A "FAIL: ..." message on failure, or None when the marker requirements are satisfied.
+        A deterministic "FAIL: ..." message on failure, or None when the marker requirement is satisfied.
     """
     # Prefer explicit "saw_*" flags tracked by the main harness loop (these survive tail truncation),
     # but keep a tail scan fallback to support direct unit tests (and any legacy call sites).
@@ -2413,7 +2413,8 @@ def _virtio_net_link_flap_required_failure_message(
         return None
     if saw_fail or b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|FAIL" in tail:
         return (
-            "FAIL: VIRTIO_NET_LINK_FLAP_FAILED: virtio-net-link-flap test reported FAIL while --with-net-link-flap was enabled"
+            "FAIL: VIRTIO_NET_LINK_FLAP_FAILED: virtio-net-link-flap test reported FAIL while "
+            "--with-net-link-flap was enabled"
         )
     if saw_skip or b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|SKIP" in tail:
         return _virtio_net_link_flap_skip_failure_message(tail)

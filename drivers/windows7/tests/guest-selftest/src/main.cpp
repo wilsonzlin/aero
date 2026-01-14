@@ -7699,8 +7699,13 @@ struct VirtioNetLinkFlapTestResult {
   std::string reason;
   double down_sec = 0.0;
   double up_sec = 0.0;
+  DWORD down_wait_ms = 0;
+  DWORD up_wait_ms = 0;
+  DWORD recovery_wait_ms = 0;
+  DWORD total_ms = 0;
   std::optional<IN_ADDR> ip_after;
   int http_attempts = 0;
+  int recovery_attempts = 0;
   // Best-effort: virtio-net config interrupt observability via aero_virtio_net diag IOCTL.
   // When present, these counters help validate that link flap transitions were driven by config interrupts
   // (not polling), and aid debugging when the test fails.
@@ -7713,8 +7718,13 @@ struct VirtioNetLinkFlapTestResult {
 static VirtioNetLinkFlapTestResult VirtioNetLinkFlapTest(Logger& log, const Options& opt,
                                                          const VirtioNetAdapter& adapter) {
   VirtioNetLinkFlapTestResult out{};
+  const DWORD start_ms = GetTickCount();
   if (adapter.instance_id.empty()) {
     out.reason = "missing_adapter_guid";
+    out.total_ms = GetTickCount() - start_ms;
+    log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|FAIL|reason=%s|adapter=%s|guid=%s|total_ms=%lu",
+             out.reason.c_str(), WideToUtf8(adapter.friendly_name).c_str(), WideToUtf8(adapter.instance_id).c_str(),
+             static_cast<unsigned long>(out.total_ms));
     return out;
   }
 
@@ -7841,16 +7851,21 @@ static VirtioNetLinkFlapTestResult VirtioNetLinkFlapTest(Logger& log, const Opti
     }
     Sleep(200);
   }
-  out.down_sec = (GetTickCount() - down_start) / 1000.0;
+  out.down_wait_ms = GetTickCount() - down_start;
+  out.down_sec = out.down_wait_ms / 1000.0;
   if (!saw_down) {
     out.reason = "timeout_waiting_link_down";
+    out.total_ms = GetTickCount() - start_ms;
     const std::string extra = cfg_fields();
-    log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|FAIL|reason=%s|adapter=%s|guid=%s|down_sec=%.2f%s",
-             out.reason.c_str(), WideToUtf8(adapter.friendly_name).c_str(), WideToUtf8(adapter.instance_id).c_str(),
-             out.down_sec, extra.c_str());
+    log.Logf(
+        "AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|FAIL|reason=%s|adapter=%s|guid=%s|down_wait_ms=%lu|down_sec=%.2f|total_ms=%lu%s",
+        out.reason.c_str(), WideToUtf8(adapter.friendly_name).c_str(), WideToUtf8(adapter.instance_id).c_str(),
+        static_cast<unsigned long>(out.down_wait_ms), out.down_sec, static_cast<unsigned long>(out.total_ms),
+        extra.c_str());
     return out;
   }
-  log.Logf("virtio-net-link-flap: observed link DOWN down_sec=%.2f", out.down_sec);
+  log.Logf("virtio-net-link-flap: observed link DOWN down_sec=%.2f down_wait_ms=%lu", out.down_sec,
+           static_cast<unsigned long>(out.down_wait_ms));
 
   // Best-effort: confirm that we observed at least one config interrupt between READY and link-down.
   if (out.cfg_vector.has_value()) {
@@ -7859,10 +7874,13 @@ static VirtioNetLinkFlapTestResult VirtioNetLinkFlapTest(Logger& log, const Opti
     if (out.cfg_intr_before.has_value() && out.cfg_intr_down.has_value() &&
         *out.cfg_intr_down <= *out.cfg_intr_before) {
       out.reason = "config_irq_missing_down";
+      out.total_ms = GetTickCount() - start_ms;
       const std::string extra = cfg_fields();
-      log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|FAIL|reason=%s|adapter=%s|guid=%s|down_sec=%.2f%s",
+      log.Logf(
+          "AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|FAIL|reason=%s|adapter=%s|guid=%s|down_wait_ms=%lu|down_sec=%.2f|total_ms=%lu%s",
                out.reason.c_str(), WideToUtf8(adapter.friendly_name).c_str(), WideToUtf8(adapter.instance_id).c_str(),
-               out.down_sec, extra.c_str());
+               static_cast<unsigned long>(out.down_wait_ms), out.down_sec, static_cast<unsigned long>(out.total_ms),
+               extra.c_str());
       return out;
     }
   }
@@ -7884,17 +7902,21 @@ static VirtioNetLinkFlapTestResult VirtioNetLinkFlapTest(Logger& log, const Opti
     }
     Sleep(500);
   }
-  out.up_sec = (GetTickCount() - up_start) / 1000.0;
+  out.up_wait_ms = GetTickCount() - up_start;
+  out.up_sec = out.up_wait_ms / 1000.0;
   if (!saw_up) {
     out.reason = "timeout_waiting_link_up";
+    out.total_ms = GetTickCount() - start_ms;
     const std::string extra = cfg_fields();
     log.Logf(
-        "AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|FAIL|reason=%s|adapter=%s|guid=%s|down_sec=%.2f|up_sec=%.2f%s",
+        "AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|FAIL|reason=%s|adapter=%s|guid=%s|down_wait_ms=%lu|up_wait_ms=%lu|down_sec=%.2f|up_sec=%.2f|total_ms=%lu%s",
         out.reason.c_str(), WideToUtf8(adapter.friendly_name).c_str(), WideToUtf8(adapter.instance_id).c_str(),
-        out.down_sec, out.up_sec, extra.c_str());
+        static_cast<unsigned long>(out.down_wait_ms), static_cast<unsigned long>(out.up_wait_ms), out.down_sec,
+        out.up_sec, static_cast<unsigned long>(out.total_ms), extra.c_str());
     return out;
   }
-  log.Logf("virtio-net-link-flap: observed link UP up_sec=%.2f", out.up_sec);
+  log.Logf("virtio-net-link-flap: observed link UP up_sec=%.2f up_wait_ms=%lu", out.up_sec,
+           static_cast<unsigned long>(out.up_wait_ms));
 
   // Best-effort: confirm that we observed another config interrupt between link-down and link-up.
   if (out.cfg_vector.has_value()) {
@@ -7902,11 +7924,13 @@ static VirtioNetLinkFlapTestResult VirtioNetLinkFlapTest(Logger& log, const Opti
     out.cfg_intr_up = cfg_intr_count(d, *out.cfg_vector);
     if (out.cfg_intr_down.has_value() && out.cfg_intr_up.has_value() && *out.cfg_intr_up <= *out.cfg_intr_down) {
       out.reason = "config_irq_missing_up";
+      out.total_ms = GetTickCount() - start_ms;
       const std::string extra = cfg_fields();
       log.Logf(
-          "AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|FAIL|reason=%s|adapter=%s|guid=%s|down_sec=%.2f|up_sec=%.2f%s",
+          "AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|FAIL|reason=%s|adapter=%s|guid=%s|down_wait_ms=%lu|up_wait_ms=%lu|down_sec=%.2f|up_sec=%.2f|total_ms=%lu%s",
           out.reason.c_str(), WideToUtf8(adapter.friendly_name).c_str(), WideToUtf8(adapter.instance_id).c_str(),
-          out.down_sec, out.up_sec, extra.c_str());
+          static_cast<unsigned long>(out.down_wait_ms), static_cast<unsigned long>(out.up_wait_ms), out.down_sec,
+          out.up_sec, static_cast<unsigned long>(out.total_ms), extra.c_str());
       return out;
     }
   }
@@ -7915,21 +7939,27 @@ static VirtioNetLinkFlapTestResult VirtioNetLinkFlapTest(Logger& log, const Opti
   {
     constexpr int kMaxAttempts = 3;
     bool ok = false;
+    const DWORD recovery_start = GetTickCount();
     for (int attempt = 1; attempt <= kMaxAttempts; attempt++) {
       out.http_attempts = attempt;
+      out.recovery_attempts = attempt;
       if (HttpGet(log, opt.http_url)) {
         ok = true;
         break;
       }
       Sleep(500);
     }
+    out.recovery_wait_ms = GetTickCount() - recovery_start;
     if (!ok) {
       out.reason = "http_get_failed";
+      out.total_ms = GetTickCount() - start_ms;
       const std::string extra = cfg_fields();
       log.Logf(
-          "AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|FAIL|reason=%s|adapter=%s|guid=%s|down_sec=%.2f|up_sec=%.2f|http_attempts=%d%s",
+          "AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|FAIL|reason=%s|adapter=%s|guid=%s|down_wait_ms=%lu|up_wait_ms=%lu|recovery_wait_ms=%lu|down_sec=%.2f|up_sec=%.2f|http_attempts=%d|recovery_attempts=%d|total_ms=%lu%s",
           out.reason.c_str(), WideToUtf8(adapter.friendly_name).c_str(), WideToUtf8(adapter.instance_id).c_str(),
-          out.down_sec, out.up_sec, out.http_attempts, extra.c_str());
+          static_cast<unsigned long>(out.down_wait_ms), static_cast<unsigned long>(out.up_wait_ms),
+          static_cast<unsigned long>(out.recovery_wait_ms), out.down_sec, out.up_sec, out.http_attempts,
+          out.recovery_attempts, static_cast<unsigned long>(out.total_ms), extra.c_str());
       return out;
     }
   }
@@ -7942,11 +7972,14 @@ static VirtioNetLinkFlapTestResult VirtioNetLinkFlapTest(Logger& log, const Opti
 
   out.ok = true;
   out.reason.clear();
+  out.total_ms = GetTickCount() - start_ms;
   const std::string extra = cfg_fields();
   log.Logf(
-      "AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|PASS|adapter=%s|guid=%s|down_sec=%.2f|up_sec=%.2f|ipv4=%u.%u.%u.%u|http_attempts=%d%s",
-      WideToUtf8(adapter.friendly_name).c_str(), WideToUtf8(adapter.instance_id).c_str(), out.down_sec, out.up_sec, a,
-      b, c, d, out.http_attempts, extra.c_str());
+      "AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|PASS|adapter=%s|guid=%s|down_wait_ms=%lu|up_wait_ms=%lu|recovery_wait_ms=%lu|down_sec=%.2f|up_sec=%.2f|ipv4=%u.%u.%u.%u|http_attempts=%d|recovery_attempts=%d|total_ms=%lu%s",
+      WideToUtf8(adapter.friendly_name).c_str(), WideToUtf8(adapter.instance_id).c_str(),
+      static_cast<unsigned long>(out.down_wait_ms), static_cast<unsigned long>(out.up_wait_ms),
+      static_cast<unsigned long>(out.recovery_wait_ms), out.down_sec, out.up_sec, a, b, c, d, out.http_attempts,
+      out.recovery_attempts, static_cast<unsigned long>(out.total_ms), extra.c_str());
   return out;
 }
 
