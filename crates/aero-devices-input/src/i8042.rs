@@ -561,7 +561,18 @@ impl I8042Controller {
         if let Some(pending) = self.pending_write.take() {
             match pending {
                 PendingWrite::CommandByte => {
+                    // The command-byte translation bit (bit 6) enables Set-2 -> Set-1 translation.
+                    //
+                    // The translator is stateful (tracks `E0`/`F0` prefixes). If the guest toggles
+                    // translation mid-stream, any prefix state from the previous mode must be
+                    // cleared; otherwise the next scancode byte may be misinterpreted as extended
+                    // or as a break code.
+                    let was_translation_enabled = self.translation_enabled();
                     self.command_byte = value;
+                    let translation_enabled = self.translation_enabled();
+                    if was_translation_enabled != translation_enabled {
+                        self.translator = Set2ToSet1::default();
+                    }
                 }
                 PendingWrite::OutputPort => {
                     self.set_output_port(value);

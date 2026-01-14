@@ -39,3 +39,26 @@ fn i8042_inject_keyboard_bytes_respects_translation_bit() {
     c.inject_keyboard_bytes(&[0xF0, 0x1C]);
     assert_eq!(drain_output(&mut c), vec![0xF0, 0x1C]);
 }
+
+#[test]
+fn i8042_translation_toggle_resets_prefix_state() {
+    let mut c = I8042Controller::new();
+
+    // Inject an extended scancode sequence. With translation enabled, the controller will deliver
+    // the `0xE0` prefix first and keep internal "saw E0" state until the following byte is
+    // consumed.
+    c.inject_keyboard_bytes(&[0xE0, 0x1F]);
+
+    // Disable translation before the guest drains the sequence. This causes the second byte to be
+    // delivered raw, and (prior to the fix) leaves the translator stuck in the "saw E0" state.
+    c.write_port(0x64, 0x60); // write command byte
+    c.write_port(0x60, 0x05); // default 0x45 without 0x40 (disable translation)
+    assert_eq!(drain_output(&mut c), vec![0xE0, 0x1F]);
+
+    // Re-enable translation and inject a non-extended key. The translation toggle should reset any
+    // stale prefix state so the key is translated correctly.
+    c.write_port(0x64, 0x60); // write command byte
+    c.write_port(0x60, 0x45); // enable translation
+    c.inject_keyboard_bytes(&[0x1C]);
+    assert_eq!(drain_output(&mut c), vec![0x1E]);
+}
