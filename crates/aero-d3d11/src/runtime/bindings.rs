@@ -86,6 +86,21 @@ impl ShaderStage {
             Self::Geometry | Self::Hull | Self::Domain => 3,
         }
     }
+
+    /// Map a WebGPU bind group index back to the corresponding D3D11 shader stage bucket.
+    ///
+    /// Groups `0..=2` have a fixed meaning (`VS`, `PS`, `CS`). Group 3 is shared by multiple
+    /// compute-based emulation pipelines (GS/HS/DS), so callers must supply which stage is being
+    /// executed when interpreting bindings from `@group(3)`.
+    pub const fn from_bind_group_index(group: u32, group3_stage: ShaderStage) -> Option<Self> {
+        match group {
+            0 => Some(Self::Vertex),
+            1 => Some(Self::Pixel),
+            2 => Some(Self::Compute),
+            3 => Some(group3_stage),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

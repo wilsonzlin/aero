@@ -22440,6 +22440,240 @@ fn hs_main() {{
     }
 
     #[test]
+    fn hs_stage_ex_resources_bind_to_group3_for_emulated_compute_passes() {
+        pollster::block_on(async {
+            let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+                Ok(exec) => exec,
+                Err(e) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                    return;
+                }
+            };
+            if !exec.supports_compute() {
+                skip_or_panic(module_path!(), "compute unsupported");
+                return;
+            }
+
+            // Create guest-backed resources so this test covers the implicit upload path.
+            const ALLOC_ID: u32 = 1;
+            const CB: u32 = 10;
+            const TEX: u32 = 11;
+            const TEX_OFFSET: u32 = 0x1000;
+            const HS_SHADER: u32 = 12;
+
+            let alloc_entries = [AerogpuAllocEntry {
+                alloc_id: ALLOC_ID,
+                flags: 0,
+                gpa: 0,
+                size_bytes: 0x2000,
+                reserved0: 0,
+            }];
+            let allocs = AllocTable::new(Some(&alloc_entries)).expect("alloc table should build");
+
+            let mut guest_mem = VecGuestMemory::new(0x2000);
+            // Fill constant buffer + texture backing with deterministic bytes.
+            guest_mem
+                .write(0, &[0xCDu8; 256])
+                .expect("write constant buffer backing");
+            guest_mem
+                .write(u64::from(TEX_OFFSET), &[255, 0, 0, 255])
+                .expect("write texture backing");
+
+            // CREATE_BUFFER (guest-backed).
+            let mut cmd_bytes = Vec::new();
+            cmd_bytes.extend_from_slice(&(AerogpuCmdOpcode::CreateBuffer as u32).to_le_bytes());
+            cmd_bytes.extend_from_slice(&40u32.to_le_bytes()); // size_bytes
+            cmd_bytes.extend_from_slice(&CB.to_le_bytes());
+            cmd_bytes.extend_from_slice(&AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER.to_le_bytes());
+            cmd_bytes.extend_from_slice(&256u64.to_le_bytes()); // size_bytes
+            cmd_bytes.extend_from_slice(&ALLOC_ID.to_le_bytes()); // backing_alloc_id
+            cmd_bytes.extend_from_slice(&0u32.to_le_bytes()); // backing_offset_bytes
+            cmd_bytes.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+            assert_eq!(cmd_bytes.len(), 40);
+            exec.exec_create_buffer(&cmd_bytes, &allocs)
+                .expect("CREATE_BUFFER should succeed");
+
+            // CREATE_TEXTURE2D (guest-backed).
+            let mut cmd_bytes = Vec::new();
+            cmd_bytes.extend_from_slice(&(AerogpuCmdOpcode::CreateTexture2d as u32).to_le_bytes());
+            cmd_bytes.extend_from_slice(&56u32.to_le_bytes()); // size_bytes
+            cmd_bytes.extend_from_slice(&TEX.to_le_bytes());
+            cmd_bytes.extend_from_slice(&AEROGPU_RESOURCE_USAGE_TEXTURE.to_le_bytes());
+            cmd_bytes.extend_from_slice(&AEROGPU_FORMAT_R8G8B8A8_UNORM.to_le_bytes());
+            cmd_bytes.extend_from_slice(&1u32.to_le_bytes()); // width
+            cmd_bytes.extend_from_slice(&1u32.to_le_bytes()); // height
+            cmd_bytes.extend_from_slice(&1u32.to_le_bytes()); // mip_levels
+            cmd_bytes.extend_from_slice(&1u32.to_le_bytes()); // array_layers
+            cmd_bytes.extend_from_slice(&4u32.to_le_bytes()); // row_pitch_bytes
+            cmd_bytes.extend_from_slice(&ALLOC_ID.to_le_bytes()); // backing_alloc_id
+            cmd_bytes.extend_from_slice(&TEX_OFFSET.to_le_bytes()); // backing_offset_bytes
+            cmd_bytes.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+            assert_eq!(cmd_bytes.len(), 56);
+            exec.exec_create_texture2d(&cmd_bytes, &allocs)
+                .expect("CREATE_TEXTURE2D should succeed");
+
+            // SET_TEXTURE to HS via stage_ex.
+            let mut cmd_bytes = Vec::new();
+            cmd_bytes.extend_from_slice(&(AerogpuCmdOpcode::SetTexture as u32).to_le_bytes());
+            cmd_bytes.extend_from_slice(&24u32.to_le_bytes()); // size_bytes
+            cmd_bytes.extend_from_slice(&(AerogpuShaderStage::Compute as u32).to_le_bytes());
+            cmd_bytes.extend_from_slice(&0u32.to_le_bytes()); // slot
+            cmd_bytes.extend_from_slice(&TEX.to_le_bytes()); // texture handle
+            cmd_bytes.extend_from_slice(&(AerogpuShaderStageEx::Hull as u32).to_le_bytes());
+            assert_eq!(cmd_bytes.len(), 24);
+            exec.exec_set_texture(&cmd_bytes)
+                .expect("SET_TEXTURE (HS via stage_ex) should succeed");
+
+            // SET_CONSTANT_BUFFERS to HS via stage_ex, with an unaligned offset so the scratch-copy
+            // path is exercised.
+            let mut cmd_bytes = Vec::new();
+            cmd_bytes.extend_from_slice(&(AerogpuCmdOpcode::SetConstantBuffers as u32).to_le_bytes());
+            cmd_bytes.extend_from_slice(&40u32.to_le_bytes()); // size_bytes (24 + 16)
+            cmd_bytes.extend_from_slice(&(AerogpuShaderStage::Compute as u32).to_le_bytes());
+            cmd_bytes.extend_from_slice(&0u32.to_le_bytes()); // start_slot
+            cmd_bytes.extend_from_slice(&1u32.to_le_bytes()); // buffer_count
+            cmd_bytes.extend_from_slice(&(AerogpuShaderStageEx::Hull as u32).to_le_bytes());
+            cmd_bytes.extend_from_slice(&CB.to_le_bytes()); // buffer handle
+            cmd_bytes.extend_from_slice(&16u32.to_le_bytes()); // offset_bytes (unaligned to 256)
+            cmd_bytes.extend_from_slice(&16u32.to_le_bytes()); // size_bytes
+            cmd_bytes.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+            assert_eq!(cmd_bytes.len(), 40);
+            exec.exec_set_constant_buffers(&cmd_bytes)
+                .expect("SET_CONSTANT_BUFFERS (HS via stage_ex) should succeed");
+
+            // Build a minimal compute shader that uses the shared `@group(3)` binding model.
+            let bindings = vec![
+                crate::Binding {
+                    group: 3,
+                    binding: crate::binding_model::BINDING_BASE_CBUFFER,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    kind: crate::BindingKind::ConstantBuffer {
+                        slot: 0,
+                        reg_count: 1,
+                    },
+                },
+                crate::Binding {
+                    group: 3,
+                    binding: crate::binding_model::BINDING_BASE_TEXTURE,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    kind: crate::BindingKind::Texture2D { slot: 0 },
+                },
+                crate::Binding {
+                    group: 3,
+                    binding: crate::binding_model::BINDING_BASE_SAMPLER,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    kind: crate::BindingKind::Sampler { slot: 0 },
+                },
+            ];
+
+            let wgsl = r#"
+struct Cb0 {
+  v: vec4<f32>,
+};
+
+@group(3) @binding(0) var<uniform> cb0: Cb0;
+@group(3) @binding(32) var tex0: texture_2d<f32>;
+@group(3) @binding(160) var samp0: sampler;
+
+@compute @workgroup_size(1)
+fn hs_main() {
+  let _x: f32 = cb0.v.x;
+  let _y: vec4<f32> = textureSample(tex0, samp0, vec2<f32>(0.0, 0.0));
+}
+"#;
+            let (wgsl_hash, _module) = exec.pipeline_cache.get_or_create_shader_module(
+                &exec.device,
+                aero_gpu::pipeline_key::ShaderStage::Compute,
+                wgsl,
+                Some("aerogpu_cmd HS stage_ex test shader"),
+            );
+            exec.resources.shaders.insert(
+                HS_SHADER,
+                ShaderResource {
+                    stage: ShaderStage::Hull,
+                    wgsl_hash,
+                    depth_clamp_wgsl_hash: None,
+                    dxbc_hash_fnv1a64: 0,
+                    entry_point: "hs_main",
+                    vs_input_signature: Vec::new(),
+                    reflection: ShaderReflection {
+                        inputs: Vec::new(),
+                        outputs: Vec::new(),
+                        bindings,
+                        rdef: None,
+                    },
+                    sm4_metadata: Sm4ShaderMetadata::default(),
+                    sm4_module: None,
+                    wgsl_source: wgsl.to_string(),
+                },
+            );
+            exec.state.hs = Some(HS_SHADER);
+
+            let mut encoder = exec
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("aerogpu_cmd HS stage_ex test encoder"),
+                });
+
+            // Dispatch the HS compute pass via the stage_ex dispatch path.
+            let mut dispatch_cmd = Vec::new();
+            dispatch_cmd.extend_from_slice(&(AerogpuCmdOpcode::Dispatch as u32).to_le_bytes());
+            dispatch_cmd.extend_from_slice(&24u32.to_le_bytes()); // size_bytes
+            dispatch_cmd.extend_from_slice(&1u32.to_le_bytes()); // group_count_x
+            dispatch_cmd.extend_from_slice(&1u32.to_le_bytes()); // group_count_y
+            dispatch_cmd.extend_from_slice(&1u32.to_le_bytes()); // group_count_z
+            dispatch_cmd.extend_from_slice(&(AerogpuShaderStageEx::Hull as u32).to_le_bytes());
+            assert_eq!(dispatch_cmd.len(), 24);
+
+            exec.device.push_error_scope(wgpu::ErrorFilter::Validation);
+            exec.exec_dispatch(&mut encoder, &dispatch_cmd, &allocs, &mut guest_mem)
+                .expect("DISPATCH (HS via stage_ex) should succeed");
+
+            exec.queue.submit([encoder.finish()]);
+            exec.poll_wait();
+
+            let err = exec.device.pop_error_scope().await;
+            assert!(
+                err.is_none(),
+                "unexpected wgpu validation error while running HS emulation pass: {err:?}"
+            );
+
+            assert!(
+                exec.encoder_used_buffers.contains(&CB),
+                "expected HS constant buffer {CB} to be marked used"
+            );
+            assert!(
+                exec.encoder_used_textures.contains(&TEX),
+                "expected HS texture {TEX} to be marked used"
+            );
+
+            assert!(
+                exec.cbuffer_scratch.contains_key(&(ShaderStage::Hull, 0)),
+                "expected constant-buffer scratch allocation for HS stage"
+            );
+
+            assert!(
+                exec.resources
+                    .buffers
+                    .get(&CB)
+                    .expect("CB buffer exists")
+                    .dirty
+                    .is_none(),
+                "expected HS constant buffer upload to clear dirty range"
+            );
+            assert!(
+                !exec
+                    .resources
+                    .textures
+                    .get(&TEX)
+                    .expect("texture exists")
+                    .dirty,
+                "expected HS texture upload to clear dirty flag"
+            );
+        });
+    }
+
+    #[test]
     fn hs_control_point_and_patch_constant_compute_passes_smoke() {
         pollster::block_on(async {
             let mut exec = match AerogpuD3d11Executor::new_for_tests().await {

@@ -21,6 +21,10 @@ use crate::binding_model::{
 /// - `@group(2)` = compute shader resources
 /// - `@group(3)` = D3D11 extended stage resources (GS/HS/DS; executed via compute emulation)
 ///
+/// Note: `@group(3)` is shared by multiple emulated stages. When running an emulation compute pass,
+/// the executor decides which D3D11 stage bucket (`GS`/`HS`/`DS`) `@group(3)` should source bindings
+/// from for that pass.
+///
 /// These groups are reserved for guest-translated shaders. Internal/emulation
 /// pipelines may opt into additional bind groups beyond this range, but guest
 /// shaders must remain constrained to `0..=MAX_GUEST_BIND_GROUP_INDEX`.
