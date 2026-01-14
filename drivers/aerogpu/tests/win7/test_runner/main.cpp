@@ -1133,6 +1133,7 @@ int main(int argc, char** argv) {
       "umd_private_sanity",
       "transfer_feature_sanity",
       "dbgctl_escape_security_sanity",
+      "dbgctl_selftest_sanity",
       "d3d9_raster_status_sanity",
       "d3d9_raster_status_pacing",
       "d3d9_validate_device_sanity",
