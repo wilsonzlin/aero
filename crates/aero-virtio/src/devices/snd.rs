@@ -79,6 +79,15 @@ pub const PCM_SAMPLE_RATE_HZ: u32 = 48_000;
 /// plenty for the minimal Win7 contract while still bounding worst-case allocations.
 const MAX_PCM_XFER_BYTES: u64 = 256 * 1024;
 
+/// Defensive cap on the number of queued virtio-snd events.
+///
+/// The virtio-snd `eventq` is guest-driven: the guest must post writable buffers before the device
+/// can deliver events. The Aero contract v1 does not require any events and some guests may not
+/// service the queue promptly. To avoid unbounded host memory growth (e.g. a malicious guest that
+/// never posts event buffers, combined with a host integration that keeps queueing events), cap the
+/// pending FIFO at a small bounded size.
+const MAX_PENDING_EVENTS: usize = 256;
+
 /// Defensive upper bound for host-provided sample rates.
 ///
 /// Host integrations (including the browser/WASM runtime) may provide the output/capture sample
@@ -298,6 +307,11 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
     /// The message is delivered best-effort: it will only be written once the guest posts a writable
     /// event buffer chain on `eventq` and the transport polls queues.
     pub fn queue_event(&mut self, event_type: u32, data: u32) {
+        if self.pending_events.len() >= MAX_PENDING_EVENTS {
+            // Drop the oldest event to preserve bounded memory usage while keeping the most recent
+            // state transitions (e.g. jack connected/disconnected).
+            let _ = self.pending_events.pop_front();
+        }
         let mut evt = [0u8; 8];
         evt[0..4].copy_from_slice(&event_type.to_le_bytes());
         evt[4..8].copy_from_slice(&data.to_le_bytes());
@@ -2021,6 +2035,23 @@ mod tests {
         assert_eq!(read_u32_le(&mem, used + 8).unwrap(), 8);
         assert_eq!(mem.get_slice(buf, 8).unwrap(), &evt);
         assert!(snd.pending_events.is_empty());
+    }
+
+    #[test]
+    fn virtio_snd_pending_events_are_bounded() {
+        let mut snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
+
+        // Queue more events than the cap to ensure we never grow unbounded.
+        for i in 0..(MAX_PENDING_EVENTS + 10) {
+            snd.queue_event(VIRTIO_SND_EVT_PCM_PERIOD_ELAPSED, i as u32);
+        }
+
+        assert_eq!(snd.pending_events.len(), MAX_PENDING_EVENTS);
+
+        // Oldest events should have been dropped; the first remaining should be data=10.
+        let first = snd.pending_events.front().unwrap();
+        let data = u32::from_le_bytes(first[4..8].try_into().unwrap());
+        assert_eq!(data, 10);
     }
 
     #[test]
