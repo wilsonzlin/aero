@@ -256,6 +256,16 @@ mod tests {
     use std::thread;
 
     #[test]
+    fn scanout_state_defaults_match_protocol() {
+        let state = ScanoutState::new();
+        let snap = state.snapshot();
+        assert_eq!(snap.generation, 0);
+        assert_eq!(snap.source, SCANOUT_SOURCE_LEGACY_TEXT);
+        assert_eq!(snap.format, SCANOUT_FORMAT_B8G8R8X8);
+        assert_eq!(SCANOUT_FORMAT_B8G8R8X8, AerogpuFormat::B8G8R8X8Unorm as u32);
+    }
+
+    #[test]
     fn scanout_format_default_matches_aerogpu_protocol() {
         assert_eq!(SCANOUT_FORMAT_B8G8R8X8, AerogpuFormat::B8G8R8X8Unorm as u32);
     }
