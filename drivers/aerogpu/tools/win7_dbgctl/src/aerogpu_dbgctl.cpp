@@ -1641,6 +1641,148 @@ static NTSTATUS QueryAdapterInfoWithTimeout(const D3DKMT_FUNCS *f, D3DKMT_HANDLE
   return (w == WAIT_TIMEOUT) ? STATUS_TIMEOUT : STATUS_INVALID_PARAMETER;
 }
 
+typedef struct GetScanLineThreadCtx {
+  const D3DKMT_FUNCS *f;
+  D3DKMT_GETSCANLINE scan;
+  NTSTATUS status;
+  HANDLE done_event;
+} GetScanLineThreadCtx;
+
+typedef struct GetScanLineWorker {
+  HANDLE request_event;
+  volatile GetScanLineThreadCtx *ctx;
+  GetScanLineThreadCtx ctx_storage;
+} GetScanLineWorker;
+
+static GetScanLineWorker *g_get_scanline_worker = NULL;
+static CRITICAL_SECTION g_get_scanline_worker_cs;
+static bool g_get_scanline_worker_cs_inited = false;
+
+static void InitGetScanLineWorkerCs() {
+  if (!g_get_scanline_worker_cs_inited) {
+    InitializeCriticalSection(&g_get_scanline_worker_cs);
+    g_get_scanline_worker_cs_inited = true;
+  }
+}
+
+static DWORD WINAPI GetScanLineWorkerThreadProc(LPVOID param) {
+  GetScanLineWorker *worker = (GetScanLineWorker *)param;
+  if (!worker || !worker->request_event) {
+    return 0;
+  }
+
+  for (;;) {
+    DWORD w = WaitForSingleObject(worker->request_event, INFINITE);
+    if (w != WAIT_OBJECT_0) {
+      continue;
+    }
+
+    GetScanLineThreadCtx *ctx =
+        (GetScanLineThreadCtx *)InterlockedExchangePointer((PVOID *)&worker->ctx, NULL);
+    if (!ctx) {
+      continue;
+    }
+
+    if (!ctx->f || !ctx->f->GetScanLine) {
+      ctx->status = STATUS_INVALID_PARAMETER;
+      if (ctx->done_event) {
+        SetEvent(ctx->done_event);
+      }
+      continue;
+    }
+
+    ctx->status = ctx->f->GetScanLine(&ctx->scan);
+    if (ctx->done_event) {
+      SetEvent(ctx->done_event);
+    }
+  }
+
+  // Unreachable (thread runs until process exit), but keep MSVC happy.
+  return 0;
+}
+
+static GetScanLineWorker *CreateGetScanLineWorker() {
+  GetScanLineWorker *worker =
+      (GetScanLineWorker *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*worker));
+  if (!worker) {
+    return NULL;
+  }
+
+  worker->request_event = CreateEventW(NULL, FALSE, FALSE, NULL);
+  if (!worker->request_event) {
+    HeapFree(GetProcessHeap(), 0, worker);
+    return NULL;
+  }
+
+  worker->ctx_storage.done_event = CreateEventW(NULL, TRUE, FALSE, NULL);
+  if (!worker->ctx_storage.done_event) {
+    CloseHandle(worker->request_event);
+    HeapFree(GetProcessHeap(), 0, worker);
+    return NULL;
+  }
+
+  HANDLE thread = CreateThread(NULL, 0, GetScanLineWorkerThreadProc, worker, 0, NULL);
+  if (!thread) {
+    CloseHandle(worker->ctx_storage.done_event);
+    CloseHandle(worker->request_event);
+    HeapFree(GetProcessHeap(), 0, worker);
+    return NULL;
+  }
+
+  CloseHandle(thread);
+  return worker;
+}
+
+static NTSTATUS GetScanLineWithTimeout(const D3DKMT_FUNCS *f, D3DKMT_GETSCANLINE *inout) {
+  if (!f || !f->GetScanLine || !inout) {
+    return STATUS_INVALID_PARAMETER;
+  }
+  if (g_escape_timeout_ms == 0) {
+    return f->GetScanLine(inout);
+  }
+
+  InitGetScanLineWorkerCs();
+
+  GetScanLineWorker *worker = NULL;
+  EnterCriticalSection(&g_get_scanline_worker_cs);
+  worker = g_get_scanline_worker;
+  if (!worker) {
+    worker = CreateGetScanLineWorker();
+    if (!worker) {
+      LeaveCriticalSection(&g_get_scanline_worker_cs);
+      return STATUS_INSUFFICIENT_RESOURCES;
+    }
+    g_get_scanline_worker = worker;
+  }
+  LeaveCriticalSection(&g_get_scanline_worker_cs);
+
+  ResetEvent(worker->ctx_storage.done_event);
+  worker->ctx_storage.f = f;
+  worker->ctx_storage.scan = *inout;
+  worker->ctx_storage.status = 0;
+
+  if (InterlockedCompareExchangePointer((PVOID *)&worker->ctx, &worker->ctx_storage, NULL) != NULL) {
+    return STATUS_INVALID_DEVICE_STATE;
+  }
+  SetEvent(worker->request_event);
+
+  DWORD w = WaitForSingleObject(worker->ctx_storage.done_event, g_escape_timeout_ms);
+  if (w == WAIT_OBJECT_0) {
+    *inout = worker->ctx_storage.scan;
+    return worker->ctx_storage.status;
+  }
+
+  // Timeout or failure; abandon worker and avoid deadlock-prone cleanup.
+  EnterCriticalSection(&g_get_scanline_worker_cs);
+  if (g_get_scanline_worker == worker) {
+    g_get_scanline_worker = NULL;
+  }
+  LeaveCriticalSection(&g_get_scanline_worker_cs);
+
+  InterlockedExchange(&g_skip_close_adapter, 1);
+  return (w == WAIT_TIMEOUT) ? STATUS_TIMEOUT : STATUS_INVALID_PARAMETER;
+}
+
 static const wchar_t *SelftestErrorToString(uint32_t code) {
   switch (code) {
   case AEROGPU_DBGCTL_SELFTEST_OK:
@@ -6548,13 +6690,13 @@ static int DoQueryScanline(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32
     s.hAdapter = hAdapter;
     s.VidPnSourceId = effectiveVidpnSourceId;
 
-    NTSTATUS st = f->GetScanLine(&s);
+    NTSTATUS st = GetScanLineWithTimeout(f, &s);
     if (!NT_SUCCESS(st) && st == STATUS_INVALID_PARAMETER && effectiveVidpnSourceId != 0) {
       wprintf(L"GetScanLine: VidPnSourceId=%lu not supported; retrying with source 0\n",
               (unsigned long)effectiveVidpnSourceId);
       effectiveVidpnSourceId = 0;
       s.VidPnSourceId = effectiveVidpnSourceId;
-      st = f->GetScanLine(&s);
+      st = GetScanLineWithTimeout(f, &s);
     }
     if (!NT_SUCCESS(st)) {
       PrintNtStatus(L"D3DKMTGetScanLine failed", f, st);
@@ -6626,13 +6768,13 @@ static int DoDumpVblank(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t 
       ZeroMemory(&s, sizeof(s));
       s.hAdapter = hAdapter;
       s.VidPnSourceId = scanlineFallbackToSource0 ? 0 : effectiveVidpnSourceId;
-      NTSTATUS st = f->GetScanLine(&s);
+      NTSTATUS st = GetScanLineWithTimeout(f, &s);
       if (!NT_SUCCESS(st) && st == STATUS_INVALID_PARAMETER && s.VidPnSourceId != 0) {
         wprintf(L"  GetScanLine: VidPnSourceId=%lu not supported; retrying with source 0\n",
                 (unsigned long)s.VidPnSourceId);
         scanlineFallbackToSource0 = true;
         s.VidPnSourceId = 0;
-        st = f->GetScanLine(&s);
+        st = GetScanLineWithTimeout(f, &s);
       }
       if (NT_SUCCESS(st)) {
         wprintf(L"  scanline: %lu%s\n", (unsigned long)s.ScanLine, s.InVerticalBlank ? L" (vblank)" : L"");
@@ -10036,11 +10178,11 @@ static int DoDumpVblankJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint3
       ZeroMemory(&s, sizeof(s));
       s.hAdapter = hAdapter;
       s.VidPnSourceId = scanlineFallbackToSource0 ? 0 : effectiveVidpnSourceId;
-      NTSTATUS stScan = f->GetScanLine(&s);
+      NTSTATUS stScan = GetScanLineWithTimeout(f, &s);
       if (!NT_SUCCESS(stScan) && stScan == STATUS_INVALID_PARAMETER && s.VidPnSourceId != 0) {
         scanlineFallbackToSource0 = true;
         s.VidPnSourceId = 0;
-        stScan = f->GetScanLine(&s);
+        stScan = GetScanLineWithTimeout(f, &s);
       }
       w.Key("scanline");
       w.BeginObject();
@@ -10423,12 +10565,12 @@ static int DoQueryScanlineJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, ui
     s.hAdapter = hAdapter;
     s.VidPnSourceId = effectiveVidpnSourceId;
 
-    NTSTATUS st = f->GetScanLine(&s);
+    NTSTATUS st = GetScanLineWithTimeout(f, &s);
     if (!NT_SUCCESS(st) && st == STATUS_INVALID_PARAMETER && effectiveVidpnSourceId != 0) {
       fallbackToSource0 = true;
       effectiveVidpnSourceId = 0;
       s.VidPnSourceId = 0;
-      st = f->GetScanLine(&s);
+      st = GetScanLineWithTimeout(f, &s);
     }
     if (!NT_SUCCESS(st)) {
       w.EndArray();
