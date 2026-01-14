@@ -247,22 +247,25 @@ Examples (illustrative) INF model entries:
 %AeroVirtioSnd.DeviceDesc% = AeroVirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&REV_01
 
 ; aero_virtio_input.inf (virtio-input is a multi-function device: keyboard + mouse)
-; Canonical INF includes SUBSYS-qualified keyboard/mouse IDs for distinct Device Manager naming,
-; plus a strict revision-gated generic fallback (no SUBSYS) for environments where subsystem IDs
-; are absent/ignored:
+; Canonical INF is intentionally SUBSYS-only and includes explicit keyboard/mouse model lines so they appear
+; distinctly in Device Manager:
 %AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
 %AeroVirtioMouse.DeviceDesc%    = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
-%AeroVirtioInput.DeviceDesc%    = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&REV_01
+
+; Legacy filename alias `virtio-input.inf` (checked in disabled-by-default as `virtio-input.inf.disabled`)
+; - Exists for compatibility with workflows/tools that still reference `virtio-input.inf` instead of `aero_virtio_input.inf`.
+; - Expected to remain byte-for-byte identical to `aero_virtio_input.inf` from the first section header (`[Version]`) onward,
+;   except for the models sections (`[Aero.NTx86]` / `[Aero.NTamd64]`). Only the leading banner/comments may differ (see
+;   `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
+; - Does change HWID matching behavior by adding an opt-in strict, revision-gated generic fallback model entry:
+;   `PCI\VEN_1AF4&DEV_1052&REV_01`.
+; - Example additional models line present in the alias INF:
+;   %AeroVirtioInput.DeviceDesc% = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&REV_01
+; - Do not ship/install both INFs at the same time: they match overlapping HWIDs and can cause confusing driver selection.
 
 ; aero_virtio_tablet.inf (optional tablet / absolute pointer)
 ; Note: this SUBSYS-qualified HWID is more specific, so it wins over the generic fallback when both packages are installed.
 %AeroVirtioTablet.DeviceDesc%   = AeroVirtioTablet_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01
-
-; Optional legacy filename alias `virtio-input.inf` (checked in disabled-by-default as `virtio-input.inf.disabled`)
-; - Exists for compatibility with workflows/tools that still reference `virtio-input.inf` instead of `aero_virtio_input.inf`.
-; - Filename alias only: from the first section header (`[Version]`) onward, expected to be byte-for-byte identical to
-;   `aero_virtio_input.inf` (only the leading banner/comments may differ; see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
-; - Do not install both INFs at the same time: they match overlapping HWIDs and can cause confusing driver selection.
 ```
 
 ### Boot-critical storage (`CriticalDeviceDatabase`)
