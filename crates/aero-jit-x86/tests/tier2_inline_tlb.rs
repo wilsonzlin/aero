@@ -1032,6 +1032,77 @@ fn tier2_inline_tlb_store_on_prefilled_non_ram_tlb_entry_uses_slow_helper() {
 }
 
 #[test]
+fn tier2_inline_tlb_prefilled_ram_entry_uses_physical_base_for_load() {
+    // Ensure the inline-TLB RAM fast path uses the physical page base from the cached TLB entry
+    // when computing the RAM address (i.e. supports non-identity mappings).
+    let trace = TraceIr {
+        prologue: Vec::new(),
+        body: vec![
+            Instr::LoadMem {
+                dst: ValueId(0),
+                addr: Operand::Const(0x1000),
+                width: Width::W32,
+            },
+            Instr::StoreReg {
+                reg: Gpr::Rax,
+                src: Operand::Value(ValueId(0)),
+            },
+        ],
+        kind: TraceKind::Linear,
+    };
+
+    let mut ram = vec![0u8; 0x20_000];
+    ram[0x1000..0x1000 + 4].copy_from_slice(&0x1111_2222u32.to_le_bytes());
+    ram[0x2000..0x2000 + 4].copy_from_slice(&0x3333_4444u32.to_le_bytes());
+    let cpu_ptr = ram.len() as u64;
+
+    // Prefill a TLB entry that maps vaddr page 1 (0x1000) to phys_base 0x2000.
+    let flags = TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM;
+    let tlb_data = (0x2000u64 & PAGE_BASE_MASK) | flags;
+
+    let (_ret, _got_ram, gpr, host) =
+        run_trace_with_prefilled_tlbs(&trace, ram, cpu_ptr, 0, &[(0x1000, tlb_data)]);
+
+    assert_eq!(gpr[Gpr::Rax.as_u8() as usize] as u32, 0x3333_4444);
+    assert_eq!(host.mmu_translate_calls, 0);
+    assert_eq!(host.slow_mem_reads, 0);
+    assert_eq!(host.slow_mem_writes, 0);
+}
+
+#[test]
+fn tier2_inline_tlb_prefilled_ram_entry_uses_physical_base_for_store() {
+    // Like `tier2_inline_tlb_prefilled_ram_entry_uses_physical_base_for_load`, but for stores.
+    let trace = TraceIr {
+        prologue: Vec::new(),
+        body: vec![Instr::StoreMem {
+            addr: Operand::Const(0x1000),
+            src: Operand::Const(0xDDCC_BBAA),
+            width: Width::W32,
+        }],
+        kind: TraceKind::Linear,
+    };
+
+    let mut ram = vec![0u8; 0x20_000];
+    ram[0x1000..0x1000 + 4].copy_from_slice(&0x1111_2222u32.to_le_bytes());
+    ram[0x2000..0x2000 + 4].copy_from_slice(&0x3333_4444u32.to_le_bytes());
+    let cpu_ptr = ram.len() as u64;
+
+    let flags = TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM;
+    let tlb_data = (0x2000u64 & PAGE_BASE_MASK) | flags;
+
+    let (_ret, got_ram, _gpr, host) =
+        run_trace_with_prefilled_tlbs(&trace, ram, cpu_ptr, 0, &[(0x1000, tlb_data)]);
+
+    // Store should target the physical backing page (0x2000), not the virtual address (0x1000).
+    assert_eq!(read_u32_le(&got_ram, 0x1000), 0x1111_2222);
+    assert_eq!(read_u32_le(&got_ram, 0x2000), 0xDDCC_BBAA);
+
+    assert_eq!(host.mmu_translate_calls, 0);
+    assert_eq!(host.slow_mem_reads, 0);
+    assert_eq!(host.slow_mem_writes, 0);
+}
+
+#[test]
 fn tier2_inline_tlb_load_permission_miss_on_prefilled_entry_calls_translate() {
     // If a cached TLB entry lacks the required permission flag, the inline-TLB permission check
     // should call `mmu_translate` and retry using the updated entry.
