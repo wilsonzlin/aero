@@ -221,8 +221,7 @@ fn command_processor_guest_backed_texture_layout_matches_protocol_formats() {
     for &format in ALL_PROTOCOL_FORMATS {
         let expected_row_pitch = expected_tight_row_pitch_bytes(format, WIDTH);
         let expected_rows = expected_rows_in_layout(format, HEIGHT);
-        let expected_size_bytes =
-            u64::from(expected_row_pitch) * u64::from(expected_rows) * /*layers=*/ 1;
+        let expected_size_bytes = u64::from(expected_row_pitch) * u64::from(expected_rows);
 
         let allocs = [crate::AeroGpuSubmissionAllocation {
             alloc_id: ALLOC_ID,

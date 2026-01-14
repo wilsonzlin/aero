@@ -4658,10 +4658,8 @@ mod tests {
                     let blocks_w = width.div_ceil(exp.block_w);
                     let blocks_h = height.div_ceil(exp.block_h);
                     let expected_unpadded = blocks_w * exp.block_bytes;
-                    let expected_padded = {
-                        let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-                        ((expected_unpadded + align - 1) / align) * align
-                    };
+                    let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+                    let expected_padded = expected_unpadded.div_ceil(align) * align;
 
                     assert_eq!(layout.rows_in_layout, blocks_h, "format={format:?}");
                     assert_eq!(

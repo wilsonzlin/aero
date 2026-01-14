@@ -59,7 +59,7 @@ mod tests {
     #[test]
     fn classify_wgpu_error_maps_by_variant() {
         let oom = wgpu::Error::OutOfMemory {
-            source: Box::new(std::io::Error::new(std::io::ErrorKind::Other, "oom")),
+            source: Box::new(std::io::Error::other("oom")),
         };
         assert_eq!(
             classify_wgpu_error(&oom),
@@ -67,7 +67,7 @@ mod tests {
         );
 
         let validation = wgpu::Error::Validation {
-            source: Box::new(std::io::Error::new(std::io::ErrorKind::Other, "validation")),
+            source: Box::new(std::io::Error::other("validation")),
             description: "validation error".into(),
         };
         assert_eq!(
@@ -76,7 +76,7 @@ mod tests {
         );
 
         let internal = wgpu::Error::Internal {
-            source: Box::new(std::io::Error::new(std::io::ErrorKind::Other, "internal")),
+            source: Box::new(std::io::Error::other("internal")),
             description: "internal error".into(),
         };
         assert_eq!(

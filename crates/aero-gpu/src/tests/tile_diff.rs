@@ -114,7 +114,7 @@ fn assert_tile_rect_invariants(rect: Rect, width: u32, height: u32) {
     );
 
     assert!(
-        rect.x % TILE_SIZE == 0 && rect.y % TILE_SIZE == 0,
+        rect.x.is_multiple_of(TILE_SIZE) && rect.y.is_multiple_of(TILE_SIZE),
         "tile rect must start on a {TILE_SIZE}x{TILE_SIZE} grid: {rect:?}"
     );
     assert!(rect.w > 0 && rect.h > 0);

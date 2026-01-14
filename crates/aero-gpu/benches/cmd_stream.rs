@@ -60,11 +60,10 @@ fn extract_cmd_stream_from_trace(trace_bytes: &[u8]) -> Vec<u8> {
     let mut reader =
         TraceReader::open(Cursor::new(trace_bytes)).expect("failed to open .aerogputrace fixture");
 
-    let entry = reader
+    let entry = *reader
         .frame_entries()
         .first()
-        .expect("trace fixture contained no frames")
-        .clone();
+        .expect("trace fixture contained no frames");
 
     let records = reader
         .read_records_in_range(entry.start_offset, entry.end_offset)

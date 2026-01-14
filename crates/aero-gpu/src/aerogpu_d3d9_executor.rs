@@ -372,6 +372,7 @@ enum PendingWriteback {
 }
 
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 enum Resource {
     Buffer {
         buffer: wgpu::Buffer,
@@ -1119,20 +1120,12 @@ struct ClearDummyColorTarget {
 }
 
 /// Configuration for [`AerogpuD3d9Executor`].
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct AerogpuD3d9ExecutorConfig {
     /// Enable the D3D9 half-pixel center convention in translated vertex shaders.
     ///
     /// See `aero-d3d9`'s `WgslOptions::half_pixel_center` for details.
     pub half_pixel_center: bool,
-}
-
-impl Default for AerogpuD3d9ExecutorConfig {
-    fn default() -> Self {
-        Self {
-            half_pixel_center: false,
-        }
-    }
 }
 
 impl AerogpuD3d9Executor {
@@ -8572,24 +8565,22 @@ impl AerogpuD3d9Executor {
                                         if srgb_texture {
                                             view_cube_srgb
                                                 .as_ref()
-                                                .or_else(|| view_cube.as_ref())
+                                                .or(view_cube.as_ref())
                                                 .unwrap_or(&self.dummy_cube_texture_view)
                                         } else {
                                             view_cube
                                                 .as_ref()
                                                 .unwrap_or(&self.dummy_cube_texture_view)
                                         }
-                                    } else {
+                                    } else if *array_layers != 1 {
                                         // A cube texture's default view is `D2Array`, which cannot be
                                         // bound to a `texture_2d<f32>` binding. Treat mismatched bindings
                                         // as unbound.
-                                        if *array_layers != 1 {
-                                            &self.dummy_texture_view
-                                        } else if srgb_texture {
-                                            view_srgb.as_ref().unwrap_or(view)
-                                        } else {
-                                            view
-                                        }
+                                        &self.dummy_texture_view
+                                    } else if srgb_texture {
+                                        view_srgb.as_ref().unwrap_or(view)
+                                    } else {
+                                        view
                                     }
                                 }
                                 _ => {
@@ -8663,21 +8654,19 @@ impl AerogpuD3d9Executor {
                                         if srgb_texture {
                                             view_cube_srgb
                                                 .as_ref()
-                                                .or_else(|| view_cube.as_ref())
+                                                .or(view_cube.as_ref())
                                                 .unwrap_or(&self.dummy_cube_texture_view)
                                         } else {
                                             view_cube
                                                 .as_ref()
                                                 .unwrap_or(&self.dummy_cube_texture_view)
                                         }
+                                    } else if *array_layers != 1 {
+                                        &self.dummy_texture_view
+                                    } else if srgb_texture {
+                                        view_srgb.as_ref().unwrap_or(view)
                                     } else {
-                                        if *array_layers != 1 {
-                                            &self.dummy_texture_view
-                                        } else if srgb_texture {
-                                            view_srgb.as_ref().unwrap_or(view)
-                                        } else {
-                                            view
-                                        }
+                                        view
                                     }
                                 }
                                 _ => {

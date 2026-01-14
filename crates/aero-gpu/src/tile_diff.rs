@@ -131,13 +131,11 @@ impl TileDiff {
 
 #[cfg(all(test, feature = "diff-engine"))]
 mod tests {
-    use super::*;
-
     #[test]
     fn diff_treats_overflow_row_bytes_as_full_frame_dirty() {
-        let mut diff = TileDiff::new(1, 1, usize::MAX);
+        let mut diff = super::TileDiff::new(1, 1, usize::MAX);
         let dirty = diff.diff(&[], 0);
-        assert_eq!(dirty, vec![Rect::new(0, 0, 1, 1)]);
+        assert_eq!(dirty, vec![crate::Rect::new(0, 0, 1, 1)]);
         assert!(diff.prev_packed.is_empty());
     }
 
@@ -145,9 +143,9 @@ mod tests {
     fn diff_rejects_huge_frames_without_allocating() {
         let width = u32::MAX;
         let height = 1;
-        let mut diff = TileDiff::new(width, height, 4);
+        let mut diff = super::TileDiff::new(width, height, 4);
         let dirty = diff.diff(&[], 0);
-        assert_eq!(dirty, vec![Rect::new(0, 0, width, height)]);
+        assert_eq!(dirty, vec![crate::Rect::new(0, 0, width, height)]);
         assert!(diff.prev_packed.is_empty());
     }
 }

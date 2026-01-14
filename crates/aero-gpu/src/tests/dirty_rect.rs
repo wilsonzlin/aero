@@ -159,7 +159,7 @@ fn merge_and_cap_rects_cap_one_returns_bounding_box() {
 fn merge_and_cap_rects_randomized_invariants() {
     // This test is specifically aimed at catching regressions that could lead to out-of-bounds
     // texture uploads in the presenter (e.g. `x+w > width`).
-    let mut rng = Rng::new(0xC0FFEE_FACADE_1234);
+    let mut rng = Rng::new(0xC0FF_EEFA_CADE_1234);
 
     for _case in 0..2_000 {
         let width = rng.gen_range_u32(0..=512);
