@@ -168,6 +168,15 @@ fn aerogpu_scanout_handoff_to_wddm_blocks_legacy_int10_steal() {
     assert_ne!(bar0_base, 0);
     assert_ne!(bar1_base, 0);
 
+    // Enable bus mastering (DMA) so AeroGPU scanout reads behave like a real PCI device.
+    {
+        let pci_cfg = m.pci_config_ports().expect("pc platform enabled");
+        let mut pci_cfg = pci_cfg.borrow_mut();
+        let bus = pci_cfg.bus_mut();
+        let command = bus.read_config(profile::AEROGPU.bdf, 0x04, 2) as u16;
+        bus.write_config(profile::AEROGPU.bdf, 0x04, 2, u32::from(command | (1 << 2)));
+    }
+
     m.write_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_WIDTH), width);
     m.write_physical_u32(
         bar0_base + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_HEIGHT),
