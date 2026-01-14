@@ -11,7 +11,8 @@
   - Must reference the expected catalog filename
   - Must target KMDF 1.9 (in-box on Win7 SP1)
   - Must include the contract v1 keyboard/mouse HWID set (revision gated, REV_01)
-  - Must be SUBSYS-gated (no generic `PCI\VEN_1AF4&DEV_1052&REV_01` fallback in the canonical INF)
+  - Must include the strict (no SUBSYS) REV-qualified fallback HWID: `PCI\VEN_1AF4&DEV_1052&REV_01`
+  - Must not include a revision-less base HWID (`PCI\VEN_1AF4&DEV_1052`) (revision gating is required)
   - Must use distinct DeviceDesc strings for keyboard vs mouse (so they appear separately in Device Manager)
   - Must enable MSI/MSI-X and request enough message interrupts for virtio-input
 
@@ -279,15 +280,19 @@ foreach ($installSect in $installWdfSections) {
 #------------------------------------------------------------------------------
 # Hardware IDs (Aero contract v1)
 #------------------------------------------------------------------------------
-# The canonical keyboard/mouse INF must include:
-# - The SUBSYS-qualified Aero contract v1 keyboard/mouse IDs (distinct keyboard/mouse naming).
-# The canonical INF must *not* include a generic (no SUBSYS) fallback HWID; that fallback is
-# available only via the opt-in legacy alias INF (`virtio-input.inf.disabled`).
+# The canonical keyboard/mouse INF must include the SUBSYS-qualified Aero contract v1
+# keyboard/mouse IDs (distinct keyboard/mouse naming), plus a strict (no SUBSYS) fallback
+# HWID for stable binding when subsystem IDs are missing/unrecognized.
+#
+# Note: tablet devices bind via `aero_virtio_tablet.inf` (more specific) and will win over
+# the generic fallback when that INF is installed.
 $requiredHwids = @(
   # Aero contract v1 keyboard (SUBSYS_0010)
   'PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01',
   # Aero contract v1 mouse (SUBSYS_0011)
-  'PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01'
+  'PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01',
+  # Strict generic fallback (no SUBSYS).
+  'PCI\VEN_1AF4&DEV_1052&REV_01',
 )
 
 $modelSections = @('Aero.NTx86', 'Aero.NTamd64')
@@ -327,6 +332,11 @@ $requiredModelMappings = @(
     Message = 'Missing x86 mouse model line (expected %AeroVirtioMouse.DeviceDesc% = AeroVirtioInput_Install.NTx86, ...SUBSYS_00111AF4... ).'
   },
   @{
+    Name = 'NTx86 fallback mapping'
+    Regex = ('(?i)^' + [regex]::Escape('%AeroVirtioInput.DeviceDesc%') + '\s*=\s*' + [regex]::Escape('AeroVirtioInput_Install.NTx86') + '\s*,\s*' + [regex]::Escape('PCI\VEN_1AF4&DEV_1052&REV_01') + '$')
+    Message = 'Missing x86 fallback model line (expected %AeroVirtioInput.DeviceDesc% = AeroVirtioInput_Install.NTx86, ...&REV_01 ).'
+  },
+  @{
     Name = 'NTamd64 keyboard mapping'
     Regex = ('(?i)^' + [regex]::Escape('%AeroVirtioKeyboard.DeviceDesc%') + '\s*=\s*' + [regex]::Escape('AeroVirtioInput_Install.NTamd64') + '\s*,\s*' + [regex]::Escape('PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01') + '$')
     Message = 'Missing x64 keyboard model line (expected %AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTamd64, ...SUBSYS_00101AF4... ).'
@@ -336,6 +346,11 @@ $requiredModelMappings = @(
     Regex = ('(?i)^' + [regex]::Escape('%AeroVirtioMouse.DeviceDesc%') + '\s*=\s*' + [regex]::Escape('AeroVirtioInput_Install.NTamd64') + '\s*,\s*' + [regex]::Escape('PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01') + '$')
     Message = 'Missing x64 mouse model line (expected %AeroVirtioMouse.DeviceDesc% = AeroVirtioInput_Install.NTamd64, ...SUBSYS_00111AF4... ).'
   },
+  @{
+    Name = 'NTamd64 fallback mapping'
+    Regex = ('(?i)^' + [regex]::Escape('%AeroVirtioInput.DeviceDesc%') + '\s*=\s*' + [regex]::Escape('AeroVirtioInput_Install.NTamd64') + '\s*,\s*' + [regex]::Escape('PCI\VEN_1AF4&DEV_1052&REV_01') + '$')
+    Message = 'Missing x64 fallback model line (expected %AeroVirtioInput.DeviceDesc% = AeroVirtioInput_Install.NTamd64, ...&REV_01 ).'
+  },
 )
 
 foreach ($m in $requiredModelMappings) {
@@ -344,16 +359,22 @@ foreach ($m in $requiredModelMappings) {
   }
 }
 
-# Disallow generic (no SUBSYS) fallback model lines in the canonical INF.
-$genericFallbackHwid = 'PCI\VEN_1AF4&DEV_1052&REV_01'
-$genericFallbackHwidRegex = '(?i)' + [regex]::Escape($genericFallbackHwid)
+# Enforce revision gating for all virtio-input HWIDs in the PCI\VEN_1AF4&DEV_1052 family.
+$baseHwid = 'PCI\VEN_1AF4&DEV_1052'
+$expectedRevTag = '&REV_01'
 foreach ($sect in $modelSections) {
   if (-not $sections.ContainsKey($sect)) { continue }
-  $count = (Get-MatchingLines -Lines $sections[$sect] -Regex $genericFallbackHwidRegex).Count
-  if ($count -ne 0) {
-    Add-Failure -Failures $failures -Message (("Generic fallback HWID must not appear in the canonical INF models section [{0}]: {1} " +
-      "(found {2} occurrences). If you need a fallback for environments that do not expose Aero subsystem IDs, " +
-      "enable the legacy alias INF (virtio-input.inf.disabled -> virtio-input.inf).") -f $sect, $genericFallbackHwid, $count)
+  foreach ($line in $sections[$sect]) {
+    $parts = Split-InfCommaList -Text $line
+    foreach ($part in $parts) {
+      $p = $part.Trim()
+      if ($p.ToLower().StartsWith($baseHwid.ToLower())) {
+        if ($p.ToLower() -notmatch [regex]::Escape($expectedRevTag.ToLower())) {
+          Add-Failure -Failures $failures -Message (("Unexpected virtio-input HWID without required revision gating in [{0}]: {1}. " +
+            "Expected all model entries in the {2} family to include {3}.") -f $sect, $p, $baseHwid, $expectedRevTag)
+        }
+      }
+    }
   }
 }
 # Disallow tablet subsystem IDs in the keyboard/mouse INF to keep bindings disjoint.
