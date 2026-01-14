@@ -11369,6 +11369,7 @@ struct BuiltVertexState {
     wgpu_slot_to_d3d_slot: Vec<u32>,
 }
 
+#[allow(dead_code)]
 fn wgsl_gs_passthrough_vertex_shader(varying_locations: &BTreeSet<u32>) -> Result<String> {
     // Pick a vertex attribute location for the clip-space position that does not collide with the
     // varyings expected by the pixel shader.
