@@ -155,13 +155,24 @@ fn cmd_fixtures(args: Vec<String>) -> Result<()> {
     )?;
 
     // Firmware fixtures (kept in-repo; must remain small and deterministic).
-    //
-    // ACPI DSDT.
-    let cfg = AcpiConfig::default();
     let placement = AcpiPlacement::default();
+
+    // ACPI DSDT (legacy PCI root bridge; ECAM/MMCONFIG disabled).
+    let cfg = AcpiConfig::default();
+    let acpi_tables = AcpiTables::build(&cfg, placement);
+    ensure_file(&root.join("crates/firmware/acpi/dsdt.aml"), &acpi_tables.dsdt, check)?;
+
+    // ACPI DSDT with PCIe ECAM/MMCONFIG enabled (PCI0 becomes a PCIe root bridge).
+    let cfg = AcpiConfig {
+        pcie_ecam_base: aero_pc_constants::PCIE_ECAM_BASE,
+        pcie_segment: aero_pc_constants::PCIE_ECAM_SEGMENT,
+        pcie_start_bus: aero_pc_constants::PCIE_ECAM_START_BUS,
+        pcie_end_bus: aero_pc_constants::PCIE_ECAM_END_BUS,
+        ..Default::default()
+    };
     let acpi_tables = AcpiTables::build(&cfg, placement);
     ensure_file(
-        &root.join("crates/firmware/acpi/dsdt.aml"),
+        &root.join("crates/firmware/acpi/dsdt_pcie.aml"),
         &acpi_tables.dsdt,
         check,
     )?;

@@ -738,6 +738,30 @@ fn shipped_dsdt_aml_matches_aero_acpi_generator() {
     );
 }
 
+#[test]
+fn shipped_dsdt_pcie_aml_matches_aero_acpi_generator() {
+    let cfg = aero_acpi::AcpiConfig {
+        pcie_ecam_base: PCIE_ECAM_BASE,
+        pcie_segment: PCIE_ECAM_SEGMENT,
+        pcie_start_bus: PCIE_ECAM_START_BUS,
+        pcie_end_bus: PCIE_ECAM_END_BUS,
+        ..Default::default()
+    };
+    let placement = aero_acpi::AcpiPlacement::default();
+    let generated = aero_acpi::AcpiTables::build(&cfg, placement).dsdt;
+
+    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    path.push("acpi");
+    path.push("dsdt_pcie.aml");
+    let on_disk =
+        std::fs::read(&path).unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
+
+    assert_eq!(
+        on_disk, generated,
+        "crates/firmware/acpi/dsdt_pcie.aml is out of date; regenerate it with: cargo xtask fixtures"
+    );
+}
+
 fn read_table_from_mem<M: GuestMemory>(mem: &M, addr: u64) -> Vec<u8> {
     let mut header_buf = [0u8; 36];
     mem.read_into(addr, &mut header_buf)
