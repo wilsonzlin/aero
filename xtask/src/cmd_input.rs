@@ -115,6 +115,11 @@ const AERO_WASM_INPUT_TESTS: &[&str] = &[
 const WEB_UNIT_TEST_PATHS: &[&str] = &[
     "src/input",
     "src/hid",
+    "src/platform/hid_passthrough_protocol.test.ts",
+    "src/platform/webhid_passthrough.test.ts",
+    "src/platform/webhid_passthrough_broker.test.ts",
+    "src/platform/webusb_protection.test.ts",
+    "src/platform/webusb_troubleshooting.test.ts",
     "src/usb/usb_guest_controller.test.ts",
     "src/usb/webusb_passthrough_runtime.test.ts",
     "src/usb/webhid_passthrough_runtime.test.ts",
@@ -311,7 +316,7 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
         .args(["-w", "web", "run", "test:unit", "--"]);
     cmd.args(WEB_UNIT_TEST_PATHS.iter().copied());
     match runner.run_step(
-        "Web: npm -w web run test:unit -- src/input src/hid (plus WebUSB/WebHID topology guards)",
+        "Web: npm -w web run test:unit -- src/input src/hid src/platform/* (plus WebUSB/WebHID topology guards)",
         &mut cmd,
     ) {
         Ok(()) => {}

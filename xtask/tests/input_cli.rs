@@ -104,6 +104,21 @@ fn input_help_mentions_flags_and_steps() {
             "webhid_report_descriptor_synthesis_wasm",
         ))
         .stdout(predicate::str::contains("src/hid"))
+        .stdout(predicate::str::contains(
+            "src/platform/hid_passthrough_protocol.test.ts",
+        ))
+        .stdout(predicate::str::contains(
+            "src/platform/webhid_passthrough.test.ts",
+        ))
+        .stdout(predicate::str::contains(
+            "src/platform/webhid_passthrough_broker.test.ts",
+        ))
+        .stdout(predicate::str::contains(
+            "src/platform/webusb_protection.test.ts",
+        ))
+        .stdout(predicate::str::contains(
+            "src/platform/webusb_troubleshooting.test.ts",
+        ))
         .stdout(predicate::str::contains("usb_guest_controller"))
         .stdout(predicate::str::contains("webusb_passthrough_runtime"))
         .stdout(predicate::str::contains(
