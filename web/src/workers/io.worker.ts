@@ -1672,12 +1672,45 @@ function maybeInitUhciDevice(): void {
       webUsbGuestControllerKind = xhciPick.kind;
 
       if (!usbPassthroughRuntime) {
+        // xHCI is a high/super-speed controller: disable the UHCI-only CONFIGURATION→OTHER_SPEED_CONFIGURATION
+        // translation in the WebUSB backend so the guest sees the device's real current-speed descriptors.
+        //
+        // The main-thread UsbBroker routes actions based on the MessagePort they arrive on, so create a
+        // dedicated port for the xHCI passthrough runtime with translation disabled.
+        let port: MessagePort | DedicatedWorkerGlobalScope = ctx;
+        if (typeof MessageChannel !== "undefined") {
+          try {
+            const channel = new MessageChannel();
+            // Ask the main-thread UsbBroker (listening on `ctx`) to attach the other end with xHCI options.
+            ctx.postMessage(
+              {
+                type: "usb.broker.attachPort",
+                port: channel.port2,
+                attachRings: false,
+                backendOptions: { translateOtherSpeedConfigurationDescriptor: false },
+              },
+              [channel.port2],
+            );
+            port = channel.port1;
+            try {
+              // Node/Vitest may keep MessagePorts alive; unref so unit tests don't hang.
+              (channel.port1 as unknown as { unref?: () => void }).unref?.();
+              (channel.port2 as unknown as { unref?: () => void }).unref?.();
+            } catch {
+              // ignore
+            }
+          } catch {
+            // Fall back to the default worker channel when MessageChannel is unavailable.
+          }
+        }
+
         usbPassthroughRuntime = new WebUsbPassthroughRuntime({
           bridge: wrapped,
-          port: ctx,
+          port,
           pollIntervalMs: 0,
           initiallyBlocked: !usbAvailable,
-          initialRingAttach: usbRingAttach ?? undefined,
+          // Ring handles received on the main worker channel are not compatible with the dedicated xHCI port.
+          initialRingAttach: port === ctx ? (usbRingAttach ?? undefined) : undefined,
         });
         usbPassthroughRuntime.start();
         if (import.meta.env.DEV) {
