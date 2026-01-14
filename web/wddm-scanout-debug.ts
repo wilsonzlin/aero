@@ -367,20 +367,6 @@ async function main() {
   // Spawn + init the canonical GPU worker.
   const worker = new Worker(new URL("./src/workers/gpu.worker.ts", import.meta.url), { type: "module" });
 
-  worker.postMessage({
-    kind: "init",
-    role: "gpu",
-    controlSab: segments.control,
-    guestMemory: segments.guestMemory,
-    vgaFramebuffer: segments.vgaFramebuffer,
-    scanoutState: segments.scanoutState,
-    scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
-    ioIpcSab: segments.ioIpc,
-    sharedFramebuffer: segments.sharedFramebuffer,
-    sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
-    frameStateSab: sharedFrameState,
-  } satisfies WorkerInitMessage);
-
   const offscreen = canvasEl.transferControlToOffscreen();
   const GPU_MESSAGE_BASE = { protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION } as const;
 
@@ -428,6 +414,12 @@ async function main() {
     log(`worker error: ${err instanceof Error ? err.message : String(err)}`);
   });
 
+  // NOTE: Message ordering matters.
+  //
+  // The GPU-protocol init path resets some runtime-worker pointers (including scanoutState)
+  // for compatibility with harnesses that do not send the runtime-worker init message. Send
+  // the GPU-protocol init first, then the runtime-worker init (which plumbs scanoutState +
+  // guest RAM) so WDDM scanout presentation is active for this page.
   worker.postMessage(
     {
       ...GPU_MESSAGE_BASE,
@@ -449,6 +441,20 @@ async function main() {
     },
     [offscreen],
   );
+
+  worker.postMessage({
+    kind: "init",
+    role: "gpu",
+    controlSab: segments.control,
+    guestMemory: segments.guestMemory,
+    vgaFramebuffer: segments.vgaFramebuffer,
+    scanoutState: segments.scanoutState,
+    scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
+    ioIpcSab: segments.ioIpc,
+    sharedFramebuffer: segments.sharedFramebuffer,
+    sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
+    frameStateSab: sharedFrameState,
+  } satisfies WorkerInitMessage);
 
   await ready;
 
