@@ -3,7 +3,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::binding_model::{
     BINDING_BASE_CBUFFER, BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE, BINDING_BASE_UAV,
-    D3D11_MAX_CONSTANT_BUFFER_SLOTS, MAX_SAMPLER_SLOTS, MAX_TEXTURE_SLOTS, MAX_UAV_SLOTS,
+    D3D11_MAX_CONSTANT_BUFFER_SLOTS, EXPANDED_VERTEX_MAX_VARYINGS, MAX_SAMPLER_SLOTS,
+    MAX_TEXTURE_SLOTS, MAX_UAV_SLOTS,
 };
 use crate::signature::{DxbcSignature, DxbcSignatureParameter, ShaderSignatures};
 use crate::sm4::opcode::opcode_name;
@@ -911,20 +912,11 @@ fn translate_hs(
     let mut module_pc = module.clone();
     module_pc.instructions = pc_insts;
 
-    // Determine the number of non-system input registers we need to source from the patch buffer.
-    let used_inputs = scan_used_input_registers(module);
-    let max_non_siv_input = used_inputs
-        .iter()
-        // Ignore indexed `OutputPatch` reads (encoded as `SrcKind::GsInput`) when they refer to
-        // HS control-point outputs rather than true HS inputs.
-        .filter(|r| io_cp.hs_input_regs.contains(r))
-        .filter(|r| !io_cp.hs_inputs.contains_key(r))
-        .max()
-        .copied();
-    let hs_in_stride = max_non_siv_input.map(|m| m.saturating_add(1)).unwrap_or(1);
-
-    let max_cp_out = io_cp.outputs.keys().max().copied();
-    let hs_cp_out_stride = max_cp_out.map(|m| m.saturating_add(1)).unwrap_or(1);
+    // Per-control-point stage IO register files must use the same register stride as the
+    // tessellation prepass runtime (pos + 32 varyings) so the expanded draw can always use a
+    // fixed-size vertex record.
+    let hs_in_stride: u32 = 1 + EXPANDED_VERTEX_MAX_VARYINGS;
+    let hs_cp_out_stride: u32 = 1 + EXPANDED_VERTEX_MAX_VARYINGS;
 
     // Patch-constant output buffers exclude tess factors; those are written to a separate compact
     // scalar buffer consumed by the tessellator.
@@ -965,7 +957,10 @@ fn translate_hs(
         crate::runtime::tessellation::BINDING_HS_PATCH_CONSTANTS;
     const BINDING_HS_TESS_FACTORS: u32 = crate::runtime::tessellation::BINDING_HS_TESS_FACTORS;
 
-    w.line("struct HsRegBuffer { data: array<vec4<f32>> };");
+    // NOTE: Stage-interface register files are typeless 32-bit lanes (D3D semantics). Model them
+    // as `vec4<u32>` and bitcast to/from `vec4<f32>` when interacting with the translator's
+    // internal `vec4<f32>` register model.
+    w.line("struct HsRegBuffer { data: array<vec4<u32>> };");
     w.line(&format!(
         "@group({INTERNAL_GROUP}) @binding({BINDING_VS_OUT}) var<storage, read> hs_in: HsRegBuffer;"
     ));
@@ -984,23 +979,35 @@ fn translate_hs(
     // Note: Unlike fixed-size `array<T, N>`, runtime-sized arrays allow `arrayLength()` queries.
     // These helpers keep the generated WGSL well-defined even if the host provides conservative
     // allocations or runs with robust buffer access disabled.
-    w.line("fn hs_load_in(idx: u32) -> vec4<f32> {");
+    w.line("fn hs_load_in_u32(idx: u32) -> vec4<u32> {");
     w.indent();
     w.line("let len = arrayLength(&hs_in.data);");
-    w.line("if (idx >= len) { return vec4<f32>(0.0); }");
+    w.line("if (idx >= len) { return vec4<u32>(0u); }");
     w.line("return hs_in.data[idx];");
+    w.dedent();
+    w.line("}");
+    w.line("");
+    w.line("fn hs_load_in(idx: u32) -> vec4<f32> {");
+    w.indent();
+    w.line("return bitcast<vec4<f32>>(hs_load_in_u32(idx));");
+    w.dedent();
+    w.line("}");
+    w.line("");
+    w.line("fn hs_load_out_cp_u32(idx: u32) -> vec4<u32> {");
+    w.indent();
+    w.line("let len = arrayLength(&hs_out_cp.data);");
+    w.line("if (idx >= len) { return vec4<u32>(0u); }");
+    w.line("return hs_out_cp.data[idx];");
     w.dedent();
     w.line("}");
     w.line("");
     w.line("fn hs_load_out_cp(idx: u32) -> vec4<f32> {");
     w.indent();
-    w.line("let len = arrayLength(&hs_out_cp.data);");
-    w.line("if (idx >= len) { return vec4<f32>(0.0); }");
-    w.line("return hs_out_cp.data[idx];");
+    w.line("return bitcast<vec4<f32>>(hs_load_out_cp_u32(idx));");
     w.dedent();
     w.line("}");
     w.line("");
-    w.line("fn hs_store_out_cp(idx: u32, value: vec4<f32>) {");
+    w.line("fn hs_store_out_cp_u32(idx: u32, value: vec4<u32>) {");
     w.indent();
     w.line("let len = arrayLength(&hs_out_cp.data);");
     w.line("if (idx >= len) { return; }");
@@ -1008,7 +1015,13 @@ fn translate_hs(
     w.dedent();
     w.line("}");
     w.line("");
-    w.line("fn hs_store_patch_constants(idx: u32, value: vec4<f32>) {");
+    w.line("fn hs_store_out_cp(idx: u32, value: vec4<f32>) {");
+    w.indent();
+    w.line("hs_store_out_cp_u32(idx, bitcast<vec4<u32>>(value));");
+    w.dedent();
+    w.line("}");
+    w.line("");
+    w.line("fn hs_store_patch_constants_u32(idx: u32, value: vec4<u32>) {");
     w.indent();
     w.line("let len = arrayLength(&hs_patch_constants_buf.data);");
     w.line("if (idx >= len) { return; }");
@@ -1016,11 +1029,23 @@ fn translate_hs(
     w.dedent();
     w.line("}");
     w.line("");
-    w.line("fn hs_store_tess_factors(idx: u32, value: vec4<f32>) {");
+    w.line("fn hs_store_patch_constants(idx: u32, value: vec4<f32>) {");
+    w.indent();
+    w.line("hs_store_patch_constants_u32(idx, bitcast<vec4<u32>>(value));");
+    w.dedent();
+    w.line("}");
+    w.line("");
+    w.line("fn hs_store_tess_factors_u32(idx: u32, value: vec4<u32>) {");
     w.indent();
     w.line("let len = arrayLength(&hs_tess_factors.data);");
     w.line("if (idx >= len) { return; }");
     w.line("hs_tess_factors.data[idx] = value;");
+    w.dedent();
+    w.line("}");
+    w.line("");
+    w.line("fn hs_store_tess_factors(idx: u32, value: vec4<f32>) {");
+    w.indent();
+    w.line("hs_store_tess_factors_u32(idx, bitcast<vec4<u32>>(value));");
     w.dedent();
     w.line("}");
     w.line("");
@@ -1264,18 +1289,12 @@ fn translate_ds(
         rdef,
     };
 
-    // These strides must match the buffers produced by HS emulation.
-    let cp_in_stride = isgn
-        .parameters
-        .iter()
-        .filter(|p| {
-            !is_sv_domain_location(&p.semantic_name) && !is_sv_primitive_id(&p.semantic_name)
-        })
-        .map(|p| p.register)
-        .max()
-        .map(|m| m.saturating_add(1))
-        .unwrap_or(1)
-        .max(1);
+    // These strides must match the buffers produced by the tessellation prepass.
+    //
+    // Per-control-point payloads are written using the expanded-vertex record layout
+    // (pos + `EXPANDED_VERTEX_MAX_VARYINGS` varyings) so later stages can always use the same
+    // fixed-size vertex struct.
+    let cp_in_stride: u32 = 1 + EXPANDED_VERTEX_MAX_VARYINGS;
     let pc_in_stride = psgn
         .parameters
         .iter()
@@ -1291,14 +1310,78 @@ fn translate_ds(
             "domain output SV_Position",
         ))?;
 
+    // Determine control points-per-patch (for indexed `v#[cp]` access). If this metadata is
+    // missing, fall back to the D3D11 maximum (32) to keep indexing defined.
+    let mut input_control_points: Option<u32> = None;
+    for decl in &module.decls {
+        if let Sm4Decl::InputControlPointCount { count } = decl {
+            if *count == 0 || *count > 32 {
+                return Err(ShaderTranslateError::UnsupportedInstruction {
+                    inst_index: 0,
+                    opcode: format!("ds_input_control_points_{count}"),
+                });
+            }
+            if let Some(prev) = input_control_points {
+                if prev != *count {
+                    return Err(ShaderTranslateError::UnsupportedInstruction {
+                        inst_index: 0,
+                        opcode: format!("ds_input_control_points_{prev}_vs_{count}"),
+                    });
+                }
+            } else {
+                input_control_points = Some(*count);
+            }
+        }
+    }
+
     let mut w = WgslWriter::new();
 
     // DS stage interface buffers for compute emulation.
-    w.line("struct DsRegBuffer { data: array<vec4<f32>> };");
+    //
+    // Like HS, these are typeless register files in D3D. Model as `vec4<u32>` and bitcast when
+    // interacting with the translator's internal `vec4<f32>` register model.
+    w.line("struct DsRegBuffer { data: array<vec4<u32>> };");
     w.line("struct DsF32Buffer { data: array<f32> };");
     w.line("@group(0) @binding(0) var<storage, read> ds_in_cp: DsRegBuffer;");
     w.line("@group(0) @binding(1) var<storage, read> ds_in_pc: DsRegBuffer;");
     w.line("@group(0) @binding(3) var<storage, read> ds_tess_factors: DsF32Buffer;");
+    w.line("");
+    // Bounds-checked accessors for runtime-sized DS scratch buffers.
+    w.line("fn ds_load_cp_u32(idx: u32) -> vec4<u32> {");
+    w.indent();
+    w.line("let len = arrayLength(&ds_in_cp.data);");
+    w.line("if (idx >= len) { return vec4<u32>(0u); }");
+    w.line("return ds_in_cp.data[idx];");
+    w.dedent();
+    w.line("}");
+    w.line("");
+    w.line("fn ds_load_cp(idx: u32) -> vec4<f32> {");
+    w.indent();
+    w.line("return bitcast<vec4<f32>>(ds_load_cp_u32(idx));");
+    w.dedent();
+    w.line("}");
+    w.line("");
+    w.line("fn ds_load_pc_u32(idx: u32) -> vec4<u32> {");
+    w.indent();
+    w.line("let len = arrayLength(&ds_in_pc.data);");
+    w.line("if (idx >= len) { return vec4<u32>(0u); }");
+    w.line("return ds_in_pc.data[idx];");
+    w.dedent();
+    w.line("}");
+    w.line("");
+    w.line("fn ds_load_pc(idx: u32) -> vec4<f32> {");
+    w.indent();
+    w.line("return bitcast<vec4<f32>>(ds_load_pc_u32(idx));");
+    w.dedent();
+    w.line("}");
+    w.line("");
+    w.line("fn ds_load_tess_factor(idx: u32) -> f32 {");
+    w.indent();
+    w.line("let len = arrayLength(&ds_tess_factors.data);");
+    w.line("if (idx >= len) { return 0.0; }");
+    w.line("return ds_tess_factors.data[idx];");
+    w.dedent();
+    w.line("}");
     w.line("");
 
     // Output struct mirrors `VsOut`, but without stage I/O attributes (written to a storage buffer).
@@ -1326,6 +1409,13 @@ fn translate_ds(
     // Compact tess factors buffer: outer[3] + inner[1] for tri-domain.
     w.line("const DS_TESS_FACTOR_STRIDE: u32 = 4u;");
     w.line("const DS_MAX_CONTROL_POINTS: u32 = 32u;");
+    if let Some(count) = input_control_points {
+        w.line(&format!(
+            "const DS_CONTROL_POINTS_PER_PATCH: u32 = {count}u;"
+        ));
+    } else {
+        w.line("const DS_CONTROL_POINTS_PER_PATCH: u32 = DS_MAX_CONTROL_POINTS;");
+    }
     w.line("");
 
     // DS body function (returns a struct so `ret` can map to `return out;`).
@@ -1369,7 +1459,7 @@ fn translate_ds(
 
     // For now, derive a single tess level from outer tess factor 0 (integer partition).
     // Clamp to at least 1 to avoid division-by-zero.
-    w.line("let tess_f: f32 = ds_tess_factors.data[tf_base + 0u];");
+    w.line("let tess_f: f32 = ds_load_tess_factor(tf_base + 0u);");
     w.line("let tess: u32 = max(1u, u32(round(tess_f)));");
     w.line("let verts_per_patch: u32 = (tess + 1u) * (tess + 2u) / 2u;");
     w.line("if (vert_in_patch >= verts_per_patch) { return; }");
@@ -3248,10 +3338,11 @@ impl IoMaps {
                         register: reg,
                     },
                 )?;
-                // HS inputs are provided via an emulated "patch buffer" (storage buffer) and are
-                // modeled as full `vec4<f32>` registers. Use a bounds-checked helper to avoid
-                // undefined behaviour if the runtime provides a smaller scratch allocation than
-                // the shader expects.
+                // HS inputs are provided via an emulated "patch buffer" (storage buffer). The
+                // underlying scratch is a typeless `vec4<u32>` register file; `hs_load_in` bitcasts
+                // to the translator's internal `vec4<f32>` register model. Use a bounds-checked
+                // helper to avoid undefined behaviour if the runtime provides a smaller scratch
+                // allocation than the shader expects.
                 Ok(apply_sig_mask_to_vec4(
                     &format!("hs_load_in(hs_in_base + {reg}u)"),
                     p.param.mask,
@@ -3275,9 +3366,7 @@ impl IoMaps {
                 // buffers. Treat all other `v#` inputs as patch-constant registers, even when the
                 // signature marks them as system values (e.g. tess factors).
                 let pc_expr = match self.ds_mode {
-                    DsTranslationMode::LegacyCompute => {
-                        format!("ds_in_pc.data[ds_pc_base + {reg}u]")
-                    }
+                    DsTranslationMode::LegacyCompute => format!("ds_load_pc(ds_pc_base + {reg}u)"),
                     DsTranslationMode::Eval => {
                         format!("aero_hs_patch_constants[ds_pc_base + {reg}u]")
                     }
@@ -7034,7 +7123,7 @@ fn emit_src_vec4(
         SrcKind::GsInput { reg, vertex } => match ctx.stage {
             ShaderStage::Domain => match ctx.io.ds_mode {
                 DsTranslationMode::LegacyCompute => format!(
-                    "ds_in_cp.data[(ds_patch_id * DS_MAX_CONTROL_POINTS + {vertex}u) * DS_CP_IN_STRIDE + {reg}u]"
+                    "ds_load_cp((ds_patch_id * DS_CONTROL_POINTS_PER_PATCH + {vertex}u) * DS_CP_IN_STRIDE + {reg}u)"
                 ),
                 DsTranslationMode::Eval => format!(
                     "aero_hs_control_points[(ds_patch_id * AERO_HS_CONTROL_POINTS_PER_PATCH + {vertex}u) * DS_CP_IN_STRIDE + {reg}u]"
@@ -7169,7 +7258,7 @@ fn emit_src_vec4_u32(
         SrcKind::GsInput { reg, vertex } => match ctx.stage {
             ShaderStage::Domain => match ctx.io.ds_mode {
                 DsTranslationMode::LegacyCompute => format!(
-                    "bitcast<vec4<u32>>(ds_in_cp.data[(ds_patch_id * DS_MAX_CONTROL_POINTS + {vertex}u) * DS_CP_IN_STRIDE + {reg}u])"
+                    "ds_load_cp_u32((ds_patch_id * DS_CONTROL_POINTS_PER_PATCH + {vertex}u) * DS_CP_IN_STRIDE + {reg}u)"
                 ),
                 DsTranslationMode::Eval => format!(
                     "bitcast<vec4<u32>>(aero_hs_control_points[(ds_patch_id * AERO_HS_CONTROL_POINTS_PER_PATCH + {vertex}u) * DS_CP_IN_STRIDE + {reg}u])"
@@ -7287,7 +7376,7 @@ fn emit_src_vec4_i32(
         SrcKind::GsInput { reg, vertex } => match ctx.stage {
             ShaderStage::Domain => match ctx.io.ds_mode {
                 DsTranslationMode::LegacyCompute => format!(
-                    "bitcast<vec4<i32>>(ds_in_cp.data[(ds_patch_id * DS_MAX_CONTROL_POINTS + {vertex}u) * DS_CP_IN_STRIDE + {reg}u])"
+                    "bitcast<vec4<i32>>(ds_load_cp_u32((ds_patch_id * DS_CONTROL_POINTS_PER_PATCH + {vertex}u) * DS_CP_IN_STRIDE + {reg}u))"
                 ),
                 DsTranslationMode::Eval => format!(
                     "bitcast<vec4<i32>>(aero_hs_control_points[(ds_patch_id * AERO_HS_CONTROL_POINTS_PER_PATCH + {vertex}u) * DS_CP_IN_STRIDE + {reg}u])"

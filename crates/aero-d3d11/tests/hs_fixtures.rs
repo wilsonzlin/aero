@@ -58,6 +58,39 @@ fn parses_and_translates_sm5_hs_fixture() {
         "expected HS translation to generate a compute entry point:\n{}",
         translated.wgsl
     );
+    assert!(
+        translated
+            .wgsl
+            .contains("struct HsRegBuffer { data: array<vec4<u32>> };"),
+        "expected HS stage interface register files to be typeless vec4<u32>:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated
+            .wgsl
+            .contains("hs_in: HsRegBuffer;"),
+        "expected HS translation to declare hs_in as HsRegBuffer:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated
+            .wgsl
+            .contains("hs_out_cp: HsRegBuffer;"),
+        "expected HS translation to declare hs_out_cp as HsRegBuffer:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated
+            .wgsl
+            .contains("hs_patch_constants_buf: HsRegBuffer;"),
+        "expected HS translation to declare hs_patch_constants_buf as HsRegBuffer:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("hs_tess_factors: HsRegBuffer;"),
+        "expected HS translation to declare hs_tess_factors as HsRegBuffer:\n{}",
+        translated.wgsl
+    );
 
     assert!(
         translated

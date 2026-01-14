@@ -64,6 +64,27 @@ fn parses_and_translates_sm5_ds_tri_integer_fixture() {
         translated.wgsl
     );
     assert!(
+        translated
+            .wgsl
+            .contains("struct DsRegBuffer { data: array<vec4<u32>> };"),
+        "expected DS stage interface register files to be typeless vec4<u32>:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated
+            .wgsl
+            .contains("@group(0) @binding(0) var<storage, read> ds_in_cp: DsRegBuffer;"),
+        "expected DS translation to declare ds_in_cp as DsRegBuffer:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated
+            .wgsl
+            .contains("@group(0) @binding(1) var<storage, read> ds_in_pc: DsRegBuffer;"),
+        "expected DS translation to declare ds_in_pc as DsRegBuffer:\n{}",
+        translated.wgsl
+    );
+    assert!(
         translated.wgsl.contains("ds_domain_location"),
         "expected DS WGSL to include SV_DomainLocation plumbing:\n{}",
         translated.wgsl
