@@ -4777,7 +4777,8 @@ HRESULT ensure_passthrough_shaders_locked(Device* dev, Shader** vs_out, Shader**
 
   // Ensure a minimal internal shader pair exists so the UMD can always emit
   // non-null shader binds, even when the requested fixed-function/FVF state is
-  // unsupported (draws will still fail at ensure_draw_pipeline_locked()).
+  // unsupported (draws will still fail at draw time when a fixed-function
+  // fallback cannot be applied).
   if (!dev->fixedfunc_vs) {
     dev->fixedfunc_vs = create_internal_shader_locked(
         dev,

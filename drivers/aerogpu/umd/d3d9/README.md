@@ -368,7 +368,7 @@ Code anchors (all in `src/aerogpu_d3d9_driver.cpp`):
   `kSupportedFvfXyzrhwTex1` / `kSupportedFvfXyzDiffuse` / `kSupportedFvfXyzDiffuseTex1` /
   `kSupportedFvfXyzTex1`
 - `fixedfunc_fvf_supported()` (internal FVF-driven decl subset required by patch emulation; **XYZRHW + DIFFUSE variants only**)
-- `ensure_fixedfunc_pipeline_locked()` / `ensure_draw_pipeline_locked()`
+- `ensure_fixedfunc_pipeline_locked()` / `bind_draw_shaders_locked()` / `ensure_shader_bindings_locked()`
 - Stage0 fixed-function PS variants: `fixedfunc_stage0_key_locked()` + `fixedfunc_ps_variant_bytes()`
 - XYZRHW conversion path: `fixedfunc_fvf_is_xyzrhw()` + `convert_xyzrhw_to_clipspace_locked()`
 - FVF selection paths: `device_set_fvf()` and the `SetVertexDecl` pattern detection in `device_set_vertex_decl()`
@@ -394,8 +394,8 @@ Implementation notes (bring-up):
   implied FVF from common declaration layouts in `device_set_vertex_decl()`).
 - For `D3DFVF_XYZ*` fixed-function FVFs, the fixed-function VS applies the combined world/view/projection matrix (uploaded
   into a reserved VS constant range by the UMD via `ensure_fixedfunc_wvp_constants_locked()`).
-- Shader-stage interop is supported: when exactly one stage is bound (VS-only or PS-only), `ensure_draw_pipeline_locked()`
-  binds a fixed-function fallback shader for the missing stage at draw time.
+- Shader-stage interop is supported: when exactly one stage is bound (VS-only or PS-only), the draw paths bind a
+  fixed-function fallback shader for the missing stage at draw time (see `bind_draw_shaders_locked()`).
   - VS-only interop (PS is NULL) uses a stage0 fixed-function PS variant (validated by `d3d9_shader_stage_interop`).
   - PS-only interop (VS is NULL) uses a fixed-function VS derived from the active FVF (limited to the bring-up subset).
 - For indexed draws in this mode, indices may be expanded into a temporary vertex stream (conservative but sufficient
