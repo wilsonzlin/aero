@@ -2,7 +2,7 @@
 //!
 //! The emulator runs in a browser and receives `KeyboardEvent.code` strings and pointer events.
 //! This module maps those inputs onto USB HID usage values suitable for the HID keyboard/mouse
-//! devices in this crate.
+//! and consumer-control devices in this crate.
 
 pub const MOUSE_BUTTON_LEFT: u8 = 0x01;
 pub const MOUSE_BUTTON_RIGHT: u8 = 0x02;
