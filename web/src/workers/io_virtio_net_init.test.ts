@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { DeviceManager, type IrqSink } from "../io/device_manager";
+import type { WasmApi } from "../runtime/wasm_context";
 import { tryInitVirtioNetDevice } from "./io_virtio_net_init";
 
 describe("workers/io_virtio_net_init", () => {
@@ -10,8 +11,7 @@ describe("workers/io_virtio_net_init", () => {
 
     expect(() => {
       const dev = tryInitVirtioNetDevice({
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        api: {} as any,
+        api: {} as unknown as WasmApi,
         mgr,
         guestBase: 0x1000,
         guestSize: 0x2000,
@@ -43,7 +43,7 @@ describe("workers/io_virtio_net_init", () => {
     }
 
     const dev = tryInitVirtioNetDevice({
-      api: { VirtioNetPciBridge: FakeVirtioNetPciBridge } as any,
+      api: { VirtioNetPciBridge: FakeVirtioNetPciBridge } as unknown as WasmApi,
       mgr,
       guestBase: 0x1000,
       guestSize: 0x2000,
@@ -80,7 +80,7 @@ describe("workers/io_virtio_net_init", () => {
     }
 
     const dev = tryInitVirtioNetDevice({
-      api: { VirtioNetPciBridge: FakeVirtioNetPciBridge } as any,
+      api: { VirtioNetPciBridge: FakeVirtioNetPciBridge } as unknown as WasmApi,
       mgr,
       guestBase: 0x1000,
       guestSize: 0x2000,
@@ -124,7 +124,7 @@ describe("workers/io_virtio_net_init", () => {
     }
 
     const dev = tryInitVirtioNetDevice({
-      api: { VirtioNetPciBridge: FakeVirtioNetPciBridge } as any,
+      api: { VirtioNetPciBridge: FakeVirtioNetPciBridge } as unknown as WasmApi,
       mgr,
       guestBase: 0x1000,
       guestSize: 0x2000,
@@ -250,7 +250,7 @@ describe("workers/io_virtio_net_init", () => {
     }
 
     const dev = tryInitVirtioNetDevice({
-      api: { VirtioNetPciBridge: FakeVirtioNetPciBridge } as any,
+      api: { VirtioNetPciBridge: FakeVirtioNetPciBridge } as unknown as WasmApi,
       mgr,
       guestBase: 0x1000,
       guestSize: 0x2000,

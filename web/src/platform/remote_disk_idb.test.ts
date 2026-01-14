@@ -130,17 +130,18 @@ function installQuotaExceededOnRemoteChunksPut(disk: RemoteStreamingDisk): { put
           // Model a request that fails asynchronously and aborts the transaction,
           // similar to how IndexedDB signals QuotaExceededError.
           const req: { error: unknown; onerror: null | (() => void) } = { error: null, onerror: null };
-          (tx as any).requestStarted?.();
+          const txHooks = tx as unknown as { requestStarted?: () => void; requestFinished?: () => void; error?: unknown };
+          txHooks.requestStarted?.();
           queueMicrotask(() => {
             const err = new DOMException("quota exceeded", "QuotaExceededError");
             req.error = err;
-            (tx as any).error = err;
+            txHooks.error = err;
             try {
               req.onerror?.();
             } finally {
               tx.onerror?.();
               tx.onabort?.();
-              (tx as any).requestFinished?.();
+              txHooks.requestFinished?.();
             }
           });
           return req;
@@ -272,14 +273,15 @@ describe("RemoteStreamingDisk (IndexedDB cache)", () => {
     const cacheLimitBytes = blockSize * 8;
     const image = makeTestImage(blockSize * 2);
     const mock = installMockRangeFetch(image, { etag: '"e1"' });
-    const originalIndexedDB = (globalThis as any).indexedDB;
+    const globals = globalThis as unknown as { indexedDB?: unknown };
+    const originalIndexedDB = globals.indexedDB;
 
     const openOpfsSpy = vi.spyOn(RemoteCacheManager, "openOpfs").mockRejectedValue(new Error("OPFS unavailable"));
     const idbOpenSpy = vi.spyOn(IdbRemoteChunkCache, "open");
 
     // Simulate environments without IndexedDB (e.g. older webviews / sandboxed contexts). The disk
     // should still open and read correctly, just without caching.
-    (globalThis as any).indexedDB = undefined;
+    globals.indexedDB = undefined;
 
     let disk: RemoteStreamingDisk | null = null;
     try {
@@ -308,7 +310,7 @@ describe("RemoteStreamingDisk (IndexedDB cache)", () => {
     } finally {
       disk?.close();
       mock.restore();
-      (globalThis as any).indexedDB = originalIndexedDB;
+      globals.indexedDB = originalIndexedDB;
     }
   });
 

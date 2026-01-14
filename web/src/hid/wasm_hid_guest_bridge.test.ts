@@ -53,8 +53,7 @@ describe("hid/WasmHidGuestBridge", () => {
     const api = {
       UsbHidPassthroughBridge: FakeBridge,
       synthesize_webhid_report_descriptor: synthesizeSpy,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } as any as WasmApi;
+    } as unknown as WasmApi;
 
     const guest = new WasmHidGuestBridge(api, host, topology);
 
@@ -224,8 +223,7 @@ describe("hid/WasmHidGuestBridge", () => {
     const api = {
       UsbHidPassthroughBridge: FakeBridge,
       synthesize_webhid_report_descriptor: synthesizeSpy,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } as any as WasmApi;
+    } as unknown as WasmApi;
 
     const guest = new WasmHidGuestBridge(api, host, topology);
     const attach: HidAttachMessage = {
@@ -280,8 +278,7 @@ describe("hid/WasmHidGuestBridge", () => {
     const api = {
       UsbHidPassthroughBridge: FakeBridge,
       synthesize_webhid_report_descriptor: synthesizeSpy,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } as any as WasmApi;
+    } as unknown as WasmApi;
 
     const guest = new WasmHidGuestBridge(api, host, topology);
     const attach: HidAttachMessage = {
@@ -337,8 +334,7 @@ describe("hid/WasmHidGuestBridge", () => {
 
     const api = {
       WebHidPassthroughBridge: FakeBridge,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } as any as WasmApi;
+    } as unknown as WasmApi;
 
     const guest = new WasmHidGuestBridge(api, host, topology);
 
@@ -388,8 +384,7 @@ describe("hid/WasmHidGuestBridge", () => {
     const topology = new UhciHidTopologyManager({ defaultHubPortCount: 16 });
     const api = {
       WebHidPassthroughBridge: FakeBridge,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } as any as WasmApi;
+    } as unknown as WasmApi;
 
     const guest = new WasmHidGuestBridge(api, host, topology);
     guest.attach({
@@ -397,7 +392,7 @@ describe("hid/WasmHidGuestBridge", () => {
       deviceId: 1,
       vendorId: 0x1234,
       productId: 0xabcd,
-      collections: [{ some: "collection" }] as any,
+      collections: [makeTopLevelApplicationCollection(0x01, 0x04)],
       hasInterruptOut: false,
     });
 

@@ -78,6 +78,11 @@ describe("main/frameScheduler (telemetry)", () => {
     } as unknown as Worker & { dispatch: (data: unknown) => void };
   }
 
+  function snapshot(): Record<string, unknown> {
+    const snap = overlay.getSnapshot?.();
+    return typeof snap === "object" && snap !== null ? (snap as Record<string, unknown>) : {};
+  }
+
   it("preserves gpuEvents across metrics updates", async () => {
     const gpuWorker = makeMockWorker();
     const sharedFrameState = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
@@ -103,7 +108,7 @@ describe("main/frameScheduler (telemetry)", () => {
       telemetry: { hello: "world" },
     });
 
-    const snapAfterFirstMetrics = overlay.getSnapshot?.() as any;
+    const snapAfterFirstMetrics = snapshot();
     expect(snapAfterFirstMetrics.hello).toBe("world");
     expect(snapAfterFirstMetrics.framesReceived).toBe(1);
     expect(snapAfterFirstMetrics.gpuEvents).toBeUndefined();
@@ -124,9 +129,11 @@ describe("main/frameScheduler (telemetry)", () => {
       ],
     });
 
-    const snapAfterEvents = overlay.getSnapshot?.() as any;
-    expect(Array.isArray(snapAfterEvents?.gpuEvents)).toBe(true);
-    expect(snapAfterEvents.gpuEvents).toHaveLength(1);
+    const snapAfterEvents = snapshot();
+    const gpuEvents = snapAfterEvents.gpuEvents;
+    expect(Array.isArray(gpuEvents)).toBe(true);
+    if (!Array.isArray(gpuEvents)) throw new Error("expected gpuEvents array");
+    expect(gpuEvents).toHaveLength(1);
     expect(snapAfterEvents.hello).toBe("world");
     expect(console.error).toHaveBeenCalled();
 
@@ -140,11 +147,13 @@ describe("main/frameScheduler (telemetry)", () => {
       telemetry: { hello: "world2" },
     });
 
-    const snapAfterMetrics = overlay.getSnapshot?.() as any;
+    const snapAfterMetrics = snapshot();
     expect(snapAfterMetrics.hello).toBe("world2");
     expect(snapAfterMetrics.framesReceived).toBe(1);
-    expect(Array.isArray(snapAfterMetrics?.gpuEvents)).toBe(true);
-    expect(snapAfterMetrics.gpuEvents).toHaveLength(1);
+    const preservedEvents = snapAfterMetrics.gpuEvents;
+    expect(Array.isArray(preservedEvents)).toBe(true);
+    if (!Array.isArray(preservedEvents)) throw new Error("expected gpuEvents array");
+    expect(preservedEvents).toHaveLength(1);
 
     handle.stop();
   });
@@ -179,10 +188,11 @@ describe("main/frameScheduler (telemetry)", () => {
       },
     });
 
-    const snapAfterStats = overlay.getSnapshot?.() as any;
-    expect(snapAfterStats.gpuStats?.type).toBe("stats");
-    expect(snapAfterStats.gpuStats?.backendKind).toBe("webgpu");
-    expect(snapAfterStats.gpuStats?.counters?.recoveries_attempted).toBe(3);
+    const snapAfterStats = snapshot();
+    const gpuStats = snapAfterStats.gpuStats as { type?: unknown; backendKind?: unknown; counters?: { recoveries_attempted?: unknown } };
+    expect(gpuStats?.type).toBe("stats");
+    expect(gpuStats?.backendKind).toBe("webgpu");
+    expect(gpuStats?.counters?.recoveries_attempted).toBe(3);
 
     gpuWorker.dispatch({
       protocol: GPU_PROTOCOL_NAME,
@@ -194,9 +204,10 @@ describe("main/frameScheduler (telemetry)", () => {
       telemetry: { hello: "world" },
     });
 
-    const snapAfterMetrics = overlay.getSnapshot?.() as any;
+    const snapAfterMetrics = snapshot();
     expect(snapAfterMetrics.hello).toBe("world");
-    expect(snapAfterMetrics.gpuStats?.backendKind).toBe("webgpu");
+    const gpuStatsAfterMetrics = snapAfterMetrics.gpuStats as { backendKind?: unknown } | undefined;
+    expect(gpuStatsAfterMetrics?.backendKind).toBe("webgpu");
 
     handle.stop();
   });
@@ -235,10 +246,11 @@ describe("main/frameScheduler (telemetry)", () => {
       },
     });
 
-    const snap = overlay.getSnapshot?.() as any;
+    const snap = snapshot();
     expect(snap.scanout).toBeTruthy();
-    expect(snap.scanout.format).toBe(2);
-    expect(snap.scanout.format_str).toBe("B8G8R8X8Unorm (2)");
+    const scanout = snap.scanout as { format?: unknown; format_str?: unknown } | undefined;
+    expect(scanout?.format).toBe(2);
+    expect(scanout?.format_str).toBe("B8G8R8X8Unorm (2)");
 
     handle.stop();
   });

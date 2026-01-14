@@ -7,7 +7,7 @@ import { createSharedMemoryViews } from "../runtime/shared_layout";
 import { MessageType, type ProtocolMessage, type WorkerInitMessage } from "../runtime/protocol";
 import { FRAME_PRESENTED, FRAME_SEQ_INDEX, FRAME_STATUS_INDEX, GPU_PROTOCOL_NAME, GPU_PROTOCOL_VERSION } from "../ipc/gpu-protocol";
 import { publishScanoutState, SCANOUT_SOURCE_WDDM } from "../ipc/scanout_state";
-import { aerogpuFormatToString } from "../../../emulator/protocol/aerogpu/aerogpu_pci.ts";
+import { aerogpuFormatToString, type AerogpuFormat } from "../../../emulator/protocol/aerogpu/aerogpu_pci.ts";
 
 async function waitForWorkerMessage(
   worker: Worker,
@@ -26,7 +26,8 @@ async function waitForWorkerMessage(
       const maybeProtocol = msg as Partial<ProtocolMessage> | undefined;
       if (maybeProtocol?.type === MessageType.ERROR) {
         cleanup();
-        const errMsg = typeof (maybeProtocol as { message?: unknown }).message === "string" ? (maybeProtocol as any).message : "";
+        const rawMsg = (maybeProtocol as { message?: unknown }).message;
+        const errMsg = typeof rawMsg === "string" ? rawMsg : "";
         reject(new Error(`worker reported error${errMsg ? `: ${errMsg}` : ""}`));
         return;
       }
@@ -85,7 +86,7 @@ describe("workers/gpu-worker scanout readback invalid diagnostics", () => {
       width: 1,
       height: 1,
       pitchBytes: 4,
-      format: unsupportedFormat as any,
+      format: unsupportedFormat as unknown as AerogpuFormat,
     });
 
     const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
@@ -142,25 +143,28 @@ describe("workers/gpu-worker scanout readback invalid diagnostics", () => {
           const m = msg as { protocol?: unknown; type?: unknown; events?: unknown[] } | undefined;
           if (m?.protocol !== GPU_PROTOCOL_NAME || m.type !== "events") return false;
           const events = Array.isArray(m.events) ? m.events : [];
-          return events.some(
-            (ev) =>
-              (ev as { category?: unknown; message?: unknown })?.category === "ScanoutReadback" &&
-              String((ev as any).message).includes("unsupported format"),
-          );
-        },
-        10_000,
-      );
+           return events.some(
+             (ev) =>
+              (ev as { category?: unknown; message?: unknown } | null | undefined)?.category === "ScanoutReadback" &&
+              String((ev as { message?: unknown }).message).includes("unsupported format"),
+           );
+         },
+         10_000,
+       );
 
       // Drive a tick so the worker attempts scanout readback and emits the diagnostic.
       worker.postMessage({ protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION, type: "tick", frameTimeMs: 0 });
 
-      const eventsMsg = (await eventsPromise) as { events?: unknown[] };
-      const scanoutEvent = (eventsMsg.events ?? []).find((ev) => (ev as any)?.category === "ScanoutReadback") as any;
-      expect(scanoutEvent).toBeTruthy();
-      expect(scanoutEvent.severity).toBe("warn");
-      expect(String(scanoutEvent.message)).toContain("unsupported format");
-      expect(scanoutEvent.details).toMatchObject({
-        scanout: {
+       const eventsMsg = (await eventsPromise) as { events?: unknown[] };
+       const scanoutEvent = (eventsMsg.events ?? []).find(
+         (ev) => (ev as { category?: unknown } | null | undefined)?.category === "ScanoutReadback",
+       ) as { severity?: unknown; message?: unknown; details?: unknown } | undefined;
+       expect(scanoutEvent).toBeTruthy();
+       if (!scanoutEvent) throw new Error("expected ScanoutReadback event");
+       expect(scanoutEvent.severity).toBe("warn");
+       expect(String(scanoutEvent.message)).toContain("unsupported format");
+       expect(scanoutEvent.details).toMatchObject({
+         scanout: {
           format: unsupportedFormat,
           format_str: aerogpuFormatToString(unsupportedFormat),
         },

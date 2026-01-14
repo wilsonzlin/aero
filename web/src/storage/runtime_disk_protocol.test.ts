@@ -277,8 +277,13 @@ describe("runtime disk worker protocol", () => {
       type: "request",
       requestId: 3,
       op: "readInto",
-      payload: { handle, lba: 0, byteLength: 512, dest: { sab: new ArrayBuffer(1024) as any, offsetBytes: 0 } },
-    } as any);
+      payload: {
+        handle,
+        lba: 0,
+        byteLength: 512,
+        dest: { sab: new ArrayBuffer(1024) as unknown as SharedArrayBuffer, offsetBytes: 0 },
+      },
+    });
     const sabResp = posted.shift();
     expect(sabResp.ok).toBe(false);
     expect(String(sabResp.error.message)).toMatch(/SharedArrayBuffer/i);
@@ -321,8 +326,12 @@ describe("runtime disk worker protocol", () => {
       type: "request",
       requestId: 3,
       op: "writeFrom",
-      payload: { handle, lba: 0, src: { sab: new ArrayBuffer(1024) as any, offsetBytes: 0, byteLength: 512 } },
-    } as any);
+      payload: {
+        handle,
+        lba: 0,
+        src: { sab: new ArrayBuffer(1024) as unknown as SharedArrayBuffer, offsetBytes: 0, byteLength: 512 },
+      },
+    });
     const sabResp = posted.shift();
     expect(sabResp.ok).toBe(false);
     expect(String(sabResp.error.message)).toMatch(/SharedArrayBuffer/i);
@@ -340,7 +349,7 @@ describe("runtime disk worker protocol", () => {
     const openDisk: OpenDiskFn = async () => ({ disk, readOnly: false, backendSnapshot: null });
     const worker = new RuntimeDiskWorker((msg) => posted.push(msg), openDisk);
 
-    await worker.handleMessage({ type: "request", requestId: 1, op: "nope", payload: {} } as any);
+    await worker.handleMessage({ type: "request", requestId: 1, op: "nope", payload: {} });
     const resp = posted.shift();
     expect(resp.ok).toBe(false);
     expect(String(resp.error.message)).toMatch(/unsupported runtime disk op/i);

@@ -104,9 +104,9 @@ describe("disk_worker message validation", () => {
       expect(String(resp.error?.message ?? "")).toMatch(/backend/i);
     } finally {
       if (backendExisting) Object.defineProperty(Object.prototype, "backend", backendExisting);
-      else delete (Object.prototype as any).backend;
+      else Reflect.deleteProperty(Object.prototype, "backend");
       if (opExisting) Object.defineProperty(Object.prototype, "op", opExisting);
-      else delete (Object.prototype as any).op;
+      else Reflect.deleteProperty(Object.prototype, "op");
     }
   });
 
@@ -142,7 +142,7 @@ describe("disk_worker message validation", () => {
       for (const k of fields) {
         const desc = existing[k];
         if (desc) Object.defineProperty(Object.prototype, k, desc);
-        else delete (Object.prototype as any)[k];
+        else Reflect.deleteProperty(Object.prototype, k);
       }
     }
   });
@@ -179,7 +179,7 @@ describe("disk_worker message validation", () => {
       expect(update.result?.name).toBe("original");
     } finally {
       if (nameExisting) Object.defineProperty(Object.prototype, "name", nameExisting);
-      else delete (Object.prototype as any).name;
+      else Reflect.deleteProperty(Object.prototype, "name");
     }
   });
 });

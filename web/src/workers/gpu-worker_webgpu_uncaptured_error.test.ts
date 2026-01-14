@@ -31,7 +31,8 @@ async function waitForWorkerMessage(
       const maybeProtocol = msg as Partial<ProtocolMessage> | undefined;
       if (maybeProtocol?.type === MessageType.ERROR) {
         cleanup();
-        const errMsg = typeof (maybeProtocol as { message?: unknown }).message === "string" ? (maybeProtocol as any).message : "";
+        const rawMsg = (maybeProtocol as { message?: unknown }).message;
+        const errMsg = typeof rawMsg === "string" ? rawMsg : "";
         reject(new Error(`worker reported error${errMsg ? `: ${errMsg}` : ""}`));
         return;
       }
@@ -157,7 +158,9 @@ describe("workers/gpu-worker webgpu_uncaptured_error handling", () => {
           if (m?.protocol !== GPU_PROTOCOL_NAME || m.type !== "events") return false;
           const events = Array.isArray(m.events) ? m.events : [];
           return events.some(
-            (ev) => (ev as { category?: unknown; message?: unknown })?.category === "Validation" && String((ev as any).message).includes("simulated uncaptured error"),
+            (ev) =>
+              (ev as { category?: unknown; message?: unknown } | null | undefined)?.category === "Validation" &&
+              String((ev as { message?: unknown }).message).includes("simulated uncaptured error"),
           );
         },
         10_000,
@@ -170,8 +173,10 @@ describe("workers/gpu-worker webgpu_uncaptured_error handling", () => {
 
       await firstPresentCall;
       const eventsMsg = (await eventsPromise) as { events?: unknown[] };
-      const validationEvent = (eventsMsg.events ?? []).find((ev) => (ev as any)?.category === "Validation") as any;
-      expect(validationEvent).toBeTruthy();
+      const validationEvent = (eventsMsg.events ?? []).find(
+        (ev) => (ev as { category?: unknown } | null | undefined)?.category === "Validation",
+      ) as { message?: unknown } | undefined;
+      if (!validationEvent) throw new Error("expected Validation event");
       expect(String(validationEvent.message)).toContain("simulated uncaptured error");
 
       // Tick #2: mock presenter should continue presenting successfully after the uncaptured error.
@@ -186,7 +191,10 @@ describe("workers/gpu-worker webgpu_uncaptured_error handling", () => {
       // Ensure the GPU worker did not forward the uncaptured error as a legacy `type:"error"` message.
       expect(
         observedMessages.some(
-          (msg) => (msg as any)?.protocol === GPU_PROTOCOL_NAME && (msg as any)?.type === "error",
+          (msg) => {
+            const m = msg as { protocol?: unknown; type?: unknown } | null | undefined;
+            return m?.protocol === GPU_PROTOCOL_NAME && m?.type === "error";
+          },
         ),
       ).toBe(false);
     } finally {

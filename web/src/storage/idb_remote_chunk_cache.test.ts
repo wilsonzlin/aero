@@ -159,11 +159,11 @@ describe("IdbRemoteChunkCache", () => {
     } finally {
       cache.close();
       if (existingCacheKey) Object.defineProperty(Object.prototype, "cacheKey", existingCacheKey);
-      else delete (Object.prototype as any).cacheKey;
+      else Reflect.deleteProperty(Object.prototype, "cacheKey");
       if (existingChunkIndex) Object.defineProperty(Object.prototype, "chunkIndex", existingChunkIndex);
-      else delete (Object.prototype as any).chunkIndex;
+      else Reflect.deleteProperty(Object.prototype, "chunkIndex");
       if (existingData) Object.defineProperty(Object.prototype, "data", existingData);
-      else delete (Object.prototype as any).data;
+      else Reflect.deleteProperty(Object.prototype, "data");
     }
   });
 
@@ -173,7 +173,7 @@ describe("IdbRemoteChunkCache", () => {
       const req: any = { result: null, error: new DOMException("quota exceeded", "QuotaExceededError") };
       queueMicrotask(() => req.onerror?.());
       return req;
-    }) as any;
+    }) as unknown as typeof indexedDB.open;
 
     try {
       await expect(
@@ -200,7 +200,7 @@ describe("IdbRemoteChunkCache", () => {
       const req: any = { result: null, error: new DOMException("quota reached", "NS_ERROR_DOM_QUOTA_REACHED") };
       queueMicrotask(() => req.onerror?.());
       return req;
-    }) as any;
+    }) as unknown as typeof indexedDB.open;
 
     try {
       await expect(

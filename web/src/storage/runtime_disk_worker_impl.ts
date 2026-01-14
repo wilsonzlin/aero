@@ -820,12 +820,16 @@ async function openDiskFromMetadata(
         // Legacy remote-streaming local disks always use RemoteStreamingDisk + OPFS chunk cache.
         // The base image is treated as read-only; HDD writes go to a runtime COW overlay.
         const blockSizeBytes = remoteRec && hasOwn(remoteRec, "blockSizeBytes") ? remoteRec.blockSizeBytes : undefined;
-        const cacheLimitBytes = remoteRec && hasOwn(remoteRec, "cacheLimitBytes") ? remoteRec.cacheLimitBytes : undefined;
+        const cacheLimitBytesRaw = remoteRec && hasOwn(remoteRec, "cacheLimitBytes") ? remoteRec.cacheLimitBytes : undefined;
         const prefetchSequentialBlocks =
           remoteRec && hasOwn(remoteRec, "prefetchSequentialBlocks") ? remoteRec.prefetchSequentialBlocks : undefined;
+        let cacheLimitBytes: number | null | undefined = undefined;
+        if (typeof cacheLimitBytesRaw === "number" || cacheLimitBytesRaw === null) {
+          cacheLimitBytes = cacheLimitBytesRaw;
+        }
         return await RemoteStreamingDisk.open(url, {
           blockSize: typeof blockSizeBytes === "number" ? blockSizeBytes : undefined,
-          cacheLimitBytes: typeof cacheLimitBytes === "number" || cacheLimitBytes === null ? (cacheLimitBytes as any) : undefined,
+          cacheLimitBytes,
           prefetchSequentialBlocks: typeof prefetchSequentialBlocks === "number" ? prefetchSequentialBlocks : undefined,
           cacheBackend: "opfs",
           expectedSizeBytes: sizeBytes,
@@ -1499,11 +1503,8 @@ export class RuntimeDiskWorker {
     }
     const payload = hasOwn(msg, "payload") ? msg.payload : undefined;
 
-    const req = Object.create(null) as RuntimeDiskRequestMessage;
-    (req as any).type = "request";
-    (req as any).requestId = requestId;
-    (req as any).op = op;
-    (req as any).payload = payload;
+    // Treat `op`/`payload` as untrusted; we validate them inside `handleRequest`.
+    const req = Object.assign(Object.create(null), { type: "request", requestId, op, payload }) as unknown as RuntimeDiskRequestMessage;
 
     this.requestChain = this.requestChain.then(async () => {
       try {
@@ -1546,8 +1547,15 @@ export class RuntimeDiskWorker {
         if (mode !== "cow" && mode !== "direct") {
           throw new Error(`invalid mode=${String(mode)}`);
         }
-        const overlayBlockSizeBytes = hasOwn(payloadRec, "overlayBlockSizeBytes") ? payloadRec.overlayBlockSizeBytes : undefined;
-        const entry = await this.openDisk(spec, mode, overlayBlockSizeBytes as any);
+        const overlayBlockSizeBytesRaw = hasOwn(payloadRec, "overlayBlockSizeBytes") ? payloadRec.overlayBlockSizeBytes : undefined;
+        let overlayBlockSizeBytes: number | undefined;
+        if (overlayBlockSizeBytesRaw !== undefined) {
+          if (typeof overlayBlockSizeBytesRaw !== "number" || !Number.isFinite(overlayBlockSizeBytesRaw) || overlayBlockSizeBytesRaw <= 0) {
+            throw new Error("invalid overlayBlockSizeBytes");
+          }
+          overlayBlockSizeBytes = overlayBlockSizeBytesRaw;
+        }
+        const entry = await this.openDisk(spec, mode, overlayBlockSizeBytes);
         const handle = this.nextHandle++;
         this.disks.set(handle, { ...entry, io: emptyIoTelemetry() });
         this.postOk(msg.requestId, {

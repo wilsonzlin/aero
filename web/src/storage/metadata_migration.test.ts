@@ -77,7 +77,8 @@ describe("disk metadata schema migration", () => {
     // `__proto__` must be treated as a plain key, not a prototype setter.
     expect(Object.getPrototypeOf(state.disks)).toBe(Object.prototype);
     expect(Object.prototype.hasOwnProperty.call(state.disks, "__proto__")).toBe(true);
-    expect((state.disks as any)["__proto__"]?.id).toBe("__proto__");
+    const protoEntry = Object.getOwnPropertyDescriptor(state.disks, "__proto__")?.value;
+    expect((protoEntry as { id?: unknown } | undefined)?.id).toBe("__proto__");
   });
 
   it("does not allow Object.prototype mount IDs to affect upgraded mount configs", () => {
@@ -102,9 +103,9 @@ describe("disk metadata schema migration", () => {
       expect(state.mounts.cdId).toBeUndefined();
     } finally {
       if (hddExisting) Object.defineProperty(Object.prototype, "hddId", hddExisting);
-      else delete (Object.prototype as any).hddId;
+      else Reflect.deleteProperty(Object.prototype, "hddId");
       if (cdExisting) Object.defineProperty(Object.prototype, "cdId", cdExisting);
-      else delete (Object.prototype as any).cdId;
+      else Reflect.deleteProperty(Object.prototype, "cdId");
     }
   });
 
@@ -129,7 +130,7 @@ describe("disk metadata schema migration", () => {
 
   it("ignores inherited source discriminants when upgrading disk metadata", () => {
     const proto = { source: "remote" };
-    const v1Disk = Object.create(proto) as any;
+    const v1Disk = Object.create(proto) as Record<string, unknown>;
     v1Disk.id = "d2";
     v1Disk.name = "disk2.img";
     v1Disk.backend = "idb";
@@ -165,11 +166,11 @@ describe("disk metadata schema migration", () => {
       expect(upgradeDiskMetadata({})).toBeUndefined();
     } finally {
       if (idExisting) Object.defineProperty(Object.prototype, "id", idExisting);
-      else delete (Object.prototype as any).id;
+      else Reflect.deleteProperty(Object.prototype, "id");
       if (backendExisting) Object.defineProperty(Object.prototype, "backend", backendExisting);
-      else delete (Object.prototype as any).backend;
+      else Reflect.deleteProperty(Object.prototype, "backend");
       if (fileNameExisting) Object.defineProperty(Object.prototype, "fileName", fileNameExisting);
-      else delete (Object.prototype as any).fileName;
+      else Reflect.deleteProperty(Object.prototype, "fileName");
     }
   });
 
@@ -205,7 +206,7 @@ describe("disk metadata schema migration", () => {
 
   it("backfills remote disk cacheLimitBytes when inherited via prototype pollution", () => {
     const protoCache = { cacheLimitBytes: 123 };
-    const cache = Object.create(protoCache) as any;
+    const cache = Object.create(protoCache) as Record<string, unknown>;
     cache.chunkSizeBytes = 1024;
     cache.backend = "opfs";
     cache.fileName = "cache.aerospar";
@@ -321,7 +322,7 @@ describe("disk metadata schema migration", () => {
       expect(Object.prototype.hasOwnProperty.call(meta.cache, "cacheLimitBytes")).toBe(true);
     } finally {
       if (existing) Object.defineProperty(Object.prototype, "cacheLimitBytes", existing);
-      else delete (Object.prototype as any).cacheLimitBytes;
+      else Reflect.deleteProperty(Object.prototype, "cacheLimitBytes");
     }
   });
 

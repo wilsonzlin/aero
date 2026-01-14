@@ -534,11 +534,13 @@ async function idbSumDiskChunkBytes(db: IDBDatabase, diskId: string): Promise<nu
       if (value && typeof value === "object") {
         const rec = value as Record<string, unknown>;
         if (hasOwnProp(rec, "data")) {
-          const data = rec.data as any;
-          if (data instanceof ArrayBuffer) {
-            total += data.byteLength;
-          } else if (data instanceof Uint8Array) {
-            total += data.byteLength;
+          const data = rec.data;
+          if (data && typeof data === "object") {
+            if (data instanceof ArrayBuffer) {
+              total += data.byteLength;
+            } else if (data instanceof Uint8Array) {
+              total += data.byteLength;
+            }
           }
         }
       }
@@ -1288,13 +1290,15 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
     }
 
     case "create_remote": {
-      const name = String(((hasOwnProp(payload, "name") ? payload.name : undefined) as any) || "");
-      const imageId = String(((hasOwnProp(payload, "imageId") ? payload.imageId : undefined) as any) || "");
-      const version = String(((hasOwnProp(payload, "version") ? payload.version : undefined) as any) || "");
+      // Preserve the legacy `||` fallback semantics: treat any falsy (including empty strings)
+      // values as missing to maintain back-compat with earlier worker message shapes.
+      const name = String((hasOwnProp(payload, "name") ? payload.name : undefined) || "");
+      const imageId = String((hasOwnProp(payload, "imageId") ? payload.imageId : undefined) || "");
+      const version = String((hasOwnProp(payload, "version") ? payload.version : undefined) || "");
       const delivery = (hasOwnProp(payload, "delivery") ? payload.delivery : undefined) as RemoteDiskDelivery;
       const sizeBytes = hasOwnProp(payload, "sizeBytes") ? payload.sizeBytes : undefined;
-      const kind = (((hasOwnProp(payload, "kind") ? payload.kind : undefined) as any) || "hdd") as DiskKind;
-      const format = (((hasOwnProp(payload, "format") ? payload.format : undefined) as any) || "raw") as DiskFormat;
+      const kind = ((hasOwnProp(payload, "kind") ? payload.kind : undefined) || "hdd") as DiskKind;
+      const format = ((hasOwnProp(payload, "format") ? payload.format : undefined) || "raw") as DiskFormat;
 
       if (!name.trim()) throw new Error("Remote disk name is required");
       if (!imageId) throw new Error("imageId is required");
@@ -1430,7 +1434,7 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
     }
 
     case "update_remote": {
-      const id = String(((hasOwnProp(payload, "id") ? payload.id : undefined) as any) || "");
+      const id = String((hasOwnProp(payload, "id") ? payload.id : undefined) || "");
       if (!id) throw new Error("Missing remote disk id");
 
       const meta = await requireDisk(backend, id);

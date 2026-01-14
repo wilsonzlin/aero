@@ -8,8 +8,7 @@ let hadNavigatorStorage = false;
 
 afterEach(() => {
   // Restore `navigator.storage` after OPFS mock tests.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const nav = globalThis.navigator as any;
+  const nav = globalThis.navigator as unknown as { storage?: unknown };
   if (hadNavigatorStorage) {
     nav.storage = realNavigatorStorage;
   } else {
@@ -21,8 +20,7 @@ afterEach(() => {
 
 describe("importFileToOpfs", () => {
   it("truncates the destination when createWritable options are unsupported", async () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const nav = globalThis.navigator as any;
+    const nav = globalThis.navigator as unknown as { storage?: unknown };
     realNavigatorStorage = nav.storage;
     hadNavigatorStorage = Object.prototype.hasOwnProperty.call(nav, "storage");
 
@@ -38,10 +36,9 @@ describe("importFileToOpfs", () => {
 
     // Simulate an implementation that rejects the options bag, forcing importFileToOpfs to fall
     // back to `createWritable()` (which can behave like keepExistingData=true).
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const originalCreateWritable = (destHandle as any).createWritable;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (destHandle as any).createWritable = async (...args: any[]) => {
+    const dest = destHandle as unknown as { createWritable: (...args: unknown[]) => Promise<unknown> };
+    const originalCreateWritable = dest.createWritable;
+    dest.createWritable = async (...args: unknown[]) => {
       if (args.length > 0) throw new Error("synthetic createWritable options not supported");
       return originalCreateWritable.call(destHandle);
     };
@@ -54,4 +51,3 @@ describe("importFileToOpfs", () => {
     expect(Array.from(outBytes)).toEqual([9, 9]);
   });
 });
-

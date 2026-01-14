@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { DeviceManager, type IrqSink } from "../device_manager";
-import { VirtioNetPciDevice } from "./virtio_net";
+import { VirtioNetPciDevice, type VirtioNetPciBridgeLike } from "./virtio_net";
 import { initWasm } from "../../runtime/wasm_loader";
 import { computeGuestRamLayout, createIoIpcSab } from "../../runtime/shared_layout";
 
@@ -32,26 +32,26 @@ describe("io/devices/virtio_net (wasm transitional)", () => {
     const ioIpcSab = createIoIpcSab({ includeHidIn: false });
 
     // Instantiate a transitional bridge. Older builds may not accept the 4th arg; fall back.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const AnyCtor = Bridge as any;
-    let bridge: any;
+    type BridgeCtor = new (...args: unknown[]) => VirtioNetPciBridgeLike;
+    const BridgeCtor = Bridge as unknown as BridgeCtor;
+    let bridge: VirtioNetPciBridgeLike;
     try {
-      bridge = new AnyCtor(layout.guest_base >>> 0, layout.guest_size >>> 0, ioIpcSab, true);
+      bridge = new BridgeCtor(layout.guest_base >>> 0, layout.guest_size >>> 0, ioIpcSab, true);
     } catch {
-      bridge = new AnyCtor(layout.guest_base >>> 0, layout.guest_size >>> 0, ioIpcSab);
+      bridge = new BridgeCtor(layout.guest_base >>> 0, layout.guest_size >>> 0, ioIpcSab);
     }
 
     const legacyRead =
       typeof bridge.legacy_io_read === "function"
         ? bridge.legacy_io_read
-        : typeof (bridge as any).io_read === "function"
-          ? (bridge as any).io_read
+        : typeof bridge.io_read === "function"
+          ? bridge.io_read
           : null;
     const legacyWrite =
       typeof bridge.legacy_io_write === "function"
         ? bridge.legacy_io_write
-        : typeof (bridge as any).io_write === "function"
-          ? (bridge as any).io_write
+        : typeof bridge.io_write === "function"
+          ? bridge.io_write
           : null;
 
     // Older WASM builds may not implement legacy IO accessors; treat transitional mode as unsupported.
@@ -68,8 +68,7 @@ describe("io/devices/virtio_net (wasm transitional)", () => {
     //
     // Note: virtio-pci legacy IO reads are gated by PCI command bit0 (I/O enable). For the probe
     // we temporarily enable I/O decoding inside the bridge so the read is meaningful.
-    const bridgeAny = bridge as any;
-    const setCmd = typeof bridgeAny.set_pci_command === "function" ? bridgeAny.set_pci_command : null;
+    const setCmd = typeof bridge.set_pci_command === "function" ? bridge.set_pci_command : null;
     let probeOk = false;
     try {
       if (setCmd) {

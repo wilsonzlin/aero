@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { UsbBroker } from "./usb_broker";
 import { WebUsbPassthroughRuntime, type UsbPassthroughBridgeLike } from "./webusb_passthrough_runtime";
-import type { UsbHostAction, UsbHostCompletion } from "./usb_proxy_protocol";
+import type { UsbHostAction, UsbHostCompletion, UsbRingAttachMessage } from "./usb_proxy_protocol";
 import { createUsbProxyRingBuffer, USB_PROXY_RING_CTRL_BYTES, UsbProxyRing } from "./usb_proxy_ring";
 
 type Listener = (ev: MessageEvent<unknown>) => void;
@@ -111,8 +111,7 @@ afterEach(() => {
   if (originalCrossOriginIsolatedDescriptor) {
     Object.defineProperty(globalThis, "crossOriginIsolated", originalCrossOriginIsolatedDescriptor);
   } else {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    delete (globalThis as any).crossOriginIsolated;
+    Reflect.deleteProperty(globalThis, "crossOriginIsolated");
   }
   vi.clearAllMocks();
   vi.resetModules();
@@ -374,7 +373,7 @@ describe("usb/WebUSB proxy SAB ring integration", () => {
     broker.attachWorkerPort(brokerPort as unknown as MessagePort);
     expect(lastRingAttach).toBeTruthy();
 
-    const ringAttach1 = lastRingAttach as any;
+    const ringAttach1 = lastRingAttach as UsbRingAttachMessage;
 
     // Prevent the runtime's constructor from triggering a ring resend: we want it to attach to
     // the first ringAttach payload and only later receive a re-sent attach (with cloned SAB wrappers).
@@ -399,7 +398,7 @@ describe("usb/WebUSB proxy SAB ring integration", () => {
     workerPort.deliverToPeer = true;
     workerPort.postMessage({ type: "usb.ringAttachRequest" });
     expect(lastRingAttach).toBeTruthy();
-    const ringAttach2 = lastRingAttach as any;
+    const ringAttach2 = lastRingAttach as UsbRingAttachMessage;
     expect(ringAttach2).not.toBe(ringAttach1);
 
     // Disable postMessage deliveries again so subsequent usb.action messages can't reach the broker.
@@ -495,7 +494,8 @@ describe("usb/WebUSB proxy SAB ring integration", () => {
 
     const postedActions = workerPort.sent.filter((p) => (p.msg as { type?: unknown }).type === "usb.action");
     expect(postedActions).toHaveLength(1);
-    expect((postedActions[0]!.msg as any).action.id).toBe(2);
+    const actionId = (postedActions[0]?.msg as { action?: { id?: unknown } } | undefined)?.action?.id;
+    expect(actionId).toBe(2);
 
     runtime.destroy();
     broker.detachWorkerPort(brokerPort as unknown as MessagePort);

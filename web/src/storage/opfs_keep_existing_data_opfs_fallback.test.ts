@@ -9,8 +9,7 @@ let hadNavigatorStorage = false;
 
 afterEach(() => {
   // Restore `navigator.storage` after OPFS mock tests.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const nav = globalThis.navigator as any;
+  const nav = globalThis.navigator as unknown as { storage?: unknown };
   if (hadNavigatorStorage) {
     nav.storage = realNavigatorStorage;
   } else {
@@ -22,8 +21,7 @@ afterEach(() => {
 
 describe("OPFS createWritable({ keepExistingData: true }) options-bag fallback", () => {
   it("opfsResizeDisk falls back to createWritable() when options are rejected", async () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const nav = globalThis.navigator as any;
+    const nav = globalThis.navigator as unknown as { storage?: unknown };
     realNavigatorStorage = nav.storage;
     hadNavigatorStorage = Object.prototype.hasOwnProperty.call(nav, "storage");
 
@@ -44,8 +42,7 @@ describe("OPFS createWritable({ keepExistingData: true }) options-bag fallback",
       if (this.name === fileName && args.length > 0) {
         throw new Error("synthetic createWritable options not supported");
       }
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      return await (originalCreateWritable as any).call(this, ...args);
+      return await originalCreateWritable.call(this, ...(args as Parameters<typeof originalCreateWritable>));
     };
 
     try {
@@ -60,8 +57,7 @@ describe("OPFS createWritable({ keepExistingData: true }) options-bag fallback",
   });
 
   it("OpfsRawDisk.writeSectors falls back to createWritable() when options are rejected", async () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const nav = globalThis.navigator as any;
+    const nav = globalThis.navigator as unknown as { storage?: unknown };
     realNavigatorStorage = nav.storage;
     hadNavigatorStorage = Object.prototype.hasOwnProperty.call(nav, "storage");
 
@@ -78,8 +74,7 @@ describe("OPFS createWritable({ keepExistingData: true }) options-bag fallback",
       if (this.name === fileName && args.length > 0) {
         throw new Error("synthetic createWritable options not supported");
       }
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      return await (originalCreateWritable as any).call(this, ...args);
+      return await originalCreateWritable.call(this, ...(args as Parameters<typeof originalCreateWritable>));
     };
 
     const payload = new Uint8Array(1024);
@@ -104,4 +99,3 @@ describe("OPFS createWritable({ keepExistingData: true }) options-bag fallback",
     expect(Array.from(untouched3)).toEqual(Array.from(new Uint8Array(512)));
   });
 });
-

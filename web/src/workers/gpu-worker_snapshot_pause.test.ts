@@ -415,24 +415,37 @@ describe("workers/gpu-worker snapshot pause", () => {
       // Snapshot pause should wait until the screenshot handler finishes before acknowledging.
       worker.postMessage({ kind: "vm.snapshot.pause", requestId: 1 });
 
-      await expect(
-        waitForWorkerMessage(
+        await expect(
+          waitForWorkerMessage(
+            worker,
+            (msg) => {
+              const m = msg as { kind?: unknown; requestId?: unknown; ok?: unknown } | null | undefined;
+              return m?.kind === "vm.snapshot.paused" && m?.requestId === 1 && m?.ok === true;
+            },
+            100,
+          ),
+        ).rejects.toThrow(/timed out/i);
+
+        await waitForWorkerMessage(
           worker,
-          (msg) => (msg as any)?.kind === "vm.snapshot.paused" && (msg as any)?.requestId === 1 && (msg as any)?.ok === true,
-          100,
-        ),
-      ).rejects.toThrow(/timed out/i);
+          (msg) => {
+            const m = msg as { type?: unknown; requestId?: unknown } | null | undefined;
+            return m?.type === "screenshot" && m?.requestId === 42;
+          },
+          10_000,
+        );
 
-      await waitForWorkerMessage(worker, (msg) => (msg as any)?.type === "screenshot" && (msg as any)?.requestId === 42, 10_000);
-
-      await waitForWorkerMessage(
-        worker,
-        (msg) => (msg as any)?.kind === "vm.snapshot.paused" && (msg as any)?.requestId === 1 && (msg as any)?.ok === true,
-        5_000,
-      );
-    } finally {
-      await worker.terminate();
-    }
+        await waitForWorkerMessage(
+          worker,
+          (msg) => {
+            const m = msg as { kind?: unknown; requestId?: unknown; ok?: unknown } | null | undefined;
+            return m?.kind === "vm.snapshot.paused" && m?.requestId === 1 && m?.ok === true;
+          },
+          5_000,
+        );
+      } finally {
+        await worker.terminate();
+      }
   });
 
   it("waits for in-flight telemetry polling before acknowledging snapshot pause", async () => {
@@ -503,7 +516,10 @@ describe("workers/gpu-worker snapshot pause", () => {
       await expect(
         waitForWorkerMessage(
           worker,
-          (msg) => (msg as any)?.kind === "vm.snapshot.paused" && (msg as any)?.requestId === 1 && (msg as any)?.ok === true,
+          (msg) => {
+            const m = msg as { kind?: unknown; requestId?: unknown; ok?: unknown } | null | undefined;
+            return m?.kind === "vm.snapshot.paused" && m?.requestId === 1 && m?.ok === true;
+          },
           100,
         ),
       ).rejects.toThrow(/timed out/i);
@@ -511,7 +527,10 @@ describe("workers/gpu-worker snapshot pause", () => {
       await waitForWorkerMessage(worker, (msg) => (msg as { type?: unknown }).type === "mock_telemetry_finished", 10_000);
       await waitForWorkerMessage(
         worker,
-        (msg) => (msg as any)?.kind === "vm.snapshot.paused" && (msg as any)?.requestId === 1 && (msg as any)?.ok === true,
+        (msg) => {
+          const m = msg as { kind?: unknown; requestId?: unknown; ok?: unknown } | null | undefined;
+          return m?.kind === "vm.snapshot.paused" && m?.requestId === 1 && m?.ok === true;
+        },
         5_000,
       );
     } finally {

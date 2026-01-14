@@ -26,7 +26,9 @@ describe("InputEventRouter", () => {
     const preventDefault = vi.fn();
     const stopPropagation = vi.fn();
 
-    (listeners.get("keydown") as any)({
+    const keydown = listeners.get("keydown");
+    if (typeof keydown !== "function") throw new Error("missing keydown listener");
+    keydown({
       code: "KeyA",
       key: "a",
       location: 0,
@@ -37,12 +39,14 @@ describe("InputEventRouter", () => {
       metaKey: false,
       preventDefault,
       stopPropagation,
-    } satisfies Partial<KeyboardEvent>);
+    } as unknown as KeyboardEvent);
 
     expect(preventDefault).toHaveBeenCalledTimes(1);
     expect(stopPropagation).toHaveBeenCalledTimes(1);
 
-    (listeners.get("pointerdown") as any)({
+    const pointerdown = listeners.get("pointerdown");
+    if (typeof pointerdown !== "function") throw new Error("missing pointerdown listener");
+    pointerdown({
       pointerId: 1,
       pointerType: "mouse",
       button: 0,
@@ -56,30 +60,33 @@ describe("InputEventRouter", () => {
       tiltY: 0,
       preventDefault,
       stopPropagation,
-    } satisfies Partial<PointerEvent>);
+    } as unknown as PointerEvent);
 
     expect(preventDefault).toHaveBeenCalledTimes(2);
     expect(stopPropagation).toHaveBeenCalledTimes(2);
 
-    (listeners.get("wheel") as any)({
+    const wheel = listeners.get("wheel");
+    if (typeof wheel !== "function") throw new Error("missing wheel listener");
+    wheel({
       deltaX: 0,
       deltaY: 1,
       deltaZ: 0,
       deltaMode: 0,
       preventDefault,
       stopPropagation,
-    } satisfies Partial<WheelEvent>);
+    } as unknown as WheelEvent);
 
     expect(preventDefault).toHaveBeenCalledTimes(3);
     expect(stopPropagation).toHaveBeenCalledTimes(3);
 
-    (listeners.get("contextmenu") as any)({
+    const contextmenu = listeners.get("contextmenu");
+    if (typeof contextmenu !== "function") throw new Error("missing contextmenu listener");
+    contextmenu({
       preventDefault,
       stopPropagation,
-    } satisfies Partial<Event>);
+    } as unknown as Event);
 
     expect(preventDefault).toHaveBeenCalledTimes(4);
     expect(stopPropagation).toHaveBeenCalledTimes(4);
   });
 });
-

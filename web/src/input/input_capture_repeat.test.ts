@@ -11,14 +11,19 @@ describe("InputCapture key repeat behavior", () => {
       const posted: any[] = [];
       const ioWorker = { postMessage: (msg: unknown) => posted.push(msg) };
       const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: false });
+      const h = capture as unknown as {
+        hasFocus: boolean;
+        handleKeyDown: (ev: KeyboardEvent) => void;
+        queue: { size: number };
+      };
 
-      (capture as any).hasFocus = true;
+      h.hasFocus = true;
 
       const preventDefault = vi.fn();
       const stopPropagation = vi.fn();
 
       // Arrow keys are prevented by default (avoid scroll), and they commonly generate key repeat.
-      (capture as any).handleKeyDown({
+      h.handleKeyDown({
         code: "ArrowUp",
         repeat: false,
         timeStamp: 0,
@@ -33,9 +38,9 @@ describe("InputCapture key repeat behavior", () => {
       expect(preventDefault).toHaveBeenCalledTimes(1);
       expect(stopPropagation).toHaveBeenCalledTimes(1);
       // Initial press emits HID usage + PS/2 scancode.
-      expect((capture as any).queue.size).toBe(2);
+      expect(h.queue.size).toBe(2);
 
-      (capture as any).handleKeyDown({
+      h.handleKeyDown({
         code: "ArrowUp",
         repeat: true,
         timeStamp: 1,
@@ -50,7 +55,7 @@ describe("InputCapture key repeat behavior", () => {
       // Repeat press should still be swallowed, but only emit a PS/2 make scancode (typematic).
       expect(preventDefault).toHaveBeenCalledTimes(2);
       expect(stopPropagation).toHaveBeenCalledTimes(2);
-      expect((capture as any).queue.size).toBe(3);
+      expect(h.queue.size).toBe(3);
 
       capture.flushNow();
       expect(posted).toHaveLength(1);

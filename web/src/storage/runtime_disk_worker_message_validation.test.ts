@@ -36,7 +36,7 @@ describe("runtime disk worker message validation", () => {
         requestId: 1,
         // Missing `op` must not be satisfied by prototype pollution.
         payload: { spec: { kind: "local", meta: dummyLocalMeta } },
-      } as any);
+      });
 
       const resp = posted.shift();
       expect(resp.ok).toBe(false);
@@ -44,7 +44,7 @@ describe("runtime disk worker message validation", () => {
       expect(openDisk).toHaveBeenCalledTimes(0);
     } finally {
       if (opExisting) Object.defineProperty(Object.prototype, "op", opExisting);
-      else delete (Object.prototype as any).op;
+      else Reflect.deleteProperty(Object.prototype, "op");
     }
   });
 
@@ -81,7 +81,7 @@ describe("runtime disk worker message validation", () => {
         op: "open",
         // Missing `spec` must not be satisfied by prototype pollution.
         payload: {},
-      } as any);
+      });
 
       const resp = posted.shift();
       expect(resp.ok).toBe(false);
@@ -89,7 +89,7 @@ describe("runtime disk worker message validation", () => {
       expect(openDisk).toHaveBeenCalledTimes(0);
     } finally {
       if (specExisting) Object.defineProperty(Object.prototype, "spec", specExisting);
-      else delete (Object.prototype as any).spec;
+      else Reflect.deleteProperty(Object.prototype, "spec");
     }
   });
 });
