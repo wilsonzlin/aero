@@ -4,6 +4,12 @@ use std::io::Write as _;
 fn assert_driver_eq(a: &aero_packager::DriverSpec, b: &aero_packager::DriverSpec) {
     assert_eq!(a.name, b.name);
     assert_eq!(a.required, b.required);
+    assert_eq!(a.expected_inf_files, b.expected_inf_files);
+    assert_eq!(a.expected_add_services, b.expected_add_services);
+    assert_eq!(
+        a.expected_add_services_from_devices_cmd_var,
+        b.expected_add_services_from_devices_cmd_var
+    );
     assert_eq!(a.expected_hardware_ids, b.expected_hardware_ids);
     assert_eq!(
         a.expected_hardware_ids_from_devices_cmd_var,
@@ -18,10 +24,15 @@ fn spec_loader_accepts_schema_field_without_changing_behavior() -> anyhow::Resul
     let dir = tempfile::tempdir()?;
 
     let base = serde_json::json!({
+        "require_optional_drivers_on_all_arches": true,
+        "fail_on_unlisted_driver_dirs": true,
         "drivers": [
             {
                 "name": "testdrv",
                 "required": false,
+                "expected_inf_files": ["test.inf"],
+                "expected_add_services": ["testsvc"],
+                "expected_add_services_from_devices_cmd_var": "AERO_TEST_SERVICE",
                 "expected_hardware_ids": [],
                 "allow_extensions": ["pdb"],
                 "allow_path_regexes": [],
@@ -61,6 +72,14 @@ fn spec_loader_accepts_schema_field_without_changing_behavior() -> anyhow::Resul
     let loaded_no_schema = aero_packager::PackagingSpec::load(&spec_path_no_schema)?;
     let loaded_with_schema = aero_packager::PackagingSpec::load(&spec_path_with_schema)?;
 
+    assert_eq!(
+        loaded_no_schema.require_optional_drivers_on_all_arches,
+        loaded_with_schema.require_optional_drivers_on_all_arches
+    );
+    assert_eq!(
+        loaded_no_schema.fail_on_unlisted_driver_dirs,
+        loaded_with_schema.fail_on_unlisted_driver_dirs
+    );
     assert_eq!(loaded_no_schema.drivers.len(), loaded_with_schema.drivers.len());
     for (a, b) in loaded_no_schema
         .drivers
@@ -124,4 +143,3 @@ fn spec_loader_rejects_unknown_fields_under_strict_parsing() -> anyhow::Result<(
 
     Ok(())
 }
-
