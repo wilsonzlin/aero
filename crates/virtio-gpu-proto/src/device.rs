@@ -696,7 +696,7 @@ fn default_edid_1024x768() -> [u8; 128] {
 
     // Chromaticity coordinates (leave as zero).
     // Established timings: 640x480@60, 800x600@60, 1024x768@60.
-    edid[35] = 0x21; // 640x480@60 (bit0) + 800x600@60 (bit5)
+    edid[35] = 0x05; // 640x480@60 (bit0) + 800x600@60 (bit2)
     edid[36] = 0x08; // 1024x768@60 (bit3)
     edid[37] = 0x00;
 
