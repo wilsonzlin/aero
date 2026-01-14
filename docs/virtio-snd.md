@@ -82,6 +82,18 @@ Windows shows `DEV_1018` you must configure the hypervisor to expose a modern-on
   - Stream `0`: render/playback, stereo (2ch), 48kHz, S16_LE
   - Stream `1`: capture/input, mono (1ch), 48kHz, S16_LE
 
+### Event queue (eventq)
+
+The virtio-snd specification defines `eventq` (queue index `1`) for asynchronous device → driver notifications.
+
+Contract v1 does **not** define any required event messages (see `docs/windows7-virtio-driver-contract.md` §3.4.2.1), and Aero’s
+virtio-snd device model currently emits **no** events. However:
+
+- The Windows 7 virtio-snd driver posts a small bounded set of writable buffers and keeps `eventq` running.
+- If the device completes an event buffer anyway (future extensions, or a buggy device model), the driver parses the standard
+  8-byte virtio-snd event header (`type: u32` + `data: u32`, little-endian), dispatches known events best-effort, and ignores
+  unknown/malformed events without crashing (buffers are always reposted).
+
 The authoritative Windows driver-binding values are tracked in [`docs/windows-device-contract.md`](./windows-device-contract.md)
 and [`docs/windows-device-contract.json`](./windows-device-contract.json).
 
