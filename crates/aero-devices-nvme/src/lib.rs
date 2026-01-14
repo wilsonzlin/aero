@@ -105,9 +105,11 @@ const NVME_MAX_PENDING_SQ_TAIL_UPDATES: usize = NVME_MAX_IO_QUEUES + 1; // + adm
 // Layout:
 // - Table: BAR0 + 0x3000, one 16-byte entry (vector 0)
 // - PBA: immediately following the table, 8-byte aligned
-pub const NVME_MSIX_TABLE_SIZE: u16 = 1;
-pub const NVME_MSIX_TABLE_BAR: u8 = 0;
-pub const NVME_MSIX_TABLE_OFFSET: u32 = 0x3000;
+pub const NVME_MSIX_TABLE_SIZE: u16 = profile::NVME_MSIX_TABLE_SIZE;
+pub const NVME_MSIX_TABLE_BAR: u8 = profile::NVME_MSIX_TABLE_BAR;
+pub const NVME_MSIX_TABLE_OFFSET: u32 = profile::NVME_MSIX_TABLE_OFFSET;
+pub const NVME_MSIX_PBA_BAR: u8 = profile::NVME_MSIX_PBA_BAR;
+pub const NVME_MSIX_PBA_OFFSET: u32 = profile::NVME_MSIX_PBA_OFFSET;
 
 #[deprecated(
     note = "NVMe MSI-X capability is now included in the canonical PCI profile (aero_devices::pci::profile::NVME_CONTROLLER). \
@@ -122,8 +124,7 @@ pub fn add_nvme_msix_capability(config: &mut PciConfigSpace) {
 
     let table_size = NVME_MSIX_TABLE_SIZE;
     let table_offset = NVME_MSIX_TABLE_OFFSET;
-    let table_bytes = u32::from(table_size).saturating_mul(16);
-    let pba_offset = align_up_u32(table_offset.saturating_add(table_bytes), 8);
+    let pba_offset = NVME_MSIX_PBA_OFFSET;
 
     // Keep the layout within the fixed BAR0 window.
     debug_assert!(u64::from(pba_offset) < NvmeController::bar0_len());
@@ -132,14 +133,9 @@ pub fn add_nvme_msix_capability(config: &mut PciConfigSpace) {
         table_size,
         NVME_MSIX_TABLE_BAR,
         table_offset,
-        NVME_MSIX_TABLE_BAR,
+        NVME_MSIX_PBA_BAR,
         pba_offset,
     )));
-}
-
-fn align_up_u32(value: u32, align: u32) -> u32 {
-    debug_assert!(align.is_power_of_two());
-    value.wrapping_add(align - 1) & !(align - 1)
 }
 
 /// Errors returned by disk backends.

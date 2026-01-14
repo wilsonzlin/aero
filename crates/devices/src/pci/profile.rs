@@ -360,6 +360,30 @@ pub const AHCI_CAPS: [PciCapabilityProfile; 1] = [PciCapabilityProfile::Msi {
 
 pub const NVME_BARS: [PciBarProfile; 1] = [PciBarProfile::mem64(0, 0x4000, false)];
 
+/// NVMe MSI-X table size (number of vectors) exposed by the canonical NVMe profile.
+pub const NVME_MSIX_TABLE_SIZE: u16 = 1;
+/// PCI BAR index containing the NVMe MSI-X table.
+pub const NVME_MSIX_TABLE_BAR: u8 = 0;
+/// Byte offset of the NVMe MSI-X table within BAR0.
+pub const NVME_MSIX_TABLE_OFFSET: u32 = 0x3000;
+
+const NVME_MSIX_TABLE_ENTRY_SIZE_BYTES: u32 = 16;
+
+const fn nvme_msix_table_bytes(table_size: u16) -> u32 {
+    (table_size as u32).saturating_mul(NVME_MSIX_TABLE_ENTRY_SIZE_BYTES)
+}
+
+const fn nvme_msix_pba_offset(table_size: u16) -> u32 {
+    // Align to 8 bytes as required by MSI-X.
+    let end = NVME_MSIX_TABLE_OFFSET.saturating_add(nvme_msix_table_bytes(table_size));
+    (end + 7) & !7
+}
+
+/// PCI BAR index containing the NVMe MSI-X PBA.
+pub const NVME_MSIX_PBA_BAR: u8 = 0;
+/// Byte offset of the NVMe MSI-X PBA within BAR0.
+pub const NVME_MSIX_PBA_OFFSET: u32 = nvme_msix_pba_offset(NVME_MSIX_TABLE_SIZE);
+
 /// Canonical capabilities exposed by the NVMe controller profile.
 ///
 /// Aero's NVMe device model uses a single interrupt vector, so a single-vector MSI capability is
@@ -374,11 +398,11 @@ pub const NVME_CAPS: [PciCapabilityProfile; 2] = [
     // - table: 1 entry at +0x3000
     // - PBA: immediately after the table (8-byte aligned) at +0x3010
     PciCapabilityProfile::Msix {
-        table_size: 1,
-        table_bar: 0,
-        table_offset: 0x3000,
-        pba_bar: 0,
-        pba_offset: 0x3010,
+        table_size: NVME_MSIX_TABLE_SIZE,
+        table_bar: NVME_MSIX_TABLE_BAR,
+        table_offset: NVME_MSIX_TABLE_OFFSET,
+        pba_bar: NVME_MSIX_PBA_BAR,
+        pba_offset: NVME_MSIX_PBA_OFFSET,
     },
 ];
 
