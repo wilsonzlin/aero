@@ -6,6 +6,8 @@ use super::tss::{
     TextureArgSource, TextureOp, TextureResultTarget, TextureStageState,
 };
 
+const MAX_TEXTURE_STAGES: usize = 8;
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct FixedFunctionGlobals {
@@ -32,8 +34,8 @@ pub struct FixedFunctionGlobals {
     pub lighting_flags: [u32; 4],
     /// `D3DRS_TEXTUREFACTOR` converted to linear RGBA floats.
     pub texture_factor: [f32; 4],
-    /// `D3DTSS_CONSTANT` values for stages 0..1.
-    pub stage_constants: [[f32; 4]; 2],
+    /// `D3DTSS_CONSTANT` values for stages 0..7.
+    pub stage_constants: [[f32; 4]; MAX_TEXTURE_STAGES],
 }
 
 impl FixedFunctionGlobals {
@@ -55,7 +57,7 @@ impl FixedFunctionGlobals {
             light_color: [1.0, 1.0, 1.0, 1.0],
             lighting_flags: [0, 0, 0, 0],
             texture_factor: [1.0, 1.0, 1.0, 1.0],
-            stage_constants: [[0.0, 0.0, 0.0, 0.0]; 2],
+            stage_constants: [[0.0, 0.0, 0.0, 0.0]; MAX_TEXTURE_STAGES],
         }
     }
 
@@ -76,8 +78,7 @@ impl FixedFunctionGlobals {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FixedFunctionShaderDesc {
     pub fvf: Fvf,
-    pub stage0: TextureStageState,
-    pub stage1: TextureStageState,
+    pub stages: [TextureStageState; MAX_TEXTURE_STAGES],
     pub alpha_test: AlphaTestState,
     pub fog: FogState,
     pub lighting: LightingState,
@@ -119,8 +120,15 @@ impl FixedFunctionShaderDesc {
             write_u8(hash, stage.result_target as u8);
         }
 
-        write_stage(&mut hash, &self.stage0);
-        write_stage(&mut hash, &self.stage1);
+        // D3D9 fixed-function stage disabling is keyed off COLOROP: if stage N has
+        // `D3DTSS_COLOROP = D3DTOP_DISABLE`, that stage and all subsequent stages are disabled.
+        // Hash only stages that can affect output.
+        for stage in &self.stages {
+            if stage.color_op == TextureOp::Disable {
+                break;
+            }
+            write_stage(&mut hash, stage);
+        }
 
         write_u8(&mut hash, self.alpha_test.enabled as u8);
         write_u8(&mut hash, self.alpha_test.func as u8);
@@ -330,10 +338,16 @@ fn generate_fragment_wgsl(desc: &FixedFunctionShaderDesc, layout: &FvfLayout) ->
     let mut wgsl = String::new();
     wgsl.push_str(WGSL_SHARED);
 
-    wgsl.push_str("@group(1) @binding(0) var tex0: texture_2d<f32>;\n");
-    wgsl.push_str("@group(1) @binding(1) var samp0: sampler;\n\n");
-    wgsl.push_str("@group(1) @binding(2) var tex1: texture_2d<f32>;\n");
-    wgsl.push_str("@group(1) @binding(3) var samp1: sampler;\n\n");
+    for stage in 0..MAX_TEXTURE_STAGES {
+        let _ = writeln!(
+            wgsl,
+            "@group(1) @binding({}) var tex{}: texture_2d<f32>;\n@group(1) @binding({}) var samp{}: sampler;\n",
+            stage * 2,
+            stage,
+            stage * 2 + 1,
+            stage,
+        );
+    }
 
     wgsl.push_str("struct FragmentIn {\n  @location(0) diffuse: vec4<f32>,\n  @location(1) specular: vec4<f32>,\n");
     let mut location = 2u32;
@@ -357,12 +371,11 @@ fn generate_fragment_wgsl(desc: &FixedFunctionShaderDesc, layout: &FvfLayout) ->
     // D3D9 stage disabling: `D3DTOP_DISABLE` on stage N disables stage N and all subsequent
     // stages. D3D9 stage disabling is keyed off COLOROP: if `D3DTOP_DISABLE` is set on stage N,
     // that stage and all subsequent stages are disabled.
-    if desc.stage0.color_op != TextureOp::Disable {
-        emit_tss_stage(&mut wgsl, desc, layout, 0, &desc.stage0);
-
-        if desc.stage1.color_op != TextureOp::Disable {
-            emit_tss_stage(&mut wgsl, desc, layout, 1, &desc.stage1);
+    for (stage_index, stage) in desc.stages.iter().enumerate() {
+        if stage.color_op == TextureOp::Disable {
+            break;
         }
+        emit_tss_stage(&mut wgsl, desc, layout, stage_index, stage);
     }
 
     if desc.alpha_test.enabled {
@@ -391,11 +404,12 @@ fn emit_tss_stage(
     }
 
     let tex_var = format!("tex{}_color", stage_index);
-    let tex_decl = match stage_index {
-        0 => ("tex0", "samp0"),
-        1 => ("tex1", "samp1"),
-        _ => unreachable!("only stages 0 and 1 are supported"),
-    };
+    assert!(
+        stage_index < MAX_TEXTURE_STAGES,
+        "stage_index {stage_index} out of range"
+    );
+    let tex_name = format!("tex{}", stage_index);
+    let samp_name = format!("samp{}", stage_index);
 
     if stage_uses_texture(stage) {
         // Default texcoord mapping: TEXCOORDn feeds stage n. This can be overridden with
@@ -415,7 +429,7 @@ fn emit_tss_stage(
         let _ = writeln!(
             wgsl,
             "  let {} = textureSample({}, {}, {});",
-            tex_var, tex_decl.0, tex_decl.1, uv_expr
+            tex_var, tex_name, samp_name, uv_expr
         );
     } else {
         let _ = writeln!(wgsl, "  let {} = vec4<f32>(1.0, 1.0, 1.0, 1.0);", tex_var);
@@ -502,7 +516,16 @@ fn stage_uses_temp(stage: &TextureStageState) -> bool {
 }
 
 fn shader_uses_temp(desc: &FixedFunctionShaderDesc) -> bool {
-    stage_uses_temp(&desc.stage0) || stage_uses_temp(&desc.stage1)
+    // Respect D3D9 stage disabling semantics (COLOROP disables the stage and all subsequent ones).
+    for stage in &desc.stages {
+        if stage.color_op == TextureOp::Disable {
+            break;
+        }
+        if stage_uses_temp(stage) {
+            return true;
+        }
+    }
+    false
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -653,7 +676,7 @@ struct Globals {
   light_color: vec4<f32>,
   lighting_flags: vec4<u32>,
   texture_factor: vec4<f32>,
-  stage_constants: array<vec4<f32>, 2>,
+  stage_constants: array<vec4<f32>, 8>,
 };
 
 @group(0) @binding(0) var<uniform> globals: Globals;

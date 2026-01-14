@@ -100,17 +100,18 @@ fn fixed_function_fvf_texcoord_size_bits_work_up_to_tex7() {
 
 #[test]
 fn fixed_function_shader_generation_supports_8_texcoords() {
+    let mut stages = [TextureStageState::default(); 8];
+    stages[0] = TextureStageState {
+        color_op: TextureOp::Modulate,
+        color_arg1: TextureArg::Texture,
+        color_arg2: TextureArg::Diffuse,
+        alpha_op: TextureOp::SelectArg1,
+        alpha_arg1: TextureArg::Texture,
+        ..TextureStageState::default()
+    };
     let desc = FixedFunctionShaderDesc {
         fvf: Fvf(Fvf::XYZ | Fvf::DIFFUSE | Fvf::SPECULAR | ((8u32) << Fvf::TEXCOUNT_SHIFT)),
-        stage0: TextureStageState {
-            color_op: TextureOp::Modulate,
-            color_arg1: TextureArg::Texture,
-            color_arg2: TextureArg::Diffuse,
-            alpha_op: TextureOp::SelectArg1,
-            alpha_arg1: TextureArg::Texture,
-            ..TextureStageState::default()
-        },
-        stage1: TextureStageState::default(),
+        stages,
         alpha_test: AlphaTestState::default(),
         fog: FogState { enabled: true },
         lighting: LightingState::default(),

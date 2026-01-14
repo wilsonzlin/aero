@@ -195,21 +195,21 @@ fn assert_rgba_approx(actual: [u8; 4], expected: [u8; 4], tolerance: u8) {
 #[test]
 fn shader_cache_hits_on_identical_state() {
     let mut cache = FixedFunctionShaderCache::new();
+    let mut stages = [TextureStageState::default(); 8];
+    stages[0] = TextureStageState {
+        color_op: TextureOp::Modulate,
+        color_arg0: TextureArg::Current,
+        color_arg1: TextureArg::Texture,
+        color_arg2: TextureArg::Diffuse,
+        alpha_op: TextureOp::SelectArg1,
+        alpha_arg0: TextureArg::Current,
+        alpha_arg1: TextureArg::Diffuse,
+        alpha_arg2: TextureArg::Current,
+        ..Default::default()
+    };
     let desc = FixedFunctionShaderDesc {
         fvf: Fvf(Fvf::XYZ | (1 << 8)),
-        stage0: TextureStageState {
-            color_op: TextureOp::Modulate,
-            color_arg0: TextureArg::Current,
-            color_arg1: TextureArg::Texture,
-            color_arg2: TextureArg::Diffuse,
-            alpha_op: TextureOp::SelectArg1,
-            alpha_arg0: TextureArg::Current,
-            alpha_arg1: TextureArg::Diffuse,
-            alpha_arg2: TextureArg::Current,
-            texcoord_index: None,
-            result_target: TextureResultTarget::Current,
-        },
-        stage1: TextureStageState::default(),
+        stages,
         alpha_test: AlphaTestState::default(),
         fog: FogState::default(),
         lighting: LightingState::default(),
@@ -226,8 +226,7 @@ fn shader_cache_hits_on_identical_state() {
 fn shader_includes_lighting_branch_only_when_enabled() {
     let base = FixedFunctionShaderDesc {
         fvf: Fvf(Fvf::XYZ | Fvf::NORMAL),
-        stage0: TextureStageState::default(),
-        stage1: TextureStageState::default(),
+        stages: [TextureStageState::default(); 8],
         alpha_test: AlphaTestState::default(),
         fog: FogState::default(),
         lighting: LightingState { enabled: false },
@@ -241,8 +240,7 @@ fn shader_includes_lighting_branch_only_when_enabled() {
 
     let lit = FixedFunctionShaderDesc {
         fvf: base.fvf,
-        stage0: base.stage0,
-        stage1: base.stage1,
+        stages: base.stages,
         alpha_test: base.alpha_test,
         fog: base.fog,
         lighting: LightingState { enabled: true },
@@ -328,21 +326,21 @@ fn render_transformed_textured_quad() {
         ..Default::default()
     });
 
+    let mut stages = [TextureStageState::default(); 8];
+    stages[0] = TextureStageState {
+        color_op: TextureOp::Modulate,
+        color_arg0: TextureArg::Current,
+        color_arg1: TextureArg::Texture,
+        color_arg2: TextureArg::Diffuse,
+        alpha_op: TextureOp::SelectArg1,
+        alpha_arg0: TextureArg::Current,
+        alpha_arg1: TextureArg::Texture,
+        alpha_arg2: TextureArg::Current,
+        ..Default::default()
+    };
     let desc = FixedFunctionShaderDesc {
         fvf: Fvf(Fvf::XYZ | (1 << 8)),
-        stage0: TextureStageState {
-            color_op: TextureOp::Modulate,
-            color_arg0: TextureArg::Current,
-            color_arg1: TextureArg::Texture,
-            color_arg2: TextureArg::Diffuse,
-            alpha_op: TextureOp::SelectArg1,
-            alpha_arg0: TextureArg::Current,
-            alpha_arg1: TextureArg::Texture,
-            alpha_arg2: TextureArg::Current,
-            texcoord_index: None,
-            result_target: TextureResultTarget::Current,
-        },
-        stage1: TextureStageState::default(),
+        stages,
         alpha_test: AlphaTestState::default(),
         fog: FogState::default(),
         lighting: LightingState::default(),
@@ -399,64 +397,44 @@ fn render_transformed_textured_quad() {
         }],
     });
 
+    let mut tex_entries = Vec::new();
+    for stage in 0..8u32 {
+        tex_entries.push(wgpu::BindGroupLayoutEntry {
+            binding: stage * 2,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        });
+        tex_entries.push(wgpu::BindGroupLayoutEntry {
+            binding: stage * 2 + 1,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+            count: None,
+        });
+    }
     let tex_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("tex-bgl"),
-        entries: &[
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 2,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 3,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                count: None,
-            },
-        ],
+        entries: &tex_entries,
     });
+    let mut tex_bg_entries = Vec::new();
+    for stage in 0..8u32 {
+        tex_bg_entries.push(wgpu::BindGroupEntry {
+            binding: stage * 2,
+            resource: wgpu::BindingResource::TextureView(&tex_view),
+        });
+        tex_bg_entries.push(wgpu::BindGroupEntry {
+            binding: stage * 2 + 1,
+            resource: wgpu::BindingResource::Sampler(&sampler),
+        });
+    }
     let tex_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("tex-bg"),
         layout: &tex_bgl,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&tex_view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::Sampler(&sampler),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: wgpu::BindingResource::TextureView(&tex_view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: wgpu::BindingResource::Sampler(&sampler),
-            },
-        ],
+        entries: &tex_bg_entries,
     });
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -634,21 +612,21 @@ fn render_vertex_color_modulation() {
         ..Default::default()
     });
 
+    let mut stages = [TextureStageState::default(); 8];
+    stages[0] = TextureStageState {
+        color_op: TextureOp::Modulate,
+        color_arg0: TextureArg::Current,
+        color_arg1: TextureArg::Texture,
+        color_arg2: TextureArg::Diffuse,
+        alpha_op: TextureOp::Modulate,
+        alpha_arg0: TextureArg::Current,
+        alpha_arg1: TextureArg::Texture,
+        alpha_arg2: TextureArg::Diffuse,
+        ..Default::default()
+    };
     let desc = FixedFunctionShaderDesc {
         fvf: Fvf(Fvf::XYZ | Fvf::DIFFUSE | (1 << 8)),
-        stage0: TextureStageState {
-            color_op: TextureOp::Modulate,
-            color_arg0: TextureArg::Current,
-            color_arg1: TextureArg::Texture,
-            color_arg2: TextureArg::Diffuse,
-            alpha_op: TextureOp::Modulate,
-            alpha_arg0: TextureArg::Current,
-            alpha_arg1: TextureArg::Texture,
-            alpha_arg2: TextureArg::Diffuse,
-            texcoord_index: None,
-            result_target: TextureResultTarget::Current,
-        },
-        stage1: TextureStageState::default(),
+        stages,
         alpha_test: AlphaTestState::default(),
         fog: FogState::default(),
         lighting: LightingState::default(),
@@ -699,64 +677,44 @@ fn render_vertex_color_modulation() {
         }],
     });
 
+    let mut tex_entries = Vec::new();
+    for stage in 0..8u32 {
+        tex_entries.push(wgpu::BindGroupLayoutEntry {
+            binding: stage * 2,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        });
+        tex_entries.push(wgpu::BindGroupLayoutEntry {
+            binding: stage * 2 + 1,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+            count: None,
+        });
+    }
     let tex_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("tex-bgl"),
-        entries: &[
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 2,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 3,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                count: None,
-            },
-        ],
+        entries: &tex_entries,
     });
+    let mut tex_bg_entries = Vec::new();
+    for stage in 0..8u32 {
+        tex_bg_entries.push(wgpu::BindGroupEntry {
+            binding: stage * 2,
+            resource: wgpu::BindingResource::TextureView(&tex_view),
+        });
+        tex_bg_entries.push(wgpu::BindGroupEntry {
+            binding: stage * 2 + 1,
+            resource: wgpu::BindingResource::Sampler(&sampler),
+        });
+    }
     let tex_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("tex-bg"),
         layout: &tex_bgl,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&tex_view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::Sampler(&sampler),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: wgpu::BindingResource::TextureView(&tex_view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: wgpu::BindingResource::Sampler(&sampler),
-            },
-        ],
+        entries: &tex_bg_entries,
     });
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -946,21 +904,21 @@ fn render_alpha_test_with_blending() {
         ..Default::default()
     });
 
+    let mut stages = [TextureStageState::default(); 8];
+    stages[0] = TextureStageState {
+        color_op: TextureOp::SelectArg1,
+        color_arg0: TextureArg::Current,
+        color_arg1: TextureArg::Diffuse,
+        color_arg2: TextureArg::Current,
+        alpha_op: TextureOp::SelectArg1,
+        alpha_arg0: TextureArg::Current,
+        alpha_arg1: TextureArg::Diffuse,
+        alpha_arg2: TextureArg::Current,
+        ..Default::default()
+    };
     let desc = FixedFunctionShaderDesc {
         fvf: Fvf(Fvf::XYZ | Fvf::DIFFUSE | (1 << 8)),
-        stage0: TextureStageState {
-            color_op: TextureOp::SelectArg1,
-            color_arg0: TextureArg::Current,
-            color_arg1: TextureArg::Diffuse,
-            color_arg2: TextureArg::Current,
-            alpha_op: TextureOp::SelectArg1,
-            alpha_arg0: TextureArg::Current,
-            alpha_arg1: TextureArg::Diffuse,
-            alpha_arg2: TextureArg::Current,
-            texcoord_index: None,
-            result_target: TextureResultTarget::Current,
-        },
-        stage1: TextureStageState::default(),
+        stages,
         alpha_test: AlphaTestState {
             enabled: true,
             func: CompareFunc::Greater,
@@ -1015,64 +973,44 @@ fn render_alpha_test_with_blending() {
         }],
     });
 
+    let mut tex_entries = Vec::new();
+    for stage in 0..8u32 {
+        tex_entries.push(wgpu::BindGroupLayoutEntry {
+            binding: stage * 2,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        });
+        tex_entries.push(wgpu::BindGroupLayoutEntry {
+            binding: stage * 2 + 1,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+            count: None,
+        });
+    }
     let tex_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("tex-bgl"),
-        entries: &[
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 2,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 3,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                count: None,
-            },
-        ],
+        entries: &tex_entries,
     });
+    let mut tex_bg_entries = Vec::new();
+    for stage in 0..8u32 {
+        tex_bg_entries.push(wgpu::BindGroupEntry {
+            binding: stage * 2,
+            resource: wgpu::BindingResource::TextureView(&tex_view),
+        });
+        tex_bg_entries.push(wgpu::BindGroupEntry {
+            binding: stage * 2 + 1,
+            resource: wgpu::BindingResource::Sampler(&sampler),
+        });
+    }
     let tex_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("tex-bg"),
         layout: &tex_bgl,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&tex_view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::Sampler(&sampler),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: wgpu::BindingResource::TextureView(&tex_view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: wgpu::BindingResource::Sampler(&sampler),
-            },
-        ],
+        entries: &tex_bg_entries,
     });
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -1287,22 +1225,21 @@ fn render_directional_lighting_diffuse_only() {
         alpha_arg0: TextureArg::Current,
         alpha_arg1: TextureArg::Diffuse,
         alpha_arg2: TextureArg::Current,
-        texcoord_index: None,
-        result_target: TextureResultTarget::Current,
+        ..Default::default()
     };
+    let mut stages = [TextureStageState::default(); 8];
+    stages[0] = stage0;
 
     let desc_unlit = FixedFunctionShaderDesc {
         fvf: Fvf(Fvf::XYZ | Fvf::NORMAL),
-        stage0,
-        stage1: TextureStageState::default(),
+        stages,
         alpha_test: AlphaTestState::default(),
         fog: FogState::default(),
         lighting: LightingState { enabled: false },
     };
     let desc_lit = FixedFunctionShaderDesc {
         fvf: desc_unlit.fvf,
-        stage0: desc_unlit.stage0,
-        stage1: desc_unlit.stage1,
+        stages: desc_unlit.stages,
         alpha_test: desc_unlit.alpha_test,
         fog: desc_unlit.fog,
         lighting: LightingState { enabled: true },
@@ -1369,64 +1306,44 @@ fn render_directional_lighting_diffuse_only() {
         }],
     });
 
+    let mut tex_entries = Vec::new();
+    for stage in 0..8u32 {
+        tex_entries.push(wgpu::BindGroupLayoutEntry {
+            binding: stage * 2,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        });
+        tex_entries.push(wgpu::BindGroupLayoutEntry {
+            binding: stage * 2 + 1,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+            count: None,
+        });
+    }
     let tex_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("tex-bgl"),
-        entries: &[
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 2,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 3,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                count: None,
-            },
-        ],
+        entries: &tex_entries,
     });
+    let mut tex_bg_entries = Vec::new();
+    for stage in 0..8u32 {
+        tex_bg_entries.push(wgpu::BindGroupEntry {
+            binding: stage * 2,
+            resource: wgpu::BindingResource::TextureView(&tex_view),
+        });
+        tex_bg_entries.push(wgpu::BindGroupEntry {
+            binding: stage * 2 + 1,
+            resource: wgpu::BindingResource::Sampler(&sampler),
+        });
+    }
     let tex_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("tex-bg"),
         layout: &tex_bgl,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&tex_view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::Sampler(&sampler),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: wgpu::BindingResource::TextureView(&tex_view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: wgpu::BindingResource::Sampler(&sampler),
-            },
-        ],
+        entries: &tex_bg_entries,
     });
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -1683,64 +1600,49 @@ fn render_two_stage_texture_ops_modulate_add_subtract() {
         }],
     });
 
+    let mut tex_entries = Vec::new();
+    for stage in 0..8u32 {
+        tex_entries.push(wgpu::BindGroupLayoutEntry {
+            binding: stage * 2,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        });
+        tex_entries.push(wgpu::BindGroupLayoutEntry {
+            binding: stage * 2 + 1,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+            count: None,
+        });
+    }
     let tex_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("tex-bgl"),
-        entries: &[
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 2,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 3,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                count: None,
-            },
-        ],
+        entries: &tex_entries,
     });
+    let mut tex_bg_entries = Vec::new();
+    for stage in 0..8u32 {
+        let view = match stage {
+            0 => &tex0_view,
+            1 => &tex1_view,
+            _ => &tex0_view,
+        };
+        tex_bg_entries.push(wgpu::BindGroupEntry {
+            binding: stage * 2,
+            resource: wgpu::BindingResource::TextureView(view),
+        });
+        tex_bg_entries.push(wgpu::BindGroupEntry {
+            binding: stage * 2 + 1,
+            resource: wgpu::BindingResource::Sampler(&sampler),
+        });
+    }
     let tex_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("tex-bg"),
         layout: &tex_bgl,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&tex0_view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::Sampler(&sampler),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: wgpu::BindingResource::TextureView(&tex1_view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: wgpu::BindingResource::Sampler(&sampler),
-            },
-        ],
+        entries: &tex_bg_entries,
     });
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -1801,32 +1703,32 @@ fn render_two_stage_texture_ops_modulate_add_subtract() {
     ];
 
     for (op, expected) in cases {
+        let mut stages = [TextureStageState::default(); 8];
+        stages[0] = TextureStageState {
+            color_op: TextureOp::SelectArg1,
+            color_arg0: TextureArg::Current,
+            color_arg1: TextureArg::Texture,
+            color_arg2: TextureArg::Current,
+            alpha_op: TextureOp::SelectArg1,
+            alpha_arg0: TextureArg::Current,
+            alpha_arg1: TextureArg::Texture,
+            alpha_arg2: TextureArg::Current,
+            ..Default::default()
+        };
+        stages[1] = TextureStageState {
+            color_op: op,
+            color_arg0: TextureArg::Current,
+            color_arg1: TextureArg::Current,
+            color_arg2: TextureArg::Texture,
+            alpha_op: TextureOp::SelectArg1,
+            alpha_arg0: TextureArg::Current,
+            alpha_arg1: TextureArg::Current,
+            alpha_arg2: TextureArg::Current,
+            ..Default::default()
+        };
         let desc = FixedFunctionShaderDesc {
             fvf: Fvf(Fvf::XYZ | (2 << 8)),
-            stage0: TextureStageState {
-                color_op: TextureOp::SelectArg1,
-                color_arg0: TextureArg::Current,
-                color_arg1: TextureArg::Texture,
-                color_arg2: TextureArg::Current,
-                alpha_op: TextureOp::SelectArg1,
-                alpha_arg0: TextureArg::Current,
-                alpha_arg1: TextureArg::Texture,
-                alpha_arg2: TextureArg::Current,
-                texcoord_index: None,
-                result_target: TextureResultTarget::Current,
-            },
-            stage1: TextureStageState {
-                color_op: op,
-                color_arg0: TextureArg::Current,
-                color_arg1: TextureArg::Current,
-                color_arg2: TextureArg::Texture,
-                alpha_op: TextureOp::SelectArg1,
-                alpha_arg0: TextureArg::Current,
-                alpha_arg1: TextureArg::Current,
-                alpha_arg2: TextureArg::Current,
-                texcoord_index: None,
-                result_target: TextureResultTarget::Current,
-            },
+            stages,
             alpha_test: AlphaTestState::default(),
             fog: FogState::default(),
             lighting: LightingState::default(),
@@ -2015,64 +1917,49 @@ fn render_two_stage_dotproduct3() {
         }],
     });
 
+    let mut tex_entries = Vec::new();
+    for stage in 0..8u32 {
+        tex_entries.push(wgpu::BindGroupLayoutEntry {
+            binding: stage * 2,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        });
+        tex_entries.push(wgpu::BindGroupLayoutEntry {
+            binding: stage * 2 + 1,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+            count: None,
+        });
+    }
     let tex_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("tex-bgl"),
-        entries: &[
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 2,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 3,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                count: None,
-            },
-        ],
+        entries: &tex_entries,
     });
+    let mut tex_bg_entries = Vec::new();
+    for stage in 0..8u32 {
+        let view = match stage {
+            0 => &tex0_view,
+            1 => &tex1_view,
+            _ => &tex0_view,
+        };
+        tex_bg_entries.push(wgpu::BindGroupEntry {
+            binding: stage * 2,
+            resource: wgpu::BindingResource::TextureView(view),
+        });
+        tex_bg_entries.push(wgpu::BindGroupEntry {
+            binding: stage * 2 + 1,
+            resource: wgpu::BindingResource::Sampler(&sampler),
+        });
+    }
     let tex_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("tex-bg"),
         layout: &tex_bgl,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&tex0_view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::Sampler(&sampler),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: wgpu::BindingResource::TextureView(&tex1_view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: wgpu::BindingResource::Sampler(&sampler),
-            },
-        ],
+        entries: &tex_bg_entries,
     });
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -2120,32 +2007,32 @@ fn render_two_stage_dotproduct3() {
         usage: wgpu::BufferUsages::VERTEX,
     });
 
+    let mut stages = [TextureStageState::default(); 8];
+    stages[0] = TextureStageState {
+        color_op: TextureOp::SelectArg1,
+        color_arg0: TextureArg::Current,
+        color_arg1: TextureArg::Texture,
+        color_arg2: TextureArg::Current,
+        alpha_op: TextureOp::SelectArg1,
+        alpha_arg0: TextureArg::Current,
+        alpha_arg1: TextureArg::Texture,
+        alpha_arg2: TextureArg::Current,
+        ..Default::default()
+    };
+    stages[1] = TextureStageState {
+        color_op: TextureOp::DotProduct3,
+        color_arg0: TextureArg::Current,
+        color_arg1: TextureArg::Current,
+        color_arg2: TextureArg::Texture,
+        alpha_op: TextureOp::SelectArg1,
+        alpha_arg0: TextureArg::Current,
+        alpha_arg1: TextureArg::Current,
+        alpha_arg2: TextureArg::Current,
+        ..Default::default()
+    };
     let desc = FixedFunctionShaderDesc {
         fvf: Fvf(Fvf::XYZ | (2 << 8)),
-        stage0: TextureStageState {
-            color_op: TextureOp::SelectArg1,
-            color_arg0: TextureArg::Current,
-            color_arg1: TextureArg::Texture,
-            color_arg2: TextureArg::Current,
-            alpha_op: TextureOp::SelectArg1,
-            alpha_arg0: TextureArg::Current,
-            alpha_arg1: TextureArg::Texture,
-            alpha_arg2: TextureArg::Current,
-            texcoord_index: None,
-            result_target: TextureResultTarget::Current,
-        },
-        stage1: TextureStageState {
-            color_op: TextureOp::DotProduct3,
-            color_arg0: TextureArg::Current,
-            color_arg1: TextureArg::Current,
-            color_arg2: TextureArg::Texture,
-            alpha_op: TextureOp::SelectArg1,
-            alpha_arg0: TextureArg::Current,
-            alpha_arg1: TextureArg::Current,
-            alpha_arg2: TextureArg::Current,
-            texcoord_index: None,
-            result_target: TextureResultTarget::Current,
-        },
+        stages,
         alpha_test: AlphaTestState::default(),
         fog: FogState::default(),
         lighting: LightingState::default(),
@@ -2335,64 +2222,49 @@ fn render_two_stage_blend_alpha_ops() {
         }],
     });
 
+    let mut tex_entries = Vec::new();
+    for stage in 0..8u32 {
+        tex_entries.push(wgpu::BindGroupLayoutEntry {
+            binding: stage * 2,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        });
+        tex_entries.push(wgpu::BindGroupLayoutEntry {
+            binding: stage * 2 + 1,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+            count: None,
+        });
+    }
     let tex_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("tex-bgl"),
-        entries: &[
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 2,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 3,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                count: None,
-            },
-        ],
+        entries: &tex_entries,
     });
+    let mut tex_bg_entries = Vec::new();
+    for stage in 0..8u32 {
+        let view = match stage {
+            0 => &tex0_view,
+            1 => &tex1_view,
+            _ => &tex0_view,
+        };
+        tex_bg_entries.push(wgpu::BindGroupEntry {
+            binding: stage * 2,
+            resource: wgpu::BindingResource::TextureView(view),
+        });
+        tex_bg_entries.push(wgpu::BindGroupEntry {
+            binding: stage * 2 + 1,
+            resource: wgpu::BindingResource::Sampler(&sampler),
+        });
+    }
     let tex_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("tex-bg"),
         layout: &tex_bgl,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&tex0_view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::Sampler(&sampler),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: wgpu::BindingResource::TextureView(&tex1_view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: wgpu::BindingResource::Sampler(&sampler),
-            },
-        ],
+        entries: &tex_bg_entries,
     });
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -2446,32 +2318,32 @@ fn render_two_stage_blend_alpha_ops() {
     ];
 
     for (op, expected) in cases {
+        let mut stages = [TextureStageState::default(); 8];
+        stages[0] = TextureStageState {
+            color_op: TextureOp::SelectArg1,
+            color_arg0: TextureArg::Current,
+            color_arg1: TextureArg::Texture,
+            color_arg2: TextureArg::Current,
+            alpha_op: TextureOp::SelectArg1,
+            alpha_arg0: TextureArg::Current,
+            alpha_arg1: TextureArg::Texture,
+            alpha_arg2: TextureArg::Current,
+            ..Default::default()
+        };
+        stages[1] = TextureStageState {
+            color_op: op,
+            color_arg0: TextureArg::Current,
+            color_arg1: TextureArg::Texture,
+            color_arg2: TextureArg::Current,
+            alpha_op: TextureOp::SelectArg1,
+            alpha_arg0: TextureArg::Current,
+            alpha_arg1: TextureArg::Current,
+            alpha_arg2: TextureArg::Current,
+            ..Default::default()
+        };
         let desc = FixedFunctionShaderDesc {
             fvf: Fvf(Fvf::XYZ | (2 << 8)),
-            stage0: TextureStageState {
-                color_op: TextureOp::SelectArg1,
-                color_arg0: TextureArg::Current,
-                color_arg1: TextureArg::Texture,
-                color_arg2: TextureArg::Current,
-                alpha_op: TextureOp::SelectArg1,
-                alpha_arg0: TextureArg::Current,
-                alpha_arg1: TextureArg::Texture,
-                alpha_arg2: TextureArg::Current,
-                texcoord_index: None,
-                result_target: TextureResultTarget::Current,
-            },
-            stage1: TextureStageState {
-                color_op: op,
-                color_arg0: TextureArg::Current,
-                color_arg1: TextureArg::Texture,
-                color_arg2: TextureArg::Current,
-                alpha_op: TextureOp::SelectArg1,
-                alpha_arg0: TextureArg::Current,
-                alpha_arg1: TextureArg::Current,
-                alpha_arg2: TextureArg::Current,
-                texcoord_index: None,
-                result_target: TextureResultTarget::Current,
-            },
+            stages,
             alpha_test: AlphaTestState::default(),
             fog: FogState::default(),
             lighting: LightingState::default(),
@@ -2542,6 +2414,632 @@ fn render_two_stage_blend_alpha_ops() {
         let pixels = readback_rgba8(&device, &queue, &target, width, height);
         assert_rgba_approx(pixel_at_rgba(&pixels, width, 1, 1), expected, 3);
     }
+}
+
+#[test]
+fn render_two_stage_lerp_uses_texture_factor_alpha() {
+    let Some((device, queue)) = request_device() else {
+        return;
+    };
+
+    #[repr(C)]
+    #[derive(Clone, Copy, Pod, Zeroable)]
+    struct Vertex {
+        pos: [f32; 3],
+        tex0: [f32; 2],
+        tex1: [f32; 2],
+    }
+
+    let width = 4;
+    let height = 4;
+
+    let target = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("target"),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let target_view = target.create_view(&Default::default());
+
+    let make_tex = |label: &str, rgba: [u8; 4]| {
+        let tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(label),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &tex,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &rgba,
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(4),
+                rows_per_image: Some(1),
+            },
+            wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
+        let view = tex.create_view(&Default::default());
+        (tex, view)
+    };
+
+    let (_tex0, tex0_view) = make_tex("tex0", [255, 0, 0, 255]);
+    let (_tex1, tex1_view) = make_tex("tex1", [0, 0, 255, 255]);
+
+    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("nearest"),
+        mag_filter: wgpu::FilterMode::Nearest,
+        min_filter: wgpu::FilterMode::Nearest,
+        ..Default::default()
+    });
+
+    let globals = FixedFunctionGlobals {
+        world_view_proj: FixedFunctionGlobals::identity().world_view_proj,
+        viewport: [0.0, 0.0, width as f32, height as f32],
+        // Use alpha as the lerp factor and ALPHA_REPLICATE to broadcast to RGB.
+        texture_factor: [0.0, 0.0, 0.0, 0.5],
+        ..FixedFunctionGlobals::identity()
+    };
+    let globals_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("globals"),
+        contents: globals.as_bytes(),
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
+
+    let globals_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("globals-bgl"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }],
+    });
+    let globals_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("globals-bg"),
+        layout: &globals_bgl,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: globals_buf.as_entire_binding(),
+        }],
+    });
+
+    let mut tex_entries = Vec::new();
+    for stage in 0..8u32 {
+        tex_entries.push(wgpu::BindGroupLayoutEntry {
+            binding: stage * 2,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        });
+        tex_entries.push(wgpu::BindGroupLayoutEntry {
+            binding: stage * 2 + 1,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+            count: None,
+        });
+    }
+    let tex_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("tex-bgl"),
+        entries: &tex_entries,
+    });
+    let mut tex_bg_entries = Vec::new();
+    for stage in 0..8u32 {
+        let view = match stage {
+            0 => &tex0_view,
+            1 => &tex1_view,
+            _ => &tex0_view,
+        };
+        tex_bg_entries.push(wgpu::BindGroupEntry {
+            binding: stage * 2,
+            resource: wgpu::BindingResource::TextureView(view),
+        });
+        tex_bg_entries.push(wgpu::BindGroupEntry {
+            binding: stage * 2 + 1,
+            resource: wgpu::BindingResource::Sampler(&sampler),
+        });
+    }
+    let tex_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("tex-bg"),
+        layout: &tex_bgl,
+        entries: &tex_bg_entries,
+    });
+
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("pipeline-layout"),
+        bind_group_layouts: &[&globals_bgl, &tex_bgl],
+        push_constant_ranges: &[],
+    });
+
+    let verts = [
+        Vertex {
+            pos: [-1.0, -1.0, 0.0],
+            tex0: [0.0, 1.0],
+            tex1: [0.0, 1.0],
+        },
+        Vertex {
+            pos: [-1.0, 1.0, 0.0],
+            tex0: [0.0, 0.0],
+            tex1: [0.0, 0.0],
+        },
+        Vertex {
+            pos: [1.0, 1.0, 0.0],
+            tex0: [1.0, 0.0],
+            tex1: [1.0, 0.0],
+        },
+        Vertex {
+            pos: [-1.0, -1.0, 0.0],
+            tex0: [0.0, 1.0],
+            tex1: [0.0, 1.0],
+        },
+        Vertex {
+            pos: [1.0, 1.0, 0.0],
+            tex0: [1.0, 0.0],
+            tex1: [1.0, 0.0],
+        },
+        Vertex {
+            pos: [1.0, -1.0, 0.0],
+            tex0: [1.0, 1.0],
+            tex1: [1.0, 1.0],
+        },
+    ];
+    let vb = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("vb"),
+        contents: bytemuck::cast_slice(&verts),
+        usage: wgpu::BufferUsages::VERTEX,
+    });
+
+    let mut stages = [TextureStageState::default(); 8];
+    stages[0] = TextureStageState {
+        color_op: TextureOp::SelectArg1,
+        color_arg0: TextureArg::Current,
+        color_arg1: TextureArg::Texture,
+        color_arg2: TextureArg::Current,
+        alpha_op: TextureOp::SelectArg1,
+        alpha_arg0: TextureArg::Current,
+        alpha_arg1: TextureArg::Texture,
+        alpha_arg2: TextureArg::Current,
+        ..Default::default()
+    };
+    stages[1] = TextureStageState {
+        color_op: TextureOp::Lerp,
+        color_arg0: TextureArg::TextureFactor.alpha_replicate(),
+        color_arg1: TextureArg::Texture,
+        color_arg2: TextureArg::Current,
+        alpha_op: TextureOp::SelectArg1,
+        alpha_arg0: TextureArg::Current,
+        alpha_arg1: TextureArg::Current,
+        alpha_arg2: TextureArg::Current,
+        ..Default::default()
+    };
+
+    let desc = FixedFunctionShaderDesc {
+        fvf: Fvf(Fvf::XYZ | (2 << 8)),
+        stages,
+        alpha_test: AlphaTestState::default(),
+        fog: FogState::default(),
+        lighting: LightingState::default(),
+    };
+
+    let shaders = aero_d3d9::fixed_function::shader_gen::generate_fixed_function_shaders(&desc);
+    let vs = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("vs"),
+        source: wgpu::ShaderSource::Wgsl(shaders.vertex_wgsl.clone().into()),
+    });
+    let fs = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("fs"),
+        source: wgpu::ShaderSource::Wgsl(shaders.fragment_wgsl.clone().into()),
+    });
+
+    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("pipeline"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &vs,
+            entry_point: "vs_main",
+            buffers: &[shaders.vertex_buffer_layout()],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &fs,
+            entry_point: "fs_main",
+            targets: &[Some(wgpu::ColorTargetState {
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+    });
+
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("render-encoder"),
+    });
+    {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("render-pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &target_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            occlusion_query_set: None,
+            timestamp_writes: None,
+        });
+
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &globals_bg, &[]);
+        pass.set_bind_group(1, &tex_bg, &[]);
+        pass.set_vertex_buffer(0, vb.slice(..));
+        pass.draw(0..6, 0..1);
+    }
+    queue.submit([encoder.finish()]);
+
+    let pixels = readback_rgba8(&device, &queue, &target, width, height);
+    // red (tex0) and blue (tex1) with t=0.5 => purple.
+    assert_rgba_approx(pixel_at_rgba(&pixels, width, 1, 1), [128, 0, 128, 255], 3);
+}
+
+#[test]
+fn render_three_stage_add_uses_tex2_binding() {
+    let Some((device, queue)) = request_device() else {
+        return;
+    };
+
+    #[repr(C)]
+    #[derive(Clone, Copy, Pod, Zeroable)]
+    struct Vertex {
+        pos: [f32; 3],
+        tex0: [f32; 2],
+        tex1: [f32; 2],
+        tex2: [f32; 2],
+    }
+
+    let width = 4;
+    let height = 4;
+
+    let target = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("target"),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let target_view = target.create_view(&Default::default());
+
+    let make_tex = |label: &str, rgba: [u8; 4]| {
+        let tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(label),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &tex,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &rgba,
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(4),
+                rows_per_image: Some(1),
+            },
+            wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
+        let view = tex.create_view(&Default::default());
+        (tex, view)
+    };
+
+    let (_tex0, tex0_view) = make_tex("tex0", [128, 64, 32, 255]);
+    let (_tex2, tex2_view) = make_tex("tex2", [64, 128, 255, 255]);
+
+    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("nearest"),
+        mag_filter: wgpu::FilterMode::Nearest,
+        min_filter: wgpu::FilterMode::Nearest,
+        ..Default::default()
+    });
+
+    let globals = FixedFunctionGlobals {
+        world_view_proj: FixedFunctionGlobals::identity().world_view_proj,
+        viewport: [0.0, 0.0, width as f32, height as f32],
+        ..FixedFunctionGlobals::identity()
+    };
+    let globals_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("globals"),
+        contents: globals.as_bytes(),
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
+
+    let globals_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("globals-bgl"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }],
+    });
+    let globals_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("globals-bg"),
+        layout: &globals_bgl,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: globals_buf.as_entire_binding(),
+        }],
+    });
+
+    let mut tex_entries = Vec::new();
+    for stage in 0..8u32 {
+        tex_entries.push(wgpu::BindGroupLayoutEntry {
+            binding: stage * 2,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        });
+        tex_entries.push(wgpu::BindGroupLayoutEntry {
+            binding: stage * 2 + 1,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+            count: None,
+        });
+    }
+    let tex_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("tex-bgl"),
+        entries: &tex_entries,
+    });
+    let mut tex_bg_entries = Vec::new();
+    for stage in 0..8u32 {
+        let view = match stage {
+            0 => &tex0_view,
+            // Stage 1 is enabled but doesn't sample; bind any texture.
+            2 => &tex2_view,
+            _ => &tex0_view,
+        };
+        tex_bg_entries.push(wgpu::BindGroupEntry {
+            binding: stage * 2,
+            resource: wgpu::BindingResource::TextureView(view),
+        });
+        tex_bg_entries.push(wgpu::BindGroupEntry {
+            binding: stage * 2 + 1,
+            resource: wgpu::BindingResource::Sampler(&sampler),
+        });
+    }
+    let tex_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("tex-bg"),
+        layout: &tex_bgl,
+        entries: &tex_bg_entries,
+    });
+
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("pipeline-layout"),
+        bind_group_layouts: &[&globals_bgl, &tex_bgl],
+        push_constant_ranges: &[],
+    });
+
+    let verts = [
+        Vertex {
+            pos: [-1.0, -1.0, 0.0],
+            tex0: [0.0, 1.0],
+            tex1: [0.0, 1.0],
+            tex2: [0.0, 1.0],
+        },
+        Vertex {
+            pos: [-1.0, 1.0, 0.0],
+            tex0: [0.0, 0.0],
+            tex1: [0.0, 0.0],
+            tex2: [0.0, 0.0],
+        },
+        Vertex {
+            pos: [1.0, 1.0, 0.0],
+            tex0: [1.0, 0.0],
+            tex1: [1.0, 0.0],
+            tex2: [1.0, 0.0],
+        },
+        Vertex {
+            pos: [-1.0, -1.0, 0.0],
+            tex0: [0.0, 1.0],
+            tex1: [0.0, 1.0],
+            tex2: [0.0, 1.0],
+        },
+        Vertex {
+            pos: [1.0, 1.0, 0.0],
+            tex0: [1.0, 0.0],
+            tex1: [1.0, 0.0],
+            tex2: [1.0, 0.0],
+        },
+        Vertex {
+            pos: [1.0, -1.0, 0.0],
+            tex0: [1.0, 1.0],
+            tex1: [1.0, 1.0],
+            tex2: [1.0, 1.0],
+        },
+    ];
+    let vb = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("vb"),
+        contents: bytemuck::cast_slice(&verts),
+        usage: wgpu::BufferUsages::VERTEX,
+    });
+
+    let mut stages = [TextureStageState::default(); 8];
+    stages[0] = TextureStageState {
+        color_op: TextureOp::SelectArg1,
+        color_arg0: TextureArg::Current,
+        color_arg1: TextureArg::Texture,
+        color_arg2: TextureArg::Current,
+        alpha_op: TextureOp::SelectArg1,
+        alpha_arg0: TextureArg::Current,
+        alpha_arg1: TextureArg::Texture,
+        alpha_arg2: TextureArg::Current,
+        ..Default::default()
+    };
+    // Stage 1 enabled to allow stage 2; passthrough.
+    stages[1] = TextureStageState {
+        color_op: TextureOp::SelectArg1,
+        color_arg0: TextureArg::Current,
+        color_arg1: TextureArg::Current,
+        color_arg2: TextureArg::Current,
+        alpha_op: TextureOp::SelectArg1,
+        alpha_arg0: TextureArg::Current,
+        alpha_arg1: TextureArg::Current,
+        alpha_arg2: TextureArg::Current,
+        ..Default::default()
+    };
+    stages[2] = TextureStageState {
+        color_op: TextureOp::Add,
+        color_arg0: TextureArg::Current,
+        color_arg1: TextureArg::Current,
+        color_arg2: TextureArg::Texture,
+        alpha_op: TextureOp::SelectArg1,
+        alpha_arg0: TextureArg::Current,
+        alpha_arg1: TextureArg::Current,
+        alpha_arg2: TextureArg::Current,
+        ..Default::default()
+    };
+
+    let desc = FixedFunctionShaderDesc {
+        fvf: Fvf(Fvf::XYZ | (3 << 8)),
+        stages,
+        alpha_test: AlphaTestState::default(),
+        fog: FogState::default(),
+        lighting: LightingState::default(),
+    };
+
+    let shaders = aero_d3d9::fixed_function::shader_gen::generate_fixed_function_shaders(&desc);
+    let vs = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("vs"),
+        source: wgpu::ShaderSource::Wgsl(shaders.vertex_wgsl.clone().into()),
+    });
+    let fs = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("fs"),
+        source: wgpu::ShaderSource::Wgsl(shaders.fragment_wgsl.clone().into()),
+    });
+
+    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("pipeline"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &vs,
+            entry_point: "vs_main",
+            buffers: &[shaders.vertex_buffer_layout()],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &fs,
+            entry_point: "fs_main",
+            targets: &[Some(wgpu::ColorTargetState {
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+    });
+
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("render-encoder"),
+    });
+    {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("render-pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &target_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            occlusion_query_set: None,
+            timestamp_writes: None,
+        });
+
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &globals_bg, &[]);
+        pass.set_bind_group(1, &tex_bg, &[]);
+        pass.set_vertex_buffer(0, vb.slice(..));
+        pass.draw(0..6, 0..1);
+    }
+    queue.submit([encoder.finish()]);
+
+    let pixels = readback_rgba8(&device, &queue, &target, width, height);
+    // tex0 (128,64,32) + tex2 (64,128,255) => (192,192,287) clamped to (192,192,255).
+    assert_rgba_approx(pixel_at_rgba(&pixels, width, 1, 1), [192, 192, 255, 255], 3);
 }
 
 #[test]
@@ -2641,64 +3139,50 @@ fn render_fixed_function_uniform_sources_and_flags() {
         }],
     });
 
+    let mut tex_entries = Vec::new();
+    for stage in 0..8u32 {
+        tex_entries.push(wgpu::BindGroupLayoutEntry {
+            binding: stage * 2,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        });
+        tex_entries.push(wgpu::BindGroupLayoutEntry {
+            binding: stage * 2 + 1,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+            count: None,
+        });
+    }
     let tex_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("tex-bgl"),
-        entries: &[
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 2,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 3,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                count: None,
-            },
-        ],
+        entries: &tex_entries,
     });
+
+    let mut tex_bg_entries = Vec::new();
+    for stage in 0..8u32 {
+        let view = match stage {
+            0 => &tex0_view,
+            1 => &tex1_view,
+            _ => &tex0_view,
+        };
+        tex_bg_entries.push(wgpu::BindGroupEntry {
+            binding: stage * 2,
+            resource: wgpu::BindingResource::TextureView(view),
+        });
+        tex_bg_entries.push(wgpu::BindGroupEntry {
+            binding: stage * 2 + 1,
+            resource: wgpu::BindingResource::Sampler(&sampler),
+        });
+    }
     let tex_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("tex-bg"),
         layout: &tex_bgl,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&tex0_view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::Sampler(&sampler),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: wgpu::BindingResource::TextureView(&tex1_view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: wgpu::BindingResource::Sampler(&sampler),
-            },
-        ],
+        entries: &tex_bg_entries,
     });
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -2759,15 +3243,6 @@ fn render_fixed_function_uniform_sources_and_flags() {
 
     let fvf = Fvf(Fvf::XYZ | Fvf::DIFFUSE | Fvf::SPECULAR | (2 << 8));
 
-    let desc_base = FixedFunctionShaderDesc {
-        fvf,
-        stage0: TextureStageState::default(),
-        stage1: TextureStageState::default(),
-        alpha_test: AlphaTestState::default(),
-        fog: FogState::default(),
-        lighting: LightingState::default(),
-    };
-
     let stage0_select_tex = TextureStageState {
         color_op: TextureOp::SelectArg1,
         color_arg0: TextureArg::Current,
@@ -2777,8 +3252,7 @@ fn render_fixed_function_uniform_sources_and_flags() {
         alpha_arg0: TextureArg::Current,
         alpha_arg1: TextureArg::Texture,
         alpha_arg2: TextureArg::Current,
-        texcoord_index: None,
-        result_target: TextureResultTarget::Current,
+        ..Default::default()
     };
 
     let mut globals_base = FixedFunctionGlobals::identity();
@@ -2797,10 +3271,10 @@ fn render_fixed_function_uniform_sources_and_flags() {
     let cases = [
         (
             "texture-factor",
-            FixedFunctionShaderDesc {
-                fvf,
-                stage0: stage0_select_tex,
-                stage1: TextureStageState {
+            {
+                let mut stages = [TextureStageState::default(); 8];
+                stages[0] = stage0_select_tex;
+                stages[1] = TextureStageState {
                     color_op: TextureOp::Modulate,
                     color_arg0: TextureArg::Current,
                     color_arg1: TextureArg::Current,
@@ -2809,20 +3283,25 @@ fn render_fixed_function_uniform_sources_and_flags() {
                     alpha_arg0: TextureArg::Current,
                     alpha_arg1: TextureArg::Current,
                     alpha_arg2: TextureArg::TextureFactor,
-                    texcoord_index: None,
-                    result_target: TextureResultTarget::Current,
-                },
-                ..desc_base.clone()
+                    ..Default::default()
+                };
+                FixedFunctionShaderDesc {
+                    fvf,
+                    stages,
+                    alpha_test: AlphaTestState::default(),
+                    fog: FogState::default(),
+                    lighting: LightingState::default(),
+                }
             },
             globals_tf,
             [64, 32, 16, 128],
         ),
         (
             "stage-constant",
-            FixedFunctionShaderDesc {
-                fvf,
-                stage0: stage0_select_tex,
-                stage1: TextureStageState {
+            {
+                let mut stages = [TextureStageState::default(); 8];
+                stages[0] = stage0_select_tex;
+                stages[1] = TextureStageState {
                     color_op: TextureOp::Add,
                     color_arg0: TextureArg::Current,
                     color_arg1: TextureArg::Current,
@@ -2831,19 +3310,24 @@ fn render_fixed_function_uniform_sources_and_flags() {
                     alpha_arg0: TextureArg::Current,
                     alpha_arg1: TextureArg::Current,
                     alpha_arg2: TextureArg::Factor,
-                    texcoord_index: None,
-                    result_target: TextureResultTarget::Current,
-                },
-                ..desc_base.clone()
+                    ..Default::default()
+                };
+                FixedFunctionShaderDesc {
+                    fvf,
+                    stages,
+                    alpha_test: AlphaTestState::default(),
+                    fog: FogState::default(),
+                    lighting: LightingState::default(),
+                }
             },
             globals_stage_const,
             [192, 128, 96, 64],
         ),
         (
             "arg-flags",
-            FixedFunctionShaderDesc {
-                fvf,
-                stage0: TextureStageState {
+            {
+                let mut stages = [TextureStageState::default(); 8];
+                stages[0] = TextureStageState {
                     color_op: TextureOp::Modulate2x,
                     color_arg0: TextureArg::Current,
                     color_arg1: TextureArg::Texture.complement(),
@@ -2852,10 +3336,15 @@ fn render_fixed_function_uniform_sources_and_flags() {
                     alpha_arg0: TextureArg::Current,
                     alpha_arg1: TextureArg::Diffuse,
                     alpha_arg2: TextureArg::Current,
-                    texcoord_index: None,
-                    result_target: TextureResultTarget::Current,
-                },
-                ..desc_base.clone()
+                    ..Default::default()
+                };
+                FixedFunctionShaderDesc {
+                    fvf,
+                    stages,
+                    alpha_test: AlphaTestState::default(),
+                    fog: FogState::default(),
+                    lighting: LightingState::default(),
+                }
             },
             globals_base,
             [64, 96, 112, 255],
@@ -2863,8 +3352,11 @@ fn render_fixed_function_uniform_sources_and_flags() {
         (
             "fog",
             FixedFunctionShaderDesc {
+                fvf,
+                stages: [TextureStageState::default(); 8],
+                alpha_test: AlphaTestState::default(),
                 fog: FogState { enabled: true },
-                ..desc_base.clone()
+                lighting: LightingState::default(),
             },
             globals_fog,
             [255, 128, 128, 255],
@@ -3031,10 +3523,6 @@ fn render_texcoord_index_override() {
     );
     let tex0_view = tex0.create_view(&Default::default());
 
-    // Stage1 is disabled, but the fixed-function shaders always declare/bind tex1 + samp1.
-    // Reuse tex0 for simplicity.
-    let tex1_view = tex0.create_view(&Default::default());
-
     let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
         label: Some("nearest"),
         mag_filter: wgpu::FilterMode::Nearest,
@@ -3075,64 +3563,44 @@ fn render_texcoord_index_override() {
         }],
     });
 
+    let mut tex_entries = Vec::new();
+    for stage in 0..8u32 {
+        tex_entries.push(wgpu::BindGroupLayoutEntry {
+            binding: stage * 2,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        });
+        tex_entries.push(wgpu::BindGroupLayoutEntry {
+            binding: stage * 2 + 1,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+            count: None,
+        });
+    }
     let tex_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("tex-bgl"),
-        entries: &[
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 2,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 3,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                count: None,
-            },
-        ],
+        entries: &tex_entries,
     });
+    let mut tex_bg_entries = Vec::new();
+    for stage in 0..8u32 {
+        tex_bg_entries.push(wgpu::BindGroupEntry {
+            binding: stage * 2,
+            resource: wgpu::BindingResource::TextureView(&tex0_view),
+        });
+        tex_bg_entries.push(wgpu::BindGroupEntry {
+            binding: stage * 2 + 1,
+            resource: wgpu::BindingResource::Sampler(&sampler),
+        });
+    }
     let tex_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("tex-bg"),
         layout: &tex_bgl,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&tex0_view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::Sampler(&sampler),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: wgpu::BindingResource::TextureView(&tex1_view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: wgpu::BindingResource::Sampler(&sampler),
-            },
-        ],
+        entries: &tex_bg_entries,
     });
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -3181,9 +3649,9 @@ fn render_texcoord_index_override() {
         usage: wgpu::BufferUsages::VERTEX,
     });
 
-    let mk_desc = |texcoord_index| FixedFunctionShaderDesc {
-        fvf: Fvf(Fvf::XYZ | (2 << 8)),
-        stage0: TextureStageState {
+    let mk_desc = |texcoord_index| {
+        let mut stages = [TextureStageState::default(); 8];
+        stages[0] = TextureStageState {
             color_op: TextureOp::SelectArg1,
             color_arg0: TextureArg::Current,
             color_arg1: TextureArg::Texture,
@@ -3193,12 +3661,15 @@ fn render_texcoord_index_override() {
             alpha_arg1: TextureArg::Texture,
             alpha_arg2: TextureArg::Current,
             texcoord_index,
-            result_target: TextureResultTarget::Current,
-        },
-        stage1: TextureStageState::default(),
-        alpha_test: AlphaTestState::default(),
-        fog: FogState::default(),
-        lighting: LightingState::default(),
+            ..Default::default()
+        };
+        FixedFunctionShaderDesc {
+            fvf: Fvf(Fvf::XYZ | (2 << 8)),
+            stages,
+            alpha_test: AlphaTestState::default(),
+            fog: FogState::default(),
+            lighting: LightingState::default(),
+        }
     };
 
     let desc_default = mk_desc(None);
@@ -3452,64 +3923,49 @@ fn render_two_stage_result_to_temp_then_add() {
         }],
     });
 
+    let mut tex_entries = Vec::new();
+    for stage in 0..8u32 {
+        tex_entries.push(wgpu::BindGroupLayoutEntry {
+            binding: stage * 2,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        });
+        tex_entries.push(wgpu::BindGroupLayoutEntry {
+            binding: stage * 2 + 1,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+            count: None,
+        });
+    }
     let tex_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("tex-bgl"),
-        entries: &[
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 2,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 3,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                count: None,
-            },
-        ],
+        entries: &tex_entries,
     });
+    let mut tex_bg_entries = Vec::new();
+    for stage in 0..8u32 {
+        let view = match stage {
+            0 => &tex0_view,
+            1 => &tex1_view,
+            _ => &tex0_view,
+        };
+        tex_bg_entries.push(wgpu::BindGroupEntry {
+            binding: stage * 2,
+            resource: wgpu::BindingResource::TextureView(view),
+        });
+        tex_bg_entries.push(wgpu::BindGroupEntry {
+            binding: stage * 2 + 1,
+            resource: wgpu::BindingResource::Sampler(&sampler),
+        });
+    }
     let tex_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("tex-bg"),
         layout: &tex_bgl,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&tex0_view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::Sampler(&sampler),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: wgpu::BindingResource::TextureView(&tex1_view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: wgpu::BindingResource::Sampler(&sampler),
-            },
-        ],
+        entries: &tex_bg_entries,
     });
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -3564,32 +4020,34 @@ fn render_two_stage_result_to_temp_then_add() {
         usage: wgpu::BufferUsages::VERTEX,
     });
 
+    let mut stages = [TextureStageState::default(); 8];
+    stages[0] = TextureStageState {
+        color_op: TextureOp::SelectArg1,
+        color_arg0: TextureArg::Current,
+        color_arg1: TextureArg::Texture,
+        color_arg2: TextureArg::Current,
+        alpha_op: TextureOp::SelectArg1,
+        alpha_arg0: TextureArg::Current,
+        alpha_arg1: TextureArg::Texture,
+        alpha_arg2: TextureArg::Current,
+        texcoord_index: None,
+        result_target: TextureResultTarget::Temp,
+    };
+    stages[1] = TextureStageState {
+        color_op: TextureOp::Add,
+        color_arg0: TextureArg::Current,
+        color_arg1: TextureArg::Temp,
+        color_arg2: TextureArg::Current,
+        alpha_op: TextureOp::SelectArg1,
+        alpha_arg0: TextureArg::Current,
+        alpha_arg1: TextureArg::Current,
+        alpha_arg2: TextureArg::Current,
+        texcoord_index: None,
+        result_target: TextureResultTarget::Current,
+    };
     let desc = FixedFunctionShaderDesc {
         fvf: Fvf(Fvf::XYZ | Fvf::DIFFUSE | (2 << 8)),
-        stage0: TextureStageState {
-            color_op: TextureOp::SelectArg1,
-            color_arg0: TextureArg::Current,
-            color_arg1: TextureArg::Texture,
-            color_arg2: TextureArg::Current,
-            alpha_op: TextureOp::SelectArg1,
-            alpha_arg0: TextureArg::Current,
-            alpha_arg1: TextureArg::Texture,
-            alpha_arg2: TextureArg::Current,
-            texcoord_index: None,
-            result_target: TextureResultTarget::Temp,
-        },
-        stage1: TextureStageState {
-            color_op: TextureOp::Add,
-            color_arg0: TextureArg::Current,
-            color_arg1: TextureArg::Temp,
-            color_arg2: TextureArg::Current,
-            alpha_op: TextureOp::SelectArg1,
-            alpha_arg0: TextureArg::Current,
-            alpha_arg1: TextureArg::Current,
-            alpha_arg2: TextureArg::Current,
-            texcoord_index: None,
-            result_target: TextureResultTarget::Current,
-        },
+        stages,
         alpha_test: AlphaTestState::default(),
         fog: FogState::default(),
         lighting: LightingState::default(),

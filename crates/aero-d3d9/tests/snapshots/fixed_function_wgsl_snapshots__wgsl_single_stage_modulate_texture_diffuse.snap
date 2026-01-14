@@ -1,9 +1,8 @@
 ---
 source: crates/aero-d3d9/tests/fixed_function_wgsl_snapshots.rs
-assertion_line: 38
 expression: shaders_snapshot(&desc)
 ---
-// hash: 0x8194ad6652930bac
+// hash: 0x2986a1db51476a47
 
 // --- vertex.wgsl ---
 
@@ -19,7 +18,7 @@ struct Globals {
   light_color: vec4<f32>,
   lighting_flags: vec4<u32>,
   texture_factor: vec4<f32>,
-  stage_constants: array<vec4<f32>, 2>,
+  stage_constants: array<vec4<f32>, 8>,
 };
 
 @group(0) @binding(0) var<uniform> globals: Globals;
@@ -69,7 +68,7 @@ struct Globals {
   light_color: vec4<f32>,
   lighting_flags: vec4<u32>,
   texture_factor: vec4<f32>,
-  stage_constants: array<vec4<f32>, 2>,
+  stage_constants: array<vec4<f32>, 8>,
 };
 
 @group(0) @binding(0) var<uniform> globals: Globals;
@@ -85,6 +84,24 @@ fn d3dcolor_bgra_to_rgba(c: vec4<f32>) -> vec4<f32> {
 
 @group(1) @binding(2) var tex1: texture_2d<f32>;
 @group(1) @binding(3) var samp1: sampler;
+
+@group(1) @binding(4) var tex2: texture_2d<f32>;
+@group(1) @binding(5) var samp2: sampler;
+
+@group(1) @binding(6) var tex3: texture_2d<f32>;
+@group(1) @binding(7) var samp3: sampler;
+
+@group(1) @binding(8) var tex4: texture_2d<f32>;
+@group(1) @binding(9) var samp4: sampler;
+
+@group(1) @binding(10) var tex5: texture_2d<f32>;
+@group(1) @binding(11) var samp5: sampler;
+
+@group(1) @binding(12) var tex6: texture_2d<f32>;
+@group(1) @binding(13) var samp6: sampler;
+
+@group(1) @binding(14) var tex7: texture_2d<f32>;
+@group(1) @binding(15) var samp7: sampler;
 
 struct FragmentIn {
   @location(0) diffuse: vec4<f32>,
