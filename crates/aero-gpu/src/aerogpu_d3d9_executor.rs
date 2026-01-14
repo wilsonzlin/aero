@@ -93,6 +93,10 @@ pub struct AerogpuD3d9Executor {
     half_pixel_bind_group_layout: Option<wgpu::BindGroupLayout>,
     half_pixel_uniform_buffer: Option<wgpu::Buffer>,
     half_pixel_bind_group: Option<wgpu::BindGroup>,
+    /// Cached viewport dimensions (width/height) used for the last half-pixel uniform upload.
+    ///
+    /// This is tracked per-context (see [`ContextState`]) and swapped in `switch_context`.
+    half_pixel_last_viewport_dims: Option<(f32, f32)>,
 
     dummy_texture_view: wgpu::TextureView,
     dummy_cube_texture_view: wgpu::TextureView,
@@ -174,6 +178,7 @@ struct ContextState {
     samplers_bind_groups_dirty: bool,
     half_pixel_uniform_buffer: Option<wgpu::Buffer>,
     half_pixel_bind_group: Option<wgpu::BindGroup>,
+    half_pixel_last_viewport_dims: Option<(f32, f32)>,
     samplers_vs: [Arc<wgpu::Sampler>; MAX_SAMPLERS],
     sampler_state_vs: [D3d9SamplerState; MAX_SAMPLERS],
     samplers_ps: [Arc<wgpu::Sampler>; MAX_SAMPLERS],
@@ -216,6 +221,7 @@ impl ContextState {
             samplers_bind_groups_dirty: true,
             half_pixel_uniform_buffer,
             half_pixel_bind_group,
+            half_pixel_last_viewport_dims: None,
             samplers_vs: std::array::from_fn(|_| default_sampler.clone()),
             sampler_state_vs: std::array::from_fn(|_| D3d9SamplerState::default()),
             samplers_ps: std::array::from_fn(|_| default_sampler.clone()),
@@ -1381,6 +1387,7 @@ impl AerogpuD3d9Executor {
             half_pixel_bind_group_layout,
             half_pixel_uniform_buffer,
             half_pixel_bind_group,
+            half_pixel_last_viewport_dims: None,
             dummy_texture_view,
             dummy_cube_texture_view,
             downlevel_flags,
@@ -1483,6 +1490,7 @@ impl AerogpuD3d9Executor {
         self.samplers_vs = std::array::from_fn(|_| default_sampler.clone());
         self.samplers_ps = std::array::from_fn(|_| default_sampler.clone());
         self.state = create_default_state();
+        self.half_pixel_last_viewport_dims = None;
         self.encoder = None;
 
         // Avoid leaking constants across resets; the next draw will rewrite what it needs.
@@ -2039,6 +2047,10 @@ impl AerogpuD3d9Executor {
             &mut next.half_pixel_uniform_buffer,
         );
         std::mem::swap(&mut self.half_pixel_bind_group, &mut next.half_pixel_bind_group);
+        std::mem::swap(
+            &mut self.half_pixel_last_viewport_dims,
+            &mut next.half_pixel_last_viewport_dims,
+        );
         std::mem::swap(&mut self.samplers_vs, &mut next.samplers_vs);
         std::mem::swap(&mut self.sampler_state_vs, &mut next.sampler_state_vs);
         std::mem::swap(&mut self.samplers_ps, &mut next.samplers_ps);
@@ -5094,42 +5106,6 @@ impl AerogpuD3d9Executor {
                     min_depth: f32::from_bits(min_depth_f32),
                     max_depth: f32::from_bits(max_depth_f32),
                 });
-
-                // When half-pixel mode is enabled, keep the viewport inverse dimensions uniform in
-                // sync. Use an encoder-ordered copy so multiple viewport changes within a single
-                // command stream are ordered correctly relative to subsequent draws.
-                if self.half_pixel_center {
-                    let inv_w = if width > 0.0 { 1.0 / width } else { 0.0 };
-                    let inv_h = if height > 0.0 { 1.0 / height } else { 0.0 };
-                    let mut data = [0u8; HALF_PIXEL_UNIFORM_SIZE_BYTES];
-                    data[0..4].copy_from_slice(&inv_w.to_le_bytes());
-                    data[4..8].copy_from_slice(&inv_h.to_le_bytes());
-                    // Remaining bytes are padding.
-
-                    if self.half_pixel_uniform_buffer.is_some() {
-                        self.ensure_encoder();
-                        let staging = self
-                            .device
-                            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                                label: Some("aerogpu-d3d9.half_pixel.staging"),
-                                contents: &data,
-                                usage: wgpu::BufferUsages::COPY_SRC,
-                            });
-                        let mut encoder = self.encoder.take().unwrap();
-                        let buf = self
-                            .half_pixel_uniform_buffer
-                            .as_ref()
-                            .expect("checked is_some above");
-                        encoder.copy_buffer_to_buffer(
-                            &staging,
-                            0,
-                            buf,
-                            0,
-                            HALF_PIXEL_UNIFORM_SIZE_BYTES as u64,
-                        );
-                        self.encoder = Some(encoder);
-                    }
-                }
                 Ok(())
             }
             AeroGpuCmd::SetScissor {
@@ -7302,6 +7278,47 @@ impl AerogpuD3d9Executor {
             .samplers_bind_group_ps
             .as_ref()
             .expect("ensure_sampler_bind_groups initializes PS sampler bind group");
+
+        // When half-pixel mode is enabled, keep the viewport inverse dimensions uniform in sync
+        // with the *effective* viewport used for this draw (after clamping to render target
+        // bounds). This also covers the default viewport case where the guest never explicitly
+        // sets one (D3D9 defaults the viewport to the full render target).
+        if self.half_pixel_center {
+            if let Some(buf) = self.half_pixel_uniform_buffer.as_ref() {
+                let (vp_w, vp_h) = if let Some(vp) = viewport.as_ref() {
+                    (vp.width, vp.height)
+                } else {
+                    (rt_w as f32, rt_h as f32)
+                };
+                if vp_w > 0.0 && vp_h > 0.0 {
+                    let dims = (vp_w, vp_h);
+                    if self.half_pixel_last_viewport_dims != Some(dims) {
+                        let inv_w = 1.0 / vp_w;
+                        let inv_h = 1.0 / vp_h;
+                        let mut data = [0u8; HALF_PIXEL_UNIFORM_SIZE_BYTES];
+                        data[0..4].copy_from_slice(&inv_w.to_le_bytes());
+                        data[4..8].copy_from_slice(&inv_h.to_le_bytes());
+                        // Remaining bytes are padding.
+
+                        let staging =
+                            self.device
+                                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                                    label: Some("aerogpu-d3d9.half_pixel.viewport_staging"),
+                                    contents: &data,
+                                    usage: wgpu::BufferUsages::COPY_SRC,
+                                });
+                        encoder.copy_buffer_to_buffer(
+                            &staging,
+                            0,
+                            buf,
+                            0,
+                            HALF_PIXEL_UNIFORM_SIZE_BYTES as u64,
+                        );
+                        self.half_pixel_last_viewport_dims = Some(dims);
+                    }
+                }
+            }
+        }
 
         let (color_views, depth_view) = self.render_target_attachments()?;
         let color_attachments = color_views
