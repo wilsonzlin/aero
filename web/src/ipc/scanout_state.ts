@@ -253,29 +253,40 @@ export function publishScanoutState(words: Int32Array, update: ScanoutStateUpdat
   }
 
   // Acquire the writer lock by setting the busy bit.
+  //
+  // IMPORTANT: this must not spin forever if another writer crashes while holding the busy bit.
+  // Bound the retry loop so callers can recover.
+  const startMs = nowMs();
+  const MAX_SPIN_MS = 50;
+  const MAX_SPINS = 1_000_000;
   let start = Atomics.load(words, ScanoutStateIndex.GENERATION) >>> 0;
-  while (true) {
+  for (let spins = 0; spins < MAX_SPINS; spins += 1) {
     if ((start & SCANOUT_STATE_GENERATION_BUSY_BIT) !== 0) {
+      if ((spins & 0x3fff) === 0 && nowMs() - startMs > MAX_SPIN_MS) break;
       start = Atomics.load(words, ScanoutStateIndex.GENERATION) >>> 0;
       continue;
     }
+
     const desired = (start | SCANOUT_STATE_GENERATION_BUSY_BIT) >>> 0;
     const prev = Atomics.compareExchange(words, ScanoutStateIndex.GENERATION, start | 0, desired | 0) >>> 0;
-    if (prev === start) break;
+    if (prev === start) {
+      // Store the payload fields.
+      Atomics.store(words, ScanoutStateIndex.SOURCE, update.source | 0);
+      Atomics.store(words, ScanoutStateIndex.BASE_PADDR_LO, update.basePaddrLo | 0);
+      Atomics.store(words, ScanoutStateIndex.BASE_PADDR_HI, update.basePaddrHi | 0);
+      Atomics.store(words, ScanoutStateIndex.WIDTH, update.width | 0);
+      Atomics.store(words, ScanoutStateIndex.HEIGHT, update.height | 0);
+      Atomics.store(words, ScanoutStateIndex.PITCH_BYTES, update.pitchBytes | 0);
+      Atomics.store(words, ScanoutStateIndex.FORMAT, update.format | 0);
+
+      // Final publish step: increment generation and clear the busy bit.
+      const newGeneration = (((start + 1) >>> 0) & (~SCANOUT_STATE_GENERATION_BUSY_BIT >>> 0)) >>> 0;
+      Atomics.store(words, ScanoutStateIndex.GENERATION, newGeneration | 0);
+      return newGeneration;
+    }
     start = prev;
+    if ((spins & 0x3fff) === 0 && nowMs() - startMs > MAX_SPIN_MS) break;
   }
 
-  // Store the payload fields.
-  Atomics.store(words, ScanoutStateIndex.SOURCE, update.source | 0);
-  Atomics.store(words, ScanoutStateIndex.BASE_PADDR_LO, update.basePaddrLo | 0);
-  Atomics.store(words, ScanoutStateIndex.BASE_PADDR_HI, update.basePaddrHi | 0);
-  Atomics.store(words, ScanoutStateIndex.WIDTH, update.width | 0);
-  Atomics.store(words, ScanoutStateIndex.HEIGHT, update.height | 0);
-  Atomics.store(words, ScanoutStateIndex.PITCH_BYTES, update.pitchBytes | 0);
-  Atomics.store(words, ScanoutStateIndex.FORMAT, update.format | 0);
-
-  // Final publish step: increment generation and clear the busy bit.
-  const newGeneration = (((start + 1) >>> 0) & (~SCANOUT_STATE_GENERATION_BUSY_BIT >>> 0)) >>> 0;
-  Atomics.store(words, ScanoutStateIndex.GENERATION, newGeneration | 0);
-  return newGeneration;
+  throw new Error("publishScanoutState: timed out (writer busy bit stuck or too much contention)");
 }

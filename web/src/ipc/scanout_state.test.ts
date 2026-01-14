@@ -209,6 +209,38 @@ describe("ipc/scanout_state", () => {
     }
   });
 
+  it("publish times out if the busy bit is stuck", () => {
+    const scanoutSab = new SharedArrayBuffer(SCANOUT_STATE_BYTE_LEN);
+    const words = wrapScanoutState(scanoutSab, 0);
+
+    // Simulate a wedged writer holding the lock forever.
+    Atomics.store(words, ScanoutStateIndex.GENERATION, (123 | SCANOUT_STATE_GENERATION_BUSY_BIT) | 0);
+
+    // Force the time-based bailout to trigger immediately.
+    const originalNow = performance.now;
+    let nowCalls = 0;
+    (performance as unknown as { now: typeof performance.now }).now = (() => {
+      nowCalls += 1;
+      return nowCalls === 1 ? 0 : 1000;
+    }) as typeof performance.now;
+
+    try {
+      expect(() =>
+        publishScanoutState(words, {
+          source: SCANOUT_SOURCE_WDDM,
+          basePaddrLo: 0,
+          basePaddrHi: 0,
+          width: 0,
+          height: 0,
+          pitchBytes: 0,
+          format: SCANOUT_FORMAT_B8G8R8X8,
+        }),
+      ).toThrow(/timed out/);
+    } finally {
+      (performance as unknown as { now: typeof performance.now }).now = originalNow;
+    }
+  });
+
   it("trySnapshotScanoutState returns null quickly when the busy bit is stuck", () => {
     const scanoutSab = new SharedArrayBuffer(SCANOUT_STATE_BYTE_LEN);
     const words = wrapScanoutState(scanoutSab, 0);

@@ -278,33 +278,45 @@ export function publishCursorState(words: Int32Array, update: CursorStateUpdate)
   }
 
   // Acquire the writer lock by setting the busy bit.
+  //
+  // IMPORTANT: this must not spin forever if another writer crashes while holding the busy bit
+  // (or if the underlying SharedArrayBuffer is reused across worker restarts with a wedged
+  // generation word). Bound the retry loop so callers can recover.
+  const startMs = nowMs();
+  const MAX_SPIN_MS = 50;
+  const MAX_SPINS = 1_000_000;
   let start = Atomics.load(words, CursorStateIndex.GENERATION) >>> 0;
-  while (true) {
+  for (let spins = 0; spins < MAX_SPINS; spins += 1) {
     if ((start & CURSOR_STATE_GENERATION_BUSY_BIT) !== 0) {
+      if ((spins & 0x3fff) === 0 && nowMs() - startMs > MAX_SPIN_MS) break;
       start = Atomics.load(words, CursorStateIndex.GENERATION) >>> 0;
       continue;
     }
+
     const desired = (start | CURSOR_STATE_GENERATION_BUSY_BIT) >>> 0;
     const prev = Atomics.compareExchange(words, CursorStateIndex.GENERATION, start | 0, desired | 0) >>> 0;
-    if (prev === start) break;
+    if (prev === start) {
+      // Store the payload fields.
+      Atomics.store(words, CursorStateIndex.ENABLE, update.enable | 0);
+      Atomics.store(words, CursorStateIndex.X, update.x | 0);
+      Atomics.store(words, CursorStateIndex.Y, update.y | 0);
+      Atomics.store(words, CursorStateIndex.HOT_X, update.hotX | 0);
+      Atomics.store(words, CursorStateIndex.HOT_Y, update.hotY | 0);
+      Atomics.store(words, CursorStateIndex.WIDTH, update.width | 0);
+      Atomics.store(words, CursorStateIndex.HEIGHT, update.height | 0);
+      Atomics.store(words, CursorStateIndex.PITCH_BYTES, update.pitchBytes | 0);
+      Atomics.store(words, CursorStateIndex.FORMAT, update.format | 0);
+      Atomics.store(words, CursorStateIndex.BASE_PADDR_LO, update.basePaddrLo | 0);
+      Atomics.store(words, CursorStateIndex.BASE_PADDR_HI, update.basePaddrHi | 0);
+
+      // Final publish step: increment generation and clear the busy bit.
+      const newGeneration = (((start + 1) >>> 0) & (~CURSOR_STATE_GENERATION_BUSY_BIT >>> 0)) >>> 0;
+      Atomics.store(words, CursorStateIndex.GENERATION, newGeneration | 0);
+      return newGeneration;
+    }
     start = prev;
+    if ((spins & 0x3fff) === 0 && nowMs() - startMs > MAX_SPIN_MS) break;
   }
 
-  // Store the payload fields.
-  Atomics.store(words, CursorStateIndex.ENABLE, update.enable | 0);
-  Atomics.store(words, CursorStateIndex.X, update.x | 0);
-  Atomics.store(words, CursorStateIndex.Y, update.y | 0);
-  Atomics.store(words, CursorStateIndex.HOT_X, update.hotX | 0);
-  Atomics.store(words, CursorStateIndex.HOT_Y, update.hotY | 0);
-  Atomics.store(words, CursorStateIndex.WIDTH, update.width | 0);
-  Atomics.store(words, CursorStateIndex.HEIGHT, update.height | 0);
-  Atomics.store(words, CursorStateIndex.PITCH_BYTES, update.pitchBytes | 0);
-  Atomics.store(words, CursorStateIndex.FORMAT, update.format | 0);
-  Atomics.store(words, CursorStateIndex.BASE_PADDR_LO, update.basePaddrLo | 0);
-  Atomics.store(words, CursorStateIndex.BASE_PADDR_HI, update.basePaddrHi | 0);
-
-  // Final publish step: increment generation and clear the busy bit.
-  const newGeneration = (((start + 1) >>> 0) & (~CURSOR_STATE_GENERATION_BUSY_BIT >>> 0)) >>> 0;
-  Atomics.store(words, CursorStateIndex.GENERATION, newGeneration | 0);
-  return newGeneration;
+  throw new Error("publishCursorState: timed out (writer busy bit stuck or too much contention)");
 }

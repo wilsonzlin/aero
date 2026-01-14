@@ -251,6 +251,42 @@ describe("ipc/cursor_state", () => {
     }
   });
 
+  it("publish times out if the busy bit is stuck", () => {
+    const cursorSab = new SharedArrayBuffer(CURSOR_STATE_BYTE_LEN);
+    const words = wrapCursorState(cursorSab, 0);
+
+    // Simulate a wedged writer holding the lock forever.
+    Atomics.store(words, CursorStateIndex.GENERATION, (123 | CURSOR_STATE_GENERATION_BUSY_BIT) | 0);
+
+    // Force the time-based bailout to trigger immediately.
+    const originalNow = performance.now;
+    let nowCalls = 0;
+    (performance as unknown as { now: typeof performance.now }).now = (() => {
+      nowCalls += 1;
+      return nowCalls === 1 ? 0 : 1000;
+    }) as typeof performance.now;
+
+    try {
+      expect(() =>
+        publishCursorState(words, {
+          enable: 0,
+          x: 0,
+          y: 0,
+          hotX: 0,
+          hotY: 0,
+          width: 0,
+          height: 0,
+          pitchBytes: 0,
+          format: CURSOR_FORMAT_B8G8R8A8,
+          basePaddrLo: 0,
+          basePaddrHi: 0,
+        }),
+      ).toThrow(/timed out/);
+    } finally {
+      (performance as unknown as { now: typeof performance.now }).now = originalNow;
+    }
+  });
+
   it("trySnapshotCursorState returns null quickly when the busy bit is stuck", () => {
     const cursorSab = new SharedArrayBuffer(CURSOR_STATE_BYTE_LEN);
     const words = wrapCursorState(cursorSab, 0);
