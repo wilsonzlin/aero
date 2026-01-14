@@ -45,6 +45,7 @@ cargo xtask wasm both release   # build wasm packages (single + threaded)
 cargo xtask web dev             # run the Vite dev server (prints the local URL)
 cargo xtask web build           # production web build
 cargo xtask test-all --skip-e2e # Rust + WASM + TS (skip Playwright)
+cargo xtask wasm-check          # compile-check wasm32 compatibility (no JS runtime required)
 ```
 
 ### Common workflows (bash/just convenience)
@@ -52,6 +53,7 @@ cargo xtask test-all --skip-e2e # Rust + WASM + TS (skip Playwright)
 ```bash
 just setup   # install wasm target, install JS deps, sanity-check toolchain
 just wasm    # build the Rust→WASM package used by the web app (if present)
+just wasm-check # compile-check wasm32 compatibility (no JS runtime required)
 just dev     # run the Vite dev server (prints the local URL)
 just build   # wasm + web production build
 just test    # Rust tests + web unit tests
