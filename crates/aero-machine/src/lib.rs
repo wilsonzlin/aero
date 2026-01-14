@@ -8602,7 +8602,7 @@ impl Machine {
                     //   b = usageId & 0xFFFF
                     let usage_page = (a & 0xffff) as u16;
                     let pressed = ((a >> 16) & 1) != 0;
-                    let usage_id = (b & 0xffff) as u32;
+                    let usage_id = b & 0xffff;
 
                     // Only Usage Page 0x0C ("Consumer") is supported by the canonical synthetic
                     // consumer-control device today.
