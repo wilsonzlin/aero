@@ -422,28 +422,65 @@ function idbOverlayBindingKey(overlayDiskId: string): string {
   return `overlay-binding:${overlayDiskId}`;
 }
 
-async function bestEffortRepairOpfsAerosparMetadata(store: ReturnType<typeof getStore>, meta: DiskImageMetadata): Promise<void> {
+async function bestEffortRepairOpfsLocalMetadata(store: ReturnType<typeof getStore>, meta: DiskImageMetadata): Promise<void> {
   if (meta.source !== "local" || meta.backend !== "opfs") return;
   try {
     const handle = await opfsGetDiskFileHandle(meta.fileName, { create: false, dirPath: meta.opfsDirectory });
     const file = await handle.getFile();
-    // Only attempt repair when the file bytes look like an aerosparse disk.
-    // This aligns with Rust-side `detect_format` logic (magic+version) and avoids silently opening
-    // aerosparse-looking images as raw (which would expose the header bytes to the guest).
-    const looksAerospar = await looksLikeAerosparseDiskFromFile(file);
-    if (!looksAerospar) return;
 
-    // Only set sizeBytes when we can fully validate the header; otherwise keep the existing
-    // capacity metadata but still correct the format so opens fail with a corruption error
-    // instead of leaking header bytes.
-    let diskSizeBytes: number | null = null;
-    try {
-      diskSizeBytes = await sniffAerosparseDiskSizeBytesFromFile(file);
-    } catch {
-      diskSizeBytes = null;
+    // Content-based sniffing to repair legacy imports that trusted the file extension. This avoids
+    // opening container formats as raw sector disks (which can leak headers to the guest).
+    //
+    // Priority order matches `import_file` sniffing: aerospar -> qcow2 -> vhd -> iso.
+    const looksAerospar = await looksLikeAerosparseDiskFromFile(file);
+    if (looksAerospar) {
+      // Only set sizeBytes when we can fully validate the header; otherwise keep the existing
+      // capacity metadata but still correct the format so opens fail with a corruption error
+      // instead of leaking header bytes.
+      let diskSizeBytes: number | null = null;
+      try {
+        diskSizeBytes = await sniffAerosparseDiskSizeBytesFromFile(file);
+      } catch {
+        diskSizeBytes = null;
+      }
+      const nextFormat: DiskFormat = "aerospar";
+      const nextKind: DiskKind = "hdd";
+      let changed = false;
+      if (meta.format !== nextFormat) {
+        meta.format = nextFormat;
+        changed = true;
+      }
+      if (meta.kind !== nextKind) {
+        meta.kind = nextKind;
+        changed = true;
+      }
+      if (diskSizeBytes !== null && meta.sizeBytes !== diskSizeBytes) {
+        meta.sizeBytes = diskSizeBytes;
+        changed = true;
+      }
+      if (!changed) return;
+      await store.putDisk(meta);
+      return;
     }
-    const nextFormat: DiskFormat = "aerospar";
-    const nextKind: DiskKind = "hdd";
+
+    const looksQcow2 = await looksLikeQcow2FromFile(file);
+    const looksVhd = looksQcow2 ? false : await looksLikeVhdFromFile(file);
+    const looksIso = looksQcow2 || looksVhd ? false : await looksLikeIso9660FromFile(file);
+
+    let nextFormat: DiskFormat | null = null;
+    let nextKind: DiskKind | null = null;
+    if (looksQcow2) {
+      nextFormat = "qcow2";
+      nextKind = "hdd";
+    } else if (looksVhd) {
+      nextFormat = "vhd";
+      nextKind = "hdd";
+    } else if (looksIso) {
+      nextFormat = "iso";
+      nextKind = "cd";
+    }
+    if (!nextFormat || !nextKind) return;
+
     let changed = false;
     if (meta.format !== nextFormat) {
       meta.format = nextFormat;
@@ -451,10 +488,6 @@ async function bestEffortRepairOpfsAerosparMetadata(store: ReturnType<typeof get
     }
     if (meta.kind !== nextKind) {
       meta.kind = nextKind;
-      changed = true;
-    }
-    if (diskSizeBytes !== null && meta.sizeBytes !== diskSizeBytes) {
-      meta.sizeBytes = diskSizeBytes;
       changed = true;
     }
     if (!changed) return;
@@ -684,7 +717,7 @@ async function requireDisk(backend: DiskBackend, id: string): Promise<DiskImageM
     // - `sizeBytes` could be incorrectly stored as the *physical* file length (header+table+allocated blocks),
     //   not the logical disk capacity.
     // Repair these records lazily so future opens succeed.
-    await bestEffortRepairOpfsAerosparMetadata(store, meta);
+    await bestEffortRepairOpfsLocalMetadata(store, meta);
   }
   return meta;
 }
@@ -831,7 +864,7 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
       if (backend === "opfs") {
         // Best-effort metadata repair for aerosparse images imported by older clients.
         for (const meta of disks) {
-          await bestEffortRepairOpfsAerosparMetadata(store, meta).catch(() => {});
+          await bestEffortRepairOpfsLocalMetadata(store, meta).catch(() => {});
         }
       }
       postOk(requestId, disks);
