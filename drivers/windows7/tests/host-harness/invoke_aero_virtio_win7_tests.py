@@ -3718,6 +3718,17 @@ def main() -> int:
                 "QEMU virtio-keyboard-pci and virtio-mouse-pci support. Upgrade QEMU or omit input event injection."
             )
 
+    if need_input_led and not args.dry_run:
+        # The guest virtio-input sanity test requires both keyboard and mouse. Fail fast with a clearer
+        # host-side error when the running QEMU build does not advertise one of these devices.
+        if not _qemu_has_device(args.qemu_system, "virtio-keyboard-pci") or not _qemu_has_device(
+            args.qemu_system, "virtio-mouse-pci"
+        ):
+            parser.error(
+                "--with-input-led requires QEMU virtio-keyboard-pci and virtio-mouse-pci support. "
+                "Upgrade QEMU or omit LED/statusq validation."
+            )
+
     if need_input_leds and not args.dry_run:
         if not _qemu_has_device(args.qemu_system, "virtio-keyboard-pci") or not _qemu_has_device(
             args.qemu_system, "virtio-mouse-pci"
