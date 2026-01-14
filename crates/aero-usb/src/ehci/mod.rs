@@ -103,10 +103,6 @@ impl EhciRegs {
         }
     }
 
-    fn frame_index(&self) -> u16 {
-        ((self.frindex >> 3) & 0x03ff) as u16
-    }
-
     fn advance_1ms(&mut self) {
         // FRINDEX is a microframe counter. We tick in 1ms increments, so add 8 microframes so the
         // microframe bits (0..=2) remain 0 at tick boundaries.
