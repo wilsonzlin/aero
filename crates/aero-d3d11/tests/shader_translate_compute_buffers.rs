@@ -193,6 +193,85 @@ fn translates_compute_system_value_builtins_to_wgsl_builtins() {
 }
 
 #[test]
+fn translates_compute_builtin_operand_types_to_wgsl_builtins() {
+    // Compute shaders can reference thread IDs using dedicated operand types in the token stream
+    // (`OPERAND_TYPE_INPUT_THREAD_ID`, etc). In our IR those lower to `SrcKind::ComputeBuiltin`
+    // rather than an `InputSiv`/`RegFile::Input` register.
+    //
+    // Ensure these still result in the correct WGSL `@builtin(...)` declarations.
+    let dxbc_bytes = build_dxbc(&[(FOURCC_SHEX, Vec::new())]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let src_builtin = |builtin: aero_d3d11::sm4_ir::ComputeBuiltin| SrcOperand {
+        kind: SrcKind::ComputeBuiltin(builtin),
+        swizzle: Swizzle::XYZW,
+        modifier: aero_d3d11::OperandModifier::None,
+    };
+
+    let module = Sm4Module {
+        stage: ShaderStage::Compute,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: vec![Sm4Decl::ThreadGroupSize { x: 1, y: 1, z: 1 }],
+        instructions: vec![
+            Sm4Inst::Mov {
+                dst: aero_d3d11::DstOperand {
+                    reg: aero_d3d11::RegisterRef {
+                        file: aero_d3d11::RegFile::Temp,
+                        index: 0,
+                    },
+                    mask: WriteMask::XYZW,
+                    saturate: false,
+                },
+                src: src_builtin(aero_d3d11::sm4_ir::ComputeBuiltin::DispatchThreadId),
+            },
+            Sm4Inst::Mov {
+                dst: aero_d3d11::DstOperand {
+                    reg: aero_d3d11::RegisterRef {
+                        file: aero_d3d11::RegFile::Temp,
+                        index: 1,
+                    },
+                    mask: WriteMask::XYZW,
+                    saturate: false,
+                },
+                src: src_builtin(aero_d3d11::sm4_ir::ComputeBuiltin::GroupThreadId),
+            },
+            Sm4Inst::Mov {
+                dst: aero_d3d11::DstOperand {
+                    reg: aero_d3d11::RegisterRef {
+                        file: aero_d3d11::RegFile::Temp,
+                        index: 2,
+                    },
+                    mask: WriteMask::XYZW,
+                    saturate: false,
+                },
+                src: src_builtin(aero_d3d11::sm4_ir::ComputeBuiltin::GroupId),
+            },
+            Sm4Inst::Mov {
+                dst: aero_d3d11::DstOperand {
+                    reg: aero_d3d11::RegisterRef {
+                        file: aero_d3d11::RegFile::Temp,
+                        index: 3,
+                    },
+                    mask: WriteMask::XYZW,
+                    saturate: false,
+                },
+                src: src_builtin(aero_d3d11::sm4_ir::ComputeBuiltin::GroupIndex),
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+
+    assert!(translated.wgsl.contains("@builtin(global_invocation_id)"));
+    assert!(translated.wgsl.contains("@builtin(local_invocation_id)"));
+    assert!(translated.wgsl.contains("@builtin(workgroup_id)"));
+    assert!(translated.wgsl.contains("@builtin(local_invocation_index)"));
+}
+
+#[test]
 fn translates_compute_buffer_load_store_raw() {
     let dxbc_bytes = build_dxbc(&[(FOURCC_SHEX, Vec::new())]);
     let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");

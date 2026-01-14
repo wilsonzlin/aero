@@ -2487,6 +2487,119 @@ fn decodes_sm5_compute_thread_group_and_raw_uav_ops() {
 }
 
 #[test]
+fn decodes_compute_builtin_operand_types() {
+    use aero_d3d11::sm4_ir::ComputeBuiltin;
+
+    let mut body = Vec::<u32>::new();
+
+    // mov r0, thread_id (SV_DispatchThreadID)
+    let src = reg_src(
+        OPERAND_TYPE_INPUT_THREAD_ID,
+        &[],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    );
+    let mut mov = vec![opcode_token(OPCODE_MOV, (1 + 2 + src.len()) as u32)];
+    mov.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    mov.extend_from_slice(&src);
+    body.extend_from_slice(&mov);
+
+    // mov r1, thread_group_id (SV_GroupID)
+    let src = reg_src(
+        OPERAND_TYPE_INPUT_THREAD_GROUP_ID,
+        &[],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    );
+    let mut mov = vec![opcode_token(OPCODE_MOV, (1 + 2 + src.len()) as u32)];
+    mov.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 1, WriteMask::XYZW));
+    mov.extend_from_slice(&src);
+    body.extend_from_slice(&mov);
+
+    // mov r2, thread_id_in_group (SV_GroupThreadID)
+    let src = reg_src(
+        OPERAND_TYPE_INPUT_THREAD_ID_IN_GROUP,
+        &[],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    );
+    let mut mov = vec![opcode_token(OPCODE_MOV, (1 + 2 + src.len()) as u32)];
+    mov.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 2, WriteMask::XYZW));
+    mov.extend_from_slice(&src);
+    body.extend_from_slice(&mov);
+
+    // mov r3, thread_id_in_group_flattened (SV_GroupIndex)
+    //
+    // Encode this as a scalar select1 operand (matching how scalar operands are represented in
+    // SM4/5 token streams).
+    let src = vec![operand_token(
+        OPERAND_TYPE_INPUT_THREAD_ID_IN_GROUP_FLATTENED,
+        1,
+        OPERAND_SEL_SELECT1,
+        0,
+        0,
+        false,
+    )];
+    let mut mov = vec![opcode_token(OPCODE_MOV, (1 + 2 + src.len()) as u32)];
+    mov.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 3, WriteMask::XYZW));
+    mov.extend_from_slice(&src);
+    body.extend_from_slice(&mov);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    let tokens = make_sm5_program_tokens(5, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+    let module = decode_program(&program).expect("decode");
+
+    assert_eq!(
+        module.instructions[0],
+        Sm4Inst::Mov {
+            dst: dst(RegFile::Temp, 0, WriteMask::XYZW),
+            src: SrcOperand {
+                kind: SrcKind::ComputeBuiltin(ComputeBuiltin::DispatchThreadId),
+                swizzle: Swizzle::XYZW,
+                modifier: OperandModifier::None,
+            },
+        }
+    );
+    assert_eq!(
+        module.instructions[1],
+        Sm4Inst::Mov {
+            dst: dst(RegFile::Temp, 1, WriteMask::XYZW),
+            src: SrcOperand {
+                kind: SrcKind::ComputeBuiltin(ComputeBuiltin::GroupId),
+                swizzle: Swizzle::XYZW,
+                modifier: OperandModifier::None,
+            },
+        }
+    );
+    assert_eq!(
+        module.instructions[2],
+        Sm4Inst::Mov {
+            dst: dst(RegFile::Temp, 2, WriteMask::XYZW),
+            src: SrcOperand {
+                kind: SrcKind::ComputeBuiltin(ComputeBuiltin::GroupThreadId),
+                swizzle: Swizzle::XYZW,
+                modifier: OperandModifier::None,
+            },
+        }
+    );
+    assert_eq!(
+        module.instructions[3],
+        Sm4Inst::Mov {
+            dst: dst(RegFile::Temp, 3, WriteMask::XYZW),
+            src: SrcOperand {
+                kind: SrcKind::ComputeBuiltin(ComputeBuiltin::GroupIndex),
+                swizzle: Swizzle::XXXX,
+                modifier: OperandModifier::None,
+            },
+        }
+    );
+    assert!(matches!(module.instructions[4], Sm4Inst::Ret));
+}
+
+#[test]
 fn rejects_truncated_sm5_thread_group_decl() {
     // `dcl_thread_group` has a fixed length of 4 DWORDs (opcode + x,y,z). Ensure the decoder
     // rejects token streams that end early instead of panicking.
