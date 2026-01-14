@@ -1007,68 +1007,63 @@ function New-ZipFromFolder {
         Remove-Item -Force $ZipPath
     }
 
-    $useCompressArchiveFallback = $false
-
     try {
+        # `Compress-Archive` is not deterministic (timestamps/file order vary across hosts).
+        # Use ZipArchive directly and fail if unavailable so callers do not silently get
+        # non-reproducible artifacts.
         Add-Type -AssemblyName System.IO.Compression -ErrorAction Stop | Out-Null
-    } catch {
-        $useCompressArchiveFallback = $true
-    }
 
-    if (-not $useCompressArchiveFallback) {
+        $entries = Get-DeterministicZipEntriesFromFolder -Folder $Folder
+
+        $fs = [System.IO.File]::Open($ZipPath, [System.IO.FileMode]::CreateNew)
         try {
-            $entries = Get-DeterministicZipEntriesFromFolder -Folder $Folder
-
-            $fs = [System.IO.File]::Open($ZipPath, [System.IO.FileMode]::CreateNew)
+            $zip = New-Object System.IO.Compression.ZipArchive($fs, [System.IO.Compression.ZipArchiveMode]::Create, $false)
             try {
-                $zip = New-Object System.IO.Compression.ZipArchive($fs, [System.IO.Compression.ZipArchiveMode]::Create, $false)
-                try {
-                    foreach ($e in $entries) {
-                        if ($e.IsDirectory) {
-                            $entry = $zip.CreateEntry($e.EntryName)
-                            $entry.LastWriteTime = $DeterministicTimestamp
-                            try {
-                                # Best-effort: avoid capturing unpredictable host attributes.
-                                # Mark directory attribute but keep everything else stable.
-                                $entry.ExternalAttributes = 0x10
-                            } catch {
-                            }
-                            continue
-                        }
-
-                        $entry = $zip.CreateEntry($e.EntryName, [System.IO.Compression.CompressionLevel]::Optimal)
+                foreach ($e in $entries) {
+                    if ($e.IsDirectory) {
+                        $entry = $zip.CreateEntry($e.EntryName)
                         $entry.LastWriteTime = $DeterministicTimestamp
                         try {
                             # Best-effort: avoid capturing unpredictable host attributes.
-                            $entry.ExternalAttributes = 0
+                            # Mark directory attribute but keep everything else stable.
+                            $entry.ExternalAttributes = 0x10
                         } catch {
                         }
-
-                        $inStream = [System.IO.File]::OpenRead($e.FullPath)
-                        try {
-                            $outStream = $entry.Open()
-                            try {
-                                $inStream.CopyTo($outStream)
-                            } finally {
-                                $outStream.Dispose()
-                            }
-                        } finally {
-                            $inStream.Dispose()
-                        }
+                        continue
                     }
-                } finally {
-                    $zip.Dispose()
+
+                    $entry = $zip.CreateEntry($e.EntryName, [System.IO.Compression.CompressionLevel]::Optimal)
+                    $entry.LastWriteTime = $DeterministicTimestamp
+                    try {
+                        # Best-effort: avoid capturing unpredictable host attributes.
+                        $entry.ExternalAttributes = 0
+                    } catch {
+                    }
+
+                    $inStream = [System.IO.File]::OpenRead($e.FullPath)
+                    try {
+                        $outStream = $entry.Open()
+                        try {
+                            $inStream.CopyTo($outStream)
+                        } finally {
+                            $outStream.Dispose()
+                        }
+                    } finally {
+                        $inStream.Dispose()
+                    }
                 }
             } finally {
-                $fs.Dispose()
+                $zip.Dispose()
             }
-        } catch {
-            $useCompressArchiveFallback = $true
+        } finally {
+            $fs.Dispose()
         }
-    }
-
-    if ($useCompressArchiveFallback) {
-        Compress-Archive -Path (Join-Path $Folder "*") -DestinationPath $ZipPath -Force
+    } catch {
+        # Avoid leaving partial output files around.
+        if (Test-Path -LiteralPath $ZipPath) {
+            Remove-Item -LiteralPath $ZipPath -Force -ErrorAction SilentlyContinue
+        }
+        throw
     }
 
     $zipFile = Get-Item -Path $ZipPath -ErrorAction SilentlyContinue
