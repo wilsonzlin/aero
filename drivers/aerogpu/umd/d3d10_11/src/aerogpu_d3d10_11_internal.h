@@ -2731,6 +2731,96 @@ inline bool EmitSetConstantBuffersCmdLocked(DeviceT* dev,
                                          EmitSetConstantBuffersNoopSetError{});
 }
 
+// -------------------------------------------------------------------------------------------------
+// Resource binding helpers (SET_SHADER_RESOURCE_BUFFERS)
+// -------------------------------------------------------------------------------------------------
+template <typename DeviceT, typename SetErrorFn>
+inline bool EmitSetShaderResourceBuffersCmdLocked(DeviceT* dev,
+                                                  uint32_t shader_stage,
+                                                  uint32_t start_slot,
+                                                  uint32_t buffer_count,
+                                                  const aerogpu_shader_resource_buffer_binding* buffers,
+                                                  SetErrorFn&& set_error) {
+  if (!dev) {
+    return false;
+  }
+  if (buffer_count != 0 && !buffers) {
+    set_error(E_INVALIDARG);
+    return false;
+  }
+
+  auto* cmd = dev->cmd.template append_with_payload<aerogpu_cmd_set_shader_resource_buffers>(
+      AEROGPU_CMD_SET_SHADER_RESOURCE_BUFFERS, buffers, static_cast<size_t>(buffer_count) * sizeof(buffers[0]));
+  if (!cmd) {
+    set_error(E_OUTOFMEMORY);
+    return false;
+  }
+  cmd->shader_stage = shader_stage;
+  cmd->start_slot = start_slot;
+  cmd->buffer_count = buffer_count;
+  cmd->reserved0 = 0;
+  return true;
+}
+
+struct EmitSetShaderResourceBuffersNoopSetError {
+  void operator()(HRESULT) const noexcept {}
+};
+
+template <typename DeviceT>
+inline bool EmitSetShaderResourceBuffersCmdLocked(DeviceT* dev,
+                                                  uint32_t shader_stage,
+                                                  uint32_t start_slot,
+                                                  uint32_t buffer_count,
+                                                  const aerogpu_shader_resource_buffer_binding* buffers) {
+  return EmitSetShaderResourceBuffersCmdLocked(
+      dev, shader_stage, start_slot, buffer_count, buffers, EmitSetShaderResourceBuffersNoopSetError{});
+}
+
+// -------------------------------------------------------------------------------------------------
+// Resource binding helpers (SET_UNORDERED_ACCESS_BUFFERS)
+// -------------------------------------------------------------------------------------------------
+template <typename DeviceT, typename SetErrorFn>
+inline bool EmitSetUnorderedAccessBuffersCmdLocked(DeviceT* dev,
+                                                   uint32_t shader_stage,
+                                                   uint32_t start_slot,
+                                                   uint32_t uav_count,
+                                                   const aerogpu_unordered_access_buffer_binding* uavs,
+                                                   SetErrorFn&& set_error) {
+  if (!dev) {
+    return false;
+  }
+  if (uav_count != 0 && !uavs) {
+    set_error(E_INVALIDARG);
+    return false;
+  }
+
+  auto* cmd = dev->cmd.template append_with_payload<aerogpu_cmd_set_unordered_access_buffers>(
+      AEROGPU_CMD_SET_UNORDERED_ACCESS_BUFFERS, uavs, static_cast<size_t>(uav_count) * sizeof(uavs[0]));
+  if (!cmd) {
+    set_error(E_OUTOFMEMORY);
+    return false;
+  }
+  cmd->shader_stage = shader_stage;
+  cmd->start_slot = start_slot;
+  cmd->uav_count = uav_count;
+  cmd->reserved0 = 0;
+  return true;
+}
+
+struct EmitSetUnorderedAccessBuffersNoopSetError {
+  void operator()(HRESULT) const noexcept {}
+};
+
+template <typename DeviceT>
+inline bool EmitSetUnorderedAccessBuffersCmdLocked(DeviceT* dev,
+                                                   uint32_t shader_stage,
+                                                   uint32_t start_slot,
+                                                   uint32_t uav_count,
+                                                   const aerogpu_unordered_access_buffer_binding* uavs) {
+  return EmitSetUnorderedAccessBuffersCmdLocked(
+      dev, shader_stage, start_slot, uav_count, uavs, EmitSetUnorderedAccessBuffersNoopSetError{});
+}
+
 template <typename THandle, typename TObject>
 inline TObject* FromHandle(THandle h) {
   return reinterpret_cast<TObject*>(h.pDrvPrivate);

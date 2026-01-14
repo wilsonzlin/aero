@@ -1306,16 +1306,14 @@ static bool BindShaderResourceBuffersRangeLocked(Device* dev,
   if (!dev || !bindings || buffer_count == 0) {
     return false;
   }
-  auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_shader_resource_buffers>(
-      AEROGPU_CMD_SET_SHADER_RESOURCE_BUFFERS, bindings, static_cast<size_t>(buffer_count) * sizeof(bindings[0]));
-  if (!cmd) {
-    SetError(dev, E_OUTOFMEMORY);
+  if (!aerogpu::d3d10_11::EmitSetShaderResourceBuffersCmdLocked(dev,
+                                                                shader_stage,
+                                                                start_slot,
+                                                                buffer_count,
+                                                                bindings,
+                                                                [&](HRESULT hr) { SetError(dev, hr); })) {
     return false;
   }
-  cmd->shader_stage = shader_stage;
-  cmd->start_slot = start_slot;
-  cmd->buffer_count = buffer_count;
-  cmd->reserved0 = 0;
 
   if (shader_stage == AEROGPU_SHADER_STAGE_GEOMETRY) {
     AEROGPU_D3D10_11_LOG("emit GS SetShaderResourceBuffers start=%u count=%u",
@@ -1333,16 +1331,14 @@ static bool BindUnorderedAccessBuffersRangeLocked(Device* dev,
   if (!dev || !bindings || buffer_count == 0) {
     return false;
   }
-  auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_unordered_access_buffers>(
-      AEROGPU_CMD_SET_UNORDERED_ACCESS_BUFFERS, bindings, static_cast<size_t>(buffer_count) * sizeof(bindings[0]));
-  if (!cmd) {
-    SetError(dev, E_OUTOFMEMORY);
+  if (!aerogpu::d3d10_11::EmitSetUnorderedAccessBuffersCmdLocked(dev,
+                                                                 shader_stage,
+                                                                 start_slot,
+                                                                 buffer_count,
+                                                                 bindings,
+                                                                 [&](HRESULT hr) { SetError(dev, hr); })) {
     return false;
   }
-  cmd->shader_stage = shader_stage;
-  cmd->start_slot = start_slot;
-  cmd->uav_count = buffer_count;
-  cmd->reserved0 = 0;
   return true;
 }
 
@@ -7570,16 +7566,14 @@ void AEROGPU_APIENTRY ClearState11(D3D11DDI_HDEVICECONTEXT hCtx) {
 
   std::array<aerogpu_shader_resource_buffer_binding, kMaxShaderResourceSlots> null_buf_srvs{};
   auto emit_null_buf_srvs = [&](uint32_t stage) -> bool {
-    auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_shader_resource_buffers>(
-        AEROGPU_CMD_SET_SHADER_RESOURCE_BUFFERS, null_buf_srvs.data(), null_buf_srvs.size() * sizeof(null_buf_srvs[0]));
-    if (!cmd) {
-      SetError(dev, E_OUTOFMEMORY);
+    if (!aerogpu::d3d10_11::EmitSetShaderResourceBuffersCmdLocked(dev,
+                                                                  stage,
+                                                                  /*start_slot=*/0,
+                                                                  static_cast<uint32_t>(null_buf_srvs.size()),
+                                                                  null_buf_srvs.data(),
+                                                                  [&](HRESULT hr) { SetError(dev, hr); })) {
       return false;
     }
-    cmd->shader_stage = stage;
-    cmd->start_slot = 0;
-    cmd->buffer_count = kMaxShaderResourceSlots;
-    cmd->reserved0 = 0;
     if (stage == AEROGPU_SHADER_STAGE_GEOMETRY) {
       AEROGPU_D3D10_11_LOG("emit GS ClearState: null SRV buffers");
     }
@@ -7613,16 +7607,14 @@ void AEROGPU_APIENTRY ClearState11(D3D11DDI_HDEVICECONTEXT hCtx) {
   for (auto& b : null_uavs) {
     b.initial_count = kD3DUavInitialCountNoChange;
   }
-  auto* uav_cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_unordered_access_buffers>(
-      AEROGPU_CMD_SET_UNORDERED_ACCESS_BUFFERS, null_uavs.data(), null_uavs.size() * sizeof(null_uavs[0]));
-  if (!uav_cmd) {
-    SetError(dev, E_OUTOFMEMORY);
+  if (!aerogpu::d3d10_11::EmitSetUnorderedAccessBuffersCmdLocked(dev,
+                                                                 AEROGPU_SHADER_STAGE_COMPUTE,
+                                                                 /*start_slot=*/0,
+                                                                 static_cast<uint32_t>(null_uavs.size()),
+                                                                 null_uavs.data(),
+                                                                 [&](HRESULT hr) { SetError(dev, hr); })) {
     return;
   }
-  uav_cmd->shader_stage = AEROGPU_SHADER_STAGE_COMPUTE;
-  uav_cmd->start_slot = 0;
-  uav_cmd->uav_count = kMaxUavSlots;
-  uav_cmd->reserved0 = 0;
   for (uint32_t i = 0; i < kMaxUavSlots; ++i) {
     dev->cs_uavs[i] = null_uavs[i];
   }

@@ -1059,6 +1059,251 @@ bool TestSetIndexBufferHelperEncodesPacket() {
   return true;
 }
 
+bool TestSetShaderResourceBuffersHelperEncodesPacket() {
+  using aerogpu::d3d10_11::EmitSetShaderResourceBuffersCmdLocked;
+
+  struct DummyDevice {
+    aerogpu::CmdWriter cmd;
+
+    DummyDevice() {
+      cmd.reset();
+    }
+  };
+
+  std::vector<HRESULT> errors;
+
+  DummyDevice dev{};
+  aerogpu_shader_resource_buffer_binding bindings[2]{};
+  bindings[0].buffer = 101;
+  bindings[0].offset_bytes = 16;
+  bindings[0].size_bytes = 128;
+  bindings[0].reserved0 = 0;
+  bindings[1].buffer = 202;
+  bindings[1].offset_bytes = 0;
+  bindings[1].size_bytes = 0;
+  bindings[1].reserved0 = 0;
+
+  const bool ok = EmitSetShaderResourceBuffersCmdLocked(&dev,
+                                                        AEROGPU_SHADER_STAGE_PIXEL,
+                                                        /*start_slot=*/5,
+                                                        /*buffer_count=*/2,
+                                                        bindings,
+                                                        [&](HRESULT hr) { errors.push_back(hr); });
+  dev.cmd.finalize();
+
+  if (!Check(ok, "EmitSetShaderResourceBuffersCmdLocked should succeed")) {
+    return false;
+  }
+  if (!Check(errors.empty(), "EmitSetShaderResourceBuffersCmdLocked should not report errors")) {
+    return false;
+  }
+
+  const uint32_t expected_packet_bytes =
+      static_cast<uint32_t>(sizeof(aerogpu_cmd_set_shader_resource_buffers) + sizeof(bindings));
+  if (!Check(dev.cmd.size() >= sizeof(aerogpu_cmd_stream_header) + expected_packet_bytes,
+             "SET_SHADER_RESOURCE_BUFFERS packet emitted")) {
+    return false;
+  }
+
+  const auto* pkt = reinterpret_cast<const aerogpu_cmd_set_shader_resource_buffers*>(
+      dev.cmd.data() + sizeof(aerogpu_cmd_stream_header));
+  if (!Check(pkt->hdr.opcode == AEROGPU_CMD_SET_SHADER_RESOURCE_BUFFERS, "SET_SHADER_RESOURCE_BUFFERS opcode")) {
+    return false;
+  }
+  if (!Check(pkt->hdr.size_bytes == expected_packet_bytes, "SET_SHADER_RESOURCE_BUFFERS hdr.size_bytes")) {
+    return false;
+  }
+  if (!Check(pkt->shader_stage == AEROGPU_SHADER_STAGE_PIXEL, "SET_SHADER_RESOURCE_BUFFERS shader_stage")) {
+    return false;
+  }
+  if (!Check(pkt->start_slot == 5, "SET_SHADER_RESOURCE_BUFFERS start_slot")) {
+    return false;
+  }
+  if (!Check(pkt->buffer_count == 2, "SET_SHADER_RESOURCE_BUFFERS buffer_count")) {
+    return false;
+  }
+  if (!Check(pkt->reserved0 == 0, "SET_SHADER_RESOURCE_BUFFERS reserved0 cleared")) {
+    return false;
+  }
+
+  const auto* payload = reinterpret_cast<const aerogpu_shader_resource_buffer_binding*>(
+      reinterpret_cast<const uint8_t*>(pkt) + sizeof(*pkt));
+  if (!Check(payload[0].buffer == bindings[0].buffer, "SET_SHADER_RESOURCE_BUFFERS payload[0].buffer")) {
+    return false;
+  }
+  if (!Check(payload[0].offset_bytes == bindings[0].offset_bytes, "SET_SHADER_RESOURCE_BUFFERS payload[0].offset_bytes")) {
+    return false;
+  }
+  if (!Check(payload[0].size_bytes == bindings[0].size_bytes, "SET_SHADER_RESOURCE_BUFFERS payload[0].size_bytes")) {
+    return false;
+  }
+
+  // Invalid argument path: non-zero count with null bindings pointer.
+  DummyDevice invalid{};
+  errors.clear();
+  const bool ok_invalid = EmitSetShaderResourceBuffersCmdLocked(&invalid,
+                                                                AEROGPU_SHADER_STAGE_VERTEX,
+                                                                /*start_slot=*/0,
+                                                                /*buffer_count=*/1,
+                                                                /*buffers=*/nullptr,
+                                                                [&](HRESULT hr) { errors.push_back(hr); });
+  if (!Check(!ok_invalid,
+             "EmitSetShaderResourceBuffersCmdLocked should fail when buffers==nullptr and buffer_count!=0")) {
+    return false;
+  }
+  if (!Check(errors.size() == 1 && errors[0] == E_INVALIDARG, "invalid buffers pointer reports E_INVALIDARG")) {
+    return false;
+  }
+  if (!Check(invalid.cmd.size() == sizeof(aerogpu_cmd_stream_header), "invalid args do not emit a packet")) {
+    return false;
+  }
+
+  // Insufficient-space path.
+  alignas(4) uint8_t tiny_buf[sizeof(aerogpu_cmd_stream_header)] = {};
+  struct TinyDevice {
+    aerogpu::CmdWriter cmd;
+    TinyDevice(uint8_t* buf, size_t cap) {
+      cmd.set_span(buf, cap);
+    }
+  };
+  TinyDevice tiny(tiny_buf, sizeof(tiny_buf));
+  errors.clear();
+  const bool ok2 = EmitSetShaderResourceBuffersCmdLocked(&tiny,
+                                                         AEROGPU_SHADER_STAGE_PIXEL,
+                                                         /*start_slot=*/0,
+                                                         /*buffer_count=*/1,
+                                                         bindings,
+                                                         [&](HRESULT hr) { errors.push_back(hr); });
+  if (!Check(!ok2, "EmitSetShaderResourceBuffersCmdLocked should fail when cmd append fails")) {
+    return false;
+  }
+  if (!Check(errors.size() == 1 && errors[0] == E_OUTOFMEMORY, "cmd append failure reports E_OUTOFMEMORY")) {
+    return false;
+  }
+
+  return true;
+}
+
+bool TestSetUnorderedAccessBuffersHelperEncodesPacket() {
+  using aerogpu::d3d10_11::EmitSetUnorderedAccessBuffersCmdLocked;
+
+  struct DummyDevice {
+    aerogpu::CmdWriter cmd;
+
+    DummyDevice() {
+      cmd.reset();
+    }
+  };
+
+  std::vector<HRESULT> errors;
+
+  DummyDevice dev{};
+  aerogpu_unordered_access_buffer_binding bindings[2]{};
+  bindings[0].buffer = 303;
+  bindings[0].offset_bytes = 0;
+  bindings[0].size_bytes = 0;
+  bindings[0].initial_count = aerogpu::d3d10_11::kD3DUavInitialCountNoChange;
+  bindings[1].buffer = 0;
+  bindings[1].offset_bytes = 0;
+  bindings[1].size_bytes = 0;
+  bindings[1].initial_count = aerogpu::d3d10_11::kD3DUavInitialCountNoChange;
+
+  const bool ok = EmitSetUnorderedAccessBuffersCmdLocked(&dev,
+                                                         AEROGPU_SHADER_STAGE_COMPUTE,
+                                                         /*start_slot=*/1,
+                                                         /*uav_count=*/2,
+                                                         bindings,
+                                                         [&](HRESULT hr) { errors.push_back(hr); });
+  dev.cmd.finalize();
+
+  if (!Check(ok, "EmitSetUnorderedAccessBuffersCmdLocked should succeed")) {
+    return false;
+  }
+  if (!Check(errors.empty(), "EmitSetUnorderedAccessBuffersCmdLocked should not report errors")) {
+    return false;
+  }
+
+  const uint32_t expected_packet_bytes =
+      static_cast<uint32_t>(sizeof(aerogpu_cmd_set_unordered_access_buffers) + sizeof(bindings));
+  if (!Check(dev.cmd.size() >= sizeof(aerogpu_cmd_stream_header) + expected_packet_bytes,
+             "SET_UNORDERED_ACCESS_BUFFERS packet emitted")) {
+    return false;
+  }
+  const auto* pkt = reinterpret_cast<const aerogpu_cmd_set_unordered_access_buffers*>(
+      dev.cmd.data() + sizeof(aerogpu_cmd_stream_header));
+  if (!Check(pkt->hdr.opcode == AEROGPU_CMD_SET_UNORDERED_ACCESS_BUFFERS, "SET_UNORDERED_ACCESS_BUFFERS opcode")) {
+    return false;
+  }
+  if (!Check(pkt->hdr.size_bytes == expected_packet_bytes, "SET_UNORDERED_ACCESS_BUFFERS hdr.size_bytes")) {
+    return false;
+  }
+  if (!Check(pkt->shader_stage == AEROGPU_SHADER_STAGE_COMPUTE, "SET_UNORDERED_ACCESS_BUFFERS shader_stage")) {
+    return false;
+  }
+  if (!Check(pkt->start_slot == 1, "SET_UNORDERED_ACCESS_BUFFERS start_slot")) {
+    return false;
+  }
+  if (!Check(pkt->uav_count == 2, "SET_UNORDERED_ACCESS_BUFFERS uav_count")) {
+    return false;
+  }
+  if (!Check(pkt->reserved0 == 0, "SET_UNORDERED_ACCESS_BUFFERS reserved0 cleared")) {
+    return false;
+  }
+
+  const auto* payload = reinterpret_cast<const aerogpu_unordered_access_buffer_binding*>(
+      reinterpret_cast<const uint8_t*>(pkt) + sizeof(*pkt));
+  if (!Check(payload[0].buffer == bindings[0].buffer, "SET_UNORDERED_ACCESS_BUFFERS payload[0].buffer")) {
+    return false;
+  }
+  if (!Check(payload[0].initial_count == bindings[0].initial_count, "SET_UNORDERED_ACCESS_BUFFERS payload[0].initial_count")) {
+    return false;
+  }
+
+  // Invalid argument path: non-zero count with null bindings pointer.
+  DummyDevice invalid{};
+  errors.clear();
+  const bool ok_invalid = EmitSetUnorderedAccessBuffersCmdLocked(&invalid,
+                                                                 AEROGPU_SHADER_STAGE_COMPUTE,
+                                                                 /*start_slot=*/0,
+                                                                 /*uav_count=*/1,
+                                                                 /*uavs=*/nullptr,
+                                                                 [&](HRESULT hr) { errors.push_back(hr); });
+  if (!Check(!ok_invalid, "EmitSetUnorderedAccessBuffersCmdLocked should fail when uavs==nullptr and uav_count!=0")) {
+    return false;
+  }
+  if (!Check(errors.size() == 1 && errors[0] == E_INVALIDARG, "invalid uavs pointer reports E_INVALIDARG")) {
+    return false;
+  }
+  if (!Check(invalid.cmd.size() == sizeof(aerogpu_cmd_stream_header), "invalid args do not emit a packet")) {
+    return false;
+  }
+
+  // Insufficient-space path.
+  alignas(4) uint8_t tiny_buf[sizeof(aerogpu_cmd_stream_header)] = {};
+  struct TinyDevice {
+    aerogpu::CmdWriter cmd;
+    TinyDevice(uint8_t* buf, size_t cap) {
+      cmd.set_span(buf, cap);
+    }
+  };
+  TinyDevice tiny(tiny_buf, sizeof(tiny_buf));
+  errors.clear();
+  const bool ok2 = EmitSetUnorderedAccessBuffersCmdLocked(&tiny,
+                                                          AEROGPU_SHADER_STAGE_COMPUTE,
+                                                          /*start_slot=*/0,
+                                                          /*uav_count=*/1,
+                                                          bindings,
+                                                          [&](HRESULT hr) { errors.push_back(hr); });
+  if (!Check(!ok2, "EmitSetUnorderedAccessBuffersCmdLocked should fail when cmd append fails")) {
+    return false;
+  }
+  if (!Check(errors.size() == 1 && errors[0] == E_OUTOFMEMORY, "cmd append failure reports E_OUTOFMEMORY")) {
+    return false;
+  }
+
+  return true;
+}
+
 bool TestTrackWddmAllocForSubmitLockedHelper() {
   using aerogpu::d3d10_11::WddmSubmitAllocation;
 
@@ -10316,6 +10561,8 @@ int main() {
   ok &= TestSetVertexBuffersHelperEncodesPacket();
   ok &= TestSetInputLayoutHelperEncodesPacket();
   ok &= TestSetIndexBufferHelperEncodesPacket();
+  ok &= TestSetShaderResourceBuffersHelperEncodesPacket();
+  ok &= TestSetUnorderedAccessBuffersHelperEncodesPacket();
   ok &= TestTrackWddmAllocForSubmitLockedHelper();
   ok &= TestDeviceFuncsTableNoNullEntriesHostOwned();
   ok &= TestDeviceFuncsTableNoNullEntriesGuestBacked();
