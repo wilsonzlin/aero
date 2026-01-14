@@ -3552,29 +3552,39 @@ fn decode_aerogpu_snapshot_v1(bytes: &[u8]) -> Option<AeroGpuSnapshotV1> {
         (0, 0, 0)
     };
 
-    // Optional scanout0 FB_GPA pending payload (added after the error fields).
-    let (scanout0_fb_gpa_pending_lo, scanout0_fb_gpa_lo_pending) =
-        if has_error_payload && bytes.len() >= off.saturating_add(8) {
-            let pending_lo = read_u32(bytes, &mut off).unwrap_or(0);
-            let pending = read_u32(bytes, &mut off).unwrap_or(0) != 0;
-            (pending_lo, pending)
-        } else {
-            (0, false)
-        };
-    let (cursor_fb_gpa_pending_lo, cursor_fb_gpa_lo_pending) =
-        if has_error_payload && bytes.len() >= off.saturating_add(8) {
-            // Cursor pending payload was added before the optional VGA DAC payload; avoid consuming
-            // the "DACP" tag as if it were a pending cursor address.
-            if bytes.get(off..off.saturating_add(4)) == Some(b"DACP".as_slice()) {
-                (0, false)
-            } else {
-                let pending_lo = read_u32(bytes, &mut off).unwrap_or(0);
-                let pending = read_u32(bytes, &mut off).unwrap_or(0) != 0;
-                (pending_lo, pending)
-            }
-        } else {
-            (0, false)
-        };
+    // Optional scanout0/cursor FB_GPA pending payloads (added after the error fields).
+    //
+    // These are currently encoded as raw `u32` pairs `(pending_lo, pending_flag_u32)`. The
+    // snapshot format is forward-compatible (trailing bytes may be added), so restoring older
+    // snapshots must not misinterpret tagged trailing payloads (e.g. `DACP`) as pending state.
+    //
+    // To detect presence, peek at the `pending_flag_u32` and only accept it when it is 0 or 1.
+    let (scanout0_fb_gpa_pending_lo, scanout0_fb_gpa_lo_pending) = if has_error_payload
+        && bytes.len() >= off.saturating_add(8)
+        && bytes
+            .get(off.saturating_add(4)..off.saturating_add(8))
+            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+            .is_some_and(|flag| flag <= 1)
+    {
+        let pending_lo = read_u32(bytes, &mut off).unwrap_or(0);
+        let pending = read_u32(bytes, &mut off).unwrap_or(0) != 0;
+        (pending_lo, pending)
+    } else {
+        (0, false)
+    };
+    let (cursor_fb_gpa_pending_lo, cursor_fb_gpa_lo_pending) = if has_error_payload
+        && bytes.len() >= off.saturating_add(8)
+        && bytes
+            .get(off.saturating_add(4)..off.saturating_add(8))
+            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+            .is_some_and(|flag| flag <= 1)
+    {
+        let pending_lo = read_u32(bytes, &mut off).unwrap_or(0);
+        let pending = read_u32(bytes, &mut off).unwrap_or(0) != 0;
+        (pending_lo, pending)
+    } else {
+        (0, false)
+    };
     let vga_dac = {
         const TAG: &[u8; 4] = b"DACP";
         const PALETTE_LEN: usize = 256 * 3;
@@ -3768,30 +3778,35 @@ fn apply_aerogpu_snapshot_v2(
         (0, 0, 0)
     };
 
-    // Optional scanout0 FB_GPA pending payload (added after the error fields).
-    let (scanout0_fb_gpa_pending_lo, scanout0_fb_gpa_lo_pending) =
-        if has_error_payload && bytes.len() >= off.saturating_add(8) {
-            let pending_lo = read_u32(bytes, &mut off).unwrap_or(0);
-            let pending = read_u32(bytes, &mut off).unwrap_or(0) != 0;
-            (pending_lo, pending)
-        } else {
-            (0, false)
-        };
-    let (cursor_fb_gpa_pending_lo, cursor_fb_gpa_lo_pending) =
-        if has_error_payload && bytes.len() >= off.saturating_add(8) {
-            // Cursor pending payload was added before the tagged VGA state payloads. Avoid
-            // consuming a tag as if it were a pending cursor address.
-            let tag = bytes.get(off..off.saturating_add(4));
-            if tag == Some(b"DACP".as_slice()) || tag == Some(b"ATRG".as_slice()) {
-                (0, false)
-            } else {
-                let pending_lo = read_u32(bytes, &mut off).unwrap_or(0);
-                let pending = read_u32(bytes, &mut off).unwrap_or(0) != 0;
-                (pending_lo, pending)
-            }
-        } else {
-            (0, false)
-        };
+    // Optional scanout0/cursor FB_GPA pending payloads (added after the error fields).
+    //
+    // See `decode_aerogpu_snapshot_v1` for rationale on the `pending_flag_u32` probe.
+    let (scanout0_fb_gpa_pending_lo, scanout0_fb_gpa_lo_pending) = if has_error_payload
+        && bytes.len() >= off.saturating_add(8)
+        && bytes
+            .get(off.saturating_add(4)..off.saturating_add(8))
+            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+            .is_some_and(|flag| flag <= 1)
+    {
+        let pending_lo = read_u32(bytes, &mut off).unwrap_or(0);
+        let pending = read_u32(bytes, &mut off).unwrap_or(0) != 0;
+        (pending_lo, pending)
+    } else {
+        (0, false)
+    };
+    let (cursor_fb_gpa_pending_lo, cursor_fb_gpa_lo_pending) = if has_error_payload
+        && bytes.len() >= off.saturating_add(8)
+        && bytes
+            .get(off.saturating_add(4)..off.saturating_add(8))
+            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+            .is_some_and(|flag| flag <= 1)
+    {
+        let pending_lo = read_u32(bytes, &mut off).unwrap_or(0);
+        let pending = read_u32(bytes, &mut off).unwrap_or(0) != 0;
+        (pending_lo, pending)
+    } else {
+        (0, false)
+    };
     let mut restored_dac = false;
     let mut exec_state: Option<&[u8]> = None;
     // Optional trailing sections:
