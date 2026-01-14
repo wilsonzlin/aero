@@ -1135,6 +1135,103 @@ bool TestFvfXyzDiffuseRedundantSetTransformDoesNotReuploadWvp() {
   return true;
 }
 
+bool TestFvfXyzDiffuseMultiplyTransformEagerUploadNotDuplicatedByFirstDraw() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnMultiplyTransform != nullptr, "pfnMultiplyTransform is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+
+  // Activate fixed-function XYZ|DIFFUSE (WVP VS path).
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|DIFFUSE)")) {
+    return false;
+  }
+
+  // Apply a simple non-identity WORLD0 via MultiplyTransform so WVP is observable.
+  constexpr float tx = 2.0f;
+  constexpr float ty = 3.0f;
+  constexpr float tz = 0.0f;
+  const float expected_wvp_cols[16] = {
+      1.0f, 0.0f, 0.0f, tx,
+      0.0f, 1.0f, 0.0f, ty,
+      0.0f, 0.0f, 1.0f, tz,
+      0.0f, 0.0f, 0.0f, 1.0f,
+  };
+  D3DMATRIX world_mul{};
+  world_mul.m[0][0] = 1.0f;
+  world_mul.m[1][1] = 1.0f;
+  world_mul.m[2][2] = 1.0f;
+  world_mul.m[3][3] = 1.0f;
+  world_mul.m[3][0] = tx;
+  world_mul.m[3][1] = ty;
+  world_mul.m[3][2] = tz;
+
+  hr = cleanup.device_funcs.pfnMultiplyTransform(cleanup.hDevice, kD3dTransformWorld0, &world_mul);
+  if (!Check(hr == S_OK, "MultiplyTransform(WORLD0, translation)")) {
+    return false;
+  }
+  // MultiplyTransform eagerly refreshes the fixed-function WVP constant range
+  // when WVP rendering is active.
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(!dev->fixedfunc_matrix_dirty, "MultiplyTransform eagerly cleared fixedfunc_matrix_dirty")) {
+      return false;
+    }
+  }
+
+  const VertexXyzDiffuse tri[3] = {
+      {-1.0f, -1.0f, 0.0f, 0xFFFF0000u},
+      {1.0f, -1.0f, 0.0f, 0xFF00FF00u},
+      {-1.0f, 1.0f, 0.0f, 0xFF0000FFu},
+  };
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(triangle xyz diffuse)")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(XYZ|DIFFUSE MultiplyTransform WVP caching)")) {
+    return false;
+  }
+
+  // Ensure the first draw doesn't redundantly re-upload WVP constants if
+  // MultiplyTransform already uploaded them eagerly.
+  size_t wvp_uploads = 0;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
+    const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
+    if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX || sc->start_register != 240 || sc->vec4_count != 4) {
+      continue;
+    }
+    const size_t need = sizeof(aerogpu_cmd_set_shader_constants_f) + sizeof(expected_wvp_cols);
+    if (!Check(hdr->size_bytes >= need, "SET_SHADER_CONSTANTS_F contains WVP payload")) {
+      return false;
+    }
+    const float* payload = reinterpret_cast<const float*>(
+        reinterpret_cast<const uint8_t*>(sc) + sizeof(aerogpu_cmd_set_shader_constants_f));
+    if (std::memcmp(payload, expected_wvp_cols, sizeof(expected_wvp_cols)) == 0) {
+      ++wvp_uploads;
+    }
+  }
+  if (!Check(wvp_uploads == 1, "WVP constants uploaded once (MultiplyTransform cached)")) {
+    return false;
+  }
+
+  return true;
+}
+
 bool TestFvfXyzDiffuseWvpDirtyAfterUserVsAndConstClobber() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -6801,6 +6898,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestFvfXyzDiffuseRedundantSetTransformDoesNotReuploadWvp()) {
+    return 1;
+  }
+  if (!aerogpu::TestFvfXyzDiffuseMultiplyTransformEagerUploadNotDuplicatedByFirstDraw()) {
     return 1;
   }
   if (!aerogpu::TestFvfXyzDiffuseRedundantSetFvfDoesNotReuploadWvp()) {
