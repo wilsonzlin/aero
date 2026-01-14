@@ -517,6 +517,7 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
     // decoded MMU until both are known.
     let mut cpu_apic_ids: Option<Vec<u32>> = None;
     let mut pending_legacy_mmu: Option<MmuState> = None;
+    let mut pending_mmus: Option<Vec<VcpuMmuSnapshot>> = None;
 
     while let Some(header) = read_section_header(r)? {
         if header.id == SectionId::DEVICES && header.len > limits::MAX_DEVICES_SECTION_LEN {
@@ -552,6 +553,12 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
                     if let Some(mmu) = pending_legacy_mmu.take() {
                         target.restore_mmu_states(vec![VcpuMmuSnapshot { apic_id: 0, mmu }])?;
                     }
+                    if let Some(mmus) = pending_mmus.take() {
+                        if mmus.len() != 1 || mmus[0].apic_id != 0 {
+                            return Err(SnapshotError::Corrupt(MMUS_CPUS_MISMATCH));
+                        }
+                        target.restore_mmu_states(mmus)?;
+                    }
                 } else if header.version >= 2 {
                     if seen_cpu {
                         return Err(SnapshotError::Corrupt("duplicate CPU/CPUS section"));
@@ -566,6 +573,12 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
                     cpu_apic_ids = Some(vec![0]);
                     if let Some(mmu) = pending_legacy_mmu.take() {
                         target.restore_mmu_states(vec![VcpuMmuSnapshot { apic_id: 0, mmu }])?;
+                    }
+                    if let Some(mmus) = pending_mmus.take() {
+                        if mmus.len() != 1 || mmus[0].apic_id != 0 {
+                            return Err(SnapshotError::Corrupt(MMUS_CPUS_MISMATCH));
+                        }
+                        target.restore_mmu_states(mmus)?;
                     }
                 }
             }
@@ -634,6 +647,17 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
                         };
                         target.restore_mmu_states(states)?;
                     }
+                    if let Some(mmus) = pending_mmus.take() {
+                        if mmus.len() != apic_ids.len()
+                            || mmus
+                                .iter()
+                                .zip(apic_ids.iter())
+                                .any(|(mmu, &apic_id)| mmu.apic_id != apic_id)
+                        {
+                            return Err(SnapshotError::Corrupt(MMUS_CPUS_MISMATCH));
+                        }
+                        target.restore_mmu_states(mmus)?;
+                    }
                 } else if header.version >= 2 {
                     if seen_cpu {
                         return Err(SnapshotError::Corrupt("duplicate CPU/CPUS section"));
@@ -698,6 +722,17 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
                         };
                         target.restore_mmu_states(states)?;
                     }
+                    if let Some(mmus) = pending_mmus.take() {
+                        if mmus.len() != apic_ids.len()
+                            || mmus
+                                .iter()
+                                .zip(apic_ids.iter())
+                                .any(|(mmu, &apic_id)| mmu.apic_id != apic_id)
+                        {
+                            return Err(SnapshotError::Corrupt(MMUS_CPUS_MISMATCH));
+                        }
+                        target.restore_mmu_states(mmus)?;
+                    }
                 }
             }
             id if id == SectionId::MMU => {
@@ -705,11 +740,6 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
                     return Err(SnapshotError::Corrupt("snapshot contains both MMU and MMUS"));
                 }
                 if header.version == 1 {
-                    if seen_mmus_section {
-                        return Err(SnapshotError::Corrupt(
-                            "snapshot contains both MMU and MMUS",
-                        ));
-                    }
                     if seen_mmu_section {
                         return Err(SnapshotError::Corrupt("duplicate MMU section"));
                     }
@@ -735,11 +765,6 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
                         pending_legacy_mmu = Some(mmu);
                     }
                 } else if header.version >= 2 {
-                    if seen_mmus_section {
-                        return Err(SnapshotError::Corrupt(
-                            "snapshot contains both MMU and MMUS",
-                        ));
-                    }
                     if seen_mmu_section {
                         return Err(SnapshotError::Corrupt("duplicate MMU section"));
                     }
@@ -809,7 +834,19 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
                         return Err(SnapshotError::Corrupt(DUPLICATE_APIC_ID_MMU));
                     }
 
-                    target.restore_mmu_states(mmus)?;
+                    if let Some(apic_ids) = cpu_apic_ids.as_ref() {
+                        if mmus.len() != apic_ids.len()
+                            || mmus
+                                .iter()
+                                .zip(apic_ids.iter())
+                                .any(|(mmu, &apic_id)| mmu.apic_id != apic_id)
+                        {
+                            return Err(SnapshotError::Corrupt(MMUS_CPUS_MISMATCH));
+                        }
+                        target.restore_mmu_states(mmus)?;
+                    } else {
+                        pending_mmus = Some(mmus);
+                    }
                 } else if header.version >= 2 {
                     if seen_mmu_section {
                         return Err(SnapshotError::Corrupt(
@@ -854,7 +891,19 @@ fn restore_snapshot_impl<R: Read, T: SnapshotTarget>(
                         return Err(SnapshotError::Corrupt(DUPLICATE_APIC_ID_MMU));
                     }
 
-                    target.restore_mmu_states(mmus)?;
+                    if let Some(apic_ids) = cpu_apic_ids.as_ref() {
+                        if mmus.len() != apic_ids.len()
+                            || mmus
+                                .iter()
+                                .zip(apic_ids.iter())
+                                .any(|(mmu, &apic_id)| mmu.apic_id != apic_id)
+                        {
+                            return Err(SnapshotError::Corrupt(MMUS_CPUS_MISMATCH));
+                        }
+                        target.restore_mmu_states(mmus)?;
+                    } else {
+                        pending_mmus = Some(mmus);
+                    }
                 }
             }
             id if id == SectionId::DEVICES => {
