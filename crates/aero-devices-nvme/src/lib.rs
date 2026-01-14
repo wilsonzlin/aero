@@ -2075,6 +2075,12 @@ impl SglDescriptor {
         let addr = u64::from_le_bytes(bytes[0..8].try_into().unwrap());
         let length = u32::from_le_bytes(bytes[8..12].try_into().unwrap());
         let type_byte = bytes[15];
+        let subtype = type_byte >> 4;
+        // For address-based SGLs (subtype=0), NVMe reserves bytes 12..=14 and requires them to be
+        // zero. Non-zero values typically indicate keyed/transport SGLs, which we do not support.
+        if subtype == 0 && (bytes[12] | bytes[13] | bytes[14]) != 0 {
+            return Err(NvmeStatus::INVALID_FIELD);
+        }
         let dtype = match type_byte & 0x0f {
             0x0 => SglDescriptorType::DataBlock,
             0x2 => SglDescriptorType::Segment,
@@ -2085,7 +2091,7 @@ impl SglDescriptor {
             addr,
             length,
             dtype,
-            subtype: type_byte >> 4,
+            subtype,
         })
     }
 
@@ -2094,6 +2100,11 @@ impl SglDescriptor {
         let addr = dptr1;
         let length = (dptr2 & 0xffff_ffff) as u32;
         let type_byte = (dptr2 >> 56) as u8;
+        let subtype = type_byte >> 4;
+        let reserved = (dptr2 >> 32) & 0x00ff_ffff;
+        if subtype == 0 && reserved != 0 {
+            return Err(NvmeStatus::INVALID_FIELD);
+        }
         let dtype = match type_byte & 0x0f {
             0x0 => SglDescriptorType::DataBlock,
             0x2 => SglDescriptorType::Segment,
@@ -2104,7 +2115,7 @@ impl SglDescriptor {
             addr,
             length,
             dtype,
-            subtype: type_byte >> 4,
+            subtype,
         })
     }
 }

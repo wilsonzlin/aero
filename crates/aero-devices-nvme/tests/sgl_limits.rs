@@ -381,3 +381,60 @@ fn sgl_rejects_segment_list_too_short_for_transfer() {
     assert_eq!(cqe.cid, 0x31);
     assert_eq!(cqe.status & !0x1, 0x4004);
 }
+
+#[test]
+fn sgl_rejects_inline_descriptor_with_nonzero_reserved_bytes() {
+    let (mut ctrl, mut mem, io_cq, io_sq) = setup_ctrl_with_io_queues();
+
+    let buf = 0x60000u64;
+
+    let mut cmd = build_command(0x01, 1); // WRITE, PSDT=SGL
+    set_cid(&mut cmd, 0x32);
+    set_nsid(&mut cmd, 1);
+    set_prp1(&mut cmd, buf);
+    // Inline Data Block descriptor with reserved bits (DW12..DW13 bits 23:0) set.
+    // Layout: dptr2[31:0]=len, dptr2[55:32]=reserved, dptr2[63:56]=type.
+    set_prp2(&mut cmd, 512u64 | (0x12u64 << 32));
+    set_cdw10(&mut cmd, 0);
+    set_cdw11(&mut cmd, 0);
+    set_cdw12(&mut cmd, 0);
+    mem.write_physical(io_sq, &cmd);
+    ctrl.mmio_write(0x1008, 4, 1);
+    ctrl.process(&mut mem);
+
+    let cqe = read_cqe(&mut mem, io_cq);
+    assert_eq!(cqe.cid, 0x32);
+    assert_eq!(cqe.status & !0x1, 0x4004);
+}
+
+#[test]
+fn sgl_rejects_segment_descriptor_with_nonzero_reserved_bytes() {
+    let (mut ctrl, mut mem, io_cq, io_sq) = setup_ctrl_with_io_queues();
+
+    let list = 0x70000u64;
+    let buf = 0x60000u64;
+
+    // Data Block descriptor with reserved bytes set.
+    let mut desc = [0u8; 16];
+    desc[0..8].copy_from_slice(&buf.to_le_bytes());
+    desc[8..12].copy_from_slice(&512u32.to_le_bytes());
+    desc[12] = 0xAA; // reserved
+    desc[15] = 0x00; // Data Block, subtype=0
+    mem.write_physical(list, &desc);
+
+    let mut cmd = build_command(0x01, 1); // WRITE, PSDT=SGL
+    set_cid(&mut cmd, 0x33);
+    set_nsid(&mut cmd, 1);
+    set_prp1(&mut cmd, list);
+    set_prp2(&mut cmd, 16u64 | ((0x02u64) << 56)); // Segment (1 descriptor)
+    set_cdw10(&mut cmd, 0);
+    set_cdw11(&mut cmd, 0);
+    set_cdw12(&mut cmd, 0);
+    mem.write_physical(io_sq, &cmd);
+    ctrl.mmio_write(0x1008, 4, 1);
+    ctrl.process(&mut mem);
+
+    let cqe = read_cqe(&mut mem, io_cq);
+    assert_eq!(cqe.cid, 0x33);
+    assert_eq!(cqe.status & !0x1, 0x4004);
+}
