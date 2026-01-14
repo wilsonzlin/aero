@@ -281,6 +281,31 @@ export function has_guest_memory(): boolean {
 }
 
 /**
+ * Register a view of the AeroGPU VRAM aperture (BAR1).
+ *
+ * When configured, GPAs in `[PCI_MMIO_BASE, PCI_MMIO_BASE + vram_len)` can be resolved by the wasm
+ * executor for allocation uploads/writebacks.
+ */
+export function set_vram_memory(vramU8: Uint8Array): void {
+  const mod = requireLoaded();
+  if (typeof mod.set_vram_memory !== "function") {
+    throw new Error("aero-gpu wasm export set_vram_memory is missing (outdated bundle?)");
+  }
+  mod.set_vram_memory(vramU8);
+}
+
+export function clear_vram_memory(): void {
+  const mod = requireLoaded();
+  // Optional chaining for backward compatibility with older bundles.
+  mod.clear_vram_memory?.();
+}
+
+export function has_vram_memory(): boolean {
+  const mod = requireLoaded();
+  return !!mod.has_vram_memory?.();
+}
+
+/**
  * Debug helper: read bytes from guest RAM at the given guest physical address.
  *
  * `gpa` is a guest physical address (subject to the same hole/high-RAM remap translation as

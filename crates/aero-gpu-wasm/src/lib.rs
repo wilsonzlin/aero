@@ -91,6 +91,16 @@ mod guest_phys {
     }
 }
 
+// Import the canonical wasm32 guest layout constants from `crates/aero-wasm`.
+//
+// We `#[path]`-include the module instead of depending on the full `aero-wasm` crate to avoid
+// pulling its wasm-bindgen exports (which would collide at link time when building this separate
+// wasm-pack module).
+#[cfg(target_arch = "wasm32")]
+#[allow(dead_code)]
+#[path = "../../aero-wasm/src/guest_layout.rs"]
+mod guest_layout;
+
 // The full implementation is only meaningful on wasm32.
 #[cfg(target_arch = "wasm32")]
 mod wasm {
@@ -110,6 +120,7 @@ mod wasm {
     };
     use aero_protocol::aerogpu::aerogpu_cmd as cmd;
     use aero_protocol::aerogpu::aerogpu_ring as ring;
+    use crate::guest_layout::PCI_MMIO_BASE;
     use futures_intrusive::channel::shared::oneshot_channel;
     use js_sys::{Array, BigInt, Object, Reflect, Uint8Array};
     use wasm_bindgen::prelude::*;
@@ -426,49 +437,79 @@ mod wasm {
 
     #[derive(Clone)]
     struct JsGuestMemory {
-        view: Uint8Array,
+        ram: Uint8Array,
+        vram: Option<Uint8Array>,
+    }
+
+    impl JsGuestMemory {
+        fn resolve_range(
+            &self,
+            gpa: u64,
+            len: usize,
+        ) -> Result<(&Uint8Array, u32, u32), GuestMemoryError> {
+            let len_u64 = u64::try_from(len).map_err(|_| GuestMemoryError { gpa, len })?;
+
+            // ---------------------------------------------------------------------
+            // Guest RAM (PC/Q35 hole/high-RAM remap layout).
+            // ---------------------------------------------------------------------
+            //
+            // `gpa` is a guest physical address. The backing `Uint8Array` is a flat RAM byte store
+            // of length `guest_size`; translate through the PC/Q35 hole/high-RAM remap layout.
+            let ram_bytes = self.ram.length() as u64;
+            if let Some(ram_offset) =
+                crate::guest_phys::translate_guest_paddr_range(ram_bytes, gpa, len_u64)
+            {
+                let end = ram_offset
+                    .checked_add(len_u64)
+                    .ok_or(GuestMemoryError { gpa, len })?;
+                let start_u32 =
+                    u32::try_from(ram_offset).map_err(|_| GuestMemoryError { gpa, len })?;
+                let end_u32 = u32::try_from(end).map_err(|_| GuestMemoryError { gpa, len })?;
+                return Ok((&self.ram, start_u32, end_u32));
+            }
+
+            // ---------------------------------------------------------------------
+            // VRAM aperture (BAR1) in the PCI/MMIO hole below 4GiB.
+            // ---------------------------------------------------------------------
+            if let Some(vram) = self.vram.as_ref() {
+                let vram_len = vram.length() as u64;
+                if let Some(vram_off) = gpa.checked_sub(PCI_MMIO_BASE) {
+                    let end = vram_off
+                        .checked_add(len_u64)
+                        .ok_or(GuestMemoryError { gpa, len })?;
+                    if end <= vram_len {
+                        let start_u32 =
+                            u32::try_from(vram_off).map_err(|_| GuestMemoryError { gpa, len })?;
+                        let end_u32 =
+                            u32::try_from(end).map_err(|_| GuestMemoryError { gpa, len })?;
+                        return Ok((vram, start_u32, end_u32));
+                    }
+                }
+            }
+
+            Err(GuestMemoryError { gpa, len })
+        }
     }
 
     impl GuestMemory for JsGuestMemory {
         fn read(&mut self, gpa: u64, dst: &mut [u8]) -> Result<(), GuestMemoryError> {
             let len = dst.len();
-            // `gpa` is a guest physical address. The backing `Uint8Array` is a flat RAM byte store
-            // of length `guest_size`; translate through the PC/Q35 hole/high-RAM remap layout.
-            let ram_bytes = self.view.length() as u64;
-            let len_u64 = u64::try_from(len).map_err(|_| GuestMemoryError { gpa, len })?;
-            let ram_offset =
-                crate::guest_phys::translate_guest_paddr_range(ram_bytes, gpa, len_u64)
-                    .ok_or(GuestMemoryError { gpa, len })?;
-            let end = ram_offset
-                .checked_add(len_u64)
-                .ok_or(GuestMemoryError { gpa, len })?;
-
-            let start_u32 = u32::try_from(ram_offset).map_err(|_| GuestMemoryError { gpa, len })?;
-            let end_u32 = u32::try_from(end).map_err(|_| GuestMemoryError { gpa, len })?;
-            self.view.subarray(start_u32, end_u32).copy_to(dst);
+            let (view, start_u32, end_u32) = self.resolve_range(gpa, len)?;
+            view.subarray(start_u32, end_u32).copy_to(dst);
             Ok(())
         }
 
         fn write(&mut self, gpa: u64, src: &[u8]) -> Result<(), GuestMemoryError> {
             let len = src.len();
-            let ram_bytes = self.view.length() as u64;
-            let len_u64 = u64::try_from(len).map_err(|_| GuestMemoryError { gpa, len })?;
-            let ram_offset =
-                crate::guest_phys::translate_guest_paddr_range(ram_bytes, gpa, len_u64)
-                    .ok_or(GuestMemoryError { gpa, len })?;
-            let end = ram_offset
-                .checked_add(len_u64)
-                .ok_or(GuestMemoryError { gpa, len })?;
-
-            let start_u32 = u32::try_from(ram_offset).map_err(|_| GuestMemoryError { gpa, len })?;
-            let end_u32 = u32::try_from(end).map_err(|_| GuestMemoryError { gpa, len })?;
-            self.view.subarray(start_u32, end_u32).copy_from(src);
+            let (view, start_u32, end_u32) = self.resolve_range(gpa, len)?;
+            view.subarray(start_u32, end_u32).copy_from(src);
             Ok(())
         }
     }
 
     thread_local! {
         static GUEST_MEMORY: RefCell<Option<JsGuestMemory>> = RefCell::new(None);
+        static VRAM_MEMORY: RefCell<Option<Uint8Array>> = RefCell::new(None);
     }
 
     /// Register a view of guest RAM for AeroGPU submissions.
@@ -481,8 +522,12 @@ mod wasm {
     /// rest of the wasm runtime.
     #[wasm_bindgen]
     pub fn set_guest_memory(guest_u8: Uint8Array) {
+        let vram = VRAM_MEMORY.with(|slot| slot.borrow().clone());
         GUEST_MEMORY.with(|slot| {
-            *slot.borrow_mut() = Some(JsGuestMemory { view: guest_u8 });
+            *slot.borrow_mut() = Some(JsGuestMemory {
+                ram: guest_u8,
+                vram,
+            });
         });
     }
 
@@ -496,6 +541,40 @@ mod wasm {
     #[wasm_bindgen]
     pub fn has_guest_memory() -> bool {
         GUEST_MEMORY.with(|slot| slot.borrow().is_some())
+    }
+
+    /// Register a view of the AeroGPU VRAM aperture (BAR1) for guest memory resolution.
+    ///
+    /// When configured, GPAs in the PCI/MMIO window `[PCI_MMIO_BASE, PCI_MMIO_BASE + vram_len)` can
+    /// be resolved by the GPU executor for allocation uploads/writebacks.
+    #[wasm_bindgen]
+    pub fn set_vram_memory(vram_u8: Uint8Array) {
+        let vram_for_guest = vram_u8.clone();
+        VRAM_MEMORY.with(|slot| {
+            *slot.borrow_mut() = Some(vram_u8);
+        });
+        GUEST_MEMORY.with(|slot| {
+            if let Some(mem) = slot.borrow_mut().as_mut() {
+                mem.vram = Some(vram_for_guest);
+            }
+        });
+    }
+
+    #[wasm_bindgen]
+    pub fn clear_vram_memory() {
+        VRAM_MEMORY.with(|slot| {
+            *slot.borrow_mut() = None;
+        });
+        GUEST_MEMORY.with(|slot| {
+            if let Some(mem) = slot.borrow_mut().as_mut() {
+                mem.vram = None;
+            }
+        });
+    }
+
+    #[wasm_bindgen]
+    pub fn has_vram_memory() -> bool {
+        VRAM_MEMORY.with(|slot| slot.borrow().is_some())
     }
 
     /// Debug helper: copy bytes out of the registered guest RAM view.
@@ -520,6 +599,38 @@ mod wasm {
             Ok::<(), JsValue>(())
         })?;
         Ok(Uint8Array::from(out.as_slice()))
+    }
+
+    #[cfg(test)]
+    mod vram_tests {
+        use super::*;
+        use wasm_bindgen_test::*;
+
+        wasm_bindgen_test_configure!(run_in_browser);
+
+        #[wasm_bindgen_test]
+        fn guest_memory_vram_aperture_read_write() {
+            // Guest RAM is present but intentionally small; VRAM mappings should still work for
+            // GPAs inside the BAR1 window.
+            let guest = Uint8Array::new_with_length(0x100);
+            let vram = Uint8Array::new_with_length(0x20);
+
+            let mut mem = JsGuestMemory {
+                ram: guest,
+                vram: Some(vram.clone()),
+            };
+
+            let gpa = PCI_MMIO_BASE + 4;
+            mem.write(gpa, &[1, 2, 3]).expect("write VRAM");
+
+            let mut out = [0u8; 3];
+            mem.read(gpa, &mut out).expect("read VRAM");
+            assert_eq!(out, [1, 2, 3]);
+
+            let mut vram_bytes = [0u8; 3];
+            vram.subarray(4, 7).copy_to(&mut vram_bytes);
+            assert_eq!(vram_bytes, [1, 2, 3]);
+        }
     }
 
     const MAX_ALLOC_TABLE_SIZE_BYTES: usize = 16 * 1024 * 1024;

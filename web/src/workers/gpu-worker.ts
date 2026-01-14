@@ -294,6 +294,50 @@ let aerogpuWasmD3d9InitBackend: PresenterBackendKind | null = null;
 let aerogpuWasmD3d9Backend: PresenterBackendKind | null = null;
 let aerogpuWasmD3d9InternalCanvas: OffscreenCanvas | null = null;
 
+const extractVramU8FromWorkerInit = (init: WorkerInitMessage): Uint8Array | null => {
+  // The VRAM aperture is optional and may be supplied under different field names depending on the
+  // embedding environment / runtime version. Accept either:
+  // - a `Uint8Array` view directly, or
+  // - an `ArrayBuffer`/`SharedArrayBuffer` plus optional offset/length metadata.
+  const rec = init as unknown as Record<string, unknown>;
+  const raw =
+    rec["vramU8"] ??
+    rec["vramMemoryU8"] ??
+    rec["vramMemory"] ??
+    rec["vram"] ??
+    rec["aerogpuVram"] ??
+    rec["aerogpuVramMemory"] ??
+    null;
+
+  if (raw instanceof Uint8Array) return raw;
+
+  if (!(raw instanceof ArrayBuffer) && !(raw instanceof SharedArrayBuffer)) return null;
+  const buf = raw;
+
+  const offsetRaw = rec["vramOffsetBytes"] ?? rec["vramMemoryOffsetBytes"] ?? 0;
+  const lengthRaw = rec["vramByteLength"] ?? rec["vramSizeBytes"] ?? rec["vramMemoryByteLength"] ?? null;
+
+  const offset = typeof offsetRaw === "number" && Number.isFinite(offsetRaw) ? Math.max(0, Math.trunc(offsetRaw)) : 0;
+  const maxLen = buf.byteLength - offset;
+  const length =
+    typeof lengthRaw === "number" && Number.isFinite(lengthRaw)
+      ? Math.max(0, Math.min(maxLen, Math.trunc(lengthRaw)))
+      : maxLen;
+
+  if (offset < 0 || length < 0 || offset + length > buf.byteLength) {
+    return new Uint8Array(buf);
+  }
+  return new Uint8Array(buf, offset, length);
+};
+
+const syncAerogpuWasmMemoryViews = (wasm: AeroGpuWasmApi): void => {
+  if (guestU8) wasm.set_guest_memory(guestU8);
+  else wasm.clear_guest_memory();
+
+  if (vramU8) wasm.set_vram_memory(vramU8);
+  else wasm.clear_vram_memory();
+};
+
 async function loadAerogpuWasm(): Promise<AeroGpuWasmApi> {
   if (aerogpuWasm) return aerogpuWasm;
   if (!aerogpuWasmLoadPromise) {
@@ -2773,11 +2817,7 @@ const handleSubmitAerogpu = async (req: GpuRuntimeSubmitAerogpuMessage): Promise
       }
 
       if (wasm) {
-        if (guestU8) {
-          wasm.set_guest_memory(guestU8);
-        } else {
-          wasm.clear_guest_memory();
-        }
+        syncAerogpuWasmMemoryViews(wasm);
 
         const cmdU8 = new Uint8Array(req.cmdStream);
         const allocTableU8 = req.allocTable ? new Uint8Array(req.allocTable) : undefined;
@@ -3226,11 +3266,7 @@ async function initPresenterForRuntime(canvas: OffscreenCanvas, width: number, h
       if (presenter.backend === "webgpu" || presenter.backend === "webgl2_wgpu") {
         void ensureAerogpuWasmD3d9(presenter.backend)
           .then((wasm) => {
-            if (guestU8) {
-              wasm.set_guest_memory(guestU8);
-            } else {
-              wasm.clear_guest_memory();
-            }
+            syncAerogpuWasmMemoryViews(wasm);
           })
           .catch((err) => {
             emitGpuEvent({
@@ -3336,7 +3372,7 @@ const handleRuntimeInit = (init: WorkerInitMessage) => {
     try {
       // If aero-gpu-wasm is already loaded (e.g. via the webgl2_wgpu presenter), plumb the
       // shared guest RAM view immediately so alloc_table submissions can resolve GPAs.
-      aerogpuWasm.set_guest_memory(guestU8);
+      syncAerogpuWasmMemoryViews(aerogpuWasm);
     } catch {
       // Ignore; wasm module may not have been initialized yet.
     }
@@ -3518,6 +3554,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
         if (aerogpuWasm) {
           try {
             aerogpuWasm.clear_guest_memory();
+            aerogpuWasm.clear_vram_memory();
           } catch {
             // Ignore; best-effort cleanup.
           }
@@ -3535,11 +3572,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
         if (!runtimeCanvas && (forcedBackend === "webgpu" || forcedBackend === "webgl2_wgpu")) {
           void ensureAerogpuWasmD3d9(forcedBackend)
             .then((wasm) => {
-              if (guestU8) {
-                wasm.set_guest_memory(guestU8);
-              } else {
-                wasm.clear_guest_memory();
-              }
+              syncAerogpuWasmMemoryViews(wasm);
             })
             .catch((err) => {
               emitGpuEvent({
@@ -4614,6 +4647,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
       if (aerogpuWasm) {
         try {
           aerogpuWasm.clear_guest_memory();
+          aerogpuWasm.clear_vram_memory();
         } catch {
           // Ignore; best-effort cleanup.
         }
