@@ -2873,7 +2873,7 @@ fn sm3_wgsl_is_compatible_with_aerogpu_d3d9_pipeline_layout() {
     //
     // This catches regressions where SM3 WGSL sampler declarations drift back to group(0) or use
     // incorrect binding numbering.
-    let Some((device, _queue)) = request_device() else {
+    let Some((device, queue)) = request_device() else {
         return;
     };
 
@@ -2927,7 +2927,8 @@ fn sm3_wgsl_is_compatible_with_aerogpu_d3d9_pipeline_layout() {
             ty: wgpu::BindingType::Buffer {
                 ty: wgpu::BufferBindingType::Uniform,
                 has_dynamic_offset: false,
-                min_binding_size: None,
+                // 512 vec4<f32>.
+                min_binding_size: wgpu::BufferSize::new(512 * 16),
             },
             count: None,
         }],
@@ -2995,7 +2996,7 @@ fn sm3_wgsl_is_compatible_with_aerogpu_d3d9_pipeline_layout() {
     // Note: wgpu may return a dummy pipeline object and report validation errors via the device's
     // error callback, so use an error scope to make failures visible to the test harness.
     device.push_error_scope(wgpu::ErrorFilter::Validation);
-    let _pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("sm3-wgsl-test.pipeline"),
         layout: Some(&pipeline_layout),
         vertex: wgpu::VertexState {
@@ -3022,6 +3023,146 @@ fn sm3_wgsl_is_compatible_with_aerogpu_d3d9_pipeline_layout() {
     device.poll(wgpu::Maintain::Poll);
     let err = pollster::block_on(device.pop_error_scope());
     assert!(err.is_none(), "wgpu validation error: {err:?}");
+
+    // Also run a tiny draw that binds all expected bind groups. This catches cases where wgpu
+    // defers certain binding/layout validation until draw/submit.
+    const CONSTANTS_SIZE_BYTES: u64 = 512 * 16;
+    let constants_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("sm3-wgsl-test.constants"),
+        size: CONSTANTS_SIZE_BYTES,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let constants_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("sm3-wgsl-test.constants_bg"),
+        layout: &constants_bgl,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: constants_buffer.as_entire_binding(),
+        }],
+    });
+
+    // 1x1 RGBA8 texture containing vec4(0,0,0,1) so the vertex shader writes a valid position.
+    let sample_tex = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("sm3-wgsl-test.sample_tex"),
+        size: wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    let sample_tex_view = sample_tex.create_view(&wgpu::TextureViewDescriptor::default());
+    let sample_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("sm3-wgsl-test.sample_sampler"),
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        mipmap_filter: wgpu::FilterMode::Nearest,
+        ..Default::default()
+    });
+
+    // wgpu requires bytes_per_row alignment even for queue.write_texture, so pad to 256.
+    let mut tex_row = vec![0u8; wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as usize];
+    tex_row[..4].copy_from_slice(&[0, 0, 0, 255]);
+    queue.write_texture(
+        wgpu::ImageCopyTexture {
+            texture: &sample_tex,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        &tex_row,
+        wgpu::ImageDataLayout {
+            offset: 0,
+            bytes_per_row: Some(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT),
+            rows_per_image: Some(1),
+        },
+        wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+    );
+
+    let samplers_vs_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("sm3-wgsl-test.samplers_vs_bg"),
+        layout: &samplers_vs_bgl,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&sample_tex_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(&sample_sampler),
+            },
+        ],
+    });
+    let samplers_ps_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("sm3-wgsl-test.samplers_ps_bg"),
+        layout: &samplers_ps_bgl,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&sample_tex_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(&sample_sampler),
+            },
+        ],
+    });
+
+    let render_tex = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("sm3-wgsl-test.render_tex"),
+        size: wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    let render_view = render_tex.create_view(&wgpu::TextureViewDescriptor::default());
+
+    device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("sm3-wgsl-test.encoder"),
+    });
+    {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("sm3-wgsl-test.pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &render_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &constants_bg, &[]);
+        pass.set_bind_group(1, &samplers_vs_bg, &[]);
+        pass.set_bind_group(2, &samplers_ps_bg, &[]);
+        pass.draw(0..3, 0..1);
+    }
+    queue.submit(Some(encoder.finish()));
+    device.poll(wgpu::Maintain::Poll);
+    let err = pollster::block_on(device.pop_error_scope());
+    assert!(err.is_none(), "wgpu validation error (draw): {err:?}");
 }
 
 #[test]
