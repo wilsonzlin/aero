@@ -168,22 +168,15 @@ pub fn translate_d3d9_shader_to_wgsl(
 
             // Fallback to the legacy translator. Use the extracted token stream so malformed DXBC
             // (already handled above) can't be silently bypassed.
-            //
-            // Note: the SM3 decoder uses the real SM2/3 instruction length encoding, while the
-            // legacy bring-up parser expects a simplified "operand count" length field. If the
-            // direct parse fails, retry after rewriting instruction length fields.
-            let program = match shader::parse(token_stream) {
-                Ok(p) => p,
-                Err(parse_err) => {
-                    let converted = reencode_sm3_instruction_lengths_for_legacy(token_stream)
-                        .map_err(ShaderTranslateError::Malformed)?;
-                    shader::parse(&converted).map_err(|e| {
-                        ShaderTranslateError::Translation(format!(
-                            "{parse_err}; after SM3-length reencode: {e}"
-                        ))
-                    })?
-                }
-            };
+            let program = shader::parse(token_stream).map_err(|e| match e {
+                // Treat obvious truncation/shape issues as malformed input rather than a generic
+                // translation failure.
+                shader::ShaderError::TokenStreamTooSmall
+                | shader::ShaderError::TokenCountTooLarge { .. }
+                | shader::ShaderError::BytecodeTooLarge { .. }
+                | shader::ShaderError::UnexpectedEof => ShaderTranslateError::Malformed(e.to_string()),
+                other => ShaderTranslateError::Translation(other.to_string()),
+            })?;
             let ir = shader::to_ir(&program);
             let wgsl = shader::generate_wgsl_with_options(&ir, options)
                 .map_err(|e| ShaderTranslateError::Translation(e.to_string()))?;
@@ -207,76 +200,6 @@ pub fn translate_d3d9_shader_to_wgsl(
             })
         }
     }
-}
-
-fn reencode_sm3_instruction_lengths_for_legacy(token_stream: &[u8]) -> Result<Vec<u8>, String> {
-    if !token_stream.len().is_multiple_of(4) {
-        return Err(format!(
-            "token stream length {} is not a multiple of 4",
-            token_stream.len()
-        ));
-    }
-    if token_stream.len() < 4 {
-        return Err("token stream too small".to_owned());
-    }
-
-    let mut tokens: Vec<u32> = token_stream
-        .chunks_exact(4)
-        .map(|c| u32::from_le_bytes(c.try_into().unwrap()))
-        .collect();
-
-    let mut idx = 1usize;
-    while idx < tokens.len() {
-        let token = tokens[idx];
-        let opcode = (token & 0xFFFF) as u16;
-
-        // Comments are variable-length data blocks that should be skipped.
-        // Layout: opcode=0xFFFE, length in DWORDs in bits 16..30.
-        if opcode == 0xFFFE {
-            let comment_len = ((token >> 16) & 0x7FFF) as usize;
-            let total_len = 1usize
-                .checked_add(comment_len)
-                .ok_or_else(|| "comment length overflow".to_owned())?;
-            if idx + total_len > tokens.len() {
-                return Err(format!(
-                    "comment length {comment_len} exceeds remaining tokens {}",
-                    tokens.len() - idx
-                ));
-            }
-            idx += total_len;
-            continue;
-        }
-
-        if opcode == 0xFFFF {
-            break;
-        }
-
-        // In SM2/3 bytecode, bits 24..27 encode the *total* instruction length (in DWORD tokens),
-        // including the opcode token itself. A value of 0 is treated as a 1-token instruction.
-        let mut length = ((token >> 24) & 0x0F) as usize;
-        if length == 0 {
-            length = 1;
-        }
-        if idx + length > tokens.len() {
-            return Err(format!(
-                "instruction length {length} exceeds remaining tokens {}",
-                tokens.len() - idx
-            ));
-        }
-
-        // Legacy shader parser expects the length field to contain the number of operand tokens
-        // (excluding the opcode token), so rewrite length from `N` to `N-1`.
-        let operand_count = (length - 1) as u32;
-        tokens[idx] = (token & !(0x0F << 24)) | ((operand_count & 0x0F) << 24);
-
-        idx += length;
-    }
-
-    let mut out = Vec::with_capacity(token_stream.len());
-    for t in tokens {
-        out.extend_from_slice(&t.to_le_bytes());
-    }
-    Ok(out)
 }
 
 #[derive(Debug)]
