@@ -846,7 +846,7 @@ impl aero_mmu::MemoryBus for SystemMemory {
 struct PerCpuSystemMemoryBus<'a> {
     apic_id: u8,
     interrupts: Option<Rc<RefCell<PlatformInterrupts>>>,
-    ap_cpus: Rc<RefCell<Vec<CpuCore>>>,
+    ap_cpus: &'a mut [CpuCore],
     mem: &'a mut SystemMemory,
 }
 
@@ -854,7 +854,7 @@ impl<'a> PerCpuSystemMemoryBus<'a> {
     fn new(
         apic_id: u8,
         interrupts: Option<Rc<RefCell<PlatformInterrupts>>>,
-        ap_cpus: Rc<RefCell<Vec<CpuCore>>>,
+        ap_cpus: &'a mut [CpuCore],
         mem: &'a mut SystemMemory,
     ) -> Self {
         Self {
@@ -863,6 +863,12 @@ impl<'a> PerCpuSystemMemoryBus<'a> {
             ap_cpus,
             mem,
         }
+    }
+
+    fn maybe_deliver_ipi(&mut self, icr_low: u32, icr_high: u32) {
+        self.maybe_deliver_init_ipi(icr_low, icr_high);
+        self.maybe_deliver_startup_ipi(icr_low, icr_high);
+        self.maybe_deliver_fixed_ipi(icr_low, icr_high);
     }
 
     fn maybe_deliver_init_ipi(&mut self, icr_low: u32, icr_high: u32) {
@@ -896,6 +902,100 @@ impl<'a> PerCpuSystemMemoryBus<'a> {
         }
     }
 
+    fn maybe_deliver_startup_ipi(&mut self, icr_low: u32, icr_high: u32) {
+        // Intel SDM Vol. 3: ICR delivery mode.
+        // 0b110 = STARTUP (SIPI).
+        let delivery_mode = (icr_low >> 8) & 0b111;
+        if delivery_mode != 0b110 {
+            return;
+        }
+        // Only model STARTUP "assert".
+        let level_assert = ((icr_low >> 14) & 1) != 0;
+        if !level_assert {
+            return;
+        }
+
+        let vector = (icr_low & 0xFF) as u8;
+        let shorthand = (icr_low >> 18) & 0b11;
+        match shorthand {
+            0 => {
+                let dest = (icr_high >> 24) as u8;
+                if dest == 0xFF {
+                    self.start_all_aps_excluding_sender(vector);
+                } else {
+                    self.start_ap_by_apic_id(dest, vector);
+                }
+            }
+            // Self.
+            1 => self.start_ap_by_apic_id(self.apic_id, vector),
+            // All including self.
+            2 => self.start_all_aps(vector),
+            // All excluding self.
+            3 => self.start_all_aps_excluding_sender(vector),
+            _ => {}
+        }
+    }
+
+    fn maybe_deliver_fixed_ipi(&mut self, icr_low: u32, icr_high: u32) {
+        // Intel SDM Vol. 3: ICR delivery mode.
+        // 0b000 = Fixed.
+        let delivery_mode = (icr_low >> 8) & 0b111;
+        if delivery_mode != 0b000 {
+            return;
+        }
+        let level_assert = ((icr_low >> 14) & 1) != 0;
+        if !level_assert {
+            return;
+        }
+        let vector = (icr_low & 0xFF) as u8;
+        let shorthand = (icr_low >> 18) & 0b11;
+        match shorthand {
+            0 => {
+                let dest = (icr_high >> 24) as u8;
+                if dest == 0xFF {
+                    self.inject_fixed_all_excluding_sender(vector);
+                } else {
+                    self.inject_fixed_to_apic_id(dest, vector);
+                }
+            }
+            // Self.
+            1 => self.inject_fixed_to_apic_id(self.apic_id, vector),
+            // All including self.
+            2 => self.inject_fixed_to_all(vector),
+            // All excluding self.
+            3 => self.inject_fixed_all_excluding_sender(vector),
+            _ => {}
+        }
+    }
+
+    fn inject_fixed_to_apic_id(&mut self, apic_id: u8, vector: u8) {
+        let Some(interrupts) = &self.interrupts else {
+            return;
+        };
+        let Some(lapic) = interrupts.borrow().lapic_by_apic_id(apic_id) else {
+            return;
+        };
+        lapic.inject_fixed_interrupt(vector);
+    }
+
+    fn inject_fixed_to_all(&mut self, vector: u8) {
+        let cpu_count = self.ap_cpus.len().saturating_add(1);
+        for apic_id in 0..cpu_count {
+            self.inject_fixed_to_apic_id(apic_id as u8, vector);
+        }
+    }
+
+    fn inject_fixed_all_excluding_sender(&mut self, vector: u8) {
+        let cpu_count = self.ap_cpus.len().saturating_add(1);
+        for apic_id in 0..cpu_count {
+            let apic_id = apic_id as u8;
+            if apic_id == self.apic_id {
+                continue;
+            }
+            self.inject_fixed_to_apic_id(apic_id, vector);
+        }
+    }
+
     fn reset_ap_by_apic_id(&mut self, apic_id: u8) {
         if apic_id == 0 {
             // Destination 0 = BSP (ignore).
@@ -908,8 +1008,7 @@ impl<'a> PerCpuSystemMemoryBus<'a> {
         }
 
         let idx = (apic_id as usize).saturating_sub(1);
-        let mut ap_cpus = self.ap_cpus.borrow_mut();
-        if let Some(cpu) = ap_cpus.get_mut(idx) {
+        if let Some(cpu) = self.ap_cpus.get_mut(idx) {
             vcpu_init::reset_ap_vcpu_to_init_state(cpu);
             set_cpu_apic_base_bsp_bit(cpu, false);
             // After INIT, application processors wait for a SIPI before executing.
@@ -921,8 +1020,7 @@ impl<'a> PerCpuSystemMemoryBus<'a> {
     }
 
     fn reset_all_aps(&mut self) {
-        let mut ap_cpus = self.ap_cpus.borrow_mut();
-        for (idx, cpu) in ap_cpus.iter_mut().enumerate() {
+        for (idx, cpu) in self.ap_cpus.iter_mut().enumerate() {
             let apic_id = (idx + 1) as u8;
             vcpu_init::reset_ap_vcpu_to_init_state(cpu);
             set_cpu_apic_base_bsp_bit(cpu, false);
@@ -935,8 +1033,7 @@ impl<'a> PerCpuSystemMemoryBus<'a> {
 
     fn reset_all_aps_excluding_sender(&mut self) {
         let sender_idx = self.apic_id.checked_sub(1).map(|v| v as usize);
-        let mut ap_cpus = self.ap_cpus.borrow_mut();
-        for (idx, cpu) in ap_cpus.iter_mut().enumerate() {
+        for (idx, cpu) in self.ap_cpus.iter_mut().enumerate() {
             if Some(idx) == sender_idx {
                 continue;
             }
@@ -949,47 +1046,18 @@ impl<'a> PerCpuSystemMemoryBus<'a> {
             }
         }
     }
-
-    fn maybe_deliver_sipi_ipi(&mut self, icr_low: u32, icr_high: u32) {
-        // Intel SDM Vol. 3: ICR delivery mode.
-        // 0b110 = Startup (SIPI).
-        let delivery_mode = (icr_low >> 8) & 0b111;
-        if delivery_mode != 0b110 {
-            return;
-        }
-        let vector = (icr_low & 0xFF) as u8;
-
-        let shorthand = (icr_low >> 18) & 0b11;
-        match shorthand {
-            // No shorthand: use ICR_HIGH destination field (xAPIC physical destination).
-            0 => {
-                let dest = (icr_high >> 24) as u8;
-                self.start_ap_by_apic_id(dest, vector);
-            }
-            // Self: ignore (starting self is undefined / meaningless).
-            1 => {}
-            // All including self: start all APs (ignore BSP/self semantics; APs are index-based).
-            2 => self.start_all_aps(vector),
-            // All excluding self: start all APs except the sender (if it is an AP).
-            3 => self.start_all_aps_excluding_sender(vector),
-            _ => {}
-        }
-    }
-
     fn start_ap_by_apic_id(&mut self, apic_id: u8, vector: u8) {
         if apic_id == 0 {
-            // Destination 0 = BSP (ignore).
+            // SIPI to BSP: ignore.
             return;
         }
         if apic_id == 0xFF {
-            // Destination 0xFF is commonly used as a broadcast.
+            // Treat as broadcast.
             self.start_all_aps_excluding_sender(vector);
             return;
         }
-
         let idx = (apic_id as usize).saturating_sub(1);
-        let mut ap_cpus = self.ap_cpus.borrow_mut();
-        let Some(cpu) = ap_cpus.get_mut(idx) else {
+        let Some(cpu) = self.ap_cpus.get_mut(idx) else {
             return;
         };
         vcpu_init::init_ap_vcpu_from_sipi(cpu, vector);
@@ -997,8 +1065,7 @@ impl<'a> PerCpuSystemMemoryBus<'a> {
     }
 
     fn start_all_aps(&mut self, vector: u8) {
-        let mut ap_cpus = self.ap_cpus.borrow_mut();
-        for cpu in ap_cpus.iter_mut() {
+        for cpu in self.ap_cpus.iter_mut() {
             vcpu_init::init_ap_vcpu_from_sipi(cpu, vector);
             set_cpu_apic_base_bsp_bit(cpu, false);
         }
@@ -1006,8 +1073,7 @@ impl<'a> PerCpuSystemMemoryBus<'a> {
 
     fn start_all_aps_excluding_sender(&mut self, vector: u8) {
         let sender_idx = self.apic_id.checked_sub(1).map(|v| v as usize);
-        let mut ap_cpus = self.ap_cpus.borrow_mut();
-        for (idx, cpu) in ap_cpus.iter_mut().enumerate() {
+        for (idx, cpu) in self.ap_cpus.iter_mut().enumerate() {
             if Some(idx) == sender_idx {
                 continue;
             }
@@ -1088,7 +1154,7 @@ impl memory::MemoryBus for PerCpuSystemMemoryBus<'_> {
                     &buf[offset..offset + chunk_len],
                 );
 
-                // Detect INIT IPIs issued via the LAPIC ICR. The LAPIC device model treats ICR as
+                // Detect IPIs issued via the LAPIC ICR. The LAPIC device model treats ICR as
                 // register state only; IPI delivery is handled by the machine integration layer.
                 const ICR_LOW_OFF: u64 = 0x300;
                 const ICR_HIGH_OFF: u64 = 0x310;
@@ -1113,10 +1179,7 @@ impl memory::MemoryBus for PerCpuSystemMemoryBus<'_> {
                         );
                         u32::from_le_bytes(tmp)
                     };
-                    // IPI delivery is handled by the machine integration layer, not by the LAPIC
-                    // device model. Detect INIT+SIPI sequences by observing ICR_LOW writes.
-                    self.maybe_deliver_init_ipi(icr_low, icr_high);
-                    self.maybe_deliver_sipi_ipi(icr_low, icr_high);
+                    self.maybe_deliver_ipi(icr_low, icr_high);
                 }
                 paddr = paddr.wrapping_add(chunk_len as u64);
                 offset += chunk_len;
@@ -2832,7 +2895,7 @@ pub struct Machine {
     reset_latch: ResetLatch,
 
     cpu: CpuCore,
-    ap_cpus: Rc<RefCell<Vec<CpuCore>>>,
+    ap_cpus: Vec<CpuCore>,
     assist: AssistContext,
     mmu: aero_mmu::Mmu,
     mem: SystemMemory,
@@ -3037,7 +3100,7 @@ impl Machine {
             chipset,
             reset_latch: ResetLatch::new(),
             cpu: CpuCore::new(CpuMode::Real),
-            ap_cpus: Rc::new(RefCell::new(Vec::new())),
+            ap_cpus: Vec::new(),
             assist: AssistContext::default(),
             mmu: aero_mmu::Mmu::new(),
             mem,
@@ -3249,33 +3312,20 @@ impl Machine {
     /// multiple CPUs that share guest-physical address space, so tests need a stable way to inspect
     /// per-vCPU state without relying on guest execution.
     ///
-    /// Note: `Machine` currently only executes vCPU0. The canonical PC platform interrupt complex
-    /// does model multiple LAPICs (see [`Machine::read_lapic_u32`] / [`Machine::write_lapic_u32`]),
-    /// but additional CPU cores are not scheduled/executed yet, so only vCPU0 has a meaningful
-    /// architectural [`CpuState`] here.
-    ///
     /// # Panics
-    /// Panics if `idx` is out of range, or if `idx != 0` (since only vCPU0 CPU state exists today).
+    /// Panics if `idx` is out of range.
     pub fn cpu_by_index(&self, idx: usize) -> &CpuState {
         let cpu_count = self.cfg.cpu_count as usize;
-        if idx >= cpu_count {
-            panic!("cpu index {idx} out of range (cpu_count={})", self.cfg.cpu_count);
+        assert!(
+            idx < cpu_count,
+            "cpu index {idx} out of range (cpu_count={})",
+            self.cfg.cpu_count
+        );
+        if idx == 0 {
+            &self.cpu.state
+        } else {
+            &self.ap_cpus[idx - 1].state
         }
-        if idx != 0 {
-            panic!(
-                "cpu index {idx} is configured (cpu_count={}), but the canonical Machine currently only executes vCPU0\n\
-\n\
-SMP (multi-vCPU) is not supported yet because the full-system stack is still missing key pieces:\n\
-  - AP startup (INIT/SIPI + low-memory trampoline + wait-for-SIPI state)\n\
-  - LAPIC/IPI delivery (ICR) and per-vCPU scheduling\n\
-  - end-to-end multi-CPU firmware/platform validation (ACPI MADT/_PR_, SMBIOS)\n\
-\n\
-Track progress: docs/21-smp.md\n\
-",
-                self.cfg.cpu_count,
-            );
-        }
-        &self.cpu.state
     }
 
     /// Mutable access to the current CPU state (debug/testing only).
@@ -3286,27 +3336,19 @@ Track progress: docs/21-smp.md\n\
     /// Debug/testing helper: returns mutable access to the CPU core for vCPU `idx`.
     ///
     /// # Panics
-    /// Panics if `idx` is out of range, or if `idx != 0` (since only vCPU0 CPU state exists today).
+    /// Panics if `idx` is out of range.
     pub fn cpu_core_mut_by_index(&mut self, idx: usize) -> &mut CpuCore {
         let cpu_count = self.cfg.cpu_count as usize;
-        if idx >= cpu_count {
-            panic!("cpu index {idx} out of range (cpu_count={})", self.cfg.cpu_count);
+        assert!(
+            idx < cpu_count,
+            "cpu index {idx} out of range (cpu_count={})",
+            self.cfg.cpu_count
+        );
+        if idx == 0 {
+            &mut self.cpu
+        } else {
+            &mut self.ap_cpus[idx - 1]
         }
-        if idx != 0 {
-            panic!(
-                "cpu index {idx} is configured (cpu_count={}), but the canonical Machine currently only executes vCPU0\n\
-\n\
-SMP (multi-vCPU) is not supported yet because the full-system stack is still missing key pieces:\n\
-  - AP startup (INIT/SIPI + low-memory trampoline + wait-for-SIPI state)\n\
-  - LAPIC/IPI delivery (ICR) and per-vCPU scheduling\n\
-  - end-to-end multi-CPU firmware/platform validation (ACPI MADT/_PR_, SMBIOS)\n\
-\n\
-Track progress: docs/21-smp.md\n\
-",
-                self.cfg.cpu_count,
-            );
-        }
-        &mut self.cpu
     }
 
     /// Guest physical address of the ACPI Root System Description Pointer (RSDP), if published.
@@ -3364,10 +3406,7 @@ Track progress: docs/21-smp.md\n\
         if cpu_index == 0 {
             Some(self.cpu.state.clone())
         } else {
-            self.ap_cpus
-                .borrow()
-                .get(cpu_index - 1)
-                .map(|cpu| cpu.state.clone())
+            self.ap_cpus.get(cpu_index - 1).map(|cpu| cpu.state.clone())
         }
     }
 
@@ -3633,8 +3672,12 @@ Track progress: docs/21-smp.md\n\
         );
         let apic_id = cpu_index as u8;
         let interrupts = self.interrupts.clone();
-        let mut bus =
-            PerCpuSystemMemoryBus::new(apic_id, interrupts, self.ap_cpus.clone(), &mut self.mem);
+        let mut bus = PerCpuSystemMemoryBus::new(
+            apic_id,
+            interrupts,
+            self.ap_cpus.as_mut_slice(),
+            &mut self.mem,
+        );
         aero_mmu::MemoryBus::read_u32(&mut bus, LAPIC_MMIO_BASE + offset)
     }
 
@@ -3649,8 +3692,12 @@ Track progress: docs/21-smp.md\n\
         );
         let apic_id = cpu_index as u8;
         let interrupts = self.interrupts.clone();
-        let mut bus =
-            PerCpuSystemMemoryBus::new(apic_id, interrupts, self.ap_cpus.clone(), &mut self.mem);
+        let mut bus = PerCpuSystemMemoryBus::new(
+            apic_id,
+            interrupts,
+            self.ap_cpus.as_mut_slice(),
+            &mut self.mem,
+        );
         aero_mmu::MemoryBus::write_u32(&mut bus, LAPIC_MMIO_BASE + offset, value);
     }
 
@@ -7008,7 +7055,7 @@ Track progress: docs/21-smp.md\n\
             cpu.state.halted = true;
             ap_cpus.push(cpu);
         }
-        *self.ap_cpus.borrow_mut() = ap_cpus;
+        self.ap_cpus = ap_cpus;
         self.guest_time = GuestTime::new_from_cpu(&self.cpu);
         self.mmu = aero_mmu::Mmu::new();
 
@@ -7563,7 +7610,7 @@ Track progress: docs/21-smp.md\n\
             let phys = PerCpuSystemMemoryBus::new(
                 0,
                 self.interrupts.clone(),
-                self.ap_cpus.clone(),
+                self.ap_cpus.as_mut_slice(),
                 &mut self.mem,
             );
             let mut inner = aero_cpu_core::PagingBus::new_with_io(
@@ -12644,7 +12691,7 @@ mod tests {
         m.chipset.a20().set_enabled(false);
 
         let interrupts = m.interrupts.clone();
-        let phys = PerCpuSystemMemoryBus::new(0, interrupts, m.ap_cpus.clone(), &mut m.mem);
+        let phys = PerCpuSystemMemoryBus::new(0, interrupts, m.ap_cpus.as_mut_slice(), &mut m.mem);
         let inner = aero_cpu_core::PagingBus::new_with_io(phys, StrictIoPortBus { io: &mut m.io });
         let mut bus = MachineCpuBus {
             a20: m.chipset.a20(),
