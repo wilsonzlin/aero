@@ -6,7 +6,7 @@ WebGPU render pipeline.
 
 This document describes:
 
-- what is **implemented today** (command-stream plumbing, binding model, compute-prepass scaffolding + current limitations), and
+- what is **implemented today** (command-stream plumbing, binding model, compute-prepass scaffolding + current limitations; prototype GS DXBC→WGSL translator exists but is not wired into the executor), and
 - the **next steps** (wire up GS DXBC translation + bytecode execution, then expand opcode/topology coverage, system values, etc).
 
 > Related: [`docs/16-d3d10-11-translation.md`](../16-d3d10-11-translation.md) (high-level D3D10/11→WebGPU mapping).
@@ -58,6 +58,10 @@ When a geometry shader is active, a draw is executed as:
      - a small **passthrough VS** that reads the expanded vertex buffer, and
      - the original D3D pixel shader (translated to WGSL fragment).
    - Issue `draw_indirect` / `draw_indexed_indirect` using the args buffer produced by step (2).
+
+Note: the current AeroGPU command-stream executor implements the compute-prepass + indirect draw plumbing
+and routes draws through a compute prepass when GS/HS/DS stages are bound, but the compute shader is
+currently a placeholder that emits synthetic geometry. VS-as-compute and GS DXBC execution are WIP.
 
 ### Why we expand strips into lists
 
@@ -119,9 +123,8 @@ Supported (non-adjacency) GS input primitive declarations:
 - `line`
 - `triangle`
 
-Not supported:
-
-- `lineadj` / `triadj` (adjacency primitives)
+Adjacency primitives (`lineadj` / `triadj`) are parsed by the prototype translator (verts-per-primitive
+4/6), but are not yet exercised end-to-end in the executor.
 
 ### Output topology / stream types
 
@@ -167,8 +170,8 @@ Known limitations include:
   - No simultaneous multiple output stream declarations
 - **No stream-out (SO / transform feedback)**
   - GS output cannot be captured into D3D stream-out buffers
-- **No adjacency**
-  - `lineadj` / `triadj` inputs are not supported
+- **No adjacency (end-to-end)**
+  - `lineadj` / `triadj` inputs are not supported by the command-stream executor yet
 - **No layered rendering semantics**
   - No `SV_RenderTargetArrayIndex` / `SV_ViewportArrayIndex` style outputs (future work)
 - **No fixed-function GS-side rasterizer discard**
