@@ -1310,6 +1310,7 @@ pub struct BindGroupLayout {
     /// - group(0): constants shared by VS/PS (bindings 0/1/2 for float/int/bool constants)
     /// - group(1): VS texture/sampler bindings
     /// - group(2): PS texture/sampler bindings
+    /// - group(3): optional half-pixel-center uniform buffer (VS only)
     pub sampler_group: u32,
     /// sampler_index -> (texture_binding, sampler_binding)
     pub sampler_bindings: HashMap<u16, (u32, u32)>,
