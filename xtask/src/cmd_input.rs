@@ -50,7 +50,7 @@ Steps:
      (or: --usb-all to run the full aero-usb test suite)
   3. (optional: --machine) cargo test -p aero-machine --lib --locked --test machine_uhci --test machine_xhci --test xhci_snapshot --test machine_xhci_usb_attach_at_path
   4. (optional: --wasm) wasm-pack test --node crates/aero-wasm --test webusb_uhci_bridge --test xhci_webusb_bridge --locked
-  5. (optional: --with-wasm) cargo test -p aero-wasm --test machine_input_backends --locked
+  5. (optional: --with-wasm) cargo test -p aero-wasm --locked --test machine_input_injection --test machine_input_backends
   6. (unless --rust-only) npm -w web run test:unit -- src/input src/usb/ehci_webusb_root_port_rust_drift.test.ts src/usb/xhci_webusb_root_port_rust_drift.test.ts
   7. (optional: --e2e, unless --rust-only) npm run test:e2e -- <input-related specs...>
      (defaults to --project=chromium --workers=1; sets AERO_WASM_PACKAGES=core unless already set)
@@ -60,8 +60,8 @@ Options:
   --machine             Also run targeted `aero-machine` tests (UHCI/xHCI wiring + snapshot/restore).
   --wasm                Also run wasm-pack tests for the WASM USB bridge (does not require `node_modules`).
   --rust-only            Skip npm unit + Playwright steps (does not require `node_modules`).
-  --with-wasm            Also run the `aero-wasm` input backend integration smoke test.
   --usb-all             Run the full `aero-usb` test suite (all integration tests).
+  --with-wasm            Also run the `aero-wasm` input integration smoke tests.
   -- <args>             Extra Playwright args forwarded to `npm run test:e2e` (requires --e2e).
   -h, --help            Show this help.
 
@@ -152,12 +152,14 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
             "test",
             "-p",
             "aero-wasm",
+            "--locked",
+            "--test",
+            "machine_input_injection",
             "--test",
             "machine_input_backends",
-            "--locked",
         ]);
         runner.run_step(
-            "Rust: cargo test -p aero-wasm --test machine_input_backends --locked",
+            "Rust: cargo test -p aero-wasm --locked --test machine_input_injection --test machine_input_backends",
             &mut cmd,
         )?;
     }
@@ -370,6 +372,14 @@ mod tests {
                 .contains("extra Playwright args after `--` require `--e2e`"),
             "unexpected error message: {err}"
         );
+    }
+
+    #[test]
+    fn parse_args_accepts_wasm_flag() {
+        let opts = parse_args(vec!["--wasm".into()])
+            .expect("parse_args should accept --wasm")
+            .expect("expected opts for non-help invocation");
+        assert!(opts.wasm);
     }
 
     #[test]
