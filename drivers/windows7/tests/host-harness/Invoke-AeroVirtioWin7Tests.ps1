@@ -1015,29 +1015,55 @@ function Wait-AeroSelftestResult {
 
   function Test-VirtioInputMsixRequirement {
     param(
-      [Parameter(Mandatory = $true)] [string]$Tail
+      [Parameter(Mandatory = $true)] [string]$Tail,
+      # Optional: if provided, fall back to parsing the full serial log when the rolling tail buffer does not
+      # contain the virtio-input-msix marker (e.g. because the tail was truncated).
+      [Parameter(Mandatory = $false)] [string]$SerialLogPath = ""
     )
-
+ 
     if (-not $RequireVirtioInputMsixPass) { return $null }
-
-    $matches = [regex]::Matches($Tail, "AERO_VIRTIO_SELFTEST\|TEST\|virtio-input-msix\|[^\r\n]+")
-    if ($matches.Count -le 0) {
+ 
+    $prefix = "AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|"
+    $line = Try-ExtractLastAeroMarkerLine -Tail $Tail -Prefix $prefix -SerialLogPath $SerialLogPath
+    if ($null -eq $line) {
       return @{ Result = "MISSING_VIRTIO_INPUT_MSIX"; Tail = $Tail }
     }
-
-    $line = $matches[$matches.Count - 1].Value
-    $status = ""
-    if ($line -match "^AERO_VIRTIO_SELFTEST\|TEST\|virtio-input-msix\|([^|]+)") {
-      $status = $Matches[1]
+ 
+    $fields = @{}
+    foreach ($tok in $line.Split("|")) {
+      $idx = $tok.IndexOf("=")
+      if ($idx -le 0) { continue }
+      $k = $tok.Substring(0, $idx).Trim()
+      $v = $tok.Substring($idx + 1).Trim()
+      if (-not [string]::IsNullOrEmpty($k)) {
+        $fields[$k] = $v
+      }
     }
-
-    $mode = ""
-    if ($line -match "mode=([^|\r\n]+)") { $mode = $Matches[1] }
-
-    if ($status -ne "PASS" -or $mode -ne "msix") {
-      return @{ Result = "VIRTIO_INPUT_MSIX_REQUIRED"; Tail = $Tail }
+ 
+    if ($line -match "\|FAIL(\||$)") {
+      $reason = "virtio-input-msix marker reported FAIL"
+      if ($fields.ContainsKey("reason")) { $reason += " reason=$($fields["reason"])" }
+      if ($fields.ContainsKey("err")) { $reason += " err=$($fields["err"])" }
+      return @{ Result = "VIRTIO_INPUT_MSIX_REQUIRED"; Tail = $Tail; MsixReason = $reason }
     }
-
+    if ($line -match "\|SKIP(\||$)") {
+      $reason = "virtio-input-msix marker reported SKIP"
+      if ($fields.ContainsKey("reason")) { $reason += " reason=$($fields["reason"])" }
+      if ($fields.ContainsKey("err")) { $reason += " err=$($fields["err"])" }
+      return @{ Result = "VIRTIO_INPUT_MSIX_REQUIRED"; Tail = $Tail; MsixReason = $reason }
+    }
+ 
+    if (-not $fields.ContainsKey("mode")) {
+      return @{ Result = "VIRTIO_INPUT_MSIX_REQUIRED"; Tail = $Tail; MsixReason = "virtio-input-msix marker missing mode=... field" }
+    }
+ 
+    $mode = [string]$fields["mode"]
+    if ($mode -ne "msix") {
+      $msgs = "?"
+      if ($fields.ContainsKey("messages")) { $msgs = [string]$fields["messages"] }
+      return @{ Result = "VIRTIO_INPUT_MSIX_REQUIRED"; Tail = $Tail; MsixReason = "mode=$mode (expected msix) messages=$msgs" }
+    }
+ 
     return $null
   }
 
@@ -1495,7 +1521,10 @@ function Wait-AeroSelftestResult {
           }
 
           if ($RequireVirtioNetMsix -and (-not $sawVirtioNetMsixModeMsix)) {
-            return @{ Result = "VIRTIO_NET_MSIX_REQUIRED"; Tail = $tail }
+            $chk = Test-AeroVirtioNetMsixMarker -Tail $tail -SerialLogPath $SerialLogPath
+            if (-not $chk.Ok) {
+              return @{ Result = "VIRTIO_NET_MSIX_REQUIRED"; Tail = $tail; MsixReason = $chk.Reason }
+            }
           }
 
           if ($RequireVirtioNetLinkFlapPass) {
@@ -1573,7 +1602,7 @@ function Wait-AeroSelftestResult {
             }
           }
 
-          $msixCheck = Test-VirtioInputMsixRequirement -Tail $tail
+          $msixCheck = Test-VirtioInputMsixRequirement -Tail $tail -SerialLogPath $SerialLogPath
           if ($null -ne $msixCheck) { return $msixCheck }
           $blkResetCheck = Test-VirtioBlkResetRequirement -Tail $tail
           if ($null -ne $blkResetCheck) { return $blkResetCheck }
@@ -1658,7 +1687,10 @@ function Wait-AeroSelftestResult {
                   }
                 }
                 if ($RequireVirtioNetMsix -and (-not $sawVirtioNetMsixModeMsix)) {
-                  return @{ Result = "VIRTIO_NET_MSIX_REQUIRED"; Tail = $tail }
+                  $chk = Test-AeroVirtioNetMsixMarker -Tail $tail -SerialLogPath $SerialLogPath
+                  if (-not $chk.Ok) {
+                    return @{ Result = "VIRTIO_NET_MSIX_REQUIRED"; Tail = $tail; MsixReason = $chk.Reason }
+                  }
                 }
                 if ($RequireVirtioNetLinkFlapPass) {
                   if ($sawVirtioNetLinkFlapFail) { return @{ Result = "VIRTIO_NET_LINK_FLAP_FAILED"; Tail = $tail } }
@@ -1667,7 +1699,7 @@ function Wait-AeroSelftestResult {
                     return @{ Result = "MISSING_VIRTIO_NET_LINK_FLAP"; Tail = $tail }
                   }
                 }
-                $msixCheck = Test-VirtioInputMsixRequirement -Tail $tail
+                $msixCheck = Test-VirtioInputMsixRequirement -Tail $tail -SerialLogPath $SerialLogPath
                 if ($null -ne $msixCheck) { return $msixCheck }
                 $blkResetCheck = Test-VirtioBlkResetRequirement -Tail $tail
                 if ($null -ne $blkResetCheck) { return $blkResetCheck }
@@ -1767,10 +1799,13 @@ function Wait-AeroSelftestResult {
           }
         }
         if ($RequireVirtioNetMsix -and (-not $sawVirtioNetMsixModeMsix)) {
-          return @{ Result = "VIRTIO_NET_MSIX_REQUIRED"; Tail = $tail }
+          $chk = Test-AeroVirtioNetMsixMarker -Tail $tail -SerialLogPath $SerialLogPath
+          if (-not $chk.Ok) {
+            return @{ Result = "VIRTIO_NET_MSIX_REQUIRED"; Tail = $tail; MsixReason = $chk.Reason }
+          }
         }
 
-        $msixCheck = Test-VirtioInputMsixRequirement -Tail $tail
+        $msixCheck = Test-VirtioInputMsixRequirement -Tail $tail -SerialLogPath $SerialLogPath
         if ($null -ne $msixCheck) { return $msixCheck }
         $blkResetCheck = Test-VirtioBlkResetRequirement -Tail $tail
         if ($null -ne $blkResetCheck) { return $blkResetCheck }
@@ -2287,13 +2322,6 @@ function Test-AeroVirtioBlkMsixMarker {
     return @{ Ok = $false; Reason = "missing virtio-blk-msix marker (guest selftest too old?)" }
   }
 
-  if ($line -match "\|FAIL(\||$)") {
-    return @{ Ok = $false; Reason = "virtio-blk-msix marker reported FAIL" }
-  }
-  if ($line -match "\|SKIP(\||$)") {
-    return @{ Ok = $false; Reason = "virtio-blk-msix marker reported SKIP" }
-  }
-
   $fields = @{}
   foreach ($tok in $line.Split("|")) {
     $idx = $tok.IndexOf("=")
@@ -2303,6 +2331,19 @@ function Test-AeroVirtioBlkMsixMarker {
     if (-not [string]::IsNullOrEmpty($k)) {
       $fields[$k] = $v
     }
+  }
+
+  if ($line -match "\|FAIL(\||$)") {
+    $reason = "virtio-blk-msix marker reported FAIL"
+    if ($fields.ContainsKey("reason")) { $reason += " reason=$($fields["reason"])" }
+    if ($fields.ContainsKey("err")) { $reason += " err=$($fields["err"])" }
+    return @{ Ok = $false; Reason = $reason }
+  }
+  if ($line -match "\|SKIP(\||$)") {
+    $reason = "virtio-blk-msix marker reported SKIP"
+    if ($fields.ContainsKey("reason")) { $reason += " reason=$($fields["reason"])" }
+    if ($fields.ContainsKey("err")) { $reason += " err=$($fields["err"])" }
+    return @{ Ok = $false; Reason = $reason }
   }
 
   if (-not $fields.ContainsKey("mode")) {
@@ -2366,13 +2407,6 @@ function Test-AeroVirtioNetMsixMarker {
     return @{ Ok = $false; Reason = "missing virtio-net-msix marker (guest selftest too old?)" }
   }
 
-  if ($line -match "\|FAIL(\||$)") {
-    return @{ Ok = $false; Reason = "virtio-net-msix marker reported FAIL" }
-  }
-  if ($line -match "\|SKIP(\||$)") {
-    return @{ Ok = $false; Reason = "virtio-net-msix marker reported SKIP" }
-  }
-
   $fields = @{}
   foreach ($tok in $line.Split("|")) {
     $idx = $tok.IndexOf("=")
@@ -2382,6 +2416,19 @@ function Test-AeroVirtioNetMsixMarker {
     if (-not [string]::IsNullOrEmpty($k)) {
       $fields[$k] = $v
     }
+  }
+
+  if ($line -match "\|FAIL(\||$)") {
+    $reason = "virtio-net-msix marker reported FAIL"
+    if ($fields.ContainsKey("reason")) { $reason += " reason=$($fields["reason"])" }
+    if ($fields.ContainsKey("err")) { $reason += " err=$($fields["err"])" }
+    return @{ Ok = $false; Reason = $reason }
+  }
+  if ($line -match "\|SKIP(\||$)") {
+    $reason = "virtio-net-msix marker reported SKIP"
+    if ($fields.ContainsKey("reason")) { $reason += " reason=$($fields["reason"])" }
+    if ($fields.ContainsKey("err")) { $reason += " err=$($fields["err"])" }
+    return @{ Ok = $false; Reason = $reason }
   }
 
   if (-not $fields.ContainsKey("mode")) {
@@ -2445,13 +2492,6 @@ function Test-AeroVirtioSndMsixMarker {
     return @{ Ok = $false; Reason = "missing virtio-snd-msix marker (guest selftest too old?)" }
   }
 
-  if ($line -match "\|FAIL(\||$)") {
-    return @{ Ok = $false; Reason = "virtio-snd-msix marker reported FAIL" }
-  }
-  if ($line -match "\|SKIP(\||$)") {
-    return @{ Ok = $false; Reason = "virtio-snd-msix marker reported SKIP" }
-  }
-
   $fields = @{}
   foreach ($tok in $line.Split("|")) {
     $idx = $tok.IndexOf("=")
@@ -2461,6 +2501,19 @@ function Test-AeroVirtioSndMsixMarker {
     if (-not [string]::IsNullOrEmpty($k)) {
       $fields[$k] = $v
     }
+  }
+
+  if ($line -match "\|FAIL(\||$)") {
+    $reason = "virtio-snd-msix marker reported FAIL"
+    if ($fields.ContainsKey("reason")) { $reason += " reason=$($fields["reason"])" }
+    if ($fields.ContainsKey("err")) { $reason += " err=$($fields["err"])" }
+    return @{ Ok = $false; Reason = $reason }
+  }
+  if ($line -match "\|SKIP(\||$)") {
+    $reason = "virtio-snd-msix marker reported SKIP"
+    if ($fields.ContainsKey("reason")) { $reason += " reason=$($fields["reason"])" }
+    if ($fields.ContainsKey("err")) { $reason += " err=$($fields["err"])" }
+    return @{ Ok = $false; Reason = $reason }
   }
 
   if (-not $fields.ContainsKey("mode")) {
@@ -6970,7 +7023,10 @@ try {
       $scriptExitCode = 1
     }
     "VIRTIO_INPUT_MSIX_REQUIRED" {
-      Write-Host "FAIL: VIRTIO_INPUT_MSIX_REQUIRED: virtio-input-msix marker did not report mode=msix while -RequireVirtioInputMsix was enabled"
+      $reason = ""
+      try { $reason = [string]$result.MsixReason } catch { }
+      if ([string]::IsNullOrEmpty($reason)) { $reason = "virtio-input-msix marker did not report mode=msix while -RequireVirtioInputMsix was enabled" }
+      Write-Host "FAIL: VIRTIO_INPUT_MSIX_REQUIRED: $reason"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
