@@ -41,7 +41,11 @@ export const StatusIndex = {
   HeartbeatCounter: 0,
   StopRequested: 1,
 
-  // I/O worker input telemetry (optional; used by tests and perf instrumentation).
+  // Input telemetry (optional; used by tests and perf instrumentation).
+  //
+  // Ownership:
+  // - legacy runtime: written by the IO worker (input is injected there)
+  // - `vmRuntime="machine"`: written by the machine CPU worker (input is injected there)
   IoInputBatchCounter: 2,
   IoInputEventCounter: 3,
 
@@ -63,9 +67,9 @@ export const StatusIndex = {
   IoInputKeyboardHeldCount: 26,
   IoInputMouseButtonsHeldMask: 27,
 
-  // Total input batches received by the I/O worker (including queued/dropped while snapshot-paused).
+  // Total input batches received by the input injector (including queued/dropped while snapshot-paused).
   IoInputBatchReceivedCounter: 28,
-  // Total input batches dropped by the I/O worker (e.g. when snapshot-paused queue is full, or when a malformed batch is received).
+  // Total input batches dropped by the input injector (e.g. when snapshot-paused queue is full, or when a malformed batch is received).
   IoInputBatchDropCounter: 29,
   // Total backend switches (ps2↔usb↔virtio) observed by the I/O worker input pipeline.
   IoKeyboardBackendSwitchCounter: 30,
