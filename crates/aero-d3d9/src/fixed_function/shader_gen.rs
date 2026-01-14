@@ -180,12 +180,19 @@ impl FixedFunctionShaderDesc {
             write_u8(hash, stage.result_target as u8);
         }
 
+        // `TEMP` is only meaningful when later stages actually *read* it. If nothing reads TEMP,
+        // then writes to TEMP are dead and don't affect shader generation (we can omit them).
+        let temp_is_ever_read = shader_reads_temp(self);
+
         // D3D9 fixed-function stage disabling is keyed off COLOROP: if stage N has
         // `D3DTSS_COLOROP = D3DTOP_DISABLE`, that stage and all subsequent stages are disabled.
         // Hash only stages that can affect output.
         for stage in &self.stages {
             if stage.color_op == TextureOp::Disable {
                 break;
+            }
+            if !temp_is_ever_read && stage.result_target == TextureResultTarget::Temp {
+                continue;
             }
             write_stage(&mut hash, stage);
         }
@@ -433,8 +440,10 @@ fn generate_fragment_wgsl(desc: &FixedFunctionShaderDesc, layout: &FvfLayout) ->
 
     wgsl.push_str("@fragment\nfn fs_main(input: FragmentIn) -> @location(0) vec4<f32> {\n");
 
+    let temp_is_ever_read = shader_reads_temp(desc);
+
     wgsl.push_str("  var current = input.diffuse;\n");
-    if shader_uses_temp(desc) {
+    if temp_is_ever_read {
         wgsl.push_str("  var temp = current;\n");
     }
     // D3D9 stage disabling: `D3DTOP_DISABLE` on stage N disables stage N and all subsequent
@@ -443,6 +452,9 @@ fn generate_fragment_wgsl(desc: &FixedFunctionShaderDesc, layout: &FvfLayout) ->
     for (stage_index, stage) in desc.stages.iter().enumerate() {
         if stage.color_op == TextureOp::Disable {
             break;
+        }
+        if !temp_is_ever_read && stage.result_target == TextureResultTarget::Temp {
+            continue;
         }
         emit_tss_stage(&mut wgsl, desc, layout, stage_index, stage);
     }
@@ -617,11 +629,7 @@ fn stage_uses_texture(stage: &TextureStageState) -> bool {
     false
 }
 
-fn stage_uses_temp(stage: &TextureStageState) -> bool {
-    if stage.result_target == TextureResultTarget::Temp {
-        return true;
-    }
-
+fn stage_reads_temp(stage: &TextureStageState) -> bool {
     let color_mask = op_arg_mask(stage.color_op, Component::Rgb);
     if (color_mask & ARG0_MASK) != 0 && stage.color_arg0.source == TextureArgSource::Temp {
         return true;
@@ -647,13 +655,13 @@ fn stage_uses_temp(stage: &TextureStageState) -> bool {
     false
 }
 
-fn shader_uses_temp(desc: &FixedFunctionShaderDesc) -> bool {
+fn shader_reads_temp(desc: &FixedFunctionShaderDesc) -> bool {
     // Respect D3D9 stage disabling semantics (COLOROP disables the stage and all subsequent ones).
     for stage in &desc.stages {
         if stage.color_op == TextureOp::Disable {
             break;
         }
-        if stage_uses_temp(stage) {
+        if stage_reads_temp(stage) {
             return true;
         }
     }

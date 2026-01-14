@@ -294,7 +294,10 @@ fn state_hash_includes_texcoord_index_texture_transform_and_result_target() {
         "expected stage0 to apply a texture transform:\n{wgsl_xform}"
     );
 
-    // RESULTARG (TEMP vs CURRENT) should influence the hash and stage write target.
+    // RESULTARG (TEMP vs CURRENT) should influence the hash and generated code.
+    //
+    // When TEMP is not read by later stages, writes to TEMP are dead and the stage can be treated
+    // as a no-op (avoid sampling textures / declaring temp).
     let mut stages_temp = [TextureStageState::default(); 8];
     stages_temp[0] = TextureStageState {
         result_target: TextureResultTarget::Temp,
@@ -310,8 +313,63 @@ fn state_hash_includes_texcoord_index_texture_transform_and_result_target() {
     assert_ne!(desc_tex0.state_hash(), desc_temp.state_hash());
     let wgsl_temp = generate_fixed_function_shaders(&desc_temp).fragment_wgsl;
     assert!(
-        wgsl_temp.contains("temp = vec4<f32>"),
-        "expected stage0 to write to temp:\n{wgsl_temp}"
+        !wgsl_temp.contains("var temp = current"),
+        "expected temp register to be omitted when TEMP is never read:\n{wgsl_temp}"
+    );
+    assert!(
+        !wgsl_temp.contains("textureSample("),
+        "expected no texture sampling when stage0 only writes TEMP that is never read:\n{wgsl_temp}"
+    );
+}
+
+#[test]
+fn result_target_temp_emits_temp_when_read_later() {
+    // If a later stage reads TEMP, we must emit the temp register and preserve the write.
+    let mut stages = [TextureStageState::default(); 8];
+    stages[0] = TextureStageState {
+        color_op: TextureOp::SelectArg1,
+        color_arg0: TextureArg::Current,
+        color_arg1: TextureArg::Texture,
+        color_arg2: TextureArg::Current,
+        alpha_op: TextureOp::SelectArg1,
+        alpha_arg0: TextureArg::Current,
+        alpha_arg1: TextureArg::Texture,
+        alpha_arg2: TextureArg::Current,
+        result_target: TextureResultTarget::Temp,
+        ..Default::default()
+    };
+    stages[1] = TextureStageState {
+        color_op: TextureOp::SelectArg1,
+        color_arg0: TextureArg::Current,
+        color_arg1: TextureArg::Temp,
+        color_arg2: TextureArg::Current,
+        alpha_op: TextureOp::SelectArg1,
+        alpha_arg0: TextureArg::Current,
+        alpha_arg1: TextureArg::Temp,
+        alpha_arg2: TextureArg::Current,
+        ..Default::default()
+    };
+
+    let desc = FixedFunctionShaderDesc {
+        fvf: Fvf(Fvf::XYZ | (1 << Fvf::TEXCOUNT_SHIFT)),
+        stages,
+        alpha_test: AlphaTestState::default(),
+        fog: FogState::default(),
+        lighting: LightingState::default(),
+    };
+
+    let wgsl = generate_fixed_function_shaders(&desc).fragment_wgsl;
+    assert!(
+        wgsl.contains("var temp = current"),
+        "expected temp register to be declared:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("temp = vec4<f32>"),
+        "expected stage0 to write to temp:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("let rgb_raw = temp.rgb"),
+        "expected later stage to read temp:\n{wgsl}"
     );
 }
 
