@@ -7817,11 +7817,19 @@ static NTSTATUS APIENTRY AeroGpuDdiCreateAllocation(_In_ const HANDLE hAdapter,
                 }
 
                 /*
-                 * For v2 blobs, also propagate the explicit row pitch to the
-                 * legacy pitch field used by DxgkDdiLock when reserved0 does not
-                 * carry a pitch encoding.
+                 * For v2 blobs, prefer the explicit row pitch for surface locks.
+                 *
+                 * The v2 private-data blob carries `row_pitch_bytes` as the
+                 * canonical packed layout row pitch chosen by the UMD (and
+                 * consumed by the host-side executor). Use it whenever present
+                 * so DxgkDdiLock returns a pitch consistent with the UMD layout,
+                 * even if `reserved0` is repurposed by other extensions.
                  */
-                if (pitchBytes == 0 && rowPitchBytes != 0) {
+                if (rowPitchBytes != 0) {
+                    if ((aerogpu_wddm_u64)rowPitchBytes > (aerogpu_wddm_u64)info->Size) {
+                        status = STATUS_INVALID_PARAMETER;
+                        goto Rollback;
+                    }
                     pitchBytes = rowPitchBytes;
                 }
             }
@@ -8107,11 +8115,13 @@ static NTSTATUS APIENTRY AeroGpuDdiOpenAllocation(_In_ const HANDLE hAdapter,
         }
 
         /*
-         * Keep parity with the CreateAllocation path: if reserved0 does not encode a pitch
-         * (e.g. reserved0 is used for a D3D9 shared-surface descriptor), fall back to the
-         * v2 row_pitch_bytes field when present.
+         * Prefer explicit v2 `row_pitch_bytes` when available.
+         *
+         * `reserved0` may carry a D3D9 shared-surface descriptor encoding (bit63
+         * marker) or legacy pitch metadata; the v2 row pitch is the canonical
+         * packed layout pitch used by the UMD + host.
          */
-        if (pitchBytes == 0 && rowPitchBytes != 0) {
+        if (rowPitchBytes != 0) {
             pitchBytes = rowPitchBytes;
             if ((aerogpu_wddm_u64)pitchBytes > priv->size_bytes) {
                 AEROGPU_LOG("OpenAllocation: invalid row_pitch_bytes in private data (alloc_id=%lu pitch=%lu size=%I64u)",
