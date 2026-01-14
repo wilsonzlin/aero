@@ -7921,6 +7921,13 @@ impl AerogpuD3d11Executor {
         let gs_output_active = gs_output_info.is_some();
         let passthrough_active = emulation_active || gs_output_active;
 
+        if emulation_active && !self.caps.supports_compute {
+            bail!(
+                "DRAW: expanded-geometry passthrough requires storage buffers/compute shaders; backend {:?} missing wgpu::DownlevelFlags::COMPUTE_SHADERS",
+                self.backend
+            );
+        }
+
         let ps_handle = self
             .state
             .ps
@@ -22147,6 +22154,79 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {{
             let msg = err.to_string();
             assert!(
                 msg.contains("shader 2 (Pixel) uses SRV/UAV storage bindings"),
+                "unexpected error: {msg:#}"
+            );
+            assert!(msg.contains("COMPUTE_SHADERS"), "unexpected error: {msg:#}");
+        });
+    }
+
+    #[test]
+    fn draw_rejects_emulated_expanded_vertex_buffer_when_supports_compute_forced_off() {
+        pollster::block_on(async {
+            let exec = match AerogpuD3d11Executor::new_for_tests().await {
+                Ok(exec) => exec,
+                Err(e) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                    return;
+                }
+            };
+            // Force compute off even if the underlying adapter supports it, so the test validates
+            // the draw-time passthrough-VS capability checks deterministically.
+            let AerogpuD3d11Executor {
+                device,
+                queue,
+                backend,
+                ..
+            } = exec;
+            let mut exec =
+                AerogpuD3d11Executor::new_with_supports_compute(device, queue, backend, false);
+
+            // Seed dummy VS/PS shader records. Pipeline creation should not be reached once the
+            // passthrough path rejects missing compute support.
+            const VS: u32 = 1;
+            const PS: u32 = 2;
+            exec.resources.shaders.insert(
+                VS,
+                ShaderResource {
+                    stage: ShaderStage::Vertex,
+                    wgsl_hash: 0,
+                    depth_clamp_wgsl_hash: None,
+                    dxbc_hash_fnv1a64: 0,
+                    entry_point: "vs_main",
+                    vs_input_signature: Vec::new(),
+                    reflection: ShaderReflection::default(),
+                    wgsl_source: String::new(),
+                },
+            );
+            exec.resources.shaders.insert(
+                PS,
+                ShaderResource {
+                    stage: ShaderStage::Pixel,
+                    wgsl_hash: 0,
+                    depth_clamp_wgsl_hash: None,
+                    dxbc_hash_fnv1a64: 0,
+                    entry_point: "ps_main",
+                    vs_input_signature: Vec::new(),
+                    reflection: ShaderReflection::default(),
+                    wgsl_source: String::new(),
+                },
+            );
+
+            exec.state.render_targets = vec![Some(123)];
+            exec.state.vs = Some(VS);
+            exec.state.ps = Some(PS);
+            exec.set_emulated_expanded_vertex_buffer(Some(999));
+
+            let mut writer = AerogpuCmdWriter::new();
+            writer.draw(3, 1, 0, 0);
+            let stream = writer.finish();
+            let mut guest_mem = VecGuestMemory::new(0);
+            let err = exec
+                .execute_cmd_stream(&stream, None, &mut guest_mem)
+                .expect_err("draw should fail when passthrough VS is active but compute is unsupported");
+            let msg = err.to_string();
+            assert!(
+                msg.contains("expanded-geometry passthrough"),
                 "unexpected error: {msg:#}"
             );
             assert!(msg.contains("COMPUTE_SHADERS"), "unexpected error: {msg:#}");
