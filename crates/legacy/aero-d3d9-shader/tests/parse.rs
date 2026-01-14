@@ -66,6 +66,32 @@ fn rejects_oversized_bytecode() {
 }
 
 #[test]
+fn malformed_dxbc_shader_chunk_invalid_byte_length_errors() {
+    // DXBC container where the shader chunk payload isn't DWORD-aligned.
+    let shader_bytes = vec![0u8; 5];
+    let dxbc = dxbc_test_utils::build_container(&[(FourCC(*b"SHDR"), shader_bytes.as_slice())]);
+
+    let err = D3d9Shader::parse(&dxbc).unwrap_err();
+    assert_eq!(err, ShaderParseError::InvalidByteLength { len: 5 });
+}
+
+#[test]
+fn malformed_dxbc_shader_chunk_too_large_errors() {
+    // DXBC container where the shader chunk payload is larger than our parser cap.
+    let shader_bytes = vec![0u8; 256 * 1024 + 4];
+    let dxbc = dxbc_test_utils::build_container(&[(FourCC(*b"SHDR"), shader_bytes.as_slice())]);
+
+    let err = D3d9Shader::parse(&dxbc).unwrap_err();
+    assert_eq!(
+        err,
+        ShaderParseError::BytecodeTooLarge {
+            len: 256 * 1024 + 4,
+            max: 256 * 1024,
+        }
+    );
+}
+
+#[test]
 fn malformed_dxbc_truncated_header_errors() {
     let err = D3d9Shader::parse(b"DXBC").unwrap_err();
     assert!(matches!(
