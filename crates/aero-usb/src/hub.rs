@@ -2091,6 +2091,123 @@ mod tests {
     }
 
     #[test]
+    fn hub_remote_wakeup_resumes_selectively_suspended_port() {
+        #[derive(Default)]
+        struct WakeState {
+            suspended: bool,
+            wake_pending: bool,
+        }
+
+        #[derive(Clone)]
+        struct WakeDevice(Rc<RefCell<WakeState>>);
+
+        impl WakeDevice {
+            fn new() -> Self {
+                Self(Rc::new(RefCell::new(WakeState::default())))
+            }
+
+            fn request_wake(&self) {
+                self.0.borrow_mut().wake_pending = true;
+            }
+        }
+
+        impl UsbDeviceModel for WakeDevice {
+            fn handle_control_request(
+                &mut self,
+                _setup: SetupPacket,
+                _data_stage: Option<&[u8]>,
+            ) -> ControlResponse {
+                ControlResponse::Ack
+            }
+
+            fn set_suspended(&mut self, suspended: bool) {
+                self.0.borrow_mut().suspended = suspended;
+            }
+
+            fn poll_remote_wakeup(&mut self) -> bool {
+                let mut st = self.0.borrow_mut();
+                if st.suspended && st.wake_pending {
+                    st.wake_pending = false;
+                    true
+                } else {
+                    false
+                }
+            }
+        }
+
+        let mut hub = UsbHubDevice::new_with_ports(1);
+        hub.configuration = 1;
+        hub.remote_wakeup_enabled = false;
+        hub.upstream_suspended = false;
+
+        let wake = WakeDevice::new();
+        hub.attach(1, Box::new(wake.clone()));
+        hub.ports[0].set_powered(true);
+        hub.ports[0].set_enabled(true);
+
+        // Clear the initial connect/enable change bits so the interrupt endpoint stays idle until
+        // the remote wake event resumes the port.
+        hub.ports[0].connect_change = false;
+        hub.ports[0].enable_change = false;
+        hub.ports[0].suspend_change = false;
+
+        // Suspend the downstream port (selective suspend). This should update the device model's
+        // suspended state so it can report a remote wake event.
+        let suspend = SetupPacket {
+            bm_request_type: 0x23, // Host-to-device | Class | Other (port)
+            b_request: USB_REQUEST_SET_FEATURE,
+            w_value: HUB_PORT_FEATURE_SUSPEND,
+            w_index: 1,
+            w_length: 0,
+        };
+        assert_eq!(hub.handle_control_request(suspend, None), ControlResponse::Ack);
+        assert!(hub.ports[0].suspended);
+        assert!(wake.0.borrow().suspended);
+
+        // Clear the port's suspend-change bit so the next interrupt reflects only the resume.
+        let clear_suspend_change = SetupPacket {
+            bm_request_type: 0x23,
+            b_request: USB_REQUEST_CLEAR_FEATURE,
+            w_value: HUB_PORT_FEATURE_C_PORT_SUSPEND,
+            w_index: 1,
+            w_length: 0,
+        };
+        assert_eq!(
+            hub.handle_control_request(clear_suspend_change, None),
+            ControlResponse::Ack
+        );
+        assert!(!hub.ports[0].suspend_change);
+        assert_eq!(hub.handle_interrupt_in(HUB_INTERRUPT_IN_EP), UsbInResult::Nak);
+
+        wake.request_wake();
+        UsbHub::tick_1ms(&mut hub);
+
+        assert!(
+            !hub.ports[0].suspended,
+            "expected remote wake to resume selectively suspended port"
+        );
+        assert!(
+            hub.ports[0].suspend_change,
+            "expected resume to latch suspend-change bit"
+        );
+        assert!(
+            !wake.0.borrow().suspended,
+            "expected resumed port to update device suspended state"
+        );
+
+        let bitmap = match hub.handle_interrupt_in(HUB_INTERRUPT_IN_EP) {
+            UsbInResult::Data(b) => b,
+            other => panic!("expected interrupt IN data after resume, got {other:?}"),
+        };
+        assert_eq!(bitmap.len(), hub.interrupt_bitmap_len);
+        assert_ne!(
+            bitmap[0] & (1 << 1),
+            0,
+            "expected port 1 change bit in interrupt bitmap"
+        );
+    }
+
+    #[test]
     fn root_hub_portsc_lsda_is_set_only_for_low_speed() {
         const LSDA: u16 = 1 << 8;
 
