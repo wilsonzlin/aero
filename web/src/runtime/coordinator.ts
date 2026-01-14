@@ -851,8 +851,9 @@ export class WorkerCoordinator {
    * Override which worker receives the AudioWorklet playback ring buffer attachment.
    *
    * Pass `null` to clear any prior override and return to the default policy:
-   * - demo mode (no disk): CPU worker
-   * - VM mode (disk present): IO worker
+   * - machine runtime: IO worker
+   * - legacy demo mode (no disk): CPU worker
+   * - legacy VM mode (disk present): IO worker
    */
   setAudioRingBufferOwner(owner: RingBufferOwner | null): void {
     if (owner === null) {
