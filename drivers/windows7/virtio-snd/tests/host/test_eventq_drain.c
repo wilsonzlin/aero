@@ -728,6 +728,56 @@ static void test_eventq_period_elapsed_out_of_range_stream_is_ignored(void)
     TestFreePool(&pool);
 }
 
+static void test_eventq_repost_mask_sets_bit_without_submitting(void)
+{
+    VIRTIOSND_HOST_QUEUE q;
+    VIRTIOSND_DMA_BUFFER pool;
+    VIRTIOSND_EVENTQ_STATS stats;
+    VIRTIOSND_JACK_STATE jack;
+    uint8_t* buf1;
+    ULONGLONG repostMask;
+    BOOLEAN reposted;
+
+    VirtioSndHostQueueInit(&q, 8);
+    TestInitPool(&pool, 2);
+    RtlZeroMemory(&stats, sizeof(stats));
+    VirtIoSndJackStateInit(&jack);
+
+    buf1 = (uint8_t*)pool.Va + VIRTIOSND_EVENTQ_BUFFER_SIZE; /* idx=1 */
+    repostMask = 0;
+
+    /* PCM_PERIOD_ELAPSED (stream_id=0) */
+    {
+        const uint8_t evt[] = {
+            0x00, 0x11, 0x00, 0x00, /* type = PCM_PERIOD_ELAPSED */
+            0x00, 0x00, 0x00, 0x00, /* data = stream_id (0) */
+        };
+        RtlCopyMemory(buf1, evt, sizeof(evt));
+    }
+
+    reposted = VirtIoSndEventqHandleUsed(
+        &q.Queue,
+        &pool,
+        &stats,
+        &jack,
+        /*CallbackState=*/NULL,
+        /*PeriodState=*/NULL,
+        /*Started=*/TRUE,
+        /*Removed=*/FALSE,
+        /*Cookie=*/buf1,
+        /*UsedLen=*/(UINT32)sizeof(VIRTIO_SND_EVENT),
+        /*EnableDebugLogs=*/TRUE,
+        /*RepostMask=*/&repostMask);
+
+    TEST_ASSERT(reposted == TRUE);
+    TEST_ASSERT(repostMask == (1ull << 1));
+    TEST_ASSERT(q.SubmitCalls == 0);
+    TEST_ASSERT(stats.Completions == 1);
+    TEST_ASSERT(stats.Parsed == 1);
+
+    TestFreePool(&pool);
+}
+
 int main(void)
 {
     test_eventq_null_cookie_does_not_repost();
@@ -739,6 +789,7 @@ int main(void)
     test_eventq_period_elapsed_does_not_signal_when_callback_present();
     test_eventq_period_elapsed_signals_without_callback_state();
     test_eventq_period_elapsed_out_of_range_stream_is_ignored();
+    test_eventq_repost_mask_sets_bit_without_submitting();
 
     printf("virtiosnd_eventq_drain_tests: PASS\n");
     return 0;
