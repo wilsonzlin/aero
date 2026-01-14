@@ -1,5 +1,6 @@
 #include "..\\common\\aerogpu_test_common.h"
 #include "..\\common\\aerogpu_test_report.h"
+#include "..\\common\\aerogpu_test_scanout_diag.h"
 
 #include <d3d10.h>
 #include <d3d10_1.h>
@@ -355,6 +356,28 @@ static int CheckAdapterPolicy(const char* test_name,
   return 0;
 }
 
+static bool QueryScanoutDiag0(aerogpu_test::AerogpuScanoutDiag* out_diag) {
+  if (!out_diag) {
+    return false;
+  }
+  aerogpu_test::kmt::D3DKMT_FUNCS kmt;
+  std::string kmt_err;
+  if (!aerogpu_test::kmt::LoadD3DKMT(&kmt, &kmt_err)) {
+    return false;
+  }
+  aerogpu_test::kmt::D3DKMT_HANDLE adapter = 0;
+  std::string open_err;
+  if (!aerogpu_test::kmt::OpenPrimaryAdapter(&kmt, &adapter, &open_err)) {
+    aerogpu_test::kmt::UnloadD3DKMT(&kmt);
+    return false;
+  }
+  const bool ok = aerogpu_test::TryQueryAerogpuScanoutDiagWithKmt(
+      &kmt, (uint32_t)adapter, 0 /* vidpn_source_id */, out_diag);
+  aerogpu_test::kmt::CloseAdapter(&kmt, adapter);
+  aerogpu_test::kmt::UnloadD3DKMT(&kmt);
+  return ok;
+}
+
 static int RunDxgiSwapchainProbe(int argc, char** argv) {
   const char* kTestName = "dxgi_swapchain_probe";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
@@ -393,6 +416,30 @@ static int RunDxgiSwapchainProbe(int argc, char** argv) {
   }
   if (frames > 120) {
     frames = 120;
+  }
+
+  aerogpu_test::AerogpuScanoutDiag scanout_diag;
+  const bool have_scanout_diag = QueryScanoutDiag0(&scanout_diag);
+  if (have_scanout_diag) {
+    aerogpu_test::PrintfStdout("INFO: %s: scanout: flags=0x%08lX%s%s cached_enable=%lu mmio_enable=%lu",
+                               kTestName,
+                               (unsigned long)scanout_diag.flags_u32,
+                               scanout_diag.flags_valid ? "" : " (flags_invalid)",
+                               scanout_diag.post_display_ownership_released ? " (post_display_ownership_released)" : "",
+                               (unsigned long)scanout_diag.cached_enable,
+                               (unsigned long)scanout_diag.mmio_enable);
+    // This test uses Present(1,0) to exercise vsync-paced swapchain behavior; if scanout/vblank is
+    // intentionally gated off (post-display ownership released), avoid hanging and fail clearly.
+    if (scanout_diag.flags_valid && scanout_diag.post_display_ownership_released) {
+      return reporter.Fail("post_display_ownership_released flag is set in QUERY_SCANOUT (flags=0x%08lX)",
+                           (unsigned long)scanout_diag.flags_u32);
+    }
+    if (scanout_diag.cached_enable == 0 || scanout_diag.mmio_enable == 0) {
+      return reporter.Fail("scanout enable appears off (cached_enable=%lu mmio_enable=%lu flags=0x%08lX)",
+                           (unsigned long)scanout_diag.cached_enable,
+                           (unsigned long)scanout_diag.mmio_enable,
+                           (unsigned long)scanout_diag.flags_u32);
+    }
   }
 
   uint32_t require_vid = 0;
