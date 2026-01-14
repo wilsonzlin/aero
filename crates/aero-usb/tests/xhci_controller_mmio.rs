@@ -330,6 +330,23 @@ fn xhci_controller_run_does_not_dma_when_dma_disabled() {
 }
 
 #[test]
+fn xhci_tick_1ms_does_not_dma_when_dma_disabled() {
+    let mut ctrl = XhciController::new();
+    let mut mem = NoDmaCountingMem::default();
+
+    // Put the controller into the running state without allowing DMA.
+    ctrl.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
+    assert_eq!(mem.reads, 0);
+    assert_eq!(mem.writes, 0);
+
+    ctrl.tick_1ms(&mut mem);
+
+    // A tick should still advance internal time/port state, but it must not touch guest memory.
+    assert_eq!(mem.reads, 0);
+    assert_eq!(mem.writes, 0);
+}
+
+#[test]
 fn xhci_doorbell_does_not_process_command_ring_without_dma() {
     let mut ctrl = XhciController::new();
     let mut mem = CountingMem::new(0x4000);
