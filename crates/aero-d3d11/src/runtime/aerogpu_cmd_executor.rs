@@ -12063,6 +12063,8 @@ impl AerogpuD3d11Executor {
                         .await;
                     continue;
                 }
+                // Fall back to the non-persistent path so we don't silently accept-and-ignore a
+                // shader handle due to stale/corrupt cache entries.
                 return self.exec_create_shader_dxbc(cmd_bytes);
             };
 

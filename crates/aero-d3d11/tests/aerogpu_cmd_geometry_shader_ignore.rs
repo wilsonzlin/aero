@@ -46,10 +46,11 @@ fn aerogpu_cmd_can_create_and_bind_geometry_shader() {
             }
         };
 
-        // A minimal DXBC container that parses as a geometry shader (program type 2). WebGPU has
-        // no native geometry stage, and the executor only runs a small subset of GS today
-        // (point-list prepass). Ensure we accept the shader and allow GS binding/state updates
-        // without crashing (unsupported payloads should not trigger stage-mismatch errors).
+        // A minimal DXBC container that parses as a geometry shader (program type 2).
+        //
+        // WebGPU does not expose GS/HS/DS stages directly, but the command-stream executor accepts
+        // and binds these shaders for state tracking (via a placeholder WGSL module) so later GS
+        // emulation passes can access the original DXBC bytecode by handle.
         let gs_dxbc = build_dxbc(&[(FOURCC_SHEX, build_minimal_sm4_program_chunk(2))]);
 
         let mut guest_mem = VecGuestMemory::new(0);
