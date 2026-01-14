@@ -3317,52 +3317,106 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPowerState(_In_ const HANDLE hAdapter,
                     KeAcquireSpinLock(&adapter->RingLock, &ringIrql);
 
                     if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
-                        if (adapter->RingHeader) {
-                            const ULONG tail = adapter->RingTail;
+                        /*
+                         * Re-program the ring + optional fence page addresses in
+                         * case the device reset them while powered down.
+                         */
+                        const BOOLEAN haveRingRegs = adapter->Bar0Length >= (AEROGPU_MMIO_REG_RING_CONTROL + sizeof(ULONG));
+                        const BOOLEAN haveFenceRegs = adapter->Bar0Length >= (AEROGPU_MMIO_REG_FENCE_GPA_HI + sizeof(ULONG));
+
+                        BOOLEAN haveRing = FALSE;
+                        if (adapter->RingVa && adapter->RingEntryCount != 0) {
+                            const ULONGLONG minRingBytes =
+                                (ULONGLONG)sizeof(struct aerogpu_ring_header) +
+                                (ULONGLONG)adapter->RingEntryCount * (ULONGLONG)sizeof(struct aerogpu_submit_desc);
+                            haveRing = (minRingBytes <= (ULONGLONG)adapter->RingSizeBytes) ? TRUE : FALSE;
+                        }
+
+                        if (haveRing && adapter->RingSizeBytes >= sizeof(struct aerogpu_ring_header)) {
+                            if (!adapter->RingHeader) {
+                                adapter->RingHeader = (struct aerogpu_ring_header*)adapter->RingVa;
+                            }
+
+                            /*
+                             * Reinitialise the ring header static fields in case
+                             * guest memory was clobbered while powered down.
+                             */
+                            adapter->RingHeader->magic = AEROGPU_RING_MAGIC;
+                            adapter->RingHeader->abi_version = AEROGPU_ABI_VERSION_U32;
+                            adapter->RingHeader->size_bytes = (uint32_t)adapter->RingSizeBytes;
+                            adapter->RingHeader->entry_count = (uint32_t)adapter->RingEntryCount;
+                            adapter->RingHeader->entry_stride_bytes = (uint32_t)sizeof(struct aerogpu_submit_desc);
+                            adapter->RingHeader->flags = 0;
+
+                            ULONG tail = adapter->RingTail;
+                            if (tail >= adapter->RingEntryCount) {
+                                tail = 0;
+                                adapter->RingTail = 0;
+                            }
                             adapter->RingHeader->head = tail;
                             adapter->RingHeader->tail = tail;
                             KeMemoryBarrier();
                         }
 
-                        /*
-                         * Re-program the ring + optional fence page addresses in
-                         * case the device reset them while powered down.
-                         */
-                        const BOOLEAN haveRing =
-                            (adapter->RingVa && adapter->RingHeader && adapter->RingEntryCount != 0) ? TRUE : FALSE;
-                        if (haveRing) {
-                            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_RING_GPA_LO, adapter->RingPa.LowPart);
-                            AeroGpuWriteRegU32(adapter,
-                                               AEROGPU_MMIO_REG_RING_GPA_HI,
-                                               (ULONG)(adapter->RingPa.QuadPart >> 32));
-                            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_RING_SIZE_BYTES, adapter->RingSizeBytes);
-                        }
+                        if (haveRingRegs) {
+                            if (haveRing) {
+                                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_RING_GPA_LO, adapter->RingPa.LowPart);
+                                AeroGpuWriteRegU32(adapter,
+                                                   AEROGPU_MMIO_REG_RING_GPA_HI,
+                                                   (ULONG)(adapter->RingPa.QuadPart >> 32));
+                                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_RING_SIZE_BYTES, adapter->RingSizeBytes);
+                            } else {
+                                /* Ensure the device will not DMA from stale ring pointers. */
+                                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_RING_GPA_LO, 0);
+                                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_RING_GPA_HI, 0);
+                                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_RING_SIZE_BYTES, 0);
+                            }
 
-                        if (adapter->FencePageVa && (adapter->DeviceFeatures & (ULONGLONG)AEROGPU_FEATURE_FENCE_PAGE)) {
-                            adapter->FencePageVa->completed_fence = 0;
-                            KeMemoryBarrier();
-                            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_FENCE_GPA_LO, adapter->FencePagePa.LowPart);
-                            AeroGpuWriteRegU32(adapter,
-                                               AEROGPU_MMIO_REG_FENCE_GPA_HI,
-                                               (ULONG)(adapter->FencePagePa.QuadPart >> 32));
-                        } else {
-                            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_FENCE_GPA_LO, 0);
-                            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_FENCE_GPA_HI, 0);
-                        }
+                            if (haveFenceRegs) {
+                                if (adapter->FencePageVa &&
+                                    (adapter->DeviceFeatures & (ULONGLONG)AEROGPU_FEATURE_FENCE_PAGE) != 0) {
+                                    adapter->FencePageVa->magic = AEROGPU_FENCE_PAGE_MAGIC;
+                                    adapter->FencePageVa->abi_version = AEROGPU_ABI_VERSION_U32;
+                                    adapter->FencePageVa->completed_fence = adapter->LastCompletedFence;
+                                    KeMemoryBarrier();
+                                    AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_FENCE_GPA_LO, adapter->FencePagePa.LowPart);
+                                    AeroGpuWriteRegU32(adapter,
+                                                       AEROGPU_MMIO_REG_FENCE_GPA_HI,
+                                                       (ULONG)(adapter->FencePagePa.QuadPart >> 32));
+                                } else {
+                                    AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_FENCE_GPA_LO, 0);
+                                    AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_FENCE_GPA_HI, 0);
+                                }
+                            }
 
-                        if (haveRing) {
-                            AeroGpuWriteRegU32(adapter,
-                                               AEROGPU_MMIO_REG_RING_CONTROL,
-                                               AEROGPU_RING_CONTROL_ENABLE | AEROGPU_RING_CONTROL_RESET);
+                            if (haveRing) {
+                                AeroGpuWriteRegU32(adapter,
+                                                   AEROGPU_MMIO_REG_RING_CONTROL,
+                                                   AEROGPU_RING_CONTROL_ENABLE | AEROGPU_RING_CONTROL_RESET);
+                            } else {
+                                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_RING_CONTROL, 0);
+                            }
                         }
                     } else {
+                        BOOLEAN ringOk = FALSE;
                         if (adapter->RingVa && adapter->RingEntryCount != 0) {
+                            const ULONGLONG minRingBytes =
+                                (ULONGLONG)adapter->RingEntryCount * (ULONGLONG)sizeof(aerogpu_legacy_ring_entry);
+                            ringOk = (minRingBytes <= (ULONGLONG)adapter->RingSizeBytes) ? TRUE : FALSE;
+                        }
+
+                        if (ringOk) {
                             AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_BASE_LO, adapter->RingPa.LowPart);
                             AeroGpuWriteRegU32(adapter,
                                                AEROGPU_LEGACY_REG_RING_BASE_HI,
                                                (ULONG)(adapter->RingPa.QuadPart >> 32));
                             AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_ENTRY_COUNT, adapter->RingEntryCount);
+                        } else {
+                            AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_ENTRY_COUNT, 0);
+                            AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_BASE_LO, 0);
+                            AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_BASE_HI, 0);
                         }
+
                         AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_HEAD, 0);
                         AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_TAIL, 0);
                         adapter->RingTail = 0;
@@ -7174,10 +7228,9 @@ static NTSTATUS APIENTRY AeroGpuDdiSubmitCommand(_In_ const HANDLE hAdapter,
         /* Best-effort: drain any per-submit meta handle so we don't leak on device-lost. */
         if (metaHandle != 0) {
             AEROGPU_SUBMISSION_META* metaEarly = AeroGpuMetaHandleTake(adapter, metaHandle);
-            if (!metaEarly) {
-                return STATUS_INVALID_PARAMETER;
+            if (metaEarly) {
+                AeroGpuFreeSubmissionMeta(metaEarly);
             }
-            AeroGpuFreeSubmissionMeta(metaEarly);
         }
         return STATUS_GRAPHICS_DEVICE_REMOVED;
     }
@@ -7195,10 +7248,9 @@ static NTSTATUS APIENTRY AeroGpuDdiSubmitCommand(_In_ const HANDLE hAdapter,
     if (!poweredOn || !accepting || !adapter->Bar0) {
         if (metaHandle != 0) {
             AEROGPU_SUBMISSION_META* metaEarly = AeroGpuMetaHandleTake(adapter, metaHandle);
-            if (!metaEarly) {
-                return STATUS_INVALID_PARAMETER;
+            if (metaEarly) {
+                AeroGpuFreeSubmissionMeta(metaEarly);
             }
-            AeroGpuFreeSubmissionMeta(metaEarly);
         }
         return STATUS_DEVICE_NOT_READY;
     }
@@ -7209,7 +7261,22 @@ static NTSTATUS APIENTRY AeroGpuDdiSubmitCommand(_In_ const HANDLE hAdapter,
     if (metaHandle != 0) {
         meta = AeroGpuMetaHandleTake(adapter, metaHandle);
         if (!meta) {
-            return STATUS_INVALID_PARAMETER;
+            /*
+             * Be robust against stale MetaHandles (e.g. after power transitions,
+             * TDR recovery, or scheduler cancellation). If the submit args carry
+             * an allocation list, rebuild the metadata on-demand; otherwise,
+             * continue without it (subsequent validation may still reject the
+             * submission if an alloc table is required).
+             */
+#if DBG
+            static volatile LONG g_MissingMetaHandleLogs = 0;
+            const LONG n = InterlockedIncrement(&g_MissingMetaHandleLogs);
+            if ((n <= 8) || ((n & 1023) == 0)) {
+                AEROGPU_LOG("SubmitCommand: MetaHandle=0x%I64x not found; rebuilding if possible (fence=%I64u)",
+                            metaHandle,
+                            (ULONGLONG)pSubmitCommand->SubmissionFenceId);
+            }
+#endif
         }
     }
 
