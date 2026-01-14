@@ -224,7 +224,7 @@ fn boot_sector_int10_vbe_sets_scanout_state_to_legacy_vbe_lfb() {
 
     let snap = scanout_state.snapshot();
     assert_eq!(snap.source, SCANOUT_SOURCE_LEGACY_VBE_LFB);
-    assert_eq!(snap.base_paddr(), u64::from(m.vbe_lfb_base()));
+    assert_eq!(snap.base_paddr(), m.vbe_lfb_base());
     assert_eq!(snap.width, 1024);
     assert_eq!(snap.height, 768);
     assert_eq!(snap.pitch_bytes, 1024 * 4);
@@ -370,7 +370,7 @@ fn boot_sector_int10_vbe_display_start_updates_scanout_state_base() {
 
     let snap = scanout_state.snapshot();
     assert_eq!(snap.source, SCANOUT_SOURCE_LEGACY_VBE_LFB);
-    assert_eq!(snap.base_paddr(), u64::from(m.vbe_lfb_base()) + 4);
+    assert_eq!(snap.base_paddr(), m.vbe_lfb_base() + 4);
     assert_eq!(snap.width, 1024);
     assert_eq!(snap.height, 768);
     assert_eq!(snap.pitch_bytes, 1024 * 4);
@@ -411,7 +411,7 @@ fn boot_sector_int10_vbe_scanline_bytes_and_display_start_update_scanout_state()
     assert_eq!(snap.source, SCANOUT_SOURCE_LEGACY_VBE_LFB);
     assert_eq!(
         snap.base_paddr(),
-        u64::from(m.vbe_lfb_base()) + u64::from(y_off) * u64::from(bytes_per_scan_line) + 4
+        m.vbe_lfb_base() + u64::from(y_off) * u64::from(bytes_per_scan_line) + 4
     );
     assert_eq!(snap.width, 1024);
     assert_eq!(snap.height, 768);

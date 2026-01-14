@@ -74,7 +74,7 @@ fn write_ring_header(
     let ring_size_bytes =
         ring::AerogpuRingHeader::SIZE_BYTES as u32 + entry_count * entry_stride_bytes;
 
-    m.write_physical_u32(ring_gpa + 0, ring::AEROGPU_RING_MAGIC);
+    m.write_physical_u32(ring_gpa, ring::AEROGPU_RING_MAGIC);
     m.write_physical_u32(ring_gpa + 4, pci::AEROGPU_ABI_VERSION_U32);
     m.write_physical_u32(ring_gpa + 8, ring_size_bytes);
     m.write_physical_u32(ring_gpa + 12, entry_count);
@@ -94,7 +94,7 @@ fn write_submit_desc(
     signal_fence: u64,
     flags: u32,
 ) {
-    m.write_physical_u32(desc_gpa + 0, ring::AerogpuSubmitDesc::SIZE_BYTES as u32); // desc_size_bytes
+    m.write_physical_u32(desc_gpa, ring::AerogpuSubmitDesc::SIZE_BYTES as u32); // desc_size_bytes
     m.write_physical_u32(desc_gpa + 4, flags);
     m.write_physical_u32(desc_gpa + 8, 0); // context_id
     m.write_physical_u32(desc_gpa + 12, ring::AEROGPU_ENGINE_0); // engine_id
@@ -333,8 +333,9 @@ fn vsync_fence_blocks_immediate_fences_behind_it_until_vblank() {
     let ring_size_bytes =
         write_ring_header(&mut m, ring_gpa, 8, /*head=*/ 0, /*tail=*/ 2);
     let stride = ring::AerogpuSubmitDesc::SIZE_BYTES as u64;
-    let desc0_gpa = ring_gpa + ring::AerogpuRingHeader::SIZE_BYTES as u64 + 0 * stride;
-    let desc1_gpa = ring_gpa + ring::AerogpuRingHeader::SIZE_BYTES as u64 + 1 * stride;
+    let desc_base = ring_gpa + ring::AerogpuRingHeader::SIZE_BYTES as u64;
+    let desc0_gpa = desc_base;
+    let desc1_gpa = desc_base + stride;
 
     write_submit_desc(&mut m, desc0_gpa, cmd_gpa, cmd_stream.len() as u32, 1, 0);
     // Empty submission (no cmd stream) should be treated as immediate.
@@ -417,8 +418,9 @@ fn completes_at_most_one_vsync_fence_per_vblank_tick() {
     let ring_size_bytes =
         write_ring_header(&mut m, ring_gpa, 8, /*head=*/ 0, /*tail=*/ 2);
     let stride = ring::AerogpuSubmitDesc::SIZE_BYTES as u64;
-    let desc0_gpa = ring_gpa + ring::AerogpuRingHeader::SIZE_BYTES as u64 + 0 * stride;
-    let desc1_gpa = ring_gpa + ring::AerogpuRingHeader::SIZE_BYTES as u64 + 1 * stride;
+    let desc_base = ring_gpa + ring::AerogpuRingHeader::SIZE_BYTES as u64;
+    let desc0_gpa = desc_base;
+    let desc1_gpa = desc_base + stride;
 
     write_submit_desc(&mut m, desc0_gpa, cmd_gpa, cmd_stream.len() as u32, 1, 0);
     write_submit_desc(&mut m, desc1_gpa, cmd_gpa, cmd_stream.len() as u32, 2, 0);

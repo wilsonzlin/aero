@@ -69,7 +69,7 @@ fn snapshot_roundtrip_preserves_virtio_input_queue_state_without_dup_or_stuck_ir
     cmd |= 0x0006; // MEM + BUSMASTER
     cfg_write(&mut m, bdf, 0x04, 2, u32::from(cmd));
 
-    let common = bar0 + 0x0000;
+    let common = bar0;
     let notify = bar0 + 0x1000;
 
     // Feature negotiation (modern virtio-pci).
@@ -79,12 +79,12 @@ fn snapshot_roundtrip_preserves_virtio_input_queue_state_without_dup_or_stuck_ir
         VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
     );
 
-    m.write_physical_u32(common + 0x00, 0);
+    m.write_physical_u32(common, 0);
     let f0 = m.read_physical_u32(common + 0x04);
     m.write_physical_u32(common + 0x08, 0);
     m.write_physical_u32(common + 0x0c, f0);
 
-    m.write_physical_u32(common + 0x00, 1);
+    m.write_physical_u32(common, 1);
     let f1 = m.read_physical_u32(common + 0x04);
     m.write_physical_u32(common + 0x08, 1);
     m.write_physical_u32(common + 0x0c, f1);
@@ -122,12 +122,12 @@ fn snapshot_roundtrip_preserves_virtio_input_queue_state_without_dup_or_stuck_ir
         m.write_physical(buf, &[0u8; 8]);
         write_desc(&mut m, desc, i as u16, buf, 8, VIRTQ_DESC_F_WRITE);
     }
-    m.write_physical_u16(avail + 0, 0);
+    m.write_physical_u16(avail, 0);
     m.write_physical_u16(avail + 2, bufs.len() as u16);
     for (i, _buf) in bufs.iter().enumerate() {
         m.write_physical_u16(avail + 4 + (i as u64) * 2, i as u16);
     }
-    m.write_physical_u16(used + 0, 0);
+    m.write_physical_u16(used, 0);
     m.write_physical_u16(used + 2, 0);
 
     // Notify queue 0 and let the device consume the buffers (it will cache them internally).

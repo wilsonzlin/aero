@@ -27,7 +27,7 @@ fn assert_ioapic_delivers_to_apic(
 
         // GSI1 -> vector, level-triggered, unmasked, destination APIC ID `dest_apic_id`.
         program_ioapic_entry(
-            &mut *ints,
+            &mut ints,
             gsi,
             u32::from(vector) | (1 << 15),
             u32::from(dest_apic_id) << 24,

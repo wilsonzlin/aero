@@ -93,7 +93,7 @@ fn nvme_msix_delivers_to_lapic_in_apic_mode() {
 
     let vector: u8 = 0x67;
     let entry0 = bar0_base + table_offset;
-    m.write_physical_u32(entry0 + 0x0, 0xfee0_0000);
+    m.write_physical_u32(entry0, 0xfee0_0000);
     m.write_physical_u32(entry0 + 0x4, 0);
     m.write_physical_u32(entry0 + 0x8, u32::from(vector));
     m.write_physical_u32(entry0 + 0xc, 0); // unmasked
@@ -182,7 +182,7 @@ fn nvme_msix_function_mask_defers_delivery_until_unmasked() {
     // Program table entry 0 via guest physical MMIO.
     let vector: u8 = 0x68;
     let entry0 = bar0_base + table_offset;
-    m.write_physical_u32(entry0 + 0x0, 0xfee0_0000);
+    m.write_physical_u32(entry0, 0xfee0_0000);
     m.write_physical_u32(entry0 + 0x4, 0);
     m.write_physical_u32(entry0 + 0x8, u32::from(vector));
     m.write_physical_u32(entry0 + 0xc, 0); // unmasked

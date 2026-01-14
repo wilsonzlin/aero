@@ -139,7 +139,7 @@ fn parse_el_torito_boot_info(iso_path: &Path) -> std::io::Result<ElToritoBootInf
     let meta_len = file.metadata()?.len();
     let total_blocks = meta_len / ISO_SECTOR_SIZE;
     let available_blocks = total_blocks.saturating_sub(u64::from(boot_catalog_lba));
-    let blocks_to_read = available_blocks.min(MAX_CATALOG_BLOCKS).max(1);
+    let blocks_to_read = available_blocks.clamp(1, MAX_CATALOG_BLOCKS);
 
     let mut catalog = vec![0u8; (blocks_to_read * ISO_SECTOR_SIZE) as usize];
     read_exact_at(

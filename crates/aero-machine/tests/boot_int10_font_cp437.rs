@@ -2,7 +2,7 @@ use aero_machine::{Machine, MachineConfig, RunExit};
 use firmware::bios::{BIOS_SEGMENT, VGA_FONT_8X16_OFFSET};
 
 const RESULT_BASE: u64 = 0x0500;
-const RESULT_OR: u64 = RESULT_BASE + 0;
+const RESULT_OR: u64 = RESULT_BASE;
 const RESULT_AND: u64 = RESULT_BASE + 1;
 const RESULT_ES: u64 = RESULT_BASE + 2;
 const RESULT_CX: u64 = RESULT_BASE + 4;

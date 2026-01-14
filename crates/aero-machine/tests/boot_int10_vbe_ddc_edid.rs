@@ -2,7 +2,7 @@ use aero_machine::{Machine, MachineConfig, RunExit};
 use pretty_assertions::assert_eq;
 
 const RESULT_BUF_BASE: u64 = 0x0500;
-const RESULT0_AX: u64 = RESULT_BUF_BASE + 0;
+const RESULT0_AX: u64 = RESULT_BUF_BASE;
 const RESULT0_BX: u64 = RESULT_BUF_BASE + 2;
 const RESULT0_FLAGS: u64 = RESULT_BUF_BASE + 4;
 const RESULT1_AX: u64 = RESULT_BUF_BASE + 6;

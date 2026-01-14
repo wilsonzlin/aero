@@ -96,7 +96,7 @@ fn virtio_blk_msix_delivers_to_lapic_in_apic_mode() {
     let vector = 0x61u32;
     let table_offset = u64::from(table & !0x7);
     let entry0 = bar0_base + table_offset;
-    m.write_physical_u32(entry0 + 0x0, 0xfee0_0000);
+    m.write_physical_u32(entry0, 0xfee0_0000);
     m.write_physical_u32(entry0 + 0x4, 0);
     m.write_physical_u32(entry0 + 0x8, vector);
     m.write_physical_u32(entry0 + 0xc, 0); // unmasked

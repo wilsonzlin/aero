@@ -203,6 +203,25 @@ impl BlockDevice for SharedDisk {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+impl BlockDevice for SharedDisk {
+    fn read_sector(&mut self, lba: u64, buf: &mut [u8; 512]) -> Result<(), BiosDiskError> {
+        self.inner
+            .lock()
+            .expect("shared disk mutex should not be poisoned")
+            .read_sectors(lba, buf)
+            .map_err(|_err| BiosDiskError::OutOfRange)
+    }
+
+    fn size_in_sectors(&self) -> u64 {
+        self.inner
+            .lock()
+            .expect("shared disk mutex should not be poisoned")
+            .capacity_bytes()
+            / SECTOR_SIZE as u64
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::SharedDisk;
@@ -230,24 +249,5 @@ mod tests {
         let mut buf = [0xCCu8; 512];
         shared.read_at(0, &mut buf).unwrap();
         assert_eq!(buf, [0u8; 512]);
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-impl BlockDevice for SharedDisk {
-    fn read_sector(&mut self, lba: u64, buf: &mut [u8; 512]) -> Result<(), BiosDiskError> {
-        self.inner
-            .lock()
-            .expect("shared disk mutex should not be poisoned")
-            .read_sectors(lba, buf)
-            .map_err(|_err| BiosDiskError::OutOfRange)
-    }
-
-    fn size_in_sectors(&self) -> u64 {
-        self.inner
-            .lock()
-            .expect("shared disk mutex should not be poisoned")
-            .capacity_bytes()
-            / SECTOR_SIZE as u64
     }
 }

@@ -17,10 +17,11 @@ fn usb_ehci_attach_root_is_noop_when_ehci_disabled() {
 
 #[test]
 fn usb_ehci_attach_root_attaches_and_detaches_devices() {
-    let mut cfg = MachineConfig::default();
-    cfg.enable_pc_platform = true;
-    cfg.enable_ehci = true;
-
+    let cfg = MachineConfig {
+        enable_pc_platform: true,
+        enable_ehci: true,
+        ..Default::default()
+    };
     let mut machine = Machine::new(cfg).expect("machine constructs");
     assert!(machine.ehci().is_some());
 
@@ -45,10 +46,11 @@ fn usb_ehci_attach_root_attaches_and_detaches_devices() {
 
 #[test]
 fn usb_ehci_attach_root_rejects_invalid_port() {
-    let mut cfg = MachineConfig::default();
-    cfg.enable_pc_platform = true;
-    cfg.enable_ehci = true;
-
+    let cfg = MachineConfig {
+        enable_pc_platform: true,
+        enable_ehci: true,
+        ..Default::default()
+    };
     let mut machine = Machine::new(cfg).expect("machine constructs");
     assert!(machine.ehci().is_some());
 

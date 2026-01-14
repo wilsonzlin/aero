@@ -207,5 +207,5 @@ fn boot_int10_vbe_logical_scanline_updates_stride_and_renderer_uses_it() {
     assert_eq!(vga.borrow().get_resolution(), (1024, 768));
 
     vga.borrow_mut().present();
-    assert_eq!(vga.borrow().get_framebuffer()[(1 * 1024) + 0], 0xFF00_00FF);
+    assert_eq!(vga.borrow().get_framebuffer()[1024], 0xFF00_00FF);
 }

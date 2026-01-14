@@ -55,7 +55,7 @@ fn machine_acpi_mcfg_publishes_canonical_ecam_window() {
     // Parse XSDT entries (u64 pointers) and locate the MCFG (PCI Express MMCONFIG/ECAM) table.
     let entries = &xsdt[36..];
     assert!(
-        entries.len() % 8 == 0,
+        entries.len().is_multiple_of(8),
         "XSDT entry region must be 8-byte aligned"
     );
 

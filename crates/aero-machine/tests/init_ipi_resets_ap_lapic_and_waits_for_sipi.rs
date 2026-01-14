@@ -6,11 +6,12 @@ const IA32_APIC_BASE_BSP_BIT: u64 = 1 << 8;
 
 #[test]
 fn init_ipi_resets_target_ap_lapic_and_enters_wait_for_sipi() {
-    let mut cfg = MachineConfig::default();
-    cfg.ram_size_bytes = 2 * 1024 * 1024;
-    cfg.cpu_count = 2;
-    cfg.enable_pc_platform = true;
-
+    let cfg = MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        cpu_count: 2,
+        enable_pc_platform: true,
+        ..Default::default()
+    };
     let mut m = Machine::new(cfg).unwrap();
     m.platform_interrupts()
         .expect("pc platform enabled")

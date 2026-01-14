@@ -453,7 +453,7 @@ fn xhci_msix_triggers_lapic_vector_and_suppresses_intx() {
     // Program MSI-X table entry 0: dest = BSP (APIC ID 0), vector = 0x66.
     let vector: u8 = 0x66;
     let entry0 = bar0_base + u64::from(table_offset);
-    m.write_physical_u32(entry0 + 0x00, 0xfee0_0000);
+    m.write_physical_u32(entry0, 0xfee0_0000);
     m.write_physical_u32(entry0 + 0x04, 0);
     m.write_physical_u32(entry0 + 0x08, u32::from(vector));
     m.write_physical_u32(entry0 + 0x0c, 0); // unmasked

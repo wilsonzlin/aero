@@ -7949,6 +7949,7 @@ impl Machine {
             } else {
                 None
             };
+
             if attach_usb2_mux {
                 if let (Some(uhci), Some(ehci)) = (&uhci, &ehci) {
                     // UHCI exposes two root hub ports. EHCI defaults to six; mux the first two so
@@ -12224,7 +12225,7 @@ mod tests {
 
     #[test]
     fn ap_cpus_split_get_mut_excludes_current_index() {
-        let mut cpus = vec![
+        let mut cpus = [
             CpuCore::new(CpuMode::Real),
             CpuCore::new(CpuMode::Real),
             CpuCore::new(CpuMode::Real),
@@ -12262,7 +12263,7 @@ mod tests {
 
     #[test]
     fn ap_cpus_split_for_each_mut_excluding_current_uses_full_indices() {
-        let mut cpus = vec![
+        let mut cpus = [
             CpuCore::new(CpuMode::Real),
             CpuCore::new(CpuMode::Real),
             CpuCore::new(CpuMode::Real),
@@ -12284,7 +12285,7 @@ mod tests {
 
     #[test]
     fn ap_cpus_split_for_each_mut_excluding_index_skips_requested_index() {
-        let mut cpus = vec![
+        let mut cpus = [
             CpuCore::new(CpuMode::Real),
             CpuCore::new(CpuMode::Real),
             CpuCore::new(CpuMode::Real),

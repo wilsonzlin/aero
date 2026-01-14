@@ -259,7 +259,7 @@ fn aerogpu_scanout_disable_reverts_to_legacy_vbe_scanout_with_panning_stride() {
     run_until_halt(&mut m);
 
     // Sanity check: after the BIOS VBE calls, legacy scanout should already reflect panning/stride.
-    let lfb_base = u64::from(m.vbe_lfb_base());
+    let lfb_base = m.vbe_lfb_base();
     let expected_base =
         lfb_base + u64::from(y_off) * u64::from(bytes_per_scan_line) + u64::from(x_off) * 4;
 

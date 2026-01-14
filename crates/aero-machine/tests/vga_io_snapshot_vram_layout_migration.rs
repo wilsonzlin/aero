@@ -142,7 +142,7 @@ fn machine_restore_migrates_vgad_v1_0_vram_layout() {
     vm.io_write(0x01CF, 2, 0x0041);
 
     // Write one red pixel at (0,0) in packed 32bpp BGRX.
-    vm.write_physical_u32(u64::from(vm.vbe_lfb_base()), 0x00FF_0000);
+    vm.write_physical_u32(vm.vbe_lfb_base(), 0x00FF_0000);
 
     let mut snap = vm.take_snapshot_full().unwrap();
     patch_vga_state_to_vgad_v1_0(&mut snap);

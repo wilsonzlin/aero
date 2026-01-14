@@ -167,7 +167,6 @@ fn virtio_input_eventq_delivers_injected_event_end_to_end() {
     // Canonical virtio capability layout for Aero profiles (BAR0 offsets).
     const COMMON: u64 = profile::VIRTIO_COMMON_CFG_BAR0_OFFSET as u64;
     const NOTIFY: u64 = profile::VIRTIO_NOTIFY_CFG_BAR0_OFFSET as u64;
-    const NOTIFY_MULT: u64 = profile::VIRTIO_NOTIFY_OFF_MULTIPLIER as u64;
 
     // Minimal feature negotiation: accept all device features and reach DRIVER_OK.
     m.write_physical_u8(bar0_base + COMMON + 0x14, VIRTIO_STATUS_ACKNOWLEDGE);
@@ -225,7 +224,7 @@ fn virtio_input_eventq_delivers_injected_event_end_to_end() {
     m.write_physical_u16(used + 2, 0); // idx
 
     // Notify queue 0 so the platform pops and caches the buffer.
-    m.write_physical_u16(bar0_base + NOTIFY + 0 * NOTIFY_MULT, 0);
+    m.write_physical_u16(bar0_base + NOTIFY, 0);
     m.process_virtio_input();
 
     assert_eq!(m.read_physical_u16(used + 2), 0);
@@ -274,7 +273,6 @@ fn snapshot_restore_roundtrips_virtio_input_queue_progress_without_replaying_eve
 
     const COMMON: u64 = profile::VIRTIO_COMMON_CFG_BAR0_OFFSET as u64;
     const NOTIFY: u64 = profile::VIRTIO_NOTIFY_CFG_BAR0_OFFSET as u64;
-    const NOTIFY_MULT: u64 = profile::VIRTIO_NOTIFY_OFF_MULTIPLIER as u64;
 
     // Configure event queue 0 with two buffers.
     let desc = 0x0090_0000;
@@ -307,7 +305,7 @@ fn snapshot_restore_roundtrips_virtio_input_queue_progress_without_replaying_eve
     m.write_physical_u16(used, 0);
     m.write_physical_u16(used + 2, 0);
 
-    m.write_physical_u16(bar0_base + NOTIFY + 0 * NOTIFY_MULT, 0);
+    m.write_physical_u16(bar0_base + NOTIFY, 0);
     m.process_virtio_input();
 
     // Deliver one event (consumes buffer 0) leaving buffer 1 outstanding.

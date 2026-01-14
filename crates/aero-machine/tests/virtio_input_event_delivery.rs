@@ -66,7 +66,7 @@ fn virtio_input_keyboard_init_then_host_injects_key_events() {
     cmd |= 0x0006; // MEM + BUSMASTER
     cfg_write(&mut m, bdf, 0x04, 2, u32::from(cmd));
 
-    let common = bar0 + 0x0000;
+    let common = bar0;
     let notify = bar0 + 0x1000;
 
     // Feature negotiation (modern virtio-pci).
@@ -77,12 +77,12 @@ fn virtio_input_keyboard_init_then_host_injects_key_events() {
     );
 
     // Read offered features (low/high dwords) and accept them as-is.
-    m.write_physical_u32(common + 0x00, 0);
+    m.write_physical_u32(common, 0);
     let f0 = m.read_physical_u32(common + 0x04);
     m.write_physical_u32(common + 0x08, 0);
     m.write_physical_u32(common + 0x0c, f0);
 
-    m.write_physical_u32(common + 0x00, 1);
+    m.write_physical_u32(common, 1);
     let f1 = m.read_physical_u32(common + 0x04);
     m.write_physical_u32(common + 0x08, 1);
     m.write_physical_u32(common + 0x0c, f1);
@@ -124,14 +124,14 @@ fn virtio_input_keyboard_init_then_host_injects_key_events() {
     }
 
     // avail ring: flags=0, idx=4, ring=[0,1,2,3].
-    m.write_physical_u16(avail + 0, 0);
+    m.write_physical_u16(avail, 0);
     m.write_physical_u16(avail + 2, bufs.len() as u16);
     for (i, _buf) in bufs.iter().enumerate() {
         m.write_physical_u16(avail + 4 + (i as u64) * 2, i as u16);
     }
 
     // used ring: flags=0, idx=0.
-    m.write_physical_u16(used + 0, 0);
+    m.write_physical_u16(used, 0);
     m.write_physical_u16(used + 2, 0);
 
     // Notify queue 0 (virtio-pci modern notify region).

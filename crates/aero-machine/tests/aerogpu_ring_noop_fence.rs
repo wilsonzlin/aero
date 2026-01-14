@@ -60,7 +60,7 @@ fn aerogpu_ring_doorbell_noop_completes_fence_and_interrupts() {
         ring::AerogpuRingHeader::SIZE_BYTES as u32 + entry_count * entry_stride_bytes;
 
     // Ring header.
-    m.write_physical_u32(ring_gpa + 0, ring::AEROGPU_RING_MAGIC);
+    m.write_physical_u32(ring_gpa, ring::AEROGPU_RING_MAGIC);
     m.write_physical_u32(ring_gpa + 4, pci::AEROGPU_ABI_VERSION_U32);
     m.write_physical_u32(ring_gpa + 8, ring_size_bytes);
     m.write_physical_u32(ring_gpa + 12, entry_count);
@@ -73,7 +73,7 @@ fn aerogpu_ring_doorbell_noop_completes_fence_and_interrupts() {
     let desc_gpa = ring_gpa + ring::AerogpuRingHeader::SIZE_BYTES as u64;
     let signal_fence = 0x1234_5678_9ABC_DEF0u64;
 
-    m.write_physical_u32(desc_gpa + 0, ring::AerogpuSubmitDesc::SIZE_BYTES as u32); // desc_size_bytes
+    m.write_physical_u32(desc_gpa, ring::AerogpuSubmitDesc::SIZE_BYTES as u32); // desc_size_bytes
     m.write_physical_u32(desc_gpa + 4, 0); // flags
     m.write_physical_u32(desc_gpa + 8, 0); // context_id
     m.write_physical_u32(desc_gpa + 12, ring::AEROGPU_ENGINE_0); // engine_id
@@ -132,7 +132,7 @@ fn aerogpu_ring_doorbell_noop_completes_fence_and_interrupts() {
     );
 
     assert_eq!(
-        m.read_physical_u32(fence_gpa + 0),
+        m.read_physical_u32(fence_gpa),
         0,
         "fence page should not be written while COMMAND.BME=0"
     );
@@ -160,7 +160,7 @@ fn aerogpu_ring_doorbell_noop_completes_fence_and_interrupts() {
 
     // Fence page written.
     assert_eq!(
-        m.read_physical_u32(fence_gpa + 0),
+        m.read_physical_u32(fence_gpa),
         ring::AEROGPU_FENCE_PAGE_MAGIC
     );
     assert_eq!(
@@ -203,7 +203,7 @@ fn aerogpu_ring_doorbell_noop_completes_fence_and_interrupts() {
     let desc1_gpa = desc_gpa + u64::from(entry_stride_bytes);
     let signal_fence2 = signal_fence.wrapping_add(1);
 
-    m.write_physical_u32(desc1_gpa + 0, ring::AerogpuSubmitDesc::SIZE_BYTES as u32); // desc_size_bytes
+    m.write_physical_u32(desc1_gpa, ring::AerogpuSubmitDesc::SIZE_BYTES as u32); // desc_size_bytes
     m.write_physical_u32(desc1_gpa + 4, 0); // flags
     m.write_physical_u32(desc1_gpa + 8, 0); // context_id
     m.write_physical_u32(desc1_gpa + 12, ring::AEROGPU_ENGINE_0); // engine_id
@@ -300,7 +300,7 @@ fn aerogpu_submit_flag_no_irq_suppresses_fence_interrupt() {
         ring::AerogpuRingHeader::SIZE_BYTES as u32 + entry_count * entry_stride_bytes;
 
     // Ring header.
-    m.write_physical_u32(ring_gpa + 0, ring::AEROGPU_RING_MAGIC);
+    m.write_physical_u32(ring_gpa, ring::AEROGPU_RING_MAGIC);
     m.write_physical_u32(ring_gpa + 4, pci::AEROGPU_ABI_VERSION_U32);
     m.write_physical_u32(ring_gpa + 8, ring_size_bytes);
     m.write_physical_u32(ring_gpa + 12, entry_count);
@@ -313,7 +313,7 @@ fn aerogpu_submit_flag_no_irq_suppresses_fence_interrupt() {
     let desc_gpa = ring_gpa + ring::AerogpuRingHeader::SIZE_BYTES as u64;
     let signal_fence = 0x1111_2222_3333_4444u64;
 
-    m.write_physical_u32(desc_gpa + 0, ring::AerogpuSubmitDesc::SIZE_BYTES as u32); // desc_size_bytes
+    m.write_physical_u32(desc_gpa, ring::AerogpuSubmitDesc::SIZE_BYTES as u32); // desc_size_bytes
     m.write_physical_u32(desc_gpa + 4, ring::AEROGPU_SUBMIT_FLAG_NO_IRQ); // flags
     m.write_physical_u32(desc_gpa + 8, 0); // context_id
     m.write_physical_u32(desc_gpa + 12, ring::AEROGPU_ENGINE_0); // engine_id

@@ -20,7 +20,7 @@ fn read_acpi_table(m: &mut Machine, paddr: u64) -> Option<Vec<u8>> {
 
     let len: usize = hdr.length.try_into().ok()?;
     // Defensive bounds checks: reject absurd lengths and OOB reads.
-    if len < ACPI_HEADER_SIZE || len > 64 * 1024 {
+    if !(ACPI_HEADER_SIZE..=64 * 1024).contains(&len) {
         return None;
     }
     let end = paddr.checked_add(hdr.length as u64)?;

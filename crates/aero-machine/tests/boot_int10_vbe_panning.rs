@@ -92,7 +92,7 @@ fn boot_int10_vbe_scanline_bytes_and_display_start_affect_scanout_base() {
     run_until_halt(&mut m);
 
     let bytes_per_pixel = 4u64;
-    let base = u64::from(m.vbe_lfb_base());
+    let base = m.vbe_lfb_base();
 
     // Correct mapping per VBE contract:
     //   base = lfb_base + y_off * bytes_per_scan_line + x_off * bytes_per_pixel

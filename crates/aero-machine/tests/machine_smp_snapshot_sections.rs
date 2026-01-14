@@ -5,11 +5,12 @@ use std::io::Cursor;
 
 #[test]
 fn smp_snapshot_uses_cpus_and_mmus_sections() {
-    let mut cfg = MachineConfig::default();
-    cfg.ram_size_bytes = 2 * 1024 * 1024;
-    cfg.cpu_count = 2;
-    cfg.enable_pc_platform = true;
-
+    let cfg = MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        cpu_count: 2,
+        enable_pc_platform: true,
+        ..Default::default()
+    };
     let mut m = Machine::new(cfg.clone()).unwrap();
     let snap = m.take_snapshot_full().unwrap();
 

@@ -68,7 +68,7 @@ fn machine_config_explicitly_controls_acpi_publication() {
     // Parse XSDT entries (u64 pointers) and ensure key tables exist.
     let entries = &xsdt[36..];
     assert!(
-        entries.len() % 8 == 0,
+        entries.len().is_multiple_of(8),
         "XSDT entry region must be 8-byte aligned"
     );
     let mut fadt_addr: Option<u64> = None;

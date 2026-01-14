@@ -225,10 +225,7 @@ fn aerogpu_scanout_handoff_to_wddm_blocks_legacy_int10_steal() {
 
     m.display_present();
     assert_eq!(m.active_scanout_source(), ScanoutSource::Wddm);
-    assert_eq!(
-        m.display_resolution(),
-        (u32::from(width), u32::from(height))
-    );
+    assert_eq!(m.display_resolution(), (width, height));
     assert_eq!(m.display_framebuffer()[0], 0xFFAA_BBCC);
 
     // Scribble into the legacy VBE LFB (BAR1 + fixed offset) to ensure it does not steal scanout
@@ -246,10 +243,7 @@ fn aerogpu_scanout_handoff_to_wddm_blocks_legacy_int10_steal() {
 
     m.display_present();
     assert_eq!(m.active_scanout_source(), ScanoutSource::Wddm);
-    assert_eq!(
-        m.display_resolution(),
-        (u32::from(width), u32::from(height))
-    );
+    assert_eq!(m.display_resolution(), (width, height));
     assert_eq!(m.display_framebuffer()[0], 0xFFAA_BBCC);
 
     // Once WDDM has claimed scanout, legacy VGA/VBE sources are ignored until scanout is disabled
