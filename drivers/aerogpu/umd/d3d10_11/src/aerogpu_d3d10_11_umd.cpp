@@ -5123,17 +5123,10 @@ void AEROGPU_APIENTRY SetViewport(D3D10DDI_HDEVICE hDevice, const AEROGPU_DDI_VI
 
   std::lock_guard<std::mutex> lock(dev->mutex);
 
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_viewport>(AEROGPU_CMD_SET_VIEWPORT);
-  if (!cmd) {
-    ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
-    return;
-  }
-  cmd->x_f32 = f32_bits(pVp->TopLeftX);
-  cmd->y_f32 = f32_bits(pVp->TopLeftY);
-  cmd->width_f32 = f32_bits(pVp->Width);
-  cmd->height_f32 = f32_bits(pVp->Height);
-  cmd->min_depth_f32 = f32_bits(pVp->MinDepth);
-  cmd->max_depth_f32 = f32_bits(pVp->MaxDepth);
+  validate_and_emit_viewports_locked(dev,
+                                     /*num_viewports=*/1,
+                                     pVp,
+                                     [&](HRESULT hr) { ReportDeviceErrorLocked(dev, hDevice, hr); });
 }
 
 void AEROGPU_APIENTRY SetDrawState(D3D10DDI_HDEVICE hDevice, D3D10DDI_HSHADER hVs, D3D10DDI_HSHADER hPs) {
