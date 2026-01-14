@@ -11261,9 +11261,41 @@ impl snapshot::SnapshotSource for Machine {
         }
 
         if let Some(e1000) = &self.e1000 {
+            // The E1000 model snapshots its internal PCI config image. Mirror the canonical PCI
+            // command/BAR programming owned by `PciConfigPorts` so snapshots capture a coherent view
+            // even when the guest reprograms BARs (including to base=0).
+            let bdf = aero_devices::pci::profile::NIC_E1000_82540EM.bdf;
+            let (command, bar0_base, bar1_base) = self
+                .pci_cfg
+                .as_ref()
+                .map(|pci_cfg| {
+                    let mut pci_cfg = pci_cfg.borrow_mut();
+                    let cfg = pci_cfg.bus_mut().device_config(bdf);
+                    let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+                    let bar0_base = cfg
+                        .and_then(|cfg| cfg.bar_range(0))
+                        .map(|range| range.base)
+                        .unwrap_or(0);
+                    let bar1_base = cfg
+                        .and_then(|cfg| cfg.bar_range(1))
+                        .map(|range| range.base)
+                        .unwrap_or(0);
+                    (command, bar0_base, bar1_base)
+                })
+                .unwrap_or((0, 0, 0));
+
+            let mut nic = e1000.borrow_mut();
+            nic.pci_config_write(0x04, 2, u32::from(command));
+            if let Ok(bar0_base) = u32::try_from(bar0_base) {
+                nic.pci_config_write(0x10, 4, bar0_base);
+            }
+            if let Ok(bar1_base) = u32::try_from(bar1_base) {
+                nic.pci_config_write(0x14, 4, bar1_base);
+            }
+
             devices.push(snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
                 snapshot::DeviceId::E1000,
-                &*e1000.borrow(),
+                &*nic,
             ));
         }
         if let Some(virtio_net) = &self.virtio_net {

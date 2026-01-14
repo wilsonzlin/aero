@@ -366,3 +366,62 @@ fn snapshot_device_states_mirrors_virtio_net_bar0_when_guest_clears_it_to_zero()
         assert_eq!(dev.config().bar_range(bar).unwrap().base, 0);
     }
 }
+
+#[test]
+fn snapshot_device_states_mirrors_e1000_bar0_when_guest_clears_it_to_zero() {
+    let vm = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_e1000: true,
+        // Keep this test focused on PCI config <-> device model mirroring.
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    let e1000 = vm.e1000().expect("e1000 enabled");
+    let pci_cfg = vm.pci_config_ports().expect("pc platform enabled");
+    let bdf = profile::NIC_E1000_82540EM.bdf;
+
+    // BIOS POST must assign a non-zero base address to BAR0 (E1000 MMIO window).
+    let bar0_base = {
+        let mut pci_cfg = pci_cfg.borrow_mut();
+        let cfg = pci_cfg
+            .bus_mut()
+            .device_config(bdf)
+            .expect("E1000 config function must exist");
+        cfg.bar_range(0).expect("E1000 BAR0 must exist").base
+    };
+    assert_ne!(bar0_base, 0, "expected E1000 BAR0 base to be assigned");
+
+    // Ensure the device model observes the assigned BAR0 base before we clear it.
+    {
+        let dev = e1000.borrow();
+        assert_eq!(dev.pci_config_read(0x10, 4), u32::try_from(bar0_base).unwrap());
+    }
+
+    // Simulate a guest unassigning BAR0 by programming it to 0.
+    {
+        let mut pci_cfg = pci_cfg.borrow_mut();
+        pci_cfg.bus_mut().write_config(bdf, 0x10, 4, 0);
+    }
+
+    // The E1000 device model maintains its own PCI config image; ensure it is still stale until we
+    // take a snapshot (which should perform mirroring).
+    {
+        let dev = e1000.borrow();
+        assert_eq!(dev.pci_config_read(0x10, 4), u32::try_from(bar0_base).unwrap());
+    }
+
+    // Snapshotting calls `SnapshotSource::device_states`, which must mirror BAR0 base=0 into the
+    // E1000 device model so snapshots don't preserve stale BAR bases.
+    let _ = <Machine as aero_snapshot::SnapshotSource>::device_states(&vm);
+    {
+        let dev = e1000.borrow();
+        assert_eq!(dev.pci_config_read(0x10, 4), 0);
+    }
+}
