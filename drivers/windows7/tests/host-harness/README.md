@@ -1123,6 +1123,10 @@ On the self-hosted runner you need:
 To enable the optional host-side QEMU PCI ID preflight (`query-pci` via QMP), set the workflow input
 `qemu_preflight_pci=true`. This helps catch missing/ignored `x-pci-revision=0x01` (REV_01) configuration early.
 
+To force INTx-only mode (disable MSI-X by passing `vectors=0` on the virtio devices), set the workflow input
+`force_intx=true`. This passes `--force-intx` (alias: `--virtio-disable-msix`) to the Python harness. Note: some QEMU
+builds may reject `vectors=0`; in that case the harness will fail fast with the QEMU error in the stderr sidecar log.
+
 The workflow can also optionally exercise the end-to-end virtio-input event delivery path (guest HID report verification +
 host-side input injection via QMP/HMP) by setting the workflow input `with_virtio_input_events=true`.
 This requires a guest image provisioned with `--test-input-events` (for example via

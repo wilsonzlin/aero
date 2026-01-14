@@ -38,6 +38,11 @@ on:
         required: false
         default: false
         type: boolean
+      force_intx:
+        description: Force virtio devices to expose no MSI-X capability (vectors=0) so the guest uses INTx
+        required: false
+        default: false
+        type: boolean
       with_virtio_input_events:
         description: Inject deterministic virtio-input events via QMP (keyboard + mouse) and require virtio-input-events to PASS (requires a guest image provisioned with --test-input-events)
         required: false
@@ -183,6 +188,7 @@ jobs:
             echo "  snapshot: '${{ inputs.snapshot }}'"
             echo "  follow_serial: '${{ inputs.follow_serial }}'"
             echo "  qemu_preflight_pci: '${{ inputs.qemu_preflight_pci }}'"
+            echo "  force_intx: '${{ inputs.force_intx }}'"
             echo "  with_virtio_input_events: '${{ inputs.with_virtio_input_events }}'"
             echo "  with_virtio_input_wheel: '${{ inputs.with_virtio_input_wheel }}'"
             echo "  with_virtio_input_media_keys: '${{ inputs.with_virtio_input_media_keys }}'"
@@ -255,6 +261,7 @@ jobs:
             virtio_snd_verify_wav="${{ inputs.virtio_snd_verify_wav }}"
             virtio_snd_wav_peak_threshold="${{ inputs.virtio_snd_wav_peak_threshold }}"
             virtio_snd_wav_rms_threshold="${{ inputs.virtio_snd_wav_rms_threshold }}"
+            force_intx="${{ inputs.force_intx }}"
             with_virtio_input_events="${{ inputs.with_virtio_input_events }}"
             with_virtio_input_wheel="${{ inputs.with_virtio_input_wheel }}"
             with_virtio_input_media_keys="${{ inputs.with_virtio_input_media_keys }}"
@@ -289,6 +296,9 @@ jobs:
             fi
             if [[ "${{ inputs.qemu_preflight_pci }}" == "true" ]]; then
               args+=(--qemu-preflight-pci)
+            fi
+            if [[ "${force_intx}" == "true" ]]; then
+              args+=(--force-intx)
             fi
             if [[ "${with_virtio_input_events}" == "true" ]]; then
               args+=(--with-input-events)
@@ -448,6 +458,7 @@ jobs:
           failure_token=""
           failure_line=""
           error_line=""
+          force_intx_host_marker=""
           if [[ -f "${serial_log}" ]]; then
             result_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|RESULT\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
             blk_resize_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-blk-resize\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
@@ -477,6 +488,7 @@ jobs:
               input_media_keys_inject_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MEDIA_KEYS_INJECT|' "${harness_log}" | tail -n 1 || true)"
               input_tablet_inject_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|' "${harness_log}" | tail -n 1 || true)"
               input_binding_host_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_BINDING|' "${harness_log}" | tail -n 1 || true)"
+              force_intx_host_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|CONFIG|force_intx=1' "${harness_log}" | tail -n 1 || true)"
               pci_preflight_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|QEMU_PCI_PREFLIGHT|' "${harness_log}" | tail -n 1 || true)"
               blk_resize_request_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESIZE|REQUEST|' "${harness_log}" | tail -n 1 || true)"
               blk_resize_fail_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESIZE|FAIL|reason=' "${harness_log}" | tail -n 1 || true)"
@@ -502,6 +514,9 @@ jobs:
             echo ""
             echo "- Harness step: ${{ steps.harness.outcome }}"
             echo "- Harness exit code: ${{ steps.harness.outputs.exit_code || 'unknown' }}"
+            if [[ "${{ inputs.force_intx }}" == "true" && -n "${force_intx_host_marker}" ]]; then
+              echo "- Host force INTx marker: \`${force_intx_host_marker}\`"
+            fi
             if [[ -n "${failure_token}" ]]; then
               echo "- Harness failure token: ${failure_token}"
             fi

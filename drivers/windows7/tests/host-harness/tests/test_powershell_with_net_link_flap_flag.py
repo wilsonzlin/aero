@@ -16,10 +16,10 @@ class PowerShellHarnessNetLinkFlapFlagTests(unittest.TestCase):
     def test_with_net_link_flap_param_exists(self) -> None:
         # Ensure the public harness switch exists (so users can enable the QMP flap + require markers).
         self.assertIn("[switch]$WithNetLinkFlap", self.text)
-        # The alias list may evolve, so avoid brittle exact-string matching.
+        # Alias list may grow; keep the test tolerant to additional aliases.
         self.assertRegex(
             self.text,
-            r'Alias\("WithVirtioNetLinkFlap",\s*"EnableVirtioNetLinkFlap"(?:,\s*"RequireVirtioNetLinkFlap")?\)',
+            r'Alias\([^)]*"WithVirtioNetLinkFlap"[^)]*"EnableVirtioNetLinkFlap"[^)]*\)',
         )
 
     def test_wait_result_enforces_link_flap_marker_when_required(self) -> None:
@@ -36,12 +36,11 @@ class PowerShellHarnessNetLinkFlapFlagTests(unittest.TestCase):
     def test_qmp_flap_targets_stable_net_device_id(self) -> None:
         # The host harness targets the virtio-net QOM id via QMP set_link.
         self.assertIn('$script:VirtioNetQmpId = "aero_virtio_net0"', self.text)
-        # Ensure the actual QMP command uses execute=set_link (tolerate whitespace alignment).
+        # Allow arbitrary whitespace for aligned hashtable formatting.
         self.assertRegex(self.text, r'execute\s*=\s*"set_link"')
-        # Ensure the QOM id is included in the list of names tried for set_link targeting.
+        # Ensure the stable QOM id is actually attempted for set_link targeting.
         self.assertIn('$names = @($script:VirtioNetQmpId, "net0")', self.text)
-        # Ensure the set_link command forwards the per-attempt name variable (so the stable id is used
-        # on the first iteration).
+        # Ensure the set_link command forwards the per-attempt name variable.
         self.assertRegex(self.text, r"name\s*=\s*\$name")
 
 
