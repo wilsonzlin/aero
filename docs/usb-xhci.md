@@ -60,7 +60,8 @@ Regression tests:
   and gates MSI-X table/PBA MMIO on `COMMAND.MEM`).
 - `crates/aero-machine/tests/xhci_snapshot.rs` asserts machine-level snapshot/restore semantics for
   xHCI (restores controller state, re-drives PCI INTx into the platform interrupt sink, preserves
-  host-attached device handles, and clears passthrough host async state).
+  host-attached device handles, clears passthrough host async state, and preserves MSI-X table/PBA
+  state so masked vectors re-deliver correctly after restore).
 - `crates/aero-machine/tests/machine_xhci.rs` asserts machine-level PCI/MMIO integration semantics
   for xHCI (PCI identity, `COMMAND.MEM` gating for MMIO, `RUN/STOP` toggling `USBSTS.HCHALTED`, and
   MSI/MSI-X behavior).
