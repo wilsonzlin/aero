@@ -43,14 +43,14 @@ var (
 	ErrPayloadTooLarge = errors.New("udpproto: payload too large")
 )
 
-// Datagram is the v1 binary frame payload carried in the WebRTC DataChannel.
+// datagram is the v1 binary frame payload carried in the WebRTC DataChannel.
 //
 // The GuestPort field always refers to the guest-side UDP port:
 //   - outbound (guest -> remote): source port
 //   - inbound (remote -> guest): destination port
 //
 // RemoteIP/RemotePort identify the remote endpoint (destination on outbound, source on inbound).
-type Datagram struct {
+type datagram struct {
 	GuestPort  uint16
 	RemoteIP   [4]byte
 	RemotePort uint16
@@ -74,7 +74,7 @@ type Codec struct {
 	MaxPayload int
 }
 
-// DefaultCodec is used by the top-level EncodeDatagram/DecodeDatagram helpers.
+// DefaultCodec is used by the relay for encoding/decoding UDP frames.
 var DefaultCodec = Codec{MaxPayload: DefaultMaxPayload}
 
 func NewCodec(maxPayload int) (Codec, error) {
@@ -84,7 +84,7 @@ func NewCodec(maxPayload int) (Codec, error) {
 	return Codec{MaxPayload: maxPayload}, nil
 }
 
-func (c Codec) EncodeDatagram(d Datagram, dst []byte) ([]byte, error) {
+func (c Codec) encodeDatagram(d datagram, dst []byte) ([]byte, error) {
 	if c.MaxPayload < 0 {
 		return nil, fmt.Errorf("udpproto: invalid codec max payload %d", c.MaxPayload)
 	}
@@ -110,19 +110,19 @@ func (c Codec) EncodeDatagram(d Datagram, dst []byte) ([]byte, error) {
 	return dst, nil
 }
 
-func (c Codec) DecodeDatagram(b []byte) (Datagram, error) {
+func (c Codec) decodeDatagram(b []byte) (datagram, error) {
 	if c.MaxPayload < 0 {
-		return Datagram{}, fmt.Errorf("udpproto: invalid codec max payload %d", c.MaxPayload)
+		return datagram{}, fmt.Errorf("udpproto: invalid codec max payload %d", c.MaxPayload)
 	}
 	if len(b) < v1HeaderLen {
-		return Datagram{}, ErrTooShort
+		return datagram{}, ErrTooShort
 	}
 	payload := b[v1HeaderLen:]
 	if len(payload) > c.MaxPayload {
-		return Datagram{}, fmt.Errorf("%w: %d > %d", ErrPayloadTooLarge, len(payload), c.MaxPayload)
+		return datagram{}, fmt.Errorf("%w: %d > %d", ErrPayloadTooLarge, len(payload), c.MaxPayload)
 	}
 
-	return Datagram{
+	return datagram{
 		GuestPort:  binary.BigEndian.Uint16(b[0:2]),
 		RemoteIP:   [4]byte{b[2], b[3], b[4], b[5]},
 		RemotePort: binary.BigEndian.Uint16(b[6:8]),
@@ -138,7 +138,7 @@ func (c Codec) DecodeFrame(b []byte) (Frame, error) {
 		return c.decodeV2(b)
 	}
 
-	d, err := c.DecodeDatagram(b)
+	d, err := c.decodeDatagram(b)
 	if err != nil {
 		return Frame{}, err
 	}
@@ -158,13 +158,13 @@ func (c Codec) EncodeFrameV1(f Frame) ([]byte, error) {
 	if !f.RemoteIP.Is4() {
 		return nil, fmt.Errorf("udpproto: v1 only supports IPv4")
 	}
-	d := Datagram{
+	d := datagram{
 		GuestPort:  f.GuestPort,
 		RemoteIP:   f.RemoteIP.As4(),
 		RemotePort: f.RemotePort,
 		Payload:    f.Payload,
 	}
-	return c.EncodeDatagram(d, nil)
+	return c.encodeDatagram(d, nil)
 }
 
 func (c Codec) EncodeFrameV2(f Frame) ([]byte, error) {

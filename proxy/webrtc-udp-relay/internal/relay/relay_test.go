@@ -21,9 +21,9 @@ func (f *fakeDataChannel) Send(data []byte) error {
 	return nil
 }
 
-func mustEncode(t *testing.T, d udpproto.Datagram) []byte {
+func mustEncode(t *testing.T, f udpproto.Frame) []byte {
 	t.Helper()
-	b, err := udpproto.DefaultCodec.EncodeDatagram(d, nil)
+	b, err := udpproto.DefaultCodec.EncodeFrameV1(f)
 	if err != nil {
 		t.Fatalf("encode datagram: %v", err)
 	}
@@ -43,9 +43,9 @@ func TestSessionRelay_BindingEviction(t *testing.T) {
 	t.Cleanup(r.Close)
 
 	send := func(guestPort uint16) {
-		r.HandleDataChannelMessage(mustEncode(t, udpproto.Datagram{
+		r.HandleDataChannelMessage(mustEncode(t, udpproto.Frame{
 			GuestPort:  guestPort,
-			RemoteIP:   [4]byte{127, 0, 0, 1},
+			RemoteIP:   netip.AddrFrom4([4]byte{127, 0, 0, 1}),
 			RemotePort: 9999,
 			Payload:    []byte("x"),
 		}))
@@ -92,9 +92,9 @@ func TestSessionRelay_IdleTimeoutCleanup(t *testing.T) {
 	r := NewSessionRelay(dc, cfg, p, nil, nil)
 	t.Cleanup(r.Close)
 
-	r.HandleDataChannelMessage(mustEncode(t, udpproto.Datagram{
+	r.HandleDataChannelMessage(mustEncode(t, udpproto.Frame{
 		GuestPort:  1,
-		RemoteIP:   [4]byte{127, 0, 0, 1},
+		RemoteIP:   netip.AddrFrom4([4]byte{127, 0, 0, 1}),
 		RemotePort: 9999,
 		Payload:    []byte("x"),
 	}))
@@ -140,9 +140,9 @@ func TestUdpPortBinding_RemoteAllowlist(t *testing.T) {
 	}
 	var remote1IP [4]byte
 	copy(remote1IP[:], ip4)
-	r.HandleDataChannelMessage(mustEncode(t, udpproto.Datagram{
+	r.HandleDataChannelMessage(mustEncode(t, udpproto.Frame{
 		GuestPort:  guestPort,
-		RemoteIP:   remote1IP,
+		RemoteIP:   netip.AddrFrom4(remote1IP),
 		RemotePort: uint16(remote1Addr.Port),
 		Payload:    []byte("ping"),
 	}))
@@ -175,21 +175,21 @@ func TestUdpPortBinding_RemoteAllowlist(t *testing.T) {
 		t.Fatalf("timed out waiting for forwarded packet from allowed remote")
 	}
 
-	d, err := udpproto.DefaultCodec.DecodeDatagram(got)
+	f, err := udpproto.DefaultCodec.DecodeFrame(got)
 	if err != nil {
 		t.Fatalf("decode forwarded packet: %v", err)
 	}
-	if d.GuestPort != guestPort {
-		t.Fatalf("guest port mismatch: %d != %d", d.GuestPort, guestPort)
+	if f.GuestPort != guestPort {
+		t.Fatalf("guest port mismatch: %d != %d", f.GuestPort, guestPort)
 	}
-	if d.RemotePort != uint16(remote1Addr.Port) {
-		t.Fatalf("remote port mismatch: %d != %d", d.RemotePort, remote1Addr.Port)
+	if f.RemotePort != uint16(remote1Addr.Port) {
+		t.Fatalf("remote port mismatch: %d != %d", f.RemotePort, remote1Addr.Port)
 	}
-	if d.RemoteIP != ([4]byte{127, 0, 0, 1}) {
-		t.Fatalf("remote ip mismatch: %v", d.RemoteIP)
+	if f.RemoteIP != netip.AddrFrom4([4]byte{127, 0, 0, 1}) {
+		t.Fatalf("remote ip mismatch: %v", f.RemoteIP)
 	}
-	if string(d.Payload) != "pong" {
-		t.Fatalf("payload mismatch: %q", d.Payload)
+	if string(f.Payload) != "pong" {
+		t.Fatalf("payload mismatch: %q", f.Payload)
 	}
 
 	remote2, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
@@ -249,9 +249,9 @@ func TestUdpPortBinding_InboundFilterAny_AllowsAnyRemote(t *testing.T) {
 	copy(remote1IP[:], ip4)
 
 	// Create the UDP binding by sending to remote1.
-	r.HandleDataChannelMessage(mustEncode(t, udpproto.Datagram{
+	r.HandleDataChannelMessage(mustEncode(t, udpproto.Frame{
 		GuestPort:  guestPort,
-		RemoteIP:   remote1IP,
+		RemoteIP:   netip.AddrFrom4(remote1IP),
 		RemotePort: uint16(remote1Addr.Port),
 		Payload:    []byte("ping"),
 	}))
@@ -291,21 +291,21 @@ func TestUdpPortBinding_InboundFilterAny_AllowsAnyRemote(t *testing.T) {
 		t.Fatalf("timed out waiting for forwarded packet from remote2")
 	}
 
-	d, err := udpproto.DefaultCodec.DecodeDatagram(got)
+	f, err := udpproto.DefaultCodec.DecodeFrame(got)
 	if err != nil {
 		t.Fatalf("decode forwarded packet: %v", err)
 	}
-	if d.GuestPort != guestPort {
-		t.Fatalf("guest port mismatch: %d != %d", d.GuestPort, guestPort)
+	if f.GuestPort != guestPort {
+		t.Fatalf("guest port mismatch: %d != %d", f.GuestPort, guestPort)
 	}
-	if d.RemotePort != uint16(remote2Addr.Port) {
-		t.Fatalf("remote port mismatch: %d != %d", d.RemotePort, remote2Addr.Port)
+	if f.RemotePort != uint16(remote2Addr.Port) {
+		t.Fatalf("remote port mismatch: %d != %d", f.RemotePort, remote2Addr.Port)
 	}
-	if d.RemoteIP != ([4]byte{127, 0, 0, 1}) {
-		t.Fatalf("remote ip mismatch: %v", d.RemoteIP)
+	if f.RemoteIP != netip.AddrFrom4([4]byte{127, 0, 0, 1}) {
+		t.Fatalf("remote ip mismatch: %v", f.RemoteIP)
 	}
-	if string(d.Payload) != "pong" {
-		t.Fatalf("payload mismatch: %q", d.Payload)
+	if string(f.Payload) != "pong" {
+		t.Fatalf("payload mismatch: %q", f.Payload)
 	}
 }
 
@@ -334,9 +334,9 @@ func TestUdpPortBinding_DropsOversizeDatagramInsteadOfForwardingTruncated(t *tes
 	remoteAddr := remote.LocalAddr().(*net.UDPAddr)
 
 	// Create the UDP binding.
-	r.HandleDataChannelMessage(mustEncode(t, udpproto.Datagram{
+	r.HandleDataChannelMessage(mustEncode(t, udpproto.Frame{
 		GuestPort:  1234,
-		RemoteIP:   [4]byte{127, 0, 0, 1},
+		RemoteIP:   netip.AddrFrom4([4]byte{127, 0, 0, 1}),
 		RemotePort: uint16(remoteAddr.Port),
 		Payload:    []byte("x"),
 	}))

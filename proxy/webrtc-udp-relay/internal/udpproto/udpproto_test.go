@@ -13,7 +13,7 @@ func TestEncodeDecodeRoundTrip(t *testing.T) {
 		t.Fatalf("NewCodec: %v", err)
 	}
 
-	in := Datagram{
+	in := datagram{
 		GuestPort:  12345,
 		RemoteIP:   [4]byte{1, 2, 3, 4},
 		RemotePort: 443,
@@ -21,12 +21,12 @@ func TestEncodeDecodeRoundTrip(t *testing.T) {
 	}
 
 	buf := make([]byte, 0, 128)
-	encoded, err := c.EncodeDatagram(in, buf)
+	encoded, err := c.encodeDatagram(in, buf)
 	if err != nil {
 		t.Fatalf("EncodeDatagram: %v", err)
 	}
 
-	out, err := c.DecodeDatagram(encoded)
+	out, err := c.decodeDatagram(encoded)
 	if err != nil {
 		t.Fatalf("DecodeDatagram: %v", err)
 	}
@@ -47,7 +47,7 @@ func TestEncodeDecodeRoundTrip(t *testing.T) {
 
 func TestDecodeTooShort(t *testing.T) {
 	for n := 0; n < v1HeaderLen; n++ {
-		_, err := DefaultCodec.DecodeDatagram(make([]byte, n))
+		_, err := DefaultCodec.decodeDatagram(make([]byte, n))
 		if !errors.Is(err, ErrTooShort) {
 			t.Fatalf("len=%d: got err=%v, want ErrTooShort", n, err)
 		}
@@ -61,7 +61,7 @@ func TestMaxPayloadEnforced(t *testing.T) {
 	}
 
 	// Encode should reject payloads over max.
-	_, err = c.EncodeDatagram(Datagram{
+	_, err = c.encodeDatagram(datagram{
 		GuestPort:  1,
 		RemoteIP:   [4]byte{127, 0, 0, 1},
 		RemotePort: 2,
@@ -78,7 +78,7 @@ func TestMaxPayloadEnforced(t *testing.T) {
 		0, 2, // remote_port
 		0, 1, 2, 3, // payload (4 bytes; max is 3)
 	}
-	_, err = c.DecodeDatagram(frame)
+	_, err = c.decodeDatagram(frame)
 	if !errors.Is(err, ErrPayloadTooLarge) {
 		t.Fatalf("decode: got err=%v, want ErrPayloadTooLarge", err)
 	}

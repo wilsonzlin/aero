@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
@@ -146,14 +147,14 @@ func TestUDPWebSocket_RoundTripV1AndV2(t *testing.T) {
 	var ip4Arr [4]byte
 	copy(ip4Arr[:], ip4)
 
-	pktV1, err := udpproto.DefaultCodec.EncodeDatagram(udpproto.Datagram{
+	pktV1, err := udpproto.DefaultCodec.EncodeFrameV1(udpproto.Frame{
 		GuestPort:  1234,
-		RemoteIP:   ip4Arr,
+		RemoteIP:   netip.AddrFrom4(ip4Arr),
 		RemotePort: uint16(echoAddr.Port),
 		Payload:    []byte("hello-v1"),
-	}, nil)
+	})
 	if err != nil {
-		t.Fatalf("EncodeDatagram(v1): %v", err)
+		t.Fatalf("EncodeFrameV1: %v", err)
 	}
 	if err := c.WriteMessage(websocket.BinaryMessage, pktV1); err != nil {
 		t.Fatalf("WriteMessage(v1): %v", err)
@@ -247,14 +248,14 @@ func TestUDPWebSocket_APIKeyAuth(t *testing.T) {
 		ip4 := echoAddr.IP.To4()
 		var ip4Arr [4]byte
 		copy(ip4Arr[:], ip4)
-		pkt, err := udpproto.DefaultCodec.EncodeDatagram(udpproto.Datagram{
+		pkt, err := udpproto.DefaultCodec.EncodeFrameV1(udpproto.Frame{
 			GuestPort:  1234,
-			RemoteIP:   ip4Arr,
+			RemoteIP:   netip.AddrFrom4(ip4Arr),
 			RemotePort: uint16(echoAddr.Port),
 			Payload:    []byte("auth-ok"),
-		}, nil)
+		})
 		if err != nil {
-			t.Fatalf("EncodeDatagram: %v", err)
+			t.Fatalf("EncodeFrameV1: %v", err)
 		}
 		if err := c.WriteMessage(websocket.BinaryMessage, pkt); err != nil {
 			t.Fatalf("WriteMessage: %v", err)
@@ -308,14 +309,14 @@ func TestUDPWebSocket_JWTAuth_QueryParam(t *testing.T) {
 	ip4 := echoAddr.IP.To4()
 	var ip4Arr [4]byte
 	copy(ip4Arr[:], ip4)
-	pkt, err := udpproto.DefaultCodec.EncodeDatagram(udpproto.Datagram{
+	pkt, err := udpproto.DefaultCodec.EncodeFrameV1(udpproto.Frame{
 		GuestPort:  1234,
-		RemoteIP:   ip4Arr,
+		RemoteIP:   netip.AddrFrom4(ip4Arr),
 		RemotePort: uint16(echoAddr.Port),
 		Payload:    []byte("jwt-ok"),
-	}, nil)
+	})
 	if err != nil {
-		t.Fatalf("EncodeDatagram: %v", err)
+		t.Fatalf("EncodeFrameV1: %v", err)
 	}
 	if err := c.WriteMessage(websocket.BinaryMessage, pkt); err != nil {
 		t.Fatalf("WriteMessage: %v", err)

@@ -3,6 +3,7 @@ package relay
 import (
 	"encoding/binary"
 	"net"
+	"net/netip"
 	"testing"
 	"time"
 
@@ -96,9 +97,9 @@ func TestSessionRelay_WebRTCUDPMetrics_BackpressureDrop(t *testing.T) {
 	copy(remoteIP[:], ip4)
 
 	const guestPort = uint16(1234)
-	r.HandleDataChannelMessage(mustEncode(t, udpproto.Datagram{
+	r.HandleDataChannelMessage(mustEncode(t, udpproto.Frame{
 		GuestPort:  guestPort,
-		RemoteIP:   remoteIP,
+		RemoteIP:   netip.AddrFrom4(remoteIP),
 		RemotePort: uint16(remoteAddr.Port),
 		Payload:    []byte("ping"),
 	}))
@@ -171,9 +172,9 @@ func TestSessionRelay_WebRTCUDPMetrics_AllowlistDropDoesNotCountAsWebRTCUDPDropp
 	copy(remote1IP[:], ip4)
 
 	// Create the UDP binding and allowlist entry by sending to remote1.
-	r.HandleDataChannelMessage(mustEncode(t, udpproto.Datagram{
+	r.HandleDataChannelMessage(mustEncode(t, udpproto.Frame{
 		GuestPort:  guestPort,
-		RemoteIP:   remote1IP,
+		RemoteIP:   netip.AddrFrom4(remote1IP),
 		RemotePort: uint16(remote1Addr.Port),
 		Payload:    []byte("ping"),
 	}))

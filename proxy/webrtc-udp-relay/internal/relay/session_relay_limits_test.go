@@ -2,6 +2,7 @@ package relay
 
 import (
 	"net"
+	"net/netip"
 	"testing"
 	"time"
 
@@ -49,9 +50,9 @@ func TestSessionRelay_EnforcesOutboundUDPRateLimit(t *testing.T) {
 	t.Cleanup(r.Close)
 
 	send := func() {
-		r.HandleDataChannelMessage(mustEncode(t, udpproto.Datagram{
+		r.HandleDataChannelMessage(mustEncode(t, udpproto.Frame{
 			GuestPort:  1234,
-			RemoteIP:   [4]byte{127, 0, 0, 1},
+			RemoteIP:   netip.AddrFrom4([4]byte{127, 0, 0, 1}),
 			RemotePort: uint16(remoteAddr.Port),
 			Payload:    []byte("x"),
 		}))
@@ -119,9 +120,9 @@ func TestSessionRelay_EnforcesInboundDataChannelRateLimit(t *testing.T) {
 	t.Cleanup(r.Close)
 
 	// Create the UDP binding and allowlist the remote endpoint.
-	r.HandleDataChannelMessage(mustEncode(t, udpproto.Datagram{
+	r.HandleDataChannelMessage(mustEncode(t, udpproto.Frame{
 		GuestPort:  1234,
-		RemoteIP:   [4]byte{127, 0, 0, 1},
+		RemoteIP:   netip.AddrFrom4([4]byte{127, 0, 0, 1}),
 		RemotePort: uint16(remoteAddr.Port),
 		Payload:    []byte("p"),
 	}))
