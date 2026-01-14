@@ -1146,7 +1146,10 @@ const compositeCursorOverRgba8 = (
         const dstCh = dst[dstOff + ch]!;
         dst[dstOff + ch] = Math.floor((src * a + dstCh * invA + 127) / 255);
       }
-      dst[dstOff + 3] = 255;
+      // Mirror the presenter shader's alpha policy:
+      // outA = a + dstA * (1 - a)
+      const dstA = dst[dstOff + 3]!;
+      dst[dstOff + 3] = Math.min(255, a + Math.floor((dstA * invA + 127) / 255));
     }
   }
 };

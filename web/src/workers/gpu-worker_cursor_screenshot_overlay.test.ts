@@ -15,7 +15,7 @@ import { allocateHarnessSharedMemorySegments } from "../runtime/harness_shared_m
 import { createSharedMemoryViews } from "../runtime/shared_layout";
 import { MessageType, type ProtocolMessage, type WorkerInitMessage } from "../runtime/protocol";
 import { FRAME_PRESENTED, FRAME_SEQ_INDEX, FRAME_STATUS_INDEX, GPU_PROTOCOL_NAME, GPU_PROTOCOL_VERSION } from "../ipc/gpu-protocol";
-import { publishScanoutState, SCANOUT_FORMAT_B8G8R8X8, SCANOUT_SOURCE_WDDM } from "../ipc/scanout_state";
+import { publishScanoutState, SCANOUT_FORMAT_B8G8R8A8, SCANOUT_FORMAT_B8G8R8X8, SCANOUT_SOURCE_WDDM } from "../ipc/scanout_state";
 import { CURSOR_FORMAT_B8G8R8A8, CURSOR_FORMAT_B8G8R8X8, publishCursorState } from "../ipc/cursor_state";
 
 async function waitForWorkerMessage(
@@ -524,6 +524,72 @@ describe("workers/gpu-worker cursor screenshot overlay", () => {
       expect(shot.height).toBe(1);
       // 50% red over black: R = round(255*128/255) = 128 => 0xff000080.
       expect(firstPixelU32(shot.rgba8)).toBe(0xff000080);
+    } finally {
+      await worker.terminate();
+    }
+  }, 25_000);
+
+  it("propagates cursor alpha when the scanout pixel is transparent", async () => {
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 0 });
+    const views = createSharedMemoryViews(segments);
+
+    const scanoutPaddr = 0x1000;
+    const cursorPaddr = 0x2000;
+    // Background pixel: BGRA all zeros -> RGBA [0,0,0,0].
+    views.guestU8.set([0x00, 0x00, 0x00, 0x00], scanoutPaddr);
+    publishScanoutState(views.scanoutStateI32!, {
+      source: SCANOUT_SOURCE_WDDM,
+      basePaddrLo: scanoutPaddr,
+      basePaddrHi: 0,
+      width: 1,
+      height: 1,
+      pitchBytes: 4,
+      format: SCANOUT_FORMAT_B8G8R8A8,
+    });
+
+    // Cursor pixel: BGRA with A=0x80, red=0xff.
+    views.guestU8.set([0x00, 0x00, 0xff, 0x80], cursorPaddr);
+    publishCursorState(views.cursorStateI32!, {
+      enable: 1,
+      x: 0,
+      y: 0,
+      hotX: 0,
+      hotY: 0,
+      width: 1,
+      height: 1,
+      pitchBytes: 4,
+      format: CURSOR_FORMAT_B8G8R8A8,
+      basePaddrLo: cursorPaddr,
+      basePaddrHi: 0,
+    });
+
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./gpu-worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      await initHeadlessGpuWorker(worker, {
+        kind: "init",
+        role: "gpu",
+        controlSab: segments.control,
+        guestMemory: segments.guestMemory,
+        ioIpcSab: segments.ioIpc,
+        sharedFramebuffer: segments.sharedFramebuffer,
+        sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
+        scanoutState: segments.scanoutState,
+        scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
+        cursorState: segments.cursorState,
+        cursorStateOffsetBytes: segments.cursorStateOffsetBytes,
+      });
+
+      const shot = await requestScreenshot(worker, 1, true);
+      expect(shot.width).toBe(1);
+      expect(shot.height).toBe(1);
+      // outRgb = 50% red over black, outA = 0x80 over alpha=0 background => 0x80000080.
+      expect(firstPixelU32(shot.rgba8)).toBe(0x80000080);
     } finally {
       await worker.terminate();
     }
