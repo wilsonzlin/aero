@@ -533,7 +533,6 @@ pub enum MachineError {
     InvalidDiskSize(usize),
     DiskBackend(String),
     GuestMemoryTooLarge(u64),
-    AeroGpuRequiresPcPlatform,
     AhciRequiresPcPlatform,
     NvmeRequiresPcPlatform,
     IdeRequiresPcPlatform,
@@ -565,9 +564,6 @@ impl fmt::Display for MachineError {
                 f,
                 "guest RAM size {size} bytes does not fit in the current platform's usize"
             ),
-            MachineError::AeroGpuRequiresPcPlatform => {
-                write!(f, "enable_aerogpu requires enable_pc_platform=true")
-            }
             MachineError::AhciRequiresPcPlatform => {
                 write!(f, "enable_ahci requires enable_pc_platform=true")
             }
