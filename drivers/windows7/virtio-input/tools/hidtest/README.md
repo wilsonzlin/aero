@@ -25,6 +25,9 @@ For the consolidated end-to-end virtio-input validation plan (device model + dri
   - virtio-input keyboard report (`ReportID=1`)
   - virtio-input mouse report (`ReportID=2`)
 - Can query/reset the virtio-input driver diagnostic counters (`--counters`, `--counters-json`, `--reset-counters`).
+- Can query a virtio-input interrupt diagnostics snapshot (MSI-X vs INTx, vector routing) via:
+  - `DeviceIoControl(IOCTL_VIOINPUT_QUERY_INTERRUPT_INFO)`
+  - `hidtest.exe --interrupt-info` / `hidtest.exe --interrupt-info-json`
 - Can get/set the virtio-input driver's diagnostics log mask at runtime (`--get-log-mask`, `--set-log-mask`) when using a DBG/diagnostics build of the driver.
 - Optionally writes a keyboard LED output report (`ReportID=1`) via:
   - `WriteFile` (exercises `IOCTL_HID_WRITE_REPORT`)
@@ -34,6 +37,8 @@ For the consolidated end-to-end virtio-input validation plan (device model + dri
 - Optionally queries/resets virtio-input driver diagnostics counters via:
   - `DeviceIoControl(IOCTL_VIOINPUT_QUERY_COUNTERS)`
   - `DeviceIoControl(IOCTL_VIOINPUT_RESET_COUNTERS)`
+- Includes an optional short-buffer probe for `IOCTL_VIOINPUT_QUERY_INTERRUPT_INFO`:
+  - `hidtest.exe --ioctl-query-interrupt-info-short`
 - Includes optional negative tests that pass invalid METHOD_NEITHER pointers (should fail cleanly without crashing the guest).
 
 ## Aero virtio-input IDs / expectations
@@ -155,7 +160,7 @@ The JSON output includes additional fields for the optional collection descripto
 
 `--selftest` exits `0` on pass and `1` on fail.
 
-`--selftest` is intentionally standalone and cannot be combined with `--state`, `--list`, descriptor dump options, `--vid`, `--pid`, `--index`, counters, LED writes, or negative-test options.
+`--selftest` is intentionally standalone and cannot be combined with `--state`, `--interrupt-info`, `--list`, descriptor dump options, `--vid`, `--pid`, `--index`, counters, LED writes, or negative-test options.
 
 Tip: pass `--quiet` with `--selftest` to suppress the per-device enumeration output (leaving only the `HIDTEST|SELFTEST|...` lines).
 
@@ -221,7 +226,7 @@ hidtest.exe --get-log-mask
 hidtest.exe --set-log-mask 0x8000000F
 ```
 
-`--get-log-mask` / `--set-log-mask` are intended as standalone actions (similar to `--state` / `--counters`); they are mutually exclusive with other report/IOCTL test modes.
+`--get-log-mask` / `--set-log-mask` are intended as standalone actions (similar to `--state` / `--interrupt-info` / `--counters`); they are mutually exclusive with other report/IOCTL test modes.
 
 This updates the same `DiagnosticsMask` that is normally read from the registry at `DriverEntry`:
 
@@ -234,6 +239,14 @@ Mask bits (see `drivers/windows7/virtio-input/src/log.h`):
 - `0x00000004` `VIOINPUT_LOG_QUEUE`
 - `0x00000008` `VIOINPUT_LOG_VIRTQ`
 - `0x80000000` `VIOINPUT_LOG_VERBOSE`
+
+Query virtio-input driver state / interrupt routing snapshot:
+
+```bat
+hidtest.exe --keyboard --state
+hidtest.exe --keyboard --interrupt-info
+hidtest.exe --keyboard --interrupt-info-json
+```
 
 ### Counters interpretation
 
@@ -311,6 +324,13 @@ Probe the driver-private state IOCTL with a short output buffer (verifies the dr
 
 ```bat
 hidtest.exe --ioctl-query-state-short
+```
+
+Probe the driver-private interrupt-info IOCTL with a short output buffer (verifies the driver returns
+`STATUS_BUFFER_TOO_SMALL` while still returning `Size`/`Version` so tools can adapt to version bumps):
+
+```bat
+hidtest.exe --ioctl-query-interrupt-info-short
 ```
 
 Test the GetInputReport path (should return a single report of the expected size, then return a no-data error when no new
