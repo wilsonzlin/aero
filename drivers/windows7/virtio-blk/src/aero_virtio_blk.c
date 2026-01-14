@@ -1694,6 +1694,16 @@ SCSI_ADAPTER_CONTROL_STATUS AerovblkHwAdapterControl(_In_ PVOID deviceExtension,
     BOOLEAN treatAsSurprise;
 
     /*
+     * For potential surprise removal, set the flag as early as possible so the
+     * INTx ISR path (HwInterrupt) will avoid BAR0 MMIO reads immediately.
+     */
+    treatAsSurprise = (controlType == ScsiRemoveAdapter && !devExt->Removed) ? TRUE : FALSE;
+    if (treatAsSurprise) {
+      devExt->SurpriseRemoved = TRUE;
+      devExt->Removed = TRUE;
+    }
+
+    /*
      * Mark removed/stopped under the interrupt lock so we don't race with the
      * I/O submission path and interrupt handler.
      */
@@ -1702,7 +1712,6 @@ SCSI_ADAPTER_CONTROL_STATUS AerovblkHwAdapterControl(_In_ PVOID deviceExtension,
      * Treat ScsiRemoveAdapter without a preceding stop as potential surprise
      * removal: the device may already be gone, so BAR0 MMIO could fault.
      */
-    treatAsSurprise = (controlType == ScsiRemoveAdapter && !devExt->Removed) ? TRUE : FALSE;
     devExt->Removed = TRUE;
     if (treatAsSurprise) {
       devExt->SurpriseRemoved = TRUE;
