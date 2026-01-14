@@ -1045,7 +1045,7 @@ export class WorkerCoordinator {
    * primary mode selector and treat boot-disk presence as an *activity* signal (VM vs demo loops).
    */
   setBootDisks(mounts: MountConfig, hdd: DiskImageMetadata | null, cd: DiskImageMetadata | null): void {
-    const msg: SetBootDisksMessage = { type: "setBootDisks", mounts, hdd, cd };
+    const msg: SetBootDisksMessage = { ...emptySetBootDisksMessage(), mounts, hdd, cd };
     this.bootDisks = msg;
 
     const vmRuntime = this.activeConfig?.vmRuntime ?? "legacy";

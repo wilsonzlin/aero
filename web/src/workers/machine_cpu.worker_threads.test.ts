@@ -816,7 +816,7 @@ describe("workers/machine_cpu.worker (boot device selection)", () => {
       ) as Promise<{ type: string; bootDevice: string }>;
 
       worker.postMessage({
-        type: "setBootDisks",
+        ...emptySetBootDisksMessage(),
         mounts: { hddId: "hdd0", cdId: "cd0" },
         hdd: makeLocalHddMeta(),
         cd: makeLocalCdMeta(),
@@ -845,7 +845,7 @@ describe("workers/machine_cpu.worker (boot device selection)", () => {
       ) as Promise<{ type: string; bootDevice: string }>;
 
       worker.postMessage({
-        type: "setBootDisks",
+        ...emptySetBootDisksMessage(),
         mounts: { hddId: "hdd0" },
         hdd: makeLocalHddMeta(),
         cd: null,

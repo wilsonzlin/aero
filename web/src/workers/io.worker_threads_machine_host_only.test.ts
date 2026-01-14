@@ -7,7 +7,7 @@ import { VRAM_BASE_PADDR } from "../arch/guest_phys.ts";
 import { allocateHarnessSharedMemorySegments } from "../runtime/harness_shared_memory";
 import { createIoIpcSab, createSharedMemoryViews, StatusIndex, type SharedMemorySegments } from "../runtime/shared_layout";
 import { MessageType, type ProtocolMessage, type WorkerInitMessage } from "../runtime/protocol";
-import type { SetBootDisksMessage } from "../runtime/boot_disks_protocol";
+import { emptySetBootDisksMessage, type SetBootDisksMessage } from "../runtime/boot_disks_protocol";
 
 async function waitForWorkerMessage(worker: Worker, predicate: (msg: unknown) => boolean, timeoutMs: number): Promise<unknown> {
   return new Promise((resolve, reject) => {
@@ -145,7 +145,7 @@ describe("workers/io.worker (worker_threads)", () => {
 
       const diskWorkerCreated = waitForWorkerMessage(worker, (msg) => (msg as { type?: unknown }).type === "test.worker.created", 500);
       worker.postMessage({
-        type: "setBootDisks",
+        ...emptySetBootDisksMessage(),
         mounts: {},
         // Provide a non-null stub object so legacy code paths would attempt to open.
         hdd: { source: "local", id: "dummy", name: "dummy" } as any,

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { perf } from "../perf/perf";
 import type { DiskImageMetadata } from "../storage/metadata";
 import { WorkerCoordinator } from "./coordinator";
-import type { SetBootDisksMessage } from "./boot_disks_protocol";
+import { emptySetBootDisksMessage, type SetBootDisksMessage } from "./boot_disks_protocol";
 import { createIoIpcSab, createSharedMemoryViews } from "./shared_layout";
 import { allocateHarnessSharedMemorySegments } from "./harness_shared_memory";
 
@@ -99,7 +99,7 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
     const ioWorker = (coordinator as any).workers.io.worker as MockWorker;
 
     const expectedCpuMessage = {
-      type: "setBootDisks",
+      ...emptySetBootDisksMessage(),
       mounts: { hddId: "hdd1", cdId: "cd1" },
       hdd,
       cd,
@@ -164,7 +164,7 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
     const ioWorker = (coordinator as any).workers.io.worker as MockWorker;
 
     const expectedIoMessage = {
-      type: "setBootDisks",
+      ...emptySetBootDisksMessage(),
       mounts: { hddId: "hdd1", cdId: "cd1" },
       hdd,
       cd,
