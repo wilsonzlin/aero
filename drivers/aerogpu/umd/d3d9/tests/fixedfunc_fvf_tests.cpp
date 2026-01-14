@@ -612,9 +612,9 @@ bool TestFvfXyzDiffuseEmitsInputLayoutAndShaders() {
     return false;
   }
 
-  // XYZ vertices are transformed to clip-space by a draw-time CPU conversion
-  // path (fixed-function emulation). With identity transforms, these inputs are
-  // already clip-space.
+  // XYZ vertices are transformed to clip-space by the fixed-function WVP vertex
+  // shader (internal VS + reserved constant range `c240..c243`). With identity
+  // transforms, these inputs are already clip-space.
   const VertexXyzDiffuse tri[3] = {
       {-1.0f, -1.0f, 0.0f, 0xFFFF0000u},
       {1.0f, -1.0f, 0.0f, 0xFF00FF00u},
