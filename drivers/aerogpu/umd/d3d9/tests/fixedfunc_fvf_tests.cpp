@@ -1318,6 +1318,39 @@ bool TestStageStateChangeRebindsShadersIfImplemented() {
     return false;
   }
 
+  // Restore default stage0 and ensure the shader rebinds back to texturing.
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    dev->texture_stage_states[0][kD3dTssColorOp] = kD3dTopModulate;
+    dev->texture_stage_states[0][kD3dTssColorArg1] = kD3dTaTexture;
+    dev->texture_stage_states[0][kD3dTssColorArg2] = kD3dTaDiffuse;
+    dev->texture_stage_states[0][kD3dTssAlphaOp] = kD3dTopSelectArg1;
+    dev->texture_stage_states[0][kD3dTssAlphaArg1] = kD3dTaTexture;
+    dev->texture_stage_states[0][kD3dTssAlphaArg2] = kD3dTaDiffuse;
+  }
+  if (!DrawTri("DrawPrimitiveUP(tenth)")) {
+    return false;
+  }
+  if (!ExpectFixedfuncPs(fixedfunc::kPsStage0ModulateTexture, "fixed-function PS bytecode (restore modulate/texture)")) {
+    return false;
+  }
+
+  // If texture0 is unbound, do not select a texture-sampling shader even when stage0
+  // state requests texturing.
+  {
+    D3DDDI_HRESOURCE null_tex{};
+    hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, null_tex);
+    if (!Check(hr == S_OK, "SetTexture(stage0=null)")) {
+      return false;
+    }
+  }
+  if (!DrawTri("DrawPrimitiveUP(eleventh)")) {
+    return false;
+  }
+  if (!ExpectFixedfuncPs(fixedfunc::kPsPassthroughColor, "fixed-function PS bytecode (no texture -> passthrough)")) {
+    return false;
+  }
+
   dev->cmd.finalize();
   const uint8_t* buf = dev->cmd.data();
   const size_t len = dev->cmd.bytes_used();
