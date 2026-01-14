@@ -1000,6 +1000,41 @@ bool unbind_resource_from_srvs_locked(AeroGpuDevice* dev,
   return true;
 }
 
+// Best-effort variant used by DestroyResource.
+//
+// DestroyResource must guarantee that the UMD's cached state does not retain
+// dangling pointers after the resource is freed, even if command emission fails
+// (OOM). Therefore, this helper clears the SRV caches regardless of append
+// success while still trying to emit the corresponding unbind packets.
+static void UnbindResourceFromSrvsBestEffortLocked(AeroGpuDevice* dev,
+                                                   D3D10DDI_HDEVICE hDevice,
+                                                   aerogpu_handle_t resource_handle,
+                                                   const AeroGpuResource* res) {
+  if (!dev || (resource_handle == 0 && !res)) {
+    return;
+  }
+
+  bool oom = false;
+  for (uint32_t slot = 0; slot < kMaxShaderResourceSlots; ++slot) {
+    if ((resource_handle != 0 && dev->vs_srvs[slot] == resource_handle) ||
+        (res && ResourcesAlias(dev->vs_srv_resources[slot], res))) {
+      if (!oom && !set_texture_locked(dev, hDevice, AEROGPU_SHADER_STAGE_VERTEX, slot, 0)) {
+        oom = true;
+      }
+      dev->vs_srvs[slot] = 0;
+      dev->vs_srv_resources[slot] = nullptr;
+    }
+    if ((resource_handle != 0 && dev->ps_srvs[slot] == resource_handle) ||
+        (res && ResourcesAlias(dev->ps_srv_resources[slot], res))) {
+      if (!oom && !set_texture_locked(dev, hDevice, AEROGPU_SHADER_STAGE_PIXEL, slot, 0)) {
+        oom = true;
+      }
+      dev->ps_srvs[slot] = 0;
+      dev->ps_srv_resources[slot] = nullptr;
+    }
+  }
+}
+
 bool unbind_resource_from_srvs_locked(AeroGpuDevice* dev, D3D10DDI_HDEVICE hDevice, const AeroGpuResource* res) {
   return unbind_resource_from_srvs_locked(dev, hDevice, /*resource_handle=*/0, res);
 }
@@ -1899,9 +1934,8 @@ void AEROGPU_APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOUR
   if (rt_changed && !emit_set_render_targets_locked(dev)) {
     ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
   }
-  if (handle && !unbind_resource_from_srvs_locked(dev, hDevice, handle, res)) {
-    // Best-effort: keep going with destroy, but surface the error.
-    ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+  if (handle) {
+    UnbindResourceFromSrvsBestEffortLocked(dev, hDevice, handle, res);
   }
 
   if (res->handle != kInvalidHandle) {
