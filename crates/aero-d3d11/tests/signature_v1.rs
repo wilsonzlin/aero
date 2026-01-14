@@ -36,93 +36,72 @@ fn sig_param(
 }
 
 fn build_signature_chunk_v0(params: &[DxbcSignatureParameter]) -> Vec<u8> {
-    // Header: param_count + param_offset.
-    let param_count = u32::try_from(params.len()).expect("too many signature params");
-    let header_len = 8usize;
+    let entries: Vec<dxbc_test_utils::SignatureEntryDesc<'_>> = params
+        .iter()
+        .map(|p| dxbc_test_utils::SignatureEntryDesc {
+            semantic_name: p.semantic_name.as_str(),
+            semantic_index: p.semantic_index,
+            system_value_type: p.system_value_type,
+            component_type: p.component_type,
+            register: p.register,
+            mask: p.mask,
+            read_write_mask: p.read_write_mask,
+            stream: u32::from(p.stream),
+        })
+        .collect();
+
+    let mut bytes = dxbc_test_utils::build_signature_chunk_v0(&entries);
+
+    // Patch the v0 min-precision byte (stored in the last byte of the packed DWORD).
+    let table_start = 8usize;
     let entry_size = 24usize;
-    let table_len = params.len() * entry_size;
-
-    // Strings appended after table.
-    let mut strings = Vec::<u8>::new();
-    let mut name_offsets = Vec::<u32>::with_capacity(params.len());
-    for p in params {
-        name_offsets.push((header_len + table_len + strings.len()) as u32);
-        strings.extend_from_slice(p.semantic_name.as_bytes());
-        strings.push(0);
+    for (i, p) in params.iter().enumerate() {
+        let base = table_start + i * entry_size;
+        bytes[base + 23] = p.min_precision;
     }
 
-    let mut bytes = Vec::with_capacity(header_len + table_len + strings.len());
-    bytes.extend_from_slice(&param_count.to_le_bytes());
-    bytes.extend_from_slice(&(header_len as u32).to_le_bytes());
-
-    for (p, &name_off) in params.iter().zip(name_offsets.iter()) {
-        bytes.extend_from_slice(&name_off.to_le_bytes());
-        bytes.extend_from_slice(&p.semantic_index.to_le_bytes());
-        bytes.extend_from_slice(&p.system_value_type.to_le_bytes());
-        bytes.extend_from_slice(&p.component_type.to_le_bytes());
-        bytes.extend_from_slice(&p.register.to_le_bytes());
-        bytes.push(p.mask);
-        bytes.push(p.read_write_mask);
-        bytes.push(p.stream);
-        bytes.push(p.min_precision);
-    }
-    bytes.extend_from_slice(&strings);
     bytes
 }
 
 fn build_signature_chunk_v1(params: &[DxbcSignatureParameter]) -> Vec<u8> {
-    // Header: param_count + param_offset.
-    let param_count = u32::try_from(params.len()).expect("too many signature params");
-    let header_len = 8usize;
+    let entries: Vec<dxbc_test_utils::SignatureEntryDesc<'_>> = params
+        .iter()
+        .map(|p| dxbc_test_utils::SignatureEntryDesc {
+            semantic_name: p.semantic_name.as_str(),
+            semantic_index: p.semantic_index,
+            system_value_type: p.system_value_type,
+            component_type: p.component_type,
+            register: p.register,
+            mask: p.mask,
+            read_write_mask: p.read_write_mask,
+            stream: u32::from(p.stream),
+        })
+        .collect();
+
+    let mut bytes = dxbc_test_utils::build_signature_chunk_v1(&entries);
+
+    // Patch v1 min-precision DWORDs so tests can verify they are ignored by the parser.
+    let table_start = 8usize;
     let entry_size = 32usize;
-    let table_len = params.len() * entry_size;
-
-    // Strings appended after table.
-    let mut strings = Vec::<u8>::new();
-    let mut name_offsets = Vec::<u32>::with_capacity(params.len());
-    for p in params {
-        name_offsets.push((header_len + table_len + strings.len()) as u32);
-        strings.extend_from_slice(p.semantic_name.as_bytes());
-        strings.push(0);
+    for (i, p) in params.iter().enumerate() {
+        let base = table_start + i * entry_size;
+        bytes[base + 28..base + 32].copy_from_slice(&(u32::from(p.min_precision)).to_le_bytes());
     }
 
-    let mut bytes = Vec::with_capacity(header_len + table_len + strings.len());
-    bytes.extend_from_slice(&param_count.to_le_bytes());
-    bytes.extend_from_slice(&(header_len as u32).to_le_bytes());
-
-    for (p, &name_off) in params.iter().zip(name_offsets.iter()) {
-        bytes.extend_from_slice(&name_off.to_le_bytes());
-        bytes.extend_from_slice(&p.semantic_index.to_le_bytes());
-        bytes.extend_from_slice(&p.system_value_type.to_le_bytes());
-        bytes.extend_from_slice(&p.component_type.to_le_bytes());
-        bytes.extend_from_slice(&p.register.to_le_bytes());
-        bytes.push(p.mask);
-        bytes.push(p.read_write_mask);
-        bytes.extend_from_slice(&[0u8; 2]); // reserved/padding
-        bytes.extend_from_slice(&(p.stream as u32).to_le_bytes());
-        bytes.extend_from_slice(&(p.min_precision as u32).to_le_bytes());
-    }
-    bytes.extend_from_slice(&strings);
     bytes
 }
 
 fn build_signature_chunk_v1_one_entry(stream: u32) -> Vec<u8> {
-    // Signature chunk header: param_count + param_offset.
-    let mut bytes = Vec::new();
-    bytes.extend_from_slice(&1u32.to_le_bytes()); // param_count
-    bytes.extend_from_slice(&8u32.to_le_bytes()); // param_offset
-
-    let string_table_offset = 8u32 + 32u32;
-    bytes.extend_from_slice(&string_table_offset.to_le_bytes()); // semantic_name_offset
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // semantic_index
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // system_value_type
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // component_type
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // register
-    bytes.extend_from_slice(&u32::from_le_bytes([0xF, 0x3, 0, 0]).to_le_bytes()); // mask/rw/pad
-    bytes.extend_from_slice(&stream.to_le_bytes()); // stream
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // min_precision
-    bytes.extend_from_slice(b"POSITION\0");
-    bytes
+    dxbc_test_utils::build_signature_chunk_v1(&[dxbc_test_utils::SignatureEntryDesc {
+        semantic_name: "POSITION",
+        semantic_index: 0,
+        system_value_type: 0,
+        component_type: 0,
+        register: 0,
+        mask: 0xF,
+        read_write_mask: 0x3,
+        stream,
+    }])
 }
 
 #[test]
