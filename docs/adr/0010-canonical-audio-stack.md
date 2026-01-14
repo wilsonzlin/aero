@@ -14,7 +14,7 @@ The repo accumulated two overlapping audio implementations:
 
 2. **Legacy/parallel**:
    - `crates/emulator/src/io/audio/*` (AC97, HDA, DSP, capture plumbing)
-   - `crates/emulator/src/io/virtio/devices/snd.rs` (a second virtio-snd model)
+   - (Removed) a second virtio-snd model previously lived in `crates/emulator`
 
 The browser demo/runtime code interacts with `crates/aero-wasm` exports and uses the
 newer stack; the legacy `crates/emulator` audio code is not on the default path.

@@ -9,8 +9,6 @@ also wired into the IO-worker PCI stack**:
 - TS PCI device wrapper: `web/src/io/devices/virtio_snd.ts` (`VirtioSndPciDevice`)
 - IO worker init/wiring: `web/src/workers/io_virtio_snd_init.ts` + `web/src/workers/io.worker.ts`
 
-The legacy virtio-snd implementation under `crates/emulator/src/io/virtio/devices/snd.rs` is retained behind the `emulator/legacy-audio` feature for reference.
-
 See also:
 
 - [`virtio/virtqueue-split-ring-win7.md`](./virtio/virtqueue-split-ring-win7.md) — split-ring virtqueue implementation guide for Windows 7 KMDF drivers (descriptor mgmt, ordering/barriers, EVENT_IDX, indirect).
