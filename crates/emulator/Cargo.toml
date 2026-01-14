@@ -13,13 +13,13 @@ net-trace = ["aero-net-trace/net-trace"]
 # Enable verbose debug logging from the user-space network stack.
 net_log = []
 sinc-resampler = []
-# Enable compatibility wrappers backed by the canonical storage controller crates.
+# Deprecated: canonical storage controller crates are now always used by the emulator.
 #
-# Deprecated: legacy in-tree NVMe model has been removed; NVMe is always backed by
-# `aero-devices-nvme`. This flag is retained for backwards compatibility.
+# The legacy in-tree NVMe model has been removed; NVMe is always backed by `aero-devices-nvme`.
+# This flag is retained as a no-op for backwards compatibility with existing build scripts.
 storage-device-crates = []
-# Legacy audio stack (AC97/HDA/DSP). This is not part of the browser/WASM runtime
-# path; it is retained for reference and for targeted tests.
+# Legacy audio stack (AC97/HDA/DSP). This is not part of the browser/WASM runtime path; it is
+# retained for reference and for targeted tests.
 legacy-audio = []
 # Legacy deterministic SMP/APIC model + snapshot harness.
 legacy-smp-model = ["dep:aero-smp-model"]
