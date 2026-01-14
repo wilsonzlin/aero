@@ -2054,6 +2054,49 @@ fn bus_master_registers_mask_command_bits_and_require_dword_prd_writes() {
 }
 
 #[test]
+fn pci_io_decode_disabled_floats_ports_and_ignores_writes() {
+    let capacity = 4 * SECTOR_SIZE as u64;
+    let disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut()
+        .controller
+        .attach_primary_master_ata(AtaDrive::new(Box::new(disk)).unwrap());
+
+    // Keep PCI command bits cleared: IO decode disabled.
+    ide.borrow_mut().config_mut().set_command(0x0000);
+
+    let mut ioports = IoPortBus::new();
+    register_piix3_ide_ports(&mut ioports, ide.clone());
+
+    let bm_base = ide.borrow().bus_master_base();
+
+    // Reads should float high when IO decode is disabled.
+    assert_eq!(ioports.read(PRIMARY_PORTS.cmd_base + 7, 1) as u8, 0xFF);
+    assert_eq!(ioports.read(bm_base + 4, 4), 0xFFFF_FFFF);
+
+    // Writes must be ignored.
+    ioports.write(bm_base + 4, 4, 0x1234_5678);
+    ioports.write(bm_base, 1, 0x09);
+    ioports.write(PRIMARY_PORTS.cmd_base + 7, 1, 0xC8);
+
+    // Re-enable IO decode so we can observe state.
+    ide.borrow_mut().config_mut().set_command(0x0001);
+
+    // Bus master registers should remain at reset defaults.
+    assert_eq!(ioports.read(bm_base + 4, 4), 0);
+    assert_eq!(ioports.read(bm_base, 1) as u8 & 0x09, 0);
+    let bm_st = ioports.read(bm_base + 2, 1) as u8;
+    assert_eq!(bm_st & 0x07, 0);
+
+    // Channel should remain idle (DRDY, no BSY/DRQ).
+    let st = ioports.read(PRIMARY_PORTS.cmd_base + 7, 1) as u8;
+    assert_eq!(st & 0x80, 0);
+    assert_eq!(st & 0x08, 0);
+    assert_ne!(st & 0x40, 0);
+}
+
+#[test]
 fn bus_master_status_advertises_dma_capability_for_attached_ata_drive() {
     let capacity = 4 * SECTOR_SIZE as u64;
     let disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
