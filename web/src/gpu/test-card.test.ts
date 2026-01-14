@@ -75,6 +75,19 @@ describe("gpu/test-card", () => {
       expect(getPixelRgba(rgba, width, width - 1, height - 1)).toEqual([255, 255, 255, 255]); // white
     });
 
+    it("is deterministic for odd dimensions (9x5)", () => {
+      const width = 9;
+      const height = 5;
+      const rgba = createGpuColorTestCardRgba8Linear(width, height);
+
+      expect(rgba.length).toBe(width * height * 4);
+      expect(sha256Hex(rgba)).toBe("dc96dbeae845ab4c01f89fe96cd5e4b49c1e88d3b642a8f7cf1343e858e61e14");
+
+      // Quick sanity spot checks across the split.
+      expect(getPixelRgba(rgba, width, 3, 2)).toEqual([255, 255, 255, 255]); // last grayscale column
+      expect(getPixelRgba(rgba, width, 4, 2)).toEqual([255, 0, 255, 128]); // first magenta column, mid alpha
+    });
+
     it("handles height=1 without throwing (degenerate alpha gradient)", () => {
       const width = 3;
       const height = 1;
