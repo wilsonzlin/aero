@@ -3552,6 +3552,88 @@ fn sm3_shader_cache_retranslates_when_wgsl_options_change() {
 }
 
 #[test]
+fn shader_translate_cache_retranslates_when_wgsl_options_change() {
+    let vs_bytes = to_bytes(&assemble_vs_passthrough_sm3_decoder());
+
+    let mut cache = shader_translate::ShaderCache::new(shader::WgslOptions {
+        half_pixel_center: false,
+    });
+
+    {
+        let cached = cache.get_or_translate(&vs_bytes).unwrap();
+        assert_eq!(
+            cached.source,
+            shader_translate::ShaderCacheLookupSource::Translated
+        );
+        assert!(
+            !cached.wgsl.contains("var<uniform> half_pixel"),
+            "{}",
+            cached.wgsl
+        );
+    }
+
+    {
+        let cached = cache.get_or_translate(&vs_bytes).unwrap();
+        assert_eq!(cached.source, shader_translate::ShaderCacheLookupSource::Memory);
+    }
+
+    cache.set_wgsl_options(shader::WgslOptions {
+        half_pixel_center: true,
+    });
+
+    {
+        let cached = cache.get_or_translate(&vs_bytes).unwrap();
+        assert_eq!(
+            cached.source,
+            shader_translate::ShaderCacheLookupSource::Translated
+        );
+        assert!(
+            cached.wgsl.contains("var<uniform> half_pixel"),
+            "{}",
+            cached.wgsl
+        );
+    }
+}
+
+#[test]
+fn legacy_shader_cache_retranslates_when_wgsl_options_change() {
+    let vs_bytes = to_bytes(&assemble_vs_passthrough());
+
+    let mut cache = shader::ShaderCache::new(shader::WgslOptions {
+        half_pixel_center: false,
+    });
+
+    {
+        let cached = cache.get_or_translate(&vs_bytes).unwrap();
+        assert_eq!(cached.source, shader::ShaderCacheLookupSource::Translated);
+        assert!(
+            !cached.wgsl.wgsl.contains("var<uniform> half_pixel"),
+            "{}",
+            cached.wgsl.wgsl
+        );
+    }
+
+    {
+        let cached = cache.get_or_translate(&vs_bytes).unwrap();
+        assert_eq!(cached.source, shader::ShaderCacheLookupSource::Memory);
+    }
+
+    cache.set_wgsl_options(shader::WgslOptions {
+        half_pixel_center: true,
+    });
+
+    {
+        let cached = cache.get_or_translate(&vs_bytes).unwrap();
+        assert_eq!(cached.source, shader::ShaderCacheLookupSource::Translated);
+        assert!(
+            cached.wgsl.wgsl.contains("var<uniform> half_pixel"),
+            "{}",
+            cached.wgsl.wgsl
+        );
+    }
+}
+
+#[test]
 fn translate_entrypoint_accepts_operand_count_length_encoding() {
     // Some historical shader blobs encoded opcode token length as operand count instead of total
     // instruction length. The high-level translator should normalize this and still produce valid
