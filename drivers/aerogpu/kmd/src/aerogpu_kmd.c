@@ -7408,7 +7408,11 @@ static NTSTATUS APIENTRY AeroGpuDdiGetScanLine(_In_ const HANDLE hAdapter, _Inou
      * GetRasterStatus at very high frequency.
      */
     {
-        const ULONG irqEnableMask = AeroGpuAtomicReadU32((volatile ULONG*)&adapter->IrqEnableMask);
+        ULONG irqEnableMask = AeroGpuAtomicReadU32((volatile ULONG*)&adapter->IrqEnableMask);
+        if (mmioSafe && adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ENABLE + sizeof(ULONG))) {
+            /* Prefer the device's IRQ_ENABLE register over the cached mask (see ISR path). */
+            irqEnableMask = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE);
+        }
         const BOOLEAN vblankIrqEnabled = (irqEnableMask & AEROGPU_IRQ_SCANOUT_VBLANK) != 0;
 
         const ULONGLONG lastVblank100ns = AeroGpuAtomicReadU64(&adapter->LastVblankInterruptTime100ns);
