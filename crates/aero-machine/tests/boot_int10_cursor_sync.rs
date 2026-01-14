@@ -389,7 +389,7 @@ fn read_crtc_start_addr(m: &mut Machine) -> u16 {
 }
 
 #[test]
-fn int10_cursor_updates_sync_to_vga_crtc() {
+fn boot_int10_cursor_updates_sync_to_vga_crtc() {
     let mut m = Machine::new(MachineConfig {
         ram_size_bytes: 2 * 1024 * 1024,
         enable_pc_platform: true,
@@ -422,7 +422,7 @@ fn int10_cursor_updates_sync_to_vga_crtc() {
 }
 
 #[test]
-fn int10_set_cursor_pos_non_active_page_does_not_move_vga_cursor() {
+fn boot_int10_set_cursor_pos_non_active_page_does_not_move_vga_cursor() {
     let mut m = Machine::new(MachineConfig {
         ram_size_bytes: 2 * 1024 * 1024,
         enable_pc_platform: true,
@@ -453,7 +453,7 @@ fn int10_set_cursor_pos_non_active_page_does_not_move_vga_cursor() {
 }
 
 #[test]
-fn int10_cursor_shape_updates_sync_to_vga_crtc() {
+fn boot_int10_cursor_shape_updates_sync_to_vga_crtc() {
     let mut m = Machine::new(MachineConfig {
         ram_size_bytes: 2 * 1024 * 1024,
         enable_pc_platform: true,
@@ -475,7 +475,7 @@ fn int10_cursor_shape_updates_sync_to_vga_crtc() {
 }
 
 #[test]
-fn int10_cursor_sync_includes_crtc_start_address_offset() {
+fn boot_int10_cursor_sync_includes_crtc_start_address_offset() {
     let mut m = Machine::new(MachineConfig {
         ram_size_bytes: 2 * 1024 * 1024,
         enable_pc_platform: true,
@@ -509,7 +509,7 @@ fn int10_cursor_sync_includes_crtc_start_address_offset() {
 }
 
 #[test]
-fn int10_set_mode_resets_crtc_start_address() {
+fn boot_int10_set_mode_resets_crtc_start_address() {
     let mut m = Machine::new(MachineConfig {
         ram_size_bytes: 2 * 1024 * 1024,
         enable_pc_platform: true,
@@ -531,7 +531,7 @@ fn int10_set_mode_resets_crtc_start_address() {
 }
 
 #[test]
-fn int10_teletype_output_advances_cursor_and_syncs_to_vga_crtc() {
+fn boot_int10_teletype_output_advances_cursor_and_syncs_to_vga_crtc() {
     let mut m = Machine::new(MachineConfig {
         ram_size_bytes: 2 * 1024 * 1024,
         enable_pc_platform: true,
@@ -561,7 +561,7 @@ fn int10_teletype_output_advances_cursor_and_syncs_to_vga_crtc() {
 }
 
 #[test]
-fn int10_set_active_page_updates_crtc_start_address() {
+fn boot_int10_set_active_page_updates_crtc_start_address() {
     let mut m = Machine::new(MachineConfig {
         ram_size_bytes: 2 * 1024 * 1024,
         enable_pc_platform: true,
@@ -592,7 +592,7 @@ fn int10_set_active_page_updates_crtc_start_address() {
 }
 
 #[test]
-fn int10_set_active_page_uses_that_pages_cursor_pos_for_vga_cursor() {
+fn boot_int10_set_active_page_uses_that_pages_cursor_pos_for_vga_cursor() {
     let mut m = Machine::new(MachineConfig {
         ram_size_bytes: 2 * 1024 * 1024,
         enable_pc_platform: true,
@@ -633,7 +633,7 @@ fn int10_set_active_page_uses_that_pages_cursor_pos_for_vga_cursor() {
 }
 
 #[test]
-fn int10_write_string_updates_cursor_and_syncs_to_vga_crtc() {
+fn boot_int10_write_string_updates_cursor_and_syncs_to_vga_crtc() {
     let mut m = Machine::new(MachineConfig {
         ram_size_bytes: 2 * 1024 * 1024,
         enable_pc_platform: true,
@@ -659,7 +659,7 @@ fn int10_write_string_updates_cursor_and_syncs_to_vga_crtc() {
 }
 
 #[test]
-fn aerogpu_int10_cursor_updates_sync_to_vga_crtc() {
+fn boot_int10_aerogpu_cursor_updates_sync_to_vga_crtc() {
     let mut m = Machine::new(MachineConfig {
         ram_size_bytes: 2 * 1024 * 1024,
         enable_pc_platform: true,
@@ -699,7 +699,7 @@ fn aerogpu_int10_cursor_updates_sync_to_vga_crtc() {
 }
 
 #[test]
-fn aerogpu_int10_set_active_page_uses_that_pages_cursor_pos_for_crtc() {
+fn boot_int10_aerogpu_set_active_page_uses_that_pages_cursor_pos_for_crtc() {
     let mut m = Machine::new(MachineConfig {
         ram_size_bytes: 2 * 1024 * 1024,
         enable_pc_platform: true,
