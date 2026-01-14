@@ -502,6 +502,8 @@ fn exec_op(
         IrOp::Mov { src, .. } => exec_src(src, temps, addrs, loops, preds, inputs_v, inputs_t, constants),
         IrOp::Mova { src, .. } => {
             let a = exec_src(src, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            // Match the WGSL lowering: apply float result modifiers first, then convert float -> int.
+            let a = apply_result_modifier(a, modifiers);
             let to_i32 = |v: f32| (v as i32) as f32;
             Vec4::new(to_i32(a.x), to_i32(a.y), to_i32(a.z), to_i32(a.w))
         }
@@ -642,7 +644,11 @@ fn exec_op(
         }
     };
 
-    let v = apply_result_modifier(v, modifiers);
+    let v = if matches!(op, IrOp::Mova { .. }) {
+        v
+    } else {
+        apply_result_modifier(v, modifiers)
+    };
     exec_dst(
         dst,
         temps,
