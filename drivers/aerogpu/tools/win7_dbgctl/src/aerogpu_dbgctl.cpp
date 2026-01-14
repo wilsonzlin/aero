@@ -2155,6 +2155,15 @@ static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
       }
       wprintf(L"\n");
     }
+
+    if (qp.hdr.size >= offsetof(aerogpu_escape_query_perf_out, contig_pool_bytes_saved) +
+                           sizeof(qp.contig_pool_bytes_saved)) {
+      wprintf(L"  contig_pool: hit=%I64u miss=%I64u bytes_saved=",
+              (unsigned long long)qp.contig_pool_hit,
+              (unsigned long long)qp.contig_pool_miss);
+      PrintBytesAndMiB((ULONGLONG)qp.contig_pool_bytes_saved);
+      wprintf(L"\n");
+    }
   };
 
   const auto DumpUmdPrivateSummary = [&]() {
@@ -2903,6 +2912,19 @@ static int DoStatusJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, std::stri
         w.Key("bytes");
         w.Null();
       }
+    }
+    w.EndObject();
+
+    w.Key("contig_pool");
+    w.BeginObject();
+    const bool haveContigPool =
+        (qp.hdr.size >= offsetof(aerogpu_escape_query_perf_out, contig_pool_bytes_saved) + sizeof(qp.contig_pool_bytes_saved));
+    w.Key("available");
+    w.Bool(haveContigPool);
+    if (haveContigPool) {
+      JsonWriteU64HexDec(w, "hit", qp.contig_pool_hit);
+      JsonWriteU64HexDec(w, "miss", qp.contig_pool_miss);
+      JsonWriteU64HexDec(w, "bytes_saved", qp.contig_pool_bytes_saved);
     }
     w.EndObject();
 

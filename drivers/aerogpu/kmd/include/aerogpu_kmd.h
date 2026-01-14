@@ -387,7 +387,7 @@ typedef struct _AEROGPU_ADAPTER {
      *
      * Interlocked*64 requires 8-byte alignment, so these fields are explicitly
      * aligned.
-     */
+    */
     DECLSPEC_ALIGN(8) volatile ULONGLONG LastSubmittedFence;
     DECLSPEC_ALIGN(8) volatile ULONGLONG LastCompletedFence;
 
@@ -419,6 +419,11 @@ typedef struct _AEROGPU_ADAPTER {
     DECLSPEC_ALIGN(8) volatile LONGLONG PerfLastResetTime100ns;
 
     DECLSPEC_ALIGN(8) volatile LONGLONG PerfRingPushFailures;
+
+    /* Submit-path contiguous allocation pool counters. */
+    DECLSPEC_ALIGN(8) volatile LONGLONG PerfContigPoolHit;
+    DECLSPEC_ALIGN(8) volatile LONGLONG PerfContigPoolMiss;
+    DECLSPEC_ALIGN(8) volatile LONGLONG PerfContigPoolBytesSaved;
 
     /* dbgctl selftest statistics (AEROGPU_ESCAPE_OP_SELFTEST). */
     DECLSPEC_ALIGN(8) volatile LONGLONG PerfSelftestCount;

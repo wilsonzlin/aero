@@ -234,7 +234,7 @@ typedef struct aerogpu_escape_query_perf_out {
   aerogpu_escape_u32 pending_meta_handle_count;
   aerogpu_escape_u32 pending_meta_handle_reserved0;
   aerogpu_escape_u64 pending_meta_handle_bytes;
- 
+  
   /*
    * DxgkDdiGetScanLine (GetRasterStatus) telemetry (appended).
    *
@@ -246,6 +246,16 @@ typedef struct aerogpu_escape_query_perf_out {
    */
   aerogpu_escape_u64 get_scanline_cache_hits;
   aerogpu_escape_u64 get_scanline_mmio_polls;
+
+  /*
+   * Submission-path contiguous allocation pool counters (appended).
+   *
+   * These fields are appended to keep the layout backwards compatible with
+   * older bring-up tooling. Callers must check `hdr.size` before reading them.
+   */
+  aerogpu_escape_u64 contig_pool_hit;
+  aerogpu_escape_u64 contig_pool_miss;
+  aerogpu_escape_u64 contig_pool_bytes_saved;
 } aerogpu_escape_query_perf_out;
 
 #define AEROGPU_DBGCTL_QUERY_PERF_FLAGS_VALID (1u << 31)
@@ -254,7 +264,7 @@ typedef struct aerogpu_escape_query_perf_out {
 #define AEROGPU_DBGCTL_QUERY_PERF_FLAG_GETSCANLINE_COUNTERS_VALID (1u << 2)
 
 /* Must remain stable across x86/x64. */
-AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_query_perf_out) == 216);
+AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_query_perf_out) == 240);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, last_submitted_fence) == 16);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, last_completed_fence) == 24);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, ring0_head) == 32);
@@ -285,6 +295,9 @@ AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, pending_met
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, pending_meta_handle_bytes) == 192);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, get_scanline_cache_hits) == 200);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, get_scanline_mmio_polls) == 208);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, contig_pool_hit) == 216);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, contig_pool_miss) == 224);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, contig_pool_bytes_saved) == 232);
 
 /*
  * Must remain stable across x86/x64.

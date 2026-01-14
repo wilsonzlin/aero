@@ -1560,13 +1560,16 @@ static PVOID AeroGpuAllocContiguousNoInit(_Inout_ AEROGPU_ADAPTER* Adapter, _In_
 
     UINT classIndex = 0;
     SIZE_T allocSize = 0;
+    const BOOLEAN poolEligible = AeroGpuContigPoolClassForSize(Size, &classIndex, &allocSize);
 
     PVOID va = NULL;
-    if (AeroGpuContigPoolClassForSize(Size, &classIndex, &allocSize)) {
+    BOOLEAN poolHit = FALSE;
+    if (poolEligible) {
         KIRQL oldIrql;
         KeAcquireSpinLock(&Adapter->ContigPool.Lock, &oldIrql);
         if (!IsListEmpty(&Adapter->ContigPool.FreeLists[classIndex])) {
             va = (PVOID)RemoveHeadList(&Adapter->ContigPool.FreeLists[classIndex]);
+            poolHit = TRUE;
             if (Adapter->ContigPool.BytesRetained >= allocSize) {
                 Adapter->ContigPool.BytesRetained -= allocSize;
             } else {
@@ -1581,6 +1584,15 @@ static PVOID AeroGpuAllocContiguousNoInit(_Inout_ AEROGPU_ADAPTER* Adapter, _In_
 #endif
         }
         KeReleaseSpinLock(&Adapter->ContigPool.Lock, oldIrql);
+    }
+
+    if (poolEligible) {
+        if (poolHit) {
+            InterlockedIncrement64(&Adapter->PerfContigPoolHit);
+            InterlockedAdd64(&Adapter->PerfContigPoolBytesSaved, (LONGLONG)allocSize);
+        } else {
+            InterlockedIncrement64(&Adapter->PerfContigPoolMiss);
+        }
     }
 
     if (!va) {
@@ -2994,7 +3006,7 @@ static __forceinline ULONGLONG AeroGpuSubmissionTotalBytes(_In_ const AEROGPU_SU
 
 static VOID AeroGpuFreeSubmission(_Inout_ AEROGPU_ADAPTER* Adapter, _In_opt_ AEROGPU_SUBMISSION* Sub)
 {
-    if (!Sub) {
+    if (!Adapter || !Sub) {
         return;
     }
     AeroGpuFreeContiguousNonCached(Adapter, Sub->AllocTableVa, (SIZE_T)Sub->AllocTableSizeBytes);
@@ -3823,6 +3835,7 @@ static NTSTATUS APIENTRY AeroGpuDdiAddDevice(_In_ PDEVICE_OBJECT PhysicalDeviceO
     KeInitializeSpinLock(&adapter->RingLock);
     KeInitializeSpinLock(&adapter->IrqEnableLock);
     KeInitializeSpinLock(&adapter->PendingLock);
+    KeInitializeSpinLock(&adapter->ContigPool.Lock);
     InitializeListHead(&adapter->PendingSubmissions);
     InitializeListHead(&adapter->PendingInternalSubmissions);
     ExInitializeNPagedLookasideList(&adapter->PendingInternalSubmissionLookaside,
@@ -10128,6 +10141,9 @@ static NTSTATUS APIENTRY AeroGpuDdiResetFromTimeout(_In_ const HANDLE hAdapter)
             CONTAINING_RECORD(entry, AEROGPU_PENDING_INTERNAL_SUBMISSION, ListEntry);
         AeroGpuFreeInternalSubmission(adapter, sub);
     }
+
+    /* Reset/teardown path: do not retain pooled contiguous allocations across TDR recovery. */
+    AeroGpuContigPoolPurge(adapter);
     return STATUS_SUCCESS;
 }
 
@@ -11518,6 +11534,19 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                 (offsetof(aerogpu_escape_query_perf_out, pending_meta_handle_bytes) + sizeof(aerogpu_escape_u64))) {
                 out->pending_meta_handle_bytes = (uint64_t)metaBytes;
             }
+        }
+
+        if (pEscape->PrivateDriverDataSize >=
+            (offsetof(aerogpu_escape_query_perf_out, contig_pool_hit) + sizeof(aerogpu_escape_u64))) {
+            out->contig_pool_hit = (uint64_t)InterlockedCompareExchange64(&adapter->PerfContigPoolHit, 0, 0);
+        }
+        if (pEscape->PrivateDriverDataSize >=
+            (offsetof(aerogpu_escape_query_perf_out, contig_pool_miss) + sizeof(aerogpu_escape_u64))) {
+            out->contig_pool_miss = (uint64_t)InterlockedCompareExchange64(&adapter->PerfContigPoolMiss, 0, 0);
+        }
+        if (pEscape->PrivateDriverDataSize >=
+            (offsetof(aerogpu_escape_query_perf_out, contig_pool_bytes_saved) + sizeof(aerogpu_escape_u64))) {
+            out->contig_pool_bytes_saved = (uint64_t)InterlockedCompareExchange64(&adapter->PerfContigPoolBytesSaved, 0, 0);
         }
 
         return STATUS_SUCCESS;
