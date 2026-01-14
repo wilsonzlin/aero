@@ -407,6 +407,44 @@ fn uhci_synthetic_usb_keyboard_pending_report_survives_snapshot_restore() {
 }
 
 #[test]
+fn uhci_synthetic_usb_hid_held_state_is_not_lost_before_configuration() {
+    let cfg = synthetic_usb_hid_cfg();
+    let mut m = Machine::new(cfg).unwrap();
+
+    // Inject state *before* the guest configures the HID devices. The device models should keep
+    // the latest state so the first interrupt-IN report after `SET_CONFIGURATION` reflects held
+    // inputs ("held during enumeration" semantics).
+    m.inject_usb_hid_keyboard_usage(0x04, true); // 'A'
+
+    let gamepad_report = [0x01, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00];
+    inject_gamepad_report_bytes(&mut m, &gamepad_report);
+
+    // Configure and verify the keyboard emits a report for the held key.
+    let mut kbd = m
+        .usb_hid_keyboard_handle()
+        .expect("synthetic keyboard handle should be present");
+    assert!(!kbd.configured(), "keyboard should start unconfigured");
+    configure_keyboard_for_reports(&mut kbd);
+    expect_keyboard_report_contains(
+        poll_keyboard_interrupt_in(&mut m),
+        0x04,
+        "after keyboard configuration",
+    );
+
+    // Configure and verify the gamepad emits a report for the held state.
+    let mut gamepad = m
+        .usb_hid_gamepad_handle()
+        .expect("synthetic gamepad handle should be present");
+    assert!(!gamepad.configured(), "gamepad should start unconfigured");
+    configure_gamepad_for_reports(&mut gamepad);
+    expect_gamepad_report(
+        poll_gamepad_interrupt_in(&mut m),
+        &gamepad_report,
+        "after gamepad configuration",
+    );
+}
+
+#[test]
 fn uhci_synthetic_usb_hid_handles_survive_reset_and_snapshot_restore() {
     let cfg = synthetic_usb_hid_cfg();
     let mut m = Machine::new(cfg.clone()).unwrap();
