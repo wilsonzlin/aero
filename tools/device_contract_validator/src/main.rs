@@ -2842,7 +2842,8 @@ AddService = TestSvc, 0x00000002, Service_Inst
     }
 
     #[test]
-    fn normalized_inf_lines_for_alias_diff_treats_unexpected_preamble_as_functional() -> Result<()> {
+    fn normalized_inf_lines_for_alias_diff_treats_unexpected_preamble_as_functional() -> Result<()>
+    {
         let inf = r#"
 This line is not an INF comment
 [Version]
