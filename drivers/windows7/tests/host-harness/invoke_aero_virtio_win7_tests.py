@@ -1918,14 +1918,15 @@ def _qemu_device_arg_add_vectors(device_arg: str, vectors: Optional[int]) -> str
     This is used by the host harness to request more MSI-X vectors from virtio-pci
     devices (when the running QEMU build exposes the `vectors` property).
 
-    `vectors=0` is also used to force INTx-only operation (disable MSI-X) when supported.
+    Note: `vectors=0` is used to force INTx-only operation (disable MSI-X), but that
+    is handled by `_qemu_device_arg_disable_msix` (not this helper).
     """
 
     if vectors is None:
         return device_arg
     vectors_i = int(vectors)
-    if vectors_i < 0:
-        raise ValueError(f"vectors must be a non-negative integer (got {vectors})")
+    if vectors_i <= 0:
+        raise ValueError(f"vectors must be a positive integer (got {vectors})")
 
     # Avoid generating malformed args if callers accidentally include a trailing comma.
     arg = device_arg.rstrip()

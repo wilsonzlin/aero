@@ -74,10 +74,8 @@ class VirtioMsixVectorsTests(unittest.TestCase):
 
     def test_rejects_non_positive_vectors(self) -> None:
         f = self.harness._qemu_device_arg_add_vectors
-        self.assertEqual(
-            f("virtio-net-pci,netdev=net0", 0),
-            "virtio-net-pci,netdev=net0,vectors=0",
-        )
+        with self.assertRaises(ValueError):
+            f("virtio-net-pci,netdev=net0", 0)
         with self.assertRaises(ValueError):
             f("virtio-net-pci,netdev=net0", -1)
 
