@@ -1225,6 +1225,35 @@ jobs:
             if [[ -n "${wav_marker}" ]]; then
               echo "- Host wav marker: ${wav_marker}"
             fi
+            if [[ "${{ steps.harness.outcome }}" != "success" ]]; then
+              if [[ -f "${harness_log}" ]]; then
+                echo ""
+                echo "<details><summary>harness.log (tail)</summary>"
+                echo ""
+                echo '```'
+                tail -n 200 "${harness_log}" | tr -d '\r'
+                echo '```'
+                echo "</details>"
+              fi
+              if [[ -f "${serial_log}" ]]; then
+                echo ""
+                echo "<details><summary>serial.log (tail)</summary>"
+                echo ""
+                echo '```'
+                tail -n 200 "${serial_log}" | tr -d '\r'
+                echo '```'
+                echo "</details>"
+              fi
+              if [[ -f "${qemu_stderr_log}" ]]; then
+                echo ""
+                echo "<details><summary>qemu.stderr.log (tail)</summary>"
+                echo ""
+                echo '```'
+                tail -n 200 "${qemu_stderr_log}" | tr -d '\r'
+                echo '```'
+                echo "</details>"
+              fi
+            fi
             echo "- Logs artifact: win7-virtio-harness-logs"
             echo "- Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           } >>"$GITHUB_STEP_SUMMARY"
