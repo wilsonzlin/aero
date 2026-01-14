@@ -691,6 +691,20 @@ impl XhciController {
             }
         };
 
+        let Some(dcbaa_entry) = self.dcbaap_entry_paddr(slot_id) else {
+            self.queue_command_completion_event(cmd_paddr, CompletionCode::ContextStateError, slot_id);
+            return;
+        };
+        let dev_ctx_raw = mem.read_u64(dcbaa_entry);
+        let dev_ctx_ptr = dev_ctx_raw & !0x3f;
+        if dev_ctx_ptr == 0 || (dev_ctx_raw & 0x3f) != 0 {
+            self.queue_command_completion_event(cmd_paddr, CompletionCode::ContextStateError, slot_id);
+            return;
+        }
+
+        // Only issue SET_ADDRESS after we know the command has a valid output Device Context
+        // pointer. If the command fails due to controller state (missing DCBAAP entry, invalid
+        // pointer, etc.) the device must not observe any side effects.
         let expected_speed = match self.find_device_by_topology(port_id, &route) {
             Some(dev) => {
                 if !bsr {
@@ -705,7 +719,7 @@ impl XhciController {
                     };
                     match dev.handle_setup(set_address) {
                         UsbOutResult::Ack => {}
-                        UsbOutResult::Nak => {
+                        UsbOutResult::Nak | UsbOutResult::Timeout => {
                             self.queue_command_completion_event(
                                 cmd_paddr,
                                 CompletionCode::UsbTransactionError,
@@ -721,19 +735,11 @@ impl XhciController {
                             );
                             return;
                         }
-                        UsbOutResult::Timeout => {
-                            self.queue_command_completion_event(
-                                cmd_paddr,
-                                CompletionCode::UsbTransactionError,
-                                slot_id,
-                            );
-                            return;
-                        }
                     }
 
                     match dev.handle_in(0, 0) {
                         UsbInResult::Data(data) if data.is_empty() => {}
-                        UsbInResult::Nak => {
+                        UsbInResult::Nak | UsbInResult::Timeout => {
                             self.queue_command_completion_event(
                                 cmd_paddr,
                                 CompletionCode::UsbTransactionError,
@@ -745,14 +751,6 @@ impl XhciController {
                             self.queue_command_completion_event(
                                 cmd_paddr,
                                 CompletionCode::StallError,
-                                slot_id,
-                            );
-                            return;
-                        }
-                        UsbInResult::Timeout => {
-                            self.queue_command_completion_event(
-                                cmd_paddr,
-                                CompletionCode::UsbTransactionError,
                                 slot_id,
                             );
                             return;
@@ -780,17 +778,6 @@ impl XhciController {
             }
         };
         slot_ctx.set_speed(expected_speed);
-
-        let Some(dcbaa_entry) = self.dcbaap_entry_paddr(slot_id) else {
-            self.queue_command_completion_event(cmd_paddr, CompletionCode::ContextStateError, slot_id);
-            return;
-        };
-        let dev_ctx_raw = mem.read_u64(dcbaa_entry);
-        let dev_ctx_ptr = dev_ctx_raw & !0x3f;
-        if dev_ctx_ptr == 0 || (dev_ctx_raw & 0x3f) != 0 {
-            self.queue_command_completion_event(cmd_paddr, CompletionCode::ContextStateError, slot_id);
-            return;
-        }
 
         // Mirror contexts to the output Device Context.
         slot_ctx.write_to(mem, dev_ctx_ptr);
