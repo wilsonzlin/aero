@@ -136,6 +136,17 @@ export class VirtioSndPciDevice implements PciDevice, TickableDevice {
   readonly capabilities: ReadonlyArray<PciCapability>;
 
   readonly #bridge: VirtioSndPciBridgeLike;
+  readonly #mmioReadFn: (offset: number, size: number) => number;
+  readonly #mmioWriteFn: (offset: number, size: number, value: number) => void;
+  readonly #pollFn: () => void;
+  readonly #driverOkFn: () => boolean;
+  readonly #irqAssertedFn: () => boolean;
+  readonly #setAudioRingBufferFn: (ringSab: SharedArrayBuffer | null | undefined, capacityFrames: number, channelCount: number) => void;
+  readonly #setHostSampleRateHzFn: (rate: number) => void;
+  readonly #setMicRingBufferFn: (ringSab?: SharedArrayBuffer | null) => void;
+  readonly #setCaptureSampleRateHzFn: (rate: number) => void;
+  readonly #freeFn: () => void;
+  readonly #setPciCommandFn: ((command: number) => void) | null;
   readonly #irqSink: IrqSink;
   readonly #mode: VirtioSndPciMode;
 
@@ -149,6 +160,63 @@ export class VirtioSndPciDevice implements PciDevice, TickableDevice {
     this.#bridge = opts.bridge;
     this.#irqSink = opts.irqSink;
     this.#mode = opts.mode ?? "modern";
+
+    // Backwards compatibility: accept both snake_case and camelCase exports and call extracted
+    // methods via `.call(bridge, ...)` to avoid wasm-bindgen `this` binding pitfalls.
+    const bridgeAny = opts.bridge as unknown as Record<string, unknown>;
+    const mmioRead = bridgeAny.mmio_read ?? bridgeAny.mmioRead;
+    const mmioWrite = bridgeAny.mmio_write ?? bridgeAny.mmioWrite;
+    const poll = bridgeAny.poll;
+    const driverOk = bridgeAny.driver_ok ?? bridgeAny.driverOk;
+    const irqAsserted = bridgeAny.irq_asserted ?? bridgeAny.irqAsserted;
+    const setAudioRing = bridgeAny.set_audio_ring_buffer ?? bridgeAny.setAudioRingBuffer;
+    const setHostRate = bridgeAny.set_host_sample_rate_hz ?? bridgeAny.setHostSampleRateHz;
+    const setMicRing = bridgeAny.set_mic_ring_buffer ?? bridgeAny.setMicRingBuffer;
+    const setCaptureRate = bridgeAny.set_capture_sample_rate_hz ?? bridgeAny.setCaptureSampleRateHz;
+    const free = bridgeAny.free;
+
+    if (typeof mmioRead !== "function" || typeof mmioWrite !== "function") {
+      throw new Error("virtio-snd bridge missing mmio_read/mmioRead or mmio_write/mmioWrite exports.");
+    }
+    if (typeof poll !== "function") {
+      throw new Error("virtio-snd bridge missing poll() export.");
+    }
+    if (typeof driverOk !== "function") {
+      throw new Error("virtio-snd bridge missing driver_ok/driverOk export.");
+    }
+    if (typeof irqAsserted !== "function") {
+      throw new Error("virtio-snd bridge missing irq_asserted/irqAsserted export.");
+    }
+    if (typeof setAudioRing !== "function") {
+      throw new Error("virtio-snd bridge missing set_audio_ring_buffer/setAudioRingBuffer export.");
+    }
+    if (typeof setHostRate !== "function") {
+      throw new Error("virtio-snd bridge missing set_host_sample_rate_hz/setHostSampleRateHz export.");
+    }
+    if (typeof setMicRing !== "function") {
+      throw new Error("virtio-snd bridge missing set_mic_ring_buffer/setMicRingBuffer export.");
+    }
+    if (typeof setCaptureRate !== "function") {
+      throw new Error("virtio-snd bridge missing set_capture_sample_rate_hz/setCaptureSampleRateHz export.");
+    }
+    if (typeof free !== "function") {
+      throw new Error("virtio-snd bridge missing free() export.");
+    }
+
+    this.#mmioReadFn = mmioRead as (offset: number, size: number) => number;
+    this.#mmioWriteFn = mmioWrite as (offset: number, size: number, value: number) => void;
+    this.#pollFn = poll as () => void;
+    this.#driverOkFn = driverOk as () => boolean;
+    this.#irqAssertedFn = irqAsserted as () => boolean;
+    this.#setAudioRingBufferFn =
+      setAudioRing as (ringSab: SharedArrayBuffer | null | undefined, capacityFrames: number, channelCount: number) => void;
+    this.#setHostSampleRateHzFn = setHostRate as (rate: number) => void;
+    this.#setMicRingBufferFn = setMicRing as (ringSab?: SharedArrayBuffer | null) => void;
+    this.#setCaptureSampleRateHzFn = setCaptureRate as (rate: number) => void;
+    this.#freeFn = free as () => void;
+
+    const setCmd = bridgeAny.set_pci_command ?? bridgeAny.setPciCommand;
+    this.#setPciCommandFn = typeof setCmd === "function" ? (setCmd as (command: number) => void) : null;
 
     const caps: ReadonlyArray<PciCapability> = [
       // Virtio modern vendor-specific capabilities (contract v1 fixed BAR0 layout).
@@ -194,7 +262,7 @@ export class VirtioSndPciDevice implements PciDevice, TickableDevice {
 
     let value = 0;
     try {
-      value = this.#bridge.mmio_read(off >>> 0, size) >>> 0;
+      value = this.#mmioReadFn.call(this.#bridge, off >>> 0, size) >>> 0;
     } catch {
       value = 0;
     }
@@ -224,7 +292,7 @@ export class VirtioSndPciDevice implements PciDevice, TickableDevice {
     if (!defined) return;
 
     try {
-      this.#bridge.mmio_write(off >>> 0, size, maskToSize(value >>> 0, size));
+      this.#mmioWriteFn.call(this.#bridge, off >>> 0, size, maskToSize(value >>> 0, size));
     } catch {
       // ignore device errors during guest IO
     }
@@ -240,10 +308,17 @@ export class VirtioSndPciDevice implements PciDevice, TickableDevice {
     const off = offset >>> 0;
     if (off + size > VIRTIO_LEGACY_IO_BAR2_SIZE) return defaultReadValue(size);
 
-    const bridge = this.#bridge as unknown as { legacy_io_read?: unknown; io_read?: unknown };
-    const fn = (typeof bridge.legacy_io_read === "function" ? bridge.legacy_io_read : bridge.io_read) as
-      | ((offset: number, size: number) => number)
-      | undefined;
+    const bridge = this.#bridge as unknown as Record<string, unknown>;
+    const fn =
+      (typeof bridge.legacy_io_read === "function"
+        ? (bridge.legacy_io_read as (offset: number, size: number) => number)
+        : typeof bridge.legacyIoRead === "function"
+          ? (bridge.legacyIoRead as (offset: number, size: number) => number)
+          : typeof bridge.io_read === "function"
+            ? (bridge.io_read as (offset: number, size: number) => number)
+            : typeof bridge.ioRead === "function"
+              ? (bridge.ioRead as (offset: number, size: number) => number)
+              : undefined) ?? undefined;
     if (typeof fn !== "function") return defaultReadValue(size);
 
     let value: number;
@@ -265,10 +340,17 @@ export class VirtioSndPciDevice implements PciDevice, TickableDevice {
     const off = offset >>> 0;
     if (off + size > VIRTIO_LEGACY_IO_BAR2_SIZE) return;
 
-    const bridge = this.#bridge as unknown as { legacy_io_write?: unknown; io_write?: unknown };
-    const fn = (typeof bridge.legacy_io_write === "function" ? bridge.legacy_io_write : bridge.io_write) as
-      | ((offset: number, size: number, value: number) => void)
-      | undefined;
+    const bridge = this.#bridge as unknown as Record<string, unknown>;
+    const fn =
+      (typeof bridge.legacy_io_write === "function"
+        ? (bridge.legacy_io_write as (offset: number, size: number, value: number) => void)
+        : typeof bridge.legacyIoWrite === "function"
+          ? (bridge.legacyIoWrite as (offset: number, size: number, value: number) => void)
+          : typeof bridge.io_write === "function"
+            ? (bridge.io_write as (offset: number, size: number, value: number) => void)
+            : typeof bridge.ioWrite === "function"
+              ? (bridge.ioWrite as (offset: number, size: number, value: number) => void)
+              : undefined) ?? undefined;
     if (typeof fn === "function") {
       try {
         fn.call(this.#bridge, off, size, maskToSize(value >>> 0, size));
@@ -285,7 +367,7 @@ export class VirtioSndPciDevice implements PciDevice, TickableDevice {
     this.#pciCommand = cmd;
 
     // Mirror into the WASM bridge so it can enforce PCI Bus Master Enable gating for DMA.
-    const setCmd = this.#bridge.set_pci_command;
+    const setCmd = this.#setPciCommandFn;
     if (typeof setCmd === "function") {
       try {
         setCmd.call(this.#bridge, cmd >>> 0);
@@ -309,7 +391,7 @@ export class VirtioSndPciDevice implements PciDevice, TickableDevice {
     const busMasterEnabled = (this.#pciCommand & (1 << 2)) !== 0;
     if (busMasterEnabled) {
       try {
-        this.#bridge.poll();
+        this.#pollFn.call(this.#bridge);
       } catch {
         // ignore device errors during tick
       }
@@ -320,7 +402,7 @@ export class VirtioSndPciDevice implements PciDevice, TickableDevice {
   driverOk(): boolean {
     let ok = false;
     try {
-      ok = Boolean(this.#bridge.driver_ok());
+      ok = Boolean(this.#driverOkFn.call(this.#bridge));
     } catch {
       ok = false;
     }
@@ -333,22 +415,29 @@ export class VirtioSndPciDevice implements PciDevice, TickableDevice {
 
   canSaveState(): boolean {
     const b = this.#bridge as unknown as Record<string, unknown>;
-    return typeof b["save_state"] === "function" || typeof b["snapshot_state"] === "function";
+    return (
+      typeof b["save_state"] === "function" ||
+      typeof b["snapshot_state"] === "function" ||
+      typeof b["saveState"] === "function" ||
+      typeof b["snapshotState"] === "function"
+    );
   }
 
   canLoadState(): boolean {
     const b = this.#bridge as unknown as Record<string, unknown>;
-    return typeof b["load_state"] === "function" || typeof b["restore_state"] === "function";
+    return (
+      typeof b["load_state"] === "function" ||
+      typeof b["restore_state"] === "function" ||
+      typeof b["loadState"] === "function" ||
+      typeof b["restoreState"] === "function"
+    );
   }
 
   saveState(): Uint8Array | null {
     if (this.#destroyed) return null;
-    const bridgeAny = this.#bridge as unknown as {
-      save_state?: unknown;
-      snapshot_state?: unknown;
-    };
-    const save = typeof bridgeAny.save_state === "function" ? bridgeAny.save_state : typeof bridgeAny.snapshot_state === "function" ? bridgeAny.snapshot_state : null;
-    if (!save) return null;
+    const bridgeAny = this.#bridge as unknown as Record<string, unknown>;
+    const save = bridgeAny.save_state ?? bridgeAny.snapshot_state ?? bridgeAny.saveState ?? bridgeAny.snapshotState;
+    if (typeof save !== "function") return null;
     try {
       const bytes = (save as () => unknown).call(this.#bridge) as unknown;
       if (bytes instanceof Uint8Array) return bytes;
@@ -360,13 +449,9 @@ export class VirtioSndPciDevice implements PciDevice, TickableDevice {
 
   loadState(bytes: Uint8Array): boolean {
     if (this.#destroyed) return false;
-    const bridgeAny = this.#bridge as unknown as {
-      load_state?: unknown;
-      restore_state?: unknown;
-    };
-    const load =
-      typeof bridgeAny.load_state === "function" ? bridgeAny.load_state : typeof bridgeAny.restore_state === "function" ? bridgeAny.restore_state : null;
-    if (!load) return false;
+    const bridgeAny = this.#bridge as unknown as Record<string, unknown>;
+    const load = bridgeAny.load_state ?? bridgeAny.restore_state ?? bridgeAny.loadState ?? bridgeAny.restoreState;
+    if (typeof load !== "function") return false;
     try {
       (load as (bytes: Uint8Array) => unknown).call(this.#bridge, bytes);
       this.#syncIrq();
@@ -391,7 +476,7 @@ export class VirtioSndPciDevice implements PciDevice, TickableDevice {
 
     if (dstSampleRateHz > 0) {
       try {
-        this.#bridge.set_host_sample_rate_hz(dstSampleRateHz);
+        this.#setHostSampleRateHzFn.call(this.#bridge, dstSampleRateHz);
 
         // The Rust virtio-snd device can track its capture sample rate to the host/output sample
         // rate until a distinct capture rate is configured. Reassert the configured capture rate
@@ -400,7 +485,7 @@ export class VirtioSndPciDevice implements PciDevice, TickableDevice {
         const micSr = this.#micSampleRateHz >>> 0;
         if (micSr > 0) {
           try {
-            this.#bridge.set_capture_sample_rate_hz(micSr);
+            this.#setCaptureSampleRateHzFn.call(this.#bridge, micSr);
           } catch {
             // ignore
           }
@@ -412,7 +497,7 @@ export class VirtioSndPciDevice implements PciDevice, TickableDevice {
 
     try {
       // Rust expects an `Option<SharedArrayBuffer>`; pass `undefined` when detaching.
-      this.#bridge.set_audio_ring_buffer(ring ?? undefined, capacityFrames, channelCount);
+      this.#setAudioRingBufferFn.call(this.#bridge, ring ?? undefined, capacityFrames, channelCount);
     } catch {
       // ignore invalid ring attachment
     }
@@ -421,7 +506,7 @@ export class VirtioSndPciDevice implements PciDevice, TickableDevice {
   setMicRingBuffer(ringBuffer: SharedArrayBuffer | null): void {
     if (this.#destroyed) return;
     try {
-      this.#bridge.set_mic_ring_buffer(ringBuffer ?? undefined);
+      this.#setMicRingBufferFn.call(this.#bridge, ringBuffer ?? undefined);
     } catch {
       // ignore
     }
@@ -433,7 +518,7 @@ export class VirtioSndPciDevice implements PciDevice, TickableDevice {
     if (!sr) return;
     this.#micSampleRateHz = sr;
     try {
-      this.#bridge.set_capture_sample_rate_hz(sr);
+      this.#setCaptureSampleRateHzFn.call(this.#bridge, sr);
     } catch {
       // ignore
     }
@@ -447,7 +532,7 @@ export class VirtioSndPciDevice implements PciDevice, TickableDevice {
       this.#irqLevel = false;
     }
     try {
-      this.#bridge.free();
+      this.#freeFn.call(this.#bridge);
     } catch {
       // ignore
     }
@@ -456,7 +541,7 @@ export class VirtioSndPciDevice implements PciDevice, TickableDevice {
   #syncIrq(): void {
     let asserted = false;
     try {
-      asserted = Boolean(this.#bridge.irq_asserted());
+      asserted = Boolean(this.#irqAssertedFn.call(this.#bridge));
     } catch {
       asserted = false;
     }

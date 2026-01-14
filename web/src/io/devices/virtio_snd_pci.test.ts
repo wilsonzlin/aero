@@ -203,6 +203,66 @@ describe("io/devices/virtio_snd PCI config", () => {
 });
 
 describe("io/devices/virtio_snd BAR0 MMIO", () => {
+  it("accepts camelCase virtio-snd bridge exports (backwards compatibility)", () => {
+    const mmioRead = vi.fn(() => 0x1234_5678);
+    const mmioWrite = vi.fn();
+    const poll = vi.fn();
+    const driverOk = vi.fn(() => false);
+    const irqAsserted = vi.fn(() => false);
+    const setAudioRingBuffer = vi.fn();
+    const setHostSampleRateHz = vi.fn();
+    const setMicRingBuffer = vi.fn();
+    const setCaptureSampleRateHz = vi.fn();
+    const setPciCommand = vi.fn();
+    const free = vi.fn();
+
+    const bridge = {
+      mmioRead,
+      mmioWrite,
+      poll,
+      driverOk,
+      irqAsserted,
+      setAudioRingBuffer,
+      setHostSampleRateHz,
+      setMicRingBuffer,
+      setCaptureSampleRateHz,
+      setPciCommand,
+      free,
+    };
+    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+    const dev = new VirtioSndPciDevice({ bridge: bridge as unknown as VirtioSndPciBridgeLike, irqSink });
+
+    // Defined BAR0 region should forward to bridge.
+    expect(dev.mmioRead(0, 0x0000n, 4)).toBe(0x1234_5678);
+    expect(mmioRead).toHaveBeenCalledWith(0, 4);
+    dev.mmioWrite(0, 0x0000n, 4, 0xdead_beef);
+    expect(mmioWrite).toHaveBeenCalledWith(0, 4, 0xdead_beef);
+
+    // Output sample rate + audio ring plumbing.
+    dev.setAudioRingBuffer({ ringBuffer: null, capacityFrames: 0, channelCount: 0, dstSampleRateHz: 48_000 });
+    expect(setHostSampleRateHz).toHaveBeenCalledWith(48_000);
+    expect(setAudioRingBuffer).toHaveBeenCalledWith(undefined, 0, 0);
+
+    dev.setCaptureSampleRateHz(44_100);
+    expect(setCaptureSampleRateHz).toHaveBeenCalledWith(44_100);
+
+    const ringBuffer =
+      typeof SharedArrayBuffer === "function" ? new SharedArrayBuffer(256) : ({} as unknown as SharedArrayBuffer);
+    dev.setMicRingBuffer(ringBuffer);
+    expect(setMicRingBuffer).toHaveBeenCalledWith(ringBuffer);
+
+    // Polling is gated on bus mastering.
+    dev.tick(0);
+    expect(poll).not.toHaveBeenCalled();
+    dev.onPciCommandWrite(1 << 2);
+    expect(setPciCommand).toHaveBeenCalledWith(0x0004);
+    dev.tick(1);
+    expect(poll).toHaveBeenCalledTimes(1);
+
+    dev.destroy();
+    expect(free).toHaveBeenCalled();
+  });
+
   it("returns 0 and ignores writes for undefined BAR0 MMIO offsets (contract v1)", () => {
     const mmioRead = vi.fn(() => 0x1234_5678);
     const mmioWrite = vi.fn();

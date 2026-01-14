@@ -27,6 +27,37 @@ describe("io/devices/xhci", () => {
     expect(dev.irqLine).toBe(11);
   });
 
+  it("accepts camelCase xHCI bridge exports (backwards compatibility)", () => {
+    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+    const mmioRead = vi.fn(() => 0);
+    const mmioWrite = vi.fn();
+    const stepFrames = vi.fn();
+    const irqAsserted = vi.fn(() => false);
+    const setPciCommand = vi.fn();
+    const poll = vi.fn();
+    const free = vi.fn();
+
+    const bridge = { mmioRead, mmioWrite, stepFrames, irqAsserted, setPciCommand, poll, free };
+    const dev = new XhciPciDevice({ bridge: bridge as unknown as XhciControllerBridgeLike, irqSink });
+
+    // Enable MMIO decoding + bus mastering.
+    dev.onPciCommandWrite((1 << 1) | (1 << 2));
+    expect(setPciCommand).toHaveBeenCalledWith(0x0006);
+
+    dev.mmioRead(0, 0n, 4);
+    expect(mmioRead).toHaveBeenCalledWith(0, 4);
+    dev.mmioWrite(0, 0n, 4, 0x1234);
+    expect(mmioWrite).toHaveBeenCalledWith(0, 4, 0x1234);
+
+    dev.tick(0);
+    dev.tick(5);
+    expect(stepFrames).toHaveBeenCalledWith(5);
+    expect(poll).toHaveBeenCalledTimes(1);
+
+    dev.destroy();
+    expect(free).toHaveBeenCalled();
+  });
+
   it("forwards mmioRead/mmioWrite to the underlying bridge when PCI MEM is enabled", () => {
     const bridge: XhciControllerBridgeLike = {
       mmio_read: vi.fn(() => 0x1234_5678),

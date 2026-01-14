@@ -54,6 +54,67 @@ describe("io/devices/E1000PciDevice", () => {
     expect(dev.bars).toEqual([{ kind: "mmio32", size: 0x20_000 }, { kind: "io", size: 0x40 }, null, null, null, null]);
   });
 
+  it("accepts camelCase E1000 bridge exports (backwards compatibility)", () => {
+    const { buffer } = createIpcBuffer([
+      { kind: IO_IPC_NET_TX_QUEUE_KIND, capacityBytes: 256 },
+      { kind: IO_IPC_NET_RX_QUEUE_KIND, capacityBytes: 256 },
+    ]);
+    const netTx = openRingByKind(buffer, IO_IPC_NET_TX_QUEUE_KIND);
+    const netRx = openRingByKind(buffer, IO_IPC_NET_RX_QUEUE_KIND);
+
+    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+    const mmioRead = vi.fn(() => 0);
+    const mmioWrite = vi.fn();
+    const ioRead = vi.fn(() => 0);
+    const ioWrite = vi.fn();
+    const poll = vi.fn();
+    const receiveFrame = vi.fn();
+    const popTxFrame = vi.fn(() => undefined);
+    const irqLevel = vi.fn(() => false);
+    const setPciCommand = vi.fn();
+    const free = vi.fn();
+
+    // Simulate a WASM build (or manual shim) that exposes camelCase methods.
+    const bridge = {
+      mmioRead,
+      mmioWrite,
+      ioRead,
+      ioWrite,
+      poll,
+      receiveFrame,
+      popTxFrame,
+      irqLevel,
+      setPciCommand,
+      free,
+    };
+
+    const dev = new E1000PciDevice({ bridge: bridge as unknown as E1000BridgeLike, irqSink, netTxRing: netTx, netRxRing: netRx });
+
+    dev.mmioRead(0, 0n, 4);
+    expect(mmioRead).toHaveBeenCalledWith(0, 4);
+    dev.mmioWrite(0, 0n, 4, 0x1234);
+    expect(mmioWrite).toHaveBeenCalledWith(0, 4, 0x1234);
+
+    dev.ioRead(1, 0, 4);
+    expect(ioRead).toHaveBeenCalledWith(0, 4);
+    dev.ioWrite(1, 0, 4, 0xfeed_beef);
+    expect(ioWrite).toHaveBeenCalledWith(0, 4, 0xfeed_beef);
+
+    // Enable bus mastering and ensure PCI command is mirrored.
+    dev.onPciCommandWrite?.(0x1_0004);
+    expect(setPciCommand).toHaveBeenCalledWith(0x0004);
+
+    // NET_RX -> receiveFrame, and poll() should run when BME is enabled.
+    expect(netRx.tryPush(new Uint8Array([1, 2, 3]))).toBe(true);
+    dev.tick(0);
+    expect(receiveFrame).toHaveBeenCalledTimes(1);
+    expect(Array.from(receiveFrame.mock.calls[0]![0] as Uint8Array)).toEqual([1, 2, 3]);
+    expect(poll).toHaveBeenCalledTimes(1);
+
+    dev.destroy();
+    expect(free).toHaveBeenCalled();
+  });
+
   it("pumps NET_RX -> receive_frame and drains pop_tx_frame -> NET_TX", () => {
     const { buffer } = createIpcBuffer([
       { kind: IO_IPC_NET_TX_QUEUE_KIND, capacityBytes: 256 },

@@ -149,6 +149,10 @@ export class VirtioNetPciDevice implements PciDevice, TickableDevice {
   readonly bars: ReadonlyArray<PciBar | null>;
 
   readonly #bridge: VirtioNetPciBridgeLike;
+  readonly #mmioReadFn: (offset: number, size: number) => number;
+  readonly #mmioWriteFn: (offset: number, size: number, value: number) => void;
+  readonly #freeFn: () => void;
+  readonly #setPciCommandFn: ((command: number) => void) | null;
   readonly #irqSink: IrqSink;
   readonly #mode: VirtioNetPciMode;
 
@@ -160,6 +164,26 @@ export class VirtioNetPciDevice implements PciDevice, TickableDevice {
     this.#bridge = opts.bridge;
     this.#irqSink = opts.irqSink;
     this.#mode = opts.mode ?? "modern";
+
+    // Backwards compatibility: accept both snake_case and camelCase WASM bridge exports and
+    // invoke extracted method references via `.call(bridge, ...)` to avoid wasm-bindgen `this`
+    // binding pitfalls.
+    const bridgeAny = opts.bridge as unknown as Record<string, unknown>;
+    const mmioRead = bridgeAny.mmio_read ?? bridgeAny.mmioRead;
+    const mmioWrite = bridgeAny.mmio_write ?? bridgeAny.mmioWrite;
+    const free = bridgeAny.free;
+    if (typeof mmioRead !== "function" || typeof mmioWrite !== "function") {
+      throw new Error("virtio-net bridge missing mmio_read/mmioRead or mmio_write/mmioWrite exports.");
+    }
+    if (typeof free !== "function") {
+      throw new Error("virtio-net bridge missing free() export.");
+    }
+    this.#mmioReadFn = mmioRead as (offset: number, size: number) => number;
+    this.#mmioWriteFn = mmioWrite as (offset: number, size: number, value: number) => void;
+    this.#freeFn = free as () => void;
+
+    const setCmd = bridgeAny.set_pci_command ?? bridgeAny.setPciCommand;
+    this.#setPciCommandFn = typeof setCmd === "function" ? (setCmd as (command: number) => void) : null;
 
     this.deviceId = this.#mode === "modern" ? VIRTIO_NET_MODERN_DEVICE_ID : VIRTIO_NET_TRANSITIONAL_DEVICE_ID;
     this.bars =
@@ -246,7 +270,7 @@ export class VirtioNetPciDevice implements PciDevice, TickableDevice {
     let value: number;
     try {
       // BAR0 is 0x4000 bytes, so offset fits in a JS number.
-      value = this.#bridge.mmio_read(off >>> 0, size) >>> 0;
+      value = this.#mmioReadFn.call(this.#bridge, off >>> 0, size) >>> 0;
     } catch {
       // Virtio contract v1 expects undefined MMIO reads within BAR0 to return 0.
       // Treat device-side errors the same way to avoid spurious all-ones reads
@@ -275,7 +299,7 @@ export class VirtioNetPciDevice implements PciDevice, TickableDevice {
       isInRange(off, size, VIRTIO_MMIO_DEVICE_OFFSET, VIRTIO_MMIO_DEVICE_LEN);
     if (!defined) return;
     try {
-      this.#bridge.mmio_write(off >>> 0, size, maskToSize(value >>> 0, size));
+      this.#mmioWriteFn.call(this.#bridge, off >>> 0, size, maskToSize(value >>> 0, size));
     } catch {
       // ignore device errors during guest IO
     }
@@ -287,7 +311,7 @@ export class VirtioNetPciDevice implements PciDevice, TickableDevice {
     this.#pciCommand = command & 0xffff;
 
     // Mirror into the WASM bridge so it can enforce PCI Bus Master Enable gating for DMA.
-    const setCmd = this.#bridge.set_pci_command;
+    const setCmd = this.#setPciCommandFn;
     if (typeof setCmd === "function") {
       try {
         setCmd.call(this.#bridge, this.#pciCommand >>> 0);
@@ -309,10 +333,17 @@ export class VirtioNetPciDevice implements PciDevice, TickableDevice {
     const off = offset >>> 0;
     if (off + size > VIRTIO_LEGACY_IO_BAR2_SIZE) return defaultReadValue(size);
 
-    const bridge = this.#bridge as unknown as { legacy_io_read?: unknown; io_read?: unknown };
-    const fn = (typeof bridge.legacy_io_read === "function" ? bridge.legacy_io_read : bridge.io_read) as
-      | ((offset: number, size: number) => number)
-      | undefined;
+    const bridge = this.#bridge as unknown as Record<string, unknown>;
+    const fn =
+      (typeof bridge.legacy_io_read === "function"
+        ? (bridge.legacy_io_read as (offset: number, size: number) => number)
+        : typeof bridge.legacyIoRead === "function"
+          ? (bridge.legacyIoRead as (offset: number, size: number) => number)
+          : typeof bridge.io_read === "function"
+            ? (bridge.io_read as (offset: number, size: number) => number)
+            : typeof bridge.ioRead === "function"
+              ? (bridge.ioRead as (offset: number, size: number) => number)
+              : undefined) ?? undefined;
     if (typeof fn !== "function") return defaultReadValue(size);
 
     let value: number;
@@ -334,10 +365,17 @@ export class VirtioNetPciDevice implements PciDevice, TickableDevice {
     const off = offset >>> 0;
     if (off + size > VIRTIO_LEGACY_IO_BAR2_SIZE) return;
 
-    const bridge = this.#bridge as unknown as { legacy_io_write?: unknown; io_write?: unknown };
-    const fn = (typeof bridge.legacy_io_write === "function" ? bridge.legacy_io_write : bridge.io_write) as
-      | ((offset: number, size: number, value: number) => void)
-      | undefined;
+    const bridge = this.#bridge as unknown as Record<string, unknown>;
+    const fn =
+      (typeof bridge.legacy_io_write === "function"
+        ? (bridge.legacy_io_write as (offset: number, size: number, value: number) => void)
+        : typeof bridge.legacyIoWrite === "function"
+          ? (bridge.legacyIoWrite as (offset: number, size: number, value: number) => void)
+          : typeof bridge.io_write === "function"
+            ? (bridge.io_write as (offset: number, size: number, value: number) => void)
+            : typeof bridge.ioWrite === "function"
+              ? (bridge.ioWrite as (offset: number, size: number, value: number) => void)
+              : undefined) ?? undefined;
     if (typeof fn === "function") {
       try {
         fn.call(this.#bridge, off, size, maskToSize(value >>> 0, size));
@@ -389,21 +427,23 @@ export class VirtioNetPciDevice implements PciDevice, TickableDevice {
       this.#irqLevel = false;
     }
     try {
-      this.#bridge.free();
+      this.#freeFn.call(this.#bridge);
     } catch {
       // ignore
     }
   }
 
   #syncIrq(): void {
-    const bridge = this.#bridge as unknown as { irq_level?: unknown; irq_asserted?: unknown };
+    const bridge = this.#bridge as unknown as Record<string, unknown>;
 
     let asserted = false;
     try {
-      if (typeof bridge.irq_asserted === "function") {
-        asserted = Boolean(bridge.irq_asserted.call(this.#bridge));
-      } else if (typeof bridge.irq_level === "function") {
-        asserted = Boolean(bridge.irq_level.call(this.#bridge));
+      const irqAsserted = bridge.irq_asserted ?? bridge.irqAsserted;
+      const irqLevel = bridge.irq_level ?? bridge.irqLevel;
+      if (typeof irqAsserted === "function") {
+        asserted = Boolean((irqAsserted as () => unknown).call(this.#bridge));
+      } else if (typeof irqLevel === "function") {
+        asserted = Boolean((irqLevel as () => unknown).call(this.#bridge));
       }
     } catch {
       asserted = false;

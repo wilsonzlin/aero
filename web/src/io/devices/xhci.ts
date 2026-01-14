@@ -94,6 +94,16 @@ export class XhciPciDevice implements PciDevice, TickableDevice {
   readonly bars: ReadonlyArray<PciBar | null> = [{ kind: "mmio32", size: XHCI_MMIO_BAR_SIZE }, null, null, null, null, null];
 
   readonly #bridge: XhciControllerBridgeLike;
+  readonly #mmioReadFn: (offset: number, size: number) => number;
+  readonly #mmioWriteFn: (offset: number, size: number, value: number) => void;
+  readonly #stepFramesFn: ((frames: number) => void) | null;
+  readonly #tickFramesFn: ((frames: number) => void) | null;
+  readonly #stepFrameFn: (() => void) | null;
+  readonly #tick1msFn: (() => void) | null;
+  readonly #pollFn: (() => void) | null;
+  readonly #irqAssertedFn: () => boolean;
+  readonly #freeFn: () => void;
+  readonly #setPciCommandFn: ((command: number) => void) | null;
   readonly #irqSink: IrqSink;
 
   #lastTickMs: number | null = null;
@@ -105,6 +115,43 @@ export class XhciPciDevice implements PciDevice, TickableDevice {
   constructor(opts: { bridge: XhciControllerBridgeLike; irqSink: IrqSink }) {
     this.#bridge = opts.bridge;
     this.#irqSink = opts.irqSink;
+
+    // Backwards compatibility: tolerate camelCase exports and invoke extracted methods via `.call`
+    // to avoid wasm-bindgen `this` binding pitfalls.
+    const bridgeAny = opts.bridge as unknown as Record<string, unknown>;
+    const mmioRead = bridgeAny.mmio_read ?? bridgeAny.mmioRead;
+    const mmioWrite = bridgeAny.mmio_write ?? bridgeAny.mmioWrite;
+    const irqAsserted = bridgeAny.irq_asserted ?? bridgeAny.irqAsserted;
+    const free = bridgeAny.free;
+
+    if (typeof mmioRead !== "function" || typeof mmioWrite !== "function") {
+      throw new Error("xHCI bridge missing mmio_read/mmioRead or mmio_write/mmioWrite exports.");
+    }
+    if (typeof irqAsserted !== "function") {
+      throw new Error("xHCI bridge missing irq_asserted/irqAsserted export.");
+    }
+    if (typeof free !== "function") {
+      throw new Error("xHCI bridge missing free() export.");
+    }
+
+    this.#mmioReadFn = mmioRead as (offset: number, size: number) => number;
+    this.#mmioWriteFn = mmioWrite as (offset: number, size: number, value: number) => void;
+    this.#irqAssertedFn = irqAsserted as () => boolean;
+    this.#freeFn = free as () => void;
+
+    const setCmd = bridgeAny.set_pci_command ?? bridgeAny.setPciCommand;
+    this.#setPciCommandFn = typeof setCmd === "function" ? (setCmd as (command: number) => void) : null;
+
+    const stepFrames = bridgeAny.step_frames ?? bridgeAny.stepFrames;
+    this.#stepFramesFn = typeof stepFrames === "function" ? (stepFrames as (frames: number) => void) : null;
+    const tick = bridgeAny.tick;
+    this.#tickFramesFn = typeof tick === "function" ? (tick as (frames: number) => void) : null;
+    const stepFrame = bridgeAny.step_frame ?? bridgeAny.stepFrame;
+    this.#stepFrameFn = typeof stepFrame === "function" ? (stepFrame as () => void) : null;
+    const tick1ms = bridgeAny.tick_1ms ?? bridgeAny.tick1ms ?? bridgeAny.tick1Ms;
+    this.#tick1msFn = typeof tick1ms === "function" ? (tick1ms as () => void) : null;
+    const poll = bridgeAny.poll;
+    this.#pollFn = typeof poll === "function" ? (poll as () => void) : null;
   }
 
   mmioRead(barIndex: number, offset: bigint, size: number): number {
@@ -120,7 +167,7 @@ export class XhciPciDevice implements PciDevice, TickableDevice {
 
     let value = defaultReadValue(size);
     try {
-      value = this.#bridge.mmio_read(off >>> 0, size >>> 0) >>> 0;
+      value = this.#mmioReadFn.call(this.#bridge, off >>> 0, size >>> 0) >>> 0;
     } catch {
       value = defaultReadValue(size);
     }
@@ -142,7 +189,7 @@ export class XhciPciDevice implements PciDevice, TickableDevice {
     if (!Number.isFinite(off) || off < 0 || off + size > XHCI_MMIO_BAR_SIZE) return;
 
     try {
-      this.#bridge.mmio_write(off >>> 0, size >>> 0, maskToSize(value >>> 0, size));
+      this.#mmioWriteFn.call(this.#bridge, off >>> 0, size >>> 0, maskToSize(value >>> 0, size));
     } catch {
       // ignore device errors during guest MMIO
     }
@@ -155,7 +202,7 @@ export class XhciPciDevice implements PciDevice, TickableDevice {
     this.#pciCommand = cmd;
 
     // Mirror into the WASM bridge so it can enforce PCI Bus Master Enable gating for DMA.
-    const setCmd = this.#bridge.set_pci_command;
+    const setCmd = this.#setPciCommandFn;
     if (typeof setCmd === "function") {
       try {
         setCmd.call(this.#bridge, cmd >>> 0);
@@ -195,7 +242,7 @@ export class XhciPciDevice implements PciDevice, TickableDevice {
     // For backwards compatibility with older WASM builds that may not implement BME gating, we
     // conservatively freeze time until BME is enabled *unless* `set_pci_command` is available.
     const busMasterEnabled = (this.#pciCommand & (1 << 2)) !== 0;
-    if (!busMasterEnabled && typeof this.#bridge.set_pci_command !== "function") {
+    if (!busMasterEnabled && !this.#setPciCommandFn) {
       this.#accumulatedMs = 0;
       this.#syncIrq();
       return;
@@ -208,16 +255,15 @@ export class XhciPciDevice implements PciDevice, TickableDevice {
     let frames = Math.floor(this.#accumulatedMs / XHCI_FRAME_MS);
     frames = Math.min(frames, XHCI_MAX_FRAMES_PER_TICK);
     if (frames > 0) {
-      const bridge = this.#bridge;
       try {
-        if (typeof bridge.step_frames === "function") {
-          bridge.step_frames(frames);
-        } else if (typeof bridge.tick === "function") {
-          bridge.tick(frames);
-        } else if (typeof bridge.step_frame === "function") {
-          for (let i = 0; i < frames; i++) bridge.step_frame();
-        } else if (typeof bridge.tick_1ms === "function") {
-          for (let i = 0; i < frames; i++) bridge.tick_1ms();
+        if (this.#stepFramesFn) {
+          this.#stepFramesFn.call(this.#bridge, frames);
+        } else if (this.#tickFramesFn) {
+          this.#tickFramesFn.call(this.#bridge, frames);
+        } else if (this.#stepFrameFn) {
+          for (let i = 0; i < frames; i++) this.#stepFrameFn.call(this.#bridge);
+        } else if (this.#tick1msFn) {
+          for (let i = 0; i < frames; i++) this.#tick1msFn.call(this.#bridge);
         }
       } catch {
         // ignore device errors during tick
@@ -227,7 +273,7 @@ export class XhciPciDevice implements PciDevice, TickableDevice {
 
     // Some WASM bridges expose a `poll()` hook that performs non-time-advancing work (e.g. draining
     // pending completions). Treat it as a legacy alias for `step_frames(0)`.
-    const poll = this.#bridge.poll;
+    const poll = this.#pollFn;
     if (busMasterEnabled && typeof poll === "function") {
       try {
         poll.call(this.#bridge);
@@ -248,7 +294,7 @@ export class XhciPciDevice implements PciDevice, TickableDevice {
       this.#irqLevel = false;
     }
     try {
-      this.#bridge.free();
+      this.#freeFn.call(this.#bridge);
     } catch {
       // ignore
     }
@@ -257,7 +303,7 @@ export class XhciPciDevice implements PciDevice, TickableDevice {
   #syncIrq(): void {
     let asserted = false;
     try {
-      asserted = Boolean(this.#bridge.irq_asserted());
+      asserted = Boolean(this.#irqAssertedFn.call(this.#bridge));
     } catch {
       asserted = false;
     }

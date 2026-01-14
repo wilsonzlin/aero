@@ -61,18 +61,27 @@ export function tryInitVirtioNetDevice(opts: {
   }
 
   if (mode !== "modern") {
+    const anyBridge = bridge as unknown as Record<string, unknown>;
     const read =
-      typeof bridge.legacy_io_read === "function"
-        ? bridge.legacy_io_read
-        : typeof bridge.io_read === "function"
-          ? bridge.io_read
-          : null;
+      typeof anyBridge.legacy_io_read === "function"
+        ? (anyBridge.legacy_io_read as (offset: number, size: number) => number)
+        : typeof anyBridge.legacyIoRead === "function"
+          ? (anyBridge.legacyIoRead as (offset: number, size: number) => number)
+          : typeof anyBridge.io_read === "function"
+            ? (anyBridge.io_read as (offset: number, size: number) => number)
+            : typeof anyBridge.ioRead === "function"
+              ? (anyBridge.ioRead as (offset: number, size: number) => number)
+              : null;
     const write =
-      typeof bridge.legacy_io_write === "function"
-        ? bridge.legacy_io_write
-        : typeof bridge.io_write === "function"
-          ? bridge.io_write
-          : null;
+      typeof anyBridge.legacy_io_write === "function"
+        ? (anyBridge.legacy_io_write as (offset: number, size: number, value: number) => void)
+        : typeof anyBridge.legacyIoWrite === "function"
+          ? (anyBridge.legacyIoWrite as (offset: number, size: number, value: number) => void)
+          : typeof anyBridge.io_write === "function"
+            ? (anyBridge.io_write as (offset: number, size: number, value: number) => void)
+            : typeof anyBridge.ioWrite === "function"
+              ? (anyBridge.ioWrite as (offset: number, size: number, value: number) => void)
+              : null;
     if (!read || !write) {
       try {
         bridge.free();
@@ -87,7 +96,8 @@ export function tryInitVirtioNetDevice(opts: {
     //
     // Note: virtio-pci legacy IO reads are gated by PCI command bit0 (I/O enable). For the probe
     // we temporarily enable I/O decoding inside the bridge so the read is meaningful.
-    const setCmd = typeof bridge.set_pci_command === "function" ? bridge.set_pci_command : null;
+    const setCmdAny = anyBridge.set_pci_command ?? anyBridge.setPciCommand;
+    const setCmd = typeof setCmdAny === "function" ? (setCmdAny as (command: number) => void) : null;
     let ok = false;
     try {
       if (setCmd) {

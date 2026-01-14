@@ -757,7 +757,9 @@ function snapshotE1000DeviceState(): { kind: string; bytes: Uint8Array } | null 
 
   const save =
     (bridge as unknown as { save_state?: unknown }).save_state ??
-    (bridge as unknown as { snapshot_state?: unknown }).snapshot_state;
+    (bridge as unknown as { snapshot_state?: unknown }).snapshot_state ??
+    (bridge as unknown as { saveState?: unknown }).saveState ??
+    (bridge as unknown as { snapshotState?: unknown }).snapshotState;
   if (typeof save !== "function") return null;
   try {
     const bytes = save.call(bridge) as unknown;
@@ -784,7 +786,9 @@ function restoreE1000DeviceState(bytes: Uint8Array): void {
 
   const load =
     (bridge as unknown as { load_state?: unknown }).load_state ??
-    (bridge as unknown as { restore_state?: unknown }).restore_state;
+    (bridge as unknown as { restore_state?: unknown }).restore_state ??
+    (bridge as unknown as { loadState?: unknown }).loadState ??
+    (bridge as unknown as { restoreState?: unknown }).restoreState;
   if (typeof load !== "function") {
     console.warn("[io.worker] Snapshot contains net.e1000 state but E1000 bridge has no load_state/restore_state hook; ignoring blob.");
     return;
@@ -1718,29 +1722,38 @@ function maybeInitVirtioInput(): void {
   if (!keyboardDev || !mouseDev) return;
 
   if (mode !== "modern") {
-    const probeLegacyIo = (dev: VirtioInputPciDeviceLike): boolean => {
-      const devAny = dev as unknown as Record<string, unknown>;
-      const read =
-        typeof devAny.legacy_io_read === "function"
-          ? (devAny.legacy_io_read as (offset: number, size: number) => number)
-          : typeof devAny.io_read === "function"
-            ? (devAny.io_read as (offset: number, size: number) => number)
-            : null;
-      const write =
-        typeof devAny.legacy_io_write === "function"
-          ? (devAny.legacy_io_write as (offset: number, size: number, value: number) => void)
-          : typeof devAny.io_write === "function"
-            ? (devAny.io_write as (offset: number, size: number, value: number) => void)
-            : null;
-      if (!read || !write) return false;
+      const probeLegacyIo = (dev: VirtioInputPciDeviceLike): boolean => {
+        const devAny = dev as unknown as Record<string, unknown>;
+        const read =
+          typeof devAny.legacy_io_read === "function"
+            ? (devAny.legacy_io_read as (offset: number, size: number) => number)
+            : typeof devAny.legacyIoRead === "function"
+              ? (devAny.legacyIoRead as (offset: number, size: number) => number)
+              : typeof devAny.io_read === "function"
+                ? (devAny.io_read as (offset: number, size: number) => number)
+                : typeof devAny.ioRead === "function"
+                  ? (devAny.ioRead as (offset: number, size: number) => number)
+                  : null;
+        const write =
+          typeof devAny.legacy_io_write === "function"
+            ? (devAny.legacy_io_write as (offset: number, size: number, value: number) => void)
+            : typeof devAny.legacyIoWrite === "function"
+              ? (devAny.legacyIoWrite as (offset: number, size: number, value: number) => void)
+              : typeof devAny.io_write === "function"
+                ? (devAny.io_write as (offset: number, size: number, value: number) => void)
+                : typeof devAny.ioWrite === "function"
+                  ? (devAny.ioWrite as (offset: number, size: number, value: number) => void)
+                  : null;
+        if (!read || !write) return false;
 
-      // virtio-pci legacy IO is gated by PCI command bit0 (I/O enable). For the probe we
-      // temporarily enable I/O decoding inside the bridge so the read is meaningful.
-      const setCmd = typeof devAny.set_pci_command === "function" ? (devAny.set_pci_command as (command: number) => void) : null;
-      try {
-        if (setCmd) {
-          try {
-            setCmd.call(dev, 0x0001);
+        // virtio-pci legacy IO is gated by PCI command bit0 (I/O enable). For the probe we
+        // temporarily enable I/O decoding inside the bridge so the read is meaningful.
+        const setCmdAny = devAny.set_pci_command ?? devAny.setPciCommand;
+        const setCmd = typeof setCmdAny === "function" ? (setCmdAny as (command: number) => void) : null;
+        try {
+          if (setCmd) {
+            try {
+              setCmd.call(dev, 0x0001);
           } catch {
             // ignore
           }

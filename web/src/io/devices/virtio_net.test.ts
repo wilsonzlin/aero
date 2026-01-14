@@ -86,6 +86,43 @@ describe("io/devices/VirtioNetPciDevice", () => {
     expect(Array.from(visited)).toEqual([0x50, 0x60, 0x74, 0x84]);
   });
 
+  it("accepts camelCase virtio-net bridge exports (backwards compatibility)", () => {
+    const mmioRead = vi.fn(() => 0x1234_5678);
+    const mmioWrite = vi.fn();
+    const poll = vi.fn();
+    const irqAsserted = vi.fn(() => false);
+    const setPciCommand = vi.fn();
+    const free = vi.fn();
+
+    const bridge = {
+      mmioRead,
+      mmioWrite,
+      poll,
+      irqAsserted,
+      setPciCommand,
+      free,
+    };
+    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+    const dev = new VirtioNetPciDevice({ bridge: bridge as unknown as VirtioNetPciBridgeLike, irqSink });
+
+    // Defined region (COMMON_CFG): should forward to bridge.
+    expect(dev.mmioRead(0, 0x0000n, 4)).toBe(0x1234_5678);
+    expect(mmioRead).toHaveBeenCalledWith(0, 4);
+
+    dev.mmioWrite(0, 0x0000n, 4, 0xdead_beef);
+    expect(mmioWrite).toHaveBeenCalledWith(0, 4, 0xdead_beef);
+
+    // Enable bus mastering so poll runs, and ensure PCI command is mirrored.
+    dev.onPciCommandWrite(1 << 2);
+    expect(setPciCommand).toHaveBeenCalledWith(0x0004);
+
+    dev.tick(0);
+    expect(poll).toHaveBeenCalledTimes(1);
+
+    dev.destroy();
+    expect(free).toHaveBeenCalled();
+  });
+
   it("returns 0 and ignores writes for undefined BAR0 MMIO offsets (contract v1)", () => {
     const mmioRead = vi.fn(() => 0x1234_5678);
     const mmioWrite = vi.fn();

@@ -540,6 +540,19 @@ export class VirtioInputPciFunction implements PciDevice, TickableDevice {
   readonly capabilities: ReadonlyArray<PciCapability>;
 
   readonly #dev: VirtioInputPciDeviceLike;
+  readonly #mmioReadFn: (offset: number, size: number) => number;
+  readonly #mmioWriteFn: (offset: number, size: number, value: number) => void;
+  readonly #pollFn: () => void;
+  readonly #driverOkFn: () => boolean;
+  readonly #irqAssertedFn: () => boolean;
+  readonly #injectKeyFn: (linuxKey: number, pressed: boolean) => void;
+  readonly #injectRelFn: (dx: number, dy: number) => void;
+  readonly #injectButtonFn: (btn: number, pressed: boolean) => void;
+  readonly #injectWheelFn: (delta: number) => void;
+  readonly #injectHwheelFn: ((delta: number) => void) | null;
+  readonly #injectWheel2Fn: ((wheel: number, hwheel: number) => void) | null;
+  readonly #setPciCommandFn: ((command: number) => void) | null;
+  readonly #freeFn: () => void;
   readonly #irqSink: IrqSink;
   readonly #kind: VirtioInputKind;
   readonly #mode: VirtioInputPciMode;
@@ -555,6 +568,62 @@ export class VirtioInputPciFunction implements PciDevice, TickableDevice {
     this.#dev = opts.device;
     this.#irqSink = opts.irqSink;
     this.#mode = opts.mode ?? "modern";
+
+    // Backwards compatibility: accept both snake_case and camelCase exports and always call
+    // extracted methods via `.call(dev, ...)` to avoid wasm-bindgen `this` binding pitfalls.
+    const devAny = opts.device as unknown as Record<string, unknown>;
+    const mmioRead = devAny.mmio_read ?? devAny.mmioRead;
+    const mmioWrite = devAny.mmio_write ?? devAny.mmioWrite;
+    const poll = devAny.poll;
+    const driverOk = devAny.driver_ok ?? devAny.driverOk;
+    const irqAsserted = devAny.irq_asserted ?? devAny.irqAsserted;
+    const injectKey = devAny.inject_key ?? devAny.injectKey;
+    const injectRel = devAny.inject_rel ?? devAny.injectRel;
+    const injectButton = devAny.inject_button ?? devAny.injectButton;
+    const injectWheel = devAny.inject_wheel ?? devAny.injectWheel;
+    const free = devAny.free;
+
+    if (typeof mmioRead !== "function" || typeof mmioWrite !== "function") {
+      throw new Error("virtio-input device missing mmio_read/mmioRead or mmio_write/mmioWrite exports.");
+    }
+    if (typeof poll !== "function") {
+      throw new Error("virtio-input device missing poll() export.");
+    }
+    if (typeof driverOk !== "function") {
+      throw new Error("virtio-input device missing driver_ok/driverOk export.");
+    }
+    if (typeof irqAsserted !== "function") {
+      throw new Error("virtio-input device missing irq_asserted/irqAsserted export.");
+    }
+    if (typeof injectKey !== "function" || typeof injectRel !== "function") {
+      throw new Error("virtio-input device missing inject_key/injectKey or inject_rel/injectRel exports.");
+    }
+    if (typeof injectButton !== "function" || typeof injectWheel !== "function") {
+      throw new Error("virtio-input device missing inject_button/injectButton or inject_wheel/injectWheel exports.");
+    }
+    if (typeof free !== "function") {
+      throw new Error("virtio-input device missing free() export.");
+    }
+
+    this.#mmioReadFn = mmioRead as (offset: number, size: number) => number;
+    this.#mmioWriteFn = mmioWrite as (offset: number, size: number, value: number) => void;
+    this.#pollFn = poll as () => void;
+    this.#driverOkFn = driverOk as () => boolean;
+    this.#irqAssertedFn = irqAsserted as () => boolean;
+    this.#injectKeyFn = injectKey as (linuxKey: number, pressed: boolean) => void;
+    this.#injectRelFn = injectRel as (dx: number, dy: number) => void;
+    this.#injectButtonFn = injectButton as (btn: number, pressed: boolean) => void;
+    this.#injectWheelFn = injectWheel as (delta: number) => void;
+    this.#freeFn = free as () => void;
+
+    const injectHwheel = devAny.inject_hwheel ?? devAny.injectHwheel ?? devAny.injectHWheel;
+    this.#injectHwheelFn = typeof injectHwheel === "function" ? (injectHwheel as (delta: number) => void) : null;
+    const injectWheel2 = devAny.inject_wheel2 ?? devAny.injectWheel2;
+    this.#injectWheel2Fn =
+      typeof injectWheel2 === "function" ? (injectWheel2 as (wheel: number, hwheel: number) => void) : null;
+    const setCmd = devAny.set_pci_command ?? devAny.setPciCommand;
+    this.#setPciCommandFn = typeof setCmd === "function" ? (setCmd as (command: number) => void) : null;
+
     this.name = `virtio_input_${opts.kind}`;
     this.subsystemId = opts.kind === "keyboard" ? VIRTIO_INPUT_SUBSYSTEM_KEYBOARD : VIRTIO_INPUT_SUBSYSTEM_MOUSE;
     this.headerType = opts.kind === "keyboard" ? 0x80 : 0x00;
@@ -597,7 +666,7 @@ export class VirtioInputPciFunction implements PciDevice, TickableDevice {
 
     let value = 0;
     try {
-      value = this.#dev.mmio_read(off >>> 0, size >>> 0) >>> 0;
+      value = this.#mmioReadFn.call(this.#dev, off >>> 0, size >>> 0) >>> 0;
     } catch {
       value = 0;
     }
@@ -619,7 +688,7 @@ export class VirtioInputPciFunction implements PciDevice, TickableDevice {
     if (!Number.isFinite(off) || off < 0 || off + size > VIRTIO_INPUT_MMIO_BAR_SIZE) return;
 
     try {
-      this.#dev.mmio_write(off >>> 0, size >>> 0, maskToSize(value >>> 0, size));
+      this.#mmioWriteFn.call(this.#dev, off >>> 0, size >>> 0, maskToSize(value >>> 0, size));
     } catch {
       // ignore device errors during guest MMIO
     }
@@ -635,10 +704,17 @@ export class VirtioInputPciFunction implements PciDevice, TickableDevice {
     const off = offset >>> 0;
     if (off + size > VIRTIO_LEGACY_IO_BAR2_SIZE) return defaultReadValue(size);
 
-    const dev = this.#dev as unknown as { legacy_io_read?: unknown; io_read?: unknown };
-    const fn = (typeof dev.legacy_io_read === "function" ? dev.legacy_io_read : dev.io_read) as
-      | ((offset: number, size: number) => number)
-      | undefined;
+    const dev = this.#dev as unknown as Record<string, unknown>;
+    const fn =
+      (typeof dev.legacy_io_read === "function"
+        ? (dev.legacy_io_read as (offset: number, size: number) => number)
+        : typeof dev.legacyIoRead === "function"
+          ? (dev.legacyIoRead as (offset: number, size: number) => number)
+          : typeof dev.io_read === "function"
+            ? (dev.io_read as (offset: number, size: number) => number)
+            : typeof dev.ioRead === "function"
+              ? (dev.ioRead as (offset: number, size: number) => number)
+              : undefined) ?? undefined;
     if (typeof fn !== "function") return defaultReadValue(size);
 
     let value: number;
@@ -660,10 +736,17 @@ export class VirtioInputPciFunction implements PciDevice, TickableDevice {
     const off = offset >>> 0;
     if (off + size > VIRTIO_LEGACY_IO_BAR2_SIZE) return;
 
-    const dev = this.#dev as unknown as { legacy_io_write?: unknown; io_write?: unknown };
-    const fn = (typeof dev.legacy_io_write === "function" ? dev.legacy_io_write : dev.io_write) as
-      | ((offset: number, size: number, value: number) => void)
-      | undefined;
+    const dev = this.#dev as unknown as Record<string, unknown>;
+    const fn =
+      (typeof dev.legacy_io_write === "function"
+        ? (dev.legacy_io_write as (offset: number, size: number, value: number) => void)
+        : typeof dev.legacyIoWrite === "function"
+          ? (dev.legacyIoWrite as (offset: number, size: number, value: number) => void)
+          : typeof dev.io_write === "function"
+            ? (dev.io_write as (offset: number, size: number, value: number) => void)
+            : typeof dev.ioWrite === "function"
+              ? (dev.ioWrite as (offset: number, size: number, value: number) => void)
+              : undefined) ?? undefined;
     if (typeof fn === "function") {
       try {
         fn.call(this.#dev, off, size, maskToSize(value >>> 0, size));
@@ -680,7 +763,7 @@ export class VirtioInputPciFunction implements PciDevice, TickableDevice {
     this.#pciCommand = cmd;
 
     // Mirror into the underlying device model so it can enforce DMA gating based on Bus Master Enable.
-    const setCmd = this.#dev.set_pci_command;
+    const setCmd = this.#setPciCommandFn;
     if (typeof setCmd === "function") {
       try {
         setCmd.call(this.#dev, cmd >>> 0);
@@ -708,7 +791,7 @@ export class VirtioInputPciFunction implements PciDevice, TickableDevice {
       try {
         // Drive notified virtqueues (especially `statusq` LED/output events) so the guest
         // never wedges waiting for completions when no input events are flowing.
-        this.#dev.poll();
+        this.#pollFn.call(this.#dev);
       } catch {
         // ignore device errors during tick
       }
@@ -719,7 +802,7 @@ export class VirtioInputPciFunction implements PciDevice, TickableDevice {
   driverOk(): boolean {
     let ok = false;
     try {
-      ok = Boolean(this.#dev.driver_ok());
+      ok = Boolean(this.#driverOkFn.call(this.#dev));
     } catch {
       ok = false;
     }
@@ -737,7 +820,7 @@ export class VirtioInputPciFunction implements PciDevice, TickableDevice {
     const key = code >>> 0;
     if (key === 0) return;
     try {
-      this.#dev.inject_key(key, Boolean(pressed));
+      this.#injectKeyFn.call(this.#dev, key, Boolean(pressed));
     } catch {
       // ignore
     }
@@ -750,7 +833,7 @@ export class VirtioInputPciFunction implements PciDevice, TickableDevice {
     const y = dy | 0;
     if (x === 0 && y === 0) return;
     try {
-      this.#dev.inject_rel(x, y);
+      this.#injectRelFn.call(this.#dev, x, y);
     } catch {
       // ignore
     }
@@ -760,7 +843,7 @@ export class VirtioInputPciFunction implements PciDevice, TickableDevice {
   injectWheel(delta: number): void {
     if (this.#destroyed) return;
     try {
-      this.#dev.inject_wheel(delta | 0);
+      this.#injectWheelFn.call(this.#dev, delta | 0);
     } catch {
       // ignore
     }
@@ -769,7 +852,7 @@ export class VirtioInputPciFunction implements PciDevice, TickableDevice {
 
   injectHWheel(delta: number): void {
     if (this.#destroyed) return;
-    const fn = this.#dev.inject_hwheel;
+    const fn = this.#injectHwheelFn;
     if (!fn) return;
     try {
       fn.call(this.#dev, delta | 0);
@@ -782,7 +865,7 @@ export class VirtioInputPciFunction implements PciDevice, TickableDevice {
   injectWheel2(wheel: number, hwheel: number): void {
     if (this.#destroyed) return;
 
-    const fn = this.#dev.inject_wheel2;
+    const fn = this.#injectWheel2Fn;
     if (fn) {
       try {
         fn.call(this.#dev, wheel | 0, hwheel | 0);
@@ -824,7 +907,7 @@ export class VirtioInputPciFunction implements PciDevice, TickableDevice {
 
     for (const ch of changes) {
       try {
-        this.#dev.inject_button(ch.code >>> 0, ch.pressed);
+        this.#injectButtonFn.call(this.#dev, ch.code >>> 0, ch.pressed);
       } catch {
         // ignore
       }
@@ -836,22 +919,29 @@ export class VirtioInputPciFunction implements PciDevice, TickableDevice {
 
   canSaveState(): boolean {
     const dev = this.#dev as unknown as Record<string, unknown>;
-    return typeof dev["save_state"] === "function" || typeof dev["snapshot_state"] === "function";
+    return (
+      typeof dev["save_state"] === "function" ||
+      typeof dev["snapshot_state"] === "function" ||
+      typeof dev["saveState"] === "function" ||
+      typeof dev["snapshotState"] === "function"
+    );
   }
 
   canLoadState(): boolean {
     const dev = this.#dev as unknown as Record<string, unknown>;
-    return typeof dev["load_state"] === "function" || typeof dev["restore_state"] === "function";
+    return (
+      typeof dev["load_state"] === "function" ||
+      typeof dev["restore_state"] === "function" ||
+      typeof dev["loadState"] === "function" ||
+      typeof dev["restoreState"] === "function"
+    );
   }
 
   saveState(): Uint8Array | null {
     if (this.#destroyed) return null;
-    const devAny = this.#dev as unknown as {
-      save_state?: unknown;
-      snapshot_state?: unknown;
-    };
-    const save = typeof devAny.save_state === "function" ? devAny.save_state : typeof devAny.snapshot_state === "function" ? devAny.snapshot_state : null;
-    if (!save) return null;
+    const devAny = this.#dev as unknown as Record<string, unknown>;
+    const save = devAny.save_state ?? devAny.snapshot_state ?? devAny.saveState ?? devAny.snapshotState;
+    if (typeof save !== "function") return null;
     try {
       const bytes = (save as () => unknown).call(this.#dev) as unknown;
       if (bytes instanceof Uint8Array) return bytes;
@@ -863,13 +953,9 @@ export class VirtioInputPciFunction implements PciDevice, TickableDevice {
 
   loadState(bytes: Uint8Array): boolean {
     if (this.#destroyed) return false;
-    const devAny = this.#dev as unknown as {
-      load_state?: unknown;
-      restore_state?: unknown;
-    };
-    const load =
-      typeof devAny.load_state === "function" ? devAny.load_state : typeof devAny.restore_state === "function" ? devAny.restore_state : null;
-    if (!load) return false;
+    const devAny = this.#dev as unknown as Record<string, unknown>;
+    const load = devAny.load_state ?? devAny.restore_state ?? devAny.loadState ?? devAny.restoreState;
+    if (typeof load !== "function") return false;
     try {
       (load as (bytes: Uint8Array) => unknown).call(this.#dev, bytes);
       this.#syncIrq();
@@ -902,7 +988,7 @@ export class VirtioInputPciFunction implements PciDevice, TickableDevice {
     }
 
     try {
-      this.#dev.free();
+      this.#freeFn.call(this.#dev);
     } catch {
       // ignore
     }
@@ -911,7 +997,7 @@ export class VirtioInputPciFunction implements PciDevice, TickableDevice {
   #syncIrq(): void {
     let asserted = false;
     try {
-      asserted = Boolean(this.#dev.irq_asserted());
+      asserted = Boolean(this.#irqAssertedFn.call(this.#dev));
     } catch {
       asserted = false;
     }

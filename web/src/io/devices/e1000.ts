@@ -86,6 +86,17 @@ export class E1000PciDevice implements PciDevice, TickableDevice {
   ];
 
   readonly #bridge: E1000BridgeLike;
+  readonly #mmioReadFn: (offset: number, size: number) => number;
+  readonly #mmioWriteFn: (offset: number, size: number, value: number) => void;
+  readonly #ioReadFn: (offset: number, size: number) => number;
+  readonly #ioWriteFn: (offset: number, size: number, value: number) => void;
+  readonly #pollFn: () => void;
+  readonly #receiveFrameFn: (frame: Uint8Array) => void;
+  readonly #popTxFrameFn: () => Uint8Array | null | undefined;
+  readonly #irqLevelFn: () => boolean;
+  readonly #freeFn: () => void;
+  readonly #pciConfigWriteFn: ((offset: number, size: number, value: number) => void) | null;
+  readonly #setPciCommandFn: ((command: number) => void) | null;
   readonly #irqSink: IrqSink;
   readonly #netTxRing: RingBuffer;
   readonly #netRxRing: RingBuffer;
@@ -101,11 +112,65 @@ export class E1000PciDevice implements PciDevice, TickableDevice {
     this.#irqSink = opts.irqSink;
     this.#netTxRing = opts.netTxRing;
     this.#netRxRing = opts.netRxRing;
+
+    // Backwards compatibility: accept both snake_case and camelCase WASM bridge methods.
+    // Pre-resolve the hot-path method references and always invoke extracted methods via
+    // `.call(bridge, ...)` to avoid wasm-bindgen `this` binding pitfalls.
+    const bridgeAny = opts.bridge as unknown as Record<string, unknown>;
+
+    const mmioRead = bridgeAny.mmio_read ?? bridgeAny.mmioRead;
+    const mmioWrite = bridgeAny.mmio_write ?? bridgeAny.mmioWrite;
+    const ioRead = bridgeAny.io_read ?? bridgeAny.ioRead;
+    const ioWrite = bridgeAny.io_write ?? bridgeAny.ioWrite;
+    const poll = bridgeAny.poll;
+    const receiveFrame = bridgeAny.receive_frame ?? bridgeAny.receiveFrame;
+    const popTxFrame = bridgeAny.pop_tx_frame ?? bridgeAny.popTxFrame;
+    const irqLevel = bridgeAny.irq_level ?? bridgeAny.irqLevel;
+    const free = bridgeAny.free;
+
+    if (typeof mmioRead !== "function" || typeof mmioWrite !== "function") {
+      throw new Error("E1000 bridge missing mmio_read/mmioRead or mmio_write/mmioWrite exports.");
+    }
+    if (typeof ioRead !== "function" || typeof ioWrite !== "function") {
+      throw new Error("E1000 bridge missing io_read/ioRead or io_write/ioWrite exports.");
+    }
+    if (typeof poll !== "function") {
+      throw new Error("E1000 bridge missing poll() export.");
+    }
+    if (typeof receiveFrame !== "function") {
+      throw new Error("E1000 bridge missing receive_frame/receiveFrame export.");
+    }
+    if (typeof popTxFrame !== "function") {
+      throw new Error("E1000 bridge missing pop_tx_frame/popTxFrame export.");
+    }
+    if (typeof irqLevel !== "function") {
+      throw new Error("E1000 bridge missing irq_level/irqLevel export.");
+    }
+    if (typeof free !== "function") {
+      throw new Error("E1000 bridge missing free() export.");
+    }
+
+    this.#mmioReadFn = mmioRead as (offset: number, size: number) => number;
+    this.#mmioWriteFn = mmioWrite as (offset: number, size: number, value: number) => void;
+    this.#ioReadFn = ioRead as (offset: number, size: number) => number;
+    this.#ioWriteFn = ioWrite as (offset: number, size: number, value: number) => void;
+    this.#pollFn = poll as () => void;
+    this.#receiveFrameFn = receiveFrame as (frame: Uint8Array) => void;
+    this.#popTxFrameFn = popTxFrame as () => Uint8Array | null | undefined;
+    this.#irqLevelFn = irqLevel as () => boolean;
+    this.#freeFn = free as () => void;
+
+    const pciConfigWrite = bridgeAny.pci_config_write ?? bridgeAny.pciConfigWrite;
+    this.#pciConfigWriteFn =
+      typeof pciConfigWrite === "function" ? (pciConfigWrite as (offset: number, size: number, value: number) => void) : null;
+
+    const setPciCommand = bridgeAny.set_pci_command ?? bridgeAny.setPciCommand;
+    this.#setPciCommandFn = typeof setPciCommand === "function" ? (setPciCommand as (cmd: number) => void) : null;
   }
 
   pciConfigWrite(offset: number, size: number, value: number): void {
     if (this.#destroyed) return;
-    const fn = this.#bridge.pci_config_write;
+    const fn = this.#pciConfigWriteFn;
     if (!fn) return;
     if (size !== 1 && size !== 2 && size !== 4) return;
     try {
@@ -125,7 +190,7 @@ export class E1000PciDevice implements PciDevice, TickableDevice {
 
     let value = defaultReadValue(size);
     try {
-      value = this.#bridge.mmio_read(off >>> 0, size >>> 0) >>> 0;
+      value = this.#mmioReadFn.call(this.#bridge, off >>> 0, size >>> 0) >>> 0;
     } catch {
       value = defaultReadValue(size);
     }
@@ -144,7 +209,7 @@ export class E1000PciDevice implements PciDevice, TickableDevice {
     if (!Number.isFinite(off) || off < 0 || off + size > E1000_MMIO_BAR_SIZE) return;
 
     try {
-      this.#bridge.mmio_write(off >>> 0, size >>> 0, maskToSize(value >>> 0, size));
+      this.#mmioWriteFn.call(this.#bridge, off >>> 0, size >>> 0, maskToSize(value >>> 0, size));
     } catch {
       // ignore device errors during guest MMIO
     }
@@ -161,7 +226,7 @@ export class E1000PciDevice implements PciDevice, TickableDevice {
 
     let value = defaultReadValue(size);
     try {
-      value = this.#bridge.io_read(off, size >>> 0) >>> 0;
+      value = this.#ioReadFn.call(this.#bridge, off, size >>> 0) >>> 0;
     } catch {
       value = defaultReadValue(size);
     }
@@ -180,7 +245,7 @@ export class E1000PciDevice implements PciDevice, TickableDevice {
     if (off + size > E1000_IO_BAR_SIZE) return;
 
     try {
-      this.#bridge.io_write(off, size >>> 0, maskToSize(value >>> 0, size));
+      this.#ioWriteFn.call(this.#bridge, off, size >>> 0, maskToSize(value >>> 0, size));
     } catch {
       // ignore device errors during guest IO
     }
@@ -201,7 +266,7 @@ export class E1000PciDevice implements PciDevice, TickableDevice {
     const busMasterEnabled = (this.#pciCommand & (1 << 2)) !== 0;
     if (busMasterEnabled) {
       try {
-        this.#bridge.poll();
+        this.#pollFn.call(this.#bridge);
       } catch {
         // ignore device errors during tick
       }
@@ -223,7 +288,7 @@ export class E1000PciDevice implements PciDevice, TickableDevice {
     this.#pendingTxFrame = null;
 
     try {
-      this.#bridge.free();
+      this.#freeFn.call(this.#bridge);
     } catch {
       // ignore
     }
@@ -265,7 +330,7 @@ export class E1000PciDevice implements PciDevice, TickableDevice {
 
     // Mirror into the WASM device model so DMA gating (Bus Master Enable) is coherent with the
     // JS PCI config space.
-    const setCmd = this.#bridge.set_pci_command;
+    const setCmd = this.#setPciCommandFn;
     if (typeof setCmd === "function") {
       try {
         setCmd.call(this.#bridge, cmd >>> 0);
@@ -281,11 +346,12 @@ export class E1000PciDevice implements PciDevice, TickableDevice {
   #pumpRxRing(): void {
     const ring = this.#netRxRing;
     const bridge = this.#bridge;
+    const receiveFrame = this.#receiveFrameFn;
 
     for (let i = 0; i < MAX_FRAMES_PER_TICK; i++) {
       const didConsume = ring.consumeNext((frame) => {
         try {
-          bridge.receive_frame(frame);
+          receiveFrame.call(bridge, frame);
         } catch {
           // ignore malformed frames
         }
@@ -297,6 +363,7 @@ export class E1000PciDevice implements PciDevice, TickableDevice {
   #pumpTxRing(): void {
     const ring = this.#netTxRing;
     const bridge = this.#bridge;
+    const popTxFrame = this.#popTxFrameFn;
 
     // If the NET_TX ring was full, retry the pending frame first and avoid
     // popping more frames from WASM until we can flush it.
@@ -308,7 +375,7 @@ export class E1000PciDevice implements PciDevice, TickableDevice {
     for (let i = 0; i < MAX_FRAMES_PER_TICK; i++) {
       let frame: Uint8Array | null | undefined;
       try {
-        frame = bridge.pop_tx_frame();
+        frame = popTxFrame.call(bridge);
       } catch {
         frame = undefined;
       }
@@ -328,7 +395,7 @@ export class E1000PciDevice implements PciDevice, TickableDevice {
     // See `docs/irq-semantics.md`.
     let asserted = false;
     try {
-      asserted = Boolean(this.#bridge.irq_level());
+      asserted = Boolean(this.#irqLevelFn.call(this.#bridge));
     } catch {
       asserted = false;
     }
