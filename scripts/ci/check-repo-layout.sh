@@ -24,6 +24,15 @@ cd "$(git rev-parse --show-toplevel)"
 need_file "docs/repo-layout.md"
 need_file "docs/adr/0001-repo-layout.md"
 
+# Canonical VM wiring guardrail:
+# `crates/emulator` is legacy/compat and must not become part of the "canonical"
+# dependency graph via new `[dependencies] emulator = { ... }` edges.
+if command -v python3 >/dev/null 2>&1; then
+  python3 scripts/ci/check-no-emulator-deps.py
+else
+  echo "warning: python3 not found; skipping emulator dependency guardrail" >&2
+fi
+
 # Local-only agent notes should never be checked in. They're ignored by default, but
 # `git add -f` would still stage them. Keep the repo clean by failing CI if they
 # become tracked.

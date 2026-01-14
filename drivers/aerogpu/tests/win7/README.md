@@ -430,10 +430,14 @@ In a Win7 VM with AeroGPU installed and working correctly:
 * `d3d9ex_scissor_sanity` validates `SetScissorRect` + `D3DRS_SCISSORTESTENABLE` actually clips rendering (expects **corner red + center blue** via readback)
 * `d3d9ex_multiframe_triangle` renders multiple frames using a persistent dynamic vertex buffer and confirms the **center pixel changes across frames** via readback (uses non-symmetric colors to catch channel-order regressions)
 * `d3d9ex_vb_dirty_range` renders a blue triangle using a vertex buffer updated via `Lock/Unlock` and confirms **corner red + center blue** via readback (catches regressions in vertex-buffer dirty-range tracking / upload)
-* `d3d9_process_vertices_smoke` calls `IDirect3DDevice9::ProcessVertices` with non-zero `SrcStartIndex`/`DestIndex`, then draws from the processed vertex buffer and confirms **corner red + center blue** via readback (catches regressions where ProcessVertices is a silent no-op or mishandles offsets)
+* `d3d9_process_vertices_sanity` calls `IDirect3DDevice9::ProcessVertices` and validates the output vertex buffer bytes match expected results (including XYZ→XYZRHW conversion paths) (catches regressions where ProcessVertices produces incorrect vertex data)
+* `d3d9_process_vertices_smoke` calls `IDirect3DDevice9::ProcessVertices` with non-zero `SrcStartIndex`/`DestIndex`, then draws from the processed vertex buffer and confirms **corner clear + center blue** via readback (catches regressions where ProcessVertices is a silent no-op or mishandles offsets)
+* `d3d9_fixedfunc_xyz_diffuse` draws a triangle using the fixed-function pipeline (`D3DFVF_XYZ|D3DFVF_DIFFUSE`) with world/view/projection transforms and validates **corner clear + center diffuse** via readback (catches clip-space/transform regressions)
+* `d3d9_fixedfunc_xyz_diffuse_tex1` draws a textured triangle using the fixed-function pipeline (`D3DFVF_XYZ|D3DFVF_DIFFUSE|D3DFVF_TEX1`) and validates the expected modulated output via readback (catches fixed-function texturing regressions)
 * `d3d9ex_stretchrect` exercises compositor-critical D3D9Ex DDIs: `ColorFill`, `UpdateSurface`, `StretchRect`, and `UpdateTexture` (validated via readback)
 * `d3d9ex_query_latency` validates D3D9Ex `D3DQUERYTYPE_EVENT` polling + max frame latency APIs (prints query completion timing + configured latency)
 * `d3d9ex_texture_16bit_formats` validates creation/upload/rendering of common 16-bit texture formats via readback (sanity-check for format support and conversion paths)
+* `d3d9_patch_rendering_smoke` draws both `DrawRectPatch` and `DrawTriPatch` (including redraw after `DeletePatch`) and validates expected pixel output via backbuffer readback (catches broken patch rendering paths)
 * `d3d9ex_shared_surface` creates a D3D9Ex shared render-target (prefers texture; falls back to shared surface), duplicates the shared handle into a child process, and validates cross-process pixel visibility via readback (pass `--no-validate-sharing` to skip readback validation)
   * When debugging the KMD, this is also a good repro for validating stable `alloc_id` / `share_token`:
     * `alloc_id` is preserved cross-process via the WDDM allocation private-driver-data blob (`aerogpu_wddm_alloc_priv.alloc_id` in `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`).
@@ -454,6 +458,7 @@ In a Win7 VM with AeroGPU installed and working correctly:
 * `d3d9ex_shared_allocations` exercises allocation behavior for shared resources:
   * creates a non-shared mip chain texture (Levels=4) as a baseline for `NumAllocations` logging
   * creates a shared render-target surface and attempts shared textures that would imply multiple mips (Levels=4 and Levels=0/full chain), which may be rejected by the MVP single-allocation policy
+* `d3d9_patch_sanity` probes D3D9 patch caps and (when supported) renders a cubic Bezier patch, validating expected output via readback (skips when patch caps are not advertised)
 * `d3d9ex_shared_surface_stress` repeatedly creates a shared D3D9Ex render target surface in a parent process, duplicates the shared handle into a child process, and validates the child can open the surface (including opening it twice) and issue basic rendering commands without hanging or crashing (`--iterations=N` controls loop count; default 20)
 * `d3d10_triangle` uses `D3D10CreateDeviceAndSwapChain` (hardware), verifies the D3D10 runtime path (`d3d10.dll`) and the AeroGPU `OpenAdapter10` export, and confirms **corner red + center green** via readback
 * `d3d10_map_do_not_wait` validates that `Map(READ, DO_NOT_WAIT)` is a non-blocking poll (returns `DXGI_ERROR_WAS_STILL_DRAWING` while work is in flight, never hangs)
