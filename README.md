@@ -332,6 +332,11 @@ Browsers cannot open arbitrary TCP/UDP sockets directly. Aero’s guest networki
 
   Inbound filtering note: by default the relay only forwards inbound UDP from remote address+port tuples that the guest previously sent to (`UDP_INBOUND_FILTER_MODE=address_and_port`). You can switch to full-cone behavior with `UDP_INBOUND_FILTER_MODE=any` (**less safe**; see the relay README).
 
+  DoS hardening note: the relay configures pion/SCTP message-size caps to prevent malicious peers from sending extremely large WebRTC DataChannel messages that could otherwise be buffered/allocated before `DataChannel.OnMessage` runs. These are configurable on the relay via:
+  - `WEBRTC_DATACHANNEL_MAX_MESSAGE_BYTES` (SDP `a=max-message-size` hint; 0 = auto)
+  - `WEBRTC_SCTP_MAX_RECEIVE_BUFFER_BYTES` (hard receive-side cap; 0 = auto; must be ≥ `WEBRTC_DATACHANNEL_MAX_MESSAGE_BYTES` and ≥ `1500`)
+  - `WEBRTC_SESSION_CONNECT_TIMEOUT` (close server-side PeerConnections that never connect; default `30s`)
+
   When deploying the relay separately, `backend/aero-gateway` can optionally mint short-lived relay credentials via the `udpRelay` field in `POST /session` (or `POST /udp-relay/token`).
 
 ### Local dev workflow (run alongside Vite)
