@@ -263,7 +263,8 @@ export async function reattachMachineSnapshotDisks(opts: {
         // path string (not the disk format metadata), and callers may reuse stable file names like
         // `win7.base` even when the underlying file is an `.aerospar` image. Detect this case via the
         // header when we can.
-        let isAerosparBase = base.toLowerCase().endsWith(".aerospar");
+        const baseLower = base.toLowerCase();
+        let isAerosparBase = baseLower.endsWith(".aerospar") || baseLower.endsWith(".aerosparse");
         if (!isAerosparBase) {
           const blockSize = await tryReadAerosparseBlockSizeBytesFromOpfs(base, prefix);
           isAerosparBase = blockSize != null;

@@ -585,6 +585,38 @@ describe("runtime/machine_snapshot_disks", () => {
     }
   });
 
+  it("treats .aerosparse base disk suffixes as aerospar without needing header sniffing", async () => {
+    const events: string[] = [];
+    const restore_snapshot_from_opfs = vi.fn(async (_path: string) => {
+      events.push("restore");
+    });
+    const take_restored_disk_overlays = vi.fn(() => {
+      events.push("take");
+      return [{ disk_id: 1, base_image: "aero/disks/win7.aerosparse", overlay_image: "" }];
+    });
+    const set_disk_aerospar_opfs_open = vi.fn(async (_path: string) => {
+      events.push("aerospar");
+    });
+
+    const machine = {
+      restore_snapshot_from_opfs,
+      take_restored_disk_overlays,
+      set_disk_aerospar_opfs_open,
+    } as unknown as InstanceType<WasmApi["Machine"]>;
+
+    const api = {
+      Machine: {
+        disk_id_primary_hdd: () => 1,
+        disk_id_install_media: () => 2,
+      },
+    } as unknown as WasmApi;
+
+    await restoreMachineSnapshotFromOpfsAndReattachDisks({ api, machine, path: "state/test.snap", logPrefix: "test" });
+
+    expect(set_disk_aerospar_opfs_open).toHaveBeenCalledWith("aero/disks/win7.aerosparse");
+    expect(events).toEqual(["restore", "take", "aerospar"]);
+  });
+
   it("prefers Machine.set_disk_cow_opfs_open when available (supports non-raw base images)", async () => {
     const events: string[] = [];
     const restore_snapshot_from_opfs = vi.fn(async (_path: string) => {
