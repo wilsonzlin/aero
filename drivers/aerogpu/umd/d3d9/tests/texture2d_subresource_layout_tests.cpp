@@ -166,7 +166,13 @@ int main() {
   // BC1 uses 4x4 blocks; ensure pitch calculations follow block rounding for
   // both the base level and smaller mips.
   ok &= RunCase("BC1 7x5 mips=5 layers=2", aerogpu::kD3dFmtDxt1, 7, 5, 5, 2);
- 
+
+  // BC3 uses 16-byte blocks (DXT5 family); verify the 16-byte block path.
+  ok &= RunCase("BC3 7x5 mips=5 layers=2", aerogpu::kD3dFmtDxt5, 7, 5, 5, 2);
+
+  // Uncompressed 16-bit format: validate bytes-per-pixel pitch computation.
+  ok &= RunCase("R5G6B5 13x7 mips=4 layers=2", static_cast<D3DDDIFORMAT>(23u), 13, 7, 4, 2);
+
   return ok ? 0 : 1;
 }
  
