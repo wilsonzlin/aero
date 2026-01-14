@@ -1,3 +1,4 @@
+use aero_usb::device::AttachedUsbDevice;
 use aero_usb::ehci::regs::{
     reg_portsc, CONFIGFLAG_CF, PORTSC_CSC, PORTSC_FPR, PORTSC_HSP, PORTSC_LS_MASK, PORTSC_PED,
     PORTSC_PEDC, PORTSC_PO, PORTSC_PP, PORTSC_PR, PORTSC_SUSP, REG_CONFIGFLAG, REG_USBSTS,
@@ -46,6 +47,14 @@ fn control_no_data(ehci: &mut EhciController, addr: u8, setup: SetupPacket) {
         .hub_mut()
         .device_mut_for_address(addr)
         .unwrap_or_else(|| panic!("expected USB device at address {addr}"));
+    assert_eq!(dev.handle_setup(setup), UsbOutResult::Ack);
+    assert!(
+        matches!(dev.handle_in(0, 0), UsbInResult::Data(data) if data.is_empty()),
+        "expected ACK for status stage"
+    );
+}
+
+fn control_no_data_dev(dev: &mut AttachedUsbDevice, setup: SetupPacket) {
     assert_eq!(dev.handle_setup(setup), UsbOutResult::Ack);
     assert!(
         matches!(dev.handle_in(0, 0), UsbInResult::Data(data) if data.is_empty()),
@@ -749,5 +758,70 @@ fn ehci_keyboard_remote_wakeup_does_not_propagate_through_external_hub_without_h
     assert!(
         ehci.hub_mut().device_mut_for_address(2).is_none(),
         "device should not be reachable while the root port remains suspended"
+    );
+
+    // Enable DEVICE_REMOTE_WAKEUP on the hub *after* the downstream device has already requested
+    // remote wake. The hub should have drained the wake request even while propagation was
+    // disabled, so enabling remote wake later must not "replay" a stale wake event.
+    {
+        let mut hub_dev = ehci
+            .hub_mut()
+            .port_device_mut(0)
+            .expect("hub device should be attached");
+        control_no_data_dev(
+            &mut hub_dev,
+            SetupPacket {
+                bm_request_type: 0x00,
+                b_request: 0x03, // SET_FEATURE
+                w_value: 0x0001, // DEVICE_REMOTE_WAKEUP
+                w_index: 0,
+                w_length: 0,
+            },
+        );
+    }
+
+    for _ in 0..5 {
+        ehci.tick_1ms(&mut mem);
+    }
+
+    let portsc = ehci.mmio_read(reg_portsc(0), 4);
+    assert_eq!(
+        portsc & PORTSC_FPR,
+        0,
+        "unexpected EHCI resume state from a stale wake request after enabling hub remote wake"
+    );
+    assert_ne!(portsc & PORTSC_SUSP, 0, "port should remain suspended");
+    assert_eq!(portsc & PORTSC_LS_MASK, 0b10 << 10, "expected J-state");
+    assert!(
+        ehci.hub_mut().device_mut_for_address(2).is_none(),
+        "device should remain unreachable while the root port remains suspended"
+    );
+
+    // A fresh key event should now propagate remote wakeup through the hub.
+    keyboard.key_event(0x05, true); // HID usage for KeyB.
+    ehci.tick_1ms(&mut mem);
+
+    let portsc = ehci.mmio_read(reg_portsc(0), 4);
+    assert_ne!(
+        portsc & PORTSC_FPR,
+        0,
+        "expected EHCI port to enter resume state after remote wake once hub remote wake is enabled"
+    );
+    assert_eq!(
+        portsc & PORTSC_LS_MASK,
+        0b01 << 10,
+        "expected K-state while resuming"
+    );
+
+    // After the resume timer expires, the port should exit suspend/resume and return to J state.
+    for _ in 0..20 {
+        ehci.tick_1ms(&mut mem);
+    }
+    let portsc = ehci.mmio_read(reg_portsc(0), 4);
+    assert_eq!(portsc & (PORTSC_SUSP | PORTSC_FPR), 0);
+    assert_eq!(portsc & PORTSC_LS_MASK, 0b10 << 10);
+    assert!(
+        ehci.hub_mut().device_mut_for_address(2).is_some(),
+        "device should be reachable after remote wake resumes the port"
     );
 }
