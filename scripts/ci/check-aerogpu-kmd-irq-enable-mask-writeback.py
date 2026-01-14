@@ -150,16 +150,24 @@ def main() -> int:
 
     # Also forbid: assign InterlockedAnd(old) result into a variable and then use
     # that variable to program IRQ_ENABLE.
+    #
+    # NOTE: Be permissive about cast style; the KMD commonly spells the pointer
+    # cast as `(volatile LONG*)&adapter->IrqEnableMask` (rather than
+    # `(volatile LONG*)&(adapter->IrqEnableMask)` or `(volatile LONG*)&adapter->...`).
+    #
+    # We don't attempt to parse C here; this is a best-effort regex guardrail.
     assign_re = re.compile(
-        r"\b([A-Za-z_][A-Za-z0-9_]*)\s*=\s*\(ULONG\)\s*InterlockedAnd\s*\(\s*"
-        r"\(\s*volatile\s+LONG\s*\*\s*\)\s*&\s*(?:adapter|Adapter)->IrqEnableMask\s*,[^;]*?\)\s*;",
+        r"\b([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:\([^)]*\)\s*)?InterlockedAnd\s*\(\s*"
+        r"[^,;]*\b(?:adapter|Adapter)->IrqEnableMask\b[^,;]*,",
         re.S,
     )
     vars_old = set(assign_re.findall(body))
     for var in sorted(vars_old):
         if re.search(
-            rf"\bAeroGpuWriteRegU32\s*\(\s*(?:adapter|Adapter)\s*,\s*AEROGPU_MMIO_REG_IRQ_ENABLE\s*,\s*{re.escape(var)}\s*\)",
+            rf"\bAeroGpuWriteRegU32\s*\(\s*(?:adapter|Adapter)\s*,\s*AEROGPU_MMIO_REG_IRQ_ENABLE\s*,\s*"
+            rf"(?:\(\s*[^()]*\)\s*)*\(?\s*{re.escape(var)}\s*\)?\s*\)",
             body,
+            re.S,
         ):
             errors.append(
                 f"IRQ_ENABLE write uses '{var}', which is the old value returned by InterlockedAnd(&IrqEnableMask, ...)."
@@ -177,4 +185,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
