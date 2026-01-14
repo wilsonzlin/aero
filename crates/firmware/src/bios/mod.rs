@@ -603,6 +603,23 @@ impl Bios {
         self.el_torito_boot_info.is_some()
     }
 
+    /// Returns the configured BIOS boot drive number used when transferring control to the boot
+    /// sector / El Torito boot image.
+    pub fn boot_drive(&self) -> u8 {
+        self.config.boot_drive
+    }
+
+    /// Returns whether the host-configured firmware "CD-first when present" policy is enabled.
+    pub fn boot_from_cd_if_present(&self) -> bool {
+        self.config.boot_from_cd_if_present
+    }
+
+    /// Returns the BIOS drive number to use for CD-ROM boot when the "CD-first when present" policy
+    /// is enabled.
+    pub fn cd_boot_drive(&self) -> u8 {
+        self.config.cd_boot_drive
+    }
+
     /// Set the BIOS boot drive number exposed in `DL` when transferring control to the boot
     /// sector.
     ///

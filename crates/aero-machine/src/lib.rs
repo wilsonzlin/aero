@@ -5495,6 +5495,22 @@ impl Machine {
         }
     }
 
+    /// Returns the configured BIOS boot drive number (`DL`) used for the next firmware POST/boot.
+    pub fn boot_drive(&self) -> u8 {
+        self.boot_drive
+    }
+
+    /// Returns whether the firmware "CD-first when present" boot policy is enabled.
+    pub fn boot_from_cd_if_present(&self) -> bool {
+        self.bios.boot_from_cd_if_present()
+    }
+
+    /// Returns the BIOS drive number used for CD-ROM boot when the "CD-first when present" policy
+    /// is enabled.
+    pub fn cd_boot_drive(&self) -> u8 {
+        self.bios.cd_boot_drive()
+    }
+
     /// Returns whether the guest currently reports install media inserted in the canonical ATAPI
     /// CD-ROM slot (IDE secondary master).
     ///

@@ -164,10 +164,10 @@ mod native {
             .set_disk_backend(disk_backend)
             .map_err(|e| anyhow!("{e}"))?;
 
-        // Track whether we've enabled the firmware CD-first policy so we can disable it after the
-        // first guest-initiated reset (Windows setup reboots into the installed HDD while leaving
-        // install media inserted).
-        let mut cd_first_enabled = false;
+        // Track whether the firmware "CD-first when present" policy is enabled so we can disable it
+        // after the first guest-initiated reset (Windows setup reboots into the installed HDD while
+        // leaving install media inserted).
+        let mut cd_first_enabled: bool;
 
         if let Some(path) = &args.snapshot_load {
             let mut f = File::open(path)
@@ -274,10 +274,10 @@ mod native {
                         machine.set_cd_boot_drive(0xE0);
                         machine.set_boot_from_cd_if_present(true);
                         machine.set_boot_drive(0x80);
-                        cd_first_enabled = true;
                     }
                 }
             }
+            cd_first_enabled = machine.boot_from_cd_if_present();
         } else {
             // No snapshot restore: attach optional install media and apply boot policy, then reset.
             if let Some(iso_path) = &args.install_iso {
@@ -305,9 +305,9 @@ mod native {
                     machine.set_cd_boot_drive(0xE0);
                     machine.set_boot_from_cd_if_present(true);
                     machine.set_boot_drive(0x80);
-                    cd_first_enabled = true;
                 }
             }
+            cd_first_enabled = machine.boot_from_cd_if_present();
 
             // `Machine::new` performs an initial BIOS POST + boot attempt. Re-run POST after
             // attaching disks and configuring boot policy so the guest starts executing from the
