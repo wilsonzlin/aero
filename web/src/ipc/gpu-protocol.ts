@@ -277,6 +277,13 @@ export type GpuRuntimeSubmitAerogpuMessage = GpuWorkerMessageBase & {
    */
   contextId: number;
   /**
+   * Optional submission flags (`aerogpu_submit_desc.flags`).
+   *
+   * This is currently unused by the GPU worker executor, but is forwarded for debugging and
+   * forward-compatible extensions (e.g. NO_IRQ semantics, engine selection).
+   */
+  flags?: number;
+  /**
    * Guest-provided fence value to report as completed once the submission finishes.
    *
    * Uses BigInt to preserve full u64 fidelity across JS/worker IPC.

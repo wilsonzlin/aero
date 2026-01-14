@@ -318,6 +318,18 @@ export type CursorSetStateMessage = {
 export type AerogpuSubmitMessage = {
   kind: "aerogpu.submit";
   contextId: number;
+  /**
+   * Optional submission flags (`aerogpu_submit_desc.flags` / u32).
+   *
+   * Forwarded for debugging and forward-compatible extensions. Currently unused by the GPU worker.
+   */
+  flags?: number;
+  /**
+   * Optional engine selector (`aerogpu_submit_desc.engine_id` / u32).
+   *
+   * Currently unused by the GPU worker; retained for future multi-engine support.
+   */
+  engineId?: number;
   signalFence: bigint;
   cmdStream: ArrayBuffer;
   allocTable?: ArrayBuffer;

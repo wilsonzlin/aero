@@ -2081,6 +2081,14 @@ export class WorkerCoordinator {
     const info = this.workers[role];
     if (!shared || !info) return;
 
+    if (role === "cpu") {
+      // Any pending/in-flight AeroGPU submissions belong to the machine instance owned by the CPU
+      // worker. If the CPU worker is being restarted, drop these so we do not execute stale work
+      // against a new `api.Machine` instance.
+      this.pendingAerogpuSubmissions = [];
+      this.aerogpuInFlightFencesByRequestId.clear();
+    }
+
     if (role === "net") {
       const err = new Error("Net worker restarted while a trace request was pending.");
       this.rejectAllPendingNetTraceRequests(err);
@@ -2374,6 +2382,12 @@ export class WorkerCoordinator {
     ) {
       // Defensive: ignore malformed optional allocTable payloads.
       if (maybeAerogpuSubmit.allocTable !== undefined && !(maybeAerogpuSubmit.allocTable instanceof ArrayBuffer)) {
+        return;
+      }
+      if (maybeAerogpuSubmit.flags !== undefined && typeof maybeAerogpuSubmit.flags !== "number") {
+        return;
+      }
+      if (maybeAerogpuSubmit.engineId !== undefined && typeof maybeAerogpuSubmit.engineId !== "number") {
         return;
       }
       this.forwardAerogpuSubmit(maybeAerogpuSubmit as AerogpuSubmitMessage);
@@ -2785,6 +2799,7 @@ export class WorkerCoordinator {
 
     const cmdStream = sub.cmdStream;
     const allocTable = sub.allocTable;
+    const flags = typeof sub.flags === "number" && Number.isFinite(sub.flags) ? sub.flags >>> 0 : undefined;
 
     const requestId = this.nextAerogpuRequestId++;
     if (typeof sub.signalFence === "bigint" && sub.signalFence !== 0n) {
@@ -2798,6 +2813,7 @@ export class WorkerCoordinator {
       signalFence: sub.signalFence,
       cmdStream,
       ...(allocTable ? { allocTable } : {}),
+      ...(flags !== undefined ? { flags } : {}),
     };
 
     const transfer: Transferable[] = [cmdStream];

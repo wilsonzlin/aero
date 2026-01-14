@@ -1878,6 +1878,8 @@ function drainAerogpuSubmissions(): void {
       cmdStream: unknown;
       signalFence: unknown;
       contextId: unknown;
+      flags: unknown;
+      engineId: unknown;
       allocTable: unknown;
     }>;
     if (!(sub.cmdStream instanceof Uint8Array)) continue;
@@ -1894,9 +1896,14 @@ function drainAerogpuSubmissions(): void {
       transfer.push(allocTable);
     }
 
+    const flags = typeof sub.flags === "number" && Number.isFinite(sub.flags) ? sub.flags >>> 0 : undefined;
+    const engineId = typeof sub.engineId === "number" && Number.isFinite(sub.engineId) ? sub.engineId >>> 0 : undefined;
+
     const msg: AerogpuSubmitMessage = {
       kind: "aerogpu.submit",
       contextId: sub.contextId >>> 0,
+      ...(flags !== undefined ? { flags } : {}),
+      ...(engineId !== undefined ? { engineId } : {}),
       signalFence: sub.signalFence,
       cmdStream,
       ...(allocTable ? { allocTable } : {}),
@@ -2319,6 +2326,7 @@ async function runLoop(): Promise<void> {
       }
       machine = null;
     }
+    pendingAerogpuFenceCompletions.length = 0;
     networkAttached = false;
   }
 }
@@ -2452,6 +2460,10 @@ ctx.onmessage = (ev) => {
   if (aerogpuComplete?.kind === "aerogpu.complete_fence") {
     const fence = aerogpuComplete.fence;
     if (typeof fence !== "bigint") return;
+    // Keep the queue bounded so pathological worker restart loops cannot grow memory unbounded.
+    if (pendingAerogpuFenceCompletions.length >= 4096) {
+      pendingAerogpuFenceCompletions.shift();
+    }
     pendingAerogpuFenceCompletions.push(fence);
     // Best-effort: process immediately when safe.
     processPendingAerogpuFenceCompletions();
