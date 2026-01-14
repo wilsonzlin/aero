@@ -12264,12 +12264,36 @@ impl AerogpuD3d11Executor {
         for group_index in 0..pipeline_bindings.group_layouts.len() {
             let group_bindings = &pipeline_bindings.group_bindings[group_index];
             if group_bindings.is_empty() {
-                let entries: [BindGroupCacheEntry<'_>; 0] = [];
-                bind_groups.push(self.bind_group_cache.get_or_create(
-                    &self.device,
-                    &pipeline_bindings.group_layouts[group_index],
-                    &entries,
-                ));
+                // Some internal emulation paths (expanded-geometry draws) extend the pipeline layout
+                // with an internal bind group (see `extend_pipeline_bindings_for_passthrough_vs`) but
+                // do not have any D3D11-stage bindings for it. Those layouts still require a bind
+                // group with the internal expanded-vertex buffer binding, so bind a dummy storage
+                // buffer here. Callers that actually use expanded draws will overwrite this bind
+                // group with the correct expanded-vertex buffer before issuing the draw.
+                let group_u32 = group_index as u32;
+                if group_u32 == BIND_GROUP_INTERNAL_EMULATION {
+                    let entries = [BindGroupCacheEntry {
+                        binding: BINDING_INTERNAL_EXPANDED_VERTICES,
+                        resource: BindGroupCacheResource::Buffer {
+                            id: BufferId(0),
+                            buffer: &self.dummy_storage,
+                            offset: 0,
+                            size: None,
+                        },
+                    }];
+                    bind_groups.push(self.bind_group_cache.get_or_create(
+                        &self.device,
+                        &pipeline_bindings.group_layouts[group_index],
+                        &entries,
+                    ));
+                } else {
+                    let entries: [BindGroupCacheEntry<'_>; 0] = [];
+                    bind_groups.push(self.bind_group_cache.get_or_create(
+                        &self.device,
+                        &pipeline_bindings.group_layouts[group_index],
+                        &entries,
+                    ));
+                }
                 continue;
             }
 
