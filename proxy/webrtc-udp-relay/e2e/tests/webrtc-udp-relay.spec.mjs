@@ -2741,6 +2741,118 @@ test("drops oversized /udp frames and increments udp_ws_dropped_oversized", asyn
   }
 });
 
+test("drops malformed /udp frames and increments udp_ws_dropped_malformed", async ({ page }) => {
+  const echo = await startUdpEchoServer("udp4", "127.0.0.1");
+  const relay = await spawnRelayServer();
+  const web = await startWebServer();
+  const droppedMetric = "udp_ws_dropped";
+  const droppedMalformedMetric = "udp_ws_dropped_malformed";
+
+  try {
+    await page.goto(web.url);
+
+    const res = await page.evaluate(
+      async ({ relayPort, echoPort }) => {
+        const ws = new WebSocket(`ws://127.0.0.1:${relayPort}/udp`);
+        ws.binaryType = "arraybuffer";
+        await new Promise((resolve, reject) => {
+          ws.addEventListener("open", () => resolve(), { once: true });
+          ws.addEventListener("error", () => reject(new Error("ws error")), { once: true });
+        });
+
+        const waitForDatagram = async ({ timeoutMs }) =>
+          await new Promise((resolve, reject) => {
+            let timeout;
+            let done = false;
+            const onMessage = (event) => {
+              (async () => {
+                let data = event.data;
+                if (typeof data === "string") {
+                  let msg;
+                  try {
+                    msg = JSON.parse(data);
+                  } catch {
+                    return;
+                  }
+                  if (msg?.type === "ready") {
+                    return;
+                  }
+                  if (msg?.type === "error") {
+                    throw new Error(`udp websocket error: ${msg.code ?? "unknown"}: ${msg.message ?? ""}`);
+                  }
+                  return;
+                }
+                if (data instanceof Blob) {
+                  data = await data.arrayBuffer();
+                }
+                if (!(data instanceof ArrayBuffer)) {
+                  throw new Error(`unexpected websocket message type: ${typeof data}`);
+                }
+                if (done) return;
+                done = true;
+                cleanup();
+                resolve(new Uint8Array(data));
+              })().catch((err) => {
+                if (done) return;
+                done = true;
+                cleanup();
+                reject(err);
+              });
+            };
+            const cleanup = () => {
+              ws.removeEventListener("message", onMessage);
+              clearTimeout(timeout);
+            };
+            timeout = setTimeout(() => {
+              if (done) return;
+              done = true;
+              cleanup();
+              resolve(null);
+            }, timeoutMs);
+            ws.addEventListener("message", onMessage);
+          });
+
+        const guestPort = 10_000;
+        const buildFrame = (payloadText) => {
+          const payload = new TextEncoder().encode(payloadText);
+          const frame = new Uint8Array(8 + payload.length);
+          frame[0] = (guestPort >> 8) & 0xff;
+          frame[1] = guestPort & 0xff;
+          frame.set([127, 0, 0, 1], 2);
+          frame[6] = (echoPort >> 8) & 0xff;
+          frame[7] = echoPort & 0xff;
+          frame.set(payload, 8);
+          return frame;
+        };
+
+        // Malformed payload (too short to parse).
+        ws.send(new Uint8Array([0x01]));
+        const maybeMalformedResponse = await waitForDatagram({ timeoutMs: 500 });
+
+        const okRespPromise = waitForDatagram({ timeoutMs: 10_000 });
+        ws.send(buildFrame("hello"));
+        const okResp = await okRespPromise;
+        if (!okResp) throw new Error("timed out waiting for echoed datagram");
+        if (okResp.length < 8) throw new Error("echoed frame too short");
+        const okText = new TextDecoder().decode(okResp.slice(8));
+
+        ws.close();
+        return { gotMalformedResponse: maybeMalformedResponse !== null, okText };
+      },
+      { relayPort: relay.port, echoPort: echo.port },
+    );
+
+    expect(res.gotMalformedResponse).toBe(false);
+    expect(res.okText).toBe("hello");
+
+    const counters = await getRelayEventCounters(relay.port);
+    expect(getCounter(counters, droppedMetric)).toBe(1);
+    expect(getCounter(counters, droppedMalformedMetric)).toBe(1);
+  } finally {
+    await Promise.all([web.close(), relay.kill(), echo.close()]);
+  }
+});
+
 test("drops UDP replies from unexpected source ports by default (UDP_INBOUND_FILTER_MODE=address_and_port)", async ({ page }) => {
   const echo = await startUdpEchoServerDifferentSourcePort("udp4", "127.0.0.1");
   test.skip(!echo, "udp4 not supported in test environment");
