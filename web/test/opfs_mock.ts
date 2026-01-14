@@ -1,42 +1,64 @@
 export class MemFileSystemWritableFileStream {
-  private parts: Uint8Array[] = [];
+  private data: Uint8Array;
+  private position = 0;
   private aborted = false;
   private readonly file: MemFileSystemFileHandle;
 
   constructor(file: MemFileSystemFileHandle, keepExistingData: boolean) {
     this.file = file;
-    if (keepExistingData) {
-      this.parts.push(file.data.slice());
+    this.data = keepExistingData ? file.data.slice() : new Uint8Array(0);
+  }
+
+  private writeBytes(bytes: Uint8Array): void {
+    if (bytes.byteLength === 0) return;
+    const end = this.position + bytes.byteLength;
+    if (end > this.data.byteLength) {
+      const next = new Uint8Array(end);
+      next.set(this.data);
+      this.data = next;
     }
+    this.data.set(bytes, this.position);
+    this.position = end;
   }
 
   async write(chunk: unknown): Promise<void> {
     if (this.aborted) throw new Error("write after abort");
 
     if (typeof chunk === "string") {
-      this.parts.push(new TextEncoder().encode(chunk));
+      this.writeBytes(new TextEncoder().encode(chunk));
       return;
     }
 
     if (chunk && typeof chunk === "object") {
-      // Support the common `{ type: "write", data: ... }` form.
-      const maybeParams = chunk as { type?: unknown; data?: unknown };
+      // Support the standard `{ type: "write", position, data }` form used by OPFS streams.
+      const maybeParams = chunk as { type?: unknown; data?: unknown; position?: unknown; size?: unknown };
       if (maybeParams.type === "write" && maybeParams.data !== undefined) {
+        if (typeof maybeParams.position === "number") {
+          this.position = maybeParams.position;
+        }
         await this.write(maybeParams.data);
+        return;
+      }
+      if (maybeParams.type === "seek" && typeof maybeParams.position === "number") {
+        this.position = maybeParams.position;
+        return;
+      }
+      if (maybeParams.type === "truncate" && typeof maybeParams.size === "number") {
+        await this.truncate(maybeParams.size);
         return;
       }
     }
 
     if (chunk instanceof Uint8Array) {
-      this.parts.push(chunk.slice());
+      this.writeBytes(chunk);
       return;
     }
     if (chunk instanceof ArrayBuffer) {
-      this.parts.push(new Uint8Array(chunk));
+      this.writeBytes(new Uint8Array(chunk));
       return;
     }
     if (ArrayBuffer.isView(chunk)) {
-      this.parts.push(new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength));
+      this.writeBytes(new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength));
       return;
     }
 
@@ -45,14 +67,7 @@ export class MemFileSystemWritableFileStream {
 
   async close(): Promise<void> {
     if (this.aborted) return;
-    const total = this.parts.reduce((sum, p) => sum + p.byteLength, 0);
-    const out = new Uint8Array(total);
-    let off = 0;
-    for (const p of this.parts) {
-      out.set(p, off);
-      off += p.byteLength;
-    }
-    this.file.data = out;
+    this.file.data = this.data;
     this.file.lastModified = Date.now();
   }
 
@@ -62,24 +77,23 @@ export class MemFileSystemWritableFileStream {
       throw new Error(`invalid truncate size: ${size}`);
     }
     if (size === 0) {
-      this.parts = [];
+      this.data = new Uint8Array(0);
+      this.position = 0;
       return;
     }
-    const total = this.parts.reduce((sum, p) => sum + p.byteLength, 0);
-    if (size === total) return;
+    if (size === this.data.byteLength) return;
 
-    const out = new Uint8Array(size);
-    let off = 0;
-    for (const p of this.parts) {
-      if (off >= size) break;
-      const len = Math.min(p.byteLength, size - off);
-      out.set(p.subarray(0, len), off);
-      off += len;
+    if (size < this.data.byteLength) {
+      this.data = this.data.slice(0, size);
+    } else {
+      const out = new Uint8Array(size);
+      out.set(this.data);
+      this.data = out;
     }
-    this.parts = [out];
+    this.position = Math.min(this.position, size);
   }
 
-  async abort(): Promise<void> {
+  async abort(_reason?: unknown): Promise<void> {
     this.aborted = true;
   }
 }

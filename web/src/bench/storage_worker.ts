@@ -387,7 +387,12 @@ async function runOpfsBench(params: {
     if (params.config.include_random_write) {
       const randomWriteRuns: StorageBenchLatencyRun[] = [];
       for (let run = 0; run < params.config.random_runs; run++) {
-        const writer = await (fileHandle as any).createWritable({ keepExistingData: true });
+        let writer: any;
+        try {
+          writer = await (fileHandle as any).createWritable({ keepExistingData: true });
+        } catch {
+          writer = await (fileHandle as any).createWritable();
+        }
         const rand = createRandomSource(params.config.random_seed, 4000 + run);
         const latencies: number[] = [];
         let min = Number.POSITIVE_INFINITY;

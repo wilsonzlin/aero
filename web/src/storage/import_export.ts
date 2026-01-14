@@ -225,7 +225,13 @@ export async function opfsResizeDisk(
   dirPath?: string,
 ): Promise<void> {
   const handle = await opfsGetDiskFileHandle(fileName, { create: false, dirPath });
-  const writable = await handle.createWritable({ keepExistingData: true });
+  let writable: FileSystemWritableFileStream;
+  try {
+    writable = await handle.createWritable({ keepExistingData: true });
+  } catch {
+    // Some implementations may not accept options; fall back to default.
+    writable = await handle.createWritable();
+  }
   report(onProgress, { phase: "resize", processedBytes: 0, totalBytes: newSizeBytes });
   try {
     await writable.truncate(newSizeBytes);
