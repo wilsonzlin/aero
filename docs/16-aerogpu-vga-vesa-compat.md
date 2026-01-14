@@ -35,9 +35,10 @@ The canonical `aero_machine::Machine` supports **two mutually-exclusive** displa
     (`Machine::display_present_aerogpu_scanout`)
 
   The BIOS VBE implementation uses a linear framebuffer inside BAR1. `aero_machine` sets the VBE
-  `PhysBasePtr` to `BAR1_BASE + 0x40000` (see `crates/aero-machine/src/lib.rs::VBE_LFB_OFFSET`) so
-  INT 10h VBE mode set/clear writes land in BAR1-backed VRAM (leaving the first 256KiB reserved for
-  legacy VGA planar/text backing: 4 × 64KiB planes).
+  `PhysBasePtr` to `BAR1_BASE + 0x40000` (`AEROGPU_PCI_BAR1_VBE_LFB_OFFSET_BYTES`; see
+  `crates/aero-machine/src/lib.rs::VBE_LFB_OFFSET`) so INT 10h VBE mode set/clear writes land in
+  BAR1-backed VRAM (leaving the first 256KiB reserved for legacy VGA planar/text backing:
+  4 × 64KiB planes).
 
   Full 3D command execution is not wired into `aero_machine` yet. Shared device-side building
   blocks (ring executor + backend boundary) live in `crates/aero-devices-gpu`, with legacy sandbox
@@ -138,7 +139,7 @@ BAR1 (VRAM aperture) base: BAR1_BASE (assigned by BIOS)
 
 VRAM offset    Purpose
 0x00000..0x3FFFF  Legacy VGA planar memory (4 × 64KiB planes; includes the CPU-visible `0xA0000..0xBFFFF` window backing)
-0x40000..          VBE linear framebuffer (LFB) base (packed-pixel VBE modes)
+0x40000..          VBE linear framebuffer (LFB) base (`AEROGPU_PCI_BAR1_VBE_LFB_OFFSET_BYTES`; packed-pixel VBE modes)
 ...                Optional: WDDM allocations in VRAM (if implemented)
 ```
 
