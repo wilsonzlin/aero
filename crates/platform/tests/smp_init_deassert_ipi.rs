@@ -34,3 +34,25 @@ fn init_deassert_ipi_is_ignored_and_does_not_reset_target_lapic() {
     assert!(!ints.take_pending_init(1));
     assert_eq!(lapic_read_u32(&ints, 1, 0x80), 0x70);
 }
+
+#[test]
+fn init_assert_ipi_sets_pending_init_and_resets_target_lapic() {
+    let ints = PlatformInterrupts::new_with_cpu_count(2);
+
+    // Pending INIT flags start clear.
+    assert!(!ints.take_pending_init(0));
+    assert!(!ints.take_pending_init(1));
+
+    // Set some LAPIC1 state that should be cleared by INIT reset semantics.
+    lapic_write_u32(&ints, 1, 0x80, 0x70); // TPR
+    assert_eq!(lapic_read_u32(&ints, 1, 0x80), 0x70);
+
+    // Send INIT IPI with level=assert from CPU0 to CPU1.
+    lapic_write_u32(&ints, 0, 0x310, 1u32 << 24);
+    lapic_write_u32(&ints, 0, 0x300, (5u32 << 8) | (1u32 << 14));
+
+    assert!(ints.take_pending_init(1));
+    assert_eq!(lapic_read_u32(&ints, 1, 0x80), 0);
+    // Flag is consumed on take.
+    assert!(!ints.take_pending_init(1));
+}
