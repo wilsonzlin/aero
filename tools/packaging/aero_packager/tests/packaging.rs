@@ -375,7 +375,19 @@ fn aero_virtio_spec_packages_expected_drivers() -> anyhow::Result<()> {
     let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let testdata = repo_root.join("testdata");
 
-    let drivers_dir = testdata.join("drivers-aero-virtio");
+    // The repo intentionally avoids tracking real driver binaries. For this fixture, inject
+    // stub `.sys` files so we can validate spec/packaging behaviour without shipping actual
+    // driver payloads in git.
+    let drivers_src = testdata.join("drivers-aero-virtio");
+    let drivers_tmp = tempfile::tempdir()?;
+    copy_dir_all(&drivers_src, drivers_tmp.path())?;
+    for arch in ["x86", "amd64"] {
+        for drv in ["aero_virtio_blk", "aero_virtio_net"] {
+            let dir = drivers_tmp.path().join(arch).join(drv);
+            fs::write(dir.join(format!("{drv}.sys")), b"dummy sys\n")?;
+        }
+    }
+    let drivers_dir = drivers_tmp.path().to_path_buf();
     let guest_tools_dir = testdata.join("guest-tools");
     let spec_path = repo_root
         .join("..")

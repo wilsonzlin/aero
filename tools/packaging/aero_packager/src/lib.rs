@@ -1529,6 +1529,57 @@ fn collect_inf_references(inf_text: &str) -> (BTreeSet<String>, bool) {
         inf_no_comments.push('\n');
     }
 
+    // Best-effort: scan common single-line directives that reference files but are often omitted
+    // from `SourceDisksFiles` (or do not otherwise appear in `CopyFiles` lists).
+    //
+    // - `CatalogFile[.<suffix>] = foo.cat` - validates the expected catalog file is present.
+    // - `ServiceBinary = %12%\foo.sys` - validates the driver binary referenced by the service.
+    let catalog_file_re =
+        regex::RegexBuilder::new(r"^\s*CatalogFile(?:\.[^=]+)?\s*=\s*([^\s;]+)")
+            .case_insensitive(true)
+            .build()
+            .expect("valid regex");
+    let service_binary_re = regex::RegexBuilder::new(r"^\s*ServiceBinary\s*=\s*([^\s;]+)")
+        .case_insensitive(true)
+        .build()
+        .expect("valid regex");
+
+    for line in inf_no_comments.lines() {
+        if let Some(caps) = catalog_file_re.captures(line) {
+            let value = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+            let token = normalize_inf_path_token(value);
+            if token.is_empty() {
+                continue;
+            }
+            let base = token
+                .rsplit_once('/')
+                .map(|(_, b)| b)
+                .unwrap_or(token.as_str());
+            // Ignore unresolved string substitutions unless the basename is explicit.
+            if base.is_empty() || base.contains('%') {
+                continue;
+            }
+            referenced.insert(base.to_string());
+        }
+
+        if let Some(caps) = service_binary_re.captures(line) {
+            let value = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+            let token = normalize_inf_path_token(value);
+            if token.is_empty() {
+                continue;
+            }
+            let base = token
+                .rsplit_once('/')
+                .map(|(_, b)| b)
+                .unwrap_or(token.as_str());
+            // Ignore unresolved string substitutions unless the basename is explicit.
+            if base.is_empty() || base.contains('%') {
+                continue;
+            }
+            referenced.insert(base.to_string());
+        }
+    }
+
     let inf_lower = inf_no_comments.to_ascii_lowercase();
     if inf_lower.contains("wdfcoinstaller") {
         let re = regex::RegexBuilder::new(r"wdfcoinstaller[0-9a-z_]*\.dll")
