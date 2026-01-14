@@ -4785,7 +4785,7 @@ impl Machine {
         disk: Box<dyn aero_storage::VirtualDisk + Send>,
         base_image: impl Into<String>,
     ) -> std::io::Result<()> {
-        self.attach_ide_secondary_master_iso(disk)?;
+        self.attach_install_media_iso_for_restore(disk)?;
         self.set_ide_secondary_master_atapi_overlay_ref(base_image, "");
         Ok(())
     }
@@ -4798,7 +4798,7 @@ impl Machine {
         disk: Box<dyn aero_storage::VirtualDisk>,
         base_image: impl Into<String>,
     ) -> std::io::Result<()> {
-        self.attach_ide_secondary_master_iso(disk)?;
+        self.attach_install_media_iso_for_restore(disk)?;
         self.set_ide_secondary_master_atapi_overlay_ref(base_image, "");
         Ok(())
     }

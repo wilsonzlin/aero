@@ -274,10 +274,10 @@ mod tests {
     fn apic_mode_non_fixed_delivery_mode_is_treated_as_fixed() {
         let mut ints = PlatformInterrupts::new();
         ints.set_mode(PlatformInterruptMode::Apic);
-        enable_lapic_svr_for_apic(&ints, 0);
 
         // Delivery Mode = Lowest Priority (0b001). We currently treat it as Fixed.
         let bsp_id = ints.lapic_apic_id();
+        enable_lapic_svr_for_apic(&ints, bsp_id);
         ints.trigger_msi(msi_message_with(bsp_id, 0x77, false, 0b001));
 
         assert_eq!(ints.get_pending_for_apic(bsp_id), Some(0x77));
