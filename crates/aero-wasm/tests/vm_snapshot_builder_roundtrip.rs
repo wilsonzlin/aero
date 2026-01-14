@@ -91,11 +91,15 @@ fn vm_snapshot_builder_roundtrips_guest_ram_and_device_states() {
         .expect("guest_size fits in usize");
     assert!(guest_size > 0, "guest_size should be non-zero");
 
-    // Safety: We just ensured linear memory has at least `guest_base + guest_size` bytes.
-    let guest = unsafe { core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size) };
-
-    for (i, b) in guest.iter_mut().enumerate() {
-        *b = ram_pattern_byte(i);
+    {
+        // Safety: We just ensured linear memory has at least `guest_base + guest_size` bytes.
+        //
+        // Keep the borrow short-lived so we do not hold a `&mut [u8]` across snapshot builder calls
+        // that read guest RAM via raw pointers.
+        let guest = unsafe { core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size) };
+        for (i, b) in guest.iter_mut().enumerate() {
+            *b = ram_pattern_byte(i);
+        }
     }
 
     let cpu_bytes = build_cpu_bytes();
@@ -262,7 +266,14 @@ fn vm_snapshot_builder_roundtrips_guest_ram_and_device_states() {
     );
 
     // Clear RAM and restore via the wasm export.
-    guest.fill(0);
+    {
+        // Safety: We just ensured linear memory has at least `guest_base + guest_size` bytes.
+        //
+        // Keep the borrow short-lived so we do not hold a `&mut [u8]` across snapshot restore,
+        // which writes guest RAM via raw pointers.
+        let guest = unsafe { core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size) };
+        guest.fill(0);
+    }
 
     let restored =
         vm_snapshot_restore(Uint8Array::from(snap_a.as_slice())).expect("vm_snapshot_restore ok");
@@ -343,8 +354,12 @@ fn vm_snapshot_builder_roundtrips_guest_ram_and_device_states() {
         "net.stack device bytes should roundtrip"
     );
 
-    for (i, &b) in guest.iter().enumerate() {
-        assert_eq!(b, ram_pattern_byte(i), "RAM mismatch at offset {i}");
+    {
+        // Safety: We just ensured linear memory has at least `guest_base + guest_size` bytes.
+        let guest = unsafe { core::slice::from_raw_parts(guest_base as *const u8, guest_size) };
+        for (i, &b) in guest.iter().enumerate() {
+            assert_eq!(b, ram_pattern_byte(i), "RAM mismatch at offset {i}");
+        }
     }
 }
 
