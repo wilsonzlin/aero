@@ -246,20 +246,20 @@ debugging possible without attaching WinDbg.
 Packaged locations:
 
 - Guest Tools ISO/zip:
-  - x64: `drivers\\amd64\\aerogpu\\tools\\aerogpu_dbgctl.exe`
-  - x86: `drivers\\x86\\aerogpu\\tools\\aerogpu_dbgctl.exe`
+  - x64: `drivers\\amd64\\aerogpu\\tools\\win7_dbgctl\\bin\\aerogpu_dbgctl.exe`
+  - x86: `drivers\\x86\\aerogpu\\tools\\win7_dbgctl\\bin\\aerogpu_dbgctl.exe`
 - CI-staged packages (host-side, copy into the guest):
-  - x64: `out\\packages\\aerogpu\\x64\\tools\\aerogpu_dbgctl.exe`
-  - x86: `out\\packages\\aerogpu\\x86\\tools\\aerogpu_dbgctl.exe`
+  - x64: `out\\packages\\aerogpu\\x64\\tools\\win7_dbgctl\\bin\\aerogpu_dbgctl.exe`
+  - x86: `out\\packages\\aerogpu\\x86\\tools\\win7_dbgctl\\bin\\aerogpu_dbgctl.exe`
 
 Pass the full path:
 
 ```cmd
 :: Point directly at the dbgctl shipped on the Guest Tools ISO/zip (replace <GuestToolsDrive>, e.g. D).
 :: Win7 x64:
-bin\aerogpu_test_runner.exe --log-dir=logs --dbgctl=<GuestToolsDrive>:\drivers\amd64\aerogpu\tools\aerogpu_dbgctl.exe
+bin\aerogpu_test_runner.exe --log-dir=logs --dbgctl=<GuestToolsDrive>:\drivers\amd64\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe
 :: Win7 x86:
-:: bin\aerogpu_test_runner.exe --log-dir=logs --dbgctl=<GuestToolsDrive>:\drivers\x86\aerogpu\tools\aerogpu_dbgctl.exe
+:: bin\aerogpu_test_runner.exe --log-dir=logs --dbgctl=<GuestToolsDrive>:\drivers\x86\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe
 ```
 
 Or copy dbgctl next to the runner and use a shorter `--dbgctl` path:
@@ -267,9 +267,9 @@ Or copy dbgctl next to the runner and use a shorter `--dbgctl` path:
 ```cmd
 :: Copy dbgctl next to the runner (into win7\bin\) and reference it with a relative path.
 :: Win7 x64 (dbgctl is still x86 and runs under WOW64):
-copy /y <GuestToolsDrive>:\drivers\amd64\aerogpu\tools\aerogpu_dbgctl.exe bin\
+copy /y <GuestToolsDrive>:\drivers\amd64\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe bin\
 :: Win7 x86:
-:: copy /y <GuestToolsDrive>:\drivers\x86\aerogpu\tools\aerogpu_dbgctl.exe bin\
+:: copy /y <GuestToolsDrive>:\drivers\x86\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe bin\
 bin\aerogpu_test_runner.exe --log-dir=logs --dbgctl=aerogpu_dbgctl.exe
 ```
 
