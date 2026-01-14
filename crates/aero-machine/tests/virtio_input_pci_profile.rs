@@ -51,4 +51,3 @@ fn virtio_input_pci_ids_match_aero_w7_virtio_contract_v1() {
     assert_eq!(cfg_read(&mut m, keyboard, 0x0e, 1), 0x80);
     assert_eq!(cfg_read(&mut m, mouse, 0x0e, 1), 0x00);
 }
-

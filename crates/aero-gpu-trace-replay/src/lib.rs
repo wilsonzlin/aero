@@ -1354,13 +1354,14 @@ pub fn decode_cmd_stream_listing(
                         }
                     }
                     AerogpuCmdOpcode::SetSamplers => {
-                        let (cmd, handles) = pkt.decode_set_samplers_payload_le().map_err(|err| {
-                            CmdStreamDecodeError::Payload {
-                                offset,
-                                opcode,
-                                err,
-                            }
-                        })?;
+                        let (cmd, handles) =
+                            pkt.decode_set_samplers_payload_le().map_err(|err| {
+                                CmdStreamDecodeError::Payload {
+                                    offset,
+                                    opcode,
+                                    err,
+                                }
+                            })?;
                         // Avoid taking references to packed fields.
                         let shader_stage = cmd.shader_stage;
                         let start_slot = cmd.start_slot;
@@ -1397,18 +1398,19 @@ pub fn decode_cmd_stream_listing(
                                 msg: "vec4_count overflow",
                             },
                         )? as usize;
-                        let payload_len = 16usize.checked_add(float_count.checked_mul(4).ok_or(
-                            CmdStreamDecodeError::MalformedPayload {
+                        let payload_len = 16usize
+                            .checked_add(float_count.checked_mul(4).ok_or(
+                                CmdStreamDecodeError::MalformedPayload {
+                                    offset,
+                                    opcode,
+                                    msg: "vec4_count overflow",
+                                },
+                            )?)
+                            .ok_or(CmdStreamDecodeError::MalformedPayload {
                                 offset,
                                 opcode,
                                 msg: "vec4_count overflow",
-                            },
-                        )?)
-                        .ok_or(CmdStreamDecodeError::MalformedPayload {
-                            offset,
-                            opcode,
-                            msg: "vec4_count overflow",
-                        })?;
+                            })?;
                         if pkt.payload.len() < payload_len {
                             return Err(CmdStreamDecodeError::MalformedPayload {
                                 offset,

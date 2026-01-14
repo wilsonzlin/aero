@@ -5,12 +5,12 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuBlendFactor, AerogpuBlendOp, AerogpuCmdBindShaders, AerogpuCmdCreateInputLayout,
     AerogpuCmdCreateShaderDxbc, AerogpuCmdExportSharedSurface, AerogpuCmdHdr,
     AerogpuCmdImportSharedSurface, AerogpuCmdOpcode, AerogpuCmdPresentEx,
-    AerogpuCmdReleaseSharedSurface, AerogpuCmdSetShaderConstantsF, AerogpuCmdSetConstantBuffers,
-    AerogpuCmdSetSamplers, AerogpuCmdSetShaderResourceBuffers, AerogpuCmdSetTexture,
+    AerogpuCmdReleaseSharedSurface, AerogpuCmdSetConstantBuffers, AerogpuCmdSetSamplers,
+    AerogpuCmdSetShaderConstantsF, AerogpuCmdSetShaderResourceBuffers, AerogpuCmdSetTexture,
     AerogpuCmdStreamHeader, AerogpuCmdUploadResource, AerogpuCompareFunc,
-    AerogpuConstantBufferBinding, AerogpuCullMode, AerogpuFillMode, AerogpuShaderResourceBufferBinding,
-    AerogpuShaderStage, AerogpuShaderStageEx, AerogpuVertexBufferBinding, BindShadersEx,
-    AEROGPU_CMD_STREAM_MAGIC,
+    AerogpuConstantBufferBinding, AerogpuCullMode, AerogpuFillMode,
+    AerogpuShaderResourceBufferBinding, AerogpuShaderStage, AerogpuShaderStageEx,
+    AerogpuVertexBufferBinding, BindShadersEx, AEROGPU_CMD_STREAM_MAGIC,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
@@ -68,7 +68,10 @@ fn cmd_writer_bind_shaders_with_gs_reuses_reserved0_field() {
 #[test]
 fn cmd_writer_bind_shaders_ex_emits_append_only_extended_payload() {
     let mut w = AerogpuCmdWriter::new();
-    w.bind_shaders_ex(/* vs */ 11, /* ps */ 22, /* cs */ 33, /* gs */ 44, /* hs */ 55, /* ds */ 66);
+    w.bind_shaders_ex(
+        /* vs */ 11, /* ps */ 22, /* cs */ 33, /* gs */ 44, /* hs */ 55,
+        /* ds */ 66,
+    );
     w.flush();
 
     let buf = w.finish();
@@ -100,15 +103,27 @@ fn cmd_writer_bind_shaders_ex_emits_append_only_extended_payload() {
 
     // Trailing handles are at offsets 24/28/32 from the packet start.
     assert_eq!(
-        u32::from_le_bytes(buf[packet_offset + 24..packet_offset + 28].try_into().unwrap()),
+        u32::from_le_bytes(
+            buf[packet_offset + 24..packet_offset + 28]
+                .try_into()
+                .unwrap()
+        ),
         44
     );
     assert_eq!(
-        u32::from_le_bytes(buf[packet_offset + 28..packet_offset + 32].try_into().unwrap()),
+        u32::from_le_bytes(
+            buf[packet_offset + 28..packet_offset + 32]
+                .try_into()
+                .unwrap()
+        ),
         55
     );
     assert_eq!(
-        u32::from_le_bytes(buf[packet_offset + 32..packet_offset + 36].try_into().unwrap()),
+        u32::from_le_bytes(
+            buf[packet_offset + 32..packet_offset + 36]
+                .try_into()
+                .unwrap()
+        ),
         66
     );
 
@@ -163,7 +178,8 @@ fn cmd_writer_emits_geometry_stage_binding_packets() {
 
     let buf = w.finish();
 
-    let read_u32 = |off: usize| -> u32 { u32::from_le_bytes(buf[off..off + 4].try_into().unwrap()) };
+    let read_u32 =
+        |off: usize| -> u32 { u32::from_le_bytes(buf[off..off + 4].try_into().unwrap()) };
 
     let mut cursor = AerogpuCmdStreamHeader::SIZE_BYTES;
 
@@ -180,8 +196,14 @@ fn cmd_writer_emits_geometry_stage_binding_packets() {
             AerogpuShaderStage::Geometry as u32
         );
         assert_eq!(read_u32(cursor + offset_of!(AerogpuCmdSetTexture, slot)), 7);
-        assert_eq!(read_u32(cursor + offset_of!(AerogpuCmdSetTexture, texture)), 123);
-        assert_eq!(read_u32(cursor + offset_of!(AerogpuCmdSetTexture, reserved0)), 0);
+        assert_eq!(
+            read_u32(cursor + offset_of!(AerogpuCmdSetTexture, texture)),
+            123
+        );
+        assert_eq!(
+            read_u32(cursor + offset_of!(AerogpuCmdSetTexture, reserved0)),
+            0
+        );
         cursor += size_bytes as usize;
     }
 
@@ -199,9 +221,18 @@ fn cmd_writer_emits_geometry_stage_binding_packets() {
             read_u32(cursor + offset_of!(AerogpuCmdSetSamplers, shader_stage)),
             AerogpuShaderStage::Geometry as u32
         );
-        assert_eq!(read_u32(cursor + offset_of!(AerogpuCmdSetSamplers, start_slot)), 2);
-        assert_eq!(read_u32(cursor + offset_of!(AerogpuCmdSetSamplers, sampler_count)), 2);
-        assert_eq!(read_u32(cursor + offset_of!(AerogpuCmdSetSamplers, reserved0)), 0);
+        assert_eq!(
+            read_u32(cursor + offset_of!(AerogpuCmdSetSamplers, start_slot)),
+            2
+        );
+        assert_eq!(
+            read_u32(cursor + offset_of!(AerogpuCmdSetSamplers, sampler_count)),
+            2
+        );
+        assert_eq!(
+            read_u32(cursor + offset_of!(AerogpuCmdSetSamplers, reserved0)),
+            0
+        );
         let payload = cursor + size_of::<AerogpuCmdSetSamplers>();
         assert_eq!(read_u32(payload), 42);
         assert_eq!(read_u32(payload + 4), 43);
@@ -222,14 +253,23 @@ fn cmd_writer_emits_geometry_stage_binding_packets() {
             read_u32(cursor + offset_of!(AerogpuCmdSetConstantBuffers, shader_stage)),
             AerogpuShaderStage::Geometry as u32
         );
-        assert_eq!(read_u32(cursor + offset_of!(AerogpuCmdSetConstantBuffers, start_slot)), 1);
+        assert_eq!(
+            read_u32(cursor + offset_of!(AerogpuCmdSetConstantBuffers, start_slot)),
+            1
+        );
         assert_eq!(
             read_u32(cursor + offset_of!(AerogpuCmdSetConstantBuffers, buffer_count)),
             1
         );
-        assert_eq!(read_u32(cursor + offset_of!(AerogpuCmdSetConstantBuffers, reserved0)), 0);
+        assert_eq!(
+            read_u32(cursor + offset_of!(AerogpuCmdSetConstantBuffers, reserved0)),
+            0
+        );
         let b = cursor + size_of::<AerogpuCmdSetConstantBuffers>();
-        assert_eq!(read_u32(b + offset_of!(AerogpuConstantBufferBinding, buffer)), 11);
+        assert_eq!(
+            read_u32(b + offset_of!(AerogpuConstantBufferBinding, buffer)),
+            11
+        );
         assert_eq!(
             read_u32(b + offset_of!(AerogpuConstantBufferBinding, offset_bytes)),
             16

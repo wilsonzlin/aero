@@ -3,8 +3,7 @@ use std::collections::BTreeSet;
 use anyhow::{bail, Result};
 
 use crate::binding_model::{
-    BIND_GROUP_INTERNAL_EMULATION, BINDING_INTERNAL_EXPANDED_VERTICES,
-    EXPANDED_VERTEX_MAX_VARYINGS,
+    BINDING_INTERNAL_EXPANDED_VERTICES, BIND_GROUP_INTERNAL_EMULATION, EXPANDED_VERTEX_MAX_VARYINGS,
 };
 
 fn parse_location_attr(line: &str) -> Option<u32> {

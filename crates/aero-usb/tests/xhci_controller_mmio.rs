@@ -130,7 +130,10 @@ fn xhci_controller_dboff_rtsoff_are_plausible() {
 #[test]
 fn xhci_controller_pagesize_supports_4k_pages() {
     let mut ctrl = XhciController::new();
-    assert_eq!(ctrl.mmio_read(regs::REG_PAGESIZE, 4) as u32, regs::PAGESIZE_4K);
+    assert_eq!(
+        ctrl.mmio_read(regs::REG_PAGESIZE, 4) as u32,
+        regs::PAGESIZE_4K
+    );
 }
 
 #[test]
@@ -167,12 +170,8 @@ fn xhci_controller_config_and_dnctrl_roundtrip_and_reset() {
     ctrl.mmio_write(regs::REG_DNCTRL, 4, 0x1234_5678);
 
     // CONFIG has reserved bits and clamps MaxSlotsEn to HCSPARAMS1.MaxSlots.
-    let expected_config =
-        ((0xa5a5u32 & 0x3ff) & !0xff) | u32::from(regs::MAX_SLOTS);
-    assert_eq!(
-        ctrl.mmio_read(regs::REG_CONFIG, 4) as u32,
-        expected_config
-    );
+    let expected_config = ((0xa5a5u32 & 0x3ff) & !0xff) | u32::from(regs::MAX_SLOTS);
+    assert_eq!(ctrl.mmio_read(regs::REG_CONFIG, 4) as u32, expected_config);
     assert_eq!(ctrl.mmio_read(regs::REG_DNCTRL, 4) as u32, 0x1234_5678);
 
     // Host controller reset should clear operational register state.
@@ -461,7 +460,8 @@ fn xhci_snapshot_pending_dma_on_run_defaults_to_false_when_missing() {
     const TAG_USBCMD: u16 = 1;
     const TAG_PENDING_DMA_ON_RUN: u16 = 29;
 
-    let mut w = aero_io_snapshot::io::state::SnapshotWriter::new(*b"XHCI", SnapshotVersion::new(0, 8));
+    let mut w =
+        aero_io_snapshot::io::state::SnapshotWriter::new(*b"XHCI", SnapshotVersion::new(0, 8));
     w.field_u32(TAG_USBCMD, regs::USBCMD_RUN);
     let bytes = w.finish();
 
@@ -486,10 +486,8 @@ fn xhci_snapshot_clears_pending_dma_on_run_when_controller_halted() {
     const TAG_USBCMD: u16 = 1;
     const TAG_PENDING_DMA_ON_RUN: u16 = 29;
 
-    let mut w = aero_io_snapshot::io::state::SnapshotWriter::new(
-        *b"XHCI",
-        XhciController::DEVICE_VERSION,
-    );
+    let mut w =
+        aero_io_snapshot::io::state::SnapshotWriter::new(*b"XHCI", XhciController::DEVICE_VERSION);
     w.field_u32(TAG_USBCMD, 0);
     w.field_bool(TAG_PENDING_DMA_ON_RUN, true);
     let bytes = w.finish();
@@ -813,10 +811,7 @@ fn xhci_controller_snapshot_roundtrip_preserves_regs() {
         restored.mmio_read(regs::REG_CRCR_LO, 4) as u32,
         (0x1234u32 & !0x3f) | (0x1234u32 & 0x07)
     );
-    assert_eq!(
-        restored.mmio_read(regs::REG_DNCTRL, 4) as u32,
-        0x1122_3344
-    );
+    assert_eq!(restored.mmio_read(regs::REG_DNCTRL, 4) as u32, 0x1122_3344);
     let expected_config = ((0xa5a5u32 & 0x3ff) & !0xff) | u32::from(regs::MAX_SLOTS);
     assert_eq!(
         restored.mmio_read(regs::REG_CONFIG, 4) as u32,
@@ -910,11 +905,7 @@ fn xhci_controller_doorbell_writes_do_not_alias_operational_regs() {
     assert_eq!(dboff, u64::from(regs::DBOFF_VALUE));
 
     ctrl.mmio_write(dboff, 4, 0x1); // DB0
-    ctrl.mmio_write(
-        dboff + u64::from(regs::doorbell::DOORBELL_STRIDE),
-        4,
-        0x1,
-    ); // DB1
+    ctrl.mmio_write(dboff + u64::from(regs::doorbell::DOORBELL_STRIDE), 4, 0x1); // DB1
 
     // Doorbell writes should not affect the operational register file directly.
     assert_eq!(ctrl.mmio_read(regs::REG_USBCMD, 4), 0);

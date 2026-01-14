@@ -402,7 +402,10 @@ mod tests {
         assert_eq!(ShaderStage::from_aerogpu_u32_with_stage_ex(2, 1), None);
 
         // Non-compute stages ignore stage_ex (reserved field).
-        assert_eq!(ShaderStage::from_aerogpu_u32_with_stage_ex(0, 1), Some(ShaderStage::Vertex));
+        assert_eq!(
+            ShaderStage::from_aerogpu_u32_with_stage_ex(0, 1),
+            Some(ShaderStage::Vertex)
+        );
     }
 
     #[test]

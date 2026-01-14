@@ -1324,7 +1324,10 @@ mod tests {
                 return;
             }
             if device.limits().max_storage_buffers_per_shader_stage == 0 {
-                skip_or_panic(module_path!(), "storage buffers are not supported by this adapter");
+                skip_or_panic(
+                    module_path!(),
+                    "storage buffers are not supported by this adapter",
+                );
                 return;
             }
             if device.limits().max_bind_groups < 5 {
@@ -1915,7 +1918,10 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
 
             let device = rt.device();
             if device.limits().max_storage_buffers_per_shader_stage == 0 {
-                skip_or_panic(module_path!(), "storage buffers are not supported by this adapter");
+                skip_or_panic(
+                    module_path!(),
+                    "storage buffers are not supported by this adapter",
+                );
                 return;
             }
 
@@ -2397,7 +2403,10 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
 
             let device = rt.device();
             if device.limits().max_storage_buffers_per_shader_stage == 0 {
-                skip_or_panic(module_path!(), "storage buffers are not supported by this adapter");
+                skip_or_panic(
+                    module_path!(),
+                    "storage buffers are not supported by this adapter",
+                );
                 return;
             }
             let storage_align = device.limits().min_storage_buffer_offset_alignment as u64;

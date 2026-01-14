@@ -178,8 +178,7 @@ fn uhci_active_td_cycle_sets_hse_and_errint() {
     let mut mem = TestMem::new(0x4000);
 
     // Attach a device so TD processing advances through the chain within a single frame.
-    ctrl.hub_mut()
-        .attach(0, Box::new(AlwaysAckDevice));
+    ctrl.hub_mut().attach(0, Box::new(AlwaysAckDevice));
     ctrl.hub_mut().force_enable_for_tests(0);
 
     ctrl.io_write(regs::REG_FLBASEADD, 4, FRAME_LIST_BASE);
@@ -217,8 +216,7 @@ fn uhci_long_active_td_chain_budget_sets_hse_and_errint() {
     // Allocate enough space for a long TD chain.
     let mut mem = TestMem::new(0x20000);
 
-    ctrl.hub_mut()
-        .attach(0, Box::new(AlwaysAckDevice));
+    ctrl.hub_mut().attach(0, Box::new(AlwaysAckDevice));
     ctrl.hub_mut().force_enable_for_tests(0);
 
     ctrl.io_write(regs::REG_FLBASEADD, 4, FRAME_LIST_BASE);
@@ -260,8 +258,7 @@ fn uhci_qh_element_td_self_loop_sets_hse_and_errint() {
     let mut ctrl = UhciController::new();
     let mut mem = TestMem::new(0x4000);
 
-    ctrl.hub_mut()
-        .attach(0, Box::new(AlwaysAckDevice));
+    ctrl.hub_mut().attach(0, Box::new(AlwaysAckDevice));
     ctrl.hub_mut().force_enable_for_tests(0);
 
     ctrl.io_write(regs::REG_FLBASEADD, 4, FRAME_LIST_BASE);
@@ -292,8 +289,7 @@ fn uhci_qh_element_budget_sets_hse_and_errint() {
     let mut ctrl = UhciController::new();
     let mut mem = TestMem::new(0x20000);
 
-    ctrl.hub_mut()
-        .attach(0, Box::new(AlwaysAckDevice));
+    ctrl.hub_mut().attach(0, Box::new(AlwaysAckDevice));
     ctrl.hub_mut().force_enable_for_tests(0);
 
     ctrl.io_write(regs::REG_FLBASEADD, 4, FRAME_LIST_BASE);
@@ -378,10 +374,7 @@ fn uhci_stop_td_skip_cycle_is_detected_without_spinning_budget() {
     mem.write_u32(td2, td2);
 
     mem.write_u32(TD_ADDR + 4, TD_STATUS_ACTIVE);
-    mem.write_u32(
-        TD_ADDR + 8,
-        PID_OUT | (5u32 << 8) | (1u32 << 15),
-    );
+    mem.write_u32(TD_ADDR + 8, PID_OUT | (5u32 << 8) | (1u32 << 15));
     mem.write_u32(TD_ADDR + 12, 0x3800);
 
     ctrl.io_write(regs::REG_USBINTR, 2, regs::USBINTR_TIMEOUT_CRC as u32);
@@ -486,8 +479,7 @@ fn uhci_qh_element_list_exact_budget_limit_null_termination_does_not_fault() {
     // This matches the internal `MAX_QH_ELEMENT_STEPS` constant in `uhci/schedule.rs`.
     const QH_ELEM_BUDGET: usize = 1024;
 
-    ctrl.hub_mut()
-        .attach(0, Box::new(AlwaysAckDevice));
+    ctrl.hub_mut().attach(0, Box::new(AlwaysAckDevice));
     ctrl.hub_mut().force_enable_for_tests(0);
 
     ctrl.io_write(regs::REG_FLBASEADD, 4, FRAME_LIST_BASE);
@@ -560,8 +552,7 @@ fn uhci_td_chain_exact_budget_limit_null_termination_does_not_fault() {
     // This matches the internal `MAX_TD_CHAIN_STEPS` constant in `uhci/schedule.rs`.
     const TD_CHAIN_BUDGET: usize = 1024;
 
-    ctrl.hub_mut()
-        .attach(0, Box::new(AlwaysAckDevice));
+    ctrl.hub_mut().attach(0, Box::new(AlwaysAckDevice));
     ctrl.hub_mut().force_enable_for_tests(0);
 
     ctrl.io_write(regs::REG_FLBASEADD, 4, FRAME_LIST_BASE);

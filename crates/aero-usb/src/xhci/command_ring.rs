@@ -1782,13 +1782,8 @@ mod tests {
         let in_slot = 0x100u64;
         let out_slot = 0x200u64;
 
-        let mut processor = CommandRingProcessor::new(
-            mem_size,
-            1,
-            0,
-            CommandRing::new(0),
-            EventRing::new(0, 0),
-        );
+        let mut processor =
+            CommandRingProcessor::new(mem_size, 1, 0, CommandRing::new(0), EventRing::new(0, 0));
 
         // Seed an output Slot Context with controller-owned fields set.
         let out_address = 7u32;

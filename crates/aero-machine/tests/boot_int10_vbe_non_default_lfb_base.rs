@@ -75,4 +75,3 @@ fn boot_sector_int10_vbe_sets_mode_and_lfb_is_visible_at_non_default_base() {
     vga.present();
     assert_eq!(vga.get_framebuffer()[0], 0xFF00_00FF);
 }
-

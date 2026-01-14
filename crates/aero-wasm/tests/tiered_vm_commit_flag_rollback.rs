@@ -86,8 +86,8 @@ fn tiered_vm_commit_flag_rollback_retires_zero_instructions_node() {
     // ---------------------------------------------------------------------
     let tsc_before = vm.cpu_tsc();
     let outcome = {
-        let commit_call = Closure::wrap(
-            Box::new(move |_table_index: u32, cpu_ptr: u32, _jit_ctx_ptr: u32| -> i64 {
+        let commit_call = Closure::wrap(Box::new(
+            move |_table_index: u32, cpu_ptr: u32, _jit_ctx_ptr: u32| -> i64 {
                 let commit_flag_ptr = cpu_ptr + commit_flag_offset;
                 let before = unsafe { core::ptr::read_unaligned(commit_flag_ptr as *const u32) };
                 assert_eq!(
@@ -95,8 +95,8 @@ fn tiered_vm_commit_flag_rollback_retires_zero_instructions_node() {
                     "commit flag should be set to 1 before host hook runs"
                 );
                 0x1000
-            }) as Box<dyn FnMut(u32, u32, u32) -> i64>,
-        );
+            },
+        ) as Box<dyn FnMut(u32, u32, u32) -> i64>);
         let _guard = GlobalThisValueGuard::set("__aero_jit_call", commit_call.as_ref());
         vm.step_raw()
     };
@@ -127,8 +127,8 @@ fn tiered_vm_commit_flag_rollback_retires_zero_instructions_node() {
     // ---------------------------------------------------------------------
     let tsc_before = vm.cpu_tsc();
     let outcome = {
-        let rollback_call = Closure::wrap(
-            Box::new(move |_table_index: u32, cpu_ptr: u32, _jit_ctx_ptr: u32| -> i64 {
+        let rollback_call = Closure::wrap(Box::new(
+            move |_table_index: u32, cpu_ptr: u32, _jit_ctx_ptr: u32| -> i64 {
                 let commit_flag_ptr = cpu_ptr + commit_flag_offset;
                 let before = unsafe { core::ptr::read_unaligned(commit_flag_ptr as *const u32) };
                 assert_eq!(
@@ -139,8 +139,8 @@ fn tiered_vm_commit_flag_rollback_retires_zero_instructions_node() {
                     core::ptr::write_unaligned(commit_flag_ptr as *mut u32, 0);
                 }
                 0x1000
-            }) as Box<dyn FnMut(u32, u32, u32) -> i64>,
-        );
+            },
+        ) as Box<dyn FnMut(u32, u32, u32) -> i64>);
         let _guard = GlobalThisValueGuard::set("__aero_jit_call", rollback_call.as_ref());
         vm.step_raw()
     };
@@ -159,8 +159,5 @@ fn tiered_vm_commit_flag_rollback_retires_zero_instructions_node() {
         }
         other => panic!("expected JIT block outcome, got {other:?}"),
     }
-    assert_eq!(
-        tsc_after, tsc_before,
-        "rollback exits must not advance TSC"
-    );
+    assert_eq!(tsc_after, tsc_before, "rollback exits must not advance TSC");
 }

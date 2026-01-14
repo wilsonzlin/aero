@@ -65,8 +65,14 @@ fn aerogpu_bme_toggle_gates_ring_dma_and_scanout_reads() {
     let height = 1u32;
     let pitch = width * 4;
 
-    m.write_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_WIDTH), width);
-    m.write_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_HEIGHT), height);
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_WIDTH),
+        width,
+    );
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_HEIGHT),
+        height,
+    );
     m.write_physical_u32(
         bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_PITCH_BYTES),
         pitch,
@@ -83,10 +89,7 @@ fn aerogpu_bme_toggle_gates_ring_dma_and_scanout_reads() {
         bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_HI),
         (fb_gpa >> 32) as u32,
     );
-    m.write_physical_u32(
-        bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE),
-        1,
-    );
+    m.write_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE), 1);
 
     m.display_present();
     assert_eq!(m.display_resolution(), (width, height));
@@ -138,7 +141,10 @@ fn aerogpu_bme_toggle_gates_ring_dma_and_scanout_reads() {
     m.write_physical_u64(desc0_gpa + 56, 0);
 
     // Program BAR0 ring + fence registers.
-    m.write_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_RING_GPA_LO), ring_gpa as u32);
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_RING_GPA_LO),
+        ring_gpa as u32,
+    );
     m.write_physical_u32(
         bar0 + u64::from(pci::AEROGPU_MMIO_REG_RING_GPA_HI),
         (ring_gpa >> 32) as u32,
@@ -151,7 +157,10 @@ fn aerogpu_bme_toggle_gates_ring_dma_and_scanout_reads() {
         bar0 + u64::from(pci::AEROGPU_MMIO_REG_RING_CONTROL),
         pci::AEROGPU_RING_CONTROL_ENABLE,
     );
-    m.write_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_FENCE_GPA_LO), fence_gpa as u32);
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_FENCE_GPA_LO),
+        fence_gpa as u32,
+    );
     m.write_physical_u32(
         bar0 + u64::from(pci::AEROGPU_MMIO_REG_FENCE_GPA_HI),
         (fence_gpa >> 32) as u32,
@@ -219,4 +228,3 @@ fn aerogpu_bme_toggle_gates_ring_dma_and_scanout_reads() {
     assert_eq!(m.display_resolution(), (width, height));
     assert_eq!(m.display_framebuffer()[0], 0xFFAA_BBCC);
 }
-

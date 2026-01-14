@@ -6,8 +6,8 @@
 
 use aero_usb::xhci::interrupter::IMAN_IE;
 use aero_usb::xhci::trb::{Trb, TrbType, TRB_LEN};
-use aero_usb::xhci::{budget, regs, XhciController};
 use aero_usb::xhci::CommandCompletionCode;
+use aero_usb::xhci::{budget, regs, XhciController};
 use aero_usb::{ControlResponse, MemoryBus, SetupPacket, UsbDeviceModel};
 
 mod util;
@@ -63,7 +63,8 @@ fn xhci_step_1ms_command_ring_is_bounded_and_makes_progress() {
     let event_ring_trbs: u16 =
         u16::try_from(COMMAND_TRBS + 1).expect("event ring size fits in u16");
 
-    let mem_size = (event_ring_base + (event_ring_trbs as u64) * (TRB_LEN as u64) + 0x1000) as usize;
+    let mem_size =
+        (event_ring_base + (event_ring_trbs as u64) * (TRB_LEN as u64) + 0x1000) as usize;
     let mut mem = TestMemory::new(mem_size);
 
     write_erst_entry(&mut mem, erstba, event_ring_base, event_ring_trbs as u32);
@@ -130,7 +131,10 @@ fn xhci_step_1ms_command_ring_is_bounded_and_makes_progress() {
     }
 
     let events_final = count_event_trbs(&mut mem, event_ring_base, event_ring_trbs as usize);
-    assert_eq!(events_final, COMMAND_TRBS, "expected all commands to complete");
+    assert_eq!(
+        events_final, COMMAND_TRBS,
+        "expected all commands to complete"
+    );
 }
 
 #[test]

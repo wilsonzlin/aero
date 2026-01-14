@@ -4,7 +4,9 @@ mod native {
 
     use clap::{Args, Parser, Subcommand};
 
-    use aero_disk_convert::{convert, ConvertOptions, OutputFormat, DEFAULT_AEROSPARSE_BLOCK_SIZE_BYTES};
+    use aero_disk_convert::{
+        convert, ConvertOptions, OutputFormat, DEFAULT_AEROSPARSE_BLOCK_SIZE_BYTES,
+    };
 
     #[derive(Parser, Debug)]
     #[command(author, version, about)]

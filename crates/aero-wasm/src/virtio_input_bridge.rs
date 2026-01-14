@@ -333,7 +333,9 @@ impl VirtioInputPciDeviceCore {
 mod wasm_guest_memory {
     use aero_virtio::memory::{GuestMemory as VirtioGuestMemory, GuestMemoryError};
 
-    use crate::guest_phys::{GuestRamRange, guest_ram_phys_end_exclusive, translate_guest_paddr_range};
+    use crate::guest_phys::{
+        GuestRamRange, guest_ram_phys_end_exclusive, translate_guest_paddr_range,
+    };
 
     // Cap open-bus reads/writes so a malicious guest cannot force unbounded work.
     const OPEN_BUS_MAX_LEN: usize = 64 * 1024;

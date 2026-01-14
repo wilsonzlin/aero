@@ -24,8 +24,11 @@ fn invalid() -> u8 {
 //   block1: side-exit/return
 fn code() -> [u8; 6] {
     [
-        0x48, 0xff, 0xc9, // dec rcx
-        0x75, 0xfb, // jne -5 (to 0x00)
+        0x48,
+        0xff,
+        0xc9, // dec rcx
+        0x75,
+        0xfb, // jne -5 (to 0x00)
         invalid(),
     ]
 }
@@ -37,8 +40,11 @@ fn code() -> [u8; 6] {
 //   0x05: <invalid>
 fn mem_code() -> [u8; 6] {
     [
-        0xc6, 0x00, 0x12, // mov byte ptr [rax], 0x12
-        0x8a, 0x00, // mov al, byte ptr [rax]
+        0xc6,
+        0x00,
+        0x12, // mov byte ptr [rax], 0x12
+        0x8a,
+        0x00, // mov al, byte ptr [rax]
         invalid(),
     ]
 }
@@ -50,8 +56,10 @@ fn mem_code() -> [u8; 6] {
 //   0x04: <invalid>
 fn jp_code() -> [u8; 5] {
     [
-        0x31, 0xc0, // xor eax, eax
-        0x7a, 0xfc, // jp -4 (to 0x00)
+        0x31,
+        0xc0, // xor eax, eax
+        0x7a,
+        0xfc, // jp -4 (to 0x00)
         invalid(),
     ]
 }
@@ -59,8 +67,10 @@ fn jp_code() -> [u8; 5] {
 // Same as `jp_code`, but with JNP.
 fn jnp_code() -> [u8; 5] {
     [
-        0x31, 0xc0, // xor eax, eax
-        0x7b, 0xfc, // jnp -4 (to 0x00)
+        0x31,
+        0xc0, // xor eax, eax
+        0x7b,
+        0xfc, // jnp -4 (to 0x00)
         invalid(),
     ]
 }

@@ -764,10 +764,7 @@ async fn d3d9_executor_retranslates_on_persisted_reflection_sampler_dim_key_mism
         .and_then(|v| v.as_f64())
         .map(|v| v as u32)
         .unwrap_or(0);
-    assert_eq!(
-        dim_key_before, 1,
-        "expected shader to use cube sampler s0"
-    );
+    assert_eq!(dim_key_before, 1, "expected shader to use cube sampler s0");
 
     // Corrupt samplerDimKey.
     let reflection_obj: Object = reflection
@@ -929,10 +926,11 @@ async fn d3d9_executor_retranslates_on_persisted_reflection_semantic_locations_c
 
     let reflection =
         Reflect::get(&cached, &JsValue::from_str("reflection")).expect("get cached.reflection");
-    let uses_semantic_locations = Reflect::get(&reflection, &JsValue::from_str("usesSemanticLocations"))
-        .ok()
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
+    let uses_semantic_locations =
+        Reflect::get(&reflection, &JsValue::from_str("usesSemanticLocations"))
+            .ok()
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
     assert!(
         uses_semantic_locations,
         "expected shader to use semantic location remapping"

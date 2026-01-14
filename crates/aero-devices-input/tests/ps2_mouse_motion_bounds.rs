@@ -26,7 +26,9 @@ fn ps2_mouse_bounds_packet_generation_for_extreme_motion() {
         let _ = mouse.pop_output();
         bytes += 1;
         if bytes > 10_000 {
-            panic!("unexpectedly large PS/2 mouse output queue (possible unbounded motion splitting)");
+            panic!(
+                "unexpectedly large PS/2 mouse output queue (possible unbounded motion splitting)"
+            );
         }
     }
 
@@ -36,4 +38,3 @@ fn ps2_mouse_bounds_packet_generation_for_extreme_motion() {
         "expected bounded output for extreme motion, got {bytes} bytes"
     );
 }
-

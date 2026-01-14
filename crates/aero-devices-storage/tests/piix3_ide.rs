@@ -2045,10 +2045,7 @@ fn atapi_dma_missing_prd_eot_sets_error_status_on_secondary_channel() {
     );
 
     // ATAPI uses Sector Count as interrupt reason; errors should transition to status phase.
-    assert_eq!(
-        ioports.read(SECONDARY_PORTS.cmd_base + 2, 1) as u8,
-        0x03
-    );
+    assert_eq!(ioports.read(SECONDARY_PORTS.cmd_base + 2, 1) as u8, 0x03);
 
     // Use ALT_STATUS so we don't accidentally clear the interrupt.
     let st = ioports.read(SECONDARY_PORTS.ctrl_base, 1) as u8;

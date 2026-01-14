@@ -1739,10 +1739,7 @@ fn tier1_inline_tlb_cross_page_load_fastpath_wraps_u64_address_space() {
     let snap = CpuSnapshot::from_wasm_bytes(&got_mem[0..abi::CPU_STATE_SIZE as usize]);
 
     assert_eq!(snap.rip, 0x3000);
-    assert_eq!(
-        snap.gpr[Gpr::Rax.as_u8() as usize],
-        0x0807_0605_0403_0201
-    );
+    assert_eq!(snap.gpr[Gpr::Rax.as_u8() as usize], 0x0807_0605_0403_0201);
 
     let host_state = *store.data();
     assert_eq!(host_state.mmio_exit_calls, 0);
@@ -3512,10 +3509,7 @@ fn tier1_inline_tlb_mmio_store_exit_reports_faulting_rip() {
     // Ensure the first instruction's effects are preserved.
     assert_eq!(got_cpu.gpr[Gpr::Rax.as_u8() as usize], 0xF000);
     // Store must not touch the MMIO region.
-    assert_eq!(
-        &got_ram[0xF000..0xF004],
-        &0xaabb_ccddu32.to_le_bytes(),
-    );
+    assert_eq!(&got_ram[0xF000..0xF004], &0xaabb_ccddu32.to_le_bytes(),);
 
     assert_eq!(host_state.mmio_exit_calls, 1);
     assert_eq!(host_state.mmu_translate_calls, 1);
@@ -4264,10 +4258,7 @@ fn tier1_inline_tlb_high_ram_remap_store_bumps_physical_code_page_version() {
     let phys_page: u64 = HIGH_RAM_BASE >> PAGE_SHIFT;
     let table_len: u32 = (phys_page as u32) + 1;
     let table_ptr: usize = 0x20000;
-    let table_bytes = usize::try_from(table_len)
-        .unwrap()
-        .checked_mul(4)
-        .unwrap();
+    let table_bytes = usize::try_from(table_len).unwrap().checked_mul(4).unwrap();
 
     let mut b = IrBuilder::new(0x1000);
     let addr = b.const_int(Width::W64, HIGH_RAM_BASE);
@@ -4504,10 +4495,7 @@ fn tier1_inline_tlb_high_ram_remap_cross_page_store_bumps_physical_code_pages() 
     assert_eq!(phys_page1, phys_page0 + 1);
     let table_len: u32 = (phys_page1 as u32) + 1;
     let table_ptr: usize = 0x20000;
-    let table_bytes = usize::try_from(table_len)
-        .unwrap()
-        .checked_mul(4)
-        .unwrap();
+    let table_bytes = usize::try_from(table_len).unwrap().checked_mul(4).unwrap();
 
     let mut b = IrBuilder::new(0x1000);
     let addr = b.const_int(Width::W64, addr_u64);

@@ -188,7 +188,8 @@ async fn rejects_manifests_with_zero_total_size() {
     });
     let manifest_body = serde_json::to_string(&manifest).unwrap();
 
-    let (url, _state, shutdown) = start_chunked_server(image, chunk_size, manifest_body, None).await;
+    let (url, _state, shutdown) =
+        start_chunked_server(image, chunk_size, manifest_body, None).await;
 
     let cache_dir = tempdir().unwrap();
     let mut config = ChunkedStreamingDiskConfig::new(url, cache_dir.path());

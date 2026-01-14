@@ -211,7 +211,10 @@ fn xhci_driver_bringup_mmio_rings_and_transfer() {
     // subsequent assertions are tied to command/transfer events.
     xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
     xhci.tick_1ms(&mut mem);
-    assert!(xhci.irq_level(), "RUN should assert an IRQ due to dma_on_run");
+    assert!(
+        xhci.irq_level(),
+        "RUN should assert an IRQ due to dma_on_run"
+    );
     xhci.mmio_write(regs::REG_USBSTS, 4, u64::from(regs::USBSTS_EINT));
     assert!(!xhci.irq_level(), "USBSTS RW1C should clear IRQ");
 
@@ -293,7 +296,10 @@ fn xhci_driver_bringup_mmio_rings_and_transfer() {
     assert_eq!(ev3.pointer(), cmd_ring);
     assert_eq!(ev3.completion_code_raw(), CompletionCode::Success.as_u8());
 
-    assert!(xhci.irq_level(), "second command completion should assert IRQ");
+    assert!(
+        xhci.irq_level(),
+        "second command completion should assert IRQ"
+    );
     xhci.mmio_write(regs::REG_USBSTS, 4, u64::from(regs::USBSTS_EINT));
     assert!(!xhci.irq_level());
 

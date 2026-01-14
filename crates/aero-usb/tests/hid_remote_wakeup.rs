@@ -1,9 +1,9 @@
 use aero_usb::hid::keyboard::UsbHidKeyboardHandle;
-use aero_usb::usb2_port::Usb2PortMux;
 use aero_usb::uhci::regs::{
     REG_PORTSC1, REG_USBINTR, REG_USBSTS, USBINTR_RESUME, USBSTS_RESUMEDETECT,
 };
 use aero_usb::uhci::UhciController;
+use aero_usb::usb2_port::Usb2PortMux;
 use aero_usb::{SetupPacket, UsbInResult, UsbOutResult};
 
 mod util;

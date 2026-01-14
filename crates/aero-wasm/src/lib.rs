@@ -3311,7 +3311,9 @@ mod cow_base_format_tests {
 
     fn sample_pattern(len: usize) -> Vec<u8> {
         // Deterministic non-trivial data so a failure to consult the base disk is obvious.
-        (0..len).map(|i| (i as u8).wrapping_mul(31).wrapping_add(7)).collect()
+        (0..len)
+            .map(|i| (i as u8).wrapping_mul(31).wrapping_add(7))
+            .collect()
     }
 
     #[test]
@@ -4107,7 +4109,8 @@ impl Machine {
         base_format: Option<String>,
     ) -> Result<(), JsValue> {
         let overlay_path = path.clone();
-        self.set_disk_opfs(path, create, size_bytes, base_format).await?;
+        self.set_disk_opfs(path, create, size_bytes, base_format)
+            .await?;
         self.set_ahci_port0_disk_overlay_ref(&overlay_path, "");
         Ok(())
     }

@@ -246,7 +246,8 @@ fn pending_vsync_fence_is_flushed_when_scanout_is_disabled() {
     let cmd_stream = writer.finish();
     m.write_physical(cmd_gpa, &cmd_stream);
 
-    let ring_size_bytes = write_ring_header(&mut m, ring_gpa, 8, /*head=*/ 0, /*tail=*/ 1);
+    let ring_size_bytes =
+        write_ring_header(&mut m, ring_gpa, 8, /*head=*/ 0, /*tail=*/ 1);
     let desc_gpa = ring_gpa + ring::AerogpuRingHeader::SIZE_BYTES as u64;
     let signal_fence = 1u64;
     write_submit_desc(
@@ -329,7 +330,8 @@ fn vsync_fence_blocks_immediate_fences_behind_it_until_vblank() {
     let cmd_stream = writer.finish();
     m.write_physical(cmd_gpa, &cmd_stream);
 
-    let ring_size_bytes = write_ring_header(&mut m, ring_gpa, 8, /*head=*/ 0, /*tail=*/ 2);
+    let ring_size_bytes =
+        write_ring_header(&mut m, ring_gpa, 8, /*head=*/ 0, /*tail=*/ 2);
     let stride = ring::AerogpuSubmitDesc::SIZE_BYTES as u64;
     let desc0_gpa = ring_gpa + ring::AerogpuRingHeader::SIZE_BYTES as u64 + 0 * stride;
     let desc1_gpa = ring_gpa + ring::AerogpuRingHeader::SIZE_BYTES as u64 + 1 * stride;
@@ -412,7 +414,8 @@ fn completes_at_most_one_vsync_fence_per_vblank_tick() {
     let cmd_stream = writer.finish();
     m.write_physical(cmd_gpa, &cmd_stream);
 
-    let ring_size_bytes = write_ring_header(&mut m, ring_gpa, 8, /*head=*/ 0, /*tail=*/ 2);
+    let ring_size_bytes =
+        write_ring_header(&mut m, ring_gpa, 8, /*head=*/ 0, /*tail=*/ 2);
     let stride = ring::AerogpuSubmitDesc::SIZE_BYTES as u64;
     let desc0_gpa = ring_gpa + ring::AerogpuRingHeader::SIZE_BYTES as u64 + 0 * stride;
     let desc1_gpa = ring_gpa + ring::AerogpuRingHeader::SIZE_BYTES as u64 + 1 * stride;

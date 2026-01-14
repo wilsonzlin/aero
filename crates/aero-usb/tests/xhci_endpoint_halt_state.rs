@@ -115,11 +115,16 @@ fn stalled_endpoint_sets_halted_state_in_device_context_until_reset() {
 
     assert_eq!(&mem.data[buf1 as usize..buf1 as usize + 4], &[0, 0, 0, 0]);
 
-    let ev0 = xhci.pop_pending_event().expect("expected stall transfer event");
+    let ev0 = xhci
+        .pop_pending_event()
+        .expect("expected stall transfer event");
     assert_eq!(ev0.trb_type(), TrbType::TransferEvent);
     assert_eq!(ev0.slot_id(), slot_id);
     assert_eq!(ev0.endpoint_id(), endpoint_id);
-    assert_eq!(ev0.completion_code_raw(), CompletionCode::StallError.as_u8());
+    assert_eq!(
+        ev0.completion_code_raw(),
+        CompletionCode::StallError.as_u8()
+    );
 
     let ep_ctx = EndpointContext::read_from(&mut mem, ep_ctx_paddr);
     assert_eq!(

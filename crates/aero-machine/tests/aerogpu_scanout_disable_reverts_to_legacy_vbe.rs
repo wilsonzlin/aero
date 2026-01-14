@@ -6,7 +6,9 @@ use aero_devices::a20_gate::A20_GATE_PORT;
 use aero_devices::pci::profile;
 use aero_machine::{Machine, MachineConfig, RunExit};
 use aero_protocol::aerogpu::aerogpu_pci as pci;
-use aero_shared::scanout_state::{ScanoutState, SCANOUT_SOURCE_LEGACY_VBE_LFB, SCANOUT_SOURCE_WDDM};
+use aero_shared::scanout_state::{
+    ScanoutState, SCANOUT_SOURCE_LEGACY_VBE_LFB, SCANOUT_SOURCE_WDDM,
+};
 use pretty_assertions::assert_eq;
 
 fn run_until_halt(m: &mut Machine) {
@@ -75,8 +77,11 @@ fn aerogpu_scanout_disable_reverts_to_legacy_vbe_with_panning_and_stride() {
     let bytes_per_scan_line = 4101u16;
     let x_off = 1u16;
     let y_off = 4u16;
-    let boot =
-        build_vbe_mode_118_with_stride_and_display_start_boot_sector(bytes_per_scan_line, x_off, y_off);
+    let boot = build_vbe_mode_118_with_stride_and_display_start_boot_sector(
+        bytes_per_scan_line,
+        x_off,
+        y_off,
+    );
 
     let scanout_state = Arc::new(ScanoutState::new());
 
@@ -97,9 +102,8 @@ fn aerogpu_scanout_disable_reverts_to_legacy_vbe_with_panning_and_stride() {
 
     // The BIOS should have published a legacy VBE scanout descriptor that includes the display start
     // offsets and byte-granular pitch.
-    let expected_legacy_base = m.vbe_lfb_base()
-        + u64::from(y_off) * u64::from(bytes_per_scan_line)
-        + u64::from(x_off) * 4;
+    let expected_legacy_base =
+        m.vbe_lfb_base() + u64::from(y_off) * u64::from(bytes_per_scan_line) + u64::from(x_off) * 4;
     let snap = scanout_state.snapshot();
     assert_eq!(snap.source, SCANOUT_SOURCE_LEGACY_VBE_LFB);
     assert_eq!(snap.pitch_bytes, u32::from(bytes_per_scan_line));
@@ -115,16 +119,22 @@ fn aerogpu_scanout_disable_reverts_to_legacy_vbe_with_panning_and_stride() {
             .bus_mut()
             .device_config(profile::AEROGPU.bdf)
             .expect("AeroGPU PCI function missing");
-        (cfg.bar_range(0).expect("AeroGPU BAR0 missing").base, cfg.command())
+        (
+            cfg.bar_range(0).expect("AeroGPU BAR0 missing").base,
+            cfg.command(),
+        )
     };
 
     // Enable PCI bus mastering (required for device-initiated scanout reads).
     {
         let pci_cfg = m.pci_config_ports().expect("pc platform enabled");
         let mut pci_cfg = pci_cfg.borrow_mut();
-        pci_cfg
-            .bus_mut()
-            .write_config(profile::AEROGPU.bdf, 0x04, 2, u32::from(command | (1 << 2)));
+        pci_cfg.bus_mut().write_config(
+            profile::AEROGPU.bdf,
+            0x04,
+            2,
+            u32::from(command | (1 << 2)),
+        );
     }
 
     // Claim WDDM scanout.
@@ -135,8 +145,14 @@ fn aerogpu_scanout_disable_reverts_to_legacy_vbe_with_panning_and_stride() {
     // Seed a single pixel (B,G,R,X = AA,BB,CC,00) so the config is non-trivial.
     m.write_physical_u32(fb_gpa, 0x00CC_BBAA);
 
-    m.write_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_WIDTH), width);
-    m.write_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_HEIGHT), height);
+    m.write_physical_u32(
+        bar0_base + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_WIDTH),
+        width,
+    );
+    m.write_physical_u32(
+        bar0_base + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_HEIGHT),
+        height,
+    );
     m.write_physical_u32(
         bar0_base + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_PITCH_BYTES),
         pitch,
@@ -153,14 +169,20 @@ fn aerogpu_scanout_disable_reverts_to_legacy_vbe_with_panning_and_stride() {
         bar0_base + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_FORMAT),
         pci::AerogpuFormat::B8G8R8X8Unorm as u32,
     );
-    m.write_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE), 1);
+    m.write_physical_u32(
+        bar0_base + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE),
+        1,
+    );
 
     m.process_aerogpu();
     assert_eq!(scanout_state.snapshot().source, SCANOUT_SOURCE_WDDM);
 
     // Explicitly disable WDDM scanout. The machine should release WDDM ownership and return to the
     // legacy VBE scanout descriptor (including panning/stride).
-    m.write_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE), 0);
+    m.write_physical_u32(
+        bar0_base + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE),
+        0,
+    );
     m.process_aerogpu();
 
     let snap = scanout_state.snapshot();

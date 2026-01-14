@@ -171,11 +171,17 @@ fn build_e2e_cmd(repo_root: &Path, pw_extra_args: &[String]) -> Command {
     }
 
     // Default to Chromium unless the caller has already selected Playwright projects.
-    if !pw_extra_args.iter().any(|arg| arg == "--project" || arg.starts_with("--project=")) {
+    if !pw_extra_args
+        .iter()
+        .any(|arg| arg == "--project" || arg.starts_with("--project="))
+    {
         cmd.arg("--project=chromium");
     }
     // Default to a single worker for reliability in constrained environments.
-    if !pw_extra_args.iter().any(|arg| arg == "--workers" || arg.starts_with("--workers=")) {
+    if !pw_extra_args
+        .iter()
+        .any(|arg| arg == "--workers" || arg.starts_with("--workers="))
+    {
         cmd.arg("--workers=1");
     }
     cmd.args(INPUT_E2E_SPECS);
@@ -223,7 +229,8 @@ mod tests {
         let err = parse_args(vec!["--rust-only".into(), "--e2e".into()])
             .expect_err("expected parse_args to reject incompatible flags");
         assert!(
-            err.to_string().contains("--rust-only cannot be combined with --e2e"),
+            err.to_string()
+                .contains("--rust-only cannot be combined with --e2e"),
             "unexpected error message: {err}"
         );
     }
@@ -250,8 +257,8 @@ mod tests {
     #[test]
     fn cmd_input_source_mentions_malformed_spec_once() {
         let src_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/cmd_input.rs");
-        let src = fs::read_to_string(&src_path)
-            .unwrap_or_else(|err| panic!("read {src_path:?}: {err}"));
+        let src =
+            fs::read_to_string(&src_path).unwrap_or_else(|err| panic!("read {src_path:?}: {err}"));
         let occurrences = src.matches(INPUT_BATCH_MALFORMED_SPEC).count();
         assert_eq!(
             occurrences, 1,

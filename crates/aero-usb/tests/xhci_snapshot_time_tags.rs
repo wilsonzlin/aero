@@ -26,10 +26,7 @@ fn xhci_snapshot_load_accepts_v0_7_last_tick_encoded_under_tag_time_ms() {
             .unwrap_or(0),
         0x1234_5678
     );
-    assert_eq!(
-        r.u64(TAG_TIME_MS).expect("read time_ms").unwrap_or(0),
-        0
-    );
+    assert_eq!(r.u64(TAG_TIME_MS).expect("read time_ms").unwrap_or(0), 0);
 }
 
 #[test]
@@ -50,10 +47,7 @@ fn xhci_snapshot_load_accepts_swapped_time_and_tick_tags() {
 
     let bytes2 = ctrl.save_state();
     let r = SnapshotReader::parse(&bytes2, *b"XHCI").expect("parse restored snapshot");
-    assert_eq!(
-        r.u64(TAG_TIME_MS).expect("read time_ms").unwrap_or(0),
-        7
-    );
+    assert_eq!(r.u64(TAG_TIME_MS).expect("read time_ms").unwrap_or(0), 7);
     assert_eq!(
         r.u32(TAG_LAST_TICK_DMA_DWORD)
             .expect("read last_tick_dma_dword")

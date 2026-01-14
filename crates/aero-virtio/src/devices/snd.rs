@@ -567,10 +567,7 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
                     if take == 0 {
                         continue;
                     }
-                    if mem
-                        .write(d.addr, &event[written..written + take])
-                        .is_err()
-                    {
+                    if mem.write(d.addr, &event[written..written + take]).is_err() {
                         wrote_all = false;
                         break;
                     };

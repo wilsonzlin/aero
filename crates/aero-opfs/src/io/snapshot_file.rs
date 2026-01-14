@@ -534,12 +534,18 @@ mod tests {
             assert_eq!(io.kind(), expected, "unexpected kind: {io:?}");
         }
 
-        assert_kind(DiskError::NotSupported("nope".to_string()), ErrorKind::Unsupported);
+        assert_kind(
+            DiskError::NotSupported("nope".to_string()),
+            ErrorKind::Unsupported,
+        );
         assert_kind(DiskError::Unsupported("feature"), ErrorKind::Unsupported);
         assert_kind(DiskError::BackendUnavailable, ErrorKind::NotConnected);
         assert_kind(DiskError::InUse, ErrorKind::ResourceBusy);
         assert_kind(DiskError::QuotaExceeded, ErrorKind::StorageFull);
-        assert_kind(DiskError::InvalidState("bad".to_string()), ErrorKind::BrokenPipe);
+        assert_kind(
+            DiskError::InvalidState("bad".to_string()),
+            ErrorKind::BrokenPipe,
+        );
         assert_kind(
             DiskError::UnalignedLength {
                 len: 3,
@@ -558,7 +564,10 @@ mod tests {
         assert_kind(DiskError::OffsetOverflow, ErrorKind::InvalidInput);
         assert_kind(DiskError::InvalidConfig("bad"), ErrorKind::InvalidInput);
         assert_kind(DiskError::CorruptImage("bad"), ErrorKind::InvalidData);
-        assert_kind(DiskError::InvalidSparseHeader("bad"), ErrorKind::InvalidData);
+        assert_kind(
+            DiskError::InvalidSparseHeader("bad"),
+            ErrorKind::InvalidData,
+        );
         assert_kind(DiskError::CorruptSparseImage("bad"), ErrorKind::InvalidData);
         assert_kind(DiskError::Io("boom".to_string()), ErrorKind::Other);
     }

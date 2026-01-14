@@ -1,7 +1,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 
-use aero_devices::pci::PciDevice as _;
 use aero_devices::pci::profile::VIRTIO_DEVICE_CFG_BAR0_OFFSET;
+use aero_devices::pci::PciDevice as _;
 use aero_machine::{Machine, MachineConfig};
 use aero_storage::{MemBackend, RawDisk};
 

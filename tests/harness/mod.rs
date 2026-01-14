@@ -773,8 +773,8 @@ impl QemuVm {
                 if cfg.artifacts.enabled {
                     let nonce = self.qmp.next_nonce();
                     let qemu_log = self.stderr.snapshot_lossy();
-                    let artifacts = write_screenshot_mismatch_artifacts(
-                        ScreenshotMismatchArtifactContext {
+                    let artifacts =
+                        write_screenshot_mismatch_artifacts(ScreenshotMismatchArtifactContext {
                             golden,
                             cfg,
                             actual: &actual,
@@ -784,8 +784,7 @@ impl QemuVm {
                             serial_log_src: &self.serial_path,
                             qemu_log: &qemu_log,
                             nonce,
-                        },
-                    );
+                        });
                     msg.push_str(&format!(
                         "\nartifacts:\n  dir:      {}\n  actual:   {}\n  expected: {}\n  diff:     {}\n  serial:   {}\n  qemu_log: {}\n  meta:     {}",
                         artifacts.dir.display(),

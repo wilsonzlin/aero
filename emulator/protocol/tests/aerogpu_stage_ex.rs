@@ -442,7 +442,10 @@ fn cmd_writer_stage_ex_encodes_compute_and_reserved0() {
     );
     // Compute is canonicalized to legacy encoding (`reserved0==0`).
     assert_eq!(reserved0, 0);
-    assert_eq!(decode_stage_ex(stage, reserved0), Some(AerogpuShaderStageEx::None));
+    assert_eq!(
+        decode_stage_ex(stage, reserved0),
+        Some(AerogpuShaderStageEx::None)
+    );
     cursor += size_bytes as usize;
 
     assert_eq!(cursor, buf.len());
@@ -471,7 +474,10 @@ fn legacy_compute_stage_ex_zero_resolves_to_compute() {
 #[test]
 fn extended_stage_ex_resolves_geometry_hull_domain() {
     let cases: &[(AerogpuShaderStageEx, AerogpuD3dShaderStage)] = &[
-        (AerogpuShaderStageEx::Geometry, AerogpuD3dShaderStage::Geometry),
+        (
+            AerogpuShaderStageEx::Geometry,
+            AerogpuD3dShaderStage::Geometry,
+        ),
         (AerogpuShaderStageEx::Hull, AerogpuD3dShaderStage::Hull),
         (AerogpuShaderStageEx::Domain, AerogpuD3dShaderStage::Domain),
     ];
@@ -489,6 +495,9 @@ fn extended_stage_ex_resolves_geometry_hull_domain() {
         let reserved0 = cmd.reserved0;
         assert_eq!(stage, AerogpuShaderStage::Compute as u32);
         assert_eq!(reserved0, stage_ex as u32);
-        assert_eq!(resolve_stage(stage, reserved0).expect("stage must resolve"), expected);
+        assert_eq!(
+            resolve_stage(stage, reserved0).expect("stage must resolve"),
+            expected
+        );
     }
 }

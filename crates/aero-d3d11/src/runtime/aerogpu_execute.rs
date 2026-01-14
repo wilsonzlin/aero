@@ -1280,8 +1280,7 @@ impl AerogpuCmdRuntime {
                             Some(self.device.create_buffer(&wgpu::BufferDescriptor {
                                 label: Some("aero-d3d11 aerogpu draw_indirect args"),
                                 size: DrawIndirectArgs::SIZE_BYTES,
-                                usage: wgpu::BufferUsages::INDIRECT
-                                    | wgpu::BufferUsages::COPY_DST,
+                                usage: wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::COPY_DST,
                                 mapped_at_creation: false,
                             }));
                         let args_buffer = indirect_args_buffer
@@ -1354,8 +1353,7 @@ impl AerogpuCmdRuntime {
                             Some(self.device.create_buffer(&wgpu::BufferDescriptor {
                                 label: Some("aero-d3d11 aerogpu draw_indexed_indirect args"),
                                 size: DrawIndexedIndirectArgs::SIZE_BYTES,
-                                usage: wgpu::BufferUsages::INDIRECT
-                                    | wgpu::BufferUsages::COPY_DST,
+                                usage: wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::COPY_DST,
                                 mapped_at_creation: false,
                             }));
                         let args_buffer = indirect_args_buffer

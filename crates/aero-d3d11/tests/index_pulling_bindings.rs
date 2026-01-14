@@ -37,4 +37,3 @@ fn index_pulling_bindings_use_internal_range_and_do_not_overlap_vertex_buffers()
         "index buffer binding should immediately follow params binding"
     );
 }
-

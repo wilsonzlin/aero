@@ -252,8 +252,7 @@ fn virtio_net_pci_bridge_smoke_and_irq_latch() {
     guest.read_into(rx_payload_addr, &mut rx_buf);
     let expected_rx_buf = vec![0xBB; rx_frame.len()];
     assert_eq!(
-        rx_buf,
-        expected_rx_buf,
+        rx_buf, expected_rx_buf,
         "RX payload buffer should not be DMA-written while PCI bus mastering is disabled"
     );
 
@@ -289,8 +288,7 @@ fn virtio_net_pci_bridge_smoke_and_irq_latch() {
     guest.read_into(rx_hdr_addr, &mut rx_hdr);
     let expected_rx_hdr = vec![0u8; VirtioNetHdr::BASE_LEN];
     assert_eq!(
-        rx_hdr,
-        expected_rx_hdr,
+        rx_hdr, expected_rx_hdr,
         "expected virtio-net RX header to be zeroed by device"
     );
     let mut rx_payload = vec![0u8; rx_frame.len()];

@@ -171,8 +171,8 @@ fn xhci_controller_control_out_immediate_data_stage_is_delivered() {
     link_trb.write_to(&mut mem, transfer_ring_base + 3 * TRB_LEN as u64);
 
     // Ring the endpoint doorbell then tick to process.
-    let doorbell_offset =
-        u64::from(regs::DBOFF_VALUE) + u64::from(slot_id) * u64::from(regs::doorbell::DOORBELL_STRIDE);
+    let doorbell_offset = u64::from(regs::DBOFF_VALUE)
+        + u64::from(slot_id) * u64::from(regs::doorbell::DOORBELL_STRIDE);
     xhci.mmio_write(doorbell_offset, 4, 1);
     xhci.tick(&mut mem);
     xhci.service_event_ring(&mut mem);
@@ -257,8 +257,8 @@ fn xhci_controller_control_in_immediate_data_stage_writes_trb_parameter() {
     link_trb.write_to(&mut mem, transfer_ring_base + 3 * TRB_LEN as u64);
 
     // Ring the endpoint doorbell then tick to process.
-    let doorbell_offset =
-        u64::from(regs::DBOFF_VALUE) + u64::from(slot_id) * u64::from(regs::doorbell::DOORBELL_STRIDE);
+    let doorbell_offset = u64::from(regs::DBOFF_VALUE)
+        + u64::from(slot_id) * u64::from(regs::doorbell::DOORBELL_STRIDE);
     xhci.mmio_write(doorbell_offset, 4, 1);
     xhci.tick(&mut mem);
     xhci.service_event_ring(&mut mem);

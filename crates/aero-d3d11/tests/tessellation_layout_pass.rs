@@ -400,7 +400,9 @@ fn tessellation_layout_pass_prefix_sums_and_indirect_args_match_expected() {
                 return;
             }
         };
-        let supports_compute = downlevel.flags.contains(wgpu::DownlevelFlags::COMPUTE_SHADERS);
+        let supports_compute = downlevel
+            .flags
+            .contains(wgpu::DownlevelFlags::COMPUTE_SHADERS);
         if !supports_compute {
             common::skip_or_panic(test_name, "compute unsupported");
             return;
@@ -505,7 +507,9 @@ fn tessellation_layout_pass_clamps_to_capacity_and_sets_debug_flag() {
                 return;
             }
         };
-        let supports_compute = downlevel.flags.contains(wgpu::DownlevelFlags::COMPUTE_SHADERS);
+        let supports_compute = downlevel
+            .flags
+            .contains(wgpu::DownlevelFlags::COMPUTE_SHADERS);
         if !supports_compute {
             common::skip_or_panic(test_name, "compute unsupported");
             return;

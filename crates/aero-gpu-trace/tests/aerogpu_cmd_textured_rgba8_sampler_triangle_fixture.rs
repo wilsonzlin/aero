@@ -18,9 +18,8 @@ const ILAY_POS3_TEX2: &[u8] = include_bytes!("../../aero-d3d11/tests/fixtures/il
 
 fn fixture_path() -> PathBuf {
     // `CARGO_MANIFEST_DIR` = `.../crates/aero-gpu-trace`
-    Path::new(env!("CARGO_MANIFEST_DIR")).join(
-        "../../tests/fixtures/aerogpu_cmd_textured_rgba8_sampler_triangle.aerogputrace",
-    )
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/aerogpu_cmd_textured_rgba8_sampler_triangle.aerogputrace")
 }
 
 fn make_cmd_stream() -> Vec<u8> {
@@ -169,4 +168,3 @@ fn aerogpu_cmd_textured_rgba8_sampler_triangle_trace_fixture_is_stable() {
         fs::read(&path).expect("fixture file missing; run with AERO_UPDATE_TRACE_FIXTURES=1");
     assert_eq!(bytes, fixture);
 }
-

@@ -43,8 +43,7 @@ fn gs_cut_restartstrip_resets_triangle_strip_assembly_semantics() -> Result<()> 
         // actually contains the `cut` opcode token. This helps catch accidental fixture
         // corruption, even though the test below uses WGSL to emulate the expected behavior.
         let dxbc = DxbcFile::parse(GS_CUT_DXBC).context("parse gs_cut.dxbc as DXBC")?;
-        let program =
-            Sm4Program::parse_from_dxbc(&dxbc).context("parse gs_cut.dxbc as SM4")?;
+        let program = Sm4Program::parse_from_dxbc(&dxbc).context("parse gs_cut.dxbc as SM4")?;
         assert_eq!(
             program.stage,
             ShaderStage::Geometry,

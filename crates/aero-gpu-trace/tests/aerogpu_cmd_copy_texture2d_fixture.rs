@@ -11,7 +11,8 @@ use std::path::{Path, PathBuf};
 
 fn fixture_path() -> PathBuf {
     // `CARGO_MANIFEST_DIR` = `.../crates/aero-gpu-trace`
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/aerogpu_cmd_copy_texture2d.aerogputrace")
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/aerogpu_cmd_copy_texture2d.aerogputrace")
 }
 
 fn make_cmd_stream() -> Vec<u8> {
@@ -54,7 +55,21 @@ fn make_cmd_stream() -> Vec<u8> {
     // Copy into DST and present it.
     // NOTE: This uses a regular GPU-to-GPU copy (no WRITEBACK_DST flag) so it works without a
     // guest allocation table.
-    w.copy_texture2d(DST, SRC, 0, 0, 0, 0, 0, 0, 0, 0, 64, 64, AEROGPU_COPY_FLAG_NONE);
+    w.copy_texture2d(
+        DST,
+        SRC,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        64,
+        64,
+        AEROGPU_COPY_FLAG_NONE,
+    );
     w.set_render_targets(&[DST], 0);
     w.present(0, 0);
 

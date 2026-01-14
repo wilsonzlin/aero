@@ -1284,7 +1284,7 @@ fn assemble_ps3_mova_sat_relative_const() -> Vec<u32> {
         0x002E,
         1u32 << 20, // saturate (no shift)
         &[
-            enc_dst(3, 0, 0x1), // a0.x (regtype 3)
+            enc_dst(3, 0, 0x1),  // a0.x (regtype 3)
             enc_src(2, 0, 0x00), // c0.x
         ],
     ));
@@ -5035,11 +5035,9 @@ fn translate_entrypoint_rejects_oversized_shader_bytecode() {
     // any decoding/normalization work.
     let bytecode = vec![0u8; MAX_D3D9_SHADER_BYTECODE_BYTES + 4];
 
-    let err = shader_translate::translate_d3d9_shader_to_wgsl(
-        &bytecode,
-        shader::WgslOptions::default(),
-    )
-    .unwrap_err();
+    let err =
+        shader_translate::translate_d3d9_shader_to_wgsl(&bytecode, shader::WgslOptions::default())
+            .unwrap_err();
     assert!(
         matches!(err, shader_translate::ShaderTranslateError::Malformed(_)),
         "{err:?}"

@@ -104,12 +104,12 @@ fn vs_as_compute_writes_vs_out_regs_non_indexed() {
     pollster::block_on(async {
         let (device, queue, supports_compute) =
             match common::wgpu::create_device_queue("aero-d3d11 VS-as-compute test device").await {
-            Ok(v) => v,
-            Err(err) => {
-                common::skip_or_panic(module_path!(), &format!("{err:#}"));
-                return;
-            }
-        };
+                Ok(v) => v,
+                Err(err) => {
+                    common::skip_or_panic(module_path!(), &format!("{err:#}"));
+                    return;
+                }
+            };
         if !supports_compute {
             common::skip_or_panic(module_path!(), "compute unsupported");
             return;
@@ -255,12 +255,12 @@ fn vs_as_compute_supports_index_pulling() {
     pollster::block_on(async {
         let (device, queue, supports_compute) =
             match common::wgpu::create_device_queue("aero-d3d11 VS-as-compute test device").await {
-            Ok(v) => v,
-            Err(err) => {
-                common::skip_or_panic(module_path!(), &format!("{err:#}"));
-                return;
-            }
-        };
+                Ok(v) => v,
+                Err(err) => {
+                    common::skip_or_panic(module_path!(), &format!("{err:#}"));
+                    return;
+                }
+            };
         if !supports_compute {
             common::skip_or_panic(module_path!(), "compute unsupported");
             return;
@@ -418,12 +418,12 @@ fn vs_as_compute_rejects_non_multiple_of_control_points() {
     pollster::block_on(async {
         let (device, queue, supports_compute) =
             match common::wgpu::create_device_queue("aero-d3d11 VS-as-compute test device").await {
-            Ok(v) => v,
-            Err(err) => {
-                common::skip_or_panic(module_path!(), &format!("{err:#}"));
-                return;
-            }
-        };
+                Ok(v) => v,
+                Err(err) => {
+                    common::skip_or_panic(module_path!(), &format!("{err:#}"));
+                    return;
+                }
+            };
         if !supports_compute {
             common::skip_or_panic(module_path!(), "compute unsupported");
             return;
@@ -436,7 +436,9 @@ fn vs_as_compute_rejects_non_multiple_of_control_points() {
         let stride = 28u32;
         let slot_strides = [stride];
         let binding = InputLayoutBinding::new(&layout, &slot_strides);
-        let pulling = VertexPullingLayout::new(&binding, &vs_signature).context("pulling layout").unwrap();
+        let pulling = VertexPullingLayout::new(&binding, &vs_signature)
+            .context("pulling layout")
+            .unwrap();
 
         // Provide 4 vertices (the exact contents don't matter since dispatch should fail before execution).
         let mut vb_bytes = Vec::new();

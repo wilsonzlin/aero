@@ -957,9 +957,9 @@ mod tests {
     use super::*;
     use std::cell::{Cell, RefCell};
     use std::panic;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
     use std::sync::Mutex;
-    use std::sync::atomic::{AtomicU64, Ordering};
 
     #[derive(Default)]
     struct MockMetricsSink {
@@ -1120,7 +1120,11 @@ mod tests {
         panic::set_hook(prev);
 
         assert!(result.is_err(), "expected a panic");
-        LAST_PANIC_LOC.with(|cell| cell.borrow().clone().expect("panic hook did not capture a location"))
+        LAST_PANIC_LOC.with(|cell| {
+            cell.borrow()
+                .clone()
+                .expect("panic hook did not capture a location")
+        })
     }
 
     #[test]

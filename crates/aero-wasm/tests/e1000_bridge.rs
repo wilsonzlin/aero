@@ -8,7 +8,14 @@ use wasm_bindgen_test::wasm_bindgen_test;
 mod common;
 
 /// Minimal legacy TX descriptor layout (16 bytes).
-fn write_tx_desc(guest: &common::GuestRegion, addr: u32, buf_addr: u64, len: u16, cmd: u8, status: u8) {
+fn write_tx_desc(
+    guest: &common::GuestRegion,
+    addr: u32,
+    buf_addr: u64,
+    len: u16,
+    cmd: u8,
+    status: u8,
+) {
     guest.write_u64(addr, buf_addr);
     guest.write_u16(addr + 8, len);
     guest.write_bytes(addr + 10, &[0]); // cso

@@ -72,7 +72,11 @@ fn i8042_service_output_does_not_update_prefer_mouse_when_draining_pending_fifo(
 
     // Drain the ACK.
     let status = c.read_port(0x64);
-    assert_ne!(status & 0x01, 0, "mouse ACK should be present in output buffer");
+    assert_ne!(
+        status & 0x01,
+        0,
+        "mouse ACK should be present in output buffer"
+    );
     assert_ne!(
         status & 0x20,
         0,

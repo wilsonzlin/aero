@@ -15,7 +15,8 @@ pub const CMD_STREAM_RESERVED0_OFFSET: u64 =
 pub const CMD_STREAM_RESERVED1_OFFSET: u64 =
     offset_of!(protocol_cmd::AerogpuCmdStreamHeader, reserved1) as u64;
 
-pub const CMD_STREAM_HEADER_SIZE_BYTES: u32 = protocol_cmd::AerogpuCmdStreamHeader::SIZE_BYTES as u32;
+pub const CMD_STREAM_HEADER_SIZE_BYTES: u32 =
+    protocol_cmd::AerogpuCmdStreamHeader::SIZE_BYTES as u32;
 
 pub const CMD_HDR_OPCODE_OFFSET: u64 = offset_of!(protocol_cmd::AerogpuCmdHdr, opcode) as u64;
 pub const CMD_HDR_SIZE_BYTES_OFFSET: u64 =
@@ -26,4 +27,3 @@ pub const CMD_PRESENT_SCANOUT_ID_OFFSET: u64 =
     offset_of!(protocol_cmd::AerogpuCmdPresent, scanout_id) as u64;
 pub const CMD_PRESENT_FLAGS_OFFSET: u64 = offset_of!(protocol_cmd::AerogpuCmdPresent, flags) as u64;
 pub const CMD_PRESENT_SIZE_BYTES: u32 = protocol_cmd::AerogpuCmdPresent::SIZE_BYTES as u32;
-

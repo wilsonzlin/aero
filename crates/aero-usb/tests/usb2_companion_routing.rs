@@ -355,7 +355,11 @@ fn usb2_companion_routing_uhci_lsda_is_clear_when_port_is_ehci_owned() {
 
     // With CONFIGFLAG=0, the port is companion-owned so UHCI should see the low-speed attach.
     let portsc = uhci.io_read(REG_PORTSC1, 2) as u16;
-    assert_ne!(portsc & PORTSC_CCS, 0, "expected device connected in UHCI view");
+    assert_ne!(
+        portsc & PORTSC_CCS,
+        0,
+        "expected device connected in UHCI view"
+    );
     assert_ne!(
         portsc & PORTSC_LSDA,
         0,
@@ -366,7 +370,11 @@ fn usb2_companion_routing_uhci_lsda_is_clear_when_port_is_ehci_owned() {
     ehci.mmio_write(REG_CONFIGFLAG, 4, CONFIGFLAG_CF);
 
     let portsc = uhci.io_read(REG_PORTSC1, 2) as u16;
-    assert_eq!(portsc & PORTSC_CCS, 0, "expected CCS clear when EHCI owns port");
+    assert_eq!(
+        portsc & PORTSC_CCS,
+        0,
+        "expected CCS clear when EHCI owns port"
+    );
     assert_eq!(
         portsc & PORTSC_LSDA,
         0,
@@ -386,8 +394,14 @@ fn usb2_port_mux_owner_change_without_device_does_not_fabricate_connection_state
     let mut mux = Usb2PortMux::new(1);
 
     // No device attached: both views should show disconnected.
-    assert_eq!(mux.uhci_read_portsc(0) & (UHCI_PORTSC_CCS | UHCI_PORTSC_CSC), 0);
-    assert_eq!(mux.ehci_read_portsc(0) & (EHCI_PORTSC_CCS | EHCI_PORTSC_CSC), 0);
+    assert_eq!(
+        mux.uhci_read_portsc(0) & (UHCI_PORTSC_CCS | UHCI_PORTSC_CSC),
+        0
+    );
+    assert_eq!(
+        mux.ehci_read_portsc(0) & (EHCI_PORTSC_CCS | EHCI_PORTSC_CSC),
+        0
+    );
 
     // Claim port for EHCI (CONFIGFLAG=1 + PORT_OWNER=0) while no device is attached.
     mux.set_configflag(true);
@@ -492,7 +506,10 @@ fn usb2_companion_routing_snapshot_restore_preserves_device_suspend_state() {
         uhci.load_state(&uhci_snapshot)
             .expect("UHCI snapshot restore should succeed");
 
-        assert!(spy.suspended(), "device should remain suspended after restore");
+        assert!(
+            spy.suspended(),
+            "device should remain suspended after restore"
+        );
     }
 
     // Restore order: UHCI first, then EHCI.
@@ -511,6 +528,9 @@ fn usb2_companion_routing_snapshot_restore_preserves_device_suspend_state() {
         ehci.load_state(&ehci_snapshot)
             .expect("EHCI snapshot restore should succeed");
 
-        assert!(spy.suspended(), "device should remain suspended after restore");
+        assert!(
+            spy.suspended(),
+            "device should remain suspended after restore"
+        );
     }
 }

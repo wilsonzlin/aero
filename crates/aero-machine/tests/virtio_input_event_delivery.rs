@@ -71,7 +71,10 @@ fn virtio_input_keyboard_init_then_host_injects_key_events() {
 
     // Feature negotiation (modern virtio-pci).
     m.write_physical_u8(common + 0x14, VIRTIO_STATUS_ACKNOWLEDGE);
-    m.write_physical_u8(common + 0x14, VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER);
+    m.write_physical_u8(
+        common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
+    );
 
     // Read offered features (low/high dwords) and accept them as-is.
     m.write_physical_u32(common + 0x00, 0);
@@ -89,7 +92,10 @@ fn virtio_input_keyboard_init_then_host_injects_key_events() {
         VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK,
     );
     // Device should accept FEATURES_OK (must keep it set if negotiation succeeded).
-    assert_ne!(m.read_physical_u8(common + 0x14) & VIRTIO_STATUS_FEATURES_OK, 0);
+    assert_ne!(
+        m.read_physical_u8(common + 0x14) & VIRTIO_STATUS_FEATURES_OK,
+        0
+    );
 
     m.write_physical_u8(
         common + 0x14,
@@ -114,14 +120,7 @@ fn virtio_input_keyboard_init_then_host_injects_key_events() {
     let bufs = [0x13000u64, 0x13020u64, 0x13040u64, 0x13060u64];
     for (i, &buf) in bufs.iter().enumerate() {
         m.write_physical(buf, &[0u8; 8]);
-        write_desc(
-            &mut m,
-            desc,
-            i as u16,
-            buf,
-            8,
-            VIRTQ_DESC_F_WRITE,
-        );
+        write_desc(&mut m, desc, i as u16, buf, 8, VIRTQ_DESC_F_WRITE);
     }
 
     // avail ring: flags=0, idx=4, ring=[0,1,2,3].

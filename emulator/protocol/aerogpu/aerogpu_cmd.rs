@@ -316,7 +316,9 @@ pub fn resolve_stage(
             // Compute program type (5) is accepted as an alias for legacy Compute.
             5 => Ok(AerogpuD3dShaderStage::Compute),
             // Vertex program type (1) must be encoded via shader_stage for clarity.
-            1 => Err(AerogpuStageResolveError::InvalidStageEx { stage_ex: reserved0 }),
+            1 => Err(AerogpuStageResolveError::InvalidStageEx {
+                stage_ex: reserved0,
+            }),
             other => Err(AerogpuStageResolveError::UnknownStageEx { stage_ex: other }),
         },
         other => Err(AerogpuStageResolveError::UnknownShaderStage {

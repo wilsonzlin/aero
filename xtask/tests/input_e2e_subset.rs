@@ -69,7 +69,10 @@ fn input_e2e_appends_extra_playwright_args_after_spec_list() {
 
     let npm_e2e = invocations
         .iter()
-        .find(|argv| argv.first().map(|s| s.as_str()) == Some("npm") && argv.contains(&"test:e2e".to_string()))
+        .find(|argv| {
+            argv.first().map(|s| s.as_str()) == Some("npm")
+                && argv.contains(&"test:e2e".to_string())
+        })
         .expect("expected an npm test:e2e invocation");
 
     // Identify the final spec path without hardcoding which spec happens to be last.
@@ -77,7 +80,8 @@ fn input_e2e_appends_extra_playwright_args_after_spec_list() {
         .iter()
         .enumerate()
         .filter(|(_, arg)| {
-            arg.starts_with("tests/e2e/") && (arg.ends_with(".spec.ts") || arg.ends_with(".spec.mjs"))
+            arg.starts_with("tests/e2e/")
+                && (arg.ends_with(".spec.ts") || arg.ends_with(".spec.mjs"))
         })
         .map(|(idx, _)| idx)
         .max()

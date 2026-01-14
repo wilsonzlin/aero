@@ -2,12 +2,12 @@
 
 use aero_jit_x86::tier1::ir::{IrBuilder, IrTerminator};
 use aero_jit_x86::tier1::{Tier1WasmCodegen, Tier1WasmOptions, EXPORT_BLOCK_FN};
-use aero_jit_x86::{abi, jit_ctx};
 use aero_jit_x86::tier2::ir::{Instr, Operand, TraceIr, TraceKind};
 use aero_jit_x86::tier2::opt::RegAllocPlan;
-use aero_jit_x86::tier2::{Tier2WasmCodegen, Tier2WasmOptions};
 use aero_jit_x86::tier2::wasm_codegen::EXPORT_TRACE_FN;
-use aero_jit_x86::wasm::{IMPORT_MEM_WRITE_U8, IMPORT_MEMORY, IMPORT_MMU_TRANSLATE, IMPORT_MODULE};
+use aero_jit_x86::tier2::{Tier2WasmCodegen, Tier2WasmOptions};
+use aero_jit_x86::wasm::{IMPORT_MEMORY, IMPORT_MEM_WRITE_U8, IMPORT_MMU_TRANSLATE, IMPORT_MODULE};
+use aero_jit_x86::{abi, jit_ctx};
 use aero_jit_x86::{
     JIT_TLB_ENTRY_SIZE, JIT_TLB_INDEX_MASK, PAGE_BASE_MASK, PAGE_SHIFT, TLB_FLAG_EXEC,
     TLB_FLAG_IS_RAM, TLB_FLAG_READ, TLB_FLAG_WRITE,
@@ -110,7 +110,8 @@ fn tier2_module_instantiates_with_shared_imported_memory_in_wasmtime() {
 fn write_bytes(mem: &SharedMemory, addr: usize, src: &[u8]) {
     let data = mem.data();
     assert!(
-        addr.checked_add(src.len()).is_some_and(|end| end <= data.len()),
+        addr.checked_add(src.len())
+            .is_some_and(|end| end <= data.len()),
         "write_bytes out of bounds: addr={addr} len={} mem_len={}",
         src.len(),
         data.len()
@@ -125,7 +126,8 @@ fn write_bytes(mem: &SharedMemory, addr: usize, src: &[u8]) {
 fn read_bytes(mem: &SharedMemory, addr: usize, dst: &mut [u8]) {
     let data = mem.data();
     assert!(
-        addr.checked_add(dst.len()).is_some_and(|end| end <= data.len()),
+        addr.checked_add(dst.len())
+            .is_some_and(|end| end <= data.len()),
         "read_bytes out of bounds: addr={addr} len={} mem_len={}",
         dst.len(),
         data.len()
@@ -229,11 +231,7 @@ fn tier2_inline_code_version_guards_work_with_shared_memory_in_wasmtime() {
     write_u32(&memory, table_ptr, 1);
 
     // Initialize CPU state.
-    write_u64(
-        &memory,
-        cpu_ptr + abi::CPU_RIP_OFF as usize,
-        init_rip,
-    );
+    write_u64(&memory, cpu_ptr + abi::CPU_RIP_OFF as usize, init_rip);
     write_u64(
         &memory,
         cpu_ptr + abi::CPU_RFLAGS_OFF as usize,
@@ -255,11 +253,7 @@ fn tier2_inline_code_version_guards_work_with_shared_memory_in_wasmtime() {
 
     // Mutate the table entry: guard should invalidate.
     write_u32(&memory, table_ptr, 2);
-    write_u64(
-        &memory,
-        cpu_ptr + abi::CPU_RIP_OFF as usize,
-        init_rip,
-    );
+    write_u64(&memory, cpu_ptr + abi::CPU_RIP_OFF as usize, init_rip);
     let ret = trace_fn
         .call(&mut store, (cpu_ptr as i32, 0))
         .expect("call Tier-2 trace");
@@ -441,7 +435,10 @@ fn tier2_inline_tlb_store_bumps_code_version_table_with_shared_memory_in_wasmtim
     assert_eq!(ret as u64, init_rip);
 
     assert_eq!(
-        read_u32(&memory, cpu_ptr + jit_ctx::TRACE_EXIT_REASON_OFFSET as usize),
+        read_u32(
+            &memory,
+            cpu_ptr + jit_ctx::TRACE_EXIT_REASON_OFFSET as usize
+        ),
         jit_ctx::TRACE_EXIT_REASON_NONE
     );
     assert_eq!(read_u8(&memory, 0), 0xAB);

@@ -162,8 +162,7 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
 
     out_indices[patch.index_base + local_index] = out_val;
 }}
-"#
-        ,
+"#,
         tess_lib = tess_lib,
     )
 }

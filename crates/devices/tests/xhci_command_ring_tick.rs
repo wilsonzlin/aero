@@ -104,8 +104,9 @@ fn new_xhci_with_shared_memory(ram_size: usize) -> (XhciPciDevice, MemoryBus, Co
     // MMIO-triggered DMA uses an independent physical bus backed by the same RAM. The xHCI wrapper's
     // MMIO path uses this bus, while the tick path receives `mem` directly.
     let dma_ram = ram_handle.clone();
-    let dma_bus: Rc<RefCell<dyn memory::MemoryBus>> =
-        Rc::new(RefCell::new(memory::PhysicalMemoryBus::new(Box::new(dma_ram))));
+    let dma_bus: Rc<RefCell<dyn memory::MemoryBus>> = Rc::new(RefCell::new(
+        memory::PhysicalMemoryBus::new(Box::new(dma_ram)),
+    ));
 
     let mut dev = XhciPciDevice::default();
     dev.set_dma_memory_bus(Some(dma_bus));
@@ -113,7 +114,13 @@ fn new_xhci_with_shared_memory(ram_size: usize) -> (XhciPciDevice, MemoryBus, Co
     (dev, mem, ram_handle)
 }
 
-fn program_test_rings(mem: &mut MemoryBus, dev: &mut XhciPciDevice, cmd_ring: u64, erstba: u64, event_ring: u64) {
+fn program_test_rings(
+    mem: &mut MemoryBus,
+    dev: &mut XhciPciDevice,
+    cmd_ring: u64,
+    erstba: u64,
+    event_ring: u64,
+) {
     // Guest event ring (single segment).
     write_erst_entry(mem, erstba, event_ring, 256);
 
@@ -153,11 +160,7 @@ fn doorbell0_command_ring_continues_processing_on_tick() {
         let mut trb = Trb::new(0, 0, 0);
         trb.set_trb_type(TrbType::NoOpCommand);
         trb.set_cycle(true);
-        write_trb(
-            &mut mem,
-            cmd_ring + (i as u64) * (TRB_LEN as u64),
-            trb,
-        );
+        write_trb(&mut mem, cmd_ring + (i as u64) * (TRB_LEN as u64), trb);
     }
 
     // Stop marker: cycle mismatch so the ring looks empty after the command sequence.
@@ -208,11 +211,7 @@ fn tick_dma_and_command_ring_progress_are_gated_by_pci_bme() {
         let mut trb = Trb::new(0, 0, 0);
         trb.set_trb_type(TrbType::NoOpCommand);
         trb.set_cycle(true);
-        write_trb(
-            &mut mem,
-            cmd_ring + (i as u64) * (TRB_LEN as u64),
-            trb,
-        );
+        write_trb(&mut mem, cmd_ring + (i as u64) * (TRB_LEN as u64), trb);
     }
 
     let mut stop = Trb::new(0, 0, 0);

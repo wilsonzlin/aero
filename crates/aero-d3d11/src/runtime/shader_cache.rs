@@ -100,11 +100,22 @@ impl PersistedShaderStage {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum PersistedBindingKind {
-    ConstantBuffer { slot: u32, reg_count: u32 },
-    Texture2D { slot: u32 },
-    SrvBuffer { slot: u32 },
-    Sampler { slot: u32 },
-    UavBuffer { slot: u32 },
+    ConstantBuffer {
+        slot: u32,
+        reg_count: u32,
+    },
+    Texture2D {
+        slot: u32,
+    },
+    SrvBuffer {
+        slot: u32,
+    },
+    Sampler {
+        slot: u32,
+    },
+    UavBuffer {
+        slot: u32,
+    },
     UavTexture2DWriteOnly {
         slot: u32,
         format: crate::StorageTextureFormat,

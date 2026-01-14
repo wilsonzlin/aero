@@ -425,17 +425,7 @@ mod tests {
     }
 
     d3d_formats![
-        A8R8G8B8,
-        X8R8G8B8,
-        R5G6B5,
-        A1R5G5B5,
-        X1R5G5B5,
-        A4R4G4B4,
-        Dxt1,
-        Dxt3,
-        Dxt5,
-        D16,
-        D24S8,
+        A8R8G8B8, X8R8G8B8, R5G6B5, A1R5G5B5, X1R5G5B5, A4R4G4B4, Dxt1, Dxt3, Dxt5, D16, D24S8,
         D32,
     ];
 

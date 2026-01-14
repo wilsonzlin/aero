@@ -52,21 +52,9 @@ fn aerogpu_cmd_can_render_from_expanded_vertex_buffer_via_passthrough_vs() {
 
         let mut expanded = Vec::new();
         // Fullscreen triangle in clip-space.
-        push_expanded_vertex(
-            &mut expanded,
-            [-1.0, -1.0, 0.0, 1.0],
-            [1.0, 0.0, 0.0, 1.0],
-        );
-        push_expanded_vertex(
-            &mut expanded,
-            [-1.0, 3.0, 0.0, 1.0],
-            [1.0, 0.0, 0.0, 1.0],
-        );
-        push_expanded_vertex(
-            &mut expanded,
-            [3.0, -1.0, 0.0, 1.0],
-            [1.0, 0.0, 0.0, 1.0],
-        );
+        push_expanded_vertex(&mut expanded, [-1.0, -1.0, 0.0, 1.0], [1.0, 0.0, 0.0, 1.0]);
+        push_expanded_vertex(&mut expanded, [-1.0, 3.0, 0.0, 1.0], [1.0, 0.0, 0.0, 1.0]);
+        push_expanded_vertex(&mut expanded, [3.0, -1.0, 0.0, 1.0], [1.0, 0.0, 0.0, 1.0]);
 
         let w = 16u32;
         let h = 16u32;
@@ -135,4 +123,3 @@ fn aerogpu_cmd_can_render_from_expanded_vertex_buffer_via_passthrough_vs() {
         }
     });
 }
-

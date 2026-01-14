@@ -44,4 +44,3 @@ fn native_backend_smoke_submits_and_completes_fence() {
         "expected command stream to execute without error"
     );
 }
-

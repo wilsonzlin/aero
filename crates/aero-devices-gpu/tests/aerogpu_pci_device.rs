@@ -514,7 +514,10 @@ fn error_mmio_regs_latch_and_survive_irq_ack() {
     // Ring reset is a recovery point: it clears any previously latched error payload.
     dev.write(mmio::RING_CONTROL, 4, ring_control::RESET as u64);
     dev.tick(&mut mem, 0);
-    assert_eq!(dev.read(mmio::ERROR_CODE, 4) as u32, AerogpuErrorCode::None as u32);
+    assert_eq!(
+        dev.read(mmio::ERROR_CODE, 4) as u32,
+        AerogpuErrorCode::None as u32
+    );
     assert_eq!(dev.read(mmio::ERROR_FENCE_LO, 4), 0);
     assert_eq!(dev.read(mmio::ERROR_FENCE_HI, 4), 0);
     assert_eq!(dev.read(mmio::ERROR_COUNT, 4), 0);
@@ -655,7 +658,10 @@ fn drain_pending_submissions_filters_out_submissions_completed_before_drain() {
     let stride = u64::from(AeroGpuSubmitDesc::SIZE_BYTES);
     for (slot, fence) in [1u64, 2].into_iter().enumerate() {
         let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES + (slot as u64) * stride;
-        mem.write_u32(desc_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET, AeroGpuSubmitDesc::SIZE_BYTES);
+        mem.write_u32(
+            desc_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET,
+            AeroGpuSubmitDesc::SIZE_BYTES,
+        );
         mem.write_u32(desc_gpa + SUBMIT_DESC_FLAGS_OFFSET, 0);
         mem.write_u32(desc_gpa + SUBMIT_DESC_CONTEXT_ID_OFFSET, 0);
         mem.write_u32(desc_gpa + SUBMIT_DESC_ENGINE_ID_OFFSET, 0);

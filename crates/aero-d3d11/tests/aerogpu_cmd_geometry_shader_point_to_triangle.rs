@@ -2,8 +2,7 @@ mod common;
 
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
 use aero_d3d11::sm4::opcode::{
-    OPCODE_CUT, OPCODE_EMIT, OPCODE_LEN_MASK, OPCODE_LEN_SHIFT, OPCODE_MASK, OPCODE_MOV,
-    OPCODE_RET,
+    OPCODE_CUT, OPCODE_EMIT, OPCODE_LEN_MASK, OPCODE_LEN_SHIFT, OPCODE_MASK, OPCODE_MOV, OPCODE_RET,
 };
 use aero_d3d11::{
     DxbcFile, GsInputPrimitive, GsOutputTopology, ShaderStage as Sm4ShaderStage, Sm4Decl, Sm4Inst,
@@ -114,10 +113,12 @@ fn assert_gs_dxbc_decodes_as_geometry_and_has_emit(dxbc_bytes: &[u8]) {
     // output topology, and max output vertices. Validate them explicitly so fixture drift is caught
     // even on backends that skip the full runtime test.
     assert!(
-        module
-            .decls
-            .iter()
-            .any(|d| matches!(d, Sm4Decl::GsInputPrimitive { primitive: GsInputPrimitive::Point })),
+        module.decls.iter().any(|d| matches!(
+            d,
+            Sm4Decl::GsInputPrimitive {
+                primitive: GsInputPrimitive::Point
+            }
+        )),
         "GS DXBC should declare point input primitive via dcl_inputprimitive, got decls={:?}",
         module.decls
     );
@@ -142,12 +143,14 @@ fn assert_gs_dxbc_decodes_as_geometry_and_has_emit(dxbc_bytes: &[u8]) {
         "GS DXBC should declare max output vertices via dcl_maxvertexcount (max=3), got decls={:?}",
         module.decls
     );
-    let has_emit = module.instructions.iter().any(|inst| {
-        matches!(inst, Sm4Inst::Emit { .. } | Sm4Inst::EmitThenCut { .. })
-    });
-    let has_cut = module.instructions.iter().any(|inst| {
-        matches!(inst, Sm4Inst::Cut { .. } | Sm4Inst::EmitThenCut { .. })
-    });
+    let has_emit = module
+        .instructions
+        .iter()
+        .any(|inst| matches!(inst, Sm4Inst::Emit { .. } | Sm4Inst::EmitThenCut { .. }));
+    let has_cut = module
+        .instructions
+        .iter()
+        .any(|inst| matches!(inst, Sm4Inst::Cut { .. } | Sm4Inst::EmitThenCut { .. }));
     assert!(
         has_emit,
         "GS DXBC should contain an Emit-like instruction (Emit/EmitThenCut) (module.instructions={:?})",

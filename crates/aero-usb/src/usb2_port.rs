@@ -135,7 +135,8 @@ impl Usb2PortMux {
         if p.effective_owner != Usb2PortOwner::Companion {
             return;
         }
-        p.uhci.tick_1ms(&mut p.device, RemoteWakeBehavior::ResumeDetect);
+        p.uhci
+            .tick_1ms(&mut p.device, RemoteWakeBehavior::ResumeDetect);
     }
 
     pub fn uhci_bus_reset(&mut self, port: usize) {
@@ -256,7 +257,8 @@ impl Usb2PortMux {
         if p.effective_owner != Usb2PortOwner::Ehci {
             return;
         }
-        p.ehci.tick_1ms(&mut p.device, RemoteWakeBehavior::EnterResume);
+        p.ehci
+            .tick_1ms(&mut p.device, RemoteWakeBehavior::EnterResume);
     }
 
     pub fn ehci_bus_reset(&mut self, port: usize) {

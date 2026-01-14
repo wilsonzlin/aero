@@ -55,4 +55,3 @@ fn usb_ehci_attach_root_rejects_invalid_port() {
         .expect_err("root port 6 should be out of range (0..=5)");
     assert_eq!(err, UsbHubAttachError::InvalidPort);
 }
-

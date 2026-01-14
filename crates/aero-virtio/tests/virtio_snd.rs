@@ -1110,7 +1110,8 @@ fn virtio_snd_eventq_delivers_event_queued_before_buffer_is_posted() {
         .unwrap()
         .queue_event(VIRTIO_SND_EVT_PCM_PERIOD_ELAPSED, 0);
     assert_eq!(
-        irq_state.borrow().raised, 0,
+        irq_state.borrow().raised,
+        0,
         "queueing an event without eventq buffers should not raise an interrupt"
     );
 

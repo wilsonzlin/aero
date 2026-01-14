@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use aero_gpu_vga::{PortIO as _, VgaDevice};
-use aero_shared::scanout_state::{ScanoutState, SCANOUT_SOURCE_WDDM};
 #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
 use aero_shared::scanout_state::ScanoutStateUpdate;
+use aero_shared::scanout_state::{ScanoutState, SCANOUT_SOURCE_WDDM};
 use memory::MemoryBus;
 
 use crate::devices::aerogpu_regs::{
@@ -1162,7 +1162,7 @@ mod tests {
         // Doorbell processing and backend completion are driven by `tick()`.
         dev.tick(&mut mem, 0);
         dev.tick(&mut mem, 0);
- 
+
         // Fence must still advance even on backend error, and the ERROR IRQ bit must latch.
         assert_eq!(dev.regs.completed_fence, 1);
         assert_ne!(dev.regs.irq_status & irq_bits::FENCE, 0);
@@ -1295,14 +1295,14 @@ mod tests {
         dev.mmio_write(&mut mem, mmio::FENCE_GPA_LO, 4, fence_gpa as u32);
         dev.mmio_write(&mut mem, mmio::FENCE_GPA_HI, 4, (fence_gpa >> 32) as u32);
         dev.mmio_write(&mut mem, mmio::RING_CONTROL, 4, ring_control::ENABLE);
- 
+
         // Kick.
         dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
         // Drive doorbell processing and poll the backend completion so the error IRQ payload
         // becomes visible before the vsync-delayed fence completes.
         dev.tick(&mut mem, 0);
         dev.tick(&mut mem, 0);
- 
+
         // Backend error should set ERROR before the vsync-delayed fence completes.
         assert_eq!(dev.regs.completed_fence, 0);
         assert_eq!(dev.regs.irq_status & irq_bits::FENCE, 0);
@@ -1311,13 +1311,13 @@ mod tests {
         assert_eq!(dev.regs.error_fence, 1);
         assert_eq!(dev.regs.error_count, 1);
         assert!(dev.irq_level());
- 
+
         // Force a vblank edge and ensure the fence still advances (even though the backend errored).
         let next = dev
             .next_vblank_ns
             .expect("vblank scheduling should be active");
         dev.tick(&mut mem, next);
- 
+
         assert_eq!(dev.regs.completed_fence, 1);
         assert_ne!(dev.regs.irq_status & irq_bits::FENCE, 0);
         assert_ne!(dev.regs.irq_status & irq_bits::ERROR, 0);
@@ -1341,7 +1341,7 @@ mod tests {
             error: Some("boom".to_string()),
         });
         dev.set_backend(Box::new(backend));
- 
+
         dev.tick(&mut mem, 0);
 
         let features_lo = dev.mmio_read(&mut mem, mmio::FEATURES_LO, 4) as u64;

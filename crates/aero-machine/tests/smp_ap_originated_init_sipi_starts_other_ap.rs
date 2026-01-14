@@ -187,7 +187,8 @@ fn smp_ap_can_start_another_ap_via_init_sipi() {
     };
 
     let mut m = Machine::new(cfg).unwrap();
-    m.set_disk_image(boot_sector_spin_forever().to_vec()).unwrap();
+    m.set_disk_image(boot_sector_spin_forever().to_vec())
+        .unwrap();
     m.reset();
     m.platform_interrupts()
         .unwrap()
@@ -233,4 +234,3 @@ fn smp_ap_can_start_another_ap_via_init_sipi() {
         FLAG_VALUE
     );
 }
-

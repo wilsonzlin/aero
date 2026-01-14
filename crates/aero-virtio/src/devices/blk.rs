@@ -834,7 +834,10 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                                     let mut cur_addr = addr;
                                     while remaining != 0 {
                                         let take = remaining.min(scratch.len());
-                                        if self.backend.read_at(offset, &mut scratch[..take]).is_err()
+                                        if self
+                                            .backend
+                                            .read_at(offset, &mut scratch[..take])
+                                            .is_err()
                                             || mem.write(cur_addr, &scratch[..take]).is_err()
                                         {
                                             status = VIRTIO_BLK_S_IOERR;
@@ -894,7 +897,10 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                                     while remaining != 0 {
                                         let take = remaining.min(scratch.len());
                                         if mem.read(cur_addr, &mut scratch[..take]).is_err()
-                                            || self.backend.write_at(offset, &scratch[..take]).is_err()
+                                            || self
+                                                .backend
+                                                .write_at(offset, &scratch[..take])
+                                                .is_err()
                                         {
                                             status = VIRTIO_BLK_S_IOERR;
                                             break;

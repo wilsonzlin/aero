@@ -84,7 +84,9 @@ pub async fn create_device_queue_with_downlevel(
 ///   fail initialization in minimal CI environments.
 pub async fn create_device_queue(device_label: &str) -> Result<(wgpu::Device, wgpu::Queue, bool)> {
     let (device, queue, downlevel) = create_device_queue_with_downlevel(device_label).await?;
-    let supports_compute = downlevel.flags.contains(wgpu::DownlevelFlags::COMPUTE_SHADERS);
+    let supports_compute = downlevel
+        .flags
+        .contains(wgpu::DownlevelFlags::COMPUTE_SHADERS);
     Ok((device, queue, supports_compute))
 }
 

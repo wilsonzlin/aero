@@ -143,7 +143,10 @@ fn mouse_motion_bounds_packet_generation_for_extreme_deltas() {
 
     let last = reports.last().expect("expected at least one report");
     let (_buttons, x, _y, _wheel, _hwheel) = parse_report(last);
-    assert_eq!(x, 127, "expected capped motion to drop the final remainder report");
+    assert_eq!(
+        x, 127,
+        "expected capped motion to drop the final remainder report"
+    );
 }
 
 #[test]

@@ -116,4 +116,3 @@ fn usb2_port_mux_ehci_remote_wakeup_enters_resume_state() {
     // The device should be reachable again after resume.
     assert!(ehci.hub_mut().device_mut_for_address(1).is_some());
 }
-

@@ -42,7 +42,10 @@ fn machine_process_ahci_mirrors_bar5_when_guest_clears_it_to_zero() {
     {
         let dev = ahci.borrow();
         assert_eq!(
-            dev.config().bar_range(profile::AHCI_ABAR_BAR_INDEX).unwrap().base,
+            dev.config()
+                .bar_range(profile::AHCI_ABAR_BAR_INDEX)
+                .unwrap()
+                .base,
             abar_base
         );
     }
@@ -60,7 +63,10 @@ fn machine_process_ahci_mirrors_bar5_when_guest_clears_it_to_zero() {
     {
         let dev = ahci.borrow();
         assert_eq!(
-            dev.config().bar_range(profile::AHCI_ABAR_BAR_INDEX).unwrap().base,
+            dev.config()
+                .bar_range(profile::AHCI_ABAR_BAR_INDEX)
+                .unwrap()
+                .base,
             0
         );
     }

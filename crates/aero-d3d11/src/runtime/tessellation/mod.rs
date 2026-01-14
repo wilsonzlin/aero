@@ -175,11 +175,11 @@ impl TessellationRuntime {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::domain_eval::{
         build_triangle_domain_eval_wgsl, chunk_count_for_vertex_count, DomainEvalPipeline,
         DOMAIN_EVAL_WORKGROUP_SIZE_Y,
     };
+    use super::*;
     use crate::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
     use std::sync::Arc;
 
@@ -211,8 +211,8 @@ mod tests {
                 .map(|v| v.is_empty())
                 .unwrap_or(true);
             if needs_runtime_dir {
-                let dir =
-                    std::env::temp_dir().join(format!("aero-d3d11-xdg-runtime-{}", std::process::id()));
+                let dir = std::env::temp_dir()
+                    .join(format!("aero-d3d11-xdg-runtime-{}", std::process::id()));
                 let _ = std::fs::create_dir_all(&dir);
                 let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
                 std::env::set_var("XDG_RUNTIME_DIR", &dir);
@@ -660,13 +660,14 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {{
                 push_constant_ranges: &[],
             });
 
-            let layout_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("tess test layout pipeline"),
-                layout: Some(&layout_pl),
-                module: &layout_module,
-                entry_point: "cs_main",
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            });
+            let layout_pipeline =
+                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: Some("tess test layout pipeline"),
+                    layout: Some(&layout_pl),
+                    module: &layout_module,
+                    entry_point: "cs_main",
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                });
 
             // DS eval pass: consumes meta + HS outputs, writes expanded vertex buffer.
             let expanded_size = expected_vertex_count as u64 * out_reg_count as u64 * 16;
@@ -785,7 +786,13 @@ fn ds_eval(patch_id: u32, domain: vec3<f32>, _local_vertex: u32) -> AeroDsOut {
             });
 
             encoder.copy_buffer_to_buffer(&total_vertex_count, 0, &staging_total, 0, 4);
-            encoder.copy_buffer_to_buffer(&expanded_vertices, 0, &staging_vertices, 0, expanded_size);
+            encoder.copy_buffer_to_buffer(
+                &expanded_vertices,
+                0,
+                &staging_vertices,
+                0,
+                expanded_size,
+            );
 
             queue.submit([encoder.finish()]);
 

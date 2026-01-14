@@ -219,11 +219,8 @@ impl<B: NetBackend> VirtioNet<B> {
 
             if hdr_written < hdr_len {
                 let take = (hdr_len - hdr_written).min(remaining_desc);
-                mem.read(
-                    addr,
-                    &mut hdr_bytes[hdr_written..hdr_written + take],
-                )
-                .map_err(|_| VirtioDeviceError::IoError)?;
+                mem.read(addr, &mut hdr_bytes[hdr_written..hdr_written + take])
+                    .map_err(|_| VirtioDeviceError::IoError)?;
                 hdr_written += take;
                 addr = addr
                     .checked_add(take as u64)
@@ -401,11 +398,8 @@ impl<B: NetBackend> VirtioNet<B> {
                 let d_len = d.len as usize;
                 if header_off < hdr_len {
                     let take = (hdr_len - header_off).min(d_len);
-                    mem.write(
-                        d.addr,
-                        &header_bytes[header_off..header_off + take],
-                    )
-                    .map_err(|_| VirtioDeviceError::IoError)?;
+                    mem.write(d.addr, &header_bytes[header_off..header_off + take])
+                        .map_err(|_| VirtioDeviceError::IoError)?;
                     header_off += take;
                     off += take;
                 }

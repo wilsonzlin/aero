@@ -280,11 +280,16 @@ async fn opfs_attach_install_media_iso_existing_does_not_overwrite_overlay_refs_
     let sentinel_overlay = "sentinel-install.overlay";
     machine.set_ide_secondary_master_atapi_overlay_ref(sentinel_base, sentinel_overlay);
 
-    let attach_res = machine.attach_install_media_iso_opfs_existing(path.clone()).await;
+    let attach_res = machine
+        .attach_install_media_iso_opfs_existing(path.clone())
+        .await;
     if let Err(err) = attach_res {
         let msg = err
             .as_string()
-            .or_else(|| err.dyn_ref::<js_sys::Error>().map(|e| String::from(e.message())))
+            .or_else(|| {
+                err.dyn_ref::<js_sys::Error>()
+                    .map(|e| String::from(e.message()))
+            })
             .unwrap_or_else(|| format!("{err:?}"));
         // Treat OPFS unavailability (e.g. missing sync access handle support) as a skip.
         if msg.contains("OPFS")

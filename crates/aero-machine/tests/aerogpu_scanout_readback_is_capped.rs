@@ -50,8 +50,14 @@ fn aerogpu_scanout_readback_is_capped_to_avoid_unbounded_allocations() {
     let pitch = width * 4;
     let fb_gpa: u64 = 0x0020_0000;
 
-    m.write_physical_u32(bar0_base + aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_WIDTH as u64, width);
-    m.write_physical_u32(bar0_base + aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_HEIGHT as u64, height);
+    m.write_physical_u32(
+        bar0_base + aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_WIDTH as u64,
+        width,
+    );
+    m.write_physical_u32(
+        bar0_base + aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_HEIGHT as u64,
+        height,
+    );
     m.write_physical_u32(
         bar0_base + aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_PITCH_BYTES as u64,
         pitch,
@@ -68,7 +74,10 @@ fn aerogpu_scanout_readback_is_capped_to_avoid_unbounded_allocations() {
         bar0_base + aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_HI as u64,
         (fb_gpa >> 32) as u32,
     );
-    m.write_physical_u32(bar0_base + aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE as u64, 1);
+    m.write_physical_u32(
+        bar0_base + aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE as u64,
+        1,
+    );
 
     // The scanout is valid enough to claim WDDM ownership, but the host readback path must reject
     // it to avoid allocating an enormous temporary buffer.
@@ -78,7 +87,10 @@ fn aerogpu_scanout_readback_is_capped_to_avoid_unbounded_allocations() {
     assert!(m.display_framebuffer().is_empty());
 
     // Explicit disable releases the WDDM scanout claim and returns to legacy output.
-    m.write_physical_u32(bar0_base + aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE as u64, 0);
+    m.write_physical_u32(
+        bar0_base + aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE as u64,
+        0,
+    );
     m.process_aerogpu();
     m.display_present();
     assert_eq!(m.active_scanout_source(), ScanoutSource::LegacyText);

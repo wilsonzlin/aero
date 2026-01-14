@@ -1408,7 +1408,10 @@ fn drain_pending_submissions_and_complete_fence_across_u32_boundary() {
     mem.write_u32(desc0_gpa + SUBMIT_DESC_CONTEXT_ID_OFFSET, 7);
     mem.write_u32(desc0_gpa + SUBMIT_DESC_ENGINE_ID_OFFSET, 9);
     mem.write_u64(desc0_gpa + SUBMIT_DESC_CMD_GPA_OFFSET, cmd_gpa);
-    mem.write_u32(desc0_gpa + SUBMIT_DESC_CMD_SIZE_BYTES_OFFSET, cmd_size_bytes);
+    mem.write_u32(
+        desc0_gpa + SUBMIT_DESC_CMD_SIZE_BYTES_OFFSET,
+        cmd_size_bytes,
+    );
     mem.write_u64(desc0_gpa + SUBMIT_DESC_ALLOC_TABLE_GPA_OFFSET, 0);
     mem.write_u32(desc0_gpa + SUBMIT_DESC_ALLOC_TABLE_SIZE_BYTES_OFFSET, 0);
     mem.write_u64(desc0_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, fence0);
@@ -1423,7 +1426,10 @@ fn drain_pending_submissions_and_complete_fence_across_u32_boundary() {
     mem.write_u32(desc1_gpa + SUBMIT_DESC_CONTEXT_ID_OFFSET, 7);
     mem.write_u32(desc1_gpa + SUBMIT_DESC_ENGINE_ID_OFFSET, 9);
     mem.write_u64(desc1_gpa + SUBMIT_DESC_CMD_GPA_OFFSET, cmd_gpa);
-    mem.write_u32(desc1_gpa + SUBMIT_DESC_CMD_SIZE_BYTES_OFFSET, cmd_size_bytes);
+    mem.write_u32(
+        desc1_gpa + SUBMIT_DESC_CMD_SIZE_BYTES_OFFSET,
+        cmd_size_bytes,
+    );
     mem.write_u64(desc1_gpa + SUBMIT_DESC_ALLOC_TABLE_GPA_OFFSET, 0);
     mem.write_u32(desc1_gpa + SUBMIT_DESC_ALLOC_TABLE_SIZE_BYTES_OFFSET, 0);
     mem.write_u64(desc1_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, fence1);

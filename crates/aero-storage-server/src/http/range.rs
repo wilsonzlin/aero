@@ -83,7 +83,14 @@ mod tests {
             ByteRangeSpec::FromTo { start: 0, end: 1 },
             ByteRangeSpec::FromTo { start: 2, end: 3 },
         ];
-        let err = resolve_range(&specs, 10, RangeOptions { max_total_bytes: 10 }).unwrap_err();
+        let err = resolve_range(
+            &specs,
+            10,
+            RangeOptions {
+                max_total_bytes: 10,
+            },
+        )
+        .unwrap_err();
         assert_eq!(err, RangeResolveError::MultiRangeNotSupported);
     }
 

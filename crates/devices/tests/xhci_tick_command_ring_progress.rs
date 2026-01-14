@@ -5,8 +5,8 @@ use aero_platform::chipset::ChipsetState;
 use aero_platform::memory::MemoryBus as PlatformMemoryBus;
 use aero_usb::xhci::interrupter::IMAN_IE;
 use aero_usb::xhci::trb::{CompletionCode, Trb, TrbType, TRB_LEN};
-use memory::MmioHandler;
 use memory::MemoryBus as _;
+use memory::MmioHandler;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -33,9 +33,8 @@ fn xhci_tick_processes_command_ring_without_additional_mmio() {
     // perform additional MMIO.
     let chipset = ChipsetState::new(true);
     let filter = AddressFilter::new(chipset.a20());
-    let mem: Rc<RefCell<PlatformMemoryBus>> = Rc::new(RefCell::new(PlatformMemoryBus::new(
-        filter, 0x100_000,
-    )));
+    let mem: Rc<RefCell<PlatformMemoryBus>> =
+        Rc::new(RefCell::new(PlatformMemoryBus::new(filter, 0x100_000)));
 
     let mut dev = XhciPciDevice::default();
     dev.set_dma_memory_bus(Some(mem.clone()));
@@ -89,12 +88,7 @@ fn xhci_tick_processes_command_ring_without_additional_mmio() {
     // Program CRCR and start the controller.
     MmioHandler::write(&mut dev, regs::REG_CRCR_LO, 4, CMD_RING_BASE | 1);
     MmioHandler::write(&mut dev, regs::REG_CRCR_HI, 4, 0);
-    MmioHandler::write(
-        &mut dev,
-        regs::REG_USBCMD,
-        4,
-        u64::from(regs::USBCMD_RUN),
-    );
+    MmioHandler::write(&mut dev, regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     // Ring doorbell 0 (Command Ring). The controller processes a bounded number of TRBs per MMIO.
     MmioHandler::write(&mut dev, u64::from(regs::DBOFF_VALUE), 4, 0);
@@ -111,10 +105,7 @@ fn xhci_tick_processes_command_ring_without_additional_mmio() {
     {
         let mut mem = mem.borrow_mut();
         for i in 0..COMMAND_COUNT {
-            let evt = read_trb(
-                &mut mem,
-                EVENT_RING_BASE + (i as u64) * (TRB_LEN as u64),
-            );
+            let evt = read_trb(&mut mem, EVENT_RING_BASE + (i as u64) * (TRB_LEN as u64));
             assert_eq!(
                 evt.trb_type(),
                 TrbType::CommandCompletionEvent,

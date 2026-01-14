@@ -286,7 +286,11 @@ mod tests {
         }
 
         let portsc_val = dev.mmio_read(&mut mem, portsc, 4);
-        assert_eq!(portsc_val & regs::PORTSC_PR, 0, "port reset should self-clear");
+        assert_eq!(
+            portsc_val & regs::PORTSC_PR,
+            0,
+            "port reset should self-clear"
+        );
         assert_ne!(
             portsc_val & regs::PORTSC_PED,
             0,

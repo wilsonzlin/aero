@@ -52,7 +52,12 @@ impl MemoryBus for CountingMem {
     }
 }
 
-fn write_erst_entry<M: MemoryBus + ?Sized>(mem: &mut M, erstba: u64, seg_base: u64, seg_size_trbs: u32) {
+fn write_erst_entry<M: MemoryBus + ?Sized>(
+    mem: &mut M,
+    erstba: u64,
+    seg_base: u64,
+    seg_size_trbs: u32,
+) {
     MemoryBus::write_u64(mem, erstba, seg_base);
     MemoryBus::write_u32(mem, erstba + 8, seg_size_trbs);
     MemoryBus::write_u32(mem, erstba + 12, 0);

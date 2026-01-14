@@ -118,7 +118,11 @@ fn pc_platform_xhci_msix_triggers_lapic_vector_and_suppresses_intx() {
 
     // Table offset/BIR must point into BAR0.
     let table = pci_cfg_read_u32(&mut pc, bdf, msix_base + 0x04);
-    assert_eq!(table & 0x7, 0, "xHCI MSI-X table should live in BAR0 (BIR=0)");
+    assert_eq!(
+        table & 0x7,
+        0,
+        "xHCI MSI-X table should live in BAR0 (BIR=0)"
+    );
     let table_offset = u64::from(table & !0x7);
 
     // Enable MSI-X.

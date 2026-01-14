@@ -87,13 +87,7 @@ fn virtio_net_msix_delivers_to_lapic_in_apic_mode() {
 
     // Enable PCI memory decoding + bus mastering so BAR0 is reachable and DMA works.
     let cmd = cfg_read(&mut m, bdf, 0x04, 2) as u16;
-    cfg_write(
-        &mut m,
-        bdf,
-        0x04,
-        2,
-        u32::from(cmd | (1 << 1) | (1 << 2)),
-    );
+    cfg_write(&mut m, bdf, 0x04, 2, u32::from(cmd | (1 << 1) | (1 << 2)));
 
     // Discover BAR0.
     let bar0_lo = cfg_read(&mut m, bdf, 0x10, 4) as u64;
@@ -248,7 +242,13 @@ fn virtio_net_msix_delivers_to_lapic_in_apic_mode() {
     // Clear MSI-X Function Mask and ensure any pending vector is delivered (no need for additional
     // device work once unmasked).
     let ctrl = cfg_read(&mut m, bdf, msix_cap + 0x02, 2) as u16;
-    cfg_write(&mut m, bdf, msix_cap + 0x02, 2, u32::from(ctrl & !(1 << 14)));
+    cfg_write(
+        &mut m,
+        bdf,
+        msix_cap + 0x02,
+        2,
+        u32::from(ctrl & !(1 << 14)),
+    );
     m.poll_network();
     assert_eq!(interrupts.borrow().get_pending(), Some(vector as u8));
     interrupts.borrow_mut().acknowledge(vector as u8);

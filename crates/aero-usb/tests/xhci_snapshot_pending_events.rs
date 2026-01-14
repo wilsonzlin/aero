@@ -39,17 +39,9 @@ fn xhci_snapshot_roundtrip_preserves_pending_events() {
 
     restored.mmio_write(regs::REG_INTR0_ERSTSZ, 4, 1);
     restored.mmio_write(regs::REG_INTR0_ERSTBA_LO, 4, erstba);
-    restored.mmio_write(
-        regs::REG_INTR0_ERSTBA_HI,
-        4,
-        erstba >> 32,
-    );
+    restored.mmio_write(regs::REG_INTR0_ERSTBA_HI, 4, erstba >> 32);
     restored.mmio_write(regs::REG_INTR0_ERDP_LO, 4, ring_base);
-    restored.mmio_write(
-        regs::REG_INTR0_ERDP_HI,
-        4,
-        ring_base >> 32,
-    );
+    restored.mmio_write(regs::REG_INTR0_ERDP_HI, 4, ring_base >> 32);
     restored.mmio_write(regs::REG_INTR0_IMAN, 4, u64::from(IMAN_IE));
 
     restored.service_event_ring(&mut mem);
@@ -109,11 +101,7 @@ fn xhci_snapshot_roundtrip_preserves_tick_time_and_dma_state() {
     MemoryBus::write_u32(&mut mem, crcr_addr, dma_value);
 
     xhci.mmio_write(regs::REG_CRCR_LO, 4, crcr_addr);
-    xhci.mmio_write(
-        regs::REG_CRCR_HI,
-        4,
-        crcr_addr >> 32,
-    );
+    xhci.mmio_write(regs::REG_CRCR_HI, 4, crcr_addr >> 32);
     // Enable RUN so `tick_1ms_with_dma` performs the CRCR dword read.
     xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
@@ -124,10 +112,7 @@ fn xhci_snapshot_roundtrip_preserves_tick_time_and_dma_state() {
 
     let bytes = xhci.save_state();
     let r = SnapshotReader::parse(&bytes, *b"XHCI").expect("parse xHCI snapshot");
-    assert_eq!(
-        r.u64(TAG_TIME_MS).expect("read time_ms").unwrap_or(0),
-        3
-    );
+    assert_eq!(r.u64(TAG_TIME_MS).expect("read time_ms").unwrap_or(0), 3);
     assert_eq!(
         r.u32(TAG_LAST_TICK_DMA_DWORD)
             .expect("read last_tick_dma_dword")
@@ -142,10 +127,7 @@ fn xhci_snapshot_roundtrip_preserves_tick_time_and_dma_state() {
 
     let bytes2 = restored.save_state();
     let r2 = SnapshotReader::parse(&bytes2, *b"XHCI").expect("parse restored snapshot");
-    assert_eq!(
-        r2.u64(TAG_TIME_MS).expect("read time_ms").unwrap_or(0),
-        4
-    );
+    assert_eq!(r2.u64(TAG_TIME_MS).expect("read time_ms").unwrap_or(0), 4);
     assert_eq!(
         r2.u32(TAG_LAST_TICK_DMA_DWORD)
             .expect("read last_tick_dma_dword")

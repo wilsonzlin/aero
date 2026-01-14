@@ -1,6 +1,6 @@
 use aero_usb::hid::webhid::{
-    HidCollectionInfo, HidCollectionType, HidReportInfo, HidReportItem, infer_boot_interface,
-    max_output_report_bytes,
+    infer_boot_interface, max_output_report_bytes, HidCollectionInfo, HidCollectionType,
+    HidReportInfo, HidReportItem,
 };
 
 fn parse_fixture_collections(json: &str) -> Vec<HidCollectionInfo> {
@@ -113,4 +113,3 @@ fn max_output_report_bytes_aggregates_across_collections_per_report_id() {
 
     assert_eq!(max_output_report_bytes(&[a, b]), 70);
 }
-

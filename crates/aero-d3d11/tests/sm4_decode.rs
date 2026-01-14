@@ -2,8 +2,8 @@ use aero_d3d11::sm4::decode::Sm4DecodeErrorKind;
 use aero_d3d11::sm4::{decode_program, opcode::*};
 use aero_d3d11::{
     BufferKind, BufferRef, HsDomain, HsOutputTopology, HsPartitioning, OperandModifier, RegFile,
-    RegisterRef, ShaderModel, Sm4Decl, Sm4Inst, Sm4Module, Sm4Program, SrcKind, SrcOperand, Swizzle,
-    TextureRef, UavRef, WriteMask,
+    RegisterRef, ShaderModel, Sm4Decl, Sm4Inst, Sm4Module, Sm4Program, SrcKind, SrcOperand,
+    Swizzle, TextureRef, UavRef, WriteMask,
 };
 
 fn make_sm5_program_tokens(stage_type: u16, body_tokens: &[u32]) -> Vec<u32> {
@@ -1870,10 +1870,7 @@ fn decodes_cmp_movc_and_structured_if() {
 
     // lt r0, v0.xxxx, l(1.0)
     let imm_one = imm32_scalar(1.0f32.to_bits());
-    let mut lt = vec![opcode_token(
-        OPCODE_LT,
-        (1 + 2 + 2 + imm_one.len()) as u32,
-    )];
+    let mut lt = vec![opcode_token(OPCODE_LT, (1 + 2 + 2 + imm_one.len()) as u32)];
     lt.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
     lt.extend_from_slice(&reg_src(
         OPERAND_TYPE_INPUT,
@@ -2292,12 +2289,7 @@ fn sm5_uav_and_raw_buffer_opcode_constants_match_d3d11_tokenized_format() {
         OPCODE_USHR,
     ];
     let compare_opcodes = [
-        OPCODE_IEQ,
-        OPCODE_INE,
-        OPCODE_ILT,
-        OPCODE_IGE,
-        OPCODE_ULT,
-        OPCODE_UGE,
+        OPCODE_IEQ, OPCODE_INE, OPCODE_ILT, OPCODE_IGE, OPCODE_ULT, OPCODE_UGE,
     ];
     for (i, &opcode) in compare_opcodes.iter().enumerate() {
         assert!(

@@ -102,4 +102,3 @@ fn tier2_inline_tlb_same_page_trace_imports_mmu_translate() {
         "expected same-page trace to import env.mmu_translate, got {imports:?}"
     );
 }
-

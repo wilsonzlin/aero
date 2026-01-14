@@ -3155,23 +3155,13 @@ fn diff_devices_section(
                         }
                         (Some(_), None) => {
                             out.diff_msg(
-                                &format!(
-                                    "DEVICES[{} v{} flags={}]",
-                                    DeviceId(key.0),
-                                    key.1,
-                                    key.2
-                                ),
+                                &format!("DEVICES[{} v{} flags={}]", DeviceId(key.0), key.1, key.2),
                                 "present in A, missing in B",
                             );
                         }
                         (None, Some(_)) => {
                             out.diff_msg(
-                                &format!(
-                                    "DEVICES[{} v{} flags={}]",
-                                    DeviceId(key.0),
-                                    key.1,
-                                    key.2
-                                ),
+                                &format!("DEVICES[{} v{} flags={}]", DeviceId(key.0), key.1, key.2),
                                 "missing in A, present in B",
                             );
                         }

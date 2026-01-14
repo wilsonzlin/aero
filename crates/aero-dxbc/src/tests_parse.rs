@@ -310,8 +310,11 @@ fn parse_accepts_max_chunk_count_with_repeated_offsets() {
     let chunk_count = 4096u32;
     let mut bytes = build_max_chunk_count_container(FourCC(*b"JUNK"));
     let offset_table_pos = 4 + 16 + 4 + 4 + 4;
-    let first_off =
-        u32::from_le_bytes(bytes[offset_table_pos..offset_table_pos + 4].try_into().unwrap());
+    let first_off = u32::from_le_bytes(
+        bytes[offset_table_pos..offset_table_pos + 4]
+            .try_into()
+            .unwrap(),
+    );
     for i in 0..chunk_count as usize {
         let pos = offset_table_pos + i * 4;
         bytes[pos..pos + 4].copy_from_slice(&first_off.to_le_bytes());
@@ -335,7 +338,9 @@ fn malformed_last_chunk_size_out_of_bounds_with_large_chunk_count() {
     let offset_table_pos = 4 + 16 + 4 + 4 + 4;
     let last_entry_pos = offset_table_pos + ((chunk_count as usize - 1) * 4);
     let last_chunk_off = u32::from_le_bytes(
-        bytes[last_entry_pos..last_entry_pos + 4].try_into().unwrap(),
+        bytes[last_entry_pos..last_entry_pos + 4]
+            .try_into()
+            .unwrap(),
     ) as usize;
 
     // Patch the final chunk header to declare a payload of 1 byte even though no bytes remain

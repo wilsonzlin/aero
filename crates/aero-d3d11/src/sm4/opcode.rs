@@ -531,7 +531,6 @@ pub fn opcode_name(opcode: u32) -> Option<&'static str> {
         OPCODE_DCL_UAV_STRUCTURED => Some("dcl_uav_structured"),
 
         // ---- Common SM4/SM5 opcodes we don't translate yet (diagnostics only) ----
-
         _ => None,
     }
 }
@@ -544,7 +543,9 @@ mod tests {
     fn integer_compare_opcodes_do_not_overlap_integer_bitwise_opcodes() {
         // These opcodes intentionally live in different numeric ranges so the decoder can
         // distinguish `cmp` instructions from integer arithmetic/bitwise ops.
-        for &cmp in &[OPCODE_IEQ, OPCODE_INE, OPCODE_ILT, OPCODE_IGE, OPCODE_ULT, OPCODE_UGE] {
+        for &cmp in &[
+            OPCODE_IEQ, OPCODE_INE, OPCODE_ILT, OPCODE_IGE, OPCODE_ULT, OPCODE_UGE,
+        ] {
             for &bitop in &[OPCODE_IMUL, OPCODE_AND, OPCODE_OR, OPCODE_USHR] {
                 assert_ne!(cmp, bitop);
             }

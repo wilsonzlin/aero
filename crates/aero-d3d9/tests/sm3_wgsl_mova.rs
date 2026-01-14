@@ -200,11 +200,7 @@ fn wgsl_relative_constant_indexing_uses_addr_component_y() {
         // (`a0.y`), not assume `.x`.
         assert!(wgsl.wgsl.contains("var a0: vec4<i32>"), "{}", wgsl.wgsl);
         assert!(wgsl.wgsl.contains("a0.y"), "{}", wgsl.wgsl);
-        assert!(
-            wgsl.wgsl.contains("clamp(i32(1) + (a0.y)"),
-            "{}",
-            wgsl.wgsl
-        );
+        assert!(wgsl.wgsl.contains("clamp(i32(1) + (a0.y)"), "{}", wgsl.wgsl);
         assert!(
             !wgsl.wgsl.contains("clamp(i32(1) + (a0.x)"),
             "{}",

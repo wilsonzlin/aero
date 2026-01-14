@@ -569,9 +569,7 @@ impl PcIdePort {
             let bus = pci_cfg.bus_mut();
             let cfg = bus.device_config(self.bdf);
             let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
-            let bar4_base = cfg
-                .and_then(|cfg| cfg.bar_range(4))
-                .map(|range| range.base);
+            let bar4_base = cfg.and_then(|cfg| cfg.bar_range(4)).map(|range| range.base);
             (command, bar4_base)
         };
 
@@ -622,9 +620,7 @@ impl PcIdeBusMasterBar {
             let bus = pci_cfg.bus_mut();
             let cfg = bus.device_config(self.bdf);
             let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
-            let bar4_base = cfg
-                .and_then(|cfg| cfg.bar_range(4))
-                .map(|range| range.base);
+            let bar4_base = cfg.and_then(|cfg| cfg.bar_range(4)).map(|range| range.base);
             (command, bar4_base)
         };
 
@@ -2769,9 +2765,7 @@ impl PcPlatform {
             let mut pci_cfg = self.pci_cfg.borrow_mut();
             let cfg = pci_cfg.bus_mut().device_config(bdf);
             let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
-            let bar4 = cfg
-                .and_then(|cfg| cfg.bar_range(4))
-                .map(|range| range.base);
+            let bar4 = cfg.and_then(|cfg| cfg.bar_range(4)).map(|range| range.base);
             (command, bar4)
         };
 

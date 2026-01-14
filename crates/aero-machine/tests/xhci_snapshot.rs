@@ -7,7 +7,9 @@ use aero_io_snapshot::io::state::IoSnapshot;
 use aero_machine::{Machine, MachineConfig};
 use aero_usb::hid::UsbHidKeyboardHandle;
 use aero_usb::hub::UsbHubDevice;
-use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel, UsbInResult, UsbWebUsbPassthroughDevice};
+use aero_usb::{
+    ControlResponse, SetupPacket, UsbDeviceModel, UsbInResult, UsbWebUsbPassthroughDevice,
+};
 use pretty_assertions::{assert_eq, assert_ne};
 
 #[test]
@@ -40,7 +42,10 @@ fn snapshot_restore_roundtrips_xhci_state_and_redrives_intx_level() {
     };
 
     xhci.borrow_mut().raise_event_interrupt();
-    assert!(xhci.borrow().irq_level(), "xHCI IRQ level should be asserted");
+    assert!(
+        xhci.borrow().irq_level(),
+        "xHCI IRQ level should be asserted"
+    );
 
     // Intentionally do *not* sync xHCI's INTx into the platform interrupt controller before
     // snapshot. This leaves the interrupt sink desynchronized, which restore must fix up by

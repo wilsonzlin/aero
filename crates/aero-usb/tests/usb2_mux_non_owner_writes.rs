@@ -104,7 +104,11 @@ fn usb2_mux_non_owner_uhci_port_writes_do_not_clear_ehci_device_suspend_state() 
     let portsc = ehci.mmio_read(reg_portsc(0), 4);
     ehci.mmio_write(reg_portsc(0), 4, portsc | PORTSC_SUSP);
     let portsc = ehci.mmio_read(reg_portsc(0), 4);
-    assert_ne!(portsc & PORTSC_SUSP, 0, "expected EHCI port to be suspended");
+    assert_ne!(
+        portsc & PORTSC_SUSP,
+        0,
+        "expected EHCI port to be suspended"
+    );
 
     // Non-owner UHCI write while the port is EHCI-owned. This must not affect the shared device's
     // suspended state; otherwise remote wakeup requests will be dropped.
@@ -181,7 +185,11 @@ fn usb2_mux_non_owner_ehci_port_writes_do_not_clear_uhci_device_suspend_state() 
         (cur_portsc | UHCI_PORTSC_PED | UHCI_PORTSC_SUSP) as u32,
     );
     let portsc = uhci.io_read(REG_PORTSC1, 2) as u16;
-    assert_ne!(portsc & UHCI_PORTSC_SUSP, 0, "expected UHCI port to be suspended");
+    assert_ne!(
+        portsc & UHCI_PORTSC_SUSP,
+        0,
+        "expected UHCI port to be suspended"
+    );
     assert_eq!(
         portsc & UHCI_PORTSC_RD,
         0,
@@ -210,4 +218,3 @@ fn usb2_mux_non_owner_ehci_port_writes_do_not_clear_uhci_device_suspend_state() 
         "expected UHCI Resume Detect to latch after remote wakeup"
     );
 }
-

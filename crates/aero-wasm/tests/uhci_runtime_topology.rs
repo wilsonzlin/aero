@@ -85,14 +85,14 @@ fn uhci_runtime_webhid_attach_skips_reserved_webusb_root_port() {
     // remains available.
     let port = rt
         .webhid_attach(
-        1,
-        0x1234,
-        0x5678,
-        Some("hid".to_string()),
-        webhid_mouse_collections_json(),
-        Some(1),
-    )
-    .expect("webhid attach ok");
+            1,
+            0x1234,
+            0x5678,
+            Some("hid".to_string()),
+            webhid_mouse_collections_json(),
+            Some(1),
+        )
+        .expect("webhid attach ok");
     assert_eq!(port, 0);
 
     assert_eq!(rt.webusb_attach(Some(1)).expect("webusb attach ok"), 1);

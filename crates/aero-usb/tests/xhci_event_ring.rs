@@ -119,11 +119,7 @@ fn event_ring_erdp_ehb_write_clears_interrupt_pending() {
     assert!(xhci.irq_level());
 
     // Many xHCI drivers acknowledge interrupts by writing ERDP with EHB set.
-    xhci.mmio_write(
-        regs::REG_INTR0_ERDP_LO,
-        4,
-        ring_base | u64::from(ERDP_EHB),
-    );
+    xhci.mmio_write(regs::REG_INTR0_ERDP_LO, 4, ring_base | u64::from(ERDP_EHB));
     let erdp_lo = xhci.mmio_read(regs::REG_INTR0_ERDP_LO, 4);
     assert_eq!(
         erdp_lo & u64::from(ERDP_EHB),
@@ -422,11 +418,7 @@ fn event_ring_wrap_toggles_cycle_and_respects_consumer_erdp() {
     assert_eq!(got1.parameter, 0xbbbb);
 
     // Simulate the guest consuming the first TRB by advancing ERDP to entry 1.
-    xhci.mmio_write(
-        regs::REG_INTR0_ERDP_LO,
-        4,
-        ring_base + TRB_LEN as u64,
-    );
+    xhci.mmio_write(regs::REG_INTR0_ERDP_LO, 4, ring_base + TRB_LEN as u64);
     xhci.mmio_write(
         regs::REG_INTR0_ERDP_HI,
         4,
@@ -493,11 +485,7 @@ fn event_ring_consumer_full_lap_same_erdp_toggles_cycle_and_unblocks_producer() 
     // Guest consumes both TRBs and writes ERDP back to the same address. xHCI drivers can do this
     // when they consume a whole number of ring laps. The model should treat this as a wrap and
     // toggle the consumer cycle state to unblock the producer.
-    xhci.mmio_write(
-        regs::REG_INTR0_ERDP_LO,
-        4,
-        ring_base | u64::from(ERDP_EHB),
-    );
+    xhci.mmio_write(regs::REG_INTR0_ERDP_LO, 4, ring_base | u64::from(ERDP_EHB));
     xhci.mmio_write(regs::REG_INTR0_ERDP_HI, 4, ring_base >> 32);
 
     xhci.service_event_ring(&mut mem);

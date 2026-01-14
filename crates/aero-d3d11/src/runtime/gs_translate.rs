@@ -1054,8 +1054,8 @@ mod tests {
             ],
         };
 
-        let wgsl =
-            translate_gs_module_to_wgsl_compute_prepass(&module).expect("translation should succeed");
+        let wgsl = translate_gs_module_to_wgsl_compute_prepass(&module)
+            .expect("translation should succeed");
         assert!(
             wgsl.contains("let primitive_id: u32 = prim_id;"),
             "expected primitive_id mapping in WGSL:\n{wgsl}"
@@ -1117,8 +1117,8 @@ mod tests {
             ],
         };
 
-        let wgsl =
-            translate_gs_module_to_wgsl_compute_prepass(&module).expect("translation should succeed");
+        let wgsl = translate_gs_module_to_wgsl_compute_prepass(&module)
+            .expect("translation should succeed");
         assert!(
             wgsl.contains("const GS_INSTANCE_COUNT: u32 = 2u;"),
             "expected GS_INSTANCE_COUNT constant in WGSL:\n{wgsl}"

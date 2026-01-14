@@ -44,7 +44,9 @@ fn poll_keyboard_interrupt_in(m: &mut Machine) -> UsbInResult {
     let mut dev0 = root
         .port_device_mut(0)
         .expect("UHCI root port 0 should have an external hub attached");
-    let hub = dev0.as_hub_mut().expect("root port 0 device should be a hub");
+    let hub = dev0
+        .as_hub_mut()
+        .expect("root port 0 device should be a hub");
     let keyboard = hub
         .downstream_device_mut(0)
         .expect("hub port 1 should contain a keyboard device");

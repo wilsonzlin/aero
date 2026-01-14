@@ -17,13 +17,15 @@ fn wgpu_draw_indexed_indirect_uses_args_written_by_compute() {
         )
         .await
         {
-                Ok(v) => v,
-                Err(err) => {
-                    common::skip_or_panic(test_name, &format!("wgpu unavailable ({err:#})"));
-                    return;
-                }
-            };
-        let supports_compute = downlevel.flags.contains(wgpu::DownlevelFlags::COMPUTE_SHADERS);
+            Ok(v) => v,
+            Err(err) => {
+                common::skip_or_panic(test_name, &format!("wgpu unavailable ({err:#})"));
+                return;
+            }
+        };
+        let supports_compute = downlevel
+            .flags
+            .contains(wgpu::DownlevelFlags::COMPUTE_SHADERS);
         if !supports_compute {
             common::skip_or_panic(test_name, "compute unsupported");
             return;

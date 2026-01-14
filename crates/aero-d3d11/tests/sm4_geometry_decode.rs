@@ -21,28 +21,22 @@ fn decodes_geometry_shader_decls_and_emit_cut() {
     assert_eq!(module.stage, ShaderStage::Geometry);
 
     assert!(
-        module
-            .decls
-            .iter()
-            .any(|d| matches!(
-                d,
-                Sm4Decl::GsInputPrimitive {
-                    primitive: GsInputPrimitive::Triangle
-                }
-            )),
+        module.decls.iter().any(|d| matches!(
+            d,
+            Sm4Decl::GsInputPrimitive {
+                primitive: GsInputPrimitive::Triangle
+            }
+        )),
         "expected dcl_inputprimitive in decls: {:#?}",
         module.decls
     );
     assert!(
-        module
-            .decls
-            .iter()
-            .any(|d| matches!(
-                d,
-                Sm4Decl::GsOutputTopology {
-                    topology: GsOutputTopology::TriangleStrip
-                }
-            )),
+        module.decls.iter().any(|d| matches!(
+            d,
+            Sm4Decl::GsOutputTopology {
+                topology: GsOutputTopology::TriangleStrip
+            }
+        )),
         "expected dcl_outputtopology in decls: {:#?}",
         module.decls
     );
@@ -90,28 +84,22 @@ fn decodes_geometry_shader_emit_stream_and_cut_stream() {
     assert_eq!(module.stage, ShaderStage::Geometry);
 
     assert!(
-        module
-            .decls
-            .iter()
-            .any(|d| matches!(
-                d,
-                Sm4Decl::GsInputPrimitive {
-                    primitive: GsInputPrimitive::Triangle
-                }
-            )),
+        module.decls.iter().any(|d| matches!(
+            d,
+            Sm4Decl::GsInputPrimitive {
+                primitive: GsInputPrimitive::Triangle
+            }
+        )),
         "expected dcl_inputprimitive in decls: {:#?}",
         module.decls
     );
     assert!(
-        module
-            .decls
-            .iter()
-            .any(|d| matches!(
-                d,
-                Sm4Decl::GsOutputTopology {
-                    topology: GsOutputTopology::TriangleStrip
-                }
-            )),
+        module.decls.iter().any(|d| matches!(
+            d,
+            Sm4Decl::GsOutputTopology {
+                topology: GsOutputTopology::TriangleStrip
+            }
+        )),
         "expected dcl_outputtopology in decls: {:#?}",
         module.decls
     );

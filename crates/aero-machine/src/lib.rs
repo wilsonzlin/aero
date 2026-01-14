@@ -3081,9 +3081,7 @@ fn decode_aerogpu_snapshot_v1(bytes: &[u8]) -> Option<AeroGpuSnapshotV1> {
             && bytes.len() >= off.saturating_add(TOTAL_LEN)
         {
             let pel_mask = bytes.get(off + 4).copied().unwrap_or(0xFF);
-            let pal_bytes = bytes
-                .get((off + 5)..(off + 5 + PALETTE_LEN))
-                .unwrap_or(&[]);
+            let pal_bytes = bytes.get((off + 5)..(off + 5 + PALETTE_LEN)).unwrap_or(&[]);
             let mut palette = [[0u8; 3]; 256];
             for (idx, entry) in palette.iter_mut().enumerate() {
                 let base = idx * 3;
@@ -3269,9 +3267,7 @@ fn apply_aerogpu_snapshot_v2(
             && bytes.len() >= off.saturating_add(TOTAL_LEN)
         {
             let pel_mask = bytes.get(off + 4).copied().unwrap_or(0xFF);
-            let pal_bytes = bytes
-                .get((off + 5)..(off + 5 + PALETTE_LEN))
-                .unwrap_or(&[]);
+            let pal_bytes = bytes.get((off + 5)..(off + 5 + PALETTE_LEN)).unwrap_or(&[]);
             let mut palette = [[0u8; 3]; 256];
             for (idx, entry) in palette.iter_mut().enumerate() {
                 let base = idx * 3;
@@ -3372,9 +3368,7 @@ impl IdePort {
             let bus = pci_cfg.bus_mut();
             let cfg = bus.device_config(self.bdf);
             let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
-            let bar4_base = cfg
-                .and_then(|cfg| cfg.bar_range(4))
-                .map(|range| range.base);
+            let bar4_base = cfg.and_then(|cfg| cfg.bar_range(4)).map(|range| range.base);
             (command, bar4_base)
         };
 
@@ -3416,9 +3410,7 @@ impl IdeBusMasterBar {
             let bus = pci_cfg.bus_mut();
             let cfg = bus.device_config(self.bdf);
             let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
-            let bar4_base = cfg
-                .and_then(|cfg| cfg.bar_range(4))
-                .map(|range| range.base);
+            let bar4_base = cfg.and_then(|cfg| cfg.bar_range(4)).map(|range| range.base);
             (command, bar4_base)
         };
 
@@ -5078,9 +5070,7 @@ impl Machine {
             let mut pci_cfg = pci_cfg.borrow_mut();
             let cfg = pci_cfg.bus_mut().device_config(bdf);
             let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
-            let bar0_base = cfg
-                .and_then(|cfg| cfg.bar_range(0))
-                .map(|range| range.base);
+            let bar0_base = cfg.and_then(|cfg| cfg.bar_range(0)).map(|range| range.base);
             (command, bar0_base)
         } else {
             (0, None)
@@ -5394,10 +5384,7 @@ impl Machine {
     /// - `path[1..]`: downstream hub port numbers (1-based, per the USB hub spec).
     ///
     /// If EHCI is not enabled on this machine, this is a no-op and returns `Ok(())`.
-    pub fn usb_ehci_detach_path(
-        &mut self,
-        path: &[u8],
-    ) -> Result<(), aero_usb::UsbHubAttachError> {
+    pub fn usb_ehci_detach_path(&mut self, path: &[u8]) -> Result<(), aero_usb::UsbHubAttachError> {
         self.usb_ehci_detach_at_path(path)
     }
 
@@ -5547,9 +5534,7 @@ impl Machine {
             let mut pci_cfg = pci_cfg.borrow_mut();
             let cfg = pci_cfg.bus_mut().device_config(bdf);
             let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
-            let bar0_base = cfg
-                .and_then(|cfg| cfg.bar_range(0))
-                .map(|range| range.base);
+            let bar0_base = cfg.and_then(|cfg| cfg.bar_range(0)).map(|range| range.base);
             (command, bar0_base)
         } else {
             (0, None)
@@ -6120,8 +6105,7 @@ impl Machine {
         // like PIT/HPET/LAPIC timers can make progress and wake the system.
         let should_tick = (self.cpu.state.rflags() & aero_cpu_core::state::RFLAGS_IF) != 0
             || self.ap_cpus.iter().any(|cpu| {
-                !cpu.state.halted
-                    || (cpu.state.rflags() & aero_cpu_core::state::RFLAGS_IF) != 0
+                !cpu.state.halted || (cpu.state.rflags() & aero_cpu_core::state::RFLAGS_IF) != 0
             });
         if !should_tick {
             return;
@@ -7925,9 +7909,7 @@ impl Machine {
                         if port_count >= 4 && !port4_occupied {
                             let consumer = self
                                 .usb_hid_consumer_control
-                                .get_or_insert_with(
-                                    aero_usb::hid::UsbHidConsumerControlHandle::new,
-                                )
+                                .get_or_insert_with(aero_usb::hid::UsbHidConsumerControlHandle::new)
                                 .clone();
                             let _ = root.attach_at_path(&[0, 4], Box::new(consumer));
                         }
@@ -8157,9 +8139,7 @@ impl Machine {
                     let mut pci_cfg = pci_cfg.borrow_mut();
                     let cfg = pci_cfg.bus_mut().device_config(bdf);
                     let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
-                    let bar0_base = cfg
-                        .and_then(|cfg| cfg.bar_range(0))
-                        .map(|range| range.base);
+                    let bar0_base = cfg.and_then(|cfg| cfg.bar_range(0)).map(|range| range.base);
                     (command, bar0_base)
                 };
                 let mut dev = virtio_input_keyboard.borrow_mut();
@@ -8175,9 +8155,7 @@ impl Machine {
                     let mut pci_cfg = pci_cfg.borrow_mut();
                     let cfg = pci_cfg.bus_mut().device_config(bdf);
                     let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
-                    let bar0_base = cfg
-                        .and_then(|cfg| cfg.bar_range(0))
-                        .map(|range| range.base);
+                    let bar0_base = cfg.and_then(|cfg| cfg.bar_range(0)).map(|range| range.base);
                     (command, bar0_base)
                 };
                 let mut dev = virtio_input_mouse.borrow_mut();
@@ -8231,9 +8209,7 @@ impl Machine {
                     let mut pci_cfg = pci_cfg.borrow_mut();
                     let cfg = pci_cfg.bus_mut().device_config(bdf);
                     let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
-                    let bar0_base = cfg
-                        .and_then(|cfg| cfg.bar_range(0))
-                        .map(|range| range.base);
+                    let bar0_base = cfg.and_then(|cfg| cfg.bar_range(0)).map(|range| range.base);
                     (command, bar0_base)
                 };
 
@@ -8249,9 +8225,7 @@ impl Machine {
                     let mut pci_cfg = pci_cfg.borrow_mut();
                     let cfg = pci_cfg.bus_mut().device_config(bdf);
                     let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
-                    let bar4_base = cfg
-                        .and_then(|cfg| cfg.bar_range(4))
-                        .map(|range| range.base);
+                    let bar4_base = cfg.and_then(|cfg| cfg.bar_range(4)).map(|range| range.base);
                     (command, bar4_base)
                 };
 
@@ -8267,9 +8241,7 @@ impl Machine {
                     let mut pci_cfg = pci_cfg.borrow_mut();
                     let cfg = pci_cfg.bus_mut().device_config(bdf);
                     let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
-                    let bar0_base = cfg
-                        .and_then(|cfg| cfg.bar_range(0))
-                        .map(|range| range.base);
+                    let bar0_base = cfg.and_then(|cfg| cfg.bar_range(0)).map(|range| range.base);
                     (command, bar0_base)
                 };
 
@@ -8845,9 +8817,7 @@ impl Machine {
             let mut pci_cfg = pci_cfg.borrow_mut();
             let cfg = pci_cfg.bus_mut().device_config(bdf);
             let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
-            let bar4_base = cfg
-                .and_then(|cfg| cfg.bar_range(4))
-                .map(|range| range.base);
+            let bar4_base = cfg.and_then(|cfg| cfg.bar_range(4)).map(|range| range.base);
             (command, bar4_base)
         };
 
@@ -8916,8 +8886,10 @@ impl Machine {
         dev.config_mut().set_command(command);
         dev.config_mut()
             .set_bar_base(aero_devices::pci::profile::AEROGPU_BAR0_INDEX, bar0_base);
-        dev.config_mut()
-            .set_bar_base(aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX, bar1_base);
+        dev.config_mut().set_bar_base(
+            aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX,
+            bar1_base,
+        );
         dev.process(&mut self.mem);
 
         // Publish WDDM scanout state updates based on BAR0 scanout registers.
@@ -10664,9 +10636,7 @@ impl snapshot::SnapshotSource for Machine {
                     let mut pci_cfg = pci_cfg.borrow_mut();
                     let cfg = pci_cfg.bus_mut().device_config(bdf);
                     let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
-                    let bar4_base = cfg
-                        .and_then(|cfg| cfg.bar_range(4))
-                        .map(|range| range.base);
+                    let bar4_base = cfg.and_then(|cfg| cfg.bar_range(4)).map(|range| range.base);
                     (command, bar4_base)
                 };
                 let mut ide = ide.borrow_mut();
@@ -11163,8 +11133,8 @@ impl snapshot::SnapshotTarget for Machine {
                 if let (Some(vram_dev), Some(bar0_dev)) = (&self.aerogpu, &self.aerogpu_mmio) {
                     let mut vram = vram_dev.borrow_mut();
                     let mut bar0 = bar0_dev.borrow_mut();
-                    let restored_dac =
-                        apply_aerogpu_snapshot_v2(&state.data, &mut vram, &mut bar0).unwrap_or(false);
+                    let restored_dac = apply_aerogpu_snapshot_v2(&state.data, &mut vram, &mut bar0)
+                        .unwrap_or(false);
                     drop(bar0);
 
                     // Backward-compatibility: v2 snapshots initially did not include VGA DAC state.

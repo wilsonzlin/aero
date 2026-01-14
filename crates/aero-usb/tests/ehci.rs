@@ -803,7 +803,10 @@ fn ehci_async_out_reads_guest_memory_across_page_boundary() {
 
     c.tick_1ms(&mut mem);
 
-    assert_eq!(out_received.borrow().as_slice(), std::slice::from_ref(&payload));
+    assert_eq!(
+        out_received.borrow().as_slice(),
+        std::slice::from_ref(&payload)
+    );
 
     let token = mem.read_u32(QTD_BULK_OUT + 0x08);
     assert_eq!(token & QTD_TOKEN_ACTIVE, 0);

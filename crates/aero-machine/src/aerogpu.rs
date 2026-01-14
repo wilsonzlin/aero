@@ -37,12 +37,12 @@ const _: () = {
 const MAX_CMD_STREAM_SIZE_BYTES: u32 = 64 * 1024 * 1024;
 
 fn write_fence_page(mem: &mut dyn MemoryBus, gpa: u64, abi_version: u32, completed_fence: u64) {
-    mem.write_u32(gpa + FENCE_PAGE_MAGIC_OFFSET, ring::AEROGPU_FENCE_PAGE_MAGIC);
-    mem.write_u32(gpa + FENCE_PAGE_ABI_VERSION_OFFSET, abi_version);
-    mem.write_u64(
-        gpa + FENCE_PAGE_COMPLETED_FENCE_OFFSET,
-        completed_fence,
+    mem.write_u32(
+        gpa + FENCE_PAGE_MAGIC_OFFSET,
+        ring::AEROGPU_FENCE_PAGE_MAGIC,
     );
+    mem.write_u32(gpa + FENCE_PAGE_ABI_VERSION_OFFSET, abi_version);
+    mem.write_u64(gpa + FENCE_PAGE_COMPLETED_FENCE_OFFSET, completed_fence);
 
     // Keep writes within the defined struct size; do not touch the rest of the page.
     let _ = FENCE_PAGE_SIZE_BYTES;
@@ -676,7 +676,10 @@ impl AeroGpuMmioDevice {
                 || x == pci::AerogpuFormat::R8G8B8X8Unorm as u32
                 || x == pci::AerogpuFormat::R8G8B8A8Unorm as u32
                 || x == pci::AerogpuFormat::R8G8B8X8UnormSrgb as u32
-                || x == pci::AerogpuFormat::R8G8B8A8UnormSrgb as u32 => Some(x),
+                || x == pci::AerogpuFormat::R8G8B8A8UnormSrgb as u32 =>
+            {
+                Some(x)
+            }
             _ => None,
         }
     }
@@ -1298,11 +1301,7 @@ impl AeroGpuMmioDevice {
         }
     }
 
-    pub(crate) fn write_fence_page_if_dirty(
-        &mut self,
-        mem: &mut dyn MemoryBus,
-        dma_enabled: bool,
-    ) {
+    pub(crate) fn write_fence_page_if_dirty(&mut self, mem: &mut dyn MemoryBus, dma_enabled: bool) {
         if !self.fence_page_dirty {
             return;
         }
@@ -1603,7 +1602,7 @@ impl PciBarMmioHandler for AeroGpuMmioDevice {
             _ => 0,
         }
     }
- 
+
     fn write(&mut self, offset: u64, size: usize, value: u64) {
         match size {
             0 => {}
@@ -1712,7 +1711,10 @@ mod tests {
     fn error_mmio_regs_latch_and_survive_irq_ack() {
         let mut dev = AeroGpuMmioDevice::default();
 
-        assert_ne!(dev.supported_features() & pci::AEROGPU_FEATURE_ERROR_INFO, 0);
+        assert_ne!(
+            dev.supported_features() & pci::AEROGPU_FEATURE_ERROR_INFO,
+            0
+        );
 
         // Unmask ERROR IRQ delivery so `irq_level` reflects the status bit.
         dev.mmio_write_dword(
@@ -1789,7 +1791,11 @@ mod tests {
         fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
             let start = usize::try_from(paddr).unwrap_or(0);
             for (i, b) in buf.iter_mut().enumerate() {
-                *b = self.bytes.get(start.saturating_add(i)).copied().unwrap_or(0);
+                *b = self
+                    .bytes
+                    .get(start.saturating_add(i))
+                    .copied()
+                    .unwrap_or(0);
             }
         }
 
@@ -1836,25 +1842,41 @@ mod tests {
         ];
 
         let formats: &[(u32, SrcKind, bool)] = &[
-            (pci::AerogpuFormat::B8G8R8A8Unorm as u32, SrcKind::Bgra, false),
+            (
+                pci::AerogpuFormat::B8G8R8A8Unorm as u32,
+                SrcKind::Bgra,
+                false,
+            ),
             (
                 pci::AerogpuFormat::B8G8R8A8UnormSrgb as u32,
                 SrcKind::Bgra,
                 false,
             ),
-            (pci::AerogpuFormat::B8G8R8X8Unorm as u32, SrcKind::Bgrx, true),
+            (
+                pci::AerogpuFormat::B8G8R8X8Unorm as u32,
+                SrcKind::Bgrx,
+                true,
+            ),
             (
                 pci::AerogpuFormat::B8G8R8X8UnormSrgb as u32,
                 SrcKind::Bgrx,
                 true,
             ),
-            (pci::AerogpuFormat::R8G8B8A8Unorm as u32, SrcKind::Rgba, false),
+            (
+                pci::AerogpuFormat::R8G8B8A8Unorm as u32,
+                SrcKind::Rgba,
+                false,
+            ),
             (
                 pci::AerogpuFormat::R8G8B8A8UnormSrgb as u32,
                 SrcKind::Rgba,
                 false,
             ),
-            (pci::AerogpuFormat::R8G8B8X8Unorm as u32, SrcKind::Rgbx, true),
+            (
+                pci::AerogpuFormat::R8G8B8X8Unorm as u32,
+                SrcKind::Rgbx,
+                true,
+            ),
             (
                 pci::AerogpuFormat::R8G8B8X8UnormSrgb as u32,
                 SrcKind::Rgbx,
@@ -1865,7 +1887,9 @@ mod tests {
         for &(format, kind, force_opaque) in formats {
             let expected: Vec<u32> = pixels_rgba
                 .iter()
-                .map(|&[r, g, b, a]| u32::from_le_bytes([r, g, b, if force_opaque { 0xFF } else { a }]))
+                .map(|&[r, g, b, a]| {
+                    u32::from_le_bytes([r, g, b, if force_opaque { 0xFF } else { a }])
+                })
                 .collect();
 
             let fb_gpa = 0x1000u64;
@@ -1875,7 +1899,11 @@ mod tests {
                 let mut row = Vec::with_capacity(row_bytes);
                 for x in 0..width {
                     let idx = y * width + x;
-                    row.extend_from_slice(&pack(kind, pixels_rgba[idx], 0x12u8.wrapping_add(idx as u8)));
+                    row.extend_from_slice(&pack(
+                        kind,
+                        pixels_rgba[idx],
+                        0x12u8.wrapping_add(idx as u8),
+                    ));
                 }
                 mem.write_physical(row_gpa, &row);
             }

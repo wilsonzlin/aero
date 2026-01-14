@@ -93,8 +93,7 @@ fn xhci_reset_clears_operational_state() {
         "reset should leave controller halted"
     );
     assert_eq!(
-        (ctrl.mmio_read(usbcmd, 4) as u32)
-            & (regs::op::USBCMD_RUN_STOP | regs::op::USBCMD_HCRST),
+        (ctrl.mmio_read(usbcmd, 4) as u32) & (regs::op::USBCMD_RUN_STOP | regs::op::USBCMD_HCRST),
         0,
         "reset should clear RUN/STOP and self-clear HCRST"
     );

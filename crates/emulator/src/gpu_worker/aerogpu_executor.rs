@@ -1,5 +1,5 @@
-use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::collections::btree_map::Entry;
+use std::collections::{BTreeMap, HashSet, VecDeque};
 
 use aero_protocol::aerogpu::aerogpu_cmd::{
     cmd_stream_has_vsync_present_bytes, decode_cmd_hdr_le, decode_cmd_stream_header_le,
@@ -730,9 +730,7 @@ impl AeroGpuExecutor {
                         // ring entry, we may be able to advance immediately.
                         if already_completed
                             && matches!(
-                                self.in_flight
-                                    .get(&desc.signal_fence)
-                                    .map(|e| e.kind),
+                                self.in_flight.get(&desc.signal_fence).map(|e| e.kind),
                                 Some(PendingFenceKind::Immediate)
                             )
                         {
@@ -1351,12 +1349,12 @@ impl InFlightSubmission {
 
         // Prefer the more restrictive completion kind: if any submission wants vblank pacing,
         // the fence must remain gated on vblank.
-        let new_kind = if self.kind == PendingFenceKind::Vblank || other.kind == PendingFenceKind::Vblank
-        {
-            PendingFenceKind::Vblank
-        } else {
-            PendingFenceKind::Immediate
-        };
+        let new_kind =
+            if self.kind == PendingFenceKind::Vblank || other.kind == PendingFenceKind::Vblank {
+                PendingFenceKind::Vblank
+            } else {
+                PendingFenceKind::Immediate
+            };
 
         if self.kind == PendingFenceKind::Immediate && new_kind == PendingFenceKind::Vblank {
             // Upgrading from immediate to vblank-gated: force the fence to wait for the next vblank
@@ -1627,10 +1625,7 @@ mod tests {
             fence_completion: AeroGpuFenceCompletionMode::Deferred,
         });
         exec.set_backend(Box::new(CompletingBackend {
-            completions: vec![AeroGpuBackendCompletion {
-                fence,
-                error: None,
-            }],
+            completions: vec![AeroGpuBackendCompletion { fence, error: None }],
             scanout: AeroGpuBackendScanout {
                 width: 1,
                 height: 1,

@@ -229,8 +229,5 @@ fn sm3_translator_supports_opcode(op: &Opcode) -> bool {
     //
     // This is intentionally conservative: `Unknown` opcodes and control-flow constructs that
     // aren't yet lowered should be surfaced.
-    !matches!(
-        op,
-        Opcode::Call | Opcode::Ret | Opcode::Unknown(_)
-    )
+    !matches!(op, Opcode::Call | Opcode::Ret | Opcode::Unknown(_))
 }

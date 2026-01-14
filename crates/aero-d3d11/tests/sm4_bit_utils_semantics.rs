@@ -494,7 +494,9 @@ fn compute_isubc_and_usubb_produce_expected_carry_and_borrow() {
         let out = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("sm4_isubc_usubb_semantics out buffer"),
             size: OUT_SIZE,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         queue.write_buffer(&out, 0, &vec![0u8; OUT_SIZE as usize]);
@@ -577,10 +579,26 @@ fn compute_uaddc_and_iaddc_produce_expected_sum_and_carry() {
             uaddc_a[3].wrapping_add(uaddc_b[3]),
         ];
         let expected_uaddc_carry = [
-            if expected_uaddc_sum[0] < uaddc_a[0] { 1u32 } else { 0u32 },
-            if expected_uaddc_sum[1] < uaddc_a[1] { 1u32 } else { 0u32 },
-            if expected_uaddc_sum[2] < uaddc_a[2] { 1u32 } else { 0u32 },
-            if expected_uaddc_sum[3] < uaddc_a[3] { 1u32 } else { 0u32 },
+            if expected_uaddc_sum[0] < uaddc_a[0] {
+                1u32
+            } else {
+                0u32
+            },
+            if expected_uaddc_sum[1] < uaddc_a[1] {
+                1u32
+            } else {
+                0u32
+            },
+            if expected_uaddc_sum[2] < uaddc_a[2] {
+                1u32
+            } else {
+                0u32
+            },
+            if expected_uaddc_sum[3] < uaddc_a[3] {
+                1u32
+            } else {
+                0u32
+            },
         ];
 
         let iaddc_a = [0x7fff_ffffu32, 0x8000_0000, 0xffff_ffff, 0];
@@ -592,10 +610,26 @@ fn compute_uaddc_and_iaddc_produce_expected_sum_and_carry() {
             iaddc_a[3].wrapping_add(iaddc_b[3]),
         ];
         let expected_iaddc_carry = [
-            if expected_iaddc_sum[0] < iaddc_a[0] { 1u32 } else { 0u32 },
-            if expected_iaddc_sum[1] < iaddc_a[1] { 1u32 } else { 0u32 },
-            if expected_iaddc_sum[2] < iaddc_a[2] { 1u32 } else { 0u32 },
-            if expected_iaddc_sum[3] < iaddc_a[3] { 1u32 } else { 0u32 },
+            if expected_iaddc_sum[0] < iaddc_a[0] {
+                1u32
+            } else {
+                0u32
+            },
+            if expected_iaddc_sum[1] < iaddc_a[1] {
+                1u32
+            } else {
+                0u32
+            },
+            if expected_iaddc_sum[2] < iaddc_a[2] {
+                1u32
+            } else {
+                0u32
+            },
+            if expected_iaddc_sum[3] < iaddc_a[3] {
+                1u32
+            } else {
+                0u32
+            },
         ];
 
         // Compute shader writes 4 vec4<u32> blocks (sum + carry for uaddc, sum + carry for iaddc)

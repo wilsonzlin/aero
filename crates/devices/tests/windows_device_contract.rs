@@ -402,9 +402,8 @@ fn windows_device_contract_virtio_input_inf_uses_distinct_keyboard_mouse_device_
     let hwid_fallback = "PCI\\VEN_1AF4&DEV_1052&REV_01";
 
     for section in ["Aero.NTx86", "Aero.NTamd64"] {
-        let (kbd_desc, kbd_install) =
-            inf_model_entry_for_hwid(&inf_contents, section, hwid_kbd)
-                .unwrap_or_else(|| panic!("missing {hwid_kbd} model entry in [{section}]"));
+        let (kbd_desc, kbd_install) = inf_model_entry_for_hwid(&inf_contents, section, hwid_kbd)
+            .unwrap_or_else(|| panic!("missing {hwid_kbd} model entry in [{section}]"));
         let (mouse_desc, mouse_install) =
             inf_model_entry_for_hwid(&inf_contents, section, hwid_mouse)
                 .unwrap_or_else(|| panic!("missing {hwid_mouse} model entry in [{section}]"));
@@ -412,7 +411,10 @@ fn windows_device_contract_virtio_input_inf_uses_distinct_keyboard_mouse_device_
             inf_model_entry_for_hwid(&inf_contents, section, hwid_fallback)
                 .unwrap_or_else(|| panic!("missing {hwid_fallback} model entry in [{section}]"));
 
-        assert_eq!(kbd_install, mouse_install, "{section}: install section mismatch");
+        assert_eq!(
+            kbd_install, mouse_install,
+            "{section}: install section mismatch"
+        );
         assert_eq!(
             fallback_install, kbd_install,
             "{section}: generic fallback install section mismatch"
@@ -499,9 +501,8 @@ fn windows_device_contract_virtio_input_alias_inf_includes_generic_fallback_mode
     let hwid_fallback = "PCI\\VEN_1AF4&DEV_1052&REV_01";
 
     for section in ["Aero.NTx86", "Aero.NTamd64"] {
-        let (kbd_desc, kbd_install) =
-            inf_model_entry_for_hwid(&inf_contents, section, hwid_kbd)
-                .unwrap_or_else(|| panic!("missing {hwid_kbd} model entry in [{section}]"));
+        let (kbd_desc, kbd_install) = inf_model_entry_for_hwid(&inf_contents, section, hwid_kbd)
+            .unwrap_or_else(|| panic!("missing {hwid_kbd} model entry in [{section}]"));
         let (mouse_desc, mouse_install) =
             inf_model_entry_for_hwid(&inf_contents, section, hwid_mouse)
                 .unwrap_or_else(|| panic!("missing {hwid_mouse} model entry in [{section}]"));

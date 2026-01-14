@@ -697,14 +697,8 @@ fn tier2_inline_tlb_store_bumps_code_version_table_on_unshared_memory() {
     let ram = vec![0u8; 0x20_000];
     let cpu_ptr = ram.len() as u64;
     let table_ptr: u32 = 0x1000;
-    let (_ret, got_ram, _gpr, host) = run_trace_with_code_version_table(
-        &trace,
-        ram,
-        cpu_ptr,
-        0x20_000,
-        table_ptr,
-        &[u32::MAX],
-    );
+    let (_ret, got_ram, _gpr, host) =
+        run_trace_with_code_version_table(&trace, ram, cpu_ptr, 0x20_000, table_ptr, &[u32::MAX]);
 
     assert_eq!(got_ram[0x10], 0xAB);
     assert_eq!(read_u32_le(&got_ram, table_ptr as usize), 0);
@@ -731,14 +725,8 @@ fn tier2_inline_tlb_store_with_zero_length_code_version_table_does_not_trap() {
     let cpu_ptr = ram.len() as u64;
     // Point at some in-RAM location; it should not be dereferenced when len == 0.
     let table_ptr: u32 = 0x1000;
-    let (_ret, got_ram, _gpr, host) = run_trace_with_code_version_table(
-        &trace,
-        ram,
-        cpu_ptr,
-        0x20_000,
-        table_ptr,
-        &[],
-    );
+    let (_ret, got_ram, _gpr, host) =
+        run_trace_with_code_version_table(&trace, ram, cpu_ptr, 0x20_000, table_ptr, &[]);
 
     assert_eq!(got_ram[0x10], 0xAB);
     assert_eq!(host.mmu_translate_calls, 1);
@@ -795,14 +783,8 @@ fn tier2_inline_tlb_store_to_out_of_range_page_does_not_bump_code_version_table(
     let ram = vec![0u8; 0x20_000];
     let cpu_ptr = ram.len() as u64;
     let table_ptr: u32 = 0x1000;
-    let (_ret, got_ram, _gpr, host) = run_trace_with_code_version_table(
-        &trace,
-        ram,
-        cpu_ptr,
-        0x20_000,
-        table_ptr,
-        &[7],
-    );
+    let (_ret, got_ram, _gpr, host) =
+        run_trace_with_code_version_table(&trace, ram, cpu_ptr, 0x20_000, table_ptr, &[7]);
 
     assert_eq!(got_ram[0x3000], 0xEE);
     assert_eq!(read_u32_le(&got_ram, table_ptr as usize), 7);

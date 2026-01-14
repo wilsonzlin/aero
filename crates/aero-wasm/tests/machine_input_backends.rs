@@ -1,7 +1,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use aero_io_snapshot::io::state::IoSnapshot as _;
-use aero_virtio::devices::input::{VirtioInput, BTN_LEFT, KEY_A};
+use aero_virtio::devices::input::{BTN_LEFT, KEY_A, VirtioInput};
 
 #[test]
 fn machine_can_inject_virtio_input_and_synthetic_usb_hid() {
@@ -20,7 +20,10 @@ fn machine_can_inject_virtio_input_and_synthetic_usb_hid() {
     let before = usb_kbd.save_state();
     m.inject_usb_hid_keyboard_usage(0x04, true); // Keyboard A
     let after = usb_kbd.save_state();
-    assert_ne!(before, after, "USB keyboard state should change after injection");
+    assert_ne!(
+        before, after,
+        "USB keyboard state should change after injection"
+    );
 
     let usb_mouse = m
         .debug_inner()
@@ -31,7 +34,10 @@ fn machine_can_inject_virtio_input_and_synthetic_usb_hid() {
     // enumeration.
     m.inject_usb_hid_mouse_buttons(0x01); // left down
     let after = usb_mouse.save_state();
-    assert_ne!(before, after, "USB mouse state should change after injection");
+    assert_ne!(
+        before, after,
+        "USB mouse state should change after injection"
+    );
 
     let usb_gamepad = m
         .debug_inner()
@@ -42,7 +48,10 @@ fn machine_can_inject_virtio_input_and_synthetic_usb_hid() {
     // bytes: [01 00 08 00 00 00 00 00]
     m.inject_usb_hid_gamepad_report(0x0008_0001, 0x0000_0000);
     let after = usb_gamepad.save_state();
-    assert_ne!(before, after, "USB gamepad state should change after injection");
+    assert_ne!(
+        before, after,
+        "USB gamepad state should change after injection"
+    );
 
     let usb_consumer = m
         .debug_inner()

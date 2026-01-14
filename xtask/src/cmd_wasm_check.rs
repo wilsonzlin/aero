@@ -61,7 +61,10 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
         if cargo_locked {
             cmd.arg("--locked");
         }
-        runner.run_step("Rust: cargo check (wasm32, aero-machine, aero-wasm)", &mut cmd)?;
+        runner.run_step(
+            "Rust: cargo check (wasm32, aero-machine, aero-wasm)",
+            &mut cmd,
+        )?;
     }
 
     Ok(())

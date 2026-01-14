@@ -111,7 +111,10 @@ fn install_control_in_schedule(guest_base: u32) -> u32 {
 }
 
 fn first_action_id(actions: &[UsbHostAction]) -> u32 {
-    match actions.first().expect("expected at least one queued UsbHostAction") {
+    match actions
+        .first()
+        .expect("expected at least one queued UsbHostAction")
+    {
         UsbHostAction::ControlIn { id, .. } => *id,
         other => panic!("expected first host action to be ControlIn, got {other:?}"),
     }

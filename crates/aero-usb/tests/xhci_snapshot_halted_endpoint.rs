@@ -4,7 +4,8 @@ use aero_usb::xhci::context::SlotContext;
 use aero_usb::xhci::trb::{Trb, TrbType, TRB_LEN};
 use aero_usb::xhci::{CommandCompletionCode, XhciController};
 use aero_usb::{
-    ControlResponse, MemoryBus, SetupPacket, UsbDeviceModel, UsbInResult, UsbWebUsbPassthroughDevice,
+    ControlResponse, MemoryBus, SetupPacket, UsbDeviceModel, UsbInResult,
+    UsbWebUsbPassthroughDevice,
 };
 
 use std::any::Any;

@@ -1080,7 +1080,8 @@ impl UsbHubDevice {
         // This matters for host-side hotplug while the upstream link is suspended: device models
         // (especially HID) should only request remote wakeup while suspended.
         if let Some(dev) = port.device.as_mut() {
-            dev.model_mut().set_suspended(upstream_suspended || port.suspended);
+            dev.model_mut()
+                .set_suspended(upstream_suspended || port.suspended);
         }
     }
 
@@ -1697,7 +1698,8 @@ impl UsbHub for UsbHubDevice {
             let upstream_suspended = self.upstream_suspended;
             p.attach(model);
             if let Some(dev) = p.device.as_mut() {
-                dev.model_mut().set_suspended(upstream_suspended || p.suspended);
+                dev.model_mut()
+                    .set_suspended(upstream_suspended || p.suspended);
             }
         }
     }

@@ -2002,7 +2002,11 @@ pub fn decode_decl(opcode: u32, inst_toks: &[u32], at: usize) -> Result<Sm4Decl,
                 _ => {
                     // Typed UAV declarations encode their dimensionality in an extra token, similar
                     // to typed resources. We only model `RWTexture2D` today.
-                    let dim = if r.is_eof() { None } else { Some(r.read_u32()?) };
+                    let dim = if r.is_eof() {
+                        None
+                    } else {
+                        Some(r.read_u32()?)
+                    };
                     if dim == Some(2) && inst_toks.len() >= 3 {
                         // Preserve the raw DXGI_FORMAT so later stages can report actionable
                         // errors for unsupported formats.

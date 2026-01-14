@@ -1,8 +1,8 @@
 #![cfg(target_arch = "wasm32")]
 
 use aero_usb::xhci::interrupter::IMAN_IE;
-use aero_usb::xhci::trb::{Trb, TrbType, TRB_LEN};
-use aero_usb::xhci::{regs, XhciController};
+use aero_usb::xhci::trb::{TRB_LEN, Trb, TrbType};
+use aero_usb::xhci::{XhciController, regs};
 use aero_wasm::XhciControllerBridge;
 use wasm_bindgen_test::wasm_bindgen_test;
 

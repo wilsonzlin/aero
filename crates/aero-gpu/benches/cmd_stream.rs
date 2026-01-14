@@ -18,8 +18,7 @@ use aero_gpu_trace::{BlobKind, TraceReader, TraceRecord};
 #[cfg(not(target_arch = "wasm32"))]
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuIndexFormat, AerogpuPrimitiveTopology, AerogpuShaderStage, AerogpuVertexBufferBinding,
-    AEROGPU_CLEAR_COLOR, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
-    AEROGPU_RESOURCE_USAGE_INDEX_BUFFER,
+    AEROGPU_CLEAR_COLOR, AEROGPU_RESOURCE_USAGE_INDEX_BUFFER, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
     AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
 #[cfg(not(target_arch = "wasm32"))]

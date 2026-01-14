@@ -324,8 +324,7 @@ mod tests {
         assert_eq!(sizes.hs_out_bytes, 192);
         assert_eq!(sizes.hs_patch_constants_bytes, 64);
         assert_eq!(
-            sizes.tess_metadata_bytes,
-            40,
+            sizes.tess_metadata_bytes, 40,
             "Patch meta is 5 u32s (tess_level + 4 offsets/counts)"
         );
         assert_eq!(sizes.expanded_vertex_count_total, 50);

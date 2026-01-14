@@ -496,8 +496,7 @@ mod tests {
             .expect("missing MSI capability") as u16;
 
         // Program MSI message address/data and enable it.
-        dev.config_mut()
-            .write(cap_offset + 0x04, 4, 0xfee0_0000);
+        dev.config_mut().write(cap_offset + 0x04, 4, 0xfee0_0000);
         dev.config_mut().write(cap_offset + 0x08, 4, 0);
         dev.config_mut().write(cap_offset + 0x0c, 2, 0x0045);
         // Mask the single vector.

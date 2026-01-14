@@ -377,7 +377,10 @@ fn machine_aerogpu_display_scanout_exports_non_empty_rgba8888_framebuffer() {
     m.display_present();
     let width = m.display_width();
     let height = m.display_height();
-    assert!(width > 0, "display_width must be non-zero when scanout is present");
+    assert!(
+        width > 0,
+        "display_width must be non-zero when scanout is present"
+    );
     assert!(
         height > 0,
         "display_height must be non-zero when scanout is present"
@@ -385,7 +388,10 @@ fn machine_aerogpu_display_scanout_exports_non_empty_rgba8888_framebuffer() {
     assert_eq!(m.display_stride_bytes(), width.saturating_mul(4));
 
     let copy = m.display_framebuffer_copy_rgba8888();
-    assert!(!copy.is_empty(), "copied display framebuffer should be non-empty");
+    assert!(
+        !copy.is_empty(),
+        "copied display framebuffer should be non-empty"
+    );
 
     let blank = fnv1a_blank_rgba8(copy.len());
     let hash = fnv1a(&copy);

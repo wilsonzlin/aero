@@ -207,10 +207,7 @@ fn uhci_controller_bridge_can_step_guest_memory_and_toggle_irq() {
     guest.read_into(0x4000, &mut out);
     assert_eq!(&out, b"ABCD");
     // Hardware should advance the QH element pointer as TDs complete.
-    assert_eq!(
-        read_u32_guest(guest_base, guest_size, 0x2004),
-        LINK_PTR_T
-    );
+    assert_eq!(read_u32_guest(guest_base, guest_size, 0x2004), LINK_PTR_T);
 
     let ctrl_sts = read_u32_guest(guest_base, guest_size, 0x3004);
     assert_eq!(ctrl_sts & TD_CTRL_ACTIVE, 0);
@@ -252,12 +249,7 @@ fn uhci_controller_bridge_blocks_schedule_dma_until_pci_bus_master_enable() {
 
     // Frame list: point every entry at our QH so the test is independent of the current FRNUM.
     for i in 0..1024u32 {
-        write_u32_guest(
-            guest_base,
-            guest_size,
-            0x1000 + i * 4,
-            0x2000 | LINK_PTR_Q,
-        );
+        write_u32_guest(guest_base, guest_size, 0x1000 + i * 4, 0x2000 | LINK_PTR_Q);
     }
 
     // Queue head -> TD.
@@ -293,8 +285,7 @@ fn uhci_controller_bridge_blocks_schedule_dma_until_pci_bus_master_enable() {
     let mut buf = [0u8; 4];
     guest.read_into(0x4000, &mut buf);
     assert_eq!(
-        &buf,
-        &[0xEE; 4],
+        &buf, &[0xEE; 4],
         "expected schedule DMA to be blocked without PCI BME"
     );
     assert_eq!(
@@ -316,10 +307,7 @@ fn uhci_controller_bridge_blocks_schedule_dma_until_pci_bus_master_enable() {
     ctrl.set_pci_command(PCI_COMMAND_BME);
     ctrl.step_frames(1);
     guest.read_into(0x4000, &mut buf);
-    assert_eq!(
-        &buf,
-        b"ABCD"
-    );
+    assert_eq!(&buf, b"ABCD");
 }
 
 #[wasm_bindgen_test]

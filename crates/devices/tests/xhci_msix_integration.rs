@@ -2,9 +2,9 @@ use aero_devices::pci::msi::PCI_CAP_ID_MSI;
 use aero_devices::pci::msix::PCI_CAP_ID_MSIX;
 use aero_devices::pci::{MsixCapability, PciDevice};
 use aero_devices::usb::xhci::{regs, XhciPciDevice};
+use aero_io_snapshot::io::state::IoSnapshot;
 use aero_platform::address_filter::AddressFilter;
 use aero_platform::chipset::ChipsetState;
-use aero_io_snapshot::io::state::IoSnapshot;
 use aero_platform::interrupts::{InterruptController, PlatformInterruptMode, PlatformInterrupts};
 use aero_platform::memory::MemoryBus as PlatformMemoryBus;
 use memory::MemoryBus as _;
@@ -150,7 +150,11 @@ fn xhci_msix_masked_vector_sets_pba_and_delivers_on_unmask() {
     assert_eq!(ints.get_pending(), None);
 
     let pba_after = MmioHandler::read(&mut dev, pba_base, 8);
-    assert_eq!(pba_after & 1, 0, "PBA pending bit should clear after delivery");
+    assert_eq!(
+        pba_after & 1,
+        0,
+        "PBA pending bit should clear after delivery"
+    );
 }
 
 #[test]
@@ -244,7 +248,10 @@ fn xhci_msix_table_mmio_is_gated_by_pci_command_mem() {
 
     // MMIO decoding is enabled again; writes should now apply.
     MmioHandler::write(&mut dev, table_base, 4, initial ^ 0xffff_ffff);
-    assert_eq!(MmioHandler::read(&mut dev, table_base, 4), initial ^ 0xffff_ffff);
+    assert_eq!(
+        MmioHandler::read(&mut dev, table_base, 4),
+        initial ^ 0xffff_ffff
+    );
 }
 
 #[test]
@@ -324,7 +331,11 @@ fn xhci_msix_pba_mmio_write_is_ignored() {
 
     dev.raise_event_interrupt();
     let pba = MmioHandler::read(&mut dev, pba_base, 8);
-    assert_eq!(pba & 1, 1, "masked MSI-X trigger should set PBA pending bit");
+    assert_eq!(
+        pba & 1,
+        1,
+        "masked MSI-X trigger should set PBA pending bit"
+    );
 
     // PBA is read-only to the guest; writes must not clear the pending bit.
     MmioHandler::write(&mut dev, pba_base, 8, 0);
@@ -355,8 +366,11 @@ fn xhci_msix_function_mask_sets_pba_and_delivers_on_unmask() {
         .find_capability(PCI_CAP_ID_MSIX)
         .expect("MSI-X capability") as u16;
     let ctrl = dev.config_mut().read(cap_offset + 0x02, 2) as u16;
-    dev.config_mut()
-        .write(cap_offset + 0x02, 2, u32::from(ctrl | (1 << 15) | (1 << 14)));
+    dev.config_mut().write(
+        cap_offset + 0x02,
+        2,
+        u32::from(ctrl | (1 << 15) | (1 << 14)),
+    );
 
     let pba_base = u64::from(
         dev.config()
@@ -367,10 +381,17 @@ fn xhci_msix_function_mask_sets_pba_and_delivers_on_unmask() {
 
     // Trigger: function mask should prevent delivery but set PBA[0].
     dev.raise_event_interrupt();
-    assert!(!dev.irq_level(), "INTx must be suppressed while MSI-X is active");
+    assert!(
+        !dev.irq_level(),
+        "INTx must be suppressed while MSI-X is active"
+    );
     assert_eq!(interrupts.borrow_mut().get_pending(), None);
     let pba = MmioHandler::read(&mut dev, pba_base, 8);
-    assert_eq!(pba & 1, 1, "function-masked trigger should set PBA pending bit");
+    assert_eq!(
+        pba & 1,
+        1,
+        "function-masked trigger should set PBA pending bit"
+    );
 
     // Clear the function mask while the interrupt condition remains asserted.
     let ctrl_after = dev.config_mut().read(cap_offset + 0x02, 2) as u16;
@@ -388,7 +409,11 @@ fn xhci_msix_function_mask_sets_pba_and_delivers_on_unmask() {
     assert_eq!(ints.get_pending(), None);
 
     let pba_after = MmioHandler::read(&mut dev, pba_base, 8);
-    assert_eq!(pba_after & 1, 0, "PBA pending bit should clear after delivery");
+    assert_eq!(
+        pba_after & 1,
+        0,
+        "PBA pending bit should clear after delivery"
+    );
 }
 
 #[test]

@@ -183,7 +183,10 @@ fn xhci_run_stop_toggles_usbsts_hchalted_bit() {
 
     // Set USBCMD.RUN (bit 0) and observe USBSTS.HCHALTED clear.
     let usbcmd_before = m.read_physical_u32(bar0_base + regs::REG_USBCMD);
-    m.write_physical_u32(bar0_base + regs::REG_USBCMD, usbcmd_before | regs::USBCMD_RUN);
+    m.write_physical_u32(
+        bar0_base + regs::REG_USBCMD,
+        usbcmd_before | regs::USBCMD_RUN,
+    );
 
     let usbsts_running = m.read_physical_u32(bar0_base + regs::REG_USBSTS);
     assert_eq!(
@@ -194,7 +197,10 @@ fn xhci_run_stop_toggles_usbsts_hchalted_bit() {
 
     // Clear USBCMD.RUN and observe USBSTS.HCHALTED set again.
     let usbcmd_running = m.read_physical_u32(bar0_base + regs::REG_USBCMD);
-    m.write_physical_u32(bar0_base + regs::REG_USBCMD, usbcmd_running & !regs::USBCMD_RUN);
+    m.write_physical_u32(
+        bar0_base + regs::REG_USBCMD,
+        usbcmd_running & !regs::USBCMD_RUN,
+    );
 
     let usbsts_after = m.read_physical_u32(bar0_base + regs::REG_USBSTS);
     assert_ne!(
@@ -321,13 +327,7 @@ fn xhci_command_ring_progress_is_gated_by_pci_bme() {
 
     // Enable bus mastering (BME) and tick again; command completion should be written.
     let cmd = cfg_read(&mut m, bdf, 0x04, 2) as u16;
-    cfg_write(
-        &mut m,
-        bdf,
-        0x04,
-        2,
-        u32::from(cmd | (1 << 1) | (1 << 2)),
-    );
+    cfg_write(&mut m, bdf, 0x04, 2, u32::from(cmd | (1 << 1) | (1 << 2)));
     m.tick_platform(10_000_000); // 10ms
 
     let after = m.read_physical_bytes(event_ring, TRB_LEN);

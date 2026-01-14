@@ -437,7 +437,11 @@ fn ehci_keyboard_remote_wakeup_enters_resume_state_through_usb2_port_mux() {
         0,
         "expected EHCI port to enter resume state after remote wakeup"
     );
-    assert_eq!(portsc & PORTSC_LS_MASK, 0b01 << 10, "expected K-state while resuming");
+    assert_eq!(
+        portsc & PORTSC_LS_MASK,
+        0b01 << 10,
+        "expected K-state while resuming"
+    );
 
     // After the resume timer expires, the port should exit suspend/resume and return to J state.
     for _ in 0..20 {

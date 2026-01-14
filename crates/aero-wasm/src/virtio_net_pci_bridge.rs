@@ -127,10 +127,9 @@ impl GuestMemory for WasmGuestMemory {
                 dst.fill(0xFF);
                 Ok(())
             }
-            crate::guest_phys::GuestRamRange::OutOfBounds => Err(GuestMemoryError::OutOfBounds {
-                addr,
-                len,
-            }),
+            crate::guest_phys::GuestRamRange::OutOfBounds => {
+                Err(GuestMemoryError::OutOfBounds { addr, len })
+            }
         }
     }
 
@@ -169,10 +168,9 @@ impl GuestMemory for WasmGuestMemory {
                 Self::check_open_bus(addr, len)?;
                 Ok(())
             }
-            crate::guest_phys::GuestRamRange::OutOfBounds => Err(GuestMemoryError::OutOfBounds {
-                addr,
-                len,
-            }),
+            crate::guest_phys::GuestRamRange::OutOfBounds => {
+                Err(GuestMemoryError::OutOfBounds { addr, len })
+            }
         }
     }
 }

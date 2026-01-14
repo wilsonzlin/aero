@@ -1,6 +1,8 @@
 #![cfg(not(target_arch = "wasm32"))]
 
-use aero_cpu_core::jit::runtime::{CompileRequestSink, JitConfig, JitRuntime, DEFAULT_CODE_VERSION_MAX_PAGES};
+use aero_cpu_core::jit::runtime::{
+    CompileRequestSink, JitConfig, JitRuntime, DEFAULT_CODE_VERSION_MAX_PAGES,
+};
 use aero_cpu_core::state::CpuState;
 use aero_jit_x86::backend::WasmtimeBackend;
 use aero_jit_x86::jit_ctx;
@@ -144,7 +146,9 @@ fn wasmtime_code_version_table_is_coherent_with_jit_runtime_on_guest_write() {
     jit.install_block(entry_rip, table_index, 0, 0);
 
     // Entry should be valid and return `ok_next_rip` while version==expected.
-    let handle = jit.prepare_block(entry_rip).expect("block should be installed");
+    let handle = jit
+        .prepare_block(entry_rip)
+        .expect("block should be installed");
     let mut cpu = CpuState {
         rip: entry_rip,
         ..Default::default()

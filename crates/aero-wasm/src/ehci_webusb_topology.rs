@@ -70,7 +70,9 @@ pub(crate) fn set_ehci_webusb_connected(
     if !connected {
         // Best-effort: if the bridge lost its handle but the topology still contains a WebUSB
         // device, recover a clone so we can reset host-side state after detaching.
-        if webusb_handle.is_none() && let Some((_, handle)) = found.first() {
+        if webusb_handle.is_none()
+            && let Some((_, handle)) = found.first()
+        {
             *webusb_handle = Some(handle.clone());
         }
 
@@ -110,7 +112,10 @@ pub(crate) fn set_ehci_webusb_connected(
 
     // Fast path: device already attached at the reserved root port; avoid detach/attach churn so
     // the guest doesn't observe a spurious reconnect.
-    if found.iter().any(|(path, _)| path.as_slice() == reserved_path) {
+    if found
+        .iter()
+        .any(|(path, _)| path.as_slice() == reserved_path)
+    {
         if let Some(dev) = webusb_handle.as_ref() {
             dev.set_speed(UsbSpeed::High);
         }
@@ -118,7 +123,8 @@ pub(crate) fn set_ehci_webusb_connected(
     }
 
     // Attach the shared handle at the reserved root port with replace semantics.
-    let dev = webusb_handle.get_or_insert_with(|| UsbWebUsbPassthroughDevice::new_with_speed(UsbSpeed::High));
+    let dev = webusb_handle
+        .get_or_insert_with(|| UsbWebUsbPassthroughDevice::new_with_speed(UsbSpeed::High));
     dev.set_speed(UsbSpeed::High);
     let _ = ctrl.hub_mut().detach_at_path(&reserved_path);
     ctrl.hub_mut()

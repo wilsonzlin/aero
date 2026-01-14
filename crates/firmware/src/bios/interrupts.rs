@@ -2179,8 +2179,7 @@ mod tests {
     use super::super::{
         ivt, A20Gate, BiosConfig, BlockDevice, CdromDevice, DiskError, ElToritoBootInfo,
         ElToritoBootMediaType, InMemoryCdrom, InMemoryDisk, TestMemory, BDA_BASE, EBDA_BASE,
-        EBDA_SIZE,
-        MAX_TTY_OUTPUT_BYTES, PCIE_ECAM_BASE, PCIE_ECAM_SIZE,
+        EBDA_SIZE, MAX_TTY_OUTPUT_BYTES, PCIE_ECAM_BASE, PCIE_ECAM_SIZE,
     };
     use super::*;
     use aero_cpu_core::state::{gpr, CpuMode, CpuState, FLAG_CF, FLAG_ZF};

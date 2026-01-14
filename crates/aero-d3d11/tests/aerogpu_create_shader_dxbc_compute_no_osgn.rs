@@ -43,17 +43,16 @@ fn create_shader_dxbc_compute_uses_signature_driven_translation_even_without_osg
             "::create_shader_dxbc_compute_uses_signature_driven_translation_even_without_osgn"
         );
 
-        let (device, queue, supports_compute) = match common::wgpu::create_device_queue(
-            "aero-d3d11 compute shader create test device",
-        )
-        .await
-        {
-            Ok(v) => v,
-            Err(err) => {
-                common::skip_or_panic(test_name, &format!("wgpu unavailable ({err:#})"));
-                return Ok(());
-            }
-        };
+        let (device, queue, supports_compute) =
+            match common::wgpu::create_device_queue("aero-d3d11 compute shader create test device")
+                .await
+            {
+                Ok(v) => v,
+                Err(err) => {
+                    common::skip_or_panic(test_name, &format!("wgpu unavailable ({err:#})"));
+                    return Ok(());
+                }
+            };
         if !supports_compute {
             common::skip_or_panic(test_name, "compute unsupported");
             return Ok(());

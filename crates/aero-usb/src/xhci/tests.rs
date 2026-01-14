@@ -1,10 +1,10 @@
 use super::command_ring::{CommandRing, CommandRingProcessor, EventRing};
+use super::context;
 use super::trb::{CompletionCode, Trb, TrbType, TRB_LEN};
 use super::{
     regs, RingCursor, XhciController, PORTSC_CCS, PORTSC_CSC, PORTSC_PEC, PORTSC_PED, PORTSC_PR,
     PORTSC_PRC,
 };
-use super::context;
 use crate::hub::UsbHubDevice;
 use crate::{ControlResponse, MemoryBus, SetupPacket, UsbDeviceModel};
 use aero_io_snapshot::io::state::IoSnapshot;
@@ -129,17 +129,24 @@ fn xhci_context_helpers_ignore_slot0_scratchpad_entry() {
     mem.data[scratchpad as usize..scratchpad as usize + 0x100].fill(0xAA);
 
     assert!(
-        ctrl.read_endpoint_state_from_context(&mut mem, 0, 1).is_none(),
+        ctrl.read_endpoint_state_from_context(&mut mem, 0, 1)
+            .is_none(),
         "slot 0 should never resolve to a valid Endpoint Context state"
     );
     assert!(
-        ctrl.read_endpoint_dequeue_from_context(&mut mem, 0, 1).is_none(),
+        ctrl.read_endpoint_dequeue_from_context(&mut mem, 0, 1)
+            .is_none(),
         "slot 0 should never resolve to a valid TR Dequeue Pointer"
     );
 
     ctrl.write_endpoint_dequeue_to_context(&mut mem, 0, 1, 0x1234_5678, true);
     assert!(
-        !ctrl.write_endpoint_state_to_context(&mut mem, 0, 1, super::context::EndpointState::Halted),
+        !ctrl.write_endpoint_state_to_context(
+            &mut mem,
+            0,
+            1,
+            super::context::EndpointState::Halted
+        ),
         "writing endpoint state for slot 0 should be rejected"
     );
 
@@ -257,7 +264,9 @@ fn write_endpoint_state_to_context_updates_controller_shadow_context() {
         u32::from(context::EndpointState::Halted.raw())
     );
 
-    let slot = ctrl.slot_state(slot_id).expect("slot must exist after enable_slot");
+    let slot = ctrl
+        .slot_state(slot_id)
+        .expect("slot must exist after enable_slot");
     assert_eq!(slot.device_context_ptr(), dev_ctx);
     let shadow = slot
         .endpoint_context(usize::from(endpoint_id - 1))
@@ -1416,7 +1425,10 @@ fn controller_mmio_doorbell_processes_command_ring_and_posts_events() {
     ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
     ctrl.tick_1ms(&mut mem);
     ctrl.mmio_write(regs::REG_USBSTS, 4, u64::from(regs::USBSTS_EINT));
-    assert!(!ctrl.irq_level(), "IRQ should be clear before ringing doorbell");
+    assert!(
+        !ctrl.irq_level(),
+        "IRQ should be clear before ringing doorbell"
+    );
 
     // Ring the command doorbell (DB0).
     ctrl.mmio_write(regs::DBOFF_VALUE as u64, 4, 0);
@@ -1629,7 +1641,9 @@ fn snapshot_roundtrip_preserves_regs_ports_slots_and_device_tree() {
     assert_eq!(mem.read_trb(event_ring_base + TRB_LEN as u64), ev1_before);
 
     // Guest consumes the first event, leaving index 1 unconsumed.
-    restored.interrupter0.write_erdp(event_ring_base + TRB_LEN as u64);
+    restored
+        .interrupter0
+        .write_erdp(event_ring_base + TRB_LEN as u64);
     restored.service_event_ring(&mut mem);
     assert_eq!(restored.pending_event_count(), 0);
 

@@ -1,9 +1,9 @@
 mod common;
 
-use aero_dxbc::test_utils as dxbc_test_utils;
 use aero_d3d11::runtime::aerogpu_resources::AerogpuResourceManager;
 use aero_d3d11::sm4::opcode::*;
 use aero_d3d11::FourCC;
+use aero_dxbc::test_utils as dxbc_test_utils;
 use aero_protocol::aerogpu::aerogpu_cmd::AerogpuShaderStage;
 
 const DXBC_GS_EMIT_STREAM1: &[u8] = include_bytes!("fixtures/gs_emit_stream1.dxbc");
@@ -36,13 +36,7 @@ fn build_sm5_gs_stream_op(stream_opcode: u32, stream: u32) -> Vec<u8> {
 
     fn imm32_scalar(value: u32) -> [u32; 2] {
         [
-            operand_token(
-                OPERAND_TYPE_IMMEDIATE32,
-                1,
-                OPERAND_SEL_SELECT1,
-                0,
-                0,
-            ),
+            operand_token(OPERAND_TYPE_IMMEDIATE32, 1, OPERAND_SEL_SELECT1, 0, 0),
             value,
         ]
     }

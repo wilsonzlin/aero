@@ -137,18 +137,21 @@ pub fn aerogpu_executor(
             ..Default::default()
         });
 
-        let adapter = match pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
-            compatible_surface: None,
-            force_fallback_adapter: true,
-        })) {
-            Some(adapter) => Some(adapter),
-            None => pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        let adapter =
+            match pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::LowPower,
                 compatible_surface: None,
-                force_fallback_adapter: false,
-            })),
-        }?;
+                force_fallback_adapter: true,
+            })) {
+                Some(adapter) => Some(adapter),
+                None => {
+                    pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+                        power_preference: wgpu::PowerPreference::LowPower,
+                        compatible_surface: None,
+                        force_fallback_adapter: false,
+                    }))
+                }
+            }?;
 
         let (device, queue) = pollster::block_on(adapter.request_device(
             &wgpu::DeviceDescriptor {

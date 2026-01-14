@@ -3,9 +3,10 @@ mod common;
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
 use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode, AerogpuCmdStreamHeader as ProtocolCmdStreamHeader,
-    AerogpuPrimitiveTopology, AEROGPU_CLEAR_COLOR, AEROGPU_CMD_STREAM_MAGIC,
-    AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
+    AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode,
+    AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AerogpuPrimitiveTopology,
+    AEROGPU_CLEAR_COLOR, AEROGPU_CMD_STREAM_MAGIC, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+    AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
 use aero_protocol::aerogpu::aerogpu_pci::{AerogpuFormat, AEROGPU_ABI_VERSION_U32};
 
@@ -269,7 +270,10 @@ fn aerogpu_cmd_renders_branchy_pixel_shader() {
             .expect("execute_cmd_stream should succeed");
         exec.poll_wait();
 
-        let pixels = exec.read_texture_rgba8(RT).await.expect("readback should succeed");
+        let pixels = exec
+            .read_texture_rgba8(RT)
+            .await
+            .expect("readback should succeed");
         assert_eq!(pixels.len(), 4 * 4 * 4);
 
         let w = 4usize;
@@ -284,4 +288,3 @@ fn aerogpu_cmd_renders_branchy_pixel_shader() {
         assert_eq!(px(3, 0), &[255, 0, 255, 255]);
     });
 }
-

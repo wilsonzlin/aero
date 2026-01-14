@@ -24,10 +24,7 @@ fn aerogpu_pci_config_space_matches_protocol_identity() {
         cfg.read(0x2c, 2) as u16,
         proto::AEROGPU_PCI_SUBSYSTEM_VENDOR_ID
     );
-    assert_eq!(
-        cfg.read(0x2e, 2) as u16,
-        proto::AEROGPU_PCI_SUBSYSTEM_ID
-    );
+    assert_eq!(cfg.read(0x2e, 2) as u16, proto::AEROGPU_PCI_SUBSYSTEM_ID);
 
     let bar0 = cfg
         .bar_range(proto::AEROGPU_PCI_BAR0_INDEX as u8)

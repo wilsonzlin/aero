@@ -4,7 +4,9 @@ use std::rc::Rc;
 use aero_usb::xhci::context::SlotContext;
 use aero_usb::xhci::trb::{Trb, TrbType, TRB_LEN};
 use aero_usb::xhci::{CommandCompletionCode, XhciController, PORTSC_PR};
-use aero_usb::{ControlResponse, MemoryBus, SetupPacket, UsbDeviceModel, UsbInResult, UsbOutResult};
+use aero_usb::{
+    ControlResponse, MemoryBus, SetupPacket, UsbDeviceModel, UsbInResult, UsbOutResult,
+};
 
 mod util;
 use util::{Alloc, TestMemory};
@@ -140,4 +142,3 @@ fn xhci_tick_1ms_does_not_double_tick_device_when_multiple_endpoints_active() {
         "device tick_1ms should run once per controller tick, regardless of active endpoints"
     );
 }
-

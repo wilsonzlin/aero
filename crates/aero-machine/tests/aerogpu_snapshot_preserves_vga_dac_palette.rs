@@ -66,11 +66,11 @@ fn aerogpu_snapshot_preserves_vga_dac_palette_and_pel_mask() {
     // - Set PEL mask = 0 so index 1 maps to palette[0]
     m.io_write(0x3C6, 1, 0x00); // PEL mask
     m.io_write(0x3C8, 1, 0x00); // DAC write index
-    // Entry 0: green.
+                                // Entry 0: green.
     m.io_write(0x3C9, 1, 0); // R
     m.io_write(0x3C9, 1, 63); // G
     m.io_write(0x3C9, 1, 0); // B
-    // Entry 1: red.
+                             // Entry 1: red.
     m.io_write(0x3C9, 1, 63); // R
     m.io_write(0x3C9, 1, 0); // G
     m.io_write(0x3C9, 1, 0); // B
@@ -97,4 +97,3 @@ fn aerogpu_snapshot_preserves_vga_dac_palette_and_pel_mask() {
     assert_eq!(m2.display_framebuffer()[0], 0xFF00_FF00);
     assert_eq!(m2.io_read(0x3C6, 1) as u8, 0x00);
 }
-

@@ -83,11 +83,7 @@ fn smp_fixed_ipi_sets_pending_vector_in_destination_lapic() {
     //
     // Fixed IPIs are edge-triggered; the ICR "Level" bit is treated as don't-care. Keep it clear
     // here to ensure we don't accidentally regress into level-gated delivery.
-    m.write_lapic_u32(
-        0,
-        ICR_LOW_OFF,
-        u32::from(vector) | (0b000u32 << 8),
-    );
+    m.write_lapic_u32(0, ICR_LOW_OFF, u32::from(vector) | (0b000u32 << 8));
 
     assert_eq!(interrupts.borrow().get_pending_for_apic(1), Some(vector));
 }

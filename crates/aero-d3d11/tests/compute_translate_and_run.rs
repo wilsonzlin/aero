@@ -238,8 +238,8 @@ fn compute_translate_and_run_copy_structured_srv_to_uav() {
         let expected: [u32; 4] = [0x3f80_0000, 0x4000_0000, 0x4040_0000, 0x4080_0000];
 
         // Use a checked-in DXBC fixture to exercise the full DXBC → decode → WGSL path.
-        let dxbc = DxbcFile::parse(CS_COPY_STRUCTURED_SRV_TO_UAV_DXBC)
-            .expect("fixture DXBC should parse");
+        let dxbc =
+            DxbcFile::parse(CS_COPY_STRUCTURED_SRV_TO_UAV_DXBC).expect("fixture DXBC should parse");
         let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM5 parse should succeed");
         let module = decode_program(&program).expect("SM5 decode should succeed");
 

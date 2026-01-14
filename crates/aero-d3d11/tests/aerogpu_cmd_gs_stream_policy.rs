@@ -2,10 +2,10 @@ mod common;
 
 use std::fs;
 
-use aero_dxbc::test_utils as dxbc_test_utils;
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
 use aero_d3d11::sm4::opcode::*;
 use aero_d3d11::FourCC;
+use aero_dxbc::test_utils as dxbc_test_utils;
 use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::AerogpuShaderStage;
 use aero_protocol::aerogpu::aerogpu_cmd::AerogpuShaderStageEx;
@@ -53,13 +53,7 @@ fn build_sm5_gs_stream_op(stream_opcode: u32, stream: u32) -> Vec<u8> {
 
     fn imm32_scalar(value: u32) -> [u32; 2] {
         [
-            operand_token(
-                OPERAND_TYPE_IMMEDIATE32,
-                1,
-                OPERAND_SEL_SELECT1,
-                0,
-                0,
-            ),
+            operand_token(OPERAND_TYPE_IMMEDIATE32, 1, OPERAND_SEL_SELECT1, 0, 0),
             value,
         ]
     }

@@ -587,17 +587,20 @@ fn signature_chunk_missing_null_terminator_is_rejected() {
     // Build a well-formed chunk with a semantic name that doesn't require string-table padding
     // ("ABC\0" is already 4-byte aligned). This ensures the null terminator is at the end of the
     // payload, so overwriting the last byte removes it entirely.
-    let mut bytes = dxbc_test_utils::build_signature_chunk_v0(&[dxbc_test_utils::SignatureEntryDesc {
-        semantic_name: "ABC",
-        semantic_index: 0,
-        system_value_type: 0,
-        component_type: 3,
-        register: 0,
-        mask: 0xF,
-        read_write_mask: 0xF,
-        stream: 0,
-    }]);
-    *bytes.last_mut().expect("signature bytes should be non-empty") = b'X';
+    let mut bytes =
+        dxbc_test_utils::build_signature_chunk_v0(&[dxbc_test_utils::SignatureEntryDesc {
+            semantic_name: "ABC",
+            semantic_index: 0,
+            system_value_type: 0,
+            component_type: 3,
+            register: 0,
+            mask: 0xF,
+            read_write_mask: 0xF,
+            stream: 0,
+        }]);
+    *bytes
+        .last_mut()
+        .expect("signature bytes should be non-empty") = b'X';
 
     let err = parse_signature_chunk(&bytes).unwrap_err();
     assert!(matches!(err, DxbcError::InvalidChunk { .. }));

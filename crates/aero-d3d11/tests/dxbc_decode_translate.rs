@@ -1093,12 +1093,18 @@ fn decodes_and_translates_loop_with_break_and_continue() {
     let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
     let module = decode_program(&program).expect("SM4 decode");
     assert!(
-        module.instructions.iter().any(|i| matches!(i, Sm4Inst::Loop)),
+        module
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Sm4Inst::Loop)),
         "expected Loop instruction in decoded module: {:#?}",
         module.instructions
     );
     assert!(
-        module.instructions.iter().any(|i| matches!(i, Sm4Inst::Continue)),
+        module
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Sm4Inst::Continue)),
         "expected Continue instruction in decoded module: {:#?}",
         module.instructions
     );

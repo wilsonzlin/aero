@@ -95,4 +95,3 @@ fn xhci_ep0_halt_does_not_clobber_tr_dequeue_pointer() {
         "halting EP0 must not overwrite the guest TR Dequeue Pointer"
     );
 }
-

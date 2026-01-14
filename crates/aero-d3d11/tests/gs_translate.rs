@@ -1,4 +1,6 @@
-use aero_d3d11::runtime::gs_translate::{translate_gs_module_to_wgsl_compute_prepass, GsTranslateError};
+use aero_d3d11::runtime::gs_translate::{
+    translate_gs_module_to_wgsl_compute_prepass, GsTranslateError,
+};
 use aero_d3d11::sm4::decode_program;
 use aero_d3d11::sm4::opcode::*;
 use aero_d3d11::{

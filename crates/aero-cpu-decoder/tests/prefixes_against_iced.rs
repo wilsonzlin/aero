@@ -162,8 +162,8 @@ fn check_one(mode: DecodeMode, bytes: &[u8]) {
     let mandatory_group1_is_byte = encoding == EncodingKind::Legacy;
     let expected_rep =
         iced.has_rep_prefix() || (mandatory_group1_is_byte && mandatory == MandatoryPrefix::PF3);
-    let expected_repne = iced.has_repne_prefix()
-        || (mandatory_group1_is_byte && mandatory == MandatoryPrefix::PF2);
+    let expected_repne =
+        iced.has_repne_prefix() || (mandatory_group1_is_byte && mandatory == MandatoryPrefix::PF2);
     let expected_group1_count = expected_lock as u8 + expected_rep as u8 + expected_repne as u8;
     if expected_group1_count <= 1 {
         assert_eq!(

@@ -277,7 +277,8 @@ fn xhci_control_in_immediate_data_stage_rejects_oversized_length() {
 
     let mut xhci = Ep0TransferEngine::new_with_ports(1);
     xhci.set_event_ring(event_ring_base as u64, 16);
-    xhci.hub_mut().attach(0, Box::new(NakImmediateControlInDevice::default()));
+    xhci.hub_mut()
+        .attach(0, Box::new(NakImmediateControlInDevice::default()));
 
     let slot_id = xhci.enable_slot(0).expect("slot must be allocated");
     assert!(xhci.configure_ep0(slot_id, tr_ring_base as u64, true, 64));

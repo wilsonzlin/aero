@@ -45,7 +45,9 @@ impl fmt::Display for AerogpuUmdPrivateDecodeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             AerogpuUmdPrivateDecodeError::BufferTooSmall => write!(f, "buffer too small"),
-            AerogpuUmdPrivateDecodeError::BadSizeField { found } => write!(f, "bad size_bytes field {found}"),
+            AerogpuUmdPrivateDecodeError::BadSizeField { found } => {
+                write!(f, "bad size_bytes field {found}")
+            }
             AerogpuUmdPrivateDecodeError::UnsupportedStructVersion { found } => {
                 write!(f, "unsupported struct_version {found}")
             }

@@ -34,8 +34,15 @@ fn make_dummy_webhid() -> WebHidPassthroughBridge {
         "/../../tests/fixtures/hid/webhid_normalized_mouse.json"
     ));
     let collections = JSON::parse(fixture).expect("parse webhid_normalized_mouse.json fixture");
-    WebHidPassthroughBridge::new(0x1234, 0x5678, None, Some("test".to_string()), None, collections)
-        .expect("WebHidPassthroughBridge::new ok")
+    WebHidPassthroughBridge::new(
+        0x1234,
+        0x5678,
+        None,
+        Some("test".to_string()),
+        None,
+        collections,
+    )
+    .expect("WebHidPassthroughBridge::new ok")
 }
 
 #[wasm_bindgen_test]

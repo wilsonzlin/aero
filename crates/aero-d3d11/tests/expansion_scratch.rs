@@ -27,7 +27,10 @@ fn expansion_scratch_offsets_are_disjoint_across_frames_and_wrap() {
             || !exec.caps().supports_indirect_execution
             || device.limits().max_storage_buffers_per_shader_stage == 0
         {
-            common::skip_or_panic(test_name, "compute/storage buffers/indirect execution unsupported");
+            common::skip_or_panic(
+                test_name,
+                "compute/storage buffers/indirect execution unsupported",
+            );
             return;
         }
 
@@ -104,7 +107,10 @@ fn expansion_scratch_offsets_are_disjoint_across_frames_and_wrap() {
 #[test]
 fn expansion_scratch_grows_when_segment_is_full() {
     pollster::block_on(async {
-        let test_name = concat!(module_path!(), "::expansion_scratch_grows_when_segment_is_full");
+        let test_name = concat!(
+            module_path!(),
+            "::expansion_scratch_grows_when_segment_is_full"
+        );
         let exec = match AerogpuD3d11Executor::new_for_tests().await {
             Ok(exec) => exec,
             Err(e) => {
@@ -118,7 +124,10 @@ fn expansion_scratch_grows_when_segment_is_full() {
             || !exec.caps().supports_indirect_execution
             || device.limits().max_storage_buffers_per_shader_stage == 0
         {
-            common::skip_or_panic(test_name, "compute/storage buffers/indirect execution unsupported");
+            common::skip_or_panic(
+                test_name,
+                "compute/storage buffers/indirect execution unsupported",
+            );
             return;
         }
 

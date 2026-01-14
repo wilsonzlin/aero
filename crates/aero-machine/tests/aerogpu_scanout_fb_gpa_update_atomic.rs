@@ -91,4 +91,3 @@ fn aerogpu_scanout_fb_gpa_update_is_atomic_at_hi_commit() {
     assert_eq!(m.display_resolution(), (1, 1));
     assert_eq!(m.display_framebuffer(), &[0xFF00_FF00]); // green
 }
-

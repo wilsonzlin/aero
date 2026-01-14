@@ -914,8 +914,9 @@ export function installAeroMmioTestShims() {
         assert_eq!(exit.kind(), crate::RunExitKind::Halted);
         {
             // Safety: test-owned guest region inside wasm linear memory.
-            let guest =
-                unsafe { core::slice::from_raw_parts(guest_base as *const u8, guest_size as usize) };
+            let guest = unsafe {
+                core::slice::from_raw_parts(guest_base as *const u8, guest_size as usize)
+            };
             assert_eq!(
                 guest[0x0000_0200], 0x22,
                 "A20 enabled: 0x1_00000 should be distinct from 0x0"
@@ -946,8 +947,9 @@ export function installAeroMmioTestShims() {
         assert_eq!(exit.kind(), crate::RunExitKind::Halted);
         {
             // Safety: test-owned guest region inside wasm linear memory.
-            let guest =
-                unsafe { core::slice::from_raw_parts(guest_base as *const u8, guest_size as usize) };
+            let guest = unsafe {
+                core::slice::from_raw_parts(guest_base as *const u8, guest_size as usize)
+            };
             assert_eq!(
                 guest[0x0000_0200], 0x11,
                 "A20 disabled: 0x1_00000 should alias to 0x0"

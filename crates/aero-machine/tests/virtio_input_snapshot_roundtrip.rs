@@ -74,7 +74,10 @@ fn snapshot_roundtrip_preserves_virtio_input_queue_state_without_dup_or_stuck_ir
 
     // Feature negotiation (modern virtio-pci).
     m.write_physical_u8(common + 0x14, VIRTIO_STATUS_ACKNOWLEDGE);
-    m.write_physical_u8(common + 0x14, VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER);
+    m.write_physical_u8(
+        common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
+    );
 
     m.write_physical_u32(common + 0x00, 0);
     let f0 = m.read_physical_u32(common + 0x04);
@@ -90,7 +93,10 @@ fn snapshot_roundtrip_preserves_virtio_input_queue_state_without_dup_or_stuck_ir
         common + 0x14,
         VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK,
     );
-    assert_ne!(m.read_physical_u8(common + 0x14) & VIRTIO_STATUS_FEATURES_OK, 0);
+    assert_ne!(
+        m.read_physical_u8(common + 0x14) & VIRTIO_STATUS_FEATURES_OK,
+        0
+    );
     m.write_physical_u8(
         common + 0x14,
         VIRTIO_STATUS_ACKNOWLEDGE
@@ -114,14 +120,7 @@ fn snapshot_roundtrip_preserves_virtio_input_queue_state_without_dup_or_stuck_ir
     let bufs = [0x13000u64, 0x13020u64];
     for (i, &buf) in bufs.iter().enumerate() {
         m.write_physical(buf, &[0u8; 8]);
-        write_desc(
-            &mut m,
-            desc,
-            i as u16,
-            buf,
-            8,
-            VIRTQ_DESC_F_WRITE,
-        );
+        write_desc(&mut m, desc, i as u16, buf, 8, VIRTQ_DESC_F_WRITE);
     }
     m.write_physical_u16(avail + 0, 0);
     m.write_physical_u16(avail + 2, bufs.len() as u16);
@@ -137,12 +136,7 @@ fn snapshot_roundtrip_preserves_virtio_input_queue_state_without_dup_or_stuck_ir
     assert_eq!(m.read_physical_u16(used + 2), 0);
 
     // No pending interrupts expected yet.
-    assert!(
-        !m.virtio_input_keyboard()
-            .unwrap()
-            .borrow()
-            .irq_level()
-    );
+    assert!(!m.virtio_input_keyboard().unwrap().borrow().irq_level());
 
     let snap = m.take_snapshot_full().unwrap();
 
@@ -153,13 +147,11 @@ fn snapshot_roundtrip_preserves_virtio_input_queue_state_without_dup_or_stuck_ir
     assert!(restored.virtio_input_keyboard_driver_ok());
 
     // Snapshot restore should not spuriously assert INTx without an event.
-    assert!(
-        !restored
-            .virtio_input_keyboard()
-            .unwrap()
-            .borrow()
-            .irq_level()
-    );
+    assert!(!restored
+        .virtio_input_keyboard()
+        .unwrap()
+        .borrow()
+        .irq_level());
 
     // The cached-but-not-used buffers must still be usable after restore: inject a key press and
     // expect both EV_KEY and EV_SYN to complete immediately without reusing/duplicating old events.
@@ -179,4 +171,3 @@ fn snapshot_roundtrip_preserves_virtio_input_queue_state_without_dup_or_stuck_ir
     assert_eq!(parse(&got0), (EV_KEY, KEY_A, 1));
     assert_eq!(parse(&got1), (EV_SYN, SYN_REPORT, 0));
 }
-

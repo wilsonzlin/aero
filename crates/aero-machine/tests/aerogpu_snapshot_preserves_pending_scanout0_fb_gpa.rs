@@ -49,7 +49,10 @@ fn aerogpu_snapshot_preserves_pending_scanout0_fb_gpa_lo_until_hi_commit() {
         bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_FORMAT),
         pci::AerogpuFormat::B8G8R8X8Unorm as u32,
     );
-    vm.write_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_PITCH_BYTES), 4);
+    vm.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_PITCH_BYTES),
+        4,
+    );
     vm.write_physical_u32(
         bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_LO),
         fb_a as u32,
@@ -81,7 +84,9 @@ fn aerogpu_snapshot_preserves_pending_scanout0_fb_gpa_lo_until_hi_commit() {
     restored.reset();
     restored.restore_snapshot_bytes(&snap).unwrap();
 
-    let bdf = restored.aerogpu().expect("AeroGPU device should be present");
+    let bdf = restored
+        .aerogpu()
+        .expect("AeroGPU device should be present");
     let bar0 = restored
         .pci_bar_base(bdf, AEROGPU_BAR0_INDEX)
         .expect("AeroGPU BAR0 should be mapped");
@@ -103,4 +108,3 @@ fn aerogpu_snapshot_preserves_pending_scanout0_fb_gpa_lo_until_hi_commit() {
     restored.display_present();
     assert_eq!(restored.display_framebuffer(), &[0xFF00_FF00]); // green
 }
-

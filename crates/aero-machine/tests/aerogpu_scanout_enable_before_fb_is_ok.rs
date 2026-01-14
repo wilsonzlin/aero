@@ -260,9 +260,8 @@ fn aerogpu_scanout_disable_reverts_to_legacy_vbe_scanout_with_panning_stride() {
 
     // Sanity check: after the BIOS VBE calls, legacy scanout should already reflect panning/stride.
     let lfb_base = u64::from(m.vbe_lfb_base());
-    let expected_base = lfb_base
-        + u64::from(y_off) * u64::from(bytes_per_scan_line)
-        + u64::from(x_off) * 4;
+    let expected_base =
+        lfb_base + u64::from(y_off) * u64::from(bytes_per_scan_line) + u64::from(x_off) * 4;
 
     let snap0 = scanout_state.snapshot();
     assert_eq!(snap0.source, SCANOUT_SOURCE_LEGACY_VBE_LFB);
@@ -292,8 +291,14 @@ fn aerogpu_scanout_disable_reverts_to_legacy_vbe_scanout_with_panning_stride() {
     let pitch = w * 4;
     let fb_gpa: u64 = 0x0010_0000;
 
-    m.write_physical_u32(bar0_base + aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_WIDTH as u64, w);
-    m.write_physical_u32(bar0_base + aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_HEIGHT as u64, h);
+    m.write_physical_u32(
+        bar0_base + aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_WIDTH as u64,
+        w,
+    );
+    m.write_physical_u32(
+        bar0_base + aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_HEIGHT as u64,
+        h,
+    );
     m.write_physical_u32(
         bar0_base + aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_PITCH_BYTES as u64,
         pitch,
@@ -310,11 +315,17 @@ fn aerogpu_scanout_disable_reverts_to_legacy_vbe_scanout_with_panning_stride() {
         bar0_base + aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_FORMAT as u64,
         aerogpu_pci::AerogpuFormat::B8G8R8X8Unorm as u32,
     );
-    m.write_physical_u32(bar0_base + aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE as u64, 1);
+    m.write_physical_u32(
+        bar0_base + aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE as u64,
+        1,
+    );
     m.process_aerogpu();
     assert_eq!(scanout_state.snapshot().source, SCANOUT_SOURCE_WDDM);
 
-    m.write_physical_u32(bar0_base + aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE as u64, 0);
+    m.write_physical_u32(
+        bar0_base + aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE as u64,
+        0,
+    );
     m.process_aerogpu();
 
     let snap1 = scanout_state.snapshot();

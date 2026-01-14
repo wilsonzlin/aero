@@ -114,8 +114,8 @@ fn xhci_controller_ep0_control_in_webusb_nak_keeps_td_pending_and_dequeue_pinned
     xhci.set_endpoint_ring(slot_id, 1, transfer_ring_base, true);
 
     // Ring doorbell via MMIO and tick once: SETUP is consumed, DATA stage NAKs, no event yet.
-    let doorbell_offset =
-        u64::from(regs::DBOFF_VALUE) + u64::from(slot_id) * u64::from(regs::doorbell::DOORBELL_STRIDE);
+    let doorbell_offset = u64::from(regs::DBOFF_VALUE)
+        + u64::from(slot_id) * u64::from(regs::doorbell::DOORBELL_STRIDE);
     xhci.mmio_write(doorbell_offset, 4, 1);
     xhci.tick(&mut mem);
 

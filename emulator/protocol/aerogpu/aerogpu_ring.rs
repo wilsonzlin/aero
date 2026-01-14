@@ -41,7 +41,9 @@ impl fmt::Display for AerogpuRingDecodeError {
             AerogpuRingDecodeError::BufferTooSmall => write!(f, "buffer too small"),
             AerogpuRingDecodeError::BadMagic { found } => write!(f, "bad magic 0x{found:08X}"),
             AerogpuRingDecodeError::Abi(err) => write!(f, "abi error: {err}"),
-            AerogpuRingDecodeError::BadSizeField { found } => write!(f, "bad size_bytes field {found}"),
+            AerogpuRingDecodeError::BadSizeField { found } => {
+                write!(f, "bad size_bytes field {found}")
+            }
             AerogpuRingDecodeError::BadEntryCount { found } => write!(f, "bad entry_count {found}"),
             AerogpuRingDecodeError::BadStrideField { found } => {
                 write!(f, "bad entry_stride_bytes field {found}")
@@ -185,16 +187,19 @@ impl fmt::Display for AerogpuAllocTableDecodeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             AerogpuAllocTableDecodeError::BufferTooSmall => write!(f, "buffer too small"),
-            AerogpuAllocTableDecodeError::BadMagic { found } => write!(f, "bad magic 0x{found:08X}"),
+            AerogpuAllocTableDecodeError::BadMagic { found } => {
+                write!(f, "bad magic 0x{found:08X}")
+            }
             AerogpuAllocTableDecodeError::Abi(err) => write!(f, "abi error: {err}"),
             AerogpuAllocTableDecodeError::BadSize { found, buf_len } => {
                 write!(f, "bad size_bytes {found} (buffer_len={buf_len})")
             }
-            AerogpuAllocTableDecodeError::BadStride { found, expected } => write!(
-                f,
-                "bad entry_stride_bytes {found} (expected >= {expected})"
-            ),
-            AerogpuAllocTableDecodeError::CountOutOfBounds => write!(f, "entry_count out of bounds"),
+            AerogpuAllocTableDecodeError::BadStride { found, expected } => {
+                write!(f, "bad entry_stride_bytes {found} (expected >= {expected})")
+            }
+            AerogpuAllocTableDecodeError::CountOutOfBounds => {
+                write!(f, "entry_count out of bounds")
+            }
             AerogpuAllocTableDecodeError::Misaligned => write!(f, "entries buffer misaligned"),
         }
     }

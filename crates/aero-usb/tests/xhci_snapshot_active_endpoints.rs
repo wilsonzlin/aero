@@ -16,9 +16,7 @@ fn xhci_snapshot_load_rejects_duplicate_active_endpoints() {
 
     let mut ctrl = XhciController::new();
     match ctrl.load_state(&snapshot) {
-        Err(SnapshotError::InvalidFieldEncoding(
-            "xhci active endpoint duplicate",
-        )) => {}
+        Err(SnapshotError::InvalidFieldEncoding("xhci active endpoint duplicate")) => {}
         other => panic!("expected InvalidFieldEncoding, got {other:?}"),
     }
 }

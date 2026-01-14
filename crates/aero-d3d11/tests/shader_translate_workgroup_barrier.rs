@@ -1,9 +1,9 @@
+use aero_d3d11::sm4::opcode::{
+    SYNC_FLAG_THREAD_GROUP_SHARED_MEMORY, SYNC_FLAG_THREAD_GROUP_SYNC, SYNC_FLAG_UAV_MEMORY,
+};
 use aero_d3d11::{
     parse_signatures, translate_sm4_module_to_wgsl, DxbcFile, FourCC, ShaderModel, ShaderStage,
     Sm4Decl, Sm4Inst, Sm4Module,
-};
-use aero_d3d11::sm4::opcode::{
-    SYNC_FLAG_THREAD_GROUP_SHARED_MEMORY, SYNC_FLAG_THREAD_GROUP_SYNC, SYNC_FLAG_UAV_MEMORY,
 };
 use aero_dxbc::test_utils as dxbc_test_utils;
 
@@ -62,7 +62,12 @@ fn translates_sync_uav_fence_only_to_wgsl() {
         stage: ShaderStage::Compute,
         model: ShaderModel { major: 5, minor: 0 },
         decls: vec![Sm4Decl::ThreadGroupSize { x: 1, y: 1, z: 1 }],
-        instructions: vec![Sm4Inst::Sync { flags: SYNC_FLAG_UAV_MEMORY }, Sm4Inst::Ret],
+        instructions: vec![
+            Sm4Inst::Sync {
+                flags: SYNC_FLAG_UAV_MEMORY,
+            },
+            Sm4Inst::Ret,
+        ],
     };
 
     let dxbc_bytes = build_dxbc(&[(FOURCC_SHEX, Vec::new())]);

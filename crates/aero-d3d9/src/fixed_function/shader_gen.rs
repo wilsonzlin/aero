@@ -478,9 +478,7 @@ fn emit_tss_stage(
         //
         // If the vertex format provides fewer sets than requested, fall back to TEXCOORD0 (common
         // for UI that reuses the same UVs).
-        let texcoord_index = stage
-            .texcoord_index
-            .unwrap_or(stage_index as u8) as usize;
+        let texcoord_index = stage.texcoord_index.unwrap_or(stage_index as u8) as usize;
         let tc_expr = if layout.texcoords.is_empty() {
             "vec4<f32>(0.0, 0.0, 0.0, 1.0)".to_string()
         } else if texcoord_index < layout.texcoords.len() {
@@ -680,7 +678,10 @@ fn op_arg_mask(op: TextureOp, component: Component) -> u8 {
 }
 
 fn op_implicitly_uses_texture(op: TextureOp) -> bool {
-    matches!(op, TextureOp::BlendTextureAlpha | TextureOp::BlendTextureAlphaPm)
+    matches!(
+        op,
+        TextureOp::BlendTextureAlpha | TextureOp::BlendTextureAlphaPm
+    )
 }
 
 fn wgsl_arg_component(arg: TextureArg, stage_index: usize, component: Component) -> String {

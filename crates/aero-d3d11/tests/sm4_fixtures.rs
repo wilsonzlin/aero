@@ -334,23 +334,38 @@ fn parses_and_translates_sm4_ps_if_movc_fixture() {
 
     let module = decode_program(&program).expect("SM4 decode failed");
     assert!(
-        module.instructions.iter().any(|i| matches!(i, Sm4Inst::Cmp { .. })),
+        module
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Sm4Inst::Cmp { .. })),
         "expected comparison instruction"
     );
     assert!(
-        module.instructions.iter().any(|i| matches!(i, Sm4Inst::Movc { .. })),
+        module
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Sm4Inst::Movc { .. })),
         "expected movc instruction"
     );
     assert!(
-        module.instructions.iter().any(|i| matches!(i, Sm4Inst::If { .. })),
+        module
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Sm4Inst::If { .. })),
         "expected if instruction"
     );
     assert!(
-        module.instructions.iter().any(|i| matches!(i, Sm4Inst::Else)),
+        module
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Sm4Inst::Else)),
         "expected else instruction"
     );
     assert!(
-        module.instructions.iter().any(|i| matches!(i, Sm4Inst::EndIf)),
+        module
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Sm4Inst::EndIf)),
         "expected endif instruction"
     );
 
@@ -390,27 +405,21 @@ fn parses_and_decodes_sm4_gs_passthrough_fixture() {
 
     let module = decode_program(&program).expect("SM4 decode failed");
     assert!(
-        module
-            .decls
-            .iter()
-            .any(|d| matches!(
-                d,
-                Sm4Decl::GsInputPrimitive {
-                    primitive: GsInputPrimitive::Triangle
-                }
-            )),
+        module.decls.iter().any(|d| matches!(
+            d,
+            Sm4Decl::GsInputPrimitive {
+                primitive: GsInputPrimitive::Triangle
+            }
+        )),
         "expected triangle input primitive decl"
     );
     assert!(
-        module
-            .decls
-            .iter()
-            .any(|d| matches!(
-                d,
-                Sm4Decl::GsOutputTopology {
-                    topology: GsOutputTopology::TriangleStrip
-                }
-            )),
+        module.decls.iter().any(|d| matches!(
+            d,
+            Sm4Decl::GsOutputTopology {
+                topology: GsOutputTopology::TriangleStrip
+            }
+        )),
         "expected triangle strip output topology decl"
     );
     assert!(
@@ -428,7 +437,10 @@ fn parses_and_decodes_sm4_gs_passthrough_fixture() {
             if dst.reg.file == RegFile::Output && dst.reg.index == 0
                 && matches!(src.kind, SrcKind::GsInput { reg: 0, vertex: 0 })
     ));
-    assert!(matches!(&module.instructions[1], Sm4Inst::Emit { stream: 0 }));
+    assert!(matches!(
+        &module.instructions[1],
+        Sm4Inst::Emit { stream: 0 }
+    ));
     assert!(matches!(module.instructions.last(), Some(Sm4Inst::Ret)));
 }
 

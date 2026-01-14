@@ -6,9 +6,9 @@
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
+use aero_usb::xhci::regs;
 use aero_usb::xhci::ring::{RingCursor, RingError, RingPoll};
 use aero_usb::xhci::trb::{Trb, TrbType};
-use aero_usb::xhci::regs;
 use aero_usb::xhci::XhciController;
 use aero_usb::{ControlResponse, MemoryBus, SetupPacket, UsbDeviceModel};
 
@@ -285,7 +285,11 @@ fn xhci_doorbell0_sets_host_controller_error_on_open_bus_command_ring_fetch() {
     // even though we treat USBSTS as RW1C for other bits (e.g. USBSTS.EINT).
     xhci.mmio_write(regs::REG_USBSTS, 4, u64::from(regs::USBSTS_HCE));
     let sts3 = xhci.mmio_read(regs::REG_USBSTS, 4) as u32;
-    assert_ne!(sts3 & regs::USBSTS_HCE, 0, "USBSTS write must not clear HCE");
+    assert_ne!(
+        sts3 & regs::USBSTS_HCE,
+        0,
+        "USBSTS write must not clear HCE"
+    );
 
     // Host Controller Reset should clear HCE.
     xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_HCRST));

@@ -27,7 +27,10 @@ fn caplength_and_hciversion_are_stable() {
     assert_eq!(caplength0, xhci.mmio_read(REG_CAPLENGTH, 1) as u8);
     assert_eq!(hciversion0, xhci.mmio_read(REG_HCIVERSION, 2) as u16);
 
-    assert!(caplength0 >= 0x20, "CAPLENGTH must leave space for base cap regs");
+    assert!(
+        caplength0 >= 0x20,
+        "CAPLENGTH must leave space for base cap regs"
+    );
     assert_ne!(hciversion0, 0, "HCIVERSION must be non-zero");
 }
 
@@ -78,7 +81,11 @@ fn usbcmd_usbsts_run_stop_reset() {
 
     let cmd_after = xhci.mmio_read(usbcmd, 4) as u32;
     assert_eq!(cmd_after & USBCMD_HCRST, 0, "HCRST should be self-clearing");
-    assert_eq!(cmd_after & USBCMD_RS, 0, "HCRST should leave controller stopped");
+    assert_eq!(
+        cmd_after & USBCMD_RS,
+        0,
+        "HCRST should leave controller stopped"
+    );
     assert_ne!(
         xhci.mmio_read(usbsts, 4) as u32 & USBSTS_HCH,
         0,

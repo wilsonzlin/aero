@@ -500,15 +500,7 @@ fn virtio_input_statusq_led_events_split_across_descriptors() {
     mem.write(buf0, &payload[..split]).unwrap();
     mem.write(buf1, &payload[split..]).unwrap();
 
-    write_desc(
-        &mut mem,
-        desc,
-        0,
-        buf0,
-        split as u32,
-        VIRTQ_DESC_F_NEXT,
-        1,
-    );
+    write_desc(&mut mem, desc, 0, buf0, split as u32, VIRTQ_DESC_F_NEXT, 1);
     write_desc(
         &mut mem,
         desc,

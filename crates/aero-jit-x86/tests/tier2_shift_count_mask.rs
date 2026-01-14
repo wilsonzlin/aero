@@ -40,8 +40,14 @@ fn tier2_masks_shift_count_for_32bit_operands_like_x86() {
     // shl eax, 33
     // <invalid>
     let code = [
-        0xB8, 0x01, 0x00, 0x00, 0x00, // mov eax, 1
-        0xC1, 0xE0, 0x21, // shl eax, 33
+        0xB8,
+        0x01,
+        0x00,
+        0x00,
+        0x00, // mov eax, 1
+        0xC1,
+        0xE0,
+        0x21, // shl eax, 33
         invalid(),
     ];
 
@@ -56,8 +62,11 @@ fn tier2_masks_shift_count_for_8bit_operands_like_x86() {
     // shl al, 33
     // <invalid>
     let code = [
-        0xB0, 0x01, // mov al, 1
-        0xC0, 0xE0, 0x21, // shl al, 33
+        0xB0,
+        0x01, // mov al, 1
+        0xC0,
+        0xE0,
+        0x21, // shl al, 33
         invalid(),
     ];
 
@@ -75,8 +84,11 @@ fn tier2_masks_8bit_shift_counts_to_5_bits_not_3_bits() {
     // x86 masks 8-bit shift counts to 5 bits, so 9 is *not* reduced to 1.
     // If we (incorrectly) masked by (width.bits()-1)==7, this would behave like shl al, 1.
     let code = [
-        0xB0, 0x01, // mov al, 1
-        0xC0, 0xE0, 0x09, // shl al, 9
+        0xB0,
+        0x01, // mov al, 1
+        0xC0,
+        0xE0,
+        0x09, // shl al, 9
         invalid(),
     ];
 
@@ -91,8 +103,11 @@ fn tier2_masks_shift_count_for_high8_operands_like_x86() {
     // shl ah, 33
     // <invalid>
     let code = [
-        0xB4, 0x01, // mov ah, 1
-        0xC0, 0xE4, 0x21, // shl ah, 33
+        0xB4,
+        0x01, // mov ah, 1
+        0xC0,
+        0xE4,
+        0x21, // shl ah, 33
         invalid(),
     ];
 
@@ -109,8 +124,11 @@ fn tier2_masks_high8_shift_counts_to_5_bits_not_3_bits() {
     //
     // x86 masks 8-bit shift counts to 5 bits, so 9 is *not* reduced to 1.
     let code = [
-        0xB4, 0x01, // mov ah, 1
-        0xC0, 0xE4, 0x09, // shl ah, 9
+        0xB4,
+        0x01, // mov ah, 1
+        0xC0,
+        0xE4,
+        0x09, // shl ah, 9
         invalid(),
     ];
 
@@ -125,8 +143,14 @@ fn tier2_masks_shift_count_for_32bit_shr_like_x86() {
     // shr eax, 33
     // <invalid>
     let code = [
-        0xB8, 0x00, 0x00, 0x00, 0x80, // mov eax, 0x80000000
-        0xC1, 0xE8, 0x21, // shr eax, 33
+        0xB8,
+        0x00,
+        0x00,
+        0x00,
+        0x80, // mov eax, 0x80000000
+        0xC1,
+        0xE8,
+        0x21, // shr eax, 33
         invalid(),
     ];
 
@@ -141,8 +165,14 @@ fn tier2_masks_shift_count_for_32bit_sar_like_x86() {
     // sar eax, 33
     // <invalid>
     let code = [
-        0xB8, 0x00, 0x00, 0x00, 0x80, // mov eax, 0x80000000
-        0xC1, 0xF8, 0x21, // sar eax, 33
+        0xB8,
+        0x00,
+        0x00,
+        0x00,
+        0x80, // mov eax, 0x80000000
+        0xC1,
+        0xF8,
+        0x21, // sar eax, 33
         invalid(),
     ];
 
@@ -157,8 +187,14 @@ fn tier2_masks_shift_count_for_16bit_operands_like_x86() {
     // 66 shl ax, 33
     // <invalid>
     let code = [
-        0x66, 0xB8, 0x01, 0x00, // mov ax, 1
-        0x66, 0xC1, 0xE0, 0x21, // shl ax, 33
+        0x66,
+        0xB8,
+        0x01,
+        0x00, // mov ax, 1
+        0x66,
+        0xC1,
+        0xE0,
+        0x21, // shl ax, 33
         invalid(),
     ];
 
@@ -175,8 +211,14 @@ fn tier2_masks_16bit_shift_counts_to_5_bits_not_4_bits() {
     //
     // x86 masks 16-bit shift counts to 5 bits, so 17 is *not* reduced to 1.
     let code = [
-        0x66, 0xB8, 0x01, 0x00, // mov ax, 1
-        0x66, 0xC1, 0xE0, 0x11, // shl ax, 17
+        0x66,
+        0xB8,
+        0x01,
+        0x00, // mov ax, 1
+        0x66,
+        0xC1,
+        0xE0,
+        0x11, // shl ax, 17
         invalid(),
     ];
 
@@ -191,8 +233,14 @@ fn tier2_masks_shift_count_for_16bit_shr_like_x86() {
     // shr ax, 33
     // <invalid>
     let code = [
-        0x66, 0xB8, 0x00, 0x80, // mov ax, 0x8000
-        0x66, 0xC1, 0xE8, 0x21, // shr ax, 33
+        0x66,
+        0xB8,
+        0x00,
+        0x80, // mov ax, 0x8000
+        0x66,
+        0xC1,
+        0xE8,
+        0x21, // shr ax, 33
         invalid(),
     ];
 
@@ -207,8 +255,14 @@ fn tier2_masks_shift_count_for_16bit_sar_like_x86() {
     // sar ax, 33
     // <invalid>
     let code = [
-        0x66, 0xB8, 0x00, 0x80, // mov ax, 0x8000
-        0x66, 0xC1, 0xF8, 0x21, // sar ax, 33
+        0x66,
+        0xB8,
+        0x00,
+        0x80, // mov ax, 0x8000
+        0x66,
+        0xC1,
+        0xF8,
+        0x21, // sar ax, 33
         invalid(),
     ];
 
@@ -223,8 +277,11 @@ fn tier2_masks_shift_count_for_8bit_shr_like_x86() {
     // shr al, 33
     // <invalid>
     let code = [
-        0xB0, 0x80, // mov al, 0x80
-        0xC0, 0xE8, 0x21, // shr al, 33
+        0xB0,
+        0x80, // mov al, 0x80
+        0xC0,
+        0xE8,
+        0x21, // shr al, 33
         invalid(),
     ];
 
@@ -239,8 +296,11 @@ fn tier2_masks_shift_count_for_8bit_sar_like_x86() {
     // sar al, 33
     // <invalid>
     let code = [
-        0xB0, 0x80, // mov al, 0x80
-        0xC0, 0xF8, 0x21, // sar al, 33
+        0xB0,
+        0x80, // mov al, 0x80
+        0xC0,
+        0xF8,
+        0x21, // sar al, 33
         invalid(),
     ];
 
@@ -255,8 +315,11 @@ fn tier2_masks_shift_count_for_high8_shr_like_x86() {
     // shr ah, 33
     // <invalid>
     let code = [
-        0xB4, 0x80, // mov ah, 0x80
-        0xC0, 0xEC, 0x21, // shr ah, 33
+        0xB4,
+        0x80, // mov ah, 0x80
+        0xC0,
+        0xEC,
+        0x21, // shr ah, 33
         invalid(),
     ];
 
@@ -271,8 +334,11 @@ fn tier2_masks_shift_count_for_high8_sar_like_x86() {
     // sar ah, 33
     // <invalid>
     let code = [
-        0xB4, 0x80, // mov ah, 0x80
-        0xC0, 0xFC, 0x21, // sar ah, 33
+        0xB4,
+        0x80, // mov ah, 0x80
+        0xC0,
+        0xFC,
+        0x21, // sar ah, 33
         invalid(),
     ];
 
@@ -287,8 +353,17 @@ fn tier2_masks_shift_count_for_64bit_operands_like_x86() {
     // shl rax, 65
     // <invalid>
     let code = [
-        0x48, 0xC7, 0xC0, 0x01, 0x00, 0x00, 0x00, // mov rax, 1
-        0x48, 0xC1, 0xE0, 0x41, // shl rax, 65
+        0x48,
+        0xC7,
+        0xC0,
+        0x01,
+        0x00,
+        0x00,
+        0x00, // mov rax, 1
+        0x48,
+        0xC1,
+        0xE0,
+        0x41, // shl rax, 65
         invalid(),
     ];
 
@@ -305,8 +380,17 @@ fn tier2_masks_shift_count_uses_6_bits_for_64bit_operands() {
     //
     // x86 masks 64-bit shift counts to 6 bits (mod 64), so 32 is *not* reduced to 0.
     let code = [
-        0x48, 0xC7, 0xC0, 0x01, 0x00, 0x00, 0x00, // mov rax, 1
-        0x48, 0xC1, 0xE0, 0x20, // shl rax, 32
+        0x48,
+        0xC7,
+        0xC0,
+        0x01,
+        0x00,
+        0x00,
+        0x00, // mov rax, 1
+        0x48,
+        0xC1,
+        0xE0,
+        0x20, // shl rax, 32
         invalid(),
     ];
 

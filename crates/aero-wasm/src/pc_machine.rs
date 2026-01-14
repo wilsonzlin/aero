@@ -7,7 +7,7 @@
 
 use wasm_bindgen::prelude::*;
 
-use aero_ipc::wasm::{open_ring_by_kind, SharedRingBuffer};
+use aero_ipc::wasm::{SharedRingBuffer, open_ring_by_kind};
 use js_sys::{BigInt, Object, Reflect, SharedArrayBuffer};
 
 use crate::RunExit;

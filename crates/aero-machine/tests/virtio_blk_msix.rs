@@ -186,7 +186,13 @@ fn virtio_blk_msix_delivers_to_lapic_in_apic_mode() {
     // Disable MSI-X via PCI config space (without BAR0 MMIO). The machine should mirror the MSI-X
     // enable state into the transport during polling so the device falls back to legacy INTx.
     let ctrl = cfg_read(&mut m, bdf, msix_cap + 0x02, 2) as u16;
-    cfg_write(&mut m, bdf, msix_cap + 0x02, 2, u32::from(ctrl & !(1 << 15)));
+    cfg_write(
+        &mut m,
+        bdf,
+        msix_cap + 0x02,
+        2,
+        u32::from(ctrl & !(1 << 15)),
+    );
 
     // Re-submit the same descriptor chain.
     m.write_physical_u8(status, 0xff);

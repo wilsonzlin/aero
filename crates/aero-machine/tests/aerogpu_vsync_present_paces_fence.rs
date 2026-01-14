@@ -61,7 +61,8 @@ fn aerogpu_vsync_present_paces_fence_until_next_vblank() {
     let scanout_fb_gpa = 0x40000u64;
 
     // Build a minimal command stream containing a vsynced PRESENT.
-    let stream_size_bytes = (cmd::AerogpuCmdStreamHeader::SIZE_BYTES + cmd::AerogpuCmdPresent::SIZE_BYTES) as u32;
+    let stream_size_bytes =
+        (cmd::AerogpuCmdStreamHeader::SIZE_BYTES + cmd::AerogpuCmdPresent::SIZE_BYTES) as u32;
     let mut cmd_stream = vec![0u8; stream_size_bytes as usize];
     cmd_stream[0..4].copy_from_slice(&cmd::AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
     cmd_stream[4..8].copy_from_slice(&pci::AEROGPU_ABI_VERSION_U32.to_le_bytes());
@@ -154,7 +155,10 @@ fn aerogpu_vsync_present_paces_fence_until_next_vblank() {
         bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_FORMAT),
         pci::AerogpuFormat::B8G8R8X8Unorm as u32,
     );
-    m.write_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_PITCH_BYTES), 4);
+    m.write_physical_u32(
+        bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_PITCH_BYTES),
+        4,
+    );
     m.write_physical_u32(
         bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_LO),
         scanout_fb_gpa as u32,
@@ -227,4 +231,3 @@ fn aerogpu_vsync_present_paces_fence_until_next_vblank() {
     let irq_status = m.read_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_IRQ_STATUS));
     assert_eq!(irq_status & pci::AEROGPU_IRQ_FENCE, pci::AEROGPU_IRQ_FENCE);
 }
-

@@ -8,11 +8,11 @@ use tier1_common::SimpleBus;
 use aero_jit_x86::abi;
 use aero_jit_x86::jit_ctx;
 use aero_jit_x86::tier2::interp::{run_trace_with_cached_regs, RunExit, RuntimeEnv, T2State};
+#[cfg(not(target_arch = "wasm32"))]
+use aero_jit_x86::tier2::ir::{flag_to_set, FlagValues};
 use aero_jit_x86::tier2::ir::{
     BinOp, Block, BlockId, Function, Instr, Operand, Terminator, TraceIr, TraceKind, ValueId,
 };
-#[cfg(not(target_arch = "wasm32"))]
-use aero_jit_x86::tier2::ir::{flag_to_set, FlagValues};
 use aero_jit_x86::tier2::opt::{optimize_trace, OptConfig};
 use aero_jit_x86::tier2::profile::{ProfileData, TraceConfig};
 use aero_jit_x86::tier2::trace::TraceBuilder;
@@ -1863,10 +1863,13 @@ fn tier2_loop_trace_code_version_wraparound_on_storemem_interpreter_matches_wasm
 
     let mut interp_state = init_state.clone();
     let mut bus = SimpleBus::new(GUEST_MEM_SIZE);
-    let expected = aero_jit_x86::tier2::interp::run_trace(&trace, &env, &mut bus, &mut interp_state, 5);
+    let expected =
+        aero_jit_x86::tier2::interp::run_trace(&trace, &env, &mut bus, &mut interp_state, 5);
     assert_eq!(
         expected.exit,
-        RunExit::Invalidate { next_rip: entry_rip },
+        RunExit::Invalidate {
+            next_rip: entry_rip
+        },
         "loop should invalidate after StoreMem wraps the guarded page version"
     );
     assert_eq!(

@@ -75,7 +75,7 @@ fn xhci_control_get_descriptor_device_keyboard_short_packet_event() {
     status_trb.set_cycle(true);
     status_trb.set_trb_type(TrbType::StatusStage);
     status_trb.control |= Trb::CONTROL_IOC; // request Transfer Event
-                                             // DIR=0 (Status OUT) for a control read.
+                                            // DIR=0 (Status OUT) for a control read.
     status_trb.write_to(&mut mem, transfer_ring_base + 2 * TRB_LEN as u64);
 
     let mut link_trb = Trb {
@@ -118,8 +118,8 @@ fn xhci_control_get_descriptor_device_keyboard_short_packet_event() {
     xhci.set_endpoint_ring(slot_id, 1, transfer_ring_base, true);
 
     // Ring the endpoint doorbell then tick to process.
-    let doorbell_offset =
-        u64::from(regs::DBOFF_VALUE) + u64::from(slot_id) * u64::from(regs::doorbell::DOORBELL_STRIDE);
+    let doorbell_offset = u64::from(regs::DBOFF_VALUE)
+        + u64::from(slot_id) * u64::from(regs::doorbell::DOORBELL_STRIDE);
     xhci.mmio_write(doorbell_offset, 4, 1);
     xhci.tick_1ms_and_service_event_ring(&mut mem);
 

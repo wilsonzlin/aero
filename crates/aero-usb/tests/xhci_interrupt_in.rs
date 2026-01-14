@@ -322,11 +322,7 @@ fn xhci_interrupt_in_nak_is_retried_on_tick_without_additional_doorbells() {
     xhci.mmio_write(regs::REG_INTR0_ERSTBA_LO, 4, erstba);
     xhci.mmio_write(regs::REG_INTR0_ERSTBA_HI, 4, erstba >> 32);
     xhci.mmio_write(regs::REG_INTR0_ERDP_LO, 4, event_ring_base);
-    xhci.mmio_write(
-        regs::REG_INTR0_ERDP_HI,
-        4,
-        event_ring_base >> 32,
-    );
+    xhci.mmio_write(regs::REG_INTR0_ERDP_HI, 4, event_ring_base >> 32);
     xhci.mmio_write(regs::REG_INTR0_IMAN, 4, u64::from(IMAN_IE));
 
     // Interrupt IN endpoint 1 uses DCI=3.

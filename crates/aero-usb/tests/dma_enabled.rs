@@ -152,7 +152,8 @@ fn xhci_ep0_transfer_engine_does_not_touch_guest_memory_without_dma() {
     let mut mem = NoDmaCountingMem::default();
     let mut xhci = Ep0TransferEngine::new_with_ports(1);
     xhci.set_event_ring(0x2000, 8);
-    xhci.hub_mut().attach(0, Box::new(UsbHidKeyboardHandle::new()));
+    xhci.hub_mut()
+        .attach(0, Box::new(UsbHidKeyboardHandle::new()));
 
     let slot_id = xhci.enable_slot(0).expect("slot allocation");
     assert!(xhci.configure_ep0(slot_id, 0x1000, true, 64));

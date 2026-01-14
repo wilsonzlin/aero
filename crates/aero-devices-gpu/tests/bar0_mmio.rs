@@ -4,12 +4,12 @@ use aero_devices_gpu::ring::{
     AEROGPU_RING_MAGIC, FENCE_PAGE_COMPLETED_FENCE_OFFSET, FENCE_PAGE_MAGIC_OFFSET,
     RING_ABI_VERSION_OFFSET, RING_ENTRY_COUNT_OFFSET, RING_ENTRY_STRIDE_BYTES_OFFSET,
     RING_FLAGS_OFFSET, RING_HEAD_OFFSET, RING_MAGIC_OFFSET, RING_SIZE_BYTES_OFFSET,
-    RING_TAIL_OFFSET, SUBMIT_DESC_FLAGS_OFFSET, SUBMIT_DESC_SIGNAL_FENCE_OFFSET,
-    SUBMIT_DESC_SIZE_BYTES_OFFSET, SUBMIT_DESC_CMD_GPA_OFFSET, SUBMIT_DESC_CMD_SIZE_BYTES_OFFSET,
+    RING_TAIL_OFFSET, SUBMIT_DESC_CMD_GPA_OFFSET, SUBMIT_DESC_CMD_SIZE_BYTES_OFFSET,
+    SUBMIT_DESC_FLAGS_OFFSET, SUBMIT_DESC_SIGNAL_FENCE_OFFSET, SUBMIT_DESC_SIZE_BYTES_OFFSET,
 };
 use aero_devices_gpu::{
-    irq_bits, mmio, ring_control, AeroGpuDeviceConfig, AeroGpuExecutorConfig, AeroGpuFormat,
-    AeroGpuFenceCompletionMode, AeroGpuPciDevice, ImmediateAeroGpuBackend,
+    irq_bits, mmio, ring_control, AeroGpuDeviceConfig, AeroGpuExecutorConfig,
+    AeroGpuFenceCompletionMode, AeroGpuFormat, AeroGpuPciDevice, ImmediateAeroGpuBackend,
 };
 use aero_protocol::aerogpu::aerogpu_cmd::AEROGPU_CMD_STREAM_MAGIC;
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuErrorCode;
@@ -288,8 +288,14 @@ fn ring_control_reset_clears_completed_fence_and_syncs_head_and_fence_page() {
     assert_eq!(dev.regs.irq_status, 0);
     assert!(!dev.irq_level());
     assert_eq!(mem.read_u32(ring_gpa + RING_HEAD_OFFSET), 3);
-    assert_eq!(mem.read_u32(fence_gpa + FENCE_PAGE_MAGIC_OFFSET), AEROGPU_FENCE_PAGE_MAGIC);
-    assert_eq!(mem.read_u64(fence_gpa + FENCE_PAGE_COMPLETED_FENCE_OFFSET), 0);
+    assert_eq!(
+        mem.read_u32(fence_gpa + FENCE_PAGE_MAGIC_OFFSET),
+        AEROGPU_FENCE_PAGE_MAGIC
+    );
+    assert_eq!(
+        mem.read_u64(fence_gpa + FENCE_PAGE_COMPLETED_FENCE_OFFSET),
+        0
+    );
 }
 
 #[test]
@@ -423,7 +429,10 @@ fn doorbell_is_ignored_until_ring_is_enabled_and_requires_a_new_kick() {
         mem.read_u32(fence_gpa + FENCE_PAGE_MAGIC_OFFSET),
         AEROGPU_FENCE_PAGE_MAGIC
     );
-    assert_eq!(mem.read_u64(fence_gpa + FENCE_PAGE_COMPLETED_FENCE_OFFSET), 7);
+    assert_eq!(
+        mem.read_u64(fence_gpa + FENCE_PAGE_COMPLETED_FENCE_OFFSET),
+        7
+    );
 }
 
 #[test]
@@ -435,7 +444,10 @@ fn scanout_and_cursor_fb_gpa_mmio_64bit_write_roundtrips() {
     dev.write(mmio::SCANOUT0_FB_GPA_LO, 8, scanout_fb_gpa);
     assert_eq!(dev.regs.scanout0.fb_gpa, scanout_fb_gpa);
     assert_eq!(dev.read(mmio::SCANOUT0_FB_GPA_LO, 8), scanout_fb_gpa);
-    assert_eq!(dev.read(mmio::SCANOUT0_FB_GPA_LO, 4) as u32, scanout_fb_gpa as u32);
+    assert_eq!(
+        dev.read(mmio::SCANOUT0_FB_GPA_LO, 4) as u32,
+        scanout_fb_gpa as u32
+    );
     assert_eq!(
         dev.read(mmio::SCANOUT0_FB_GPA_HI, 4) as u32,
         (scanout_fb_gpa >> 32) as u32
@@ -445,7 +457,10 @@ fn scanout_and_cursor_fb_gpa_mmio_64bit_write_roundtrips() {
     dev.write(mmio::CURSOR_FB_GPA_LO, 8, cursor_fb_gpa);
     assert_eq!(dev.regs.cursor.fb_gpa, cursor_fb_gpa);
     assert_eq!(dev.read(mmio::CURSOR_FB_GPA_LO, 8), cursor_fb_gpa);
-    assert_eq!(dev.read(mmio::CURSOR_FB_GPA_LO, 4) as u32, cursor_fb_gpa as u32);
+    assert_eq!(
+        dev.read(mmio::CURSOR_FB_GPA_LO, 4) as u32,
+        cursor_fb_gpa as u32
+    );
     assert_eq!(
         dev.read(mmio::CURSOR_FB_GPA_HI, 4) as u32,
         (cursor_fb_gpa >> 32) as u32
@@ -577,7 +592,10 @@ fn error_mmio_regs_latch_and_irq_ack_clears_only_status() {
 
     assert_ne!(dev.read(mmio::IRQ_STATUS, 4) as u32 & irq_bits::ERROR, 0);
     assert!(dev.irq_level());
-    assert_eq!(dev.read(mmio::ERROR_CODE, 4) as u32, AerogpuErrorCode::CmdDecode as u32);
+    assert_eq!(
+        dev.read(mmio::ERROR_CODE, 4) as u32,
+        AerogpuErrorCode::CmdDecode as u32
+    );
     assert_eq!(dev.read(mmio::ERROR_FENCE_LO, 8), 200);
     assert_eq!(dev.read(mmio::ERROR_COUNT, 4) as u32, 2);
 
@@ -585,7 +603,10 @@ fn error_mmio_regs_latch_and_irq_ack_clears_only_status() {
     dev.write(mmio::IRQ_ACK, 4, irq_bits::ERROR as u64);
     assert_eq!(dev.read(mmio::IRQ_STATUS, 4) as u32 & irq_bits::ERROR, 0);
     assert!(!dev.irq_level());
-    assert_eq!(dev.read(mmio::ERROR_CODE, 4) as u32, AerogpuErrorCode::CmdDecode as u32);
+    assert_eq!(
+        dev.read(mmio::ERROR_CODE, 4) as u32,
+        AerogpuErrorCode::CmdDecode as u32
+    );
     assert_eq!(dev.read(mmio::ERROR_FENCE_LO, 8), 200);
     assert_eq!(dev.read(mmio::ERROR_COUNT, 4) as u32, 2);
 }

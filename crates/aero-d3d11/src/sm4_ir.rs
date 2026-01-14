@@ -81,15 +81,23 @@ pub enum Sm4Decl {
         sys_value: u32,
     },
     /// Geometry-shader input primitive.
-    GsInputPrimitive { primitive: GsInputPrimitive },
+    GsInputPrimitive {
+        primitive: GsInputPrimitive,
+    },
     /// Geometry-shader output topology.
-    GsOutputTopology { topology: GsOutputTopology },
+    GsOutputTopology {
+        topology: GsOutputTopology,
+    },
     /// Geometry-shader maximum number of vertices that can be emitted per invocation.
-    GsMaxOutputVertexCount { max: u32 },
+    GsMaxOutputVertexCount {
+        max: u32,
+    },
     /// Geometry-shader instance count.
     ///
     /// This declaration is optional; if omitted, the instance count is implicitly 1.
-    GsInstanceCount { count: u32 },
+    GsInstanceCount {
+        count: u32,
+    },
     ConstantBuffer {
         slot: u32,
         reg_count: u32,
@@ -752,7 +760,9 @@ pub enum Sm4Inst {
     ///
     /// The translator interprets `flags` using the `SYNC_FLAG_*` constants in
     /// [`crate::sm4::opcode`].
-    Sync { flags: u32 },
+    Sync {
+        flags: u32,
+    },
     /// Atomic add on a UAV buffer word address (SM5 `InterlockedAdd` family).
     ///
     /// This models the subset needed for `RWByteAddressBuffer` / `RWStructuredBuffer<uint>`
@@ -792,7 +802,9 @@ pub enum Sm4Inst {
     /// This allows the WGSL backend to fail with a precise opcode + instruction
     /// index, instead of the decoder having to reject the entire shader up
     /// front.
-    Unknown { opcode: u32 },
+    Unknown {
+        opcode: u32,
+    },
     /// Structured `switch` statement.
     ///
     /// The SM4/SM5 token stream encodes structured control flow as a linear stream of opcodes
