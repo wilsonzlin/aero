@@ -5164,6 +5164,7 @@ impl AerogpuD3d11Executor {
                         }
                     }
                     crate::BindingKind::Sampler { .. } => {}
+                    crate::BindingKind::ExpansionStorageBuffer { .. } => {}
                     // Forward-compat: fall back to binding-number range inspection.
                     _ => {
                         let binding_num = binding.binding;
@@ -5743,6 +5744,7 @@ impl AerogpuD3d11Executor {
                         }
                     }
                     crate::BindingKind::Sampler { .. } => {}
+                    crate::BindingKind::ExpansionStorageBuffer { .. } => {}
                     // Forward-compat: fall back to binding-number range classification for any new
                     // `BindingKind` variants (e.g. future UAV textures).
                     _ => {
@@ -6950,6 +6952,7 @@ impl AerogpuD3d11Executor {
                                         default_sampler: &self.default_sampler,
                                         stage,
                                         stage_state: stage_bindings,
+                                        internal_buffers: &[],
                                     };
                                     let bg = reflection_bindings::build_bind_group(
                                         &self.device,
@@ -7069,6 +7072,7 @@ impl AerogpuD3d11Executor {
                                         }
                                     }
                                     crate::BindingKind::Sampler { .. } => {}
+                                    crate::BindingKind::ExpansionStorageBuffer { .. } => {}
                                     // Forward-compat: fall back to binding-number range inspection.
                                     _ => {
                                         let binding_num = binding.binding;
@@ -7196,6 +7200,7 @@ impl AerogpuD3d11Executor {
                                         default_sampler: &self.default_sampler,
                                         stage,
                                         stage_state: stage_bindings,
+                                        internal_buffers: &[],
                                     };
                                     let bg = reflection_bindings::build_bind_group(
                                         &self.device,
@@ -7318,6 +7323,7 @@ impl AerogpuD3d11Executor {
                                         }
                                     }
                                     crate::BindingKind::Sampler { .. } => {}
+                                    crate::BindingKind::ExpansionStorageBuffer { .. } => {}
                                     // Forward-compat: fall back to binding-number range inspection.
                                     _ => {
                                         let binding_num = binding.binding;
@@ -11806,6 +11812,7 @@ impl AerogpuD3d11Executor {
                     default_sampler: &self.default_sampler,
                     stage,
                     stage_state: stage_bindings,
+                    internal_buffers: &[],
                 };
                 let bg = reflection_bindings::build_bind_group(
                     &self.device,
@@ -12032,6 +12039,7 @@ impl AerogpuD3d11Executor {
                 default_sampler: &self.default_sampler,
                 stage: group_stage,
                 stage_state: stage_bindings,
+                internal_buffers: &[],
             };
 
             bind_groups.push(reflection_bindings::build_bind_group(
@@ -12127,6 +12135,7 @@ impl AerogpuD3d11Executor {
                         }
                     }
                     crate::BindingKind::Sampler { .. } => {}
+                    crate::BindingKind::ExpansionStorageBuffer { .. } => {}
                     // Forward-compat: for new variants (e.g. future UAV textures), fall back to
                     // binding-number range inspection and upload whatever is currently bound at the
                     // corresponding slots.
@@ -12314,6 +12323,220 @@ impl AerogpuD3d11Executor {
                 encoder.copy_buffer_to_buffer(src, offset, &scratch.buffer, 0, size);
                 self.encoder_has_commands = true;
                 self.encoder_used_buffers.insert(srv.buffer);
+            }
+        }
+
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    fn ensure_stage_resources_uploaded_for_bindings(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        stage: ShaderStage,
+        bindings: &[crate::Binding],
+        allocs: &AllocTable,
+        guest_mem: &mut dyn GuestMemory,
+    ) -> Result<()> {
+        let uniform_align = self.device.limits().min_uniform_buffer_offset_alignment as u64;
+        let max_uniform_binding_size = self.device.limits().max_uniform_buffer_binding_size as u64;
+
+        // Upload guest-backed resources referenced by this stage.
+        for binding in bindings {
+            match &binding.kind {
+                crate::BindingKind::ConstantBuffer { slot, .. } => {
+                    if let Some(cb) = self.bindings.stage(stage).constant_buffer(*slot) {
+                        if cb.buffer != legacy_constants_buffer_id(stage) {
+                            self.ensure_buffer_uploaded(encoder, cb.buffer, allocs, guest_mem)?;
+                        }
+                    }
+                }
+                crate::BindingKind::Texture2D { slot } => {
+                    if let Some(tex) = self.bindings.stage(stage).texture(*slot) {
+                        self.ensure_texture_uploaded(encoder, tex.texture, allocs, guest_mem)?;
+                    }
+                }
+                crate::BindingKind::SrvBuffer { slot } => {
+                    if let Some(buf) = self.bindings.stage(stage).srv_buffer(*slot) {
+                        self.ensure_buffer_uploaded(encoder, buf.buffer, allocs, guest_mem)?;
+                    }
+                }
+                crate::BindingKind::UavBuffer { slot } => {
+                    if let Some(buf) = self.bindings.stage(stage).uav_buffer(*slot) {
+                        self.ensure_buffer_uploaded(encoder, buf.buffer, allocs, guest_mem)?;
+                    }
+                }
+                crate::BindingKind::UavTexture2DWriteOnly { slot, .. } => {
+                    // Aero's binding state does not track typed UAV textures separately yet. Treat
+                    // them as best-effort aliases of the stage's `t#` bindings.
+                    if let Some(tex) = self.bindings.stage(stage).texture(*slot) {
+                        self.ensure_texture_uploaded(encoder, tex.texture, allocs, guest_mem)?;
+                    }
+                }
+                crate::BindingKind::Sampler { .. }
+                | crate::BindingKind::ExpansionStorageBuffer { .. } => {}
+            }
+        }
+
+        // Constant buffer scratch copies for unaligned offsets (see `ensure_bound_resources_uploaded`
+        // for background).
+        for binding in bindings {
+            let crate::BindingKind::ConstantBuffer { slot, reg_count } = &binding.kind else {
+                continue;
+            };
+            let Some(cb) = self.bindings.stage(stage).constant_buffer(*slot) else {
+                continue;
+            };
+
+            let offset = cb.offset;
+            if offset == 0 || offset % uniform_align == 0 {
+                continue;
+            }
+
+            // Resolve the source buffer and its size.
+            let (src_ptr, src_size) = if cb.buffer == legacy_constants_buffer_id(stage) {
+                let Some(buf) = self.legacy_constants.get(&stage) else {
+                    continue;
+                };
+                (buf as *const wgpu::Buffer, LEGACY_CONSTANTS_SIZE_BYTES)
+            } else if let Some(buf) = self.resources.buffers.get(&cb.buffer) {
+                (&buf.buffer as *const wgpu::Buffer, buf.size)
+            } else {
+                continue;
+            };
+
+            if offset >= src_size {
+                continue;
+            }
+            let mut size = cb.size.unwrap_or(src_size - offset);
+            size = size.min(src_size - offset);
+            let required_min = (*reg_count as u64)
+                .saturating_mul(reflection_bindings::UNIFORM_BINDING_SIZE_ALIGN);
+            if size < required_min {
+                continue;
+            }
+            if size > max_uniform_binding_size {
+                size = max_uniform_binding_size;
+                if size < required_min {
+                    continue;
+                }
+            }
+            size -= size % reflection_bindings::UNIFORM_BINDING_SIZE_ALIGN;
+            if size < required_min || size == 0 {
+                continue;
+            }
+
+            if !offset.is_multiple_of(wgpu::COPY_BUFFER_ALIGNMENT)
+                || !size.is_multiple_of(wgpu::COPY_BUFFER_ALIGNMENT)
+            {
+                bail!(
+                    "constant buffer scratch copy requires COPY_BUFFER_ALIGNMENT={} (stage={stage:?} slot={slot} offset={offset} size={size})",
+                    wgpu::COPY_BUFFER_ALIGNMENT
+                );
+            }
+
+            let scratch = self.get_or_create_constant_buffer_scratch(stage, *slot, size);
+            let src = unsafe { &*src_ptr };
+            encoder.copy_buffer_to_buffer(src, offset, &scratch.buffer, 0, size);
+            self.encoder_has_commands = true;
+            self.encoder_used_buffers.insert(cb.buffer);
+        }
+
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    fn exec_hull_shader_phases(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        allocs: &AllocTable,
+        guest_mem: &mut dyn GuestMemory,
+        internal_buffers: &[InternalBufferBinding<'_>],
+        control_point: super::tessellation::hull::HullKernel<'_>,
+        patch_constant: super::tessellation::hull::HullKernel<'_>,
+        params: super::tessellation::hull::HullDispatchParams,
+    ) -> Result<()> {
+        // Ensure HS stage resources are uploaded/scratch-copied before dispatch.
+        self.ensure_stage_resources_uploaded_for_bindings(
+            encoder,
+            ShaderStage::Hull,
+            control_point.bindings,
+            allocs,
+            guest_mem,
+        )?;
+        self.ensure_stage_resources_uploaded_for_bindings(
+            encoder,
+            ShaderStage::Hull,
+            patch_constant.bindings,
+            allocs,
+            guest_mem,
+        )?;
+
+        let provider = CmdExecutorBindGroupProvider {
+            resources: &self.resources,
+            legacy_constants: &self.legacy_constants,
+            cbuffer_scratch: &self.cbuffer_scratch,
+            srv_buffer_scratch: &self.srv_buffer_scratch,
+            storage_align: (self.device.limits().min_storage_buffer_offset_alignment as u64).max(1),
+            max_storage_binding_size: self.device.limits().max_storage_buffer_binding_size as u64,
+            dummy_uniform: &self.dummy_uniform,
+            dummy_storage: &self.dummy_storage,
+            dummy_texture_view: &self.dummy_texture_view,
+            default_sampler: &self.default_sampler,
+            stage: ShaderStage::Hull,
+            stage_state: self.bindings.stage(ShaderStage::Hull),
+            internal_buffers,
+        };
+
+        super::tessellation::hull::dispatch_hull_phases(
+            &self.device,
+            encoder,
+            &mut self.pipeline_cache,
+            &mut self.bind_group_layout_cache,
+            &mut self.pipeline_layout_cache,
+            &mut self.bind_group_cache,
+            &provider,
+            control_point,
+            patch_constant,
+            params,
+        )?;
+
+        // Record that the current encoder now has work, and conservatively mark HS stage resources
+        // as used so `UPLOAD_RESOURCE` ordering heuristics stay sound.
+        if params.patch_count_total != 0 {
+            self.encoder_has_commands = true;
+        }
+
+        let stage_bindings = self.bindings.stage(ShaderStage::Hull);
+        for binding in control_point.bindings.iter().chain(patch_constant.bindings.iter()) {
+            match &binding.kind {
+                crate::BindingKind::Texture2D { slot } => {
+                    if let Some(tex) = stage_bindings.texture(*slot) {
+                        self.encoder_used_textures.insert(tex.texture);
+                    }
+                }
+                crate::BindingKind::SrvBuffer { slot } => {
+                    if let Some(buf) = stage_bindings.srv_buffer(*slot) {
+                        self.encoder_used_buffers.insert(buf.buffer);
+                    }
+                }
+                crate::BindingKind::UavBuffer { slot } => {
+                    if let Some(buf) = stage_bindings.uav_buffer(*slot) {
+                        self.encoder_used_buffers.insert(buf.buffer);
+                    }
+                }
+                crate::BindingKind::ConstantBuffer { slot, .. } => {
+                    if let Some(cb) = stage_bindings.constant_buffer(*slot) {
+                        self.encoder_used_buffers.insert(cb.buffer);
+                    }
+                }
+                crate::BindingKind::UavTexture2DWriteOnly { slot, .. } => {
+                    if let Some(tex) = stage_bindings.texture(*slot) {
+                        self.encoder_used_textures.insert(tex.texture);
+                    }
+                }
+                crate::BindingKind::Sampler { .. }
+                | crate::BindingKind::ExpansionStorageBuffer { .. } => {}
             }
         }
 
@@ -13496,6 +13719,16 @@ struct CmdExecutorBindGroupProvider<'a> {
     default_sampler: &'a aero_gpu::bindings::samplers::CachedSampler,
     stage: ShaderStage,
     stage_state: &'a super::bindings::StageBindings,
+    internal_buffers: &'a [InternalBufferBinding<'a>],
+}
+
+#[derive(Clone, Copy, Debug)]
+struct InternalBufferBinding<'a> {
+    binding: u32,
+    id: BufferId,
+    buffer: &'a wgpu::Buffer,
+    offset: u64,
+    size: u64,
 }
 
 impl reflection_bindings::BindGroupResourceProvider for CmdExecutorBindGroupProvider<'_> {
@@ -13503,10 +13736,7 @@ impl reflection_bindings::BindGroupResourceProvider for CmdExecutorBindGroupProv
         let bound = self.stage_state.constant_buffer(slot)?;
 
         if bound.buffer == legacy_constants_buffer_id(self.stage) {
-            let buf = self
-                .legacy_constants
-                .get(&self.stage)
-                .expect("legacy constants buffer exists for every stage");
+            let buf = self.legacy_constants.get(&self.stage)?;
             return Some(reflection_bindings::BufferBinding {
                 id: BufferId(bound.buffer as u64),
                 buffer: buf,
@@ -13605,6 +13835,20 @@ impl reflection_bindings::BindGroupResourceProvider for CmdExecutorBindGroupProv
             offset: bound.offset,
             size: bound.size,
             total_size: buf.size,
+        })
+    }
+
+    fn internal_buffer(&self, binding: u32) -> Option<reflection_bindings::BufferBinding<'_>> {
+        let internal = self.internal_buffers.iter().find(|b| b.binding == binding)?;
+        Some(reflection_bindings::BufferBinding {
+            id: internal.id,
+            buffer: internal.buffer,
+            offset: internal.offset,
+            size: Some(internal.size),
+            total_size: internal
+                .offset
+                .checked_add(internal.size)
+                .unwrap_or(u64::MAX),
         })
     }
 
@@ -17363,6 +17607,363 @@ fn main() {{
     }
 
     #[test]
+    fn hs_control_point_and_patch_constant_compute_passes_smoke() {
+        pollster::block_on(async {
+            let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+                Ok(exec) => exec,
+                Err(e) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                    return;
+                }
+            };
+
+            async fn read_staging(device: &wgpu::Device, buffer: &wgpu::Buffer) -> Vec<u8> {
+                let slice = buffer.slice(..);
+                let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
+                slice.map_async(wgpu::MapMode::Read, move |res| {
+                    sender.send(res).ok();
+                });
+                #[cfg(not(target_arch = "wasm32"))]
+                device.poll(wgpu::Maintain::Wait);
+                receiver
+                    .receive()
+                    .await
+                    .expect("map_async dropped")
+                    .expect("map_async failed");
+                let mapped = slice.get_mapped_range();
+                let out = mapped.to_vec();
+                drop(mapped);
+                buffer.unmap();
+                out
+            }
+
+            const CB0: u32 = 100;
+            let allocs = AllocTable::new(None).unwrap();
+
+            // Create a constant buffer and bind it to the HS stage bucket.
+            {
+                let mut cmd_bytes = Vec::new();
+                cmd_bytes.extend_from_slice(&(AerogpuCmdOpcode::CreateBuffer as u32).to_le_bytes());
+                cmd_bytes.extend_from_slice(&40u32.to_le_bytes()); // size_bytes
+                cmd_bytes.extend_from_slice(&CB0.to_le_bytes());
+                cmd_bytes.extend_from_slice(&AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER.to_le_bytes());
+                cmd_bytes.extend_from_slice(&16u64.to_le_bytes()); // size_bytes
+                cmd_bytes.extend_from_slice(&0u32.to_le_bytes()); // backing_alloc_id
+                cmd_bytes.extend_from_slice(&0u32.to_le_bytes()); // backing_offset_bytes
+                cmd_bytes.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+                assert_eq!(cmd_bytes.len(), 40);
+                exec.exec_create_buffer(&cmd_bytes, &allocs)
+                    .expect("CREATE_BUFFER should succeed");
+            }
+
+            let cb0_buf = &exec
+                .resources
+                .buffers
+                .get(&CB0)
+                .expect("cbuffer should exist")
+                .buffer;
+            let params = [1.0f32, 2.0f32, 3.0f32, 4.0f32];
+            exec.queue
+                .write_buffer(cb0_buf, 0, bytemuck::cast_slice(&params));
+
+            exec.bindings.stage_mut(ShaderStage::Hull).set_constant_buffer(
+                0,
+                Some(BoundConstantBuffer {
+                    buffer: CB0,
+                    offset: 0,
+                    size: Some(16),
+                }),
+            );
+
+            // Scratch allocations for internal buffers.
+            let patch_count_total = 2u32;
+            let output_control_points = 3u8;
+            let vertex_count = patch_count_total as usize * output_control_points as usize;
+            let vs_out_size = (vertex_count * 16) as u64;
+            let patch_consts_size = patch_count_total as u64 * 16;
+            let tess_factors_size = patch_count_total as u64
+                * crate::runtime::tessellation::HS_TESS_FACTOR_VEC4S_PER_PATCH as u64
+                * 16;
+
+            let vs_out = exec
+                .expansion_scratch
+                .alloc_metadata(&exec.device, vs_out_size, 16)
+                .expect("vs_out alloc");
+            let hs_out = exec
+                .expansion_scratch
+                .alloc_metadata(&exec.device, vs_out_size, 16)
+                .expect("hs_out alloc");
+            let patch_consts = exec
+                .expansion_scratch
+                .alloc_metadata(&exec.device, patch_consts_size, 16)
+                .expect("patch consts alloc");
+            let tess_factors = exec
+                .expansion_scratch
+                .alloc_metadata(&exec.device, tess_factors_size, 16)
+                .expect("tess factors alloc");
+
+            let mut vs_out_data: Vec<f32> = Vec::with_capacity(vertex_count * 4);
+            for i in 0..vertex_count {
+                vs_out_data.extend_from_slice(&[i as f32, 0.0, 0.0, 0.0]);
+            }
+            exec.queue.write_buffer(
+                vs_out.buffer.as_ref(),
+                vs_out.offset,
+                bytemuck::cast_slice(&vs_out_data),
+            );
+            exec.queue
+                .write_buffer(hs_out.buffer.as_ref(), hs_out.offset, &vec![0u8; vs_out_size as usize]);
+            exec.queue.write_buffer(
+                patch_consts.buffer.as_ref(),
+                patch_consts.offset,
+                &vec![0u8; patch_consts_size as usize],
+            );
+            exec.queue.write_buffer(
+                tess_factors.buffer.as_ref(),
+                tess_factors.offset,
+                &vec![0u8; tess_factors_size as usize],
+            );
+
+            // Internal buffer bindings (group 3, binding >= 256).
+            let internal_buffers = vec![
+                InternalBufferBinding {
+                    binding: crate::runtime::tessellation::BINDING_VS_OUT_REGS,
+                    id: BufferId(vs_out.buffer.as_ref() as *const wgpu::Buffer as u64),
+                    buffer: vs_out.buffer.as_ref(),
+                    offset: vs_out.offset,
+                    size: vs_out_size,
+                },
+                InternalBufferBinding {
+                    binding: crate::runtime::tessellation::BINDING_HS_OUT_REGS,
+                    id: BufferId(hs_out.buffer.as_ref() as *const wgpu::Buffer as u64),
+                    buffer: hs_out.buffer.as_ref(),
+                    offset: hs_out.offset,
+                    size: vs_out_size,
+                },
+                InternalBufferBinding {
+                    binding: crate::runtime::tessellation::BINDING_HS_PATCH_CONSTANTS,
+                    id: BufferId(patch_consts.buffer.as_ref() as *const wgpu::Buffer as u64),
+                    buffer: patch_consts.buffer.as_ref(),
+                    offset: patch_consts.offset,
+                    size: patch_consts_size,
+                },
+                InternalBufferBinding {
+                    binding: crate::runtime::tessellation::BINDING_HS_TESS_FACTORS,
+                    id: BufferId(tess_factors.buffer.as_ref() as *const wgpu::Buffer as u64),
+                    buffer: tess_factors.buffer.as_ref(),
+                    offset: tess_factors.offset,
+                    size: tess_factors_size,
+                },
+            ];
+
+            let cp_bindings = vec![
+                crate::Binding {
+                    group: 3,
+                    binding: crate::binding_model::BINDING_BASE_CBUFFER,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    kind: crate::BindingKind::ConstantBuffer {
+                        slot: 0,
+                        reg_count: 1,
+                    },
+                },
+                crate::Binding {
+                    group: 3,
+                    binding: crate::runtime::tessellation::BINDING_VS_OUT_REGS,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    kind: crate::BindingKind::ExpansionStorageBuffer { read_only: true },
+                },
+                crate::Binding {
+                    group: 3,
+                    binding: crate::runtime::tessellation::BINDING_HS_OUT_REGS,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    kind: crate::BindingKind::ExpansionStorageBuffer { read_only: false },
+                },
+            ];
+
+            let pc_bindings = vec![
+                crate::Binding {
+                    group: 3,
+                    binding: crate::runtime::tessellation::BINDING_HS_PATCH_CONSTANTS,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    kind: crate::BindingKind::ExpansionStorageBuffer { read_only: false },
+                },
+                crate::Binding {
+                    group: 3,
+                    binding: crate::runtime::tessellation::BINDING_HS_TESS_FACTORS,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    kind: crate::BindingKind::ExpansionStorageBuffer { read_only: false },
+                },
+            ];
+
+            let cp_wgsl = format!(
+                r#"
+struct Params {{
+    value: vec4<f32>,
+}};
+
+@group(3) @binding({cb0}) var<uniform> params: Params;
+@group(3) @binding({vs_out}) var<storage, read> vs_out_regs: array<vec4<f32>>;
+@group(3) @binding({hs_out}) var<storage, read_write> hs_out_regs: array<vec4<f32>>;
+
+@compute @workgroup_size(1)
+fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {{
+    let i = id.x;
+    hs_out_regs[i] = vs_out_regs[i] + params.value;
+}}
+"#,
+                cb0 = crate::binding_model::BINDING_BASE_CBUFFER,
+                vs_out = crate::runtime::tessellation::BINDING_VS_OUT_REGS,
+                hs_out = crate::runtime::tessellation::BINDING_HS_OUT_REGS,
+            );
+
+            let pc_wgsl = format!(
+                r#"
+@group(3) @binding({patch_consts}) var<storage, read_write> hs_patch_constants: array<vec4<f32>>;
+@group(3) @binding({tess_factors}) var<storage, read_write> hs_tess_factors: array<vec4<f32>>;
+
+@compute @workgroup_size(1)
+fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {{
+    let p = id.x;
+    hs_patch_constants[p] = vec4<f32>(f32(p), 10.0, 20.0, 30.0);
+
+    let base = p * {vec4s_per_patch}u;
+    hs_tess_factors[base + 0u] = vec4<f32>(f32(p), 1.0, 2.0, 3.0);
+}}
+"#,
+                patch_consts = crate::runtime::tessellation::BINDING_HS_PATCH_CONSTANTS,
+                tess_factors = crate::runtime::tessellation::BINDING_HS_TESS_FACTORS,
+                vec4s_per_patch = crate::runtime::tessellation::HS_TESS_FACTOR_VEC4S_PER_PATCH,
+            );
+
+            let hs_out_staging = exec.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("hs_out_regs staging"),
+                size: vs_out_size,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let patch_consts_staging = exec.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("hs_patch_constants staging"),
+                size: patch_consts_size,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let tess_factors_staging = exec.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("hs_tess_factors staging"),
+                size: tess_factors_size,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+
+            let mut guest_mem = VecGuestMemory::new(0);
+            let mut encoder = exec
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("hs compute passes smoke encoder"),
+                });
+
+            exec.device.push_error_scope(wgpu::ErrorFilter::Validation);
+            exec.exec_hull_shader_phases(
+                &mut encoder,
+                &allocs,
+                &mut guest_mem,
+                &internal_buffers,
+                crate::runtime::tessellation::hull::HullKernel {
+                    label: "hs control point kernel",
+                    wgsl: &cp_wgsl,
+                    bindings: &cp_bindings,
+                    entry_point: "cs_main",
+                    workgroup_size_x: 1,
+                },
+                crate::runtime::tessellation::hull::HullKernel {
+                    label: "hs patch constant kernel",
+                    wgsl: &pc_wgsl,
+                    bindings: &pc_bindings,
+                    entry_point: "cs_main",
+                    workgroup_size_x: 1,
+                },
+                crate::runtime::tessellation::hull::HullDispatchParams {
+                    patch_count_total,
+                    ia_patch_control_points: output_control_points,
+                    hs_input_patch_size: Some(output_control_points),
+                    hs_output_control_points: output_control_points,
+                },
+            )
+            .expect("HS dispatch should succeed");
+
+            encoder.copy_buffer_to_buffer(
+                hs_out.buffer.as_ref(),
+                hs_out.offset,
+                &hs_out_staging,
+                0,
+                vs_out_size,
+            );
+            encoder.copy_buffer_to_buffer(
+                patch_consts.buffer.as_ref(),
+                patch_consts.offset,
+                &patch_consts_staging,
+                0,
+                patch_consts_size,
+            );
+            encoder.copy_buffer_to_buffer(
+                tess_factors.buffer.as_ref(),
+                tess_factors.offset,
+                &tess_factors_staging,
+                0,
+                tess_factors_size,
+            );
+
+            exec.queue.submit([encoder.finish()]);
+            #[cfg(not(target_arch = "wasm32"))]
+            exec.device.poll(wgpu::Maintain::Wait);
+            let err = exec.device.pop_error_scope().await;
+            assert!(
+                err.is_none(),
+                "HS compute passes must not trigger wgpu validation errors, got: {err:?}"
+            );
+
+            let hs_out_bytes = read_staging(&exec.device, &hs_out_staging).await;
+            let hs_out_f32: &[f32] = bytemuck::cast_slice(&hs_out_bytes);
+            assert_eq!(hs_out_f32.len(), vertex_count * 4);
+            for i in 0..vertex_count {
+                let base = i * 4;
+                assert_eq!(hs_out_f32[base + 0], i as f32 + 1.0);
+                assert_eq!(hs_out_f32[base + 1], 2.0);
+                assert_eq!(hs_out_f32[base + 2], 3.0);
+                assert_eq!(hs_out_f32[base + 3], 4.0);
+            }
+
+            let patch_consts_bytes = read_staging(&exec.device, &patch_consts_staging).await;
+            let patch_consts_f32: &[f32] = bytemuck::cast_slice(&patch_consts_bytes);
+            assert_eq!(patch_consts_f32.len(), patch_count_total as usize * 4);
+            for p in 0..patch_count_total as usize {
+                let base = p * 4;
+                assert_eq!(patch_consts_f32[base + 0], p as f32);
+                assert_eq!(patch_consts_f32[base + 1], 10.0);
+                assert_eq!(patch_consts_f32[base + 2], 20.0);
+                assert_eq!(patch_consts_f32[base + 3], 30.0);
+            }
+
+            let tess_bytes = read_staging(&exec.device, &tess_factors_staging).await;
+            let tess_f32: &[f32] = bytemuck::cast_slice(&tess_bytes);
+            assert_eq!(
+                tess_f32.len(),
+                patch_count_total as usize
+                    * crate::runtime::tessellation::HS_TESS_FACTOR_VEC4S_PER_PATCH as usize
+                    * 4
+            );
+            // One vec4 per patch.
+            for p in 0..patch_count_total as usize {
+                let base_vec4 = p * crate::runtime::tessellation::HS_TESS_FACTOR_VEC4S_PER_PATCH as usize;
+                let base0 = base_vec4 * 4;
+                assert_eq!(tess_f32[base0 + 0], p as f32);
+                assert_eq!(tess_f32[base0 + 1], 1.0);
+                assert_eq!(tess_f32[base0 + 2], 2.0);
+                assert_eq!(tess_f32[base0 + 3], 3.0);
+            }
+        });
+    }
+
+    #[test]
     fn compute_pipelines_can_be_deterministically_disabled_without_wgpu_calls() {
         pollster::block_on(async {
             let exec = match AerogpuD3d11Executor::new_for_tests().await {
@@ -18581,6 +19182,7 @@ fn cs_main() {
                 default_sampler: &exec.default_sampler,
                 stage: ShaderStage::Vertex,
                 stage_state: exec.bindings.stage(ShaderStage::Vertex),
+                internal_buffers: &[],
             };
             let bg0 = reflection_bindings::build_bind_group(
                 &exec.device,
@@ -18614,6 +19216,7 @@ fn cs_main() {
                 default_sampler: &exec.default_sampler,
                 stage: ShaderStage::Geometry,
                 stage_state: exec.bindings.stage(ShaderStage::Geometry),
+                internal_buffers: &[],
             };
             let bg3 = reflection_bindings::build_bind_group(
                 &exec.device,
@@ -19138,6 +19741,7 @@ fn cs_main() {
                 default_sampler: &exec.default_sampler,
                 stage: ShaderStage::Compute,
                 stage_state: exec.bindings.stage(ShaderStage::Compute),
+                internal_buffers: &[],
             };
             let bound = provider
                 .srv_buffer(0)

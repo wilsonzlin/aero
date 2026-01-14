@@ -10,9 +10,9 @@ use aero_gpu::pipeline_key::PipelineLayoutKey;
 use anyhow::{bail, Result};
 
 use crate::binding_model::{
-    BINDING_BASE_CBUFFER, BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE, BINDING_BASE_UAV,
-    BIND_GROUP_INTERNAL_EMULATION, D3D11_MAX_CONSTANT_BUFFER_SLOTS, MAX_SAMPLER_SLOTS,
-    MAX_TEXTURE_SLOTS, MAX_UAV_SLOTS,
+    BINDING_BASE_CBUFFER, BINDING_BASE_INTERNAL, BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE,
+    BINDING_BASE_UAV, BIND_GROUP_INTERNAL_EMULATION, D3D11_MAX_CONSTANT_BUFFER_SLOTS,
+    MAX_SAMPLER_SLOTS, MAX_TEXTURE_SLOTS, MAX_UAV_SLOTS,
 };
 
 /// The AeroGPU D3D11 binding model uses stage-scoped bind groups:
@@ -350,6 +350,28 @@ pub(super) fn binding_to_layout_entry(
                 view_dimension: wgpu::TextureViewDimension::D2,
             }
         }
+        crate::BindingKind::ExpansionStorageBuffer { read_only } => {
+            if binding.binding < BINDING_BASE_INTERNAL {
+                bail!(
+                    "expansion storage buffer binding @binding({}) must be >= BINDING_BASE_INTERNAL ({BINDING_BASE_INTERNAL})",
+                    binding.binding
+                );
+            }
+            if binding.group != 3 {
+                bail!(
+                    "expansion storage buffer bindings must live in @group(3), got @group({}) @binding({})",
+                    binding.group,
+                    binding.binding
+                );
+            }
+            wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage {
+                    read_only: *read_only,
+                },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            }
+        }
     };
 
     Ok(wgpu::BindGroupLayoutEntry {
@@ -385,6 +407,9 @@ pub(super) trait BindGroupResourceProvider {
 
     /// Optional `u#` UAV buffer binding.
     fn uav_buffer(&self, _slot: u32) -> Option<BufferBinding<'_>> {
+        None
+    }
+    fn internal_buffer(&self, _binding: u32) -> Option<BufferBinding<'_>> {
         None
     }
 
@@ -594,6 +619,70 @@ pub(super) fn build_bind_group(
                     resource: BindGroupCacheResource::Sampler {
                         id: sampler.id,
                         sampler: sampler.sampler.as_ref(),
+                    },
+                });
+            }
+            crate::BindingKind::ExpansionStorageBuffer { .. } => {
+                let bound = provider.internal_buffer(binding.binding).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "missing expansion-internal buffer for @group({}) @binding({})",
+                        binding.group,
+                        binding.binding
+                    )
+                })?;
+
+                let id = bound.id;
+                let buffer = bound.buffer;
+                let offset = bound.offset;
+                let mut size: Option<u64> = bound.size;
+                let total_size = bound.total_size;
+
+                if offset >= total_size || (offset != 0 && !offset.is_multiple_of(storage_align)) {
+                    bail!(
+                        "invalid expansion-internal buffer binding @group({}) @binding({}): offset={} total_size={} storage_align={}",
+                        binding.group,
+                        binding.binding,
+                        offset,
+                        total_size,
+                        storage_align
+                    );
+                }
+
+                let remaining = total_size - offset;
+                let mut bind_size = size.unwrap_or(remaining).min(remaining);
+                if bind_size > max_storage_binding_size {
+                    bind_size = max_storage_binding_size;
+                }
+                // WebGPU requires storage buffer binding sizes to be 4-byte aligned.
+                bind_size -= bind_size % 4;
+                if bind_size == 0 {
+                    bail!(
+                        "invalid expansion-internal buffer binding @group({}) @binding({}): computed bind_size=0 (offset={} total_size={})",
+                        binding.group,
+                        binding.binding,
+                        offset,
+                        total_size
+                    );
+                }
+                size = Some(bind_size);
+
+                // No dummy fallback: expansion-internal bindings are required for the emulation
+                // pipeline to function, so treat missing/invalid bindings as a hard error.
+                if id == BufferId(0) {
+                    bail!(
+                        "invalid expansion-internal buffer binding @group({}) @binding({}): BufferId must be non-zero",
+                        binding.group,
+                        binding.binding
+                    );
+                }
+
+                entries.push(BindGroupCacheEntry {
+                    binding: binding.binding,
+                    resource: BindGroupCacheResource::Buffer {
+                        id,
+                        buffer,
+                        offset,
+                        size: size.and_then(wgpu::BufferSize::new),
                     },
                 });
             }

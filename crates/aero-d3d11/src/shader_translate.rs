@@ -97,6 +97,12 @@ pub enum BindingKind {
         slot: u32,
         format: StorageTextureFormat,
     },
+    /// An expansion-internal storage buffer binding used by compute-based GS/HS/DS emulation.
+    ///
+    /// These bindings are not part of the D3D11 resource binding model, so they do not map to a
+    /// register slot. Instead, they use a reserved binding-number range within `@group(3)` starting
+    /// at [`crate::binding_model::BINDING_BASE_INTERNAL`].
+    ExpansionStorageBuffer { read_only: bool },
 }
 
 /// Supported typed UAV storage texture formats.

@@ -15,6 +15,7 @@
 
 pub mod buffers;
 pub mod domain_eval;
+pub mod hull;
 pub mod layout_pass;
 pub mod pipeline;
 pub mod tessellator;
@@ -355,6 +356,33 @@ impl TessellationRuntime {
         })
     }
 }
+
+use crate::binding_model::BINDING_BASE_INTERNAL;
+
+/// Expansion-internal binding for the VS output register file (`vs_out_regs`).
+///
+/// This buffer is written by the compute-variant VS and consumed by HS.
+///
+/// Note: this lives in the reserved internal binding range (`BINDING_BASE_INTERNAL..`) to avoid
+/// colliding with D3D register-space bindings (`b#`/`t#`/`s#`/`u#`) when HS resources are also mapped
+/// to `@group(3)`.
+pub const BINDING_VS_OUT_REGS: u32 = BINDING_BASE_INTERNAL + 80;
+
+/// Expansion-internal binding for the HS output register file (`hs_out_regs`).
+///
+/// This buffer is written by the HS control-point phase and consumed by later tessellation stages.
+pub const BINDING_HS_OUT_REGS: u32 = BINDING_BASE_INTERNAL + 81;
+
+/// Expansion-internal binding for HS patch-constant outputs (`hs_patch_constants`).
+pub const BINDING_HS_PATCH_CONSTANTS: u32 = BINDING_BASE_INTERNAL + 82;
+
+/// Expansion-internal binding for compact tess factors (`hs_tess_factors`).
+///
+/// The layout pass consumes this buffer to derive per-patch tessellation levels.
+pub const BINDING_HS_TESS_FACTORS: u32 = BINDING_BASE_INTERNAL + 83;
+
+/// Number of `vec4<f32>` elements stored per patch in [`BINDING_HS_TESS_FACTORS`].
+pub const HS_TESS_FACTOR_VEC4S_PER_PATCH: u32 = 1;
 
 #[cfg(test)]
 mod tests {
