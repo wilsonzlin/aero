@@ -70,5 +70,24 @@ describe("gpu/test-card", () => {
       // Middle pixel is not a corner marker. For height=1 we define a=1, so the right half stays fully opaque.
       expect(getPixelRgba(rgba, width, 1, 0)).toEqual([255, 0, 255, 255]);
     });
+
+    it("handles width=1 without throwing (degenerate left/right split)", () => {
+      const width = 1;
+      const height = 3;
+
+      expect(() => createGpuColorTestCardRgba8Linear(width, height)).not.toThrow();
+
+      const rgba = createGpuColorTestCardRgba8Linear(width, height);
+      expect(rgba.length).toBe(width * height * 4);
+
+      // With width=1, the "left" and "right" corner markers overlap in X. Later writes win:
+      // - (0,0) ends up as top-right marker (green)
+      // - (0,h-1) ends up as bottom-right marker (white)
+      expect(getPixelRgba(rgba, width, 0, 0)).toEqual([0, 255, 0, 255]);
+      expect(getPixelRgba(rgba, width, 0, height - 1)).toEqual([255, 255, 255, 255]);
+
+      // Non-marker pixels still follow the card definition (magenta with vertical alpha gradient).
+      expect(getPixelRgba(rgba, width, 0, 1)).toEqual([255, 0, 255, 128]);
+    });
   });
 });
