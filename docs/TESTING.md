@@ -115,7 +115,8 @@ cargo xtask test-all --pw-project chromium -- --grep smoke
 
 ### Focused test runners
 
-If you're working on a specific subsystem, `xtask` also provides smaller suites:
+If you're working on a specific subsystem, `xtask` also provides smaller suites, and some subsystems
+have dedicated `scripts/ci/*` helpers:
 
 ```bash
 # USB + input (Rust + focused web unit tests; optional Playwright subset)
@@ -127,6 +128,9 @@ cargo xtask input --with-wasm
 cargo xtask input --rust-only --with-wasm
 cargo xtask input --wasm --rust-only
 cargo xtask input --e2e
+
+# Boot display (VGA/VBE/INT10) regression suite (device model + BIOS INT10 + machine wiring)
+bash ./scripts/ci/run-vga-vbe-tests.sh
 ```
 
 ### CPU instruction conformance / differential tests (x86_64 unix)
