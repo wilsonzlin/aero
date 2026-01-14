@@ -1,4 +1,4 @@
-use aero_devices::pci::PciBarKind;
+use aero_devices::pci::{PciBarKind, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig};
 use aero_machine::{Machine, MachineConfig};
 use aero_pc_constants::{PCI_MMIO_BASE, PCI_MMIO_SIZE};
 use aero_protocol::aerogpu::aerogpu_pci as pci;
@@ -29,7 +29,7 @@ fn aerogpu_enumerates_at_canonical_bdf_with_bars_in_pci_mmio_window() {
     let mut m = Machine::new(cfg).unwrap();
 
     let bdf = aero_devices::pci::profile::AEROGPU.bdf;
-    let (id, class, command, bar0, bar1, bar0_reg, bar1_reg) = {
+    let (id, class, command, bar0, bar1, bar0_reg, bar1_reg, int_line, int_pin) = {
         let pci_cfg = m.pci_config_ports().expect("pc platform enabled");
         let mut pci_cfg = pci_cfg.borrow_mut();
         let bus = pci_cfg.bus_mut();
@@ -43,13 +43,15 @@ fn aerogpu_enumerates_at_canonical_bdf_with_bars_in_pci_mmio_window() {
         let command = cfg.command();
         let bar0_reg = cfg.read(0x10, 4);
         let bar1_reg = cfg.read(0x14, 4);
+        let int_line = cfg.interrupt_line();
+        let int_pin = cfg.interrupt_pin();
         let bar0 = cfg
             .bar_range(0)
             .expect("AeroGPU BAR0 should be assigned by PCI BIOS POST");
         let bar1 = cfg
             .bar_range(1)
             .expect("AeroGPU BAR1 should be assigned by PCI BIOS POST");
-        (id, class, command, bar0, bar1, bar0_reg, bar1_reg)
+        (id, class, command, bar0, bar1, bar0_reg, bar1_reg, int_line, int_pin)
     };
 
     assert_eq!(id.vendor_id, 0xA3A0, "AeroGPU vendor ID drifted");
@@ -58,6 +60,20 @@ fn aerogpu_enumerates_at_canonical_bdf_with_bars_in_pci_mmio_window() {
     assert_eq!(class.class, 0x03, "AeroGPU base class drifted");
     assert_eq!(class.subclass, 0x00, "AeroGPU subclass drifted");
     assert_eq!(class.prog_if, 0x00, "AeroGPU programming interface drifted");
+
+    // Interrupt Line/Pin should match the default PCI INTx router swizzle:
+    // PIRQ = (pin + device_number) mod 4, then PIRQ[A-D] -> GSI[10-13].
+    let router = PciIntxRouter::new(PciIntxRouterConfig::default());
+    let expected_gsi = router.gsi_for_intx(bdf, PciInterruptPin::IntA);
+    assert_eq!(
+        int_line,
+        expected_gsi as u8,
+        "AeroGPU PCI Interrupt Line does not match router swizzle"
+    );
+    assert_eq!(
+        int_pin, 1,
+        "AeroGPU PCI Interrupt Pin drifted (expected INTA#)"
+    );
 
     // PCI BIOS POST should have enabled memory decoding (AeroGPU exposes only MMIO BARs).
     assert_eq!(command & 0x1, 0, "AeroGPU should not enable PCI I/O decode");
