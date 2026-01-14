@@ -1650,10 +1650,15 @@ impl AerogpuD3d9Executor {
             Some(compute_wgpu_caps_hash(&device, downlevel_flags)),
         );
 
-        // The D3D9 token-stream translator packs vertex + pixel constant registers into a single
-        // uniform buffer:
-        // - c[0..255]   = vertex constants
-        // - c[256..511] = pixel constants
+        // D3D9 shader translation uses a single uniform buffer split into stable regions for the
+        // float/int/bool register files:
+        // - binding(0): float4 constants (`c#`)
+        // - binding(1): int4 constants (`i#`)
+        // - binding(2): bool constants (`b#`, encoded as `vec4<u32>` per register)
+        //
+        // Each region contains 512 registers, where indices:
+        // - [0..255]   = vertex shader constants
+        // - [256..511] = pixel shader constants
         let constants_buffer = create_constants_buffer(&device);
 
         // Dummy bindings for unbound textures/samplers.

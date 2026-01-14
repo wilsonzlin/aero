@@ -435,6 +435,9 @@ Known gaps / limitations (enforced by code):
 
 - Shader translation rejects unsupported tokens/opcodes:
   - [`crates/aero-d3d9/src/shader.rs`](../../crates/aero-d3d9/src/shader.rs) (`ShaderError::Unsupported*`)
+- The translation entrypoint rejects shaders that *sample* from 1D/3D textures because the current
+  command stream/runtime only supports binding 2D + cube textures:
+  - [`crates/aero-d3d9/src/shader_translate.rs`](../../crates/aero-d3d9/src/shader_translate.rs) (`validate_sampler_texture_types`)
 - SM3 IR builder rejects some control-flow / addressing forms:
   - [`crates/aero-d3d9/src/sm3/ir_builder.rs`](../../crates/aero-d3d9/src/sm3/ir_builder.rs)
 
