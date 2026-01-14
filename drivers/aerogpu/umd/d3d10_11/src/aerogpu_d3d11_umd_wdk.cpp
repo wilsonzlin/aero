@@ -8211,6 +8211,64 @@ void AEROGPU_APIENTRY CopyResource11(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DDI_HRES
   CopySubresourceRegion11(hCtx, hDstResource, 0, 0, 0, 0, hSrcResource, 0, nullptr);
 }
 
+void AEROGPU_APIENTRY CopyStructureCount11(D3D11DDI_HDEVICECONTEXT hCtx,
+                                           D3D11DDI_HRESOURCE hDstBuffer,
+                                           UINT DstAlignedByteOffset,
+                                           D3D11DDI_HUNORDEREDACCESSVIEW hSrcView) {
+  auto* dev = DeviceFromContext(hCtx);
+  if (!dev) {
+    return;
+  }
+  if (!hDstBuffer.pDrvPrivate || !hSrcView.pDrvPrivate) {
+    SetError(dev, E_INVALIDARG);
+    return;
+  }
+  if ((DstAlignedByteOffset & 3u) != 0) {
+    SetError(dev, E_INVALIDARG);
+    return;
+  }
+
+  auto* dst = FromHandle<D3D11DDI_HRESOURCE, Resource>(hDstBuffer);
+  auto* src = FromHandle<D3D11DDI_HUNORDEREDACCESSVIEW, UnorderedAccessView>(hSrcView);
+  if (!dst || !src || !src->resource) {
+    SetError(dev, E_INVALIDARG);
+    return;
+  }
+  if (dst->kind != ResourceKind::Buffer || src->resource->kind != ResourceKind::Buffer) {
+    SetError(dev, E_NOTIMPL);
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  const uint64_t off = static_cast<uint64_t>(DstAlignedByteOffset);
+  if (off > dst->size_bytes || dst->size_bytes - off < 4) {
+    SetError(dev, E_INVALIDARG);
+    return;
+  }
+  if (dst->storage.size() < off + 4) {
+    SetError(dev, E_FAIL);
+    return;
+  }
+
+  // The bring-up implementation does not track UAV counters. Best-effort:
+  // if the UAV is currently bound and has a known initial_count, forward that;
+  // otherwise write 0.
+  uint32_t count = 0;
+  for (uint32_t slot = 0; slot < kMaxUavSlots; ++slot) {
+    if (dev->current_cs_uavs[slot] != src->resource) {
+      continue;
+    }
+    const uint32_t init = dev->cs_uavs[slot].initial_count;
+    if (init != 0xFFFFFFFFu) {
+      count = init;
+    }
+    break;
+  }
+
+  std::memcpy(dst->storage.data() + static_cast<size_t>(off), &count, sizeof(count));
+  EmitUploadLocked(dev, dst, off, sizeof(count));
+}
+
 void AEROGPU_APIENTRY CopySubresourceRegion11(D3D11DDI_HDEVICECONTEXT hCtx,
                                              D3D11DDI_HRESOURCE hDstResource,
                                              UINT dst_subresource,
@@ -10551,6 +10609,14 @@ HRESULT AEROGPU_APIENTRY CreateDevice11(D3D10DDI_HADAPTER hAdapter, D3D11DDIARG_
 
   ctx_funcs->pfnCopyResource = &CopyResource11;
   ctx_funcs->pfnCopySubresourceRegion = &CopySubresourceRegion11;
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnCopyStructureCount) {
+    using Fn = decltype(ctx_funcs->pfnCopyStructureCount);
+    if constexpr (std::is_convertible_v<decltype(&CopyStructureCount11), Fn>) {
+      ctx_funcs->pfnCopyStructureCount = &CopyStructureCount11;
+    } else {
+      ctx_funcs->pfnCopyStructureCount = &DdiStub<Fn>::Call;
+    }
+  }
 
   // Map can be HRESULT or void depending on interface version.
   if constexpr (std::is_same_v<decltype(ctx_funcs->pfnMap), decltype(&Map11)>) {
