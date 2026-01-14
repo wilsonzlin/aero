@@ -4,7 +4,7 @@ xHCI (“eXtensible Host Controller Interface”) is the USB host controller arc
 
 This repo’s USB stack historically started with a **minimal UHCI (USB 1.1)** implementation (`crates/aero-usb`) because it is sufficient for Windows 7 in-box USB + HID drivers.
 
-EHCI (USB 2.0) is being brought up in parallel for **high-speed** device support; see
+EHCI (USB 2.0) is implemented for **high-speed** device support; see
 [`docs/usb-ehci.md`](./usb-ehci.md).
 
 xHCI is being added to:
