@@ -200,7 +200,7 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
       cursorStateOffsetBytes: init.cursorStateOffsetBytes ?? 0,
       ioIpc: init.ioIpcSab,
       sharedFramebuffer: init.sharedFramebuffer,
-      sharedFramebufferOffsetBytes: init.sharedFramebufferOffsetBytes ?? 0,
+      sharedFramebufferOffsetBytes: init.sharedFramebufferOffsetBytes,
     };
 
     const views = createSharedMemoryViews(segments);
