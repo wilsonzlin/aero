@@ -385,6 +385,7 @@ typedef struct OPTIONS {
 typedef struct SELECTED_DEVICE {
     HANDLE handle;
     DWORD desired_access;
+    DWORD index;
     WCHAR *path;
     HIDD_ATTRIBUTES attr;
     int attr_valid;
@@ -1098,6 +1099,13 @@ static void print_vioinput_state_json(const SELECTED_DEVICE *dev, const VIOINPUT
     wprintf(L"{\n");
 
     /* Selected HID interface metadata (helps correlate output when multiple devices are present). */
+    wprintf(L"  \"index\": ");
+    if (dev) {
+        wprintf(L"%lu", (unsigned long)dev->index);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
     wprintf(L"  \"path\": ");
     json_print_string_w(dev ? dev->path : NULL);
     wprintf(L",\n");
@@ -1394,6 +1402,13 @@ static void print_vioinput_interrupt_info_json(const SELECTED_DEVICE *dev, const
     wprintf(L"{\n");
 
     /* Selected HID interface metadata (helps correlate output when multiple devices are present). */
+    wprintf(L"  \"index\": ");
+    if (dev) {
+        wprintf(L"%lu", (unsigned long)dev->index);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
     wprintf(L"  \"path\": ");
     json_print_string_w(dev ? dev->path : NULL);
     wprintf(L",\n");
@@ -2067,6 +2082,7 @@ static int dump_vioinput_counters_json(const SELECTED_DEVICE *dev)
     } while (0)
 
     wprintf(L"{\n");
+    wprintf(L"  \"index\": %lu,\n", (unsigned long)dev->index);
     wprintf(L"  \"path\": ");
     json_print_string_w(dev->path);
     wprintf(L",\n");
@@ -3085,6 +3101,12 @@ static void json_print_selftest_device_info(const SELFTEST_DEVICE_INFO *info)
     } else {
         wprintf(L"null");
     }
+    wprintf(L",\"featureLen\":");
+    if (info->caps_valid) {
+        wprintf(L"%u", (unsigned)info->caps.FeatureReportByteLength);
+    } else {
+        wprintf(L"null");
+    }
     wprintf(L",\"reportDescLen\":");
     if (info->report_desc_valid) {
         wprintf(L"%lu", info->report_desc_len);
@@ -3944,6 +3966,7 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
             if (match) {
                 out->handle = handle;
                 out->desired_access = desired_access;
+                out->index = iface_index;
                 out->path = wcsdup_heap(detail->DevicePath);
                 out->attr = attr;
                 out->attr_valid = attr_valid;
@@ -3968,6 +3991,7 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
             if (is_virtio) {
                 out->handle = handle;
                 out->desired_access = desired_access;
+                out->index = iface_index;
                 out->path = wcsdup_heap(detail->DevicePath);
                 out->attr = attr;
                 out->attr_valid = attr_valid;
@@ -3987,6 +4011,7 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
             if (fallback_any.handle == INVALID_HANDLE_VALUE) {
                 fallback_any.handle = handle;
                 fallback_any.desired_access = desired_access;
+                fallback_any.index = iface_index;
                 fallback_any.path = wcsdup_heap(detail->DevicePath);
                 fallback_any.attr = attr;
                 fallback_any.attr_valid = attr_valid;
@@ -4002,6 +4027,7 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
         } else if (is_virtio && is_keyboard) {
             out->handle = handle;
             out->desired_access = desired_access;
+            out->index = iface_index;
             out->path = wcsdup_heap(detail->DevicePath);
             out->attr = attr;
             out->attr_valid = attr_valid;
@@ -4020,6 +4046,7 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
         } else if (is_virtio && fallback_virtio.handle == INVALID_HANDLE_VALUE) {
             fallback_virtio.handle = handle;
             fallback_virtio.desired_access = desired_access;
+            fallback_virtio.index = iface_index;
             fallback_virtio.path = wcsdup_heap(detail->DevicePath);
             fallback_virtio.attr = attr;
             fallback_virtio.attr_valid = attr_valid;
@@ -4032,6 +4059,7 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
         } else if (fallback_any.handle == INVALID_HANDLE_VALUE) {
             fallback_any.handle = handle;
             fallback_any.desired_access = desired_access;
+            fallback_any.index = iface_index;
             fallback_any.path = wcsdup_heap(detail->DevicePath);
             fallback_any.attr = attr;
             fallback_any.attr_valid = attr_valid;
