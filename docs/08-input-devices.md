@@ -876,7 +876,8 @@ passthrough devices can coexist without fighting over port numbers:
     - hub port **1**: USB HID keyboard
     - hub port **2**: USB HID mouse
     - hub port **3**: USB HID gamepad
-  - dynamic passthrough allocation starts at hub port **4** (`UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT`)
+    - hub port **4**: USB HID consumer-control (media keys)
+  - dynamic passthrough allocation starts at hub port **5** (`UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT`)
 
 Source-of-truth constants live in:
 
@@ -898,11 +899,12 @@ In the web runtime, browser keyboard/mouse/gamepad events can be exposed to the 
 
 Current implementation details:
 
-- The I/O worker attaches an **external USB hub** on UHCI root port 0 and then attaches three
+- The I/O worker attaches an **external USB hub** on UHCI root port 0 and then attaches four
   fixed "synthetic" USB HID devices behind it:
   - hub port 1: USB keyboard (boot protocol)
   - hub port 2: USB mouse (boot protocol + wheel)
   - hub port 3: USB gamepad (Aero's fixed 8-byte report)
+  - hub port 4: USB consumer-control (media keys)
   - See: `web/src/usb/uhci_external_hub.ts`, `web/src/workers/io.worker.ts`
 - Browser input capture emits both PS/2 scancodes and HID usage events so the runtime can drive
   multiple backends from the same captured stream.
