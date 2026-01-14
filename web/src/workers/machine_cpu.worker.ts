@@ -864,9 +864,41 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
             // ignore
           }
         } else {
-          throw new Error(
-            `Machine.set_disk_aerospar_opfs_open* exports are unavailable in this WASM build (disk path=${plan.opfsPath}).`,
-          );
+          // Newer WASM builds can open aerosparse disks via the generic OPFS existing open path when
+          // provided an explicit base format.
+          const existingAndSetRef = (m as unknown as { set_disk_opfs_existing_and_set_overlay_ref?: unknown })
+            .set_disk_opfs_existing_and_set_overlay_ref;
+          const existing = (m as unknown as { set_disk_opfs_existing?: unknown }).set_disk_opfs_existing;
+          const openViaFormat =
+            typeof existingAndSetRef === "function" && existingAndSetRef.length >= 2
+              ? existingAndSetRef
+              : typeof existing === "function" && existing.length >= 2
+                ? existing
+                : null;
+          if (openViaFormat == null) {
+            throw new Error(
+              `Machine.set_disk_aerospar_opfs_open* exports are unavailable in this WASM build (disk path=${plan.opfsPath}), and generic aerospar open via Machine.set_disk_opfs_existing*(path, \"aerospar\") is unsupported.`,
+            );
+          }
+
+          try {
+            await maybeAwait((openViaFormat as (path: string, baseFormat: string) => unknown).call(m, plan.opfsPath, "aerospar"));
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            throw new Error(`setBootDisks: failed to attach aerospar HDD (disk_id=0) path=${plan.opfsPath}: ${message}`);
+          }
+
+          if (openViaFormat !== existingAndSetRef) {
+            // Best-effort overlay ref: ensure snapshots record a stable base_image for disk_id=0.
+            try {
+              const setRef = (m as unknown as { set_ahci_port0_disk_overlay_ref?: unknown }).set_ahci_port0_disk_overlay_ref;
+              if (typeof setRef === "function") {
+                (setRef as (base: string, overlay: string) => void).call(m, plan.opfsPath, "");
+              }
+            } catch {
+              // ignore
+            }
+          }
         }
         changed = true;
       }
