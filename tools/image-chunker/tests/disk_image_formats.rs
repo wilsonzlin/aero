@@ -550,6 +550,110 @@ fn chunking_raw_auto_uses_file_bytes() {
 }
 
 #[test]
+fn chunking_auto_treats_qcow2_magic_with_unknown_version_as_raw() {
+    let disk_size_bytes = 4096u64;
+    let chunk_size = 1024u64;
+
+    // Build a raw disk whose first bytes resemble QCOW2 but with an unsupported version field,
+    // so format detection should conservatively fall back to raw.
+    let mut expected = vec![0u8; disk_size_bytes as usize];
+    for (i, b) in expected.iter_mut().enumerate() {
+        *b = (i % 251) as u8;
+    }
+    expected[0..4].copy_from_slice(b"QFI\xfb");
+    expected[4..8].copy_from_slice(&1u32.to_be_bytes()); // invalid qcow2 version (not 2/3)
+
+    let mut backend = MemBackend::with_len(disk_size_bytes).unwrap();
+    backend.write_at(0, &expected).unwrap();
+    let tmp = persist_mem_backend(backend);
+
+    let (manifest, chunks) = chunk_disk_to_vecs(
+        tmp.path(),
+        ImageFormat::Auto,
+        chunk_size,
+        ChecksumAlgorithm::Sha256,
+    )
+    .unwrap();
+
+    assert_eq!(manifest.total_size, disk_size_bytes);
+    assert_eq!(manifest.chunk_size, chunk_size);
+    assert_eq!(manifest.chunk_count, disk_size_bytes / chunk_size);
+
+    let actual: Vec<u8> = chunks.iter().flat_map(|c| c.iter()).copied().collect();
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn chunking_auto_treats_aerosparse_magic_with_unknown_version_as_raw() {
+    let disk_size_bytes = 4096u64;
+    let chunk_size = 1024u64;
+
+    // AeroSparse magic, but version != 1 => should not be detected as AeroSparse.
+    let mut expected = vec![0u8; disk_size_bytes as usize];
+    for (i, b) in expected.iter_mut().enumerate() {
+        *b = (i % 251) as u8;
+    }
+    expected[0..8].copy_from_slice(b"AEROSPAR");
+    expected[8..12].copy_from_slice(&2u32.to_le_bytes()); // unsupported aerosparse version
+
+    let mut backend = MemBackend::with_len(disk_size_bytes).unwrap();
+    backend.write_at(0, &expected).unwrap();
+    let tmp = persist_mem_backend(backend);
+
+    let (manifest, chunks) = chunk_disk_to_vecs(
+        tmp.path(),
+        ImageFormat::Auto,
+        chunk_size,
+        ChecksumAlgorithm::Sha256,
+    )
+    .unwrap();
+
+    assert_eq!(manifest.total_size, disk_size_bytes);
+    assert_eq!(manifest.chunk_size, chunk_size);
+    assert_eq!(manifest.chunk_count, disk_size_bytes / chunk_size);
+
+    let actual: Vec<u8> = chunks.iter().flat_map(|c| c.iter()).copied().collect();
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn chunking_auto_treats_vhd_cookie_with_invalid_footer_as_raw() {
+    let disk_size_bytes = 4096u64;
+    let chunk_size = 1024u64;
+
+    // VHD cookie at offset 0, but with an invalid file_format_version field in the footer so
+    // `looks_like_vhd_footer` fails and auto-detect falls back to raw.
+    let mut expected = vec![0u8; disk_size_bytes as usize];
+    for (i, b) in expected.iter_mut().enumerate() {
+        *b = (i % 251) as u8;
+    }
+    expected[0..8].copy_from_slice(b"conectix");
+    // file_format_version at 12..16 should be 0x0001_0000 for VHD; make it invalid.
+    expected[12..16].copy_from_slice(&0u32.to_be_bytes());
+    // Ensure we don't accidentally look like a fixed VHD footer at EOF.
+    expected[disk_size_bytes as usize - 8..].copy_from_slice(b"notvhd!!");
+
+    let mut backend = MemBackend::with_len(disk_size_bytes).unwrap();
+    backend.write_at(0, &expected).unwrap();
+    let tmp = persist_mem_backend(backend);
+
+    let (manifest, chunks) = chunk_disk_to_vecs(
+        tmp.path(),
+        ImageFormat::Auto,
+        chunk_size,
+        ChecksumAlgorithm::Sha256,
+    )
+    .unwrap();
+
+    assert_eq!(manifest.total_size, disk_size_bytes);
+    assert_eq!(manifest.chunk_size, chunk_size);
+    assert_eq!(manifest.chunk_count, disk_size_bytes / chunk_size);
+
+    let actual: Vec<u8> = chunks.iter().flat_map(|c| c.iter()).copied().collect();
+    assert_eq!(actual, expected);
+}
+
+#[test]
 fn chunking_rejects_non_sector_aligned_raw_disk_size() {
     let disk_size_bytes = 1000u64;
     let chunk_size = SECTOR_SIZE as u64;
