@@ -26,7 +26,7 @@ Feature matrix for the Win7 WDK-backed UMDs:
 | Vertex buffer binding | **Multiple slots** supported (`StartSlot/NumBuffers` forwarded) | **Multiple slots** supported (`StartSlot/NumBuffers` forwarded) | **Multiple slots** supported (`StartSlot/NumBuffers` forwarded) |
 | Constant buffers | VS/PS/GS supported (14 slots, whole-buffer binding) | VS/PS/GS supported (14 slots, whole-buffer binding) | VS/PS/GS/CS supported (14 slots, `{FirstConstant, NumConstants}` ranges supported) |
 | Samplers | VS/PS/GS supported (16 slots; `CREATE_SAMPLER` + `SET_SAMPLERS`) | VS/PS/GS supported (16 slots; `CREATE_SAMPLER` + `SET_SAMPLERS`) | VS/PS/GS/CS supported (16 slots; basic filter/address modes) |
-| Geometry shaders (GS) | **Supported (partial)**: GS create + bind (GS handle carried via `aerogpu_cmd_bind_shaders.reserved0` (legacy compat)) | **Supported (partial)**: GS create + bind (GS handle carried via `aerogpu_cmd_bind_shaders.reserved0` (legacy compat)) | **Supported (partial)**: GS create + bind (GS handle carried via `aerogpu_cmd_bind_shaders.reserved0` (legacy compat)) |
+| Geometry shaders (GS) | **Supported (partial)**: GS create + bind (GS handle carried via `aerogpu_cmd_bind_shaders.reserved0` (legacy compat)) | **Supported (partial)**: GS create + bind (GS handle carried via `aerogpu_cmd_bind_shaders.reserved0` (legacy compat)) | **Supported (partial)**: GS create + bind + stage bindings (executed on the host via compute emulation; see below) |
 | Compute (CS) + UAV buffers | — | — | **Supported (partial)**: CS shaders + `AEROGPU_CMD_DISPATCH`; UAV **buffers** only (8 slots; no UAV textures / OM UAV binding) |
 
 \* All UMDs (D3D10 / D3D10.1 / D3D11) preserve the runtime-provided RTV slot count/list when emitting `SET_RENDER_TARGETS`: `color_count` reflects the runtime-provided slot count, clamped to `AEROGPU_MAX_RENDER_TARGETS` (8). `NULL` entries within `[0, color_count)` are valid and are encoded as `colors[i] = 0` (gaps are preserved).
@@ -41,7 +41,7 @@ Feature matrix for the Win7 WDK-backed UMDs:
 - Shaders (DXBC payload passthrough):
   - D3D10: VS/PS/GS
   - D3D10.1: VS/PS/GS
-  - D3D11: VS/PS/GS/CS (GS execution on the host is still bring-up scaffolding; see below)
+  - D3D11: VS/PS/GS/CS (GS is emulated on the host via a compute prepass; GS DXBC is translated/executed via `crates/aero-d3d11/src/runtime/gs_translate.rs`)
 - Input layout + vertex/index buffers, primitive topology
 - Shader binding tables:
   - D3D10: VS/PS/GS constant buffers, shader-resource views, samplers (whole-buffer constant-buffer binding)
@@ -82,18 +82,28 @@ Feature matrix for the Win7 WDK-backed UMDs:
   - D3D10 / D3D10.1: `CreateGeometryShader` + `GsSetShader` (and GS resource bindings: `GsSetConstantBuffers`, `GsSetShaderResources`, `GsSetSamplers`) are forwarded into the command stream (GS handle carried via `aerogpu_cmd_bind_shaders.reserved0` (legacy compat)).
   - D3D11:
     - `CreateGeometryShader` + `GsSetShader` are forwarded into the command stream (GS handle carried via `aerogpu_cmd_bind_shaders.reserved0` for legacy compat).
-    - GS stage resource binding DDIs (`GsSetConstantBuffers`, `GsSetShaderResources`, `GsSetSamplers`) emit binding packets, but geometry-stage bindings are currently accepted-but-ignored by the host executor (until GS DXBC execution lands).
+    - GS stage resource binding DDIs (`GsSetConstantBuffers`, `GsSetShaderResources`, `GsSetSamplers`) emit binding packets.
   - Host/WebGPU execution:
-    - WebGPU has no geometry stage; the host uses a **compute prepass + indirect draw** path when GS/HS/DS emulation is required.
-    - Current implementation is **placeholder scaffolding**: the prepass writes synthetic triangle-list geometry (one triangle per input primitive) and does **not** yet translate/execute the GS DXBC.
-    - The command stream exposes an ABI extension for extended D3D11 stages (`stage_ex`; see `enum aerogpu_shader_stage_ex` in `drivers/aerogpu/protocol/aerogpu_cmd.h`). The host executor accepts legacy `stage = GEOMETRY` creates for robustness but ignores them.
-    - Win7 test subset (initial target for real GS execution):
-      - Input topologies: `PointList` and `TriangleList` (non-adjacency).
-      - Output topology: `TriangleStream` (`triangle_strip`). `RestartStrip()` / `cut` terminates the current strip; strips are expanded into a triangle list (no primitive-restart indices).
+    - WebGPU has no geometry stage; GS is emulated via a **compute prepass + indirect draw** pipeline.
+    - The host decodes the GS DXBC/SM4 module and translates it to WGSL compute in `crates/aero-d3d11/src/runtime/gs_translate.rs`. The generated compute shader executes the GS instruction stream per input primitive and produces:
+      - an expanded vertex buffer
+      - an expanded **triangle-list** index buffer
+      - `DrawIndexedIndirectArgs` so the render pass can consume the expansion via `draw_indexed_indirect`
+    - Output topology: `TriangleStream` (`triangle_strip`). `RestartStrip()` / `cut` terminates the current strip; strip output is expanded into a triangle list with CUT semantics (see `crates/aero-d3d11/src/runtime/strip_to_list.rs`).
+    - The command stream exposes an ABI extension for extended D3D11 stages (`stage_ex`; see `enum aerogpu_shader_stage_ex` in `drivers/aerogpu/protocol/aerogpu_cmd.h`). The host executor supports both the legacy `stage = GEOMETRY` encoding and the newer extended-stage encoding.
+    - Win7 validation tests:
+      - `drivers/aerogpu/tests/win7/d3d11_geometry_shader_smoke`
+      - `drivers/aerogpu/tests/win7/d3d11_geometry_shader_restart_strip`
+      - Host-side tests live under `crates/aero-d3d11/tests/` (e.g. `gs_translate.rs`; run via `cargo test -p aero-d3d11`).
+    - Current tested GS subset:
+      - Input primitives: `point` and `triangle` (non-adjacency)
+      - Output: `TriangleStream` only (stream 0)
+      - Shader instructions/operands: a small SM4 subset (enough for the tests: `mov`/`add` + immediate constants + `v#[]` inputs + `emit`/`cut`)
   - Known unsupported / not yet implemented:
     - Stream-output (SO / `CreateGeometryShaderWithStreamOutput`, `SOSetTargets`, etc.).
-    - Multi-stream GS output (`emit_stream` / `cut_stream`; non-zero stream indices are rejected at shader-create time).
-    - Adjacency primitive semantics and tessellation (HS/DS) beyond the placeholder prepass path.
+    - Multi-stream GS output (`emit_stream` / `cut_stream`); non-zero stream indices are not supported.
+    - Adjacency input primitives (`lineadj` / `triangleadj`) are not supported.
+    - Most real-world SM4 GS shaders are not supported yet (control flow, resource access, additional opcodes/operands beyond the translated subset).
 - Tessellation (HS/DS) and other D3D11 features outside the implemented subset should fail cleanly (`E_NOTIMPL` / `SetErrorCb`).
 
 Unsupported functionality must fail cleanly (returning `E_NOTIMPL` / `E_INVALIDARG`) rather than crashing or dereferencing null DDI function pointers.
@@ -105,7 +115,7 @@ Host-side unit tests that exercise Map/Unmap and the newer resource/layout behav
     - `cmake -S drivers/aerogpu/umd/d3d10_11/tests -B out/umd_d3d10_11_tests && cmake --build out/umd_d3d10_11_tests && ctest --test-dir out/umd_d3d10_11_tests -V`
 - `drivers/aerogpu/umd/d3d10_11/tests/dxgi_format_tests.cpp` (CMake target: `aerogpu_d3d10_11_dxgi_format_tests`) covers DXGI→AeroGPU format mapping and ABI-gated sRGB/BC policies in `src/aerogpu_dxgi_format.h`.
 - `drivers/aerogpu/umd/d3d10_11/tests/state_packets_tests.cpp` (CMake target: `aerogpu_d3d10_11_state_packets_tests`) covers fixed-function state packet encoding (`SET_BLEND_STATE`, `SET_RASTERIZER_STATE`, `SET_DEPTH_STENCIL_STATE`) and protocol invariants (size/alignment, default-state behavior).
-- Host-side command-stream execution tests for the WebGPU-backed executor live under `crates/aero-d3d11/tests/` (run via `cargo test -p aero-d3d11`), including smoke coverage for `AEROGPU_CMD_*` packets and GS/HS/DS compute-prepass scaffolding.
+- Host-side command-stream execution tests for the WebGPU-backed executor live under `crates/aero-d3d11/tests/` (run via `cargo test -p aero-d3d11`), including smoke coverage for `AEROGPU_CMD_*` packets, GS translation (`runtime/gs_translate.rs`), and strip restart semantics (`runtime/strip_to_list.rs`).
 - Command-stream/host validation for B5 formats, MRT, and state packets lives under `crates/aero-gpu/tests/` (run via `cargo test -p aero-gpu`)
   (for example: `aerogpu_d3d9_16bit_formats.rs`, `aerogpu_d3d9_clear_scissor.rs`, `aerogpu_d3d9_cmd_stream_state.rs`).
 
