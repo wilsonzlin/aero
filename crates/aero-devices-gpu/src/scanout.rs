@@ -367,6 +367,85 @@ mod tests {
     }
 
     #[test]
+    fn scanout_read_rgba_converts_32bpp_formats_and_pitch() {
+        #[derive(Clone, Copy)]
+        enum SrcKind {
+            Bgra,
+            Bgrx,
+            Rgba,
+            Rgbx,
+        }
+
+        fn pack(kind: SrcKind, rgba: [u8; 4], x: u8) -> [u8; 4] {
+            let [r, g, b, a] = rgba;
+            match kind {
+                SrcKind::Bgra => [b, g, r, a],
+                SrcKind::Bgrx => [b, g, r, x],
+                SrcKind::Rgba => [r, g, b, a],
+                SrcKind::Rgbx => [r, g, b, x],
+            }
+        }
+
+        let width = 2usize;
+        let height = 2usize;
+        let row_bytes = width * 4;
+        let pitch = 12u32;
+
+        let pixels_rgba: [[u8; 4]; 4] = [
+            [0x10, 0x20, 0x30, 0x40],
+            [0x50, 0x60, 0x70, 0x80],
+            [0x90, 0xA0, 0xB0, 0xC0],
+            [0xD0, 0xE0, 0xF0, 0x01],
+        ];
+
+        let formats: &[(AeroGpuFormat, SrcKind, bool)] = &[
+            (AeroGpuFormat::B8G8R8A8Unorm, SrcKind::Bgra, false),
+            (AeroGpuFormat::B8G8R8A8UnormSrgb, SrcKind::Bgra, false),
+            (AeroGpuFormat::B8G8R8X8Unorm, SrcKind::Bgrx, true),
+            (AeroGpuFormat::B8G8R8X8UnormSrgb, SrcKind::Bgrx, true),
+            (AeroGpuFormat::R8G8B8A8Unorm, SrcKind::Rgba, false),
+            (AeroGpuFormat::R8G8B8A8UnormSrgb, SrcKind::Rgba, false),
+            (AeroGpuFormat::R8G8B8X8Unorm, SrcKind::Rgbx, true),
+            (AeroGpuFormat::R8G8B8X8UnormSrgb, SrcKind::Rgbx, true),
+        ];
+
+        for &(format, kind, force_opaque) in formats {
+            let expected: Vec<u8> = pixels_rgba
+                .iter()
+                .flat_map(|&[r, g, b, a]| [r, g, b, if force_opaque { 0xFF } else { a }])
+                .collect();
+
+            let fb_gpa = 0x1000u64;
+            let mut mem = VecMemory::new(0x2000);
+            for y in 0..height {
+                let row_gpa = fb_gpa + (y as u64) * u64::from(pitch);
+                let mut row = Vec::with_capacity(row_bytes);
+                for x in 0..width {
+                    let idx = y * width + x;
+                    row.extend_from_slice(&pack(
+                        kind,
+                        pixels_rgba[idx],
+                        0x12u8.wrapping_add(idx as u8),
+                    ));
+                }
+                mem.write_physical(row_gpa, &row);
+            }
+
+            let cfg = AeroGpuScanoutConfig {
+                enable: true,
+                width: width as u32,
+                height: height as u32,
+                format,
+                pitch_bytes: pitch,
+                fb_gpa,
+            };
+
+            let out = cfg.read_rgba(&mut mem).unwrap();
+            assert_eq!(out, expected, "format={format:?}");
+        }
+    }
+
+    #[test]
     fn scanout_read_b8g8r8x8_sets_opaque_alpha() {
         let mut mem = VecMemory::new(0x1000);
         let fb_gpa = 0x100u64;
