@@ -5,12 +5,9 @@ use std::borrow::Cow;
 use aero_d3d11::runtime::indirect_args::DrawIndirectArgs;
 
 #[test]
-fn wgpu_draw_indirect_uses_args_written_by_compute() {
+fn wgpu_draw_indirect_renders_pixels() {
     pollster::block_on(async {
-        let test_name = concat!(
-            module_path!(),
-            "::wgpu_draw_indirect_uses_args_written_by_compute"
-        );
+        let test_name = concat!(module_path!(), "::wgpu_draw_indirect_renders_pixels");
 
         let (device, queue, supports_compute) = match common::wgpu::create_device_queue(
             "aero-d3d11 draw_indirect test device",
@@ -23,10 +20,6 @@ fn wgpu_draw_indirect_uses_args_written_by_compute() {
                 return;
             }
         };
-        if !supports_compute {
-            common::skip_or_panic(test_name, "compute unsupported");
-            return;
-        }
 
         let (args_size, args_align) = DrawIndirectArgs::layout();
         assert_eq!(args_size, 16);
@@ -37,75 +30,14 @@ fn wgpu_draw_indirect_uses_args_written_by_compute() {
             size: args_size,
             usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::INDIRECT
-                | wgpu::BufferUsages::COPY_SRC,
+                | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
-        });
-
-        let cs_wgsl = r#"
-            struct DrawArgs {
-                vertex_count: u32,
-                instance_count: u32,
-                first_vertex: u32,
-                first_instance: u32,
-            };
-
-            @group(0) @binding(0)
-            var<storage, read_write> args: DrawArgs;
-
-            @compute @workgroup_size(1)
-            fn main() {
-                args.vertex_count = 3u;
-                args.instance_count = 1u;
-                args.first_vertex = 0u;
-                args.first_instance = 0u;
-            }
-        "#;
-
-        let cs_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("aero-d3d11 draw_indirect args compute"),
-            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(cs_wgsl)),
-        });
-
-        let cs_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("aero-d3d11 draw_indirect compute bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: false },
-                    has_dynamic_offset: false,
-                    min_binding_size: wgpu::BufferSize::new(args_size),
-                },
-                count: None,
-            }],
-        });
-
-        let cs_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("aero-d3d11 draw_indirect compute bg"),
-            layout: &cs_bgl,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: args_buffer.as_entire_binding(),
-            }],
-        });
-
-        let cs_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("aero-d3d11 draw_indirect compute pl"),
-            bind_group_layouts: &[&cs_bgl],
-            push_constant_ranges: &[],
-        });
-
-        let cs_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("aero-d3d11 draw_indirect compute pipeline"),
-            layout: Some(&cs_pl),
-            module: &cs_module,
-            entry_point: "main",
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
         });
 
         let rs_wgsl = r#"
             @vertex
             fn vs_main(@builtin(vertex_index) vid: u32) -> @builtin(position) vec4<f32> {
+                // Full-screen triangle.
                 var pos = array<vec2<f32>, 3>(
                     vec2<f32>(-1.0, -1.0),
                     vec2<f32>(3.0, -1.0),
@@ -178,11 +110,88 @@ fn wgpu_draw_indirect_uses_args_written_by_compute() {
         });
         let rt_view = rt.create_view(&wgpu::TextureViewDescriptor::default());
 
+        let cs_pipeline = if supports_compute {
+            let cs_wgsl = r#"
+                struct DrawArgs {
+                    vertex_count: u32,
+                    instance_count: u32,
+                    first_vertex: u32,
+                    first_instance: u32,
+                };
+
+                @group(0) @binding(0)
+                var<storage, read_write> args: DrawArgs;
+
+                @compute @workgroup_size(1)
+                fn main() {
+                    args.vertex_count = 3u;
+                    args.instance_count = 1u;
+                    args.first_vertex = 0u;
+                    args.first_instance = 0u;
+                }
+            "#;
+
+            let cs_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("aero-d3d11 draw_indirect args compute"),
+                source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(cs_wgsl)),
+            });
+
+            let cs_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("aero-d3d11 draw_indirect compute bgl"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: wgpu::BufferSize::new(args_size),
+                    },
+                    count: None,
+                }],
+            });
+
+            let cs_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("aero-d3d11 draw_indirect compute bg"),
+                layout: &cs_bgl,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: args_buffer.as_entire_binding(),
+                }],
+            });
+
+            let cs_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("aero-d3d11 draw_indirect compute pl"),
+                bind_group_layouts: &[&cs_bgl],
+                push_constant_ranges: &[],
+            });
+
+            let cs_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("aero-d3d11 draw_indirect compute pipeline"),
+                layout: Some(&cs_pl),
+                module: &cs_module,
+                entry_point: "main",
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            });
+
+            (Some(cs_pipeline), Some(cs_bg))
+        } else {
+            // Queue-side fallback: write the args buffer directly.
+            let args = DrawIndirectArgs {
+                vertex_count: 3,
+                instance_count: 1,
+                first_vertex: 0,
+                first_instance: 0,
+            };
+            queue.write_buffer(&args_buffer, 0, args.as_bytes());
+
+            (None, None)
+        };
+
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("aero-d3d11 draw_indirect encoder"),
         });
 
-        {
+        if let (Some(cs_pipeline), Some(cs_bg)) = cs_pipeline {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("aero-d3d11 draw_indirect compute pass"),
                 timestamp_writes: None,

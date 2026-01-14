@@ -12,61 +12,15 @@
 
 /// Arguments for [`wgpu::RenderPass::draw_indirect`].
 ///
-/// Layout matches the WebGPU spec's `DrawIndirectArgs`:
-/// - `vertex_count`
-/// - `instance_count`
-/// - `first_vertex`
-/// - `first_instance`
-///
-/// Total size: 16 bytes.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct DrawIndirectArgs {
-    pub vertex_count: u32,
-    pub instance_count: u32,
-    pub first_vertex: u32,
-    pub first_instance: u32,
-}
-
-impl DrawIndirectArgs {
-    /// Returns `(size, alignment)` in bytes for the argument struct.
-    pub const fn layout() -> (u64, u64) {
-        (
-            core::mem::size_of::<Self>() as u64,
-            core::mem::align_of::<Self>() as u64,
-        )
-    }
-}
+/// This is re-exported from `aero-gpu` so all GPU/compute pipelines share a single canonical
+/// layout definition.
+pub use aero_gpu::indirect::DrawIndirectArgs;
 
 /// Arguments for [`wgpu::RenderPass::draw_indexed_indirect`].
 ///
-/// Layout matches the WebGPU spec's `DrawIndexedIndirectArgs`:
-/// - `index_count`
-/// - `instance_count`
-/// - `first_index`
-/// - `base_vertex` (signed)
-/// - `first_instance`
-///
-/// Total size: 20 bytes.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct DrawIndexedIndirectArgs {
-    pub index_count: u32,
-    pub instance_count: u32,
-    pub first_index: u32,
-    pub base_vertex: i32,
-    pub first_instance: u32,
-}
-
-impl DrawIndexedIndirectArgs {
-    /// Returns `(size, alignment)` in bytes for the argument struct.
-    pub const fn layout() -> (u64, u64) {
-        (
-            core::mem::size_of::<Self>() as u64,
-            core::mem::align_of::<Self>() as u64,
-        )
-    }
-}
+/// This is re-exported from `aero-gpu` so all GPU/compute pipelines share a single canonical
+/// layout definition.
+pub use aero_gpu::indirect::DrawIndexedIndirectArgs;
 
 // Compile-time layout validation.
 const _: [(); 16] = [(); core::mem::size_of::<DrawIndirectArgs>()];
@@ -96,4 +50,3 @@ mod tests {
         assert_eq!(core::mem::offset_of!(DrawIndexedIndirectArgs, first_instance), 16);
     }
 }
-

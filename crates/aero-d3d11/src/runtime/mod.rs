@@ -78,6 +78,13 @@ fn negotiated_features_for_available(
         }
     }
 
+    // Enable indirect draws with non-zero `first_instance` when supported. This is required for
+    // correct D3D-style instancing semantics in emulation/prepass paths that rely on indirect draw
+    // argument buffers.
+    if available.contains(wgpu::Features::INDIRECT_FIRST_INSTANCE) {
+        requested |= wgpu::Features::INDIRECT_FIRST_INSTANCE;
+    }
+
     requested
 }
 

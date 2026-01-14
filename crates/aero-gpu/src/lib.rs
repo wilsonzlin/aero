@@ -21,6 +21,7 @@ mod dirty_rect;
 mod error;
 mod error_event;
 pub mod guest_memory;
+pub mod indirect;
 mod present;
 mod shared_surface;
 // The diff engine is feature-gated for production use, but we still compile it for unit tests so
@@ -80,6 +81,7 @@ pub use dirty_rect::{merge_and_cap_rects, Rect, RectMergeOutcome};
 pub use error::GpuError;
 pub use error_event::{GpuErrorCategory, GpuErrorEvent, GpuErrorSeverity, GpuErrorSeverityKind};
 pub use guest_memory::{GuestMemory, GuestMemoryError, VecGuestMemory};
+pub use indirect::{DrawIndexedIndirectArgs, DrawIndirectArgs};
 pub use present::{PresentError, PresentTelemetry, Presenter, TextureWriter};
 pub use profiler::{
     FrameTimingsReport, GpuBackendKind, GpuProfiler, GpuProfilerConfig, GpuTimestampPhase,

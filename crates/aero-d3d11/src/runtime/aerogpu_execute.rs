@@ -4,6 +4,7 @@ use std::sync::Arc;
 use aero_gpu::bindings::bind_group_cache::{BindGroupCache, BufferId, TextureViewId};
 use aero_gpu::bindings::layout_cache::BindGroupLayoutCache;
 use aero_gpu::bindings::samplers::SamplerCache;
+use aero_gpu::indirect::{DrawIndexedIndirectArgs, DrawIndirectArgs};
 use aero_gpu::pipeline_cache::{PipelineCache, PipelineCacheConfig};
 use aero_gpu::passthrough_vs::PassthroughVertexShaderKey;
 use aero_gpu::pipeline_key::{
@@ -733,12 +734,12 @@ impl AerogpuCmdRuntime {
         first_vertex: u32,
         first_instance: u32,
     ) -> Result<()> {
-        self.draw_internal(DrawKind::NonIndexed {
+        self.draw_internal(DrawKind::NonIndexed(DrawIndirectArgs {
             vertex_count,
             instance_count,
             first_vertex,
             first_instance,
-        })
+        }))
     }
 
     pub fn draw_indexed(
@@ -749,13 +750,13 @@ impl AerogpuCmdRuntime {
         base_vertex: i32,
         first_instance: u32,
     ) -> Result<()> {
-        self.draw_internal(DrawKind::Indexed {
+        self.draw_internal(DrawKind::Indexed(DrawIndexedIndirectArgs {
             index_count,
             instance_count,
             first_index,
             base_vertex,
             first_instance,
-        })
+        }))
     }
 
     /// Draw using an expanded-geometry vertex buffer and a generated passthrough vertex shader.
@@ -930,6 +931,14 @@ impl AerogpuCmdRuntime {
             wgpu_slot_to_d3d_slot,
         } = build_vertex_state(&self.resources, &self.state, &vs.vs_input_signature)?;
 
+        // `owned_vertex_layouts` is moved into the pipeline-creation closure below, but we still
+        // need per-slot stride/step-mode information later to clamp indirect draw args against the
+        // currently bound vertex buffers. Extract a lightweight copy here.
+        let vertex_slot_info: Vec<(u64, wgpu::VertexStepMode)> = owned_vertex_layouts
+            .iter()
+            .map(|l| (l.array_stride, l.step_mode))
+            .collect();
+
         let pipeline_bindings = reflection_bindings::build_pipeline_bindings_info(
             &self.device,
             &mut self.bind_group_layout_cache,
@@ -1075,6 +1084,13 @@ impl AerogpuCmdRuntime {
                 label: Some("aero-d3d11 aerogpu draw encoder"),
             });
 
+        // If we end up using indirect draws, we allocate a temporary args buffer and keep it alive
+        // until the render pass is dropped.
+        //
+        // NOTE: This must be declared *before* `pass` so drop order ensures the buffer outlives the
+        // render pass.
+        let indirect_args_buffer: Option<wgpu::Buffer>;
+
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("aero-d3d11 aerogpu draw pass"),
             color_attachments: &color_attachments,
@@ -1160,25 +1176,72 @@ impl AerogpuCmdRuntime {
             pass.set_vertex_buffer(wgpu_slot as u32, buf.buffer.slice(binding.offset..));
         }
 
+        let indirect_first_instance_supported = self
+            .device
+            .features()
+            .contains(wgpu::Features::INDIRECT_FIRST_INSTANCE);
+
         match kind {
-            DrawKind::NonIndexed {
-                vertex_count,
-                instance_count,
-                first_vertex,
-                first_instance,
-            } => {
-                pass.draw(
-                    first_vertex..first_vertex + vertex_count,
-                    first_instance..first_instance + instance_count,
-                );
+            DrawKind::NonIndexed(mut args) => {
+                // Clamp against vertex buffers referenced by the current pipeline to avoid
+                // out-of-bounds vertex fetches.
+                let mut max_vertices: Option<u32> = None;
+                let mut max_instances: Option<u32> = None;
+                for (wgpu_slot, d3d_slot) in wgpu_slot_to_d3d_slot.iter().copied().enumerate() {
+                    let slot = d3d_slot as usize;
+                    let Some(binding) = self.state.vertex_buffers.get(slot).and_then(|b| *b) else {
+                        continue;
+                    };
+                    let buf = match self.resources.buffers.get(&binding.buffer) {
+                        Some(buf) => buf,
+                        None => continue,
+                    };
+                    let (stride, step_mode) = vertex_slot_info
+                        .get(wgpu_slot)
+                        .copied()
+                        .expect("wgpu_slot_to_d3d_slot and vertex_slot_info must match");
+                    let available = buf.size.saturating_sub(binding.offset);
+                    let max = aero_gpu::indirect::max_elements_in_buffer(available, stride);
+                    match step_mode {
+                        wgpu::VertexStepMode::Vertex => {
+                            max_vertices = Some(max_vertices.map_or(max, |cur| cur.min(max)));
+                        }
+                        wgpu::VertexStepMode::Instance => {
+                            max_instances = Some(max_instances.map_or(max, |cur| cur.min(max)));
+                        }
+                    }
+                }
+                if let Some(max) = max_vertices {
+                    args.clamp_vertices(max);
+                }
+                if let Some(max) = max_instances {
+                    args.clamp_instances(max);
+                }
+
+                if args.first_instance != 0 && !indirect_first_instance_supported {
+                    // Downlevel backends (notably wgpu GL) may not support indirect first-instance.
+                    // Fall back to direct draws to preserve semantics.
+                    let end_vertex = args.first_vertex.saturating_add(args.vertex_count);
+                    let end_instance = args.first_instance.saturating_add(args.instance_count);
+                    pass.draw(args.first_vertex..end_vertex, args.first_instance..end_instance);
+                    indirect_args_buffer = None;
+                } else {
+                    indirect_args_buffer = Some(self.device.create_buffer(&wgpu::BufferDescriptor {
+                        label: Some("aero-d3d11 aerogpu draw_indirect args"),
+                        size: DrawIndirectArgs::SIZE_BYTES,
+                        usage: wgpu::BufferUsages::INDIRECT
+                            | wgpu::BufferUsages::COPY_DST
+                            | wgpu::BufferUsages::STORAGE,
+                        mapped_at_creation: false,
+                    }));
+                    let args_buffer = indirect_args_buffer
+                        .as_ref()
+                        .expect("indirect_args_buffer must be set");
+                    self.queue.write_buffer(args_buffer, 0, args.as_bytes());
+                    pass.draw_indirect(args_buffer, 0);
+                }
             }
-            DrawKind::Indexed {
-                index_count,
-                instance_count,
-                first_index,
-                base_vertex,
-                first_instance,
-            } => {
+            DrawKind::Indexed(mut args) => {
                 let index = self
                     .state
                     .index_buffer
@@ -1189,13 +1252,74 @@ impl AerogpuCmdRuntime {
                     .get(&index.buffer)
                     .ok_or_else(|| anyhow!("unknown index buffer {}", index.buffer))?;
                 pass.set_index_buffer(buf.buffer.slice(index.offset..), index.format);
-                pass.draw_indexed(
-                    first_index..first_index + index_count,
-                    base_vertex,
-                    first_instance..first_instance + instance_count,
-                );
+
+                // Clamp against index buffer size (avoids OOB index fetch).
+                let index_stride = match index.format {
+                    wgpu::IndexFormat::Uint16 => 2u64,
+                    wgpu::IndexFormat::Uint32 => 4u64,
+                };
+                let available = buf.size.saturating_sub(index.offset);
+                let max_indices = aero_gpu::indirect::max_elements_in_buffer(available, index_stride);
+                args.clamp_indices(max_indices);
+
+                // Clamp instance count for any instance-rate vertex buffers (best-effort).
+                let mut max_instances: Option<u32> = None;
+                for (wgpu_slot, d3d_slot) in wgpu_slot_to_d3d_slot.iter().copied().enumerate() {
+                    let (stride, step_mode) = vertex_slot_info
+                        .get(wgpu_slot)
+                        .copied()
+                        .expect("wgpu_slot_to_d3d_slot and vertex_slot_info must match");
+                    if step_mode != wgpu::VertexStepMode::Instance {
+                        continue;
+                    }
+                    let slot = d3d_slot as usize;
+                    let Some(binding) = self.state.vertex_buffers.get(slot).and_then(|b| *b) else {
+                        continue;
+                    };
+                    let buf = match self.resources.buffers.get(&binding.buffer) {
+                        Some(buf) => buf,
+                        None => continue,
+                    };
+                    let available = buf.size.saturating_sub(binding.offset);
+                    let max = aero_gpu::indirect::max_elements_in_buffer(available, stride);
+                    max_instances = Some(max_instances.map_or(max, |cur| cur.min(max)));
+                }
+                if let Some(max) = max_instances {
+                    args.clamp_instances(max);
+                }
+
+                if args.first_instance != 0 && !indirect_first_instance_supported {
+                    let end_index = args.first_index.saturating_add(args.index_count);
+                    let end_instance = args.first_instance.saturating_add(args.instance_count);
+                    pass.draw_indexed(
+                        args.first_index..end_index,
+                        args.base_vertex,
+                        args.first_instance..end_instance,
+                    );
+                    indirect_args_buffer = None;
+                } else {
+                    indirect_args_buffer =
+                        Some(self.device.create_buffer(&wgpu::BufferDescriptor {
+                            label: Some("aero-d3d11 aerogpu draw_indexed_indirect args"),
+                            size: DrawIndexedIndirectArgs::SIZE_BYTES,
+                            usage: wgpu::BufferUsages::INDIRECT
+                                | wgpu::BufferUsages::COPY_DST
+                                | wgpu::BufferUsages::STORAGE,
+                            mapped_at_creation: false,
+                        }));
+                    let args_buffer = indirect_args_buffer
+                        .as_ref()
+                        .expect("indirect_args_buffer must be set");
+                    self.queue.write_buffer(args_buffer, 0, args.as_bytes());
+                    pass.draw_indexed_indirect(args_buffer, 0);
+                }
             }
         }
+
+        // Make the buffer "used" on all control-flow paths so the `unused_assignments` lint doesn't
+        // fire for the `None` initialization paths. (The real reason this exists is to keep the
+        // indirect args buffer alive until `pass` is dropped.)
+        let _ = &indirect_args_buffer;
 
         drop(pass);
         self.queue.submit([encoder.finish()]);
@@ -1619,19 +1743,8 @@ impl AerogpuCmdRuntime {
 
 #[derive(Debug, Copy, Clone)]
 enum DrawKind {
-    NonIndexed {
-        vertex_count: u32,
-        instance_count: u32,
-        first_vertex: u32,
-        first_instance: u32,
-    },
-    Indexed {
-        index_count: u32,
-        instance_count: u32,
-        first_index: u32,
-        base_vertex: i32,
-        first_instance: u32,
-    },
+    NonIndexed(DrawIndirectArgs),
+    Indexed(DrawIndexedIndirectArgs),
 }
 
 struct RuntimeBindGroupProvider<'a> {
