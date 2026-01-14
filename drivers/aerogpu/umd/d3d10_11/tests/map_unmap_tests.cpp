@@ -2158,6 +2158,157 @@ bool TestMapSubresourceValidation() {
   return true;
 }
 
+bool TestStagingMapTypeValidation() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false),
+             "InitTestDevice(staging map type validation)")) {
+    return false;
+  }
+
+  TestResource buf{};
+  if (!Check(CreateStagingBuffer(&dev, /*byte_width=*/16, AEROGPU_D3D11_CPU_ACCESS_WRITE, &buf), "CreateStagingBuffer")) {
+    return false;
+  }
+
+  AEROGPU_DDI_MAPPED_SUBRESOURCE mapped = {};
+  HRESULT hr = dev.device_funcs.pfnMap(dev.hDevice,
+                                       buf.hResource,
+                                       /*subresource=*/0,
+                                       AEROGPU_DDI_MAP_WRITE_DISCARD,
+                                       /*map_flags=*/0,
+                                       &mapped);
+  if (!Check(hr == E_INVALIDARG, "Map(WRITE_DISCARD) on STAGING should fail")) {
+    return false;
+  }
+  mapped = {};
+  hr = dev.device_funcs.pfnMap(dev.hDevice,
+                               buf.hResource,
+                               /*subresource=*/0,
+                               AEROGPU_DDI_MAP_WRITE_NO_OVERWRITE,
+                               /*map_flags=*/0,
+                               &mapped);
+  if (!Check(hr == E_INVALIDARG, "Map(WRITE_NO_OVERWRITE) on STAGING should fail")) {
+    return false;
+  }
+
+  TestResource tex{};
+  if (!Check(CreateStagingTexture2D(&dev,
+                                    /*width=*/3,
+                                    /*height=*/2,
+                                    AEROGPU_D3D11_CPU_ACCESS_WRITE,
+                                    &tex),
+             "CreateStagingTexture2D")) {
+    return false;
+  }
+
+  mapped = {};
+  hr = dev.device_funcs.pfnStagingResourceMap(dev.hDevice,
+                                              tex.hResource,
+                                              /*subresource=*/0,
+                                              AEROGPU_DDI_MAP_WRITE_DISCARD,
+                                              /*map_flags=*/0,
+                                              &mapped);
+  if (!Check(hr == E_INVALIDARG, "StagingResourceMap(WRITE_DISCARD) on STAGING should fail")) {
+    return false;
+  }
+  mapped = {};
+  hr = dev.device_funcs.pfnStagingResourceMap(dev.hDevice,
+                                              tex.hResource,
+                                              /*subresource=*/0,
+                                              AEROGPU_DDI_MAP_WRITE_NO_OVERWRITE,
+                                              /*map_flags=*/0,
+                                              &mapped);
+  if (!Check(hr == E_INVALIDARG, "StagingResourceMap(WRITE_NO_OVERWRITE) on STAGING should fail")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, tex.hResource);
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, buf.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
+bool TestStagingReadWriteMapAllowed() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false),
+             "InitTestDevice(staging read/write map)")) {
+    return false;
+  }
+
+  TestResource buf{};
+  if (!Check(CreateStagingBuffer(&dev,
+                                 /*byte_width=*/16,
+                                 AEROGPU_D3D11_CPU_ACCESS_READ | AEROGPU_D3D11_CPU_ACCESS_WRITE,
+                                 &buf),
+             "CreateStagingBuffer")) {
+    return false;
+  }
+
+  AEROGPU_DDI_MAPPED_SUBRESOURCE mapped = {};
+  HRESULT hr = dev.device_funcs.pfnMap(dev.hDevice,
+                                       buf.hResource,
+                                       /*subresource=*/0,
+                                       AEROGPU_DDI_MAP_READ_WRITE,
+                                       /*map_flags=*/0,
+                                       &mapped);
+  if (!Check(hr == S_OK, "Map(READ_WRITE) on STAGING cpu_read|cpu_write buffer")) {
+    return false;
+  }
+  if (!Check(mapped.pData != nullptr, "Map(READ_WRITE) returned non-null pointer")) {
+    return false;
+  }
+  if (!Check(mapped.RowPitch == 0 && mapped.DepthPitch == 0, "Map(READ_WRITE) buffer pitches are 0")) {
+    return false;
+  }
+
+  uint8_t expected[16] = {};
+  for (size_t i = 0; i < sizeof(expected); ++i) {
+    expected[i] = static_cast<uint8_t>(i * 11u);
+  }
+  std::memcpy(mapped.pData, expected, sizeof(expected));
+  dev.device_funcs.pfnUnmap(dev.hDevice, buf.hResource, /*subresource=*/0);
+
+  hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(hr == S_OK, "Flush after Unmap(READ_WRITE)")) {
+    return false;
+  }
+  if (!Check(ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size()), "ValidateStream")) {
+    return false;
+  }
+  const uint8_t* stream = dev.harness.last_stream.data();
+  const size_t stream_len = StreamBytesUsed(stream, dev.harness.last_stream.size());
+  if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_RESOURCE_DIRTY_RANGE) == 0,
+             "host-owned Unmap(READ_WRITE) should not emit RESOURCE_DIRTY_RANGE")) {
+    return false;
+  }
+  if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_UPLOAD_RESOURCE) == 1,
+             "host-owned Unmap(READ_WRITE) should emit UPLOAD_RESOURCE")) {
+    return false;
+  }
+
+  CmdLoc upload_loc = FindLastOpcode(stream, stream_len, AEROGPU_CMD_UPLOAD_RESOURCE);
+  if (!Check(upload_loc.hdr != nullptr, "UPLOAD_RESOURCE emitted")) {
+    return false;
+  }
+  const auto* upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(stream + upload_loc.offset);
+  if (!Check(upload_cmd->size_bytes == sizeof(expected), "UPLOAD_RESOURCE size matches Map size")) {
+    return false;
+  }
+  const size_t payload_offset = upload_loc.offset + sizeof(*upload_cmd);
+  if (!Check(payload_offset + sizeof(expected) <= stream_len, "UPLOAD_RESOURCE payload bounds")) {
+    return false;
+  }
+  if (!Check(std::memcmp(stream + payload_offset, expected, sizeof(expected)) == 0, "UPLOAD_RESOURCE payload matches")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, buf.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
 bool TestMapDoNotWaitReportsStillDrawing() {
   TestDevice dev{};
   if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true, /*async_fences=*/true),
@@ -8863,6 +9014,8 @@ int main() {
   ok &= TestStagingMapFlagsValidation();
   ok &= TestMapAlreadyMappedFails();
   ok &= TestMapSubresourceValidation();
+  ok &= TestStagingMapTypeValidation();
+  ok &= TestStagingReadWriteMapAllowed();
   ok &= TestMapDoNotWaitReportsStillDrawing();
   ok &= TestMapDoNotWaitIgnoresUnrelatedInFlightWork();
   ok &= TestMapBlockingWaitUsesInfiniteTimeout();
