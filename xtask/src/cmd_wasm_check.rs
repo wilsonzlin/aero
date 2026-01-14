@@ -185,9 +185,7 @@ fn mask_rust_for_scan(src: &str) -> String {
                     }
                     if ok {
                         out.push(b'"');
-                        for _ in 0..hashes {
-                            out.push(b'#');
-                        }
+                        out.extend(std::iter::repeat_n(b'#', hashes));
                         i += 1 + hashes;
                         mode = Mode::Code;
                         continue;
