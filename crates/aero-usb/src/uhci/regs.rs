@@ -88,7 +88,11 @@ impl UhciRegs {
     }
 
     pub fn update_halted(&mut self) {
-        if self.usbcmd & USBCMD_RS == 0 {
+        // The UHCI spec drives HCHALTED from the host controller's run/stop state. In our model we
+        // treat Global Suspend Mode (EGSM) as a non-running state as well (see `UhciController`'s
+        // `tick_1ms` early-return condition), so HCHALTED is considered set unless we are
+        // explicitly running with RS=1 and EGSM=0.
+        if self.usbcmd & (USBCMD_RS | USBCMD_EGSM) != USBCMD_RS {
             self.usbsts |= USBSTS_HCHALTED;
         } else {
             self.usbsts &= !USBSTS_HCHALTED;

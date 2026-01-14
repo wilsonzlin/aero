@@ -56,7 +56,7 @@ impl UhciController {
     /// Forces status bits in USBSTS for tests and diagnostics.
     ///
     /// Reserved bits are masked out; the HCHALTED bit is driven by `USBCMD.RS` and should not be
-    /// set manually.
+    /// set manually (it is derived from the controller run/suspend state).
     pub fn set_usbsts_bits(&mut self, bits: u16) {
         let bits = bits & (USBSTS_READ_MASK & !USBSTS_HCHALTED);
         if bits & USBSTS_USBINT != 0 {
