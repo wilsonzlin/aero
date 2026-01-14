@@ -17,6 +17,37 @@ impl MemoryBus for PanicMem {
     }
 }
 
+struct TestMem {
+    data: Vec<u8>,
+}
+
+impl TestMem {
+    fn new(size: usize) -> Self {
+        Self { data: vec![0; size] }
+    }
+}
+
+impl MemoryBus for TestMem {
+    fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
+        let start = paddr as usize;
+        let end = start.saturating_add(buf.len());
+        if end > self.data.len() {
+            buf.fill(0);
+            return;
+        }
+        buf.copy_from_slice(&self.data[start..end]);
+    }
+
+    fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
+        let start = paddr as usize;
+        let end = start.saturating_add(buf.len());
+        if end > self.data.len() {
+            return;
+        }
+        self.data[start..end].copy_from_slice(buf);
+    }
+}
+
 fn control_no_data(dev: &mut AttachedUsbDevice, setup: SetupPacket) {
     assert_eq!(dev.handle_setup(setup), UsbOutResult::Ack);
     assert!(
@@ -225,4 +256,39 @@ fn xhci_snapshot_loads_legacy_tag_mapping_for_ports_and_hce() {
             "expected port enabled bit to roundtrip through legacy snapshot"
         );
     }
+}
+
+#[test]
+fn xhci_snapshot_roundtrip_preserves_tick_time_and_dma_probe_state() {
+    let mut ctrl = XhciController::new();
+    let mut mem = TestMem::new(0x4000);
+
+    // Point CRCR at a known address and seed a dword there so `tick_1ms_with_dma` updates the
+    // controller's internal DMA probe state.
+    let crcr_ptr = 0x1000u64;
+    mem.write_u32(crcr_ptr, 0xaabb_ccdd);
+
+    ctrl.mmio_write(&mut mem, regs::REG_CRCR_LO, 4, crcr_ptr as u32);
+    ctrl.mmio_write(&mut mem, regs::REG_CRCR_HI, 4, (crcr_ptr >> 32) as u32);
+    ctrl.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
+
+    // Advance time and run the tick-driven DMA probe.
+    for _ in 0..3 {
+        ctrl.tick_1ms_with_dma(&mut mem);
+    }
+
+    let bytes = ctrl.save_state();
+    let r = SnapshotReader::parse(&bytes, *b"XHCI").expect("parse xHCI snapshot");
+
+    // Snapshot v0.7 stores the 1ms tick counter + last tick DMA dword.
+    assert_eq!(r.u64(27).unwrap().unwrap(), 3);
+    assert_eq!(r.u32(28).unwrap().unwrap(), 0xaabb_ccdd);
+
+    // Ensure restore preserves the fields as well (not just save).
+    let mut restored = XhciController::new();
+    restored.load_state(&bytes).expect("load snapshot");
+    let bytes2 = restored.save_state();
+    let r2 = SnapshotReader::parse(&bytes2, *b"XHCI").expect("parse restored snapshot");
+    assert_eq!(r2.u64(27).unwrap().unwrap(), 3);
+    assert_eq!(r2.u32(28).unwrap().unwrap(), 0xaabb_ccdd);
 }
