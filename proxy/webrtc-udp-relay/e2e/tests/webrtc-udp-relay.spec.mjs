@@ -562,6 +562,10 @@ async function spawnRelayServer(extraEnv = {}) {
          ALLOWED_ORIGINS: "*",
          // Keep /webrtc/ice stable even when no STUN/TURN is configured.
          AERO_ICE_SERVERS_JSON: "[]",
+         AERO_STUN_URLS: "",
+         AERO_TURN_URLS: "",
+         AERO_TURN_USERNAME: "",
+         AERO_TURN_CREDENTIAL: "",
          // Allow the UDP echo server on localhost.
         DESTINATION_POLICY_PRESET: "dev",
         ALLOW_PRIVATE_NETWORKS: "true",
