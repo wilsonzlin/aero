@@ -147,6 +147,45 @@ python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
   --snapshot
 ```
 
+#### Optional: scroll wheel + horizontal wheel (AC Pan)
+
+To also regression-test **mouse scrolling** end-to-end (including **horizontal scrolling** via `REL_HWHEEL` /
+HID Consumer `AC Pan`), run the harness with:
+
+- PowerShell: `-WithInputWheel`
+- Python: `--with-input-wheel`
+
+This:
+
+- **implies** `-WithInputEvents` / `--with-input-events`
+- injects wheel events via QMP `input-send-event` (rel axes `wheel` + `hwheel`)
+- requires the guest marker:
+  `AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|PASS|...`
+
+Note: Some older QEMU builds do not support the `hwheel` axis for QMP `input-send-event`. When `-WithInputWheel` /
+`--with-input-wheel` is enabled, the harness fails with a clear error in that case (upgrade QEMU or omit the wheel flag).
+
+PowerShell:
+
+```powershell
+pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
+  -QemuSystem qemu-system-x86_64 `
+  -DiskImagePath ./win7-aero-tests.qcow2 `
+  -WithInputWheel `
+  -TimeoutSeconds 600
+```
+
+Python:
+
+```bash
+python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
+  --qemu-system qemu-system-x86_64 \
+  --disk-image ./win7-aero-tests.qcow2 \
+  --with-input-wheel \
+  --timeout-seconds 600 \
+  --snapshot
+```
+
 Note: If the guest was provisioned without `--test-input-events`, it will emit:
 `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|SKIP|flag_not_set`.
 The host harness only requires `virtio-input-events|PASS` when `-WithInputEvents` / `--with-input-events` is set. When
