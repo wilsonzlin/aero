@@ -385,11 +385,11 @@ Geometry shader note:
     * The guest UMD treats GS like VS/PS: it forwards the DXBC blob to the host and participates in normal shader lifetime + binding.
     * Since WebGPU has **no GS stage**, AeroGPU emulates GS by inserting a **compute prepass** when a GS is bound:
       - The executor already routes draws with a bound GS through a compute-prepass + indirect-draw path.
-      - The in-tree GS DXBC→WGSL compute translator exists and is partially integrated: translation is attempted at `CREATE_SHADER_DXBC`, and non-indexed `PointList` draws can execute the translated compute prepass; other cases use a synthetic expansion shader for bring-up/coverage.
+      - The in-tree GS DXBC→WGSL compute translator exists and is partially integrated: translation is attempted at `CREATE_SHADER_DXBC`, and non-indexed `PointList` draws can execute the translated compute prepass (minimal SM4 subset); other cases use a synthetic expansion shader for bring-up/coverage.
       - The intended end state is: VS-as-compute (vertex pulling) → GS-as-compute (primitive expansion) → render expanded buffers with a passthrough VS + the original PS.
     * This is **internal** WebGPU compute; it does *not* require exposing the D3D11 compute shader stage (you can still keep D3D11 CS as `NOT_SUPPORTED` initially).
     * Details: [`geometry-shader-emulation.md`](./geometry-shader-emulation.md).
-    * **Current repo status:** the host-side executor’s GS/HS/DS compute-prepass path uses synthetic expansion geometry for most draws, but non-indexed `PointList` draws can execute a minimal translated SM4 GS subset; treat the above as the intended design until GS DXBC execution is expanded to more cases. See [`docs/graphics/status.md`](./status.md) and [`geometry-shader-emulation.md`](./geometry-shader-emulation.md).
+    * **Current repo status:** the host-side executor’s GS/HS/DS compute-prepass path uses synthetic expansion geometry for most draws, but non-indexed `PointList` draws can execute a minimal translated SM4 GS subset. VS-as-compute is not implemented yet (the point-list GS path populates inputs directly from IA), and broader GS DXBC execution is still WIP. See [`docs/graphics/status.md`](./status.md) and [`geometry-shader-emulation.md`](./geometry-shader-emulation.md).
 * Win7 regression tests that define the minimum semantics to target:
   * `drivers/aerogpu/tests/win7/d3d11_geometry_shader_smoke` — basic GS create/bind/execute path.
   * `drivers/aerogpu/tests/win7/d3d11_geometry_shader_restart_strip` — validates `TriangleStream::RestartStrip` / DXBC `cut` handling.

@@ -85,21 +85,21 @@ For simplicity and portability, Aero’s emulation expands strips into lists:
 This avoids needing to generate restart indices and keeps the draw stage in the most widely-supported
 primitive topologies.
 
-Note: there is an in-progress GS→WGSL compute translator at
-`crates/aero-d3d11/src/runtime/gs_translate.rs`. The initial implementation focuses on
-`triangle_strip` output and lowers it to an indexed **triangle list** suitable for
-`draw_indexed_indirect`.
-It is wired into the command executor for non-indexed `PointList` draws (other topologies still fall
-back to synthetic expansion).
+Note: there is an in-tree GS→WGSL compute translator at `crates/aero-d3d11/src/runtime/gs_translate.rs`.
+The initial implementation focuses on `triangle_strip` output and lowers it to an indexed **triangle
+list** suitable for `draw_indexed_indirect`.
+It is partially wired into the command executor via the point-list GS prepass path (non-indexed
+`PointList` draws); other topologies still fall back to synthetic expansion.
 
 ---
 
 ## Current implementation status (AeroGPU command-stream executor)
 
 The AeroGPU D3D10/11 command-stream executor implements GS emulation as a GPU-side **compute expansion
-prepass** + **indirect draw** path.
+prepass** + **indirect draw** path. It also has an initial “execute guest GS DXBC” path for a small
+point-list subset, but it is not yet a complete GS implementation.
 
-There are two compute-prepass “modes”:
+There are currently two compute-prepass “modes”:
 
 - **Real GS execution (supported subset):** translate the guest’s GS DXBC into a WGSL compute shader
   and run it to generate expanded vertices/indices + indirect args.
