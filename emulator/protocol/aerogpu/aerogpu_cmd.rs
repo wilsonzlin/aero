@@ -2351,7 +2351,9 @@ impl<'a> AerogpuCmdPacket<'a> {
         ))
     }
 
-    pub fn decode_copy_buffer_payload_le(&self) -> Result<AerogpuCmdCopyBuffer, AerogpuCmdDecodeError> {
+    pub fn decode_copy_buffer_payload_le(
+        &self,
+    ) -> Result<AerogpuCmdCopyBuffer, AerogpuCmdDecodeError> {
         if self.opcode != Some(AerogpuCmdOpcode::CopyBuffer) {
             return Err(AerogpuCmdDecodeError::UnexpectedOpcode {
                 found: self.hdr.opcode,

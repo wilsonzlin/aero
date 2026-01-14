@@ -7875,4 +7875,4 @@ mod tests {
             ShaderTranslateError::UavSlotUsedAsBufferAndTexture { slot: 0 }
         ));
     }
-} 
+}

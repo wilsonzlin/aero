@@ -1643,7 +1643,7 @@ fn protocol_preserves_stage_ex_reserved0_for_binding_cmds() {
             push_u32(out, 0); // start_slot
             push_u32(out, 1); // buffer_count
             push_u32(out, stage_ex); // reserved0 (stage_ex)
-            // binding[0]
+                                     // binding[0]
             push_u32(out, 0x90); // buffer
             push_u32(out, 16); // offset_bytes
             push_u32(out, 64); // size_bytes
@@ -1655,7 +1655,7 @@ fn protocol_preserves_stage_ex_reserved0_for_binding_cmds() {
             push_u32(out, 0); // start_register
             push_u32(out, 1); // vec4_count
             push_u32(out, stage_ex); // reserved0 (stage_ex)
-            // one vec4
+                                     // one vec4
             push_u32(out, 1.0f32.to_bits());
             push_u32(out, 2.0f32.to_bits());
             push_u32(out, 3.0f32.to_bits());

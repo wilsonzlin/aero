@@ -31,7 +31,12 @@ fn tier2_masks_32bit_effective_addresses_for_memory_operands() {
     state.cpu.gpr[Gpr::Rdi.as_u8() as usize] = 0x1_0000_0000; // masked to 0
 
     let exit = run_function(&func, &env, &mut bus, &mut state, 8);
-    assert_eq!(exit, RunExit::SideExit { next_rip: entry + 2 });
+    assert_eq!(
+        exit,
+        RunExit::SideExit {
+            next_rip: entry + 2
+        }
+    );
     assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0x1122_3344);
 }
 
@@ -61,8 +66,12 @@ fn tier2_masks_32bit_stack_pointer_for_pop() {
     state.cpu.gpr[Gpr::Rsp.as_u8() as usize] = 0x1_0000_0000; // masked to 0
 
     let exit = run_function(&func, &env, &mut bus, &mut state, 8);
-    assert_eq!(exit, RunExit::SideExit { next_rip: entry + 1 });
+    assert_eq!(
+        exit,
+        RunExit::SideExit {
+            next_rip: entry + 1
+        }
+    );
     assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0x5566_7788);
     assert_eq!(state.cpu.gpr[Gpr::Rsp.as_u8() as usize], 4);
 }
-

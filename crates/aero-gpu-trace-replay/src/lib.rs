@@ -1862,16 +1862,18 @@ pub fn decode_cmd_stream_listing(
                         );
                     }
                     AerogpuCmdOpcode::SetVertexBuffers => {
-                        let (cmd, bindings) = pkt
-                            .decode_set_vertex_buffers_payload_le()
-                            .map_err(|err| CmdStreamDecodeError::Payload {
-                                offset,
-                                opcode,
-                                err,
+                        let (cmd, bindings) =
+                            pkt.decode_set_vertex_buffers_payload_le().map_err(|err| {
+                                CmdStreamDecodeError::Payload {
+                                    offset,
+                                    opcode,
+                                    err,
+                                }
                             })?;
                         let start_slot = cmd.start_slot;
                         let buffer_count = cmd.buffer_count;
-                        let _ = write!(line, " start_slot={start_slot} buffer_count={buffer_count}");
+                        let _ =
+                            write!(line, " start_slot={start_slot} buffer_count={buffer_count}");
                         if let Some(b0) = bindings.first() {
                             // Avoid taking references to packed fields.
                             let vb0_buffer = b0.buffer;
@@ -1895,8 +1897,10 @@ pub fn decode_cmd_stream_listing(
                         let format = u32_le_at(pkt.payload, 4).unwrap();
                         let offset_bytes = u32_le_at(pkt.payload, 8).unwrap();
                         let reserved0 = u32_le_at(pkt.payload, 12).unwrap();
-                        let _ =
-                            write!(line, " buffer={buffer} format={format} offset_bytes={offset_bytes}");
+                        let _ = write!(
+                            line,
+                            " buffer={buffer} format={format} offset_bytes={offset_bytes}"
+                        );
                         if let Some(name) = index_format_name(format) {
                             let _ = write!(line, " format_name={name}");
                         }

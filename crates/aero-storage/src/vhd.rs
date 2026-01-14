@@ -1365,7 +1365,9 @@ mod wasm_send_bounds_check {
 
         let _open_with_parent: fn(MemBackend, Box<dyn VirtualDisk>) -> Result<VhdDisk<MemBackend>> =
             VhdDisk::<MemBackend>::open_with_parent;
-        let _open_differencing: fn(MemBackend, Box<dyn VirtualDisk>) -> Result<VhdDisk<MemBackend>> =
-            VhdDisk::<MemBackend>::open_differencing;
+        let _open_differencing: fn(
+            MemBackend,
+            Box<dyn VirtualDisk>,
+        ) -> Result<VhdDisk<MemBackend>> = VhdDisk::<MemBackend>::open_differencing;
     }
 }

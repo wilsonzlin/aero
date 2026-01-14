@@ -100,10 +100,7 @@ fn xhci_msi_pending_delivers_on_unmask_even_after_interrupt_cleared() {
     cpu.install_isr(0x45);
 
     // Program MSI config space.
-    let cap_offset = dev
-        .config_mut()
-        .find_capability(PCI_CAP_ID_MSI)
-        .unwrap() as u16;
+    let cap_offset = dev.config_mut().find_capability(PCI_CAP_ID_MSI).unwrap() as u16;
     dev.config_mut().write(cap_offset + 0x04, 4, 0xfee0_0000);
     dev.config_mut().write(cap_offset + 0x08, 4, 0);
     dev.config_mut().write(cap_offset + 0x0c, 2, 0x0045);
@@ -115,7 +112,10 @@ fn xhci_msi_pending_delivers_on_unmask_even_after_interrupt_cleared() {
     // test defensive in case profiles change).
     let is_64bit = (ctrl & (1 << 7)) != 0;
     let per_vector_masking = (ctrl & (1 << 8)) != 0;
-    assert!(per_vector_masking, "test requires per-vector masking support");
+    assert!(
+        per_vector_masking,
+        "test requires per-vector masking support"
+    );
     let mask_off = if is_64bit {
         cap_offset + 0x10
     } else {

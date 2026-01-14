@@ -456,7 +456,9 @@ fn stable_listing_decodes_vertex_and_index_buffers() {
 
     assert!(
         listing.contains("SetVertexBuffers")
-            && listing.contains("start_slot=0 buffer_count=1 vb0_buffer=7 vb0_stride_bytes=16 vb0_offset_bytes=32"),
+            && listing.contains(
+                "start_slot=0 buffer_count=1 vb0_buffer=7 vb0_stride_bytes=16 vb0_offset_bytes=32"
+            ),
         "{listing}"
     );
     assert!(

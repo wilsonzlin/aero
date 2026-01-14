@@ -633,7 +633,10 @@ fn xhci_tick_platform_zero_syncs_msix_enable_state_into_device_model() {
         (msix.enabled(), msix.function_masked())
     };
 
-    assert!(enabled, "expected MSI-X enable bit to sync via tick_platform(0)");
+    assert!(
+        enabled,
+        "expected MSI-X enable bit to sync via tick_platform(0)"
+    );
     assert!(
         masked,
         "expected MSI-X Function Mask bit to sync via tick_platform(0)"

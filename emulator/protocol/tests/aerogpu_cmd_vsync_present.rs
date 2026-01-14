@@ -163,6 +163,9 @@ fn reader_does_not_copy_full_stream() {
 
     assert!(cmd_stream_has_vsync_present_reader(read, base_gpa, stream.len() as u32).unwrap());
     assert!(bytes_read < stream.len());
-    assert!(bytes_read <= 64, "expected small header-only reads, got {bytes_read}");
+    assert!(
+        bytes_read <= 64,
+        "expected small header-only reads, got {bytes_read}"
+    );
     assert!(read_calls <= 8, "expected few reads, got {read_calls}");
 }

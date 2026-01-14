@@ -9,17 +9,17 @@ use aero_virtio::devices::snd::{
     VIRTIO_SND_S_OK,
 };
 use aero_virtio::pci::{
-    VIRTIO_PCI_LEGACY_GUEST_FEATURES, VIRTIO_PCI_LEGACY_HOST_FEATURES,
-    VIRTIO_PCI_LEGACY_ISR_QUEUE, VIRTIO_PCI_LEGACY_QUEUE_NOTIFY, VIRTIO_PCI_LEGACY_QUEUE_NUM,
-    VIRTIO_PCI_LEGACY_QUEUE_PFN, VIRTIO_PCI_LEGACY_QUEUE_SEL, VIRTIO_PCI_LEGACY_STATUS,
-    VIRTIO_PCI_LEGACY_VRING_ALIGN, VIRTIO_STATUS_ACKNOWLEDGE, VIRTIO_STATUS_DRIVER,
-    VIRTIO_STATUS_DRIVER_OK, VIRTIO_STATUS_FEATURES_OK,
+    VIRTIO_PCI_LEGACY_GUEST_FEATURES, VIRTIO_PCI_LEGACY_HOST_FEATURES, VIRTIO_PCI_LEGACY_ISR_QUEUE,
+    VIRTIO_PCI_LEGACY_QUEUE_NOTIFY, VIRTIO_PCI_LEGACY_QUEUE_NUM, VIRTIO_PCI_LEGACY_QUEUE_PFN,
+    VIRTIO_PCI_LEGACY_QUEUE_SEL, VIRTIO_PCI_LEGACY_STATUS, VIRTIO_PCI_LEGACY_VRING_ALIGN,
+    VIRTIO_STATUS_ACKNOWLEDGE, VIRTIO_STATUS_DRIVER, VIRTIO_STATUS_DRIVER_OK,
+    VIRTIO_STATUS_FEATURES_OK,
 };
 use aero_virtio::queue::{VIRTQ_DESC_F_NEXT, VIRTQ_DESC_F_WRITE};
 use aero_wasm::VirtioSndPciBridge;
 use js_sys::{SharedArrayBuffer, Uint32Array};
-use wasm_bindgen_test::wasm_bindgen_test;
 use wasm_bindgen::JsValue;
+use wasm_bindgen_test::wasm_bindgen_test;
 
 mod common;
 
@@ -349,30 +349,21 @@ fn virtio_snd_pci_bridge_legacy_only_delivers_speaker_jack_event_into_cached_buf
         size: guest_size,
     };
 
-    let mut bridge = VirtioSndPciBridge::new(
-        guest_base,
-        guest_size,
-        Some(JsValue::from_str("legacy")),
-    )
-    .expect("VirtioSndPciBridge::new");
+    let mut bridge =
+        VirtioSndPciBridge::new(guest_base, guest_size, Some(JsValue::from_str("legacy")))
+            .expect("VirtioSndPciBridge::new");
     // Enable legacy I/O decoding + bus mastering.
     bridge.set_pci_command(0x0005);
 
     // Legacy feature negotiation (low 32 bits only).
     let host_features = bridge.io_read(VIRTIO_PCI_LEGACY_HOST_FEATURES as u32, 4);
-    bridge.io_write(
-        VIRTIO_PCI_LEGACY_GUEST_FEATURES as u32,
-        4,
-        host_features,
-    );
+    bridge.io_write(VIRTIO_PCI_LEGACY_GUEST_FEATURES as u32, 4, host_features);
 
     // Set device status.
     bridge.io_write(
         VIRTIO_PCI_LEGACY_STATUS as u32,
         1,
-        u32::from(
-            VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_DRIVER_OK,
-        ),
+        u32::from(VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_DRIVER_OK),
     );
 
     // Configure event queue 1 via legacy registers.
@@ -400,15 +391,7 @@ fn virtio_snd_pci_bridge_legacy_only_delivers_speaker_jack_event_into_cached_buf
     // buffer without completing it.
     let buf = 0x4000u32;
     guest.fill(buf, 8, 0xAA);
-    write_desc(
-        &guest,
-        desc_table,
-        0,
-        buf as u64,
-        8,
-        VIRTQ_DESC_F_WRITE,
-        0,
-    );
+    write_desc(&guest, desc_table, 0, buf as u64, 8, VIRTQ_DESC_F_WRITE, 0);
     guest.write_u16(avail, 0);
     guest.write_u16(avail + 2, 1);
     guest.write_u16(avail + 4, 0);

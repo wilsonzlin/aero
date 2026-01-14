@@ -1,10 +1,10 @@
+use crate::pci::capabilities::PCI_CONFIG_SPACE_SIZE;
 use crate::pci::config::{
     PciBarChange, PciBarDefinition, PciCommandChange, PciConfigSpace, PciConfigSpaceState,
     PciConfigWriteEffects,
 };
 use crate::pci::{PciBarKind, PciBarRange, PciBdf, PciDevice};
 use crate::pci::{PciResourceAllocator, PciResourceError};
-use crate::pci::capabilities::PCI_CONFIG_SPACE_SIZE;
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
 use aero_io_snapshot::io::state::{
     IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
@@ -1072,4 +1072,4 @@ mod tests {
         bus.write_config(bdf, 0xFF, 2, 0xBEEF);
         assert_eq!(bus.read_config(bdf, 0x00, 2), vendor_id);
     }
-} 
+}
