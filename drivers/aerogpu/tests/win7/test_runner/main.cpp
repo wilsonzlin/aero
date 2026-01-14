@@ -917,6 +917,7 @@ int main(int argc, char** argv) {
       "d3d9_raster_status_pacing",
       "d3d9_validate_device_sanity",
       "d3d9_get_state_roundtrip",
+      "d3d9_process_vertices_sanity",
       "dwm_flush_pacing",
       "d3d9ex_triangle",
       "d3d9_mipmapped_texture_smoke",
