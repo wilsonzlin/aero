@@ -3918,7 +3918,7 @@ static int RunD3D9GetStateRoundtrip(int argc, char** argv) {
     }
   }
 
-  // N-Patch mode (cached state).
+  // N-Patch (Truform) mode (cached state).
   {
     const float kMode = 3.0f;
     hr = dev->SetNPatchMode(kMode);
