@@ -463,7 +463,10 @@ def lint_files(*, setup_cmd: Path, uninstall_cmd: Path, verify_ps1: Path) -> Lis
             expected_hint='Under :check_mode, sets INSTALL_ROOT to a %TEMP% path (e.g. set "INSTALL_ROOT=%TEMP%\\AeroGuestToolsCheck")',
             predicate=lambda text: (
                 (block := _label_block(text, "check_mode")) is not None
-                and re.search(r'(?i)\bset\s+"INSTALL_ROOT=%TEMP%[\\/]', block) is not None
+                and re.search(
+                    r'(?i)\bset\s+"INSTALL_ROOT=%TEMP%[\\/]', _strip_batch_comment_lines(block)
+                )
+                is not None
             ),
         ),
         Invariant(
@@ -471,7 +474,10 @@ def lint_files(*, setup_cmd: Path, uninstall_cmd: Path, verify_ps1: Path) -> Lis
             expected_hint="Under :check_mode, calls :validate_cert_payload",
             predicate=lambda text: (
                 (block := _label_block(text, "check_mode")) is not None
-                and re.search(r"(?i)\bcall\s+:?validate_cert_payload\b", block) is not None
+                and re.search(
+                    r"(?i)\bcall\s+:?validate_cert_payload\b", _strip_batch_comment_lines(block)
+                )
+                is not None
             ),
         ),
         Invariant(
@@ -479,17 +485,18 @@ def lint_files(*, setup_cmd: Path, uninstall_cmd: Path, verify_ps1: Path) -> Lis
             expected_hint=":check_mode should not call :install_certs, :stage_all_drivers, :preseed_storage_boot, :maybe_enable_testsigning, or :skip_storage_preseed",
             predicate=lambda text: (
                 (block := _label_block(text, "check_mode")) is not None
+                and (block_exec := _strip_batch_comment_lines(block)) is not None
                 and (
                     re.search(
                         r"(?i)\b(certutil|pnputil|reg|bcdedit|shutdown)(?:\.exe)?\b[^\r\n]*"
                         r"(?:-addstore|\s+-a\b|\s+-i\b|\s+(?:add|delete)\b|\s+/set\b|\s+/(?:r|s)\b)",
-                        _strip_batch_comment_lines(block),
+                        block_exec,
                     )
                     is None
                 )
                 and re.search(
                     r"(?i)\bcall\s+:?(install_certs|stage_all_drivers|preseed_storage_boot|maybe_enable_testsigning|skip_storage_preseed|require_admin_stdout|require_admin)\b",
-                    block,
+                    block_exec,
                 )
                 is None
             ),

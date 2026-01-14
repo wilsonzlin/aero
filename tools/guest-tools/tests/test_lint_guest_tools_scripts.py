@@ -610,6 +610,27 @@ class LintGuestToolsScriptsTests(unittest.TestCase):
                 msg="expected /check destructive command error. Errors:\n" + "\n".join(errs),
             )
 
+    def test_linter_ignores_commented_out_calls_in_check_mode(self) -> None:
+        # Ensure check-mode invariants ignore comment lines (so documentation/notes
+        # inside :check_mode don't spuriously fail lint).
+        with tempfile.TemporaryDirectory(prefix="aero-guest-tools-lint-") as tmp:
+            tmp_path = Path(tmp)
+            setup_cmd = tmp_path / "setup.cmd"
+            uninstall_cmd = tmp_path / "uninstall.cmd"
+            verify_ps1 = tmp_path / "verify.ps1"
+
+            setup_cmd.write_text(
+                _synthetic_setup_text(check_mode_extra_line="rem call :install_certs"),
+                encoding="utf-8",
+            )
+            uninstall_cmd.write_text(_synthetic_uninstall_text(), encoding="utf-8")
+            verify_ps1.write_text(_synthetic_verify_text(), encoding="utf-8")
+
+            errs = lint_guest_tools_scripts.lint_files(
+                setup_cmd=setup_cmd, uninstall_cmd=uninstall_cmd, verify_ps1=verify_ps1
+            )
+            self.assertEqual(errs, [], msg="unexpected lint errors:\n" + "\n".join(errs))
+
     def test_linter_fails_when_setup_missing_storage_skip_marker(self) -> None:
         with tempfile.TemporaryDirectory(prefix="aero-guest-tools-lint-") as tmp:
             tmp_path = Path(tmp)
