@@ -52,6 +52,15 @@ For the consolidated virtio-input end-to-end validation plan (device model + dri
   - Deterministic large HTTP upload (HTTP POST to `<http_url>-large`) to stress sustained TX throughput:
     - uploads **1 MiB** of bytes `0..255` repeating
     - expects a 2xx response from the host harness, which validates integrity (SHA-256)
+  - Optional interrupt-mode diagnostics (`virtio-net-msix`):
+    - The selftest queries the virtio-net diagnostics device (`\\.\AeroVirtioNetDiag`) and emits:
+      `AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|PASS/FAIL/SKIP|mode=<intx|msi|msix>|messages=<n>|config_vector=...|rx_vector=...|tx_vector=...`.
+    - This marker is informational by default (so older configurations that fall back to INTx can still PASS overall).
+    - Use `--require-net-msix` (or env var `AERO_VIRTIO_SELFTEST_REQUIRE_NET_MSIX=1`) to make the selftest **FAIL**
+      when virtio-net is not using MSI-X (mode != `msix`).
+    - The host harness can also enforce MSI-X end-to-end:
+      - PowerShell: `Invoke-AeroVirtioWin7Tests.ps1 -RequireVirtioNetMsix`
+      - Python: `invoke_aero_virtio_win7_tests.py --require-virtio-net-msix`
 - **virtio-input**
   - Enumerate HID devices (SetupAPI via `GUID_DEVINTERFACE_HID`).
   - Detect virtio-input devices by matching virtio-input PCI/HID IDs:
