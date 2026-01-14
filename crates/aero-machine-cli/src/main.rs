@@ -291,7 +291,10 @@ mod native {
 
         let capacity = disk.capacity_bytes();
         if capacity == 0 {
-            bail!("disk image is empty (expected at least one 512-byte sector)");
+            bail!(
+                "disk image is empty (expected at least one {}-byte sector)",
+                SECTOR_SIZE
+            );
         }
         if capacity % SECTOR_SIZE as u64 != 0 {
             bail!(
