@@ -223,7 +223,7 @@ fn decodes_and_translates_f32tof16_and_f16tof32() {
 
     let module = decode_program(&program).expect("SM4 decode");
     assert!(matches!(
-        module.instructions.get(0),
+        module.instructions.first(),
         Some(Sm4Inst::F32ToF16 { .. })
     ));
     assert!(matches!(

@@ -19621,6 +19621,7 @@ fn hs_main() {{
                         bindings,
                         rdef: None,
                     },
+                    sm4_metadata: Sm4ShaderMetadata::default(),
                     wgsl_source: wgsl.clone(),
                 },
             );
