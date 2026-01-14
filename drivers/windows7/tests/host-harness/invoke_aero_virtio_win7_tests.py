@@ -3150,7 +3150,11 @@ def _format_commandline_for_host(argv: list[str]) -> str:
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser()
+    # Use `allow_abbrev=False` so QEMU passthrough args (unknown to the harness) cannot be
+    # accidentally consumed as abbreviated harness flags. This avoids surprising behavior when
+    # users append additional QEMU options and also makes the CLI surface stable as new flags are
+    # added (argparse's abbreviation matching can become ambiguous over time).
+    parser = argparse.ArgumentParser(allow_abbrev=False)
     parser.add_argument("--qemu-system", required=True, help="Path to qemu-system-* binary")
     parser.add_argument("--disk-image", required=True, help="Prepared Win7 disk image")
     parser.add_argument(
