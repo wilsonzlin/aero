@@ -8,6 +8,7 @@ pub const VIRTIO_DEVICE_TYPE_INPUT: u16 = 18;
 
 pub const VIRTIO_INPUT_SUBSYSTEM_KEYBOARD: u16 = 0x0010;
 pub const VIRTIO_INPUT_SUBSYSTEM_MOUSE: u16 = 0x0011;
+pub const VIRTIO_INPUT_SUBSYSTEM_TABLET: u16 = 0x0012;
 
 pub const VIRTIO_INPUT_CFG_UNSET: u8 = 0x00;
 pub const VIRTIO_INPUT_CFG_ID_NAME: u8 = 0x01;
@@ -20,6 +21,7 @@ pub const VIRTIO_INPUT_CFG_ABS_INFO: u8 = 0x12;
 pub const EV_SYN: u16 = 0x00;
 pub const EV_KEY: u16 = 0x01;
 pub const EV_REL: u16 = 0x02;
+pub const EV_ABS: u16 = 0x03;
 pub const EV_LED: u16 = 0x11;
 
 pub const SYN_REPORT: u16 = 0x00;
@@ -29,6 +31,9 @@ pub const REL_Y: u16 = 0x01;
 // Linux input ABI: horizontal wheel (tilt wheel). Often surfaced to HID as "AC Pan".
 pub const REL_HWHEEL: u16 = 0x06;
 pub const REL_WHEEL: u16 = 0x08;
+
+pub const ABS_X: u16 = 0x00;
+pub const ABS_Y: u16 = 0x01;
 
 pub const LED_NUML: u16 = 0x00;
 pub const LED_CAPSL: u16 = 0x01;
@@ -177,6 +182,28 @@ const MAX_STATUSQ_BYTES: usize = 4096;
 pub enum VirtioInputDeviceKind {
     Keyboard,
     Mouse,
+    Tablet,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VirtioInputAbsInfo {
+    pub min: i32,
+    pub max: i32,
+    pub fuzz: i32,
+    pub flat: i32,
+    pub res: i32,
+}
+
+impl VirtioInputAbsInfo {
+    fn to_le_bytes(self) -> [u8; 20] {
+        let mut out = [0u8; 20];
+        out[0..4].copy_from_slice(&self.min.to_le_bytes());
+        out[4..8].copy_from_slice(&self.max.to_le_bytes());
+        out[8..12].copy_from_slice(&self.fuzz.to_le_bytes());
+        out[12..16].copy_from_slice(&self.flat.to_le_bytes());
+        out[16..20].copy_from_slice(&self.res.to_le_bytes());
+        out
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -227,6 +254,7 @@ struct VirtioInputBitmaps {
     ev: [u8; 128],
     key: [u8; 128],
     rel: [u8; 128],
+    abs: [u8; 128],
     led: [u8; 128],
 }
 
@@ -236,6 +264,7 @@ impl VirtioInputBitmaps {
             ev: [0u8; 128],
             key: [0u8; 128],
             rel: [0u8; 128],
+            abs: [0u8; 128],
             led: [0u8; 128],
         }
     }
@@ -397,6 +426,25 @@ impl VirtioInputBitmaps {
         bitmaps.rel = Self::with_bits(&[REL_X, REL_Y, REL_WHEEL, REL_HWHEEL]);
         bitmaps
     }
+
+    fn for_tablet() -> Self {
+        let mut bitmaps = Self::empty();
+        bitmaps.ev = Self::with_bits(&[EV_SYN, EV_KEY, EV_ABS]);
+        // Expose the same 8-button set as the relative mouse; the Win7 virtio-input tablet HID
+        // descriptor advertises 8 buttons.
+        bitmaps.key = Self::with_bits(&[
+            BTN_LEFT,
+            BTN_RIGHT,
+            BTN_MIDDLE,
+            BTN_SIDE,
+            BTN_EXTRA,
+            BTN_FORWARD,
+            BTN_BACK,
+            BTN_TASK,
+        ]);
+        bitmaps.abs = Self::with_bits(&[ABS_X, ABS_Y]);
+        bitmaps
+    }
 }
 
 pub struct VirtioInput {
@@ -444,6 +492,16 @@ impl VirtioInput {
                     version: 0x0001,
                 },
                 VirtioInputBitmaps::for_mouse(),
+            ),
+            VirtioInputDeviceKind::Tablet => (
+                "Aero Virtio Tablet".to_string(),
+                VirtioInputDevids {
+                    bustype: 0x0006,
+                    vendor: 0x1af4,
+                    product: 0x0003,
+                    version: 0x0001,
+                },
+                VirtioInputBitmaps::for_tablet(),
             ),
         };
 
@@ -564,6 +622,24 @@ impl VirtioInput {
         });
     }
 
+    pub fn inject_abs_move(&mut self, x: i32, y: i32) {
+        self.push_event(VirtioInputEvent {
+            type_: EV_ABS,
+            code: ABS_X,
+            value: x,
+        });
+        self.push_event(VirtioInputEvent {
+            type_: EV_ABS,
+            code: ABS_Y,
+            value: y,
+        });
+        self.push_event(VirtioInputEvent {
+            type_: EV_SYN,
+            code: SYN_REPORT,
+            value: 0,
+        });
+    }
+
     /// Number of input events currently queued for delivery to the guest.
     ///
     /// This is primarily intended for host-side diagnostics and unit tests.
@@ -611,6 +687,7 @@ impl VirtioDevice for VirtioInput {
         match self.kind {
             VirtioInputDeviceKind::Keyboard => VIRTIO_INPUT_SUBSYSTEM_KEYBOARD,
             VirtioInputDeviceKind::Mouse => VIRTIO_INPUT_SUBSYSTEM_MOUSE,
+            VirtioInputDeviceKind::Tablet => VIRTIO_INPUT_SUBSYSTEM_TABLET,
         }
     }
 
@@ -620,6 +697,7 @@ impl VirtioDevice for VirtioInput {
             // function (function 1) on the same device.
             VirtioInputDeviceKind::Keyboard => 0x80,
             VirtioInputDeviceKind::Mouse => 0x00,
+            VirtioInputDeviceKind::Tablet => 0x00,
         }
     }
 
@@ -802,12 +880,44 @@ impl VirtioInput {
                 payload[..8].copy_from_slice(&self.devids.to_le_bytes());
                 (8, payload)
             }
-            VIRTIO_INPUT_CFG_PROP_BITS | VIRTIO_INPUT_CFG_ABS_INFO => (0, payload),
+            VIRTIO_INPUT_CFG_PROP_BITS => (0, payload),
+            VIRTIO_INPUT_CFG_ABS_INFO => {
+                // Only the tablet variant advertises EV_ABS. For keyboard/mouse, treat ABS_INFO as
+                // absent.
+                if self.kind != VirtioInputDeviceKind::Tablet {
+                    return (0, payload);
+                }
+
+                // For Aero contract v1, expose an absolute coordinate range matching the HID
+                // logical range used by the Win7 virtio-input tablet HID descriptor.
+                const DEFAULT_MIN: i32 = 0;
+                const DEFAULT_MAX: i32 = 32767;
+
+                let abs = match u16::from(self.config_subsel) {
+                    ABS_X | ABS_Y => Some(VirtioInputAbsInfo {
+                        min: DEFAULT_MIN,
+                        max: DEFAULT_MAX,
+                        fuzz: 0,
+                        flat: 0,
+                        res: 0,
+                    }),
+                    _ => None,
+                };
+
+                if let Some(abs) = abs {
+                    let bytes = abs.to_le_bytes();
+                    payload[..bytes.len()].copy_from_slice(&bytes);
+                    (bytes.len() as u8, payload)
+                } else {
+                    (0, payload)
+                }
+            }
             VIRTIO_INPUT_CFG_EV_BITS => {
                 let bitmap = match self.config_subsel {
                     0 => Some(&self.bitmaps.ev),
                     x if x == EV_KEY as u8 => Some(&self.bitmaps.key),
                     x if x == EV_REL as u8 => Some(&self.bitmaps.rel),
+                    x if x == EV_ABS as u8 => Some(&self.bitmaps.abs),
                     x if x == EV_LED as u8 => Some(&self.bitmaps.led),
                     _ => None,
                 };

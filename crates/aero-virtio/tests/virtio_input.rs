@@ -1,11 +1,12 @@
 use aero_platform::interrupts::msi::MsiMessage;
 use aero_virtio::devices::input::{
-    VirtioInput, VirtioInputDeviceKind, VirtioInputEvent, BTN_BACK, BTN_EXTRA, BTN_FORWARD,
-    BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, BTN_SIDE, BTN_TASK, EV_KEY, EV_LED, EV_REL, EV_SYN, KEY_A,
-    KEY_F1, KEY_F12, KEY_MUTE, KEY_NEXTSONG, KEY_NUMLOCK, KEY_PLAYPAUSE, KEY_PREVIOUSSONG,
-    KEY_SCROLLLOCK, KEY_STOPCD, KEY_VOLUMEDOWN, KEY_VOLUMEUP, LED_CAPSL, LED_COMPOSE, LED_KANA,
-    LED_NUML, LED_SCROLLL, REL_HWHEEL, REL_WHEEL, REL_X, REL_Y, SYN_REPORT,
-    VIRTIO_INPUT_CFG_EV_BITS, VIRTIO_INPUT_CFG_ID_DEVIDS, VIRTIO_INPUT_CFG_ID_NAME,
+    ABS_X, ABS_Y, EV_ABS, VirtioInput, VirtioInputDeviceKind, VirtioInputEvent, BTN_BACK,
+    BTN_EXTRA, BTN_FORWARD, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, BTN_SIDE, BTN_TASK, EV_KEY, EV_LED,
+    EV_REL, EV_SYN, KEY_A, KEY_F1, KEY_F12, KEY_MUTE, KEY_NEXTSONG, KEY_NUMLOCK, KEY_PLAYPAUSE,
+    KEY_PREVIOUSSONG, KEY_SCROLLLOCK, KEY_STOPCD, KEY_VOLUMEDOWN, KEY_VOLUMEUP, LED_CAPSL,
+    LED_COMPOSE, LED_KANA, LED_NUML, LED_SCROLLL, REL_HWHEEL, REL_WHEEL, REL_X, REL_Y, SYN_REPORT,
+    VIRTIO_INPUT_CFG_ABS_INFO, VIRTIO_INPUT_CFG_EV_BITS, VIRTIO_INPUT_CFG_ID_DEVIDS,
+    VIRTIO_INPUT_CFG_ID_NAME,
 };
 use aero_virtio::memory::{
     read_u16_le, read_u32_le, write_u16_le, write_u32_le, write_u64_le, GuestMemory, GuestRam,
@@ -1048,6 +1049,7 @@ fn virtio_input_config_exposes_name_devids_and_ev_bits() {
     assert_ne!(ev_bits[(EV_KEY / 8) as usize] & (1u8 << (EV_KEY % 8)), 0);
     assert_ne!(ev_bits[(EV_LED / 8) as usize] & (1u8 << (EV_LED % 8)), 0);
     assert_eq!(ev_bits[(EV_REL / 8) as usize] & (1u8 << (EV_REL % 8)), 0);
+    assert_eq!(ev_bits[(EV_ABS / 8) as usize] & (1u8 << (EV_ABS % 8)), 0);
 
     // EV_BITS: subsel=EV_KEY returns supported key bitmap (keyboard should include KEY_A).
     bar_write_u8(&mut dev, &mut mem, caps.device, VIRTIO_INPUT_CFG_EV_BITS);
@@ -1144,6 +1146,7 @@ fn virtio_input_config_exposes_name_devids_and_ev_bits() {
     assert_ne!(ev_bits[(EV_KEY / 8) as usize] & (1u8 << (EV_KEY % 8)), 0);
     assert_ne!(ev_bits[(EV_REL / 8) as usize] & (1u8 << (EV_REL % 8)), 0);
     assert_eq!(ev_bits[(EV_LED / 8) as usize] & (1u8 << (EV_LED % 8)), 0);
+    assert_eq!(ev_bits[(EV_ABS / 8) as usize] & (1u8 << (EV_ABS % 8)), 0);
 
     // Mouse key bitmap includes BTN_LEFT.
     bar_write_u8(&mut dev, &mut mem, caps.device, VIRTIO_INPUT_CFG_EV_BITS);
@@ -1198,6 +1201,50 @@ fn virtio_input_config_exposes_name_devids_and_ev_bits() {
         rel_bits[(REL_HWHEEL / 8) as usize] & (1u8 << (REL_HWHEEL % 8)),
         0
     );
+
+    // Tablet variant (absolute pointer) exposes EV_ABS and ABS_INFO.
+    let tablet = VirtioInput::new(VirtioInputDeviceKind::Tablet);
+    let mut dev = VirtioPciDevice::new(Box::new(tablet), Box::new(InterruptLog::default()));
+    dev.config_write(0x04, &0x0002u16.to_le_bytes());
+    let caps = parse_caps(&mut dev);
+
+    // ID_NAME: "Aero Virtio Tablet"
+    bar_write_u8(&mut dev, &mut mem, caps.device, VIRTIO_INPUT_CFG_ID_NAME);
+    bar_write_u8(&mut dev, &mut mem, caps.device + 1, 0);
+    let size = bar_read_u8(&mut dev, caps.device + 2) as usize;
+    let payload = bar_read(&mut dev, caps.device + 8, size);
+    assert!(payload.starts_with(b"Aero Virtio Tablet"));
+
+    // EV_BITS(types) should include EV_ABS but not EV_REL/EV_LED.
+    bar_write_u8(&mut dev, &mut mem, caps.device, VIRTIO_INPUT_CFG_EV_BITS);
+    bar_write_u8(&mut dev, &mut mem, caps.device + 1, 0);
+    let size = bar_read_u8(&mut dev, caps.device + 2) as usize;
+    let ev_bits = bar_read(&mut dev, caps.device + 8, size);
+    assert_ne!(ev_bits[(EV_SYN / 8) as usize] & (1u8 << (EV_SYN % 8)), 0);
+    assert_ne!(ev_bits[(EV_KEY / 8) as usize] & (1u8 << (EV_KEY % 8)), 0);
+    assert_ne!(ev_bits[(EV_ABS / 8) as usize] & (1u8 << (EV_ABS % 8)), 0);
+    assert_eq!(ev_bits[(EV_REL / 8) as usize] & (1u8 << (EV_REL % 8)), 0);
+    assert_eq!(ev_bits[(EV_LED / 8) as usize] & (1u8 << (EV_LED % 8)), 0);
+
+    // EV_BITS(EV_ABS) should include ABS_X/ABS_Y.
+    bar_write_u8(&mut dev, &mut mem, caps.device, VIRTIO_INPUT_CFG_EV_BITS);
+    bar_write_u8(&mut dev, &mut mem, caps.device + 1, EV_ABS as u8);
+    let size = bar_read_u8(&mut dev, caps.device + 2) as usize;
+    assert_eq!(size, 128);
+    let abs_bits = bar_read(&mut dev, caps.device + 8, size);
+    assert_ne!(abs_bits[(ABS_X / 8) as usize] & (1u8 << (ABS_X % 8)), 0);
+    assert_ne!(abs_bits[(ABS_Y / 8) as usize] & (1u8 << (ABS_Y % 8)), 0);
+
+    // ABS_INFO(ABS_X) should return a deterministic range (0..32767).
+    bar_write_u8(&mut dev, &mut mem, caps.device, VIRTIO_INPUT_CFG_ABS_INFO);
+    bar_write_u8(&mut dev, &mut mem, caps.device + 1, ABS_X as u8);
+    let size = bar_read_u8(&mut dev, caps.device + 2) as usize;
+    assert_eq!(size, 20);
+    let abs_info = bar_read(&mut dev, caps.device + 8, size);
+    let min = i32::from_le_bytes(abs_info[0..4].try_into().unwrap());
+    let max = i32::from_le_bytes(abs_info[4..8].try_into().unwrap());
+    assert_eq!(min, 0);
+    assert_eq!(max, 32767);
 }
 
 #[test]
