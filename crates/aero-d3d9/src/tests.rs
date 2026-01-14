@@ -39,7 +39,6 @@ fn enc_inst(opcode: u16, params: &[u32]) -> Vec<u32> {
     v.extend_from_slice(params);
     v
 }
-
 fn enc_inst_with_extra(opcode: u16, extra: u32, params: &[u32]) -> Vec<u32> {
     let token = (opcode as u32) | (((params.len() as u32) + 1) << 24) | extra;
     let mut v = vec![token];
