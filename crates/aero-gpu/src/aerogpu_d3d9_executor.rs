@@ -11148,12 +11148,12 @@ mod d3d9 {
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
+    #[cfg(not(target_os = "linux"))]
+    use super::D3d9SamplerState;
     use super::{
         build_alpha_test_wgsl_variant, cmd, d3d9, guest_texture_linear_layout, AerogpuD3d9Error,
         AerogpuD3d9Executor, AerogpuFormat,
     };
-    #[cfg(not(target_os = "linux"))]
-    use super::D3d9SamplerState;
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     struct BlockExpectation {
