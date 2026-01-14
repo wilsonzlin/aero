@@ -12,8 +12,8 @@ func TestDefaultWebRTCDataChannelMaxMessageBytes_DerivedFromProtocolLimits(t *te
 			t.Fatalf("min=%d, want 4096", min)
 		}
 		def := defaultWebRTCDataChannelMaxMessageBytes(maxDatagramPayloadBytes, l2MaxMessageBytes)
-		if def != 4096+DefaultWebRTCDataChannelMaxMessageOverheadBytes {
-			t.Fatalf("default=%d, want %d", def, 4096+DefaultWebRTCDataChannelMaxMessageOverheadBytes)
+		if def != 4096+defaultWebRTCDataChannelMaxMessageOverheadBytes {
+			t.Fatalf("default=%d, want %d", def, 4096+defaultWebRTCDataChannelMaxMessageOverheadBytes)
 		}
 	}
 
@@ -26,7 +26,7 @@ func TestDefaultWebRTCDataChannelMaxMessageBytes_DerivedFromProtocolLimits(t *te
 			t.Fatalf("min=%d, want %d", min, 1500+webrtcDataChannelUDPFrameOverheadBytes)
 		}
 		def := defaultWebRTCDataChannelMaxMessageBytes(maxDatagramPayloadBytes, l2MaxMessageBytes)
-		want := min + DefaultWebRTCDataChannelMaxMessageOverheadBytes
+		want := min + defaultWebRTCDataChannelMaxMessageOverheadBytes
 		if def != want {
 			t.Fatalf("default=%d, want %d", def, want)
 		}
@@ -35,8 +35,8 @@ func TestDefaultWebRTCDataChannelMaxMessageBytes_DerivedFromProtocolLimits(t *te
 
 func TestDefaultWebRTCSCTPMaxReceiveBufferBytes_AtLeastMessageSize(t *testing.T) {
 	// Small message size: expect minimum default (1MiB).
-	if got := defaultWebRTCSCTPMaxReceiveBufferBytes(4096); got != DefaultWebRTCSCTPMaxReceiveBufferBytes {
-		t.Fatalf("got=%d, want %d", got, DefaultWebRTCSCTPMaxReceiveBufferBytes)
+	if got := defaultWebRTCSCTPMaxReceiveBufferBytes(4096); got != defaultWebRTCSCTPMaxReceiveBufferBytesBase {
+		t.Fatalf("got=%d, want %d", got, defaultWebRTCSCTPMaxReceiveBufferBytesBase)
 	}
 
 	// Large message size: expect >= 2x.

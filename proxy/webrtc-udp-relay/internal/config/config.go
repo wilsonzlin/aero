@@ -89,7 +89,7 @@ const (
 	defaultListenAddr                       = "127.0.0.1:8080"
 	defaultShutdown                         = 15 * time.Second
 	defaultICEGatherTimeout                 = 2 * time.Second
-	DefaultWebRTCSessionConnectTimeout      = 30 * time.Second
+	defaultWebRTCSessionConnectTimeout      = 30 * time.Second
 	defaultViolationWindow                  = 10 * time.Second
 	defaultMode                        Mode = ModeDev
 	// defaultSessionPreallocTTL is a safety bound for POST /session to avoid
@@ -101,23 +101,23 @@ const (
 	defaultUDPInboundFilterMode      = UDPInboundFilterModeAddressAndPort
 	defaultDataChannelSendQueueBytes = 1 << 20 // 1MiB
 	defaultMaxUDPBindingsPerSession  = 128
-	DefaultMaxDatagramPayloadBytes   = udpproto.DefaultMaxPayload
+	defaultMaxDatagramPayloadBytes   = udpproto.DefaultMaxPayload
 	// defaultUDPReadBufferBytes is the default UDP socket read buffer size for
 	// each UDP port binding (per IP family).
 	//
 	// The buffer is intentionally sized to MaxDatagramPayloadBytes+1, so the
 	// relay can detect and drop oversized UDP datagrams instead of forwarding a
 	// silently truncated payload.
-	defaultUDPReadBufferBytes          = DefaultMaxDatagramPayloadBytes + 1
+	defaultUDPReadBufferBytes          = defaultMaxDatagramPayloadBytes + 1
 	defaultMaxAllowedRemotesPerBinding = 1024
-	DefaultL2MaxMessageBytes           = 4096
-	// DefaultWebRTCDataChannelMaxMessageOverheadBytes is added on top of the
+	defaultL2MaxMessageBytes           = 4096
+	// defaultWebRTCDataChannelMaxMessageOverheadBytes is added on top of the
 	// protocol-derived minimum when computing the effective default for
 	// WebRTC_DATACHANNEL_MAX_MESSAGE_BYTES.
-	DefaultWebRTCDataChannelMaxMessageOverheadBytes = 256
-	// DefaultWebRTCSCTPMaxReceiveBufferBytes caps the SCTP receive buffer used by
+	defaultWebRTCDataChannelMaxMessageOverheadBytes = 256
+	// defaultWebRTCSCTPMaxReceiveBufferBytesBase caps the SCTP receive buffer used by
 	// pion (applies before application-level message decoding).
-	DefaultWebRTCSCTPMaxReceiveBufferBytes = 1 << 20 // 1MiB
+	defaultWebRTCSCTPMaxReceiveBufferBytesBase = 1 << 20 // 1MiB
 
 	defaultAuthMode AuthMode = AuthModeAPIKey
 
@@ -127,8 +127,8 @@ const (
 	defaultMaxSignalingMessageBytes      = int64(64 * 1024)
 	defaultMaxSignalingMessagesPerSecond = 50
 
-	DefaultUDPWSIdleTimeout  = 60 * time.Second
-	DefaultUDPWSPingInterval = 20 * time.Second
+	defaultUDPWSIdleTimeout  = 60 * time.Second
+	defaultUDPWSPingInterval = 20 * time.Second
 
 	defaultTURNRESTTTLSeconds     int64  = 3600
 	defaultTURNRESTUsernamePrefix string = "aero"
@@ -421,7 +421,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		udpRemoteAllowlistIdleTimeout = d
 	}
 
-	maxDatagramPayloadBytes, err := envIntOrDefault(lookup, envVarMaxDatagramPayloadBytes, DefaultMaxDatagramPayloadBytes)
+	maxDatagramPayloadBytes, err := envIntOrDefault(lookup, envVarMaxDatagramPayloadBytes, defaultMaxDatagramPayloadBytes)
 	if err != nil {
 		return Config{}, err
 	}
@@ -473,7 +473,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	if envAuthForwardModeSet {
 		l2BackendAuthForwardModeStr = strings.TrimSpace(envAuthForwardMode)
 	}
-	l2MaxMessageBytes, err := envIntOrDefault(lookup, envVarL2MaxMessageBytes, DefaultL2MaxMessageBytes)
+	l2MaxMessageBytes, err := envIntOrDefault(lookup, envVarL2MaxMessageBytes, defaultL2MaxMessageBytes)
 	if err != nil {
 		return Config{}, err
 	}
@@ -504,7 +504,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		iceGatherTimeout = d
 	}
 
-	webrtcSessionConnectTimeout := DefaultWebRTCSessionConnectTimeout
+	webrtcSessionConnectTimeout := defaultWebRTCSessionConnectTimeout
 	if raw, ok := lookup(envVarWebRTCSessionConnectTimeout); ok && strings.TrimSpace(raw) != "" {
 		d, err := time.ParseDuration(strings.TrimSpace(raw))
 		if err != nil {
@@ -624,7 +624,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		maxSignalingMessagesPerSecond = n
 	}
 
-	udpWSIdleTimeout := DefaultUDPWSIdleTimeout
+	udpWSIdleTimeout := defaultUDPWSIdleTimeout
 	if raw, ok := lookup(envVarUDPWSIdleTimeout); ok && strings.TrimSpace(raw) != "" {
 		d, err := time.ParseDuration(strings.TrimSpace(raw))
 		if err != nil {
@@ -633,7 +633,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		udpWSIdleTimeout = d
 	}
 
-	udpWSPingInterval := DefaultUDPWSPingInterval
+	udpWSPingInterval := defaultUDPWSPingInterval
 	if raw, ok := lookup(envVarUDPWSPingInterval); ok && strings.TrimSpace(raw) != "" {
 		d, err := time.ParseDuration(strings.TrimSpace(raw))
 		if err != nil {

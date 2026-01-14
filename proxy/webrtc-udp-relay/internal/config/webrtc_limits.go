@@ -34,7 +34,7 @@ func minWebRTCDataChannelMaxMessageBytes(maxDatagramPayloadBytes, l2MaxMessageBy
 func defaultWebRTCDataChannelMaxMessageBytes(maxDatagramPayloadBytes, l2MaxMessageBytes int) int {
 	min := minWebRTCDataChannelMaxMessageBytes(maxDatagramPayloadBytes, l2MaxMessageBytes)
 	// Add a small allowance for future protocol overhead.
-	max := min + DefaultWebRTCDataChannelMaxMessageOverheadBytes
+	max := min + defaultWebRTCDataChannelMaxMessageOverheadBytes
 	if max < min {
 		// Overflow on 32-bit systems is not expected, but clamp defensively.
 		return min
@@ -46,7 +46,7 @@ func defaultWebRTCSCTPMaxReceiveBufferBytes(maxMessageBytes int) int {
 	if maxMessageBytes < 0 {
 		maxMessageBytes = 0
 	}
-	buf := DefaultWebRTCSCTPMaxReceiveBufferBytes
+	buf := defaultWebRTCSCTPMaxReceiveBufferBytesBase
 
 	// Keep the receive buffer comfortably above the per-message cap so that a
 	// small amount of in-flight data does not immediately stall the association.

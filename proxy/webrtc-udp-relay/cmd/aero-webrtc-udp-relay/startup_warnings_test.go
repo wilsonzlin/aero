@@ -9,7 +9,6 @@ import (
 
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/config"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/policy"
-	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/udpproto"
 )
 
 type recordedLog struct {
@@ -473,25 +472,16 @@ func TestStartupSecurityWarnings_WebRTCSessionConnectTimeoutLarge(t *testing.T) 
 func TestStartupSecurityWarnings_SafeConfig_NoWarnings(t *testing.T) {
 	logger, records := newRecordingLogger()
 
-	// Mirror the typical runtime defaults for the WebRTC DoS hardening caps.
-	minDataChannelMax := config.DefaultL2MaxMessageBytes
-	if max := config.DefaultMaxDatagramPayloadBytes + udpproto.MaxFrameOverheadBytes; max > minDataChannelMax {
-		minDataChannelMax = max
+	t.Setenv("API_KEY", "secret")
+	cfg, err := config.Load([]string{"--mode", "prod"})
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
 	}
-	webrtcDataChannelMaxMessageBytes := minDataChannelMax + config.DefaultWebRTCDataChannelMaxMessageOverheadBytes
+	cfg.MaxSessions = 10
 
-	cfg := config.Config{
-		Mode:                             config.ModeProd,
-		AuthMode:                         config.AuthModeAPIKey,
-		APIKey:                           "secret",
-		MaxSessions:                      10,
-		WebRTCSessionConnectTimeout:      config.DefaultWebRTCSessionConnectTimeout,
-		WebRTCDataChannelMaxMessageBytes: webrtcDataChannelMaxMessageBytes,
-		WebRTCSCTPMaxReceiveBufferBytes:  config.DefaultWebRTCSCTPMaxReceiveBufferBytes,
-		// Explicitly avoid query-string auth forwarding mode (the default in config.Load)
-		// so we assert a truly "safe" config produces no warnings.
-		L2BackendAuthForwardMode: config.L2BackendAuthForwardModeSubprotocol,
-	}
+	// Explicitly avoid query-string auth forwarding mode (the default in config.Load)
+	// so we assert a truly "safe" config produces no warnings.
+	cfg.L2BackendAuthForwardMode = config.L2BackendAuthForwardModeSubprotocol
 	destPolicy := policy.NewProductionDestinationPolicy()
 
 	logStartupSecurityWarnings(logger, cfg, destPolicy)

@@ -30,8 +30,8 @@ func TestDefaultsDev(t *testing.T) {
 	if cfg.LogFormat != LogFormatText {
 		t.Fatalf("logFormat=%q, want %q", cfg.LogFormat, LogFormatText)
 	}
-	if cfg.WebRTCSessionConnectTimeout != DefaultWebRTCSessionConnectTimeout {
-		t.Fatalf("WebRTCSessionConnectTimeout=%v, want %v", cfg.WebRTCSessionConnectTimeout, DefaultWebRTCSessionConnectTimeout)
+	if cfg.WebRTCSessionConnectTimeout != defaultWebRTCSessionConnectTimeout {
+		t.Fatalf("WebRTCSessionConnectTimeout=%v, want %v", cfg.WebRTCSessionConnectTimeout, defaultWebRTCSessionConnectTimeout)
 	}
 	if cfg.WebRTCUDPPortRange != nil {
 		t.Fatalf("expected WebRTCUDPPortRange unset, got %+v", *cfg.WebRTCUDPPortRange)
@@ -45,7 +45,7 @@ func TestDefaultsDev(t *testing.T) {
 	if len(cfg.WebRTCNAT1To1IPs) != 0 {
 		t.Fatalf("expected WebRTCNAT1To1IPs empty, got %v", cfg.WebRTCNAT1To1IPs)
 	}
-	wantDCMax := defaultWebRTCDataChannelMaxMessageBytes(DefaultMaxDatagramPayloadBytes, DefaultL2MaxMessageBytes)
+	wantDCMax := defaultWebRTCDataChannelMaxMessageBytes(defaultMaxDatagramPayloadBytes, defaultL2MaxMessageBytes)
 	if cfg.WebRTCDataChannelMaxMessageBytes != wantDCMax {
 		t.Fatalf("WebRTCDataChannelMaxMessageBytes=%d, want %d", cfg.WebRTCDataChannelMaxMessageBytes, wantDCMax)
 	}
@@ -68,8 +68,8 @@ func TestDefaultsDev(t *testing.T) {
 	if cfg.DataChannelSendQueueBytes != defaultDataChannelSendQueueBytes {
 		t.Fatalf("DataChannelSendQueueBytes=%d, want %d", cfg.DataChannelSendQueueBytes, defaultDataChannelSendQueueBytes)
 	}
-	if cfg.MaxDatagramPayloadBytes != DefaultMaxDatagramPayloadBytes {
-		t.Fatalf("MaxDatagramPayloadBytes=%d, want %d", cfg.MaxDatagramPayloadBytes, DefaultMaxDatagramPayloadBytes)
+	if cfg.MaxDatagramPayloadBytes != defaultMaxDatagramPayloadBytes {
+		t.Fatalf("MaxDatagramPayloadBytes=%d, want %d", cfg.MaxDatagramPayloadBytes, defaultMaxDatagramPayloadBytes)
 	}
 	if cfg.MaxAllowedRemotesPerBinding != defaultMaxAllowedRemotesPerBinding {
 		t.Fatalf("MaxAllowedRemotesPerBinding=%d, want %d", cfg.MaxAllowedRemotesPerBinding, defaultMaxAllowedRemotesPerBinding)
@@ -95,8 +95,8 @@ func TestDefaultsDev(t *testing.T) {
 	if cfg.L2BackendForwardAeroSession {
 		t.Fatalf("L2BackendForwardAeroSession=true, want false")
 	}
-	if cfg.L2MaxMessageBytes != DefaultL2MaxMessageBytes {
-		t.Fatalf("L2MaxMessageBytes=%d, want %d", cfg.L2MaxMessageBytes, DefaultL2MaxMessageBytes)
+	if cfg.L2MaxMessageBytes != defaultL2MaxMessageBytes {
+		t.Fatalf("L2MaxMessageBytes=%d, want %d", cfg.L2MaxMessageBytes, defaultL2MaxMessageBytes)
 	}
 	if cfg.MaxUDPBindingsPerSession != defaultMaxUDPBindingsPerSession {
 		t.Fatalf("MaxUDPBindingsPerSession=%d, want %d", cfg.MaxUDPBindingsPerSession, defaultMaxUDPBindingsPerSession)
@@ -113,11 +113,11 @@ func TestDefaultsDev(t *testing.T) {
 	if cfg.SignalingWSPingInterval != defaultSignalingWSPingInterval {
 		t.Fatalf("SignalingWSPingInterval=%v, want %v", cfg.SignalingWSPingInterval, defaultSignalingWSPingInterval)
 	}
-	if cfg.UDPWSIdleTimeout != DefaultUDPWSIdleTimeout {
-		t.Fatalf("UDPWSIdleTimeout=%v, want %v", cfg.UDPWSIdleTimeout, DefaultUDPWSIdleTimeout)
+	if cfg.UDPWSIdleTimeout != defaultUDPWSIdleTimeout {
+		t.Fatalf("UDPWSIdleTimeout=%v, want %v", cfg.UDPWSIdleTimeout, defaultUDPWSIdleTimeout)
 	}
-	if cfg.UDPWSPingInterval != DefaultUDPWSPingInterval {
-		t.Fatalf("UDPWSPingInterval=%v, want %v", cfg.UDPWSPingInterval, DefaultUDPWSPingInterval)
+	if cfg.UDPWSPingInterval != defaultUDPWSPingInterval {
+		t.Fatalf("UDPWSPingInterval=%v, want %v", cfg.UDPWSPingInterval, defaultUDPWSPingInterval)
 	}
 }
 
@@ -286,7 +286,7 @@ func TestWebRTCDataChannelMaxMessageBytes_AutoDerivesFromRelayLimits(t *testing.
 	}
 
 	wantMin := max(1400+webrtcDataChannelUDPFrameOverheadBytes, 2048)
-	want := wantMin + DefaultWebRTCDataChannelMaxMessageOverheadBytes
+	want := wantMin + defaultWebRTCDataChannelMaxMessageOverheadBytes
 	if cfg.WebRTCDataChannelMaxMessageBytes != want {
 		t.Fatalf("WebRTCDataChannelMaxMessageBytes=%d, want %d", cfg.WebRTCDataChannelMaxMessageBytes, want)
 	}

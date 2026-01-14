@@ -24,6 +24,9 @@ import (
 
 const (
 	wsUDPWriteWait = 1 * time.Second
+
+	defaultUDPWSIdleTimeout  = 60 * time.Second
+	defaultUDPWSPingInterval = 20 * time.Second
 )
 
 type udpWSControlMessage struct {
@@ -152,11 +155,11 @@ func (s *udpWebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	sessionKey := ""
 	idleTimeout := s.cfg.UDPWSIdleTimeout
 	if idleTimeout <= 0 {
-		idleTimeout = config.DefaultUDPWSIdleTimeout
+		idleTimeout = defaultUDPWSIdleTimeout
 	}
 	pingInterval := s.cfg.UDPWSPingInterval
 	if pingInterval <= 0 {
-		pingInterval = config.DefaultUDPWSPingInterval
+		pingInterval = defaultUDPWSPingInterval
 	}
 	conn.SetPingHandler(func(appData string) error {
 		// Only extend the idle deadline once authenticated; we still want the auth
