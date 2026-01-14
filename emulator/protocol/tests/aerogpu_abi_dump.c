@@ -91,6 +91,7 @@ int main(void) {
   PRINT_SIZE("aerogpu_escape_dump_ring_v2_inout", aerogpu_escape_dump_ring_v2_inout);
   PRINT_SIZE("aerogpu_escape_selftest_inout", aerogpu_escape_selftest_inout);
   PRINT_SIZE("aerogpu_escape_query_vblank_out", aerogpu_escape_query_vblank_out);
+  PRINT_SIZE("aerogpu_escape_dump_vblank_inout", aerogpu_escape_dump_vblank_inout);
   PRINT_SIZE("aerogpu_escape_query_scanout_out", aerogpu_escape_query_scanout_out);
   PRINT_SIZE("aerogpu_escape_query_cursor_out", aerogpu_escape_query_cursor_out);
   PRINT_SIZE("aerogpu_escape_query_error_out", aerogpu_escape_query_error_out);
@@ -959,6 +960,7 @@ int main(void) {
   PRINT_CONST(AEROGPU_ESCAPE_OP_DUMP_RING);
   PRINT_CONST(AEROGPU_ESCAPE_OP_SELFTEST);
   PRINT_CONST(AEROGPU_ESCAPE_OP_QUERY_VBLANK);
+  PRINT_CONST(AEROGPU_ESCAPE_OP_DUMP_VBLANK);
   PRINT_CONST(AEROGPU_ESCAPE_OP_DUMP_RING_V2);
   PRINT_CONST(AEROGPU_ESCAPE_OP_QUERY_DEVICE_V2);
   PRINT_CONST(AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE);

@@ -620,6 +620,7 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(size("aerogpu_escape_dump_ring_v2_inout"), 52 + 32 * 40);
   assert.equal(size("aerogpu_escape_selftest_inout"), 32);
   assert.equal(size("aerogpu_escape_query_vblank_out"), 56);
+  assert.equal(size("aerogpu_escape_dump_vblank_inout"), 56);
   assert.equal(size("aerogpu_escape_query_scanout_out"), 72);
   assert.equal(size("aerogpu_escape_query_cursor_out"), 72);
   assert.equal(size("aerogpu_escape_query_error_out"), 40);
@@ -1332,6 +1333,7 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(konst("AEROGPU_ESCAPE_OP_DUMP_RING"), 3n);
   assert.equal(konst("AEROGPU_ESCAPE_OP_SELFTEST"), 4n);
   assert.equal(konst("AEROGPU_ESCAPE_OP_QUERY_VBLANK"), 5n);
+  assert.equal(konst("AEROGPU_ESCAPE_OP_DUMP_VBLANK"), 5n);
   assert.equal(konst("AEROGPU_ESCAPE_OP_DUMP_RING_V2"), 6n);
   assert.equal(konst("AEROGPU_ESCAPE_OP_QUERY_CURSOR"), 11n);
   assert.equal(konst("AEROGPU_ESCAPE_OP_READ_GPA"), 13n);
