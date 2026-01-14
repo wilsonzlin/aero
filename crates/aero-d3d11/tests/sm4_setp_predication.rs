@@ -1121,6 +1121,73 @@ fn decodes_and_translates_predicate_operand_swizzle_mask_and_negation() {
 }
 
 #[test]
+fn translates_setp_ordered_ne_is_false_when_nan_is_involved() {
+    // `Sm4CmpOp::Ne` (no `_U` suffix) is the **ordered** not-equal variant in the SM4 tokenized
+    // program format: it must evaluate to false when either operand is NaN.
+    //
+    // We can't execute the shader here, but we can assert that translation emits explicit NaN
+    // guards (`x == x`) rather than using WGSL `!=` directly (which would be unordered).
+    let mut body = Vec::<u32>::new();
+
+    // setp p0.x, l(NaN), l(0.0), ne
+    let dst_p0x = reg_dst(OPERAND_TYPE_PREDICATE, 0, WriteMask::X);
+    let src_nan = imm32_scalar(0x7fc0_0000); // quiet NaN (f32)
+    let src_zero = imm32_scalar(0.0f32.to_bits());
+    let setp_len = 1 + dst_p0x.len() as u32 + src_nan.len() as u32 + src_zero.len() as u32;
+    body.push(opcode_token_setp(setp_len, 1)); // Ne
+    body.extend_from_slice(&dst_p0x);
+    body.extend_from_slice(&src_nan);
+    body.extend_from_slice(&src_zero);
+
+    // (+p0.x) mov o0, l(1,1,1,1)
+    let pred_p0x = pred_operand(0, 0);
+    let imm1 = imm32_vec4([1.0f32.to_bits(); 4]);
+    body.push(opcode_token(
+        OPCODE_MOV,
+        1 + pred_p0x.len() as u32 + 2 + imm1.len() as u32,
+    ));
+    body.extend_from_slice(&pred_p0x);
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&imm1);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 0 is pixel shader.
+    let tokens = make_sm5_program_tokens(0, &body);
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Target", 0, 0, 0b1111)]),
+        ),
+    ]);
+
+    let dxbc = aero_d3d11::DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    let module = aero_d3d11::sm4::decode_program(&program).expect("SM4 decode");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+
+    // For ordered `ne`, the translator should emit `x == x` NaN guards.
+    assert!(
+        translated
+            .wgsl
+            .contains("((setp_a_0).x) == ((setp_a_0).x)"),
+        "expected ordered ne setp to include NaN guard for lhs (`x == x`):\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated
+            .wgsl
+            .contains("((setp_b_0).x) == ((setp_b_0).x)"),
+        "expected ordered ne setp to include NaN guard for rhs (`x == x`):\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
 fn decodes_and_translates_predicated_sample() {
     let mut body = Vec::<u32>::new();
 
