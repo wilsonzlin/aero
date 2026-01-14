@@ -295,6 +295,20 @@ so you must configure an allowlist (CIDRs/ports) before UDP relay traffic will f
 
 For local development/testing, you can set `DESTINATION_POLICY_PRESET=dev` to allow by default.
 
+#### Optional: inbound UDP filtering (NAT behavior)
+
+By default, the relay applies **inbound filtering** so it only forwards inbound UDP from remote
+address+port tuples that the guest previously sent to (`UDP_INBOUND_FILTER_MODE=address_and_port`).
+
+You can switch to full-cone behavior with:
+
+- `UDP_INBOUND_FILTER_MODE=any` (**less safe**; accepts inbound UDP from any remote)
+
+Additional knobs:
+
+- `UDP_REMOTE_ALLOWLIST_IDLE_TIMEOUT` (default: `UDP_BINDING_IDLE_TIMEOUT`) — expire inactive allowlist entries
+- `MAX_ALLOWED_REMOTES_PER_BINDING` — cap the number of tracked remotes per UDP binding (DoS hardening)
+
 See:
 
 - `proxy/webrtc-udp-relay/README.md` (authoritative)
