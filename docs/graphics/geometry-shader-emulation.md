@@ -228,7 +228,7 @@ Supported operand surface (initial):
 - swizzles, write masks, destination saturate (`_sat`), and basic operand modifiers (`abs` / `-` / `-abs`)
 - system values:
   - `SV_PrimitiveID`
-  - `SV_GSInstanceID` (GS instancing is not supported yet, so this currently always evaluates to 0)
+  - `SV_GSInstanceID` (honors `dcl_gsinstancecount` / `[instance(n)]`; values 0..n-1, default 0)
 
 Everything else (resource access like texture sampling / buffer loads/stores, barriers, most other
 SM4/SM5 opcodes, etc) is currently rejected by translation.
@@ -246,8 +246,6 @@ Known limitations include:
     `CREATE_SHADER_DXBC` time.
 - **No stream-out (SO / transform feedback)**
   - GS output cannot be captured into D3D stream-out buffers
-- **No GS instancing**
-  - `[instance(n)]` / `dcl_gsinstancecount` with `n > 1` is rejected (fail-fast).
 - **No adjacency (end-to-end)**
   - `lineadj` / `triadj` inputs are not supported by the command-stream executor yet
 - **Limited output topology / payload**
@@ -265,7 +263,7 @@ Known limitations include:
 Error policy:
 
 - Some unsupported GS features are rejected with clear errors (e.g. non-zero stream indices at
-  `CREATE_SHADER_DXBC` time and `gsinstancecount > 1` at draw time).
+  `CREATE_SHADER_DXBC` time).
 - If the guest GS DXBC cannot be translated by the current `gs_translate` subset, the GS handle is
   still accepted/stored, but draws with that GS bound currently fail with a clear
   “geometry shader not supported” error (rather than silently running the synthetic-expansion
