@@ -21,7 +21,6 @@ static const uint32_t kExpectedPagingBufferPrivateDataSize = AEROGPU_WIN7_DMA_BU
 static const uint32_t kExpectedPagingBufferSegmentId = 1;  // AEROGPU_SEGMENT_ID_SYSTEM
 
 static const wchar_t* kAeroGpuHwidNeedleNew = L"PCI\\VEN_A3A0&DEV_0001";
-static const wchar_t* kAeroGpuHwidNeedleLegacy = L"PCI\\VEN_1AED&DEV_0001";
 
 struct SegmentGroupSize {
   uint64_t LocalMemorySize;
@@ -329,8 +328,7 @@ static bool ReadAeroGpuNonLocalMemorySizeMbFromRegistry(uint32_t* out_mb, std::s
     if (reg_type != REG_MULTI_SZ) {
       continue;
     }
-    if (!MultiSzContainsCaseInsensitive(hwid, kAeroGpuHwidNeedleNew) &&
-        !MultiSzContainsCaseInsensitive(hwid, kAeroGpuHwidNeedleLegacy)) {
+    if (!MultiSzContainsCaseInsensitive(hwid, kAeroGpuHwidNeedleNew)) {
       continue;
     }
 

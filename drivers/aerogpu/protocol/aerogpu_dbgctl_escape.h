@@ -147,11 +147,13 @@ typedef struct aerogpu_escape_query_perf_out {
   aerogpu_escape_u64 last_submitted_fence;
   aerogpu_escape_u64 last_completed_fence;
 
+  /* Ring 0 geometry (always filled; 0 if unknown). */
+  aerogpu_escape_u32 ring0_size_bytes;
+  aerogpu_escape_u32 ring0_entry_count;
+
   /* Ring 0 head/tail indices (best-effort for legacy devices). */
   aerogpu_escape_u32 ring0_head;
   aerogpu_escape_u32 ring0_tail;
-  aerogpu_escape_u32 ring0_size_bytes;
-  aerogpu_escape_u32 ring0_entry_count;
 
   aerogpu_escape_u64 total_submissions;
   aerogpu_escape_u64 total_presents;
@@ -177,10 +179,10 @@ typedef struct aerogpu_escape_query_perf_out {
 AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_query_perf_out) == 144);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, last_submitted_fence) == 16);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, last_completed_fence) == 24);
-AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, ring0_head) == 32);
-AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, ring0_tail) == 36);
-AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, ring0_size_bytes) == 40);
-AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, ring0_entry_count) == 44);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, ring0_size_bytes) == 32);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, ring0_entry_count) == 36);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, ring0_head) == 40);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, ring0_tail) == 44);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, total_submissions) == 48);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, irq_fence_delivered) == 80);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, reset_from_timeout_count) == 104);
