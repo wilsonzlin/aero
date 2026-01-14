@@ -44,9 +44,11 @@ import {
   decodeCmdSetSamplersPayload,
   decodeCmdSetShaderResourceBuffersPayload,
   decodeCmdSetUnorderedAccessBuffersPayload,
+  decodeShaderStageEx,
   decodeStageEx,
   decodeCmdStreamHeader,
   encodeStageEx,
+  resolveShaderStageWithEx,
 } from "../aerogpu/aerogpu_cmd.ts";
 
 test("AerogpuCmdWriter emits aligned packets and updates stream header size", () => {
@@ -638,6 +640,33 @@ test("stage_ex encode/decode helpers roundtrip", () => {
     );
   }
   assert.equal(decodeStageEx(AerogpuShaderStage.Vertex, AerogpuShaderStageEx.Geometry), undefined);
+});
+
+test("stage_ex shader-stage resolution helpers handle legacy Pixel/Vertex and invalid discriminators", () => {
+  // `decodeShaderStageEx` is a strict conversion from legacy `(shaderStage, reserved0)` pairs into a
+  // single `AerogpuShaderStageEx` enum. Pixel/Vertex cannot be represented in this enum.
+  assert.equal(decodeShaderStageEx(AerogpuShaderStage.Vertex, 0), null);
+  assert.equal(decodeShaderStageEx(AerogpuShaderStage.Pixel, 0), null);
+  assert.equal(decodeShaderStageEx(AerogpuShaderStage.Geometry, 0), AerogpuShaderStageEx.Geometry);
+  assert.equal(decodeShaderStageEx(AerogpuShaderStage.Geometry, 123), null);
+  // For compute packets, reserved0==0 is legacy encoding (treated as Compute).
+  assert.equal(decodeShaderStageEx(AerogpuShaderStage.Compute, 0), AerogpuShaderStageEx.Compute);
+  assert.equal(decodeShaderStageEx(AerogpuShaderStage.Compute, AerogpuShaderStageEx.Domain), AerogpuShaderStageEx.Domain);
+  // Stage_ex values that are not part of the protocol enum are rejected.
+  assert.equal(decodeShaderStageEx(AerogpuShaderStage.Compute, 1), null);
+  assert.equal(decodeShaderStageEx(AerogpuShaderStage.Compute, 42), null);
+
+  // `resolveShaderStageWithEx` is the stage_ex-aware decode that can represent legacy Pixel/Vertex.
+  assert.deepEqual(resolveShaderStageWithEx(AerogpuShaderStage.Pixel, 999), { kind: "Pixel" });
+  assert.deepEqual(resolveShaderStageWithEx(AerogpuShaderStage.Vertex, 2), { kind: "Vertex" });
+  assert.deepEqual(resolveShaderStageWithEx(AerogpuShaderStage.Compute, 0), { kind: "Compute" });
+  assert.deepEqual(resolveShaderStageWithEx(AerogpuShaderStage.Compute, AerogpuShaderStageEx.Hull), { kind: "Hull" });
+  // Unknown stage_ex discriminators are preserved for forward-compat.
+  assert.deepEqual(resolveShaderStageWithEx(AerogpuShaderStage.Compute, 1), {
+    kind: "Unknown",
+    shaderStage: AerogpuShaderStage.Compute,
+    stageEx: 1,
+  });
 });
 
 test("AerogpuCmdWriter.createShaderDxbcEx rejects invalid stageEx=1 (Vertex program type) and does not emit a packet", () => {

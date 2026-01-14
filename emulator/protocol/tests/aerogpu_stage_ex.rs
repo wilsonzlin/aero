@@ -2,10 +2,11 @@ use core::mem::{offset_of, size_of};
 
 use aero_protocol::aerogpu::aerogpu_cmd::{
     decode_cmd_create_shader_dxbc_payload_le, decode_cmd_hdr_le, decode_stage_ex, encode_stage_ex,
-    resolve_stage, AerogpuCmdOpcode, AerogpuCmdSetConstantBuffers, AerogpuCmdSetSamplers,
-    AerogpuCmdSetShaderConstantsF, AerogpuCmdSetShaderResourceBuffers, AerogpuCmdSetTexture,
-    AerogpuCmdSetUnorderedAccessBuffers, AerogpuCmdStreamHeader, AerogpuConstantBufferBinding,
-    AerogpuD3dShaderStage, AerogpuShaderResourceBufferBinding, AerogpuShaderStage, AerogpuShaderStageEx,
+    resolve_shader_stage_with_ex, resolve_stage, AerogpuCmdOpcode, AerogpuCmdSetConstantBuffers,
+    AerogpuCmdSetSamplers, AerogpuCmdSetShaderConstantsF, AerogpuCmdSetShaderResourceBuffers,
+    AerogpuCmdSetTexture, AerogpuCmdSetUnorderedAccessBuffers, AerogpuCmdStreamHeader,
+    AerogpuConstantBufferBinding, AerogpuD3dShaderStage, AerogpuShaderResourceBufferBinding,
+    AerogpuShaderStage, AerogpuShaderStageEx, AerogpuShaderStageResolved,
     AerogpuUnorderedAccessBufferBinding,
 };
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
@@ -48,6 +49,63 @@ fn stage_ex_encode_decode_roundtrip() {
             AerogpuShaderStageEx::Compute as u32
         ),
         Some(AerogpuShaderStageEx::Compute)
+    );
+}
+
+#[test]
+fn resolve_shader_stage_with_ex_handles_legacy_and_stage_ex_encodings() {
+    use AerogpuShaderStageResolved as Res;
+
+    // Legacy VS/PS/CS must be representable.
+    assert_eq!(
+        resolve_shader_stage_with_ex(AerogpuShaderStage::Vertex as u32, 0),
+        Res::Vertex
+    );
+    assert_eq!(
+        resolve_shader_stage_with_ex(AerogpuShaderStage::Pixel as u32, 0),
+        Res::Pixel
+    );
+    assert_eq!(
+        resolve_shader_stage_with_ex(AerogpuShaderStage::Compute as u32, 0),
+        Res::Compute
+    );
+
+    // Stage-ex encoding: shader_stage==COMPUTE plus non-zero reserved0 discriminator.
+    assert_eq!(
+        resolve_shader_stage_with_ex(
+            AerogpuShaderStage::Compute as u32,
+            AerogpuShaderStageEx::Geometry as u32
+        ),
+        Res::Geometry
+    );
+    assert_eq!(
+        resolve_shader_stage_with_ex(
+            AerogpuShaderStage::Compute as u32,
+            AerogpuShaderStageEx::Hull as u32
+        ),
+        Res::Hull
+    );
+    assert_eq!(
+        resolve_shader_stage_with_ex(
+            AerogpuShaderStage::Compute as u32,
+            AerogpuShaderStageEx::Domain as u32
+        ),
+        Res::Domain
+    );
+
+    // Non-compute stages ignore reserved0.
+    assert_eq!(
+        resolve_shader_stage_with_ex(AerogpuShaderStage::Vertex as u32, 123),
+        Res::Vertex
+    );
+
+    // Unknown discriminators are preserved for forward-compat.
+    assert_eq!(
+        resolve_shader_stage_with_ex(AerogpuShaderStage::Compute as u32, 42),
+        Res::Unknown {
+            shader_stage: AerogpuShaderStage::Compute as u32,
+            stage_ex: 42
+        }
     );
 }
 
