@@ -5,20 +5,27 @@ WebGPU does **not** expose:
 - a **hull shader (HS)** / **domain shader (DS)** programmable tessellation pipeline, or
 - the **fixed-function tessellator** that turns patches into triangles/lines.
 
-To support D3D11 tessellation, Aero emulates HS/DS and the tessellator using a **multi-pass compute
-pipeline** that produces vertex/index buffers, then draws them with a normal WebGPU render pipeline.
+To support D3D11 tessellation, the intended design is for Aero to emulate HS/DS and the tessellator
+using a **multi-pass compute pipeline** that produces vertex/index buffers, then draws them with a
+normal WebGPU render pipeline.
 
 This document describes the intended architecture for contributors: **pass sequence**, **buffer
 layouts**, the **bind group + ABI model**, the initial **supported subset**, and the **testing
 strategy**.
 
-> Current repo status: tessellation (HS/DS) execution is **not** wired up yet in the host-side
-> D3D11 executor. Patchlist topologies are accepted by `SET_PRIMITIVE_TOPOLOGY`, but when HS/DS are
-> bound the draw currently returns a clear error (instead of executing tessellation). The GS/HS/DS
-> compute-prepass path is also still a placeholder (no real tessellation output). Treat the rest of
-> this document as the target design until HS/DS execution lands; see
-> [`docs/graphics/status.md`](./status.md).
+> Current repo status: tessellation (HS/DS) execution is **not** wired up yet in the host-side D3D11
+> executor.
+> - Patchlist topologies are accepted by `SET_PRIMITIVE_TOPOLOGY`.
+> - When HS/DS are bound, the draw currently fails with a clear error (instead of executing
+>   tessellation).
+> - The GS/HS/DS compute-prepass path is still placeholder scaffolding; patchlist draws without
+>   HS/DS currently produce a placeholder triangle to exercise render-pass splitting + indirect draw
+>   plumbing, not tessellation semantics.
 >
+> Treat the rest of this document as the target design until HS/DS execution lands; see
+> [`docs/graphics/status.md`](./status.md). For adjacency/patchlist bring-up behavior notes, see
+> [`docs/16-d3d10-11-translation.md`](../16-d3d10-11-translation.md).
+
 > Related:
 > - [`docs/16-d3d10-11-translation.md`](../16-d3d10-11-translation.md) (high-level D3D11→WebGPU mapping)
 > - [`docs/graphics/geometry-shader-emulation.md`](./geometry-shader-emulation.md) (compute expansion pattern + indirect draw)
@@ -382,7 +389,19 @@ Recommended test coverage:
 
 These tests should run in `cargo test` without requiring a GPU.
 
-### Pixel-compare tests (GPU integration)
+Current in-tree examples:
+
+- `crates/aero-d3d11/src/runtime/tessellator.rs` (unit tests for tri-domain integer tessellation math)
+
+### GPU tests (building blocks)
+
+While the executor does not yet run HS/DS in draws, GPU tests focus on the pieces that will be used
+by tessellation expansion:
+
+- `crates/aero-d3d11/tests/tessellation_layout_pass.rs` (runs the WGSL layout pass and validates its outputs)
+- `crates/aero-d3d11/tests/tessellation_vs_as_compute.rs` (VS-as-compute plumbing / vertex pulling)
+
+### Pixel-compare tests (GPU integration; future)
 
 Add `aero-d3d11` tests that:
 
@@ -394,8 +413,9 @@ Add `aero-d3d11` tests that:
 
 Suggested fixtures and tests (naming pattern aligns with existing docs/tests):
 
-- Fixtures: `crates/aero-d3d11/tests/fixtures/{hs,ds}_*.dxbc`
-- Tests: `crates/aero-d3d11/tests/aerogpu_cmd_tessellation_*.rs`
+- Existing fixture: `crates/aero-d3d11/tests/fixtures/hs_minimal.dxbc`
+- Future fixtures: `crates/aero-d3d11/tests/fixtures/{hs,ds}_*.dxbc`
+- Future tests: `crates/aero-d3d11/tests/aerogpu_cmd_tessellation_*.rs`
 
 For early bring-up, it’s also useful to add a “buffer readback” test that validates:
 
