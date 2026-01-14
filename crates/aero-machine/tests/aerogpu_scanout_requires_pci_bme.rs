@@ -29,8 +29,8 @@ fn aerogpu_scanout_requires_pci_bus_master_enable_for_host_reads() {
     // already claimed WDDM scanout.
     m.write_physical_u16(0xB8000, 0x1F41); // 'A' with bright attribute
     m.display_present();
-    assert_eq!(m.active_scanout_source(), ScanoutSource::LegacyText);
     let legacy_res = m.display_resolution();
+    assert_eq!(m.active_scanout_source(), ScanoutSource::LegacyText);
     assert_eq!(legacy_res, (720, 400));
 
     let bar0_base = {

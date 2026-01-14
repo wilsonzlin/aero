@@ -283,9 +283,7 @@ fn aerogpu_scanout_disable_reverts_to_legacy_vbe_scanout_with_panning_stride() {
         cfg.bar_range(0).expect("AeroGPU BAR0 missing").base
     };
 
-    // Claim WDDM scanout, then explicitly disable it. Even though a legacy VBE scanout is
-    // configured (including non-default stride/panning), disabling scanout releases WDDM ownership
-    // and presentation falls back to legacy.
+    // Claim WDDM scanout, then explicitly disable it.
     let w = 64u32;
     let h = 64u32;
     let pitch = w * 4;

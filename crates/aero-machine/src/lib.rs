@@ -809,6 +809,7 @@ pub enum MachineError {
     InvalidDiskSize(usize),
     DiskBackend(String),
     GuestMemoryTooLarge(u64),
+    GuestMemorySizeMismatch { expected: u64, actual: u64 },
     AhciRequiresPcPlatform,
     NvmeRequiresPcPlatform,
     IdeRequiresPcPlatform,
@@ -842,6 +843,10 @@ impl fmt::Display for MachineError {
             MachineError::GuestMemoryTooLarge(size) => write!(
                 f,
                 "guest RAM size {size} bytes does not fit in the current platform's usize"
+            ),
+            MachineError::GuestMemorySizeMismatch { expected, actual } => write!(
+                f,
+                "guest RAM backing size mismatch: expected {expected} bytes, got {actual} bytes"
             ),
             MachineError::AeroGpuRequiresPcPlatform => {
                 write!(
@@ -4003,15 +4008,17 @@ impl Machine {
         Ok(machine)
     }
 
-    /// Construct a machine using a caller-provided guest RAM backend.
+    /// Construct a machine using an externally provided guest RAM backend.
     ///
-    /// This exists primarily for wasm32 builds where guest RAM is mapped into the wasm linear
-    /// memory instead of being heap-allocated.
+    /// This is intended for `wasm32` builds where guest RAM can be backed by the host-provided
+    /// WebAssembly linear memory region (avoiding large Rust heap allocations).
+    ///
+    /// `backing.size()` must match `cfg.ram_size_bytes`.
     pub fn new_with_guest_memory(
         mut cfg: MachineConfig,
         backing: Box<dyn memory::GuestMemory>,
     ) -> Result<Self, MachineError> {
-        cfg.ram_size_bytes = backing.size();
+        // Normalize boot selection like `Machine::new`.
         if cfg.boot_device == BootDevice::Cdrom && cfg.boot_drive == 0x80 {
             cfg.boot_drive = 0xE0;
         }
@@ -4021,6 +4028,12 @@ impl Machine {
             BootDevice::Hdd
         };
         Self::validate_cfg(&cfg)?;
+
+        let actual = backing.size();
+        let expected = cfg.ram_size_bytes;
+        if actual != expected {
+            return Err(MachineError::GuestMemorySizeMismatch { expected, actual });
+        }
 
         let chipset = ChipsetState::new(false);
         let mem = SystemMemory::new_with_backing(backing, chipset.a20())?;
