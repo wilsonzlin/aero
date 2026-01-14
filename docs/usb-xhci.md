@@ -178,10 +178,11 @@ Notes:
     - optional WebUSB passthrough APIs (`set_connected`, `drain_actions`, `push_completion`, `reset`,
       `pending_summary`).
 - The IRQ line observed by the guest depends on platform routing (PIRQ swizzle); see [`docs/pci-device-compatibility.md`](./pci-device-compatibility.md) and [`docs/irq-semantics.md`](./irq-semantics.md).
-- `aero_machine::Machine` does not expose an xHCI controller by default (today it wires UHCI for
-  USB), but it can be enabled via `MachineConfig.enable_xhci`. The PC platform
-  (`crates/aero-pc-platform`) can also expose xHCI behind the `PcPlatformConfig.enable_xhci` flag;
-  treat xHCI as opt-in/experimental and the native PCI profile as the shared contract.
+- `aero_machine::Machine` does not expose an xHCI controller by default. USB controllers are opt-in
+  via `MachineConfig.enable_uhci`/`enable_ehci`/`enable_xhci` (xHCI via `MachineConfig.enable_xhci`).
+  The PC platform (`crates/aero-pc-platform`) can also expose xHCI behind the
+  `PcPlatformConfig.enable_xhci` flag; treat xHCI as opt-in/experimental and the native PCI profile
+  as the shared contract.
 - WebHID passthrough attachment behind xHCI is managed via `XhciHidTopologyManager`
   (`web/src/hid/xhci_hid_topology.ts`) and the optional topology APIs exported by
   `XhciControllerBridge` (`attach_hub`, `detach_at_path`, `attach_webhid_device`,
