@@ -369,6 +369,11 @@ The provisioning media generator (`host-harness/New-AeroWin7TestImage.ps1`) can 
       - The harness also emits a host marker for the injection step itself:
         - `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MEDIA_KEYS_INJECT|PASS|attempt=<n>|backend=<qmp_input_send_event|hmp_fallback>|kbd_mode=device/broadcast`
         - `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MEDIA_KEYS_INJECT|FAIL|attempt=<n>|backend=<qmp_input_send_event|hmp_fallback|unknown>|reason=...`
+    - When `-WithInputLed` / `--with-input-led` is enabled, the harness requires the guest marker:
+      - `AERO_VIRTIO_SELFTEST|TEST|virtio-input-led|PASS`
+      This requires provisioning the guest with `--test-input-led` (or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_LED=1`;
+      if using `New-AeroWin7TestImage.ps1`, pass `-TestInputLed`).
+      - This test is guest-driven (HID keyboard LED output reports → virtio-input statusq) and does not require QMP injection.
     - When `-WithInputTabletEvents` (aliases: `-WithVirtioInputTabletEvents`, `-WithTabletEvents`) /
       `--with-input-tablet-events` (aliases: `--with-virtio-input-tablet-events`, `--with-tablet-events`) is enabled,
       the harness attaches `virtio-tablet-pci`, injects a
@@ -407,13 +412,14 @@ without starting the HTTP/QMP servers or launching QEMU:
 
 This repo also includes an **opt-in** self-hosted GitHub Actions workflow wrapper around the Python harness:
 
-- [`.github/workflows/win7-virtio-harness.yml`](../../../.github/workflows/win7-virtio-harness.yml)
-  - Set `qemu_preflight_pci=true` to enable the optional host-side QMP `query-pci` preflight (validates QEMU-emitted `VEN/DEV/REV`).
+  - [`.github/workflows/win7-virtio-harness.yml`](../../../.github/workflows/win7-virtio-harness.yml)
+    - Set `qemu_preflight_pci=true` to enable the optional host-side QMP `query-pci` preflight (validates QEMU-emitted `VEN/DEV/REV`).
   - Use workflow inputs `with_virtio_input_events=true`, `with_virtio_input_wheel=true`, `with_virtio_input_media_keys=true`,
-    `with_virtio_input_events_extended=true`, and/or `with_virtio_input_tablet_events=true` to enable the optional QMP injection-based
+    `with_virtio_input_led=true`, `with_virtio_input_events_extended=true`, and/or `with_virtio_input_tablet_events=true` to enable optional
     end-to-end virtio-input tests.
     (Requires a guest image provisioned with `--test-input-events` for events/wheel, `--test-input-media-keys` for media keys, also
-    `--test-input-events-extended` for the extended markers, and `--test-input-tablet-events` (alias: `--test-tablet-events`) for tablet.)
+    `--test-input-led` for LED/statusq, also `--test-input-events-extended` for the extended markers, and `--test-input-tablet-events`
+    (alias: `--test-tablet-events`) for tablet.)
   - To require the virtio-snd buffer limits stress test, set `with_virtio_snd=true` and `with_snd_buffer_limits=true` (requires a
     guest image provisioned with `--test-snd-buffer-limits`).
 
