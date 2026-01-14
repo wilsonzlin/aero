@@ -460,10 +460,8 @@ func (s *server) handleOffer(w http.ResponseWriter, r *http.Request) {
 		clientCredential,
 		aeroSessionCookieFromRequest(r),
 		s.WebRTCDataChannelMaxMessageBytes,
-		webrtcpeer.SessionOptions{
-			ConnectTimeout: s.webrtcSessionConnectTimeout(),
-			RemoteAddr:     r.RemoteAddr,
-		},
+		s.webrtcSessionConnectTimeout(),
+		r.RemoteAddr,
 		cleanup,
 	)
 	if err != nil {
@@ -619,10 +617,8 @@ func (s *server) handleWebRTCOffer(w http.ResponseWriter, r *http.Request) {
 		clientCredential,
 		aeroSessionCookieFromRequest(r),
 		s.WebRTCDataChannelMaxMessageBytes,
-		webrtcpeer.SessionOptions{
-			ConnectTimeout: s.webrtcSessionConnectTimeout(),
-			RemoteAddr:     r.RemoteAddr,
-		},
+		s.webrtcSessionConnectTimeout(),
+		r.RemoteAddr,
 		cleanup,
 	)
 	if err != nil {
@@ -1183,10 +1179,8 @@ func (wss *wsSession) handleOffer(offerWire sdp) error {
 		wss.credential,
 		aeroSessionCookieFromRequest(wss.req),
 		wss.srv.WebRTCDataChannelMaxMessageBytes,
-		webrtcpeer.SessionOptions{
-			ConnectTimeout: wss.srv.webrtcSessionConnectTimeout(),
-			RemoteAddr:     wss.req.RemoteAddr,
-		},
+		wss.srv.webrtcSessionConnectTimeout(),
+		wss.req.RemoteAddr,
 		cleanup,
 	)
 	if err != nil {

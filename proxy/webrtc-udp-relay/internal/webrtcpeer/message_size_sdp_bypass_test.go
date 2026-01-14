@@ -52,7 +52,8 @@ func TestWebRTCDataChannel_OversizeMessage_IgnoresSDP_ClosesSession(t *testing.T
 		"",
 		nil,
 		cfg.WebRTCDataChannelMaxMessageBytes,
-		SessionOptions{},
+		0,
+		"",
 		func() { closeOnce.Do(func() { close(sessClosed) }) },
 	)
 	if err != nil {
@@ -145,7 +146,8 @@ func TestWebRTCDataChannel_OversizeL2Message_IgnoresSDP_ClosesSession(t *testing
 		"",
 		nil,
 		cfg.WebRTCDataChannelMaxMessageBytes,
-		SessionOptions{},
+		0,
+		"",
 		func() { closeOnce.Do(func() { close(sessClosed) }) },
 	)
 	if err != nil {

@@ -21,15 +21,6 @@ import (
 //	magic+version+af+type (4) + guest_port (2) + ipv6 (16) + remote_port (2) = 24
 const webrtcDataChannelUDPFrameOverheadBytes = udpproto.MaxFrameOverheadBytes
 
-type SessionOptions struct {
-	// ConnectTimeout bounds how long the session is allowed to remain in a
-	// non-connected state before being closed. Values <= 0 disable the timeout.
-	ConnectTimeout time.Duration
-
-	// RemoteAddr is optional caller-provided connection info used for logging.
-	RemoteAddr string
-}
-
 // Session owns a server-side PeerConnection and binds relay adapters to specific
 // DataChannel labels:
 //   - "udp": WebRTC UDP relay
@@ -84,7 +75,7 @@ func rejectDataChannel(dc *webrtc.DataChannel) {
 	_ = dc.Close()
 }
 
-func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.Config, destPolicy *policy.DestinationPolicy, quota *relay.Session, origin, credential string, aeroSessionCookie *string, maxDataChannelMessageBytes int, opts SessionOptions, onClose func()) (*Session, error) {
+func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.Config, destPolicy *policy.DestinationPolicy, quota *relay.Session, origin, credential string, aeroSessionCookie *string, maxDataChannelMessageBytes int, connectTimeout time.Duration, remoteAddr string, onClose func()) (*Session, error) {
 	if api == nil {
 		api = webrtc.NewAPI()
 	}
@@ -104,7 +95,7 @@ func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.C
 		quota:                      quota,
 		origin:                     origin,
 		credential:                 credential,
-		remoteAddr:                 opts.RemoteAddr,
+		remoteAddr:                 remoteAddr,
 		maxDataChannelMessageBytes: maxDataChannelMessageBytes,
 		onClose:                    onClose,
 	}
@@ -401,10 +392,10 @@ func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.C
 		}
 	})
 
-	if opts.ConnectTimeout > 0 {
-		connectTimeout := opts.ConnectTimeout
+	if connectTimeout > 0 {
+		ct := connectTimeout
 		s.connectTimerMu.Lock()
-		s.connectTimer = time.AfterFunc(connectTimeout, func() {
+		s.connectTimer = time.AfterFunc(ct, func() {
 			// Avoid tearing down sessions that did manage to connect just before the
 			// timeout fired but after any state-change callbacks were scheduled.
 			if s.pc.ConnectionState() == webrtc.PeerConnectionStateConnected {
@@ -425,7 +416,7 @@ func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.C
 				"session_id", sessionID,
 				"origin", s.origin,
 				"remote_addr", s.remoteAddr,
-				"timeout", connectTimeout.String(),
+				"timeout", ct.String(),
 			)
 			_ = s.Close()
 		})
