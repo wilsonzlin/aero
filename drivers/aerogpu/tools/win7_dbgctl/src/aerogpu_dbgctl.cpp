@@ -9867,7 +9867,20 @@ int wmain(int argc, wchar_t **argv) {
         }
         return 1;
       }
-      ringId = (uint32_t)wcstoul(argv[++i], NULL, 0);
+      const wchar_t *arg = argv[++i];
+      wchar_t *end = NULL;
+      const unsigned long v = wcstoul(arg, &end, 0);
+      if (!end || end == arg || *end != 0) {
+        fwprintf(stderr, L"Invalid --ring-id value: %s\n", arg);
+        if (g_json_output) {
+          std::string json;
+          const std::string msg = std::string("Invalid --ring-id value: ") + WideToUtf8(arg);
+          JsonWriteTopLevelError(&json, "parse-args", NULL, msg.c_str(), STATUS_INVALID_PARAMETER);
+          WriteJsonToDestination(json);
+        }
+        return 1;
+      }
+      ringId = (uint32_t)v;
       continue;
     }
 
@@ -9883,7 +9896,20 @@ int wmain(int argc, wchar_t **argv) {
         }
         return 1;
       }
-      timeoutMs = (uint32_t)wcstoul(argv[++i], NULL, 0);
+      const wchar_t *arg = argv[++i];
+      wchar_t *end = NULL;
+      const unsigned long v = wcstoul(arg, &end, 0);
+      if (!end || end == arg || *end != 0) {
+        fwprintf(stderr, L"Invalid --timeout-ms value: %s\n", arg);
+        if (g_json_output) {
+          std::string json;
+          const std::string msg = std::string("Invalid --timeout-ms value: ") + WideToUtf8(arg);
+          JsonWriteTopLevelError(&json, "parse-args", NULL, msg.c_str(), STATUS_INVALID_PARAMETER);
+          WriteJsonToDestination(json);
+        }
+        return 1;
+      }
+      timeoutMs = (uint32_t)v;
       timeoutMsSet = true;
       continue;
     }
@@ -10074,7 +10100,20 @@ int wmain(int argc, wchar_t **argv) {
         }
         return 1;
       }
-      vblankSamples = (uint32_t)wcstoul(argv[++i], NULL, 0);
+      const wchar_t *arg = argv[++i];
+      wchar_t *end = NULL;
+      const unsigned long v = wcstoul(arg, &end, 0);
+      if (!end || end == arg || *end != 0) {
+        fwprintf(stderr, L"Invalid --vblank-samples value: %s\n", arg);
+        if (g_json_output) {
+          std::string json;
+          const std::string msg = std::string("Invalid --vblank-samples value: ") + WideToUtf8(arg);
+          JsonWriteTopLevelError(&json, "parse-args", NULL, msg.c_str(), STATUS_INVALID_PARAMETER);
+          WriteJsonToDestination(json);
+        }
+        return 1;
+      }
+      vblankSamples = (uint32_t)v;
       continue;
     }
 
@@ -10090,7 +10129,20 @@ int wmain(int argc, wchar_t **argv) {
         }
         return 1;
       }
-      vblankIntervalMs = (uint32_t)wcstoul(argv[++i], NULL, 0);
+      const wchar_t *arg = argv[++i];
+      wchar_t *end = NULL;
+      const unsigned long v = wcstoul(arg, &end, 0);
+      if (!end || end == arg || *end != 0) {
+        fwprintf(stderr, L"Invalid --vblank-interval-ms value: %s\n", arg);
+        if (g_json_output) {
+          std::string json;
+          const std::string msg = std::string("Invalid --vblank-interval-ms value: ") + WideToUtf8(arg);
+          JsonWriteTopLevelError(&json, "parse-args", NULL, msg.c_str(), STATUS_INVALID_PARAMETER);
+          WriteJsonToDestination(json);
+        }
+        return 1;
+      }
+      vblankIntervalMs = (uint32_t)v;
       continue;
     }
 
@@ -10105,7 +10157,20 @@ int wmain(int argc, wchar_t **argv) {
         }
         return 1;
       }
-      watchSamples = (uint32_t)wcstoul(argv[++i], NULL, 0);
+      const wchar_t *arg = argv[++i];
+      wchar_t *end = NULL;
+      const unsigned long v = wcstoul(arg, &end, 0);
+      if (!end || end == arg || *end != 0) {
+        fwprintf(stderr, L"Invalid --samples value: %s\n", arg);
+        if (g_json_output) {
+          std::string json;
+          const std::string msg = std::string("Invalid --samples value: ") + WideToUtf8(arg);
+          JsonWriteTopLevelError(&json, "parse-args", NULL, msg.c_str(), STATUS_INVALID_PARAMETER);
+          WriteJsonToDestination(json);
+        }
+        return 1;
+      }
+      watchSamples = (uint32_t)v;
       watchSamplesSet = true;
       continue;
     }
@@ -10122,7 +10187,20 @@ int wmain(int argc, wchar_t **argv) {
         }
         return 1;
       }
-      watchIntervalMs = (uint32_t)wcstoul(argv[++i], NULL, 0);
+      const wchar_t *arg = argv[++i];
+      wchar_t *end = NULL;
+      const unsigned long v = wcstoul(arg, &end, 0);
+      if (!end || end == arg || *end != 0) {
+        fwprintf(stderr, L"Invalid --interval-ms value: %s\n", arg);
+        if (g_json_output) {
+          std::string json;
+          const std::string msg = std::string("Invalid --interval-ms value: ") + WideToUtf8(arg);
+          JsonWriteTopLevelError(&json, "parse-args", NULL, msg.c_str(), STATUS_INVALID_PARAMETER);
+          WriteJsonToDestination(json);
+        }
+        return 1;
+      }
+      watchIntervalMs = (uint32_t)v;
       watchIntervalSet = true;
       continue;
     }

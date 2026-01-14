@@ -67,6 +67,12 @@ Assert-ValidJson -ExpectedCommand "dump-cursor-png" -Args @("--dump-cursor-png",
 # Parse errors should still return machine-readable JSON if `--json` is present.
 Assert-ValidJson -ExpectedCommand "parse-args" -Args @("--status", "--query-fence")
 Assert-ValidJson -ExpectedCommand "parse-args" -Args @("--size", "nope", "--read-gpa", "0x0")
+Assert-ValidJson -ExpectedCommand "parse-args" -Args @("--ring-id", "nope", "--dump-ring")
+Assert-ValidJson -ExpectedCommand "parse-args" -Args @("--timeout-ms", "nope", "--status")
+Assert-ValidJson -ExpectedCommand "parse-args" -Args @("--watch-fence", "--samples", "nope", "--interval-ms", "0")
+Assert-ValidJson -ExpectedCommand "parse-args" -Args @("--watch-fence", "--samples", "1", "--interval-ms", "nope")
+Assert-ValidJson -ExpectedCommand "parse-args" -Args @("--dump-vblank", "--vblank-samples", "nope")
+Assert-ValidJson -ExpectedCommand "parse-args" -Args @("--dump-vblank", "--vblank-interval-ms", "nope")
 Assert-ValidJson -ExpectedCommand "parse-args" -Args @("--dump-createalloc", "--csv", "a.csv", "--csv", "b.csv")
 Assert-ValidJson -ExpectedCommand "parse-args" -Args @("--json=")
 
