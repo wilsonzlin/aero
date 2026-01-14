@@ -5740,9 +5740,9 @@ impl Machine {
         }
 
         if self.cfg.enable_aerogpu {
-            // While the guest WDDM driver has claimed scanout (valid `SCANOUT0_*` + `ENABLE=1`),
-            // prefer presenting that framebuffer over the VBE/text fallbacks. Disabling scanout
-            // (`ENABLE=0`) blanks output but does not release WDDM ownership back to legacy VGA/VBE.
+            // Once the guest has claimed WDDM scanout, prefer presenting that framebuffer over the
+            // VBE/text fallbacks. Disabling scanout (`ENABLE=0`) blanks output but does not release
+            // WDDM ownership back to legacy VGA/VBE.
             if self.display_present_aerogpu_scanout() {
                 return;
             }

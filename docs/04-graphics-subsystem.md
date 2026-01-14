@@ -36,7 +36,7 @@ Canonical machine GPU device modes (today):
     feature-gated in-process wgpu backend; implementation: `crates/aero-machine/src/aerogpu.rs`).
 - On the Rust side, the host can call `Machine::display_present()` to update a host-visible RGBA framebuffer cache (`Machine::display_framebuffer()` / `Machine::display_resolution()`).
   - In AeroGPU mode (no standalone VGA device model), `display_present()` prefers the WDDM scanout0 framebuffer once it has been claimed by a valid scanout config; otherwise it falls back to BIOS VBE LFB or BIOS text mode (see `Machine::display_present` in `crates/aero-machine/src/lib.rs`).
-      - Once WDDM scanout is claimed, WDDM ownership remains sticky until reset. Writing `SCANOUT0_ENABLE=0` blanks presentation but does not release WDDM ownership back to legacy output.
+      - Once WDDM scanout is claimed, WDDM ownership remains sticky until VM reset. Writing `SCANOUT0_ENABLE=0` blanks presentation but does not release WDDM ownership back to legacy output.
       - When scanout is claimed but cannot be presented (e.g. PCI `COMMAND.BME=0`), `display_present()` clears the cached framebuffer instead of falling back to legacy output.
   - `aero-machine` does not execute the AeroGPU command stream in-process by default; browser
     runtimes can enable the submission bridge (`Machine::aerogpu_drain_submissions` /
