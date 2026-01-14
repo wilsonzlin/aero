@@ -106,3 +106,6 @@ dependencies.
 For exercising HID output report paths, see:
 
 - `tools/hidtest/` (supports `--led`, `--led-hidd`, and negative pointer tests).
+
+`hidtest` also supports `--led-ioctl-set-output`, `--led-cycle`, and `--led-spam` for stress-testing the virtio-input
+keyboard LED/statusq path.
