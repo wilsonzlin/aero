@@ -83,15 +83,20 @@ pub fn discover_block_mode<B: Tier1Bus>(
 
         // Instruction fetch must respect architectural IP width for 16/32-bit guests.
         //
-        // `Tier1Bus::fetch()` uses `u64` wrapping arithmetic; for 16/32-bit modes we instead mask
+        // `Tier1Bus` helpers use `u64` wrapping arithmetic; for 16/32-bit modes we instead mask
         // each byte address so instructions that straddle the architectural wrap boundary (e.g.
         // EIP=0xFFFF_FFFF) decode consistently with the guest IP size.
-        let bytes = if ip_mask == u64::MAX {
-            bus.fetch(rip, 15)
+        //
+        // When the full 15-byte decode window is contiguous within the masked IP space, we can
+        // use `Tier1Bus::fetch_window()` directly (avoids per-byte masking and heap allocation).
+        let bytes = if ip_mask == u64::MAX || rip <= ip_mask - 14 {
+            bus.fetch_window(rip)
         } else {
-            (0..15)
-                .map(|i| bus.read_u8(rip.wrapping_add(i as u64) & ip_mask))
-                .collect()
+            let mut buf = [0u8; 15];
+            for (i, slot) in buf.iter_mut().enumerate() {
+                *slot = bus.read_u8(rip.wrapping_add(i as u64) & ip_mask);
+            }
+            buf
         };
         let inst = decode_one_mode(rip, &bytes, bitness);
         total_bytes += inst.len as usize;

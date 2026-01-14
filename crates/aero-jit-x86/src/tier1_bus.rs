@@ -9,6 +9,21 @@ pub trait Tier1Bus {
     fn read_u8(&self, addr: u64) -> u8;
     fn write_u8(&mut self, addr: u64, value: u8);
 
+    /// Fetch the next 15 bytes of the instruction stream starting at `addr`.
+    ///
+    /// This is the architectural maximum instruction length and is used by the Tier-1
+    /// decoder/block discovery logic. The default implementation performs 15 individual
+    /// [`read_u8`] calls using `u64` wrapping arithmetic; implementations with fast contiguous RAM
+    /// access can override it to avoid per-byte overhead and heap allocation.
+    #[must_use]
+    fn fetch_window(&self, addr: u64) -> [u8; 15] {
+        let mut buf = [0u8; 15];
+        for (i, slot) in buf.iter_mut().enumerate() {
+            *slot = self.read_u8(addr.wrapping_add(i as u64));
+        }
+        buf
+    }
+
     #[must_use]
     fn read(&self, addr: u64, width: Width) -> u64 {
         match width {

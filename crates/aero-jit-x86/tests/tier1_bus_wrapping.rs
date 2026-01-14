@@ -43,6 +43,31 @@ fn tier1_bus_helpers_use_wrapping_address_arithmetic() {
     // Fetch helper must use the same wrapping arithmetic.
     assert_eq!(bus.fetch(u64::MAX - 1, 4), vec![0xFE, 0xFF, 0x00, 0x01]);
     assert_eq!(&*bus.reads.borrow(), &[u64::MAX - 1, u64::MAX, 0, 1]);
+    bus.reads.borrow_mut().clear();
+
+    // Fixed 15-byte decode window helper should match `fetch` semantics (and also wrap).
+    let window = bus.fetch_window(u64::MAX - 1);
+    assert_eq!(&window[..4], &[0xFE, 0xFF, 0x00, 0x01]);
+    assert_eq!(
+        &*bus.reads.borrow(),
+        &[
+            u64::MAX - 1,
+            u64::MAX,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12
+        ]
+    );
 }
 
 #[test]
