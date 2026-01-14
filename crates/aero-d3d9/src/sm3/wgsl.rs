@@ -1155,21 +1155,30 @@ fn is_uniformity_sensitive_op(op: &IrOp, stage: ShaderStage) -> bool {
     )
 }
 
-fn block_contains_uniformity_sensitive_ops(block: &Block, stage: ShaderStage) -> bool {
+fn block_contains_uniformity_sensitive_ops(
+    block: &Block,
+    stage: ShaderStage,
+    subroutine_infos: &HashMap<u32, SubroutineInfo>,
+) -> bool {
     block.stmts.iter().any(|stmt| match stmt {
         Stmt::Op(op) => is_uniformity_sensitive_op(op, stage),
+        Stmt::Call { label } => subroutine_infos
+            .get(label)
+            .is_some_and(|info| stage == ShaderStage::Pixel && info.uses_derivatives),
         Stmt::If {
             then_block,
             else_block,
             ..
         } => {
-            block_contains_uniformity_sensitive_ops(then_block, stage)
+            block_contains_uniformity_sensitive_ops(then_block, stage, subroutine_infos)
                 || else_block
                     .as_ref()
-                    .is_some_and(|b| block_contains_uniformity_sensitive_ops(b, stage))
+                    .is_some_and(|b| {
+                        block_contains_uniformity_sensitive_ops(b, stage, subroutine_infos)
+                    })
         }
         Stmt::Loop { body, .. } | Stmt::Rep { body, .. } => {
-            block_contains_uniformity_sensitive_ops(body, stage)
+            block_contains_uniformity_sensitive_ops(body, stage, subroutine_infos)
         }
         _ => false,
     })
@@ -2521,10 +2530,13 @@ fn emit_stmt(
             let cond_e = cond_expr(cond, f32_defs)?;
             let not_cond_e = format!("!({cond_e})");
 
-            let contains_sensitive = block_contains_uniformity_sensitive_ops(then_block, stage)
+            let contains_sensitive =
+                block_contains_uniformity_sensitive_ops(then_block, stage, subroutine_infos)
                 || else_block
                     .as_ref()
-                    .is_some_and(|b| block_contains_uniformity_sensitive_ops(b, stage));
+                    .is_some_and(|b| {
+                        block_contains_uniformity_sensitive_ops(b, stage, subroutine_infos)
+                    });
 
             let cond_with_pred = |op: &IrOp, base_cond: &str| -> Result<String, WgslError> {
                 if let Some(pred) = &op_modifiers(op).predicate {
@@ -2706,12 +2718,14 @@ fn emit_stmt(
                             stmts: then_rest.to_vec(),
                         },
                         stage,
+                        subroutine_infos,
                     )
                     || block_contains_uniformity_sensitive_ops(
                         &Block {
                             stmts: else_rest.to_vec(),
                         },
                         stage,
+                        subroutine_infos,
                     ))
             {
                 emit_block_predicated(

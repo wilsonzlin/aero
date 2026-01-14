@@ -244,6 +244,79 @@ fn sm3_nonuniform_conditional_call_to_derivative_subroutine_is_naga_valid() {
 }
 
 #[test]
+fn sm3_nonuniform_if_prefix_ops_then_call_to_derivative_subroutine_is_naga_valid() {
+    // ps_3_0:
+    //   dcl_texcoord0 v0
+    //   if v0.x
+    //     mov r1, v0
+    //     call l0 showing a derivative op inside the subroutine
+    //   endif
+    //   mov oC0, r0
+    //   ret
+    //   label l0
+    //   dsx r0, r1
+    //   ret
+    //   end
+    //
+    // This covers the case where the derivative-using call is *not* the first statement in the
+    // non-uniform `if` body.
+    let ps_tokens = vec![
+        version_token(ShaderStage::Pixel, 3, 0),
+        // dcl_texcoord0 v0  (usage 5 = texcoord)
+        opcode_token(31, 1) | (5u32 << 16),
+        dst_token(1, 0, 0xF),
+        // if v0.x
+        opcode_token(40, 1),
+        src_token(1, 0, 0x00, 0), // v0.xxxx
+        // mov r1, v0
+        opcode_token(1, 2),
+        dst_token(0, 1, 0xF),
+        src_token(1, 0, 0xE4, 0),
+        // call l0
+        opcode_token(25, 1),
+        src_token(18, 0, 0xE4, 0),
+        // endif
+        opcode_token(43, 0),
+        // mov oC0, r0
+        opcode_token(1, 2),
+        dst_token(8, 0, 0xF),
+        src_token(0, 0, 0xE4, 0),
+        // ret (end main)
+        opcode_token(28, 0),
+        // label l0
+        opcode_token(30, 1),
+        src_token(18, 0, 0xE4, 0),
+        // dsx r0, r1
+        opcode_token(86, 2),
+        dst_token(0, 0, 0xF),
+        src_token(0, 1, 0xE4, 0),
+        // ret
+        opcode_token(28, 0),
+        // end
+        0x0000_FFFF,
+    ];
+
+    let decoded = decode_u32_tokens(&ps_tokens).unwrap();
+    let ps = build_ir(&decoded).unwrap();
+    verify_ir(&ps).unwrap();
+
+    let wgsl = generate_wgsl(&ps).unwrap().wgsl;
+    assert!(wgsl.contains("dpdx("), "{wgsl}");
+    assert!(wgsl.contains("_aero_call_taken_"), "{wgsl}");
+    assert!(wgsl.contains("_aero_saved_call"), "{wgsl}");
+    // The call should not remain under a non-uniform `if (v0.x)`.
+    assert!(!wgsl.contains("if (v0"), "{wgsl}");
+
+    let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+}
+
+#[test]
 fn sm3_callnz_is_conditional_in_software() {
     // ps_3_0:
     //   mov r0, c0
