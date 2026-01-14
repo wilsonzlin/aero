@@ -5875,7 +5875,10 @@ void AEROGPU_APIENTRY CsSetUnorderedAccessViews11(D3D11DDI_HDEVICECONTEXT hCtx,
         b.buffer = res ? res->handle : b.buffer;
       }
     }
-    if (pUAVInitialCounts) {
+    // D3D11 ignores initial counts for null UAV bindings. Preserve the sentinel
+    // `0xFFFFFFFFu` in that case so the command stream does not carry a
+    // potentially uninitialized app-provided value.
+    if (pUAVInitialCounts && b.buffer) {
       b.initial_count = pUAVInitialCounts[i];
     }
 
