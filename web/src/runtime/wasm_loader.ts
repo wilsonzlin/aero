@@ -2063,9 +2063,9 @@ export interface WasmApi {
          * This preserves the existing `new(ramSizeBytes)` behavior when `options` is omitted.
          *
          * Note: the mutually-exclusive VGA/AeroGPU device selection mirrors `new_with_config`:
-         * - If callers explicitly set `enableAerogpu` without specifying `enableVga`, VGA defaults to
-         *   `!enableAerogpu`.
-         * - If callers enable `enableVga=true` without explicitly specifying `enableAerogpu`,
+         * - If callers explicitly set `enable_aerogpu` without specifying `enable_vga`, VGA defaults to
+         *   `!enable_aerogpu`.
+         * - If callers enable `enable_vga=true` without explicitly specifying `enable_aerogpu`,
          *   AeroGPU defaults to `false`.
          *
          * Optional for older WASM builds.
