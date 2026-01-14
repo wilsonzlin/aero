@@ -1444,6 +1444,9 @@ with an implementation-defined workgroup size chosen by the translator/runtime.
       - Reads control points from `vs_out`.
       - Let `patch_instance_id = instance_id * patch_count + patch_id` (see `tess_patch_state`
         indexing rule).
+        - If using a flattened dispatch where `global_invocation_id.x` is `patch_instance_id`, derive:
+          - `patch_id = patch_instance_id % patch_count`
+          - `instance_id = patch_instance_id / patch_count`
       - Writes tess factors to `tess_patch_constants[patch_instance_id]` (`SV_TessFactor` /
         `SV_InsideTessFactor`).
       - System values mapping (recommended):
@@ -1456,8 +1459,8 @@ with an implementation-defined workgroup size chosen by the translator/runtime.
           implementation-defined).
       - Writes any additional patch constants needed by DS to scratch (per patch; P2 follow-up).
       - Dispatch mapping (recommended):
-        - `global_invocation_id.x` = `patch_id` (`0..patch_count`)
-        - `global_invocation_id.y` = `instance_id` (`0..instance_count`) (optional; may flatten instances)
+        - Use a flattened patch ID:
+          - `global_invocation_id.x` = `patch_instance_id` (`0..(patch_count * instance_count)`)
     - Tessellation layout pass (recommended; deterministic):
       - Reads tess factors from `tess_patch_constants`.
       - Derives tessellation level(s) and stores them in `tess_patch_state[patch_instance_id]`:
@@ -1479,9 +1482,12 @@ with an implementation-defined workgroup size chosen by the translator/runtime.
         - `SV_OutputControlPointID = control_point_id`
         - `SV_PrimitiveID = patch_instance_id`
       - Dispatch mapping:
-        - `global_invocation_id.x` = `patch_id`
-        - `global_invocation_id.y` = `control_point_id` (`0..control_points`)
-        - `global_invocation_id.z` = `instance_id` (if using 3D dispatch)
+        - Use a 2D grid (matches the in-tree HS translator’s shape):
+          - `global_invocation_id.x` = `control_point_id` (`0..32`)
+          - `global_invocation_id.y` = `patch_instance_id` (`0..(patch_count * instance_count)`)
+        - Early-return if `control_point_id >= control_points`.
+        - Derive `patch_id`/`instance_id` from `patch_instance_id` as described above when indexing
+          per-instance `vs_out` inputs.
     - Tessellator + DS evaluation:
       - Generates tessellated domain points and evaluates DS.
       - For P2a tri-domain, the doc specifies a concrete uniform grid enumeration and triangle-list
@@ -1496,11 +1502,12 @@ with an implementation-defined workgroup size chosen by the translator/runtime.
           the concrete enumeration rules above.
         - `SV_PrimitiveID = patch_instance_id`
       - Dispatch mapping (recommended; conservative bounds):
-        - `global_invocation_id.x` = `patch_id`
-        - `global_invocation_id.y` = `instance_id`
-        - `global_invocation_id.z` = `domain_vertex_id` (`0..V_patch_max`)
+        - Use a 2D grid:
+          - `global_invocation_id.x` = `domain_vertex_id` (`0..V_patch_max`)
+          - `global_invocation_id.y` = `patch_instance_id` (`0..(patch_count * instance_count)`)
         - Early-return if `domain_vertex_id >= tess_patch_state[patch_instance_id].vertex_count` (or
           if `tess_level_u == 0`).
+        - Derive `patch_id`/`instance_id` from `patch_instance_id` when indexing per-instance inputs.
       - Writes `tess_out_vertices` + `tess_out_indices` (index generation may be a separate pass).
       - Indirect args (when no GS is bound):
         - if using the deterministic tessellation layout pass, it typically writes `indirect_args`
