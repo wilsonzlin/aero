@@ -39,7 +39,7 @@ drivers/windows7/tests/
     with `--test-blk-resize` / env var `AERO_VIRTIO_SELFTEST_TEST_BLK_RESIZE=1` to enable it.
   - When the host harness is run with `--with-blk-resize` / `-WithBlkResize`, it waits for the guest `READY` marker,
     issues a QMP resize (`blockdev-resize` with fallback to legacy `block_resize`), and requires `virtio-blk-resize|PASS`.
-- Runs a virtio-net test (wait for DHCP, DNS resolve, HTTP GET).
+- Runs a virtio-net test (wait for DHCP, UDP echo roundtrip to the host harness, DNS resolve, HTTP GET).
 - Runs a virtio-input HID sanity test (detect virtio-input HID devices + validate separate keyboard-only + mouse-only HID devices).
 - Emits a `virtio-input-events` marker that can be used to validate **end-to-end input report delivery** when the host
   harness injects deterministic keyboard/mouse events via QMP (`input-send-event`).
@@ -114,6 +114,7 @@ drivers/windows7/tests/
   AERO_VIRTIO_SELFTEST|TEST|virtio-snd-format|INFO|render=...|capture=...
   # Optional: virtio-snd eventq counters (diagnostic only):
   AERO_VIRTIO_SELFTEST|TEST|virtio-snd-eventq|INFO|completions=...|pcm_period=...|xrun=...|...
+  AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp|PASS
   AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS
   AERO_VIRTIO_SELFTEST|RESULT|PASS
 ```
@@ -124,7 +125,7 @@ The guest may also emit optional interrupt-mode diagnostics markers (information
 - `virtio-<dev>-irq|WARN|...`
 
  The host harness waits for the final `AERO_VIRTIO_SELFTEST|RESULT|...` line and also enforces that key per-test markers
-(virtio-blk + virtio-input + virtio-snd + virtio-snd-capture + virtio-net) were emitted so older selftest binaries
+(virtio-blk + virtio-input + virtio-snd + virtio-snd-capture + virtio-net + virtio-net-udp) were emitted so older selftest binaries
 can’t accidentally pass.
 
 When the harness is run with:
