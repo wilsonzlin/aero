@@ -7631,10 +7631,13 @@ impl AerogpuD3d11Executor {
                         if slot >= used_vertex_slots.len() || !used_vertex_slots[slot] {
                             continue;
                         }
-                        let buffer = u32::from_le(binding.buffer);
-                        if buffer == 0 {
+                        let buffer_raw = u32::from_le(binding.buffer);
+                        if buffer_raw == 0 {
                             continue;
                         }
+                        let buffer = self
+                            .shared_surfaces
+                            .resolve_cmd_handle(buffer_raw, "SET_VERTEX_BUFFERS")?;
                         let needs_upload = self
                             .resources
                             .buffers
@@ -7685,8 +7688,11 @@ impl AerogpuD3d11Executor {
                 }
                 OPCODE_SET_INDEX_BUFFER => {
                     if cmd_bytes.len() >= 12 {
-                        let buffer = read_u32_le(cmd_bytes, 8)?;
-                        if buffer != 0 {
+                        let buffer_raw = read_u32_le(cmd_bytes, 8)?;
+                        if buffer_raw != 0 {
+                            let buffer = self
+                                .shared_surfaces
+                                .resolve_cmd_handle(buffer_raw, "SET_INDEX_BUFFER")?;
                             let needs_upload =
                                 self.resources.buffers.get(&buffer).is_some_and(|buf| {
                                     buf.backing.is_some() && buf.dirty.is_some()
@@ -7727,9 +7733,12 @@ impl AerogpuD3d11Executor {
                     if cmd_bytes.len() >= 24 {
                         let stage_raw = read_u32_le(cmd_bytes, 8)?;
                         let slot = read_u32_le(cmd_bytes, 12)?;
-                        let texture = read_u32_le(cmd_bytes, 16)?;
+                        let texture_raw = read_u32_le(cmd_bytes, 16)?;
                         let stage_ex = read_u32_le(cmd_bytes, 20)?;
-                        if texture != 0 {
+                        if texture_raw != 0 {
+                            let texture = self
+                                .shared_surfaces
+                                .resolve_cmd_handle(texture_raw, "SET_TEXTURE")?;
                             let stage = ShaderStage::from_aerogpu_u32_with_stage_ex(stage_raw, stage_ex)
                                 .ok_or_else(|| {
                                     anyhow!(
@@ -7827,10 +7836,16 @@ impl AerogpuD3d11Executor {
                                     }
 
                                     let base = 24 + i * 16;
-                                    let buffer = read_u32_le(cmd_bytes, base)?;
-                                    if buffer == 0 || buffer == legacy_constants_buffer_id(stage) {
+                                    let buffer_raw = read_u32_le(cmd_bytes, base)?;
+                                    if buffer_raw == 0
+                                        || buffer_raw == legacy_constants_buffer_id(stage)
+                                    {
                                         continue;
                                     }
+                                    let buffer = self.shared_surfaces.resolve_cmd_handle(
+                                        buffer_raw,
+                                        "SET_CONSTANT_BUFFERS",
+                                    )?;
                                     let needs_upload =
                                         self.resources.buffers.get(&buffer).is_some_and(|buf| {
                                             buf.backing.is_some() && buf.dirty.is_some()
@@ -7894,10 +7909,14 @@ impl AerogpuD3d11Executor {
                                 }
 
                                 let base = 24 + i * 16;
-                                let buffer = read_u32_le(cmd_bytes, base)?;
-                                if buffer == 0 {
+                                let buffer_raw = read_u32_le(cmd_bytes, base)?;
+                                if buffer_raw == 0 {
                                     continue;
                                 }
+                                let buffer = self.shared_surfaces.resolve_cmd_handle(
+                                    buffer_raw,
+                                    "SET_SHADER_RESOURCE_BUFFERS",
+                                )?;
                                 let needs_upload =
                                     self.resources.buffers.get(&buffer).is_some_and(|buf| {
                                         buf.backing.is_some() && buf.dirty.is_some()
@@ -7961,10 +7980,14 @@ impl AerogpuD3d11Executor {
                                 }
 
                                 let base = 24 + i * 16;
-                                let buffer = read_u32_le(cmd_bytes, base)?;
-                                if buffer == 0 {
+                                let buffer_raw = read_u32_le(cmd_bytes, base)?;
+                                if buffer_raw == 0 {
                                     continue;
                                 }
+                                let buffer = self.shared_surfaces.resolve_cmd_handle(
+                                    buffer_raw,
+                                    "SET_UNORDERED_ACCESS_BUFFERS",
+                                )?;
                                 let needs_upload =
                                     self.resources.buffers.get(&buffer).is_some_and(|buf| {
                                         buf.backing.is_some() && buf.dirty.is_some()
@@ -18679,6 +18702,8 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {{
 
             const RT: u32 = 1;
             const BUF: u32 = 2;
+            const BUF_ALIAS: u32 = 10;
+            const SHARE_TOKEN: u64 = 0x0123_4567_89ab_cdef;
             const VS: u32 = 3;
             const PS: u32 = 4;
             const ALLOC_ID: u32 = 1;
@@ -18854,6 +18879,8 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {{
             writer.set_viewport(0.0, 0.0, w as f32, h as f32, 0.0, 1.0);
 
             writer.create_buffer(BUF, AEROGPU_RESOURCE_USAGE_STORAGE, BUF_SIZE, ALLOC_ID, 0);
+            writer.export_shared_surface(BUF, SHARE_TOKEN);
+            writer.import_shared_surface(BUF_ALIAS, SHARE_TOKEN);
 
             writer.create_shader_dxbc(VS, AerogpuShaderStage::Vertex, VS_PASSTHROUGH);
             writer.create_shader_dxbc(
@@ -18869,7 +18896,7 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {{
 
             writer.draw(3, 1, 0, 0);
             // Bind the SRV buffer through the legacy `SET_TEXTURE` packet (t0).
-            writer.set_texture(AerogpuShaderStage::Pixel, 0, BUF);
+            writer.set_texture(AerogpuShaderStage::Pixel, 0, BUF_ALIAS);
             writer.draw(3, 1, 0, 0);
 
             let stream = writer.finish();
