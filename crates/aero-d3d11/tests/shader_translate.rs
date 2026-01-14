@@ -1824,6 +1824,21 @@ fn translates_store_uav_typed_as_storage_texture_write() {
         "@group(1) @binding({BINDING_BASE_UAV}) var u0: texture_storage_2d<rgba8unorm, write>;"
     )));
     assert!(translated.wgsl.contains("textureStore(u0, vec2<i32>("));
+    let store_line = translated
+        .wgsl
+        .lines()
+        .find(|l| l.contains("textureStore("))
+        .expect("expected a textureStore call");
+    assert!(
+        store_line.contains("bitcast<i32>(0x00000001u)"),
+        "expected raw integer bit-pattern 1 to flow into textureStore coordinate:\n{}",
+        store_line
+    );
+    assert!(
+        !store_line.contains("select(") && !store_line.contains("floor(") && !store_line.contains("i32("),
+        "textureStore coordinate lowering should not use float-vs-bitcast heuristics or numeric f32->i32 conversions:\n{}",
+        store_line
+    );
 
     let uav_binding = translated
         .reflection
@@ -2043,6 +2058,70 @@ fn translates_store_uav_typed_rg32_float_accepts_xy_mask() {
         .expect("missing uav binding");
     assert_eq!(uav_binding.group, 1);
     assert_eq!(uav_binding.binding, BINDING_BASE_UAV);
+}
+
+#[test]
+fn translates_store_uav_typed_uses_raw_integer_bits_not_float_heuristics() {
+    let osgn_params = vec![sig_param("SV_Target", 0, 0, 0b1111)];
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (FOURCC_OSGN, build_signature_chunk(&osgn_params)),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    // Use float bit patterns that look like exact integers as floats (e.g. 1.0 = 0x3f800000).
+    // `store_uav_typed` must interpret these operands as *integer bits* in the untyped register
+    // file, not as numeric floats that "happen to be integers".
+    let coord = SrcOperand {
+        kind: SrcKind::ImmediateF32([1.0f32.to_bits(), 2.0f32.to_bits(), 0, 0]),
+        swizzle: Swizzle::XYZW,
+        modifier: OperandModifier::None,
+    };
+
+    let module = Sm4Module {
+        stage: ShaderStage::Pixel,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: vec![Sm4Decl::UavTyped2D {
+            slot: 0,
+            // DXGI_FORMAT_R8G8B8A8_UNORM
+            format: 28,
+        }],
+        instructions: vec![
+            Sm4Inst::StoreUavTyped {
+                uav: UavRef { slot: 0 },
+                coord,
+                value: src_imm([0.25, 0.5, 0.75, 1.0]),
+                mask: WriteMask::XYZW,
+            },
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Output, 0, WriteMask::XYZW),
+                src: src_imm([0.0, 0.0, 0.0, 1.0]),
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+    let store_line = translated
+        .wgsl
+        .lines()
+        .find(|l| l.contains("textureStore("))
+        .expect("expected a textureStore call");
+    assert!(
+        store_line.contains("bitcast<i32>(0x3f800000u)"),
+        "expected raw bit pattern 0x3f800000 (f32 1.0) to flow into textureStore as i32 bits:\n{}",
+        store_line
+    );
+    assert!(
+        !store_line.contains("select(")
+            && !store_line.contains("floor(")
+            && !store_line.contains("i32("),
+        "textureStore coordinate lowering should not use float-vs-bitcast heuristics or numeric f32->i32 conversions:\n{}",
+        store_line
+    );
 }
 
 #[test]

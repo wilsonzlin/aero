@@ -6045,6 +6045,9 @@ fn emit_instructions(
                 }
 
                 // Typed UAV stores use integer texel coordinates, similar to `ld`.
+                //
+                // DXBC registers are untyped; interpret the coordinate lanes strictly as integer
+                // bits (bitcast `f32` -> `i32`) with no float-to-int heuristics.
                 let coord_i = emit_src_vec4_i32(coord, inst_index, "store_uav_typed", ctx)?;
                 let x = format!("({coord_i}).x");
                 let y = format!("({coord_i}).y");
