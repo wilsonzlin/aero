@@ -10931,6 +10931,29 @@ mod tests {
     }
 
     #[test]
+    fn ap_cpus_split_for_each_mut_excluding_index_skips_requested_index() {
+        let mut cpus = vec![
+            CpuCore::new(CpuMode::Real),
+            CpuCore::new(CpuMode::Real),
+            CpuCore::new(CpuMode::Real),
+        ];
+
+        // Exclude the middle AP (idx=1) and then exclude the first AP (idx=0). We should be left
+        // with only the last AP (idx=2).
+        let mut seen = Vec::new();
+        {
+            let (before, rest) = cpus.split_at_mut(1);
+            let after = {
+                let (_current, after) = rest.split_first_mut().expect("split_first_mut");
+                after
+            };
+            let mut ap_cpus = ApCpus::Split { before, after };
+            ap_cpus.for_each_mut_excluding_index(0, |idx, _cpu| seen.push(idx));
+        }
+        assert_eq!(seen, vec![2]);
+    }
+
+    #[test]
     fn usb_snapshot_container_decodes_legacy_uhci_only_payload_and_defaults_ehci_fields() {
         let expected_uhci = vec![0x12, 0x34, 0x56];
         let expected_remainder = 42u64;
