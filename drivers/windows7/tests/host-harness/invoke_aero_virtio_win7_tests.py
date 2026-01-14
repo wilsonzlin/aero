@@ -2549,6 +2549,140 @@ def _virtio_snd_buffer_limits_required_failure_message(
     )
 
 
+def _virtio_blk_fail_failure_message(tail: bytes, *, marker_line: Optional[str] = None) -> str:
+    # virtio-blk marker:
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-blk|FAIL|irq_mode=...|irq_message_count=...|write_ok=...|...
+    marker = marker_line
+    if marker is not None:
+        if (
+            not marker.startswith("AERO_VIRTIO_SELFTEST|TEST|virtio-blk|")
+            or _try_extract_marker_status(marker) != "FAIL"
+        ):
+            marker = None
+    if marker is None:
+        marker = _try_extract_last_marker_line(
+            tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|FAIL"
+        )
+
+    details = ""
+    if marker is not None:
+        fields = _parse_marker_kv_fields(marker)
+        parts: list[str] = []
+        for k in (
+            "write_ok",
+            "flush_ok",
+            "read_ok",
+            "write_bytes",
+            "read_bytes",
+            "write_mbps",
+            "read_mbps",
+            "irq_mode",
+            "irq_message_count",
+            "irq_reason",
+            "msix_config_vector",
+            "msix_queue_vector",
+        ):
+            v = fields.get(k, "").strip()
+            if v:
+                parts.append(f"{k}={v}")
+        if parts:
+            details = " (" + " ".join(parts) + ")"
+
+    return "FAIL: VIRTIO_BLK_FAILED: selftest RESULT=PASS but virtio-blk test reported FAIL" + details
+
+
+def _virtio_input_fail_failure_message(tail: bytes, *, marker_line: Optional[str] = None) -> str:
+    # virtio-input marker:
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-input|FAIL|...|reason=<...>|irq_mode=...|irq_message_count=...
+    marker = marker_line
+    if marker is not None:
+        if (
+            not marker.startswith("AERO_VIRTIO_SELFTEST|TEST|virtio-input|")
+            or _try_extract_marker_status(marker) != "FAIL"
+        ):
+            marker = None
+    if marker is None:
+        marker = _try_extract_last_marker_line(
+            tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-input|FAIL"
+        )
+
+    details = ""
+    if marker is not None:
+        fields = _parse_marker_kv_fields(marker)
+        parts: list[str] = []
+        reason = fields.get("reason", "").strip()
+        if reason:
+            parts.append(f"reason={reason}")
+        for k in (
+            "devices",
+            "keyboard_devices",
+            "consumer_devices",
+            "mouse_devices",
+            "ambiguous_devices",
+            "unknown_devices",
+            "keyboard_collections",
+            "consumer_collections",
+            "mouse_collections",
+            "tablet_devices",
+            "tablet_collections",
+            "irq_mode",
+            "irq_message_count",
+            "irq_reason",
+        ):
+            v = fields.get(k, "").strip()
+            if v:
+                parts.append(f"{k}={v}")
+        if parts:
+            details = " (" + " ".join(parts) + ")"
+
+    return (
+        "FAIL: VIRTIO_INPUT_FAILED: selftest RESULT=PASS but virtio-input test reported FAIL"
+        + details
+    )
+
+
+def _virtio_net_fail_failure_message(tail: bytes, *, marker_line: Optional[str] = None) -> str:
+    # virtio-net marker:
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-net|FAIL|large_ok=...|...|upload_ok=...|...|msi_messages=...|irq_mode=...
+    marker = marker_line
+    if marker is not None:
+        if (
+            not marker.startswith("AERO_VIRTIO_SELFTEST|TEST|virtio-net|")
+            or _try_extract_marker_status(marker) != "FAIL"
+        ):
+            marker = None
+    if marker is None:
+        marker = _try_extract_last_marker_line(
+            tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-net|FAIL"
+        )
+
+    details = ""
+    if marker is not None:
+        fields = _parse_marker_kv_fields(marker)
+        parts: list[str] = []
+        for k in (
+            "large_ok",
+            "large_bytes",
+            "large_fnv1a64",
+            "large_mbps",
+            "upload_ok",
+            "upload_bytes",
+            "upload_mbps",
+            "msi",
+            "msi_messages",
+            "irq_mode",
+            "irq_message_count",
+            "irq_reason",
+        ):
+            v = fields.get(k, "").strip()
+            if v:
+                parts.append(f"{k}={v}")
+        if parts:
+            details = " (" + " ".join(parts) + ")"
+
+    return "FAIL: VIRTIO_NET_FAILED: selftest RESULT=PASS but virtio-net test reported FAIL" + details
+
+
 def _virtio_blk_reset_skip_failure_message(tail: bytes, *, marker_line: Optional[str] = None) -> str:
     # virtio-blk miniport reset marker:
     #   AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|PASS|performed=1|counter_before=...|counter_after=...
@@ -6777,17 +6911,20 @@ def main() -> int:
                                 _print_tail(serial_log)
                                 result_code = 1
                                 break
-                        if require_per_test_markers:
-                            # Require per-test markers so older selftest binaries cannot
-                            # accidentally pass the host harness.
-                            if saw_virtio_blk_fail:
-                                print(
-                                    "FAIL: VIRTIO_BLK_FAILED: selftest RESULT=PASS but virtio-blk test reported FAIL",
-                                    file=sys.stderr,
-                                )
-                                _print_tail(serial_log)
-                                result_code = 1
-                                break
+                            if require_per_test_markers:
+                                # Require per-test markers so older selftest binaries cannot
+                                # accidentally pass the host harness.
+                                if saw_virtio_blk_fail:
+                                    print(
+                                        _virtio_blk_fail_failure_message(
+                                            tail,
+                                            marker_line=virtio_blk_marker_line,
+                                        ),
+                                        file=sys.stderr,
+                                    )
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
                             if not saw_virtio_blk_pass:
                                 print(
                                     "FAIL: MISSING_VIRTIO_BLK: selftest RESULT=PASS but did not emit virtio-blk test marker",
@@ -6828,7 +6965,10 @@ def main() -> int:
                                     break
                             if saw_virtio_input_fail:
                                 print(
-                                    "FAIL: VIRTIO_INPUT_FAILED: selftest RESULT=PASS but virtio-input test reported FAIL",
+                                    _virtio_input_fail_failure_message(
+                                        tail,
+                                        marker_line=virtio_input_marker_line,
+                                    ),
                                     file=sys.stderr,
                                 )
                                 _print_tail(serial_log)
@@ -7188,7 +7328,10 @@ def main() -> int:
                                     break
                             if saw_virtio_net_fail:
                                 print(
-                                    "FAIL: VIRTIO_NET_FAILED: selftest RESULT=PASS but virtio-net test reported FAIL",
+                                    _virtio_net_fail_failure_message(
+                                        tail,
+                                        marker_line=virtio_net_marker_line,
+                                    ),
                                     file=sys.stderr,
                                 )
                                 _print_tail(serial_log)
@@ -9080,7 +9223,10 @@ def main() -> int:
                             if require_per_test_markers:
                                 if saw_virtio_blk_fail:
                                     print(
-                                        "FAIL: VIRTIO_BLK_FAILED: selftest RESULT=PASS but virtio-blk test reported FAIL",
+                                        _virtio_blk_fail_failure_message(
+                                            tail,
+                                            marker_line=virtio_blk_marker_line,
+                                        ),
                                         file=sys.stderr,
                                     )
                                     _print_tail(serial_log)
@@ -9126,7 +9272,10 @@ def main() -> int:
                                         break
                                 if saw_virtio_input_fail:
                                     print(
-                                        "FAIL: VIRTIO_INPUT_FAILED: selftest RESULT=PASS but virtio-input test reported FAIL",
+                                        _virtio_input_fail_failure_message(
+                                            tail,
+                                            marker_line=virtio_input_marker_line,
+                                        ),
                                         file=sys.stderr,
                                     )
                                     _print_tail(serial_log)
@@ -9298,7 +9447,10 @@ def main() -> int:
                                         break
                                 if saw_virtio_net_fail:
                                     print(
-                                        "FAIL: VIRTIO_NET_FAILED: selftest RESULT=PASS but virtio-net test reported FAIL",
+                                        _virtio_net_fail_failure_message(
+                                            tail,
+                                            marker_line=virtio_net_marker_line,
+                                        ),
                                         file=sys.stderr,
                                     )
                                     _print_tail(serial_log)

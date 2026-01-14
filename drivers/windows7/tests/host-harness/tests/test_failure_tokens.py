@@ -87,6 +87,53 @@ class FailureTokenTests(unittest.TestCase):
         self.assertIn("reason=wasapi_failed", msg)
         self.assertIn("hr=0x8007000e", msg)
 
+    def test_virtio_blk_failed_token_includes_io_flags_and_irq_fields_when_present(self) -> None:
+        h = self.harness
+
+        tail = (
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|FAIL|irq_mode=msix|irq_message_count=3|"
+            b"write_ok=0|write_bytes=0|write_mbps=0.00|flush_ok=1|read_ok=0|read_bytes=0|read_mbps=0.00\n"
+        )
+        msg = h._virtio_blk_fail_failure_message(tail)
+        self.assertRegex(msg, _TOKEN_RE)
+        self.assertTrue(msg.startswith("FAIL: VIRTIO_BLK_FAILED:"))
+        self.assertIn("write_ok=0", msg)
+        self.assertIn("flush_ok=1", msg)
+        self.assertIn("read_ok=0", msg)
+        self.assertIn("irq_mode=msix", msg)
+        self.assertIn("irq_message_count=3", msg)
+
+    def test_virtio_net_failed_token_includes_large_and_upload_fields_when_present(self) -> None:
+        h = self.harness
+
+        tail = (
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-net|FAIL|large_ok=0|large_bytes=123|large_fnv1a64=0x0000000000000000|"
+            b"large_mbps=0.00|upload_ok=1|upload_bytes=456|upload_mbps=1.23|msi=1|msi_messages=3|irq_mode=msi|irq_message_count=1\n"
+        )
+        msg = h._virtio_net_fail_failure_message(tail)
+        self.assertRegex(msg, _TOKEN_RE)
+        self.assertTrue(msg.startswith("FAIL: VIRTIO_NET_FAILED:"))
+        self.assertIn("large_ok=0", msg)
+        self.assertIn("upload_ok=1", msg)
+        self.assertIn("msi_messages=3", msg)
+        self.assertIn("irq_mode=msi", msg)
+
+    def test_virtio_input_failed_token_includes_reason_and_device_counts_when_present(self) -> None:
+        h = self.harness
+
+        tail = (
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-input|FAIL|devices=1|keyboard_devices=0|consumer_devices=0|"
+            b"mouse_devices=1|ambiguous_devices=0|unknown_devices=0|keyboard_collections=0|consumer_collections=0|"
+            b"mouse_collections=1|tablet_devices=0|tablet_collections=0|reason=device_missing|irq_mode=intx|irq_message_count=0\n"
+        )
+        msg = h._virtio_input_fail_failure_message(tail)
+        self.assertRegex(msg, _TOKEN_RE)
+        self.assertTrue(msg.startswith("FAIL: VIRTIO_INPUT_FAILED:"))
+        self.assertIn("reason=device_missing", msg)
+        self.assertIn("devices=1", msg)
+        self.assertIn("mouse_devices=1", msg)
+        self.assertIn("irq_mode=intx", msg)
+
     def test_virtio_snd_force_null_backend_token(self) -> None:
         h = self.harness
 

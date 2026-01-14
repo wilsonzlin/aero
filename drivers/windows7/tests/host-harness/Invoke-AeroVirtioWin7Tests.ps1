@@ -7728,7 +7728,52 @@ try {
       $scriptExitCode = 1
     }
     "VIRTIO_BLK_FAILED" {
-      Write-Host "FAIL: VIRTIO_BLK_FAILED: selftest RESULT=PASS but virtio-blk test reported FAIL"
+      $writeOk = ""
+      $flushOk = ""
+      $readOk = ""
+      $writeBytes = ""
+      $readBytes = ""
+      $writeMbps = ""
+      $readMbps = ""
+      $irqMode = ""
+      $irqMessageCount = ""
+      $irqReason = ""
+      $msixConfigVector = ""
+      $msixQueueVector = ""
+      $line = Try-ExtractLastAeroMarkerLine `
+        -Tail $result.Tail `
+        -Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-blk|FAIL|" `
+        -SerialLogPath $SerialLogPath
+      if ($null -ne $line) {
+        if ($line -match "(?:^|\|)write_ok=([^|\r\n]+)") { $writeOk = $Matches[1] }
+        if ($line -match "(?:^|\|)flush_ok=([^|\r\n]+)") { $flushOk = $Matches[1] }
+        if ($line -match "(?:^|\|)read_ok=([^|\r\n]+)") { $readOk = $Matches[1] }
+        if ($line -match "(?:^|\|)write_bytes=([^|\r\n]+)") { $writeBytes = $Matches[1] }
+        if ($line -match "(?:^|\|)read_bytes=([^|\r\n]+)") { $readBytes = $Matches[1] }
+        if ($line -match "(?:^|\|)write_mbps=([^|\r\n]+)") { $writeMbps = $Matches[1] }
+        if ($line -match "(?:^|\|)read_mbps=([^|\r\n]+)") { $readMbps = $Matches[1] }
+        if ($line -match "(?:^|\|)irq_mode=([^|\r\n]+)") { $irqMode = $Matches[1] }
+        if ($line -match "(?:^|\|)irq_message_count=([^|\r\n]+)") { $irqMessageCount = $Matches[1] }
+        if ($line -match "(?:^|\|)irq_reason=([^|\r\n]+)") { $irqReason = $Matches[1] }
+        if ($line -match "(?:^|\|)msix_config_vector=([^|\r\n]+)") { $msixConfigVector = $Matches[1] }
+        if ($line -match "(?:^|\|)msix_queue_vector=([^|\r\n]+)") { $msixQueueVector = $Matches[1] }
+      }
+      $detailsParts = @()
+      if (-not [string]::IsNullOrEmpty($writeOk)) { $detailsParts += "write_ok=$writeOk" }
+      if (-not [string]::IsNullOrEmpty($flushOk)) { $detailsParts += "flush_ok=$flushOk" }
+      if (-not [string]::IsNullOrEmpty($readOk)) { $detailsParts += "read_ok=$readOk" }
+      if (-not [string]::IsNullOrEmpty($writeBytes)) { $detailsParts += "write_bytes=$writeBytes" }
+      if (-not [string]::IsNullOrEmpty($readBytes)) { $detailsParts += "read_bytes=$readBytes" }
+      if (-not [string]::IsNullOrEmpty($writeMbps)) { $detailsParts += "write_mbps=$writeMbps" }
+      if (-not [string]::IsNullOrEmpty($readMbps)) { $detailsParts += "read_mbps=$readMbps" }
+      if (-not [string]::IsNullOrEmpty($irqMode)) { $detailsParts += "irq_mode=$irqMode" }
+      if (-not [string]::IsNullOrEmpty($irqMessageCount)) { $detailsParts += "irq_message_count=$irqMessageCount" }
+      if (-not [string]::IsNullOrEmpty($irqReason)) { $detailsParts += "irq_reason=$irqReason" }
+      if (-not [string]::IsNullOrEmpty($msixConfigVector)) { $detailsParts += "msix_config_vector=$msixConfigVector" }
+      if (-not [string]::IsNullOrEmpty($msixQueueVector)) { $detailsParts += "msix_queue_vector=$msixQueueVector" }
+      $details = ""
+      if ($detailsParts.Count -gt 0) { $details = " (" + ($detailsParts -join " ") + ")" }
+      Write-Host "FAIL: VIRTIO_BLK_FAILED: selftest RESULT=PASS but virtio-blk test reported FAIL$details"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -7968,7 +8013,46 @@ try {
       $scriptExitCode = 1
     }
     "VIRTIO_INPUT_FAILED" {
-      Write-Host "FAIL: VIRTIO_INPUT_FAILED: selftest RESULT=PASS but virtio-input test reported FAIL"
+      $reason = ""
+      $devices = ""
+      $keyboardDevices = ""
+      $consumerDevices = ""
+      $mouseDevices = ""
+      $unknownDevices = ""
+      $tabletDevices = ""
+      $irqMode = ""
+      $irqMessageCount = ""
+      $irqReason = ""
+      $line = Try-ExtractLastAeroMarkerLine `
+        -Tail $result.Tail `
+        -Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-input|FAIL|" `
+        -SerialLogPath $SerialLogPath
+      if ($null -ne $line) {
+        if ($line -match "(?:^|\|)reason=([^|\r\n]+)") { $reason = $Matches[1] }
+        if ($line -match "(?:^|\|)devices=([^|\r\n]+)") { $devices = $Matches[1] }
+        if ($line -match "(?:^|\|)keyboard_devices=([^|\r\n]+)") { $keyboardDevices = $Matches[1] }
+        if ($line -match "(?:^|\|)consumer_devices=([^|\r\n]+)") { $consumerDevices = $Matches[1] }
+        if ($line -match "(?:^|\|)mouse_devices=([^|\r\n]+)") { $mouseDevices = $Matches[1] }
+        if ($line -match "(?:^|\|)unknown_devices=([^|\r\n]+)") { $unknownDevices = $Matches[1] }
+        if ($line -match "(?:^|\|)tablet_devices=([^|\r\n]+)") { $tabletDevices = $Matches[1] }
+        if ($line -match "(?:^|\|)irq_mode=([^|\r\n]+)") { $irqMode = $Matches[1] }
+        if ($line -match "(?:^|\|)irq_message_count=([^|\r\n]+)") { $irqMessageCount = $Matches[1] }
+        if ($line -match "(?:^|\|)irq_reason=([^|\r\n]+)") { $irqReason = $Matches[1] }
+      }
+      $detailsParts = @()
+      if (-not [string]::IsNullOrEmpty($reason)) { $detailsParts += "reason=$reason" }
+      if (-not [string]::IsNullOrEmpty($devices)) { $detailsParts += "devices=$devices" }
+      if (-not [string]::IsNullOrEmpty($keyboardDevices)) { $detailsParts += "keyboard_devices=$keyboardDevices" }
+      if (-not [string]::IsNullOrEmpty($consumerDevices)) { $detailsParts += "consumer_devices=$consumerDevices" }
+      if (-not [string]::IsNullOrEmpty($mouseDevices)) { $detailsParts += "mouse_devices=$mouseDevices" }
+      if (-not [string]::IsNullOrEmpty($unknownDevices)) { $detailsParts += "unknown_devices=$unknownDevices" }
+      if (-not [string]::IsNullOrEmpty($tabletDevices)) { $detailsParts += "tablet_devices=$tabletDevices" }
+      if (-not [string]::IsNullOrEmpty($irqMode)) { $detailsParts += "irq_mode=$irqMode" }
+      if (-not [string]::IsNullOrEmpty($irqMessageCount)) { $detailsParts += "irq_message_count=$irqMessageCount" }
+      if (-not [string]::IsNullOrEmpty($irqReason)) { $detailsParts += "irq_reason=$irqReason" }
+      $details = ""
+      if ($detailsParts.Count -gt 0) { $details = " (" + ($detailsParts -join " ") + ")" }
+      Write-Host "FAIL: VIRTIO_INPUT_FAILED: selftest RESULT=PASS but virtio-input test reported FAIL$details"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -8613,7 +8697,52 @@ try {
       $scriptExitCode = 1
     }
     "VIRTIO_NET_FAILED" {
-      Write-Host "FAIL: VIRTIO_NET_FAILED: selftest RESULT=PASS but virtio-net test reported FAIL"
+      $largeOk = ""
+      $largeBytes = ""
+      $largeFnv = ""
+      $largeMbps = ""
+      $uploadOk = ""
+      $uploadBytes = ""
+      $uploadMbps = ""
+      $msi = ""
+      $msiMessages = ""
+      $irqMode = ""
+      $irqMessageCount = ""
+      $irqReason = ""
+      $line = Try-ExtractLastAeroMarkerLine `
+        -Tail $result.Tail `
+        -Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-net|FAIL|" `
+        -SerialLogPath $SerialLogPath
+      if ($null -ne $line) {
+        if ($line -match "(?:^|\|)large_ok=([^|\r\n]+)") { $largeOk = $Matches[1] }
+        if ($line -match "(?:^|\|)large_bytes=([^|\r\n]+)") { $largeBytes = $Matches[1] }
+        if ($line -match "(?:^|\|)large_fnv1a64=([^|\r\n]+)") { $largeFnv = $Matches[1] }
+        if ($line -match "(?:^|\|)large_mbps=([^|\r\n]+)") { $largeMbps = $Matches[1] }
+        if ($line -match "(?:^|\|)upload_ok=([^|\r\n]+)") { $uploadOk = $Matches[1] }
+        if ($line -match "(?:^|\|)upload_bytes=([^|\r\n]+)") { $uploadBytes = $Matches[1] }
+        if ($line -match "(?:^|\|)upload_mbps=([^|\r\n]+)") { $uploadMbps = $Matches[1] }
+        if ($line -match "(?:^|\|)msi=([^|\r\n]+)") { $msi = $Matches[1] }
+        if ($line -match "(?:^|\|)msi_messages=([^|\r\n]+)") { $msiMessages = $Matches[1] }
+        if ($line -match "(?:^|\|)irq_mode=([^|\r\n]+)") { $irqMode = $Matches[1] }
+        if ($line -match "(?:^|\|)irq_message_count=([^|\r\n]+)") { $irqMessageCount = $Matches[1] }
+        if ($line -match "(?:^|\|)irq_reason=([^|\r\n]+)") { $irqReason = $Matches[1] }
+      }
+      $detailsParts = @()
+      if (-not [string]::IsNullOrEmpty($largeOk)) { $detailsParts += "large_ok=$largeOk" }
+      if (-not [string]::IsNullOrEmpty($largeBytes)) { $detailsParts += "large_bytes=$largeBytes" }
+      if (-not [string]::IsNullOrEmpty($largeFnv)) { $detailsParts += "large_fnv1a64=$largeFnv" }
+      if (-not [string]::IsNullOrEmpty($largeMbps)) { $detailsParts += "large_mbps=$largeMbps" }
+      if (-not [string]::IsNullOrEmpty($uploadOk)) { $detailsParts += "upload_ok=$uploadOk" }
+      if (-not [string]::IsNullOrEmpty($uploadBytes)) { $detailsParts += "upload_bytes=$uploadBytes" }
+      if (-not [string]::IsNullOrEmpty($uploadMbps)) { $detailsParts += "upload_mbps=$uploadMbps" }
+      if (-not [string]::IsNullOrEmpty($msi)) { $detailsParts += "msi=$msi" }
+      if (-not [string]::IsNullOrEmpty($msiMessages)) { $detailsParts += "msi_messages=$msiMessages" }
+      if (-not [string]::IsNullOrEmpty($irqMode)) { $detailsParts += "irq_mode=$irqMode" }
+      if (-not [string]::IsNullOrEmpty($irqMessageCount)) { $detailsParts += "irq_message_count=$irqMessageCount" }
+      if (-not [string]::IsNullOrEmpty($irqReason)) { $detailsParts += "irq_reason=$irqReason" }
+      $details = ""
+      if ($detailsParts.Count -gt 0) { $details = " (" + ($detailsParts -join " ") + ")" }
+      Write-Host "FAIL: VIRTIO_NET_FAILED: selftest RESULT=PASS but virtio-net test reported FAIL$details"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
