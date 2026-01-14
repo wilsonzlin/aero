@@ -2090,19 +2090,28 @@ impl PcPlatform {
                     bdf,
                     pin: PciInterruptPin::IntA,
                     query_level: Box::new(move |pc| {
-                        let command = {
+                        let (command, msix_enabled, msix_masked) = {
                             let mut pci_cfg = pc.pci_cfg.borrow_mut();
-                            pci_cfg
-                                .bus_mut()
-                                .device_config(bdf)
-                                .map(|cfg| cfg.command())
-                                .unwrap_or(0)
+                            match pci_cfg.bus_mut().device_config(bdf) {
+                                Some(cfg) => {
+                                    let msix = cfg.capability::<MsixCapability>();
+                                    (
+                                        cfg.command(),
+                                        msix.is_some_and(|msix| msix.enabled()),
+                                        msix.is_some_and(|msix| msix.function_masked()),
+                                    )
+                                }
+                                None => (0, false, false),
+                            }
                         };
 
                         // Keep the virtio transport's internal PCI command register in sync so
                         // `VirtioPciDevice::irq_level` can respect COMMAND.INTX_DISABLE (bit 10)
                         // even though the PC platform owns the canonical PCI config space.
                         let mut dev = virtio_for_intx.borrow_mut();
+                        // Mirror MSI-X enable/mask bits into the runtime virtio transport so INTx
+                        // is suppressed once MSI-X is enabled in canonical PCI config space.
+                        sync_msix_capability_into_config(dev.config_mut(), msix_enabled, msix_masked);
                         dev.set_pci_command(command);
                         dev.irq_level()
                     }),

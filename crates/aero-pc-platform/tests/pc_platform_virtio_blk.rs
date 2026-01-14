@@ -1916,6 +1916,96 @@ fn pc_platform_virtio_blk_msix_function_mask_defers_delivery_until_unmasked() {
 }
 
 #[test]
+fn pc_platform_virtio_blk_msix_enable_suppresses_legacy_intx_in_poll_pci_intx_lines() {
+    let config = PcPlatformConfig {
+        enable_virtio_blk: true,
+        enable_virtio_msix: true,
+        // Keep the platform minimal and deterministic for a focused MSI-X regression test.
+        enable_ahci: false,
+        enable_uhci: false,
+        enable_nvme: false,
+        enable_ide: false,
+        enable_e1000: false,
+        enable_ehci: false,
+        enable_xhci: false,
+        ..Default::default()
+    };
+    let mut pc = PcPlatform::new_with_config(2 * 1024 * 1024, config);
+    let bdf = VIRTIO_BLK.bdf;
+
+    // Ensure legacy INTx is enabled in the guest-visible PCI command register (bit 10 clear).
+    let cmd_status = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04);
+    let command = (cmd_status & 0xffff) as u16;
+    write_cfg_u16(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x04,
+        command & !(1 << 10),
+    );
+
+    // Synthesize a pending legacy INTx interrupt inside the virtio transport, then poll PCI INTx
+    // lines to drive it into the platform interrupt controller.
+    let virtio_blk = pc.virtio_blk.as_ref().expect("virtio-blk enabled").clone();
+    virtio_blk.borrow_mut().signal_config_interrupt();
+    pc.poll_pci_intx_lines();
+
+    let gsi = pc.pci_intx.gsi_for_intx(bdf, PciInterruptPin::IntA);
+    assert_eq!(pc.interrupts.borrow().gsi_level(gsi), true);
+
+    // Enable MSI-X in the canonical PCI config space. Polling INTx lines should mirror MSI-X state
+    // into the runtime virtio transport so legacy INTx becomes suppressed even without any virtio
+    // queue processing.
+    let msix_cap = {
+        let mut cap_ptr = read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, 0x34);
+        let mut guard = 0usize;
+        let mut found = None;
+        while cap_ptr != 0 {
+            guard += 1;
+            assert!(guard <= 16, "capability list too long or cyclic");
+            let cap_id = read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, cap_ptr);
+            if cap_id == PCI_CAP_ID_MSIX {
+                found = Some(cap_ptr);
+                break;
+            }
+            cap_ptr = read_cfg_u8(
+                &mut pc,
+                bdf.bus,
+                bdf.device,
+                bdf.function,
+                cap_ptr.wrapping_add(1),
+            );
+        }
+        found.expect("virtio-blk should expose MSI-X capability")
+    };
+
+    let ctrl_lo = read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, msix_cap + 0x02);
+    let ctrl_hi = read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, msix_cap + 0x03);
+    let ctrl = u16::from(ctrl_lo) | (u16::from(ctrl_hi) << 8);
+    let ctrl = (ctrl & !(1 << 14)) | (1 << 15);
+    write_cfg_u16(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        msix_cap + 0x02,
+        ctrl,
+    );
+
+    pc.poll_pci_intx_lines();
+    assert_eq!(
+        pc.interrupts.borrow().gsi_level(gsi),
+        false,
+        "expected legacy INTx to be suppressed once MSI-X is enabled"
+    );
+    assert!(
+        !virtio_blk.borrow().irq_level(),
+        "expected virtio transport legacy INTx line to be deasserted once MSI-X is enabled"
+    );
+}
+
+#[test]
 fn pc_platform_virtio_blk_snapshot_restore_preserves_virtqueue_progress() {
     let mut pc = PcPlatform::new_with_virtio_blk(2 * 1024 * 1024);
     let bdf = VIRTIO_BLK.bdf;
