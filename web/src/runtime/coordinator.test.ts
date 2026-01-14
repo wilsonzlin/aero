@@ -653,9 +653,9 @@ describe("runtime/coordinator", () => {
     const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
     (coordinator as any).shared = shared;
-    // `allocateTestSegments` uses a tiny 64KiB guest RAM layout; keep the config consistent so we
-    // don't trigger a full restart due to a guest memory layout change.
-    const guestMemoryMiB = 64 / 1024;
+    // Keep the config consistent with `allocateTestSegments` so we don't trigger a full restart
+    // due to a guest memory layout change.
+    const guestMemoryMiB = TEST_GUEST_MIB;
     // Older/compat configs may omit vmRuntime; treat that as legacy.
     (coordinator as any).activeConfig = {
       guestMemoryMiB,
