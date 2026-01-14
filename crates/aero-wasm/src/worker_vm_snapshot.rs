@@ -317,10 +317,25 @@ impl SnapshotSource for WorkerVmSnapshot {
 
     fn read_ram(&self, offset: u64, buf: &mut [u8]) -> aero_snapshot::Result<()> {
         let abs = self.ram_range_checked(offset, buf.len())?;
-        // Safety: `ram_range_checked` bounds-checks the access against both
-        // guest_size and the current wasm linear memory size.
+        // Shared-memory (`+atomics`) builds: use atomic byte loads to avoid Rust data-race UB when
+        // guest RAM lives in a shared `WebAssembly.Memory`.
+        #[cfg(target_feature = "atomics")]
+        {
+            use core::sync::atomic::{AtomicU8, Ordering};
+            let src = abs as *const AtomicU8;
+            for (i, slot) in buf.iter_mut().enumerate() {
+                // Safety: `ram_range_checked` bounds-checks the access against both guest_size and
+                // the current wasm linear memory size, and `AtomicU8` has alignment 1.
+                *slot = unsafe { (&*src.add(i)).load(Ordering::Relaxed) };
+            }
+        }
+
+        // Non-atomic wasm builds: linear memory is not shared across threads, so memcpy is fine.
+        #[cfg(not(target_feature = "atomics"))]
         unsafe {
-            core::ptr::copy(abs as *const u8, buf.as_mut_ptr(), buf.len());
+            // Safety: `ram_range_checked` bounds-checks the access against both guest_size and the
+            // current wasm linear memory size.
+            core::ptr::copy_nonoverlapping(abs as *const u8, buf.as_mut_ptr(), buf.len());
         }
         Ok(())
     }
@@ -354,10 +369,25 @@ impl SnapshotTarget for WorkerVmSnapshot {
 
     fn write_ram(&mut self, offset: u64, data: &[u8]) -> aero_snapshot::Result<()> {
         let abs = self.ram_range_checked(offset, data.len())?;
-        // Safety: `ram_range_checked` bounds-checks the access against both
-        // guest_size and the current wasm linear memory size.
+        // Shared-memory (`+atomics`) builds: use atomic byte stores to avoid Rust data-race UB when
+        // guest RAM lives in a shared `WebAssembly.Memory`.
+        #[cfg(target_feature = "atomics")]
+        {
+            use core::sync::atomic::{AtomicU8, Ordering};
+            let dst = abs as *const AtomicU8;
+            for (i, byte) in data.iter().copied().enumerate() {
+                // Safety: `ram_range_checked` bounds-checks the access against both guest_size and
+                // the current wasm linear memory size, and `AtomicU8` has alignment 1.
+                unsafe { (&*dst.add(i)).store(byte, Ordering::Relaxed) };
+            }
+        }
+
+        // Non-atomic wasm builds: linear memory is not shared across threads, so memcpy is fine.
+        #[cfg(not(target_feature = "atomics"))]
         unsafe {
-            core::ptr::copy(data.as_ptr(), abs as *mut u8, data.len());
+            // Safety: `ram_range_checked` bounds-checks the access against both guest_size and the
+            // current wasm linear memory size.
+            core::ptr::copy_nonoverlapping(data.as_ptr(), abs as *mut u8, data.len());
         }
         Ok(())
     }
