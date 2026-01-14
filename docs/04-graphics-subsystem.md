@@ -179,11 +179,13 @@ Key properties:
 - **Header is an array of 32-bit atomics** so it can be accessed from both Rust and JS via `AtomicU32` / `Int32Array + Atomics`.
 - **Double buffering** (`slot 0` and `slot 1`):
   - producer writes into the “back” slot, then publishes it by flipping `active_index` and incrementing `frame_seq`.
-- Producer also sets a `frame_dirty` flag (`SharedFramebufferHeaderIndex.FRAME_DIRTY`) on publish. This is a producer→consumer “new frame” / liveness flag that some implementations may `Atomics.wait` on. (Not to be confused with the frame pacing state value `FRAME_DIRTY` in `web/src/ipc/gpu-protocol.ts`.)
+- Producer also sets a `frame_dirty` flag (`SharedFramebufferHeaderIndex.FRAME_DIRTY`) on publish. This is a producer→consumer “new frame” / liveness flag that some implementations may `Atomics.wait` on. It can also be treated as a best-effort **consumer acknowledgement** (ACK): consumers clear it after they finish copying/presenting the active buffer, and producers may choose to throttle publishing until it is cleared to avoid overwriting a buffer that is still being read.
+  (Not to be confused with the frame pacing state value `FRAME_DIRTY` in `web/src/ipc/gpu-protocol.ts`.)
   - Published by: `SharedFramebufferWriter::write_frame()` in `crates/aero-shared/src/shared_framebuffer.rs`
-  - Cleared by consumers after consuming a frame (examples):
-    - Rust: `FrameSource::poll_frame()` in `crates/aero-gpu/src/frame_source.rs`
-    - Browser GPU worker: `presentOnce()` in `web/src/workers/gpu-worker.ts` (clears after consuming a legacy frame, and also when scanout owns output to avoid stale legacy-dirty state).
+- Cleared by consumers after consuming a frame (examples):
+  - Rust: `FrameSource::ack_frame(frame.seq)` in `crates/aero-gpu/src/frame_source.rs`
+  - Browser GPU worker: `presentOnce()` in `web/src/workers/gpu-worker.ts` (clears after consuming a legacy frame, and also when scanout owns output to avoid stale legacy-dirty state).
+  - Main-thread fallback presenter: `SharedLayoutPresenter` in `web/src/display/shared_layout_presenter.ts` (clears after `putImageData`).
 - Optional **dirty-tile tracking**:
   - each slot may have a dirty bitset (`dirty_words_per_buffer`)
   - dirty tiles are converted to pixel rects by:
@@ -196,7 +198,7 @@ The canonical publish ordering (important for Atomics-based consumers) is docume
 
 Rust-side consumer (host/presenter utilities):
 
-- `crates/aero-gpu/src/frame_source.rs` (`FrameSource`) polls `frame_seq`, selects the active slot, and converts dirty tiles into rects for the presenter.
+- `crates/aero-gpu/src/frame_source.rs` (`FrameSource`) polls `frame_seq`, selects the active slot, and converts dirty tiles into rects for the presenter. Consumers can call `FrameSource::ack_frame` after they are finished reading/copying a frame to clear the shared `frame_dirty` flag (ACK).
 
 ### Consumption in the GPU worker
 
