@@ -89,6 +89,49 @@ fn build_fixture_cmd_stream() -> Vec<u8> {
     assert_eq!(payload.len(), 8);
     push_packet(&mut out, AerogpuCmdOpcode::DestroyResource as u32, &payload);
 
+    // SET_SHADER_RESOURCE_BUFFERS(shader_stage=2, start_slot=0, buffer_count=1, stage_ex=0, binding0={buffer=7, offset=32, size=64}).
+    let mut payload = Vec::new();
+    push_u32_le(&mut payload, 2); // shader_stage=Compute
+    push_u32_le(&mut payload, 0); // start_slot
+    push_u32_le(&mut payload, 1); // buffer_count
+    push_u32_le(&mut payload, 0); // reserved0 / stage_ex
+    push_u32_le(&mut payload, 7); // binding[0].buffer
+    push_u32_le(&mut payload, 32); // binding[0].offset_bytes
+    push_u32_le(&mut payload, 64); // binding[0].size_bytes
+    push_u32_le(&mut payload, 0); // binding[0].reserved0
+    assert_eq!(payload.len(), 32);
+    push_packet(
+        &mut out,
+        AerogpuCmdOpcode::SetShaderResourceBuffers as u32,
+        &payload,
+    );
+
+    // SET_UNORDERED_ACCESS_BUFFERS(shader_stage=2, start_slot=0, uav_count=1, stage_ex=0, binding0={buffer=8, offset=0, size=16, initial_count=123}).
+    let mut payload = Vec::new();
+    push_u32_le(&mut payload, 2); // shader_stage=Compute
+    push_u32_le(&mut payload, 0); // start_slot
+    push_u32_le(&mut payload, 1); // uav_count
+    push_u32_le(&mut payload, 0); // reserved0 / stage_ex
+    push_u32_le(&mut payload, 8); // binding[0].buffer
+    push_u32_le(&mut payload, 0); // binding[0].offset_bytes
+    push_u32_le(&mut payload, 16); // binding[0].size_bytes
+    push_u32_le(&mut payload, 123); // binding[0].initial_count
+    assert_eq!(payload.len(), 32);
+    push_packet(
+        &mut out,
+        AerogpuCmdOpcode::SetUnorderedAccessBuffers as u32,
+        &payload,
+    );
+
+    // DISPATCH(1,2,3).
+    let mut payload = Vec::new();
+    push_u32_le(&mut payload, 1); // group_count_x
+    push_u32_le(&mut payload, 2); // group_count_y
+    push_u32_le(&mut payload, 3); // group_count_z
+    push_u32_le(&mut payload, 0); // reserved0
+    assert_eq!(payload.len(), 16);
+    push_packet(&mut out, AerogpuCmdOpcode::Dispatch as u32, &payload);
+
     // Patch header.size_bytes.
     let size_bytes = out.len() as u32;
     out[8..12].copy_from_slice(&size_bytes.to_le_bytes());
@@ -124,6 +167,26 @@ fn decodes_cmd_stream_dump_to_stable_listing() {
 
     // Decoder continues after unknown opcodes.
     assert!(listing.contains("0x000000BC DestroyResource size_bytes=16"));
+
+    // New ABI opcodes should also decode their fields.
+    assert!(listing.contains(
+        "0x000000CC SetShaderResourceBuffers size_bytes=40"
+    ));
+    assert!(listing.contains("shader_stage=2"));
+    assert!(listing.contains("buffer_count=1"));
+    assert!(listing.contains("srv0_buffer=7"));
+
+    assert!(listing.contains(
+        "0x000000F4 SetUnorderedAccessBuffers size_bytes=40"
+    ));
+    assert!(listing.contains("uav_count=1"));
+    assert!(listing.contains("uav0_buffer=8"));
+    assert!(listing.contains("uav0_initial_count=123"));
+
+    assert!(listing.contains("0x0000011C Dispatch size_bytes=24"));
+    assert!(listing.contains("group_count_x=1"));
+    assert!(listing.contains("group_count_y=2"));
+    assert!(listing.contains("group_count_z=3"));
 }
 
 #[test]
@@ -152,4 +215,38 @@ fn decodes_cmd_stream_built_by_writer() {
     assert!(listing.contains("SetViewport"), "{listing}");
     assert!(listing.contains("Draw"), "{listing}");
     assert!(listing.contains("Present"), "{listing}");
+}
+
+#[test]
+fn json_listing_decodes_new_opcodes() {
+    let bytes = build_fixture_cmd_stream();
+    let listing = aero_gpu_trace_replay::cmd_stream_decode::render_cmd_stream_listing(
+        &bytes,
+        aero_gpu_trace_replay::cmd_stream_decode::CmdStreamListingFormat::Json,
+    )
+    .expect("render json listing");
+    let v: serde_json::Value = serde_json::from_str(&listing).expect("parse json listing");
+
+    let records = v["records"].as_array().expect("records array");
+    let find_packet = |opcode: &str| {
+        records
+            .iter()
+            .find(|r| r["type"] == "packet" && r["opcode"] == opcode)
+            .unwrap_or_else(|| panic!("missing packet {opcode}"))
+    };
+
+    let srv = find_packet("SetShaderResourceBuffers");
+    assert_eq!(srv["decoded"]["shader_stage"], 2);
+    assert_eq!(srv["decoded"]["buffer_count"], 1);
+    assert_eq!(srv["decoded"]["srv0_buffer"], 7);
+
+    let uav = find_packet("SetUnorderedAccessBuffers");
+    assert_eq!(uav["decoded"]["uav_count"], 1);
+    assert_eq!(uav["decoded"]["uav0_buffer"], 8);
+    assert_eq!(uav["decoded"]["uav0_initial_count"], 123);
+
+    let dispatch = find_packet("Dispatch");
+    assert_eq!(dispatch["decoded"]["group_count_x"], 1);
+    assert_eq!(dispatch["decoded"]["group_count_y"], 2);
+    assert_eq!(dispatch["decoded"]["group_count_z"], 3);
 }

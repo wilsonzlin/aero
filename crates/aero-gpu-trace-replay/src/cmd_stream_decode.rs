@@ -465,6 +465,76 @@ fn decode_known_fields(pkt: &aero_protocol::aerogpu::aerogpu_cmd::AerogpuCmdPack
                 out.insert("topology".into(), json!(v));
             }
         }
+        AerogpuCmdOpcode::SetShaderResourceBuffers => {
+            match pkt.decode_set_shader_resource_buffers_payload_le() {
+                Ok((cmd, bindings)) => {
+                    let shader_stage = cmd.shader_stage;
+                    let start_slot = cmd.start_slot;
+                    let buffer_count = cmd.buffer_count;
+                    let stage_ex = cmd.reserved0;
+                    out.insert("shader_stage".into(), json!(shader_stage));
+                    out.insert("start_slot".into(), json!(start_slot));
+                    out.insert("buffer_count".into(), json!(buffer_count));
+                    if shader_stage == 2 && stage_ex != 0 {
+                        out.insert("stage_ex".into(), json!(stage_ex));
+                    }
+                    if let Some(first) = bindings.first() {
+                        let srv0_buffer = first.buffer;
+                        let srv0_offset_bytes = first.offset_bytes;
+                        let srv0_size_bytes = first.size_bytes;
+                        out.insert("srv0_buffer".into(), json!(srv0_buffer));
+                        out.insert("srv0_offset_bytes".into(), json!(srv0_offset_bytes));
+                        out.insert("srv0_size_bytes".into(), json!(srv0_size_bytes));
+                    }
+                }
+                Err(err) => {
+                    out.insert("decode_error".into(), json!(format!("{:?}", err)));
+                }
+            }
+        }
+        AerogpuCmdOpcode::SetUnorderedAccessBuffers => {
+            match pkt.decode_set_unordered_access_buffers_payload_le() {
+                Ok((cmd, bindings)) => {
+                    let shader_stage = cmd.shader_stage;
+                    let start_slot = cmd.start_slot;
+                    let uav_count = cmd.uav_count;
+                    let stage_ex = cmd.reserved0;
+                    out.insert("shader_stage".into(), json!(shader_stage));
+                    out.insert("start_slot".into(), json!(start_slot));
+                    out.insert("uav_count".into(), json!(uav_count));
+                    if shader_stage == 2 && stage_ex != 0 {
+                        out.insert("stage_ex".into(), json!(stage_ex));
+                    }
+                    if let Some(first) = bindings.first() {
+                        let uav0_buffer = first.buffer;
+                        let uav0_offset_bytes = first.offset_bytes;
+                        let uav0_size_bytes = first.size_bytes;
+                        let uav0_initial_count = first.initial_count;
+                        out.insert("uav0_buffer".into(), json!(uav0_buffer));
+                        out.insert("uav0_offset_bytes".into(), json!(uav0_offset_bytes));
+                        out.insert("uav0_size_bytes".into(), json!(uav0_size_bytes));
+                        out.insert(
+                            "uav0_initial_count".into(),
+                            json!(uav0_initial_count),
+                        );
+                    }
+                }
+                Err(err) => {
+                    out.insert("decode_error".into(), json!(format!("{:?}", err)));
+                }
+            }
+        }
+        AerogpuCmdOpcode::Dispatch => {
+            if let Some(v) = read_u32_le(pkt.payload, 0) {
+                out.insert("group_count_x".into(), json!(v));
+            }
+            if let Some(v) = read_u32_le(pkt.payload, 4) {
+                out.insert("group_count_y".into(), json!(v));
+            }
+            if let Some(v) = read_u32_le(pkt.payload, 8) {
+                out.insert("group_count_z".into(), json!(v));
+            }
+        }
         AerogpuCmdOpcode::Clear => {
             if let Some(v) = read_u32_le(pkt.payload, 0) {
                 out.insert("flags".into(), json!(v));

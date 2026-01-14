@@ -1328,6 +1328,90 @@ pub fn decode_cmd_stream_listing(
                         }
                     }
 
+                    AerogpuCmdOpcode::SetShaderResourceBuffers => {
+                        let (cmd, bindings) = pkt
+                            .decode_set_shader_resource_buffers_payload_le()
+                            .map_err(|err| CmdStreamDecodeError::Payload {
+                                offset,
+                                opcode,
+                                err,
+                            })?;
+                        // Avoid taking references to packed fields.
+                        let shader_stage = cmd.shader_stage;
+                        let start_slot = cmd.start_slot;
+                        let buffer_count = cmd.buffer_count;
+                        let stage_ex = cmd.reserved0;
+
+                        let _ = write!(
+                            line,
+                            " shader_stage={shader_stage} start_slot={start_slot} buffer_count={buffer_count}"
+                        );
+                        if shader_stage == 2 && stage_ex != 0 {
+                            let _ = write!(line, " stage_ex={stage_ex}");
+                        }
+
+                        if let Some(b0) = bindings.first() {
+                            // Avoid taking references to packed fields.
+                            let srv0_buffer = b0.buffer;
+                            let srv0_offset_bytes = b0.offset_bytes;
+                            let srv0_size_bytes = b0.size_bytes;
+                            let _ = write!(
+                                line,
+                                " srv0_buffer={srv0_buffer} srv0_offset_bytes={srv0_offset_bytes} srv0_size_bytes={srv0_size_bytes}"
+                            );
+                        }
+                    }
+                    AerogpuCmdOpcode::SetUnorderedAccessBuffers => {
+                        let (cmd, bindings) = pkt
+                            .decode_set_unordered_access_buffers_payload_le()
+                            .map_err(|err| CmdStreamDecodeError::Payload {
+                                offset,
+                                opcode,
+                                err,
+                            })?;
+                        // Avoid taking references to packed fields.
+                        let shader_stage = cmd.shader_stage;
+                        let start_slot = cmd.start_slot;
+                        let uav_count = cmd.uav_count;
+                        let stage_ex = cmd.reserved0;
+
+                        let _ = write!(
+                            line,
+                            " shader_stage={shader_stage} start_slot={start_slot} uav_count={uav_count}"
+                        );
+                        if shader_stage == 2 && stage_ex != 0 {
+                            let _ = write!(line, " stage_ex={stage_ex}");
+                        }
+
+                        if let Some(b0) = bindings.first() {
+                            // Avoid taking references to packed fields.
+                            let uav0_buffer = b0.buffer;
+                            let uav0_offset_bytes = b0.offset_bytes;
+                            let uav0_size_bytes = b0.size_bytes;
+                            let uav0_initial_count = b0.initial_count;
+                            let _ = write!(
+                                line,
+                                " uav0_buffer={uav0_buffer} uav0_offset_bytes={uav0_offset_bytes} uav0_size_bytes={uav0_size_bytes} uav0_initial_count={uav0_initial_count}"
+                            );
+                        }
+                    }
+                    AerogpuCmdOpcode::Dispatch => {
+                        if pkt.payload.len() < 16 {
+                            return Err(CmdStreamDecodeError::MalformedPayload {
+                                offset,
+                                opcode,
+                                msg: "expected at least 16 bytes",
+                            });
+                        }
+                        let group_count_x = u32_le_at(pkt.payload, 0).unwrap();
+                        let group_count_y = u32_le_at(pkt.payload, 4).unwrap();
+                        let group_count_z = u32_le_at(pkt.payload, 8).unwrap();
+                        let _ = write!(
+                            line,
+                            " group_count_x={group_count_x} group_count_y={group_count_y} group_count_z={group_count_z}"
+                        );
+                    }
+
                     AerogpuCmdOpcode::Flush
                     | AerogpuCmdOpcode::DestroyShader
                     | AerogpuCmdOpcode::SetShaderConstantsF
@@ -1346,9 +1430,6 @@ pub fn decode_cmd_stream_listing(
                     | AerogpuCmdOpcode::DestroySampler
                     | AerogpuCmdOpcode::SetSamplers
                     | AerogpuCmdOpcode::SetConstantBuffers
-                    | AerogpuCmdOpcode::SetShaderResourceBuffers
-                    | AerogpuCmdOpcode::SetUnorderedAccessBuffers
-                    | AerogpuCmdOpcode::Dispatch
                     | AerogpuCmdOpcode::ExportSharedSurface
                     | AerogpuCmdOpcode::ImportSharedSurface
                     | AerogpuCmdOpcode::ReleaseSharedSurface => {
