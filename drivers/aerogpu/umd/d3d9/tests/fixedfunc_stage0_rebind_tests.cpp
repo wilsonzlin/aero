@@ -22,10 +22,13 @@ namespace {
 // Portable D3D9 FVF bits (from d3d9types.h).
 constexpr uint32_t kD3dFvfXyz = 0x00000002u;
 constexpr uint32_t kD3dFvfXyzRhw = 0x00000004u;
+constexpr uint32_t kD3dFvfNormal = 0x00000010u;
 constexpr uint32_t kD3dFvfDiffuse = 0x00000040u;
 constexpr uint32_t kD3dFvfTex1 = 0x00000100u;
 constexpr uint32_t kFvfXyzDiffuse = kD3dFvfXyz | kD3dFvfDiffuse;
 constexpr uint32_t kFvfXyzDiffuseTex1 = kD3dFvfXyz | kD3dFvfDiffuse | kD3dFvfTex1;
+constexpr uint32_t kFvfXyzNormal = kD3dFvfXyz | kD3dFvfNormal;
+constexpr uint32_t kFvfXyzNormalTex1 = kD3dFvfXyz | kD3dFvfNormal | kD3dFvfTex1;
 constexpr uint32_t kFvfXyzrhwDiffuse = kD3dFvfXyzRhw | kD3dFvfDiffuse;
 constexpr uint32_t kFvfXyzrhwDiffuseTex1 = kD3dFvfXyzRhw | kD3dFvfDiffuse | kD3dFvfTex1;
 // D3DFVF_TEXCOORDSIZE* encodes 2 bits per texcoord set starting at bit 16. These
@@ -255,10 +258,17 @@ bool TestStage0ColorOpImmediateRebindForFvf(
   // triggers a bind without issuing another draw.
   const size_t baseline = dev->cmd.bytes_used();
 
-  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice,
-                                               /*stage=*/0,
-                                               kD3dTssColorOp,
-                                               kD3dTopSelectArg1);
+  if (cleanup.device_funcs.pfnSetTextureStageState) {
+    hr = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice,
+                                                      /*stage=*/0,
+                                                      kD3dTssColorOp,
+                                                      kD3dTopSelectArg1);
+  } else {
+    hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice,
+                                                 /*stage=*/0,
+                                                 kD3dTssColorOp,
+                                                 kD3dTopSelectArg1);
+  }
   if (!Check(hr == S_OK, "SetTextureStageState(stage0 COLOROP=SELECTARG1)")) {
     return false;
   }
@@ -333,6 +343,36 @@ int main() {
       {0.0f, 1.0f, 0.0f, kWhite, 0.5f, 1.0f},
   };
 
+  struct VertexXyzNormal {
+    float x;
+    float y;
+    float z;
+    float nx;
+    float ny;
+    float nz;
+  };
+  const VertexXyzNormal tri_xyz_normal[3] = {
+      {-1.0f, -1.0f, 0.0f, 0.0f, 0.0f, 1.0f},
+      {1.0f, -1.0f, 0.0f, 0.0f, 0.0f, 1.0f},
+      {0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f},
+  };
+
+  struct VertexXyzNormalTex1 {
+    float x;
+    float y;
+    float z;
+    float nx;
+    float ny;
+    float nz;
+    float u;
+    float v;
+  };
+  const VertexXyzNormalTex1 tri_xyz_normal_tex1[3] = {
+      {-1.0f, -1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f},
+      {1.0f, -1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f},
+      {0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.5f, 1.0f},
+  };
+
   struct VertexXyzrhwDiffuse {
     float x;
     float y;
@@ -362,8 +402,8 @@ int main() {
   };
 
   if (!TestStage0ColorOpImmediateRebindForFvf(kFvfXyzDiffuseTex1,
-                                             tri_xyz_diffuse_tex1,
-                                             "SetFVF(XYZ|DIFFUSE|TEX1)")) {
+                                              tri_xyz_diffuse_tex1,
+                                              "SetFVF(XYZ|DIFFUSE|TEX1)")) {
     return 1;
   }
   if (!TestStage0ColorOpImmediateRebindForFvf(kFvfXyzDiffuseTex1 | kFvfGarbageTexCoord1SizeBits,
@@ -379,6 +419,16 @@ int main() {
   if (!TestStage0ColorOpImmediateRebindForFvf(kFvfXyzDiffuse,
                                               tri_xyz_diffuse,
                                               "SetFVF(XYZ|DIFFUSE)")) {
+    return 1;
+  }
+  if (!TestStage0ColorOpImmediateRebindForFvf(kFvfXyzNormal,
+                                              tri_xyz_normal,
+                                              "SetFVF(XYZ|NORMAL)")) {
+    return 1;
+  }
+  if (!TestStage0ColorOpImmediateRebindForFvf(kFvfXyzNormalTex1,
+                                              tri_xyz_normal_tex1,
+                                              "SetFVF(XYZ|NORMAL|TEX1)")) {
     return 1;
   }
   if (!TestStage0ColorOpImmediateRebindForFvf(kFvfXyzDiffuse | kFvfGarbageTexCoord0SizeBits,

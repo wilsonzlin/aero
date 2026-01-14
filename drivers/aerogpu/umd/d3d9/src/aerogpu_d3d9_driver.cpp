@@ -13663,6 +13663,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_texture(
       switch (fvf_base) {
         case kSupportedFvfXyzrhwDiffuse:
         case kSupportedFvfXyzDiffuse:
+        case kSupportedFvfXyzNormal:
         case kSupportedFvfXyzNormalDiffuse:
           ps_slot = &dev->fixedfunc_ps;
           break;
@@ -13672,6 +13673,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_texture(
           break;
         case kSupportedFvfXyzDiffuseTex1:
         case kSupportedFvfXyzTex1:
+        case kSupportedFvfXyzNormalTex1:
         case kSupportedFvfXyzNormalDiffuseTex1:
           ps_slot = &dev->fixedfunc_ps_xyz_diffuse_tex1;
           break;
@@ -15639,6 +15641,7 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
       switch (fvf_base) {
         case kSupportedFvfXyzrhwDiffuse:
         case kSupportedFvfXyzDiffuse:
+        case kSupportedFvfXyzNormal:
         case kSupportedFvfXyzNormalDiffuse:
           ps_slot = &dev->fixedfunc_ps;
           break;
@@ -15648,6 +15651,7 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
           break;
         case kSupportedFvfXyzDiffuseTex1:
         case kSupportedFvfXyzTex1:
+        case kSupportedFvfXyzNormalTex1:
         case kSupportedFvfXyzNormalDiffuseTex1:
           ps_slot = &dev->fixedfunc_ps_xyz_diffuse_tex1;
           break;
@@ -16153,6 +16157,7 @@ HRESULT device_set_texture_stage_state_impl(D3DDDI_HDEVICE hDevice, StageT stage
       switch (fvf_base) {
         case kSupportedFvfXyzrhwDiffuse:
         case kSupportedFvfXyzDiffuse:
+        case kSupportedFvfXyzNormal:
         case kSupportedFvfXyzNormalDiffuse:
           ps_slot = &dev->fixedfunc_ps;
           break;
@@ -16162,6 +16167,7 @@ HRESULT device_set_texture_stage_state_impl(D3DDDI_HDEVICE hDevice, StageT stage
           break;
         case kSupportedFvfXyzDiffuseTex1:
         case kSupportedFvfXyzTex1:
+        case kSupportedFvfXyzNormalTex1:
         case kSupportedFvfXyzNormalDiffuseTex1:
           ps_slot = &dev->fixedfunc_ps_xyz_diffuse_tex1;
           break;
@@ -26874,6 +26880,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_texture_stage_state(
       switch (fvf_base) {
         case kSupportedFvfXyzrhwDiffuse:
         case kSupportedFvfXyzDiffuse:
+        case kSupportedFvfXyzNormal:
         case kSupportedFvfXyzNormalDiffuse:
           ps_slot = &dev->fixedfunc_ps;
           break;
@@ -26883,6 +26890,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_texture_stage_state(
           break;
         case kSupportedFvfXyzDiffuseTex1:
         case kSupportedFvfXyzTex1:
+        case kSupportedFvfXyzNormalTex1:
         case kSupportedFvfXyzNormalDiffuseTex1:
           ps_slot = &dev->fixedfunc_ps_xyz_diffuse_tex1;
           break;
