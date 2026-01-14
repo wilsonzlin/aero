@@ -4020,8 +4020,8 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
      * Reset fence bookkeeping on each (re)start so v1 ring submissions always begin from a
      * well-defined 64-bit fence extension epoch.
      */
-    InterlockedExchange64((volatile LONGLONG*)&adapter->LastSubmittedFence, 0);
-    InterlockedExchange64((volatile LONGLONG*)&adapter->LastCompletedFence, 0);
+    AeroGpuAtomicWriteU64(&adapter->LastSubmittedFence, 0);
+    AeroGpuAtomicWriteU64(&adapter->LastCompletedFence, 0);
     adapter->V1FenceEpoch = 0;
     adapter->V1LastFence32 = 0;
 
