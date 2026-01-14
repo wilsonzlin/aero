@@ -795,19 +795,19 @@ struct BufferResource {
     gpu_size: u64,
     /// Original AeroGPU usage flags (`AEROGPU_RESOURCE_USAGE_*`).
     ///
-    /// This is used for backend-specific CPU shadows (e.g. index-buffer contents for primitive
-    /// restart emulation on the wgpu GL backend).
+    /// This is used for backend-specific behavior that depends on the guest's intended usage
+    /// (notably CPU shadows for index buffers to emulate strip primitive-restart semantics in a
+    /// backend-agnostic way).
     aerogpu_usage_flags: u32,
     // Test-only: expose the computed wgpu usage flags for assertions.
     #[cfg(test)]
     usage: wgpu::BufferUsages,
     backing: Option<ResourceBacking>,
     dirty: Option<Range<u64>>,
-    /// CPU shadow copy of the buffer contents when available.
+    /// Optional CPU shadow copy of the buffer contents.
     ///
-    /// This is currently only populated for index buffers on the wgpu GL backend so the executor
-    /// can emulate primitive-restart semantics for strip topologies (GL has correctness issues
-    /// with `PrimitiveState.strip_index_format`).
+    /// This is used to implement deterministic D3D11 primitive-restart semantics for indexed strip
+    /// topologies by expanding strip indices on the CPU.
     host_shadow: Option<Vec<u8>>,
 }
 
@@ -11054,6 +11054,17 @@ impl AerogpuD3d11Executor {
             None
         };
 
+        // For determinism, keep a CPU shadow copy of index buffers so we can implement D3D11 strip
+        // primitive-restart semantics without relying on backend support (notably wgpu's GL path).
+        let host_shadow = if (usage_flags & AEROGPU_RESOURCE_USAGE_INDEX_BUFFER) != 0 {
+            let size_usize: usize = size_bytes
+                .try_into()
+                .map_err(|_| anyhow!("CREATE_BUFFER: size_bytes out of range for host shadow"))?;
+            Some(vec![0u8; size_usize])
+        } else {
+            None
+        };
+
         self.shared_surfaces
             .register_handle(buffer_handle)
             .map_err(|e| match e {
@@ -11081,7 +11092,7 @@ impl AerogpuD3d11Executor {
             aerogpu_usage_flags: usage_flags,
             backing,
             dirty: None,
-            host_shadow: None,
+            host_shadow,
             #[cfg(test)]
             usage,
         };
@@ -11582,44 +11593,37 @@ impl AerogpuD3d11Executor {
                 self.queue.write_buffer(&buf.buffer, offset, write_data);
             }
             if let Some(buf_mut) = self.resources.buffers.get_mut(&handle) {
-                // wgpu's GL backend has correctness issues with indexed strip primitive restart
-                // (`PrimitiveState.strip_index_format`). Keep a CPU shadow of index buffers so the
-                // render path can emulate primitive-restart semantics by expanding strips into
-                // lists (triangle_list/line_list) at draw time.
-                if self.backend == wgpu::Backend::Gl
-                    && (buf_mut.aerogpu_usage_flags & AEROGPU_RESOURCE_USAGE_INDEX_BUFFER) != 0
+                // Maintain any CPU shadow copy (used for strip primitive-restart emulation).
+                //
+                // Some buffers (notably index buffers) need a CPU-visible copy so we can implement
+                // primitive-restart semantics deterministically even when the backend does not
+                // reliably honor `PrimitiveState.strip_index_format` (e.g. wgpu-GL).
+                if buf_mut.host_shadow.is_some()
+                    || (buf_mut.aerogpu_usage_flags & AEROGPU_RESOURCE_USAGE_INDEX_BUFFER) != 0
                 {
+                    let offset_usize: usize = offset
+                        .try_into()
+                        .map_err(|_| anyhow!("UPLOAD_RESOURCE: offset out of range"))?;
                     let size_usize: usize = size
                         .try_into()
                         .map_err(|_| anyhow!("UPLOAD_RESOURCE: size_bytes out of range"))?;
-                    let offset_usize: usize = offset
-                        .try_into()
-                        .map_err(|_| anyhow!("UPLOAD_RESOURCE: offset_bytes out of range"))?;
-                    if data.len() != size_usize {
-                        bail!(
-                            "UPLOAD_RESOURCE: payload size mismatch (expected {size_usize} bytes, got {})",
-                            data.len()
-                        );
-                    }
+                    let end_usize = offset_usize
+                        .checked_add(size_usize)
+                        .ok_or_else(|| anyhow!("UPLOAD_RESOURCE: shadow range overflows usize"))?;
 
-                    let buf_size_usize: usize = buf_mut
-                        .size
-                        .try_into()
-                        .map_err(|_| anyhow!("UPLOAD_RESOURCE: buffer size out of range"))?;
-                    if buf_mut
-                        .host_shadow
-                        .as_ref()
-                        .is_some_and(|shadow| shadow.len() != buf_size_usize)
-                    {
-                        bail!("UPLOAD_RESOURCE: internal shadow size mismatch");
-                    }
                     if buf_mut.host_shadow.is_none() {
+                        let buf_size_usize: usize = buf_mut
+                            .size
+                            .try_into()
+                            .map_err(|_| anyhow!("UPLOAD_RESOURCE: buffer size out of range"))?;
                         buf_mut.host_shadow = Some(vec![0u8; buf_size_usize]);
                     }
-                    let shadow = buf_mut.host_shadow.as_mut().ok_or_else(|| {
-                        anyhow!("UPLOAD_RESOURCE: internal error: missing shadow")
-                    })?;
-                    shadow[offset_usize..offset_usize + size_usize].copy_from_slice(data);
+                    if let Some(shadow) = buf_mut.host_shadow.as_mut() {
+                        if end_usize > shadow.len() || data.len() < size_usize {
+                            bail!("UPLOAD_RESOURCE: internal error: shadow update out of bounds");
+                        }
+                        shadow[offset_usize..end_usize].copy_from_slice(&data[..size_usize]);
+                    }
                 }
 
                 // Uploaded data is now current on the GPU; clear dirty ranges.
@@ -12259,8 +12263,74 @@ impl AerogpuD3d11Executor {
         }
         // The destination GPU buffer content has changed; discard any pending "dirty" ranges that
         // would otherwise cause us to overwrite the copy with stale guest-memory contents.
+        let dst_has_shadow = self
+            .resources
+            .buffers
+            .get(&dst_buffer)
+            .is_some_and(|buf| buf.host_shadow.is_some());
+        let src_bytes_for_shadow: Option<Vec<u8>> = if dst_has_shadow {
+            let src = self
+                .resources
+                .buffers
+                .get(&src_buffer)
+                .ok_or_else(|| anyhow!("COPY_BUFFER: unknown src buffer {src_buffer}"))?;
+            let src_offset_usize: usize = src_offset_bytes
+                .try_into()
+                .map_err(|_| anyhow!("COPY_BUFFER: src_offset_bytes out of range"))?;
+            let size_usize: usize = size_bytes
+                .try_into()
+                .map_err(|_| anyhow!("COPY_BUFFER: size_bytes out of range"))?;
+            let src_end_usize = src_offset_usize
+                .checked_add(size_usize)
+                .ok_or_else(|| anyhow!("COPY_BUFFER: src range overflows usize"))?;
+            if let Some(src_shadow) = src.host_shadow.as_ref() {
+                if src_end_usize > src_shadow.len() {
+                    bail!("COPY_BUFFER: internal error: src shadow out of bounds");
+                }
+                Some(src_shadow[src_offset_usize..src_end_usize].to_vec())
+            } else if let Some(backing) = src.backing {
+                // The source is guest-backed; it has already been uploaded (see ensure_buffer_uploaded
+                // above), so reading from guest memory produces the same bytes the GPU copy will
+                // observe.
+                allocs.validate_range(
+                    backing.alloc_id,
+                    backing
+                        .offset_bytes
+                        .checked_add(src_offset_bytes)
+                        .ok_or_else(|| anyhow!("COPY_BUFFER: src backing offset overflow"))?,
+                    size_bytes,
+                )?;
+                let src_gpa = allocs.gpa(backing.alloc_id)? + backing.offset_bytes + src_offset_bytes;
+                let mut tmp = vec![0u8; size_usize];
+                guest_mem.read(src_gpa, &mut tmp).map_err(anyhow_guest_mem)?;
+                Some(tmp)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         if let Some(dst) = self.resources.buffers.get_mut(&dst_buffer) {
             dst.dirty = None;
+            if let Some(dst_shadow) = dst.host_shadow.as_mut() {
+                if let Some(src_bytes) = src_bytes_for_shadow.as_ref() {
+                    let dst_offset_usize: usize = dst_offset_bytes
+                        .try_into()
+                        .map_err(|_| anyhow!("COPY_BUFFER: dst_offset_bytes out of range"))?;
+                    let dst_end_usize = dst_offset_usize
+                        .checked_add(src_bytes.len())
+                        .ok_or_else(|| anyhow!("COPY_BUFFER: dst range overflows usize"))?;
+                    if dst_end_usize > dst_shadow.len() {
+                        bail!("COPY_BUFFER: internal error: dst shadow out of bounds");
+                    }
+                    dst_shadow[dst_offset_usize..dst_end_usize].copy_from_slice(src_bytes);
+                } else {
+                    // We can't keep a deterministic shadow if the source doesn't have one and isn't
+                    // backed by guest memory.
+                    dst.host_shadow = None;
+                }
+            }
         }
 
         // Maintain CPU shadows for index buffers on the wgpu GL backend so strip primitive-restart
@@ -16232,9 +16302,15 @@ impl AerogpuD3d11Executor {
         let gpa = allocs.gpa(backing.alloc_id)? + backing.offset_bytes + dirty.start;
 
         // SAFETY: the buffer table is not mutated while we hold a raw pointer into it.
-        let buf = unsafe { &*buf_ptr };
+        let wgpu_buffer = unsafe { &*buf_ptr };
 
-        if needs_shadow {
+        let wants_shadow = needs_shadow
+            || self
+                .resources
+                .buffers
+                .get(&buffer_handle)
+                .is_some_and(|b| b.host_shadow.is_some());
+        if wants_shadow {
             let buf_size_usize: usize = buffer_size
                 .try_into()
                 .map_err(|_| anyhow!("buffer upload: buffer size out of range"))?;
@@ -16263,13 +16339,19 @@ impl AerogpuD3d11Executor {
                 .read(gpa + (offset - dirty.start), &mut tmp)
                 .map_err(anyhow_guest_mem)?;
 
-            if needs_shadow {
-                let offset_usize: usize = offset
-                    .try_into()
-                    .map_err(|_| anyhow!("buffer upload: offset out of range"))?;
+            if wants_shadow {
                 if let Some(buf_mut) = self.resources.buffers.get_mut(&buffer_handle) {
                     if let Some(shadow) = buf_mut.host_shadow.as_mut() {
-                        shadow[offset_usize..offset_usize + n].copy_from_slice(&tmp);
+                        let offset_usize: usize = offset
+                            .try_into()
+                            .map_err(|_| anyhow!("buffer upload: offset out of range"))?;
+                        let end_usize = offset_usize
+                            .checked_add(n)
+                            .ok_or_else(|| anyhow!("buffer upload shadow range overflows usize"))?;
+                        if end_usize > shadow.len() {
+                            bail!("buffer upload shadow write out of bounds");
+                        }
+                        shadow[offset_usize..end_usize].copy_from_slice(&tmp[..n]);
                     }
                 }
             }
@@ -16293,7 +16375,7 @@ impl AerogpuD3d11Executor {
                 bail!("buffer upload overruns wgpu buffer allocation");
             }
 
-            self.queue.write_buffer(buf, offset, &tmp[..write_len]);
+            self.queue.write_buffer(wgpu_buffer, offset, &tmp[..write_len]);
             offset += n as u64;
         }
 
@@ -23661,7 +23743,7 @@ fn cs_main() {
                     buffer: cb,
                     size: cb_size,
                     gpu_size: cb_size,
-                    aerogpu_usage_flags: 0,
+                    aerogpu_usage_flags: AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER,
                     usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                     backing: None,
                     dirty: None,
@@ -24296,7 +24378,7 @@ fn cs_main() {
                     buffer: src,
                     size: buf_size,
                     gpu_size: buf_size,
-                    aerogpu_usage_flags: 0,
+                    aerogpu_usage_flags: AEROGPU_RESOURCE_USAGE_STORAGE,
                     #[cfg(test)]
                     usage: wgpu::BufferUsages::STORAGE
                         | wgpu::BufferUsages::COPY_SRC
