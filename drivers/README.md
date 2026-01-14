@@ -72,11 +72,12 @@ powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-driver-pack.ps1 
 
 Notes:
 
-- By default, `make-driver-pack.ps1` **requires** `viostor` + `netkvm`, and attempts to include `viosnd` + `vioinput` best-effort (emits a warning if missing).
-- To build a minimal pack explicitly:
-  - `-Drivers viostor,netkvm`
-- To fail if optional drivers are requested but missing:
-  - `-StrictOptional` (typically used together with `-Drivers viostor,netkvm,viosnd,vioinput`)
+ - By default, `make-driver-pack.ps1` **requires** `viostor` + `netkvm`, and attempts to include `viosnd` + `vioinput` best-effort.
+   - Optional drivers are only included when present for **both** x86 and amd64. If an optional driver is missing for either arch (including one-arch-only “partial” availability), it is omitted entirely (treated as missing for both) and a warning is emitted.
+ - To build a minimal pack explicitly:
+   - `-Drivers viostor,netkvm`
+ - To fail if optional drivers are requested but missing:
+   - `-StrictOptional` (typically used together with `-Drivers viostor,netkvm,viosnd,vioinput`)
 
 ### Linux/macOS host
 
@@ -172,8 +173,8 @@ On non-Windows hosts you have three options:
 
 Profiles:
 
-- `-Profile full` (default): includes optional virtio drivers when available (`vioinput`, `viosnd`)
-- `-Profile minimal`: storage + network only (`viostor`, `netkvm`)
+ - `-Profile full` (default): includes optional virtio drivers when available for **both** x86 and amd64 (`vioinput`, `viosnd`)
+ - `-Profile minimal`: storage + network only (`viostor`, `netkvm`)
 
 Signing policy:
 
