@@ -448,13 +448,13 @@ static bool ApplyDisplayModeAndWaitEx(const DEVMODEW& target,
       if (cur.dmPelsWidth == target.dmPelsWidth && cur.dmPelsHeight == target.dmPelsHeight) {
         return true;
       }
-    }
-
-    // Fallback/secondary signal: desktop metrics.
-    const int w = GetSystemMetrics(SM_CXSCREEN);
-    const int h = GetSystemMetrics(SM_CYSCREEN);
-    if (w == (int)target.dmPelsWidth && h == (int)target.dmPelsHeight) {
-      return true;
+    } else {
+      // Fallback signal: desktop metrics. Only trust this when EnumDisplaySettingsW itself fails.
+      const int w = GetSystemMetrics(SM_CXSCREEN);
+      const int h = GetSystemMetrics(SM_CYSCREEN);
+      if (w == (int)target.dmPelsWidth && h == (int)target.dmPelsHeight) {
+        return true;
+      }
     }
     if (remaining == 0 || GetTickCount() - wait_start >= remaining) {
       break;
