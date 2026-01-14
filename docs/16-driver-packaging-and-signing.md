@@ -112,6 +112,26 @@ The script will copy the requested `WdfCoInstaller*.dll` into `out/packages/<dri
 
 `ci/make-catalogs.ps1` runs `Inf2Cat` in each staged package directory to generate `.cat` files. If a coinstaller DLL is present and referenced by the driver’s INF, Inf2Cat will hash it into the generated catalog.
 
+### Important: extra files in the package directory may be hashed too
+
+`Inf2Cat` is invoked against the *package directory* (`/driver:<dir>`). Whether it hashes only **INF-referenced** payload files or also hashes **extra** files found under the package directory tree is a toolchain detail we validate in CI.
+
+CI validates the current toolchain’s behaviour in `ci/validate-toolchain.ps1` by:
+
+- generating a dummy driver package (INF + SYS),
+- adding an *unreferenced* extra file under a subdirectory (e.g. `tools/win7_dbgctl/bin/aero_inf2cat_extra_tool.exe`),
+- running `Inf2Cat /os:7_X86,7_X64`,
+- dumping the resulting `.cat` and checking whether the extra filename appears in the catalog’s member list.
+
+The workflow logs print a stable summary line:
+
+- `INF2CAT_UNREFERENCED_FILE_HASHED=0`: unreferenced extra files are **not** cataloged (catalog membership is limited to INF-referenced payload files and the INF itself).
+- `INF2CAT_UNREFERENCED_FILE_HASHED=1`: unreferenced extra files **are** cataloged (extra files under the package directory tree are included in the `.cat` member list).
+
+**Practical rule:** treat the staged package directory as immutable after catalog generation. If you add, modify, or post-process any files that are hashed into the catalog, you must regenerate and re-sign the `.cat`.
+
+For packaged helper tools (for example `aerogpu_dbgctl.exe` staged under `tools/win7_dbgctl/bin/`), ensure they are built/copied into the staging directory **before** running `ci/make-catalogs.ps1`.
+
 Signing is handled by `ci/sign-drivers.ps1` (which uses `signtool` to sign `.sys` drivers and `.cat` catalogs):
 
 ```powershell

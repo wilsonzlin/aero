@@ -305,6 +305,8 @@ On Windows 7, a PnP driver package is typically considered “signed” when:
 
 **Any time you change any file in the package, you must regenerate and re-sign the catalog.**
 
+Note: whether `Inf2Cat` includes *unreferenced* extra files found under the package directory tree in the catalog is a toolchain detail. CI’s Win7 toolchain smoke test (`ci/validate-toolchain.ps1`) prints `INF2CAT_UNREFERENCED_FILE_HASHED=0|1` so toolchain updates don’t silently change this behaviour. In practice, treat staged package directories as immutable after catalog generation, and stage any auxiliary tools (e.g. dbgctl under `tools/`) before running `ci/make-catalogs.ps1`.
+
 ### Required INF metadata
 
 `Inf2Cat` expects certain INF metadata. At minimum, the `[Version]` section should contain:

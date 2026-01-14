@@ -106,6 +106,8 @@ If `-ToolchainJson` is provided, it will use `StampInfExe` from that manifest (w
 
 Runs `ci/stamp-infs.ps1` **before** calling `Inf2Cat.exe`, because catalog hashes include the INF contents.
 
+Note: `Inf2Cat` catalog membership is toolchain-dependent (see the `ci/validate-toolchain.ps1` smoke test note below). If you ship auxiliary tools or other extra files inside the staged driver package directory (for example under `tools/`), stage them **before** this step so the package contents used for catalog generation are final.
+
 Only drivers that include `drivers/<driver>/ci-package.json` are staged into `out/packages/`. This is the
 explicit opt-in gate that keeps CI driver bundles from accidentally including dev/test drivers.
 
@@ -163,7 +165,14 @@ CI signs:
 - `*.sys` (kernel-mode drivers)
 - `*.cat` (catalogs)
 
-Note: `Inf2Cat` catalogs include hashes for all INF-referenced files in the package (INF, SYS, DLL, etc). Windows PnP validates package contents against those hashes via the signed catalog, so Authenticode-signing `*.dll` files individually is optional.
+Note: `Inf2Cat` catalogs include hashes for INF-referenced files (INF, SYS, DLL, etc). Whether `Inf2Cat` also hashes **extra files present under the package directory tree** (even when they are not referenced by the INF) is a toolchain detail we validate in CI.
+
+CI’s Win7 toolchain smoke test (`ci/validate-toolchain.ps1`) includes a minimal experiment that adds an unreferenced file under `tools/` and checks whether its name appears in the generated `.cat` (via `certutil -dump`, with a raw-byte fallback). The logs include a stable summary line:
+
+- `INF2CAT_UNREFERENCED_FILE_HASHED=0`: unreferenced extra files are not cataloged.
+- `INF2CAT_UNREFERENCED_FILE_HASHED=1`: unreferenced extra files are cataloged.
+
+Practical rule: treat staged package directories as immutable after `ci/make-catalogs.ps1` runs. For packaged helper tools (for example `aerogpu_dbgctl.exe` under `tools/win7_dbgctl/bin/`), build/copy them into the staging directory *before* catalog generation.
 
 And verifies:
 

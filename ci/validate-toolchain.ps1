@@ -17,6 +17,8 @@ Set-StrictMode -Version Latest
     - Prints resolved paths + file versions for:
         Inf2Cat.exe, signtool.exe, stampinf.exe, msbuild.exe
     - Generates a minimal dummy driver package (INF + SYS referenced by INF)
+    - Adds an extra file NOT referenced by the INF under a subdirectory (tools/...)
+      and dumps the generated .cat to determine whether Inf2Cat catalogs that file.
     - Runs:
         Inf2Cat /driver:<dir> /os:7_X86,7_X64
     - Fails if Inf2Cat rejects the OS list or no .cat file is produced.
@@ -202,6 +204,38 @@ function Find-ExePathInToolchainJson {
   return $null
 }
 
+function Test-ByteSubsequence {
+  param(
+    [Parameter(Mandatory = $true)]
+    [byte[]]$Haystack,
+
+    [Parameter(Mandatory = $true)]
+    [byte[]]$Needle
+  )
+
+  if ($Needle.Length -eq 0) {
+    return $true
+  }
+  if ($Haystack.Length -lt $Needle.Length) {
+    return $false
+  }
+
+  for ($i = 0; $i -le ($Haystack.Length - $Needle.Length); $i++) {
+    $match = $true
+    for ($j = 0; $j -lt $Needle.Length; $j++) {
+      if ($Haystack[$i + $j] -ne $Needle[$j]) {
+        $match = $false
+        break
+      }
+    }
+    if ($match) {
+      return $true
+    }
+  }
+
+  return $false
+}
+
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 
@@ -264,10 +298,22 @@ try {
   $infPath = Join-Path $pkgDir "aero_dummy.inf"
   $sysPath = Join-Path $pkgDir "aero_dummy.sys"
 
-  # A real driver binary isn't required for catalog generation; Inf2Cat hashes the files
-  # referenced by the INF. Keep it deterministic and tiny.
+  # A real driver binary isn't required for catalog generation; Inf2Cat hashes at least the
+  # files referenced by the INF. Keep it deterministic and tiny.
   [byte[]]$sysBytes = 0..255
   [System.IO.File]::WriteAllBytes($sysPath, $sysBytes)
+
+  # Extra file not referenced by the INF (used to validate whether Inf2Cat hashes
+  # "extra" files found under the package directory tree, or only INF-referenced
+  # payload files).
+  $extraRelDir = Join-Path "tools" (Join-Path "win7_dbgctl" "bin")
+  $extraFileName = "aero_inf2cat_extra_tool.exe"
+  $extraRelPath = Join-Path $extraRelDir $extraFileName
+  $extraAbsDir = Join-Path $pkgDir $extraRelDir
+  New-Item -ItemType Directory -Force -Path $extraAbsDir | Out-Null
+  $extraAbsPath = Join-Path $pkgDir $extraRelPath
+  [byte[]]$extraBytes = 0..127
+  [System.IO.File]::WriteAllBytes($extraAbsPath, $extraBytes)
 
 $infContents = @'
 [Version]
@@ -387,6 +433,100 @@ DiskName="Aero Dummy Install Disk"
     }
     Write-Host "Generated catalog: $($cat.FullName) ($($cat.Length) bytes)"
   }
+
+  Write-Host ""
+  Write-Host "== Inf2Cat catalog contents experiment (unreferenced extra file) =="
+  Write-Host "Extra file NOT referenced by INF: $extraRelPath"
+  Write-Host "Extra file absolute path:         $extraAbsPath"
+
+  # We expect exactly one catalog from this single-INF dummy package, but keep the
+  # logic generic in case Inf2Cat produces multiple catalogs in some environments.
+  $extraFoundInAnyCat = $false
+  $certutilAvailable = $null -ne (Get-Command certutil.exe -ErrorAction SilentlyContinue)
+
+  foreach ($cat in $catFiles) {
+    $certutilDumpPath = Join-Path $LogDir ("certutil-dump-" + $cat.BaseName + ".txt")
+
+    $foundInThisCat = $false
+    $foundBy = @()
+
+    if ($certutilAvailable) {
+      try {
+        $dumpLines = & certutil.exe -dump $cat.FullName 2>&1
+        $dumpLines | Set-Content -LiteralPath $certutilDumpPath -Encoding UTF8
+        $dumpText = $dumpLines -join "`n"
+
+        $patterns = @(
+          $extraFileName,
+          $extraRelPath.Replace('/', '\')
+        )
+        foreach ($p in $patterns) {
+          if (-not [string]::IsNullOrWhiteSpace($p) -and ($dumpText -match [regex]::Escape($p))) {
+            $foundInThisCat = $true
+            $foundBy += "certutil"
+            break
+          }
+        }
+      } catch {
+        Write-Warning "certutil.exe -dump failed for '$($cat.FullName)': $($_.Exception.Message)"
+      }
+    } else {
+      Write-Warning "certutil.exe not found; falling back to raw catalog byte search."
+    }
+
+    # Fallback: search the raw catalog bytes for the filename/path. Catalog member
+    # file names are typically embedded as strings (often UTF-16LE).
+    try {
+      $catBytes = [System.IO.File]::ReadAllBytes($cat.FullName)
+      $bytePatterns = @(
+        $extraFileName,
+        $extraFileName.ToUpperInvariant(),
+        $extraRelPath.Replace('/', '\'),
+        $extraRelPath.Replace('/', '\').ToUpperInvariant()
+      ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+
+      $encodings = @(
+        [System.Text.Encoding]::ASCII,
+        [System.Text.Encoding]::UTF8,
+        [System.Text.Encoding]::Unicode
+      )
+
+      foreach ($p in $bytePatterns) {
+        foreach ($enc in $encodings) {
+          $needle = $enc.GetBytes($p)
+          if (Test-ByteSubsequence -Haystack $catBytes -Needle $needle) {
+            $foundInThisCat = $true
+            $foundBy += "raw-bytes:$($enc.WebName)"
+            break
+          }
+        }
+        if ($foundInThisCat) { break }
+      }
+    } catch {
+      Write-Warning "Failed to scan raw catalog bytes for '$($cat.FullName)': $($_.Exception.Message)"
+    }
+
+    $foundBy = $foundBy | Select-Object -Unique
+    $resultText = if ($foundInThisCat) { "YES" } else { "NO" }
+    $methodsText = if ($foundBy.Count -gt 0) { $foundBy -join ", " } else { "(none)" }
+
+    Write-Host "Catalog: $($cat.Name)"
+    if ($certutilAvailable) {
+      Write-Host "  certutil dump: $certutilDumpPath"
+    }
+    Write-Host "  Extra file name present in catalog contents: $resultText"
+    Write-Host "  Detection method(s): $methodsText"
+
+    if ($foundInThisCat) {
+      $extraFoundInAnyCat = $true
+    }
+  }
+
+  $conclusion = if ($extraFoundInAnyCat) { "YES" } else { "NO" }
+  Write-Host ""
+  Write-Host "== Conclusion =="
+  Write-Host "Inf2Cat includes unreferenced extra files in the generated catalog: $conclusion"
+  Write-Host "INF2CAT_UNREFERENCED_FILE_HASHED=$([int]$extraFoundInAnyCat)"
 
   $artifactPkgDir = Join-Path $LogDir "dummy-driver-package"
   Copy-Item -Path $pkgDir -Destination $artifactPkgDir -Recurse -Force
