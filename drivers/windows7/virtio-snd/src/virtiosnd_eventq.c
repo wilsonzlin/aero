@@ -316,7 +316,7 @@ VirtIoSndEventqHandleUsed(
      * Contract v1 must remain correct without eventq; treat this as best-effort
      * and skip dispatch during teardown.
      */
-    if (haveEvent && Started && CallbackState != NULL) {
+    if (haveEvent && Started) {
         EVT_VIRTIOSND_EVENTQ_EVENT* cb;
         void* cbCtx;
         KIRQL oldIrql;
@@ -325,7 +325,10 @@ VirtIoSndEventqHandleUsed(
         cbCtx = NULL;
         oldIrql = PASSIVE_LEVEL;
 
-        if (CallbackState->Lock != NULL && CallbackState->Callback != NULL && CallbackState->CallbackContext != NULL) {
+        if (CallbackState != NULL &&
+            CallbackState->Lock != NULL &&
+            CallbackState->Callback != NULL &&
+            CallbackState->CallbackContext != NULL) {
             KeAcquireSpinLock(CallbackState->Lock, &oldIrql);
             cb = *CallbackState->Callback;
             cbCtx = *CallbackState->CallbackContext;
@@ -343,12 +346,13 @@ VirtIoSndEventqHandleUsed(
 
         if (cb != NULL) {
             cb(cbCtx, evtType, evtData);
-            if (CallbackState->CallbackInFlight != NULL) {
+            if (CallbackState != NULL && CallbackState->CallbackInFlight != NULL) {
                 InterlockedDecrement(CallbackState->CallbackInFlight);
             }
         } else if (evtType == VIRTIO_SND_EVT_PCM_PERIOD_ELAPSED &&
                    PeriodState != NULL &&
-                   PeriodState->SignalStreamNotification != NULL) {
+                   PeriodState->SignalStreamNotification != NULL &&
+                   evtData < PeriodState->StreamCount) {
             /*
              * Optional pacing signal:
              * If WaveRT registered a notification event object for this stream,
@@ -356,6 +360,9 @@ VirtIoSndEventqHandleUsed(
              * it may queue the WaveRT DPC which signals the event after updating
              * PacketCount; avoid double-signaling by only doing this when no
              * callback is present.
+             *
+             * Validate stream id against PeriodState->StreamCount to avoid calling
+             * into higher layers with device-controlled out-of-range values.
              */
             (VOID)PeriodState->SignalStreamNotification(PeriodState->SignalStreamNotificationContext, evtData);
         }
