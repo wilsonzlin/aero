@@ -145,6 +145,13 @@ param(
   [Alias("EnableVirtioTablet")]
   [switch]$WithVirtioTablet,
 
+  # If set, run a QMP `query-pci` preflight to validate QEMU-emitted virtio PCI Vendor/Device/Revision IDs.
+  # In default (contract-v1) mode this enforces VEN_1AF4 + DEV_1041/DEV_1042/DEV_1052[/DEV_1059] and REV_01.
+  # In transitional mode this is permissive and only asserts that at least one VEN_1AF4 device exists.
+  [Parameter(Mandatory = $false)]
+  [Alias("QmpPreflightPci")]
+  [switch]$QemuPreflightPci,
+
   # If set, require that the corresponding virtio PCI function has MSI-X enabled.
   # Verification is performed via QMP/QEMU introspection (query-pci or HMP `info pci` fallback).
   #
@@ -2890,6 +2897,211 @@ function Format-AeroPciBdf {
   return ("{0:x2}:{1:x2}.{2}" -f $Bus, $Slot, $Function)
 }
 
+function Get-AeroPciIdsFromQueryPci {
+  param(
+    [Parameter(Mandatory = $true)] $QueryPciReturn
+  )
+
+  $ids = @()
+  if ($null -eq $QueryPciReturn) { return $ids }
+
+  foreach ($bus in $QueryPciReturn) {
+    $busNum = Convert-AeroPciInt $bus.bus
+    $devs = $bus.devices
+    if ($null -eq $devs) { continue }
+    foreach ($dev in $devs) {
+      $vendor = Convert-AeroPciInt $dev.vendor_id
+      $device = Convert-AeroPciInt $dev.device_id
+      if (($null -eq $vendor) -or ($null -eq $device)) { continue }
+
+      $rev = Convert-AeroPciInt $dev.revision
+      $subVendor = Convert-AeroPciInt $dev.subsystem_vendor_id
+      $subId = Convert-AeroPciInt $dev.subsystem_id
+
+      $devBus = Convert-AeroPciInt $dev.bus
+      if ($null -eq $devBus) { $devBus = $busNum }
+      $slot = Convert-AeroPciInt $dev.slot
+      $function = Convert-AeroPciInt $dev.function
+
+      $ids += [pscustomobject]@{
+        VendorId          = $vendor
+        DeviceId          = $device
+        Revision          = $rev
+        SubsystemVendorId = $subVendor
+        SubsystemId       = $subId
+        Bus               = $devBus
+        Slot              = $slot
+        Function          = $function
+      }
+    }
+  }
+  return $ids
+}
+
+function Format-AeroPciIdSummary {
+  param(
+    [Parameter(Mandatory = $true)] $Ids
+  )
+
+  $keys = @{}
+  foreach ($d in $Ids) {
+    $ven = Convert-AeroPciInt $d.VendorId
+    $dev = Convert-AeroPciInt $d.DeviceId
+    $rev = Convert-AeroPciInt $d.Revision
+    if (($null -eq $ven) -or ($null -eq $dev)) { continue }
+    $revText = if ($null -eq $rev) { "??" } else { "{0:x2}" -f $rev }
+    $k = "{0:x4}:{1:x4}@{2}" -f $ven, $dev, $revText
+    $keys[$k] = $true
+  }
+
+  $sorted = @(
+    $keys.Keys | Sort-Object -Stable { $_.Split("@")[0] }, { $_.Split("@")[1] }
+  )
+  return ($sorted -join ",")
+}
+
+function Format-AeroPciIdDump {
+  param(
+    [Parameter(Mandatory = $true)] $Ids,
+    [Parameter(Mandatory = $false)] [int]$MaxLines = 32
+  )
+
+  $lines = @()
+  foreach ($d in ($Ids | Sort-Object -Stable VendorId, DeviceId, Bus, Slot, Function)) {
+    $ven = Convert-AeroPciInt $d.VendorId
+    $dev = Convert-AeroPciInt $d.DeviceId
+    if (($null -eq $ven) -or ($null -eq $dev)) { continue }
+
+    $bdf = Format-AeroPciBdf -Bus $d.Bus -Slot $d.Slot -Function $d.Function
+    $revText = if ($null -eq $d.Revision) { "?" } else { "0x{0:x2}" -f ([int]$d.Revision) }
+    $subText = "?:?"
+    if (($null -ne $d.SubsystemVendorId) -and ($null -ne $d.SubsystemId)) {
+      $subText = "0x{0:x4}:0x{1:x4}" -f ([int]$d.SubsystemVendorId), ([int]$d.SubsystemId)
+    }
+    $lines += ("$bdf 0x{0:x4}:0x{1:x4} subsys=$subText rev=$revText" -f $ven, $dev)
+  }
+
+  if ($lines.Count -eq 0) { return "  (no devices parsed from query-pci output)" }
+
+  if ($lines.Count -gt $MaxLines) {
+    $extra = $lines.Count - $MaxLines
+    $lines = @($lines[0..($MaxLines - 1)]) + "... ($extra more)"
+  }
+
+  return (($lines | ForEach-Object { "  $_" }) -join "`n")
+}
+
+function Test-AeroQmpVirtioPciPreflight {
+  param(
+    [Parameter(Mandatory = $true)] [string]$Host,
+    [Parameter(Mandatory = $true)] [int]$Port,
+    [Parameter(Mandatory = $false)] [bool]$VirtioTransitional = $false,
+    [Parameter(Mandatory = $false)] [bool]$WithVirtioSnd = $false,
+    [Parameter(Mandatory = $false)] [bool]$WithVirtioTablet = $false
+  )
+
+  $deadline = [DateTime]::UtcNow.AddSeconds(5)
+  $lastErr = ""
+  while ([DateTime]::UtcNow -lt $deadline) {
+    $client = $null
+    try {
+      $client = [System.Net.Sockets.TcpClient]::new()
+      $client.ReceiveTimeout = 2000
+      $client.SendTimeout = 2000
+      $client.Connect($Host, $Port)
+
+      $stream = $client.GetStream()
+      $reader = [System.IO.StreamReader]::new($stream, [System.Text.Encoding]::UTF8, $false, 4096, $true)
+      $writer = [System.IO.StreamWriter]::new($stream, [System.Text.Encoding]::UTF8, 4096, $true)
+      $writer.NewLine = "`n"
+      $writer.AutoFlush = $true
+
+      # Greeting.
+      $null = $reader.ReadLine()
+      $null = Invoke-AeroQmpCommand -Writer $writer -Reader $reader -Command @{ execute = "qmp_capabilities" }
+
+      $query = (Invoke-AeroQmpCommand -Writer $writer -Reader $reader -Command @{ execute = "query-pci" }).return
+      $ids = Get-AeroPciIdsFromQueryPci -QueryPciReturn $query
+      $virtio = @($ids | Where-Object { $_.VendorId -eq 0x1AF4 })
+
+      if ($virtio.Count -eq 0) {
+        $dump = Format-AeroPciIdDump -Ids $ids
+        return @{
+          Ok     = $false
+          Reason = "QMP query-pci did not report any virtio PCI devices (expected vendor_id=0x1AF4).`nquery-pci devices:`n$dump"
+        }
+      }
+
+      if ($VirtioTransitional) {
+        $summary = Format-AeroPciIdSummary -Ids $virtio
+        Write-Host "AERO_VIRTIO_WIN7_HOST|QEMU_PCI_PREFLIGHT|PASS|mode=transitional|vendor=1af4|devices=$(Sanitize-AeroMarkerValue $summary)"
+        return @{ Ok = $true }
+      }
+
+      $expectedCounts = @{}
+      $expectedCounts[0x1041] = 1
+      $expectedCounts[0x1042] = 1
+      $expectedCounts[0x1052] = $(if ($WithVirtioTablet) { 3 } else { 2 })
+      if ($WithVirtioSnd) { $expectedCounts[0x1059] = 1 }
+
+      $missing = @()
+      foreach ($devId in ($expectedCounts.Keys | Sort-Object)) {
+        $want = [int]$expectedCounts[$devId]
+        $have = @($virtio | Where-Object { $_.DeviceId -eq $devId }).Count
+        if ($have -lt $want) {
+          $missing += ("DEV_{0:X4} (need>={1}, got={2})" -f $devId, $want, $have)
+        }
+      }
+
+      $badRev = @(
+        $virtio | Where-Object { $expectedCounts.ContainsKey($_.DeviceId) -and ($null -ne $_.Revision) -and $_.Revision -ne 0x01 }
+      )
+      $missingRev = @(
+        $virtio | Where-Object { $expectedCounts.ContainsKey($_.DeviceId) -and $null -eq $_.Revision }
+      )
+      $revProblems = @($badRev + $missingRev)
+
+      if (($missing.Count -gt 0) -or ($revProblems.Count -gt 0)) {
+        $summary = Format-AeroPciIdSummary -Ids $virtio
+        $dump = Format-AeroPciIdDump -Ids $virtio
+        $expectedStr = ($expectedCounts.Keys | Sort-Object | ForEach-Object { "DEV_{0:X4}" -f $_ }) -join "/"
+        $reason = "QEMU PCI preflight failed (expected Aero contract v1 virtio PCI IDs).`nExpected (vendor/device/rev): VEN_1AF4 with $expectedStr and REV_01."
+        if ($missing.Count -gt 0) {
+          $reason += "`nMissing expected device IDs: " + ($missing -join ", ")
+        }
+        if ($revProblems.Count -gt 0) {
+          $revStr = (
+            $revProblems |
+              Sort-Object VendorId, DeviceId, Bus, Slot, Function |
+              ForEach-Object {
+                $r = if ($null -eq $_.Revision) { "??" } else { "{0:X2}" -f ([int]$_.Revision) }
+                "{0:X4}:{1:X4}@{2}" -f ([int]$_.VendorId), ([int]$_.DeviceId), $r
+              }
+          ) -join ", "
+          $reason += "`nUnexpected revision IDs (expected REV_01): $revStr"
+        }
+        $reason += "`nDetected virtio devices (from query-pci):`n$dump`nCompact summary: $summary"
+        $reason += "`nHint: in contract-v1 mode the harness expects modern-only virtio-pci devices with disable-legacy=on,x-pci-revision=0x01."
+        return @{ Ok = $false; Reason = $reason }
+      }
+
+      $matched = @($virtio | Where-Object { $expectedCounts.ContainsKey($_.DeviceId) })
+      $summary = Format-AeroPciIdSummary -Ids $matched
+      Write-Host "AERO_VIRTIO_WIN7_HOST|QEMU_PCI_PREFLIGHT|PASS|mode=contract-v1|vendor=1af4|devices=$(Sanitize-AeroMarkerValue $summary)"
+      return @{ Ok = $true }
+    } catch {
+      try { $lastErr = [string]$_.Exception.Message } catch { }
+      Start-Sleep -Milliseconds 100
+      continue
+    } finally {
+      if ($client) { $client.Close() }
+    }
+  }
+
+  if ([string]::IsNullOrEmpty($lastErr)) { $lastErr = "timeout" }
+  return @{ Ok = $false; Reason = "failed to connect to QMP for PCI preflight: $(Sanitize-AeroMarkerValue $lastErr)" }
+}
+
 function Get-AeroPciMsixInfoFromQueryPci {
   param(
     [Parameter(Mandatory = $true)] $QueryPciReturn
@@ -3160,20 +3372,21 @@ try {
   $virtioSndVectorsFlag = $(if ($VirtioSndVectors -gt 0) { "-VirtioSndVectors" } else { "-VirtioMsixVectors" })
   $virtioInputVectorsFlag = $(if ($VirtioInputVectors -gt 0) { "-VirtioInputVectors" } else { "-VirtioMsixVectors" })
   $needMsixCheck = [bool]$RequireVirtioNetMsix -or [bool]$RequireVirtioBlkMsix -or [bool]$RequireVirtioSndMsix
-  $needQmp = ($WithVirtioSnd -and $VirtioSndAudioBackend -eq "wav") -or $needInputEvents -or $needInputMediaKeys -or $needInputTabletEvents -or $needMsixCheck
+  $needQmp = ($WithVirtioSnd -and $VirtioSndAudioBackend -eq "wav") -or $needInputEvents -or $needInputMediaKeys -or $needInputTabletEvents -or $needMsixCheck -or [bool]$QemuPreflightPci
   if ($needQmp) {
     # QMP channel:
     # - Used for graceful shutdown when using the `wav` audiodev backend (so the RIFF header is finalized).
     # - Also used for virtio-input event injection (`input-send-event`) when -WithInputEvents/-WithInputMediaKeys is set.
     # - Also used for virtio PCI MSI-X enable verification (query-pci / info pci) when -RequireVirtio*Msix is set.
+    # - Also used for the optional virtio PCI ID preflight (-QemuPreflightPci/-QmpPreflightPci).
     try {
       $qmpPort = Get-AeroFreeTcpPort
       $qmpArgs = @(
         "-qmp", "tcp:127.0.0.1:$qmpPort,server,nowait"
       )
     } catch {
-      if ($needInputEvents -or $needInputMediaKeys -or $needInputTabletEvents) {
-        throw "Failed to allocate QMP port required for input injection flags (-WithInputEvents/-WithVirtioInputEvents/-EnableVirtioInputEvents, -WithInputWheel/-WithVirtioInputWheel/-EnableVirtioInputWheel, -WithInputEventsExtended/-WithInputEventsExtra, -WithInputMediaKeys/-WithVirtioInputMediaKeys/-EnableVirtioInputMediaKeys, -WithInputTabletEvents/-WithTabletEvents): $_"
+      if ($needInputEvents -or $needInputMediaKeys -or $needInputTabletEvents -or [bool]$QemuPreflightPci) {
+        throw "Failed to allocate QMP port required for input injection flags (-WithInputEvents/-WithVirtioInputEvents/-EnableVirtioInputEvents, -WithInputWheel/-WithVirtioInputWheel/-EnableVirtioInputWheel, -WithInputEventsExtended/-WithInputEventsExtra, -WithInputMediaKeys/-WithVirtioInputMediaKeys/-EnableVirtioInputMediaKeys, -WithInputTabletEvents/-WithTabletEvents) or -QemuPreflightPci/-QmpPreflightPci: $_"
       }
       Write-Warning "Failed to allocate QMP port for graceful shutdown: $_"
       $qmpPort = $null
@@ -3412,29 +3625,56 @@ try {
 
   Write-Host "Launching QEMU:"
   Write-Host "  $QemuSystem $($qemuArgs -join ' ')"
-
+ 
   $proc = Start-Process -FilePath $QemuSystem -ArgumentList $qemuArgs -PassThru -RedirectStandardError $qemuStderrPath
   $scriptExitCode = 0
-
+  
+  $result = $null
   try {
-    $result = Wait-AeroSelftestResult `
-      -SerialLogPath $SerialLogPath `
-      -QemuProcess $proc `
-      -TimeoutSeconds $TimeoutSeconds `
-      -HttpListener $httpListener `
-      -HttpPath $HttpPath `
-      -FollowSerial ([bool]$FollowSerial) `
-      -RequirePerTestMarkers (-not $VirtioTransitional) `
-      -RequireVirtioSndPass ([bool]$WithVirtioSnd) `
-      -RequireVirtioSndBufferLimitsPass ([bool]$WithSndBufferLimits) `
-      -RequireVirtioInputEventsPass ([bool]$needInputEvents) `
-      -RequireVirtioInputMediaKeysPass ([bool]$needInputMediaKeys) `
-      -RequireVirtioInputWheelPass ([bool]$needInputWheel) `
-      -RequireVirtioInputEventsExtendedPass ([bool]$needInputEventsExtended) `
-      -RequireVirtioInputMsixPass ([bool]$RequireVirtioInputMsix) `
-      -RequireVirtioInputTabletEventsPass ([bool]$needInputTabletEvents) `
-      -QmpHost "127.0.0.1" `
-      -QmpPort $qmpPort
+    if ([bool]$QemuPreflightPci) {
+      if (($null -eq $qmpPort) -or ($qmpPort -le 0)) {
+        $result = @{
+          Result = "QEMU_PCI_PREFLIGHT_FAILED"
+          Tail   = ""
+          Reason = "QMP endpoint not configured"
+        }
+      } else {
+        $pref = Test-AeroQmpVirtioPciPreflight `
+          -Host "127.0.0.1" `
+          -Port ([int]$qmpPort) `
+          -VirtioTransitional ([bool]$VirtioTransitional) `
+          -WithVirtioSnd ([bool]$WithVirtioSnd) `
+          -WithVirtioTablet ([bool]$needVirtioTablet)
+        if (-not $pref.Ok) {
+          $result = @{
+            Result = "QEMU_PCI_PREFLIGHT_FAILED"
+            Tail   = ""
+            Reason = $pref.Reason
+          }
+        }
+      }
+    }
+
+    if ($null -eq $result) {
+      $result = Wait-AeroSelftestResult `
+        -SerialLogPath $SerialLogPath `
+        -QemuProcess $proc `
+        -TimeoutSeconds $TimeoutSeconds `
+        -HttpListener $httpListener `
+        -HttpPath $HttpPath `
+        -FollowSerial ([bool]$FollowSerial) `
+        -RequirePerTestMarkers (-not $VirtioTransitional) `
+        -RequireVirtioSndPass ([bool]$WithVirtioSnd) `
+        -RequireVirtioSndBufferLimitsPass ([bool]$WithSndBufferLimits) `
+        -RequireVirtioInputEventsPass ([bool]$needInputEvents) `
+        -RequireVirtioInputMediaKeysPass ([bool]$needInputMediaKeys) `
+        -RequireVirtioInputWheelPass ([bool]$needInputWheel) `
+        -RequireVirtioInputEventsExtendedPass ([bool]$needInputEventsExtended) `
+        -RequireVirtioInputMsixPass ([bool]$RequireVirtioInputMsix) `
+        -RequireVirtioInputTabletEventsPass ([bool]$needInputTabletEvents) `
+        -QmpHost "127.0.0.1" `
+        -QmpPort $qmpPort
+    }
     if ($RequireVirtioBlkMsix -and $result.Result -eq "PASS") {
       # In addition to the host-side PCI MSI-X enable check (QMP), require the guest to report
       # virtio-blk running in MSI-X mode via the dedicated marker:
@@ -3678,6 +3918,14 @@ try {
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
       }
       $scriptExitCode = 1
+    }
+    "QEMU_PCI_PREFLIGHT_FAILED" {
+      $reason = ""
+      try { $reason = [string]$result.Reason } catch { }
+      if ([string]::IsNullOrEmpty($reason)) { $reason = "QMP query-pci preflight failed" }
+      Write-Host "FAIL: QEMU_PCI_PREFLIGHT_FAILED: $reason"
+      Write-AeroQemuStderrTail -Path $qemuStderrPath
+      $scriptExitCode = 2
     }
     "MISSING_VIRTIO_INPUT_WHEEL" {
       Write-Host "FAIL: MISSING_VIRTIO_INPUT_WHEEL: did not observe virtio-input-wheel marker while -WithInputWheel/-WithVirtioInputWheel/-EnableVirtioInputWheel was enabled (guest selftest too old or missing wheel coverage)"
