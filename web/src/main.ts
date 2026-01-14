@@ -3018,13 +3018,29 @@ function renderDisksPanel(): HTMLElement {
     disks = await manager.listDisks();
     mounts = await manager.getMounts();
 
-    // Keep the coordinator's cached boot disk selection in sync with DiskManager mounts so that
-    // automatic worker restarts always inherit the latest disk attachments.
+    // Propagate the current DiskManager mount selection to the runtime workers (CPU + IO) via the
+    // coordinator. This is the canonical disk selection flow; `activeDiskImage` is deprecated and
+    // is no longer used as a "VM mode" toggle.
+    //
+    // Note: `workerCoordinator.setBootDisks(...)` is safe to call even when workers are not running;
+    // it caches the selection so newly spawned workers inherit it.
+    //
+    // Avoid re-sending identical selections because the legacy IO worker remount path closes and
+    // re-opens disk handles (expensive; can also perturb in-flight I/O).
     try {
       const byId = new Map(disks.map((d) => [d.id, d]));
       const hdd = mounts.hddId ? byId.get(mounts.hddId) ?? null : null;
       const cd = mounts.cdId ? byId.get(mounts.cdId) ?? null : null;
-      workerCoordinator.setBootDisks(mounts, hdd, cd);
+      const prevSelection = workerCoordinator.getBootDisks();
+      const changed =
+        !prevSelection ||
+        prevSelection.mounts.hddId !== mounts.hddId ||
+        prevSelection.mounts.cdId !== mounts.cdId ||
+        prevSelection.hdd?.id !== hdd?.id ||
+        prevSelection.cd?.id !== cd?.id;
+      if (changed) {
+        workerCoordinator.setBootDisks(mounts, hdd, cd);
+      }
     } catch {
       // ignore best-effort runtime sync
     }
