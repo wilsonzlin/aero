@@ -5836,7 +5836,9 @@ function renderAudioPanel(): HTMLElement {
             const files = [...baseFiles, { path: manifestPath, bytes: manifestSizeGuess }];
             files.sort((a, b) => a.path.localeCompare(b.path));
             const totalBytes = files.reduce((sum, f) => sum + (Number.isFinite(f.bytes) ? f.bytes : 0), 0);
-            manifestBytes = encoder.encode(JSON.stringify({ timeIso, build, fileCount: files.length, totalBytes, files }, null, 2));
+            manifestBytes = encoder.encode(
+              JSON.stringify({ schemaVersion: 1, timeIso, build, fileCount: files.length, totalBytes, files }, null, 2),
+            );
             const next = manifestBytes.byteLength;
             if (next === manifestSizeGuess) break;
             manifestSizeGuess = next;
