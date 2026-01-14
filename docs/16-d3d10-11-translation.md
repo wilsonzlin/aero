@@ -505,6 +505,9 @@ bring up correctness incrementally:
   - Initial P1b limitations (explicit):
     - no stream-out / transform feedback (SO targets are unsupported),
     - only stream 0 (no `EmitStream` / `CutStream` / `SV_StreamID`),
+    - draw instancing (`instance_count > 1`) in the **translated-GS prepass** is still bring-up only:
+      the in-tree implementation currently assumes `instance_count == 1` when executing translated GS
+      DXBC. (GS instancing via `[instance(n)]` / `SV_GSInstanceID` is supported.)
     - adjacency input primitives (`*_ADJ` topologies / `lineadj`/`triadj`):
       - The required IA primitive assembly ordering is specified in section 2.1.1b.
       - The in-tree translated-GS execution path is currently wired for list topologies:
@@ -1121,13 +1124,15 @@ To populate `gs_inputs`, the runtime must:
      (`LINELIST_ADJ`/`TRIANGLELIST_ADJ`) translated-GS prepass paths in
      `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs` populate `gs_inputs` from **VS outputs**
      via vertex pulling plus a minimal VS-as-compute feeding path (simple SM4 subset), with a guarded
-     IA-fill fallback:
-     - If VS-as-compute translation fails, the executor only falls back to direct IA-fill when the
-       VS is a strict passthrough (or `AERO_D3D11_ALLOW_INCORRECT_GS_INPUTS=1` is set to force the
-       IA-fill fallback for debugging; may misrender). Otherwise the draw fails with a clear error.
-     - Extending translated-GS execution to additional IA topologies (strip and strip-adjacency)
-       requires the input-fill pass to implement the primitive assembly rules in section 2.1.1b,
-       including primitive restart for indexed strips.
+      IA-fill fallback:
+       - If VS-as-compute translation fails, the executor only falls back to direct IA-fill when the
+         VS is a strict passthrough (or `AERO_D3D11_ALLOW_INCORRECT_GS_INPUTS=1` is set to force the
+         IA-fill fallback for debugging; may misrender). Otherwise the draw fails with a clear error.
+       - Extending translated-GS execution to additional IA topologies (strip and strip-adjacency) requires
+         the input-fill pass to implement the primitive assembly rules in section 2.1.1b, including
+         primitive restart for indexed strips.
+       - Note: translated GS prepass execution currently assumes `instance_count == 1` (draw instancing
+         is not implemented yet for this path).
 
 Note: an alternative design is to have the translated GS code read directly from the upstream stage
 register buffer, eliminating the extra packing step. This is a follow-up optimization.
