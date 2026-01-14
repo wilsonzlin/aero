@@ -136,7 +136,7 @@ pub fn generate_edid(preferred: Timing) -> [u8; EDID_BLOCK_SIZE] {
     edid[34] = 0x54;
 
     // Established timings: 640x480@60, 800x600@60, 1024x768@60.
-    edid[35] = 0x21;
+    edid[35] = 0x05;
     edid[36] = 0x08;
     edid[37] = 0x00;
 
@@ -815,7 +815,7 @@ mod tests {
         assert_eq!(edid[85], 0x0A);
 
         // Established timings: 640x480@60, 800x600@60, 1024x768@60.
-        assert_eq!(edid[35], 0x21);
+        assert_eq!(edid[35], 0x05);
         assert_eq!(edid[36], 0x08);
         assert_eq!(edid[37], 0x00);
 
