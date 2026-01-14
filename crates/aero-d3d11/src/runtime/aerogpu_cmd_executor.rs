@@ -8143,14 +8143,10 @@ impl AerogpuD3d11Executor {
         self.validate_gs_hs_ds_emulation_capabilities()?;
 
         if self.state.hs.is_some() && self.state.ds.is_none() {
-            bail!(
-                "tessellation (HS/DS) compute expansion is not wired up yet: hull shader is bound but domain shader is not"
-            );
+            bail!("tessellation draw requires a bound DS (HS is bound without DS)");
         }
         if self.state.ds.is_some() && self.state.hs.is_none() {
-            bail!(
-                "tessellation (HS/DS) compute expansion is not wired up yet: domain shader is bound but hull shader is not"
-            );
+            bail!("tessellation draw requires a bound HS (DS is bound without HS)");
         }
 
         // Tessellation emulation will eventually use a VS-as-compute prepass to populate HS control
@@ -18834,7 +18830,7 @@ fn ds_eval(patch_id: u32, domain: vec3<f32>, _local_vertex: u32) -> AeroDsOut {
         encoder: &mut wgpu::CommandEncoder,
         allocs: &AllocTable,
         guest_mem: &mut dyn GuestMemory,
-        internal_buffers: &[InternalBufferBinding<'_>],
+        internal_buffers: &[InternalBufferBinding],
         control_point: super::tessellation::hull::HullKernel<'_>,
         patch_constant: super::tessellation::hull::HullKernel<'_>,
         params: super::tessellation::hull::HullDispatchParams,
@@ -18870,9 +18866,9 @@ fn ds_eval(patch_id: u32, domain: vec3<f32>, _local_vertex: u32) -> AeroDsOut {
             scratch_index: usize,
             size: u64,
         }
-        let mut internal_buffers_vec: Vec<InternalBufferBinding<'_>> = internal_buffers.to_vec();
+        let mut internal_buffers_vec: Vec<InternalBufferBinding> = internal_buffers.to_vec();
         let mut read_only_scratch: Vec<ReadOnlyInternalScratch> = Vec::new();
-        let mut scratch_buffers: Vec<wgpu::Buffer> = Vec::new();
+        let mut scratch_buffers: Vec<Arc<wgpu::Buffer>> = Vec::new();
 
         let mut write_buffers: HashSet<*const wgpu::Buffer> = HashSet::new();
         for binding in control_point
@@ -18885,7 +18881,7 @@ fn ds_eval(patch_id: u32, domain: vec3<f32>, _local_vertex: u32) -> AeroDsOut {
                     .iter()
                     .find(|b| b.binding == binding.binding)
                 {
-                    write_buffers.insert(internal.buffer as *const wgpu::Buffer);
+                    write_buffers.insert(Arc::as_ptr(&internal.buffer));
                 }
             }
         }
@@ -18901,7 +18897,7 @@ fn ds_eval(patch_id: u32, domain: vec3<f32>, _local_vertex: u32) -> AeroDsOut {
                     .iter()
                     .find(|b| b.binding == binding.binding)
                 {
-                    if write_buffers.contains(&(internal.buffer as *const wgpu::Buffer)) {
+                    if write_buffers.contains(&Arc::as_ptr(&internal.buffer)) {
                         bindings_to_copy.insert(binding.binding);
                     }
                 }
@@ -18927,13 +18923,19 @@ fn ds_eval(patch_id: u32, domain: vec3<f32>, _local_vertex: u32) -> AeroDsOut {
             }
 
             let scratch_size = src.size.max(align);
-            let scratch = self.device.create_buffer(&wgpu::BufferDescriptor {
+            let scratch = Arc::new(self.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("aerogpu_cmd HS internal read-only scratch"),
                 size: scratch_size,
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
-            });
-            encoder.copy_buffer_to_buffer(src.buffer, src.offset, &scratch, 0, src.size);
+            }));
+            encoder.copy_buffer_to_buffer(
+                src.buffer.as_ref(),
+                src.offset,
+                scratch.as_ref(),
+                0,
+                src.size,
+            );
 
             let id = BufferId(self.next_scratch_buffer_id);
             self.next_scratch_buffer_id = self.next_scratch_buffer_id.wrapping_add(1);
@@ -18948,7 +18950,7 @@ fn ds_eval(patch_id: u32, domain: vec3<f32>, _local_vertex: u32) -> AeroDsOut {
         }
 
         for scratch in &read_only_scratch {
-            let buf = &scratch_buffers[scratch.scratch_index];
+            let buf = scratch_buffers[scratch.scratch_index].clone();
             let replacement = InternalBufferBinding {
                 binding: scratch.binding,
                 id: scratch.id,
@@ -20437,14 +20439,14 @@ struct CmdExecutorBindGroupProvider<'a> {
     default_sampler: &'a aero_gpu::bindings::samplers::CachedSampler,
     stage: ShaderStage,
     stage_state: &'a super::bindings::StageBindings,
-    internal_buffers: &'a [InternalBufferBinding<'a>],
+    internal_buffers: &'a [InternalBufferBinding],
 }
 
-#[derive(Clone, Copy, Debug)]
-struct InternalBufferBinding<'a> {
+#[derive(Clone, Debug)]
+struct InternalBufferBinding {
     binding: u32,
     id: BufferId,
-    buffer: &'a wgpu::Buffer,
+    buffer: Arc<wgpu::Buffer>,
     offset: u64,
     size: u64,
 }
@@ -20569,7 +20571,7 @@ impl reflection_bindings::BindGroupResourceProvider for CmdExecutorBindGroupProv
             .find(|b| b.binding == binding)?;
         Some(reflection_bindings::BufferBinding {
             id: internal.id,
-            buffer: internal.buffer,
+            buffer: internal.buffer.as_ref(),
             offset: internal.offset,
             size: Some(internal.size),
             total_size: internal.offset.saturating_add(internal.size),
@@ -21433,6 +21435,23 @@ fn legacy_constants_buffer_id(stage: ShaderStage) -> u32 {
         }
 }
 
+fn passthrough_vs_internal_emulation_layout(
+    device: &wgpu::Device,
+    bind_group_layout_cache: &mut BindGroupLayoutCache,
+) -> aero_gpu::bindings::layout_cache::CachedBindGroupLayout {
+    let entries = [wgpu::BindGroupLayoutEntry {
+        binding: BINDING_INTERNAL_EXPANDED_VERTICES,
+        visibility: wgpu::ShaderStages::VERTEX,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Storage { read_only: true },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    }];
+    bind_group_layout_cache.get_or_create(device, &entries)
+}
+
 fn extend_pipeline_bindings_for_passthrough_vs(
     device: &wgpu::Device,
     bind_group_layout_cache: &mut BindGroupLayoutCache,
@@ -21446,22 +21465,11 @@ fn extend_pipeline_bindings_for_passthrough_vs(
 
     while pipeline_bindings.group_layouts.len() < required_groups {
         let group_index = pipeline_bindings.group_layouts.len() as u32;
-        let entries: Vec<wgpu::BindGroupLayoutEntry> =
-            if group_index == BIND_GROUP_INTERNAL_EMULATION {
-                vec![wgpu::BindGroupLayoutEntry {
-                    binding: BINDING_INTERNAL_EXPANDED_VERTICES,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }]
-            } else {
-                Vec::new()
-            };
-        let layout = bind_group_layout_cache.get_or_create(device, &entries);
+        let layout = if group_index == BIND_GROUP_INTERNAL_EMULATION {
+            passthrough_vs_internal_emulation_layout(device, bind_group_layout_cache)
+        } else {
+            bind_group_layout_cache.get_or_create(device, &[])
+        };
         pipeline_bindings.group_layouts.push(layout);
     }
 
@@ -25282,28 +25290,28 @@ fn hs_main() {
                 InternalBufferBinding {
                     binding: crate::runtime::tessellation::BINDING_VS_OUT_REGS,
                     id: BufferId(vs_out.buffer.as_ref() as *const wgpu::Buffer as u64),
-                    buffer: vs_out.buffer.as_ref(),
+                    buffer: Arc::clone(&vs_out.buffer),
                     offset: vs_out.offset,
                     size: vs_out_size,
                 },
                 InternalBufferBinding {
                     binding: crate::runtime::tessellation::BINDING_HS_OUT_REGS,
                     id: BufferId(hs_out.buffer.as_ref() as *const wgpu::Buffer as u64),
-                    buffer: hs_out.buffer.as_ref(),
+                    buffer: Arc::clone(&hs_out.buffer),
                     offset: hs_out.offset,
                     size: vs_out_size,
                 },
                 InternalBufferBinding {
                     binding: crate::runtime::tessellation::BINDING_HS_PATCH_CONSTANTS,
                     id: BufferId(patch_consts.buffer.as_ref() as *const wgpu::Buffer as u64),
-                    buffer: patch_consts.buffer.as_ref(),
+                    buffer: Arc::clone(&patch_consts.buffer),
                     offset: patch_consts.offset,
                     size: patch_consts_size,
                 },
                 InternalBufferBinding {
                     binding: crate::runtime::tessellation::BINDING_HS_TESS_FACTORS,
                     id: BufferId(tess_factors.buffer.as_ref() as *const wgpu::Buffer as u64),
-                    buffer: tess_factors.buffer.as_ref(),
+                    buffer: Arc::clone(&tess_factors.buffer),
                     offset: tess_factors.offset,
                     size: tess_factors_size,
                 },
@@ -26365,8 +26373,7 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {{
                 .expect_err("draw should fail when HS is bound without DS");
             let msg = err.to_string();
             assert!(
-                msg.contains("tessellation (HS/DS) compute expansion is not wired up yet")
-                    && msg.contains("domain shader is not"),
+                msg.contains("tessellation draw requires a bound DS"),
                 "unexpected error: {err:#}"
             );
         });

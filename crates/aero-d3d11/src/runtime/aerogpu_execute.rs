@@ -308,6 +308,9 @@ impl AerogpuCmdRuntime {
         );
 
         let mut dummy_storage_texture_views = HashMap::new();
+        // Even when storage textures are supported, some formats are not allowed as storage
+        // textures on downlevel backends. Filter them out to avoid wgpu validation panics when
+        // creating our dummy fallback resources.
         if device.limits().max_storage_textures_per_shader_stage > 0 {
             for format in [
                 crate::StorageTextureFormat::Rgba8Unorm,

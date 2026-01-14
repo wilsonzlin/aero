@@ -415,6 +415,7 @@ mod tests {
     fn detects_overflow() {
         // Keep counts within u32 so we validate u64 byte-size overflow paths.
         //
+        // With tess factor clamping, the expanded vertex/index math stays well within u64.
         // Use an absurd per-control-point output payload (ds_output_register_count) together with a
         // maximal patch count to overflow the VS/HS stage-IO byte-size computation:
         //   control_point_count_total * ds_output_stride_bytes > u64::MAX
