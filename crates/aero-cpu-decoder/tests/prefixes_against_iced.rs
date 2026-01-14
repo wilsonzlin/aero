@@ -66,10 +66,12 @@ fn expected_segment(mode: DecodeMode, iced: Register) -> Option<Segment> {
     }
 }
 
-fn is_vex_evex_xop(encoding: EncodingKind) -> bool {
+fn is_modern_prefix_encoding(encoding: EncodingKind) -> bool {
+    // Modern vector encodings that use a multi-byte prefix which can encode
+    // `66`/`F2`/`F3` in an internal field (rather than as legacy prefix bytes).
     matches!(
         encoding,
-        EncodingKind::VEX | EncodingKind::EVEX | EncodingKind::XOP
+        EncodingKind::VEX | EncodingKind::EVEX | EncodingKind::XOP | EncodingKind::MVEX
     )
 }
 
@@ -113,10 +115,7 @@ fn legacy_prefix_bytes<'a>(inst_bytes: &'a [u8], op_code: &OpCodeInfo) -> Option
     None
 }
 
-fn legacy_prefix_bytes_before_modern_prefix(
-    inst_bytes: &[u8],
-    encoding: EncodingKind,
-) -> Option<&[u8]> {
+fn legacy_prefix_bytes_before_modern_prefix(inst_bytes: &[u8], encoding: EncodingKind) -> Option<&[u8]> {
     let lead = match encoding {
         EncodingKind::VEX => {
             // 2-byte VEX: C5, 3-byte VEX: C4
@@ -125,7 +124,8 @@ fn legacy_prefix_bytes_before_modern_prefix(
                 .position(|&b| b == 0xC4 || b == 0xC5)
                 .map(|i| &inst_bytes[..i]);
         }
-        EncodingKind::EVEX => 0x62,
+        // EVEX and MVEX share the same lead byte.
+        EncodingKind::EVEX | EncodingKind::MVEX => 0x62,
         EncodingKind::XOP => 0x8F,
         _ => return None,
     };
@@ -191,10 +191,10 @@ fn check_one(mode: DecodeMode, bytes: &[u8]) {
     // *decoded instruction bytes* include `66` / `67` in the legacy prefix
     // region using opcode metadata.
     //
-    // For VEX/EVEX/XOP, the mandatory-prefix byte (66/F2/F3) is encoded inside
-    // the VEX/EVEX/XOP prefix, so we only compare operand-size override for
-    // non-VEX/EVEX/XOP encodings.
-    if !is_vex_evex_xop(encoding) && encoding == EncodingKind::Legacy {
+    // For VEX/EVEX/XOP/MVEX, the mandatory-prefix byte (66/F2/F3) is encoded
+    // inside the modern prefix itself, so we only compare operand-size override
+    // for legacy encodings.
+    if !is_modern_prefix_encoding(encoding) && encoding == EncodingKind::Legacy {
         if let Some(pfx) = legacy_prefix_bytes(inst_bytes, op_code) {
             assert_eq!(
                 ours.operand_size_override,
@@ -214,7 +214,7 @@ fn check_one(mode: DecodeMode, bytes: &[u8]) {
                 );
             }
         }
-        _ if is_vex_evex_xop(encoding) => {
+        _ if is_modern_prefix_encoding(encoding) => {
             if let Some(pfx) = legacy_prefix_bytes_before_modern_prefix(inst_bytes, encoding) {
                 assert_eq!(
                     ours.address_size_override,
