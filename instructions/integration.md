@@ -93,9 +93,9 @@ This is the **coordination hub**. You wire together the work from all other work
   `crates/platform-compat/tests/smp_msi_routing.rs`).
   Note: MSI injection intentionally bypasses `PlatformInterruptMode`, but while the platform is in
   **Legacy PIC mode** the vCPU interrupt polling path (`InterruptController::get_pending` /
-  `PlatformInterrupts::get_pending_for_apic`) consults the 8259 PIC instead of LAPIC IRR state, so
-  MSI-delivered vectors will not be observed until the guest switches to APIC mode. Also ensure the
-  guest leaves the LAPIC software-enabled (SVR[8]=1).
+  `PlatformInterrupts::{get_pending_for_cpu,get_pending_for_apic}`) consults the 8259 PIC instead of
+  LAPIC IRR state, so MSI-delivered vectors will not be observed until the guest switches to APIC
+  mode. Also ensure the guest leaves the LAPIC software-enabled (SVR[8]=1).
 ---
 
 ## Key Crates & Directories
