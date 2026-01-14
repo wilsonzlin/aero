@@ -6,59 +6,59 @@ import (
 )
 
 const (
-	// Version1 is the current signaling schema version used by the relay.
-	Version1 = 1
+	// version1 is the current signaling schema version used by the relay.
+	version1 = 1
 )
 
 var (
-	ErrUnsupportedVersion = errors.New("signaling: unsupported version")
-	ErrInvalidSDPType     = errors.New("signaling: invalid session description type")
-	ErrMissingSDP         = errors.New("signaling: missing session description sdp")
+	errUnsupportedVersion = errors.New("signaling: unsupported version")
+	errInvalidSDPType     = errors.New("signaling: invalid session description type")
+	errMissingSDP         = errors.New("signaling: missing session description sdp")
 )
 
-// SessionDescription is a minimal, JSON-friendly representation of an SDP offer/answer.
+// sessionDescription is a minimal, JSON-friendly representation of an SDP offer/answer.
 //
 // We intentionally avoid depending on any WebRTC library type here; this package
 // models the protocol surface, not the implementation.
-type SessionDescription struct {
+type sessionDescription struct {
 	Type string `json:"type"`
 	SDP  string `json:"sdp"`
 }
 
-// OfferRequest is sent by the browser/client to the relay.
-type OfferRequest struct {
+// offerRequest is sent by the browser/client to the relay.
+type offerRequest struct {
 	Version int                `json:"version"`
-	Offer   SessionDescription `json:"offer"`
+	Offer   sessionDescription `json:"offer"`
 }
 
-// AnswerResponse is returned by the relay in response to an OfferRequest.
-type AnswerResponse struct {
+// answerResponse is returned by the relay in response to an OfferRequest.
+type answerResponse struct {
 	Version int                `json:"version"`
-	Answer  SessionDescription `json:"answer"`
+	Answer  sessionDescription `json:"answer"`
 }
 
-func (r OfferRequest) Validate() error {
-	if r.Version != Version1 {
-		return fmt.Errorf("%w: %d", ErrUnsupportedVersion, r.Version)
+func (r offerRequest) Validate() error {
+	if r.Version != version1 {
+		return fmt.Errorf("%w: %d", errUnsupportedVersion, r.Version)
 	}
 	if r.Offer.Type != "offer" {
-		return fmt.Errorf("%w: %q", ErrInvalidSDPType, r.Offer.Type)
+		return fmt.Errorf("%w: %q", errInvalidSDPType, r.Offer.Type)
 	}
 	if r.Offer.SDP == "" {
-		return ErrMissingSDP
+		return errMissingSDP
 	}
 	return nil
 }
 
-func (r AnswerResponse) Validate() error {
-	if r.Version != Version1 {
-		return fmt.Errorf("%w: %d", ErrUnsupportedVersion, r.Version)
+func (r answerResponse) Validate() error {
+	if r.Version != version1 {
+		return fmt.Errorf("%w: %d", errUnsupportedVersion, r.Version)
 	}
 	if r.Answer.Type != "answer" {
-		return fmt.Errorf("%w: %q", ErrInvalidSDPType, r.Answer.Type)
+		return fmt.Errorf("%w: %q", errInvalidSDPType, r.Answer.Type)
 	}
 	if r.Answer.SDP == "" {
-		return ErrMissingSDP
+		return errMissingSDP
 	}
 	return nil
 }

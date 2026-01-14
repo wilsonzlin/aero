@@ -80,6 +80,16 @@ func parseSignalMessage(data []byte) (signaling.SignalMessage, error) {
 	return msg, nil
 }
 
+type legacySessionDescription struct {
+	Type string `json:"type"`
+	SDP  string `json:"sdp"`
+}
+
+type legacyOfferRequest struct {
+	Version int                      `json:"version"`
+	Offer   legacySessionDescription `json:"offer"`
+}
+
 func startSignalingServer(t *testing.T, cfg config.Config) (*httptest.Server, *metrics.Metrics) {
 	t.Helper()
 
@@ -487,13 +497,7 @@ func TestAuth_JWT_RejectsConcurrentSessionsWithSameSID_HTTPOfferEndpoints(t *tes
 	})
 
 	t.Run("POST /offer", func(t *testing.T) {
-		body, err := json.Marshal(signaling.OfferRequest{
-			Version: signaling.Version1,
-			Offer: signaling.SessionDescription{
-				Type: "offer",
-				SDP:  "v=0",
-			},
-		})
+		body, err := json.Marshal(legacyOfferRequest{Version: 1, Offer: legacySessionDescription{Type: "offer", SDP: "v=0"}})
 		if err != nil {
 			t.Fatalf("marshal offer: %v", err)
 		}
@@ -592,13 +596,7 @@ func TestAuth_APIKey_Offer(t *testing.T) {
 	}
 	ts, m := startSignalingServer(t, cfg)
 
-	body, err := json.Marshal(signaling.OfferRequest{
-		Version: signaling.Version1,
-		Offer: signaling.SessionDescription{
-			Type: "offer",
-			SDP:  "v=0",
-		},
-	})
+	body, err := json.Marshal(legacyOfferRequest{Version: 1, Offer: legacySessionDescription{Type: "offer", SDP: "v=0"}})
 	if err != nil {
 		t.Fatalf("marshal offer: %v", err)
 	}
@@ -651,13 +649,7 @@ func TestAuth_JWT_Offer(t *testing.T) {
 	}
 	ts, m := startSignalingServer(t, cfg)
 
-	body, err := json.Marshal(signaling.OfferRequest{
-		Version: signaling.Version1,
-		Offer: signaling.SessionDescription{
-			Type: "offer",
-			SDP:  "v=0",
-		},
-	})
+	body, err := json.Marshal(legacyOfferRequest{Version: 1, Offer: legacySessionDescription{Type: "offer", SDP: "v=0"}})
 	if err != nil {
 		t.Fatalf("marshal offer: %v", err)
 	}

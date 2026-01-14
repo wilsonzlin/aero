@@ -302,9 +302,9 @@ func TestServer_HTTPInternalAuthErrorReturns500(t *testing.T) {
 	})
 
 	t.Run("offer", func(t *testing.T) {
-		body, err := json.Marshal(OfferRequest{
-			Version: Version1,
-			Offer: SessionDescription{
+		body, err := json.Marshal(offerRequest{
+			Version: version1,
+			Offer: sessionDescription{
 				Type: "offer",
 				SDP:  "v=0",
 			},
@@ -404,9 +404,9 @@ func TestServer_Offer_ICEGatheringTimeoutReturnsAnswer(t *testing.T) {
 		t.Fatalf("missing local description")
 	}
 
-	body, err := json.Marshal(OfferRequest{
-		Version: Version1,
-		Offer: SessionDescription{
+	body, err := json.Marshal(offerRequest{
+		Version: version1,
+		Offer: sessionDescription{
 			Type: "offer",
 			SDP:  local.SDP,
 		},
@@ -428,7 +428,7 @@ func TestServer_Offer_ICEGatheringTimeoutReturnsAnswer(t *testing.T) {
 		t.Fatalf("status=%d, want %d", resp.StatusCode, http.StatusOK)
 	}
 
-	var got AnswerResponse
+	var got answerResponse
 	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -712,9 +712,9 @@ func TestServer_Offer_CanceledRequestClosesSession(t *testing.T) {
 		t.Fatalf("missing local description")
 	}
 
-	body, err := json.Marshal(OfferRequest{
-		Version: Version1,
-		Offer: SessionDescription{
+	body, err := json.Marshal(offerRequest{
+		Version: version1,
+		Offer: sessionDescription{
 			Type: "offer",
 			SDP:  local.SDP,
 		},

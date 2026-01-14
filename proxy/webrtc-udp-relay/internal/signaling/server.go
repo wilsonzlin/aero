@@ -389,13 +389,13 @@ func (s *Server) handleOffer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req OfferRequest
+	var req offerRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 2<<20)).Decode(&req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "bad_message", "invalid offer")
 		return
 	}
 	if err := req.Validate(); err != nil {
-		if errors.Is(err, ErrUnsupportedVersion) {
+		if errors.Is(err, errUnsupportedVersion) {
 			writeJSONError(w, http.StatusBadRequest, "bad_message", "unsupported protocol version")
 			return
 		}
@@ -529,9 +529,9 @@ func (s *Server) handleOffer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(AnswerResponse{
+	_ = json.NewEncoder(w).Encode(answerResponse{
 		Version: req.Version,
-		Answer: SessionDescription{
+		Answer: sessionDescription{
 			Type: "answer",
 			SDP:  local.SDP,
 		},

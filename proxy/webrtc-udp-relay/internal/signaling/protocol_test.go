@@ -19,15 +19,15 @@ func mustCompactJSON(t *testing.T, b []byte) []byte {
 func TestOfferRequestJSON(t *testing.T) {
 	raw := []byte(`{"version":1,"offer":{"type":"offer","sdp":"v=0..."}}`)
 
-	var req OfferRequest
+	var req offerRequest
 	if err := json.Unmarshal(raw, &req); err != nil {
 		t.Fatalf("json.Unmarshal: %v", err)
 	}
 	if err := req.Validate(); err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
-	if req.Version != Version1 {
-		t.Fatalf("Version: got %d want %d", req.Version, Version1)
+	if req.Version != version1 {
+		t.Fatalf("Version: got %d want %d", req.Version, version1)
 	}
 	if req.Offer.Type != "offer" || req.Offer.SDP != "v=0..." {
 		t.Fatalf("Offer: got %#v", req.Offer)
@@ -45,15 +45,15 @@ func TestOfferRequestJSON(t *testing.T) {
 func TestAnswerResponseJSON(t *testing.T) {
 	raw := []byte(`{"version":1,"answer":{"type":"answer","sdp":"v=0..."}}`)
 
-	var resp AnswerResponse
+	var resp answerResponse
 	if err := json.Unmarshal(raw, &resp); err != nil {
 		t.Fatalf("json.Unmarshal: %v", err)
 	}
 	if err := resp.Validate(); err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
-	if resp.Version != Version1 {
-		t.Fatalf("Version: got %d want %d", resp.Version, Version1)
+	if resp.Version != version1 {
+		t.Fatalf("Version: got %d want %d", resp.Version, version1)
 	}
 	if resp.Answer.Type != "answer" || resp.Answer.SDP != "v=0..." {
 		t.Fatalf("Answer: got %#v", resp.Answer)
@@ -61,25 +61,25 @@ func TestAnswerResponseJSON(t *testing.T) {
 }
 
 func TestSignalingValidation(t *testing.T) {
-	var req OfferRequest
+	var req offerRequest
 	if err := json.Unmarshal([]byte(`{"version":2,"offer":{"type":"offer","sdp":"x"}}`), &req); err != nil {
 		t.Fatalf("json.Unmarshal: %v", err)
 	}
-	if err := req.Validate(); !errors.Is(err, ErrUnsupportedVersion) {
+	if err := req.Validate(); !errors.Is(err, errUnsupportedVersion) {
 		t.Fatalf("unsupported version: got %v", err)
 	}
 
 	if err := json.Unmarshal([]byte(`{"version":1,"offer":{"type":"answer","sdp":"x"}}`), &req); err != nil {
 		t.Fatalf("json.Unmarshal: %v", err)
 	}
-	if err := req.Validate(); !errors.Is(err, ErrInvalidSDPType) {
+	if err := req.Validate(); !errors.Is(err, errInvalidSDPType) {
 		t.Fatalf("invalid type: got %v", err)
 	}
 
 	if err := json.Unmarshal([]byte(`{"version":1,"offer":{"type":"offer","sdp":""}}`), &req); err != nil {
 		t.Fatalf("json.Unmarshal: %v", err)
 	}
-	if err := req.Validate(); !errors.Is(err, ErrMissingSDP) {
+	if err := req.Validate(); !errors.Is(err, errMissingSDP) {
 		t.Fatalf("missing sdp: got %v", err)
 	}
 }
