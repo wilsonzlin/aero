@@ -422,4 +422,97 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
       await worker.terminate();
     }
   }, 20_000);
+
+  it("drops excess input batches while snapshot-paused and recycles them immediately", async () => {
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 0 });
+
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      const workerReady = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "cpu",
+        10_000,
+      );
+
+      worker.postMessage({
+        kind: "config.update",
+        version: 1,
+        config: makeConfig(),
+      });
+      worker.postMessage(makeInit(segments));
+      await workerReady;
+
+      const pauseAck = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { kind?: unknown; requestId?: unknown }).kind === "vm.snapshot.paused" && (msg as any).requestId === 1,
+        10_000,
+      );
+      worker.postMessage({ kind: "vm.snapshot.pause", requestId: 1 });
+      await pauseAck;
+
+      // Fill the pause queue (~4 MiB).
+      const big = new ArrayBuffer(4 * 1024 * 1024);
+      const bigWords = new Int32Array(big);
+      bigWords[0] = 0; // count=0, so flush won't do work.
+      bigWords[1] = 1111; // sentinel
+      worker.postMessage({ type: "in:input-batch", buffer: big, recycle: true }, [big]);
+
+      // This small batch should exceed the queue limit and be recycled immediately (before resume).
+      const small = new ArrayBuffer((2 + 4) * 4);
+      const smallWords = new Int32Array(small);
+      smallWords[0] = 0;
+      smallWords[1] = 2222; // sentinel
+
+      const recycledWhilePaused = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { type?: unknown }).type === "in:input-batch-recycle",
+        10_000,
+      );
+      worker.postMessage({ type: "in:input-batch", buffer: small, recycle: true }, [small]);
+
+      const firstRecycle = (await recycledWhilePaused) as { buffer?: unknown };
+      const firstRecycleBuf = firstRecycle.buffer;
+      if (!(firstRecycleBuf instanceof ArrayBuffer)) {
+        throw new Error("expected in:input-batch-recycle to carry an ArrayBuffer");
+      }
+      const firstRecycleWords = new Int32Array(firstRecycleBuf);
+      if (firstRecycleWords[1] !== 2222) {
+        throw new Error(
+          `expected the dropped buffer (sentinel=2222) to be recycled while paused, got sentinel=${firstRecycleWords[1]}`,
+        );
+      }
+
+      const recycledOnResume = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { type?: unknown }).type === "in:input-batch-recycle",
+        10_000,
+      );
+      const resumedAck = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { kind?: unknown; requestId?: unknown }).kind === "vm.snapshot.resumed" && (msg as any).requestId === 2,
+        10_000,
+      );
+      worker.postMessage({ kind: "vm.snapshot.resume", requestId: 2 });
+
+      const [secondRecycle] = (await Promise.all([recycledOnResume, resumedAck])) as [unknown, unknown];
+      const secondRecycleBuf = (secondRecycle as { buffer?: unknown }).buffer;
+      if (!(secondRecycleBuf instanceof ArrayBuffer)) {
+        throw new Error("expected in:input-batch-recycle to carry an ArrayBuffer");
+      }
+      const secondRecycleWords = new Int32Array(secondRecycleBuf);
+      if (secondRecycleWords[1] !== 1111) {
+        throw new Error(
+          `expected the queued buffer (sentinel=1111) to be recycled on resume, got sentinel=${secondRecycleWords[1]}`,
+        );
+      }
+    } finally {
+      await worker.terminate();
+    }
+  }, 20_000);
 });
