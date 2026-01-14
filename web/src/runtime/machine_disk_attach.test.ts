@@ -467,6 +467,99 @@ describe("runtime/machine_disk_attach (Machine attach method selection)", () => 
     }
   });
 
+  it("ignores truncated aerosparse overlay files even if the header looks valid", async () => {
+    const meta: DiskImageMetadata = {
+      source: "local",
+      id: "hdd2-truncated",
+      name: "Disk 2 (truncated overlay)",
+      backend: "opfs",
+      kind: "hdd",
+      format: "raw",
+      fileName: "disk.img",
+      sizeBytes: 1024,
+      createdAtMs: 0,
+    };
+    const plan = planMachineBootDiskAttachment(meta, "hdd");
+
+    const overlayHeader = new Uint8Array(64);
+    // "AEROSPAR"
+    overlayHeader.set([0x41, 0x45, 0x52, 0x4f, 0x53, 0x50, 0x41, 0x52], 0);
+    const dv = new DataView(overlayHeader.buffer);
+    dv.setUint32(8, 1, true); // version
+    dv.setUint32(12, 64, true); // header size
+    dv.setUint32(16, 4096, true); // block size
+    dv.setBigUint64(24, 4096n, true); // disk size bytes
+    dv.setBigUint64(32, 64n, true); // table offset
+    dv.setBigUint64(40, 1n, true); // table entries
+    dv.setBigUint64(48, 4096n, true); // data offset
+    // allocated_blocks=1 means the image must contain 1 full block in the data region, but this
+    // file is truncated at `data_offset`.
+    dv.setBigUint64(56, 1n, true);
+    const file = new Blob([overlayHeader, new Uint8Array(4096 - 64)]);
+
+    const originalNavigatorDesc = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+    try {
+      const fileHandle = {
+        getFile: async () => file,
+      };
+      const disksDir = {
+        getDirectoryHandle: async (_name: string) => {
+          throw new Error("unexpected nested directory");
+        },
+        getFileHandle: async (name: string) => {
+          if (name !== `${meta.id}.overlay.aerospar`) throw new Error(`unexpected file request: ${name}`);
+          return fileHandle;
+        },
+      };
+      const aeroDir = {
+        getDirectoryHandle: async (name: string) => {
+          if (name !== "disks") throw new Error(`unexpected directory request: ${name}`);
+          return disksDir;
+        },
+        getFileHandle: async (_name: string) => {
+          throw new Error("unexpected file request at aero/");
+        },
+      };
+      const rootDir = {
+        getDirectoryHandle: async (name: string) => {
+          if (name !== "aero") throw new Error(`unexpected directory request: ${name}`);
+          return aeroDir;
+        },
+        getFileHandle: async (_name: string) => {
+          throw new Error("unexpected file request at root");
+        },
+      };
+
+      Object.defineProperty(globalThis, "navigator", {
+        value: {
+          storage: {
+            getDirectory: async () => rootDir,
+          },
+        },
+        configurable: true,
+      });
+
+      const attach = vi.fn(async (_basePath: string, _overlayPath: string, _blockSizeBytes: number) => {});
+      const machine = {
+        set_primary_hdd_opfs_cow: attach,
+      } as unknown as MachineHandle;
+
+      await attachMachineBootDisk(machine, "hdd", meta);
+
+      expect(attach).toHaveBeenCalledWith(
+        plan.opfsPath,
+        `${OPFS_DISKS_PATH}/${meta.id}.overlay.aerospar`,
+        DEFAULT_PRIMARY_HDD_OVERLAY_BLOCK_SIZE_BYTES,
+      );
+    } finally {
+      if (originalNavigatorDesc) {
+        Object.defineProperty(globalThis, "navigator", originalNavigatorDesc);
+      } else {
+        delete (globalThis as unknown as { navigator?: unknown }).navigator;
+      }
+    }
+  });
+
   it("ignores invalid aerosparse overlay headers and falls back to the default block size", async () => {
     const meta: DiskImageMetadata = {
       source: "local",
