@@ -140,7 +140,7 @@ def main() -> int:
     # directly. InterlockedAnd returns the old value, so this can accidentally
     # keep ERROR delivery enabled.
     if re.search(
-        r"AeroGpuWriteRegU32\s*\(\s*(?:adapter|Adapter)\s*,\s*AEROGPU_MMIO_REG_IRQ_ENABLE\s*,[^;]*\bInterlockedAnd\s*\(",
+        r"AeroGpuWriteRegU32\s*\(\s*[^,]*,\s*AEROGPU_MMIO_REG_IRQ_ENABLE\s*,[^;]*\bInterlockedAnd\s*\(",
         body,
         re.S,
     ):
@@ -160,13 +160,13 @@ def main() -> int:
     # We don't attempt to parse C here; this is a best-effort regex guardrail.
     assign_re = re.compile(
         r"\b([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:\([^)]*\)\s*)?(?:\(\s*)*InterlockedAnd\s*\(\s*"
-        r"[^,;]*\b(?:adapter|Adapter)->IrqEnableMask\b[^,;]*,",
+        r"[^,;]*(?:->|\.)IrqEnableMask\b[^,;]*,",
         re.S,
     )
     vars_old = set(assign_re.findall(body))
     for var in sorted(vars_old):
         if re.search(
-            rf"\bAeroGpuWriteRegU32\s*\(\s*(?:adapter|Adapter)\s*,\s*AEROGPU_MMIO_REG_IRQ_ENABLE\s*,\s*"
+            rf"\bAeroGpuWriteRegU32\s*\(\s*[^,]*,\s*AEROGPU_MMIO_REG_IRQ_ENABLE\s*,\s*"
             rf"(?:\(\s*[^()]*\)\s*)*\(?\s*{re.escape(var)}\s*\)?\s*\)",
             body,
             re.S,
