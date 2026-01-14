@@ -327,6 +327,28 @@ describe("hid/WebHidBroker", () => {
     }
   });
 
+  it("drops inputreport events with invalid reportId values before forwarding", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const manager = new WebHidPassthroughManager({ hid: null });
+      const broker = new WebHidBroker({ manager });
+      const port = new FakePort();
+      broker.attachWorkerPort(port as unknown as MessagePort);
+
+      const device = new FakeHidDevice();
+      await broker.attachDevice(device as unknown as HIDDevice);
+
+      const huge = new Uint8Array(1024 * 1024);
+      huge.set([1, 2, 3], 0);
+      device.dispatchInputReport(-1, huge);
+
+      expect(port.posted.some((p) => (p.msg as { type?: unknown }).type === "hid.inputReport")).toBe(false);
+      expect(warn.mock.calls.some((call) => String(call[0]).includes("invalid reportId"))).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("clamps oversized inputreport payloads before writing to the SharedArrayBuffer input report ring", async () => {
     Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
 

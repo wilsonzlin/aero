@@ -645,4 +645,39 @@ describe("WebHidPassthroughManager inputreport forwarding", () => {
       warn.mockRestore();
     }
   });
+
+  it("drops inputreport events with invalid reportId values before forwarding", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const target = new TestTarget();
+      const manager = new WebHidPassthroughManager({ hid: null, target });
+
+      let inputListener: ((event: HIDInputReportEvent) => void) | null = null;
+      const device = {
+        productName: "Invalid reportId Device",
+        vendorId: 0x1234,
+        productId: 0xabcd,
+        collections: [] as unknown as HIDCollectionInfo[],
+        open: vi.fn(async () => {}),
+        close: vi.fn(async () => {}),
+        addEventListener: vi.fn((type: string, cb: unknown) => {
+          if (type === "inputreport") inputListener = cb as (event: HIDInputReportEvent) => void;
+        }),
+        removeEventListener: vi.fn(),
+      } as unknown as HIDDevice;
+
+      await manager.attachKnownDevice(device);
+      expect(inputListener).toBeTruthy();
+
+      const huge = new Uint8Array(1024 * 1024);
+      huge.set([1, 2, 3], 0);
+      const event = { reportId: -1, data: new DataView(huge.buffer), timeStamp: 123 } as unknown as HIDInputReportEvent;
+      expect(() => inputListener!(event)).not.toThrow();
+
+      expect(target.messages.some((m) => m.type === "hid:inputReport")).toBe(false);
+      expect(warn.mock.calls.some((call) => String(call[0]).includes("invalid reportId"))).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
+  });
 });
