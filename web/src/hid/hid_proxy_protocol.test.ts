@@ -133,7 +133,7 @@ describe("hid/hid_proxy_protocol", () => {
       reportType: "output",
       reportId: 7,
       data: Uint8Array.of(9, 8, 7),
-      outputRingTail: 1234,
+      outputRingTail: 1232,
     };
     expect(isHidSendReportMessage(send)).toBe(true);
     expect(isHidProxyMessage(send)).toBe(true);
@@ -142,6 +142,7 @@ describe("hid/hid_proxy_protocol", () => {
     expect(isHidSendReportMessage({ ...send, reportId: 256 } as unknown)).toBe(false);
     expect(isHidSendReportMessage({ ...send, outputRingTail: -1 } as unknown)).toBe(false);
     expect(isHidSendReportMessage({ ...send, outputRingTail: 1.5 } as unknown)).toBe(false);
+    expect(isHidSendReportMessage({ ...send, outputRingTail: 1 } as unknown)).toBe(false);
 
     expect(isHidSendReportMessage({ type: "hid.sendReport", deviceId: 1, reportType: "bad", reportId: 0, data: Uint8Array.of() })).toBe(
       false,
@@ -175,13 +176,14 @@ describe("hid/hid_proxy_protocol", () => {
       requestId: 123,
       deviceId: 1,
       reportId: 7,
-      outputRingTail: 99,
+      outputRingTail: 100,
     };
     expect(isHidGetFeatureReportMessage(req)).toBe(true);
     expect(isHidProxyMessage(req)).toBe(true);
 
     expect(isHidGetFeatureReportMessage({ ...req, outputRingTail: -1 } as unknown)).toBe(false);
     expect(isHidGetFeatureReportMessage({ ...req, outputRingTail: 1.5 } as unknown)).toBe(false);
+    expect(isHidGetFeatureReportMessage({ ...req, outputRingTail: 1 } as unknown)).toBe(false);
 
     const ok: HidFeatureReportResultMessage = {
       type: "hid.featureReportResult",

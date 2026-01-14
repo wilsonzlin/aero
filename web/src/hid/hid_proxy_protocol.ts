@@ -324,7 +324,13 @@ export function isHidSendReportMessage(value: unknown): value is HidSendReportMe
   if (!isUint32(value.deviceId) || !isUint8(value.reportId)) return false;
   if (value.reportType !== "output" && value.reportType !== "feature") return false;
   if (!isArrayBufferBackedUint8Array(value.data)) return false;
-  if (value.outputRingTail !== undefined && !isUint32(value.outputRingTail)) return false;
+  if (value.outputRingTail !== undefined) {
+    if (!isUint32(value.outputRingTail)) return false;
+    // The ring's head/tail counters are always 4-byte aligned (record format uses 4-byte alignment),
+    // so reject any message that claims a non-aligned tail snapshot. This also guards against
+    // draining the ring to an unreachable position (which would otherwise drain until empty).
+    if (((value.outputRingTail as number) & 3) !== 0) return false;
+  }
   return true;
 }
 
@@ -332,7 +338,10 @@ export function isHidGetFeatureReportMessage(value: unknown): value is HidGetFea
   if (!isRecord(value) || value.type !== "hid.getFeatureReport") return false;
   if (!isUint32(value.requestId)) return false;
   if (!isUint32(value.deviceId) || !isUint8(value.reportId)) return false;
-  if (value.outputRingTail !== undefined && !isUint32(value.outputRingTail)) return false;
+  if (value.outputRingTail !== undefined) {
+    if (!isUint32(value.outputRingTail)) return false;
+    if (((value.outputRingTail as number) & 3) !== 0) return false;
+  }
   return true;
 }
 
