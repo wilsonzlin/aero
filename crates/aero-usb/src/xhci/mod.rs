@@ -3476,11 +3476,25 @@ impl XhciController {
         //   retries after NAK without duplicating work.
         // - Once the Status Stage completes, `control_td` is reset to its default (no TD in
         //   progress) and we commit the current cursor (`ring`) as the new dequeue pointer.
+        let new_committed_ring = control_td.td_start.unwrap_or(ring);
+        let committed_changed = new_committed_ring != committed_ring;
         if let Some(slot) = self.slots.get_mut(slot_idx) {
-            slot.transfer_rings[0] = match control_td.td_start {
-                Some(start) => Some(start),
-                None => Some(ring),
-            };
+            slot.transfer_rings[0] = Some(new_committed_ring);
+            if committed_changed {
+                slot.endpoint_contexts[0].set_tr_dequeue_pointer(
+                    new_committed_ring.dequeue_ptr(),
+                    new_committed_ring.cycle_state(),
+                );
+            }
+        }
+        if committed_changed {
+            self.write_endpoint_dequeue_to_context(
+                mem,
+                slot_id,
+                endpoint_id,
+                new_committed_ring.dequeue_ptr(),
+                new_committed_ring.cycle_state(),
+            );
         }
         if halt_endpoint {
             // Keep the guest endpoint context and controller-local shadow state in sync. Use the

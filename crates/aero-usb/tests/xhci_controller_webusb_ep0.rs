@@ -2,6 +2,7 @@ use aero_usb::passthrough::{
     SetupPacket as HostSetupPacket, UsbHostAction, UsbHostCompletion, UsbHostCompletionIn,
 };
 use aero_usb::xhci::context::SlotContext;
+use aero_usb::xhci::context::{EndpointContext, CONTEXT_SIZE};
 use aero_usb::xhci::interrupter::IMAN_IE;
 use aero_usb::xhci::trb::{CompletionCode, Trb, TrbType, TRB_LEN};
 use aero_usb::xhci::{regs, CommandCompletionCode, XhciController};
@@ -37,6 +38,7 @@ fn xhci_controller_ep0_control_in_webusb_nak_keeps_td_pending_and_dequeue_pinned
 
     // Guest structures.
     let dcbaa = alloc.alloc(0x100, 0x40) as u64;
+    let dev_ctx = alloc.alloc(0x400, 0x40) as u64;
     let erstba = alloc.alloc(16, 0x10) as u64;
     let event_ring_base = alloc.alloc((TRB_LEN as u32) * 8, 0x10) as u64;
     let transfer_ring_base = alloc.alloc((TRB_LEN as u32) * 3, 0x10) as u64;
@@ -57,6 +59,15 @@ fn xhci_controller_ep0_control_in_webusb_nak_keeps_td_pending_and_dequeue_pinned
     assert_eq!(completion.completion_code, CommandCompletionCode::Success);
     let slot_id = completion.slot_id;
     assert_ne!(slot_id, 0);
+
+    // Provide a Device Context so the controller can update the Endpoint Context TR Dequeue Pointer
+    // field as it processes the control TD.
+    MemoryBus::write_u64(&mut mem, dcbaa + u64::from(slot_id) * 8, dev_ctx);
+    let ep0_ctx_paddr = dev_ctx + CONTEXT_SIZE as u64;
+    let mut ep0_ctx = EndpointContext::default();
+    ep0_ctx.set_endpoint_state(1); // Running
+    ep0_ctx.set_tr_dequeue_pointer(transfer_ring_base, true);
+    ep0_ctx.write_to(&mut mem, ep0_ctx_paddr);
 
     let mut slot_ctx = SlotContext::default();
     slot_ctx.set_root_hub_port_number(1);
@@ -127,6 +138,13 @@ fn xhci_controller_ep0_control_in_webusb_nak_keeps_td_pending_and_dequeue_pinned
         .expect("ep0 transfer ring should exist");
     assert_eq!(ring.dequeue_ptr(), transfer_ring_base);
     assert!(ring.cycle_state());
+    let ep0_ctx = EndpointContext::read_from(&mut mem, ep0_ctx_paddr);
+    assert_eq!(
+        ep0_ctx.tr_dequeue_pointer(),
+        transfer_ring_base,
+        "endpoint context TRDP must remain pinned while a TD is pending"
+    );
+    assert!(ep0_ctx.dcs());
 
     // Passthrough model should have queued a single host action.
     let mut actions = dev.drain_actions();
@@ -196,6 +214,13 @@ fn xhci_controller_ep0_control_in_webusb_nak_keeps_td_pending_and_dequeue_pinned
         .transfer_ring(1)
         .expect("ep0 transfer ring should exist");
     assert_eq!(ring.dequeue_ptr(), transfer_ring_base + 3 * TRB_LEN as u64);
+    let ep0_ctx = EndpointContext::read_from(&mut mem, ep0_ctx_paddr);
+    assert_eq!(
+        ep0_ctx.tr_dequeue_pointer(),
+        transfer_ring_base + 3 * TRB_LEN as u64,
+        "endpoint context TRDP should commit once the TD completes"
+    );
+    assert!(ep0_ctx.dcs());
 
     // Verify we got a Transfer Event for the status stage.
     let ev = Trb::read_from(&mut mem, event_ring_base);
