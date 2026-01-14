@@ -49,7 +49,7 @@ if "%EXITCODE%"=="0" (
 echo Reports:
 echo   C:\AeroGuestTools\report.json
 echo   C:\AeroGuestTools\report.txt
-echo   C:\AeroGuestTools\dbgctl_*.txt  (if -RunDbgctl is used and aerogpu_dbgctl.exe is present)
+echo   C:\AeroGuestTools\dbgctl_*.txt  (if -RunDbgctl is used, AeroGPU is healthy, and aerogpu_dbgctl.exe is present)
 echo   Note: Optional tools inventory (tools\*) is included in report.txt under "Optional Tools (tools\*)".
 exit /b %EXITCODE%
 
