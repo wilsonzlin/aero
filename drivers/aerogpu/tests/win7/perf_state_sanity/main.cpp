@@ -123,12 +123,16 @@ static int RunPerfStateSanity(int argc, char** argv) {
 
     // If the ring snapshot is marked valid, check that the implied pending range is sane.
     //
-    // Note: for the newer V1 ring ABI, `head`/`tail` are monotonically increasing indices
-    // (not masked). For the legacy ring registers, they are masked indices in
-    // `[0, entry_count)`. We intentionally avoid asserting `head/tail < entry_count` here.
+    // Note: ring0 indices in QUERY_PERF are format-dependent:
+    // - V1 ring ABI: `head`/`tail` are monotonically increasing u32 indices (not masked).
+    // - Legacy ring registers: `head`/`tail` are masked indices in `[0, entry_count)`.
     if ((q.flags & AEROGPU_DBGCTL_QUERY_PERF_FLAG_RING_VALID) != 0 && q.ring0_entry_count != 0) {
       uint32_t pending = 0;
-      if (q.ring0_tail >= q.ring0_head) {
+      // If either index is out of the masked range, assume monotonic semantics and compute the
+      // pending count via wrapping u32 subtraction.
+      if (q.ring0_head >= q.ring0_entry_count || q.ring0_tail >= q.ring0_entry_count) {
+        pending = (uint32_t)(q.ring0_tail - q.ring0_head);
+      } else if (q.ring0_tail >= q.ring0_head) {
         pending = q.ring0_tail - q.ring0_head;
       } else {
         pending = q.ring0_tail + q.ring0_entry_count - q.ring0_head;
