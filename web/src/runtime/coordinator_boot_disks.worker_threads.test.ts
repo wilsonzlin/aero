@@ -261,6 +261,24 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
     expect(coordinator.getMachineCpuBootConfig()).toBe(null);
   });
 
+  it("ignores inherited machine CPU boot config reports", () => {
+    const coordinator = new WorkerCoordinator();
+
+    const segments = allocateTestSegments();
+    const shared = createSharedMemoryViews(segments);
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).activeConfig = { vmRuntime: "machine" };
+
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("cpu", segments);
+    const cpuInfo = (coordinator as unknown as CoordinatorTestHarness).workers.cpu;
+
+    const msg = Object.create({ bootDrive: 0x80, cdBootDrive: 0xe0, bootFromCdIfPresent: true });
+    msg.type = "machineCpu.bootConfig";
+    (coordinator as unknown as CoordinatorTestHarness).onWorkerMessage("cpu", cpuInfo.instanceId, msg);
+
+    expect(coordinator.getMachineCpuBootConfig()).toBe(null);
+  });
+
   it("clears the active boot device when the VM is stopped", () => {
     const coordinator = new WorkerCoordinator();
 

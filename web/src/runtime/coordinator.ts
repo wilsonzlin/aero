@@ -2514,11 +2514,13 @@ export class WorkerCoordinator {
         return;
       }
 
-      const bootConfigMsg = data as Partial<{ type: unknown; bootDrive: unknown; cdBootDrive: unknown; bootFromCdIfPresent: unknown }>;
-      if (bootConfigMsg?.type === "machineCpu.bootConfig") {
-        const bootDrive = bootConfigMsg.bootDrive;
-        const cdBootDrive = bootConfigMsg.cdBootDrive;
-        const bootFromCdIfPresent = bootConfigMsg.bootFromCdIfPresent;
+      const bootConfigMsg = data as unknown;
+      if (bootConfigMsg && typeof bootConfigMsg === "object" && (bootConfigMsg as { type?: unknown }).type === "machineCpu.bootConfig") {
+        // Treat postMessage payloads as untrusted and ignore inherited values (prototype pollution).
+        const rec = bootConfigMsg as Record<string, unknown>;
+        const bootDrive = Object.prototype.hasOwnProperty.call(rec, "bootDrive") ? rec.bootDrive : undefined;
+        const cdBootDrive = Object.prototype.hasOwnProperty.call(rec, "cdBootDrive") ? rec.cdBootDrive : undefined;
+        const bootFromCdIfPresent = Object.prototype.hasOwnProperty.call(rec, "bootFromCdIfPresent") ? rec.bootFromCdIfPresent : undefined;
         if (
           typeof bootDrive === "number" &&
           Number.isFinite(bootDrive) &&
