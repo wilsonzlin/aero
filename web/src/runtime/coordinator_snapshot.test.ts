@@ -259,10 +259,11 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
     installReadyWorkers(coordinator, { cpu, io, net });
 
     const shared = (coordinator as any).shared;
-    const scanoutSab = new SharedArrayBuffer(SCANOUT_STATE_U32_LEN * Int32Array.BYTES_PER_ELEMENT);
+    const scanoutOffsetBytes = 64;
+    const scanoutSab = new SharedArrayBuffer(scanoutOffsetBytes + SCANOUT_STATE_U32_LEN * Int32Array.BYTES_PER_ELEMENT);
     shared.scanoutState = scanoutSab;
-    shared.scanoutStateOffsetBytes = 0;
-    const scanoutWords = wrapScanoutState(scanoutSab, 0);
+    shared.scanoutStateOffsetBytes = scanoutOffsetBytes;
+    const scanoutWords = wrapScanoutState(scanoutSab, scanoutOffsetBytes);
     publishScanoutState(scanoutWords, {
       source: SCANOUT_SOURCE_WDDM,
       basePaddrLo: 0x1234,
@@ -589,10 +590,11 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
     installReadyWorkers(coordinator, { cpu, io, net });
 
     const shared = (coordinator as any).shared;
-    const scanoutSab = new SharedArrayBuffer(SCANOUT_STATE_U32_LEN * Int32Array.BYTES_PER_ELEMENT);
+    const scanoutOffsetBytes = 64;
+    const scanoutSab = new SharedArrayBuffer(scanoutOffsetBytes + SCANOUT_STATE_U32_LEN * Int32Array.BYTES_PER_ELEMENT);
     shared.scanoutState = scanoutSab;
-    shared.scanoutStateOffsetBytes = 0;
-    const scanoutWords = wrapScanoutState(scanoutSab, 0);
+    shared.scanoutStateOffsetBytes = scanoutOffsetBytes;
+    const scanoutWords = wrapScanoutState(scanoutSab, scanoutOffsetBytes);
     publishScanoutState(scanoutWords, {
       source: SCANOUT_SOURCE_WDDM,
       basePaddrLo: 0x1234,
