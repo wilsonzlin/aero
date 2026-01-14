@@ -63,6 +63,10 @@ const MAX_SHA256_MANIFEST_ENTRIES = 1_000_000;
 
 export type OpenDiskFn = (spec: DiskOpenSpec, mode: OpenMode, overlayBlockSizeBytes?: number) => Promise<DiskEntry>;
 
+const AEROSPARSE_MAGIC = [0x41, 0x45, 0x52, 0x4f, 0x53, 0x50, 0x41, 0x52] as const; // "AEROSPAR"
+const QCOW2_MAGIC = [0x51, 0x46, 0x49, 0xfb] as const; // "QFI\xfb"
+const VHD_COOKIE = [0x63, 0x6f, 0x6e, 0x65, 0x63, 0x74, 0x69, 0x78] as const; // "conectix"
+
 type DiskIoTelemetry = {
   reads: number;
   bytesRead: number;
@@ -148,6 +152,110 @@ function stableImageIdFromUrl(url: string): string {
     const noHash = url.split("#", 1)[0] ?? url;
     return (noHash.split("?", 1)[0] ?? noHash).trim();
   }
+}
+
+async function readFileBytes(file: File, offset: number, length: number): Promise<Uint8Array> {
+  if (length <= 0) return new Uint8Array();
+  const end = offset + length;
+  const ab = await file.slice(offset, end).arrayBuffer();
+  return new Uint8Array(ab);
+}
+
+function bytesEqualPrefix(bytes: Uint8Array, expected: readonly number[]): boolean {
+  if (bytes.byteLength < expected.length) return false;
+  for (let i = 0; i < expected.length; i += 1) {
+    if (bytes[i] !== expected[i]) return false;
+  }
+  return true;
+}
+
+async function looksLikeAerosparFromFile(file: File): Promise<boolean> {
+  const sniffLen = Math.min(file.size, 12);
+  if (sniffLen < AEROSPARSE_MAGIC.length) return false;
+  const prefix = await readFileBytes(file, 0, sniffLen);
+  if (!bytesEqualPrefix(prefix, AEROSPARSE_MAGIC)) return false;
+  // Treat truncated headers as aerospar so callers surface corruption errors instead of
+  // interpreting the header bytes as a raw disk image.
+  if (prefix.byteLength < 12) return true;
+  const version = new DataView(prefix.buffer, prefix.byteOffset, prefix.byteLength).getUint32(8, true);
+  return version === 1;
+}
+
+async function looksLikeQcow2FromFile(file: File): Promise<boolean> {
+  const len = file.size;
+  if (len < 4) return false;
+  const prefix = await readFileBytes(file, 0, Math.min(8, len));
+  if (!bytesEqualPrefix(prefix, QCOW2_MAGIC)) return false;
+  if (len < 72) return true;
+  if (prefix.byteLength < 8) return true;
+  const version = new DataView(prefix.buffer, prefix.byteOffset, prefix.byteLength).getUint32(4, false);
+  return version === 2 || version === 3;
+}
+
+function looksLikeVhdFooterBytes(footerBytes: Uint8Array, fileSize: number): boolean {
+  if (footerBytes.byteLength !== 512) return false;
+  if (!bytesEqualPrefix(footerBytes, VHD_COOKIE)) return false;
+  const dv = new DataView(footerBytes.buffer, footerBytes.byteOffset, footerBytes.byteLength);
+
+  // Fixed file format version for VHD footers (big-endian).
+  if (dv.getUint32(12, false) !== 0x0001_0000) return false;
+
+  const currentSizeBig = dv.getBigUint64(48, false);
+  const currentSize = Number(currentSizeBig);
+  if (!Number.isSafeInteger(currentSize) || currentSize <= 0) return false;
+  if (currentSize % 512 !== 0) return false;
+
+  const diskType = dv.getUint32(60, false);
+  if (diskType !== 2 && diskType !== 3 && diskType !== 4) return false;
+
+  const dataOffsetBig = dv.getBigUint64(16, false);
+  if (diskType === 2) {
+    if (dataOffsetBig !== 0xffff_ffff_ffff_ffffn) return false;
+    const requiredLen = currentSize + 512;
+    if (!Number.isSafeInteger(requiredLen) || fileSize < requiredLen) return false;
+  } else {
+    if (dataOffsetBig === 0xffff_ffff_ffff_ffffn) return false;
+    const dataOffset = Number(dataOffsetBig);
+    if (!Number.isSafeInteger(dataOffset) || dataOffset < 512) return false;
+    if (dataOffset % 512 !== 0) return false;
+    const end = dataOffset + 1024;
+    if (!Number.isSafeInteger(end) || end > fileSize) return false;
+  }
+
+  return true;
+}
+
+async function looksLikeVhdFromFile(file: File): Promise<boolean> {
+  const len = file.size;
+  if (len < 8) return false;
+  if (len < 512) {
+    const cookie = await readFileBytes(file, 0, 8);
+    return bytesEqualPrefix(cookie, VHD_COOKIE);
+  }
+
+  const footerEnd = await readFileBytes(file, len - 512, 512);
+  if (looksLikeVhdFooterBytes(footerEnd, len)) return true;
+
+  const footer0 = await readFileBytes(file, 0, 512);
+  if (!looksLikeVhdFooterBytes(footer0, len)) return false;
+  const dv = new DataView(footer0.buffer, footer0.byteOffset, footer0.byteLength);
+  const diskType = dv.getUint32(60, false);
+  if (diskType === 2) {
+    const currentSize = Number(dv.getBigUint64(48, false));
+    const required = currentSize + 1024;
+    return Number.isSafeInteger(required) && len >= required;
+  }
+  return true;
+}
+
+async function sniffContainerFormatForRawOpen(file: File): Promise<"aerospar" | "qcow2" | "vhd" | null> {
+  // Only sniff formats that must not be treated as raw sector images (they contain headers /
+  // allocation tables that would leak to the guest). ISO images are still raw sector images, so we
+  // do not treat "missing CD001" as an error here.
+  if (await looksLikeAerosparFromFile(file)) return "aerospar";
+  if (await looksLikeQcow2FromFile(file)) return "qcow2";
+  if (await looksLikeVhdFromFile(file)) return "vhd";
+  return null;
 }
 
 async function bestEffortDeleteLegacyRemoteRangeCache(imageId: string, version: string): Promise<void> {
@@ -735,6 +843,22 @@ async function openDiskFromMetadata(
         case "raw":
         case "iso":
         case "unknown":
+          // Defensive: treat local disk metadata as untrusted. If the on-disk bytes look like a
+          // container format (aerospar/qcow2/vhd), refuse to open as a raw sector image so we don't
+          // leak headers/allocation tables to the guest.
+          try {
+            const fh = await opfsGetDiskFileHandle(fileName, { create: false, dirPath });
+            const detected = await sniffContainerFormatForRawOpen(await fh.getFile());
+            if (detected) {
+              throw new Error(
+                `disk format mismatch: metadata says ${localMeta.format} but file looks like ${detected} (convert to aerospar first)`,
+              );
+            }
+          } catch (err) {
+            // If the file is missing or probing fails, fall back to the normal open path so the
+            // caller gets a consistent NotFound / mismatch error.
+            if (err instanceof Error && /disk format mismatch/.test(err.message)) throw err;
+          }
           return await OpfsRawDisk.open(fileName, { create: false, sizeBytes, dirPath });
         case "qcow2":
         case "vhd":
@@ -901,6 +1025,19 @@ async function openDiskFromSnapshot(entry: RuntimeDiskSnapshotEntry): Promise<Di
         case "raw":
         case "iso":
         case "unknown":
+          // Defensive: snapshot metadata can be stale/corrupt. Refuse to open container formats as
+          // raw sector disks to avoid leaking headers/allocation tables to the guest.
+          try {
+            const fh = await opfsGetDiskFileHandle(backend.key, { create: false, dirPath });
+            const detected = await sniffContainerFormatForRawOpen(await fh.getFile());
+            if (detected) {
+              throw new Error(
+                `disk format mismatch: snapshot says ${backend.format} but file looks like ${detected} (convert to aerospar first)`,
+              );
+            }
+          } catch (err) {
+            if (err instanceof Error && /disk format mismatch/.test(err.message)) throw err;
+          }
           base = await OpfsRawDisk.open(backend.key, { create: false, sizeBytes: backend.sizeBytes, dirPath });
           break;
         case "qcow2":
