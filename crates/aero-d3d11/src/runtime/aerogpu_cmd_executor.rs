@@ -139,16 +139,20 @@ const OPCODE_FLUSH: u32 = AerogpuCmdOpcode::Flush as u32;
 const DEFAULT_BIND_GROUP_CACHE_CAPACITY: usize = 4096;
 
 // Placeholder geometry/tessellation emulation path:
-// - Compute prepass expands a fixed triangle into an "expanded vertex" buffer + indirect args.
+// - Compute prepass expands one or more synthetic primitives into an "expanded vertex" buffer +
+//   indirect args.
 // - Render pass consumes those buffers via `draw_indirect`/`draw_indexed_indirect`.
+//
+// This prepass is scaffolding for GS/HS/DS compute-based emulation. In particular:
+// - `@builtin(global_invocation_id).x` is treated as the GS `SV_PrimitiveID`
+// - `@builtin(global_invocation_id).y` is treated as the GS `SV_GSInstanceID`
 const GEOMETRY_PREPASS_EXPANDED_VERTEX_STRIDE_BYTES: u64 = 32;
-const GEOMETRY_PREPASS_VERTEX_COUNT: u64 = 3;
-const GEOMETRY_PREPASS_INDEX_COUNT: u64 = 3;
 // Use the indexed-indirect layout size since it is a strict superset of `DrawIndirectArgs`.
 const GEOMETRY_PREPASS_INDIRECT_ARGS_SIZE_BYTES: u64 =
     core::mem::size_of::<DrawIndexedIndirectArgs>() as u64;
 const GEOMETRY_PREPASS_COUNTER_SIZE_BYTES: u64 = 4; // 1x u32
-const GEOMETRY_PREPASS_PARAMS_SIZE_BYTES: u64 = 16; // vec4<f32>
+// `vec4<f32>` color + `vec4<u32>` counts.
+const GEOMETRY_PREPASS_PARAMS_SIZE_BYTES: u64 = 32;
 
 const GEOMETRY_PREPASS_CS_WGSL: &str = r#"
 struct ExpandedVertex {
@@ -158,6 +162,7 @@ struct ExpandedVertex {
 
 struct Params {
     color: vec4<f32>,
+    counts: vec4<u32>,
 };
 
 @group(0) @binding(0) var<storage, read_write> out_vertices: array<ExpandedVertex>;
@@ -168,37 +173,79 @@ struct Params {
 
 @compute @workgroup_size(1)
 fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
-    if (id.x != 0u) {
+    // Compute-based GS emulation system values.
+    let primitive_id: u32 = id.x;
+    let gs_instance_id: u32 = id.y;
+
+    let primitive_count: u32 = params.counts.x;
+    if (primitive_id >= primitive_count) {
         return;
     }
 
-    let c = params.color;
+    // Default placeholder color:
+    // - primitive 0: `params.color` (red in tests)
+    // - primitive 1+: green, to make primitive_id-dependent output easy to validate
+    var c = params.color;
+    if (primitive_id != 0u) {
+        c = vec4<f32>(0.0, 1.0, 0.0, 1.0);
+    }
 
-    // Clockwise full-screen-ish triangle (matches default `FrontFace::Cw` + back-face culling).
-    out_vertices[0].pos = vec4<f32>(-1.0, -1.0, 0.0, 1.0);
-    out_vertices[1].pos = vec4<f32>(-1.0, 3.0, 0.0, 1.0);
-    out_vertices[2].pos = vec4<f32>(3.0, -1.0, 0.0, 1.0);
+    if (primitive_count == 1u) {
+        // Clockwise full-screen-ish triangle (matches default `FrontFace::Cw` + back-face culling).
+        out_vertices[0].pos = vec4<f32>(-1.0, -1.0, 0.0, 1.0);
+        out_vertices[1].pos = vec4<f32>(-1.0, 3.0, 0.0, 1.0);
+        out_vertices[2].pos = vec4<f32>(3.0, -1.0, 0.0, 1.0);
 
-    out_vertices[0].o1 = c;
-    out_vertices[1].o1 = c;
-    out_vertices[2].o1 = c;
+        out_vertices[0].o1 = c;
+        out_vertices[1].o1 = c;
+        out_vertices[2].o1 = c;
 
-    // Indices for indexed draws.
-    out_indices[0] = 0u;
-    out_indices[1] = 1u;
-    out_indices[2] = 2u;
+        // Indices for indexed draws.
+        out_indices[0] = 0u;
+        out_indices[1] = 1u;
+        out_indices[2] = 2u;
+    } else {
+        // Side-by-side triangles (used for primitive-id tests).
+        let base: u32 = primitive_id * 3u;
 
-    // Placeholder counter (for eventual GS-style append/emit emulation).
-    out_counter[0] = 3u;
+        var x0: f32 = -2.0;
+        var x1: f32 = -2.0;
+        if (primitive_id == 0u) {
+            x0 = -1.0;
+            x1 = 0.0;
+        } else if (primitive_id == 1u) {
+            x0 = 0.0;
+            x1 = 3.0;
+        }
+
+        out_vertices[base + 0u].pos = vec4<f32>(x0, -1.0, 0.0, 1.0);
+        out_vertices[base + 1u].pos = vec4<f32>(x0, 3.0, 0.0, 1.0);
+        out_vertices[base + 2u].pos = vec4<f32>(x1, -1.0, 0.0, 1.0);
+
+        out_vertices[base + 0u].o1 = c;
+        out_vertices[base + 1u].o1 = c;
+        out_vertices[base + 2u].o1 = c;
+
+        out_indices[base + 0u] = base + 0u;
+        out_indices[base + 1u] = base + 1u;
+        out_indices[base + 2u] = base + 2u;
+    }
 
     // Write 5 u32s so the same buffer works for both:
     // - draw_indirect:           vertex_count, instance_count, first_vertex, first_instance
     // - draw_indexed_indirect:   index_count, instance_count, first_index, base_vertex, first_instance
-    out_indirect[0] = 3u;
-    out_indirect[1] = 1u;
-    out_indirect[2] = 0u;
-    out_indirect[3] = 0u;
-    out_indirect[4] = 0u;
+    //
+    // Only the first GS instance writes indirect args (so future GS instancing does not race).
+    if (primitive_id == 0u && gs_instance_id == 0u) {
+        let count: u32 = primitive_count * 3u;
+        // Placeholder counter (for eventual GS-style append/emit emulation).
+        out_counter[0] = count;
+        out_indirect[0] = count;
+        out_indirect[1] = params.counts.y;
+        out_indirect[2] = 0u;
+        out_indirect[3] = 0u;
+        out_indirect[4] = 0u;
+    }
 }
 "#;
 
@@ -2595,6 +2642,27 @@ impl AerogpuD3d11Executor {
             }
             _ => unreachable!(),
         };
+        let (element_count, instance_count) = match opcode {
+            OPCODE_DRAW => (read_u32_le(cmd_bytes, 8)?, read_u32_le(cmd_bytes, 12)?),
+            OPCODE_DRAW_INDEXED => (read_u32_le(cmd_bytes, 8)?, read_u32_le(cmd_bytes, 12)?),
+            _ => unreachable!(),
+        };
+        let primitive_count: u32 = match self.state.primitive_topology {
+            CmdPrimitiveTopology::PointList => element_count,
+            CmdPrimitiveTopology::LineList => element_count / 2,
+            CmdPrimitiveTopology::LineStrip => element_count.saturating_sub(1),
+            CmdPrimitiveTopology::TriangleList => element_count / 3,
+            CmdPrimitiveTopology::TriangleStrip | CmdPrimitiveTopology::TriangleFan => {
+                element_count.saturating_sub(2)
+            }
+            CmdPrimitiveTopology::LineListAdj => element_count / 4,
+            CmdPrimitiveTopology::LineStripAdj => element_count.saturating_sub(3),
+            CmdPrimitiveTopology::TriangleListAdj => element_count / 6,
+            CmdPrimitiveTopology::TriangleStripAdj => element_count.saturating_sub(4) / 2,
+            CmdPrimitiveTopology::PatchList { control_points } => {
+                element_count / u32::from(control_points.max(1))
+            }
+        };
 
         // Consume the draw packet now so errors include consistent cursor information.
         stream.iter.next().expect("peeked Some").map_err(|err| {
@@ -2606,6 +2674,12 @@ impl AerogpuD3d11Executor {
 
         if opcode == OPCODE_DRAW_INDEXED && self.state.index_buffer.is_none() {
             bail!("DRAW_INDEXED without index buffer");
+        }
+
+        if primitive_count == 0 || instance_count == 0 {
+            report.commands = report.commands.saturating_add(1);
+            *stream.cursor = cmd_end;
+            return Ok(());
         }
 
         // Upload any dirty render targets/depth-stencil attachments before starting the passes.
@@ -2718,10 +2792,14 @@ impl AerogpuD3d11Executor {
         }
 
         // Prepare compute prepass output buffers.
+        let expanded_vertex_count = u64::from(primitive_count)
+            .checked_mul(3)
+            .ok_or_else(|| anyhow!("geometry prepass expanded vertex count overflow"))?;
+        let expanded_index_count = expanded_vertex_count;
         let expanded_vertex_size = GEOMETRY_PREPASS_EXPANDED_VERTEX_STRIDE_BYTES
-            .checked_mul(GEOMETRY_PREPASS_VERTEX_COUNT)
+            .checked_mul(expanded_vertex_count)
             .ok_or_else(|| anyhow!("geometry prepass expanded vertex buffer size overflow"))?;
-        let expanded_index_size = GEOMETRY_PREPASS_INDEX_COUNT
+        let expanded_index_size = expanded_index_count
             .checked_mul(4)
             .ok_or_else(|| anyhow!("geometry prepass expanded index buffer size overflow"))?;
 
@@ -2750,13 +2828,17 @@ impl AerogpuD3d11Executor {
         });
         {
             // Default placeholder color: solid red.
-            let bytes = [
-                1.0f32.to_le_bytes(),
-                0.0f32.to_le_bytes(),
-                0.0f32.to_le_bytes(),
-                1.0f32.to_le_bytes(),
-            ]
-            .concat();
+            let mut bytes = [0u8; GEOMETRY_PREPASS_PARAMS_SIZE_BYTES as usize];
+            bytes[0..4].copy_from_slice(&1.0f32.to_le_bytes());
+            bytes[4..8].copy_from_slice(&0.0f32.to_le_bytes());
+            bytes[8..12].copy_from_slice(&0.0f32.to_le_bytes());
+            bytes[12..16].copy_from_slice(&1.0f32.to_le_bytes());
+
+            // Counts (`vec4<u32>`) for compute-based GS emulation:
+            // - x: primitive_count (dispatch.x)
+            // - y: instance_count (for indirect draw args)
+            bytes[16..20].copy_from_slice(&primitive_count.to_le_bytes());
+            bytes[20..24].copy_from_slice(&instance_count.to_le_bytes());
             let mut mapped = params_buffer.slice(..).get_mapped_range_mut();
             mapped.copy_from_slice(&bytes);
         }
@@ -3147,7 +3229,7 @@ impl AerogpuD3d11Executor {
             if let Some(bg) = vertex_pulling_bg.as_ref() {
                 pass.set_bind_group(VERTEX_PULLING_GROUP, bg, &[]);
             }
-            pass.dispatch_workgroups(1, 1, 1);
+            pass.dispatch_workgroups(primitive_count, 1, 1);
         }
 
         // Build bind groups for the render pass (before starting the pass so we can freely mutate
