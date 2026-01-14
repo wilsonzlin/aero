@@ -134,16 +134,7 @@ pub fn generate_edid(preferred: Timing) -> [u8; EDID_BLOCK_SIZE] {
     edid[37] = 0x00;
 
     // Standard timings.
-    edid[38..54].copy_from_slice(&[
-        0x61, 0x40, // 1024x768@60
-        0x45, 0x40, // 800x600@60
-        0x31, 0x40, // 640x480@60
-        0x01, 0x01, // unused
-        0x01, 0x01, // unused
-        0x01, 0x01, // unused
-        0x01, 0x01, // unused
-        0x01, 0x01, // unused
-    ]);
+    fill_standard_timings(&mut edid, preferred);
 
     // Detailed timing descriptor #1: preferred timing.
     let preferred_dtd = dtd_bytes_for_timing(preferred);
@@ -183,6 +174,80 @@ fn align_down_u32(v: u32, align: u32) -> u32 {
         return v;
     }
     v / align * align
+}
+
+fn fill_standard_timings(edid: &mut [u8; EDID_BLOCK_SIZE], preferred: Timing) {
+    // EDID standard timings are a small, fixed-size list. We keep the legacy
+    // modes (1024×768/800×600/640×480 @ 60Hz) and, when possible, also include
+    // the preferred timing so the EDID advertises it in multiple standard
+    // places.
+    //
+    // This intentionally does not change the default EDID bytes: for the legacy
+    // 1024×768@60 preferred timing, the output matches the previous hardcoded
+    // standard timing table.
+    let candidates = [
+        preferred,
+        Timing::new(1024, 768, 60),
+        Timing::new(800, 600, 60),
+        Timing::new(640, 480, 60),
+    ];
+
+    let mut slots = [[0x01u8, 0x01u8]; 8];
+    let mut idx = 0usize;
+    for t in candidates {
+        if idx >= slots.len() {
+            break;
+        }
+        let Some(bytes) = encode_standard_timing(t) else {
+            continue;
+        };
+        if slots[..idx].contains(&bytes) {
+            continue;
+        }
+        slots[idx] = bytes;
+        idx += 1;
+    }
+
+    for (i, pair) in slots.iter().enumerate() {
+        let base = 38 + i * 2;
+        edid[base] = pair[0];
+        edid[base + 1] = pair[1];
+    }
+}
+
+fn encode_standard_timing(timing: Timing) -> Option<[u8; 2]> {
+    // Standard timing encoding (EDID 1.4):
+    // - Horizontal active = (byte0 + 31) * 8
+    // - Aspect ratio = byte1 bits 7-6
+    // - Refresh = (byte1 bits 5-0) + 60
+    if timing.refresh_hz < 60 || timing.refresh_hz > 123 {
+        return None;
+    }
+    if !timing.width.is_multiple_of(8) {
+        return None;
+    }
+
+    let horiz_code = (timing.width / 8).checked_sub(31)?;
+    if horiz_code > u8::MAX as u16 {
+        return None;
+    }
+
+    let w = timing.width as u32;
+    let h = timing.height as u32;
+    let aspect_bits = if w * 10 == h * 16 {
+        0u8 // 16:10
+    } else if w * 3 == h * 4 {
+        1u8 // 4:3
+    } else if w * 4 == h * 5 {
+        2u8 // 5:4
+    } else if w * 9 == h * 16 {
+        3u8 // 16:9
+    } else {
+        return None;
+    };
+
+    let refresh_code = (timing.refresh_hz - 60) as u8;
+    Some([(horiz_code as u8), (aspect_bits << 6) | refresh_code])
 }
 
 fn range_limits_descriptor(preferred: Timing, preferred_dtd: &[u8; 18]) -> [u8; 18] {
