@@ -12,7 +12,9 @@
   - Must target KMDF 1.9 (in-box on Win7 SP1)
   - Must include the contract v1 keyboard/mouse HWID set (revision gated, REV_01), plus the strict REV-qualified generic fallback HWID (no SUBSYS):
     `PCI\VEN_1AF4&DEV_1052&REV_01`
-  - If a legacy filename alias INF exists (`virtio-input.inf{,.disabled}`), it must be a filename alias only and remain byte-for-byte identical to the canonical INF from the first section header (`[Version]`) onward (only the leading banner/comments may differ).
+  - If a legacy filename alias INF exists (`virtio-input.inf{,.disabled}`), it must be a filename alias only and remain
+    byte-for-byte identical to the canonical INF from the first section header (`[Version]`) onward
+    (only the leading banner/comments may differ; see `scripts/check-inf-alias.py`).
   - Must not include a revision-less base HWID (`PCI\VEN_1AF4&DEV_1052`) (revision gating is required)
   - Must use distinct DeviceDesc strings for keyboard vs mouse (so they appear separately in Device Manager)
   - Must enable MSI/MSI-X and request enough message interrupts for virtio-input

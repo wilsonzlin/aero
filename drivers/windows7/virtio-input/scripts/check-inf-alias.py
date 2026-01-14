@@ -103,7 +103,18 @@ def _decode_lines_for_diff(data: bytes) -> list[str]:
         # If this was UTF-16 without a BOM, it will look like NUL-padded UTF-8.
         if "\x00" in text:
             text = text.replace("\x00", "")
-    return text.splitlines(keepends=True)
+    # Keep line endings so difflib produces a readable unified diff.
+    out: list[str] = []
+    for line in text.splitlines(keepends=True):
+        # Make CRLF/CR visible without emitting literal '\r' characters that can
+        # break terminal output.
+        if line.endswith("\r\n"):
+            out.append(line[:-2] + "\\r\n")
+        elif line.endswith("\r"):
+            out.append(line[:-1] + "\\r\n")
+        else:
+            out.append(line)
+    return out
 
 
 def main() -> int:
