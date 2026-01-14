@@ -2,6 +2,8 @@
 //!
 //! Source of truth: `drivers/aerogpu/protocol/aerogpu_umd_private.h`.
 
+use core::fmt;
+
 /// ABI struct version for [`AerogpuUmdPrivateV1`].
 pub const AEROGPU_UMDPRIV_STRUCT_VERSION_V1: u32 = 1;
 
@@ -38,6 +40,20 @@ pub enum AerogpuUmdPrivateDecodeError {
     BadSizeField { found: u32 },
     UnsupportedStructVersion { found: u32 },
 }
+
+impl fmt::Display for AerogpuUmdPrivateDecodeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            AerogpuUmdPrivateDecodeError::BufferTooSmall => write!(f, "buffer too small"),
+            AerogpuUmdPrivateDecodeError::BadSizeField { found } => write!(f, "bad size_bytes field {found}"),
+            AerogpuUmdPrivateDecodeError::UnsupportedStructVersion { found } => {
+                write!(f, "unsupported struct_version {found}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for AerogpuUmdPrivateDecodeError {}
 
 /// Version 1 of the UMDRIVERPRIVATE discovery blob returned by the KMD.
 ///

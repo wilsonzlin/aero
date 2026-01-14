@@ -3,6 +3,7 @@
 //! Source of truth: `drivers/aerogpu/protocol/aerogpu_ring.h`.
 
 use super::aerogpu_pci::{parse_and_validate_abi_version_u32, AerogpuAbiError};
+use core::fmt;
 use std::borrow::Cow;
 
 pub const AEROGPU_ALLOC_TABLE_MAGIC: u32 = 0x434F_4C41; // "ALOC" LE
@@ -34,10 +35,44 @@ impl From<AerogpuAbiError> for AerogpuRingDecodeError {
     }
 }
 
+impl fmt::Display for AerogpuRingDecodeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            AerogpuRingDecodeError::BufferTooSmall => write!(f, "buffer too small"),
+            AerogpuRingDecodeError::BadMagic { found } => write!(f, "bad magic 0x{found:08X}"),
+            AerogpuRingDecodeError::Abi(err) => write!(f, "abi error: {err}"),
+            AerogpuRingDecodeError::BadSizeField { found } => write!(f, "bad size_bytes field {found}"),
+            AerogpuRingDecodeError::BadEntryCount { found } => write!(f, "bad entry_count {found}"),
+            AerogpuRingDecodeError::BadStrideField { found } => {
+                write!(f, "bad entry_stride_bytes field {found}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for AerogpuRingDecodeError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            AerogpuRingDecodeError::Abi(err) => Some(err),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AerogpuRingEncodeError {
     BufferTooSmall,
 }
+
+impl fmt::Display for AerogpuRingEncodeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            AerogpuRingEncodeError::BufferTooSmall => write!(f, "buffer too small"),
+        }
+    }
+}
+
+impl std::error::Error for AerogpuRingEncodeError {}
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -143,6 +178,34 @@ pub enum AerogpuAllocTableDecodeError {
 impl From<AerogpuAbiError> for AerogpuAllocTableDecodeError {
     fn from(value: AerogpuAbiError) -> Self {
         Self::Abi(value)
+    }
+}
+
+impl fmt::Display for AerogpuAllocTableDecodeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            AerogpuAllocTableDecodeError::BufferTooSmall => write!(f, "buffer too small"),
+            AerogpuAllocTableDecodeError::BadMagic { found } => write!(f, "bad magic 0x{found:08X}"),
+            AerogpuAllocTableDecodeError::Abi(err) => write!(f, "abi error: {err}"),
+            AerogpuAllocTableDecodeError::BadSize { found, buf_len } => {
+                write!(f, "bad size_bytes {found} (buffer_len={buf_len})")
+            }
+            AerogpuAllocTableDecodeError::BadStride { found, expected } => write!(
+                f,
+                "bad entry_stride_bytes {found} (expected >= {expected})"
+            ),
+            AerogpuAllocTableDecodeError::CountOutOfBounds => write!(f, "entry_count out of bounds"),
+            AerogpuAllocTableDecodeError::Misaligned => write!(f, "entries buffer misaligned"),
+        }
+    }
+}
+
+impl std::error::Error for AerogpuAllocTableDecodeError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            AerogpuAllocTableDecodeError::Abi(err) => Some(err),
+            _ => None,
+        }
     }
 }
 
