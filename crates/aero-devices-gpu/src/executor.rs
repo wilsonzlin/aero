@@ -418,6 +418,24 @@ impl AeroGpuExecutor {
             return;
         }
 
+        // Defensive: reject ring mappings that would wrap the u64 physical address space.
+        //
+        // Some `MemoryBus` implementations iterate bytewise using `wrapping_add`, so allowing a ring
+        // GPA near `u64::MAX` could cause device reads/writes to silently wrap to low memory.
+        if regs
+            .ring_gpa
+            .checked_add(AEROGPU_RING_HEADER_SIZE_BYTES)
+            .is_none()
+            || regs
+                .ring_gpa
+                .checked_add(u64::from(regs.ring_size_bytes))
+                .is_none()
+        {
+            regs.stats.malformed_submissions = regs.stats.malformed_submissions.saturating_add(1);
+            regs.record_error(AerogpuErrorCode::Oob, 0);
+            return;
+        }
+
         let ring = AeroGpuRingHeader::read_from(mem, regs.ring_gpa);
         if !ring.is_valid(regs.ring_size_bytes) {
             regs.stats.malformed_submissions = regs.stats.malformed_submissions.saturating_add(1);
@@ -443,16 +461,18 @@ impl AeroGpuExecutor {
         let max = ring.entry_count.min(pending);
 
         while head != tail && processed < max {
-            let desc_offset = u64::from(ring.slot_index(head)) * u64::from(ring.entry_stride_bytes);
             let desc_gpa = match regs
                 .ring_gpa
                 .checked_add(AEROGPU_RING_HEADER_SIZE_BYTES)
-                .and_then(|base| base.checked_add(desc_offset))
-            {
+                .and_then(|base| {
+                    let slot = u64::from(ring.slot_index(head));
+                    let stride = u64::from(ring.entry_stride_bytes);
+                    slot.checked_mul(stride).and_then(|off| base.checked_add(off))
+                }) {
                 Some(v) => v,
                 None => {
-                    // Address overflow when forming the descriptor GPA. Drop all pending work (as if the
-                    // ring were corrupted) to avoid looping forever and surface an OOB error.
+                    // Address overflow when forming the descriptor GPA. Drop all pending work (as if
+                    // the ring were corrupted) to avoid looping forever and surface an OOB error.
                     AeroGpuRingHeader::write_head(mem, regs.ring_gpa, tail);
                     regs.stats.malformed_submissions =
                         regs.stats.malformed_submissions.saturating_add(1);
@@ -1821,6 +1841,34 @@ mod tests {
         exec.process_vblank_tick(&mut regs, &mut mem);
         assert_eq!(regs.completed_fence, fence);
         assert_ne!(regs.irq_status & irq_bits::FENCE, 0);
+    }
+
+    #[test]
+    fn process_doorbell_rejects_overflowing_ring_gpa_without_touching_memory() {
+        #[derive(Default)]
+        struct PanicBus;
+
+        impl MemoryBus for PanicBus {
+            fn read_physical(&mut self, _paddr: u64, _buf: &mut [u8]) {
+                panic!("unexpected guest memory read");
+            }
+
+            fn write_physical(&mut self, _paddr: u64, _buf: &[u8]) {
+                panic!("unexpected guest memory write");
+            }
+        }
+
+        let mut mem = PanicBus::default();
+        let mut regs = AeroGpuRegs::default();
+        regs.ring_control = ring_control::ENABLE;
+        regs.ring_gpa = u64::MAX - 1;
+        regs.ring_size_bytes = 0x1000;
+
+        let mut exec = AeroGpuExecutor::new(AeroGpuExecutorConfig::default());
+        exec.process_doorbell(&mut regs, &mut mem);
+
+        assert_eq!(regs.error_code, AerogpuErrorCode::Oob as u32);
+        assert_ne!(regs.irq_status & irq_bits::ERROR, 0);
     }
 
     #[test]

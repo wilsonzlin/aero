@@ -428,6 +428,17 @@ mod tests {
     }
 
     #[test]
+    fn ring_head_tail_helpers_ignore_overflowing_gpas() {
+        let mut mem = VecMemory::new(0x1000);
+        let ring_gpa = u64::MAX - 1;
+        // Should not panic (and should not wrap to a low address).
+        AeroGpuRingHeader::write_head(&mut mem, ring_gpa, 0xDEAD_BEEF);
+        AeroGpuRingHeader::write_tail(&mut mem, ring_gpa, 0xCAFE_BABE);
+        assert_eq!(AeroGpuRingHeader::read_head(&mut mem, ring_gpa), 0);
+        assert_eq!(AeroGpuRingHeader::read_tail(&mut mem, ring_gpa), 0);
+    }
+
+    #[test]
     fn write_fence_page_writes_expected_fields() {
         let mut mem = VecMemory::new(0x1000);
         let fence_gpa = 0x200u64;
