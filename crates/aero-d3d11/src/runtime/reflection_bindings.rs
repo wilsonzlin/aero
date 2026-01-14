@@ -1327,6 +1327,13 @@ mod tests {
                 skip_or_panic(module_path!(), "storage buffers are not supported by this adapter");
                 return;
             }
+            if device.limits().max_bind_groups < 5 {
+                skip_or_panic(
+                    module_path!(),
+                    "adapter does not support 5 bind groups (required by this test)",
+                );
+                return;
+            }
 
             // Build stage-scoped bind group layouts via the same reflection-driven path the D3D11
             // executor uses. The geometry stage is emulated via a compute shader, but its slot
