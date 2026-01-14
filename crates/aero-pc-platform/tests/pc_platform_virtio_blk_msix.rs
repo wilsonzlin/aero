@@ -213,3 +213,78 @@ fn pc_platform_virtio_blk_msix_triggers_lapic_vector() {
     assert_eq!(pc.interrupts.borrow().get_pending(), Some(0x55));
 }
 
+#[test]
+fn pc_platform_virtio_blk_msix_config_interrupt_triggers_lapic_vector() {
+    let mut pc = PcPlatform::new_with_config(
+        2 * 1024 * 1024,
+        PcPlatformConfig {
+            enable_ahci: false,
+            enable_uhci: false,
+            enable_virtio_blk: true,
+            enable_virtio_msix: true,
+            ..Default::default()
+        },
+    );
+    let bdf = VIRTIO_BLK.bdf;
+
+    // Switch into APIC mode so MSI delivery targets the LAPIC.
+    pc.io.write_u8(IMCR_SELECT_PORT, IMCR_INDEX);
+    pc.io.write_u8(IMCR_DATA_PORT, 0x01);
+    assert_eq!(pc.interrupts.borrow().mode(), PlatformInterruptMode::Apic);
+
+    // Enable BAR0 MMIO decode + bus mastering, and disable legacy INTx so only MSI-X delivery is
+    // observable.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0406);
+
+    let bar0_base = read_bar0_base(&mut pc);
+    assert_ne!(bar0_base, 0);
+    assert_eq!(bar0_base % 0x4000, 0);
+
+    // Locate the MSI-X capability.
+    let msix_cap = find_capability(&mut pc, bdf.bus, bdf.device, bdf.function, PCI_CAP_ID_MSIX)
+        .expect("virtio-blk should expose MSI-X when enabled");
+
+    // Enable MSI-X.
+    let ctrl = read_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, msix_cap + 0x02);
+    write_cfg_u16(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        msix_cap + 0x02,
+        (ctrl & !(1 << 14)) | (1 << 15),
+    );
+
+    // Program table entry 1: destination = BSP (APIC ID 0), vector = 0x56.
+    let table = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, msix_cap + 0x04);
+    assert_eq!(table & 0x7, 0, "MSI-X table should live in BAR0 (BIR=0)");
+    let table_offset = u64::from(table & !0x7);
+    let entry1 = bar0_base + table_offset + 16;
+    pc.memory.write_u32(entry1 + 0x0, 0xfee0_0000);
+    pc.memory.write_u32(entry1 + 0x4, 0);
+    pc.memory.write_u32(entry1 + 0x8, 0x0056);
+    pc.memory.write_u32(entry1 + 0xc, 0); // unmasked
+
+    // Assign MSI-X table entry 1 as the config interrupt vector.
+    //
+    // BAR0 layout for Aero's virtio-pci contract:
+    // - common cfg @ 0x0000
+    const COMMON: u64 = 0x0000;
+    pc.memory.write_u16(bar0_base + COMMON + 0x10, 1); // msix_config_vector
+    assert_eq!(
+        pc.memory.read_u16(bar0_base + COMMON + 0x10),
+        1,
+        "msix_config_vector should be writable after MSI-X is enabled"
+    );
+
+    assert_eq!(pc.interrupts.borrow().get_pending(), None);
+
+    // Trigger a device configuration interrupt directly from the virtio transport.
+    pc.virtio_blk
+        .as_ref()
+        .unwrap()
+        .borrow_mut()
+        .signal_config_interrupt();
+
+    assert_eq!(pc.interrupts.borrow().get_pending(), Some(0x56));
+}
