@@ -9,10 +9,6 @@ import { encodeCommand } from "../../ipc/protocol.ts";
 
 import { AeroIpcIoServer, type AeroIpcIoDispatchTarget } from "./aero_ipc_io.ts";
 
-function nowMs(): number {
-  return typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
-}
-
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | null = null;
   const timeout = new Promise<never>((_, reject) => {
@@ -79,15 +75,22 @@ describe("io/ipc/aero_ipc_io tick fairness", () => {
     const abort = new AbortController();
     const serverTask = server.runAsync({ signal: abort.signal, yieldEveryNCommands: 64 });
 
-    const end = nowMs() + 50;
-    while (nowMs() < end) {
-      // Top up to ensure the drain loop never terminates.
-      while (cmdQ.tryPush(cmdBytes)) {}
-      await sleep0();
+    try {
+      await withTimeout(
+        (async () => {
+          while (!tickSawCmdData) {
+            // Top up to keep the drain loop hot until at least one tick fires while data is still queued.
+            while (cmdQ.tryPush(cmdBytes)) {}
+            await sleep0();
+          }
+        })(),
+        2000,
+        "tick() while draining (runAsync)",
+      );
+    } finally {
+      abort.abort();
+      await withTimeout(serverTask, 2000, "server.runAsync() shutdown");
     }
-
-    abort.abort();
-    await withTimeout(serverTask, 2000, "server.runAsync() shutdown");
 
     expect(tickCount).toBeGreaterThan(0);
     expect(tickSawCmdData).toBe(true);
@@ -142,14 +145,21 @@ describe("io/ipc/aero_ipc_io tick fairness", () => {
     const abort = new AbortController();
     const serverTask = server.runAsync({ signal: abort.signal, yieldEveryNCommands: 64 });
 
-    const end = nowMs() + 50;
-    while (nowMs() < end) {
-      while (cmdQ.tryPush(malformed)) {}
-      await sleep0();
+    try {
+      await withTimeout(
+        (async () => {
+          while (!timerFired || !tickSawCmdData) {
+            while (cmdQ.tryPush(malformed)) {}
+            await sleep0();
+          }
+        })(),
+        2000,
+        "yield + tick() while draining malformed commands (runAsync)",
+      );
+    } finally {
+      abort.abort();
+      await withTimeout(serverTask, 2000, "server.runAsync() shutdown (malformed)");
     }
-
-    abort.abort();
-    await withTimeout(serverTask, 2000, "server.runAsync() shutdown (malformed)");
 
     expect(timerFired).toBe(true);
     expect(tickCount).toBeGreaterThan(0);
@@ -194,12 +204,18 @@ describe("io/ipc/aero_ipc_io tick fairness", () => {
       // Start with a full ring so the server immediately enters the drain loop.
       while (cmdQ.tryPush(cmdBytes)) {}
 
-      const end = nowMs() + 50;
-      while (nowMs() < end) {
-        // Keep the ring non-empty by pushing whenever space becomes available.
-        // Batch pushes so time checks don't dominate and the producer stays ahead.
-        for (let i = 0; i < 1024; i++) cmdQ.tryPush(cmdBytes);
-      }
+      await withTimeout(
+        (async () => {
+          while (Atomics.load(tickSawCmdData, 0) !== 1) {
+            // Keep the ring non-empty by pushing whenever space becomes available.
+            // Batch pushes so time checks don't dominate and the producer stays ahead.
+            for (let i = 0; i < 1024; i++) cmdQ.tryPush(cmdBytes);
+            await sleep0();
+          }
+        })(),
+        2000,
+        "tick() while draining (run)",
+      );
 
       expect(Atomics.load(tickCounter, 0)).toBeGreaterThan(0);
       expect(Atomics.load(tickSawCmdData, 0)).toBe(1);
@@ -281,10 +297,16 @@ describe("io/ipc/aero_ipc_io tick fairness", () => {
       // Pre-fill so the server starts draining immediately.
       while (cmdQ.tryPush(malformed)) {}
 
-      const end = nowMs() + 50;
-      while (nowMs() < end) {
-        for (let i = 0; i < 256; i++) cmdQ.tryPush(malformed);
-      }
+      await withTimeout(
+        (async () => {
+          while (Atomics.load(tickSawCmdData, 0) !== 1) {
+            for (let i = 0; i < 256; i++) cmdQ.tryPush(malformed);
+            await sleep0();
+          }
+        })(),
+        2000,
+        "tick() while draining malformed commands (run)",
+      );
 
       expect(Atomics.load(tickCounter, 0)).toBeGreaterThan(0);
       expect(Atomics.load(tickSawCmdData, 0)).toBe(1);
