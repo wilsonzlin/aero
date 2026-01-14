@@ -68,7 +68,9 @@ fn boot_int10_aerogpu_vbe_118_sets_mode_and_lfb_is_visible_via_bar1() {
             .bus_mut()
             .device_config(profile::AEROGPU.bdf)
             .expect("AeroGPU device missing from PCI bus");
-        cfg.bar_range(1).expect("AeroGPU BAR1 must exist").base
+        cfg.bar_range(profile::AEROGPU_BAR1_VRAM_INDEX)
+            .expect("AeroGPU BAR1 must exist")
+            .base
     };
     assert_ne!(bar1_base, 0);
     let lfb_base = bar1_base + VBE_LFB_OFFSET as u64;

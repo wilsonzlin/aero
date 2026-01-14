@@ -162,8 +162,12 @@ fn aerogpu_scanout_handoff_to_wddm_blocks_legacy_int10_steal() {
             .device_config(profile::AEROGPU.bdf)
             .expect("AeroGPU device missing from PCI bus");
         (
-            cfg.bar_range(0).expect("AeroGPU BAR0 must exist").base,
-            cfg.bar_range(1).expect("AeroGPU BAR1 must exist").base,
+            cfg.bar_range(profile::AEROGPU_BAR0_INDEX)
+                .expect("AeroGPU BAR0 must exist")
+                .base,
+            cfg.bar_range(profile::AEROGPU_BAR1_VRAM_INDEX)
+                .expect("AeroGPU BAR1 must exist")
+                .base,
             cfg.command(),
         )
     };
@@ -245,13 +249,21 @@ fn aerogpu_scanout_handoff_to_wddm_blocks_legacy_int10_steal() {
     assert_eq!(m.display_resolution(), (width, height));
     assert_eq!(m.display_framebuffer()[0], 0xFFAA_BBCC);
 
+    // Legacy text memory changes must remain hidden while WDDM owns scanout.
+    m.write_physical(0xB8000, &vec![0u8; 0x8000]);
+    m.write_physical_u16(BDA_VIDEO_PAGE_OFFSET_ADDR, 0);
+    m.write_physical_u16(BDA_CURSOR_SHAPE_ADDR, 0x2000);
+    m.write_physical_u8(0xB8000, b'Z');
+    m.write_physical_u8(0xB8001, 0x1F);
+    m.display_present();
+    assert_eq!(m.active_scanout_source(), ScanoutSource::Wddm);
+    assert_eq!(m.display_resolution(), (width, height));
+    assert_eq!(m.display_framebuffer()[0], 0xFFAA_BBCC);
+
     // Once WDDM has claimed scanout, legacy VGA/VBE sources are ignored until the guest explicitly
     // disables scanout (`SCANOUT0_ENABLE=0`) or the VM resets. Explicit disable releases WDDM
     // ownership and allows falling back to the legacy presentation paths.
-    m.write_physical_u32(
-        bar0_base + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE),
-        0,
-    );
+    m.write_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE), 0);
     m.process_aerogpu();
     m.display_present();
     assert_eq!(m.active_scanout_source(), ScanoutSource::LegacyText);
@@ -263,7 +275,7 @@ fn aerogpu_scanout_handoff_to_wddm_blocks_legacy_int10_steal() {
     m.write_physical(0xB8000, &vec![0u8; 0x8000]);
     m.write_physical_u16(BDA_VIDEO_PAGE_OFFSET_ADDR, 0);
     m.write_physical_u16(BDA_CURSOR_SHAPE_ADDR, 0x2000);
-    m.write_physical_u8(0xB8000, b'Z');
+    m.write_physical_u8(0xB8000, b'Y');
     m.write_physical_u8(0xB8001, 0x1F);
     m.display_present();
     assert_eq!(m.active_scanout_source(), ScanoutSource::LegacyText);

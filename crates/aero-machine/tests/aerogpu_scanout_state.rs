@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use aero_devices::pci::PciBdf;
+use aero_devices::pci::profile;
 use aero_machine::{Machine, MachineConfig, RunExit, VBE_LFB_OFFSET};
 use aero_protocol::aerogpu::aerogpu_pci as agpu_pci;
 use aero_shared::scanout_state::{
@@ -147,9 +147,13 @@ fn aerogpu_scanout_state_transitions_from_legacy_to_wddm_and_is_sticky() {
     }
 
     // After VBE set mode, scanout should be legacy VBE LFB with base = BAR1 + VBE_LFB_OFFSET.
-    let bdf = PciBdf::new(0, 0x07, 0);
-    let bar0_base = m.pci_bar_base(bdf, 0).expect("BAR0 should be assigned");
-    let bar1_base = m.pci_bar_base(bdf, 1).expect("BAR1 should be assigned");
+    let bdf = profile::AEROGPU.bdf;
+    let bar0_base = m
+        .pci_bar_base(bdf, profile::AEROGPU_BAR0_INDEX)
+        .expect("BAR0 should be assigned");
+    let bar1_base = m
+        .pci_bar_base(bdf, profile::AEROGPU_BAR1_VRAM_INDEX)
+        .expect("BAR1 should be assigned");
     let expected_lfb_base = bar1_base + VBE_LFB_OFFSET as u64;
 
     let snap1 = scanout_state.snapshot();

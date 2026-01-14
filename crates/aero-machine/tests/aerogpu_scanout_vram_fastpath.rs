@@ -1,4 +1,4 @@
-use aero_devices::pci::profile::AEROGPU;
+use aero_devices::pci::profile::{AEROGPU, AEROGPU_BAR1_VRAM_INDEX};
 use aero_machine::{Machine, MachineConfig, RunExit, VBE_LFB_OFFSET};
 use pretty_assertions::assert_eq;
 
@@ -77,7 +77,9 @@ fn aerogpu_scanout_reads_from_bar1_vram_without_mmio_reads_during_present() {
             .bus_mut()
             .device_config(AEROGPU.bdf)
             .expect("AeroGPU PCI function should exist");
-        cfg.bar_range(1).map(|range| range.base).unwrap_or(0)
+        cfg.bar_range(AEROGPU_BAR1_VRAM_INDEX)
+            .map(|range| range.base)
+            .unwrap_or(0)
     };
     assert_ne!(
         bar1_base, 0,
