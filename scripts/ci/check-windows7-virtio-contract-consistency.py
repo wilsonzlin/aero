@@ -1095,7 +1095,9 @@ def scan_inf_msi_interrupt_settings(text: str, *, file: Path) -> tuple[InfMsiInt
             # "Equivalent key creation" forms:
             # - FLG_ADDREG_KEYONLY (0x10) (recommended)
             # - setting any value under the key (including the default value name)
-            if value_name == "" and (len(parts) >= 5 or (flags is not None and (flags & 0x10))):
+            if flags is None:
+                continue
+            if value_name == "" and (len(parts) >= 5 or (flags & 0x10)):
                 interrupt_mgmt_lines.append(InfRegLineOccurrence(line_no=line_no, raw_line=f"{file.as_posix()}:{line_no}: {line}"))
             elif value_name:
                 interrupt_mgmt_lines.append(InfRegLineOccurrence(line_no=line_no, raw_line=f"{file.as_posix()}:{line_no}: {line}"))
@@ -1952,7 +1954,7 @@ def validate_win7_virtio_inf_msi_settings(
                     if subkey == "interrupt management":
                         value_name = _normalize_inf_reg_value_name(parts[2] if len(parts) > 2 else "")
                         flags = _try_parse_inf_int(parts[3] if len(parts) > 3 else "")
-                        if value_name or (value_name == "" and len(parts) >= 5) or (flags is not None and (flags & 0x10)):
+                        if flags is not None and (value_name or (value_name == "" and (len(parts) >= 5 or (flags & 0x10)))):
                             found_interrupt_key = f"{inf_path.as_posix()}:{line_no}: {line}"
                     if subkey != "interrupt management\\messagesignaledinterruptproperties":
                         continue
