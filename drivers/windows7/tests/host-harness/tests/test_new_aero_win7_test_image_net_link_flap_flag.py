@@ -21,7 +21,10 @@ class NewAeroWin7TestImageNetLinkFlapFlagTests(unittest.TestCase):
         self.assertIn('$testNetLinkFlapArg = " --test-net-link-flap"', self.text)
 
         # Ensure the scheduled task commandline includes the arg variable.
-        self.assertIn("$testInputTabletEventsArg$testNetLinkFlapArg$requireSndArg", self.text)
+        self.assertIn(
+            "$testInputTabletEventsArg$testInputLedsArg$testNetLinkFlapArg$requireSndArg",
+            self.text,
+        )
 
     def test_readme_mentions_test_net_link_flap(self) -> None:
         self.assertIn("`-TestNetLinkFlap` (adds `--test-net-link-flap` to the scheduled task)", self.text)
@@ -29,4 +32,3 @@ class NewAeroWin7TestImageNetLinkFlapFlagTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
