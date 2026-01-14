@@ -575,6 +575,93 @@ fn aerogpu_cmd_stage_ex_bindings_route_to_correct_stage_bucket() {
 }
 
 #[test]
+fn aerogpu_cmd_legacy_geometry_stage_bindings_update_geometry_bucket() {
+    pollster::block_on(async {
+        let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+            Ok(exec) => exec,
+            Err(e) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                return;
+            }
+        };
+
+        let mut stream = vec![0u8; AerogpuCmdStreamHeader::SIZE_BYTES];
+        stream[0..4].copy_from_slice(&AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
+        stream[4..8].copy_from_slice(&AEROGPU_ABI_VERSION_U32.to_le_bytes());
+
+        // Baseline: bind CS so we can assert that GS bindings don't clobber CS state.
+        push_set_texture(&mut stream, AerogpuShaderStage::Compute as u32, 0, 111, 0);
+
+        // Legacy GS encoding uses `shader_stage=GEOMETRY` directly (not the stage_ex encoding).
+        push_set_texture(
+            &mut stream,
+            AerogpuShaderStage::Geometry as u32,
+            0,
+            222,
+            0,
+        );
+        push_set_samplers(
+            &mut stream,
+            AerogpuShaderStage::Geometry as u32,
+            0,
+            333,
+            0,
+        );
+        push_set_constant_buffer(
+            &mut stream,
+            AerogpuShaderStage::Geometry as u32,
+            0,
+            444,
+            0,
+        );
+        push_set_srv_buffer(
+            &mut stream,
+            AerogpuShaderStage::Geometry as u32,
+            1,
+            555,
+            0,
+        );
+
+        let stream = finish_stream(stream);
+
+        let mut guest_mem = VecGuestMemory::new(0);
+        exec.execute_cmd_stream(&stream, None, &mut guest_mem)
+            .expect("command stream should execute");
+
+        let bindings = exec.binding_state();
+        assert_eq!(
+            bindings.stage(ShaderStage::Compute).texture(0),
+            Some(BoundTexture { texture: 111 })
+        );
+
+        assert_eq!(
+            bindings.stage(ShaderStage::Geometry).texture(0),
+            Some(BoundTexture { texture: 222 })
+        );
+        assert_eq!(
+            bindings.stage(ShaderStage::Geometry).sampler(0),
+            Some(BoundSampler { sampler: 333 })
+        );
+        assert_eq!(
+            bindings.stage(ShaderStage::Geometry).constant_buffer(0),
+            Some(BoundConstantBuffer {
+                buffer: 444,
+                offset: 0,
+                size: Some(16),
+            })
+        );
+        assert_eq!(
+            bindings.stage(ShaderStage::Geometry).srv_buffer(1),
+            Some(BoundBuffer {
+                buffer: 555,
+                offset: 0,
+                size: None,
+            })
+        );
+    });
+}
+
+#[test]
 fn aerogpu_cmd_buffer_bindings_update_stage_state_and_unbind_t_slot_conflicts() {
     pollster::block_on(async {
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {

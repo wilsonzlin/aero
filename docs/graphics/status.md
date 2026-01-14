@@ -350,7 +350,7 @@ Known gaps / limitations (enforced by code/tests):
   - Design/notes: [`docs/graphics/geometry-shader-emulation.md`](./geometry-shader-emulation.md) (“Current limitation” section)
   - Code: [`crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`](../../crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs) (`gs_hs_ds_emulation_required`, `exec_draw_with_compute_prepass`)
   - Tests: [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_compute_prepass_smoke.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_compute_prepass_smoke.rs)
-- GS/HS/DS shader objects are accepted via the `stage_ex` ABI extension, but are currently stored as **stub WGSL modules** (no guest GS/HS/DS DXBC execution yet). Legacy `AerogpuShaderStage::Geometry` (non-`stage_ex`) is still ignored.
+- GS/HS/DS shader objects are accepted via the `stage_ex` ABI extension, but are currently stored as **stub WGSL modules** (no guest GS/HS/DS DXBC execution yet). Legacy `AerogpuShaderStage::Geometry` (non-`stage_ex`) shader creation is accepted-but-ignored; however, resource bindings for the legacy GS stage (`shader_stage = GEOMETRY`) are still accepted and tracked so apps that set GS resources do not fail.
   - Code: [`crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`](../../crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs) (`exec_create_shader_dxbc`, `from_aerogpu_u32_with_stage_ex`)
   - Tests: [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_ignore.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_ignore.rs)
 - Tessellation (Hull/Domain) execution is not implemented; patchlist topologies are accepted in `SET_PRIMITIVE_TOPOLOGY` but draws error (`patchlist topology requires tessellation emulation`) until HS/DS execution exists.
