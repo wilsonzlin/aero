@@ -391,23 +391,49 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
   let changed = false;
 
   if (msg.hdd) {
-    const cow = diskMetaToOpfsCowPaths(msg.hdd);
-    if (!cow) {
-      throw new Error("setBootDisks: HDD is not OPFS-backed (cannot attach in machine_cpu.worker).");
-    }
+    const plan = planMachineBootDiskAttachment(msg.hdd, "hdd");
+    if (plan.format === "aerospar") {
+      const openAndSetRef = (m as unknown as { set_disk_aerospar_opfs_open_and_set_overlay_ref?: unknown })
+        .set_disk_aerospar_opfs_open_and_set_overlay_ref;
+      const open = (m as unknown as { set_disk_aerospar_opfs_open?: unknown }).set_disk_aerospar_opfs_open;
+      if (typeof openAndSetRef === "function") {
+        await maybeAwait((openAndSetRef as (path: string) => unknown).call(m, plan.opfsPath));
+      } else if (typeof open === "function") {
+        await maybeAwait((open as (path: string) => unknown).call(m, plan.opfsPath));
+        // Best-effort overlay ref: ensure snapshots record a stable base_image for disk_id=0.
+        try {
+          const setRef = (m as unknown as { set_ahci_port0_disk_overlay_ref?: unknown }).set_ahci_port0_disk_overlay_ref;
+          if (typeof setRef === "function") {
+            (setRef as (base: string, overlay: string) => void).call(m, plan.opfsPath, "");
+          }
+        } catch {
+          // ignore
+        }
+      } else {
+        throw new Error("Machine.set_disk_aerospar_opfs_open* exports are unavailable in this WASM build.");
+      }
+      changed = true;
+    } else {
+      const cow = diskMetaToOpfsCowPaths(msg.hdd);
+      if (!cow) {
+        throw new Error("setBootDisks: HDD is not OPFS-backed (cannot attach in machine_cpu.worker).");
+      }
 
-    const setPrimary = (m as unknown as { set_primary_hdd_opfs_cow?: unknown }).set_primary_hdd_opfs_cow;
-    if (typeof setPrimary !== "function") {
-      throw new Error("Machine.set_primary_hdd_opfs_cow is unavailable in this WASM build.");
-    }
+      const setPrimary = (m as unknown as { set_primary_hdd_opfs_cow?: unknown }).set_primary_hdd_opfs_cow;
+      if (typeof setPrimary !== "function") {
+        throw new Error("Machine.set_primary_hdd_opfs_cow is unavailable in this WASM build.");
+      }
 
-    // Some builds may extend the API to accept a block size hint; preserve compatibility.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const anyFn = setPrimary as any;
-    const arity = typeof anyFn.length === "number" ? (anyFn.length as number) : 0;
-    const res = arity >= 3 ? anyFn.call(m, cow.basePath, cow.overlayPath, 1024 * 1024) : anyFn.call(m, cow.basePath, cow.overlayPath);
-    await maybeAwait(res);
-    changed = true;
+      const blockSizeBytes = cow.overlayBlockSizeBytes ?? 1024 * 1024;
+      // Some builds may extend the API to accept a block size hint; preserve compatibility.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const anyFn = setPrimary as any;
+      const arity = typeof anyFn.length === "number" ? (anyFn.length as number) : 0;
+      const res =
+        arity >= 3 ? anyFn.call(m, cow.basePath, cow.overlayPath, blockSizeBytes) : anyFn.call(m, cow.basePath, cow.overlayPath);
+      await maybeAwait(res);
+      changed = true;
+    }
   }
 
   if (msg.cd) {
