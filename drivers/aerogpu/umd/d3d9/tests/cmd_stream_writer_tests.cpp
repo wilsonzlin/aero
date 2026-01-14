@@ -4218,70 +4218,100 @@ bool TestCreateSwapChainComputes16BitBackbufferPitchAndFormat() {
   }
   ScopedDeviceCmdVectorReset cmd_reset(dev);
 
+  struct Case {
+    uint32_t d3d9_format;
+    uint32_t agpu_format;
+    const char* name;
+  };
+
+  const Case cases[] = {
+      {23u, AEROGPU_FORMAT_B5G6R5_UNORM, "R5G6B5"},       // D3DFMT_R5G6B5
+      {24u, AEROGPU_FORMAT_B5G5R5A1_UNORM, "X1R5G5B5"},   // D3DFMT_X1R5G5B5
+      {25u, AEROGPU_FORMAT_B5G5R5A1_UNORM, "A1R5G5B5"},   // D3DFMT_A1R5G5B5
+  };
+
   // Bind a span-backed command buffer so we can validate CREATE_TEXTURE2D output.
   std::vector<uint8_t> dma(4096, 0);
-  dev->cmd.set_span(dma.data(), dma.size());
-  dev->cmd.reset();
 
   constexpr uint32_t kWidth = 13;
   constexpr uint32_t kHeight = 7;
   constexpr uint32_t kExpectedRowPitch = kWidth * 2;
 
-  D3D9DDIARG_CREATESWAPCHAIN create_sc{};
-  create_sc.present_params.backbuffer_width = kWidth;
-  create_sc.present_params.backbuffer_height = kHeight;
-  create_sc.present_params.backbuffer_format = 23u; // D3DFMT_R5G6B5
-  create_sc.present_params.backbuffer_count = 1;
-  create_sc.present_params.swap_effect = 1;
-  create_sc.present_params.flags = 0;
-  create_sc.present_params.hDeviceWindow = nullptr;
-  create_sc.present_params.windowed = TRUE;
-  create_sc.present_params.presentation_interval = 1;
+  for (const Case& c : cases) {
+    std::memset(dma.data(), 0, dma.size());
+    dev->cmd.set_span(dma.data(), dma.size());
+    dev->cmd.reset();
 
-  hr = cleanup.device_funcs.pfnCreateSwapChain(create_dev.hDevice, &create_sc);
-  if (!Check(hr == S_OK, "CreateSwapChain(R5G6B5)")) {
-    return false;
-  }
-  if (!Check(create_sc.hSwapChain.pDrvPrivate != nullptr, "CreateSwapChain returned swapchain handle")) {
-    return false;
-  }
-  cleanup.hSwapChain = create_sc.hSwapChain;
-  cleanup.has_swapchain = true;
+    D3D9DDIARG_CREATESWAPCHAIN create_sc{};
+    create_sc.present_params.backbuffer_width = kWidth;
+    create_sc.present_params.backbuffer_height = kHeight;
+    create_sc.present_params.backbuffer_format = c.d3d9_format;
+    create_sc.present_params.backbuffer_count = 1;
+    create_sc.present_params.swap_effect = 1;
+    create_sc.present_params.flags = 0;
+    create_sc.present_params.hDeviceWindow = nullptr;
+    create_sc.present_params.windowed = TRUE;
+    create_sc.present_params.presentation_interval = 1;
 
-  auto* bb = reinterpret_cast<Resource*>(create_sc.hBackBuffer.pDrvPrivate);
-  if (!Check(bb != nullptr, "CreateSwapChain returned backbuffer handle")) {
-    return false;
+    char create_msg[128] = {};
+    std::snprintf(create_msg, sizeof(create_msg), "CreateSwapChain(%s)", c.name);
+    hr = cleanup.device_funcs.pfnCreateSwapChain(create_dev.hDevice, &create_sc);
+    if (!Check(hr == S_OK, create_msg)) {
+      return false;
+    }
+    if (!Check(create_sc.hSwapChain.pDrvPrivate != nullptr, "CreateSwapChain returned swapchain handle")) {
+      return false;
+    }
+    cleanup.hSwapChain = create_sc.hSwapChain;
+    cleanup.has_swapchain = true;
+
+    auto* bb = reinterpret_cast<Resource*>(create_sc.hBackBuffer.pDrvPrivate);
+    if (!Check(bb != nullptr, "CreateSwapChain returned backbuffer handle")) {
+      return false;
+    }
+
+    if (!Check(bb->row_pitch == kExpectedRowPitch, "16-bit backbuffer row_pitch bytes")) {
+      return false;
+    }
+    if (!Check(bb->slice_pitch == kExpectedRowPitch * kHeight, "16-bit backbuffer slice_pitch bytes")) {
+      return false;
+    }
+    if (!Check(bb->size_bytes == bb->slice_pitch, "16-bit backbuffer size_bytes matches slice_pitch")) {
+      return false;
+    }
+
+    dev->cmd.finalize();
+    if (!Check(ValidateStream(dma.data(), dma.size()), "stream validates")) {
+      return false;
+    }
+
+    const CmdLoc create_loc = FindLastOpcode(dma.data(), dma.size(), AEROGPU_CMD_CREATE_TEXTURE2D);
+    if (!Check(create_loc.hdr != nullptr, "CREATE_TEXTURE2D emitted")) {
+      return false;
+    }
+    const auto* cmd = reinterpret_cast<const aerogpu_cmd_create_texture2d*>(create_loc.hdr);
+    if (!Check(cmd->format == c.agpu_format, "CREATE_TEXTURE2D format matches expected")) {
+      return false;
+    }
+    if (!Check(cmd->row_pitch_bytes == kExpectedRowPitch, "CREATE_TEXTURE2D row_pitch_bytes")) {
+      return false;
+    }
+    if (!Check((cmd->usage_flags & AEROGPU_RESOURCE_USAGE_RENDER_TARGET) != 0,
+               "CREATE_TEXTURE2D usage_flags includes RT")) {
+      return false;
+    }
+
+    // Make cleanup safe: switch back to vector mode so swapchain teardown is not
+    // constrained by the span-backed buffer capacity.
+    dev->cmd.set_vector();
+    hr = cleanup.device_funcs.pfnDestroySwapChain(create_dev.hDevice, create_sc.hSwapChain);
+    if (!Check(hr == S_OK, "DestroySwapChain")) {
+      return false;
+    }
+    cleanup.has_swapchain = false;
+    cleanup.hSwapChain = {};
   }
 
-  if (!Check(bb->row_pitch == kExpectedRowPitch, "R5G6B5 backbuffer row_pitch bytes")) {
-    return false;
-  }
-  if (!Check(bb->slice_pitch == kExpectedRowPitch * kHeight, "R5G6B5 backbuffer slice_pitch bytes")) {
-    return false;
-  }
-  if (!Check(bb->size_bytes == bb->slice_pitch, "R5G6B5 backbuffer size_bytes matches slice_pitch")) {
-    return false;
-  }
-
-  dev->cmd.finalize();
-  if (!Check(ValidateStream(dma.data(), dma.size()), "stream validates")) {
-    return false;
-  }
-
-  const CmdLoc create_loc = FindLastOpcode(dma.data(), dma.size(), AEROGPU_CMD_CREATE_TEXTURE2D);
-  if (!Check(create_loc.hdr != nullptr, "CREATE_TEXTURE2D emitted")) {
-    return false;
-  }
-  const auto* cmd = reinterpret_cast<const aerogpu_cmd_create_texture2d*>(create_loc.hdr);
-  if (!Check(cmd->format == AEROGPU_FORMAT_B5G6R5_UNORM, "CREATE_TEXTURE2D format==B5G6R5")) {
-    return false;
-  }
-  if (!Check(cmd->row_pitch_bytes == kExpectedRowPitch, "CREATE_TEXTURE2D row_pitch_bytes")) {
-    return false;
-  }
-  if (!Check((cmd->usage_flags & AEROGPU_RESOURCE_USAGE_RENDER_TARGET) != 0, "CREATE_TEXTURE2D usage_flags includes RT")) {
-    return false;
-  }
   return true;
 }
 
