@@ -361,7 +361,16 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{
         });
 
         let ia_bgl = pulling.create_bind_group_layout(&device);
-        let ia_bg = pulling.create_bind_group(&device, &ia_bgl, &[&vb], &ia_uniform);
+        let ia_bg = pulling.create_bind_group(
+            &device,
+            &ia_bgl,
+            &[&vb],
+            wgpu::BufferBinding {
+                buffer: &ia_uniform,
+                offset: 0,
+                size: None,
+            },
+        );
         let pipeline_layout = create_vertex_pulling_pipeline_layout(
             &device,
             "vertex pulling pipeline layout",
@@ -558,7 +567,16 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{
         });
 
         let ia_bgl = pulling.create_bind_group_layout(&device);
-        let ia_bg = pulling.create_bind_group(&device, &ia_bgl, &[&vb], &ia_uniform);
+        let ia_bg = pulling.create_bind_group(
+            &device,
+            &ia_bgl,
+            &[&vb],
+            wgpu::BufferBinding {
+                buffer: &ia_uniform,
+                offset: 0,
+                size: None,
+            },
+        );
         let pipeline_layout = create_vertex_pulling_pipeline_layout(
             &device,
             "vertex pulling unorm pipeline layout",
@@ -749,7 +767,16 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{
             entries: &[],
         });
         let ia_bgl = pulling.create_bind_group_layout(&device);
-        let ia_bg = pulling.create_bind_group(&device, &ia_bgl, &[&vb], &ia_uniform);
+        let ia_bg = pulling.create_bind_group(
+            &device,
+            &ia_bgl,
+            &[&vb],
+            wgpu::BufferBinding {
+                buffer: &ia_uniform,
+                offset: 0,
+                size: None,
+            },
+        );
 
         let pipeline_layout = create_vertex_pulling_pipeline_layout(
             &device,
@@ -924,7 +951,16 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{
             entries: &[],
         });
         let ia_bgl = pulling.create_bind_group_layout(&device);
-        let ia_bg = pulling.create_bind_group(&device, &ia_bgl, &[&vb], &ia_uniform);
+        let ia_bg = pulling.create_bind_group(
+            &device,
+            &ia_bgl,
+            &[&vb],
+            wgpu::BufferBinding {
+                buffer: &ia_uniform,
+                offset: 0,
+                size: None,
+            },
+        );
 
         let pipeline_layout = create_vertex_pulling_pipeline_layout(
             &device,

@@ -463,7 +463,7 @@ impl VertexPullingLayout {
         device: &wgpu::Device,
         layout: &wgpu::BindGroupLayout,
         vertex_buffers: &[&wgpu::Buffer],
-        uniform_buffer: &wgpu::Buffer,
+        uniform_buffer: wgpu::BufferBinding<'_>,
     ) -> wgpu::BindGroup {
         assert_eq!(
             vertex_buffers.len(),
@@ -481,7 +481,7 @@ impl VertexPullingLayout {
         }
         entries.push(wgpu::BindGroupEntry {
             binding: VERTEX_PULLING_UNIFORM_BINDING,
-            resource: uniform_buffer.as_entire_binding(),
+            resource: wgpu::BindingResource::Buffer(uniform_buffer),
         });
 
         device.create_bind_group(&wgpu::BindGroupDescriptor {

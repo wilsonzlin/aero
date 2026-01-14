@@ -35,6 +35,7 @@ impl Default for ExpansionScratchDescriptor {
                 | wgpu::BufferUsages::VERTEX
                 | wgpu::BufferUsages::INDEX
                 | wgpu::BufferUsages::INDIRECT
+                | wgpu::BufferUsages::UNIFORM
                 | wgpu::BufferUsages::COPY_SRC
                 | wgpu::BufferUsages::COPY_DST,
         }
@@ -230,13 +231,16 @@ impl ExpansionScratchAllocator {
 
         let max_buffer_size = device.limits().max_buffer_size;
         let storage_alignment = (device.limits().min_storage_buffer_offset_alignment as u64).max(1);
+        let uniform_alignment = (device.limits().min_uniform_buffer_offset_alignment as u64).max(1);
 
         // Segment boundaries must be aligned so offsets are valid for copy operations, and so
-        // callers can bind subranges as storage buffers if needed.
+        // callers can bind subranges as storage/uniform buffers if needed.
         //
         // WebGPU requires these alignments to be powers of two, but use LCM to keep this robust.
-        let required_alignment =
-            lcm_u64(wgpu::COPY_BUFFER_ALIGNMENT, lcm_u64(storage_alignment, 16));
+        let required_alignment = lcm_u64(
+            wgpu::COPY_BUFFER_ALIGNMENT,
+            lcm_u64(lcm_u64(storage_alignment, uniform_alignment), 16),
+        );
 
         let mut per_frame_capacity = align_up(self.desc.per_frame_size, required_alignment)
             .max(required_alignment);

@@ -2990,6 +2990,7 @@ impl AerogpuD3d11Executor {
         }
 
         // Prepare compute prepass output buffers.
+        let uniform_align = (self.device.limits().min_uniform_buffer_offset_alignment as u64).max(1);
         let expanded_vertex_count = u64::from(primitive_count)
             .checked_mul(3)
             .ok_or_else(|| anyhow!("geometry prepass expanded vertex count overflow"))?;
@@ -3018,29 +3019,26 @@ impl AerogpuD3d11Executor {
             .alloc_counter_u32(&self.device)
             .map_err(|e| anyhow!("geometry prepass: alloc counter buffer: {e}"))?;
 
-        let params_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("aerogpu_cmd geometry prepass params"),
-            size: GEOMETRY_PREPASS_PARAMS_SIZE_BYTES,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: true,
-        });
-        {
-            // Default placeholder color: solid red.
-            let mut bytes = [0u8; GEOMETRY_PREPASS_PARAMS_SIZE_BYTES as usize];
-            bytes[0..4].copy_from_slice(&1.0f32.to_le_bytes());
-            bytes[4..8].copy_from_slice(&0.0f32.to_le_bytes());
-            bytes[8..12].copy_from_slice(&0.0f32.to_le_bytes());
-            bytes[12..16].copy_from_slice(&1.0f32.to_le_bytes());
-
-            // Counts (`vec4<u32>`) for compute-based GS emulation:
-            // - x: primitive_count (dispatch.x)
-            // - y: instance_count (for indirect draw args)
-            bytes[16..20].copy_from_slice(&primitive_count.to_le_bytes());
-            bytes[20..24].copy_from_slice(&instance_count.to_le_bytes());
-            let mut mapped = params_buffer.slice(..).get_mapped_range_mut();
-            mapped.copy_from_slice(&bytes);
-        }
-        params_buffer.unmap();
+        // Default placeholder color: solid red.
+        let mut params_bytes = [0u8; GEOMETRY_PREPASS_PARAMS_SIZE_BYTES as usize];
+        params_bytes[0..4].copy_from_slice(&1.0f32.to_le_bytes());
+        params_bytes[4..8].copy_from_slice(&0.0f32.to_le_bytes());
+        params_bytes[8..12].copy_from_slice(&0.0f32.to_le_bytes());
+        params_bytes[12..16].copy_from_slice(&1.0f32.to_le_bytes());
+        // Counts (`vec4<u32>`) for compute-based GS emulation:
+        // - x: primitive_count (dispatch.x)
+        // - y: instance_count (for indirect draw args)
+        params_bytes[16..20].copy_from_slice(&primitive_count.to_le_bytes());
+        params_bytes[20..24].copy_from_slice(&instance_count.to_le_bytes());
+        let params_alloc = self
+            .expansion_scratch
+            .alloc_metadata(&self.device, GEOMETRY_PREPASS_PARAMS_SIZE_BYTES, uniform_align)
+            .map_err(|e| anyhow!("geometry prepass: alloc params buffer: {e}"))?;
+        self.queue.write_buffer(
+            params_alloc.buffer.as_ref(),
+            params_alloc.offset,
+            &params_bytes,
+        );
 
         let depth_params_buffer = self
             .legacy_constants
@@ -3114,17 +3112,15 @@ impl AerogpuD3d11Executor {
             }
 
             let uniform_bytes = pulling.pack_uniform_bytes(&slots, vertex_pulling_draw);
-            let uniform_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("aerogpu_cmd vertex pulling uniform"),
-                size: uniform_bytes.len() as u64,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: true,
-            });
-            {
-                let mut mapped = uniform_buffer.slice(..).get_mapped_range_mut();
-                mapped.copy_from_slice(&uniform_bytes);
-            }
-            uniform_buffer.unmap();
+            let uniform_alloc = self
+                .expansion_scratch
+                .alloc_metadata(&self.device, uniform_bytes.len() as u64, uniform_align)
+                .map_err(|e| anyhow!("geometry prepass: alloc vertex pulling uniform: {e}"))?;
+            self.queue.write_buffer(
+                uniform_alloc.buffer.as_ref(),
+                uniform_alloc.offset,
+                &uniform_bytes,
+            );
 
             let mut vp_bgl_entries = pulling.bind_group_layout_entries();
             let mut vp_bg_entries: Vec<wgpu::BindGroupEntry<'_>> =
@@ -3137,7 +3133,11 @@ impl AerogpuD3d11Executor {
             }
             vp_bg_entries.push(wgpu::BindGroupEntry {
                 binding: VERTEX_PULLING_UNIFORM_BINDING,
-                resource: uniform_buffer.as_entire_binding(),
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: uniform_alloc.buffer.as_ref(),
+                    offset: uniform_alloc.offset,
+                    size: wgpu::BufferSize::new(uniform_alloc.size),
+                }),
             });
 
             let mut vp_cs_prelude = pulling.wgsl_prelude();
@@ -3161,29 +3161,27 @@ impl AerogpuD3d11Executor {
                 };
 
                 let params_bytes = params.to_le_bytes();
-                let params_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("aerogpu_cmd index pulling params"),
-                    size: params_bytes.len() as u64,
-                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: true,
-                });
-                {
-                    let mut mapped = params_buffer.slice(..).get_mapped_range_mut();
-                    mapped.copy_from_slice(&params_bytes);
-                }
-                params_buffer.unmap();
+                let params_alloc = self
+                    .expansion_scratch
+                    .alloc_metadata(&self.device, params_bytes.len() as u64, uniform_align)
+                    .map_err(|e| anyhow!("geometry prepass: alloc index pulling params: {e}"))?;
+                self.queue.write_buffer(
+                    params_alloc.buffer.as_ref(),
+                    params_alloc.offset,
+                    &params_bytes,
+                );
 
                 vp_cs_prelude.push_str(&super::index_pulling::wgsl_index_pulling_lib(
                     VERTEX_PULLING_GROUP,
                     INDEX_PULLING_PARAMS_BINDING,
                     INDEX_PULLING_BUFFER_BINDING,
                 ));
-                Some((params_buffer, &ib_buf.buffer))
+                Some((params_alloc, &ib_buf.buffer))
             } else {
                 None
             };
 
-            if let Some((params_buffer, ib_buffer)) = index_pulling_setup.as_ref() {
+            if let Some((params_alloc, ib_buffer)) = index_pulling_setup.as_ref() {
                 vp_bgl_entries.push(wgpu::BindGroupLayoutEntry {
                     binding: INDEX_PULLING_PARAMS_BINDING,
                     visibility: wgpu::ShaderStages::COMPUTE,
@@ -3207,7 +3205,11 @@ impl AerogpuD3d11Executor {
 
                 vp_bg_entries.push(wgpu::BindGroupEntry {
                     binding: INDEX_PULLING_PARAMS_BINDING,
-                    resource: params_buffer.as_entire_binding(),
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: params_alloc.buffer.as_ref(),
+                        offset: params_alloc.offset,
+                        size: wgpu::BufferSize::new(params_alloc.size),
+                    }),
                 });
                 vp_bg_entries.push(wgpu::BindGroupEntry {
                     binding: INDEX_PULLING_BUFFER_BINDING,
@@ -3468,8 +3470,8 @@ impl AerogpuD3d11Executor {
                 wgpu::BindGroupEntry {
                     binding: 4,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &params_buffer,
-                        offset: 0,
+                        buffer: params_alloc.buffer.as_ref(),
+                        offset: params_alloc.offset,
                         size: wgpu::BufferSize::new(GEOMETRY_PREPASS_PARAMS_SIZE_BYTES),
                     }),
                 },
