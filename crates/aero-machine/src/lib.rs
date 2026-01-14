@@ -6243,6 +6243,9 @@ impl Machine {
                         }
                     }
                 } else {
+                    // Render row-by-row to avoid allocating large intermediate buffers (and to keep
+                    // the MMIO read path incremental for BAR-backed apertures).
+                    let mut row = vec![0u8; row_bytes];
                     for y in 0..height_usize {
                         let row_addr = base.saturating_add((y as u64).saturating_mul(pitch));
                         self.mem.read_physical(row_addr, &mut row);
