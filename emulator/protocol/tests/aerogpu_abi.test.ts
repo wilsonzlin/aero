@@ -1381,6 +1381,7 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(konst("AEROGPU_DBGCTL_QUERY_PERF_FLAGS_VALID"), 1n << 31n);
   assert.equal(konst("AEROGPU_DBGCTL_QUERY_PERF_FLAG_RING_VALID"), 1n);
   assert.equal(konst("AEROGPU_DBGCTL_QUERY_PERF_FLAG_VBLANK_VALID"), 2n);
+  assert.equal(konst("AEROGPU_DBGCTL_QUERY_PERF_FLAG_GETSCANLINE_COUNTERS_VALID"), 1n << 2n);
 
   assert.equal(konst("AEROGPU_DBGCTL_SELFTEST_OK"), 0n);
   assert.equal(konst("AEROGPU_DBGCTL_SELFTEST_ERR_INVALID_STATE"), 1n);

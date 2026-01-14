@@ -3119,7 +3119,7 @@ fn rust_layout_matches_c_headers() {
     assert_eq!(abi.konst("AEROGPU_DBGCTL_QUERY_PERF_FLAG_VBLANK_VALID"), 2);
     assert_eq!(
         abi.konst("AEROGPU_DBGCTL_QUERY_PERF_FLAG_GETSCANLINE_COUNTERS_VALID"),
-        4
+        1u64 << 2
     );
     assert_eq!(
         abi.konst("AEROGPU_DBGCTL_QUERY_SCANOUT_FLAGS_VALID"),
