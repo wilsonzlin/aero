@@ -5677,26 +5677,10 @@ impl Machine {
             .and_then(|base| base.checked_add(aero_devices::pci::profile::AEROGPU_VRAM_SIZE));
 
         let scanout_row_bytes = || -> Option<u64> {
-            use aero_protocol::aerogpu::aerogpu_pci as pci;
-            let bytes_per_pixel = match state.format {
-                x if x == pci::AerogpuFormat::B8G8R8A8Unorm as u32
-                    || x == pci::AerogpuFormat::B8G8R8X8Unorm as u32
-                    || x == pci::AerogpuFormat::R8G8B8A8Unorm as u32
-                    || x == pci::AerogpuFormat::R8G8B8X8Unorm as u32
-                    || x == pci::AerogpuFormat::B8G8R8A8UnormSrgb as u32
-                    || x == pci::AerogpuFormat::B8G8R8X8UnormSrgb as u32
-                    || x == pci::AerogpuFormat::R8G8B8A8UnormSrgb as u32
-                    || x == pci::AerogpuFormat::R8G8B8X8UnormSrgb as u32 =>
-                {
-                    4u64
-                }
-                x if x == pci::AerogpuFormat::B5G6R5Unorm as u32
-                    || x == pci::AerogpuFormat::B5G5R5A1Unorm as u32 =>
-                {
-                    2u64
-                }
-                _ => return None,
-            };
+            let bytes_per_pixel = u64::try_from(
+                aero_devices_gpu::AeroGpuFormat::from_u32(state.format).bytes_per_pixel()?,
+            )
+            .ok()?;
             u64::from(state.width).checked_mul(bytes_per_pixel)
         };
 
@@ -5749,19 +5733,7 @@ impl Machine {
                 return false;
             }
 
-            use aero_protocol::aerogpu::aerogpu_pci as pci;
-            let is_32bpp = matches!(
-                cursor.format,
-                x if x == pci::AerogpuFormat::B8G8R8A8Unorm as u32
-                    || x == pci::AerogpuFormat::B8G8R8X8Unorm as u32
-                    || x == pci::AerogpuFormat::R8G8B8A8Unorm as u32
-                    || x == pci::AerogpuFormat::R8G8B8X8Unorm as u32
-                    || x == pci::AerogpuFormat::B8G8R8A8UnormSrgb as u32
-                    || x == pci::AerogpuFormat::B8G8R8X8UnormSrgb as u32
-                    || x == pci::AerogpuFormat::R8G8B8A8UnormSrgb as u32
-                    || x == pci::AerogpuFormat::R8G8B8X8UnormSrgb as u32
-            );
-            if !is_32bpp {
+            if aero_devices_gpu::AeroGpuFormat::from_u32(cursor.format).bytes_per_pixel() != Some(4) {
                 return false;
             }
 
