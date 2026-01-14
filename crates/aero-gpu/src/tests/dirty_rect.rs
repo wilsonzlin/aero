@@ -109,6 +109,24 @@ fn merge_and_cap_rects_merges_transitively() {
 }
 
 #[test]
+fn merge_and_cap_rects_merges_edge_adjacent_rects() {
+    let r1 = Rect::new(0, 0, 10, 10);
+    let r2 = Rect::new(10, 2, 5, 5);
+
+    let out = merge_and_cap_rects(&[r1, r2], (100, 100), 128);
+    assert_eq!(out.rects, vec![Rect::new(0, 0, 15, 10)]);
+}
+
+#[test]
+fn merge_and_cap_rects_does_not_merge_corner_touching_rects() {
+    let r1 = Rect::new(0, 0, 10, 10);
+    let r2 = Rect::new(10, 10, 5, 5);
+
+    let out = merge_and_cap_rects(&[r1, r2], (100, 100), 128);
+    assert_eq!(out.rects, vec![r1, r2]);
+}
+
+#[test]
 fn merge_and_cap_rects_randomized_invariants() {
     // This test is specifically aimed at catching regressions that could lead to out-of-bounds
     // texture uploads in the presenter (e.g. `x+w > width`).

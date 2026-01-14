@@ -153,6 +153,34 @@ fn tile_diff_single_pixel_change_marks_containing_tile() {
 }
 
 #[test]
+fn tile_diff_ignores_stride_padding_bytes() {
+    // If the CPU framebuffer has a padded stride, changes to the padding bytes must *not* mark the
+    // tile dirty (presenter uploads only operate on width*bpp bytes per row).
+    let (width, height, bpp) = (5u32, 5u32, 4usize);
+    let row_bytes = width as usize * bpp;
+    let stride = row_bytes + 7;
+
+    let mut frame = vec![0u8; stride * height as usize];
+    for (i, b) in frame.iter_mut().enumerate() {
+        *b = (i as u8).wrapping_mul(17);
+    }
+
+    let mut diff = TileDiff::new(width, height, bpp);
+    diff.diff(&frame, stride);
+
+    // Mutate only padding bytes.
+    for row in 0..height as usize {
+        let base = row * stride + row_bytes;
+        for b in &mut frame[base..base + (stride - row_bytes)] {
+            *b ^= 0xFF;
+        }
+    }
+
+    let dirty = diff.diff(&frame, stride);
+    assert!(dirty.is_empty(), "expected no dirty tiles; got {dirty:?}");
+}
+
+#[test]
 fn tile_diff_randomized_matches_reference_and_stays_in_bounds() {
     let mut rng = Rng::new(0xD1FF_D1FF_5EED_5EED);
 
@@ -213,4 +241,3 @@ fn tile_diff_randomized_matches_reference_and_stays_in_bounds() {
         }
     }
 }
-
