@@ -3113,6 +3113,103 @@ mod tests {
         assert!(!state_after.enable);
     }
 
+    fn exec_snapshot_base_encoder() -> Encoder {
+        // Version 2 of the exec snapshot state includes the `ring_reset_pending_dma` bool field.
+        Encoder::new()
+            .u32(2) // version
+            .bool(false) // submission_bridge_enabled
+            .bool(false) // doorbell_pending
+            .bool(false) // ring_reset_pending
+            .bool(false) // ring_reset_pending_dma
+            .bool(false) // fence_page_dirty
+    }
+
+    #[test]
+    fn exec_snapshot_decode_rejects_invalid_version() {
+        let bytes = Encoder::new().u32(3).finish();
+        let mut dev = AeroGpuMmioDevice::default();
+        assert_eq!(
+            dev.load_exec_snapshot_state_v1(&bytes),
+            Err(SnapshotError::InvalidFieldEncoding(
+                "aerogpu.exec_state.version"
+            ))
+        );
+    }
+
+    #[test]
+    fn exec_snapshot_decode_rejects_oversized_pending_fence_count() {
+        let bytes = exec_snapshot_base_encoder().u32(65_537).finish();
+        let mut dev = AeroGpuMmioDevice::default();
+        assert_eq!(
+            dev.load_exec_snapshot_state_v1(&bytes),
+            Err(SnapshotError::InvalidFieldEncoding(
+                "aerogpu.exec_state.pending_fences"
+            ))
+        );
+    }
+
+    #[test]
+    fn exec_snapshot_decode_rejects_oversized_pending_submission_count() {
+        let bytes = exec_snapshot_base_encoder()
+            .u32(0) // pending fences
+            .u32(0) // backend completed fences
+            .u32((MAX_PENDING_AEROGPU_SUBMISSIONS as u32) + 1)
+            .finish();
+        let mut dev = AeroGpuMmioDevice::default();
+        assert_eq!(
+            dev.load_exec_snapshot_state_v1(&bytes),
+            Err(SnapshotError::InvalidFieldEncoding(
+                "aerogpu.exec_state.pending_submissions"
+            ))
+        );
+    }
+
+    #[test]
+    fn exec_snapshot_decode_rejects_oversized_cmd_stream_len() {
+        let too_large = MAX_CMD_STREAM_SIZE_BYTES + 1;
+        let bytes = exec_snapshot_base_encoder()
+            .u32(0) // pending fences
+            .u32(0) // backend completed fences
+            .u32(1) // pending submissions
+            .u32(0) // flags
+            .u32(0) // context_id
+            .u32(0) // engine_id
+            .u64(0) // signal_fence
+            .u32(too_large)
+            .finish();
+        let mut dev = AeroGpuMmioDevice::default();
+        assert_eq!(
+            dev.load_exec_snapshot_state_v1(&bytes),
+            Err(SnapshotError::InvalidFieldEncoding(
+                "aerogpu.exec_state.pending_submissions.cmd_stream"
+            ))
+        );
+    }
+
+    #[test]
+    fn exec_snapshot_decode_rejects_oversized_alloc_table_len() {
+        let too_large = MAX_AEROGPU_ALLOC_TABLE_BYTES + 1;
+        let bytes = exec_snapshot_base_encoder()
+            .u32(0) // pending fences
+            .u32(0) // backend completed fences
+            .u32(1) // pending submissions
+            .u32(0) // flags
+            .u32(0) // context_id
+            .u32(0) // engine_id
+            .u64(0) // signal_fence
+            .u32(0) // cmd_len
+            .bool(true) // alloc_present
+            .u32(too_large)
+            .finish();
+        let mut dev = AeroGpuMmioDevice::default();
+        assert_eq!(
+            dev.load_exec_snapshot_state_v1(&bytes),
+            Err(SnapshotError::InvalidFieldEncoding(
+                "aerogpu.exec_state.pending_submissions.alloc_table"
+            ))
+        );
+    }
+
     #[derive(Default)]
     struct TestMem {
         bytes: Vec<u8>,
