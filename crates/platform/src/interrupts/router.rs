@@ -242,6 +242,7 @@ impl PlatformInterrupts {
         // while allowing the platform interrupt fabric to emulate SMP IPI delivery.
         let lapics_for_ipi = Arc::new(lapics.clone());
         for src_apic_id in 0..cpu_count {
+            let apic_enabled_for_ipi = apic_enabled.clone();
             let pending_init_for_ipi = pending_init.clone();
             let pending_sipi_for_ipi = pending_sipi.clone();
             let lapics_for_ipi = lapics_for_ipi.clone();
@@ -250,6 +251,7 @@ impl PlatformInterrupts {
                     src_apic_id,
                     icr,
                     lapics_for_ipi.as_ref(),
+                    apic_enabled_for_ipi.as_ref(),
                     &pending_init_for_ipi,
                     &pending_sipi_for_ipi,
                 );
@@ -294,6 +296,7 @@ impl PlatformInterrupts {
         src_apic_id: u8,
         icr: Icr,
         lapics: &[Arc<LocalApic>],
+        apic_enabled: &AtomicBool,
         pending_init: &Arc<Vec<AtomicBool>>,
         pending_sipi: &Arc<Mutex<Vec<Option<u8>>>>,
     ) {
@@ -347,11 +350,12 @@ impl PlatformInterrupts {
                         flag.store(true, Ordering::SeqCst);
                     }
                     lapic.reset_state(apic_id);
-                    // Keep the LAPIC enabled for platform-level interrupt injection.
-                    //
-                    // Real hardware clears SVR[8] on reset; our platform keeps it set so IOAPIC/MSI
-                    // delivery to an AP works deterministically during early bring-up.
-                    Self::enable_lapic_software(lapic.as_ref());
+                    // Real hardware clears SVR[8] on INIT. When the platform is running in APIC
+                    // mode, keep the destination LAPIC software-enabled so IOAPIC/MSI delivery can
+                    // continue immediately after INIT (without requiring guest SVR writes).
+                    if apic_enabled.load(Ordering::SeqCst) {
+                        Self::enable_lapic_software(lapic.as_ref());
+                    }
                 }
             }
             DeliveryMode::Startup => {
@@ -806,7 +810,9 @@ impl PlatformInterrupts {
             return;
         };
         lapic.reset_state(apic_id);
-        Self::enable_lapic_software(lapic);
+        if self.apic_enabled.load(Ordering::SeqCst) {
+            Self::enable_lapic_software(lapic);
+        }
     }
     pub fn get_pending_for_apic(&self, apic_id: u8) -> Option<u8> {
         match self.mode {
