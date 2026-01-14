@@ -1311,6 +1311,12 @@ to emit recovery counters markers), set either:
 - `require_no_blk_recovery=true` (passes `--require-no-blk-recovery`), or
 - `fail_on_blk_recovery=true` (passes `--fail-on-blk-recovery`, a narrower subset).
 
+To fail when the guest virtio-blk reset recovery diagnostic marker reports reset activity (best-effort; requires the guest
+to emit `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset-recovery|...`), set either:
+
+- `require_no_blk_reset_recovery=true` (passes `--require-no-blk-reset-recovery`), or
+- `fail_on_blk_reset_recovery=true` (passes `--fail-on-blk-reset-recovery`, a narrower subset).
+
 To require the optional virtio-blk reset test (`virtio-blk-reset`), set the workflow input `with_blk_reset=true`.
 This requires a guest image provisioned with `--test-blk-reset` (or env var `AERO_VIRTIO_SELFTEST_TEST_BLK_RESET=1`),
 for example via `New-AeroWin7TestImage.ps1 -TestBlkReset`.

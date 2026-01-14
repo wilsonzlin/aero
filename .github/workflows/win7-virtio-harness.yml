@@ -203,6 +203,16 @@ on:
         required: false
         default: false
         type: boolean
+      require_no_blk_reset_recovery:
+        description: Fail if virtio-blk-reset-recovery marker reports reset_detected or hw_reset_bus activity (when available from guest markers)
+        required: false
+        default: false
+        type: boolean
+      fail_on_blk_reset_recovery:
+        description: Fail if virtio-blk-reset-recovery marker reports hw_reset_bus activity (subset of require_no_blk_reset_recovery)
+        required: false
+        default: false
+        type: boolean
       with_blk_reset:
         description: Require virtio-blk-reset to PASS (requires a guest image provisioned with --test-blk-reset)
         required: false
@@ -341,6 +351,8 @@ jobs:
             echo "  require_expect_blk_msi: '${{ inputs.require_expect_blk_msi }}'"
             echo "  require_no_blk_recovery: '${{ inputs.require_no_blk_recovery }}'"
             echo "  fail_on_blk_recovery: '${{ inputs.fail_on_blk_recovery }}'"
+            echo "  require_no_blk_reset_recovery: '${{ inputs.require_no_blk_reset_recovery }}'"
+            echo "  fail_on_blk_reset_recovery: '${{ inputs.fail_on_blk_reset_recovery }}'"
             echo "  with_blk_reset: '${{ inputs.with_blk_reset }}'"
             echo "  with_net_link_flap: '${{ inputs.with_net_link_flap }}'"
             echo "  require_net_csum_offload: '${{ inputs.require_net_csum_offload }}'"
@@ -483,6 +495,8 @@ jobs:
             require_expect_blk_msi="${{ inputs.require_expect_blk_msi }}"
             require_no_blk_recovery="${{ inputs.require_no_blk_recovery }}"
             fail_on_blk_recovery="${{ inputs.fail_on_blk_recovery }}"
+            require_no_blk_reset_recovery="${{ inputs.require_no_blk_reset_recovery }}"
+            fail_on_blk_reset_recovery="${{ inputs.fail_on_blk_reset_recovery }}"
             with_blk_reset="${{ inputs.with_blk_reset }}"
             with_net_link_flap="${{ inputs.with_net_link_flap }}"
             require_net_csum_offload="${{ inputs.require_net_csum_offload }}"
@@ -695,6 +709,12 @@ jobs:
             if [[ "${fail_on_blk_recovery}" == "true" ]]; then
               args+=(--fail-on-blk-recovery)
             fi
+            if [[ "${require_no_blk_reset_recovery}" == "true" ]]; then
+              args+=(--require-no-blk-reset-recovery)
+            fi
+            if [[ "${fail_on_blk_reset_recovery}" == "true" ]]; then
+              args+=(--fail-on-blk-reset-recovery)
+            fi
             if [[ "${with_blk_reset}" == "true" ]]; then
               args+=(--with-blk-reset)
             fi
@@ -796,6 +816,7 @@ jobs:
           result_marker=""
           blk_resize_marker=""
           blk_reset_marker=""
+          blk_reset_recovery_marker=""
           net_link_flap_marker=""
           net_link_flap_host_marker=""
           net_offload_csum_marker=""
@@ -849,6 +870,9 @@ jobs:
             result_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|RESULT\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
             blk_resize_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-blk-resize\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
             blk_reset_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-blk-reset\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
+            blk_reset_recovery_marker="$(
+              grep -F 'AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset-recovery|' "${serial_log}" | tail -n 1 | tr -d '\r' || true
+            )"
             net_link_flap_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-net-link-flap\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
             net_offload_csum_marker="$(
               grep -F 'AERO_VIRTIO_SELFTEST|TEST|virtio-net-offload-csum|' "${serial_log}" | tail -n 1 | tr -d '\r' || true
@@ -950,6 +974,11 @@ jobs:
               fi
               if [[ -n "${blk_counters_host_marker}" ]]; then
                 echo "- Host virtio-blk counters marker: \`${blk_counters_host_marker}\`"
+              fi
+            fi
+            if [[ "${{ inputs.require_no_blk_reset_recovery }}" == "true" || "${{ inputs.fail_on_blk_reset_recovery }}" == "true" ]]; then
+              if [[ -n "${blk_reset_recovery_host_marker}" ]]; then
+                echo "- Host virtio-blk reset recovery marker: \`${blk_reset_recovery_host_marker}\`"
               fi
             fi
             if [[ "${{ inputs.require_virtio_net_msix }}" == "true" && -n "${net_msix_host_marker}" ]]; then
