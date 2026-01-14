@@ -1,4 +1,5 @@
 use aero_d3d11::{
+    binding_model::{BINDING_BASE_TEXTURE, BINDING_BASE_UAV},
     parse_signatures, translate_sm4_module_to_wgsl, BufferKind, BufferRef, DstOperand, DxbcFile,
     FourCC, OperandModifier, RegFile, RegisterRef, ShaderModel, ShaderStage, ShaderTranslateError,
     Sm4Decl, Sm4Inst, Sm4Module, SrcKind, SrcOperand, Swizzle, UavRef, WriteMask,
@@ -6,6 +7,43 @@ use aero_d3d11::{
 use aero_dxbc::test_utils as dxbc_test_utils;
 
 const FOURCC_SHEX: FourCC = FourCC(*b"SHEX");
+const FOURCC_RDEF: FourCC = FourCC(*b"RDEF");
+
+fn build_minimal_rdef_single_resource(
+    name: &str,
+    input_type: u32,
+    bind_point: u32,
+    bind_count: u32,
+) -> Vec<u8> {
+    // Header (8 DWORDs / 32 bytes) + resource binding table entry (32 bytes) + string table.
+    let header_len = 32u32;
+    let rb_offset = header_len;
+    let string_offset = header_len + 32;
+
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // cb_count
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // cb_offset
+    bytes.extend_from_slice(&1u32.to_le_bytes()); // rb_count
+    bytes.extend_from_slice(&rb_offset.to_le_bytes());
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // target
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // flags
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // creator_offset
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // interface_slot_count
+
+    // Resource binding desc (32 bytes).
+    bytes.extend_from_slice(&string_offset.to_le_bytes()); // name_offset
+    bytes.extend_from_slice(&input_type.to_le_bytes());
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // return_type
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // dimension
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // sample_count
+    bytes.extend_from_slice(&bind_point.to_le_bytes());
+    bytes.extend_from_slice(&bind_count.to_le_bytes());
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // flags
+
+    bytes.extend_from_slice(name.as_bytes());
+    bytes.push(0);
+    bytes
+}
 
 fn build_dxbc(chunks: &[(FourCC, Vec<u8>)]) -> Vec<u8> {
     dxbc_test_utils::build_container_owned(chunks)
@@ -206,4 +244,79 @@ fn rejects_store_structured_with_empty_write_mask() {
             ..
         } if mask.0 == 0
     ));
+}
+
+#[test]
+fn rdef_expands_srv_buffer_array_slots() {
+    // Shader reads from t2, but RDEF declares an array bound at t0..t3.
+    let rdef_bytes = build_minimal_rdef_single_resource("buf_array", 7, 0, 4); // D3D_SIT_BYTEADDRESS
+
+    let dxbc_bytes = build_dxbc(&[(FOURCC_SHEX, Vec::new()), (FOURCC_RDEF, rdef_bytes)]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let module = Sm4Module {
+        stage: ShaderStage::Compute,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: vec![Sm4Decl::ThreadGroupSize { x: 1, y: 1, z: 1 }],
+        instructions: vec![
+            Sm4Inst::LdRaw {
+                dst: dst_temp(0, WriteMask::XYZW),
+                addr: src_imm_u32_scalar(0),
+                buffer: BufferRef { slot: 2 },
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+
+    // Ensure the full t0..t3 binding range is declared.
+    assert!(translated.wgsl.contains(&format!(
+        "@group(2) @binding({}) var<storage, read> t0: AeroStorageBufferU32;",
+        BINDING_BASE_TEXTURE
+    )));
+    assert!(translated.wgsl.contains(&format!(
+        "@group(2) @binding({}) var<storage, read> t3: AeroStorageBufferU32;",
+        BINDING_BASE_TEXTURE + 3
+    )));
+}
+
+#[test]
+fn rdef_expands_uav_buffer_array_slots() {
+    // Shader writes to u2, but RDEF declares an array bound at u0..u3.
+    let rdef_bytes = build_minimal_rdef_single_resource("uav_array", 8, 0, 4); // D3D_SIT_UAV_RWBYTEADDRESS
+
+    let dxbc_bytes = build_dxbc(&[(FOURCC_SHEX, Vec::new()), (FOURCC_RDEF, rdef_bytes)]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let module = Sm4Module {
+        stage: ShaderStage::Compute,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: vec![Sm4Decl::ThreadGroupSize { x: 1, y: 1, z: 1 }],
+        instructions: vec![
+            Sm4Inst::StoreRaw {
+                uav: UavRef { slot: 2 },
+                addr: src_imm_u32_scalar(0),
+                value: src_imm_u32_scalar(0x1234_5678),
+                mask: WriteMask::X,
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+
+    // Ensure the full u0..u3 binding range is declared.
+    assert!(translated.wgsl.contains(&format!(
+        "@group(2) @binding({}) var<storage, read_write> u0: AeroStorageBufferU32;",
+        BINDING_BASE_UAV
+    )));
+    assert!(translated.wgsl.contains(&format!(
+        "@group(2) @binding({}) var<storage, read_write> u3: AeroStorageBufferU32;",
+        BINDING_BASE_UAV + 3
+    )));
 }
