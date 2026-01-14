@@ -171,6 +171,9 @@ Not yet supported end-to-end:
 
 - non-point input primitives (`line`, `triangle`)
 - adjacency primitives (`lineadj` / `triadj`, i.e. `*_ADJ` topologies)
+  - When adjacency support is implemented, the required IA primitive assembly ordering for
+    `LINELIST_ADJ`/`LINESTRIP_ADJ` and `TRIANGLELIST_ADJ`/`TRIANGLESTRIP_ADJ` is specified in
+    [`docs/16-d3d10-11-translation.md`](../16-d3d10-11-translation.md) section 2.1.1b.
 
 ### Output topology / streams
 
