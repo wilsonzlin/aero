@@ -76,6 +76,7 @@ NTSTATUS VirtioSndCtrlSelectPcmConfig(const VIRTIO_SND_PCM_INFO* Info, ULONG Str
     UCHAR chosenChannels;
     UCHAR chosenFormat;
     UCHAR chosenRate;
+    BOOLEAN rateSelected;
     ULONG i;
 
     if (OutConfig != NULL) {
@@ -155,6 +156,7 @@ NTSTATUS VirtioSndCtrlSelectPcmConfig(const VIRTIO_SND_PCM_INFO* Info, ULONG Str
     }
 
     chosenRate = 0;
+    rateSelected = FALSE;
     for (i = 0; i < RTL_NUMBER_OF(kRatePriority); ++i) {
         const UCHAR candidate = kRatePriority[i];
         ULONG rateHz;
@@ -169,9 +171,10 @@ NTSTATUS VirtioSndCtrlSelectPcmConfig(const VIRTIO_SND_PCM_INFO* Info, ULONG Str
         }
 
         chosenRate = candidate;
+        rateSelected = TRUE;
         break;
     }
-    if (chosenRate == 0) {
+    if (!rateSelected) {
         return STATUS_NOT_SUPPORTED;
     }
 
