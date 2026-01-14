@@ -457,7 +457,13 @@ impl Usb2MuxPort {
             } else if !self.ehci.reset {
                 // Port is not owned by EHCI; retain the previous MVP line status behaviour.
                 let ls = if self.ehci.resuming { 0b10 } else { 0b01 };
-                v |= (ls as u32) << 10;
+                v |= ((ls as u32) << 10) & LS_MASK;
+
+                if let Some(dev) = self.device.as_ref() {
+                    if dev.speed() == UsbSpeed::High {
+                        v |= HSP;
+                    }
+                }
             }
         }
         if self.ehci.connect_change {

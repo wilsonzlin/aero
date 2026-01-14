@@ -3,14 +3,15 @@ use std::rc::Rc;
 
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_usb::ehci::regs::{
-    reg_portsc, CONFIGFLAG_CF, PORTSC_PED, PORTSC_PO, PORTSC_PR as EHCI_PORTSC_PR, REG_CONFIGFLAG,
+    reg_portsc, CONFIGFLAG_CF, PORTSC_HSP, PORTSC_PED, PORTSC_PO, PORTSC_PR as EHCI_PORTSC_PR,
+    REG_CONFIGFLAG,
 };
 use aero_usb::ehci::EhciController;
 use aero_usb::hid::keyboard::UsbHidKeyboardHandle;
 use aero_usb::uhci::regs::REG_PORTSC1;
 use aero_usb::uhci::UhciController;
 use aero_usb::usb2_port::Usb2PortMux;
-use aero_usb::{SetupPacket, UsbInResult, UsbOutResult};
+use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel, UsbInResult, UsbOutResult, UsbSpeed};
 
 mod util;
 
@@ -173,6 +174,41 @@ fn usb2_companion_routing_swaps_reachability_between_uhci_and_ehci() {
         let desc = ehci_get_device_descriptor(&mut ehci).expect("EHCI descriptor after toggle");
         assert_eq!(desc, expected, "EHCI descriptor mismatch after toggle {i}");
     }
+}
+
+#[test]
+fn usb2_companion_routing_mux_reports_ehci_high_speed_indicator() {
+    struct HighSpeedDevice;
+
+    impl UsbDeviceModel for HighSpeedDevice {
+        fn speed(&self) -> UsbSpeed {
+            UsbSpeed::High
+        }
+
+        fn handle_control_request(
+            &mut self,
+            _setup: SetupPacket,
+            _data_stage: Option<&[u8]>,
+        ) -> ControlResponse {
+            ControlResponse::Stall
+        }
+    }
+
+    let mux = Rc::new(RefCell::new(Usb2PortMux::new(1)));
+    let mut ehci = EhciController::new_with_port_count(1);
+    ehci.hub_mut().attach_usb2_port_mux(0, mux.clone(), 0);
+
+    mux.borrow_mut().attach(0, Box::new(HighSpeedDevice));
+
+    // Route ports to EHCI and claim ownership (clears PORT_OWNER).
+    ehci.mmio_write(REG_CONFIGFLAG, 4, CONFIGFLAG_CF);
+
+    let portsc = ehci.mmio_read(reg_portsc(0), 4);
+    assert_ne!(
+        portsc & PORTSC_HSP,
+        0,
+        "expected EHCI PORTSC.HSP set when a high-speed device is attached"
+    );
 }
 
 #[test]
