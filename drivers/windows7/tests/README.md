@@ -80,8 +80,8 @@ drivers/windows7/tests/
         (it is SUBSYS-qualified). In that case you must either:
         - Adjust/emulate the subsystem IDs to the contract values (so the tablet enumerates as
           `...&SUBSYS_00121AF4&REV_01` and binds via `aero_virtio_tablet.inf`), **or**
-      - Enable/install the optional legacy filename alias INF
-        (`drivers/windows7/virtio-input/inf/virtio-input.inf.disabled` → rename to `virtio-input.inf` to enable), which
+      - Enable/install the optional legacy filename alias INF under `drivers/windows7/virtio-input/inf/`
+        (the `*.inf.disabled` file; drop the `.disabled` suffix to enable), which
         provides the strict revision-gated generic fallback match (`PCI\VEN_1AF4&DEV_1052&REV_01`) (expected for stock QEMU
         `virtio-tablet-pci` devices with non-Aero subsystem IDs).
         - When binding via the fallback entry, Device Manager will show the generic **Aero VirtIO Input Device** name.

@@ -824,8 +824,8 @@ To enable end-to-end testing:
         (it is SUBSYS-qualified). In that case you must either:
         - Adjust/emulate the subsystem IDs to the contract values (so the tablet enumerates as
           `...&SUBSYS_00121AF4&REV_01` and binds via `aero_virtio_tablet.inf`), **or**
-        - Enable/install the optional legacy filename alias INF
-          (`drivers/windows7/virtio-input/inf/virtio-input.inf.disabled` → rename to `virtio-input.inf` to enable), which
+        - Enable/install the optional legacy filename alias INF under `drivers/windows7/virtio-input/inf/`
+          (the `*.inf.disabled` file; drop the `.disabled` suffix to enable), which
           provides the strict revision-gated generic fallback match (`PCI\VEN_1AF4&DEV_1052&REV_01`) (expected for stock QEMU
           `virtio-tablet-pci` devices with non-Aero subsystem IDs).
           - When binding via the fallback entry, Device Manager will show the generic **Aero VirtIO Input Device** name.
@@ -1357,8 +1357,9 @@ To attach a virtio-tablet device without enabling the tablet events selftest/inj
 in addition to the virtio keyboard/mouse devices. Ensure the guest tablet driver is installed (for the in-tree stack:
 `aero_virtio_tablet.inf` for `...&SUBSYS_00121AF4&REV_01`). If the device does not expose the Aero contract subsystem IDs,
 either emulate the subsystem IDs to the contract values (so it binds to `aero_virtio_tablet.inf`) or enable/install the
-optional legacy filename alias INF (`virtio-input.inf.disabled` → rename to `virtio-input.inf` to enable) to provide the
-strict revision-gated generic fallback match (`PCI\VEN_1AF4&DEV_1052&REV_01`) for generic binding.
+optional legacy filename alias INF under `drivers/windows7/virtio-input/inf/` (the `*.inf.disabled` file; drop the
+`.disabled` suffix to enable) to provide the strict revision-gated generic fallback match (`PCI\VEN_1AF4&DEV_1052&REV_01`)
+for generic binding.
 
 To exercise the optional virtio-blk runtime resize test (`virtio-blk-resize`), set the workflow input
 `with_blk_resize=true`. This triggers a host-side QMP resize (`blockdev-resize` with a fallback to legacy `block_resize`)
