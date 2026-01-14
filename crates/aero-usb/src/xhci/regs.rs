@@ -45,6 +45,13 @@ pub const USBSTS_HCHALTED: u32 = 1 << 0;
 /// The full xHCI interrupt model is not implemented yet; the skeleton uses this bit as a generic
 /// level-triggered IRQ pending flag.
 pub const USBSTS_EINT: u32 = 1 << 3;
+/// USBSTS bit 12 (Host Controller Error).
+///
+/// This bit is sticky and is set when the controller detects an unrecoverable internal error.
+///
+/// The Aero xHCI model uses this bit to report malformed guest Event Ring configuration
+/// (e.g. ERST/ERDP values that cannot be mapped safely).
+pub const USBSTS_HCE: u32 = 1 << 12;
 
 /// HCCPARAMS1 Context Size (CSZ) bit.
 ///
@@ -91,6 +98,7 @@ pub mod op {
 
     // USBSTS bits (subset).
     pub const USBSTS_EINT: u32 = 1 << 3;
+    pub const USBSTS_HCE: u32 = 1 << 12;
 }
 
 /// Runtime registers (base at `RTSOFF`).

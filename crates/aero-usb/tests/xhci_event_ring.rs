@@ -59,10 +59,95 @@ fn event_ring_enqueue_writes_trb_and_sets_interrupt_pending() {
     assert!(xhci.interrupter0().interrupt_pending());
     assert!(xhci.irq_level());
 
-    // Verify IMAN.IP is W1C.
+    // Verify USBSTS.EINT is W1C and can be used to acknowledge interrupter 0.
+    xhci.mmio_write(&mut mem, regs::REG_USBSTS, 4, regs::USBSTS_EINT);
+    assert!(!xhci.interrupter0().interrupt_pending());
+    assert!(!xhci.irq_level());
+
+    // Generate another event and verify IMAN.IP is also W1C.
+    xhci.post_event(evt);
+    xhci.service_event_ring(&mut mem);
+    assert!(xhci.interrupter0().interrupt_pending());
+    assert!(xhci.irq_level());
+
     xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IP | IMAN_IE);
     assert!(!xhci.interrupter0().interrupt_pending());
     assert!(!xhci.irq_level());
+}
+
+/// A tiny `MemoryBus` that never panics on out-of-range accesses.
+///
+/// This is important for xHCI robustness: guests can program ERSTBA/ERDP to arbitrary physical
+/// addresses.
+struct SafeMemory {
+    bytes: Vec<u8>,
+}
+
+impl SafeMemory {
+    fn new(size: usize) -> Self {
+        Self {
+            bytes: vec![0; size],
+        }
+    }
+}
+
+impl MemoryBus for SafeMemory {
+    fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
+        let Ok(start) = usize::try_from(paddr) else {
+            buf.fill(0);
+            return;
+        };
+        let Some(end) = start.checked_add(buf.len()) else {
+            buf.fill(0);
+            return;
+        };
+        if end > self.bytes.len() {
+            buf.fill(0);
+            return;
+        }
+        buf.copy_from_slice(&self.bytes[start..end]);
+    }
+
+    fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
+        let Ok(start) = usize::try_from(paddr) else {
+            return;
+        };
+        let Some(end) = start.checked_add(buf.len()) else {
+            return;
+        };
+        if end > self.bytes.len() {
+            return;
+        }
+        self.bytes[start..end].copy_from_slice(buf);
+    }
+}
+
+#[test]
+fn event_ring_invalid_config_sets_host_controller_error() {
+    let mut mem = SafeMemory::new(0x1000);
+    let mut xhci = XhciController::new();
+
+    // Program ERSTSZ/ERSTBA/ERDP with an out-of-range ERSTBA (unmapped guest memory).
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 1);
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, 0xdead_beef);
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_HI, 4, 0);
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, 0x100);
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_HI, 4, 0);
+
+    let mut evt = Trb::default();
+    evt.set_trb_type(TrbType::PortStatusChangeEvent);
+    xhci.post_event(evt);
+
+    // Must not panic, and should set USBSTS.HCE as a sticky error bit.
+    xhci.service_event_ring(&mut mem);
+
+    let sts = xhci.mmio_read(&mut mem, regs::REG_USBSTS, 4);
+    assert_ne!(sts & regs::USBSTS_HCE, 0, "controller should latch HCE");
+
+    // USBSTS is RW1C, but HCE is sticky: writing 1 must not clear it.
+    xhci.mmio_write(&mut mem, regs::REG_USBSTS, 4, regs::USBSTS_HCE);
+    let sts2 = xhci.mmio_read(&mut mem, regs::REG_USBSTS, 4);
+    assert_ne!(sts2 & regs::USBSTS_HCE, 0, "HCE should be sticky");
 }
 
 #[test]

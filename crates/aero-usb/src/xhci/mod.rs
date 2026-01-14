@@ -271,6 +271,8 @@ pub struct XhciController {
     // Minimal MMIO-visible register file for emulator PCI/MMIO integration.
     usbcmd: u32,
     usbsts: u32,
+    /// Sticky host controller error latch surfaced via USBSTS.HCE.
+    host_controller_error: bool,
     crcr: u64,
     dcbaap: u64,
     slots: Vec<SlotState>,
@@ -301,6 +303,7 @@ impl fmt::Debug for XhciController {
             .field("ext_caps_dwords", &self.ext_caps.len())
             .field("usbcmd", &self.usbcmd)
             .field("usbsts", &self.usbsts)
+            .field("host_controller_error", &self.host_controller_error)
             .field("crcr", &self.crcr)
             .field("dcbaap", &self.dcbaap)
             .field("slots", &self.slots.len())
@@ -343,6 +346,7 @@ impl XhciController {
             ext_caps: Vec::new(),
             usbcmd: 0,
             usbsts: 0,
+            host_controller_error: false,
             crcr: 0,
             dcbaap: 0,
             slots,
@@ -1098,9 +1102,15 @@ impl XhciController {
                     self.pending_events.pop_front();
                     self.interrupter0.set_interrupt_pending(true);
                 }
-                Err(event_ring::EnqueueError::NotConfigured)
-                | Err(event_ring::EnqueueError::RingFull)
-                | Err(event_ring::EnqueueError::InvalidConfig) => break,
+                Err(event_ring::EnqueueError::NotConfigured) | Err(event_ring::EnqueueError::RingFull) => {
+                    break
+                }
+                Err(event_ring::EnqueueError::InvalidConfig) => {
+                    // Malformed guest configuration (e.g. ERST points out of bounds) should not
+                    // panic; instead surface Host Controller Error as a sticky flag.
+                    self.host_controller_error = true;
+                    break;
+                }
             }
         }
     }
@@ -1281,7 +1291,12 @@ impl XhciController {
             } else {
                 0
             }
-            | if running { 0 } else { regs::USBSTS_HCHALTED };
+            | if running { 0 } else { regs::USBSTS_HCHALTED }
+            | if self.host_controller_error {
+                regs::USBSTS_HCE
+            } else {
+                0
+            };
 
         let value32 = match aligned {
             off if off >= port_regs_base && off < port_regs_end => {
@@ -1463,6 +1478,12 @@ impl XhciController {
                 // Treat USBSTS as RW1C. Writing 1 clears the bit.
                 let write_val = merge(0);
                 self.usbsts &= !write_val;
+                // Allow acknowledging event interrupts via USBSTS.EINT by also clearing
+                // Interrupter 0's pending bit (IMAN.IP). This is a minimal model of the xHCI
+                // "summary" interrupt status bit.
+                if (write_val & regs::USBSTS_EINT) != 0 {
+                    self.interrupter0.set_interrupt_pending(false);
+                }
             }
             regs::REG_CRCR_LO => {
                 let lo = merge(self.crcr as u32) as u64;
@@ -1523,6 +1544,7 @@ impl XhciController {
     fn reset_controller(&mut self) {
         self.usbcmd = 0;
         self.usbsts = 0;
+        self.host_controller_error = false;
         self.crcr = 0;
         self.dcbaap = 0;
 
@@ -1856,11 +1878,12 @@ fn make_port_status_change_event_trb(port_id: u8) -> Trb {
 }
 impl IoSnapshot for XhciController {
     const DEVICE_ID: [u8; 4] = *b"XHCI";
-    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(0, 2);
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(0, 3);
 
     fn save_state(&self) -> Vec<u8> {
         const TAG_USBCMD: u16 = 1;
         const TAG_USBSTS: u16 = 2;
+        const TAG_HOST_CONTROLLER_ERROR: u16 = 11;
         const TAG_CRCR: u16 = 3;
         const TAG_PORT_COUNT: u16 = 4;
         const TAG_DCBAAP: u16 = 5;
@@ -1873,6 +1896,7 @@ impl IoSnapshot for XhciController {
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
         w.field_u32(TAG_USBCMD, self.usbcmd);
         w.field_u32(TAG_USBSTS, self.usbsts);
+        w.field_bool(TAG_HOST_CONTROLLER_ERROR, self.host_controller_error);
         w.field_u64(TAG_CRCR, self.crcr);
         w.field_u8(TAG_PORT_COUNT, self.port_count);
         w.field_u64(TAG_DCBAAP, self.dcbaap);
@@ -1887,6 +1911,7 @@ impl IoSnapshot for XhciController {
     fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
         const TAG_USBCMD: u16 = 1;
         const TAG_USBSTS: u16 = 2;
+        const TAG_HOST_CONTROLLER_ERROR: u16 = 11;
         const TAG_CRCR: u16 = 3;
         const TAG_PORT_COUNT: u16 = 4;
         const TAG_DCBAAP: u16 = 5;
@@ -1904,6 +1929,7 @@ impl IoSnapshot for XhciController {
 
         self.usbcmd = r.u32(TAG_USBCMD)?.unwrap_or(0);
         self.usbsts = r.u32(TAG_USBSTS)?.unwrap_or(0);
+        self.host_controller_error = r.bool(TAG_HOST_CONTROLLER_ERROR)?.unwrap_or(false);
         self.crcr = r.u64(TAG_CRCR)?.unwrap_or(0);
         self.dcbaap = r.u64(TAG_DCBAAP)?.unwrap_or(0) & !0x3f;
 

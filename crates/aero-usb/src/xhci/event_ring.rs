@@ -95,7 +95,10 @@ impl EventRingProducer {
             self.last_erdp_gen = 0;
         }
 
-        if !self.is_configured() {
+        if !self.is_configured(intr) {
+            // Treat a missing ERDP pointer as "not configured" and force the ring state back to an
+            // uninitialised baseline so a future configuration write starts from scratch.
+            self.ready = false;
             return;
         }
 
@@ -144,14 +147,16 @@ impl EventRingProducer {
         intr: &InterrupterRegs,
         trb: Trb,
     ) -> Result<(), EnqueueError> {
-        if !self.is_configured() {
+        if !self.is_configured(intr) {
             return Err(EnqueueError::NotConfigured);
         }
         if !self.ready {
             // Attempt to lazily initialise from the current ERDP pointer.
             self.refresh(mem, intr);
             if !self.ready {
-                return Err(EnqueueError::NotConfigured);
+                // ERST is configured but ERDP did not map into any segment: treat as an invalid
+                // guest configuration (should raise HCE in the controller model).
+                return Err(EnqueueError::InvalidConfig);
             }
         }
 
@@ -168,8 +173,8 @@ impl EventRingProducer {
         Ok(())
     }
 
-    fn is_configured(&self) -> bool {
-        self.erstsz != 0 && self.erstba != 0
+    fn is_configured(&self, intr: &InterrupterRegs) -> bool {
+        self.erstsz != 0 && self.erstba != 0 && intr.erdp_ptr() != 0
     }
 
     fn is_full(&self) -> bool {
