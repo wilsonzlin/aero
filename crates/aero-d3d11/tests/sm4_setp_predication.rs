@@ -1004,3 +1004,132 @@ fn decodes_and_translates_trailing_predicated_sample() {
         translated.wgsl
     );
 }
+
+#[test]
+fn decodes_and_translates_predicated_break_in_loop() {
+    let mut body = Vec::<u32>::new();
+
+    // mov o0, l(0, 0, 0, 0)
+    let imm0 = imm32_vec4([0u32; 4]);
+    body.push(opcode_token(OPCODE_MOV, 1 + 2 + imm0.len() as u32));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&imm0);
+
+    // loop
+    body.push(opcode_token(OPCODE_LOOP, 1));
+
+    // (+p0.x) break
+    let pred_p0x = pred_operand(0, 0);
+    body.push(opcode_token(OPCODE_BREAK, 1 + pred_p0x.len() as u32));
+    body.extend_from_slice(&pred_p0x);
+
+    // break (ensure the loop terminates even when p0.x is false)
+    body.push(opcode_token(OPCODE_BREAK, 1));
+
+    // endloop
+    body.push(opcode_token(OPCODE_ENDLOOP, 1));
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 0 is pixel shader.
+    let tokens = make_sm5_program_tokens(0, &body);
+
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (
+            FOURCC_ISGN,
+            build_signature_chunk(&[sig_param("TEXCOORD", 0, 0, 0b1111)]),
+        ),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Target", 0, 0, 0b1111)]),
+        ),
+    ]);
+
+    let dxbc = aero_d3d11::DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    let module = aero_d3d11::sm4::decode_program(&program).expect("SM4 decode");
+
+    assert!(matches!(module.instructions[1], Sm4Inst::Loop));
+    assert!(matches!(
+        &module.instructions[2],
+        Sm4Inst::Predicated { inner, .. } if matches!(inner.as_ref(), Sm4Inst::Break)
+    ));
+
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+
+    assert!(
+        translated.wgsl.contains("loop {"),
+        "expected loop block in WGSL:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("if (p0.x) {") && translated.wgsl.contains("break;"),
+        "expected predicated break to lower via if (p0.x) {{ break; }}:\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
+fn decodes_and_translates_predicated_continue_in_loop() {
+    let mut body = Vec::<u32>::new();
+
+    // mov o0, l(0, 0, 0, 0)
+    let imm0 = imm32_vec4([0u32; 4]);
+    body.push(opcode_token(OPCODE_MOV, 1 + 2 + imm0.len() as u32));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&imm0);
+
+    // loop
+    body.push(opcode_token(OPCODE_LOOP, 1));
+
+    // (+p0.x) continue
+    let pred_p0x = pred_operand(0, 0);
+    body.push(opcode_token(OPCODE_CONTINUE, 1 + pred_p0x.len() as u32));
+    body.extend_from_slice(&pred_p0x);
+
+    // break (avoid an infinite loop when p0.x is false)
+    body.push(opcode_token(OPCODE_BREAK, 1));
+
+    // endloop
+    body.push(opcode_token(OPCODE_ENDLOOP, 1));
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 0 is pixel shader.
+    let tokens = make_sm5_program_tokens(0, &body);
+
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (
+            FOURCC_ISGN,
+            build_signature_chunk(&[sig_param("TEXCOORD", 0, 0, 0b1111)]),
+        ),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Target", 0, 0, 0b1111)]),
+        ),
+    ]);
+
+    let dxbc = aero_d3d11::DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    let module = aero_d3d11::sm4::decode_program(&program).expect("SM4 decode");
+
+    assert!(matches!(module.instructions[1], Sm4Inst::Loop));
+    assert!(matches!(
+        &module.instructions[2],
+        Sm4Inst::Predicated { inner, .. } if matches!(inner.as_ref(), Sm4Inst::Continue)
+    ));
+
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+
+    assert!(
+        translated.wgsl.contains("if (p0.x) {") && translated.wgsl.contains("continue;"),
+        "expected predicated continue to lower via if (p0.x) {{ continue; }}:\n{}",
+        translated.wgsl
+    );
+}

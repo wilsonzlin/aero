@@ -4836,6 +4836,96 @@ fn emit_instructions(
                     }
                 }
 
+                // Predicated control-flow exits need access to the *current* structured control-flow
+                // context (loop/switch stacks). The generic predication lowering below wraps the
+                // inner instruction in a fresh `Sm4Module` and calls `emit_instructions`
+                // recursively, which would reset that context and incorrectly reject `break` /
+                // `continue` as malformed control flow.
+                if matches!(inner.as_ref(), Sm4Inst::Break) {
+                    let inside_case = matches!(cf_stack.last(), Some(CfFrame::Case));
+                    let inside_loop = blocks.iter().any(|b| matches!(b, BlockKind::Loop));
+                    if !inside_case && !inside_loop {
+                        return Err(ShaderTranslateError::MalformedControlFlow {
+                            inst_index,
+                            expected: "loop or switch case".to_owned(),
+                            found: blocks
+                                .last()
+                                .map(|b| b.describe())
+                                .unwrap_or_else(|| "none".to_owned()),
+                        });
+                    }
+                    let cond = emit_test_predicate_scalar(pred);
+                    w.line(&format!("if ({cond}) {{"));
+                    w.indent();
+                    w.line("break;");
+                    w.dedent();
+                    w.line("}");
+                    continue;
+                }
+                if let Sm4Inst::BreakC { op, a, b } = inner.as_ref() {
+                    let inside_case = matches!(cf_stack.last(), Some(CfFrame::Case));
+                    let inside_loop = blocks.iter().any(|b| matches!(b, BlockKind::Loop));
+                    if !inside_case && !inside_loop {
+                        return Err(ShaderTranslateError::MalformedControlFlow {
+                            inst_index,
+                            expected: "loop or switch case".to_owned(),
+                            found: blocks
+                                .last()
+                                .map(|b| b.describe())
+                                .unwrap_or_else(|| "none".to_owned()),
+                        });
+                    }
+                    let cond = emit_test_predicate_scalar(pred);
+                    let expr = emit_cmp(*op, a, b, "breakc")?;
+                    w.line(&format!("if ({cond} && ({expr})) {{"));
+                    w.indent();
+                    w.line("break;");
+                    w.dedent();
+                    w.line("}");
+                    continue;
+                }
+                if matches!(inner.as_ref(), Sm4Inst::Continue) {
+                    let inside_loop = blocks.iter().any(|b| matches!(b, BlockKind::Loop));
+                    if !inside_loop {
+                        return Err(ShaderTranslateError::MalformedControlFlow {
+                            inst_index,
+                            expected: "loop".to_owned(),
+                            found: blocks
+                                .last()
+                                .map(|b| b.describe())
+                                .unwrap_or_else(|| "none".to_owned()),
+                        });
+                    }
+                    let cond = emit_test_predicate_scalar(pred);
+                    w.line(&format!("if ({cond}) {{"));
+                    w.indent();
+                    w.line("continue;");
+                    w.dedent();
+                    w.line("}");
+                    continue;
+                }
+                if let Sm4Inst::ContinueC { op, a, b } = inner.as_ref() {
+                    let inside_loop = blocks.iter().any(|b| matches!(b, BlockKind::Loop));
+                    if !inside_loop {
+                        return Err(ShaderTranslateError::MalformedControlFlow {
+                            inst_index,
+                            expected: "loop".to_owned(),
+                            found: blocks
+                                .last()
+                                .map(|b| b.describe())
+                                .unwrap_or_else(|| "none".to_owned()),
+                        });
+                    }
+                    let cond = emit_test_predicate_scalar(pred);
+                    let expr = emit_cmp(*op, a, b, "continuec")?;
+                    w.line(&format!("if ({cond} && ({expr})) {{"));
+                    w.indent();
+                    w.line("continue;");
+                    w.dedent();
+                    w.line("}");
+                    continue;
+                }
+
                 match inner.as_ref() {
                     Sm4Inst::If { .. } => {
                         return Err(ShaderTranslateError::UnsupportedInstruction {
@@ -4859,18 +4949,6 @@ fn emit_instructions(
                         return Err(ShaderTranslateError::UnsupportedInstruction {
                             inst_index,
                             opcode: "predicated_endif".to_owned(),
-                        })
-                    }
-                    Sm4Inst::BreakC { .. } => {
-                        return Err(ShaderTranslateError::UnsupportedInstruction {
-                            inst_index,
-                            opcode: "predicated_breakc".to_owned(),
-                        })
-                    }
-                    Sm4Inst::ContinueC { .. } => {
-                        return Err(ShaderTranslateError::UnsupportedInstruction {
-                            inst_index,
-                            opcode: "predicated_continuec".to_owned(),
                         })
                     }
                     Sm4Inst::Sync { flags } => {
