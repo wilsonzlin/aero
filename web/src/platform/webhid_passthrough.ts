@@ -24,6 +24,7 @@ import {
   DEFAULT_EXTERNAL_HUB_PORT_COUNT,
   EXTERNAL_HUB_ROOT_PORT,
   UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT,
+  WEBUSB_GUEST_ROOT_PORT,
 } from "../usb/uhci_external_hub";
 import { XHCI_MAX_HUB_PORT_COUNT } from "../hid/xhci_hid_topology";
 
@@ -1125,12 +1126,12 @@ export function mountWebHidPassthroughPanel(host: HTMLElement, manager: WebHidPa
   const portHint = el("div", {
     class: "mono",
     text:
-      `Guest USB root port 0 hosts an emulated external USB hub (${hubPortCount} ports). ` +
+      `Guest USB root port ${EXTERNAL_HUB_ROOT_PORT} hosts an emulated external USB hub (${hubPortCount} ports). ` +
       (reservedPorts > 0
-        ? `Ports 1..=${reservedPorts} are reserved for synthetic HID devices (keyboard/mouse/gamepad/consumer-control). ` +
-          `Passthrough devices attach behind it using paths like 0.${reservedPorts + 1}. `
-        : `Passthrough devices attach behind it using paths like 0.${UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT}. `) +
-      "Guest USB root port 1 is reserved for the guest-visible WebUSB passthrough device.",
+         ? `Ports 1..=${reservedPorts} are reserved for synthetic HID devices (keyboard/mouse/gamepad/consumer-control). ` +
+           `Passthrough devices attach behind it using paths like ${EXTERNAL_HUB_ROOT_PORT}.${reservedPorts + 1}. `
+         : `Passthrough devices attach behind it using paths like ${EXTERNAL_HUB_ROOT_PORT}.${UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT}. `) +
+      `Guest USB root port ${WEBUSB_GUEST_ROOT_PORT} is reserved for the guest-visible WebUSB passthrough device.`,
   });
 
   const permissionHint = el("div", { class: "mono" });
