@@ -23,8 +23,8 @@ struct InternalBufferOverrides<'a, P> {
     copies: &'a [InternalBufferCopy],
 }
 
-impl<P: reflection_bindings::BindGroupResourceProvider> reflection_bindings::BindGroupResourceProvider
-    for InternalBufferOverrides<'_, P>
+impl<P: reflection_bindings::BindGroupResourceProvider>
+    reflection_bindings::BindGroupResourceProvider for InternalBufferOverrides<'_, P>
 {
     fn constant_buffer(&self, slot: u32) -> Option<reflection_bindings::BufferBinding<'_>> {
         self.base.constant_buffer(slot)
