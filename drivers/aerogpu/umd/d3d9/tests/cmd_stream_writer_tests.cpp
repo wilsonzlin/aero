@@ -66,6 +66,11 @@ HRESULT AEROGPU_D3D9_CALL device_test_set_resource_backing(
     uint32_t backing_alloc_id,
     uint32_t backing_offset_bytes,
     WddmAllocationHandle wddm_hAllocation);
+HRESULT AEROGPU_D3D9_CALL device_test_set_resource_shared_private_driver_data(
+    D3DDDI_HDEVICE hDevice,
+    D3DDDI_HRESOURCE hResource,
+    const void* data,
+    uint32_t data_size);
 HRESULT AEROGPU_D3D9_CALL device_test_alias_fixedfunc_stage0_ps_variant(
     D3DDDI_HDEVICE hDevice,
     uint32_t src_index,
@@ -37587,8 +37592,16 @@ bool TestRotateResourceIdentitiesUndoOnSmallCmdBuffer() {
   if (!res1->storage.empty()) {
     res1->storage[0] = 0xB2;
   }
-  res0->shared_private_driver_data = {0x01, 0x02, 0x03};
-  res1->shared_private_driver_data = {0x04, 0x05};
+  const uint8_t priv0[] = {0x01, 0x02, 0x03};
+  const uint8_t priv1[] = {0x04, 0x05};
+  hr = device_test_set_resource_shared_private_driver_data(create_dev.hDevice, cleanup.resources[0], priv0, sizeof(priv0));
+  if (!Check(hr == S_OK, "device_test_set_resource_shared_private_driver_data(res0)")) {
+    return false;
+  }
+  hr = device_test_set_resource_shared_private_driver_data(create_dev.hDevice, cleanup.resources[1], priv1, sizeof(priv1));
+  if (!Check(hr == S_OK, "device_test_set_resource_shared_private_driver_data(res1)")) {
+    return false;
+  }
 
   // Too small for SET_RENDER_TARGETS (48 bytes), so rotate should fail and restore.
   uint8_t small_dma[sizeof(aerogpu_cmd_stream_header) + 32] = {};

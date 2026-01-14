@@ -27616,6 +27616,25 @@ HRESULT AEROGPU_D3D9_CALL device_test_set_resource_backing(
   return S_OK;
 }
 
+HRESULT AEROGPU_D3D9_CALL device_test_set_resource_shared_private_driver_data(
+    D3DDDI_HDEVICE hDevice,
+    D3DDDI_HRESOURCE hResource,
+    const void* data,
+    uint32_t data_size) {
+  if (!hDevice.pDrvPrivate || !hResource.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+  if (data_size != 0 && !data) {
+    return E_INVALIDARG;
+  }
+  auto* dev = as_device(hDevice);
+  auto* res = as_resource(hResource);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  res->shared_private_driver_data.assign(static_cast<const uint8_t*>(data),
+                                         static_cast<const uint8_t*>(data) + data_size);
+  return S_OK;
+}
+
 HRESULT AEROGPU_D3D9_CALL device_test_force_device_lost(D3DDDI_HDEVICE hDevice, HRESULT hr) {
   if (!hDevice.pDrvPrivate) {
     return E_INVALIDARG;
