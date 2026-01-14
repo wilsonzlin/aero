@@ -294,3 +294,12 @@ fn decodes_geometry_shader_emit_cut_stream_variants() {
         ]
     );
 }
+
+#[test]
+fn gs_opcode_constants_match_d3d10_tokenized_format() {
+    // Keep these in sync with `d3d10tokenizedprogramformat.h` (`D3D10_SB_OPCODE_TYPE`).
+    assert_eq!(OPCODE_EMIT_STREAM, 0x41);
+    assert_eq!(OPCODE_CUT_STREAM, 0x42);
+    assert_eq!(OPCODE_EMIT, 0x43);
+    assert_eq!(OPCODE_CUT, 0x44);
+}
