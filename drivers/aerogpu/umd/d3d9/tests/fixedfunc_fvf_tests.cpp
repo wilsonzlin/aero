@@ -684,14 +684,18 @@ bool TestFvfXyzDiffuseEmitsTransformConstantsAndDecl() {
   constexpr float tx = 2.0f;
   constexpr float ty = 3.0f;
   constexpr float tz = 0.0f;
-  const float expected_wvp_cols[16] = {
-      1.0f, 0.0f, 0.0f, tx,
-      0.0f, 1.0f, 0.0f, ty,
-      0.0f, 0.0f, 1.0f, tz,
-      0.0f, 0.0f, 0.0f, 1.0f,
+  // The fixed-function XYZ path CPU-transforms vertices to clip-space and
+  // uploads them into the scratch UP buffer as a POSITIONT(float4)+DIFFUSE
+  // layout.
+  const VertexXyzrhwDiffuse expected_clip[3] = {
+      {-1.0f + tx, -1.0f + ty, 0.0f + tz, 1.0f, 0xFFFF0000u},
+      {1.0f + tx, -1.0f + ty, 0.0f + tz, 1.0f, 0xFF00FF00u},
+      {-1.0f + tx, 1.0f + ty, 0.0f + tz, 1.0f, 0xFF0000FFu},
   };
 
   aerogpu_handle_t expected_input_layout = 0;
+  aerogpu_handle_t expected_clip_input_layout = 0;
+  aerogpu_handle_t expected_vb = 0;
   bool decl_ok = false;
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
@@ -736,22 +740,49 @@ bool TestFvfXyzDiffuseEmitsTransformConstantsAndDecl() {
 
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
-    if (!Check(dev->fixedfunc_vs_xyz_diffuse != nullptr, "fixedfunc_vs_xyz_diffuse created")) {
+    // XYZ fixed-function draws are CPU-transformed to clip-space, so the GPU path
+    // uses the passthrough VS (same as XYZRHW|DIFFUSE).
+    if (!Check(dev->fixedfunc_vs != nullptr, "fixedfunc_vs created")) {
       return false;
     }
-    if (!Check(dev->vs == dev->fixedfunc_vs_xyz_diffuse, "XYZ|DIFFUSE binds WVP VS")) {
+    if (!Check(dev->vs == dev->fixedfunc_vs, "XYZ|DIFFUSE binds passthrough VS")) {
       return false;
     }
+    if (!Check(ShaderBytecodeEquals(dev->vs, fixedfunc::kVsPassthroughPosColor),
+               "XYZ|DIFFUSE VS bytecode passthrough")) {
+      return false;
+    }
+
+    if (dev->fvf_vertex_decl) {
+      expected_clip_input_layout = dev->fvf_vertex_decl->handle;
+    }
+    if (dev->up_vertex_buffer) {
+      expected_vb = dev->up_vertex_buffer->handle;
+      if (!Check(dev->up_vertex_buffer->storage.size() >= sizeof(expected_clip),
+                 "scratch VB storage contains converted vertices")) {
+        return false;
+      }
+      if (!Check(std::memcmp(dev->up_vertex_buffer->storage.data(), expected_clip, sizeof(expected_clip)) == 0,
+                 "scratch VB contains expected clip-space vertices (XYZ|DIFFUSE)")) {
+        return false;
+      }
+    }
+  }
+  if (!Check(expected_vb != 0, "scratch VB handle non-zero (XYZ|DIFFUSE)")) {
+    return false;
+  }
+  if (!Check(expected_clip_input_layout != 0, "clip-space decl handle non-zero (XYZ|DIFFUSE)")) {
+    return false;
   }
 
   dev->cmd.finalize();
   const uint8_t* buf = dev->cmd.data();
   const size_t len = dev->cmd.bytes_used();
-  if (!Check(ValidateStream(buf, len), "ValidateStream(XYZ|DIFFUSE WVP constants)")) {
+  if (!Check(ValidateStream(buf, len), "ValidateStream(XYZ|DIFFUSE CPU transform)")) {
     return false;
   }
 
-  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F) >= 1, "SET_SHADER_CONSTANTS_F emitted")) {
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_UPLOAD_RESOURCE) >= 1, "UPLOAD_RESOURCE emitted")) {
     return false;
   }
 
@@ -767,27 +798,46 @@ bool TestFvfXyzDiffuseEmitsTransformConstantsAndDecl() {
     return false;
   }
 
-  bool saw_wvp_constants = false;
-  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
-    const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
-    if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX) {
-      continue;
-    }
-    if (sc->start_register != 240 || sc->vec4_count != 4) {
-      continue;
-    }
-    const size_t need = sizeof(aerogpu_cmd_set_shader_constants_f) + sizeof(expected_wvp_cols);
-    if (hdr->size_bytes < need) {
-      continue;
-    }
-    const float* payload = reinterpret_cast<const float*>(
-        reinterpret_cast<const uint8_t*>(sc) + sizeof(aerogpu_cmd_set_shader_constants_f));
-    if (std::memcmp(payload, expected_wvp_cols, sizeof(expected_wvp_cols)) == 0) {
-      saw_wvp_constants = true;
+  // The CPU transform path binds an internal clip-space input layout for the draw
+  // (POSITIONT=float4 + DIFFUSE).
+  bool saw_clip_layout = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_INPUT_LAYOUT)) {
+    const auto* il = reinterpret_cast<const aerogpu_cmd_set_input_layout*>(hdr);
+    if (il->input_layout_handle == expected_clip_input_layout) {
+      saw_clip_layout = true;
       break;
     }
   }
-  if (!Check(saw_wvp_constants, "SET_SHADER_CONSTANTS_F uploads expected WVP columns (XYZ|DIFFUSE)")) {
+  if (!Check(saw_clip_layout, "SET_INPUT_LAYOUT binds clip-space layout handle (XYZ|DIFFUSE)")) {
+    return false;
+  }
+
+  // Validate at least one vertex buffer binding references the scratch UP buffer
+  // with the clip-space stride.
+  bool saw_expected_vb = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_VERTEX_BUFFERS)) {
+    const auto* svb = reinterpret_cast<const aerogpu_cmd_set_vertex_buffers*>(hdr);
+    if (svb->buffer_count == 0) {
+      continue;
+    }
+    const size_t need = sizeof(aerogpu_cmd_set_vertex_buffers) +
+                        static_cast<size_t>(svb->buffer_count) * sizeof(aerogpu_vertex_buffer_binding);
+    if (hdr->size_bytes < need) {
+      continue;
+    }
+    const auto* bindings = reinterpret_cast<const aerogpu_vertex_buffer_binding*>(reinterpret_cast<const uint8_t*>(svb) +
+                                                                                  sizeof(aerogpu_cmd_set_vertex_buffers));
+    for (uint32_t i = 0; i < svb->buffer_count; ++i) {
+      if (bindings[i].buffer == expected_vb && bindings[i].stride_bytes == sizeof(VertexXyzrhwDiffuse)) {
+        saw_expected_vb = true;
+        break;
+      }
+    }
+    if (saw_expected_vb) {
+      break;
+    }
+  }
+  if (!Check(saw_expected_vb, "SET_VERTEX_BUFFERS binds scratch UP buffer (XYZ|DIFFUSE clip-space)")) {
     return false;
   }
 
@@ -1095,14 +1145,17 @@ bool TestFvfXyzDiffuseTex1EmitsTransformConstantsAndDecl() {
   constexpr float tx = 2.0f;
   constexpr float ty = 3.0f;
   constexpr float tz = 0.0f;
-  const float expected_wvp_cols[16] = {
-      1.0f, 0.0f, 0.0f, tx,
-      0.0f, 1.0f, 0.0f, ty,
-      0.0f, 0.0f, 1.0f, tz,
-      0.0f, 0.0f, 0.0f, 1.0f,
+  // The fixed-function XYZ path CPU-transforms vertices to clip-space and
+  // uploads them into the scratch UP buffer as POSITIONT(float4)+DIFFUSE+TEX1.
+  const VertexXyzrhwDiffuseTex1 expected_clip[3] = {
+      {-1.0f + tx, -1.0f + ty, 0.0f + tz, 1.0f, 0xFFFFFFFFu, 0.0f, 0.0f},
+      {1.0f + tx, -1.0f + ty, 0.0f + tz, 1.0f, 0xFFFFFFFFu, 1.0f, 0.0f},
+      {-1.0f + tx, 1.0f + ty, 0.0f + tz, 1.0f, 0xFFFFFFFFu, 0.0f, 1.0f},
   };
 
   aerogpu_handle_t expected_input_layout = 0;
+  aerogpu_handle_t expected_clip_input_layout = 0;
+  aerogpu_handle_t expected_vb = 0;
   bool decl_ok = false;
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
@@ -1160,22 +1213,47 @@ bool TestFvfXyzDiffuseTex1EmitsTransformConstantsAndDecl() {
     if (!Check(dev->fixedfunc_vs_xyz_diffuse_tex1 != nullptr, "fixedfunc_vs_xyz_diffuse_tex1 created")) {
       return false;
     }
-    if (!Check(dev->vs == dev->fixedfunc_vs_xyz_diffuse_tex1, "XYZ|DIFFUSE|TEX1 binds WVP VS")) {
+    if (!Check(dev->vs == dev->fixedfunc_vs_xyz_diffuse_tex1, "XYZ|DIFFUSE|TEX1 binds passthrough VS")) {
       return false;
     }
+    if (!Check(ShaderBytecodeEquals(dev->vs, fixedfunc::kVsPassthroughPosColorTex1),
+               "XYZ|DIFFUSE|TEX1 VS bytecode passthrough")) {
+      return false;
+    }
+
+    if (dev->fvf_vertex_decl_tex1) {
+      expected_clip_input_layout = dev->fvf_vertex_decl_tex1->handle;
+    }
+    if (dev->up_vertex_buffer) {
+      expected_vb = dev->up_vertex_buffer->handle;
+      if (!Check(dev->up_vertex_buffer->storage.size() >= sizeof(expected_clip),
+                 "scratch VB storage contains converted vertices (TEX1)")) {
+        return false;
+      }
+      if (!Check(std::memcmp(dev->up_vertex_buffer->storage.data(), expected_clip, sizeof(expected_clip)) == 0,
+                 "scratch VB contains expected clip-space vertices (XYZ|DIFFUSE|TEX1)")) {
+        return false;
+      }
+    }
+  }
+  if (!Check(expected_vb != 0, "scratch VB handle non-zero (XYZ|DIFFUSE|TEX1)")) {
+    return false;
+  }
+  if (!Check(expected_clip_input_layout != 0, "clip-space decl handle non-zero (XYZ|DIFFUSE|TEX1)")) {
+    return false;
   }
 
   dev->cmd.finalize();
   const uint8_t* buf = dev->cmd.data();
   const size_t len = dev->cmd.bytes_used();
-  if (!Check(ValidateStream(buf, len), "ValidateStream(XYZ|DIFFUSE|TEX1 WVP constants)")) {
+  if (!Check(ValidateStream(buf, len), "ValidateStream(XYZ|DIFFUSE|TEX1 CPU transform)")) {
     return false;
   }
 
   if (!Check(CountOpcode(buf, len, AEROGPU_CMD_SET_TEXTURE) >= 1, "SET_TEXTURE emitted")) {
     return false;
   }
-  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F) >= 1, "SET_SHADER_CONSTANTS_F emitted")) {
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_UPLOAD_RESOURCE) >= 1, "UPLOAD_RESOURCE emitted")) {
     return false;
   }
 
@@ -1191,27 +1269,46 @@ bool TestFvfXyzDiffuseTex1EmitsTransformConstantsAndDecl() {
     return false;
   }
 
-  bool saw_wvp_constants = false;
-  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
-    const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
-    if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX) {
-      continue;
-    }
-    if (sc->start_register != 240 || sc->vec4_count != 4) {
-      continue;
-    }
-    const size_t need = sizeof(aerogpu_cmd_set_shader_constants_f) + sizeof(expected_wvp_cols);
-    if (hdr->size_bytes < need) {
-      continue;
-    }
-    const float* payload = reinterpret_cast<const float*>(
-        reinterpret_cast<const uint8_t*>(sc) + sizeof(aerogpu_cmd_set_shader_constants_f));
-    if (std::memcmp(payload, expected_wvp_cols, sizeof(expected_wvp_cols)) == 0) {
-      saw_wvp_constants = true;
+  // The CPU transform path binds an internal clip-space input layout for the draw
+  // (POSITIONT=float4 + DIFFUSE + TEXCOORD0).
+  bool saw_clip_layout = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_INPUT_LAYOUT)) {
+    const auto* il = reinterpret_cast<const aerogpu_cmd_set_input_layout*>(hdr);
+    if (il->input_layout_handle == expected_clip_input_layout) {
+      saw_clip_layout = true;
       break;
     }
   }
-  if (!Check(saw_wvp_constants, "SET_SHADER_CONSTANTS_F uploads expected WVP columns (XYZ|DIFFUSE|TEX1)")) {
+  if (!Check(saw_clip_layout, "SET_INPUT_LAYOUT binds clip-space layout handle (XYZ|DIFFUSE|TEX1)")) {
+    return false;
+  }
+
+  // Validate at least one vertex buffer binding references the scratch UP buffer
+  // with the clip-space stride.
+  bool saw_expected_vb = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_VERTEX_BUFFERS)) {
+    const auto* svb = reinterpret_cast<const aerogpu_cmd_set_vertex_buffers*>(hdr);
+    if (svb->buffer_count == 0) {
+      continue;
+    }
+    const size_t need = sizeof(aerogpu_cmd_set_vertex_buffers) +
+                        static_cast<size_t>(svb->buffer_count) * sizeof(aerogpu_vertex_buffer_binding);
+    if (hdr->size_bytes < need) {
+      continue;
+    }
+    const auto* bindings = reinterpret_cast<const aerogpu_vertex_buffer_binding*>(reinterpret_cast<const uint8_t*>(svb) +
+                                                                                  sizeof(aerogpu_cmd_set_vertex_buffers));
+    for (uint32_t i = 0; i < svb->buffer_count; ++i) {
+      if (bindings[i].buffer == expected_vb && bindings[i].stride_bytes == sizeof(VertexXyzrhwDiffuseTex1)) {
+        saw_expected_vb = true;
+        break;
+      }
+    }
+    if (saw_expected_vb) {
+      break;
+    }
+  }
+  if (!Check(saw_expected_vb, "SET_VERTEX_BUFFERS binds scratch UP buffer (XYZ|DIFFUSE|TEX1 clip-space)")) {
     return false;
   }
 
@@ -2550,6 +2647,280 @@ bool TestPsOnlyInteropVertexDeclXyzTex1SynthesizesVsAndUploadsWvp() {
   return true;
 }
 
+bool TestSetTextureStageStateUpdatesPsForTex1NoDiffuseVertexDeclFvfs() {
+  // ---------------------------------------------------------------------------
+  // XYZRHW | TEX1 via SetVertexDecl (implied FVF)
+  // ---------------------------------------------------------------------------
+  {
+    CleanupDevice cleanup;
+    if (!CreateDevice(&cleanup)) {
+      return false;
+    }
+
+    auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+    if (!Check(dev != nullptr, "device pointer")) {
+      return false;
+    }
+
+    dev->cmd.reset();
+
+    const D3DVERTEXELEMENT9_COMPAT decl_blob[] = {
+        {0, 0, kD3dDeclTypeFloat4, kD3dDeclMethodDefault, kD3dDeclUsagePositionT, 0},
+        {0, 16, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
+        {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0},
+    };
+
+    D3D9DDI_HVERTEXDECL hDecl{};
+    HRESULT hr = cleanup.device_funcs.pfnCreateVertexDecl(
+        cleanup.hDevice, decl_blob, static_cast<uint32_t>(sizeof(decl_blob)), &hDecl);
+    if (!Check(hr == S_OK, "CreateVertexDecl(XYZRHW|TEX1)")) {
+      return false;
+    }
+    cleanup.vertex_decls.push_back(hDecl);
+
+    hr = cleanup.device_funcs.pfnSetVertexDecl(cleanup.hDevice, hDecl);
+    if (!Check(hr == S_OK, "SetVertexDecl(XYZRHW|TEX1)")) {
+      return false;
+    }
+
+    aerogpu_handle_t decl_handle = 0;
+    {
+      std::lock_guard<std::mutex> lock(dev->mutex);
+      if (!Check(dev->fvf == kFvfXyzrhwTex1, "SetVertexDecl inferred FVF == XYZRHW|TEX1")) {
+        return false;
+      }
+      auto* decl = reinterpret_cast<VertexDecl*>(hDecl.pDrvPrivate);
+      if (!Check(decl != nullptr, "vertex decl pointer")) {
+        return false;
+      }
+      decl_handle = decl->handle;
+
+      // Ensure a known starting point for stage0 state (matches D3D9 defaults).
+      dev->texture_stage_states[0][kD3dTssColorOp] = kD3dTopModulate;
+      dev->texture_stage_states[0][kD3dTssColorArg1] = kD3dTaTexture;
+      dev->texture_stage_states[0][kD3dTssColorArg2] = kD3dTaDiffuse;
+      dev->texture_stage_states[0][kD3dTssAlphaOp] = kD3dTopSelectArg1;
+      dev->texture_stage_states[0][kD3dTssAlphaArg1] = kD3dTaTexture;
+      dev->texture_stage_states[0][kD3dTssAlphaArg2] = kD3dTaDiffuse;
+    }
+    if (!Check(decl_handle != 0, "explicit decl handle non-zero")) {
+      return false;
+    }
+
+    D3DDDI_HRESOURCE hTex{};
+    if (!CreateDummyTexture(&cleanup, &hTex)) {
+      return false;
+    }
+    hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, hTex);
+    if (!Check(hr == S_OK, "SetTexture(stage0)")) {
+      return false;
+    }
+
+    const VertexXyzrhwTex1 tri[3] = {
+        {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f},
+        {1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f},
+        {0.0f, 1.0f, 0.0f, 1.0f, 0.0f, 1.0f},
+    };
+    hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+        cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwTex1));
+    if (!Check(hr == S_OK, "DrawPrimitiveUP(XYZRHW|TEX1 via decl)")) {
+      return false;
+    }
+
+    {
+      std::lock_guard<std::mutex> lock(dev->mutex);
+      if (!Check(dev->ps != nullptr, "XYZRHW|TEX1 via decl: PS bound after draw")) {
+        return false;
+      }
+      if (!Check(ShaderBytecodeEquals(dev->ps, fixedfunc::kPsStage0ModulateTexture),
+                 "XYZRHW|TEX1 via decl: PS bytecode modulate/texture")) {
+        return false;
+      }
+    }
+
+    const auto SetTextureStageState = [&](uint32_t stage, uint32_t state, uint32_t value, const char* msg) -> bool {
+      HRESULT hr2 = S_OK;
+      if (cleanup.device_funcs.pfnSetTextureStageState) {
+        hr2 = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, stage, state, value);
+      } else {
+        hr2 = aerogpu::device_set_texture_stage_state(cleanup.hDevice, stage, state, value);
+      }
+      return Check(hr2 == S_OK, msg);
+    };
+
+    if (!SetTextureStageState(/*stage=*/0,
+                              kD3dTssColorOp,
+                              kD3dTopDisable,
+                              "XYZRHW|TEX1 via decl: SetTextureStageState(COLOROP=DISABLE) succeeds")) {
+      return false;
+    }
+    {
+      std::lock_guard<std::mutex> lock(dev->mutex);
+      if (!Check(dev->ps != nullptr, "XYZRHW|TEX1 via decl: PS still bound after SetTextureStageState")) {
+        return false;
+      }
+      if (!Check(ShaderBytecodeEquals(dev->ps, fixedfunc::kPsPassthroughColor),
+                 "XYZRHW|TEX1 via decl: PS bytecode disable->passthrough")) {
+        return false;
+      }
+    }
+
+    dev->cmd.finalize();
+    const uint8_t* buf = dev->cmd.data();
+    const size_t len = dev->cmd.bytes_used();
+    if (!Check(ValidateStream(buf, len), "ValidateStream(XYZRHW|TEX1 via decl stage-state update)")) {
+      return false;
+    }
+    // Ensure we never rebound an internal SetFVF decl: the explicit decl handle must
+    // remain the active input layout.
+    const auto layouts = CollectOpcodes(buf, len, AEROGPU_CMD_SET_INPUT_LAYOUT);
+    if (!Check(!layouts.empty(), "SET_INPUT_LAYOUT packets collected")) {
+      return false;
+    }
+    const auto* last_layout = reinterpret_cast<const aerogpu_cmd_set_input_layout*>(layouts.back());
+    if (!Check(last_layout->input_layout_handle == decl_handle,
+               "XYZRHW|TEX1 via decl: SET_INPUT_LAYOUT uses explicit decl handle")) {
+      return false;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // XYZ | TEX1 via SetVertexDecl (implied FVF)
+  // ---------------------------------------------------------------------------
+  {
+    CleanupDevice cleanup;
+    if (!CreateDevice(&cleanup)) {
+      return false;
+    }
+
+    auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+    if (!Check(dev != nullptr, "device pointer")) {
+      return false;
+    }
+
+    dev->cmd.reset();
+
+    const D3DVERTEXELEMENT9_COMPAT decl_blob[] = {
+        {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsagePosition, 0},
+        {0, 12, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
+        {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0},
+    };
+
+    D3D9DDI_HVERTEXDECL hDecl{};
+    HRESULT hr = cleanup.device_funcs.pfnCreateVertexDecl(
+        cleanup.hDevice, decl_blob, static_cast<uint32_t>(sizeof(decl_blob)), &hDecl);
+    if (!Check(hr == S_OK, "CreateVertexDecl(XYZ|TEX1)")) {
+      return false;
+    }
+    cleanup.vertex_decls.push_back(hDecl);
+
+    hr = cleanup.device_funcs.pfnSetVertexDecl(cleanup.hDevice, hDecl);
+    if (!Check(hr == S_OK, "SetVertexDecl(XYZ|TEX1)")) {
+      return false;
+    }
+
+    aerogpu_handle_t decl_handle = 0;
+    {
+      std::lock_guard<std::mutex> lock(dev->mutex);
+      if (!Check(dev->fvf == kFvfXyzTex1, "SetVertexDecl inferred FVF == XYZ|TEX1")) {
+        return false;
+      }
+      auto* decl = reinterpret_cast<VertexDecl*>(hDecl.pDrvPrivate);
+      if (!Check(decl != nullptr, "vertex decl pointer")) {
+        return false;
+      }
+      decl_handle = decl->handle;
+
+      // Ensure a known starting point for stage0 state (matches D3D9 defaults).
+      dev->texture_stage_states[0][kD3dTssColorOp] = kD3dTopModulate;
+      dev->texture_stage_states[0][kD3dTssColorArg1] = kD3dTaTexture;
+      dev->texture_stage_states[0][kD3dTssColorArg2] = kD3dTaDiffuse;
+      dev->texture_stage_states[0][kD3dTssAlphaOp] = kD3dTopSelectArg1;
+      dev->texture_stage_states[0][kD3dTssAlphaArg1] = kD3dTaTexture;
+      dev->texture_stage_states[0][kD3dTssAlphaArg2] = kD3dTaDiffuse;
+    }
+    if (!Check(decl_handle != 0, "explicit decl handle non-zero")) {
+      return false;
+    }
+
+    D3DDDI_HRESOURCE hTex{};
+    if (!CreateDummyTexture(&cleanup, &hTex)) {
+      return false;
+    }
+    hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, hTex);
+    if (!Check(hr == S_OK, "SetTexture(stage0)")) {
+      return false;
+    }
+
+    const VertexXyzTex1 tri[3] = {
+        {0.0f, 0.0f, 0.0f, 0.0f, 0.0f},
+        {1.0f, 0.0f, 0.0f, 1.0f, 0.0f},
+        {0.0f, 1.0f, 0.0f, 0.0f, 1.0f},
+    };
+    hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+        cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzTex1));
+    if (!Check(hr == S_OK, "DrawPrimitiveUP(XYZ|TEX1 via decl)")) {
+      return false;
+    }
+
+    {
+      std::lock_guard<std::mutex> lock(dev->mutex);
+      if (!Check(dev->ps != nullptr, "XYZ|TEX1 via decl: PS bound after draw")) {
+        return false;
+      }
+      if (!Check(ShaderBytecodeEquals(dev->ps, fixedfunc::kPsStage0ModulateTexture),
+                 "XYZ|TEX1 via decl: PS bytecode modulate/texture")) {
+        return false;
+      }
+    }
+
+    const auto SetTextureStageState = [&](uint32_t stage, uint32_t state, uint32_t value, const char* msg) -> bool {
+      HRESULT hr2 = S_OK;
+      if (cleanup.device_funcs.pfnSetTextureStageState) {
+        hr2 = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, stage, state, value);
+      } else {
+        hr2 = aerogpu::device_set_texture_stage_state(cleanup.hDevice, stage, state, value);
+      }
+      return Check(hr2 == S_OK, msg);
+    };
+
+    if (!SetTextureStageState(/*stage=*/0,
+                              kD3dTssColorOp,
+                              kD3dTopDisable,
+                              "XYZ|TEX1 via decl: SetTextureStageState(COLOROP=DISABLE) succeeds")) {
+      return false;
+    }
+    {
+      std::lock_guard<std::mutex> lock(dev->mutex);
+      if (!Check(dev->ps != nullptr, "XYZ|TEX1 via decl: PS still bound after SetTextureStageState")) {
+        return false;
+      }
+      if (!Check(ShaderBytecodeEquals(dev->ps, fixedfunc::kPsPassthroughColor),
+                 "XYZ|TEX1 via decl: PS bytecode disable->passthrough")) {
+        return false;
+      }
+    }
+
+    dev->cmd.finalize();
+    const uint8_t* buf = dev->cmd.data();
+    const size_t len = dev->cmd.bytes_used();
+    if (!Check(ValidateStream(buf, len), "ValidateStream(XYZ|TEX1 via decl stage-state update)")) {
+      return false;
+    }
+    const auto layouts = CollectOpcodes(buf, len, AEROGPU_CMD_SET_INPUT_LAYOUT);
+    if (!Check(!layouts.empty(), "SET_INPUT_LAYOUT packets collected")) {
+      return false;
+    }
+    const auto* last_layout = reinterpret_cast<const aerogpu_cmd_set_input_layout*>(layouts.back());
+    if (!Check(last_layout->input_layout_handle == decl_handle,
+               "XYZ|TEX1 via decl: SET_INPUT_LAYOUT uses explicit decl handle")) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 bool TestGetTextureStageStateRoundTrips() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -3174,6 +3545,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestPsOnlyInteropVertexDeclXyzTex1SynthesizesVsAndUploadsWvp()) {
+    return 1;
+  }
+  if (!aerogpu::TestSetTextureStageStateUpdatesPsForTex1NoDiffuseVertexDeclFvfs()) {
     return 1;
   }
   if (!aerogpu::TestGetTextureStageStateRoundTrips()) {
