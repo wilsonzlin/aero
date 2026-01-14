@@ -8,6 +8,7 @@ use std::process::Command;
 
 #[derive(Default)]
 struct TestAllOpts {
+    skip_fixtures: bool,
     skip_rust: bool,
     skip_wasm: bool,
     skip_ts: bool,
@@ -28,13 +29,14 @@ Usage:
   cargo xtask test-all [options] [-- <extra playwright args>]
 
 Note:
-  When Rust tests are enabled (default), this command also validates deterministic
-  binary fixtures and fails fast if they are out of date:
+  This command validates deterministic binary fixtures and fails fast if they are
+  out of date:
 
     - cargo xtask fixtures --check   (regenerate via: cargo xtask fixtures)
     - cargo xtask bios-rom --check   (regenerate via: cargo xtask bios-rom)
 
 Options:
+  --skip-fixtures       Skip deterministic fixture checks (`cargo xtask fixtures --check`, `cargo xtask bios-rom --check`)
   --skip-rust           Skip Rust checks/tests (cargo fmt/clippy/test)
   --skip-wasm           Skip wasm-pack tests
   --skip-ts             Skip TypeScript unit tests (npm run test:unit)
@@ -76,6 +78,19 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
     let repo_root = paths::repo_root()?;
     let runner = Runner::new();
 
+    if !opts.skip_fixtures {
+        let xtask_exe = std::env::current_exe().map_err(|e| {
+            XtaskError::Message(format!("failed to resolve current xtask executable path: {e}"))
+        })?;
+        let mut cmd = Command::new(&xtask_exe);
+        cmd.current_dir(&repo_root).args(["fixtures", "--check"]);
+        runner.run_step("Fixtures: cargo xtask fixtures --check", &mut cmd)?;
+
+        let mut cmd = Command::new(&xtask_exe);
+        cmd.current_dir(&repo_root).args(["bios-rom", "--check"]);
+        runner.run_step("BIOS ROM: cargo xtask bios-rom --check", &mut cmd)?;
+    }
+
     let needs_node = !opts.skip_wasm || !opts.skip_ts || !opts.skip_e2e;
     if needs_node {
         let mut cmd = tools::check_node_version(&repo_root);
@@ -92,20 +107,6 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
     let cargo_locked_args: [&str; 1] = ["--locked"];
 
     if !opts.skip_rust {
-        // Validate deterministic binary fixtures early so `cargo xtask test-all` fails fast when a
-        // fixture-regeneration step is needed.
-        let mut cmd = Command::new("cargo");
-        cmd.current_dir(&repo_root)
-            .env("AERO_REQUIRE_WEBGPU", &require_webgpu)
-            .args(["xtask", "fixtures", "--check"]);
-        runner.run_step("Fixtures: cargo xtask fixtures --check", &mut cmd)?;
-
-        let mut cmd = Command::new("cargo");
-        cmd.current_dir(&repo_root)
-            .env("AERO_REQUIRE_WEBGPU", &require_webgpu)
-            .args(["xtask", "bios-rom", "--check"]);
-        runner.run_step("BIOS ROM: cargo xtask bios-rom --check", &mut cmd)?;
-
         let mut cmd = Command::new("cargo");
         cmd.current_dir(&repo_root)
             .env("AERO_REQUIRE_WEBGPU", &require_webgpu)
@@ -249,6 +250,7 @@ fn parse_args(args: Vec<String>) -> Result<Option<TestAllOpts>> {
                 print_help();
                 return Ok(None);
             }
+            "--skip-fixtures" => opts.skip_fixtures = true,
             "--skip-rust" => opts.skip_rust = true,
             "--skip-wasm" => opts.skip_wasm = true,
             "--skip-ts" | "--skip-unit" => opts.skip_ts = true,
