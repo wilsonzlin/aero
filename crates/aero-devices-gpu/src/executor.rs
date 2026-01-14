@@ -266,6 +266,20 @@ impl AeroGpuExecutor {
             }
         }
 
+        // `push_back` may allocate; reserve fallibly to avoid aborting on OOM.
+        if self.pending_submissions.try_reserve(1).is_err() {
+            let fence = submission.signal_fence;
+            if fence != 0 && fence > regs.completed_fence {
+                regs.stats.gpu_exec_errors = regs.stats.gpu_exec_errors.saturating_add(1);
+                regs.record_error(AerogpuErrorCode::Backend, fence);
+                if let Some(entry) = self.in_flight.get_mut(&fence) {
+                    entry.vblank_ready = true;
+                }
+                self.complete_fence(regs, mem, fence);
+            }
+            return;
+        }
+
         self.pending_submissions_bytes = self.pending_submissions_bytes.saturating_add(sub_bytes);
         self.pending_submissions.push_back(submission);
     }
