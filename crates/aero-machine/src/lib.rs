@@ -6524,9 +6524,15 @@ impl Machine {
             return Ok(());
         };
 
-        if !disk.capacity_bytes().is_multiple_of(512) {
+        if !disk
+            .capacity_bytes()
+            .is_multiple_of(aero_storage::SECTOR_SIZE as u64)
+        {
             return Err(MachineError::DiskBackend(
-                "virtio-blk disk capacity must be a multiple of 512 bytes".to_string(),
+                format!(
+                    "virtio-blk disk capacity must be a multiple of {} bytes",
+                    aero_storage::SECTOR_SIZE
+                ),
             ));
         }
 

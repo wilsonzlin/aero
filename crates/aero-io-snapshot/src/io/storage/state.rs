@@ -2,6 +2,7 @@ use crate::io::state::codec::{Decoder, Encoder};
 use crate::io::state::{
     IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
+use aero_storage::SECTOR_SIZE;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 
@@ -190,7 +191,7 @@ impl DiskBackendState {
         if disk_size_bytes == 0 {
             return Err(SnapshotError::InvalidFieldEncoding("overlay disk_size"));
         }
-        if disk_size_bytes % 512 != 0 {
+        if disk_size_bytes % (SECTOR_SIZE as u64) != 0 {
             return Err(SnapshotError::InvalidFieldEncoding(
                 "overlay disk_size not multiple of 512",
             ));
@@ -198,7 +199,7 @@ impl DiskBackendState {
         if block_size_bytes == 0 {
             return Err(SnapshotError::InvalidFieldEncoding("overlay block_size"));
         }
-        if !block_size_bytes.is_multiple_of(512) {
+        if !block_size_bytes.is_multiple_of(SECTOR_SIZE as u32) {
             return Err(SnapshotError::InvalidFieldEncoding(
                 "overlay block_size not multiple of 512",
             ));
@@ -331,7 +332,7 @@ impl DiskBackendState {
                 if chunk_size == 0 {
                     return Err(SnapshotError::InvalidFieldEncoding("chunk_size"));
                 }
-                if !u64::from(chunk_size).is_multiple_of(512) {
+                if !u64::from(chunk_size).is_multiple_of(SECTOR_SIZE as u64) {
                     return Err(SnapshotError::InvalidFieldEncoding(
                         "chunk_size not multiple of 512",
                     ));
