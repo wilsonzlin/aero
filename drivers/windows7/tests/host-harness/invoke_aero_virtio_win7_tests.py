@@ -4846,18 +4846,30 @@ def _compute_wave_metrics_16bit_equiv(
                 else:
                     raise ValueError(f"unsupported PCM bits_per_sample {bits_per_sample}")
             elif kind == "float":
-                if bits_per_sample != 32:
+                if bits_per_sample == 32:
+                    for i in range(0, len(mv), 4):
+                        (raw_f,) = struct.unpack_from("<f", mv, i)
+                        if not math.isfinite(raw_f):
+                            continue
+                        v = float(raw_f) * 32767.0
+                        av = -v if v < 0.0 else v
+                        if av > peak_f:
+                            peak_f = av
+                        sum_sq += v * v
+                        count += 1
+                elif bits_per_sample == 64:
+                    for i in range(0, len(mv), 8):
+                        (raw_d,) = struct.unpack_from("<d", mv, i)
+                        if not math.isfinite(raw_d):
+                            continue
+                        v = float(raw_d) * 32767.0
+                        av = -v if v < 0.0 else v
+                        if av > peak_f:
+                            peak_f = av
+                        sum_sq += v * v
+                        count += 1
+                else:
                     raise ValueError(f"unsupported float bits_per_sample {bits_per_sample}")
-                for i in range(0, len(mv), 4):
-                    (raw_f,) = struct.unpack_from("<f", mv, i)
-                    if not math.isfinite(raw_f):
-                        continue
-                    v = float(raw_f) * 32767.0
-                    av = -v if v < 0.0 else v
-                    if av > peak_f:
-                        peak_f = av
-                    sum_sq += v * v
-                    count += 1
             else:
                 raise ValueError(f"unknown wav sample kind {kind}")
 
@@ -5686,7 +5698,7 @@ def _verify_virtio_snd_wav_non_silent(path: Path, *, peak_threshold: int, rms_th
         if kind == "pcm" and fmt.bits_per_sample not in (8, 16, 24, 32):
             print(f"{marker_prefix}|FAIL|reason=unsupported_bits_per_sample_{fmt.bits_per_sample}")
             return False
-        if kind == "float" and fmt.bits_per_sample != 32:
+        if kind == "float" and fmt.bits_per_sample not in (32, 64):
             print(f"{marker_prefix}|FAIL|reason=unsupported_bits_per_sample_{fmt.bits_per_sample}")
             return False
         if info.data_size <= 0:

@@ -137,7 +137,7 @@ def _write_extensible_wav(
     WAVEFORMATEXTENSIBLE (and as expected by the host harness verifier).
     """
     assert kind in ("silence", "tone")
-    assert bits_per_sample in (16, 32)
+    assert bits_per_sample in (16, 32, 64)
     assert len(subformat_guid_le) == 16
 
     def sample_value(i: int) -> float:
@@ -148,9 +148,12 @@ def _write_extensible_wav(
     if bits_per_sample == 16:
         sample_bytes = 2
         max_val = 32767.0
-    else:
+    elif bits_per_sample == 32:
         sample_bytes = 4
         max_val = 1.0  # float32 uses [-1.0, 1.0]
+    else:
+        sample_bytes = 8
+        max_val = 1.0  # float64 uses [-1.0, 1.0]
 
     block_align = channels * sample_bytes
     avg_bytes_per_sec = sample_rate * block_align
@@ -162,8 +165,10 @@ def _write_extensible_wav(
             if bits_per_sample == 16:
                 v = int(round(s * max_val))
                 data += v.to_bytes(2, "little", signed=True)
-            else:
+            elif bits_per_sample == 32:
                 data += struct.pack("<f", float(s))
+            else:
+                data += struct.pack("<d", float(s))
 
     data_size = len(data)
     data_chunk_size = data_chunk_size_override if data_chunk_size_override is not None else data_size
@@ -358,6 +363,36 @@ class WavVerificationTests(unittest.TestCase):
             self.assertIn("reason=silent_pcm", out)
 
             ok, out = self._verify(tone_f_size0)
+            self.assertTrue(ok)
+            self.assertIn("|PASS|", out)
+
+            # Float64 in extensible container.
+            silence_f64 = td_path / "silence_ext_f64.wav"
+            tone_f64 = td_path / "tone_ext_f64.wav"
+            _write_extensible_wav(
+                silence_f64,
+                sample_rate=8000,
+                channels=1,
+                frames=8000,
+                bits_per_sample=64,
+                subformat_guid_le=k_subformat_float,
+                kind="silence",
+            )
+            _write_extensible_wav(
+                tone_f64,
+                sample_rate=8000,
+                channels=1,
+                frames=8000,
+                bits_per_sample=64,
+                subformat_guid_le=k_subformat_float,
+                kind="tone",
+            )
+
+            ok, out = self._verify(silence_f64)
+            self.assertFalse(ok)
+            self.assertIn("reason=silent_pcm", out)
+
+            ok, out = self._verify(tone_f64)
             self.assertTrue(ok)
             self.assertIn("|PASS|", out)
 
