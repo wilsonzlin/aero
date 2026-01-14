@@ -587,6 +587,95 @@ fn tier2_code_version_guard_can_inline_version_table_reads() {
 }
 
 #[test]
+fn tier2_code_version_guard_out_of_range_pages_default_to_zero_with_host_import() {
+    // When `page >= table_len`, the runtime treats the code version as 0. The legacy import path
+    // should reflect this behavior.
+    let mut trace = TraceIr {
+        prologue: vec![Instr::GuardCodeVersion {
+            page: 5,
+            expected: 0,
+            exit_rip: 0x9999,
+        }],
+        body: vec![],
+        kind: TraceKind::Linear,
+    };
+
+    let opt = optimize_trace(&mut trace, &OptConfig::default());
+    let wasm = Tier2WasmCodegen::new().compile_trace(&trace, &opt.regalloc);
+    validate_wasm(&wasm);
+
+    let (mut store, memory, func) = instantiate_trace(&wasm, HostEnv::default());
+    let guest_mem_init = vec![0u8; GUEST_MEM_SIZE];
+    memory.write(&mut store, 0, &guest_mem_init).unwrap();
+
+    let mut cpu_bytes = vec![0u8; abi::CPU_STATE_SIZE as usize];
+    let mut init_state = T2State::default();
+    init_state.cpu.rip = 0x1111;
+    init_state.cpu.rflags = abi::RFLAGS_RESERVED1;
+    write_cpu_state(&mut cpu_bytes, &init_state.cpu);
+    memory
+        .write(&mut store, CPU_PTR as usize, &cpu_bytes)
+        .unwrap();
+    install_code_version_table(&memory, &mut store, &[1]);
+
+    let got_rip = func.call(&mut store, (CPU_PTR, JIT_CTX_PTR)).unwrap() as u64;
+    assert_eq!(got_rip, 0x1111);
+    assert_eq!(
+        store.data().code_version_calls,
+        1,
+        "host-import guards should call env.code_page_version even for out-of-range pages"
+    );
+}
+
+#[test]
+fn tier2_code_version_guard_out_of_range_pages_default_to_zero_with_inline_table_reads() {
+    // Same behavior as the host import variant, but using inline table loads.
+    let mut trace = TraceIr {
+        prologue: vec![Instr::GuardCodeVersion {
+            page: 5,
+            expected: 0,
+            exit_rip: 0x9999,
+        }],
+        body: vec![],
+        kind: TraceKind::Linear,
+    };
+
+    let opt = optimize_trace(&mut trace, &OptConfig::default());
+    let wasm = Tier2WasmCodegen::new().compile_trace_with_options(
+        &trace,
+        &opt.regalloc,
+        Tier2WasmOptions {
+            code_version_guard_import: false,
+            ..Default::default()
+        },
+    );
+    validate_wasm(&wasm);
+
+    let (mut store, memory, func) =
+        instantiate_trace_without_code_page_version(&wasm, HostEnv::default());
+    let guest_mem_init = vec![0u8; GUEST_MEM_SIZE];
+    memory.write(&mut store, 0, &guest_mem_init).unwrap();
+
+    let mut cpu_bytes = vec![0u8; abi::CPU_STATE_SIZE as usize];
+    let mut init_state = T2State::default();
+    init_state.cpu.rip = 0x1111;
+    init_state.cpu.rflags = abi::RFLAGS_RESERVED1;
+    write_cpu_state(&mut cpu_bytes, &init_state.cpu);
+    memory
+        .write(&mut store, CPU_PTR as usize, &cpu_bytes)
+        .unwrap();
+    install_code_version_table(&memory, &mut store, &[1]);
+
+    let got_rip = func.call(&mut store, (CPU_PTR, JIT_CTX_PTR)).unwrap() as u64;
+    assert_eq!(got_rip, 0x1111);
+    assert_eq!(
+        store.data().code_version_calls,
+        0,
+        "inline guards should not call env.code_page_version"
+    );
+}
+
+#[test]
 fn tier2_trace_without_code_version_guards_does_not_require_code_page_version_import() {
     let mut trace = TraceIr {
         prologue: vec![],
