@@ -4597,6 +4597,14 @@ def main() -> int:
             virtio_net_offload_csum_marker_carry = b""
             virtio_net_diag_marker_line: Optional[str] = None
             virtio_net_diag_marker_carry = b""
+            virtio_snd_marker_line: Optional[str] = None
+            virtio_snd_marker_carry = b""
+            virtio_snd_capture_marker_line: Optional[str] = None
+            virtio_snd_capture_marker_carry = b""
+            virtio_snd_duplex_marker_line: Optional[str] = None
+            virtio_snd_duplex_marker_carry = b""
+            virtio_snd_buffer_limits_marker_line: Optional[str] = None
+            virtio_snd_buffer_limits_marker_carry = b""
             virtio_snd_msix_marker_line: Optional[str] = None
             virtio_snd_msix_marker_carry = b""
             virtio_input_marker_line: Optional[str] = None
@@ -4784,6 +4792,30 @@ def main() -> int:
                         chunk,
                         prefix=b"virtio-net-diag|",
                         carry=virtio_net_diag_marker_carry,
+                    )
+                    virtio_snd_marker_line, virtio_snd_marker_carry = _update_last_marker_line_from_chunk(
+                        virtio_snd_marker_line,
+                        chunk,
+                        prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|",
+                        carry=virtio_snd_marker_carry,
+                    )
+                    virtio_snd_capture_marker_line, virtio_snd_capture_marker_carry = _update_last_marker_line_from_chunk(
+                        virtio_snd_capture_marker_line,
+                        chunk,
+                        prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|",
+                        carry=virtio_snd_capture_marker_carry,
+                    )
+                    virtio_snd_duplex_marker_line, virtio_snd_duplex_marker_carry = _update_last_marker_line_from_chunk(
+                        virtio_snd_duplex_marker_line,
+                        chunk,
+                        prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|",
+                        carry=virtio_snd_duplex_marker_carry,
+                    )
+                    virtio_snd_buffer_limits_marker_line, virtio_snd_buffer_limits_marker_carry = _update_last_marker_line_from_chunk(
+                        virtio_snd_buffer_limits_marker_line,
+                        chunk,
+                        prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|",
+                        carry=virtio_snd_buffer_limits_marker_carry,
                     )
                     virtio_snd_msix_marker_line, virtio_snd_msix_marker_carry = _update_last_marker_line_from_chunk(
                         virtio_snd_msix_marker_line,
@@ -5389,6 +5421,42 @@ def main() -> int:
                             _print_tail(serial_log)
                             result_code = 1
                             break
+
+                    # Prefer incrementally captured virtio-snd markers so we don't miss PASS/FAIL/SKIP when
+                    # the rolling tail buffer truncates earlier output (or when a large read chunk exceeds
+                    # the tail cap).
+                    if virtio_snd_marker_line is not None:
+                        status_tok = _try_extract_marker_status(virtio_snd_marker_line)
+                        if not saw_virtio_snd_pass and status_tok == "PASS":
+                            saw_virtio_snd_pass = True
+                        if not saw_virtio_snd_skip and status_tok == "SKIP":
+                            saw_virtio_snd_skip = True
+                        if not saw_virtio_snd_fail and status_tok == "FAIL":
+                            saw_virtio_snd_fail = True
+                    if virtio_snd_capture_marker_line is not None:
+                        status_tok = _try_extract_marker_status(virtio_snd_capture_marker_line)
+                        if not saw_virtio_snd_capture_pass and status_tok == "PASS":
+                            saw_virtio_snd_capture_pass = True
+                        if not saw_virtio_snd_capture_skip and status_tok == "SKIP":
+                            saw_virtio_snd_capture_skip = True
+                        if not saw_virtio_snd_capture_fail and status_tok == "FAIL":
+                            saw_virtio_snd_capture_fail = True
+                    if virtio_snd_duplex_marker_line is not None:
+                        status_tok = _try_extract_marker_status(virtio_snd_duplex_marker_line)
+                        if not saw_virtio_snd_duplex_pass and status_tok == "PASS":
+                            saw_virtio_snd_duplex_pass = True
+                        if not saw_virtio_snd_duplex_skip and status_tok == "SKIP":
+                            saw_virtio_snd_duplex_skip = True
+                        if not saw_virtio_snd_duplex_fail and status_tok == "FAIL":
+                            saw_virtio_snd_duplex_fail = True
+                    if virtio_snd_buffer_limits_marker_line is not None:
+                        status_tok = _try_extract_marker_status(virtio_snd_buffer_limits_marker_line)
+                        if not saw_virtio_snd_buffer_limits_pass and status_tok == "PASS":
+                            saw_virtio_snd_buffer_limits_pass = True
+                        if not saw_virtio_snd_buffer_limits_skip and status_tok == "SKIP":
+                            saw_virtio_snd_buffer_limits_skip = True
+                        if not saw_virtio_snd_buffer_limits_fail and status_tok == "FAIL":
+                            saw_virtio_snd_buffer_limits_fail = True
 
                     if not saw_virtio_snd_pass and b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS" in tail:
                         saw_virtio_snd_pass = True
@@ -7038,6 +7106,30 @@ def main() -> int:
                             prefix=b"virtio-net-diag|",
                             carry=virtio_net_diag_marker_carry,
                         )
+                        virtio_snd_marker_line, virtio_snd_marker_carry = _update_last_marker_line_from_chunk(
+                            virtio_snd_marker_line,
+                            chunk2,
+                            prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|",
+                            carry=virtio_snd_marker_carry,
+                        )
+                        virtio_snd_capture_marker_line, virtio_snd_capture_marker_carry = _update_last_marker_line_from_chunk(
+                            virtio_snd_capture_marker_line,
+                            chunk2,
+                            prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|",
+                            carry=virtio_snd_capture_marker_carry,
+                        )
+                        virtio_snd_duplex_marker_line, virtio_snd_duplex_marker_carry = _update_last_marker_line_from_chunk(
+                            virtio_snd_duplex_marker_line,
+                            chunk2,
+                            prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|",
+                            carry=virtio_snd_duplex_marker_carry,
+                        )
+                        virtio_snd_buffer_limits_marker_line, virtio_snd_buffer_limits_marker_carry = _update_last_marker_line_from_chunk(
+                            virtio_snd_buffer_limits_marker_line,
+                            chunk2,
+                            prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|",
+                            carry=virtio_snd_buffer_limits_marker_carry,
+                        )
                         virtio_snd_msix_marker_line, virtio_snd_msix_marker_carry = _update_last_marker_line_from_chunk(
                             virtio_snd_msix_marker_line,
                             chunk2,
@@ -7404,6 +7496,39 @@ def main() -> int:
                             and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|SKIP" in tail
                         ):
                             saw_virtio_input_tablet_events_skip = True
+
+                        if virtio_snd_marker_line is not None:
+                            status_tok = _try_extract_marker_status(virtio_snd_marker_line)
+                            if not saw_virtio_snd_pass and status_tok == "PASS":
+                                saw_virtio_snd_pass = True
+                            if not saw_virtio_snd_skip and status_tok == "SKIP":
+                                saw_virtio_snd_skip = True
+                            if not saw_virtio_snd_fail and status_tok == "FAIL":
+                                saw_virtio_snd_fail = True
+                        if virtio_snd_capture_marker_line is not None:
+                            status_tok = _try_extract_marker_status(virtio_snd_capture_marker_line)
+                            if not saw_virtio_snd_capture_pass and status_tok == "PASS":
+                                saw_virtio_snd_capture_pass = True
+                            if not saw_virtio_snd_capture_skip and status_tok == "SKIP":
+                                saw_virtio_snd_capture_skip = True
+                            if not saw_virtio_snd_capture_fail and status_tok == "FAIL":
+                                saw_virtio_snd_capture_fail = True
+                        if virtio_snd_duplex_marker_line is not None:
+                            status_tok = _try_extract_marker_status(virtio_snd_duplex_marker_line)
+                            if not saw_virtio_snd_duplex_pass and status_tok == "PASS":
+                                saw_virtio_snd_duplex_pass = True
+                            if not saw_virtio_snd_duplex_skip and status_tok == "SKIP":
+                                saw_virtio_snd_duplex_skip = True
+                            if not saw_virtio_snd_duplex_fail and status_tok == "FAIL":
+                                saw_virtio_snd_duplex_fail = True
+                        if virtio_snd_buffer_limits_marker_line is not None:
+                            status_tok = _try_extract_marker_status(virtio_snd_buffer_limits_marker_line)
+                            if not saw_virtio_snd_buffer_limits_pass and status_tok == "PASS":
+                                saw_virtio_snd_buffer_limits_pass = True
+                            if not saw_virtio_snd_buffer_limits_skip and status_tok == "SKIP":
+                                saw_virtio_snd_buffer_limits_skip = True
+                            if not saw_virtio_snd_buffer_limits_fail and status_tok == "FAIL":
+                                saw_virtio_snd_buffer_limits_fail = True
                         if not saw_virtio_snd_pass and b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS" in tail:
                             saw_virtio_snd_pass = True
                         if not saw_virtio_snd_skip and b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP" in tail:
@@ -8544,6 +8669,38 @@ def main() -> int:
                     virtio_net_diag_marker_line = raw2.decode("utf-8", errors="replace").strip()
                 except Exception:
                     pass
+        if virtio_snd_marker_carry:
+            raw = virtio_snd_marker_carry.rstrip(b"\r")
+            raw2 = raw.lstrip()
+            if raw2.startswith(b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|"):
+                try:
+                    virtio_snd_marker_line = raw2.decode("utf-8", errors="replace").strip()
+                except Exception:
+                    pass
+        if virtio_snd_capture_marker_carry:
+            raw = virtio_snd_capture_marker_carry.rstrip(b"\r")
+            raw2 = raw.lstrip()
+            if raw2.startswith(b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|"):
+                try:
+                    virtio_snd_capture_marker_line = raw2.decode("utf-8", errors="replace").strip()
+                except Exception:
+                    pass
+        if virtio_snd_duplex_marker_carry:
+            raw = virtio_snd_duplex_marker_carry.rstrip(b"\r")
+            raw2 = raw.lstrip()
+            if raw2.startswith(b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|"):
+                try:
+                    virtio_snd_duplex_marker_line = raw2.decode("utf-8", errors="replace").strip()
+                except Exception:
+                    pass
+        if virtio_snd_buffer_limits_marker_carry:
+            raw = virtio_snd_buffer_limits_marker_carry.rstrip(b"\r")
+            raw2 = raw.lstrip()
+            if raw2.startswith(b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|"):
+                try:
+                    virtio_snd_buffer_limits_marker_line = raw2.decode("utf-8", errors="replace").strip()
+                except Exception:
+                    pass
         if virtio_snd_msix_marker_carry:
             raw = virtio_snd_msix_marker_carry.rstrip(b"\r")
             raw2 = raw.lstrip()
@@ -8643,11 +8800,27 @@ def main() -> int:
         )
         _emit_virtio_input_msix_host_marker(input_msix_tail)
         _emit_virtio_irq_host_markers(tail, markers=irq_diag_markers)
-        _emit_virtio_snd_playback_host_marker(tail)
-        _emit_virtio_snd_capture_host_marker(tail)
+        snd_play_tail = virtio_snd_marker_line.encode("utf-8") if virtio_snd_marker_line is not None else tail
+        _emit_virtio_snd_playback_host_marker(snd_play_tail)
+        snd_capture_tail = (
+            virtio_snd_capture_marker_line.encode("utf-8")
+            if virtio_snd_capture_marker_line is not None
+            else tail
+        )
+        _emit_virtio_snd_capture_host_marker(snd_capture_tail)
         _emit_virtio_snd_format_host_marker(tail)
-        _emit_virtio_snd_duplex_host_marker(tail)
-        _emit_virtio_snd_buffer_limits_host_marker(tail)
+        snd_duplex_tail = (
+            virtio_snd_duplex_marker_line.encode("utf-8")
+            if virtio_snd_duplex_marker_line is not None
+            else tail
+        )
+        _emit_virtio_snd_duplex_host_marker(snd_duplex_tail)
+        snd_buffer_limits_tail = (
+            virtio_snd_buffer_limits_marker_line.encode("utf-8")
+            if virtio_snd_buffer_limits_marker_line is not None
+            else tail
+        )
+        _emit_virtio_snd_buffer_limits_host_marker(snd_buffer_limits_tail)
         _emit_virtio_snd_eventq_host_marker(tail)
 
         return result_code if result_code is not None else 2
