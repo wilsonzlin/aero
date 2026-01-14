@@ -1215,6 +1215,10 @@ static VOID AeroGpuProgramScanout(_Inout_ AEROGPU_ADAPTER* Adapter, _In_ PHYSICA
     const ULONG enable = (Adapter->SourceVisible && FbPa.QuadPart != 0) ? 1u : 0u;
 
     if (Adapter->UsingNewAbi || Adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
+        if (Adapter->Bar0Length < (AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_HI + sizeof(ULONG))) {
+            /* Defensive: avoid out-of-bounds MMIO on partial BAR0 mappings. */
+            return;
+        }
         AeroGpuWriteRegU32(Adapter, AEROGPU_MMIO_REG_SCANOUT0_WIDTH, Adapter->CurrentWidth);
         AeroGpuWriteRegU32(Adapter, AEROGPU_MMIO_REG_SCANOUT0_HEIGHT, Adapter->CurrentHeight);
         AeroGpuWriteRegU32(Adapter, AEROGPU_MMIO_REG_SCANOUT0_FORMAT, Adapter->CurrentFormat);
@@ -1223,13 +1227,17 @@ static VOID AeroGpuProgramScanout(_Inout_ AEROGPU_ADAPTER* Adapter, _In_ PHYSICA
         AeroGpuWriteRegU32(Adapter, AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_HI, (ULONG)(FbPa.QuadPart >> 32));
         AeroGpuWriteRegU32(Adapter, AEROGPU_MMIO_REG_SCANOUT0_ENABLE, enable);
 
-        if (!enable && Adapter->SupportsVblank) {
+        if (!enable && Adapter->SupportsVblank && Adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ACK + sizeof(ULONG))) {
             /* Be robust against stale vblank IRQ state on scanout disable. */
             AeroGpuWriteRegU32(Adapter, AEROGPU_MMIO_REG_IRQ_ACK, AEROGPU_IRQ_SCANOUT_VBLANK);
         }
         return;
     }
 
+    if (Adapter->Bar0Length < (AEROGPU_LEGACY_REG_SCANOUT_ENABLE + sizeof(ULONG))) {
+        /* Defensive: avoid out-of-bounds MMIO on partial BAR0 mappings. */
+        return;
+    }
     AeroGpuWriteRegU32(Adapter, AEROGPU_LEGACY_REG_SCANOUT_FB_LO, FbPa.LowPart);
     AeroGpuWriteRegU32(Adapter, AEROGPU_LEGACY_REG_SCANOUT_FB_HI, (ULONG)(FbPa.QuadPart >> 32));
     AeroGpuWriteRegU32(Adapter, AEROGPU_LEGACY_REG_SCANOUT_PITCH, Adapter->CurrentPitch);
@@ -1262,12 +1270,20 @@ static VOID AeroGpuSetScanoutEnable(_Inout_ AEROGPU_ADAPTER* Adapter, _In_ ULONG
     }
 
     if (Adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
+        if (Adapter->Bar0Length < (AEROGPU_MMIO_REG_SCANOUT0_ENABLE + sizeof(ULONG))) {
+            return;
+        }
         AeroGpuWriteRegU32(Adapter, AEROGPU_MMIO_REG_SCANOUT0_ENABLE, Enable);
         if (!Enable) {
             /* Be robust against stale vblank IRQ state on scanout disable. */
-            AeroGpuWriteRegU32(Adapter, AEROGPU_MMIO_REG_IRQ_ACK, AEROGPU_IRQ_SCANOUT_VBLANK);
+            if (Adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ACK + sizeof(ULONG))) {
+                AeroGpuWriteRegU32(Adapter, AEROGPU_MMIO_REG_IRQ_ACK, AEROGPU_IRQ_SCANOUT_VBLANK);
+            }
         }
     } else {
+        if (Adapter->Bar0Length < (AEROGPU_LEGACY_REG_SCANOUT_ENABLE + sizeof(ULONG))) {
+            return;
+        }
         AeroGpuWriteRegU32(Adapter, AEROGPU_LEGACY_REG_SCANOUT_ENABLE, Enable);
         if (!Enable && Adapter->SupportsVblank && Adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ACK + sizeof(ULONG))) {
             /* Be robust against stale vblank IRQ state on scanout disable. */
