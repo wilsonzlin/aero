@@ -33,10 +33,118 @@ if (args.help) {
 const root = path.resolve(args.dir);
 
 function safeJoin(rootDir, requestPath) {
-  const decoded = decodeURIComponent(requestPath);
+  let decoded;
+  try {
+    decoded = decodeURIComponent(requestPath);
+  } catch {
+    return null;
+  }
   const full = path.resolve(path.join(rootDir, "." + decoded));
   if (!full.startsWith(rootDir + path.sep) && full !== rootDir) return null;
   return full;
+}
+
+function computeEtag(stat) {
+  return `"${stat.size.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}"`;
+}
+
+function stripWeakEtagPrefix(etag) {
+  return etag.trim().replace(/^w\//i, "");
+}
+
+function splitCommaHeaderOutsideQuotes(value) {
+  const out = [];
+  let start = 0;
+  let inQuotes = false;
+  let escaped = false;
+  for (let i = 0; i < value.length; i++) {
+    const ch = value[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (inQuotes && ch === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (ch === '"') {
+      inQuotes = !inQuotes;
+      continue;
+    }
+    if (ch === "," && !inQuotes) {
+      out.push(value.slice(start, i));
+      start = i + 1;
+    }
+  }
+  out.push(value.slice(start));
+  return out;
+}
+
+function ifNoneMatchMatches(ifNoneMatch, currentEtag) {
+  const raw = String(ifNoneMatch).trim();
+  if (!raw) return false;
+  if (raw === "*") return true;
+
+  const current = stripWeakEtagPrefix(currentEtag);
+  for (const part of splitCommaHeaderOutsideQuotes(raw)) {
+    const candidate = part.trim();
+    if (!candidate) continue;
+    if (candidate === "*") return true;
+    if (stripWeakEtagPrefix(candidate) === current) return true;
+  }
+  return false;
+}
+
+function parseHttpDate(value) {
+  const millis = Date.parse(value);
+  if (!Number.isFinite(millis)) return null;
+  return new Date(millis);
+}
+
+function ifModifiedSinceMatches(ifModifiedSince, stat) {
+  const ims = parseHttpDate(ifModifiedSince);
+  if (!ims) return false;
+  // HTTP-date has 1-second resolution. Compare at second granularity to avoid false negatives when
+  // the filesystem provides sub-second mtimes.
+  const resourceSeconds = Math.floor(stat.mtimeMs / 1000);
+  const imsSeconds = Math.floor(ims.getTime() / 1000);
+  return resourceSeconds <= imsSeconds;
+}
+
+function isNotModified(req, stat) {
+  const etag = computeEtag(stat);
+  const ifNoneMatch = req.headers["if-none-match"];
+  if (typeof ifNoneMatch === "string") {
+    return ifNoneMatchMatches(ifNoneMatch, etag);
+  }
+
+  const ifModifiedSince = req.headers["if-modified-since"];
+  if (typeof ifModifiedSince === "string") {
+    return ifModifiedSinceMatches(ifModifiedSince, stat);
+  }
+
+  return false;
+}
+
+function ifRangeAllowsRange(req, stat) {
+  const ifRange = req.headers["if-range"];
+  if (typeof ifRange !== "string") return true;
+
+  const value = ifRange.trim();
+  if (!value) return false;
+
+  // Entity-tag form. RFC 9110 requires strong comparison and disallows weak validators.
+  if (value.startsWith('"') || /^w\//i.test(value)) {
+    if (/^w\//i.test(value)) return false;
+    return value === computeEtag(stat);
+  }
+
+  // HTTP-date form.
+  const since = parseHttpDate(value);
+  if (!since) return false;
+  const resourceSeconds = Math.floor(stat.mtimeMs / 1000);
+  const sinceSeconds = Math.floor(since.getTime() / 1000);
+  return resourceSeconds <= sinceSeconds;
 }
 
 function sendHeaders(res, stat, { contentLength, contentRange, statusCode }) {
@@ -54,7 +162,7 @@ function sendHeaders(res, stat, { contentLength, contentRange, statusCode }) {
   res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
   res.setHeader(
     "Access-Control-Expose-Headers",
-    "Accept-Ranges, Content-Range, Content-Length, ETag, Last-Modified"
+    "Accept-Ranges, Content-Range, Content-Length, Content-Encoding, ETag, Last-Modified"
   );
   res.setHeader("Access-Control-Max-Age", "86400");
   res.setHeader(
@@ -69,22 +177,50 @@ function sendHeaders(res, stat, { contentLength, contentRange, statusCode }) {
 
   // Lightweight content-type; raw images are typically `application/octet-stream`.
   res.setHeader("Content-Type", "application/octet-stream");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Content-Encoding", "identity");
   res.setHeader("Cache-Control", "no-transform");
   res.setHeader("Last-Modified", stat.mtime.toUTCString());
-  res.setHeader(
-    "ETag",
-    `"${stat.size.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}"`
-  );
+  res.setHeader("ETag", computeEtag(stat));
 }
 
 function parseRange(rangeHeader, size) {
-  // Supports: bytes=start-end (single range only)
-  const m = /^bytes=(\d+)-(\d+)$/.exec(rangeHeader);
-  if (!m) return null;
-  const start = Number(m[1]);
-  const endInclusive = Number(m[2]);
-  if (!Number.isFinite(start) || !Number.isFinite(endInclusive)) return null;
+  // Supports single byte ranges only:
+  // - bytes=start-end
+  // - bytes=start-
+  // - bytes=-suffixLen
+  const trimmed = rangeHeader.trim();
+  const parts = trimmed.split("=");
+  if (parts.length !== 2) return null;
+  const unit = parts[0].trim().toLowerCase();
+  if (unit !== "bytes") return { ignore: true };
+  const spec = parts[1].trim();
+  if (!spec || spec.includes(",")) return null;
+
+  if (spec.startsWith("-")) {
+    const len = Number(spec.slice(1).trim());
+    if (!Number.isFinite(len) || !Number.isInteger(len) || len <= 0) return null;
+    const suffix = Math.min(len, size);
+    const start = size - suffix;
+    return { start, endExclusive: size };
+  }
+
+  const dash = spec.indexOf("-");
+  if (dash === -1) return null;
+  const startStr = spec.slice(0, dash).trim();
+  const endStr = spec.slice(dash + 1).trim();
+  const start = Number(startStr);
+  if (!Number.isFinite(start) || !Number.isInteger(start) || start < 0) return null;
   if (start >= size) return { error: 416 };
+
+  if (!endStr) {
+    return { start, endExclusive: size };
+  }
+
+  const endInclusive = Number(endStr);
+  if (!Number.isFinite(endInclusive) || !Number.isInteger(endInclusive) || endInclusive < 0)
+    return null;
+  if (endInclusive < start) return null;
   const endExclusive = Math.min(endInclusive + 1, size);
   if (endExclusive <= start) return { error: 416 };
   return { start, endExclusive };
@@ -102,7 +238,7 @@ const server = http.createServer((req, res) => {
     );
     res.setHeader(
       "Access-Control-Expose-Headers",
-      "Accept-Ranges, Content-Range, Content-Length, ETag, Last-Modified"
+      "Accept-Ranges, Content-Range, Content-Length, Content-Encoding, ETag, Last-Modified"
     );
     res.setHeader("Access-Control-Max-Age", "86400");
     res.setHeader(
@@ -132,7 +268,40 @@ const server = http.createServer((req, res) => {
       return;
     }
 
+    if (isNotModified(req, stat)) {
+      sendHeaders(res, stat, { contentLength: 0, statusCode: 304 });
+      res.end();
+      return;
+    }
+
     if (req.method === "HEAD") {
+      const rangeHeader = req.headers["range"];
+      const ifRangeOk = ifRangeAllowsRange(req, stat);
+      if (typeof rangeHeader === "string" && ifRangeOk) {
+        const parsed = parseRange(rangeHeader, stat.size);
+        if (parsed && parsed.ignore) {
+          // Ignore unknown Range unit.
+        } else if (!parsed || parsed.error) {
+          sendHeaders(res, stat, {
+            statusCode: 416,
+            contentLength: 0,
+            contentRange: `bytes */${stat.size}`,
+          });
+          res.end();
+          return;
+        } else {
+          const { start, endExclusive } = parsed;
+          const endInclusive = endExclusive - 1;
+          sendHeaders(res, stat, {
+            statusCode: 206,
+            contentLength: endExclusive - start,
+            contentRange: `bytes ${start}-${endInclusive}/${stat.size}`,
+          });
+          res.end();
+          return;
+        }
+      }
+
       sendHeaders(res, stat, { contentLength: stat.size, statusCode: 200 });
       res.end();
       return;
@@ -144,7 +313,21 @@ const server = http.createServer((req, res) => {
       return;
     }
 
-    const rangeHeader = req.headers["range"];
+    let rangeHeader = req.headers["range"];
+    if (typeof rangeHeader === "string") {
+      if (!ifRangeAllowsRange(req, stat)) {
+        rangeHeader = undefined;
+      }
+    }
+
+    if (typeof rangeHeader === "string") {
+      const parsed = parseRange(rangeHeader, stat.size);
+      if (parsed && parsed.ignore) {
+        // Ignore unknown Range unit.
+        rangeHeader = undefined;
+      }
+    }
+
     if (typeof rangeHeader === "string") {
       const parsed = parseRange(rangeHeader, stat.size);
       if (!parsed || parsed.error) {
