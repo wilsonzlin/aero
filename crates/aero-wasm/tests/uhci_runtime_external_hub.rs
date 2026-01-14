@@ -1,7 +1,7 @@
 #![cfg(target_arch = "wasm32")]
 
 use aero_usb::hid::webhid::HidCollectionInfo;
-use aero_wasm::UhciRuntime;
+use aero_wasm::{UhciRuntime, WEBUSB_ROOT_PORT};
 use wasm_bindgen_test::wasm_bindgen_test;
 
 mod common;
@@ -29,8 +29,11 @@ fn uhci_runtime_supports_external_hub_paths_and_webusb_on_root_port_1() {
         serde_wasm_bindgen::to_value(&collections).expect("collections to_value");
 
     // Invalid paths should return a JS error rather than trapping.
-    let invalid_root_path =
-        serde_wasm_bindgen::to_value(&vec![1u32, 1u32]).expect("invalid_root_path to_value");
+    let invalid_root_path = serde_wasm_bindgen::to_value(&vec![
+        u32::from(WEBUSB_ROOT_PORT),
+        1u32,
+    ])
+    .expect("invalid_root_path to_value");
     assert!(
         rt.webhid_attach_at_path(
             999,
@@ -85,6 +88,8 @@ fn uhci_runtime_supports_external_hub_paths_and_webusb_on_root_port_1() {
     // Root port 1 is reserved for the guest-visible WebUSB passthrough device. Ensure it can be
     // attached concurrently without stealing root port 0 (the hub).
     assert!(rt.webusb_attach(Some(0)).is_err());
-    let webusb_port = rt.webusb_attach(Some(1)).expect("attach WebUSB");
-    assert_eq!(webusb_port, 1);
+    let webusb_port = rt
+        .webusb_attach(Some(WEBUSB_ROOT_PORT))
+        .expect("attach WebUSB");
+    assert_eq!(webusb_port, u32::from(WEBUSB_ROOT_PORT));
 }

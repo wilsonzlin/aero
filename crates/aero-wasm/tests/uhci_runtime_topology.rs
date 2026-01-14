@@ -1,7 +1,7 @@
 #![cfg(target_arch = "wasm32")]
 
 use aero_usb::hid::webhid::HidCollectionInfo;
-use aero_wasm::UhciRuntime;
+use aero_wasm::{UhciRuntime, WEBUSB_ROOT_PORT};
 use wasm_bindgen_test::wasm_bindgen_test;
 
 mod common;
@@ -90,12 +90,16 @@ fn uhci_runtime_webhid_attach_skips_reserved_webusb_root_port() {
             0x5678,
             Some("hid".to_string()),
             webhid_mouse_collections_json(),
-            Some(1),
+            Some(WEBUSB_ROOT_PORT),
         )
         .expect("webhid attach ok");
     assert_eq!(port, 0);
 
-    assert_eq!(rt.webusb_attach(Some(1)).expect("webusb attach ok"), 1);
+    assert_eq!(
+        rt.webusb_attach(Some(WEBUSB_ROOT_PORT))
+            .expect("webusb attach ok"),
+        u32::from(WEBUSB_ROOT_PORT)
+    );
 }
 
 #[wasm_bindgen_test]

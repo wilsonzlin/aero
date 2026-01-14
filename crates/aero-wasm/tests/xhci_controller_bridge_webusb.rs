@@ -6,7 +6,7 @@ use wasm_bindgen_test::wasm_bindgen_test;
 use aero_io_snapshot::io::state::SnapshotReader;
 use aero_usb::passthrough::{UsbHostCompletion, UsbHostCompletionIn};
 use aero_usb::xhci::{PORTSC_CCS, regs};
-use aero_wasm::XhciControllerBridge;
+use aero_wasm::{XhciControllerBridge, WEBUSB_ROOT_PORT};
 
 mod common;
 
@@ -18,7 +18,11 @@ const TAG_WEBUSB_DEVICE: u16 = 3;
 fn webusb_root_port_index(bridge: &mut XhciControllerBridge) -> usize {
     let hcsparams1 = bridge.mmio_read(regs::REG_HCSPARAMS1 as u32, 4);
     let port_count = ((hcsparams1 >> 24) & 0xff) as usize;
-    if port_count > 1 { 1 } else { 0 }
+    if port_count > WEBUSB_ROOT_PORT as usize {
+        WEBUSB_ROOT_PORT as usize
+    } else {
+        0
+    }
 }
 
 #[wasm_bindgen_test]

@@ -3,7 +3,7 @@
 use aero_io_snapshot::io::state::{SnapshotReader, codec::Decoder};
 use aero_usb::hid::webhid::{HidCollectionInfo, HidCollectionType, HidReportInfo, HidReportItem};
 use aero_usb::passthrough::UsbHostAction;
-use aero_wasm::UhciRuntime;
+use aero_wasm::{UhciRuntime, WEBUSB_ROOT_PORT};
 use core::fmt::Write as _;
 use js_sys::{Array, Reflect, Uint8Array};
 use wasm_bindgen::JsValue;
@@ -415,7 +415,8 @@ fn uhci_runtime_snapshot_is_deterministic() {
     )
     .expect("attach WebHID device #2");
 
-    rt.webusb_attach(Some(1)).expect("attach WebUSB");
+    rt.webusb_attach(Some(WEBUSB_ROOT_PORT))
+        .expect("attach WebUSB");
 
     let a = rt.save_state();
     let b = rt.save_state();
@@ -491,7 +492,8 @@ fn uhci_runtime_snapshot_roundtrip_preserves_irq_and_registers() {
     let fl_base = setup_webusb_control_in_frame_list(&guest);
 
     let mut rt = UhciRuntime::new(guest_base, guest_size).expect("new UhciRuntime");
-    rt.webusb_attach(Some(1)).expect("attach WebUSB");
+    rt.webusb_attach(Some(WEBUSB_ROOT_PORT))
+        .expect("attach WebUSB");
 
     rt.port_write(REG_FRBASEADD, 4, fl_base);
     rt.port_write(REG_USBINTR, 2, USBINTR_IOC as u32);
@@ -575,7 +577,8 @@ fn uhci_runtime_restore_clears_webusb_host_state_and_allows_retry() {
     let fl_base = setup_webusb_control_in_frame_list(&guest);
 
     let mut rt = UhciRuntime::new(guest_base, guest_size).expect("new UhciRuntime");
-    rt.webusb_attach(Some(1)).expect("attach WebUSB");
+    rt.webusb_attach(Some(WEBUSB_ROOT_PORT))
+        .expect("attach WebUSB");
 
     rt.port_write(REG_FRBASEADD, 4, fl_base);
     rt.port_write(REG_PORTSC2, 2, PORTSC_PED as u32);
@@ -651,7 +654,8 @@ fn uhci_runtime_webusb_action_ids_are_monotonic_across_disconnect_reconnect() {
     let fl_base = setup_webusb_control_in_frame_list(&guest);
 
     let mut rt = UhciRuntime::new(guest_base, guest_size).expect("new UhciRuntime");
-    rt.webusb_attach(Some(1)).expect("attach WebUSB");
+    rt.webusb_attach(Some(WEBUSB_ROOT_PORT))
+        .expect("attach WebUSB");
 
     rt.port_write(REG_FRBASEADD, 4, fl_base);
     rt.port_write(REG_PORTSC2, 2, PORTSC_PED as u32);
@@ -676,7 +680,8 @@ fn uhci_runtime_webusb_action_ids_are_monotonic_across_disconnect_reconnect() {
     // Stop the controller so the schedule doesn't run while the port is disconnected.
     rt.port_write(REG_USBCMD, 2, 0);
     rt.webusb_detach();
-    rt.webusb_attach(Some(1)).expect("reattach WebUSB");
+    rt.webusb_attach(Some(WEBUSB_ROOT_PORT))
+        .expect("reattach WebUSB");
     // Re-enable the port to ensure the schedule can reach the device after reconnect.
     rt.port_write(REG_PORTSC2, 2, PORTSC_PED as u32);
 

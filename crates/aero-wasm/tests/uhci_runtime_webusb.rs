@@ -1,6 +1,6 @@
 #![cfg(target_arch = "wasm32")]
 
-use aero_wasm::UhciRuntime;
+use aero_wasm::{UhciRuntime, WEBUSB_ROOT_PORT};
 use js_sys::{Array, Reflect};
 use wasm_bindgen::JsValue;
 use wasm_bindgen_test::wasm_bindgen_test;
@@ -115,7 +115,8 @@ fn uhci_runtime_webusb_drain_actions_returns_null_when_not_attached() {
 #[wasm_bindgen_test]
 fn uhci_runtime_webusb_drain_actions_returns_null_when_attached_but_idle() {
     let mut rt = make_runtime();
-    rt.webusb_attach(Some(1)).expect("webusb_attach ok");
+    rt.webusb_attach(Some(WEBUSB_ROOT_PORT))
+        .expect("webusb_attach ok");
     let drained = rt.webusb_drain_actions().expect("webusb_drain_actions ok");
     assert!(
         drained.is_null(),
@@ -129,7 +130,8 @@ fn uhci_runtime_webusb_drain_actions_returns_array_when_actions_queued() {
     let fl_base = setup_webusb_control_in_frame_list(guest_base);
 
     let mut rt = UhciRuntime::new(guest_base, guest_size).expect("UhciRuntime::new");
-    rt.webusb_attach(Some(1)).expect("webusb_attach ok");
+    rt.webusb_attach(Some(WEBUSB_ROOT_PORT))
+        .expect("webusb_attach ok");
 
     rt.port_write(REG_FRBASEADD, 4, fl_base);
     rt.port_write(REG_PORTSC2, 2, PORTSC_PED as u32);

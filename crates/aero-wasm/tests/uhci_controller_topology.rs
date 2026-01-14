@@ -1,6 +1,6 @@
 #![cfg(target_arch = "wasm32")]
 
-use aero_wasm::{UhciControllerBridge, UsbHidPassthroughBridge, WebHidPassthroughBridge};
+use aero_wasm::{UhciControllerBridge, UsbHidPassthroughBridge, WebHidPassthroughBridge, WEBUSB_ROOT_PORT};
 use js_sys::JSON;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_test::wasm_bindgen_test;
@@ -58,7 +58,7 @@ fn uhci_attach_hub_rejects_reserved_webusb_root_port() {
 
     // Root port 1 is reserved by the UHCI bridge for WebUSB passthrough.
     let err = uhci
-        .attach_hub(1, 4)
+        .attach_hub(WEBUSB_ROOT_PORT, 4)
         .expect_err("expected attach_hub on reserved root port to error");
     assert!(err.is_instance_of::<js_sys::Error>());
 }
@@ -67,7 +67,7 @@ fn uhci_attach_hub_rejects_reserved_webusb_root_port() {
 fn uhci_detach_rejects_reserved_webusb_root_port() {
     let mut uhci = make_controller();
 
-    let path = serde_wasm_bindgen::to_value(&vec![1u32]).expect("path");
+    let path = serde_wasm_bindgen::to_value(&vec![u32::from(WEBUSB_ROOT_PORT)]).expect("path");
     let err = uhci
         .detach_at_path(path)
         .expect_err("expected detach_at_path on reserved root port to error");
@@ -79,7 +79,7 @@ fn uhci_attach_webhid_device_rejects_reserved_webusb_root_port() {
     let mut uhci = make_controller();
 
     let dev = make_dummy_webhid();
-    let path = serde_wasm_bindgen::to_value(&vec![1u32]).expect("path");
+    let path = serde_wasm_bindgen::to_value(&vec![u32::from(WEBUSB_ROOT_PORT)]).expect("path");
     let err = uhci
         .attach_webhid_device(path, &dev)
         .expect_err("expected attach_webhid_device on reserved root port to error");
@@ -91,7 +91,7 @@ fn uhci_attach_usb_hid_passthrough_device_rejects_reserved_webusb_root_port() {
     let mut uhci = make_controller();
 
     let dev = make_dummy_hid();
-    let path = serde_wasm_bindgen::to_value(&vec![1u32]).expect("path");
+    let path = serde_wasm_bindgen::to_value(&vec![u32::from(WEBUSB_ROOT_PORT)]).expect("path");
     let err = uhci
         .attach_usb_hid_passthrough_device(path, &dev)
         .expect_err("expected attach_usb_hid_passthrough_device on reserved root port to error");

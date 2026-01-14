@@ -1,8 +1,7 @@
 #![cfg(target_arch = "wasm32")]
 
 use aero_usb::passthrough::UsbHostAction;
-use aero_wasm::UhciControllerBridge;
-use aero_wasm::WebUsbUhciBridge;
+use aero_wasm::{UhciControllerBridge, WebUsbUhciBridge, WEBUSB_ROOT_PORT};
 use wasm_bindgen_test::wasm_bindgen_test;
 
 mod common;
@@ -168,7 +167,8 @@ fn webusb_uhci_bridge_detach_at_path_rejects_reserved_root_ports() {
     );
 
     // Root port 1 is reserved for WebUSB passthrough and must be managed via set_connected().
-    let webusb_path = serde_wasm_bindgen::to_value(&vec![1u32]).expect("webusb path");
+    let webusb_path =
+        serde_wasm_bindgen::to_value(&vec![u32::from(WEBUSB_ROOT_PORT)]).expect("webusb path");
     assert!(
         bridge.detach_at_path(webusb_path).is_err(),
         "expected detach_at_path([1]) to error"

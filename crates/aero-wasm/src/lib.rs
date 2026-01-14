@@ -9,6 +9,8 @@ pub mod guest_cpu_bench;
 mod ehci_webusb_topology;
 #[cfg(any(target_arch = "wasm32", test))]
 mod webusb_ports;
+#[cfg(target_arch = "wasm32")]
+pub use webusb_ports::WEBUSB_ROOT_PORT;
 
 #[cfg(any(target_arch = "wasm32", test))]
 mod guest_phys;

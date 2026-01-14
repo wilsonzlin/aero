@@ -9,7 +9,7 @@
 /// Guest-visible root hub port reserved for WebUSB passthrough.
 ///
 /// Root ports are 0-based in the host-managed topology contract.
-pub(crate) const WEBUSB_ROOT_PORT: u8 = 1;
+pub const WEBUSB_ROOT_PORT: u8 = 1;
 
 /// Maximum number of WebUSB host actions to drain from WASM per JS poll.
 ///
