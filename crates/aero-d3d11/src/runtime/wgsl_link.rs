@@ -35,7 +35,7 @@ pub(crate) fn locations_in_struct(wgsl: &str, struct_name: &str) -> Result<BTree
             continue;
         }
 
-        if trimmed == "};" {
+        if trimmed.starts_with('}') {
             in_struct = false;
             continue;
         }
@@ -90,7 +90,7 @@ pub(crate) fn referenced_ps_input_locations(wgsl: &str) -> BTreeSet<u32> {
             }
             continue;
         }
-        if trimmed == "};" {
+        if trimmed.starts_with('}') {
             break;
         }
         let Some(loc) = parse_location_attr(line) else {
@@ -196,7 +196,7 @@ pub(crate) fn trim_vs_outputs_to_locations(
             }
             continue;
         }
-        if trimmed == "};" {
+        if trimmed.starts_with('}') {
             break;
         }
         let Some(loc) = parse_location_attr(line) else {
@@ -224,7 +224,7 @@ pub(crate) fn trim_vs_outputs_to_locations(
         }
 
         if in_vs_out {
-            if trimmed == "};" {
+            if trimmed.starts_with('}') {
                 in_vs_out = false;
                 out.push_str(line);
                 out.push('\n');
@@ -287,7 +287,7 @@ pub(crate) fn trim_ps_inputs_to_locations(ps_wgsl: &str, keep_locations: &BTreeS
                 continue;
             }
 
-            if trimmed == "};" {
+            if trimmed.starts_with('}') {
                 break;
             }
 
@@ -310,7 +310,7 @@ pub(crate) fn trim_ps_inputs_to_locations(ps_wgsl: &str, keep_locations: &BTreeS
                 continue;
             }
             if in_ps_in {
-                if trimmed == "};" {
+                if trimmed.starts_with('}') {
                     in_ps_in = false;
                 }
                 continue;
@@ -342,7 +342,7 @@ pub(crate) fn trim_ps_inputs_to_locations(ps_wgsl: &str, keep_locations: &BTreeS
         }
 
         if in_ps_in {
-            if trimmed == "};" {
+            if trimmed.starts_with('}') {
                 in_ps_in = false;
                 out.push_str(line);
                 out.push('\n');
@@ -387,7 +387,7 @@ pub(crate) fn trim_ps_outputs_to_locations(
             continue;
         }
 
-        if trimmed == "};" {
+        if trimmed.starts_with('}') {
             in_ps_out = false;
             continue;
         }
@@ -448,7 +448,7 @@ pub(crate) fn trim_ps_outputs_to_locations(
                 continue;
             }
             if in_ps_out {
-                if trimmed == "};" {
+                if trimmed.starts_with('}') {
                     in_ps_out = false;
                 }
                 continue;
@@ -519,7 +519,7 @@ pub(crate) fn trim_ps_outputs_to_locations(
             }
 
             if in_ps_out {
-                if trimmed == "};" {
+                if trimmed.starts_with('}') {
                     in_ps_out = false;
                     out.push_str(line);
                     out.push('\n');
@@ -737,6 +737,24 @@ mod tests {
         "#;
         let locs = locations_in_struct(wgsl, "PsIn").unwrap();
         assert_eq!(locs.iter().copied().collect::<Vec<_>>(), vec![1, 10]);
+    }
+
+    #[test]
+    fn finds_locations_in_struct_without_trailing_semicolon() {
+        // WGSL allows omitting the trailing semicolon after struct declarations. Ensure our
+        // lightweight parser still detects the end of the struct so it doesn't accidentally scan
+        // into subsequent declarations.
+        let wgsl = r#"
+            struct PsIn {
+                @location(1) v1: vec4<f32>,
+            }
+
+            struct Other {
+                @location(2) v2: vec4<f32>,
+            };
+        "#;
+        let locs = locations_in_struct(wgsl, "PsIn").unwrap();
+        assert_eq!(locs.iter().copied().collect::<Vec<_>>(), vec![1]);
     }
 
     #[test]
