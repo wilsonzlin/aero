@@ -11,6 +11,11 @@ fn hccparams1_xecp_points_to_extended_capabilities() {
     let mut mem = TestMemory::new(XhciController::MMIO_SIZE as usize);
 
     let hccparams1 = xhci.mmio_read_u32(&mut mem, cap::HCCPARAMS1 as u64);
+    assert_eq!(
+        hccparams1 & HCCPARAMS1_CSZ_64B,
+        0,
+        "MVP assumes 32-byte contexts (HCCPARAMS1.CSZ=0)"
+    );
     let xecp_dwords = (hccparams1 >> 16) & 0xffff;
     assert_ne!(xecp_dwords, 0, "HCCPARAMS1.xECP must be non-zero");
 
