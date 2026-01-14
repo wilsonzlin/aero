@@ -1953,7 +1953,7 @@ fn sync_index_buffer<'a>(
 
 fn map_buffer_usage(usage: BufferUsage, supports_compute: bool) -> wgpu::BufferUsages {
     let mut out = wgpu::BufferUsages::empty();
-    let mut needs_storage = false;
+    let mut needs_storage = usage.contains(BufferUsage::STORAGE);
     if usage.contains(BufferUsage::MAP_READ) {
         out |= wgpu::BufferUsages::MAP_READ;
     }
@@ -1982,9 +1982,6 @@ fn map_buffer_usage(usage: BufferUsage, supports_compute: bool) -> wgpu::BufferU
     // bind them as `var<storage>`. Gate this on compute support so downlevel backends (e.g. WebGL2)
     // don't hit validation errors.
     if supports_compute && needs_storage {
-        out |= wgpu::BufferUsages::STORAGE;
-    }
-    if usage.contains(BufferUsage::STORAGE) {
         out |= wgpu::BufferUsages::STORAGE;
     }
     if usage.contains(BufferUsage::INDIRECT) {
@@ -2134,5 +2131,18 @@ mod tests {
                 Some(&GpuError::Unsupported("compute"))
             );
         });
+    }
+
+    #[test]
+    fn map_buffer_usage_gates_storage_on_compute_support() {
+        let bu = map_buffer_usage(BufferUsage::VERTEX, false);
+        assert!(bu.contains(wgpu::BufferUsages::VERTEX));
+        assert!(!bu.contains(wgpu::BufferUsages::STORAGE));
+
+        let storage = map_buffer_usage(BufferUsage::STORAGE, false);
+        assert!(!storage.contains(wgpu::BufferUsages::STORAGE));
+
+        let storage_compute = map_buffer_usage(BufferUsage::STORAGE, true);
+        assert!(storage_compute.contains(wgpu::BufferUsages::STORAGE));
     }
 }

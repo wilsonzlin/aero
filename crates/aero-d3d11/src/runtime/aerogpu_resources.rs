@@ -1132,9 +1132,6 @@ pub fn map_buffer_usage_flags(
     if (usage_flags & AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER) != 0 {
         out |= wgpu::BufferUsages::UNIFORM;
     }
-    if (usage_flags & AEROGPU_RESOURCE_USAGE_STORAGE) != 0 {
-        out |= wgpu::BufferUsages::STORAGE;
-    }
     out
 }
 
@@ -1969,6 +1966,9 @@ mod tests {
         assert!(bu.contains(wgpu::BufferUsages::COPY_DST));
         assert!(bu.contains(wgpu::BufferUsages::VERTEX));
         assert!(!bu.contains(wgpu::BufferUsages::STORAGE));
+
+        let storage = map_buffer_usage_flags(AEROGPU_RESOURCE_USAGE_STORAGE, false);
+        assert!(!storage.contains(wgpu::BufferUsages::STORAGE));
 
         let bu_compute = map_buffer_usage_flags(AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER, true);
         assert!(bu_compute.contains(wgpu::BufferUsages::STORAGE));
