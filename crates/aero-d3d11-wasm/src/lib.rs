@@ -44,7 +44,8 @@ mod wasm {
                     aero_d3d11::ShaderStage::Compute => PersistedShaderStage::Compute,
                     aero_d3d11::ShaderStage::Geometry
                     | aero_d3d11::ShaderStage::Hull
-                    | aero_d3d11::ShaderStage::Domain => PersistedShaderStage::Ignored,
+                    | aero_d3d11::ShaderStage::Domain
+                    | aero_d3d11::ShaderStage::Unknown(_) => PersistedShaderStage::Ignored,
                 };
 
                 if stage == PersistedShaderStage::Ignored {
@@ -61,7 +62,7 @@ mod wasm {
                 let reflection: ShaderReflection;
                 let wgsl: String;
                 if signature_driven {
-                    let module = program.decode().map_err(|e| e.to_string())?;
+                    let module = aero_d3d11::sm4::decode_program(&program).map_err(|e| e.to_string())?;
                     let translated =
                         translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).map_err(|e| e.to_string())?;
                     wgsl = translated.wgsl;
@@ -111,4 +112,3 @@ mod wasm {
         serde_wasm_bindgen::to_value(&out).map_err(|e| JsValue::from_str(&e.to_string()))
     }
 }
-

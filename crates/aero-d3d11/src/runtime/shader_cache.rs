@@ -79,6 +79,7 @@ impl PersistedShaderStage {
             ShaderStage::Vertex => Self::Vertex,
             ShaderStage::Pixel => Self::Pixel,
             ShaderStage::Compute => Self::Compute,
+            ShaderStage::Geometry | ShaderStage::Hull | ShaderStage::Domain => Self::Ignored,
         }
     }
 
@@ -98,7 +99,9 @@ impl PersistedShaderStage {
 pub enum PersistedBindingKind {
     ConstantBuffer { slot: u32, reg_count: u32 },
     Texture2D { slot: u32 },
+    SrvBuffer { slot: u32 },
     Sampler { slot: u32 },
+    UavBuffer { slot: u32 },
 }
 
 impl PersistedBindingKind {
@@ -111,7 +114,9 @@ impl PersistedBindingKind {
                 }
             }
             crate::BindingKind::Texture2D { slot } => Self::Texture2D { slot: *slot },
+            crate::BindingKind::SrvBuffer { slot } => Self::SrvBuffer { slot: *slot },
             crate::BindingKind::Sampler { slot } => Self::Sampler { slot: *slot },
+            crate::BindingKind::UavBuffer { slot } => Self::UavBuffer { slot: *slot },
         }
     }
 
@@ -122,7 +127,9 @@ impl PersistedBindingKind {
                 reg_count: *reg_count,
             },
             Self::Texture2D { slot } => crate::BindingKind::Texture2D { slot: *slot },
+            Self::SrvBuffer { slot } => crate::BindingKind::SrvBuffer { slot: *slot },
             Self::Sampler { slot } => crate::BindingKind::Sampler { slot: *slot },
+            Self::UavBuffer { slot } => crate::BindingKind::UavBuffer { slot: *slot },
         }
     }
 }
