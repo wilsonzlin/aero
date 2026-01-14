@@ -493,6 +493,8 @@ This is used by the guest stack to resolve hostnames without direct UDP access f
 - Status: `200 OK` (including DNS errors encoded in the DNS message, e.g. `NXDOMAIN`)
 - Header: `Content-Type: application/dns-message`
 - Body: DNS response in wire format
+  - Note: for some *HTTP-level* failures (e.g. malformed query, payload too large, rate limiting, unsupported `Content-Type`), the gateway may respond with a non-`200` status (e.g. `400`, `413`, `429`, `415`) but will still return a valid `application/dns-message` payload (typically `FORMERR` or `SERVFAIL`) so clients can extract the DNS header/id.
+  - Authentication / Origin failures (`401`/`403`) return a JSON error response (see OpenAPI).
 
 Example:
 
