@@ -222,23 +222,17 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
                     }
                 }
                 Some(cmd::AerogpuCmdOpcode::SetTexture) => {
-                    if pkt.payload.len() >= 16 {
-                        let shader_stage =
-                            u32::from_le_bytes(pkt.payload[0..4].try_into().unwrap());
-                        let slot = u32::from_le_bytes(pkt.payload[4..8].try_into().unwrap());
-                        let texture = u32::from_le_bytes(pkt.payload[8..12].try_into().unwrap());
-                        let reserved0 = u32::from_le_bytes(pkt.payload[12..16].try_into().unwrap());
-                        let _ = cmd::decode_stage_ex(shader_stage, reserved0);
-                        let _ = cmd::resolve_stage(shader_stage, reserved0);
-                        let _ = cmd::resolve_shader_stage_with_ex(shader_stage, reserved0);
-                        let cmd_set_texture = cmd::AerogpuCmdSetTexture {
-                            hdr: pkt.hdr,
-                            shader_stage,
-                            slot,
-                            texture,
-                            reserved0,
-                        };
+                    if let Ok(cmd_set_texture) = pkt.decode_set_texture_payload_le() {
+                        let _ = cmd::decode_stage_ex(cmd_set_texture.shader_stage, cmd_set_texture.reserved0);
+                        let _ = cmd::resolve_stage(cmd_set_texture.shader_stage, cmd_set_texture.reserved0);
+                        let _ = cmd::resolve_shader_stage_with_ex(
+                            cmd_set_texture.shader_stage,
+                            cmd_set_texture.reserved0,
+                        );
                         let _ = cmd_set_texture.resolved_shader_stage();
+                    }
+                    if let Some(packet_bytes) = packet_bytes(cmd_bytes, &pkt) {
+                        let _ = cmd::decode_cmd_set_texture_le(packet_bytes);
                     }
                 }
                 Some(cmd::AerogpuCmdOpcode::SetSamplers) => {

@@ -1928,6 +1928,18 @@ pub fn decode_cmd_set_vertex_buffers_bindings_le(
     packet.decode_set_vertex_buffers_payload_le()
 }
 
+/// Decode SET_TEXTURE.
+pub fn decode_cmd_set_texture_le(buf: &[u8]) -> Result<AerogpuCmdSetTexture, AerogpuCmdDecodeError> {
+    let hdr = decode_cmd_hdr_le(buf)?;
+    let packet_len = validate_packet_len(buf, hdr)?;
+    let packet = AerogpuCmdPacket {
+        hdr,
+        opcode: AerogpuCmdOpcode::from_u32(hdr.opcode),
+        payload: &buf[AerogpuCmdHdr::SIZE_BYTES..packet_len],
+    };
+    packet.decode_set_texture_payload_le()
+}
+
 /// Decode SET_SAMPLERS and parse the trailing `aerogpu_handle_t samplers[]`.
 pub fn decode_cmd_set_samplers_handles_le(
     buf: &[u8],
@@ -2462,6 +2474,32 @@ impl<'a> AerogpuCmdPacket<'a> {
             },
             bindings,
         ))
+    }
+
+    pub fn decode_set_texture_payload_le(&self) -> Result<AerogpuCmdSetTexture, AerogpuCmdDecodeError> {
+        if self.opcode != Some(AerogpuCmdOpcode::SetTexture) {
+            return Err(AerogpuCmdDecodeError::UnexpectedOpcode {
+                found: self.hdr.opcode,
+                expected: AerogpuCmdOpcode::SetTexture,
+            });
+        }
+        if self.payload.len() < 16 {
+            return Err(AerogpuCmdDecodeError::BufferTooSmall);
+        }
+
+        let shader_stage = u32::from_le_bytes(self.payload[0..4].try_into().unwrap());
+        let slot = u32::from_le_bytes(self.payload[4..8].try_into().unwrap());
+        let texture = u32::from_le_bytes(self.payload[8..12].try_into().unwrap());
+        let reserved0 = u32::from_le_bytes(self.payload[12..16].try_into().unwrap());
+
+        validate_expected_payload_size(16, self.payload)?;
+        Ok(AerogpuCmdSetTexture {
+            hdr: self.hdr,
+            shader_stage,
+            slot,
+            texture,
+            reserved0,
+        })
     }
 
     pub fn decode_set_samplers_payload_le(
