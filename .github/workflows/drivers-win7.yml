@@ -8,6 +8,7 @@ on:
       - "tools/packaging/**"
       - "ci/**"
       - "scripts/ci/check-windows7-virtio-contract-consistency.py"
+      - "scripts/ci/check-win7-harness-constants.py"
       - "scripts/ci/check-virtio-snd-vcxproj-sources.py"
       - "scripts/ci/check-win7-virtio-snd-contiguous-free.py"
       - "scripts/ci/check-win7-virtqueue-split-headers.py"
@@ -39,6 +40,7 @@ on:
       - "tools/packaging/**"
       - "ci/**"
       - "scripts/ci/check-windows7-virtio-contract-consistency.py"
+      - "scripts/ci/check-win7-harness-constants.py"
       - "scripts/ci/check-virtio-snd-vcxproj-sources.py"
       - "scripts/ci/check-win7-virtio-snd-contiguous-free.py"
       - "scripts/ci/check-win7-virtqueue-split-headers.py"
@@ -86,6 +88,9 @@ jobs:
 
       - name: Unit tests (Win7 host harness wav verification)
         run: python3 -m unittest discover -s drivers/windows7/tests/host-harness/tests -p 'test_*.py'
+
+      - name: Guardrail (Win7 guest selftest ↔ host harness constants)
+        run: python3 scripts/ci/check-win7-harness-constants.py
 
       - name: Check virtio-snd.vcxproj sources (modern vs legacy)
         shell: bash
