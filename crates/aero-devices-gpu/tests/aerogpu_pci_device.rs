@@ -3,26 +3,14 @@ use aero_devices_gpu::pci::AeroGpuDeviceConfig;
 use aero_devices_gpu::regs::FEATURE_VBLANK;
 use aero_devices_gpu::regs::{irq_bits, mmio, ring_control, AerogpuErrorCode, AEROGPU_MMIO_MAGIC};
 use aero_devices_gpu::ring::{
-    AeroGpuSubmitDesc, AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_RING_HEADER_SIZE_BYTES,
-    AEROGPU_RING_MAGIC, FENCE_PAGE_MAGIC_OFFSET, RING_HEAD_OFFSET, RING_TAIL_OFFSET,
+    AeroGpuSubmitDesc, AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_RING_HEADER_SIZE_BYTES, AEROGPU_RING_MAGIC,
+    FENCE_PAGE_MAGIC_OFFSET, RING_ABI_VERSION_OFFSET, RING_ENTRY_COUNT_OFFSET,
+    RING_ENTRY_STRIDE_BYTES_OFFSET, RING_FLAGS_OFFSET, RING_HEAD_OFFSET, RING_MAGIC_OFFSET,
+    RING_SIZE_BYTES_OFFSET, RING_TAIL_OFFSET, SUBMIT_DESC_SIGNAL_FENCE_OFFSET,
+    SUBMIT_DESC_SIZE_BYTES_OFFSET,
 };
 use aero_devices_gpu::AeroGpuPciDevice;
-use aero_protocol::aerogpu::aerogpu_ring::AerogpuRingHeader as ProtocolRingHeader;
-use aero_protocol::aerogpu::aerogpu_ring::AerogpuSubmitDesc as ProtocolSubmitDesc;
 use memory::{MemoryBus, MmioHandler};
-
-const RING_MAGIC_OFFSET: u64 = core::mem::offset_of!(ProtocolRingHeader, magic) as u64;
-const RING_ABI_VERSION_OFFSET: u64 = core::mem::offset_of!(ProtocolRingHeader, abi_version) as u64;
-const RING_SIZE_BYTES_OFFSET: u64 = core::mem::offset_of!(ProtocolRingHeader, size_bytes) as u64;
-const RING_ENTRY_COUNT_OFFSET: u64 = core::mem::offset_of!(ProtocolRingHeader, entry_count) as u64;
-const RING_ENTRY_STRIDE_BYTES_OFFSET: u64 =
-    core::mem::offset_of!(ProtocolRingHeader, entry_stride_bytes) as u64;
-const RING_FLAGS_OFFSET: u64 = core::mem::offset_of!(ProtocolRingHeader, flags) as u64;
-
-const SUBMIT_DESC_SIZE_BYTES_OFFSET: u64 =
-    core::mem::offset_of!(ProtocolSubmitDesc, desc_size_bytes) as u64;
-const SUBMIT_DESC_SIGNAL_FENCE_OFFSET: u64 =
-    core::mem::offset_of!(ProtocolSubmitDesc, signal_fence) as u64;
 
 #[derive(Clone, Debug)]
 struct VecMemory {

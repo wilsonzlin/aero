@@ -10,9 +10,18 @@ use aero_devices_gpu::regs::{
     irq_bits, ring_control, AeroGpuRegs, AerogpuErrorCode, FEATURE_VBLANK,
 };
 use aero_devices_gpu::ring::{
-    AeroGpuAllocEntry, AeroGpuSubmitDesc, AEROGPU_ALLOC_TABLE_HEADER_SIZE_BYTES,
-    AEROGPU_ALLOC_TABLE_MAGIC, AEROGPU_RING_HEADER_SIZE_BYTES, AEROGPU_RING_MAGIC,
-    RING_HEAD_OFFSET, RING_TAIL_OFFSET,
+    AeroGpuAllocEntry, AeroGpuSubmitDesc, ALLOC_ENTRY_ALLOC_ID_OFFSET, ALLOC_ENTRY_FLAGS_OFFSET,
+    ALLOC_ENTRY_GPA_OFFSET, ALLOC_ENTRY_RESERVED0_OFFSET, ALLOC_ENTRY_SIZE_BYTES_OFFSET,
+    ALLOC_TABLE_ABI_VERSION_OFFSET, ALLOC_TABLE_ENTRY_COUNT_OFFSET,
+    ALLOC_TABLE_ENTRY_STRIDE_BYTES_OFFSET, ALLOC_TABLE_MAGIC_OFFSET, ALLOC_TABLE_RESERVED0_OFFSET,
+    ALLOC_TABLE_SIZE_BYTES_OFFSET, AEROGPU_ALLOC_TABLE_HEADER_SIZE_BYTES, AEROGPU_ALLOC_TABLE_MAGIC,
+    AEROGPU_RING_HEADER_SIZE_BYTES, AEROGPU_RING_MAGIC, RING_ABI_VERSION_OFFSET,
+    RING_ENTRY_COUNT_OFFSET, RING_ENTRY_STRIDE_BYTES_OFFSET, RING_FLAGS_OFFSET, RING_HEAD_OFFSET,
+    RING_MAGIC_OFFSET, RING_SIZE_BYTES_OFFSET, RING_TAIL_OFFSET, SUBMIT_DESC_ALLOC_TABLE_GPA_OFFSET,
+    SUBMIT_DESC_ALLOC_TABLE_RESERVED0_OFFSET, SUBMIT_DESC_ALLOC_TABLE_SIZE_BYTES_OFFSET,
+    SUBMIT_DESC_CMD_GPA_OFFSET, SUBMIT_DESC_CMD_RESERVED0_OFFSET, SUBMIT_DESC_CMD_SIZE_BYTES_OFFSET,
+    SUBMIT_DESC_CONTEXT_ID_OFFSET, SUBMIT_DESC_ENGINE_ID_OFFSET, SUBMIT_DESC_FLAGS_OFFSET,
+    SUBMIT_DESC_RESERVED0_OFFSET, SUBMIT_DESC_SIGNAL_FENCE_OFFSET, SUBMIT_DESC_SIZE_BYTES_OFFSET,
 };
 use aero_devices_gpu::scanout::AeroGpuFormat;
 use aero_protocol::aerogpu::aerogpu_cmd::{
@@ -20,62 +29,7 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AEROGPU_CMD_STREAM_MAGIC,
     AEROGPU_PRESENT_FLAG_VSYNC,
 };
-use aero_protocol::aerogpu::aerogpu_ring::{
-    AerogpuAllocEntry as ProtocolAllocEntry, AerogpuAllocTableHeader as ProtocolAllocTableHeader,
-    AerogpuRingHeader as ProtocolRingHeader, AerogpuSubmitDesc as ProtocolSubmitDesc,
-};
 use memory::MemoryBus;
-
-const RING_MAGIC_OFFSET: u64 = core::mem::offset_of!(ProtocolRingHeader, magic) as u64;
-const RING_ABI_VERSION_OFFSET: u64 = core::mem::offset_of!(ProtocolRingHeader, abi_version) as u64;
-const RING_SIZE_BYTES_OFFSET: u64 = core::mem::offset_of!(ProtocolRingHeader, size_bytes) as u64;
-const RING_ENTRY_COUNT_OFFSET: u64 = core::mem::offset_of!(ProtocolRingHeader, entry_count) as u64;
-const RING_ENTRY_STRIDE_BYTES_OFFSET: u64 =
-    core::mem::offset_of!(ProtocolRingHeader, entry_stride_bytes) as u64;
-const RING_FLAGS_OFFSET: u64 = core::mem::offset_of!(ProtocolRingHeader, flags) as u64;
-
-const SUBMIT_DESC_SIZE_BYTES_OFFSET: u64 =
-    core::mem::offset_of!(ProtocolSubmitDesc, desc_size_bytes) as u64;
-const SUBMIT_DESC_FLAGS_OFFSET: u64 = core::mem::offset_of!(ProtocolSubmitDesc, flags) as u64;
-const SUBMIT_DESC_CONTEXT_ID_OFFSET: u64 =
-    core::mem::offset_of!(ProtocolSubmitDesc, context_id) as u64;
-const SUBMIT_DESC_ENGINE_ID_OFFSET: u64 =
-    core::mem::offset_of!(ProtocolSubmitDesc, engine_id) as u64;
-const SUBMIT_DESC_CMD_GPA_OFFSET: u64 = core::mem::offset_of!(ProtocolSubmitDesc, cmd_gpa) as u64;
-const SUBMIT_DESC_CMD_SIZE_BYTES_OFFSET: u64 =
-    core::mem::offset_of!(ProtocolSubmitDesc, cmd_size_bytes) as u64;
-const SUBMIT_DESC_CMD_RESERVED0_OFFSET: u64 =
-    core::mem::offset_of!(ProtocolSubmitDesc, cmd_reserved0) as u64;
-const SUBMIT_DESC_ALLOC_TABLE_GPA_OFFSET: u64 =
-    core::mem::offset_of!(ProtocolSubmitDesc, alloc_table_gpa) as u64;
-const SUBMIT_DESC_ALLOC_TABLE_SIZE_BYTES_OFFSET: u64 =
-    core::mem::offset_of!(ProtocolSubmitDesc, alloc_table_size_bytes) as u64;
-const SUBMIT_DESC_ALLOC_TABLE_RESERVED0_OFFSET: u64 =
-    core::mem::offset_of!(ProtocolSubmitDesc, alloc_table_reserved0) as u64;
-const SUBMIT_DESC_SIGNAL_FENCE_OFFSET: u64 =
-    core::mem::offset_of!(ProtocolSubmitDesc, signal_fence) as u64;
-const SUBMIT_DESC_RESERVED0_OFFSET: u64 =
-    core::mem::offset_of!(ProtocolSubmitDesc, reserved0) as u64;
-
-const ALLOC_TABLE_MAGIC_OFFSET: u64 = core::mem::offset_of!(ProtocolAllocTableHeader, magic) as u64;
-const ALLOC_TABLE_ABI_VERSION_OFFSET: u64 =
-    core::mem::offset_of!(ProtocolAllocTableHeader, abi_version) as u64;
-const ALLOC_TABLE_SIZE_BYTES_OFFSET: u64 =
-    core::mem::offset_of!(ProtocolAllocTableHeader, size_bytes) as u64;
-const ALLOC_TABLE_ENTRY_COUNT_OFFSET: u64 =
-    core::mem::offset_of!(ProtocolAllocTableHeader, entry_count) as u64;
-const ALLOC_TABLE_ENTRY_STRIDE_BYTES_OFFSET: u64 =
-    core::mem::offset_of!(ProtocolAllocTableHeader, entry_stride_bytes) as u64;
-const ALLOC_TABLE_RESERVED0_OFFSET: u64 =
-    core::mem::offset_of!(ProtocolAllocTableHeader, reserved0) as u64;
-
-const ALLOC_ENTRY_ALLOC_ID_OFFSET: u64 = core::mem::offset_of!(ProtocolAllocEntry, alloc_id) as u64;
-const ALLOC_ENTRY_FLAGS_OFFSET: u64 = core::mem::offset_of!(ProtocolAllocEntry, flags) as u64;
-const ALLOC_ENTRY_GPA_OFFSET: u64 = core::mem::offset_of!(ProtocolAllocEntry, gpa) as u64;
-const ALLOC_ENTRY_SIZE_BYTES_OFFSET: u64 =
-    core::mem::offset_of!(ProtocolAllocEntry, size_bytes) as u64;
-const ALLOC_ENTRY_RESERVED0_OFFSET: u64 =
-    core::mem::offset_of!(ProtocolAllocEntry, reserved0) as u64;
 
 const CMD_STREAM_MAGIC_OFFSET: u64 = core::mem::offset_of!(ProtocolCmdStreamHeader, magic) as u64;
 const CMD_STREAM_ABI_VERSION_OFFSET: u64 =
