@@ -532,8 +532,13 @@ impl D3D11Runtime {
             mapped_at_creation: false,
         });
 
-        let shadow_len = usize::try_from(size).context("CreateBuffer size overflows usize")?;
-        let shadow = vec![0u8; shadow_len];
+        let shadow = if self.emulate_strip_restart {
+            usize::try_from(size)
+                .ok()
+                .map(|shadow_len| vec![0u8; shadow_len])
+        } else {
+            None
+        };
         self.resources.buffers.insert(
             id,
             BufferResource {
@@ -584,17 +589,17 @@ impl D3D11Runtime {
             .get_mut(&id)
             .ok_or_else(|| anyhow!("unknown buffer {id}"))?;
         self.queue.write_buffer(&buffer.buffer, offset, bytes);
-
-        let shadow_start =
-            usize::try_from(offset).context("UpdateBuffer offset overflows usize")?;
-        let shadow_end = shadow_start
-            .checked_add(bytes.len())
-            .ok_or_else(|| anyhow!("UpdateBuffer shadow range overflows usize"))?;
-        buffer
-            .shadow
-            .get_mut(shadow_start..shadow_end)
-            .ok_or_else(|| anyhow!("UpdateBuffer shadow range out of bounds"))?
-            .copy_from_slice(bytes);
+        if let Some(shadow) = buffer.shadow.as_mut() {
+            let shadow_start =
+                usize::try_from(offset).context("UpdateBuffer offset overflows usize")?;
+            let shadow_end = shadow_start
+                .checked_add(bytes.len())
+                .ok_or_else(|| anyhow!("UpdateBuffer shadow range overflows usize"))?;
+            shadow
+                .get_mut(shadow_start..shadow_end)
+                .ok_or_else(|| anyhow!("UpdateBuffer shadow range out of bounds"))?
+                .copy_from_slice(bytes);
+        }
         Ok(())
     }
 
@@ -1508,50 +1513,74 @@ impl D3D11Runtime {
 
         // Update the CPU shadow copies so later commands (e.g. strip primitive-restart emulation)
         // see the same buffer contents that the GPU will.
-        let shadow_src_start =
-            usize::try_from(src_offset).context("CopyBufferToBuffer src_offset overflows usize")?;
-        let shadow_dst_start =
-            usize::try_from(dst_offset).context("CopyBufferToBuffer dst_offset overflows usize")?;
-        let shadow_size =
-            usize::try_from(size).context("CopyBufferToBuffer size overflows usize")?;
-        let shadow_src_end = shadow_src_start
-            .checked_add(shadow_size)
-            .ok_or_else(|| anyhow!("CopyBufferToBuffer src shadow range overflows usize"))?;
-        let shadow_dst_end = shadow_dst_start
-            .checked_add(shadow_size)
-            .ok_or_else(|| anyhow!("CopyBufferToBuffer dst shadow range overflows usize"))?;
+        let should_update_shadow = self
+            .resources
+            .buffers
+            .get(&src)
+            .is_some_and(|b| b.shadow.is_some())
+            && self
+                .resources
+                .buffers
+                .get(&dst)
+                .is_some_and(|b| b.shadow.is_some());
 
-        if src == dst {
-            let buf = self
-                .resources
-                .buffers
-                .get_mut(&src)
-                .ok_or_else(|| anyhow!("unknown buffer {src}"))?;
-            buf.shadow
-                .copy_within(shadow_src_start..shadow_src_end, shadow_dst_start);
-        } else {
-            let tmp = {
-                let src_buf = self
-                    .resources
-                    .buffers
-                    .get(&src)
-                    .ok_or_else(|| anyhow!("unknown buffer {src}"))?;
-                src_buf
-                    .shadow
-                    .get(shadow_src_start..shadow_src_end)
-                    .ok_or_else(|| anyhow!("CopyBufferToBuffer src shadow range out of bounds"))?
-                    .to_vec()
-            };
-            let dst_buf = self
-                .resources
-                .buffers
-                .get_mut(&dst)
-                .ok_or_else(|| anyhow!("unknown buffer {dst}"))?;
-            dst_buf
-                .shadow
-                .get_mut(shadow_dst_start..shadow_dst_end)
-                .ok_or_else(|| anyhow!("CopyBufferToBuffer dst shadow range out of bounds"))?
-                .copy_from_slice(&tmp);
+        if should_update_shadow {
+            if let (Ok(shadow_src_start), Ok(shadow_dst_start), Ok(shadow_size)) = (
+                usize::try_from(src_offset),
+                usize::try_from(dst_offset),
+                usize::try_from(size),
+            ) {
+                let shadow_src_end =
+                    shadow_src_start.checked_add(shadow_size).ok_or_else(|| {
+                        anyhow!("CopyBufferToBuffer src shadow range overflows usize")
+                    })?;
+                let shadow_dst_end =
+                    shadow_dst_start.checked_add(shadow_size).ok_or_else(|| {
+                        anyhow!("CopyBufferToBuffer dst shadow range overflows usize")
+                    })?;
+
+                if src == dst {
+                    let buf = self
+                        .resources
+                        .buffers
+                        .get_mut(&src)
+                        .ok_or_else(|| anyhow!("unknown buffer {src}"))?;
+                    if let Some(shadow) = buf.shadow.as_mut() {
+                        shadow.copy_within(shadow_src_start..shadow_src_end, shadow_dst_start);
+                    }
+                } else {
+                    let tmp = {
+                        let src_buf = self
+                            .resources
+                            .buffers
+                            .get(&src)
+                            .ok_or_else(|| anyhow!("unknown buffer {src}"))?;
+                        let src_shadow = src_buf
+                            .shadow
+                            .as_deref()
+                            .ok_or_else(|| anyhow!("CopyBufferToBuffer src shadow missing"))?;
+                        src_shadow
+                            .get(shadow_src_start..shadow_src_end)
+                            .ok_or_else(|| {
+                                anyhow!("CopyBufferToBuffer src shadow range out of bounds")
+                            })?
+                            .to_vec()
+                    };
+                    let dst_buf = self
+                        .resources
+                        .buffers
+                        .get_mut(&dst)
+                        .ok_or_else(|| anyhow!("unknown buffer {dst}"))?;
+                    if let Some(dst_shadow) = dst_buf.shadow.as_mut() {
+                        dst_shadow
+                            .get_mut(shadow_dst_start..shadow_dst_end)
+                            .ok_or_else(|| {
+                                anyhow!("CopyBufferToBuffer dst shadow range out of bounds")
+                            })?
+                            .copy_from_slice(&tmp);
+                    }
+                }
+            }
         }
 
         let src_buf = self
@@ -2450,7 +2479,9 @@ fn expand_indexed_strip_to_list(
     first_index: u32,
     index_count: u32,
 ) -> Result<Option<Vec<u32>>> {
-    let shadow = index_buf.shadow.as_slice();
+    let Some(shadow) = index_buf.shadow.as_deref() else {
+        return Ok(None);
+    };
     if index_count == 0 {
         return Ok(None);
     }

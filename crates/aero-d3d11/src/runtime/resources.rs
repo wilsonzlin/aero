@@ -9,13 +9,13 @@ use aero_gpu::protocol_d3d11::ResourceId;
 pub struct BufferResource {
     pub buffer: wgpu::Buffer,
     pub size: u64,
-    /// CPU shadow copy of the buffer contents.
+    /// CPU shadow copy of the buffer contents (when required).
     ///
     /// The protocol D3D11 runtime uses this to emulate behaviors that require inspecting index
     /// buffers on the CPU (e.g. primitive-restart handling for strip topologies on wgpu GL).
     ///
     /// This is kept up to date by `UpdateBuffer` and `CopyBufferToBuffer` opcodes.
-    pub shadow: Vec<u8>,
+    pub shadow: Option<Vec<u8>>,
 }
 
 impl fmt::Debug for BufferResource {
@@ -23,7 +23,7 @@ impl fmt::Debug for BufferResource {
         f.debug_struct("BufferResource")
             .field("buffer", &self.buffer)
             .field("size", &self.size)
-            .field("shadow_len", &self.shadow.len())
+            .field("shadow_len", &self.shadow.as_ref().map(|s| s.len()))
             .finish()
     }
 }
