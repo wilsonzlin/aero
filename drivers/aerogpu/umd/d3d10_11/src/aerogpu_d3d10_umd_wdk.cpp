@@ -66,6 +66,11 @@ using aerogpu::d3d10_11::kHrNtStatusTimeout;
 using aerogpu::d3d10_11::kHrNtStatusGraphicsGpuBusy;
 using aerogpu::d3d10_11::kD3DMapFlagDoNotWait;
 using aerogpu::d3d10_11::kAeroGpuTimeoutMsInfinite;
+using aerogpu::d3d10_11::kD3D10UsageDynamic;
+using aerogpu::d3d10_11::kD3D10UsageStaging;
+using aerogpu::d3d10_11::kD3D10CpuAccessRead;
+using aerogpu::d3d10_11::kD3D10CpuAccessWrite;
+using aerogpu::d3d10_11::kD3D10ResourceMiscShared;
 constexpr uint32_t kAeroGpuDeviceLiveCookie = 0xA3E0D310u;
 
 // -----------------------------------------------------------------------------
@@ -1220,14 +1225,11 @@ static void TrackStagingWriteLocked(AeroGpuDevice* dev, AeroGpuResource* dst) {
   //
   // Prefer using the captured Usage field when available, but keep the legacy
   // bind-flags heuristic as a fallback in case older WDK structs omit it.
-#ifdef D3D10_USAGE_STAGING
   if (dst->usage != 0) {
-    if (dst->usage != static_cast<uint32_t>(D3D10_USAGE_STAGING)) {
+    if (dst->usage != kD3D10UsageStaging) {
       return;
     }
-  } else
-#endif
-  {
+  } else {
     if (dst->bind_flags != 0) {
       return;
     }
@@ -1236,8 +1238,7 @@ static void TrackStagingWriteLocked(AeroGpuDevice* dev, AeroGpuResource* dst) {
   // Prefer to only track CPU-readable staging resources, but fall back to
   // tracking all bindless resources if CPU access flags were not captured (WDK
   // struct layout differences).
-  if (dst->cpu_access_flags != 0 &&
-      (dst->cpu_access_flags & static_cast<uint32_t>(D3D10_CPU_ACCESS_READ)) == 0) {
+  if (dst->cpu_access_flags != 0 && (dst->cpu_access_flags & kD3D10CpuAccessRead) == 0) {
     return;
   }
 
@@ -2410,7 +2411,7 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       priv.flags |= AEROGPU_WDDM_ALLOC_PRIV_FLAG_CPU_VISIBLE;
     }
     if constexpr (has_Usage<D3D10DDIARG_CREATERESOURCE>::value) {
-      if (static_cast<uint32_t>(pDesc->Usage) == static_cast<uint32_t>(D3D10_USAGE_STAGING)) {
+      if (static_cast<uint32_t>(pDesc->Usage) == kD3D10UsageStaging) {
         priv.flags |= AEROGPU_WDDM_ALLOC_PRIV_FLAG_STAGING;
       }
     }
@@ -2592,17 +2593,13 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     }
     bool is_staging = false;
     if constexpr (has_Usage<D3D10DDIARG_CREATERESOURCE>::value) {
-      is_staging = (static_cast<uint32_t>(pDesc->Usage) == static_cast<uint32_t>(D3D10_USAGE_STAGING));
+      is_staging = (static_cast<uint32_t>(pDesc->Usage) == kD3D10UsageStaging);
       cpu_visible = cpu_visible || is_staging;
     }
     const bool is_rt = (res->bind_flags & kD3D10BindRenderTarget) != 0;
     const bool is_ds = (res->bind_flags & kD3D10BindDepthStencil) != 0;
     bool is_shared = false;
-#ifdef D3D10_DDI_RESOURCE_MISC_SHARED
-    is_shared = (res->misc_flags & D3D10_DDI_RESOURCE_MISC_SHARED) != 0;
-#else
-    is_shared = (res->misc_flags & D3D10_RESOURCE_MISC_SHARED) != 0;
-#endif
+    is_shared = (res->misc_flags & kD3D10ResourceMiscShared) != 0;
     res->is_shared = is_shared;
     const bool want_guest_backed = !is_shared && !is_primary && !is_staging && !is_rt && !is_ds;
     cpu_visible = cpu_visible || want_guest_backed;
@@ -2610,11 +2607,7 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     bool want_host_owned = false;
     if constexpr (has_Usage<D3D10DDIARG_CREATERESOURCE>::value) {
       const uint32_t usage = static_cast<uint32_t>(pDesc->Usage);
-    #ifdef D3D10_USAGE_DYNAMIC
-      want_host_owned = (usage == static_cast<uint32_t>(D3D10_USAGE_DYNAMIC));
-    #else
-      want_host_owned = (usage == 2u);
-    #endif
+      want_host_owned = (usage == kD3D10UsageDynamic);
     }
     want_host_owned = want_host_owned && !is_shared;
 
@@ -2849,17 +2842,13 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     }
     bool is_staging = false;
     if constexpr (has_Usage<D3D10DDIARG_CREATERESOURCE>::value) {
-      is_staging = (static_cast<uint32_t>(pDesc->Usage) == static_cast<uint32_t>(D3D10_USAGE_STAGING));
+      is_staging = (static_cast<uint32_t>(pDesc->Usage) == kD3D10UsageStaging);
       cpu_visible = cpu_visible || is_staging;
     }
     const bool is_rt = (res->bind_flags & kD3D10BindRenderTarget) != 0;
     const bool is_ds = (res->bind_flags & kD3D10BindDepthStencil) != 0;
     bool is_shared = false;
-#ifdef D3D10_DDI_RESOURCE_MISC_SHARED
-    is_shared = (res->misc_flags & D3D10_DDI_RESOURCE_MISC_SHARED) != 0;
-#else
-    is_shared = (res->misc_flags & D3D10_RESOURCE_MISC_SHARED) != 0;
-#endif
+    is_shared = (res->misc_flags & kD3D10ResourceMiscShared) != 0;
     res->is_shared = is_shared;
     if (is_shared && (res->mip_levels != 1 || res->array_size != 1)) {
       // Keep shared surface interop conservative: only support the legacy single-subresource layout.
@@ -2872,11 +2861,7 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     bool want_host_owned = false;
     if constexpr (has_Usage<D3D10DDIARG_CREATERESOURCE>::value) {
       const uint32_t usage = static_cast<uint32_t>(pDesc->Usage);
-    #ifdef D3D10_USAGE_DYNAMIC
-      want_host_owned = (usage == static_cast<uint32_t>(D3D10_USAGE_DYNAMIC));
-    #else
-      want_host_owned = (usage == 2u);
-    #endif
+      want_host_owned = (usage == kD3D10UsageDynamic);
     }
     want_host_owned = want_host_owned && !is_shared;
     // Host-owned Texture2D updates go through `AEROGPU_CMD_UPLOAD_RESOURCE`. The protocol supports
@@ -3325,11 +3310,9 @@ HRESULT APIENTRY OpenResource(D3D10DDI_HDEVICE hDevice,
   }
   // If the WDK OpenResource struct does not expose a Usage field, fall back to
   // the KMD-provided private flag to preserve staging Map behavior.
-#ifdef D3D10_USAGE_STAGING
   if (priv.flags & AEROGPU_WDDM_ALLOC_PRIV_FLAG_STAGING) {
-    res->usage = static_cast<uint32_t>(D3D10_USAGE_STAGING);
+    res->usage = kD3D10UsageStaging;
   }
-#endif
 
   // Recover the runtime allocation handle (`hAllocation`) for LockCb/UnlockCb
   // and the KM handles needed for pfnDeallocateCb. Field availability varies
@@ -3818,15 +3801,15 @@ HRESULT APIENTRY Map(D3D10DDI_HDEVICE hDevice, D3D10DDIARG_MAP* pMap) {
   const bool want_read = (map_type_u == kD3DMapRead || map_type_u == kD3DMapReadWrite);
 
   // Enforce D3D10 usage/CPU-access rules (matches Win7 runtime expectations).
-  const uint32_t cpu_read = static_cast<uint32_t>(D3D10_CPU_ACCESS_READ);
-  const uint32_t cpu_write = static_cast<uint32_t>(D3D10_CPU_ACCESS_WRITE);
+  const uint32_t cpu_read = kD3D10CpuAccessRead;
+  const uint32_t cpu_write = kD3D10CpuAccessWrite;
   switch (res->usage) {
-    case static_cast<uint32_t>(D3D10_USAGE_DYNAMIC):
+    case kD3D10UsageDynamic:
       if (map_type_u != kD3DMapWriteDiscard && map_type_u != kD3DMapWriteNoOverwrite) {
         return E_INVALIDARG;
       }
       break;
-    case static_cast<uint32_t>(D3D10_USAGE_STAGING): {
+    case kD3D10UsageStaging: {
       const uint32_t access_mask = cpu_read | cpu_write;
       const uint32_t access = res->cpu_access_flags & access_mask;
       if (access == cpu_read) {
@@ -3860,7 +3843,7 @@ HRESULT APIENTRY Map(D3D10DDI_HDEVICE hDevice, D3D10DDIARG_MAP* pMap) {
 
   // Only apply implicit synchronization for staging-style resources. For D3D10
   // this maps to resources with no bind flags (typical staging readback).
-  if (want_read && res->usage == static_cast<uint32_t>(D3D10_USAGE_STAGING)) {
+  if (want_read && res->usage == kD3D10UsageStaging) {
     if (!dev->cmd.empty()) {
       HRESULT submit_hr = S_OK;
       submit_locked(dev, /*want_present=*/false, &submit_hr);
@@ -3946,7 +3929,7 @@ HRESULT APIENTRY Map(D3D10DDI_HDEVICE hDevice, D3D10DDIARG_MAP* pMap) {
   }
 
   const bool allow_storage_map =
-      (res->backing_alloc_id == 0) && !(want_read && res->usage == static_cast<uint32_t>(D3D10_USAGE_STAGING));
+      (res->backing_alloc_id == 0) && !(want_read && res->usage == kD3D10UsageStaging);
   const auto map_storage = [&]() -> HRESULT {
     res->mapped = true;
     res->mapped_write = want_write;
@@ -5203,8 +5186,8 @@ void APIENTRY CopySubresourceRegion(D3D10DDI_HDEVICE hDevice,
     cmd->size_bytes = bytes;
     uint32_t copy_flags = AEROGPU_COPY_FLAG_NONE;
     if (dst->backing_alloc_id != 0 &&
-        dst->usage == static_cast<uint32_t>(D3D10_USAGE_STAGING) &&
-        (dst->cpu_access_flags & static_cast<uint32_t>(D3D10_CPU_ACCESS_READ)) != 0) {
+        dst->usage == kD3D10UsageStaging &&
+        (dst->cpu_access_flags & kD3D10CpuAccessRead) != 0) {
       copy_flags |= AEROGPU_COPY_FLAG_WRITEBACK_DST;
     }
     cmd->flags = copy_flags;
@@ -5420,9 +5403,9 @@ void APIENTRY CopySubresourceRegion(D3D10DDI_HDEVICE hDevice,
     // transfer backend is unavailable or stubbed out.
     if (copy_width && copy_height &&
         dst->backing_alloc_id != 0 &&
-        dst->usage == static_cast<uint32_t>(D3D10_USAGE_STAGING) &&
+        dst->usage == kD3D10UsageStaging &&
         (dst->cpu_access_flags == 0 ||
-         (dst->cpu_access_flags & static_cast<uint32_t>(D3D10_CPU_ACCESS_READ)) != 0)) {
+         (dst->cpu_access_flags & kD3D10CpuAccessRead) != 0)) {
       EmitUploadLocked(hDevice, dev, dst, dst_sub.offset_bytes, dst_sub.size_bytes);
     }
 
@@ -5447,8 +5430,8 @@ void APIENTRY CopySubresourceRegion(D3D10DDI_HDEVICE hDevice,
     cmd->height = copy_height;
     uint32_t copy_flags = AEROGPU_COPY_FLAG_NONE;
     if (dst->backing_alloc_id != 0 &&
-        dst->usage == static_cast<uint32_t>(D3D10_USAGE_STAGING) &&
-        (dst->cpu_access_flags & static_cast<uint32_t>(D3D10_CPU_ACCESS_READ)) != 0) {
+        dst->usage == kD3D10UsageStaging &&
+        (dst->cpu_access_flags & kD3D10CpuAccessRead) != 0) {
       copy_flags |= AEROGPU_COPY_FLAG_WRITEBACK_DST;
     }
     cmd->flags = copy_flags;

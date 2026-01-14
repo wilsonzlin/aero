@@ -102,11 +102,23 @@ constexpr uint32_t kD3D10IaVertexInputResourceSlotCount = 16;
 constexpr uint32_t kD3D11CpuAccessWrite = 0x10000;
 constexpr uint32_t kD3D11CpuAccessRead = 0x20000;
 
+// D3D10_CPU_ACCESS_* subset (numeric values from d3d10.h). These share values
+// with the corresponding D3D11 CPU access flags.
+constexpr uint32_t kD3D10CpuAccessWrite = kD3D11CpuAccessWrite;
+constexpr uint32_t kD3D10CpuAccessRead = kD3D11CpuAccessRead;
+
 // D3D11_USAGE subset (numeric values from d3d11.h).
 constexpr uint32_t kD3D11UsageDefault = 0;
 constexpr uint32_t kD3D11UsageImmutable = 1;
 constexpr uint32_t kD3D11UsageDynamic = 2;
 constexpr uint32_t kD3D11UsageStaging = 3;
+
+// D3D10_USAGE subset (numeric values from d3d10.h). These share values with the
+// corresponding D3D11 usage constants.
+constexpr uint32_t kD3D10UsageDefault = kD3D11UsageDefault;
+constexpr uint32_t kD3D10UsageImmutable = kD3D11UsageImmutable;
+constexpr uint32_t kD3D10UsageDynamic = kD3D11UsageDynamic;
+constexpr uint32_t kD3D10UsageStaging = kD3D11UsageStaging;
 
 // D3D_FEATURE_LEVEL subset (numeric values from d3dcommon.h).
 constexpr uint32_t kD3DFeatureLevel10_0 = 0xA000;
@@ -128,6 +140,8 @@ constexpr uint32_t kD3D11FormatSupportDisplay = 0x80000;
 
 // D3D11_RESOURCE_MISC_* subset (numeric values from d3d11.h).
 constexpr uint32_t kD3D11ResourceMiscShared = 0x2;
+// Back-compat alias used by D3D10 paths (D3D10_RESOURCE_MISC_SHARED).
+constexpr uint32_t kD3D10ResourceMiscShared = kD3D11ResourceMiscShared;
 
 inline uint32_t D3D11FormatSupportFlagsFromDxgiCapsMask(uint32_t caps) {
   uint32_t support = 0;
