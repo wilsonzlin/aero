@@ -300,6 +300,18 @@ pub fn opcode_name(opcode: u32) -> Option<&'static str> {
         OPCODE_DP4 => Some("dp4"),
         OPCODE_MIN => Some("min"),
         OPCODE_MAX => Some("max"),
+        OPCODE_IABS => Some("iabs"),
+        OPCODE_INEG => Some("ineg"),
+        OPCODE_IMIN => Some("imin"),
+        OPCODE_IMAX => Some("imax"),
+        OPCODE_UMIN => Some("umin"),
+        OPCODE_UMAX => Some("umax"),
+        OPCODE_IEQ => Some("ieq"),
+        OPCODE_IGE => Some("ige"),
+        OPCODE_ILT => Some("ilt"),
+        OPCODE_INE => Some("ine"),
+        OPCODE_ULT => Some("ult"),
+        OPCODE_UGE => Some("uge"),
         OPCODE_IADDC => Some("iaddc"),
         OPCODE_UADDC => Some("uaddc"),
         OPCODE_ISUBC => Some("isubc"),
@@ -335,6 +347,7 @@ pub fn opcode_name(opcode: u32) -> Option<&'static str> {
         OPCODE_FIRSTBIT_HI => Some("firstbit_hi"),
         OPCODE_FIRSTBIT_LO => Some("firstbit_lo"),
         OPCODE_FIRSTBIT_SHI => Some("firstbit_shi"),
+        OPCODE_SYNC => Some("sync"),
         OPCODE_DCL_THREAD_GROUP => Some("dcl_thread_group"),
         OPCODE_DCL_GS_INPUT_PRIMITIVE => Some("dcl_gs_input_primitive"),
         OPCODE_DCL_GS_OUTPUT_TOPOLOGY => Some("dcl_gs_output_topology"),
@@ -375,5 +388,22 @@ mod tests {
         assert_eq!(opcode_name(OPCODE_FIRSTBIT_HI), Some("firstbit_hi"));
         assert_eq!(opcode_name(OPCODE_FIRSTBIT_LO), Some("firstbit_lo"));
         assert_eq!(opcode_name(OPCODE_FIRSTBIT_SHI), Some("firstbit_shi"));
+    }
+
+    #[test]
+    fn opcode_name_includes_integer_ops() {
+        assert_eq!(opcode_name(OPCODE_IABS), Some("iabs"));
+        assert_eq!(opcode_name(OPCODE_INEG), Some("ineg"));
+        assert_eq!(opcode_name(OPCODE_IMIN), Some("imin"));
+        assert_eq!(opcode_name(OPCODE_IMAX), Some("imax"));
+        assert_eq!(opcode_name(OPCODE_UMIN), Some("umin"));
+        assert_eq!(opcode_name(OPCODE_UMAX), Some("umax"));
+        assert_eq!(opcode_name(OPCODE_IEQ), Some("ieq"));
+        assert_eq!(opcode_name(OPCODE_IGE), Some("ige"));
+        assert_eq!(opcode_name(OPCODE_ILT), Some("ilt"));
+        assert_eq!(opcode_name(OPCODE_INE), Some("ine"));
+        assert_eq!(opcode_name(OPCODE_ULT), Some("ult"));
+        assert_eq!(opcode_name(OPCODE_UGE), Some("uge"));
+        assert_eq!(opcode_name(OPCODE_SYNC), Some("sync"));
     }
 }
