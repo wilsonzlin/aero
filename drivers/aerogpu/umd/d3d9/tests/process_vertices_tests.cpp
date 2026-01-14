@@ -1608,11 +1608,13 @@ void test_copy_xyzrhw_diffuse_infer_dest_stride_from_decl() {
   pv.DestStride = 0;
 
   // Expected result: copy the first 20 bytes of each source vertex into the
-  // destination stride. The XYZRHW fixed-function path does not clear the full
-  // destination stride, so the extra TEX0 bytes remain untouched (0xCD).
+  // destination stride. The fixed-function path zeros the full destination
+  // stride to produce deterministic output for elements not written by the
+  // source FVF (e.g. dst has TEX0 but src does not), so TEX0 is cleared.
   std::vector<uint8_t> expected = dst.storage;
   for (uint32_t i = 0; i < pv.VertexCount; ++i) {
     const size_t off = static_cast<size_t>(pv.DestIndex + i) * kDstStride;
+    std::memset(expected.data() + off, 0, kDstStride);
     std::memcpy(expected.data() + off,
                 src.storage.data() + static_cast<size_t>(pv.SrcStartIndex + i) * 20,
                 20);
