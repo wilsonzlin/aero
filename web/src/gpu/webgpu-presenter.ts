@@ -142,10 +142,8 @@ export class WebGpuPresenter {
   /** @type {"opaque" | "premultiplied"} */
   _alphaMode;
 
-  /** @type {any} */
-  _uncapturedErrorDevice = null;
-  /** @type {((ev: any) => void) | null} */
-  _onUncapturedError = null;
+  _uncapturedErrorDevice: GPUDevice | null = null;
+  _onUncapturedError: ((ev: any) => void) | null = null;
   /** @type {Set<string>} */
   _seenUncapturedErrorKeys = new Set();
 

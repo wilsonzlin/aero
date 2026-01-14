@@ -111,7 +111,7 @@ export class AeroGpuPciDevice implements PciDevice, TickableDevice {
   #cursorHotY = 0;
   #cursorWidth = 0;
   #cursorHeight = 0;
-  #cursorFormat = AerogpuFormat.Invalid;
+  #cursorFormat: number = AerogpuFormat.Invalid;
   #cursorPitchBytes = 0;
   #cursorFbGpaLo = 0;
   #cursorFbGpaHi = 0;
