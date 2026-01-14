@@ -206,9 +206,9 @@ impl core::fmt::Display for TessellationScratchOomError {
         write!(
             f,
             "tessellation scratch OOM: patch_count_total={} tess_factor_clamped={} \
- vs_out_bytes={} hs_out_bytes={} hs_patch_constants_bytes={} hs_tess_factors_bytes={} tess_metadata_bytes={} \
- expanded_vertex_bytes={} expanded_index_bytes={} indirect_args_bytes={} debug_counters_bytes={} \
- total_scratch_bytes={} scratch_per_frame_capacity={} device_max_buffer_size={}",
+vs_out_bytes={} hs_out_bytes={} hs_patch_constants_bytes={} hs_tess_factors_bytes={} tess_metadata_bytes={} \
+expanded_vertex_bytes={} expanded_index_bytes={} indirect_args_bytes={} debug_counters_bytes={} \
+total_scratch_bytes={} scratch_per_frame_capacity={} device_max_buffer_size={}",
             self.patch_count_total,
             self.tess_factor_clamped,
             self.sizes.vs_out_bytes,
@@ -305,6 +305,7 @@ impl TessellationRuntime {
         let exceeds_device_limit = sizes.vs_out_bytes > device_max_buffer_size
             || sizes.hs_out_bytes > device_max_buffer_size
             || sizes.hs_patch_constants_bytes > device_max_buffer_size
+            || sizes.hs_tess_factors_bytes > device_max_buffer_size
             || sizes.tess_metadata_bytes > device_max_buffer_size
             || sizes.expanded_vertex_bytes > device_max_buffer_size
             || sizes.expanded_index_bytes > device_max_buffer_size
@@ -578,6 +579,10 @@ mod tests {
             assert_eq!(
                 draw.hs_patch_constants.size,
                 draw.sizes.hs_patch_constants_bytes
+            );
+            assert_eq!(
+                draw.hs_tess_factors.size,
+                draw.sizes.hs_tess_factors_bytes
             );
             assert_eq!(draw.tess_metadata.size, draw.sizes.tess_metadata_bytes);
             assert_eq!(
