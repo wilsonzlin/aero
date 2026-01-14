@@ -812,7 +812,6 @@ impl PlatformInterrupts {
             return;
         };
         lapic.reset_state(apic_id);
-        Self::enable_lapic_software(lapic);
     }
     pub fn get_pending_for_apic(&self, apic_id: u8) -> Option<u8> {
         match self.mode {
@@ -1817,6 +1816,10 @@ mod tests {
         let svr_before = lapic_read_u32_for_cpu(&ints, 1, 0xF0);
         assert_ne!(svr_before & (1 << 8), 0);
 
+        // Mutate a LAPIC register and ensure INIT resets it.
+        lapic_write_u32_for_cpu(&ints, 1, 0x80, 0x70); // TPR
+        assert_eq!(lapic_read_u32_for_cpu(&ints, 1, 0x80), 0x70);
+
         // CPU0 sends INIT (level=assert) to CPU1.
         lapic_write_u32_for_cpu(&ints, 0, 0x310, (1u32) << 24); // dest=1
         lapic_write_u32_for_cpu(&ints, 0, 0x300, (5u32 << 8) | (1u32 << 14)); // INIT + level=assert
@@ -1824,9 +1827,13 @@ mod tests {
         assert!(ints.take_pending_init(1));
         assert!(!ints.take_pending_init(1));
 
-        // Destination LAPIC should be reset (SVR enable bit cleared).
+        // Destination LAPIC should be reset (TPR cleared).
+        assert_eq!(lapic_read_u32_for_cpu(&ints, 1, 0x80), 0);
+
+        // Platform keeps the target LAPIC software-enabled so external interrupts can be injected
+        // deterministically after INIT (IOAPIC/MSI delivery).
         let svr_after = lapic_read_u32_for_cpu(&ints, 1, 0xF0);
-        assert_eq!(svr_after & (1 << 8), 0);
+        assert_ne!(svr_after & (1 << 8), 0);
     }
 
     #[test]
