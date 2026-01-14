@@ -19,6 +19,20 @@ const RING_HEAD_OFFSET: u64 = offset_of!(ring::AerogpuRingHeader, head) as u64;
 const RING_TAIL_OFFSET: u64 = offset_of!(ring::AerogpuRingHeader, tail) as u64;
 const RING_HEADER_SIZE_BYTES: u64 = ring::AerogpuRingHeader::SIZE_BYTES as u64;
 
+// -----------------------------------------------------------------------------
+// Defensive caps (host readback paths)
+// -----------------------------------------------------------------------------
+//
+// `Machine::display_present` can read scanout and cursor bitmaps directly from guest memory to
+// produce a host-visible RGBA framebuffer. These reads are driven by guest-controlled registers,
+// so they must not allocate unbounded memory.
+//
+// Note: these caps apply only to the host-side "readback to Vec<u32>" helpers. The browser runtime
+// uses a separate scanout pipeline (shared scanout state + GPU worker) and has its own sizing and
+// allocation limits.
+const MAX_HOST_SCANOUT_RGBA8888_BYTES: usize = 64 * 1024 * 1024; // 16,777,216 pixels (~4K@32bpp)
+const MAX_HOST_CURSOR_RGBA8888_BYTES: usize = 4 * 1024 * 1024; // 1,048,576 pixels (~1024x1024)
+
 fn supported_features() -> u64 {
     pci::AEROGPU_FEATURE_FENCE_PAGE
         | pci::AEROGPU_FEATURE_CURSOR
@@ -90,7 +104,13 @@ impl AeroGpuScanout0State {
             .checked_add((height as u64).checked_sub(1)?.checked_mul(pitch_u64)?)?;
         last_row_gpa.checked_add(row_bytes_u64)?;
 
-        let mut out = vec![0u32; width.checked_mul(height)?];
+        let pixel_count = width.checked_mul(height)?;
+        let out_bytes = pixel_count.checked_mul(core::mem::size_of::<u32>())?;
+        if out_bytes > MAX_HOST_SCANOUT_RGBA8888_BYTES {
+            return None;
+        }
+
+        let mut out = vec![0u32; pixel_count];
         let mut row = vec![0u8; row_bytes];
 
         for y in 0..height {
@@ -230,7 +250,13 @@ impl AeroGpuCursorConfig {
             .checked_add((height as u64).checked_sub(1)?.checked_mul(pitch_u64)?)?;
         last_row_gpa.checked_add(row_bytes_u64)?;
 
-        let mut out = vec![0u32; width.checked_mul(height)?];
+        let pixel_count = width.checked_mul(height)?;
+        let out_bytes = pixel_count.checked_mul(core::mem::size_of::<u32>())?;
+        if out_bytes > MAX_HOST_CURSOR_RGBA8888_BYTES {
+            return None;
+        }
+
+        let mut out = vec![0u32; pixel_count];
         let mut row = vec![0u8; row_bytes];
 
         for y in 0..height {
