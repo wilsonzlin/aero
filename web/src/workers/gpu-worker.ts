@@ -1639,11 +1639,12 @@ function handleDeviceLost(message: string, details?: unknown, startRecovery?: bo
 
   const backend = backendKindForEvent();
   const scanoutSnap = trySnapshotScanoutState();
-  const scanoutIsWddm = scanoutSnap?.source === SCANOUT_SOURCE_WDDM;
+  const scanoutIsWddm = scanoutSnap?.source === SCANOUT_SOURCE_WDDM || (!scanoutSnap && wddmOwnsScanoutFallback);
   const enrichedDetails: Record<string, unknown> = {
     ...(details === undefined ? {} : { cause: details }),
     ...(scanoutSnap ? { scanout: scanoutSnap } : {}),
     scanout_is_wddm: scanoutIsWddm,
+    wddm_owns_scanout_fallback: wddmOwnsScanoutFallback,
     aerogpu_last_output_source: aerogpuLastOutputSource,
     aerogpu_has_last_presented_frame: !!aerogpuLastPresentedFrame,
   };
@@ -1674,7 +1675,8 @@ async function attemptRecovery(reason: string): Promise<void> {
 
   recoveriesAttempted += 1;
   const scanoutAtStart = trySnapshotScanoutState();
-  const scanoutWasWddm = scanoutAtStart?.source === SCANOUT_SOURCE_WDDM;
+  const scanoutWasWddm =
+    scanoutAtStart?.source === SCANOUT_SOURCE_WDDM || (!scanoutAtStart && wddmOwnsScanoutFallback);
   if (scanoutWasWddm) recoveriesAttemptedWddm += 1;
   emitGpuEvent({
     time_ms: performance.now(),
@@ -1686,6 +1688,7 @@ async function attemptRecovery(reason: string): Promise<void> {
       reason,
       ...(scanoutAtStart ? { scanout: scanoutAtStart } : {}),
       scanout_is_wddm: scanoutWasWddm,
+      wddm_owns_scanout_fallback: wddmOwnsScanoutFallback,
       aerogpu_last_output_source: aerogpuLastOutputSource,
       aerogpu_has_last_presented_frame: !!aerogpuLastPresentedFrame,
     },
@@ -1732,7 +1735,7 @@ async function attemptRecovery(reason: string): Promise<void> {
     await maybeSendReady();
 
     const scanoutAtEnd = trySnapshotScanoutState();
-    const scanoutIsWddm = scanoutAtEnd?.source === SCANOUT_SOURCE_WDDM;
+    const scanoutIsWddm = scanoutAtEnd?.source === SCANOUT_SOURCE_WDDM || (!scanoutAtEnd && wddmOwnsScanoutFallback);
     if (scanoutIsWddm) recoveriesSucceededWddm += 1;
 
     emitGpuEvent({
@@ -1744,6 +1747,7 @@ async function attemptRecovery(reason: string): Promise<void> {
       details: {
         ...(scanoutAtEnd ? { scanout: scanoutAtEnd } : {}),
         scanout_is_wddm: scanoutIsWddm,
+        wddm_owns_scanout_fallback: wddmOwnsScanoutFallback,
         aerogpu_last_output_source: aerogpuLastOutputSource,
         aerogpu_has_last_presented_frame: !!aerogpuLastPresentedFrame,
       },
