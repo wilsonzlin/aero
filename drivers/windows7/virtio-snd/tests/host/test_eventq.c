@@ -149,11 +149,36 @@ static void test_eventq_drain_tolerates_trailing_bytes(void)
     TEST_ASSERT(ctx.parse_failures == 0u);
 }
 
+static void test_eventq_drain_tolerates_unknown_event_types(void)
+{
+    VIRTIOSND_HOST_QUEUE q;
+    EVENTQ_TEST_CTX ctx;
+    VIRTIO_SND_EVENT evt;
+    ULONG drained;
+
+    VirtioSndHostQueueInit(&q, 8);
+    RtlZeroMemory(&ctx, sizeof(ctx));
+    RtlZeroMemory(&evt, sizeof(evt));
+
+    evt.type = 0xDEADBEEFu;
+    evt.data = 0x01020304u;
+
+    VirtioSndHostQueuePushUsed(&q, &evt, (UINT32)sizeof(evt));
+
+    drained = EventqTestDrainUsed(&q.Queue, &ctx);
+    TEST_ASSERT(drained == 1u);
+    TEST_ASSERT(ctx.calls == 1u);
+    TEST_ASSERT(ctx.parse_failures == 0u);
+    TEST_ASSERT(ctx.last_type == 0xDEADBEEFu);
+    TEST_ASSERT(ctx.last_data == 0x01020304u);
+}
+
 int main(void)
 {
     test_eventq_drain_ignores_short_messages();
     test_eventq_drain_dispatches_pcm_events();
     test_eventq_drain_tolerates_trailing_bytes();
+    test_eventq_drain_tolerates_unknown_event_types();
 
     printf("virtiosnd_eventq_tests: PASS\n");
     return 0;
