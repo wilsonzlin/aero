@@ -37,6 +37,9 @@ struct HostState {
     slow_mem_writes: u64,
     ram_size: u64,
     last_mmio: Option<MmioExit>,
+    // Test-only override used to simulate non-identity page mappings.
+    override_vpn: Option<u64>,
+    override_phys_base: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -341,7 +344,12 @@ fn define_mmu_translate(
                     let tag = (vpn ^ salt) | 1;
 
                     let is_ram = vaddr_u < caller.data().ram_size;
-                    let phys_base = vaddr_u & PAGE_BASE_MASK;
+                    let phys_base = match caller.data().override_vpn {
+                        Some(override_vpn) if override_vpn == vpn => {
+                            caller.data().override_phys_base & PAGE_BASE_MASK
+                        }
+                        _ => vaddr_u & PAGE_BASE_MASK,
+                    };
                     let flags = TLB_FLAG_READ
                         | TLB_FLAG_WRITE
                         | TLB_FLAG_EXEC
@@ -1217,6 +1225,184 @@ fn tier1_inline_tlb_cross_page_store_fastpath_permission_miss_on_second_page_cal
     assert_eq!(host_state.mmio_exit_calls, 0);
     assert_eq!(host_state.slow_mem_reads, 0);
     assert_eq!(host_state.slow_mem_writes, 0);
+}
+
+#[test]
+fn tier1_inline_tlb_cross_page_load_fastpath_handles_noncontiguous_physical_pages() {
+    let addr = 0xFF9u64;
+
+    let mut b = IrBuilder::new(0x1000);
+    let a0 = b.const_int(Width::W64, addr);
+    let v0 = b.load(Width::W64, a0);
+    b.write_reg(
+        GuestReg::Gpr {
+            reg: Gpr::Rax,
+            width: Width::W64,
+            high8: false,
+        },
+        v0,
+    );
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+
+    let wasm = Tier1WasmCodegen::new().compile_block_with_options(
+        &block,
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_cross_page_fastpath: true,
+            ..Default::default()
+        },
+    );
+    validate_wasm(&wasm);
+
+    // Match `run_wasm_inner` layout.
+    let ram_base = (JIT_CTX_PTR as u64)
+        + (JitContext::TOTAL_BYTE_SIZE as u64)
+        + u64::from(jit_ctx::TIER2_CTX_SIZE);
+
+    // 3 pages of RAM: page 0 contains the first 7 bytes of the load, while virtual page 1 is
+    // mapped to physical page 2 (0x2000).
+    let mut ram = vec![0u8; 0x3000];
+    ram[0xFF9..0x1000].copy_from_slice(&[1, 2, 3, 4, 5, 6, 7]);
+    ram[0x2000] = 8;
+
+    let total_len = ram_base as usize + ram.len();
+    let mut mem = vec![0u8; total_len];
+
+    let mut cpu_bytes = vec![0u8; abi::CPU_STATE_SIZE as usize];
+    write_cpu_to_wasm_bytes(&cpu, &mut cpu_bytes);
+    mem[CPU_PTR as usize..CPU_PTR as usize + cpu_bytes.len()].copy_from_slice(&cpu_bytes);
+
+    let ctx = JitContext {
+        ram_base,
+        tlb_salt: TLB_SALT,
+    };
+    ctx.write_header_to_mem(&mut mem, JIT_CTX_PTR as usize);
+
+    mem[ram_base as usize..ram_base as usize + ram.len()].copy_from_slice(&ram);
+
+    let pages = total_len.div_ceil(65_536) as u32;
+    let (mut store, memory, func) = instantiate(&wasm, pages, 0x3000);
+    memory.write(&mut store, 0, &mem).unwrap();
+
+    // Map VPN 1 (vaddr 0x1000..0x1FFF) to physical page 2 (paddr 0x2000..0x2FFF).
+    store.data_mut().override_vpn = Some(1);
+    store.data_mut().override_phys_base = 0x2000;
+
+    let ret = func.call(&mut store, (CPU_PTR, JIT_CTX_PTR)).unwrap();
+    assert_eq!(ret, 0x3000);
+
+    let mut got_mem = vec![0u8; total_len];
+    memory.read(&store, 0, &mut got_mem).unwrap();
+    let snap =
+        CpuSnapshot::from_wasm_bytes(&got_mem[0..abi::CPU_STATE_SIZE as usize]);
+
+    assert_eq!(snap.rip, 0x3000);
+    assert_eq!(
+        snap.gpr[Gpr::Rax.as_u8() as usize],
+        0x0807_0605_0403_0201
+    );
+
+    let host_state = *store.data();
+    assert_eq!(host_state.mmu_translate_calls, 2);
+    assert_eq!(host_state.mmio_exit_calls, 0);
+    assert_eq!(host_state.slow_mem_reads, 0);
+    assert_eq!(host_state.slow_mem_writes, 0);
+}
+
+#[test]
+fn tier1_inline_tlb_cross_page_store_fastpath_handles_noncontiguous_physical_pages() {
+    let addr = 0xFF9u64;
+
+    let mut b = IrBuilder::new(0x1000);
+    let a0 = b.const_int(Width::W64, addr);
+    let v0 = b.const_int(Width::W64, 0x0807_0605_0403_0201);
+    b.store(Width::W64, a0, v0);
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+
+    let wasm = Tier1WasmCodegen::new().compile_block_with_options(
+        &block,
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_cross_page_fastpath: true,
+            ..Default::default()
+        },
+    );
+    validate_wasm(&wasm);
+
+    // Configure a code-version table so the inline store fast-path will bump page versions.
+    let code_version_table_len = 4u32;
+    let table_ptr = u64::from(jit_ctx::TIER2_CTX_OFFSET + jit_ctx::TIER2_CTX_SIZE);
+    let table_bytes = usize::try_from(code_version_table_len)
+        .unwrap()
+        .checked_mul(4)
+        .unwrap();
+    let ram_base = table_ptr + (table_bytes as u64);
+
+    let ram_len = 0x3000usize;
+    let total_len = ram_base as usize + ram_len;
+    let mut mem = vec![0u8; total_len];
+
+    let mut cpu_bytes = vec![0u8; abi::CPU_STATE_SIZE as usize];
+    write_cpu_to_wasm_bytes(&cpu, &mut cpu_bytes);
+    mem[CPU_PTR as usize..CPU_PTR as usize + cpu_bytes.len()].copy_from_slice(&cpu_bytes);
+
+    let ctx = JitContext {
+        ram_base,
+        tlb_salt: TLB_SALT,
+    };
+    ctx.write_header_to_mem(&mut mem, JIT_CTX_PTR as usize);
+
+    mem[jit_ctx::CODE_VERSION_TABLE_PTR_OFFSET as usize
+        ..jit_ctx::CODE_VERSION_TABLE_PTR_OFFSET as usize + 4]
+        .copy_from_slice(&(table_ptr as u32).to_le_bytes());
+    mem[jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET as usize
+        ..jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET as usize + 4]
+        .copy_from_slice(&code_version_table_len.to_le_bytes());
+
+    let pages = total_len.div_ceil(65_536) as u32;
+    let (mut store, memory, func) = instantiate(&wasm, pages, 0x3000);
+    memory.write(&mut store, 0, &mem).unwrap();
+
+    store.data_mut().override_vpn = Some(1);
+    store.data_mut().override_phys_base = 0x2000;
+
+    let ret = func.call(&mut store, (CPU_PTR, JIT_CTX_PTR)).unwrap();
+    assert_eq!(ret, 0x3000);
+
+    let mut got_mem = vec![0u8; total_len];
+    memory.read(&store, 0, &mut got_mem).unwrap();
+
+    let got_ram = got_mem[ram_base as usize..ram_base as usize + ram_len].to_vec();
+    assert_eq!(&got_ram[0xFF9..0x1000], &[1, 2, 3, 4, 5, 6, 7]);
+    assert_eq!(got_ram[0x2000], 8);
+    // Ensure we really used the remapped physical page for the final byte.
+    assert_eq!(got_ram[0x1000], 0);
+
+    // Code-version table bumps should target physical pages, not virtual pages.
+    let mut table = Vec::new();
+    for i in 0..code_version_table_len {
+        let off = table_ptr as usize + (i as usize) * 4;
+        table.push(u32::from_le_bytes(got_mem[off..off + 4].try_into().unwrap()));
+    }
+    assert_eq!(table, vec![1, 0, 1, 0]);
+
+    let host_state = *store.data();
+    assert_eq!(host_state.mmio_exit_calls, 0);
+    assert_eq!(host_state.slow_mem_reads, 0);
+    assert_eq!(host_state.slow_mem_writes, 0);
+    assert_eq!(host_state.mmu_translate_calls, 2);
 }
 
 #[test]
