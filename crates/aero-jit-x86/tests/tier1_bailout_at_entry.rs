@@ -97,79 +97,83 @@ impl Interpreter<TestCpu> for MiniInterpreter {
 
 #[test]
 fn tier1_zero_progress_block_is_not_installed() {
-    let entry = 0x1000u64;
-    let invalid = tier1_common::pick_invalid_opcode(64);
+    // Ensure the higher-level Tier-1 pipeline rejects zero-progress blocks for all supported guest
+    // bitnesses (16/32/64).
+    for (i, bitness) in [16u32, 32, 64].into_iter().enumerate() {
+        let entry = 0x1000u64 + (i as u64) * 0x1000;
+        let invalid = tier1_common::pick_invalid_opcode(bitness);
 
-    // A tight loop:
-    //   <unsupported>
-    //   jmp <entry>
-    //
-    // The Tier-1 decoder treats the first instruction as `InstKind::Invalid`, so Tier-1
-    // compilation will produce an `ExitToInterpreter { next_rip: entry }` terminator with no
-    // side-effecting IR instructions. This should be treated as "non-compilable" to avoid JIT
-    // thrash.
-    let code = [invalid, 0xeb, 0xfd]; // <invalid>; JMP -3
+        // A tight loop:
+        //   <unsupported>
+        //   jmp <entry>
+        //
+        // The Tier-1 decoder treats the first instruction as `InstKind::Invalid`, so Tier-1
+        // compilation will produce an `ExitToInterpreter { next_rip: entry }` terminator with no
+        // side-effecting IR instructions. This should be treated as "non-compilable" to avoid JIT
+        // thrash.
+        let code = [invalid, 0xeb, 0xfd]; // <invalid>; JMP -3
 
-    let mut bus = SimpleBus::new(0x2000);
-    bus.load(entry, &code);
+        let mut bus = SimpleBus::new(0x4000);
+        bus.load(entry, &code);
 
-    let interpreter = MiniInterpreter {
-        bus: bus.clone(),
-        unsupported_opcode: invalid,
-    };
-    let queue = Tier1CompileQueue::new();
-    let config = JitConfig {
-        enabled: true,
-        hot_threshold: 3,
-        cache_max_blocks: 16,
-        cache_max_bytes: 0,
-        code_version_max_pages: DEFAULT_CODE_VERSION_MAX_PAGES,
-    };
-    let jit = aero_cpu_core::jit::runtime::JitRuntime::new(config, PanicBackend, queue.clone());
-    let mut dispatcher = ExecDispatcher::new(interpreter, jit);
+        let interpreter = MiniInterpreter {
+            bus: bus.clone(),
+            unsupported_opcode: invalid,
+        };
+        let queue = Tier1CompileQueue::new();
+        let config = JitConfig {
+            enabled: true,
+            hot_threshold: 3,
+            cache_max_blocks: 16,
+            cache_max_bytes: 0,
+            code_version_max_pages: DEFAULT_CODE_VERSION_MAX_PAGES,
+        };
+        let jit = aero_cpu_core::jit::runtime::JitRuntime::new(config, PanicBackend, queue.clone());
+        let mut dispatcher = ExecDispatcher::new(interpreter, jit);
 
-    let mut cpu = TestCpu { rip: entry };
+        let mut cpu = TestCpu { rip: entry };
 
-    // Run blocks until hotness triggers compilation. Keep running to ensure the
-    // request is only queued once.
-    for _ in 0..5 {
-        match dispatcher.step(&mut cpu) {
-            StepOutcome::Block {
-                tier,
-                entry_rip,
-                next_rip,
-                instructions_retired: _,
-            } => {
-                assert_eq!(tier, ExecutedTier::Interpreter);
-                assert_eq!(entry_rip, entry);
-                assert_eq!(next_rip, entry);
+        // Run blocks until hotness triggers compilation. Keep running to ensure the
+        // request is only queued once.
+        for _ in 0..5 {
+            match dispatcher.step(&mut cpu) {
+                StepOutcome::Block {
+                    tier,
+                    entry_rip,
+                    next_rip,
+                    instructions_retired: _,
+                } => {
+                    assert_eq!(tier, ExecutedTier::Interpreter);
+                    assert_eq!(entry_rip, entry);
+                    assert_eq!(next_rip, entry);
+                }
+                StepOutcome::InterruptDelivered => panic!("unexpected interrupt"),
             }
-            StepOutcome::InterruptDelivered => panic!("unexpected interrupt"),
         }
-    }
 
-    assert_eq!(queue.drain(), vec![entry]);
+        assert_eq!(queue.drain(), vec![entry]);
 
-    // Compilation should return `BailoutAtEntry` and must not install the block.
-    let mut compiler = Tier1Compiler::new(bus, PanicRegistry).with_limits(BlockLimits {
-        max_insts: 16,
-        max_bytes: 64,
-    });
+        // Compilation should return `BailoutAtEntry` and must not install the block.
+        let mut compiler = Tier1Compiler::new(bus, PanicRegistry).with_limits(BlockLimits {
+            max_insts: 16,
+            max_bytes: 64,
+        });
 
-    let res = compiler.compile_and_install(dispatcher.jit_mut(), entry, 64);
-    assert!(
-        matches!(res, Err(Tier1CompileError::BailoutAtEntry { entry_rip }) if entry_rip == entry),
-        "expected BailoutAtEntry, got {res:?}"
-    );
+        let res = compiler.compile_and_install(dispatcher.jit_mut(), entry, bitness);
+        assert!(
+            matches!(res, Err(Tier1CompileError::BailoutAtEntry { entry_rip }) if entry_rip == entry),
+            "expected BailoutAtEntry for bitness={bitness}, got {res:?}"
+        );
 
-    assert!(!dispatcher.jit_mut().is_compiled(entry));
+        assert!(!dispatcher.jit_mut().is_compiled(entry));
 
-    // Keep executing; we should stay on the interpreter path and not keep requesting compilation.
-    for _ in 0..3 {
-        match dispatcher.step(&mut cpu) {
-            StepOutcome::Block { tier, .. } => assert_eq!(tier, ExecutedTier::Interpreter),
-            StepOutcome::InterruptDelivered => panic!("unexpected interrupt"),
+        // Keep executing; we should stay on the interpreter path and not keep requesting compilation.
+        for _ in 0..3 {
+            match dispatcher.step(&mut cpu) {
+                StepOutcome::Block { tier, .. } => assert_eq!(tier, ExecutedTier::Interpreter),
+                StepOutcome::InterruptDelivered => panic!("unexpected interrupt"),
+            }
         }
+        assert!(queue.is_empty());
     }
-    assert!(queue.is_empty());
 }
