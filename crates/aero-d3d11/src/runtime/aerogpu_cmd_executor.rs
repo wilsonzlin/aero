@@ -1905,7 +1905,11 @@ impl AerogpuD3d11Executor {
             let buf = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("aerogpu_cmd legacy constants buffer"),
                 size: LEGACY_CONSTANTS_SIZE_BYTES,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                // Tests read this buffer back via `copy_buffer_to_buffer`, so it must be a copy
+                // source. This is also harmless for production use (it stays a uniform buffer).
+                usage: wgpu::BufferUsages::UNIFORM
+                    | wgpu::BufferUsages::COPY_DST
+                    | wgpu::BufferUsages::COPY_SRC,
                 mapped_at_creation: true,
             });
             {

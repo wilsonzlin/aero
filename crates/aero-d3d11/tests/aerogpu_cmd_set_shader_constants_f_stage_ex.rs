@@ -6,6 +6,7 @@ use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode,
     AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AerogpuShaderStageEx,
+    AEROGPU_STAGE_EX_MIN_ABI_MINOR,
 };
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 
@@ -13,7 +14,25 @@ const CMD_TRIANGLE_SM4: &[u8] = include_bytes!("fixtures/cmd_triangle_sm4.bin");
 
 const CMD_STREAM_SIZE_BYTES_OFFSET: usize =
     core::mem::offset_of!(ProtocolCmdStreamHeader, size_bytes);
+const CMD_STREAM_ABI_VERSION_OFFSET: usize =
+    core::mem::offset_of!(ProtocolCmdStreamHeader, abi_version);
 const CMD_HDR_SIZE_BYTES_OFFSET: usize = core::mem::offset_of!(ProtocolCmdHdr, size_bytes);
+
+fn bump_stream_abi_minor(stream: &mut [u8], min_minor: u16) {
+    let abi = u32::from_le_bytes(
+        stream[CMD_STREAM_ABI_VERSION_OFFSET..CMD_STREAM_ABI_VERSION_OFFSET + 4]
+            .try_into()
+            .expect("abi_version slice"),
+    );
+    let major = abi >> 16;
+    let minor = (abi & 0xFFFF) as u16;
+    if minor >= min_minor {
+        return;
+    }
+    let bumped = (major << 16) | (min_minor as u32);
+    stream[CMD_STREAM_ABI_VERSION_OFFSET..CMD_STREAM_ABI_VERSION_OFFSET + 4]
+        .copy_from_slice(&bumped.to_le_bytes());
+}
 
 fn insert_before_first_present(stream: &mut Vec<u8>, insert: &[u8]) {
     let mut cursor = ProtocolCmdStreamHeader::SIZE_BYTES;
@@ -126,6 +145,10 @@ fn aerogpu_cmd_set_shader_constants_f_stage_ex_fast_path_does_not_touch_compute(
         let insert_stream = insert_writer.finish();
         let insert_cmds = &insert_stream[ProtocolCmdStreamHeader::SIZE_BYTES..];
         insert_before_first_present(&mut stream, insert_cmds);
+        // The fixture command stream is ABI 1.0 (minor 0). `stage_ex` decoding is gated on ABI 1.3+
+        // to avoid misinterpreting legacy reserved fields, so bump the minor version when we splice
+        // in stage_ex commands.
+        bump_stream_abi_minor(&mut stream, AEROGPU_STAGE_EX_MIN_ABI_MINOR);
 
         let mut guest_mem = VecGuestMemory::new(0);
         exec.execute_cmd_stream(&stream, None, &mut guest_mem)
