@@ -153,9 +153,9 @@ Notes:
     - MMIO reads/writes,
     - PCI command gating (DMA gated on Bus Master Enable via `set_pci_command()`),
     - a non-time-advancing poll hook (`poll()`) that drains queued event TRBs into the guest event ring,
-    - INTx IRQ level (`irq_asserted()` mirrors `XhciController::irq_level()` / USBSTS.EINT), and
-    - deterministic snapshot/restore (controller state + a tick counter, plus optional WebUSB
-      passthrough device state).
+    - INTx IRQ level (`irq_asserted()` mirrors `XhciController::irq_level()`), and
+    - deterministic snapshot/restore (controller state + tick counter, plus WebUSB device state when
+      connected).
 - The IRQ line observed by the guest depends on platform routing (PIRQ swizzle); see [`docs/pci-device-compatibility.md`](./pci-device-compatibility.md) and [`docs/irq-semantics.md`](./irq-semantics.md).
 - `aero_machine::Machine` does not yet expose an xHCI controller by default (today it wires UHCI for
   USB). The PC platform (`crates/aero-pc-platform`) can expose xHCI behind the
@@ -202,12 +202,13 @@ rather than a complete xHCI.
     - A small xHCI extended capability list (xECP), including:
       - USB Legacy Support (BIOS owned cleared, OS owned set), and
       - Supported Protocol (USB 2.0 + speed IDs) sized to `port_count`.
-    - Operational registers (subset): USBCMD, USBSTS, DNCTRL, CRCR, DCBAAP, CONFIG.
-    - Runtime registers (subset): MFINDEX, and Interrupter 0 regs (IMAN/ERST/ERDP).
+    - Operational registers (subset): USBCMD, USBSTS, PAGESIZE, DNCTRL, CRCR, DCBAAP, CONFIG.
+    - Runtime registers (subset): MFINDEX, and Interrupter 0 regs (IMAN/IMOD/ERST/ERDP).
   - DBOFF/RTSOFF report realistic offsets. The doorbell array is **partially** implemented:
     - command ring doorbell (doorbell 0) is latched; while the controller is running it triggers
       bounded command ring processing (`No-Op`, `Enable Slot`, `Disable Slot`, `Address Device`,
-      `Configure Endpoint`, `Evaluate Context`, and a minimal subset of endpoint commands) and queues
+      `Configure Endpoint`, `Evaluate Context`, `Stop Endpoint`, `Reset Endpoint`,
+      `Set TR Dequeue Pointer`; most other commands complete with TRB Error) and queues
       `Command Completion Event` TRBs.
     - device endpoint doorbells are latched and can drive a bounded endpoint-0 control transfer
       executor (Setup/Data/Status TRBs) when the controller is ticked.
@@ -234,16 +235,14 @@ rather than a complete xHCI.
     (`XhciController::tick_1ms_and_service_event_ring`).
   - `poll()` drains any queued event TRBs into the guest event ring (`XhciController::service_event_ring`);
     DMA is gated on BME.
-  - WebUSB passthrough hooks (`set_connected`, `drain_actions`, `push_completion`, `reset`) used by the
-    web I/O worker to attach/detach a passthrough device behind a fixed xHCI root port.
+  - WebUSB passthrough device APIs (`set_connected`, `drain_actions`, `push_completion`, `reset`,
+    `pending_summary`). The passthrough device is attached to a reserved xHCI root port (currently
+    root port index `1`).
   - `irq_asserted()` reflects `XhciController::irq_level()` (USBSTS.EINT / interrupter pending).
   - Optional host-side topology mutation APIs for passthrough HID/hubs (`attach_hub`,
     `detach_at_path`, `attach_webhid_device`, `attach_usb_hid_passthrough_device`).
-  - Optional WebUSB passthrough device APIs (`set_connected`, `drain_actions`, `push_completion`,
-    `reset`, `pending_summary`). The passthrough device is attached to a reserved xHCI root port
-    (currently root port index `1`).
-  - Deterministic snapshot/restore of the controller state + tick counter (+ optional WebUSB device
-    state when connected).
+  - Deterministic snapshot/restore of controller state + tick counter (and WebUSB device state when
+    connected).
 
 These are **not** full xHCI implementations. In particular, command ring coverage is still incomplete
 (bounded to a small subset of commands), and transfer execution for non-control endpoints (bulk/interrupt)
@@ -264,12 +263,12 @@ These are used by tests and by higher-level “transfer engine” harnesses.
 `crates/aero-usb/src/xhci/` includes a few early building blocks that model **parts** of xHCI
 command/event behavior:
 
-- `XhciController::{set_command_ring,process_command_ring}`: a command ring processor that can
-  consume a guest command ring (via `RingCursor`) and queue `Command Completion Event` TRBs for a
-  small subset of commands (slot + endpoint management used during bring-up, including `No-Op`,
-  `Enable Slot`, `Disable Slot`, `Address Device`, `Configure Endpoint`, `Evaluate Context`, and a
-  minimal subset of endpoint commands). It is used by unit tests and by the guest-visible MMIO path
-  (CRCR + doorbell 0). These events are delivered to the guest only once the event ring is
+- `XhciController::{set_command_ring,process_command_ring}`: command ring processing used by unit
+  tests and by the guest-visible MMIO path (CRCR + doorbell 0). It consumes a guest command ring
+  (via `RingCursor`) and queues `Command Completion Event` TRBs for a small subset of commands used
+  during bring-up: `No-Op`, `Enable Slot`, `Disable Slot`, `Address Device`, `Configure Endpoint`,
+  `Evaluate Context`, and endpoint commands `Stop Endpoint`, `Reset Endpoint`, `Set TR Dequeue Pointer`.
+  These events are delivered to the guest only once the event ring is
   configured and `service_event_ring` is called (e.g. via the WASM bridge `step_frames()`/`poll()`
   hook).
 - `command_ring::CommandRingProcessor`: parses a guest command ring and writes completion events into
