@@ -277,6 +277,7 @@ Minimum supported commands:
 - `aerogpu_dbgctl --map-shared-handle HANDLE`  
   Calls the KMD escape `AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE` to map a process-local Win32 shared handle to a stable 32-bit **debug token**.
   Note: this is *not* the `u64 share_token` used by `EXPORT_SHARED_SURFACE` / `IMPORT_SHARED_SURFACE`.
+  Note: this expects a real NT handle to a section object (common for DXGI shared handles). Token-style shared handles cannot be mapped.
   Also note: the handle must be valid in the `aerogpu_dbgctl.exe` process (inherit/duplicate the handle into this process if needed).
   Note: this escape is disabled by default; see “Escape gating / security gating” below.
 
