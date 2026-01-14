@@ -3402,8 +3402,8 @@ def main() -> None:
         # Most Win7 virtio INFs include a strict (no SUBSYS) Vendor/Device+REV match so
         # binding remains revision-gated even if subsystem IDs are absent/ignored.
         #
-        # The canonical virtio-input INF is intentionally SUBSYS-only to avoid overlapping
-        # with the tablet INF; the opt-in legacy alias INF provides the strict fallback.
+        # virtio-input is validated separately because its canonical INF intentionally includes
+        # both SUBSYS-qualified keyboard/mouse IDs and a strict fallback HWID.
         if device_name != "virtio-input" and strict_hwid.upper() not in hwids_upper:
             errors.append(
                 format_error(
