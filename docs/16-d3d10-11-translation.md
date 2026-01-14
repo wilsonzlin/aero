@@ -859,6 +859,55 @@ The patch input mapping is:
 Adjacency topologies use D3D-defined vertex ordering (`lineadj`/`triadj`) and are out of scope for
 initial bring-up (see limitations above).
 
+#### 2.1.1c) GS input register payload layout (optional; matches in-tree `gs_translate`)
+
+The compute-emulated GS needs access to the previous stage’s per-vertex outputs for each input
+primitive. One implementation strategy (used by the in-tree SM4 GS→WGSL translator in
+`crates/aero-d3d11/src/runtime/gs_translate.rs`) is to pre-pack the GS inputs into a dense “register
+file” buffer that the translated GS code can index with a simple formula.
+
+**Layout**
+
+`gs_inputs` is a read-only storage buffer of `vec4<f32>` registers:
+
+```wgsl
+struct Vec4F32Buffer { data: array<vec4<f32>>; }
+@group(G) @binding(B) var<storage, read> gs_inputs: Vec4F32Buffer;
+```
+
+Flattened indexing (normative, matches `gs_translate`):
+
+```
+idx = ((prim_id * GS_INPUT_VERTS_PER_PRIM + vertex_in_prim) * GS_INPUT_REG_COUNT + reg)
+```
+
+Where:
+
+- `prim_id` is the GS `SV_PrimitiveID` (`0..input_prim_count`).
+- `vertex_in_prim` is the vertex index within the input primitive (`0..GS_INPUT_VERTS_PER_PRIM`),
+  where `GS_INPUT_VERTS_PER_PRIM` depends on the GS declared input primitive:
+  - point: 1
+  - line: 2
+  - triangle: 3
+  - lineadj: 4
+  - triadj: 6
+- `reg` is the input register index within the GS (`v#` register index).
+- `GS_INPUT_REG_COUNT` is the number of input registers packed per vertex. A safe value is:
+  - `max_used_v_reg + 1`, where `max_used_v_reg` is the maximum `v#` register index referenced by
+    the GS instruction stream.
+
+**Populating `gs_inputs`**
+
+To populate `gs_inputs`, the runtime must:
+
+1. assemble input primitives (`primitive_id` → vertex invocations) according to the IA topology (see
+   section 2.1.1b), and
+2. for each vertex in the assembled primitive, copy the required output registers from the previous
+   stage’s output register buffer (`vs_out_regs` or DS output regs) into the packed `gs_inputs`.
+
+Note: an alternative design is to have the translated GS code read directly from the upstream stage
+register buffer, eliminating the extra packing step. This is a follow-up optimization.
+
 #### 2.1.2) Tessellation sizing (P2a: tri domain, integer partitioning; conservative)
 
 Tessellation output sizes depend on **tess factors** produced by the HS patch-constant function, so
