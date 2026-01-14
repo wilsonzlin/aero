@@ -461,6 +461,43 @@ fn bench_hotness_profile(c: &mut Criterion) {
         });
     });
 
+    // `mark_requested` steady-state: the entry is already in the requested set, so we just update
+    // the counter entry's `last_hit` timestamp.
+    group.bench_function("mark_requested_existing", |b| {
+        let mut profile = HotnessProfile::new(32);
+        let rip = 0x5000u64;
+        profile.record_hit(rip, false);
+        profile.mark_requested(rip);
+
+        b.iter(|| {
+            for _ in 0..OPS_PER_ITER {
+                profile.mark_requested(black_box(rip));
+            }
+            black_box(profile.counter(rip));
+        });
+    });
+
+    // `mark_requested` under capacity pressure: each call inserts a new requested RIP and forces an
+    // eviction.
+    const MARK_EVICT_OPS_PER_ITER: usize = 256;
+    group.throughput(Throughput::Elements(MARK_EVICT_OPS_PER_ITER as u64));
+    group.bench_function("mark_requested_evict", |b| {
+        const CAPACITY: usize = 256;
+        let mut profile = HotnessProfile::new_with_capacity(32, CAPACITY);
+        for i in 0..CAPACITY {
+            profile.record_hit(i as u64, false);
+        }
+
+        let mut next_rip = CAPACITY as u64;
+        b.iter(|| {
+            for _ in 0..MARK_EVICT_OPS_PER_ITER {
+                profile.mark_requested(black_box(next_rip));
+                next_rip = next_rip.wrapping_add(1);
+            }
+            black_box(profile.len());
+        });
+    });
+
     // Capacity pressure path: insert new RIPs once the internal counter table is full.
     //
     // This exercises the profile's eviction logic (victim selection + HashMap/HashSet removal) and
