@@ -142,9 +142,23 @@ You can also use `aero-virtio-selftest.exe`:
   - Host (best-effort, global): `-VirtioMsixVectors N` / `--virtio-msix-vectors N`
   - Host (best-effort, virtio-net only): `-VirtioNetVectors N` / `--virtio-net-vectors N`
   - Host (hard requirement): `-RequireVirtioNetMsix` / `--require-virtio-net-msix`
-- See `../tests/guest-selftest/README.md` for how to build/run the tool.
+  - See `../tests/guest-selftest/README.md` for how to build/run the tool.
 
 See also: [`docs/windows/virtio-pci-modern-interrupt-debugging.md`](../../../docs/windows/virtio-pci-modern-interrupt-debugging.md).
+
+### TX cancellation diagnostics (DBG builds)
+
+When built with `DBG`, the miniport tracks how many sends were cancelled at each stage of the TX pipeline:
+
+- `before_sg`: cancelled while awaiting NDIS SG mapping (`MiniportCancelSend` hit while the request is in `TxAwaitingSgList`)
+- `after_sg`: cancelled after SG mapping completed but before submission to the virtqueue (`TxPendingList`)
+- `after_submit`: cancellation requested after the TX was already submitted to the device (`TxSubmittedList`, best-effort only)
+
+These counters are printed during shutdown/teardown (`AerovNetVirtioStop`) as:
+
+```
+aero_virtio_net: tx cancel stats: before_sg=<n> after_sg=<n> after_submit=<n>
+```
 
 ## Files
 
