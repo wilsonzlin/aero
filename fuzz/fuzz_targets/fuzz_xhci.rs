@@ -161,6 +161,33 @@ fn biased_offset(u: &mut Unstructured<'_>, port_count: usize) -> u64 {
     }
 }
 
+fn biased_paddr(u: &mut Unstructured<'_>) -> u64 {
+    let sel: u8 = u.arbitrary().unwrap_or(0);
+    // ~75% pick a known structure base; otherwise allow arbitrary offsets in RAM.
+    let base = if sel & 0b11 != 0 {
+        match sel % 11 {
+            0 => DCBAA_BASE,
+            1 => DEV_CTX_BASE,
+            2 => INPUT_CTX_BASE,
+            3 => CONFIG_INPUT_CTX_BASE,
+            4 => CMD_RING_BASE,
+            5 => EVENT_RING_BASE,
+            6 => ERST_BASE,
+            7 => EP0_TR_BASE,
+            8 => EP1_TR_BASE,
+            9 => EP0_BUF_BASE,
+            _ => EP1_BUF_BASE,
+        }
+    } else {
+        u.int_in_range(0u64..=(MEM_SIZE as u64).saturating_sub(1))
+            .unwrap_or(0)
+    };
+
+    let off: u16 = u.arbitrary().unwrap_or(0);
+    let paddr = base.saturating_add(u64::from(off) & 0x1ff);
+    paddr.min((MEM_SIZE as u64).saturating_sub(1))
+}
+
 fn seed_controller_state(bus: &mut FuzzBus, xhci: &mut XhciController) {
     // --- Guest memory structures ---
     //
@@ -637,7 +664,7 @@ fuzz_target!(|data: &[u8]| {
 
     for _ in 0..ops {
         let tag: u8 = u.arbitrary().unwrap_or(0);
-        match tag % 11 {
+        match tag % 12 {
             0 | 1 | 2 => {
                 let offset = biased_offset(&mut u, port_count);
                 let size = decode_size(tag >> 3);
@@ -733,6 +760,14 @@ fuzz_target!(|data: &[u8]| {
                     xhci.mmio_write(db1, 4, 1);
                     xhci.tick_1ms(&mut bus);
                 }
+            }
+            11 => {
+                // Mutate guest physical memory backing the rings/contexts. This approximates guest
+                // software updating descriptors/TRBs between ticks.
+                let addr = biased_paddr(&mut u);
+                let len: usize = u.int_in_range(0usize..=64).unwrap_or(0);
+                let bytes = u.bytes(len).unwrap_or(&[]);
+                bus.write_physical(addr, bytes);
             }
             _ => {}
         }
