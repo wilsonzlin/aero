@@ -237,6 +237,72 @@ fn flag_elimination_clears_overwritten_flags() {
 }
 
 #[test]
+fn flag_elimination_keeps_flags_live_across_guard_code_version_exit() {
+    // Regression test: `Instr::GuardCodeVersion` can exit/return control to the runtime (like
+    // `Guard`/`SideExit`), so flags computed before it are architecturally observable on exit.
+    //
+    // A bug in `flag_elim` treated `GuardCodeVersion` like a non-exiting instruction and could
+    // incorrectly drop earlier flag writes, causing mismatched RFLAGS after invalidation.
+    let trace = TraceIr {
+        prologue: vec![],
+        body: vec![
+            Instr::Const {
+                dst: v(0),
+                value: u64::MAX,
+            },
+            Instr::Const { dst: v(1), value: 1 },
+            // This addition sets CF, PF and ZF (result = 0), and clears the other ALU flags.
+            Instr::BinOp {
+                dst: v(2),
+                op: BinOp::Add,
+                lhs: Operand::Value(v(0)),
+                rhs: Operand::Value(v(1)),
+                flags: FlagSet::ALU,
+            },
+            Instr::StoreReg {
+                reg: Gpr::Rax,
+                src: Operand::Value(v(2)),
+            },
+            Instr::GuardCodeVersion {
+                page: 0,
+                expected: 1,
+                exit_rip: 0x9999,
+            },
+        ],
+        // GuardCodeVersion is allowed in loop bodies; using a loop trace here ensures the IR is
+        // considered valid by the verifier while still exercising an early-exit boundary.
+        kind: TraceKind::Loop,
+    };
+
+    let mut env = RuntimeEnv::default();
+    env.page_versions.set_version(0, 0); // force invalidation
+
+    let mut baseline_state = T2State::default();
+    baseline_state.cpu.rflags = aero_jit_x86::abi::RFLAGS_RESERVED1;
+    let mut opt_state = baseline_state.clone();
+
+    let mut bus0 = SimpleBus::new(256);
+    let mut bus1 = bus0.clone();
+
+    let base = run_trace(&trace, &env, &mut bus0, &mut baseline_state, 1);
+    assert_eq!(base.exit, RunExit::Invalidate { next_rip: 0x9999 });
+    let expected_rflags = aero_jit_x86::abi::RFLAGS_RESERVED1
+        | (1u64 << Flag::Cf.rflags_bit())
+        | (1u64 << Flag::Pf.rflags_bit())
+        | (1u64 << Flag::Af.rflags_bit())
+        | (1u64 << Flag::Zf.rflags_bit());
+    assert_eq!(baseline_state.cpu.rflags, expected_rflags);
+
+    let mut optimized = trace.clone();
+    optimize_trace(&mut optimized, &OptConfig::default());
+
+    let opt = run_trace(&optimized, &env, &mut bus1, &mut opt_state, 1);
+    assert_eq!(opt.exit, base.exit);
+    assert_eq!(opt_state, baseline_state);
+    assert_eq!(bus0.mem(), bus1.mem());
+}
+
+#[test]
 fn cse_removes_duplicate_expressions() {
     let mut trace = TraceIr {
         prologue: vec![],
