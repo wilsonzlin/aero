@@ -31,6 +31,14 @@ async function callMaybeAsync(fn: (...args: unknown[]) => unknown, thisArg: unkn
   await Promise.resolve(fn.apply(thisArg, args));
 }
 
+function setAhciPort0DiskOverlayRef(machine: MachineHandle, base: string, overlay: string): void {
+  const setRef =
+    machine.set_ahci_port0_disk_overlay_ref ??
+    (machine as unknown as { setAhciPort0DiskOverlayRef?: unknown }).setAhciPort0DiskOverlayRef;
+  if (typeof setRef !== "function") return;
+  (setRef as (base: string, overlay: string) => void).call(machine, base, overlay);
+}
+
 async function tryReadAerosparseBlockSizeBytesFromOpfs(path: string): Promise<number | null> {
   if (!path) return null;
   // In CI/unit tests there is no `navigator` / OPFS environment. Treat this as best-effort.
@@ -162,7 +170,7 @@ async function attachHdd(machine: MachineHandle, plan: MachineBootDiskPlan, meta
       (machine as unknown as { setDiskAerosparOpfsOpen?: unknown }).setDiskAerosparOpfsOpen;
     if (typeof aerosparOpen === "function") {
       await callMaybeAsync(aerosparOpen as (...args: unknown[]) => unknown, machine, [plan.opfsPath]);
-      machine.set_ahci_port0_disk_overlay_ref?.(plan.opfsPath, "");
+      setAhciPort0DiskOverlayRef(machine, plan.opfsPath, "");
       return;
     }
     // Newer WASM builds can open aerosparse disks via the generic OPFS existing open path when an
@@ -178,7 +186,7 @@ async function attachHdd(machine: MachineHandle, plan: MachineBootDiskPlan, meta
       machine.set_disk_opfs_existing ?? (machine as unknown as { setDiskOpfsExisting?: unknown }).setDiskOpfsExisting;
     if (typeof diskExisting === "function" && diskExisting.length >= 2) {
       await callMaybeAsync(diskExisting as (...args: unknown[]) => unknown, machine, [plan.opfsPath, "aerospar"]);
-      machine.set_ahci_port0_disk_overlay_ref?.(plan.opfsPath, "");
+      setAhciPort0DiskOverlayRef(machine, plan.opfsPath, "");
       return;
     }
     throw new Error(
@@ -217,7 +225,7 @@ async function attachHdd(machine: MachineHandle, plan: MachineBootDiskPlan, meta
     machine.set_disk_opfs_existing ?? (machine as unknown as { setDiskOpfsExisting?: unknown }).setDiskOpfsExisting;
   if (typeof diskExisting === "function") {
     await callMaybeAsync(diskExisting as (...args: unknown[]) => unknown, machine, [plan.opfsPath]);
-    machine.set_ahci_port0_disk_overlay_ref?.(plan.opfsPath, "");
+    setAhciPort0DiskOverlayRef(machine, plan.opfsPath, "");
     return;
   }
   throw new Error(

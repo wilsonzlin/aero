@@ -205,6 +205,30 @@ describe("runtime/machine_disk_attach (Machine attach method selection)", () => 
     expect(set_ahci_port0_disk_overlay_ref).toHaveBeenCalledWith(plan.opfsPath, "");
   });
 
+  it("supports camelCase Machine.setAhciPort0DiskOverlayRef for fallback overlay ref setting", async () => {
+    const meta = hddMetaRaw();
+    const plan = planMachineBootDiskAttachment(meta, "hdd");
+
+    const calls: string[] = [];
+    const set_disk_opfs_existing = vi.fn(async (_path: string) => {
+      calls.push("attach");
+    });
+    const setAhciPort0DiskOverlayRef = vi.fn((_base: string, _overlay: string) => {
+      calls.push("set-ref");
+    });
+
+    const machine = {
+      set_disk_opfs_existing,
+      setAhciPort0DiskOverlayRef,
+    } as unknown as MachineHandle;
+
+    await attachMachineBootDisk(machine, "hdd", meta);
+
+    expect(set_disk_opfs_existing).toHaveBeenCalledWith(plan.opfsPath);
+    expect(setAhciPort0DiskOverlayRef).toHaveBeenCalledWith(plan.opfsPath, "");
+    expect(calls).toEqual(["attach", "set-ref"]);
+  });
+
   it("falls back to set_disk_opfs_existing_and_set_overlay_ref when set_primary_hdd_opfs_existing is unavailable", async () => {
     const meta = hddMetaRaw();
     const plan = planMachineBootDiskAttachment(meta, "hdd");
