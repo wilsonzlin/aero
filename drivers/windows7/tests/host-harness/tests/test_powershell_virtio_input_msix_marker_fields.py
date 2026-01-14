@@ -14,12 +14,12 @@ class PowerShellVirtioInputMsixMarkerFieldsTests(unittest.TestCase):
         self.text = ps_path.read_text(encoding="utf-8", errors="replace")
 
     def _extract_function_text(self, name: str) -> str:
-        m = re.search(rf"(?m)^function\s+{re.escape(name)}\b", self.text)
+        m = re.search(rf"(?m)^\s*function\s+{re.escape(name)}\b", self.text)
         self.assertIsNotNone(m, f"missing PowerShell function {name}")
         assert m is not None
         start = m.start()
 
-        m2 = re.search(r"(?m)^function\s+", self.text[m.end() :])
+        m2 = re.search(r"(?m)^\s*function\s+", self.text[m.end() :])
         end = len(self.text) if m2 is None else (m.end() + m2.start())
         return self.text[start:end]
 
@@ -40,4 +40,3 @@ class PowerShellVirtioInputMsixMarkerFieldsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

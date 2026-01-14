@@ -16,12 +16,12 @@ class PowerShellVirtioNetMsixMarkerFieldsTests(unittest.TestCase):
     def _extract_function_text(self, name: str) -> str:
         # We can't execute PowerShell in CI, so tests validate behavior by inspecting the script text.
         # To avoid false positives (matching another function), extract the target function body.
-        m = re.search(rf"(?m)^function\s+{re.escape(name)}\b", self.text)
+        m = re.search(rf"(?m)^\s*function\s+{re.escape(name)}\b", self.text)
         self.assertIsNotNone(m, f"missing PowerShell function {name}")
         assert m is not None
         start = m.start()
 
-        m2 = re.search(r"(?m)^function\s+", self.text[m.end() :])
+        m2 = re.search(r"(?m)^\s*function\s+", self.text[m.end() :])
         end = len(self.text) if m2 is None else (m.end() + m2.start())
         return self.text[start:end]
 
