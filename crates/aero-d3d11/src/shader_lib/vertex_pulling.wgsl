@@ -307,6 +307,13 @@ fn ia_load_r16_uint(slot: u32, vertex_index: u32, element_offset_bytes: u32) -> 
   return packed & 0xffffu;
 }
 
+// DXGI_FORMAT_R16_SINT
+fn ia_load_r16_sint(slot: u32, vertex_index: u32, element_offset_bytes: u32) -> i32 {
+  let addr = ia_vertex_byte_addr(slot, vertex_index, element_offset_bytes);
+  let packed = ia_load_u32(slot, addr);
+  return (bitcast<i32>(packed << 16u)) >> 16u;
+}
+
 // DXGI_FORMAT_R16G16_UINT
 fn ia_load_r16g16_uint(slot: u32, vertex_index: u32, element_offset_bytes: u32) -> vec2<u32> {
   let addr = ia_vertex_byte_addr(slot, vertex_index, element_offset_bytes);
@@ -314,6 +321,15 @@ fn ia_load_r16g16_uint(slot: u32, vertex_index: u32, element_offset_bytes: u32) 
   let x = packed & 0xffffu;
   let y = packed >> 16u;
   return vec2<u32>(x, y);
+}
+
+// DXGI_FORMAT_R16G16_SINT
+fn ia_load_r16g16_sint(slot: u32, vertex_index: u32, element_offset_bytes: u32) -> vec2<i32> {
+  let addr = ia_vertex_byte_addr(slot, vertex_index, element_offset_bytes);
+  let packed = ia_load_u32(slot, addr);
+  let lo = (bitcast<i32>(packed << 16u)) >> 16u;
+  let hi = bitcast<i32>(packed) >> 16u;
+  return vec2<i32>(lo, hi);
 }
 
 // DXGI_FORMAT_R16G16B16A16_UINT
@@ -326,4 +342,16 @@ fn ia_load_r16g16b16a16_uint(slot: u32, vertex_index: u32, element_offset_bytes:
   let x1 = p1 & 0xffffu;
   let y1 = p1 >> 16u;
   return vec4<u32>(x0, y0, x1, y1);
+}
+
+// DXGI_FORMAT_R16G16B16A16_SINT
+fn ia_load_r16g16b16a16_sint(slot: u32, vertex_index: u32, element_offset_bytes: u32) -> vec4<i32> {
+  let addr = ia_vertex_byte_addr(slot, vertex_index, element_offset_bytes);
+  let p0 = ia_load_u32(slot, addr + 0u);
+  let p1 = ia_load_u32(slot, addr + 4u);
+  let lo0 = (bitcast<i32>(p0 << 16u)) >> 16u;
+  let hi0 = bitcast<i32>(p0) >> 16u;
+  let lo1 = (bitcast<i32>(p1 << 16u)) >> 16u;
+  let hi1 = bitcast<i32>(p1) >> 16u;
+  return vec4<i32>(lo0, hi0, lo1, hi1);
 }
