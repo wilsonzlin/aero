@@ -227,6 +227,8 @@ When `DL` is a CD drive number (`0xE0..=0xEF`), Aero’s BIOS implements a minim
 |---:|---|---|
 | `00h` | Reset disk system | Supported. |
 | `01h` | Get status of last operation | Supported. |
+| `03h` | Write sectors (CHS) | Not supported; returns write-protected (`CF=1`, `AH=03h`). |
+| `05h` | Format track (CHS) | Not supported; returns write-protected (`CF=1`, `AH=03h`). |
 | `15h` | Get disk type | Supported; reports presence and returns sector count in **2048-byte sectors**. |
 | `41h` | Extensions check (EDD) | Supported; reports EDD 3.0 and `42h`+`48h` support. |
 | `42h` | Extended read (DAP) | Supported (read-only). For CD drives, `LBA` + `count` are in **2048-byte sectors**. |
