@@ -109,7 +109,7 @@ For the full-system `Machine` wrapper, synthetic USB HID injection is available 
   - motion: `Machine.inject_usb_hid_mouse_move(dx, dy)` (`dy > 0` = down)
   - buttons: `Machine.inject_usb_hid_mouse_buttons(mask)` (low bits match DOM `MouseEvent.buttons`)
   - wheel: `Machine.inject_usb_hid_mouse_wheel(delta)` (`delta > 0` = wheel up)
-  - horizontal wheel: `Machine.inject_usb_hid_mouse_hwheel(delta)` (`delta > 0` = wheel right)
+  - horizontal wheel: `Machine.inject_usb_hid_mouse_hwheel(delta)` (`delta > 0` = wheel right / AC Pan)
   - combined: `Machine.inject_usb_hid_mouse_wheel2(wheel, hwheel)` (single report)
 - Gamepad: `Machine.inject_usb_hid_gamepad_report(packed_lo, packed_hi)` (matches `web/src/input/gamepad.ts` packing)
 
@@ -121,7 +121,7 @@ In the production worker runtime, input is typically translated into USB HID rep
   - motion: `UsbHidBridge.mouse_move(dx, dy)` (`dy > 0` = down)
   - buttons: `UsbHidBridge.mouse_buttons(mask)` (low bits match DOM `MouseEvent.buttons`)
   - wheel: `UsbHidBridge.mouse_wheel(delta)` (`delta > 0` = wheel up)
-  - horizontal wheel: `UsbHidBridge.mouse_hwheel(delta)` (`delta > 0` = wheel right; optional for older WASM builds)
+  - horizontal wheel: `UsbHidBridge.mouse_hwheel(delta)` (`delta > 0` = wheel right / AC Pan; optional for older WASM builds)
   - combined: `UsbHidBridge.mouse_wheel2(wheel, hwheel)` (single report; optional for older WASM builds)
 - Gamepad: `UsbHidBridge.gamepad_report(packed_lo, packed_hi)` (matches `web/src/input/gamepad.ts` packing)
 
@@ -955,7 +955,7 @@ Current implementation details:
   available) and then attaches four
   fixed "synthetic" USB HID devices behind it:
   - hub port 1: USB keyboard (boot protocol)
-  - hub port 2: USB mouse (boot protocol + wheel + horizontal wheel / AC Pan)
+  - hub port 2: USB mouse (boot protocol; report protocol includes wheel + horizontal wheel / AC Pan)
   - hub port 3: USB gamepad (Aero's fixed 8-byte report)
   - hub port 4: USB consumer-control (media keys)
   - See: `web/src/usb/uhci_external_hub.ts`, `web/src/workers/io.worker.ts`
