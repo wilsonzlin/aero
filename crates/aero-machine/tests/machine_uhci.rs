@@ -1,5 +1,6 @@
 #![cfg(not(target_arch = "wasm32"))]
 
+use core::any::Any;
 use aero_devices::pci::profile::USB_EHCI_ICH9;
 use aero_devices::pci::profile::USB_UHCI_PIIX3;
 use aero_devices::usb::ehci::regs as ehci_regs;
@@ -303,6 +304,53 @@ fn machine_synthetic_usb_hid_consumer_injection_produces_report() {
         other => panic!("expected consumer report data, got {other:?}"),
     };
     assert_eq!(report, vec![0xe9, 0x00]);
+}
+
+#[test]
+fn machine_synthetic_usb_hid_does_not_overwrite_root_port0_when_occupied() {
+    let cfg = MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_uhci: true,
+        enable_synthetic_usb_hid: true,
+        // Keep the machine minimal/deterministic for this topology test.
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        ..Default::default()
+    };
+
+    let mut m = Machine::new(cfg).unwrap();
+
+    // Replace the synthetic external hub (normally on root port 0) with a host-attached device.
+    let uhci = m.uhci().expect("UHCI device should exist");
+    uhci.borrow_mut()
+        .controller_mut()
+        .hub_mut()
+        .attach(0, Box::new(UsbHidKeyboardHandle::new()));
+
+    // Reset should not clobber host-attached devices on root port 0.
+    m.reset();
+
+    let uhci = m.uhci().expect("UHCI device should exist");
+    let uhci_ref = uhci.borrow();
+    let dev0 = uhci_ref
+        .controller()
+        .hub()
+        .port_device(0)
+        .expect("root port 0 should remain occupied across reset");
+
+    assert!(
+        (dev0.model() as &dyn Any).is::<UsbHidKeyboardHandle>(),
+        "expected root port 0 to retain the host-attached device"
+    );
+    assert!(
+        dev0.as_hub().is_none(),
+        "expected root port 0 to not be replaced by the synthetic external hub"
+    );
 }
 
 #[test]
