@@ -1993,6 +1993,37 @@ fn sm5_uav_and_raw_buffer_opcode_constants_match_d3d11_tokenized_format() {
     assert_eq!(OPCODE_AND, 0x71);
     assert_eq!(OPCODE_OR, 0x72);
     assert_eq!(OPCODE_USHR, 0x73);
+    // Compare opcodes must not overlap the integer/bitwise opcode range; the decoder relies on
+    // unique opcode IDs for dispatch.
+    let int_bitwise_opcodes = [
+        OPCODE_IADD,
+        OPCODE_ISUB,
+        OPCODE_IMUL,
+        OPCODE_AND,
+        OPCODE_OR,
+        OPCODE_XOR,
+        OPCODE_NOT,
+        OPCODE_ISHL,
+        OPCODE_ISHR,
+        OPCODE_USHR,
+    ];
+    let compare_opcodes = [
+        OPCODE_IEQ,
+        OPCODE_INE,
+        OPCODE_ILT,
+        OPCODE_IGE,
+        OPCODE_ULT,
+        OPCODE_UGE,
+    ];
+    for (i, &opcode) in compare_opcodes.iter().enumerate() {
+        assert!(
+            !int_bitwise_opcodes.contains(&opcode),
+            "compare opcode {opcode:#x} overlaps integer/bitwise opcode table"
+        );
+        for &other in &compare_opcodes[..i] {
+            assert_ne!(opcode, other, "duplicate compare opcode {opcode:#x}");
+        }
+    }
     assert_eq!(OPCODE_DCL_THREAD_GROUP, 0x11f);
     assert_eq!(OPCODE_DCL_RESOURCE_RAW, 0x205);
     assert_eq!(OPCODE_DCL_RESOURCE_STRUCTURED, 0x206);
