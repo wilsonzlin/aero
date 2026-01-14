@@ -1,4 +1,4 @@
-use aero_machine::{Machine, MachineConfig, RunExit};
+use aero_machine::{Machine, MachineConfig, RunExit, ScanoutSource};
 use pretty_assertions::assert_eq;
 
 fn build_int10_set_mode13h_boot_sector() -> [u8; 512] {
@@ -49,10 +49,11 @@ fn aerogpu_mode13h_respects_crtc_start_address_and_byte_mode() {
     };
 
     let boot = build_int10_set_mode13h_boot_sector();
-    let mut m = Machine::new(cfg).unwrap();
+    let mut m = Machine::new(cfg.clone()).unwrap();
     m.set_disk_image(boot.to_vec()).unwrap();
     m.reset();
     run_until_halt(&mut m);
+    assert_eq!(m.active_scanout_source(), ScanoutSource::LegacyVga);
 
     // Populate the start of the VGA graphics window with a simple ramp.
     for i in 0..32u8 {
@@ -78,4 +79,27 @@ fn aerogpu_mode13h_respects_crtc_start_address_and_byte_mode() {
     m.display_present();
     // VGA palette entry 1 is EGA blue (0x00,0x00,0xAA).
     assert_eq!(m.display_framebuffer()[0], 0xFFAA_0000);
+
+    // Snapshot/restore should preserve both the VRAM contents and the CRTC register state that
+    // drives mode 13h panning.
+    let snap = m.take_snapshot_full().unwrap();
+
+    let boot = build_int10_set_mode13h_boot_sector();
+    let mut m2 = Machine::new(cfg).unwrap();
+    m2.set_disk_image(boot.to_vec()).unwrap();
+    m2.reset();
+    m2.restore_snapshot_bytes(&snap).unwrap();
+
+    assert_eq!(m2.active_scanout_source(), ScanoutSource::LegacyVga);
+    m2.display_present();
+    assert_eq!(m2.display_resolution(), (320, 200));
+    assert_eq!(m2.display_framebuffer()[0], 0xFFAA_0000);
+
+    // Validate the CRTC regs survived restore too.
+    m2.io_write(0x3D4, 1, 0x0C);
+    assert_eq!(m2.io_read(0x3D5, 1) as u8, 0x00);
+    m2.io_write(0x3D4, 1, 0x0D);
+    assert_eq!(m2.io_read(0x3D5, 1) as u8, 0x01);
+    m2.io_write(0x3D4, 1, 0x17);
+    assert_eq!(m2.io_read(0x3D5, 1) as u8, 0x40);
 }
