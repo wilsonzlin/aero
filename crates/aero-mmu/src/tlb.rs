@@ -195,10 +195,11 @@ impl TlbEntry {
 
     #[inline]
     fn matches_pcid<const PCID_ENABLED: bool>(&self, pcid: u16) -> bool {
+        let flags = self.flags;
         if PCID_ENABLED {
-            self.valid() && (self.global() || self.pcid == pcid)
+            flags & FLAG_VALID != 0 && (flags & FLAG_GLOBAL != 0 || self.pcid == pcid)
         } else {
-            self.valid()
+            flags & FLAG_VALID != 0
         }
     }
 
