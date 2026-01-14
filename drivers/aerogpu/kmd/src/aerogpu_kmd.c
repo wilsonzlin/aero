@@ -1534,7 +1534,8 @@ static NTSTATUS AeroGpuAllocTableScratchEnsureCapacityLocked(_Inout_ AEROGPU_ALL
 
 static NTSTATUS AeroGpuBuildAllocTableFillScratch(_In_reads_opt_(Count) const DXGK_ALLOCATIONLIST* List,
                                                   _In_ UINT Count,
-                                                  _Inout_updates_(Count) struct aerogpu_alloc_entry* TmpEntries,
+                                                  _Inout_updates_(TmpEntriesCap) struct aerogpu_alloc_entry* TmpEntries,
+                                                  _In_ UINT TmpEntriesCap,
                                                   _Inout_updates_(HashCap) uint32_t* Seen,
                                                   _Inout_updates_(HashCap) UINT* SeenIndex,
                                                   _Inout_updates_(HashCap) uint64_t* SeenGpa,
@@ -1549,7 +1550,7 @@ static NTSTATUS AeroGpuBuildAllocTableFillScratch(_In_reads_opt_(Count) const DX
     if (!List || Count == 0) {
         return STATUS_SUCCESS;
     }
-    if (!TmpEntries || !Seen || !SeenIndex || !SeenGpa || !SeenSize || !EntryCountOut) {
+    if (!TmpEntries || TmpEntriesCap == 0 || !Seen || !SeenIndex || !SeenGpa || !SeenSize || !EntryCountOut) {
         return STATUS_INVALID_PARAMETER;
     }
     if (HashCap < 2 || (HashCap & (HashCap - 1)) != 0) {
@@ -1591,6 +1592,9 @@ static NTSTATUS AeroGpuBuildAllocTableFillScratch(_In_reads_opt_(Count) const DX
         for (;;) {
             const uint32_t existing = Seen[slot];
             if (existing == 0) {
+                if (entryCount >= TmpEntriesCap) {
+                    return STATUS_INTEGER_OVERFLOW;
+                }
                 Seen[slot] = allocId;
                 SeenIndex[slot] = entryCount;
                 SeenGpa[slot] = (uint64_t)List[i].PhysicalAddress.QuadPart;
@@ -1720,7 +1724,7 @@ static NTSTATUS AeroGpuBuildAllocTable(_Inout_ AEROGPU_ADAPTER* Adapter,
      * Do this outside the scratch-cache lock so concurrent submissions can still
      * update their allocations even if they contend on the cached scratch buffer.
      */
-    BOOLEAN anyAllocId = FALSE;
+    UINT nonZeroAllocIdCount = 0;
     for (UINT i = 0; i < Count; ++i) {
         AEROGPU_ALLOCATION* alloc = (AEROGPU_ALLOCATION*)List[i].hAllocation;
         if (!alloc) {
@@ -1731,7 +1735,7 @@ static NTSTATUS AeroGpuBuildAllocTable(_Inout_ AEROGPU_ADAPTER* Adapter,
         alloc->LastKnownPa.QuadPart = List[i].PhysicalAddress.QuadPart;
         ExReleaseFastMutex(&alloc->CpuMapMutex);
         if (alloc->AllocationId != 0) {
-            anyAllocId = TRUE;
+            nonZeroAllocIdCount += 1;
         }
     }
 
@@ -1740,11 +1744,18 @@ static NTSTATUS AeroGpuBuildAllocTable(_Inout_ AEROGPU_ADAPTER* Adapter,
      * (alloc_table_gpa/size will be 0). This avoids taking the scratch-cache lock
      * and touching large scratch arrays on submissions that never reference guest-backed memory.
      */
-    if (!anyAllocId) {
+    if (nonZeroAllocIdCount == 0) {
         return STATUS_SUCCESS;
     }
 
-    const UINT cap = AeroGpuAllocTableComputeHashCap(Count);
+    /*
+     * Size scratch structures based on the number of non-zero alloc_id values rather than the
+     * total allocation-list length. Many allocation list entries may have alloc_id == 0 (never
+     * referenced via alloc_id in the command stream), and we only need scratch space for the
+     * subset that can actually be inserted into the table.
+     */
+    const UINT tmpEntriesCap = nonZeroAllocIdCount;
+    const UINT cap = AeroGpuAllocTableComputeHashCap(nonZeroAllocIdCount);
 
     /*
      * Use the adapter-owned scratch block when possible; this avoids per-submit
@@ -1752,7 +1763,7 @@ static NTSTATUS AeroGpuBuildAllocTable(_Inout_ AEROGPU_ADAPTER* Adapter,
      * usage by holding the scratch mutex for the duration of the table build.
      */
     ExAcquireFastMutex(&Adapter->AllocTableScratch.Mutex);
-    const NTSTATUS scratchSt = AeroGpuAllocTableScratchEnsureCapacityLocked(&Adapter->AllocTableScratch, Count, cap);
+    const NTSTATUS scratchSt = AeroGpuAllocTableScratchEnsureCapacityLocked(&Adapter->AllocTableScratch, tmpEntriesCap, cap);
     if (NT_SUCCESS(scratchSt)) {
         tmpEntries = Adapter->AllocTableScratch.TmpEntries;
         seen = Adapter->AllocTableScratch.Seen;
@@ -1766,8 +1777,9 @@ static NTSTATUS AeroGpuBuildAllocTable(_Inout_ AEROGPU_ADAPTER* Adapter,
         static volatile LONG g_BuildAllocTableScratchFallbackLogCount = 0;
         AEROGPU_LOG_RATELIMITED(g_BuildAllocTableScratchFallbackLogCount,
                                 4,
-                                "BuildAllocTable: scratch cache unavailable (Count=%u cap=%u); falling back to per-call allocations",
+                                "BuildAllocTable: scratch cache unavailable (Count=%u alloc_ids=%u cap=%u); falling back to per-call allocations",
                                 Count,
+                                nonZeroAllocIdCount,
                                 cap);
 #endif
         ExReleaseFastMutex(&Adapter->AllocTableScratch.Mutex);
@@ -1778,7 +1790,7 @@ static NTSTATUS AeroGpuBuildAllocTable(_Inout_ AEROGPU_ADAPTER* Adapter,
         }
 
         /* Allocation failure growing the cache. Fall back to one-off scratch allocations. */
-        const NTSTATUS allocSt = AeroGpuAllocTableScratchAllocBlock(Count,
+        const NTSTATUS allocSt = AeroGpuAllocTableScratchAllocBlock(tmpEntriesCap,
                                                                     cap,
                                                                     &slowBlock,
                                                                     &slowBlockBytes,
@@ -1792,7 +1804,8 @@ static NTSTATUS AeroGpuBuildAllocTable(_Inout_ AEROGPU_ADAPTER* Adapter,
         }
     }
 
-    st = AeroGpuBuildAllocTableFillScratch(List, Count, tmpEntries, seen, seenIndex, seenGpa, seenSize, cap, &entryCount);
+    st = AeroGpuBuildAllocTableFillScratch(
+        List, Count, tmpEntries, tmpEntriesCap, seen, seenIndex, seenGpa, seenSize, cap, &entryCount);
     if (!NT_SUCCESS(st)) {
         goto cleanup;
     }
