@@ -126,11 +126,9 @@ fn push_set_uav_buffer(
     stage: u32,
     slot: u32,
     stage_ex: u32,
-    buffer: u32,
-    offset: u32,
-    size: u32,
-    initial_count: u32,
+    binding: (u32, u32, u32, u32),
 ) {
+    let (buffer, offset, size, initial_count) = binding;
     let start = begin_cmd(stream, AerogpuCmdOpcode::SetUnorderedAccessBuffers as u32);
     stream.extend_from_slice(&stage.to_le_bytes());
     stream.extend_from_slice(&slot.to_le_bytes()); // start_slot
@@ -247,10 +245,7 @@ fn aerogpu_cmd_stage_ex_srv_uav_buffers_route_and_unbind_correctly() {
             AerogpuShaderStage::Compute as u32,
             0,
             0,
-            BUF_CS_UAV1,
-            0,
-            0,
-            0,
+            (BUF_CS_UAV1, 0, 0, 0),
         );
 
         // Stage-ex HS/DS bindings use shader_stage==COMPUTE + reserved0 stage_ex to route into the
@@ -269,10 +264,7 @@ fn aerogpu_cmd_stage_ex_srv_uav_buffers_route_and_unbind_correctly() {
             AerogpuShaderStage::Compute as u32,
             0,
             STAGE_EX_HULL,
-            BUF_UAV_ALIAS,
-            0,
-            0,
-            7, // initial_count ignored by executor (not yet implemented)
+            (BUF_UAV_ALIAS, 0, 0, 7), // initial_count ignored by executor (not yet implemented)
         );
         push_set_shader_resource_buffer(
             &mut stream,
@@ -288,10 +280,7 @@ fn aerogpu_cmd_stage_ex_srv_uav_buffers_route_and_unbind_correctly() {
             AerogpuShaderStage::Compute as u32,
             0,
             STAGE_EX_DOMAIN,
-            BUF_DS_UAV,
-            0,
-            0,
-            0,
+            (BUF_DS_UAV, 0, 0, 0),
         );
 
         // Second CS update ensures compute and stage_ex buckets remain distinct in both directions.
@@ -309,10 +298,7 @@ fn aerogpu_cmd_stage_ex_srv_uav_buffers_route_and_unbind_correctly() {
             AerogpuShaderStage::Compute as u32,
             0,
             0,
-            BUF_CS_UAV2,
-            0,
-            0,
-            0,
+            (BUF_CS_UAV2, 0, 0, 0),
         );
 
         let stream = finish_stream(stream);
