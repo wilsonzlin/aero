@@ -1,8 +1,8 @@
 /*
  * Clean-room DSDT for Aero.
  *
- * This is intentionally minimal: it declares only the devices and methods
- * required for Windows 7 to enumerate a basic ACPI PC.
+ * This is a human-readable reference intended to stay in sync with the
+ * generated AML fixture at `crates/firmware/acpi/dsdt.aml`.
  *
  * NOTE: The shipped `dsdt.aml` is generated from Rust code in
  * `crates/firmware/src/bin/gen_dsdt.rs` (which uses `aero-acpi`).
@@ -16,7 +16,13 @@
  *     cargo run -p firmware --bin gen_dsdt --locked
  *
  * Keep this ASL in sync with the generated AML if you make changes.
+ *
+ * To get a baseline DSL for comparison, disassemble the shipped fixture:
+ *
+ *     iasl -d crates/firmware/acpi/dsdt.aml
  */
+
+#pragma disable 3168 /* Legacy Processor() keyword detected */
 
 DefinitionBlock ("dsdt.aml", "DSDT", 2, "AERO  ", "AEROACPI", 0x00000001)
 {
@@ -41,9 +47,9 @@ DefinitionBlock ("dsdt.aml", "DSDT", 2, "AERO  ", "AEROACPI", 0x00000001)
 
     Method (_PIC, 1, NotSerialized)
     {
-        Store (Arg0, PICM)
-        Store (0x70, IMCS)
-        And (Arg0, One, IMCD)
+        PICM = Arg0
+        IMCS = 0x70
+        IMCD = (Arg0 & One)
     }
 
     Scope (\_SB_)
@@ -130,12 +136,12 @@ DefinitionBlock ("dsdt.aml", "DSDT", 2, "AERO  ", "AEROACPI", 0x00000001)
              * We use conventional PCI INTx swizzling:
              *   PIRQ = (Device + Pin) % 4
              * and map PIRQs to GSIs:
-             *   A → 10, B → 11, C → 12, D → 13
-             */
-             Name (_PRT, Package ()
-             {
-                Package () { 0x0001FFFF, 0, Zero, 11 },
-                Package () { 0x0001FFFF, 1, Zero, 12 },
+              *   A → 10, B → 11, C → 12, D → 13
+              */
+             Name (_PRT, Package (0x7C)
+              {
+                 Package () { 0x0001FFFF, 0, Zero, 11 },
+                 Package () { 0x0001FFFF, 1, Zero, 12 },
                 Package () { 0x0001FFFF, 2, Zero, 13 },
                 Package () { 0x0001FFFF, 3, Zero, 10 },
                 Package () { 0x0002FFFF, 0, Zero, 12 },
