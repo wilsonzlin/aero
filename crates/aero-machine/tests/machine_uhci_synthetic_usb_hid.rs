@@ -91,6 +91,24 @@ fn poll_consumer_interrupt_in(m: &mut Machine) -> UsbInResult {
     consumer.model_mut().handle_interrupt_in(0x81)
 }
 
+fn expect_keyboard_report_contains(result: UsbInResult, usage: u8, context: &str) {
+    match result {
+        UsbInResult::Data(data) => {
+            assert_eq!(
+                data.len(),
+                8,
+                "{context}: expected 8-byte keyboard report, got {} bytes",
+                data.len()
+            );
+            assert!(
+                data[2..].contains(&usage),
+                "{context}: expected keyboard report to contain usage {usage:#04x}; got {data:?}"
+            );
+        }
+        other => panic!("{context}: expected keyboard report data, got {other:?}"),
+    }
+}
+
 fn expect_consumer_control_report(result: UsbInResult, usage: u16, context: &str) {
     let expected = usage.to_le_bytes().to_vec();
     match result {
@@ -188,10 +206,7 @@ fn uhci_synthetic_usb_hid_handles_survive_reset_and_snapshot_restore() {
     configure_keyboard_for_reports(&mut kbd);
 
     m.inject_usb_hid_keyboard_usage(0x04, true);
-    assert!(
-        matches!(poll_keyboard_interrupt_in(&mut m), UsbInResult::Data(_)),
-        "expected keyboard interrupt IN to return data after injection"
-    );
+    expect_keyboard_report_contains(poll_keyboard_interrupt_in(&mut m), 0x04, "after injection");
 
     let mut consumer = m
         .usb_hid_consumer_control_handle()
@@ -213,10 +228,7 @@ fn uhci_synthetic_usb_hid_handles_survive_reset_and_snapshot_restore() {
     // UHCI host controller reset preserves attached devices; use a different key so we always
     // trigger a report even if the previous key remains latched as pressed.
     m.inject_usb_hid_keyboard_usage(0x05, true);
-    assert!(
-        matches!(poll_keyboard_interrupt_in(&mut m), UsbInResult::Data(_)),
-        "expected keyboard interrupt IN to return data after reset"
-    );
+    expect_keyboard_report_contains(poll_keyboard_interrupt_in(&mut m), 0x05, "after reset");
 
     let mut consumer = m
         .usb_hid_consumer_control_handle()
@@ -235,12 +247,10 @@ fn uhci_synthetic_usb_hid_handles_survive_reset_and_snapshot_restore() {
     configure_keyboard_for_reports(&mut kbd);
 
     restored.inject_usb_hid_keyboard_usage(0x06, true);
-    assert!(
-        matches!(
-            poll_keyboard_interrupt_in(&mut restored),
-            UsbInResult::Data(_)
-        ),
-        "expected keyboard interrupt IN to return data after snapshot restore"
+    expect_keyboard_report_contains(
+        poll_keyboard_interrupt_in(&mut restored),
+        0x06,
+        "after snapshot restore",
     );
 
     let mut consumer = restored
