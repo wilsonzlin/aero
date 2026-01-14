@@ -12,6 +12,7 @@ use aero_jit_x86::wasm::abi::{
 };
 
 use wasmi::{Caller, Engine, Func, Linker, Memory, MemoryType, Module, Store, TypedFunc};
+use wasmparser::{Parser, Payload};
 
 #[derive(Debug, Default, Clone, Copy)]
 struct HostState {
@@ -25,6 +26,20 @@ struct HostState {
 fn validate_wasm(bytes: &[u8]) {
     let mut validator = wasmparser::Validator::new();
     validator.validate_all(bytes).unwrap();
+}
+
+fn type_count(bytes: &[u8]) -> u32 {
+    for payload in Parser::new(0).parse_all(bytes) {
+        if let Payload::TypeSection(types) = payload.expect("parse wasm") {
+            let mut count = 0u32;
+            for ty in types.into_iter_err_on_gc_types() {
+                ty.expect("parse type");
+                count += 1;
+            }
+            return count;
+        }
+    }
+    panic!("type section not found");
 }
 
 fn instantiate(
@@ -415,6 +430,22 @@ fn run_wasm(
     let got_cpu = CpuState::read_from_mem(&got_mem, 0);
     let host_state = *store.data();
     (got_rip, got_cpu, got_mem, host_state)
+}
+
+#[test]
+fn wasm_codegen_reuses_helper_types() {
+    let block = IrBlock::new(vec![IrOp::Exit {
+        next_rip: Operand::Imm(0x1000),
+    }]);
+
+    let wasm = WasmCodegen::new().compile_block(&block);
+    validate_wasm(&wasm);
+
+    assert_eq!(
+        type_count(&wasm),
+        7,
+        "expected baseline codegen to dedupe identical helper signatures"
+    );
 }
 
 #[test]
