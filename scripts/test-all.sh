@@ -8,7 +8,7 @@ set -euo pipefail
 # but avoid adding new logic here.
 #
 # This wrapper still normalizes/validates Aero's cross-tooling env vars so that:
-# - legacy aliases emit warnings (e.g. AERO_WEB_DIR/AERO_WASM_DIR)
+# - legacy aliases emit warnings (e.g. AERO_WEB_DIR/WEB_DIR/AERO_WASM_DIR)
 # - booleans normalize to 1/0 (e.g. AERO_REQUIRE_WEBGPU=true -> 1)
 # - invalid paths fail fast with clear errors
 #
