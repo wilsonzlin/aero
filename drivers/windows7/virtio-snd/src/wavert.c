@@ -697,12 +697,19 @@ VirtIoSndWaveRtPcmXrunWorkItem(_In_ PVOID Context)
      * If additional XRUNs arrived while we were running, re-queue once. This is
      * bounded by the single outstanding work item guarantee.
      */
-    if (InterlockedCompareExchange(&dx->PcmXrunPendingMask, 0, 0) != 0) {
+    if (!dx->Removed && dx->Started && dx->Control.DmaCtx != NULL &&
+        InterlockedCompareExchange(&dx->PcmXrunPendingMask, 0, 0) != 0) {
         if (InterlockedCompareExchange(&dx->PcmXrunWorkQueued, 1, 0) == 0) {
             ExInitializeWorkItem(&dx->PcmXrunWorkItem, VirtIoSndWaveRtPcmXrunWorkItem, dx);
             ExQueueWorkItem(&dx->PcmXrunWorkItem, DelayedWorkQueue);
             requeued = TRUE;
         }
+    } else {
+        /*
+         * During teardown or when the control engine is unavailable, drop any
+         * accumulated bits so we don't spin re-queuing a best-effort recovery.
+         */
+        (VOID)InterlockedExchange(&dx->PcmXrunPendingMask, 0);
     }
 
     if (!requeued && selfObject != NULL) {

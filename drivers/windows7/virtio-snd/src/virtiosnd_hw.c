@@ -1019,6 +1019,15 @@ VOID VirtIoSndStopHardware(PVIRTIOSND_DEVICE_EXTENSION Dx)
     Dx->EventqCallbackContext = NULL;
     KeReleaseSpinLock(&Dx->EventqLock, oldIrql);
     VirtIoSndEventqClearStreamNotificationEvents(Dx);
+    /*
+     * Drop any pending XRUN recovery requests from the interrupt path.
+     *
+     * The recovery work item is best-effort and may still be queued/running; do
+     * not touch PcmXrunWorkQueued here, but clearing the pending mask ensures a
+     * stale pre-stop XRUN does not trigger control-plane work after a subsequent
+     * START_DEVICE.
+     */
+    (VOID)InterlockedExchange(&Dx->PcmXrunPendingMask, 0);
 
     cancelStatus = Dx->Removed ? STATUS_DEVICE_REMOVED : STATUS_CANCELLED;
 
@@ -1182,8 +1191,20 @@ NTSTATUS VirtIoSndStartHardware(
     Dx->EventqCallbackContext = NULL;
     Dx->EventqCallbackInFlight = 0;
     RtlZeroMemory(Dx->EventqStreamNotify, sizeof(Dx->EventqStreamNotify));
-    Dx->PcmXrunWorkQueued = 0;
-    Dx->PcmXrunPendingMask = 0;
+    /*
+     * XRUN recovery work item state:
+     *
+     * The work item uses a single embedded WORK_QUEUE_ITEM stored in the device
+     * extension. A work item from a previous START_DEVICE may still be queued
+     * while PnP transitions through STOP_DEVICE/START_DEVICE. Clearing
+     * PcmXrunWorkQueued here could allow the same WORK_QUEUE_ITEM to be queued
+     * twice, corrupting the system work queue.
+     *
+     * Clear any stale pending bits for this start; new XRUN events will set the
+     * mask and either be handled by the existing in-flight work item or will
+     * queue a new one once it completes.
+     */
+    (VOID)InterlockedExchange(&Dx->PcmXrunPendingMask, 0);
 
     status = VirtIoSndAcquireBusInterface(Dx->LowerDeviceObject, &Dx->PciInterface, &Dx->PciInterfaceAcquired);
     if (!NT_SUCCESS(status)) {
