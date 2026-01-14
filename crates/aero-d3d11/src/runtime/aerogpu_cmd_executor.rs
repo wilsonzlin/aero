@@ -3766,6 +3766,14 @@ impl AerogpuD3d11Executor {
         ExpansionScratchAlloc,
         ExpansionScratchAlloc,
     )> {
+        const VERTS_PER_PRIM: u32 = 1;
+        if gs_meta.verts_per_primitive != VERTS_PER_PRIM {
+            bail!(
+                "GS point-list prepass requires verts_per_primitive={VERTS_PER_PRIM}, got {}",
+                gs_meta.verts_per_primitive
+            );
+        }
+
         let gs_shader = self
             .resources
             .shaders
@@ -3784,11 +3792,6 @@ impl AerogpuD3d11Executor {
             .clone();
         if vs_shader.stage != ShaderStage::Vertex {
             bail!("shader {vs_handle} is not a vertex shader");
-        }
-        if instance_count != 1 {
-            bail!(
-                "GS prepass VS-as-compute bring-up currently supports only instance_count == 1 (got {instance_count})"
-            );
         }
 
         let layout_handle = self
@@ -3967,9 +3970,29 @@ impl AerogpuD3d11Executor {
             entries: &vp_bg_entries,
         });
 
+        // GS prepass params: {primitive_count, instance_count, first_instance, pad}.
+        //
+        // This is consumed by both the translated GS prepass compute shader and the `gs_inputs`
+        // fill compute shader (to keep pipeline WGSL/layout independent of per-draw primitive
+        // counts).
+        let mut params_bytes = [0u8; 16];
+        params_bytes[0..4].copy_from_slice(&primitive_count.to_le_bytes());
+        params_bytes[4..8].copy_from_slice(&instance_count.to_le_bytes());
+        params_bytes[8..12].copy_from_slice(&vertex_pulling_draw.first_instance.to_le_bytes());
+        let params_alloc = self
+            .expansion_uniform_scratch
+            .alloc_metadata(&self.device, params_bytes.len() as u64, uniform_align)
+            .map_err(|e| anyhow!("GS prepass: alloc params buffer: {e}"))?;
+        self.queue.write_buffer(
+            params_alloc.buffer.as_ref(),
+            params_alloc.offset,
+            &params_bytes,
+        );
+
         // Allocate and populate the GS input payload (flattened v#[] register file).
         let gs_input_vec4_count = u64::from(primitive_count)
-            .checked_mul(u64::from(gs_meta.verts_per_primitive))
+            .checked_mul(u64::from(instance_count))
+            .and_then(|v| v.checked_mul(u64::from(gs_meta.verts_per_primitive)))
             .and_then(|v| v.checked_mul(u64::from(gs_meta.input_reg_count)))
             .ok_or_else(|| anyhow!("GS prepass: gs_inputs element count overflow"))?;
         let gs_inputs_size = gs_input_vec4_count
@@ -4026,15 +4049,25 @@ impl AerogpuD3d11Executor {
             out.push_str(
                 "@group(0) @binding(0) var<storage, read_write> gs_inputs: Vec4F32Buffer;\n",
             );
+            out.push_str(
+                "struct GsPrepassParams {\n  primitive_count: u32,\n  instance_count: u32,\n  first_instance: u32,\n  _pad0: u32,\n};\n",
+            );
+            out.push_str("@group(0) @binding(1) var<uniform> params: GsPrepassParams;\n");
             out.push_str(&format!(
-                "const GS_INPUT_REG_COUNT: u32 = {}u;\n\n",
+                "const GS_INPUT_REG_COUNT: u32 = {}u;\n",
                 gs_meta.input_reg_count
+            ));
+            out.push_str(&format!(
+                "const GS_INPUT_VERTS_PER_PRIM: u32 = {}u;\n\n",
+                gs_meta.verts_per_primitive
             ));
             out.push_str(
                 "fn aero_gs_default() -> vec4<f32> { return vec4<f32>(0.0, 0.0, 0.0, 1.0); }\n\n",
             );
 
-            out.push_str("fn aero_gs_load_reg(reg: u32, vertex_index: u32) -> vec4<f32> {\n");
+            out.push_str(
+                "fn aero_gs_load_reg(reg: u32, vertex_index: u32, draw_instance_id: u32) -> vec4<f32> {\n",
+            );
             out.push_str("  switch reg {\n");
             for attr in &pulling.attributes {
                 let reg = vs_location_to_input_reg
@@ -4050,7 +4083,7 @@ impl AerogpuD3d11Executor {
                     wgpu::VertexStepMode::Vertex => "vertex_index".to_owned(),
                     wgpu::VertexStepMode::Instance => {
                         let step = attr.instance_step_rate.max(1);
-                        format!("aero_vp_ia.first_instance / {step}u")
+                        format!("((aero_vp_ia.first_instance + draw_instance_id) / {step}u)")
                     }
                 };
                 out.push_str(&format!("    case {reg}u: {{\n"));
@@ -4208,16 +4241,25 @@ impl AerogpuD3d11Executor {
             out.push_str("@compute @workgroup_size(1)\n");
             out.push_str("fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {\n");
             out.push_str("  let prim_id: u32 = id.x;\n");
+            out.push_str("  let draw_instance_id: u32 = id.y;\n");
+            out.push_str("  if (prim_id >= params.primitive_count) { return; }\n");
+            out.push_str("  if (draw_instance_id >= params.instance_count) { return; }\n");
+            out.push_str(
+                "  for (var vert_in_prim: u32 = 0u; vert_in_prim < GS_INPUT_VERTS_PER_PRIM; vert_in_prim = vert_in_prim + 1u) {\n",
+            );
             if indexed_draw {
-                out.push_str(
-                    "  let vertex_index: u32 = u32(index_pulling_resolve_vertex_id(prim_id));\n",
-                );
+                out.push_str("    let vertex_index: u32 = u32(index_pulling_resolve_vertex_id(prim_id * GS_INPUT_VERTS_PER_PRIM + vert_in_prim));\n");
             } else {
-                out.push_str("  let vertex_index: u32 = aero_vp_ia.first_vertex + prim_id;\n");
+                out.push_str("    let vertex_index: u32 = aero_vp_ia.first_vertex + prim_id * GS_INPUT_VERTS_PER_PRIM + vert_in_prim;\n");
             }
-            out.push_str("  for (var reg: u32 = 0u; reg < GS_INPUT_REG_COUNT; reg = reg + 1u) {\n");
-            out.push_str("    let idx: u32 = prim_id * GS_INPUT_REG_COUNT + reg;\n");
-            out.push_str("    gs_inputs.data[idx] = aero_gs_load_reg(reg, vertex_index);\n");
+            out.push_str(
+                "    for (var reg: u32 = 0u; reg < GS_INPUT_REG_COUNT; reg = reg + 1u) {\n",
+            );
+            out.push_str("      let idx: u32 = (((draw_instance_id * params.primitive_count + prim_id) * GS_INPUT_VERTS_PER_PRIM + vert_in_prim) * GS_INPUT_REG_COUNT + reg);\n");
+            out.push_str(
+                "      gs_inputs.data[idx] = aero_gs_load_reg(reg, vertex_index, draw_instance_id);\n",
+            );
+            out.push_str("    }\n");
             out.push_str("  }\n");
             out.push_str("}\n");
             out
@@ -4426,7 +4468,10 @@ impl AerogpuD3d11Executor {
                 let base = match &src.kind {
                     SrcKind::Register(reg) => match reg.file {
                         RegFile::Input => {
-                            format!("aero_vs_load_input_reg({}u, {vertex_index_var})", reg.index)
+                            format!(
+                                "aero_vs_load_input_reg({}u, {vertex_index_var}, draw_instance_id)",
+                                reg.index
+                            )
                         }
                         RegFile::Temp => format!("r[{}u]", reg.index),
                         RegFile::Output => {
@@ -4482,9 +4527,17 @@ impl AerogpuD3d11Executor {
             out.push_str(
                 "@group(0) @binding(0) var<storage, read_write> gs_inputs: Vec4F32Buffer;\n",
             );
+            out.push_str(
+                "struct GsPrepassParams {\n  primitive_count: u32,\n  instance_count: u32,\n  first_instance: u32,\n  _pad0: u32,\n};\n",
+            );
+            out.push_str("@group(0) @binding(1) var<uniform> params: GsPrepassParams;\n");
             out.push_str(&format!(
                 "const GS_INPUT_REG_COUNT: u32 = {}u;\n",
                 gs_input_reg_count
+            ));
+            out.push_str(&format!(
+                "const GS_INPUT_VERTS_PER_PRIM: u32 = {}u;\n",
+                VERTS_PER_PRIM
             ));
             out.push_str(&format!(
                 "const TEMP_REG_COUNT: u32 = {}u;\n\n",
@@ -4496,7 +4549,9 @@ impl AerogpuD3d11Executor {
             );
 
             // Input register loads (`v#`) from IA buffers.
-            out.push_str("fn aero_vs_load_input_reg(reg: u32, vertex_index: u32) -> vec4<f32> {\n");
+            out.push_str(
+                "fn aero_vs_load_input_reg(reg: u32, vertex_index: u32, draw_instance_id: u32) -> vec4<f32> {\n",
+            );
             out.push_str("  switch reg {\n");
             for attr in &pulling.attributes {
                 let reg = vs_location_to_input_reg
@@ -4508,8 +4563,10 @@ impl AerogpuD3d11Executor {
                 let element_index_expr = match attr.step_mode {
                     wgpu::VertexStepMode::Vertex => "vertex_index".to_owned(),
                     wgpu::VertexStepMode::Instance => {
-                        let step = attr.instance_step_rate.max(1);
-                        format!("aero_vp_ia.first_instance / {step}u")
+                        let step_rate = attr.instance_step_rate.max(1);
+                        format!(
+                            "((aero_vp_ia.first_instance + draw_instance_id) / {step_rate}u)"
+                        )
                     }
                 };
                 out.push_str(&format!("    case {reg}u: {{\n"));
@@ -4672,17 +4729,14 @@ impl AerogpuD3d11Executor {
             out.push_str("@compute @workgroup_size(1)\n");
             out.push_str("fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {\n");
             out.push_str("  let prim_id: u32 = id.x;\n");
-            out.push_str(
-                "  for (var vert_in_prim: u32 = 0u; vert_in_prim < VERTS_PER_PRIM; vert_in_prim = vert_in_prim + 1u) {\n",
-            );
+            out.push_str("  let draw_instance_id: u32 = id.y;\n");
+            out.push_str("  if (prim_id >= params.primitive_count) { return; }\n");
+            out.push_str("  if (draw_instance_id >= params.instance_count) { return; }\n");
+            out.push_str("  for (var vert_in_prim: u32 = 0u; vert_in_prim < GS_INPUT_VERTS_PER_PRIM; vert_in_prim = vert_in_prim + 1u) {\n");
             if indexed_draw {
-                out.push_str(
-                    "    let vertex_index: u32 = u32(index_pulling_resolve_vertex_id(prim_id * VERTS_PER_PRIM + vert_in_prim));\n",
-                );
+                out.push_str("    let vertex_index: u32 = u32(index_pulling_resolve_vertex_id(prim_id * GS_INPUT_VERTS_PER_PRIM + vert_in_prim));\n");
             } else {
-                out.push_str(
-                    "    let vertex_index: u32 = aero_vp_ia.first_vertex + prim_id * VERTS_PER_PRIM + vert_in_prim;\n",
-                );
+                out.push_str("    let vertex_index: u32 = aero_vp_ia.first_vertex + prim_id * GS_INPUT_VERTS_PER_PRIM + vert_in_prim;\n");
             }
             out.push_str(&format!("    var r: array<vec4<f32>, {temp_reg_count}>;\n"));
             out.push_str(&format!("    var o: array<vec4<f32>, {out_reg_count}>;\n"));
@@ -4752,9 +4806,7 @@ impl AerogpuD3d11Executor {
             out.push_str(
                 "\n    for (var reg: u32 = 0u; reg < GS_INPUT_REG_COUNT; reg = reg + 1u) {\n",
             );
-            out.push_str(
-                "      let idx: u32 = ((prim_id * VERTS_PER_PRIM + vert_in_prim) * GS_INPUT_REG_COUNT + reg);\n",
-            );
+            out.push_str("      let idx: u32 = (((draw_instance_id * params.primitive_count + prim_id) * GS_INPUT_VERTS_PER_PRIM + vert_in_prim) * GS_INPUT_REG_COUNT + reg);\n");
             out.push_str("      gs_inputs.data[idx] = o[reg];\n");
             out.push_str("    }\n");
             out.push_str("  }\n");
@@ -4808,33 +4860,55 @@ impl AerogpuD3d11Executor {
             }
         };
 
-        let fill_bgl_entries = [wgpu::BindGroupLayoutEntry {
-            binding: 0,
-            visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Storage { read_only: false },
-                has_dynamic_offset: false,
-                // `min_binding_size` participates in bind-group-layout identity, so if we set it to
-                // the per-draw `gs_inputs_size` we'd create a unique compute pipeline for each
-                // primitive-count change (see `gs_prepass_reuses_compute_pipeline_across_primitive_counts`).
-                min_binding_size: wgpu::BufferSize::new(16),
+        let fill_bgl_entries = [
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    // `min_binding_size` participates in bind-group-layout identity, so if we set it to
+                    // the per-draw `gs_inputs_size` we'd create a unique compute pipeline for each
+                    // primitive-count change (see `gs_prepass_reuses_compute_pipeline_across_primitive_counts`).
+                    min_binding_size: wgpu::BufferSize::new(16),
+                },
+                count: None,
             },
-            count: None,
-        }];
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(16),
+                },
+                count: None,
+            },
+        ];
         let fill_bgl = self
             .bind_group_layout_cache
             .get_or_create(&self.device, &fill_bgl_entries);
         let fill_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("aerogpu_cmd gs prepass input fill bind group"),
             layout: fill_bgl.layout.as_ref(),
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: gs_inputs_alloc.buffer.as_ref(),
-                    offset: gs_inputs_alloc.offset,
-                    size: wgpu::BufferSize::new(gs_inputs_alloc.size),
-                }),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: gs_inputs_alloc.buffer.as_ref(),
+                        offset: gs_inputs_alloc.offset,
+                        size: wgpu::BufferSize::new(gs_inputs_alloc.size),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: params_alloc.buffer.as_ref(),
+                        offset: params_alloc.offset,
+                        size: wgpu::BufferSize::new(params_alloc.size),
+                    }),
+                },
+            ],
         });
 
         let empty_bgl = self
@@ -4902,12 +4976,13 @@ impl AerogpuD3d11Executor {
             pass.set_bind_group(0, &fill_bg, &[]);
             bind_empty_groups_before_vertex_pulling(&mut pass, self.empty_bind_group.as_ref(), 1);
             pass.set_bind_group(VERTEX_PULLING_GROUP, &vp_bg, &[]);
-            pass.dispatch_workgroups(primitive_count, 1, 1);
+            pass.dispatch_workgroups(primitive_count, instance_count, 1);
         }
 
         // Allocate expanded output buffers for the GS prepass.
         let expanded_vertex_count = u64::from(primitive_count)
-            .checked_mul(u64::from(gs_instance_count))
+            .checked_mul(u64::from(instance_count))
+            .and_then(|v| v.checked_mul(u64::from(gs_instance_count)))
             .and_then(|v| v.checked_mul(u64::from(gs_meta.max_output_vertices)))
             .ok_or_else(|| anyhow!("GS prepass: expanded vertex count overflow"))?;
         let expanded_vertex_size = GEOMETRY_PREPASS_EXPANDED_VERTEX_STRIDE_BYTES
@@ -4919,7 +4994,8 @@ impl AerogpuD3d11Executor {
             gs_meta.max_output_vertices,
         )?;
         let expanded_index_count = u64::from(primitive_count)
-            .checked_mul(u64::from(gs_instance_count))
+            .checked_mul(u64::from(instance_count))
+            .and_then(|v| v.checked_mul(u64::from(gs_instance_count)))
             .and_then(|v| v.checked_mul(max_indices_per_prim))
             .ok_or_else(|| anyhow!("GS prepass: expanded index count overflow"))?;
         let expanded_index_size = expanded_index_count
@@ -4956,21 +5032,6 @@ impl AerogpuD3d11Executor {
             state_alloc.buffer.as_ref(),
             counter_offset,
             &[0u8; GEOMETRY_PREPASS_COUNTER_SIZE_BYTES as usize],
-        );
-
-        // GS prepass params: {primitive_count, instance_count, first_instance, pad}.
-        let mut params_bytes = [0u8; 16];
-        params_bytes[0..4].copy_from_slice(&primitive_count.to_le_bytes());
-        params_bytes[4..8].copy_from_slice(&instance_count.to_le_bytes());
-        params_bytes[8..12].copy_from_slice(&vertex_pulling_draw.first_instance.to_le_bytes());
-        let params_alloc = self
-            .expansion_uniform_scratch
-            .alloc_metadata(&self.device, params_bytes.len() as u64, uniform_align)
-            .map_err(|e| anyhow!("GS prepass: alloc params buffer: {e}"))?;
-        self.queue.write_buffer(
-            params_alloc.buffer.as_ref(),
-            params_alloc.offset,
-            &params_bytes,
         );
 
         // Build GS prepass pipeline + bind group.
@@ -5329,7 +5390,7 @@ impl AerogpuD3d11Executor {
         let gs_finalize_pipeline = unsafe { &*gs_finalize_pipeline_ptr };
 
         self.encoder_has_commands = true;
-        if primitive_count != 0 {
+        if primitive_count != 0 && instance_count != 0 {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("aerogpu_cmd gs prepass compute pass"),
                 timestamp_writes: None,
@@ -5342,7 +5403,7 @@ impl AerogpuD3d11Executor {
                 gs_group3_bg.as_ref(),
                 &[],
             );
-            pass.dispatch_workgroups(primitive_count, 1, 1);
+            pass.dispatch_workgroups(primitive_count, instance_count, 1);
         }
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -5585,9 +5646,29 @@ impl AerogpuD3d11Executor {
             entries: &vp_bg_entries,
         });
 
+        // GS prepass params: {primitive_count, instance_count, first_instance, pad}.
+        //
+        // This is consumed by both the translated GS prepass compute shader and the `gs_inputs`
+        // fill compute shader (to keep pipeline WGSL/layout independent of per-draw primitive
+        // counts).
+        let mut params_bytes = [0u8; 16];
+        params_bytes[0..4].copy_from_slice(&primitive_count.to_le_bytes());
+        params_bytes[4..8].copy_from_slice(&instance_count.to_le_bytes());
+        params_bytes[8..12].copy_from_slice(&vertex_pulling_draw.first_instance.to_le_bytes());
+        let params_alloc = self
+            .expansion_uniform_scratch
+            .alloc_metadata(&self.device, params_bytes.len() as u64, uniform_align)
+            .map_err(|e| anyhow!("GS prepass: alloc params buffer: {e}"))?;
+        self.queue.write_buffer(
+            params_alloc.buffer.as_ref(),
+            params_alloc.offset,
+            &params_bytes,
+        );
+
         // Allocate and populate the GS input payload (flattened v#[] register file).
         let gs_input_vec4_count = u64::from(primitive_count)
-            .checked_mul(u64::from(gs_meta.verts_per_primitive))
+            .checked_mul(u64::from(instance_count))
+            .and_then(|v| v.checked_mul(u64::from(gs_meta.verts_per_primitive)))
             .and_then(|v| v.checked_mul(u64::from(gs_meta.input_reg_count)))
             .ok_or_else(|| anyhow!("GS prepass: gs_inputs element count overflow"))?;
         let gs_inputs_size = gs_input_vec4_count
@@ -5644,15 +5725,25 @@ impl AerogpuD3d11Executor {
             out.push_str(
                 "@group(0) @binding(0) var<storage, read_write> gs_inputs: Vec4F32Buffer;\n",
             );
+            out.push_str(
+                "struct GsPrepassParams {\n  primitive_count: u32,\n  instance_count: u32,\n  first_instance: u32,\n  _pad0: u32,\n};\n",
+            );
+            out.push_str("@group(0) @binding(1) var<uniform> params: GsPrepassParams;\n");
             out.push_str(&format!(
-                "const GS_INPUT_REG_COUNT: u32 = {}u;\n\n",
+                "const GS_INPUT_REG_COUNT: u32 = {}u;\n",
                 gs_meta.input_reg_count
+            ));
+            out.push_str(&format!(
+                "const GS_INPUT_VERTS_PER_PRIM: u32 = {}u;\n\n",
+                gs_meta.verts_per_primitive
             ));
             out.push_str(
                 "fn aero_gs_default() -> vec4<f32> { return vec4<f32>(0.0, 0.0, 0.0, 1.0); }\n\n",
             );
 
-            out.push_str("fn aero_gs_load_reg(reg: u32, vertex_index: u32) -> vec4<f32> {\n");
+            out.push_str(
+                "fn aero_gs_load_reg(reg: u32, vertex_index: u32, draw_instance_id: u32) -> vec4<f32> {\n",
+            );
             out.push_str("  switch reg {\n");
             for attr in &pulling.attributes {
                 let reg = vs_location_to_input_reg
@@ -5667,8 +5758,10 @@ impl AerogpuD3d11Executor {
                 let element_index_expr = match attr.step_mode {
                     wgpu::VertexStepMode::Vertex => "vertex_index".to_owned(),
                     wgpu::VertexStepMode::Instance => {
-                        let step = attr.instance_step_rate.max(1);
-                        format!("aero_vp_ia.first_instance / {step}u")
+                        // D3D11 per-instance fetch semantics:
+                        // element_index = (first_instance + draw_instance_id) / instance_step_rate.
+                        let step_rate = attr.instance_step_rate.max(1);
+                        format!("((aero_vp_ia.first_instance + draw_instance_id) / {step_rate}u)")
                     }
                 };
                 out.push_str(&format!("    case {reg}u: {{\n"));
@@ -5714,25 +5807,22 @@ impl AerogpuD3d11Executor {
             out.push_str("@compute @workgroup_size(1)\n");
             out.push_str("fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {\n");
             out.push_str("  let prim_id: u32 = id.x;\n");
+            out.push_str("  let draw_instance_id: u32 = id.y;\n");
+            out.push_str("  if (prim_id >= params.primitive_count) { return; }\n");
+            out.push_str("  if (draw_instance_id >= params.instance_count) { return; }\n");
             out.push_str(
-                "  for (var vert_in_prim: u32 = 0u; vert_in_prim < 2u; vert_in_prim = vert_in_prim + 1u) {\n",
+                "  for (var vert_in_prim: u32 = 0u; vert_in_prim < GS_INPUT_VERTS_PER_PRIM; vert_in_prim = vert_in_prim + 1u) {\n",
             );
             if indexed_draw {
-                out.push_str(
-                    "    let vertex_index: u32 = u32(index_pulling_resolve_vertex_id(prim_id * 2u + vert_in_prim));\n",
-                );
+                out.push_str("    let vertex_index: u32 = u32(index_pulling_resolve_vertex_id(prim_id * GS_INPUT_VERTS_PER_PRIM + vert_in_prim));\n");
             } else {
-                out.push_str(
-                    "    let vertex_index: u32 = aero_vp_ia.first_vertex + prim_id * 2u + vert_in_prim;\n",
-                );
+                out.push_str("    let vertex_index: u32 = aero_vp_ia.first_vertex + prim_id * GS_INPUT_VERTS_PER_PRIM + vert_in_prim;\n");
             }
             out.push_str(
                 "    for (var reg: u32 = 0u; reg < GS_INPUT_REG_COUNT; reg = reg + 1u) {\n",
             );
-            out.push_str(
-                "      let idx: u32 = ((prim_id * 2u + vert_in_prim) * GS_INPUT_REG_COUNT + reg);\n",
-            );
-            out.push_str("      gs_inputs.data[idx] = aero_gs_load_reg(reg, vertex_index);\n");
+            out.push_str("      let idx: u32 = (((draw_instance_id * params.primitive_count + prim_id) * GS_INPUT_VERTS_PER_PRIM + vert_in_prim) * GS_INPUT_REG_COUNT + reg);\n");
+            out.push_str("      gs_inputs.data[idx] = aero_gs_load_reg(reg, vertex_index, draw_instance_id);\n");
             out.push_str("    }\n");
             out.push_str("  }\n");
             out.push_str("}\n");
@@ -5966,7 +6056,10 @@ impl AerogpuD3d11Executor {
                 let base = match &src.kind {
                     SrcKind::Register(reg) => match reg.file {
                         RegFile::Input => {
-                            format!("aero_vs_load_input_reg({}u, {vertex_index_var})", reg.index)
+                            format!(
+                                "aero_vs_load_input_reg({}u, {vertex_index_var}, draw_instance_id)",
+                                reg.index
+                            )
                         }
                         RegFile::Temp => format!("r[{}u]", reg.index),
                         RegFile::Output => {
@@ -6022,9 +6115,17 @@ impl AerogpuD3d11Executor {
             out.push_str(
                 "@group(0) @binding(0) var<storage, read_write> gs_inputs: Vec4F32Buffer;\n",
             );
+            out.push_str(
+                "struct GsPrepassParams {\n  primitive_count: u32,\n  instance_count: u32,\n  first_instance: u32,\n  _pad0: u32,\n};\n",
+            );
+            out.push_str("@group(0) @binding(1) var<uniform> params: GsPrepassParams;\n");
             out.push_str(&format!(
                 "const GS_INPUT_REG_COUNT: u32 = {}u;\n",
                 gs_input_reg_count
+            ));
+            out.push_str(&format!(
+                "const GS_INPUT_VERTS_PER_PRIM: u32 = {}u;\n",
+                VERTS_PER_PRIM
             ));
             out.push_str(&format!(
                 "const TEMP_REG_COUNT: u32 = {}u;\n\n",
@@ -6035,7 +6136,9 @@ impl AerogpuD3d11Executor {
             );
 
             // Input register loads (`v#`) from IA buffers.
-            out.push_str("fn aero_vs_load_input_reg(reg: u32, vertex_index: u32) -> vec4<f32> {\n");
+            out.push_str(
+                "fn aero_vs_load_input_reg(reg: u32, vertex_index: u32, draw_instance_id: u32) -> vec4<f32> {\n",
+            );
             out.push_str("  switch reg {\n");
             for attr in &pulling.attributes {
                 let reg = vs_location_to_input_reg
@@ -6047,8 +6150,10 @@ impl AerogpuD3d11Executor {
                 let element_index_expr = match attr.step_mode {
                     wgpu::VertexStepMode::Vertex => "vertex_index".to_owned(),
                     wgpu::VertexStepMode::Instance => {
-                        let step = attr.instance_step_rate.max(1);
-                        format!("aero_vp_ia.first_instance / {step}u")
+                        let step_rate = attr.instance_step_rate.max(1);
+                        format!(
+                            "((aero_vp_ia.first_instance + draw_instance_id) / {step_rate}u)"
+                        )
                     }
                 };
                 out.push_str(&format!("    case {reg}u: {{\n"));
@@ -6095,20 +6200,23 @@ impl AerogpuD3d11Executor {
             out.push_str("@compute @workgroup_size(1)\n");
             out.push_str("fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {\n");
             out.push_str("  let prim_id: u32 = id.x;\n");
+            out.push_str("  let draw_instance_id: u32 = id.y;\n");
+            out.push_str("  if (prim_id >= params.primitive_count) { return; }\n");
+            out.push_str("  if (draw_instance_id >= params.instance_count) { return; }\n");
             out.push_str(&format!("  var r: array<vec4<f32>, {temp_reg_count}>;\n"));
             out.push_str(&format!(
                 "  var o: array<vec4<f32>, {gs_input_reg_count}>;\n"
             ));
             out.push_str(
-                "  for (var vert_in_prim: u32 = 0u; vert_in_prim < 2u; vert_in_prim = vert_in_prim + 1u) {\n",
+                "  for (var vert_in_prim: u32 = 0u; vert_in_prim < GS_INPUT_VERTS_PER_PRIM; vert_in_prim = vert_in_prim + 1u) {\n",
             );
             if indexed_draw {
                 out.push_str(
-                    "    let vertex_index: u32 = u32(index_pulling_resolve_vertex_id(prim_id * 2u + vert_in_prim));\n",
+                    "    let vertex_index: u32 = u32(index_pulling_resolve_vertex_id(prim_id * GS_INPUT_VERTS_PER_PRIM + vert_in_prim));\n",
                 );
             } else {
                 out.push_str(
-                    "    let vertex_index: u32 = aero_vp_ia.first_vertex + prim_id * 2u + vert_in_prim;\n",
+                    "    let vertex_index: u32 = aero_vp_ia.first_vertex + prim_id * GS_INPUT_VERTS_PER_PRIM + vert_in_prim;\n",
                 );
             }
             out.push_str(
@@ -6163,9 +6271,7 @@ impl AerogpuD3d11Executor {
             out.push_str(
                 "\n    for (var reg: u32 = 0u; reg < GS_INPUT_REG_COUNT; reg = reg + 1u) {\n",
             );
-            out.push_str(
-                "      let idx: u32 = ((prim_id * 2u + vert_in_prim) * GS_INPUT_REG_COUNT + reg);\n",
-            );
+            out.push_str("      let idx: u32 = (((draw_instance_id * params.primitive_count + prim_id) * GS_INPUT_VERTS_PER_PRIM + vert_in_prim) * GS_INPUT_REG_COUNT + reg);\n");
             out.push_str("      gs_inputs.data[idx] = o[reg];\n");
             out.push_str("    }\n");
             out.push_str("  }\n");
@@ -6218,33 +6324,55 @@ impl AerogpuD3d11Executor {
                 }
             }
         };
-        let fill_bgl_entries = [wgpu::BindGroupLayoutEntry {
-            binding: 0,
-            visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Storage { read_only: false },
-                has_dynamic_offset: false,
-                // `min_binding_size` participates in bind-group-layout identity, so if we set it to
-                // the per-draw `gs_inputs_size` we'd create a unique compute pipeline for each
-                // primitive-count change (see `gs_prepass_reuses_compute_pipeline_across_primitive_counts`).
-                min_binding_size: wgpu::BufferSize::new(16),
+        let fill_bgl_entries = [
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    // `min_binding_size` participates in bind-group-layout identity, so if we set it to
+                    // the per-draw `gs_inputs_size` we'd create a unique compute pipeline for each
+                    // primitive-count change (see `gs_prepass_reuses_compute_pipeline_across_primitive_counts`).
+                    min_binding_size: wgpu::BufferSize::new(16),
+                },
+                count: None,
             },
-            count: None,
-        }];
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(16),
+                },
+                count: None,
+            },
+        ];
         let fill_bgl = self
             .bind_group_layout_cache
             .get_or_create(&self.device, &fill_bgl_entries);
         let fill_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("aerogpu_cmd gs prepass input fill bind group"),
             layout: fill_bgl.layout.as_ref(),
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: gs_inputs_alloc.buffer.as_ref(),
-                    offset: gs_inputs_alloc.offset,
-                    size: wgpu::BufferSize::new(gs_inputs_alloc.size),
-                }),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: gs_inputs_alloc.buffer.as_ref(),
+                        offset: gs_inputs_alloc.offset,
+                        size: wgpu::BufferSize::new(gs_inputs_alloc.size),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: params_alloc.buffer.as_ref(),
+                        offset: params_alloc.offset,
+                        size: wgpu::BufferSize::new(params_alloc.size),
+                    }),
+                },
+            ],
         });
 
         let empty_bgl = self
@@ -6303,7 +6431,7 @@ impl AerogpuD3d11Executor {
         let fill_pipeline = unsafe { &*fill_pipeline_ptr };
 
         self.encoder_has_commands = true;
-        {
+        if primitive_count != 0 && instance_count != 0 {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("aerogpu_cmd gs prepass fill compute pass"),
                 timestamp_writes: None,
@@ -6312,12 +6440,13 @@ impl AerogpuD3d11Executor {
             pass.set_bind_group(0, &fill_bg, &[]);
             bind_empty_groups_before_vertex_pulling(&mut pass, self.empty_bind_group.as_ref(), 1);
             pass.set_bind_group(VERTEX_PULLING_GROUP, &vp_bg, &[]);
-            pass.dispatch_workgroups(primitive_count, 1, 1);
+            pass.dispatch_workgroups(primitive_count, instance_count, 1);
         }
 
         // Allocate expanded output buffers for the GS prepass.
         let expanded_vertex_count = u64::from(primitive_count)
-            .checked_mul(u64::from(gs_instance_count))
+            .checked_mul(u64::from(instance_count))
+            .and_then(|v| v.checked_mul(u64::from(gs_instance_count)))
             .and_then(|v| v.checked_mul(u64::from(gs_meta.max_output_vertices)))
             .ok_or_else(|| anyhow!("GS prepass: expanded vertex count overflow"))?;
         let expanded_vertex_size = GEOMETRY_PREPASS_EXPANDED_VERTEX_STRIDE_BYTES
@@ -6338,7 +6467,8 @@ impl AerogpuD3d11Executor {
             }
         };
         let expanded_index_count = u64::from(primitive_count)
-            .checked_mul(u64::from(gs_instance_count))
+            .checked_mul(u64::from(instance_count))
+            .and_then(|v| v.checked_mul(u64::from(gs_instance_count)))
             .and_then(|v| v.checked_mul(max_indices_per_prim))
             .ok_or_else(|| anyhow!("GS prepass: expanded index count overflow"))?;
         let expanded_index_size = expanded_index_count
@@ -6377,22 +6507,13 @@ impl AerogpuD3d11Executor {
             size: GEOMETRY_PREPASS_INDIRECT_ARGS_SIZE_BYTES,
         };
 
-        // GS prepass params: {primitive_count, instance_count, first_instance, pad}.
-        let mut params_bytes = [0u8; 16];
-        params_bytes[0..4].copy_from_slice(&primitive_count.to_le_bytes());
-        params_bytes[4..8].copy_from_slice(&instance_count.to_le_bytes());
-        params_bytes[8..12].copy_from_slice(&vertex_pulling_draw.first_instance.to_le_bytes());
-        let params_alloc = self
-            .expansion_uniform_scratch
-            .alloc_metadata(&self.device, params_bytes.len() as u64, uniform_align)
-            .map_err(|e| anyhow!("GS prepass: alloc params uniform: {e}"))?;
-        self.queue.write_buffer(
-            params_alloc.buffer.as_ref(),
-            params_alloc.offset,
-            &params_bytes,
-        );
-
-        // Group(0) bind group for the translated GS prepass compute shader.
+        // Build GS prepass pipeline + bind group.
+        // Keep group(0) bindings consistent with `runtime::gs_translate`:
+        // - out_vertices: @binding(0) storage
+        // - out_indices:  @binding(1) storage
+        // - out_state:    @binding(2) storage
+        // - params:       @binding(4) uniform
+        // - gs_inputs:    @binding(5) storage
         let gs_bgl_entries = [
             wgpu::BindGroupLayoutEntry {
                 binding: 0,
@@ -6675,7 +6796,7 @@ impl AerogpuD3d11Executor {
         let gs_finalize_pipeline = unsafe { &*gs_finalize_pipeline_ptr };
 
         self.encoder_has_commands = true;
-        if primitive_count != 0 {
+        if primitive_count != 0 && instance_count != 0 {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("aerogpu_cmd gs prepass compute pass"),
                 timestamp_writes: None,
@@ -6688,7 +6809,7 @@ impl AerogpuD3d11Executor {
                 gs_group3_bg.as_ref(),
                 &[],
             );
-            pass.dispatch_workgroups(primitive_count, 1, 1);
+            pass.dispatch_workgroups(primitive_count, instance_count, 1);
         }
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -6757,11 +6878,6 @@ impl AerogpuD3d11Executor {
             .clone();
         if vs_shader.stage != ShaderStage::Vertex {
             bail!("shader {vs_handle} is not a vertex shader");
-        }
-        if instance_count != 1 {
-            bail!(
-                "GS prepass VS-as-compute bring-up currently supports only instance_count == 1 (got {instance_count})"
-            );
         }
 
         let layout_handle = self

@@ -2250,10 +2250,15 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_impl(
     }
 
     // GS input helper (v#[]).
-    w.line("fn gs_load_input(prim_id: u32, reg: u32, vertex: u32) -> vec4<f32> {");
+    w.line(
+        "fn gs_load_input(draw_instance_id: u32, prim_id: u32, reg: u32, vertex: u32) -> vec4<f32> {",
+    );
     w.indent();
-    w.line("// Flattened index: ((prim_id * verts_per_prim + vertex) * reg_count + reg).");
-    w.line("let idx = ((prim_id * GS_INPUT_VERTS_PER_PRIM + vertex) * GS_INPUT_REG_COUNT + reg);");
+    w.line("// Flattened index:");
+    w.line(
+        "// (((draw_instance_id * primitive_count + prim_id) * verts_per_prim + vertex) * reg_count + reg).",
+    );
+    w.line("let idx = (((draw_instance_id * params.primitive_count + prim_id) * GS_INPUT_VERTS_PER_PRIM + vertex) * GS_INPUT_REG_COUNT + reg);");
     w.line("let len = arrayLength(&gs_inputs.data);");
     w.line("if (idx >= len) {");
     w.indent();
@@ -2417,6 +2422,7 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_impl(
     // Primitive entry point.
     w.line("fn gs_exec_primitive(");
     w.indent();
+    w.line("draw_instance_id_in: u32,");
     w.line("prim_id: u32,");
     w.line("gs_instance_id_in: u32,");
     w.line("overflow: ptr<function, bool>,");
@@ -2443,6 +2449,7 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_impl(
     w.line("var strip_prev1: u32 = 0u;");
     w.line("");
     w.line("// Synthetic system values for compute-based GS emulation.");
+    w.line("let draw_instance_id: u32 = draw_instance_id_in;"); // Used for v#[] lookup.
     w.line("let primitive_id: u32 = prim_id;"); // SV_PrimitiveID
     w.line("let gs_instance_id: u32 = gs_instance_id_in;"); // SV_GSInstanceID
     w.line("");
@@ -4110,21 +4117,23 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_impl(
     w.line("}");
     w.line("");
 
-    // Compute entry point: one invocation per input primitive.
+    // Compute entry point: one invocation per input primitive per draw instance.
     w.line("@compute @workgroup_size(1)");
     w.line(&format!(
         "fn {entry_point}(@builtin(global_invocation_id) id: vec3<u32>) {{"
     ));
     w.indent();
     w.line("let prim_id: u32 = id.x;");
+    w.line("let draw_instance_id: u32 = id.y;");
     w.line("if (prim_id >= params.primitive_count) { return; }");
+    w.line("if (draw_instance_id >= params.instance_count) { return; }");
     w.line("");
     w.line("var overflow: bool = false;");
     w.line(
         "for (var gs_instance_id: u32 = 0u; gs_instance_id < GS_INSTANCE_COUNT; gs_instance_id = gs_instance_id + 1u) {",
     );
     w.indent();
-    w.line("gs_exec_primitive(prim_id, gs_instance_id, &overflow);");
+    w.line("gs_exec_primitive(draw_instance_id, prim_id, gs_instance_id, &overflow);");
     w.line("if (overflow) { break; }");
     w.dedent();
     w.line("}");
@@ -4153,10 +4162,12 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_impl(
     w.indent();
     w.line("let out_index_count: u32 = atomicLoad(&out_state.counters.index_count);");
     w.line("out_state.out_indirect.index_count = out_index_count;");
-    w.line("out_state.out_indirect.instance_count = params.instance_count;");
+    // The executor dispatches the GS prepass once per draw instance, so the expanded geometry
+    // already includes all instances. Emit a non-instanced indirect draw.
+    w.line("out_state.out_indirect.instance_count = 1u;");
     w.line("out_state.out_indirect.first_index = 0u;");
     w.line("out_state.out_indirect.base_vertex = 0;");
-    w.line("out_state.out_indirect.first_instance = params.first_instance;");
+    w.line("out_state.out_indirect.first_instance = 0u;");
     w.dedent();
     w.line("}");
     w.dedent();
@@ -4647,7 +4658,9 @@ fn emit_src_vec4(
                 expand_u32_to_vec4(u32_expr, info.mask)
             }
         },
-        SrcKind::GsInput { reg, vertex } => format!("gs_load_input(prim_id, {reg}u, {vertex}u)"),
+        SrcKind::GsInput { reg, vertex } => {
+            format!("gs_load_input(draw_instance_id, prim_id, {reg}u, {vertex}u)")
+        }
         SrcKind::ConstantBuffer { slot, reg } => {
             format!("bitcast<vec4<f32>>(cb{slot}.regs[{reg}])")
         }
@@ -4733,9 +4746,9 @@ fn emit_src_vec4_u32(
                 })
             }
         },
-        SrcKind::GsInput { reg, vertex } => {
-            format!("bitcast<vec4<u32>>(gs_load_input(prim_id, {reg}u, {vertex}u))")
-        }
+        SrcKind::GsInput { reg, vertex } => format!(
+            "bitcast<vec4<u32>>(gs_load_input(draw_instance_id, prim_id, {reg}u, {vertex}u))"
+        ),
         SrcKind::ConstantBuffer { slot, reg } => format!("cb{slot}.regs[{reg}]"),
         SrcKind::ImmediateF32(vals) => {
             let lanes: Vec<String> = vals.iter().map(|v| format!("0x{v:08x}u")).collect();
@@ -4837,9 +4850,9 @@ fn emit_src_vec4_i32(
                 })
             }
         },
-        SrcKind::GsInput { reg, vertex } => {
-            format!("bitcast<vec4<i32>>(gs_load_input(prim_id, {reg}u, {vertex}u))")
-        }
+        SrcKind::GsInput { reg, vertex } => format!(
+            "bitcast<vec4<i32>>(gs_load_input(draw_instance_id, prim_id, {reg}u, {vertex}u))"
+        ),
         SrcKind::ConstantBuffer { slot, reg } => {
             format!("bitcast<vec4<i32>>(cb{slot}.regs[{reg}])")
         }
@@ -5184,7 +5197,7 @@ mod tests {
             "expected per-instance loop in WGSL:\n{wgsl}"
         );
         assert!(
-            wgsl.contains("gs_exec_primitive(prim_id, gs_instance_id,"),
+            wgsl.contains("gs_exec_primitive(draw_instance_id, prim_id, gs_instance_id,"),
             "expected primitive invocation to receive gs_instance_id:\n{wgsl}"
         );
     }
