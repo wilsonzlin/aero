@@ -44,10 +44,14 @@ fn build_int10_vbe_set_mode_boot_sector() -> [u8; 512] {
 
 #[test]
 fn vga_vbe_lfb_is_reachable_via_pci_mmio_router() {
+    // Use a non-default base to ensure the PCI MMIO router path doesn't have a hidden dependency
+    // on `aero_gpu_vga::SVGA_LFB_BASE`.
+    let lfb_base: u32 = 0xE100_0000;
     let cfg = MachineConfig {
         enable_pc_platform: true,
         enable_vga: true,
         enable_aerogpu: false,
+        vga_lfb_base: lfb_base,
         ..Default::default()
     };
     let mut m = Machine::new(cfg).unwrap();
@@ -72,6 +76,7 @@ fn vga_vbe_lfb_is_reachable_via_pci_mmio_router() {
     // Always use the firmware-reported VBE PhysBasePtr so this test stays robust if the LFB base
     // changes (e.g. standalone VGA stub vs AeroGPU BAR1-backed legacy VBE).
     let base = m.vbe_lfb_base();
+    assert_eq!(base, u64::from(lfb_base));
     // Write a red pixel at (0,0) in packed 32bpp BGRX via *machine memory*.
     m.write_physical_u32(base, 0x00FF_0000);
 

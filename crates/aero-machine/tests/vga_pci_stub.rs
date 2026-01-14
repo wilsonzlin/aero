@@ -4,12 +4,17 @@ use aero_machine::{Machine, MachineConfig};
 
 #[test]
 fn vga_pci_stub_enumerates_and_bar0_sizes_correctly() {
+    // Use a non-default LFB base to ensure the VGA PCI stub mirrors the configured base (and does
+    // not depend on `aero_gpu_vga::SVGA_LFB_BASE`).
+    let lfb_base: u32 = 0xE100_0000;
+
     let cfg = MachineConfig {
         ram_size_bytes: 2 * 1024 * 1024,
         enable_pc_platform: true,
         enable_vga: true,
         // Keep this test stable if AeroGPU becomes enabled-by-default in the canonical presets.
         enable_aerogpu: false,
+        vga_lfb_base: lfb_base,
         // Keep the machine minimal for the PCI stub check.
         enable_serial: false,
         enable_i8042: false,
@@ -19,6 +24,7 @@ fn vga_pci_stub_enumerates_and_bar0_sizes_correctly() {
         ..Default::default()
     };
     let mut m = Machine::new(cfg).unwrap();
+    assert_eq!(m.vbe_lfb_base(), u64::from(lfb_base));
 
     // The canonical machine may expose a transitional VGA/VBE PCI stub at this fixed BDF:
     // `00:0c.0` (see `docs/pci-device-compatibility.md`). Phase 2 removes it when AeroGPU owns
@@ -39,6 +45,7 @@ fn vga_pci_stub_enumerates_and_bar0_sizes_correctly() {
         let vga = vga.borrow();
         (vga.lfb_base(), vga.vram_size())
     };
+    assert_eq!(expected_lfb_base, lfb_base);
 
     let bar0_base = {
         let pci_cfg = m.pci_config_ports().expect("pc platform enabled");
