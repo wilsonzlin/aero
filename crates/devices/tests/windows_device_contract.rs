@@ -407,10 +407,17 @@ fn windows_device_contract_virtio_input_inf_uses_distinct_keyboard_mouse_device_
         let (mouse_desc, mouse_install) =
             inf_model_entry_for_hwid(&inf_contents, section, hwid_mouse)
                 .unwrap_or_else(|| panic!("missing {hwid_mouse} model entry in [{section}]"));
+        let (fallback_desc, fallback_install) =
+            inf_model_entry_for_hwid(&inf_contents, section, hwid_fallback)
+                .unwrap_or_else(|| panic!("missing {hwid_fallback} model entry in [{section}]"));
 
         assert_eq!(
             kbd_install, mouse_install,
             "{section}: install section mismatch"
+        );
+        assert_eq!(
+            fallback_install, kbd_install,
+            "{section}: generic fallback install section mismatch"
         );
 
         assert_ne!(
@@ -419,29 +426,20 @@ fn windows_device_contract_virtio_input_inf_uses_distinct_keyboard_mouse_device_
             "{section}: keyboard/mouse DeviceDesc tokens must be distinct"
         );
 
-        // The canonical INF (`aero_virtio_input.inf`) is intentionally SUBSYS-gated only. A strict
-        // contract-gated fallback match (no SUBSYS) is provided by the legacy alias INF
-        // (`virtio-input.inf.disabled`, rename to `virtio-input.inf` to enable). The tablet INF is
-        // more specific (`SUBSYS_0012...`) so it wins when present; see
-        // `drivers/windows7/virtio-input/docs/pci-hwids.md` for details.
         assert!(
-            inf_model_entry_for_hwid(&inf_contents, section, hwid_fallback).is_none(),
-            "{section}: canonical INF must not contain generic fallback model entry {hwid_fallback}"
+            fallback_desc.to_ascii_lowercase() != kbd_desc.to_ascii_lowercase(),
+            "{section}: generic fallback DeviceDesc token must be generic (not keyboard)"
+        );
+        assert!(
+            fallback_desc.to_ascii_lowercase() != mouse_desc.to_ascii_lowercase(),
+            "{section}: generic fallback DeviceDesc token must be generic (not mouse)"
         );
 
         // The canonical INF is expected to use these tokens (kept in sync with docs/tests).
         assert_eq!(kbd_desc, "%AeroVirtioKeyboard.DeviceDesc%");
         assert_eq!(mouse_desc, "%AeroVirtioMouse.DeviceDesc%");
+        assert_eq!(fallback_desc, "%AeroVirtioInput.DeviceDesc%");
     }
-
-    // CI enforces that the strict fallback HWID does not appear in the canonical INF at all
-    // (including comments) to prevent cargo-culted reintroduction.
-    assert!(
-        !inf_contents
-            .to_ascii_lowercase()
-            .contains(&hwid_fallback.to_ascii_lowercase()),
-        "canonical INF must not contain the strict generic fallback HWID {hwid_fallback} anywhere"
-    );
 
     let strings = inf_strings(&inf_contents);
     let kbd_name = strings
