@@ -102,6 +102,7 @@ where
     I: IntoIterator<Item = ShaderBindingSet<'a>>,
 {
     let max_uniform_binding_size = device.limits().max_uniform_buffer_binding_size as u64;
+    let max_storage_buffers_per_shader_stage = device.limits().max_storage_buffers_per_shader_stage;
 
     let max_internal_bind_group_index = match bind_group_validation {
         BindGroupIndexValidation::GuestShaders => None,
@@ -134,6 +135,19 @@ where
                 bail!(
                     "{shader_kind} binding @group({}) is out of range for AeroGPU D3D11 binding model (max {max_group})",
                     binding.group,
+                );
+            }
+
+            if max_storage_buffers_per_shader_stage == 0
+                && matches!(
+                    binding.kind,
+                    crate::BindingKind::SrvBuffer { .. } | crate::BindingKind::UavBuffer { .. }
+                )
+            {
+                bail!(
+                    "{shader_kind} binding @group({}) @binding({}) requires storage buffers, but this device reports max_storage_buffers_per_shader_stage=0",
+                    binding.group,
+                    binding.binding,
                 );
             }
 
