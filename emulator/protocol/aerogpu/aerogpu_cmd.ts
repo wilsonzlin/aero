@@ -319,24 +319,50 @@ export function shaderStageExFromDxbcProgramType(programType: number): AerogpuSh
  * `AEROGPU_SHADER_STAGE_COMPUTE`.
  */
 export function decodeStageEx(shaderStage: number, reserved0: number): AerogpuShaderStageEx | undefined {
+  // The `stage_ex` overload is only active when `shaderStage == COMPUTE` *and* the reserved field
+  // is non-zero. `reserved0 == 0` must remain the legacy/default encoding (old guests always wrote
+  // 0 into reserved fields), so it cannot be interpreted as DXBC program-type 0 (Pixel).
   if ((shaderStage >>> 0) !== AerogpuShaderStage.Compute) return undefined;
-  // `reserved0 == 0` is reserved for legacy/default "no stage_ex" (old guests always write 0).
-  if ((reserved0 >>> 0) === 0) return undefined;
-  return shaderStageExFromDxbcProgramType(reserved0);
+
+  const tag = reserved0 >>> 0;
+  if (tag === 0) return undefined;
+
+  // For binding packets we only accept the extended stages routed via `stage_ex` (GS/HS/DS).
+  // Optionally tolerate `stage_ex == 5` (Compute) for older buggy writers.
+  switch (tag) {
+    case AerogpuShaderStageEx.Geometry:
+      return AerogpuShaderStageEx.Geometry;
+    case AerogpuShaderStageEx.Hull:
+      return AerogpuShaderStageEx.Hull;
+    case AerogpuShaderStageEx.Domain:
+      return AerogpuShaderStageEx.Domain;
+    case AerogpuShaderStageEx.Compute:
+      return AerogpuShaderStageEx.Compute;
+    default:
+      return undefined;
+  }
 }
 
 /**
  * Encode the extended shader stage ("stage_ex") into `(shaderStage, reserved0)`.
- *
- * The returned `shaderStage` is always `AEROGPU_SHADER_STAGE_COMPUTE`.
  */
 export function encodeStageEx(stageEx: AerogpuShaderStageEx): [shaderStage: number, reserved0: number] {
-  if ((stageEx >>> 0) === AerogpuShaderStageEx.Pixel) {
-    throw new Error(
-      "encodeStageEx: stageEx=0 (Pixel) cannot be encoded into reserved0; use the legacy shaderStage field",
-    );
+  // Encoding rules for resource-binding packets:
+  // - VS/PS/CS use the legacy `shaderStage` field, with `reserved0 == 0`.
+  // - GS/HS/DS are encoded by setting `shaderStage = COMPUTE` and `reserved0` to a non-zero
+  //   `stage_ex` tag (DXBC program type: 2/3/4).
+  switch (stageEx) {
+    case AerogpuShaderStageEx.Pixel:
+      return [AerogpuShaderStage.Pixel, 0];
+    case AerogpuShaderStageEx.Vertex:
+      return [AerogpuShaderStage.Vertex, 0];
+    case AerogpuShaderStageEx.Compute:
+      return [AerogpuShaderStage.Compute, 0];
+    case AerogpuShaderStageEx.Geometry:
+    case AerogpuShaderStageEx.Hull:
+    case AerogpuShaderStageEx.Domain:
+      return [AerogpuShaderStage.Compute, stageEx];
   }
-  return [AerogpuShaderStage.Compute, stageEx];
 }
 
 export type AerogpuShaderStageResolved =
@@ -1644,10 +1670,9 @@ export class AerogpuCmdWriter {
   /**
    * Stage-ex aware variant of {@link setShaderConstantsF}.
    *
-   * Encodes `stageEx` into `reserved0` and sets the legacy `stage` field to `COMPUTE`.
-   *
-   * Note: `stageEx = 0` (DXBC Pixel program-type) cannot be encoded here because `reserved0 == 0`
-   * is reserved for legacy/default "no stage_ex".
+   * Encodes `stageEx` using the `stage_ex` ABI rules:
+   * - VS/PS/CS use the legacy `stage` field with `reserved0 = 0`.
+   * - GS/HS/DS are encoded as `stage = COMPUTE` with a non-zero `reserved0` tag (2/3/4).
    */
   setShaderConstantsFEx(
     stageEx: AerogpuShaderStageEx,
@@ -1823,10 +1848,9 @@ export class AerogpuCmdWriter {
   /**
    * Stage-ex aware variant of {@link setTexture}.
    *
-   * Encodes `stageEx` into `reserved0` and sets the legacy `shaderStage` field to `COMPUTE`.
-   *
-   * Note: `stageEx = 0` (DXBC Pixel program-type) cannot be encoded here because `reserved0 == 0`
-   * is reserved for legacy/default "no stage_ex".
+   * Encodes `stageEx` using the `stage_ex` ABI rules:
+   * - VS/PS/CS use the legacy `shaderStage` field with `reserved0 = 0`.
+   * - GS/HS/DS are encoded as `shaderStage = COMPUTE` with a non-zero `reserved0` tag (2/3/4).
    */
   setTextureEx(stageEx: AerogpuShaderStageEx, slot: number, texture: AerogpuHandle): void {
     const [shaderStage, reserved0] = encodeStageEx(stageEx);
@@ -1891,10 +1915,9 @@ export class AerogpuCmdWriter {
   /**
    * Stage-ex aware variant of {@link setSamplers}.
    *
-   * Encodes `stageEx` into `reserved0` and sets the legacy `shaderStage` field to `COMPUTE`.
-   *
-   * Note: `stageEx = 0` (DXBC Pixel program-type) cannot be encoded here because `reserved0 == 0`
-   * is reserved for legacy/default "no stage_ex".
+   * Encodes `stageEx` using the `stage_ex` ABI rules:
+   * - VS/PS/CS use the legacy `shaderStage` field with `reserved0 = 0`.
+   * - GS/HS/DS are encoded as `shaderStage = COMPUTE` with a non-zero `reserved0` tag (2/3/4).
    */
   setSamplersEx(stageEx: AerogpuShaderStageEx, startSlot: number, handles: ArrayLike<AerogpuHandle>): void {
     const [shaderStage, reserved0] = encodeStageEx(stageEx);
@@ -1939,10 +1962,9 @@ export class AerogpuCmdWriter {
   /**
    * Stage-ex aware variant of {@link setConstantBuffers}.
    *
-   * Encodes `stageEx` into `reserved0` and sets the legacy `shaderStage` field to `COMPUTE`.
-   *
-   * Note: `stageEx = 0` (DXBC Pixel program-type) cannot be encoded here because `reserved0 == 0`
-   * is reserved for legacy/default "no stage_ex".
+   * Encodes `stageEx` using the `stage_ex` ABI rules:
+   * - VS/PS/CS use the legacy `shaderStage` field with `reserved0 = 0`.
+   * - GS/HS/DS are encoded as `shaderStage = COMPUTE` with a non-zero `reserved0` tag (2/3/4).
    */
   setConstantBuffersEx(
     stageEx: AerogpuShaderStageEx,

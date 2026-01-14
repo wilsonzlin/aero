@@ -607,13 +607,11 @@ int main(void) {
   PRINT_OFF("aerogpu_escape_query_cursor_out", aerogpu_escape_query_cursor_out, fb_gpa);
   PRINT_OFF("aerogpu_escape_query_cursor_out", aerogpu_escape_query_cursor_out, pitch_bytes);
   PRINT_OFF("aerogpu_escape_query_cursor_out", aerogpu_escape_query_cursor_out, reserved1);
-
   PRINT_OFF("aerogpu_escape_query_error_out", aerogpu_escape_query_error_out, flags);
   PRINT_OFF("aerogpu_escape_query_error_out", aerogpu_escape_query_error_out, error_code);
   PRINT_OFF("aerogpu_escape_query_error_out", aerogpu_escape_query_error_out, error_fence);
   PRINT_OFF("aerogpu_escape_query_error_out", aerogpu_escape_query_error_out, error_count);
   PRINT_OFF("aerogpu_escape_query_error_out", aerogpu_escape_query_error_out, reserved0);
-
   PRINT_OFF("aerogpu_escape_map_shared_handle_inout", aerogpu_escape_map_shared_handle_inout, shared_handle);
   PRINT_OFF("aerogpu_escape_map_shared_handle_inout", aerogpu_escape_map_shared_handle_inout, debug_token);
   PRINT_OFF("aerogpu_escape_map_shared_handle_inout", aerogpu_escape_map_shared_handle_inout, share_token);

@@ -10,22 +10,33 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 
 #[test]
-fn stage_ex_encode_decode_roundtrip() {
-    let all = [
-        AerogpuShaderStageEx::Vertex,
+fn stage_ex_encode_decode_semantics() {
+    // Legacy stages (VS/PS/CS): stage_ex is not used and reserved0 stays 0.
+    assert_eq!(
+        encode_stage_ex(AerogpuShaderStageEx::Pixel),
+        (AerogpuShaderStage::Pixel as u32, 0)
+    );
+    assert_eq!(
+        encode_stage_ex(AerogpuShaderStageEx::Vertex),
+        (AerogpuShaderStage::Vertex as u32, 0)
+    );
+    assert_eq!(
+        encode_stage_ex(AerogpuShaderStageEx::Compute),
+        (AerogpuShaderStage::Compute as u32, 0)
+    );
+
+    // Extended stages (GS/HS/DS): encoded as (shader_stage=COMPUTE, reserved0=2/3/4).
+    for stage_ex in [
         AerogpuShaderStageEx::Geometry,
         AerogpuShaderStageEx::Hull,
         AerogpuShaderStageEx::Domain,
-        AerogpuShaderStageEx::Compute,
-    ];
-
-    for stage_ex in all {
+    ] {
         let (shader_stage, reserved0) = encode_stage_ex(stage_ex);
         assert_eq!(shader_stage, AerogpuShaderStage::Compute as u32);
         assert_eq!(decode_stage_ex(shader_stage, reserved0), Some(stage_ex));
     }
 
-    // Backwards-compat: reserved0==0 must *not* be interpreted as Pixel.
+    // Regression: reserved0=0 is legacy/no override, not "Pixel".
     assert_eq!(
         decode_stage_ex(AerogpuShaderStage::Compute as u32, 0),
         None
@@ -37,6 +48,16 @@ fn stage_ex_encode_decode_roundtrip() {
             AerogpuShaderStage::Vertex as u32,
             AerogpuShaderStageEx::Geometry as u32
         ),
+        None
+    );
+}
+
+#[test]
+fn stage_ex_legacy_compute_reserved0_zero_does_not_decode_as_pixel() {
+    // Legacy compute bindings use (shader_stage=COMPUTE, reserved0=0); this must not decode as
+    // `stage_ex = Pixel` (DXBC program-type 0).
+    assert_eq!(
+        decode_stage_ex(AerogpuShaderStage::Compute as u32, 0),
         None
     );
 }
@@ -324,7 +345,9 @@ fn cmd_writer_stage_ex_encodes_compute_and_reserved0() {
             .try_into()
             .unwrap(),
     );
-    assert_eq!(decode_stage_ex(stage, reserved0), Some(AerogpuShaderStageEx::Compute));
+    // Compute bindings remain the legacy encoding: reserved0 stays 0 (not 5).
+    assert_eq!(reserved0, 0);
+    assert_eq!(decode_stage_ex(stage, reserved0), None);
     cursor += size_bytes as usize;
 
     assert_eq!(cursor, buf.len());

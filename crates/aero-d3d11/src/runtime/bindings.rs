@@ -46,7 +46,12 @@ impl ShaderStage {
             0 => Some(Self::Vertex),
             1 => Some(Self::Pixel),
             2 => match stage_ex {
-                0 => Some(Self::Compute),
+                // `stage_ex == 0` is the legacy/default compute-stage encoding.
+                //
+                // We also tolerate `stage_ex == 5` (DXBC program type for compute) for older/broken
+                // command writers that incorrectly used the DXBC value instead of the reserved 0
+                // sentinel in binding packets.
+                0 | 5 => Some(Self::Compute),
                 2 => Some(Self::Geometry),
                 3 => Some(Self::Hull),
                 4 => Some(Self::Domain),
