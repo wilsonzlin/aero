@@ -664,6 +664,14 @@ VirtIoSndWaveRtStartTimer(_Inout_ PVIRTIOSND_WAVERT_STREAM Stream)
 
     KeAcquireSpinLock(&Stream->Lock, &oldIrql);
     Stream->Stopping = FALSE;
+#if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
+    /*
+     * Reset tick coalescing when (re)starting the timer so a PAUSE->RUN transition
+     * doesn't accidentally suppress the first DPC tick due to a stale timestamp
+     * from the previous RUN segment.
+     */
+    Stream->LastTickTime100ns = 0;
+#endif
     KeReleaseSpinLock(&Stream->Lock, oldIrql);
 
     period100ns = Stream->Period100ns;
