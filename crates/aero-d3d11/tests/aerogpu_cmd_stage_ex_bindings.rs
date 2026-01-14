@@ -69,13 +69,17 @@ fn build_minimal_sm4_program_chunk(program_type: u16) -> Vec<u8> {
 }
 
 fn push_bind_shaders(stream: &mut Vec<u8>, vs: u32, ps: u32, cs: u32, gs: u32) {
-    // `aerogpu_cmd_bind_shaders` extended ABI:
-    // - `reserved0` carries GS handle.
+    // Encode the append-only `BIND_SHADERS` extension so the executor sees `{gs,hs,ds}` via the
+    // canonical decoder, while also duplicating `gs` into the legacy `reserved0` field for backwards
+    // compatibility (see `drivers/aerogpu/protocol/aerogpu_cmd.h`).
     let start = begin_cmd(stream, AerogpuCmdOpcode::BindShaders as u32);
     stream.extend_from_slice(&vs.to_le_bytes());
     stream.extend_from_slice(&ps.to_le_bytes());
     stream.extend_from_slice(&cs.to_le_bytes());
-    stream.extend_from_slice(&gs.to_le_bytes());
+    stream.extend_from_slice(&gs.to_le_bytes()); // reserved0 (legacy GS)
+    stream.extend_from_slice(&gs.to_le_bytes()); // gs (extension)
+    stream.extend_from_slice(&0u32.to_le_bytes()); // hs (extension)
+    stream.extend_from_slice(&0u32.to_le_bytes()); // ds (extension)
     end_cmd(stream, start);
 }
 
@@ -217,7 +221,7 @@ fn aerogpu_cmd_stage_ex_bindings_route_to_correct_stage_bucket() {
             end_cmd(&mut stream, start);
         }
 
-        // Bind the GS via the extended BIND_SHADERS ABI (reserved0 carries GS handle).
+        // Bind the GS via the append-only `BIND_SHADERS` extension (`{gs,hs,ds}` payload).
         push_bind_shaders(&mut stream, 0, 0, 0, GS_SHADER);
 
         // Create dummy resources for each binding table.
