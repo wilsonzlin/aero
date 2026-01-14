@@ -100,6 +100,12 @@ struct HasPfnSetShaderConstI<T, std::void_t<decltype(&T::pfnSetShaderConstI)>>
     : std::true_type {};
 
 template <typename T, typename = void>
+struct HasPfnSetShaderConstF : std::false_type {};
+template <typename T>
+struct HasPfnSetShaderConstF<T, std::void_t<decltype(&T::pfnSetShaderConstF)>>
+    : std::true_type {};
+
+template <typename T, typename = void>
 struct HasPfnSetShaderConstB : std::false_type {};
 template <typename T>
 struct HasPfnSetShaderConstB<T, std::void_t<decltype(&T::pfnSetShaderConstB)>>
@@ -15038,6 +15044,131 @@ bool TestGetShaderConstIBRoundTripImpl() {
 
 bool TestGetShaderConstIBRoundTrip() {
   return TestGetShaderConstIBRoundTripImpl<D3D9DDI_DEVICEFUNCS>();
+}
+
+template <typename DeviceFuncsT, uint32_t D3dStage>
+bool TestApplyStateBlockSkipsRedundantShaderConstFImpl() {
+  if constexpr (!HasPfnSetShaderConstF<DeviceFuncsT>::value) {
+    // Some D3D9 DDI header variants may not expose SetShaderConstF in the device function table.
+    return true;
+  } else {
+    struct Cleanup {
+      D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+      DeviceFuncsT device_funcs{};
+      D3DDDI_HADAPTER hAdapter{};
+      D3DDDI_HDEVICE hDevice{};
+      D3D9DDI_HSTATEBLOCK hStateBlock{};
+      bool has_adapter = false;
+      bool has_device = false;
+      bool has_stateblock = false;
+
+      ~Cleanup() {
+        if (has_stateblock && device_funcs.pfnDeleteStateBlock) {
+          device_funcs.pfnDeleteStateBlock(hDevice, hStateBlock);
+        }
+        if (has_device && device_funcs.pfnDestroyDevice) {
+          device_funcs.pfnDestroyDevice(hDevice);
+        }
+        if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+          adapter_funcs.pfnCloseAdapter(hAdapter);
+        }
+      }
+    } cleanup;
+
+    D3DDDIARG_OPENADAPTER2 open{};
+    open.Interface = 1;
+    open.Version = 1;
+    D3DDDI_ADAPTERCALLBACKS callbacks{};
+    D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+    open.pAdapterCallbacks = &callbacks;
+    open.pAdapterCallbacks2 = &callbacks2;
+    open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+    HRESULT hr = ::OpenAdapter2(&open);
+    if (!Check(hr == S_OK, "OpenAdapter2")) {
+      return false;
+    }
+    cleanup.hAdapter = open.hAdapter;
+    cleanup.has_adapter = true;
+
+    D3D9DDIARG_CREATEDEVICE create_dev{};
+    create_dev.hAdapter = open.hAdapter;
+    create_dev.Flags = 0;
+    hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+    if (!Check(hr == S_OK, "CreateDevice")) {
+      return false;
+    }
+    cleanup.hDevice = create_dev.hDevice;
+    cleanup.has_device = true;
+
+    if (!cleanup.device_funcs.pfnBeginStateBlock ||
+        !cleanup.device_funcs.pfnEndStateBlock ||
+        !cleanup.device_funcs.pfnApplyStateBlock ||
+        !cleanup.device_funcs.pfnDeleteStateBlock) {
+      // Some build configurations may omit state-block entrypoints.
+      return true;
+    }
+    if (!Check(cleanup.device_funcs.pfnSetShaderConstF != nullptr, "SetShaderConstF must be available")) {
+      return false;
+    }
+
+    auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+    if (!Check(dev != nullptr, "device pointer")) {
+      return false;
+    }
+
+    std::vector<uint8_t> dma(4096, 0);
+    dev->cmd.set_span(dma.data(), dma.size());
+    dev->cmd.reset();
+    ScopedDeviceCmdVectorReset cmd_reset(dev);
+
+    // Record a state block that sets float shader constants.
+    hr = cleanup.device_funcs.pfnBeginStateBlock(create_dev.hDevice);
+    if (!Check(hr == S_OK, "BeginStateBlock")) {
+      return false;
+    }
+    const uint32_t start_reg = 5;
+    const uint32_t vec4_count = 2;
+    const float data[vec4_count * 4] = {
+        1.0f, 2.0f, 3.0f, 4.0f,
+        5.0f, 6.0f, 7.0f, 8.0f,
+    };
+    hr = cleanup.device_funcs.pfnSetShaderConstF(create_dev.hDevice, D3dStage, start_reg, data, vec4_count);
+    if (!Check(hr == S_OK, "SetShaderConstF(record)")) {
+      return false;
+    }
+    hr = cleanup.device_funcs.pfnEndStateBlock(create_dev.hDevice, &cleanup.hStateBlock);
+    if (!Check(hr == S_OK, "EndStateBlock")) {
+      return false;
+    }
+    if (!Check(cleanup.hStateBlock.pDrvPrivate != nullptr, "EndStateBlock returns a stateblock handle")) {
+      return false;
+    }
+    cleanup.has_stateblock = true;
+
+    // Applying the state block immediately (without changing device state) should not emit redundant constant uploads.
+    dev->cmd.reset();
+    hr = cleanup.device_funcs.pfnApplyStateBlock(create_dev.hDevice, cleanup.hStateBlock);
+    if (!Check(hr == S_OK, "ApplyStateBlock")) {
+      return false;
+    }
+    dev->cmd.finalize();
+    const uint8_t* buf = dma.data();
+    const size_t len = dev->cmd.bytes_used();
+    if (!Check(ValidateStream(buf, dma.size()), "command stream validates")) {
+      return false;
+    }
+    return Check(CountOpcode(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F) == 0,
+                 "Redundant ApplyStateBlock does not emit SET_SHADER_CONSTANTS_F");
+  }
+}
+
+bool TestApplyStateBlockSkipsRedundantShaderConstF() {
+  return TestApplyStateBlockSkipsRedundantShaderConstFImpl<D3D9DDI_DEVICEFUNCS, kD3d9ShaderStagePs>();
+}
+
+bool TestApplyStateBlockSkipsRedundantShaderConstFVs() {
+  return TestApplyStateBlockSkipsRedundantShaderConstFImpl<D3D9DDI_DEVICEFUNCS, kD3d9ShaderStageVs>();
 }
 
 template <typename DeviceFuncsT, uint32_t D3dStage, uint32_t ExpectedStage>
@@ -41408,6 +41539,8 @@ int main() {
   RUN_TEST(TestSetShaderConstIBNormalizesStage);
   RUN_TEST(TestSetShaderConstIBInvalidRangeNoops);
   RUN_TEST(TestGetShaderConstIBRoundTrip);
+  RUN_TEST(TestApplyStateBlockSkipsRedundantShaderConstF);
+  RUN_TEST(TestApplyStateBlockSkipsRedundantShaderConstFVs);
   RUN_TEST(TestApplyStateBlockEmitsShaderConstIB);
   RUN_TEST(TestApplyStateBlockEmitsShaderConstIBVs);
   RUN_TEST(TestApplyStateBlockSplitsShaderConstIB);

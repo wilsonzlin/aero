@@ -15552,12 +15552,25 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
         }
       }
 
-      std::memcpy(dst + static_cast<size_t>(start) * 4,
-                  src + static_cast<size_t>(start) * 4,
-                  static_cast<size_t>(count) * 4 * sizeof(float));
-
       const float* payload = src + static_cast<size_t>(start) * 4;
       const size_t payload_size = static_cast<size_t>(count) * 4 * sizeof(float);
+
+      // Always record into the in-progress state block (if any), even if the
+      // constant data is redundant.
+      stateblock_record_shader_const_f_locked(dev, stage, start, payload, count);
+
+      if (std::memcmp(dst + static_cast<size_t>(start) * 4, payload, payload_size) == 0) {
+        // Skip redundant constant uploads: applying identical state again is a
+        // no-op, but still recorded above for state blocks.
+        // Leave `dst` unchanged (it already matches).
+        reg = end + 1;
+        continue;
+      }
+
+      std::memcpy(dst + static_cast<size_t>(start) * 4,
+                  payload,
+                  payload_size);
+
       auto* cmd = append_with_payload_locked<aerogpu_cmd_set_shader_constants_f>(
           dev, AEROGPU_CMD_SET_SHADER_CONSTANTS_F, payload, payload_size);
       if (!cmd) {
@@ -15567,8 +15580,6 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
       cmd->start_register = start;
       cmd->vec4_count = count;
       cmd->reserved0 = 0;
-
-      stateblock_record_shader_const_f_locked(dev, stage, start, payload, count);
 
       reg = end + 1;
     }
