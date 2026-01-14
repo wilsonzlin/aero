@@ -81,6 +81,8 @@ pub struct AeroGpuPciDevice {
 
     scanout_state: Option<Arc<ScanoutState>>,
     last_published_scanout0: Option<Scanout0Descriptor>,
+    /// Pending LO dword for `SCANOUT0_FB_GPA` while waiting for the HI write commit.
+    scanout0_fb_gpa_pending_lo: u32,
     /// Set after a write to `SCANOUT0_FB_GPA_LO` and cleared on `SCANOUT0_FB_GPA_HI`.
     ///
     /// This ensures we don't publish a scanout state update with a torn 64-bit `fb_gpa`
@@ -170,6 +172,7 @@ impl AeroGpuPciDevice {
             vga,
             scanout_state: None,
             last_published_scanout0: None,
+            scanout0_fb_gpa_pending_lo: 0,
             scanout0_fb_gpa_lo_pending: false,
             // The `now_ns` timebase used by `tick()` is defined as "nanoseconds since device boot"
             // (see `drivers/aerogpu/protocol/vblank.md`). Use 0 as the stable epoch so vblank
@@ -414,6 +417,7 @@ impl AeroGpuPciDevice {
 
         // Reset scanout-state publish bookkeeping. If a reset occurs mid-framebuffer-address update,
         // we must not leave the scanout state publisher permanently blocked on a stale LO write.
+        self.scanout0_fb_gpa_pending_lo = 0;
         self.scanout0_fb_gpa_lo_pending = false;
         self.last_published_scanout0 = None;
 
@@ -709,7 +713,15 @@ impl AeroGpuPciDevice {
             mmio::SCANOUT0_HEIGHT => self.regs.scanout0.height,
             mmio::SCANOUT0_FORMAT => self.regs.scanout0.format as u32,
             mmio::SCANOUT0_PITCH_BYTES => self.regs.scanout0.pitch_bytes,
-            mmio::SCANOUT0_FB_GPA_LO => self.regs.scanout0.fb_gpa as u32,
+            mmio::SCANOUT0_FB_GPA_LO => {
+                // Expose the pending LO value while keeping `fb_gpa` stable to avoid consumers
+                // observing a torn 64-bit address mid-update.
+                if self.scanout0_fb_gpa_lo_pending {
+                    self.scanout0_fb_gpa_pending_lo
+                } else {
+                    self.regs.scanout0.fb_gpa as u32
+                }
+            }
             mmio::SCANOUT0_FB_GPA_HI => (self.regs.scanout0.fb_gpa >> 32) as u32,
 
             mmio::SCANOUT0_VBLANK_SEQ_LO => self.regs.scanout0_vblank_seq as u32,
@@ -812,6 +824,7 @@ impl AeroGpuPciDevice {
                 }
                 if !new_enable {
                     // Reset torn-update tracking so a stale LO write can't block future publishes.
+                    self.scanout0_fb_gpa_pending_lo = 0;
                     self.scanout0_fb_gpa_lo_pending = false;
                     self.last_published_scanout0 = None;
                 }
@@ -843,15 +856,19 @@ impl AeroGpuPciDevice {
                 self.maybe_publish_wddm_scanout0_state();
             }
             mmio::SCANOUT0_FB_GPA_LO => {
-                self.regs.scanout0.fb_gpa =
-                    (self.regs.scanout0.fb_gpa & 0xffff_ffff_0000_0000) | u64::from(value);
-                // Avoid publishing a torn 64-bit `fb_gpa` update. Defer until the HI write.
+                // Avoid exposing a torn 64-bit `fb_gpa` update. Treat the LO write as starting a
+                // new update and commit the combined value on the subsequent HI write.
+                self.scanout0_fb_gpa_pending_lo = value;
                 self.scanout0_fb_gpa_lo_pending = true;
             }
             mmio::SCANOUT0_FB_GPA_HI => {
-                self.regs.scanout0.fb_gpa =
-                    (self.regs.scanout0.fb_gpa & 0x0000_0000_ffff_ffff) | (u64::from(value) << 32);
                 // Drivers typically write LO then HI; treat HI as the commit point.
+                let lo = if self.scanout0_fb_gpa_lo_pending {
+                    u64::from(self.scanout0_fb_gpa_pending_lo)
+                } else {
+                    self.regs.scanout0.fb_gpa & 0xffff_ffff
+                };
+                self.regs.scanout0.fb_gpa = (u64::from(value) << 32) | lo;
                 self.scanout0_fb_gpa_lo_pending = false;
                 self.maybe_publish_wddm_scanout0_state();
             }

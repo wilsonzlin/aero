@@ -992,6 +992,51 @@ fn scanout_bgrx_forces_opaque_alpha() {
 }
 
 #[test]
+fn scanout_fb_gpa_updates_are_atomic_for_readback() {
+    let mut mem = VecMemory::new(0x20_000);
+    let mut dev = new_test_device(AeroGpuDeviceConfig::default());
+
+    let fb0 = 0x5000u64;
+    let fb1 = 0x6000u64;
+
+    // 1x1 pixels, RGBA: (1,2,3,4) then (5,6,7,8).
+    mem.write_physical(fb0, &[1, 2, 3, 4]);
+    mem.write_physical(fb1, &[5, 6, 7, 8]);
+
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_WIDTH, 4, 1);
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_HEIGHT, 4, 1);
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_PITCH_BYTES, 4, 4);
+    dev.mmio_write(
+        &mut mem,
+        mmio::SCANOUT0_FORMAT,
+        4,
+        AeroGpuFormat::R8G8B8A8Unorm as u32,
+    );
+
+    // Initial framebuffer address (LO then HI).
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_FB_GPA_LO, 4, fb0 as u32);
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_FB_GPA_HI, 4, (fb0 >> 32) as u32);
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_ENABLE, 4, 1);
+
+    let rgba0 = dev.read_scanout0_rgba(&mut mem).unwrap();
+    assert_eq!(rgba0, vec![1, 2, 3, 4]);
+
+    // Begin updating `fb_gpa` by writing only the LO dword. The device must not expose a torn
+    // address to the readback path; it should keep using the previous stable framebuffer address
+    // until the HI dword commit.
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_FB_GPA_LO, 4, fb1 as u32);
+
+    let rgba_after_lo = dev.read_scanout0_rgba(&mut mem).unwrap();
+    assert_eq!(rgba_after_lo, vec![1, 2, 3, 4]);
+
+    // Commit the new address by writing HI.
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_FB_GPA_HI, 4, (fb1 >> 32) as u32);
+
+    let rgba1 = dev.read_scanout0_rgba(&mut mem).unwrap();
+    assert_eq!(rgba1, vec![5, 6, 7, 8]);
+}
+
+#[test]
 fn scanout_bgrx_srgb_forces_opaque_alpha() {
     let mut mem = VecMemory::new(0x20_000);
     let mut dev = new_test_device(AeroGpuDeviceConfig::default());
