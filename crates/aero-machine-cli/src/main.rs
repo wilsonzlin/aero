@@ -15,10 +15,10 @@ mod native {
     use std::path::{Path, PathBuf};
     use std::time::{Duration, Instant};
 
-    use aero_machine::{Machine, MachineConfig, RunExit};
+    use aero_machine::{BootDevice, Machine, MachineConfig, RunExit};
     use aero_storage::{AeroCowDisk, DiskImage, StdFileBackend, VirtualDisk, SECTOR_SIZE};
     use anyhow::{anyhow, bail, Context, Result};
-    use clap::{ArgGroup, Parser};
+    use clap::{ArgGroup, Parser, ValueEnum};
 
     const SLICE_INST_BUDGET: u64 = 100_000;
 
@@ -87,6 +87,33 @@ mod native {
         /// Load a snapshot (aero_snapshot format) before running.
         #[arg(long)]
         snapshot_load: Option<PathBuf>,
+
+        /// Optional install/recovery ISO to attach as an ATAPI CD-ROM (IDE secondary master).
+        ///
+        /// This uses the canonical Win7 install-media slot (`disk_id=1`).
+        #[arg(long)]
+        install_iso: Option<PathBuf>,
+
+        /// BIOS boot selection policy.
+        ///
+        /// Defaults to:
+        /// - `hdd` when no `--install-iso` is provided
+        /// - `cd-first` when `--install-iso` is provided
+        ///
+        /// Note: when `--snapshot-load` is used, this only affects future guest resets. The current
+        /// CPU state is restored from the snapshot and the VM is not reset.
+        #[arg(long, value_enum)]
+        boot: Option<BootMode>,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+    enum BootMode {
+        /// Boot from the primary HDD (`DL=0x80`).
+        Hdd,
+        /// Boot from the install-media CD-ROM (`DL=0xE0`).
+        Cdrom,
+        /// Enable firmware "CD-first when present" policy (try `DL=0xE0` when ISO is present, otherwise fall back to HDD).
+        CdFirst,
     }
 
     pub fn main() -> Result<()> {
@@ -96,6 +123,20 @@ mod native {
             .ram
             .checked_mul(1024 * 1024)
             .context("RAM size overflow")?;
+
+        // By default, treat an attached install ISO as a request to boot from CD once, then allow
+        // the guest to reboot into HDD without host-side boot-drive toggling (mirrors the browser
+        // runtime's `vmRuntime="machine"` install flow).
+        let boot_mode = args.boot.unwrap_or_else(|| {
+            if args.install_iso.is_some() {
+                BootMode::CdFirst
+            } else {
+                BootMode::Hdd
+            }
+        });
+        if matches!(boot_mode, BootMode::Cdrom | BootMode::CdFirst) && args.install_iso.is_none() {
+            bail!("--boot={boot_mode:?} requires --install-iso");
+        }
 
         // Use the canonical PC platform defaults so the CLI is useful for full-system boot images.
         let mut machine = Machine::new(MachineConfig::win7_storage_defaults(ram_bytes))
@@ -122,9 +163,11 @@ mod native {
         machine
             .set_disk_backend(disk_backend)
             .map_err(|e| anyhow!("{e}"))?;
-        // `Machine::new` performs an initial BIOS POST + boot attempt. Re-run POST after attaching
-        // the user's disk so the guest starts executing from the boot sector.
-        machine.reset();
+
+        // Track whether we've enabled the firmware CD-first policy so we can disable it after the
+        // first guest-initiated reset (Windows setup reboots into the installed HDD while leaving
+        // install media inserted).
+        let mut cd_first_enabled = false;
 
         if let Some(path) = &args.snapshot_load {
             let mut f = File::open(path)
@@ -167,6 +210,28 @@ mod native {
                         }
                     }
                 }
+
+                if let Some(install_iso) = &args.install_iso {
+                    let cli_iso = install_iso.display().to_string();
+                    if let Some(cd) = restored
+                        .disks
+                        .iter()
+                        .find(|d| d.disk_id == Machine::DISK_ID_INSTALL_MEDIA)
+                    {
+                        if !cd.base_image.is_empty() && cd.base_image != cli_iso {
+                            eprintln!(
+                                "warning: snapshot install-media base_image differs from --install-iso: snapshot={} cli={}",
+                                cd.base_image, cli_iso
+                            );
+                        }
+                        if !cd.overlay_image.is_empty() {
+                            eprintln!(
+                                "warning: snapshot install-media overlay_image is non-empty (expected read-only ISO): {}",
+                                cd.overlay_image
+                            );
+                        }
+                    }
+                }
             }
 
             // Storage controller snapshots intentionally drop host backends. Reattach the shared
@@ -177,6 +242,77 @@ mod native {
             machine
                 .attach_shared_disk_to_virtio_blk()
                 .map_err(|e| anyhow!("{e}"))?;
+
+            // If install media is provided, reattach it without changing guest-visible tray state.
+            if let Some(iso_path) = &args.install_iso {
+                let iso = open_disk_image(iso_path, true)?;
+                machine
+                    .attach_install_media_iso_for_restore(Box::new(iso))
+                    .with_context(|| {
+                        format!(
+                            "failed to attach install ISO for restore: {}",
+                            iso_path.display()
+                        )
+                    })?;
+                machine
+                    .set_ide_secondary_master_atapi_overlay_ref(iso_path.display().to_string(), "");
+            }
+
+            // Only override the snapshot's boot policy when explicitly requested. Otherwise we keep
+            // the restored BIOS config intact.
+            if args.boot.is_some() {
+                match boot_mode {
+                    BootMode::Hdd => {
+                        machine.set_boot_from_cd_if_present(false);
+                        machine.set_boot_drive(0x80);
+                    }
+                    BootMode::Cdrom => {
+                        machine.set_boot_from_cd_if_present(false);
+                        machine.set_boot_drive(0xE0);
+                    }
+                    BootMode::CdFirst => {
+                        machine.set_cd_boot_drive(0xE0);
+                        machine.set_boot_from_cd_if_present(true);
+                        machine.set_boot_drive(0x80);
+                        cd_first_enabled = true;
+                    }
+                }
+            }
+        } else {
+            // No snapshot restore: attach optional install media and apply boot policy, then reset.
+            if let Some(iso_path) = &args.install_iso {
+                let iso = open_disk_image(iso_path, true)?;
+                machine
+                    .attach_install_media_iso_and_set_overlay_ref(
+                        Box::new(iso),
+                        iso_path.display().to_string(),
+                    )
+                    .with_context(|| {
+                        format!("failed to attach install ISO: {}", iso_path.display())
+                    })?;
+            }
+
+            match boot_mode {
+                BootMode::Hdd => {
+                    machine.set_boot_from_cd_if_present(false);
+                    machine.set_boot_drive(0x80);
+                }
+                BootMode::Cdrom => {
+                    machine.set_boot_from_cd_if_present(false);
+                    machine.set_boot_drive(0xE0);
+                }
+                BootMode::CdFirst => {
+                    machine.set_cd_boot_drive(0xE0);
+                    machine.set_boot_from_cd_if_present(true);
+                    machine.set_boot_drive(0x80);
+                    cd_first_enabled = true;
+                }
+            }
+
+            // `Machine::new` performs an initial BIOS POST + boot attempt. Re-run POST after
+            // attaching disks and configuring boot policy so the guest starts executing from the
+            // selected boot device.
+            machine.reset();
         }
 
         let mut serial_sink = open_serial_sink(&args.serial_out)?;
@@ -209,7 +345,7 @@ mod native {
                 stream_debugcon(&mut machine, out)?;
             }
 
-            match handle_exit(&mut machine, exit, total_executed) {
+            match handle_exit(&mut machine, exit, total_executed, &mut cd_first_enabled) {
                 Ok(LoopControl::Continue) => continue,
                 Ok(LoopControl::Break) => break,
                 Err(e) => {
@@ -384,6 +520,7 @@ mod native {
         machine: &mut Machine,
         exit: RunExit,
         total_executed: u64,
+        cd_first_enabled: &mut bool,
     ) -> Result<LoopControl> {
         match exit {
             RunExit::Completed { .. } => Ok(LoopControl::Continue),
@@ -392,7 +529,20 @@ mod native {
                 Ok(LoopControl::Break)
             }
             RunExit::ResetRequested { kind, .. } => {
-                eprintln!("guest requested reset: {kind:?} (continuing)");
+                // When using the "CD-first when present" policy, Windows setup commonly boots from
+                // CD once, then reboots into the installed HDD while leaving the ISO attached.
+                // Disable the policy after the first guest reset so setup does not loop back into
+                // install media.
+                if *cd_first_enabled && machine.active_boot_device() == BootDevice::Cdrom {
+                    eprintln!(
+                        "guest requested reset: {kind:?} (disabling CD-first policy; booting HDD next)"
+                    );
+                    machine.set_boot_from_cd_if_present(false);
+                    machine.set_boot_drive(0x80);
+                    *cd_first_enabled = false;
+                } else {
+                    eprintln!("guest requested reset: {kind:?} (continuing)");
+                }
                 machine.reset();
                 Ok(LoopControl::Continue)
             }

@@ -84,6 +84,29 @@ bash ./scripts/safe-run.sh \
     --serial-out stdout
 ```
 
+Install media (ATAPI CD-ROM) and boot policy:
+
+```bash
+# Attach a Win7 install ISO and boot from CD once, then allow the guest to reboot into the HDD.
+# (The CLI automatically disables the firmware CD-first policy after the first guest reset if the
+# active boot device was the CD-ROM, to avoid setup looping back into the installer.)
+bash ./scripts/safe-run.sh \
+  cargo run -p aero-machine-cli -- \
+    --disk /path/to/win7.img \
+    --install-iso /path/to/win7.iso \
+    --boot cd-first \
+    --max-ms 60000 \
+    --serial-out stdout
+
+# Force boot from CD every time (even after guest resets).
+bash ./scripts/safe-run.sh \
+  cargo run -p aero-machine-cli -- \
+    --disk /path/to/win7.img \
+    --install-iso /path/to/win7.iso \
+    --boot cdrom \
+    --max-ms 60000
+```
+
 Optional outputs:
 
 ```bash
