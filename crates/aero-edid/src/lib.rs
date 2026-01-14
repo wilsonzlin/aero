@@ -11,6 +11,14 @@ const MIN_V_BLANK: u32 = 15; // 3+6+6.
 ///
 /// Only a subset of timing parameters are exposed publicly; the generator will
 /// synthesize a full Detailed Timing Descriptor (DTD).
+///
+/// ## Constraints
+///
+/// EDID 1.4 stores active dimensions as 12-bit values and the pixel clock as a
+/// 16-bit value in 10kHz units (max 655.35MHz). The generator will fall back to
+/// [`Timing::DEFAULT`] if the requested timing cannot be represented in a base
+/// EDID block without inconsistencies (for example, extreme resolutions or
+/// refresh rates).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Timing {
     pub width: u16,
