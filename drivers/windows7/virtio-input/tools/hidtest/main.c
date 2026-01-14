@@ -2899,6 +2899,12 @@ static int list_hid_devices_json(void)
         DWORD hid_report_desc_len = 0;
         int hid_report_desc_valid = 0;
         int handle_valid = 0;
+        int is_virtio = 0;
+        int is_keyboard = 0;
+        int is_mouse = 0;
+        int is_consumer = 0;
+        int is_tablet = 0;
+        const wchar_t *kind = NULL;
 
         ZeroMemory(&iface, sizeof(iface));
         iface.cbSize = sizeof(iface);
@@ -2942,6 +2948,7 @@ static int list_hid_devices_json(void)
             attr.Size = sizeof(attr);
             if (HidD_GetAttributes(handle, &attr)) {
                 attr_valid = 1;
+                is_virtio = is_virtio_input_device(&attr);
             }
 
             ZeroMemory(&caps, sizeof(caps));
@@ -2955,6 +2962,37 @@ static int list_hid_devices_json(void)
             handle_valid = 0;
             // Still emit the device entry but without VID/PID/caps info.
             fprint_last_error_w(stderr, L"CreateFile");
+        }
+
+        if (caps_valid) {
+            is_keyboard = caps.UsagePage == 0x01 && caps.Usage == 0x06;
+            is_mouse = caps.UsagePage == 0x01 && caps.Usage == 0x02;
+            is_consumer = caps.UsagePage == 0x0C && caps.Usage == 0x01;
+        }
+        if (is_virtio && attr_valid && attr.ProductID == VIRTIO_INPUT_PID_TABLET) {
+            is_tablet = 1;
+        } else if (is_virtio) {
+            // Heuristic: tablet shares the mouse top-level usage, so distinguish by report descriptor length.
+            if (report_desc_valid && report_desc_len == VIRTIO_INPUT_EXPECTED_TABLET_REPORT_DESC_LEN) {
+                is_tablet = 1;
+            } else if (hid_report_desc_valid && hid_report_desc_len == VIRTIO_INPUT_EXPECTED_TABLET_REPORT_DESC_LEN) {
+                is_tablet = 1;
+            }
+        }
+        if (is_tablet) {
+            is_mouse = 0;
+        }
+
+        if (is_tablet) {
+            kind = L"tablet";
+        } else if (is_keyboard) {
+            kind = L"keyboard";
+        } else if (is_mouse) {
+            kind = L"mouse";
+        } else if (is_consumer) {
+            kind = L"consumer";
+        } else if (caps_valid) {
+            kind = L"other";
         }
 
         if (!first) {
@@ -2978,6 +3016,12 @@ static int list_hid_devices_json(void)
         } else {
             wprintf(L"null");
         }
+        wprintf(L",\"isVirtio\":");
+        if (attr_valid) {
+            wprintf(is_virtio ? L"true" : L"false");
+        } else {
+            wprintf(L"null");
+        }
         wprintf(L",\"usagePage\":");
         if (caps_valid) {
             wprintf(L"%u", (unsigned)caps.UsagePage);
@@ -2987,6 +3031,12 @@ static int list_hid_devices_json(void)
         wprintf(L",\"usage\":");
         if (caps_valid) {
             wprintf(L"%u", (unsigned)caps.Usage);
+        } else {
+            wprintf(L"null");
+        }
+        wprintf(L",\"kind\":");
+        if (kind != NULL) {
+            json_print_string_w(kind);
         } else {
             wprintf(L"null");
         }

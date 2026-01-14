@@ -118,7 +118,7 @@ hidtest.exe --list --json
 
 The JSON output is a single array on stdout. Each entry has:
 
-- `index`, `path`, `vid`, `pid`, `usagePage`, `usage`, `inputLen`, `outputLen`, `featureLen`, `reportDescLen`, `hidReportDescLen`, `desiredAccess`, `writeAccess`
+- `index`, `path`, `vid`, `pid`, `isVirtio`, `usagePage`, `usage`, `kind`, `inputLen`, `outputLen`, `featureLen`, `reportDescLen`, `hidReportDescLen`, `desiredAccess`, `writeAccess`
 
 Run the virtio-input descriptor selftest (prints `PASS`/`FAIL` lines and exits non-zero on mismatch):
 
