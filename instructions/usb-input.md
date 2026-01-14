@@ -448,6 +448,9 @@ bash ./scripts/safe-run.sh cargo test -p aero-usb --locked \
   --test attached_device_snapshot_address_clamping \
   --test hid_usage_keyboard_fixture \
   --test hid_usage_consumer_fixture \
+  --test webhid_boot_interface \
+  --test webhid_passthrough \
+  --test webhid_report_descriptor_synthesis \
   --test xhci_enum_smoke \
   --test xhci_port_remote_wakeup \
   --test xhci_controller_webusb_ep0 \
