@@ -1,6 +1,6 @@
 #![cfg(not(target_arch = "wasm32"))]
 
-use aero_storage::{AeroSparseConfig, AeroSparseDisk, DiskImage, MemBackend, VirtualDisk};
+use aero_storage::{DiskImage, MemBackend, VirtualDisk};
 use proptest::prelude::*;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
@@ -147,15 +147,32 @@ fn base_qcow2_empty() -> Vec<u8> {
 }
 
 fn base_aerosparse_empty() -> Vec<u8> {
-    let disk = AeroSparseDisk::create(
-        MemBackend::new(),
-        AeroSparseConfig {
-            disk_size_bytes: 64 * 1024,
-            block_size_bytes: 4096,
-        },
-    )
-    .unwrap();
-    disk.into_backend().into_vec()
+    // Minimal valid AeroSparse image with an empty allocation table.
+    //
+    // We construct it manually instead of calling `AeroSparseDisk::create` so the test's input
+    // generator itself cannot panic (e.g. due to an unexpected allocation error).
+    let disk_size_bytes: u64 = 64 * 1024;
+    let block_size_bytes: u32 = 4096;
+
+    let table_entries = disk_size_bytes / block_size_bytes as u64;
+    let table_bytes = table_entries * 8;
+    let table_end = 64u64 + table_bytes;
+    let block_size_u64 = block_size_bytes as u64;
+    let data_offset = ((table_end + block_size_u64 - 1) / block_size_u64) * block_size_u64;
+
+    let mut out = vec![0u8; data_offset as usize];
+    out[0..8].copy_from_slice(b"AEROSPAR");
+    out[8..12].copy_from_slice(&1u32.to_le_bytes()); // version
+    out[12..16].copy_from_slice(&64u32.to_le_bytes()); // header_size
+    out[16..20].copy_from_slice(&block_size_bytes.to_le_bytes());
+    out[20..24].copy_from_slice(&0u32.to_le_bytes()); // reserved
+    out[24..32].copy_from_slice(&disk_size_bytes.to_le_bytes());
+    out[32..40].copy_from_slice(&64u64.to_le_bytes()); // table_offset
+    out[40..48].copy_from_slice(&table_entries.to_le_bytes());
+    out[48..56].copy_from_slice(&data_offset.to_le_bytes());
+    out[56..64].copy_from_slice(&0u64.to_le_bytes()); // allocated_blocks
+
+    out
 }
 
 fn apply_mutations(mut bytes: Vec<u8>, truncate_seed: u32, mutations: &[(u32, u8)]) -> Vec<u8> {
