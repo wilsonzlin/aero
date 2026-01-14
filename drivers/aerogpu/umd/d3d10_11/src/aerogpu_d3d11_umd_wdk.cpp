@@ -3744,6 +3744,63 @@ void AEROGPU_APIENTRY DestroyResource11(D3D11DDI_HDEVICE hDevice, D3D11DDI_HRESO
   UnbindResourceFromConstantBuffersLocked(dev, res);
   UnbindResourceFromInputAssemblerLocked(dev, res);
 
+  // Best-effort safety net: if any unbind command emission failed (OOM), some of
+  // the above helpers may leave cached pointers intact. Ensure we never keep a
+  // dangling `Resource*` to memory we're about to destroy.
+  //
+  // Note: this does not guarantee the host state was updated (OOM may have
+  // prevented command emission), but it prevents UMD-side use-after-free on later
+  // state tracking.
+  for (uint32_t slot = 0; slot < kMaxShaderResourceSlots; ++slot) {
+    if (slot < dev->current_vs_srvs.size() && dev->current_vs_srvs[slot] == res) {
+      dev->current_vs_srvs[slot] = nullptr;
+      dev->vs_srvs[slot] = 0;
+      if (slot == 0) {
+        dev->current_vs_srv0 = nullptr;
+      }
+    }
+    if (slot < dev->current_ps_srvs.size() && dev->current_ps_srvs[slot] == res) {
+      dev->current_ps_srvs[slot] = nullptr;
+      dev->ps_srvs[slot] = 0;
+      if (slot == 0) {
+        dev->current_ps_srv0 = nullptr;
+      }
+    }
+    if (slot < dev->current_gs_srvs.size() && dev->current_gs_srvs[slot] == res) {
+      dev->current_gs_srvs[slot] = nullptr;
+      dev->gs_srvs[slot] = 0;
+    }
+    if (slot < dev->current_cs_srvs.size() && dev->current_cs_srvs[slot] == res) {
+      dev->current_cs_srvs[slot] = nullptr;
+      dev->cs_srvs[slot] = 0;
+    }
+
+    if (slot < dev->current_vs_srv_buffers.size() && dev->current_vs_srv_buffers[slot] == res) {
+      dev->current_vs_srv_buffers[slot] = nullptr;
+      dev->vs_srv_buffers[slot] = {};
+    }
+    if (slot < dev->current_ps_srv_buffers.size() && dev->current_ps_srv_buffers[slot] == res) {
+      dev->current_ps_srv_buffers[slot] = nullptr;
+      dev->ps_srv_buffers[slot] = {};
+    }
+    if (slot < dev->current_gs_srv_buffers.size() && dev->current_gs_srv_buffers[slot] == res) {
+      dev->current_gs_srv_buffers[slot] = nullptr;
+      dev->gs_srv_buffers[slot] = {};
+    }
+    if (slot < dev->current_cs_srv_buffers.size() && dev->current_cs_srv_buffers[slot] == res) {
+      dev->current_cs_srv_buffers[slot] = nullptr;
+      dev->cs_srv_buffers[slot] = {};
+    }
+  }
+  for (uint32_t slot = 0; slot < kMaxUavSlots; ++slot) {
+    if (slot < dev->current_cs_uavs.size() && dev->current_cs_uavs[slot] == res) {
+      dev->current_cs_uavs[slot] = nullptr;
+      aerogpu_unordered_access_buffer_binding null_uav{};
+      null_uav.initial_count = 0xFFFFFFFFu;
+      dev->cs_uavs[slot] = null_uav;
+    }
+  }
+
   if (res->handle) {
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_destroy_resource>(AEROGPU_CMD_DESTROY_RESOURCE);
     cmd->resource_handle = res->handle;
