@@ -11015,10 +11015,10 @@ int wmain(int argc, wchar_t **argv) {
           wchar_t *endSize = NULL;
           const unsigned long sizeUl = wcstoul(maybeSize, &endSize, 0);
           if (!endSize || endSize == maybeSize || *endSize != 0) {
-            fwprintf(stderr, L"Invalid size value: %s\n", maybeSize);
+            fwprintf(stderr, L"Invalid --read-gpa size value: %s\n", maybeSize);
             if (g_json_output) {
               std::string json;
-              const std::string msg = std::string("Invalid size value: ") + WideToUtf8(maybeSize);
+              const std::string msg = std::string("Invalid --read-gpa size value: ") + WideToUtf8(maybeSize);
               JsonWriteTopLevelError(&json, "read-gpa", NULL, msg.c_str(), STATUS_INVALID_PARAMETER);
               WriteJsonToDestination(json);
             }
