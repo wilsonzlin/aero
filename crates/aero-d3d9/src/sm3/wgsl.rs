@@ -2707,16 +2707,16 @@ fn emit_stmt(
                                     stage,
                                     f32_defs,
                                     sampler_types,
-                                )? {
-                                    else_lines.push(mov_line);
-                                    else_lines.push(op_line);
-                                    else_skip = 2;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+                                 )? {
+                                     else_lines.push(mov_line);
+                                     else_lines.push(op_line);
+                                     else_skip = 2;
+                                 }
+                             }
+                         }
+                     }
+                 }
+             }
             if else_lines.is_empty() {
                 if let Some(else_b) = else_block.as_ref() {
                     if let Some(first) = else_b.stmts.first() {

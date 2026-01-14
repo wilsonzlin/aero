@@ -84,6 +84,22 @@ fn parse_signatures_prefers_v1_chunk_id_when_both_exist() {
 }
 
 #[test]
+fn parse_signatures_prefers_pcg1_when_both_exist() {
+    let pcsg = build_signature_chunk_v0_one_entry("V0", 0);
+    let pcg1 = build_signature_chunk_v1_one_entry("V1", 1, 0);
+
+    let dxbc_bytes = build_dxbc(&[(FourCC(*b"PCSG"), &pcsg), (FourCC(*b"PCG1"), &pcg1)]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse should succeed");
+
+    let sigs = parse_signatures(&dxbc).expect("signature parse should succeed");
+    let sig = sigs.pcsg.expect("expected patch-constant signature");
+
+    assert_eq!(sig.parameters.len(), 1);
+    assert_eq!(sig.parameters[0].semantic_name, "V1");
+    assert_eq!(sig.parameters[0].register, 1);
+}
+
+#[test]
 fn parse_signatures_parses_pcsg_patch_constant_signature_chunk() {
     // Minimal signature chunk: zero entries, param_offset points past header.
     let pcsg = dxbc_test_utils::build_signature_chunk_v0(&[]);
