@@ -451,6 +451,46 @@ def parse_inf_string_keys(path: Path) -> set[str]:
     return keys
 
 
+def parse_inf_strings_map(path: Path) -> dict[str, str]:
+    """
+    Parse the INF [Strings] section into a key->value mapping.
+
+    Keys are normalized to lowercase. Values are returned unquoted (i.e. surrounding
+    double-quotes are removed when present).
+    """
+
+    text = read_text(path)
+    out: dict[str, str] = {}
+    current_section: str | None = None
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith(";"):
+            continue
+        if ";" in line:
+            line = line.split(";", 1)[0].rstrip()
+            if not line:
+                continue
+        m = re.match(r"^\[(?P<section>[^\]]+)\]\s*$", line)
+        if m:
+            current_section = m.group("section").strip()
+            continue
+        if current_section is None:
+            continue
+        if not current_section.lower().startswith("strings"):
+            continue
+        if "=" not in line:
+            continue
+        key, value = (s.strip() for s in line.split("=", 1))
+        if not key:
+            continue
+        if value.startswith('"') and value.endswith('"') and len(value) >= 2:
+            value = value[1:-1]
+        out[key.lower()] = value
+    return out
+
+
 _PCI_HARDWARE_ID_RE = re.compile(r"^PCI\\VEN_(?P<ven>[0-9A-Fa-f]{4})&DEV_(?P<dev>[0-9A-Fa-f]{4})")
 
 
@@ -2419,6 +2459,7 @@ def main() -> None:
         if device_name == "virtio-input":
             model_entries = parse_inf_model_entries(inf_path)
             string_keys = parse_inf_string_keys(inf_path)
+            string_map = parse_inf_strings_map(inf_path)
             by_section: dict[str, list[InfModelEntry]] = {}
             for e in model_entries:
                 by_section.setdefault(e.section.lower(), []).append(e)
@@ -2513,6 +2554,32 @@ def main() -> None:
                                     [entry.raw_line],
                                 )
                             )
+
+                def _resolve(desc: str) -> str:
+                    d = desc.strip()
+                    if d.startswith("%") and d.endswith("%") and len(d) > 2:
+                        key = d[1:-1].strip().lower()
+                        return string_map.get(key, d)
+                    return d
+
+                kb_name = _resolve(kb_entry.device_desc)
+                ms_name = _resolve(ms_entry.device_desc)
+                fb_name = _resolve(fb_entry.device_desc)
+
+                if kb_name.strip().lower() == ms_name.strip().lower():
+                    errors.append(
+                        format_error(
+                            f"{inf_path.as_posix()}: virtio-input keyboard and mouse DeviceDesc strings are identical in [{section}] (must differ):",
+                            [kb_entry.raw_line, ms_entry.raw_line],
+                        )
+                    )
+                if fb_name.strip().lower() in {kb_name.strip().lower(), ms_name.strip().lower()}:
+                    errors.append(
+                        format_error(
+                            f"{inf_path.as_posix()}: virtio-input fallback DeviceDesc string in [{section}] must be generic (must not equal keyboard/mouse):",
+                            [kb_entry.raw_line, ms_entry.raw_line, fb_entry.raw_line],
+                        )
+                    )
 
     if errors:
         print("\n\n".join(errors), file=sys.stderr)
