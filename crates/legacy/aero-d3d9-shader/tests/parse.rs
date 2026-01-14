@@ -993,6 +993,28 @@ fn malformed_invalid_dcl_register_encoding_errors() {
 }
 
 #[test]
+fn malformed_invalid_dcl_register_encoding_modern_form_errors() {
+    // Modern `dcl` encodings may only include the destination register token, with usage/texture
+    // information encoded in the opcode token itself. Ensure invalid register encodings are still
+    // rejected in this form.
+    let invalid_reg_token = 0xF00F_1800;
+    let words = [
+        0xFFFE_0200, // vs_2_0
+        0x0200_001F, // dcl (len=2)
+        invalid_reg_token,
+        0x0000_FFFF, // end
+    ];
+    let err = D3d9Shader::parse(&words_to_bytes(&words)).unwrap_err();
+    assert_eq!(
+        err,
+        ShaderParseError::InvalidRegisterEncoding {
+            token: invalid_reg_token,
+            at_token: 2,
+        }
+    );
+}
+
+#[test]
 fn malformed_invalid_predicate_register_encoding_errors() {
     // Predicated instruction with an invalid predicate register encoding.
     let invalid_pred_token = 0xF000_1800;
