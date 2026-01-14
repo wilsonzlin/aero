@@ -18,6 +18,7 @@ This crate uses [`cargo-fuzz`](https://github.com/rust-fuzz/cargo-fuzz) (libFuzz
 - D3D9 shader token stream parsing + disassembly formatting (`aero-d3d9-shader`)
 - Intel HDA controller emulation (MMIO + CORB/RIRB parsing) (`aero-audio`)
 - virtio-snd queue parsing + playback/capture request handling (`aero-virtio`)
+- BIOS HLE interrupt dispatch robustness (INT 10h/13h/15h/16h/1Ah) (`firmware`)
 
 ## Prereqs
 
@@ -47,6 +48,7 @@ cargo +"$nightly" fuzz run fuzz_aero_storage_sparse_open
 cargo +"$nightly" fuzz run fuzz_disk_image_open_auto
 cargo +"$nightly" fuzz run fuzz_aerogpu_parse
 cargo +"$nightly" fuzz run fuzz_aerogpu_bc_decompress
+cargo +"$nightly" fuzz run fuzz_bios_interrupts
 cargo +"$nightly" fuzz run fuzz_tier0_step
 cargo +"$nightly" fuzz run fuzz_linear_mem_wrapped
 

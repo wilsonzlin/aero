@@ -309,3 +309,9 @@ name = "fuzz_aerogpu_bc_decompress"
 path = "fuzz_targets/fuzz_aerogpu_bc_decompress.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "fuzz_bios_interrupts"
+path = "fuzz_targets/fuzz_bios_interrupts.rs"
+test = false
+doc = false
