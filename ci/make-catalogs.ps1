@@ -211,13 +211,16 @@ function Invoke-PackageSanitation {
   # NOTE: This runs on the staged package directory under out/packages/** (not on the build outputs).
   # It is intended to prevent accidentally shipping debug/intermediate artifacts or secret material.
   $debugAndIntermediateExtensions = @(
-    '.pdb', '.ipdb', '.iobj', '.obj', '.lib', '.exp', '.ilk', '.tlog', '.log', '.idb', '.map', '.lastbuildstate', '.tmp', '.cache'
+    '.pdb', '.dbg', '.ipdb', '.iobj', '.obj', '.lib', '.exp', '.ilk', '.idb', '.map',
+    '.tlog', '.log', '.wrn', '.err', '.lastbuildstate', '.tmp', '.cache',
+    '.pch', '.sdf', '.opensdf', '.ncb', '.binlog', '.etl', '.dmp'
   )
   $sourceAndProjectExtensions = @(
-    '.c', '.cc', '.cpp', '.h', '.hpp', '.idl', '.inl', '.rc', '.asm', '.s', '.vcxproj', '.sln', '.props', '.targets'
+    '.c', '.cc', '.cpp', '.cxx', '.h', '.hpp', '.idl', '.inl', '.rc', '.asm', '.s',
+    '.vcxproj', '.sln', '.props', '.targets', '.filters', '.user'
   )
   $forbiddenSecretExtensions = @(
-    '.pfx', '.p12', '.pvk', '.snk', '.key', '.pem', '.p8', '.pk8', '.der', '.csr'
+    '.pfx', '.p12', '.pvk', '.snk', '.key', '.pem', '.p8', '.pk8', '.ppk', '.jks', '.keystore', '.kdbx', '.gpg', '.pgp', '.der', '.csr'
   )
   $metadataFileNames = @('Thumbs.db', 'desktop.ini', '.DS_Store')
 

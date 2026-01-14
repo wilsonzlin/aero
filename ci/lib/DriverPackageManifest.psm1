@@ -47,14 +47,7 @@ function Assert-PathIsRelativeAndUnderRoot {
     throw "Invalid manifest '$ManifestPath': $Context must be a relative path (got rooted path '$ChildPath')."
   }
 
-  # Best-effort hardening: reject `..` segments even if they would normalize back under the
-  # root directory. This keeps the manifest schema and runtime validation aligned and avoids
-  # bypassing duplicate detection via mixed normalized/non-normalized spellings.
-  foreach ($seg in ($ChildPath -split '[\\/]+')) {
-    if ($seg -eq '..') {
-      throw "Invalid manifest '$ManifestPath': $Context path '$ChildPath' must not contain '..' segments."
-    }
-  }
+  Assert-PathDoesNotContainDotDot -Path $ChildPath -Context $Context -ManifestPath $ManifestPath
 
   $sep = [System.IO.Path]::DirectorySeparatorChar
   $alt = [System.IO.Path]::AltDirectorySeparatorChar
@@ -67,6 +60,26 @@ function Assert-PathIsRelativeAndUnderRoot {
 
   if (-not $full.StartsWith($prefix, $cmp)) {
     throw "Invalid manifest '$ManifestPath': $Context path '$ChildPath' resolves outside driver root '$rootFull'."
+  }
+}
+
+function Assert-PathDoesNotContainDotDot {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [string] $Path,
+
+    [Parameter(Mandatory = $true)]
+    [string] $Context,
+
+    [Parameter(Mandatory = $true)]
+    [string] $ManifestPath
+  )
+
+  # Disallow '..' traversal segments even if the normalized path would still be under the driver root.
+  # This prevents surprising/manipulative manifests like "foo/../bar.txt".
+  if ($Path -match '(^|[\\\\/])\\.\\.([\\\\/]|$)') {
+    throw "Invalid manifest '$ManifestPath': $Context must not contain '..' path segments (got '$Path')."
   }
 }
 
@@ -257,6 +270,8 @@ function Validate-DriverPackageManifest {
         Assert-PathIsRelativeAndUnderRoot -Root $DriverRoot -ChildPath $s -Context "infFiles[$index]" -ManifestPath $ManifestPath
       } elseif ([System.IO.Path]::IsPathRooted($s)) {
         throw "Invalid manifest '$ManifestPath': infFiles[$index] must be a relative path (got '$s')."
+      } else {
+        Assert-PathDoesNotContainDotDot -Path $s -Context "infFiles[$index]" -ManifestPath $ManifestPath
       }
 
       $key = $s.Replace('\', '/').ToLowerInvariant()
@@ -302,7 +317,11 @@ function Validate-DriverPackageManifest {
   if ($null -ne $additionalProp) {
     Assert-JsonArray -Value $additionalProp.Value -Context 'additionalFiles' -ManifestPath $ManifestPath
 
-    $binaryExts = @('.sys', '.dll', '.exe', '.cat', '.msi', '.cab')
+    $binaryExts = @(
+      '.sys', '.dll', '.exe', '.cat', '.msi', '.cab',
+      '.pdb', '.dbg', '.ipdb', '.iobj', '.obj', '.lib', '.exp', '.ilk', '.idb', '.map', '.tlog',
+      '.pch', '.sdf', '.opensdf', '.ncb', '.binlog', '.etl', '.dmp', '.tmp', '.cache'
+    )
     $secretExts = @(
       '.pfx',
       '.p12',
@@ -330,6 +349,8 @@ function Validate-DriverPackageManifest {
         Assert-PathIsRelativeAndUnderRoot -Root $DriverRoot -ChildPath $s -Context "additionalFiles[$index]" -ManifestPath $ManifestPath
       } elseif ([System.IO.Path]::IsPathRooted($s)) {
         throw "Invalid manifest '$ManifestPath': additionalFiles[$index] must be a relative path (got '$s')."
+      } else {
+        Assert-PathDoesNotContainDotDot -Path $s -Context "additionalFiles[$index]" -ManifestPath $ManifestPath
       }
 
       $ext = [System.IO.Path]::GetExtension($s).ToLowerInvariant()
@@ -366,6 +387,8 @@ function Validate-DriverPackageManifest {
         Assert-PathIsRelativeAndUnderRoot -Root $DriverRoot -ChildPath $s -Context "requiredBuildOutputFiles[$index]" -ManifestPath $ManifestPath
       } elseif ([System.IO.Path]::IsPathRooted($s)) {
         throw "Invalid manifest '$ManifestPath': requiredBuildOutputFiles[$index] must be a relative path (got '$s')."
+      } else {
+        Assert-PathDoesNotContainDotDot -Path $s -Context "requiredBuildOutputFiles[$index]" -ManifestPath $ManifestPath
       }
 
       $key = $s.Replace('\', '/').ToLowerInvariant()
@@ -395,6 +418,8 @@ function Validate-DriverPackageManifest {
         Assert-PathIsRelativeAndUnderRoot -Root $DriverRoot -ChildPath $s -Context "toolFiles[$index]" -ManifestPath $ManifestPath
       } elseif ([System.IO.Path]::IsPathRooted($s)) {
         throw "Invalid manifest '$ManifestPath': toolFiles[$index] must be a relative path (got '$s')."
+      } else {
+        Assert-PathDoesNotContainDotDot -Path $s -Context "toolFiles[$index]" -ManifestPath $ManifestPath
       }
 
       $key = $s.Replace('\', '/').ToLowerInvariant()
