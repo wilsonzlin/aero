@@ -51,10 +51,10 @@ When `D3DRS_LIGHTING` is enabled for the `NORMAL` variants, the UMD additionally
 
 Note: for `TEX1` fixed-function FVFs, `TEXCOORD0` may be declared as `float1/2/3/4` via `D3DFVF_TEXCOORDSIZE*`.
 The fixed-function fallback uses the first two components as `(u, v)` (`float1` implies `v=0`; extra components are ignored).
+Multiple texture coordinate sets still require user shaders (layout translation is supported; fixed-function shading is not).
 
-Exception: patch rendering (`DrawRectPatch` / `DrawTriPatch`) currently assumes `TEXCOORD0=float2` when `D3DFVF_TEX1` is used
-and rejects other encodings (`D3DERR_INVALIDCALL`), since the CPU tessellation path writes only `(u, v)` pairs into the
-generated vertices.
+Exception: patch rendering (`DrawRectPatch` / `DrawTriPatch`) requires at least two texture-coordinate components and rejects
+`D3DFVF_TEXCOORDSIZE1(0)` (`float1`) with `D3DERR_INVALIDCALL`, since the CPU tessellation path writes only `(u, v)` pairs.
 
 ## Pre-transformed `D3DFVF_XYZRHW*` draws (no WVP)
 
