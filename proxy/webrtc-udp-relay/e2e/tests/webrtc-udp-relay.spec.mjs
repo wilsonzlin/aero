@@ -1199,7 +1199,10 @@ test("expires UDP remote allowlist entries over WebRTC after UDP_REMOTE_ALLOWLIS
           if (first.length < 8) throw new Error("echoed frame too short");
           const firstText = new TextDecoder().decode(first.slice(8));
 
-          const second = await waitForDatagram({ timeoutMs: 2_500 });
+          // The delayed datagram is emitted ~900ms after the first send; keep a
+          // conservative buffer but avoid waiting multiple seconds in the common
+          // (expected) drop case.
+          const second = await waitForDatagram({ timeoutMs: 1_500 });
           const secondText = second ? new TextDecoder().decode(second.slice(8)) : null;
           return { firstText, gotSecond: second !== null, secondText };
         } finally {
@@ -1354,7 +1357,10 @@ test("evicts UDP remote allowlist entries over WebRTC when MAX_ALLOWED_REMOTES_P
           const textB = await sendAndRecvText(echoPortB, "hello B");
 
           // If eviction worked, this should be dropped and we should not receive it.
-          const late = await waitForDatagram({ timeoutMs: 3_500 });
+          // The delayed datagram is emitted ~2s after the first send; keep enough
+          // headroom for scheduling jitter while avoiding a long timeout on the
+          // expected drop path.
+          const late = await waitForDatagram({ timeoutMs: 2_500 });
           const lateText = late ? new TextDecoder().decode(late.slice(8)) : null;
           return { textA, textB, gotLate: late !== null, lateText };
         } finally {
@@ -3178,7 +3184,10 @@ test("expires UDP remote allowlist entries after UDP_REMOTE_ALLOWLIST_IDLE_TIMEO
 
         // If the allowlist entry expires, this should be dropped and we should not
         // observe a second datagram.
-        const second = await waitForDatagram({ timeoutMs: 2_000 });
+        // The delayed datagram is emitted ~900ms after the first send; keep a
+        // conservative buffer but avoid waiting multiple seconds in the expected
+        // drop case.
+        const second = await waitForDatagram({ timeoutMs: 1_500 });
         const secondText = second ? new TextDecoder().decode(second.slice(8)) : null;
 
         ws.close();
@@ -3311,7 +3320,10 @@ test("evicts UDP remote allowlist entries when MAX_ALLOWED_REMOTES_PER_BINDING i
         const textB = await sendAndRecvText(echoPortB, "hello B");
 
         // A now sends a delayed datagram. If eviction worked, we should not see it.
-        const late = await waitForDatagram({ timeoutMs: 2_500 });
+        // The delayed datagram is emitted ~1s after the first send; keep a
+        // conservative buffer but avoid waiting too long in the expected drop
+        // case.
+        const late = await waitForDatagram({ timeoutMs: 1_800 });
         const lateText = late ? new TextDecoder().decode(late.slice(8)) : null;
 
         ws.close();
