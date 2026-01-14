@@ -11,7 +11,7 @@ use aero_devices::pci::profile::USB_UHCI_PIIX3;
 use aero_devices::pci::{PciIntxRouter, PciIntxRouterConfig};
 
 use crate::io::pci::{PciConfigSpace, PciDevice};
-use crate::io::PortIO;
+use aero_platform::io::PortIoDevice;
 use memory::MemoryBus;
 
 enum AeroUsbMemoryBus<'a> {
@@ -164,11 +164,18 @@ impl PciDevice for UhciPciDevice {
     }
 }
 
-impl PortIO for UhciPciDevice {
-    fn port_read(&self, port: u16, size: usize) -> u32 {
+impl PortIoDevice for UhciPciDevice {
+    fn read(&mut self, port: u16, size: u8) -> u32 {
+        let size_usize = match size {
+            0 => return 0,
+            1 | 2 | 4 => size as usize,
+            _ => {
+                return u32::MAX;
+            }
+        };
         // Gate I/O decoding on PCI command I/O Space Enable (bit 0).
         if !self.io_space_enabled() {
-            return match size {
+            return match size_usize {
                 1 => 0xff,
                 2 => 0xffff,
                 4 => u32::MAX,
@@ -176,17 +183,22 @@ impl PortIO for UhciPciDevice {
             };
         }
         let Some(offset) = port.checked_sub(self.io_base) else {
-            return match size {
+            return match size_usize {
                 1 => 0xff,
                 2 => 0xffff,
                 4 => u32::MAX,
                 _ => u32::MAX,
             };
         };
-        self.controller.io_read(offset, size)
+        self.controller.io_read(offset, size_usize)
     }
 
-    fn port_write(&mut self, port: u16, size: usize, val: u32) {
+    fn write(&mut self, port: u16, size: u8, val: u32) {
+        let size_usize = match size {
+            0 => return,
+            1 | 2 | 4 => size as usize,
+            _ => return,
+        };
         // Gate I/O decoding on PCI command I/O Space Enable (bit 0).
         if !self.io_space_enabled() {
             return;
@@ -194,14 +206,14 @@ impl PortIO for UhciPciDevice {
         let Some(offset) = port.checked_sub(self.io_base) else {
             return;
         };
-        self.controller.io_write(offset, size, val);
+        self.controller.io_write(offset, size_usize, val);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::io::PortIO;
+    use aero_platform::io::PortIoDevice;
 
     struct PanicMem;
 
@@ -220,20 +232,20 @@ mod tests {
         let mut dev = UhciPciDevice::new(UhciController::new(), 0x1000);
 
         // COMMAND.IO is clear by default: reads float high, writes ignored.
-        dev.port_write(0x1000 + regs::REG_USBCMD, 2, u32::from(regs::USBCMD_RS));
-        assert_eq!(dev.port_read(0x1000 + regs::REG_USBCMD, 2), 0xffff);
+        dev.write(0x1000 + regs::REG_USBCMD, 2, u32::from(regs::USBCMD_RS));
+        assert_eq!(dev.read(0x1000 + regs::REG_USBCMD, 2), 0xffff);
 
         // Enable I/O space decoding and verify the earlier write did not take effect.
         dev.config_write(0x04, 2, 1 << 0);
         assert_eq!(
-            dev.port_read(0x1000 + regs::REG_USBCMD, 2) as u16,
+            dev.read(0x1000 + regs::REG_USBCMD, 2) as u16,
             regs::USBCMD_MAXP,
         );
 
         // Writes should apply once IO decoding is enabled.
-        dev.port_write(0x1000 + regs::REG_USBCMD, 2, u32::from(regs::USBCMD_RS));
+        dev.write(0x1000 + regs::REG_USBCMD, 2, u32::from(regs::USBCMD_RS));
         assert_eq!(
-            dev.port_read(0x1000 + regs::REG_USBCMD, 2) as u16,
+            dev.read(0x1000 + regs::REG_USBCMD, 2) as u16,
             regs::USBCMD_RS
         );
     }
@@ -245,8 +257,8 @@ mod tests {
         // Enable I/O decoding so we can program the controller, but leave BME disabled.
         dev.config_write(0x04, 2, 1 << 0);
 
-        dev.port_write(0x1000 + regs::REG_FLBASEADD, 4, 0x1000);
-        dev.port_write(0x1000 + regs::REG_USBCMD, 2, u32::from(regs::USBCMD_RS));
+        dev.write(0x1000 + regs::REG_FLBASEADD, 4, 0x1000);
+        dev.write(0x1000 + regs::REG_USBCMD, 2, u32::from(regs::USBCMD_RS));
 
         // With BME clear, no DMA should occur.
         let mut mem = PanicMem;
@@ -267,16 +279,16 @@ mod tests {
         // Enable I/O decoding so we can start the controller, but keep BME disabled.
         dev.config_write(0x04, 2, 1 << 0);
 
-        dev.port_write(0x1000 + regs::REG_FRNUM, 2, 0);
-        dev.port_write(0x1000 + regs::REG_USBCMD, 2, u32::from(regs::USBCMD_RS));
+        dev.write(0x1000 + regs::REG_FRNUM, 2, 0);
+        dev.write(0x1000 + regs::REG_USBCMD, 2, u32::from(regs::USBCMD_RS));
 
-        let fr0 = dev.port_read(0x1000 + regs::REG_FRNUM, 2) as u16;
+        let fr0 = dev.read(0x1000 + regs::REG_FRNUM, 2) as u16;
 
         // With BME clear, ticking must not DMA but should still advance the frame counter.
         let mut mem = PanicMem;
         dev.tick_1ms(&mut mem);
 
-        let fr1 = dev.port_read(0x1000 + regs::REG_FRNUM, 2) as u16;
+        let fr1 = dev.read(0x1000 + regs::REG_FRNUM, 2) as u16;
         assert_eq!(fr1, fr0.wrapping_add(1) & 0x07ff);
     }
 
@@ -308,9 +320,9 @@ mod tests {
         dev.controller.hub_mut().attach(0, Box::new(DummyDevice));
 
         // Assert port reset.
-        dev.port_write(0x1000 + regs::REG_PORTSC1, 2, u32::from(PORTSC_PR));
+        dev.write(0x1000 + regs::REG_PORTSC1, 2, u32::from(PORTSC_PR));
         assert_ne!(
-            dev.port_read(0x1000 + regs::REG_PORTSC1, 2) as u16 & PORTSC_PR,
+            dev.read(0x1000 + regs::REG_PORTSC1, 2) as u16 & PORTSC_PR,
             0
         );
 
@@ -320,7 +332,7 @@ mod tests {
             dev.tick_1ms(&mut mem);
         }
 
-        let portsc = dev.port_read(0x1000 + regs::REG_PORTSC1, 2) as u16;
+        let portsc = dev.read(0x1000 + regs::REG_PORTSC1, 2) as u16;
         assert_eq!(
             portsc & PORTSC_PR,
             0,
@@ -386,12 +398,12 @@ mod tests {
         }
 
         // Enter port suspend and enable resume interrupts.
-        dev.port_write(
+        dev.write(
             0x1000 + regs::REG_USBINTR,
             2,
             u32::from(regs::USBINTR_RESUME),
         );
-        dev.port_write(
+        dev.write(
             0x1000 + regs::REG_PORTSC1,
             2,
             u32::from(PORTSC_PED | PORTSC_SUSP),
@@ -404,11 +416,11 @@ mod tests {
         dev.tick_1ms(&mut mem);
 
         assert_ne!(
-            dev.port_read(0x1000 + regs::REG_PORTSC1, 2) as u16 & PORTSC_RD,
+            dev.read(0x1000 + regs::REG_PORTSC1, 2) as u16 & PORTSC_RD,
             0
         );
         assert_ne!(
-            dev.port_read(0x1000 + regs::REG_USBSTS, 2) as u16 & regs::USBSTS_RESUMEDETECT,
+            dev.read(0x1000 + regs::REG_USBSTS, 2) as u16 & regs::USBSTS_RESUMEDETECT,
             0
         );
         assert!(dev.irq_level());
@@ -420,7 +432,7 @@ mod tests {
 
         // Enable IO decoding so we can program USBINTR.
         dev.config_write(0x04, 2, 1 << 0);
-        dev.port_write(0x1000 + regs::REG_USBINTR, 2, u32::from(regs::USBINTR_IOC));
+        dev.write(0x1000 + regs::REG_USBINTR, 2, u32::from(regs::USBINTR_IOC));
         dev.controller.set_usbsts_bits(regs::USBSTS_USBINT);
 
         assert!(dev.controller.irq_level());

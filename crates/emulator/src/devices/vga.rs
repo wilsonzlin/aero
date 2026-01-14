@@ -10,30 +10,22 @@
 
 pub use aero_gpu_vga::*;
 
-use crate::io::PortIO as EmulatorPortIO;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-/// Shared VGA device handle (interior mutable) that implements the emulator's
-/// [`crate::io::PortIO`] trait.
+/// Shared VGA device handle (interior mutable).
 ///
 /// `aero-gpu-vga` uses `&mut self` for port reads because many legacy VGA ports
 /// have read side effects (e.g. attribute controller flip-flop). The emulator's
-/// port I/O bus uses `&self` for reads, so the canonical device is typically
-/// wired up behind a `RefCell`.
+/// port I/O wiring typically shares the VGA device with other components (MMIO,
+/// rendering) behind a `RefCell`.
 pub type SharedVgaDevice = Rc<RefCell<VgaDevice>>;
 
 pub fn new_shared_vga_device() -> SharedVgaDevice {
     Rc::new(RefCell::new(VgaDevice::new()))
 }
 
-impl EmulatorPortIO for SharedVgaDevice {
-    fn port_read(&self, port: u16, size: usize) -> u32 {
-        aero_gpu_vga::PortIO::port_read(&mut *self.borrow_mut(), port, size)
-    }
-
-    fn port_write(&mut self, port: u16, size: usize, val: u32) {
-        aero_gpu_vga::PortIO::port_write(&mut *self.borrow_mut(), port, size, val)
-    }
+/// Create a [`VgaPortIoDevice`] wrapper around a shared VGA device.
+pub fn new_vga_portio_device(dev: SharedVgaDevice) -> VgaPortIoDevice {
+    VgaPortIoDevice { dev }
 }
-

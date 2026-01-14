@@ -13,7 +13,7 @@ pub mod regs;
 use memory::MemoryBus;
 
 use crate::io::pci::{PciConfigSpace, PciDevice};
-use crate::io::PortIO;
+use aero_platform::io::PortIoDevice;
 
 use crate::io::audio::ac97::dma::{AudioSink, PcmOutDma};
 use crate::io::audio::ac97::regs::*;
@@ -501,11 +501,16 @@ impl PciDevice for Ac97PciDevice {
     }
 }
 
-impl PortIO for Ac97PciDevice {
-    fn port_read(&self, port: u16, size: usize) -> u32 {
+impl PortIoDevice for Ac97PciDevice {
+    fn read(&mut self, port: u16, size: u8) -> u32 {
+        let size_usize = match size {
+            0 => return 0,
+            1 | 2 | 4 => size as usize,
+            _ => return u32::MAX,
+        };
         // Gate I/O decoding on PCI command I/O Space Enable (bit 0).
         if !self.io_space_enabled() {
-            return match size {
+            return match size_usize {
                 1 => 0xff,
                 2 => 0xffff,
                 4 => u32::MAX,
@@ -513,25 +518,30 @@ impl PortIO for Ac97PciDevice {
             };
         }
         if let Some(off) = self.port_to_nam_offset(port) {
-            return self.controller.nam_read(off, size);
+            return self.controller.nam_read(off, size_usize);
         }
         if let Some(off) = self.port_to_nabm_offset(port) {
-            return self.controller.nabm_read(off, size);
+            return self.controller.nabm_read(off, size_usize);
         }
         0
     }
 
-    fn port_write(&mut self, port: u16, size: usize, val: u32) {
+    fn write(&mut self, port: u16, size: u8, val: u32) {
+        let size_usize = match size {
+            0 => return,
+            1 | 2 | 4 => size as usize,
+            _ => return,
+        };
         // Gate I/O decoding on PCI command I/O Space Enable (bit 0).
         if !self.io_space_enabled() {
             return;
         }
         if let Some(off) = self.port_to_nam_offset(port) {
-            self.controller.nam_write(off, size, val);
+            self.controller.nam_write(off, size_usize, val);
             return;
         }
         if let Some(off) = self.port_to_nabm_offset(port) {
-            self.controller.nabm_write(off, size, val);
+            self.controller.nabm_write(off, size_usize, val);
         }
     }
 }
@@ -539,7 +549,7 @@ impl PortIO for Ac97PciDevice {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::io::PortIO;
+    use aero_platform::io::PortIoDevice;
     use memory::Bus;
 
     #[derive(Default)]
@@ -696,15 +706,15 @@ mod tests {
 
         // With COMMAND.IO clear, reads float high and writes are ignored.
         let vid1_port = 0x1000u16 + NAM_VENDOR_ID1 as u16;
-        assert_eq!(dev.port_read(vid1_port, 2), 0xffff);
+        assert_eq!(dev.read(vid1_port, 2), 0xffff);
 
         let master_vol_port = 0x1000u16 + NAM_MASTER_VOL as u16;
-        dev.port_write(master_vol_port, 2, 0x1234);
+        dev.write(master_vol_port, 2, 0x1234);
 
         // Enable IO decoding and verify the earlier write did not take effect.
         dev.config_write(0x04, 2, 1 << 0);
-        assert_eq!(dev.port_read(vid1_port, 2) as u16, 0x8384);
-        assert_eq!(dev.port_read(master_vol_port, 2) as u16, 0x0000);
+        assert_eq!(dev.read(vid1_port, 2) as u16, 0x8384);
+        assert_eq!(dev.read(master_vol_port, 2) as u16, 0x0000);
     }
 
     #[test]
@@ -743,15 +753,15 @@ mod tests {
 
         let vid1_port = 0xFF00u16 + NAM_VENDOR_ID1 as u16;
         let vid2_port = 0xFF00u16 + NAM_VENDOR_ID2 as u16;
-        assert_eq!(dev.port_read(vid1_port, 2) as u16, 0x8384);
-        assert_eq!(dev.port_read(vid2_port, 2) as u16, 0x7600);
+        assert_eq!(dev.read(vid1_port, 2) as u16, 0x8384);
+        assert_eq!(dev.read(vid2_port, 2) as u16, 0x7600);
 
         // Also cover the NABM path with a BAR that would overflow.
         let mut dev = Ac97PciDevice::new(0xFE00, 0xFF00);
         dev.config_write(0x04, 2, 1 << 0);
 
         let civ_port = 0xFF00u16 + NABM_PO_CIV as u16;
-        assert_eq!(dev.port_read(civ_port, 1) as u8, 0);
+        assert_eq!(dev.read(civ_port, 1) as u8, 0);
     }
 
     #[test]
@@ -780,9 +790,9 @@ mod tests {
         dev.config_write(0x04, 2, 1 << 0);
 
         // Start the PCM out DMA engine (this would DMA immediately if BME was enabled).
-        dev.port_write(0x1100 + NABM_PO_BDBAR as u16, 4, 0x2000);
-        dev.port_write(0x1100 + NABM_PO_LVI as u16, 1, 0);
-        dev.port_write(0x1100 + NABM_PO_CR as u16, 1, u32::from(CR_RPBM));
+        dev.write(0x1100 + NABM_PO_BDBAR as u16, 4, 0x2000);
+        dev.write(0x1100 + NABM_PO_LVI as u16, 1, 0);
+        dev.write(0x1100 + NABM_PO_CR as u16, 1, u32::from(CR_RPBM));
 
         let mut mem = PanicMem;
         let mut sink = Sink;
