@@ -178,6 +178,10 @@ pub struct TessellationDrawScratchSizes {
     pub vs_out_bytes: u64,
     pub hs_out_bytes: u64,
     pub hs_patch_constants_bytes: u64,
+    /// HS-derived tess factors buffer (`hs_tess_factors`) consumed by the layout pass.
+    ///
+    /// Layout: `HS_TESS_FACTOR_VEC4S_PER_PATCH` `vec4<f32>` values per patch.
+    pub hs_tess_factors_bytes: u64,
     pub tess_metadata_bytes: u64,
     pub expanded_vertex_bytes: u64,
     pub expanded_index_bytes: u64,
@@ -232,6 +236,13 @@ impl TessellationDrawScratchSizes {
         let hs_patch_constants_bytes =
             checked_mul_u64(patch_count_total, 16, "hs_patch_constants bytes")?;
 
+        let hs_tess_factors_bytes = checked_mul_u64(
+            patch_count_total,
+            super::HS_TESS_FACTOR_VEC4S_PER_PATCH as u64,
+            "hs_tess_factors vec4 count",
+        )
+        .and_then(|vec4_count| checked_mul_u64(vec4_count, 16, "hs_tess_factors bytes"))?;
+
         let (metadata_size, _metadata_align) = super::TessellationLayoutPatchMeta::layout();
         let tess_metadata_bytes =
             checked_mul_u64(patch_count_total, metadata_size, "metadata bytes")?;
@@ -269,6 +280,7 @@ impl TessellationDrawScratchSizes {
             vs_out_bytes,
             hs_out_bytes,
             hs_patch_constants_bytes,
+            hs_tess_factors_bytes,
             tess_metadata_bytes,
             expanded_vertex_bytes,
             expanded_index_bytes,
@@ -282,6 +294,7 @@ pub struct TessellationDrawScratch {
     pub vs_out: ExpansionScratchAlloc,
     pub hs_out: ExpansionScratchAlloc,
     pub hs_patch_constants: ExpansionScratchAlloc,
+    pub hs_tess_factors: ExpansionScratchAlloc,
     pub tess_metadata: ExpansionScratchAlloc,
     pub expanded_vertices: ExpansionScratchAlloc,
     pub expanded_indices: ExpansionScratchAlloc,
@@ -332,6 +345,11 @@ mod tests {
         assert_eq!(sizes.vs_out_bytes, 192);
         assert_eq!(sizes.hs_out_bytes, 192);
         assert_eq!(sizes.hs_patch_constants_bytes, 32);
+        assert_eq!(
+            sizes.hs_tess_factors_bytes,
+            32,
+            "one vec4<f32> tess factor payload per patch"
+        );
         assert_eq!(
             sizes.tess_metadata_bytes, 40,
             "Patch meta is 5 u32s (tess_level + 4 offsets/counts)"

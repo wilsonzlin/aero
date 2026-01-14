@@ -97,16 +97,17 @@ fn compute_worst_case_scratch_usage_bytes(
     let storage_alignment = scratch_storage_alignment(device);
     let mut offset = 0u64;
 
-    // VS/HS stage outputs and patch constants are vertex-like storage payloads.
-    for bytes in [
-        sizes.vs_out_bytes,
-        sizes.hs_out_bytes,
-        sizes.hs_patch_constants_bytes,
-        sizes.tess_metadata_bytes,
-        sizes.expanded_vertex_bytes,
-    ] {
-        offset = scratch_add_alloc(offset, bytes, 16, storage_alignment)?;
-    }
+        // VS/HS stage outputs and patch constants are vertex-like storage payloads.
+        for bytes in [
+            sizes.vs_out_bytes,
+            sizes.hs_out_bytes,
+            sizes.hs_patch_constants_bytes,
+            sizes.hs_tess_factors_bytes,
+            sizes.tess_metadata_bytes,
+            sizes.expanded_vertex_bytes,
+        ] {
+            offset = scratch_add_alloc(offset, bytes, 16, storage_alignment)?;
+        }
 
     // Expanded indices + indirect args are u32-based.
     offset = scratch_add_alloc(offset, sizes.expanded_index_bytes, 4, storage_alignment)?;
@@ -205,14 +206,15 @@ impl core::fmt::Display for TessellationScratchOomError {
         write!(
             f,
             "tessellation scratch OOM: patch_count_total={} tess_factor_clamped={} \
-vs_out_bytes={} hs_out_bytes={} hs_patch_constants_bytes={} tess_metadata_bytes={} \
-expanded_vertex_bytes={} expanded_index_bytes={} indirect_args_bytes={} debug_counters_bytes={} \
-total_scratch_bytes={} scratch_per_frame_capacity={} device_max_buffer_size={}",
+ vs_out_bytes={} hs_out_bytes={} hs_patch_constants_bytes={} hs_tess_factors_bytes={} tess_metadata_bytes={} \
+ expanded_vertex_bytes={} expanded_index_bytes={} indirect_args_bytes={} debug_counters_bytes={} \
+ total_scratch_bytes={} scratch_per_frame_capacity={} device_max_buffer_size={}",
             self.patch_count_total,
             self.tess_factor_clamped,
             self.sizes.vs_out_bytes,
             self.sizes.hs_out_bytes,
             self.sizes.hs_patch_constants_bytes,
+            self.sizes.hs_tess_factors_bytes,
             self.sizes.tess_metadata_bytes,
             self.sizes.expanded_vertex_bytes,
             self.sizes.expanded_index_bytes,
@@ -336,6 +338,9 @@ impl TessellationRuntime {
         let hs_patch_constants = scratch
             .alloc_vertex_output(device, sizes.hs_patch_constants_bytes)
             .map_err(TessellationRuntimeError::Scratch)?;
+        let hs_tess_factors = scratch
+            .alloc_vertex_output(device, sizes.hs_tess_factors_bytes)
+            .map_err(TessellationRuntimeError::Scratch)?;
 
         let tess_metadata = scratch
             .alloc_metadata(device, sizes.tess_metadata_bytes, 16)
@@ -356,6 +361,7 @@ impl TessellationRuntime {
             vs_out,
             hs_out,
             hs_patch_constants,
+            hs_tess_factors,
             tess_metadata,
             expanded_vertices,
             expanded_indices,
