@@ -89,21 +89,21 @@ struct Set2ToSet1 {
 }
 
 impl Set2ToSet1 {
-    fn feed(&mut self, byte: u8) -> Vec<u8> {
+    fn feed(&mut self, byte: u8) -> Option<u8> {
         match byte {
             0xE0 => {
                 self.saw_e0 = true;
-                vec![0xE0]
+                Some(0xE0)
             }
             // Used by Pause/Break.
             0xE1 => {
                 self.saw_e0 = false;
                 self.saw_f0 = false;
-                vec![0xE1]
+                Some(0xE1)
             }
             0xF0 => {
                 self.saw_f0 = true;
-                Vec::new()
+                None
             }
             _ => {
                 let extended = self.saw_e0;
@@ -115,7 +115,7 @@ impl Set2ToSet1 {
                 if break_code {
                     out |= 0x80;
                 }
-                vec![out]
+                Some(out)
             }
         }
     }
@@ -705,7 +705,7 @@ impl I8042Controller {
         };
 
         if self.translation_enabled() {
-            for out in self.translator.feed(byte) {
+            if let Some(out) = self.translator.feed(byte) {
                 self.push_pending_output(OutputByte {
                     value: out,
                     source: OutputSource::Keyboard,

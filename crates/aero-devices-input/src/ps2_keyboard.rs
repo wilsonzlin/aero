@@ -5,7 +5,7 @@ use aero_io_snapshot::io::state::{
     IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
 
-use crate::scancode::{push_set2_sequence, Set2Scancode};
+use crate::scancode::Set2Scancode;
 
 const MAX_OUTPUT_BYTES: usize = 4096;
 
@@ -68,10 +68,27 @@ impl Ps2Keyboard {
             return;
         }
 
-        let mut seq = Vec::new();
-        push_set2_sequence(&mut seq, scancode, pressed);
-        for byte in seq {
-            self.push_out(byte);
+        match scancode {
+            Set2Scancode::Simple { make, extended } => {
+                if pressed {
+                    if extended {
+                        self.push_out(0xE0);
+                    }
+                    self.push_out(make);
+                } else {
+                    if extended {
+                        self.push_out(0xE0);
+                    }
+                    self.push_out(0xF0);
+                    self.push_out(make);
+                }
+            }
+            Set2Scancode::Sequence { make, break_seq } => {
+                let bytes = if pressed { make } else { break_seq };
+                for &byte in bytes {
+                    self.push_out(byte);
+                }
+            }
         }
     }
 

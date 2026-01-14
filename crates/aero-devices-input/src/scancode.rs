@@ -28,7 +28,29 @@ pub fn browser_code_to_set2_bytes(code: &str, pressed: bool) -> Option<Vec<u8>> 
 
 /// Appends a make or break sequence to `out`.
 pub fn push_set2_sequence(out: &mut Vec<u8>, scancode: Set2Scancode, pressed: bool) {
-    out.extend(scancode.bytes(pressed));
+    match scancode {
+        Set2Scancode::Simple { make, extended } => {
+            if pressed {
+                if extended {
+                    out.push(0xE0);
+                }
+                out.push(make);
+            } else {
+                if extended {
+                    out.push(0xE0);
+                }
+                out.push(0xF0);
+                out.push(make);
+            }
+        }
+        Set2Scancode::Sequence { make, break_seq } => {
+            if pressed {
+                out.extend_from_slice(make);
+            } else {
+                out.extend_from_slice(break_seq);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
