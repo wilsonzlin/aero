@@ -20247,6 +20247,234 @@ bool TestXyzrhwConversionUsesEffectiveViewportFromRenderTarget() {
   return true;
 }
 
+bool TestXyzrhwIndexedConversionUsesEffectiveViewportFromRenderTarget() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetRenderTarget != nullptr, "pfnSetRenderTarget is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnLock != nullptr, "pfnLock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnUnlock != nullptr, "pfnUnlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetStreamSource != nullptr, "pfnSetStreamSource is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetIndices != nullptr, "pfnSetIndices is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDrawIndexedPrimitive != nullptr, "pfnDrawIndexedPrimitive is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Match TestXyzrhwConversionUsesEffectiveViewportFromRenderTarget(), but exercise
+  // the VB/IB indexed draw path's XYZRHW expansion/conversion loop.
+  constexpr float rt_w = 640.0f;
+  constexpr float rt_h = 480.0f;
+
+  // Create a dummy render-target surface and bind it to slot 0.
+  D3D9DDIARG_CREATERESOURCE create_rt{};
+  create_rt.type = 1u;    // D3DRTYPE_SURFACE
+  create_rt.format = 22u; // D3DFMT_X8R8G8B8
+  create_rt.width = static_cast<uint32_t>(rt_w);
+  create_rt.height = static_cast<uint32_t>(rt_h);
+  create_rt.depth = 1;
+  create_rt.mip_levels = 1;
+  create_rt.usage = 0x00000001u; // D3DUSAGE_RENDERTARGET
+  create_rt.pool = 0;
+  create_rt.size = 0;
+  create_rt.hResource.pDrvPrivate = nullptr;
+  create_rt.pSharedHandle = nullptr;
+  create_rt.pPrivateDriverData = nullptr;
+  create_rt.PrivateDriverDataSize = 0;
+  create_rt.wddm_hAllocation = 0;
+
+  HRESULT hr = cleanup.device_funcs.pfnCreateResource(cleanup.hDevice, &create_rt);
+  if (!Check(hr == S_OK, "CreateResource(render target surface)")) {
+    return false;
+  }
+  if (!Check(create_rt.hResource.pDrvPrivate != nullptr, "CreateResource returned RT handle")) {
+    return false;
+  }
+  cleanup.resources.push_back(create_rt.hResource);
+
+  hr = cleanup.device_funcs.pfnSetRenderTarget(cleanup.hDevice, /*slot=*/0, create_rt.hResource);
+  if (!Check(hr == S_OK, "SetRenderTarget(RT0)")) {
+    return false;
+  }
+
+  // Do not call SetViewport: rely on viewport_effective_locked() fallback.
+  hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzrhwDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE)")) {
+    return false;
+  }
+
+  // Vertex at the center of the effective viewport should map to NDC (0,0).
+  const float cx = rt_w * 0.5f - 0.5f;
+  const float cy = rt_h * 0.5f - 0.5f;
+  const VertexXyzrhwDiffuse verts[3] = {
+      {cx, cy, 0.25f, 1.0f, 0xFFFFFFFFu},
+      {cx + 1.0f, cy, 0.25f, 1.0f, 0xFFFFFFFFu},
+      {cx, cy + 1.0f, 0.25f, 1.0f, 0xFFFFFFFFu},
+  };
+
+  // Create + fill a VB.
+  D3D9DDIARG_CREATERESOURCE create_vb{};
+  create_vb.type = 0u;
+  create_vb.format = 0u;
+  create_vb.width = 0;
+  create_vb.height = 0;
+  create_vb.depth = 0;
+  create_vb.mip_levels = 1;
+  create_vb.usage = 0;
+  create_vb.pool = 0;
+  create_vb.size = sizeof(verts);
+  create_vb.hResource.pDrvPrivate = nullptr;
+  create_vb.pSharedHandle = nullptr;
+  create_vb.pPrivateDriverData = nullptr;
+  create_vb.PrivateDriverDataSize = 0;
+  create_vb.wddm_hAllocation = 0;
+  hr = cleanup.device_funcs.pfnCreateResource(cleanup.hDevice, &create_vb);
+  if (!Check(hr == S_OK, "CreateResource(vertex buffer xyzrhw|diffuse)")) {
+    return false;
+  }
+  if (!Check(create_vb.hResource.pDrvPrivate != nullptr, "CreateResource returned vb handle")) {
+    return false;
+  }
+  cleanup.resources.push_back(create_vb.hResource);
+
+  D3D9DDIARG_LOCK lock_vb{};
+  lock_vb.hResource = create_vb.hResource;
+  lock_vb.offset_bytes = 0;
+  lock_vb.size_bytes = 0;
+  lock_vb.flags = 0;
+  D3DDDI_LOCKEDBOX vb_box{};
+  hr = cleanup.device_funcs.pfnLock(cleanup.hDevice, &lock_vb, &vb_box);
+  if (!Check(hr == S_OK, "Lock(vb xyzrhw|diffuse)")) {
+    return false;
+  }
+  if (!Check(vb_box.pData != nullptr, "Lock(vb) returns pData")) {
+    return false;
+  }
+  std::memcpy(vb_box.pData, verts, sizeof(verts));
+
+  D3D9DDIARG_UNLOCK unlock_vb{};
+  unlock_vb.hResource = create_vb.hResource;
+  unlock_vb.offset_bytes = 0;
+  unlock_vb.size_bytes = 0;
+  hr = cleanup.device_funcs.pfnUnlock(cleanup.hDevice, &unlock_vb);
+  if (!Check(hr == S_OK, "Unlock(vb xyzrhw|diffuse)")) {
+    return false;
+  }
+
+  // Create + fill an index buffer (0,1,2).
+  const uint16_t indices[3] = {0u, 1u, 2u};
+  D3D9DDIARG_CREATERESOURCE create_ib{};
+  create_ib.type = 0u;
+  create_ib.format = 0u;
+  create_ib.width = 0;
+  create_ib.height = 0;
+  create_ib.depth = 0;
+  create_ib.mip_levels = 1;
+  create_ib.usage = 0;
+  create_ib.pool = 0;
+  create_ib.size = sizeof(indices);
+  create_ib.hResource.pDrvPrivate = nullptr;
+  create_ib.pSharedHandle = nullptr;
+  create_ib.pPrivateDriverData = nullptr;
+  create_ib.PrivateDriverDataSize = 0;
+  create_ib.wddm_hAllocation = 0;
+  hr = cleanup.device_funcs.pfnCreateResource(cleanup.hDevice, &create_ib);
+  if (!Check(hr == S_OK, "CreateResource(index buffer u16)")) {
+    return false;
+  }
+  if (!Check(create_ib.hResource.pDrvPrivate != nullptr, "CreateResource returned ib handle")) {
+    return false;
+  }
+  cleanup.resources.push_back(create_ib.hResource);
+
+  D3D9DDIARG_LOCK lock_ib{};
+  lock_ib.hResource = create_ib.hResource;
+  lock_ib.offset_bytes = 0;
+  lock_ib.size_bytes = 0;
+  lock_ib.flags = 0;
+  D3DDDI_LOCKEDBOX ib_box{};
+  hr = cleanup.device_funcs.pfnLock(cleanup.hDevice, &lock_ib, &ib_box);
+  if (!Check(hr == S_OK, "Lock(ib u16)")) {
+    return false;
+  }
+  if (!Check(ib_box.pData != nullptr, "Lock(ib) returns pData")) {
+    return false;
+  }
+  std::memcpy(ib_box.pData, indices, sizeof(indices));
+
+  D3D9DDIARG_UNLOCK unlock_ib{};
+  unlock_ib.hResource = create_ib.hResource;
+  unlock_ib.offset_bytes = 0;
+  unlock_ib.size_bytes = 0;
+  hr = cleanup.device_funcs.pfnUnlock(cleanup.hDevice, &unlock_ib);
+  if (!Check(hr == S_OK, "Unlock(ib u16)")) {
+    return false;
+  }
+
+  // Bind VB/IB and draw.
+  hr = cleanup.device_funcs.pfnSetStreamSource(
+      cleanup.hDevice, /*stream=*/0, create_vb.hResource, /*offset=*/0, sizeof(VertexXyzrhwDiffuse));
+  if (!Check(hr == S_OK, "SetStreamSource(stream0=vb xyzrhw|diffuse)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetIndices(cleanup.hDevice, create_ib.hResource, static_cast<D3DDDIFORMAT>(101), 0);
+  if (!Check(hr == S_OK, "SetIndices(ib index16)")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnDrawIndexedPrimitive(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*base_vertex=*/0, /*min_index=*/0, /*num_vertices=*/3, /*start_index=*/0,
+      /*primitive_count=*/1);
+  if (!Check(hr == S_OK, "DrawIndexedPrimitive(XYZRHW effective viewport from RT)")) {
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->up_vertex_buffer != nullptr, "indexed effective viewport from RT: scratch VB created")) {
+      return false;
+    }
+    if (!Check(dev->up_vertex_buffer->storage.size() >= sizeof(verts),
+               "indexed effective viewport from RT: scratch VB contains vertices")) {
+      return false;
+    }
+
+    float clip_x = 0.0f;
+    float clip_y = 0.0f;
+    float clip_w = 0.0f;
+    std::memcpy(&clip_x, dev->up_vertex_buffer->storage.data() + 0, sizeof(float));
+    std::memcpy(&clip_y, dev->up_vertex_buffer->storage.data() + 4, sizeof(float));
+    std::memcpy(&clip_w, dev->up_vertex_buffer->storage.data() + 12, sizeof(float));
+    if (!Check(clip_w == 1.0f, "indexed effective viewport from RT: clip_w == 1")) {
+      return false;
+    }
+    if (!Check(clip_x == 0.0f, "indexed effective viewport from RT: clip_x == 0 at center")) {
+      return false;
+    }
+    if (!Check(clip_y == 0.0f, "indexed effective viewport from RT: clip_y == 0 at center")) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 bool TestFixedfuncFogVertexModeEmitsConstants() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -20900,6 +21128,339 @@ bool TestFixedfuncFogTableModeTakesPrecedenceOverVertexMode() {
   }
   if (!Check(fog_const_uploads == 0, "table fog precedence: does not upload fog constants")) {
     return false;
+  }
+
+  return true;
+}
+
+bool TestFvfXyzDiffuseFogSelectsFogVs() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetRenderState != nullptr, "pfnSetRenderState is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Portable D3DRS_* numeric values (from d3d9types.h).
+  constexpr uint32_t kD3dRsFogEnable = 28u;    // D3DRS_FOGENABLE
+  constexpr uint32_t kD3dRsFogColor = 34u;     // D3DRS_FOGCOLOR
+  constexpr uint32_t kD3dRsFogTableMode = 35u; // D3DRS_FOGTABLEMODE
+  constexpr uint32_t kD3dRsFogStart = 36u;     // D3DRS_FOGSTART (float bits)
+  constexpr uint32_t kD3dRsFogEnd = 37u;       // D3DRS_FOGEND   (float bits)
+  constexpr uint32_t kD3dFogLinear = 3u;       // D3DFOG_LINEAR
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|DIFFUSE)")) {
+    return false;
+  }
+
+  const auto SetTextureStageState = [&](uint32_t stage, uint32_t state, uint32_t value, const char* msg) -> bool {
+    HRESULT hr2 = S_OK;
+    if (cleanup.device_funcs.pfnSetTextureStageState) {
+      hr2 = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, stage, state, value);
+    } else {
+      hr2 = aerogpu::device_set_texture_stage_state(cleanup.hDevice, stage, state, value);
+    }
+    return Check(hr2 == S_OK, msg);
+  };
+
+  // Stage0: output diffuse (no texture sampling). Disable later stages.
+  if (!SetTextureStageState(0, kD3dTssColorOp, kD3dTopSelectArg1, "stage0 COLOROP=SELECTARG1")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssColorArg1, kD3dTaDiffuse, "stage0 COLORARG1=DIFFUSE")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssAlphaOp, kD3dTopDisable, "stage0 ALPHAOP=DISABLE")) {
+    return false;
+  }
+  if (!SetTextureStageState(1, kD3dTssColorOp, kD3dTopDisable, "stage1 COLOROP=DISABLE")) {
+    return false;
+  }
+
+  // Enable linear fog.
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogEnable, 1u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGENABLE=1)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogTableMode, kD3dFogLinear);
+  if (!Check(hr == S_OK, "SetRenderState(FOGTABLEMODE=LINEAR)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogColor, 0xFFFF0000u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGCOLOR=red)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogStart, F32Bits(0.2f));
+  if (!Check(hr == S_OK, "SetRenderState(FOGSTART)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogEnd, F32Bits(0.8f));
+  if (!Check(hr == S_OK, "SetRenderState(FOGEND)")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+  const VertexXyzDiffuse tri[3] = {
+      {0.0f, 0.0f, 0.25f, 0xFFFFFFFFu},
+      {1.0f, 0.0f, 0.25f, 0xFFFFFFFFu},
+      {0.0f, 1.0f, 0.25f, 0xFFFFFFFFu},
+  };
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(XYZ|DIFFUSE; fog enabled)")) {
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->vs != nullptr, "XYZ|DIFFUSE fog: VS bound")) {
+      return false;
+    }
+    if (!Check(ShaderBytecodeEquals(dev->vs, fixedfunc::kVsWvpPosColorFog),
+               "XYZ|DIFFUSE fog: selected kVsWvpPosColorFog")) {
+      return false;
+    }
+    if (!Check(dev->ps != nullptr, "XYZ|DIFFUSE fog: PS bound")) {
+      return false;
+    }
+    if (!Check(ShaderContainsToken(dev->ps, 0x20E40001u), "XYZ|DIFFUSE fog: PS references c1 (fog color)")) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+bool TestFvfXyzDiffuseTex1FogSelectsFogVs() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetRenderState != nullptr, "pfnSetRenderState is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Portable D3DRS_* numeric values (from d3d9types.h).
+  constexpr uint32_t kD3dRsFogEnable = 28u;    // D3DRS_FOGENABLE
+  constexpr uint32_t kD3dRsFogColor = 34u;     // D3DRS_FOGCOLOR
+  constexpr uint32_t kD3dRsFogTableMode = 35u; // D3DRS_FOGTABLEMODE
+  constexpr uint32_t kD3dRsFogStart = 36u;     // D3DRS_FOGSTART (float bits)
+  constexpr uint32_t kD3dRsFogEnd = 37u;       // D3DRS_FOGEND   (float bits)
+  constexpr uint32_t kD3dFogLinear = 3u;       // D3DFOG_LINEAR
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzDiffuseTex1);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|DIFFUSE|TEX1)")) {
+    return false;
+  }
+
+  D3DDDI_HRESOURCE hTex0{};
+  if (!CreateDummyTexture(&cleanup, &hTex0)) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, hTex0);
+  if (!Check(hr == S_OK, "SetTexture(stage0)")) {
+    return false;
+  }
+
+  const auto SetTextureStageState = [&](uint32_t stage, uint32_t state, uint32_t value, const char* msg) -> bool {
+    HRESULT hr2 = S_OK;
+    if (cleanup.device_funcs.pfnSetTextureStageState) {
+      hr2 = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, stage, state, value);
+    } else {
+      hr2 = aerogpu::device_set_texture_stage_state(cleanup.hDevice, stage, state, value);
+    }
+    return Check(hr2 == S_OK, msg);
+  };
+
+  // Stage0: output texture0. Disable later stages.
+  if (!SetTextureStageState(0, kD3dTssColorOp, kD3dTopSelectArg1, "stage0 COLOROP=SELECTARG1")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssColorArg1, kD3dTaTexture, "stage0 COLORARG1=TEXTURE")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssAlphaOp, kD3dTopDisable, "stage0 ALPHAOP=DISABLE")) {
+    return false;
+  }
+  if (!SetTextureStageState(1, kD3dTssColorOp, kD3dTopDisable, "stage1 COLOROP=DISABLE")) {
+    return false;
+  }
+
+  // Enable linear fog.
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogEnable, 1u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGENABLE=1)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogTableMode, kD3dFogLinear);
+  if (!Check(hr == S_OK, "SetRenderState(FOGTABLEMODE=LINEAR)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogColor, 0xFFFF0000u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGCOLOR=red)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogStart, F32Bits(0.2f));
+  if (!Check(hr == S_OK, "SetRenderState(FOGSTART)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogEnd, F32Bits(0.8f));
+  if (!Check(hr == S_OK, "SetRenderState(FOGEND)")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+  const VertexXyzDiffuseTex1 tri[3] = {
+      {0.0f, 0.0f, 0.25f, 0xFFFFFFFFu, 0.0f, 0.0f},
+      {1.0f, 0.0f, 0.25f, 0xFFFFFFFFu, 1.0f, 0.0f},
+      {0.0f, 1.0f, 0.25f, 0xFFFFFFFFu, 0.0f, 1.0f},
+  };
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzDiffuseTex1));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(XYZ|DIFFUSE|TEX1; fog enabled)")) {
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->vs != nullptr, "XYZ|DIFFUSE|TEX1 fog: VS bound")) {
+      return false;
+    }
+    if (!Check(ShaderBytecodeEquals(dev->vs, fixedfunc::kVsWvpPosColorTex0Fog),
+               "XYZ|DIFFUSE|TEX1 fog: selected kVsWvpPosColorTex0Fog")) {
+      return false;
+    }
+    if (!Check(dev->ps != nullptr, "XYZ|DIFFUSE|TEX1 fog: PS bound")) {
+      return false;
+    }
+    if (!Check(ShaderContainsToken(dev->ps, 0x20E40001u), "XYZ|DIFFUSE|TEX1 fog: PS references c1 (fog color)")) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+bool TestFvfXyzTex1FogSelectsFogVs() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetRenderState != nullptr, "pfnSetRenderState is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Portable D3DRS_* numeric values (from d3d9types.h).
+  constexpr uint32_t kD3dRsFogEnable = 28u;    // D3DRS_FOGENABLE
+  constexpr uint32_t kD3dRsFogColor = 34u;     // D3DRS_FOGCOLOR
+  constexpr uint32_t kD3dRsFogTableMode = 35u; // D3DRS_FOGTABLEMODE
+  constexpr uint32_t kD3dRsFogStart = 36u;     // D3DRS_FOGSTART (float bits)
+  constexpr uint32_t kD3dRsFogEnd = 37u;       // D3DRS_FOGEND   (float bits)
+  constexpr uint32_t kD3dFogLinear = 3u;       // D3DFOG_LINEAR
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzTex1);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|TEX1)")) {
+    return false;
+  }
+
+  D3DDDI_HRESOURCE hTex0{};
+  if (!CreateDummyTexture(&cleanup, &hTex0)) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, hTex0);
+  if (!Check(hr == S_OK, "SetTexture(stage0)")) {
+    return false;
+  }
+
+  const auto SetTextureStageState = [&](uint32_t stage, uint32_t state, uint32_t value, const char* msg) -> bool {
+    HRESULT hr2 = S_OK;
+    if (cleanup.device_funcs.pfnSetTextureStageState) {
+      hr2 = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, stage, state, value);
+    } else {
+      hr2 = aerogpu::device_set_texture_stage_state(cleanup.hDevice, stage, state, value);
+    }
+    return Check(hr2 == S_OK, msg);
+  };
+
+  // Stage0: output texture0. Disable later stages.
+  if (!SetTextureStageState(0, kD3dTssColorOp, kD3dTopSelectArg1, "stage0 COLOROP=SELECTARG1")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssColorArg1, kD3dTaTexture, "stage0 COLORARG1=TEXTURE")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssAlphaOp, kD3dTopDisable, "stage0 ALPHAOP=DISABLE")) {
+    return false;
+  }
+  if (!SetTextureStageState(1, kD3dTssColorOp, kD3dTopDisable, "stage1 COLOROP=DISABLE")) {
+    return false;
+  }
+
+  // Enable linear fog.
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogEnable, 1u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGENABLE=1)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogTableMode, kD3dFogLinear);
+  if (!Check(hr == S_OK, "SetRenderState(FOGTABLEMODE=LINEAR)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogColor, 0xFFFF0000u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGCOLOR=red)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogStart, F32Bits(0.2f));
+  if (!Check(hr == S_OK, "SetRenderState(FOGSTART)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogEnd, F32Bits(0.8f));
+  if (!Check(hr == S_OK, "SetRenderState(FOGEND)")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+  const VertexXyzTex1 tri[3] = {
+      {0.0f, 0.0f, 0.25f, 0.0f, 0.0f},
+      {1.0f, 0.0f, 0.25f, 1.0f, 0.0f},
+      {0.0f, 1.0f, 0.25f, 0.0f, 1.0f},
+  };
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzTex1));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(XYZ|TEX1; fog enabled)")) {
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->vs != nullptr, "XYZ|TEX1 fog: VS bound")) {
+      return false;
+    }
+    if (!Check(ShaderBytecodeEquals(dev->vs, fixedfunc::kVsTransformPosWhiteTex1Fog),
+               "XYZ|TEX1 fog: selected kVsTransformPosWhiteTex1Fog")) {
+      return false;
+    }
+    if (!Check(dev->ps != nullptr, "XYZ|TEX1 fog: PS bound")) {
+      return false;
+    }
+    if (!Check(ShaderContainsToken(dev->ps, 0x20E40001u), "XYZ|TEX1 fog: PS references c1 (fog color)")) {
+      return false;
+    }
   }
 
   return true;
@@ -21710,6 +22271,9 @@ int main() {
   if (!aerogpu::TestXyzrhwConversionUsesEffectiveViewportFromRenderTarget()) {
     return 1;
   }
+  if (!aerogpu::TestXyzrhwIndexedConversionUsesEffectiveViewportFromRenderTarget()) {
+    return 1;
+  }
   if (!aerogpu::TestFixedfuncFogVertexModeEmitsConstants()) {
     return 1;
   }
@@ -21723,6 +22287,15 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestFixedfuncFogTableModeTakesPrecedenceOverVertexMode()) {
+    return 1;
+  }
+  if (!aerogpu::TestFvfXyzDiffuseFogSelectsFogVs()) {
+    return 1;
+  }
+  if (!aerogpu::TestFvfXyzDiffuseTex1FogSelectsFogVs()) {
+    return 1;
+  }
+  if (!aerogpu::TestFvfXyzTex1FogSelectsFogVs()) {
     return 1;
   }
   if (!aerogpu::TestFvfXyzNormalFogSelectsFogVsAndLitFogVs()) {
