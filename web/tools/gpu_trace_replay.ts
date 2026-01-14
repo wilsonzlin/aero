@@ -2417,9 +2417,32 @@ void main() {
     function readPixels() {
       // Read back from the default framebuffer (canvas), even if the last replayed
       // command left an offscreen framebuffer bound.
-      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
-      const out = new Uint8Array(canvas.width * canvas.height * 4);
-      gl.readPixels(0, 0, canvas.width, canvas.height, gl.RGBA, gl.UNSIGNED_BYTE, out);
+      const prevReadFbo = gl.getParameter(gl.READ_FRAMEBUFFER_BINDING);
+      const prevPackBuffer = gl.getParameter(gl.PIXEL_PACK_BUFFER_BINDING);
+      const prevPackAlignment = gl.getParameter(gl.PACK_ALIGNMENT);
+      const prevPackRowLength = gl.getParameter(gl.PACK_ROW_LENGTH);
+      const prevPackSkipPixels = gl.getParameter(gl.PACK_SKIP_PIXELS);
+      const prevPackSkipRows = gl.getParameter(gl.PACK_SKIP_ROWS);
+      const w = canvas.width;
+      const h = canvas.height;
+      const out = new Uint8Array(w * h * 4);
+      try {
+        // Ensure readPixels writes into client memory with a tight packing.
+        gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
+        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+        gl.pixelStorei(gl.PACK_ALIGNMENT, 1);
+        gl.pixelStorei(gl.PACK_ROW_LENGTH, 0);
+        gl.pixelStorei(gl.PACK_SKIP_PIXELS, 0);
+        gl.pixelStorei(gl.PACK_SKIP_ROWS, 0);
+        gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, out);
+      } finally {
+        gl.pixelStorei(gl.PACK_ALIGNMENT, prevPackAlignment);
+        gl.pixelStorei(gl.PACK_ROW_LENGTH, prevPackRowLength);
+        gl.pixelStorei(gl.PACK_SKIP_PIXELS, prevPackSkipPixels);
+        gl.pixelStorei(gl.PACK_SKIP_ROWS, prevPackSkipRows);
+        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, prevPackBuffer);
+        gl.bindFramebuffer(gl.READ_FRAMEBUFFER, prevReadFbo);
+      }
       return out;
     }
 
@@ -2944,9 +2967,32 @@ void main() {
     }
 
     function readPixels() {
-      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-      const out = new Uint8Array(canvas.width * canvas.height * 4);
-      gl.readPixels(0, 0, canvas.width, canvas.height, gl.RGBA, gl.UNSIGNED_BYTE, out);
+      const prevReadFbo = gl.getParameter(gl.READ_FRAMEBUFFER_BINDING);
+      const prevPackBuffer = gl.getParameter(gl.PIXEL_PACK_BUFFER_BINDING);
+      const prevPackAlignment = gl.getParameter(gl.PACK_ALIGNMENT);
+      const prevPackRowLength = gl.getParameter(gl.PACK_ROW_LENGTH);
+      const prevPackSkipPixels = gl.getParameter(gl.PACK_SKIP_PIXELS);
+      const prevPackSkipRows = gl.getParameter(gl.PACK_SKIP_ROWS);
+      const w = canvas.width;
+      const h = canvas.height;
+      const out = new Uint8Array(w * h * 4);
+      try {
+        // Ensure readPixels writes into client memory with a tight packing.
+        gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
+        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+        gl.pixelStorei(gl.PACK_ALIGNMENT, 1);
+        gl.pixelStorei(gl.PACK_ROW_LENGTH, 0);
+        gl.pixelStorei(gl.PACK_SKIP_PIXELS, 0);
+        gl.pixelStorei(gl.PACK_SKIP_ROWS, 0);
+        gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, out);
+      } finally {
+        gl.pixelStorei(gl.PACK_ALIGNMENT, prevPackAlignment);
+        gl.pixelStorei(gl.PACK_ROW_LENGTH, prevPackRowLength);
+        gl.pixelStorei(gl.PACK_SKIP_PIXELS, prevPackSkipPixels);
+        gl.pixelStorei(gl.PACK_SKIP_ROWS, prevPackSkipRows);
+        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, prevPackBuffer);
+        gl.bindFramebuffer(gl.READ_FRAMEBUFFER, prevReadFbo);
+      }
       return out;
     }
 
