@@ -81,8 +81,20 @@ export default defineConfig({
 | WebUSB (`navigator.usb`) | 61+ | ✗ | ✗ | 79+ | Optional (Chromium-only; limited passthrough) |
 | WebHID (`navigator.hid`) | 89+ | ✗ | ✗ | 89+ | Optional (Chromium-only; HID devices) |
 | WebSerial (`navigator.serial`) | 89+ | ✗ | ✗ | 89+ | Optional (Chromium-only) |
+| Keyboard Lock (`navigator.keyboard.lock`) | ✓ | ✗ | ✗ | ✓ | Optional (improves VM input capture of reserved keys) |
 
 Legend: `✓` supported · `🚧` in progress/partial · `✗` not available.
+
+---
+
+## Keyboard Lock (reserved key capture)
+
+When available, Aero uses the **Keyboard Lock API** to improve delivery of browser-reserved keys (e.g. `Escape`, function keys) to the guest while input capture is active.
+
+- API: `navigator.keyboard.lock([...codes])` and `navigator.keyboard.unlock()` (best-effort).
+- **User activation:** lock requests require transient user activation and must be initiated from a user gesture handler on the main thread (Aero does this from the same click that requests Pointer Lock).
+- **Failure handling:** lock/unlock are optional and never cause capture to fail; rejections are logged and ignored.
+- **Important:** locking `Escape` can prevent the browser’s default “Escape exits pointer lock” behavior, so apps should provide an alternative capture-exit path (e.g. a host-only release chord or an on-screen UI control).
 
 ---
 

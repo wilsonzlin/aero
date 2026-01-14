@@ -196,6 +196,7 @@ For the canonical USB stack selection for the browser runtime, see [ADR 0015](./
 │  ┌─────────────────────────────────────────────────────────┐    │
 │  │  Input Capture Layer                                     │    │
 │  │    - Pointer Lock API (mouse capture)                    │    │
+│  │    - Keyboard Lock API (best-effort reserved key capture)│    │
 │  │    - Keyboard event handling                             │    │
 │  │    - Gamepad API                                         │    │
 │  └─────────────────────────────────────────────────────────┘    │
