@@ -506,6 +506,7 @@ In the browser runtime, the I/O worker may store multiple USB controller blobs i
 See:
 
 - `web/src/workers/usb_snapshot_container.ts` (`USB_SNAPSHOT_TAG_UHCI`, `USB_SNAPSHOT_TAG_EHCI`)
+  - Container tags also include `USB_SNAPSHOT_TAG_XHCI` when xHCI is present (the container is controller-agnostic).
 
 ---
 
