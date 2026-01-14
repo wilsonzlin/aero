@@ -2155,9 +2155,8 @@ def validate_virtio_input_model_lines(
       (distinct naming).
     - If `require_fallback=True`, it must include the strict REV-qualified generic
       fallback HWID (no SUBSYS) so binding remains revision-gated even when subsystem
-      IDs are absent/ignored. If `require_fallback=False`, it must not include that
-      fallback HWID (the canonical INF is SUBSYS-only and the fallback is opt-in via
-      the legacy alias).
+      IDs are absent/ignored.
+    - If `require_fallback=False`, it must not include that strict fallback HWID.
     - It must not include the tablet subsystem ID (`SUBSYS_00121AF4`); tablet devices
       bind via `aero_virtio_tablet.inf` (which is more specific and wins over the
       generic fallback when both are installed).
@@ -2188,7 +2187,7 @@ def validate_virtio_input_model_lines(
         if strict_bytes and strict_bytes in inf_path.read_bytes().upper():
             errors.append(
                 format_error(
-                    f"{inf_path.as_posix()}: canonical virtio-input INF must not contain the strict generic fallback HWID ({strict_hwid}); fallback is available only via virtio-input.inf.disabled:",
+                    f"{inf_path.as_posix()}: virtio-input INF must not contain the strict generic fallback HWID ({strict_hwid}) when fallback is disabled:",
                     [f"found: {strict_hwid}"],
                 )
             )
@@ -4528,7 +4527,7 @@ def main() -> None:
                 inf_path=inf_path,
                 strict_hwid=strict_hwid,
                 contract_rev=contract_rev,
-                require_fallback=False,
+                require_fallback=True,
                 errors=errors,
             )
 
@@ -4552,13 +4551,9 @@ def main() -> None:
         strict_hwid = f"{base_hwid}&REV_{contract_rev:02X}"
 
         # The legacy alias INF is kept for compatibility with workflows that reference the
-        # legacy `virtio-input.inf` name, and provides an opt-in strict generic fallback
-        # HWID match (`PCI\VEN_1AF4&DEV_1052&REV_01`) for environments that do not expose the
-        # Aero subsystem IDs.
-        #
-        # Policy: it is allowed to diverge from the canonical INF in the models sections
-        # (`[Aero.NTx86]` / `[Aero.NTamd64]`) to add that fallback entry, but should otherwise
-        # stay in sync.
+        # legacy `virtio-input.inf` name. Policy: it must be byte-for-byte identical to the
+        # canonical INF from the first section header (`[Version]`) onward (only the leading
+        # banner/comments may differ).
         validate_virtio_input_model_lines(
             inf_path=virtio_input_alias,
             strict_hwid=strict_hwid,
@@ -4566,12 +4561,11 @@ def main() -> None:
             require_fallback=True,
             errors=errors,
         )
-        drift = check_inf_alias_drift_excluding_sections(
+        drift = check_inf_alias_drift(
             canonical=virtio_input_canonical,
             alias=virtio_input_alias,
             repo_root=REPO_ROOT,
             label="virtio-input",
-            drop_sections={"Aero.NTx86", "Aero.NTamd64"},
         )
         if drift:
             errors.append(drift)
