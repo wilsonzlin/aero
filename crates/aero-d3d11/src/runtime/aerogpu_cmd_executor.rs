@@ -5401,6 +5401,11 @@ impl AerogpuD3d11Executor {
         if vs_shader.stage != ShaderStage::Vertex {
             bail!("shader {vs_handle} is not a vertex shader");
         }
+        if instance_count != 1 {
+            bail!(
+                "GS prepass VS-as-compute bring-up currently supports only instance_count == 1 (got {instance_count})"
+            );
+        }
 
         let layout_handle = self
             .state
