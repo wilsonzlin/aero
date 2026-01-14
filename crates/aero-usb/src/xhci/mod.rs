@@ -3144,7 +3144,9 @@ impl XhciController {
             }
         }
 
-        if let Some(state) = self.read_endpoint_state_from_context(mem, slot_id, endpoint_id) {
+        let guest_endpoint_state = self.read_endpoint_state_from_context(mem, slot_id, endpoint_id);
+        let guest_ctx_available = guest_endpoint_state.is_some();
+        if let Some(state) = guest_endpoint_state {
             if !matches!(state, context::EndpointState::Running) {
                 return EndpointOutcome::idle();
             }
@@ -3182,7 +3184,14 @@ impl XhciController {
                 return EndpointOutcome::idle();
             };
 
-            self.ensure_endpoint_mapped_from_context(mem, &mut exec, slot_id, endpoint_id, ep_addr);
+            self.ensure_endpoint_mapped_from_context(
+                mem,
+                &mut exec,
+                slot_id,
+                endpoint_id,
+                ep_addr,
+                guest_ctx_available,
+            );
 
             let before = exec
                 .endpoint_state(ep_addr)
@@ -3722,11 +3731,19 @@ impl XhciController {
         slot_id: u8,
         endpoint_id: u8,
         ep_addr: u8,
+        guest_ctx_available: bool,
     ) {
         let (dequeue_ptr, cycle) =
             match self.read_endpoint_dequeue_from_context(mem, slot_id, endpoint_id) {
                 Some(v) => v,
                 None => {
+                    // If the guest has configured a valid Device Context for this slot, do not fall
+                    // back to controller-local ring cursors. `read_endpoint_dequeue_from_context`
+                    // returning `None` in this case implies the guest Endpoint Context is either
+                    // malformed (missing TRDP) or describes an unsupported endpoint type.
+                    if guest_ctx_available {
+                        return;
+                    }
                     // Test/harness helpers like `set_endpoint_ring()` configure controller-local ring
                     // cursors without populating full Endpoint Context state in guest memory. Fall back
                     // to those cursors so deterministic `tick_1ms` polling can still make progress.
