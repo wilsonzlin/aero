@@ -125,7 +125,30 @@ fn verify_block(
 }
 
 fn verify_op(op: &IrOp, stage: ShaderStage) -> Result<(), VerifyError> {
-    verify_dst(op_dst(op))?;
+    let dst = op_dst(op);
+    verify_dst(dst, stage)?;
+
+    // Some register files are only writable via specific opcodes. Enforce that here so malformed
+    // bytecode can't synthesize otherwise-unrepresentable state (e.g. writing predicate registers
+    // via `mov` instead of `setp`).
+    match dst.reg.file {
+        RegFile::Addr => {
+            if !matches!(op, IrOp::Mova { .. }) {
+                return Err(VerifyError {
+                    message: "address register writes are only valid for mova".to_owned(),
+                });
+            }
+        }
+        RegFile::Predicate => {
+            if !matches!(op, IrOp::SetCmp { .. }) {
+                return Err(VerifyError {
+                    message: "predicate register writes are only valid for setp/set-on-compare"
+                        .to_owned(),
+                });
+            }
+        }
+        _ => {}
+    }
 
     // Some operations have stricter modifier rules depending on destination register type.
     if let IrOp::SetCmp { dst, modifiers, .. } = op {
@@ -447,6 +470,11 @@ fn verify_modifiers(mods: &crate::sm3::ir::InstModifiers) -> Result<(), VerifyEr
                 message: "predicate modifier refers to non-predicate register".to_owned(),
             });
         }
+        if pred.reg.relative.is_some() {
+            return Err(VerifyError {
+                message: "predicate modifier uses relative addressing".to_owned(),
+            });
+        }
     }
     Ok(())
 }
@@ -468,6 +496,11 @@ fn verify_cond(cond: &Cond, stage: ShaderStage) -> Result<(), VerifyError> {
             if pred.reg.file != crate::sm3::ir::RegFile::Predicate {
                 return Err(VerifyError {
                     message: "condition predicate refers to non-predicate register".to_owned(),
+                });
+            }
+            if pred.reg.relative.is_some() {
+                return Err(VerifyError {
+                    message: "condition predicate uses relative addressing".to_owned(),
                 });
             }
             Ok(())
@@ -517,7 +550,12 @@ fn verify_src(src: &Src, stage: ShaderStage) -> Result<(), VerifyError> {
     Ok(())
 }
 
-fn verify_dst(dst: &Dst) -> Result<(), VerifyError> {
+fn verify_dst(dst: &Dst, stage: ShaderStage) -> Result<(), VerifyError> {
+    if dst.reg.relative.is_some() {
+        return Err(VerifyError {
+            message: "destination register uses relative addressing".to_owned(),
+        });
+    }
     // Reject writes to register files that are not writable in D3D9 SM2/SM3 and/or would produce
     // invalid WGSL output.
     if matches!(
@@ -534,12 +572,41 @@ fn verify_dst(dst: &Dst) -> Result<(), VerifyError> {
         | RegFile::Input
         | RegFile::Texture
         | RegFile::MiscType
+        // Loop registers are implicitly written by `loop`/`rep`, not by general ops.
+        | RegFile::Loop
         // Label registers are not runtime storage.
         | RegFile::Label
     ) {
         return Err(VerifyError {
             message: format!("{:?} register used as a destination operand", dst.reg.file),
         });
+    }
+
+    // Output register files are stage-dependent.
+    match stage {
+        ShaderStage::Vertex => {
+            if matches!(dst.reg.file, RegFile::ColorOut | RegFile::DepthOut) {
+                return Err(VerifyError {
+                    message: format!(
+                        "{:?} register used as a destination operand in a vertex shader",
+                        dst.reg.file
+                    ),
+                });
+            }
+        }
+        ShaderStage::Pixel => {
+            if matches!(
+                dst.reg.file,
+                RegFile::RastOut | RegFile::AttrOut | RegFile::TexCoordOut | RegFile::Output
+            ) {
+                return Err(VerifyError {
+                    message: format!(
+                        "{:?} register used as a destination operand in a pixel shader",
+                        dst.reg.file
+                    ),
+                });
+            }
+        }
     }
     Ok(())
 }

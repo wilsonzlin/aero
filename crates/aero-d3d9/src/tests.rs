@@ -3716,6 +3716,79 @@ fn translate_entrypoint_rejects_misctype_register_as_dst_operand() {
 }
 
 #[test]
+fn translate_entrypoint_rejects_loop_register_as_dst_operand() {
+    // Loop registers (`aL#`) are not writable by general ops; they are updated implicitly by
+    // `loop`/`rep`.
+    let mut words = vec![0xFFFF_0300];
+    // mov aL, aL
+    words.extend(enc_inst(
+        0x0001,
+        &[enc_dst(15, 0, 0xF), enc_src(15, 0, 0xE4)],
+    ));
+    words.push(0x0000_FFFF);
+
+    let err = shader_translate::translate_d3d9_shader_to_wgsl(
+        &to_bytes(&words),
+        shader::WgslOptions::default(),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, shader_translate::ShaderTranslateError::Malformed(_)),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn translate_entrypoint_rejects_predicate_register_as_dst_operand() {
+    // Predicate registers (`p#`) are only writable via `setp` and should not be writable by generic
+    // ops like `mov`.
+    let mut words = vec![0xFFFF_0300];
+    // mov p0, p0
+    words.extend(enc_inst(
+        0x0001,
+        &[enc_dst(19, 0, 0x1), enc_src(19, 0, 0xE4)],
+    ));
+    words.push(0x0000_FFFF);
+
+    let err = shader_translate::translate_d3d9_shader_to_wgsl(
+        &to_bytes(&words),
+        shader::WgslOptions::default(),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, shader_translate::ShaderTranslateError::Malformed(_)),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn translate_entrypoint_rejects_addr_register_write_with_mov() {
+    // Address registers (`a#`) are only writable via `mova` in D3D9.
+    let mut words = vec![0xFFFE_0300]; // vs_3_0
+    // mov a0.x, a0.x
+    words.extend(enc_inst(
+        0x0001,
+        &[enc_dst(3, 0, 0x1), enc_src(3, 0, 0xE4)],
+    ));
+    // mov oPos, v0 (otherwise-valid VS output)
+    words.extend(enc_inst(
+        0x0001,
+        &[enc_dst(4, 0, 0xF), enc_src(1, 0, 0xE4)],
+    ));
+    words.push(0x0000_FFFF);
+
+    let err = shader_translate::translate_d3d9_shader_to_wgsl(
+        &to_bytes(&words),
+        shader::WgslOptions::default(),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, shader_translate::ShaderTranslateError::Malformed(_)),
+        "{err:?}"
+    );
+}
+
+#[test]
 fn translate_entrypoint_rejects_label_register_as_src_operand() {
     // Label registers (`l#`) are not runtime storage and may not appear as generic source operands.
     let mut words = vec![0xFFFF_0300];
