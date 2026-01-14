@@ -1113,6 +1113,18 @@ after the guest emits the readiness marker (`...|virtio-blk-resize|READY|...`), 
   for example via `New-AeroWin7TestImage.ps1 -TestBlkResize`.
 - Optional: set `blk_resize_delta_mib=<N>` to override the default growth delta (MiB).
 
+To require the optional virtio-blk reset test (`virtio-blk-reset`), set the workflow input `with_blk_reset=true`.
+This requires a guest image provisioned with `--test-blk-reset` (or env var `AERO_VIRTIO_SELFTEST_TEST_BLK_RESET=1`),
+for example via `New-AeroWin7TestImage.ps1 -TestBlkReset`.
+
+To exercise the optional virtio-net link flap test (`virtio-net-link-flap`), set the workflow input
+`with_net_link_flap=true`. This triggers a host-side QMP `set_link` down/up sequence after the guest emits the readiness
+marker (`...|virtio-net-link-flap|READY|...`) and requires the guest marker
+`AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|PASS|...`.
+
+- The guest image must be provisioned with `--test-net-link-flap` (or env var `AERO_VIRTIO_SELFTEST_TEST_NET_LINK_FLAP=1`),
+  for example via `New-AeroWin7TestImage.ps1 -TestNetLinkFlap`.
+
 To require the virtio-snd buffer limits stress test (`virtio-snd-buffer-limits`), set the workflow input
 `with_snd_buffer_limits=true` (requires `with_virtio_snd=true` and a guest image provisioned with `--test-snd-buffer-limits`,
 for example via `New-AeroWin7TestImage.ps1 -TestSndBufferLimits`).
