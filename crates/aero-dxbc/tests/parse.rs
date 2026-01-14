@@ -125,6 +125,36 @@ fn malformed_total_size_truncates_chunk_payload_is_error() {
 }
 
 #[test]
+fn malformed_total_size_truncates_chunk_header_is_error() {
+    // Shrink total_size to end exactly at the end of the chunk offset table,
+    // leaving no room for the chunk header itself.
+    let mut bytes = build_dxbc(&[(FourCC(*b"SHDR"), &[1, 2, 3, 4])]);
+    let offset_table_end = 4 + 16 + 4 + 4 + 4 + 4;
+    bytes[24..28].copy_from_slice(&(offset_table_end as u32).to_le_bytes());
+
+    let err = DxbcFile::parse(&bytes).unwrap_err();
+    assert!(matches!(err, DxbcError::OutOfBounds { .. }));
+    assert!(err.context().contains("header"));
+    assert!(err.context().contains("outside total_size"));
+}
+
+#[test]
+fn malformed_truncated_chunk_offset_table_is_error() {
+    // DXBC header declaring one chunk, but missing the chunk offset table entry.
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"DXBC");
+    bytes.extend_from_slice(&[0u8; 16]); // checksum
+    bytes.extend_from_slice(&1u32.to_le_bytes()); // reserved
+    bytes.extend_from_slice(&32u32.to_le_bytes()); // total_size
+    bytes.extend_from_slice(&1u32.to_le_bytes()); // chunk_count
+    assert_eq!(bytes.len(), 32);
+
+    let err = DxbcFile::parse(&bytes).unwrap_err();
+    assert!(matches!(err, DxbcError::MalformedOffsets { .. }));
+    assert!(err.context().contains("chunk offset table"));
+}
+
+#[test]
 fn malformed_chunk_count_makes_offset_table_oob_is_error() {
     // Declare a huge chunk_count but keep total_size minimal, ensuring the offset
     // table end computation stays safe and is rejected.
