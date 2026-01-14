@@ -17,6 +17,8 @@ const REGEN_CMD_ALT: &str = "cargo run -p firmware --bin gen_bios_rom --locked";
 // flag to the binary rather than trying to parse it itself.
 const CHECK_CMD_ALT: &str = "cargo run -p firmware --bin gen_bios_rom --locked -- --check";
 
+const BIOS_ROM_LEN: usize = 0x10000; // 64KiB
+
 fn repo_root() -> PathBuf {
     // `CARGO_MANIFEST_DIR` for this binary is `<repo>/crates/firmware`.
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -106,6 +108,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let rom = firmware::bios::build_bios_rom();
+    if rom.len() != BIOS_ROM_LEN {
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            format!(
+                "generated BIOS ROM has unexpected size: {} bytes (expected {BIOS_ROM_LEN} bytes)",
+                rom.len()
+            ),
+        )
+        .into());
+    }
     if rom.len() > 1024 * 1024 {
         return Err(io::Error::new(
             io::ErrorKind::Other,
@@ -126,7 +138,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     io::ErrorKind::Other,
                     format!(
                         "{} does not match the canonical generator output ({} bytes vs {} bytes).\n\
-Regenerate with: {REGEN_CMD} (or: {REGEN_CMD_ALT})",
+Regenerate with: {REGEN_CMD_BIOS_ROM} (or: {REGEN_CMD}, or: {REGEN_CMD_ALT})",
                         out_path.display(),
                         existing.len(),
                         rom.len()
@@ -138,7 +150,7 @@ Regenerate with: {REGEN_CMD} (or: {REGEN_CMD_ALT})",
                 return Err(io::Error::new(
                     io::ErrorKind::NotFound,
                     format!(
-                        "{} does not exist.\nRegenerate with: {REGEN_CMD} (or: {REGEN_CMD_ALT})",
+                        "{} does not exist.\nRegenerate with: {REGEN_CMD_BIOS_ROM} (or: {REGEN_CMD}, or: {REGEN_CMD_ALT})",
                         out_path.display()
                     ),
                 )
