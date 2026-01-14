@@ -472,12 +472,14 @@ jobs:
           PY
 
       - name: Cache FreeDOS download (FD14-FloppyEdition.zip)
+        id: freedos-zip-cache
         uses: actions/cache@v4
         with:
           path: test-images/cache/FD14-FloppyEdition.zip
           key: freedos-zip-${{ runner.os }}-${{ env.FREEDOS_CACHE_VERSION }}-${{ steps.freedos-cache-key.outputs.zip_url_sanitized }}-${{ steps.freedos-cache-key.outputs.zip_sha256 }}
 
       - name: Cache patched FreeDOS boot image (fd14-boot-aero.img)
+        id: freedos-img-cache
         uses: actions/cache@v4
         with:
           path: |
@@ -487,6 +489,20 @@ jobs:
 
       - name: Prepare open-source test images
         run: bash scripts/prepare-freedos.sh
+
+      - name: FreeDOS cache summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### FreeDOS cache"
+            echo ""
+            echo "- ZIP cache hit: \`${{ steps.freedos-zip-cache.outputs.cache-hit }}\`"
+            echo "- Image cache hit: \`${{ steps.freedos-img-cache.outputs.cache-hit }}\`"
+            echo "- URL: \`${{ steps.freedos-cache-key.outputs.zip_url_sanitized }}\`"
+            echo "- Expected SHA256: \`${{ steps.freedos-cache-key.outputs.zip_sha256 }}\`"
+            echo "- Cache version: \`${{ env.FREEDOS_CACHE_VERSION }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Run QEMU boot tests
         run: cargo test ${{ steps.setup-rust.outputs.cargo_locked_flag }} -p emulator --test boot_sector --test freedos_boot
