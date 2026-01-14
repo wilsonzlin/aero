@@ -9022,6 +9022,7 @@ impl AerogpuD3d11Executor {
             let stage = group_index_to_stage(group_index as u32)?;
             let stage_bindings = self.bindings.stage(stage);
             for binding in group_bindings {
+                #[allow(unreachable_patterns)]
                 match &binding.kind {
                     crate::BindingKind::Texture2D { slot } => {
                         if let Some(tex) = stage_bindings.texture(*slot) {
@@ -9042,8 +9043,38 @@ impl AerogpuD3d11Executor {
                         if let Some(buf) = stage_bindings.uav_buffer(*slot) {
                             self.encoder_used_buffers.insert(buf.buffer);
                         }
+                        if let Some(tex) = stage_bindings.uav_texture(*slot) {
+                            self.encoder_used_textures.insert(tex.texture);
+                        }
                     }
                     crate::BindingKind::Sampler { .. } => {}
+                    // Forward-compat: fall back to binding-number range inspection for any new
+                    // `BindingKind` variants (e.g. future UAV textures).
+                    _ => {
+                        let binding_num = binding.binding;
+                        if binding_num >= BINDING_BASE_UAV {
+                            let slot = binding_num.saturating_sub(BINDING_BASE_UAV);
+                            if let Some(buf) = stage_bindings.uav_buffer(slot) {
+                                self.encoder_used_buffers.insert(buf.buffer);
+                            }
+                            if let Some(tex) = stage_bindings.uav_texture(slot) {
+                                self.encoder_used_textures.insert(tex.texture);
+                            }
+                        } else if binding_num >= BINDING_BASE_TEXTURE && binding_num < BINDING_BASE_SAMPLER
+                        {
+                            let slot = binding_num.saturating_sub(BINDING_BASE_TEXTURE);
+                            if let Some(tex) = stage_bindings.texture(slot) {
+                                self.encoder_used_textures.insert(tex.texture);
+                            }
+                            if let Some(buf) = stage_bindings.srv_buffer(slot) {
+                                self.encoder_used_buffers.insert(buf.buffer);
+                            }
+                        } else if binding_num < BINDING_BASE_TEXTURE {
+                            if let Some(cb) = stage_bindings.constant_buffer(binding_num) {
+                                self.encoder_used_buffers.insert(cb.buffer);
+                            }
+                        }
+                    }
                 }
             }
         }
