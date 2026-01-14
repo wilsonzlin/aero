@@ -767,7 +767,30 @@ impl AeroGpuMmioDevice {
             return false;
         };
         let pitch = u64::from(self.scanout0_pitch_bytes);
-        pitch >= row_bytes
+        if pitch < row_bytes {
+            return false;
+        }
+        if pitch % bytes_per_pixel != 0 {
+            return false;
+        }
+
+        // Ensure `fb_gpa + (height-1)*pitch + row_bytes` does not overflow. Keep this aligned with
+        // `scanout0_to_scanout_state_update` so the WDDM scanout claim is only taken for configs
+        // that scanout consumers can represent safely.
+        let Some(last_row_offset) = u64::from(self.scanout0_height)
+            .checked_sub(1)
+            .and_then(|rows| rows.checked_mul(pitch))
+        else {
+            return false;
+        };
+        let Some(end_offset) = last_row_offset.checked_add(row_bytes) else {
+            return false;
+        };
+        if self.scanout0_fb_gpa.checked_add(end_offset).is_none() {
+            return false;
+        }
+
+        true
     }
 
     fn maybe_claim_wddm_scanout(&mut self) {
@@ -1564,7 +1587,7 @@ impl PciBarMmioHandler for AeroGpuMmioDevice {
             _ => 0,
         }
     }
-
+ 
     fn write(&mut self, offset: u64, size: usize, value: u64) {
         match size {
             0 => {}
