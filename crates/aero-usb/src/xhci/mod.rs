@@ -2390,7 +2390,7 @@ impl XhciController {
                 //
                 // For bulk/interrupt endpoints this runs at most one TD per call via the transfer
                 // executor.
-                if target != 0 {
+                if target != 0 && mem.dma_enabled() {
                     self.tick(mem);
                     self.service_event_ring(mem);
                 }
