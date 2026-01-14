@@ -547,11 +547,6 @@ fn exec_op(
             let b = exec_src(src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
             Vec4::splat(a.dot3(b))
         }
-        IrOp::Dp2 { src0, src1, .. } => {
-            let a = exec_src(src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
-            let b = exec_src(src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
-            Vec4::splat(a.x * b.x + a.y * b.y)
-        }
         IrOp::Dp4 { src0, src1, .. } => {
             let a = exec_src(src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
             let b = exec_src(src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
