@@ -9203,56 +9203,67 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
         }
 
         if ((handled & AEROGPU_IRQ_SCANOUT_VBLANK) != 0) {
-            InterlockedIncrement64(&adapter->PerfIrqVblankDelivered);
-            InterlockedIncrement(&adapter->IrqIsrVblankCount);
             /*
-             * Keep a guest-time anchor of the most recent vblank so GetScanLine callers don't
-             * need to poll the vblank sequence counter at high frequency.
+             * Defensive: the vblank IRQ bit may be asserted even if the device does not
+             * expose the optional vblank timing registers (or if the feature bit is
+             * not advertised). In that case, ACK it but avoid touching the vblank MMIO
+             * register block.
              */
-            const ULONGLONG now100ns = KeQueryInterruptTime();
-            const ULONGLONG seq = AeroGpuReadRegU64HiLoHi(adapter,
-                                                         AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO,
-                                                         AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_HI);
-            const ULONGLONG timeNs = AeroGpuReadRegU64HiLoHi(adapter,
-                                                            AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO,
-                                                            AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_HI);
-            const ULONG periodNs = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS);
-            if (periodNs != 0) {
-                adapter->VblankPeriodNs = periodNs;
-            }
-            AeroGpuAtomicWriteU64(&adapter->LastVblankSeq, seq);
-            AeroGpuAtomicWriteU64(&adapter->LastVblankTimeNs, timeNs);
-            AeroGpuAtomicWriteU64(&adapter->LastVblankInterruptTime100ns, now100ns);
-
-            any = TRUE;
-            queueDpc = TRUE;
-
-            if (adapter->DxgkInterface.DxgkCbNotifyInterrupt && adapter->VblankInterruptTypeValid) {
-                KeMemoryBarrier();
-                const DXGK_INTERRUPT_TYPE vblankType = adapter->VblankInterruptType;
-
-                DXGKARGCB_NOTIFY_INTERRUPT notify;
-                RtlZeroMemory(&notify, sizeof(notify));
-                notify.InterruptType = vblankType;
-
+            if (!adapter->SupportsVblank) {
+                InterlockedIncrement64(&adapter->PerfIrqSpurious);
+                any = TRUE;
+            } else {
+                InterlockedIncrement64(&adapter->PerfIrqVblankDelivered);
+                InterlockedIncrement(&adapter->IrqIsrVblankCount);
                 /*
-                 * ABI-critical: for DXGK_INTERRUPT_TYPE_CRTC_VSYNC, dxgkrnl expects
-                 * DXGKARGCB_NOTIFY_INTERRUPT.CrtcVsync.VidPnSourceId to identify the
-                 * VidPn source that vblanked.
+                 * Keep a guest-time anchor of the most recent vblank so GetScanLine callers don't
+                 * need to poll the vblank sequence counter at high frequency.
                  */
-                if (notify.InterruptType != DXGK_INTERRUPT_TYPE_CRTC_VSYNC) {
+                const ULONGLONG now100ns = KeQueryInterruptTime();
+                const ULONGLONG seq = AeroGpuReadRegU64HiLoHi(adapter,
+                                                             AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO,
+                                                             AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_HI);
+                const ULONGLONG timeNs = AeroGpuReadRegU64HiLoHi(adapter,
+                                                                AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO,
+                                                                AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_HI);
+                const ULONG periodNs = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS);
+                if (periodNs != 0) {
+                    adapter->VblankPeriodNs = periodNs;
+                }
+                AeroGpuAtomicWriteU64(&adapter->LastVblankSeq, seq);
+                AeroGpuAtomicWriteU64(&adapter->LastVblankTimeNs, timeNs);
+                AeroGpuAtomicWriteU64(&adapter->LastVblankInterruptTime100ns, now100ns);
+
+                any = TRUE;
+                queueDpc = TRUE;
+
+                if (adapter->DxgkInterface.DxgkCbNotifyInterrupt && adapter->VblankInterruptTypeValid) {
+                    KeMemoryBarrier();
+                    const DXGK_INTERRUPT_TYPE vblankType = adapter->VblankInterruptType;
+
+                    DXGKARGCB_NOTIFY_INTERRUPT notify;
+                    RtlZeroMemory(&notify, sizeof(notify));
+                    notify.InterruptType = vblankType;
+
+                    /*
+                     * ABI-critical: for DXGK_INTERRUPT_TYPE_CRTC_VSYNC, dxgkrnl expects
+                     * DXGKARGCB_NOTIFY_INTERRUPT.CrtcVsync.VidPnSourceId to identify the
+                     * VidPn source that vblanked.
+                     */
+                    if (notify.InterruptType != DXGK_INTERRUPT_TYPE_CRTC_VSYNC) {
 #if DBG
-                    static volatile LONG g_UnexpectedVblankNotifyTypeLogs = 0;
-                    const LONG n = InterlockedIncrement(&g_UnexpectedVblankNotifyTypeLogs);
-                    if ((n <= 8) || ((n & 1023) == 0)) {
-                        AEROGPU_LOG(
-                            "InterruptRoutine: vblank uses unexpected InterruptType=%lu; expected DXGK_INTERRUPT_TYPE_CRTC_VSYNC",
-                            (ULONG)notify.InterruptType);
-                    }
+                        static volatile LONG g_UnexpectedVblankNotifyTypeLogs = 0;
+                        const LONG n = InterlockedIncrement(&g_UnexpectedVblankNotifyTypeLogs);
+                        if ((n <= 8) || ((n & 1023) == 0)) {
+                            AEROGPU_LOG(
+                                "InterruptRoutine: vblank uses unexpected InterruptType=%lu; expected DXGK_INTERRUPT_TYPE_CRTC_VSYNC",
+                                (ULONG)notify.InterruptType);
+                        }
 #endif
-                } else {
-                    notify.CrtcVsync.VidPnSourceId = AEROGPU_VIDPN_SOURCE_ID;
-                    adapter->DxgkInterface.DxgkCbNotifyInterrupt(adapter->StartInfo.hDxgkHandle, &notify);
+                    } else {
+                        notify.CrtcVsync.VidPnSourceId = AEROGPU_VIDPN_SOURCE_ID;
+                        adapter->DxgkInterface.DxgkCbNotifyInterrupt(adapter->StartInfo.hDxgkHandle, &notify);
+                    }
                 }
             }
         }
