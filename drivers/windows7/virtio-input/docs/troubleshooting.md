@@ -194,7 +194,7 @@ Also confirm you are opening the intended collection (keyboard vs mouse) if mult
 
 ## Debugging keyboard LEDs / statusq backpressure
 
-Keyboard LED updates (NumLock/CapsLock/ScrollLock) flow through the virtio **statusq** (driver → device). Under heavy write load, the statusq can become full; the driver provides a debug knob to control what happens then:
+Keyboard LED updates (HID boot keyboard LED bits: NumLock/CapsLock/ScrollLock plus optional Compose/Kana) flow through the virtio **statusq** (driver → device). Under heavy write load, the statusq can become full; the driver provides a debug knob to control what happens then:
 
 `HKLM\System\CurrentControlSet\Services\aero_virtio_input\Parameters\StatusQDropOnFull` (REG_DWORD)
 
