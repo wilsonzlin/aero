@@ -143,7 +143,7 @@ Legend:
 | VG-002 | Implemented | Text mode rasterization (80x25) | `crates/aero-gpu-vga/src/lib.rs`, `crates/aero-gpu-vga/src/text_font.rs` | `bash ./scripts/safe-run.sh cargo test -p aero-gpu-vga --locked` |
 | VG-003 | Implemented | Mode 13h (320x200x256) chain-4 rendering | `crates/aero-gpu-vga/src/lib.rs` | `bash ./scripts/safe-run.sh cargo test -p aero-gpu-vga --locked` |
 | VG-004 | Partial | Planar graphics write modes + basic rasterization (enough for BIOS/boot) | `crates/aero-gpu-vga/src/lib.rs` (planar paths + tests) | `bash ./scripts/safe-run.sh cargo test -p aero-gpu-vga --locked` |
-| VG-005 | Implemented | Bochs VBE (`VBE_DISPI`) linear framebuffer modes (LFB at `SVGA_LFB_BASE`) | `crates/aero-gpu-vga/src/lib.rs` | `bash ./scripts/safe-run.sh cargo test -p aero-machine --test boot_int10_vbe_sets_mode --locked` |
+| VG-005 | Implemented | Bochs VBE (`VBE_DISPI`) linear framebuffer modes (LFB base configurable; legacy default `SVGA_LFB_BASE`) | `crates/aero-gpu-vga/src/lib.rs` | `bash ./scripts/safe-run.sh cargo test -p aero-machine --test boot_int10_vbe_sets_mode --locked` |
 | VG-006 | Implemented | Palette + DAC behavior (VGA ports `0x3C6..0x3C9`) | `crates/aero-gpu-vga/src/palette.rs` | `bash ./scripts/safe-run.sh cargo test -p aero-gpu-vga --locked` |
 | VG-007 | Implemented | Snapshot/restore (optional; behind `io-snapshot`) | `crates/aero-gpu-vga/src/snapshot.rs` | `bash ./scripts/safe-run.sh cargo test -p aero-machine --test vga_snapshot_roundtrip --locked` |
 | VG-008 | Implemented | BIOS INT 10h VGA + VBE entrypoints (real-mode boot) | `crates/firmware/src/bios/int10.rs`, `crates/firmware/src/bios/int10_vbe.rs` | `bash ./scripts/safe-run.sh cargo test -p firmware --test int10_vbe --locked` |
