@@ -45,10 +45,10 @@ export function mountSettingsPanel(
     "VM runtime backend. " +
     "legacy uses CPU-only WasmVm + JS I/O shims; machine uses wasm api.Machine with AHCI/IDE and requires OPFS SyncAccessHandle (FileSystemFileHandle.createSyncAccessHandle()). " +
     "Changing this requires a restart/reload to apply.";
+  const supportsMachineRuntime = report?.opfsSyncAccessHandle !== false;
   const vmRuntimeOpfsMissingHint =
     "This browser does not support OPFS SyncAccessHandle, so the machine runtime is disabled. " +
     "Use a Chromium-based browser (Chrome/Edge) or enable the File System Access APIs.";
-  const supportsMachineRuntime = report?.opfsSyncAccessHandle !== false;
 
   const memorySelect = document.createElement("select");
   let customMemoryOption: HTMLOptionElement | null = null;
@@ -94,9 +94,7 @@ export function mountSettingsPanel(
     option.textContent = label;
     if (value === "machine") {
       machineVmRuntimeOption = option;
-      if (!supportsMachineRuntime) {
-        option.disabled = true;
-      }
+      option.disabled = !supportsMachineRuntime;
     }
     vmRuntimeSelect.appendChild(option);
   }
@@ -306,7 +304,10 @@ export function mountSettingsPanel(
       proxyHint.textContent = proxyHelpText;
     }
     if (!state.lockedKeys.has("vmRuntime")) {
-      vmRuntimeHint.textContent = supportsMachineRuntime ? vmRuntimeHelpText : `${vmRuntimeHelpText} ${vmRuntimeOpfsMissingHint}`;
+      vmRuntimeHint.textContent = vmRuntimeHelpText;
+    }
+    if (!supportsMachineRuntime) {
+      vmRuntimeHint.textContent = `${vmRuntimeHint.textContent} ${vmRuntimeOpfsMissingHint}`.trim();
     }
     if (!state.lockedKeys.has("virtioNetMode")) {
       virtioNetModeHint.textContent = virtioNetModeHelpText;

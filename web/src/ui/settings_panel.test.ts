@@ -106,4 +106,3 @@ describe("ui/settings_panel", () => {
     expect(hint.textContent).not.toContain("machine runtime is disabled");
   });
 });
-
