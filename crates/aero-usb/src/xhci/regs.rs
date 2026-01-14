@@ -3,10 +3,7 @@
 //! This file provides a small set of well-known offsets/constants to support an eventual MMIO
 //! implementation. It is not a complete model of the xHCI register set.
 
-/// Size of the exposed xHCI MMIO region for the current skeleton controller.
-pub const XHCI_MMIO_SIZE: u32 = 0x10000;
-
-/// Minimal register offsets used by the controller skeleton in [`super::XhciController`].
+/// Minimal register offsets used by the controller model in [`super::XhciController`].
 ///
 /// These are absolute offsets into the controller's MMIO BAR. They are also used by the emulator's
 /// thin PCI/MMIO wrapper (`emulator::io::usb::xhci`), so keep them stable.
