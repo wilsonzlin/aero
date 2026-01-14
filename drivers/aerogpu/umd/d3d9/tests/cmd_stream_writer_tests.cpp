@@ -16991,6 +16991,186 @@ bool TestGetRenderTargetData16BitTransferEmitsCopyTexture2D() {
 #endif
 }
 
+bool TestGetRenderTargetDataTransferRetracksAllocationsAfterFlush() {
+#if defined(_WIN32)
+  return true;
+#else
+  constexpr uint32_t kD3dFmtR5G6B5 = 23u;
+  constexpr D3DDDIFORMAT kFmtR5G6B5 = static_cast<D3DDDIFORMAT>(kD3dFmtR5G6B5);
+
+  if (aerogpu::d3d9_format_to_aerogpu(kD3dFmtR5G6B5) == AEROGPU_FORMAT_INVALID) {
+    std::fprintf(stderr, "INFO: skipping GetRenderTargetData alloc-list split test (R5G6B5 not enabled)\n");
+    return true;
+  }
+
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    bool has_adapter = false;
+    bool has_device = false;
+
+    ~Cleanup() {
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev && dev->adapter, "device+adapter pointers")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnGetRenderTargetData != nullptr, "pfnGetRenderTargetData")) {
+    return false;
+  }
+
+  // Enable transfer support.
+  std::memset(&dev->adapter->umd_private, 0, sizeof(dev->adapter->umd_private));
+  dev->adapter->umd_private.size_bytes = sizeof(dev->adapter->umd_private);
+  dev->adapter->umd_private.struct_version = AEROGPU_UMDPRIV_STRUCT_VERSION_V1;
+  dev->adapter->umd_private.device_abi_version_u32 = AEROGPU_ABI_VERSION_U32;
+  dev->adapter->umd_private.device_features = AEROGPU_UMDPRIV_FEATURE_TRANSFER;
+  dev->adapter->umd_private_valid = true;
+
+  // Enable allocation list tracking with a tiny capacity so tracking `src`
+  // forces a submission split, requiring `dst` to be re-tracked.
+  D3DDDI_ALLOCATIONLIST alloc_list[2] = {};
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    dev->wddm_context.hContext = 1;
+    dev->alloc_list_tracker.rebind(alloc_list, 2, 0xFFFFu);
+    dev->alloc_list_tracker.reset();
+
+    // Pre-fill one entry so tracking the two copy resources requires a flush.
+    const auto pre = dev->alloc_list_tracker.track_texture_read(/*hAllocation=*/0xAAAAu, /*alloc_id=*/0xAAAAu, /*share_token=*/0);
+    if (!Check(pre.status == AllocRefStatus::kOk, "pre-fill allocation list")) {
+      return false;
+    }
+    if (!Check(dev->alloc_list_tracker.list_len() == 1, "pre-fill list_len==1")) {
+      return false;
+    }
+  }
+
+  // Use a span-backed buffer so submit()'s rewind preserves the bytes.
+  uint8_t stream_buf[256] = {};
+  dev->cmd.set_span(stream_buf, sizeof(stream_buf));
+  dev->cmd.reset();
+  struct CmdModeGuard {
+    Device* dev = nullptr;
+    ~CmdModeGuard() {
+      if (dev) {
+        dev->cmd.set_vector();
+      }
+    }
+  } cmd_guard{dev};
+
+  const uint32_t bpp = aerogpu::bytes_per_pixel(kFmtR5G6B5);
+  if (!Check(bpp == 2u, "bytes_per_pixel(R5G6B5)")) {
+    return false;
+  }
+
+  constexpr uint32_t kWidth = 4;
+  constexpr uint32_t kHeight = 4;
+
+  Resource src{};
+  src.kind = ResourceKind::Surface;
+  src.handle = 0x1000u;
+  src.format = kFmtR5G6B5;
+  src.width = kWidth;
+  src.height = kHeight;
+  src.depth = 1;
+  src.mip_levels = 1;
+  src.pool = 0;
+  src.row_pitch = kWidth * bpp;
+  src.slice_pitch = src.row_pitch * kHeight;
+  src.size_bytes = src.slice_pitch;
+  src.backing_alloc_id = 0x2000u;
+  src.wddm_hAllocation = 0x2000u;
+
+  Resource dst{};
+  dst.kind = ResourceKind::Surface;
+  dst.handle = 0x2000u;
+  dst.format = kFmtR5G6B5;
+  dst.width = kWidth;
+  dst.height = kHeight;
+  dst.depth = 1;
+  dst.mip_levels = 1;
+  dst.pool = 2u; // D3DPOOL_SYSTEMMEM
+  dst.row_pitch = src.row_pitch;
+  dst.slice_pitch = src.slice_pitch;
+  dst.size_bytes = src.size_bytes;
+  dst.backing_alloc_id = 0x3000u;
+  dst.wddm_hAllocation = 0x3000u;
+
+  D3DDDI_HRESOURCE hSrc{};
+  hSrc.pDrvPrivate = &src;
+  D3DDDI_HRESOURCE hDst{};
+  hDst.pDrvPrivate = &dst;
+
+  D3D9DDIARG_GETRENDERTARGETDATA args{};
+  args.hSrcResource = hSrc;
+  args.hDstResource = hDst;
+
+  hr = cleanup.device_funcs.pfnGetRenderTargetData(create_dev.hDevice, &args);
+  if (!Check(hr == S_OK, "GetRenderTargetData(transfer + alloc tracking)")) {
+    return false;
+  }
+
+  if (!Check(ValidateStream(stream_buf, sizeof(stream_buf)), "command stream validation")) {
+    return false;
+  }
+  if (!Check(CountOpcode(stream_buf, sizeof(stream_buf), AEROGPU_CMD_COPY_TEXTURE2D) == 1,
+             "expected one COPY_TEXTURE2D")) {
+    return false;
+  }
+
+  // The copy path should have flushed once when tracking `src`, then re-tracked
+  // both allocations so the final submission's allocation list contains src+dst
+  // (not the pre-fill entry).
+  if (!Check(alloc_list[0].hAllocation == src.wddm_hAllocation, "alloc_list[0] == src allocation")) {
+    return false;
+  }
+  if (!Check(alloc_list[1].hAllocation == dst.wddm_hAllocation, "alloc_list[1] == dst allocation")) {
+    return false;
+  }
+  if (!Check(alloc_list[0].WriteOperation == 0, "src tracked as read")) {
+    return false;
+  }
+  return Check(alloc_list[1].WriteOperation == 1, "dst tracked as write");
+#endif
+}
+
 bool TestGetRenderTargetData16BitTransferRejectsHostAllocatedDst() {
 #if defined(_WIN32)
   return true;
@@ -17378,6 +17558,7 @@ int main() {
   failures += !aerogpu::TestGuestBackedUpdateTextureEmitsDirtyRangeNotUpload();
   failures += !aerogpu::TestGetRenderTargetData16BitEmitsDirtyRangeOrUpload();
   failures += !aerogpu::TestGetRenderTargetData16BitTransferEmitsCopyTexture2D();
+  failures += !aerogpu::TestGetRenderTargetDataTransferRetracksAllocationsAfterFlush();
   failures += !aerogpu::TestGetRenderTargetData16BitTransferRejectsHostAllocatedDst();
   failures += !aerogpu::TestBlitAlphaLockedUsesSrcAlphaBlend();
   failures += !aerogpu::TestKmdQueryGetScanLineClearsOutputsOnFailure();
