@@ -362,6 +362,12 @@ fn aerogpu_cmd_stage_ex_bindings_route_to_correct_stage_bucket() {
         exec.execute_cmd_stream(&stream, None, &mut guest_mem)
             .expect("command stream should execute");
 
+        assert_eq!(
+            exec.shader_entry_point(GS_SHADER).unwrap(),
+            "gs_main",
+            "geometry shader should be stored in the shader table"
+        );
+
         let bindings = exec.binding_state();
 
         let expect_cb = |buffer: u32| {
