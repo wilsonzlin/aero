@@ -3387,6 +3387,7 @@ static int DoWatchFence(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t 
   LARGE_INTEGER prevTime;
   ZeroMemory(&prevTime, sizeof(prevTime));
   uint32_t stallIntervals = 0;
+  int queryErrorSupport = 0; // 0=unknown, 1=supported, -1=not supported
 
   for (uint32_t i = 0; i < samples; ++i) {
     LARGE_INTEGER before;
@@ -3442,11 +3443,41 @@ static int DoWatchFence(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t 
 
     const bool errorDelta = havePrev && (q.error_irq_count > prevErrorIrqCount);
 
+    bool latchedValid = false;
+    bool latched = false;
+    if (queryErrorSupport >= 0) {
+      aerogpu_escape_query_error_out qe;
+      ZeroMemory(&qe, sizeof(qe));
+      qe.hdr.version = AEROGPU_ESCAPE_VERSION;
+      qe.hdr.op = AEROGPU_ESCAPE_OP_QUERY_ERROR;
+      qe.hdr.size = sizeof(qe);
+      qe.hdr.reserved0 = 0;
+      NTSTATUS stErr = SendAerogpuEscape(f, hAdapter, &qe, sizeof(qe));
+      if (stErr == STATUS_NOT_SUPPORTED) {
+        queryErrorSupport = -1;
+      } else if (NT_SUCCESS(stErr)) {
+        queryErrorSupport = 1;
+        bool supported = true;
+        if ((qe.flags & AEROGPU_DBGCTL_QUERY_ERROR_FLAGS_VALID) != 0) {
+          supported = (qe.flags & AEROGPU_DBGCTL_QUERY_ERROR_FLAG_ERROR_SUPPORTED) != 0;
+        }
+        if (supported && (qe.flags & AEROGPU_DBGCTL_QUERY_ERROR_FLAGS_VALID) != 0) {
+          latchedValid = true;
+          latched = (qe.flags & AEROGPU_DBGCTL_QUERY_ERROR_FLAG_ERROR_LATCHED) != 0;
+        }
+      }
+    }
+    const bool errorLatched = latchedValid && latched;
+    const wchar_t *latchedStr = L"unknown";
+    if (latchedValid) {
+      latchedStr = latched ? L"true" : L"false";
+    }
+
     const bool warnStall = (stallIntervals != 0 && stallIntervals >= stallWarnIntervals);
     const wchar_t *warn = L"-";
     if (havePrev && delta.reset) {
       warn = L"RESET";
-    } else if (errorDelta) {
+    } else if (errorLatched || errorDelta) {
       warn = L"ERROR";
     } else if (warnStall) {
       warn = L"STALL";
@@ -3455,13 +3486,14 @@ static int DoWatchFence(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t 
     const uint64_t pending =
         (q.last_submitted_fence >= q.last_completed_fence) ? (q.last_submitted_fence - q.last_completed_fence) : 0;
 
-    wprintf(L"watch-fence sample=%lu/%lu t_ms=%.3f submitted=0x%I64x completed=0x%I64x pending=%I64u d_sub=%I64u d_comp=%I64u dt_ms=%.3f rate_comp_per_s=%.3f stall_intervals=%lu warn=%s error_irq_count=0x%I64x last_error_fence=0x%I64x\n",
+    wprintf(L"watch-fence sample=%lu/%lu t_ms=%.3f submitted=0x%I64x completed=0x%I64x pending=%I64u d_sub=%I64u d_comp=%I64u dt_ms=%.3f rate_comp_per_s=%.3f stall_intervals=%lu warn=%s error_irq_count=0x%I64x last_error_fence=0x%I64x latched=%s\n",
             (unsigned long)(i + 1), (unsigned long)samples, tMs, (unsigned long long)q.last_submitted_fence,
             (unsigned long long)q.last_completed_fence, (unsigned long long)pending,
             (unsigned long long)delta.delta_submitted, (unsigned long long)delta.delta_completed, dtMs,
             delta.completed_per_s, (unsigned long)stallIntervals, warn,
             (unsigned long long)q.error_irq_count,
-            (unsigned long long)q.last_error_fence);
+            (unsigned long long)q.last_error_fence,
+            latchedStr);
 
     prevSubmitted = q.last_submitted_fence;
     prevCompleted = q.last_completed_fence;
@@ -7340,6 +7372,7 @@ static int DoWatchFenceJson(const D3DKMT_FUNCS *f,
   LARGE_INTEGER prevTime;
   ZeroMemory(&prevTime, sizeof(prevTime));
   uint32_t stallIntervals = 0;
+  int queryErrorSupport = 0; // 0=unknown, 1=supported, -1=not supported
 
   JsonWriter w(out);
   w.BeginObject();
@@ -7437,11 +7470,37 @@ static int DoWatchFenceJson(const D3DKMT_FUNCS *f,
 
     const bool errorDelta = havePrev && (q.error_irq_count > prevErrorIrqCount);
 
+    bool latchedValid = false;
+    bool latched = false;
+    if (queryErrorSupport >= 0) {
+      aerogpu_escape_query_error_out qe;
+      ZeroMemory(&qe, sizeof(qe));
+      qe.hdr.version = AEROGPU_ESCAPE_VERSION;
+      qe.hdr.op = AEROGPU_ESCAPE_OP_QUERY_ERROR;
+      qe.hdr.size = sizeof(qe);
+      qe.hdr.reserved0 = 0;
+      const NTSTATUS stErr = SendAerogpuEscape(f, hAdapter, &qe, sizeof(qe));
+      if (stErr == STATUS_NOT_SUPPORTED) {
+        queryErrorSupport = -1;
+      } else if (NT_SUCCESS(stErr)) {
+        queryErrorSupport = 1;
+        bool supported = true;
+        if ((qe.flags & AEROGPU_DBGCTL_QUERY_ERROR_FLAGS_VALID) != 0) {
+          supported = (qe.flags & AEROGPU_DBGCTL_QUERY_ERROR_FLAG_ERROR_SUPPORTED) != 0;
+        }
+        if (supported && (qe.flags & AEROGPU_DBGCTL_QUERY_ERROR_FLAGS_VALID) != 0) {
+          latchedValid = true;
+          latched = (qe.flags & AEROGPU_DBGCTL_QUERY_ERROR_FLAG_ERROR_LATCHED) != 0;
+        }
+      }
+    }
+    const bool errorLatched = latchedValid && latched;
+
     const bool warnStall = (stallIntervals != 0 && stallIntervals >= stallWarnIntervals);
     const char *warn = "-";
     if (havePrev && delta.reset) {
       warn = "RESET";
-    } else if (errorDelta) {
+    } else if (errorLatched || errorDelta) {
       warn = "ERROR";
     } else if (warnStall) {
       warn = "STALL";
@@ -7463,6 +7522,12 @@ static int DoWatchFenceJson(const D3DKMT_FUNCS *f,
     w.String(DecU64(pending));
     JsonWriteU64HexDec(w, "error_irq_count", q.error_irq_count);
     JsonWriteU64HexDec(w, "last_error_fence", q.last_error_fence);
+    w.Key("latched");
+    if (latchedValid) {
+      w.Bool(latched);
+    } else {
+      w.Null();
+    }
     w.EndObject();
     w.Key("delta");
     w.BeginObject();

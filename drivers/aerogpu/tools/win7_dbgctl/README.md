@@ -101,7 +101,9 @@ Minimum supported commands:
   - the current submitted/completed fences,
   - deltas since the previous sample,
   - an observed completed-fence rate (fences/sec), and
-  - a stall warning if the completed fence does not advance for multiple intervals while work is pending.
+  - a stall warning if the completed fence does not advance for multiple intervals while work is pending, and
+  - sticky IRQ_ERROR diagnostics (`error_irq_count` / `last_error_fence`) and the current device error latch state (`latched=true/false`
+    when supported by the installed KMD).
 
 - `aerogpu_dbgctl --query-perf` *(alias: `--perf`)*  
   Dumps a KMD-provided perf/health counter snapshot, including:

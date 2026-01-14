@@ -9236,23 +9236,40 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
     if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
         const ULONG status = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_IRQ_STATUS);
         const ULONG known = (AEROGPU_IRQ_FENCE | AEROGPU_IRQ_SCANOUT_VBLANK | AEROGPU_IRQ_ERROR);
-        const ULONG handled = status & known;
+        /*
+         * Only process enabled IRQ_STATUS bits.
+         *
+         * This is important for:
+         * - vblank: dxgkrnl toggles delivery via DxgkDdiControlInterrupt. A vblank status bit may
+         *   latch while the IRQ is masked; if a fence interrupt later fires, we must ACK it but not
+         *   notify dxgkrnl.
+         * - error: after observing IRQ_ERROR, the ISR masks off ERROR delivery to avoid storms from
+         *   a level-triggered/sticky status bit. We must not repeatedly treat the sticky bit as a
+         *   new error on every subsequent (enabled) vblank/fence interrupt.
+         */
+        const ULONG enableMask = AeroGpuAtomicReadU32((volatile ULONG*)&adapter->IrqEnableMask);
+        const ULONG pending = status & enableMask;
+        const ULONG handled = pending & known;
         const ULONG unknown = status & ~known;
         if (handled == 0) {
             if (status != 0) {
-                InterlockedIncrement64(&adapter->PerfIrqSpurious);
+                if (unknown != 0) {
+                    InterlockedIncrement64(&adapter->PerfIrqSpurious);
+                }
                 /*
                  * Defensive: if the device reports an IRQ_STATUS bit we don't understand,
                  * still ACK it to avoid interrupt storms from a stuck level-triggered line.
-                */
+                 */
                 AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, status);
                 InterlockedIncrement(&adapter->IrqIsrCount);
                 static LONG g_UnexpectedIrqWarned = 0;
-                if (InterlockedExchange(&g_UnexpectedIrqWarned, 1) == 0) {
+                if (unknown != 0 && InterlockedExchange(&g_UnexpectedIrqWarned, 1) == 0) {
                     DbgPrintEx(DPFLTR_IHVVIDEO_ID,
                                DPFLTR_ERROR_LEVEL,
-                               "aerogpu-kmd: unexpected IRQ_STATUS bits (status=0x%08lx)\n",
-                               status);
+                               "aerogpu-kmd: unexpected IRQ_STATUS bits (status=0x%08lx pending=0x%08lx enable=0x%08lx)\n",
+                               status,
+                               pending,
+                               enableMask);
                 }
                 return TRUE;
             }
