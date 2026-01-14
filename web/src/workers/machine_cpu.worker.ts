@@ -136,6 +136,9 @@ let pendingBootDisks: SetBootDisksMessage | null = null;
 type MachineCpuBootDevice = "hdd" | "cdrom";
 type MachineCpuBootDeviceSelectedMessage = { type: "machineCpu.bootDeviceSelected"; bootDevice: MachineCpuBootDevice };
 let pendingBootDevice: MachineCpuBootDevice = "hdd";
+// Last boot disk selection successfully applied to the Machine. Used to decide whether an HDD is
+// present when handling guest resets (avoid looping on install media).
+let currentBootDisks: SetBootDisksMessage | null = null;
 
 type InputBatchMessage = {
   type: "in:input-batch";
@@ -180,6 +183,9 @@ let machine: InstanceType<WasmApi["Machine"]> | null = null;
 
 const HEARTBEAT_INTERVAL_MS = 250;
 const RUN_SLICE_MAX_INSTS = 50_000;
+
+const BIOS_DRIVE_HDD0 = 0x80;
+const BIOS_DRIVE_CD0 = 0xe0;
 
 const MAX_INPUT_BATCHES_PER_TICK = 8;
 const MAX_QUEUED_INPUT_BATCH_BYTES = 4 * 1024 * 1024;
@@ -527,12 +533,14 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
   let changed = false;
 
   // The Aero BIOS does not currently probe multiple devices; it only exposes the selected boot
-  // drive (`DL`). For Windows install flows (HDD + install ISO), we must explicitly select the CD
-  // drive (`0xE0`) before resetting, otherwise the BIOS will try HDD0 (`0x80`) and the install ISO
-  // will never boot.
+  // drive (`DL`) to INT 13h. For Windows install flows (HDD + install ISO), we must explicitly
+  // select the CD drive (`0xE0`) before resetting so BIOS can El Torito boot it.
   //
-  // Policy: boot from CD when an ISO is present, otherwise boot from HDD.
-  const desiredBootDrive = msg.cd ? 0xe0 : 0x80;
+  // Policy:
+  // - When an ISO is present, boot from CD for the next reset.
+  // - After the guest requests a reset, automatically fall back to HDD0 (`0x80`) when present
+  //   (so installs don't loop back into the ISO).
+  const desiredBootDrive = msg.cd ? BIOS_DRIVE_CD0 : BIOS_DRIVE_HDD0;
 
   if (msg.hdd) {
     const plan = planMachineBootDiskAttachment(msg.hdd, "hdd");
@@ -717,6 +725,8 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
       throw new Error(`setBootDisks: Machine.reset failed after disk attachment: ${message}`);
     }
   }
+
+  currentBootDisks = msg;
 }
 
 function drainSerialOutput(): void {
@@ -746,8 +756,35 @@ function handleRunExit(exit: unknown): void {
   const detailStr = typeof detail === "string" ? detail : "";
 
   if (kindNum === 2) {
-    pushEventBlocking({ kind: "resetRequest" }, 250);
-    running = false;
+    // Guest requested a reset (e.g. reboot). Unlike the legacy runtime, the canonical `Machine`
+    // owns all devices in this worker, so we can handle it internally without restarting the
+    // entire worker set (which would drop state such as boot-drive policy).
+    const m = machine;
+    if (m) {
+      // When an install ISO is present we boot from it once, then switch to HDD0 on the first
+      // guest reset so that Windows setup can reboot into the newly-installed OS while still
+      // keeping the ISO attached for later file access.
+      if (pendingBootDevice === "cdrom" && currentBootDisks?.hdd) {
+        pendingBootDevice = "hdd";
+        postBootDeviceSelected("hdd");
+      }
+
+      try {
+        const drive = pendingBootDevice === "cdrom" ? BIOS_DRIVE_CD0 : BIOS_DRIVE_HDD0;
+        const setBootDrive = (m as unknown as { set_boot_drive?: unknown }).set_boot_drive;
+        if (typeof setBootDrive === "function") {
+          (setBootDrive as (drive: number) => void).call(m, drive);
+        }
+      } catch {
+        // ignore
+      }
+
+      try {
+        m.reset();
+      } catch {
+        // ignore
+      }
+    }
     return;
   }
 
