@@ -114,7 +114,9 @@ export function tryComputeScanoutRgba8ByteLength(
 /**
  * Convert a guest scanout buffer (BGRA/BGRX/RGBA/RGBX, incl. sRGB variants) into a packed RGBA8 buffer.
  *
- * Note: SRGB variants are swizzled identically; only sampling differs at render time.
+ * Notes:
+ * - `BGRX` / `RGBX` formats treat the unused `X` byte as fully opaque (`A=0xFF`) when converting to RGBA.
+ * - sRGB variants are swizzled identically; only sampling differs at render time.
  *
  * This is a pure helper intended for unit tests and screenshot/present paths.
  * It:

@@ -7,6 +7,15 @@ use aero_shared::scanout_state::{
 };
 
 // Values derived from the canonical `aero-protocol` definition of `enum aerogpu_format`.
+//
+// Format semantics (mirrors `drivers/aerogpu/protocol/aerogpu_pci.h` and
+// `docs/16-gpu-command-abi.md` §2.5.1):
+// - `*X8*` formats (`B8G8R8X8*`, `R8G8B8X8*`) do not carry alpha. When converting to RGBA for
+//   scanout/cursor presentation or blending, treat alpha as fully opaque (`A=0xFF`) and ignore the
+//   stored `X` byte.
+// - `*_SRGB` formats are byte-layout-identical to their UNORM counterparts; only the color space
+//   interpretation differs (sampling decodes sRGB→linear; render-target writes may encode
+//   linear→sRGB). Presenters must avoid double-applying gamma.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[repr(u32)]
 pub enum AeroGpuFormat {
