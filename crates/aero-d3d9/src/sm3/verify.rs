@@ -1,6 +1,8 @@
 use crate::shader_limits::MAX_D3D9_SHADER_CONTROL_FLOW_NESTING;
 use crate::sm3::decode::{ResultShift, SrcModifier};
-use crate::sm3::ir::{Block, CompareOp, Cond, IrOp, RegFile, ShaderIr, Src, Stmt, TexSampleKind};
+use crate::sm3::ir::{
+    Block, CompareOp, Cond, Dst, IrOp, RegFile, ShaderIr, Src, Stmt, TexSampleKind,
+};
 use crate::sm3::types::ShaderStage;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -97,6 +99,30 @@ fn verify_block(
 }
 
 fn verify_op(op: &IrOp, stage: ShaderStage) -> Result<(), VerifyError> {
+    verify_dst(op_dst(op))?;
+
+    // Some operations have stricter modifier rules depending on destination register type.
+    if let IrOp::SetCmp { dst, modifiers, .. } = op {
+        if dst.reg.file == RegFile::Predicate
+            && (modifiers.saturate || modifiers.shift != ResultShift::None)
+        {
+            return Err(VerifyError {
+                message: "predicate register writes cannot use saturate/shift modifiers".to_owned(),
+            });
+        }
+    }
+
+    if let IrOp::Abs { dst, src, modifiers } = op {
+        if is_int_reg_file(dst.reg.file)
+            && is_int_reg_file(src.reg.file)
+            && (modifiers.saturate || modifiers.shift != ResultShift::None)
+        {
+            return Err(VerifyError {
+                message: "integer abs cannot use saturate/shift modifiers".to_owned(),
+            });
+        }
+    }
+
     match op {
         IrOp::Mov {
             dst: _,
@@ -419,6 +445,15 @@ fn verify_cond(cond: &Cond, stage: ShaderStage) -> Result<(), VerifyError> {
 }
 
 fn verify_src(src: &Src, stage: ShaderStage) -> Result<(), VerifyError> {
+    // Sampler registers (`s#`) are not general-purpose registers: in D3D9 they may only appear as
+    // the sampler operand of texture sampling instructions. The IR builder extracts sampler
+    // operands into `IrOp::TexSample::sampler`, so any remaining sampler references indicate
+    // malformed bytecode.
+    if src.reg.file == RegFile::Sampler {
+        return Err(VerifyError {
+            message: "sampler register used as a source operand".to_owned(),
+        });
+    }
     if matches!(src.modifier, SrcModifier::Unknown(_)) {
         return Err(VerifyError {
             message: "unknown source modifier in IR".to_owned(),
@@ -441,4 +476,58 @@ fn verify_src(src: &Src, stage: ShaderStage) -> Result<(), VerifyError> {
         }
     }
     Ok(())
+}
+
+fn verify_dst(dst: &Dst) -> Result<(), VerifyError> {
+    // Sampler registers (`s#`) are not writable.
+    if dst.reg.file == RegFile::Sampler {
+        return Err(VerifyError {
+            message: "sampler register used as a destination operand".to_owned(),
+        });
+    }
+    Ok(())
+}
+
+fn is_int_reg_file(file: RegFile) -> bool {
+    matches!(
+        file,
+        RegFile::Addr | RegFile::ConstInt | RegFile::Loop | RegFile::Label
+    )
+}
+
+fn op_dst(op: &IrOp) -> &Dst {
+    match op {
+        IrOp::Mov { dst, .. }
+        | IrOp::Mova { dst, .. }
+        | IrOp::Add { dst, .. }
+        | IrOp::Sub { dst, .. }
+        | IrOp::Mul { dst, .. }
+        | IrOp::Mad { dst, .. }
+        | IrOp::Lrp { dst, .. }
+        | IrOp::Dp2 { dst, .. }
+        | IrOp::Dp2Add { dst, .. }
+        | IrOp::Dp3 { dst, .. }
+        | IrOp::Dp4 { dst, .. }
+        | IrOp::Min { dst, .. }
+        | IrOp::Max { dst, .. }
+        | IrOp::MatrixMul { dst, .. }
+        | IrOp::Rcp { dst, .. }
+        | IrOp::Rsq { dst, .. }
+        | IrOp::Frc { dst, .. }
+        | IrOp::Abs { dst, .. }
+        | IrOp::Dst { dst, .. }
+        | IrOp::Crs { dst, .. }
+        | IrOp::Sgn { dst, .. }
+        | IrOp::Nrm { dst, .. }
+        | IrOp::Lit { dst, .. }
+        | IrOp::SinCos { dst, .. }
+        | IrOp::Exp { dst, .. }
+        | IrOp::Log { dst, .. }
+        | IrOp::Ddx { dst, .. }
+        | IrOp::Ddy { dst, .. }
+        | IrOp::SetCmp { dst, .. }
+        | IrOp::Select { dst, .. }
+        | IrOp::Pow { dst, .. }
+        | IrOp::TexSample { dst, .. } => dst,
+    }
 }

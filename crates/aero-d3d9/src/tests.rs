@@ -2780,6 +2780,75 @@ fn translate_entrypoint_rejects_relative_register_addressing() {
 }
 
 #[test]
+fn translate_entrypoint_rejects_sampler_register_as_src_operand() {
+    // Sampler registers (`s#`) are not general-purpose source operands. They should only appear as
+    // the sampler argument to texture sampling instructions (`texld`, `texldd`, etc).
+    let mut words = vec![0xFFFF_0300];
+    // mov oC0, s0
+    words.extend(enc_inst(
+        0x0001,
+        &[enc_dst(8, 0, 0xF), enc_src(10, 0, 0xE4)],
+    ));
+    words.push(0x0000_FFFF);
+
+    let err = shader_translate::translate_d3d9_shader_to_wgsl(
+        &to_bytes(&words),
+        shader::WgslOptions::default(),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, shader_translate::ShaderTranslateError::Malformed(_)),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn translate_entrypoint_rejects_sampler_register_as_dst_operand() {
+    // Writing to sampler registers is invalid and should be rejected as malformed.
+    let mut words = vec![0xFFFF_0300];
+    // mov s0, c0
+    words.extend(enc_inst(
+        0x0001,
+        &[enc_dst(10, 0, 0xF), enc_src(2, 0, 0xE4)],
+    ));
+    words.push(0x0000_FFFF);
+
+    let err = shader_translate::translate_d3d9_shader_to_wgsl(
+        &to_bytes(&words),
+        shader::WgslOptions::default(),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, shader_translate::ShaderTranslateError::Malformed(_)),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn translate_entrypoint_rejects_setp_with_result_modifiers() {
+    // `setp` writes predicate registers. Saturate/shift modifiers are meaningless and should be
+    // rejected as malformed instead of triggering legacy fallback.
+    let mut words = vec![0xFFFF_0300];
+    // setp_sat_ge p0, c0, c1  (cmp code 2 = ge, saturate flag set)
+    words.extend(enc_inst_with_extra(
+        0x005E,
+        (2u32 << 16) | (1u32 << 20),
+        &[enc_dst(19, 0, 0x1), enc_src(2, 0, 0xE4), enc_src(2, 1, 0xE4)],
+    ));
+    words.push(0x0000_FFFF);
+
+    let err = shader_translate::translate_d3d9_shader_to_wgsl(
+        &to_bytes(&words),
+        shader::WgslOptions::default(),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, shader_translate::ShaderTranslateError::Malformed(_)),
+        "{err:?}"
+    );
+}
+
+#[test]
 fn translate_entrypoint_legacy_fallback_supports_derivatives() {
     // Ensure the legacy fallback translator implements `dsx`/`dsy` so shaders that fall back due
     // to unrelated SM3-pipeline limitations can still compute derivatives.
