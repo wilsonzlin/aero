@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { InputCapture } from "./input_capture";
-import { withStubbedDocument, withStubbedWindow } from "./test_utils";
+import { withStubbedDocument, withStubbedDom } from "./test_utils";
 
 function makeCanvasStub(): HTMLCanvasElement {
   return {
@@ -36,127 +36,121 @@ function keyDownEvent(code: string, timeStamp: number): KeyboardEvent {
 
 describe("InputCapture buffer recycling", () => {
   it("listens for worker recycle messages via start()'s message handler wiring", () => {
-    withStubbedDocument((doc) =>
-      withStubbedWindow(() => {
-        const canvas = makeCanvasStub();
+    withStubbedDom(({ document: doc }) => {
+      const canvas = makeCanvasStub();
 
-        doc.activeElement = canvas;
+      doc.activeElement = canvas;
 
-        let onMessage: ((ev: MessageEvent<unknown>) => void) | null = null;
+      let onMessage: ((ev: MessageEvent<unknown>) => void) | null = null;
 
-        const posted: ArrayBuffer[] = [];
-        const postedByteLengths: number[] = [];
-        let recycledFromFirstFlush: ArrayBuffer | null = null;
-        let postCount = 0;
+      const posted: ArrayBuffer[] = [];
+      const postedByteLengths: number[] = [];
+      let recycledFromFirstFlush: ArrayBuffer | null = null;
+      let postCount = 0;
 
-        const ioWorker = {
-          addEventListener: (type: "message", listener: (ev: MessageEvent<unknown>) => void) => {
-            expect(type).toBe("message");
-            onMessage = listener;
-          },
-          removeEventListener: () => {},
-          postMessage: (msg: any, transfer?: any[]) => {
-            postedByteLengths.push(msg.buffer.byteLength);
-            posted.push(msg.buffer);
-            expect(msg.recycle).toBe(true);
-            expect(transfer).toContain(msg.buffer);
-            expect(onMessage).not.toBeNull();
+      const ioWorker = {
+        addEventListener: (type: "message", listener: (ev: MessageEvent<unknown>) => void) => {
+          expect(type).toBe("message");
+          onMessage = listener;
+        },
+        removeEventListener: () => {},
+        postMessage: (msg: any, transfer?: any[]) => {
+          postedByteLengths.push(msg.buffer.byteLength);
+          posted.push(msg.buffer);
+          expect(msg.recycle).toBe(true);
+          expect(transfer).toContain(msg.buffer);
+          expect(onMessage).not.toBeNull();
 
-            // Mimic transfer -> worker -> transfer-back, which yields a *new* ArrayBuffer instance.
-            const workerSide = transferToWorker(msg.buffer);
-            const recycled = transferFromWorker(workerSide);
+          // Mimic transfer -> worker -> transfer-back, which yields a *new* ArrayBuffer instance.
+          const workerSide = transferToWorker(msg.buffer);
+          const recycled = transferFromWorker(workerSide);
 
-            postCount++;
-            if (postCount === 1) {
-              recycledFromFirstFlush = recycled;
-            }
+          postCount++;
+          if (postCount === 1) {
+            recycledFromFirstFlush = recycled;
+          }
 
-            onMessage?.({ data: { type: "in:input-batch-recycle", buffer: recycled } } as unknown as MessageEvent<unknown>);
-          },
-        };
+          onMessage?.({ data: { type: "in:input-batch-recycle", buffer: recycled } } as unknown as MessageEvent<unknown>);
+        },
+      };
 
-        const capture = new InputCapture(canvas, ioWorker as any, { enableGamepad: false, recycleBuffers: true });
-        capture.start();
+      const capture = new InputCapture(canvas, ioWorker as any, { enableGamepad: false, recycleBuffers: true });
+      capture.start();
 
-        (capture as any).handleKeyDown(keyDownEvent("KeyA", 0));
-        capture.flushNow();
+      (capture as any).handleKeyDown(keyDownEvent("KeyA", 0));
+      capture.flushNow();
 
-        (capture as any).handleKeyDown(keyDownEvent("KeyB", 1));
-        capture.flushNow();
+      (capture as any).handleKeyDown(keyDownEvent("KeyB", 1));
+      capture.flushNow();
 
-        expect(posted).toHaveLength(2);
-        expect(postedByteLengths).toHaveLength(2);
-        expect(recycledFromFirstFlush).not.toBeNull();
-        expect(posted[1]).toBe(recycledFromFirstFlush);
-        expect(postedByteLengths[1]).toBe(postedByteLengths[0]);
-      }),
-    );
+      expect(posted).toHaveLength(2);
+      expect(postedByteLengths).toHaveLength(2);
+      expect(recycledFromFirstFlush).not.toBeNull();
+      expect(posted[1]).toBe(recycledFromFirstFlush);
+      expect(postedByteLengths[1]).toBe(postedByteLengths[0]);
+    });
   });
 
   it("removes the worker message listener on stop()", () => {
-    withStubbedDocument((doc) =>
-      withStubbedWindow(() => {
-        const canvas = makeCanvasStub();
+    withStubbedDom(({ document: doc }) => {
+      const canvas = makeCanvasStub();
 
-        doc.activeElement = canvas;
+      doc.activeElement = canvas;
 
-        let added: ((ev: MessageEvent<unknown>) => void) | null = null;
-        let removed: ((ev: MessageEvent<unknown>) => void) | null = null;
+      let added: ((ev: MessageEvent<unknown>) => void) | null = null;
+      let removed: ((ev: MessageEvent<unknown>) => void) | null = null;
 
-        const ioWorker = {
-          addEventListener: (type: "message", listener: (ev: MessageEvent<unknown>) => void) => {
-            if (type === "message") {
-              added = listener;
-            }
-          },
-          removeEventListener: (type: "message", listener: (ev: MessageEvent<unknown>) => void) => {
-            if (type === "message") {
-              removed = listener;
-            }
-          },
-          postMessage: () => {},
-        };
+      const ioWorker = {
+        addEventListener: (type: "message", listener: (ev: MessageEvent<unknown>) => void) => {
+          if (type === "message") {
+            added = listener;
+          }
+        },
+        removeEventListener: (type: "message", listener: (ev: MessageEvent<unknown>) => void) => {
+          if (type === "message") {
+            removed = listener;
+          }
+        },
+        postMessage: () => {},
+      };
 
-        const capture = new InputCapture(canvas, ioWorker as any, { enableGamepad: false, recycleBuffers: true });
-        capture.start();
-        expect(added).not.toBeNull();
+      const capture = new InputCapture(canvas, ioWorker as any, { enableGamepad: false, recycleBuffers: true });
+      capture.start();
+      expect(added).not.toBeNull();
 
-        capture.stop();
-        expect(removed).toBe(added);
-      }),
-    );
+      capture.stop();
+      expect(removed).toBe(added);
+    });
   });
 
   it("does not request buffer recycling on stop() flush (even when recycleBuffers=true)", () => {
-    withStubbedDocument((doc) =>
-      withStubbedWindow(() => {
-        const canvas = makeCanvasStub();
+    withStubbedDom(({ document: doc }) => {
+      const canvas = makeCanvasStub();
 
-        doc.activeElement = canvas;
+      doc.activeElement = canvas;
 
-        const posted: any[] = [];
-        const ioWorker = {
-          addEventListener: () => {},
-          removeEventListener: () => {},
-          postMessage: (msg: any, transfer?: any[]) => {
-            posted.push({ msg, transfer });
-          },
-        };
+      const posted: any[] = [];
+      const ioWorker = {
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        postMessage: (msg: any, transfer?: any[]) => {
+          posted.push({ msg, transfer });
+        },
+      };
 
-        const capture = new InputCapture(canvas, ioWorker as any, { enableGamepad: false, recycleBuffers: true });
-        capture.start();
+      const capture = new InputCapture(canvas, ioWorker as any, { enableGamepad: false, recycleBuffers: true });
+      capture.start();
 
-        (capture as any).handleKeyDown(keyDownEvent("KeyA", 0));
+      (capture as any).handleKeyDown(keyDownEvent("KeyA", 0));
 
-        capture.stop();
+      capture.stop();
 
-        expect(posted).toHaveLength(1);
-        const { msg, transfer } = posted[0]!;
-        expect(msg.type).toBe("in:input-batch");
-        expect(msg.recycle).toBeUndefined();
-        expect(transfer).toContain(msg.buffer);
-      }),
-    );
+      expect(posted).toHaveLength(1);
+      const { msg, transfer } = posted[0]!;
+      expect(msg.type).toBe("in:input-batch");
+      expect(msg.recycle).toBeUndefined();
+      expect(transfer).toContain(msg.buffer);
+    });
   });
 
   it("reuses recycled buffers even when the recycle response arrives after flush (one-flush delay)", () => {

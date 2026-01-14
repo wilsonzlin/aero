@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { InputCapture } from "./input_capture";
-import { withStubbedDocument, withStubbedWindow } from "./test_utils";
+import { withStubbedDom } from "./test_utils";
 
-function withStubbedDom<T>(run: (ctx: { window: any; document: any }) => T): T {
-  return withStubbedWindow((win) =>
-    withStubbedDocument((doc) => {
+describe("InputCapture restart behavior", () => {
+  it("reattaches pointer lock listeners and refreshes pointerLocked across stop/start cycles", () => {
+    withStubbedDom(({ document: doc, window: win }) => {
       const addCounts = new Map<string, number>();
       const removeCounts = new Map<string, number>();
 
@@ -24,14 +24,6 @@ function withStubbedDom<T>(run: (ctx: { window: any; document: any }) => T): T {
       win.setInterval = vi.fn(() => 1);
       win.clearInterval = vi.fn(() => {});
 
-      return run({ window: win, document: doc });
-    }),
-  );
-}
-
-describe("InputCapture restart behavior", () => {
-  it("reattaches pointer lock listeners and refreshes pointerLocked across stop/start cycles", () => {
-    withStubbedDom(({ document: doc }) => {
       const canvas = {
         tabIndex: 0,
         addEventListener: () => {},

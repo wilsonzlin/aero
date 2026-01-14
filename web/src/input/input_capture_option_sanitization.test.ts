@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { InputCapture } from "./input_capture";
-import { withStubbedDocument, withStubbedWindow } from "./test_utils";
+import { withStubbedDom } from "./test_utils";
 
-function withStubbedDom<T>(run: (ctx: { window: any; document: any }) => T): T {
-  return withStubbedWindow((win) =>
-    withStubbedDocument((doc) => {
+describe("InputCapture option sanitization", () => {
+  it("sanitizes non-finite flushHz so setInterval is never called with NaN/Infinity", () => {
+    withStubbedDom(({ window: win, document: doc }) => {
       doc.addEventListener = vi.fn(() => {});
       doc.removeEventListener = vi.fn(() => {});
       doc.exitPointerLock = vi.fn(() => {});
@@ -15,14 +15,6 @@ function withStubbedDom<T>(run: (ctx: { window: any; document: any }) => T): T {
       win.setInterval = vi.fn(() => 1);
       win.clearInterval = vi.fn(() => {});
 
-      return run({ window: win, document: doc });
-    }),
-  );
-}
-
-describe("InputCapture option sanitization", () => {
-  it("sanitizes non-finite flushHz so setInterval is never called with NaN/Infinity", () => {
-    withStubbedDom(({ window: win }) => {
       const canvas = {
         tabIndex: 0,
         addEventListener: () => {},
@@ -49,7 +41,16 @@ describe("InputCapture option sanitization", () => {
   });
 
   it("sanitizes zero/negative flushHz to a safe default", () => {
-    withStubbedDom(({ window: win }) => {
+    withStubbedDom(({ window: win, document: doc }) => {
+      doc.addEventListener = vi.fn(() => {});
+      doc.removeEventListener = vi.fn(() => {});
+      doc.exitPointerLock = vi.fn(() => {});
+
+      win.addEventListener = vi.fn(() => {});
+      win.removeEventListener = vi.fn(() => {});
+      win.setInterval = vi.fn(() => 1);
+      win.clearInterval = vi.fn(() => {});
+
       const canvas = {
         tabIndex: 0,
         addEventListener: () => {},
@@ -74,4 +75,3 @@ describe("InputCapture option sanitization", () => {
     });
   });
 });
-
