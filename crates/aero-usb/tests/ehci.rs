@@ -286,6 +286,45 @@ fn ehci_schedule_status_bits_track_usbcmd() {
 }
 
 #[test]
+fn ehci_usbsts_schedule_status_bits_are_derived_not_stored() {
+    let mut c = EhciController::new();
+
+    // Force the schedule status bits into the backing register state. Real hardware exposes these
+    // bits as read-only derived state, so reads should ignore the stored values.
+    c.set_usbsts_bits(regs::USBSTS_PSS | regs::USBSTS_ASS);
+
+    // While halted, schedules are inactive regardless of what is stored in USBSTS.
+    let st0 = c.mmio_read(regs::REG_USBSTS, 4);
+    assert_eq!(st0 & (regs::USBSTS_PSS | regs::USBSTS_ASS), 0);
+
+    // Running without schedule enables should still read as inactive.
+    c.mmio_write(regs::REG_USBCMD, 4, regs::USBCMD_RS);
+    let st1 = c.mmio_read(regs::REG_USBSTS, 4);
+    assert_eq!(st1 & (regs::USBSTS_PSS | regs::USBSTS_ASS), 0);
+
+    // Enabling periodic only should set only PSS.
+    c.mmio_write(regs::REG_USBCMD, 4, regs::USBCMD_RS | regs::USBCMD_PSE);
+    let st2 = c.mmio_read(regs::REG_USBSTS, 4);
+    assert_ne!(st2 & regs::USBSTS_PSS, 0);
+    assert_eq!(st2 & regs::USBSTS_ASS, 0);
+
+    // Enabling both schedules should set both bits.
+    c.mmio_write(
+        regs::REG_USBCMD,
+        4,
+        regs::USBCMD_RS | regs::USBCMD_PSE | regs::USBCMD_ASE,
+    );
+    let st3 = c.mmio_read(regs::REG_USBSTS, 4);
+    assert_ne!(st3 & regs::USBSTS_PSS, 0);
+    assert_ne!(st3 & regs::USBSTS_ASS, 0);
+
+    // Stopping the controller clears both status bits.
+    c.mmio_write(regs::REG_USBCMD, 4, 0);
+    let st4 = c.mmio_read(regs::REG_USBSTS, 4);
+    assert_eq!(st4 & (regs::USBSTS_PSS | regs::USBSTS_ASS), 0);
+}
+
+#[test]
 fn ehci_hcreset_resets_operational_regs_but_preserves_port_connection() {
     let mut c = EhciController::new_with_port_count(1);
     c.hub_mut().attach(0, Box::new(TestDevice));

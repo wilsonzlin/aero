@@ -311,7 +311,10 @@ impl EhciController {
         }
         if offset >= REG_USBSTS && offset < REG_USBSTS + 4 {
             let shift = (offset - REG_USBSTS) * 8;
-            let mut v = self.regs.usbsts & USBSTS_READ_MASK;
+            // USBSTS.PSS/ASS are read-only schedule status bits. Keep them fully derived from
+            // USBCMD so they cannot be latched by internal state (e.g. snapshots/tests).
+            let mut v =
+                self.regs.usbsts & (USBSTS_READ_MASK & !(USBSTS_PSS | USBSTS_ASS));
             // Derive schedule-status bits (EHCI USBSTS.PSS/ASS) from the command register. These
             // are read-only in hardware and allow drivers to observe whether schedules are active.
             if self.regs.usbcmd & USBCMD_RS != 0 {
