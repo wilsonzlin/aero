@@ -22,6 +22,7 @@ declare global {
       sourceHash?: string;
       expectedSourceHash?: string;
       pass?: boolean;
+      cursorOk?: boolean;
       metrics?: any;
       samplePixels?: () => Promise<{
         backend: string;
@@ -412,13 +413,10 @@ async function main(): Promise<void> {
     const cursorPixel = sample(presentedWithCursorRgba8, presentedWithCursorWidth, cursorX, cursorY);
     const cursorNearby = sample(presentedWithCursorRgba8, presentedWithCursorWidth, 8, 8);
 
-    const pass =
-      hash === expectedHash &&
-      sourceHash === expectedSourceHash &&
-      cursorPixel[0] === 0 &&
-      cursorPixel[1] === 0 &&
-      cursorPixel[2] === 0 &&
-      cursorPixel[3] === 255;
+    // Preserve the original smoke-test invariant: `pass` tracks scanout correctness only.
+    // Cursor overlay checks are asserted separately so failures produce clearer diagnostics.
+    const pass = hash === expectedHash && sourceHash === expectedSourceHash;
+    const cursorOk = cursorPixel[0] === 0 && cursorPixel[1] === 0 && cursorPixel[2] === 0 && cursorPixel[3] === 255;
 
     const sample = (rgba: Uint8Array, width_: number, x: number, y: number): number[] => {
       const i = (y * width_ + x) * 4;
@@ -458,6 +456,7 @@ async function main(): Promise<void> {
           bottomRight: sample(presentedRgba8, presentedWidth, presentedWidth - 9, presentedHeight - 9),
         },
       }),
+      cursorOk,
     };
   } catch (err) {
     renderError(err instanceof Error ? err.message : String(err));
