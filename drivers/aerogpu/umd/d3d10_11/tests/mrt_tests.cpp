@@ -31,6 +31,16 @@ struct CmdLoc {
   size_t offset = 0;
 };
 
+const AEROGPU_WDDM_SUBMIT_ALLOCATION* FindSubmitAlloc(const std::vector<AEROGPU_WDDM_SUBMIT_ALLOCATION>& allocs,
+                                                      AEROGPU_WDDM_ALLOCATION_HANDLE handle) {
+  for (const auto& a : allocs) {
+    if (a.handle == handle) {
+      return &a;
+    }
+  }
+  return nullptr;
+}
+
 bool ValidateStream(const uint8_t* buf, size_t len) {
   if (!Check(buf != nullptr, "stream buffer must be non-null")) {
     return false;
@@ -156,6 +166,7 @@ std::vector<aerogpu_handle_t> CollectCreateTexture2DHandles(const uint8_t* buf, 
 
 struct Harness {
   std::vector<uint8_t> last_stream;
+  std::vector<AEROGPU_WDDM_SUBMIT_ALLOCATION> last_allocs;
   std::vector<HRESULT> errors;
 
   struct Allocation {
@@ -292,8 +303,8 @@ struct Harness {
   static HRESULT AEROGPU_APIENTRY SubmitCmdStream(void* user,
                                                   const void* cmd_stream,
                                                   uint32_t cmd_stream_size_bytes,
-                                                  const AEROGPU_WDDM_SUBMIT_ALLOCATION*,
-                                                  uint32_t,
+                                                  const AEROGPU_WDDM_SUBMIT_ALLOCATION* allocs,
+                                                  uint32_t alloc_count,
                                                   uint64_t* out_fence) {
     if (!user || !cmd_stream || cmd_stream_size_bytes < sizeof(aerogpu_cmd_stream_header)) {
       return E_INVALIDARG;
@@ -301,6 +312,11 @@ struct Harness {
     auto* h = reinterpret_cast<Harness*>(user);
     const auto* bytes = reinterpret_cast<const uint8_t*>(cmd_stream);
     h->last_stream.assign(bytes, bytes + cmd_stream_size_bytes);
+    if (!allocs || alloc_count == 0) {
+      h->last_allocs.clear();
+    } else {
+      h->last_allocs.assign(allocs, allocs + alloc_count);
+    }
     if (out_fence) {
       *out_fence = 0;
     }
@@ -877,6 +893,21 @@ bool TestSrvBindingUnbindsOnlyAllocAliasedRtv() {
     if (!Check(set_rt->colors[i] == 0, "SET_RENDER_TARGETS colors[i]==0 (alloc-aliased trailing)")) {
       return false;
     }
+  }
+
+  const auto* alloc100 = FindSubmitAlloc(dev.harness.last_allocs, 100);
+  if (!Check(alloc100 != nullptr, "alloc list contains handle 100 (SRV/RTV alias)")) {
+    return false;
+  }
+  if (!Check(alloc100->write == 0, "alloc 100 marked read-only after RTV[0] hazard unbind")) {
+    return false;
+  }
+  const auto* alloc101 = FindSubmitAlloc(dev.harness.last_allocs, 101);
+  if (!Check(alloc101 != nullptr, "alloc list contains handle 101 (RTV[1])")) {
+    return false;
+  }
+  if (!Check(alloc101->write == 1, "alloc 101 marked write (RTV[1] still bound)")) {
+    return false;
   }
 
   dev.device_funcs.pfnDestroyShaderResourceView(dev.hDevice, srv_alias.hSrv);
@@ -1511,6 +1542,21 @@ bool TestSrvBindingUnbindsOnlyAllocAliasedRtvVs() {
     }
   }
 
+  const auto* alloc100 = FindSubmitAlloc(dev.harness.last_allocs, 100);
+  if (!Check(alloc100 != nullptr, "alloc list contains handle 100 (VS SRV/RTV alias)")) {
+    return false;
+  }
+  if (!Check(alloc100->write == 0, "alloc 100 marked read-only after VS RTV[0] hazard unbind")) {
+    return false;
+  }
+  const auto* alloc101 = FindSubmitAlloc(dev.harness.last_allocs, 101);
+  if (!Check(alloc101 != nullptr, "alloc list contains handle 101 (VS RTV[1])")) {
+    return false;
+  }
+  if (!Check(alloc101->write == 1, "alloc 101 marked write (VS RTV[1] still bound)")) {
+    return false;
+  }
+
   dev.device_funcs.pfnDestroyShaderResourceView(dev.hDevice, srv_alias.hSrv);
   dev.device_funcs.pfnDestroyRTV(dev.hDevice, rtv0.hRtv);
   dev.device_funcs.pfnDestroyRTV(dev.hDevice, rtv1.hRtv);
@@ -1946,6 +1992,14 @@ bool TestSrvBindingUnbindsAllocAliasedDsv() {
     }
   }
 
+  const auto* alloc200 = FindSubmitAlloc(dev.harness.last_allocs, 200);
+  if (!Check(alloc200 != nullptr, "alloc list contains handle 200 (DSV/SRV alias)")) {
+    return false;
+  }
+  if (!Check(alloc200->write == 0, "alloc 200 marked read-only after DSV hazard unbind")) {
+    return false;
+  }
+
   dev.device_funcs.pfnDestroyShaderResourceView(dev.hDevice, srv_alias.hSrv);
   dev.device_funcs.pfnDestroyDSV(dev.hDevice, dsv.hDsv);
   dev.device_funcs.pfnDestroyResource(dev.hDevice, depth_alias.hResource);
@@ -2139,6 +2193,14 @@ bool TestSrvBindingUnbindsAllocAliasedDsvVs() {
     if (!Check(set_rt->colors[i] == 0, "SET_RENDER_TARGETS colors[i]==0 (alloc-aliased DSV unbound)")) {
       return false;
     }
+  }
+
+  const auto* alloc200 = FindSubmitAlloc(dev.harness.last_allocs, 200);
+  if (!Check(alloc200 != nullptr, "alloc list contains handle 200 (VS DSV/SRV alias)")) {
+    return false;
+  }
+  if (!Check(alloc200->write == 0, "alloc 200 marked read-only after VS DSV hazard unbind")) {
+    return false;
   }
 
   dev.device_funcs.pfnDestroyShaderResourceView(dev.hDevice, srv_alias.hSrv);
