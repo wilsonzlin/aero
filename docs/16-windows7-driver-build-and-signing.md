@@ -154,7 +154,12 @@ See also the examples under `drivers/_template/`:
 > `drivers/win7/virtio/virtio-transport-test/` is a KMDF smoke-test driver and is intentionally **not** CI-packaged (no `ci-package.json`), so it does not ship in CI-produced driver bundles / Guest Tools artifacts. Its `virtio-transport-test.inf` intentionally binds a **non-contract** virtio PCI HWID (`PCI\VEN_1AF4&DEV_1040`) so it cannot steal binding from production virtio devices if you install it manually alongside other drivers.
 >
 >
-> The virtio-input driver under `drivers/windows7/virtio-input/` binds to the real virtio-input PCI HWIDs. For Aero contract v1, it is revision-gated (e.g. `PCI\VEN_1AF4&DEV_1052&REV_01`, plus more specific `...&SUBSYS_...&REV_01` keyboard/mouse variants). Shipping multiple INFs that match the same HWIDs can cause confusing driver selection/install behaviour. Prefer explicit `ci-package.json` `infFiles` allowlists.
+> The virtio-input driver under `drivers/windows7/virtio-input/` is revision-gated to Aero contract v1 (`...&REV_01`). The
+> canonical keyboard/mouse INF (`inf/aero_virtio_input.inf`) is **SUBSYS-gated only** (`SUBSYS_0010`/`SUBSYS_0011`) for
+> deterministic binding and distinct Device Manager names. If you need a revision-gated generic fallback HWID
+> (`PCI\VEN_1AF4&DEV_1052&REV_01`) for environments that don’t expose subsystem IDs, enable the legacy alias INF
+> (`inf/virtio-input.inf.disabled` → `inf/virtio-input.inf`). Avoid shipping both INFs at once (overlapping matches can cause
+> confusing driver selection). Prefer explicit `ci-package.json` `infFiles` allowlists.
 
 ```powershell
 .\ci\build-drivers.ps1 -ToolchainJson .\out\toolchain.json
