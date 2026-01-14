@@ -476,15 +476,6 @@ fn decode_known_fields(
                 out.insert("decode_error".into(), json!(format!("{:?}", err)));
             }
         },
-        AerogpuCmdOpcode::DestroyShader => {
-            if let (Some(shader_handle), Some(_reserved0)) =
-                (read_u32_le(pkt.payload, 0), read_u32_le(pkt.payload, 4))
-            {
-                out.insert("shader_handle".into(), json!(shader_handle));
-            } else {
-                out.insert("decode_error".into(), json!("truncated payload"));
-            }
-        }
         AerogpuCmdOpcode::BindShaders => match pkt.decode_bind_shaders_payload_le() {
             Ok((cmd, ex)) => {
                 // Avoid taking references to packed fields.
@@ -494,15 +485,22 @@ fn decode_known_fields(
                 out.insert("vs".into(), json!(vs));
                 out.insert("ps".into(), json!(ps));
                 out.insert("cs".into(), json!(cs));
-
-                if let Some(ex) = ex {
-                    out.insert("gs".into(), json!(ex.gs));
-                    out.insert("hs".into(), json!(ex.hs));
-                    out.insert("ds".into(), json!(ex.ds));
-                } else {
-                    let gs = cmd.gs();
-                    if gs != 0 {
+                match ex {
+                    Some(ex) => {
+                        let gs = ex.gs;
+                        let hs = ex.hs;
+                        let ds = ex.ds;
                         out.insert("gs".into(), json!(gs));
+                        out.insert("hs".into(), json!(hs));
+                        out.insert("ds".into(), json!(ds));
+                    }
+                    None => {
+                        // Legacy encoding: `reserved0` is used as an optional GS handle. HS/DS are
+                        // unavailable in the base packet format.
+                        let gs = cmd.gs();
+                        out.insert("gs".into(), json!(gs));
+                        out.insert("hs".into(), json!(0));
+                        out.insert("ds".into(), json!(0));
                     }
                 }
             }
@@ -510,6 +508,15 @@ fn decode_known_fields(
                 out.insert("decode_error".into(), json!(format!("{:?}", err)));
             }
         },
+        AerogpuCmdOpcode::DestroyShader => {
+            if let (Some(shader_handle), Some(_reserved0)) =
+                (read_u32_le(pkt.payload, 0), read_u32_le(pkt.payload, 4))
+            {
+                out.insert("shader_handle".into(), json!(shader_handle));
+            } else {
+                out.insert("decode_error".into(), json!("truncated payload"));
+            }
+        }
         AerogpuCmdOpcode::CreateInputLayout => match pkt.decode_create_input_layout_payload_le() {
             Ok((cmd, blob)) => {
                 let input_layout_handle = cmd.input_layout_handle;
