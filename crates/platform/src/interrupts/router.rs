@@ -510,10 +510,6 @@ impl PlatformInterrupts {
         self.lapics.len()
     }
 
-    fn lapics_iter(&self) -> impl Iterator<Item = &LocalApic> + '_ {
-        self.lapics.iter().map(|lapic| lapic.as_ref())
-    }
-
     pub fn lapic(&self, cpu_index: usize) -> &LocalApic {
         self.lapics
             .get(cpu_index)
@@ -819,7 +815,7 @@ impl PlatformInterrupts {
     /// Note: This intentionally bypasses `PlatformInterruptMode` (legacy PIC vs APIC routing). MSI
     /// broadcast delivery should reach all CPUs regardless of legacy IRQ routing state.
     pub(crate) fn inject_fixed_broadcast(&self, vector: u8) {
-        for lapic in self.lapics_iter() {
+        for lapic in &self.lapics {
             lapic.inject_fixed_interrupt(vector);
         }
     }

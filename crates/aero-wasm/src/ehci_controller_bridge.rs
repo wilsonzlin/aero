@@ -24,7 +24,7 @@ use aero_usb::device::AttachedUsbDevice;
 use aero_usb::ehci::EhciController;
 use aero_usb::hub::UsbHubDevice;
 use aero_usb::passthrough::{UsbHostAction, UsbHostCompletion};
-use aero_usb::{UsbDeviceModel, UsbHubAttachError, UsbSpeed, UsbWebUsbPassthroughDevice};
+use aero_usb::{UsbDeviceModel, UsbHubAttachError, UsbWebUsbPassthroughDevice};
 
 use crate::guest_memory_bus::{GuestMemoryBus, NoDmaMemory, wasm_memory_byte_len};
 
@@ -33,12 +33,10 @@ const EHCI_BRIDGE_DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
 
 /// Reserve EHCI root port 1 for the WebUSB passthrough device.
 ///
-/// This matches the UHCI and xHCI WASM bridges:
-/// - root port 0 is available for an external hub / synthetic HID / WebHID passthrough, and
-/// - root port 1 is reserved for WebUSB passthrough.
-///
-/// Keep this stable so host-side code can treat the port index as part of the public ABI.
-const WEBUSB_ROOT_PORT: u8 = 1;
+/// Root port 0 is reserved for the runtime's external hub / topology manager (synthetic HID +
+/// WebHID). Keeping this stable lets host-side code treat the port index as part of the public ABI
+/// and matches the UHCI + xHCI WASM bridges.
+const WEBUSB_ROOT_PORT: u8 = crate::webusb_ports::WEBUSB_ROOT_PORT;
 
 fn js_error(message: impl core::fmt::Display) -> JsValue {
     js_sys::Error::new(&message.to_string()).into()
@@ -383,42 +381,11 @@ impl EhciControllerBridge {
     /// The passthrough device is implemented by `aero_usb::UsbWebUsbPassthroughDevice` and emits
     /// host actions that must be executed by the browser `UsbBroker` (see `web/src/usb`).
     pub fn set_connected(&mut self, connected: bool) {
-        let was_connected = self.webusb_connected;
-
-        match (was_connected, connected) {
-            (true, true) | (false, false) => {}
-            (false, true) => {
-                let dev = self.webusb.get_or_insert_with(|| {
-                    UsbWebUsbPassthroughDevice::new_with_speed(UsbSpeed::High)
-                });
-                // Ensure the device advertises a high-speed view when attached behind EHCI.
-                dev.set_speed(UsbSpeed::High);
-                let attached = attach_device_at_path(
-                    &mut self.ctrl,
-                    &[WEBUSB_ROOT_PORT],
-                    Box::new(dev.clone()),
-                )
-                .is_ok();
-                self.webusb_connected = attached;
-            }
-            (true, false) => {
-                // Detach using a topology scan so snapshot restores from older builds (which may
-                // have attached the passthrough device to a different root port) still disconnect
-                // cleanly.
-                let path =
-                    find_webusb_passthrough_device_path(&mut self.ctrl).unwrap_or_else(|| {
-                        vec![WEBUSB_ROOT_PORT]
-                    });
-                let _ = detach_device_at_path(&mut self.ctrl, &path);
-                self.webusb_connected = false;
-                // Preserve pre-existing semantics: disconnecting the device drops any queued actions
-                // and in-flight state, but we keep the handle alive so `UsbPassthroughDevice.next_id`
-                // remains monotonic across reconnects.
-                if let Some(dev) = self.webusb.as_ref() {
-                    dev.reset();
-                }
-            }
-        }
+        self.webusb_connected = crate::ehci_webusb_topology::set_ehci_webusb_connected(
+            &mut self.ctrl,
+            &mut self.webusb,
+            connected,
+        );
     }
 
     /// Drain queued WebUSB passthrough host actions as plain JS objects.

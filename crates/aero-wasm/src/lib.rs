@@ -6,6 +6,11 @@ use wasm_bindgen::prelude::*;
 pub mod guest_cpu_bench;
 
 #[cfg(any(target_arch = "wasm32", test))]
+mod ehci_webusb_topology;
+#[cfg(any(target_arch = "wasm32", test))]
+mod webusb_ports;
+
+#[cfg(any(target_arch = "wasm32", test))]
 mod guest_phys;
 
 #[cfg(any(target_arch = "wasm32", test))]

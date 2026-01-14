@@ -30,7 +30,7 @@ const REG_PORTSC2: u16 = 0x12;
 
 // Reserve the 2nd UHCI root port for the WebUSB passthrough device. Root port 0 is used for the
 // external WebHID hub by default (see `web/src/platform/webhid_passthrough.ts`).
-const WEBUSB_ROOT_PORT: usize = 1;
+const WEBUSB_ROOT_PORT: usize = crate::webusb_ports::WEBUSB_ROOT_PORT as usize;
 
 fn js_error(message: impl core::fmt::Display) -> JsValue {
     js_sys::Error::new(&message.to_string()).into()

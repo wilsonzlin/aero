@@ -44,7 +44,7 @@ const MAX_XHCI_SNAPSHOT_BYTES: usize = 4 * 1024 * 1024;
 //
 // This keeps the port assignment stable across snapshots and matches the UHCI bridge's convention
 // of leaving root port 0 available for an external hub / HID passthrough in the future.
-const WEBUSB_ROOT_PORT: u8 = 1;
+const WEBUSB_ROOT_PORT: u8 = crate::webusb_ports::WEBUSB_ROOT_PORT;
 
 /// Maximum number of 1ms frames processed per [`XhciControllerBridge::step_frames`] call.
 ///
