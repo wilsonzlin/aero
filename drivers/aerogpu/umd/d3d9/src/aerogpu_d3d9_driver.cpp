@@ -5868,24 +5868,24 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
       needs_matrix = true;
       break;
     case kSupportedFvfXyzNormal:
-      vs_slot = lighting_enabled ? &dev->fixedfunc_vs_xyz_normal_lit : &dev->fixedfunc_vs_xyz_normal;
+      vs_slot = fixedfunc_lighting_active ? &dev->fixedfunc_vs_xyz_normal_lit : &dev->fixedfunc_vs_xyz_normal;
       ps_slot = &dev->fixedfunc_ps;
       fvf_decl = dev->fvf_vertex_decl_xyz_normal;
-      vs_bytes = lighting_enabled ? fixedfunc::kVsWvpLitPosNormal : fixedfunc::kVsWvpPosNormalWhite;
-      vs_size = lighting_enabled ? static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpLitPosNormal))
+      vs_bytes = fixedfunc_lighting_active ? fixedfunc::kVsWvpLitPosNormal : fixedfunc::kVsWvpPosNormalWhite;
+      vs_size = fixedfunc_lighting_active ? static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpLitPosNormal))
                                  : static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpPosNormalWhite));
       needs_matrix = true;
-      needs_lighting = lighting_enabled;
+      needs_lighting = fixedfunc_lighting_active;
       break;
     case kSupportedFvfXyzNormalTex1:
-      vs_slot = lighting_enabled ? &dev->fixedfunc_vs_xyz_normal_tex1_lit : &dev->fixedfunc_vs_xyz_normal_tex1;
+      vs_slot = fixedfunc_lighting_active ? &dev->fixedfunc_vs_xyz_normal_tex1_lit : &dev->fixedfunc_vs_xyz_normal_tex1;
       ps_slot = &dev->fixedfunc_ps_xyz_diffuse_tex1;
       fvf_decl = dev->fvf_vertex_decl_xyz_normal_tex1;
-      vs_bytes = lighting_enabled ? fixedfunc::kVsWvpLitPosNormalTex1 : fixedfunc::kVsWvpPosNormalWhiteTex0;
-      vs_size = lighting_enabled ? static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpLitPosNormalTex1))
+      vs_bytes = fixedfunc_lighting_active ? fixedfunc::kVsWvpLitPosNormalTex1 : fixedfunc::kVsWvpPosNormalWhiteTex0;
+      vs_size = fixedfunc_lighting_active ? static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpLitPosNormalTex1))
                                  : static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpPosNormalWhiteTex0));
       needs_matrix = true;
-      needs_lighting = lighting_enabled;
+      needs_lighting = fixedfunc_lighting_active;
       break;
     case kSupportedFvfXyzNormalDiffuse:
       vs_slot = fixedfunc_lighting_active ? &dev->fixedfunc_vs_xyz_normal_diffuse_lit : &dev->fixedfunc_vs_xyz_normal_diffuse;
