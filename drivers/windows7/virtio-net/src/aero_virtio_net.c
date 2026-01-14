@@ -2288,39 +2288,39 @@ static VOID AerovNetInterruptDpcWork(_Inout_ AEROVNET_ADAPTER* Adapter, _In_ BOO
       }
 
       if (DoTx) {
-  // TX completions.
-  for (;;) {
-    PVOID Cookie;
-    AEROVNET_TX_REQUEST* TxReq;
+        // TX completions.
+        for (;;) {
+          PVOID Cookie;
+          AEROVNET_TX_REQUEST* TxReq;
 
-    Cookie = NULL;
+          Cookie = NULL;
 
-    if (Adapter->TxVq.QueueSize == 0) {
-      break;
+          if (Adapter->TxVq.QueueSize == 0) {
+            break;
           }
 
           if (virtqueue_split_pop_used(&Adapter->TxVq.Vq, &Cookie, NULL) == VIRTIO_FALSE) {
             break;
           }
 
-    TxReq = (AEROVNET_TX_REQUEST*)Cookie;
+          TxReq = (AEROVNET_TX_REQUEST*)Cookie;
 
-    if (TxReq) {
-      Adapter->StatTxPackets++;
-      if (TxReq->Nb) {
-        Adapter->StatTxBytes += NET_BUFFER_DATA_LENGTH(TxReq->Nb);
-      } else {
-        Adapter->StatTxErrors++;
-      }
+          if (TxReq) {
+            Adapter->StatTxPackets++;
+            if (TxReq->Nb) {
+              Adapter->StatTxBytes += NET_BUFFER_DATA_LENGTH(TxReq->Nb);
+            } else {
+              Adapter->StatTxErrors++;
+            }
 
-      if (TxReq->State == AerovNetTxSubmitted) {
-        RemoveEntryList(&TxReq->Link);
-      }
-      InsertTailList(&CompleteTxReqs, &TxReq->Link);
+            if (TxReq->State == AerovNetTxSubmitted) {
+              RemoveEntryList(&TxReq->Link);
+            }
+            InsertTailList(&CompleteTxReqs, &TxReq->Link);
 
-      AerovNetCompleteTxRequest(Adapter, TxReq, NDIS_STATUS_SUCCESS, &CompleteNblHead, &CompleteNblTail);
-    }
-  }
+            AerovNetCompleteTxRequest(Adapter, TxReq, NDIS_STATUS_SUCCESS, &CompleteNblHead, &CompleteNblTail);
+          }
+        }
 
         // Submit any TX requests that were waiting on descriptors.
         if (Adapter->State == AerovNetAdapterRunning) {
