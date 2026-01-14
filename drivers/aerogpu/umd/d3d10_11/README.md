@@ -55,7 +55,7 @@ Feature matrix for the Win7 WDK-backed UMDs:
 ### Not yet supported / requires protocol changes
 
 - **Subresource view selection** (SRV/RTV/DSV mip level + array slice): view descriptors are currently ignored and bindings resolve to the underlying texture handle only. Supporting per-view subresource selection requires protocol representation of “views” (or subresource selectors) rather than just raw texture handles.
-- **Unordered access views (UAVs) and compute shaders** (FL11+): the D3D11 UMD reports `E_NOTIMPL` for CS/UAV binding; the protocol currently has no UAV binding or compute pipeline representation.
+- **Unordered access views (UAVs) and compute shaders** (FL11+): the D3D11 UMD reports `E_NOTIMPL` for CS/UAV binding. The protocol has partial scaffolding (`AEROGPU_CMD_DISPATCH` + buffer UAV bindings via `AEROGPU_CMD_SET_UNORDERED_ACCESS_BUFFERS`), but host execution is not implemented and there is no representation for texture UAVs or D3D11 view/subresource selectors.
 - **DXGI format expansion** beyond the protocol’s current `enum aerogpu_format` list: only formats representable in the protocol can be encoded. Adding more DXGI formats requires extending `drivers/aerogpu/protocol/aerogpu_pci.h` + host support.
 - Stencil ops are protocol-limited: the current `aerogpu_depth_stencil_state` only carries enable + masks; it does **not** encode stencil funcs/ops (or separate front/back face state).
 - Blend factors are protocol-limited: only `{Zero, One, SrcAlpha, InvSrcAlpha, DestAlpha, InvDestAlpha, Constant, InvConstant}` are representable. Other D3D10/11 blend factors are mapped to conservative fallbacks.
