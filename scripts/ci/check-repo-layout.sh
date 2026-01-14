@@ -597,6 +597,8 @@ for raw in manifest_path.read_text(encoding="utf-8").splitlines():
         continue
     # Mirror the Windows-side manifest parsing logic (tokens=1 with comment guards).
     token = line.split(None, 1)[0]
+    # Strip UTF-8 BOM if present on the first line.
+    token = token.lstrip("\ufeff")
     if not token:
         continue
     if token[0] in ("#", ";") or token.startswith("::") or token.lower() == "rem":
