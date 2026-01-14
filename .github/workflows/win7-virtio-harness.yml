@@ -842,21 +842,21 @@ jobs:
             harness_exit=$?
             set -e
 
-            # If QEMU fails very early, the harness may not create a serial log. Always upload *something*
-            # so the artifact has a stable shape for consumers.
-            if [[ ! -s "${serial_log}" ]]; then
-              echo "(serial log was not produced)" >"${serial_log}"
-            fi
-            if [[ ! -s "${http_log}" ]]; then
-              echo "(no HTTP requests were logged)" >"${http_log}"
-            fi
-
             exit "${harness_exit}"
           ) 2>&1 | tee "${harness_log}"
 
           # Capture the harness exit code even when the pipeline fails, so we can surface it
           # in job summaries and downstream steps.
           harness_exit="${PIPESTATUS[0]}"
+
+          # Ensure the logs artifact has a stable shape even when the harness fails before
+          # producing serial/HTTP logs (e.g. unit tests fail, QEMU exits immediately, etc).
+          if [[ ! -s "${serial_log}" ]]; then
+            echo "(serial log was not produced)" >"${serial_log}"
+          fi
+          if [[ ! -s "${http_log}" ]]; then
+            echo "(no HTTP requests were logged)" >"${http_log}"
+          fi
           set -e
           echo "exit_code=${harness_exit}" >>"${GITHUB_OUTPUT}"
           exit "${harness_exit}"
