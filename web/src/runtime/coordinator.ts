@@ -2205,13 +2205,6 @@ export class WorkerCoordinator {
     if (role === "gpu") {
       this.completeInFlightAerogpuFences();
     }
-    if (role === "cpu") {
-      // Submissions/fences are tied to the canonical Machine instance owned by the CPU worker.
-      // If the CPU worker is restarted in isolation, drop any buffered/in-flight AeroGPU work so
-      // stale submit_complete messages from the GPU worker can't be misapplied to the new Machine.
-      this.pendingAerogpuSubmissions = [];
-      this.aerogpuInFlightFencesByRequestId.clear();
-    }
 
     setReadyFlag(shared.status, role, false);
     info.worker.terminate();
