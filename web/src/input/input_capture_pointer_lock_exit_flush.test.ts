@@ -2,25 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { InputEventType } from "./event_queue";
 import { InputCapture } from "./input_capture";
-import { withStubbedDocument } from "./test_utils";
-
-type DecodedEvent = { type: number; timestampUs: number; a: number; b: number };
-
-function decodeEvents(buffer: ArrayBuffer): DecodedEvent[] {
-  const words = new Int32Array(buffer);
-  const count = words[0] >>> 0;
-  const out: DecodedEvent[] = [];
-  for (let i = 0; i < count; i++) {
-    const base = 2 + i * 4;
-    out.push({
-      type: words[base]! >>> 0,
-      timestampUs: words[base + 1]! >>> 0,
-      a: words[base + 2]!,
-      b: words[base + 3]!,
-    });
-  }
-  return out;
-}
+import { decodeInputBatchEvents, withStubbedDocument } from "./test_utils";
 
 describe("InputCapture pointer-lock exit safety flush", () => {
   it("flushes an immediate all-released snapshot when pointer lock exits while the canvas is not focused", () => {
@@ -77,7 +59,7 @@ describe("InputCapture pointer-lock exit safety flush", () => {
       expect(posted).toHaveLength(1);
 
       const msg = posted[0] as { buffer: ArrayBuffer };
-      const events = decodeEvents(msg.buffer);
+      const events = decodeInputBatchEvents(msg.buffer);
 
       const KEY_A_USAGE = 0x04;
       expect(

@@ -2,36 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 
 import { InputEventType } from "./event_queue";
 import { InputCapture } from "./input_capture";
-import { decodePackedBytes, withStubbedDocument } from "./test_utils";
-
-type DecodedEvent = Readonly<{
-  type: number;
-  timestampUs: number;
-  a: number;
-  b: number;
-}>;
-
-function decodeEvents(buffer: ArrayBuffer): DecodedEvent[] {
-  const words = new Int32Array(buffer);
-  const count = words[0] >>> 0;
-  const base = 2;
-  const out: DecodedEvent[] = [];
-  for (let i = 0; i < count; i++) {
-    const o = base + i * 4;
-    out.push({
-      type: words[o]! >>> 0,
-      timestampUs: words[o + 1]! >>> 0,
-      a: words[o + 2]! | 0,
-      b: words[o + 3]! | 0,
-    });
-  }
-  return out;
-}
+import { decodeInputBatchEvents, decodePackedBytes, withStubbedDocument } from "./test_utils";
 
 function expectAllReleasedBatch(posted: any[]): void {
   expect(posted).toHaveLength(1);
   const msg = posted[0] as { buffer: ArrayBuffer };
-  const events = decodeEvents(msg.buffer);
+  const events = decodeInputBatchEvents(msg.buffer);
 
   // KeyA break scancode: F0 1C.
   expect(

@@ -1,46 +1,32 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { InputCapture } from "./input_capture";
+import { withStubbedDocument, withStubbedWindow } from "./test_utils";
 
 function withStubbedDom<T>(run: (ctx: { window: any; document: any }) => T): T {
-  const originalWindow = (globalThis as any).window;
-  const originalDocument = (globalThis as any).document;
+  return withStubbedWindow((win) =>
+    withStubbedDocument((doc) => {
+      const addCounts = new Map<string, number>();
+      const removeCounts = new Map<string, number>();
 
-  const addCounts = new Map<string, number>();
-  const removeCounts = new Map<string, number>();
+      doc.addEventListener = vi.fn((type: string) => {
+        addCounts.set(type, (addCounts.get(type) ?? 0) + 1);
+      });
+      doc.removeEventListener = vi.fn((type: string) => {
+        removeCounts.set(type, (removeCounts.get(type) ?? 0) + 1);
+      });
+      doc.exitPointerLock = vi.fn(() => {});
+      doc.addCounts = addCounts;
+      doc.removeCounts = removeCounts;
 
-  const doc: any = {
-    pointerLockElement: null,
-    visibilityState: "visible",
-    activeElement: null,
-    hasFocus: () => true,
-    addEventListener: vi.fn((type: string) => {
-      addCounts.set(type, (addCounts.get(type) ?? 0) + 1);
+      win.addEventListener = vi.fn(() => {});
+      win.removeEventListener = vi.fn(() => {});
+      win.setInterval = vi.fn(() => 1);
+      win.clearInterval = vi.fn(() => {});
+
+      return run({ window: win, document: doc });
     }),
-    removeEventListener: vi.fn((type: string) => {
-      removeCounts.set(type, (removeCounts.get(type) ?? 0) + 1);
-    }),
-    exitPointerLock: vi.fn(() => {}),
-  };
-  doc.addCounts = addCounts;
-  doc.removeCounts = removeCounts;
-
-  const win: any = {
-    addEventListener: vi.fn(() => {}),
-    removeEventListener: vi.fn(() => {}),
-    setInterval: vi.fn(() => 1),
-    clearInterval: vi.fn(() => {}),
-  };
-
-  (globalThis as any).document = doc;
-  (globalThis as any).window = win;
-
-  try {
-    return run({ window: win, document: doc });
-  } finally {
-    (globalThis as any).window = originalWindow;
-    (globalThis as any).document = originalDocument;
-  }
+  );
 }
 
 describe("InputCapture restart behavior", () => {
