@@ -78,11 +78,20 @@ fn tiered_vm_commit_flag_cleared_means_no_retirement_node() {
                 assert_eq!(table_index, 42);
                 let flag_ptr = cpu_ptr + commit_off;
 
-                let before = unsafe { core::ptr::read_unaligned(flag_ptr as *const u32) };
+                let before = unsafe {
+                    core::ptr::read_unaligned(core::ptr::with_exposed_provenance::<u32>(
+                        flag_ptr as usize,
+                    ))
+                };
                 assert_eq!(before, 1, "commit flag must be set before host hook");
 
                 // Roll back architectural side effects.
-                unsafe { core::ptr::write_unaligned(flag_ptr as *mut u32, 0) };
+                unsafe {
+                    core::ptr::write_unaligned(
+                        core::ptr::with_exposed_provenance_mut::<u32>(flag_ptr as usize),
+                        0,
+                    );
+                }
                 -1
             },
         ) as Box<dyn FnMut(u32, u32, u32) -> i64>);
@@ -128,7 +137,11 @@ fn tiered_vm_commit_flag_default_means_retirement_node() {
                 assert_eq!(table_index, 42);
                 let flag_ptr = cpu_ptr + commit_off;
 
-                let before = unsafe { core::ptr::read_unaligned(flag_ptr as *const u32) };
+                let before = unsafe {
+                    core::ptr::read_unaligned(core::ptr::with_exposed_provenance::<u32>(
+                        flag_ptr as usize,
+                    ))
+                };
                 assert_eq!(before, 1, "commit flag must be set before host hook");
 
                 // Leave flag as 1 to indicate commit.

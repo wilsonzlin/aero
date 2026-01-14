@@ -47,7 +47,11 @@ fn wasm_machine_display_present_exposes_framebuffer_cache() {
     let mut fb = vec![0u8; len as usize];
     // Safety: ptr/len is a view into the module's own linear memory.
     unsafe {
-        core::ptr::copy_nonoverlapping(ptr as *const u8, fb.as_mut_ptr(), fb.len());
+        core::ptr::copy_nonoverlapping(
+            core::ptr::with_exposed_provenance(ptr as usize),
+            fb.as_mut_ptr(),
+            fb.len(),
+        );
     }
     assert_eq!(copied, fb);
 }

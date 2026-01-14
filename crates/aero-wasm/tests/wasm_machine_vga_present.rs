@@ -30,7 +30,11 @@ fn copy_linear_bytes(ptr: u32, len: u32) -> Vec<u8> {
     let mut out = vec![0u8; len as usize];
     // Safety: callers ensure ptr/len refer to a valid range in wasm linear memory.
     unsafe {
-        core::ptr::copy_nonoverlapping(ptr as *const u8, out.as_mut_ptr(), out.len());
+        core::ptr::copy_nonoverlapping(
+            core::ptr::with_exposed_provenance(ptr as usize),
+            out.as_mut_ptr(),
+            out.len(),
+        );
     }
     out
 }
@@ -39,7 +43,11 @@ fn read_linear_prefix<const N: usize>(ptr: u32) -> [u8; N] {
     let mut out = [0u8; N];
     // Safety: callers ensure ptr points to at least N bytes in wasm linear memory.
     unsafe {
-        core::ptr::copy_nonoverlapping(ptr as *const u8, out.as_mut_ptr(), N);
+        core::ptr::copy_nonoverlapping(
+            core::ptr::with_exposed_provenance(ptr as usize),
+            out.as_mut_ptr(),
+            N,
+        );
     }
     out
 }
@@ -47,7 +55,7 @@ fn read_linear_prefix<const N: usize>(ptr: u32) -> [u8; N] {
 unsafe fn snapshot_scanout_state(ptr: u32) -> ScanoutSnapshot {
     // Implements the same seqlock-style protocol as `aero_shared::scanout_state::ScanoutState::snapshot`,
     // but without depending on the optional `aero-shared` crate when running wasm-bindgen tests.
-    let base = ptr as *const u32;
+    let base = core::ptr::with_exposed_provenance::<u32>(ptr as usize);
     loop {
         // Safety: caller ensures `ptr` points to a valid scanout state header in wasm linear memory.
         let gen0 = unsafe { core::ptr::read_volatile(base.add(0)) };

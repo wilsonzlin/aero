@@ -95,7 +95,7 @@ fn vm_snapshot_builder_roundtrips_guest_ram_and_device_states() {
     //
     // Safety: We just ensured linear memory has at least `guest_base + guest_size` bytes.
     unsafe {
-        let base = guest_base as *mut u8;
+        let base = core::ptr::with_exposed_provenance_mut::<u8>(guest_base as usize);
         for i in 0..guest_size {
             core::ptr::write(base.add(i), ram_pattern_byte(i));
         }
@@ -269,7 +269,11 @@ fn vm_snapshot_builder_roundtrips_guest_ram_and_device_states() {
     //
     // Safety: We just ensured linear memory has at least `guest_base + guest_size` bytes.
     unsafe {
-        core::ptr::write_bytes(guest_base as *mut u8, 0, guest_size);
+        core::ptr::write_bytes(
+            core::ptr::with_exposed_provenance_mut::<u8>(guest_base as usize),
+            0,
+            guest_size,
+        );
     }
 
     let restored =
@@ -356,7 +360,7 @@ fn vm_snapshot_builder_roundtrips_guest_ram_and_device_states() {
         // Safety: We just ensured linear memory has at least `guest_base + guest_size` bytes.
         unsafe {
             core::ptr::copy_nonoverlapping(
-                guest_base as *const u8,
+                core::ptr::with_exposed_provenance(guest_base as usize),
                 guest.as_mut_ptr(),
                 guest.len(),
             );

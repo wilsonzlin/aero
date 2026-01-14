@@ -15,7 +15,7 @@ fn pattern_byte(i: usize) -> u8 {
 fn worker_vm_snapshot_is_deterministic() {
     let (guest_base, guest_size) = common::alloc_guest_region_bytes(256 * 1024);
     unsafe {
-        let base = guest_base as *mut u8;
+        let base = core::ptr::with_exposed_provenance_mut::<u8>(guest_base as usize);
         let len = guest_size as usize;
         for i in 0..len {
             core::ptr::write(base.add(i), pattern_byte(i));
@@ -74,7 +74,7 @@ fn worker_vm_snapshot_is_deterministic() {
 fn worker_vm_snapshot_roundtrip_restores_ram_and_devices() {
     let (src_base, src_size) = common::alloc_guest_region_bytes(128 * 1024);
     unsafe {
-        let base = src_base as *mut u8;
+        let base = core::ptr::with_exposed_provenance_mut::<u8>(src_base as usize);
         let len = src_size as usize;
         for i in 0..len {
             core::ptr::write(base.add(i), pattern_byte(i));

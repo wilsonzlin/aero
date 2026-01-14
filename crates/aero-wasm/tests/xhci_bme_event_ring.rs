@@ -43,7 +43,11 @@ fn write_erst_entry(guest_base: u32, erstba: u64, seg_base: u64, seg_size_trbs: 
 fn read_bytes(guest_base: u32, paddr: u64, out: &mut [u8]) {
     let linear = linear_addr(guest_base, paddr, out.len());
     unsafe {
-        core::ptr::copy_nonoverlapping(linear as *const u8, out.as_mut_ptr(), out.len());
+        core::ptr::copy_nonoverlapping(
+            core::ptr::with_exposed_provenance(linear as usize),
+            out.as_mut_ptr(),
+            out.len(),
+        );
     }
 }
 

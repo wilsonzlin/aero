@@ -107,7 +107,11 @@ fn tiered_vm_commit_flag_rollback_retires_zero_instructions_node() {
         let commit_call = Closure::wrap(Box::new(
             move |_table_index: u32, cpu_ptr: u32, _jit_ctx_ptr: u32| -> i64 {
                 let commit_flag_ptr = cpu_ptr + commit_flag_offset;
-                let before = unsafe { core::ptr::read_unaligned(commit_flag_ptr as *const u32) };
+                let before = unsafe {
+                    core::ptr::read_unaligned(core::ptr::with_exposed_provenance::<u32>(
+                        commit_flag_ptr as usize,
+                    ))
+                };
                 assert_eq!(
                     before, 1,
                     "commit flag should be set to 1 before host hook runs"
@@ -148,13 +152,20 @@ fn tiered_vm_commit_flag_rollback_retires_zero_instructions_node() {
         let rollback_call = Closure::wrap(Box::new(
             move |_table_index: u32, cpu_ptr: u32, _jit_ctx_ptr: u32| -> i64 {
                 let commit_flag_ptr = cpu_ptr + commit_flag_offset;
-                let before = unsafe { core::ptr::read_unaligned(commit_flag_ptr as *const u32) };
+                let before = unsafe {
+                    core::ptr::read_unaligned(core::ptr::with_exposed_provenance::<u32>(
+                        commit_flag_ptr as usize,
+                    ))
+                };
                 assert_eq!(
                     before, 1,
                     "commit flag should be set to 1 before host hook runs"
                 );
                 unsafe {
-                    core::ptr::write_unaligned(commit_flag_ptr as *mut u32, 0);
+                    core::ptr::write_unaligned(
+                        core::ptr::with_exposed_provenance_mut::<u32>(commit_flag_ptr as usize),
+                        0,
+                    );
                 }
                 0x1000
             },
@@ -188,7 +199,11 @@ fn tiered_vm_commit_flag_rollback_retires_zero_instructions_node() {
         let commit_again = Closure::wrap(Box::new(
             move |_table_index: u32, cpu_ptr: u32, _jit_ctx_ptr: u32| -> i64 {
                 let commit_flag_ptr = cpu_ptr + commit_flag_offset;
-                let before = unsafe { core::ptr::read_unaligned(commit_flag_ptr as *const u32) };
+                let before = unsafe {
+                    core::ptr::read_unaligned(core::ptr::with_exposed_provenance::<u32>(
+                        commit_flag_ptr as usize,
+                    ))
+                };
                 assert_eq!(
                     before, 1,
                     "commit flag should be reset to 1 before the host hook runs"
