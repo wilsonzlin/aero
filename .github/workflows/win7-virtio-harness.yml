@@ -9,7 +9,7 @@ on:
         default: ""
         type: string
       qemu_system:
-        description: qemu-system-* binary to use on the runner (required unless dry_run=true)
+        description: qemu-system-* binary to use on the runner (must be on PATH unless dry_run=true)
         required: false
         default: qemu-system-x86_64
         type: string
@@ -406,6 +406,17 @@ jobs:
             http_port="${{ inputs.http_port }}"
             http_path="${{ inputs.http_path }}"
             udp_port="${{ inputs.udp_port }}"
+
+            # workflow_dispatch inputs are freeform strings; trim leading/trailing whitespace
+            # so accidental spaces do not cause confusing failures (e.g. `command -v`).
+            disk_image_path="${disk_image_path#"${disk_image_path%%[![:space:]]*}"}"
+            disk_image_path="${disk_image_path%"${disk_image_path##*[![:space:]]}"}"
+            qemu_system="${qemu_system#"${qemu_system%%[![:space:]]*}"}"
+            qemu_system="${qemu_system%"${qemu_system##*[![:space:]]}"}"
+            if [[ -z "${qemu_system}" ]]; then
+              echo "ERROR: workflow input 'qemu_system' is empty."
+              exit 1
+            fi
 
             if [[ -z "${disk_image_path}" ]]; then
               if [[ "${dry_run}" == "true" ]]; then
