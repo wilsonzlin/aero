@@ -89,7 +89,8 @@ function Write-SyntheticInf {
   param(
     [Parameter(Mandatory = $true)][string]$Path,
     [Parameter(Mandatory = $true)][string]$BaseName,
-    [string]$HardwareId
+    [string]$HardwareId,
+    [switch]$AddServiceInlineComment
   )
 
   $lines = New-Object "System.Collections.Generic.List[string]"
@@ -114,7 +115,14 @@ function Write-SyntheticInf {
   # test can validate the packaged devices.cmd stays in sync.
   $lines.Add("") | Out-Null
   $lines.Add("[DefaultInstall.Services]") | Out-Null
-  $lines.Add("AddService = $BaseName, 0x00000002, ${BaseName}_Service_Inst") | Out-Null
+  if ($AddServiceInlineComment) {
+    # Regression: some INFs contain an inline comment immediately after the service token, which
+    # historically caused Guest Tools contract auto-detection to pick a service name with a
+    # trailing ';' (e.g. "viostor;").
+    $lines.Add("AddService = $BaseName; comment, 0x00000002, ${BaseName}_Service_Inst") | Out-Null
+  } else {
+    $lines.Add("AddService = $BaseName, 0x00000002, ${BaseName}_Service_Inst") | Out-Null
+  }
   $lines.Add("") | Out-Null
   $lines.Add("[${BaseName}_Service_Inst]") | Out-Null
   $lines.Add("ServiceType = 1") | Out-Null
@@ -162,7 +170,8 @@ function New-SyntheticDriverFiles {
     [Parameter(Mandatory = $true)][string]$InfBaseName,
     [Parameter(Mandatory = $true)][string]$OsDirName,
     [Parameter(Mandatory = $true)][string]$ArchDirName,
-    [string]$HardwareId
+    [string]$HardwareId,
+    [switch]$AddServiceInlineComment
   )
 
   $dir = Join-Path $VirtioRoot (Join-Path $UpstreamDirName (Join-Path $OsDirName $ArchDirName))
@@ -173,7 +182,7 @@ function New-SyntheticDriverFiles {
   $catName = "$InfBaseName.cat"
 
   $infPath = Join-Path $dir $infName
-  Write-SyntheticInf -Path $infPath -BaseName $InfBaseName -HardwareId $HardwareId
+  Write-SyntheticInf -Path $infPath -BaseName $InfBaseName -HardwareId $HardwareId -AddServiceInlineComment:$AddServiceInlineComment
 
   Write-PlaceholderBinary -Path (Join-Path $dir $sysName)
   Write-PlaceholderBinary -Path (Join-Path $dir $catName)
@@ -361,9 +370,32 @@ function Set-ContractDriverServiceName {
 
 function Get-InfAddServiceName {
   param([Parameter(Mandatory = $true)][string]$InfText)
-  $m = [regex]::Match($InfText, '(?im)^\s*AddService\s*=\s*([^,\s]+)')
-  if ($m.Success) {
-    return $m.Groups[1].Value.Trim().Trim('"')
+
+  foreach ($rawLine in ($InfText -split "`r?`n")) {
+    $line = $rawLine
+    if ($line.Length -gt 0 -and $line[0] -eq [char]0xFEFF) {
+      $line = $line.Substring(1)
+    }
+
+    $semi = $line.IndexOf(';')
+    if ($semi -ge 0) {
+      $line = $line.Substring(0, $semi)
+    }
+    $line = $line.Trim()
+    if (-not $line) { continue }
+
+    $m = [regex]::Match($line, '(?i)^\s*AddService\s*=\s*(.+)$')
+    if (-not $m.Success) { continue }
+
+    $rest = $m.Groups[1].Value.Trim()
+    if (-not $rest) { continue }
+    $rest = $rest.Replace('"', '')
+
+    $m2 = [regex]::Match($rest, '^([^,\s]+)')
+    if ($m2.Success) {
+      $svc = $m2.Groups[1].Value.Trim().TrimEnd(';').Trim()
+      if ($svc) { return $svc }
+    }
   }
   return $null
 }
@@ -515,8 +547,8 @@ $fakeIsoVolumeId = "SYNTH_VIRTIOWIN"
   }
 } | ConvertTo-Json -Depth 4 | Out-File -FilePath (Join-Path $syntheticRoot "virtio-win-provenance.json") -Encoding UTF8
 
-New-SyntheticDriverFiles -VirtioRoot $syntheticRoot -UpstreamDirName "viostor" -InfBaseName "viostor" -OsDirName $osDir -ArchDirName "x86" -HardwareId "PCI\VEN_1AF4&DEV_1042"
-New-SyntheticDriverFiles -VirtioRoot $syntheticRoot -UpstreamDirName "viostor" -InfBaseName "viostor" -OsDirName $osDir -ArchDirName "amd64" -HardwareId "PCI\VEN_1AF4&DEV_1042"
+New-SyntheticDriverFiles -VirtioRoot $syntheticRoot -UpstreamDirName "viostor" -InfBaseName "viostor" -OsDirName $osDir -ArchDirName "x86" -HardwareId "PCI\VEN_1AF4&DEV_1042" -AddServiceInlineComment
+New-SyntheticDriverFiles -VirtioRoot $syntheticRoot -UpstreamDirName "viostor" -InfBaseName "viostor" -OsDirName $osDir -ArchDirName "amd64" -HardwareId "PCI\VEN_1AF4&DEV_1042" -AddServiceInlineComment
 
 New-SyntheticDriverFiles -VirtioRoot $syntheticRoot -UpstreamDirName "NetKVM" -InfBaseName "netkvm" -OsDirName $osDir -ArchDirName "x86" -HardwareId "PCI\VEN_1AF4&DEV_1041"
 New-SyntheticDriverFiles -VirtioRoot $syntheticRoot -UpstreamDirName "NetKVM" -InfBaseName "netkvm" -OsDirName $osDir -ArchDirName "amd64" -HardwareId "PCI\VEN_1AF4&DEV_1041"

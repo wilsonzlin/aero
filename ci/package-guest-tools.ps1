@@ -629,7 +629,21 @@ function Get-InfAddServiceNames {
   }
 
   $names = @{}
-  foreach ($line in ($content -split "`r?`n")) {
+  foreach ($rawLine in ($content -split "`r?`n")) {
+    $line = $rawLine
+    if ($line.Length -gt 0 -and $line[0] -eq [char]0xFEFF) {
+      $line = $line.Substring(1)
+    }
+
+    # Strip inline INF comments before parsing AddService so the extracted service name doesn't
+    # include a trailing ';' (e.g. `AddService = viostor; comment, ...`).
+    $semi = $line.IndexOf(';')
+    if ($semi -ge 0) {
+      $line = $line.Substring(0, $semi)
+    }
+    $line = $line.Trim()
+    if (-not $line) { continue }
+
     $m = [regex]::Match($line, "(?i)^\\s*AddService\\s*=\\s*(.+)$")
     if (-not $m.Success) { continue }
 
@@ -640,7 +654,7 @@ function Get-InfAddServiceNames {
     $svc = $null
     $m2 = [regex]::Match($rest, "^([^,\\s]+)")
     if ($m2.Success) {
-      $svc = $m2.Groups[1].Value.Trim()
+      $svc = $m2.Groups[1].Value.Trim().TrimEnd(';').Trim()
     }
     if ([string]::IsNullOrWhiteSpace($svc)) { continue }
 
