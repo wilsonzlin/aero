@@ -56,6 +56,29 @@ export class MemFileSystemWritableFileStream {
     this.file.lastModified = Date.now();
   }
 
+  async truncate(size: number): Promise<void> {
+    if (this.aborted) throw new Error("truncate after abort");
+    if (!Number.isSafeInteger(size) || size < 0) {
+      throw new Error(`invalid truncate size: ${size}`);
+    }
+    if (size === 0) {
+      this.parts = [];
+      return;
+    }
+    const total = this.parts.reduce((sum, p) => sum + p.byteLength, 0);
+    if (size === total) return;
+
+    const out = new Uint8Array(size);
+    let off = 0;
+    for (const p of this.parts) {
+      if (off >= size) break;
+      const len = Math.min(p.byteLength, size - off);
+      out.set(p.subarray(0, len), off);
+      off += len;
+    }
+    this.parts = [out];
+  }
+
   async abort(): Promise<void> {
     this.aborted = true;
   }
@@ -72,7 +95,14 @@ export class MemFileSystemFileHandle {
   }
 
   async getFile(): Promise<File> {
-    return new File([this.data], this.name, { lastModified: this.lastModified });
+    // `BlobPart` types only accept ArrayBuffer-backed views; `Uint8Array` is generic over
+    // `ArrayBufferLike` and may be backed by `SharedArrayBuffer`. Copy when needed so TypeScript
+    // (and spec compliance) are happy.
+    const bytesForIo: Uint8Array<ArrayBuffer> =
+      this.data.buffer instanceof ArrayBuffer
+        ? (this.data as Uint8Array<ArrayBuffer>)
+        : (new Uint8Array(this.data) as Uint8Array<ArrayBuffer>);
+    return new File([bytesForIo], this.name, { lastModified: this.lastModified });
   }
 
   async createWritable(opts: { keepExistingData?: boolean } = {}): Promise<MemFileSystemWritableFileStream> {
@@ -153,4 +183,3 @@ export async function getDir(
   }
   return dir;
 }
-
