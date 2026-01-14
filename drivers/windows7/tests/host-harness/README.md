@@ -833,7 +833,7 @@ To enable end-to-end testing:
             - Adjust/emulate the subsystem IDs to the contract values (so the tablet enumerates as
               `...&SUBSYS_00121AF4&REV_01` and binds via `aero_virtio_tablet.inf`), **or**
             - Install `aero_virtio_input.inf`: it includes the strict revision-gated generic fallback match
-              (`PCI\VEN_1AF4&DEV_1052&REV_01`) (expected for stock QEMU `virtio-tablet-pci` devices with non-Aero subsystem IDs).
+              (`PCI\VEN_1AF4&DEV_1052&REV_01`) (for QEMU, ensure `x-pci-revision=0x01` is in effect; the harness does this by default).
               - When binding via the generic fallback entry, Device Manager will show the generic **Aero VirtIO Input Device**
                 name.
               - Caveat: do not ship/install overlapping virtio-input INFs.
