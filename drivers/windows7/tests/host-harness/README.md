@@ -1013,6 +1013,9 @@ default and do not affect overall PASS/FAIL.
   - Note: newer guest selftests also emit a virtio-blk miniport IOCTL-derived diagnostics line:
     - `virtio-blk-miniport-irq|INFO|mode=...|messages=...|message_count=...|msix_config_vector=...|msix_queue0_vector=...`
     - (and WARN variants like `virtio-blk-miniport-irq|WARN|reason=...|...` when the miniport contract is missing/truncated)
+    - Note: virtio-blk miniport diagnostics may report `mode=msi` even when MSI-X vectors are assigned. The harness treats
+      any non-`0xFFFF` MSI-X vector indices as evidence of MSI-X and reports `irq_mode=msix` in the stable
+      `AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_IRQ|...` host marker.
 - Mirrored host markers (for log scraping):
   - `AERO_VIRTIO_WIN7_HOST|VIRTIO_<DEV>_IRQ_DIAG|INFO/WARN|...`
 

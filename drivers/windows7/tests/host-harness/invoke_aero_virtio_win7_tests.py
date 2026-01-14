@@ -86,6 +86,9 @@ It may also mirror guest-side IRQ diagnostics (when present) into per-device hos
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_IRQ|PASS/FAIL/INFO|irq_mode=...|irq_message_count=...`
 - `AERO_VIRTIO_WIN7_HOST|QEMU_PCI_PREFLIGHT|PASS|mode=contract-v1/transitional|vendor=1af4|devices=...`
 
+Note: virtio-blk miniport IRQ diagnostics may report `mode=msi` even when MSI-X vectors are assigned; the harness infers
+MSI-X (`irq_mode=msix`) when any `msix_*_vector` field is non-`0xFFFF`.
+
 It also mirrors the standalone guest IRQ diagnostic lines (when present):
 
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_*_IRQ_DIAG|INFO/WARN|...`
