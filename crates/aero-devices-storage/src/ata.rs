@@ -84,6 +84,7 @@ impl AtaDrive {
             mwdma_mode: 0,
         };
         drive.update_identify_transfer_mode_words();
+        drive.sync_identify_write_cache_enabled();
 
         Ok(drive)
     }
@@ -171,10 +172,35 @@ impl AtaDrive {
 
     pub fn set_write_cache_enabled(&mut self, enabled: bool) {
         self.write_cache_enabled = enabled;
+        self.sync_identify_write_cache_enabled();
     }
 
     pub fn write_cache_enabled(&self) -> bool {
         self.write_cache_enabled
+    }
+
+    fn sync_identify_write_cache_enabled(&mut self) {
+        // ATA IDENTIFY words:
+        // - Word 82: command set supported
+        // - Word 85: command set enabled
+        //
+        // Bit 5 in both words is the write cache feature.
+        const WORD_CMD_SET_SUPPORTED: usize = 82;
+        const WORD_CMD_SET_ENABLED: usize = 85;
+        const WRITE_CACHE_BIT: u16 = 1 << 5;
+
+        let supported = self.identify_word(WORD_CMD_SET_SUPPORTED) & WRITE_CACHE_BIT != 0;
+        let mut enabled_word = self.identify_word(WORD_CMD_SET_ENABLED);
+        enabled_word &= !WRITE_CACHE_BIT;
+        if supported && self.write_cache_enabled {
+            enabled_word |= WRITE_CACHE_BIT;
+        }
+        self.set_identify_word(WORD_CMD_SET_ENABLED, enabled_word);
+    }
+
+    fn identify_word(&self, idx: usize) -> u16 {
+        let off = idx * 2;
+        u16::from_le_bytes([self.identify[off], self.identify[off + 1]])
     }
 
     pub fn snapshot_state(&self) -> aero_io_snapshot::io::storage::state::IdeAtaDeviceState {
@@ -253,7 +279,7 @@ impl IoSnapshot for AtaDrive {
             }
         }
         if let Some(enabled) = r.bool(TAG_WRITE_CACHE_ENABLED)? {
-            self.write_cache_enabled = enabled;
+            self.set_write_cache_enabled(enabled);
         }
 
         if let Some(udma_enabled) = r.bool(TAG_UDMA_ENABLED)? {
@@ -400,6 +426,11 @@ mod tests {
         assert!(restored.write_cache_enabled());
         restored.load_state(&snap).unwrap();
         assert!(!restored.write_cache_enabled());
+
+        // IDENTIFY DEVICE word 85 bit 5 should reflect restored write-cache state.
+        let id = restored.identify_sector();
+        let w85 = u16::from_le_bytes([id[170], id[171]]);
+        assert_eq!(w85 & (1 << 5), 0);
     }
 
     #[test]
@@ -415,5 +446,32 @@ mod tests {
             err,
             SnapshotError::InvalidFieldEncoding("ata sector_count mismatch")
         );
+    }
+
+    #[test]
+    fn identify_sector_reflects_write_cache_enabled() {
+        let capacity = 16 * SECTOR_SIZE as u64;
+        let disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+        let mut drive = AtaDrive::new(Box::new(disk)).unwrap();
+
+        fn word(id: &[u8; SECTOR_SIZE], idx: usize) -> u16 {
+            let off = idx * 2;
+            u16::from_le_bytes([id[off], id[off + 1]])
+        }
+
+        // Word 82 reports support; it should remain stable.
+        let id = drive.identify_sector();
+        assert_ne!(word(id, 82) & (1 << 5), 0);
+        assert_ne!(word(id, 85) & (1 << 5), 0);
+
+        drive.set_write_cache_enabled(false);
+        let id = drive.identify_sector();
+        assert_ne!(word(id, 82) & (1 << 5), 0);
+        assert_eq!(word(id, 85) & (1 << 5), 0);
+
+        drive.set_write_cache_enabled(true);
+        let id = drive.identify_sector();
+        assert_ne!(word(id, 82) & (1 << 5), 0);
+        assert_ne!(word(id, 85) & (1 << 5), 0);
     }
 }
