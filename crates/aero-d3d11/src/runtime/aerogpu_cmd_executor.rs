@@ -4626,10 +4626,6 @@ impl AerogpuD3d11Executor {
             .checked_mul(16)
             .ok_or_else(|| anyhow!("GS prepass: gs_inputs buffer size overflow"))?
             .max(16);
-        // Keep input buffers separate from the expansion scratch output buffer. wgpu tracks storage
-        // buffer hazards at buffer granularity, so using disjoint ranges of the same scratch buffer
-        // as both `storage, read` and `storage, read_write` in the GS prepass dispatch triggers
-        // validation errors on some backends (notably GL).
         let max_buffer_size = self.device.limits().max_buffer_size;
         if gs_inputs_size > max_buffer_size {
             bail!(
@@ -4642,12 +4638,14 @@ impl AerogpuD3d11Executor {
                 "GS prepass: gs_inputs buffer size {gs_inputs_size} exceeds max_storage_buffer_binding_size {max_storage_binding_size}"
             );
         }
-        let gs_inputs_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("aerogpu_cmd gs prepass gs_inputs buffer"),
-            size: gs_inputs_size,
-            usage: wgpu::BufferUsages::STORAGE,
-            mapped_at_creation: false,
-        });
+        // The translated GS prepass binds `gs_inputs` as a storage buffer; allocate it from the
+        // expansion scratch buffer (instead of creating a fresh wgpu buffer every draw) and bind it
+        // as `STORAGE_READ_WRITE` to avoid per-buffer READ vs READ_WRITE hazard validation on
+        // downlevel backends such as wgpu-GL.
+        let gs_inputs_alloc = self
+            .expansion_scratch
+            .alloc_metadata(&self.device, gs_inputs_size, 16)
+            .map_err(|e| anyhow!("GS prepass: alloc gs_inputs buffer: {e}"))?;
 
         // Map WGSL `@location` indices (used by the vertex-pulling layout) back to the original
         // D3D11 input register indices. Signature-driven translation often compacts locations, so
@@ -5256,9 +5254,9 @@ impl AerogpuD3d11Executor {
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: &gs_inputs_buffer,
-                    offset: 0,
-                    size: wgpu::BufferSize::new(gs_inputs_size),
+                    buffer: gs_inputs_alloc.buffer.as_ref(),
+                    offset: gs_inputs_alloc.offset,
+                    size: wgpu::BufferSize::new(gs_inputs_alloc.size),
                 }),
             }],
         });
@@ -5531,9 +5529,9 @@ impl AerogpuD3d11Executor {
                 wgpu::BindGroupEntry {
                     binding: 5,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &gs_inputs_buffer,
-                        offset: 0,
-                        size: wgpu::BufferSize::new(gs_inputs_size),
+                        buffer: gs_inputs_alloc.buffer.as_ref(),
+                        offset: gs_inputs_alloc.offset,
+                        size: wgpu::BufferSize::new(gs_inputs_alloc.size),
                     }),
                 },
             ],
