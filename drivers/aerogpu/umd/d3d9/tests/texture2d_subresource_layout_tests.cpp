@@ -236,6 +236,10 @@ int main() {
   // both the base level and smaller mips.
   ok &= RunCase("BC1 7x5 mips=5 layers=2", aerogpu::kD3dFmtDxt1, 7, 5, 5, 2);
 
+  // BC2 uses 16-byte blocks (DXT2/DXT3 family); verify the 16-byte block path
+  // for the DXT3 format encoding.
+  ok &= RunCase("BC2 7x5 mips=5 layers=2", aerogpu::kD3dFmtDxt3, 7, 5, 5, 2);
+
   // BC3 uses 16-byte blocks (DXT5 family); verify the 16-byte block path.
   ok &= RunCase("BC3 7x5 mips=5 layers=2", aerogpu::kD3dFmtDxt5, 7, 5, 5, 2);
 
