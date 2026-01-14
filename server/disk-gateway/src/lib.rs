@@ -35,6 +35,70 @@ use aero_http_range::{
     parse_range_header, resolve_ranges, RangeParseError, RangeResolveError, ResolvedByteRange,
 };
 
+fn append_vary(headers: &mut HeaderMap, tokens: &[&str]) {
+    // Keep behavior consistent with `aero-storage-server`'s CORS implementation: append `Vary`
+    // tokens without clobbering any preexisting values, and treat `Vary: *` as a sentinel that
+    // should remain intact.
+    let mut out: Vec<String> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut has_star = false;
+
+    for value in headers.get_all(VARY).iter() {
+        let Ok(value) = value.to_str() else {
+            continue;
+        };
+        for raw in value.split(',') {
+            let token = raw.trim();
+            if token.is_empty() {
+                continue;
+            }
+            if token == "*" {
+                has_star = true;
+                break;
+            }
+            let key = token.to_ascii_lowercase();
+            if seen.insert(key) {
+                out.push(token.to_string());
+            }
+        }
+        if has_star {
+            break;
+        }
+    }
+
+    if has_star {
+        headers.remove(VARY);
+        headers.insert(VARY, HeaderValue::from_static("*"));
+        return;
+    }
+
+    for token in tokens {
+        let token = token.trim();
+        if token.is_empty() {
+            continue;
+        }
+        if token == "*" {
+            headers.remove(VARY);
+            headers.insert(VARY, HeaderValue::from_static("*"));
+            return;
+        }
+        let key = token.to_ascii_lowercase();
+        if seen.insert(key) {
+            out.push(token.to_string());
+        }
+    }
+
+    if out.is_empty() {
+        return;
+    }
+
+    let normalized = out.join(", ");
+    if let Ok(value) = HeaderValue::from_str(&normalized) {
+        headers.remove(VARY);
+        headers.insert(VARY, value);
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Config {
     pub bind: SocketAddr,
@@ -520,8 +584,7 @@ fn apply_cors_headers(
             .insert(ACCESS_CONTROL_ALLOW_ORIGIN, allow_origin);
 
         if cfg.cors_allowed_origins.should_vary_origin() {
-            resp.headers_mut()
-                .insert(VARY, HeaderValue::from_static("Origin"));
+            append_vary(resp.headers_mut(), &["Origin"]);
         }
 
         resp.headers_mut().insert(
@@ -536,9 +599,13 @@ fn apply_cors_headers(
         // Even when `Access-Control-Allow-Origin: *`, varying on the preflight request headers is a
         // safe default for caches and avoids surprising behavior if deployments later move to an
         // allowlist.
-        resp.headers_mut().insert(
-            VARY,
-            HeaderValue::from_static("Origin, Access-Control-Request-Method, Access-Control-Request-Headers"),
+        append_vary(
+            resp.headers_mut(),
+            &[
+                "Origin",
+                "Access-Control-Request-Method",
+                "Access-Control-Request-Headers",
+            ],
         );
         resp.headers_mut().insert(
             ACCESS_CONTROL_ALLOW_METHODS,
@@ -1907,5 +1974,65 @@ mod tests {
         assert!(if_none_match_matches("\"a,b\"", "\"a,b\""));
         assert!(if_none_match_matches("W/\"x\", \"a,b\"", "\"a,b\""));
         assert!(!if_none_match_matches("\"a,b\"", "\"c\""));
+    }
+
+    #[test]
+    fn apply_cors_headers_appends_vary_instead_of_overwriting() {
+        let mut allowed = HashSet::new();
+        allowed.insert("https://app.example".to_owned());
+        let cfg = Config {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            public_dir: PathBuf::from("public"),
+            private_dir: PathBuf::from("private"),
+            token_secret: "secret".into(),
+            cors_allowed_origins: AllowedOrigins::List(allowed),
+            corp_policy: CorpPolicy::SameSite,
+            lease_ttl: Duration::from_secs(60),
+            max_ranges: 16,
+            max_total_bytes: 512 * 1024 * 1024,
+        };
+
+        let origin = HeaderValue::from_static("https://app.example");
+
+        let mut resp = StatusCode::OK.into_response();
+        resp.headers_mut()
+            .insert(VARY, HeaderValue::from_static("Accept-Encoding"));
+
+        apply_cors_headers(&cfg, Some(&origin), &mut resp, false, "");
+
+        assert_eq!(
+            resp.headers().get(VARY).unwrap().to_str().unwrap(),
+            "Accept-Encoding, Origin"
+        );
+    }
+
+    #[test]
+    fn apply_cors_headers_preserves_vary_star() {
+        let cfg = Config {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            public_dir: PathBuf::from("public"),
+            private_dir: PathBuf::from("private"),
+            token_secret: "secret".into(),
+            cors_allowed_origins: AllowedOrigins::Any,
+            corp_policy: CorpPolicy::SameSite,
+            lease_ttl: Duration::from_secs(60),
+            max_ranges: 16,
+            max_total_bytes: 512 * 1024 * 1024,
+        };
+
+        let origin = HeaderValue::from_static("https://app.example");
+
+        let mut resp = StatusCode::NO_CONTENT.into_response();
+        resp.headers_mut().insert(VARY, HeaderValue::from_static("*"));
+
+        apply_cors_headers(
+            &cfg,
+            Some(&origin),
+            &mut resp,
+            true,
+            "GET, HEAD, OPTIONS",
+        );
+
+        assert_eq!(resp.headers().get(VARY).unwrap().to_str().unwrap(), "*");
     }
 }
