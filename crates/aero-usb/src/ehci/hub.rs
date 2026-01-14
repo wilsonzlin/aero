@@ -559,6 +559,9 @@ impl RootHub {
                 if let Some(dev) = port.device.as_mut() {
                     dev.load_state(&state)?;
                 }
+            } else {
+                // Snapshot indicates no device attached.
+                port.device = None;
             }
 
             // Ensure the device model observes the restored port suspended state.
