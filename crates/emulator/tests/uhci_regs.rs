@@ -703,6 +703,18 @@ fn uhci_remote_wakeup_propagates_through_external_hub() {
                 w_length: 0,
             },
         );
+        // Remote wakeup is a device-level feature. Downstream devices signal resume upstream
+        // through the hub, so the hub itself must have DEVICE_REMOTE_WAKEUP enabled as well.
+        control_no_data(
+            &mut dev,
+            SetupPacket {
+                bm_request_type: 0x00,
+                b_request: 0x03, // SET_FEATURE
+                w_value: 1,      // DEVICE_REMOTE_WAKEUP
+                w_index: 0,
+                w_length: 0,
+            },
+        );
     }
 
     // Power + reset hub downstream port 1 to make the keyboard reachable.
