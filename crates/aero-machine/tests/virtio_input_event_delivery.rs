@@ -3,8 +3,8 @@
 use aero_devices::pci::{profile, PciBdf};
 use aero_machine::{Machine, MachineConfig};
 use aero_virtio::devices::input::{
-    VirtioInput, BTN_LEFT, EV_KEY, EV_LED, EV_REL, EV_SYN, KEY_A, LED_CAPSL, REL_HWHEEL, REL_WHEEL,
-    KEY_VOLUMEUP, REL_X, REL_Y, SYN_REPORT,
+    VirtioInput, BTN_LEFT, EV_KEY, EV_LED, EV_REL, EV_SYN, KEY_A, KEY_VOLUMEUP, LED_CAPSL,
+    REL_HWHEEL, REL_WHEEL, REL_X, REL_Y, SYN_REPORT,
 };
 use aero_virtio::pci::{
     VIRTIO_STATUS_ACKNOWLEDGE, VIRTIO_STATUS_DRIVER, VIRTIO_STATUS_DRIVER_OK,

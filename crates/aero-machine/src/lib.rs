@@ -5656,15 +5656,7 @@ impl Machine {
 
                 let start_x = u64::from(dev.vbe_dispi_x_offset);
                 let start_y = u64::from(dev.vbe_dispi_y_offset);
-                (
-                    width,
-                    height,
-                    bpp,
-                    bytes_per_pixel,
-                    pitch,
-                    start_x,
-                    start_y,
-                )
+                (width, height, bpp, bytes_per_pixel, pitch, start_x, start_y)
             };
 
         let base = u64::from(self.bios.video.vbe.lfb_base)
@@ -12004,7 +11996,6 @@ impl Machine {
                         dev.vga_port_write_u8(0x3C9, b);
                     }
                 }
-
             }
         }
         self.cpu.state.a20_enabled = self.chipset.a20().enabled();
