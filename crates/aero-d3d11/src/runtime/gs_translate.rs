@@ -4889,6 +4889,107 @@ mod tests {
     }
 
     #[test]
+    fn gs_translate_defaults_to_written_output_varyings_when_dcl_output_missing() {
+        // Some real-world geometry shaders omit `dcl_output` declarations and instead rely on the
+        // DXBC output signature (`OSGN`) to define their stage interface. Our `Sm4Module` IR does
+        // not currently carry signature information, so ensure the default varyings selection falls
+        // back to scanning instruction destinations for `o#` writes.
+        let module = Sm4Module {
+            stage: ShaderStage::Geometry,
+            model: ShaderModel { major: 4, minor: 0 },
+            decls: vec![
+                Sm4Decl::GsInputPrimitive {
+                    primitive: GsInputPrimitive::Point(1),
+                },
+                Sm4Decl::GsOutputTopology {
+                    topology: GsOutputTopology::TriangleStrip(3),
+                },
+                Sm4Decl::GsMaxOutputVertexCount { max: 1 },
+            ],
+            instructions: vec![
+                // o0 = position
+                Sm4Inst::Mov {
+                    dst: DstOperand {
+                        reg: RegisterRef {
+                            file: RegFile::Output,
+                            index: 0,
+                        },
+                        mask: WriteMask::XYZW,
+                        saturate: false,
+                    },
+                    src: SrcOperand {
+                        kind: SrcKind::ImmediateF32([
+                            0.0f32.to_bits(),
+                            0.0f32.to_bits(),
+                            0.0f32.to_bits(),
+                            1.0f32.to_bits(),
+                        ]),
+                        swizzle: Swizzle::XYZW,
+                        modifier: OperandModifier::None,
+                    },
+                },
+                // o1 = color
+                Sm4Inst::Mov {
+                    dst: DstOperand {
+                        reg: RegisterRef {
+                            file: RegFile::Output,
+                            index: 1,
+                        },
+                        mask: WriteMask::XYZW,
+                        saturate: false,
+                    },
+                    src: SrcOperand {
+                        kind: SrcKind::ImmediateF32([
+                            1.0f32.to_bits(),
+                            0.0f32.to_bits(),
+                            0.0f32.to_bits(),
+                            1.0f32.to_bits(),
+                        ]),
+                        swizzle: Swizzle::XYZW,
+                        modifier: OperandModifier::None,
+                    },
+                },
+                // o7 = another varying
+                Sm4Inst::Mov {
+                    dst: DstOperand {
+                        reg: RegisterRef {
+                            file: RegFile::Output,
+                            index: 7,
+                        },
+                        mask: WriteMask::XYZW,
+                        saturate: false,
+                    },
+                    src: SrcOperand {
+                        kind: SrcKind::ImmediateF32([
+                            0.0f32.to_bits(),
+                            1.0f32.to_bits(),
+                            0.0f32.to_bits(),
+                            1.0f32.to_bits(),
+                        ]),
+                        swizzle: Swizzle::XYZW,
+                        modifier: OperandModifier::None,
+                    },
+                },
+                Sm4Inst::Ret,
+            ],
+        };
+        let wgsl = translate_gs_module_to_wgsl_compute_prepass(&module)
+            .expect("translation should succeed");
+        assert!(
+            wgsl.contains("out_vertices.data[vtx_idx].varyings[1u] = o1;"),
+            "expected output o1 to be exported by default even without a dcl_output declaration:\n{wgsl}"
+        );
+        assert!(
+            wgsl.contains("out_vertices.data[vtx_idx].varyings[7u] = o7;"),
+            "expected output o7 to be exported by default even without a dcl_output declaration:\n{wgsl}"
+        );
+        assert!(
+            !wgsl.contains("varyings[0u]"),
+            "expected location 0 to remain reserved for position:\n{wgsl}"
+        );
+    }
+
+    #[test]
     fn gs_translate_emits_prepass_state_with_indirect_args_at_offset_0() {
         // Regression test: the executor feeds the GS prepass state buffer directly into
         // `draw_indexed_indirect`, so `DrawIndexedIndirectArgs` must be the first field in the
