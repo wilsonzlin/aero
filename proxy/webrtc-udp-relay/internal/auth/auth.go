@@ -24,14 +24,14 @@ type ClaimsVerifier interface {
 	VerifyAndExtractClaims(credential string) (JWTClaims, error)
 }
 
-type NoopVerifier struct{}
+type noopVerifier struct{}
 
-func (NoopVerifier) Verify(string) error { return nil }
+func (noopVerifier) Verify(string) error { return nil }
 
 func NewVerifier(cfg config.Config) (Verifier, error) {
 	switch cfg.AuthMode {
 	case config.AuthModeNone:
-		return NoopVerifier{}, nil
+		return noopVerifier{}, nil
 	case config.AuthModeAPIKey:
 		return APIKeyVerifier{Expected: cfg.APIKey}, nil
 	case config.AuthModeJWT:
@@ -55,18 +55,18 @@ func CredentialFromRequest(mode config.AuthMode, r *http.Request) (string, error
 	if r == nil {
 		return "", ErrMissingCredentials
 	}
-	if v := CredentialFromHeaders(mode, r.Header); strings.TrimSpace(v) != "" {
+	if v := credentialFromHeaders(mode, r.Header); strings.TrimSpace(v) != "" {
 		return strings.TrimSpace(v), nil
 	}
 	return CredentialFromQuery(mode, r.URL.Query())
 }
 
-// CredentialFromHeaders extracts credentials from HTTP headers.
+// credentialFromHeaders extracts credentials from HTTP headers.
 //
 // Supported formats:
 //   - AUTH_MODE=api_key: X-API-Key: ..., or Authorization: ApiKey ...
 //   - AUTH_MODE=jwt:    Authorization: Bearer ...
-func CredentialFromHeaders(mode config.AuthMode, h http.Header) string {
+func credentialFromHeaders(mode config.AuthMode, h http.Header) string {
 	switch mode {
 	case config.AuthModeAPIKey:
 		if v := strings.TrimSpace(h.Get("X-API-Key")); v != "" {
