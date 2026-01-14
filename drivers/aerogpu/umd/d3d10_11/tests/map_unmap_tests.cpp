@@ -36,6 +36,7 @@ using aerogpu::d3d10_11::kD3D11BindVertexBuffer;
 using aerogpu::d3d10_11::kD3D11BindIndexBuffer;
 using aerogpu::d3d10_11::kD3D11BindConstantBuffer;
 using aerogpu::d3d10_11::kD3D11BindShaderResource;
+using aerogpu::d3d10_11::kD3D11BindUnorderedAccess;
 using aerogpu::d3d10_11::kD3D11BindRenderTarget;
 
 bool Check(bool cond, const char* msg) {
@@ -6518,6 +6519,63 @@ bool TestGuestBackedCreateBufferInitialDataDirtyRange() {
   return true;
 }
 
+bool TestCreateBufferSrvUavBindsMarkStorageUsage() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false),
+             "InitTestDevice(CreateResource buffer storage usage)")) {
+    return false;
+  }
+
+  auto check_bind = [&](uint32_t bind_flags, const char* label) -> bool {
+    TestResource buf{};
+    if (!Check(CreateBuffer(&dev,
+                            /*byte_width=*/16,
+                            AEROGPU_D3D11_USAGE_DEFAULT,
+                            bind_flags,
+                            /*cpu_access_flags=*/0,
+                            &buf),
+               label)) {
+      return false;
+    }
+
+    const HRESULT hr = dev.device_funcs.pfnFlush(dev.hDevice);
+    if (!Check(hr == S_OK, "Flush after CreateResource(buffer)")) {
+      return false;
+    }
+    if (!Check(ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size()), "ValidateStream")) {
+      return false;
+    }
+
+    const uint8_t* stream = dev.harness.last_stream.data();
+    const size_t stream_len = StreamBytesUsed(stream, dev.harness.last_stream.size());
+
+    CmdLoc create_loc = FindLastOpcode(stream, stream_len, AEROGPU_CMD_CREATE_BUFFER);
+    if (!Check(create_loc.hdr != nullptr, "CREATE_BUFFER emitted")) {
+      return false;
+    }
+    const auto* create_cmd = reinterpret_cast<const aerogpu_cmd_create_buffer*>(stream + create_loc.offset);
+    if (!Check((create_cmd->usage_flags & AEROGPU_RESOURCE_USAGE_STORAGE) != 0,
+               "CREATE_BUFFER usage_flags includes STORAGE")) {
+      return false;
+    }
+    if (!Check((create_cmd->usage_flags & AEROGPU_RESOURCE_USAGE_TEXTURE) == 0,
+               "CREATE_BUFFER usage_flags does not include TEXTURE")) {
+      return false;
+    }
+
+    dev.device_funcs.pfnDestroyResource(dev.hDevice, buf.hResource);
+    return true;
+  };
+
+  bool ok = true;
+  ok &= check_bind(kD3D11BindShaderResource, "CreateBuffer(SRV bind flag)");
+  ok &= check_bind(kD3D11BindUnorderedAccess, "CreateBuffer(UAV bind flag)");
+
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return ok;
+}
+
 bool TestHostOwnedCreateTextureInitialDataUploads() {
   TestDevice dev{};
   if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false), "InitTestDevice(CreateResource initial tex2d host-owned)")) {
@@ -9058,6 +9116,7 @@ int main() {
   ok &= TestGuestBackedUpdateSubresourceUPBcTextureBoxRejectsMisaligned();
   ok &= TestHostOwnedCreateBufferInitialDataUploads();
   ok &= TestGuestBackedCreateBufferInitialDataDirtyRange();
+  ok &= TestCreateBufferSrvUavBindsMarkStorageUsage();
   ok &= TestHostOwnedCreateTextureInitialDataUploads();
   ok &= TestGuestBackedCreateTextureInitialDataDirtyRange();
   ok &= TestHostOwnedCreateBcTextureInitialDataUploads();
