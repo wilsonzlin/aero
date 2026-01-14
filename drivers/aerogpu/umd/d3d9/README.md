@@ -482,6 +482,7 @@ This subset is validated via:
   `d3d9_shader_stage_interop`, `d3d9ex_ps_only_triangle`,
   `d3d9ex_texture_16bit_formats`, `d3d9_texture_16bit_sampling`, `d3d9_patch_sanity`, `d3d9_patch_rendering_smoke`,
   `d3d9_process_vertices_sanity`, `d3d9_process_vertices_smoke`,
+  `d3d9_validate_device_sanity`, `d3d9ex_stateblock_sanity`,
   `d3d9ex_draw_indexed_primitive_up`, `d3d9ex_scissor_sanity`, `d3d9ex_query_latency`, `d3d9ex_event_query`,
   `d3d9_raster_status_sanity`, `d3d9ex_multiframe_triangle`, `d3d9ex_vb_dirty_range`, and the DWM-focused `d3d9ex_dwm_ddi_sanity` / `d3d9ex_dwm_probe`).
 
@@ -625,6 +626,9 @@ These cached values participate in D3D9 state blocks:
 - `CreateStateBlock` snapshots the current cached values when the state block is created.
 - `CaptureStateBlock` refreshes them from the current device state.
 - `ApplyStateBlock` restores them (updating the UMD-side caches so `Get*` reflects the applied state).
+
+`ValidateDevice` is implemented and reports a conservative `NumPasses = 1` for the supported shader pipeline (validated by
+`d3d9_validate_device_sanity`).
 
 ### Caps/feature gating
 
