@@ -510,8 +510,9 @@ python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
 ```
 
 Note: `--with-snd-buffer-limits` requires a guest image provisioned with the selftest flag `--test-snd-buffer-limits`
-(so the guest emits `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|PASS/FAIL|...`). If the guest reports
-`SKIP|flag_not_set` or the marker is missing entirely, the harness treats it as a hard failure.
+(or env var `AERO_VIRTIO_SELFTEST_TEST_SND_BUFFER_LIMITS=1`) so the guest emits
+`AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|PASS/FAIL|...`. If the guest reports `SKIP|flag_not_set` or the
+marker is missing entirely, the harness treats it as a hard failure.
 
 ---
 

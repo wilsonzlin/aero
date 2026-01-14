@@ -3738,7 +3738,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "Require the guest virtio-snd-buffer-limits stress test marker to PASS. "
-            "This requires a guest image provisioned with --test-snd-buffer-limits and also requires "
+            "This requires a guest image provisioned with --test-snd-buffer-limits "
+            "(or env var AERO_VIRTIO_SELFTEST_TEST_SND_BUFFER_LIMITS=1) and also requires "
             "--with-virtio-snd/--enable-virtio-snd so a virtio-snd device is attached."
         ),
     )

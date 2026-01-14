@@ -514,7 +514,8 @@ Notes:
   - `PASS|frames=...|non_silence=...` when the duplex test runs successfully.
   - `FAIL|reason=...|hr=...` if any WASAPI call fails or capture returns no frames.
   - `SKIP|endpoint_missing` when the duplex test is enabled but a matching endpoint cannot be found.
-- The buffer sizing stress marker (`virtio-snd-buffer-limits`) is emitted when `--test-snd-buffer-limits` is set:
+- The buffer sizing stress marker (`virtio-snd-buffer-limits`) is emitted when `--test-snd-buffer-limits` is set
+  (or env var `AERO_VIRTIO_SELFTEST_TEST_SND_BUFFER_LIMITS=1`):
   - `PASS|...` when the large-buffer Initialize attempt completes without hanging (success or expected failure).
   - `FAIL|reason=...|hr=...` when the attempt times out or returns inconsistent results.
 - The virtio-snd section also emits an informational mix-format marker (`virtio-snd-format`) describing the shared-mode

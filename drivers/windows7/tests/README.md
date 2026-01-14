@@ -99,8 +99,8 @@ drivers/windows7/tests/
 - Also emits an informational `virtio-snd-format` marker exposing the negotiated endpoint mix formats (as visible via
   the Windows shared-mode mix format returned by `IAudioClient::GetMixFormat()`):
   - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-format|INFO|render=<...>|capture=<...>`
-- When run with `--test-snd-buffer-limits`, also runs a WASAPI buffer sizing stress test and emits the marker
-  `virtio-snd-buffer-limits` (PASS/FAIL).
+- When run with `--test-snd-buffer-limits` (or env var `AERO_VIRTIO_SELFTEST_TEST_SND_BUFFER_LIMITS=1`), also runs a
+  WASAPI buffer sizing stress test and emits the marker `virtio-snd-buffer-limits` (PASS/FAIL).
 - Logs to:
   - stdout
   - `C:\aero-virtio-selftest.log`
