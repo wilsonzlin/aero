@@ -4309,6 +4309,75 @@ mod tests {
     }
 
     #[test]
+    fn validate_manifest_v1_rejects_non_sector_aligned_chunk_size() {
+        let manifest = ManifestV1 {
+            schema: MANIFEST_SCHEMA.to_string(),
+            image_id: "demo".to_string(),
+            version: "sha256-abc".to_string(),
+            mime_type: CHUNK_MIME_TYPE.to_string(),
+            total_size: (SECTOR_SIZE as u64) * 2,
+            chunk_size: (SECTOR_SIZE as u64) + 1,
+            chunk_count: 1,
+            chunk_index_width: CHUNK_INDEX_WIDTH as u32,
+            chunks: None,
+        };
+        let err = validate_manifest_v1(&manifest, MAX_CHUNKS)
+            .expect_err("expected chunkSize alignment validation failure");
+        assert!(
+            err.to_string()
+                .contains("manifest chunkSize must be a multiple"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_manifest_v1_rejects_chunk_count_mismatch() {
+        let total_size = (SECTOR_SIZE as u64) * 3;
+        let chunk_size = (SECTOR_SIZE as u64) * 2;
+        let expected = chunk_count(total_size, chunk_size);
+        assert_eq!(expected, 2);
+
+        let manifest = ManifestV1 {
+            schema: MANIFEST_SCHEMA.to_string(),
+            image_id: "demo".to_string(),
+            version: "sha256-abc".to_string(),
+            mime_type: CHUNK_MIME_TYPE.to_string(),
+            total_size,
+            chunk_size,
+            chunk_count: expected + 1,
+            chunk_index_width: CHUNK_INDEX_WIDTH as u32,
+            chunks: None,
+        };
+        let err = validate_manifest_v1(&manifest, MAX_CHUNKS)
+            .expect_err("expected chunkCount mismatch validation failure");
+        assert!(
+            err.to_string().contains("manifest chunkCount mismatch"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_manifest_v1_rejects_chunk_index_width_too_large() {
+        let manifest = ManifestV1 {
+            schema: MANIFEST_SCHEMA.to_string(),
+            image_id: "demo".to_string(),
+            version: "sha256-abc".to_string(),
+            mime_type: CHUNK_MIME_TYPE.to_string(),
+            total_size: SECTOR_SIZE as u64,
+            chunk_size: SECTOR_SIZE as u64,
+            chunk_count: 1,
+            chunk_index_width: 33,
+            chunks: None,
+        };
+        let err = validate_manifest_v1(&manifest, MAX_CHUNKS)
+            .expect_err("expected chunkIndexWidth validation failure");
+        assert!(
+            err.to_string().contains("unreasonably large"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
     fn validate_manifest_v1_rejects_chunk_index_width_too_small() {
         let manifest = ManifestV1 {
             schema: MANIFEST_SCHEMA.to_string(),
@@ -4369,6 +4438,85 @@ mod tests {
         assert!(
             err.to_string().contains("exceeds --max-chunks"),
             "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_manifest_v1_rejects_chunks_length_mismatch() {
+        let manifest = ManifestV1 {
+            schema: MANIFEST_SCHEMA.to_string(),
+            image_id: "demo".to_string(),
+            version: "sha256-abc".to_string(),
+            mime_type: CHUNK_MIME_TYPE.to_string(),
+            total_size: (SECTOR_SIZE as u64) * 2,
+            chunk_size: SECTOR_SIZE as u64,
+            chunk_count: 2,
+            chunk_index_width: CHUNK_INDEX_WIDTH as u32,
+            chunks: Some(vec![ManifestChunkV1 {
+                size: Some(SECTOR_SIZE as u64),
+                sha256: None,
+            }]),
+        };
+        let err = validate_manifest_v1(&manifest, MAX_CHUNKS)
+            .expect_err("expected chunks length validation failure");
+        assert!(
+            err.to_string().contains("manifest chunks length"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_manifest_v1_rejects_chunk_size_mismatch_in_chunks_list() {
+        let manifest = ManifestV1 {
+            schema: MANIFEST_SCHEMA.to_string(),
+            image_id: "demo".to_string(),
+            version: "sha256-abc".to_string(),
+            mime_type: CHUNK_MIME_TYPE.to_string(),
+            total_size: (SECTOR_SIZE as u64) * 3,
+            chunk_size: (SECTOR_SIZE as u64) * 2,
+            chunk_count: 2,
+            chunk_index_width: CHUNK_INDEX_WIDTH as u32,
+            chunks: Some(vec![
+                ManifestChunkV1 {
+                    size: Some((SECTOR_SIZE as u64) * 2),
+                    sha256: None,
+                },
+                ManifestChunkV1 {
+                    size: Some((SECTOR_SIZE as u64) * 2), // wrong: expected 512
+                    sha256: None,
+                },
+            ]),
+        };
+        let err = validate_manifest_v1(&manifest, MAX_CHUNKS)
+            .expect_err("expected per-chunk size validation failure");
+        assert!(
+            err.to_string().contains("manifest chunk[1].size mismatch"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_manifest_v1_rejects_invalid_chunk_sha256() {
+        let manifest = ManifestV1 {
+            schema: MANIFEST_SCHEMA.to_string(),
+            image_id: "demo".to_string(),
+            version: "sha256-abc".to_string(),
+            mime_type: CHUNK_MIME_TYPE.to_string(),
+            total_size: SECTOR_SIZE as u64,
+            chunk_size: SECTOR_SIZE as u64,
+            chunk_count: 1,
+            chunk_index_width: CHUNK_INDEX_WIDTH as u32,
+            chunks: Some(vec![ManifestChunkV1 {
+                size: Some(SECTOR_SIZE as u64),
+                sha256: Some("not-hex".to_string()),
+            }]),
+        };
+        let err = validate_manifest_v1(&manifest, MAX_CHUNKS)
+            .expect_err("expected sha256 validation failure");
+        let msg = error_chain_summary(&err);
+        assert!(
+            msg.contains("manifest chunk[0].sha256 is invalid") && msg.contains("expected 64 hex"),
+            "unexpected error: {msg}"
         );
     }
 
