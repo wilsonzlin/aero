@@ -3043,11 +3043,24 @@ static VOID AerovNetInterruptDpcWork(_Inout_ AEROVNET_ADAPTER* Adapter, _In_ BOO
           NET_BUFFER_LIST_NEXT_NBL(RxHead->Nbl) = NULL;
           NET_BUFFER_LIST_INFO(RxHead->Nbl, TcpIpChecksumNetBufferListInfo) = NULL;
 
-          // Note: mergeable RX buffers may scatter a single packet across multiple
-          // buffers, making the frame non-contiguous in memory. For now, only
-          // indicate checksum status when the packet fits in a single buffer.
+          // Indicate RX checksum status (when negotiated) so Windows can skip
+          // software checksum validation. When mergeable RX buffers are used,
+          // the packet may be scattered across multiple MDLs; in that case, use
+          // NdisGetDataBuffer to materialize a contiguous copy for header parsing.
           if (NumBuffers == 1) {
-            AerovNetIndicateRxChecksum(Adapter, RxHead->Nbl, RxHead->BufferVa + RxHdrBytes, TotalPayloadLen, (const VIRTIO_NET_HDR*)RxHead->BufferVa);
+            AerovNetIndicateRxChecksum(Adapter, RxHead->Nbl, RxHead->BufferVa + RxHdrBytes, TotalPayloadLen,
+                                       (const VIRTIO_NET_HDR*)RxHead->BufferVa);
+          } else {
+            UCHAR FrameBytes[2048];
+            PVOID FramePtr;
+
+            FramePtr = NULL;
+            if (RxHead->Nb && TotalPayloadLen <= sizeof(FrameBytes)) {
+              FramePtr = NdisGetDataBuffer(RxHead->Nb, TotalPayloadLen, FrameBytes, 1, 0);
+            }
+            if (FramePtr) {
+              AerovNetIndicateRxChecksum(Adapter, RxHead->Nbl, (const UCHAR*)FramePtr, TotalPayloadLen, (const VIRTIO_NET_HDR*)RxHead->BufferVa);
+            }
           }
 
           if (IndicateTail) {
