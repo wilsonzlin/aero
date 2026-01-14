@@ -80,8 +80,17 @@ export async function opfsCreateBlankDisk(
   const handle = await opfsGetDiskFileHandle(fileName, { create: true, dirPath });
   const writable = await handle.createWritable({ keepExistingData: false });
   report(onProgress, { phase: "create", processedBytes: 0, totalBytes: sizeBytes });
-  await writable.truncate(sizeBytes);
-  await writable.close();
+  try {
+    await writable.truncate(sizeBytes);
+    await writable.close();
+  } catch (err) {
+    try {
+      await writable.abort(err);
+    } catch {
+      // ignore abort failures
+    }
+    throw err;
+  }
   report(onProgress, { phase: "create", processedBytes: sizeBytes, totalBytes: sizeBytes });
 
   // We do not compute a checksum for large sparse files (too expensive).
@@ -120,20 +129,34 @@ export async function opfsImportFile(
   let crc = crc32Init();
   let processed = 0;
 
-  report(onProgress, { phase: "import", processedBytes: 0, totalBytes: file.size });
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    const chunk = value;
-    await writable.write(chunk);
-    processed += chunk.byteLength;
-    if (shouldChecksum) {
-      crc = crc32Update(crc, chunk);
+  try {
+    report(onProgress, { phase: "import", processedBytes: 0, totalBytes: file.size });
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = value;
+      await writable.write(chunk);
+      processed += chunk.byteLength;
+      if (shouldChecksum) {
+        crc = crc32Update(crc, chunk);
+      }
+      report(onProgress, { phase: "import", processedBytes: processed, totalBytes: file.size });
     }
-    report(onProgress, { phase: "import", processedBytes: processed, totalBytes: file.size });
-  }
 
-  await writable.close();
+    await writable.close();
+  } catch (err) {
+    try {
+      await reader.cancel(err);
+    } catch {
+      // ignore
+    }
+    try {
+      await writable.abort(err);
+    } catch {
+      // ignore abort failures
+    }
+    throw err;
+  }
   if (!shouldChecksum) {
     return { sizeBytes: file.size, checksumCrc32: undefined };
   }
@@ -170,8 +193,17 @@ export async function opfsResizeDisk(
   const handle = await opfsGetDiskFileHandle(fileName, { create: false, dirPath });
   const writable = await handle.createWritable({ keepExistingData: true });
   report(onProgress, { phase: "resize", processedBytes: 0, totalBytes: newSizeBytes });
-  await writable.truncate(newSizeBytes);
-  await writable.close();
+  try {
+    await writable.truncate(newSizeBytes);
+    await writable.close();
+  } catch (err) {
+    try {
+      await writable.abort(err);
+    } catch {
+      // ignore abort failures
+    }
+    throw err;
+  }
   report(onProgress, { phase: "resize", processedBytes: newSizeBytes, totalBytes: newSizeBytes });
 }
 

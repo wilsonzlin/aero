@@ -209,8 +209,17 @@ class OpfsStore implements BinaryStore {
   async write(path: string, data: Uint8Array<ArrayBuffer>): Promise<void> {
     const handle = await openFileHandle(path, { create: true });
     const writable = await handle.createWritable({ keepExistingData: false });
-    await writable.write(toArrayBufferUint8(data));
-    await writable.close();
+    try {
+      await writable.write(toArrayBufferUint8(data));
+      await writable.close();
+    } catch (err) {
+      try {
+        await writable.abort(err);
+      } catch {
+        // ignore abort failures
+      }
+      throw err;
+    }
   }
 
   async remove(path: string, options: { recursive?: boolean } = {}): Promise<void> {

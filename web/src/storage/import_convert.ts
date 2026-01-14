@@ -115,8 +115,18 @@ export async function importConvertToOpfs(
     const outName = `${baseName}.iso`;
     const fileHandle = await destDir.getFileHandle(outName, { create: true });
     const writable = await fileHandle.createWritable({ keepExistingData: false });
-    const { crc32 } = await copySequentialCrc32(src, writable, options.signal, options.onProgress);
-    await writable.close();
+    let crc32: number;
+    try {
+      ({ crc32 } = await copySequentialCrc32(src, writable, options.signal, options.onProgress));
+      await writable.close();
+    } catch (err) {
+      try {
+        await writable.abort(err);
+      } catch {
+        // ignore abort failures
+      }
+      throw err;
+    }
 
     const manifest: ImportManifest = {
       manifestVersion: 1,
@@ -261,8 +271,17 @@ async function writeManifest(
 ): Promise<void> {
   const fh = await dir.getFileHandle(`${baseName}.manifest.json`, { create: true });
   const w = await fh.createWritable({ keepExistingData: false });
-  await w.write(JSON.stringify(manifest, null, 2));
-  await w.close();
+  try {
+    await w.write(JSON.stringify(manifest, null, 2));
+    await w.close();
+  } catch (err) {
+    try {
+      await w.abort(err);
+    } catch {
+      // ignore abort failures
+    }
+    throw err;
+  }
 }
 
 async function createSyncAccessHandle(fileHandle: FileSystemFileHandle): Promise<SyncAccessHandleLike> {
