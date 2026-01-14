@@ -25,15 +25,17 @@ export type IoInputTelemetrySnapshot = {
   /**
    * Total backend switches for keyboard input (ps2↔usb↔virtio).
    *
-   * Note: this is currently only meaningful in `vmRuntime=legacy` where the I/O worker implements
-   * input backend selection. In `vmRuntime=machine` this counter is expected to remain zero.
+   * This counter is written by whichever worker is currently injecting input:
+   * - `vmRuntime=legacy`: I/O worker
+   * - `vmRuntime=machine`: machine CPU worker
    */
   keyboardBackendSwitches: number;
   /**
    * Total backend switches for mouse input (ps2↔usb↔virtio).
    *
-   * Note: this is currently only meaningful in `vmRuntime=legacy` where the I/O worker implements
-   * input backend selection. In `vmRuntime=machine` this counter is expected to remain zero.
+   * This counter is written by whichever worker is currently injecting input:
+   * - `vmRuntime=legacy`: I/O worker
+   * - `vmRuntime=machine`: machine CPU worker
    */
   mouseBackendSwitches: number;
 };
