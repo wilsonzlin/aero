@@ -1179,11 +1179,14 @@ mod tests {
         ints.lapic_mmio_write_for_apic(1, 0x380, &10u32.to_le_bytes()); // Initial count
 
         ints.tick(9);
-        assert_eq!(ints.get_pending_for_apic(1), None);
+        assert!(!ints.lapics[1].is_pending(0x55));
 
         ints.tick(1);
+        assert!(ints.lapics[1].is_pending(0x55));
         assert_eq!(ints.get_pending_for_apic(1), Some(0x55));
-        assert_ne!(ints.get_pending_for_apic(0), Some(0x55));
+
+        // Ensure isolation: LAPIC0 should not see LAPIC1's timer vector pending in IRR.
+        assert!(!ints.lapics[0].is_pending(0x55));
     }
 
     #[test]
