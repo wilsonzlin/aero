@@ -131,10 +131,7 @@ fn aerogpu_immediate_backend_completes_fence_and_raises_intx() {
         .unwrap();
     m.write_physical_u32(RING_GPA + 24, 0); // head
     m.write_physical_u32(RING_GPA + 28, 1); // tail
-    m.write_physical_u32(
-        bar0_base + u64::from(pci::AEROGPU_MMIO_REG_DOORBELL),
-        1,
-    );
+    m.write_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_DOORBELL), 1);
     m.process_aerogpu();
 
     let completed_fence = {

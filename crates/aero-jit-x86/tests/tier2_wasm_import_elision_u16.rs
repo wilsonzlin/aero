@@ -117,8 +117,8 @@ fn tier2_inline_tlb_cross_page_only_u16_store_elides_mmu_translate_import() {
 }
 
 #[test]
-fn tier2_inline_tlb_constant_end_of_page_u16_load_imports_mmu_translate_and_elides_cross_page_check()
-{
+fn tier2_inline_tlb_constant_end_of_page_u16_load_imports_mmu_translate_and_elides_cross_page_check(
+) {
     // For u16, `PAGE_SIZE - 2` is still same-page. This test is sensitive to the `>` vs `>=`
     // boundary when deciding whether an access can ever cross a page.
     let trace = TraceIr {
@@ -161,8 +161,8 @@ fn tier2_inline_tlb_constant_end_of_page_u16_load_imports_mmu_translate_and_elid
 }
 
 #[test]
-fn tier2_inline_tlb_constant_end_of_page_u16_store_imports_mmu_translate_and_elides_cross_page_check()
-{
+fn tier2_inline_tlb_constant_end_of_page_u16_store_imports_mmu_translate_and_elides_cross_page_check(
+) {
     // For u16, `PAGE_SIZE - 2` is still same-page. This test is sensitive to the `>` vs `>=`
     // boundary when deciding whether an access can ever cross a page.
     let trace = TraceIr {

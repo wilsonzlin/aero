@@ -1658,8 +1658,8 @@ fn assemble_ps3_predicated_mov_with_pred_index(pred_index: u16) -> Vec<u32> {
         0x005E,
         &[
             enc_dst(19, pred_index, 0x1), // p#.x
-            enc_src(1, 0, 0x00), // v0.x
-            enc_src(2, 0, 0x00), // c0.x
+            enc_src(1, 0, 0x00),          // v0.x
+            enc_src(2, 0, 0x00),          // c0.x
         ],
     ));
 
@@ -1721,7 +1721,7 @@ fn assemble_ps3_mova_relative_const_with_addr_index(addr_index: u16) -> Vec<u32>
         2u32 << 20, // result shift = x2 (no saturate)
         &[
             enc_dst(3, addr_index, 0x1), // a#.x (regtype 3)
-            enc_src(3, 0, 0x00), // t0.x
+            enc_src(3, 0, 0x00),         // t0.x
         ],
     ));
 
@@ -2419,7 +2419,7 @@ fn assemble_ps3_loop_relative_const_with_loop_index(loop_index: u16) -> Vec<u32>
         0x001B,
         &[
             enc_src(15, loop_index, 0xE4), // aL
-            enc_src(7, 0, 0xE4),  // i0
+            enc_src(7, 0, 0xE4),           // i0
         ],
     ));
 
@@ -6099,7 +6099,9 @@ fn sm3_mova_relative_const_pixel_compare() {
     }
 
     for addr_index in [0u16, 20u16] {
-        let ps = build_sm3_ir(&assemble_ps3_mova_relative_const_with_addr_index(addr_index));
+        let ps = build_sm3_ir(&assemble_ps3_mova_relative_const_with_addr_index(
+            addr_index,
+        ));
 
         let mut rt = software::RenderTarget::new(8, 8, software::Vec4::ZERO);
         let constants = zero_constants();
@@ -6509,7 +6511,9 @@ fn sm3_loop_relative_const_pixel_compare() {
     }
 
     for loop_index in [0u16, 20u16] {
-        let ps = build_sm3_ir(&assemble_ps3_loop_relative_const_with_loop_index(loop_index));
+        let ps = build_sm3_ir(&assemble_ps3_loop_relative_const_with_loop_index(
+            loop_index,
+        ));
 
         let mut rt = software::RenderTarget::new(16, 16, software::Vec4::ZERO);
         let constants = zero_constants();

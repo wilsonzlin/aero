@@ -463,7 +463,15 @@ fn virtio_snd_pci_bridge_eventq_retains_event_when_first_chain_is_descriptor_loo
         VIRTQ_DESC_F_WRITE | VIRTQ_DESC_F_NEXT,
         0,
     );
-    write_desc(&guest, desc_table, 1, ok_buf as u64, 8, VIRTQ_DESC_F_WRITE, 0);
+    write_desc(
+        &guest,
+        desc_table,
+        1,
+        ok_buf as u64,
+        8,
+        VIRTQ_DESC_F_WRITE,
+        0,
+    );
 
     guest.write_u16(avail, 0);
     guest.write_u16(avail + 2, 2); // avail.idx = 2
@@ -497,6 +505,9 @@ fn virtio_snd_pci_bridge_eventq_retains_event_when_first_chain_is_descriptor_loo
     let mut got_evt = [0u8; 8];
     guest.read_into(loop_buf, &mut loop_before);
     guest.read_into(ok_buf, &mut got_evt);
-    assert_eq!(&loop_before, &[0xAAu8; 8], "loop buffer should remain untouched");
+    assert_eq!(
+        &loop_before, &[0xAAu8; 8],
+        "loop buffer should remain untouched"
+    );
     assert_eq!(&got_evt, &expected_speaker_connected());
 }

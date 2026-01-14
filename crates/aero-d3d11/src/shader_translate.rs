@@ -961,7 +961,8 @@ fn translate_hs(
     const INTERNAL_GROUP: u32 = crate::binding_model::BIND_GROUP_INTERNAL_EMULATION;
     const BINDING_VS_OUT: u32 = crate::runtime::tessellation::BINDING_VS_OUT_REGS;
     const BINDING_HS_OUT: u32 = crate::runtime::tessellation::BINDING_HS_OUT_REGS;
-    const BINDING_HS_PATCH_CONSTANTS: u32 = crate::runtime::tessellation::BINDING_HS_PATCH_CONSTANTS;
+    const BINDING_HS_PATCH_CONSTANTS: u32 =
+        crate::runtime::tessellation::BINDING_HS_PATCH_CONSTANTS;
     const BINDING_HS_TESS_FACTORS: u32 = crate::runtime::tessellation::BINDING_HS_TESS_FACTORS;
 
     w.line("struct HsRegBuffer { data: array<vec4<f32>> };");

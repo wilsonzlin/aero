@@ -188,18 +188,10 @@ fn hs_patch_constants_route_tess_factors_to_compact_buffer() {
     assert!(translated
         .wgsl
         .contains("let tf_base: u32 = hs_primitive_id * HS_TESS_FACTOR_STRIDE;"));
-    assert!(translated
-        .wgsl
-        .contains("tf0.x = o0.x;"));
-    assert!(translated
-        .wgsl
-        .contains("tf0.y = o0.y;"));
-    assert!(translated
-        .wgsl
-        .contains("tf0.z = o1.x;"));
-    assert!(translated
-        .wgsl
-        .contains("tf0.w = o1.y;"));
+    assert!(translated.wgsl.contains("tf0.x = o0.x;"));
+    assert!(translated.wgsl.contains("tf0.y = o0.y;"));
+    assert!(translated.wgsl.contains("tf0.z = o1.x;"));
+    assert!(translated.wgsl.contains("tf0.w = o1.y;"));
     assert!(translated
         .wgsl
         .contains("hs_store_tess_factors(tf_base + 0u, tf0);"));
