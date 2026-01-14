@@ -5,6 +5,7 @@ pub mod aerogpu_state;
 pub mod bindings;
 pub mod expansion_scratch;
 pub mod execute;
+pub mod gs_translate;
 pub mod indirect_args;
 pub mod index_pulling;
 pub mod pipeline_layout_cache;
