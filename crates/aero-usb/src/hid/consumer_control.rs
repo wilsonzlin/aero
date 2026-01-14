@@ -29,6 +29,15 @@ use super::{
 const INTERRUPT_IN_EP: u8 = 0x81;
 const MAX_PENDING_REPORTS: usize = 64;
 const MAX_PRESSED_USAGES: usize = 256;
+const MAX_CONSUMER_USAGE: u16 = 0x03ff;
+
+fn sanitize_consumer_usage(usage: u16) -> u16 {
+    if usage <= MAX_CONSUMER_USAGE {
+        usage
+    } else {
+        0
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ConsumerControlReport {
@@ -38,7 +47,7 @@ pub struct ConsumerControlReport {
 
 impl ConsumerControlReport {
     pub fn to_bytes(self) -> [u8; 2] {
-        self.usage.to_le_bytes()
+        sanitize_consumer_usage(self.usage).to_le_bytes()
     }
 }
 
@@ -210,7 +219,10 @@ impl IoSnapshot for UsbHidConsumerControl {
                 .try_reserve_exact(count)
                 .map_err(|_| SnapshotError::OutOfMemory)?;
             for _ in 0..count {
-                self.pressed_usages.push(d.u16()?);
+                let usage = d.u16()?;
+                if usage != 0 && usage <= MAX_CONSUMER_USAGE {
+                    self.pressed_usages.push(usage);
+                }
             }
             d.finish()?;
         }
@@ -219,7 +231,8 @@ impl IoSnapshot for UsbHidConsumerControl {
             if buf.len() != self.last_report.len() {
                 return Err(SnapshotError::InvalidFieldEncoding("consumer last report"));
             }
-            self.last_report.copy_from_slice(buf);
+            let usage = u16::from_le_bytes([buf[0], buf[1]]);
+            self.last_report = sanitize_consumer_usage(usage).to_le_bytes();
         }
 
         if let Some(buf) = r.bytes(TAG_PENDING_REPORTS) {
@@ -239,8 +252,10 @@ impl IoSnapshot for UsbHidConsumerControl {
                     ));
                 }
                 let report = d.bytes_vec(len)?;
+                let report: [u8; 2] = report.try_into().expect("len checked");
+                let usage = u16::from_le_bytes(report);
                 self.pending_reports
-                    .push_back(report.try_into().expect("len checked"));
+                    .push_back(sanitize_consumer_usage(usage).to_le_bytes());
             }
             d.finish()?;
         }
@@ -287,19 +302,27 @@ impl UsbHidConsumerControl {
     }
 
     pub fn consumer_event(&mut self, usage: u16, pressed: bool) {
+        if usage == 0 {
+            return;
+        }
         if pressed {
+            if usage > MAX_CONSUMER_USAGE {
+                return;
+            }
             if !self.pressed_usages.contains(&usage) {
                 self.pressed_usages.push(usage);
             }
         } else {
             self.pressed_usages.retain(|&u| u != usage);
         }
+        self.pressed_usages
+            .retain(|&u| u != 0 && u <= MAX_CONSUMER_USAGE);
         self.enqueue_current_report();
     }
 
     fn current_input_report(&self) -> ConsumerControlReport {
         ConsumerControlReport {
-            usage: self.pressed_usages.last().copied().unwrap_or(0),
+            usage: sanitize_consumer_usage(self.pressed_usages.last().copied().unwrap_or(0)),
         }
     }
 
