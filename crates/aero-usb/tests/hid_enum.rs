@@ -1,4 +1,5 @@
 use aero_usb::hid::keyboard::UsbHidKeyboardHandle;
+use aero_usb::hid::{KEYBOARD_LED_CAPS_LOCK, KEYBOARD_LED_NUM_LOCK};
 use aero_usb::uhci::regs::{
     REG_FLBASEADD, REG_PORTSC1, REG_USBCMD, REG_USBINTR, USBCMD_MAXP, USBCMD_RS, USBINTR_IOC,
 };
@@ -250,6 +251,80 @@ fn control_no_data(
     ctrl.tick_1ms(mem);
 }
 
+#[allow(clippy::too_many_arguments)]
+fn control_out(
+    ctrl: &mut UhciController,
+    mem: &mut TestMemory,
+    alloc: &mut Alloc,
+    fl_base: u32,
+    devaddr: u8,
+    max_packet: usize,
+    setup: SetupPacket,
+    data: &[u8],
+) {
+    assert_eq!(
+        setup.w_length as usize,
+        data.len(),
+        "control OUT helper expects wLength to match payload size"
+    );
+
+    let qh_addr = alloc.alloc(0x20, 0x10);
+    let setup_buf = alloc.alloc(8, 0x10);
+    let setup_td = alloc.alloc(0x20, 0x10);
+
+    let mut bytes = [0u8; 8];
+    bytes[0] = setup.bm_request_type;
+    bytes[1] = setup.b_request;
+    bytes[2..4].copy_from_slice(&setup.w_value.to_le_bytes());
+    bytes[4..6].copy_from_slice(&setup.w_index.to_le_bytes());
+    bytes[6..8].copy_from_slice(&setup.w_length.to_le_bytes());
+    mem.write_physical(setup_buf as u64, &bytes);
+
+    let mut tds = Vec::new();
+    tds.push((setup_td, setup_buf, 8usize, 0x2D, false)); // SETUP, DATA0
+
+    let mut remaining = data.len();
+    let mut offset = 0usize;
+    let mut toggle = true;
+    while remaining != 0 {
+        let chunk = remaining.min(max_packet);
+        let buf = alloc.alloc(chunk as u32, 0x10);
+        let td = alloc.alloc(0x20, 0x10);
+        mem.write_physical(buf as u64, &data[offset..offset + chunk]);
+        tds.push((td, buf, chunk, 0xE1, toggle)); // OUT
+        toggle = !toggle;
+        remaining -= chunk;
+        offset += chunk;
+    }
+
+    // Status stage: IN zero-length, DATA1.
+    let status_td = alloc.alloc(0x20, 0x10);
+    tds.push((status_td, 0, 0, 0x69, true));
+
+    for i in 0..tds.len() {
+        let (td_addr, buf_addr, len, pid, dtoggle) = tds[i];
+        let link = if i + 1 == tds.len() {
+            LINK_PTR_T
+        } else {
+            tds[i + 1].0
+        };
+        let ioc = i + 1 == tds.len();
+        write_td(
+            mem,
+            td_addr,
+            link,
+            td_ctrl(true, ioc),
+            td_token(pid, devaddr, 0, dtoggle, len),
+            buf_addr,
+        );
+    }
+
+    write_qh(mem, qh_addr, LINK_PTR_T, setup_td);
+    install_frame_list(mem, fl_base, qh_addr);
+
+    ctrl.tick_1ms(mem);
+}
+
 #[test]
 fn enumerate_hid_keyboard_and_receive_keypress_report() {
     let mut ctrl = UhciController::new();
@@ -367,6 +442,27 @@ fn enumerate_hid_keyboard_and_receive_keypress_report() {
             w_length: 0,
         },
     );
+
+    // SET_REPORT(Output) to update the boot keyboard LED state.
+    // Send padding bits as well; the device should ignore them.
+    assert_eq!(keyboard.leds(), 0);
+    control_out(
+        &mut ctrl,
+        &mut mem,
+        &mut alloc,
+        fl_base,
+        1,
+        ep0_max_packet,
+        SetupPacket {
+            bm_request_type: 0x21,
+            b_request: 0x09,    // SET_REPORT
+            w_value: 2u16 << 8, // Output report, ID 0
+            w_index: 0,
+            w_length: 1,
+        },
+        &[0xE3],
+    );
+    assert_eq!(keyboard.leds(), KEYBOARD_LED_NUM_LOCK | KEYBOARD_LED_CAPS_LOCK);
 
     // GET_DESCRIPTOR(Report) for interface 0.
     let report_desc = control_in(
