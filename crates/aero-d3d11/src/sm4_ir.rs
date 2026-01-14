@@ -141,6 +141,16 @@ pub enum Sm4Decl {
     HsOutputControlPointCount {
         count: u32,
     },
+    /// Hull shader max tess factor (`dcl_hs_max_tessfactor`).
+    ///
+    /// Stored as raw IEEE-754 `f32` bits.
+    HsMaxTessFactor {
+        factor: u32,
+    },
+    /// Domain shader tessellator domain (`dcl_ds_domain`).
+    DsDomain {
+        domain: HsDomain,
+    },
     /// Compute shader thread group size (`dcl_thread_group x, y, z`).
     ///
     /// WGSL requires this information to emit `@workgroup_size(x, y, z)` on the
@@ -172,7 +182,7 @@ pub enum Sm4Decl {
     },
 }
 
-/// Hull shader tessellation domain.
+/// Tessellation domain (tri/quad/isoline) used by hull/domain shaders.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HsDomain {
     Tri,
@@ -192,9 +202,10 @@ pub enum HsPartitioning {
 /// Hull shader output topology.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HsOutputTopology {
+    Point,
+    Line,
     TriangleCw,
     TriangleCcw,
-    Line,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

@@ -247,6 +247,31 @@ pub const OPCODE_DCL_GS_MAX_OUTPUT_VERTEX_COUNT: u32 = 0x10e;
 /// Upstream: `D3D11_SB_OPCODE_DCL_GS_INSTANCE_COUNT`.
 pub const OPCODE_DCL_GS_INSTANCE_COUNT: u32 = 0x10f;
 
+/// `dcl_hs_max_tessfactor` (hull shader max tess factor).
+///
+/// Upstream: `D3D11_SB_OPCODE_DCL_HS_MAX_TESSFACTOR`.
+pub const OPCODE_DCL_HS_MAX_TESSFACTOR: u32 = 0x110;
+/// `dcl_hs_domain` (hull shader tessellation domain).
+///
+/// Upstream: `D3D11_SB_OPCODE_DCL_HS_DOMAIN`.
+pub const OPCODE_DCL_HS_DOMAIN: u32 = 0x113;
+/// `dcl_hs_partitioning` (hull shader tessellation partitioning).
+///
+/// Upstream: `D3D11_SB_OPCODE_DCL_HS_PARTITIONING`.
+pub const OPCODE_DCL_HS_PARTITIONING: u32 = 0x114;
+/// `dcl_hs_output_topology` / `dcl_hs_output_primitive` (hull shader tessellation output topology).
+///
+/// Upstream: `D3D11_SB_OPCODE_DCL_HS_OUTPUT_TOPOLOGY`.
+pub const OPCODE_DCL_HS_OUTPUT_TOPOLOGY: u32 = 0x115;
+/// `dcl_hs_output_control_point_count` (hull shader output control point count).
+///
+/// Upstream: `D3D11_SB_OPCODE_DCL_HS_OUTPUT_CONTROL_POINT_COUNT`.
+pub const OPCODE_DCL_HS_OUTPUT_CONTROL_POINT_COUNT: u32 = 0x116;
+/// `dcl_ds_domain` (domain shader tessellation domain).
+///
+/// Upstream: `D3D11_SB_OPCODE_DCL_DS_DOMAIN`.
+pub const OPCODE_DCL_DS_DOMAIN: u32 = 0x119;
+
 /// `dcl_thread_group` declaration.
 ///
 /// Upstream: `D3D11_SB_OPCODE_DCL_THREAD_GROUP`.

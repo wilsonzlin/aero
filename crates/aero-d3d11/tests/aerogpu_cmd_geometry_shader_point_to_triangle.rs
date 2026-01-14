@@ -107,20 +107,20 @@ fn assert_gs_dxbc_decodes_as_geometry_and_has_emit(dxbc_bytes: &[u8]) {
 
     let module = aero_d3d11::sm4::decode_program(&program).expect("GS SM4 module should decode");
     assert_eq!(module.stage, Sm4ShaderStage::Geometry);
+    let has_emit = module.instructions.iter().any(|inst| {
+        matches!(inst, Sm4Inst::Emit { .. } | Sm4Inst::EmitThenCut { .. })
+    });
     assert!(
-        module
-            .instructions
-            .iter()
-            .any(|inst| matches!(inst, Sm4Inst::Emit { .. })),
-        "GS DXBC should contain an Emit instruction (module.instructions={:?})",
+        has_emit,
+        "GS DXBC should contain an Emit instruction (or EmitThenCut) (module.instructions={:?})",
         module.instructions
     );
+    let has_cut = module.instructions.iter().any(|inst| {
+        matches!(inst, Sm4Inst::Cut { .. } | Sm4Inst::EmitThenCut { .. })
+    });
     assert!(
-        module
-            .instructions
-            .iter()
-            .any(|inst| matches!(inst, Sm4Inst::Cut { .. })),
-        "GS DXBC should contain a Cut instruction (module.instructions={:?})",
+        has_cut,
+        "GS DXBC should contain a Cut instruction (or EmitThenCut) (module.instructions={:?})",
         module.instructions
     );
 }

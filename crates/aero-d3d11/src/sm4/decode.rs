@@ -2,10 +2,10 @@ use core::fmt;
 use std::collections::BTreeMap;
 
 use crate::sm4_ir::{
-    BufferKind, BufferRef, CmpOp, CmpType, ComputeBuiltin, DstOperand, OperandModifier,
-    PredicateDstOperand, PredicateOperand, PredicateRef, RegFile, RegisterRef, SamplerRef, Sm4CmpOp,
-    Sm4Decl, Sm4Inst, Sm4Module, Sm4TestBool, SrcKind, SrcOperand, Swizzle, TextureRef, UavRef,
-    WriteMask,
+    BufferKind, BufferRef, CmpOp, CmpType, ComputeBuiltin, DstOperand, HsDomain, HsOutputTopology,
+    HsPartitioning, OperandModifier, PredicateDstOperand, PredicateOperand, PredicateRef, RegFile,
+    RegisterRef, SamplerRef, Sm4CmpOp, Sm4Decl, Sm4Inst, Sm4Module, Sm4TestBool, SrcKind,
+    SrcOperand, Swizzle, TextureRef, UavRef, WriteMask,
 };
 
 use super::opcode::*;
@@ -1328,6 +1328,12 @@ fn decode_stream_index(r: &mut InstrReader<'_>) -> Result<u32, Sm4DecodeError> {
     // indicating the stream index (0..=3).
     //
     // The operand is encoded as an immediate32 scalar (replicated lanes).
+    //
+    // Some toolchains (and some test fixtures) omit the operand entirely for stream 0. Be
+    // permissive and treat the missing operand as `0`.
+    if r.is_eof() {
+        return Ok(0);
+    }
     let op = decode_raw_operand(r)?;
     let Some(imm) = op.imm32 else {
         return Err(Sm4DecodeError {
@@ -1581,7 +1587,39 @@ pub fn decode_decl(opcode: u32, inst_toks: &[u32], at: usize) -> Result<Sm4Decl,
         r.expect_eof()?;
         return Ok(Sm4Decl::ThreadGroupSize { x, y, z });
     }
-    // Geometry shader metadata declarations do not use an operand token; they carry
+    fn decode_hs_domain(raw: u32) -> Option<HsDomain> {
+        // Values from `d3d11tokenizedprogramformat.h` (`D3D11_SB_TESSELLATOR_DOMAIN`).
+        match raw {
+            1 => Some(HsDomain::Isoline),
+            2 => Some(HsDomain::Tri),
+            3 => Some(HsDomain::Quad),
+            _ => None,
+        }
+    }
+
+    fn decode_hs_partitioning(raw: u32) -> Option<HsPartitioning> {
+        // Values from `d3d11tokenizedprogramformat.h` (`D3D11_SB_TESSELLATOR_PARTITIONING`).
+        match raw {
+            1 => Some(HsPartitioning::Integer),
+            2 => Some(HsPartitioning::Pow2),
+            3 => Some(HsPartitioning::FractionalOdd),
+            4 => Some(HsPartitioning::FractionalEven),
+            _ => None,
+        }
+    }
+
+    fn decode_hs_output_topology(raw: u32) -> Option<HsOutputTopology> {
+        // Values from `d3d11tokenizedprogramformat.h` (`D3D11_SB_TESSELLATOR_OUTPUT_PRIMITIVE`).
+        match raw {
+            1 => Some(HsOutputTopology::Point),
+            2 => Some(HsOutputTopology::Line),
+            3 => Some(HsOutputTopology::TriangleCw),
+            4 => Some(HsOutputTopology::TriangleCcw),
+            _ => None,
+        }
+    }
+
+    // Geometry + tessellation metadata declarations do not use an operand token; they carry
     // a small immediate payload (or no payload) instead.
     match opcode {
         OPCODE_DCL_GS_INPUT_PRIMITIVE => {
@@ -1615,6 +1653,78 @@ pub fn decode_decl(opcode: u32, inst_toks: &[u32], at: usize) -> Result<Sm4Decl,
             let count = r.read_u32()?;
             r.expect_eof()?;
             return Ok(Sm4Decl::GsInstanceCount { count });
+        }
+        OPCODE_DCL_HS_DOMAIN => {
+            if r.is_eof() {
+                return Ok(Sm4Decl::Unknown { opcode });
+            }
+            let raw = r.read_u32()?;
+            if !r.is_eof() {
+                return Ok(Sm4Decl::Unknown { opcode });
+            }
+            let Some(domain) = decode_hs_domain(raw) else {
+                return Ok(Sm4Decl::Unknown { opcode });
+            };
+            return Ok(Sm4Decl::HsDomain { domain });
+        }
+        OPCODE_DCL_HS_PARTITIONING => {
+            if r.is_eof() {
+                return Ok(Sm4Decl::Unknown { opcode });
+            }
+            let raw = r.read_u32()?;
+            if !r.is_eof() {
+                return Ok(Sm4Decl::Unknown { opcode });
+            }
+            let Some(partitioning) = decode_hs_partitioning(raw) else {
+                return Ok(Sm4Decl::Unknown { opcode });
+            };
+            return Ok(Sm4Decl::HsPartitioning { partitioning });
+        }
+        OPCODE_DCL_HS_OUTPUT_TOPOLOGY => {
+            if r.is_eof() {
+                return Ok(Sm4Decl::Unknown { opcode });
+            }
+            let raw = r.read_u32()?;
+            if !r.is_eof() {
+                return Ok(Sm4Decl::Unknown { opcode });
+            }
+            let Some(topology) = decode_hs_output_topology(raw) else {
+                return Ok(Sm4Decl::Unknown { opcode });
+            };
+            return Ok(Sm4Decl::HsOutputTopology { topology });
+        }
+        OPCODE_DCL_HS_OUTPUT_CONTROL_POINT_COUNT => {
+            if r.is_eof() {
+                return Ok(Sm4Decl::Unknown { opcode });
+            }
+            let count = r.read_u32()?;
+            if !r.is_eof() {
+                return Ok(Sm4Decl::Unknown { opcode });
+            }
+            return Ok(Sm4Decl::HsOutputControlPointCount { count });
+        }
+        OPCODE_DCL_HS_MAX_TESSFACTOR => {
+            if r.is_eof() {
+                return Ok(Sm4Decl::Unknown { opcode });
+            }
+            let factor = r.read_u32()?;
+            if !r.is_eof() {
+                return Ok(Sm4Decl::Unknown { opcode });
+            }
+            return Ok(Sm4Decl::HsMaxTessFactor { factor });
+        }
+        OPCODE_DCL_DS_DOMAIN => {
+            if r.is_eof() {
+                return Ok(Sm4Decl::Unknown { opcode });
+            }
+            let raw = r.read_u32()?;
+            if !r.is_eof() {
+                return Ok(Sm4Decl::Unknown { opcode });
+            }
+            let Some(domain) = decode_hs_domain(raw) else {
+                return Ok(Sm4Decl::Unknown { opcode });
+            };
+            return Ok(Sm4Decl::DsDomain { domain });
         }
         _ => {}
     }

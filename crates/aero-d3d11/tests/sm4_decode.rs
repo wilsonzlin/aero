@@ -1,8 +1,9 @@
 use aero_d3d11::sm4::decode::Sm4DecodeErrorKind;
 use aero_d3d11::sm4::{decode_program, opcode::*};
 use aero_d3d11::{
-    BufferKind, BufferRef, OperandModifier, RegFile, RegisterRef, ShaderModel, Sm4Decl, Sm4Inst,
-    Sm4Module, Sm4Program, SrcKind, SrcOperand, Swizzle, TextureRef, UavRef, WriteMask,
+    BufferKind, BufferRef, HsDomain, HsOutputTopology, HsPartitioning, OperandModifier, RegFile,
+    RegisterRef, ShaderModel, Sm4Decl, Sm4Inst, Sm4Module, Sm4Program, SrcKind, SrcOperand, Swizzle,
+    TextureRef, UavRef, WriteMask,
 };
 
 fn make_sm5_program_tokens(stage_type: u16, body_tokens: &[u32]) -> Vec<u32> {
@@ -2137,6 +2138,93 @@ fn sm5_uav_and_raw_buffer_opcode_constants_match_d3d11_tokenized_format() {
     assert_eq!(OPCODE_LD_STRUCTURED, 0x54);
     assert_eq!(OPCODE_STORE_RAW, 0x56);
     assert_eq!(OPCODE_STORE_STRUCTURED, 0x57);
+}
+
+#[test]
+fn sm5_tessellation_decl_opcode_constants_match_d3d11_tokenized_format() {
+    // Keep these in sync with `d3d11tokenizedprogramformat.h` (`D3D11_SB_OPCODE_TYPE`).
+    assert_eq!(OPCODE_DCL_HS_MAX_TESSFACTOR, 0x110);
+    assert_eq!(OPCODE_DCL_HS_DOMAIN, 0x113);
+    assert_eq!(OPCODE_DCL_HS_PARTITIONING, 0x114);
+    assert_eq!(OPCODE_DCL_HS_OUTPUT_TOPOLOGY, 0x115);
+    assert_eq!(OPCODE_DCL_HS_OUTPUT_CONTROL_POINT_COUNT, 0x116);
+    assert_eq!(OPCODE_DCL_DS_DOMAIN, 0x119);
+}
+
+#[test]
+fn decodes_sm5_hs_tessellation_declarations() {
+    // hs_5_0 with only tessellation-related declarations:
+    // - dcl_hs_domain tri
+    // - dcl_hs_partitioning integer
+    // - dcl_hs_output_topology triangle_cw
+    // - dcl_hs_output_control_point_count 3
+    // - dcl_hs_max_tessfactor 64.0
+    // - ret
+    let mut body = Vec::<u32>::new();
+
+    body.extend_from_slice(&[opcode_token(OPCODE_DCL_HS_DOMAIN, 2), 2]);
+    body.extend_from_slice(&[opcode_token(OPCODE_DCL_HS_PARTITIONING, 2), 1]);
+    body.extend_from_slice(&[opcode_token(OPCODE_DCL_HS_OUTPUT_TOPOLOGY, 2), 3]);
+    body.extend_from_slice(&[opcode_token(OPCODE_DCL_HS_OUTPUT_CONTROL_POINT_COUNT, 2), 3]);
+    body.extend_from_slice(&[
+        opcode_token(OPCODE_DCL_HS_MAX_TESSFACTOR, 2),
+        64.0f32.to_bits(),
+    ]);
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 3 is hull shader.
+    let tokens = make_sm5_program_tokens(3, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+    assert_eq!(program.stage, aero_d3d11::ShaderStage::Hull);
+
+    let module = decode_program(&program).expect("decode");
+    assert_eq!(module.stage, aero_d3d11::ShaderStage::Hull);
+
+    assert_eq!(
+        module.decls,
+        vec![
+            Sm4Decl::HsDomain {
+                domain: HsDomain::Tri
+            },
+            Sm4Decl::HsPartitioning {
+                partitioning: HsPartitioning::Integer
+            },
+            Sm4Decl::HsOutputTopology {
+                topology: HsOutputTopology::TriangleCw
+            },
+            Sm4Decl::HsOutputControlPointCount { count: 3 },
+            Sm4Decl::HsMaxTessFactor {
+                factor: 64.0f32.to_bits()
+            },
+        ]
+    );
+    assert_eq!(module.instructions, vec![Sm4Inst::Ret]);
+}
+
+#[test]
+fn decodes_sm5_ds_domain_declaration() {
+    // ds_5_0 with just dcl_ds_domain tri; ret.
+    let body = [
+        opcode_token(OPCODE_DCL_DS_DOMAIN, 2),
+        2,
+        opcode_token(OPCODE_RET, 1),
+    ];
+
+    // Stage type 4 is domain shader.
+    let tokens = make_sm5_program_tokens(4, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+    assert_eq!(program.stage, aero_d3d11::ShaderStage::Domain);
+
+    let module = decode_program(&program).expect("decode");
+    assert_eq!(
+        module.decls,
+        vec![Sm4Decl::DsDomain {
+            domain: HsDomain::Tri
+        }]
+    );
+    assert_eq!(module.instructions, vec![Sm4Inst::Ret]);
 }
 
 #[test]
