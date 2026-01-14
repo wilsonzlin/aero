@@ -436,6 +436,7 @@ fn generated_tables_are_self_consistent_and_checksums_pass() {
     let dsdt = mem.read(tables.addresses.dsdt, dsdt_hdr.length as usize);
     let aml = &dsdt[36..];
     assert!(aml.windows(4).any(|w| w == b"SYS0"));
+    assert!(aml.windows(4).any(|w| w == b"PWRB"));
     assert!(aml.windows(4).any(|w| w == b"PCI0"));
     assert!(aml.windows(4).any(|w| w == b"HPET"));
     assert!(aml.windows(4).any(|w| w == b"_PRT"));
