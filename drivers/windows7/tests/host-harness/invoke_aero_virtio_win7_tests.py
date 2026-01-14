@@ -2842,7 +2842,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help=(
             "Fail deterministically if the guest selftest was not provisioned with "
             "--expect-blk-msi (i.e. CONFIG marker expect_blk_msi=1). "
-            "Useful for MSI/MSI-X-specific CI to catch mis-provisioned images."
+            "Useful for MSI/MSI-X-specific CI to catch mis-provisioned images "
+            "(re-provision with New-AeroWin7TestImage.ps1 -ExpectBlkMsi)."
         ),
     )
     parser.add_argument(

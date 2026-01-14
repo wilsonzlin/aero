@@ -95,6 +95,7 @@ param(
   #
   # This is useful in MSI/MSI-X-specific CI to fail deterministically when running against
   # a mis-provisioned image (where the guest selftest would otherwise accept INTx fallback).
+  # Provisioning hint: bake `--expect-blk-msi` into the guest scheduled task via `New-AeroWin7TestImage.ps1 -ExpectBlkMsi`.
   [Parameter(Mandatory = $false)]
   [switch]$RequireExpectBlkMsi,
 
