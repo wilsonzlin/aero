@@ -363,6 +363,59 @@ class DryRunQemuCmdTests(unittest.TestCase):
             mock_run.assert_not_called()
             mock_popen.assert_not_called()
 
+    def test_dry_run_with_virtio_snd_and_force_intx_includes_vectors0(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            disk = tmp / "win7.qcow2"
+            disk.write_bytes(b"")
+            serial = tmp / "serial.log"
+
+            argv = [
+                "invoke_aero_virtio_win7_tests.py",
+                "--qemu-system",
+                "qemu-system-x86_64",
+                "--disk-image",
+                str(disk),
+                "--serial-log",
+                str(serial),
+                "--with-virtio-snd",
+                "--virtio-disable-msix",
+                "--dry-run",
+            ]
+
+            out = io.StringIO()
+            with (
+                mock.patch.object(sys, "argv", argv),
+                mock.patch.object(self.harness.subprocess, "run") as mock_run,
+                mock.patch.object(self.harness.subprocess, "Popen") as mock_popen,
+                mock.patch.object(
+                    self.harness.socket, "socket", side_effect=AssertionError("unexpected socket usage in dry-run")
+                ),
+                contextlib.redirect_stdout(out),
+                contextlib.redirect_stderr(io.StringIO()),
+            ):
+                rc = self.harness.main()
+
+            self.assertEqual(rc, 0)
+            stdout = out.getvalue()
+
+            # Dry-run should include virtio-snd and apply vectors=0 when INTx-only mode is requested.
+            self.assertIn(
+                "virtio-sound-pci,audiodev=snd0,disable-legacy=on,x-pci-revision=0x01,vectors=0",
+                stdout,
+            )
+            self.assertIn("-audiodev none,id=snd0", stdout)
+
+            first_line = stdout.splitlines()[0]
+            parsed = json.loads(first_line)
+            self.assertIn(
+                "virtio-sound-pci,audiodev=snd0,disable-legacy=on,x-pci-revision=0x01,vectors=0",
+                parsed,
+            )
+
+            mock_run.assert_not_called()
+            mock_popen.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
