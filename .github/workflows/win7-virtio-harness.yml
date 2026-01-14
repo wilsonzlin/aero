@@ -44,7 +44,7 @@ on:
         default: "18080"
         type: string
       http_path:
-        description: HTTP path served by the harness (guest requests http://10.0.2.2:<port><path>)
+        description: HTTP path served by the harness (must start with / and contain no whitespace; guest requests http://10.0.2.2:<port><path>)
         required: false
         default: "/aero-virtio-selftest"
         type: string
