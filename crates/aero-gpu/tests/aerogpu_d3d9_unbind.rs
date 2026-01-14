@@ -1,6 +1,6 @@
 mod common;
 
-use aero_gpu::{AerogpuD3d9Error, AerogpuD3d9Executor};
+use aero_gpu::AerogpuD3d9Error;
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuIndexFormat, AerogpuShaderStage, AerogpuVertexBufferBinding,
     AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_TEXTURE,
@@ -77,13 +77,9 @@ fn vertex_decl_position0_stream0() -> Vec<u8> {
 
 #[test]
 fn d3d9_set_vertex_buffers_zero_handle_unbinds() {
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(module_path!(), "wgpu adapter not found");
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
     };
 
     const RT_HANDLE: u32 = 1;
@@ -138,13 +134,9 @@ fn d3d9_set_vertex_buffers_zero_handle_unbinds() {
 
 #[test]
 fn d3d9_set_index_buffer_zero_handle_unbinds() {
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(module_path!(), "wgpu adapter not found");
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
     };
 
     const RT_HANDLE: u32 = 1;

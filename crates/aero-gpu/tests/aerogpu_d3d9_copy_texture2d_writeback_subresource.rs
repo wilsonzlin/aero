@@ -1,7 +1,7 @@
 mod common;
 
 use aero_gpu::aerogpu_executor::{AllocEntry, AllocTable};
-use aero_gpu::{AerogpuD3d9Error, AerogpuD3d9Executor, GuestMemory, VecGuestMemory};
+use aero_gpu::{GuestMemory, VecGuestMemory};
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AEROGPU_COPY_FLAG_WRITEBACK_DST, AEROGPU_RESOURCE_USAGE_TEXTURE,
 };
@@ -12,13 +12,9 @@ use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 fn d3d9_copy_texture2d_writeback_dst_accounts_for_mip_offsets() {
     common::ensure_xdg_runtime_dir();
 
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(module_path!(), "wgpu adapter not found");
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
     };
 
     const DST_HANDLE: u32 = 1;
@@ -125,13 +121,9 @@ fn d3d9_copy_texture2d_writeback_dst_accounts_for_mip_offsets() {
 fn d3d9_copy_texture2d_writeback_dst_respects_padded_row_pitch_for_mip0() {
     common::ensure_xdg_runtime_dir();
 
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(module_path!(), "wgpu adapter not found");
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
     };
 
     const DST_HANDLE: u32 = 1;

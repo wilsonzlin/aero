@@ -1,6 +1,5 @@
 mod common;
 
-use aero_gpu::{AerogpuD3d9Error, AerogpuD3d9Executor};
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuPrimitiveTopology, AerogpuShaderStage, AerogpuVertexBufferBinding, AEROGPU_CLEAR_COLOR,
     AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_TEXTURE,
@@ -94,13 +93,9 @@ fn assert_triangle_color(rgba: &[u8], width: u32, expected: [u8; 4]) {
 
 #[test]
 fn d3d9_destroy_resource_invalidates_bind_groups_for_all_contexts() {
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(module_path!(), "wgpu adapter not found");
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
     };
 
     const CTX_A: u32 = 100;
@@ -244,13 +239,9 @@ fn d3d9_destroy_resource_invalidates_bind_groups_for_all_contexts() {
 
 #[test]
 fn d3d9_import_shared_surface_invalidates_bind_groups_for_all_contexts() {
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(module_path!(), "wgpu adapter not found");
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
     };
 
     const CTX_A: u32 = 100;

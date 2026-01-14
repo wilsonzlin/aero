@@ -1,7 +1,7 @@
 mod common;
 
 use aero_gpu::aerogpu_executor::{AllocEntry, AllocTable};
-use aero_gpu::{AerogpuD3d9Error, AerogpuD3d9Executor, GuestMemory, VecGuestMemory};
+use aero_gpu::{GuestMemory, VecGuestMemory};
 use aero_protocol::aerogpu::{
     aerogpu_cmd::{
         AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode,
@@ -182,13 +182,9 @@ fn build_pos_tex_vertex_decl() -> Vec<u8> {
 
 #[test]
 fn d3d9_cmd_stream_supports_16bit_formats_b5g6r5_and_b5g5r5a1() {
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(module_path!(), "wgpu adapter not found");
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
     };
 
     let formats = [
@@ -530,13 +526,9 @@ fn d3d9_cmd_stream_supports_16bit_formats_b5g6r5_and_b5g5r5a1() {
 
 #[test]
 fn d3d9_copy_texture2d_writeback_packs_16bit_formats() {
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(module_path!(), "wgpu adapter not found");
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
     };
 
     const OPC_CREATE_TEXTURE2D: u32 = AerogpuCmdOpcode::CreateTexture2d as u32;

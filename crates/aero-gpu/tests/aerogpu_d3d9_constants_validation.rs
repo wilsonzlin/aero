@@ -1,18 +1,14 @@
 mod common;
 
-use aero_gpu::{AerogpuD3d9Error, AerogpuD3d9Executor};
+use aero_gpu::AerogpuD3d9Error;
 use aero_protocol::aerogpu::aerogpu_cmd::AerogpuShaderStage;
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 
 #[test]
 fn d3d9_set_shader_constants_rejects_unsupported_stage() {
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(module_path!(), "wgpu adapter not found");
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
     };
 
     let mut writer = AerogpuCmdWriter::new();
@@ -28,13 +24,9 @@ fn d3d9_set_shader_constants_rejects_unsupported_stage() {
 
 #[test]
 fn d3d9_set_shader_constants_rejects_out_of_range_registers() {
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(module_path!(), "wgpu adapter not found");
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
     };
 
     // c255..c256 is out of range (each stage has only 256 registers).

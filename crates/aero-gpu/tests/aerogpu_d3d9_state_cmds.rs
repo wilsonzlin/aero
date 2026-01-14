@@ -1,6 +1,5 @@
 mod common;
 
-use aero_gpu::{AerogpuD3d9Error, AerogpuD3d9Executor};
 use aero_protocol::aerogpu::{
     aerogpu_cmd::{
         AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode,
@@ -248,13 +247,9 @@ fn pixel_at(pixels: &[u8], width: u32, x: u32, y: u32) -> [u8; 4] {
 
 #[test]
 fn d3d9_cmd_stream_render_state_alpha_blend_srcalpha_invsrcalpha() {
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(module_path!(), "wgpu adapter not found");
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
     };
 
     const RT_HANDLE: u32 = 1;
@@ -523,13 +518,9 @@ fn d3d9_cmd_stream_render_state_alpha_blend_srcalpha_invsrcalpha() {
 
 #[test]
 fn d3d9_cmd_stream_render_state_scissor_rect_clips_draw() {
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(module_path!(), "wgpu adapter not found");
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
     };
 
     const RT_HANDLE: u32 = 1;
@@ -720,13 +711,9 @@ fn d3d9_cmd_stream_render_state_scissor_rect_clips_draw() {
 
 #[test]
 fn d3d9_cmd_stream_render_state_scissor_rect_is_clamped() {
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(module_path!(), "wgpu adapter not found");
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
     };
 
     const RT_HANDLE: u32 = 1;
@@ -914,13 +901,9 @@ fn d3d9_cmd_stream_render_state_scissor_rect_is_clamped() {
 
 #[test]
 fn d3d9_cmd_stream_sampler_address_wrap_vs_clamp() {
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(module_path!(), "wgpu adapter not found");
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
     };
 
     const RT_HANDLE: u32 = 1;

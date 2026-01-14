@@ -1,6 +1,5 @@
 mod common;
 
-use aero_gpu::{AerogpuD3d9Error, AerogpuD3d9Executor};
 use aero_protocol::aerogpu::{
     aerogpu_cmd::{
         AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode,
@@ -166,13 +165,9 @@ fn stencil_at(stencil: &[u8], width: u32, x: u32, y: u32) -> u8 {
 
 #[test]
 fn d3d9_cmd_stream_clear_respects_scissor_rect() {
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(module_path!(), "wgpu adapter not found");
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
     };
 
     const RT_HANDLE: u32 = 1;
@@ -300,19 +295,9 @@ fn d3d9_cmd_stream_clear_respects_scissor_rect() {
 
 #[test]
 fn d3d9_cmd_stream_clear_scissored_respects_srgb_write_enable() {
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(
-                concat!(
-                    module_path!(),
-                    "::d3d9_cmd_stream_clear_scissored_respects_srgb_write_enable"
-                ),
-                "wgpu adapter not found",
-            );
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
     };
 
     if !exec.supports_view_formats() {
@@ -448,19 +433,9 @@ fn d3d9_cmd_stream_clear_scissored_respects_srgb_write_enable() {
 
 #[test]
 fn d3d9_cmd_stream_clear_scissored_respects_srgb_write_enable_bgra8() {
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(
-                concat!(
-                    module_path!(),
-                    "::d3d9_cmd_stream_clear_scissored_respects_srgb_write_enable_bgra8"
-                ),
-                "wgpu adapter not found",
-            );
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
     };
 
     if !exec.supports_view_formats() {
@@ -596,19 +571,9 @@ fn d3d9_cmd_stream_clear_scissored_respects_srgb_write_enable_bgra8() {
 
 #[test]
 fn d3d9_cmd_stream_clear_respects_scissor_rect_with_negative_origin() {
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(
-                concat!(
-                    module_path!(),
-                    "::d3d9_cmd_stream_clear_respects_scissor_rect_with_negative_origin"
-                ),
-                "wgpu adapter not found",
-            );
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
     };
 
     const RT_HANDLE: u32 = 1;
@@ -713,19 +678,9 @@ fn d3d9_cmd_stream_clear_respects_scissor_rect_with_negative_origin() {
 
 #[test]
 fn d3d9_cmd_stream_clear_skips_when_scissor_rect_has_no_intersection_due_to_negative_origin() {
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(
-                concat!(
-                    module_path!(),
-                    "::d3d9_cmd_stream_clear_skips_when_scissor_rect_has_no_intersection_due_to_negative_origin"
-                ),
-                "wgpu adapter not found",
-            );
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
     };
 
     const RT_HANDLE: u32 = 1;
@@ -824,19 +779,9 @@ fn d3d9_cmd_stream_clear_skips_when_scissor_rect_has_no_intersection_due_to_nega
 
 #[test]
 fn d3d9_cmd_stream_draw_skips_when_scissor_rect_has_no_intersection() {
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(
-                concat!(
-                    module_path!(),
-                    "::d3d9_cmd_stream_draw_skips_when_scissor_rect_has_no_intersection"
-                ),
-                "wgpu adapter not found",
-            );
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
     };
 
     const RT_HANDLE: u32 = 1;
@@ -1023,19 +968,9 @@ fn d3d9_cmd_stream_draw_skips_when_scissor_rect_has_no_intersection() {
 
 #[test]
 fn d3d9_cmd_stream_clear_respects_scissor_rect_mrt() {
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(
-                concat!(
-                    module_path!(),
-                    "::d3d9_cmd_stream_clear_respects_scissor_rect_mrt"
-                ),
-                "wgpu adapter not found",
-            );
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
     };
 
     const RT0_HANDLE: u32 = 1;
@@ -1147,19 +1082,9 @@ fn d3d9_cmd_stream_clear_respects_scissor_rect_mrt() {
 
 #[test]
 fn d3d9_cmd_stream_clear_stencil_respects_scissor_rect() {
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(
-                concat!(
-                    module_path!(),
-                    "::d3d9_cmd_stream_clear_stencil_respects_scissor_rect"
-                ),
-                "wgpu adapter not found",
-            );
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
     };
 
     if !exec.supports_depth_texture_and_buffer_copies() {
@@ -1284,19 +1209,9 @@ fn d3d9_cmd_stream_clear_stencil_respects_scissor_rect() {
 
 #[test]
 fn d3d9_cmd_stream_clear_depth_respects_scissor_rect() {
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(
-                concat!(
-                    module_path!(),
-                    "::d3d9_cmd_stream_clear_depth_respects_scissor_rect"
-                ),
-                "wgpu adapter not found",
-            );
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
     };
 
     const RT_HANDLE: u32 = 1;
@@ -1544,19 +1459,9 @@ fn d3d9_cmd_stream_clear_depth_respects_scissor_rect() {
 
 #[test]
 fn d3d9_cmd_stream_clear_stencil_masks_to_8_bits() {
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(
-                concat!(
-                    module_path!(),
-                    "::d3d9_cmd_stream_clear_stencil_masks_to_8_bits"
-                ),
-                "wgpu adapter not found",
-            );
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
     };
 
     if !exec.supports_depth_texture_and_buffer_copies() {
@@ -1660,19 +1565,9 @@ fn d3d9_cmd_stream_clear_stencil_masks_to_8_bits() {
 
 #[test]
 fn d3d9_cmd_stream_clear_depth_d24s8_respects_scissor_rect() {
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(
-                concat!(
-                    module_path!(),
-                    "::d3d9_cmd_stream_clear_depth_d24s8_respects_scissor_rect"
-                ),
-                "wgpu adapter not found",
-            );
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
     };
 
     const RT_HANDLE: u32 = 1;
@@ -1920,19 +1815,9 @@ fn d3d9_cmd_stream_clear_depth_d24s8_respects_scissor_rect() {
 
 #[test]
 fn d3d9_cmd_stream_clear_color_depth_stencil_d24s8_respects_scissor_rect() {
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(
-                concat!(
-                    module_path!(),
-                    "::d3d9_cmd_stream_clear_color_depth_stencil_d24s8_respects_scissor_rect"
-                ),
-                "wgpu adapter not found",
-            );
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
     };
 
     if !exec.supports_depth_texture_and_buffer_copies() {

@@ -1,6 +1,5 @@
 mod common;
 
-use aero_gpu::{AerogpuD3d9Error, AerogpuD3d9Executor};
 use aero_protocol::aerogpu::aerogpu_cmd as cmd;
 use aero_protocol::aerogpu::aerogpu_pci as pci;
 
@@ -253,13 +252,9 @@ fn vertex_decl_pos_tex() -> Vec<u8> {
 
 #[test]
 fn d3d9_cmd_stream_alpha_blend_srcalpha_invsrcalpha() {
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(module_path!(), "wgpu adapter not found");
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
     };
 
     // Protocol constants from `aero-protocol`.
@@ -550,13 +545,9 @@ fn d3d9_cmd_stream_alpha_blend_srcalpha_invsrcalpha() {
 
 #[test]
 fn d3d9_cmd_stream_blend_factor_constant() {
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(module_path!(), "wgpu adapter not found");
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
     };
 
     // Protocol constants from `aero-protocol`.
@@ -778,13 +769,9 @@ fn d3d9_cmd_stream_blend_factor_constant() {
 
 #[test]
 fn d3d9_cmd_stream_sample_mask_discards_draw() {
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(module_path!(), "wgpu adapter not found");
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
     };
 
     // Protocol constants from `aero-protocol`.
@@ -980,13 +967,9 @@ fn d3d9_cmd_stream_sample_mask_discards_draw() {
 
 #[test]
 fn d3d9_cmd_stream_color_write_enable1_masks_mrt() {
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(module_path!(), "wgpu adapter not found");
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
     };
 
     // Protocol constants from `aero-protocol`.
@@ -1188,13 +1171,9 @@ fn d3d9_cmd_stream_color_write_enable1_masks_mrt() {
 
 #[test]
 fn d3d9_cmd_stream_scissor_test_enable_clips_draw() {
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(module_path!(), "wgpu adapter not found");
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
     };
 
     // Protocol constants from `aero-protocol`.
@@ -1404,13 +1383,9 @@ fn d3d9_cmd_stream_scissor_test_enable_clips_draw() {
 
 #[test]
 fn d3d9_cmd_stream_sampler_wrap_vs_clamp() {
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(module_path!(), "wgpu adapter not found");
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
     };
 
     // Protocol constants from `aero-protocol`.
@@ -1711,13 +1686,9 @@ fn d3d9_cmd_stream_sampler_wrap_vs_clamp() {
 
 #[test]
 fn d3d9_cmd_stream_srgb_write_enable_encodes_linear_output() {
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(module_path!(), "wgpu adapter not found");
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
     };
 
     if !exec.supports_view_formats() {
@@ -1917,13 +1888,9 @@ fn d3d9_cmd_stream_srgb_write_enable_encodes_linear_output() {
 
 #[test]
 fn d3d9_cmd_stream_sampler_srgb_texture_decodes_srgb_texels() {
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(module_path!(), "wgpu adapter not found");
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
     };
 
     if !exec.supports_view_formats() {
@@ -2209,13 +2176,9 @@ fn d3d9_cmd_stream_sampler_srgb_texture_decodes_srgb_texels() {
 
 #[test]
 fn d3d9_cmd_stream_stencil_clip_mask() {
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(module_path!(), "wgpu adapter not found");
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
     };
 
     // Protocol constants from `aero-protocol`.

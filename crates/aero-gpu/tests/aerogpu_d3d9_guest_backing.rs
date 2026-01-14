@@ -1,7 +1,7 @@
 mod common;
 
 use aero_gpu::aerogpu_executor::{AllocEntry, AllocTable};
-use aero_gpu::{AerogpuD3d9Error, AerogpuD3d9Executor, GuestMemory, VecGuestMemory};
+use aero_gpu::{AerogpuD3d9Error, GuestMemory, VecGuestMemory};
 use aero_protocol::aerogpu::{
     aerogpu_cmd::{
         AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode,
@@ -134,13 +134,9 @@ fn assemble_ps_sample_tex0() -> Vec<u8> {
 
 #[test]
 fn d3d9_cmd_stream_flushes_guest_backed_resources_from_dirty_ranges() {
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(module_path!(), "wgpu adapter not found");
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
     };
 
     // Protocol constants from `drivers/aerogpu/protocol/aerogpu_cmd.h`.
@@ -421,13 +417,9 @@ fn d3d9_cmd_stream_flushes_guest_backed_resources_from_dirty_ranges() {
 
 #[test]
 fn d3d9_cmd_stream_uses_current_alloc_table_for_dirty_range_uploads() {
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(module_path!(), "wgpu adapter not found");
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
     };
 
     // Protocol constants from `drivers/aerogpu/protocol/aerogpu_cmd.h`.
@@ -726,13 +718,9 @@ fn d3d9_cmd_stream_uses_current_alloc_table_for_dirty_range_uploads() {
 
 #[test]
 fn d3d9_copy_texture2d_flushes_dst_dirty_ranges_before_sampling() {
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(module_path!(), "wgpu adapter not found");
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
     };
 
     // Protocol constants from `aero-protocol`.
@@ -1035,13 +1023,9 @@ fn d3d9_copy_texture2d_flushes_dst_dirty_ranges_before_sampling() {
 
 #[test]
 fn d3d9_copy_buffer_writeback_writes_guest_backing() {
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(module_path!(), "wgpu adapter not found");
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
     };
 
     // Protocol constants from `aero-protocol`.
@@ -1120,13 +1104,9 @@ fn d3d9_copy_buffer_writeback_writes_guest_backing() {
 
 #[test]
 fn d3d9_copy_buffer_writeback_rejects_readonly_alloc() {
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(module_path!(), "wgpu adapter not found");
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
     };
 
     // Protocol constants from `aero-protocol`.
@@ -1219,13 +1199,9 @@ fn d3d9_copy_buffer_writeback_rejects_readonly_alloc() {
 
 #[test]
 fn d3d9_copy_buffer_writeback_requires_alloc_table_each_submit() {
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(module_path!(), "wgpu adapter not found");
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
     };
 
     const OPC_CREATE_BUFFER: u32 = AerogpuCmdOpcode::CreateBuffer as u32;
@@ -1351,13 +1327,9 @@ fn d3d9_copy_buffer_writeback_requires_alloc_table_each_submit() {
 
 #[test]
 fn d3d9_copy_buffer_writeback_does_not_consume_dirty_ranges_on_alloc_table_error() {
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(module_path!(), "wgpu adapter not found");
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
     };
 
     const OPC_CREATE_BUFFER: u32 = AerogpuCmdOpcode::CreateBuffer as u32;
@@ -1526,13 +1498,9 @@ fn d3d9_copy_buffer_writeback_does_not_consume_dirty_ranges_on_alloc_table_error
 
 #[test]
 fn d3d9_copy_texture2d_writeback_does_not_consume_dirty_ranges_on_alloc_table_error() {
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(module_path!(), "wgpu adapter not found");
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
     };
 
     const OPC_CREATE_TEXTURE2D: u32 = AerogpuCmdOpcode::CreateTexture2d as u32;
@@ -1698,13 +1666,9 @@ fn d3d9_copy_texture2d_writeback_does_not_consume_dirty_ranges_on_alloc_table_er
 
 #[test]
 fn d3d9_create_buffer_rebind_updates_guest_backing() {
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(module_path!(), "wgpu adapter not found");
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
     };
 
     const OPC_CREATE_BUFFER: u32 = AerogpuCmdOpcode::CreateBuffer as u32;
@@ -1835,13 +1799,9 @@ fn d3d9_create_buffer_rebind_updates_guest_backing() {
 
 #[test]
 fn d3d9_create_buffer_rebind_rejects_mismatched_size() {
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(module_path!(), "wgpu adapter not found");
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
     };
 
     let stream = build_stream(|out| {
@@ -1873,13 +1833,9 @@ fn d3d9_create_buffer_rebind_rejects_mismatched_size() {
 
 #[test]
 fn d3d9_copy_texture2d_writeback_writes_guest_backing() {
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(module_path!(), "wgpu adapter not found");
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
     };
 
     const OPC_CREATE_TEXTURE2D: u32 = AerogpuCmdOpcode::CreateTexture2d as u32;
@@ -1992,13 +1948,9 @@ fn d3d9_copy_texture2d_writeback_writes_guest_backing() {
 
 #[test]
 fn d3d9_copy_texture2d_writeback_requires_alloc_table_each_submit() {
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(module_path!(), "wgpu adapter not found");
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
     };
 
     const OPC_CREATE_TEXTURE2D: u32 = AerogpuCmdOpcode::CreateTexture2d as u32;
@@ -2145,13 +2097,9 @@ fn d3d9_copy_texture2d_writeback_requires_alloc_table_each_submit() {
 
 #[test]
 fn d3d9_copy_texture2d_writeback_rejects_readonly_alloc() {
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(module_path!(), "wgpu adapter not found");
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
     };
 
     const OPC_CREATE_TEXTURE2D: u32 = AerogpuCmdOpcode::CreateTexture2d as u32;
@@ -2265,13 +2213,9 @@ fn d3d9_copy_texture2d_writeback_rejects_readonly_alloc() {
 
 #[test]
 fn d3d9_create_texture2d_rebind_updates_guest_backing() {
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(module_path!(), "wgpu adapter not found");
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
     };
 
     const OPC_CREATE_TEXTURE2D: u32 = AerogpuCmdOpcode::CreateTexture2d as u32;
@@ -2449,13 +2393,9 @@ fn d3d9_create_texture2d_rebind_updates_guest_backing() {
 
 #[test]
 fn d3d9_create_texture2d_rebind_rejects_mismatched_format() {
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(module_path!(), "wgpu adapter not found");
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
     };
 
     let stream = build_stream(|out| {
@@ -2497,13 +2437,9 @@ fn d3d9_create_texture2d_rebind_rejects_mismatched_format() {
 
 #[test]
 fn d3d9_copy_texture2d_writeback_respects_copy_region() {
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(module_path!(), "wgpu adapter not found");
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
     };
 
     const OPC_CREATE_TEXTURE2D: u32 = AerogpuCmdOpcode::CreateTexture2d as u32;
@@ -2619,13 +2555,9 @@ fn d3d9_copy_texture2d_writeback_respects_copy_region() {
 
 #[test]
 fn d3d9_copy_texture2d_writeback_encodes_x8_alpha_as_255() {
-    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-        Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(module_path!(), "wgpu adapter not found");
-            return;
-        }
-        Err(err) => panic!("failed to create executor: {err}"),
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
     };
 
     const OPC_CREATE_TEXTURE2D: u32 = AerogpuCmdOpcode::CreateTexture2d as u32;
