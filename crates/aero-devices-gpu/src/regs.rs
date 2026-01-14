@@ -5,7 +5,7 @@ use aero_protocol::aerogpu::aerogpu_pci as pci;
 // Constants mirrored from `drivers/aerogpu/protocol/aerogpu_pci.h` via `aero-protocol`.
 
 pub use pci::{
-    AEROGPU_ABI_MAJOR, AEROGPU_ABI_MINOR, AEROGPU_ABI_VERSION_U32,
+    AerogpuErrorCode, AEROGPU_ABI_MAJOR, AEROGPU_ABI_MINOR, AEROGPU_ABI_VERSION_U32,
     AEROGPU_FEATURE_CURSOR as FEATURE_CURSOR, AEROGPU_FEATURE_FENCE_PAGE as FEATURE_FENCE_PAGE,
     AEROGPU_FEATURE_SCANOUT as FEATURE_SCANOUT, AEROGPU_FEATURE_TRANSFER as FEATURE_TRANSFER,
     AEROGPU_FEATURE_VBLANK as FEATURE_VBLANK, AEROGPU_MMIO_MAGIC,
@@ -50,6 +50,12 @@ pub mod mmio {
     pub const IRQ_STATUS: u64 = pci::AEROGPU_MMIO_REG_IRQ_STATUS as u64;
     pub const IRQ_ENABLE: u64 = pci::AEROGPU_MMIO_REG_IRQ_ENABLE as u64;
     pub const IRQ_ACK: u64 = pci::AEROGPU_MMIO_REG_IRQ_ACK as u64;
+
+    // Error reporting (ABI 1.3+).
+    pub const ERROR_CODE: u64 = pci::AEROGPU_MMIO_REG_ERROR_CODE as u64;
+    pub const ERROR_FENCE_LO: u64 = pci::AEROGPU_MMIO_REG_ERROR_FENCE_LO as u64;
+    pub const ERROR_FENCE_HI: u64 = pci::AEROGPU_MMIO_REG_ERROR_FENCE_HI as u64;
+    pub const ERROR_COUNT: u64 = pci::AEROGPU_MMIO_REG_ERROR_COUNT as u64;
 
     pub const SCANOUT0_ENABLE: u64 = pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE as u64;
     pub const SCANOUT0_WIDTH: u64 = pci::AEROGPU_MMIO_REG_SCANOUT0_WIDTH as u64;
@@ -119,6 +125,13 @@ pub struct AeroGpuRegs {
     pub irq_status: u32,
     pub irq_enable: u32,
 
+    /// Most recent error code written to `MMIO_REG_ERROR_CODE` (ABI 1.3+).
+    pub error_code: u32,
+    /// Fence associated with the most recent error (ABI 1.3+).
+    pub error_fence: u64,
+    /// Monotonic count of errors recorded (ABI 1.3+).
+    pub error_count: u32,
+
     pub scanout0: AeroGpuScanoutConfig,
     pub scanout0_vblank_seq: u64,
     pub scanout0_vblank_time_ns: u64,
@@ -140,6 +153,9 @@ impl Default for AeroGpuRegs {
             completed_fence: 0,
             irq_status: 0,
             irq_enable: 0,
+            error_code: AerogpuErrorCode::None as u32,
+            error_fence: 0,
+            error_count: 0,
             scanout0: AeroGpuScanoutConfig::default(),
             scanout0_vblank_seq: 0,
             scanout0_vblank_time_ns: 0,
@@ -147,6 +163,15 @@ impl Default for AeroGpuRegs {
             cursor: AeroGpuCursorConfig::default(),
             stats: AeroGpuStats::default(),
         }
+    }
+}
+
+impl AeroGpuRegs {
+    pub fn record_error(&mut self, code: AerogpuErrorCode, fence: u64) {
+        self.error_code = code as u32;
+        self.error_fence = fence;
+        self.error_count = self.error_count.saturating_add(1);
+        self.irq_status |= irq_bits::ERROR;
     }
 }
 

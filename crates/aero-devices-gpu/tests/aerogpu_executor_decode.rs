@@ -6,7 +6,9 @@ use aero_devices_gpu::executor::{
     AeroGpuAllocTableDecodeError, AeroGpuCmdStreamDecodeError, AeroGpuExecutor,
     AeroGpuExecutorConfig, AeroGpuFenceCompletionMode, AeroGpuSubmissionDecodeError,
 };
-use aero_devices_gpu::regs::{irq_bits, ring_control, AeroGpuRegs, FEATURE_VBLANK};
+use aero_devices_gpu::regs::{
+    irq_bits, ring_control, AeroGpuRegs, AerogpuErrorCode, FEATURE_VBLANK,
+};
 use aero_devices_gpu::ring::{
     AeroGpuAllocEntry, AeroGpuSubmitDesc, AEROGPU_ALLOC_TABLE_HEADER_SIZE_BYTES,
     AEROGPU_ALLOC_TABLE_MAGIC, AEROGPU_RING_HEADER_SIZE_BYTES, AEROGPU_RING_MAGIC,
@@ -879,6 +881,9 @@ fn alloc_table_descriptor_address_overflow_sets_error_irq_and_advances_head() {
     assert_eq!(regs.completed_fence, 10);
     assert_eq!(regs.stats.malformed_submissions, 1);
     assert_ne!(regs.irq_status & irq_bits::ERROR, 0);
+    assert_eq!(regs.error_code, AerogpuErrorCode::Oob as u32);
+    assert_eq!(regs.error_fence, 10);
+    assert_eq!(regs.error_count, 1);
 
     let record = exec
         .last_submissions
@@ -1008,6 +1013,9 @@ fn backend_completion_error_advances_fence_and_sets_error_irq() {
     assert_eq!(regs.completed_fence, 9);
     assert_eq!(regs.stats.gpu_exec_errors, 1);
     assert_ne!(regs.irq_status & irq_bits::ERROR, 0);
+    assert_eq!(regs.error_code, AerogpuErrorCode::Backend as u32);
+    assert_eq!(regs.error_fence, 9);
+    assert_eq!(regs.error_count, 1);
 }
 
 #[test]
