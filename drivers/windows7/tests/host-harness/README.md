@@ -167,6 +167,8 @@ The Python harness prints:
    - POSIX: shell-escaped via `shlex.quote`
    - Windows: cmdline-escaped via `subprocess.list2cmdline`
 
+Note: `--print-qemu-cmd` is accepted as an alias for `--dry-run`.
+
 ### Forcing / limiting virtio MSI-X vector count (QEMU `vectors=`)
 
 To deterministically exercise the Aero virtio drivers' **multi-vector MSI-X** paths *and* fallback behavior when fewer
