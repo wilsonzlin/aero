@@ -120,7 +120,7 @@ fn px(rgba: &[u8], width: u32, x: u32, y: u32) -> [u8; 4] {
     rgba[idx..idx + 4].try_into().unwrap()
 }
 
-fn run(half_pixel_center: bool) -> Option<Vec<u8>> {
+fn run(half_pixel_center: bool, set_viewport: bool) -> Option<Vec<u8>> {
     let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless_with_config(
         AerogpuD3d9ExecutorConfig { half_pixel_center },
     )) {
@@ -298,14 +298,18 @@ fn run(half_pixel_center: bool) -> Option<Vec<u8>> {
             }
         });
 
-        emit_packet(out, OPC_SET_VIEWPORT, |out| {
-            push_u32(out, 0.0f32.to_bits()); // x
-            push_u32(out, 0.0f32.to_bits()); // y
-            push_u32(out, (width as f32).to_bits()); // width
-            push_u32(out, (height as f32).to_bits()); // height
-            push_u32(out, 0.0f32.to_bits()); // min_depth
-            push_u32(out, 1.0f32.to_bits()); // max_depth
-        });
+        // Deliberately omit SetViewport in some tests to validate the D3D9 default viewport
+        // behavior (full render target).
+        if set_viewport {
+            emit_packet(out, OPC_SET_VIEWPORT, |out| {
+                push_u32(out, 0.0f32.to_bits()); // x
+                push_u32(out, 0.0f32.to_bits()); // y
+                push_u32(out, (width as f32).to_bits()); // width
+                push_u32(out, (height as f32).to_bits()); // height
+                push_u32(out, 0.0f32.to_bits()); // min_depth
+                push_u32(out, 1.0f32.to_bits()); // max_depth
+            });
+        }
 
         emit_packet(out, OPC_SET_SCISSOR, |out| {
             push_u32(out, 0); // x
@@ -374,27 +378,44 @@ fn run(half_pixel_center: bool) -> Option<Vec<u8>> {
     Some(rgba)
 }
 
-#[test]
-fn d3d9_half_pixel_center_shifts_rasterization() {
-    let Some(off) = run(false) else { return };
-    let Some(on) = run(true) else { return };
-
+fn assert_half_pixel_center_shift(off: &[u8], on: &[u8]) {
     let width = 4u32;
     let bg = [0, 0, 0, 255];
     let green = [0, 255, 0, 255];
 
-    assert_eq!(px(&off, width, 0, 0), bg, "half_pixel_center=false: (0,0) is background");
     assert_eq!(
-        px(&off, width, 1, 1),
+        px(off, width, 0, 0),
+        bg,
+        "half_pixel_center=false: (0,0) is background"
+    );
+    assert_eq!(
+        px(off, width, 1, 1),
         green,
         "half_pixel_center=false: (1,1) is inside the rect"
     );
 
     assert_eq!(
-        px(&on, width, 0, 0),
+        px(on, width, 0, 0),
         green,
         "half_pixel_center=true: (0,0) is inside the rect"
     );
-    assert_eq!(px(&on, width, 1, 1), bg, "half_pixel_center=true: (1,1) is background");
+    assert_eq!(
+        px(on, width, 1, 1),
+        bg,
+        "half_pixel_center=true: (1,1) is background"
+    );
 }
 
+#[test]
+fn d3d9_half_pixel_center_shifts_rasterization() {
+    let Some(off) = run(false, true) else { return };
+    let Some(on) = run(true, true) else { return };
+    assert_half_pixel_center_shift(&off, &on);
+}
+
+#[test]
+fn d3d9_half_pixel_center_default_viewport_shifts_rasterization() {
+    let Some(off) = run(false, false) else { return };
+    let Some(on) = run(true, false) else { return };
+    assert_half_pixel_center_shift(&off, &on);
+}
