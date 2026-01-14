@@ -534,7 +534,14 @@ impl AeroGpuMmioDevice {
                     "aerogpu.exec_state.pending_submissions.cmd_stream",
                 ));
             }
+            if pending_submissions_bytes.saturating_add(cmd_len) > MAX_PENDING_AEROGPU_SUBMISSIONS_BYTES
+            {
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "aerogpu.exec_state.pending_submissions.total_bytes",
+                ));
+            }
             let cmd_stream = d.bytes(cmd_len)?.to_vec();
+            pending_submissions_bytes = pending_submissions_bytes.saturating_add(cmd_stream.len());
 
             let alloc_present = d.bool()?;
             let alloc_table = if alloc_present {
@@ -544,15 +551,20 @@ impl AeroGpuMmioDevice {
                         "aerogpu.exec_state.pending_submissions.alloc_table",
                     ));
                 }
-                Some(d.bytes(alloc_len)?.to_vec())
+                if pending_submissions_bytes.saturating_add(alloc_len)
+                    > MAX_PENDING_AEROGPU_SUBMISSIONS_BYTES
+                {
+                    return Err(SnapshotError::InvalidFieldEncoding(
+                        "aerogpu.exec_state.pending_submissions.total_bytes",
+                    ));
+                }
+                let alloc_table = d.bytes(alloc_len)?.to_vec();
+                pending_submissions_bytes =
+                    pending_submissions_bytes.saturating_add(alloc_table.len());
+                Some(alloc_table)
             } else {
                 None
             };
-
-            let alloc_bytes = alloc_table.as_ref().map(|bytes| bytes.len()).unwrap_or(0);
-            pending_submissions_bytes = pending_submissions_bytes
-                .saturating_add(cmd_stream.len())
-                .saturating_add(alloc_bytes);
 
             pending_submissions.push_back(AerogpuSubmission {
                 flags,
@@ -2923,6 +2935,77 @@ mod tests {
         assert_eq!(
             dev.pending_submissions_bytes,
             MAX_PENDING_AEROGPU_SUBMISSIONS
+        );
+    }
+
+    #[test]
+    fn exec_snapshot_restore_recomputes_pending_submission_bytes() {
+        // Encode a minimal EXEC snapshot payload with one pending submission.
+        let cmd_stream = vec![0u8; 10];
+        let alloc_table = vec![0u8; 5];
+
+        let bytes = Encoder::new()
+            .u32(3) // version
+            .bool(false) // submission_bridge_enabled
+            .bool(false) // doorbell_pending
+            .bool(false) // ring_reset_pending
+            .bool(false) // ring_reset_pending_dma
+            .bool(false) // fence_page_dirty
+            .u32(0) // pending_fences.len()
+            .u32(0) // backend_completed.len()
+            .u32(0) // deferred_backend_completions.len()
+            .u32(1) // pending_submissions.len()
+            .u32(0) // flags
+            .u32(0) // context_id
+            .u32(0) // engine_id
+            .u64(0) // signal_fence
+            .u32(cmd_stream.len() as u32)
+            .bytes(&cmd_stream)
+            .bool(true) // alloc_present
+            .u32(alloc_table.len() as u32)
+            .bytes(&alloc_table)
+            .finish();
+
+        let mut dev = AeroGpuMmioDevice::default();
+        dev.load_exec_snapshot_state_v1(&bytes)
+            .expect("exec snapshot should load");
+
+        assert_eq!(dev.pending_submissions.len(), 1);
+        assert_eq!(
+            dev.pending_submissions_bytes,
+            cmd_stream.len() + alloc_table.len()
+        );
+    }
+
+    #[test]
+    fn exec_snapshot_restore_rejects_pending_submission_total_bytes_over_cap() {
+        // The EXEC snapshot payload is allowed to come from untrusted sources. Ensure we reject
+        // snapshots that would restore more queued submission bytes than the runtime queue cap.
+        //
+        // We intentionally omit the cmd_stream bytes: the decoder should reject the oversized
+        // `cmd_len` before attempting to allocate/copy it.
+        let bytes = Encoder::new()
+            .u32(3) // version
+            .bool(false) // submission_bridge_enabled
+            .bool(false) // doorbell_pending
+            .bool(false) // ring_reset_pending
+            .bool(false) // ring_reset_pending_dma
+            .bool(false) // fence_page_dirty
+            .u32(0) // pending_fences.len()
+            .u32(0) // backend_completed.len()
+            .u32(0) // deferred_backend_completions.len()
+            .u32(1) // pending_submissions.len()
+            .u32(0) // flags
+            .u32(0) // context_id
+            .u32(0) // engine_id
+            .u64(0) // signal_fence
+            .u32((MAX_PENDING_AEROGPU_SUBMISSIONS_BYTES as u32) + 1) // cmd_len
+            .finish();
+
+        let mut dev = AeroGpuMmioDevice::default();
+        assert!(
+            dev.load_exec_snapshot_state_v1(&bytes).is_err(),
+            "expected oversized exec snapshot to be rejected"
         );
     }
 
