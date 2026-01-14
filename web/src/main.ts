@@ -43,6 +43,7 @@ import {
   wrapSharedFramebuffer,
 } from "./display/framebuffer_protocol";
 import { VgaPresenter } from "./display/vga_presenter";
+import { SharedLayoutPresenter } from "./display/shared_layout_presenter";
 import { installAeroGlobal } from "./runtime/aero_global";
 import { createWebGpuCanvasContext, requestWebGpuDevice } from "./platform/webgpu";
 import { WorkerCoordinator } from "./runtime/coordinator";
@@ -5694,9 +5695,8 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
 
   const vgaInfoLine = el("div", { class: "mono", text: "" });
 
-  let vgaPresenter: VgaPresenter | null = null;
-  let vgaShared: ReturnType<typeof wrapSharedFramebuffer> | null = null;
-  let vgaSab: SharedArrayBuffer | null = null;
+  let vgaPresenter: SharedLayoutPresenter | null = null;
+  let vgaFramebufferInfo: { sab: SharedArrayBuffer; offsetBytes: number } | null = null;
   let schedulerWorker: Worker | null = null;
   let schedulerFrameStateSab: SharedArrayBuffer | null = null;
   let schedulerSharedFramebuffer: { sab: SharedArrayBuffer; offsetBytes: number } | null = null;
@@ -5728,16 +5728,8 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
   });
 
   function ensureVgaPresenter(): void {
-    const sab = workerCoordinator.getVgaFramebuffer();
-    if (!sab) return;
-
-    if (sab !== vgaSab) {
-      vgaSab = sab;
-      vgaShared = wrapSharedFramebuffer(sab, 0);
-      if (vgaPresenter) {
-        vgaPresenter.setSharedFramebuffer(vgaShared);
-      }
-    }
+    const fb = workerCoordinator.getSharedFramebuffer();
+    if (!fb) return;
 
     if (useWorkerPresentation) {
       // Worker owns the canvas; main-thread presenter must be disabled.
@@ -5745,12 +5737,20 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
         vgaPresenter.destroy();
         vgaPresenter = null;
       }
+      vgaFramebufferInfo = null;
       return;
     }
 
-    if (!vgaPresenter && vgaShared) {
-      vgaPresenter = new VgaPresenter(vgaCanvas, { scaleMode: "auto", integerScaling: true, maxPresentHz: 60 });
-      vgaPresenter.setSharedFramebuffer(vgaShared);
+    const changed =
+      !vgaFramebufferInfo || vgaFramebufferInfo.sab !== fb.sab || vgaFramebufferInfo.offsetBytes !== fb.offsetBytes;
+    if (changed) {
+      vgaFramebufferInfo = fb;
+      vgaPresenter?.setSharedFramebuffer(fb);
+    }
+
+    if (!vgaPresenter) {
+      vgaPresenter = new SharedLayoutPresenter(vgaCanvas, { maxPresentHz: 60 });
+      vgaPresenter.setSharedFramebuffer(fb);
       vgaPresenter.start();
     }
   }
@@ -5760,8 +5760,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       vgaPresenter.destroy();
       vgaPresenter = null;
     }
-    vgaShared = null;
-    vgaSab = null;
+    vgaFramebufferInfo = null;
     vgaInfoLine.textContent = "";
   }
 
@@ -5978,11 +5977,18 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
 
     if (anyActive) {
       ensureVgaPresenter();
-      if (vgaShared) {
-        const w = Atomics.load(vgaShared.header, HEADER_INDEX_WIDTH);
-        const h = Atomics.load(vgaShared.header, HEADER_INDEX_HEIGHT);
-        const frame = Atomics.load(vgaShared.header, HEADER_INDEX_FRAME_COUNTER);
-        vgaInfoLine.textContent = `vga ${w}x${h} frame=${frame}`;
+      const fb = vgaFramebufferInfo;
+      if (fb) {
+        try {
+          const header = new Int32Array(fb.sab, fb.offsetBytes, SHARED_FRAMEBUFFER_HEADER_U32_LEN);
+          const w = Atomics.load(header, SharedFramebufferHeaderIndex.WIDTH);
+          const h = Atomics.load(header, SharedFramebufferHeaderIndex.HEIGHT);
+          const seq = Atomics.load(header, SharedFramebufferHeaderIndex.FRAME_SEQ);
+          vgaInfoLine.textContent = `legacy ${w}x${h} seq=${seq}`;
+        } catch {
+          // ignore if the framebuffer isn't initialized yet.
+          vgaInfoLine.textContent = "";
+        }
       }
     } else {
       teardownVgaPresenter();

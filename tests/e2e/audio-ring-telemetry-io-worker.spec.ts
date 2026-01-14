@@ -70,7 +70,6 @@ test("IO worker publishes AudioWorklet ring telemetry into StatusIndex.Audio*", 
     initRing(regions.event.byteOffset, regions.event.byteLength);
 
     const ioIpcSab = createIoIpcSab();
-    const vgaFramebuffer = new SharedArrayBuffer(1);
     const sharedFramebuffer = new SharedArrayBuffer(64);
 
     const ioWorker = new Worker(new URL("/web/src/workers/io.worker.ts", location.href), { type: "module" });
@@ -156,7 +155,6 @@ test("IO worker publishes AudioWorklet ring telemetry into StatusIndex.Audio*", 
       role: "io",
       controlSab,
       guestMemory,
-      vgaFramebuffer,
       ioIpcSab,
       sharedFramebuffer,
       sharedFramebufferOffsetBytes: 0,

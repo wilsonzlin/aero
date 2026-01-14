@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 
-import { requiredFramebufferBytes } from "../display/framebuffer_protocol";
 import { parseIpcBuffer } from "../ipc/ipc";
 import { RingBuffer } from "../ipc/ring_buffer";
 import { RECORD_ALIGN, ringCtrl } from "../ipc/layout";
@@ -168,6 +167,12 @@ describe("runtime/shared_layout", () => {
     expect(views.sharedFramebufferOffsetBytes).toBe(segments.sharedFramebufferOffsetBytes);
   });
 
+  it("does not allocate a separate vgaFramebuffer segment (legacy scanout uses sharedFramebuffer)", () => {
+    const segments = allocateSharedMemorySegments({ guestRamMiB: TEST_GUEST_RAM_MIB, vramMiB: TEST_VRAM_MIB });
+    // Historical field; should be absent so workers can't dead-write into an unused region.
+    expect((segments as unknown as { vgaFramebuffer?: unknown }).vgaFramebuffer).toBeUndefined();
+  });
+
   it("allocates and initializes scanoutState", () => {
     const segments = allocateSharedMemorySegments({ guestRamMiB: TEST_GUEST_RAM_MIB, vramMiB: TEST_VRAM_MIB });
     expect(segments.scanoutState).toBeInstanceOf(SharedArrayBuffer);
@@ -226,11 +231,6 @@ describe("runtime/shared_layout", () => {
     expect(caps.get(IO_IPC_NET_TX_QUEUE_KIND)).toBe(IO_IPC_NET_RING_CAPACITY_BYTES);
     expect(caps.get(IO_IPC_NET_RX_QUEUE_KIND)).toBe(IO_IPC_NET_RING_CAPACITY_BYTES);
     expect(caps.get(IO_IPC_HID_IN_QUEUE_KIND)).toBe(IO_IPC_HID_IN_RING_CAPACITY_BYTES);
-  });
-
-  it("allocates a VGA/VBE framebuffer large enough for 1280x720x32bpp (VBE mode 0x160)", () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: TEST_GUEST_RAM_MIB, vramMiB: TEST_VRAM_MIB });
-    expect(segments.vgaFramebuffer.byteLength).toBeGreaterThanOrEqual(requiredFramebufferBytes(1280, 720, 1280 * 4));
   });
 
   it("sets worker ready flags without overlapping status indices", () => {

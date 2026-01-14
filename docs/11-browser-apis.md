@@ -339,7 +339,7 @@ function initializeMemory() {
     // - `control`: SharedArrayBuffer for status + per-worker command/event rings
     // - `guestMemory`: shared WebAssembly.Memory for guest RAM
     // - `ioIpc`: SharedArrayBuffer for high-frequency CPU<->IO IPC
-    // - `vgaFramebuffer` + `sharedFramebuffer`: demo display buffers
+    // - `sharedFramebuffer`: demo/legacy display buffer
     return { segments, shared, guestToLinear: guestToLinearAddr };
 }
 ```
@@ -893,7 +893,6 @@ class WorkerCoordinator {
                 role,
                 controlSab: segments.control,
                 guestMemory: segments.guestMemory,
-                vgaFramebuffer: segments.vgaFramebuffer,
                 ioIpcSab: segments.ioIpc,
                 sharedFramebuffer: segments.sharedFramebuffer,
                 sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,

@@ -13,6 +13,8 @@
 // couple of tiny shims (`ws`, `ipaddr.js`) for offline unit tests. Everything
 // else (node: builtins, bare specifiers, absolute URLs) is delegated unchanged.
 
+import { readFile } from "node:fs/promises";
+
 export async function resolve(specifier, context, nextResolve) {
   if (specifier === "ws") {
     try {
@@ -115,6 +117,17 @@ export async function load(url, context, nextLoad) {
   // Don't short-circuit those module loads; only synthesize `?url` for non-module
   // assets.
   const u = new URL(url);
+  if (u.protocol === "file:" && u.searchParams.has("raw")) {
+    const base = new URL(url);
+    base.search = "";
+    base.hash = "";
+    const text = await readFile(base, "utf8");
+    return {
+      format: "module",
+      source: `export default ${JSON.stringify(text)};\n`,
+      shortCircuit: true,
+    };
+  }
   if (u.protocol === "file:" && u.searchParams.has("url")) {
     const path = u.pathname.toLowerCase();
     if (

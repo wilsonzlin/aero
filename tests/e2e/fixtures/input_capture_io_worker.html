@@ -67,10 +67,13 @@
           kind: "init",
           role: "io",
           controlSab: segments.control,
-         guestMemory: segments.guestMemory,
-         vgaFramebuffer: segments.vgaFramebuffer,
-         ioIpcSab: segments.ioIpc,
-       });
+          guestMemory: segments.guestMemory,
+          ioIpcSab: segments.ioIpc,
+          sharedFramebuffer: segments.sharedFramebuffer,
+          sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
+          scanoutState: segments.scanoutState,
+          scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
+        });
 
       window.__capture = new InputCapture(canvas, ioWorker, {
         flushHz: 1000,

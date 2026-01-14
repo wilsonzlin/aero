@@ -93,7 +93,6 @@ test("runtime UHCI: WebHID + WebUSB passthrough are guest-visible (NAK while pen
       role: "io",
       controlSab: segments.control,
       guestMemory: segments.guestMemory,
-      vgaFramebuffer: segments.vgaFramebuffer,
       ioIpcSab: segments.ioIpc,
       sharedFramebuffer: segments.sharedFramebuffer,
       sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,

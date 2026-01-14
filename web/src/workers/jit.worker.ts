@@ -236,7 +236,6 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       const segments = {
         control: init.controlSab!,
         guestMemory: init.guestMemory!,
-        vgaFramebuffer: init.vgaFramebuffer!,
         scanoutState: init.scanoutState,
         scanoutStateOffsetBytes: init.scanoutStateOffsetBytes ?? 0,
         cursorState: init.cursorState,

@@ -1,5 +1,4 @@
 import { RECORD_ALIGN, queueKind, ringCtrl } from "../ipc/layout";
-import { requiredFramebufferBytes } from "../display/framebuffer_protocol";
 import { createIpcBuffer } from "../ipc/ipc";
 import { PCI_MMIO_BASE, VRAM_BASE_PADDR } from "../arch/guest_phys.ts";
 import { guestPaddrToRamOffset as guestPaddrToRamOffsetRaw, guestRangeInBounds as guestRangeInBoundsRaw } from "../arch/guest_ram_translate.ts";
@@ -182,7 +181,7 @@ export function createIoIpcSab(): SharedArrayBuffer {
  * - `ioIpc`: a SharedArrayBuffer carrying high-frequency AIPC queues
  *   (device command/event traffic, raw Ethernet frames, etc).
  * - `guestMemory`: a shared WebAssembly.Memory for guest RAM.
- * - `vgaFramebuffer`: a shared framebuffer region for early VGA/VBE display.
+ * - `sharedFramebuffer`: a shared framebuffer region for legacy/demo scanout.
  *
  * This keeps IPC cache-friendly and avoids tying worker bring-up to a massive
  * monolithic allocation.
@@ -286,20 +285,6 @@ export const CPU_WORKER_DEMO_FRAMEBUFFER_OFFSET_BYTES = 0x20_0000; // 2 MiB (64-
 export const CPU_WORKER_DEMO_FRAMEBUFFER_WIDTH = 640;
 export const CPU_WORKER_DEMO_FRAMEBUFFER_HEIGHT = 480;
 export const CPU_WORKER_DEMO_FRAMEBUFFER_TILE_SIZE = 32;
-
-// Early VGA/VBE framebuffer sizing.
-//
-// The buffer is reused across mode changes; the active dimensions live in the
-// framebuffer header. Allocate enough space for the largest VBE mode we expose
-// in the BIOS mode list, including the required 0x160 mode (1280x720x32bpp).
-//
-// Keep this reasonably small: this SharedArrayBuffer is always allocated during
-// worker bring-up, regardless of guest RAM size.
-const VGA_FRAMEBUFFER_MAX_WIDTH = 1280;
-// Keep a bit of vertical slack over 720p so minor mode-list tweaks don't require
-// reallocating or rejecting frames.
-const VGA_FRAMEBUFFER_MAX_HEIGHT = 768;
-
 function mibToBytes(mib: number): number {
   return mib * 1024 * 1024;
 }
@@ -318,7 +303,6 @@ export interface SharedMemorySegments {
    * `[VRAM_BASE_PADDR, VRAM_BASE_PADDR + vram.byteLength)`.
    */
   vram?: SharedArrayBuffer;
-  vgaFramebuffer: SharedArrayBuffer;
   ioIpc: SharedArrayBuffer;
   sharedFramebuffer: SharedArrayBuffer;
   /**
@@ -376,7 +360,6 @@ export interface SharedMemoryViews {
    * Size of the VRAM aperture in bytes (equals `vramU8.byteLength`).
    */
   vramSizeBytes: number;
-  vgaFramebuffer: SharedArrayBuffer;
   sharedFramebuffer: SharedArrayBuffer;
   sharedFramebufferOffsetBytes: number;
   scanoutState?: SharedArrayBuffer;
@@ -670,14 +653,6 @@ export function allocateSharedMemorySegments(options?: {
     control,
     guestMemory,
     vram,
-    // A single shared 32bpp framebuffer region used for early VGA/VBE display.
-    //
-    // Sized to accommodate the required VBE mode list (including 1280x720x32bpp),
-    // with a small amount of slack so the emulator can switch modes without
-    // reallocating the backing store.
-    vgaFramebuffer: new SharedArrayBuffer(
-      requiredFramebufferBytes(VGA_FRAMEBUFFER_MAX_WIDTH, VGA_FRAMEBUFFER_MAX_HEIGHT, VGA_FRAMEBUFFER_MAX_WIDTH * 4),
-    ),
     ioIpc: createIoIpcSab(),
     sharedFramebuffer,
     sharedFramebufferOffsetBytes,
@@ -756,7 +731,6 @@ export function createSharedMemoryViews(segments: SharedMemorySegments): SharedM
     guestI32,
     vramU8,
     vramSizeBytes,
-    vgaFramebuffer: segments.vgaFramebuffer,
     sharedFramebuffer: segments.sharedFramebuffer,
     sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
     scanoutState,

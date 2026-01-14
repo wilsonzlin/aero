@@ -815,10 +815,6 @@ export class WorkerCoordinator {
     return this.shared?.status ?? null;
   }
 
-  getVgaFramebuffer(): SharedArrayBuffer | null {
-    return this.shared?.vgaFramebuffer ?? null;
-  }
-
   getSharedFramebuffer(): { sab: SharedArrayBuffer; offsetBytes: number } | null {
     const shared = this.shared;
     if (!shared) return null;
@@ -1852,7 +1848,6 @@ export class WorkerCoordinator {
         vram: segments.vram,
         vramBasePaddr: segments.vram ? VRAM_BASE_PADDR : undefined,
         vramSizeBytes: segments.vram ? segments.vram.byteLength : undefined,
-        vgaFramebuffer: segments.vgaFramebuffer,
         scanoutState: segments.scanoutState,
         scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
         cursorState: segments.cursorState,

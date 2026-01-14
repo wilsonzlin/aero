@@ -66,7 +66,6 @@ export type WorkerInitMessage = {
    * This typically equals `vram.byteLength` when `vram` is present.
    */
   vramSizeBytes?: number;
-  vgaFramebuffer: SharedArrayBuffer;
   /**
    * Shared scanout descriptor used to select which framebuffer is currently presented.
    *

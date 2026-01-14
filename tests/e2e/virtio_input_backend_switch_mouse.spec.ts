@@ -566,7 +566,6 @@ test("IO worker switches mouse input from PS/2 (i8042 AUX packets) to virtio-inp
         role: "io",
         controlSab: segments.control,
         guestMemory: segments.guestMemory,
-        vgaFramebuffer: segments.vgaFramebuffer,
         ioIpcSab: segments.ioIpc,
         sharedFramebuffer: segments.sharedFramebuffer,
         sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,

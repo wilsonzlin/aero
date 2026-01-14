@@ -57,7 +57,6 @@ test("IO worker switches keyboard input from i8042 scancodes to virtio-input aft
       role: "io",
       controlSab: segments.control,
       guestMemory: segments.guestMemory,
-      vgaFramebuffer: segments.vgaFramebuffer,
       ioIpcSab: segments.ioIpc,
       sharedFramebuffer: segments.sharedFramebuffer,
       sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,

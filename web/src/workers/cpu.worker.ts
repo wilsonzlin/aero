@@ -18,18 +18,6 @@ import {
   type SharedFramebufferLayout,
 } from "../ipc/shared-layout";
 import {
-  FRAMEBUFFER_FORMAT_RGBA8888,
-  HEADER_INDEX_CONFIG_COUNTER,
-  HEADER_INDEX_FRAME_COUNTER,
-  HEADER_INDEX_HEIGHT,
-  HEADER_INDEX_STRIDE_BYTES,
-  HEADER_INDEX_WIDTH,
-  addHeaderI32,
-  initFramebufferHeader,
-  storeHeaderI32,
-  wrapSharedFramebuffer,
-} from "../display/framebuffer_protocol";
-import {
   CPU_WORKER_DEMO_FRAMEBUFFER_HEIGHT,
   CPU_WORKER_DEMO_FRAMEBUFFER_TILE_SIZE,
   CPU_WORKER_DEMO_FRAMEBUFFER_WIDTH,
@@ -265,7 +253,6 @@ let eventRing!: RingBuffer;
 let guestI32!: Int32Array;
 let guestU8!: Uint8Array;
 let guestLayout: GuestRamLayout | null = null;
-let vgaFramebuffer: ReturnType<typeof wrapSharedFramebuffer> | null = null;
 let frameState: Int32Array | null = null;
 let io: AeroIpcIoClient | null = null;
 let ioNetTxRing: RingBuffer | null = null;
@@ -792,17 +779,9 @@ function guestRangesOverlap(aStart: number, aLen: number, bStart: number, bLen: 
 }
 
 function guestAssertNoOverlapWithDemoRegions(offset: number, len: number, label: string): void {
-  // The CPU worker continuously publishes frames into guest RAM for the embedded shared framebuffer
-  // and demo framebuffer scratch paths. Any harness that uses fixed guest offsets must keep its
-  // scratch buffers disjoint from those regions or it will be corrupted in the background.
-  const demoFbStart = DEMO_FB_OFFSET;
-  const demoFbLen = DEMO_FB_MAX_BYTES;
-  if (guestRangesOverlap(offset, len, demoFbStart, demoFbLen)) {
-    throw new Error(
-      `${label} guest range overlaps DEMO_FB region: [0x${offset.toString(16)}, +0x${len.toString(16)}] intersects ` +
-        `[0x${demoFbStart.toString(16)}, +0x${demoFbLen.toString(16)}]`,
-    );
-  }
+  // The CPU worker continuously publishes frames into guest RAM when the shared framebuffer is
+  // embedded in the guest WebAssembly.Memory. Any harness that uses fixed guest offsets must keep
+  // its scratch buffers disjoint from that region or it will be corrupted in the background.
 
   const header = sharedHeader;
   const layout = sharedLayout;
@@ -1035,9 +1014,8 @@ async function startHdaPciDevice(msg: AudioOutputHdaPciDeviceStartMessage, token
   //
   // Avoid low-memory offsets that are used by other CPU-worker demos (e.g. the
   // diskRead demo uses 0x1000 as a scratch buffer) and keep this region distinct
-  // from the CPU worker's ongoing framebuffer demo regions:
+  // from the CPU worker's ongoing framebuffer demo region:
   // - Shared framebuffer: starts at `CPU_WORKER_DEMO_FRAMEBUFFER_OFFSET_BYTES` (0x20_0000).
-  // - Demo framebuffer scratch: `DEMO_FB_OFFSET` (0x50_0000) for up to ~3MiB.
   //
   // Those demos continuously write guest RAM in the background, so overlapping
   // addresses will corrupt CORB/RIRB/BDL/PCM state and cause flaky CI failures.
@@ -1188,16 +1166,6 @@ let perfIoWaitMs = 0;
 let perfDeviceExits = 0;
 let perfDeviceIoReadBytes = 0;
 let perfDeviceIoWriteBytes = 0;
-
-// Demo framebuffer region inside guest RAM. The worker drives a tiny JS→WASM→SAB
-// render path by asking WASM to fill pixels here and then bulk-copying them into the VGA SAB.
-// NOTE: Keep this disjoint from the shared framebuffer demo region starting at
-// `CPU_WORKER_DEMO_FRAMEBUFFER_OFFSET_BYTES`.
-//
-// IMPORTANT: This region is written continuously by the CPU worker render loop.
-// Fixed-offset harness DMA buffers (audio, etc.) must not overlap it.
-const DEMO_FB_OFFSET = 0x500000;
-const DEMO_FB_MAX_BYTES = 1024 * 768 * 4;
 
 let audioRingBuffer: SharedArrayBuffer | null = null;
 let audioDstSampleRate = 0;
@@ -2519,7 +2487,6 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
       const segments = {
         control: init.controlSab!,
         guestMemory: init.guestMemory!,
-        vgaFramebuffer: init.vgaFramebuffer!,
         scanoutState: init.scanoutState,
         scanoutStateOffsetBytes: init.scanoutStateOffsetBytes ?? 0,
         cursorState: init.cursorState,
@@ -2533,19 +2500,8 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
       guestLayout = views.guestLayout;
       guestI32 = views.guestI32;
       guestU8 = views.guestU8;
-      vgaFramebuffer = wrapSharedFramebuffer(segments.vgaFramebuffer, 0);
       frameState = init.frameStateSab ? new Int32Array(init.frameStateSab) : null;
       (globalThis as unknown as { __aeroScanoutState?: Int32Array }).__aeroScanoutState = views.scanoutStateI32;
-
-      const demoFbEnd = DEMO_FB_OFFSET + DEMO_FB_MAX_BYTES;
-      if (demoFbEnd > guestU8.byteLength) {
-        const guestBytes = guestU8.byteLength;
-        const message = `guestMemory too small for demo framebuffer: need >= ${demoFbEnd} bytes, got ${guestBytes} bytes.`;
-        setReadyFlag(status, role, false);
-        ctx.postMessage({ type: MessageType.ERROR, role, message } satisfies ProtocolMessage);
-        ctx.close();
-        return;
-      }
 
       if (init.perfChannel) {
         perfWriter = new PerfWriter(init.perfChannel.buffer, {
@@ -2554,13 +2510,6 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
         });
         perfFrameHeader = new Int32Array(init.perfChannel.frameHeader);
       }
-
-      initFramebufferHeader(vgaFramebuffer.header, {
-        width: 320,
-        height: 200,
-        strideBytes: 320 * 4,
-        format: FRAMEBUFFER_FORMAT_RGBA8888,
-      });
 
       initSharedFramebufferViews(segments.sharedFramebuffer, segments.sharedFramebufferOffsetBytes);
 
@@ -2877,22 +2826,10 @@ async function runLoopInner(): Promise<void> {
   let running = false;
   const heartbeatIntervalMs = 250;
   const frameIntervalMs = 1000 / 60;
-  const modeSwitchIntervalMs = 2500;
   const audioFillIntervalMs = 20;
 
   let nextHeartbeatMs = performance.now();
   let nextFrameMs = performance.now();
-  let nextModeSwitchMs = performance.now() + modeSwitchIntervalMs;
-
-  const modes = [
-    { width: 320, height: 200 },
-    { width: 640, height: 480 },
-    { width: 1024, height: 768 },
-  ] as const;
-  let modeIndex = 0;
-  let mode: (typeof modes)[number] = modes[0];
-  let demoFbView = guestU8.subarray(DEMO_FB_OFFSET, DEMO_FB_OFFSET + mode.width * mode.height * 4);
-  const demoFbLinearOffset = guestU8.byteOffset + DEMO_FB_OFFSET;
   const instructionsPerSharedFrame = BigInt(CPU_WORKER_DEMO_FRAMEBUFFER_WIDTH * CPU_WORKER_DEMO_FRAMEBUFFER_HEIGHT);
 
   const maybeEmitPerfSample = () => {
@@ -2970,7 +2907,6 @@ async function runLoopInner(): Promise<void> {
         perfLastFrameId = 0;
         nextHeartbeatMs = performance.now();
         nextFrameMs = performance.now();
-        nextModeSwitchMs = performance.now() + modeSwitchIntervalMs;
         // Keep the legacy disk demo behind the "no active disk image" path so it
         // doesn't interfere with real VM boot fixtures.
         if (!diskDemoStarted && !currentConfig?.activeDiskImage) {
@@ -3247,36 +3183,6 @@ async function runLoopInner(): Promise<void> {
           } else {
             // VM requested but not ready yet: keep the demo render loop alive so
             // the UI stays responsive while we wait for a disk to be opened.
-            if (vgaFramebuffer) {
-              if (now >= nextModeSwitchMs) {
-                modeIndex = (modeIndex + 1) % modes.length;
-                mode = modes[modeIndex];
-
-                const strideBytes = mode.width * 4;
-                storeHeaderI32(vgaFramebuffer.header, HEADER_INDEX_WIDTH, mode.width);
-                storeHeaderI32(vgaFramebuffer.header, HEADER_INDEX_HEIGHT, mode.height);
-                storeHeaderI32(vgaFramebuffer.header, HEADER_INDEX_STRIDE_BYTES, strideBytes);
-                addHeaderI32(vgaFramebuffer.header, HEADER_INDEX_CONFIG_COUNTER, 1);
-
-                demoFbView = guestU8.subarray(DEMO_FB_OFFSET, DEMO_FB_OFFSET + strideBytes * mode.height);
-                nextModeSwitchMs = now + modeSwitchIntervalMs;
-              }
-
-              const strideBytes = mode.width * 4;
-              const wasmRender = wasmApi?.demo_render_rgba8888;
-              if (typeof wasmRender === "function") {
-                const instructions = wasmRender(demoFbLinearOffset, mode.width, mode.height, strideBytes, now) >>> 0;
-                vgaFramebuffer.pixelsU8Clamped.set(demoFbView);
-                if (perfActive) perfInstructions += BigInt(instructions);
-              } else {
-                // Fallback for dev builds where the wasm package hasn't been rebuilt yet.
-                renderTestPattern(vgaFramebuffer, mode.width, mode.height, now);
-                if (perfActive) perfInstructions += BigInt(mode.width * mode.height);
-              }
-
-              addHeaderI32(vgaFramebuffer.header, HEADER_INDEX_FRAME_COUNTER, 1);
-            }
-
             if (cpuDemo) {
               const seq = cpuDemo.render_frame(0, now);
               if (perfActive) perfInstructions += instructionsPerSharedFrame;
@@ -3289,38 +3195,7 @@ async function runLoopInner(): Promise<void> {
             }
           }
         } else {
-          // Legacy demo loop: render a moving gradient into the VGA scratch buffer
-          // and publish a shared-framebuffer tile toggle for GPU smoke tests.
-          if (vgaFramebuffer) {
-            if (now >= nextModeSwitchMs) {
-              modeIndex = (modeIndex + 1) % modes.length;
-              mode = modes[modeIndex];
-
-              const strideBytes = mode.width * 4;
-              storeHeaderI32(vgaFramebuffer.header, HEADER_INDEX_WIDTH, mode.width);
-              storeHeaderI32(vgaFramebuffer.header, HEADER_INDEX_HEIGHT, mode.height);
-              storeHeaderI32(vgaFramebuffer.header, HEADER_INDEX_STRIDE_BYTES, strideBytes);
-              addHeaderI32(vgaFramebuffer.header, HEADER_INDEX_CONFIG_COUNTER, 1);
-
-              demoFbView = guestU8.subarray(DEMO_FB_OFFSET, DEMO_FB_OFFSET + strideBytes * mode.height);
-              nextModeSwitchMs = now + modeSwitchIntervalMs;
-            }
-
-            const strideBytes = mode.width * 4;
-            const wasmRender = wasmApi?.demo_render_rgba8888;
-            if (typeof wasmRender === "function") {
-              const instructions = wasmRender(demoFbLinearOffset, mode.width, mode.height, strideBytes, now) >>> 0;
-              vgaFramebuffer.pixelsU8Clamped.set(demoFbView);
-              if (perfActive) perfInstructions += BigInt(instructions);
-            } else {
-              // Fallback for dev builds where the wasm package hasn't been rebuilt yet.
-              renderTestPattern(vgaFramebuffer, mode.width, mode.height, now);
-              if (perfActive) perfInstructions += BigInt(mode.width * mode.height);
-            }
-
-            addHeaderI32(vgaFramebuffer.header, HEADER_INDEX_FRAME_COUNTER, 1);
-          }
-
+          // Legacy demo loop: publish a shared-framebuffer animation.
           if (cpuDemo) {
             const seq = cpuDemo.render_frame(0, now);
             if (perfActive) perfInstructions += instructionsPerSharedFrame;
@@ -3355,7 +3230,7 @@ async function runLoopInner(): Promise<void> {
 
     const now = performance.now();
     const nextAudioMs = workletBridge ? nextAudioFillDeadlineMs : Number.POSITIVE_INFINITY;
-    const until = Math.min(nextHeartbeatMs, nextFrameMs, nextModeSwitchMs, nextAudioMs) - now;
+    const until = Math.min(nextHeartbeatMs, nextFrameMs, nextAudioMs) - now;
     await commandRing.waitForDataAsync(Math.max(0, Math.min(heartbeatIntervalMs, until)));
   }
 
@@ -3590,28 +3465,6 @@ function publishSharedFramebufferVgaText(vgaTextBytes: Uint8Array): void {
     Atomics.store(frameState, FRAME_SEQ_INDEX, newSeq);
     Atomics.store(frameState, FRAME_STATUS_INDEX, FRAME_DIRTY);
     Atomics.notify(frameState, FRAME_STATUS_INDEX);
-  }
-}
-
-function renderTestPattern(
-  fb: ReturnType<typeof wrapSharedFramebuffer>,
-  width: number,
-  height: number,
-  nowMs: number,
-): void {
-  const pixels = fb.pixelsU8Clamped;
-  const strideBytes = width * 4;
-  const t = nowMs * 0.001;
-
-  for (let y = 0; y < height; y++) {
-    const base = y * strideBytes;
-    for (let x = 0; x < width; x++) {
-      const i = base + x * 4;
-      pixels[i + 0] = (x + t * 60) & 255;
-      pixels[i + 1] = (y + t * 35) & 255;
-      pixels[i + 2] = ((x ^ y) + t * 20) & 255;
-      pixels[i + 3] = 255;
-    }
   }
 }
 

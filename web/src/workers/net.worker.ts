@@ -686,7 +686,6 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
       const segments = {
         control: init.controlSab!,
         guestMemory: init.guestMemory!,
-        vgaFramebuffer: init.vgaFramebuffer!,
         scanoutState: init.scanoutState,
         scanoutStateOffsetBytes: init.scanoutStateOffsetBytes ?? 0,
         cursorState: init.cursorState,
