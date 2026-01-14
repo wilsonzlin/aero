@@ -257,12 +257,27 @@ Each port tracks:
 - **Port owner** (`PORT_OWNER`) for companion routing (modeled; `PORT_OWNER=1` makes the port
   unreachable from EHCI; in the canonical machine ports 0–1 may be backed by `Usb2PortMux` so
   ownership handoff routes the same attached device between EHCI and UHCI)
+- **Speed reporting** via `PORTSC.HSP` (high-speed indicator) and `PORTSC.LS` (line status)
 
 Implementation note:
 
 - The current `aero-usb` EHCI model defaults to **6 root hub ports** (see
   `crates/aero-usb/src/ehci/mod.rs::DEFAULT_PORT_COUNT`), which is a common PC-style EHCI
   configuration.
+
+### Speed reporting (`PORTSC.HSP` + `PORTSC.LS`)
+
+Guests use a combination of the **high-speed indicator** and the **line status** bits to infer the
+attached device speed and decide whether to hand off a port to a companion controller.
+
+**Aero contract (matches `Usb2PortMux`):**
+
+- `PORTSC.HSP` is set for **high-speed** devices **only when EHCI owns the port** (`PORT_OWNER=0`).
+- `PORTSC.LS` (bits 10:11) is reported when the port is not in reset (`PR=0`):
+  - Full-speed idle: J-state (`LS=0b10`, D+ high)
+  - Low-speed idle: K-state (`LS=0b01`, D- high)
+  - Resume signaling (full/low speed): K-state (`LS=0b01`)
+  - High-speed: LS bits cleared (`LS=0b00`)
 
 ### Timing model
 
