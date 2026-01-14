@@ -125,3 +125,38 @@ fn index_pulling_resolve_vertex_id(index_in_draw: u32) -> i32 {{
 "#
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::binding_model::BINDING_BASE_INTERNAL;
+    use crate::runtime::vertex_pulling::VERTEX_PULLING_VERTEX_BUFFER_BINDING_BASE;
+
+    #[test]
+    fn index_pulling_bindings_are_internal_and_disjoint_from_vertex_pulling() {
+        // Index pulling bindings are typically used in the same bind group as vertex pulling
+        // (`VERTEX_PULLING_GROUP`). They must be in the reserved internal binding range so they
+        // never collide with D3D11 register-space bindings.
+        assert!(
+            INDEX_PULLING_PARAMS_BINDING >= BINDING_BASE_INTERNAL,
+            "index pulling params binding must be in internal range"
+        );
+        assert!(
+            INDEX_PULLING_BUFFER_BINDING >= BINDING_BASE_INTERNAL,
+            "index pulling buffer binding must be in internal range"
+        );
+
+        // Index pulling must not overlap any possible vertex buffer bindings.
+        let last_possible_vb_binding =
+            VERTEX_PULLING_VERTEX_BUFFER_BINDING_BASE + MAX_WGPU_VERTEX_BUFFERS - 1;
+        assert!(
+            INDEX_PULLING_PARAMS_BINDING > last_possible_vb_binding,
+            "index pulling params binding must come after the vertex pulling vertex-buffer binding range"
+        );
+        assert_eq!(
+            INDEX_PULLING_BUFFER_BINDING,
+            INDEX_PULLING_PARAMS_BINDING + 1,
+            "index pulling buffer binding must immediately follow params binding"
+        );
+    }
+}
