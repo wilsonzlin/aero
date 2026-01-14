@@ -116,13 +116,14 @@ export function gamepadButtonsToBitfield(buttons: readonly GamepadButtonLike[]):
   return bits & 0xffff;
 }
 
- /**
-  * 8-byte report layout (little-endian):
-  *   (Must match `crates/aero-usb/src/hid/gamepad.rs::GamepadReport`.)
-  *   Byte 0: buttons low 8
-  *   Byte 1: buttons high 8
-  *   Byte 2: hat (low 4 bits; 8=neutral/null)
-  *   Byte 3: x (i8)
+/**
+ * 8-byte report layout (little-endian):
+ *   (Must match `crates/aero-usb/src/hid/gamepad.rs::GamepadReport`.)
+ *   Cross-language contract is pinned by `docs/fixtures/hid_gamepad_report_vectors.json`.
+ *   Byte 0: buttons low 8
+ *   Byte 1: buttons high 8
+ *   Byte 2: hat (low 4 bits; 8=neutral/null)
+ *   Byte 3: x (i8)
  *   Byte 4: y (i8)
  *   Byte 5: rx (i8)
  *   Byte 6: ry (i8)

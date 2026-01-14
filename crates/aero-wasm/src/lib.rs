@@ -889,6 +889,10 @@ impl UsbHidBridge {
     /// The packed format matches `web/src/input/gamepad.ts`:
     /// - `packed_lo`: bytes 0..3 (little-endian)
     /// - `packed_hi`: bytes 4..7 (little-endian)
+    ///
+    /// The canonical gamepad report layout is defined by `aero_usb::hid::GamepadReport`
+    /// (`crates/aero-usb/src/hid/gamepad.rs`) and kept in sync with TypeScript via
+    /// `docs/fixtures/hid_gamepad_report_vectors.json`.
     pub fn gamepad_report(&mut self, packed_lo: u32, packed_hi: u32) {
         let b0 = (packed_lo & 0xff) as u8;
         let b1 = ((packed_lo >> 8) & 0xff) as u8;
