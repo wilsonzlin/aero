@@ -289,4 +289,20 @@ fn virtio_net_msix_delivers_to_lapic_in_apic_mode() {
         None,
         "expected no MSI-X delivery once MSI-X is disabled"
     );
+
+    // If the device was asserting legacy INTx, re-enabling MSI-X should suppress it immediately
+    // (MSI-X is exclusive once enabled).
+    let ctrl = cfg_read(&mut m, bdf, msix_cap + 0x02, 2) as u16;
+    cfg_write(
+        &mut m,
+        bdf,
+        msix_cap + 0x02,
+        2,
+        u32::from((ctrl & !(1 << 14)) | (1 << 15)),
+    );
+    m.poll_network();
+    assert!(
+        !virtio_net.borrow().irq_level(),
+        "virtio-net should deassert legacy INTx once MSI-X is re-enabled"
+    );
 }
