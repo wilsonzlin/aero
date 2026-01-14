@@ -49,6 +49,15 @@ function assertBodyObject(
 
 function normalizeEtag(etag: string): string {
   const trimmed = etag.trim();
+  if (/^w\//i.test(trimmed)) {
+    const opaque = trimmed.slice(2).trim();
+    return `W/${normalizeOpaqueTag(opaque)}`;
+  }
+  return normalizeOpaqueTag(trimmed);
+}
+
+function normalizeOpaqueTag(value: string): string {
+  const trimmed = value.trim();
   if (trimmed.startsWith('"') && trimmed.endsWith('"')) return trimmed;
   return `"${trimmed.replace(/"/g, "")}"`;
 }
@@ -64,6 +73,10 @@ function ensureNoTransformCacheControl(value: string): string {
 function stripWeakEtagPrefix(value: string): string {
   const trimmed = value.trim();
   return trimmed.replace(/^w\//i, "");
+}
+
+function isWeakEtag(value: string): boolean {
+  return value.trim().toLowerCase().startsWith("w/");
 }
 
 function splitCommaHeaderOutsideQuotes(value: string): string[] {
@@ -111,6 +124,12 @@ function ifModifiedSinceAllowsNotModified(ifModifiedSince: string, lastModified:
   const lastSeconds = Math.floor(lastModified.getTime() / 1000);
   const imsSeconds = Math.floor(imsMillis / 1000);
   return lastSeconds <= imsSeconds;
+}
+
+function parseHttpDate(value: string): Date | undefined {
+  const millis = Date.parse(value);
+  if (!Number.isFinite(millis)) return undefined;
+  return new Date(millis);
 }
 
 function assertIdentityContentEncoding(value: string | undefined): void {
@@ -1092,17 +1111,26 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
       return;
     }
 
-    const ifRange = requestedRange && typeof req.headers["if-range"] === "string" ? req.headers["if-range"] : undefined;
+    const ifRange =
+      requestedRange && typeof req.headers["if-range"] === "string"
+        ? req.headers["if-range"]
+        : undefined;
 
     let ifMatch: string | undefined;
+    let ifUnmodifiedSince: Date | undefined;
     if (ifRange) {
-      const normalizedIfRange = normalizeEtag(ifRange);
+      const ifRangeTrimmed = ifRange.trim();
+      const ifRangeLooksLikeEtag =
+        ifRangeTrimmed.startsWith('"') || /^w\//i.test(ifRangeTrimmed);
+      const ifRangeDate = ifRangeLooksLikeEtag ? undefined : parseHttpDate(ifRangeTrimmed);
+
       let currentEtag = record.etag;
       let currentLastModified = record.lastModified ? new Date(record.lastModified) : undefined;
-      let currentCacheControl: string | undefined;
 
-      // Fall back to an S3 HEAD if we don't have an in-memory validator.
-      if (!currentEtag || (ifModifiedSince && !currentLastModified)) {
+      // Fall back to an S3 HEAD if we don't have the validator required by If-Range.
+      const needEtag = ifRangeLooksLikeEtag;
+      const needLastModified = !ifRangeLooksLikeEtag;
+      if ((needEtag && !currentEtag) || (needLastModified && !currentLastModified)) {
         let head: HeadObjectCommandOutput;
         try {
           head = await deps.s3.send(
@@ -1122,33 +1150,51 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
         }
 
         currentEtag = typeof head.ETag === "string" ? head.ETag : undefined;
-        const size = typeof head.ContentLength === "number" ? head.ContentLength : undefined;
-        const lastModified =
-          head.LastModified instanceof Date ? head.LastModified.toISOString() : undefined;
         currentLastModified = head.LastModified instanceof Date ? head.LastModified : undefined;
-        currentCacheControl = head.CacheControl;
-
         deps.store.update(imageId, {
           etag: currentEtag,
-          size,
-          lastModified,
+          size: typeof head.ContentLength === "number" ? head.ContentLength : undefined,
+          lastModified:
+            head.LastModified instanceof Date ? head.LastModified.toISOString() : undefined,
         });
       }
 
-      if (!currentEtag) {
-        throw new ApiError(502, "Unable to determine current image ETag", "S3_ERROR");
-      }
+      if (ifRangeLooksLikeEtag) {
+        if (!currentEtag) {
+          throw new ApiError(502, "Unable to determine current image ETag", "S3_ERROR");
+        }
 
-      const normalizedCurrentEtag = normalizeEtag(currentEtag);
-      if (normalizedIfRange !== normalizedCurrentEtag) {
-        // RFC 9110 If-Range semantics: ignore Range and return the full representation to avoid
-        // serving mixed-version bytes.
-        requestedRange = undefined;
+        const normalizedIfRange = normalizeEtag(ifRangeTrimmed);
+        const normalizedCurrentEtag = normalizeEtag(currentEtag);
+
+        // RFC 9110 If-Range semantics: strong comparison, and weak validators must not match.
+        if (
+          isWeakEtag(normalizedIfRange) ||
+          isWeakEtag(normalizedCurrentEtag) ||
+          normalizedIfRange !== normalizedCurrentEtag
+        ) {
+          requestedRange = undefined;
+        } else {
+          // Enforce If-Range semantics atomically at S3: if the object changes between our
+          // validation step and GetObject, S3 will return 412 instead of streaming bytes for the
+          // new version.
+          ifMatch = normalizedCurrentEtag;
+        }
       } else {
-        // Enforce If-Range semantics atomically at S3: if the object changes between our
-        // validation step and GetObject, S3 will return 412 instead of streaming bytes for the
-        // new version.
-        ifMatch = normalizedCurrentEtag;
+        // If-Range can also be an HTTP-date. Serve the range only if the resource has not been
+        // modified since the supplied time. Compare at second granularity (HTTP-date resolution).
+        if (!ifRangeDate || !currentLastModified) {
+          requestedRange = undefined;
+        } else {
+          const resourceSeconds = Math.floor(currentLastModified.getTime() / 1000);
+          const sinceSeconds = Math.floor(ifRangeDate.getTime() / 1000);
+          if (resourceSeconds > sinceSeconds) {
+            requestedRange = undefined;
+          } else {
+            // Enforce If-Range atomically at S3 with an `If-Unmodified-Since` condition.
+            ifUnmodifiedSince = ifRangeDate;
+          }
+        }
       }
     }
 
@@ -1241,6 +1287,7 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
           Key: record.s3Key,
           Range: requestedRange,
           ...(ifMatch ? { IfMatch: ifMatch } : {}),
+          ...(ifUnmodifiedSince ? { IfUnmodifiedSince: ifUnmodifiedSince } : {}),
         })
       );
     } catch (err) {
@@ -1250,10 +1297,11 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
       ).$metadata?.httpStatusCode;
       if (typeof maybeStatus === "number") {
         if (maybeStatus === 412) {
-          // IfMatch failed (most likely due to an If-Range check). Per RFC 9110, ignore Range and
-          // return the full representation to avoid mixed-version bytes.
+          // IfMatch/IfUnmodifiedSince failed (most likely due to an If-Range check). Per RFC 9110,
+          // ignore Range and return the full representation to avoid mixed-version bytes.
           requestedRange = undefined;
           ifMatch = undefined;
+          ifUnmodifiedSince = undefined;
           try {
             s3Res = await deps.s3.send(
               new GetObjectCommand({

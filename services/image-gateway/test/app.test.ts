@@ -590,6 +590,131 @@ describe("app", () => {
     expect(res.payload).toBe("hello");
   });
 
+  it("allows ranged GET when If-Range matches the current Last-Modified time (HTTP-date form)", async () => {
+    const config = makeConfig();
+    const store = new MemoryImageStore();
+    const ownerId = "user-1";
+    const imageId = "image-1";
+
+    // Use sub-second precision to ensure we compare at HTTP-date granularity (seconds).
+    const lastModified = new Date("2020-01-01T00:00:00.456Z");
+    store.create({
+      id: imageId,
+      ownerId,
+      createdAt: new Date().toISOString(),
+      version: "v1",
+      s3Key: "images/user-1/image-1/v1/disk.img",
+      uploadId: "upload-1",
+      status: "complete",
+      etag: '"etag"',
+      lastModified: lastModified.toISOString(),
+    });
+
+    const ifRangeValue = lastModified.toUTCString();
+    const expectedIfUnmodifiedSince = new Date(ifRangeValue);
+
+    let getObjectCalls = 0;
+    const s3 = {
+      async send(command: unknown) {
+        if (command instanceof GetObjectCommand) {
+          getObjectCalls += 1;
+          expect(command.input.Range).toBe("bytes=0-4");
+          expect(command.input.IfMatch).toBeUndefined();
+          expect(command.input.IfUnmodifiedSince?.toISOString()).toBe(
+            expectedIfUnmodifiedSince.toISOString()
+          );
+          return {
+            Body: Buffer.from("hello"),
+            ContentRange: "bytes 0-4/10",
+            ContentLength: 5,
+            ETag: '"etag"',
+            ContentType: "application/octet-stream",
+          };
+        }
+        throw new Error("unexpected command");
+      },
+    } as unknown as S3Client;
+
+    const app = buildApp({ config, s3, store });
+    await app.ready();
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/v1/images/${imageId}/range`,
+      headers: {
+        "x-user-id": ownerId,
+        range: "bytes=0-4",
+        "if-range": ifRangeValue,
+      },
+    });
+
+    expect(getObjectCalls).toBe(1);
+    expect(res.statusCode).toBe(206);
+    expect(res.headers["content-range"]).toBe("bytes 0-4/10");
+    expect(res.headers["etag"]).toBe('"etag"');
+    expect(res.payload).toBe("hello");
+  });
+
+  it("ignores Range and returns 200 when If-Range HTTP-date is older than Last-Modified", async () => {
+    const config = makeConfig();
+    const store = new MemoryImageStore();
+    const ownerId = "user-1";
+    const imageId = "image-1";
+
+    const lastModified = new Date("2020-01-01T00:00:01.000Z");
+    store.create({
+      id: imageId,
+      ownerId,
+      createdAt: new Date().toISOString(),
+      version: "v1",
+      s3Key: "images/user-1/image-1/v1/disk.img",
+      uploadId: "upload-1",
+      status: "complete",
+      etag: '"etag"',
+      lastModified: lastModified.toISOString(),
+    });
+
+    const ifRangeValue = new Date("2020-01-01T00:00:00.000Z").toUTCString();
+
+    let getObjectCalls = 0;
+    const s3 = {
+      async send(command: unknown) {
+        if (command instanceof GetObjectCommand) {
+          getObjectCalls += 1;
+          expect(command.input.Range).toBeUndefined();
+          expect(command.input.IfMatch).toBeUndefined();
+          expect(command.input.IfUnmodifiedSince).toBeUndefined();
+          return {
+            Body: Buffer.from("hello"),
+            ContentLength: 5,
+            ETag: '"etag"',
+            ContentType: "application/octet-stream",
+          };
+        }
+        throw new Error("unexpected command");
+      },
+    } as unknown as S3Client;
+
+    const app = buildApp({ config, s3, store });
+    await app.ready();
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/v1/images/${imageId}/range`,
+      headers: {
+        "x-user-id": ownerId,
+        range: "bytes=0-4",
+        "if-range": ifRangeValue,
+      },
+    });
+
+    expect(getObjectCalls).toBe(1);
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["content-range"]).toBeUndefined();
+    expect(res.headers["etag"]).toBe('"etag"');
+    expect(res.payload).toBe("hello");
+  });
+
   it("ignores Range and returns 200 when If-Range does not match", async () => {
     const config = makeConfig();
     const store = new MemoryImageStore();
@@ -688,6 +813,51 @@ describe("app", () => {
       headers: {
         "x-user-id": ownerId,
         "if-none-match": '"etag"',
+      },
+    });
+
+    expect(res.statusCode).toBe(304);
+    expect(res.payload).toBe("");
+    expect(res.headers["etag"]).toBe('"etag"');
+    expect(res.headers["last-modified"]).toBe(lastModified.toUTCString());
+    expect(res.headers["cache-control"]).toBe("private, no-store, no-transform");
+    expect(res.headers["cross-origin-resource-policy"]).toBe("same-site");
+  });
+
+  it("returns 304 for GET If-None-Match when a weak validator matches (no S3 call)", async () => {
+    const config = makeConfig();
+    const store = new MemoryImageStore();
+    const ownerId = "user-1";
+    const imageId = "image-1";
+
+    const lastModified = new Date("2020-01-01T00:00:00.000Z");
+    store.create({
+      id: imageId,
+      ownerId,
+      createdAt: new Date().toISOString(),
+      version: "v1",
+      s3Key: "images/user-1/image-1/v1/disk.img",
+      uploadId: "upload-1",
+      status: "complete",
+      etag: '"etag"',
+      lastModified: lastModified.toISOString(),
+    });
+
+    const s3 = {
+      async send() {
+        throw new Error("S3 should not be called for a satisfied conditional request");
+      },
+    } as unknown as S3Client;
+
+    const app = buildApp({ config, s3, store });
+    await app.ready();
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/v1/images/${imageId}/range`,
+      headers: {
+        "x-user-id": ownerId,
+        "if-none-match": 'W/"etag"',
       },
     });
 
