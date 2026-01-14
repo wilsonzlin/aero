@@ -145,6 +145,11 @@ fn cmd_fixtures(args: Vec<String>) -> Result<()> {
         &fixture_sources::realmode_vbe_test::BIN,
         check,
     )?;
+    ensure_file(
+        &root.join("tools/qemu_diff/boot/boot.bin"),
+        &fixture_sources::qemu_diff_boot::BIN,
+        check,
+    )?;
 
     // Firmware fixtures (kept in-repo; must remain small and deterministic).
     //
