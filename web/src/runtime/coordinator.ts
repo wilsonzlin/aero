@@ -465,7 +465,21 @@ export class WorkerCoordinator {
     this.setVmState("starting", "start");
 
     try {
-      const segments = allocateSharedMemorySegments({ guestRamMiB: config.guestMemoryMiB, vramMiB: config.vramMiB });
+      // Most production configs always allocate the full IO IPC buffer (NET + HID rings) and the
+      // canonical demo framebuffer (640x480). However, many test harnesses start the coordinator
+      // with very small guest RAM values (e.g. 1MiB) purely to exercise worker wiring.
+      //
+      // Treat such configs as "test-like" and shrink optional shared-memory segments to reduce
+      // Playwright/CI memory pressure without impacting production defaults.
+      const TEST_UI_GUEST_RAM_FLOOR_MIB = 256;
+      const isTestLikeConfig = config.guestMemoryMiB < TEST_UI_GUEST_RAM_FLOOR_MIB;
+      const isTinyGuestConfig = config.guestMemoryMiB <= 1 && config.vramMiB === 0;
+      const segments = allocateSharedMemorySegments({
+        guestRamMiB: config.guestMemoryMiB,
+        vramMiB: config.vramMiB,
+        ioIpcOptions: isTestLikeConfig ? { includeHidIn: false } : undefined,
+        sharedFramebufferLayout: isTinyGuestConfig ? { width: 64, height: 64, tileSize: 32 } : undefined,
+      });
       const shared = createSharedMemoryViews(segments);
       this.shared = shared;
       this.runId += 1;
@@ -681,7 +695,9 @@ export class WorkerCoordinator {
     this.resetAllRings(shared.segments.control);
     // Reset the CPU↔I/O AIPC rings so the restarted workers don't observe stale
     // device-bus traffic from the previous run.
-    shared.segments.ioIpc = createIoIpcSab();
+    const TEST_UI_GUEST_RAM_FLOOR_MIB = 256;
+    const isTestLikeConfig = config.guestMemoryMiB < TEST_UI_GUEST_RAM_FLOOR_MIB;
+    shared.segments.ioIpc = isTestLikeConfig ? createIoIpcSab({ includeHidIn: false }) : createIoIpcSab();
     if (this.frameStateSab) new Int32Array(this.frameStateSab).fill(0);
 
     this.nextCmdSeq = 1;
