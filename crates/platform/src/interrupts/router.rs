@@ -326,6 +326,17 @@ impl PlatformInterrupts {
         self.mode
     }
 
+    pub fn cpu_count(&self) -> usize {
+        self.lapics.len()
+    }
+
+    pub fn lapic(&self, cpu_index: usize) -> &LocalApic {
+        self.lapics
+            .get(cpu_index)
+            .map(|lapic| lapic.as_ref())
+            .unwrap_or_else(|| panic!("invalid CPU index {cpu_index}"))
+    }
+
     pub fn set_mode(&mut self, mode: PlatformInterruptMode) {
         let prev = self.mode;
         self.mode = mode;

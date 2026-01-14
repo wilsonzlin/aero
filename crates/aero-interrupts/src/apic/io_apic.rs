@@ -382,8 +382,6 @@ impl IoApic {
             return;
         }
 
-        let mut delivered = false;
-
         if entry.destination == 0xFF {
             if self.lapics.is_empty() {
                 return;
@@ -397,6 +395,7 @@ impl IoApic {
             return;
         }
 
+        let mut delivered = false;
         for lapic in &self.lapics {
             if entry.destination != lapic.apic_id() {
                 continue;
