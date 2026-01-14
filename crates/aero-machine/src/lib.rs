@@ -5757,6 +5757,31 @@ impl Machine {
             .then_some(bdf)
     }
 
+    /// Install the "immediate" AeroGPU backend (headless-friendly).
+    ///
+    /// The immediate backend completes fences synchronously and performs no rendering. This is
+    /// safe to call even when AeroGPU is not enabled/present; it will no-op.
+    pub fn aerogpu_set_backend_immediate(&mut self) {
+        let Some(mmio) = &self.aerogpu_mmio else {
+            return;
+        };
+        mmio.borrow_mut().set_backend(Box::new(
+            aero_devices_gpu::backend::ImmediateAeroGpuBackend::new(),
+        ));
+    }
+
+    /// Install the "null" AeroGPU backend (drops all submissions).
+    ///
+    /// The null backend never completes fences (guests will observe stuck fences). This is safe to
+    /// call even when AeroGPU is not enabled/present; it will no-op.
+    pub fn aerogpu_set_backend_null(&mut self) {
+        let Some(mmio) = &self.aerogpu_mmio else {
+            return;
+        };
+        mmio.borrow_mut()
+            .set_backend(Box::new(aero_devices_gpu::backend::NullAeroGpuBackend::new()));
+    }
+
     /// Returns the PCI INTx router, if present.
     pub fn pci_intx_router(&self) -> Option<Rc<RefCell<PciIntxRouter>>> {
         self.pci_intx.clone()
