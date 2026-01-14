@@ -26,7 +26,7 @@ Feature matrix for the Win7 WDK-backed UMDs:
 | Vertex buffer binding | **Multiple slots** supported (`StartSlot/NumBuffers` forwarded) | **Multiple slots** supported (`StartSlot/NumBuffers` forwarded) | **Multiple slots** supported (`StartSlot/NumBuffers` forwarded) |
 | Constant buffers | VS/PS/GS supported (14 slots, whole-buffer binding) | VS/PS/GS supported (14 slots, whole-buffer binding) | VS/PS/GS/CS supported (14 slots, `{FirstConstant, NumConstants}` ranges supported) |
 | Samplers | VS/PS/GS supported (16 slots; `CREATE_SAMPLER` + `SET_SAMPLERS`) | VS/PS/GS supported (16 slots; `CREATE_SAMPLER` + `SET_SAMPLERS`) | VS/PS/GS/CS supported (16 slots; basic filter/address modes) |
-| Geometry shaders (GS) | **Supported (partial)**: GS create + bind (legacy compat: GS handle carried via `aerogpu_cmd_bind_shaders.reserved0`; newer streams may also use the append-only `{gs,hs,ds}` extension) | **Supported (partial)**: GS create + bind (legacy compat: GS handle carried via `aerogpu_cmd_bind_shaders.reserved0`; newer streams may also use the append-only `{gs,hs,ds}` extension) | **Supported (partial)**: GS create + bind + stage bindings (host uses compute-prepass scaffolding (placeholder; guest GS DXBC execution not wired yet); see below) |
+| Geometry shaders (GS) | **Supported (partial)**: GS create + bind (legacy compat: GS handle carried via `aerogpu_cmd_bind_shaders.reserved0`; newer streams may also use the append-only `{gs,hs,ds}` extension) | **Supported (partial)**: GS create + bind (legacy compat: GS handle carried via `aerogpu_cmd_bind_shaders.reserved0`; newer streams may also use the append-only `{gs,hs,ds}` extension) | **Supported (partial)**: GS create + bind + stage bindings (host has compute-prepass scaffolding (synthetic expansion; guest GS DXBC execution not wired yet); see below) |
 | Compute (CS) + UAV buffers | — | — | **Supported (partial)**: CS shaders + `AEROGPU_CMD_DISPATCH`; UAV **buffers** only (8 slots; no UAV textures / OM UAV binding) |
 
 \* All UMDs (D3D10 / D3D10.1 / D3D11) preserve the runtime-provided RTV slot count/list when emitting `SET_RENDER_TARGETS`: `color_count` reflects the runtime-provided slot count, clamped to `AEROGPU_MAX_RENDER_TARGETS` (8). `NULL` entries within `[0, color_count)` are valid and are encoded as `colors[i] = 0` (gaps are preserved).
@@ -40,7 +40,7 @@ Feature matrix for the Win7 WDK-backed UMDs:
   - Block-compressed formats (BC1/BC2/BC3/BC7) and explicit sRGB variants are ABI-gated (ABI 1.2+; see `aerogpu_umd_private_v1.device_abi_version_u32`). On older ABIs, sRGB DXGI formats are mapped to UNORM for command-stream compatibility; BC formats are rejected.
 - Shaders (DXBC payload passthrough):
   - D3D10/D3D10.1: VS/PS/GS
-  - D3D11: VS/PS/GS/CS (GS binding currently triggers compute-prepass scaffolding; guest GS DXBC execution is not implemented yet; see “Geometry shaders (GS)” below)
+  - D3D11: VS/PS/GS/CS (GS binding triggers compute-prepass scaffolding; guest GS DXBC execution is not wired yet; see “Geometry shaders (GS)” below)
 - Input layout + vertex/index buffers, primitive topology
 - Shader binding tables:
   - D3D10: VS/PS/GS constant buffers, shader-resource views, samplers (whole-buffer constant-buffer binding)
@@ -85,10 +85,10 @@ Feature matrix for the Win7 WDK-backed UMDs:
     - Forward-compat: the protocol also supports an append-only `BIND_SHADERS` extension that appends `{gs,hs,ds}` after the base 24-byte packet; producers may mirror `gs` into `reserved0` (should match the appended `gs`).
   - D3D11:
     - `CreateGeometryShader` + `GsSetShader` are forwarded into the command stream (GS handle carried via `aerogpu_cmd_bind_shaders.reserved0` for legacy compat).
-    - GS stage resource binding DDIs (`GsSetConstantBuffers`, `GsSetShaderResources`, `GsSetSamplers`) emit binding packets; the host tracks these bindings for the eventual GS compute-emulation path, but the current compute-prepass placeholder does not execute GS DXBC yet.
+    - GS stage resource binding DDIs (`GsSetConstantBuffers`, `GsSetShaderResources`, `GsSetSamplers`) emit binding packets; the host tracks these bindings for the eventual GS compute-emulation path, but the current compute-prepass scaffolding does not execute GS DXBC yet.
   - Host/WebGPU execution:
     - WebGPU has no geometry stage; AeroGPU uses a **compute prepass + indirect draw** path when GS/HS/DS emulation is required.
-    - The current executor compute prepass is a **placeholder**: it emits deterministic synthetic triangle geometry for bring-up and does not execute guest GS DXBC yet (see `GEOMETRY_PREPASS_CS_WGSL` / `GEOMETRY_PREPASS_CS_VERTEX_PULLING_WGSL` in `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`).
+    - The current executor compute prepass emits deterministic synthetic triangle geometry for bring-up and does not execute guest GS DXBC yet (see `GEOMETRY_PREPASS_CS_WGSL` / `GEOMETRY_PREPASS_CS_VERTEX_PULLING_WGSL` in `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`).
     - A prototype GS DXBC/SM4 → WGSL compute translator exists in `crates/aero-d3d11/src/runtime/gs_translate.rs`, with strip-cut/RestartStrip expansion helpers in `crates/aero-d3d11/src/runtime/strip_to_list.rs`. These are covered by unit tests but are not yet wired into the executor.
     - The command stream exposes an ABI extension for extended D3D11 stages (`stage_ex`; see `enum aerogpu_shader_stage_ex` in `drivers/aerogpu/protocol/aerogpu_cmd.h`). The host executor accepts both the direct `AEROGPU_SHADER_STAGE_GEOMETRY` (`stage = 3`) encoding and the `stage_ex` encoding:
       - Preferred: `shader_stage = GEOMETRY`, `reserved0 = 0`
