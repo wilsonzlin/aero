@@ -5639,8 +5639,11 @@ impl AerogpuD3d11Executor {
                 let slot = attr.pulling_slot;
                 let offset = attr.offset_bytes;
                 let element_index_expr = match attr.step_mode {
-                    wgpu::VertexStepMode::Vertex => "vertex_index",
-                    wgpu::VertexStepMode::Instance => "aero_vp_ia.first_instance",
+                    wgpu::VertexStepMode::Vertex => "vertex_index".to_owned(),
+                    wgpu::VertexStepMode::Instance => {
+                        let step = attr.instance_step_rate.max(1);
+                        format!("aero_vp_ia.first_instance / {step}u")
+                    }
                 };
                 out.push_str(&format!("    case {reg}u: {{\n"));
                 out.push_str(&format!(
@@ -6016,8 +6019,11 @@ impl AerogpuD3d11Executor {
                 let slot = attr.pulling_slot;
                 let offset = attr.offset_bytes;
                 let element_index_expr = match attr.step_mode {
-                    wgpu::VertexStepMode::Vertex => "vertex_index",
-                    wgpu::VertexStepMode::Instance => "aero_vp_ia.first_instance",
+                    wgpu::VertexStepMode::Vertex => "vertex_index".to_owned(),
+                    wgpu::VertexStepMode::Instance => {
+                        let step = attr.instance_step_rate.max(1);
+                        format!("aero_vp_ia.first_instance / {step}u")
+                    }
                 };
                 out.push_str(&format!("    case {reg}u: {{\n"));
                 out.push_str(&format!(
