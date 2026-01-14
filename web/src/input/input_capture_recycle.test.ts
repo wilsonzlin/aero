@@ -386,7 +386,7 @@ describe("InputCapture buffer recycling", () => {
         focus: () => {},
       } as unknown as HTMLCanvasElement;
       const ioWorker = { postMessage: () => {} };
-      const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false });
+      const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: true });
 
       const handleWorkerMessage = (capture as any).handleWorkerMessage as (ev: { data: unknown }) => void;
       for (let i = 0; i < 100; i++) {
@@ -409,7 +409,7 @@ describe("InputCapture buffer recycling", () => {
         focus: () => {},
       } as unknown as HTMLCanvasElement;
       const ioWorker = { postMessage: () => {} };
-      const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false });
+      const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: true });
 
       const handleWorkerMessage = (capture as any).handleWorkerMessage as (ev: { data: unknown }) => void;
       const size = 2048;
@@ -435,7 +435,7 @@ describe("InputCapture buffer recycling", () => {
         focus: () => {},
       } as unknown as HTMLCanvasElement;
       const ioWorker = { postMessage: () => {} };
-      const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false });
+      const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: true });
 
       const handleWorkerMessage = (capture as any).handleWorkerMessage as (ev: { data: unknown }) => void;
       handleWorkerMessage({ data: null });
