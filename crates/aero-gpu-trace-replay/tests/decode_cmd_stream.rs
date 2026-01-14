@@ -132,6 +132,19 @@ fn build_fixture_cmd_stream() -> Vec<u8> {
     assert_eq!(payload.len(), 16);
     push_packet(&mut out, AerogpuCmdOpcode::Dispatch as u32, &payload);
 
+    // SET_CONSTANT_BUFFERS(shader_stage=2, start_slot=1, buffer_count=1, stage_ex=0, binding0={buffer=9, offset=64, size=256}).
+    let mut payload = Vec::new();
+    push_u32_le(&mut payload, 2); // shader_stage=Compute
+    push_u32_le(&mut payload, 1); // start_slot
+    push_u32_le(&mut payload, 1); // buffer_count
+    push_u32_le(&mut payload, 0); // reserved0 / stage_ex
+    push_u32_le(&mut payload, 9); // binding[0].buffer
+    push_u32_le(&mut payload, 64); // binding[0].offset_bytes
+    push_u32_le(&mut payload, 256); // binding[0].size_bytes
+    push_u32_le(&mut payload, 0); // binding[0].reserved0
+    assert_eq!(payload.len(), 32);
+    push_packet(&mut out, AerogpuCmdOpcode::SetConstantBuffers as u32, &payload);
+
     // Patch header.size_bytes.
     let size_bytes = out.len() as u32;
     out[8..12].copy_from_slice(&size_bytes.to_le_bytes());
@@ -183,6 +196,12 @@ fn decodes_cmd_stream_dump_to_stable_listing() {
     assert!(listing.contains("group_count_x=1"));
     assert!(listing.contains("group_count_y=2"));
     assert!(listing.contains("group_count_z=3"));
+
+    assert!(listing.contains("0x00000134 SetConstantBuffers size_bytes=40"));
+    assert!(listing.contains("start_slot=1"));
+    assert!(listing.contains("cb0_buffer=9"));
+    assert!(listing.contains("cb0_offset_bytes=64"));
+    assert!(listing.contains("cb0_size_bytes=256"));
 }
 
 #[test]
@@ -245,4 +264,12 @@ fn json_listing_decodes_new_opcodes() {
     assert_eq!(dispatch["decoded"]["group_count_x"], 1);
     assert_eq!(dispatch["decoded"]["group_count_y"], 2);
     assert_eq!(dispatch["decoded"]["group_count_z"], 3);
+
+    let cbs = find_packet("SetConstantBuffers");
+    assert_eq!(cbs["decoded"]["shader_stage"], 2);
+    assert_eq!(cbs["decoded"]["start_slot"], 1);
+    assert_eq!(cbs["decoded"]["buffer_count"], 1);
+    assert_eq!(cbs["decoded"]["cb0_buffer"], 9);
+    assert_eq!(cbs["decoded"]["cb0_offset_bytes"], 64);
+    assert_eq!(cbs["decoded"]["cb0_size_bytes"], 256);
 }

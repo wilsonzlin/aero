@@ -455,6 +455,31 @@ fn decode_known_fields(
                 out.insert("topology".into(), json!(v));
             }
         }
+        AerogpuCmdOpcode::SetConstantBuffers => match pkt.decode_set_constant_buffers_payload_le() {
+            Ok((cmd, bindings)) => {
+                let shader_stage = cmd.shader_stage;
+                let start_slot = cmd.start_slot;
+                let buffer_count = cmd.buffer_count;
+                let stage_ex = cmd.reserved0;
+                out.insert("shader_stage".into(), json!(shader_stage));
+                out.insert("start_slot".into(), json!(start_slot));
+                out.insert("buffer_count".into(), json!(buffer_count));
+                if shader_stage == 2 && stage_ex != 0 {
+                    out.insert("stage_ex".into(), json!(stage_ex));
+                }
+                if let Some(first) = bindings.first() {
+                    let cb0_buffer = first.buffer;
+                    let cb0_offset_bytes = first.offset_bytes;
+                    let cb0_size_bytes = first.size_bytes;
+                    out.insert("cb0_buffer".into(), json!(cb0_buffer));
+                    out.insert("cb0_offset_bytes".into(), json!(cb0_offset_bytes));
+                    out.insert("cb0_size_bytes".into(), json!(cb0_size_bytes));
+                }
+            }
+            Err(err) => {
+                out.insert("decode_error".into(), json!(format!("{:?}", err)));
+            }
+        },
         AerogpuCmdOpcode::SetShaderResourceBuffers => {
             match pkt.decode_set_shader_resource_buffers_payload_le() {
                 Ok((cmd, bindings)) => {

@@ -1327,6 +1327,39 @@ pub fn decode_cmd_stream_listing(
                         }
                     }
 
+                    AerogpuCmdOpcode::SetConstantBuffers => {
+                        let (cmd, bindings) = pkt
+                            .decode_set_constant_buffers_payload_le()
+                            .map_err(|err| CmdStreamDecodeError::Payload {
+                                offset,
+                                opcode,
+                                err,
+                            })?;
+                        // Avoid taking references to packed fields.
+                        let shader_stage = cmd.shader_stage;
+                        let start_slot = cmd.start_slot;
+                        let buffer_count = cmd.buffer_count;
+                        let stage_ex = cmd.reserved0;
+
+                        let _ = write!(
+                            line,
+                            " shader_stage={shader_stage} start_slot={start_slot} buffer_count={buffer_count}"
+                        );
+                        if shader_stage == 2 && stage_ex != 0 {
+                            let _ = write!(line, " stage_ex={stage_ex}");
+                        }
+
+                        if let Some(b0) = bindings.first() {
+                            // Avoid taking references to packed fields.
+                            let cb0_buffer = b0.buffer;
+                            let cb0_offset_bytes = b0.offset_bytes;
+                            let cb0_size_bytes = b0.size_bytes;
+                            let _ = write!(
+                                line,
+                                " cb0_buffer={cb0_buffer} cb0_offset_bytes={cb0_offset_bytes} cb0_size_bytes={cb0_size_bytes}"
+                            );
+                        }
+                    }
                     AerogpuCmdOpcode::SetShaderResourceBuffers => {
                         let (cmd, bindings) = pkt
                             .decode_set_shader_resource_buffers_payload_le()
@@ -1428,7 +1461,6 @@ pub fn decode_cmd_stream_listing(
                     | AerogpuCmdOpcode::CreateSampler
                     | AerogpuCmdOpcode::DestroySampler
                     | AerogpuCmdOpcode::SetSamplers
-                    | AerogpuCmdOpcode::SetConstantBuffers
                     | AerogpuCmdOpcode::ExportSharedSurface
                     | AerogpuCmdOpcode::ImportSharedSurface
                     | AerogpuCmdOpcode::ReleaseSharedSurface => {
