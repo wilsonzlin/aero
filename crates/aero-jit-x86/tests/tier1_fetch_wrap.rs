@@ -52,3 +52,24 @@ fn discover_block_mode_16bit_fetch_wraps_across_64k_boundary() {
     assert_eq!(block.insts[0].kind, InstKind::JmpRel { target: 0x1 });
     assert!(matches!(block.end_kind, BlockEndKind::Jmp));
 }
+
+#[test]
+fn discover_block_mode_16bit_wraps_rip_between_instructions() {
+    // Exercise IP wraparound without requiring an instruction to cross the 64KiB boundary.
+    //
+    //   0xFFFE: inc ax  (0x40)
+    //   0xFFFF: dec cx  (0x49)
+    //   0x0000: ret     (0xC3)
+    let mut bus = MapBus::default();
+    bus.write_u8(0xfffe, 0x40);
+    bus.write_u8(0xffff, 0x49);
+    bus.write_u8(0x0000, 0xc3);
+
+    let block = discover_block_mode(&bus, 0xfffe, BlockLimits::default(), 16);
+    assert_eq!(block.entry_rip, 0xfffe);
+    assert_eq!(block.insts.len(), 3);
+    assert_eq!(block.insts[0].rip, 0xfffe);
+    assert_eq!(block.insts[1].rip, 0xffff);
+    assert_eq!(block.insts[2].rip, 0x0000);
+    assert!(matches!(block.end_kind, BlockEndKind::Ret));
+}
