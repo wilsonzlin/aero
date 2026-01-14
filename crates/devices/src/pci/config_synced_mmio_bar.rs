@@ -25,8 +25,10 @@ use std::rc::Rc;
 ///
 /// Note: MSI "pending bits" are device-managed (set when a vector is masked at the time an
 /// interrupt is raised). In setups where the canonical PCI config space is decoupled from the
-/// device model, the platform cannot observe device-generated pending bits, so this wrapper does
-/// **not** overwrite the device model's pending bit latch when synchronizing MSI state.
+/// device model, the platform cannot observe device-generated pending bits. This wrapper therefore:
+/// - does **not** overwrite the device model's pending bit latch when synchronizing MSI state, and
+/// - mirrors device-managed pending bits back into the canonical config space after each MMIO
+///   access so guest config-space reads observe the most recent pending state immediately.
 ///
 /// This is intentionally BAR-scoped: it only syncs the BAR index passed at construction.
 ///
@@ -150,13 +152,13 @@ impl<T: PciDevice> PciConfigSyncedMmioBar<T> {
         // while delivery is blocked (masked or unprogrammed address). If the platform maintains a
         // separate canonical PCI config space for guest reads, mirror the pending bits back so
         // config-space reads observe the device-managed state immediately.
-        let pending_bits = self
-            .dev
-            .borrow()
-            .config()
-            .capability::<MsiCapability>()
-            .map(|msi| msi.pending_bits())
-            .unwrap_or(0);
+        let pending_bits = {
+            let dev = self.dev.borrow();
+            let Some(msi) = dev.config().capability::<MsiCapability>() else {
+                return;
+            };
+            msi.pending_bits()
+        };
 
         let mut pci_cfg = self.pci_cfg.borrow_mut();
         let Some(cfg) = pci_cfg.bus_mut().device_config_mut(self.bdf) else {
