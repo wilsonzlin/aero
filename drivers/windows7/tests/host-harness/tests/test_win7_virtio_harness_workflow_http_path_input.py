@@ -19,6 +19,7 @@ class Win7VirtioHarnessWorkflowHttpPathInputTests(unittest.TestCase):
 
     def test_workflow_plumbs_http_path(self) -> None:
         self.assertIn("http_path:", self.text)
+        self.assertIn("must start with / and contain no whitespace", self.text)
         self.assertIn('http_path="${{ inputs.http_path }}"', self.text)
         self.assertIn('--http-path "${http_path}"', self.text)
         self.assertIn("workflow input 'http_path' must not contain whitespace", self.text)
