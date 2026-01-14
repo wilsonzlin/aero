@@ -1581,6 +1581,55 @@ function Try-EmitAeroVirtioNetLargeMarker {
   Write-Host $out
 }
 
+function Try-EmitAeroVirtioIrqMarkerFromTestMarker {
+  param(
+    [Parameter(Mandatory = $true)] [string]$Tail,
+    # Guest per-test marker name (e.g. virtio-net, virtio-snd, virtio-input).
+    [Parameter(Mandatory = $true)] [string]$Device,
+    # Host marker token (e.g. VIRTIO_NET_IRQ).
+    [Parameter(Mandatory = $true)] [string]$HostMarker
+  )
+
+  $prefix = "AERO_VIRTIO_SELFTEST|TEST|$Device|"
+  $matches = [regex]::Matches($Tail, [regex]::Escape($prefix) + "[^`r`n]*")
+  if ($matches.Count -eq 0) { return }
+
+  $line = $matches[$matches.Count - 1].Value
+
+  $fields = @{}
+  foreach ($tok in $line.Split("|")) {
+    $idx = $tok.IndexOf("=")
+    if ($idx -le 0) { continue }
+    $k = $tok.Substring(0, $idx).Trim()
+    $v = $tok.Substring($idx + 1).Trim()
+    if (-not [string]::IsNullOrEmpty($k)) {
+      $fields[$k] = $v
+    }
+  }
+
+  $irqKeys = @($fields.Keys | Where-Object { $_.StartsWith("irq_") })
+  if ($irqKeys.Count -eq 0) { return }
+
+  $status = "INFO"
+  if ($line -match "\|FAIL(\||$)") { $status = "FAIL" }
+  elseif ($line -match "\|PASS(\||$)") { $status = "PASS" }
+
+  $out = "AERO_VIRTIO_WIN7_HOST|$HostMarker|$status"
+
+  # Keep ordering stable for log scraping.
+  foreach ($k in @("irq_mode", "irq_message_count")) {
+    if ($fields.ContainsKey($k)) {
+      $out += "|$k=$(Sanitize-AeroMarkerValue $fields[$k])"
+    }
+  }
+
+  foreach ($k in ($irqKeys | Where-Object { $_ -ne "irq_mode" -and $_ -ne "irq_message_count" } | Sort-Object)) {
+    $out += "|$k=$(Sanitize-AeroMarkerValue $fields[$k])"
+  }
+
+  Write-Host $out
+}
+
 function Try-EmitAeroVirtioSndEventqMarker {
   param(
     [Parameter(Mandatory = $true)] [string]$Tail
@@ -3161,6 +3210,9 @@ try {
 
   Try-EmitAeroVirtioBlkIrqMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioNetLargeMarker -Tail $result.Tail
+  Try-EmitAeroVirtioIrqMarkerFromTestMarker -Tail $result.Tail -Device "virtio-net" -HostMarker "VIRTIO_NET_IRQ"
+  Try-EmitAeroVirtioIrqMarkerFromTestMarker -Tail $result.Tail -Device "virtio-snd" -HostMarker "VIRTIO_SND_IRQ"
+  Try-EmitAeroVirtioIrqMarkerFromTestMarker -Tail $result.Tail -Device "virtio-input" -HostMarker "VIRTIO_INPUT_IRQ"
   Try-EmitAeroVirtioSndEventqMarker -Tail $result.Tail
   Try-EmitAeroVirtioIrqDiagnosticsMarkers -Tail $result.Tail -SerialLogPath $SerialLogPath
 
