@@ -2418,7 +2418,14 @@ const LEGACY_VGA_WINDOW_SIZE: usize = aero_gpu_vga::VGA_LEGACY_MEM_LEN as usize;
 /// This keeps the LFB aligned to 64KiB and leaves the first 256KiB reserved for legacy VGA planar
 /// storage (4 × 64KiB planes), matching `aero_gpu_vga`'s VRAM layout.
 #[allow(dead_code)]
-pub const VBE_LFB_OFFSET: usize = aero_gpu_vga::VBE_FRAMEBUFFER_OFFSET;
+pub const VBE_LFB_OFFSET: usize =
+    aero_protocol::aerogpu::aerogpu_pci::AEROGPU_PCI_BAR1_VBE_LFB_OFFSET_BYTES as usize;
+const _: () = {
+    assert!(
+        VBE_LFB_OFFSET == aero_gpu_vga::VBE_FRAMEBUFFER_OFFSET,
+        "AeroGPU BAR1 VBE LFB offset must match the VGA/VBE VRAM layout"
+    );
+};
 
 // Allocated VRAM backing store size.
 //
