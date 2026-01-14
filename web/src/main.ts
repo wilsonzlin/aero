@@ -7831,6 +7831,20 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
         const boot = bootDiskSelection.bootDevice ?? (bootDiskSelection.mounts.cdId ? "cdrom" : "hdd");
         parts.push(`boot=${boot}`);
       }
+      if (vmRuntime === "machine") {
+        const activeBootDevice = workerCoordinator.getMachineCpuActiveBootDevice();
+        if (activeBootDevice) {
+          parts.push(`activeBoot=${activeBootDevice}`);
+        }
+        const bootCfg = workerCoordinator.getMachineCpuBootConfig();
+        if (bootCfg) {
+          const bootDriveHex = `0x${(bootCfg.bootDrive >>> 0).toString(16)}`;
+          const cdBootDriveHex = `0x${(bootCfg.cdBootDrive >>> 0).toString(16)}`;
+          parts.push(`bootDrive=${bootDriveHex}`);
+          parts.push(`cdBootDrive=${cdBootDriveHex}`);
+          parts.push(`cdFirst=${bootCfg.bootFromCdIfPresent ? "1" : "0"}`);
+        }
+      }
       diskLine.textContent = parts.length ? `disks: ${parts.join(" ")}` : "disks: (no mounts)";
     }
 
