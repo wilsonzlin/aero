@@ -51,7 +51,37 @@ class HarnessVectorsFlagValidationTests(unittest.TestCase):
         finally:
             sys.argv = old_argv
 
+    def test_rejects_non_positive_vectors_flags(self) -> None:
+        h = self.harness
+
+        cases = [
+            (["--virtio-msix-vectors", "0"], "--virtio-msix-vectors must be a positive integer"),
+            (["--virtio-msix-vectors", "-1"], "--virtio-msix-vectors must be a positive integer"),
+            (["--virtio-net-vectors", "0"], "--virtio-net-vectors must be a positive integer"),
+            (["--virtio-blk-vectors", "0"], "--virtio-blk-vectors must be a positive integer"),
+            (["--virtio-input-vectors", "0"], "--virtio-input-vectors must be a positive integer"),
+            (["--virtio-snd-vectors", "0"], "--virtio-snd-vectors must be a positive integer"),
+        ]
+
+        for extra_argv, expected in cases:
+            with self.subTest(argv=extra_argv):
+                old_argv = sys.argv
+                try:
+                    sys.argv = [
+                        "invoke_aero_virtio_win7_tests.py",
+                        "--qemu-system",
+                        "qemu-system-x86_64",
+                        "--disk-image",
+                        "disk.img",
+                    ] + extra_argv
+                    stderr = io.StringIO()
+                    with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as cm:
+                        h.main()
+                    self.assertEqual(cm.exception.code, 2)
+                    self.assertIn(expected, stderr.getvalue())
+                finally:
+                    sys.argv = old_argv
+
 
 if __name__ == "__main__":
     unittest.main()
-
