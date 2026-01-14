@@ -469,7 +469,7 @@ impl<B: StorageBackend> VhdDisk<B> {
                 })
             }
             VHD_DISK_TYPE_DIFFERENCING => Err(DiskError::Unsupported(
-                "vhd differencing disks require explicit parent (use VhdDisk::open_differencing)",
+                "vhd differencing disks require explicit parent (use VhdDisk::open_with_parent/open_differencing)",
             )),
             _ => Err(DiskError::Unsupported("vhd disk type")),
         }

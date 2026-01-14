@@ -2357,7 +2357,7 @@ fn vhd_differencing_open_auto_is_rejected_with_hint() {
     assert!(matches!(
         err,
         DiskError::Unsupported(
-            "vhd differencing disks require explicit parent (use VhdDisk::open_differencing)"
+            "vhd differencing disks require explicit parent (use VhdDisk::open_with_parent/open_differencing)"
         )
     ));
 }
