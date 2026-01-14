@@ -873,8 +873,20 @@ mod tests {
         assert!(apic.is_pending(0x80));
 
         // Register notifiers and ensure they are preserved by reset.
-        apic.register_eoi_notifier(Arc::new(|_| {}));
-        apic.register_icr_notifier(Arc::new(|_| {}));
+        let seen_eoi: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+        {
+            let seen_eoi = seen_eoi.clone();
+            apic.register_eoi_notifier(Arc::new(move |vector| {
+                seen_eoi.lock().unwrap().push(vector);
+            }));
+        }
+        let seen_icr: Arc<Mutex<Vec<Icr>>> = Arc::new(Mutex::new(Vec::new()));
+        {
+            let seen_icr = seen_icr.clone();
+            apic.register_icr_notifier(Arc::new(move |icr| {
+                seen_icr.lock().unwrap().push(icr);
+            }));
+        }
         assert_eq!(apic.eoi_notifiers.lock().unwrap().len(), 1);
         assert_eq!(apic.icr_notifiers.lock().unwrap().len(), 1);
 
@@ -914,6 +926,22 @@ mod tests {
         // Notifiers are not cleared by reset.
         assert_eq!(apic.eoi_notifiers.lock().unwrap().len(), 1);
         assert_eq!(apic.icr_notifiers.lock().unwrap().len(), 1);
+
+        // Notifiers continue to fire after reset.
+        write_u32(&apic, REG_SVR, 1 << 8);
+        apic.inject_fixed_interrupt(0x40);
+        let vec = apic.get_pending_vector().expect("pending after reset");
+        assert_eq!(vec, 0x40);
+        assert!(apic.ack(vec));
+        write_u32(&apic, REG_EOI, 0);
+        assert_eq!(*seen_eoi.lock().unwrap(), vec![0x40]);
+
+        write_u32(&apic, REG_ICR_HIGH, 2u32 << 24);
+        write_u32(&apic, REG_ICR_LOW, 0x45 | (1 << 14));
+        let icr_events = seen_icr.lock().unwrap();
+        assert_eq!(icr_events.len(), 1);
+        assert_eq!(icr_events[0].destination, 2);
+        assert_eq!(icr_events[0].vector, 0x45);
     }
 
     #[test]
