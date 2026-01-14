@@ -214,6 +214,7 @@ Notes:
   - `virtio-net`, `virtio-snd`, `virtio-input`:
     - `virtio-<dev>-irq|INFO|mode=intx`
     - `virtio-<dev>-irq|INFO|mode=msi|messages=<n>`
+    - `virtio-<dev>-irq|INFO|mode=msix|messages=<n>|msix_config_vector=0x....|...` (when a driver exposes richer MSI-X diagnostics)
     - (and WARN variants like `virtio-<dev>-irq|WARN|reason=...`).
   The host harness mirrors these into `AERO_VIRTIO_WIN7_HOST|VIRTIO_*_IRQ_DIAG|...` markers for log scraping/CI
   (for example `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_IRQ_DIAG|INFO|mode=msi|messages=4`).

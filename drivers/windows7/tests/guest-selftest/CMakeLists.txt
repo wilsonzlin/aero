@@ -10,6 +10,10 @@ add_executable(aero-virtio-selftest
 
 target_compile_features(aero-virtio-selftest PRIVATE cxx_std_17)
 
+target_include_directories(aero-virtio-selftest PRIVATE
+  ${CMAKE_CURRENT_LIST_DIR}/../../virtio-snd/include
+)
+
 target_compile_definitions(aero-virtio-selftest PRIVATE
   UNICODE
   _UNICODE

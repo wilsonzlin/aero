@@ -42,6 +42,8 @@
 #include <string>
 #include <vector>
 
+#include <aero_virtio_snd_diag.h>
+
 #ifndef STATUS_NOT_SUPPORTED
 // Some Windows 7 SDK environments don't expose NTSTATUS codes in the default
 // include set. Define the minimal constant we need for miniport IOCTL probing.
@@ -1117,6 +1119,73 @@ static void EmitVirtioIrqMarker(Logger& log, const char* dev_name, const std::ve
   }
 
   EmitVirtioIrqMarkerForDevInst(log, dev_name, matches.front().devinst);
+}
+
+static std::optional<AERO_VIRTIO_SND_DIAG_INFO> QueryVirtioSndDiag(Logger& log) {
+  // Best-effort: the virtio-snd diag device is optional and may not exist on older drivers/images.
+  HANDLE h = CreateFileW(L"\\\\.\\aero_virtio_snd_diag", GENERIC_READ,
+                         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0, nullptr);
+  if (h == INVALID_HANDLE_VALUE) {
+    return std::nullopt;
+  }
+
+  AERO_VIRTIO_SND_DIAG_INFO info{};
+  DWORD bytes = 0;
+  const BOOL ok =
+      DeviceIoControl(h, IOCTL_AERO_VIRTIO_SND_DIAG_QUERY, nullptr, 0, &info, sizeof(info), &bytes, nullptr);
+  const DWORD err = ok ? 0 : GetLastError();
+  CloseHandle(h);
+
+  if (!ok) {
+    log.Logf("virtio-snd: diag query failed err=%lu", static_cast<unsigned long>(err));
+    return std::nullopt;
+  }
+  if (bytes < sizeof(info)) {
+    log.Logf("virtio-snd: diag query returned too few bytes=%lu expected=%zu", static_cast<unsigned long>(bytes),
+             sizeof(info));
+    return std::nullopt;
+  }
+  if (info.Version != AERO_VIRTIO_SND_DIAG_VERSION) {
+    log.Logf("virtio-snd: diag version mismatch got=%lu expected=%u", static_cast<unsigned long>(info.Version),
+             static_cast<unsigned>(AERO_VIRTIO_SND_DIAG_VERSION));
+    return std::nullopt;
+  }
+  return info;
+}
+
+static void EmitVirtioSndIrqMarker(Logger& log, DEVINST devinst) {
+  if (devinst == 0) {
+    EmitVirtioIrqMarkerForDevInst(log, "virtio-snd", 0);
+    return;
+  }
+
+  const auto info_opt = QueryVirtioSndDiag(log);
+  if (!info_opt.has_value()) {
+    // Fall back to ConfigManager resource inspection (reports whether Windows assigned message interrupts).
+    EmitVirtioIrqMarkerForDevInst(log, "virtio-snd", devinst);
+    return;
+  }
+
+  const auto& info = *info_opt;
+  const char* mode = "unknown";
+  if (info.IrqMode == AERO_VIRTIO_SND_DIAG_IRQ_MODE_INTX) {
+    mode = "intx";
+  } else if (info.IrqMode == AERO_VIRTIO_SND_DIAG_IRQ_MODE_MSIX) {
+    mode = "msix";
+  } else if (info.IrqMode == AERO_VIRTIO_SND_DIAG_IRQ_MODE_NONE) {
+    mode = "none";
+  }
+
+  log.Logf(
+      "virtio-snd-irq|INFO|mode=%s|messages=%lu|msix_config_vector=0x%04x|msix_queue0_vector=0x%04x|"
+      "msix_queue1_vector=0x%04x|msix_queue2_vector=0x%04x|msix_queue3_vector=0x%04x|interrupt_count=%lu|dpc_count=%lu|"
+      "drain0=%lu|drain1=%lu|drain2=%lu|drain3=%lu",
+      mode, static_cast<unsigned long>(info.MessageCount), static_cast<unsigned>(info.MsixConfigVector),
+      static_cast<unsigned>(info.QueueMsixVector[0]), static_cast<unsigned>(info.QueueMsixVector[1]),
+      static_cast<unsigned>(info.QueueMsixVector[2]), static_cast<unsigned>(info.QueueMsixVector[3]),
+      static_cast<unsigned long>(info.InterruptCount), static_cast<unsigned long>(info.DpcCount),
+      static_cast<unsigned long>(info.QueueDrainCount[0]), static_cast<unsigned long>(info.QueueDrainCount[1]),
+      static_cast<unsigned long>(info.QueueDrainCount[2]), static_cast<unsigned long>(info.QueueDrainCount[3]));
 }
 
 struct VirtioSndPciIdInfo {
@@ -8452,7 +8521,8 @@ int wmain(int argc, wchar_t** argv) {
   }
 
   if (!snd_pci.empty() && snd_pci.front().devinst != 0) {
-    EmitVirtioIrqMarkerForDevInst(log, "virtio-snd", snd_pci.front().devinst);
+    // Prefer driver-provided diag info (vector mapping + counters); fall back to resource inspection.
+    EmitVirtioSndIrqMarker(log, snd_pci.front().devinst);
   } else if (opt.allow_virtio_snd_transitional) {
     EmitVirtioIrqMarker(log, "virtio-snd", {L"PCI\\VEN_1AF4&DEV_1059", L"PCI\\VEN_1AF4&DEV_1018"});
   } else {

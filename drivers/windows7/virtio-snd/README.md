@@ -62,9 +62,11 @@ If Windows grants fewer than `1 + numQueues` messages, the driver falls back to:
   - You can view this output with a kernel debugger or Sysinternals **DebugView** (Capture Kernel).
 - **`aero-virtio-selftest.exe` markers**:
   - The selftest logs to `C:\\aero-virtio-selftest.log` and emits `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|...` markers on stdout/COM1.
-  - The selftest also emits a `virtio-snd-irq|INFO|...` line indicating which interrupt mode Windows assigned:
-    - `virtio-snd-irq|INFO|mode=intx`
-    - `virtio-snd-irq|INFO|mode=msi|messages=<n>` (message-signaled interrupts; MSI/MSI-X)
+  - The selftest also emits a `virtio-snd-irq|INFO|...` line describing the observed interrupt mode:
+    - `virtio-snd-irq|INFO|mode=intx|...`
+    - `virtio-snd-irq|INFO|mode=msix|messages=<n>|msix_config_vector=0x....|msix_queue0_vector=0x....|...`
+    - (On older images/drivers where the diag interface is unavailable, the selftest falls back to best-effort PnP
+      resource inspection and may report `mode=msi` with only a message count.)
   - See `../tests/guest-selftest/README.md` for how to build/run the tool.
 
 ## Directory layout
