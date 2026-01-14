@@ -267,6 +267,32 @@ fn bench_hotness_profile(c: &mut Criterion) {
         });
     });
 
+    // Capacity pressure path: insert new RIPs once the internal counter table is full.
+    //
+    // This exercises the profile's eviction logic (victim selection + HashMap/HashSet removal) and
+    // is a useful proxy for worst-case bookkeeping when guests execute a very large number of cold
+    // blocks.
+    group.bench_function("record_hit_new_key_eviction", |b| {
+        const CAPACITY: usize = 256;
+        // Keep the per-iteration work factor lower here: each operation can scan the whole table to
+        // pick an eviction victim.
+        const EVICT_OPS_PER_ITER: usize = 256;
+
+        let mut profile = HotnessProfile::new_with_capacity(u32::MAX, CAPACITY);
+        for i in 0..CAPACITY {
+            profile.record_hit(i as u64, false);
+        }
+
+        let mut next_rip = CAPACITY as u64;
+        b.iter(|| {
+            for _ in 0..EVICT_OPS_PER_ITER {
+                profile.record_hit(black_box(next_rip), false);
+                next_rip = next_rip.wrapping_add(1);
+            }
+            black_box(profile.counter(0));
+        });
+    });
+
     group.finish();
 }
 
@@ -304,6 +330,7 @@ fn bench_jit_runtime_prepare_block(c: &mut Criterion) {
             hot_threshold: 1_000_000,
             cache_max_blocks: 1024,
             cache_max_bytes: 0,
+            ..JitConfig::default()
         };
         let mut jit = JitRuntime::new(config, NullBackend, NullCompileSink);
         let rip = 0x4000u64;
@@ -326,6 +353,7 @@ fn bench_jit_runtime_prepare_block(c: &mut Criterion) {
             hot_threshold: u32::MAX,
             cache_max_blocks: 1024,
             cache_max_bytes: 0,
+            ..JitConfig::default()
         };
         let mut jit = JitRuntime::new(config, NullBackend, NullCompileSink);
         let rip = 0x5000u64;
