@@ -379,6 +379,99 @@ bool TestRenderTargetHelpersClearStaleDsvHandles() {
   return true;
 }
 
+bool TestPrimitiveTopologyHelperEmitsAndCaches() {
+  using aerogpu::d3d10_11::SetPrimitiveTopologyLocked;
+
+  struct DummyDevice {
+    aerogpu::CmdWriter cmd;
+    uint32_t current_topology = AEROGPU_TOPOLOGY_TRIANGLELIST;
+
+    DummyDevice() {
+      cmd.reset();
+    }
+  };
+
+  DummyDevice dev{};
+  std::vector<HRESULT> errors;
+
+  // Setting the default topology again should be a no-op (no packet emission).
+  if (!Check(SetPrimitiveTopologyLocked(&dev,
+                                        AEROGPU_TOPOLOGY_TRIANGLELIST,
+                                        [&](HRESULT hr) { errors.push_back(hr); }),
+             "SetPrimitiveTopologyLocked(default) should succeed")) {
+    return false;
+  }
+  if (!Check(errors.empty(), "SetPrimitiveTopologyLocked(default) should not report errors")) {
+    return false;
+  }
+  if (!Check(dev.cmd.size() == sizeof(aerogpu_cmd_stream_header), "default topology does not emit a packet")) {
+    return false;
+  }
+
+  // Changing topology should emit a packet and update cached state.
+  if (!Check(SetPrimitiveTopologyLocked(&dev,
+                                        AEROGPU_TOPOLOGY_LINELIST,
+                                        [&](HRESULT hr) { errors.push_back(hr); }),
+             "SetPrimitiveTopologyLocked(linelist) should succeed")) {
+    return false;
+  }
+  dev.cmd.finalize();
+  if (!Check(dev.current_topology == AEROGPU_TOPOLOGY_LINELIST, "current_topology updated")) {
+    return false;
+  }
+  if (!Check(dev.cmd.size() >= sizeof(aerogpu_cmd_stream_header) + sizeof(aerogpu_cmd_set_primitive_topology),
+             "linelist emits SET_PRIMITIVE_TOPOLOGY packet")) {
+    return false;
+  }
+  const auto* pkt = reinterpret_cast<const aerogpu_cmd_set_primitive_topology*>(
+      dev.cmd.data() + sizeof(aerogpu_cmd_stream_header));
+  if (!Check(pkt->hdr.opcode == AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY, "packet opcode")) {
+    return false;
+  }
+  if (!Check(pkt->topology == AEROGPU_TOPOLOGY_LINELIST, "packet topology payload")) {
+    return false;
+  }
+
+  // Re-applying the same topology should not append another packet.
+  const size_t bytes_before = dev.cmd.size();
+  if (!Check(SetPrimitiveTopologyLocked(&dev,
+                                        AEROGPU_TOPOLOGY_LINELIST,
+                                        [&](HRESULT hr) { errors.push_back(hr); }),
+             "SetPrimitiveTopologyLocked(linelist again) should succeed")) {
+    return false;
+  }
+  if (!Check(dev.cmd.size() == bytes_before, "re-applying same topology is a no-op")) {
+    return false;
+  }
+
+  // OOM/insufficient-space should not update cached topology.
+  alignas(4) uint8_t tiny_buf[sizeof(aerogpu_cmd_stream_header)] = {};
+  struct TinyDevice {
+    aerogpu::CmdWriter cmd;
+    uint32_t current_topology = AEROGPU_TOPOLOGY_TRIANGLELIST;
+    TinyDevice(uint8_t* buf, size_t cap) {
+      cmd.set_span(buf, cap);
+    }
+  };
+
+  TinyDevice tiny(tiny_buf, sizeof(tiny_buf));
+  errors.clear();
+  const bool ok = SetPrimitiveTopologyLocked(&tiny,
+                                            AEROGPU_TOPOLOGY_TRIANGLESTRIP,
+                                            [&](HRESULT hr) { errors.push_back(hr); });
+  if (!Check(!ok, "SetPrimitiveTopologyLocked should fail when cmd append fails")) {
+    return false;
+  }
+  if (!Check(errors.size() == 1 && errors[0] == E_OUTOFMEMORY, "cmd append failure reports E_OUTOFMEMORY")) {
+    return false;
+  }
+  if (!Check(tiny.current_topology == AEROGPU_TOPOLOGY_TRIANGLELIST, "cached topology not updated on failure")) {
+    return false;
+  }
+
+  return true;
+}
+
 bool TestTrackWddmAllocForSubmitLockedHelper() {
   using aerogpu::d3d10_11::WddmSubmitAllocation;
 
@@ -9629,6 +9722,7 @@ int main() {
   ok &= TestViewportHelperCachesDimsOnlyWhenEnabledForD3D10StyleDevice();
   ok &= TestViewportScissorHelpersDontReportNotImplWhenCmdAppendFails();
   ok &= TestRenderTargetHelpersClearStaleDsvHandles();
+  ok &= TestPrimitiveTopologyHelperEmitsAndCaches();
   ok &= TestTrackWddmAllocForSubmitLockedHelper();
   ok &= TestDeviceFuncsTableNoNullEntriesHostOwned();
   ok &= TestDeviceFuncsTableNoNullEntriesGuestBacked();

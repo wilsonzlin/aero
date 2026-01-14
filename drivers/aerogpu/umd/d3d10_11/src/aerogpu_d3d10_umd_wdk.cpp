@@ -7155,17 +7155,9 @@ void APIENTRY IaSetTopology(D3D10DDI_HDEVICE hDevice, D3D10_DDI_PRIMITIVE_TOPOLO
   std::lock_guard<std::mutex> lock(dev->mutex);
 
   const uint32_t topo_u32 = static_cast<uint32_t>(topology);
-  if (dev->current_topology == topo_u32) {
-    return;
-  }
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_primitive_topology>(AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY);
-  if (!cmd) {
-    SetError(hDevice, E_OUTOFMEMORY);
-    return;
-  }
-  dev->current_topology = topo_u32;
-  cmd->topology = topo_u32;
-  cmd->reserved0 = 0;
+  (void)aerogpu::d3d10_11::SetPrimitiveTopologyLocked(dev,
+                                                      topo_u32,
+                                                      [&](HRESULT hr) { SetError(hDevice, hr); });
 }
 
 static bool EmitBindShadersCmdLocked(AeroGpuDevice* dev,

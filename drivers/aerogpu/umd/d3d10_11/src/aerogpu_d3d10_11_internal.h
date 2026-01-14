@@ -2454,6 +2454,45 @@ inline void validate_and_emit_scissor_rects_locked(DeviceT* dev,
   }
 }
 
+// -------------------------------------------------------------------------------------------------
+// Input assembler helpers (primitive topology)
+// -------------------------------------------------------------------------------------------------
+//
+// The protocol's `aerogpu_primitive_topology` values intentionally match the
+// D3D10/D3D11 runtime numeric values, so UMDs can forward them directly.
+//
+// The caller is expected to hold `dev->mutex`.
+template <typename DeviceT, typename SetErrorFn>
+inline bool SetPrimitiveTopologyLocked(DeviceT* dev, uint32_t topology, SetErrorFn&& set_error) {
+  if (!dev) {
+    return false;
+  }
+  if (dev->current_topology == topology) {
+    return true;
+  }
+
+  auto* cmd =
+      dev->cmd.template append_fixed<aerogpu_cmd_set_primitive_topology>(AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY);
+  if (!cmd) {
+    set_error(E_OUTOFMEMORY);
+    return false;
+  }
+
+  cmd->topology = topology;
+  cmd->reserved0 = 0;
+  dev->current_topology = topology;
+  return true;
+}
+
+struct SetPrimitiveTopologyNoopSetError {
+  void operator()(HRESULT) const noexcept {}
+};
+
+template <typename DeviceT>
+inline bool SetPrimitiveTopologyLocked(DeviceT* dev, uint32_t topology) {
+  return SetPrimitiveTopologyLocked(dev, topology, SetPrimitiveTopologyNoopSetError{});
+}
+
 template <typename THandle, typename TObject>
 inline TObject* FromHandle(THandle h) {
   return reinterpret_cast<TObject*>(h.pDrvPrivate);

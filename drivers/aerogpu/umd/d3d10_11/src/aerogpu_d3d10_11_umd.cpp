@@ -5341,18 +5341,9 @@ void AEROGPU_APIENTRY SetPrimitiveTopology(D3D10DDI_HDEVICE hDevice, uint32_t to
 
   std::lock_guard<std::mutex> lock(dev->mutex);
 
-  if (dev->current_topology == topology) {
-    return;
-  }
-
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_primitive_topology>(AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY);
-  if (!cmd) {
-    ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
-    return;
-  }
-  cmd->topology = topology;
-  cmd->reserved0 = 0;
-  dev->current_topology = topology;
+  (void)aerogpu::d3d10_11::SetPrimitiveTopologyLocked(dev,
+                                                     topology,
+                                                     [&](HRESULT hr) { ReportDeviceErrorLocked(dev, hDevice, hr); });
 }
 
 void AEROGPU_APIENTRY VsSetConstantBuffers(D3D10DDI_HDEVICE hDevice,
