@@ -9,6 +9,7 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     AEROGPU_RESOURCE_USAGE_TEXTURE, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
 use aero_protocol::aerogpu::aerogpu_pci::{AerogpuFormat, AEROGPU_ABI_VERSION_U32};
+use wgpu::Features;
 
 const DXBC_VS_PASSTHROUGH: &[u8] = include_bytes!("fixtures/vs_passthrough.dxbc");
 const DXBC_PS_PRIMITIVE_ID: &[u8] = include_bytes!("fixtures/ps_primitive_id.dxbc");
@@ -72,6 +73,17 @@ fn aerogpu_cmd_sv_primitive_id_colors_primitives() {
                 return;
             }
         };
+        if !exec
+            .device()
+            .features()
+            .contains(Features::SHADER_PRIMITIVE_INDEX)
+        {
+            common::skip_or_panic(
+                module_path!(),
+                "wgpu adapter does not support SHADER_PRIMITIVE_INDEX (SV_PrimitiveID)",
+            );
+            return;
+        }
 
         if !common::require_shader_primitive_index_or_skip(&exec, module_path!()) {
             return;

@@ -5,13 +5,14 @@ use aero_d3d11::sm4::opcode::{OPCODE_LEN_SHIFT, OPCODE_MOV, OPCODE_RET};
 use aero_dxbc::{test_utils as dxbc_test_utils, FourCC};
 use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    AerogpuPrimitiveTopology, AerogpuShaderStage, AEROGPU_CLEAR_COLOR,
+    AerogpuPrimitiveTopology, AerogpuShaderStage, AerogpuShaderStageEx, AEROGPU_CLEAR_COLOR,
     AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 
 const VS_PASSTHROUGH: &[u8] = include_bytes!("fixtures/vs_passthrough.dxbc");
+const GS_POINT_TO_TRIANGLE: &[u8] = include_bytes!("fixtures/gs_point_to_triangle.dxbc");
 
 #[derive(Clone, Copy)]
 struct SigParam {
@@ -117,6 +118,7 @@ fn aerogpu_cmd_geometry_shader_compute_prepass_supports_location2_varying() {
         const RT: u32 = 1;
         const VS: u32 = 2;
         const PS: u32 = 3;
+        const GS: u32 = 0xCAFE_BABE;
 
         let ps_dxbc = build_ps_passthrough_color_in_v2_dxbc();
 
@@ -136,9 +138,9 @@ fn aerogpu_cmd_geometry_shader_compute_prepass_supports_location2_varying() {
         writer.set_render_targets(&[RT], 0);
         writer.clear(AEROGPU_CLEAR_COLOR, [0.0, 0.0, 0.0, 1.0], 1.0, 0);
         writer.create_shader_dxbc(VS, AerogpuShaderStage::Vertex, VS_PASSTHROUGH);
+        writer.create_shader_dxbc_ex(GS, AerogpuShaderStageEx::Geometry, GS_POINT_TO_TRIANGLE);
         writer.create_shader_dxbc(PS, AerogpuShaderStage::Pixel, &ps_dxbc);
-        // Bind a dummy GS handle to force the compute-prepass path.
-        writer.bind_shaders_ex(VS, PS, 0, 0xCAFE_BABE, 0, 0);
+        writer.bind_shaders_ex(VS, PS, 0, GS, 0, 0);
         writer.set_primitive_topology(AerogpuPrimitiveTopology::TriangleList);
         writer.draw(3, 1, 0, 0);
 

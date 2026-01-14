@@ -240,6 +240,16 @@ fn primitive_id_pixel_shader_renders_different_colors_per_triangle() {
                 return;
             }
         };
+        if !device
+            .features()
+            .contains(wgpu::Features::SHADER_PRIMITIVE_INDEX)
+        {
+            common::skip_or_panic(
+                module_path!(),
+                "wgpu adapter does not support SHADER_PRIMITIVE_INDEX (SV_PrimitiveID)",
+            );
+            return;
+        }
 
         if !device
             .features()

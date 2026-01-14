@@ -3,8 +3,8 @@ mod common;
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
 use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    AerogpuIndexFormat, AerogpuShaderStage, AerogpuVertexBufferBinding, AEROGPU_CLEAR_COLOR,
-    AEROGPU_RESOURCE_USAGE_INDEX_BUFFER, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+    AerogpuIndexFormat, AerogpuShaderStage, AerogpuShaderStageEx, AerogpuVertexBufferBinding,
+    AEROGPU_CLEAR_COLOR, AEROGPU_RESOURCE_USAGE_INDEX_BUFFER, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
     AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
@@ -13,6 +13,7 @@ use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 const VS_PASSTHROUGH: &[u8] = include_bytes!("fixtures/vs_passthrough.dxbc");
 const PS_PASSTHROUGH: &[u8] = include_bytes!("fixtures/ps_passthrough.dxbc");
 const ILAY_POS3_COLOR: &[u8] = include_bytes!("fixtures/ilay_pos3_color.bin");
+const GS_POINT_TO_TRIANGLE: &[u8] = include_bytes!("fixtures/gs_point_to_triangle.dxbc");
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -63,6 +64,7 @@ fn aerogpu_cmd_geometry_shader_compute_prepass_draw_indexed_smoke() {
         const VS: u32 = 4;
         const PS: u32 = 5;
         const IL: u32 = 6;
+        const GS: u32 = 0xCAFE_BABE;
 
         let vertices = [
             VertexPos3Color4 {
@@ -116,6 +118,7 @@ fn aerogpu_cmd_geometry_shader_compute_prepass_draw_indexed_smoke() {
         writer.clear(AEROGPU_CLEAR_COLOR, [0.0, 0.0, 0.0, 1.0], 1.0, 0);
 
         writer.create_shader_dxbc(VS, AerogpuShaderStage::Vertex, VS_PASSTHROUGH);
+        writer.create_shader_dxbc_ex(GS, AerogpuShaderStageEx::Geometry, GS_POINT_TO_TRIANGLE);
         writer.create_shader_dxbc(PS, AerogpuShaderStage::Pixel, PS_PASSTHROUGH);
 
         writer.create_input_layout(IL, ILAY_POS3_COLOR);
@@ -131,9 +134,7 @@ fn aerogpu_cmd_geometry_shader_compute_prepass_draw_indexed_smoke() {
         );
         writer.set_index_buffer(IB, AerogpuIndexFormat::Uint32, 0);
 
-        // Bind a dummy GS handle to force the compute-prepass path; no actual GS shader is needed
-        // for this smoke test.
-        writer.bind_shaders_ex(VS, PS, 0, 0xCAFE_BABE, 0, 0);
+        writer.bind_shaders_ex(VS, PS, 0, GS, 0, 0);
         writer.draw_indexed(3, 1, 0, 0, 0);
 
         let stream = writer.finish();
