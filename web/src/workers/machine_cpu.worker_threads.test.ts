@@ -5,7 +5,7 @@ import { Worker, type WorkerOptions } from "node:worker_threads";
 import type { AeroConfig } from "../config/aero_config";
 import { VRAM_BASE_PADDR } from "../arch/guest_phys.ts";
 import { InputEventType } from "../input/event_queue";
-import { allocateSharedMemorySegments, type SharedMemorySegments } from "../runtime/shared_layout";
+import { STATUS_INTS, STATUS_OFFSET_BYTES, StatusIndex, allocateSharedMemorySegments, type SharedMemorySegments } from "../runtime/shared_layout";
 import { MessageType, type ProtocolMessage, type WorkerInitMessage } from "../runtime/protocol";
 import { emptySetBootDisksMessage, type SetBootDisksMessage } from "../runtime/boot_disks_protocol";
 
@@ -487,6 +487,9 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
 
   it("drops excess input batches while snapshot-paused and recycles them immediately", async () => {
     const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 0 });
+    const status = new Int32Array(segments.control, STATUS_OFFSET_BYTES, STATUS_INTS);
+    const receivedBase = Atomics.load(status, StatusIndex.IoInputBatchReceivedCounter) >>> 0;
+    const droppedBase = Atomics.load(status, StatusIndex.IoInputBatchDropCounter) >>> 0;
 
     const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
     const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
@@ -548,6 +551,15 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
         throw new Error(
           `expected the dropped buffer (sentinel=2222) to be recycled while paused, got sentinel=${firstRecycleWords[1]}`,
         );
+      }
+
+      const receivedAfterDrop = Atomics.load(status, StatusIndex.IoInputBatchReceivedCounter) >>> 0;
+      const droppedAfterDrop = Atomics.load(status, StatusIndex.IoInputBatchDropCounter) >>> 0;
+      if (receivedAfterDrop - receivedBase !== 2) {
+        throw new Error(`expected IoInputBatchReceivedCounter to increase by 2, got ${receivedAfterDrop - receivedBase}`);
+      }
+      if (droppedAfterDrop - droppedBase !== 1) {
+        throw new Error(`expected IoInputBatchDropCounter to increase by 1, got ${droppedAfterDrop - droppedBase}`);
       }
 
       const recycledOnResume = waitForWorkerMessage(
