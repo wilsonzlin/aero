@@ -12081,18 +12081,25 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             timeoutMs = 30000u;
         }
 
-        if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
-            if (!AeroGpuV1SubmitPathUsable(adapter)) {
-                io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_RING_NOT_READY;
-                InterlockedExchange(&adapter->PerfSelftestLastErrorCode, (LONG)io->error_code);
-                return STATUS_SUCCESS;
+        BOOLEAN ringReady = FALSE;
+        {
+            /*
+             * AeroGpu*SubmitPathUsable reads ring header fields; take RingLock so we don't race
+             * AeroGpuRingCleanup during teardown.
+             */
+            KIRQL ringIrql;
+            KeAcquireSpinLock(&adapter->RingLock, &ringIrql);
+            if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
+                ringReady = AeroGpuV1SubmitPathUsable(adapter);
+            } else {
+                ringReady = AeroGpuLegacySubmitPathUsable(adapter);
             }
-        } else {
-            if (!AeroGpuLegacySubmitPathUsable(adapter)) {
-                io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_RING_NOT_READY;
-                InterlockedExchange(&adapter->PerfSelftestLastErrorCode, (LONG)io->error_code);
-                return STATUS_SUCCESS;
-            }
+            KeReleaseSpinLock(&adapter->RingLock, ringIrql);
+        }
+        if (!ringReady) {
+            io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_RING_NOT_READY;
+            InterlockedExchange(&adapter->PerfSelftestLastErrorCode, (LONG)io->error_code);
+            return STATUS_SUCCESS;
         }
 
         const ULONGLONG startTime = KeQueryInterruptTime();
