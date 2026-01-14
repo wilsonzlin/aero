@@ -58,6 +58,11 @@ on:
         required: false
         default: false
         type: boolean
+      require_virtio_input_binding:
+        description: Require virtio-input-binding (PCI driver service validation) to PASS
+        required: false
+        default: false
+        type: boolean
       with_virtio_input_events_extended:
         description: Inject extended virtio-input events via QMP (modifiers/buttons/wheel) and require virtio-input-events-* markers to PASS (requires a guest image provisioned with --test-input-events and --test-input-events-extended)
         required: false
@@ -182,6 +187,7 @@ jobs:
             echo "  with_virtio_input_wheel: '${{ inputs.with_virtio_input_wheel }}'"
             echo "  with_virtio_input_media_keys: '${{ inputs.with_virtio_input_media_keys }}'"
             echo "  with_virtio_input_led: '${{ inputs.with_virtio_input_led }}'"
+            echo "  require_virtio_input_binding: '${{ inputs.require_virtio_input_binding }}'"
             echo "  with_virtio_input_events_extended: '${{ inputs.with_virtio_input_events_extended }}'"
             echo "  with_virtio_input_tablet_events: '${{ inputs.with_virtio_input_tablet_events }}'"
             echo "  with_blk_resize: '${{ inputs.with_blk_resize }}'"
@@ -253,6 +259,7 @@ jobs:
             with_virtio_input_wheel="${{ inputs.with_virtio_input_wheel }}"
             with_virtio_input_media_keys="${{ inputs.with_virtio_input_media_keys }}"
             with_virtio_input_led="${{ inputs.with_virtio_input_led }}"
+            require_virtio_input_binding="${{ inputs.require_virtio_input_binding }}"
             with_virtio_input_events_extended="${{ inputs.with_virtio_input_events_extended }}"
             with_virtio_input_tablet_events="${{ inputs.with_virtio_input_tablet_events }}"
             with_blk_resize="${{ inputs.with_blk_resize }}"
@@ -294,6 +301,9 @@ jobs:
             fi
             if [[ "${with_virtio_input_led}" == "true" ]]; then
               args+=(--with-input-led)
+            fi
+            if [[ "${require_virtio_input_binding}" == "true" ]]; then
+              args+=(--require-virtio-input-binding)
             fi
             if [[ "${with_virtio_input_events_extended}" == "true" ]]; then
               args+=(--with-input-events-extended)
@@ -419,6 +429,7 @@ jobs:
           input_wheel_marker=""
           input_media_keys_marker=""
           input_led_marker=""
+          input_binding_host_marker=""
           input_events_modifiers_marker=""
           input_events_buttons_marker=""
           input_events_wheel_marker=""
@@ -465,6 +476,7 @@ jobs:
               input_inject_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|' "${harness_log}" | tail -n 1 || true)"
               input_media_keys_inject_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MEDIA_KEYS_INJECT|' "${harness_log}" | tail -n 1 || true)"
               input_tablet_inject_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|' "${harness_log}" | tail -n 1 || true)"
+              input_binding_host_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_BINDING|' "${harness_log}" | tail -n 1 || true)"
               pci_preflight_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|QEMU_PCI_PREFLIGHT|' "${harness_log}" | tail -n 1 || true)"
               blk_resize_request_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESIZE|REQUEST|' "${harness_log}" | tail -n 1 || true)"
               blk_resize_fail_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESIZE|FAIL|reason=' "${harness_log}" | tail -n 1 || true)"
@@ -537,6 +549,9 @@ jobs:
             fi
             if [[ -n "${input_media_keys_marker}" ]]; then
               echo "- Guest virtio-input-media-keys marker: ${input_media_keys_marker}"
+            fi
+            if [[ "${{ inputs.require_virtio_input_binding }}" == "true" && -n "${input_binding_host_marker}" ]]; then
+              echo "- Host virtio-input binding marker: \`${input_binding_host_marker}\`"
             fi
             if [[ "${{ inputs.with_virtio_input_led }}" == "true" && -n "${input_led_marker}" ]]; then
               echo "- Guest virtio-input-led marker: \`${input_led_marker}\`"

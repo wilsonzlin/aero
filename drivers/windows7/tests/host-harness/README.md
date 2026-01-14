@@ -1118,6 +1118,11 @@ To also require the optional virtio-input LED/statusq marker (`virtio-input-led`
 `with_virtio_input_led=true`. This requires a guest image provisioned with `--test-input-led` (for example via
 `New-AeroWin7TestImage.ps1 -TestInputLed`).
 
+To require virtio-input PCI binding/service validation (at least one virtio-input PCI device bound to the expected
+driver service), set the workflow input `require_virtio_input_binding=true`. This requires a guest selftest new enough
+to emit the marker `AERO_VIRTIO_SELFTEST|TEST|virtio-input-binding|PASS|...` (older images may fail with
+`MISSING_VIRTIO_INPUT_BINDING`).
+
 To exercise the extended virtio-input markers (`virtio-input-events-modifiers/buttons/wheel`), set the workflow input
 `with_virtio_input_events_extended=true`. This requires a guest image provisioned with `--test-input-events` and
 `--test-input-events-extended` (or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS_EXTENDED=1`; for example via
