@@ -4795,6 +4795,19 @@ def main() -> int:
     # Any remaining args are passed directly to QEMU.
     args, qemu_extra = parser.parse_known_args()
     args.qemu_system = _resolve_executable_path(args.qemu_system)
+    if args.qemu_system:
+        try:
+            has_sep = os.sep in args.qemu_system or (os.altsep is not None and os.altsep in args.qemu_system)
+        except Exception:
+            has_sep = False
+        if has_sep:
+            try:
+                qemu_path = Path(args.qemu_system)
+                if qemu_path.exists() and qemu_path.is_dir():
+                    print(f"ERROR: qemu system binary path is a directory: {qemu_path}", file=sys.stderr)
+                    return 2
+            except Exception:
+                pass
     need_blk_reset = bool(getattr(args, "with_blk_reset", False))
     need_input_wheel = bool(getattr(args, "with_input_wheel", False))
     need_input_events_extended = bool(getattr(args, "with_input_events_extended", False))
