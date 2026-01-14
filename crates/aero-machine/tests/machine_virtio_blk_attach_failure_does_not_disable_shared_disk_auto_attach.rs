@@ -1,6 +1,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use aero_devices::pci::PciDevice as _;
+use aero_devices::pci::profile::VIRTIO_DEVICE_CFG_BAR0_OFFSET;
 use aero_machine::{Machine, MachineConfig};
 use aero_storage::{MemBackend, RawDisk};
 
@@ -42,8 +43,8 @@ fn virtio_blk_attach_failure_does_not_disable_shared_disk_auto_attach() {
         .base;
     assert_ne!(bar0_base, 0, "expected virtio-blk BAR0 to be assigned");
 
-    // Virtio-pci device-specific config lives at BAR0 + 0x3000.
-    const DEVICE_CFG_OFFSET: u64 = 0x3000;
+    // Virtio-pci device-specific config lives at BAR0 + VIRTIO_DEVICE_CFG_BAR0_OFFSET.
+    const DEVICE_CFG_OFFSET: u64 = VIRTIO_DEVICE_CFG_BAR0_OFFSET as u64;
 
     let mut cap_bytes = [0u8; 8];
     virtio_blk
