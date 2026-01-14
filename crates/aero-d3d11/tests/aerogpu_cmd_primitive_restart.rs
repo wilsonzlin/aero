@@ -801,7 +801,7 @@ fn assert_restart_gap_line_strip_u32(pixels: &[u8], width: u32, height: u32) {
     //   left_line -> (left_top -> origin) -> (origin -> right_top) -> right_line
     // and should draw a diagonal bridge through the upper-left quadrant.
     //
-    // Sample a few pixels along that expected diagonal (y == -x) that are far away from the
+    // Sample a few pixels along that expected diagonal (y == x) that are far away from the
     // intended vertical lines.
     let left_x = 8usize;
     let right_x = 55usize;
