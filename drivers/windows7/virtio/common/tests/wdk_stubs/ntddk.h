@@ -308,6 +308,10 @@ static __forceinline VOID KeAcquireSpinLock(_Inout_ PKSPIN_LOCK SpinLock, _Out_ 
     if (OldIrql != NULL) {
         *OldIrql = cur;
     }
+    if (SpinLock == NULL) {
+        return;
+    }
+
     if (cur < DISPATCH_LEVEL) {
         /*
          * Model KeAcquireSpinLock raising IRQL to DISPATCH_LEVEL. This helps host
@@ -316,21 +320,21 @@ static __forceinline VOID KeAcquireSpinLock(_Inout_ PKSPIN_LOCK SpinLock, _Out_ 
          */
         WdkTestSetCurrentIrql(DISPATCH_LEVEL);
     }
-    if (SpinLock == NULL) {
-        return;
-    }
 
-    while (__atomic_exchange_n(&SpinLock->locked, 1, __ATOMIC_ACQUIRE) != 0) {
-        /* host tests are single-threaded; this should not spin. */
+    /*
+     * Host tests are single-threaded. Contended locks indicate a bug (e.g.
+     * double-acquire) and must fail fast instead of spinning forever.
+     */
+    if (__atomic_exchange_n(&SpinLock->locked, 1, __ATOMIC_ACQUIRE) != 0) {
+        ASSERT(FALSE);
     }
 }
 
 static __forceinline VOID KeReleaseSpinLock(_Inout_ PKSPIN_LOCK SpinLock, _In_ KIRQL OldIrql)
 {
-    if (SpinLock == NULL) {
-        return;
+    if (SpinLock != NULL) {
+        __atomic_store_n(&SpinLock->locked, 0, __ATOMIC_RELEASE);
     }
-    __atomic_store_n(&SpinLock->locked, 0, __ATOMIC_RELEASE);
     WdkTestSetCurrentIrql(OldIrql);
 }
 
