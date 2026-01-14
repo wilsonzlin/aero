@@ -12,6 +12,7 @@ import {
   wrapScanoutState,
 } from "../ipc/scanout_state.ts";
 import { VRAM_BASE_PADDR } from "../arch/guest_phys.ts";
+import { aerogpuFormatToString } from "../../../emulator/protocol/aerogpu/aerogpu_pci.ts";
 
 async function waitForWorkerMessage(
   worker: Worker,
@@ -164,6 +165,10 @@ describe("workers/gpu-worker scanout VRAM missing diagnostics", () => {
       expect(scanoutEvent.details).toMatchObject({
         vram_base_paddr: `0x${vramBasePaddr.toString(16)}`,
         vram_size_bytes: vramSizeBytes,
+        scanout: {
+          format: SCANOUT_FORMAT_B8G8R8X8,
+          format_str: aerogpuFormatToString(SCANOUT_FORMAT_B8G8R8X8),
+        },
       });
 
       const errorMsg = errorMsgRaw as ProtocolMessage & { message?: string };

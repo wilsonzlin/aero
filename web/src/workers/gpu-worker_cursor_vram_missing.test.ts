@@ -7,6 +7,7 @@ import { allocateHarnessSharedMemorySegments } from "../runtime/harness_shared_m
 import { MessageType, type ProtocolMessage, type WorkerInitMessage } from "../runtime/protocol";
 import { GPU_PROTOCOL_NAME, GPU_PROTOCOL_VERSION } from "../ipc/gpu-protocol";
 import { CURSOR_FORMAT_B8G8R8A8, publishCursorState, wrapCursorState } from "../ipc/cursor_state.ts";
+import { aerogpuFormatToString } from "../../../emulator/protocol/aerogpu/aerogpu_pci.ts";
 
 async function waitForWorkerMessage(
   worker: Worker,
@@ -149,13 +150,17 @@ describe("workers/gpu-worker cursor VRAM missing diagnostics", () => {
       const ev = (eventsMsg.events ?? []).find((e) => (e as any)?.category === "CursorReadback") as any;
       expect(ev).toBeTruthy();
       expect(ev.severity).toBe("warn");
-      expect(String(ev.message)).toContain(expectedSnippet);
-      expect(ev.details).toMatchObject({
-        vram_base_paddr: `0x${vramBasePaddr.toString(16)}`,
-        vram_size_bytes: vramSizeBytes,
-      });
-    } finally {
-      await worker.terminate();
-    }
-  }, 20_000);
+       expect(String(ev.message)).toContain(expectedSnippet);
+       expect(ev.details).toMatchObject({
+         vram_base_paddr: `0x${vramBasePaddr.toString(16)}`,
+         vram_size_bytes: vramSizeBytes,
+         cursor: {
+           format: CURSOR_FORMAT_B8G8R8A8,
+           format_str: aerogpuFormatToString(CURSOR_FORMAT_B8G8R8A8),
+         },
+       });
+     } finally {
+       await worker.terminate();
+     }
+   }, 20_000);
 });
