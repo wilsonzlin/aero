@@ -817,6 +817,9 @@ static void TrackDrawStateLocked(Device* dev) {
   for (Resource* res : dev->current_ps_cbs) {
     TrackWddmAllocForSubmitLocked(dev, res, /*write=*/false);
   }
+  for (Resource* res : dev->current_gs_cbs) {
+    TrackWddmAllocForSubmitLocked(dev, res, /*write=*/false);
+  }
 
   for (Resource* res : dev->current_vs_srvs) {
     TrackWddmAllocForSubmitLocked(dev, res, /*write=*/false);
@@ -824,11 +827,17 @@ static void TrackDrawStateLocked(Device* dev) {
   for (Resource* res : dev->current_ps_srvs) {
     TrackWddmAllocForSubmitLocked(dev, res, /*write=*/false);
   }
+  for (Resource* res : dev->current_gs_srvs) {
+    TrackWddmAllocForSubmitLocked(dev, res, /*write=*/false);
+  }
 
   for (Resource* res : dev->current_vs_srv_buffers) {
     TrackWddmAllocForSubmitLocked(dev, res);
   }
   for (Resource* res : dev->current_ps_srv_buffers) {
+    TrackWddmAllocForSubmitLocked(dev, res);
+  }
+  for (Resource* res : dev->current_gs_srv_buffers) {
     TrackWddmAllocForSubmitLocked(dev, res);
   }
 }
@@ -1113,6 +1122,12 @@ static bool SetTextureLocked(Device* dev, uint32_t shader_stage, uint32_t slot, 
   cmd->slot = slot;
   cmd->texture = texture;
   cmd->reserved0 = 0;
+
+  if (shader_stage == AEROGPU_SHADER_STAGE_GEOMETRY) {
+    AEROGPU_D3D10_11_LOG("emit GS SetTexture slot=%u tex=%u",
+                         static_cast<unsigned>(slot),
+                         static_cast<unsigned>(texture));
+  }
   return true;
 }
 
@@ -1125,6 +1140,8 @@ static aerogpu_handle_t* ShaderResourceTableForStage(Device* dev, uint32_t shade
       return dev->vs_srvs;
     case AEROGPU_SHADER_STAGE_PIXEL:
       return dev->ps_srvs;
+    case AEROGPU_SHADER_STAGE_GEOMETRY:
+      return dev->gs_srvs;
     case AEROGPU_SHADER_STAGE_COMPUTE:
       return dev->cs_srvs;
     default:
@@ -1141,6 +1158,8 @@ static aerogpu_handle_t* SamplerTableForStage(Device* dev, uint32_t shader_stage
       return dev->vs_samplers;
     case AEROGPU_SHADER_STAGE_PIXEL:
       return dev->ps_samplers;
+    case AEROGPU_SHADER_STAGE_GEOMETRY:
+      return dev->current_gs_samplers;
     case AEROGPU_SHADER_STAGE_COMPUTE:
       return dev->cs_samplers;
     default:
@@ -1157,6 +1176,8 @@ static aerogpu_constant_buffer_binding* ConstantBufferTableForStage(Device* dev,
       return dev->vs_constant_buffers;
     case AEROGPU_SHADER_STAGE_PIXEL:
       return dev->ps_constant_buffers;
+    case AEROGPU_SHADER_STAGE_GEOMETRY:
+      return dev->gs_constant_buffers;
     case AEROGPU_SHADER_STAGE_COMPUTE:
       return dev->cs_constant_buffers;
     default:
@@ -1173,6 +1194,8 @@ static aerogpu_shader_resource_buffer_binding* ShaderResourceBufferTableForStage
       return dev->vs_srv_buffers;
     case AEROGPU_SHADER_STAGE_PIXEL:
       return dev->ps_srv_buffers;
+    case AEROGPU_SHADER_STAGE_GEOMETRY:
+      return dev->gs_srv_buffers;
     case AEROGPU_SHADER_STAGE_COMPUTE:
       return dev->cs_srv_buffers;
     default:
@@ -1189,6 +1212,8 @@ static Resource** CurrentTextureSrvsForStage(Device* dev, uint32_t shader_stage)
       return dev->current_vs_srvs.data();
     case AEROGPU_SHADER_STAGE_PIXEL:
       return dev->current_ps_srvs.data();
+    case AEROGPU_SHADER_STAGE_GEOMETRY:
+      return dev->current_gs_srvs.data();
     case AEROGPU_SHADER_STAGE_COMPUTE:
       return dev->current_cs_srvs.data();
     default:
@@ -1205,6 +1230,8 @@ static Resource** CurrentBufferSrvsForStage(Device* dev, uint32_t shader_stage) 
       return dev->current_vs_srv_buffers.data();
     case AEROGPU_SHADER_STAGE_PIXEL:
       return dev->current_ps_srv_buffers.data();
+    case AEROGPU_SHADER_STAGE_GEOMETRY:
+      return dev->current_gs_srv_buffers.data();
     case AEROGPU_SHADER_STAGE_COMPUTE:
       return dev->current_cs_srv_buffers.data();
     default:
@@ -1230,6 +1257,12 @@ static bool BindShaderResourceBuffersRangeLocked(Device* dev,
   cmd->start_slot = start_slot;
   cmd->buffer_count = buffer_count;
   cmd->reserved0 = 0;
+
+  if (shader_stage == AEROGPU_SHADER_STAGE_GEOMETRY) {
+    AEROGPU_D3D10_11_LOG("emit GS SetShaderResourceBuffers start=%u count=%u",
+                         static_cast<unsigned>(start_slot),
+                         static_cast<unsigned>(buffer_count));
+  }
   return true;
 }
 
@@ -1341,6 +1374,22 @@ static void UnbindResourceFromSrvsLocked(Device* dev, aerogpu_handle_t resource)
         dev->ps_srv_buffers[slot] = null_buf_srv;
         if (slot < dev->current_ps_srv_buffers.size()) {
           dev->current_ps_srv_buffers[slot] = nullptr;
+        }
+      }
+    }
+    if (dev->gs_srvs[slot] == resource) {
+      SetShaderResourceSlotLocked(dev, AEROGPU_SHADER_STAGE_GEOMETRY, slot, 0);
+      if (dev->gs_srvs[slot] == 0) {
+        if (slot < dev->current_gs_srvs.size()) {
+          dev->current_gs_srvs[slot] = nullptr;
+        }
+      }
+    }
+    if (dev->gs_srv_buffers[slot].buffer == resource) {
+      if (BindShaderResourceBuffersRangeLocked(dev, AEROGPU_SHADER_STAGE_GEOMETRY, slot, 1, &null_buf_srv)) {
+        dev->gs_srv_buffers[slot] = null_buf_srv;
+        if (slot < dev->current_gs_srv_buffers.size()) {
+          dev->current_gs_srv_buffers[slot] = nullptr;
         }
       }
     }
@@ -5397,6 +5446,8 @@ static void SetConstantBuffers11Locked(Device* dev,
     bound_resources = dev->current_vs_cbs.data();
   } else if (shader_stage == AEROGPU_SHADER_STAGE_PIXEL) {
     bound_resources = dev->current_ps_cbs.data();
+  } else if (shader_stage == AEROGPU_SHADER_STAGE_GEOMETRY) {
+    bound_resources = dev->current_gs_cbs.data();
   } else if (shader_stage == AEROGPU_SHADER_STAGE_COMPUTE) {
     bound_resources = dev->current_cs_cbs.data();
   }
@@ -5458,6 +5509,12 @@ static void SetConstantBuffers11Locked(Device* dev,
   cmd->buffer_count = static_cast<uint32_t>(buffer_count);
   cmd->reserved0 = 0;
 
+  if (shader_stage == AEROGPU_SHADER_STAGE_GEOMETRY) {
+    AEROGPU_D3D10_11_LOG("emit GS SetConstantBuffers start=%u count=%u",
+                         static_cast<unsigned>(start_slot),
+                         static_cast<unsigned>(buffer_count));
+  }
+
   for (UINT i = 0; i < buffer_count; i++) {
     table[start_slot + i] = bindings[i];
     if (bound_resources) {
@@ -5511,7 +5568,19 @@ void AEROGPU_APIENTRY PsSetConstantBuffers11(D3D11DDI_HDEVICECONTEXT hCtx,
     }
   }
 }
-void AEROGPU_APIENTRY GsSetConstantBuffers11(D3D11DDI_HDEVICECONTEXT, UINT, UINT, const D3D11DDI_HRESOURCE*, const UINT*, const UINT*) {}
+void AEROGPU_APIENTRY GsSetConstantBuffers11(D3D11DDI_HDEVICECONTEXT hCtx,
+                                             UINT StartSlot,
+                                             UINT NumBuffers,
+                                             const D3D11DDI_HRESOURCE* phBuffers,
+                                             const UINT* pFirstConstant,
+                                             const UINT* pNumConstants) {
+  auto* dev = DeviceFromContext(hCtx);
+  if (!dev) {
+    return;
+  }
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  SetConstantBuffers11Locked(dev, AEROGPU_SHADER_STAGE_GEOMETRY, StartSlot, NumBuffers, phBuffers, pFirstConstant, pNumConstants);
+}
 
 template <typename THandle>
 static bool AnyNonNullHandles(const THandle* handles, UINT count) {
@@ -5935,7 +6004,18 @@ void AEROGPU_APIENTRY PsSetShaderResources11(D3D11DDI_HDEVICECONTEXT hCtx,
   SetShaderResources11Locked(dev, AEROGPU_SHADER_STAGE_PIXEL, StartSlot, NumViews, phViews);
 }
 
-void AEROGPU_APIENTRY GsSetShaderResources11(D3D11DDI_HDEVICECONTEXT, UINT, UINT, const D3D11DDI_HSHADERRESOURCEVIEW*) {}
+void AEROGPU_APIENTRY GsSetShaderResources11(D3D11DDI_HDEVICECONTEXT hCtx,
+                                             UINT StartSlot,
+                                             UINT NumViews,
+                                             const D3D11DDI_HSHADERRESOURCEVIEW* phViews) {
+  auto* dev = DeviceFromContext(hCtx);
+  if (!dev || NumViews == 0) {
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  SetShaderResources11Locked(dev, AEROGPU_SHADER_STAGE_GEOMETRY, StartSlot, NumViews, phViews);
+}
 
 static void SetSamplers11Locked(Device* dev,
                                 uint32_t shader_stage,
@@ -6003,6 +6083,12 @@ static void SetSamplers11Locked(Device* dev,
   cmd->sampler_count = sampler_count;
   cmd->reserved0 = 0;
 
+  if (shader_stage == AEROGPU_SHADER_STAGE_GEOMETRY) {
+    AEROGPU_D3D10_11_LOG("emit GS SetSamplers start=%u count=%u",
+                         static_cast<unsigned>(start_slot),
+                         static_cast<unsigned>(sampler_count));
+  }
+
   for (UINT i = 0; i < sampler_count; i++) {
     table[start_slot + i] = handles[i];
   }
@@ -6040,7 +6126,17 @@ void AEROGPU_APIENTRY PsSetSamplers11(D3D11DDI_HDEVICECONTEXT hCtx,
   std::lock_guard<std::mutex> lock(dev->mutex);
   SetSamplers11Locked(dev, AEROGPU_SHADER_STAGE_PIXEL, StartSlot, NumSamplers, phSamplers);
 }
-void AEROGPU_APIENTRY GsSetSamplers11(D3D11DDI_HDEVICECONTEXT, UINT, UINT, const D3D11DDI_HSAMPLER*) {}
+void AEROGPU_APIENTRY GsSetSamplers11(D3D11DDI_HDEVICECONTEXT hCtx,
+                                      UINT StartSlot,
+                                      UINT NumSamplers,
+                                      const D3D11DDI_HSAMPLER* phSamplers) {
+  auto* dev = DeviceFromContext(hCtx);
+  if (!dev) {
+    return;
+  }
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  SetSamplers11Locked(dev, AEROGPU_SHADER_STAGE_GEOMETRY, StartSlot, NumSamplers, phSamplers);
+}
 
 void AEROGPU_APIENTRY SetViewports11(D3D11DDI_HDEVICECONTEXT hCtx, UINT NumViewports, const D3D10_DDI_VIEWPORT* pViewports) {
   auto* dev = DeviceFromContext(hCtx);
@@ -6321,6 +6417,9 @@ void AEROGPU_APIENTRY ClearState11(D3D11DDI_HDEVICECONTEXT hCtx) {
     if (dev->ps_srvs[slot]) {
       SetShaderResourceSlotLocked(dev, AEROGPU_SHADER_STAGE_PIXEL, slot, 0);
     }
+    if (dev->gs_srvs[slot]) {
+      SetShaderResourceSlotLocked(dev, AEROGPU_SHADER_STAGE_GEOMETRY, slot, 0);
+    }
     if (dev->cs_srvs[slot]) {
       SetShaderResourceSlotLocked(dev, AEROGPU_SHADER_STAGE_COMPUTE, slot, 0);
     }
@@ -6339,18 +6438,24 @@ void AEROGPU_APIENTRY ClearState11(D3D11DDI_HDEVICECONTEXT hCtx) {
     cmd->start_slot = 0;
     cmd->buffer_count = kMaxConstantBufferSlots;
     cmd->reserved0 = 0;
+    if (stage == AEROGPU_SHADER_STAGE_GEOMETRY) {
+      AEROGPU_D3D10_11_LOG("emit GS ClearState: null constant buffers");
+    }
     return true;
   };
   if (!emit_null_cbs(AEROGPU_SHADER_STAGE_VERTEX) ||
       !emit_null_cbs(AEROGPU_SHADER_STAGE_PIXEL) ||
+      !emit_null_cbs(AEROGPU_SHADER_STAGE_GEOMETRY) ||
       !emit_null_cbs(AEROGPU_SHADER_STAGE_COMPUTE)) {
     return;
   }
   std::memset(dev->vs_constant_buffers, 0, sizeof(dev->vs_constant_buffers));
   std::memset(dev->ps_constant_buffers, 0, sizeof(dev->ps_constant_buffers));
+  std::memset(dev->gs_constant_buffers, 0, sizeof(dev->gs_constant_buffers));
   std::memset(dev->cs_constant_buffers, 0, sizeof(dev->cs_constant_buffers));
   dev->current_vs_cbs.fill(nullptr);
   dev->current_ps_cbs.fill(nullptr);
+  dev->current_gs_cbs.fill(nullptr);
   dev->current_cs_cbs.fill(nullptr);
 
   std::array<aerogpu_handle_t, kMaxSamplerSlots> null_samplers{};
@@ -6365,15 +6470,20 @@ void AEROGPU_APIENTRY ClearState11(D3D11DDI_HDEVICECONTEXT hCtx) {
     cmd->start_slot = 0;
     cmd->sampler_count = kMaxSamplerSlots;
     cmd->reserved0 = 0;
+    if (stage == AEROGPU_SHADER_STAGE_GEOMETRY) {
+      AEROGPU_D3D10_11_LOG("emit GS ClearState: null samplers");
+    }
     return true;
   };
   if (!emit_null_samplers(AEROGPU_SHADER_STAGE_VERTEX) ||
       !emit_null_samplers(AEROGPU_SHADER_STAGE_PIXEL) ||
+      !emit_null_samplers(AEROGPU_SHADER_STAGE_GEOMETRY) ||
       !emit_null_samplers(AEROGPU_SHADER_STAGE_COMPUTE)) {
     return;
   }
   std::memset(dev->vs_samplers, 0, sizeof(dev->vs_samplers));
   std::memset(dev->ps_samplers, 0, sizeof(dev->ps_samplers));
+  std::memset(dev->current_gs_samplers, 0, sizeof(dev->current_gs_samplers));
   std::memset(dev->cs_samplers, 0, sizeof(dev->cs_samplers));
 
   std::array<aerogpu_shader_resource_buffer_binding, kMaxShaderResourceSlots> null_buf_srvs{};
@@ -6388,18 +6498,24 @@ void AEROGPU_APIENTRY ClearState11(D3D11DDI_HDEVICECONTEXT hCtx) {
     cmd->start_slot = 0;
     cmd->buffer_count = kMaxShaderResourceSlots;
     cmd->reserved0 = 0;
+    if (stage == AEROGPU_SHADER_STAGE_GEOMETRY) {
+      AEROGPU_D3D10_11_LOG("emit GS ClearState: null SRV buffers");
+    }
     return true;
   };
   if (!emit_null_buf_srvs(AEROGPU_SHADER_STAGE_VERTEX) ||
       !emit_null_buf_srvs(AEROGPU_SHADER_STAGE_PIXEL) ||
+      !emit_null_buf_srvs(AEROGPU_SHADER_STAGE_GEOMETRY) ||
       !emit_null_buf_srvs(AEROGPU_SHADER_STAGE_COMPUTE)) {
     return;
   }
   std::memset(dev->vs_srv_buffers, 0, sizeof(dev->vs_srv_buffers));
   std::memset(dev->ps_srv_buffers, 0, sizeof(dev->ps_srv_buffers));
+  std::memset(dev->gs_srv_buffers, 0, sizeof(dev->gs_srv_buffers));
   std::memset(dev->cs_srv_buffers, 0, sizeof(dev->cs_srv_buffers));
   dev->current_vs_srv_buffers.fill(nullptr);
   dev->current_ps_srv_buffers.fill(nullptr);
+  dev->current_gs_srv_buffers.fill(nullptr);
   dev->current_cs_srv_buffers.fill(nullptr);
 
   std::array<aerogpu_unordered_access_buffer_binding, kMaxUavSlots> null_uavs{};
@@ -6428,6 +6544,7 @@ void AEROGPU_APIENTRY ClearState11(D3D11DDI_HDEVICECONTEXT hCtx) {
   dev->current_dsv_resource = nullptr;
   dev->current_vs_srvs.fill(nullptr);
   dev->current_ps_srvs.fill(nullptr);
+  dev->current_gs_srvs.fill(nullptr);
   dev->current_cs_srvs.fill(nullptr);
   dev->current_vs = 0;
   dev->current_ps = 0;
@@ -9899,6 +10016,16 @@ void AEROGPU_APIENTRY RotateResourceIdentities11(D3D11DDI_HDEVICECONTEXT hCtx, D
                                 AEROGPU_SHADER_STAGE_COMPUTE,
                                 slot,
                                 dev->current_cs_srvs[slot] ? dev->current_cs_srvs[slot]->handle : 0);
+  }
+
+  for (uint32_t slot = 0; slot < dev->current_gs_srvs.size(); ++slot) {
+    if (!is_rotated(dev->current_gs_srvs[slot])) {
+      continue;
+    }
+    SetShaderResourceSlotLocked(dev,
+                                AEROGPU_SHADER_STAGE_GEOMETRY,
+                                slot,
+                                dev->current_gs_srvs[slot] ? dev->current_gs_srvs[slot]->handle : 0);
   }
 
 #if defined(AEROGPU_UMD_TRACE_RESOURCES)

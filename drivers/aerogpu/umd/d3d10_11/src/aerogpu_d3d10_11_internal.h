@@ -791,9 +791,11 @@ struct Device {
   Resource* current_dsv_resource = nullptr;
   std::array<Resource*, kAeroGpuD3D11MaxSrvSlots> current_vs_srvs{};
   std::array<Resource*, kAeroGpuD3D11MaxSrvSlots> current_ps_srvs{};
+  std::array<Resource*, kAeroGpuD3D11MaxSrvSlots> current_gs_srvs{};
   std::array<Resource*, kAeroGpuD3D11MaxSrvSlots> current_cs_srvs{};
   std::array<Resource*, kMaxConstantBufferSlots> current_vs_cbs{};
   std::array<Resource*, kMaxConstantBufferSlots> current_ps_cbs{};
+  std::array<Resource*, kMaxConstantBufferSlots> current_gs_cbs{};
   std::array<Resource*, kMaxConstantBufferSlots> current_cs_cbs{};
   aerogpu_handle_t current_vs = 0;
   aerogpu_handle_t current_ps = 0;
@@ -805,20 +807,25 @@ struct Device {
 
   aerogpu_constant_buffer_binding vs_constant_buffers[kMaxConstantBufferSlots] = {};
   aerogpu_constant_buffer_binding ps_constant_buffers[kMaxConstantBufferSlots] = {};
+  aerogpu_constant_buffer_binding gs_constant_buffers[kMaxConstantBufferSlots] = {};
   aerogpu_constant_buffer_binding cs_constant_buffers[kMaxConstantBufferSlots] = {};
   aerogpu_handle_t vs_srvs[kMaxShaderResourceSlots] = {};
   aerogpu_handle_t ps_srvs[kMaxShaderResourceSlots] = {};
+  aerogpu_handle_t gs_srvs[kMaxShaderResourceSlots] = {};
   aerogpu_handle_t cs_srvs[kMaxShaderResourceSlots] = {};
   aerogpu_handle_t vs_samplers[kMaxSamplerSlots] = {};
   aerogpu_handle_t ps_samplers[kMaxSamplerSlots] = {};
+  aerogpu_handle_t current_gs_samplers[kMaxSamplerSlots] = {};
   aerogpu_handle_t cs_samplers[kMaxSamplerSlots] = {};
 
   // Buffer SRV bindings (structured/raw buffers).
   aerogpu_shader_resource_buffer_binding vs_srv_buffers[kMaxShaderResourceSlots] = {};
   aerogpu_shader_resource_buffer_binding ps_srv_buffers[kMaxShaderResourceSlots] = {};
+  aerogpu_shader_resource_buffer_binding gs_srv_buffers[kMaxShaderResourceSlots] = {};
   aerogpu_shader_resource_buffer_binding cs_srv_buffers[kMaxShaderResourceSlots] = {};
   std::array<Resource*, kAeroGpuD3D11MaxSrvSlots> current_vs_srv_buffers{};
   std::array<Resource*, kAeroGpuD3D11MaxSrvSlots> current_ps_srv_buffers{};
+  std::array<Resource*, kAeroGpuD3D11MaxSrvSlots> current_gs_srv_buffers{};
   std::array<Resource*, kAeroGpuD3D11MaxSrvSlots> current_cs_srv_buffers{};
 
   // Compute UAV buffer bindings.
