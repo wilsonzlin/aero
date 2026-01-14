@@ -119,7 +119,6 @@ describe("workers/cpu.worker legacy framebuffer publishing", () => {
         role: "cpu",
         controlSab: segments.control,
         guestMemory: segments.guestMemory,
-        vgaFramebuffer: segments.sharedFramebuffer,
         ioIpcSab: segments.ioIpc,
         sharedFramebuffer: segments.sharedFramebuffer,
         sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,

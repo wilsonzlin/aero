@@ -129,7 +129,6 @@ describe("workers/gpu-worker WDDM tick gating", () => {
         role: "gpu",
         controlSab: segments.control,
         guestMemory: segments.guestMemory,
-        vgaFramebuffer: segments.sharedFramebuffer,
         ioIpcSab: segments.ioIpc,
         sharedFramebuffer: segments.sharedFramebuffer,
         sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,

@@ -68,6 +68,84 @@ describe("runtime/boot_disks_protocol", () => {
       });
     });
 
+    it("parses bootDevice when valid and drops it when invalid", () => {
+      expect(
+        normalizeSetBootDisksMessage({
+          type: "setBootDisks",
+          mounts: {},
+          hdd: null,
+          cd: null,
+          bootDevice: "cdrom",
+        }),
+      ).toEqual({
+        type: "setBootDisks",
+        mounts: {},
+        hdd: null,
+        cd: null,
+        bootDevice: "cdrom",
+      });
+
+      // Invalid values are dropped rather than rejected outright.
+      expect(
+        normalizeSetBootDisksMessage({
+          type: "setBootDisks",
+          mounts: {},
+          hdd: null,
+          cd: null,
+          bootDevice: "nope",
+        }),
+      ).toEqual({
+        type: "setBootDisks",
+        mounts: {},
+        hdd: null,
+        cd: null,
+      });
+    });
+
+    it("drops disk metadata objects that fail minimal shape checks", () => {
+      expect(
+        normalizeSetBootDisksMessage({
+          type: "setBootDisks",
+          mounts: {},
+          hdd: { source: "local", id: "hdd0", kind: "cd" },
+          cd: null,
+        }),
+      ).toEqual({
+        type: "setBootDisks",
+        mounts: {},
+        hdd: null,
+        cd: null,
+      });
+
+      expect(
+        normalizeSetBootDisksMessage({
+          type: "setBootDisks",
+          mounts: {},
+          hdd: { source: "local", id: "   ", kind: "hdd" },
+          cd: null,
+        }),
+      ).toEqual({
+        type: "setBootDisks",
+        mounts: {},
+        hdd: null,
+        cd: null,
+      });
+
+      expect(
+        normalizeSetBootDisksMessage({
+          type: "setBootDisks",
+          mounts: {},
+          hdd: { source: "nope", id: "hdd0", kind: "hdd" },
+          cd: null,
+        }),
+      ).toEqual({
+        type: "setBootDisks",
+        mounts: {},
+        hdd: null,
+        cd: null,
+      });
+    });
+
     it("passes through object-like disk metadata without deep validation", () => {
       const hdd = { source: "local", id: "hdd0", kind: "hdd", some: "meta" };
       const cd = { source: "local", id: "cd0", kind: "cd", other: "meta" };
