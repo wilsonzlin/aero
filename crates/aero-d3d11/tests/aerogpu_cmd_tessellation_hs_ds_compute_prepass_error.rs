@@ -13,8 +13,16 @@ use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 const VS_PASSTHROUGH: &[u8] = include_bytes!("fixtures/vs_passthrough.dxbc");
 const PS_PASSTHROUGH: &[u8] = include_bytes!("fixtures/ps_passthrough.dxbc");
 
+use aero_d3d11::sm4::opcode::{
+    OPCODE_DCL_INPUT_CONTROL_POINT_COUNT, OPCODE_LEN_SHIFT, OPCODE_RET,
+};
+
 fn build_dxbc(chunks: &[(FourCC, Vec<u8>)]) -> Vec<u8> {
     dxbc_test_utils::build_container_owned(chunks)
+}
+
+fn opcode_token(opcode: u32, len_dwords: u32) -> u32 {
+    opcode | (len_dwords << OPCODE_LEN_SHIFT)
 }
 
 fn build_minimal_sm4_program_chunk(program_type: u16) -> Vec<u8> {
@@ -27,11 +35,22 @@ fn build_minimal_sm4_program_chunk(program_type: u16) -> Vec<u8> {
     let version = (program_type as u32) << 16 | (major << 4) | minor;
 
     // Declared length in DWORDs includes the version + length tokens.
-    let declared_len = 2u32;
+    //
+    // For HS, include `dcl_inputcontrolpoints` so patchlist validation can proceed far enough for
+    // this test to assert the "missing input layout" error (instead of failing earlier on missing
+    // HS metadata).
+    let mut tokens: Vec<u32> = vec![version, 0 /* patched below */];
+    if program_type == 3 {
+        tokens.push(opcode_token(OPCODE_DCL_INPUT_CONTROL_POINT_COUNT, 2));
+        tokens.push(3); // PatchList3.
+    }
+    tokens.push(opcode_token(OPCODE_RET, 1));
+    tokens[1] = tokens.len() as u32;
 
     let mut bytes = Vec::with_capacity(8);
-    bytes.extend_from_slice(&version.to_le_bytes());
-    bytes.extend_from_slice(&declared_len.to_le_bytes());
+    for t in tokens {
+        bytes.extend_from_slice(&t.to_le_bytes());
+    }
     bytes
 }
 

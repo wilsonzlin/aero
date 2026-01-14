@@ -4343,36 +4343,42 @@ impl AerogpuD3d11Executor {
         // D3D11 patchlist topologies are only valid when a hull shader + domain shader are bound,
         // and the patchlist control point count must match the hull shader's
         // `dcl_inputcontrolpoints`.
+        //
+        // However, several compute-prepass smoke tests intentionally use patchlist topologies as a
+        // sentinel to force the emulation path (without binding HS/DS). Only enforce strict
+        // HS/DS+patchlist validation when a tessellation stage is actually bound.
         if let CmdPrimitiveTopology::PatchList { control_points } = self.state.primitive_topology {
-            let actual = u32::from(control_points);
+            if self.state.hs.is_some() || self.state.ds.is_some() {
+                let actual = u32::from(control_points);
 
-            let hs_handle = self.state.hs.ok_or_else(|| {
-                anyhow!(
-                    "PATCHLIST draw requires HS+DS, but no hull shader (HS) is bound (topology=PatchList{actual})"
-                )
-            })?;
-            let hs = self
-                .resources
-                .shaders
-                .get(&hs_handle)
-                .ok_or_else(|| anyhow!("unknown hull shader {hs_handle}"))?;
-            if hs.stage != ShaderStage::Hull {
-                bail!("shader {hs_handle} is not a hull shader");
-            }
-            let expected = hs.sm4_metadata.hs_input_control_points.ok_or_else(|| {
-                anyhow!("hull shader {hs_handle} is missing dcl_inputcontrolpoints metadata")
-            })?;
+                let hs_handle = self.state.hs.ok_or_else(|| {
+                    anyhow!(
+                        "PATCHLIST draw requires HS+DS, but no hull shader (HS) is bound (topology=PatchList{actual})"
+                    )
+                })?;
+                let hs = self
+                    .resources
+                    .shaders
+                    .get(&hs_handle)
+                    .ok_or_else(|| anyhow!("unknown hull shader {hs_handle}"))?;
+                if hs.stage != ShaderStage::Hull {
+                    bail!("shader {hs_handle} is not a hull shader");
+                }
+                let expected = hs.sm4_metadata.hs_input_control_points.ok_or_else(|| {
+                    anyhow!("hull shader {hs_handle} is missing dcl_inputcontrolpoints metadata")
+                })?;
 
-            if expected != actual {
-                bail!(
-                    "patchlist control point count mismatch: hull shader expects {expected} input control points, but primitive topology is PatchList{actual}"
-                );
-            }
+                if expected != actual {
+                    bail!(
+                        "patchlist control point count mismatch: hull shader expects {expected} input control points, but primitive topology is PatchList{actual}"
+                    );
+                }
 
-            if self.state.ds.is_none() {
-                bail!(
-                    "PATCHLIST draw requires HS+DS, but no domain shader (DS) is bound (topology=PatchList{actual})"
-                );
+                if self.state.ds.is_none() {
+                    bail!(
+                        "PATCHLIST draw requires HS+DS, but no domain shader (DS) is bound (topology=PatchList{actual})"
+                    );
+                }
             }
         }
 
