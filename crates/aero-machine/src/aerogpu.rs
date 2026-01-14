@@ -3252,7 +3252,8 @@ mod tests {
 
     #[test]
     fn exec_snapshot_decode_rejects_invalid_version() {
-        // `load_exec_snapshot_state_v1` currently accepts versions 1..=3.
+        // `load_exec_snapshot_state_v1` currently accepts versions 1..=3; use a higher value to
+        // verify the decoder rejects unknown future versions.
         let bytes = Encoder::new().u32(4).finish();
         let mut dev = AeroGpuMmioDevice::default();
         assert_eq!(
