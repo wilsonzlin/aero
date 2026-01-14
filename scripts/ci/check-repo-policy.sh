@@ -166,6 +166,7 @@ echo "Repo policy check: scanning changes in '$BASE_REF...$HEAD_REF'"
 
 forbidden_hits=()
 oversize_hits=()
+invalid_size_hits=()
 execbit_hits=()
 
 matches_any_glob_ci() {
@@ -256,6 +257,13 @@ while IFS= read -r -d '' status; do
 
   blob_size="$(git cat-file -s "$HEAD_REF:$path")"
 
+  # `assets/bios.bin` is a 64KiB ROM image; enforce its exact size when it is
+  # modified so it cannot silently drift into something else (even if still
+  # "small enough" for the generic allowlist cap).
+  if [[ "$path_lc" == "assets/bios.bin" ]] && [[ "$blob_size" -ne 65536 ]]; then
+    invalid_size_hits+=("$path|$(human_bytes "$blob_size") (expected: 65536B / 64KiB)")
+  fi
+
   if [[ "$is_allowlisted_forbidden_ext" == "true" ]] && [[ "$blob_size" -gt "$ALLOWLISTED_BINARY_SIZE_LIMIT_BYTES" ]]; then
     oversize_hits+=("$path|$(human_bytes "$blob_size") (limit: 1MB for allowlisted binary fixtures)")
   fi
@@ -286,7 +294,7 @@ while IFS= read -r path; do
   fi
 done < <(git ls-files '*.sh')
 
-if (( ${#forbidden_hits[@]} == 0 && ${#oversize_hits[@]} == 0 && ${#execbit_hits[@]} == 0 )); then
+if (( ${#forbidden_hits[@]} == 0 && ${#oversize_hits[@]} == 0 && ${#invalid_size_hits[@]} == 0 && ${#execbit_hits[@]} == 0 )); then
   echo "Repo policy check: OK"
   exit 0
 fi
@@ -316,6 +324,19 @@ if (( ${#oversize_hits[@]} > 0 )); then
     echo "  - $path ($detail)"
     if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
       echo "::error file=$path::Repository policy violation: file too large ($detail)"
+    fi
+  done
+  echo
+fi
+
+if (( ${#invalid_size_hits[@]} > 0 )); then
+  echo "Allowlisted fixtures with invalid sizes detected:"
+  for hit in "${invalid_size_hits[@]}"; do
+    path="${hit%%|*}"
+    detail="${hit#*|}"
+    echo "  - $path ($detail)"
+    if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+      echo "::error file=$path::Repository policy violation: unexpected fixture size ($detail)"
     fi
   done
   echo
