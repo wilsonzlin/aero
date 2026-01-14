@@ -78,6 +78,20 @@ fn read_records_in_range_rejects_invalid_ranges() {
 }
 
 #[test]
+fn writer_rejects_unknown_container_version() {
+    let meta = TraceMeta::new("test", 0);
+    let bad_version = CONTAINER_VERSION + 1;
+    let err = match TraceWriter::new_with_container_version(Vec::<u8>::new(), &meta, bad_version) {
+        Ok(_) => panic!("expected TraceWriter creation to fail"),
+        Err(err) => err,
+    };
+    assert!(matches!(
+        err,
+        TraceWriteError::UnsupportedContainerVersion(v) if v == bad_version
+    ));
+}
+
+#[test]
 fn writer_rejects_aerogpu_submission_in_container_v1() {
     let meta = TraceMeta::new("test", 0);
     let mut writer = TraceWriter::new(Vec::<u8>::new(), &meta).expect("TraceWriter::new");
