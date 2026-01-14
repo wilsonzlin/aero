@@ -21,7 +21,7 @@ The canonical `aero_machine::Machine` supports **two mutually-exclusive** displa
   AeroGPU PCI identity at `00:07.0` (`A3A0:0001`) with the canonical BAR layout (BAR0 regs + BAR1
   VRAM aperture). In `aero_machine` today this wires the **BAR1 VRAM aperture** to a dedicated
   host-backed VRAM buffer and implements minimal **legacy VGA decode** (permissive VGA port I/O +
-  `0xA0000..0xBFFFF` aliasing into VRAM).
+  a VRAM-backed `0xA0000..0xBFFFF` window).
 
   Concretely:
 
@@ -128,7 +128,7 @@ For determinism and to avoid conflicts with guest RAM paging, legacy VGA/VBE use
 BAR1 (VRAM aperture) base: BAR1_BASE (assigned by BIOS)
 
 VRAM offset    Purpose
-0x00000..0x1FFFF  Legacy VGA window backing for 0xA0000..0xBFFFF (128KB)
+0x00000..0x1FFFF  Legacy VGA reserved/alias region (backs 0xA0000..0xBFFFF when VBE inactive; 128KB)
 0x20000..          VBE linear framebuffer (LFB) base (packed-pixel VBE modes)
 ...                Optional: WDDM allocations in VRAM (if implemented)
 ```
@@ -139,11 +139,16 @@ The guest-visible legacy VGA decode range is still the standard 128KiB aperture:
 
 - `0xA0000–0xBFFFF` (128KB)
 
-In the canonical `aero_machine` implementation today, this range is a simple linear alias into BAR1
-VRAM:
+In the canonical `aero_machine` implementation today, this range is VRAM-backed:
 
 ```text
+# VBE inactive (VGA/text): linear alias.
 0xA0000..0xBFFFF  <->  VRAM[0x00000..0x1FFFF]
+
+# VBE active: 0xA0000..0xAFFFF becomes the VBE banked window into the VBE framebuffer region
+# starting at VBE_LFB_OFFSET (selected by the current 64KiB bank).
+0xA0000..0xAFFFF  <->  VRAM[VBE_LFB_OFFSET + vbe_bank*64KiB + off]
+0xB0000..0xBFFFF  <->  VRAM[0x10000..0x1FFFF]
 ```
 
 This is sufficient for BIOS POST + bootloader text output and for the firmware VBE implementation

@@ -379,8 +379,8 @@ WDDM device identity (`PCI\VEN_A3A0&DEV_0001`; see
 With `MachineConfig::enable_aerogpu=true` (and `enable_vga=false`), the canonical machine exposes
 the AeroGPU PCI identity (`A3A0:0001`) at `00:07.0` with the canonical BAR layout (BAR0 regs + BAR1
 VRAM aperture) for stable Windows driver binding and enumeration. In `aero_machine` today BAR1 is
-backed by a dedicated VRAM buffer and the legacy VGA window (`0xA0000..0xBFFFF`) is aliased into
-the first 128KiB of that VRAM with permissive legacy VGA port decode.
+backed by a dedicated VRAM buffer and implements permissive legacy VGA decode (VGA port I/O +
+VRAM-backed `0xA0000..0xBFFFF` window; see `docs/16-aerogpu-vga-vesa-compat.md`).
 
 BAR0 is currently implemented as a **minimal MMIO + ring/fence transport stub** (no-op command
 execution; enough for the in-tree Win7 KMD to initialize and advance fences), but the full

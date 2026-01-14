@@ -17,9 +17,9 @@ The canonical machine supports **two mutually-exclusive** display configurations
 
   In `aero_machine` today this provides:
 
-  - **BAR1 VRAM aperture:** backed by a dedicated VRAM buffer, with the legacy VGA window
-    (`0xA0000..0xBFFFF`) aliased into the first 128KiB (`VRAM[0x00000..0x1FFFF]`) plus permissive
-    legacy VGA port decode.
+  - **BAR1 VRAM aperture:** backed by a dedicated VRAM buffer, with permissive legacy VGA decode
+    (VGA port I/O + VRAM-backed `0xA0000..0xBFFFF` window; see
+    `docs/16-aerogpu-vga-vesa-compat.md`).
   - **BAR0 regs:** a **minimal** implementation of the versioned MMIO + ring/fence transport (enough
     for the in-tree Win7 KMD to initialize and advance fences), but **no** command execution or
     scanout yet in `aero_machine`.

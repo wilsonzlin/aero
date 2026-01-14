@@ -13,10 +13,11 @@ Note on the canonical machine (`aero_machine::Machine`):
   (`PCI\\VEN_A3A0&DEV_0001`).
 - When `MachineConfig::enable_aerogpu=true`, the machine exposes the AeroGPU PCI identity at
   `00:07.0` (`A3A0:0001`) with the canonical BAR layout (BAR0 regs + BAR1 VRAM aperture). In
-  `aero_machine` today BAR1 is backed by a dedicated VRAM buffer and the legacy VGA window
-  (`0xA0000..0xBFFFF`) is aliased into the first 128KiB (`VRAM[0x00000..0x1FFFF]`) plus permissive
-  legacy VGA port decode. BAR0 is implemented as a minimal MMIO + ring/fence transport stub (no-op
-  command execution; enough for the Win7 KMD to initialize without deadlocking).
+  `aero_machine` today BAR1 is backed by a dedicated VRAM buffer and implements permissive legacy
+  VGA decode (VGA port I/O + VRAM-backed `0xA0000..0xBFFFF` window; see
+  `docs/16-aerogpu-vga-vesa-compat.md`). BAR0 is implemented as a minimal MMIO + ring/fence
+  transport stub (no-op command execution; enough for the Win7 KMD to initialize without
+  deadlocking).
 
   The full versioned-AeroGPU device model (command execution + scanout + vblank pacing) lives in
   `crates/emulator` and is not yet wired into `aero_machine::Machine`.
