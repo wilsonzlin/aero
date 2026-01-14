@@ -145,6 +145,76 @@ fn take_capped_bytes<'a>(u: &mut Unstructured<'a>, cap: usize) -> &'a [u8] {
     u.bytes(len).unwrap_or(&[])
 }
 
+fn build_patched_signature_chunk(fourcc: FourCC, seed: &[u8]) -> Vec<u8> {
+    // Build a small, self-consistent signature chunk payload (not including the DXBC chunk header).
+    //
+    // This intentionally keeps `param_count` small and ensures semantic name offsets point at valid
+    // NUL-terminated strings so signature parsing reaches deeper paths (vs. immediately bailing out
+    // on nonsense offsets/counts).
+    //
+    // The resulting buffer size stays well below `MAX_PATCHED_SIG_BYTES`.
+    let mut u = Unstructured::new(seed);
+    let entry_size = if fourcc.0[3] == b'1' { 32usize } else { 24usize };
+    let param_count = (u.arbitrary::<u8>().unwrap_or(0) % 4) as usize + 1; // 1..=4
+    let header_len = 8usize;
+    let table_len = param_count * entry_size;
+
+    let mut out = vec![0u8; header_len + table_len];
+    out[0..4].copy_from_slice(&(param_count as u32).to_le_bytes());
+    out[4..8].copy_from_slice(&(header_len as u32).to_le_bytes());
+
+    for entry_index in 0..param_count {
+        let entry_start = header_len + entry_index * entry_size;
+
+        // Place the semantic name after the table so it is never inside the header or entries region.
+        let semantic_name_offset = out.len() as u32;
+        out[entry_start..entry_start + 4].copy_from_slice(&semantic_name_offset.to_le_bytes());
+
+        let semantic_index = u32::from(u.arbitrary::<u8>().unwrap_or(0) % 8);
+        let system_value_type = u32::from(u.arbitrary::<u8>().unwrap_or(0));
+        let component_type = u32::from(u.arbitrary::<u8>().unwrap_or(0));
+        let register = u32::from(u.arbitrary::<u8>().unwrap_or(0));
+
+        out[entry_start + 4..entry_start + 8].copy_from_slice(&semantic_index.to_le_bytes());
+        out[entry_start + 8..entry_start + 12].copy_from_slice(&system_value_type.to_le_bytes());
+        out[entry_start + 12..entry_start + 16].copy_from_slice(&component_type.to_le_bytes());
+        out[entry_start + 16..entry_start + 20].copy_from_slice(&register.to_le_bytes());
+
+        // Keep masks simple and valid-looking.
+        let mask: u8 = 0xF;
+        let read_write_mask: u8 = 0xF;
+        let stream: u8 = u.arbitrary::<u8>().unwrap_or(0) % 4;
+
+        match entry_size {
+            24 => {
+                let packed = (mask as u32 & 0xFF)
+                    | ((read_write_mask as u32 & 0xFF) << 8)
+                    | ((stream as u32 & 0xFF) << 16);
+                out[entry_start + 20..entry_start + 24].copy_from_slice(&packed.to_le_bytes());
+            }
+            32 => {
+                out[entry_start + 20] = mask;
+                out[entry_start + 21] = read_write_mask;
+                out[entry_start + 24..entry_start + 28]
+                    .copy_from_slice(&(stream as u32).to_le_bytes());
+                // min_precision at entry_start+28..32 left as 0.
+            }
+            _ => unreachable!(),
+        }
+
+        // Append a small ASCII semantic name + NUL terminator (must be valid UTF-8).
+        let name_len = (u.arbitrary::<u8>().unwrap_or(0) % 16) as usize + 1;
+        for _ in 0..name_len {
+            let b = u.arbitrary::<u8>().unwrap_or(0);
+            out.push(b'A' + (b % 26));
+        }
+        out.push(0);
+    }
+
+    debug_assert!(out.len() <= MAX_PATCHED_SIG_BYTES);
+    out
+}
+
 fn build_patched_dxbc(input: &[u8]) -> Vec<u8> {
     let mut u = Unstructured::new(input);
     let selector = u.arbitrary::<u8>().unwrap_or(0);
@@ -170,17 +240,20 @@ fn build_patched_dxbc(input: &[u8]) -> Vec<u8> {
         FourCC(*b"SHEX")
     };
 
-    let isgn_bytes = take_capped_bytes(&mut u, MAX_PATCHED_SIG_BYTES);
-    let osgn_bytes = take_capped_bytes(&mut u, MAX_PATCHED_SIG_BYTES);
-    let psgn_bytes = take_capped_bytes(&mut u, MAX_PATCHED_SIG_BYTES);
+    let isgn_seed = take_capped_bytes(&mut u, MAX_PATCHED_SIG_BYTES);
+    let osgn_seed = take_capped_bytes(&mut u, MAX_PATCHED_SIG_BYTES);
+    let psgn_seed = take_capped_bytes(&mut u, MAX_PATCHED_SIG_BYTES);
+    let isgn_payload = build_patched_signature_chunk(isgn_fourcc, isgn_seed);
+    let osgn_payload = build_patched_signature_chunk(osgn_fourcc, osgn_seed);
+    let psgn_payload = build_patched_signature_chunk(psgn_fourcc, psgn_seed);
     let shader_bytes = take_capped_bytes(&mut u, MAX_PATCHED_SHADER_BYTES);
     let rdef_bytes = take_capped_bytes(&mut u, MAX_PATCHED_OTHER_BYTES);
     let stat_bytes = take_capped_bytes(&mut u, MAX_PATCHED_OTHER_BYTES);
 
     let chunks: &[(FourCC, &[u8])] = &[
-        (isgn_fourcc, isgn_bytes),
-        (osgn_fourcc, osgn_bytes),
-        (psgn_fourcc, psgn_bytes),
+        (isgn_fourcc, &isgn_payload),
+        (osgn_fourcc, &osgn_payload),
+        (psgn_fourcc, &psgn_payload),
         (shader_fourcc, shader_bytes),
         (FourCC(*b"RDEF"), rdef_bytes),
         (FourCC(*b"STAT"), stat_bytes),
