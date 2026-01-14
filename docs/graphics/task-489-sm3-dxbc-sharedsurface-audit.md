@@ -121,6 +121,12 @@ bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --features dxbc-robust --test
 - `crates/aero-gpu/tests/shared_surface_aliasing.rs`
 - `crates/aero-gpu/tests/aerogpu_d3d9_shared_surface.rs`
 
+**Notes:**
+- `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs` currently contains a *separate* local
+  `SharedSurfaceTable` implementation (duplicate bookkeeping). The tasks above were satisfied for
+  the D3D9 executor/command-processor path, but unifying the D3D11 executor on the canonical
+  `aero-gpu` implementation would reduce drift/maintenance.
+
 ---
 
 ## Task 85 / 87 / 88 / 92 / 93 / 94 — SM3 opcode + modifier + const support
