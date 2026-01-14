@@ -2291,9 +2291,9 @@ impl XhciController {
         if self.host_controller_error {
             return;
         }
-        // Transfer execution is gated on `USBCMD.RUN`. Guests may ring endpoint doorbells while the
-        // controller is stopped; those doorbells should be remembered, but no DMA or ring progress
-        // should occur until the controller is running again.
+        // Transfer execution is gated on `USBCMD.RUN` (see xHCI spec). Guests may ring endpoint
+        // doorbells while the controller is stopped; those doorbells should be remembered, but no
+        // DMA or ring progress should occur until the controller is running again.
         if (self.usbcmd & regs::USBCMD_RUN) == 0 {
             return;
         }
