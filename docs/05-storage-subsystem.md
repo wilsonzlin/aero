@@ -876,7 +876,8 @@ pub struct StreamingDisk {
     total_size: u64,
     
     // Local cache
-    local_cache: SparseDisk,
+    // (e.g. an OPFS-backed `AEROSPAR` sparse disk file)
+    local_cache: AeroSparseDisk,
     
     // Download state
     downloaded_ranges: RangeSet,
