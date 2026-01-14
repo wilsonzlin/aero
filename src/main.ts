@@ -10,6 +10,7 @@ import { perf } from '../web/src/perf/perf';
 import { installAeroGlobal } from '../web/src/runtime/aero_global';
 import { installNetTraceBackendOnAeroGlobal } from '../web/src/net/trace_backend';
 import { installNetTraceUI, type NetTraceBackend } from '../web/src/net/trace_ui';
+import { installBootDeviceBackendOnAeroGlobal } from '../web/src/runtime/boot_device_backend';
 import { RuntimeDiskClient } from '../web/src/storage/runtime_disk_client';
 
 import { createHotspotsPanel } from './ui/hud_hotspots.js';
@@ -933,6 +934,7 @@ function renderAudioPanel(): HTMLElement {
     // Best-effort only.
   }
   installNetTraceBackendOnAeroGlobal(workerCoordinator);
+  installBootDeviceBackendOnAeroGlobal(workerCoordinator);
   let hdaDemoWorker: Worker | null = null;
   let hdaDemoStats: { [k: string]: unknown } | null = null;
   let virtioSndDemoWorker: Worker | null = null;
