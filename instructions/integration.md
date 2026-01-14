@@ -44,7 +44,7 @@ This is the **coordination hub**. You wire together the work from all other work
   `crates/aero-machine/src/lib.rs`).
 - **PCI MSI/MSI-X message delivery (for devices that opt in)**:
   `aero_platform::interrupts::msi` + `PlatformInterrupts::trigger_msi`; used today by AHCI (MSI)
-  and NVMe (MSI + MSI-X) in both `aero-machine` and `aero-pc-platform` (see
+  and NVMe (MSI + single-vector MSI-X) in both `aero-machine` and `aero-pc-platform` (see
   `crates/aero-machine/src/lib.rs::{process_ahci,process_nvme}` and
   `crates/aero-pc-platform/src/lib.rs::{process_ahci,process_nvme}`).
 - **Snapshots + restore plumbing**:
@@ -71,11 +71,18 @@ This is the **coordination hub**. You wire together the work from all other work
   - `aero_machine` has MSI message delivery (`VirtioMsixInterruptSink`), but its BAR0 MMIO wrapper
     currently only mirrors the PCI command register; MSI-X enable/function-mask bits are **not**
     synchronized from the canonical PCI config space yet, so guests effectively run virtio in
-    **INTx-only mode** today.
+    **INTx-only mode** today. VTP-009 completes this by mirroring MSI-X enable/mask into the virtio
+    transport (at which point `NoopVirtioInterruptSink` should only be used when interrupts are
+    absent).
 - **NVMe MSI/MSI-X is implemented (but Win7 support is opt-in/experimental)**:
-  `aero-devices-nvme` exposes MSI + MSI-X capabilities and delivers message-signaled interrupts when
-  enabled (see `crates/aero-devices-nvme/README.md`, plus `pc_platform_nvme` tests). Note: Windows 7
-  has no in-box NVMe driver.
+  `aero-devices-nvme` exposes MSI + MSI-X capabilities (currently single-vector MSI-X) and delivers
+  message-signaled interrupts when enabled (see `crates/aero-devices-nvme/README.md`, plus
+  `pc_platform_nvme` tests). Note: Windows 7 has no in-box NVMe driver.
+- **MSI/MSI-X delivery is APIC-mode only**:
+  `PlatformInterrupts::trigger_msi` intentionally drops MSIs while the platform is still in PIC
+  mode (matches the I/O APIC’s “don’t accumulate pending interrupts” behavior during the PIC→APIC
+  transition). If you are debugging “MSI not firing”, confirm the platform has switched to APIC mode
+  first.
 ---
 
 ## Key Crates & Directories
@@ -203,7 +210,6 @@ relevant crates/tests.
 If you are looking for impactful integration/boot work today, focus on:
 
 - **SMP / multi-vCPU bring-up** (MP-001)
-- **MSI/MSI-X end-to-end** (MP-002, VTP-009)
 - **PCI routing hardening**: keep `aero_acpi` DSDT `_PRT`, PCI “Interrupt Line” programming, and the
   runtime INTx/MSI/MSI-X delivery model coherent and snapshot-safe.
 - **Snapshot determinism & stability**: ensure device ordering, guest time, and interrupt state are
