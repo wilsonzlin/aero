@@ -251,6 +251,11 @@ See `tools/packaging/aero_packager/testdata/spec.json` for a minimal example.
 Specs may include an optional `$schema` field for editor/CI validation:
 `tools/packaging/packaging-spec.schema.json` (draft 2020-12).
 
+The packager also supports additional (optional) validation fields:
+`expected_inf_files`, `expected_add_services`, and `expected_add_services_from_devices_cmd_var`.
+These are useful for ensuring packaging stays aligned with the INF service names and the exact INF
+variant shipped in multi-INF driver directories.
+
 The current schema uses a unified `drivers` list:
 
 ```json

@@ -50,6 +50,13 @@ Example:
 }
 ```
 
+- `require_optional_drivers_on_all_arches` (default: `false`)
+  - When enabled, any driver with `required=false` must be present for **both** x86 and amd64.
+    (Otherwise, packaging fails.)
+  - This prevents producing Guest Tools media where an optional driver is shipped for only one
+    guest architecture, which can lead to confusing and inconsistent behaviour across x86/x64
+    Windows guests.
+
 All virtio HWID patterns in these specs are expected to follow the **Aero virtio contract v1**
 (`AERO-W7-VIRTIO`, virtio-pci **modern-only**).
 
