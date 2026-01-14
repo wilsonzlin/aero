@@ -2852,16 +2852,25 @@ fn retry_backoff(attempt: usize) -> Duration {
 }
 
 #[cfg(test)]
-    mod tests {
-        use super::*;
+mod tests {
+    use super::*;
 
-        async fn start_test_http_server(
-            responder: Arc<
-                dyn Fn(&str) -> (u16, Vec<(String, String)>, Vec<u8>) + Send + Sync + 'static,
-            >,
-        ) -> Result<(String, tokio::sync::oneshot::Sender<()>, tokio::task::JoinHandle<()>)> {
-            use tokio::io::{AsyncReadExt, AsyncWriteExt};
-            use tokio::net::TcpListener;
+    #[derive(Debug, Clone)]
+    struct TestHttpRequest {
+        path: String,
+        headers: Vec<(String, String)>,
+    }
+
+    async fn start_test_http_server(
+        responder: Arc<
+            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>)
+                + Send
+                + Sync
+                + 'static,
+        >,
+    ) -> Result<(String, tokio::sync::oneshot::Sender<()>, tokio::task::JoinHandle<()>)> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
 
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
@@ -2896,16 +2905,29 @@ fn retry_backoff(attempt: usize) -> Duration {
                                 buf.extend_from_slice(&scratch[..n]);
                             }
 
-                            let request = String::from_utf8_lossy(&buf);
-                            let path = request
+                            let raw = String::from_utf8_lossy(&buf).to_string();
+                            let path = raw
                                 .lines()
                                 .next()
                                 .and_then(|line| line.split_whitespace().nth(1))
-                                .unwrap_or("/");
+                                .unwrap_or("/")
+                                .to_string();
+                            let mut headers = Vec::new();
+                            for line in raw.lines().skip(1) {
+                                let line = line.trim();
+                                if line.is_empty() {
+                                    break;
+                                }
+                                if let Some((name, value)) = line.split_once(':') {
+                                    headers.push((name.trim().to_string(), value.trim().to_string()));
+                                }
+                            }
 
-                            let (status, extra_headers, body) = (responder)(path);
+                            let (status, extra_headers, body) =
+                                (responder)(TestHttpRequest { path, headers });
                             let status_line = match status {
                                 200 => "200 OK",
+                                401 => "401 Unauthorized",
                                 404 => "404 Not Found",
                                 500 => "500 Internal Server Error",
                                 _ => "500 Internal Server Error",
@@ -3540,13 +3562,14 @@ fn retry_backoff(attempt: usize) -> Duration {
         )?;
         let manifest_bytes = serde_json::to_vec_pretty(&manifest).context("serialize manifest")?;
 
-        let responder: Arc<dyn Fn(&str) -> (u16, Vec<(String, String)>, Vec<u8>) + Send + Sync + 'static> =
-            Arc::new(move |path: &str| match path {
-                "/manifest.json" => (200, Vec::new(), manifest_bytes.clone()),
-                "/chunks/00000000.bin" => (200, Vec::new(), chunk0.clone()),
-                "/chunks/00000001.bin" => (200, Vec::new(), chunk1.clone()),
-                _ => (404, Vec::new(), b"not found".to_vec()),
-            });
+        let responder: Arc<
+            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>) + Send + Sync + 'static,
+        > = Arc::new(move |req: TestHttpRequest| match req.path.as_str() {
+            "/manifest.json" => (200, Vec::new(), manifest_bytes.clone()),
+            "/chunks/00000000.bin" => (200, Vec::new(), chunk0.clone()),
+            "/chunks/00000001.bin" => (200, Vec::new(), chunk1.clone()),
+            _ => (404, Vec::new(), b"not found".to_vec()),
+        });
 
         let (base_url, shutdown_tx, server_handle) = start_test_http_server(responder).await?;
 
@@ -3597,10 +3620,12 @@ fn retry_backoff(attempt: usize) -> Duration {
         let manifest_requests = Arc::new(AtomicU64::new(0));
         let chunk0_requests = Arc::new(AtomicU64::new(0));
 
-        let responder: Arc<dyn Fn(&str) -> (u16, Vec<(String, String)>, Vec<u8>) + Send + Sync + 'static> = {
+        let responder: Arc<
+            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>) + Send + Sync + 'static,
+        > = {
             let manifest_requests = Arc::clone(&manifest_requests);
             let chunk0_requests = Arc::clone(&chunk0_requests);
-            Arc::new(move |path: &str| match path {
+            Arc::new(move |req: TestHttpRequest| match req.path.as_str() {
                 "/manifest.json" => {
                     let n = manifest_requests.fetch_add(1, Ordering::SeqCst);
                     if n == 0 {
@@ -3655,6 +3680,126 @@ fn retry_backoff(attempt: usize) -> Duration {
     }
 
     #[tokio::test]
+    async fn verify_http_sends_custom_headers() -> Result<()> {
+        let chunk_size: u64 = 1024;
+        let chunk0 = vec![b'a'; chunk_size as usize];
+        let chunk1 = vec![b'b'; 512];
+        let total_size = (chunk0.len() + chunk1.len()) as u64;
+
+        let sha256_by_index = vec![Some(sha256_hex(&chunk0)), Some(sha256_hex(&chunk1))];
+        let manifest = build_manifest_v1(
+            total_size,
+            chunk_size,
+            "demo",
+            "v1",
+            ChecksumAlgorithm::Sha256,
+            &sha256_by_index,
+        )?;
+        let manifest_bytes = serde_json::to_vec_pretty(&manifest).context("serialize manifest")?;
+
+        let unauthorized_requests = Arc::new(AtomicU64::new(0));
+        let manifest_requests = Arc::new(AtomicU64::new(0));
+        let chunk_requests = Arc::new(AtomicU64::new(0));
+
+        let responder: Arc<
+            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>) + Send + Sync + 'static,
+        > = {
+            let unauthorized_requests = Arc::clone(&unauthorized_requests);
+            let manifest_requests = Arc::clone(&manifest_requests);
+            let chunk_requests = Arc::clone(&chunk_requests);
+            Arc::new(move |req: TestHttpRequest| {
+                let expected = "Bearer test";
+                let auth_ok = req
+                    .headers
+                    .iter()
+                    .any(|(k, v)| k.eq_ignore_ascii_case("authorization") && v == expected);
+                if !auth_ok {
+                    unauthorized_requests.fetch_add(1, Ordering::SeqCst);
+                    return (401, Vec::new(), b"unauthorized".to_vec());
+                }
+
+                match req.path.as_str() {
+                    "/manifest.json" => {
+                        manifest_requests.fetch_add(1, Ordering::SeqCst);
+                        (200, Vec::new(), manifest_bytes.clone())
+                    }
+                    "/chunks/00000000.bin" => {
+                        chunk_requests.fetch_add(1, Ordering::SeqCst);
+                        (200, Vec::new(), chunk0.clone())
+                    }
+                    "/chunks/00000001.bin" => {
+                        chunk_requests.fetch_add(1, Ordering::SeqCst);
+                        (200, Vec::new(), chunk1.clone())
+                    }
+                    _ => (404, Vec::new(), b"not found".to_vec()),
+                }
+            })
+        };
+
+        let (base_url, shutdown_tx, server_handle) = start_test_http_server(responder).await?;
+        let manifest_url = format!("{base_url}/manifest.json");
+
+        // Without headers, the server should reject with 401.
+        let err = verify(VerifyArgs {
+            manifest_url: Some(manifest_url.clone()),
+            manifest_file: None,
+            header: Vec::new(),
+            bucket: None,
+            prefix: None,
+            manifest_key: None,
+            image_id: None,
+            image_version: None,
+            endpoint: None,
+            force_path_style: false,
+            region: "us-east-1".to_string(),
+            concurrency: 1,
+            retries: 1,
+            max_chunks: MAX_CHUNKS,
+            chunk_sample: None,
+            chunk_sample_seed: None,
+        })
+        .await
+        .unwrap_err();
+        assert!(
+            error_chain_summary(&err).contains("HTTP 401"),
+            "unexpected error chain: {}",
+            error_chain_summary(&err)
+        );
+        assert_eq!(unauthorized_requests.load(Ordering::SeqCst), 1);
+        assert_eq!(manifest_requests.load(Ordering::SeqCst), 0);
+        assert_eq!(chunk_requests.load(Ordering::SeqCst), 0);
+
+        // With headers, verify should succeed.
+        verify(VerifyArgs {
+            manifest_url: Some(manifest_url),
+            manifest_file: None,
+            header: vec!["Authorization: Bearer test".to_string()],
+            bucket: None,
+            prefix: None,
+            manifest_key: None,
+            image_id: None,
+            image_version: None,
+            endpoint: None,
+            force_path_style: false,
+            region: "us-east-1".to_string(),
+            concurrency: 2,
+            retries: 1,
+            max_chunks: MAX_CHUNKS,
+            chunk_sample: None,
+            chunk_sample_seed: None,
+        })
+        .await?;
+
+        let _ = shutdown_tx.send(());
+        let _ = server_handle.await;
+
+        assert_eq!(unauthorized_requests.load(Ordering::SeqCst), 1);
+        assert_eq!(manifest_requests.load(Ordering::SeqCst), 1);
+        assert_eq!(chunk_requests.load(Ordering::SeqCst), 2);
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn verify_http_rejects_non_identity_content_encoding() -> Result<()> {
         let chunk_size: u64 = 1024;
         let chunk0 = vec![b'a'; chunk_size as usize];
@@ -3677,9 +3822,11 @@ fn retry_backoff(attempt: usize) -> Duration {
 
         let chunk0_requests = Arc::new(AtomicU64::new(0));
 
-        let responder: Arc<dyn Fn(&str) -> (u16, Vec<(String, String)>, Vec<u8>) + Send + Sync + 'static> = {
+        let responder: Arc<
+            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>) + Send + Sync + 'static,
+        > = {
             let chunk0_requests = Arc::clone(&chunk0_requests);
-            Arc::new(move |path: &str| match path {
+            Arc::new(move |req: TestHttpRequest| match req.path.as_str() {
                 "/manifest.json" => (200, Vec::new(), manifest_bytes.clone()),
                 "/chunks/00000000.bin" => {
                     chunk0_requests.fetch_add(1, Ordering::SeqCst);
