@@ -111,7 +111,7 @@ The in-tree Win7 virtio-input INFs use these subsystem-qualified HWIDs to assign
 
 The optional legacy alias INF (`inf/virtio-input.inf.disabled`, rename to `virtio-input.inf` to enable) includes a generic
 `PCI\VEN_1AF4&DEV_1052&REV_01` fallback entry that will appear as **Aero VirtIO Input Device** when subsystem IDs are not exposed.
-Outside the models sections, the alias INF is expected to stay in sync with the canonical INF (see `scripts/check-inf-alias.py`).
+Outside the models sections, the alias INF is expected to stay in sync with the canonical INF (see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
 
 Topology notes:
 
