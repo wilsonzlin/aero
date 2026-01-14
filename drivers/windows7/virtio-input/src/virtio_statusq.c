@@ -355,6 +355,9 @@ static NTSTATUS VirtioStatusQTrySubmit(_Inout_ PVIRTIO_STATUSQ Q)
         (struct virtio_input_event_le*)bufVa);
     if (eventCount == 0) {
         VIOINPUT_LOG(VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ, "statusq led_translate returned 0 events\n");
+        if (devCtx != NULL) {
+            VioInputCounterInc(&devCtx->Counters.LedWritesDropped);
+        }
         VirtioStatusQPushFreeTxBuffer(Q, idx);
         Q->PendingValid = FALSE;
         return STATUS_SUCCESS;
@@ -365,6 +368,9 @@ static NTSTATUS VirtioStatusQTrySubmit(_Inout_ PVIRTIO_STATUSQ Q)
             "statusq led_translate returned too many events: count=%Iu cap=%u\n",
             eventCount,
             (ULONG)VIOINPUT_STATUSQ_EVENTS_PER_BUFFER);
+        if (devCtx != NULL) {
+            VioInputCounterInc(&devCtx->Counters.LedWritesDropped);
+        }
         VirtioStatusQPushFreeTxBuffer(Q, idx);
         Q->PendingValid = FALSE;
         return STATUS_SUCCESS;
