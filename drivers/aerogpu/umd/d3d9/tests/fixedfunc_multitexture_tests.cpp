@@ -674,8 +674,11 @@ bool TestFixedfuncUnboundStage1TextureDoesNotTruncateWhenStage1DoesNotSample() {
   }
 
   D3DDDI_HRESOURCE hTex0{};
+  D3DDDI_HRESOURCE hTex1{};
   D3DDDI_HRESOURCE hTex2{};
-  if (!CreateDummyTexture(&cleanup, &hTex0) || !CreateDummyTexture(&cleanup, &hTex2)) {
+  if (!CreateDummyTexture(&cleanup, &hTex0) ||
+      !CreateDummyTexture(&cleanup, &hTex1) ||
+      !CreateDummyTexture(&cleanup, &hTex2)) {
     return false;
   }
 
@@ -779,6 +782,19 @@ bool TestFixedfuncUnboundStage1TextureDoesNotTruncateWhenStage1DoesNotSample() {
     }
   }
 
+  const aerogpu::Shader* ps_ptr_before = nullptr;
+  aerogpu_handle_t ps_before = 0;
+  size_t cache_size_before = 0;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    ps_ptr_before = dev->ps;
+    ps_before = dev->ps ? dev->ps->handle : 0;
+    cache_size_before = dev->fixedfunc_ps_variant_cache.size();
+  }
+  if (!Check(ps_before != 0, "draw bound non-zero PS handle")) {
+    return false;
+  }
+
   dev->cmd.finalize();
   const uint8_t* buf = dev->cmd.data();
   const size_t len = dev->cmd.bytes_used();
@@ -809,6 +825,89 @@ bool TestFixedfuncUnboundStage1TextureDoesNotTruncateWhenStage1DoesNotSample() {
   }
   if (!Check(!saw_tex1_non_null, "command stream does not bind texture slot 1 when stage1 texture is unbound")) {
     return false;
+  }
+
+  // Binding/unbinding stage1's texture should not affect fixed-function PS
+  // selection when stage1 does not sample it.
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/1, hTex1);
+  if (!Check(hr == S_OK, "SetTexture(stage1=bind, stage1 unused)")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  buf = dev->cmd.data();
+  const size_t len2 = dev->cmd.bytes_used();
+  if (!Check(CollectOpcodes(buf, len2, AEROGPU_CMD_CREATE_SHADER_DXBC).empty(),
+             "SetTexture(stage1=bind, unused) emits no CREATE_SHADER_DXBC")) {
+    return false;
+  }
+  if (!Check(CollectOpcodes(buf, len2, AEROGPU_CMD_BIND_SHADERS).empty(),
+             "SetTexture(stage1=bind, unused) emits no BIND_SHADERS")) {
+    return false;
+  }
+  if (!Check(CollectOpcodes(buf, len2, AEROGPU_CMD_DRAW).empty(), "SetTexture(stage1=bind, unused) emits no DRAW")) {
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->ps != nullptr, "fixed-function PS still bound after stage1 bind")) {
+      return false;
+    }
+    if (!Check(dev->ps == ps_ptr_before, "unused stage1 bind keeps PS pointer stable")) {
+      return false;
+    }
+    if (!Check(dev->ps->handle == ps_before, "unused stage1 bind keeps PS handle stable")) {
+      return false;
+    }
+    if (!Check(CountToken(dev->ps, kPsOpTexld) == 2, "unused stage1 bind => PS still contains exactly 2 texld")) {
+      return false;
+    }
+    if (!Check(TexldSamplerMask(dev->ps) == 0x5u, "unused stage1 bind => PS still uses samplers s0 and s2")) {
+      return false;
+    }
+    if (!Check(dev->fixedfunc_ps_variant_cache.size() == cache_size_before,
+               "unused stage1 bind does not grow fixedfunc_ps_variant_cache")) {
+      return false;
+    }
+  }
+
+  dev->cmd.reset();
+  D3DDDI_HRESOURCE null_tex{};
+  hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/1, null_tex);
+  if (!Check(hr == S_OK, "SetTexture(stage1=null, stage1 unused)")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  buf = dev->cmd.data();
+  const size_t len3 = dev->cmd.bytes_used();
+  if (!Check(CollectOpcodes(buf, len3, AEROGPU_CMD_CREATE_SHADER_DXBC).empty(),
+             "SetTexture(stage1=null, unused) emits no CREATE_SHADER_DXBC")) {
+    return false;
+  }
+  if (!Check(CollectOpcodes(buf, len3, AEROGPU_CMD_BIND_SHADERS).empty(),
+             "SetTexture(stage1=null, unused) emits no BIND_SHADERS")) {
+    return false;
+  }
+  if (!Check(CollectOpcodes(buf, len3, AEROGPU_CMD_DRAW).empty(), "SetTexture(stage1=null, unused) emits no DRAW")) {
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->ps != nullptr, "fixed-function PS still bound after stage1 unbind")) {
+      return false;
+    }
+    if (!Check(dev->ps == ps_ptr_before, "unused stage1 unbind keeps PS pointer stable")) {
+      return false;
+    }
+    if (!Check(dev->ps->handle == ps_before, "unused stage1 unbind keeps PS handle stable")) {
+      return false;
+    }
+    if (!Check(dev->fixedfunc_ps_variant_cache.size() == cache_size_before,
+               "unused stage1 unbind does not grow fixedfunc_ps_variant_cache")) {
+      return false;
+    }
   }
 
   return true;
