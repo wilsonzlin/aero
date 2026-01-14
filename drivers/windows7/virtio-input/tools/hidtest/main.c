@@ -1924,7 +1924,6 @@ static int query_collection_descriptor_length(HANDLE handle, DWORD *len_out, DWO
     BYTE buf[4096];
     DWORD bytes = 0;
     BOOL ok;
-    DWORD err;
 
     if (len_out == NULL) {
         return 0;
@@ -1939,7 +1938,6 @@ static int query_collection_descriptor_length(HANDLE handle, DWORD *len_out, DWO
 
     ZeroMemory(buf, sizeof(buf));
 
-    err = 0;
     SetLastError(ERROR_SUCCESS);
     ok = DeviceIoControl(handle, IOCTL_HID_GET_COLLECTION_DESCRIPTOR, NULL, 0, buf, (DWORD)sizeof(buf), &bytes, NULL);
     if (ok && bytes != 0) {
@@ -1949,7 +1947,6 @@ static int query_collection_descriptor_length(HANDLE handle, DWORD *len_out, DWO
         }
         return 1;
     }
-    err = ok ? ERROR_NO_DATA : GetLastError();
 
     bytes = 0;
     SetLastError(ERROR_SUCCESS);
