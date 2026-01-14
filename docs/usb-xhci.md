@@ -28,9 +28,9 @@ Status:
   `aero_usb::xhci::XhciController`). It implements a limited subset of xHCI (MMIO registers, USB2
   root ports + PORTSC, interrupter 0 + ERST-backed event ring delivery, deterministic snapshot/restore,
   and some host-side topology/WebUSB hooks). Endpoint-0 doorbell-driven control transfers can execute,
-  and doorbell 0-driven command ring processing exists for a limited subset of commands; however,
-  non-control transfers and full xHCI scheduling/state-machine coverage are still incomplete, so treat
-  it as bring-up quality and incomplete.
+  and doorbell 0-driven command ring processing exists for a limited subset of commands. Bulk/interrupt
+  endpoints (Normal TRBs) can also execute when configured/doorbelled, but overall xHCI coverage is
+  still incomplete, so treat it as bring-up quality and incomplete.
 
 > Canonical USB stack selection: see [ADR 0015](./adr/0015-canonical-usb-stack.md) (`crates/aero-usb` + `crates/aero-wasm` + `web/`).
 
@@ -173,8 +173,8 @@ Notes:
   EHCI) for guest-visible WebUSB passthrough and disables the UHCI-only
   `OTHER_SPEED_CONFIGURATION` descriptor translation. Otherwise it falls back to the UHCI-based
   passthrough path. As of today, xHCI remains bring-up quality: command ring coverage is incomplete
-  and only endpoint 0 transfers are executed (non-control transfers are still missing), so UHCI
-  remains the known-good attachment path for HID in practice. See
+  and transfer semantics are still under active development/validation, so UHCI remains the known-good
+  attachment path for HID in practice. See
   [`docs/webusb-passthrough.md`](./webusb-passthrough.md).
 - Synthetic USB HID devices (keyboard/mouse/gamepad/consumer-control) are still expected to attach
   behind UHCI when available (Windows 7 compatibility), with EHCI/xHCI used as a fallback for WASM
@@ -189,9 +189,9 @@ The current xHCI effort is intentionally staged. The long-term goal is a real xH
 for modern guests and for high-speed/superspeed passthrough, but the in-tree code today is mostly
 **MVP scaffolding**: a minimal-but-realistic MMIO register model (USB2 ports + PORTSC, interrupter 0
 runtime regs, ERST-backed event ring delivery) plus TRB/ring/command/transfer helpers used by tests
-and harnesses. Major guest-visible pieces are still missing (full command-set/state-machine coverage,
-non-control transfers, and full ring scheduling), so treat the implementation as “bring-up” quality
-rather than a complete xHCI.
+and harnesses. Major guest-visible pieces are still missing (full command-set/state-machine coverage
+and large parts of the xHCI spec), so treat the implementation as “bring-up” quality rather than a
+complete xHCI.
 
 ### What exists today
 
@@ -233,7 +233,7 @@ rather than a complete xHCI.
   - Enforces **PCI BME DMA gating** by swapping the memory bus implementation when bus mastering is
     disabled (the controller still updates register state, but must not touch guest RAM).
   - `step_frames()` advances controller time; when BME is enabled it also executes pending transfer
-    ring work (currently endpoint 0 only) and drains queued events
+    ring work (endpoint 0 control + bulk/interrupt endpoints) and drains queued events
     (`XhciController::tick_1ms_and_service_event_ring`).
   - `poll()` drains any queued event TRBs into the guest event ring (`XhciController::service_event_ring`);
     DMA is gated on BME.
@@ -248,8 +248,8 @@ rather than a complete xHCI.
     connected).
 
 These are **not** full xHCI implementations. In particular, command ring coverage is still incomplete
-(bounded to a small subset of commands), and transfer execution for non-control endpoints (bulk/interrupt)
-is not yet integrated into the guest-visible MMIO model.
+(bounded to a subset of commands), and transfer execution is still incomplete compared to real xHCI
+(no isochronous, no USB3/SuperSpeed, etc).
 
 #### TRB + ring building blocks
 
@@ -281,10 +281,11 @@ command/event behavior:
 - `command`: a minimal endpoint-management state machine used by tests and by early enumeration
   harnesses.
 
-These helpers are partially wired into the guest-visible MMIO/doorbell model (CRCR + doorbell 0 for
-the command subset, plus slot doorbells for endpoint 0), but many commands/endpoints remain bring-up-only.
-The more complete `command_ring::CommandRingProcessor` and non-control transfer executor are not yet
-wired into that MMIO model; integrations/tests still call them explicitly as part of staged bring-up.
+These helpers are wired into the guest-visible MMIO/doorbell model (CRCR + doorbell 0 for the command
+subset, plus slot doorbells for transfer execution on endpoint 0 and bulk/interrupt endpoints), but
+many commands/endpoints remain bring-up-only. The more complete
+`command_ring::CommandRingProcessor` remains a test/harness helper and is not used by the MMIO
+doorbell path today.
 
 #### Transfers (non-control endpoints via Normal TRBs)
 
@@ -314,8 +315,8 @@ This engine is currently a standalone transfer-plane component used by tests; `X
 its own minimal doorbell-driven endpoint-0 executor (driven by slot doorbells +
 `XhciController::tick()`), so `Ep0TransferEngine` is not wired into the guest-visible MMIO model.
 Note: the web/WASM bridge’s `step_frames()` path runs `tick_1ms_and_service_event_ring` when PCI BME
-is enabled, so doorbelled endpoint-0 transfers can make forward progress and queued events are
-drained. Non-control transfers are still not executed yet.
+is enabled, so doorbelled transfers (endpoint 0 + bulk/interrupt) can make forward progress and
+queued events are drained.
 
 ### Device model layer
 
@@ -349,8 +350,8 @@ Dedicated EP0 unit tests also exist:
 - Full command ring coverage via doorbell 0 (doorbell 0 is modeled, but only a subset of commands is
   implemented today) and the corresponding slot/endpoint context state machines (`Configure Endpoint`,
   `Evaluate Context`, endpoint commands, etc).
-- Bulk/interrupt transfer execution (Normal TRBs) wired into the controller MMIO/doorbell model
-  (today, only endpoint 0 runs).
+- More complete transfer scheduling/performance for bulk/interrupt endpoints (today execution is
+  intentionally bounded to keep guest-induced work finite).
 - More complete event-ring servicing / “main loop” integration in wrappers: regularly call
   `tick_1ms_and_service_event_ring` (or equivalent) so port timers, transfers, and event delivery make
   forward progress, with DMA gated on PCI BME.
@@ -366,15 +367,13 @@ xHCI is a large spec. The MVP intentionally leaves out many features that guests
 - **Root hub / port model** beyond the current USB2-only PORTSC subset + reset timer scaffolding (no USB3 ports/link states yet).
 - **Doorbell-driven command ring + transfer execution**: the doorbell array is partially implemented
   (doorbell 0 triggers a bounded subset of command ring processing; endpoint doorbells can drive
-  endpoint 0), but the command set is incomplete and non-control transfers are still missing from the
-  guest-visible MMIO model.
+  endpoint 0 and bulk/interrupt endpoints), but the command set is incomplete and many advanced xHCI
+  semantics are still missing.
 - **Full xHCI slot/endpoint context state machines** (`Configure Endpoint`, `Evaluate Context`,
   endpoint commands, etc). A subset of command processing is exposed today via doorbell 0, but full
   coverage/state machines remain incomplete.
-- **Non-control transfer execution via Normal TRBs** (bulk/interrupt endpoints) integrated into the
-  guest-visible controller and driven by a transfer tick loop. The Rust transfer executor is covered
-  by unit tests, but it is not yet wired into the controller MMIO model (today, only endpoint 0 is
-  executed).
+- **Non-control transfers are limited** to bulk/interrupt endpoints (Normal TRBs). Advanced transfer
+  types and semantics (isochronous, USB3/SuperSpeed, streams, etc) are not implemented.
 - **USB 3.x SuperSpeed** (5/10/20Gbps link speeds) and related link state machinery.
 - **Isochronous transfers** (audio/video devices).
 - **MSI/MSI-X in the web runtime**: the TS PCI wrapper currently uses INTx only (no MSI/MSI-X
