@@ -5905,7 +5905,12 @@ impl AerogpuD3d11Executor {
                 format!("{v:?}")
             }
 
-            fn emit_write_masked(out: &mut String, dst_expr: &str, mask: WriteMask, tmp_name: &str) {
+            fn emit_write_masked(
+                out: &mut String,
+                dst_expr: &str,
+                mask: WriteMask,
+                tmp_name: &str,
+            ) {
                 if mask == WriteMask::XYZW {
                     out.push_str(&format!("  {dst_expr} = {tmp_name};\n"));
                     return;
@@ -5985,9 +5990,17 @@ impl AerogpuD3d11Executor {
                 out.push('\n');
             }
             out.push_str("struct Vec4F32Buffer { data: array<vec4<f32>> };\n");
-            out.push_str("@group(0) @binding(0) var<storage, read_write> gs_inputs: Vec4F32Buffer;\n");
-            out.push_str(&format!("const GS_INPUT_REG_COUNT: u32 = {}u;\n", gs_input_reg_count));
-            out.push_str(&format!("const TEMP_REG_COUNT: u32 = {}u;\n\n", temp_reg_count));
+            out.push_str(
+                "@group(0) @binding(0) var<storage, read_write> gs_inputs: Vec4F32Buffer;\n",
+            );
+            out.push_str(&format!(
+                "const GS_INPUT_REG_COUNT: u32 = {}u;\n",
+                gs_input_reg_count
+            ));
+            out.push_str(&format!(
+                "const TEMP_REG_COUNT: u32 = {}u;\n\n",
+                temp_reg_count
+            ));
             out.push_str(
                 "fn aero_vs_default() -> vec4<f32> { return vec4<f32>(0.0, 0.0, 0.0, 1.0); }\n\n",
             );
@@ -6051,7 +6064,9 @@ impl AerogpuD3d11Executor {
             out.push_str("fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {\n");
             out.push_str("  let prim_id: u32 = id.x;\n");
             out.push_str(&format!("  var r: array<vec4<f32>, {temp_reg_count}>;\n"));
-            out.push_str(&format!("  var o: array<vec4<f32>, {gs_input_reg_count}>;\n"));
+            out.push_str(&format!(
+                "  var o: array<vec4<f32>, {gs_input_reg_count}>;\n"
+            ));
             out.push_str(
                 "  for (var vert_in_prim: u32 = 0u; vert_in_prim < 2u; vert_in_prim = vert_in_prim + 1u) {\n",
             );
@@ -6200,7 +6215,9 @@ impl AerogpuD3d11Executor {
             }],
         });
 
-        let empty_bgl = self.bind_group_layout_cache.get_or_create(&self.device, &[]);
+        let empty_bgl = self
+            .bind_group_layout_cache
+            .get_or_create(&self.device, &[]);
         let (fill_layout_key, fill_pipeline_layout) = {
             let mut hashes: Vec<u64> = Vec::with_capacity(VERTEX_PULLING_GROUP as usize + 1);
             let mut layouts: Vec<&wgpu::BindGroupLayout> =
@@ -6351,7 +6368,9 @@ impl AerogpuD3d11Executor {
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: false },
                     has_dynamic_offset: false,
-                    min_binding_size: wgpu::BufferSize::new(GEOMETRY_PREPASS_EXPANDED_VERTEX_STRIDE_BYTES),
+                    min_binding_size: wgpu::BufferSize::new(
+                        GEOMETRY_PREPASS_EXPANDED_VERTEX_STRIDE_BYTES,
+                    ),
                 },
                 count: None,
             },
@@ -6428,8 +6447,8 @@ impl AerogpuD3d11Executor {
         let gs_bgl = self
             .bind_group_layout_cache
             .get_or_create(&self.device, &gs_bgl_entries);
-        let gs_bg: Arc<wgpu::BindGroup> = Arc::new(self.device.create_bind_group(
-            &wgpu::BindGroupDescriptor {
+        let gs_bg: Arc<wgpu::BindGroup> =
+            Arc::new(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("aerogpu_cmd gs prepass bind group"),
                 layout: gs_bgl.layout.as_ref(),
                 entries: &[
@@ -6474,8 +6493,7 @@ impl AerogpuD3d11Executor {
                         }),
                     },
                 ],
-            },
-        ));
+            }));
 
         // The translated GS compute prepass keeps its internal prepass resources in `@group(0)` and
         // references D3D11 geometry-stage resources (cbuffers/textures/samplers/SRV buffers) via the
@@ -6500,7 +6518,9 @@ impl AerogpuD3d11Executor {
             guest_mem,
         )?;
 
-        let empty_bgl = self.bind_group_layout_cache.get_or_create(&self.device, &[]);
+        let empty_bgl = self
+            .bind_group_layout_cache
+            .get_or_create(&self.device, &[]);
         let (gs_group3_bgl, gs_group3_bindings) = if gs_resource_bindings.group_layouts.len()
             > ShaderStage::Geometry.as_bind_group_index() as usize
         {
@@ -6527,7 +6547,8 @@ impl AerogpuD3d11Executor {
                 srv_buffer_scratch: &self.srv_buffer_scratch,
                 storage_align: (self.device.limits().min_storage_buffer_offset_alignment as u64)
                     .max(1),
-                max_storage_binding_size: self.device.limits().max_storage_buffer_binding_size as u64,
+                max_storage_binding_size: self.device.limits().max_storage_buffer_binding_size
+                    as u64,
                 dummy_uniform: &self.dummy_uniform,
                 dummy_storage: &self.dummy_storage,
                 dummy_storage_texture_views: &self.dummy_storage_texture_views,

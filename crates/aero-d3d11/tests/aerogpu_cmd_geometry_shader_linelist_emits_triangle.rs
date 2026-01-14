@@ -316,4 +316,3 @@ fn aerogpu_cmd_geometry_shader_linelist_emits_triangle() {
         );
     });
 }
-

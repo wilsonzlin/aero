@@ -27,7 +27,11 @@ pub(crate) fn parse_signature(fourcc: FourCc, bytes: &[u8]) -> Result<DxbcSignat
     //
     // `aero-dxbc`'s non-robust parser also supports a heuristic for unknown FourCCs, but for the
     // legacy robust module keep the mapping simple and FourCC-driven.
-    let entry_size = if fourcc.as_bytes()[3] == b'1' { 32usize } else { 24usize };
+    let entry_size = if fourcc.as_bytes()[3] == b'1' {
+        32usize
+    } else {
+        24usize
+    };
     let table_bytes =
         (param_count as usize)
             .checked_mul(entry_size)

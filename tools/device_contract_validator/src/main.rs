@@ -1452,7 +1452,10 @@ mod virtio_input_device_desc_split_tests {
 "#;
         let err = validate(inf, true).unwrap_err();
         let msg = format!("{err:#}");
-        assert!(msg.contains("expected exactly one generic fallback model entry"), "{msg}");
+        assert!(
+            msg.contains("expected exactly one generic fallback model entry"),
+            "{msg}"
+        );
     }
 
     #[test]

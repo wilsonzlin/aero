@@ -12,4 +12,3 @@ fn uhci_io_read_does_not_wrap_on_offset_overflow() {
         "expected out-of-range I/O reads to return open bus instead of wrapping"
     );
 }
-

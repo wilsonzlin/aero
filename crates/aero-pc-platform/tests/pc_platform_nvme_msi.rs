@@ -538,7 +538,11 @@ fn pc_platform_nvme_msi_unprogrammed_address_latches_pending_and_delivers_after_
         "expected no MSI delivery while MSI address is invalid"
     );
 
-    let pending_off = if is_64bit { msi_off + 0x14 } else { msi_off + 0x10 };
+    let pending_off = if is_64bit {
+        msi_off + 0x14
+    } else {
+        msi_off + 0x10
+    };
     assert_ne!(
         read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, pending_off) & 1,
         0,

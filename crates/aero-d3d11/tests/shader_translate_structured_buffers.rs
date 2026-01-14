@@ -2,8 +2,8 @@ use aero_d3d11::binding_model::{BINDING_BASE_TEXTURE, BINDING_BASE_UAV};
 use aero_d3d11::DxbcFile;
 use aero_d3d11::{
     translate_sm4_module_to_wgsl, BufferKind, BufferRef, DstOperand, OperandModifier, RegFile,
-    RegisterRef, ShaderModel, ShaderSignatures, ShaderStage, ShaderTranslateError, Sm4Decl, Sm4Inst,
-    Sm4Module, SrcKind, SrcOperand, Swizzle, UavRef, WriteMask,
+    RegisterRef, ShaderModel, ShaderSignatures, ShaderStage, ShaderTranslateError, Sm4Decl,
+    Sm4Inst, Sm4Module, SrcKind, SrcOperand, Swizzle, UavRef, WriteMask,
 };
 use aero_dxbc::test_utils as dxbc_test_utils;
 

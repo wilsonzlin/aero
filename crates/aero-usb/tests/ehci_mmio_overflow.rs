@@ -12,4 +12,3 @@ fn ehci_mmio_read_does_not_wrap_on_offset_overflow() {
         "expected out-of-range MMIO reads to return open bus instead of wrapping"
     );
 }
-

@@ -291,7 +291,9 @@ impl DxbcShader {
             } else {
                 // `any == true` implies we attempted to parse at least one signature chunk, so
                 // `first_err` must have been populated.
-                Some(Err(first_err.expect("signature parse did not record an error")))
+                Some(Err(
+                    first_err.expect("signature parse did not record an error")
+                ))
             }
         }
 

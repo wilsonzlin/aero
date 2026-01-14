@@ -212,7 +212,10 @@ fn pc_platform_xhci_msi_unprogrammed_address_sets_pending_and_delivers_after_pro
         is_64bit,
         "test assumes xHCI MSI capability is using the 64-bit layout"
     );
-    assert!(per_vector_masking, "test requires per-vector masking support");
+    assert!(
+        per_vector_masking,
+        "test requires per-vector masking support"
+    );
     let pending_off = base + 0x14;
 
     let vector: u8 = 0x66;

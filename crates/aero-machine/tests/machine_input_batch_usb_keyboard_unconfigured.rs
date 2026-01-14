@@ -72,4 +72,3 @@ fn inject_input_batch_tracks_usb_keyboard_state_before_configuration_when_ps2_is
         UsbInResult::Data(vec![0, 0, 0, 0, 0, 0, 0, 0])
     );
 }
-
