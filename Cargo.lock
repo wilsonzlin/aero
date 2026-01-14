@@ -216,7 +216,6 @@ dependencies = [
  "aero-acpi",
  "aero-cpu-core",
  "aero-devices-input",
- "aero-gpu-vga",
  "aero-interrupts",
  "aero-io-snapshot",
  "aero-pci-routing",
