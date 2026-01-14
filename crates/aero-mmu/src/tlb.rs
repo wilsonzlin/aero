@@ -326,17 +326,32 @@ impl TlbSet {
     }
 
     fn flush_non_global(&mut self) {
+        self.has_1g = false;
+        self.has_4m = false;
+        self.has_2m = false;
         for set in 0..SETS {
             for way in 0..WAYS {
                 let entry = &mut self.entries[set][way];
                 if entry.valid && !entry.global {
                     entry.valid = false;
+                    continue;
+                }
+                if entry.valid {
+                    match entry.page_size {
+                        PageSize::Size1G => self.has_1g = true,
+                        PageSize::Size4M => self.has_4m = true,
+                        PageSize::Size2M => self.has_2m = true,
+                        PageSize::Size4K => {}
+                    }
                 }
             }
         }
     }
 
     fn flush_pcid(&mut self, pcid: u16, include_global: bool) {
+        self.has_1g = false;
+        self.has_4m = false;
+        self.has_2m = false;
         for set in 0..SETS {
             for way in 0..WAYS {
                 let entry = &mut self.entries[set][way];
@@ -346,11 +361,17 @@ impl TlbSet {
                 if entry.global {
                     if include_global {
                         entry.valid = false;
+                        continue;
                     }
+                } else if entry.pcid == pcid {
+                    entry.valid = false;
                     continue;
                 }
-                if entry.pcid == pcid {
-                    entry.valid = false;
+                match entry.page_size {
+                    PageSize::Size1G => self.has_1g = true,
+                    PageSize::Size4M => self.has_4m = true,
+                    PageSize::Size2M => self.has_2m = true,
+                    PageSize::Size4K => {}
                 }
             }
         }
