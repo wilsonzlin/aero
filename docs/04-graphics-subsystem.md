@@ -56,7 +56,7 @@ The repo also contains substantial implemented host-side GPU infrastructure (eve
   - `crates/aero-d3d9`
   - `crates/aero-d3d11`
   - `crates/aero-dxbc`
-- Canonical protocol mirror (Rust + TypeScript): `emulator/protocol` (source headers: `drivers/aerogpu/protocol/*`)
+- Canonical protocol mirror (Rust + TypeScript): `emulator/protocol` (source headers: `drivers/aerogpu/protocol/`)
 
 ## Runtime topology (browser)
 
