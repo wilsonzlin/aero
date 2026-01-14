@@ -2610,6 +2610,12 @@ ctx.onmessage = (ev) => {
       setBootDrive: (drive: number) => {
         dummyBootDrive = drive >>> 0;
       },
+      set_primary_hdd_opfs_cow: async (_basePath: string, _overlayPath: string, _overlayBlockSizeBytes: number) => {
+        // No-op: tests use this to exercise the boot-drive policy without touching real disks.
+      },
+      setPrimaryHddOpfsCow: async (_basePath: string, _overlayPath: string, _overlayBlockSizeBytes: number) => {
+        // No-op: back-compat for older worker shims that use camelCase exports.
+      },
       attach_install_media_opfs_iso: async (_path: string) => {
         dummyCdAttached = true;
       },

@@ -17,6 +17,11 @@ export type SetBootDisksMessage = {
    *
    * This allows keeping install media mounted while still booting from HDD after the first install
    * reboot.
+   *
+   * Note: this represents the *requested policy* ("try to boot from CD" vs "boot from HDD"). The
+   * firmware may still fall back (for example, if the CD is unbootable under the "CD-first when
+   * present" policy). Runtimes that need to know what firmware actually booted from should use the
+   * machine runtime's active-boot-device reporting instead.
    */
   bootDevice?: "hdd" | "cdrom";
 };

@@ -1408,6 +1408,96 @@ describe("workers/machine_cpu.worker (active boot device reporting)", () => {
   }, 20_000);
 });
 
+describe("workers/machine_cpu.worker (CD-first boot policy)", () => {
+  it("keeps boot drive as HDD0 while booting from CD when both devices are present (dummy machine)", async () => {
+    const segments = allocateTestSegments();
+
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      const dummyReady = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { kind?: unknown }).kind === "__test.machine_cpu.dummyMachineEnabled",
+        10_000,
+      );
+      worker.postMessage({ kind: "__test.machine_cpu.enableDummyMachine", enableBootDriveSpy: true });
+      await dummyReady;
+
+      const workerReady = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "cpu",
+        10_000,
+      );
+
+      worker.postMessage({
+        kind: "config.update",
+        version: 1,
+        config: makeConfig(),
+      });
+      worker.postMessage(makeInit(segments));
+
+      await workerReady;
+
+      const setBootDrivePromise = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { kind?: unknown; drive?: unknown }).kind === "__test.machine_cpu.setBootDrive" && (msg as any).drive === 0x80,
+        10_000,
+      ) as Promise<{ kind: string; drive: number }>;
+
+      const activePromise = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { type?: unknown; bootDevice?: unknown }).type === "machineCpu.bootDeviceActive" && (msg as any).bootDevice === "cdrom",
+        10_000,
+      ) as Promise<{ type: string; bootDevice: string }>;
+
+      const hddMeta: any = {
+        source: "local",
+        id: "hdd0",
+        name: "hdd0",
+        backend: "opfs",
+        kind: "hdd",
+        format: "raw",
+        fileName: "hdd0.img",
+        sizeBytes: 1024 * 1024,
+        createdAtMs: 0,
+      };
+
+      const cdMeta: any = {
+        source: "local",
+        id: "cd0",
+        name: "cd0",
+        backend: "opfs",
+        kind: "cd",
+        format: "iso",
+        fileName: "cd0.iso",
+        sizeBytes: 2048,
+        createdAtMs: 0,
+      };
+
+      worker.postMessage({
+        ...emptySetBootDisksMessage(),
+        mounts: { hddId: "hdd0", cdId: "cd0" },
+        hdd: hddMeta,
+        cd: cdMeta,
+        bootDevice: "cdrom",
+      } satisfies SetBootDisksMessage);
+
+      const bootDriveMsg = await setBootDrivePromise;
+      expect(bootDriveMsg.drive).toBe(0x80);
+
+      const activeMsg = await activePromise;
+      expect(activeMsg.bootDevice).toBe("cdrom");
+    } finally {
+      await worker.terminate();
+    }
+  }, 20_000);
+});
+
 describe("workers/machine_cpu.worker (boot drive API compat)", () => {
   it("uses camelCase setBootDrive when booting from CD (dummy machine)", async () => {
     const segments = allocateTestSegments();

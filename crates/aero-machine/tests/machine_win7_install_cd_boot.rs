@@ -162,6 +162,10 @@ fn machine_win7_install_helper_boots_eltorito_iso_and_falls_back_to_hdd_after_ej
 
     let mut m = Machine::new_with_win7_install(2 * 1024 * 1024, Box::new(iso)).unwrap();
 
+    // The install helper enables firmware "CD-first when present" while keeping the configured boot
+    // device preference as HDD, so callers do not need to toggle `DL` after ejecting install media.
+    assert_eq!(m.boot_device(), aero_machine::BootDevice::Hdd);
+
     // Firmware should enter the ISO boot image with DL=0xE0 (first CD-ROM drive number).
     assert_eq!(m.cpu().gpr[gpr::RDX] as u8, 0xE0);
     assert_eq!(m.active_boot_device(), aero_machine::BootDevice::Cdrom);
@@ -173,6 +177,7 @@ fn machine_win7_install_helper_boots_eltorito_iso_and_falls_back_to_hdd_after_ej
     m.set_disk_image(build_minimal_mbr_disk(b'D')).unwrap();
     m.eject_install_media();
     m.reset();
+    assert_eq!(m.boot_device(), aero_machine::BootDevice::Hdd);
     assert_eq!(m.cpu().gpr[gpr::RDX] as u8, 0x80);
     assert_eq!(m.active_boot_device(), aero_machine::BootDevice::Hdd);
 
