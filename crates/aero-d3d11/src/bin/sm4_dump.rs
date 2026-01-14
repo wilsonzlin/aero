@@ -1,9 +1,12 @@
 use std::env;
 use std::fs;
+use std::io::{self, Write};
 
 use anyhow::{bail, Context, Result};
 
-use aero_d3d11::sm4::opcode::{OPCODE_EXTENDED_BIT, OPCODE_LEN_MASK, OPCODE_LEN_SHIFT, OPCODE_MASK};
+use aero_d3d11::sm4::opcode::{
+    OPCODE_EXTENDED_BIT, OPCODE_LEN_MASK, OPCODE_LEN_SHIFT, OPCODE_MASK,
+};
 use aero_d3d11::sm4::token_dump::tokenize_instructions;
 use aero_d3d11::{ShaderStage, Sm4Program};
 
@@ -54,7 +57,7 @@ fn json_escape(s: &str) -> String {
     out
 }
 
-fn print_json(program: &Sm4Program) -> Result<()> {
+fn print_json(program: &Sm4Program, out: &mut dyn Write) -> Result<()> {
     let declared_len = program.tokens[1] as usize;
     let toks = &program.tokens[..declared_len];
     let insts = tokenize_instructions(&program.tokens)?;
@@ -62,64 +65,70 @@ fn print_json(program: &Sm4Program) -> Result<()> {
     let stage_name = stage_name(program.stage);
     let stage_ty = stage_type(program.stage);
 
-    println!("{{");
-    println!(
+    writeln!(out, "{{")?;
+    writeln!(
+        out,
         "  \"stage\": {{ \"type\": {stage_ty}, \"name\": \"{}\" }},",
         json_escape(&stage_name)
-    );
-    println!(
+    )?;
+    writeln!(
+        out,
         "  \"model\": {{ \"major\": {}, \"minor\": {} }},",
         program.model.major, program.model.minor
-    );
-    println!("  \"declared_length_dwords\": {declared_len},");
+    )?;
+    writeln!(out, "  \"declared_length_dwords\": {declared_len},")?;
 
     // Tokens.
-    println!("  \"tokens\": [");
+    writeln!(out, "  \"tokens\": [")?;
     for (i, t) in toks.iter().enumerate() {
         let comma = if i + 1 == toks.len() { "" } else { "," };
-        println!("    {{ \"index\": {i}, \"value\": \"0x{t:08x}\" }}{comma}");
+        writeln!(
+            out,
+            "    {{ \"index\": {i}, \"value\": \"0x{t:08x}\" }}{comma}"
+        )?;
     }
-    println!("  ],");
+    writeln!(out, "  ],")?;
 
     // Instruction headers.
-    println!("  \"instructions\": [");
+    writeln!(out, "  \"instructions\": [")?;
     for (idx, inst) in insts.iter().enumerate() {
         let comma = if idx + 1 == insts.len() { "" } else { "," };
-        print!(
+        write!(
+            out,
             "    {{ \"start\": {}, \"opcode\": {}, \"len\": {}, \"extended\": {}",
             inst.start,
             inst.opcode,
             inst.len,
             (inst.opcode_token & OPCODE_EXTENDED_BIT) != 0
-        );
+        )?;
 
-        print!(", \"ext_tokens\": [");
+        write!(out, ", \"ext_tokens\": [")?;
         for (j, t) in inst.ext_tokens.iter().enumerate() {
             if j != 0 {
-                print!(", ");
+                write!(out, ", ")?;
             }
-            print!("\"0x{t:08x}\"");
+            write!(out, "\"0x{t:08x}\"")?;
         }
-        print!("]");
+        write!(out, "]")?;
 
-        print!(", \"operand_tokens\": [");
+        write!(out, ", \"operand_tokens\": [")?;
         for (j, t) in inst.operand_tokens.iter().enumerate() {
             if j != 0 {
-                print!(", ");
+                write!(out, ", ")?;
             }
-            print!("\"0x{t:08x}\"");
+            write!(out, "\"0x{t:08x}\"")?;
         }
-        print!("]");
+        write!(out, "]")?;
 
-        println!(" }}{comma}");
+        writeln!(out, " }}{comma}")?;
     }
-    println!("  ]");
-    println!("}}");
+    writeln!(out, "  ]")?;
+    writeln!(out, "}}")?;
 
     Ok(())
 }
 
-fn main() -> Result<()> {
+fn main_inner() -> Result<()> {
     let mut raw = false;
     let mut json = false;
     let mut path: Option<String> = None;
@@ -145,35 +154,50 @@ fn main() -> Result<()> {
     let path = path.context("missing DXBC file path")?;
     let bytes = fs::read(&path).with_context(|| format!("failed to read {path}"))?;
 
-    let program =
-        Sm4Program::parse_from_dxbc_bytes(&bytes).with_context(|| format!("failed to parse {path} as DXBC shader bytecode"))?;
+    let program = Sm4Program::parse_from_dxbc_bytes(&bytes)
+        .with_context(|| format!("failed to parse {path} as DXBC shader bytecode"))?;
+
+    let stdout = io::stdout();
+    let mut out = io::BufWriter::new(stdout.lock());
 
     if json {
-        return print_json(&program);
+        print_json(&program, &mut out)?;
+        out.flush()?;
+        return Ok(());
     }
 
     let version = program.tokens[0];
     let declared_len = program.tokens[1] as usize;
     let toks = &program.tokens[..declared_len];
 
-    println!("stage: {} (type={})", stage_name(program.stage), stage_type(program.stage));
-    println!("model: {}.{}", program.model.major, program.model.minor);
-    println!("version_token: 0x{version:08x}");
-    println!("declared_length_dwords: {declared_len}");
-    println!("available_dwords: {}", program.tokens.len());
-    println!();
+    writeln!(
+        out,
+        "stage: {} (type={})",
+        stage_name(program.stage),
+        stage_type(program.stage)
+    )?;
+    writeln!(
+        out,
+        "model: {}.{}",
+        program.model.major, program.model.minor
+    )?;
+    writeln!(out, "version_token: 0x{version:08x}")?;
+    writeln!(out, "declared_length_dwords: {declared_len}")?;
+    writeln!(out, "available_dwords: {}", program.tokens.len())?;
+    writeln!(out)?;
 
-    println!("DWORDS (index -> value):");
+    writeln!(out, "DWORDS (index -> value):")?;
     for (i, t) in toks.iter().enumerate() {
-        println!("  {i:04}: 0x{t:08x}");
+        writeln!(out, "  {i:04}: 0x{t:08x}")?;
     }
-    println!();
+    writeln!(out)?;
 
     if raw {
+        out.flush()?;
         return Ok(());
     }
 
-    println!("INSTRUCTIONS (start: opcode len ext operands...):");
+    writeln!(out, "INSTRUCTIONS (start: opcode len ext operands...):")?;
 
     let insts = tokenize_instructions(&program.tokens)?;
     for inst in insts {
@@ -186,32 +210,49 @@ fn main() -> Result<()> {
         let len_field = ((inst.opcode_token >> OPCODE_LEN_SHIFT) & OPCODE_LEN_MASK) as usize;
         let opcode_field = inst.opcode_token & OPCODE_MASK;
 
-        print!(
+        write!(
+            out,
             "  @{start:04}: opcode={opcode_field:#05x}({opcode}) len={len_field}({len}) ext={extended}",
             start = inst.start
-        );
+        )?;
 
         if !inst.ext_tokens.is_empty() {
-            print!(" ext_toks=[");
+            write!(out, " ext_toks=[")?;
             for (j, t) in inst.ext_tokens.iter().enumerate() {
                 if j != 0 {
-                    print!(", ");
+                    write!(out, ", ")?;
                 }
-                print!("0x{t:08x}");
+                write!(out, "0x{t:08x}")?;
             }
-            print!("]");
+            write!(out, "]")?;
         }
 
-        print!(" operands=[");
+        write!(out, " operands=[")?;
         for (j, t) in inst.operand_tokens.iter().enumerate() {
             if j != 0 {
-                print!(", ");
+                write!(out, ", ")?;
             }
-            print!("0x{t:08x}");
+            write!(out, "0x{t:08x}")?;
         }
-        println!("]");
+        writeln!(out, "]")?;
     }
 
+    out.flush()?;
     Ok(())
 }
 
+fn main() -> Result<()> {
+    if let Err(err) = main_inner() {
+        // Match common CLI behavior: when output is piped to `head` (or any consumer that closes
+        // early), stdout writes can fail with `EPIPE`. This should not be treated as an error.
+        if err
+            .root_cause()
+            .downcast_ref::<io::Error>()
+            .is_some_and(|e| e.kind() == io::ErrorKind::BrokenPipe)
+        {
+            return Ok(());
+        }
+        return Err(err);
+    }
+    Ok(())
+}
