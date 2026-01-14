@@ -65,7 +65,8 @@ fn aerogpu_snapshot_roundtrip_restores_bar0_regs_and_vram() {
     // 2) Program scanout registers (BAR0) and populate a tiny framebuffer in VRAM.
     // ---------------------------------------------------------------------
     let fb_base = bar1_base + VBE_LFB_OFFSET as u64;
-    // Populate pixels in B8G8R8X8 (little-endian u32 = 0x00RRGGBB).
+    // Populate pixels in B8G8R8X8 (little-endian u32 = 0x00RRGGBB). The host-facing framebuffer
+    // is RGBA8888.
     vm.write_physical_u32(fb_base, 0x00FF_0000); // (0,0) red
     vm.write_physical_u32(fb_base + 4, 0x0000_FF00); // (1,0) green
     vm.write_physical_u32(fb_base + 8, 0x0000_00FF); // (2,0) blue

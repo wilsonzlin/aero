@@ -55,6 +55,7 @@ fn ap_rdtsc_is_nonzero_and_in_sync_after_sipi() {
     m.write_lapic_u32(0, ICR_LOW_OFF, icr_init_low);
 
     // SIPI (0b110) with vector 0x08.
+    //
     // Like INIT, we only model the "assert" phase (ICR_LEVEL=1).
     let icr_sipi_low = (0b110u32 << 8) | (1u32 << 14) | 0x08u32;
     m.write_lapic_u32(0, ICR_HIGH_OFF, icr_high);

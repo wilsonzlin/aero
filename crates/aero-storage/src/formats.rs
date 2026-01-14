@@ -334,7 +334,7 @@ impl<B: StorageBackend> DiskImage<B> {
     }
 }
 
-impl<B: StorageBackend> crate::VirtualDisk for DiskImage<B> {
+impl<B: StorageBackend + crate::disk::VirtualDiskSend> crate::VirtualDisk for DiskImage<B> {
     fn capacity_bytes(&self) -> u64 {
         match self {
             Self::Raw(d) => d.capacity_bytes(),

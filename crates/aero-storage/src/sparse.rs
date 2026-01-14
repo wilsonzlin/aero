@@ -765,24 +765,25 @@ impl<B: StorageBackend> AeroSparseDisk<B> {
     /// Blocks are only deallocated if the discard range covers the entire block; partial blocks
     /// are left allocated (callers that need partial-zeroing should write zeros instead).
     pub fn discard_range(&mut self, offset: u64, len: u64) -> Result<()> {
+        let capacity = self.header.disk_size_bytes;
         if len == 0 {
             // Still validate offset is in-bounds.
-            if offset > self.capacity_bytes() {
+            if offset > capacity {
                 return Err(DiskError::OutOfBounds {
                     offset,
                     len: 0,
-                    capacity: self.capacity_bytes(),
+                    capacity,
                 });
             }
             return Ok(());
         }
 
         let end = offset.checked_add(len).ok_or(DiskError::OffsetOverflow)?;
-        if end > self.capacity_bytes() {
+        if end > capacity {
             return Err(DiskError::OutOfBounds {
                 offset,
                 len: usize::try_from(len).unwrap_or(usize::MAX),
-                capacity: self.capacity_bytes(),
+                capacity,
             });
         }
 
@@ -842,7 +843,7 @@ impl<B: StorageBackend> AeroSparseDisk<B> {
     }
 }
 
-impl<B: StorageBackend> VirtualDisk for AeroSparseDisk<B> {
+impl<B: StorageBackend + crate::disk::VirtualDiskSend> VirtualDisk for AeroSparseDisk<B> {
     fn capacity_bytes(&self) -> u64 {
         self.header.disk_size_bytes
     }

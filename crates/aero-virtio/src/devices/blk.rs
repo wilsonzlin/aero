@@ -209,16 +209,21 @@ fn map_storage_error(err: StorageDiskError) -> BlockBackendError {
 ///
 /// This is primarily useful for reusing `aero-storage` disk wrappers (cache/sparse/COW/etc) on
 /// top of an existing virtio-blk backend implementation.
+#[cfg(target_arch = "wasm32")]
+type DynBlockBackend = dyn BlockBackend;
+#[cfg(not(target_arch = "wasm32"))]
+type DynBlockBackend = dyn BlockBackend + Send;
+
 pub struct BlockBackendAsAeroVirtualDisk {
-    backend: Box<dyn BlockBackend>,
+    backend: Box<DynBlockBackend>,
 }
 
 impl BlockBackendAsAeroVirtualDisk {
-    pub fn new(backend: Box<dyn BlockBackend>) -> Self {
+    pub fn new(backend: Box<DynBlockBackend>) -> Self {
         Self { backend }
     }
 
-    pub fn into_inner(self) -> Box<dyn BlockBackend> {
+    pub fn into_inner(self) -> Box<DynBlockBackend> {
         self.backend
     }
 

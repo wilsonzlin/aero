@@ -3,6 +3,21 @@ use crate::{DiskError, Result, StorageBackend};
 
 pub const SECTOR_SIZE: usize = 512;
 
+/// Internal helper trait: conditionally requires `Send` depending on the target.
+///
+/// On native targets, disk backends are frequently moved across threads (worker pools, async
+/// runtimes). On wasm32, backends may wrap JS/OPFS handles and are therefore often `!Send`, so we
+/// intentionally omit the `Send` bound there.
+#[cfg(not(target_arch = "wasm32"))]
+pub trait VirtualDiskSend: Send {}
+#[cfg(target_arch = "wasm32")]
+pub trait VirtualDiskSend {}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl<T: Send> VirtualDiskSend for T {}
+#[cfg(target_arch = "wasm32")]
+impl<T> VirtualDiskSend for T {}
+
 /// A fixed-capacity virtual disk.
 ///
 /// Implementations are byte-addressed (`read_at` / `write_at`) for easy composition with
@@ -10,7 +25,7 @@ pub const SECTOR_SIZE: usize = 512;
 /// `read_sectors` / `write_sectors`.
 ///
 /// See `docs/20-storage-trait-consolidation.md` for the repo-wide trait consolidation plan.
-pub trait VirtualDisk {
+pub trait VirtualDisk: VirtualDiskSend {
     /// Disk capacity in bytes.
     fn capacity_bytes(&self) -> u64;
 
@@ -180,7 +195,7 @@ impl<B: StorageBackend> RawDisk<B> {
     }
 }
 
-impl<B: StorageBackend> VirtualDisk for RawDisk<B> {
+impl<B: StorageBackend + VirtualDiskSend> VirtualDisk for RawDisk<B> {
     fn capacity_bytes(&self) -> u64 {
         self.capacity
     }

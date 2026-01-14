@@ -1,6 +1,6 @@
 use aero_devices::pci::profile;
-use aero_devices_gpu::regs::{irq_bits, mmio};
 use aero_machine::{Machine, MachineConfig};
+use aero_protocol::aerogpu::aerogpu_pci;
 
 #[test]
 fn aerogpu_vblank_counter_advances_when_platform_time_advances() {
@@ -45,13 +45,20 @@ fn aerogpu_vblank_counter_advances_when_platform_time_advances() {
         "expected AeroGPU BAR0 base assigned by BIOS POST"
     );
 
+    let reg = |offset: u32| bar0_base + u64::from(offset);
+
     // Enable scanout0 so vblank ticks are generated, and enable vblank IRQ latching.
-    m.write_physical_u32(bar0_base + mmio::SCANOUT0_ENABLE, 1);
-    m.write_physical_u32(bar0_base + mmio::IRQ_ENABLE, irq_bits::SCANOUT_VBLANK);
+    m.write_physical_u32(reg(aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE), 1);
+    m.write_physical_u32(
+        reg(aerogpu_pci::AEROGPU_MMIO_REG_IRQ_ENABLE),
+        aerogpu_pci::AEROGPU_IRQ_SCANOUT_VBLANK,
+    );
 
     let seq_before = {
-        let lo = m.read_physical_u32(bar0_base + mmio::SCANOUT0_VBLANK_SEQ_LO) as u64;
-        let hi = m.read_physical_u32(bar0_base + mmio::SCANOUT0_VBLANK_SEQ_HI) as u64;
+        let lo = m.read_physical_u32(reg(aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO))
+            as u64;
+        let hi = m.read_physical_u32(reg(aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_HI))
+            as u64;
         lo | (hi << 32)
     };
 
@@ -60,8 +67,10 @@ fn aerogpu_vblank_counter_advances_when_platform_time_advances() {
     m.tick_platform(20_000_000);
 
     let seq_after = {
-        let lo = m.read_physical_u32(bar0_base + mmio::SCANOUT0_VBLANK_SEQ_LO) as u64;
-        let hi = m.read_physical_u32(bar0_base + mmio::SCANOUT0_VBLANK_SEQ_HI) as u64;
+        let lo = m.read_physical_u32(reg(aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO))
+            as u64;
+        let hi = m.read_physical_u32(reg(aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_HI))
+            as u64;
         lo | (hi << 32)
     };
     assert!(
@@ -69,9 +78,9 @@ fn aerogpu_vblank_counter_advances_when_platform_time_advances() {
         "expected vblank seq to advance (before={seq_before}, after={seq_after})"
     );
 
-    let irq_status = m.read_physical_u32(bar0_base + mmio::IRQ_STATUS);
+    let irq_status = m.read_physical_u32(reg(aerogpu_pci::AEROGPU_MMIO_REG_IRQ_STATUS));
     assert_ne!(
-        irq_status & irq_bits::SCANOUT_VBLANK,
+        irq_status & aerogpu_pci::AEROGPU_IRQ_SCANOUT_VBLANK,
         0,
         "expected vblank IRQ status bit to be set after vblank tick (irq_status=0x{irq_status:08x})"
     );

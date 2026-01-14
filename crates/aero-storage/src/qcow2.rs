@@ -1008,7 +1008,7 @@ impl<B: StorageBackend> Qcow2Disk<B> {
     }
 }
 
-impl<B: StorageBackend> VirtualDisk for Qcow2Disk<B> {
+impl<B: StorageBackend + crate::disk::VirtualDiskSend> VirtualDisk for Qcow2Disk<B> {
     fn capacity_bytes(&self) -> u64 {
         self.header.size
     }

@@ -10,7 +10,9 @@ pub struct AeroCowDisk<Base, OverlayBackend> {
     overlay: AeroSparseDisk<OverlayBackend>,
 }
 
-impl<Base: VirtualDisk, OverlayBackend: StorageBackend> AeroCowDisk<Base, OverlayBackend> {
+impl<Base: VirtualDisk, OverlayBackend: StorageBackend + crate::disk::VirtualDiskSend>
+    AeroCowDisk<Base, OverlayBackend>
+{
     pub fn create(
         base: Base,
         overlay_backend: OverlayBackend,
@@ -49,7 +51,7 @@ impl<Base: VirtualDisk, OverlayBackend: StorageBackend> AeroCowDisk<Base, Overla
     }
 }
 
-impl<Base: VirtualDisk, OverlayBackend: StorageBackend> VirtualDisk
+impl<Base: VirtualDisk, OverlayBackend: StorageBackend + crate::disk::VirtualDiskSend> VirtualDisk
     for AeroCowDisk<Base, OverlayBackend>
 {
     fn capacity_bytes(&self) -> u64 {

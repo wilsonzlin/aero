@@ -36,19 +36,21 @@ impl<S: aero_storage::StorageBackend> RawDisk<S> {
         })
     }
 
-    pub fn open(storage: S, sector_size: u32) -> DiskResult<Self> {
+    pub fn open(mut storage: S, sector_size: u32) -> DiskResult<Self> {
         if sector_size == 0 {
             return Err(DiskError::Unsupported("sector size must be non-zero"));
         }
 
-        let inner = StorageRawDisk::open(storage).map_err(aero_storage_disk_error_to_emulator)?;
-
-        let len = inner.capacity_bytes();
+        let len = storage
+            .len()
+            .map_err(aero_storage_disk_error_to_emulator)?;
         if !len.is_multiple_of(sector_size as u64) {
             return Err(DiskError::CorruptImage(
                 "raw size not multiple of sector size",
             ));
         }
+
+        let inner = StorageRawDisk::open(storage).map_err(aero_storage_disk_error_to_emulator)?;
 
         Ok(Self {
             total_sectors: len / sector_size as u64,

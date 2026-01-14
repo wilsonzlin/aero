@@ -491,7 +491,12 @@ fn boxed_virtual_disk_can_be_used_in_generic_wrappers() {
 fn boxed_storage_backend_can_open_disk_image() {
     // Compile-time + runtime check: `Box<dyn StorageBackend>` itself implements `StorageBackend`
     // so it can be used in generic wrappers like `DiskImage`.
-    let backend: Box<dyn StorageBackend> = Box::new(MemBackend::with_len(1024 * 1024).unwrap());
+    #[cfg(not(target_arch = "wasm32"))]
+    type DynBackend = dyn StorageBackend + Send;
+    #[cfg(target_arch = "wasm32")]
+    type DynBackend = dyn StorageBackend;
+
+    let backend: Box<DynBackend> = Box::new(MemBackend::with_len(1024 * 1024).unwrap());
     let mut disk = DiskImage::open_auto(backend).unwrap();
 
     let mut sector = [0u8; SECTOR_SIZE];

@@ -1116,7 +1116,7 @@ impl<B: StorageBackend> VhdDisk<B> {
     }
 }
 
-impl<B: StorageBackend> VirtualDisk for VhdDisk<B> {
+impl<B: StorageBackend + crate::disk::VirtualDiskSend> VirtualDisk for VhdDisk<B> {
     fn capacity_bytes(&self) -> u64 {
         self.footer.current_size
     }
