@@ -2,9 +2,9 @@ mod common;
 
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
 use aero_d3d11::sm4::opcode::{
-    OPCODE_DCL_GS_INPUT_PRIMITIVE, OPCODE_DCL_GS_MAX_OUTPUT_VERTEX_COUNT, OPCODE_DCL_GS_OUTPUT_TOPOLOGY,
-    OPCODE_DCL_OUTPUT, OPCODE_DCL_RESOURCE, OPCODE_DCL_SAMPLER, OPCODE_EMIT, OPCODE_LEN_SHIFT,
-    OPCODE_MOV, OPCODE_RET, OPCODE_SAMPLE,
+    OPCODE_DCL_GS_INPUT_PRIMITIVE, OPCODE_DCL_GS_MAX_OUTPUT_VERTEX_COUNT,
+    OPCODE_DCL_GS_OUTPUT_TOPOLOGY, OPCODE_DCL_OUTPUT, OPCODE_DCL_RESOURCE, OPCODE_DCL_SAMPLER,
+    OPCODE_EMIT, OPCODE_LEN_SHIFT, OPCODE_MOV, OPCODE_RET, OPCODE_SAMPLE,
 };
 use aero_dxbc::{test_utils as dxbc_test_utils, FourCC};
 use aero_gpu::guest_memory::VecGuestMemory;
@@ -155,8 +155,10 @@ struct VertexPos3Color4 {
 #[test]
 fn aerogpu_cmd_gs_prepass_samples_geometry_t0_s0() {
     pollster::block_on(async {
-        let test_name =
-            concat!(module_path!(), "::aerogpu_cmd_gs_prepass_samples_geometry_t0_s0");
+        let test_name = concat!(
+            module_path!(),
+            "::aerogpu_cmd_gs_prepass_samples_geometry_t0_s0"
+        );
 
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
             Ok(exec) => exec,
@@ -317,4 +319,3 @@ fn aerogpu_cmd_gs_prepass_samples_geometry_t0_s0() {
         );
     });
 }
-

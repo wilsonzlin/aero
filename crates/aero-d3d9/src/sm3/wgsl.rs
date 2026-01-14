@@ -2720,7 +2720,9 @@ fn emit_rep_stmt(
         return Err(err("rep init uses a non-integer-constant register"));
     }
     if count_reg.relative.is_some() {
-        return Err(err("relative addressing is not supported in rep count operands"));
+        return Err(err(
+            "relative addressing is not supported in rep count operands",
+        ));
     }
 
     let pad = "  ".repeat(indent);
