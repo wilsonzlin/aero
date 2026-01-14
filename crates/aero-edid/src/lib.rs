@@ -50,12 +50,19 @@ impl Timing {
             // Avoid generating a preferred mode whose horizontal scan rate
             // cannot be represented.
             && {
-                // Approximate the vertical blanking used by the synthesizer.
+                // The range limits descriptor cannot represent horizontal scan
+                // rates above 255kHz. The DTD's horizontal frequency depends on
+                // the total vertical line count (`v_total`) and refresh:
+                //
+                //   h_freq_khz ≈ v_total * refresh_hz / 1000
+                //
+                // We can always reduce vertical blanking down to the minimum
+                // porch/sync requirements, so check the best-case (minimum)
+                // horizontal frequency.
                 let v_active = self.height as u32;
-                let v_blank = v_active.div_ceil(20).max(MIN_V_BLANK);
-                let v_total = v_active + v_blank;
+                let v_total_min = v_active + MIN_V_BLANK;
                 // Horizontal frequency in kHz is v_total * refresh / 1000.
-                let h_freq_khz = ((v_total as u64) * (self.refresh_hz as u64) + 500) / 1000;
+                let h_freq_khz = ((v_total_min as u64) * (self.refresh_hz as u64) + 500) / 1000;
                 h_freq_khz <= u8::MAX as u64
             }
             && {
@@ -398,6 +405,21 @@ fn synthesize_dtd_bytes(timing: Timing) -> [u8; 18] {
     let v_back_porch_min: u32 = 6;
     let min_v_blank = v_front_porch + v_sync_width + v_back_porch_min;
     let mut v_blank = v_active.div_ceil(20).clamp(min_v_blank, 0x0FFF);
+
+    // Ensure the implied horizontal scan rate can be represented in the range
+    // limits descriptor (u8 kHz). The DTD's horizontal frequency depends only
+    // on `v_total` and the requested refresh rate, so clamp vertical blanking
+    // down when required.
+    //
+    // We use a bound that keeps the *rounded-to-nearest* kHz value <= 255:
+    //   (v_total * refresh + 500) / 1000 <= 255
+    //   v_total * refresh <= 255_499
+    let v_total_max = (255_499u64 / refresh_hz.max(1) as u64) as u32;
+    let v_blank_max = v_total_max.saturating_sub(v_active).min(0x0FFF);
+    if v_blank_max < min_v_blank {
+        return known_dtd_bytes(Timing::DEFAULT).expect("missing default DTD");
+    }
+    v_blank = v_blank.min(v_blank_max).max(min_v_blank);
 
     // If the synthesized total would exceed the maximum EDID DTD pixel clock,
     // reduce blanking until it fits (or fall back).
