@@ -1121,6 +1121,103 @@ fn tier2_shl_high8_sets_cf_observed_by_jc() {
 }
 
 #[test]
+fn tier2_shr_high8_count_1_sets_cf_observed_by_jc() {
+    // mov ah, 1
+    // shr ah, 1         ; CF=old LSB (1)
+    // jc taken          ; must take
+    // mov al, 0
+    // int3
+    // taken: mov al, 1
+    // int3
+    const CODE: &[u8] = &[
+        0xB4, 0x01, // mov ah, 1
+        0xD0, 0xEC, // shr ah, 1
+        0x72, 0x03, // jc +3
+        0xB0, 0x00, // mov al, 0
+        0xCC, // int3
+        0xB0, 0x01, // mov al, 1
+        0xCC, // int3
+    ];
+
+    let (_func, exit, state) = run_x86(CODE);
+    assert_eq!(exit, RunExit::SideExit { next_rip: 11 });
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 1);
+}
+
+#[test]
+fn tier2_shr_high8_count_1_sets_of_from_old_msb_observed_by_jo() {
+    // mov ah, 0x80
+    // shr ah, 1         ; OF=old MSB (1)
+    // jo taken          ; must take
+    // mov al, 0
+    // int3
+    // taken: mov al, 1
+    // int3
+    const CODE: &[u8] = &[
+        0xB4, 0x80, // mov ah, 0x80
+        0xD0, 0xEC, // shr ah, 1
+        0x70, 0x03, // jo +3
+        0xB0, 0x00, // mov al, 0
+        0xCC, // int3
+        0xB0, 0x01, // mov al, 1
+        0xCC, // int3
+    ];
+
+    let (_func, exit, state) = run_x86(CODE);
+    assert_eq!(exit, RunExit::SideExit { next_rip: 11 });
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 1);
+}
+
+#[test]
+fn tier2_sar_high8_count_1_sets_cf_observed_by_jc() {
+    // mov ah, 1
+    // sar ah, 1         ; CF=old LSB (1)
+    // jc taken          ; must take
+    // mov al, 0
+    // int3
+    // taken: mov al, 1
+    // int3
+    const CODE: &[u8] = &[
+        0xB4, 0x01, // mov ah, 1
+        0xD0, 0xFC, // sar ah, 1
+        0x72, 0x03, // jc +3
+        0xB0, 0x00, // mov al, 0
+        0xCC, // int3
+        0xB0, 0x01, // mov al, 1
+        0xCC, // int3
+    ];
+
+    let (_func, exit, state) = run_x86(CODE);
+    assert_eq!(exit, RunExit::SideExit { next_rip: 11 });
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 1);
+}
+
+#[test]
+fn tier2_sar_high8_count_1_sets_of_to_0_observed_by_jo() {
+    // mov ah, 0x80
+    // sar ah, 1         ; OF must become 0
+    // jo taken          ; must NOT take
+    // mov al, 1
+    // int3
+    // taken: mov al, 2
+    // int3
+    const CODE: &[u8] = &[
+        0xB4, 0x80, // mov ah, 0x80
+        0xD0, 0xFC, // sar ah, 1
+        0x70, 0x03, // jo +3
+        0xB0, 0x01, // mov al, 1
+        0xCC, // int3
+        0xB0, 0x02, // mov al, 2
+        0xCC, // int3
+    ];
+
+    let init_rflags = aero_jit_x86::abi::RFLAGS_RESERVED1 | RFLAGS_OF;
+    let (_func, exit, state) = run_x86_with_rflags(CODE, init_rflags);
+    assert_eq!(exit, RunExit::SideExit { next_rip: 8 });
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 1);
+}
+
+#[test]
 fn tier2_shl_updates_pf_observed_by_jp() {
     // mov al, 0x03
     // shl al, 1
