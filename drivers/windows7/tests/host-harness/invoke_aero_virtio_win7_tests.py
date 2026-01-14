@@ -9014,14 +9014,17 @@ def _update_last_marker_line_from_chunk(
         carry = carry[-_SERIAL_TAIL_CAP_BYTES:]
 
     data = carry + chunk
-    parts = data.split(b"\n")
-    new_carry = parts.pop() if parts else b""
+
+    # Use splitlines(keepends=True) so we correctly handle any of: LF, CRLF, or CR.
+    parts = data.splitlines(keepends=True)
+    new_carry = b""
+    if parts and not parts[-1].endswith((b"\n", b"\r")):
+        new_carry = parts.pop()
     if len(new_carry) > _SERIAL_TAIL_CAP_BYTES:
         new_carry = new_carry[-_SERIAL_TAIL_CAP_BYTES:]
 
     for raw in parts:
-        if raw.endswith(b"\r"):
-            raw = raw[:-1]
+        raw = raw.rstrip(b"\r\n")
         raw2 = raw.lstrip()
         if not raw2.startswith(prefix):
             continue
