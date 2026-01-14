@@ -395,7 +395,7 @@ Newer virtio-blk miniport builds expose StorPort recovery counters via the minip
 
 The guest selftest emits a dedicated machine-readable marker when the IOCTL payload includes the counter region:
 
-`AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|INFO|abort=...|reset_device=...|reset_bus=...|pnp=...|ioctl_reset=...|capacity_change_events=<n>`
+`AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|INFO|abort=...|reset_device=...|reset_bus=...|pnp=...|ioctl_reset=...|capacity_change_events=<n|not_supported>`
 
 If the payload is too short (older miniport contract / truncated), it emits:
 
@@ -403,7 +403,7 @@ If the payload is too short (older miniport contract / truncated), it emits:
 
 For log scraping, the host harness mirrors the last observed guest marker into a stable host marker:
 
-`AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_COUNTERS|INFO/SKIP|abort=...|reset_device=...|reset_bus=...|pnp=...|ioctl_reset=...|capacity_change_events=<n>`
+`AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_COUNTERS|INFO/SKIP|abort=...|reset_device=...|reset_bus=...|pnp=...|ioctl_reset=...|capacity_change_events=<n|not_supported>`
 
 To enforce a minimal “no unexpected aborts/resets” policy (checks `abort`/`reset_device`/`reset_bus` only), enable:
 

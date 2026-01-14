@@ -50,6 +50,18 @@ class VirtioBlkCountersMarkerTests(unittest.TestCase):
             "ioctl_reset=4|capacity_change_events=5",
         )
 
+    def test_emits_info_when_capacity_change_events_not_supported(self) -> None:
+        tail = (
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|INFO|abort=0|reset_device=0|reset_bus=0|"
+            b"pnp=0|ioctl_reset=0|capacity_change_events=not_supported\n"
+        )
+        out = self._emit(tail)
+        self.assertEqual(
+            out,
+            "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_COUNTERS|INFO|abort=0|reset_device=0|reset_bus=0|pnp=0|"
+            "ioctl_reset=0|capacity_change_events=not_supported",
+        )
+
     def test_coerces_pass_to_info(self) -> None:
         # The guest marker is expected to use INFO/SKIP, but if it ever emits PASS/FAIL
         # (e.g. due to a guest-side change), keep the host marker stable as INFO/SKIP.
