@@ -39,11 +39,15 @@ fn xhci_snapshot_preserves_event_ring_producer_cursor() {
     );
     ctrl.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
 
-    let mut ev0 = Trb::default();
-    ev0.parameter = 0xaaaa;
+    let mut ev0 = Trb {
+        parameter: 0xaaaa,
+        ..Default::default()
+    };
     ev0.set_trb_type(TrbType::PortStatusChangeEvent);
-    let mut ev1 = Trb::default();
-    ev1.parameter = 0xbbbb;
+    let mut ev1 = Trb {
+        parameter: 0xbbbb,
+        ..Default::default()
+    };
     ev1.set_trb_type(TrbType::PortStatusChangeEvent);
 
     ctrl.post_event(ev0);
@@ -61,8 +65,10 @@ fn xhci_snapshot_preserves_event_ring_producer_cursor() {
     let mut restored = XhciController::new();
     restored.load_state(&bytes).expect("load snapshot");
 
-    let mut ev2 = Trb::default();
-    ev2.parameter = 0xcccc;
+    let mut ev2 = Trb {
+        parameter: 0xcccc,
+        ..Default::default()
+    };
     ev2.set_trb_type(TrbType::PortStatusChangeEvent);
     restored.post_event(ev2);
     restored.service_event_ring(&mut mem);
@@ -88,8 +94,10 @@ fn xhci_snapshot_preserves_pending_events_and_drop_counter() {
 
     const TOTAL_EVENTS: u64 = 1500;
     for i in 0..TOTAL_EVENTS {
-        let mut evt = Trb::default();
-        evt.parameter = i;
+        let mut evt = Trb {
+            parameter: i,
+            ..Default::default()
+        };
         evt.set_trb_type(TrbType::PortStatusChangeEvent);
         ctrl.post_event(evt);
     }

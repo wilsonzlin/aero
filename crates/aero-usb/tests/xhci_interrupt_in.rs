@@ -15,6 +15,8 @@ use aero_usb::{
 
 use util::{Alloc, TestMemory};
 
+type OutLog = Rc<RefCell<Vec<(u8, Vec<u8>)>>>;
+
 const RING_BASE: u64 = 0x1000;
 const NORMAL_TRB_ADDR: u64 = RING_BASE;
 const LINK_TRB_ADDR: u64 = RING_BASE + 0x10;
@@ -78,7 +80,7 @@ fn make_link_trb(target: u64, cycle: bool, toggle_cycle: bool) -> Trb {
 
 #[derive(Clone, Debug)]
 struct TestOutDevice {
-    log: Rc<RefCell<Vec<(u8, Vec<u8>)>>>,
+    log: OutLog,
 }
 
 impl TestOutDevice {

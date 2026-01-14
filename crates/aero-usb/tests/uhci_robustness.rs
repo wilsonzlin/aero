@@ -179,7 +179,7 @@ fn uhci_active_td_cycle_sets_hse_and_errint() {
 
     // Attach a device so TD processing advances through the chain within a single frame.
     ctrl.hub_mut()
-        .attach(0, Box::new(AlwaysAckDevice::default()));
+        .attach(0, Box::new(AlwaysAckDevice));
     ctrl.hub_mut().force_enable_for_tests(0);
 
     ctrl.io_write(regs::REG_FLBASEADD, 4, FRAME_LIST_BASE);
@@ -192,7 +192,7 @@ fn uhci_active_td_cycle_sets_hse_and_errint() {
     mem.write_u32(td2, TD_ADDR);
 
     // Mark both TDs active and runnable (OUT to device address 0, endpoint 1, 1 byte).
-    let token = PID_OUT | (1u32 << 15) | (0u32 << 21);
+    let token = PID_OUT | (1u32 << 15);
     let buffer = 0x3800;
     for &td in &[TD_ADDR, td2] {
         mem.write_u32(td + 4, TD_STATUS_ACTIVE);
@@ -218,13 +218,13 @@ fn uhci_long_active_td_chain_budget_sets_hse_and_errint() {
     let mut mem = TestMem::new(0x20000);
 
     ctrl.hub_mut()
-        .attach(0, Box::new(AlwaysAckDevice::default()));
+        .attach(0, Box::new(AlwaysAckDevice));
     ctrl.hub_mut().force_enable_for_tests(0);
 
     ctrl.io_write(regs::REG_FLBASEADD, 4, FRAME_LIST_BASE);
     mem.write_u32(FRAME_LIST_BASE, TD_ADDR);
 
-    let token = PID_OUT | (1u32 << 15) | (0u32 << 21);
+    let token = PID_OUT | (1u32 << 15);
     let buffer = 0x18000;
     // Build an acyclic chain long enough to exceed the internal TD-walking budget.
     let chain_len = 4096u32;
@@ -261,7 +261,7 @@ fn uhci_qh_element_td_self_loop_sets_hse_and_errint() {
     let mut mem = TestMem::new(0x4000);
 
     ctrl.hub_mut()
-        .attach(0, Box::new(AlwaysAckDevice::default()));
+        .attach(0, Box::new(AlwaysAckDevice));
     ctrl.hub_mut().force_enable_for_tests(0);
 
     ctrl.io_write(regs::REG_FLBASEADD, 4, FRAME_LIST_BASE);
@@ -273,7 +273,7 @@ fn uhci_qh_element_td_self_loop_sets_hse_and_errint() {
 
     mem.write_u32(TD_ADDR, TD_ADDR);
     mem.write_u32(TD_ADDR + 4, TD_STATUS_ACTIVE);
-    mem.write_u32(TD_ADDR + 8, PID_OUT | (1u32 << 15) | (0u32 << 21));
+    mem.write_u32(TD_ADDR + 8, PID_OUT | (1u32 << 15));
     mem.write_u32(TD_ADDR + 12, 0x3800);
 
     ctrl.io_write(regs::REG_USBINTR, 2, regs::USBINTR_TIMEOUT_CRC as u32);
@@ -293,7 +293,7 @@ fn uhci_qh_element_budget_sets_hse_and_errint() {
     let mut mem = TestMem::new(0x20000);
 
     ctrl.hub_mut()
-        .attach(0, Box::new(AlwaysAckDevice::default()));
+        .attach(0, Box::new(AlwaysAckDevice));
     ctrl.hub_mut().force_enable_for_tests(0);
 
     ctrl.io_write(regs::REG_FLBASEADD, 4, FRAME_LIST_BASE);
@@ -302,7 +302,7 @@ fn uhci_qh_element_budget_sets_hse_and_errint() {
     mem.write_u32(QH_ADDR, LINK_PTR_T);
     mem.write_u32(QH_ADDR + 4, TD_ADDR);
 
-    let token = PID_OUT | (1u32 << 15) | (0u32 << 21);
+    let token = PID_OUT | (1u32 << 15);
     let buffer = 0x18000;
     let chain_len = 4096u32;
     for i in 0..chain_len {
@@ -380,7 +380,7 @@ fn uhci_stop_td_skip_cycle_is_detected_without_spinning_budget() {
     mem.write_u32(TD_ADDR + 4, TD_STATUS_ACTIVE);
     mem.write_u32(
         TD_ADDR + 8,
-        PID_OUT | (5u32 << 8) | (1u32 << 15) | (0u32 << 21),
+        PID_OUT | (5u32 << 8) | (1u32 << 15),
     );
     mem.write_u32(TD_ADDR + 12, 0x3800);
 
@@ -487,7 +487,7 @@ fn uhci_qh_element_list_exact_budget_limit_null_termination_does_not_fault() {
     const QH_ELEM_BUDGET: usize = 1024;
 
     ctrl.hub_mut()
-        .attach(0, Box::new(AlwaysAckDevice::default()));
+        .attach(0, Box::new(AlwaysAckDevice));
     ctrl.hub_mut().force_enable_for_tests(0);
 
     ctrl.io_write(regs::REG_FLBASEADD, 4, FRAME_LIST_BASE);

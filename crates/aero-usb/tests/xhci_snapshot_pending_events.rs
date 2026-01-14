@@ -17,8 +17,10 @@ fn write_erst_entry(mem: &mut TestMemory, erstba: u64, seg_base: u64, seg_size_t
 fn xhci_snapshot_roundtrip_preserves_pending_events() {
     let mut xhci = XhciController::new();
 
-    let mut evt = Trb::default();
-    evt.parameter = 0xdead_beef;
+    let mut evt = Trb {
+        parameter: 0xdead_beef,
+        ..Default::default()
+    };
     evt.set_trb_type(TrbType::PortStatusChangeEvent);
     xhci.post_event(evt);
     assert_eq!(xhci.pending_event_count(), 1);
@@ -65,8 +67,10 @@ fn xhci_snapshot_roundtrip_preserves_dropped_event_counter() {
     let mut xhci = XhciController::new();
 
     for i in 0..5000u64 {
-        let mut evt = Trb::default();
-        evt.parameter = i;
+        let mut evt = Trb {
+            parameter: i,
+            ..Default::default()
+        };
         evt.set_trb_type(TrbType::PortStatusChangeEvent);
         xhci.post_event(evt);
         if xhci.dropped_event_trbs() != 0 {

@@ -38,7 +38,7 @@ fn write_stop_marker(mem: &mut TestMemory, addr: u64) {
 
 fn build_address_device_input_ctx(mem: &mut TestMemory, input_ctx: u64) {
     // Input Control Context (ICC): Drop=0, Add = Slot + EP0.
-    MemoryBus::write_u32(mem, input_ctx + 0x00, 0);
+    MemoryBus::write_u32(mem, input_ctx, 0);
     MemoryBus::write_u32(mem, input_ctx + 0x04, (1 << 0) | (1 << 1));
     // Slot Context Root Hub Port Number = 1.
     MemoryBus::write_u32(mem, input_ctx + 0x20 + 4, 1 << 16);
@@ -51,7 +51,7 @@ fn build_interrupt_in_input_ctx(
     tr_ring: u64,
 ) {
     // Input Control Context (ICC): Add only the endpoint context.
-    MemoryBus::write_u32(mem, input_ctx + 0x00, 0);
+    MemoryBus::write_u32(mem, input_ctx, 0);
     MemoryBus::write_u32(mem, input_ctx + 0x04, 1u32 << endpoint_id);
 
     // Endpoint context index in Input Context is DCI + 1.
@@ -68,13 +68,13 @@ fn build_interrupt_in_input_ctx(
 
 fn build_drop_input_ctx(mem: &mut TestMemory, input_ctx: u64, endpoint_id: u8) {
     // Drop the specified endpoint context, add nothing.
-    MemoryBus::write_u32(mem, input_ctx + 0x00, 1u32 << endpoint_id);
+    MemoryBus::write_u32(mem, input_ctx, 1u32 << endpoint_id);
     MemoryBus::write_u32(mem, input_ctx + 0x04, 0);
 }
 
 fn build_empty_input_ctx(mem: &mut TestMemory, input_ctx: u64) {
     // ICC Drop=0, Add=0.
-    MemoryBus::write_u32(mem, input_ctx + 0x00, 0);
+    MemoryBus::write_u32(mem, input_ctx, 0);
     MemoryBus::write_u32(mem, input_ctx + 0x04, 0);
 }
 

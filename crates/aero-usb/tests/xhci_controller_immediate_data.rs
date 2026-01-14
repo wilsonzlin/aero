@@ -130,26 +130,30 @@ fn xhci_controller_control_out_immediate_data_stage_is_delivered() {
         w_length: 4,
     };
 
-    let mut setup_trb = Trb::default();
-    setup_trb.parameter = u64::from_le_bytes([
-        setup.bm_request_type,
-        setup.b_request,
-        (setup.w_value & 0x00ff) as u8,
-        (setup.w_value >> 8) as u8,
-        (setup.w_index & 0x00ff) as u8,
-        (setup.w_index >> 8) as u8,
-        (setup.w_length & 0x00ff) as u8,
-        (setup.w_length >> 8) as u8,
-    ]);
-    setup_trb.status = 8;
+    let mut setup_trb = Trb {
+        parameter: u64::from_le_bytes([
+            setup.bm_request_type,
+            setup.b_request,
+            (setup.w_value & 0x00ff) as u8,
+            (setup.w_value >> 8) as u8,
+            (setup.w_index & 0x00ff) as u8,
+            (setup.w_index >> 8) as u8,
+            (setup.w_length & 0x00ff) as u8,
+            (setup.w_length >> 8) as u8,
+        ]),
+        status: 8,
+        ..Default::default()
+    };
     setup_trb.set_cycle(true);
     setup_trb.set_trb_type(TrbType::SetupStage);
     setup_trb.write_to(&mut mem, transfer_ring_base);
 
     let payload = [0xde, 0xad, 0xbe, 0xef, 0, 0, 0, 0];
-    let mut data_trb = Trb::default();
-    data_trb.parameter = u64::from_le_bytes(payload);
-    data_trb.status = 4;
+    let mut data_trb = Trb {
+        parameter: u64::from_le_bytes(payload),
+        status: 4,
+        ..Default::default()
+    };
     data_trb.control |= TRB_IDT;
     data_trb.set_cycle(true);
     data_trb.set_trb_type(TrbType::DataStage);
@@ -162,8 +166,10 @@ fn xhci_controller_control_out_immediate_data_stage_is_delivered() {
     status_trb.control |= Trb::CONTROL_IOC; // request event
     status_trb.write_to(&mut mem, transfer_ring_base + 2 * TRB_LEN as u64);
 
-    let mut link_trb = Trb::default();
-    link_trb.parameter = transfer_ring_base;
+    let mut link_trb = Trb {
+        parameter: transfer_ring_base,
+        ..Default::default()
+    };
     link_trb.set_cycle(true);
     link_trb.set_trb_type(TrbType::Link);
     link_trb.set_link_toggle_cycle(true);
@@ -212,25 +218,29 @@ fn xhci_controller_control_in_immediate_data_stage_writes_trb_parameter() {
         w_length: 4,
     };
 
-    let mut setup_trb = Trb::default();
-    setup_trb.parameter = u64::from_le_bytes([
-        setup.bm_request_type,
-        setup.b_request,
-        (setup.w_value & 0x00ff) as u8,
-        (setup.w_value >> 8) as u8,
-        (setup.w_index & 0x00ff) as u8,
-        (setup.w_index >> 8) as u8,
-        (setup.w_length & 0x00ff) as u8,
-        (setup.w_length >> 8) as u8,
-    ]);
-    setup_trb.status = 8;
+    let mut setup_trb = Trb {
+        parameter: u64::from_le_bytes([
+            setup.bm_request_type,
+            setup.b_request,
+            (setup.w_value & 0x00ff) as u8,
+            (setup.w_value >> 8) as u8,
+            (setup.w_index & 0x00ff) as u8,
+            (setup.w_index >> 8) as u8,
+            (setup.w_length & 0x00ff) as u8,
+            (setup.w_length >> 8) as u8,
+        ]),
+        status: 8,
+        ..Default::default()
+    };
     setup_trb.set_cycle(true);
     setup_trb.set_trb_type(TrbType::SetupStage);
     setup_trb.write_to(&mut mem, transfer_ring_base);
 
-    let mut data_trb = Trb::default();
-    data_trb.parameter = 0x8877_6655_4433_2211; // would fault if treated as a pointer.
-    data_trb.status = 4;
+    let mut data_trb = Trb {
+        parameter: 0x8877_6655_4433_2211, // would fault if treated as a pointer.
+        status: 4,
+        ..Default::default()
+    };
     data_trb.control |= TRB_IDT | Trb::CONTROL_DIR; // IN + immediate
     data_trb.set_cycle(true);
     data_trb.set_trb_type(TrbType::DataStage);
@@ -242,8 +252,10 @@ fn xhci_controller_control_in_immediate_data_stage_writes_trb_parameter() {
     status_trb.control |= Trb::CONTROL_IOC; // Status OUT for control-IN requests.
     status_trb.write_to(&mut mem, transfer_ring_base + 2 * TRB_LEN as u64);
 
-    let mut link_trb = Trb::default();
-    link_trb.parameter = transfer_ring_base;
+    let mut link_trb = Trb {
+        parameter: transfer_ring_base,
+        ..Default::default()
+    };
     link_trb.set_cycle(true);
     link_trb.set_trb_type(TrbType::Link);
     link_trb.set_link_toggle_cycle(true);

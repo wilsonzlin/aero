@@ -152,7 +152,7 @@ fn ep0_transfer_engine_self_link_faults_and_emits_event() {
 
     let mut xhci = Ep0TransferEngine::new_with_ports(1);
     xhci.set_event_ring(event_ring, 8);
-    xhci.hub_mut().attach(0, Box::new(DummyDevice::default()));
+    xhci.hub_mut().attach(0, Box::new(DummyDevice));
 
     let slot_id = xhci.enable_slot(0).expect("slot allocation");
     assert!(xhci.configure_ep0(slot_id, tr_ring, true, 64));
@@ -264,7 +264,7 @@ fn ep0_transfer_engine_all_ones_trb_fetch_faults_and_emits_event() {
 
     let mut xhci = Ep0TransferEngine::new_with_ports(1);
     xhci.set_event_ring(event_ring, 8);
-    xhci.hub_mut().attach(0, Box::new(DummyDevice::default()));
+    xhci.hub_mut().attach(0, Box::new(DummyDevice));
 
     let slot_id = xhci.enable_slot(0).expect("slot allocation");
     assert!(xhci.configure_ep0(slot_id, tr_ring, true, 64));

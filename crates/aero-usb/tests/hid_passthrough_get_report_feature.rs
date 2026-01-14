@@ -226,7 +226,7 @@ fn cancel_control_transfer_clears_pending_feature_request() {
         dev.handle_setup(SetupPacket {
             bm_request_type: 0xa1,
             b_request: HID_REQUEST_GET_REPORT,
-            w_value: (1u16 << 8) | 0u16,
+            w_value: 1u16 << 8,
             w_index: 0,
             w_length: 0,
         }),

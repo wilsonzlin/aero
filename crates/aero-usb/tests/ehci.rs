@@ -71,7 +71,7 @@ fn qh_epchar(dev_addr: u8, ep: u8, max_packet: u16) -> u32 {
 }
 
 fn write_qtd(mem: &mut TestMemory, addr: u32, next: u32, token: u32, buf0: u32) {
-    mem.write_u32(addr + 0x00, next);
+    mem.write_u32(addr, next);
     mem.write_u32(addr + 0x04, LINK_TERMINATE); // alt-next terminate
     mem.write_u32(addr + 0x08, token);
     // Buffer pointers (5 dwords).
@@ -82,7 +82,7 @@ fn write_qtd(mem: &mut TestMemory, addr: u32, next: u32, token: u32, buf0: u32) 
 }
 
 fn write_qh(mem: &mut TestMemory, addr: u32, horiz: u32, ep_char: u32, first_qtd: u32) {
-    mem.write_u32(addr + 0x00, horiz);
+    mem.write_u32(addr, horiz);
     mem.write_u32(addr + 0x04, ep_char);
     mem.write_u32(addr + 0x08, 0); // ep caps
     mem.write_u32(addr + 0x0c, 0); // cur qTD (none loaded)
@@ -803,7 +803,10 @@ fn ehci_async_out_reads_guest_memory_across_page_boundary() {
 
     c.tick_1ms(&mut mem);
 
-    assert_eq!(out_received.borrow().as_slice(), &[payload.clone()]);
+    assert_eq!(
+        out_received.borrow().as_slice(),
+        std::slice::from_ref(&payload)
+    );
 
     let token = mem.read_u32(QTD_BULK_OUT + 0x08);
     assert_eq!(token & QTD_TOKEN_ACTIVE, 0);
@@ -953,8 +956,8 @@ fn ehci_async_qh_non_head_self_loop_sets_hse_and_halts() {
 
     // The async schedule is a circular list, so a single head QH pointing to itself is valid.
     // Instead, construct: head -> qh1, qh1 -> qh1 (a non-head self-loop).
-    mem.write_u32(head_qh + 0x00, qh_link_ptr_qh(qh1));
-    mem.write_u32(qh1 + 0x00, qh_link_ptr_qh(qh1));
+    mem.write_u32(head_qh, qh_link_ptr_qh(qh1));
+    mem.write_u32(qh1, qh_link_ptr_qh(qh1));
 
     // Terminate qTD chains so QH processing is effectively a no-op.
     mem.write_u32(head_qh + 0x10, LINK_TERMINATE);
@@ -1019,7 +1022,7 @@ fn ehci_periodic_qh_self_loop_sets_hse_and_halts() {
 
     // Frame list entry 0 points at a QH with a self-referential horizontal link.
     mem.write_u32(fl_base, qh_link_ptr_qh(qh));
-    mem.write_u32(qh + 0x00, qh_link_ptr_qh(qh));
+    mem.write_u32(qh, qh_link_ptr_qh(qh));
     mem.write_u32(qh + 0x10, LINK_TERMINATE);
 
     let mut c = EhciController::new();
@@ -1044,7 +1047,7 @@ fn ehci_periodic_itd_self_loop_sets_hse_and_halts() {
     // Frame list entry 0 points at an iTD (type=0). The iTD's forward pointer (dword0) points back
     // to itself, which would loop forever without periodic traversal cycle detection.
     mem.write_u32(fl_base, itd & LINK_ADDR_MASK);
-    mem.write_u32(itd + 0x00, itd & LINK_ADDR_MASK);
+    mem.write_u32(itd, itd & LINK_ADDR_MASK);
 
     let mut c = EhciController::new();
     c.mmio_write(regs::REG_PERIODICLISTBASE, 4, fl_base);
@@ -1112,7 +1115,7 @@ fn ehci_periodic_sitd_self_loop_sets_hse_and_halts() {
     // Frame list entry 0 points at a siTD (type=2). The siTD's next link pointer (dword0) points
     // back to itself.
     mem.write_u32(fl_base, (sitd & LINK_ADDR_MASK) | LINK_TYPE_SITD);
-    mem.write_u32(sitd + 0x00, (sitd & LINK_ADDR_MASK) | LINK_TYPE_SITD);
+    mem.write_u32(sitd, (sitd & LINK_ADDR_MASK) | LINK_TYPE_SITD);
 
     let mut c = EhciController::new();
     c.mmio_write(regs::REG_PERIODICLISTBASE, 4, fl_base);
@@ -1136,7 +1139,7 @@ fn ehci_periodic_fstn_self_loop_sets_hse_and_halts() {
     // Frame list entry 0 points at an FSTN (type=3). The FSTN's Normal Path Link Pointer (dword0)
     // points back to itself.
     mem.write_u32(fl_base, (fstn & LINK_ADDR_MASK) | LINK_TYPE_FSTN);
-    mem.write_u32(fstn + 0x00, (fstn & LINK_ADDR_MASK) | LINK_TYPE_FSTN);
+    mem.write_u32(fstn, (fstn & LINK_ADDR_MASK) | LINK_TYPE_FSTN);
 
     let mut c = EhciController::new();
     c.mmio_write(regs::REG_PERIODICLISTBASE, 4, fl_base);
@@ -1176,7 +1179,7 @@ fn ehci_periodic_itd_forward_link_to_qh_executes_qh() {
 
     // Frame list entry 0 points at an iTD whose Next Link Pointer points at a QH.
     mem.write_u32(fl_base, itd & LINK_ADDR_MASK);
-    mem.write_u32(itd + 0x00, qh_link_ptr_qh(qh));
+    mem.write_u32(itd, qh_link_ptr_qh(qh));
 
     write_qtd(
         &mut mem,
@@ -1229,7 +1232,7 @@ fn ehci_periodic_sitd_forward_link_to_qh_executes_qh() {
 
     // Frame list entry 0 points at a siTD whose Next Link Pointer points at a QH.
     mem.write_u32(fl_base, (sitd & LINK_ADDR_MASK) | LINK_TYPE_SITD);
-    mem.write_u32(sitd + 0x00, qh_link_ptr_qh(qh));
+    mem.write_u32(sitd, qh_link_ptr_qh(qh));
 
     write_qtd(
         &mut mem,
@@ -1282,7 +1285,7 @@ fn ehci_periodic_fstn_forward_link_to_qh_executes_qh() {
 
     // Frame list entry 0 points at an FSTN whose Normal Path Link Pointer points at a QH.
     mem.write_u32(fl_base, (fstn & LINK_ADDR_MASK) | LINK_TYPE_FSTN);
-    mem.write_u32(fstn + 0x00, qh_link_ptr_qh(qh));
+    mem.write_u32(fstn, qh_link_ptr_qh(qh));
 
     write_qtd(
         &mut mem,
@@ -1321,7 +1324,7 @@ fn ehci_async_qh_budget_exceeded_sets_hse_and_halts() {
     for i in 0..QH_COUNT {
         let qh = head + (i as u32) * 0x20;
         let next = if i + 1 == QH_COUNT { head } else { qh + 0x20 };
-        mem.write_u32(qh + 0x00, qh_link_ptr_qh(next));
+        mem.write_u32(qh, qh_link_ptr_qh(next));
         mem.write_u32(qh + 0x04, 0); // speed invalid; QH processing is a no-op.
         mem.write_u32(qh + 0x10, LINK_TERMINATE); // no qTDs
     }
@@ -1503,7 +1506,7 @@ fn ehci_periodic_link_budget_exceeded_sets_hse_and_halts() {
             addr + 0x20
         };
         // iTD dword0 is the Next Link Pointer; use iTD type (00).
-        mem.write_u32(addr + 0x00, next);
+        mem.write_u32(addr, next);
     }
 
     let mut c = EhciController::new();
@@ -1537,7 +1540,7 @@ fn ehci_periodic_link_exact_budget_limit_termination_does_not_fault() {
             addr + 0x20
         };
         // iTD dword0 is the Next Link Pointer; use iTD type (00).
-        mem.write_u32(addr + 0x00, next);
+        mem.write_u32(addr, next);
     }
 
     c.mmio_write(regs::REG_PERIODICLISTBASE, 4, fl_base);
@@ -1619,7 +1622,7 @@ fn ehci_async_qtd_packet_budget_yields_without_faulting() {
     // budget path.
     let total_bytes = 4097usize;
     let qtd = QTD_BULK_OUT;
-    mem.write_u32(qtd + 0x00, LINK_TERMINATE); // next terminate
+    mem.write_u32(qtd, LINK_TERMINATE); // next terminate
     mem.write_u32(qtd + 0x04, LINK_TERMINATE); // alt-next terminate
     mem.write_u32(
         qtd + 0x08,
@@ -1682,7 +1685,7 @@ fn ehci_schedule_fault_raises_irq_when_enabled_and_clears_on_w1c() {
 
     // Frame list entry 0 points at a QH with a self-referential horizontal link.
     mem.write_u32(fl_base, qh_link_ptr_qh(qh));
-    mem.write_u32(qh + 0x00, qh_link_ptr_qh(qh));
+    mem.write_u32(qh, qh_link_ptr_qh(qh));
     mem.write_u32(qh + 0x10, LINK_TERMINATE);
 
     let mut c = EhciController::new();

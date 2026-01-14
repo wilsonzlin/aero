@@ -36,7 +36,7 @@ fn enable_slot_then_address_device_emits_completion_event_and_sets_address() {
     // Context). Root hub port number is encoded in Slot Context dword1 bits 23:16.
     mem.write_u32(input_ctx + 0x20 + 4, 1u32 << 16);
     // Input Control Context: add Slot + EP0.
-    mem.write_u32(input_ctx + 0x00, 0);
+    mem.write_u32(input_ctx, 0);
     mem.write_u32(input_ctx + 0x04, (1 << 0) | (1 << 1));
     // EP0 context must be type=Control.
     mem.write_u32(input_ctx + 0x40 + 4, 4u32 << 3);
@@ -131,16 +131,16 @@ fn address_device_uses_route_string_to_target_downstream_device() {
     // Hub slot context: root port 1, route string = 0.
     mem.write_u32(hub_input_ctx + 0x20 + 4, 1u32 << 16);
     // Input Control Context: add Slot + EP0.
-    mem.write_u32(hub_input_ctx + 0x00, 0);
+    mem.write_u32(hub_input_ctx, 0);
     mem.write_u32(hub_input_ctx + 0x04, (1 << 0) | (1 << 1));
     // EP0 context must be type=Control.
     mem.write_u32(hub_input_ctx + 0x40 + 4, 4u32 << 3);
 
     // Leaf slot context: root port 1, route string tier0 = 3.
-    mem.write_u32(leaf_input_ctx + 0x20 + 0, 3);
+    mem.write_u32(leaf_input_ctx + 0x20, 3);
     mem.write_u32(leaf_input_ctx + 0x20 + 4, 1u32 << 16);
     // Input Control Context: add Slot + EP0.
-    mem.write_u32(leaf_input_ctx + 0x00, 0);
+    mem.write_u32(leaf_input_ctx, 0);
     mem.write_u32(leaf_input_ctx + 0x04, (1 << 0) | (1 << 1));
     // EP0 context must be type=Control.
     mem.write_u32(leaf_input_ctx + 0x40 + 4, 4u32 << 3);

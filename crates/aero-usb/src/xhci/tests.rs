@@ -133,7 +133,7 @@ fn controller_endpoint_commands_update_device_context_and_ring_state() {
     mem.write_u64(dcbaa + 8, dev_ctx);
 
     // Seed endpoint context state + dequeue pointer.
-    mem.write_u32(ep_ctx + 0, 1); // Running
+    mem.write_u32(ep_ctx, 1); // Running
     mem.write_u32(ep_ctx + 8, 0x1110 | 1); // TR Dequeue Pointer low (DCS=1)
     mem.write_u32(ep_ctx + 12, 0);
 
@@ -143,7 +143,7 @@ fn controller_endpoint_commands_update_device_context_and_ring_state() {
         completion.completion_code,
         super::CommandCompletionCode::Success
     );
-    assert_eq!(read_u32(&mut mem, ep_ctx + 0) & 0x7, 3);
+    assert_eq!(read_u32(&mut mem, ep_ctx) & 0x7, 3);
 
     // Set TR Dequeue Pointer updates the context + internal ring cursor state.
     let new_trdp = 0x6000u64;
@@ -167,14 +167,14 @@ fn controller_endpoint_commands_update_device_context_and_ring_state() {
     assert!(!ring.cycle_state());
 
     // Simulate a transfer error halting the endpoint, then Reset Endpoint -> Running (1).
-    let halted_dw0 = (read_u32(&mut mem, ep_ctx + 0) & !0x7) | 2;
-    mem.write_u32(ep_ctx + 0, halted_dw0);
+    let halted_dw0 = (read_u32(&mut mem, ep_ctx) & !0x7) | 2;
+    mem.write_u32(ep_ctx, halted_dw0);
     let completion = ctrl.reset_endpoint(&mut mem, slot_id, endpoint_id);
     assert_eq!(
         completion.completion_code,
         super::CommandCompletionCode::Success
     );
-    assert_eq!(read_u32(&mut mem, ep_ctx + 0) & 0x7, 1);
+    assert_eq!(read_u32(&mut mem, ep_ctx) & 0x7, 1);
 }
 
 #[test]
@@ -190,7 +190,7 @@ fn address_device_copies_slot_routing_and_ep0_tr_dequeue_pointer() {
     let event_ring = 0x5000u64;
 
     // Input Control Context: Drop=0, Add = Slot + EP0.
-    mem.write_u32(input_ctx + 0x00, 0);
+    mem.write_u32(input_ctx, 0);
     mem.write_u32(input_ctx + 0x04, (1 << 0) | (1 << 1));
 
     // Slot Context: Route String + Root Hub Port Number.
@@ -199,7 +199,7 @@ fn address_device_copies_slot_routing_and_ep0_tr_dequeue_pointer() {
     let speed_id = 3u32; // arbitrary
     let context_entries = 1u32;
     mem.write_u32(
-        input_ctx + 0x20 + 0,
+        input_ctx + 0x20,
         route_string | (speed_id << 20) | (context_entries << 27),
     );
     mem.write_u32(input_ctx + 0x20 + 4, 7u32 << 16); // RootHubPortNumber = 7 (bits 23:16)
@@ -220,14 +220,14 @@ fn address_device_copies_slot_routing_and_ep0_tr_dequeue_pointer() {
         let mut trb0 = Trb::new(0, 0, 0);
         trb0.set_trb_type(TrbType::EnableSlotCommand);
         trb0.set_cycle(true);
-        mem.write_trb(cmd_ring + 0 * 16, trb0);
+        mem.write_trb(cmd_ring, trb0);
     }
     {
         let mut trb1 = Trb::new(input_ctx, 0, 0);
         trb1.set_trb_type(TrbType::AddressDeviceCommand);
         trb1.set_slot_id(1);
         trb1.set_cycle(true);
-        mem.write_trb(cmd_ring + 1 * 16, trb1);
+        mem.write_trb(cmd_ring + TRB_LEN as u64, trb1);
     }
 
     let mut processor = CommandRingProcessor::new(
@@ -261,13 +261,13 @@ fn address_device_copies_slot_routing_and_ep0_tr_dequeue_pointer() {
     processor.process(&mut mem, 1);
     assert!(!processor.host_controller_error);
 
-    let ev1 = mem.read_trb(event_ring + 1 * 16);
+    let ev1 = mem.read_trb(event_ring + TRB_LEN as u64);
     assert_eq!(ev1.trb_type(), TrbType::CommandCompletionEvent);
     assert_eq!(event_completion_code(ev1), CompletionCode::Success.as_u8());
 
     // Slot Context routing fields should be copied into the Device Context.
     let mut buf = [0u8; 4];
-    mem.read_physical(dev_ctx + 0x00, &mut buf);
+    mem.read_physical(dev_ctx, &mut buf);
     let out_slot_dw0 = u32::from_le_bytes(buf);
     assert_eq!(out_slot_dw0 & 0x000f_ffff, route_string);
 
@@ -301,13 +301,13 @@ fn configure_endpoint_rejects_unsupported_add_flags() {
     mem.write_u32(dev_ctx + 0x20 + 4, 8u32 << 16);
 
     // Address Device input context: Slot + EP0 for a device on root port 1.
-    mem.write_u32(address_ctx + 0x00, 0);
+    mem.write_u32(address_ctx, 0);
     mem.write_u32(address_ctx + 0x04, (1 << 0) | (1 << 1));
     mem.write_u32(address_ctx + 0x20 + 4, 1u32 << 16); // RootHubPortNumber = 1
     mem.write_u32(address_ctx + 0x40 + 4, (4u32 << 3) | (8u32 << 16)); // EP0 type=Control, MPS=8
 
     // Configure Endpoint input context: request EP0 + EP1 OUT (unsupported by MVP).
-    mem.write_u32(input_ctx + 0x00, 0);
+    mem.write_u32(input_ctx, 0);
     mem.write_u32(input_ctx + 0x04, (1 << 1) | (1 << 2));
     // Provide an EP0 context that would otherwise update MPS to 64 (should be ignored).
     mem.write_u32(input_ctx + 0x40 + 4, (4u32 << 3) | (64u32 << 16));
@@ -316,14 +316,14 @@ fn configure_endpoint_rejects_unsupported_add_flags() {
         let mut trb0 = Trb::new(0, 0, 0);
         trb0.set_trb_type(TrbType::EnableSlotCommand);
         trb0.set_cycle(true);
-        mem.write_trb(cmd_ring + 0 * 16, trb0);
+        mem.write_trb(cmd_ring, trb0);
     }
     {
         let mut trb1 = Trb::new(address_ctx, 0, 0);
         trb1.set_trb_type(TrbType::AddressDeviceCommand);
         trb1.set_slot_id(1);
         trb1.set_cycle(true);
-        mem.write_trb(cmd_ring + 1 * 16, trb1);
+        mem.write_trb(cmd_ring + TRB_LEN as u64, trb1);
     }
     {
         let mut trb2 = Trb::new(input_ctx, 0, 0);
@@ -355,7 +355,7 @@ fn configure_endpoint_rejects_unsupported_add_flags() {
 
     processor.process(&mut mem, 1);
     assert!(!processor.host_controller_error);
-    let ev1 = mem.read_trb(event_ring + 1 * 16);
+    let ev1 = mem.read_trb(event_ring + TRB_LEN as u64);
     assert_eq!(event_completion_code(ev1), CompletionCode::Success.as_u8());
 
     processor.process(&mut mem, 1);
@@ -396,11 +396,11 @@ fn noop_and_evaluate_context_emit_events_and_update_ep0_mps() {
     mem.write_u32(dev_ctx + 0x20 + 4, 8u32 << 16);
 
     // Input control context: Drop=0, Add = Slot + EP0.
-    mem.write_u32(input_ctx + 0x00, 0);
+    mem.write_u32(input_ctx, 0);
     mem.write_u32(input_ctx + 0x04, (1 << 0) | (1 << 1));
 
     // Input EP0 context requests MPS=64 and Interval=5.
-    mem.write_u32(input_ctx + 0x40 + 0, 5u32 << 16);
+    mem.write_u32(input_ctx + 0x40, 5u32 << 16);
     mem.write_u32(input_ctx + 0x40 + 4, 64u32 << 16);
     // TR Dequeue Pointer: copy-through field; choose an arbitrary aligned value.
     mem.write_u32(input_ctx + 0x40 + 8, 0xdead_bee0);
@@ -415,14 +415,14 @@ fn noop_and_evaluate_context_emit_events_and_update_ep0_mps() {
         let mut trb0 = Trb::new(0, 0, 0);
         trb0.set_trb_type(TrbType::EnableSlotCommand);
         trb0.set_cycle(true);
-        mem.write_trb(cmd_ring + 0 * 16, trb0);
+        mem.write_trb(cmd_ring, trb0);
     }
     {
         let mut trb1 = Trb::new(0, 0, 0);
         trb1.set_trb_type(TrbType::NoOpCommand);
         trb1.set_slot_id(0);
         trb1.set_cycle(true);
-        mem.write_trb(cmd_ring + 1 * 16, trb1);
+        mem.write_trb(cmd_ring + TRB_LEN as u64, trb1);
     }
     {
         let mut trb2 = Trb::new(input_ctx, 0, 0);
@@ -455,7 +455,7 @@ fn noop_and_evaluate_context_emit_events_and_update_ep0_mps() {
     processor.process(&mut mem, 1);
     assert!(!processor.host_controller_error);
 
-    let ev0 = mem.read_trb(event_ring + 0 * 16);
+    let ev0 = mem.read_trb(event_ring);
     assert_eq!(ev0.trb_type(), TrbType::CommandCompletionEvent);
     assert_eq!(event_completion_code(ev0), CompletionCode::Success.as_u8());
     assert_eq!(ev0.slot_id(), 1);
@@ -473,14 +473,14 @@ fn noop_and_evaluate_context_emit_events_and_update_ep0_mps() {
 
     // Link TRBs are consumed but do not generate events; we should have exactly two command
     // completion events (No-Op + Evaluate Context) after the initial Enable Slot.
-    let ev1 = mem.read_trb(event_ring + 1 * 16);
+    let ev1 = mem.read_trb(event_ring + TRB_LEN as u64);
     let ev2 = mem.read_trb(event_ring + 2 * 16);
 
     assert_eq!(ev1.trb_type(), TrbType::CommandCompletionEvent);
     assert_eq!(ev2.trb_type(), TrbType::CommandCompletionEvent);
     assert_eq!(event_completion_code(ev1), CompletionCode::Success.as_u8());
     assert_eq!(event_completion_code(ev2), CompletionCode::Success.as_u8());
-    assert_eq!(ev1.pointer(), cmd_ring + 1 * 16);
+    assert_eq!(ev1.pointer(), cmd_ring + TRB_LEN as u64);
     assert_eq!(ev2.pointer(), cmd_ring + 2 * 16);
 
     // EP0 max packet size should have been updated to 64.
@@ -491,7 +491,7 @@ fn noop_and_evaluate_context_emit_events_and_update_ep0_mps() {
 
     // Command ring should have followed the Link TRB and toggled the consumer cycle state.
     assert_eq!(processor.command_ring.dequeue_ptr, cmd_ring);
-    assert_eq!(processor.command_ring.cycle_state, false);
+    assert!(!processor.command_ring.cycle_state);
 
     // Simulate the guest adding another No-Op command after the cycle-state toggle by overwriting
     // TRB0 with cycle=0.
@@ -500,7 +500,7 @@ fn noop_and_evaluate_context_emit_events_and_update_ep0_mps() {
         trb0.set_trb_type(TrbType::NoOpCommand);
         trb0.set_slot_id(0);
         trb0.set_cycle(false);
-        mem.write_trb(cmd_ring + 0 * 16, trb0);
+        mem.write_trb(cmd_ring, trb0);
     }
 
     processor.process(&mut mem, 16);
@@ -512,7 +512,7 @@ fn noop_and_evaluate_context_emit_events_and_update_ep0_mps() {
     let ev3 = mem.read_trb(event_ring + 3 * 16);
     assert_eq!(ev3.trb_type(), TrbType::CommandCompletionEvent);
     assert_eq!(event_completion_code(ev3), CompletionCode::Success.as_u8());
-    assert_eq!(ev3.pointer(), cmd_ring + 0 * 16);
+    assert_eq!(ev3.pointer(), cmd_ring);
 }
 
 #[test]
@@ -529,7 +529,7 @@ fn evaluate_context_rejects_unsupported_context_flags() {
     mem.write_u32(dev_ctx + 0x20 + 4, 8u32 << 16);
 
     // Add EP0 + EP1 (unsupported).
-    mem.write_u32(input_ctx + 0x00, 0);
+    mem.write_u32(input_ctx, 0);
     mem.write_u32(input_ctx + 0x04, (1 << 1) | (1 << 2));
     mem.write_u32(input_ctx + 0x40 + 4, 64u32 << 16);
 
@@ -540,14 +540,14 @@ fn evaluate_context_rejects_unsupported_context_flags() {
         let mut cmd = Trb::new(0, 0, 0);
         cmd.set_trb_type(TrbType::EnableSlotCommand);
         cmd.set_cycle(true);
-        mem.write_trb(cmd_ring + 0 * 16, cmd);
+        mem.write_trb(cmd_ring, cmd);
     }
     {
         let mut cmd = Trb::new(input_ctx, 0, 0);
         cmd.set_trb_type(TrbType::EvaluateContextCommand);
         cmd.set_slot_id(1);
         cmd.set_cycle(true);
-        mem.write_trb(cmd_ring + 1 * 16, cmd);
+        mem.write_trb(cmd_ring + TRB_LEN as u64, cmd);
     }
 
     let mut processor = CommandRingProcessor::new(
@@ -570,8 +570,8 @@ fn evaluate_context_rejects_unsupported_context_flags() {
     processor.process(&mut mem, 16);
     assert!(!processor.host_controller_error);
 
-    let ev0 = mem.read_trb(event_ring + 0 * 16);
-    let ev1 = mem.read_trb(event_ring + 1 * 16);
+    let ev0 = mem.read_trb(event_ring);
+    let ev1 = mem.read_trb(event_ring + TRB_LEN as u64);
     assert_eq!(ev0.trb_type(), TrbType::CommandCompletionEvent);
     assert_eq!(ev1.trb_type(), TrbType::CommandCompletionEvent);
     assert_eq!(event_completion_code(ev0), CompletionCode::Success.as_u8());
@@ -605,7 +605,7 @@ fn endpoint_commands_emit_completion_events_and_update_context() {
     // DCBAA[1] will be populated after Enable Slot completes (simulating Address Device).
 
     // Seed endpoint context state + dequeue pointer.
-    mem.write_u32(ep_ctx + 0, 1); // Running
+    mem.write_u32(ep_ctx, 1); // Running
     mem.write_u32(ep_ctx + 8, 0x1110 | 1); // TR Dequeue Pointer low (DCS=1)
     mem.write_u32(ep_ctx + 12, 0);
 
@@ -618,7 +618,7 @@ fn endpoint_commands_emit_completion_events_and_update_context() {
         let mut en = Trb::new(0, 0, 0);
         en.set_trb_type(TrbType::EnableSlotCommand);
         en.set_cycle(true);
-        mem.write_trb(cmd_ring + 0 * 16, en);
+        mem.write_trb(cmd_ring, en);
     }
     let new_trdp = 0x6000u64;
     {
@@ -627,7 +627,7 @@ fn endpoint_commands_emit_completion_events_and_update_context() {
         stop.set_slot_id(slot_id);
         stop.set_endpoint_id(endpoint_id);
         stop.set_cycle(true);
-        mem.write_trb(cmd_ring + 1 * 16, stop);
+        mem.write_trb(cmd_ring + TRB_LEN as u64, stop);
     }
     {
         let mut set = Trb::new(new_trdp, 0, 0);
@@ -661,7 +661,7 @@ fn endpoint_commands_emit_completion_events_and_update_context() {
     processor.process(&mut mem, 1);
     assert!(!processor.host_controller_error);
 
-    let ev0 = mem.read_trb(event_ring + 0 * 16);
+    let ev0 = mem.read_trb(event_ring);
     assert_eq!(ev0.trb_type(), TrbType::CommandCompletionEvent);
     assert_eq!(event_completion_code(ev0), CompletionCode::Success.as_u8());
     assert_eq!(ev0.slot_id(), 1);
@@ -672,18 +672,18 @@ fn endpoint_commands_emit_completion_events_and_update_context() {
     processor.process(&mut mem, 2);
     assert!(!processor.host_controller_error);
 
-    let ev1 = mem.read_trb(event_ring + 1 * 16);
+    let ev1 = mem.read_trb(event_ring + TRB_LEN as u64);
     let ev2 = mem.read_trb(event_ring + 2 * 16);
 
     assert_eq!(ev1.trb_type(), TrbType::CommandCompletionEvent);
     assert_eq!(ev2.trb_type(), TrbType::CommandCompletionEvent);
     assert_eq!(event_completion_code(ev1), CompletionCode::Success.as_u8());
     assert_eq!(event_completion_code(ev2), CompletionCode::Success.as_u8());
-    assert_eq!(ev1.pointer(), cmd_ring + 1 * 16);
+    assert_eq!(ev1.pointer(), cmd_ring + TRB_LEN as u64);
     assert_eq!(ev2.pointer(), cmd_ring + 2 * 16);
 
     // Stop Endpoint should transition the endpoint state to Stopped (3).
-    assert_eq!(read_u32(&mut mem, ep_ctx + 0) & 0x7, 3);
+    assert_eq!(read_u32(&mut mem, ep_ctx) & 0x7, 3);
 
     // Set TR Dequeue Pointer should update dwords 2-3.
     let dw2 = read_u32(&mut mem, ep_ctx + 8);
@@ -693,8 +693,8 @@ fn endpoint_commands_emit_completion_events_and_update_context() {
     assert_eq!(raw & 0x01, 0);
 
     // Simulate a transfer error halting the endpoint, then process Reset Endpoint.
-    let halted_dw0 = (read_u32(&mut mem, ep_ctx + 0) & !0x7) | 2;
-    mem.write_u32(ep_ctx + 0, halted_dw0);
+    let halted_dw0 = (read_u32(&mut mem, ep_ctx) & !0x7) | 2;
+    mem.write_u32(ep_ctx, halted_dw0);
 
     processor.process(&mut mem, 1);
     assert!(!processor.host_controller_error);
@@ -705,7 +705,7 @@ fn endpoint_commands_emit_completion_events_and_update_context() {
     assert_eq!(ev3.pointer(), cmd_ring + 3 * 16);
 
     // Reset Endpoint should clear the halted condition (Running = 1).
-    assert_eq!(read_u32(&mut mem, ep_ctx + 0) & 0x7, 1);
+    assert_eq!(read_u32(&mut mem, ep_ctx) & 0x7, 1);
 }
 
 #[test]
@@ -730,14 +730,14 @@ fn disable_slot_clears_state_and_rejects_double_disable() {
         let mut trb0 = Trb::new(0, 0, 0);
         trb0.set_trb_type(TrbType::EnableSlotCommand);
         trb0.set_cycle(true);
-        mem.write_trb(cmd_ring + 0 * 16, trb0);
+        mem.write_trb(cmd_ring, trb0);
     }
     {
         let mut trb1 = Trb::new(0, 0, 0);
         trb1.set_trb_type(TrbType::DisableSlotCommand);
         trb1.set_slot_id(1);
         trb1.set_cycle(true);
-        mem.write_trb(cmd_ring + 1 * 16, trb1);
+        mem.write_trb(cmd_ring + TRB_LEN as u64, trb1);
     }
     {
         let mut trb2 = Trb::new(0, 0, 0);
@@ -761,7 +761,7 @@ fn disable_slot_clears_state_and_rejects_double_disable() {
     // Enable Slot.
     processor.process(&mut mem, 1);
     assert!(!processor.host_controller_error);
-    let ev0 = mem.read_trb(event_ring + 0 * 16);
+    let ev0 = mem.read_trb(event_ring);
     assert_eq!(ev0.trb_type(), TrbType::CommandCompletionEvent);
     assert_eq!(event_completion_code(ev0), CompletionCode::Success.as_u8());
     assert_eq!(ev0.slot_id(), 1);
@@ -773,7 +773,7 @@ fn disable_slot_clears_state_and_rejects_double_disable() {
 
     processor.process(&mut mem, 1);
     assert!(!processor.host_controller_error);
-    let ev1 = mem.read_trb(event_ring + 1 * 16);
+    let ev1 = mem.read_trb(event_ring + TRB_LEN as u64);
     assert_eq!(ev1.trb_type(), TrbType::CommandCompletionEvent);
     assert_eq!(event_completion_code(ev1), CompletionCode::Success.as_u8());
     assert_eq!(ev1.slot_id(), 1);
@@ -811,13 +811,13 @@ fn enable_slot_allocates_slot_ids_and_reports_exhaustion() {
         let mut trb0 = Trb::new(0, 0, 0);
         trb0.set_trb_type(TrbType::EnableSlotCommand);
         trb0.set_cycle(true);
-        mem.write_trb(cmd_ring + 0 * 16, trb0);
+        mem.write_trb(cmd_ring, trb0);
     }
     {
         let mut trb1 = Trb::new(0, 0, 0);
         trb1.set_trb_type(TrbType::EnableSlotCommand);
         trb1.set_cycle(true);
-        mem.write_trb(cmd_ring + 1 * 16, trb1);
+        mem.write_trb(cmd_ring + TRB_LEN as u64, trb1);
     }
     {
         let mut link = Trb::new(cmd_ring & !0x0f, 0, 0);
@@ -840,8 +840,8 @@ fn enable_slot_allocates_slot_ids_and_reports_exhaustion() {
     processor.process(&mut mem, 16);
     assert!(!processor.host_controller_error);
 
-    let ev0 = mem.read_trb(event_ring + 0 * 16);
-    let ev1 = mem.read_trb(event_ring + 1 * 16);
+    let ev0 = mem.read_trb(event_ring);
+    let ev1 = mem.read_trb(event_ring + TRB_LEN as u64);
     assert_eq!(ev0.trb_type(), TrbType::CommandCompletionEvent);
     assert_eq!(ev1.trb_type(), TrbType::CommandCompletionEvent);
 
@@ -938,7 +938,7 @@ fn command_ring_context_commands_reset_ep0_control_td_state() {
     mem.write_u64(dcbaa + (u64::from(slot_id) * 8), dev_ctx);
 
     // Evaluate Context input context: Drop=0, Add=EP0.
-    mem.write_u32(eval_ctx + 0x00, 0);
+    mem.write_u32(eval_ctx, 0);
     mem.write_u32(eval_ctx + 0x04, 1 << 1);
     let eval_trdp = 0x9000u64;
     let eval_raw = eval_trdp | 1;
@@ -946,7 +946,7 @@ fn command_ring_context_commands_reset_ep0_control_td_state() {
     mem.write_u32(eval_ctx + 0x40 + 12, (eval_raw >> 32) as u32);
 
     // Configure Endpoint input context: Drop=0, Add=EP0.
-    mem.write_u32(cfg_ctx + 0x00, 0);
+    mem.write_u32(cfg_ctx, 0);
     mem.write_u32(cfg_ctx + 0x04, 1 << 1);
     let cfg_trdp = 0xa000u64;
     let cfg_raw = cfg_trdp;
@@ -961,14 +961,14 @@ fn command_ring_context_commands_reset_ep0_control_td_state() {
         trb0.set_trb_type(TrbType::EvaluateContextCommand);
         trb0.set_slot_id(slot_id);
         trb0.set_cycle(true);
-        mem.write_trb(cmd_ring + 0 * 16, trb0);
+        mem.write_trb(cmd_ring, trb0);
     }
     {
         let mut trb1 = Trb::new(cfg_ctx, 0, 0);
         trb1.set_trb_type(TrbType::ConfigureEndpointCommand);
         trb1.set_slot_id(slot_id);
         trb1.set_cycle(true);
-        mem.write_trb(cmd_ring + 1 * 16, trb1);
+        mem.write_trb(cmd_ring + TRB_LEN as u64, trb1);
     }
 
     ctrl.set_command_ring(cmd_ring, true);
@@ -1043,11 +1043,11 @@ fn command_ring_address_device_resets_ep0_control_td_state() {
     mem.write_u64(dcbaa + (u64::from(slot_id) * 8), dev_ctx);
 
     // Input Control Context: Drop=0, Add = Slot + EP0 (required for Address Device).
-    mem.write_u32(input_ctx + 0x00, 0);
+    mem.write_u32(input_ctx, 0);
     mem.write_u32(input_ctx + 0x04, (1 << 0) | (1 << 1));
 
     // Slot Context: bind to root port 1 with an empty route string.
-    mem.write_u32(input_ctx + 0x20 + 0, 0);
+    mem.write_u32(input_ctx + 0x20, 0);
     mem.write_u32(input_ctx + 0x20 + 4, 1u32 << 16);
 
     // EP0 context: seed TRDP + DCS=1.
@@ -1062,7 +1062,7 @@ fn command_ring_address_device_resets_ep0_control_td_state() {
         trb0.set_trb_type(TrbType::AddressDeviceCommand);
         trb0.set_slot_id(slot_id);
         trb0.set_cycle(true);
-        mem.write_trb(cmd_ring + 0 * 16, trb0);
+        mem.write_trb(cmd_ring, trb0);
     }
 
     ctrl.set_command_ring(cmd_ring, true);
@@ -1192,8 +1192,10 @@ fn controller_snapshot_roundtrip_is_deterministic() {
 
     // Queue a host-side event (in addition to the port status change event) and service the guest
     // event ring once to mutate the producer cursor + IMAN.IP.
-    let mut evt = Trb::default();
-    evt.parameter = 0x1111_2222_3333_4444;
+    let mut evt = Trb {
+        parameter: 0x1111_2222_3333_4444,
+        ..Default::default()
+    };
     evt.set_trb_type(TrbType::PortStatusChangeEvent);
     xhci.post_event(evt);
     xhci.service_event_ring(&mut mem);
@@ -1283,11 +1285,11 @@ fn controller_mmio_doorbell_processes_command_ring_and_posts_events() {
     mem.write_u32(dev_ctx + 0x20 + 4, 8u32 << 16);
 
     // Input control context: Drop=0, Add = Slot + EP0.
-    mem.write_u32(input_ctx + 0x00, 0);
+    mem.write_u32(input_ctx, 0);
     mem.write_u32(input_ctx + 0x04, (1 << 0) | (1 << 1));
 
     // Input EP0 context requests MPS=64 and Interval=5.
-    mem.write_u32(input_ctx + 0x40 + 0, 5u32 << 16);
+    mem.write_u32(input_ctx + 0x40, 5u32 << 16);
     mem.write_u32(input_ctx + 0x40 + 4, 64u32 << 16);
     mem.write_u32(input_ctx + 0x40 + 8, 0xdead_bee0);
     mem.write_u32(input_ctx + 0x40 + 12, 0);
@@ -1299,17 +1301,17 @@ fn controller_mmio_doorbell_processes_command_ring_and_posts_events() {
         let mut trb0 = Trb::new(0, 0, 0);
         trb0.set_trb_type(TrbType::EnableSlotCommand);
         trb0.set_cycle(true);
-        mem.write_trb(cmd_ring + 0 * 16, trb0);
+        mem.write_trb(cmd_ring, trb0);
     }
     {
         let mut stop = Trb::new(0, 0, 0);
         stop.set_trb_type(TrbType::NoOpCommand);
         stop.set_cycle(false);
-        mem.write_trb(cmd_ring + 1 * 16, stop);
+        mem.write_trb(cmd_ring + TRB_LEN as u64, stop);
     }
 
     // Event Ring Segment Table (ERST) with a single segment pointing at `event_ring`.
-    mem.write_u64(erst + 0, event_ring);
+    mem.write_u64(erst, event_ring);
     mem.write_u32(erst + 8, 16); // segment size in TRBs
     mem.write_u32(erst + 12, 0);
 
@@ -1349,10 +1351,10 @@ fn controller_mmio_doorbell_processes_command_ring_and_posts_events() {
     ctrl.mmio_write(&mut mem, regs::DBOFF_VALUE as u64, 4, 0);
 
     // Enable Slot -> one completion event.
-    let ev0 = mem.read_trb(event_ring + 0 * 16);
+    let ev0 = mem.read_trb(event_ring);
     assert_eq!(ev0.trb_type(), TrbType::CommandCompletionEvent);
     assert_eq!(event_completion_code(ev0), CompletionCode::Success.as_u8());
-    assert_eq!(ev0.pointer(), cmd_ring + 0 * 16);
+    assert_eq!(ev0.pointer(), cmd_ring);
     assert_eq!(ev0.slot_id(), 1);
 
     // Interrupt should be asserted for the completion event.
@@ -1379,7 +1381,7 @@ fn controller_mmio_doorbell_processes_command_ring_and_posts_events() {
         trb1.set_trb_type(TrbType::NoOpCommand);
         trb1.set_slot_id(0);
         trb1.set_cycle(true);
-        mem.write_trb(cmd_ring + 1 * 16, trb1);
+        mem.write_trb(cmd_ring + TRB_LEN as u64, trb1);
     }
     {
         let mut trb2 = Trb::new(input_ctx, 0, 0);
@@ -1399,13 +1401,13 @@ fn controller_mmio_doorbell_processes_command_ring_and_posts_events() {
     ctrl.mmio_write(&mut mem, regs::DBOFF_VALUE as u64, 4, 0);
 
     // Two commands -> two completion events.
-    let ev1 = mem.read_trb(event_ring + 1 * 16);
+    let ev1 = mem.read_trb(event_ring + TRB_LEN as u64);
     let ev2 = mem.read_trb(event_ring + 2 * 16);
     assert_eq!(ev1.trb_type(), TrbType::CommandCompletionEvent);
     assert_eq!(ev2.trb_type(), TrbType::CommandCompletionEvent);
     assert_eq!(event_completion_code(ev1), CompletionCode::Success.as_u8());
     assert_eq!(event_completion_code(ev2), CompletionCode::Success.as_u8());
-    assert_eq!(ev1.pointer(), cmd_ring + 1 * 16);
+    assert_eq!(ev1.pointer(), cmd_ring + TRB_LEN as u64);
     assert_eq!(ev2.pointer(), cmd_ring + 2 * 16);
     assert_eq!(ev2.slot_id(), 1);
 
@@ -1509,8 +1511,8 @@ fn snapshot_roundtrip_preserves_regs_ports_slots_and_device_tree() {
     assert_eq!(ctrl.pending_event_count(), 3);
     ctrl.service_event_ring(&mut mem);
     assert_eq!(ctrl.pending_event_count(), 1);
-    let ev0_before = mem.read_trb(event_ring_base + 0 * 16);
-    let ev1_before = mem.read_trb(event_ring_base + 1 * 16);
+    let ev0_before = mem.read_trb(event_ring_base);
+    let ev1_before = mem.read_trb(event_ring_base + TRB_LEN as u64);
     assert_eq!(ev0_before.trb_type(), TrbType::PortStatusChangeEvent);
     assert_eq!(ev1_before.trb_type(), TrbType::PortStatusChangeEvent);
     assert!(ev0_before.cycle());
@@ -1550,16 +1552,16 @@ fn snapshot_roundtrip_preserves_regs_ports_slots_and_device_tree() {
     // Ensure the guest event ring producer state was restored by consuming one event (advance ERDP)
     // and verifying that the next event is written into the consumed slot instead of overwriting
     // the still-pending event at index 1.
-    assert_eq!(mem.read_trb(event_ring_base + 0 * 16), ev0_before);
-    assert_eq!(mem.read_trb(event_ring_base + 1 * 16), ev1_before);
+    assert_eq!(mem.read_trb(event_ring_base), ev0_before);
+    assert_eq!(mem.read_trb(event_ring_base + TRB_LEN as u64), ev1_before);
 
     // Guest consumes the first event, leaving index 1 unconsumed.
-    restored.interrupter0.write_erdp(event_ring_base + 1 * 16);
+    restored.interrupter0.write_erdp(event_ring_base + TRB_LEN as u64);
     restored.service_event_ring(&mut mem);
     assert_eq!(restored.pending_event_count(), 0);
 
-    let ev0_after = mem.read_trb(event_ring_base + 0 * 16);
-    let ev1_after = mem.read_trb(event_ring_base + 1 * 16);
+    let ev0_after = mem.read_trb(event_ring_base);
+    let ev1_after = mem.read_trb(event_ring_base + TRB_LEN as u64);
     assert_eq!(
         ev1_after, ev1_before,
         "unconsumed event should not be overwritten"

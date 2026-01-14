@@ -3671,7 +3671,7 @@ mod tests {
         assert_eq!(req.report_id, 1);
 
         // Host returns payload bytes (report ID prefix is injected by the device model).
-        dev.complete_feature_report_request(req.request_id, req.report_id, &vec![0; 199]);
+        dev.complete_feature_report_request(req.request_id, req.report_id, &[0; 199]);
 
         let resp = dev.handle_control_request(
             SetupPacket {

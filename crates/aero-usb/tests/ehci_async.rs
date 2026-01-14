@@ -130,7 +130,7 @@ impl UsbDeviceModel for DummyHsDevice {
             let mut st = self.0.borrow_mut();
             if st.bulk_reads == 0 {
                 st.bulk_reads += 1;
-                let data = vec![1u8, 2, 3, 4];
+                let data = [1u8, 2, 3, 4];
                 return UsbInResult::Data(data[..data.len().min(max_len)].to_vec());
             }
             return UsbInResult::Nak;
@@ -218,9 +218,9 @@ impl UsbDeviceModel for ChunkedInDevice {
         let mut st = self.0.borrow_mut();
         st.calls += 1;
         match st.calls {
-            1 => UsbInResult::Data(vec![1u8, 2, 3, 4][..max_len.min(4)].to_vec()),
+            1 => UsbInResult::Data([1u8, 2, 3, 4][..max_len.min(4)].to_vec()),
             2 => UsbInResult::Nak,
-            3 => UsbInResult::Data(vec![5u8, 6, 7, 8][..max_len.min(4)].to_vec()),
+            3 => UsbInResult::Data([5u8, 6, 7, 8][..max_len.min(4)].to_vec()),
             _ => UsbInResult::Nak,
         }
     }

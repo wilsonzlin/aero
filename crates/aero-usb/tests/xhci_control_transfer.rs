@@ -44,24 +44,28 @@ fn xhci_control_get_descriptor_device_keyboard_short_packet_event() {
     assert_eq!(expected.len(), 18);
 
     // Transfer ring TRBs: SetupStage, DataStage(IN), StatusStage(OUT), Link.
-    let mut setup_trb = Trb::default();
-    setup_trb.parameter = u64::from_le_bytes([
-        setup.bm_request_type,
-        setup.b_request,
-        (setup.w_value & 0x00ff) as u8,
-        (setup.w_value >> 8) as u8,
-        (setup.w_index & 0x00ff) as u8,
-        (setup.w_index >> 8) as u8,
-        (setup.w_length & 0x00ff) as u8,
-        (setup.w_length >> 8) as u8,
-    ]);
+    let mut setup_trb = Trb {
+        parameter: u64::from_le_bytes([
+            setup.bm_request_type,
+            setup.b_request,
+            (setup.w_value & 0x00ff) as u8,
+            (setup.w_value >> 8) as u8,
+            (setup.w_index & 0x00ff) as u8,
+            (setup.w_index >> 8) as u8,
+            (setup.w_length & 0x00ff) as u8,
+            (setup.w_length >> 8) as u8,
+        ]),
+        ..Default::default()
+    };
     setup_trb.set_cycle(true);
     setup_trb.set_trb_type(TrbType::SetupStage);
     setup_trb.write_to(&mut mem, transfer_ring_base);
 
-    let mut data_trb = Trb::default();
-    data_trb.parameter = data_buf;
-    data_trb.status = 64; // TRB Transfer Length
+    let mut data_trb = Trb {
+        parameter: data_buf,
+        status: 64, // TRB Transfer Length
+        ..Default::default()
+    };
     data_trb.control |= Trb::CONTROL_DIR; // IN
     data_trb.set_cycle(true);
     data_trb.set_trb_type(TrbType::DataStage);
@@ -71,11 +75,13 @@ fn xhci_control_get_descriptor_device_keyboard_short_packet_event() {
     status_trb.set_cycle(true);
     status_trb.set_trb_type(TrbType::StatusStage);
     status_trb.control |= Trb::CONTROL_IOC; // request Transfer Event
-                                            // DIR=0 (Status OUT) for a control read.
+                                             // DIR=0 (Status OUT) for a control read.
     status_trb.write_to(&mut mem, transfer_ring_base + 2 * TRB_LEN as u64);
 
-    let mut link_trb = Trb::default();
-    link_trb.parameter = transfer_ring_base;
+    let mut link_trb = Trb {
+        parameter: transfer_ring_base,
+        ..Default::default()
+    };
     link_trb.set_cycle(true);
     link_trb.set_trb_type(TrbType::Link);
     link_trb.set_link_toggle_cycle(true);

@@ -218,7 +218,7 @@ impl XhciHarness {
 
         let pending = self.ep0_pending.as_ref().expect("pending must exist");
         match self.dev.handle_in(0, pending.len) {
-            UsbInResult::Nak => return,
+            UsbInResult::Nak => (),
             UsbInResult::Data(data) => {
                 mem.write(pending.buf_ptr as u32, &data);
                 // STATUS stage: for control-IN, the status stage is an OUT ZLP.
@@ -272,7 +272,7 @@ impl XhciHarness {
             .as_ref()
             .expect("pending bulk out must exist");
         match self.dev.handle_out(pending.ep, &pending.data) {
-            UsbOutResult::Nak => return,
+            UsbOutResult::Nak => (),
             UsbOutResult::Ack => {
                 *cursor = pending.next_cursor;
                 self.completions.push_back(Completion {
@@ -319,7 +319,7 @@ impl XhciHarness {
             .as_ref()
             .expect("pending bulk in must exist");
         match self.dev.handle_in(pending.ep, pending.len) {
-            UsbInResult::Nak => return,
+            UsbInResult::Nak => (),
             UsbInResult::Data(data) => {
                 mem.write(pending.buf_ptr as u32, &data);
                 *cursor = pending.next_cursor;
@@ -389,15 +389,19 @@ fn xhci_control_in_get_descriptor_queues_action_then_completes_and_dmas_data() {
     let ep0_ring = alloc.alloc((TRB_LEN * 3) as u32, 0x10) as u64;
     let dma_buf = alloc.alloc(64, 0x10) as u64;
 
-    let mut setup_trb = Trb::default();
-    setup_trb.parameter = u64::from_le_bytes(setup_packet_bytes(setup));
+    let mut setup_trb = Trb {
+        parameter: u64::from_le_bytes(setup_packet_bytes(setup)),
+        ..Default::default()
+    };
     setup_trb.set_cycle(true);
     setup_trb.set_trb_type(TrbType::SetupStage);
     setup_trb.write_to(&mut mem, ep0_ring);
 
-    let mut data_trb = Trb::default();
-    data_trb.parameter = dma_buf;
-    data_trb.status = setup.w_length as u32;
+    let mut data_trb = Trb {
+        parameter: dma_buf,
+        status: setup.w_length as u32,
+        ..Default::default()
+    };
     data_trb.set_cycle(true);
     data_trb.set_trb_type(TrbType::DataStage);
     // Data Stage TRB DIR bit (bit 16) = 1 indicates IN.
@@ -531,9 +535,11 @@ fn xhci_bulk_in_out_normal_trb_queues_actions_and_consumes_completions() {
     mem.write(out_buf as u32, &out_payload);
 
     let bulk_out_ring = alloc.alloc(TRB_LEN as u32, 0x10) as u64;
-    let mut bulk_out_trb = Trb::default();
-    bulk_out_trb.parameter = out_buf;
-    bulk_out_trb.status = out_payload.len() as u32;
+    let mut bulk_out_trb = Trb {
+        parameter: out_buf,
+        status: out_payload.len() as u32,
+        ..Default::default()
+    };
     bulk_out_trb.set_cycle(true);
     bulk_out_trb.set_trb_type(TrbType::Normal);
     bulk_out_trb.write_to(&mut mem, bulk_out_ring);
@@ -590,9 +596,11 @@ fn xhci_bulk_in_out_normal_trb_queues_actions_and_consumes_completions() {
     let in_buf = alloc.alloc(in_payload.len() as u32, 0x10) as u64;
 
     let bulk_in_ring = alloc.alloc(TRB_LEN as u32, 0x10) as u64;
-    let mut bulk_in_trb = Trb::default();
-    bulk_in_trb.parameter = in_buf;
-    bulk_in_trb.status = in_payload.len() as u32;
+    let mut bulk_in_trb = Trb {
+        parameter: in_buf,
+        status: in_payload.len() as u32,
+        ..Default::default()
+    };
     bulk_in_trb.set_cycle(true);
     bulk_in_trb.set_trb_type(TrbType::Normal);
     bulk_in_trb.write_to(&mut mem, bulk_in_ring);

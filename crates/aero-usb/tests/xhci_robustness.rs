@@ -134,8 +134,8 @@ fn xhci_port_helpers_do_not_panic_on_invalid_port_indices() {
     xhci.write_portsc(1, 0);
     xhci.write_portsc(usize::MAX, 0);
 
-    xhci.attach_device(1, Box::new(DummyDevice::default()));
-    xhci.attach_device(usize::MAX, Box::new(DummyDevice::default()));
+    xhci.attach_device(1, Box::new(DummyDevice));
+    xhci.attach_device(usize::MAX, Box::new(DummyDevice));
 
     xhci.detach_device(1);
     xhci.detach_device(usize::MAX);
@@ -226,8 +226,10 @@ fn xhci_command_ring_link_loop_is_bounded_by_step_budget() {
     let mut mem = TestMemory::new(0x10_000);
     let ring_base: u64 = 0x1000;
 
-    let mut link = Trb::default();
-    link.parameter = ring_base;
+    let mut link = Trb {
+        parameter: ring_base,
+        ..Default::default()
+    };
     link.set_cycle(true);
     link.set_trb_type(TrbType::Link);
     link.set_link_toggle_cycle(false);
@@ -239,7 +241,7 @@ fn xhci_command_ring_link_loop_is_bounded_by_step_budget() {
         RingPoll::Err(RingError::StepBudgetExceeded)
     );
     assert_eq!(cur.dequeue_ptr(), ring_base);
-    assert_eq!(cur.cycle_state(), true);
+    assert!(cur.cycle_state());
 }
 
 #[test]

@@ -39,7 +39,7 @@ fn parse_input_context_slot_and_endpoint_context() {
     let input_ctx_base = 0x1000u64;
 
     // Input Control Context (32 bytes): Drop=0, Add Slot (bit0) + Endpoint ID 3 (bit3).
-    mem.write_u32(input_ctx_base + 0, 0);
+    mem.write_u32(input_ctx_base, 0);
     mem.write_u32(input_ctx_base + 4, (1 << 0) | (1 << 3));
 
     // Slot Context at index 1.
@@ -47,7 +47,7 @@ fn parse_input_context_slot_and_endpoint_context() {
     let slot_ctx = input_ctx_base + 0x20;
     let speed_id = 3u32; // High speed (value doesn't matter for this test).
     let context_entries = 3u32;
-    mem.write_u32(slot_ctx + 0, (speed_id << 20) | (context_entries << 27));
+    mem.write_u32(slot_ctx, (speed_id << 20) | (context_entries << 27));
     mem.write_u32(slot_ctx + 4, 5u32 << 16); // port = 5
 
     // Endpoint Context for Device Context index 3 (Endpoint 1 IN, typically).

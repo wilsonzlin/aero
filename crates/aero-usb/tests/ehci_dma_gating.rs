@@ -34,7 +34,7 @@ fn ehci_tick_does_not_process_schedules_without_dma() {
 
     let fr0 = ctrl.mmio_read(regs::REG_FRINDEX, 4) & regs::FRINDEX_MASK;
 
-    let mut mem = NoDmaPanicMem::default();
+    let mut mem = NoDmaPanicMem;
     ctrl.tick_1ms(&mut mem);
 
     // FRINDEX should still advance even though schedule processing is skipped.

@@ -31,7 +31,7 @@ fn uhci_tick_does_not_walk_schedule_without_dma() {
 
     let fr0 = ctrl.io_read(regs::REG_FRNUM, 2) as u16;
 
-    let mut mem = NoDmaPanicMem::default();
+    let mut mem = NoDmaPanicMem;
     ctrl.tick_1ms(&mut mem);
 
     // Frame number should still advance even though schedule processing is skipped.

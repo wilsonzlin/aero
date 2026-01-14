@@ -69,8 +69,10 @@ fn enable_slot_then_address_device_binds_port_and_writes_context() {
     ep0_ctx.write_to(&mut mem, input_ctx + (2 * CONTEXT_SIZE) as u64);
 
     // Address Device.
-    let mut addr = Trb::default();
-    addr.parameter = input_ctx;
+    let mut addr = Trb {
+        parameter: input_ctx,
+        ..Default::default()
+    };
     addr.set_cycle(true);
     addr.set_trb_type(TrbType::AddressDeviceCommand);
     addr.set_slot_id(slot_id);
@@ -148,8 +150,10 @@ fn address_device_invalid_port_fails_gracefully() {
     let ep0_ctx = EndpointContext::default();
     ep0_ctx.write_to(&mut mem, input_ctx + (2 * CONTEXT_SIZE) as u64);
 
-    let mut addr = Trb::default();
-    addr.parameter = input_ctx;
+    let mut addr = Trb {
+        parameter: input_ctx,
+        ..Default::default()
+    };
     addr.set_cycle(true);
     addr.set_trb_type(TrbType::AddressDeviceCommand);
     addr.set_slot_id(slot_id);
@@ -222,8 +226,10 @@ fn address_device_missing_output_context_does_not_set_address() {
     ep0_ctx.write_to(&mut mem, input_ctx + (2 * CONTEXT_SIZE) as u64);
 
     // Address Device.
-    let mut addr = Trb::default();
-    addr.parameter = input_ctx;
+    let mut addr = Trb {
+        parameter: input_ctx,
+        ..Default::default()
+    };
     addr.set_cycle(true);
     addr.set_trb_type(TrbType::AddressDeviceCommand);
     addr.set_slot_id(slot_id);
@@ -301,8 +307,10 @@ fn address_device_bsr_does_not_issue_set_address() {
     ep0_ctx.write_to(&mut mem, input_ctx + (2 * CONTEXT_SIZE) as u64);
 
     // Address Device with BSR=1 (block SET_ADDRESS request).
-    let mut addr = Trb::default();
-    addr.parameter = input_ctx;
+    let mut addr = Trb {
+        parameter: input_ctx,
+        ..Default::default()
+    };
     addr.set_cycle(true);
     addr.set_trb_type(TrbType::AddressDeviceCommand);
     addr.set_slot_id(slot_id);

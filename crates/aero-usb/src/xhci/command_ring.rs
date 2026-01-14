@@ -1553,7 +1553,7 @@ mod tests {
         let ep_ctx = dev_ctx + u64::from(endpoint_id) * CONTEXT_SIZE;
 
         // Seed endpoint context state + dequeue pointer (DCS=1).
-        mem.write_u32(ep_ctx + 0, EP_STATE_RUNNING);
+        mem.write_u32(ep_ctx, EP_STATE_RUNNING);
         mem.write_u32(ep_ctx + 8, 0x1110 | 1);
         mem.write_u32(ep_ctx + 12, 0);
 
@@ -1613,7 +1613,7 @@ mod tests {
 
         // Stop Endpoint should update guest memory and set the internal "stopped" flag.
         processor.process(&mut mem, 1);
-        assert_eq!(mem.read_u32(ep_ctx + 0) & 0x7, EP_STATE_STOPPED);
+        assert_eq!(mem.read_u32(ep_ctx) & 0x7, EP_STATE_STOPPED);
 
         let slot = processor.slots[usize::from(slot_id)]
             .as_ref()
@@ -1651,7 +1651,7 @@ mod tests {
 
         // Reset Endpoint clears stopped/halted state but preserves the ring cursor.
         processor.process(&mut mem, 1);
-        assert_eq!(mem.read_u32(ep_ctx + 0) & 0x7, EP_STATE_RUNNING);
+        assert_eq!(mem.read_u32(ep_ctx) & 0x7, EP_STATE_RUNNING);
 
         let slot = processor.slots[usize::from(slot_id)].as_ref().unwrap();
         let ep = slot.endpoints[usize::from(endpoint_id)].as_ref().unwrap();

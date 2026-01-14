@@ -106,7 +106,7 @@ fn ehci_periodic_qh_interrupt_in_qtd_completes() {
         | (PID_IN << QTD_TOKEN_PID_SHIFT)
         | QTD_TOKEN_IOC
         | (8 << QTD_TOKEN_BYTES_SHIFT);
-    mem.write_u32(qtd_addr + 0x00, LP_TERMINATE); // next qTD
+    mem.write_u32(qtd_addr, LP_TERMINATE); // next qTD
     mem.write_u32(qtd_addr + 0x04, LP_TERMINATE); // alt next qTD
     mem.write_u32(qtd_addr + 0x08, token);
     mem.write_u32(qtd_addr + 0x0c, buf_addr); // buffer 0
@@ -116,9 +116,9 @@ fn ehci_periodic_qh_interrupt_in_qtd_completes() {
     mem.write_u32(qtd_addr + 0x1c, 0);
 
     // QH: device address 0, endpoint 1, max packet 8, SMASK=uframe 0, next qTD points at qtd.
-    let ep_char = (0u32) | (1u32 << 8) | (8u32 << 16);
+    let ep_char = (1u32 << 8) | (8u32 << 16);
     let ep_caps = 0x01u32; // SMASK bit0
-    mem.write_u32(qh_addr + 0x00, LP_TERMINATE); // horiz link
+    mem.write_u32(qh_addr, LP_TERMINATE); // horiz link
     mem.write_u32(qh_addr + 0x04, ep_char);
     mem.write_u32(qh_addr + 0x08, ep_caps);
     mem.write_u32(qh_addr + 0x0c, 0); // current qTD
@@ -178,7 +178,7 @@ fn ehci_periodic_interrupt_in_nak_then_completes() {
         | (PID_IN << QTD_TOKEN_PID_SHIFT)
         | QTD_TOKEN_IOC
         | (8 << QTD_TOKEN_BYTES_SHIFT);
-    mem.write_u32(qtd_addr + 0x00, LP_TERMINATE); // next qTD
+    mem.write_u32(qtd_addr, LP_TERMINATE); // next qTD
     mem.write_u32(qtd_addr + 0x04, LP_TERMINATE); // alt next qTD
     mem.write_u32(qtd_addr + 0x08, token);
     mem.write_u32(qtd_addr + 0x0c, buf_addr); // buffer 0
@@ -188,9 +188,9 @@ fn ehci_periodic_interrupt_in_nak_then_completes() {
     mem.write_u32(qtd_addr + 0x1c, 0);
 
     // Device address 0, endpoint 1, max packet 8, SMASK=uframe 0.
-    let ep_char = (0u32) | (1u32 << 8) | (8u32 << 16);
+    let ep_char = (1u32 << 8) | (8u32 << 16);
     let ep_caps = 0x01u32; // SMASK bit0
-    mem.write_u32(qh_addr + 0x00, LP_TERMINATE);
+    mem.write_u32(qh_addr, LP_TERMINATE);
     mem.write_u32(qh_addr + 0x04, ep_char);
     mem.write_u32(qh_addr + 0x08, ep_caps);
     mem.write_u32(qh_addr + 0x0c, 0);
@@ -268,7 +268,7 @@ fn ehci_periodic_smask_skips_non_matching_microframe() {
         | (PID_IN << QTD_TOKEN_PID_SHIFT)
         | QTD_TOKEN_IOC
         | (8 << QTD_TOKEN_BYTES_SHIFT);
-    mem.write_u32(qtd_addr + 0x00, LP_TERMINATE); // next qTD
+    mem.write_u32(qtd_addr, LP_TERMINATE); // next qTD
     mem.write_u32(qtd_addr + 0x04, LP_TERMINATE); // alt next qTD
     mem.write_u32(qtd_addr + 0x08, token);
     mem.write_u32(qtd_addr + 0x0c, buf_addr); // buffer 0
@@ -278,9 +278,9 @@ fn ehci_periodic_smask_skips_non_matching_microframe() {
     mem.write_u32(qtd_addr + 0x1c, 0);
 
     // QH: device address 0, endpoint 1, max packet 8, SMASK=uframe 0.
-    let ep_char = (0u32) | (1u32 << 8) | (8u32 << 16);
+    let ep_char = (1u32 << 8) | (8u32 << 16);
     let ep_caps = 0x01u32; // SMASK bit0 only (microframe 0)
-    mem.write_u32(qh_addr + 0x00, LP_TERMINATE); // horiz link
+    mem.write_u32(qh_addr, LP_TERMINATE); // horiz link
     mem.write_u32(qh_addr + 0x04, ep_char);
     mem.write_u32(qh_addr + 0x08, ep_caps);
     mem.write_u32(qh_addr + 0x0c, 0); // current qTD
@@ -356,11 +356,11 @@ fn ehci_periodic_skips_over_itd_sitd_fstn_to_reach_qh() {
     }
 
     // iTD dword0: Next Link Pointer -> siTD.
-    mem.write_u32(itd_addr + 0x00, (sitd_addr & 0xffff_ffe0) | LP_SITD);
+    mem.write_u32(itd_addr, (sitd_addr & 0xffff_ffe0) | LP_SITD);
     // siTD dword0: Next Link Pointer -> FSTN.
-    mem.write_u32(sitd_addr + 0x00, (fstn_addr & 0xffff_ffe0) | LP_FSTN);
+    mem.write_u32(sitd_addr, (fstn_addr & 0xffff_ffe0) | LP_FSTN);
     // FSTN dword0: Normal Path Link Pointer -> QH. dword1: Back Path Link Pointer (unused here).
-    mem.write_u32(fstn_addr + 0x00, (qh_addr & 0xffff_ffe0) | LP_QH);
+    mem.write_u32(fstn_addr, (qh_addr & 0xffff_ffe0) | LP_QH);
     mem.write_u32(fstn_addr + 0x04, LP_TERMINATE);
 
     // qTD (IN, 8 bytes, IOC).
@@ -368,7 +368,7 @@ fn ehci_periodic_skips_over_itd_sitd_fstn_to_reach_qh() {
         | (PID_IN << QTD_TOKEN_PID_SHIFT)
         | QTD_TOKEN_IOC
         | (8 << QTD_TOKEN_BYTES_SHIFT);
-    mem.write_u32(qtd_addr + 0x00, LP_TERMINATE); // next qTD
+    mem.write_u32(qtd_addr, LP_TERMINATE); // next qTD
     mem.write_u32(qtd_addr + 0x04, LP_TERMINATE); // alt next qTD
     mem.write_u32(qtd_addr + 0x08, token);
     mem.write_u32(qtd_addr + 0x0c, buf_addr); // buffer 0
@@ -378,9 +378,9 @@ fn ehci_periodic_skips_over_itd_sitd_fstn_to_reach_qh() {
     mem.write_u32(qtd_addr + 0x1c, 0);
 
     // QH: device address 0, endpoint 1, max packet 8, SMASK=uframe 0, next qTD points at qtd.
-    let ep_char = (0u32) | (1u32 << 8) | (8u32 << 16);
+    let ep_char = (1u32 << 8) | (8u32 << 16);
     let ep_caps = 0x01u32; // SMASK bit0
-    mem.write_u32(qh_addr + 0x00, LP_TERMINATE); // horiz link
+    mem.write_u32(qh_addr, LP_TERMINATE); // horiz link
     mem.write_u32(qh_addr + 0x04, ep_char);
     mem.write_u32(qh_addr + 0x08, ep_caps);
     mem.write_u32(qh_addr + 0x0c, 0); // current qTD

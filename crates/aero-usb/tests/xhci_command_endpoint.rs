@@ -31,7 +31,7 @@ fn xhci_command_ring_stop_reset_and_set_trdp_update_context_and_ring_cursor() {
     // Seed endpoint context state + dequeue pointer.
     let endpoint_id = 2u8; // EP1 OUT (DCI=2)
     let ep_ctx = dev_ctx + u64::from(endpoint_id) * (CONTEXT_SIZE as u64);
-    MemoryBus::write_u32(&mut mem, ep_ctx + 0, 1); // Running
+    MemoryBus::write_u32(&mut mem, ep_ctx, 1); // Running
     MemoryBus::write_u32(&mut mem, ep_ctx + 8, 0x1110 | 1); // TR Dequeue Pointer low (DCS=1)
     MemoryBus::write_u32(&mut mem, ep_ctx + 12, 0);
 
@@ -51,11 +51,13 @@ fn xhci_command_ring_stop_reset_and_set_trdp_update_context_and_ring_cursor() {
     assert_eq!(ev0.completion_code_raw(), CompletionCode::Success.as_u8());
     assert_eq!(ev0.slot_id(), slot_id);
     assert_eq!(ev0.parameter & !0x0f, cmd_ring);
-    assert_eq!(MemoryBus::read_u32(&mut mem, ep_ctx + 0) & 0x7, 3);
+    assert_eq!(MemoryBus::read_u32(&mut mem, ep_ctx) & 0x7, 3);
 
     // --- Set TR Dequeue Pointer ---
-    let mut set = Trb::default();
-    set.parameter = new_trdp; // DCS=0
+    let mut set = Trb {
+        parameter: new_trdp, // DCS=0
+        ..Default::default()
+    };
     set.set_trb_type(TrbType::SetTrDequeuePointerCommand);
     set.set_cycle(true);
     set.set_slot_id(slot_id);
@@ -99,5 +101,5 @@ fn xhci_command_ring_stop_reset_and_set_trdp_update_context_and_ring_cursor() {
     assert_eq!(ev2.completion_code_raw(), CompletionCode::Success.as_u8());
     assert_eq!(ev2.slot_id(), slot_id);
     assert_eq!(ev2.parameter & !0x0f, cmd_ring + 2 * TRB_LEN as u64);
-    assert_eq!(MemoryBus::read_u32(&mut mem, ep_ctx + 0) & 0x7, 1);
+    assert_eq!(MemoryBus::read_u32(&mut mem, ep_ctx) & 0x7, 1);
 }

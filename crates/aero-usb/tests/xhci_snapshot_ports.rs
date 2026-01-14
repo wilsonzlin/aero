@@ -319,7 +319,7 @@ fn xhci_snapshot_roundtrip_preserves_tick_time_and_dma_probe_state() {
 #[test]
 fn xhci_snapshot_roundtrip_preserves_pending_dma_on_run_probe() {
     let mut ctrl = XhciController::new();
-    let mut nodma = NoDmaPanicMem::default();
+    let mut nodma = NoDmaPanicMem;
 
     // Program CRCR and set RUN via a dma-disabled bus so the DMA-on-RUN probe remains pending.
     ctrl.mmio_write(&mut nodma, regs::REG_CRCR_LO, 4, 0x1000);
@@ -439,7 +439,7 @@ fn xhci_snapshot_loads_legacy_tick_tag_collision_mapping() {
     // `time_ms` and wrote `last_tick_dma_dword` under tag 27, leaving tag 28 absent.
     let mut w = SnapshotWriter::new(*b"XHCI", r.header().device_version);
     for (tag, field) in r.iter_fields() {
-        if matches!(tag, 26 | 27 | 28) {
+        if matches!(tag, 26..=28) {
             continue;
         }
         w.field_bytes(tag, field.to_vec());

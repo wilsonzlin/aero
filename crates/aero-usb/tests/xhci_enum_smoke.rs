@@ -34,14 +34,14 @@ fn write_u64(mem: &mut TestMemory, paddr: u64, value: u64) {
 fn build_input_context_addr_device(mem: &mut TestMemory, base: u64, port: u8, ep0_mps: u16) {
     // Input Control Context (ICC) at base.
     // Drop=0, Add Slot (bit0) + EP0 (bit1).
-    write_u32(mem, base + 0x00, 0);
+    write_u32(mem, base, 0);
     write_u32(mem, base + 0x04, (1 << 0) | (1 << 1));
 
     // Slot Context at index 1.
     let slot = base + CONTEXT_SIZE as u64;
     let speed_id = 1u32; // "full-speed" per xHCI speed ID table (value not critical here).
     let context_entries = 1u32;
-    write_u32(mem, slot + 0x00, (speed_id << 20) | (context_entries << 27));
+    write_u32(mem, slot, (speed_id << 20) | (context_entries << 27));
     // Root Hub Port Number is DW1 bits 16..=23.
     write_u32(mem, slot + 0x04, (port as u32) << 16);
 
@@ -57,7 +57,7 @@ fn build_input_context_addr_device(mem: &mut TestMemory, base: u64, port: u8, ep
 
 fn build_input_context_eval_ep0_mps(mem: &mut TestMemory, base: u64, ep0_mps: u16) {
     // ICC: Add EP0 only (bit1).
-    write_u32(mem, base + 0x00, 0);
+    write_u32(mem, base, 0);
     write_u32(mem, base + 0x04, 1 << 1);
 
     // EP0 Endpoint Context: Input Context index 2.
@@ -78,14 +78,14 @@ fn build_input_context_config_interrupt_in(
     tr_dequeue_ptr: u64,
 ) {
     // ICC: Add Slot (bit0) + EP1 IN (Device Context index 3 => bit3).
-    write_u32(mem, base + 0x00, 0);
+    write_u32(mem, base, 0);
     write_u32(mem, base + 0x04, (1 << 0) | (1 << 3));
 
     // Slot Context: context entries up to endpoint ID 3.
     let slot = base + CONTEXT_SIZE as u64;
     let speed_id = 1u32;
     let context_entries = 3u32;
-    write_u32(mem, slot + 0x00, (speed_id << 20) | (context_entries << 27));
+    write_u32(mem, slot, (speed_id << 20) | (context_entries << 27));
     write_u32(mem, slot + 0x04, (port as u32) << 16);
 
     // EP1 IN context: Device Context index 3 => Input Context index 4.
@@ -146,7 +146,7 @@ fn xhci_enum_smoke_bringup_enumerate_and_interrupt_in() {
     let rtsoff = xhci.mmio_read(&mut mem, regs::REG_RTSOFF, 4) as u64 & !0x1f;
 
     let op_base = caplength;
-    let reg_usbcmd = op_base + 0x00;
+    let reg_usbcmd = op_base;
     let reg_usbsts = op_base + 0x04;
     let reg_crcr_lo = op_base + 0x18;
     let reg_crcr_hi = op_base + 0x1c;
@@ -157,7 +157,7 @@ fn xhci_enum_smoke_bringup_enumerate_and_interrupt_in() {
 
     // Runtime interrupter 0.
     let rt_imod = rtsoff + 0x20 + 0x04;
-    let rt_iman = rtsoff + 0x20 + 0x00;
+    let rt_iman = rtsoff + 0x20;
     let rt_erstsz = rtsoff + 0x20 + 0x08;
     let rt_erstba_lo = rtsoff + 0x20 + 0x10;
     let rt_erstba_hi = rtsoff + 0x20 + 0x14;
@@ -172,7 +172,7 @@ fn xhci_enum_smoke_bringup_enumerate_and_interrupt_in() {
     let erst = alloc.alloc(16, 0x40) as u64;
 
     // ERST entry 0.
-    write_u64(&mut mem, erst + 0x00, event_ring);
+    write_u64(&mut mem, erst, event_ring);
     write_u32(&mut mem, erst + 0x08, 64);
     write_u32(&mut mem, erst + 0x0c, 0);
 
@@ -268,7 +268,7 @@ fn xhci_enum_smoke_bringup_enumerate_and_interrupt_in() {
     enable_slot.write_to(&mut mem, cmd_ring);
 
     // Ring doorbell 0.
-    xhci.mmio_write(&mut mem, dboff + 0 * 4, 4, 0);
+    xhci.mmio_write(&mut mem, dboff, 4, 0);
     let ev = wait_for_event(
         &mut xhci,
         &mut mem,
@@ -293,14 +293,16 @@ fn xhci_enum_smoke_bringup_enumerate_and_interrupt_in() {
     let input_addr = alloc.alloc((33 * CONTEXT_SIZE) as u32, 0x40) as u64;
     build_input_context_addr_device(&mut mem, input_addr, 1, 8);
 
-    let mut addr_dev = Trb::default();
-    addr_dev.parameter = input_addr;
+    let mut addr_dev = Trb {
+        parameter: input_addr,
+        ..Default::default()
+    };
     addr_dev.set_cycle(true);
     addr_dev.set_trb_type(TrbType::AddressDeviceCommand);
     addr_dev.set_slot_id(slot_id);
     addr_dev.write_to(&mut mem, cmd_ring + TRB_LEN as u64);
 
-    xhci.mmio_write(&mut mem, dboff + 0 * 4, 4, 0);
+    xhci.mmio_write(&mut mem, dboff, 4, 0);
     let ev = wait_for_event(
         &mut xhci,
         &mut mem,
@@ -337,14 +339,16 @@ fn xhci_enum_smoke_bringup_enumerate_and_interrupt_in() {
     let input_eval = alloc.alloc((33 * CONTEXT_SIZE) as u32, 0x40) as u64;
     build_input_context_eval_ep0_mps(&mut mem, input_eval, u16::from(mps0));
 
-    let mut eval_ctx = Trb::default();
-    eval_ctx.parameter = input_eval;
+    let mut eval_ctx = Trb {
+        parameter: input_eval,
+        ..Default::default()
+    };
     eval_ctx.set_cycle(true);
     eval_ctx.set_trb_type(TrbType::EvaluateContextCommand);
     eval_ctx.set_slot_id(slot_id);
     eval_ctx.write_to(&mut mem, cmd_ring + 2 * TRB_LEN as u64);
 
-    xhci.mmio_write(&mut mem, dboff + 0 * 4, 4, 0);
+    xhci.mmio_write(&mut mem, dboff, 4, 0);
     let ev = wait_for_event(
         &mut xhci,
         &mut mem,
@@ -367,14 +371,16 @@ fn xhci_enum_smoke_bringup_enumerate_and_interrupt_in() {
     let input_cfg = alloc.alloc((33 * CONTEXT_SIZE) as u32, 0x40) as u64;
     build_input_context_config_interrupt_in(&mut mem, input_cfg, 1, 8, ep1_ring);
 
-    let mut cfg_ep = Trb::default();
-    cfg_ep.parameter = input_cfg;
+    let mut cfg_ep = Trb {
+        parameter: input_cfg,
+        ..Default::default()
+    };
     cfg_ep.set_cycle(true);
     cfg_ep.set_trb_type(TrbType::ConfigureEndpointCommand);
     cfg_ep.set_slot_id(slot_id);
     cfg_ep.write_to(&mut mem, cmd_ring + 3 * TRB_LEN as u64);
 
-    xhci.mmio_write(&mut mem, dboff + 0 * 4, 4, 0);
+    xhci.mmio_write(&mut mem, dboff, 4, 0);
     let ev = wait_for_event(
         &mut xhci,
         &mut mem,
@@ -407,17 +413,21 @@ fn xhci_enum_smoke_bringup_enumerate_and_interrupt_in() {
     keyboard.key_event(0x04, true); // 'A'
 
     // Transfer ring: Normal TRB + Link TRB back to start (toggle cycle).
-    let mut normal = Trb::default();
-    normal.parameter = dma_buf;
-    normal.status = 8; // TRB Transfer Length.
+    let mut normal = Trb {
+        parameter: dma_buf,
+        status: 8, // TRB Transfer Length.
+        ..Default::default()
+    };
     normal.set_cycle(true);
     normal.set_trb_type(TrbType::Normal);
     // IOC bit (bit 5) in the control dword.
     normal.control |= 1 << 5;
     normal.write_to(&mut mem, ep1_ring);
 
-    let mut link = Trb::default();
-    link.parameter = ep1_ring;
+    let mut link = Trb {
+        parameter: ep1_ring,
+        ..Default::default()
+    };
     link.set_cycle(true);
     link.set_trb_type(TrbType::Link);
     link.set_link_toggle_cycle(true);

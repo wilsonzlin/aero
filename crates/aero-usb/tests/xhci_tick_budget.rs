@@ -124,8 +124,7 @@ fn xhci_step_1ms_command_ring_is_bounded_and_makes_progress() {
     );
 
     // Run enough ticks to drain the work.
-    let ticks_needed = (COMMAND_TRBS + budget::MAX_COMMAND_TRBS_PER_FRAME - 1)
-        / budget::MAX_COMMAND_TRBS_PER_FRAME;
+    let ticks_needed = COMMAND_TRBS.div_ceil(budget::MAX_COMMAND_TRBS_PER_FRAME);
     for _ in 1..ticks_needed {
         ctrl.step_1ms(&mut mem);
     }
@@ -153,7 +152,7 @@ fn xhci_step_1ms_coalesces_redundant_endpoint_doorbells() {
 
     let mut mem = TestMemory::new(0x8000);
     let mut ctrl = XhciController::with_port_count(1);
-    ctrl.attach_device(0, Box::new(DummyDevice::default()));
+    ctrl.attach_device(0, Box::new(DummyDevice));
 
     // Enable a slot and bind it to the attached device so endpoint doorbells are accepted.
     ctrl.set_dcbaap(0x1000);

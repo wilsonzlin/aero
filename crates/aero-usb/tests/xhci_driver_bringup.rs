@@ -123,14 +123,14 @@ fn xhci_driver_bringup_mmio_rings_and_transfer() {
 
     // ---- Build input context for Address Device ----
     // Input Control Context (ICC): Drop=0, Add = Slot + EP0.
-    MemoryBus::write_u32(&mut mem, input_ctx_addr + 0x00, 0);
+    MemoryBus::write_u32(&mut mem, input_ctx_addr, 0);
     MemoryBus::write_u32(&mut mem, input_ctx_addr + 0x04, (1 << 0) | (1 << 1));
     // Slot Context Root Hub Port Number = 1 (port 0 in `attach_device`).
     MemoryBus::write_u32(&mut mem, input_ctx_addr + 0x20 + 4, 1 << 16);
 
     // ---- Build input context for Configure Endpoint ----
     // Drop=0, Add = Slot + EP0 + EP1 IN (device context index 3).
-    MemoryBus::write_u32(&mut mem, input_ctx_cfg + 0x00, 0);
+    MemoryBus::write_u32(&mut mem, input_ctx_cfg, 0);
     MemoryBus::write_u32(
         &mut mem,
         input_ctx_cfg + 0x04,
@@ -205,7 +205,7 @@ fn xhci_driver_bringup_mmio_rings_and_transfer() {
     xhci.mmio_write(&mut mem, intr0 + 0x18, 4, event_ring as u32);
     xhci.mmio_write(&mut mem, intr0 + 0x1c, 4, (event_ring >> 32) as u32);
     // Enable interrupter 0.
-    xhci.mmio_write(&mut mem, intr0 + 0x00, 4, IMAN_IE);
+    xhci.mmio_write(&mut mem, intr0, 4, IMAN_IE);
 
     // Start controller (RUN). This triggers a small DMA read + sets USBSTS.EINT; clear it so the
     // subsequent assertions are tied to command/transfer events.
@@ -221,13 +221,13 @@ fn xhci_driver_bringup_mmio_rings_and_transfer() {
     xhci.mmio_write(&mut mem, dboff as u64, 4, 0);
     xhci.service_event_ring(&mut mem);
 
-    let ev0 = Trb::read_from(&mut mem, event_ring + 0x00);
+    let ev0 = Trb::read_from(&mut mem, event_ring);
     assert_eq!(ev0.trb_type(), TrbType::CommandCompletionEvent);
     assert!(
         ev0.cycle(),
         "event[0] should use initial event-ring cycle state (1)"
     );
-    assert_eq!(ev0.pointer(), cmd_ring + 0x00);
+    assert_eq!(ev0.pointer(), cmd_ring);
     assert_eq!(ev0.completion_code_raw(), CompletionCode::Success.as_u8());
     let slot_id = ev0.slot_id();
     assert_eq!(
@@ -292,7 +292,7 @@ fn xhci_driver_bringup_mmio_rings_and_transfer() {
     let ev3 = Trb::read_from(&mut mem, event_ring + 0x30);
     assert_eq!(ev3.trb_type(), TrbType::CommandCompletionEvent);
     assert!(ev3.cycle(), "event[3] should still be in cycle state 1");
-    assert_eq!(ev3.pointer(), cmd_ring + 0x00);
+    assert_eq!(ev3.pointer(), cmd_ring);
     assert_eq!(ev3.completion_code_raw(), CompletionCode::Success.as_u8());
 
     assert!(
@@ -314,7 +314,7 @@ fn xhci_driver_bringup_mmio_rings_and_transfer() {
 
     // The next event write should wrap the 4-TRB event ring, toggling cycle to 0 and overwriting
     // entry 0.
-    let tev = Trb::read_from(&mut mem, event_ring + 0x00);
+    let tev = Trb::read_from(&mut mem, event_ring);
     assert_eq!(tev.trb_type(), TrbType::TransferEvent);
     assert!(
         !tev.cycle(),

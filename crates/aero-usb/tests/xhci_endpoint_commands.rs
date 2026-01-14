@@ -96,8 +96,10 @@ fn endpoint_commands_update_context_and_transfer_ring() {
         trb.write_to(&mut mem, cmd_ring + TRB_LEN as u64);
     }
     {
-        let mut trb = Trb::default();
-        trb.parameter = new_trdp; // DCS=0
+        let mut trb = Trb {
+            parameter: new_trdp, // DCS=0
+            ..Default::default()
+        };
         trb.set_cycle(true);
         trb.set_trb_type(TrbType::SetTrDequeuePointerCommand);
         trb.set_slot_id(slot_id);
@@ -282,7 +284,7 @@ fn stop_endpoint_gates_transfer_execution_until_reset() {
     let ep_ctx_paddr = dev_ctx + u64::from(endpoint_id) * (CONTEXT_SIZE as u64);
 
     // Endpoint state = Running (1).
-    MemoryBus::write_u32(&mut mem, ep_ctx_paddr + 0, 1);
+    MemoryBus::write_u32(&mut mem, ep_ctx_paddr, 1);
     // Endpoint type = Interrupt IN (7), MPS = 8.
     MemoryBus::write_u32(&mut mem, ep_ctx_paddr + 4, (7u32 << 3) | (8u32 << 16));
     // TR Dequeue Pointer (DCS=1).

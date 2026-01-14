@@ -34,8 +34,8 @@ fn route_string_encodes_ports_as_4_bit_values() {
 fn route_string_rejects_gaps_and_overflow() {
     // Bits outside the 20-bit field are not representable in the slot context.
     assert_eq!(
-        XhciRouteString::from_raw(0x01_0000_00),
-        Err(XhciRouteStringError::OutOfRange(0x01_0000_00))
+        XhciRouteString::from_raw(0x0100_0000),
+        Err(XhciRouteStringError::OutOfRange(0x0100_0000))
     );
 
     // Encountering a terminator then seeing a later non-zero nibble indicates a "hole" in the

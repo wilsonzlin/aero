@@ -27,15 +27,17 @@ fn command_ring_noop_then_enable_slot_emits_completion_events() {
     enable.set_trb_type(TrbType::EnableSlotCommand);
     enable.write_to(&mut mem, CMD_RING_BASE + TRB_LEN as u64);
 
-    let mut link = Trb::default();
-    link.parameter = CMD_RING_BASE;
+    let mut link = Trb {
+        parameter: CMD_RING_BASE,
+        ..Default::default()
+    };
     link.set_cycle(true);
     link.set_trb_type(TrbType::Link);
     link.set_link_toggle_cycle(true);
     link.write_to(&mut mem, CMD_RING_BASE + 2 * TRB_LEN as u64);
 
     // Event Ring Segment Table (single entry).
-    mem.write_physical(ERST_BASE, &(EVENT_RING_BASE as u64).to_le_bytes());
+    mem.write_physical(ERST_BASE, &EVENT_RING_BASE.to_le_bytes());
     mem.write_physical(ERST_BASE + 8, &(8u32).to_le_bytes()); // segment size in TRBs
     mem.write_physical(ERST_BASE + 12, &0u32.to_le_bytes());
 
@@ -120,7 +122,7 @@ fn command_ring_kick_persists_until_ring_empty_and_requires_doorbell0() {
     }
 
     // Event Ring Segment Table (single entry).
-    mem.write_physical(ERST_BASE, &(EVENT_RING_BASE as u64).to_le_bytes());
+    mem.write_physical(ERST_BASE, &EVENT_RING_BASE.to_le_bytes());
     mem.write_physical(ERST_BASE + 8, &(64u32).to_le_bytes()); // segment size in TRBs
     mem.write_physical(ERST_BASE + 12, &0u32.to_le_bytes());
 

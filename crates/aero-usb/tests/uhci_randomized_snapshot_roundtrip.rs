@@ -237,8 +237,8 @@ fn gen_write_op(rng: &mut Rng) -> Op {
                 }
                 v as u32
             }
-            regs::REG_FRNUM | REG_FRNUM_HI => (rng.next_u32() & 0x07ff) as u32,
-            regs::REG_SOFMOD => (rng.next_u32() & 0xff) as u32,
+            regs::REG_FRNUM | REG_FRNUM_HI => rng.next_u32() & 0x07ff,
+            regs::REG_SOFMOD => rng.next_u32() & 0xff,
             regs::REG_PORTSC1 | REG_PORTSC1_HI | regs::REG_PORTSC2 | REG_PORTSC2_HI => {
                 const CSC: u16 = 1 << 1;
                 const PED: u16 = 1 << 2;

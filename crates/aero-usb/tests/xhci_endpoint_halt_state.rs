@@ -83,7 +83,7 @@ fn stalled_endpoint_sets_halted_state_in_device_context_until_reset() {
     let ep_ctx_paddr = dev_ctx + u64::from(endpoint_id) * (CONTEXT_SIZE as u64);
 
     // Endpoint state = Running (1).
-    MemoryBus::write_u32(&mut mem, ep_ctx_paddr + 0, 1);
+    MemoryBus::write_u32(&mut mem, ep_ctx_paddr, 1);
     // Endpoint type = Interrupt IN (7), MPS = 8.
     MemoryBus::write_u32(&mut mem, ep_ctx_paddr + 4, (7u32 << 3) | (8u32 << 16));
     // TR Dequeue Pointer (DCS=1).
@@ -166,4 +166,3 @@ fn stalled_endpoint_sets_halted_state_in_device_context_until_reset() {
     assert_eq!(ev2.trb_type(), TrbType::TransferEvent);
     assert_eq!(ev2.completion_code_raw(), CompletionCode::Success.as_u8());
 }
-

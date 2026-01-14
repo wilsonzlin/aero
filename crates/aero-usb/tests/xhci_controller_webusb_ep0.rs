@@ -90,16 +90,20 @@ fn xhci_controller_ep0_control_in_webusb_nak_keeps_td_pending_and_dequeue_pinned
         w_length: 18,
     };
 
-    let mut setup_trb = Trb::default();
-    setup_trb.parameter = u64::from_le_bytes(setup_packet_bytes(setup));
-    setup_trb.status = 8;
+    let mut setup_trb = Trb {
+        parameter: u64::from_le_bytes(setup_packet_bytes(setup)),
+        status: 8,
+        ..Default::default()
+    };
     setup_trb.set_cycle(true);
     setup_trb.set_trb_type(TrbType::SetupStage);
     setup_trb.write_to(&mut mem, transfer_ring_base);
 
-    let mut data_trb = Trb::default();
-    data_trb.parameter = data_buf;
-    data_trb.status = setup.w_length as u32;
+    let mut data_trb = Trb {
+        parameter: data_buf,
+        status: setup.w_length as u32,
+        ..Default::default()
+    };
     data_trb.set_cycle(true);
     data_trb.set_trb_type(TrbType::DataStage);
     data_trb.set_dir_in(true);

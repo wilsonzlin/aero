@@ -87,7 +87,7 @@ fn ring_cursor_zero_step_budget_errors() {
 fn ring_cursor_reports_address_overflow() {
     let mut mem = SparseMem::default();
 
-    let trb_addr = u64::MAX & !0x0f;
+    let trb_addr = !0x0fu64;
     let mut trb = Trb::default();
     trb.set_cycle(true);
     trb.set_trb_type(TrbType::Normal);
@@ -110,28 +110,36 @@ fn ring_cursor_follows_links_and_toggles_cycle() {
     let seg2: u64 = 0x2000;
 
     // Segment 1: [Normal] [Link -> seg2, TC=0]
-    let mut n1 = Trb::default();
-    n1.parameter = 0xaaaabbbb_ccccdddd;
+    let mut n1 = Trb {
+        parameter: 0xaaaabbbb_ccccdddd,
+        ..Default::default()
+    };
     n1.set_cycle(true);
     n1.set_trb_type(TrbType::Normal);
     n1.write_to(&mut mem, seg1);
 
-    let mut l1 = Trb::default();
-    l1.parameter = seg2;
+    let mut l1 = Trb {
+        parameter: seg2,
+        ..Default::default()
+    };
     l1.set_cycle(true);
     l1.set_trb_type(TrbType::Link);
     l1.set_link_toggle_cycle(false);
     l1.write_to(&mut mem, seg1 + TRB_LEN as u64);
 
     // Segment 2: [Normal] [Link -> seg1, TC=1]
-    let mut n2 = Trb::default();
-    n2.parameter = 0x1111_2222_3333_4444;
+    let mut n2 = Trb {
+        parameter: 0x1111_2222_3333_4444,
+        ..Default::default()
+    };
     n2.set_cycle(true);
     n2.set_trb_type(TrbType::Normal);
     n2.write_to(&mut mem, seg2);
 
-    let mut l2 = Trb::default();
-    l2.parameter = seg1;
+    let mut l2 = Trb {
+        parameter: seg1,
+        ..Default::default()
+    };
     l2.set_cycle(true);
     l2.set_trb_type(TrbType::Link);
     l2.set_link_toggle_cycle(true);
@@ -149,7 +157,7 @@ fn ring_cursor_follows_links_and_toggles_cycle() {
         other => panic!("expected Ready, got {other:?}"),
     }
     assert_eq!(cur.dequeue_ptr(), seg1 + TRB_LEN as u64);
-    assert_eq!(cur.cycle_state(), true);
+    assert!(cur.cycle_state());
 
     // Second TRB: should skip Link TRB and return seg2 normal.
     match cur.poll(&mut mem, 8) {
@@ -161,12 +169,12 @@ fn ring_cursor_follows_links_and_toggles_cycle() {
         other => panic!("expected Ready, got {other:?}"),
     }
     assert_eq!(cur.dequeue_ptr(), seg2 + TRB_LEN as u64);
-    assert_eq!(cur.cycle_state(), true);
+    assert!(cur.cycle_state());
 
     // Third poll: should follow Link TRB, toggle cycle, then stop due to cycle mismatch at seg1.
     assert_eq!(cur.poll(&mut mem, 8), RingPoll::NotReady);
     assert_eq!(cur.dequeue_ptr(), seg1);
-    assert_eq!(cur.cycle_state(), false);
+    assert!(!cur.cycle_state());
 }
 
 #[test]
@@ -176,15 +184,19 @@ fn ring_cursor_does_not_follow_link_when_cycle_mismatch() {
     let seg1: u64 = 0x1000;
     let seg2: u64 = 0x2000;
 
-    let mut link = Trb::default();
-    link.parameter = seg2;
+    let mut link = Trb {
+        parameter: seg2,
+        ..Default::default()
+    };
     link.set_cycle(false); // mismatch
     link.set_trb_type(TrbType::Link);
     link.set_link_toggle_cycle(true);
     link.write_to(&mut mem, seg1);
 
-    let mut normal = Trb::default();
-    normal.parameter = 0xdead_beef;
+    let mut normal = Trb {
+        parameter: 0xdead_beef,
+        ..Default::default()
+    };
     normal.set_cycle(true);
     normal.set_trb_type(TrbType::Normal);
     normal.write_to(&mut mem, seg2);
@@ -192,7 +204,7 @@ fn ring_cursor_does_not_follow_link_when_cycle_mismatch() {
     let mut cur = RingCursor::new(seg1, true);
     assert_eq!(cur.poll(&mut mem, 8), RingPoll::NotReady);
     assert_eq!(cur.dequeue_ptr(), seg1);
-    assert_eq!(cur.cycle_state(), true);
+    assert!(cur.cycle_state());
 }
 
 #[test]
@@ -201,8 +213,10 @@ fn ring_cursor_rejects_null_link_target() {
 
     let seg1: u64 = 0x1000;
 
-    let mut link = Trb::default();
-    link.parameter = 0;
+    let mut link = Trb {
+        parameter: 0,
+        ..Default::default()
+    };
     link.set_cycle(true);
     link.set_trb_type(TrbType::Link);
     link.write_to(&mut mem, seg1);
@@ -213,7 +227,7 @@ fn ring_cursor_rejects_null_link_target() {
         RingPoll::Err(RingError::InvalidLinkTarget)
     );
     assert_eq!(cur.dequeue_ptr(), seg1);
-    assert_eq!(cur.cycle_state(), true);
+    assert!(cur.cycle_state());
 }
 
 #[test]
@@ -225,15 +239,19 @@ fn ring_cursor_step_budget_prevents_infinite_link_loops() {
 
     // Malformed ring: link TRBs pointing to each other, alternating cycle bits and toggling cycle.
     // This would loop forever without a step budget.
-    let mut link_a = Trb::default();
-    link_a.parameter = b;
+    let mut link_a = Trb {
+        parameter: b,
+        ..Default::default()
+    };
     link_a.set_cycle(true);
     link_a.set_trb_type(TrbType::Link);
     link_a.set_link_toggle_cycle(true);
     link_a.write_to(&mut mem, a);
 
-    let mut link_b = Trb::default();
-    link_b.parameter = a;
+    let mut link_b = Trb {
+        parameter: a,
+        ..Default::default()
+    };
     link_b.set_cycle(false);
     link_b.set_trb_type(TrbType::Link);
     link_b.set_link_toggle_cycle(true);

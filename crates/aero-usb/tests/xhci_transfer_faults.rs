@@ -92,7 +92,7 @@ fn xhci_transfer_executor_halts_on_all_ones_trb_fetch() {
     let keyboard = UsbHidKeyboardHandle::new();
     let mut exec = XhciTransferExecutor::new(Box::new(keyboard.clone()));
 
-    let mut mem = AllOnesMem::default();
+    let mut mem = AllOnesMem;
     exec.add_endpoint(0x81, RING_BASE);
     exec.tick_1ms(&mut mem);
 
@@ -189,7 +189,7 @@ fn xhci_transfer_executor_halts_on_dequeue_ptr_overflow() {
     let mut mem = SparseMem::default();
 
     // Place an unsupported TRB at the last aligned address so advancing would overflow.
-    let trb_addr = u64::MAX & !0x0f;
+    let trb_addr = !0x0f_u64;
     let trb = Trb::from_dwords(0, 0, 0, 1); // cycle=1, type=0 (invalid/unsupported)
     write_trb(&mut mem, trb_addr, trb);
 

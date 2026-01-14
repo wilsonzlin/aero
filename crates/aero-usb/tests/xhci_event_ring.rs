@@ -59,8 +59,10 @@ fn event_ring_enqueue_writes_trb_and_sets_interrupt_pending() {
     );
     xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
 
-    let mut evt = Trb::default();
-    evt.parameter = 0x1234_5678;
+    let mut evt = Trb {
+        parameter: 0x1234_5678,
+        ..Default::default()
+    };
     evt.set_trb_type(TrbType::PortStatusChangeEvent);
 
     xhci.post_event(evt);
@@ -124,8 +126,10 @@ fn event_ring_erdp_ehb_write_clears_interrupt_pending() {
     );
     xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
 
-    let mut evt = Trb::default();
-    evt.parameter = 0x1234_5678;
+    let mut evt = Trb {
+        parameter: 0x1234_5678,
+        ..Default::default()
+    };
     evt.set_trb_type(TrbType::PortStatusChangeEvent);
 
     xhci.post_event(evt);
@@ -177,8 +181,10 @@ fn event_ring_erdp_ehb_byte_write_clears_interrupt_pending() {
     );
     xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
 
-    let mut evt = Trb::default();
-    evt.parameter = 0x1234_5678;
+    let mut evt = Trb {
+        parameter: 0x1234_5678,
+        ..Default::default()
+    };
     evt.set_trb_type(TrbType::PortStatusChangeEvent);
 
     xhci.post_event(evt);
@@ -402,8 +408,10 @@ fn event_ring_wrap_and_budget_are_bounded() {
     xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
 
     for i in 0..(EVENT_ENQUEUE_BUDGET_PER_TICK + 1) {
-        let mut evt = Trb::default();
-        evt.parameter = i as u64;
+        let mut evt = Trb {
+            parameter: i as u64,
+            ..Default::default()
+        };
         evt.set_trb_type(TrbType::PortStatusChangeEvent);
         xhci.post_event(evt);
     }
@@ -448,14 +456,20 @@ fn event_ring_wrap_toggles_cycle_and_respects_consumer_erdp() {
     );
     xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
 
-    let mut ev0 = Trb::default();
-    ev0.parameter = 0xaaaa;
+    let mut ev0 = Trb {
+        parameter: 0xaaaa,
+        ..Default::default()
+    };
     ev0.set_trb_type(TrbType::PortStatusChangeEvent);
-    let mut ev1 = Trb::default();
-    ev1.parameter = 0xbbbb;
+    let mut ev1 = Trb {
+        parameter: 0xbbbb,
+        ..Default::default()
+    };
     ev1.set_trb_type(TrbType::PortStatusChangeEvent);
-    let mut ev2 = Trb::default();
-    ev2.parameter = 0xcccc;
+    let mut ev2 = Trb {
+        parameter: 0xcccc,
+        ..Default::default()
+    };
     ev2.set_trb_type(TrbType::PortStatusChangeEvent);
 
     // Post 3 events into a ring that can only hold 2; the 3rd should remain pending.
@@ -472,7 +486,7 @@ fn event_ring_wrap_toggles_cycle_and_respects_consumer_erdp() {
 
     // Both TRBs should be written with the initial producer cycle state (C=1).
     let got0 = Trb::read_from(&mut mem, ring_base);
-    let got1 = Trb::read_from(&mut mem, ring_base + 1 * TRB_LEN as u64);
+    let got1 = Trb::read_from(&mut mem, ring_base + TRB_LEN as u64);
     assert!(got0.cycle());
     assert!(got1.cycle());
     assert_eq!(got0.parameter, 0xaaaa);
@@ -483,13 +497,13 @@ fn event_ring_wrap_toggles_cycle_and_respects_consumer_erdp() {
         &mut mem,
         regs::REG_INTR0_ERDP_LO,
         4,
-        (ring_base + 1 * TRB_LEN as u64) as u32,
+        (ring_base + TRB_LEN as u64) as u32,
     );
     xhci.mmio_write(
         &mut mem,
         regs::REG_INTR0_ERDP_HI,
         4,
-        ((ring_base + 1 * TRB_LEN as u64) >> 32) as u32,
+        ((ring_base + TRB_LEN as u64) >> 32) as u32,
     );
 
     // Now the producer should be able to wrap and enqueue the final event with a toggled cycle bit.
@@ -532,14 +546,20 @@ fn event_ring_consumer_full_lap_same_erdp_toggles_cycle_and_unblocks_producer() 
     );
     xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
 
-    let mut ev0 = Trb::default();
-    ev0.parameter = 0xaaaa;
+    let mut ev0 = Trb {
+        parameter: 0xaaaa,
+        ..Default::default()
+    };
     ev0.set_trb_type(TrbType::PortStatusChangeEvent);
-    let mut ev1 = Trb::default();
-    ev1.parameter = 0xbbbb;
+    let mut ev1 = Trb {
+        parameter: 0xbbbb,
+        ..Default::default()
+    };
     ev1.set_trb_type(TrbType::PortStatusChangeEvent);
-    let mut ev2 = Trb::default();
-    ev2.parameter = 0xcccc;
+    let mut ev2 = Trb {
+        parameter: 0xcccc,
+        ..Default::default()
+    };
     ev2.set_trb_type(TrbType::PortStatusChangeEvent);
 
     xhci.post_event(ev0);
@@ -610,8 +630,10 @@ fn event_ring_multi_segment_wraps_to_first_segment_and_toggles_cycle() {
     xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
 
     for i in 0..5u64 {
-        let mut evt = Trb::default();
-        evt.parameter = 0x1000 + i;
+        let mut evt = Trb {
+            parameter: 0x1000 + i,
+            ..Default::default()
+        };
         evt.set_trb_type(TrbType::PortStatusChangeEvent);
         xhci.post_event(evt);
     }
@@ -683,7 +705,7 @@ fn port_status_change_event_is_delivered_into_guest_event_ring() {
     xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
 
     // Root hub port 0 connect should enqueue a Port Status Change Event TRB.
-    xhci.attach_device(0, Box::new(DummyDevice::default()));
+    xhci.attach_device(0, Box::new(DummyDevice));
 
     xhci.service_event_ring(&mut mem);
 
@@ -723,13 +745,17 @@ fn event_ring_cycle_toggles_on_wrap() {
     );
     xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
 
-    let mut evt1 = Trb::default();
-    evt1.parameter = 0x1111_1111;
+    let mut evt1 = Trb {
+        parameter: 0x1111_1111,
+        ..Default::default()
+    };
     evt1.set_trb_type(TrbType::PortStatusChangeEvent);
     xhci.post_event(evt1);
 
-    let mut evt2 = Trb::default();
-    evt2.parameter = 0x2222_2222;
+    let mut evt2 = Trb {
+        parameter: 0x2222_2222,
+        ..Default::default()
+    };
     evt2.set_trb_type(TrbType::PortStatusChangeEvent);
     xhci.post_event(evt2);
 
@@ -745,8 +771,10 @@ fn event_ring_cycle_toggles_on_wrap() {
     xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, erdp as u32);
     xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_HI, 4, (erdp >> 32) as u32);
 
-    let mut evt3 = Trb::default();
-    evt3.parameter = 0x3333_3333;
+    let mut evt3 = Trb {
+        parameter: 0x3333_3333,
+        ..Default::default()
+    };
     evt3.set_trb_type(TrbType::PortStatusChangeEvent);
     xhci.post_event(evt3);
     xhci.service_event_ring(&mut mem);
@@ -762,8 +790,10 @@ fn event_ring_flushes_pending_events_after_erst_programmed() {
     let mut mem = TestMemory::new(0x20_000);
 
     let mut xhci = XhciController::new();
-    let mut evt = Trb::default();
-    evt.parameter = 0xdead_beef;
+    let mut evt = Trb {
+        parameter: 0xdead_beef,
+        ..Default::default()
+    };
     evt.set_trb_type(TrbType::PortStatusChangeEvent);
     xhci.post_event(evt);
 

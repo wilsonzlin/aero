@@ -423,8 +423,8 @@ mod tests {
         let ring_base = 0x1000u64;
 
         // Prime a transfer ring with 3 Normal TRBs (cycle=1) and a Link TRB back to the start.
-        write_trb(&mut mem, ring_base + 0 * TRB_LEN as u64, normal_trb(true));
-        write_trb(&mut mem, ring_base + 1 * TRB_LEN as u64, normal_trb(true));
+        write_trb(&mut mem, ring_base, normal_trb(true));
+        write_trb(&mut mem, ring_base + TRB_LEN as u64, normal_trb(true));
         write_trb(&mut mem, ring_base + 2 * TRB_LEN as u64, normal_trb(true));
         write_trb(
             &mut mem,
@@ -474,7 +474,7 @@ mod tests {
                     completion_code: CompletionCode::Success,
                     slot_id: 1,
                     endpoint_id: 1,
-                    trb_pointer: ring_base + 1 * TRB_LEN as u64,
+                    trb_pointer: ring_base + TRB_LEN as u64,
                 },
                 Event::TransferEvent {
                     completion_code: CompletionCode::Success,
