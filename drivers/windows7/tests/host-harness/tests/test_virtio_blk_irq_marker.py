@@ -74,6 +74,11 @@ class VirtioBlkIrqMarkerTests(unittest.TestCase):
         out = self._emit(tail)
         self.assertEqual(out, "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_IRQ|FAIL|irq_mode=intx")
 
+    def test_emits_info_when_only_irq_diag_marker_present(self) -> None:
+        tail = b"virtio-blk-irq|INFO|mode=intx\n"
+        out = self._emit(tail)
+        self.assertEqual(out, "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_IRQ|INFO|irq_mode=intx")
+
     def test_uses_last_marker(self) -> None:
         tail = (
             b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS|irq_mode=intx\n"
