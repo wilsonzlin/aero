@@ -23,7 +23,8 @@ Status:
   snapshot/restore; see [`docs/usb-ehci.md`](./usb-ehci.md) for current scope/limitations.
 - The web runtime currently exposes an xHCI PCI function backed by `XhciControllerBridge`, but the
   controller is still missing key guest-visible functionality (doorbells, command ring processing,
-  transfer scheduling), so treat it as a placeholder for now.
+  transfer scheduling), so treat it as a placeholder for now. (The Rust model now includes a basic
+  runtime interrupter + ERST-backed event ring producer used by unit tests.)
 
 > Canonical USB stack selection: see [ADR 0015](./adr/0015-canonical-usb-stack.md) (`crates/aero-usb` + `crates/aero-wasm` + `web/`).
 
@@ -166,7 +167,8 @@ for modern guests and for high-speed/superspeed passthrough, but the in-tree cod
     - A small Supported Protocol xECP list (USB 2.0 + speed IDs) sized to `port_count`.
     - Operational registers (subset): USBCMD, USBSTS, CRCR, DCBAAP.
   - DBOFF/RTSOFF report realistic offsets. The doorbell array is not implemented yet, but the
-    runtime interrupter 0 registers + guest event ring producer are modeled.
+    runtime interrupter 0 registers + ERST-backed guest event ring producer are modeled (used by
+    unit tests).
   - A DMA read on the first transition of `USBCMD.RUN` (primarily to validate **PCI Bus Master Enable gating** in wrappers).
   - A level-triggered interrupt condition surfaced as `irq_level()` (USBSTS.EINT), used to validate **INTx disable gating**.
   - DCBAAP register storage and controller-local slot allocation (Enable Slot scaffolding).
@@ -218,6 +220,20 @@ Key semantics:
 - Short packets generate a `ShortPacket` completion code and report *residual bytes* (xHCI semantics).
 - `Stall` halts the endpoint and produces a `StallError` completion.
 
+#### Transfers (endpoint 0 control via Setup/Data/Status TRBs)
+
+`aero_usb::xhci::transfer::Ep0TransferEngine` can process **endpoint 0** control transfers from a
+guest transfer ring:
+
+- Setup Stage / Data Stage / Status Stage TRBs.
+- IN + OUT directions.
+- Data Stage supports buffer pointers (IDT=0); IDT=1 is handled defensively (no panics).
+- `NAK` leaves the TD pending and retries on the next `tick_1ms` (no busy loops).
+- Emits Transfer Event TRBs into a simple contiguous event ring (used by unit tests).
+
+This engine is currently a standalone transfer-plane component; it is not yet wired into the
+guest-visible `XhciController` MMIO/doorbell model.
+
 ### Device model layer
 
 xHCI shares the same USB device model abstractions as UHCI (`crate::UsbDeviceModel` / `device::AttachedUsbDevice`), so device work (HID descriptors, report formats, passthrough normalization) does not need to be duplicated per controller type.
@@ -236,13 +252,21 @@ control pipe:
 This harness is a reference/validation tool; it is **not** yet integrated into the guest-visible
 MMIO controller stubs.
 
+Dedicated EP0 unit tests also exist:
+
+- `crates/aero-usb/tests/xhci_control_get_descriptor.rs`
+- `crates/aero-usb/tests/xhci_control_set_configuration.rs`
+- `crates/aero-usb/tests/xhci_control_in_nak_retry.rs`
+
 ### Still MVP-relevant but not implemented yet
 
 - Full root hub model (USB3 ports, additional link states, full port register/event coverage).
 - Delivery of command/transfer events via the guest event ring/interrupter (beyond the current Port Status Change events).
-- Doorbell array and wiring it into the controller core.
+- Automatic servicing of the guest event ring as part of the main controller tick/PCI wrapper (today
+  callers must invoke `service_event_ring()` to flush buffered events into guest memory).
+- Doorbell array and wiring doorbell writes into command/transfer ring processing.
 - Full command ring + event ring integration (today, command-ring processing exists as standalone helpers/tests, but the controller MMIO surface does not yet expose the full model).
-- Endpoint 0 control transfer engine wired into the controller (beyond the test harness).
+- Endpoint 0 control transfer engine wired into the controller (doorbells + endpoint contexts), beyond the standalone `Ep0TransferEngine`.
 - Wiring xHCI into the canonical machine/topology (native) and aligning PCI identity across runtimes.
 
 ---
@@ -255,7 +279,8 @@ xHCI is a large spec. The MVP intentionally leaves out many features that guests
 - **Full command ring/event ring integration** and the full xHCI slot/endpoint context state machines
   (`Enable Slot`, `Address Device`, `Configure Endpoint`, etc). Some command/endpoint-management
   helpers exist for tests, but they are not yet exposed as a guest-visible controller.
-- **Setup TRBs / full endpoint 0 control transfer engine** (control requests are handled at the USB device-model layer, but not yet via xHCI-style TRBs).
+- **Controller-integrated endpoint 0 transfers** (a standalone `Ep0TransferEngine` exists for tests,
+  but `XhciController` does not yet expose doorbell-driven transfer-ring processing).
 - **USB 3.x SuperSpeed** (5/10/20Gbps link speeds) and related link state machinery.
 - **Isochronous transfers** (audio/video devices).
 - **MSI-X** interrupt delivery. (MSI support is platform-dependent; the web runtime uses INTx only today.)
