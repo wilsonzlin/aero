@@ -123,7 +123,7 @@ import {
 import type { Presenter, PresenterBackendKind, PresenterInitOptions } from "../gpu/presenter";
 import { PresenterError } from "../gpu/presenter";
 import { RawWebGl2Presenter } from "../gpu/raw-webgl2-presenter-backend";
-import { didPresenterPresent } from "./present-outcome.ts";
+import { didPresenterPresent, presentOutcomeDeltas } from "./present-outcome.ts";
 import {
   createAerogpuCpuExecutorState,
   decodeAerogpuAllocTable,
@@ -2581,14 +2581,15 @@ const handleTick = async () => {
     }
 
     if (perfEnabled) perfGpuMs += presentGpuMs;
+    const outcome = presentOutcomeDeltas(didPresent);
+    presentsSucceeded += outcome.presentsSucceeded;
+    // `framesPresented/framesDropped` count successful/failed *present passes* in this worker,
+    // regardless of whether the pixels came from the legacy shared framebuffer or WDDM scanout.
+    // When scanout is WDDM-owned, the frame scheduler keeps ticking even if `framesReceived`
+    // (shared framebuffer seq) is not advancing, so these counters may diverge.
+    framesPresented += outcome.framesPresented;
+    framesDropped += outcome.framesDropped;
     if (didPresent) {
-      presentsSucceeded += 1;
-      // `framesPresented/framesDropped` count successful/failed *present passes* in this worker,
-      // regardless of whether the pixels came from the legacy shared framebuffer or WDDM scanout.
-      // When scanout is WDDM-owned, the frame scheduler keeps ticking even if `framesReceived`
-      // (shared framebuffer seq) is not advancing, so these counters may diverge.
-      framesPresented += 1;
-
       const now = performance.now();
       if (lastFrameStartMs !== null) {
         telemetry.beginFrame(lastFrameStartMs);
@@ -2629,8 +2630,6 @@ const handleTick = async () => {
         telemetry.endFrame(now);
       }
       lastFrameStartMs = now;
-    } else {
-      framesDropped += 1;
     }
   } catch (err) {
     sendError(err);
