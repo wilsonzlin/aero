@@ -69,6 +69,8 @@ export const StatusIndex = {
   // Synthetic USB HID guest readiness (i.e. device configured by the guest stack).
   IoInputUsbKeyboardOk: 24,
   IoInputUsbMouseOk: 25,
+  // Total number of held "keyboard-like" inputs (keyboard HID usages + Consumer Control usages).
+  // This is used to gate backend switching to avoid stuck keys when routing changes mid-press.
   IoInputKeyboardHeldCount: 26,
   IoInputMouseButtonsHeldMask: 27,
 
