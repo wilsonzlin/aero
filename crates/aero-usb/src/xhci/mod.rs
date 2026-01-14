@@ -536,6 +536,16 @@ impl XhciController {
         if changed {
             self.queue_port_status_change_event(port);
         }
+
+        // If the root hub port is disconnected, any slot previously bound to that port is no longer
+        // reachable. Leave the slot enabled but mark the device as detached so `slot_device_mut()`
+        // fails fast.
+        let port_id = (port + 1) as u8;
+        for slot in self.slots.iter_mut().skip(1) {
+            if slot.enabled && slot.port_id == Some(port_id) {
+                slot.device_attached = false;
+            }
+        }
     }
 
     /// Pops the next pending event TRB (interrupter 0), if any.

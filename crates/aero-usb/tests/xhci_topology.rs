@@ -59,3 +59,45 @@ fn xhci_route_string_binds_device_behind_external_hub() {
     assert_eq!(id_product, 0x0001);
     assert_eq!(dev.handle_out(0, &[]), UsbOutResult::Ack);
 }
+
+#[test]
+fn xhci_detach_clears_slot_device_binding() {
+    let mut ctrl = XhciController::new();
+    let mut mem = TestMemory::new(0x4000);
+
+    ctrl.set_dcbaap(0x1000);
+    ctrl.attach_device(0, Box::new(UsbHidKeyboardHandle::new()));
+
+    let completion = ctrl.enable_slot(&mut mem);
+    assert_eq!(completion.completion_code, CommandCompletionCode::Success);
+    let slot_id = completion.slot_id;
+
+    let mut slot_ctx = SlotContext::default();
+    slot_ctx.set_root_hub_port_number(1);
+    let completion = ctrl.address_device(slot_id, slot_ctx);
+    assert_eq!(completion.completion_code, CommandCompletionCode::Success);
+
+    assert!(
+        ctrl.slot_device_mut(slot_id).is_some(),
+        "slot must resolve to the attached device"
+    );
+    assert!(
+        ctrl.slot_state(slot_id)
+            .expect("slot state")
+            .device_attached(),
+        "slot state should record attached device"
+    );
+
+    ctrl.detach_device(0);
+
+    assert!(
+        ctrl.slot_device_mut(slot_id).is_none(),
+        "slot must no longer resolve after port detach"
+    );
+    assert!(
+        !ctrl.slot_state(slot_id)
+            .expect("slot state")
+            .device_attached(),
+        "slot state should record detached device"
+    );
+}
