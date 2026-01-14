@@ -2934,6 +2934,52 @@ static void test_notify_queue_does_not_write_when_invalid_device_state(void)
     VirtioPciModernMmioSimUninstall();
 }
 
+static void test_notify_queue_noop_when_notify_base_null_even_with_cached_addr(void)
+{
+    uint8_t bar0[TEST_BAR0_SIZE];
+    uint8_t pci_cfg[256];
+    VIRTIO_PCI_DEVICE dev;
+    VIRTIO_PCI_MODERN_MMIO_SIM sim;
+    volatile UINT16* cache[1];
+    volatile uint16_t* addr;
+
+    setup_device(&dev, bar0, pci_cfg);
+
+    cache[0] = NULL;
+    dev.QueueNotifyAddrCache = (volatile UINT16**)cache;
+    dev.QueueNotifyAddrCacheCount = 1;
+
+    VirtioPciModernMmioSimInit(&sim,
+                               dev.CommonCfg,
+                               (volatile uint8_t*)dev.NotifyBase,
+                               dev.NotifyLength,
+                               (volatile uint8_t*)dev.IsrStatus,
+                               dev.IsrLength,
+                               (volatile uint8_t*)dev.DeviceCfg,
+                               dev.DeviceCfgLength);
+
+    sim.num_queues = 1;
+    sim.queues[0].queue_size = 8;
+    sim.queues[0].queue_notify_off = 2;
+
+    VirtioPciModernMmioSimInstall(&sim);
+
+    addr = (volatile uint16_t*)((volatile uint8_t*)dev.NotifyBase + (2u * TEST_NOTIFY_OFF_MULT));
+    cache[0] = addr; /* Simulate a cached doorbell address. */
+
+    /*
+     * If a driver NULLs NotifyBase during teardown/surprise removal, cached notify
+     * pointers must not still be used to write MMIO.
+     */
+    dev.NotifyBase = NULL;
+
+    *addr = 0x1234u;
+    VirtioPciNotifyQueue(&dev, 0);
+    assert(*addr == 0x1234u);
+
+    VirtioPciModernMmioSimUninstall();
+}
+
 static void test_misc_null_safe_behaviour(void)
 {
     VIRTIO_PCI_DEVICE dev;
@@ -3050,6 +3096,7 @@ int main(void)
     test_notify_queue_writes_queue_index_value();
     test_notify_queue_does_not_write_when_queue_missing();
     test_notify_queue_does_not_write_when_invalid_device_state();
+    test_notify_queue_noop_when_notify_base_null_even_with_cached_addr();
     test_reset_device_fast_path();
     test_reset_device_clears_after_delay_passive_level();
     test_reset_device_clears_after_stall_dispatch_level();
