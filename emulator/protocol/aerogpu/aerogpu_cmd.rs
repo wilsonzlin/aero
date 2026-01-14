@@ -1874,6 +1874,12 @@ pub fn decode_cmd_set_shader_constants_i_payload_le(
     }
 
     let hdr = decode_cmd_hdr_le(buf)?;
+    if hdr.opcode != AerogpuCmdOpcode::SetShaderConstantsI as u32 {
+        return Err(AerogpuCmdDecodeError::UnexpectedOpcode {
+            found: hdr.opcode,
+            expected: AerogpuCmdOpcode::SetShaderConstantsI,
+        });
+    }
     let packet_len = validate_packet_len(buf, hdr)?;
 
     let vec4_count = u32::from_le_bytes(buf[16..20].try_into().unwrap());
@@ -1926,6 +1932,12 @@ pub fn decode_cmd_set_shader_constants_b_payload_le(
     }
 
     let hdr = decode_cmd_hdr_le(buf)?;
+    if hdr.opcode != AerogpuCmdOpcode::SetShaderConstantsB as u32 {
+        return Err(AerogpuCmdDecodeError::UnexpectedOpcode {
+            found: hdr.opcode,
+            expected: AerogpuCmdOpcode::SetShaderConstantsB,
+        });
+    }
     let packet_len = validate_packet_len(buf, hdr)?;
 
     let bool_count = u32::from_le_bytes(buf[16..20].try_into().unwrap());
