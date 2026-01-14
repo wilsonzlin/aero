@@ -759,12 +759,6 @@ impl IoSnapshot for XhciController {
         };
         self.pending_dma_on_run = r.bool(TAG_PENDING_DMA_ON_RUN)?.unwrap_or(false);
         if (self.usbcmd & regs::USBCMD_RUN) == 0 {
-            // Dropping RUN cancels any deferred DMA-on-RUN probe in the controller model.
-            self.pending_dma_on_run = false;
-        }
-
-        self.pending_dma_on_run = r.bool(TAG_PENDING_DMA_ON_RUN)?.unwrap_or(false);
-        if (self.usbcmd & regs::USBCMD_RUN) == 0 {
             // Dropping RUN cancels the deferred DMA-on-RUN probe. Preserve that invariant on restore
             // even if older snapshots omitted the field or if a malformed snapshot has the flag set
             // while halted.
