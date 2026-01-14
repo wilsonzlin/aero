@@ -145,6 +145,19 @@ export type MachineHandle = {
      * Optional for older WASM builds.
      */
     vga_framebuffer_rgba8888_copy?(): Uint8Array | null;
+
+    /**
+     * Shared scanout state descriptor (e.g. legacy VGA/VBE vs AeroGPU WDDM scanout selection).
+     *
+     * When present, these return a pointer/length pair describing an `Int32Array`-backed scanout
+     * state structure stored inside the module's linear memory (typically a `SharedArrayBuffer`
+     * in the threaded build). See `web/src/ipc/scanout_state.ts` for the layout contract.
+     *
+     * Optional for older WASM builds and for builds that do not expose scanout state via linear
+     * memory (callers should feature-detect).
+     */
+    scanout_state_ptr?(): number;
+    scanout_state_len_bytes?(): number;
     inject_browser_key(code: string, pressed: boolean): void;
     /**
      * Inject up to 4 raw PS/2 Set-2 scancode bytes.
