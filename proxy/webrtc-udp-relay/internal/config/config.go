@@ -960,6 +960,9 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	if signalingWSPingInterval <= 0 {
 		return Config{}, fmt.Errorf("%s/--signaling-ws-ping-interval must be > 0", EnvSignalingWSPingInterval)
 	}
+	if signalingWSPingInterval >= signalingWSIdleTimeout {
+		return Config{}, fmt.Errorf("%s/--signaling-ws-ping-interval must be < %s/--signaling-ws-idle-timeout", EnvSignalingWSPingInterval, EnvSignalingWSIdleTimeout)
+	}
 	if maxSignalingMessageBytes <= 0 {
 		return Config{}, fmt.Errorf("%s/--max-signaling-message-bytes must be > 0", EnvMaxSignalingMessageBytes)
 	}
@@ -971,6 +974,9 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	}
 	if udpWSPingInterval <= 0 {
 		return Config{}, fmt.Errorf("%s/--udp-ws-ping-interval must be > 0", EnvUDPWSPingInterval)
+	}
+	if udpWSPingInterval >= udpWSIdleTimeout {
+		return Config{}, fmt.Errorf("%s/--udp-ws-ping-interval must be < %s/--udp-ws-idle-timeout", EnvUDPWSPingInterval, EnvUDPWSIdleTimeout)
 	}
 
 	if strings.TrimSpace(turnRESTSharedSecret) != "" {

@@ -248,6 +248,30 @@ func TestWebSocketTimeouts_EnvOverride(t *testing.T) {
 	}
 }
 
+func TestWebSocketTimeouts_RejectsPingIntervalGTEIdleTimeout(t *testing.T) {
+	t.Run("signaling", func(t *testing.T) {
+		_, err := load(lookupMap(map[string]string{
+			EnvAPIKey:                  "secret",
+			EnvSignalingWSIdleTimeout:  "1s",
+			EnvSignalingWSPingInterval: "1s",
+		}), nil)
+		if err == nil {
+			t.Fatalf("expected error, got nil")
+		}
+	})
+
+	t.Run("udp", func(t *testing.T) {
+		_, err := load(lookupMap(map[string]string{
+			EnvAPIKey:            "secret",
+			EnvUDPWSIdleTimeout:  "1s",
+			EnvUDPWSPingInterval: "1s",
+		}), nil)
+		if err == nil {
+			t.Fatalf("expected error, got nil")
+		}
+	})
+}
+
 func TestWebRTCDataChannelMaxMessageBytes_AutoDerivesFromRelayLimits(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
 		EnvAPIKey:                  "secret",
