@@ -991,7 +991,7 @@ impl AeroGpuMmioDevice {
         }
     }
 
-    fn enqueue_submission(&mut self, sub: AerogpuSubmission) {
+    fn enqueue_submission(&mut self, sub: AerogpuSubmission) -> bool {
         let bytes = Self::submission_payload_bytes(&sub);
 
         // If a single submission is larger than the cap (should be impossible given the command
@@ -1018,8 +1018,21 @@ impl AeroGpuMmioDevice {
             self.pop_oldest_submission();
         }
 
+        // `push_back` may allocate; reserve fallibly to avoid aborting on OOM (especially on
+        // wasm32 where heaps are often constrained).
+        if self.pending_submissions.try_reserve(1).is_err() {
+            // If we cannot queue submissions for out-of-process execution, treat this as a backend
+            // failure for visibility. Fence progress is still preserved by the caller: it will
+            // detect `queued_for_external=false` and auto-complete the fence.
+            if sub.signal_fence != 0 {
+                self.record_error(pci::AerogpuErrorCode::Backend, sub.signal_fence);
+            }
+            return false;
+        }
+
         self.pending_submissions.push_back(sub);
         self.pending_submissions_bytes = self.pending_submissions_bytes.saturating_add(bytes);
+        true
     }
 
     pub(crate) fn read_backend_scanout_rgba8(
@@ -1983,8 +1996,7 @@ impl AeroGpuMmioDevice {
                     alloc_table,
                 };
 
-                self.enqueue_submission(sub);
-                queued_for_external = true;
+                queued_for_external = self.enqueue_submission(sub);
             }
         }
 
@@ -2871,22 +2883,22 @@ mod tests {
     fn submission_queue_is_capped_by_total_bytes() {
         let mut dev = AeroGpuMmioDevice::default();
 
-        dev.enqueue_submission(make_submission(3000));
+        assert!(dev.enqueue_submission(make_submission(3000)));
         assert_eq!(dev.pending_submissions.len(), 1);
         assert_eq!(dev.pending_submissions_bytes, 3000);
 
         // Exceeds the test cap (4KiB) => drop the oldest submission.
-        dev.enqueue_submission(make_submission(3000));
+        assert!(dev.enqueue_submission(make_submission(3000)));
         assert_eq!(dev.pending_submissions.len(), 1);
         assert_eq!(dev.pending_submissions_bytes, 3000);
 
         // 3000 + 1000 == 4000 <= 4096 => keep both.
-        dev.enqueue_submission(make_submission(1000));
+        assert!(dev.enqueue_submission(make_submission(1000)));
         assert_eq!(dev.pending_submissions.len(), 2);
         assert_eq!(dev.pending_submissions_bytes, 4000);
 
         // 4000 + 200 > 4096 => drop the oldest 3000-byte submission.
-        dev.enqueue_submission(make_submission(200));
+        assert!(dev.enqueue_submission(make_submission(200)));
         assert_eq!(dev.pending_submissions.len(), 2);
         assert_eq!(dev.pending_submissions_bytes, 1200);
 
@@ -2901,7 +2913,7 @@ mod tests {
         let mut dev = AeroGpuMmioDevice::default();
 
         for _ in 0..(MAX_PENDING_AEROGPU_SUBMISSIONS + 1) {
-            dev.enqueue_submission(make_submission(1));
+            assert!(dev.enqueue_submission(make_submission(1)));
         }
 
         assert_eq!(
