@@ -5,7 +5,7 @@ use aero_d3d11::sm4::opcode::*;
 use aero_d3d11::FourCC;
 use aero_dxbc::test_utils as dxbc_test_utils;
 use aero_protocol::aerogpu::aerogpu_cmd::AerogpuShaderStage;
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 
 const FOURCC_SHEX: FourCC = FourCC(*b"SHEX");
 
@@ -35,80 +35,30 @@ fn opcode_token(opcode: u32, len: u32) -> u32 {
     opcode | (len << OPCODE_LEN_SHIFT)
 }
 
-async fn create_device_queue() -> Result<(wgpu::Device, wgpu::Queue)> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-
-        let needs_runtime_dir = std::env::var("XDG_RUNTIME_DIR")
-            .ok()
-            .map(|v| v.is_empty())
-            .unwrap_or(true);
-
-        if needs_runtime_dir {
-            let dir =
-                std::env::temp_dir().join(format!("aero-d3d11-xdg-runtime-{}", std::process::id()));
-            let _ = std::fs::create_dir_all(&dir);
-            let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
-            std::env::set_var("XDG_RUNTIME_DIR", &dir);
-        }
-    }
-
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        // Prefer GL on Linux CI to avoid crashes in some Vulkan software adapters.
-        backends: if cfg!(target_os = "linux") {
-            wgpu::Backends::GL
-        } else {
-            wgpu::Backends::PRIMARY
-        },
-        ..Default::default()
-    });
-    let adapter = match instance
-        .request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
-            compatible_surface: None,
-            force_fallback_adapter: true,
-        })
-        .await
-    {
-        Some(adapter) => Some(adapter),
-        None => {
-            instance
-                .request_adapter(&wgpu::RequestAdapterOptions {
-                    power_preference: wgpu::PowerPreference::LowPower,
-                    compatible_surface: None,
-                    force_fallback_adapter: false,
-                })
-                .await
-        }
-    }
-    .ok_or_else(|| anyhow!("wgpu: no suitable adapter found"))?;
-
-    let (device, queue) = adapter
-        .request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("aero-d3d11 compute shader create test device"),
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::downlevel_defaults(),
-            },
-            None,
-        )
-        .await
-        .map_err(|e| anyhow!("wgpu: request_device failed: {e:?}"))?;
-
-    Ok((device, queue))
-}
-
 #[test]
 fn create_shader_dxbc_compute_uses_signature_driven_translation_even_without_osgn() -> Result<()> {
     pollster::block_on(async {
-        let (device, queue) = match create_device_queue().await {
+        let test_name = concat!(
+            module_path!(),
+            "::create_shader_dxbc_compute_uses_signature_driven_translation_even_without_osgn"
+        );
+
+        let (device, queue, supports_compute) = match common::wgpu::create_device_queue(
+            "aero-d3d11 compute shader create test device",
+        )
+        .await
+        {
             Ok(v) => v,
             Err(err) => {
-                common::skip_or_panic(module_path!(), &format!("{err:#}"));
+                common::skip_or_panic(test_name, &format!("wgpu unavailable ({err:#})"));
                 return Ok(());
             }
         };
+        if !supports_compute {
+            common::skip_or_panic(test_name, "compute unsupported");
+            return Ok(());
+        }
+
         let mut mgr = AerogpuResourceManager::new(device, queue);
 
         // Minimal SM5 compute program with no signature chunks. Compute shaders require a thread
