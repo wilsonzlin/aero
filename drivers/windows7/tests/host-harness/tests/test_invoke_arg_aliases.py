@@ -227,7 +227,7 @@ class HarnessArgAliasTests(unittest.TestCase):
                 self.assertTrue(args.qemu_preflight_pci)
 
     def test_print_qemu_cmd_alias_sets_dry_run(self) -> None:
-        for flag in ("--dry-run", "--print-qemu-cmd"):
+        for flag in ("--dry-run", "--print-qemu", "--print-qemu-cmd"):
             with self.subTest(flag=flag):
                 args = self._parse(
                     [

@@ -410,7 +410,7 @@ For debugging (or CI log introspection), both harnesses support a dry-run mode t
 without starting the HTTP/QMP servers or launching QEMU:
 
 - PowerShell: `Invoke-AeroVirtioWin7Tests.ps1 -DryRun`
-- Python: `invoke_aero_virtio_win7_tests.py --dry-run` (alias: `--print-qemu-cmd`)
+- Python: `invoke_aero_virtio_win7_tests.py --dry-run` (aliases: `--print-qemu`, `--print-qemu-cmd`)
 
 This repo also includes an **opt-in** self-hosted GitHub Actions workflow wrapper around the Python harness:
 

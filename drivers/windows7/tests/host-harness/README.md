@@ -177,7 +177,7 @@ The Python harness prints:
    - POSIX: shell-escaped via `shlex.quote`
    - Windows: cmdline-escaped via `subprocess.list2cmdline`
 
-Note: `--print-qemu-cmd` is accepted as an alias for `--dry-run`.
+Note: `--print-qemu` and `--print-qemu-cmd` are accepted as aliases for `--dry-run`.
 
 ### Virtio-net link flap regression test (host-side QMP `set_link`)
 
