@@ -1700,6 +1700,9 @@ impl XhciController {
         if (self.usbcmd & regs::USBCMD_RUN) == 0 {
             return;
         }
+        if !mem.dma_enabled() {
+            return;
+        }
         // Process a bounded number of command TRBs and flush completion events to the guest event
         // ring.
         let ring_empty = self.process_command_ring(mem, COMMAND_BUDGET_PER_MMIO);
@@ -1783,6 +1786,9 @@ impl XhciController {
     ///
     /// This is intentionally bounded to avoid guest-induced hangs (e.g. malformed transfer rings).
     pub fn tick(&mut self, mem: &mut dyn MemoryBus) {
+        if !mem.dma_enabled() {
+            return;
+        }
         // Bound work even when endpoints return NAK/NotReady (which consume 0 TRBs but still require
         // host-side polling). Charge at least 1 unit per endpoint attempt so a large active endpoint
         // list cannot stall the host.
@@ -1830,6 +1836,9 @@ impl XhciController {
 
     /// Drain queued events into the guest event ring with a bounded per-tick budget.
     pub fn service_event_ring(&mut self, mem: &mut dyn MemoryBus) {
+        if !mem.dma_enabled() {
+            return;
+        }
         self.event_ring.refresh(mem, &self.interrupter0);
 
         for _ in 0..EVENT_ENQUEUE_BUDGET_PER_TICK {

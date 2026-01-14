@@ -7,6 +7,16 @@ pub trait MemoryBus {
     fn read_physical(&mut self, paddr: u64, buf: &mut [u8]);
     fn write_physical(&mut self, paddr: u64, buf: &[u8]);
 
+    /// Whether DMA (bus-mastering) is enabled for this memory bus.
+    ///
+    /// Integrations should provide a `MemoryBus` adapter that returns open-bus reads (`0xFF`) and
+    /// ignores writes when PCI Bus Master Enable (BME) is clear. Returning `false` here lets device
+    /// models avoid interpreting open-bus data as real descriptors/TRBs and mutating internal state
+    /// while DMA is disabled.
+    fn dma_enabled(&self) -> bool {
+        true
+    }
+
     /// Alias for [`MemoryBus::read_physical`], provided for discoverability.
     fn read_bytes(&mut self, paddr: u64, buf: &mut [u8]) {
         self.read_physical(paddr, buf);

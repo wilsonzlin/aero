@@ -156,6 +156,10 @@ impl<M: LinearMemory> MemoryBus for GuestMemoryBusImpl<M> {
 pub(crate) struct NoDmaMemory;
 
 impl MemoryBus for NoDmaMemory {
+    fn dma_enabled(&self) -> bool {
+        false
+    }
+
     fn read_physical(&mut self, _paddr: u64, buf: &mut [u8]) {
         buf.fill(0xFF);
     }
@@ -376,4 +380,3 @@ mod tests {
         );
     }
 }
-

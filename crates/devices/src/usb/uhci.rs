@@ -64,6 +64,10 @@ impl UhciPciDevice {
         }
 
         impl aero_usb::MemoryBus for AeroUsbMemoryBus<'_> {
+            fn dma_enabled(&self) -> bool {
+                matches!(self, AeroUsbMemoryBus::Dma(_))
+            }
+
             fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
                 match self {
                     AeroUsbMemoryBus::Dma(inner) => inner.read_physical(paddr, buf),

@@ -48,6 +48,27 @@ impl MemoryBus for CountingMem {
     }
 }
 
+#[derive(Default)]
+struct NoDmaCountingMem {
+    reads: usize,
+    writes: usize,
+}
+
+impl MemoryBus for NoDmaCountingMem {
+    fn dma_enabled(&self) -> bool {
+        false
+    }
+
+    fn read_physical(&mut self, _paddr: u64, buf: &mut [u8]) {
+        self.reads += 1;
+        buf.fill(0xFF);
+    }
+
+    fn write_physical(&mut self, _paddr: u64, _buf: &[u8]) {
+        self.writes += 1;
+    }
+}
+
 #[test]
 fn xhci_controller_caplength_hciversion_reads() {
     let mut ctrl = XhciController::new();
@@ -182,6 +203,26 @@ fn xhci_controller_run_triggers_dma_and_w1c_clears_irq() {
         ctrl.mmio_read(&mut mem, regs::REG_USBSTS, 4) & regs::USBSTS_EINT,
         0
     );
+}
+
+#[test]
+fn xhci_doorbell_does_not_process_command_ring_without_dma() {
+    let mut ctrl = XhciController::new();
+    let mut mem = CountingMem::new(0x4000);
+
+    // Point CRCR at a plausible guest physical address and set RCS=1 so the controller would
+    // normally attempt to fetch a command TRB when doorbell 0 is rung.
+    ctrl.mmio_write(&mut mem, regs::REG_CRCR_LO, 4, 0x1000 | 1);
+    ctrl.mmio_write(&mut mem, regs::REG_CRCR_HI, 4, 0);
+
+    // Start the controller so doorbell processing would run.
+    ctrl.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
+
+    let mut nodma = NoDmaCountingMem::default();
+    ctrl.mmio_write(&mut nodma, u64::from(regs::DBOFF_VALUE), 4, 0);
+
+    assert_eq!(nodma.reads, 0);
+    assert_eq!(nodma.writes, 0);
 }
 
 #[test]
