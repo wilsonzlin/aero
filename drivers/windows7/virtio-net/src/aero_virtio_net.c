@@ -658,6 +658,22 @@ static BOOLEAN AerovNetParsePacketInfo(_In_reads_bytes_(AvailLen) const UCHAR* F
         continue;
       }
 
+      if (Next == 51) {
+        // Authentication header: (Payload Len + 2) * 4 bytes.
+        ULONG HdrBytes;
+        if (FrameLen < Offset6 + 2 || AvailLen < Offset6 + 2) {
+          return FALSE;
+        }
+        HdrBytes = ((ULONG)Frame[Offset6 + 1] + 2u) * 4u;
+        if (FrameLen < Offset6 + HdrBytes || AvailLen < Offset6 + HdrBytes) {
+          return FALSE;
+        }
+        Next = Frame[Offset6 + 0];
+        Offset6 += HdrBytes;
+        ExtLen += HdrBytes;
+        continue;
+      }
+
       // Unsupported extension header.
       Info->IpProtocol = Next;
       return TRUE;
