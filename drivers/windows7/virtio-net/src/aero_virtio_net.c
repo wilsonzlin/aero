@@ -825,6 +825,12 @@ static VOID AerovNetCleanupAdapter(_Inout_ AEROVNET_ADAPTER* Adapter) {
     return;
   }
 
+  // Ensure no synchronous ctrl_vq command is still running before we tear down
+  // the virtio queues and free any pending control buffers.
+  if (KeGetCurrentIrql() == PASSIVE_LEVEL) {
+    (VOID)KeWaitForSingleObject(&Adapter->CtrlCmdEvent, Executive, KernelMode, FALSE, NULL);
+  }
+
   // Device is already stopped/reset by the caller.
   AerovNetFreeTxResources(Adapter);
   AerovNetFreeRxResources(Adapter);
