@@ -10,7 +10,7 @@ const nanoTokensPerToken int64 = int64(time.Second) // 1e9
 const maxInt64 = int64(^uint64(0) >> 1)
 
 // tokenBucket is a deterministic token bucket that refills at an integer
-// rate (tokens/sec) using a provided Clock.
+// rate (tokens/sec) using a provided clock.
 //
 // The implementation uses fixed-point "nano-tokens" to avoid float rounding.
 // One token is represented as 1e9 nano-tokens, so a rate of X tokens/sec adds
@@ -18,7 +18,7 @@ const maxInt64 = int64(^uint64(0) >> 1)
 type tokenBucket struct {
 	mu sync.Mutex
 
-	clock Clock
+	clock clock
 
 	capacityTokens int64 // tokens
 	fillRate       int64 // tokens/sec
@@ -27,7 +27,7 @@ type tokenBucket struct {
 	last                time.Time
 }
 
-func NewTokenBucket(clock Clock, capacityTokens, fillRate int64) *tokenBucket {
+func NewTokenBucket(clock clock, capacityTokens, fillRate int64) *tokenBucket {
 	if clock == nil {
 		clock = realClock{}
 	}

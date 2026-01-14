@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/metrics"
-	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/ratelimit"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/udpproto"
 )
 
@@ -292,11 +291,11 @@ func (s *sessionRelay) HandleDataChannelMessage(msg []byte) {
 
 	if s.session != nil {
 		destKey := netip.AddrPortFrom(f.RemoteIP, f.RemotePort).String()
-		allowed, reason := s.session.AllowClientDatagramWithReason(destKey, f.Payload)
+		allowed, quotaExceeded := s.session.AllowClientDatagramWithReason(destKey, f.Payload)
 		if !allowed {
 			if metricsSink != nil {
 				metricsSink.Inc(metrics.WebRTCUDPDropped)
-				if reason == ratelimit.DropReasonTooManyDestinations {
+				if quotaExceeded {
 					metricsSink.Inc(metrics.WebRTCUDPDroppedQuotaExceeded)
 				} else {
 					metricsSink.Inc(metrics.WebRTCUDPDroppedRateLimited)

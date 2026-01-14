@@ -6,13 +6,12 @@ import (
 
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/config"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/metrics"
-	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/ratelimit"
 )
 
 type SessionManager struct {
 	cfg     config.Config
 	metrics *metrics.Metrics
-	clock   ratelimit.Clock
+	clock   clock
 
 	mu       sync.Mutex
 	sessions map[string]*Session
@@ -35,7 +34,7 @@ func (sm *SessionManager) sessionIDInUseLocked(id string) bool {
 	return false
 }
 
-func NewSessionManager(cfg config.Config, m *metrics.Metrics, clock ratelimit.Clock) *SessionManager {
+func NewSessionManager(cfg config.Config, m *metrics.Metrics, clock clock) *SessionManager {
 	if m == nil {
 		m = metrics.New()
 	}

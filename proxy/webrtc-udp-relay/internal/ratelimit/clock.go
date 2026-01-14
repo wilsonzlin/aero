@@ -2,7 +2,7 @@ package ratelimit
 
 import "time"
 
-type Clock interface {
+type clock interface {
 	Now() time.Time
 }
 

@@ -9,13 +9,18 @@ import (
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/ratelimit"
 )
 
+type sessionLimiter interface {
+	AllowUDPSend(destKey string, bytes int) (allowed bool, tooManyDestinations bool)
+	AllowDataChannelSend(bytes int) bool
+}
+
 type Session struct {
 	id      string
 	cfg     config.Config
 	metrics *metrics.Metrics
-	clock   ratelimit.Clock
+	clock   clock
 
-	limiter *ratelimit.SessionLimiter
+	limiter sessionLimiter
 
 	mu     sync.Mutex
 	closed bool
@@ -31,22 +36,23 @@ type Session struct {
 	onHardClose func()
 }
 
-func newSession(id string, cfg config.Config, m *metrics.Metrics, clock ratelimit.Clock, onClose func()) *Session {
+func newSession(id string, cfg config.Config, m *metrics.Metrics, clock clock, onClose func()) *Session {
 	var onEvict func()
 	if m != nil {
 		onEvict = func() {
 			m.Inc(metrics.UDPPerDestBucketEvictions)
 		}
 	}
-	rl := ratelimit.NewSessionLimiter(clock, ratelimit.SessionConfig{
-		UDPPacketsPerSecond:        cfg.MaxUDPPpsPerSession,
-		UDPBytesPerSecond:          cfg.MaxUDPBpsPerSession,
-		DataChannelBytesPerSecond:  cfg.MaxDataChannelBpsPerSession,
-		UDPPacketsPerSecondPerDest: cfg.MaxUDPPpsPerDest,
-		MaxUniqueDestinations:      cfg.MaxUniqueDestinationsPerSession,
-		MaxUDPDestBuckets:          cfg.MaxUDPDestBucketsPerSession,
-		OnUDPDestBucketEvicted:     onEvict,
-	})
+	rl := ratelimit.NewSessionLimiter(
+		clock,
+		cfg.MaxUDPPpsPerSession,
+		cfg.MaxUDPBpsPerSession,
+		cfg.MaxDataChannelBpsPerSession,
+		cfg.MaxUDPPpsPerDest,
+		cfg.MaxUniqueDestinationsPerSession,
+		cfg.MaxUDPDestBucketsPerSession,
+		onEvict,
+	)
 
 	return &Session{
 		id:      id,
@@ -155,28 +161,30 @@ func (s *Session) closeLocked() func() {
 	return onClose
 }
 
-// AllowClientDatagramWithReason is like AllowClientDatagram but returns the
-// limiter's drop reason for callers that want to surface more granular metrics.
-func (s *Session) AllowClientDatagramWithReason(destKey string, payload []byte) (bool, ratelimit.DropReason) {
+// AllowClientDatagramWithReason enforces the outbound UDP quotas/rate limits for
+// a client datagram.
+//
+// If allowed is false, quotaExceeded is true only when the datagram was rejected
+// due to the unique destination quota (MaxUniqueDestinationsPerSession).
+func (s *Session) AllowClientDatagramWithReason(destKey string, payload []byte) (allowed bool, quotaExceeded bool) {
 	if s.Closed() {
-		return false, ""
+		return false, false
 	}
 
-	allowed, reason := s.limiter.AllowUDPSend(destKey, len(payload))
+	allowed, tooManyDestinations := s.limiter.AllowUDPSend(destKey, len(payload))
 	if allowed {
-		return true, ""
+		return true, false
 	}
 
-	switch reason {
-	case ratelimit.DropReasonTooManyDestinations:
+	if tooManyDestinations {
 		s.metrics.Inc(metrics.DropReasonQuotaExceeded)
 		s.metrics.Inc("too_many_destinations")
-	default:
+	} else {
 		s.metrics.Inc(metrics.DropReasonRateLimited)
 	}
 
 	s.recordViolation()
-	return false, reason
+	return false, tooManyDestinations
 }
 
 // HandleInboundToClient enforces the DataChannel (relay -> client) bytes/sec
@@ -186,7 +194,7 @@ func (s *Session) HandleInboundToClient(payload []byte) bool {
 		return false
 	}
 
-	allowed, _ := s.limiter.AllowDataChannelSend(len(payload))
+	allowed := s.limiter.AllowDataChannelSend(len(payload))
 	if allowed {
 		return true
 	}
