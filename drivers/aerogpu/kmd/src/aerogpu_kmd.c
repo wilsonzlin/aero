@@ -5313,12 +5313,14 @@ static NTSTATUS APIENTRY AeroGpuDdiRecommendMonitorModes(_In_ const HANDLE hAdap
             if (!pinned && msi->pfnPinMode && pinW != 0 && pinH != 0) {
                 const ULONG cw = cur->VideoSignalInfo.ActiveSize.cx;
                 const ULONG ch = cur->VideoSignalInfo.ActiveSize.cy;
-                const ULONG diffW = (cw > pinW) ? (cw - pinW) : (pinW - cw);
-                const ULONG diffH = (ch > pinH) ? (ch - pinH) : (pinH - ch);
-                if (diffW <= 2u && diffH <= 2u) {
-                    /* Pin the preferred mode if it already exists in the mode set (common when dxgkrnl parsed EDID). */
-                    (void)msi->pfnPinMode(pRecommend->hMonitorSourceModeSet, (D3DKMDT_MONITOR_SOURCE_MODE*)cur);
-                    pinned = TRUE;
+                if (AeroGpuModeWithinMax(cw, ch)) {
+                    const ULONG diffW = (cw > pinW) ? (cw - pinW) : (pinW - cw);
+                    const ULONG diffH = (ch > pinH) ? (ch - pinH) : (pinH - ch);
+                    if (diffW <= 2u && diffH <= 2u) {
+                        /* Pin the preferred mode if it already exists in the mode set (common when dxgkrnl parsed EDID). */
+                        (void)msi->pfnPinMode(pRecommend->hMonitorSourceModeSet, (D3DKMDT_MONITOR_SOURCE_MODE*)cur);
+                        pinned = TRUE;
+                    }
                 }
             }
 
