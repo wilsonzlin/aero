@@ -5857,6 +5857,88 @@ Shader* fixedfunc_vs_variant_for_fvf_locked(const Device* dev) {
   }
 }
 
+HRESULT ensure_passthrough_pixel_shader_locked(Device* dev, Shader** out_ps) {
+  if (!dev || !out_ps) {
+    return E_INVALIDARG;
+  }
+
+  // This fallback PS is used only to keep the host command stream valid when we
+  // cannot derive a fixed-function stage0 PS variant (e.g. stage-state combo is
+  // unsupported). Draws will still fail with INVALIDCALL via strict validation
+  // paths; this is for non-draw shader binding (SetShader, state blocks, teardown).
+  const void* ps_bytes = reinterpret_cast<const void*>(fixedfunc::kPsPassthroughColor);
+  const uint32_t ps_size = static_cast<uint32_t>(sizeof(fixedfunc::kPsPassthroughColor));
+
+  // Look for an existing cached PS with identical bytecode so multiple fallback
+  // sites can reuse one Shader*.
+  for (Shader* ps : dev->fixedfunc_stage0_ps_variants) {
+    if (!ps) {
+      continue;
+    }
+    if (shader_bytecode_equals(ps, ps_bytes, ps_size)) {
+      *out_ps = ps;
+      return S_OK;
+    }
+  }
+
+  Shader* ps = create_internal_shader_locked(dev, kD3d9ShaderStagePs, ps_bytes, ps_size);
+  if (!ps) {
+    return E_OUTOFMEMORY;
+  }
+
+  bool inserted = false;
+  for (Shader*& slot : dev->fixedfunc_stage0_ps_variants) {
+    if (!slot) {
+      slot = ps;
+      inserted = true;
+      break;
+    }
+  }
+
+  if (!inserted) {
+    // Evict an unreferenced cached stage0 PS variant to make room.
+    for (Shader*& slot : dev->fixedfunc_stage0_ps_variants) {
+      Shader* cand = slot;
+      if (!cand) {
+        continue;
+      }
+      if (cand == dev->ps ||
+          cand == dev->fixedfunc_ps ||
+          cand == dev->fixedfunc_ps_tex1 ||
+          cand == dev->fixedfunc_ps_xyz_diffuse_tex1 ||
+          cand == dev->fixedfunc_ps_interop) {
+        continue;
+      }
+      (void)emit_destroy_shader_locked(dev, cand->handle);
+      delete cand;
+
+      // Drop any cached signature mappings that referenced the evicted shader so
+      // lookups can't return a freed pointer.
+      for (auto it = dev->fixedfunc_stage0_ps_variant_cache.begin();
+           it != dev->fixedfunc_stage0_ps_variant_cache.end();) {
+        if (it->second == cand) {
+          it = dev->fixedfunc_stage0_ps_variant_cache.erase(it);
+        } else {
+          ++it;
+        }
+      }
+
+      slot = ps;
+      inserted = true;
+      break;
+    }
+  }
+
+  if (!inserted) {
+    (void)emit_destroy_shader_locked(dev, ps->handle);
+    delete ps;
+    return E_OUTOFMEMORY;
+  }
+
+  *out_ps = ps;
+  return S_OK;
+}
+
 HRESULT ensure_passthrough_shaders_locked(Device* dev, Shader** vs_out, Shader** ps_out) {
   if (!dev || !dev->adapter) {
     return E_FAIL;
@@ -5877,19 +5959,23 @@ HRESULT ensure_passthrough_shaders_locked(Device* dev, Shader** vs_out, Shader**
     }
   }
 
-  // Reuse the stage0 fixed-function PS selection logic (and cache the chosen
-  // variant in `dev->fixedfunc_ps_interop`).
-  Shader** ps_slot = &dev->fixedfunc_ps_interop;
-  const HRESULT ps_hr = ensure_fixedfunc_pixel_shader_locked(dev, ps_slot);
-  if (FAILED(ps_hr)) {
-    return ps_hr;
+  // Use a known-good passthrough PS so this helper can be used even when stage0
+  // texture stage state is unsupported. This keeps SetShader/state blocks from
+  // failing just because fixed-function draws would fail.
+  Shader* ps = dev->fixedfunc_ps_interop;
+  if (!ps) {
+    const HRESULT ps_hr = ensure_passthrough_pixel_shader_locked(dev, &ps);
+    if (FAILED(ps_hr)) {
+      return ps_hr;
+    }
+    dev->fixedfunc_ps_interop = ps;
   }
 
   if (vs_out) {
     *vs_out = dev->fixedfunc_vs;
   }
   if (ps_out) {
-    *ps_out = *ps_slot;
+    *ps_out = ps;
   }
   return S_OK;
 }
@@ -5916,7 +6002,23 @@ HRESULT ensure_shader_bindings_locked(Device* dev, bool strict_draw_validation) 
     Shader** ps_slot = &dev->fixedfunc_ps_interop;
     const HRESULT ps_hr = ensure_fixedfunc_pixel_shader_locked(dev, ps_slot);
     if (FAILED(ps_hr)) {
-      return (ps_hr == E_FAIL && strict_draw_validation) ? kD3DErrInvalidCall : ps_hr;
+      if (strict_draw_validation) {
+        return (ps_hr == E_FAIL) ? kD3DErrInvalidCall : ps_hr;
+      }
+      // Non-draw bindings must tolerate unsupported stage0 combinations: preserve
+      // any already-selected fallback PS, otherwise bind a minimal passthrough PS
+      // so the command stream remains valid.
+      if (ps_hr != kD3DErrInvalidCall) {
+        return ps_hr;
+      }
+      if (!*ps_slot) {
+        Shader* fallback_ps = nullptr;
+        const HRESULT fb_hr = ensure_passthrough_pixel_shader_locked(dev, &fallback_ps);
+        if (FAILED(fb_hr)) {
+          return fb_hr;
+        }
+        *ps_slot = fallback_ps;
+      }
     }
     desired_ps = *ps_slot;
   } else if (!dev->user_vs && dev->user_ps) {
@@ -15471,13 +15573,17 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
   // State-block apply bypasses SetTextureStageState, so keep the cached stage0
   // PS selection in sync and re-bind if the currently bound PS changes.
   //
+  // Note: stage0 PS selection also depends on whether texture0 is bound (stage0
+  // references to D3DTA_TEXTURE are treated as disabled when texture0 is null).
+  //
   // Also handle D3DRS_TEXTUREFACTOR updates: state blocks often include
   // TEXTUREFACTOR without changing stage state, so the fixed-function PS constant
   // (c0) must be refreshed when needed.
   constexpr uint32_t kD3dRsTextureFactor = 60u; // D3DRS_TEXTUREFACTOR
   const bool tfactor_dirty = sb->render_state_mask.test(kD3dRsTextureFactor);
+  const bool stage0_texture_dirty = sb->texture_mask.test(0);
   FixedfuncStage0Key stage0_key{};
-  if (!dev->user_ps && (stage0_tss_dirty || tfactor_dirty)) {
+  if (!dev->user_ps && (stage0_tss_dirty || stage0_texture_dirty || tfactor_dirty)) {
     stage0_key = fixedfunc_stage0_key_locked(dev);
     if (tfactor_dirty && stage0_key.supported && stage0_key.uses_tfactor) {
       const HRESULT hr = ensure_fixedfunc_texture_factor_constant_locked(dev);
@@ -15486,7 +15592,7 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
       }
     }
   }
-  if (stage0_tss_dirty && !dev->user_ps) {
+  if ((stage0_tss_dirty || stage0_texture_dirty) && !dev->user_ps) {
     Shader** ps_slot = nullptr;
     if (dev->user_vs) {
       // VS-only shader-stage interop uses the stage0 fixed-function PS fallback.
