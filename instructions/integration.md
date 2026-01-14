@@ -554,7 +554,9 @@ already implemented.
 
 ### C) Important non-boot gaps
 
-- [ ] SMP execution: `cpu_count > 1` is accepted and published via ACPI/SMBIOS, but the canonical run loops still execute only the BSP (MP-001).
+- [ ] SMP execution: SMP is still in bring-up. `aero_machine::Machine` has basic AP bring-up +
+  cooperative AP execution, but it is not yet a full SMP scheduler. `aero_machine::pc::PcMachine` /
+  `aero_pc_platform::PcPlatform` remain BSP-only execution today (MP-001).
 - [ ] MSI/MSI-X hardening: message-signaled interrupts are wired for key devices (virtio, NVMe), but patterns/tests need to be generalized and made snapshot-safe as SMP lands (MP-002).
 
 ---
