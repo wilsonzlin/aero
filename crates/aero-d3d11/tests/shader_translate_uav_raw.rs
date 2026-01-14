@@ -41,7 +41,9 @@ fn translates_compute_ld_uav_raw_and_validates() {
                     saturate: false,
                 },
                 addr: SrcOperand {
-                    kind: SrcKind::ImmediateF32([0; 4]),
+                    // Use a numeric `f32` literal (`16.0`) for the byte address. The translator
+                    // should apply the float-to-u32 heuristic and treat it as `16u` (byte offset).
+                    kind: SrcKind::ImmediateF32([16.0f32.to_bits(); 4]),
                     swizzle: Swizzle::XXXX,
                     modifier: OperandModifier::None,
                 },
@@ -54,6 +56,26 @@ fn translates_compute_ld_uav_raw_and_validates() {
     let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &ShaderSignatures::default())
         .expect("translate");
     assert_wgsl_validates(&translated.wgsl);
+
+    // The raw UAV address is a byte offset, so the translator should divide by 4 to index the
+    // underlying `array<u32>`. Ensure we used the `16.0` immediate as `16u`.
+    assert!(
+        translated.wgsl.contains("ld_uav_raw_base0"),
+        "expected ld_uav_raw base index calculation:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated
+            .wgsl
+            .contains("let ld_uav_raw_base0: u32 = (16u) / 4u;"),
+        "expected float immediate address to be treated as 16u:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("/ 4u;"),
+        "expected byte-to-word address conversion:\n{}",
+        translated.wgsl
+    );
 
     // Ensure the UAV is declared as a read-write storage buffer and uses the binding model's base.
     assert!(

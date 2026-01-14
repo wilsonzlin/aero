@@ -2983,6 +2983,7 @@ fn apply_modifier_u32(expr: String, modifier: OperandModifier) -> String {
         OperandModifier::Abs => expr,
     }
 }
+
 #[derive(Debug, Clone)]
 struct ResourceUsage {
     cbuffers: BTreeMap<u32, u32>,

@@ -524,6 +524,13 @@ fn translates_compute_buffer_uav_load_structured() {
         swizzle: Swizzle::XXXX,
         modifier: aero_d3d11::OperandModifier::None,
     };
+    let one_f32 = SrcOperand {
+        // Use a numeric `f32` literal for the structured index. The translator should treat it as
+        // `1u` (element index) when computing the word address.
+        kind: SrcKind::ImmediateF32([1.0f32.to_bits(); 4]),
+        swizzle: Swizzle::XXXX,
+        modifier: aero_d3d11::OperandModifier::None,
+    };
 
     let module = Sm4Module {
         stage: ShaderStage::Compute,
@@ -546,7 +553,7 @@ fn translates_compute_buffer_uav_load_structured() {
                     mask: WriteMask::XYZW,
                     saturate: false,
                 },
-                index: zero.clone(),
+                index: one_f32,
                 offset: zero,
                 uav: aero_d3d11::UavRef { slot: 0 },
             },
@@ -560,6 +567,13 @@ fn translates_compute_buffer_uav_load_structured() {
     assert!(
         translated.wgsl.contains("* 16u"),
         "expected structured stride (16 bytes) to appear in WGSL:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated
+            .wgsl
+            .contains("let ld_uav_struct_base0: u32 = ((1u) * 16u + (0u)) / 4u;"),
+        "expected float immediate index to be treated as 1u:\n{}",
         translated.wgsl
     );
     assert!(
