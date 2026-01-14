@@ -4185,15 +4185,15 @@ impl AerogpuD3d11Executor {
                             .prepass_error
                             .as_deref()
                             .unwrap_or("GS translation failed");
-                        bail!("geometry shader not supported: {err}");
+                        bail!("geometry shader {gs_handle} not supported: {err}");
                     }
                     meta.instance_count.max(1)
                 }
                 None => {
-                    // Some bring-up tests bind a dummy non-zero GS handle purely to force the
-                    // compute-prepass pipeline, without actually creating/translating a GS shader.
-                    // Treat an unknown handle as "no GS instancing" so the placeholder prepass can
-                    // still run.
+                    // Some bring-up tests bind a dummy non-zero GS handle (e.g. 0xCAFE_BABE) purely
+                    // to force the compute-prepass pipeline, without actually creating/translating
+                    // a GS shader. Treat an unknown handle as "no GS instancing" so the placeholder
+                    // prepass can still run.
                     1
                 }
             }
