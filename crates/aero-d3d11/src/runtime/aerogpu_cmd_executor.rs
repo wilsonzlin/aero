@@ -26316,7 +26316,6 @@ fn cs_main() {
                 pos: [f32; 3],
                 color: [f32; 4],
             }
-
             // Minimal triangle vertex buffer that matches `vs_passthrough` + `ilay_pos3_color`.
             let verts = [
                 Vertex {
@@ -26362,14 +26361,12 @@ fn cs_main() {
             writer.set_input_layout(IL);
             writer.set_vertex_buffers(
                 0,
-                &[
-                    aero_protocol::aerogpu::aerogpu_cmd::AerogpuVertexBufferBinding {
-                        buffer: VB,
-                        stride_bytes: core::mem::size_of::<Vertex>() as u32,
-                        offset_bytes: 0,
-                        reserved0: 0,
-                    },
-                ],
+                &[aero_protocol::aerogpu::aerogpu_cmd::AerogpuVertexBufferBinding {
+                    buffer: VB,
+                    stride_bytes: core::mem::size_of::<Vertex>() as u32,
+                    offset_bytes: 0,
+                    reserved0: 0,
+                }],
             );
             writer.set_render_targets(&[RT], 0);
             writer.set_viewport(0.0, 0.0, 4.0, 4.0, 0.0, 1.0);
@@ -26444,7 +26441,6 @@ fn cs_main() {
                 pos: [f32; 3],
                 color: [f32; 4],
             }
-
             // 2-triangle quad (6 vertices) so the second draw can consume 6 vertices.
             let verts = [
                 Vertex {
@@ -26502,14 +26498,12 @@ fn cs_main() {
             writer.set_input_layout(IL);
             writer.set_vertex_buffers(
                 0,
-                &[
-                    aero_protocol::aerogpu::aerogpu_cmd::AerogpuVertexBufferBinding {
-                        buffer: VB,
-                        stride_bytes: core::mem::size_of::<Vertex>() as u32,
-                        offset_bytes: 0,
-                        reserved0: 0,
-                    },
-                ],
+                &[aero_protocol::aerogpu::aerogpu_cmd::AerogpuVertexBufferBinding {
+                    buffer: VB,
+                    stride_bytes: core::mem::size_of::<Vertex>() as u32,
+                    offset_bytes: 0,
+                    reserved0: 0,
+                }],
             );
             writer.set_render_targets(&[RT], 0);
             writer.set_viewport(0.0, 0.0, 4.0, 4.0, 0.0, 1.0);
