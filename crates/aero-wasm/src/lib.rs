@@ -2907,6 +2907,13 @@ fn opfs_cross_origin_isolated() -> Option<bool> {
 }
 
 #[cfg(target_arch = "wasm32")]
+fn opfs_is_secure_context() -> Option<bool> {
+    Reflect::get(&js_sys::global(), &JsValue::from_str("isSecureContext"))
+        .ok()
+        .and_then(|v| v.as_bool())
+}
+
+#[cfg(target_arch = "wasm32")]
 fn opfs_worker_hint() -> String {
     let mut hint =
         "Hint: Run the wasm module in a DedicatedWorker (not the main thread).".to_string();
@@ -2915,6 +2922,9 @@ fn opfs_worker_hint() -> String {
     // observe that the current context is *not* cross-origin isolated.
     if matches!(opfs_cross_origin_isolated(), Some(false)) {
         hint.push_str(" If you are using the threaded build, also ensure the page is cross-origin isolated (COOP/COEP) so SharedArrayBuffer is available.");
+    }
+    if matches!(opfs_is_secure_context(), Some(false)) {
+        hint.push_str(" OPFS requires a secure context (HTTPS or localhost).");
     }
     hint
 }
