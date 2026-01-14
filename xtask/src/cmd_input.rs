@@ -2,6 +2,7 @@ use crate::error::{Result, XtaskError};
 use crate::paths;
 use crate::runner::Runner;
 use crate::tools;
+use std::env;
 use std::path::Path;
 use std::process::Command;
 
@@ -42,7 +43,7 @@ Steps:
   2. cargo test -p aero-usb --locked
   3. npm -w web run test:unit -- src/input
   4. (optional) npm run test:e2e -- <input-related specs...>
-     (sets AERO_WASM_PACKAGES=core to avoid building unrelated web WASM packages)
+     (defaults to --project=chromium; sets AERO_WASM_PACKAGES=core unless already set)
 
 Options:
   --e2e                 Also run a small subset of Playwright E2E tests relevant to input.
@@ -52,6 +53,7 @@ Examples:
   cargo xtask input
   cargo xtask input --e2e
   cargo xtask input --e2e -- --project=chromium
+  cargo xtask input --e2e -- --project=chromium --project=firefox --project=webkit
 "
     );
 }
@@ -94,11 +96,12 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
     runner.run_step("Web: npm -w web run test:unit -- src/input", &mut cmd)?;
 
     if opts.e2e {
+        let step_desc = format!(
+            "E2E: npm run test:e2e ({}) -- <input specs>",
+            e2e_step_detail(&opts.pw_extra_args)
+        );
         let mut cmd = build_e2e_cmd(&repo_root, &opts.pw_extra_args);
-        runner.run_step(
-            "E2E: npm run test:e2e (AERO_WASM_PACKAGES=core) -- <input specs>",
-            &mut cmd,
-        )?;
+        runner.run_step(&step_desc, &mut cmd)?;
     } else if !opts.pw_extra_args.is_empty() {
         return Err(XtaskError::Message(
             "extra Playwright args after `--` require `--e2e`".to_string(),
@@ -139,13 +142,41 @@ fn parse_args(args: Vec<String>) -> Result<Option<InputOpts>> {
 fn build_e2e_cmd(repo_root: &Path, pw_extra_args: &[String]) -> Command {
     let mut cmd = tools::npm();
     cmd.current_dir(repo_root).args(["run", "test:e2e", "--"]);
+
     // Playwright runs trigger `pretest:e2e`, which builds the web WASM bundles. The input/USB E2E
-    // subset only needs the core `aero-wasm` package, so avoid building unrelated packages.
-    cmd.env("AERO_WASM_PACKAGES", "core");
+    // subset only needs the core `aero-wasm` package, so avoid building unrelated packages unless
+    // the caller has already configured their own package selection.
+    if env::var_os("AERO_WASM_PACKAGES").is_none() {
+        cmd.env("AERO_WASM_PACKAGES", "core");
+    }
+
+    // Default to Chromium unless the caller has already selected Playwright projects.
+    if !pw_extra_args.iter().any(|arg| arg == "--project" || arg.starts_with("--project=")) {
+        cmd.arg("--project=chromium");
+    }
     cmd.args(INPUT_E2E_SPECS);
     // Developers can add extra Playwright args after `--`.
     cmd.args(pw_extra_args);
     cmd
+}
+
+fn e2e_step_detail(pw_extra_args: &[String]) -> String {
+    let project_detail = if pw_extra_args
+        .iter()
+        .any(|arg| arg == "--project" || arg.starts_with("--project="))
+    {
+        "projects=custom".to_string()
+    } else {
+        "project=chromium".to_string()
+    };
+
+    let wasm_detail = if env::var_os("AERO_WASM_PACKAGES").is_some() {
+        "AERO_WASM_PACKAGES=custom".to_string()
+    } else {
+        "AERO_WASM_PACKAGES=core".to_string()
+    };
+
+    format!("{project_detail}, {wasm_detail}")
 }
 
 #[cfg(test)]
@@ -181,6 +212,28 @@ mod tests {
         assert_eq!(
             args[spec_start + INPUT_E2E_SPECS.len()],
             "--project=chromium"
+        );
+    }
+
+    #[test]
+    fn e2e_cmd_defaults_to_chromium_when_no_projects_specified() {
+        let cmd = build_e2e_cmd(Path::new("."), &[]);
+        let args: Vec<String> = cmd
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+
+        let project_pos = args
+            .iter()
+            .position(|arg| arg == "--project=chromium")
+            .expect("expected --project=chromium to be present by default");
+        let spec_pos = args
+            .iter()
+            .position(|arg| arg == INPUT_E2E_SPECS[0])
+            .expect("expected curated specs to be present in the command args");
+        assert!(
+            project_pos < spec_pos,
+            "expected --project=chromium to appear before curated spec paths"
         );
     }
 
