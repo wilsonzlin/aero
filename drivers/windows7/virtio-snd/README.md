@@ -423,6 +423,13 @@ To enable polling-only mode (modern virtio-pci transport packages only):
 reg add "HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Parameters\Parameters" /v AllowPollingOnly /t REG_DWORD /d 1 /f
 ```
 
+To verify the current values (elevated `cmd.exe`, replace `<DeviceInstancePath>`):
+
+```cmd
+reg query "HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Parameters\Parameters" /v ForceNullBackend
+reg query "HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Parameters\Parameters" /v AllowPollingOnly
+```
+
 ## Offline / slipstream installation (optional)
 
 If you want virtio-snd to bind automatically on first boot (for example when building unattended Win7 images), see:

@@ -470,6 +470,10 @@ reg add "HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Paramete
 
 REM Allow polling-only mode when no usable interrupt can be wired up (modern virtio-pci transport packages only):
 reg add "HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Parameters\Parameters" /v AllowPollingOnly /t REG_DWORD /d 1 /f
+
+REM Verify current values:
+reg query "HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Parameters\Parameters" /v ForceNullBackend
+reg query "HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Parameters\Parameters" /v AllowPollingOnly
 ```
 
 ### Driver binds, but no playback endpoint appears in Control Panel → Sound
