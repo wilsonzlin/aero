@@ -1200,7 +1200,7 @@ with an implementation-defined workgroup size chosen by the translator/runtime.
 3. **GS (optional): geometry shader emulation**
     - Trigger: `gs != 0` or adjacency topology.
     - Reads primitive inputs from the previous stage output (`vs_out` for no tessellation,
-      otherwise `tess_out_vertices`).
+      otherwise `tess_out_vertices` + `tess_out_indices`).
     - Dispatch shape (for `SV_PrimitiveID` / `SV_GSInstanceID`):
       - Use a 2D grid where:
         - `global_invocation_id.x` = input `primitive_id` in `0..input_prim_count`
