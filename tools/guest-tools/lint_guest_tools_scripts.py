@@ -417,7 +417,7 @@ def lint_files(*, setup_cmd: Path, uninstall_cmd: Path, verify_ps1: Path) -> Lis
             expected_hint='If "%ARG_VERIFY_MEDIA%"=="1" (...) call :verify_media_preflight',
             predicate=lambda text: _regex(
                 r'(?is)if\s+"%ARG_VERIFY_MEDIA%"\s*==\s*"1"\s*\([\s\S]*?call\s+:?verify_media_preflight\b'
-            )(_strip_label_block(text, "check_mode")),
+            )(_strip_batch_comment_lines(_strip_label_block(text, "check_mode"))),
         ),
         Invariant(
             description="Supports /check (or /validate) dry-run validation mode (no system changes)",
@@ -502,21 +502,21 @@ def lint_files(*, setup_cmd: Path, uninstall_cmd: Path, verify_ps1: Path) -> Lis
             predicate=lambda text: _regex(
                 r'if\s+"%ARG_SKIP_STORAGE%"\s*==\s*"1"\s*\([\s\S]{0,2000}?else\s*\([\s\S]{0,2000}?call\s+:?validate_storage_service_infs\b',
                 flags=re.IGNORECASE | re.MULTILINE | re.DOTALL,
-            )(_strip_label_block(text, "check_mode")),
+            )(_strip_batch_comment_lines(_strip_label_block(text, "check_mode"))),
         ),
         Invariant(
             description="/skipstorage gates boot-critical storage pre-seeding (skips preseed_storage_boot)",
             expected_hint='If "%ARG_SKIP_STORAGE%"=="1" ( call :skip_storage_preseed ... ) else ( call :preseed_storage_boot ... )',
-            predicate=_regex(
+            predicate=lambda text: _regex(
                 r'if\s+"%ARG_SKIP_STORAGE%"\s*==\s*"1"\s*\([\s\S]{0,2000}?call\s+:?skip_storage_preseed\b[\s\S]{0,2000}?else\s*\([\s\S]{0,2000}?call\s+:?preseed_storage_boot\b',
                 flags=re.IGNORECASE | re.MULTILINE | re.DOTALL,
-            ),
+            )(_strip_batch_comment_lines(_strip_label_block(text, "check_mode"))),
         ),
         Invariant(
             description="Writes storage preseed skip marker file when /skipstorage is used",
             expected_hint='storage-preseed.skipped.txt (written via > "%STATE_STORAGE_SKIPPED%" ...)',
             predicate=lambda text: (
-                re.search(r"storage-preseed\.skipped\.txt", text, re.IGNORECASE) is not None
+                re.search(r"storage-preseed\.skipped\.txt", _strip_batch_comment_lines(text), re.IGNORECASE) is not None
                 and _any_regex(
                     [
                         # Common implementation: write via marker variable.
@@ -524,15 +524,15 @@ def lint_files(*, setup_cmd: Path, uninstall_cmd: Path, verify_ps1: Path) -> Lis
                         # Alternate: write directly to a path containing the marker filename.
                         r"(?im)[>]{1,2}[^\r\n]*storage-preseed\.skipped\.txt",
                     ]
-                )(text)
+                )(_strip_batch_comment_lines(text))
             ),
         ),
         Invariant(
             description="Certificate install requirement is gated by signing_policy (certs required only for test)",
             expected_hint='if /i "%SIGNING_POLICY%"=="test" set "CERTS_REQUIRED=1"',
-            predicate=_regex(
-                r'\bif\b\s+(?:/i\s+)?"?%SIGNING_POLICY%"?\s*==\s*"test"\s+set\s+"?CERTS_REQUIRED=1"?'
-            ),
+            predicate=lambda text: _regex(
+                r'(?im)^\s*if\s+(?:/i\s+)?"?%SIGNING_POLICY%"?\s*==\s*"test"\s+set\s+"?CERTS_REQUIRED=1"?'
+            )(_strip_batch_comment_lines(text)),
         ),
         Invariant(
             description="Certificate installation is skipped by policy for signing_policy=production|none unless explicitly overridden",
@@ -551,26 +551,30 @@ def lint_files(*, setup_cmd: Path, uninstall_cmd: Path, verify_ps1: Path) -> Lis
             description="Writes marker file when enabling Test Signing (used by uninstall/verify)",
             expected_hint='testsigning.enabled-by-aero.txt (written via > \"%STATE_TESTSIGN%\" ...)',
             predicate=lambda text: (
-                re.search(r"testsigning\.enabled-by-aero\.txt", text, re.IGNORECASE) is not None
+                re.search(r"testsigning\.enabled-by-aero\.txt", _strip_batch_comment_lines(text), re.IGNORECASE)
+                is not None
                 and _any_regex(
                     [
                         r'(?im)[>]{1,2}\s*"?([%!])STATE_TESTSIGN\1"?',
                         r"(?im)[>]{1,2}[^\r\n]*testsigning\.enabled-by-aero\.txt",
                     ]
-                )(text)
+                )(_strip_batch_comment_lines(text))
             ),
         ),
         Invariant(
             description="Writes marker file when enabling nointegritychecks (used by uninstall/verify)",
             expected_hint='nointegritychecks.enabled-by-aero.txt (written via > \"%STATE_NOINTEGRITY%\" ...)',
             predicate=lambda text: (
-                re.search(r"nointegritychecks\.enabled-by-aero\.txt", text, re.IGNORECASE) is not None
+                re.search(
+                    r"nointegritychecks\.enabled-by-aero\.txt", _strip_batch_comment_lines(text), re.IGNORECASE
+                )
+                is not None
                 and _any_regex(
                     [
                         r'(?im)[>]{1,2}\s*"?([%!])STATE_NOINTEGRITY\1"?',
                         r"(?im)[>]{1,2}[^\r\n]*nointegritychecks\.enabled-by-aero\.txt",
                     ]
-                )(text)
+                )(_strip_batch_comment_lines(text))
             ),
         ),
         Invariant(
