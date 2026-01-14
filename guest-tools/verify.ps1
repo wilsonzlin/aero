@@ -38,6 +38,37 @@ function Merge-Status([string]$a, [string]$b) {
     return "PASS"
 }
 
+function Is-StopUpstreamCommandsError($err) {
+    # Some cmdlets (notably Get-ChildItem -Recurse) can emit a "The pipeline has been stopped."
+    # StopUpstreamCommandsException when downstream uses Select-Object -First to cap enumeration.
+    # This is expected and should not be treated as an inventory failure.
+    if (-not $err) { return $false }
+
+    try {
+        $fid = "" + $err.FullyQualifiedErrorId
+        if ($fid -match '(?i)StopUpstreamCommandsException') { return $true }
+    } catch { }
+
+    try {
+        if ($err.Exception -and $err.Exception.GetType() -and $err.Exception.GetType().FullName) {
+            $tn = "" + $err.Exception.GetType().FullName
+            if ($tn -match '(?i)StopUpstreamCommandsException') { return $true }
+        }
+    } catch { }
+
+    try {
+        $msg = $null
+        if ($err.Exception -and $err.Exception.Message) {
+            $msg = "" + $err.Exception.Message
+        } else {
+            $msg = "" + $err.ToString()
+        }
+        if ($msg -match '(?i)pipeline has been stopped') { return $true }
+    } catch { }
+
+    return $false
+}
+
 function Invoke-Capture([string]$file, [string[]]$args) {
     $out = ""
     $exit = 0
@@ -1226,8 +1257,8 @@ $storagePreseedSkipped = (Test-Path $storagePreseedSkipMarker)
 $report = @{
     schema_version = 1
     tool = @{
-         name = "Aero Guest Tools Verify"
-         version = "2.5.19"
+          name = "Aero Guest Tools Verify"
+         version = "2.5.20"
          started_utc = $started.ToUniversalTime().ToString("o")
          ended_utc = $null
          duration_ms = $null
@@ -1377,6 +1408,7 @@ try {
         unreadable_files = @()
         file_results = @()
         disk_files_scanned = 0
+        disk_files_scan_errors = @()
         extra_files_not_in_manifest = @()
     }
 
@@ -1765,16 +1797,25 @@ try {
                     $diskScanTruncated = $false
 
                     $scanItems = @()
+                    $scanErrors = @()
                     try {
                         $scanItems = @(
-                            Get-ChildItem -LiteralPath $rootFull -Recurse -Force -ErrorAction Stop |
+                            Get-ChildItem -LiteralPath $rootFull -Recurse -Force -ErrorAction SilentlyContinue -ErrorVariable scanErrors |
                                 Where-Object { -not $_.PSIsContainer } |
                                 Select-Object -First $scanLimitPlus
                         )
                     } catch {
+                        # Get-ChildItem can still throw (provider issues, etc). Don't fail the whole report; treat as scan error.
+                        $scanErrors += $_
                         $scanItems = @()
-                        throw
                     }
+                    # Filter out StopUpstreamCommandsException ("The pipeline has been stopped.") which is expected when capping enumeration.
+                    $scanErrorsFiltered = @()
+                    foreach ($e in @($scanErrors)) {
+                        if (Is-StopUpstreamCommandsError $e) { continue }
+                        $scanErrorsFiltered += $e
+                    }
+                    $scanErrors = $scanErrorsFiltered
 
                     if ($scanItems.Count -gt $scanLimit) {
                         $diskScanTruncated = $true
@@ -1822,15 +1863,49 @@ try {
                     $mediaIntegrity.disk_files_scanned = $diskFiles.Count
                     $mediaIntegrity.disk_files_scan_limit = $scanLimit
                     $mediaIntegrity.disk_files_scan_truncated = $diskScanTruncated
+                    $mediaIntegrity.disk_files_scan_errors = @()
+                    try {
+                        if ($scanErrors -and $scanErrors.Count -gt 0) {
+                            foreach ($e in $scanErrors) {
+                                try {
+                                    if ($e -and $e.Exception -and $e.Exception.Message) {
+                                        $mediaIntegrity.disk_files_scan_errors += ("" + $e.Exception.Message)
+                                    } elseif ($e) {
+                                        $mediaIntegrity.disk_files_scan_errors += ("" + $e.ToString())
+                                    }
+                                } catch { }
+                            }
+                        }
+                    } catch { }
                     $mediaIntegrity.extra_files_not_in_manifest = $extra
 
                     $extraStatus = "PASS"
                     if ($extra.Count -gt 0) { $extraStatus = "WARN" }
                     if ($diskScanTruncated) { $extraStatus = "WARN" }
+                    if ($scanErrors -and $scanErrors.Count -gt 0) { $extraStatus = "WARN" }
 
                     $extraSummary = "Extra files not in manifest: " + $extra.Count + " (disk files scanned: " + $diskFiles.Count + ")"
                     if ($diskScanTruncated) { $extraSummary += " (scan truncated at " + $scanLimit + " files)" }
                     $extraDetails = @()
+                    if ($scanErrors -and $scanErrors.Count -gt 0) {
+                        $extraDetails += ("WARN: Encountered " + $scanErrors.Count + " error(s) while scanning disk files; results may be incomplete.")
+                        $maxErr = 5
+                        $shownErr = 0
+                        foreach ($e in $scanErrors) {
+                            if ($shownErr -ge $maxErr) { break }
+                            try {
+                                if ($e -and $e.Exception -and $e.Exception.Message) {
+                                    $extraDetails += ("Scan error: " + ("" + $e.Exception.Message))
+                                } elseif ($e) {
+                                    $extraDetails += ("Scan error: " + ("" + $e.ToString()))
+                                }
+                            } catch { }
+                            $shownErr++
+                        }
+                        if ($scanErrors.Count -gt $maxErr) {
+                            $extraDetails += ("Scan error: ... and " + ($scanErrors.Count - $maxErr).ToString() + " more (see report.json)")
+                        }
+                    }
                     if ($diskScanTruncated) {
                         $extraDetails += ("WARN: File scan was truncated after " + $scanLimit + " files; extra-file results may be incomplete.")
                     }
@@ -1858,6 +1933,7 @@ try {
                         disk_files_scanned = $diskFiles.Count
                         disk_files_scan_limit = $scanLimit
                         disk_files_scan_truncated = $diskScanTruncated
+                        disk_files_scan_errors = $mediaIntegrity.disk_files_scan_errors
                         extra_files = $extra
                     }
 
@@ -3686,9 +3762,14 @@ try {
             }
 
             $invErrors = @()
-            if ($gciErrors -and $gciErrors.Count -gt 0) {
-                $toolsStatus = "WARN"
-                foreach ($e in $gciErrors) {
+            $filteredGciErrors = @()
+            foreach ($e in @($gciErrors)) {
+                if (Is-StopUpstreamCommandsError $e) { continue }
+                $filteredGciErrors += $e
+            }
+            if ($filteredGciErrors -and $filteredGciErrors.Count -gt 0) {
+                $toolsStatus = Merge-Status $toolsStatus "WARN"
+                foreach ($e in $filteredGciErrors) {
                     try {
                         if ($e -and $e.Exception -and $e.Exception.Message) {
                             $invErrors += ("" + $e.Exception.Message)
