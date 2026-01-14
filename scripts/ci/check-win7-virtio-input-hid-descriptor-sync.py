@@ -335,6 +335,7 @@ def main() -> int:
     # Optional extra guardrail: expected input report lengths.
     try:
         hidtest_kbd_input = extract_c_define_int(hidtest_text, "VIRTIO_INPUT_EXPECTED_KBD_INPUT_LEN")
+        hidtest_consumer_input = extract_c_define_int(hidtest_text, "VIRTIO_INPUT_EXPECTED_CONSUMER_INPUT_LEN")
         hidtest_mouse_input = extract_c_define_int(hidtest_text, "VIRTIO_INPUT_EXPECTED_MOUSE_INPUT_LEN")
         hidtest_tablet_input = extract_c_define_int(hidtest_text, "VIRTIO_INPUT_EXPECTED_TABLET_INPUT_LEN")
         hidtest_kbd_output = extract_c_define_int(hidtest_text, "VIRTIO_INPUT_EXPECTED_KBD_OUTPUT_LEN")
@@ -350,6 +351,7 @@ def main() -> int:
         print(
             "  input report sizes:"
             f" kbd hidtest={hidtest_kbd_input} translate={translate_kbd_size},"
+            f" consumer hidtest={hidtest_consumer_input} translate={translate_consumer_size},"
             f" mouse hidtest={hidtest_mouse_input} translate={translate_mouse_size},"
             f" tablet hidtest={hidtest_tablet_input} translate={translate_tablet_size}"
         )
@@ -372,6 +374,16 @@ def main() -> int:
                         "mouse input report length mismatch:",
                         f"  hidtest VIRTIO_INPUT_EXPECTED_MOUSE_INPUT_LEN : {hidtest_mouse_input}",
                         f"  hid_translate.h HID_TRANSLATE_MOUSE_REPORT_SIZE : {translate_mouse_size}",
+                    ]
+                )
+            )
+        if hidtest_consumer_input != translate_consumer_size:
+            failures.append(
+                "\n".join(
+                    [
+                        "consumer input report length mismatch:",
+                        f"  hidtest VIRTIO_INPUT_EXPECTED_CONSUMER_INPUT_LEN : {hidtest_consumer_input}",
+                        f"  hid_translate.h HID_TRANSLATE_CONSUMER_REPORT_SIZE : {translate_consumer_size}",
                     ]
                 )
             )
@@ -514,6 +526,17 @@ def main() -> int:
                         f"  report id: {translate_consumer_id}",
                         f"  descriptor-derived len : {consumer_id_len}",
                         f"  hid_translate.h HID_TRANSLATE_CONSUMER_REPORT_SIZE : {translate_consumer_size}",
+                    ]
+                )
+            )
+        if consumer_id_len != hidtest_consumer_input:
+            failures.append(
+                "\n".join(
+                    [
+                        "consumer Report ID input length mismatch (hidtest macro vs descriptor-derived):",
+                        f"  report id: {translate_consumer_id}",
+                        f"  descriptor-derived len : {consumer_id_len}",
+                        f"  hidtest VIRTIO_INPUT_EXPECTED_CONSUMER_INPUT_LEN : {hidtest_consumer_input}",
                     ]
                 )
             )
