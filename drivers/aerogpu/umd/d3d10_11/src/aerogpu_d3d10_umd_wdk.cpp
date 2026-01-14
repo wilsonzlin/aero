@@ -7747,16 +7747,14 @@ static void SetSamplersLocked(AeroGpuDevice* dev,
     handles[i] = handle;
   }
 
-  auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_samplers>(
-      AEROGPU_CMD_SET_SAMPLERS, handles.data(), static_cast<size_t>(sampler_count) * sizeof(handles[0]));
-  if (!cmd) {
-    SetError(hDevice, E_OUTOFMEMORY);
+  if (!aerogpu::d3d10_11::EmitSetSamplersCmdLocked(dev,
+                                                   shader_stage,
+                                                   static_cast<uint32_t>(start_slot),
+                                                   static_cast<uint32_t>(sampler_count),
+                                                   handles.data(),
+                                                   [&](HRESULT hr) { SetError(hDevice, hr); })) {
     return;
   }
-  cmd->shader_stage = shader_stage;
-  cmd->start_slot = start_slot;
-  cmd->sampler_count = sampler_count;
-  cmd->reserved0 = 0;
 
   for (UINT i = 0; i < sampler_count; i++) {
     table[start_slot + i] = handles[i];

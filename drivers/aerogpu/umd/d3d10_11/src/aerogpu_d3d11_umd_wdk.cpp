@@ -7099,16 +7099,14 @@ static void SetSamplers11Locked(Device* dev,
     return;
   }
 
-  auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_samplers>(
-      AEROGPU_CMD_SET_SAMPLERS, handles.data(), sampler_count * sizeof(handles[0]));
-  if (!cmd) {
-    SetError(dev, E_OUTOFMEMORY);
+  if (!aerogpu::d3d10_11::EmitSetSamplersCmdLocked(dev,
+                                                   shader_stage,
+                                                   static_cast<uint32_t>(start_slot),
+                                                   static_cast<uint32_t>(sampler_count),
+                                                   handles.data(),
+                                                   [&](HRESULT hr) { SetError(dev, hr); })) {
     return;
   }
-  cmd->shader_stage = shader_stage;
-  cmd->start_slot = start_slot;
-  cmd->sampler_count = sampler_count;
-  cmd->reserved0 = 0;
 
   if (shader_stage == AEROGPU_SHADER_STAGE_GEOMETRY) {
     AEROGPU_D3D10_11_LOG("emit GS SetSamplers start=%u count=%u",

@@ -5614,16 +5614,14 @@ void AEROGPU_APIENTRY VsSetSamplers(D3D10DDI_HDEVICE hDevice,
     handles[i] = h;
   }
 
-  auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_samplers>(
-      AEROGPU_CMD_SET_SAMPLERS, handles, static_cast<size_t>(count) * sizeof(handles[0]));
-  if (!cmd) {
-    ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+  if (!aerogpu::d3d10_11::EmitSetSamplersCmdLocked(dev,
+                                                   AEROGPU_SHADER_STAGE_VERTEX,
+                                                   start_slot,
+                                                   count,
+                                                   handles,
+                                                   [&](HRESULT hr) { ReportDeviceErrorLocked(dev, hDevice, hr); })) {
     return;
   }
-  cmd->shader_stage = AEROGPU_SHADER_STAGE_VERTEX;
-  cmd->start_slot = start_slot;
-  cmd->sampler_count = count;
-  cmd->reserved0 = 0;
   for (uint32_t i = 0; i < count; i++) {
     dev->vs_samplers[start_slot + i] = handles[i];
   }
@@ -5664,16 +5662,14 @@ void AEROGPU_APIENTRY PsSetSamplers(D3D10DDI_HDEVICE hDevice,
     handles[i] = h;
   }
 
-  auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_samplers>(
-      AEROGPU_CMD_SET_SAMPLERS, handles, static_cast<size_t>(count) * sizeof(handles[0]));
-  if (!cmd) {
-    ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+  if (!aerogpu::d3d10_11::EmitSetSamplersCmdLocked(dev,
+                                                   AEROGPU_SHADER_STAGE_PIXEL,
+                                                   start_slot,
+                                                   count,
+                                                   handles,
+                                                   [&](HRESULT hr) { ReportDeviceErrorLocked(dev, hDevice, hr); })) {
     return;
   }
-  cmd->shader_stage = AEROGPU_SHADER_STAGE_PIXEL;
-  cmd->start_slot = start_slot;
-  cmd->sampler_count = count;
-  cmd->reserved0 = 0;
   for (uint32_t i = 0; i < count; i++) {
     dev->ps_samplers[start_slot + i] = handles[i];
   }

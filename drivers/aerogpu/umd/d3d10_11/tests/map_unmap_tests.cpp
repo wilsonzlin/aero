@@ -545,6 +545,122 @@ bool TestSetTextureHelperEncodesPacket() {
   return true;
 }
 
+bool TestSetSamplersHelperEncodesPacket() {
+  using aerogpu::d3d10_11::EmitSetSamplersCmdLocked;
+
+  struct DummyDevice {
+    aerogpu::CmdWriter cmd;
+
+    DummyDevice() {
+      cmd.reset();
+    }
+  };
+
+  std::vector<HRESULT> errors;
+
+  // Happy path.
+  DummyDevice dev{};
+  const aerogpu_handle_t handles[3] = {11, 22, 33};
+  const bool ok = EmitSetSamplersCmdLocked(&dev,
+                                          AEROGPU_SHADER_STAGE_PIXEL,
+                                          /*start_slot=*/4,
+                                          /*sampler_count=*/3,
+                                          handles,
+                                          [&](HRESULT hr) { errors.push_back(hr); });
+  dev.cmd.finalize();
+
+  if (!Check(ok, "EmitSetSamplersCmdLocked should succeed")) {
+    return false;
+  }
+  if (!Check(errors.empty(), "EmitSetSamplersCmdLocked should not report errors")) {
+    return false;
+  }
+
+  const uint32_t expected_packet_bytes =
+      static_cast<uint32_t>(sizeof(aerogpu_cmd_set_samplers) + sizeof(handles));
+  if (!Check(dev.cmd.size() >= sizeof(aerogpu_cmd_stream_header) + expected_packet_bytes,
+             "SET_SAMPLERS packet emitted")) {
+    return false;
+  }
+
+  const auto* pkt =
+      reinterpret_cast<const aerogpu_cmd_set_samplers*>(dev.cmd.data() + sizeof(aerogpu_cmd_stream_header));
+  if (!Check(pkt->hdr.opcode == AEROGPU_CMD_SET_SAMPLERS, "SET_SAMPLERS opcode")) {
+    return false;
+  }
+  if (!Check(pkt->hdr.size_bytes == expected_packet_bytes, "SET_SAMPLERS hdr.size_bytes")) {
+    return false;
+  }
+  if (!Check(pkt->shader_stage == AEROGPU_SHADER_STAGE_PIXEL, "SET_SAMPLERS shader_stage")) {
+    return false;
+  }
+  if (!Check(pkt->start_slot == 4, "SET_SAMPLERS start_slot")) {
+    return false;
+  }
+  if (!Check(pkt->sampler_count == 3, "SET_SAMPLERS sampler_count")) {
+    return false;
+  }
+  if (!Check(pkt->reserved0 == 0, "SET_SAMPLERS reserved0 cleared")) {
+    return false;
+  }
+  const auto* payload =
+      reinterpret_cast<const aerogpu_handle_t*>(reinterpret_cast<const uint8_t*>(pkt) + sizeof(*pkt));
+  if (!Check(payload[0] == handles[0], "SET_SAMPLERS payload[0]")) {
+    return false;
+  }
+  if (!Check(payload[1] == handles[1], "SET_SAMPLERS payload[1]")) {
+    return false;
+  }
+  if (!Check(payload[2] == handles[2], "SET_SAMPLERS payload[2]")) {
+    return false;
+  }
+
+  // Invalid argument path: non-zero count with null samplers pointer.
+  DummyDevice invalid{};
+  errors.clear();
+  const bool ok_invalid = EmitSetSamplersCmdLocked(&invalid,
+                                                  AEROGPU_SHADER_STAGE_VERTEX,
+                                                  /*start_slot=*/0,
+                                                  /*sampler_count=*/1,
+                                                  /*samplers=*/nullptr,
+                                                  [&](HRESULT hr) { errors.push_back(hr); });
+  if (!Check(!ok_invalid, "EmitSetSamplersCmdLocked should fail when samplers==nullptr and sampler_count!=0")) {
+    return false;
+  }
+  if (!Check(errors.size() == 1 && errors[0] == E_INVALIDARG, "invalid samplers pointer reports E_INVALIDARG")) {
+    return false;
+  }
+  if (!Check(invalid.cmd.size() == sizeof(aerogpu_cmd_stream_header), "invalid args do not emit a packet")) {
+    return false;
+  }
+
+  // Insufficient-space path.
+  alignas(4) uint8_t tiny_buf[sizeof(aerogpu_cmd_stream_header)] = {};
+  struct TinyDevice {
+    aerogpu::CmdWriter cmd;
+    TinyDevice(uint8_t* buf, size_t cap) {
+      cmd.set_span(buf, cap);
+    }
+  };
+  TinyDevice tiny(tiny_buf, sizeof(tiny_buf));
+  errors.clear();
+  const aerogpu_handle_t one_handle[1] = {7};
+  const bool ok2 = EmitSetSamplersCmdLocked(&tiny,
+                                           AEROGPU_SHADER_STAGE_PIXEL,
+                                           /*start_slot=*/0,
+                                           /*sampler_count=*/1,
+                                           one_handle,
+                                           [&](HRESULT hr) { errors.push_back(hr); });
+  if (!Check(!ok2, "EmitSetSamplersCmdLocked should fail when cmd append fails")) {
+    return false;
+  }
+  if (!Check(errors.size() == 1 && errors[0] == E_OUTOFMEMORY, "cmd append failure reports E_OUTOFMEMORY")) {
+    return false;
+  }
+
+  return true;
+}
+
 bool TestTrackWddmAllocForSubmitLockedHelper() {
   using aerogpu::d3d10_11::WddmSubmitAllocation;
 
@@ -9797,6 +9913,7 @@ int main() {
   ok &= TestRenderTargetHelpersClearStaleDsvHandles();
   ok &= TestPrimitiveTopologyHelperEmitsAndCaches();
   ok &= TestSetTextureHelperEncodesPacket();
+  ok &= TestSetSamplersHelperEncodesPacket();
   ok &= TestTrackWddmAllocForSubmitLockedHelper();
   ok &= TestDeviceFuncsTableNoNullEntriesHostOwned();
   ok &= TestDeviceFuncsTableNoNullEntriesGuestBacked();

@@ -2532,6 +2532,50 @@ inline bool EmitSetTextureCmdLocked(DeviceT* dev, uint32_t shader_stage, uint32_
   return EmitSetTextureCmdLocked(dev, shader_stage, slot, texture, EmitSetTextureNoopSetError{});
 }
 
+// -------------------------------------------------------------------------------------------------
+// Resource binding helpers (SET_SAMPLERS)
+// -------------------------------------------------------------------------------------------------
+template <typename DeviceT, typename SetErrorFn>
+inline bool EmitSetSamplersCmdLocked(DeviceT* dev,
+                                     uint32_t shader_stage,
+                                     uint32_t start_slot,
+                                     uint32_t sampler_count,
+                                     const aerogpu_handle_t* samplers,
+                                     SetErrorFn&& set_error) {
+  if (!dev) {
+    return false;
+  }
+  if (sampler_count != 0 && !samplers) {
+    set_error(E_INVALIDARG);
+    return false;
+  }
+
+  auto* cmd = dev->cmd.template append_with_payload<aerogpu_cmd_set_samplers>(
+      AEROGPU_CMD_SET_SAMPLERS, samplers, static_cast<size_t>(sampler_count) * sizeof(samplers[0]));
+  if (!cmd) {
+    set_error(E_OUTOFMEMORY);
+    return false;
+  }
+  cmd->shader_stage = shader_stage;
+  cmd->start_slot = start_slot;
+  cmd->sampler_count = sampler_count;
+  cmd->reserved0 = 0;
+  return true;
+}
+
+struct EmitSetSamplersNoopSetError {
+  void operator()(HRESULT) const noexcept {}
+};
+
+template <typename DeviceT>
+inline bool EmitSetSamplersCmdLocked(DeviceT* dev,
+                                     uint32_t shader_stage,
+                                     uint32_t start_slot,
+                                     uint32_t sampler_count,
+                                     const aerogpu_handle_t* samplers) {
+  return EmitSetSamplersCmdLocked(dev, shader_stage, start_slot, sampler_count, samplers, EmitSetSamplersNoopSetError{});
+}
+
 template <typename THandle, typename TObject>
 inline TObject* FromHandle(THandle h) {
   return reinterpret_cast<TObject*>(h.pDrvPrivate);
