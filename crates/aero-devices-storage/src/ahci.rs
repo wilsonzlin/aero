@@ -1130,6 +1130,10 @@ mod tests {
     use aero_storage::{AeroSparseConfig, AeroSparseDisk, MemBackend, RawDisk, VirtualDisk};
     use memory::MemoryBus;
 
+    fn port_reg(port: usize, reg: u64) -> u64 {
+        PORT_BASE + (port as u64) * PORT_STRIDE + reg
+    }
+
     fn setup_controller() -> (AhciController, TestIrqLine, TestMemory, AtaDrive) {
         let irq = TestIrqLine::default();
         let ctl = AhciController::new(Box::new(irq.clone()), 1);
@@ -1202,6 +1206,15 @@ mod tests {
         cfis[12] = count;
 
         mem.write_physical(ctba, &cfis);
+    }
+
+    fn make_drive_with_sector_marker(marker: [u8; 4], lba: u64) -> AtaDrive {
+        let capacity = 64 * SECTOR_SIZE as u64;
+        let mut disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+        let mut sector = vec![0u8; SECTOR_SIZE];
+        sector[0..4].copy_from_slice(&marker);
+        disk.write_sectors(lba, &sector).unwrap();
+        AtaDrive::new(Box::new(disk)).unwrap()
     }
 
     #[test]
@@ -1935,6 +1948,14 @@ mod tests {
         ctl.write_u32(HBA_REG_GHC, GHC_IE | GHC_AE);
         assert!(irq.level());
 
+        // Disabling GHC.IE must deassert IRQ even though PxIS and PxIE remain set.
+        ctl.write_u32(HBA_REG_GHC, GHC_AE);
+        assert!(!irq.level());
+
+        // Re-enabling GHC.IE should re-assert due to the still-pending enabled interrupts.
+        ctl.write_u32(HBA_REG_GHC, GHC_IE | GHC_AE);
+        assert!(irq.level());
+
         // Disabling all per-port IE bits must deassert IRQ even though PxIS is still set.
         ctl.write_u32(p0 + PORT_REG_IE, 0);
         ctl.write_u32(p1 + PORT_REG_IE, 0);
@@ -1977,9 +1998,103 @@ mod tests {
         // Ensure the IRQ line toggled as expected.
         assert_eq!(
             irq.transitions(),
-            vec![true, false, true, false, true, false],
+            vec![true, false, true, false, true, false, true, false],
             "unexpected IRQ transition sequence; check IRQ gating logic"
         );
+    }
+
+    #[test]
+    fn multi_port_pi_and_per_port_register_isolation() {
+        let irq = TestIrqLine::default();
+        let mut ctl = AhciController::new(Box::new(irq.clone()), 4);
+        let mut mem = TestMemory::new(0x40_000);
+
+        // Attach drives to a subset of ports. PI must still report all implemented ports.
+        ctl.attach_drive(0, make_drive_with_sector_marker([0xAA, 0xBB, 0xCC, 0xDD], 4));
+        ctl.attach_drive(2, make_drive_with_sector_marker([0x11, 0x22, 0x33, 0x44], 4));
+        assert_eq!(ctl.read_u32(HBA_REG_PI), 0b1111);
+
+        // Program HBA and ports.
+        let p0_clb = 0x1000;
+        let p0_fb = 0x2000;
+        let p0_ctba = 0x3000;
+        let p0_data = 0x4000;
+
+        let p2_clb = 0x5000;
+        let p2_fb = 0x6000;
+        let p2_ctba = 0x7000;
+        let p2_data = 0x8000;
+
+        ctl.write_u32(HBA_REG_GHC, GHC_IE | GHC_AE);
+
+        for (port, clb, fb) in [(0usize, p0_clb, p0_fb), (2usize, p2_clb, p2_fb)] {
+            ctl.write_u32(port_reg(port, PORT_REG_CLB), clb as u32);
+            ctl.write_u32(port_reg(port, PORT_REG_CLBU), 0);
+            ctl.write_u32(port_reg(port, PORT_REG_FB), fb as u32);
+            ctl.write_u32(port_reg(port, PORT_REG_FBU), 0);
+            ctl.write_u32(port_reg(port, PORT_REG_IE), PORT_IS_DHRS);
+            ctl.write_u32(port_reg(port, PORT_REG_CMD), PORT_CMD_ST | PORT_CMD_FRE);
+        }
+
+        // Set up READ DMA EXT commands for both ports, but only issue the command on port 0 first.
+        write_cmd_header(&mut mem, p0_clb, 0, p0_ctba, 1, false);
+        write_cfis(&mut mem, p0_ctba, ATA_CMD_READ_DMA_EXT, 4, 1);
+        write_prdt(&mut mem, p0_ctba, 0, p0_data, SECTOR_SIZE as u32);
+
+        write_cmd_header(&mut mem, p2_clb, 0, p2_ctba, 1, false);
+        write_cfis(&mut mem, p2_ctba, ATA_CMD_READ_DMA_EXT, 4, 1);
+        write_prdt(&mut mem, p2_ctba, 0, p2_data, SECTOR_SIZE as u32);
+
+        ctl.write_u32(port_reg(0, PORT_REG_CI), 1);
+        assert_eq!(
+            ctl.read_u32(port_reg(2, PORT_REG_CI)),
+            0,
+            "writing PxCI on one port must not affect other ports"
+        );
+
+        ctl.process(&mut mem);
+
+        assert!(irq.level(), "port 0 command completion should assert IRQ");
+        assert_eq!(ctl.read_u32(port_reg(0, PORT_REG_CI)), 0);
+        assert_ne!(ctl.read_u32(port_reg(0, PORT_REG_IS)) & PORT_IS_DHRS, 0);
+
+        let mut out0 = [0u8; 4];
+        mem.read_physical(p0_data, &mut out0);
+        assert_eq!(out0, [0xAA, 0xBB, 0xCC, 0xDD]);
+
+        // Port 2 should not observe any completion status until we issue its command.
+        assert_eq!(
+            ctl.read_u32(port_reg(2, PORT_REG_IS)),
+            0,
+            "completion on one port must not set PxIS on other ports"
+        );
+        let mut out2 = [0u8; 4];
+        mem.read_physical(p2_data, &mut out2);
+        assert_eq!(
+            out2,
+            [0, 0, 0, 0],
+            "DMA for one port must not write into another port's PRDT buffer"
+        );
+
+        // Clear port 0 interrupt status. IRQ should drop, since port 2 has no pending interrupt.
+        ctl.write_u32(port_reg(0, PORT_REG_IS), PORT_IS_DHRS);
+        assert!(!irq.level());
+
+        // Now issue and process the command on port 2.
+        ctl.write_u32(port_reg(2, PORT_REG_CI), 1);
+        ctl.process(&mut mem);
+
+        assert!(irq.level(), "port 2 command completion should assert IRQ");
+        assert_eq!(ctl.read_u32(port_reg(2, PORT_REG_CI)), 0);
+        assert_ne!(ctl.read_u32(port_reg(2, PORT_REG_IS)) & PORT_IS_DHRS, 0);
+        assert_eq!(
+            ctl.read_u32(port_reg(0, PORT_REG_IS)),
+            0,
+            "processing another port must not re-set cleared PxIS bits"
+        );
+
+        mem.read_physical(p2_data, &mut out2);
+        assert_eq!(out2, [0x11, 0x22, 0x33, 0x44]);
     }
 
     #[test]
