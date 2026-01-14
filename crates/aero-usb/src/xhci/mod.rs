@@ -2868,13 +2868,65 @@ impl IoSnapshot for XhciController {
         // - 11: host_controller_error
         // - 12: ports
         //
-        // Version 0.4 swapped those tags to resolve a collision introduced in 0.3, so we accept
-        // either mapping based on the snapshot minor version.
-        let (tag_host_controller_error, tag_ports) = if r.header().device_version.minor <= 3 {
-            (11u16, 12u16)
+        // Version 0.4 swapped those tags to resolve a collision introduced in 0.3. Some
+        // intermediate snapshots used the 0.4 header while still encoding fields using the 0.3 tag
+        // mapping, so we:
+        // 1) choose a default mapping based on snapshot minor version
+        // 2) override it when field "shapes" clearly indicate the opposite mapping.
+        let mut tag_host_controller_error = if r.header().device_version.minor <= 3 {
+            11u16
         } else {
-            (12u16, 11u16)
+            12u16
         };
+        let mut tag_ports = if r.header().device_version.minor <= 3 {
+            12u16
+        } else {
+            11u16
+        };
+
+        // `host_controller_error` is a bool (single byte 0/1) while `ports` is a nested vec-bytes
+        // encoding (>= 4 bytes, starting with a u32 port count). Use that to disambiguate.
+        let bytes11 = r.bytes(11);
+        let bytes12 = r.bytes(12);
+        let is_bool = |bytes: &[u8]| bytes.len() == 1 && (bytes[0] == 0 || bytes[0] == 1);
+
+        let bool_tag = match (bytes11, bytes12) {
+            (Some(b11), Some(b12)) => {
+                if is_bool(b11) && !is_bool(b12) {
+                    Some(11u16)
+                } else if is_bool(b12) && !is_bool(b11) {
+                    Some(12u16)
+                } else {
+                    None
+                }
+            }
+            (Some(b11), None) if is_bool(b11) => Some(11u16),
+            (None, Some(b12)) if is_bool(b12) => Some(12u16),
+            _ => None,
+        };
+
+        let ports_tag = match (bytes11, bytes12) {
+            (Some(b11), Some(b12)) => {
+                if b11.len() >= 4 && b12.len() < 4 {
+                    Some(11u16)
+                } else if b12.len() >= 4 && b11.len() < 4 {
+                    Some(12u16)
+                } else {
+                    None
+                }
+            }
+            (Some(b11), None) if b11.len() >= 4 => Some(11u16),
+            (None, Some(b12)) if b12.len() >= 4 => Some(12u16),
+            _ => None,
+        };
+
+        if let Some(tag) = bool_tag {
+            tag_host_controller_error = tag;
+            tag_ports = if tag == 11 { 12 } else { 11 };
+        } else if let Some(tag) = ports_tag {
+            tag_ports = tag;
+            tag_host_controller_error = if tag == 11 { 12 } else { 11 };
+        }
 
         let port_count = r.u8(TAG_PORT_COUNT)?.unwrap_or(DEFAULT_PORT_COUNT).max(1);
         let preserved_ports = if port_count == self.port_count {

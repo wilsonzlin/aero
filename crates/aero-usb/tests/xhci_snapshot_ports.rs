@@ -148,43 +148,51 @@ fn xhci_snapshot_loads_legacy_tag_mapping_for_ports_and_hce() {
         "expected port to be enabled before snapshot"
     );
 
-    // Encode a snapshot using the pre-0.4 tag mapping:
-    // - tag 11: host_controller_error
-    // - tag 12: ports
     let bytes = ctrl.save_state();
     let r = SnapshotReader::parse(&bytes, *b"XHCI").expect("parse snapshot");
-    let mut w = SnapshotWriter::new(*b"XHCI", SnapshotVersion::new(0, 3));
-    for (tag, field) in r.iter_fields() {
-        let out_tag = match tag {
-            11 => 12,
-            12 => 11,
-            other => other,
-        };
-        w.field_bytes(out_tag, field.to_vec());
-    }
-    let legacy_bytes = w.finish();
 
-    let mut restored = XhciController::new();
-    let keyboard_restored = UsbHidKeyboardHandle::new();
-    restored.attach_device(0, Box::new(keyboard_restored.clone()));
-    restored.load_state(&legacy_bytes).expect("load legacy snapshot");
+    // Encode snapshots using the pre-tag-swap mapping:
+    // - tag 11: host_controller_error
+    // - tag 12: ports
+    //
+    // We test both the original 0.3 header and an intermediate 0.4 header that still used the 0.3
+    // tag layout.
+    for legacy_version in [SnapshotVersion::new(0, 3), SnapshotVersion::new(0, 4)] {
+        let mut w = SnapshotWriter::new(*b"XHCI", legacy_version);
+        for (tag, field) in r.iter_fields() {
+            let out_tag = match tag {
+                11 => 12,
+                12 => 11,
+                other => other,
+            };
+            w.field_bytes(out_tag, field.to_vec());
+        }
+        let legacy_bytes = w.finish();
 
-    assert!(
-        keyboard_restored.configured(),
-        "expected configured state to roundtrip through legacy snapshot"
-    );
-    assert_eq!(
+        let mut restored = XhciController::new();
+        let keyboard_restored = UsbHidKeyboardHandle::new();
+        restored.attach_device(0, Box::new(keyboard_restored.clone()));
         restored
-            .find_device_by_topology(1, &[])
-            .expect("device should still be attached")
-            .address(),
-        1,
-        "expected device address to roundtrip"
-    );
+            .load_state(&legacy_bytes)
+            .unwrap_or_else(|e| panic!("load legacy snapshot version {}: {e}", legacy_version));
 
-    let after_portsc = restored.read_portsc(0);
-    assert!(
-        after_portsc & PORTSC_PED != 0,
-        "expected port enabled bit to roundtrip through legacy snapshot"
-    );
+        assert!(
+            keyboard_restored.configured(),
+            "expected configured state to roundtrip through legacy snapshot"
+        );
+        assert_eq!(
+            restored
+                .find_device_by_topology(1, &[])
+                .expect("device should still be attached")
+                .address(),
+            1,
+            "expected device address to roundtrip"
+        );
+
+        let after_portsc = restored.read_portsc(0);
+        assert!(
+            after_portsc & PORTSC_PED != 0,
+            "expected port enabled bit to roundtrip through legacy snapshot"
+        );
+    }
 }
