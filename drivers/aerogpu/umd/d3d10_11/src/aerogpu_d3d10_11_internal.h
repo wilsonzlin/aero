@@ -47,6 +47,14 @@ constexpr uint32_t kMaxUavSlots = 8;
 // Back-compat alias: older code used this name for the compute UAV buffer slot count.
 constexpr uint32_t kMaxUnorderedAccessBufferSlots = kMaxUavSlots;
 
+// D3D10/D3D11 Map flag subset (numeric values from d3d10.h/d3d11.h).
+constexpr uint32_t kD3DMapFlagDoNotWait = 0x100000;
+// Back-compat alias used by older portable code.
+constexpr uint32_t kD3D11MapFlagDoNotWait = kD3DMapFlagDoNotWait;
+
+// Sentinel timeout values used by AeroGPU fence wait helpers.
+constexpr uint32_t kAeroGpuTimeoutMsInfinite = ~0u;
+
 // D3D11_BIND_* subset (numeric values from d3d11.h).
 constexpr uint32_t kD3D11BindVertexBuffer = 0x1;
 constexpr uint32_t kD3D11BindIndexBuffer = 0x2;

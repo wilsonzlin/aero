@@ -68,12 +68,13 @@ namespace {
 
 using aerogpu::d3d10_11::kInvalidHandle;
 using aerogpu::d3d10_11::AllocateGlobalHandle;
+using aerogpu::d3d10_11::kD3DMapFlagDoNotWait;
 constexpr uint32_t kAeroGpuDeviceLiveCookie = 0xA3E0D301u;
 constexpr HRESULT kDxgiErrorWasStillDrawing = static_cast<HRESULT>(0x887A000Au); // DXGI_ERROR_WAS_STILL_DRAWING
 constexpr HRESULT kHrPending = static_cast<HRESULT>(0x8000000Au); // E_PENDING
 constexpr HRESULT kHrNtStatusGraphicsGpuBusy =
     static_cast<HRESULT>(0xD01E0102L); // HRESULT_FROM_NT(STATUS_GRAPHICS_GPU_BUSY)
-constexpr uint32_t kAeroGpuTimeoutMsInfinite = ~0u;
+using aerogpu::d3d10_11::kAeroGpuTimeoutMsInfinite;
 
 struct AeroGpuAdapter;
 
@@ -3897,7 +3898,6 @@ constexpr uint32_t kD3DMapReadWrite = 3;
 constexpr uint32_t kD3DMapWriteDiscard = 4;
 constexpr uint32_t kD3DMapWriteNoOverwrite = 5;
 // D3D10_MAP_FLAG_DO_NOT_WAIT (numeric value from d3d10.h / d3d10_1.h).
-constexpr uint32_t kD3DMapFlagDoNotWait = 0x100000;
 
 static void InitLockArgsForMap(D3DDDICB_LOCK* lock, uint32_t subresource, uint32_t map_type, uint32_t map_flags) {
   if (!lock) {

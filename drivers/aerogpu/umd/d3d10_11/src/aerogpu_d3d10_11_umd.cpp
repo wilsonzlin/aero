@@ -154,6 +154,7 @@ using aerogpu::d3d10_11::HashSemanticName;
 using aerogpu::d3d10_11::aerogpu_sampler_filter_from_d3d_filter;
 using aerogpu::d3d10_11::aerogpu_sampler_address_from_d3d_mode;
 using aerogpu::d3d10_11::AllocateGlobalHandle;
+using aerogpu::d3d10_11::kAeroGpuTimeoutMsInfinite;
 using aerogpu::d3d10_11::kInvalidHandle;
 using aerogpu::d3d10_11::kDeviceDestroyLiveCookie;
 using aerogpu::d3d10_11::atomic_max_u64;
@@ -165,7 +166,6 @@ constexpr HRESULT kHrErrorTimeout = static_cast<HRESULT>(0x800705B4u); // HRESUL
 constexpr HRESULT kHrNtStatusTimeout = static_cast<HRESULT>(0x10000102u); // HRESULT_FROM_NT(STATUS_TIMEOUT) (SUCCEEDED)
 constexpr HRESULT kHrNtStatusGraphicsGpuBusy =
     static_cast<HRESULT>(0xD01E0102u); // HRESULT_FROM_NT(STATUS_GRAPHICS_GPU_BUSY)
-constexpr uint32_t kAeroGpuTimeoutMsInfinite = ~0u;
 
 bool IsDeviceLive(D3D10DDI_HDEVICE hDevice) {
   if (!hDevice.pDrvPrivate) {
@@ -237,7 +237,7 @@ constexpr uint32_t kD3D11MapWriteDiscard = 4;
 constexpr uint32_t kD3D11MapWriteNoOverwrite = 5;
 
 // D3D11_MAP_FLAG_DO_NOT_WAIT (numeric value from d3d11.h).
-constexpr uint32_t kD3D11MapFlagDoNotWait = 0x100000;
+using aerogpu::d3d10_11::kD3D11MapFlagDoNotWait;
 
 // D3D10/11 pipeline-state enums (numeric values from d3d10.h/d3d11.h).
 constexpr uint32_t kD3D10FillWireframe = 2;

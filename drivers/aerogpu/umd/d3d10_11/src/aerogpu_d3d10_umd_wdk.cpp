@@ -61,8 +61,8 @@ constexpr HRESULT kDxgiErrorWasStillDrawing = static_cast<HRESULT>(0x887A000Au);
 constexpr HRESULT kHrPending = static_cast<HRESULT>(0x8000000Au); // E_PENDING
 constexpr HRESULT kHrNtStatusGraphicsGpuBusy =
     static_cast<HRESULT>(0xD01E0102L); // HRESULT_FROM_NT(STATUS_GRAPHICS_GPU_BUSY)
-constexpr uint32_t kD3DMapFlagDoNotWait = 0x100000;
-constexpr uint32_t kAeroGpuTimeoutMsInfinite = ~0u;
+using aerogpu::d3d10_11::kD3DMapFlagDoNotWait;
+using aerogpu::d3d10_11::kAeroGpuTimeoutMsInfinite;
 constexpr uint32_t kAeroGpuDeviceLiveCookie = 0xA3E0D310u;
 
 // -----------------------------------------------------------------------------
