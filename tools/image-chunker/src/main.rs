@@ -1386,10 +1386,13 @@ async fn verify_chunk_http(
                 match client.head(url.clone()).send().await {
                     Ok(resp) => {
                         let status = resp.status();
-                        // Some servers/CDNs do not support HEAD. Disable the optimization after
-                        // the first clear signal.
+                        // Some servers/CDNs do not support HEAD (501/405), or signed URLs may be
+                        // method-specific (403/401). Disable the optimization after the first
+                        // clear signal and fall back to GET for subsequent chunks.
                         if status == reqwest::StatusCode::METHOD_NOT_ALLOWED
+                            || status == reqwest::StatusCode::NOT_IMPLEMENTED
                             || status == reqwest::StatusCode::FORBIDDEN
+                            || status == reqwest::StatusCode::UNAUTHORIZED
                         {
                             head_supported.store(false, Ordering::SeqCst);
                         }
@@ -8211,6 +8214,199 @@ mod tests {
             chunk_head_requests.load(Ordering::SeqCst),
             1,
             "expected HEAD optimization to be disabled after the first 403"
+        );
+        assert_eq!(
+            chunk_get_requests.load(Ordering::SeqCst),
+            2,
+            "expected verifier to fall back to GET for all chunks after disabling HEAD"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn verify_http_disables_head_on_unauthorized() -> Result<()> {
+        let chunk_size: u64 = 1024;
+        let chunk0 = vec![b'a'; chunk_size as usize];
+        let chunk1 = vec![b'b'; 512];
+        let total_size = (chunk0.len() + chunk1.len()) as u64;
+
+        let manifest = ManifestV1 {
+            schema: MANIFEST_SCHEMA.to_string(),
+            image_id: "demo".to_string(),
+            version: "v1".to_string(),
+            mime_type: CHUNK_MIME_TYPE.to_string(),
+            total_size,
+            chunk_size,
+            chunk_count: chunk_count(total_size, chunk_size),
+            chunk_index_width: CHUNK_INDEX_WIDTH as u32,
+            chunks: None,
+        };
+        let manifest_bytes = serde_json::to_vec_pretty(&manifest).context("serialize manifest")?;
+
+        let chunk_head_requests = Arc::new(AtomicU64::new(0));
+        let chunk_get_requests = Arc::new(AtomicU64::new(0));
+
+        let responder: Arc<
+            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>)
+                + Send
+                + Sync
+                + 'static,
+        > = {
+            let chunk_head_requests = Arc::clone(&chunk_head_requests);
+            let chunk_get_requests = Arc::clone(&chunk_get_requests);
+            Arc::new(move |req: TestHttpRequest| match req.path.as_str() {
+                "/manifest.json" => (200, Vec::new(), manifest_bytes.clone()),
+                "/meta.json" => (404, Vec::new(), b"not found".to_vec()),
+                // Some signed URL schemes are method-specific; HEAD may be rejected even when GET is allowed.
+                "/chunks/00000000.bin" => {
+                    if req.method.eq_ignore_ascii_case("HEAD") {
+                        chunk_head_requests.fetch_add(1, Ordering::SeqCst);
+                        (401, Vec::new(), Vec::new())
+                    } else {
+                        chunk_get_requests.fetch_add(1, Ordering::SeqCst);
+                        (200, Vec::new(), chunk0.clone())
+                    }
+                }
+                "/chunks/00000001.bin" => {
+                    if req.method.eq_ignore_ascii_case("HEAD") {
+                        chunk_head_requests.fetch_add(1, Ordering::SeqCst);
+                        (401, Vec::new(), Vec::new())
+                    } else {
+                        chunk_get_requests.fetch_add(1, Ordering::SeqCst);
+                        (200, Vec::new(), chunk1.clone())
+                    }
+                }
+                _ => (404, Vec::new(), b"not found".to_vec()),
+            })
+        };
+
+        let (base_url, shutdown_tx, server_handle) = start_test_http_server(responder).await?;
+
+        let result = verify(VerifyArgs {
+            manifest_url: Some(format!("{base_url}/manifest.json")),
+            manifest_file: None,
+            header: Vec::new(),
+            bucket: None,
+            prefix: None,
+            manifest_key: None,
+            image_id: None,
+            image_version: None,
+            endpoint: None,
+            force_path_style: false,
+            region: "us-east-1".to_string(),
+            // Keep deterministic ordering so only the first chunk triggers the HEAD failure.
+            concurrency: 1,
+            retries: 1,
+            max_chunks: MAX_CHUNKS,
+            chunk_sample: None,
+            chunk_sample_seed: None,
+        })
+        .await;
+
+        let _ = shutdown_tx.send(());
+        let _ = server_handle.await;
+
+        result?;
+        assert_eq!(
+            chunk_head_requests.load(Ordering::SeqCst),
+            1,
+            "expected HEAD optimization to be disabled after the first 401"
+        );
+        assert_eq!(
+            chunk_get_requests.load(Ordering::SeqCst),
+            2,
+            "expected verifier to fall back to GET for all chunks after disabling HEAD"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn verify_http_disables_head_on_not_implemented() -> Result<()> {
+        let chunk_size: u64 = 1024;
+        let chunk0 = vec![b'a'; chunk_size as usize];
+        let chunk1 = vec![b'b'; 512];
+        let total_size = (chunk0.len() + chunk1.len()) as u64;
+
+        let manifest = ManifestV1 {
+            schema: MANIFEST_SCHEMA.to_string(),
+            image_id: "demo".to_string(),
+            version: "v1".to_string(),
+            mime_type: CHUNK_MIME_TYPE.to_string(),
+            total_size,
+            chunk_size,
+            chunk_count: chunk_count(total_size, chunk_size),
+            chunk_index_width: CHUNK_INDEX_WIDTH as u32,
+            chunks: None,
+        };
+        let manifest_bytes = serde_json::to_vec_pretty(&manifest).context("serialize manifest")?;
+
+        let chunk_head_requests = Arc::new(AtomicU64::new(0));
+        let chunk_get_requests = Arc::new(AtomicU64::new(0));
+
+        let responder: Arc<
+            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>)
+                + Send
+                + Sync
+                + 'static,
+        > = {
+            let chunk_head_requests = Arc::clone(&chunk_head_requests);
+            let chunk_get_requests = Arc::clone(&chunk_get_requests);
+            Arc::new(move |req: TestHttpRequest| match req.path.as_str() {
+                "/manifest.json" => (200, Vec::new(), manifest_bytes.clone()),
+                "/meta.json" => (404, Vec::new(), b"not found".to_vec()),
+                "/chunks/00000000.bin" => {
+                    if req.method.eq_ignore_ascii_case("HEAD") {
+                        chunk_head_requests.fetch_add(1, Ordering::SeqCst);
+                        (501, Vec::new(), Vec::new())
+                    } else {
+                        chunk_get_requests.fetch_add(1, Ordering::SeqCst);
+                        (200, Vec::new(), chunk0.clone())
+                    }
+                }
+                "/chunks/00000001.bin" => {
+                    if req.method.eq_ignore_ascii_case("HEAD") {
+                        chunk_head_requests.fetch_add(1, Ordering::SeqCst);
+                        (501, Vec::new(), Vec::new())
+                    } else {
+                        chunk_get_requests.fetch_add(1, Ordering::SeqCst);
+                        (200, Vec::new(), chunk1.clone())
+                    }
+                }
+                _ => (404, Vec::new(), b"not found".to_vec()),
+            })
+        };
+
+        let (base_url, shutdown_tx, server_handle) = start_test_http_server(responder).await?;
+
+        let result = verify(VerifyArgs {
+            manifest_url: Some(format!("{base_url}/manifest.json")),
+            manifest_file: None,
+            header: Vec::new(),
+            bucket: None,
+            prefix: None,
+            manifest_key: None,
+            image_id: None,
+            image_version: None,
+            endpoint: None,
+            force_path_style: false,
+            region: "us-east-1".to_string(),
+            // Keep deterministic ordering so only the first chunk triggers the HEAD failure.
+            concurrency: 1,
+            retries: 1,
+            max_chunks: MAX_CHUNKS,
+            chunk_sample: None,
+            chunk_sample_seed: None,
+        })
+        .await;
+
+        let _ = shutdown_tx.send(());
+        let _ = server_handle.await;
+
+        result?;
+        assert_eq!(
+            chunk_head_requests.load(Ordering::SeqCst),
+            1,
+            "expected HEAD optimization to be disabled after the first 501"
         );
         assert_eq!(
             chunk_get_requests.load(Ordering::SeqCst),
