@@ -482,11 +482,13 @@ bring up correctness incrementally:
     - adjacency input primitives (`*_ADJ` topologies / `lineadj`/`triadj`) are initially unsupported
       for real GS bytecode execution; the runtime MUST NOT silently treat them as non-adjacency
       primitives. Until adjacency emulation is implemented, route through scaffolding emulation
-      (if present) or reject with a clear error,
+      (if present) or reject with a clear error.
+      - When adjacency is implemented, the required IA primitive assembly ordering is specified in
+        section 2.1.1b.
     - **primitive restart** for indexed strip topologies is initially unsupported:
       - D3D11 encodes strip restart in the index buffer as `0xFFFF` (u16) / `0xFFFFFFFF` (u32).
       - Until we implement restart-aware strip assembly in compute, the runtime must reject draws
-        that use indexed `LINESTRIP`/`TRIANGLESTRIP` with restart indices.
+        that use indexed `LINESTRIP`/`TRIANGLESTRIP` (and adjacency variants) with restart indices.
     - output strip topologies are expanded into lists (`line_strip` → `line_list`, `triangle_strip` → `triangle_list`),
     - no layered rendering system values (`SV_RenderTargetArrayIndex`, `SV_ViewportArrayIndex`),
     - output ordering:
