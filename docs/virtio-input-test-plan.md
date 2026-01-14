@@ -455,7 +455,7 @@ case the guest may observe multiple injected scroll events; the wheel selftest i
 may be multiples of the injected values.
 
 If the running QEMU build rejects both `hscroll` and the fallback `hwheel` axis name, the harness fails with a clear
-error (upgrade QEMU or omit `-WithInputWheel` / `--with-input-wheel`).
+error (upgrade QEMU or omit `-WithInputWheel` / `--with-input-wheel` (or aliases)).
 
 ### 4.4 Optional: end-to-end tablet (absolute pointer) event delivery (QMP injection + guest HID report read)
 
