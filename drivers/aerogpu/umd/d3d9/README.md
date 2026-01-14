@@ -556,8 +556,8 @@ Current behavior is intentionally bring-up level, with two paths:
   - `D3DFVF_XYZ | D3DFVF_DIFFUSE`
   - `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1`
   - `D3DFVF_XYZ | D3DFVF_TEX1`
-  the UMD reads vertices from **stream 0** and writes **screen-space `XYZRHW`** position into the destination layout
-  described by `hVertexDecl`:
+  the UMD reads vertices from **stream 0** and writes **screen-space `XYZRHW`** position into **stream 0** of the
+  destination layout described by `hVertexDecl` (declaration elements in other streams are ignored):
   - for `D3DFVF_XYZ*` inputs: applies a CPU-side **World/View/Projection + viewport** transform to produce `XYZRHW`, and
   - for `D3DFVF_XYZRHW*` inputs: passes through the source `XYZRHW` position as-is (already `POSITIONT` screen space).
 
@@ -581,7 +581,9 @@ Code anchors (all in `src/aerogpu_d3d9_driver.cpp`):
 Limitations:
 
 - Only buffer resources are supported (source VB and destination must both be `ResourceKind::Buffer`).
-- Stream 0 only: additional vertex streams are ignored (matching the D3D9 `ProcessVertices` contract).
+- Stream 0 only:
+  - source: additional vertex streams are ignored (matching the D3D9 `ProcessVertices` contract),
+  - destination: only stream 0 of the output vertex declaration is written/used for stride inference.
 - No shader execution: neither the fixed-function CPU transform path nor the memcpy fallback executes user vertex shaders
   (or fixed-function lighting/material). When outside the supported fixed-function subset, the implementation is a
   byte-copy, not vertex processing.
