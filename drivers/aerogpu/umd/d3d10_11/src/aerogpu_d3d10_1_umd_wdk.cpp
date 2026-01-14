@@ -5128,11 +5128,21 @@ static HRESULT CreateShaderCommon(D3D10DDI_HDEVICE hDevice,
 
   auto* sh = new (hShader.pDrvPrivate) AeroGpuShader();
   sh->handle = AllocateGlobalHandle(dev->adapter);
+  if (sh->handle == kInvalidHandle) {
+    // Leave the object alive in pDrvPrivate memory. Some runtimes may still call
+    // Destroy* after a failed Create* probe, and double-destruction would be
+    // unsafe.
+    return E_FAIL;
+  }
   sh->stage = stage;
   try {
     sh->dxbc.resize(code_size);
   } catch (...) {
-    sh->~AeroGpuShader();
+    // Avoid leaving a stale non-zero handle in the pDrvPrivate memory. Some
+    // runtimes may call Destroy* after a failed Create* probe. Keep the private
+    // object alive but mark it invalid and release any partially allocated data.
+    sh->handle = kInvalidHandle;
+    std::vector<uint8_t>().swap(sh->dxbc);
     return E_OUTOFMEMORY;
   }
   std::memcpy(sh->dxbc.data(), pCode, code_size);

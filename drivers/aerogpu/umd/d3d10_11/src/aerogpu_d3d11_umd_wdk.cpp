@@ -4725,10 +4725,18 @@ static HRESULT CreateShaderCommon(D3D11DDI_HDEVICE hDevice,
   }
 
   out->handle = AllocateGlobalHandle(dev->adapter);
+  if (!out->handle) {
+    out->~Shader();
+    return E_FAIL;
+  }
   out->stage = stage;
   try {
     out->dxbc.resize(static_cast<size_t>(code_size));
   } catch (...) {
+    // Ensure teardown paths do not emit DESTROY_SHADER for a handle that never
+    // made it into the command stream (some runtimes may probe Destroy after a
+    // failed Create).
+    out->handle = 0;
     out->~Shader();
     return E_OUTOFMEMORY;
   }
@@ -4752,6 +4760,7 @@ static HRESULT CreateShaderCommon(D3D11DDI_HDEVICE hDevice,
   auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_create_shader_dxbc>(
       AEROGPU_CMD_CREATE_SHADER_DXBC, out->dxbc.data(), out->dxbc.size());
   if (!cmd) {
+    out->handle = 0;
     out->~Shader();
     SetError(dev, E_OUTOFMEMORY);
     return E_OUTOFMEMORY;
