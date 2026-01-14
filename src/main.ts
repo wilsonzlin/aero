@@ -2220,6 +2220,7 @@ function renderRemoteDiskPanel(): HTMLElement {
   const urlInput = el('input', { type: 'url', placeholder: 'https://example.com/disk.raw' }) as HTMLInputElement;
   const blockSizeInput = el('input', { type: 'number', value: String(1024), min: '4' }) as HTMLInputElement;
   const cacheLimitInput = el('input', { type: 'number', value: String(512), min: '0' }) as HTMLInputElement;
+  const cacheUnboundedInput = el('input', { type: 'checkbox' }) as HTMLInputElement;
   const prefetchInput = el('input', { type: 'number', value: String(2), min: '0' }) as HTMLInputElement;
   const maxConcurrentFetchesInput = el('input', { type: 'number', value: String(4), min: '1' }) as HTMLInputElement;
   const stats = el('pre', { text: '' });
@@ -2248,6 +2249,7 @@ function renderRemoteDiskPanel(): HTMLElement {
       url: stableUrlForStorage(urlInput.value),
       blockKiB: blockSizeInput.value,
       cacheLimitMiB: cacheLimitInput.value,
+      cacheUnbounded: cacheUnboundedInput.checked,
       prefetch: prefetchInput.value,
       maxConcurrentFetches: maxConcurrentFetchesInput.value,
       cacheImageId: cacheImageIdInput.value,
@@ -2272,6 +2274,18 @@ function renderRemoteDiskPanel(): HTMLElement {
       if (typeof parsed.url === 'string') urlInput.value = parsed.url;
       if (typeof parsed.blockKiB === 'string') blockSizeInput.value = parsed.blockKiB;
       if (typeof parsed.cacheLimitMiB === 'string') cacheLimitInput.value = parsed.cacheLimitMiB;
+      if (typeof parsed.cacheUnbounded === 'boolean') {
+        cacheUnboundedInput.checked = parsed.cacheUnbounded;
+      } else if (typeof parsed.cacheLimitMiB === 'string') {
+        // Backward compatibility: old panel versions treated cacheLimitMiB <= 0 as "unbounded".
+        // Preserve that intent by mapping it onto the explicit unbounded checkbox.
+        const n = Number(parsed.cacheLimitMiB);
+        if (Number.isFinite(n) && n <= 0) {
+          cacheUnboundedInput.checked = true;
+          // Ensure disabling unbounded doesn't silently turn caching off.
+          cacheLimitInput.value = String(512);
+        }
+      }
       if (typeof parsed.prefetch === 'string') prefetchInput.value = parsed.prefetch;
       if (typeof parsed.maxConcurrentFetches === 'string') maxConcurrentFetchesInput.value = parsed.maxConcurrentFetches;
       if (typeof parsed.cacheImageId === 'string') cacheImageIdInput.value = parsed.cacheImageId;
@@ -2305,6 +2319,10 @@ function renderRemoteDiskPanel(): HTMLElement {
     probeButton.textContent = chunked ? 'Fetch manifest' : 'Probe Range support';
   }
 
+  function updateCacheUi(): void {
+    cacheLimitInput.disabled = cacheUnboundedInput.checked;
+  }
+
   enabledInput.addEventListener('change', () => {
     if (!enabledInput.checked) {
       void closeHandle();
@@ -2315,6 +2333,12 @@ function renderRemoteDiskPanel(): HTMLElement {
   modeSelect.addEventListener('change', () => {
     void closeHandle();
     updateModeUi();
+    saveSettings();
+    updateButtons();
+  });
+  cacheUnboundedInput.addEventListener('change', () => {
+    void closeHandle();
+    updateCacheUi();
     saveSettings();
     updateButtons();
   });
@@ -2337,6 +2361,7 @@ function renderRemoteDiskPanel(): HTMLElement {
   }
   restoreSettings();
   updateModeUi();
+  updateCacheUi();
   updateButtons();
 
   async function closeHandle(): Promise<void> {
@@ -2361,8 +2386,25 @@ function renderRemoteDiskPanel(): HTMLElement {
     statsBaseline = null;
     statsBaselineAtMs = null;
 
-    const cacheLimitMiB = Number(cacheLimitInput.value);
-    const cacheLimitBytes = cacheLimitMiB <= 0 ? null : cacheLimitMiB * 1024 * 1024;
+    let cacheLimitBytes: number | null | undefined;
+    if (cacheUnboundedInput.checked) {
+      cacheLimitBytes = null;
+    } else {
+      const rawCacheMiB = cacheLimitInput.value.trim();
+      if (rawCacheMiB) {
+        const cacheLimitMiB = Number(rawCacheMiB);
+        if (!Number.isFinite(cacheLimitMiB) || !Number.isInteger(cacheLimitMiB) || cacheLimitMiB < 0) {
+          throw new Error('Invalid cache size.');
+        }
+        const bytes = cacheLimitMiB * 1024 * 1024;
+        if (!Number.isSafeInteger(bytes) || bytes < 0) {
+          throw new Error('Invalid cache size.');
+        }
+        cacheLimitBytes = bytes;
+      } else {
+        cacheLimitBytes = undefined;
+      }
+    }
 
     const prefetchSequential = Math.max(0, Number(prefetchInput.value) | 0);
     const cacheImageId = cacheImageIdInput.value.trim();
@@ -2595,8 +2637,10 @@ function renderRemoteDiskPanel(): HTMLElement {
       { class: 'row' },
       el('label', { text: 'Block KiB (range):' }),
       blockSizeInput,
-      el('label', { text: 'Cache MiB (0=no eviction):' }),
+      el('label', { text: 'Cache MiB (0=disabled):' }),
       cacheLimitInput,
+      el('label', { text: 'Unbounded:' }),
+      cacheUnboundedInput,
       el('label', { text: 'Prefetch:' }),
       prefetchInput,
       el('label', { text: 'Max inflight (chunked):' }),
