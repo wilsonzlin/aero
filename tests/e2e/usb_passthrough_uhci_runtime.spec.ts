@@ -49,6 +49,7 @@ test("runtime UHCI: WebHID + WebUSB passthrough are guest-visible (NAK while pen
       guestRamMiB: 1,
       vramMiB: 0,
       ioIpcOptions: { includeNet: false, includeHidIn: false },
+      sharedFramebufferLayout: { width: 1, height: 1, tileSize: 0 },
     });
     const views = createSharedMemoryViews(segments);
 

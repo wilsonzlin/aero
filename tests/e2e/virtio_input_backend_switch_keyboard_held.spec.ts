@@ -47,6 +47,7 @@ test("IO worker does not switch keyboard input backend while a key is held (prev
       guestRamMiB: 1,
       vramMiB: 0,
       ioIpcOptions: { includeNet: false, includeHidIn: false },
+      sharedFramebufferLayout: { width: 1, height: 1, tileSize: 0 },
     });
     const views = createSharedMemoryViews(segments);
     const status = views.status;

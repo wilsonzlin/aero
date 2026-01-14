@@ -576,6 +576,21 @@ export function allocateSharedMemorySegments(options?: {
    * Defaults match production (include NET + HID rings).
    */
   ioIpcOptions?: { includeNet?: boolean; includeHidIn?: boolean };
+  /**
+   * Override the legacy/demo shared framebuffer layout.
+   *
+   * This is primarily useful for tests/harnesses that do not need the demo framebuffer but still
+   * need to supply a `sharedFramebuffer` segment to worker init messages.
+   *
+   * Defaults match the canonical CPU worker demo framebuffer.
+   */
+  sharedFramebufferLayout?: {
+    width?: number;
+    height?: number;
+    strideBytes?: number;
+    format?: FramebufferFormat;
+    tileSize?: number;
+  };
 }): SharedMemorySegments {
   const guestRamMiB = options?.guestRamMiB ?? DEFAULT_GUEST_RAM_MIB;
   const vramMiB = options?.vramMiB ?? DEFAULT_VRAM_MIB;
@@ -641,34 +656,34 @@ export function allocateSharedMemorySegments(options?: {
   // CPU worker's WASM code can write/publish frames without JS-side copies. When
   // the configured guest RAM is too small (e.g. unit tests using ~1MiB guest
   // memory), fall back to a standalone SharedArrayBuffer.
-  const sharedFramebufferLayout = computeSharedFramebufferLayout(
-    CPU_WORKER_DEMO_FRAMEBUFFER_WIDTH,
-    CPU_WORKER_DEMO_FRAMEBUFFER_HEIGHT,
-    CPU_WORKER_DEMO_FRAMEBUFFER_WIDTH * 4,
-    FramebufferFormat.RGBA8,
-    CPU_WORKER_DEMO_FRAMEBUFFER_TILE_SIZE,
-  );
+  const fbLayoutOpts = options?.sharedFramebufferLayout;
+  const fbWidth = fbLayoutOpts?.width ?? CPU_WORKER_DEMO_FRAMEBUFFER_WIDTH;
+  const fbHeight = fbLayoutOpts?.height ?? CPU_WORKER_DEMO_FRAMEBUFFER_HEIGHT;
+  const fbStrideBytes = fbLayoutOpts?.strideBytes ?? fbWidth * 4;
+  const fbFormat = fbLayoutOpts?.format ?? FramebufferFormat.RGBA8;
+  const fbTileSize = fbLayoutOpts?.tileSize ?? CPU_WORKER_DEMO_FRAMEBUFFER_TILE_SIZE;
+  const fbLayout = computeSharedFramebufferLayout(fbWidth, fbHeight, fbStrideBytes, fbFormat, fbTileSize);
   const embeddedOffsetBytes = layout.guest_base + CPU_WORKER_DEMO_FRAMEBUFFER_OFFSET_BYTES;
-  const embeddedRequiredBytes = embeddedOffsetBytes + sharedFramebufferLayout.totalBytes;
+  const embeddedRequiredBytes = embeddedOffsetBytes + fbLayout.totalBytes;
 
   const sharedFramebufferEmbedded = embeddedRequiredBytes <= guestSab.byteLength;
 
-  const sharedFramebuffer = sharedFramebufferEmbedded ? guestSab : new SharedArrayBuffer(sharedFramebufferLayout.totalBytes);
+  const sharedFramebuffer = sharedFramebufferEmbedded ? guestSab : new SharedArrayBuffer(fbLayout.totalBytes);
   const sharedFramebufferOffsetBytes = sharedFramebufferEmbedded ? embeddedOffsetBytes : 0;
   const sharedHeader = new Int32Array(sharedFramebuffer, sharedFramebufferOffsetBytes, SHARED_FRAMEBUFFER_HEADER_U32_LEN);
   Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.MAGIC, SHARED_FRAMEBUFFER_MAGIC);
   Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.VERSION, SHARED_FRAMEBUFFER_VERSION);
-  Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.WIDTH, sharedFramebufferLayout.width);
-  Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.HEIGHT, sharedFramebufferLayout.height);
-  Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.STRIDE_BYTES, sharedFramebufferLayout.strideBytes);
-  Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.FORMAT, sharedFramebufferLayout.format);
+  Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.WIDTH, fbLayout.width);
+  Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.HEIGHT, fbLayout.height);
+  Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.STRIDE_BYTES, fbLayout.strideBytes);
+  Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.FORMAT, fbLayout.format);
   Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.ACTIVE_INDEX, 0);
   Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.FRAME_SEQ, 0);
   Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.FRAME_DIRTY, 0);
-  Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.TILE_SIZE, sharedFramebufferLayout.tileSize);
-  Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.TILES_X, sharedFramebufferLayout.tilesX);
-  Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.TILES_Y, sharedFramebufferLayout.tilesY);
-  Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.DIRTY_WORDS_PER_BUFFER, sharedFramebufferLayout.dirtyWordsPerBuffer);
+  Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.TILE_SIZE, fbLayout.tileSize);
+  Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.TILES_X, fbLayout.tilesX);
+  Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.TILES_Y, fbLayout.tilesY);
+  Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.DIRTY_WORDS_PER_BUFFER, fbLayout.dirtyWordsPerBuffer);
   Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.BUF0_FRAME_SEQ, 0);
   Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.BUF1_FRAME_SEQ, 0);
   Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.FLAGS, 0);

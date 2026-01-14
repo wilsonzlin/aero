@@ -73,6 +73,7 @@ describe("runtime/shared_layout", () => {
         guestRamMiB: TEST_GUEST_RAM_MIB,
         vramMiB: TEST_VRAM_MIB,
         ioIpcOptions: { includeNet: false, includeHidIn: false },
+        sharedFramebufferLayout: { width: 1, height: 1, tileSize: 0 },
       });
     }
     return baseSegments;
@@ -228,7 +229,7 @@ describe("runtime/shared_layout", () => {
   });
 
   it("allocates and initializes cursorState", () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: TEST_GUEST_RAM_MIB, vramMiB: TEST_VRAM_MIB });
+    const segments = getBaseSegments();
     expect(segments.cursorState).toBeInstanceOf(SharedArrayBuffer);
 
     // CursorState is embedded in the same wasm linear memory tail region as ScanoutState.
@@ -278,7 +279,11 @@ describe("runtime/shared_layout", () => {
     );
     const requiredGuestBytes = CPU_WORKER_DEMO_FRAMEBUFFER_OFFSET_BYTES + demoLayout.totalBytes;
     const guestRamMiB = Math.ceil(requiredGuestBytes / (1024 * 1024));
-    const segments = allocateSharedMemorySegments({ guestRamMiB, vramMiB: 0 });
+    const segments = allocateSharedMemorySegments({
+      guestRamMiB,
+      vramMiB: 0,
+      ioIpcOptions: { includeNet: false, includeHidIn: false },
+    });
     expect(segments.sharedFramebuffer).toBe(segments.guestMemory.buffer);
     expect(segments.sharedFramebufferOffsetBytes).toBe(RUNTIME_RESERVED_BYTES + CPU_WORKER_DEMO_FRAMEBUFFER_OFFSET_BYTES);
   });

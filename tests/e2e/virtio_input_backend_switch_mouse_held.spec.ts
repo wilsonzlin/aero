@@ -43,6 +43,7 @@ test("IO worker does not switch mouse backend while a button is held (prevents s
       guestRamMiB: 1,
       vramMiB: 0,
       ioIpcOptions: { includeNet: false, includeHidIn: false },
+      sharedFramebufferLayout: { width: 1, height: 1, tileSize: 0 },
     });
     const views = createSharedMemoryViews(segments);
 
