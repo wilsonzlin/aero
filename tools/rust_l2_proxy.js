@@ -11,7 +11,7 @@ const COMMAND_OUTPUT_LIMIT = 200_000;
 // Keep the spawned `cargo build` timeout below the Node test timeouts so we fail with an
 // actionable error (and kill the build process) instead of letting the Node test runner time out
 // while Cargo is still running.
-const BUILD_TIMEOUT_MS = 10 * 60_000;
+const BUILD_TIMEOUT_MS = 12 * 60_000;
 const BUILD_LOCK_TIMEOUT_MS = BUILD_TIMEOUT_MS + 2 * 60_000;
 const BUILD_LOCK_RETRY_MS = 200;
 const BUILD_STAMP_TIMEOUT_MS = 5_000;
