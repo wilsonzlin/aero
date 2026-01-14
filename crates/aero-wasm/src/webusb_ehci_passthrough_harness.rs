@@ -297,7 +297,13 @@ impl WebUsbEhciPassthroughHarness {
     pub fn attach_controller(&mut self) {
         self.controller_attached = true;
         self.device = None;
-        self.webusb = None;
+        // Preserve the WebUSB passthrough handle across controller (re)attach so host-action IDs
+        // remain monotonic. This prevents late completions from a previous attachment from
+        // colliding with newly queued actions (the TypeScript harness runtime may cancel pending
+        // actions by pushing error completions after a detach).
+        if let Some(dev) = self.webusb.as_ref() {
+            dev.reset();
+        }
         self.pending = None;
         self.last_error = None;
         self.clear_results();
@@ -310,8 +316,10 @@ impl WebUsbEhciPassthroughHarness {
     pub fn detach_controller(&mut self) {
         self.controller_attached = false;
         self.device = None;
-        self.webusb = None;
         self.pending = None;
+        if let Some(dev) = self.webusb.as_ref() {
+            dev.reset();
+        }
         self.update_irq();
     }
 
@@ -325,10 +333,11 @@ impl WebUsbEhciPassthroughHarness {
         }
         // EHCI presents attached devices as high-speed. Ensure the passthrough device model
         // advertises a high-speed view so the guest sees unmodified high-speed descriptors.
-        let webusb = UsbWebUsbPassthroughDevice::new_with_speed(UsbSpeed::High);
-        let attached = AttachedUsbDevice::new(Box::new(webusb.clone()));
-        self.webusb = Some(webusb);
-        self.device = Some(attached);
+        let webusb = self
+            .webusb
+            .get_or_insert_with(|| UsbWebUsbPassthroughDevice::new_with_speed(UsbSpeed::High));
+        webusb.set_speed(UsbSpeed::High);
+        self.device = Some(AttachedUsbDevice::new(Box::new(webusb.clone())));
         self.usbsts |= USBSTS_PCD;
         self.clear_results();
         self.pending = None;
@@ -341,9 +350,15 @@ impl WebUsbEhciPassthroughHarness {
     pub fn detach_device(&mut self) {
         if self.device.is_some() {
             self.device = None;
-            self.webusb = None;
             self.pending = None;
+            self.last_error = None;
+            self.clear_results();
             self.usbsts |= USBSTS_PCD;
+            if let Some(dev) = self.webusb.as_ref() {
+                // Match controller bridge semantics: drop queued/in-flight host state on detach,
+                // but keep the handle alive so action IDs remain monotonic across reattach.
+                dev.reset();
+            }
             self.update_irq();
         }
     }
@@ -433,6 +448,9 @@ impl WebUsbEhciPassthroughHarness {
 
     /// Drain queued `UsbHostAction` objects from the attached WebUSB passthrough device.
     pub fn drain_actions(&mut self) -> Result<JsValue, JsValue> {
+        if !self.controller_attached || self.device.is_none() {
+            return Ok(JsValue::NULL);
+        }
         let Some(dev) = self.webusb.as_ref() else {
             return Ok(JsValue::NULL);
         };
@@ -445,6 +463,11 @@ impl WebUsbEhciPassthroughHarness {
 
     /// Push a single host completion into the harness.
     pub fn push_completion(&mut self, completion: JsValue) -> Result<(), JsValue> {
+        // Ignore completions when the device is detached; they may be stale completions from an
+        // earlier attachment racing async host work.
+        if !self.controller_attached || self.device.is_none() {
+            return Ok(());
+        }
         let completion: UsbHostCompletion = serde_wasm_bindgen::from_value(completion)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
         // Surface a minimal EHCI-like interrupt/status behavior:
