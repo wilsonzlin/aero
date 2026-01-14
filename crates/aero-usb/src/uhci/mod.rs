@@ -270,14 +270,44 @@ impl UhciController {
     }
 
     pub fn io_read(&self, offset: u16, size: usize) -> u32 {
-        let mut out = 0u32;
-        for i in 0..size.min(4) {
-            out |= (self.io_read_u8(offset.wrapping_add(i as u16)) as u32) << (i * 8);
+        let size = size.min(4);
+        if size == 0 {
+            return 0;
         }
-        out
+
+        // Treat invalid/out-of-range reads as open bus. Do not allow `offset + i` to wrap around
+        // (e.g. `0xffff + 1 == 0`) and alias valid registers.
+        let open_bus = if size >= 4 {
+            u32::MAX
+        } else {
+            (1u32 << (size * 8)) - 1
+        };
+        let last = (size - 1) as u16;
+        if offset.checked_add(last).is_none() {
+            return open_bus;
+        }
+
+        let mut out = 0u32;
+        for i in 0..size {
+            let Some(off) = offset.checked_add(i as u16) else {
+                return open_bus;
+            };
+            out |= (self.io_read_u8(off) as u32) << (i * 8);
+        }
+        out & open_bus
     }
 
     pub fn io_write(&mut self, offset: u16, size: usize, value: u32) {
+        let size_bytes = size.min(4);
+        if size_bytes == 0 {
+            return;
+        }
+        let last = (size_bytes - 1) as u16;
+        if offset.checked_add(last).is_none() {
+            // Overflowing offsets are treated as out-of-range.
+            return;
+        }
+
         match (offset, size) {
             (REG_USBCMD, 2) => self.write_usbcmd(value as u16),
             (REG_USBSTS, 2) => self.write_usbsts(value as u16),
@@ -288,9 +318,12 @@ impl UhciController {
             (REG_PORTSC1, 2) => self.hub.write_portsc(0, value as u16),
             (REG_PORTSC2, 2) => self.hub.write_portsc(1, value as u16),
             _ => {
-                for i in 0..size.min(4) {
+                for i in 0..size_bytes {
                     let byte = ((value >> (i * 8)) & 0xff) as u8;
-                    self.io_write_u8(offset.wrapping_add(i as u16), byte);
+                    let Some(off) = offset.checked_add(i as u16) else {
+                        break;
+                    };
+                    self.io_write_u8(off, byte);
                 }
             }
         }
