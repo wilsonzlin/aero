@@ -151,7 +151,10 @@ describe("workers/gpu-worker WDDM scanout screenshot refresh", () => {
       writer.uploadResource(texHandle, 0n, new Uint8Array([0xaa, 0xbb, 0xcc, 0xdd]));
       writer.setRenderTargets([texHandle], 0);
       writer.present(0, 0);
-      const cmdStream = writer.finish().buffer;
+      // `postMessage` transfer lists only accept transferable buffers (`ArrayBuffer`, not
+      // `ArrayBufferLike`). Force an `ArrayBuffer`-backed copy so TS 5.9+ doesn't treat this as a
+      // potential `SharedArrayBuffer`.
+      const cmdStream = writer.finish().slice().buffer;
 
       const aerogpuRequestId = 100;
       const submitCompletePromise = waitForWorkerMessage(
