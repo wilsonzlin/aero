@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import { Worker, type WorkerOptions } from "node:worker_threads";
 
 import type { AeroConfig } from "../config/aero_config";
-import { allocateSharedMemorySegments, createSharedMemoryViews, StatusIndex } from "../runtime/shared_layout";
+import { openRingByKind } from "../ipc/ipc";
+import { encodeCommand } from "../ipc/protocol";
+import { IO_IPC_CMD_QUEUE_KIND, IO_IPC_EVT_QUEUE_KIND, allocateSharedMemorySegments, createSharedMemoryViews, StatusIndex } from "../runtime/shared_layout";
 import { MessageType, type ProtocolMessage, type WorkerInitMessage } from "../runtime/protocol";
 
 function arraysEqual(a: Uint8Array, b: Uint8Array): boolean {
@@ -126,6 +128,26 @@ describe("workers/io.worker (machine runtime host-only mode)", () => {
 
       // Ensure the status flag was set (READY + shared status should be consistent).
       expect(Atomics.load(views.status, StatusIndex.IoReady)).toBe(1);
+
+      // Ensure we did not start the IO IPC server: an AIPC command should not be serviced.
+      const cmdRing = openRingByKind(segments.ioIpc, IO_IPC_CMD_QUEUE_KIND);
+      const evtRing = openRingByKind(segments.ioIpc, IO_IPC_EVT_QUEUE_KIND);
+      // Defensive: drain any junk.
+      while (evtRing.tryPop()) {
+        // ignore
+      }
+      expect(
+        cmdRing.tryPush(
+          encodeCommand({
+            kind: "portRead",
+            id: 1,
+            port: 0x0060, // i8042 data port in legacy mode
+            size: 1,
+          }),
+        ),
+      ).toBe(true);
+      await new Promise<void>((resolve) => setTimeout(resolve, 20));
+      expect(evtRing.tryPop()).toBe(null);
 
       // Wait a beat to catch any accidental background/tick writes.
       await new Promise<void>((resolve) => setTimeout(resolve, 50));
