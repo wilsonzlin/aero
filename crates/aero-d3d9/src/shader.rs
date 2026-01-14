@@ -1534,8 +1534,7 @@ pub fn generate_wgsl_with_options(
                     && matches!(ir.ops[i].op, Op::If | Op::Ifc)
                     && matches!(ir.ops[i + 2].op, Op::EndIf)
                     && matches!(ir.ops[i + 1].op, Op::Texld | Op::Dsx | Op::Dsy)
-                {
-                    if try_emit_uniform_control_flow_if_single_op(
+                    && try_emit_uniform_control_flow_if_single_op(
                         &mut wgsl,
                         indent,
                         &ir.ops[i],
@@ -1545,10 +1544,10 @@ pub fn generate_wgsl_with_options(
                         const_base,
                         ir.version.stage,
                         &ir.sampler_texture_types,
-                    ) {
-                        i += 3;
-                        continue;
-                    }
+                    )
+                {
+                    i += 3;
+                    continue;
                 }
                 emit_inst(
                     &mut wgsl,
@@ -1726,6 +1725,7 @@ fn if_condition_expr(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn try_emit_uniform_control_flow_if_single_op(
     wgsl: &mut String,
     indent: usize,
