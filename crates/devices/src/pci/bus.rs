@@ -194,7 +194,7 @@ impl PciBus {
         let offset_usize = usize::from(offset);
         if offset_usize
             .checked_add(size_usize)
-            .map_or(true, |end| end > PCI_CONFIG_SPACE_SIZE)
+            .is_none_or(|end| end > PCI_CONFIG_SPACE_SIZE)
         {
             return 0;
         }
@@ -211,7 +211,7 @@ impl PciBus {
         let offset_usize = usize::from(offset);
         if offset_usize
             .checked_add(usize::from(size))
-            .map_or(true, |end| end > PCI_CONFIG_SPACE_SIZE)
+            .is_none_or(|end| end > PCI_CONFIG_SPACE_SIZE)
         {
             return;
         }
