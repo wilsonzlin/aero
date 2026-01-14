@@ -30,9 +30,6 @@
 namespace aerogpu::d3d10_11 {
 namespace {
 
-constexpr NTSTATUS kStatusTimeout = static_cast<NTSTATUS>(0x00000102L); // STATUS_TIMEOUT
-constexpr NTSTATUS kStatusInvalidParameter = static_cast<NTSTATUS>(0xC000000DL); // STATUS_INVALID_PARAMETER
-
 uint64_t ReadMonitoredFenceValue(volatile uint64_t* ptr) {
   if (!ptr) {
     return 0;
@@ -1761,7 +1758,7 @@ HRESULT WddmSubmit::SubmitAeroCmdStream(const uint8_t* stream_bytes,
 HRESULT WddmSubmit::WaitForFence(uint64_t fence) {
   // Use the kernel thunk's "infinite" convention (~0ull) rather than treating 0
   // as infinite (0 is used for polling in this module).
-  return WaitForFenceWithTimeout(fence, /*timeout_ms=*/~0u);
+  return WaitForFenceWithTimeout(fence, /*timeout_ms=*/kAeroGpuTimeoutMsInfinite);
 }
 
 HRESULT WddmSubmit::WaitForFenceWithTimeout(uint64_t fence, uint32_t timeout_ms) {
@@ -1783,7 +1780,8 @@ HRESULT WddmSubmit::WaitForFenceWithTimeout(uint64_t fence, uint32_t timeout_ms)
   UINT64 fence_values[1] = {fence};
 
   const UINT64 timeout =
-      (timeout_ms == 0) ? 0ull : (timeout_ms == ~0u ? ~0ull : static_cast<UINT64>(timeout_ms));
+      (timeout_ms == 0) ? 0ull
+                        : (timeout_ms == kAeroGpuTimeoutMsInfinite ? ~0ull : static_cast<UINT64>(timeout_ms));
 
   // Prefer the runtime callback (it handles WOW64 thunking correctly).
   if constexpr (has_pfnWaitForSynchronizationObjectCb<D3DDDI_DEVICECALLBACKS>::value) {

@@ -56,28 +56,6 @@
 
 namespace {
 
-#if defined(_WIN32)
-// Emit the exact DLL path once so bring-up on Win7 x64 can quickly confirm the
-// correct UMD bitness was loaded (System32 vs SysWOW64).
-void LogModulePathOnce() {
-  static std::once_flag once;
-  std::call_once(once, [] {
-    HMODULE module = NULL;
-    if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
-                               GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                           reinterpret_cast<LPCSTR>(&LogModulePathOnce),
-                           &module)) {
-      char path[MAX_PATH] = {};
-      if (GetModuleFileNameA(module, path, static_cast<DWORD>(sizeof(path))) != 0) {
-        char buf[MAX_PATH + 64] = {};
-        snprintf(buf, sizeof(buf), "aerogpu-d3d10_11: module_path=%s\n", path);
-        OutputDebugStringA(buf);
-      }
-    }
-  });
-}
-#endif
-
 #if defined(AEROGPU_UMD_TRACE_RESOURCES)
 const char* resource_dimension_name(AEROGPU_DDI_RESOURCE_DIMENSION dim) {
   switch (dim) {
@@ -6576,7 +6554,7 @@ HRESULT OpenAdapterCommon(D3D10DDIARG_OPENADAPTER* pOpenData) {
 #if defined(_WIN32)
   // Always emit the module path once. This is the quickest way to confirm the
   // correct UMD bitness was loaded on Win7 x64 (System32 vs SysWOW64).
-  LogModulePathOnce();
+  aerogpu::d3d10_11::LogModulePathOnce();
 #endif
 
   AEROGPU_D3D10_11_LOG_CALL();

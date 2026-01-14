@@ -45,7 +45,45 @@ namespace aerogpu::d3d10_11 {
 constexpr bool NtSuccess(NTSTATUS st) {
   return st >= 0;
 }
+
+// NTSTATUS constants commonly used by WDDM callbacks/thunks. Keep these numeric
+// values centralized so WDK and portable Win32 builds remain consistent even
+// when a given SDK/WDK revision doesn't expose a particular status macro in
+// user-mode header configurations.
+constexpr NTSTATUS kStatusTimeout = static_cast<NTSTATUS>(0x00000102L); // STATUS_TIMEOUT
+constexpr NTSTATUS kStatusInvalidParameter = static_cast<NTSTATUS>(0xC000000DL); // STATUS_INVALID_PARAMETER
 #endif
+
+template <typename T>
+inline void ResetObject(T* obj) {
+  if (!obj) {
+    return;
+  }
+  obj->~T();
+  new (obj) T();
+}
+
+inline void LogModulePathOnce() {
+#if defined(_WIN32)
+  // Emit the exact DLL path once so bring-up on Win7 x64 can quickly confirm the
+  // correct UMD bitness was loaded (System32 vs SysWOW64).
+  static std::once_flag once;
+  std::call_once(once, [] {
+    HMODULE module = NULL;
+    if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                               GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           reinterpret_cast<LPCSTR>(&LogModulePathOnce),
+                           &module)) {
+      char path[MAX_PATH] = {};
+      if (GetModuleFileNameA(module, path, static_cast<DWORD>(sizeof(path))) != 0) {
+        OutputDebugStringA("aerogpu-d3d10_11: module_path=");
+        OutputDebugStringA(path);
+        OutputDebugStringA("\n");
+      }
+    }
+  });
+#endif
+}
 
 constexpr aerogpu_handle_t kInvalidHandle = 0;
 constexpr uint32_t kDeviceDestroyLiveCookie = 0xA3E0D311u;

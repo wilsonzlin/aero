@@ -53,7 +53,7 @@
 
 namespace {
 
-constexpr NTSTATUS kStatusTimeout = static_cast<NTSTATUS>(0x00000102L); // STATUS_TIMEOUT
+using aerogpu::d3d10_11::kStatusTimeout;
 using aerogpu::d3d10_11::NtSuccess;
 using aerogpu::d3d10_11::kDxgiErrorWasStillDrawing;
 using aerogpu::d3d10_11::kHrPending;
@@ -68,16 +68,8 @@ using aerogpu::d3d10_11::kD3D10UsageStaging;
 using aerogpu::d3d10_11::kD3D10CpuAccessRead;
 using aerogpu::d3d10_11::kD3D10CpuAccessWrite;
 using aerogpu::d3d10_11::kD3D10ResourceMiscShared;
+using aerogpu::d3d10_11::ResetObject;
 constexpr uint32_t kAeroGpuDeviceLiveCookie = 0xA3E0D310u;
-
-template <typename T>
-static void ResetObject(T* obj) {
-  if (!obj) {
-    return;
-  }
-  obj->~T();
-  new (obj) T();
-}
 
 static bool IsDeviceLive(D3D10DDI_HDEVICE hDevice) {
   void* device_mem = hDevice.pDrvPrivate;

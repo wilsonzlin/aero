@@ -42,15 +42,6 @@ namespace {
 
 using namespace aerogpu::d3d10_11;
 
-template <typename T>
-static void ResetObject(T* obj) {
-  if (!obj) {
-    return;
-  }
-  obj->~T();
-  new (obj) T();
-}
-
 static void LogTexture2DPitchMismatchRateLimited(const char* label,
                                                  const Resource* res,
                                                  uint32_t subresource,
@@ -238,26 +229,6 @@ static void InitUmdPrivate(Adapter* adapter) {
 
   adapter->umd_private = blob;
   adapter->umd_private_valid = true;
-}
-
-// Emit the exact DLL path once so bring-up on Win7 x64 can quickly confirm the
-// correct UMD bitness was loaded (System32 vs SysWOW64).
-static void LogModulePathOnce() {
-  static std::once_flag once;
-  std::call_once(once, [] {
-    HMODULE module = NULL;
-    if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
-                               GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                           reinterpret_cast<LPCSTR>(&LogModulePathOnce),
-                           &module)) {
-      char path[MAX_PATH] = {};
-      if (GetModuleFileNameA(module, path, static_cast<DWORD>(sizeof(path))) != 0) {
-        char buf[MAX_PATH + 64] = {};
-        snprintf(buf, sizeof(buf), "aerogpu-d3d10_11: module_path=%s\n", path);
-        OutputDebugStringA(buf);
-      }
-    }
-  });
 }
 
 struct AeroGpuDeviceContext {
@@ -650,9 +621,9 @@ static HRESULT WaitForFence(Device* dev, uint64_t fence_value, UINT64 timeout) {
   if (timeout == 0ull) {
     timeout_ms = 0u;
   } else if (timeout == ~0ull) {
-    timeout_ms = ~0u;
-  } else if (timeout >= static_cast<UINT64>(~0u)) {
-    timeout_ms = ~0u;
+    timeout_ms = kAeroGpuTimeoutMsInfinite;
+  } else if (timeout >= static_cast<UINT64>(kAeroGpuTimeoutMsInfinite)) {
+    timeout_ms = kAeroGpuTimeoutMsInfinite;
   } else {
     timeout_ms = static_cast<uint32_t>(timeout);
   }
