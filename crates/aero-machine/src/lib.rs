@@ -6348,11 +6348,8 @@ impl Machine {
                         let src_row_off = vram_off.saturating_add(y.saturating_mul(*pitch_bytes));
                         let src_row = &vram[src_row_off..src_row_off.saturating_add(row_bytes)];
                         let dst_row = &mut self.display_fb[y * width_usize..(y + 1) * width_usize];
-                        for (x, dst) in dst_row.iter_mut().enumerate() {
-                            let i = x * 2;
-                            let lo = src_row.get(i).copied().unwrap_or(0) as u16;
-                            let hi = src_row.get(i + 1).copied().unwrap_or(0) as u16;
-                            let pix = lo | (hi << 8);
+                        for (src_px, dst) in src_row.chunks_exact(2).zip(dst_row.iter_mut()) {
+                            let pix = u16::from_le_bytes([src_px[0], src_px[1]]);
                             let b5 = pix & 0x1F;
                             let g6 = (pix >> 5) & 0x3F;
                             let r5 = (pix >> 11) & 0x1F;
@@ -6374,11 +6371,8 @@ impl Machine {
                         let row_addr = base.saturating_add((y as u64).saturating_mul(pitch));
                         self.mem.read_physical(row_addr, &mut row);
                         let dst_row = &mut self.display_fb[y * width_usize..(y + 1) * width_usize];
-                        for (x, dst) in dst_row.iter_mut().enumerate() {
-                            let i = x * 2;
-                            let lo = row.get(i).copied().unwrap_or(0) as u16;
-                            let hi = row.get(i + 1).copied().unwrap_or(0) as u16;
-                            let pix = lo | (hi << 8);
+                        for (src_px, dst) in row.chunks_exact(2).zip(dst_row.iter_mut()) {
+                            let pix = u16::from_le_bytes([src_px[0], src_px[1]]);
                             let b5 = pix & 0x1F;
                             let g6 = (pix >> 5) & 0x3F;
                             let r5 = (pix >> 11) & 0x1F;
