@@ -4,6 +4,7 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
 };
 use aero_protocol::aerogpu::aerogpu_pci::{AerogpuFormat, AEROGPU_ABI_VERSION_U32};
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
+use aero_dxbc::test_utils as dxbc_test_utils;
 
 fn push_u32_le(out: &mut Vec<u8>, v: u32) {
     out.extend_from_slice(&v.to_le_bytes());
@@ -709,13 +710,14 @@ fn stage_ex_vertex_program_type_is_reported_as_invalid() {
     push_u32_le(&mut bytes, 0); // reserved1
     assert_eq!(bytes.len(), 24);
 
-    // CREATE_SHADER_DXBC(shader_handle=1, stage=Compute, dxbc_size=4, stage_ex=1, dxbc="DXBC").
+    // CREATE_SHADER_DXBC(shader_handle=1, stage=Compute, stage_ex=1, dxbc=<empty DXBC container>).
+    let dxbc = dxbc_test_utils::build_container(&[]);
     let mut payload = Vec::new();
     push_u32_le(&mut payload, 1); // shader_handle
     push_u32_le(&mut payload, 2); // stage=Compute
-    push_u32_le(&mut payload, 4); // dxbc_size_bytes
+    push_u32_le(&mut payload, dxbc.len() as u32); // dxbc_size_bytes
     push_u32_le(&mut payload, 1); // reserved0 / stage_ex = 1 (invalid Vertex program type)
-    payload.extend_from_slice(b"DXBC");
+    payload.extend_from_slice(&dxbc);
     while payload.len() % 4 != 0 {
         payload.push(0);
     }
