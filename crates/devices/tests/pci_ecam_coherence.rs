@@ -59,6 +59,9 @@ fn pci_config_space_is_coherent_between_mech1_ports_and_ecam_mmio() {
                     },
                 );
                 cfg.set_bar_definition(1, PciBarDefinition::Io { size: 0x20 });
+                // Interrupt Pin (0x3D) is read-only from the guest's perspective. Set it via the
+                // device-facing API so we can assert that 32-bit writes to 0x3C do not clobber it.
+                cfg.set_interrupt_pin(0x01);
                 cfg
             },
         }),
@@ -111,7 +114,12 @@ fn pci_config_space_is_coherent_between_mech1_ports_and_ecam_mmio() {
         .borrow_mut()
         .io_write(PCI_CFG_ADDR_PORT, 4, cfg_addr(0, 2, 0, 0x3C));
     let reg_ports = cfg_ports.borrow_mut().io_read(PCI_CFG_DATA_PORT, 4);
-    assert_eq!(reg_ports, 0x1122_3344);
+    // The Interrupt Pin byte is read-only (and should not be clobbered by dword writes that
+    // overlap Interrupt Line), so the second byte should remain at the device-programmed value.
+    let expected = (0x1122_3344 & !0x0000_ff00) | (0x01u32 << 8);
+    assert_eq!(reg_ports, expected);
+    let reg_ecam = mem.read(ecam_addr(ecam_base, 0, 2, 0, 0x3C), 4) as u32;
+    assert_eq!(reg_ecam, expected);
 
     // BAR0 probe/program should also be coherent between the two config mechanisms.
     cfg_ports
