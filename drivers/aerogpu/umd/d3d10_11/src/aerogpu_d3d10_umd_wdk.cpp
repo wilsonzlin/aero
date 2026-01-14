@@ -6218,6 +6218,14 @@ HRESULT CreateShaderCommon(D3D10DDI_HDEVICE hDevice,
 
   auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_create_shader_dxbc>(
       AEROGPU_CMD_CREATE_SHADER_DXBC, sh->dxbc.data(), sh->dxbc.size());
+  if (!cmd) {
+    // Avoid leaving a partially-created shader. Some runtimes may still call
+    // Destroy* on failure; keep the private object alive but mark it invalid and
+    // release the DXBC blob to avoid leaking memory.
+    sh->handle = kInvalidHandle;
+    std::vector<uint8_t>().swap(sh->dxbc);
+    return E_OUTOFMEMORY;
+  }
   cmd->shader_handle = sh->handle;
   cmd->stage = stage;
   cmd->dxbc_size_bytes = static_cast<uint32_t>(sh->dxbc.size());
@@ -6342,8 +6350,12 @@ void DestroyShaderCommon(D3D10DDI_HDEVICE hDevice, D3D10DDI_HSHADER hShader) {
 
   if (sh->handle != kInvalidHandle) {
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_destroy_shader>(AEROGPU_CMD_DESTROY_SHADER);
-    cmd->shader_handle = sh->handle;
-    cmd->reserved0 = 0;
+    if (cmd) {
+      cmd->shader_handle = sh->handle;
+      cmd->reserved0 = 0;
+    } else {
+      SetError(hDevice, E_OUTOFMEMORY);
+    }
   }
   sh->~AeroGpuShader();
 }
