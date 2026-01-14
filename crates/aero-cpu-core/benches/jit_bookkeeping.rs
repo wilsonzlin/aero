@@ -142,6 +142,34 @@ fn bench_code_cache(c: &mut Criterion) {
             });
         });
 
+        // Hot-hot cache hit: repeatedly hit the current LRU head so `touch_idx` early-exits without
+        // relinking. This isolates the raw map lookup + handle clone overhead.
+        group.throughput(Throughput::Elements(OPS_PER_ITER as u64));
+        group.bench_with_input(
+            BenchmarkId::new("get_cloned_hit_head", size),
+            &size,
+            |b, &size| {
+                let mut cache = CodeCache::new(size, 0);
+                for i in 0..size {
+                    cache.insert(dummy_handle(i as u64, i as u32, 16));
+                }
+
+                let rip = (size as u64).saturating_sub(1);
+
+                b.iter(|| {
+                    let mut checksum = 0u64;
+                    for _ in 0..OPS_PER_ITER {
+                        let handle = cache.get_cloned(black_box(rip));
+                        checksum ^= handle
+                            .as_ref()
+                            .map(|h| u64::from(h.table_index))
+                            .unwrap_or(0);
+                    }
+                    black_box(checksum);
+                });
+            },
+        );
+
         // Cache miss case: same lookup but for a key that will never be present.
         group.throughput(Throughput::Elements(OPS_PER_ITER as u64));
         group.bench_with_input(BenchmarkId::new("get_cloned_miss", size), &size, |b, &size| {
@@ -325,6 +353,25 @@ fn bench_hotness_profile(c: &mut Criterion) {
         });
     });
 
+    // After a block crosses the threshold once, its RIP stays in the `requested` set until the
+    // embedder installs the compiled block (or the entry is evicted). This is the steady-state cost
+    // while compilation is in-flight.
+    group.bench_function("record_hit_already_requested", |b| {
+        let mut profile = HotnessProfile::new(1);
+        let rip = 0x4000u64;
+        assert!(
+            profile.record_hit(rip, false),
+            "first hit should trigger request"
+        );
+
+        b.iter(|| {
+            for _ in 0..OPS_PER_ITER {
+                black_box(profile.record_hit(black_box(rip), false));
+            }
+            black_box(profile.counter(rip));
+        });
+    });
+
     // Capacity pressure path: insert new RIPs once the internal counter table is full.
     //
     // This exercises the profile's eviction logic (victim selection + HashMap/HashSet removal) and
@@ -421,6 +468,31 @@ fn bench_jit_runtime_prepare_block(c: &mut Criterion) {
         let mut jit = JitRuntime::new(config, NullBackend, NullCompileSink);
         let rip = 0x5000u64;
         // Pre-seed the hotness table entry so we don't benchmark first-hit HashMap allocation.
+        black_box(jit.prepare_block(rip));
+
+        b.iter(|| {
+            for _ in 0..OPS_PER_ITER {
+                black_box(jit.prepare_block(black_box(rip)));
+            }
+            black_box(jit.hotness(rip));
+        });
+    });
+
+    group.bench_function("prepare_block_miss_already_requested", |b| {
+        let config = JitConfig {
+            enabled: true,
+            // Trigger hotness on the first call, but keep it from retriggering while requested.
+            hot_threshold: 1,
+            cache_max_blocks: 1024,
+            cache_max_bytes: 0,
+            // Keep bench setup lightweight; page-version tracking isn't exercised here.
+            code_version_max_pages: 0,
+            ..JitConfig::default()
+        };
+        let mut jit = JitRuntime::new(config, NullBackend, NullCompileSink);
+        let rip = 0x5A00u64;
+
+        // First call triggers the request and populates the requested set.
         black_box(jit.prepare_block(rip));
 
         b.iter(|| {
