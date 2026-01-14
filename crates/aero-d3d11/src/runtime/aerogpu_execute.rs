@@ -33,6 +33,12 @@ use super::reflection_bindings;
 
 #[derive(Debug)]
 pub struct BufferResource {
+    /// Unique bind-group cache ID for this buffer allocation.
+    ///
+    /// Guest handles can be reused (e.g. overwriting entries in the resource map), so using the
+    /// handle as the bind-group cache key can cause stale bind groups to be reused after a buffer
+    /// is recreated.
+    pub id: BufferId,
     pub buffer: wgpu::Buffer,
     pub size: u64,
 }
@@ -48,6 +54,8 @@ pub struct Texture2dDesc {
 pub struct TextureResource {
     pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,
+    /// Unique bind-group cache ID for `view`.
+    pub view_id: TextureViewId,
     pub desc: Texture2dDesc,
 }
 
@@ -99,6 +107,9 @@ pub struct AerogpuCmdRuntime {
     default_sampler: aero_gpu::bindings::samplers::CachedSampler,
     bind_group_layout_cache: BindGroupLayoutCache,
     bind_group_cache: BindGroupCache<Arc<wgpu::BindGroup>>,
+
+    next_buffer_id: u64,
+    next_texture_view_id: u64,
 }
 
 impl AerogpuCmdRuntime {
@@ -267,6 +278,8 @@ impl AerogpuCmdRuntime {
             default_sampler,
             bind_group_layout_cache: BindGroupLayoutCache::new(),
             bind_group_cache: BindGroupCache::new(DEFAULT_BIND_GROUP_CACHE_CAPACITY),
+            next_buffer_id: 1,
+            next_texture_view_id: 1,
         })
     }
 
@@ -299,6 +312,12 @@ impl AerogpuCmdRuntime {
     }
 
     pub fn create_buffer(&mut self, handle: AerogpuHandle, size: u64, usage: wgpu::BufferUsages) {
+        let id = BufferId(self.next_buffer_id);
+        self.next_buffer_id = self.next_buffer_id.wrapping_add(1);
+        if self.next_buffer_id == 0 {
+            self.next_buffer_id = 1;
+        }
+
         let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("aero-d3d11 aerogpu buffer"),
             size,
@@ -307,7 +326,7 @@ impl AerogpuCmdRuntime {
         });
         self.resources
             .buffers
-            .insert(handle, BufferResource { buffer, size });
+            .insert(handle, BufferResource { id, buffer, size });
     }
 
     pub fn write_buffer(&self, handle: AerogpuHandle, offset: u64, data: &[u8]) -> Result<()> {
@@ -343,6 +362,12 @@ impl AerogpuCmdRuntime {
         format: wgpu::TextureFormat,
         usage: wgpu::TextureUsages,
     ) {
+        let view_id = TextureViewId(self.next_texture_view_id);
+        self.next_texture_view_id = self.next_texture_view_id.wrapping_add(1);
+        if self.next_texture_view_id == 0 {
+            self.next_texture_view_id = 1;
+        }
+
         let texture = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("aero-d3d11 aerogpu texture"),
             size: wgpu::Extent3d {
@@ -363,6 +388,7 @@ impl AerogpuCmdRuntime {
             TextureResource {
                 texture,
                 view,
+                view_id,
                 desc: Texture2dDesc {
                     width,
                     height,
@@ -1853,7 +1879,7 @@ impl reflection_bindings::BindGroupResourceProvider for RuntimeBindGroupProvider
             .flatten()?;
         let buf = self.resources.buffers.get(&handle)?;
         Some(reflection_bindings::BufferBinding {
-            id: BufferId(handle as u64),
+            id: buf.id,
             buffer: &buf.buffer,
             offset: 0,
             size: None,
@@ -1869,7 +1895,7 @@ impl reflection_bindings::BindGroupResourceProvider for RuntimeBindGroupProvider
         let stage = self.stage_state?;
         let handle = stage.textures.get(slot as usize).copied().flatten()?;
         let tex = self.resources.textures.get(&handle)?;
-        Some((TextureViewId(handle as u64), &tex.view))
+        Some((tex.view_id, &tex.view))
     }
 
     fn srv_buffer(&self, slot: u32) -> Option<reflection_bindings::BufferBinding<'_>> {
@@ -1877,7 +1903,7 @@ impl reflection_bindings::BindGroupResourceProvider for RuntimeBindGroupProvider
         let handle = stage.textures.get(slot as usize).copied().flatten()?;
         let buf = self.resources.buffers.get(&handle)?;
         Some(reflection_bindings::BufferBinding {
-            id: BufferId(handle as u64),
+            id: buf.id,
             buffer: &buf.buffer,
             offset: 0,
             size: None,
