@@ -289,6 +289,7 @@ async fn run_bc_cpu_fallback_sample_test(
     assert_eq!(&rgba[0..4], &expected_rgba);
 }
 
+#[allow(clippy::await_holding_lock)]
 async fn run_bc_direct_sample_test(
     test_name: &str,
     format: AerogpuFormat,
@@ -1184,6 +1185,7 @@ fn executor_upload_bc7_direct_and_sample() {
 }
 
 #[test]
+#[allow(clippy::await_holding_lock)]
 fn executor_bc_non_multiple_dimensions_use_physical_copy_extents() {
     const TEST_NAME: &str = concat!(
         module_path!(),
@@ -1279,6 +1281,7 @@ fn executor_bc_non_multiple_dimensions_use_physical_copy_extents() {
 }
 
 #[test]
+#[allow(clippy::await_holding_lock)]
 fn executor_bc_writeback_uses_physical_copy_extents() {
     const TEST_NAME: &str = concat!(
         module_path!(),
@@ -1435,6 +1438,7 @@ fn executor_bc_writeback_uses_physical_copy_extents() {
 }
 
 #[test]
+#[allow(clippy::await_holding_lock)]
 fn executor_bc_dirty_range_upload_pads_small_mips() {
     const TEST_NAME: &str = concat!(
         module_path!(),

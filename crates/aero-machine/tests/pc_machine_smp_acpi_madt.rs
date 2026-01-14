@@ -42,7 +42,7 @@ fn pc_machine_cpu_count_2_publishes_madt_with_two_cpus() {
         smbios_uuid_seed: 0,
         enable_hda: false,
         enable_e1000: false,
-        ..Default::default()
+        enable_xhci: false,
     })
     .expect("PcMachine should allow cpu_count > 1 for firmware enumeration");
 

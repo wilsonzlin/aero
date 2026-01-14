@@ -9,6 +9,7 @@ use crate::ExecOutcome;
 #[cfg(not(all(target_arch = "x86_64", unix)))]
 use crate::{CpuState, Fault};
 
+#[cfg_attr(not(all(target_arch = "x86_64", unix)), allow(dead_code))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum BackendKind {
     Host,
@@ -115,6 +116,7 @@ impl ReferenceBackend {
                 }
                 #[cfg(not(all(target_arch = "x86_64", unix)))]
                 {
+                    let _ = case;
                     ExecOutcome {
                         state: CpuState::default(),
                         memory: Vec::new(),
