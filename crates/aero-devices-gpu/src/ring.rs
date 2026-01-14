@@ -437,6 +437,14 @@ mod tests {
     }
 
     #[test]
+    fn write_fence_page_does_not_wrap_or_panic_on_overflowing_gpa() {
+        let mut mem = VecMemory::new(0x1000);
+        let abi_version = (AEROGPU_ABI_MAJOR << 16) | AEROGPU_ABI_MINOR;
+        // Should not panic even though the GPA would overflow when adding the fence page offsets.
+        write_fence_page(&mut mem, u64::MAX - 1, abi_version, 123);
+    }
+
+    #[test]
     fn submit_desc_validate_prefix_rejects_too_small_size() {
         let desc = AeroGpuSubmitDesc {
             desc_size_bytes: 0,
@@ -1171,6 +1179,16 @@ impl AeroGpuAllocTable {
 }
 
 pub fn write_fence_page(mem: &mut dyn MemoryBus, gpa: u64, abi_version: u32, completed_fence: u64) {
+    // Defensive: avoid wrapping physical address arithmetic on malformed GPAs.
+    //
+    // Some `MemoryBus` implementations used in tests convert `paddr` to `usize` and will panic on
+    // extremely large addresses. If the fence page base address is close to `u64::MAX`, adding the
+    // in-struct offsets would wrap and appear as a small GPA, which is never correct for a real
+    // physical address space.
+    if gpa.checked_add(AEROGPU_FENCE_PAGE_SIZE_BYTES).is_none() {
+        return;
+    }
+
     mem.write_u32(gpa + FENCE_PAGE_MAGIC_OFFSET, AEROGPU_FENCE_PAGE_MAGIC);
     mem.write_u32(gpa + FENCE_PAGE_ABI_VERSION_OFFSET, abi_version);
     mem.write_u64(gpa + FENCE_PAGE_COMPLETED_FENCE_OFFSET, completed_fence);
