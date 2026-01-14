@@ -75,6 +75,11 @@ fn assemble_vs_passthrough() -> Vec<u32> {
     out
 }
 
+fn assemble_vs_passthrough_sm3_decoder() -> Vec<u32> {
+    // `assemble_vs_passthrough` already uses SM2/SM3's real instruction length encoding.
+    assemble_vs_passthrough()
+}
+
 fn assemble_vs_passthrough_with_dcl_sm3_decoder() -> Vec<u32> {
     // vs_2_0 with DCL semantics so the IR builder can remap input registers to canonical
     // WGSL @location(n) indices (`ShaderIr.uses_semantic_locations = true`).
@@ -116,10 +121,6 @@ fn assemble_vs_passthrough_with_dcl_sm3_decoder() -> Vec<u32> {
     ));
     out.push(0x0000FFFF);
     out
-}
-
-fn assemble_vs_passthrough_sm3_decoder() -> Vec<u32> {
-    assemble_vs_passthrough_with_dcl_sm3_decoder()
 }
 
 fn assemble_ps2_mov_oc0_t0_sm3_decoder() -> Vec<u32> {

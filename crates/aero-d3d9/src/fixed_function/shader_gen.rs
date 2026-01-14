@@ -564,6 +564,7 @@ fn wgsl_op_expr(
             let f = "current.a";
             format!("((({}) * ({})) + (({}) * (1.0 - ({}))))", arg1, f, arg2, f)
         }
+        TextureOp::MultiplyAdd => format!("(({}) + (({}) * ({})))", arg0, arg1, arg2),
         TextureOp::Lerp => format!("mix(({}), ({}), ({}))", arg2, arg1, arg0),
         TextureOp::DotProduct3 => match component {
             Component::Rgb => {

@@ -1780,6 +1780,7 @@ fn render_two_stage_texture_ops_modulate_add_subtract() {
         (TextureOp::AddSigned, [65, 65, 160, 255]),
         (TextureOp::AddSigned2x, [129, 129, 255, 255]),
         (TextureOp::AddSmooth, [160, 160, 255, 255]),
+        (TextureOp::MultiplyAdd, [160, 96, 64, 255]),
         (TextureOp::Subtract, [64, 0, 0, 255]),
     ];
 

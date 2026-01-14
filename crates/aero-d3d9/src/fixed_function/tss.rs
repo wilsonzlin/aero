@@ -92,6 +92,7 @@ pub enum TextureOp {
     BlendFactorAlpha,
     BlendTextureAlphaPm,
     BlendCurrentAlpha,
+    MultiplyAdd,
     Lerp,
     DotProduct3,
 }
