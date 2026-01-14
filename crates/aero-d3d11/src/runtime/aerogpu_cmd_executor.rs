@@ -15349,6 +15349,8 @@ mod tests {
                 &exec.resources,
                 &exec.state,
                 layout_key,
+                GEOMETRY_PREPASS_EXPANDED_VERTEX_REG_COUNT,
+                wgpu::PrimitiveTopology::TriangleList,
             );
             exec.device.poll(wgpu::Maintain::Wait);
             let err = exec.device.pop_error_scope().await;
