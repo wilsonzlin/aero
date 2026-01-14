@@ -90,6 +90,10 @@ extern "C" {
  */
 #define AEROGPU_PCI_BAR1_VBE_LFB_OFFSET_BYTES 0x40000u
 
+/* The VBE LFB offset must remain aligned with the legacy VGA planar reservation. */
+AEROGPU_STATIC_ASSERT(AEROGPU_PCI_BAR1_VBE_LFB_OFFSET_BYTES == (4u * 64u * 1024u));
+AEROGPU_STATIC_ASSERT(AEROGPU_PCI_BAR1_VBE_LFB_OFFSET_BYTES < AEROGPU_PCI_BAR1_SIZE_BYTES);
+
 /* ------------------------------ MMIO registers --------------------------- */
 
 /*
