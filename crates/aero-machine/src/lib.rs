@@ -111,6 +111,8 @@ use aero_shared::scanout_state::{
     ScanoutState, ScanoutStateUpdate, SCANOUT_FORMAT_B8G8R8X8, SCANOUT_SOURCE_LEGACY_TEXT,
     SCANOUT_SOURCE_LEGACY_VBE_LFB, SCANOUT_SOURCE_WDDM,
 };
+#[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+use aero_shared::cursor_state::{CursorState, CursorStateUpdate, CURSOR_FORMAT_B8G8R8A8};
 use aero_snapshot as snapshot;
 use aero_storage::{MemBackend, RawDisk};
 use aero_usb::usb2_port::Usb2PortMux;
@@ -3504,6 +3506,25 @@ impl PciIoBarHandler for E1000PciIoBar {
 
 type SharedPciIoBarRouter = Rc<RefCell<PciIoBarRouter>>;
 
+#[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+#[derive(Clone)]
+enum SharedStateHandle<T: 'static> {
+    Arc(Arc<T>),
+    Static(&'static T),
+}
+
+#[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+impl<T: 'static> core::ops::Deref for SharedStateHandle<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Arc(inner) => inner.as_ref(),
+            Self::Static(inner) => inner,
+        }
+    }
+}
+
 struct PciIoBarWindow {
     router: SharedPciIoBarRouter,
 }
@@ -3589,7 +3610,14 @@ pub struct Machine {
     // This is only available when the target supports atomic operations (native builds and
     // wasm32+atomics); on single-threaded wasm builds, the shared scanout protocol is unavailable.
     #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
-    scanout_state: Option<Arc<ScanoutState>>,
+    scanout_state: Option<SharedStateHandle<ScanoutState>>,
+
+    // Optional shared hardware cursor descriptor used by the browser presentation pipeline.
+    //
+    // This is only available when the target supports atomic operations (native builds and
+    // wasm32+atomics); on single-threaded wasm builds, the shared cursor protocol is unavailable.
+    #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+    cursor_state: Option<SharedStateHandle<CursorState>>,
 
     // ---------------------------------------------------------------------
     // Host-managed storage overlay references (snapshot DISKS section)
@@ -3805,6 +3833,8 @@ impl Machine {
             display_height: 0,
             #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
             scanout_state: None,
+            #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+            cursor_state: None,
             ahci_port0_overlay: None,
             ide_secondary_master_atapi_overlay: None,
             ide_primary_master_overlay: None,
@@ -4898,7 +4928,35 @@ impl Machine {
     /// and this method is not compiled.
     #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
     pub fn set_scanout_state(&mut self, state: Option<Arc<ScanoutState>>) {
-        self.scanout_state = state;
+        self.scanout_state = state.map(SharedStateHandle::Arc);
+    }
+
+    /// Install an external scanout descriptor backed by a `'static` reference.
+    ///
+    /// This exists for the threaded wasm build, where the scanout state header is embedded inside
+    /// the shared wasm linear memory.
+    #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+    pub fn set_scanout_state_static(&mut self, state: Option<&'static ScanoutState>) {
+        self.scanout_state = state.map(SharedStateHandle::Static);
+    }
+
+    /// Install an external hardware cursor descriptor that should receive AeroGPU cursor updates.
+    ///
+    /// When present, AeroGPU BAR0 cursor register updates publish updates to this descriptor so an
+    /// external presentation layer (e.g. browser canvas) can render the hardware cursor without
+    /// legacy postMessage plumbing.
+    #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+    pub fn set_cursor_state(&mut self, state: Option<Arc<CursorState>>) {
+        self.cursor_state = state.map(SharedStateHandle::Arc);
+    }
+
+    /// Install an external hardware cursor descriptor backed by a `'static` reference.
+    ///
+    /// This exists for the threaded wasm build, where the cursor state header is embedded inside
+    /// the shared wasm linear memory.
+    #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+    pub fn set_cursor_state_static(&mut self, state: Option<&'static CursorState>) {
+        self.cursor_state = state.map(SharedStateHandle::Static);
     }
 
     /// Returns the shared manual clock backing platform timer devices, if the PC platform is
@@ -8734,6 +8792,25 @@ impl Machine {
             });
         }
 
+        // Reset returns the machine to a legacy (non-WDDM) scanout; also disable the hardware
+        // cursor so hosts don't display stale WDDM cursor state after a reset.
+        #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+        if let Some(cursor_state) = &self.cursor_state {
+            cursor_state.publish(CursorStateUpdate {
+                enable: 0,
+                x: 0,
+                y: 0,
+                hot_x: 0,
+                hot_y: 0,
+                width: 0,
+                height: 0,
+                pitch_bytes: 0,
+                format: CURSOR_FORMAT_B8G8R8A8,
+                base_paddr_lo: 0,
+                base_paddr_hi: 0,
+            });
+        }
+
         // If firmware POST failed and halted the CPU via `Bios::bios_panic`, mirror the panic text
         // into COM1 so host runtimes that monitor serial output can surface the failure reason.
         if self.cpu.state.halted {
@@ -8981,6 +9058,14 @@ impl Machine {
                 {
                     publish_legacy_scanout_descriptor(scanout_state);
                 }
+            }
+        }
+
+        // Publish hardware cursor updates based on BAR0 cursor registers.
+        #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+        if let Some(cursor_state) = &self.cursor_state {
+            if let Some(update) = dev.take_cursor_state_update() {
+                cursor_state.publish(update);
             }
         }
     }

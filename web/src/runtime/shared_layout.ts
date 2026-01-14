@@ -20,6 +20,7 @@ import {
 } from "../ipc/scanout_state";
 import {
   CURSOR_FORMAT_B8G8R8A8,
+  CURSOR_STATE_BYTE_LEN,
   CURSOR_STATE_U32_LEN,
   CursorStateIndex,
   wrapCursorState,
@@ -313,7 +314,8 @@ export const CPU_WORKER_DEMO_FRAMEBUFFER_TILE_SIZE = 32;
 // IMPORTANT: Keep these constants in sync with the wasm-side runtime allocator guard in
 // `crates/aero-wasm/src/runtime_alloc.rs`.
 const WASM_MEMORY_PROBE_WINDOW_BYTES = 64;
-const WASM_RUNTIME_HEAP_TAIL_GUARD_BYTES = WASM_MEMORY_PROBE_WINDOW_BYTES + SCANOUT_STATE_BYTE_LEN;
+const WASM_RUNTIME_HEAP_TAIL_GUARD_BYTES =
+  WASM_MEMORY_PROBE_WINDOW_BYTES + SCANOUT_STATE_BYTE_LEN + CURSOR_STATE_BYTE_LEN;
 
 function mibToBytes(mib: number): number {
   return mib * 1024 * 1024;
@@ -667,8 +669,9 @@ export function allocateSharedMemorySegments(options?: {
   Atomics.store(scanoutWords, ScanoutStateIndex.FORMAT, SCANOUT_FORMAT_B8G8R8X8);
 
   // Hardware cursor state descriptor (WDDM cursor registers + surface pointer).
-  const cursorState = new SharedArrayBuffer(CURSOR_STATE_U32_LEN * 4);
-  const cursorStateOffsetBytes = 0;
+  // Embed this inside the shared WebAssembly.Memory so the WASM VM can update it directly.
+  const cursorState = guestSab;
+  const cursorStateOffsetBytes = scanoutStateOffsetBytes + SCANOUT_STATE_BYTE_LEN;
   const cursorWords = new Int32Array(cursorState, cursorStateOffsetBytes, CURSOR_STATE_U32_LEN);
   Atomics.store(cursorWords, CursorStateIndex.GENERATION, 0);
   Atomics.store(cursorWords, CursorStateIndex.ENABLE, 0);

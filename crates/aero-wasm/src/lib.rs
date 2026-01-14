@@ -153,6 +153,9 @@ use aero_shared::scanout_state::{
     SCANOUT_SOURCE_WDDM, SCANOUT_STATE_BYTE_LEN, ScanoutState, ScanoutStateUpdate,
 };
 
+#[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
+use aero_shared::cursor_state::{CURSOR_STATE_BYTE_LEN, CursorState};
+
 #[cfg(target_arch = "wasm32")]
 use aero_opfs::OpfsSyncFile;
 
@@ -3602,11 +3605,19 @@ fn opfs_snapshot_error_to_js(
 #[wasm_bindgen]
 impl Machine {
     fn new_with_native_config(cfg: aero_machine::MachineConfig) -> Result<Self, JsValue> {
-        let inner =
-            aero_machine::Machine::new(cfg).map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let inner = aero_machine::Machine::new(cfg).map_err(|e| JsValue::from_str(&e.to_string()))?;
 
         #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
-        let scanout_state = Self::scanout_state_ref();
+        let mut inner = inner;
+
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
+        let scanout_state = {
+            let scanout_state = Self::scanout_state_ref();
+            let cursor_state = Self::cursor_state_ref();
+            inner.set_scanout_state_static(Some(scanout_state));
+            inner.set_cursor_state_static(Some(cursor_state));
+            scanout_state
+        };
         Ok(Self {
             inner,
             mouse_buttons: 0,
@@ -3889,7 +3900,16 @@ impl Machine {
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
         #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
-        let scanout_state = Self::scanout_state_ref();
+        let mut inner = inner;
+
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
+        let scanout_state = {
+            let scanout_state = Self::scanout_state_ref();
+            let cursor_state = Self::cursor_state_ref();
+            inner.set_scanout_state_static(Some(scanout_state));
+            inner.set_cursor_state_static(Some(cursor_state));
+            scanout_state
+        };
         Ok(Self {
             inner,
             mouse_buttons: 0,
@@ -4932,9 +4952,11 @@ impl Machine {
     fn scanout_state_offset_bytes() -> u32 {
         // Keep this in sync with:
         // - `crates/aero-wasm/src/runtime_alloc.rs` (`HEAP_TAIL_GUARD_BYTES`)
-        // - `web/src/runtime/shared_layout.ts` (embedded scanoutState offset)
+        // - `web/src/runtime/shared_layout.ts` (embedded scanoutState/cursorState offsets)
         const WASM_MEMORY_PROBE_WINDOW_BYTES: u32 = 64;
-        let tail_guard = WASM_MEMORY_PROBE_WINDOW_BYTES + SCANOUT_STATE_BYTE_LEN as u32;
+        let tail_guard = WASM_MEMORY_PROBE_WINDOW_BYTES
+            + SCANOUT_STATE_BYTE_LEN as u32
+            + CURSOR_STATE_BYTE_LEN as u32;
         (crate::guest_layout::RUNTIME_RESERVED_BYTES as u32).saturating_sub(tail_guard)
     }
 
@@ -4988,6 +5010,50 @@ impl Machine {
         // - The wasm-side runtime allocator leaves a tail guard so this region does not overlap heap allocations.
         // - The region is treated as a plain `u32` array (Atomics-compatible) by both Rust and JS.
         unsafe { &*(offset as *const ScanoutState) }
+    }
+
+    // -------------------------------------------------------------------------
+    // Cursor state (threaded WASM only)
+    // -------------------------------------------------------------------------
+
+    /// Pointer (into wasm linear memory) to the shared [`CursorState`] header.
+    ///
+    /// Returns 0 when the build does not support a shared cursor state (e.g. non-threaded WASM
+    /// variant or non-wasm host builds).
+    pub fn cursor_state_ptr(&self) -> u32 {
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
+        {
+            Self::cursor_state_offset_bytes()
+        }
+        #[cfg(not(all(target_arch = "wasm32", feature = "wasm-threaded")))]
+        {
+            0
+        }
+    }
+
+    /// Length in bytes of the shared cursor state header.
+    pub fn cursor_state_len_bytes(&self) -> u32 {
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
+        {
+            CURSOR_STATE_BYTE_LEN as u32
+        }
+        #[cfg(not(all(target_arch = "wasm32", feature = "wasm-threaded")))]
+        {
+            0
+        }
+    }
+
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
+    fn cursor_state_offset_bytes() -> u32 {
+        Self::scanout_state_offset_bytes().saturating_add(SCANOUT_STATE_BYTE_LEN as u32)
+    }
+
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
+    fn cursor_state_ref() -> &'static CursorState {
+        Self::ensure_runtime_reserved_floor_for_scanout_state();
+        // Safety: same argument as `scanout_state_ref()`; cursor state is placed in the same
+        // allocator-excluded tail guard region inside wasm linear memory.
+        unsafe { &*(Self::cursor_state_offset_bytes() as *const CursorState) }
     }
 
     #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]

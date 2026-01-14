@@ -11,6 +11,11 @@ import {
   snapshotScanoutState,
 } from "../ipc/scanout_state";
 import { computeSharedFramebufferLayout, FramebufferFormat } from "../ipc/shared-layout";
+import {
+  CURSOR_FORMAT_B8G8R8A8,
+  CURSOR_STATE_U32_LEN,
+  snapshotCursorState,
+} from "../ipc/cursor_state";
 import { AerogpuFormat } from "../../../emulator/protocol/aerogpu/aerogpu_pci.ts";
 import { allocateHarnessSharedMemorySegments } from "./harness_shared_memory";
 import {
@@ -204,7 +209,7 @@ describe("runtime/shared_layout", () => {
 
     // ScanoutState is embedded inside the shared WebAssembly.Memory so WASM can update it directly.
     // Keep in sync with `web/src/runtime/shared_layout.ts`.
-    const expectedOffsetBytes = RUNTIME_RESERVED_BYTES - (64 + SCANOUT_STATE_U32_LEN * 4);
+    const expectedOffsetBytes = RUNTIME_RESERVED_BYTES - (64 + SCANOUT_STATE_U32_LEN * 4 + CURSOR_STATE_U32_LEN * 4);
     expect(segments.scanoutState).toBe(segments.guestMemory.buffer);
     expect(segments.scanoutStateOffsetBytes).toBe(expectedOffsetBytes);
 
@@ -213,6 +218,25 @@ describe("runtime/shared_layout", () => {
     expect(snap.generation).toBe(0);
     expect(snap.source).toBe(SCANOUT_SOURCE_LEGACY_TEXT);
     expect(snap.format).toBe(AerogpuFormat.B8G8R8X8Unorm);
+  });
+
+  it("allocates and initializes cursorState", () => {
+    const segments = allocateSharedMemorySegments({ guestRamMiB: TEST_GUEST_RAM_MIB, vramMiB: TEST_VRAM_MIB });
+    expect(segments.cursorState).toBeInstanceOf(SharedArrayBuffer);
+
+    // CursorState is embedded in the same wasm linear memory tail region as ScanoutState.
+    const expectedScanoutOffsetBytes = RUNTIME_RESERVED_BYTES - (64 + SCANOUT_STATE_U32_LEN * 4 + CURSOR_STATE_U32_LEN * 4);
+    const expectedCursorOffsetBytes = expectedScanoutOffsetBytes + SCANOUT_STATE_U32_LEN * 4;
+    expect(segments.cursorState).toBe(segments.guestMemory.buffer);
+    expect(segments.cursorStateOffsetBytes).toBe(expectedCursorOffsetBytes);
+
+    const words = new Int32Array(segments.cursorState!, expectedCursorOffsetBytes, CURSOR_STATE_U32_LEN);
+    const snap = snapshotCursorState(words);
+    expect(snap.generation).toBe(0);
+    expect(snap.enable).toBe(0);
+    expect(snap.x).toBe(0);
+    expect(snap.y).toBe(0);
+    expect(snap.format).toBe(CURSOR_FORMAT_B8G8R8A8);
   });
 
   it("clamps maximum guest RAM size below the PCI MMIO BAR window", () => {

@@ -17,6 +17,8 @@ use memory::MemoryBus;
 use aero_shared::scanout_state::{
     ScanoutStateUpdate, SCANOUT_FORMAT_B8G8R8X8, SCANOUT_SOURCE_WDDM,
 };
+#[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+use aero_shared::cursor_state::CursorStateUpdate;
 
 const RING_HEAD_OFFSET: u64 = offset_of!(ring::AerogpuRingHeader, head) as u64;
 const RING_TAIL_OFFSET: u64 = offset_of!(ring::AerogpuRingHeader, tail) as u64;
@@ -483,7 +485,11 @@ pub struct AeroGpuMmioDevice {
     cursor_height: u32,
     cursor_format: u32,
     cursor_fb_gpa: u64,
+    #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+    cursor_fb_gpa_lo_pending: bool,
     cursor_pitch_bytes: u32,
+    #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+    cursor_dirty: bool,
 
     // ---------------------------------------------------------------------
     // Fence completion pacing
@@ -600,7 +606,11 @@ impl Default for AeroGpuMmioDevice {
             cursor_height: 0,
             cursor_format: 0,
             cursor_fb_gpa: 0,
+            #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+            cursor_fb_gpa_lo_pending: false,
             cursor_pitch_bytes: 0,
+            #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+            cursor_dirty: false,
 
             pending_fence_completions: VecDeque::new(),
             fence_page_dirty: false,
@@ -866,6 +876,37 @@ impl AeroGpuMmioDevice {
         Some(self.scanout0_to_scanout_state_update())
     }
 
+    /// Consume any pending cursor register updates and produce a new shared cursor descriptor.
+    ///
+    /// Returns `None` when the cursor registers have not changed since the last call, or when the
+    /// cursor framebuffer GPA is mid-update (avoid publishing a torn 64-bit base address).
+    #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+    pub fn take_cursor_state_update(&mut self) -> Option<CursorStateUpdate> {
+        if !self.cursor_dirty {
+            return None;
+        }
+
+        // Avoid publishing a torn 64-bit cursor base update (drivers typically write LO then HI).
+        if self.cursor_fb_gpa_lo_pending {
+            return None;
+        }
+        self.cursor_dirty = false;
+
+        Some(CursorStateUpdate {
+            enable: self.cursor_enable as u32,
+            x: self.cursor_x,
+            y: self.cursor_y,
+            hot_x: self.cursor_hot_x,
+            hot_y: self.cursor_hot_y,
+            width: self.cursor_width,
+            height: self.cursor_height,
+            pitch_bytes: self.cursor_pitch_bytes,
+            format: self.cursor_format,
+            base_paddr_lo: self.cursor_fb_gpa as u32,
+            base_paddr_hi: (self.cursor_fb_gpa >> 32) as u32,
+        })
+    }
+
     pub fn supported_features(&self) -> u64 {
         self.supported_features
     }
@@ -992,6 +1033,16 @@ impl AeroGpuMmioDevice {
         self.cursor_format = snap.cursor_format;
         self.cursor_fb_gpa = snap.cursor_fb_gpa;
         self.cursor_pitch_bytes = snap.cursor_pitch_bytes;
+
+        #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+        {
+            // Ensure restored scanout/cursor state is re-published to any installed shared
+            // descriptors on the next device tick. These shared headers are host-managed and are
+            // not part of the snapshot payload.
+            self.scanout0_dirty = true;
+            self.cursor_dirty = true;
+            self.cursor_fb_gpa_lo_pending = false;
+        }
 
         // Snapshot v1 does not preserve these internal execution latches.
         self.doorbell_pending = false;
@@ -1551,24 +1602,96 @@ impl AeroGpuMmioDevice {
                 self.maybe_claim_wddm_scanout();
             }
 
-            x if x == pci::AEROGPU_MMIO_REG_CURSOR_ENABLE as u64 => self.cursor_enable = value != 0,
-            x if x == pci::AEROGPU_MMIO_REG_CURSOR_X as u64 => self.cursor_x = value as i32,
-            x if x == pci::AEROGPU_MMIO_REG_CURSOR_Y as u64 => self.cursor_y = value as i32,
-            x if x == pci::AEROGPU_MMIO_REG_CURSOR_HOT_X as u64 => self.cursor_hot_x = value,
-            x if x == pci::AEROGPU_MMIO_REG_CURSOR_HOT_Y as u64 => self.cursor_hot_y = value,
-            x if x == pci::AEROGPU_MMIO_REG_CURSOR_WIDTH as u64 => self.cursor_width = value,
-            x if x == pci::AEROGPU_MMIO_REG_CURSOR_HEIGHT as u64 => self.cursor_height = value,
-            x if x == pci::AEROGPU_MMIO_REG_CURSOR_FORMAT as u64 => self.cursor_format = value,
+            x if x == pci::AEROGPU_MMIO_REG_CURSOR_ENABLE as u64 => {
+                let new_enable = value != 0;
+                if self.cursor_enable && !new_enable {
+                    // Clear torn-update tracking so a stale LO write can't block future publishes.
+                    #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+                    {
+                        self.cursor_fb_gpa_lo_pending = false;
+                    }
+                }
+                self.cursor_enable = new_enable;
+                #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+                {
+                    self.cursor_dirty = true;
+                }
+            }
+            x if x == pci::AEROGPU_MMIO_REG_CURSOR_X as u64 => {
+                self.cursor_x = value as i32;
+                #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+                {
+                    self.cursor_dirty = true;
+                }
+            }
+            x if x == pci::AEROGPU_MMIO_REG_CURSOR_Y as u64 => {
+                self.cursor_y = value as i32;
+                #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+                {
+                    self.cursor_dirty = true;
+                }
+            }
+            x if x == pci::AEROGPU_MMIO_REG_CURSOR_HOT_X as u64 => {
+                self.cursor_hot_x = value;
+                #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+                {
+                    self.cursor_dirty = true;
+                }
+            }
+            x if x == pci::AEROGPU_MMIO_REG_CURSOR_HOT_Y as u64 => {
+                self.cursor_hot_y = value;
+                #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+                {
+                    self.cursor_dirty = true;
+                }
+            }
+            x if x == pci::AEROGPU_MMIO_REG_CURSOR_WIDTH as u64 => {
+                self.cursor_width = value;
+                #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+                {
+                    self.cursor_dirty = true;
+                }
+            }
+            x if x == pci::AEROGPU_MMIO_REG_CURSOR_HEIGHT as u64 => {
+                self.cursor_height = value;
+                #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+                {
+                    self.cursor_dirty = true;
+                }
+            }
+            x if x == pci::AEROGPU_MMIO_REG_CURSOR_FORMAT as u64 => {
+                self.cursor_format = value;
+                #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+                {
+                    self.cursor_dirty = true;
+                }
+            }
             x if x == pci::AEROGPU_MMIO_REG_CURSOR_FB_GPA_LO as u64 => {
                 self.cursor_fb_gpa =
                     (self.cursor_fb_gpa & 0xffff_ffff_0000_0000) | u64::from(value);
+                // Avoid publishing a torn 64-bit cursor base update. Defer until the HI write.
+                #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+                {
+                    self.cursor_fb_gpa_lo_pending = true;
+                    self.cursor_dirty = true;
+                }
             }
             x if x == pci::AEROGPU_MMIO_REG_CURSOR_FB_GPA_HI as u64 => {
                 self.cursor_fb_gpa =
                     (self.cursor_fb_gpa & 0x0000_0000_ffff_ffff) | (u64::from(value) << 32);
+                #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+                {
+                    // Drivers typically write LO then HI; treat HI as the commit point.
+                    self.cursor_fb_gpa_lo_pending = false;
+                    self.cursor_dirty = true;
+                }
             }
             x if x == pci::AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES as u64 => {
                 self.cursor_pitch_bytes = value;
+                #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+                {
+                    self.cursor_dirty = true;
+                }
             }
 
             // Ignore writes to read-only / unknown registers.

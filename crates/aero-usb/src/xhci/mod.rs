@@ -3612,6 +3612,7 @@ impl XhciController {
         let ep_ctx = dev_ctx.endpoint_context(mem, endpoint_id).ok()?;
         Some(ep_ctx.endpoint_state_enum())
     }
+
     fn write_endpoint_dequeue_to_context(
         &self,
         mem: &mut dyn MemoryBus,
