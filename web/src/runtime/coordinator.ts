@@ -2190,6 +2190,11 @@ export class WorkerCoordinator {
       // against a new `api.Machine` instance.
       this.pendingAerogpuSubmissions = [];
       this.aerogpuInFlightFencesByRequestId.clear();
+      // These debug/introspection fields are tied to the machine instance owned by the CPU worker.
+      // If the CPU worker is restarted in isolation, clear them so callers don't observe stale
+      // values until the new worker reports its fresh boot state.
+      this.machineCpuActiveBootDevice = null;
+      this.machineCpuBootConfig = null;
     }
 
     if (role === "net") {
