@@ -57,6 +57,16 @@ struct FileToPackage {
     bytes: Vec<u8>,
 }
 
+fn bail_if_symlink(entry: &walkdir::DirEntry, packaged_root: &str) -> Result<()> {
+    if entry.file_type().is_symlink() {
+        bail!(
+            "refusing to package symlink {} (found under {packaged_root}); replace the symlink with a real file or remove it",
+            entry.path().display(),
+        );
+    }
+    Ok(())
+}
+
 fn guest_tools_devices_cmd_service_overrides_for_spec(
     contract: &windows_device_contract::WindowsDeviceContract,
     spec: &PackagingSpec,
@@ -360,6 +370,7 @@ fn collect_files(
         .sort_by_file_name()
     {
         let entry = entry?;
+        bail_if_symlink(&entry, "guest_tools/config")?;
         if !entry.file_type().is_file() {
             continue;
         }
@@ -406,6 +417,7 @@ fn collect_files(
             .sort_by_file_name()
         {
             let entry = entry?;
+            bail_if_symlink(&entry, "guest_tools/licenses")?;
             if !entry.file_type().is_file() {
                 continue;
             }
@@ -452,6 +464,7 @@ fn collect_files(
             .sort_by_file_name()
         {
             let entry = entry?;
+            bail_if_symlink(&entry, "guest_tools/certs")?;
             if !entry.file_type().is_file() {
                 continue;
             }
@@ -569,6 +582,7 @@ fn collect_files(
     // Drivers.
     for (arch_out, drivers) in [("x86", &driver_plan.x86), ("amd64", &driver_plan.amd64)] {
         for driver in drivers {
+            let packaged_root = format!("drivers/{arch_out}/{}", &driver.spec.name);
             let allowlist =
                 DriverFileAllowlist::from_driver_spec(&driver.spec).with_context(|| {
                     format!(
@@ -582,6 +596,7 @@ fn collect_files(
                 .sort_by_file_name()
             {
                 let entry = entry?;
+                bail_if_symlink(&entry, &packaged_root)?;
                 if !entry.file_type().is_file() {
                     continue;
                 }
@@ -896,11 +911,13 @@ fn validate_driver_dir(
     let mut packaged_rel_paths = HashSet::<String>::new();
     let mut packaged_base_names = HashSet::<String>::new();
 
+    let packaged_root = format!("drivers/{arch}/{}", driver.name);
     for entry in walkdir::WalkDir::new(driver_dir)
         .follow_links(false)
         .sort_by_file_name()
     {
         let entry = entry?;
+        bail_if_symlink(&entry, &packaged_root)?;
         if !entry.file_type().is_file() {
             continue;
         }
