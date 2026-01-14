@@ -75,9 +75,23 @@ fn is_modern_prefix_encoding(encoding: EncodingKind) -> bool {
     )
 }
 
+fn is_legacy_prefix_encoding(encoding: EncodingKind) -> bool {
+    // `D3NOW` is still a legacy prefix stream followed by a special opcode
+    // encoding (`0F 0F /r ib`), so legacy prefix bytes apply normally.
+    matches!(encoding, EncodingKind::Legacy | EncodingKind::D3NOW)
+}
+
 fn op_code_bytes(op_code: &OpCodeInfo) -> Option<Vec<u8>> {
     // This is best-effort and intentionally only supports the common legacy
     // opcode tables we expect to see in random decode fuzzing.
+    if op_code.encoding() == EncodingKind::D3NOW {
+        // 3DNow! instructions always start with `0F 0F` after any legacy prefix
+        // bytes. Iced reports the trailing `ib` opcode selector as `op_code()`
+        // (and does not include the second `0F`), so handle it explicitly here
+        // to recover the legacy prefix region.
+        return Some(vec![0x0F, 0x0F]);
+    }
+
     let mut out = Vec::new();
     match op_code.table() {
         OpCodeTableKind::Normal => {}
@@ -155,14 +169,14 @@ fn check_one(mode: DecodeMode, bytes: &[u8]) {
     // prefix bytes in legacy encodings (e.g. `PAUSE` and many SSE instructions).
     // Since our prefix parser is byte-based, we treat those mandatory bytes as
     // present *only when they're actually encoded as separate legacy prefix
-    // bytes*. For VEX/EVEX/XOP, the mandatory prefix is encoded inside the
+    // bytes*. For VEX/EVEX/XOP/MVEX, the mandatory prefix is encoded inside the
     // modern prefix itself, so it must not affect our expected group1 flags.
     //
     // We also avoid comparing HLE/XACQUIRE/XRELEASE cases since iced can report
     // multiple group1 flags simultaneously there, while our metadata enforces a
     // single "effective" group1 prefix ("last prefix wins").
     let expected_lock = iced.has_lock_prefix();
-    let mandatory_group1_is_byte = encoding == EncodingKind::Legacy;
+    let mandatory_group1_is_byte = is_legacy_prefix_encoding(encoding);
     let expected_rep =
         iced.has_rep_prefix() || (mandatory_group1_is_byte && mandatory == MandatoryPrefix::PF3);
     let expected_repne =
@@ -197,7 +211,7 @@ fn check_one(mode: DecodeMode, bytes: &[u8]) {
     // For VEX/EVEX/XOP/MVEX, the mandatory-prefix byte (66/F2/F3) is encoded
     // inside the modern prefix itself, so we only compare operand-size override
     // for legacy encodings.
-    if !is_modern_prefix_encoding(encoding) && encoding == EncodingKind::Legacy {
+    if !is_modern_prefix_encoding(encoding) && is_legacy_prefix_encoding(encoding) {
         if let Some(pfx) = legacy_prefix_bytes(inst_bytes, op_code) {
             assert_eq!(
                 ours.operand_size_override,
@@ -208,7 +222,7 @@ fn check_one(mode: DecodeMode, bytes: &[u8]) {
     }
 
     match encoding {
-        EncodingKind::Legacy => {
+        e if is_legacy_prefix_encoding(e) => {
             if let Some(pfx) = legacy_prefix_bytes(inst_bytes, op_code) {
                 assert_eq!(
                     ours.address_size_override,
