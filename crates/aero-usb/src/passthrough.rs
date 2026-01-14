@@ -753,11 +753,38 @@ impl UsbPassthroughDevice {
                 }
             }
         }
-        for id in self.completions.keys() {
-            if !inflight_ids.contains(id) {
+        let mut inflight_dir_in = HashMap::<u32, bool>::new();
+        if let Some(ctl) = self.control_inflight.as_ref() {
+            inflight_dir_in.insert(ctl.id, ctl.setup.is_device_to_host());
+        }
+        for (&endpoint, inflight) in self.ep_inflight.iter() {
+            inflight_dir_in.insert(inflight.id, (endpoint & 0x80) != 0);
+        }
+
+        for (&id, result) in self.completions.iter() {
+            if !inflight_ids.contains(&id) {
                 return Err(SnapshotError::InvalidFieldEncoding(
                     "queued completion without inflight transfer",
                 ));
+            }
+            let Some(&dir_in) = inflight_dir_in.get(&id) else {
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "queued completion without inflight transfer",
+                ));
+            };
+            match result {
+                UsbHostResult::OkIn { .. } if !dir_in => {
+                    return Err(SnapshotError::InvalidFieldEncoding(
+                        "queued completion direction mismatch",
+                    ))
+                }
+                UsbHostResult::OkOut { .. } if dir_in => {
+                    return Err(SnapshotError::InvalidFieldEncoding(
+                        "queued completion direction mismatch",
+                    ))
+                }
+                UsbHostResult::Stall | UsbHostResult::Error(_) => {}
+                UsbHostResult::OkIn { .. } | UsbHostResult::OkOut { .. } => {}
             }
         }
 
@@ -2224,6 +2251,96 @@ mod tests {
             dev.handle_in_transfer(0x81, 1),
             UsbInResult::Data(vec![0xaa])
         );
+    }
+
+    #[test]
+    fn snapshot_load_rejects_bulk_in_completion_with_ok_out_result() {
+        // Endpoint 0x81 is IN; completions must not decode as OkOut.
+        let bytes = Encoder::new()
+            .u32(1)
+            .u32(0) // action_count
+            .u32(1) // completion_count
+            .u32(1) // completion id
+            .u8(2) // OkOut (invalid for IN transfers)
+            .u32(0)
+            .bool(false) // has_control
+            .u32(1) // ep_count
+            .u8(0x81)
+            .u32(1)
+            .u32(8)
+            .finish();
+        let err = snapshot_load_err(bytes);
+        assert_invalid_field_encoding(err);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_bulk_out_completion_with_ok_in_result() {
+        // Endpoint 0x02 is OUT; completions must not decode as OkIn.
+        let bytes = Encoder::new()
+            .u32(1)
+            .u32(0) // action_count
+            .u32(1) // completion_count
+            .u32(1) // completion id
+            .u8(1) // OkIn (invalid for OUT transfers)
+            .u32(0) // empty payload
+            .bool(false) // has_control
+            .u32(1) // ep_count
+            .u8(0x02)
+            .u32(1)
+            .u32(8)
+            .finish();
+        let err = snapshot_load_err(bytes);
+        assert_invalid_field_encoding(err);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_control_in_completion_with_ok_out_result() {
+        // Device-to-host control transfers must not have OkOut completions.
+        let bytes = Encoder::new()
+            .u32(1)
+            .u32(0) // action_count
+            .u32(1) // completion_count
+            .u32(1) // completion id
+            .u8(2) // OkOut (invalid for IN control)
+            .u32(0)
+            .bool(true)
+            .u32(1) // inflight control id
+            // SetupPacket (device-to-host, wLength=0)
+            .u8(0x80)
+            .u8(0)
+            .u16(0)
+            .u16(0)
+            .u16(0)
+            .bool(false) // has_data
+            .u32(0) // ep_count
+            .finish();
+        let err = snapshot_load_err(bytes);
+        assert_invalid_field_encoding(err);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_control_out_completion_with_ok_in_result() {
+        // Host-to-device control transfers must not have OkIn completions.
+        let bytes = Encoder::new()
+            .u32(1)
+            .u32(0) // action_count
+            .u32(1) // completion_count
+            .u32(1) // completion id
+            .u8(1) // OkIn (invalid for OUT control)
+            .u32(0) // empty payload
+            .bool(true)
+            .u32(1) // inflight control id
+            // SetupPacket (host-to-device, wLength=0)
+            .u8(0x00)
+            .u8(0)
+            .u16(0)
+            .u16(0)
+            .u16(0)
+            .bool(false) // has_data
+            .u32(0) // ep_count
+            .finish();
+        let err = snapshot_load_err(bytes);
+        assert_invalid_field_encoding(err);
     }
 
     #[test]
