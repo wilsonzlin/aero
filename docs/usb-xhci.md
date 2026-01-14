@@ -21,12 +21,11 @@ Status:
   modern guests (or Windows 7 only when an xHCI driver is installed).
 - EHCI supports minimal async/periodic schedule walking (control/bulk + interrupt polling) and
   snapshot/restore; see [`docs/usb-ehci.md`](./usb-ehci.md) for current scope/limitations.
-- The web runtime currently exposes an xHCI PCI function backed by `aero_wasm::XhciControllerBridge`
-  (wrapping `aero_usb::xhci::XhciController`). It implements a limited subset of xHCI (MMIO
-  registers, USB2 root ports + PORTSC, interrupter 0 + ERST-backed event ring delivery,
-  snapshot/restore), but it does not yet execute the full command/transfer rings (command ring
-  processing and non-control transfers are still missing; the WASM bridge does not yet drive the
-  transfer scheduler), so treat it as a bring-up/placeholder surface for now.
+- The web runtime exposes an xHCI PCI function backed by `aero_wasm::XhciControllerBridge` (wrapping
+  `aero_usb::xhci::XhciController`). It implements a limited subset of xHCI (MMIO registers, USB2
+  root ports + PORTSC, interrupter 0 + ERST-backed event ring delivery, snapshot/restore), but it
+  does not yet drive full command/transfer ring execution (doorbells + transfer scheduling), so
+  treat it as bring-up quality and incomplete.
 
 > Canonical USB stack selection: see [ADR 0015](./adr/0015-canonical-usb-stack.md) (`crates/aero-usb` + `crates/aero-wasm` + `web/`).
 
@@ -122,8 +121,8 @@ differ.)
 Notes:
 
 - The canonical PCI identity is defined in `crates/devices/src/pci/profile.rs` as `USB_XHCI_QEMU`.
-- The canonical PCI profile reserves a 64KiB BAR0 even though current controller stubs implement
-  only a small subset of registers.
+- The canonical PCI profile reserves a 64KiB BAR0 even though the current controller model
+  implements only a subset of the architectural register set.
 - Interrupt delivery is **platform-dependent**:
   - Web runtime: INTx only.
   - Native integrations may choose INTx or MSI (the native PCI wrapper exposes an MSI capability),
@@ -148,12 +147,14 @@ Notes:
   but `XhciControllerBridge` does not yet expose the required topology mutation APIs
   (`attach_hub`, `attach_webhid_device`, etc). As a result, WebHID passthrough devices are still
   expected to attach via UHCI in the current web runtime.
-- WebUSB passthrough is also currently UHCI-focused; high-speed passthrough via EHCI/xHCI remains
-  planned. See [`docs/webusb-passthrough.md`](./webusb-passthrough.md).
+- WebUSB passthrough exists today primarily via UHCI; xHCI attachment/plumbing exists in the web
+  runtime (and is preferred when available), but full doorbell-driven xHCI ring execution is still
+  bring-up. See [`docs/webusb-passthrough.md`](./webusb-passthrough.md).
 - The I/O worker has plumbing to *prefer* xHCI for guest-visible WebUSB passthrough when an xHCI
   bridge implements the WebUSB hotplug/action API (`set_connected`, `drain_actions`, `push_completion`,
-  `reset`). The current `XhciControllerBridge` does not expose this interface, so the worker will
-  fall back to the UHCI-based WebUSB passthrough path.
+  `reset`). `aero_wasm::XhciControllerBridge` exposes this interface, so WebUSB guest selection will
+  choose xHCI when it is available (still bring-up quality until doorbell-driven ring execution is
+  implemented).
 - Similarly, the web runtime has a code path to attach synthetic USB HID devices behind xHCI for
   WASM builds that omit UHCI, but it relies on the same missing topology APIs. Today, synthetic USB
   HID devices are expected to attach behind UHCI.
@@ -165,8 +166,10 @@ Notes:
 
 The current xHCI effort is intentionally staged. The long-term goal is a real xHCI host controller
 for modern guests and for high-speed/superspeed passthrough, but the in-tree code today is mostly
-**scaffolding** (a minimal-but-realistic MMIO register model, plus TRB/ring/command/transfer helpers
-used by tests and harnesses).
+**MVP scaffolding**: a minimal-but-realistic MMIO register model (USB2 ports + PORTSC, interrupter 0
+runtime regs, ERST-backed event ring delivery) plus TRB/ring/command/transfer helpers used by tests
+and harnesses. Major guest-visible pieces are still missing (doorbells and full ring scheduling), so
+treat the implementation as “bring-up” quality rather than a complete xHCI.
 
 ### What exists today
 
@@ -203,6 +206,8 @@ used by tests and harnesses).
   - `step_frames()` advances controller/port timers (`XhciController::tick_1ms`) and increments a tick counter.
   - `poll()` drains any queued event TRBs into the guest event ring (`XhciController::service_event_ring`);
     DMA is gated on BME.
+  - WebUSB passthrough hooks (`set_connected`, `drain_actions`, `push_completion`, `reset`) used by the
+    web I/O worker to attach/detach a passthrough device behind a fixed xHCI root port.
   - `irq_asserted()` reflects `XhciController::irq_level()` (USBSTS.EINT / interrupter pending).
   - Deterministic snapshot/restore of the controller state + tick counter.
 
@@ -285,7 +290,7 @@ control pipe:
 - Bulk IN/OUT via Normal TRBs for passthrough-style flows.
 
 This harness is a reference/validation tool; it is **not** yet integrated into the guest-visible
-MMIO controller stubs.
+controller MMIO/doorbell model.
 
 Dedicated EP0 unit tests also exist:
 
@@ -376,11 +381,17 @@ USB-related unit tests commonly live under:
 
 Rust xHCI-focused tests commonly live under:
 
+- `crates/aero-usb/tests/xhci_controller_mmio.rs`
+- `crates/aero-usb/tests/xhci_event_ring.rs`
 - `crates/aero-usb/tests/xhci_trb_ring.rs`
 - `crates/aero-usb/tests/xhci_context_parse.rs`
-- `crates/aero-usb/tests/xhci_interrupt_in.rs`
+- `crates/aero-usb/tests/xhci_extcaps.rs`
+- `crates/aero-usb/tests/xhci_supported_protocol.rs`
 - `crates/aero-usb/tests/xhci_ports.rs`
-- `crates/aero-usb/tests/xhci_event_ring.rs`
+- `crates/aero-usb/tests/xhci_interrupt_in.rs`
+- `crates/aero-usb/tests/xhci_control_get_descriptor.rs`
+- `crates/aero-usb/tests/xhci_control_set_configuration.rs`
+- `crates/aero-usb/tests/xhci_control_in_nak_retry.rs`
 - `crates/aero-usb/tests/xhci_webusb_passthrough.rs`
 
 When adding or extending xHCI functionality, prefer adding focused Rust tests (for controller semantics) and/or web unit tests (for host integration and PCI wrapper behavior) alongside the implementation.
