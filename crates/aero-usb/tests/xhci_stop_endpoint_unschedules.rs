@@ -51,6 +51,9 @@ fn stop_endpoint_command_unschedules_active_endpoint() {
     // Doorbells and command execution only make progress while the controller is running.
     xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
+    // Transfer execution is gated on USBCMD.RUN.
+    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
+
     let completion = xhci.enable_slot(&mut mem);
     assert_eq!(completion.completion_code, CommandCompletionCode::Success);
     let slot_id = completion.slot_id;
