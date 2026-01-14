@@ -1916,13 +1916,18 @@ static __forceinline uint32_t AeroGpuAllocTableEntryFlagsFromAllocationListEntry
     }
 
 #if defined(AEROGPU_KMD_USE_WDK_DDI) && AEROGPU_KMD_USE_WDK_DDI
-    const BOOLEAN written = (Entry->WriteOperation != 0);
+    /*
+     * WDDM 1.1 contract: DXGK_ALLOCATIONLIST carries per-submit access flags.
+     * Bit 0 of Flags.Value corresponds to WriteOperation.
+     */
+    const BOOLEAN written = ((Entry->Flags.Value & 0x1u) != 0) ? TRUE : FALSE;
     return written ? 0u : (uint32_t)AEROGPU_ALLOC_FLAG_READONLY;
 #else
 #if DBG
     static volatile LONG g_BuildAllocTableReadonlyFallbackLogCount = 0;
     AEROGPU_LOG_RATELIMITED(g_BuildAllocTableReadonlyFallbackLogCount,
                             8,
+                            "%s",
                             "BuildAllocTable: allocation list access flags unavailable; not setting AEROGPU_ALLOC_FLAG_READONLY");
 #endif
     return 0;
@@ -2033,11 +2038,6 @@ static NTSTATUS AeroGpuBuildAllocTableFillScratch(_In_reads_opt_(Count) const DX
                  */
                 if (entryIndex < entryCount && sizeBytes > TmpEntries[entryIndex].size_bytes) {
                     TmpEntries[entryIndex].size_bytes = sizeBytes;
-                }
-
-                /* Merge per-submit access flags across duplicate alloc_id entries (aliases). */
-                if (writeOp && entryIndex < entryCount) {
-                    TmpEntries[entryIndex].flags &= ~(uint32_t)AEROGPU_ALLOC_FLAG_READONLY;
                 }
 
                 /* Merge submission-time access flags: READONLY only if all aliases are read-only. */
