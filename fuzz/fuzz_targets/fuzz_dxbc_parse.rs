@@ -195,6 +195,19 @@ fn take_capped_bytes<'a>(u: &mut Unstructured<'a>, cap: usize) -> &'a [u8] {
     u.bytes(len).unwrap_or(&[])
 }
 
+fn build_malformed_signature_chunk(seed: &[u8]) -> Vec<u8> {
+    // Build a tiny signature-like payload that intentionally fails parsing quickly (e.g. param_offset
+    // points into the header). Keep it within our caps so higher-level helpers still attempt to parse
+    // it, exercising the "skip malformed duplicates" logic.
+    let mut u = Unstructured::new(seed);
+    let param_count = (u.arbitrary::<u8>().unwrap_or(0) % 8) as u32 + 1;
+    let param_offset = u.arbitrary::<u8>().unwrap_or(0) % 8; // < SIGNATURE_HEADER_LEN
+    let mut out = vec![0u8; 8];
+    out[0..4].copy_from_slice(&param_count.to_le_bytes());
+    out[4..8].copy_from_slice(&(param_offset as u32).to_le_bytes());
+    out
+}
+
 fn build_patched_signature_chunk(fourcc: FourCC, seed: &[u8]) -> Vec<u8> {
     // Build a small, self-consistent signature chunk payload (not including the DXBC chunk header).
     //
@@ -556,30 +569,56 @@ fn build_patched_dxbc(input: &[u8]) -> Vec<u8> {
     let osgn_seed = take_capped_bytes(&mut u, MAX_PATCHED_SIG_BYTES);
     let psgn_seed = take_capped_bytes(&mut u, MAX_PATCHED_SIG_BYTES);
     let pcsg_seed = take_capped_bytes(&mut u, MAX_PATCHED_SIG_BYTES);
+    let bad_isgn_seed = take_capped_bytes(&mut u, 32);
+    let bad_osgn_seed = take_capped_bytes(&mut u, 32);
+    let bad_psgn_seed = take_capped_bytes(&mut u, 32);
+    let bad_pcsg_seed = take_capped_bytes(&mut u, 32);
     let isgn_payload = build_patched_signature_chunk(isgn_fourcc, isgn_seed);
     let osgn_payload = build_patched_signature_chunk(osgn_fourcc, osgn_seed);
     let psgn_payload = build_patched_signature_chunk(psgn_fourcc, psgn_seed);
     let pcsg_payload = build_patched_signature_chunk(pcsg_fourcc, pcsg_seed);
+    let bad_isgn_payload = build_malformed_signature_chunk(bad_isgn_seed);
+    let bad_osgn_payload = build_malformed_signature_chunk(bad_osgn_seed);
+    let bad_psgn_payload = build_malformed_signature_chunk(bad_psgn_seed);
+    let bad_pcsg_payload = build_malformed_signature_chunk(bad_pcsg_seed);
     let shader_bytes = take_capped_bytes(&mut u, MAX_PATCHED_SHADER_BYTES);
     let rdef_seed = take_capped_bytes(&mut u, MAX_PATCHED_OTHER_BYTES);
     let ctab_seed = take_capped_bytes(&mut u, MAX_PATCHED_OTHER_BYTES);
     let rdef_payload = build_patched_rdef_chunk(rdef_seed);
     let ctab_payload = build_patched_ctab_chunk(ctab_seed);
+    let bad_rdef_payload = vec![0u8; 4];
+    let bad_ctab_payload = vec![0u8; 4];
     let stat_bytes = take_capped_bytes(&mut u, MAX_PATCHED_OTHER_BYTES);
 
-    let chunks: &[(FourCC, &[u8])] = &[
-        (isgn_fourcc, &isgn_payload),
-        (osgn_fourcc, &osgn_payload),
-        (psgn_fourcc, &psgn_payload),
-        (pcsg_fourcc, &pcsg_payload),
-        (shader_fourcc, shader_bytes),
-        (rdef_fourcc, &rdef_payload),
-        (FourCC(*b"CTAB"), &ctab_payload),
-        (FourCC(*b"STAT"), stat_bytes),
-    ];
+    let mut chunks: Vec<(FourCC, &[u8])> = Vec::with_capacity(16);
+    // Insert malformed duplicates before the valid chunks so helper APIs exercise their
+    // "try all chunks in file order and return the first that parses" behavior.
+    chunks.push((isgn_fourcc, &bad_isgn_payload));
+    chunks.push((isgn_fourcc, &isgn_payload));
+    chunks.push((osgn_fourcc, &bad_osgn_payload));
+    chunks.push((osgn_fourcc, &osgn_payload));
+    chunks.push((psgn_fourcc, &bad_psgn_payload));
+    chunks.push((psgn_fourcc, &psgn_payload));
+    chunks.push((pcsg_fourcc, &bad_pcsg_payload));
+    chunks.push((pcsg_fourcc, &pcsg_payload));
+    chunks.push((shader_fourcc, shader_bytes));
+
+    // Occasionally include a malformed primary `RDEF` chunk even when we store the real payload
+    // under the alternate `RD11` id, to exercise the fallback path when `RDEF` exists but is
+    // malformed.
+    if rdef_fourcc.0 == *b"RD11" && selector & 64 != 0 {
+        chunks.push((FourCC(*b"RDEF"), &bad_rdef_payload));
+    }
+    chunks.push((rdef_fourcc, &bad_rdef_payload));
+    chunks.push((rdef_fourcc, &rdef_payload));
+
+    chunks.push((FourCC(*b"CTAB"), &bad_ctab_payload));
+    chunks.push((FourCC(*b"CTAB"), &ctab_payload));
+
+    chunks.push((FourCC(*b"STAT"), stat_bytes));
 
     // Keep the synthesized container bounded regardless of future cap tweaks.
-    let out = dxbc_test_utils::build_container(chunks);
+    let out = dxbc_test_utils::build_container(&chunks);
     debug_assert!(out.len() <= MAX_INPUT_SIZE_BYTES);
     out
 }
