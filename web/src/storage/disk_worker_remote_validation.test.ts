@@ -121,6 +121,58 @@ describe("disk_worker remote validation", () => {
     expect(resp.error?.message ?? "").toMatch(/chunkSizeBytes/i);
   });
 
+  it("rejects OPFS create_remote sizeBytes larger than MAX_SAFE_INTEGER", async () => {
+    vi.resetModules();
+
+    const root = new MemoryDirectoryHandle("root");
+    restoreOpfs = installMemoryOpfs(root).restore;
+
+    hadOriginalSelf = Object.prototype.hasOwnProperty.call(globalThis, "self");
+    originalSelf = (globalThis as unknown as { self?: unknown }).self;
+
+    const requestId = 1;
+    let resolveResponse: ((msg: any) => void) | null = null;
+    const response = new Promise<any>((resolve) => {
+      resolveResponse = resolve;
+    });
+
+    const workerScope: any = {
+      postMessage(msg: any) {
+        if (msg?.type === "response" && msg.requestId === requestId) {
+          resolveResponse?.(msg);
+        }
+      },
+    };
+    (globalThis as unknown as { self?: unknown }).self = workerScope;
+
+    await import("./disk_worker.ts");
+
+    workerScope.onmessage?.({
+      data: {
+        type: "request",
+        requestId,
+        backend: "opfs",
+        op: "create_remote",
+        payload: {
+          name: "Remote disk",
+          imageId: "remote-validation-size",
+          version: "v1",
+          delivery: "range",
+          // 2^53: divisible by 512 but not a safe integer.
+          sizeBytes: 9007199254740992,
+          kind: "hdd",
+          format: "raw",
+          urls: { url: "https://example.invalid/disk.img" },
+        },
+      },
+    });
+
+    const resp = await response;
+    expect(resp.ok).toBe(false);
+    expect(resp.error?.message ?? "").toMatch(/sizeBytes/i);
+    expect(resp.error?.message ?? "").toMatch(/safe/i);
+  });
+
   it("rejects OPFS update_remote overlayBlockSizeBytes larger than 64MiB", async () => {
     vi.resetModules();
 

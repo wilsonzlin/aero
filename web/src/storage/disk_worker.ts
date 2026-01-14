@@ -1049,8 +1049,8 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
       if (kind === "cd" && format !== "iso") {
         throw new Error("CD remote disks must use format 'iso'");
       }
-      if (typeof sizeBytes !== "number" || !Number.isFinite(sizeBytes) || sizeBytes <= 0) {
-        throw new Error("sizeBytes must be a positive number");
+      if (typeof sizeBytes !== "number" || !Number.isFinite(sizeBytes) || sizeBytes <= 0 || !Number.isSafeInteger(sizeBytes)) {
+        throw new Error("sizeBytes must be a positive safe integer");
       }
       if (sizeBytes % 512 !== 0) {
         throw new Error("sizeBytes must be a multiple of 512");
@@ -1155,8 +1155,8 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
       if (payload.format !== undefined) meta.format = payload.format as DiskFormat;
       if (payload.sizeBytes !== undefined) {
         const next = Number(payload.sizeBytes);
-        if (!Number.isFinite(next) || next <= 0) {
-          throw new Error("sizeBytes must be a positive number");
+        if (!Number.isFinite(next) || next <= 0 || !Number.isSafeInteger(next)) {
+          throw new Error("sizeBytes must be a positive safe integer");
         }
         if (next % 512 !== 0) {
           throw new Error("sizeBytes must be a multiple of 512");
