@@ -9,7 +9,7 @@ on:
         default: ""
         type: string
       qemu_system:
-        description: qemu-system-* binary to use on the runner
+        description: qemu-system-* binary to use on the runner (required unless dry_run=true)
         required: false
         default: qemu-system-x86_64
         type: string
