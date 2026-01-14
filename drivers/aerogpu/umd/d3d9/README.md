@@ -311,11 +311,10 @@ Code anchors (all in `src/aerogpu_d3d9_driver.cpp`):
 - Stage0 fixed-function PS variants: `fixedfunc_stage0_key_locked()` + `fixedfunc_ps_variant_bytes()`
 - XYZRHW conversion path: `fixedfunc_fvf_is_xyzrhw()` + `convert_xyzrhw_to_clipspace_locked()`
 - FVF selection paths: `device_set_fvf()` and the `SetVertexDecl` pattern detection in `device_set_vertex_decl()`
-  - Note: `device_set_fvf()` synthesizes an internal vertex declaration for:
-    - `fixedfunc_fvf_supported()` (XYZRHW variants), and
-    - `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1` (WVP transform path).
-    The untextured `D3DFVF_XYZ | D3DFVF_DIFFUSE` bring-up path relies on a compatible vertex declaration being set
-    (via `SetVertexDecl`) so `device_set_vertex_decl()` can infer the implied FVF.
+  - `device_set_fvf()` synthesizes/binds an internal vertex declaration for each supported fixed-function FVF
+    (XYZRHW/XYZ with `DIFFUSE` and optional `TEX1`), so the draw path can bind a known input layout.
+  - `device_set_vertex_decl()` pattern-matches common decl layouts and sets an implied `dev->fvf` so the fixed-function
+    fallback path can activate even when `SetFVF` is never invoked.
 
 Not yet implemented (examples; expected by some fixed-function apps):
 
@@ -328,11 +327,10 @@ Implementation notes (bring-up):
 - For `POSITIONT`/`XYZRHW` vertices, the fallback path converts screen-space `XYZRHW` to clip-space on the CPU
   (`convert_xyzrhw_to_clipspace_locked()` in `src/aerogpu_d3d9_driver.cpp`) and then draws using a tiny built-in
   `vs_2_0`/`ps_2_0` pair.
-- `D3DFVF_XYZRHW*` is supported via the `SetFVF` path (the UMD builds/binds an internal vertex declaration).
-- `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1` is supported via both `SetFVF` and `SetVertexDecl`, and uses a fixed-function
-  VS that applies the combined world/view/projection matrix (uploaded into a reserved VS constant range by the UMD).
-- The untextured `D3DFVF_XYZ | D3DFVF_DIFFUSE` bring-up path is currently exercised via the `SetVertexDecl` path (the UMD
-  detects common declaration patterns and sets `dev->fvf` accordingly).
+- Supported FVFs can be selected via either `SetFVF` (internal declaration synthesized) or `SetVertexDecl` (UMD infers an
+  implied FVF from common declaration layouts in `device_set_vertex_decl()`).
+- `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1` uses a fixed-function VS that applies the combined world/view/projection matrix
+  (uploaded into a reserved VS constant range by the UMD).
 - For indexed draws in this mode, indices may be expanded into a temporary vertex stream (conservative but sufficient
   for bring-up).
 - Patch rendering (`DrawRectPatch` / `DrawTriPatch`) is supported for the bring-up subset of **cubic Bezier patches**:
