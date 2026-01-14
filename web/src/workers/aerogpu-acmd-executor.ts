@@ -39,6 +39,7 @@ import {
   AEROGPU_ALLOC_TABLE_HEADER_SIZE as AEROGPU_ALLOC_TABLE_HEADER_BYTES,
   AEROGPU_ALLOC_TABLE_MAGIC,
 } from "../../../emulator/protocol/aerogpu/aerogpu_ring.ts";
+import { PCI_MMIO_BASE } from "../arch/guest_phys.ts";
 import { guestPaddrToRamOffset, guestRangeInBounds } from "../arch/guest_ram_translate.ts";
 
 export type AeroGpuCpuTexture = {
@@ -253,10 +254,46 @@ const toU64 = (value: number, label: string): number => {
   return int;
 };
 
-const sliceGuestChecked = (guest: Uint8Array, gpa: number, len: number, label: string): Uint8Array => {
-  const ramBytes = toU64(guest.byteLength, "guest_len");
+type GuestPhysMapping = {
+  guestU8?: Uint8Array | null;
+  vramU8?: Uint8Array | null;
+  /// Base guest physical address of the `vramU8` BAR1 aperture.
+  ///
+  /// When omitted, defaults to `PCI_MMIO_BASE` (0xE000_0000) by contract.
+  vramBasePaddr?: number;
+};
+
+const sliceGuestChecked = (mem: GuestPhysMapping, gpa: number, len: number, label: string): Uint8Array => {
   const addr = toU64(gpa, "guest gpa");
   const length = toU64(len, "len");
+
+  // BAR1 VRAM mapping: treat `[vramBasePaddr..vramBasePaddr+vramLen)` as a flat aperture.
+  const vram = mem.vramU8;
+  if (vram) {
+    const vramBase = toU64(mem.vramBasePaddr ?? PCI_MMIO_BASE, "vram_base_paddr");
+    const vramLen = toU64(vram.byteLength, "vram_len");
+    const vramEnd = vramBase + vramLen;
+    if (vramEnd < vramBase) throw new Error("aerogpu: vram aperture size overflow");
+
+    if (length === 0) {
+      if (addr >= vramBase && addr <= vramEnd) {
+        const off = addr - vramBase;
+        return vram.subarray(off, off);
+      }
+    } else if (addr >= vramBase && addr <= vramEnd) {
+      if (addr < vramEnd && length <= vramEnd - addr) {
+        const off = addr - vramBase;
+        return vram.subarray(off, off + length);
+      }
+      throw new Error(
+        `aerogpu: vram out of bounds for ${label} (gpa=0x${addr.toString(16)}, len=0x${length.toString(16)}, vram_base=0x${vramBase.toString(16)}, vram_len=0x${vramLen.toString(16)})`,
+      );
+    }
+  }
+
+  // Guest RAM mapping (PC/Q35 low/high RAM with a PCI/MMIO hole).
+  const guest = requireGuestU8(mem.guestU8);
+  const ramBytes = toU64(guest.byteLength, "guest_len");
 
   if (!guestRangeInBounds(ramBytes, addr, length)) {
     throw new Error(
@@ -609,13 +646,13 @@ const uploadTextureSubresourceFromGuest = (
   format: number,
   layout: AeroGpuTextureSubresourceLayout,
   dstRgba8: Uint8Array,
-  guest: Uint8Array,
+  mem: GuestPhysMapping,
   baseGpa: number,
 ): void => {
   const rowBytes = layout.width * 4;
   for (let y = 0; y < layout.height; y += 1) {
     const srcRow = sliceGuestChecked(
-      guest,
+      mem,
       baseGpa + layout.offsetBytes + y * layout.rowPitchBytes,
       rowBytes,
       `texture ${handle} subresource upload`,
@@ -634,6 +671,20 @@ const uploadTextureSubresourceFromGuest = (
 export type ExecuteAerogpuCmdStreamOptions = {
   allocTable: AeroGpuAllocTable | null;
   guestU8: Uint8Array | null;
+  /**
+   * Optional BAR1 VRAM aperture backing store.
+   *
+   * When provided, guest-physical addresses in the PCI/MMIO hole starting at
+   * `vramBasePaddr` (default: `PCI_MMIO_BASE`) will be resolved into this buffer
+   * instead of hard-failing as "not backed by RAM".
+   */
+  vramU8?: Uint8Array | null;
+  /**
+   * Base guest physical address of `vramU8`.
+   *
+   * Defaults to `PCI_MMIO_BASE` (0xE000_0000).
+   */
+  vramBasePaddr?: number;
   presentTexture?: (tex: AeroGpuCpuTexture) => void;
 };
 
@@ -954,7 +1005,6 @@ export const executeAerogpuCmdStream = (
         const dirtySizeBytes = checkedU64ToNumber(readU64LeChecked(dv, offset + 24, end, "size_bytes"), "size_bytes");
         if (dirtySizeBytes === 0) break;
 
-        const guest = requireGuestU8(opts.guestU8);
         const table = requireAllocTable(opts.allocTable);
 
         const buf = state.buffers.get(handle);
@@ -978,7 +1028,7 @@ export const executeAerogpuCmdStream = (
 
           const baseGpa = alloc.gpa + backing.offsetBytes;
           buf.data.set(
-            sliceGuestChecked(guest, baseGpa + dirtyOffsetBytes, dirtySizeBytes, `buffer ${handle}`),
+            sliceGuestChecked(opts, baseGpa + dirtyOffsetBytes, dirtySizeBytes, `buffer ${handle}`),
             dirtyOffsetBytes,
           );
           break;
@@ -1017,7 +1067,7 @@ export const executeAerogpuCmdStream = (
           const subStart = layout.offsetBytes;
           const subEnd = subStart + layout.sizeBytes;
           if (subEnd <= dirtyStart || subStart >= dirtyEnd) continue;
-          uploadTextureSubresourceFromGuest(handle, tex.format, layout, tex.subresources[i]!, guest, baseGpa);
+          uploadTextureSubresourceFromGuest(handle, tex.format, layout, tex.subresources[i]!, opts, baseGpa);
         }
         break;
       }
@@ -1134,7 +1184,7 @@ export const executeAerogpuCmdStream = (
           throw new Error("aerogpu: COPY_BUFFER out of bounds");
         }
 
-        type CopyBufferWriteback = { guest: Uint8Array; gpa: number };
+        type CopyBufferWriteback = { gpa: number };
         let writeback: CopyBufferWriteback | null = null;
         if (flags === AEROGPU_COPY_FLAG_WRITEBACK_DST) {
           const backing = dst.backing;
@@ -1142,7 +1192,6 @@ export const executeAerogpuCmdStream = (
             throw new Error(`aerogpu: COPY_BUFFER writeback requires dst buffer ${dstBuffer} to have backing_alloc_id`);
           }
 
-          const guest = requireGuestU8(opts.guestU8);
           const table = requireAllocTable(opts.allocTable);
           const alloc = table.get(backing.allocId);
           if (!alloc) throw new Error(`aerogpu: unknown alloc_id ${backing.allocId} for buffer ${dstBuffer}`);
@@ -1155,14 +1204,14 @@ export const executeAerogpuCmdStream = (
             );
           }
 
-          writeback = { guest, gpa: alloc.gpa + backing.offsetBytes + dstOffsetBytes };
+          writeback = { gpa: alloc.gpa + backing.offsetBytes + dstOffsetBytes };
         }
 
         const tmp = src.data.slice(srcOffsetBytes, srcOffsetBytes + sizeBytes);
         dst.data.set(tmp, dstOffsetBytes);
 
         if (writeback) {
-          sliceGuestChecked(writeback.guest, writeback.gpa, sizeBytes, `buffer ${dstBuffer} writeback`).set(tmp);
+          sliceGuestChecked(opts, writeback.gpa, sizeBytes, `buffer ${dstBuffer} writeback`).set(tmp);
         }
         break;
       }
@@ -1234,7 +1283,7 @@ export const executeAerogpuCmdStream = (
           tmp.set(srcBytes.subarray(srcOff, srcOff + rowBytes), row * rowBytes);
         }
 
-        type CopyTexture2dWriteback = { guest: Uint8Array; baseGpa: number };
+        type CopyTexture2dWriteback = { baseGpa: number };
         let writeback: CopyTexture2dWriteback | null = null;
         if (flags === AEROGPU_COPY_FLAG_WRITEBACK_DST) {
           const backing = dst.backing;
@@ -1242,7 +1291,6 @@ export const executeAerogpuCmdStream = (
             throw new Error(`aerogpu: COPY_TEXTURE2D writeback requires dst texture ${dstTexture} to have backing_alloc_id`);
           }
 
-          const guest = requireGuestU8(opts.guestU8);
           const table = requireAllocTable(opts.allocTable);
           const alloc = table.get(backing.allocId);
           if (!alloc) throw new Error(`aerogpu: unknown alloc_id ${backing.allocId} for texture ${dstTexture}`);
@@ -1263,7 +1311,7 @@ export const executeAerogpuCmdStream = (
             );
           }
 
-          writeback = { guest, baseGpa: alloc.gpa + backing.offsetBytes };
+          writeback = { baseGpa: alloc.gpa + backing.offsetBytes };
         }
 
         for (let row = 0; row < height; row += 1) {
@@ -1277,7 +1325,7 @@ export const executeAerogpuCmdStream = (
             const dstBackingOff = dstLayout.offsetBytes + (dstY + row) * dstLayout.rowPitchBytes + dstX * 4;
             const tmpOff = row * rowBytes;
             const dstRowBytes = sliceGuestChecked(
-              writeback.guest,
+              opts,
               writeback.baseGpa + dstBackingOff,
               rowBytes,
               `texture ${dstTexture} writeback`,

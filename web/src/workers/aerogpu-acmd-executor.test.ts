@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  AEROGPU_CMD_COPY_BUFFER_SIZE,
   AEROGPU_CMD_COPY_TEXTURE2D_SIZE,
+  AEROGPU_CMD_CREATE_BUFFER_SIZE,
   AEROGPU_CMD_CREATE_TEXTURE2D_SIZE,
   AEROGPU_CMD_STREAM_HEADER_SIZE,
   AEROGPU_CMD_STREAM_MAGIC,
@@ -17,6 +19,7 @@ import {
 } from "../../../emulator/protocol/aerogpu/aerogpu_ring";
 
 import { createAerogpuCpuExecutorState, decodeAerogpuAllocTable, executeAerogpuCmdStream } from "./aerogpu-acmd-executor";
+import { PCI_MMIO_BASE } from "../arch/guest_phys.ts";
 
 describe("workers/aerogpu-acmd-executor", () => {
   it("accepts alloc table entries with gpa=0", () => {
@@ -301,5 +304,91 @@ describe("workers/aerogpu-acmd-executor", () => {
 
     expect(tex.subresources.length).toBe(mipLevels * arrayLayers);
     expect(Array.from(tex.subresources[subresourceIndex] ?? [])).toEqual(Array.from(uploadPixels));
+  });
+
+  it("supports VRAM-backed allocs for COPY_BUFFER (WRITEBACK_DST)", () => {
+    const payload = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
+
+    const buildStream = (): ArrayBuffer => {
+      const createSize = AEROGPU_CMD_CREATE_BUFFER_SIZE;
+      const uploadSize = AEROGPU_CMD_UPLOAD_RESOURCE_SIZE + payload.byteLength;
+      const copySize = AEROGPU_CMD_COPY_BUFFER_SIZE;
+      const streamSize = AEROGPU_CMD_STREAM_HEADER_SIZE + createSize + uploadSize + createSize + copySize;
+
+      const buf = new ArrayBuffer(streamSize);
+      const dv = new DataView(buf);
+
+      dv.setUint32(0, AEROGPU_CMD_STREAM_MAGIC, true);
+      dv.setUint32(4, AEROGPU_ABI_VERSION_U32, true);
+      dv.setUint32(8, streamSize, true);
+      dv.setUint32(12, 0, true); // flags
+      dv.setUint32(16, 0, true); // reserved0
+      dv.setUint32(20, 0, true); // reserved1
+
+      let off = AEROGPU_CMD_STREAM_HEADER_SIZE;
+
+      // CREATE_BUFFER src (host-owned).
+      dv.setUint32(off + 0, AerogpuCmdOpcode.CreateBuffer, true);
+      dv.setUint32(off + 4, createSize, true);
+      dv.setUint32(off + 8, 1, true); // buffer_handle
+      dv.setUint32(off + 12, 0, true); // usage_flags
+      dv.setBigUint64(off + 16, BigInt(payload.byteLength), true); // size_bytes
+      dv.setUint32(off + 24, 0, true); // backing_alloc_id
+      dv.setUint32(off + 28, 0, true); // backing_offset_bytes
+      dv.setBigUint64(off + 32, 0n, true); // reserved0
+      off += createSize;
+
+      // UPLOAD_RESOURCE src
+      dv.setUint32(off + 0, AerogpuCmdOpcode.UploadResource, true);
+      dv.setUint32(off + 4, uploadSize, true);
+      dv.setUint32(off + 8, 1, true); // resource_handle
+      dv.setUint32(off + 12, 0, true); // reserved0
+      dv.setBigUint64(off + 16, 0n, true); // offset_bytes
+      dv.setBigUint64(off + 24, BigInt(payload.byteLength), true); // size_bytes
+      new Uint8Array(buf, off + AEROGPU_CMD_UPLOAD_RESOURCE_SIZE, payload.byteLength).set(payload);
+      off += uploadSize;
+
+      // CREATE_BUFFER dst (VRAM-backed).
+      dv.setUint32(off + 0, AerogpuCmdOpcode.CreateBuffer, true);
+      dv.setUint32(off + 4, createSize, true);
+      dv.setUint32(off + 8, 2, true); // buffer_handle
+      dv.setUint32(off + 12, 0, true); // usage_flags
+      dv.setBigUint64(off + 16, BigInt(payload.byteLength), true); // size_bytes
+      dv.setUint32(off + 24, 1, true); // backing_alloc_id
+      dv.setUint32(off + 28, 0, true); // backing_offset_bytes
+      dv.setBigUint64(off + 32, 0n, true); // reserved0
+      off += createSize;
+
+      // COPY_BUFFER (WRITEBACK_DST) dst <- src
+      dv.setUint32(off + 0, AerogpuCmdOpcode.CopyBuffer, true);
+      dv.setUint32(off + 4, copySize, true);
+      dv.setUint32(off + 8, 2, true); // dst_buffer
+      dv.setUint32(off + 12, 1, true); // src_buffer
+      dv.setBigUint64(off + 16, 0n, true); // dst_offset_bytes
+      dv.setBigUint64(off + 24, 0n, true); // src_offset_bytes
+      dv.setBigUint64(off + 32, BigInt(payload.byteLength), true); // size_bytes
+      dv.setUint32(off + 40, AEROGPU_COPY_FLAG_WRITEBACK_DST, true); // flags
+      dv.setUint32(off + 44, 0, true); // reserved0
+      off += copySize;
+
+      if (off !== streamSize) throw new Error(`stream size mismatch (off=${off} != streamSize=${streamSize})`);
+      return buf;
+    };
+
+    const state = createAerogpuCpuExecutorState();
+    const guestU8 = new Uint8Array(0x1000);
+    guestU8.fill(0x11);
+    const vramU8 = new Uint8Array(0x1000);
+    vramU8.fill(0x22);
+
+    const allocTable = new Map([[1, { gpa: PCI_MMIO_BASE, sizeBytes: vramU8.byteLength, flags: 0 }]]);
+
+    executeAerogpuCmdStream(state, buildStream(), { allocTable, guestU8, vramU8 });
+
+    expect(Array.from(vramU8.slice(0, payload.byteLength))).toEqual(Array.from(payload));
+    // Prove we didn't clobber past the end of the backing copy.
+    expect(vramU8[payload.byteLength]).toBe(0x22);
+    // Ensure we wrote to VRAM, not RAM.
+    expect(Array.from(guestU8.slice(0, payload.byteLength))).toEqual(new Array(payload.byteLength).fill(0x11));
   });
 });
