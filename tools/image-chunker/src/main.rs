@@ -720,7 +720,8 @@ async fn verify_http_or_file(args: &VerifyArgs) -> Result<()> {
     // Only keep details for the first few failures (avoid unbounded memory usage).
     const FAILURE_SAMPLE_LIMIT: u64 = 10;
 
-    let (work_tx, work_rx) = async_channel::bounded::<u64>(args.concurrency * 2);
+    let work_cap = args.concurrency.saturating_mul(2).max(1);
+    let (work_tx, work_rx) = async_channel::bounded::<u64>(work_cap);
     let (failure_tx, mut failure_rx) = tokio::sync::mpsc::unbounded_channel::<VerifyFailure>();
 
     let mut workers = Vec::with_capacity(args.concurrency);
@@ -1742,7 +1743,8 @@ async fn verify_chunks(
         message: String,
     }
 
-    let (work_tx, work_rx) = async_channel::bounded::<VerifyChunkJob>(concurrency * 2);
+    let work_cap = concurrency.saturating_mul(2).max(1);
+    let (work_tx, work_rx) = async_channel::bounded::<VerifyChunkJob>(work_cap);
     let (failure_tx, mut failure_rx) = tokio::sync::mpsc::unbounded_channel::<VerifyChunkFailure>();
 
     // Only keep details for the first few failures (avoid unbounded memory usage).
