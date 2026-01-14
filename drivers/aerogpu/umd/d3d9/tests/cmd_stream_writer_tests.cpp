@@ -6675,6 +6675,345 @@ bool TestGenerateMipSubLevelsBoxFilter2dA8B8G8R8ChannelOrder() {
   return Check(std::memcmp(payload, expected_mip1, sizeof(expected_mip1)) == 0, "UPLOAD_RESOURCE payload matches mip bytes");
 }
 
+bool TestGenerateMipSubLevelsRejectsSingleMipTexture() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3DDDI_HRESOURCE hResource{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_resource = false;
+
+    ~Cleanup() {
+      if (has_resource && device_funcs.pfnDestroyResource) {
+        device_funcs.pfnDestroyResource(hDevice, hResource);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnCreateResource != nullptr, "CreateResource must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnGenerateMipSubLevels != nullptr, "GenerateMipSubLevels must be available")) {
+    return false;
+  }
+
+  // Create a non-mipmapped texture (mip_levels==1). GenerateMipSubLevels should
+  // reject it.
+  D3D9DDIARG_CREATERESOURCE create_res{};
+  create_res.type = kD3dRTypeTexture;
+  create_res.format = 22u; // D3DFMT_X8R8G8B8
+  create_res.width = 4;
+  create_res.height = 4;
+  create_res.depth = 1;
+  create_res.mip_levels = 1;
+  create_res.usage = 0;
+  create_res.pool = 0;
+  create_res.size = 0;
+  create_res.hResource.pDrvPrivate = nullptr;
+  create_res.pSharedHandle = nullptr;
+  create_res.pPrivateDriverData = nullptr;
+  create_res.PrivateDriverDataSize = 0;
+  create_res.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_res);
+  if (!Check(hr == S_OK, "CreateResource(single-mip texture)")) {
+    return false;
+  }
+  cleanup.hResource = create_res.hResource;
+  cleanup.has_resource = true;
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnGenerateMipSubLevels(create_dev.hDevice, create_res.hResource);
+  if (!Check(hr == kD3DErrInvalidCall, "GenerateMipSubLevels(single-mip) returns D3DERR_INVALIDCALL")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "stream validates")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_UPLOAD_RESOURCE) == 0, "no UPLOAD_RESOURCE emitted on failure")) {
+    return false;
+  }
+  return Check(CountOpcode(buf, len, AEROGPU_CMD_RESOURCE_DIRTY_RANGE) == 0, "no DIRTY_RANGE emitted on failure");
+}
+
+bool TestGenerateMipSubLevelsRejectsLockedTexture() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3DDDI_HRESOURCE hResource{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_resource = false;
+
+    ~Cleanup() {
+      if (has_resource && device_funcs.pfnDestroyResource) {
+        device_funcs.pfnDestroyResource(hDevice, hResource);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnCreateResource != nullptr, "CreateResource must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnGenerateMipSubLevels != nullptr, "GenerateMipSubLevels must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnLock != nullptr && cleanup.device_funcs.pfnUnlock != nullptr, "Lock/Unlock must be available")) {
+    return false;
+  }
+
+  // Create a mipmapped texture and lock it. GenerateMipSubLevels should reject
+  // the call while the resource is locked.
+  D3D9DDIARG_CREATERESOURCE create_res{};
+  create_res.type = kD3dRTypeTexture;
+  create_res.format = 22u; // D3DFMT_X8R8G8B8
+  create_res.width = 4;
+  create_res.height = 4;
+  create_res.depth = 1;
+  create_res.mip_levels = 2;
+  create_res.usage = 0;
+  create_res.pool = 0;
+  create_res.size = 0;
+  create_res.hResource.pDrvPrivate = nullptr;
+  create_res.pSharedHandle = nullptr;
+  create_res.pPrivateDriverData = nullptr;
+  create_res.PrivateDriverDataSize = 0;
+  create_res.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_res);
+  if (!Check(hr == S_OK, "CreateResource(mipmapped texture)")) {
+    return false;
+  }
+  cleanup.hResource = create_res.hResource;
+  cleanup.has_resource = true;
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Lock read-only to avoid any upload/dirty packets during unlock.
+  D3D9DDIARG_LOCK lock{};
+  lock.hResource = create_res.hResource;
+  lock.offset_bytes = 0;
+  lock.size_bytes = 0;
+  lock.flags = 0x00000010u; // D3DLOCK_READONLY
+  D3DDDI_LOCKEDBOX box{};
+  hr = cleanup.device_funcs.pfnLock(create_dev.hDevice, &lock, &box);
+  if (!Check(hr == S_OK, "Lock(readonly)")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnGenerateMipSubLevels(create_dev.hDevice, create_res.hResource);
+  if (!Check(hr == kD3DErrInvalidCall, "GenerateMipSubLevels(locked) returns D3DERR_INVALIDCALL")) {
+    return false;
+  }
+
+  D3D9DDIARG_UNLOCK unlock{};
+  unlock.hResource = create_res.hResource;
+  unlock.offset_bytes = 0;
+  unlock.size_bytes = 0;
+  hr = cleanup.device_funcs.pfnUnlock(create_dev.hDevice, &unlock);
+  if (!Check(hr == S_OK, "Unlock(readonly)")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "stream validates")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_UPLOAD_RESOURCE) == 0, "no UPLOAD_RESOURCE emitted on failure")) {
+    return false;
+  }
+  return Check(CountOpcode(buf, len, AEROGPU_CMD_RESOURCE_DIRTY_RANGE) == 0, "no DIRTY_RANGE emitted on failure");
+}
+
+bool TestGenerateMipSubLevelsRejectsDepthStencilFormat() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3DDDI_HRESOURCE hResource{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_resource = false;
+
+    ~Cleanup() {
+      if (has_resource && device_funcs.pfnDestroyResource) {
+        device_funcs.pfnDestroyResource(hDevice, hResource);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnCreateResource != nullptr, "CreateResource must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnGenerateMipSubLevels != nullptr, "GenerateMipSubLevels must be available")) {
+    return false;
+  }
+
+  // Create a depth/stencil texture. Even if mipmapped, mip generation should be
+  // unsupported and must fail cleanly.
+  D3D9DDIARG_CREATERESOURCE create_res{};
+  create_res.type = kD3dRTypeTexture;
+  create_res.format = 75u; // D3DFMT_D24S8
+  create_res.width = 4;
+  create_res.height = 4;
+  create_res.depth = 1;
+  create_res.mip_levels = 2;
+  create_res.usage = 0x00000002u; // D3DUSAGE_DEPTHSTENCIL
+  create_res.pool = 0;
+  create_res.size = 0;
+  create_res.hResource.pDrvPrivate = nullptr;
+  create_res.pSharedHandle = nullptr;
+  create_res.pPrivateDriverData = nullptr;
+  create_res.PrivateDriverDataSize = 0;
+  create_res.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_res);
+  if (!Check(hr == S_OK, "CreateResource(depth-stencil texture)")) {
+    return false;
+  }
+  cleanup.hResource = create_res.hResource;
+  cleanup.has_resource = true;
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnGenerateMipSubLevels(create_dev.hDevice, create_res.hResource);
+  if (!Check(hr == kD3DErrInvalidCall, "GenerateMipSubLevels(D24S8) returns D3DERR_INVALIDCALL")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "stream validates")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_UPLOAD_RESOURCE) == 0, "no UPLOAD_RESOURCE emitted on failure")) {
+    return false;
+  }
+  return Check(CountOpcode(buf, len, AEROGPU_CMD_RESOURCE_DIRTY_RANGE) == 0, "no DIRTY_RANGE emitted on failure");
+}
+
 bool TestGenerateMipSubLevelsBoxFilter2dArrayTexture() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
@@ -32523,6 +32862,9 @@ int main() {
   RUN_TEST(TestGenerateMipSubLevelsBoxFilter2dA8R8G8B8PreservesAlpha);
   RUN_TEST(TestGenerateMipSubLevelsBoxFilter1x1ClampsSourceCoords);
   RUN_TEST(TestGenerateMipSubLevelsBoxFilter2dA8B8G8R8ChannelOrder);
+  RUN_TEST(TestGenerateMipSubLevelsRejectsSingleMipTexture);
+  RUN_TEST(TestGenerateMipSubLevelsRejectsLockedTexture);
+  RUN_TEST(TestGenerateMipSubLevelsRejectsDepthStencilFormat);
   RUN_TEST(TestGenerateMipSubLevelsBoxFilter2dArrayTexture);
   RUN_TEST(TestGenerateMipSubLevelsBoxFilter2dX1R5G5B5);
   RUN_TEST(TestGenerateMipSubLevelsBoxFilter2dR5G6B5);
