@@ -12063,15 +12063,36 @@ int wmain(int argc, wchar_t** argv) {
                                offload->TxCsumOffloadUdp4 + offload->TxCsumOffloadUdp6;
       const uint64_t rx_csum = offload->RxCsumValidatedTcp4 + offload->RxCsumValidatedTcp6 +
                                offload->RxCsumValidatedUdp4 + offload->RxCsumValidatedUdp6;
+      const uint64_t tx_tcp = offload->TxCsumOffloadTcp4 + offload->TxCsumOffloadTcp6;
+      const uint64_t tx_udp = offload->TxCsumOffloadUdp4 + offload->TxCsumOffloadUdp6;
+      const uint64_t rx_tcp = offload->RxCsumValidatedTcp4 + offload->RxCsumValidatedTcp6;
+      const uint64_t rx_udp = offload->RxCsumValidatedUdp4 + offload->RxCsumValidatedUdp6;
       const uint64_t fallback = offload->TxCsumFallback;
 
       log.Logf("virtio-net: csum_offload tx=%llu rx=%llu fallback=%llu features=%s",
                static_cast<unsigned long long>(tx_csum), static_cast<unsigned long long>(rx_csum),
                static_cast<unsigned long long>(fallback),
                VirtioFeaturesToString(static_cast<ULONGLONG>(offload->GuestFeatures)).c_str());
-      log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-net-offload-csum|PASS|tx_csum=%llu|rx_csum=%llu|fallback=%llu",
-               static_cast<unsigned long long>(tx_csum), static_cast<unsigned long long>(rx_csum),
-               static_cast<unsigned long long>(fallback));
+      log.Logf(
+          "AERO_VIRTIO_SELFTEST|TEST|virtio-net-offload-csum|PASS|tx_csum=%llu|rx_csum=%llu|fallback=%llu|"
+          "tx_tcp=%llu|tx_udp=%llu|rx_tcp=%llu|rx_udp=%llu|"
+          "tx_tcp4=%llu|tx_tcp6=%llu|tx_udp4=%llu|tx_udp6=%llu|"
+          "rx_tcp4=%llu|rx_tcp6=%llu|rx_udp4=%llu|rx_udp6=%llu",
+          static_cast<unsigned long long>(tx_csum),
+          static_cast<unsigned long long>(rx_csum),
+          static_cast<unsigned long long>(fallback),
+          static_cast<unsigned long long>(tx_tcp),
+          static_cast<unsigned long long>(tx_udp),
+          static_cast<unsigned long long>(rx_tcp),
+          static_cast<unsigned long long>(rx_udp),
+          static_cast<unsigned long long>(offload->TxCsumOffloadTcp4),
+          static_cast<unsigned long long>(offload->TxCsumOffloadTcp6),
+          static_cast<unsigned long long>(offload->TxCsumOffloadUdp4),
+          static_cast<unsigned long long>(offload->TxCsumOffloadUdp6),
+          static_cast<unsigned long long>(offload->RxCsumValidatedTcp4),
+          static_cast<unsigned long long>(offload->RxCsumValidatedTcp6),
+          static_cast<unsigned long long>(offload->RxCsumValidatedUdp4),
+          static_cast<unsigned long long>(offload->RxCsumValidatedUdp6));
     }
     all_ok = all_ok && net.ok;
     if (opt.test_net_link_flap) {

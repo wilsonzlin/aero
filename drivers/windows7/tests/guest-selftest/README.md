@@ -450,6 +450,9 @@ Notes:
 - The virtio-net section also emits a standalone UDP echo test marker (used by the host harness):
   - `AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp|PASS|bytes=<n>|small_bytes=<n>|mtu_bytes=<n>|reason=<...>|wsa=<err>`
   - The overall virtio-net test fails if this UDP echo test fails.
+- The virtio-net section also emits a checksum offload diagnostics marker (used by the host harness when `--require-net-csum-offload` is set):
+  - `AERO_VIRTIO_SELFTEST|TEST|virtio-net-offload-csum|PASS/FAIL|tx_csum=<n>|rx_csum=<n>|fallback=<n>|...`
+  - The marker may include per-protocol counters such as `tx_udp4`, `tx_udp6`, `rx_udp4`, `rx_udp6`, etc.
 - The virtio-net section also emits an additional (informational) UDP DNS query marker:
   - `AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp-dns|PASS/FAIL/SKIP|server=<ip>|query=<host>|sent=<n>|recv=<n>|rcode=<n>`
   - This marker is best-effort and does not affect overall PASS/FAIL.

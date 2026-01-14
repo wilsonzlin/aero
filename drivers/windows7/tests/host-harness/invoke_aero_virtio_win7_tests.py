@@ -7365,6 +7365,7 @@ def main() -> int:
         _emit_virtio_net_large_host_marker(tail)
         _emit_virtio_net_udp_host_marker(tail)
         _emit_virtio_net_udp_dns_host_marker(tail)
+        _emit_virtio_net_offload_csum_host_marker(tail)
         _emit_virtio_net_diag_host_marker(tail)
         net_msix_tail = (
             virtio_net_msix_marker_line.encode("utf-8") if virtio_net_msix_marker_line is not None else tail
@@ -8649,6 +8650,57 @@ def _emit_virtio_net_udp_dns_host_marker(tail: bytes) -> None:
             out.append(f"reason={_sanitize_marker_value(reason)}")
 
     print("|".join(out))
+
+
+def _emit_virtio_net_offload_csum_host_marker(tail: bytes) -> None:
+    """
+    Best-effort: emit a host-side marker describing the guest's checksum offload counters.
+
+    This does not affect harness PASS/FAIL; it's only for log scraping/diagnostics.
+
+    Example guest marker:
+      AERO_VIRTIO_SELFTEST|TEST|virtio-net-offload-csum|PASS|tx_csum=...|rx_csum=...|fallback=...
+
+    Example host marker:
+      AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_OFFLOAD_CSUM|PASS|tx_csum=...|rx_csum=...|fallback=...
+    """
+    marker_line = _try_extract_last_marker_line(
+        tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-offload-csum|"
+    )
+    if marker_line is None:
+        return
+
+    status = _try_extract_marker_status(marker_line)
+    if status is None:
+        status = "INFO"
+
+    fields = _parse_marker_kv_fields(marker_line)
+
+    parts = [f"AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_OFFLOAD_CSUM|{status}"]
+    ordered = (
+        "tx_csum",
+        "rx_csum",
+        "fallback",
+        "tx_tcp",
+        "tx_udp",
+        "rx_tcp",
+        "rx_udp",
+        "tx_tcp4",
+        "tx_tcp6",
+        "tx_udp4",
+        "tx_udp6",
+        "rx_tcp4",
+        "rx_tcp6",
+        "rx_udp4",
+        "rx_udp6",
+    )
+    for k in ordered:
+        if k in fields:
+            parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
+    extra = sorted(k for k in fields if k not in ordered)
+    for k in extra:
+        parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
+    print("|".join(parts))
 
 
 def _emit_virtio_net_diag_host_marker(tail: bytes) -> None:
