@@ -83,6 +83,7 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
             "tests/e2e/input_batch_malformed.spec.ts",
             "tests/e2e/input_capture.spec.ts",
             "tests/e2e/input_capture_io_worker.spec.ts",
+            "tests/e2e/input_batch_malformed.spec.ts",
             "tests/e2e/io_worker_i8042.spec.ts",
             "tests/e2e/io_worker_input_telemetry_drop_counter.spec.ts",
             "tests/e2e/scancodes.spec.ts",
