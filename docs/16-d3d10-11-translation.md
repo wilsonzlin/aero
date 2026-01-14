@@ -795,7 +795,9 @@ For patchlist topologies:
 - `patch_count = input_vertex_invocations / control_points`
   - leftover indices/vertices are ignored.
 
-Patchlist draws are invalid unless both HS and DS are bound.
+Patchlist draws require HS+DS for correct tessellation semantics. If HS/DS are unbound, the runtime
+MUST NOT silently reinterpret the topology as a non-patch topology; it should either route through
+the emulation path (if scaffolding is present) or reject the draw with a clear error.
 
 #### 2.1.1b) IA primitive assembly (non-adjacency; mapping from `primitive_id` → vertex invocations)
 
@@ -1446,7 +1448,6 @@ with an implementation-defined workgroup size chosen by the translator/runtime.
         `SV_InsideTessFactor`).
       - System values mapping (recommended):
         - `SV_PrimitiveID = patch_instance_id` (or `patch_id` if instancing is flattened).
-        - `SV_InstanceID = first_instance + instance_id` (if not flattened).
       - Note: HS patch-constant produces the tess factors but does not inherently know output buffer
         capacities. Allocation of per-patch output ranges can be done either:
         - in a separate deterministic tessellation **layout pass** (recommended; see “Tessellation
@@ -1477,7 +1478,6 @@ with an implementation-defined workgroup size chosen by the translator/runtime.
       - System values mapping (recommended):
         - `SV_OutputControlPointID = control_point_id`
         - `SV_PrimitiveID = patch_instance_id`
-        - `SV_InstanceID = first_instance + instance_id` (if not flattened).
       - Dispatch mapping:
         - `global_invocation_id.x` = `patch_id`
         - `global_invocation_id.y` = `control_point_id` (`0..control_points`)
@@ -1495,7 +1495,6 @@ with an implementation-defined workgroup size chosen by the translator/runtime.
         - `SV_DomainLocation`: computed from `domain_vertex_id` and the patch’s tess level(s) using
           the concrete enumeration rules above.
         - `SV_PrimitiveID = patch_instance_id`
-        - `SV_InstanceID = first_instance + instance_id` (if not flattened).
       - Dispatch mapping (recommended; conservative bounds):
         - `global_invocation_id.x` = `patch_id`
         - `global_invocation_id.y` = `instance_id`
