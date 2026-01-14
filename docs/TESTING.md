@@ -113,6 +113,23 @@ cargo xtask input
 cargo xtask input --e2e
 ```
 
+### CPU instruction conformance / differential tests (x86_64 unix)
+
+The conformance harness compares Aero instruction semantics against native host execution on `x86_64` unix.
+
+```bash
+# Run a small corpus
+cargo xtask conformance --cases 512
+
+# Reproduce a failure (seed is decimal or 0x-hex; `_` separators allowed)
+cargo xtask conformance \
+  --cases 5000 \
+  --seed 0x52c671d9a4f231b9 \
+  --filter key:add \
+  --report target/conformance.json \
+  -- --nocapture
+```
+
 If your repo layout differs from the defaults, override directories:
 
 - `AERO_NODE_DIR` / `--node-dir`: the directory containing `package.json`
