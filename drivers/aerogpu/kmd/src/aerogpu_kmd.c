@@ -11182,6 +11182,9 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
          * for richer details.
          */
         out->flags |= AEROGPU_DBGCTL_QUERY_ERROR_FLAG_ERROR_SUPPORTED;
+        if (AeroGpuIsDeviceErrorLatched(adapter)) {
+            out->flags |= AEROGPU_DBGCTL_QUERY_ERROR_FLAG_ERROR_LATCHED;
+        }
 
         /* Avoid MMIO reads while powered down; return best-effort cached state. */
         out->error_fence = AeroGpuAtomicReadU64(&adapter->LastErrorFence);

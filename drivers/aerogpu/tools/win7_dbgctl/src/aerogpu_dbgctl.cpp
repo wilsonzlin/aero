@@ -1730,7 +1730,10 @@ static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
       return;
     }
 
-    wprintf(L"Last error: code=%lu (%s) fence=0x%I64x (%I64u) count=%lu\n",
+    const bool latched = ((qe.flags & AEROGPU_DBGCTL_QUERY_ERROR_FLAGS_VALID) != 0) &&
+                         ((qe.flags & AEROGPU_DBGCTL_QUERY_ERROR_FLAG_ERROR_LATCHED) != 0);
+    wprintf(L"Last error: latched=%s code=%lu (%s) fence=0x%I64x (%I64u) count=%lu\n",
+            latched ? L"true" : L"false",
             (unsigned long)qe.error_code,
             DeviceErrorCodeToString(qe.error_code),
             (unsigned long long)qe.error_fence,
@@ -2143,12 +2146,22 @@ static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
       wprintf(L"Last error: (not supported)\n");
       return;
     }
- 
-    wprintf(L"Last error: code=%lu (%s) fence=0x%I64x count=%lu\n",
-            (unsigned long)qe.error_code,
-            AerogpuErrorCodeName(qe.error_code),
-            (unsigned long long)qe.error_fence,
-            (unsigned long)qe.error_count);
+
+    if ((qe.flags & AEROGPU_DBGCTL_QUERY_ERROR_FLAGS_VALID) != 0) {
+      const bool latched = (qe.flags & AEROGPU_DBGCTL_QUERY_ERROR_FLAG_ERROR_LATCHED) != 0;
+      wprintf(L"Last error: latched=%s code=%lu (%s) fence=0x%I64x count=%lu\n",
+              latched ? L"true" : L"false",
+              (unsigned long)qe.error_code,
+              AerogpuErrorCodeName(qe.error_code),
+              (unsigned long long)qe.error_fence,
+              (unsigned long)qe.error_count);
+    } else {
+      wprintf(L"Last error: code=%lu (%s) fence=0x%I64x count=%lu\n",
+              (unsigned long)qe.error_code,
+              AerogpuErrorCodeName(qe.error_code),
+              (unsigned long long)qe.error_fence,
+              (unsigned long)qe.error_count);
+    }
   };
 
   const auto DumpCreateAllocationSummary = [&]() {
@@ -2846,6 +2859,13 @@ static int DoStatusJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, std::stri
     w.Key("supported");
     w.Bool(supported);
     JsonWriteU32Hex(w, "flags_u32_hex", qe.flags);
+    if ((qe.flags & AEROGPU_DBGCTL_QUERY_ERROR_FLAGS_VALID) != 0) {
+      w.Key("latched");
+      w.Bool((qe.flags & AEROGPU_DBGCTL_QUERY_ERROR_FLAG_ERROR_LATCHED) != 0);
+    } else {
+      w.Key("latched");
+      w.Null();
+    }
     if (supported) {
       w.Key("error_code");
       w.Uint32(qe.error_code);
@@ -7147,6 +7167,13 @@ static int DoQueryPerfJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, std::s
     w.Key("supported");
     w.Bool(supported);
     JsonWriteU32Hex(w, "flags_u32_hex", qe.flags);
+    if ((qe.flags & AEROGPU_DBGCTL_QUERY_ERROR_FLAGS_VALID) != 0) {
+      w.Key("latched");
+      w.Bool((qe.flags & AEROGPU_DBGCTL_QUERY_ERROR_FLAG_ERROR_LATCHED) != 0);
+    } else {
+      w.Key("latched");
+      w.Null();
+    }
     if (supported) {
       w.Key("error_code");
       w.Uint32(qe.error_code);

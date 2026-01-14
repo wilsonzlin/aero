@@ -480,6 +480,7 @@ typedef struct aerogpu_escape_query_error_out {
    * - Bit 0: error state is supported.
    *   - If the device exposes optional MMIO error registers, fields are sourced from them.
    *   - Otherwise fields are best-effort from the KMD's IRQ_ERROR latch/counters.
+   * - Bit 1: IRQ_ERROR is currently latched (device is in a device-lost state).
    */
   aerogpu_escape_u32 flags;
   aerogpu_escape_u32 error_code; /* enum aerogpu_error_code */
@@ -490,6 +491,7 @@ typedef struct aerogpu_escape_query_error_out {
 
 #define AEROGPU_DBGCTL_QUERY_ERROR_FLAGS_VALID (1u << 31)
 #define AEROGPU_DBGCTL_QUERY_ERROR_FLAG_ERROR_SUPPORTED (1u << 0)
+#define AEROGPU_DBGCTL_QUERY_ERROR_FLAG_ERROR_LATCHED (1u << 1)
 
 /* Must remain stable across x86/x64. */
 AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_query_error_out) == 40);
