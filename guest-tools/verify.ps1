@@ -171,7 +171,7 @@ function Find-AeroGpuDbgctl([string]$scriptDir, [bool]$is64) {
     if (Test-Path $toolsDir) {
         try {
             $searched += ($toolsDir + " (recursive search)")
-            $hit = Get-ChildItem -Path $toolsDir -Recurse -Filter aerogpu_dbgctl.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+            $hit = Get-ChildItem -Path $toolsDir -Recurse -Filter aerogpu_dbgctl.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ErrorAction SilentlyContinue
             if ($hit -and $hit.FullName) {
                 return @{ found = $true; path = ("" + $hit.FullName); searched = $searched }
             }
@@ -1258,7 +1258,7 @@ $report = @{
     schema_version = 1
     tool = @{
           name = "Aero Guest Tools Verify"
-         version = "2.5.20"
+         version = "2.5.21"
          started_utc = $started.ToUniversalTime().ToString("o")
          ended_utc = $null
          duration_ms = $null
@@ -1802,7 +1802,7 @@ try {
                         $scanItems = @(
                             Get-ChildItem -LiteralPath $rootFull -Recurse -Force -ErrorAction SilentlyContinue -ErrorVariable scanErrors |
                                 Where-Object { -not $_.PSIsContainer } |
-                                Select-Object -First $scanLimitPlus
+                                Select-Object -First $scanLimitPlus -ErrorAction SilentlyContinue
                         )
                     } catch {
                         # Get-ChildItem can still throw (provider issues, etc). Don't fail the whole report; treat as scan error.
@@ -3766,7 +3766,7 @@ try {
                 $items = @(
                     Get-ChildItem -Path $toolsDir -Recurse -Force -ErrorAction SilentlyContinue -ErrorVariable gciErrors |
                         Where-Object { -not $_.PSIsContainer } |
-                        Select-Object -First $scanLimitPlus
+                        Select-Object -First $scanLimitPlus -ErrorAction SilentlyContinue
                 )
                 if ($items.Count -gt $scanLimit) {
                     $toolsData.file_inventory_truncated = $true
