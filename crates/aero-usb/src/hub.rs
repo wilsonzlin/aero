@@ -1955,6 +1955,11 @@ mod tests {
         // Ensure the downstream port is both powered and enabled so remote-wakeup polling reaches it.
         hub.ports[0].set_powered(true);
         hub.ports[0].set_enabled(true);
+        hub.ports[0].set_suspended(true);
+        assert!(
+            hub.ports[0].suspended,
+            "expected downstream port to be selectively suspended"
+        );
 
         // Suspend the upstream link so `poll_remote_wakeup_internal` is active.
         hub.set_suspended(true);
@@ -1974,6 +1979,10 @@ mod tests {
             !wake.wake_pending(),
             "expected hub to drain downstream wake request even when propagation is disabled"
         );
+        assert!(
+            hub.ports[0].suspended,
+            "hub must not resume selectively suspended port when DEVICE_REMOTE_WAKEUP is disabled"
+        );
         assert_eq!(wake.polls(), 1);
 
         // After enabling hub remote wakeup, a stale wake event should not be replayed.
@@ -1983,6 +1992,100 @@ mod tests {
             "unexpected wake propagation after enabling hub remote wake without a new event"
         );
         assert_eq!(wake.polls(), 2);
+    }
+
+    #[test]
+    fn hub_propagates_downstream_remote_wakeup_when_remote_wakeup_enabled() {
+        #[derive(Default)]
+        struct WakeState {
+            suspended: bool,
+            wake_pending: bool,
+        }
+
+        #[derive(Clone)]
+        struct WakeDevice(Rc<RefCell<WakeState>>);
+
+        impl WakeDevice {
+            fn new() -> Self {
+                Self(Rc::new(RefCell::new(WakeState::default())))
+            }
+
+            fn request_wake(&self) {
+                self.0.borrow_mut().wake_pending = true;
+            }
+
+            fn wake_pending(&self) -> bool {
+                self.0.borrow().wake_pending
+            }
+        }
+
+        impl UsbDeviceModel for WakeDevice {
+            fn handle_control_request(
+                &mut self,
+                _setup: SetupPacket,
+                _data_stage: Option<&[u8]>,
+            ) -> ControlResponse {
+                ControlResponse::Ack
+            }
+
+            fn set_suspended(&mut self, suspended: bool) {
+                self.0.borrow_mut().suspended = suspended;
+            }
+
+            fn poll_remote_wakeup(&mut self) -> bool {
+                let mut st = self.0.borrow_mut();
+                if st.suspended && st.wake_pending {
+                    st.wake_pending = false;
+                    true
+                } else {
+                    false
+                }
+            }
+        }
+
+        let mut hub = UsbHubDevice::new_with_ports(1);
+        hub.configuration = 1;
+        hub.remote_wakeup_enabled = true;
+        let wake = WakeDevice::new();
+        hub.attach(1, Box::new(wake.clone()));
+
+        // Ensure the downstream port is both powered and enabled so remote-wakeup polling reaches it.
+        hub.ports[0].set_powered(true);
+        hub.ports[0].set_enabled(true);
+
+        // Selectively suspend the downstream port so we can observe that remote wakeup resumes it
+        // when the wake actually propagates upstream.
+        hub.ports[0].set_suspended(true);
+        assert!(
+            hub.ports[0].suspended,
+            "expected downstream port to be selectively suspended"
+        );
+
+        // Suspend the upstream link so `poll_remote_wakeup_internal` is active.
+        hub.set_suspended(true);
+
+        wake.request_wake();
+        assert!(wake.wake_pending(), "expected wake request to be pending");
+
+        assert!(
+            hub.poll_remote_wakeup_internal(),
+            "expected hub to propagate remote wakeup when DEVICE_REMOTE_WAKEUP is enabled"
+        );
+        assert!(
+            !wake.wake_pending(),
+            "expected hub to drain downstream wake request after propagation"
+        );
+        assert!(
+            !hub.ports[0].suspended,
+            "expected hub to resume selectively suspended port when wake propagates upstream"
+        );
+
+        // Remote wakeup polling should be edge-triggered (drained). Do not allow replay without a
+        // new wake request.
+        assert!(
+            !hub.poll_remote_wakeup_internal(),
+            "expected downstream wake request to be drained"
+        );
     }
 
     #[test]
