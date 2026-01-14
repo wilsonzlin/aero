@@ -35,8 +35,8 @@ fn tier2_does_not_silently_drop_shift_flags_used_by_jcc() {
     let mut state = T2State::default();
     let exit = run_function(&func, &env, &mut bus, &mut state, 10);
 
-    // Tier-2 lowers x86 shift flag updates explicitly, so it must take the carry branch and reach
-    // the final int3.
+    // Tier-2 explicitly lowers shift flag updates (for constant shift counts) to preserve x86
+    // semantics. If this regresses, we might incorrectly take the non-carry path.
     assert_eq!(exit, RunExit::SideExit { next_rip: 12 });
     assert_eq!(
         state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff,
