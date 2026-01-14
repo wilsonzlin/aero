@@ -7,7 +7,7 @@ param(
     [switch]$PlayTestSound,
 
     # Optional: run extended aerogpu_dbgctl diagnostics (best-effort) and embed output in the report.
-    # Note: verify.ps1 will still attempt a safe dbgctl --version / /? capture when dbgctl is present;
+    # Note: verify.ps1 will still attempt a safe dbgctl --help / /? capture when dbgctl is present;
     # this switch enables the more detailed --status run (when AeroGPU is detected and healthy).
     [switch]$RunDbgctl,
 
@@ -4492,7 +4492,7 @@ try {
         path = $null
         searched = @()
         # Always run a safe, fast command when dbgctl exists.
-        args = @("--version")
+        args = @("--help")
         fallback_args = @("/?")
         host_timeout_ms = 5000
         exit_code = $null
