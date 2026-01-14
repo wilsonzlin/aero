@@ -132,11 +132,20 @@ def main() -> int:
     alias_enabled = inf_dir / "virtio-input.inf"
     alias_disabled = inf_dir / "virtio-input.inf.disabled"
 
-    alias = alias_enabled if alias_enabled.exists() else alias_disabled
-
-    if not alias.exists():
-        print(f"missing legacy alias INF: {alias}", file=sys.stderr)
-        return 1
+    if alias_enabled.exists():
+        alias = alias_enabled
+    elif alias_disabled.exists():
+        alias = alias_disabled
+    else:
+        # The alias INF is optional (developers may delete it locally if they don't
+        # need the legacy basename). Skip instead of failing so this helper can be
+        # run in either state.
+        print(
+            "virtio-input INF alias drift check: no alias INF found "
+            "(expected virtio-input.inf or virtio-input.inf.disabled); skipping.",
+            file=sys.stderr,
+        )
+        return 0
 
     canonical_body = inf_functional_bytes(canonical)
     alias_body = inf_functional_bytes(alias)
@@ -154,7 +163,7 @@ def main() -> int:
         alias_lines,
         fromfile=str(canonical_rel),
         tofile=str(alias_rel),
-        lineterm="",
+        lineterm="\n",
     )
 
     print(
