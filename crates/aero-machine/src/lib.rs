@@ -4678,11 +4678,11 @@ impl Machine {
     ///
     /// This is a convenience wrapper for browser/native hosts that already have the ISO contents
     /// in memory. For large ISOs, prefer a streaming/file-backed disk and call
-    /// [`Machine::attach_install_media_iso`].
+    /// [`Machine::attach_ide_secondary_master_iso`].
     pub fn attach_install_media_iso_bytes(&mut self, bytes: Vec<u8>) -> io::Result<()> {
         let disk = RawDisk::open(MemBackend::from_vec(bytes))
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
-        self.attach_install_media_iso_for_restore(Box::new(disk))
+        self.attach_ide_secondary_master_iso(Box::new(disk))
     }
 
     /// Attach a disk image as an ATAPI CD-ROM ISO on the IDE secondary master, if present.
@@ -12730,10 +12730,10 @@ mod tests {
             .pci_bar_base(bdf, aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX)
             .unwrap_or(0);
         assert_ne!(bar1_base, 0, "AeroGPU BAR1 should be assigned by BIOS POST");
-
-        let expected = u32::try_from(bar1_base + VBE_LFB_OFFSET as u64)
-            .expect("LFB base should fit in u32");
-        assert_eq!(m.vbe_lfb_base(), u64::from(expected));
+        let expected = u64::from(
+            u32::try_from(bar1_base + VBE_LFB_OFFSET as u64).expect("LFB base should fit in u32"),
+        );
+        assert_eq!(m.vbe_lfb_base(), expected);
     }
 
     #[test]

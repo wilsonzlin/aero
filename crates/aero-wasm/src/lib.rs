@@ -3657,7 +3657,7 @@ impl Machine {
                 opfs_disk_error_to_js("Machine.attach_install_media_iso_opfs_existing", &path, e)
             })?;
         self.inner
-            .attach_install_media_iso_for_restore(Box::new(disk))
+            .attach_ide_secondary_master_iso(Box::new(disk))
             .map_err(|e| opfs_context_error_to_js("Machine.attach_install_media_iso_opfs_existing", &path, e))
     }
 
