@@ -5,7 +5,7 @@
 /*
  * Driver-local sizing limits derived from the Aero virtio-snd contract.
  *
- * Contract v1 (§3.4.6) requires the device to reject any single PCM transfer
+ * Contract v1 (sec 3.4.6) requires the device to reject any single PCM transfer
  * whose PCM payload exceeds 256 KiB (262,144 bytes) with VIRTIO_SND_S_BAD_MSG.
  * The current TX/RX engines treat BAD_MSG as fatal, so the driver must never
  * submit larger payloads.

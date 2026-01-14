@@ -86,7 +86,7 @@
  * Minimal virtio-snd eventq buffer pool.
  *
  * Contract v1 defines no *required* event messages (see docs/windows7-virtio-driver-contract.md
- * §3.4.2.1), so the audio data path must not depend on eventq.
+ * sec 3.4.2.1), so the audio data path must not depend on eventq.
  *
  * However, the virtio-snd specification reserves eventq for asynchronous device
  * notifications. To be robust to future eventq usage (and to device-model bugs

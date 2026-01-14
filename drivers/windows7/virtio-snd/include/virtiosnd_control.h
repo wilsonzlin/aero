@@ -14,8 +14,8 @@
  * This module builds/parses virtio-snd control messages and tracks two
  * independent PCM stream state machines per the Aero contract v1:
  *
- *   Stream 0 (playback/output): Idle → ParamsSet → Prepared → Running → Prepared → Idle
- *   Stream 1 (capture/input):   Idle → ParamsSet → Prepared → Running → Prepared → Idle
+ *   Stream 0 (playback/output): Idle -> ParamsSet -> Prepared -> Running -> Prepared -> Idle
+ *   Stream 1 (capture/input):   Idle -> ParamsSet -> Prepared -> Running -> Prepared -> Idle
  *
  * Queue integration uses the internal VIRTIOSND_QUEUE abstraction (see
  * virtiosnd_queue.h). The driver is responsible for wiring the queue ops (e.g.
