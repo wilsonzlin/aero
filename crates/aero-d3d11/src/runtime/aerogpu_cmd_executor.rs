@@ -6065,7 +6065,7 @@ impl AerogpuD3d11Executor {
                 count: None,
             },
             wgpu::BindGroupLayoutEntry {
-                binding: 3,
+                binding: 4,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
@@ -6075,7 +6075,7 @@ impl AerogpuD3d11Executor {
                 count: None,
             },
             wgpu::BindGroupLayoutEntry {
-                binding: 4,
+                binding: 5,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
                     // Bound as `read_write` even though the prepass only reads it: vertex pulling
@@ -6150,7 +6150,7 @@ impl AerogpuD3d11Executor {
                     }),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 3,
+                    binding: 4,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: params_alloc.buffer.as_ref(),
                         offset: params_alloc.offset,
@@ -6158,7 +6158,7 @@ impl AerogpuD3d11Executor {
                     }),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 4,
+                    binding: 5,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: gs_inputs_alloc.buffer.as_ref(),
                         offset: gs_inputs_alloc.offset,
@@ -25544,12 +25544,6 @@ fn cs_main() {
                 0,
                 0,
             );
-            writer.create_shader_dxbc(VS, AerogpuShaderStage::Vertex, DXBC_VS_PASSTHROUGH);
-            writer.create_shader_dxbc(PS, AerogpuShaderStage::Pixel, DXBC_PS_PASSTHROUGH);
-            writer.create_shader_dxbc(GS, AerogpuShaderStage::Geometry, DXBC_GS_PASSTHROUGH);
-            writer.set_render_targets(&[RT], 0);
-            writer.set_viewport(0.0, 0.0, 4.0, 4.0, 0.0, 1.0);
-            writer.bind_shaders_ex(VS, PS, 0, GS, 0, 0);
             writer.create_buffer(
                 VB,
                 AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
@@ -25558,19 +25552,23 @@ fn cs_main() {
                 0,
             );
             writer.upload_resource(VB, 0, vb_bytes);
+            writer.create_shader_dxbc(VS, AerogpuShaderStage::Vertex, DXBC_VS_PASSTHROUGH);
+            writer.create_shader_dxbc(PS, AerogpuShaderStage::Pixel, DXBC_PS_PASSTHROUGH);
+            writer.create_shader_dxbc(GS, AerogpuShaderStage::Geometry, DXBC_GS_PASSTHROUGH);
             writer.create_input_layout(IL, ILAY_POS3_COLOR);
             writer.set_input_layout(IL);
             writer.set_vertex_buffers(
                 0,
-                &[
-                    aero_protocol::aerogpu::aerogpu_cmd::AerogpuVertexBufferBinding {
-                        buffer: VB,
-                        stride_bytes: core::mem::size_of::<Vertex>() as u32,
-                        offset_bytes: 0,
-                        reserved0: 0,
-                    },
-                ],
+                &[aero_protocol::aerogpu::aerogpu_cmd::AerogpuVertexBufferBinding {
+                    buffer: VB,
+                    stride_bytes: core::mem::size_of::<Vertex>() as u32,
+                    offset_bytes: 0,
+                    reserved0: 0,
+                }],
             );
+            writer.set_render_targets(&[RT], 0);
+            writer.set_viewport(0.0, 0.0, 4.0, 4.0, 0.0, 1.0);
+            writer.bind_shaders_ex(VS, PS, 0, GS, 0, 0);
             writer.set_primitive_topology(AerogpuPrimitiveTopology::TriangleList);
             writer.clear(AEROGPU_CLEAR_COLOR, [0.0, 0.0, 0.0, 1.0], 1.0, 0);
 
@@ -25606,7 +25604,6 @@ fn cs_main() {
                 }
             };
 
-            let stats_before = exec.pipeline_cache.stats();
             if !exec.caps.supports_compute || !exec.caps.supports_indirect_execution {
                 skip_or_panic(
                     module_path!(),
@@ -25614,6 +25611,8 @@ fn cs_main() {
                 );
                 return;
             }
+
+            let stats_before = exec.pipeline_cache.stats();
 
             // Minimal stream that triggers `exec_draw_with_compute_prepass` by binding a non-zero
             // geometry shader handle. Use two draws with different primitive counts so the
@@ -25683,12 +25682,6 @@ fn cs_main() {
                 0,
                 0,
             );
-            writer.create_shader_dxbc(VS, AerogpuShaderStage::Vertex, DXBC_VS_PASSTHROUGH);
-            writer.create_shader_dxbc(PS, AerogpuShaderStage::Pixel, DXBC_PS_PASSTHROUGH);
-            writer.create_shader_dxbc(GS, AerogpuShaderStage::Geometry, DXBC_GS_PASSTHROUGH);
-            writer.set_render_targets(&[RT], 0);
-            writer.set_viewport(0.0, 0.0, 4.0, 4.0, 0.0, 1.0);
-            writer.bind_shaders_ex(VS, PS, 0, GS, 0, 0);
             writer.create_buffer(
                 VB,
                 AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
@@ -25697,19 +25690,23 @@ fn cs_main() {
                 0,
             );
             writer.upload_resource(VB, 0, vb_bytes);
+            writer.create_shader_dxbc(VS, AerogpuShaderStage::Vertex, DXBC_VS_PASSTHROUGH);
+            writer.create_shader_dxbc(PS, AerogpuShaderStage::Pixel, DXBC_PS_PASSTHROUGH);
+            writer.create_shader_dxbc(GS, AerogpuShaderStage::Geometry, DXBC_GS_PASSTHROUGH);
             writer.create_input_layout(IL, ILAY_POS3_COLOR);
             writer.set_input_layout(IL);
             writer.set_vertex_buffers(
                 0,
-                &[
-                    aero_protocol::aerogpu::aerogpu_cmd::AerogpuVertexBufferBinding {
-                        buffer: VB,
-                        stride_bytes: core::mem::size_of::<Vertex>() as u32,
-                        offset_bytes: 0,
-                        reserved0: 0,
-                    },
-                ],
+                &[aero_protocol::aerogpu::aerogpu_cmd::AerogpuVertexBufferBinding {
+                    buffer: VB,
+                    stride_bytes: core::mem::size_of::<Vertex>() as u32,
+                    offset_bytes: 0,
+                    reserved0: 0,
+                }],
             );
+            writer.set_render_targets(&[RT], 0);
+            writer.set_viewport(0.0, 0.0, 4.0, 4.0, 0.0, 1.0);
+            writer.bind_shaders_ex(VS, PS, 0, GS, 0, 0);
             writer.set_primitive_topology(AerogpuPrimitiveTopology::TriangleList);
             writer.clear(AEROGPU_CLEAR_COLOR, [0.0, 0.0, 0.0, 1.0], 1.0, 0);
 
