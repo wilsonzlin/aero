@@ -3002,6 +3002,84 @@ impl AerogpuD3d9Executor {
                         dxbc_bytes,
                     );
                 }
+
+                // Validate semantic location metadata for vertex shaders. Corrupt semantic mappings
+                // can cause incorrect vertex attribute binding or spurious draw-time errors.
+                if bytecode_stage == shader::ShaderStage::Vertex {
+                    let mut reason = None::<String>;
+                    if reflection.uses_semantic_locations && reflection.semantic_locations.is_empty()
+                    {
+                        reason = Some(
+                            "usesSemanticLocations is true but semanticLocations is empty".into(),
+                        );
+                    } else if !reflection.uses_semantic_locations
+                        && !reflection.semantic_locations.is_empty()
+                    {
+                        reason = Some(
+                            "usesSemanticLocations is false but semanticLocations is non-empty"
+                                .into(),
+                        );
+                    } else if !reflection.semantic_locations.is_empty() {
+                        let max_vertex_attributes = self.device.limits().max_vertex_attributes.max(1);
+                        let mut loc_to_sem =
+                            HashMap::<u32, (aero_d3d9::vertex::DeclUsage, u8)>::new();
+                        let mut sem_to_loc =
+                            HashMap::<(aero_d3d9::vertex::DeclUsage, u8), u32>::new();
+                        for loc in &reflection.semantic_locations {
+                            if loc.location >= max_vertex_attributes {
+                                reason = Some(format!(
+                                    "semanticLocations contains out-of-range @location({}) (maxVertexAttributes={})",
+                                    loc.location, max_vertex_attributes
+                                ));
+                                break;
+                            }
+
+                            let semantic = (loc.usage, loc.usage_index);
+                            if let Some(prev) = loc_to_sem.insert(loc.location, semantic) {
+                                if prev != semantic {
+                                    reason = Some(format!(
+                                        "semanticLocations maps multiple semantics to @location({}): {:?}{} and {:?}{}",
+                                        loc.location, prev.0, prev.1, semantic.0, semantic.1
+                                    ));
+                                    break;
+                                }
+                            }
+                            if let Some(prev_loc) = sem_to_loc.insert(semantic, loc.location) {
+                                if prev_loc != loc.location {
+                                    reason = Some(format!(
+                                        "semanticLocations maps {:?}{} to multiple locations: {} and {}",
+                                        semantic.0, semantic.1, prev_loc, loc.location
+                                    ));
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    if let Some(reason) = reason {
+                        debug!(
+                            shader_handle,
+                            %reason,
+                            "cached shader semantic location metadata is invalid; invalidating and retranslating"
+                        );
+                        if !invalidated_once {
+                            invalidated_once = true;
+                            let _ = self
+                                .persistent_shader_cache
+                                .invalidate(dxbc_bytes, flags.clone())
+                                .await;
+                            self.stats.set_d3d9_shader_cache_disabled(
+                                self.persistent_shader_cache.is_persistent_disabled(),
+                            );
+                            continue;
+                        }
+                        return self.create_shader_dxbc_in_memory(
+                            shader_handle,
+                            expected_stage,
+                            dxbc_bytes,
+                        );
+                    }
+                }
             }
 
             // Optional: validate cached WGSL on persistent hit to guard against corruption/staleness.

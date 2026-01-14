@@ -864,3 +864,159 @@ async fn d3d9_executor_does_not_invalidate_cache_on_guest_stage_mismatch() {
         "expected cached entry to survive guest stage mismatch"
     );
 }
+
+fn assemble_vs_dcl_pos_color0_v7() -> Vec<u8> {
+    // vs_2_0 with semantic-based DCL declarations:
+    //   dcl_position v0
+    //   dcl_color0 v7
+    //   add r0, v0, v7
+    //   mov oPos, r0
+    //   end
+    let mut out = vec![0xFFFE0200];
+    // usage_raw=0 (Position), usage_index=0
+    out.extend(enc_inst(0x001F, &[0u32, enc_dst(1, 0, 0)]));
+    // usage_raw=10 (Color), usage_index=0
+    out.extend(enc_inst(0x001F, &[10u32, enc_dst(1, 7, 0)]));
+    out.extend(enc_inst(
+        0x0002,
+        &[
+            enc_dst(0, 0, 0xF),  // r0
+            enc_src(1, 0, 0xE4), // v0
+            enc_src(1, 7, 0xE4), // v7
+        ],
+    ));
+    out.extend(enc_inst(0x0001, &[enc_dst(4, 0, 0xF), enc_src(0, 0, 0xE4)]));
+    out.push(0x0000FFFF);
+    to_bytes(&out)
+}
+
+#[wasm_bindgen_test(async)]
+async fn d3d9_executor_retranslates_on_persisted_reflection_semantic_locations_corruption() {
+    // Corrupting semanticLocations can cause incorrect vertex attribute binding. The executor
+    // should detect obviously inconsistent mappings on persistent cache hit and invalidate+retry.
+    let (api, store) = make_persistent_cache_stub();
+    let _guard = PersistentCacheApiGuard::install(&api, &store);
+
+    let mut exec = match AerogpuD3d9Executor::new_headless().await {
+        Ok(exec) => exec,
+        Err(err) => {
+            common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({err})"));
+            return;
+        }
+    };
+
+    let vs_bytes = assemble_vs_dcl_pos_color0_v7();
+    let mut writer = AerogpuCmdWriter::new();
+    writer.create_shader_dxbc(1, AerogpuShaderStage::Vertex, &vs_bytes);
+    let stream = writer.finish();
+
+    exec.execute_cmd_stream_for_context_async(0, &stream)
+        .await
+        .expect("first shader create succeeds");
+
+    let map: Map = Reflect::get(&store, &JsValue::from_str("map"))
+        .expect("get store.map")
+        .dyn_into()
+        .expect("store.map should be a Map");
+    let keys = Array::from(&map.keys());
+    assert_eq!(keys.length(), 1, "expected one persisted shader entry");
+    let key = keys.get(0);
+    let cached = map.get(&key);
+    assert!(
+        !cached.is_undefined() && !cached.is_null(),
+        "expected persisted cache entry to exist"
+    );
+
+    let reflection =
+        Reflect::get(&cached, &JsValue::from_str("reflection")).expect("get cached.reflection");
+    let uses_semantic_locations = Reflect::get(&reflection, &JsValue::from_str("usesSemanticLocations"))
+        .ok()
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    assert!(
+        uses_semantic_locations,
+        "expected shader to use semantic location remapping"
+    );
+
+    let semantic_locations = Reflect::get(&reflection, &JsValue::from_str("semanticLocations"))
+        .expect("get reflection.semanticLocations");
+    let semantic_locations: Array = semantic_locations
+        .dyn_into()
+        .expect("semanticLocations should be an array");
+    assert!(
+        semantic_locations.length() >= 2,
+        "expected shader to persist multiple semanticLocations"
+    );
+    let first = semantic_locations.get(0);
+    let second = semantic_locations.get(1);
+    let first_loc = Reflect::get(&first, &JsValue::from_str("location"))
+        .ok()
+        .and_then(|v| v.as_f64())
+        .map(|v| v as u32)
+        .unwrap_or(0);
+    let second_loc = Reflect::get(&second, &JsValue::from_str("location"))
+        .ok()
+        .and_then(|v| v.as_f64())
+        .map(|v| v as u32)
+        .unwrap_or(0);
+    assert_ne!(
+        first_loc, second_loc,
+        "expected semantic location mapping to contain distinct locations"
+    );
+
+    // Corrupt the semantic location mapping by forcing a duplicate @location.
+    let second_obj: Object = second
+        .dyn_into()
+        .expect("semanticLocations[1] should be an object");
+    Reflect::set(
+        &second_obj,
+        &JsValue::from_str("location"),
+        &JsValue::from_f64(first_loc as f64),
+    )
+    .expect("set semanticLocations[1].location");
+
+    exec.reset();
+    exec.execute_cmd_stream_for_context_async(0, &stream)
+        .await
+        .expect("second shader create succeeds");
+
+    let get_calls = read_f64(&store, "getCalls") as u32;
+    let put_calls = read_f64(&store, "putCalls") as u32;
+    let delete_calls = read_f64(&store, "deleteCalls") as u32;
+    assert_eq!(get_calls, 3, "expected invalidate+retry after mismatch");
+    assert_eq!(put_calls, 2, "expected corrected shader to be persisted");
+    assert_eq!(
+        delete_calls, 1,
+        "expected corrupted cached entry to be deleted"
+    );
+
+    let cached_after = map.get(&key);
+    let reflection_after =
+        Reflect::get(&cached_after, &JsValue::from_str("reflection")).expect("get reflection");
+    let semantic_locations_after =
+        Reflect::get(&reflection_after, &JsValue::from_str("semanticLocations"))
+            .expect("get reflection_after.semanticLocations");
+    let semantic_locations_after: Array = semantic_locations_after
+        .dyn_into()
+        .expect("semanticLocations_after should be an array");
+    assert!(
+        semantic_locations_after.length() >= 2,
+        "expected semanticLocations to remain populated after retranslation"
+    );
+    let first_after = semantic_locations_after.get(0);
+    let second_after = semantic_locations_after.get(1);
+    let first_loc_after = Reflect::get(&first_after, &JsValue::from_str("location"))
+        .ok()
+        .and_then(|v| v.as_f64())
+        .map(|v| v as u32)
+        .unwrap_or(0);
+    let second_loc_after = Reflect::get(&second_after, &JsValue::from_str("location"))
+        .ok()
+        .and_then(|v| v.as_f64())
+        .map(|v| v as u32)
+        .unwrap_or(0);
+    assert_ne!(
+        first_loc_after, second_loc_after,
+        "expected retranslation to restore distinct semanticLocations"
+    );
+}
