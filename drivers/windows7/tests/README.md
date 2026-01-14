@@ -285,8 +285,13 @@ virtio-net offload-related device properties on QEMU via `QemuExtraArgs` / extra
 ### virtio-snd `eventq`
 
 Contract v1 reserves virtio-snd `eventq` for future use and forbids the driver from depending on events. For
-compatibility, the Win7 virtio-snd driver still initializes `eventq` and is expected to tolerate event traffic without
-affecting streaming.
+compatibility, the Win7 virtio-snd driver still initializes `eventq` and tolerates event traffic best-effort.
+
+When present (non-contract, e.g. newer device models), the driver may also treat some standard virtio-snd PCM events as
+**optional enhancements** while still keeping the WaveRT pacing loop **timer-driven** as the baseline:
+
+- `VIRTIO_SND_EVT_PCM_PERIOD_ELAPSED`: can act as an additional WaveRT period/DPC wakeup source (with duplicate coalescing).
+- `VIRTIO_SND_EVT_PCM_XRUN`: can act as a hint to attempt best-effort stream recovery (typically `STOP`/`START`).
 
 The harness validates correct render/capture/duplex behavior under QEMU; for eventq-specific debugging, use the
 virtio-snd `DebugLogs` build and capture kernel debug output while running the selftest.
