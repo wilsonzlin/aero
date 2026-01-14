@@ -206,6 +206,7 @@ typedef struct _VIOINPUT_COUNTERS {
     // Keyboard LED output reports (HID write -> statusq).
     volatile LONG LedWritesRequested;
     volatile LONG LedWritesSubmitted;
+    // Dropped/ignored LED writes (e.g. statusq inactive, drop-on-full policy, or defensive translation failure).
     volatile LONG LedWritesDropped;
 
     // statusq activity (driver -> device).
