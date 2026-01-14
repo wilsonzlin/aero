@@ -10,7 +10,7 @@
 # Default limits (override via environment):
 #   AERO_TIMEOUT=600      (10 minutes)
 #   AERO_MEM_LIMIT=12G    (12 GB virtual address space)
-#   AERO_NODE_TEST_MEM_LIMIT=32G  (fallback RLIMIT_AS for `node --test` when AERO_MEM_LIMIT is unset)
+#   AERO_NODE_TEST_MEM_LIMIT=32G  (fallback RLIMIT_AS for WASM-heavy Node test runs when AERO_MEM_LIMIT is unset)
 #
 # Note: `cargo fuzz run` uses AddressSanitizer, which reserves a very large virtual address space
 # for shadow memory (~16 TB on x86_64). Under `RLIMIT_AS` (as used by `run_limited.sh`), the default
@@ -19,10 +19,11 @@
 # `safe-run.sh` therefore disables the default address-space cap for `cargo fuzz run` unless the
 # caller explicitly sets `AERO_MEM_LIMIT`.
 #
-# Note: `node --test` can require a much higher RLIMIT_AS than other commands because Node+WASM may
-# reserve large amounts of *virtual* address space up-front (even when resident memory usage is
-# small). `safe-run.sh` automatically bumps the default for `node --test` unless `AERO_MEM_LIMIT` is
-# explicitly set.
+# Note: Node-based test runners (including `node --test`, Vitest, and wasm-pack's `--node` runner)
+# can require a much higher RLIMIT_AS than other commands because Node+WASM may reserve large
+# amounts of *virtual* address space up-front (even when resident memory usage is small).
+# `safe-run.sh` automatically bumps the default for `node --test` (and common wrappers like
+# `npm run test:*` and `wasm-pack test --node`) unless `AERO_MEM_LIMIT` is explicitly set.
 #
 # Override example:
 #   AERO_TIMEOUT=1200 AERO_MEM_LIMIT=16G bash ./scripts/safe-run.sh cargo build --release --locked
@@ -912,7 +913,7 @@ if [[ $# -lt 1 ]]; then
     echo "Environment variables:" >&2
     echo "  AERO_TIMEOUT=600     Timeout in seconds (default: 600 = 10 min)" >&2
     echo "  AERO_MEM_LIMIT=12G   Memory limit (default: 12G; for 'cargo fuzz run' safe-run defaults to 'unlimited' due to ASAN shadow memory)" >&2
-    echo "  AERO_NODE_TEST_MEM_LIMIT=32G  Fallback memory limit for 'node --test' when AERO_MEM_LIMIT is unset (helps WASM-heavy Node tests under RLIMIT_AS)" >&2
+    echo "  AERO_NODE_TEST_MEM_LIMIT=32G  Fallback memory limit for WASM-heavy Node test runners when AERO_MEM_LIMIT is unset (helps under RLIMIT_AS; applies to node --test, npm/vitest, wasm-pack --node)" >&2
     echo "  AERO_ISOLATE_CARGO_HOME=1|<path>  Isolate Cargo state to ./.cargo-home (or a custom dir) to avoid registry lock contention on shared hosts" >&2
     echo "  AERO_DISABLE_RUSTC_WRAPPER=1  Force-disable rustc wrappers (clears RUSTC_WRAPPER env vars; overrides Cargo config build.rustc-wrapper)" >&2
     echo "  AERO_CARGO_BUILD_JOBS=1  Cargo parallelism for agent sandboxes (default: 1; overrides CARGO_BUILD_JOBS if set)" >&2
@@ -984,6 +985,33 @@ if [[ "${cmd0_basename}" == "node" || "${cmd0_basename}" == "node.exe" ]]; then
         set -- "${new_args[@]}"
     fi
     unset wants_test has_concurrency injected new_args 2>/dev/null || true
+fi
+
+# Node+WASM can also be invoked indirectly via wrapper tools (npm/pnpm/yarn/npx/wasm-pack). Since
+# `RLIMIT_AS` is inherited by child processes, keep enough virtual address space headroom for these
+# common entrypoints too when they appear to be running tests.
+if [[ -z "${AERO_MEM_LIMIT:-}" ]]; then
+    case "${cmd0_basename}" in
+        npm|npm.exe|pnpm|pnpm.exe|yarn|yarn.exe|npx|npx.exe|wasm-pack|wasm-pack.exe)
+            wants_node_wasm_mem=false
+            for arg in "${@:2}"; do
+                case "${arg}" in
+                    test|test:*|test-*)
+                        wants_node_wasm_mem=true
+                        break
+                        ;;
+                    vitest|vitest:*|playwright|playwright:*)
+                        wants_node_wasm_mem=true
+                        break
+                        ;;
+                esac
+            done
+            if [[ "${wants_node_wasm_mem}" == "true" ]]; then
+                MEM_LIMIT="${AERO_NODE_TEST_MEM_LIMIT:-32G}"
+            fi
+            unset wants_node_wasm_mem arg 2>/dev/null || true
+            ;;
+    esac
 fi
 unset cmd0_basename 2>/dev/null || true
 
