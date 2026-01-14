@@ -20,6 +20,22 @@ impl PageSize {
     }
 }
 
+/// Which page sizes may exist in the TLB for the current paging mode.
+///
+/// This allows the hottest TLB paths (`lookup` / `set_dirty`) to avoid scanning
+/// page sizes that cannot occur (e.g. 4MiB pages in long mode).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TlbLookupPageSizes {
+    /// Only 4KiB pages are possible.
+    Only4K,
+    /// 2MiB or 4KiB pages are possible.
+    Size2MAnd4K,
+    /// 4MiB or 4KiB pages are possible.
+    Size4MAnd4K,
+    /// 1GiB, 2MiB, or 4KiB pages are possible.
+    Size1G2MAnd4K,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct TlbEntry {
     vbase: u64,
@@ -137,28 +153,46 @@ impl TlbSet {
     }
 
     #[inline]
-    fn lookup(&self, vaddr: u64, pcid: u16) -> Option<&TlbEntry> {
+    fn lookup(&self, vaddr: u64, pcid: u16, page_sizes: TlbLookupPageSizes) -> Option<&TlbEntry> {
+        macro_rules! lookup_page_size {
+            ($page_size:expr) => {{
+                let page_size = $page_size;
+                let vbase = vaddr & !(page_size.bytes() - 1);
+                let tag = vbase >> 12;
+                let set = set_index(tag);
+                for way in 0..WAYS {
+                    let entry = &self.entries[set][way];
+                    if entry.page_size == page_size
+                        && entry.vbase == vbase
+                        && entry.matches_pcid(pcid)
+                    {
+                        return Some(entry);
+                    }
+                }
+            }};
+        }
+
         // Try larger pages first so we don't miss a large-page entry due to
         // indexing differences.
-        for page_size in [
-            PageSize::Size1G,
-            PageSize::Size4M,
-            PageSize::Size2M,
-            PageSize::Size4K,
-        ] {
-            let vbase = vaddr & !(page_size.bytes() - 1);
-            let tag = vbase >> 12;
-            let set = set_index(tag);
-            for way in 0..WAYS {
-                let entry = &self.entries[set][way];
-                if entry.page_size == page_size
-                    && entry.vbase == vbase
-                    && entry.matches_pcid(pcid)
-                {
-                    return Some(entry);
-                }
+        match page_sizes {
+            TlbLookupPageSizes::Only4K => {
+                lookup_page_size!(PageSize::Size4K);
+            }
+            TlbLookupPageSizes::Size2MAnd4K => {
+                lookup_page_size!(PageSize::Size2M);
+                lookup_page_size!(PageSize::Size4K);
+            }
+            TlbLookupPageSizes::Size4MAnd4K => {
+                lookup_page_size!(PageSize::Size4M);
+                lookup_page_size!(PageSize::Size4K);
+            }
+            TlbLookupPageSizes::Size1G2MAnd4K => {
+                lookup_page_size!(PageSize::Size1G);
+                lookup_page_size!(PageSize::Size2M);
+                lookup_page_size!(PageSize::Size4K);
             }
         }
+
         None
     }
 
@@ -271,27 +305,45 @@ impl TlbSet {
     }
 
     #[inline]
-    fn set_dirty(&mut self, vaddr: u64, pcid: u16) -> bool {
-        for page_size in [
-            PageSize::Size1G,
-            PageSize::Size4M,
-            PageSize::Size2M,
-            PageSize::Size4K,
-        ] {
-            let vbase = vaddr & !(page_size.bytes() - 1);
-            let tag = vbase >> 12;
-            let set = set_index(tag);
-            for way in 0..WAYS {
-                let entry = &mut self.entries[set][way];
-                if entry.page_size == page_size
-                    && entry.vbase == vbase
-                    && entry.matches_pcid(pcid)
-                {
-                    entry.dirty = true;
-                    return true;
+    fn set_dirty(&mut self, vaddr: u64, pcid: u16, page_sizes: TlbLookupPageSizes) -> bool {
+        macro_rules! set_dirty_page_size {
+            ($page_size:expr) => {{
+                let page_size = $page_size;
+                let vbase = vaddr & !(page_size.bytes() - 1);
+                let tag = vbase >> 12;
+                let set = set_index(tag);
+                for way in 0..WAYS {
+                    let entry = &mut self.entries[set][way];
+                    if entry.page_size == page_size
+                        && entry.vbase == vbase
+                        && entry.matches_pcid(pcid)
+                    {
+                        entry.dirty = true;
+                        return true;
+                    }
                 }
+            }};
+        }
+
+        match page_sizes {
+            TlbLookupPageSizes::Only4K => {
+                set_dirty_page_size!(PageSize::Size4K);
+            }
+            TlbLookupPageSizes::Size2MAnd4K => {
+                set_dirty_page_size!(PageSize::Size2M);
+                set_dirty_page_size!(PageSize::Size4K);
+            }
+            TlbLookupPageSizes::Size4MAnd4K => {
+                set_dirty_page_size!(PageSize::Size4M);
+                set_dirty_page_size!(PageSize::Size4K);
+            }
+            TlbLookupPageSizes::Size1G2MAnd4K => {
+                set_dirty_page_size!(PageSize::Size1G);
+                set_dirty_page_size!(PageSize::Size2M);
+                set_dirty_page_size!(PageSize::Size4K);
             }
         }
+
         false
     }
 }
@@ -318,11 +370,17 @@ impl Tlb {
     }
 
     #[inline]
-    pub(crate) fn lookup(&self, vaddr: u64, is_exec: bool, pcid: u16) -> Option<&TlbEntry> {
+    pub(crate) fn lookup(
+        &self,
+        vaddr: u64,
+        is_exec: bool,
+        pcid: u16,
+        page_sizes: TlbLookupPageSizes,
+    ) -> Option<&TlbEntry> {
         if is_exec {
-            self.itlb.lookup(vaddr, pcid)
+            self.itlb.lookup(vaddr, pcid, page_sizes)
         } else {
-            self.dtlb.lookup(vaddr, pcid)
+            self.dtlb.lookup(vaddr, pcid, page_sizes)
         }
     }
 
@@ -347,11 +405,17 @@ impl Tlb {
             .invalidate_address_pcid(vaddr, pcid, include_global);
     }
 
-    pub(crate) fn set_dirty(&mut self, vaddr: u64, is_exec: bool, pcid: u16) -> bool {
+    pub(crate) fn set_dirty(
+        &mut self,
+        vaddr: u64,
+        is_exec: bool,
+        pcid: u16,
+        page_sizes: TlbLookupPageSizes,
+    ) -> bool {
         if is_exec {
-            self.itlb.set_dirty(vaddr, pcid)
+            self.itlb.set_dirty(vaddr, pcid, page_sizes)
         } else {
-            self.dtlb.set_dirty(vaddr, pcid)
+            self.dtlb.set_dirty(vaddr, pcid, page_sizes)
         }
     }
 

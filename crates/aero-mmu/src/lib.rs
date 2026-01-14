@@ -8,7 +8,7 @@
 
 mod tlb;
 
-use tlb::{PageSize, Tlb, TlbEntry, TlbEntryAttributes};
+use tlb::{PageSize, Tlb, TlbEntry, TlbEntryAttributes, TlbLookupPageSizes};
 
 /// Physical memory access used for page-table walking.
 ///
@@ -822,6 +822,7 @@ impl Mmu {
 
         let is_exec = access.is_execute();
         let pcid = self.current_pcid();
+        let tlb_page_sizes = self.tlb_lookup_page_sizes(mode);
 
         #[cfg(feature = "stats")]
         {
@@ -832,7 +833,7 @@ impl Mmu {
             }
         }
 
-        if let Some(entry) = self.tlb.lookup(vaddr, is_exec, pcid) {
+        if let Some(entry) = self.tlb.lookup(vaddr, is_exec, pcid, tlb_page_sizes) {
             #[cfg(feature = "stats")]
             {
                 if is_exec {
@@ -858,7 +859,7 @@ impl Mmu {
                             let val = bus.read_u32(leaf_addr);
                             bus.write_u32(leaf_addr, val | (PTE_D as u32));
                         }
-                        self.tlb.set_dirty(vaddr, is_exec, pcid);
+                        self.tlb.set_dirty(vaddr, is_exec, pcid, tlb_page_sizes);
                     }
 
                     return Ok(paddr);
@@ -938,6 +939,7 @@ impl Mmu {
 
         let is_exec = access.is_execute();
         let pcid = self.current_pcid();
+        let tlb_page_sizes = self.tlb_lookup_page_sizes(mode);
 
         #[cfg(feature = "stats")]
         {
@@ -950,7 +952,7 @@ impl Mmu {
 
         // Probe mode may consult the internal TLB, but must not update guest
         // page tables (and thus must not lazily set dirty bits on hits).
-        if let Some(entry) = self.tlb.lookup(vaddr, is_exec, pcid) {
+        if let Some(entry) = self.tlb.lookup(vaddr, is_exec, pcid, tlb_page_sizes) {
             #[cfg(feature = "stats")]
             {
                 if is_exec {
@@ -1002,6 +1004,19 @@ impl Mmu {
             return PagingMode::Long4;
         }
         PagingMode::Pae
+    }
+
+    #[inline]
+    fn tlb_lookup_page_sizes(&self, mode: PagingMode) -> TlbLookupPageSizes {
+        if !self.cr4_pse() {
+            return TlbLookupPageSizes::Only4K;
+        }
+        match mode {
+            PagingMode::Legacy32 => TlbLookupPageSizes::Size4MAnd4K,
+            PagingMode::Pae => TlbLookupPageSizes::Size2MAnd4K,
+            PagingMode::Long4 => TlbLookupPageSizes::Size1G2MAnd4K,
+            PagingMode::Disabled => unreachable!(),
+        }
     }
 
     #[inline]
