@@ -194,3 +194,84 @@ fn rejects_structured_buffer_stride_not_multiple_of4() {
         "unexpected error: {err:?}"
     );
 }
+
+#[test]
+fn rejects_uav_structured_buffer_without_stride_declaration() {
+    let dxbc_bytes = dummy_dxbc_bytes();
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("dummy DXBC parse");
+    let signatures = ShaderSignatures::default();
+
+    // Use a structured UAV store without declaring `dcl_uav_structured` / stride.
+    let module = Sm4Module {
+        stage: ShaderStage::Compute,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: vec![Sm4Decl::ThreadGroupSize { x: 1, y: 1, z: 1 }],
+        instructions: vec![
+            Sm4Inst::StoreStructured {
+                uav: UavRef { slot: 0 },
+                index: src_imm_u32_bits(0),
+                offset: src_imm_u32_bits(0),
+                value: src_imm_u32_bits(0),
+                mask: WriteMask::XYZW,
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let err = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures)
+        .expect_err("expected structured UAV stride error");
+    assert!(
+        matches!(
+            err,
+            ShaderTranslateError::MissingStructuredBufferStride {
+                kind: "uav_buffer",
+                slot: 0
+            }
+        ),
+        "unexpected error: {err:?}"
+    );
+}
+
+#[test]
+fn rejects_uav_structured_buffer_stride_not_multiple_of4() {
+    let dxbc_bytes = dummy_dxbc_bytes();
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("dummy DXBC parse");
+    let signatures = ShaderSignatures::default();
+
+    let module = Sm4Module {
+        stage: ShaderStage::Compute,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: vec![
+            Sm4Decl::ThreadGroupSize { x: 1, y: 1, z: 1 },
+            Sm4Decl::UavBuffer {
+                slot: 0,
+                stride: 6,
+                kind: BufferKind::Structured,
+            },
+        ],
+        instructions: vec![
+            Sm4Inst::StoreStructured {
+                uav: UavRef { slot: 0 },
+                index: src_imm_u32_bits(0),
+                offset: src_imm_u32_bits(0),
+                value: src_imm_u32_bits(0),
+                mask: WriteMask::XYZW,
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let err = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures)
+        .expect_err("expected structured UAV stride error");
+    assert!(
+        matches!(
+            err,
+            ShaderTranslateError::StructuredBufferStrideNotMultipleOf4 {
+                kind: "uav_buffer",
+                slot: 0,
+                stride_bytes: 6
+            }
+        ),
+        "unexpected error: {err:?}"
+    );
+}
