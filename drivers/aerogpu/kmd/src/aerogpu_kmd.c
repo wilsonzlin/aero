@@ -2062,15 +2062,23 @@ static VOID AeroGpuAllocationUnmapCpu(_Inout_ AEROGPU_ALLOCATION* Alloc)
     Alloc->CpuMapWritePending = FALSE;
 }
 
-static ULONG AeroGpuShareTokenRefIncrementLocked(_Inout_ AEROGPU_ADAPTER* Adapter, _In_ ULONGLONG ShareToken)
+static ULONG AeroGpuShareTokenRefIncrementLocked(_Inout_ AEROGPU_ADAPTER* Adapter,
+                                                 _In_ ULONGLONG ShareToken,
+                                                 _Inout_ KIRQL* OldIrqlInOut)
 {
     if (!Adapter || ShareToken == 0) {
         return 0;
     }
+    if (!OldIrqlInOut) {
+        return 0;
+    }
 
     /*
-     * Assumes Adapter->AllocationsLock is held by the caller so increments are
-     * atomic with respect to allocation tracking/untracking.
+     * Assumes Adapter->AllocationsLock is held by the caller on entry and that it
+     * should still be held on return.
+     *
+     * Avoid ExAllocatePoolWithTag while holding the spin lock (NonPagedPool is
+     * legal at DISPATCH_LEVEL, but can increase hold time and contention).
      */
     for (PLIST_ENTRY it = Adapter->ShareTokenRefs.Flink; it != &Adapter->ShareTokenRefs; it = it->Flink) {
         AEROGPU_SHARE_TOKEN_REF* node = CONTAINING_RECORD(it, AEROGPU_SHARE_TOKEN_REF, ListEntry);
@@ -2080,14 +2088,34 @@ static ULONG AeroGpuShareTokenRefIncrementLocked(_Inout_ AEROGPU_ADAPTER* Adapte
         }
     }
 
+    KeReleaseSpinLock(&Adapter->AllocationsLock, *OldIrqlInOut);
+
     AEROGPU_SHARE_TOKEN_REF* node =
         (AEROGPU_SHARE_TOKEN_REF*)ExAllocatePoolWithTag(NonPagedPool, sizeof(*node), AEROGPU_POOL_TAG);
     if (!node) {
+        KeAcquireSpinLock(&Adapter->AllocationsLock, OldIrqlInOut);
         return 0;
     }
     RtlZeroMemory(node, sizeof(*node));
     node->ShareToken = ShareToken;
     node->OpenCount = 1;
+
+    KeAcquireSpinLock(&Adapter->AllocationsLock, OldIrqlInOut);
+
+    /*
+     * Re-check under the lock in case another thread inserted this token while we
+     * were allocating.
+     */
+    for (PLIST_ENTRY it = Adapter->ShareTokenRefs.Flink; it != &Adapter->ShareTokenRefs; it = it->Flink) {
+        AEROGPU_SHARE_TOKEN_REF* existing = CONTAINING_RECORD(it, AEROGPU_SHARE_TOKEN_REF, ListEntry);
+        if (existing->ShareToken == ShareToken) {
+            existing->OpenCount += 1;
+            const ULONG openCount = existing->OpenCount;
+            ExFreePoolWithTag(node, AEROGPU_POOL_TAG);
+            return openCount;
+        }
+    }
+
     InsertTailList(&Adapter->ShareTokenRefs, &node->ListEntry);
     return node->OpenCount;
 }
@@ -2309,8 +2337,8 @@ static VOID AeroGpuTrackAllocation(_Inout_ AEROGPU_ADAPTER* Adapter, _Inout_ AER
 {
     KIRQL oldIrql;
     KeAcquireSpinLock(&Adapter->AllocationsLock, &oldIrql);
+    const ULONG shareTokenCount = AeroGpuShareTokenRefIncrementLocked(Adapter, Allocation->ShareToken, &oldIrql);
     InsertTailList(&Adapter->Allocations, &Allocation->ListEntry);
-    const ULONG shareTokenCount = AeroGpuShareTokenRefIncrementLocked(Adapter, Allocation->ShareToken);
     KeReleaseSpinLock(&Adapter->AllocationsLock, oldIrql);
 
     if (Allocation->ShareToken != 0) {
