@@ -713,6 +713,15 @@ impl PlatformInterrupts {
         );
     }
 
+    /// Iterate over all LAPICs in the platform.
+    ///
+    /// This is primarily used by MSI delivery helpers (e.g. broadcast and logical destination
+    /// modes) without exposing the internal `lapics: Vec<Arc<LocalApic>>` field outside this
+    /// module.
+    pub(crate) fn lapics_iter(&self) -> impl Iterator<Item = &LocalApic> + '_ {
+        self.lapics.iter().map(|lapic| lapic.as_ref())
+    }
+
     #[cfg(test)]
     pub(crate) fn lapic_apic_id(&self) -> u8 {
         self.lapics[0].apic_id()
