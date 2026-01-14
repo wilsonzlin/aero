@@ -340,3 +340,59 @@ fn xhci_snapshot_loads_legacy_time_and_tick_tag_mapping() {
     assert_eq!(r2.u64(27).unwrap().unwrap(), 0);
     assert_eq!(r2.u32(28).unwrap().unwrap(), 0xaabb_ccdd);
 }
+
+#[test]
+fn xhci_snapshot_loads_legacy_tick_tag_collision_mapping() {
+    let mut ctrl = XhciController::new();
+    let mut mem = TestMem::new(0x4000);
+
+    // Point CRCR at a known address and seed a dword there so `tick_1ms_with_dma` updates the
+    // controller's internal DMA probe state.
+    let crcr_ptr = 0x1000u64;
+    mem.write_u32(crcr_ptr, 0xaabb_ccdd);
+
+    ctrl.mmio_write(&mut mem, regs::REG_CRCR_LO, 4, crcr_ptr as u32);
+    ctrl.mmio_write(&mut mem, regs::REG_CRCR_HI, 4, (crcr_ptr >> 32) as u32);
+    ctrl.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
+
+    for _ in 0..3 {
+        ctrl.tick_1ms_with_dma(&mut mem);
+    }
+
+    let bytes = ctrl.save_state();
+    let r = SnapshotReader::parse(&bytes, *b"XHCI").expect("parse xHCI snapshot");
+    let time_ms = r.u64(27).unwrap().unwrap();
+    let last_tick_dma_dword = r.u32(28).unwrap().unwrap();
+
+    // Historically, an early v0.7 snapshot implementation reused tag 26 (EP0_CONTROL_TD_FULL) for
+    // `time_ms` and wrote `last_tick_dma_dword` under tag 27, leaving tag 28 absent.
+    let mut w = SnapshotWriter::new(*b"XHCI", r.header().device_version);
+    for (tag, field) in r.iter_fields() {
+        if matches!(tag, 26 | 27 | 28) {
+            continue;
+        }
+        w.field_bytes(tag, field.to_vec());
+    }
+    w.field_u64(26, time_ms);
+    w.field_u32(27, last_tick_dma_dword);
+    let legacy_bytes = w.finish();
+
+    let legacy_r = SnapshotReader::parse(&legacy_bytes, *b"XHCI").expect("parse legacy snapshot");
+    assert_eq!(legacy_r.bytes(26).unwrap().len(), 8);
+    assert_eq!(legacy_r.bytes(27).unwrap().len(), 4);
+    assert!(legacy_r.bytes(28).is_none());
+
+    let mut restored = XhciController::new();
+    restored
+        .load_state(&legacy_bytes)
+        .expect("load legacy snapshot with tick tag collision");
+
+    let bytes2 = restored.save_state();
+    let r2 = SnapshotReader::parse(&bytes2, *b"XHCI").expect("parse restored snapshot");
+    assert_eq!(r2.u64(27).unwrap().unwrap(), time_ms);
+    assert_eq!(r2.u32(28).unwrap().unwrap(), last_tick_dma_dword);
+    assert!(
+        r2.bytes(26).unwrap().len() != 8,
+        "expected EP0_CONTROL_TD_FULL encoding under tag 26 (not time_ms)"
+    );
+}
