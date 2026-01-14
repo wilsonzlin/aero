@@ -1813,6 +1813,7 @@ static HUB_DEVICE_DESCRIPTOR: [u8; 18] = [
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::hid::UsbHidKeyboardHandle;
 
     #[test]
     fn root_hub_portsc_lsda_is_set_only_for_low_speed() {
@@ -1860,5 +1861,20 @@ mod tests {
             .map(|b| u16::from_le_bytes([b[0], b[1]]))
             .collect();
         String::from_utf16(&units).expect("payload must be valid UTF-16");
+    }
+
+    #[test]
+    fn external_hub_snapshot_restore_detaches_downstream_devices() {
+        let mut hub = UsbHubDevice::new_with_ports(1);
+        hub.attach(1, Box::new(UsbHidKeyboardHandle::new()));
+        assert!(hub.ports[0].device.is_some(), "expected attached device");
+
+        let snapshot = UsbHubDevice::new_with_ports(1).save_state();
+        hub.load_state(&snapshot).expect("snapshot restore");
+
+        assert!(
+            hub.ports[0].device.is_none(),
+            "snapshot restore should detach missing downstream device"
+        );
     }
 }
