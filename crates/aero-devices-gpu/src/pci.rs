@@ -112,8 +112,7 @@ impl AeroGpuPciDevice {
         // sandbox's heap limits in constrained environments and tests.
         //
         // Keep the PCI BAR size (device contract) unchanged, but allocate a smaller backing store
-        // on wasm32. Out-of-range VRAM accesses will "float high" (0xFF) and writes will be
-        // ignored.
+        // on wasm32. Out-of-range VRAM reads return 0 and writes are ignored.
         #[cfg(target_arch = "wasm32")]
         const VRAM_ALLOC_BYTES: usize = 32 * 1024 * 1024;
         #[cfg(target_arch = "wasm32")]
