@@ -5498,6 +5498,7 @@ fn micro_textured_quad_pixel_compare() {
             mag_filter: state::FilterMode::Point,
             address_u: state::AddressMode::Clamp,
             address_v: state::AddressMode::Clamp,
+            address_w: state::AddressMode::Clamp,
         },
     );
 
@@ -5740,6 +5741,7 @@ fn micro_ps3_ifc_def_pixel_compare() {
             mag_filter: state::FilterMode::Point,
             address_u: state::AddressMode::Clamp,
             address_v: state::AddressMode::Clamp,
+            address_w: state::AddressMode::Clamp,
         },
     );
 
@@ -5936,6 +5938,7 @@ fn sm3_texld_cube_samples_face_colors() {
             mag_filter: state::FilterMode::Point,
             address_u: state::AddressMode::Clamp,
             address_v: state::AddressMode::Clamp,
+            address_w: state::AddressMode::Clamp,
         },
     );
 

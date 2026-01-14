@@ -112,6 +112,7 @@ pub struct SamplerState {
     pub mag_filter: FilterMode,
     pub address_u: AddressMode,
     pub address_v: AddressMode,
+    pub address_w: AddressMode,
 }
 
 impl Default for SamplerState {
@@ -121,6 +122,7 @@ impl Default for SamplerState {
             mag_filter: FilterMode::Linear,
             address_u: AddressMode::Wrap,
             address_v: AddressMode::Wrap,
+            address_w: AddressMode::Wrap,
         }
     }
 }

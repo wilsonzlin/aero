@@ -144,5 +144,3 @@ position by `(-1/viewport_width, +1/viewport_height) * w` in translated vertex s
   not in the SM2/SM3 WGSL generator. Comparison samplers / depth-compare sampling are not modeled here yet.
 - The runtime command stream currently supports binding only 2D + cube textures. Shaders that sample from 1D/3D
   textures are rejected at translation time; unused `dcl_1d` / `dcl_volume` declarations are accepted.
-- The SM3 **software reference interpreter** (`crates/aero-d3d9/src/sm3/software.rs`) currently models
-  `Texture2D` + `TextureCube` sampling; it does not emulate 1D/3D sampling yet.

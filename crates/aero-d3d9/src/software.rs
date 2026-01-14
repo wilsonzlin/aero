@@ -198,6 +198,61 @@ fn apply_write_mask(dst: &mut Vec4, mask: WriteMask, value: Vec4) {
 }
 
 #[derive(Debug, Clone)]
+pub struct Texture1D {
+    pub width: u32,
+    /// Row-major, RGBA in 0..1.
+    pub texels: Vec<Vec4>,
+}
+
+impl Texture1D {
+    fn get(&self, x: u32) -> Vec4 {
+        if self.width == 0 {
+            return Vec4::ZERO;
+        }
+        let x = x.min(self.width - 1);
+        self.texels.get(x as usize).copied().unwrap_or(Vec4::ZERO)
+    }
+
+    pub fn sample(&self, sampler: SamplerState, u: f32) -> Vec4 {
+        if self.width == 0 {
+            return Vec4::ZERO;
+        }
+
+        let mut u = u;
+        match sampler.address_u {
+            AddressMode::Clamp => {
+                u = u.clamp(0.0, 1.0);
+            }
+            AddressMode::Wrap => {
+                u = u.fract();
+                if u < 0.0 {
+                    u += 1.0;
+                }
+            }
+        }
+
+        // Map [0..1] to texel centers [0..(size-1)].
+        let fx = u * (self.width as f32 - 1.0);
+
+        match (sampler.min_filter, sampler.mag_filter) {
+            (FilterMode::Point, FilterMode::Point) => {
+                let x = (fx + 0.5).floor() as u32;
+                self.get(x)
+            }
+            _ => {
+                // Linear.
+                let x0 = fx.floor().clamp(0.0, (self.width - 1) as f32) as u32;
+                let x1 = (x0 + 1).min(self.width - 1);
+                let t = fx - fx.floor();
+                let c0 = self.get(x0);
+                let c1 = self.get(x1);
+                c0.mul_scalar(1.0 - t) + c1.mul_scalar(t)
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct Texture2D {
     pub width: u32,
     pub height: u32,
@@ -282,6 +337,102 @@ impl Texture2D {
 }
 
 #[derive(Debug, Clone)]
+pub struct Texture3D {
+    pub width: u32,
+    pub height: u32,
+    pub depth: u32,
+    /// Deterministic row-major layout, RGBA in 0..1:
+    /// index = ((z * height + y) * width + x).
+    pub texels: Vec<Vec4>,
+}
+
+impl Texture3D {
+    fn get(&self, x: u32, y: u32, z: u32) -> Vec4 {
+        if self.width == 0 || self.height == 0 || self.depth == 0 {
+            return Vec4::ZERO;
+        }
+        let x = x.min(self.width - 1);
+        let y = y.min(self.height - 1);
+        let z = z.min(self.depth - 1);
+        let idx = (((z as u64) * (self.height as u64) + (y as u64)) * (self.width as u64)
+            + (x as u64)) as usize;
+        self.texels.get(idx).copied().unwrap_or(Vec4::ZERO)
+    }
+
+    pub fn sample(&self, sampler: SamplerState, uvw: (f32, f32, f32)) -> Vec4 {
+        if self.width == 0 || self.height == 0 || self.depth == 0 {
+            return Vec4::ZERO;
+        }
+
+        let mut u = uvw.0;
+        let mut v = uvw.1;
+        let mut w = uvw.2;
+
+        let apply_addr = |coord: &mut f32, mode: AddressMode| match mode {
+            AddressMode::Clamp => {
+                *coord = coord.clamp(0.0, 1.0);
+            }
+            AddressMode::Wrap => {
+                *coord = coord.fract();
+                if *coord < 0.0 {
+                    *coord += 1.0;
+                }
+            }
+        };
+        apply_addr(&mut u, sampler.address_u);
+        apply_addr(&mut v, sampler.address_v);
+        apply_addr(&mut w, sampler.address_w);
+
+        // Map [0..1] to texel centers [0..(size-1)].
+        let fx = u * (self.width as f32 - 1.0);
+        let fy = v * (self.height as f32 - 1.0);
+        let fz = w * (self.depth as f32 - 1.0);
+
+        match (sampler.min_filter, sampler.mag_filter) {
+            (FilterMode::Point, FilterMode::Point) => {
+                let x = (fx + 0.5).floor() as u32;
+                let y = (fy + 0.5).floor() as u32;
+                let z = (fz + 0.5).floor() as u32;
+                self.get(x, y, z)
+            }
+            _ => {
+                // Trilinear.
+                let x0 = fx.floor().clamp(0.0, (self.width - 1) as f32) as u32;
+                let y0 = fy.floor().clamp(0.0, (self.height - 1) as f32) as u32;
+                let z0 = fz.floor().clamp(0.0, (self.depth - 1) as f32) as u32;
+                let x1 = (x0 + 1).min(self.width - 1);
+                let y1 = (y0 + 1).min(self.height - 1);
+                let z1 = (z0 + 1).min(self.depth - 1);
+                let tx = fx - fx.floor();
+                let ty = fy - fy.floor();
+                let tz = fz - fz.floor();
+
+                let lerp = |a: Vec4, b: Vec4, t: f32| a.mul_scalar(1.0 - t) + b.mul_scalar(t);
+
+                let c000 = self.get(x0, y0, z0);
+                let c100 = self.get(x1, y0, z0);
+                let c010 = self.get(x0, y1, z0);
+                let c110 = self.get(x1, y1, z0);
+                let c001 = self.get(x0, y0, z1);
+                let c101 = self.get(x1, y0, z1);
+                let c011 = self.get(x0, y1, z1);
+                let c111 = self.get(x1, y1, z1);
+
+                let c00 = lerp(c000, c100, tx);
+                let c10 = lerp(c010, c110, tx);
+                let c01 = lerp(c001, c101, tx);
+                let c11 = lerp(c011, c111, tx);
+
+                let c0 = lerp(c00, c10, ty);
+                let c1 = lerp(c01, c11, ty);
+
+                lerp(c0, c1, tz)
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct TextureCube {
     /// Faces are ordered as +X, -X, +Y, -Y, +Z, -Z (matching D3D9 and WebGPU).
     pub faces: [Texture2D; 6],
@@ -349,13 +500,27 @@ impl TextureCube {
 
 #[derive(Debug, Clone)]
 pub enum Texture {
+    Texture1D(Texture1D),
     Texture2D(Texture2D),
+    Texture3D(Texture3D),
     TextureCube(TextureCube),
+}
+
+impl From<Texture1D> for Texture {
+    fn from(value: Texture1D) -> Self {
+        Texture::Texture1D(value)
+    }
 }
 
 impl From<Texture2D> for Texture {
     fn from(value: Texture2D) -> Self {
         Texture::Texture2D(value)
+    }
+}
+
+impl From<Texture3D> for Texture {
+    fn from(value: Texture3D) -> Self {
+        Texture::Texture3D(value)
     }
 }
 
@@ -1991,6 +2156,18 @@ fn run_pixel_shader(
                             .unwrap_or(TextureType::Texture2D);
 
                         let sampled = match tex_ty {
+                            TextureType::Texture1D => {
+                                let u = if project {
+                                    let w = coord.w.max(f32::EPSILON);
+                                    coord.x / w
+                                } else {
+                                    coord.x
+                                };
+                                match textures.get(&s) {
+                                    Some(Texture::Texture1D(tex)) => tex.sample(samp, u),
+                                    _ => Vec4::ZERO,
+                                }
+                            }
                             TextureType::Texture2D => {
                                 let (u, v) = if project {
                                     let w = coord.w.max(f32::EPSILON);
@@ -2000,6 +2177,18 @@ fn run_pixel_shader(
                                 };
                                 match textures.get(&s) {
                                     Some(Texture::Texture2D(tex)) => tex.sample(samp, (u, v)),
+                                    _ => Vec4::ZERO,
+                                }
+                            }
+                            TextureType::Texture3D => {
+                                let (u, v, w) = if project {
+                                    let pw = coord.w.max(f32::EPSILON);
+                                    (coord.x / pw, coord.y / pw, coord.z / pw)
+                                } else {
+                                    (coord.x, coord.y, coord.z)
+                                };
+                                match textures.get(&s) {
+                                    Some(Texture::Texture3D(tex)) => tex.sample(samp, (u, v, w)),
                                     _ => Vec4::ZERO,
                                 }
                             }

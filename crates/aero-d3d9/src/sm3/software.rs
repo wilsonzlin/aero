@@ -1163,6 +1163,22 @@ fn exec_op(
                     .unwrap_or(TextureType::Texture2D);
 
                 match ty {
+                    TextureType::Texture1D => {
+                        let u = match kind {
+                            TexSampleKind::ImplicitLod { project: true } => {
+                                let w = coord_v.w.max(f32::EPSILON);
+                                coord_v.x / w
+                            }
+                            TexSampleKind::ImplicitLod { project: false }
+                            | TexSampleKind::Bias
+                            | TexSampleKind::ExplicitLod
+                            | TexSampleKind::Grad => coord_v.x,
+                        };
+                        match textures.get(&s) {
+                            Some(Texture::Texture1D(tex)) => tex.sample(samp, u),
+                            _ => Vec4::ZERO,
+                        }
+                    }
                     TextureType::Texture2D => {
                         let (u, v) = match kind {
                             TexSampleKind::ImplicitLod { project: true } => {
@@ -1176,6 +1192,22 @@ fn exec_op(
                         };
                         match textures.get(&s) {
                             Some(Texture::Texture2D(tex)) => tex.sample(samp, (u, v)),
+                            _ => Vec4::ZERO,
+                        }
+                    }
+                    TextureType::Texture3D => {
+                        let (u, v, w) = match kind {
+                            TexSampleKind::ImplicitLod { project: true } => {
+                                let pw = coord_v.w.max(f32::EPSILON);
+                                (coord_v.x / pw, coord_v.y / pw, coord_v.z / pw)
+                            }
+                            TexSampleKind::ImplicitLod { project: false }
+                            | TexSampleKind::Bias
+                            | TexSampleKind::ExplicitLod
+                            | TexSampleKind::Grad => (coord_v.x, coord_v.y, coord_v.z),
+                        };
+                        match textures.get(&s) {
+                            Some(Texture::Texture3D(tex)) => tex.sample(samp, (u, v, w)),
                             _ => Vec4::ZERO,
                         }
                     }
