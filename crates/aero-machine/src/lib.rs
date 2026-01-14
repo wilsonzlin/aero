@@ -4444,9 +4444,9 @@ impl Machine {
     /// Policy summary:
     /// - Before the guest claims the AeroGPU WDDM scanout, legacy VGA/VBE output is presented.
     /// - Once the guest claims AeroGPU scanout (writes a valid `SCANOUT0_*` config and enables it),
-    ///   WDDM owns scanout until the guest disables scanout (`SCANOUT0_ENABLE=0`) or the VM resets.
-    ///   While WDDM owns scanout, legacy VGA/VBE is ignored by presentation even if legacy MMIO/PIO
-    ///   continues to accept writes for compatibility.
+    ///   WDDM owns scanout until the VM resets. While WDDM owns scanout, legacy VGA/VBE is ignored
+    ///   by presentation even if legacy MMIO/PIO continues to accept writes for compatibility.
+    ///   Clearing `SCANOUT0_ENABLE` blanks the display but does not release WDDM ownership.
     pub fn active_scanout_source(&self) -> ScanoutSource {
         if let Some(aerogpu_mmio) = &self.aerogpu_mmio {
             let state = aerogpu_mmio.borrow().scanout0_state();

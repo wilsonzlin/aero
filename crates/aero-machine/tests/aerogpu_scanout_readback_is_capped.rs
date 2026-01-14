@@ -76,11 +76,18 @@ fn aerogpu_scanout_readback_is_capped_to_avoid_unbounded_allocations() {
     assert_eq!(m.display_resolution(), (0, 0));
     assert!(m.display_framebuffer().is_empty());
 
-    // Explicit disable releases the claim and returns to legacy output.
+    // Explicit disable blanks the display but keeps WDDM ownership sticky until reset.
     m.write_physical_u32(bar0_base + aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE as u64, 0);
     m.process_aerogpu();
+    m.display_present();
+    assert_eq!(m.active_scanout_source(), ScanoutSource::Wddm);
+    assert_eq!(m.display_resolution(), (0, 0));
+    assert!(m.display_framebuffer().is_empty());
+
+    // Reset returns scanout ownership to legacy.
+    m.reset();
+    m.write_physical_u16(0xB8000, 0x1F41); // 'A'
     m.display_present();
     assert_eq!(m.active_scanout_source(), ScanoutSource::LegacyText);
     assert_eq!(m.display_resolution(), legacy_res);
 }
-

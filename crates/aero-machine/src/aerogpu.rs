@@ -1246,15 +1246,8 @@ impl AeroGpuMmioDevice {
             x if x == pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE as u64 => {
                 let new_enable = value != 0;
                 if self.scanout0_enable && !new_enable {
-                    // Releasing `SCANOUT0_ENABLE` hands scanout back to the legacy BIOS/VBE paths.
-                    // Clear the WDDM ownership latch so callers like `Machine::display_present()` and
-                    // shared `ScanoutState` publishing can fall back immediately.
-                    self.wddm_scanout_active = false;
                     self.next_vblank_ns = None;
                     self.irq_status &= !pci::AEROGPU_IRQ_SCANOUT_VBLANK;
-                    // `SCANOUT0_ENABLE=0` explicitly releases the WDDM scanout claim so the machine
-                    // can fall back to legacy VGA/VBE presentation.
-                    self.wddm_scanout_active = false;
                     // Reset torn-update tracking so a stale LO write can't block future publishes.
                     self.scanout0_fb_gpa_pending_lo = 0;
                     self.scanout0_fb_gpa_lo_pending = false;
