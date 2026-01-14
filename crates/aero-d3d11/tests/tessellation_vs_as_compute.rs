@@ -1440,16 +1440,17 @@ fn vs_as_compute_loads_u16x2_input() {
 #[test]
 fn vs_as_compute_loads_u16_scalar_input() {
     pollster::block_on(async {
-        let (device, queue, supports_compute) =
-            match common::wgpu::create_device_queue("aero-d3d11 VS-as-compute u16 scalar test device")
-                .await
-            {
-                Ok(v) => v,
-                Err(err) => {
-                    common::skip_or_panic(module_path!(), &format!("{err:#}"));
-                    return;
-                }
-            };
+        let (device, queue, supports_compute) = match common::wgpu::create_device_queue(
+            "aero-d3d11 VS-as-compute u16 scalar test device",
+        )
+        .await
+        {
+            Ok(v) => v,
+            Err(err) => {
+                common::skip_or_panic(module_path!(), &format!("{err:#}"));
+                return;
+            }
+        };
         if !supports_compute {
             common::skip_or_panic(module_path!(), "compute unsupported");
             return;
