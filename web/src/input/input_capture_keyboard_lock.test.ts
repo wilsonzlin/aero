@@ -172,4 +172,33 @@ describe("InputCapture Keyboard Lock integration", () => {
       }
     });
   });
+
+  it("unlocks on pointerlockerror", async () => {
+    await withStubbedDocument(async () => {
+      const lock = vi.fn<[readonly string[]], Promise<void>>().mockResolvedValue(undefined);
+      const unlock = vi.fn();
+
+      await withFakeNavigatorKeyboard({ lock, unlock }, async () => {
+        const canvas = {
+          tabIndex: 0,
+          addEventListener: () => {},
+          removeEventListener: () => {},
+          focus: () => {},
+          requestPointerLock: () => {},
+        } as unknown as HTMLCanvasElement;
+
+        const ioWorker = { postMessage: () => {} };
+        const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, enableKeyboardLock: true });
+
+        (capture as any).hasFocus = true;
+        (capture as any).handleClick({ preventDefault: () => {}, stopPropagation: () => {} } as unknown as MouseEvent);
+
+        // Let the lock promise resolve so we don't race the in-flight `.then()` handler.
+        await Promise.resolve();
+
+        (capture as any).handlePointerLockError();
+        expect(unlock).toHaveBeenCalled();
+      });
+    });
+  });
 });

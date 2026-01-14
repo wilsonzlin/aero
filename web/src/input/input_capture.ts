@@ -69,6 +69,10 @@ export interface InputCaptureOptions {
    *
    * This is best-effort: failures (e.g. API unavailable, permission denied, or
    * user-gesture requirements not met) are ignored after logging.
+   *
+   * Note: locking `Escape` can prevent the browser's default "Escape exits pointer lock"
+   * behavior. Apps should ensure there is an alternative way to leave capture (e.g. a
+   * host-only `releasePointerLockChord` or an on-screen exit control).
    */
   enableKeyboardLock?: boolean;
   /**
