@@ -43,10 +43,7 @@ fn dst_token(regtype: u8, index: u8, mask: u8) -> u32 {
 }
 
 fn src_token(regtype: u8, index: u8, swizzle: u8, modifier: u8) -> u32 {
-    encode_regtype(regtype)
-        | (index as u32)
-        | ((swizzle as u32) << 16)
-        | ((modifier as u32) << 24)
+    encode_regtype(regtype) | (index as u32) | ((swizzle as u32) << 16) | ((modifier as u32) << 24)
 }
 
 fn u32_from_seed(seed: &[u8], offset: usize) -> u32 {
@@ -58,13 +55,42 @@ fn u32_from_seed(seed: &[u8], offset: usize) -> u32 {
     ])
 }
 
+fn opcode_token(op: u32, param_tokens: u32, mod_bits: u8) -> u32 {
+    (op & 0xFFFF) | (param_tokens << 24) | ((mod_bits as u32) << 20)
+}
+
+fn src_token_rel_const(
+    base_idx: u8,
+    swizzle: u8,
+    modifier: u8,
+    rel_reg_idx: u8,
+    rel_swizzle: u8,
+) -> [u32; 2] {
+    // Relative constant addressing: set RELATIVE bit on the base constant token and append a
+    // second token describing the relative register (address register for `cN[a0.x]`).
+    const RELATIVE: u32 = 0x0000_2000;
+    let base = encode_regtype(2)
+        | (base_idx as u32)
+        | RELATIVE
+        | ((swizzle as u32) << 16)
+        | ((modifier as u32) << 24);
+    let rel = src_token(3, rel_reg_idx, rel_swizzle, 0);
+    [base, rel]
+}
+
 fn build_patched_shader(seed: &[u8]) -> Vec<u8> {
     // Build a tiny, self-consistent shader token stream derived from the fuzzer input.
     // This helps libFuzzer reach deeper decode/IR paths without having to discover the
     // version/opcode encodings from scratch.
 
-    let stage_is_pixel = seed.get(0).copied().unwrap_or(0) & 1 != 0;
-    let major = 2u32 + ((seed.get(1).copied().unwrap_or(0) as u32) & 1); // {2,3}
+    let mode = seed.get(6).copied().unwrap_or(0) % 4;
+    let stage_is_pixel = (seed.get(0).copied().unwrap_or(0) & 1 != 0) && mode != 2;
+    // For the `mova`/relative-constant mode, force vs_3_0 so address registers are valid as dst.
+    let major = if mode == 2 {
+        3u32
+    } else {
+        2u32 + ((seed.get(1).copied().unwrap_or(0) as u32) & 1)
+    };
     let minor = 0u32;
     let high = if stage_is_pixel {
         0xFFFF_0000
@@ -73,21 +99,32 @@ fn build_patched_shader(seed: &[u8]) -> Vec<u8> {
     };
     let version_token = high | (major << 8) | minor;
 
-    // Pick a simple opcode that is supported by the IR builder.
-    let op_sel = seed.get(2).copied().unwrap_or(0) % 3;
-    let swz = 0xE4u8; // xyzw
+    // Result modifiers (saturate + shift) are encoded in opcode_token[20..24].
+    let saturate = seed.get(7).copied().unwrap_or(0) & 1;
+    let shift = seed.get(8).copied().unwrap_or(0) % 7; // 0..=6 (avoid Unknown)
+    let mod_bits = (saturate & 1) | ((shift & 0x7) << 1);
+
+    // Use a fuzzer-controlled swizzle/modifier, but keep modifier in the known range so we reach
+    // deeper IR/WGSL paths (unknown modifiers are rejected by the IR builder).
+    let swz = seed.get(9).copied().unwrap_or(0xE4); // xyzw default
+    let src_mod = seed.get(10).copied().unwrap_or(0) % 14; // 0..=13
 
     // Destination: write to the "primary output" register for the chosen stage.
     // - VS: oPos (RastOut type=4, index 0)
     // - PS: oC0 (ColorOut type=8, index 0)
-    let (dst_regtype, dst_index) = if stage_is_pixel { (8u8, 0u8) } else { (4u8, 0u8) };
-    let dst = dst_token(dst_regtype, dst_index, 0);
+    let (dst_regtype, dst_index) = if stage_is_pixel {
+        (8u8, 0u8)
+    } else {
+        (4u8, 0u8)
+    };
+    let dst_mask = seed.get(11).copied().unwrap_or(0) & 0xF;
+    let dst = dst_token(dst_regtype, dst_index, dst_mask);
 
     // Sources: float constants c0/c1 (type=2) with varying indices.
     let c0 = seed.get(3).copied().unwrap_or(0) % 8;
     let c1 = seed.get(4).copied().unwrap_or(1) % 8;
-    let src0 = src_token(2, c0, swz, 0);
-    let src1 = src_token(2, c1, swz, 0);
+    let src0 = src_token(2, c0, swz, src_mod);
+    let src1 = src_token(2, c1, swz, src_mod);
 
     // Optional embedded constant definition for c0.
     let include_def = seed.get(5).copied().unwrap_or(0) & 1 != 0;
@@ -97,7 +134,7 @@ fn build_patched_shader(seed: &[u8]) -> Vec<u8> {
     tokens.push(version_token);
     if include_def {
         // def c#, imm0..imm3
-        tokens.push((5u32 << 24) | 81u32);
+        tokens.push(opcode_token(81, 5, 0));
         tokens.push(def_dst);
         tokens.push(u32_from_seed(seed, 8));
         tokens.push(u32_from_seed(seed, 12));
@@ -105,29 +142,91 @@ fn build_patched_shader(seed: &[u8]) -> Vec<u8> {
         tokens.push(u32_from_seed(seed, 20));
     }
 
-    match op_sel {
-        // mov dst, src0
+    match mode {
+        // Simple straight-line op.
         0 => {
-            tokens.push((2u32 << 24) | 1u32);
+            match seed.get(2).copied().unwrap_or(0) % 3 {
+                // mov dst, src0
+                0 => {
+                    tokens.push(opcode_token(1, 2, mod_bits));
+                    tokens.push(dst);
+                    tokens.push(src0);
+                }
+                // add dst, src0, src1
+                1 => {
+                    tokens.push(opcode_token(2, 3, mod_bits));
+                    tokens.push(dst);
+                    tokens.push(src0);
+                    tokens.push(src1);
+                }
+                // cmp dst, cond=src0, src_ge=src0, src_lt=src1
+                _ => {
+                    tokens.push(opcode_token(88, 4, mod_bits));
+                    tokens.push(dst);
+                    tokens.push(src0);
+                    tokens.push(src0);
+                    tokens.push(src1);
+                }
+            }
+        }
+        // Simple control-flow: if/else/endif around a couple of ops.
+        1 => {
+            // if src0
+            tokens.push(opcode_token(40, 1, 0));
+            tokens.push(src0);
+            // then: mov
+            tokens.push(opcode_token(1, 2, mod_bits));
             tokens.push(dst);
             tokens.push(src0);
-        }
-        // add dst, src0, src1
-        1 => {
-            tokens.push((3u32 << 24) | 2u32);
+            // else
+            tokens.push(opcode_token(42, 0, 0));
+            // else: add
+            tokens.push(opcode_token(2, 3, mod_bits));
             tokens.push(dst);
             tokens.push(src0);
             tokens.push(src1);
+            // endif
+            tokens.push(opcode_token(43, 0, 0));
         }
-        // cmp dst, src0, src1, src0 (cond=src0)
-        _ => {
-            tokens.push((4u32 << 24) | 88u32);
+        // Exercise address registers + relative constant addressing (vs_3_0).
+        2 => {
+            // mova a0, src0
+            let a0 = dst_token(3, 0, 0);
+            tokens.push(opcode_token(46, 2, mod_bits));
+            tokens.push(a0);
+            tokens.push(src0);
+
+            // mov dst, c1[a0.x]
+            let rel = src_token_rel_const(c1, swz, src_mod, 0, 0xE4);
+            tokens.push(opcode_token(1, 3, mod_bits));
             tokens.push(dst);
-            tokens.push(src0); // cond
-            tokens.push(src0); // src_ge
-            tokens.push(src1); // src_lt
+            tokens.push(rel[0]);
+            tokens.push(rel[1]);
         }
-    }
+        // A couple of math ops to reach more lowering code.
+        _ => match seed.get(2).copied().unwrap_or(0) % 3 {
+            // dp2 dst, src0, src1
+            0 => {
+                tokens.push(opcode_token(90, 3, mod_bits));
+                tokens.push(dst);
+                tokens.push(src0);
+                tokens.push(src1);
+            }
+            // exp dst, src0
+            1 => {
+                tokens.push(opcode_token(14, 2, mod_bits));
+                tokens.push(dst);
+                tokens.push(src0);
+            }
+            // pow dst, src0, src1
+            _ => {
+                tokens.push(opcode_token(32, 3, mod_bits));
+                tokens.push(dst);
+                tokens.push(src0);
+                tokens.push(src1);
+            }
+        },
+    };
 
     // End token.
     tokens.push(0x0000_FFFF);
@@ -219,7 +318,12 @@ fuzz_target!(|data: &[u8]| {
     if token_bytes.len() < 4 || (token_bytes.len() % 4) != 0 {
         decode_build_verify(token_bytes);
     } else {
-        let first = u32::from_le_bytes([token_bytes[0], token_bytes[1], token_bytes[2], token_bytes[3]]);
+        let first = u32::from_le_bytes([
+            token_bytes[0],
+            token_bytes[1],
+            token_bytes[2],
+            token_bytes[3],
+        ]);
         let first_high = first & 0xFFFF_0000;
         if (first_high == 0xFFFE_0000 || first_high == 0xFFFF_0000)
             && token_bytes.len() <= MAX_RAW_DECODE_BYTES
@@ -243,7 +347,11 @@ fuzz_target!(|data: &[u8]| {
     let major = 2u32 + ((forced[1] as u32) & 1); // {2, 3}
     let minor = 0u32;
 
-    let high = if stage_is_pixel { 0xFFFF_0000 } else { 0xFFFE_0000 };
+    let high = if stage_is_pixel {
+        0xFFFF_0000
+    } else {
+        0xFFFE_0000
+    };
     let version_token = high | (major << 8) | minor;
     forced[..4].copy_from_slice(&version_token.to_le_bytes());
 
