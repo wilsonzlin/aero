@@ -100,6 +100,7 @@ When enabled, the driver will:
   - Mouse: `EV_REL` with `REL_X`/`REL_Y`
   - Tablet: `EV_ABS` with `ABS_X`/`ABS_Y`
 - Relax strict `ID_DEVIDS` validation.
+- For tablets, `ABS_INFO` is **best-effort**; if unavailable, the driver keeps the translation layer’s default coordinate scaling range (`0..32767`).
 
 Compat mode does **not** relax Aero transport/PCI contract checks (modern virtio-pci + `DEV_1052`, `REV_01`, fixed BAR0
 layout expectations, queue sizing, etc); it only affects device identification/config validation. Strict Aero contract
