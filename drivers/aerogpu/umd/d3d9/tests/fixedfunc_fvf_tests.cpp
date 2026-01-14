@@ -74,6 +74,7 @@ constexpr uint32_t kD3dTopAddSmooth = 11u; // D3DTOP_ADDSMOOTH
 constexpr uint32_t kD3dTaDiffuse = 0u;
 constexpr uint32_t kD3dTaTexture = 2u;
 constexpr uint32_t kD3dTaTFactor = 3u;
+constexpr uint32_t kD3dTaSpecular = 4u;
 constexpr uint32_t kD3dTaComplement = 0x10u;
 constexpr uint32_t kD3dTaAlphaReplicate = 0x20u;
 
@@ -6125,6 +6126,131 @@ bool TestStage0ArgModifiersEmitSourceMods() {
   return true;
 }
 
+bool TestStage0IgnoresUnusedArgsAndOps() {
+  struct Case {
+    const char* name = nullptr;
+    // Stage0 state.
+    uint32_t color_op = kD3dTopSelectArg1;
+    uint32_t color_arg1 = kD3dTaDiffuse;
+    uint32_t color_arg2 = kD3dTaDiffuse;
+    uint32_t alpha_op = kD3dTopDisable;
+    uint32_t alpha_arg1 = kD3dTaDiffuse;
+    uint32_t alpha_arg2 = kD3dTaDiffuse;
+    // Expectations.
+    bool expect_texld = false;
+  };
+
+  const Case cases[] = {
+      // COLOROP=DISABLE disables the entire stage; alpha op/args must be ignored,
+      // even if they are otherwise unsupported.
+      {"color_disable_ignores_unsupported_alphaop",
+       kD3dTopDisable, kD3dTaDiffuse, kD3dTaDiffuse,
+       kD3dTopAddSmooth, kD3dTaTexture, kD3dTaDiffuse,
+       /*expect_texld=*/false},
+
+      // SELECTARG1 uses only ARG1; ARG2 should not be decoded/validated.
+      {"selectarg1_ignores_colorarg2",
+       kD3dTopSelectArg1, kD3dTaDiffuse, kD3dTaSpecular,
+       kD3dTopDisable, kD3dTaDiffuse, kD3dTaSpecular,
+       /*expect_texld=*/false},
+
+      // SELECTARG2 uses only ARG2; ARG1 should not be decoded/validated.
+      {"selectarg2_ignores_colorarg1",
+       kD3dTopSelectArg2, kD3dTaSpecular, kD3dTaDiffuse,
+       kD3dTopDisable, kD3dTaDiffuse, kD3dTaSpecular,
+       /*expect_texld=*/false},
+
+      // ALPHAOP=SELECTARG1 uses only ALPHAARG1; ALPHAARG2 should not be decoded/validated.
+      {"selectarg1_ignores_alphaarg2",
+       kD3dTopSelectArg1, kD3dTaDiffuse, kD3dTaDiffuse,
+       kD3dTopSelectArg1, kD3dTaDiffuse, kD3dTaSpecular,
+       /*expect_texld=*/false},
+  };
+
+  const VertexXyzrhwDiffuseTex1 tri[3] = {
+      {0.0f, 0.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 0.0f, 0.0f},
+      {1.0f, 0.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 1.0f, 0.0f},
+      {0.0f, 1.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 0.0f, 1.0f},
+  };
+
+  for (const auto& c : cases) {
+    CleanupDevice cleanup;
+    if (!CreateDevice(&cleanup)) {
+      return false;
+    }
+
+    auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+    if (!Check(dev != nullptr, "device pointer")) {
+      return false;
+    }
+
+    dev->cmd.reset();
+
+    HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzrhwDiffuseTex1);
+    if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE|TEX1)")) {
+      return false;
+    }
+
+    D3DDDI_HRESOURCE hTex{};
+    if (!CreateDummyTexture(&cleanup, &hTex)) {
+      return false;
+    }
+    hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, hTex);
+    if (!Check(hr == S_OK, "SetTexture(stage0)")) {
+      return false;
+    }
+
+    const auto SetTextureStageState = [&](uint32_t stage, uint32_t state, uint32_t value, const char* msg) -> bool {
+      HRESULT hr2 = S_OK;
+      if (cleanup.device_funcs.pfnSetTextureStageState) {
+        hr2 = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, stage, state, value);
+      } else {
+        hr2 = aerogpu::device_set_texture_stage_state(cleanup.hDevice, stage, state, value);
+      }
+      if (!Check(hr2 == S_OK, msg)) {
+        std::fprintf(stderr, "FAIL: %s (SetTextureStageState %s) hr=0x%08x\n", c.name, msg, static_cast<unsigned>(hr2));
+        return false;
+      }
+      return true;
+    };
+
+    if (!SetTextureStageState(/*stage=*/0, kD3dTssColorOp, c.color_op, "COLOROP")) {
+      return false;
+    }
+    if (!SetTextureStageState(/*stage=*/0, kD3dTssColorArg1, c.color_arg1, "COLORARG1")) {
+      return false;
+    }
+    if (!SetTextureStageState(/*stage=*/0, kD3dTssColorArg2, c.color_arg2, "COLORARG2")) {
+      return false;
+    }
+    if (!SetTextureStageState(/*stage=*/0, kD3dTssAlphaOp, c.alpha_op, "ALPHAOP")) {
+      return false;
+    }
+    if (!SetTextureStageState(/*stage=*/0, kD3dTssAlphaArg1, c.alpha_arg1, "ALPHAARG1")) {
+      return false;
+    }
+    if (!SetTextureStageState(/*stage=*/0, kD3dTssAlphaArg2, c.alpha_arg2, "ALPHAARG2")) {
+      return false;
+    }
+
+    hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+        cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwDiffuseTex1));
+    if (!Check(hr == S_OK, c.name)) {
+      return false;
+    }
+
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->ps != nullptr, "PS must be bound")) {
+      return false;
+    }
+    if (!Check(ShaderContainsToken(dev->ps, kPsOpTexld) == c.expect_texld, "PS texld token expectation")) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 bool TestTextureFactorRenderStateUpdatesPsConstantWhenUsed() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -6658,6 +6784,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestStage0ArgModifiersEmitSourceMods()) {
+    return 1;
+  }
+  if (!aerogpu::TestStage0IgnoresUnusedArgsAndOps()) {
     return 1;
   }
   if (!aerogpu::TestTextureFactorRenderStateUpdatesPsConstantWhenUsed()) {
