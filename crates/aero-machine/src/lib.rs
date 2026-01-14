@@ -11340,93 +11340,156 @@ impl Machine {
         // native builds and the wasm32 `wasm-threaded` build.
         #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
         if let Some(scanout_state) = &self.scanout_state {
-            let publish_legacy_scanout_descriptor = |scanout_state: &ScanoutState| {
-                let legacy_text = ScanoutStateUpdate {
-                    source: SCANOUT_SOURCE_LEGACY_TEXT,
-                    base_paddr_lo: 0,
-                    base_paddr_hi: 0,
-                    width: 0,
-                    height: 0,
-                    pitch_bytes: 0,
-                    format: SCANOUT_FORMAT_B8G8R8X8,
+            let legacy_text = ScanoutStateUpdate {
+                source: SCANOUT_SOURCE_LEGACY_TEXT,
+                base_paddr_lo: 0,
+                base_paddr_hi: 0,
+                width: 0,
+                height: 0,
+                pitch_bytes: 0,
+                format: SCANOUT_FORMAT_B8G8R8X8,
+            };
+
+            let current_legacy_scanout_descriptor = || -> ScanoutStateUpdate {
+                // BIOS-driven VBE modes (INT 10h / HLE BIOS).
+                if let Some(mode) = self.bios.video.vbe.current_mode {
+                    if let Some(mode_info) = self.bios.video.vbe.find_mode(mode) {
+                        // This legacy VBE scanout publication path currently only supports the
+                        // canonical boot pixel formats:
+                        // - 32bpp packed pixels `B8G8R8X8`
+                        // - 16bpp packed pixels `B5G6R5`
+                        //
+                        // If the guest selected a palettized VBE mode (e.g. 8bpp), fall back to the
+                        // implicit legacy path rather than publishing a misleading descriptor.
+                        let (format, bytes_per_pixel) = match mode_info.bpp {
+                            32 => (SCANOUT_FORMAT_B8G8R8X8, 4u64),
+                            16 => (SCANOUT_FORMAT_B5G6R5, 2u64),
+                            _ => return legacy_text,
+                        };
+
+                        // Keep the published legacy scanout descriptor consistent with the BIOS VBE
+                        // state used by the AeroGPU VBE/text fallback renderer
+                        // (`display_present_aerogpu_vbe_lfb`).
+                        //
+                        // `ScanoutState` has no explicit panning fields, so display-start offsets must
+                        // be encoded by adjusting the base address.
+                        let pitch = u64::from(
+                            self.bios
+                                .video
+                                .vbe
+                                .bytes_per_scan_line
+                                .max(mode_info.bytes_per_scan_line()),
+                        );
+                        if pitch == 0 {
+                            return legacy_text;
+                        }
+                        let base = u64::from(self.bios.video.vbe.lfb_base)
+                            .saturating_add(
+                                u64::from(self.bios.video.vbe.display_start_y).saturating_mul(pitch),
+                            )
+                            .saturating_add(
+                                u64::from(self.bios.video.vbe.display_start_x)
+                                    .saturating_mul(bytes_per_pixel),
+                            );
+                        return ScanoutStateUpdate {
+                            source: SCANOUT_SOURCE_LEGACY_VBE_LFB,
+                            base_paddr_lo: base as u32,
+                            base_paddr_hi: (base >> 32) as u32,
+                            width: u32::from(mode_info.width),
+                            height: u32::from(mode_info.height),
+                            pitch_bytes: pitch as u32,
+                            format,
+                        };
+                    }
+                    return legacy_text;
+                }
+
+                // Guest-driven Bochs VBE_DISPI programming (0x01CE/0x01CF). This allows a guest to
+                // select a VBE LFB mode without going through BIOS INT 10h, so publish it as a
+                // legacy VBE scanout when WDDM is not active.
+                let Some(aerogpu) = self.aerogpu.as_ref() else {
+                    return legacy_text;
+                };
+                let dev = aerogpu.borrow();
+                if !dev.vbe_dispi_enabled() {
+                    return legacy_text;
+                }
+
+                // Only publish scanout formats the shared scanout descriptor can represent.
+                let (format, bytes_per_pixel) = match dev.vbe_dispi_bpp {
+                    32 => (SCANOUT_FORMAT_B8G8R8X8, 4u64),
+                    16 => (SCANOUT_FORMAT_B5G6R5, 2u64),
+                    _ => return legacy_text,
                 };
 
-                match self.bios.video.vbe.current_mode {
-                    None => {
-                        let _ = scanout_state.try_publish(legacy_text);
-                    }
-                    Some(mode) => {
-                        if let Some(mode_info) = self.bios.video.vbe.find_mode(mode) {
-                            // This legacy VBE scanout publication path currently only supports the
-                            // canonical boot pixel formats:
-                            // - 32bpp packed pixels `B8G8R8X8`
-                            // - 16bpp packed pixels `B5G6R5`
-                            //
-                            // If the guest selected a palettized VBE mode (e.g. 8bpp), fall back to
-                            // the implicit legacy path rather than publishing a misleading descriptor.
-                            let (format, bytes_per_pixel) = match mode_info.bpp {
-                                32 => (SCANOUT_FORMAT_B8G8R8X8, 4u64),
-                                16 => (SCANOUT_FORMAT_B5G6R5, 2u64),
-                                _ => {
-                                    let _ = scanout_state.try_publish(legacy_text);
-                                    return;
-                                }
-                            };
+                let width = u32::from(dev.vbe_dispi_xres);
+                let height = u32::from(dev.vbe_dispi_yres);
+                if width == 0 || height == 0 {
+                    return legacy_text;
+                }
 
-                            // Keep the published legacy scanout descriptor consistent with the BIOS VBE
-                            // state used by the AeroGPU VBE/text fallback renderer
-                            // (`display_present_aerogpu_vbe_lfb`).
-                            //
-                            // `ScanoutState` has no explicit panning fields, so display-start offsets must
-                            // be encoded by adjusting the base address.
-                            let pitch = u64::from(
-                                self.bios
-                                    .video
-                                    .vbe
-                                    .bytes_per_scan_line
-                                    .max(mode_info.bytes_per_scan_line()),
-                            );
-                            let base = u64::from(self.bios.video.vbe.lfb_base)
-                                .saturating_add(
-                                    u64::from(self.bios.video.vbe.display_start_y)
-                                        .saturating_mul(pitch),
-                                )
-                                .saturating_add(
-                                    u64::from(self.bios.video.vbe.display_start_x)
-                                        .saturating_mul(bytes_per_pixel),
-                                );
-                            let _ = scanout_state.try_publish(ScanoutStateUpdate {
-                                source: SCANOUT_SOURCE_LEGACY_VBE_LFB,
-                                base_paddr_lo: base as u32,
-                                base_paddr_hi: (base >> 32) as u32,
-                                width: u32::from(mode_info.width),
-                                height: u32::from(mode_info.height),
-                                pitch_bytes: pitch as u32,
-                                format,
-                            });
-                        }
-                    }
+                let pitch_pixels = if dev.vbe_dispi_virt_width != 0 {
+                    dev.vbe_dispi_virt_width
+                } else {
+                    dev.vbe_dispi_xres
+                };
+                let pitch = u64::from(pitch_pixels).saturating_mul(bytes_per_pixel);
+                if pitch == 0 {
+                    return legacy_text;
+                }
+
+                let base = u64::from(self.bios.video.vbe.lfb_base)
+                    .saturating_add(u64::from(dev.vbe_dispi_y_offset).saturating_mul(pitch))
+                    .saturating_add(u64::from(dev.vbe_dispi_x_offset).saturating_mul(bytes_per_pixel));
+                ScanoutStateUpdate {
+                    source: SCANOUT_SOURCE_LEGACY_VBE_LFB,
+                    base_paddr_lo: base as u32,
+                    base_paddr_hi: (base >> 32) as u32,
+                    width,
+                    height,
+                    pitch_bytes: pitch as u32,
+                    format,
                 }
             };
+
+            let maybe_publish_legacy_descriptor =
+                |scanout_state: &ScanoutState, update: ScanoutStateUpdate| {
+                    let matches_current = scanout_state
+                        .try_snapshot()
+                        .is_some_and(|snap| {
+                            snap.source == update.source
+                                && snap.base_paddr_lo == update.base_paddr_lo
+                                && snap.base_paddr_hi == update.base_paddr_hi
+                                && snap.width == update.width
+                                && snap.height == update.height
+                                && snap.pitch_bytes == update.pitch_bytes
+                                && snap.format == update.format
+                        });
+                    if matches_current {
+                        return;
+                    }
+                    let _ = scanout_state.try_publish(update);
+                };
 
             if let Some(update) = dev.take_scanout0_state_update() {
                 // Publish WDDM scanout updates derived from BAR0 scanout registers once the guest
                 // has claimed WDDM ownership.
                 let _ = scanout_state.try_publish(update);
-            } else {
-                // If the shared scanout descriptor currently indicates WDDM scanout but the device
-                // itself no longer claims WDDM ownership (e.g. after a reset/restore mismatch),
-                // revert the shared scanout descriptor back to the legacy BIOS source.
-                //
-                // This cannot be handled inside `AeroGpuMmioDevice` because it does not have access
-                // to BIOS VBE state (for correct legacy mode reporting).
-                if !dev.scanout0_state().wddm_scanout_active {
-                    if let Some(snap) = scanout_state.try_snapshot() {
-                        if snap.source == SCANOUT_SOURCE_WDDM {
-                            publish_legacy_scanout_descriptor(scanout_state);
-                        }
-                    }
-                }
+            }
+
+            // If scanout has not yet been claimed by a valid WDDM configuration, keep the published
+            // shared scanout descriptor coherent with the current legacy state.
+            //
+            // This is required for guests that program VBE modes via Bochs VBE_DISPI ports (without
+            // BIOS INT 10h).
+            //
+            // Note: Once WDDM has claimed scanout, it remains authoritative (even when scanout is
+            // temporarily disabled) until reset, so do not override WDDM-published disabled
+            // descriptors with legacy scanout updates.
+            let state = dev.scanout0_state();
+            if !state.wddm_scanout_active {
+                let update = current_legacy_scanout_descriptor();
+                maybe_publish_legacy_descriptor(scanout_state, update);
             }
         }
 
