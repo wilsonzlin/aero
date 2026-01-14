@@ -1046,27 +1046,6 @@ struct has_member_RenderTarget : std::false_type {};
 template <typename T>
 struct has_member_RenderTarget<T, std::void_t<decltype(std::declval<T>().RenderTarget)>> : std::true_type {};
 
-// WDK struct field detection helpers.
-//
-// Win7-era D3D10 UMD headers differ across SDK/WDK releases (some use `CPUAccessFlags`,
-// others `CpuAccessFlags`, and early variants may omit `Usage`). The D3D10 runtime
-// validates Map/Unmap usage based on these fields, so keep the driver resilient to
-// header drift by using compile-time detection.
-template <typename T, typename = void>
-struct has_Usage : std::false_type {};
-template <typename T>
-struct has_Usage<T, std::void_t<decltype(std::declval<T>().Usage)>> : std::true_type {};
-
-template <typename T, typename = void>
-struct has_CPUAccessFlags : std::false_type {};
-template <typename T>
-struct has_CPUAccessFlags<T, std::void_t<decltype(std::declval<T>().CPUAccessFlags)>> : std::true_type {};
-
-template <typename T, typename = void>
-struct has_CpuAccessFlags : std::false_type {};
-template <typename T>
-struct has_CpuAccessFlags<T, std::void_t<decltype(std::declval<T>().CpuAccessFlags)>> : std::true_type {};
-
 template <typename DescT>
 static bool FillBlendRtDescsFromDesc(const DescT& desc,
                                     aerogpu::d3d10_11::D3dRtBlendDesc* rts,
