@@ -10,9 +10,10 @@ use aero_devices::i8042::{register_i8042, I8042Ports, SharedI8042Controller};
 use aero_devices::irq::{IrqLine, PlatformIrqLine};
 use aero_devices::pci::profile::{AHCI_ABAR_BAR_INDEX, AHCI_ABAR_SIZE_U32};
 use aero_devices::pci::{
-    bios_post, register_pci_config_ports, msix::PCI_CAP_ID_MSIX, MsixCapability, PciBarDefinition,
-    PciBdf, PciConfigPorts, PciDevice, PciEcamConfig, PciEcamMmio, PciInterruptPin, PciIntxRouter,
-    PciIntxRouterConfig, PciResourceAllocator, PciResourceAllocatorConfig, SharedPciConfigPorts,
+    bios_post, register_pci_config_ports, msix::PCI_CAP_ID_MSIX, MsiCapability, MsixCapability,
+    PciBarDefinition, PciBdf, PciConfigPorts, PciDevice, PciEcamConfig, PciEcamMmio, PciInterruptPin,
+    PciIntxRouter, PciIntxRouterConfig, PciResourceAllocator, PciResourceAllocatorConfig,
+    SharedPciConfigPorts,
 };
 use aero_devices::pic8259::register_pic8259_on_platform_interrupts;
 use aero_devices::pit8254::{register_pit8254, Pit8254, SharedPit8254};
@@ -450,6 +451,11 @@ struct XhciPciConfigDevice {
 impl XhciPciConfigDevice {
     fn new() -> Self {
         let mut config = aero_devices::pci::profile::USB_XHCI_QEMU.build_config_space();
+        // Expose a single-vector MSI capability so guests can opt into message-signaled interrupts
+        // via the canonical PCI config mechanism (#1).
+        if config.capability::<MsiCapability>().is_none() {
+            config.add_capability(Box::new(MsiCapability::new()));
+        }
         config.set_bar_definition(
             XhciPciDevice::MMIO_BAR_INDEX,
             PciBarDefinition::Mmio32 {
@@ -1763,8 +1769,8 @@ impl PcPlatform {
             let bdf = profile.bdf;
 
             let xhci = Rc::new(RefCell::new(XhciPciDevice::default()));
-            // Provide an MSI sink so the xHCI device model can deliver MSI when the guest enables it
-            // via PCI config space.
+            // Provide an MSI sink so the xHCI device model can deliver MSI when the guest enables
+            // it via PCI config space.
             xhci.borrow_mut()
                 .set_msi_target(Some(Box::new(interrupts.clone())));
 
@@ -1783,7 +1789,8 @@ impl PcPlatform {
                         };
 
                         // Keep device-side gating consistent when the same device model is also
-                        // used outside the platform (e.g. in unit tests).
+                        // used outside the platform (e.g. in unit tests). This also ensures INTx
+                        // is suppressed when MSI is active.
                         let mut xhci = xhci_for_intx.borrow_mut();
                         if let Some(state) = pci_state {
                             xhci.config_mut().restore_state(&state);
@@ -2946,8 +2953,8 @@ impl PcPlatform {
                     .map(|cfg| cfg.snapshot_state())
             };
 
-            // Keep the xHCI model's view of PCI config state in sync so it can apply bus mastering
-            // / MMIO gating when used via `tick_1ms`.
+            // Keep the xHCI model's view of PCI config state in sync (including MSI capability
+            // state) so it can deliver MSI through `tick_1ms`.
             let mut xhci = xhci.borrow_mut();
             if let Some(state) = pci_state {
                 xhci.config_mut().restore_state(&state);
