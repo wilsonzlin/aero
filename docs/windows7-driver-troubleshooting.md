@@ -491,10 +491,11 @@ If these entries are missing, re-run `setup.cmd` as Administrator and reboot onc
     - Tablet devices bind via the separate tablet INF (`aero_virtio_tablet.inf`,
       `PCI\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01`). That match is more specific than the generic fallback, so it wins when
       it matches.
-    - Sync policy note (if you need the legacy INF basename): `virtio-input.inf.disabled` is a filename alias only and is
-      expected to match `aero_virtio_input.inf` from the first section header (`[Version]`) onward (byte-for-byte; only the
-      leading banner/comments may differ). See `drivers/windows7/virtio-input/scripts/check-inf-alias.py`.
-      - Enabling the alias is **not** required for generic fallback binding (the canonical INF already includes it).
+    - Legacy filename alias note (if you need the old basename): `virtio-input.inf.disabled` is a filename alias only.
+      - From the first section header (`[Version]`) onward, it is expected to be byte-for-byte identical to `aero_virtio_input.inf`
+        (only the leading banner/comments may differ; see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
+      - It does not change HWID matching behavior, and enabling the alias is **not** required for generic fallback binding (the
+        canonical INF already includes it).
       - Do **not** install both `aero_virtio_input.inf` and `virtio-input.inf` at the same time.
     - If the device reports `REV_00`, the in-tree Aero virtio-input INFs will not bind; ensure your emulator/QEMU config sets `x-pci-revision=0x01` (and preferably `disable-legacy=on`).
 6. If Device Manager shows signing or driver errors for the input device, resolve them first (Code 52 / Code 28 / Code 10), then switch back to virtio-input.
