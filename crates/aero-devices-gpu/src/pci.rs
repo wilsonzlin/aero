@@ -733,6 +733,7 @@ impl MmioHandler for AeroGpuBar1VramMmio {
         let mut out = 0u64;
         for i in 0..size {
             let Some(addr) = offset.checked_add(i as u64) else {
+                // Address arithmetic overflow; treat as an out-of-range read ("floating bus").
                 out |= 0xFFu64 << (i * 8);
                 continue;
             };
@@ -760,11 +761,16 @@ impl MmioHandler for AeroGpuBar1VramMmio {
             return;
         }
 
+        let bar_size = u64::from(proto::AEROGPU_PCI_BAR1_SIZE_BYTES);
+
         let mut vram = self.vram.borrow_mut();
         for i in 0..size {
             let Some(addr) = offset.checked_add(i as u64) else {
                 continue;
             };
+            if addr >= bar_size {
+                continue;
+            }
             let Some(idx) = usize::try_from(addr).ok() else {
                 continue;
             };

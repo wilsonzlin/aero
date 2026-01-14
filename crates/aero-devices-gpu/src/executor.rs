@@ -519,8 +519,12 @@ impl AeroGpuExecutor {
                 .checked_add(u64::from(regs.ring_size_bytes))
                 .is_none()
         {
-            // Drop any pending work by syncing head -> tail where possible. We avoid reading the
-            // full ring header here because `ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES` may wrap.
+            // If the ring mapping would wrap, the device cannot safely form descriptor GPAs.
+            //
+            // Drop any pending work by syncing head -> tail where possible so guests don't get
+            // stuck repeatedly ringing the doorbell on an unrecoverable ring mapping. We avoid
+            // reading the full ring header here because `ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES`
+            // may wrap.
             //
             // These helpers use checked address arithmetic internally, so they will gracefully
             // skip memory accesses if even the head/tail fields cannot be addressed safely.
