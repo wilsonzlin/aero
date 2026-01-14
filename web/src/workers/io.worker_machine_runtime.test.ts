@@ -5,7 +5,15 @@ import { Worker, type WorkerOptions } from "node:worker_threads";
 import type { AeroConfig } from "../config/aero_config";
 import { openRingByKind } from "../ipc/ipc";
 import { encodeCommand } from "../ipc/protocol";
-import { IO_IPC_CMD_QUEUE_KIND, IO_IPC_EVT_QUEUE_KIND, allocateSharedMemorySegments, createSharedMemoryViews, StatusIndex } from "../runtime/shared_layout";
+import { allocateHarnessSharedMemorySegments } from "../runtime/harness_shared_memory";
+import {
+  IO_IPC_CMD_QUEUE_KIND,
+  IO_IPC_EVT_QUEUE_KIND,
+  createIoIpcSab,
+  createSharedMemoryViews,
+  StatusIndex,
+  type SharedMemorySegments,
+} from "../runtime/shared_layout";
 import { MessageType, type ProtocolMessage, type WorkerInitMessage } from "../runtime/protocol";
 
 function arraysEqual(a: Uint8Array, b: Uint8Array): boolean {
@@ -81,7 +89,7 @@ function makeMachineConfig(): AeroConfig {
   };
 }
 
-function makeInit(segments: ReturnType<typeof allocateSharedMemorySegments>): WorkerInitMessage {
+function makeInit(segments: SharedMemorySegments): WorkerInitMessage {
   return {
     kind: "init",
     role: "io",
@@ -100,7 +108,13 @@ function makeInit(segments: ReturnType<typeof allocateSharedMemorySegments>): Wo
 
 describe("workers/io.worker (machine runtime host-only mode)", () => {
   it("reaches READY without initializing device models and does not write guest RAM", async () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 0 });
+    const segments = allocateHarnessSharedMemorySegments({
+      guestRamBytes: 1 * 1024 * 1024,
+      sharedFramebuffer: new SharedArrayBuffer(8),
+      sharedFramebufferOffsetBytes: 0,
+      ioIpc: createIoIpcSab(),
+      vramBytes: 0,
+    });
     const views = createSharedMemoryViews(segments);
 
     // Fill guest RAM with a sentinel pattern and verify it remains unchanged.

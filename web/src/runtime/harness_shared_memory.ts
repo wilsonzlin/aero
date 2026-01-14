@@ -47,6 +47,16 @@ export function allocateHarnessSharedMemorySegments(opts: {
   guestRamBytes: number;
   sharedFramebuffer: SharedArrayBuffer;
   sharedFramebufferOffsetBytes?: number;
+  /**
+   * Pre-built IO IPC SharedArrayBuffer (must already contain the AIPC queue layout when required
+   * by the worker under test).
+   *
+   * This is useful for worker_threads/vitest tests where the CPU/IO workers expect a fully
+   * initialized IO IPC buffer (`createIoIpcSab()`), but we still want to avoid the full runtime's
+   * wasm32 runtime-reserved region.
+   */
+  ioIpc?: SharedArrayBuffer;
+  /** Size in bytes for an uninitialized IO IPC SAB (defaults to 0). Prefer `ioIpc` when possible. */
   ioIpcBytes?: number;
   vramBytes?: number;
 }): SharedMemorySegments {
@@ -103,8 +113,12 @@ export function allocateHarnessSharedMemorySegments(opts: {
 
   const vramBytes = Math.max(0, Math.trunc(opts.vramBytes ?? 0));
   const vram = vramBytes > 0 ? new SharedArrayBuffer(vramBytes) : undefined;
-  const ioIpcBytes = Math.max(0, Math.trunc(opts.ioIpcBytes ?? 0));
-  const ioIpc = new SharedArrayBuffer(ioIpcBytes);
+  const ioIpc =
+    opts.ioIpc ??
+    (() => {
+      const ioIpcBytes = Math.max(0, Math.trunc(opts.ioIpcBytes ?? 0));
+      return new SharedArrayBuffer(ioIpcBytes);
+    })();
 
   return {
     control,

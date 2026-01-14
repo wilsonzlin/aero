@@ -4,7 +4,7 @@ import { Worker, type WorkerOptions } from "node:worker_threads";
 
 import { VRAM_BASE_PADDR } from "../arch/guest_phys";
 import { allocateHarnessSharedMemorySegments } from "../runtime/harness_shared_memory";
-import { allocateSharedMemorySegments, createSharedMemoryViews } from "../runtime/shared_layout";
+import { createSharedMemoryViews } from "../runtime/shared_layout";
 import { MessageType, type ProtocolMessage, type WorkerInitMessage } from "../runtime/protocol";
 import { FRAME_PRESENTED, FRAME_SEQ_INDEX, FRAME_STATUS_INDEX, GPU_PROTOCOL_NAME, GPU_PROTOCOL_VERSION } from "../ipc/gpu-protocol";
 import { publishScanoutState, SCANOUT_FORMAT_B8G8R8X8, SCANOUT_SOURCE_WDDM } from "../ipc/scanout_state";
@@ -244,6 +244,7 @@ describe("workers/gpu-worker WDDM scanout screenshot refresh", () => {
       sharedFramebuffer: new SharedArrayBuffer(8),
       sharedFramebufferOffsetBytes: 0,
       ioIpcBytes: 0,
+      vramBytes: 0,
     });
     const views = createSharedMemoryViews(segments);
 

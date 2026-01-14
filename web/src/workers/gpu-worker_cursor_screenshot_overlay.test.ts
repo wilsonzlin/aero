@@ -11,7 +11,8 @@ import {
   SHARED_FRAMEBUFFER_MAGIC,
   SHARED_FRAMEBUFFER_VERSION,
 } from "../ipc/shared-layout";
-import { allocateSharedMemorySegments, createSharedMemoryViews } from "../runtime/shared_layout";
+import { allocateHarnessSharedMemorySegments } from "../runtime/harness_shared_memory";
+import { createSharedMemoryViews } from "../runtime/shared_layout";
 import { MessageType, type ProtocolMessage, type WorkerInitMessage } from "../runtime/protocol";
 import { FRAME_PRESENTED, FRAME_SEQ_INDEX, FRAME_STATUS_INDEX, GPU_PROTOCOL_NAME, GPU_PROTOCOL_VERSION } from "../ipc/gpu-protocol";
 import { publishScanoutState, SCANOUT_FORMAT_B8G8R8X8, SCANOUT_SOURCE_WDDM } from "../ipc/scanout_state";
@@ -137,7 +138,13 @@ async function requestScreenshot(worker: Worker, requestId: number, includeCurso
 
 describe("workers/gpu-worker cursor screenshot overlay", () => {
   it("composites X8 cursor formats as opaque (alpha forced to 0xff)", async () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 0 });
+    const segments = allocateHarnessSharedMemorySegments({
+      guestRamBytes: 1 * 1024 * 1024,
+      sharedFramebuffer: new SharedArrayBuffer(8),
+      sharedFramebufferOffsetBytes: 0,
+      ioIpcBytes: 0,
+      vramBytes: 0,
+    });
     const views = createSharedMemoryViews(segments);
 
     const scanoutPaddr = 0x1000;
@@ -208,7 +215,13 @@ describe("workers/gpu-worker cursor screenshot overlay", () => {
   }, 25_000);
 
   it("respects alpha for A8 cursor formats (transparent cursor does not overwrite)", async () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 0 });
+    const segments = allocateHarnessSharedMemorySegments({
+      guestRamBytes: 1 * 1024 * 1024,
+      sharedFramebuffer: new SharedArrayBuffer(8),
+      sharedFramebufferOffsetBytes: 0,
+      ioIpcBytes: 0,
+      vramBytes: 0,
+    });
     const views = createSharedMemoryViews(segments);
 
     const scanoutPaddr = 0x1000;
@@ -274,7 +287,13 @@ describe("workers/gpu-worker cursor screenshot overlay", () => {
   }, 25_000);
 
   it("reads VRAM-backed cursor surfaces when compositing screenshots", async () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 1 });
+    const segments = allocateHarnessSharedMemorySegments({
+      guestRamBytes: 1 * 1024 * 1024,
+      sharedFramebuffer: new SharedArrayBuffer(8),
+      sharedFramebufferOffsetBytes: 0,
+      ioIpcBytes: 0,
+      vramBytes: 1 * 1024 * 1024,
+    });
     const views = createSharedMemoryViews(segments);
     if (!segments.vram || views.vramSizeBytes === 0) {
       throw new Error("test requires a non-empty shared VRAM segment");
@@ -353,7 +372,13 @@ describe("workers/gpu-worker cursor screenshot overlay", () => {
   }, 25_000);
 
   it("syncs hardware cursor state for screenshots even when no tick is forced", async () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 0 });
+    const segments = allocateHarnessSharedMemorySegments({
+      guestRamBytes: 1 * 1024 * 1024,
+      sharedFramebuffer: new SharedArrayBuffer(8),
+      sharedFramebufferOffsetBytes: 0,
+      ioIpcBytes: 0,
+      vramBytes: 0,
+    });
     const views = createSharedMemoryViews(segments);
 
     // Provide a tiny shared framebuffer (1x1) so the headless screenshot path doesn't
@@ -432,7 +457,13 @@ describe("workers/gpu-worker cursor screenshot overlay", () => {
   }, 25_000);
 
   it("alpha-blends partially transparent cursor pixels", async () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 0 });
+    const segments = allocateHarnessSharedMemorySegments({
+      guestRamBytes: 1 * 1024 * 1024,
+      sharedFramebuffer: new SharedArrayBuffer(8),
+      sharedFramebufferOffsetBytes: 0,
+      ioIpcBytes: 0,
+      vramBytes: 0,
+    });
     const views = createSharedMemoryViews(segments);
 
     const scanoutPaddr = 0x1000;
@@ -499,7 +530,13 @@ describe("workers/gpu-worker cursor screenshot overlay", () => {
   }, 25_000);
 
   it("applies cursor hotX offsets when compositing screenshots", async () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 0 });
+    const segments = allocateHarnessSharedMemorySegments({
+      guestRamBytes: 1 * 1024 * 1024,
+      sharedFramebuffer: new SharedArrayBuffer(8),
+      sharedFramebufferOffsetBytes: 0,
+      ioIpcBytes: 0,
+      vramBytes: 0,
+    });
     const views = createSharedMemoryViews(segments);
 
     const scanoutPaddr = 0x1000;
@@ -570,7 +607,13 @@ describe("workers/gpu-worker cursor screenshot overlay", () => {
   }, 25_000);
 
   it("clips cursors that extend beyond the screenshot bounds", async () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 0 });
+    const segments = allocateHarnessSharedMemorySegments({
+      guestRamBytes: 1 * 1024 * 1024,
+      sharedFramebuffer: new SharedArrayBuffer(8),
+      sharedFramebufferOffsetBytes: 0,
+      ioIpcBytes: 0,
+      vramBytes: 0,
+    });
     const views = createSharedMemoryViews(segments);
 
     const scanoutPaddr = 0x1000;

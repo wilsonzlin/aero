@@ -2,11 +2,19 @@ import { describe, expect, it } from "vitest";
 
 import { Worker, type WorkerOptions } from "node:worker_threads";
 
-import { allocateSharedMemorySegments, ringRegionsForWorker } from "../runtime/shared_layout";
+import { allocateHarnessSharedMemorySegments } from "../runtime/harness_shared_memory";
+import { createIoIpcSab, ringRegionsForWorker } from "../runtime/shared_layout";
 import { MessageType, type ProtocolMessage, type WorkerInitMessage } from "../runtime/protocol";
 import { encodeCommand } from "../ipc/protocol";
 import { RingBuffer } from "../ipc/ring_buffer";
-import { SharedFramebufferHeaderIndex, SHARED_FRAMEBUFFER_HEADER_U32_LEN } from "../ipc/shared-layout";
+import {
+  FramebufferFormat,
+  SharedFramebufferHeaderIndex,
+  SHARED_FRAMEBUFFER_HEADER_U32_LEN,
+  SHARED_FRAMEBUFFER_MAGIC,
+  SHARED_FRAMEBUFFER_VERSION,
+  computeSharedFramebufferLayout,
+} from "../ipc/shared-layout";
 
 async function waitForWorkerMessage(
   worker: Worker,
@@ -63,11 +71,40 @@ async function waitForWorkerMessage(
   });
 }
 
+function createMinimalSharedFramebuffer(): SharedArrayBuffer {
+  const layout = computeSharedFramebufferLayout(1, 1, 4, FramebufferFormat.RGBA8, 0);
+  const sab = new SharedArrayBuffer(layout.totalBytes);
+  const header = new Int32Array(sab, 0, SHARED_FRAMEBUFFER_HEADER_U32_LEN);
+  Atomics.store(header, SharedFramebufferHeaderIndex.MAGIC, SHARED_FRAMEBUFFER_MAGIC);
+  Atomics.store(header, SharedFramebufferHeaderIndex.VERSION, SHARED_FRAMEBUFFER_VERSION);
+  Atomics.store(header, SharedFramebufferHeaderIndex.WIDTH, layout.width);
+  Atomics.store(header, SharedFramebufferHeaderIndex.HEIGHT, layout.height);
+  Atomics.store(header, SharedFramebufferHeaderIndex.STRIDE_BYTES, layout.strideBytes);
+  Atomics.store(header, SharedFramebufferHeaderIndex.FORMAT, layout.format);
+  Atomics.store(header, SharedFramebufferHeaderIndex.ACTIVE_INDEX, 0);
+  Atomics.store(header, SharedFramebufferHeaderIndex.FRAME_SEQ, 0);
+  Atomics.store(header, SharedFramebufferHeaderIndex.FRAME_DIRTY, 0);
+  Atomics.store(header, SharedFramebufferHeaderIndex.TILE_SIZE, layout.tileSize);
+  Atomics.store(header, SharedFramebufferHeaderIndex.TILES_X, layout.tilesX);
+  Atomics.store(header, SharedFramebufferHeaderIndex.TILES_Y, layout.tilesY);
+  Atomics.store(header, SharedFramebufferHeaderIndex.DIRTY_WORDS_PER_BUFFER, layout.dirtyWordsPerBuffer);
+  Atomics.store(header, SharedFramebufferHeaderIndex.BUF0_FRAME_SEQ, 0);
+  Atomics.store(header, SharedFramebufferHeaderIndex.BUF1_FRAME_SEQ, 0);
+  Atomics.store(header, SharedFramebufferHeaderIndex.FLAGS, 0);
+  return sab;
+}
+
 describe("workers/cpu.worker legacy framebuffer publishing", () => {
   it("publishes demo frames into sharedFramebuffer (no vgaFramebuffer segment)", async () => {
     // Use a tiny guest RAM size; this forces the shared framebuffer to be a standalone
     // SharedArrayBuffer, which exercises the CPU worker's JS publish path (no in-wasm demo).
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 0 });
+    const segments = allocateHarnessSharedMemorySegments({
+      guestRamBytes: 1 * 1024 * 1024,
+      sharedFramebuffer: createMinimalSharedFramebuffer(),
+      sharedFramebufferOffsetBytes: 0,
+      ioIpc: createIoIpcSab(),
+      vramBytes: 0,
+    });
 
     const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
     const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);
@@ -120,4 +157,3 @@ describe("workers/cpu.worker legacy framebuffer publishing", () => {
     }
   }, 30_000);
 });
-

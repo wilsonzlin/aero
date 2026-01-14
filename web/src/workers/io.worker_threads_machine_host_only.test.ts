@@ -4,7 +4,8 @@ import { Worker, type WorkerOptions } from "node:worker_threads";
 
 import type { AeroConfig } from "../config/aero_config";
 import { VRAM_BASE_PADDR } from "../arch/guest_phys.ts";
-import { createSharedMemoryViews, StatusIndex, allocateSharedMemorySegments, type SharedMemorySegments } from "../runtime/shared_layout";
+import { allocateHarnessSharedMemorySegments } from "../runtime/harness_shared_memory";
+import { createIoIpcSab, createSharedMemoryViews, StatusIndex, type SharedMemorySegments } from "../runtime/shared_layout";
 import { MessageType, type ProtocolMessage, type WorkerInitMessage } from "../runtime/protocol";
 import type { SetBootDisksMessage } from "../runtime/boot_disks_protocol";
 
@@ -97,7 +98,13 @@ function makeInit(segments: SharedMemorySegments): WorkerInitMessage {
 
 describe("workers/io.worker (worker_threads)", () => {
   it("runs as a host-only stub in vmRuntime=machine mode (READY without setBootDisks; ignores boot disk opens)", async () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 0 });
+    const segments = allocateHarnessSharedMemorySegments({
+      guestRamBytes: 1 * 1024 * 1024,
+      sharedFramebuffer: new SharedArrayBuffer(8),
+      sharedFramebufferOffsetBytes: 0,
+      ioIpc: createIoIpcSab(),
+      vramBytes: 0,
+    });
     const views = createSharedMemoryViews(segments);
 
     const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);

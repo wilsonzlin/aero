@@ -5,7 +5,8 @@ import { Worker, type WorkerOptions } from "node:worker_threads";
 import type { AeroConfig } from "../config/aero_config";
 import { VRAM_BASE_PADDR } from "../arch/guest_phys.ts";
 import { InputEventType } from "../input/event_queue";
-import { STATUS_INTS, STATUS_OFFSET_BYTES, StatusIndex, allocateSharedMemorySegments, type SharedMemorySegments } from "../runtime/shared_layout";
+import { allocateHarnessSharedMemorySegments } from "../runtime/harness_shared_memory";
+import { STATUS_INTS, STATUS_OFFSET_BYTES, StatusIndex, createIoIpcSab, type SharedMemorySegments } from "../runtime/shared_layout";
 import { MessageType, type ProtocolMessage, type WorkerInitMessage } from "../runtime/protocol";
 import { emptySetBootDisksMessage, type SetBootDisksMessage } from "../runtime/boot_disks_protocol";
 
@@ -99,9 +100,19 @@ function makeInit(segments: SharedMemorySegments): WorkerInitMessage {
   };
 }
 
+function allocateTestSegments(): SharedMemorySegments {
+  return allocateHarnessSharedMemorySegments({
+    guestRamBytes: 1 * 1024 * 1024,
+    sharedFramebuffer: new SharedArrayBuffer(8),
+    sharedFramebufferOffsetBytes: 0,
+    ioIpc: createIoIpcSab(),
+    vramBytes: 0,
+  });
+}
+
 describe("workers/machine_cpu.worker (worker_threads)", () => {
   it("boots via config.update + init and reaches READY", async () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 0 });
+    const segments = allocateTestSegments();
 
     const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
     const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
@@ -132,7 +143,7 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
   }, 20_000);
 
   it("recycles input batch buffers when requested (even without WASM)", async () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 0 });
+    const segments = allocateTestSegments();
     const status = new Int32Array(segments.control, STATUS_OFFSET_BYTES, STATUS_INTS);
     const receivedBase = Atomics.load(status, StatusIndex.IoInputBatchReceivedCounter) >>> 0;
     const droppedBase = Atomics.load(status, StatusIndex.IoInputBatchDropCounter) >>> 0;
@@ -205,7 +216,7 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
   }, 20_000);
 
   it("queues input batches while snapshot-paused and flushes them on resume", async () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 0 });
+    const segments = allocateTestSegments();
     const status = new Int32Array(segments.control, STATUS_OFFSET_BYTES, STATUS_INTS);
     const receivedBase = Atomics.load(status, StatusIndex.IoInputBatchReceivedCounter) >>> 0;
     const droppedBase = Atomics.load(status, StatusIndex.IoInputBatchDropCounter) >>> 0;
@@ -315,7 +326,7 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
   }, 20_000);
 
   it("enforces vm.snapshot.pause before machine snapshot RPCs and reports missing WASM", async () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 0 });
+    const segments = allocateTestSegments();
 
     const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
     const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
@@ -382,7 +393,7 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
   }, 20_000);
 
   it("enforces vm.snapshot.pause before machine restore RPCs and reports missing WASM", async () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 0 });
+    const segments = allocateTestSegments();
 
     const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
     const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
@@ -449,7 +460,7 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
   }, 20_000);
 
   it("processes multiple queued machine snapshot save requests (no WASM)", async () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 0 });
+    const segments = allocateTestSegments();
 
     const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
     const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
@@ -511,7 +522,7 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
   }, 20_000);
 
   it("drops excess input batches while snapshot-paused and recycles them immediately", async () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 0 });
+    const segments = allocateTestSegments();
     const status = new Int32Array(segments.control, STATUS_OFFSET_BYTES, STATUS_INTS);
     const receivedBase = Atomics.load(status, StatusIndex.IoInputBatchReceivedCounter) >>> 0;
     const droppedBase = Atomics.load(status, StatusIndex.IoInputBatchDropCounter) >>> 0;
