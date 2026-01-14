@@ -107,12 +107,13 @@ fn compute_shader_ld_uav_raw_uses_raw_bit_addresses() {
             source: wgpu::ShaderSource::Wgsl(translated.wgsl.into()),
         });
 
-        let empty_group0 = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("empty bind group layout 0"),
+        let empty_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("ld_uav_raw empty bind group layout"),
             entries: &[],
         });
-        let empty_group1 = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("empty bind group layout 1"),
+        let empty_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("ld_uav_raw empty bind group"),
+            layout: &empty_layout,
             entries: &[],
         });
 
@@ -144,7 +145,7 @@ fn compute_shader_ld_uav_raw_uses_raw_bit_addresses() {
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("ld_uav_raw pipeline layout"),
-            bind_group_layouts: &[&empty_group0, &empty_group1, &group2],
+            bind_group_layouts: &[&empty_layout, &empty_layout, &group2],
             push_constant_ranges: &[],
         });
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
@@ -179,6 +180,9 @@ fn compute_shader_ld_uav_raw_uses_raw_bit_addresses() {
                 timestamp_writes: None,
             });
             pass.set_pipeline(&pipeline);
+            // wgpu requires intermediate bind groups to be bound even when they are empty.
+            pass.set_bind_group(0, &empty_bg, &[]);
+            pass.set_bind_group(1, &empty_bg, &[]);
             pass.set_bind_group(2, &bind_group, &[]);
             pass.dispatch_workgroups(1, 1, 1);
         }
