@@ -5,7 +5,7 @@ use aero_d3d11::sm4::opcode::{
     OPCODE_CUT, OPCODE_EMIT, OPCODE_LEN_MASK, OPCODE_LEN_SHIFT, OPCODE_MASK, OPCODE_MOV,
     OPCODE_RET,
 };
-use aero_d3d11::{DxbcFile, ShaderStage as Sm4ShaderStage, Sm4Inst, Sm4Program};
+use aero_d3d11::{DxbcFile, ShaderStage as Sm4ShaderStage, Sm4Decl, Sm4Inst, Sm4Program};
 use aero_dxbc::{test_utils as dxbc_test_utils, FourCC};
 use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
@@ -107,6 +107,33 @@ fn assert_gs_dxbc_decodes_as_geometry_and_has_emit(dxbc_bytes: &[u8]) {
 
     let module = aero_d3d11::sm4::decode_program(&program).expect("GS SM4 module should decode");
     assert_eq!(module.stage, Sm4ShaderStage::Geometry);
+    // The GS prepass translator requires these declarations to determine the input primitive,
+    // output topology, and max output vertices. Validate them explicitly so fixture drift is caught
+    // even on backends that skip the full runtime test.
+    assert!(
+        module
+            .decls
+            .iter()
+            .any(|d| matches!(d, Sm4Decl::GsInputPrimitive { primitive: 1 })),
+        "GS DXBC should declare point input primitive via dcl_inputprimitive (primitive=1), got decls={:?}",
+        module.decls
+    );
+    assert!(
+        module
+            .decls
+            .iter()
+            .any(|d| matches!(d, Sm4Decl::GsOutputTopology { topology: 3 })),
+        "GS DXBC should declare triangle strip output topology via dcl_outputtopology (topology=3), got decls={:?}",
+        module.decls
+    );
+    assert!(
+        module
+            .decls
+            .iter()
+            .any(|d| matches!(d, Sm4Decl::GsMaxOutputVertexCount { max: 3 })),
+        "GS DXBC should declare max output vertices via dcl_maxvertexcount (max=3), got decls={:?}",
+        module.decls
+    );
     let has_emit = module.instructions.iter().any(|inst| {
         matches!(inst, Sm4Inst::Emit { .. } | Sm4Inst::EmitThenCut { .. })
     });
