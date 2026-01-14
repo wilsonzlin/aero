@@ -3172,21 +3172,15 @@ function renderDisksPanel(): HTMLElement {
     // it caches the selection so newly spawned workers inherit it.
     //
     // Avoid re-sending identical selections because the legacy IO worker remount path closes and
-    // re-opens disk handles (expensive; can also perturb in-flight I/O).
+    // re-opens disk handles (expensive; can also perturb in-flight I/O). The coordinator is
+    // responsible for suppressing no-op updates, so we can always forward the latest metadata here
+    // (important for cases like resize/remote config changes where the selected disk ID stays the
+    // same but fields like size/format change).
     try {
       const byId = new Map(disks.map((d) => [d.id, d]));
       const hdd = mounts.hddId ? byId.get(mounts.hddId) ?? null : null;
       const cd = mounts.cdId ? byId.get(mounts.cdId) ?? null : null;
-      const prevSelection = workerCoordinator.getBootDisks();
-      const changed =
-        !prevSelection ||
-        prevSelection.mounts.hddId !== mounts.hddId ||
-        prevSelection.mounts.cdId !== mounts.cdId ||
-        prevSelection.hdd?.id !== hdd?.id ||
-        prevSelection.cd?.id !== cd?.id;
-      if (changed) {
-        workerCoordinator.setBootDisks(mounts, hdd, cd);
-      }
+      workerCoordinator.setBootDisks(mounts, hdd, cd);
     } catch {
       // ignore best-effort runtime sync
     }
