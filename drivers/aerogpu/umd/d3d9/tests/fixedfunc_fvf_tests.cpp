@@ -11420,6 +11420,97 @@ bool TestFvfXyzNormalDiffusePacksPointLightConstants() {
   return true;
 }
 
+bool TestFvfXyzNormalDiffusePointLightAtt0AndRangeFallbacks() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetRenderState != nullptr, "pfnSetRenderState is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Activate the fixed-function lit path.
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzNormalDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|NORMAL|DIFFUSE)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsLighting, 1u);
+  if (!Check(hr == S_OK, "SetRenderState(LIGHTING=TRUE)")) {
+    return false;
+  }
+
+  // Configure a single point light with degenerate attenuation/range. The driver
+  // clamps these to safe defaults to avoid INF/NaN constants.
+  D3DLIGHT9 light{};
+  light.Type = D3DLIGHT_POINT;
+  light.Position = {1.0f, 2.0f, 3.0f};
+  light.Diffuse = {1.0f, 0.0f, 0.0f, 1.0f};
+  light.Ambient = {0.0f, 0.0f, 0.0f, 1.0f};
+  light.Attenuation0 = 0.0f; // clamped to 1.0 => inv_att0 = 1.0
+  light.Range = 0.0f;        // clamped => inv_range2 = 0.0
+  hr = device_set_light(cleanup.hDevice, /*index=*/0, &light);
+  if (!Check(hr == S_OK, "SetLight(point0)")) {
+    return false;
+  }
+  hr = device_light_enable(cleanup.hDevice, /*index=*/0, TRUE);
+  if (!Check(hr == S_OK, "LightEnable(point0, TRUE)")) {
+    return false;
+  }
+
+  const VertexXyzNormalDiffuse tri[3] = {
+      {0.0f, 0.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+      {1.0f, 0.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+      {0.0f, 1.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+  };
+
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzNormalDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(point light att0/range fallback)")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(point light att0/range fallback)")) {
+    return false;
+  }
+
+  const float* payload = FindVsConstantsPayload(buf,
+                                                len,
+                                                kFixedfuncLightingStartRegister,
+                                                kFixedfuncLightingVec4Count);
+  if (!Check(payload != nullptr, "lighting payload present")) {
+    return false;
+  }
+
+  constexpr uint32_t kPoint0InvAtt0Rel = (226u - kFixedfuncLightingStartRegister);
+  constexpr uint32_t kPoint0InvRange2Rel = (227u - kFixedfuncLightingStartRegister);
+
+  if (!Check(payload[kPoint0InvAtt0Rel * 4 + 0] == 1.0f &&
+             payload[kPoint0InvAtt0Rel * 4 + 1] == 1.0f &&
+             payload[kPoint0InvAtt0Rel * 4 + 2] == 1.0f &&
+             payload[kPoint0InvAtt0Rel * 4 + 3] == 1.0f,
+             "point light: inv_att0 falls back to 1.0 when att0 <= 0")) {
+    return false;
+  }
+  if (!Check(payload[kPoint0InvRange2Rel * 4 + 0] == 0.0f &&
+             payload[kPoint0InvRange2Rel * 4 + 1] == 0.0f &&
+             payload[kPoint0InvRange2Rel * 4 + 2] == 0.0f &&
+             payload[kPoint0InvRange2Rel * 4 + 3] == 0.0f,
+             "point light: inv_range2 falls back to 0.0 when range <= 0")) {
+    return false;
+  }
+
+  return true;
+}
+
 bool TestFvfXyzNormalDiffuseDisablingPointLight0ShiftsPackedPointLights() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -13303,6 +13394,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestFvfXyzNormalDiffusePacksPointLightConstants()) {
+    return 1;
+  }
+  if (!aerogpu::TestFvfXyzNormalDiffusePointLightAtt0AndRangeFallbacks()) {
     return 1;
   }
   if (!aerogpu::TestFvfXyzNormalDiffuseDisablingPointLight0ShiftsPackedPointLights()) {
