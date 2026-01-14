@@ -6186,6 +6186,13 @@ Track progress: docs/21-smp.md\n\
                     .add_device(VGA_PCI_BDF, Box::new(VgaPciConfigDevice::new()));
             }
 
+            if self.cfg.enable_aerogpu {
+                pci_cfg.borrow_mut().bus_mut().add_device(
+                    aero_devices::pci::profile::AEROGPU.bdf,
+                    Box::new(AeroGpuPciConfigDevice::new()),
+                );
+            }
+
             // PCI INTx router.
             let pci_intx: Rc<RefCell<PciIntxRouter>> = match &self.pci_intx {
                 Some(pci_intx) => {
