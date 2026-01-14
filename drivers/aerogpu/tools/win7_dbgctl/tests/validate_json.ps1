@@ -43,6 +43,8 @@ function Assert-ValidJson {
 Assert-ValidJson -ExpectedCommand "status" -Args @("--status")
 Assert-ValidJson -ExpectedCommand "status" -Args @("--status", "--pretty")
 Assert-ValidJson -ExpectedCommand "help" -Args @("--help")
+Assert-ValidJson -ExpectedCommand "help" -Args @("-h")
+Assert-ValidJson -ExpectedCommand "help" -Args @("/?")
 Assert-ValidJson -ExpectedCommand "list-displays" -Args @("--list-displays")
 Assert-ValidJson -ExpectedCommand "query-fence" -Args @("--query-fence")
 Assert-ValidJson -ExpectedCommand "watch-fence" -Args @("--watch-fence", "--samples", "2", "--interval-ms", "0")
