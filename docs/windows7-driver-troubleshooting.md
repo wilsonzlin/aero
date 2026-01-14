@@ -482,15 +482,14 @@ If these entries are missing, re-run `setup.cmd` as Administrator and reboot onc
     - If the device exposes Aero subsystem IDs, the list will also include more specific variants, for example:
       - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01` *(keyboard)*, or
       - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01` *(mouse)*
-    - Note: the canonical in-tree keyboard/mouse INF (`aero_virtio_input.inf`) is intentionally **SUBSYS-gated**
-      (`SUBSYS_0010`/`SUBSYS_0011`) and does **not** include a generic (no `SUBSYS`) fallback HWID.
-    - If your device does not expose/recognize the Aero subsystem IDs, enable the optional legacy filename alias INF
-      (`virtio-input.inf.disabled` → `virtio-input.inf`) to provide an opt-in strict revision-gated generic fallback match:
+    - Note: the canonical in-tree keyboard/mouse INF (`aero_virtio_input.inf`) matches the subsystem-qualified keyboard/mouse
+      IDs (`SUBSYS_0010`/`SUBSYS_0011`) for distinct Device Manager names, plus a strict revision-gated generic fallback match:
       - `PCI\VEN_1AF4&DEV_1052&REV_01`
       When binding via the fallback entry, Device Manager will show **Aero VirtIO Input Device**.
-      - The legacy alias INF is allowed to differ from `aero_virtio_input.inf` only in the models sections (`[Aero.NTx86]` /
-        `[Aero.NTamd64]`) to provide the fallback entry above; outside those models sections it is expected to stay in sync
-        (see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
+    - The optional legacy filename alias INF (`virtio-input.inf.disabled` → `virtio-input.inf`) is a filename-only alias for
+      workflows/tools that still reference `virtio-input.inf`. From the first section header (`[Version]`) onward, it is
+      expected to be byte-for-byte identical to `aero_virtio_input.inf` and does not change HWID matching behavior (see
+      `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
     - Tablet devices bind via the separate tablet INF (`aero_virtio_tablet.inf`, `SUBSYS_00121AF4`). That match is more
       specific than the generic fallback, so it wins when it matches.
     - Do not install both `aero_virtio_input.inf` and `virtio-input.inf` at the same time.
