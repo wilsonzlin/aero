@@ -82,6 +82,39 @@ fn cmd_writer_stage_ex_option_overrides_shader_stage() {
 }
 
 #[test]
+fn cmd_writer_stage_ex_option_vertex_encodes_compute_and_reserved0() {
+    let mut w = AerogpuCmdWriter::new();
+    w.set_texture_stage_ex(
+        AerogpuShaderStage::Vertex,
+        Some(AerogpuShaderStageEx::Vertex),
+        0,
+        99,
+    );
+    let buf = w.finish();
+    let cursor = AerogpuCmdStreamHeader::SIZE_BYTES;
+
+    let hdr = decode_cmd_hdr_le(&buf[cursor..]).unwrap();
+    let opcode = hdr.opcode;
+    assert_eq!(opcode, AerogpuCmdOpcode::SetTexture as u32);
+
+    let shader_stage = u32::from_le_bytes(
+        buf[cursor + offset_of!(AerogpuCmdSetTexture, shader_stage)
+            ..cursor + offset_of!(AerogpuCmdSetTexture, shader_stage) + 4]
+            .try_into()
+            .unwrap(),
+    );
+    let reserved0 = u32::from_le_bytes(
+        buf[cursor + offset_of!(AerogpuCmdSetTexture, reserved0)
+            ..cursor + offset_of!(AerogpuCmdSetTexture, reserved0) + 4]
+            .try_into()
+            .unwrap(),
+    );
+
+    assert_eq!(shader_stage, AerogpuShaderStage::Compute as u32);
+    assert_eq!(reserved0, AerogpuShaderStageEx::Vertex as u32);
+}
+
+#[test]
 fn cmd_writer_legacy_bindings_write_reserved0_zero() {
     let mut w = AerogpuCmdWriter::new();
     w.set_texture(AerogpuShaderStage::Pixel, 0, 99);
