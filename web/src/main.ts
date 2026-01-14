@@ -5371,6 +5371,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
   const frameLine = el("div", { class: "mono", text: "" });
   const sharedFramebufferLine = el("div", { class: "mono", text: "" });
   const gpuMetricsLine = el("div", { class: "mono", text: "" });
+  const inputStatusLine = el("div", { id: "workers-input-status", class: "hint mono", text: "" });
   const error = el("pre", { text: "" });
   const guestRamValue = el("span", { class: "mono", text: "" });
 
@@ -5575,6 +5576,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
   let booting = false;
 
   const startButton = el("button", {
+    id: "workers-start",
     text: "Start workers",
     onclick: async () => {
       error.textContent = "";
@@ -5668,8 +5670,10 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
   }) as HTMLButtonElement;
 
   const stopButton = el("button", {
+    id: "workers-stop",
     text: "Stop workers",
     onclick: async () => {
+      stopWorkersInputCapture();
       jitClient?.destroy();
       jitClient = null;
       jitClientWorker = null;
@@ -5688,6 +5692,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
   }) as HTMLButtonElement;
 
   const restartButton = el("button", {
+    id: "workers-restart",
     text: "Restart VM",
     onclick: async () => {
       frameScheduler?.stop();
@@ -5706,6 +5711,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
         bootDiskSelection = null;
       }
       try {
+        stopWorkersInputCapture();
         workerCoordinator.restart();
       } catch (err) {
         error.textContent = err instanceof Error ? err.message : String(err);
@@ -5715,6 +5721,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
   }) as HTMLButtonElement;
 
   const resetButton = el("button", {
+    id: "workers-reset",
     text: "Reset VM",
     onclick: () => {
       frameScheduler?.stop();
@@ -5722,12 +5729,14 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       schedulerWorker = null;
       schedulerFrameStateSab = null;
       schedulerSharedFramebuffer = null;
+      stopWorkersInputCapture();
       workerCoordinator.reset("ui");
       update();
     },
   }) as HTMLButtonElement;
 
   const powerOffButton = el("button", {
+    id: "workers-poweroff",
     text: "Power off",
     onclick: () => {
       frameScheduler?.stop();
@@ -5735,6 +5744,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       schedulerWorker = null;
       schedulerFrameStateSab = null;
       schedulerSharedFramebuffer = null;
+      stopWorkersInputCapture();
       workerCoordinator.powerOff();
       update();
     },
@@ -5748,12 +5758,15 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
   });
 
   const createVgaCanvas = (): HTMLCanvasElement => {
-    const canvas = el("canvas") as HTMLCanvasElement;
+    const canvas = el("canvas", { id: "workers-vga-canvas" }) as HTMLCanvasElement;
     canvas.style.width = "640px";
     canvas.style.height = "480px";
     canvas.style.border = "1px solid #333";
     canvas.style.background = "#000";
     canvas.style.imageRendering = "pixelated";
+    // Ensure the canvas can receive focus even before InputCapture is attached (important for
+    // focus-based keyboard capture when pointer lock is unavailable).
+    if (canvas.tabIndex < 0) canvas.tabIndex = 0;
     return canvas;
   };
 
@@ -5763,6 +5776,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
   let useWorkerPresentation = false;
 
   function resetVgaCanvas(): void {
+    stopWorkersInputCapture();
     // `transferControlToOffscreen()` is one-shot per HTMLCanvasElement. When the
     // worker presentation path is used, recreate the canvas so stop/start cycles
     // continue to work.
@@ -5779,9 +5793,26 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
   let schedulerFrameStateSab: SharedArrayBuffer | null = null;
   let schedulerSharedFramebuffer: { sab: SharedArrayBuffer; offsetBytes: number } | null = null;
   let attachedIoWorker: Worker | null = null;
+  let inputCapture: InputCapture | null = null;
+  let inputCaptureCanvas: HTMLCanvasElement | null = null;
+  let inputCaptureIoWorker: Worker | null = null;
+
+  function stopWorkersInputCapture(): void {
+    const current = inputCapture;
+    if (!current) return;
+    try {
+      current.stop();
+    } catch {
+      // ignore (worker may already be terminated)
+    }
+    inputCapture = null;
+    inputCaptureCanvas = null;
+    inputCaptureIoWorker = null;
+  }
 
   workerCoordinator.addEventListener("fatal", (ev) => {
     const detail = ev.detail;
+    stopWorkersInputCapture();
     frameScheduler?.stop();
     frameScheduler = null;
     schedulerWorker = null;
@@ -5802,6 +5833,13 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
     // Surface nonfatal events for debugging (without clobbering an existing fatal error).
     if (!error.textContent) {
       error.textContent = JSON.stringify(detail, null, 2);
+    }
+  });
+
+  workerCoordinator.addEventListener("statechange", (ev) => {
+    const next = ev.detail.next;
+    if (next === "stopped" || next === "restarting" || next === "resetting" || next === "poweredOff" || next === "failed") {
+      stopWorkersInputCapture();
     }
   });
 
@@ -6074,6 +6112,33 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       teardownVgaPresenter();
     }
 
+    // Workers panel input capture (wired directly to the I/O worker).
+    const shouldCapture = anyActive && ioWorker !== null;
+    if (!shouldCapture) {
+      stopWorkersInputCapture();
+    } else if (ioWorker !== inputCaptureIoWorker || vgaCanvas !== inputCaptureCanvas) {
+      // Recreate capture when the I/O worker is restarted or when the canvas is replaced.
+      stopWorkersInputCapture();
+    }
+    if (shouldCapture && !inputCapture && ioWorker) {
+      const capture = new InputCapture(vgaCanvas, ioWorker);
+      try {
+        capture.start();
+        inputCapture = capture;
+        inputCaptureCanvas = vgaCanvas;
+        inputCaptureIoWorker = ioWorker;
+      } catch {
+        // ignore
+      }
+    }
+
+    inputStatusLine.textContent =
+      `input: click canvas to focus + request pointer lock. ` +
+      `pointerLock=${inputCapture?.pointerLocked ? "yes" : "no"}  ` +
+      `ioWorker=${ioWorker ? "ready" : "stopped"}  ` +
+      `ioBatches=${workerCoordinator.getIoInputBatchCounter()}  ` +
+      `ioEvents=${workerCoordinator.getIoInputEventCounter()}`;
+
     const lastFatal = workerCoordinator.getLastFatalEvent();
     if (vmState === "running") {
       // Clear stale error output after a successful restart.
@@ -6110,6 +6175,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
     snapshotLine,
     screenshotLine,
     vgaCanvasRow,
+    inputStatusLine,
     vgaInfoLine,
     vmStateLine,
     heartbeatLine,
