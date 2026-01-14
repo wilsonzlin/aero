@@ -327,7 +327,8 @@ pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
 ### virtio-snd MSI/MSI-X interrupt mode (guest-observed, optional)
 
 Newer `aero-virtio-selftest.exe` binaries emit a dedicated marker describing the virtio-snd interrupt mode/vectors:
-`AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|PASS|mode=intx/msix|messages=<n>|config_vector=<v>|queue0_vector=<v>|...`.
+`AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|PASS|mode=intx/msix/none/unknown|messages=<n>|config_vector=<n|none>|queue0_vector=<n|none>|...`.
+If the virtio-snd diag interface is unavailable, the marker is emitted as `SKIP|reason=diag_unavailable|...`.
 
 When `--require-virtio-snd-msix` is used, the **Python** harness additionally requires `mode=msix` from this marker.
 The **PowerShell** harness does the same when `-RequireVirtioSndMsix` is set.
