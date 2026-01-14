@@ -120,11 +120,7 @@ fn build_gs_primitive_id_colored_split() -> Vec<u8> {
     //
     // Use an XYZW write mask so the `movc` condition is uniform across lanes.
     tokens.push(opcode_token(DCL_DUMMY, 4));
-    tokens.extend_from_slice(&reg_dst(
-        sm4_opcode::OPERAND_TYPE_INPUT,
-        0,
-        WriteMask::XYZW,
-    ));
+    tokens.extend_from_slice(&reg_dst(sm4_opcode::OPERAND_TYPE_INPUT, 0, WriteMask::XYZW));
     tokens.push(D3D_NAME_PRIMITIVE_ID);
 
     // dcl_output o0.xyzw (position)
@@ -144,20 +140,12 @@ fn build_gs_primitive_id_colored_split() -> Vec<u8> {
 
     // utof r0.xyzw, v0.xyzw
     tokens.push(opcode_token(sm4_opcode::OPCODE_UTOF, 5));
-    tokens.extend_from_slice(&reg_dst(
-        sm4_opcode::OPERAND_TYPE_TEMP,
-        0,
-        WriteMask::XYZW,
-    ));
+    tokens.extend_from_slice(&reg_dst(sm4_opcode::OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
     tokens.extend_from_slice(&reg_src(sm4_opcode::OPERAND_TYPE_INPUT, 0));
 
     // mul r1.xyzw, r0.xyzw, l(1,0,0,0)  (x offset per primitive)
     tokens.push(opcode_token(sm4_opcode::OPCODE_MUL, 10));
-    tokens.extend_from_slice(&reg_dst(
-        sm4_opcode::OPERAND_TYPE_TEMP,
-        1,
-        WriteMask::XYZW,
-    ));
+    tokens.extend_from_slice(&reg_dst(sm4_opcode::OPERAND_TYPE_TEMP, 1, WriteMask::XYZW));
     tokens.extend_from_slice(&reg_src(sm4_opcode::OPERAND_TYPE_TEMP, 0));
     tokens.extend_from_slice(&imm32_vec4([
         1.0f32.to_bits(),
@@ -413,4 +401,3 @@ fn aerogpu_cmd_geometry_shader_translated_prepass_sv_primitive_id() {
         assert_eq!(px(0, 0), [0, 0, 0, 255]);
     });
 }
-
