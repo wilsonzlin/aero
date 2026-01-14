@@ -94,7 +94,7 @@ fn build_vbe_mode_118_with_stride_and_display_start_boot_sector(
 }
 
 #[test]
-fn int10_vbe_display_start_pans_linear_framebuffer() {
+fn boot_int10_vbe_display_start_pans_linear_framebuffer() {
     let boot = build_vbe_mode_118_with_display_start_boot_sector(1, 0);
 
     let mut m = Machine::new(MachineConfig {
@@ -129,7 +129,7 @@ fn int10_vbe_display_start_pans_linear_framebuffer() {
 }
 
 #[test]
-fn int10_vbe_scanline_bytes_and_display_start_affect_scanout_base() {
+fn boot_int10_vbe_scanline_bytes_and_display_start_affect_scanout_base() {
     // Pick an odd scanline length so `bytes_per_scan_line` is not representable as
     // `virt_width * bytes_per_pixel` (Bochs VBE_DISPI only supports pixel-granular strides).
     let bytes_per_scan_line = 4101u16;
