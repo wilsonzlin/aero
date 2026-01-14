@@ -3022,6 +3022,12 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
     }
 
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_buffer>(AEROGPU_CMD_CREATE_BUFFER);
+    if (!cmd) {
+      SetError(dev, E_OUTOFMEMORY);
+      deallocate_if_needed();
+      res->~Resource();
+      return E_OUTOFMEMORY;
+    }
     cmd->buffer_handle = res->handle;
     cmd->usage_flags = bind_flags_to_usage_flags_for_buffer(res->bind_flags);
     cmd->size_bytes = padded_size_bytes;
@@ -3398,6 +3404,12 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
     }
 
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_texture2d>(AEROGPU_CMD_CREATE_TEXTURE2D);
+    if (!cmd) {
+      SetError(dev, E_OUTOFMEMORY);
+      deallocate_if_needed();
+      res->~Resource();
+      return E_OUTOFMEMORY;
+    }
     cmd->texture_handle = res->handle;
     cmd->usage_flags = bind_flags_to_usage_flags_for_texture(res->bind_flags);
     cmd->format = aer_fmt;
@@ -5176,6 +5188,10 @@ HRESULT AEROGPU_APIENTRY CreateElementLayout11(D3D11DDI_HDEVICE hDevice,
   std::lock_guard<std::mutex> lock(dev->mutex);
   auto* layout = new (hLayout.pDrvPrivate) InputLayout();
   layout->handle = AllocateGlobalHandle(dev->adapter);
+  if (!layout->handle) {
+    layout->~InputLayout();
+    return E_FAIL;
+  }
 
   const UINT elem_count = pDesc->NumElements;
   if (!pDesc->pVertexElements || elem_count == 0) {
@@ -5215,6 +5231,11 @@ HRESULT AEROGPU_APIENTRY CreateElementLayout11(D3D11DDI_HDEVICE hDevice,
 
   auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_create_input_layout>(
       AEROGPU_CMD_CREATE_INPUT_LAYOUT, layout->blob.data(), layout->blob.size());
+  if (!cmd) {
+    layout->~InputLayout();
+    SetError(dev, E_OUTOFMEMORY);
+    return E_OUTOFMEMORY;
+  }
   cmd->input_layout_handle = layout->handle;
   cmd->blob_size_bytes = static_cast<uint32_t>(layout->blob.size());
   cmd->reserved0 = 0;
@@ -5236,8 +5257,12 @@ void AEROGPU_APIENTRY DestroyElementLayout11(D3D11DDI_HDEVICE hDevice, D3D11DDI_
   std::lock_guard<std::mutex> lock(dev->mutex);
   if (layout->handle) {
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_destroy_input_layout>(AEROGPU_CMD_DESTROY_INPUT_LAYOUT);
-    cmd->input_layout_handle = layout->handle;
-    cmd->reserved0 = 0;
+    if (cmd) {
+      cmd->input_layout_handle = layout->handle;
+      cmd->reserved0 = 0;
+    } else {
+      SetError(dev, E_OUTOFMEMORY);
+    }
   }
   layout->~InputLayout();
 }
@@ -5696,15 +5721,17 @@ void AEROGPU_APIENTRY IaSetInputLayout11(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DDI_
 
   std::lock_guard<std::mutex> lock(dev->mutex);
   InputLayout* layout = hLayout.pDrvPrivate ? FromHandle<D3D11DDI_HELEMENTLAYOUT, InputLayout>(hLayout) : nullptr;
-  dev->current_input_layout_obj = layout;
-  dev->current_input_layout = layout ? layout->handle : 0;
+  const aerogpu_handle_t handle = layout ? layout->handle : 0;
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_input_layout>(AEROGPU_CMD_SET_INPUT_LAYOUT);
   if (!cmd) {
     SetError(dev, E_OUTOFMEMORY);
     return;
   }
-  cmd->input_layout_handle = dev->current_input_layout;
+  dev->current_input_layout_obj = layout;
+  dev->current_input_layout = handle;
+
+  cmd->input_layout_handle = handle;
   cmd->reserved0 = 0;
 }
 
@@ -5796,15 +5823,18 @@ void AEROGPU_APIENTRY IaSetIndexBuffer11(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DDI_
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
-  dev->current_ib = hBuffer.pDrvPrivate ? FromHandle<D3D11DDI_HRESOURCE, Resource>(hBuffer) : nullptr;
-  dev->current_ib_format = static_cast<uint32_t>(format);
-  dev->current_ib_offset_bytes = offset;
+  Resource* ib = hBuffer.pDrvPrivate ? FromHandle<D3D11DDI_HRESOURCE, Resource>(hBuffer) : nullptr;
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_index_buffer>(AEROGPU_CMD_SET_INDEX_BUFFER);
   if (!cmd) {
     SetError(dev, E_OUTOFMEMORY);
     return;
   }
-  cmd->buffer = dev->current_ib ? dev->current_ib->handle : 0;
+
+  dev->current_ib = ib;
+  dev->current_ib_format = static_cast<uint32_t>(format);
+  dev->current_ib_offset_bytes = offset;
+
+  cmd->buffer = ib ? ib->handle : 0;
   cmd->format = dxgi_index_format_to_aerogpu(static_cast<uint32_t>(format));
   cmd->offset_bytes = offset;
   cmd->reserved0 = 0;
@@ -8283,9 +8313,13 @@ void AEROGPU_APIENTRY ClearRenderTargetView11(D3D11DDI_HDEVICECONTEXT hCtx,
   if (!rt) {
     rt = (dev->current_rtv_count != 0) ? dev->current_rtv_resources[0] : nullptr;
   }
-  SoftwareClearTexture2D(rt, rgba);
   TrackBoundTargetsForSubmitLocked(dev);
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_clear>(AEROGPU_CMD_CLEAR);
+  if (!cmd) {
+    SetError(dev, E_OUTOFMEMORY);
+    return;
+  }
+  SoftwareClearTexture2D(rt, rgba);
   cmd->flags = AEROGPU_CLEAR_COLOR;
   cmd->color_rgba_f32[0] = f32_bits(rgba[0]);
   cmd->color_rgba_f32[1] = f32_bits(rgba[1]);
@@ -8314,11 +8348,7 @@ void AEROGPU_APIENTRY ClearDepthStencilView11(D3D11DDI_HDEVICECONTEXT hCtx,
   if (!ds) {
     ds = dev->current_dsv_resource;
   }
-  if (flags & 0x1u) {
-    SoftwareClearDepthTexture2D(ds, depth);
-  }
 
-  TrackBoundTargetsForSubmitLocked(dev);
   uint32_t aer_flags = 0;
   if (flags & 0x1u) {
     aer_flags |= AEROGPU_CLEAR_DEPTH;
@@ -8327,7 +8357,15 @@ void AEROGPU_APIENTRY ClearDepthStencilView11(D3D11DDI_HDEVICECONTEXT hCtx,
     aer_flags |= AEROGPU_CLEAR_STENCIL;
   }
 
+  TrackBoundTargetsForSubmitLocked(dev);
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_clear>(AEROGPU_CMD_CLEAR);
+  if (!cmd) {
+    SetError(dev, E_OUTOFMEMORY);
+    return;
+  }
+  if (flags & 0x1u) {
+    SoftwareClearDepthTexture2D(ds, depth);
+  }
   cmd->flags = aer_flags;
   cmd->color_rgba_f32[0] = 0;
   cmd->color_rgba_f32[1] = 0;
@@ -8437,8 +8475,12 @@ void AEROGPU_APIENTRY Draw11(D3D11DDI_HDEVICECONTEXT hCtx, UINT VertexCount, UIN
 
   std::lock_guard<std::mutex> lock(dev->mutex);
   TrackDrawStateLocked(dev);
-  SoftwareDrawTriangleList(dev, VertexCount, StartVertexLocation);
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_draw>(AEROGPU_CMD_DRAW);
+  if (!cmd) {
+    SetError(dev, E_OUTOFMEMORY);
+    return;
+  }
+  SoftwareDrawTriangleList(dev, VertexCount, StartVertexLocation);
   cmd->vertex_count = VertexCount;
   cmd->instance_count = 1;
   cmd->first_vertex = StartVertexLocation;
@@ -8460,10 +8502,14 @@ void AEROGPU_APIENTRY DrawInstanced11(D3D11DDI_HDEVICECONTEXT hCtx,
 
   std::lock_guard<std::mutex> lock(dev->mutex);
   TrackDrawStateLocked(dev);
+  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_draw>(AEROGPU_CMD_DRAW);
+  if (!cmd) {
+    SetError(dev, E_OUTOFMEMORY);
+    return;
+  }
   // The bring-up software renderer does not understand instance data. Draw a
   // single instance so staging readback tests still have sensible contents.
   SoftwareDrawTriangleList(dev, VertexCountPerInstance, StartVertexLocation);
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_draw>(AEROGPU_CMD_DRAW);
   cmd->vertex_count = VertexCountPerInstance;
   cmd->instance_count = InstanceCount;
   cmd->first_vertex = StartVertexLocation;
@@ -8478,8 +8524,12 @@ void AEROGPU_APIENTRY DrawIndexed11(D3D11DDI_HDEVICECONTEXT hCtx, UINT IndexCoun
 
   std::lock_guard<std::mutex> lock(dev->mutex);
   TrackDrawStateLocked(dev);
-  SoftwareDrawIndexedTriangleList(dev, IndexCount, StartIndexLocation, BaseVertexLocation);
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_draw_indexed>(AEROGPU_CMD_DRAW_INDEXED);
+  if (!cmd) {
+    SetError(dev, E_OUTOFMEMORY);
+    return;
+  }
+  SoftwareDrawIndexedTriangleList(dev, IndexCount, StartIndexLocation, BaseVertexLocation);
   cmd->index_count = IndexCount;
   cmd->instance_count = 1;
   cmd->first_index = StartIndexLocation;
@@ -8503,10 +8553,14 @@ void AEROGPU_APIENTRY DrawIndexedInstanced11(D3D11DDI_HDEVICECONTEXT hCtx,
 
   std::lock_guard<std::mutex> lock(dev->mutex);
   TrackDrawStateLocked(dev);
+  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_draw_indexed>(AEROGPU_CMD_DRAW_INDEXED);
+  if (!cmd) {
+    SetError(dev, E_OUTOFMEMORY);
+    return;
+  }
   // The bring-up software renderer does not understand instance data. Draw a
   // single instance so staging readback tests still have sensible contents.
   SoftwareDrawIndexedTriangleList(dev, IndexCountPerInstance, StartIndexLocation, BaseVertexLocation);
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_draw_indexed>(AEROGPU_CMD_DRAW_INDEXED);
   cmd->index_count = IndexCountPerInstance;
   cmd->instance_count = InstanceCount;
   cmd->first_index = StartIndexLocation;
@@ -8560,10 +8614,14 @@ void AEROGPU_APIENTRY DrawInstancedIndirect11(D3D11DDI_HDEVICECONTEXT hCtx,
   }
 
   TrackDrawStateLocked(dev);
+  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_draw>(AEROGPU_CMD_DRAW);
+  if (!cmd) {
+    SetError(dev, E_OUTOFMEMORY);
+    return;
+  }
   // The bring-up software renderer does not understand instance data. Draw a
   // single instance so staging readback tests still have sensible contents.
   SoftwareDrawTriangleList(dev, vertex_count_per_instance, start_vertex);
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_draw>(AEROGPU_CMD_DRAW);
   cmd->vertex_count = vertex_count_per_instance;
   cmd->instance_count = instance_count;
   cmd->first_vertex = start_vertex;
@@ -8618,10 +8676,14 @@ void AEROGPU_APIENTRY DrawIndexedInstancedIndirect11(D3D11DDI_HDEVICECONTEXT hCt
   }
 
   TrackDrawStateLocked(dev);
+  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_draw_indexed>(AEROGPU_CMD_DRAW_INDEXED);
+  if (!cmd) {
+    SetError(dev, E_OUTOFMEMORY);
+    return;
+  }
   // The bring-up software renderer does not understand instance data. Draw a
   // single instance so staging readback tests still have sensible contents.
   SoftwareDrawIndexedTriangleList(dev, index_count_per_instance, start_index, base_vertex);
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_draw_indexed>(AEROGPU_CMD_DRAW_INDEXED);
   cmd->index_count = index_count_per_instance;
   cmd->instance_count = instance_count;
   cmd->first_index = start_index;
@@ -8852,6 +8914,10 @@ void AEROGPU_APIENTRY CopySubresourceRegion11(D3D11DDI_HDEVICECONTEXT hCtx,
     TrackWddmAllocForSubmitLocked(dev, src, /*write=*/false);
     TrackWddmAllocForSubmitLocked(dev, dst, /*write=*/true);
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_copy_buffer>(AEROGPU_CMD_COPY_BUFFER);
+    if (!cmd) {
+      // The COPY_BUFFER packet is an optimization; CPU copy + upload already ran.
+      return;
+    }
     cmd->dst_buffer = dst->handle;
     cmd->src_buffer = src->handle;
     cmd->dst_offset_bytes = dst_off;
@@ -9166,6 +9232,10 @@ void AEROGPU_APIENTRY CopySubresourceRegion11(D3D11DDI_HDEVICECONTEXT hCtx,
     TrackWddmAllocForSubmitLocked(dev, src, /*write=*/false);
     TrackWddmAllocForSubmitLocked(dev, dst, /*write=*/true);
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_copy_texture2d>(AEROGPU_CMD_COPY_TEXTURE2D);
+    if (!cmd) {
+      // The COPY_TEXTURE2D packet is an optimization; CPU copy + upload already ran.
+      return;
+    }
     cmd->dst_texture = dst->handle;
     cmd->src_texture = src->handle;
     cmd->dst_mip_level = dst_sub_layout.mip_level;
