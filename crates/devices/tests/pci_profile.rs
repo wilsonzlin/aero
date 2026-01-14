@@ -3,9 +3,8 @@ use std::collections::HashSet;
 use aero_devices::pci::capabilities::PCI_CAP_ID_VENDOR_SPECIFIC;
 use aero_devices::pci::msix::PCI_CAP_ID_MSIX;
 use aero_devices::pci::profile::*;
-use aero_devices::pci::PciBarDefinition;
-use aero_devices::pci::PciBdf;
 use aero_devices::usb::xhci::XhciPciDevice;
+use aero_devices::pci::{PciBarDefinition, PciBdf, PciInterruptPin};
 use aero_protocol::aerogpu::aerogpu_pci as protocol_pci;
 
 #[test]
@@ -13,14 +12,29 @@ fn canonical_ids_and_class_codes() {
     assert_eq!(ISA_PIIX3.vendor_id, 0x8086);
     assert_eq!(ISA_PIIX3.device_id, 0x7000);
     assert_eq!(ISA_PIIX3.class.as_u32(), 0x060100);
+    assert_eq!(ISA_PIIX3.revision_id, 0);
+    assert_eq!(ISA_PIIX3.header_type, 0x80);
+    assert_eq!(ISA_PIIX3.subsystem_vendor_id, 0);
+    assert_eq!(ISA_PIIX3.subsystem_id, 0);
+    assert_eq!(ISA_PIIX3.interrupt_pin, None);
 
     assert_eq!(IDE_PIIX3.vendor_id, 0x8086);
     assert_eq!(IDE_PIIX3.device_id, 0x7010);
     assert_eq!(IDE_PIIX3.class.as_u32(), 0x01018a);
+    assert_eq!(IDE_PIIX3.revision_id, 0);
+    assert_eq!(IDE_PIIX3.header_type, 0x00);
+    assert_eq!(IDE_PIIX3.subsystem_vendor_id, 0);
+    assert_eq!(IDE_PIIX3.subsystem_id, 0);
+    assert_eq!(IDE_PIIX3.interrupt_pin, Some(PciInterruptPin::IntA));
 
     assert_eq!(USB_UHCI_PIIX3.vendor_id, 0x8086);
     assert_eq!(USB_UHCI_PIIX3.device_id, 0x7020);
     assert_eq!(USB_UHCI_PIIX3.class.as_u32(), 0x0c0300);
+    assert_eq!(USB_UHCI_PIIX3.revision_id, 0);
+    assert_eq!(USB_UHCI_PIIX3.header_type, 0x00);
+    assert_eq!(USB_UHCI_PIIX3.subsystem_vendor_id, 0);
+    assert_eq!(USB_UHCI_PIIX3.subsystem_id, 0);
+    assert_eq!(USB_UHCI_PIIX3.interrupt_pin, Some(PciInterruptPin::IntA));
 
     assert_eq!(USB_EHCI_ICH9.vendor_id, 0x8086);
     assert_eq!(USB_EHCI_ICH9.device_id, 0x293a);
@@ -29,6 +43,11 @@ fn canonical_ids_and_class_codes() {
     assert_eq!(SATA_AHCI_ICH9.vendor_id, 0x8086);
     assert_eq!(SATA_AHCI_ICH9.device_id, 0x2922);
     assert_eq!(SATA_AHCI_ICH9.class.as_u32(), 0x010601);
+    assert_eq!(SATA_AHCI_ICH9.revision_id, 0);
+    assert_eq!(SATA_AHCI_ICH9.header_type, 0x00);
+    assert_eq!(SATA_AHCI_ICH9.subsystem_vendor_id, 0);
+    assert_eq!(SATA_AHCI_ICH9.subsystem_id, 0);
+    assert_eq!(SATA_AHCI_ICH9.interrupt_pin, Some(PciInterruptPin::IntA));
 
     // AHCI ABAR (HBA registers) must stay consistent with the canonical PCI profile.
     assert_eq!(SATA_AHCI_ICH9.bars.len(), 1);
@@ -40,14 +59,29 @@ fn canonical_ids_and_class_codes() {
     assert_eq!(NVME_CONTROLLER.vendor_id, 0x1b36);
     assert_eq!(NVME_CONTROLLER.device_id, 0x0010);
     assert_eq!(NVME_CONTROLLER.class.as_u32(), 0x010802);
+    assert_eq!(NVME_CONTROLLER.revision_id, 0);
+    assert_eq!(NVME_CONTROLLER.header_type, 0x00);
+    assert_eq!(NVME_CONTROLLER.subsystem_vendor_id, 0);
+    assert_eq!(NVME_CONTROLLER.subsystem_id, 0);
+    assert_eq!(NVME_CONTROLLER.interrupt_pin, Some(PciInterruptPin::IntA));
 
     assert_eq!(HDA_ICH6.vendor_id, 0x8086);
     assert_eq!(HDA_ICH6.device_id, 0x2668);
     assert_eq!(HDA_ICH6.class.as_u32(), 0x040300);
+    assert_eq!(HDA_ICH6.revision_id, 1);
+    assert_eq!(HDA_ICH6.header_type, 0x00);
+    assert_eq!(HDA_ICH6.subsystem_vendor_id, 0x8086);
+    assert_eq!(HDA_ICH6.subsystem_id, 0x2668);
+    assert_eq!(HDA_ICH6.interrupt_pin, Some(PciInterruptPin::IntA));
 
     assert_eq!(NIC_E1000_82540EM.vendor_id, 0x8086);
     assert_eq!(NIC_E1000_82540EM.device_id, 0x100e);
     assert_eq!(NIC_E1000_82540EM.class.as_u32(), 0x020000);
+    assert_eq!(NIC_E1000_82540EM.revision_id, 0);
+    assert_eq!(NIC_E1000_82540EM.header_type, 0x00);
+    assert_eq!(NIC_E1000_82540EM.subsystem_vendor_id, 0x8086);
+    assert_eq!(NIC_E1000_82540EM.subsystem_id, 0x100e);
+    assert_eq!(NIC_E1000_82540EM.interrupt_pin, Some(PciInterruptPin::IntA));
 
     assert_eq!(NIC_RTL8139.vendor_id, 0x10ec);
     assert_eq!(NIC_RTL8139.device_id, 0x8139);

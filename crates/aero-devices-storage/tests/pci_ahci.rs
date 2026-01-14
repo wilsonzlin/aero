@@ -111,10 +111,32 @@ fn write_cfis(mem: &mut dyn MemoryBus, ctba: u64, command: u8, lba: u64, count: 
 fn pci_config_header_fields_and_bar5_size_probe() {
     let mut dev = AhciPciDevice::new(1);
 
-    let expected = profile::SATA_AHCI_ICH9;
+    let expected_profile = profile::SATA_AHCI_ICH9;
     let id = dev.config().vendor_device_id();
-    assert_eq!(id.vendor_id, expected.vendor_id);
-    assert_eq!(id.device_id, expected.device_id);
+    assert_eq!(id.vendor_id, expected_profile.vendor_id);
+    assert_eq!(id.device_id, expected_profile.device_id);
+
+    assert_eq!(
+        dev.config_mut().read(0x08, 1) as u8,
+        expected_profile.revision_id
+    );
+    assert_eq!(
+        dev.config_mut().read(0x0e, 1) as u8,
+        expected_profile.header_type
+    );
+    assert_eq!(
+        dev.config_mut().read(0x2c, 2) as u16,
+        expected_profile.subsystem_vendor_id
+    );
+    assert_eq!(
+        dev.config_mut().read(0x2e, 2) as u16,
+        expected_profile.subsystem_id
+    );
+    let expected_pin = expected_profile
+        .interrupt_pin
+        .map(|p| p.to_config_u8())
+        .unwrap_or(0);
+    assert_eq!(dev.config_mut().read(0x3d, 1) as u8, expected_pin);
 
     let class = dev.config().class_code();
     let class_code =
@@ -125,8 +147,12 @@ fn pci_config_header_fields_and_bar5_size_probe() {
     let abar_cfg_off = profile::AHCI_ABAR_CFG_OFFSET as u16;
     dev.config_mut().write(abar_cfg_off, 4, 0xFFFF_FFFF);
     let got = dev.config_mut().read(abar_cfg_off, 4);
-    let expected = !(profile::AHCI_ABAR_SIZE_U32 - 1) & 0xFFFF_FFF0;
-    assert_eq!(got, expected);
+    let mask = !(profile::AHCI_ABAR_SIZE_U32 - 1) & 0xFFFF_FFF0;
+    assert_eq!(got, mask);
+
+    // BAR base writes must be masked by the BAR size alignment (not just 16 bytes).
+    dev.config_mut().write(abar_cfg_off, 4, 0xDEAD_BEEF);
+    assert_eq!(dev.config_mut().read(abar_cfg_off, 4), 0xDEAD_BEEF & mask);
 }
 
 #[test]

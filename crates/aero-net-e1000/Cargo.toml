@@ -20,3 +20,4 @@ nt-packetlib = { path = "../nt-packetlib" }
 
 [dev-dependencies]
 aero-io-snapshot = { path = "../aero-io-snapshot" }
+aero-devices = { path = "../devices" }

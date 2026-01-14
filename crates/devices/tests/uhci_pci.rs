@@ -1,6 +1,7 @@
 use aero_devices::pci::{
-    PciBarDefinition, PciBdf, PciDevice, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig,
+    PciBarDefinition, PciDevice, PciIntxRouter, PciIntxRouterConfig,
 };
+use aero_devices::pci::profile::USB_UHCI_PIIX3;
 use aero_devices::usb::uhci::{register_uhci_io_ports, regs, SharedUhciPciDevice, UhciPciDevice};
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_platform::address_filter::AddressFilter;
@@ -21,13 +22,20 @@ fn uhci_pci_config_and_bar_io() {
         let cfg = dev.config_mut();
 
         let id = cfg.vendor_device_id();
-        assert_eq!(id.vendor_id, 0x8086);
-        assert_eq!(id.device_id, 0x7020);
+        assert_eq!(id.vendor_id, USB_UHCI_PIIX3.vendor_id);
+        assert_eq!(id.device_id, USB_UHCI_PIIX3.device_id);
+        assert_eq!(cfg.read(0x08, 1) as u8, USB_UHCI_PIIX3.revision_id);
 
         let class = cfg.class_code();
-        assert_eq!(class.class, 0x0c);
-        assert_eq!(class.subclass, 0x03);
-        assert_eq!(class.prog_if, 0x00);
+        assert_eq!(class.class, USB_UHCI_PIIX3.class.base_class);
+        assert_eq!(class.subclass, USB_UHCI_PIIX3.class.sub_class);
+        assert_eq!(class.prog_if, USB_UHCI_PIIX3.class.prog_if);
+        assert_eq!(cfg.read(0x0e, 1) as u8, USB_UHCI_PIIX3.header_type);
+        assert_eq!(
+            cfg.read(0x2c, 2) as u16,
+            USB_UHCI_PIIX3.subsystem_vendor_id
+        );
+        assert_eq!(cfg.read(0x2e, 2) as u16, USB_UHCI_PIIX3.subsystem_id);
 
         assert_eq!(
             cfg.bar_definition(UhciPciDevice::IO_BAR_INDEX),
@@ -38,13 +46,29 @@ fn uhci_pci_config_and_bar_io() {
 
         // Interrupt pin/line should reflect a typical PIIX3 UHCI wiring (00:01.2 INTA#).
         let router = PciIntxRouter::new(PciIntxRouterConfig::default());
-        let bdf = PciBdf::new(0, 1, 2);
-        let expected_gsi = router.gsi_for_intx(bdf, PciInterruptPin::IntA);
+        let expected_pin = USB_UHCI_PIIX3
+            .interrupt_pin
+            .expect("UHCI profile should provide interrupt pin");
+        let expected_gsi = router.gsi_for_intx(USB_UHCI_PIIX3.bdf, expected_pin);
         assert_eq!(
             cfg.read(0x3d, 1) as u8,
-            PciInterruptPin::IntA.to_config_u8()
+            expected_pin.to_config_u8()
         );
         assert_eq!(cfg.read(0x3c, 1) as u8, u8::try_from(expected_gsi).unwrap());
+
+        // UHCI uses BAR4 (I/O) at 0x20. Probe should report size 0x20 and programmed bases should be
+        // masked by the BAR size alignment (not just the 2-bit I/O mask).
+        let bar_offset = 0x10 + u16::from(UhciPciDevice::IO_BAR_INDEX) * 4;
+        assert_eq!(cfg.read(bar_offset, 4) & 0x1, 0x1);
+
+        cfg.write(bar_offset, 4, 0xffff_ffff);
+        let mask = cfg.read(bar_offset, 4);
+        let expected_mask =
+            (!(u32::from(UhciPciDevice::IO_BAR_SIZE) - 1) & 0xffff_fffc) | 0x1;
+        assert_eq!(mask, expected_mask);
+
+        cfg.write(bar_offset, 4, 0x1235);
+        assert_eq!(cfg.read(bar_offset, 4), 0x1235 & expected_mask);
 
         // Program BAR4 and enable I/O decoding.
         cfg.set_bar_base(UhciPciDevice::IO_BAR_INDEX, 0x1000);

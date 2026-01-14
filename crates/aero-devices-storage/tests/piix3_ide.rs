@@ -190,6 +190,14 @@ fn pci_bar_probing_and_programming_matches_piix3_profile() {
     assert_eq!(read_u8(&mut dev, 0x09), IDE_PIIX3.class.prog_if);
     assert_eq!(read_u8(&mut dev, 0x0a), IDE_PIIX3.class.sub_class);
     assert_eq!(read_u8(&mut dev, 0x0b), IDE_PIIX3.class.base_class);
+    assert_eq!(read_u8(&mut dev, 0x0e), IDE_PIIX3.header_type);
+    assert_eq!(read_u16(&mut dev, 0x2c), IDE_PIIX3.subsystem_vendor_id);
+    assert_eq!(read_u16(&mut dev, 0x2e), IDE_PIIX3.subsystem_id);
+    let expected_pin = IDE_PIIX3
+        .interrupt_pin
+        .map(|p| p.to_config_u8())
+        .unwrap_or(0);
+    assert_eq!(read_u8(&mut dev, 0x3d), expected_pin);
 
     assert_eq!(
         dev.config().bar_definition(0),
