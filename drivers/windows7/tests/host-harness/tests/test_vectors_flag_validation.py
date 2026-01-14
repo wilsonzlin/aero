@@ -143,7 +143,15 @@ class HarnessVectorsFlagValidationTests(unittest.TestCase):
                 "--virtio-disable-msix is mutually exclusive",
             ),
             (
+                ["--virtio-disable-msix", "--virtio-blk-vectors", "2"],
+                "--virtio-disable-msix is mutually exclusive",
+            ),
+            (
                 ["--virtio-disable-msix", "--virtio-input-vectors", "2"],
+                "--virtio-disable-msix is mutually exclusive",
+            ),
+            (
+                ["--virtio-disable-msix", "--virtio-snd-vectors", "2"],
                 "--virtio-disable-msix is mutually exclusive",
             ),
         ]
@@ -170,24 +178,29 @@ class HarnessVectorsFlagValidationTests(unittest.TestCase):
     def test_virtio_disable_msix_incompatible_with_require_msix(self) -> None:
         h = self.harness
 
-        old_argv = sys.argv
-        try:
-            sys.argv = [
-                "invoke_aero_virtio_win7_tests.py",
-                "--qemu-system",
-                "qemu-system-x86_64",
-                "--disk-image",
-                "disk.img",
-                "--virtio-disable-msix",
-                "--require-virtio-net-msix",
-            ]
-            stderr = io.StringIO()
-            with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as cm:
-                h.main()
-            self.assertEqual(cm.exception.code, 2)
-            self.assertIn("--virtio-disable-msix is incompatible with --require-virtio-*-msix", stderr.getvalue())
-        finally:
-            sys.argv = old_argv
+        for require_flag in ("--require-virtio-net-msix", "--require-virtio-blk-msix", "--require-virtio-snd-msix"):
+            with self.subTest(require_flag=require_flag):
+                old_argv = sys.argv
+                try:
+                    sys.argv = [
+                        "invoke_aero_virtio_win7_tests.py",
+                        "--qemu-system",
+                        "qemu-system-x86_64",
+                        "--disk-image",
+                        "disk.img",
+                        "--virtio-disable-msix",
+                        require_flag,
+                    ]
+                    stderr = io.StringIO()
+                    with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as cm:
+                        h.main()
+                    self.assertEqual(cm.exception.code, 2)
+                    self.assertIn(
+                        "--virtio-disable-msix is incompatible with --require-virtio-*-msix",
+                        stderr.getvalue(),
+                    )
+                finally:
+                    sys.argv = old_argv
 
     def test_require_intx_and_require_msi_mutually_exclusive(self) -> None:
         h = self.harness
