@@ -2,6 +2,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::{fs, io::Write};
 
@@ -299,11 +300,172 @@ fn screenshot_artifact_label(golden: &Path, cfg: &ImageMatchConfig) -> String {
         return sanitize_artifact_component(name);
     }
 
+    // Not a standard env var set by `cargo test`, but some CI runners / custom harnesses set it.
+    // Prefer it over the golden image stem when present so concurrent failures don't collide.
+    for key in ["RUST_TEST_NAME", "NEXTEST_TEST_NAME", "NEXTEST_TEST_FULL_NAME"] {
+        if let Ok(v) = std::env::var(key) {
+            let v = v.trim();
+            if !v.is_empty() {
+                return sanitize_artifact_component(v);
+            }
+        }
+    }
+
     golden
         .file_stem()
         .and_then(|s| s.to_str())
         .map(sanitize_artifact_component)
         .unwrap_or_else(|| "screenshot".to_string())
+}
+
+static SCREENSHOT_MISMATCH_ARTIFACT_SEQ: AtomicU64 = AtomicU64::new(1);
+
+struct ScreenshotMismatchArtifacts {
+    dir: PathBuf,
+    actual_path: PathBuf,
+    expected_path: PathBuf,
+    diff_path: PathBuf,
+    meta_path: PathBuf,
+    warnings: Vec<String>,
+}
+
+fn write_screenshot_mismatch_artifacts(
+    golden: &Path,
+    cfg: &ImageMatchConfig,
+    actual: &RgbaImage,
+    expected: &RgbaImage,
+    diff: &ImageDiff,
+    qemu_cmdline: &[String],
+    nonce: u64,
+) -> ScreenshotMismatchArtifacts {
+    let label = screenshot_artifact_label(golden, cfg);
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+    let ts_ms = now.as_millis() as u64;
+    let pid = std::process::id();
+    let seq = SCREENSHOT_MISMATCH_ARTIFACT_SEQ.fetch_add(1, Ordering::Relaxed);
+
+    let dir = artifact_dir().join(format!(
+        "screenshot-mismatch-{label}-{ts_ms}-pid{pid}-seq{seq}-n{nonce}"
+    ));
+
+    let actual_path = dir.join("actual.png");
+    let expected_path = dir.join("expected.png");
+    let diff_path = dir.join("diff.png");
+    let meta_path = dir.join("mismatch.json");
+
+    let mut warnings: Vec<String> = Vec::new();
+
+    if let Err(err) = std::fs::create_dir_all(&dir) {
+        warnings.push(format!(
+            "failed to create artifact dir {}: {err}",
+            dir.display()
+        ));
+        return ScreenshotMismatchArtifacts {
+            dir,
+            actual_path,
+            expected_path,
+            diff_path,
+            meta_path,
+            warnings,
+        };
+    }
+
+    let (actual_norm, expected_norm, normalized_ok) =
+        match normalize_images_for_comparison(actual, expected, cfg) {
+            Ok((a, e)) => (a, e, true),
+            Err(err) => {
+                warnings.push(format!(
+                    "failed to normalize images for artifact output: {err}"
+                ));
+                (actual.clone(), expected.clone(), false)
+            }
+        };
+
+    if let Err(err) = actual_norm.save(&actual_path) {
+        warnings.push(format!(
+            "failed to save actual screenshot artifact {}: {err}",
+            actual_path.display()
+        ));
+    }
+    if let Err(err) = expected_norm.save(&expected_path) {
+        warnings.push(format!(
+            "failed to save expected screenshot artifact {}: {err}",
+            expected_path.display()
+        ));
+    }
+
+    let diff_img = if normalized_ok {
+        render_image_diff_normalized(&actual_norm, &expected_norm, cfg.tolerance)
+    } else {
+        render_image_diff(actual, expected, cfg)
+    };
+    if let Err(err) = diff_img.save(&diff_path) {
+        warnings.push(format!(
+            "failed to save diff artifact {}: {err}",
+            diff_path.display()
+        ));
+    }
+
+    let meta = json!({
+        "type": "aero_screenshot_mismatch",
+        "label": label,
+        "golden_path": golden.display().to_string(),
+        "timestamp_unix_secs": now.as_secs(),
+        "timestamp_unix_nanos": now.subsec_nanos(),
+        "timestamp_unix_ms": ts_ms,
+        "pid": pid,
+        "seq": seq,
+        "nonce": nonce,
+        "comparison": {
+            "mismatch_ratio": diff.mismatch_ratio(),
+            "mismatched_pixels": diff.mismatched_pixels,
+            "total_pixels": diff.total_pixels,
+            "max_channel_diff": diff.max_channel_diff,
+        },
+        "config": {
+            "tolerance": cfg.tolerance,
+            "max_mismatch_ratio": cfg.max_mismatch_ratio,
+            "crop": cfg.crop.map(|c| json!({
+                "x": c.x,
+                "y": c.y,
+                "width": c.width,
+                "height": c.height,
+            })),
+            "artifacts": {
+                "enabled": cfg.artifacts.enabled,
+                "name": cfg.artifacts.name.as_deref(),
+            },
+        },
+        "qemu_cmdline": qemu_cmdline,
+        "qemu_cmdline_string": qemu_cmdline.join(" "),
+        "artifacts": {
+            "dir": dir.display().to_string(),
+            "actual_png": actual_path.display().to_string(),
+            "expected_png": expected_path.display().to_string(),
+            "diff_png": diff_path.display().to_string(),
+            "meta_json": meta_path.display().to_string(),
+        },
+    });
+
+    match serde_json::to_vec_pretty(&meta)
+        .ok()
+        .and_then(|bytes| std::fs::write(&meta_path, bytes).err())
+    {
+        Some(err) => warnings.push(format!(
+            "failed to write metadata {}: {err}",
+            meta_path.display()
+        )),
+        None => {}
+    }
+
+    ScreenshotMismatchArtifacts {
+        dir,
+        actual_path,
+        expected_path,
+        diff_path,
+        meta_path,
+        warnings,
+    }
 }
 
 pub fn ensure_ci_prereq(path: &Path, how_to_fix: &str) -> Result<()> {
@@ -340,6 +502,7 @@ pub struct QemuVm {
     qmp: QmpClient,
     serial_path: PathBuf,
     stderr: LogCapture,
+    qemu_cmdline: Vec<String>,
 }
 
 impl QemuVm {
@@ -374,53 +537,66 @@ impl QemuVm {
         let qmp_path = temp_dir.path().join("qmp.sock");
         let serial_path = temp_dir.path().join("serial.log");
 
+        let mut args: Vec<String> = Vec::new();
+        args.extend_from_slice(&[
+            // Always use TCG in CI/tests (GitHub-hosted runners typically lack KVM, and we
+            // prefer deterministic behavior over host-accelerated execution).
+            "-accel".to_string(),
+            "tcg".to_string(),
+            "-display".to_string(),
+            "none".to_string(),
+            "-serial".to_string(),
+            format!("file:{}", serial_path.display()),
+            "-monitor".to_string(),
+            "none".to_string(),
+            "-qmp".to_string(),
+            format!("unix:{},server,nowait", qmp_path.display()),
+            "-no-reboot".to_string(),
+            "-net".to_string(),
+            "none".to_string(),
+            // Ensure images are never modified by tests.
+            "-snapshot".to_string(),
+        ]);
+
+        if cfg.memory_mib != 0 {
+            args.push("-m".to_string());
+            args.push(cfg.memory_mib.to_string());
+        }
+
+        if let Some(floppy) = &cfg.floppy {
+            args.push("-drive".to_string());
+            args.push(format!("file={},if=floppy,format=raw", floppy.display()));
+        }
+
+        if let Some(hda) = &cfg.hda {
+            args.push("-drive".to_string());
+            args.push(format!("file={},if=ide,media=disk", hda.display()));
+        }
+
+        if let Some(order) = &cfg.boot_order {
+            args.push("-boot".to_string());
+            args.push(format!("order={order}"));
+        } else if cfg.floppy.is_some() {
+            args.push("-boot".to_string());
+            args.push("order=a".to_string());
+        } else if cfg.hda.is_some() {
+            args.push("-boot".to_string());
+            args.push("order=c".to_string());
+        }
+
+        for arg in &cfg.extra_args {
+            args.push(arg.clone());
+        }
+
+        let mut qemu_cmdline: Vec<String> = Vec::with_capacity(1 + args.len());
+        qemu_cmdline.push(qemu.display().to_string());
+        qemu_cmdline.extend(args.iter().cloned());
+
         let mut cmd = Command::new(&qemu);
         cmd.stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            // Always use TCG in CI/tests (GitHub-hosted runners typically lack KVM, and we
-            // prefer deterministic behavior over host-accelerated execution).
-            .arg("-accel")
-            .arg("tcg")
-            .arg("-display")
-            .arg("none")
-            .arg("-serial")
-            .arg(format!("file:{}", serial_path.display()))
-            .arg("-monitor")
-            .arg("none")
-            .arg("-qmp")
-            .arg(format!("unix:{},server,nowait", qmp_path.display()))
-            .arg("-no-reboot")
-            .arg("-net")
-            .arg("none")
-            // Ensure images are never modified by tests.
-            .arg("-snapshot");
-
-        if cfg.memory_mib != 0 {
-            cmd.arg("-m").arg(cfg.memory_mib.to_string());
-        }
-
-        if let Some(floppy) = &cfg.floppy {
-            cmd.arg("-drive")
-                .arg(format!("file={},if=floppy,format=raw", floppy.display()));
-        }
-
-        if let Some(hda) = &cfg.hda {
-            cmd.arg("-drive")
-                .arg(format!("file={},if=ide,media=disk", hda.display()));
-        }
-
-        if let Some(order) = &cfg.boot_order {
-            cmd.arg("-boot").arg(format!("order={order}"));
-        } else if cfg.floppy.is_some() {
-            cmd.arg("-boot").arg("order=a");
-        } else if cfg.hda.is_some() {
-            cmd.arg("-boot").arg("order=c");
-        }
-
-        for arg in &cfg.extra_args {
-            cmd.arg(arg);
-        }
+            .args(&args);
 
         let mut child = cmd
             .spawn()
@@ -454,6 +630,7 @@ impl QemuVm {
             qmp,
             serial_path,
             stderr,
+            qemu_cmdline,
         }))
     }
 
@@ -498,72 +675,6 @@ impl QemuVm {
             }
 
             if Instant::now() >= deadline {
-                let mut artifact_note = String::new();
-
-                let (actual_path, expected_path, diff_path) = if cfg.artifacts.enabled {
-                    let dir = artifact_dir();
-                    let label = screenshot_artifact_label(golden, cfg);
-                    let ts_ms = SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_millis();
-                    let nonce = self.qmp.next_nonce();
-                    let base = format!("{label}-{ts_ms}-{nonce}");
-                    (
-                        dir.join(format!("{base}-actual.png")),
-                        dir.join(format!("{base}-expected.png")),
-                        dir.join(format!("{base}-diff.png")),
-                    )
-                } else {
-                    (PathBuf::new(), PathBuf::new(), PathBuf::new())
-                };
-
-                if cfg.artifacts.enabled {
-                    match normalize_images_for_comparison(&actual, &expected, cfg) {
-                        Ok((actual_norm, expected_norm)) => {
-                            if let Err(err) = actual_norm.save(&actual_path) {
-                                artifact_note.push_str(&format!(
-                                    "\nwarning: failed to save actual screenshot artifact {}: {err}",
-                                    actual_path.display()
-                                ));
-                            }
-                            if let Err(err) = expected_norm.save(&expected_path) {
-                                artifact_note.push_str(&format!(
-                                    "\nwarning: failed to save expected screenshot artifact {}: {err}",
-                                    expected_path.display()
-                                ));
-                            }
-                            let diff_img =
-                                render_image_diff_normalized(&actual_norm, &expected_norm, cfg.tolerance);
-                            if let Err(err) = diff_img.save(&diff_path) {
-                                artifact_note.push_str(&format!(
-                                    "\nwarning: failed to save diff artifact {}: {err}",
-                                    diff_path.display()
-                                ));
-                            }
-                        }
-                        Err(err) => {
-                            // We already have `actual` and `expected` in memory; save them
-                            // best-effort even if normalization fails.
-                            if let Err(save_err) = actual.save(&actual_path) {
-                                artifact_note.push_str(&format!(
-                                    "\nwarning: failed to save actual screenshot artifact {}: {save_err}",
-                                    actual_path.display()
-                                ));
-                            }
-                            if let Err(save_err) = expected.save(&expected_path) {
-                                artifact_note.push_str(&format!(
-                                    "\nwarning: failed to save expected screenshot artifact {}: {save_err}",
-                                    expected_path.display()
-                                ));
-                            }
-                            artifact_note.push_str(&format!(
-                                "\nwarning: failed to normalize images for diff rendering: {err}"
-                            ));
-                        }
-                    }
-                }
-
                 let mut msg = format!(
                     "screenshot did not match golden {} within {timeout:?}:\n  mismatched_pixels={} / {} ({:.4}), max_channel_diff={} (tolerance={}), allowed_mismatch_ratio={}",
                     golden.display(),
@@ -576,18 +687,32 @@ impl QemuVm {
                 );
 
                 if cfg.artifacts.enabled {
+                    let nonce = self.qmp.next_nonce();
+                    let artifacts = write_screenshot_mismatch_artifacts(
+                        golden,
+                        cfg,
+                        &actual,
+                        &expected,
+                        &diff,
+                        &self.qemu_cmdline,
+                        nonce,
+                    );
                     msg.push_str(&format!(
-                        "\nartifacts:\n  actual:   {}\n  expected: {}\n  diff:     {}",
-                        actual_path.display(),
-                        expected_path.display(),
-                        diff_path.display(),
+                        "\nartifacts:\n  dir: {}\n  actual:   {}\n  expected: {}\n  diff:     {}\n  meta:     {}",
+                        artifacts.dir.display(),
+                        artifacts.actual_path.display(),
+                        artifacts.expected_path.display(),
+                        artifacts.diff_path.display(),
+                        artifacts.meta_path.display(),
                     ));
+                    if !artifacts.warnings.is_empty() {
+                        for warn in artifacts.warnings {
+                            msg.push_str(&format!("\nwarning: {warn}"));
+                        }
+                    }
+                } else {
+                    msg.push_str("\nartifacts disabled (cfg.artifacts.enabled=false)");
                 }
-
-                if !artifact_note.is_empty() {
-                    msg.push_str(&artifact_note);
-                }
-
                 return Err(anyhow!(msg));
             }
 
