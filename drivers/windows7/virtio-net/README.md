@@ -156,8 +156,10 @@ You can also use `aero-virtio-selftest.exe`:
   - `virtio-net-irq|INFO|mode=intx`
   - `virtio-net-irq|INFO|mode=msi|messages=<n>` (message-signaled interrupts; MSI/MSI-X)
 - Newer guest selftests also emit a dedicated MSI-X diagnostics marker (derived from `\\.\AeroVirtioNetDiag`):
-  - Guest marker: `AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|PASS/FAIL/SKIP|mode=<intx|msi|msix>|messages=<n>|config_vector=...|rx_vector=...|tx_vector=...`
-  - Host marker (mirrored by the QEMU harness): `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_MSIX|PASS/FAIL/SKIP|...`
+  - Guest marker: `AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|PASS/FAIL/SKIP|mode=<intx|msi|msix|unknown>|messages=<n>|config_vector=<n\|none>|rx_vector=<n\|none>|tx_vector=<n\|none>|...`
+  - Host marker (mirrored by the QEMU harness): `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_MSIX|PASS/FAIL/SKIP|mode=...|messages=...|config_vector=<n\|none>|rx_vector=<n\|none>|tx_vector=<n\|none>|...`
+  - Newer builds may append additional diagnostic fields (best-effort), for example:
+    `flags=0x...|intr0=...|intr1=...|intr2=...|dpc0=...|dpc1=...|dpc2=...|rx_drained=...|tx_drained=...`.
 - To increase the chance of MSI-X in the in-tree QEMU harness (and optionally fail if MSI-X is not enabled):
   - Host (MSI-X table sizing; requires QEMU virtio `vectors` property):
     - global: `-VirtioMsixVectors N` / `--virtio-msix-vectors N`
