@@ -57,7 +57,12 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
     let mut cmd = tools::check_node_version(&repo_root);
     runner.run_step("Node: check version", &mut cmd)?;
 
-    if !repo_root.join("node_modules").is_dir() {
+    // `npm ci` from the repo root installs workspace deps under `./node_modules/`, but some
+    // setups may install within `web/` directly. Accept either so `cargo xtask input` can still
+    // provide a helpful missing-deps hint without being overly strict about layout.
+    let has_node_modules = repo_root.join("node_modules").is_dir()
+        || repo_root.join("web/node_modules").is_dir();
+    if !has_node_modules {
         return Err(XtaskError::Message(
             "node_modules is missing; install Node dependencies first (e.g. `npm ci`)".to_string(),
         ));
@@ -80,6 +85,8 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
         cmd.args([
             "tests/e2e/input_capture.spec.ts",
             "tests/e2e/input_capture_io_worker.spec.ts",
+            "tests/e2e/io_worker_i8042.spec.ts",
+            "tests/e2e/io_worker_input_telemetry_drop_counter.spec.ts",
             "tests/e2e/scancodes.spec.ts",
             "tests/e2e/usb_hid_bridge.spec.ts",
             "tests/e2e/virtio_input_backend_switch_keyboard.spec.ts",
