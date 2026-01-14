@@ -48,7 +48,7 @@ fn dxbc_dump_warns_and_truncates_misaligned_shader_chunk() {
     let bin = env!("CARGO_BIN_EXE_dxbc_dump");
 
     let mut fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    fixture.push("tests/fixtures/gs_emit_cut.dxbc");
+    fixture.push("tests/fixtures/gs_point_to_triangle.dxbc");
     let fixture_bytes = fs::read(&fixture).expect("read fixture");
 
     let dxbc = DxbcFile::parse(&fixture_bytes).expect("parse fixture as DXBC");
@@ -104,4 +104,3 @@ fn dxbc_dump_warns_and_truncates_misaligned_shader_chunk() {
     assert!(stdout.contains("(emit)"));
     assert!(stdout.contains("(cut)"));
 }
-
