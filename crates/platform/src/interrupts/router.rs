@@ -512,6 +512,7 @@ impl PlatformInterrupts {
             .map(|lapic| lapic.as_ref())
             .unwrap_or_else(|| panic!("invalid CPU index {cpu_index}"))
     }
+
     /// Iterate over all LAPICs in the platform.
     ///
     /// This avoids exposing the internal `lapics: Vec<Arc<LocalApic>>` field directly and is
