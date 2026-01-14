@@ -254,6 +254,7 @@ Implement the following state-setting entrypoints and treat unknown state values
 | `pfnDeleteVertexDeclaration` | Yes | Free declaration. | N/A |
 | `pfnSetVertexDeclaration` | Yes | Bind declaration. | N/A |
 | `pfnSetStreamSource` | Yes | Bind vertex buffer + stride/offset. | N/A |
+| `pfnSetStreamSourceFreq` / `pfnGetStreamSourceFreq` | Optional | Cache per-stream frequency/divisor for D3D9-style stream instancing (`SetStreamSourceFreq`). Defaults to `1` for all streams. | If you don’t implement instancing, treat non-default values as cached-only (don’t fail), but instanced draws may fail or render incorrectly. |
 | `pfnSetIndices` | Optional | If DWM uses indexed draws. | Implement anyway; it’s commonly exercised. |
 
 Other D3D9-era state APIs (lights, materials, fog, texture transform matrices) can generally be stubbed as no-ops if you avoid advertising fixed-function reliance and DWM sticks to shaders.
