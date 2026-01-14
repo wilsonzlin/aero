@@ -6604,6 +6604,8 @@ static int DoReadGpaJson(const D3DKMT_FUNCS *f,
     w.Uint32(jsonPrefixBytes);
     w.Key("partial_copy");
     w.Bool(false);
+    w.Key("short_read");
+    w.Bool(false);
     w.Key("truncated");
     w.Bool(truncated);
     w.Key("out_path");
@@ -6647,7 +6649,8 @@ static int DoReadGpaJson(const D3DKMT_FUNCS *f,
     copied = AEROGPU_DBGCTL_READ_GPA_MAX_BYTES;
   }
 
-  const bool ok = (NT_SUCCESS(op) && op != STATUS_PARTIAL_COPY);
+  const bool shortRead = (NT_SUCCESS(op) && copied != jsonPrefixBytes);
+  const bool ok = (NT_SUCCESS(op) && op != STATUS_PARTIAL_COPY && !shortRead);
 
   bool wroteFile = false;
   if (outFile && *outFile) {
@@ -6691,6 +6694,8 @@ static int DoReadGpaJson(const D3DKMT_FUNCS *f,
   w.Uint32(io.bytes_copied);
   w.Key("partial_copy");
   w.Bool(op == STATUS_PARTIAL_COPY);
+  w.Key("short_read");
+  w.Bool(shortRead);
   w.Key("truncated");
   w.Bool(truncated);
   if (outFile && *outFile) {
