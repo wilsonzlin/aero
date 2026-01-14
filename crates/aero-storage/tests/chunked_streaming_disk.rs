@@ -4,6 +4,7 @@ use aero_storage::{
     ChunkedStreamingDiskConfig, ChunkedStreamingDiskError, ChunkedStreamingDiskSync,
     StreamingCacheBackend, SECTOR_SIZE,
 };
+use hyper::header::CACHE_CONTROL;
 use hyper::header::CONTENT_LENGTH;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Method, Request, Response, Server, StatusCode};
@@ -88,6 +89,8 @@ async fn handle_request(
         state.counters.manifest_get.fetch_add(1, Ordering::SeqCst);
         let mut resp = Response::new(Body::from(state.manifest_body.clone()));
         *resp.status_mut() = StatusCode::OK;
+        resp.headers_mut()
+            .insert(CACHE_CONTROL, "no-transform".parse().unwrap());
         resp.headers_mut().insert(
             CONTENT_LENGTH,
             (state.manifest_body.len() as u64)
@@ -128,6 +131,8 @@ async fn handle_request(
 
         let mut resp = Response::new(Body::from(bytes.clone()));
         *resp.status_mut() = StatusCode::OK;
+        resp.headers_mut()
+            .insert(CACHE_CONTROL, "no-transform".parse().unwrap());
         resp.headers_mut().insert(
             CONTENT_LENGTH,
             (bytes.len() as u64).to_string().parse().unwrap(),

@@ -250,6 +250,7 @@ Because chunk URLs are versioned and immutable, they should be cached very aggre
 - `Content-Encoding: identity` (or omit the header; required: avoid transparent compression)
   - Aero’s reference clients and tooling treat any non-identity `Content-Encoding` as a protocol error (i.e. do not gzip/br-encode chunks in transit).
 - `Cache-Control: public, max-age=31536000, immutable, no-transform`
+  - Aero’s reference clients treat missing `Cache-Control` / missing `no-transform` as a protocol error (defence-in-depth against intermediary transforms that would break byte-addressed reads).
 - `ETag: "<strong etag>"` (optional but recommended; quoted entity-tag, visible ASCII)
 - `Access-Control-Allow-Origin: *` (if served cross-origin without credentials)
 - `Access-Control-Expose-Headers: Content-Encoding` (recommended when serving cross-origin and you include `Content-Encoding`, so browser JS can detect non-identity encodings)
@@ -259,6 +260,7 @@ Because chunk URLs are versioned and immutable, they should be cached very aggre
 - `Content-Type: application/json`
 - `Content-Encoding: identity` (or omit the header; required for compatibility with Aero’s reference clients + tooling)
 - `Cache-Control: public, max-age=31536000, immutable, no-transform` (when versioned/immutable as described above)
+  - Aero’s reference clients treat missing `Cache-Control` / missing `no-transform` as a protocol error.
 - `ETag: "<strong etag>"` (optional; quoted entity-tag, visible ASCII)
 - `Access-Control-Allow-Origin: *` (same policy as chunks)
 - `Access-Control-Expose-Headers: Content-Encoding` (recommended when serving cross-origin and you include `Content-Encoding`)

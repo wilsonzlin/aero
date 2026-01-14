@@ -20,8 +20,8 @@ use std::{
 
 use crate::range_set::RangeSet;
 use crate::streaming::{
-    ChunkStore, DirectoryChunkStore, SparseFileChunkStore, StreamingCacheBackend,
-    StreamingDiskError,
+    require_no_transform_cache_control, ChunkStore, DirectoryChunkStore, SparseFileChunkStore,
+    StreamingCacheBackend, StreamingDiskError,
 };
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, ACCEPT_ENCODING, CONTENT_ENCODING};
 use serde::{Deserialize, Serialize};
@@ -1130,6 +1130,7 @@ impl ChunkedStreamingDisk {
                 )));
             }
         }
+        require_no_transform_cache_control(resp.headers(), &format!("chunk {chunk_index}"))?;
 
         let expected_usize: usize = expected_len.try_into().map_err(|_| {
             ChunkedStreamingDiskError::Protocol(format!(
@@ -1176,6 +1177,7 @@ async fn fetch_and_parse_manifest(
             )));
         }
     }
+    require_no_transform_cache_control(resp.headers(), "manifest.json")?;
 
     let bytes =
         read_response_bytes_with_limit(resp, MAX_MANIFEST_JSON_BYTES, &CancellationToken::new())

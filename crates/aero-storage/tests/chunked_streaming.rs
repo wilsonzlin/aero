@@ -26,6 +26,8 @@ struct State {
     chunk_size: u64,
     manifest_body: String,
     wrong_chunk: Option<(u64, Vec<u8>)>,
+    manifest_cache_control: Option<&'static str>,
+    chunk_cache_control: Option<&'static str>,
     counters: Counters,
 }
 
@@ -35,11 +37,32 @@ async fn start_chunked_server(
     manifest_body: String,
     wrong_chunk: Option<(u64, Vec<u8>)>,
 ) -> (Url, Arc<State>, oneshot::Sender<()>) {
+    start_chunked_server_with_cache_control(
+        image,
+        chunk_size,
+        manifest_body,
+        wrong_chunk,
+        Some("no-transform"),
+        Some("no-transform"),
+    )
+    .await
+}
+
+async fn start_chunked_server_with_cache_control(
+    image: Vec<u8>,
+    chunk_size: u64,
+    manifest_body: String,
+    wrong_chunk: Option<(u64, Vec<u8>)>,
+    manifest_cache_control: Option<&'static str>,
+    chunk_cache_control: Option<&'static str>,
+) -> (Url, Arc<State>, oneshot::Sender<()>) {
     let state = Arc::new(State {
         image: Arc::new(image),
         chunk_size,
         manifest_body,
         wrong_chunk,
+        manifest_cache_control,
+        chunk_cache_control,
         counters: Counters::default(),
     });
 
@@ -78,6 +101,10 @@ async fn handle_request(
                     hyper::header::CONTENT_TYPE,
                     "application/json".parse().unwrap(),
                 );
+                if let Some(v) = state.manifest_cache_control {
+                    resp.headers_mut()
+                        .insert(hyper::header::CACHE_CONTROL, v.parse().unwrap());
+                }
                 return Ok(resp);
             }
             path if path.starts_with("/chunks/") && path.ends_with(".bin") => {
@@ -92,6 +119,10 @@ async fn handle_request(
                             hyper::header::CONTENT_TYPE,
                             "application/octet-stream".parse().unwrap(),
                         );
+                        if let Some(v) = state.chunk_cache_control {
+                            resp.headers_mut()
+                                .insert(hyper::header::CACHE_CONTROL, v.parse().unwrap());
+                        }
                         return Ok(resp);
                     }
                 }
@@ -110,6 +141,10 @@ async fn handle_request(
                     hyper::header::CONTENT_TYPE,
                     "application/octet-stream".parse().unwrap(),
                 );
+                if let Some(v) = state.chunk_cache_control {
+                    resp.headers_mut()
+                        .insert(hyper::header::CACHE_CONTROL, v.parse().unwrap());
+                }
                 return Ok(resp);
             }
             _ => {}
@@ -169,6 +204,109 @@ async fn rejects_manifests_with_unreasonably_large_chunk_index_width() {
         }
         other => panic!("expected Protocol error, got {other:?}"),
     }
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn rejects_manifests_without_cache_control_no_transform() {
+    let total_size = SECTOR_SIZE;
+    let image: Vec<u8> = vec![0u8; total_size];
+    let chunk_size = SECTOR_SIZE as u64;
+    let total_size_u64 = image.len() as u64;
+    let chunk_count = total_size_u64.div_ceil(chunk_size);
+
+    let manifest = serde_json::json!({
+        "schema": "aero.chunked-disk-image.v1",
+        "version": "missing-no-transform",
+        "mimeType": "application/octet-stream",
+        "totalSize": total_size_u64,
+        "chunkSize": chunk_size,
+        "chunkCount": chunk_count,
+        "chunkIndexWidth": 8,
+    });
+    let manifest_body = serde_json::to_string(&manifest).unwrap();
+
+    let (url, _state, shutdown) = start_chunked_server_with_cache_control(
+        image.clone(),
+        chunk_size,
+        manifest_body,
+        None,
+        Some("public, max-age=60"),
+        Some("no-transform"),
+    )
+    .await;
+
+    let cache_dir = tempdir().unwrap();
+    let mut config = ChunkedStreamingDiskConfig::new(url, cache_dir.path());
+    config.cache_backend = StreamingCacheBackend::Directory;
+    config.options.max_retries = 1;
+    config.options.max_concurrent_fetches = 1;
+
+    let err = ChunkedStreamingDisk::open(config).await.err().unwrap();
+    match err {
+        ChunkedStreamingDiskError::Protocol(msg) => {
+            let lower = msg.to_ascii_lowercase();
+            assert!(lower.contains("cache-control"), "unexpected error: {msg}");
+            assert!(lower.contains("no-transform"), "unexpected error: {msg}");
+        }
+        other => panic!("expected Protocol error, got {other:?}"),
+    }
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn rejects_chunks_without_cache_control_no_transform() {
+    let total_size = SECTOR_SIZE;
+    let image: Vec<u8> = (0..total_size).map(|i| (i % 251) as u8).collect();
+    let chunk_size = SECTOR_SIZE as u64;
+    let total_size_u64 = image.len() as u64;
+    let chunk_count = total_size_u64.div_ceil(chunk_size);
+
+    let manifest = serde_json::json!({
+        "schema": "aero.chunked-disk-image.v1",
+        "version": "chunk-missing-no-transform",
+        "mimeType": "application/octet-stream",
+        "totalSize": total_size_u64,
+        "chunkSize": chunk_size,
+        "chunkCount": chunk_count,
+        "chunkIndexWidth": 8,
+    });
+    let manifest_body = serde_json::to_string(&manifest).unwrap();
+
+    let (url, state, shutdown) = start_chunked_server_with_cache_control(
+        image.clone(),
+        chunk_size,
+        manifest_body,
+        None,
+        Some("no-transform"),
+        Some("public, max-age=60"),
+    )
+    .await;
+
+    let cache_dir = tempdir().unwrap();
+    let mut config = ChunkedStreamingDiskConfig::new(url, cache_dir.path());
+    config.cache_backend = StreamingCacheBackend::Directory;
+    config.options.max_retries = 3;
+    config.options.max_concurrent_fetches = 1;
+
+    let disk = ChunkedStreamingDisk::open(config).await.unwrap();
+    let mut buf = vec![0u8; SECTOR_SIZE];
+    let err = disk.read_at(0, &mut buf).await.err().unwrap();
+    match err {
+        ChunkedStreamingDiskError::Protocol(msg) => {
+            let lower = msg.to_ascii_lowercase();
+            assert!(lower.contains("cache-control"), "unexpected error: {msg}");
+            assert!(lower.contains("no-transform"), "unexpected error: {msg}");
+        }
+        other => panic!("expected Protocol error, got {other:?}"),
+    }
+    assert_eq!(
+        state.counters.chunk_get.load(Ordering::SeqCst),
+        1,
+        "protocol errors should not be retried"
+    );
 
     let _ = shutdown.send(());
 }

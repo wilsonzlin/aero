@@ -53,7 +53,7 @@ const MAX_STREAMING_MAX_CONCURRENT_FETCHES: usize = 128;
 // 512 MiB.
 const MAX_STREAMING_INFLIGHT_BYTES: u64 = 512 * 1024 * 1024;
 
-fn require_no_transform_cache_control(
+pub(crate) fn require_no_transform_cache_control(
     headers: &HeaderMap,
     label: &str,
 ) -> Result<(), StreamingDiskError> {
