@@ -51,7 +51,9 @@ Feature matrix for the Win7 WDK-backed UMDs:
 - Viewport + scissor (protocol supports a **single** viewport/scissor; non-trivial arrays are surfaced via `E_NOTIMPL` and applied best-effort as slot 0)
 - D3D11 compute:
   - `CreateComputeShader` + `CsSet*` bindings + `Dispatch`
-  - Best-effort `DispatchIndirect` (reads the arg buffer from the UMD's CPU shadow storage; does not support GPU-generated indirect args)
+  - Best-effort indirect execution (reads the arg buffer from the UMD's CPU shadow storage; does not support GPU-generated indirect args):
+    - `DispatchIndirect`
+    - `DrawInstancedIndirect` / `DrawIndexedInstancedIndirect`
   - Buffer UAV utilities:
     - `ClearUnorderedAccessViewUint` / `ClearUnorderedAccessViewFloat` (buffer UAVs only)
     - Best-effort `CopyStructureCount` (no real UAV counter tracking yet; forwards `initial_count` when available)
