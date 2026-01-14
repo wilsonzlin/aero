@@ -3388,13 +3388,17 @@ static VOID AeroGpuAllocationQueueDeferredFree(_Inout_ AEROGPU_ALLOCATION* Alloc
 
 static ULONG AeroGpuShareTokenRefIncrementLocked(_Inout_ AEROGPU_ADAPTER* Adapter,
                                                  _In_ ULONGLONG ShareToken,
-                                                 _Inout_ KIRQL* OldIrqlInOut)
+                                                 _Inout_ KIRQL* OldIrqlInOut,
+                                                 _Outptr_result_maybenull_ AEROGPU_SHARE_TOKEN_REF** ToFreeOut)
 {
     if (!Adapter || ShareToken == 0) {
         return 0;
     }
     if (!OldIrqlInOut) {
         return 0;
+    }
+    if (ToFreeOut) {
+        *ToFreeOut = NULL;
     }
 
     /*
@@ -3447,7 +3451,13 @@ static ULONG AeroGpuShareTokenRefIncrementLocked(_Inout_ AEROGPU_ADAPTER* Adapte
         if (existing->ShareToken == ShareToken) {
             existing->OpenCount += 1;
             const ULONG openCount = existing->OpenCount;
-            ExFreePoolWithTag(node, AEROGPU_POOL_TAG);
+            /*
+             * Another thread inserted this token while we were allocating. Hand the
+             * unused node back to the caller to free outside AllocationsLock.
+             */
+            if (ToFreeOut) {
+                *ToFreeOut = node;
+            }
             return openCount;
         }
     }
@@ -3673,10 +3683,15 @@ static VOID AeroGpuEmitReleaseSharedSurface(_Inout_ AEROGPU_ADAPTER* Adapter, _I
 static VOID AeroGpuTrackAllocation(_Inout_ AEROGPU_ADAPTER* Adapter, _Inout_ AEROGPU_ALLOCATION* Allocation)
 {
     KIRQL oldIrql;
+    AEROGPU_SHARE_TOKEN_REF* toFree = NULL;
     KeAcquireSpinLock(&Adapter->AllocationsLock, &oldIrql);
-    const ULONG shareTokenCount = AeroGpuShareTokenRefIncrementLocked(Adapter, Allocation->ShareToken, &oldIrql);
+    const ULONG shareTokenCount = AeroGpuShareTokenRefIncrementLocked(Adapter, Allocation->ShareToken, &oldIrql, &toFree);
     InsertTailList(&Adapter->Allocations, &Allocation->ListEntry);
     KeReleaseSpinLock(&Adapter->AllocationsLock, oldIrql);
+
+    if (toFree) {
+        ExFreePoolWithTag(toFree, AEROGPU_POOL_TAG);
+    }
 
     if (Allocation->ShareToken != 0) {
         if (shareTokenCount != 0) {
