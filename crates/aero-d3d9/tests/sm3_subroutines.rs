@@ -166,6 +166,84 @@ fn sm3_call_and_label_execute_in_software_and_wgsl_compiles() {
 }
 
 #[test]
+fn sm3_nonuniform_conditional_call_to_derivative_subroutine_is_naga_valid() {
+    // ps_3_0:
+    //   def c0, 0.0, 0.0, 0.0, 0.0
+    //   mov r0, c0
+    //   setp_ne p0, v0.x, c0.x
+    //   callnz (p0) l0, v0
+    //   mov oC0, r0
+    //   ret
+    //   label l0
+    //   dsx r0, v0
+    //   ret
+    //   end
+    //
+    // This is deliberately non-uniform control flow (predicate depends on `v0.x`) with a
+    // derivative op inside the called subroutine. WGSL requires derivative ops to be in uniform
+    // control flow, so the lowering must avoid emitting `if (cond) { aero_sub(); }` in this case.
+    let ps_tokens = vec![
+        version_token(ShaderStage::Pixel, 3, 0),
+        // def c0, 0.0, 0.0, 0.0, 0.0
+        opcode_token(81, 5),
+        dst_token(2, 0, 0xF),
+        0x0000_0000,
+        0x0000_0000,
+        0x0000_0000,
+        0x0000_0000,
+        // mov r0, c0
+        opcode_token(1, 2),
+        dst_token(0, 0, 0xF),
+        src_token(2, 0, 0xE4, 0),
+        // setp_ne p0, v0.x, c0.x  (compare op 4 = ne)
+        opcode_token(94, 3) | (4u32 << 16),
+        dst_token(19, 0, 0xF),
+        src_token(1, 0, 0x00, 0), // v0.xxxx
+        src_token(2, 0, 0x00, 0), // c0.xxxx
+        // callnz (p0) l0, v0
+        opcode_token(26, 3) | 0x1000_0000, // predicated
+        src_token(18, 0, 0xE4, 0),
+        src_token(1, 0, 0xE4, 0),
+        src_token(19, 0, 0x00, 0), // p0.x
+        // mov oC0, r0
+        opcode_token(1, 2),
+        dst_token(8, 0, 0xF),
+        src_token(0, 0, 0xE4, 0),
+        // ret (end main)
+        opcode_token(28, 0),
+        // label l0
+        opcode_token(30, 1),
+        src_token(18, 0, 0xE4, 0),
+        // dsx r0, v0
+        opcode_token(86, 2),
+        dst_token(0, 0, 0xF),
+        src_token(1, 0, 0xE4, 0),
+        // ret
+        opcode_token(28, 0),
+        // end
+        0x0000_FFFF,
+    ];
+
+    let decoded = decode_u32_tokens(&ps_tokens).unwrap();
+    let ps = build_ir(&decoded).unwrap();
+    verify_ir(&ps).unwrap();
+
+    let wgsl = generate_wgsl(&ps).unwrap().wgsl;
+    assert!(wgsl.contains("dpdx("), "{wgsl}");
+    assert!(wgsl.contains("_aero_call_taken_"), "{wgsl}");
+    assert!(wgsl.contains("_aero_saved_call"), "{wgsl}");
+    // The call should not remain under a non-uniform `if`.
+    assert!(!wgsl.contains("if (p0.x)"), "{wgsl}");
+    let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+}
+
+#[test]
 fn sm3_callnz_is_conditional_in_software() {
     // ps_3_0:
     //   mov r0, c0

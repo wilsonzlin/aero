@@ -425,6 +425,170 @@ fn collect_reg_usage(block: &Block, usage: &mut RegUsage, depth: usize) -> Resul
     Ok(())
 }
 
+#[derive(Debug, Clone, Default)]
+struct SubroutineInfo {
+    /// True if this subroutine (transitively) contains WGSL ops that require uniform control flow
+    /// in fragment stage (`dpdx`/`dpdy`/`textureSample`/`textureSampleBias`).
+    uses_derivatives: bool,
+    /// True if this subroutine (transitively) can discard the fragment (`texkill`/`discard`).
+    ///
+    /// Discard is not safely "rollback-able", so we avoid speculative execution for these
+    /// subroutines.
+    may_discard: bool,
+    /// Registers written by this subroutine (transitively).
+    writes: BTreeSet<(RegFile, u32)>,
+}
+
+fn op_dst(op: &IrOp) -> &Dst {
+    match op {
+        IrOp::Mov { dst, .. }
+        | IrOp::Mova { dst, .. }
+        | IrOp::Add { dst, .. }
+        | IrOp::Sub { dst, .. }
+        | IrOp::Mul { dst, .. }
+        | IrOp::Mad { dst, .. }
+        | IrOp::Lrp { dst, .. }
+        | IrOp::Dp2 { dst, .. }
+        | IrOp::Dp2Add { dst, .. }
+        | IrOp::Dp3 { dst, .. }
+        | IrOp::Dp4 { dst, .. }
+        | IrOp::MatrixMul { dst, .. }
+        | IrOp::Dst { dst, .. }
+        | IrOp::Crs { dst, .. }
+        | IrOp::Rcp { dst, .. }
+        | IrOp::Rsq { dst, .. }
+        | IrOp::Frc { dst, .. }
+        | IrOp::Abs { dst, .. }
+        | IrOp::Sgn { dst, .. }
+        | IrOp::Exp { dst, .. }
+        | IrOp::Log { dst, .. }
+        | IrOp::Ddx { dst, .. }
+        | IrOp::Ddy { dst, .. }
+        | IrOp::Nrm { dst, .. }
+        | IrOp::Lit { dst, .. }
+        | IrOp::SinCos { dst, .. }
+        | IrOp::Min { dst, .. }
+        | IrOp::Max { dst, .. }
+        | IrOp::SetCmp { dst, .. }
+        | IrOp::Select { dst, .. }
+        | IrOp::Pow { dst, .. }
+        | IrOp::TexSample { dst, .. } => dst,
+    }
+}
+
+fn op_uses_derivatives(op: &IrOp, stage: ShaderStage) -> bool {
+    match op {
+        IrOp::Ddx { .. } | IrOp::Ddy { .. } => true,
+        IrOp::TexSample { kind, .. } if stage == ShaderStage::Pixel => matches!(
+            kind,
+            crate::sm3::ir::TexSampleKind::ImplicitLod { .. } | crate::sm3::ir::TexSampleKind::Bias
+        ),
+        _ => false,
+    }
+}
+
+fn collect_subroutine_info_direct(
+    block: &Block,
+    stage: ShaderStage,
+    info: &mut SubroutineInfo,
+    called_labels: &mut BTreeSet<u32>,
+    depth: usize,
+) -> Result<(), WgslError> {
+    if depth > MAX_D3D9_SHADER_CONTROL_FLOW_NESTING {
+        return Err(err(format!(
+            "control flow nesting exceeds maximum {MAX_D3D9_SHADER_CONTROL_FLOW_NESTING} levels"
+        )));
+    }
+    for stmt in &block.stmts {
+        match stmt {
+            Stmt::Op(op) => {
+                if op_uses_derivatives(op, stage) {
+                    info.uses_derivatives = true;
+                }
+                let dst = op_dst(op);
+                if dst.reg.relative.is_some() {
+                    return Err(err(
+                        "relative register addressing is not supported in subroutine write analysis",
+                    ));
+                }
+                info.writes.insert((dst.reg.file, dst.reg.index));
+            }
+            Stmt::If {
+                then_block,
+                else_block,
+                ..
+            } => {
+                collect_subroutine_info_direct(then_block, stage, info, called_labels, depth + 1)?;
+                if let Some(else_block) = else_block {
+                    collect_subroutine_info_direct(
+                        else_block,
+                        stage,
+                        info,
+                        called_labels,
+                        depth + 1,
+                    )?;
+                }
+            }
+            Stmt::Loop { body, .. } | Stmt::Rep { body, .. } => {
+                collect_subroutine_info_direct(body, stage, info, called_labels, depth + 1)?;
+            }
+            Stmt::Break | Stmt::BreakIf { .. } | Stmt::Return => {}
+            Stmt::Discard { .. } => info.may_discard = true,
+            Stmt::Call { label } => {
+                called_labels.insert(*label);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn build_subroutine_info_map(
+    ir: &crate::sm3::ir::ShaderIr,
+) -> Result<HashMap<u32, SubroutineInfo>, WgslError> {
+    fn dfs(
+        label: u32,
+        ir: &crate::sm3::ir::ShaderIr,
+        out: &mut HashMap<u32, SubroutineInfo>,
+        visiting: &mut BTreeSet<u32>,
+    ) -> Result<SubroutineInfo, WgslError> {
+        if let Some(info) = out.get(&label) {
+            return Ok(info.clone());
+        }
+        if !visiting.insert(label) {
+            return Err(err(format!(
+                "recursive subroutine call detected in WGSL lowering (l{label})"
+            )));
+        }
+
+        let body = ir
+            .subroutines
+            .get(&label)
+            .ok_or_else(|| err(format!("call target label l{label} is not defined")))?;
+
+        let mut info = SubroutineInfo::default();
+        let mut called = BTreeSet::<u32>::new();
+        collect_subroutine_info_direct(body, ir.version.stage, &mut info, &mut called, 0)?;
+
+        for callee in called {
+            let child = dfs(callee, ir, out, visiting)?;
+            info.uses_derivatives |= child.uses_derivatives;
+            info.may_discard |= child.may_discard;
+            info.writes.extend(child.writes);
+        }
+
+        visiting.remove(&label);
+        out.insert(label, info.clone());
+        Ok(info)
+    }
+
+    let mut out: HashMap<u32, SubroutineInfo> = HashMap::new();
+    let mut visiting = BTreeSet::<u32>::new();
+    for &label in ir.subroutines.keys() {
+        let _ = dfs(label, ir, &mut out, &mut visiting)?;
+    }
+    Ok(out)
+}
+
 fn collect_op_usage(op: &IrOp, usage: &mut RegUsage) {
     // Predicate modifier usage.
     if let Some(pred) = &op_modifiers(op).predicate {
@@ -1976,6 +2140,7 @@ struct EmitState {
     in_subroutine: bool,
     loop_stack: Vec<LoopRestore>,
     next_loop_id: u32,
+    next_call_id: u32,
 }
 
 impl EmitState {
@@ -1984,6 +2149,7 @@ impl EmitState {
             in_subroutine,
             loop_stack: Vec::new(),
             next_loop_id: 0,
+            next_call_id: 0,
         }
     }
 }
@@ -1997,6 +2163,7 @@ fn emit_block(
     stage: ShaderStage,
     f32_defs: &BTreeMap<u32, [f32; 4]>,
     sampler_types: &HashMap<u32, TextureType>,
+    subroutine_infos: &HashMap<u32, SubroutineInfo>,
     state: &mut EmitState,
 ) -> Result<(), WgslError> {
     if depth > MAX_D3D9_SHADER_CONTROL_FLOW_NESTING {
@@ -2013,9 +2180,63 @@ fn emit_block(
             stage,
             f32_defs,
             sampler_types,
+            subroutine_infos,
             state,
         )?;
     }
+    Ok(())
+}
+
+fn emit_speculative_call_with_rollback(
+    wgsl: &mut String,
+    indent: usize,
+    cond: &str,
+    label: u32,
+    subroutine_infos: &HashMap<u32, SubroutineInfo>,
+    state: &mut EmitState,
+) -> Result<(), WgslError> {
+    let info = subroutine_infos
+        .get(&label)
+        .ok_or_else(|| err(format!("call target label l{label} is not defined")))?;
+
+    let pad = "  ".repeat(indent);
+    // If the subroutine does not write any registers, we can just execute it unconditionally.
+    if info.writes.is_empty() {
+        let _ = writeln!(wgsl, "{pad}aero_sub_l{label}();");
+        return Ok(());
+    }
+
+    let call_id = state.next_call_id;
+    state.next_call_id = state.next_call_id.wrapping_add(1);
+    let taken_var = format!("_aero_call_taken_{call_id}");
+    let _ = writeln!(wgsl, "{pad}let {taken_var}: bool = {cond};");
+
+    // Snapshot registers written by the callee (transitively).
+    let mut saved_vars = Vec::new();
+    for &(file, index) in &info.writes {
+        let reg = RegRef {
+            file,
+            index,
+            relative: None,
+        };
+        let name = reg_var_name(&reg)?;
+        let ty = reg_scalar_ty(file).ok_or_else(|| err("unsupported subroutine dst file"))?;
+        let saved = format!("_aero_saved_call{call_id}_{name}");
+        let _ = writeln!(wgsl, "{pad}let {saved}: {} = {name};", ty.wgsl_vec4());
+        saved_vars.push((name, saved));
+    }
+
+    // Execute the call on all lanes.
+    let _ = writeln!(wgsl, "{pad}aero_sub_l{label}();");
+
+    // Roll back side effects when the call should not have been taken.
+    let _ = writeln!(wgsl, "{pad}if (!({taken_var})) {{");
+    let inner_pad = "  ".repeat(indent + 1);
+    for (name, saved) in saved_vars {
+        let _ = writeln!(wgsl, "{inner_pad}{name} = {saved};");
+    }
+    let _ = writeln!(wgsl, "{pad}}}");
+
     Ok(())
 }
 
@@ -2028,6 +2249,7 @@ fn emit_stmt(
     stage: ShaderStage,
     f32_defs: &BTreeMap<u32, [f32; 4]>,
     sampler_types: &HashMap<u32, TextureType>,
+    subroutine_infos: &HashMap<u32, SubroutineInfo>,
     state: &mut EmitState,
 ) -> Result<(), WgslError> {
     let pad = "  ".repeat(indent);
@@ -2099,6 +2321,33 @@ fn emit_stmt(
             let mut else_skip = 0usize;
             let mut then_lines = Vec::<String>::new();
             let mut else_lines = Vec::<String>::new();
+            let mut then_call: Option<(String, u32)> = None;
+            let mut else_call: Option<(String, u32)> = None;
+
+            let call_chain = |stmt: &Stmt,
+                              base_cond: &str|
+             -> Result<Option<(String, u32)>, WgslError> {
+                let mut cond = base_cond.to_owned();
+                let mut current = stmt;
+                loop {
+                    match current {
+                        Stmt::Call { label } => return Ok(Some((cond, *label))),
+                        Stmt::If {
+                            cond: inner_cond,
+                            then_block,
+                            else_block: None,
+                        } => {
+                            if then_block.stmts.len() != 1 {
+                                return Ok(None);
+                            }
+                            let inner = cond_expr(inner_cond, f32_defs)?;
+                            cond = format!("({cond} && {inner})");
+                            current = &then_block.stmts[0];
+                        }
+                        _ => return Ok(None),
+                    }
+                }
+            };
 
             if let Some(Stmt::Op(op)) = then_block.stmts.first() {
                 let cond_for_op = cond_with_pred(op, &cond_e)?;
@@ -2156,6 +2405,20 @@ fn emit_stmt(
                 }
             }
 
+            if then_lines.is_empty() {
+                if let Some(first) = then_block.stmts.first() {
+                    if let Some((call_cond, label)) = call_chain(first, &cond_e)? {
+                        let sub_info = subroutine_infos
+                            .get(&label)
+                            .ok_or_else(|| err(format!("call target label l{label} is not defined")))?;
+                        if sub_info.uses_derivatives && !sub_info.may_discard {
+                            then_call = Some((call_cond, label));
+                            then_skip = 1;
+                        }
+                    }
+                }
+            }
+
             if else_lines.is_empty() {
                 if let Some(else_b) = else_block.as_ref() {
                     if else_b.stmts.len() >= 2 {
@@ -2184,12 +2447,53 @@ fn emit_stmt(
                 }
             }
 
-            if !then_lines.is_empty() || !else_lines.is_empty() {
+            if else_lines.is_empty() {
+                if let Some(else_b) = else_block.as_ref() {
+                    if let Some(first) = else_b.stmts.first() {
+                        if let Some((call_cond, label)) = call_chain(first, &not_cond_e)? {
+                            let sub_info = subroutine_infos
+                                .get(&label)
+                                .ok_or_else(|| err(format!("call target label l{label} is not defined")))?;
+                            if sub_info.uses_derivatives && !sub_info.may_discard {
+                                else_call = Some((call_cond, label));
+                                else_skip = 1;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if !then_lines.is_empty()
+                || !else_lines.is_empty()
+                || then_call.is_some()
+                || else_call.is_some()
+            {
                 for line in &then_lines {
                     let _ = writeln!(wgsl, "{pad}{line}");
                 }
                 for line in &else_lines {
                     let _ = writeln!(wgsl, "{pad}{line}");
+                }
+
+                if let Some((call_cond, label)) = &then_call {
+                    emit_speculative_call_with_rollback(
+                        wgsl,
+                        indent,
+                        call_cond,
+                        *label,
+                        subroutine_infos,
+                        state,
+                    )?;
+                }
+                if let Some((call_cond, label)) = &else_call {
+                    emit_speculative_call_with_rollback(
+                        wgsl,
+                        indent,
+                        call_cond,
+                        *label,
+                        subroutine_infos,
+                        state,
+                    )?;
                 }
 
                 let then_rest = &then_block.stmts[then_skip..];
@@ -2213,6 +2517,7 @@ fn emit_stmt(
                             stage,
                             f32_defs,
                             sampler_types,
+                            subroutine_infos,
                             state,
                         )?;
                         let _ = writeln!(wgsl, "{pad}}}");
@@ -2231,6 +2536,7 @@ fn emit_stmt(
                             stage,
                             f32_defs,
                             sampler_types,
+                            subroutine_infos,
                             state,
                         )?;
                         let _ = writeln!(wgsl, "{pad}}}");
@@ -2252,6 +2558,7 @@ fn emit_stmt(
                             stage,
                             f32_defs,
                             sampler_types,
+                            subroutine_infos,
                             state,
                         )?;
                         let _ = writeln!(wgsl, "{pad}}} else {{");
@@ -2263,6 +2570,7 @@ fn emit_stmt(
                             stage,
                             f32_defs,
                             sampler_types,
+                            subroutine_infos,
                             state,
                         )?;
                         let _ = writeln!(wgsl, "{pad}}}");
@@ -2280,6 +2588,7 @@ fn emit_stmt(
                 stage,
                 f32_defs,
                 sampler_types,
+                subroutine_infos,
                 state,
             )?;
             if let Some(else_block) = else_block {
@@ -2292,6 +2601,7 @@ fn emit_stmt(
                     stage,
                     f32_defs,
                     sampler_types,
+                    subroutine_infos,
                     state,
                 )?;
             }
@@ -2357,6 +2667,7 @@ fn emit_stmt(
                 stage,
                 f32_defs,
                 sampler_types,
+                subroutine_infos,
                 state,
             )?;
             state.loop_stack.pop();
@@ -2423,6 +2734,7 @@ fn emit_stmt(
                 stage,
                 f32_defs,
                 sampler_types,
+                subroutine_infos,
                 state,
             )?;
             state.loop_stack.pop();
@@ -2581,6 +2893,8 @@ pub fn generate_wgsl_with_options(
     for def in &ir.const_defs_bool {
         bool_defs.insert(def.index, def.value);
     }
+
+    let subroutine_infos = build_subroutine_info_map(ir)?;
 
     let entry_point = match ir.version.stage {
         ShaderStage::Vertex => "vs_main",
@@ -2897,6 +3211,7 @@ pub fn generate_wgsl_with_options(
                     ShaderStage::Vertex,
                     &f32_defs,
                     &sampler_type_map,
+                    &subroutine_infos,
                     &mut state,
                 )?;
                 wgsl.push_str("}\n\n");
@@ -2963,6 +3278,7 @@ pub fn generate_wgsl_with_options(
                 ShaderStage::Vertex,
                 &f32_defs,
                 &sampler_type_map,
+                &subroutine_infos,
                 &mut state,
             )?;
 
@@ -3111,6 +3427,7 @@ pub fn generate_wgsl_with_options(
                     ShaderStage::Pixel,
                     &f32_defs,
                     &sampler_type_map,
+                    &subroutine_infos,
                     &mut state,
                 )?;
                 wgsl.push_str("}\n\n");
@@ -3196,6 +3513,7 @@ pub fn generate_wgsl_with_options(
                 ShaderStage::Pixel,
                 &f32_defs,
                 &sampler_type_map,
+                &subroutine_infos,
                 &mut state,
             )?;
 
