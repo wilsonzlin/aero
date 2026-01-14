@@ -2,9 +2,9 @@ use aero_platform::interrupts::msi::MsiMessage;
 use aero_virtio::devices::input::{
     VirtioInput, VirtioInputDeviceKind, VirtioInputEvent, BTN_BACK, BTN_EXTRA, BTN_FORWARD,
     BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, BTN_SIDE, BTN_TASK, EV_KEY, EV_LED, EV_REL, EV_SYN, KEY_A,
-    KEY_F1, KEY_F12, KEY_NUMLOCK, KEY_SCROLLLOCK, LED_CAPSL, LED_NUML, LED_SCROLLL, REL_HWHEEL,
-    REL_WHEEL, REL_X, REL_Y, SYN_REPORT, VIRTIO_INPUT_CFG_EV_BITS, VIRTIO_INPUT_CFG_ID_DEVIDS,
-    VIRTIO_INPUT_CFG_ID_NAME,
+    KEY_F1, KEY_F12, KEY_NUMLOCK, KEY_SCROLLLOCK, LED_CAPSL, LED_COMPOSE, LED_KANA, LED_NUML,
+    LED_SCROLLL, REL_HWHEEL, REL_WHEEL, REL_X, REL_Y, SYN_REPORT, VIRTIO_INPUT_CFG_EV_BITS,
+    VIRTIO_INPUT_CFG_ID_DEVIDS, VIRTIO_INPUT_CFG_ID_NAME,
 };
 use aero_virtio::memory::{
     read_u16_le, read_u32_le, write_u16_le, write_u32_le, write_u64_le, GuestMemory, GuestRam,
@@ -291,9 +291,11 @@ fn virtio_input_statusq_buffers_are_consumed() {
     bar_write_u64(&mut dev, &mut mem, caps.common + 0x30, used);
     bar_write_u16(&mut dev, &mut mem, caps.common + 0x1c, 1);
 
+    // Win7 virtio-input posts statusq buffers containing packed virtio_input_event entries:
+    // 5x EV_LED + final EV_SYN => 48 bytes.
     let buf = 0x8000;
-    mem.write(buf, &[0u8; 4]).unwrap();
-    write_desc(&mut mem, desc, 0, buf, 4, 0, 0);
+    mem.write(buf, &[0u8; 48]).unwrap();
+    write_desc(&mut mem, desc, 0, buf, 48, 0, 0);
 
     write_u16_le(&mut mem, avail, 0).unwrap();
     write_u16_le(&mut mem, avail + 2, 1).unwrap();
@@ -381,6 +383,8 @@ fn virtio_input_statusq_led_events_update_mask() {
         input_event_bytes(EV_LED, LED_NUML, 1),
         input_event_bytes(EV_LED, LED_CAPSL, 1),
         input_event_bytes(EV_LED, LED_SCROLLL, 0),
+        input_event_bytes(EV_LED, LED_COMPOSE, 1),
+        input_event_bytes(EV_LED, LED_KANA, 1),
         input_event_bytes(EV_SYN, SYN_REPORT, 0),
     ]
     .concat();
@@ -415,9 +419,9 @@ fn virtio_input_statusq_led_events_update_mask() {
     let len = read_u32_le(&mem, used + 4 + 4).unwrap();
     assert_eq!(len, 0);
 
-    // And the LED state should be updated (bit0=num, bit1=caps, bit2=scroll).
+    // And the LED state should be updated (bit0=num, bit1=caps, bit2=scroll, bit3=compose, bit4=kana).
     let leds = dev.device_mut::<VirtioInput>().unwrap().leds_mask();
-    assert_eq!(leds, 0b011);
+    assert_eq!(leds, 0b11011);
 }
 
 #[test]
@@ -499,6 +503,14 @@ fn virtio_input_config_exposes_name_devids_and_ev_bits() {
     );
     assert_ne!(
         led_bits[(LED_SCROLLL / 8) as usize] & (1u8 << (LED_SCROLLL % 8)),
+        0
+    );
+    assert_ne!(
+        led_bits[(LED_COMPOSE / 8) as usize] & (1u8 << (LED_COMPOSE % 8)),
+        0
+    );
+    assert_ne!(
+        led_bits[(LED_KANA / 8) as usize] & (1u8 << (LED_KANA % 8)),
         0
     );
 

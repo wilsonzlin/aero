@@ -393,6 +393,8 @@ pub struct VirtioInput {
     /// - bit0: Num Lock (`LED_NUML`)
     /// - bit1: Caps Lock (`LED_CAPSL`)
     /// - bit2: Scroll Lock (`LED_SCROLLL`)
+    /// - bit3: Compose (`LED_COMPOSE`)
+    /// - bit4: Kana (`LED_KANA`)
     leds_mask: u8,
 }
 
@@ -529,6 +531,8 @@ impl VirtioInput {
     /// - bit0: Num Lock (`LED_NUML`)
     /// - bit1: Caps Lock (`LED_CAPSL`)
     /// - bit2: Scroll Lock (`LED_SCROLLL`)
+    /// - bit3: Compose (`LED_COMPOSE`)
+    /// - bit4: Kana (`LED_KANA`)
     pub fn leds_mask(&self) -> u8 {
         self.leds_mask
     }
@@ -828,6 +832,8 @@ impl VirtioInput {
                     LED_NUML => 0,
                     LED_CAPSL => 1,
                     LED_SCROLLL => 2,
+                    LED_COMPOSE => 3,
+                    LED_KANA => 4,
                     _ => return,
                 };
                 let flag = 1u8 << bit;
