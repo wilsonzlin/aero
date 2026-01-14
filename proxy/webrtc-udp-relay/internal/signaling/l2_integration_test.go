@@ -476,7 +476,7 @@ func TestWebRTCUDPRelay_L2TunnelPingPongRoundTrip(t *testing.T) {
 		t.Fatalf("timed out waiting for l2 datachannel open")
 	}
 
-	ping, err := l2tunnel.EncodePing(nil)
+	ping, err := l2tunnel.EncodeWithLimits(l2TypePing, 0, nil, l2tunnel.DefaultLimits)
 	if err != nil {
 		t.Fatalf("encode ping: %v", err)
 	}
@@ -491,7 +491,7 @@ func TestWebRTCUDPRelay_L2TunnelPingPongRoundTrip(t *testing.T) {
 		t.Fatalf("timed out waiting for pong")
 	}
 
-	want, err := l2tunnel.EncodePong(nil)
+	want, err := l2tunnel.EncodeWithLimits(l2TypePong, 0, nil, l2tunnel.DefaultLimits)
 	if err != nil {
 		t.Fatalf("encode pong: %v", err)
 	}
@@ -545,7 +545,7 @@ func TestWebRTCUDPRelay_L2TunnelBackendTokenViaSubprotocol(t *testing.T) {
 		t.Fatalf("timed out waiting for l2 datachannel open")
 	}
 
-	ping, err := l2tunnel.EncodePing(nil)
+	ping, err := l2tunnel.EncodeWithLimits(l2TypePing, 0, nil, l2tunnel.DefaultLimits)
 	if err != nil {
 		t.Fatalf("encode ping: %v", err)
 	}
@@ -560,7 +560,7 @@ func TestWebRTCUDPRelay_L2TunnelBackendTokenViaSubprotocol(t *testing.T) {
 		t.Fatalf("timed out waiting for pong")
 	}
 
-	want, err := l2tunnel.EncodePong(nil)
+	want, err := l2tunnel.EncodeWithLimits(l2TypePong, 0, nil, l2tunnel.DefaultLimits)
 	if err != nil {
 		t.Fatalf("encode pong: %v", err)
 	}
@@ -623,7 +623,7 @@ func TestWebRTCUDPRelay_L2TunnelBackendTokenViaQueryForwarding(t *testing.T) {
 		t.Fatalf("timed out waiting for l2 datachannel open")
 	}
 
-	ping, err := l2tunnel.EncodePing(nil)
+	ping, err := l2tunnel.EncodeWithLimits(l2TypePing, 0, nil, l2tunnel.DefaultLimits)
 	if err != nil {
 		t.Fatalf("encode ping: %v", err)
 	}
@@ -638,7 +638,7 @@ func TestWebRTCUDPRelay_L2TunnelBackendTokenViaQueryForwarding(t *testing.T) {
 		t.Fatalf("timed out waiting for pong")
 	}
 
-	want, err := l2tunnel.EncodePong(nil)
+	want, err := l2tunnel.EncodeWithLimits(l2TypePong, 0, nil, l2tunnel.DefaultLimits)
 	if err != nil {
 		t.Fatalf("encode pong: %v", err)
 	}
@@ -714,7 +714,7 @@ func TestWebRTCUDPRelay_L2TunnelForwardsDerivedOriginWhenMissing(t *testing.T) {
 		t.Fatalf("timed out waiting for l2 datachannel open")
 	}
 
-	ping, err := l2tunnel.EncodePing(nil)
+	ping, err := l2tunnel.EncodeWithLimits(l2TypePing, 0, nil, l2tunnel.DefaultLimits)
 	if err != nil {
 		t.Fatalf("encode ping: %v", err)
 	}
@@ -792,7 +792,7 @@ func TestWebRTCUDPRelay_L2TunnelBackendOriginOverrideTakesPrecedence(t *testing.
 		t.Fatalf("timed out waiting for l2 datachannel open")
 	}
 
-	ping, err := l2tunnel.EncodePing(nil)
+	ping, err := l2tunnel.EncodeWithLimits(l2TypePing, 0, nil, l2tunnel.DefaultLimits)
 	if err != nil {
 		t.Fatalf("encode ping: %v", err)
 	}
@@ -866,7 +866,7 @@ func TestWebRTCUDPRelay_L2TunnelBackendTokenViaSubprotocolForwarding(t *testing.
 		t.Fatalf("timed out waiting for l2 datachannel open")
 	}
 
-	ping, err := l2tunnel.EncodePing(nil)
+	ping, err := l2tunnel.EncodeWithLimits(l2TypePing, 0, nil, l2tunnel.DefaultLimits)
 	if err != nil {
 		t.Fatalf("encode ping: %v", err)
 	}
@@ -881,7 +881,7 @@ func TestWebRTCUDPRelay_L2TunnelBackendTokenViaSubprotocolForwarding(t *testing.
 		t.Fatalf("timed out waiting for pong")
 	}
 
-	want, err := l2tunnel.EncodePong(nil)
+	want, err := l2tunnel.EncodeWithLimits(l2TypePong, 0, nil, l2tunnel.DefaultLimits)
 	if err != nil {
 		t.Fatalf("encode pong: %v", err)
 	}
@@ -953,7 +953,7 @@ func TestWebRTCUDPRelay_L2TunnelBackendTokenOverridesForwardedCredential(t *test
 		t.Fatalf("timed out waiting for l2 datachannel open")
 	}
 
-	ping, err := l2tunnel.EncodePing(nil)
+	ping, err := l2tunnel.EncodeWithLimits(l2TypePing, 0, nil, l2tunnel.DefaultLimits)
 	if err != nil {
 		t.Fatalf("encode ping: %v", err)
 	}
@@ -968,7 +968,7 @@ func TestWebRTCUDPRelay_L2TunnelBackendTokenOverridesForwardedCredential(t *test
 		t.Fatalf("timed out waiting for pong")
 	}
 
-	want, err := l2tunnel.EncodePong(nil)
+	want, err := l2tunnel.EncodeWithLimits(l2TypePong, 0, nil, l2tunnel.DefaultLimits)
 	if err != nil {
 		t.Fatalf("encode pong: %v", err)
 	}
@@ -1042,7 +1042,7 @@ func TestWebRTCUDPRelay_L2TunnelAuthForwardModeNoneDoesNotForwardCredential(t *t
 		t.Fatalf("timed out waiting for l2 datachannel open")
 	}
 
-	ping, err := l2tunnel.EncodePing(nil)
+	ping, err := l2tunnel.EncodeWithLimits(l2TypePing, 0, nil, l2tunnel.DefaultLimits)
 	if err != nil {
 		t.Fatalf("encode ping: %v", err)
 	}
@@ -1057,7 +1057,7 @@ func TestWebRTCUDPRelay_L2TunnelAuthForwardModeNoneDoesNotForwardCredential(t *t
 		t.Fatalf("timed out waiting for pong")
 	}
 
-	want, err := l2tunnel.EncodePong(nil)
+	want, err := l2tunnel.EncodeWithLimits(l2TypePong, 0, nil, l2tunnel.DefaultLimits)
 	if err != nil {
 		t.Fatalf("encode pong: %v", err)
 	}
@@ -1173,7 +1173,7 @@ func TestWebRTCUDPRelay_L2TunnelForwardsAeroSessionCookie(t *testing.T) {
 		t.Fatalf("timed out waiting for l2 datachannel open")
 	}
 
-	ping, err := l2tunnel.EncodePing(nil)
+	ping, err := l2tunnel.EncodeWithLimits(l2TypePing, 0, nil, l2tunnel.DefaultLimits)
 	if err != nil {
 		t.Fatalf("encode ping: %v", err)
 	}
@@ -1188,7 +1188,7 @@ func TestWebRTCUDPRelay_L2TunnelForwardsAeroSessionCookie(t *testing.T) {
 		t.Fatalf("timed out waiting for pong")
 	}
 
-	want, err := l2tunnel.EncodePong(nil)
+	want, err := l2tunnel.EncodeWithLimits(l2TypePong, 0, nil, l2tunnel.DefaultLimits)
 	if err != nil {
 		t.Fatalf("encode pong: %v", err)
 	}

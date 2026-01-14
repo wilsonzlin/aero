@@ -165,27 +165,17 @@ func decodeWithLimits(buf []byte, limits limits) (message, error) {
 	}, nil
 }
 
-// EncodePing encodes a PING message using DefaultLimits.
-func EncodePing(payload []byte) ([]byte, error) {
-	return EncodeWithLimits(typePing, 0, payload, DefaultLimits)
-}
-
-// EncodePong encodes a PONG message using DefaultLimits.
-func EncodePong(payload []byte) ([]byte, error) {
-	return EncodeWithLimits(typePong, 0, payload, DefaultLimits)
-}
-
 // DecodeMessage decodes an L2 tunnel message using DefaultLimits.
 func DecodeMessage(buf []byte) (message, error) {
 	return decodeWithLimits(buf, DefaultLimits)
 }
 
-// EncodeStructuredErrorPayload encodes a structured ERROR payload:
+// encodeStructuredErrorPayload encodes a structured ERROR payload:
 //
 //	code (u16 BE) | msg_len (u16 BE) | msg (msg_len bytes, UTF-8)
 //
 // The returned payload is truncated as needed to fit within maxPayloadBytes.
-func EncodeStructuredErrorPayload(code uint16, message string, maxPayloadBytes int) []byte {
+func encodeStructuredErrorPayload(code uint16, message string, maxPayloadBytes int) []byte {
 	if maxPayloadBytes < 0 {
 		maxPayloadBytes = 0
 	}
@@ -215,11 +205,11 @@ func EncodeStructuredErrorPayload(code uint16, message string, maxPayloadBytes i
 	return out
 }
 
-// DecodeStructuredErrorPayload attempts to decode a structured ERROR payload.
+// decodeStructuredErrorPayload attempts to decode a structured ERROR payload.
 //
 // It returns (code, message, true) only if the payload matches the exact
 // structured encoding and the message bytes are valid UTF-8.
-func DecodeStructuredErrorPayload(payload []byte) (uint16, string, bool) {
+func decodeStructuredErrorPayload(payload []byte) (uint16, string, bool) {
 	if len(payload) < errorStructuredHeaderLen {
 		return 0, "", false
 	}

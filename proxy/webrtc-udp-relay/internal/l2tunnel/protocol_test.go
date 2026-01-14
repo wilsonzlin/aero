@@ -95,7 +95,7 @@ func TestL2TunnelVectors(t *testing.T) {
 			}
 
 			if v.Structured != nil {
-				code, message, ok := DecodeStructuredErrorPayload(msg.Payload)
+				code, message, ok := decodeStructuredErrorPayload(msg.Payload)
 				if !ok {
 					t.Fatalf("DecodeStructuredErrorPayload returned ok=false")
 				}
@@ -105,25 +105,13 @@ func TestL2TunnelVectors(t *testing.T) {
 				if message != v.Structured.Message {
 					t.Fatalf("structured message=%q, want %q", message, v.Structured.Message)
 				}
-				encoded := EncodeStructuredErrorPayload(code, message, int(^uint(0)>>1))
+				encoded := encodeStructuredErrorPayload(code, message, int(^uint(0)>>1))
 				if !bytes.Equal(encoded, payload) {
 					t.Fatalf("structured payload mismatch: got %x, want %x", encoded, payload)
 				}
 			}
 
-			var encoded []byte
-			switch msg.Type {
-			case typeFrame:
-				encoded, err = EncodeWithLimits(typeFrame, 0, payload, DefaultLimits)
-			case typePing:
-				encoded, err = EncodePing(payload)
-			case typePong:
-				encoded, err = EncodePong(payload)
-			case typeError:
-				encoded, err = EncodeWithLimits(typeError, 0, payload, DefaultLimits)
-			default:
-				t.Fatalf("unsupported msg type in vectors: %#x", msg.Type)
-			}
+			encoded, err := EncodeWithLimits(msg.Type, msg.Flags, payload, DefaultLimits)
 			if err != nil {
 				t.Fatalf("encode: %v", err)
 			}
@@ -154,11 +142,11 @@ func TestL2TunnelVectors(t *testing.T) {
 
 func TestEncodeStructuredErrorPayload_Truncation(t *testing.T) {
 	// maxPayloadBytes=4 => header only.
-	p := EncodeStructuredErrorPayload(123, "hello", 4)
+	p := encodeStructuredErrorPayload(123, "hello", 4)
 	if len(p) != 4 {
 		t.Fatalf("len=%d, want 4", len(p))
 	}
-	code, msg, ok := DecodeStructuredErrorPayload(p)
+	code, msg, ok := decodeStructuredErrorPayload(p)
 	if !ok {
 		t.Fatalf("DecodeStructuredErrorPayload returned ok=false")
 	}
