@@ -257,8 +257,12 @@ As of the current implementation, the AHCI path supports the following ATA comma
 - `IDENTIFY DEVICE` (`0xEC`)
 - `READ DMA` (28-bit) (`0xC8`)
 - `WRITE DMA` (28-bit) (`0xCA`)
+- `READ SECTORS` (28-bit) (`0x20`)
+- `WRITE SECTORS` (28-bit) (`0x30`)
 - `READ DMA EXT` (48-bit) (`0x25`)
 - `WRITE DMA EXT` (48-bit) (`0x35`)
+- `READ SECTORS EXT` (48-bit) (`0x24`)
+- `WRITE SECTORS EXT` (48-bit) (`0x34`)
 - `FLUSH CACHE` (`0xE7`) and `FLUSH CACHE EXT` (`0xEA`)
 - `SET FEATURES` (`0xEF`)
   - `0x02` = enable write cache
@@ -268,9 +272,11 @@ Notes:
 
 - These commands are executed via AHCI DMA (PRDT scatter/gather) against an `AtaDrive` backed by an
   `aero_storage::VirtualDisk`.
-- PIO read/write commands are **not** implemented on the AHCI path; the legacy IDE controller model
-  is the place where PIO commands are implemented for BIOS/early-boot compatibility (see
-  [`crates/aero-devices-storage/src/ide.rs`](../crates/aero-devices-storage/src/ide.rs)).
+- Even for *PIO opcodes* like `READ SECTORS` / `WRITE SECTORS`, AHCI still performs data transfer via
+  PRDT-based DMA (there is no PIO data register in the AHCI programming model).
+- The legacy IDE controller model is still important because it implements *actual* PIO data port
+  semantics (I/O port reads/writes to the ATA DATA register), which is required for BIOS/early-boot
+  compatibility. See: [`crates/aero-devices-storage/src/ide.rs`](../crates/aero-devices-storage/src/ide.rs).
 
 For reference, the current IDE (PIO) ATA command support includes:
 
