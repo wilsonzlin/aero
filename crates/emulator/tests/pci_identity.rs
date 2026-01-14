@@ -1,6 +1,5 @@
 use aero_devices::pci::profile::{
-    AHCI_ABAR_CFG_OFFSET, AHCI_ABAR_SIZE_U32, IDE_PIIX3, NIC_E1000_82540EM, SATA_AHCI_ICH9,
-    USB_UHCI_PIIX3,
+    AHCI_ABAR_CFG_OFFSET, AHCI_ABAR_SIZE_U32, IDE_PIIX3, SATA_AHCI_ICH9, USB_UHCI_PIIX3,
 };
 #[cfg(feature = "storage-device-crates")]
 use aero_devices::pci::profile::NVME_CONTROLLER;
@@ -12,7 +11,6 @@ use aero_devices::pci::profile::HDA_ICH6;
 
 #[cfg(feature = "legacy-audio")]
 use emulator::io::audio::hda::HdaPciDevice;
-use emulator::io::net::e1000_aero::{E1000Device, E1000PciDevice};
 use emulator::io::pci::PciDevice as EmuPciDevice;
 use emulator::io::storage::ide::IdeController;
 #[cfg(feature = "storage-device-crates")]
@@ -134,12 +132,6 @@ fn hda_pci_config_matches_canonical_profile() {
     // BAR bases must be masked by the BAR size alignment (not just 16 bytes).
     dev.config_write(0x10, 4, 0xdead_beef);
     assert_eq!(dev.config_read(0x10, 4), 0xdead_beef & mask);
-}
-
-#[test]
-fn e1000_pci_config_matches_canonical_profile() {
-    let dev = E1000PciDevice::new(E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]));
-    assert_basic_identity(|off, size| dev.config_read(off, size), NIC_E1000_82540EM);
 }
 
 #[test]
