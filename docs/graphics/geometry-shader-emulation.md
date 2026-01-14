@@ -178,7 +178,12 @@ Aero’s binding model is stage-scoped. In the AeroGPU command-stream executor (
 - `@group(2)`: CS resources
 - `@group(3)`: reserved internal / emulation group:
   - GS/HS/DS (“stage_ex”) resources (tracked separately from CS to avoid clobbering)
-  - internal emulation helpers (vertex pulling, expansion scratch, counters, indirect args)
+  - internal expansion helpers (vertex pulling, etc) using `@binding >= BINDING_BASE_INTERNAL` to
+    avoid collisions with D3D `b#`/`t#`/`s#`/`u#` bindings.
+- `@group(4)`: optional dedicated internal emulation pipelines when the device supports at least 5
+  bind groups (`maxBindGroups >= 5`).
+  - Implementations may place scratch/counters/indirect args here (see `BIND_GROUP_INTERNAL_EMULATION`)
+    to avoid sharing a bind group with `stage_ex` resources.
 
 GS/HS/DS stages are emulated using compute passes, but their **D3D-stage resource bindings** are
 tracked independently and are expected to be provided to the emulation pipelines via a reserved
@@ -186,10 +191,13 @@ bind group:
 
 - `@group(3)` for GS/HS/DS resources (selected via the `stage_ex` ABI extension).
 - Expansion-internal buffers (vertex pulling inputs, scratch outputs, counters, indirect args) are
-  also internal to the emulation path. The design places these in `@group(3)` using a reserved high
-  binding-number range (starting at `BINDING_BASE_INTERNAL = 256`, defined in
+  also internal to the emulation path. In the baseline design they live in `@group(3)` using a
+  reserved high binding-number range (starting at `BINDING_BASE_INTERNAL = 256`, defined in
   `crates/aero-d3d11/src/binding_model.rs`) so they do not collide with D3D register bindings (see
   [`docs/16-d3d10-11-translation.md`](../16-d3d10-11-translation.md)).
+  - Implementations may temporarily place these in `@group(4)` if the device supports at least 5 bind
+    groups.
+  - Vertex pulling already uses this reserved range so it can be shared across emulation kernels.
 
 ### Binding number ranges within a stage group
 
@@ -227,8 +235,9 @@ The broader compute-expansion pipeline also defines additional internal scratch 
 binding-number range).
 
 Note: the full GS/HS/DS emulation pipeline will need a unified bind-group layout that accommodates
-both “stage_ex” bindings (low `@binding` ranges) and vertex pulling/expansion internal bindings
-(`@binding >= BINDING_BASE_INTERNAL`); the current executor prepass is still a placeholder.
+ both “stage_ex” bindings (low `@binding` ranges) and vertex pulling/expansion internal bindings
+ (`@binding >= BINDING_BASE_INTERNAL`) within `@group(3)` (keeping the bind group count within the
+ WebGPU baseline of 4). The current executor prepass is still a placeholder.
 
 ### AeroGPU command stream note: `stage_ex`
 
