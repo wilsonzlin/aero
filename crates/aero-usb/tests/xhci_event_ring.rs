@@ -386,6 +386,67 @@ fn event_ring_wrap_toggles_cycle_and_respects_consumer_erdp() {
 }
 
 #[test]
+fn event_ring_consumer_full_lap_same_erdp_toggles_cycle_and_unblocks_producer() {
+    let mut mem = TestMemory::new(0x20_000);
+
+    let erstba = 0x1000;
+    let ring_base = 0x2000;
+    // Single segment, 2 TRBs. This makes it easy to fill the ring and then simulate consuming a
+    // full lap (ERDP written back to the same pointer).
+    write_erst_entry(&mut mem, erstba, ring_base, 2);
+
+    let mut xhci = XhciController::new();
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 1);
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, erstba as u32);
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_HI, 4, (erstba >> 32) as u32);
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, ring_base as u32);
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_HI, 4, (ring_base >> 32) as u32);
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
+
+    let mut ev0 = Trb::default();
+    ev0.parameter = 0xaaaa;
+    ev0.set_trb_type(TrbType::PortStatusChangeEvent);
+    let mut ev1 = Trb::default();
+    ev1.parameter = 0xbbbb;
+    ev1.set_trb_type(TrbType::PortStatusChangeEvent);
+    let mut ev2 = Trb::default();
+    ev2.parameter = 0xcccc;
+    ev2.set_trb_type(TrbType::PortStatusChangeEvent);
+
+    xhci.post_event(ev0);
+    xhci.post_event(ev1);
+    xhci.post_event(ev2);
+
+    xhci.service_event_ring(&mut mem);
+    assert_eq!(
+        xhci.pending_event_count(),
+        1,
+        "ring should be full after enqueuing 2 TRBs into a 2-entry segment"
+    );
+
+    // Guest consumes both TRBs and writes ERDP back to the same address. xHCI drivers can do this
+    // when they consume a whole number of ring laps. The model should treat this as a wrap and
+    // toggle the consumer cycle state to unblock the producer.
+    xhci.mmio_write(
+        &mut mem,
+        regs::REG_INTR0_ERDP_LO,
+        4,
+        (ring_base as u32) | (ERDP_EHB as u32),
+    );
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_HI, 4, (ring_base >> 32) as u32);
+
+    xhci.service_event_ring(&mut mem);
+    assert_eq!(xhci.pending_event_count(), 0);
+
+    let wrapped = Trb::read_from(&mut mem, ring_base);
+    assert!(
+        !wrapped.cycle(),
+        "producer should be able to wrap and enqueue with a toggled cycle bit after a full-lap ERDP write"
+    );
+    assert_eq!(wrapped.parameter, 0xcccc);
+}
+
+#[test]
 fn port_status_change_event_is_delivered_into_guest_event_ring() {
     let mut mem = TestMemory::new(0x20_000);
 
