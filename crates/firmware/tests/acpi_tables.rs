@@ -570,17 +570,31 @@ fn dsdt_contains_pci_routing_and_resources() {
         "PCI0._CRS missing PCI config I/O port descriptor"
     );
 
-    // `_CRS` should include the PCI MMIO window (DWord address descriptor).
+    // `_CRS` should include the PCI MMIO window.
+    //
+    // The generator emits this as a DWord address space descriptor today, but the flag bytes are
+    // not stable across revisions, so match by the decoded range fields instead of raw bytes.
     let expected_size = (IOAPIC_MMIO_BASE as u32) - (DEFAULT_PCI_MMIO_START as u32);
     let expected_start = DEFAULT_PCI_MMIO_START as u32;
     let expected_end = expected_start + expected_size - 1;
-    let desc_prefix = [0x87, 0x17, 0x00, 0x00, 0x0D, 0x06];
-    let Some(off) = find_subslice(aml, &desc_prefix) else {
-        panic!("PCI0._CRS missing PCI MMIO DWord address descriptor");
-    };
-    assert_eq!(read_u32_le(aml, off + 10), expected_start);
-    assert_eq!(read_u32_le(aml, off + 14), expected_end);
-    assert_eq!(read_u32_le(aml, off + 22), expected_size);
+    let mut found_mmio = false;
+    for off in 0..aml.len().saturating_sub(26) {
+        // Large resource item: DWord Address Space Descriptor (0x87) with length 0x0017.
+        if aml.get(off..off + 4) != Some(&[0x87, 0x17, 0x00, 0x00]) {
+            continue;
+        }
+        if read_u32_le(aml, off + 10) == expected_start
+            && read_u32_le(aml, off + 14) == expected_end
+            && read_u32_le(aml, off + 22) == expected_size
+        {
+            found_mmio = true;
+            break;
+        }
+    }
+    assert!(
+        found_mmio,
+        "PCI0._CRS missing PCI MMIO address descriptor for 0x{expected_start:x}..=0x{expected_end:x}"
+    );
 
     // Ensure that the MMIO resources described in PCI0._CRS do not claim the ECAM window. The
     // ECAM region is described separately via the MCFG table.
@@ -606,10 +620,10 @@ fn pci0_crs_splits_mmio_window_to_exclude_ecam_when_overlapping() {
     let ecam_start = PCIE_ECAM_BASE;
     let ecam_end = ecam_start + PCIE_ECAM_SIZE;
 
-    let desc_prefix = [0x87, 0x17, 0x00, 0x00, 0x0D, 0x06];
+    let desc_prefix = [0x87, 0x17, 0x00, 0x00];
     let mut found_any = false;
-    for off in 0..aml.len().saturating_sub(desc_prefix.len()) {
-        if &aml[off..off + desc_prefix.len()] != desc_prefix {
+    for off in 0..aml.len().saturating_sub(26) {
+        if aml.get(off..off + desc_prefix.len()) != Some(desc_prefix.as_slice()) {
             continue;
         }
         found_any = true;
