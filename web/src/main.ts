@@ -7373,7 +7373,6 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       schedulerFrameStateSab = null;
       schedulerSharedFramebuffer = null;
       workerCoordinator.stop();
-      workerCoordinator.setBootDisks({}, null, null);
       useWorkerPresentation = false;
       teardownVgaPresenter();
       if (canvasTransferred) resetVgaCanvas();
