@@ -637,6 +637,14 @@ impl D3D11Runtime {
             );
         }
 
+        if usage.contains(TextureUsage::STORAGE_BINDING)
+            && self.device.limits().max_storage_textures_per_shader_stage == 0
+        {
+            bail!(
+                "CreateTexture2D requested STORAGE_BINDING, but this device reports max_storage_textures_per_shader_stage=0"
+            );
+        }
+
         let format = map_texture_format(format)?;
         let texture = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("aero-d3d11 texture2d"),
@@ -1365,6 +1373,10 @@ impl D3D11Runtime {
         cursor: &mut usize,
         binding_count: usize,
     ) -> Result<Vec<BindingDef>> {
+        let max_storage_buffers_per_shader_stage =
+            self.device.limits().max_storage_buffers_per_shader_stage;
+        let max_storage_textures_per_shader_stage =
+            self.device.limits().max_storage_textures_per_shader_stage;
         let mut bindings = Vec::with_capacity(binding_count);
         for _ in 0..binding_count {
             if *cursor + 4 > payload.len() {
@@ -1395,6 +1407,23 @@ impl D3D11Runtime {
                 }
                 _ => bail!("unknown binding type {ty}"),
             };
+
+            if matches!(kind, BindingKind::StorageBuffer { .. })
+                && max_storage_buffers_per_shader_stage == 0
+            {
+                bail!(
+                    "binding @binding({binding}) requires storage buffers, but this device reports max_storage_buffers_per_shader_stage=0"
+                );
+            }
+
+            if matches!(kind, BindingKind::StorageTexture2DWriteOnly { .. })
+                && max_storage_textures_per_shader_stage == 0
+            {
+                bail!(
+                    "binding @binding({binding}) requires storage textures, but this device reports max_storage_textures_per_shader_stage=0"
+                );
+            }
+
             bindings.push(BindingDef {
                 binding,
                 visibility,
