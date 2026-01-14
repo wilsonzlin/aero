@@ -6529,23 +6529,34 @@ impl Machine {
                 let bdf: PciBdf = aero_devices::pci::profile::VIRTIO_NET.bdf;
                 let pin = PciInterruptPin::IntA;
 
-                let command = self
+                let (command, msix_enabled, msix_masked) = self
                     .pci_cfg
                     .as_ref()
-                    .and_then(|pci_cfg| {
+                    .map(|pci_cfg| {
                         let mut pci_cfg = pci_cfg.borrow_mut();
-                        pci_cfg
-                            .bus_mut()
-                            .device_config(bdf)
-                            .map(|cfg| cfg.command())
+                        match pci_cfg.bus_mut().device_config(bdf) {
+                            Some(cfg) => {
+                                let msix = cfg.capability::<MsixCapability>();
+                                (
+                                    cfg.command(),
+                                    msix.is_some_and(|msix| msix.enabled()),
+                                    msix.is_some_and(|msix| msix.function_masked()),
+                                )
+                            }
+                            None => (0, false, false),
+                        }
                     })
-                    .unwrap_or(0);
+                    .unwrap_or((0, false, false));
 
                 // Keep the virtio transport's internal PCI command register in sync so `irq_level`
                 // can respect COMMAND.INTX_DISABLE (bit 10) while the machine owns the canonical PCI
                 // config space.
                 let mut level = {
                     let mut virtio_dev = virtio.borrow_mut();
+                    // Keep the runtime virtio transport's MSI-X enable/mask bits coherent with the
+                    // canonical PCI config space so INTx suppression reflects the guest-visible
+                    // MSI-X state even when only polling INTx lines.
+                    sync_msix_capability_into_config(virtio_dev.config_mut(), msix_enabled, msix_masked);
                     virtio_dev.set_pci_command(command);
                     virtio_dev.irq_level()
                 };
@@ -6563,20 +6574,28 @@ impl Machine {
                 let bdf: PciBdf = aero_devices::pci::profile::VIRTIO_INPUT_KEYBOARD.bdf;
                 let pin = PciInterruptPin::IntA;
 
-                let command = self
+                let (command, msix_enabled, msix_masked) = self
                     .pci_cfg
                     .as_ref()
-                    .and_then(|pci_cfg| {
+                    .map(|pci_cfg| {
                         let mut pci_cfg = pci_cfg.borrow_mut();
-                        pci_cfg
-                            .bus_mut()
-                            .device_config(bdf)
-                            .map(|cfg| cfg.command())
+                        match pci_cfg.bus_mut().device_config(bdf) {
+                            Some(cfg) => {
+                                let msix = cfg.capability::<MsixCapability>();
+                                (
+                                    cfg.command(),
+                                    msix.is_some_and(|msix| msix.enabled()),
+                                    msix.is_some_and(|msix| msix.function_masked()),
+                                )
+                            }
+                            None => (0, false, false),
+                        }
                     })
-                    .unwrap_or(0);
+                    .unwrap_or((0, false, false));
 
                 let mut level = {
                     let mut dev = virtio_input_keyboard.borrow_mut();
+                    sync_msix_capability_into_config(dev.config_mut(), msix_enabled, msix_masked);
                     dev.set_pci_command(command);
                     dev.irq_level()
                 };
@@ -6592,20 +6611,28 @@ impl Machine {
                 let bdf: PciBdf = aero_devices::pci::profile::VIRTIO_INPUT_MOUSE.bdf;
                 let pin = PciInterruptPin::IntA;
 
-                let command = self
+                let (command, msix_enabled, msix_masked) = self
                     .pci_cfg
                     .as_ref()
-                    .and_then(|pci_cfg| {
+                    .map(|pci_cfg| {
                         let mut pci_cfg = pci_cfg.borrow_mut();
-                        pci_cfg
-                            .bus_mut()
-                            .device_config(bdf)
-                            .map(|cfg| cfg.command())
+                        match pci_cfg.bus_mut().device_config(bdf) {
+                            Some(cfg) => {
+                                let msix = cfg.capability::<MsixCapability>();
+                                (
+                                    cfg.command(),
+                                    msix.is_some_and(|msix| msix.enabled()),
+                                    msix.is_some_and(|msix| msix.function_masked()),
+                                )
+                            }
+                            None => (0, false, false),
+                        }
                     })
-                    .unwrap_or(0);
+                    .unwrap_or((0, false, false));
 
                 let mut level = {
                     let mut dev = virtio_input_mouse.borrow_mut();
+                    sync_msix_capability_into_config(dev.config_mut(), msix_enabled, msix_masked);
                     dev.set_pci_command(command);
                     dev.irq_level()
                 };
@@ -6621,22 +6648,30 @@ impl Machine {
                 let bdf: PciBdf = aero_devices::pci::profile::VIRTIO_BLK.bdf;
                 let pin = PciInterruptPin::IntA;
 
-                let command = self
+                let (command, msix_enabled, msix_masked) = self
                     .pci_cfg
                     .as_ref()
-                    .and_then(|pci_cfg| {
+                    .map(|pci_cfg| {
                         let mut pci_cfg = pci_cfg.borrow_mut();
-                        pci_cfg
-                            .bus_mut()
-                            .device_config(bdf)
-                            .map(|cfg| cfg.command())
+                        match pci_cfg.bus_mut().device_config(bdf) {
+                            Some(cfg) => {
+                                let msix = cfg.capability::<MsixCapability>();
+                                (
+                                    cfg.command(),
+                                    msix.is_some_and(|msix| msix.enabled()),
+                                    msix.is_some_and(|msix| msix.function_masked()),
+                                )
+                            }
+                            None => (0, false, false),
+                        }
                     })
-                    .unwrap_or(0);
+                    .unwrap_or((0, false, false));
 
                 // Keep the virtio transport's internal PCI command register in sync so it can
                 // respect COMMAND.INTX_DISABLE gating.
                 {
                     let mut dev = virtio_blk.borrow_mut();
+                    sync_msix_capability_into_config(dev.config_mut(), msix_enabled, msix_masked);
                     dev.set_pci_command(command);
                 }
 
