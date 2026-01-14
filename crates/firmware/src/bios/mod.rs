@@ -419,6 +419,7 @@ pub struct Bios {
     e820_map: Vec<E820Entry>,
     pci_devices: Vec<PciDevice>,
     keyboard_queue: VecDeque<u16>,
+    unhandled_interrupt_log_count: u32,
     /// Cached value for INT 10h AH=0F "Get current video mode" for snapshotting.
     ///
     /// The real-mode-visible source of truth lives in the BIOS Data Area (0x0449). This field
@@ -465,6 +466,7 @@ impl Bios {
             e820_map: Vec::new(),
             pci_devices: Vec::new(),
             keyboard_queue: VecDeque::new(),
+            unhandled_interrupt_log_count: 0,
             video_mode: 0x03,
             tty_output: Vec::new(),
             tty_output_start: 0,

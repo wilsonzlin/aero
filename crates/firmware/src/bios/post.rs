@@ -26,6 +26,7 @@ impl Bios {
         self.smbios_eps_addr = None;
         self.last_int13_status = 0;
         self.el_torito_boot_info = None;
+        self.unhandled_interrupt_log_count = 0;
         self.clear_tty_output();
 
         // 0) Install ROM stubs (read-only).

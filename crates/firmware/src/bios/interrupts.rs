@@ -1,7 +1,6 @@
 use aero_cpu_core::state::{
     gpr, mask_bits, CpuState, FLAG_CF, FLAG_DF, FLAG_OF, FLAG_PF, FLAG_SF, FLAG_ZF,
 };
-use std::sync::atomic::{AtomicU32, Ordering};
 
 use super::{
     disk_err_to_int13_status, set_real_mode_seg, Bios, BiosBus, BiosMemoryBus, BlockDevice,
@@ -15,8 +14,6 @@ pub const E820_RAM: u32 = 1;
 pub const E820_RESERVED: u32 = 2;
 pub const E820_ACPI: u32 = 3;
 pub const E820_NVS: u32 = 4;
-
-static UNHANDLED_INTERRUPT_LOG_COUNT: AtomicU32 = AtomicU32::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(C)]
@@ -65,7 +62,8 @@ pub fn dispatch_interrupt(
             // Emit a BIOS-visible diagnostic, but rate-limit it so we don't spam the TTY buffer for
             // guests that probe many vectors.
             const LOG_LIMIT: u32 = 16;
-            let count = UNHANDLED_INTERRUPT_LOG_COUNT.fetch_add(1, Ordering::Relaxed);
+            let count = bios.unhandled_interrupt_log_count;
+            bios.unhandled_interrupt_log_count = bios.unhandled_interrupt_log_count.wrapping_add(1);
             if count < LOG_LIMIT {
                 let msg = format!("BIOS: unhandled interrupt {vector:02x}\n");
                 bios.push_tty_bytes(msg.as_bytes());
@@ -1270,7 +1268,8 @@ fn handle_int13(
         }
         _ => {
             const LOG_LIMIT: u32 = 16;
-            let count = UNHANDLED_INTERRUPT_LOG_COUNT.fetch_add(1, Ordering::Relaxed);
+            let count = bios.unhandled_interrupt_log_count;
+            bios.unhandled_interrupt_log_count = bios.unhandled_interrupt_log_count.wrapping_add(1);
             if count < LOG_LIMIT {
                 let msg = format!("BIOS: unhandled INT 13h AH={ah:02x}\n");
                 bios.push_tty_bytes(msg.as_bytes());
@@ -1423,7 +1422,9 @@ fn handle_int15(bios: &mut Bios, cpu: &mut CpuState, bus: &mut dyn BiosBus) {
             }
             _ => {
                 const LOG_LIMIT: u32 = 16;
-                let count = UNHANDLED_INTERRUPT_LOG_COUNT.fetch_add(1, Ordering::Relaxed);
+                let count = bios.unhandled_interrupt_log_count;
+                bios.unhandled_interrupt_log_count =
+                    bios.unhandled_interrupt_log_count.wrapping_add(1);
                 if count < LOG_LIMIT {
                     let msg = format!("BIOS: unhandled INT 15h AX={ax:04x}\n");
                     bios.push_tty_bytes(msg.as_bytes());
@@ -1582,7 +1583,8 @@ fn handle_int16(bios: &mut Bios, cpu: &mut CpuState) {
         }
         _ => {
             const LOG_LIMIT: u32 = 16;
-            let count = UNHANDLED_INTERRUPT_LOG_COUNT.fetch_add(1, Ordering::Relaxed);
+            let count = bios.unhandled_interrupt_log_count;
+            bios.unhandled_interrupt_log_count = bios.unhandled_interrupt_log_count.wrapping_add(1);
             if count < LOG_LIMIT {
                 let msg = format!("BIOS: unhandled INT 16h AH={ah:02x}\n");
                 bios.push_tty_bytes(msg.as_bytes());
@@ -1876,6 +1878,59 @@ mod tests {
         let tail = &out[out.len() - 16..];
         let expected_tail: Vec<u8> = (total - 16..total).map(|i| (i % 256) as u8).collect();
         assert_eq!(tail, expected_tail.as_slice());
+    }
+
+    #[test]
+    fn unhandled_interrupt_log_rate_limit_is_per_bios_instance() {
+        const LOG_LIMIT: usize = 16;
+
+        let mut bios1 = Bios::new(BiosConfig::default());
+        let mut cpu1 = CpuState::new(CpuMode::Real);
+        let mut mem1 = TestMemory::new(2 * 1024 * 1024);
+        let mut disk1 = InMemoryDisk::new(vec![0u8; 512]);
+
+        ivt::init_bda(&mut mem1, 0x80);
+        cpu1.a20_enabled = mem1.a20_enabled();
+        set_real_mode_seg(&mut cpu1.segments.ss, 0);
+        cpu1.gpr[gpr::RSP] = 0x1000;
+        mem1.write_u16(0x1000 + 4, 0x0002);
+
+        // Drive the rate limiter past the suppression threshold on the first BIOS instance.
+        for _ in 0..(LOG_LIMIT + 1) {
+            bios1.dispatch_interrupt(0x77, &mut cpu1, &mut mem1, &mut disk1);
+        }
+
+        let out1 = String::from_utf8_lossy(bios1.tty_output());
+        let msg1 = "BIOS: unhandled interrupt 77\n";
+        assert_eq!(out1.matches(msg1).count(), LOG_LIMIT);
+        assert_eq!(
+            out1.matches("BIOS: further unhandled interrupts suppressed\n")
+                .count(),
+            1
+        );
+
+        // A fresh BIOS instance should start logging from scratch, even if another instance has
+        // already exhausted its rate limit.
+        let mut bios2 = Bios::new(BiosConfig::default());
+        let mut cpu2 = CpuState::new(CpuMode::Real);
+        let mut mem2 = TestMemory::new(2 * 1024 * 1024);
+        let mut disk2 = InMemoryDisk::new(vec![0u8; 512]);
+
+        ivt::init_bda(&mut mem2, 0x80);
+        cpu2.a20_enabled = mem2.a20_enabled();
+        set_real_mode_seg(&mut cpu2.segments.ss, 0);
+        cpu2.gpr[gpr::RSP] = 0x1000;
+        mem2.write_u16(0x1000 + 4, 0x0002);
+
+        bios2.dispatch_interrupt(0x78, &mut cpu2, &mut mem2, &mut disk2);
+
+        let out2 = String::from_utf8_lossy(bios2.tty_output());
+        assert_eq!(out2.matches("BIOS: unhandled interrupt 78\n").count(), 1);
+        assert_eq!(
+            out2.matches("BIOS: further unhandled interrupts suppressed\n")
+                .count(),
+            0
+        );
     }
 
     #[test]
