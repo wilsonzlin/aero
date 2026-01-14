@@ -726,6 +726,15 @@ fn validate_manifest_v1(manifest: &ManifestV1, max_chunks: u64) -> Result<()> {
             manifest.schema
         );
     }
+    if manifest.image_id.is_empty() {
+        bail!("manifest imageId must be non-empty");
+    }
+    if manifest.version.is_empty() {
+        bail!("manifest version must be non-empty");
+    }
+    if manifest.mime_type.is_empty() {
+        bail!("manifest mimeType must be non-empty");
+    }
     if manifest.chunk_size == 0 {
         bail!("manifest chunkSize must be > 0");
     }
