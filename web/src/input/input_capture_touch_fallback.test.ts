@@ -166,12 +166,7 @@ describe("InputCapture touch fallback", () => {
 
   it("does not emulate a tap when touch coordinates are non-finite", () => {
     withStubbedDocument(() => {
-      const canvas = {
-        tabIndex: 0,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        focus: vi.fn(),
-      } as unknown as HTMLCanvasElement;
+      const canvas = makeCanvasStub({ focus: vi.fn() });
 
       const posted: any[] = [];
       const ioWorker = {
@@ -211,12 +206,7 @@ describe("InputCapture touch fallback", () => {
 
   it("does not emulate a tap when touch identifier is non-finite", () => {
     withStubbedDocument(() => {
-      const canvas = {
-        tabIndex: 0,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        focus: vi.fn(),
-      } as unknown as HTMLCanvasElement;
+      const canvas = makeCanvasStub({ focus: vi.fn() });
 
       const posted: any[] = [];
       const ioWorker = {

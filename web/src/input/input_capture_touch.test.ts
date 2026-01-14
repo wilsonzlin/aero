@@ -122,12 +122,7 @@ describe("InputCapture touch (PointerEvent) fallback", () => {
 
   it("does not emulate a tap when pointer coordinates are non-finite", () => {
     withStubbedDocument(() => {
-      const canvas = {
-        tabIndex: 0,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        focus: () => {},
-      } as unknown as HTMLCanvasElement;
+      const canvas = makeCanvasStub();
 
       const posted: any[] = [];
       const ioWorker = {
@@ -170,12 +165,7 @@ describe("InputCapture touch (PointerEvent) fallback", () => {
 
   it("does not track touch pointers with non-finite pointerId", () => {
     withStubbedDocument(() => {
-      const canvas = {
-        tabIndex: 0,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        focus: () => {},
-      } as unknown as HTMLCanvasElement;
+      const canvas = makeCanvasStub();
 
       const posted: any[] = [];
       const ioWorker = {
