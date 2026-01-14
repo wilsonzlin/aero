@@ -2736,6 +2736,25 @@ static NTSTATUS APIENTRY AeroGpuDdiStopDevice(_In_ const PVOID MiniportDeviceCon
             AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES, 0);
         }
 
+        /*
+         * Stop scanout DMA during teardown.
+         *
+         * SetPowerState handles D0->Dx transitions, but StopDevice can be called as
+         * part of a full PnP stop/start cycle and should not assume SetPowerState
+         * has already quiesced scanout.
+         */
+        if (adapter->UsingNewAbi || adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
+            if (adapter->Bar0Length >= (AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_HI + sizeof(ULONG))) {
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_ENABLE, 0);
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_LO, 0);
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_HI, 0);
+            }
+        } else if (adapter->Bar0Length >= (AEROGPU_LEGACY_REG_SCANOUT_ENABLE + sizeof(ULONG))) {
+            AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_SCANOUT_ENABLE, 0);
+            AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_SCANOUT_FB_LO, 0);
+            AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_SCANOUT_FB_HI, 0);
+        }
+
         /* Stop device IRQ generation before unregistering the ISR. */
         if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
             AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_RING_CONTROL, 0);
