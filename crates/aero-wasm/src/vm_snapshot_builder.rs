@@ -29,7 +29,11 @@ use crate::vm_snapshot_device_kind::{kind_from_device_id, parse_device_kind};
 use crate::vm_snapshot_payload_version::parse_vm_snapshot_device_version_flags;
 
 const MAX_STATE_BLOB_BYTES: usize = 4 * 1024 * 1024;
-const MAX_DEVICE_BLOB_BYTES: usize = 4 * 1024 * 1024;
+// Keep this in sync with `aero_snapshot::limits::MAX_DEVICE_ENTRY_LEN`.
+//
+// The web runtime may store large guest-visible memory regions (e.g. GPU VRAM/BAR1) as device
+// blobs, and those can be up to the snapshot format's per-entry limit.
+const MAX_DEVICE_BLOB_BYTES: usize = aero_snapshot::limits::MAX_DEVICE_ENTRY_LEN as usize;
 
 fn js_error(message: impl core::fmt::Display) -> JsValue {
     js_sys::Error::new(&message.to_string()).into()

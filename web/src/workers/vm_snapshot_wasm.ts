@@ -15,6 +15,7 @@ export const VM_SNAPSHOT_DEVICE_GPU_AEROGPU_KIND = "gpu.aerogpu";
 export const VM_SNAPSHOT_DEVICE_E1000_KIND = "net.e1000";
 export const VM_SNAPSHOT_DEVICE_VIRTIO_NET_KIND = "net.virtio_net";
 export const VM_SNAPSHOT_DEVICE_NET_STACK_KIND = "net.stack";
+export const VM_SNAPSHOT_DEVICE_GPU_VRAM_KIND = "gpu.vram";
 
 // `aero_snapshot::DeviceId::USB` (see `docs/16-snapshots.md`).
 export const VM_SNAPSHOT_DEVICE_ID_USB = 12;
@@ -41,6 +42,9 @@ export const VM_SNAPSHOT_DEVICE_ID_AEROGPU = 25;
 // `aero_snapshot::DeviceId::NET_STACK` (see `docs/16-snapshots.md`).
 // NOTE: This must match the Rust `DeviceId` assignment.
 export const VM_SNAPSHOT_DEVICE_ID_NET_STACK = 20;
+// `aero_snapshot::DeviceId::GPU_VRAM` (see `docs/16-snapshots.md`).
+// NOTE: This must match the Rust `DeviceId` assignment.
+export const VM_SNAPSHOT_DEVICE_ID_GPU_VRAM = 28;
 
 /**
  * Forward-compatible kind prefix for unknown/opaque device IDs.
@@ -179,6 +183,7 @@ export function vmSnapshotDeviceIdToKind(id: number): string {
   if (idU32 === VM_SNAPSHOT_DEVICE_ID_VIRTIO_NET) return VM_SNAPSHOT_DEVICE_VIRTIO_NET_KIND;
   if (idU32 === VM_SNAPSHOT_DEVICE_ID_VIRTIO_INPUT) return VM_SNAPSHOT_DEVICE_VIRTIO_INPUT_KIND;
   if (idU32 === VM_SNAPSHOT_DEVICE_ID_NET_STACK) return VM_SNAPSHOT_DEVICE_NET_STACK_KIND;
+  if (idU32 === VM_SNAPSHOT_DEVICE_ID_GPU_VRAM) return VM_SNAPSHOT_DEVICE_GPU_VRAM_KIND;
   // Forward compatibility: preserve unknown numeric IDs via a stable `device.<id>` spelling.
   return `${VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID}${idU32}`;
 }
@@ -193,6 +198,7 @@ export function vmSnapshotDeviceKindToId(kind: string): number | null {
   if (kind === VM_SNAPSHOT_DEVICE_VIRTIO_NET_KIND) return VM_SNAPSHOT_DEVICE_ID_VIRTIO_NET;
   if (kind === VM_SNAPSHOT_DEVICE_VIRTIO_INPUT_KIND) return VM_SNAPSHOT_DEVICE_ID_VIRTIO_INPUT;
   if (kind === VM_SNAPSHOT_DEVICE_NET_STACK_KIND) return VM_SNAPSHOT_DEVICE_ID_NET_STACK;
+  if (kind === VM_SNAPSHOT_DEVICE_GPU_VRAM_KIND) return VM_SNAPSHOT_DEVICE_ID_GPU_VRAM;
   if (kind.startsWith(VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID)) {
     const rest = kind.slice(VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID.length);
     if (/^[0-9]+$/.test(rest)) {

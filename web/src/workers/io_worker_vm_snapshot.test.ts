@@ -21,6 +21,7 @@ import {
   VM_SNAPSHOT_DEVICE_ID_AUDIO_HDA,
   VM_SNAPSHOT_DEVICE_ID_AUDIO_VIRTIO_SND,
   VM_SNAPSHOT_DEVICE_ID_E1000,
+  VM_SNAPSHOT_DEVICE_ID_GPU_VRAM,
   VM_SNAPSHOT_DEVICE_ID_I8042,
   VM_SNAPSHOT_DEVICE_ID_NET_STACK,
   VM_SNAPSHOT_DEVICE_ID_USB,
@@ -253,6 +254,158 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
     expect(decoded).not.toBeNull();
     expect(decoded!.entries.find((e) => e.tag === USB_SNAPSHOT_TAG_XHCI)?.bytes).toEqual(xhciState);
     expect(decoded!.entries.find((e) => e.tag === USB_SNAPSHOT_TAG_UHCI)?.bytes).toEqual(uhciState);
+  });
+
+  it("includes gpu.vram device blobs on save when a VRAM buffer is provided", async () => {
+    const calls: Array<{ path: string; devices: unknown }> = [];
+    const api = {
+      vm_snapshot_save_to_opfs: (path: string, _cpu: Uint8Array, _mmu: Uint8Array, devices: unknown) => {
+        calls.push({ path, devices });
+      },
+    } as unknown as WasmApi;
+
+    const vram = new Uint8Array(new SharedArrayBuffer(16));
+    for (let i = 0; i < vram.length; i++) vram[i] = i & 0xff;
+
+    await saveIoWorkerVmSnapshotToOpfs({
+      api,
+      path: "state/test.snap",
+      cpu: new ArrayBuffer(4),
+      mmu: new ArrayBuffer(8),
+      guestBase: 0,
+      guestSize: 0x1000,
+      runtimes: {
+        usbUhciRuntime: null,
+        usbUhciControllerBridge: null,
+        netE1000: null,
+        netStack: null,
+      },
+      vram,
+    });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.path).toBe("state/test.snap");
+
+    const payload = calls[0]!.devices as Array<{ kind: string; bytes: Uint8Array }>;
+    expect(payload).toHaveLength(1);
+    expect(payload[0]!.kind).toBe(`device.${VM_SNAPSHOT_DEVICE_ID_GPU_VRAM}`);
+    const bytes = payload[0]!.bytes;
+    expect(bytes).toBeInstanceOf(Uint8Array);
+
+    // Chunk header sanity.
+    expect(Array.from(bytes.subarray(0, 4))).toEqual([0x41, 0x45, 0x52, 0x4f]); // "AERO"
+    const version = (bytes[4]! | (bytes[5]! << 8)) >>> 0;
+    const flags = (bytes[6]! | (bytes[7]! << 8)) >>> 0;
+    expect(version).toBe(1);
+    expect(flags).toBe(0);
+    const totalLen = (bytes[12]! | (bytes[13]! << 8) | (bytes[14]! << 16) | (bytes[15]! << 24)) >>> 0;
+    const chunkOffset = (bytes[16]! | (bytes[17]! << 8) | (bytes[18]! << 16) | (bytes[19]! << 24)) >>> 0;
+    const chunkLen = (bytes[20]! | (bytes[21]! << 8) | (bytes[22]! << 16) | (bytes[23]! << 24)) >>> 0;
+    expect(totalLen).toBe(16);
+    expect(chunkOffset).toBe(0);
+    expect(chunkLen).toBe(16);
+    expect(Array.from(bytes.subarray(24, 24 + 16))).toEqual(Array.from(vram));
+  });
+
+  it("applies gpu.vram blobs on restore and does not return them in res.devices", async () => {
+    const makeVramChunk = (data: Uint8Array, chunkIndex = 0): Uint8Array => {
+      const headerBytes = 24;
+      const out = new Uint8Array(headerBytes + data.byteLength);
+      // "AERO"
+      out[0] = 0x41;
+      out[1] = 0x45;
+      out[2] = 0x52;
+      out[3] = 0x4f;
+      // version=1
+      out[4] = 0x01;
+      out[5] = 0x00;
+      // flags=chunkIndex
+      out[6] = chunkIndex & 0xff;
+      out[7] = (chunkIndex >>> 8) & 0xff;
+      // magic u32 (0x01415256)
+      out[8] = 0x56;
+      out[9] = 0x52;
+      out[10] = 0x41;
+      out[11] = 0x01;
+      // total_len=u32, offset=u32, len=u32
+      const totalLen = data.byteLength >>> 0;
+      out[12] = totalLen & 0xff;
+      out[13] = (totalLen >>> 8) & 0xff;
+      out[14] = (totalLen >>> 16) & 0xff;
+      out[15] = (totalLen >>> 24) & 0xff;
+      // offset=0
+      out[16] = 0;
+      out[17] = 0;
+      out[18] = 0;
+      out[19] = 0;
+      // len=totalLen
+      out[20] = totalLen & 0xff;
+      out[21] = (totalLen >>> 8) & 0xff;
+      out[22] = (totalLen >>> 16) & 0xff;
+      out[23] = (totalLen >>> 24) & 0xff;
+      out.set(data, headerBytes);
+      return out;
+    };
+
+    const vram = new Uint8Array(new SharedArrayBuffer(16));
+    vram.fill(0xcc);
+
+    const data = new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+    const vramBlob = makeVramChunk(data);
+
+    const api = {
+      vm_snapshot_restore_from_opfs: () => ({
+        cpu: new Uint8Array([0xaa]),
+        mmu: new Uint8Array([0xbb]),
+        devices: [{ kind: `device.${VM_SNAPSHOT_DEVICE_ID_GPU_VRAM}`, bytes: vramBlob }],
+      }),
+    } as unknown as WasmApi;
+
+    const res = await restoreIoWorkerVmSnapshotFromOpfs({
+      api,
+      path: "state/test.snap",
+      guestBase: 0,
+      guestSize: 0x1000,
+      runtimes: {
+        usbUhciRuntime: null,
+        usbUhciControllerBridge: null,
+        netE1000: null,
+        netStack: null,
+      },
+      vram,
+    });
+
+    expect(Array.from(vram)).toEqual(Array.from(data));
+    expect(res.devices).toBeUndefined();
+  });
+
+  it("clears VRAM to 0 on restore when snapshot has no gpu.vram blobs", async () => {
+    const vram = new Uint8Array(new SharedArrayBuffer(8));
+    vram.fill(0xab);
+
+    const api = {
+      vm_snapshot_restore_from_opfs: () => ({
+        cpu: new Uint8Array([0xaa]),
+        mmu: new Uint8Array([0xbb]),
+        devices: [],
+      }),
+    } as unknown as WasmApi;
+
+    await restoreIoWorkerVmSnapshotFromOpfs({
+      api,
+      path: "state/test.snap",
+      guestBase: 0,
+      guestSize: 0x1000,
+      runtimes: {
+        usbUhciRuntime: null,
+        usbUhciControllerBridge: null,
+        netE1000: null,
+        netStack: null,
+      },
+      vram,
+    });
+
+    expect(Array.from(vram)).toEqual([0, 0, 0, 0, 0, 0, 0, 0]);
   });
 
   it("normalizes device.<id> kinds on restore and applies net.stack TCP restore policy=drop", async () => {

@@ -148,6 +148,16 @@ impl DeviceId {
     pub const VIRTIO_INPUT_KEYBOARD: DeviceId = DeviceId(26);
     /// Guest-visible virtio-input (virtio-pci) mouse function state (PCI `00:0A.1`).
     pub const VIRTIO_INPUT_MOUSE: DeviceId = DeviceId(27);
+    /// Guest-visible GPU VRAM / BAR1 contents (web runtime).
+    ///
+    /// The worker-based web runtime may allocate a `SharedArrayBuffer` backing store for the GPU's
+    /// BAR1 scanout/VRAM window. Since this memory is guest-visible, it must be included in VM
+    /// snapshots to ensure deterministic restore (and to avoid restoring older snapshots with
+    /// stale VRAM contents from a later run).
+    ///
+    /// See `docs/16-snapshots.md` and `web/src/workers/vm_snapshot_wasm.ts` for the stable mapping
+    /// to the string kind `gpu.vram`.
+    pub const GPU_VRAM: DeviceId = DeviceId(28);
 
     pub fn name(self) -> Option<&'static str> {
         match self {
@@ -178,6 +188,7 @@ impl DeviceId {
             DeviceId::AEROGPU => Some("AEROGPU"),
             DeviceId::VIRTIO_INPUT_KEYBOARD => Some("VIRTIO_INPUT_KEYBOARD"),
             DeviceId::VIRTIO_INPUT_MOUSE => Some("VIRTIO_INPUT_MOUSE"),
+            DeviceId::GPU_VRAM => Some("GPU_VRAM"),
             _ => None,
         }
     }

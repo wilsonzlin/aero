@@ -15,6 +15,7 @@ pub(crate) const DEVICE_KIND_GPU_AEROGPU: &str = "gpu.aerogpu";
 pub(crate) const DEVICE_KIND_NET_E1000: &str = "net.e1000";
 pub(crate) const DEVICE_KIND_NET_VIRTIO_NET: &str = "net.virtio_net";
 pub(crate) const DEVICE_KIND_NET_STACK: &str = "net.stack";
+pub(crate) const DEVICE_KIND_GPU_VRAM: &str = "gpu.vram";
 pub(crate) const DEVICE_KIND_PREFIX_ID: &str = "device.";
 
 pub(crate) fn parse_device_kind(kind: &str) -> Option<DeviceId> {
@@ -44,6 +45,9 @@ pub(crate) fn parse_device_kind(kind: &str) -> Option<DeviceId> {
     }
     if kind == DEVICE_KIND_NET_STACK {
         return Some(DeviceId::NET_STACK);
+    }
+    if kind == DEVICE_KIND_GPU_VRAM {
+        return Some(DeviceId::GPU_VRAM);
     }
 
     // For forward compatibility, unknown device ids can be surfaced as `device.<id>` strings.
@@ -87,6 +91,9 @@ pub(crate) fn kind_from_device_id(id: DeviceId) -> String {
     if id == DeviceId::NET_STACK {
         return DEVICE_KIND_NET_STACK.to_string();
     }
+    if id == DeviceId::GPU_VRAM {
+        return DEVICE_KIND_GPU_VRAM.to_string();
+    }
 
     // For unknown device ids, preserve them as `device.<id>` entries so callers can roundtrip them
     // back through `vm_snapshot_save(_to_opfs)` without losing state.
@@ -119,6 +126,7 @@ mod tests {
             Some(DeviceId::VIRTIO_NET)
         );
         assert_eq!(parse_device_kind("net.stack"), Some(DeviceId::NET_STACK));
+        assert_eq!(parse_device_kind("gpu.vram"), Some(DeviceId::GPU_VRAM));
     }
 
     #[test]
@@ -174,6 +182,7 @@ mod tests {
         assert_eq!(kind_from_device_id(DeviceId::E1000), "net.e1000");
         assert_eq!(kind_from_device_id(DeviceId::VIRTIO_NET), "net.virtio_net");
         assert_eq!(kind_from_device_id(DeviceId::NET_STACK), "net.stack");
+        assert_eq!(kind_from_device_id(DeviceId::GPU_VRAM), "gpu.vram");
         assert_eq!(kind_from_device_id(DeviceId(1234)), "device.1234");
     }
 }

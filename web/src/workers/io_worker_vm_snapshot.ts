@@ -4,6 +4,7 @@ import {
   VM_SNAPSHOT_DEVICE_AUDIO_HDA_KIND,
   VM_SNAPSHOT_DEVICE_AUDIO_VIRTIO_SND_KIND,
   VM_SNAPSHOT_DEVICE_E1000_KIND,
+  VM_SNAPSHOT_DEVICE_GPU_VRAM_KIND,
   VM_SNAPSHOT_DEVICE_I8042_KIND,
   VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID,
   VM_SNAPSHOT_DEVICE_NET_STACK_KIND,
@@ -82,6 +83,176 @@ function isPciBusSnapshot(bytes: Uint8Array): boolean {
     bytes[10] === 0x49 &&
     bytes[11] === 0x42
   );
+}
+
+// `aero_snapshot::limits::MAX_DEVICE_ENTRY_LEN`.
+const AERO_SNAPSHOT_MAX_DEVICE_ENTRY_LEN = 64 * 1024 * 1024;
+
+// Minimal chunk payload header:
+// - legacy `AERO` header (8 bytes) so the WASM snapshot builder derives distinct `version/flags`
+//   tuples for each chunk (flags=chunk_index).
+// - plus per-chunk metadata needed to reconstruct the VRAM byte array.
+//
+// Layout (little-endian):
+//   [0..4]   "AERO"
+//   [4..6]   u16 version (VRAM chunk format version; currently 1)
+//   [6..8]   u16 flags (chunk_index)
+//   [8..12]  u32 magic (non-ASCII so helpers don't mis-detect this as an aero-io-snapshot header)
+//   [12..16] u32 total_len
+//   [16..20] u32 chunk_offset
+//   [20..24] u32 chunk_len
+//   [24..]   chunk bytes
+const VRAM_CHUNK_VERSION = 1;
+const VRAM_CHUNK_MAGIC_U32 = 0x0141_5256; // bytes[8..12] = [0x56, 0x52, 0x41, 0x01] => "VRA\\1"
+const VRAM_CHUNK_HEADER_BYTES = 24;
+
+function readU16Le(bytes: Uint8Array, off: number): number {
+  return (bytes[off]! | (bytes[off + 1]! << 8)) >>> 0;
+}
+
+function readU32Le(bytes: Uint8Array, off: number): number {
+  // Keep as unsigned u32 in JS number space.
+  return (bytes[off]! | (bytes[off + 1]! << 8) | (bytes[off + 2]! << 16) | (bytes[off + 3]! << 24)) >>> 0;
+}
+
+function writeU16Le(bytes: Uint8Array, off: number, value: number): void {
+  const x = value >>> 0;
+  bytes[off] = x & 0xff;
+  bytes[off + 1] = (x >>> 8) & 0xff;
+}
+
+function writeU32Le(bytes: Uint8Array, off: number, value: number): void {
+  const x = value >>> 0;
+  bytes[off] = x & 0xff;
+  bytes[off + 1] = (x >>> 8) & 0xff;
+  bytes[off + 2] = (x >>> 16) & 0xff;
+  bytes[off + 3] = (x >>> 24) & 0xff;
+}
+
+function buildVramChunkPayload(vram: Uint8Array, chunkOffset: number, chunkLen: number, chunkIndex: number): Uint8Array {
+  const totalLen = vram.byteLength >>> 0;
+  if (vram.byteLength !== totalLen) {
+    throw new Error(`VRAM byteLength is too large to snapshot (must fit in u32): len=${vram.byteLength}`);
+  }
+
+  if (chunkIndex < 0 || chunkIndex > 0xffff || !Number.isInteger(chunkIndex)) {
+    throw new Error(`Invalid VRAM chunk_index: ${chunkIndex}`);
+  }
+
+  const payloadLen = VRAM_CHUNK_HEADER_BYTES + chunkLen;
+  if (payloadLen > AERO_SNAPSHOT_MAX_DEVICE_ENTRY_LEN) {
+    throw new Error(
+      `VRAM chunk payload too large: payload_len=${payloadLen} max=${AERO_SNAPSHOT_MAX_DEVICE_ENTRY_LEN} (chunk_len=${chunkLen})`,
+    );
+  }
+
+  const out = new Uint8Array(payloadLen);
+  // "AERO"
+  out[0] = 0x41;
+  out[1] = 0x45;
+  out[2] = 0x52;
+  out[3] = 0x4f;
+  writeU16Le(out, 4, VRAM_CHUNK_VERSION);
+  writeU16Le(out, 6, chunkIndex);
+  writeU32Le(out, 8, VRAM_CHUNK_MAGIC_U32);
+  writeU32Le(out, 12, totalLen);
+  writeU32Le(out, 16, chunkOffset >>> 0);
+  writeU32Le(out, 20, chunkLen >>> 0);
+  out.set(vram.subarray(chunkOffset, chunkOffset + chunkLen), VRAM_CHUNK_HEADER_BYTES);
+  return out;
+}
+
+function snapshotVramDeviceStates(vram: Uint8Array | null | undefined): IoWorkerSnapshotDeviceState[] {
+  if (!vram) return [];
+  if (vram.byteLength === 0) return [];
+
+  const maxChunkLen = AERO_SNAPSHOT_MAX_DEVICE_ENTRY_LEN - VRAM_CHUNK_HEADER_BYTES;
+  if (maxChunkLen <= 0) {
+    throw new Error("VRAM chunk header exceeds max device entry length");
+  }
+
+  const totalLen = vram.byteLength;
+  const out: IoWorkerSnapshotDeviceState[] = [];
+  let off = 0;
+  let idx = 0;
+  while (off < totalLen) {
+    const len = Math.min(maxChunkLen, totalLen - off);
+    if (idx > 0xffff) {
+      throw new Error(`Too many VRAM chunks for snapshot (u16 overflow): chunks=${idx + 1}`);
+    }
+    out.push({ kind: VM_SNAPSHOT_DEVICE_GPU_VRAM_KIND, bytes: buildVramChunkPayload(vram, off, len, idx) });
+    off += len;
+    idx++;
+  }
+  return out;
+}
+
+function parseVramChunkPayload(bytes: Uint8Array): { totalLen: number; offset: number; len: number; data: Uint8Array } {
+  if (bytes.byteLength < VRAM_CHUNK_HEADER_BYTES) {
+    throw new Error(`gpu.vram device blob is truncated (len=${bytes.byteLength}, need >=${VRAM_CHUNK_HEADER_BYTES})`);
+  }
+  if (!(bytes[0] === 0x41 && bytes[1] === 0x45 && bytes[2] === 0x52 && bytes[3] === 0x4f)) {
+    throw new Error("gpu.vram device blob missing AERO header");
+  }
+  const version = readU16Le(bytes, 4);
+  if (version !== VRAM_CHUNK_VERSION) {
+    throw new Error(`gpu.vram device blob has unsupported chunk format version: ${version}`);
+  }
+  const magic = readU32Le(bytes, 8);
+  if (magic !== VRAM_CHUNK_MAGIC_U32) {
+    throw new Error(`gpu.vram device blob has unexpected magic: 0x${magic.toString(16)}`);
+  }
+
+  const totalLen = readU32Le(bytes, 12);
+  const offset = readU32Le(bytes, 16);
+  const len = readU32Le(bytes, 20);
+  const expectedEnd = VRAM_CHUNK_HEADER_BYTES + len;
+  if (expectedEnd > bytes.byteLength) {
+    throw new Error(`gpu.vram device blob is truncated (need ${expectedEnd} bytes, have ${bytes.byteLength})`);
+  }
+  if (offset + len > totalLen) {
+    throw new Error(`gpu.vram chunk range is out of bounds (offset=${offset} len=${len} total_len=${totalLen})`);
+  }
+
+  return { totalLen, offset, len, data: bytes.subarray(VRAM_CHUNK_HEADER_BYTES, expectedEnd) };
+}
+
+function applyVramSnapshotToBuffer(vram: Uint8Array, chunks: Uint8Array[]): void {
+  if (chunks.length === 0) {
+    vram.fill(0);
+    return;
+  }
+
+  const parsed = chunks.map(parseVramChunkPayload);
+  const totalLen = parsed[0]!.totalLen;
+  for (const c of parsed) {
+    if (c.totalLen !== totalLen) {
+      throw new Error(`gpu.vram chunks disagree on total_len (saw ${c.totalLen} and ${totalLen})`);
+    }
+  }
+
+  if (totalLen > vram.byteLength) {
+    throw new Error(`gpu.vram snapshot expects ${totalLen} bytes but runtime has only ${vram.byteLength}`);
+  }
+
+  parsed.sort((a, b) => a.offset - b.offset);
+  let expectedOff = 0;
+  for (const c of parsed) {
+    if (c.offset !== expectedOff) {
+      throw new Error(`gpu.vram chunks are non-contiguous (expected offset=${expectedOff}, got ${c.offset})`);
+    }
+    vram.set(c.data, c.offset);
+    expectedOff += c.len;
+  }
+  if (expectedOff !== totalLen) {
+    throw new Error(`gpu.vram chunks do not cover the full VRAM range (covered=${expectedOff} total_len=${totalLen})`);
+  }
+
+  // If the runtime VRAM is larger than the snapshotted region, clear the remainder so restores are
+  // deterministic (avoid leaving stale bytes from a later run).
+  if (vram.byteLength > totalLen) {
+    vram.fill(0, totalLen);
+  }
 }
 
 function snapshotDeviceKindForWasm(kind: string): string {
@@ -925,6 +1096,13 @@ export async function saveIoWorkerVmSnapshotToOpfs(opts: {
    * CPU_INTERNAL).
    */
   coordinatorDevices?: VmSnapshotDeviceBlob[];
+  /**
+   * Optional guest-visible GPU VRAM/BAR1 backing store.
+   *
+   * When present, its contents are persisted into the snapshot file as one or more `gpu.vram`
+   * device blobs.
+   */
+  vram?: Uint8Array | null;
 }): Promise<void> {
   // Normalize any device kind aliases in the cached/restored device list.
   //
@@ -938,6 +1116,7 @@ export async function saveIoWorkerVmSnapshotToOpfs(opts: {
 
   // Fresh device blobs produced by this IO worker.
   const freshDevices: IoWorkerSnapshotDeviceState[] = collectIoWorkerSnapshotDeviceStates(opts.runtimes);
+  freshDevices.push(...snapshotVramDeviceStates(opts.vram));
 
   // Merge in any coordinator-provided device blobs (e.g. CPU-owned device state like CPU_INTERNAL).
   // Treat these as "fresh" so they override any cached restored blobs of the same kind.
@@ -992,11 +1171,18 @@ export async function saveIoWorkerVmSnapshotToOpfs(opts: {
   const seen = new Set<string>();
   for (const cached of restoredDevices) {
     if (freshKinds.has(cached.kind)) continue;
+    // gpu.vram can be stored as multiple chunked device blobs and should never be cached (restore
+    // applies it directly to the live SharedArrayBuffer).
+    if (cached.kind === VM_SNAPSHOT_DEVICE_GPU_VRAM_KIND) continue;
     if (seen.has(cached.kind)) continue;
     devices.push(cached);
     seen.add(cached.kind);
   }
   for (const dev of freshDevices) {
+    if (dev.kind === VM_SNAPSHOT_DEVICE_GPU_VRAM_KIND) {
+      devices.push(dev);
+      continue;
+    }
     if (seen.has(dev.kind)) continue;
     devices.push(dev);
     seen.add(dev.kind);
@@ -1050,6 +1236,14 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
   guestBase: number;
   guestSize: number;
   runtimes: IoWorkerSnapshotRuntimes;
+  /**
+   * Optional guest-visible GPU VRAM/BAR1 backing store.
+   *
+   * When present, snapshot restore will apply any `gpu.vram` device blobs directly into this
+   * buffer and will not return them in the `devices` list (avoids transferring large blobs to the
+   * coordinator).
+   */
+  vram?: Uint8Array | null;
 }): Promise<{
   cpu: ArrayBuffer;
   mmu: ArrayBuffer;
@@ -1077,6 +1271,7 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
     const restoredDevices: IoWorkerSnapshotDeviceState[] = [];
     // When multiple USB blobs are present (shouldn't happen), prefer the canonical kind over legacy
     // aliases so restores are deterministic.
+    const vramChunks: Uint8Array[] = [];
     let usbBytes: Uint8Array | null = null;
     let usbPriority = -1;
     let i8042Bytes: Uint8Array | null = null;
@@ -1096,6 +1291,10 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
       let kind = normalizeRestoredDeviceKind(rawKind);
       if (kind === VM_SNAPSHOT_DEVICE_PCI_LEGACY_KIND && isPciBusSnapshot(e.bytes)) {
         kind = VM_SNAPSHOT_DEVICE_PCI_CFG_KIND;
+      }
+      if (kind === VM_SNAPSHOT_DEVICE_GPU_VRAM_KIND) {
+        vramChunks.push(e.bytes);
+        continue;
       }
       devices.push({ kind, bytes: copyU8ToArrayBuffer(e.bytes) });
       restoredDevices.push({ kind, bytes: e.bytes });
@@ -1131,6 +1330,7 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
     if (e1000Bytes) restoreNetE1000DeviceState(opts.runtimes.netE1000, e1000Bytes);
     if (pciBytes) restorePciDeviceState(opts.runtimes.pciBus ?? null, pciBytes);
     if (stackBytes) restoreNetStackDeviceState(opts.runtimes.netStack, stackBytes, { tcpRestorePolicy: "drop" });
+    if (opts.vram) applyVramSnapshotToBuffer(opts.vram, vramChunks);
 
     // Defensive dedupe: some historical/buggy snapshot producers may emit multiple USB entries
     // (e.g. both `usb` and legacy `usb.uhci`). Ensure the cached/restored device list contains
@@ -1178,6 +1378,7 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
 
     const devices: VmSnapshotDeviceBlob[] = [];
     const restoredDevices: IoWorkerSnapshotDeviceState[] = [];
+    const vramChunks: Uint8Array[] = [];
     let usbBytes: Uint8Array | null = null;
     let i8042Bytes: Uint8Array | null = null;
     let virtioInputBytes: Uint8Array | null = null;
@@ -1200,6 +1401,11 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
       const kindIsLegacyPci = kind === VM_SNAPSHOT_DEVICE_PCI_LEGACY_KIND && isPciBusSnapshot(e.data);
       const canonicalKind = kindIsLegacyPci ? VM_SNAPSHOT_DEVICE_PCI_CFG_KIND : kind;
 
+      if (canonicalKind === VM_SNAPSHOT_DEVICE_GPU_VRAM_KIND) {
+        vramChunks.push(e.data);
+        continue;
+      }
+
       if (canonicalKind === VM_SNAPSHOT_DEVICE_USB_KIND) usbBytes = e.data;
       if (canonicalKind === VM_SNAPSHOT_DEVICE_I8042_KIND) i8042Bytes = e.data;
       if (canonicalKind === VM_SNAPSHOT_DEVICE_VIRTIO_INPUT_KIND) virtioInputBytes = e.data;
@@ -1221,6 +1427,7 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
     if (e1000Bytes) restoreNetE1000DeviceState(opts.runtimes.netE1000, e1000Bytes);
     if (pciBytes) restorePciDeviceState(opts.runtimes.pciBus ?? null, pciBytes);
     if (stackBytes) restoreNetStackDeviceState(opts.runtimes.netStack, stackBytes, { tcpRestorePolicy: "drop" });
+    if (opts.vram) applyVramSnapshotToBuffer(opts.vram, vramChunks);
 
     // Defensive dedupe: snapshots should not contain multiple entries for the same outer device id,
     // but be robust if they do. Keep exactly one `usb` entry in the cached/restored device list so

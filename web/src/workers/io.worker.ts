@@ -682,7 +682,6 @@ function flushQueuedInputBatches(): void {
     }
   }
 }
-
 // Intercept async input-related messages while snapshot-paused so WebUSB/WebHID runtimes (and other
 // listeners) cannot apply them and mutate guest RAM/device state mid-snapshot.
 //
@@ -3987,6 +3986,7 @@ async function handleVmSnapshotSaveToOpfs(
       },
       restoredDevices: snapshotRestoredDeviceBlobs,
       coordinatorDevices: mergedCoordinatorDevices,
+      vram: vramU8,
     });
   } finally {
     snapshotOpInFlight = false;
@@ -4032,6 +4032,7 @@ async function handleVmSnapshotRestoreFromOpfs(path: string): Promise<{
         },
         netStack: resolveNetStackSnapshotBridge(),
       },
+      vram: vramU8,
     });
  
     // WebUSB host actions are backed by JS Promises and cannot be resumed after restoring a VM
@@ -4332,6 +4333,7 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
       guestBase = views.guestLayout.guest_base >>> 0;
       guestSize = views.guestLayout.guest_size >>> 0;
       sharedFramebuffer = { sab: segments.sharedFramebuffer, offsetBytes: segments.sharedFramebufferOffsetBytes ?? 0 };
+
       const regions = ringRegionsForWorker(role);
       commandRing = new RingBuffer(segments.control, regions.command.byteOffset);
       eventRing = new RingBuffer(segments.control, regions.event.byteOffset);

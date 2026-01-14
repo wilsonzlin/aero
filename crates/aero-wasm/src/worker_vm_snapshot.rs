@@ -11,7 +11,8 @@ use js_sys::{Array, Object, Reflect, Uint8Array};
 use wasm_bindgen::prelude::*;
 
 const WASM_PAGE_BYTES: u64 = 64 * 1024;
-const MAX_DEVICE_BLOB_BYTES: usize = 16 * 1024 * 1024;
+// Keep this in sync with `aero_snapshot::limits::MAX_DEVICE_ENTRY_LEN`.
+const MAX_DEVICE_BLOB_BYTES: usize = aero_snapshot::limits::MAX_DEVICE_ENTRY_LEN as usize;
 const MAX_DEVICE_COUNT: usize = 4096;
 
 fn js_error(message: impl core::fmt::Display) -> JsValue {
