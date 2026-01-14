@@ -246,7 +246,7 @@ cargo xtask input --usb-all
 # Also run the canonical machine integration tests (snapshot + USB container wiring).
 cargo xtask input --machine
 
-# Also run the targeted WASM USB bridge regression tests (runs in Node; does not require `node_modules`).
+# Also run the targeted WASM USB/input regression tests (runs in Node; does not require `node_modules`).
 cargo xtask input --wasm --rust-only
 
 # Also run the aero-wasm input integration smoke tests (public Machine API surface + backend wiring).
