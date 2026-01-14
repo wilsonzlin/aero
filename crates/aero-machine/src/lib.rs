@@ -9668,6 +9668,9 @@ impl Machine {
         if virtio_input_dirty {
             // Poll once to forward any newly enqueued input events into guest virtqueues.
             self.process_virtio_input();
+            // Ensure legacy INTx routing reflects any newly asserted virtio IRQ latch immediately,
+            // without requiring a subsequent `run_slice` call.
+            self.sync_pci_intx_sources_to_interrupts();
         }
     }
     pub fn take_snapshot_full(&mut self) -> snapshot::Result<Vec<u8>> {
