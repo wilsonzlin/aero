@@ -56,9 +56,9 @@ fn aerogpu_cmd_expanded_draw_dynamic_pipeline() {
         // Force the compute-prepass expanded-vertex path via an adjacency primitive topology (not
         // supported by WebGPU render pipelines).
         //
-        // Note: this test is intended to exercise the placeholder expansion path. Avoid indexed
-        // draws here because the placeholder prepass binds index-pulling resources even when they
-        // are unused, which can exceed `max_storage_buffers_per_shader_stage` on some adapters.
+        // Note: this test is intended to exercise the placeholder expansion path. Keep it
+        // non-indexed to avoid depending on index-buffer state (the placeholder prepass currently
+        // emits `draw_indirect`).
         writer.bind_shaders(VS, PS, 0);
         writer.set_primitive_topology(AerogpuPrimitiveTopology::LineListAdj);
 

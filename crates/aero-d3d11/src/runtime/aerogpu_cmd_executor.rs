@@ -6519,9 +6519,10 @@ impl AerogpuD3d11Executor {
             // bound, and the patchlist control point count must match the hull shader's
             // `dcl_inputcontrolpoints`.
             //
-            // However, several compute-prepass smoke tests intentionally use patchlist topologies
-            // as a sentinel to force the emulation path (without binding HS/DS). Only enforce
-            // strict HS/DS+patchlist validation when a tessellation stage is actually bound.
+            // When no HS/DS stages are bound, patchlist topologies fall back to the placeholder
+            // compute-prepass path so we can still rasterize *something* (useful for bring-up and
+            // for apps that speculatively select patchlist topologies). Only enforce strict
+            // HS/DS+patchlist validation once tessellation stages are actually bound.
             if let CmdPrimitiveTopology::PatchList { control_points } =
                 self.state.primitive_topology
             {
