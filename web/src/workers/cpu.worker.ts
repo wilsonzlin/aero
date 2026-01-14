@@ -99,6 +99,17 @@ const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
 void installWorkerPerfHandlers();
 
+// Some unit tests execute this worker entrypoint directly under Node
+// (`worker_threads` + `--experimental-strip-types`) without Vite transforms.
+// In that environment, `import.meta.env` is undefined; guard DEV-only branches.
+const DEV = (() => {
+  try {
+    return import.meta.env.DEV;
+  } catch {
+    return false;
+  }
+})();
+
 type AudioOutputHdaDemoStartMessage = {
   type: "audioOutputHdaDemo.start";
   ringBuffer: SharedArrayBuffer;
@@ -2410,7 +2421,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
 
   // Test-only helper used by Playwright smoke tests to program AeroGPU cursor MMIO state without
   // requiring an in-guest driver. Gated behind DEV so production bundles don't expose this hook.
-  if (import.meta.env.DEV && (msg as Partial<AerogpuCursorTestProgramMessage>).type === "aerogpu.cursorTest.program") {
+  if (DEV && (msg as Partial<AerogpuCursorTestProgramMessage>).type === "aerogpu.cursorTest.program") {
     const m = msg as Partial<AerogpuCursorTestProgramMessage>;
     if (typeof m.enabled !== "boolean") return;
     if (typeof m.x !== "number" || typeof m.y !== "number") return;
@@ -2535,11 +2546,11 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
           perf.instant("cpu:io:irq", "t", { irq, level });
           const idx = irq & 0xff;
           const flags = applyIrqRefCountChange(irqRefCounts, idx, level);
-          if (import.meta.env.DEV && (flags & IRQ_REFCOUNT_UNDERFLOW) && irqWarnedUnderflow[idx] === 0) {
+          if (DEV && (flags & IRQ_REFCOUNT_UNDERFLOW) && irqWarnedUnderflow[idx] === 0) {
             irqWarnedUnderflow[idx] = 1;
             console.warn(`[cpu.worker] IRQ${idx} refcount underflow (irqLower without matching irqRaise?)`);
           }
-          if (import.meta.env.DEV && (flags & IRQ_REFCOUNT_SATURATED) && irqWarnedSaturated[idx] === 0) {
+          if (DEV && (flags & IRQ_REFCOUNT_SATURATED) && irqWarnedSaturated[idx] === 0) {
             irqWarnedSaturated[idx] = 1;
             console.warn(`[cpu.worker] IRQ${idx} refcount saturated at 0xffff (irqRaise without matching irqLower?)`);
           }
@@ -3128,7 +3139,7 @@ async function runLoopInner(): Promise<void> {
               }
             } catch (err) {
               // Best-effort: keep retrying until the harness opens a disk.
-              if (import.meta.env.DEV) {
+              if (DEV) {
                 console.warn("[cpu] vm boot: diskRead failed:", err);
               }
             }

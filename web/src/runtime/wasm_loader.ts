@@ -1944,7 +1944,18 @@ function toApi(mod: RawWasmModule): WasmApi {
 // necessarily present in a fresh checkout. Use `import.meta.glob` so:
 //  - Vite builds don't fail when the generated output is missing.
 //  - When the output *is* present, it is bundled as usual.
-const wasmImporters = import.meta.glob("../wasm/pkg-*/aero_wasm.js");
+//
+// Note: some Node-based unit tests execute the TypeScript sources directly under
+// Node (via `--experimental-strip-types`) without Vite transforms. In that
+// environment `import.meta.glob` is undefined, so fall back to an empty importer
+// table.
+let wasmImporters: Record<string, () => Promise<unknown>> = {};
+try {
+    // This call is transformed by Vite during dev/build.
+    wasmImporters = import.meta.glob("../wasm/pkg-*/aero_wasm.js") as Record<string, () => Promise<unknown>>;
+} catch {
+    wasmImporters = {};
+}
 
 const warnOnceKeys = new Set<string>();
 function warnOnce(key: string, message: string): void {
