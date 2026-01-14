@@ -1419,9 +1419,6 @@ impl AerogpuD3d11Executor {
             ShaderStage::Hull,
             ShaderStage::Domain,
             ShaderStage::Compute,
-            ShaderStage::Geometry,
-            ShaderStage::Hull,
-            ShaderStage::Domain,
         ] {
             // Legacy shader constants are bound as uniform buffers; avoid requesting storage buffer
             // support so downlevel backends can still construct the executor.
@@ -1447,9 +1444,6 @@ impl AerogpuD3d11Executor {
             ShaderStage::Hull,
             ShaderStage::Domain,
             ShaderStage::Compute,
-            ShaderStage::Geometry,
-            ShaderStage::Hull,
-            ShaderStage::Domain,
         ] {
             bindings.stage_mut(stage).set_constant_buffer(
                 0,
@@ -1786,9 +1780,6 @@ impl AerogpuD3d11Executor {
             ShaderStage::Hull,
             ShaderStage::Domain,
             ShaderStage::Compute,
-            ShaderStage::Geometry,
-            ShaderStage::Hull,
-            ShaderStage::Domain,
         ] {
             self.bindings.stage_mut(stage).set_constant_buffer(
                 0,
