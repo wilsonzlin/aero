@@ -6976,24 +6976,12 @@ uint64_t fnv1a64_hash(const uint8_t* data, size_t len) {
   return h;
 }
 
-void get_viewport_dims_locked(Device* dev,
-                              float* out_x,
-                              float* out_y,
-                              float* out_w,
-                              float* out_h,
-                              float* out_min_z,
-                              float* out_max_z) {
+void get_viewport_dims_locked(Device* dev, float* out_x, float* out_y, float* out_w, float* out_h) {
   const D3DDDIVIEWPORTINFO vp = viewport_effective_locked(dev);
   *out_x = vp.X;
   *out_y = vp.Y;
   *out_w = vp.Width;
   *out_h = vp.Height;
-  if (out_min_z) {
-    *out_min_z = vp.MinZ;
-  }
-  if (out_max_z) {
-    *out_max_z = vp.MaxZ;
-  }
 }
 
 HRESULT convert_xyzrhw_to_clipspace_locked(
@@ -7014,9 +7002,7 @@ HRESULT convert_xyzrhw_to_clipspace_locked(
   float vp_y = 0.0f;
   float vp_w = 1.0f;
   float vp_h = 1.0f;
-  float vp_min_z = 0.0f;
-  float vp_max_z = 1.0f;
-  get_viewport_dims_locked(dev, &vp_x, &vp_y, &vp_w, &vp_h, &vp_min_z, &vp_max_z);
+  get_viewport_dims_locked(dev, &vp_x, &vp_y, &vp_w, &vp_h);
 
   const uint64_t total_bytes_u64 = static_cast<uint64_t>(stride_bytes) * static_cast<uint64_t>(vertex_count);
   if (total_bytes_u64 == 0 || total_bytes_u64 > 0x7FFFFFFFu) {
@@ -7049,10 +7035,7 @@ HRESULT convert_xyzrhw_to_clipspace_locked(
     // centers.
     const float ndc_x = ((x + 0.5f - vp_x) / vp_w) * 2.0f - 1.0f;
     const float ndc_y = 1.0f - ((y + 0.5f - vp_y) / vp_h) * 2.0f;
-    // Pre-transformed (XYZRHW) vertices are already in viewport space. Undo the
-    // viewport depth range mapping (MinZ/MaxZ) to recover NDC depth.
-    const float depth_range = vp_max_z - vp_min_z;
-    const float ndc_z = (depth_range != 0.0f) ? ((z - vp_min_z) / depth_range) : z;
+    const float ndc_z = z;
 
     write_f32_unaligned(dst + 0, ndc_x * w);
     write_f32_unaligned(dst + 4, ndc_y * w);
@@ -24080,9 +24063,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
       float vp_y = 0.0f;
       float vp_w = 1.0f;
       float vp_h = 1.0f;
-      float vp_min_z = 0.0f;
-      float vp_max_z = 1.0f;
-      get_viewport_dims_locked(dev, &vp_x, &vp_y, &vp_w, &vp_h, &vp_min_z, &vp_max_z);
+      get_viewport_dims_locked(dev, &vp_x, &vp_y, &vp_w, &vp_h);
 
       for (uint32_t i = 0; i < index_count; i++) {
         uint32_t idx = 0;
@@ -24120,8 +24101,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
         // centers.
         const float ndc_x = ((x + 0.5f - vp_x) / vp_w) * 2.0f - 1.0f;
         const float ndc_y = 1.0f - ((y + 0.5f - vp_y) / vp_h) * 2.0f;
-        const float depth_range = vp_max_z - vp_min_z;
-        const float ndc_z = (depth_range != 0.0f) ? ((z - vp_min_z) / depth_range) : z;
+        const float ndc_z = z;
 
         write_f32_unaligned(dst + 0, ndc_x * w);
         write_f32_unaligned(dst + 4, ndc_y * w);
