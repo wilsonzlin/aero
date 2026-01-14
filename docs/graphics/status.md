@@ -529,6 +529,7 @@ Where to start verifying:
   - Rust/WASM executor: [`crates/aero-gpu/src/acmd_executor.rs`](../../crates/aero-gpu/src/acmd_executor.rs) (surfaced via `crates/aero-gpu-wasm/`)
 - Shared-surface bookkeeping is centralized in [`crates/aero-gpu/src/shared_surface.rs`](../../crates/aero-gpu/src/shared_surface.rs) (`SharedSurfaceTable`) and used by both the D3D9 and D3D11 executors.
   - Lightweight mirrors (for protocol tests + tooling): [`web/src/workers/aerogpu-acmd-executor.ts`](../../web/src/workers/aerogpu-acmd-executor.ts), [`web/tools/gpu_trace_replay.ts`](../../web/tools/gpu_trace_replay.ts)
+  - Unit tests: `crates/aero-gpu/src/tests/shared_surface.rs` and `crates/aero-gpu/src/shared_surface.rs` (module `tests`)
   - Executor-level tests: `crates/aero-gpu/tests/*shared_surface*` and `crates/aero-d3d11/tests/aerogpu_cmd_shared_surface.rs`
 
 ---

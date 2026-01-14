@@ -157,6 +157,7 @@ bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --features dxbc-robust --test
 
 **Tests:**
 - `crates/aero-gpu/src/shared_surface.rs` (unit tests for token retirement/idempotency/etc)
+- `crates/aero-gpu/src/tests/shared_surface.rs` (additional unit tests for alias/refcount/token rules)
 - `crates/aero-gpu/tests/shared_surface_aliasing.rs`
 - `crates/aero-gpu/tests/aerogpu_d3d9_shared_surface.rs`
 - `crates/aero-gpu/tests/aerogpu_d3d9_cmd_stream_shared_surface.rs` (end-to-end cmd-stream coverage)
@@ -172,6 +173,7 @@ bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --features dxbc-robust --test
 ```bash
 # CPU-only unit tests for the shared-surface bookkeeping:
 bash ./scripts/safe-run.sh cargo test -p aero-gpu --lib shared_surface::tests --locked
+bash ./scripts/safe-run.sh cargo test -p aero-gpu --lib tests::shared_surface --locked
 
 bash ./scripts/safe-run.sh cargo test -p aero-gpu --test shared_surface_aliasing --locked
 bash ./scripts/safe-run.sh cargo test -p aero-gpu --test aerogpu_d3d9_shared_surface --locked
