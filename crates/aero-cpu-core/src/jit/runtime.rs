@@ -290,6 +290,11 @@ impl PageVersionTracker {
         self.ensure_table_len(pages);
     }
 
+    /// Backwards-compatible alias for [`Self::ensure_table_len`].
+    pub fn ensure_len(&mut self, len: usize) {
+        self.ensure_table_len(len);
+    }
+
     /// Returns `(ptr, len_entries)` for the JIT-visible page-version table.
     ///
     /// The table is a contiguous `u32` array with one entry per 4KiB page (`paddr >> 12`).
@@ -307,6 +312,18 @@ impl PageVersionTracker {
         }
     }
 
+    /// Pointer to the start of the dense page-version table (`u32` entries).
+    ///
+    /// The returned pointer is valid for `self.versions_len()` entries. It remains valid for the
+    /// lifetime of the tracker (no reallocations).
+    pub fn table_ptr(&self) -> *const u32 {
+        if self.versions.is_empty() {
+            core::ptr::null()
+        } else {
+            self.versions.as_ptr() as *const u32
+        }
+    }
+
     /// WASM32 helper returning the page-version table pointer + length as `u32`.
     ///
     /// `ptr` is a wasm linear-memory byte offset.
@@ -314,6 +331,12 @@ impl PageVersionTracker {
     pub fn table_ptr_len_u32(&mut self) -> (u32, u32) {
         let (ptr, len) = self.table_ptr_len();
         (ptr as u32, len as u32)
+    }
+
+    /// wasm32 helper: returns [`Self::table_ptr`] as a linear-memory byte offset.
+    #[cfg(target_arch = "wasm32")]
+    pub fn table_ptr_u32(&self) -> u32 {
+        self.table_ptr() as u32
     }
 
     pub fn version(&self, page: u64) -> u32 {
@@ -512,6 +535,23 @@ where
     /// [`PageVersionTracker::table_ptr_len`].
     pub fn page_versions(&self) -> &PageVersionTracker {
         &self.page_versions
+    }
+
+    /// Ensure the internal page-version table is at least `len` entries long.
+    ///
+    /// This is primarily intended for embedders that expose the dense table pointer to generated
+    /// code. Growing the table can reallocate; embedders should call this once with the maximum
+    /// expected guest-physical page count and then clamp out-of-range write notifications.
+    pub fn ensure_page_version_table_len(&mut self, len: usize) {
+        self.page_versions.ensure_len(len);
+    }
+
+    /// Return the `(ptr, len)` of the dense page-version table.
+    ///
+    /// `ptr` points to `len` contiguous `u32` entries, indexed by 4KiB physical page number. The
+    /// pointer remains valid until the table is resized or reset.
+    pub fn page_version_table_ptr_len(&self) -> (*const u32, usize) {
+        (self.page_versions.table_ptr(), self.page_versions.versions_len())
     }
 
     pub fn on_guest_write(&mut self, paddr: u64, len: usize) {

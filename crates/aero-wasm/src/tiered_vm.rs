@@ -232,6 +232,16 @@ pub fn tiered_vm_jit_abi_layout() -> TieredVmJitAbiLayout {
     }
 }
 
+fn clamped_guest_phys_page_count(guest_size: u64) -> usize {
+    let guest_phys_end = guest_ram_phys_end_exclusive(guest_size);
+    let page_size = 1u64 << PAGE_SHIFT;
+    let pages_u64 = guest_phys_end
+        .saturating_add(page_size.saturating_sub(1))
+        >> PAGE_SHIFT;
+    let pages = usize::try_from(pages_u64).unwrap_or(usize::MAX);
+    pages.min(PageVersionTracker::MAX_TRACKED_PAGES)
+        .min(u32::MAX as usize)
+}
 #[derive(Debug)]
 struct WasmBus {
     guest_base: u32,
@@ -760,6 +770,43 @@ impl JitAbiBuffer {
         &mut self.backing[start..end]
     }
 
+    #[inline]
+    #[cfg(test)]
+    fn slice(&self) -> &[u8] {
+        let start = self.cpu_off;
+        let end = start + self.len;
+        &self.backing[start..end]
+    }
+
+    fn write_u32_rel_cpu(&mut self, cpu_off: u32, value: u32) {
+        let off = cpu_off as usize;
+        let end = off
+            .checked_add(4)
+            .expect("jit abi write_u32 offset overflow");
+        assert!(
+            end <= self.len,
+            "jit abi write_u32 out of bounds: off={off} len={}",
+            self.len
+        );
+        self.slice_mut()[off..end].copy_from_slice(&value.to_le_bytes());
+    }
+
+    #[cfg(test)]
+    fn read_u32_rel_cpu(&self, cpu_off: u32) -> u32 {
+        let off = cpu_off as usize;
+        let end = off
+            .checked_add(4)
+            .expect("jit abi read_u32 offset overflow");
+        assert!(
+            end <= self.len,
+            "jit abi read_u32 out of bounds: off={off} len={}",
+            self.len
+        );
+        let mut bytes = [0u8; 4];
+        bytes.copy_from_slice(&self.slice()[off..end]);
+        u32::from_le_bytes(bytes)
+    }
+
     fn clear_tlb(&mut self) {
         let cpu_ptr = self.cpu_ptr() as usize;
         let jit_ctx_ptr = self.jit_ctx_ptr() as usize;
@@ -781,30 +828,8 @@ impl JitAbiBuffer {
     }
 
     fn write_code_version_table(&mut self, ptr: u32, len: u32) {
-        fn write_u32(mem: &mut [u8], off: u32, value: u32) {
-            let start = off as usize;
-            let end = start
-                .checked_add(4)
-                .unwrap_or_else(|| panic!("jit abi write overflow: off={off}"));
-            assert!(
-                end <= mem.len(),
-                "jit abi write out of bounds: off={off} mem_len={}",
-                mem.len()
-            );
-            mem[start..end].copy_from_slice(&value.to_le_bytes());
-        }
-
-        let mem = self.slice_mut();
-        write_u32(
-            mem,
-            aero_jit_x86::jit_ctx::CODE_VERSION_TABLE_PTR_OFFSET,
-            ptr,
-        );
-        write_u32(
-            mem,
-            aero_jit_x86::jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET,
-            len,
-        );
+        self.write_u32_rel_cpu(aero_jit_x86::jit_ctx::CODE_VERSION_TABLE_PTR_OFFSET, ptr);
+        self.write_u32_rel_cpu(aero_jit_x86::jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET, len);
     }
 }
 
@@ -942,6 +967,39 @@ pub struct WasmTieredVm {
 }
 
 impl WasmTieredVm {
+    fn sync_code_version_table_abi(&mut self) {
+        let guest_size = self.guest_size;
+        let (jit_abi, dispatcher) = (&mut self.jit_abi, &mut self.dispatcher);
+        let jit = dispatcher.jit_mut();
+        Self::init_code_version_table_fields(jit_abi, jit, guest_size);
+    }
+
+    fn bump_code_versions_for_guest_range(&mut self, paddr: u64, len: usize) {
+        if len == 0 {
+            return;
+        }
+        let guest_size = self.guest_size;
+        let jit = self.dispatcher.jit_mut();
+
+        let mut remaining = len;
+        let mut cur = paddr;
+        while remaining != 0 {
+            let chunk = translate_guest_paddr_chunk(guest_size, cur, remaining);
+            let (is_ram, chunk_len) = match chunk {
+                GuestRamChunk::Ram { len, .. } => (true, len),
+                GuestRamChunk::Hole { len } | GuestRamChunk::OutOfBounds { len } => (false, len),
+            };
+            if chunk_len == 0 {
+                break;
+            }
+            if is_ram {
+                jit.on_guest_write(cur, chunk_len);
+            }
+            cur = cur.saturating_add(chunk_len as u64);
+            remaining = remaining.saturating_sub(chunk_len);
+        }
+    }
+
     fn flush_guest_writes(&mut self) {
         let jit = self.dispatcher.jit_mut();
         self.vcpu
@@ -962,23 +1020,10 @@ impl WasmTieredVm {
         // The pointer/len must remain stable for the lifetime of the VM instance: once shared with
         // JIT code, reallocation would make any cached pointer stale. Size the table up-front to
         // cover the full guest-physical span so it never needs to grow.
-        let phys_end = guest_ram_phys_end_exclusive(guest_size);
-        let page_bytes = 1u64 << PAGE_SHIFT;
-        let pages_u64 = phys_end
-            .saturating_add(page_bytes.saturating_sub(1))
-            .checked_shr(PAGE_SHIFT)
-            .unwrap_or(0);
-        let Ok(pages) = usize::try_from(pages_u64) else {
-            jit_abi.write_code_version_table(0, 0);
-            return;
-        };
-
+        let pages = clamped_guest_phys_page_count(guest_size);
         jit.ensure_code_version_table_len(pages);
         let (table_ptr, table_len) = jit.code_version_table_ptr_len();
-        let Ok(table_len_u32) = u32::try_from(table_len) else {
-            jit_abi.write_code_version_table(0, 0);
-            return;
-        };
+        let table_len_u32 = u32::try_from(table_len).unwrap_or(0);
         let table_ptr_u32 = if table_len_u32 == 0 {
             0
         } else {
@@ -1015,16 +1060,7 @@ impl WasmTieredVm {
 
         // Size the dense page-version table to cover the full guest-physical RAM span (including
         // the Q35 high-RAM remap above 4GiB).
-        let phys_end = guest_ram_phys_end_exclusive(guest_size_u64);
-        let page_bytes = 1u64 << PAGE_SHIFT;
-        let pages_u64 = phys_end
-            .saturating_add(page_bytes.saturating_sub(1))
-            .checked_shr(PAGE_SHIFT)
-            .unwrap_or(0);
-        let code_version_max_pages = usize::try_from(pages_u64)
-            .unwrap_or(PageVersionTracker::MAX_TRACKED_PAGES)
-            .min(PageVersionTracker::MAX_TRACKED_PAGES);
-
+        let code_version_max_pages = clamped_guest_phys_page_count(guest_size_u64);
         let jit_config = JitConfig {
             enabled: true,
             // Low threshold for browser bring-up: we want hot blocks to quickly transition to
@@ -1136,29 +1172,7 @@ impl WasmTieredVm {
     /// This bumps the internal page-version tracker so any compiled blocks covering the modified
     /// pages are rejected or recompiled.
     pub fn jit_on_guest_write(&mut self, paddr: u64, len: u32) {
-        // Only bump versions for guest-physical ranges that map to RAM. The page-version table is
-        // exposed to JIT code as a raw pointer; allowing out-of-RAM writes to grow the dense table
-        // would risk reallocating and invalidating the shared pointer.
-        let mut remaining = len as usize;
-        if remaining == 0 {
-            return;
-        }
-        let mut cur = paddr;
-        while remaining != 0 {
-            let chunk = translate_guest_paddr_chunk(self.guest_size, cur, remaining);
-            let (is_ram, chunk_len) = match chunk {
-                GuestRamChunk::Ram { len, .. } => (true, len),
-                GuestRamChunk::Hole { len } | GuestRamChunk::OutOfBounds { len } => (false, len),
-            };
-            if chunk_len == 0 {
-                break;
-            }
-            if is_ram {
-                self.dispatcher.jit_mut().on_guest_write(cur, chunk_len);
-            }
-            cur = cur.saturating_add(chunk_len as u64);
-            remaining = remaining.saturating_sub(chunk_len);
-        }
+        self.bump_code_versions_for_guest_range(paddr, len as usize);
     }
 
     /// Drain de-duplicated Tier-1 compilation requests (entry RIPs) as `BigInt` values.
@@ -1247,9 +1261,7 @@ impl WasmTieredVm {
     /// embedded [`JitRuntime`] page-version tracker in sync so cached blocks are invalidated when
     /// the guest modifies code pages.
     pub fn on_guest_write(&mut self, paddr: u64, byte_len: u32) {
-        self.dispatcher
-            .jit_mut()
-            .on_guest_write(paddr, byte_len as usize);
+        self.bump_code_versions_for_guest_range(paddr, byte_len as usize);
     }
 
     /// Install a compiled Tier-1 block into the JIT cache.
@@ -1307,6 +1319,10 @@ impl WasmTieredVm {
     /// Returns a JS object:
     /// `{ kind, detail, executed_blocks, interp_blocks, jit_blocks }`.
     pub fn run_blocks(&mut self, max_blocks: u32) -> Result<JsValue, JsValue> {
+        // Keep the exposed page-version table pointer/len slots initialized even if a previous JIT
+        // block clobbered the Tier-2 context region.
+        self.sync_code_version_table_abi();
+
         let max_blocks_u64 = u64::from(max_blocks);
         let mut executed_blocks = 0u64;
         let mut interp_blocks = 0u64;
@@ -1360,6 +1376,10 @@ impl WasmTieredVm {
             detail = format!("bios_int(0x{vector:02x})");
         } else {
             while executed_blocks < max_blocks_u64 {
+                // Defensive: re-initialize the Tier-2 context slots used by generated code for
+                // page-version bumping/invalidation.
+                self.sync_code_version_table_abi();
+
                 // Stop if the CPU is no longer runnable.
                 if self.vcpu.cpu.state.halted {
                     kind = RunExitKind::Halted;
@@ -1409,6 +1429,9 @@ impl WasmTieredVm {
                 }
             }
         }
+
+        // Ensure the ABI slots are valid on exit back to JS (a JIT block may have clobbered them).
+        self.sync_code_version_table_abi();
 
         let obj = Object::new();
         Reflect::set(
@@ -1608,6 +1631,7 @@ mod tests {
     use aero_cpu_core::jit::runtime::PAGE_SHIFT;
     use aero_cpu_core::CpuBus;
     use aero_jit_x86::jit_ctx;
+    use crate::guest_phys::guest_ram_phys_end_exclusive;
     use js_sys::{Array, Object, Reflect};
     use wasm_bindgen::JsCast;
     use wasm_bindgen::prelude::*;
@@ -1940,6 +1964,123 @@ export function installAeroTieredMmioTestShims() {
             assert_eq!(call_prop_u32(&call, "size"), 1);
             assert_eq!(call_prop_u32(&call, "value"), byte);
         }
+    }
+
+    #[wasm_bindgen_test]
+    fn wasm_tiered_vm_writes_code_version_table_ptr_and_len_into_abi() {
+        // No MMIO/JIT shims required: we only construct the VM and inspect its ABI buffer.
+
+        let mut guest = vec![0u8; 0x2000];
+        let guest_base = guest.as_mut_ptr() as u32;
+        let guest_size = guest.len() as u32;
+
+        let vm = WasmTieredVm::new(guest_base, guest_size).expect("new WasmTieredVm");
+
+        let expected_phys_end = guest_ram_phys_end_exclusive(guest_size as u64);
+        let page_size = 1u64 << PAGE_SHIFT;
+        let expected_pages = expected_phys_end
+            .saturating_add(page_size.saturating_sub(1))
+            >> PAGE_SHIFT;
+
+        let table_ptr = vm
+            .jit_abi
+            .read_u32_rel_cpu(jit_ctx::CODE_VERSION_TABLE_PTR_OFFSET);
+        let table_len = vm
+            .jit_abi
+            .read_u32_rel_cpu(jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET);
+
+        assert_eq!(
+            table_len,
+            expected_pages as u32,
+            "CODE_VERSION_TABLE_LEN must match guest physical page count"
+        );
+        assert_ne!(table_ptr, 0, "CODE_VERSION_TABLE_PTR must be non-zero");
+        assert_eq!(table_ptr % 4, 0, "CODE_VERSION_TABLE_PTR must be 4-byte aligned");
+    }
+
+    #[wasm_bindgen_test]
+    fn wasm_tiered_vm_code_version_table_updates_snapshot_meta() {
+        // No MMIO/JIT shims required: we only use page-version tracking + meta snapshotting.
+
+        let mut guest = vec![0u8; 0x4000];
+        let guest_base = guest.as_mut_ptr() as u32;
+        let guest_size = guest.len() as u32;
+
+        let mut vm = WasmTieredVm::new(guest_base, guest_size).expect("new WasmTieredVm");
+
+        let table_ptr_before = vm
+            .jit_abi
+            .read_u32_rel_cpu(jit_ctx::CODE_VERSION_TABLE_PTR_OFFSET);
+        let table_len = vm
+            .jit_abi
+            .read_u32_rel_cpu(jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET) as usize;
+
+        let paddr = 0x1000u64; // page 1
+        let page = (paddr >> PAGE_SHIFT) as usize;
+        assert!(
+            page < table_len,
+            "test setup: page index {page} must be in range (len={table_len})"
+        );
+
+        // Bump the version for a single byte write.
+        vm.jit_on_guest_write(paddr, 1);
+
+        // The version table pointer must remain stable for in-range writes. Check this before
+        // dereferencing the pointer we captured above.
+        let table_ptr_after_write = vm
+            .jit_abi
+            .read_u32_rel_cpu(jit_ctx::CODE_VERSION_TABLE_PTR_OFFSET);
+        assert_eq!(
+            table_ptr_after_write, table_ptr_before,
+            "page version table pointer must remain stable for in-range writes"
+        );
+
+        // Verify the exposed table entry was updated in-place.
+        let version_from_table = unsafe {
+            core::slice::from_raw_parts(table_ptr_after_write as *const u32, table_len)[page]
+        };
+        assert_eq!(
+            version_from_table, 1,
+            "expected page version table entry to be incremented"
+        );
+
+        // snapshot_meta should observe the same bumped version.
+        let meta = vm.snapshot_meta(paddr, 1).expect("snapshot_meta");
+        let versions_val = Reflect::get(&meta, &JsValue::from_str("page_versions"))
+            .expect("meta.page_versions");
+        let versions = versions_val
+            .dyn_into::<Array>()
+            .expect("meta.page_versions must be an Array");
+        assert_eq!(versions.length(), 1, "expected single-page snapshot");
+
+        let snap0 = versions.get(0);
+        let snap_version = Reflect::get(&snap0, &JsValue::from_str("version"))
+            .expect("snapshot.version")
+            .as_f64()
+            .expect("snapshot.version must be a number")
+            .round() as u32;
+
+        assert_eq!(
+            snap_version, version_from_table,
+            "snapshot_meta must reflect the bumped table version"
+        );
+
+        // Pointer stability: bump a write in the last guest page and ensure the table pointer is
+        // unchanged (no `Vec` reallocation for in-range writes).
+        let expected_phys_end = guest_ram_phys_end_exclusive(guest_size as u64);
+        let page_size = 1u64 << PAGE_SHIFT;
+        let expected_pages = expected_phys_end
+            .saturating_add(page_size.saturating_sub(1))
+            >> PAGE_SHIFT;
+        let last_page_start = expected_pages.saturating_sub(1) << PAGE_SHIFT;
+        vm.jit_on_guest_write(last_page_start, 1);
+        let table_ptr_after = vm
+            .jit_abi
+            .read_u32_rel_cpu(jit_ctx::CODE_VERSION_TABLE_PTR_OFFSET);
+        assert_eq!(
+            table_ptr_after, table_ptr_before,
+            "page version table pointer must remain stable for in-range writes"
+        );
     }
 
     #[wasm_bindgen_test]
