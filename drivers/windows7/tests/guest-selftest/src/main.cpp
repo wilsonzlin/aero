@@ -797,7 +797,7 @@ static const char* AerovblkIrqModeForMarker(const AEROVBLK_QUERY_INFO& info) {
   if (info.InterruptMode == kAerovblkInterruptModeIntx) return "intx";
   if (info.InterruptMode == kAerovblkInterruptModeMsi) {
     // `InterruptMode` intentionally conflates MSI + MSI-X. If any virtio MSI-X vectors are assigned,
-    // treat this as MSI-X for logging purposes.
+    // treat this as MSI-X for marker diagnostics.
     if (info.MsixConfigVector != kVirtioPciMsiNoVector || info.MsixQueue0Vector != kVirtioPciMsiNoVector) {
       return "msix";
     }
@@ -1240,8 +1240,39 @@ static void EmitVirtioSndIrqMarker(Logger& log, DEVINST devinst) {
       static_cast<unsigned>(info.QueueMsixVector[0]), static_cast<unsigned>(info.QueueMsixVector[1]),
       static_cast<unsigned>(info.QueueMsixVector[2]), static_cast<unsigned>(info.QueueMsixVector[3]),
       static_cast<unsigned long>(info.InterruptCount), static_cast<unsigned long>(info.DpcCount),
-      static_cast<unsigned long>(info.QueueDrainCount[0]), static_cast<unsigned long>(info.QueueDrainCount[1]),
-      static_cast<unsigned long>(info.QueueDrainCount[2]), static_cast<unsigned long>(info.QueueDrainCount[3]));
+       static_cast<unsigned long>(info.QueueDrainCount[0]), static_cast<unsigned long>(info.QueueDrainCount[1]),
+       static_cast<unsigned long>(info.QueueDrainCount[2]), static_cast<unsigned long>(info.QueueDrainCount[3]));
+}
+
+static std::string IrqFieldsForTestMarkerFromDevInst(DEVINST devinst) {
+  const auto irq = QueryDevInstIrqModeWithParentFallback(devinst);
+  if (!irq.ok) {
+    std::string out = "|irq_mode=none|irq_message_count=0";
+    if (!irq.reason.empty()) {
+      out += "|irq_reason=";
+      out += irq.reason;
+    }
+    return out;
+  }
+
+  if (!irq.info.is_msi) {
+    return "|irq_mode=intx|irq_message_count=0";
+  }
+
+  return std::string("|irq_mode=msi|irq_message_count=") + std::to_string(irq.info.messages);
+}
+
+static std::string IrqFieldsForTestMarker(const std::vector<std::wstring>& hwid_needles,
+                                          const std::vector<std::wstring>& fallback_needles = {}) {
+  // Fast path: restrict to PCI enumerated devices.
+  auto matches = FindPresentDevNodesByHwidSubstrings(L"PCI", hwid_needles);
+  if (matches.empty() && !fallback_needles.empty()) {
+    matches = FindPresentDevNodesByHwidSubstrings(nullptr, fallback_needles);
+  }
+  if (matches.empty()) {
+    return "|irq_mode=none|irq_message_count=0|irq_reason=device_missing";
+  }
+  return IrqFieldsForTestMarkerFromDevInst(matches.front().devinst);
 }
 
 struct VirtioSndPciIdInfo {
@@ -4387,6 +4418,12 @@ static VirtioInputTabletEventsTestResult VirtioInputTabletEventsTest(Logger& log
     return out;
   }
   const TabletHidReportLayout layout = *layout_opt;
+  if (layout.report_id != 4) {
+    // Contract: the virtio-input tablet descriptor uses Report ID 4. Enforce this so we catch regressions
+    // where the tablet enumerates as a mouse/relative pointer.
+    out.reason = "unexpected_report_id";
+    return out;
+  }
 
   HidOverlappedReader tablet{};
   tablet.buf.resize(64);
@@ -8441,6 +8478,7 @@ int wmain(int argc, wchar_t** argv) {
 
   if (!opt.expect_blk_msi && EnvVarTruthy(L"AERO_VIRTIO_SELFTEST_EXPECT_BLK_MSI")) {
     opt.expect_blk_msi = true;
+  }
   if (!opt.test_blk_resize && EnvVarTruthy(L"AERO_VIRTIO_SELFTEST_TEST_BLK_RESIZE")) {
     opt.test_blk_resize = true;
   }
@@ -8476,32 +8514,56 @@ int wmain(int argc, wchar_t** argv) {
   const auto blk = VirtioBlkTest(log, opt, &blk_miniport_info, &blk_devinst);
 
   std::string marker = std::string("AERO_VIRTIO_SELFTEST|TEST|virtio-blk|") + (blk.ok ? "PASS" : "FAIL");
+
+  // Populate IRQ fields for the virtio-blk per-test marker. Prefer miniport IOCTL fields when present, but
+  // fall back to PnP resource inspection (via the disk devnode) so we always emit `irq_*` fields for the
+  // host harness to scrape.
+  std::string irq_mode = "none";
+  uint32_t irq_message_count = 0;
+  if (blk_devinst != 0) {
+    const auto irq = QueryDevInstIrqModeWithParentFallback(blk_devinst);
+    if (irq.ok) {
+      irq_mode = irq.info.is_msi ? "msi" : "intx";
+      irq_message_count = irq.info.is_msi ? irq.info.messages : 0;
+    }
+  }
+
   if (blk_miniport_info.has_value()) {
-    // Only include interrupt diagnostics if the miniport returned the extended fields.
     constexpr size_t kIrqModeEnd = offsetof(AEROVBLK_QUERY_INFO, InterruptMode) + sizeof(ULONG);
     constexpr size_t kMsixCfgEnd = offsetof(AEROVBLK_QUERY_INFO, MsixConfigVector) + sizeof(USHORT);
     constexpr size_t kMsixQ0End = offsetof(AEROVBLK_QUERY_INFO, MsixQueue0Vector) + sizeof(USHORT);
     constexpr size_t kMsgCountEnd = offsetof(AEROVBLK_QUERY_INFO, MessageCount) + sizeof(ULONG);
 
     if (blk_miniport_info->returned_len >= kIrqModeEnd) {
-      marker += "|irq_mode=";
-      marker += AerovblkIrqModeForMarker(blk_miniport_info->info);
-
-      if (blk_miniport_info->returned_len >= kMsixCfgEnd) {
-        char vec[16];
-        snprintf(vec, sizeof(vec), "0x%04x", static_cast<unsigned>(blk_miniport_info->info.MsixConfigVector));
-        marker += "|msix_config_vector=";
-        marker += vec;
-      }
-
-      if (blk_miniport_info->returned_len >= kMsixQ0End) {
-        char vec[16];
-        snprintf(vec, sizeof(vec), "0x%04x", static_cast<unsigned>(blk_miniport_info->info.MsixQueue0Vector));
-        marker += "|msix_queue_vector=";
-        marker += vec;
+      irq_mode = AerovblkIrqModeForMarker(blk_miniport_info->info);
+      if (strcmp(irq_mode.c_str(), "intx") == 0 || strcmp(irq_mode.c_str(), "none") == 0) {
+        irq_message_count = 0;
       }
     }
 
+    if (blk_miniport_info->returned_len >= kMsgCountEnd &&
+        (strcmp(irq_mode.c_str(), "msi") == 0 || strcmp(irq_mode.c_str(), "msix") == 0)) {
+      irq_message_count = static_cast<uint32_t>(blk_miniport_info->info.MessageCount);
+    }
+
+    marker += "|irq_mode=";
+    marker += irq_mode;
+    marker += "|irq_message_count=";
+    marker += std::to_string(static_cast<unsigned long>(irq_message_count));
+
+    if (blk_miniport_info->returned_len >= kMsixCfgEnd) {
+      char vec[16];
+      snprintf(vec, sizeof(vec), "0x%04x", static_cast<unsigned>(blk_miniport_info->info.MsixConfigVector));
+      marker += "|msix_config_vector=";
+      marker += vec;
+    }
+
+    if (blk_miniport_info->returned_len >= kMsixQ0End) {
+      char vec[16];
+      snprintf(vec, sizeof(vec), "0x%04x", static_cast<unsigned>(blk_miniport_info->info.MsixQueue0Vector));
+      marker += "|msix_queue_vector=";
+      marker += vec;
+    }
 
     /*
      * Dedicated marker for MSI/MSI-X diagnostics (used by the host harness).
@@ -8526,6 +8588,10 @@ int wmain(int argc, wchar_t** argv) {
                blk_miniport_info->returned_len);
     }
   } else {
+    marker += "|irq_mode=";
+    marker += irq_mode;
+    marker += "|irq_message_count=";
+    marker += std::to_string(static_cast<unsigned long>(irq_message_count));
     log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-blk-msix|SKIP|reason=no_miniport_info");
   }
 
@@ -8570,13 +8636,19 @@ int wmain(int argc, wchar_t** argv) {
   }
 
   const auto input = VirtioInputTest(log);
+  const std::string input_irq_fields =
+      (input.devinst != 0)
+          ? IrqFieldsForTestMarkerFromDevInst(input.devinst)
+          : IrqFieldsForTestMarker({L"PCI\\VEN_1AF4&DEV_1052", L"PCI\\VEN_1AF4&DEV_1011"},
+                                   {L"VID_1AF4&PID_0001", L"VID_1AF4&PID_0002", L"VID_1AF4&PID_0003",
+                                    L"VID_1AF4&PID_1052", L"VID_1AF4&PID_1011"});
   log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-input|%s|devices=%d|keyboard_devices=%d|"
            "mouse_devices=%d|ambiguous_devices=%d|unknown_devices=%d|keyboard_collections=%d|"
-           "mouse_collections=%d|tablet_devices=%d|tablet_collections=%d|reason=%s",
+           "mouse_collections=%d|tablet_devices=%d|tablet_collections=%d|reason=%s%s",
            input.ok ? "PASS" : "FAIL", input.matched_devices, input.keyboard_devices, input.mouse_devices,
            input.ambiguous_devices, input.unknown_devices, input.keyboard_collections, input.mouse_collections,
            input.tablet_devices, input.tablet_collections,
-           input.reason.empty() ? "-" : input.reason.c_str());
+           input.reason.empty() ? "-" : input.reason.c_str(), input_irq_fields.c_str());
   // Optional: tablet enumeration marker. Do not fail the overall selftest if absent; tablet devices
   // are not always attached by the host harness.
   if (input.tablet_devices > 0 && input.tablet_collections > 0) {
@@ -8832,6 +8904,10 @@ int wmain(int argc, wchar_t** argv) {
           tablet_events.tablet_reports, tablet_events.saw_move_target ? 1 : 0,
           tablet_events.saw_left_down ? 1 : 0, tablet_events.saw_left_up ? 1 : 0, tablet_events.last_x,
           tablet_events.last_y, tablet_events.last_left);
+      all_ok = all_ok && tablet_events.ok;
+    } else if (tablet_events.reason == "missing_tablet_device") {
+      log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|SKIP|no_tablet_device");
+      // Do not affect overall result: this test is opt-in and may be enabled in images without a tablet.
     } else {
       log.Logf(
           "AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|FAIL|reason=%s|err=%lu|tablet_reports=%d|move_target=%d|left_down=%d|left_up=%d|last_x=%d|last_y=%d|last_left=%d",
@@ -8839,8 +8915,8 @@ int wmain(int argc, wchar_t** argv) {
           static_cast<unsigned long>(tablet_events.win32_error), tablet_events.tablet_reports,
           tablet_events.saw_move_target ? 1 : 0, tablet_events.saw_left_down ? 1 : 0,
           tablet_events.saw_left_up ? 1 : 0, tablet_events.last_x, tablet_events.last_y, tablet_events.last_left);
+      all_ok = false;
     }
-    all_ok = all_ok && tablet_events.ok;
   }
 
   // virtio-snd:
@@ -8868,6 +8944,11 @@ int wmain(int argc, wchar_t** argv) {
     }
   }
 
+  const std::string snd_irq_fields =
+      opt.allow_virtio_snd_transitional
+          ? IrqFieldsForTestMarker({L"PCI\\VEN_1AF4&DEV_1059", L"PCI\\VEN_1AF4&DEV_1018"})
+          : IrqFieldsForTestMarker({L"PCI\\VEN_1AF4&DEV_1059"});
+
   const bool want_snd_playback = opt.require_snd || !snd_pci.empty();
   const bool capture_smoke_test = opt.test_snd_capture || opt.require_non_silence || want_snd_playback;
   const bool want_snd_capture =
@@ -8876,13 +8957,13 @@ int wmain(int argc, wchar_t** argv) {
 
   if (opt.disable_snd) {
     log.LogLine("virtio-snd: disabled by --disable-snd");
-    log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP");
+    log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP%s", snd_irq_fields.c_str());
     log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|disabled");
     log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|disabled");
   } else if (!want_snd_playback && !opt.require_snd_capture && !opt.test_snd_capture &&
              !opt.require_non_silence) {
     log.LogLine("virtio-snd: skipped (enable with --test-snd)");
-    log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP");
+    log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP%s", snd_irq_fields.c_str());
     log.LogLine(opt.disable_snd_capture ? "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|disabled"
                                         : "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set");
     log.LogLine(opt.disable_snd_capture ? "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|disabled"
@@ -8890,7 +8971,7 @@ int wmain(int argc, wchar_t** argv) {
   } else {
     if (!want_snd_playback) {
       log.LogLine("virtio-snd: skipped (enable with --test-snd)");
-      log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP");
+      log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP%s", snd_irq_fields.c_str());
     }
 
     if (snd_pci.empty()) {
@@ -8902,7 +8983,7 @@ int wmain(int argc, wchar_t** argv) {
       }
 
       if (want_snd_playback) {
-        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL");
+        log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL%s", snd_irq_fields.c_str());
         all_ok = false;
       }
 
@@ -8954,7 +9035,7 @@ int wmain(int argc, wchar_t** argv) {
                                                            : "driver_not_bound";
 
         if (want_snd_playback) {
-          log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|%s", reason);
+          log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|%s%s", reason, snd_irq_fields.c_str());
           all_ok = false;
         }
 
@@ -8979,7 +9060,7 @@ int wmain(int argc, wchar_t** argv) {
         log.LogLine("virtio-snd: no KSCATEGORY_TOPOLOGY interface found for detected virtio-snd device");
 
         if (want_snd_playback) {
-          log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL");
+          log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL%s", snd_irq_fields.c_str());
           all_ok = false;
         }
 
@@ -9019,10 +9100,10 @@ int wmain(int argc, wchar_t** argv) {
               "virtio-snd: ForceNullBackend=1 set; virtio transport disabled (host wav capture will be silent)");
 
           if (want_snd_playback) {
-            log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|force_null_backend");
+            log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|force_null_backend%s", snd_irq_fields.c_str());
             all_ok = false;
           } else {
-            log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP");
+            log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP%s", snd_irq_fields.c_str());
           }
 
           if (opt.disable_snd_capture) {
@@ -9088,7 +9169,8 @@ int wmain(int argc, wchar_t** argv) {
               snd_ok = WaveOutToneTest(log, match_names, opt.allow_virtio_snd_transitional);
             }
 
-            log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|%s", snd_ok ? "PASS" : "FAIL");
+            log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|%s%s", snd_ok ? "PASS" : "FAIL",
+                     snd_irq_fields.c_str());
             all_ok = all_ok && snd_ok;
           }
 
@@ -9240,24 +9322,27 @@ int wmain(int argc, wchar_t** argv) {
     EmitVirtioIrqMarker(log, "virtio-snd", {L"PCI\\VEN_1AF4&DEV_1059"});
   }
 
+  const std::string net_irq_fields =
+      IrqFieldsForTestMarker({L"PCI\\VEN_1AF4&DEV_1041", L"PCI\\VEN_1AF4&DEV_1000"});
+
   // Network tests require Winsock initialized for getaddrinfo.
   DEVINST net_devinst = 0;
   WSADATA wsa{};
   const int wsa_rc = WSAStartup(MAKEWORD(2, 2), &wsa);
   if (wsa_rc != 0) {
     log.Logf("virtio-net: WSAStartup failed rc=%d", wsa_rc);
-    log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-net|FAIL");
+    log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-net|FAIL%s", net_irq_fields.c_str());
     all_ok = false;
   } else {
     const auto net = VirtioNetTest(log, opt);
     net_devinst = net.devinst;
     log.Logf(
         "AERO_VIRTIO_SELFTEST|TEST|virtio-net|%s|large_ok=%d|large_bytes=%llu|large_fnv1a64=0x%016I64x|large_mbps=%.2f|"
-        "upload_ok=%d|upload_bytes=%llu|upload_mbps=%.2f|msi=%d|msi_messages=%d",
+        "upload_ok=%d|upload_bytes=%llu|upload_mbps=%.2f|msi=%d|msi_messages=%d%s",
         net.ok ? "PASS" : "FAIL", net.large_ok ? 1 : 0,
         static_cast<unsigned long long>(net.large_bytes), static_cast<unsigned long long>(net.large_hash),
         net.large_mbps, net.upload_ok ? 1 : 0, static_cast<unsigned long long>(net.upload_bytes), net.upload_mbps,
-        (net.msi_messages < 0) ? -1 : (net.msi_messages > 0 ? 1 : 0), net.msi_messages);
+        (net.msi_messages < 0) ? -1 : (net.msi_messages > 0 ? 1 : 0), net.msi_messages, net_irq_fields.c_str());
     all_ok = all_ok && net.ok;
     WSACleanup();
   }

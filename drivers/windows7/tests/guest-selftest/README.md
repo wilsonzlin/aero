@@ -175,11 +175,12 @@ The host harness parses these markers from COM1 serial:
 
 ```
  AERO_VIRTIO_SELFTEST|START|...
- # virtio-blk includes interrupt diagnostics (from the miniport IOCTL query) and I/O throughput metrics
- # as key/value fields so the host harness can mirror them into host-side markers (VIRTIO_BLK_IRQ / VIRTIO_BLK_IO).
- # Older guests may emit just `AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS` with no extra fields.
- AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS|irq_mode=msix|msix_config_vector=0x0000|msix_queue_vector=0x0001|write_ok=1|write_bytes=33554432|write_mbps=123.45|flush_ok=1|read_ok=1|read_bytes=33554432|read_mbps=234.56
- AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS|...
+ # virtio-blk/virtio-net/virtio-snd/virtio-input include interrupt diagnostics (`irq_mode` / `irq_message_count`) as
+ # key/value fields so the host harness can mirror them into host-side markers (VIRTIO_*_IRQ).
+ # virtio-blk additionally includes MSI-X routing fields and basic I/O throughput metrics (VIRTIO_BLK_IO).
+ # Older guests may emit just `AERO_VIRTIO_SELFTEST|TEST|virtio-<dev>|PASS` with no extra fields.
+ AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS|irq_mode=msix|irq_message_count=2|msix_config_vector=0x0000|msix_queue_vector=0x0001|write_ok=1|write_bytes=33554432|write_mbps=123.45|flush_ok=1|read_ok=1|read_bytes=33554432|read_mbps=234.56
+ AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS|...|irq_mode=msi|irq_message_count=1
  AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|SKIP|flag_not_set
  AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|SKIP|flag_not_set
  AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|SKIP|flag_not_set
@@ -221,17 +222,20 @@ AERO_VIRTIO_SELFTEST|RESULT|FAIL
 
 Notes:
 - IRQ diagnostics are emitted as standalone lines (in addition to the stable `AERO_VIRTIO_SELFTEST|TEST|...` markers):
-  - `virtio-blk`:
-    - also emits a standalone miniport IOCTL-derived line (best-effort):
-      - `virtio-blk-miniport-irq|INFO|mode=<intx|msi|unknown>|message_count=<n>|msix_config_vector=0x....|msix_queue0_vector=0x....`
-      - (and WARN variants like `virtio-blk-miniport-irq|WARN|...` when the miniport contract is missing/truncated)
-  - `virtio-net`, `virtio-snd`, `virtio-input`:
+  - The per-device TEST markers include:
+    - `irq_mode=intx|msi|msix|none`
+    - `irq_message_count=<n>` (0 for INTx/none)
+    - `virtio-blk` additionally includes `msix_config_vector=0x....` and `msix_queue_vector=0x....` when the
+      virtio-blk miniport IOCTL exposes them.
+  - The tool also emits standalone diagnostics (best-effort):
+    - `virtio-blk-miniport-irq|INFO|mode=<intx|msi|unknown>|message_count=<n>|msix_config_vector=0x....|msix_queue0_vector=0x....`
+      (and WARN variants like `virtio-blk-miniport-irq|WARN|...` when the miniport contract is missing/truncated)
     - `virtio-<dev>-irq|INFO|mode=intx`
     - `virtio-<dev>-irq|INFO|mode=msi|messages=<n>`
     - `virtio-<dev>-irq|INFO|mode=msix|messages=<n>|msix_config_vector=0x....|...` (when a driver exposes richer MSI-X diagnostics)
-    - (and WARN variants like `virtio-<dev>-irq|WARN|reason=...`).
-  The host harness mirrors these into `AERO_VIRTIO_WIN7_HOST|VIRTIO_*_IRQ_DIAG|...` markers for log scraping/CI
-  (for example `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_IRQ_DIAG|INFO|mode=msi|messages=4`).
+      (and WARN variants like `virtio-<dev>-irq|WARN|reason=...`).
+  The host harness mirrors the per-test fields into `AERO_VIRTIO_WIN7_HOST|VIRTIO_*_IRQ|...` markers, and the
+  standalone lines into `AERO_VIRTIO_WIN7_HOST|VIRTIO_*_IRQ_DIAG|...` markers for log scraping/CI.
 - If no supported virtio-snd PCI function is detected (and no capture flags are set), the tool emits
   `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP` and `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set`.
 - The optional virtio-input end-to-end event delivery markers are always emitted:
@@ -246,6 +250,7 @@ Notes:
       `AERO_VIRTIO_SELFTEST_TEST_TABLET_EVENTS=1`) is enabled:
       - emits `AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|READY` once the read loop is armed
       - emits `AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|PASS|...` or `...|FAIL|reason=...|...`
+      - if no tablet device is present, emits `AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|SKIP|no_tablet_device`
   - The overall selftest `RESULT` is only affected by these tests when the corresponding flag/env var is enabled.
 - If `--require-snd` / `--test-snd` is set and the PCI device is missing, the tool emits
   `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL`.
