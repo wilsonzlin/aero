@@ -755,6 +755,84 @@ fn virtio_snd_pci_bridge_transitional_legacy_io_eventq_is_gated_on_pci_bus_maste
 }
 
 #[wasm_bindgen_test]
+fn virtio_snd_pci_bridge_transitional_rejects_legacy_status_write_after_modern_access() {
+    // Synthetic guest RAM region outside the wasm heap.
+    let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x20000);
+
+    let mut bridge = VirtioSndPciBridge::new(
+        guest_base,
+        guest_size,
+        Some(JsValue::from_str("transitional")),
+    )
+    .expect("VirtioSndPciBridge::new");
+
+    // Enable MMIO + I/O decoding + bus mastering.
+    bridge.set_pci_command(0x0007);
+
+    const COMMON: u32 = 0x0000;
+
+    // Touch the modern transport first: this locks the transport mode to modern.
+    bridge.mmio_write(
+        COMMON + 0x14,
+        1,
+        u32::from(VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER_OK),
+    );
+    assert!(bridge.driver_ok());
+
+    // Non-reset legacy writes should now be ignored. Writing 0 would be treated as a legacy reset,
+    // so use a non-zero value.
+    bridge.io_write(
+        VIRTIO_PCI_LEGACY_STATUS as u32,
+        1,
+        u32::from(VIRTIO_STATUS_ACKNOWLEDGE),
+    );
+
+    assert!(
+        bridge.driver_ok(),
+        "legacy STATUS writes must not clear DRIVER_OK once modern transport is locked"
+    );
+    let status = bridge.mmio_read(COMMON + 0x14, 1) as u8;
+    assert_ne!(status & VIRTIO_STATUS_DRIVER_OK, 0);
+}
+
+#[wasm_bindgen_test]
+fn virtio_snd_pci_bridge_transitional_rejects_modern_status_write_after_legacy_access() {
+    // Synthetic guest RAM region outside the wasm heap.
+    let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x20000);
+
+    let mut bridge = VirtioSndPciBridge::new(
+        guest_base,
+        guest_size,
+        Some(JsValue::from_str("transitional")),
+    )
+    .expect("VirtioSndPciBridge::new");
+
+    // Enable MMIO + I/O decoding + bus mastering.
+    bridge.set_pci_command(0x0007);
+
+    const COMMON: u32 = 0x0000;
+
+    // Touch the legacy transport first: this locks the transport mode to legacy.
+    bridge.io_write(
+        VIRTIO_PCI_LEGACY_STATUS as u32,
+        1,
+        u32::from(VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER_OK),
+    );
+    assert!(bridge.driver_ok());
+
+    // Non-reset modern writes should now be ignored. Writing 0 would be treated as a modern reset,
+    // so use a non-zero value.
+    bridge.mmio_write(COMMON + 0x14, 1, u32::from(VIRTIO_STATUS_ACKNOWLEDGE));
+
+    assert!(
+        bridge.driver_ok(),
+        "modern STATUS writes must not clear DRIVER_OK once legacy transport is locked"
+    );
+    let status = bridge.mmio_read(COMMON + 0x14, 1) as u8;
+    assert_ne!(status & VIRTIO_STATUS_DRIVER_OK, 0);
+}
+
+#[wasm_bindgen_test]
 fn virtio_snd_pci_bridge_snapshot_roundtrip_is_deterministic() {
     // BAR0 layout is fixed by `aero_virtio::pci::VirtioPciDevice`.
     const COMMON: u32 = 0x0000;
