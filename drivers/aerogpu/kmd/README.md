@@ -529,11 +529,16 @@ are defined in `drivers/aerogpu/protocol/aerogpu_dbgctl_escape.h`.
   - older tools may use the legacy `AEROGPU_ESCAPE_OP_QUERY_DEVICE` response (see `drivers/aerogpu/protocol/aerogpu_escape.h`; legacy ABI details in `drivers/aerogpu/protocol/legacy/aerogpu_protocol_legacy.h`)
 
 Additional debug/control escapes used by `drivers/aerogpu/tools/win7_dbgctl`:
- 
+  
 - `AEROGPU_ESCAPE_OP_QUERY_FENCE` (see `aerogpu_dbgctl_escape.h`)
   - Robustness note: the KMD tracks fences in 64-bit fields for the versioned (AGPU) ABI, but the driver is built for both
     Win7 x86 and x64. On x86, plain 64-bit loads/stores are not atomic and can tear, so fence state used by `QUERY_FENCE`
     (and related IRQ/error diagnostics) is accessed via interlocked 64-bit operations.
+- `AEROGPU_ESCAPE_OP_QUERY_PERF` (see `aerogpu_dbgctl_escape.h`)
+  - Returns a best-effort snapshot of perf/health counters, intended for a quick “is the GPU making forward progress” check.
+  - Includes ring head/tail, submit counters, IRQ counters, reset counters, and (on newer builds) additional diagnostic fields
+    like contig-pool hit/miss/bytes-saved.
+  - The output struct is extended by **appending** new fields; tooling must check `hdr.size` before reading optional fields.
 - `AEROGPU_ESCAPE_OP_DUMP_RING_V2` (fallback: `AEROGPU_ESCAPE_OP_DUMP_RING`) (see `aerogpu_dbgctl_escape.h`)
   - For `AEROGPU_DBGCTL_RING_FORMAT_AGPU`, the v2 dump returns a recent **tail window** of descriptors ending at `tail - 1`
     (newest is `desc[desc_count - 1]`) so tooling/tests can observe recently completed submissions even when the pending
