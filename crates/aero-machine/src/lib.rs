@@ -7026,9 +7026,19 @@ impl Machine {
         // Ring DMA (reading guest memory, updating ring head, updating fence page) is gated by PCI
         // COMMAND.BME (bit 2).
         let bus_master_enabled = (command & (1 << 2)) != 0;
-        aerogpu
-            .borrow_mut()
-            .process(&mut self.mem, bus_master_enabled);
+        let mut dev = aerogpu.borrow_mut();
+        dev.process(&mut self.mem, bus_master_enabled);
+
+        // Publish WDDM scanout state updates based on BAR0 scanout registers.
+        //
+        // This is gated behind atomic-support builds because `ScanoutState` is a lock-free shared
+        // structure backed by atomic operations.
+        #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+        if let Some(scanout_state) = &self.scanout_state {
+            if let Some(update) = dev.take_scanout0_state_update() {
+                scanout_state.publish(update);
+            }
+        }
     }
 
     /// Allow the virtio-blk controller (if present) to make forward progress (DMA).

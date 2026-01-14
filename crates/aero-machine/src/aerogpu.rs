@@ -7,6 +7,9 @@ use aero_protocol::aerogpu::aerogpu_pci as pci;
 use aero_protocol::aerogpu::aerogpu_ring as ring;
 use memory::MemoryBus;
 
+#[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+use aero_shared::scanout_state::{ScanoutStateUpdate, SCANOUT_FORMAT_B8G8R8X8, SCANOUT_SOURCE_WDDM};
+
 const RING_HEAD_OFFSET: u64 = offset_of!(ring::AerogpuRingHeader, head) as u64;
 const RING_TAIL_OFFSET: u64 = offset_of!(ring::AerogpuRingHeader, tail) as u64;
 const RING_HEADER_SIZE_BYTES: u64 = ring::AerogpuRingHeader::SIZE_BYTES as u64;
@@ -54,6 +57,8 @@ pub struct AeroGpuMmioDevice {
     vblank_interval_ns: Option<u64>,
     next_vblank_ns: Option<u64>,
     wddm_scanout_active: bool,
+    #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+    scanout0_dirty: bool,
 
     cursor_enable: bool,
     cursor_x: i32,
@@ -107,6 +112,8 @@ impl Default for AeroGpuMmioDevice {
             vblank_interval_ns: Some(vblank_period_ns),
             next_vblank_ns: None,
             wddm_scanout_active: false,
+            #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+            scanout0_dirty: false,
 
             cursor_enable: false,
             cursor_x: 0,
@@ -134,6 +141,120 @@ impl AeroGpuMmioDevice {
             abi_version,
             ..Default::default()
         };
+    }
+
+    #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+    fn scanout0_disabled_update() -> ScanoutStateUpdate {
+        ScanoutStateUpdate {
+            source: SCANOUT_SOURCE_WDDM,
+            base_paddr_lo: 0,
+            base_paddr_hi: 0,
+            width: 0,
+            height: 0,
+            pitch_bytes: 0,
+            // Keep format at the default/only-representable value even while disabled.
+            format: SCANOUT_FORMAT_B8G8R8X8,
+        }
+    }
+
+    #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+    fn scanout_state_format_from_aerogpu_format(fmt: u32) -> Option<u32> {
+        // The shared scanout descriptor currently supports only `B8G8R8X8`.
+        // Treat BGRA/XRGB (and sRGB variants) as compatible since they share the same byte layout
+        // for the RGB channels; alpha (if present) is ignored by the scanout consumer.
+        match fmt {
+            x if x == pci::AerogpuFormat::B8G8R8X8Unorm as u32
+                || x == pci::AerogpuFormat::B8G8R8A8Unorm as u32
+                || x == pci::AerogpuFormat::B8G8R8X8UnormSrgb as u32
+                || x == pci::AerogpuFormat::B8G8R8A8UnormSrgb as u32 =>
+            {
+                Some(SCANOUT_FORMAT_B8G8R8X8)
+            }
+            _ => None,
+        }
+    }
+
+    #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+    fn scanout0_to_scanout_state_update(&self) -> ScanoutStateUpdate {
+        let Some(format) = Self::scanout_state_format_from_aerogpu_format(self.scanout0_format)
+        else {
+            return Self::scanout0_disabled_update();
+        };
+
+        let width = self.scanout0_width;
+        let height = self.scanout0_height;
+        if width == 0 || height == 0 {
+            return Self::scanout0_disabled_update();
+        }
+
+        let fb_gpa = self.scanout0_fb_gpa;
+        if fb_gpa == 0 {
+            return Self::scanout0_disabled_update();
+        }
+
+        // Today the shared scanout descriptor can only represent B8G8R8X8 (4 bytes per pixel).
+        // Enforce that assumption here so consumers don't misinterpret memory.
+        let bytes_per_pixel = 4u64;
+
+        let Some(row_bytes) = u64::from(width).checked_mul(bytes_per_pixel) else {
+            return Self::scanout0_disabled_update();
+        };
+        let pitch = u64::from(self.scanout0_pitch_bytes);
+        if pitch < row_bytes {
+            return Self::scanout0_disabled_update();
+        }
+        if pitch % bytes_per_pixel != 0 {
+            // Scanout consumers treat the pitch as a byte stride for `bytes_per_pixel`-sized pixels.
+            // If it's not a multiple of the pixel size, row starts would land mid-pixel.
+            return Self::scanout0_disabled_update();
+        }
+
+        // Ensure `fb_gpa + (height-1)*pitch + row_bytes` does not overflow.
+        let Some(last_row_offset) = u64::from(height)
+            .checked_sub(1)
+            .and_then(|rows| rows.checked_mul(pitch))
+        else {
+            return Self::scanout0_disabled_update();
+        };
+        let Some(end_offset) = last_row_offset.checked_add(row_bytes) else {
+            return Self::scanout0_disabled_update();
+        };
+        if fb_gpa.checked_add(end_offset).is_none() {
+            return Self::scanout0_disabled_update();
+        }
+
+        ScanoutStateUpdate {
+            source: SCANOUT_SOURCE_WDDM,
+            base_paddr_lo: fb_gpa as u32,
+            base_paddr_hi: (fb_gpa >> 32) as u32,
+            width,
+            height,
+            pitch_bytes: self.scanout0_pitch_bytes,
+            format,
+        }
+    }
+
+    /// Consume any pending scanout0 register updates and produce a new shared scanout descriptor.
+    ///
+    /// Returns `None` when:
+    /// - the scanout registers have not changed since the last call, or
+    /// - the scanout has never been enabled (so legacy scanout should remain authoritative).
+    ///
+    /// Returns a disabled descriptor (base/width/height/pitch = 0) when the scanout is enabled but
+    /// invalid/unsupported (including unsupported formats).
+    #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+    pub fn take_scanout0_state_update(&mut self) -> Option<ScanoutStateUpdate> {
+        if !self.scanout0_dirty {
+            return None;
+        }
+        self.scanout0_dirty = false;
+
+        if !self.scanout0_enable {
+            return self
+                .wddm_scanout_active
+                .then_some(Self::scanout0_disabled_update());
+        }
+        Some(self.scanout0_to_scanout_state_update())
     }
 
     pub fn irq_level(&self) -> bool {
@@ -421,26 +542,54 @@ impl AeroGpuMmioDevice {
                     self.wddm_scanout_active = true;
                 }
                 self.scanout0_enable = new_enable;
+                #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+                {
+                    self.scanout0_dirty = true;
+                }
             }
             x if x == pci::AEROGPU_MMIO_REG_SCANOUT0_WIDTH as u64 => {
                 self.scanout0_width = value;
+                #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+                {
+                    self.scanout0_dirty = true;
+                }
             }
             x if x == pci::AEROGPU_MMIO_REG_SCANOUT0_HEIGHT as u64 => {
                 self.scanout0_height = value;
+                #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+                {
+                    self.scanout0_dirty = true;
+                }
             }
             x if x == pci::AEROGPU_MMIO_REG_SCANOUT0_FORMAT as u64 => {
                 self.scanout0_format = value;
+                #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+                {
+                    self.scanout0_dirty = true;
+                }
             }
             x if x == pci::AEROGPU_MMIO_REG_SCANOUT0_PITCH_BYTES as u64 => {
                 self.scanout0_pitch_bytes = value;
+                #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+                {
+                    self.scanout0_dirty = true;
+                }
             }
             x if x == pci::AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_LO as u64 => {
                 self.scanout0_fb_gpa =
                     (self.scanout0_fb_gpa & 0xffff_ffff_0000_0000) | u64::from(value);
+                #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+                {
+                    self.scanout0_dirty = true;
+                }
             }
             x if x == pci::AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_HI as u64 => {
                 self.scanout0_fb_gpa =
                     (self.scanout0_fb_gpa & 0x0000_0000_ffff_ffff) | (u64::from(value) << 32);
+                #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+                {
+                    self.scanout0_dirty = true;
+                }
             }
 
             x if x == pci::AEROGPU_MMIO_REG_CURSOR_ENABLE as u64 => self.cursor_enable = value != 0,
