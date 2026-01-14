@@ -2,6 +2,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { installMemoryOpfs, MemoryDirectoryHandle } from "../test_utils/memory_opfs";
 
+function toArrayBufferUint8(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
+  // Newer TS libdefs model typed arrays as `Uint8Array<ArrayBufferLike>`, but `fetch`/`Response`
+  // bodies are typed to accept only ArrayBuffer-backed views.
+  return bytes.buffer instanceof ArrayBuffer ? (bytes as unknown as Uint8Array<ArrayBuffer>) : new Uint8Array(bytes);
+}
+
 let probeSize = 1024 * 512;
 
 const originalFetchDescriptor = Object.getOwnPropertyDescriptor(globalThis, "fetch");
@@ -158,7 +164,7 @@ describe("disk_worker add_remote validation", () => {
       const end = m ? Number(m[2]) : 0;
       const len = end - start + 1;
       const body = bytesForRange(start, len);
-      return new Response(body, {
+      return new Response(toArrayBufferUint8(body), {
         status: 206,
         headers: {
           "content-length": String(body.byteLength),
@@ -180,7 +186,7 @@ describe("disk_worker add_remote validation", () => {
       const end = m ? Number(m[2]) : 0;
       const len = end - start + 1;
       const body = new Uint8Array(len);
-      return new Response(body, {
+      return new Response(toArrayBufferUint8(body), {
         status: 206,
         headers: {
           "content-length": String(body.byteLength),
@@ -208,7 +214,7 @@ describe("disk_worker add_remote validation", () => {
       if (start === ISO_PVD_SIG_OFFSET && len === 5) {
         body.set([0x43, 0x44, 0x30, 0x30, 0x31], 0); // "CD001"
       }
-      return new Response(body, {
+      return new Response(toArrayBufferUint8(body), {
         status: 206,
         headers: {
           "content-length": String(body.byteLength),

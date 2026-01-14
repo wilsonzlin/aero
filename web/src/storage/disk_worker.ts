@@ -474,8 +474,14 @@ function idbOverlayBindingKey(overlayDiskId: string): string {
 
 async function bestEffortRepairOpfsLocalMetadata(store: ReturnType<typeof getStore>, meta: DiskImageMetadata): Promise<void> {
   if (meta.source !== "local" || meta.backend !== "opfs") return;
+  // Treat stored metadata as untrusted: ignore inherited fields (prototype pollution) when selecting
+  // the OPFS directory and file name to probe.
+  const fileName = ownString(meta as object, "fileName");
+  if (!fileName) return;
+  const dirPathRaw = ownString(meta as object, "opfsDirectory");
+  const dirPath = typeof dirPathRaw === "string" && dirPathRaw.trim() ? dirPathRaw : undefined;
   try {
-    const handle = await opfsGetDiskFileHandle(meta.fileName, { create: false, dirPath: meta.opfsDirectory });
+    const handle = await opfsGetDiskFileHandle(fileName, { create: false, dirPath });
     const file = await handle.getFile();
 
     // Content-based sniffing to repair legacy imports that trusted the file extension. This avoids
@@ -788,6 +794,18 @@ function hasOwnProp(obj: object, key: string): boolean {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function ownString(obj: object, key: string): string | undefined {
+  const rec = obj as Record<string, unknown>;
+  const value = hasOwnProp(rec, key) ? rec[key] : undefined;
+  return typeof value === "string" ? value : undefined;
+}
+
+function ownRecord(obj: object, key: string): Record<string, unknown> | null {
+  const rec = obj as Record<string, unknown>;
+  const value = hasOwnProp(rec, key) ? rec[key] : undefined;
+  return isRecord(value) ? (value as Record<string, unknown>) : null;
 }
 
 function normalizeMountConfig(raw: unknown): MountConfig {
@@ -1673,25 +1691,46 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
       const diskId = hasOwnProp(payload, "id") ? payload.id : undefined;
       if (typeof diskId !== "string" || !diskId) throw new Error("Missing disk id");
       const meta = await requireDisk(backend, diskId);
+      const metaRec = meta as unknown as Record<string, unknown>;
       let actualSizeBytes = meta.sizeBytes;
 
       if (meta.source === "local") {
         if (meta.backend === "opfs") {
-          if (!meta.remote) {
-            actualSizeBytes = await opfsGetDiskSizeBytes(meta.fileName, meta.opfsDirectory);
+          // Treat stored metadata as untrusted: do not observe inherited fields (prototype pollution)
+          // when selecting the OPFS file name or legacy remote-streaming metadata.
+          const fileNameRaw = ownString(metaRec, "fileName");
+          if (!fileNameRaw) {
+            throw new Error(`Corrupt local disk metadata (missing fileName) for id=${diskId}`);
+          }
+          const dirPathRaw = ownString(metaRec, "opfsDirectory");
+          const dirPath = typeof dirPathRaw === "string" && dirPathRaw.trim() ? dirPathRaw : undefined;
+
+          const legacyRemoteRaw = hasOwnProp(metaRec, "remote") ? metaRec.remote : undefined;
+          const hasLegacyRemoteBase = !!legacyRemoteRaw;
+
+          if (!hasLegacyRemoteBase) {
+            actualSizeBytes = await opfsGetDiskSizeBytes(fileNameRaw, dirPath);
           } else {
             let totalBytes = 0;
             // Remote-streaming disks store local writes in a runtime overlay.
             try {
-              totalBytes += await opfsGetDiskSizeBytes(`${meta.id}.overlay.aerospar`, meta.opfsDirectory);
+              totalBytes += await opfsGetDiskSizeBytes(`${diskId}.overlay.aerospar`, dirPath);
             } catch {
               // ignore
             }
             // Count cached bytes stored by RemoteStreamingDisk (OpfsLruChunkCache).
             try {
-              const cacheKey = await stableCacheKey(meta.remote.url, { blockSize: meta.remote.blockSizeBytes });
-              const remoteCacheDir = await opfsGetRemoteCacheDir();
-              totalBytes += await opfsReadLruChunkCacheBytes(remoteCacheDir, cacheKey);
+              const remoteRec = isRecord(legacyRemoteRaw) ? (legacyRemoteRaw as Record<string, unknown>) : null;
+              const urlRaw = remoteRec && hasOwnProp(remoteRec, "url") ? remoteRec.url : undefined;
+              const url = typeof urlRaw === "string" ? urlRaw.trim() : "";
+              if (url) {
+                const blockSizeBytesRaw =
+                  remoteRec && hasOwnProp(remoteRec, "blockSizeBytes") ? remoteRec.blockSizeBytes : undefined;
+                const blockSizeBytes = typeof blockSizeBytesRaw === "number" ? blockSizeBytesRaw : undefined;
+                const cacheKey = await stableCacheKey(url, { blockSize: blockSizeBytes });
+                const remoteCacheDir = await opfsGetRemoteCacheDir();
+                totalBytes += await opfsReadLruChunkCacheBytes(remoteCacheDir, cacheKey);
+              }
             } catch {
               // ignore
             }
@@ -1700,7 +1739,7 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
         } else if (meta.backend === "idb") {
           const db = await openDiskManagerDb();
           try {
-            actualSizeBytes = await idbSumDiskChunkBytes(db, meta.id);
+            actualSizeBytes = await idbSumDiskChunkBytes(db, diskId);
           } finally {
             db.close();
           }
@@ -1710,20 +1749,46 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
       }
 
       // Remote disks: report local storage usage best-effort.
-      if (meta.cache.backend === "idb") {
+      const remoteRec = ownRecord(metaRec, "remote");
+      const cacheRec = ownRecord(metaRec, "cache");
+      if (!remoteRec || !cacheRec) {
+        throw new Error(`Corrupt remote disk metadata (missing remote/cache) for id=${diskId}`);
+      }
+
+      const cacheBackend = hasOwnProp(cacheRec, "backend") ? cacheRec.backend : undefined;
+      if (cacheBackend !== "opfs" && cacheBackend !== "idb") {
+        throw new Error(`Corrupt remote disk metadata (invalid cache.backend=${String(cacheBackend)}) for id=${diskId}`);
+      }
+      const cacheFileName = ownString(cacheRec, "fileName");
+      const overlayFileName = ownString(cacheRec, "overlayFileName");
+      const chunkSizeBytesRaw = hasOwnProp(cacheRec, "chunkSizeBytes") ? cacheRec.chunkSizeBytes : undefined;
+      const chunkSizeBytes = typeof chunkSizeBytesRaw === "number" ? chunkSizeBytesRaw : NaN;
+
+      const delivery = hasOwnProp(remoteRec, "delivery") ? remoteRec.delivery : undefined;
+      const imageId = ownString(remoteRec, "imageId");
+      const version = ownString(remoteRec, "version");
+
+      if ((delivery !== "range" && delivery !== "chunked") || !imageId || !version) {
+        throw new Error(`Corrupt remote disk metadata (invalid remote base) for id=${diskId}`);
+      }
+      if (!cacheFileName || !overlayFileName || !Number.isFinite(chunkSizeBytes)) {
+        throw new Error(`Corrupt remote disk metadata (invalid cache fields) for id=${diskId}`);
+      }
+
+      if (cacheBackend === "idb") {
         const db = await openDiskManagerDb();
         try {
           let totalBytes = 0;
           try {
             // Overlay bytes (user state) live in the `chunks` store under the overlay ID.
-            totalBytes += await idbSumDiskChunkBytes(db, meta.cache.overlayFileName);
+            totalBytes += await idbSumDiskChunkBytes(db, overlayFileName);
           } catch {
             // ignore
           }
           try {
             // Legacy per-disk cache may have been stored in the `chunks` store too.
-            if (meta.cache.fileName !== meta.cache.overlayFileName) {
-              totalBytes += await idbSumDiskChunkBytes(db, meta.cache.fileName);
+            if (cacheFileName !== overlayFileName) {
+              totalBytes += await idbSumDiskChunkBytes(db, cacheFileName);
             }
           } catch {
             // ignore
@@ -1731,14 +1796,14 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
 
           try {
             const deliveryTypes =
-              meta.remote.delivery === "range"
-                ? [remoteRangeDeliveryType(meta.cache.chunkSizeBytes), "range"]
-                : [remoteChunkedDeliveryType(meta.cache.chunkSizeBytes), "chunked"];
+              delivery === "range"
+                ? [remoteRangeDeliveryType(chunkSizeBytes), "range"]
+                : [remoteChunkedDeliveryType(chunkSizeBytes), "chunked"];
             const derivedKeys = await Promise.all(
               deliveryTypes.map((deliveryType) =>
                 RemoteCacheManager.deriveCacheKey({
-                  imageId: meta.remote.imageId,
-                  version: meta.remote.version,
+                  imageId,
+                  version,
                   deliveryType,
                 }),
               ),
@@ -1747,9 +1812,9 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
             const keysToProbe = new Set<string>([
               ...derivedKeys,
               // Legacy IDB caches used un-derived cache identifiers.
-              meta.cache.fileName,
-              meta.cache.overlayFileName,
-              idbOverlayBindingKey(meta.cache.overlayFileName),
+              cacheFileName,
+              overlayFileName,
+              idbOverlayBindingKey(overlayFileName),
             ]);
 
             const tx = db.transaction(["remote_chunk_meta"], "readonly");
@@ -1784,14 +1849,14 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
         return;
       }
 
-      if (meta.cache.backend !== "opfs") {
+      if (cacheBackend !== "opfs") {
         postOk(requestId, { meta, actualSizeBytes });
         return;
       }
 
       let overlayBytes = 0;
       try {
-        overlayBytes = await opfsGetDiskSizeBytes(meta.cache.overlayFileName);
+        overlayBytes = await opfsGetDiskSizeBytes(overlayFileName);
       } catch {
         // ignore (overlay may not exist yet)
       }
@@ -1800,17 +1865,17 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
 
       try {
         const deliveryTypes =
-          meta.remote.delivery === "range"
-            ? [remoteRangeDeliveryType(meta.cache.chunkSizeBytes), "range"]
-            : [remoteChunkedDeliveryType(meta.cache.chunkSizeBytes), "chunked"];
+          delivery === "range"
+            ? [remoteRangeDeliveryType(chunkSizeBytes), "range"]
+            : [remoteChunkedDeliveryType(chunkSizeBytes), "chunked"];
 
-        if (meta.remote.delivery === "range") {
+        if (delivery === "range") {
           const remoteCacheDir = await opfsGetRemoteCacheDir();
 
           for (const deliveryType of deliveryTypes) {
             const cacheKey = await RemoteCacheManager.deriveCacheKey({
-              imageId: meta.remote.imageId,
-              version: meta.remote.version,
+              imageId,
+              version,
               deliveryType,
             });
             cacheBytes += await opfsReadLruChunkCacheBytes(remoteCacheDir, cacheKey);
@@ -1819,8 +1884,8 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
           const manager = await RemoteCacheManager.openOpfs();
           for (const deliveryType of deliveryTypes) {
             const cacheKey = await RemoteCacheManager.deriveCacheKey({
-              imageId: meta.remote.imageId,
-              version: meta.remote.version,
+              imageId,
+              version,
               deliveryType,
             });
             const status = await manager.getCacheStatus(cacheKey);
@@ -1833,9 +1898,9 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
 
       // Backwards compatibility: some older remote images stored cached bytes in a single sparse file.
       // Always include it when present so we don't under-count if both legacy + new caches exist.
-      if (meta.cache.fileName !== meta.cache.overlayFileName) {
+      if (cacheFileName !== overlayFileName) {
         try {
-          cacheBytes += await opfsGetDiskSizeBytes(meta.cache.fileName);
+          cacheBytes += await opfsGetDiskSizeBytes(cacheFileName);
         } catch {
           // ignore
         }
@@ -1844,9 +1909,9 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
       // Older RemoteRangeDisk versions persisted a cache file keyed by the remote base identity
       // (in addition to the per-disk cache file above). Include it when present so stat_disk
       // can attribute orphaned legacy bytes before the disk is opened (where we now delete it).
-      if (meta.remote.delivery === "range") {
+      if (delivery === "range") {
         try {
-          const imageKey = `${meta.remote.imageId}:${meta.remote.version}:${meta.remote.delivery}`;
+          const imageKey = `${imageId}:${version}:${delivery}`;
           const cacheId = await stableCacheId(imageKey);
           cacheBytes += await opfsGetDiskSizeBytes(`remote-range-cache-${cacheId}.aerospar`).catch(() => 0);
           cacheBytes += await opfsGetDiskSizeBytes(`remote-range-cache-${cacheId}.json`).catch(() => 0);
@@ -1883,18 +1948,28 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
       if (meta.format !== "raw" && meta.format !== "unknown") {
         throw new Error(`Only raw HDD images can be resized (format=${meta.format})`);
       }
-      if (meta.remote) {
+      // Legacy remote-streaming local disk metadata (`LocalDiskImageMetadata.remote`).
+      // Treat as untrusted and do not observe inherited values.
+      const metaRec = meta as unknown as Record<string, unknown>;
+      const legacyRemoteRaw = hasOwnProp(metaRec, "remote") ? metaRec.remote : undefined;
+      if (legacyRemoteRaw) {
         throw new Error("Remote disks cannot be resized.");
       }
 
       const progressCb = (p: ImportProgress) => postProgress(requestId, p);
 
       if (meta.backend === "opfs") {
-        await opfsResizeDisk(meta.fileName, newSizeBytes, progressCb, meta.opfsDirectory);
+        const fileNameRaw = ownString(metaRec, "fileName");
+        if (!fileNameRaw) {
+          throw new Error(`Corrupt local disk metadata (missing fileName) for id=${diskId}`);
+        }
+        const dirPathRaw = ownString(metaRec, "opfsDirectory");
+        const dirPath = typeof dirPathRaw === "string" && dirPathRaw.trim() ? dirPathRaw : undefined;
+        await opfsResizeDisk(fileNameRaw, newSizeBytes, progressCb, dirPath);
         // Resizing invalidates COW overlays (table size depends on disk size).
-        await opfsDeleteDisk(`${meta.id}.overlay.aerospar`, meta.opfsDirectory);
+        await opfsDeleteDisk(`${diskId}.overlay.aerospar`, dirPath);
       } else {
-        await idbResizeDisk(meta.id, meta.sizeBytes, newSizeBytes, progressCb);
+        await idbResizeDisk(diskId, meta.sizeBytes, newSizeBytes, progressCb);
       }
 
       meta.sizeBytes = newSizeBytes;
@@ -1909,48 +1984,96 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
       const diskId = hasOwnProp(payload, "id") ? payload.id : undefined;
       if (typeof diskId !== "string" || !diskId) throw new Error("Missing disk id");
       const meta = await requireDisk(backend, diskId);
+      const metaRec = meta as unknown as Record<string, unknown>;
       if (meta.source === "local") {
         if (meta.backend === "opfs") {
-          if (meta.remote) {
+          const dirPathRaw = ownString(metaRec, "opfsDirectory");
+          const dirPath = typeof dirPathRaw === "string" && dirPathRaw.trim() ? dirPathRaw : undefined;
+          // Legacy remote-streaming local disk metadata (`LocalDiskImageMetadata.remote`).
+          // Treat as untrusted and do not observe inherited values.
+          const legacyRemoteRaw = hasOwnProp(metaRec, "remote") ? metaRec.remote : undefined;
+          const hasLegacyRemoteBase = !!legacyRemoteRaw;
+
+          if (hasLegacyRemoteBase) {
             // Best-effort cache cleanup for remote-streaming disks.
             try {
-              const cacheKey = await stableCacheKey(meta.remote.url, { blockSize: meta.remote.blockSizeBytes });
-              await removeOpfsEntry(`${OPFS_DISKS_PATH}/${OPFS_REMOTE_CACHE_DIR}/${cacheKey}`, { recursive: true });
+              const remoteRec = isRecord(legacyRemoteRaw) ? (legacyRemoteRaw as Record<string, unknown>) : null;
+              const urlRaw = remoteRec && hasOwnProp(remoteRec, "url") ? remoteRec.url : undefined;
+              const url = typeof urlRaw === "string" ? urlRaw.trim() : "";
+              if (url) {
+                const blockSizeBytesRaw =
+                  remoteRec && hasOwnProp(remoteRec, "blockSizeBytes") ? remoteRec.blockSizeBytes : undefined;
+                const blockSizeBytes = typeof blockSizeBytesRaw === "number" ? blockSizeBytesRaw : undefined;
+                const cacheKey = await stableCacheKey(url, { blockSize: blockSizeBytes });
+                await removeOpfsEntry(`${OPFS_DISKS_PATH}/${OPFS_REMOTE_CACHE_DIR}/${cacheKey}`, { recursive: true });
+              }
             } catch {
               // ignore
             }
           } else {
-            await opfsDeleteDisk(meta.fileName, meta.opfsDirectory);
+            const fileNameRaw = ownString(metaRec, "fileName");
+            if (!fileNameRaw) {
+              throw new Error(`Corrupt local disk metadata (missing fileName) for id=${diskId}`);
+            }
+            await opfsDeleteDisk(fileNameRaw, dirPath);
           }
 
           // Converted images write a sidecar manifest (best-effort cleanup).
-          await opfsDeleteDisk(`${meta.id}.manifest.json`);
+          await opfsDeleteDisk(`${diskId}.manifest.json`);
           // Best-effort cleanup of runtime COW overlay files.
-          await opfsDeleteDisk(`${meta.id}.overlay.aerospar`, meta.opfsDirectory);
+          await opfsDeleteDisk(`${diskId}.overlay.aerospar`, dirPath);
         } else {
           const db = await openDiskManagerDb();
           try {
-            await idbDeleteDiskData(db, meta.id);
+            await idbDeleteDiskData(db, diskId);
           } finally {
             db.close();
           }
         }
       } else {
-        if (meta.cache.backend === "opfs") {
+        const remoteRec = ownRecord(metaRec, "remote");
+        const cacheRec = ownRecord(metaRec, "cache");
+        if (!remoteRec || !cacheRec) {
+          throw new Error(`Corrupt remote disk metadata (missing remote/cache) for id=${diskId}`);
+        }
+
+        const cacheBackend = hasOwnProp(cacheRec, "backend") ? cacheRec.backend : undefined;
+        if (cacheBackend !== "opfs" && cacheBackend !== "idb") {
+          throw new Error(`Corrupt remote disk metadata (invalid cache.backend=${String(cacheBackend)}) for id=${diskId}`);
+        }
+        const chunkSizeBytesRaw = hasOwnProp(cacheRec, "chunkSizeBytes") ? cacheRec.chunkSizeBytes : undefined;
+        const chunkSizeBytes = typeof chunkSizeBytesRaw === "number" ? chunkSizeBytesRaw : NaN;
+        const cacheFileName = ownString(cacheRec, "fileName");
+        const overlayFileName = ownString(cacheRec, "overlayFileName");
+
+        const delivery = hasOwnProp(remoteRec, "delivery") ? remoteRec.delivery : undefined;
+        const imageId = ownString(remoteRec, "imageId");
+        const version = ownString(remoteRec, "version");
+
+        const urlsRec = ownRecord(remoteRec, "urls");
+        const stableUrlRaw = urlsRec && hasOwnProp(urlsRec, "url") ? urlsRec.url : undefined;
+        const stableUrl = typeof stableUrlRaw === "string" ? stableUrlRaw.trim() : "";
+
+        if ((delivery !== "range" && delivery !== "chunked") || !imageId || !version) {
+          throw new Error(`Corrupt remote disk metadata (invalid remote base) for id=${diskId}`);
+        }
+        if (!cacheFileName || !overlayFileName || !Number.isFinite(chunkSizeBytes)) {
+          throw new Error(`Corrupt remote disk metadata (invalid cache fields) for id=${diskId}`);
+        }
+
+        if (cacheBackend === "opfs") {
           // Remote delivery caches bytes under the RemoteCacheManager directory (derived key).
           // Best-effort cleanup when deleting the disk.
           try {
             const manager = await RemoteCacheManager.openOpfs();
             const deliveryTypes =
-              meta.remote.delivery === "range"
-                ? [remoteRangeDeliveryType(meta.cache.chunkSizeBytes), "range"]
-                : meta.remote.delivery === "chunked"
-                  ? [remoteChunkedDeliveryType(meta.cache.chunkSizeBytes), "chunked"]
-                : [meta.remote.delivery];
+              delivery === "range"
+                ? [remoteRangeDeliveryType(chunkSizeBytes), "range"]
+                : [remoteChunkedDeliveryType(chunkSizeBytes), "chunked"];
             for (const deliveryType of deliveryTypes) {
               const cacheKey = await RemoteCacheManager.deriveCacheKey({
-                imageId: meta.remote.imageId,
-                version: meta.remote.version,
+                imageId,
+                version,
                 deliveryType,
               });
               await manager.clearCache(cacheKey);
@@ -1959,26 +2082,26 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
             // best-effort cleanup
           }
 
-          await opfsDeleteDisk(meta.cache.fileName);
+          await opfsDeleteDisk(cacheFileName);
           // Legacy versions used a small binding file to associate the OPFS Range cache file with the
           // immutable remote base identity. Best-effort cleanup when the disk is deleted.
-          await opfsDeleteDisk(`${meta.cache.fileName}.binding.json`);
+          await opfsDeleteDisk(`${cacheFileName}.binding.json`);
           // RuntimeDiskWorker `RemoteRangeDisk` stores per-disk cache metadata in a sidecar file.
-          if (meta.remote.delivery === "range") {
-            await opfsDeleteDisk(`${meta.cache.fileName}.remote-range-meta.json`);
+          if (delivery === "range") {
+            await opfsDeleteDisk(`${cacheFileName}.remote-range-meta.json`);
           }
           // Legacy RemoteRangeDisk persisted its own sparse cache + metadata keyed by the remote base identity.
           // Best-effort cleanup when deleting the disk.
-          if (meta.remote.delivery === "range") {
-            const imageKey = `${meta.remote.imageId}:${meta.remote.version}:${meta.remote.delivery}`;
+          if (delivery === "range") {
+            const imageKey = `${imageId}:${version}:${delivery}`;
             const cacheId = await stableCacheId(imageKey);
             await opfsDeleteDisk(`remote-range-cache-${cacheId}.aerospar`);
             await opfsDeleteDisk(`remote-range-cache-${cacheId}.json`);
           }
-          await opfsDeleteDisk(meta.cache.overlayFileName);
+          await opfsDeleteDisk(overlayFileName);
           // Remote overlays also store a base identity binding so they can be invalidated safely.
           // Best-effort cleanup when deleting the disk.
-          await opfsDeleteDisk(`${meta.cache.overlayFileName}.binding.json`);
+          await opfsDeleteDisk(`${overlayFileName}.binding.json`);
         } else {
           const db = await openDiskManagerDb();
           try {
@@ -1986,24 +2109,22 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
             // and/or in the legacy `chunks` store (disk-style sparse chunks).
             // Best-effort cleanup: try both.
             const deliveryTypes =
-              meta.remote.delivery === "range"
-                ? [remoteRangeDeliveryType(meta.cache.chunkSizeBytes), "range"]
-                : meta.remote.delivery === "chunked"
-                  ? [remoteChunkedDeliveryType(meta.cache.chunkSizeBytes), "chunked"]
-                : [meta.remote.delivery];
+              delivery === "range"
+                ? [remoteRangeDeliveryType(chunkSizeBytes), "range"]
+                : [remoteChunkedDeliveryType(chunkSizeBytes), "chunked"];
             for (const deliveryType of deliveryTypes) {
               const derivedCacheKey = await RemoteCacheManager.deriveCacheKey({
-                imageId: meta.remote.imageId,
-                version: meta.remote.version,
+                imageId,
+                version,
                 deliveryType,
               });
               await idbDeleteRemoteChunkCache(db, derivedCacheKey);
             }
-            await idbDeleteRemoteChunkCache(db, meta.cache.fileName);
-            await idbDeleteRemoteChunkCache(db, meta.cache.overlayFileName);
-            await idbDeleteRemoteChunkCache(db, idbOverlayBindingKey(meta.cache.overlayFileName));
-            await idbDeleteDiskData(db, meta.cache.fileName);
-            await idbDeleteDiskData(db, meta.cache.overlayFileName);
+            await idbDeleteRemoteChunkCache(db, cacheFileName);
+            await idbDeleteRemoteChunkCache(db, overlayFileName);
+            await idbDeleteRemoteChunkCache(db, idbOverlayBindingKey(overlayFileName));
+            await idbDeleteDiskData(db, cacheFileName);
+            await idbDeleteDiskData(db, overlayFileName);
           } finally {
             db.close();
           }
@@ -2011,12 +2132,11 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
 
         // Best-effort cleanup for RemoteStreamingDisk / RemoteRangeDisk / RemoteChunkedDisk cache directories
         // keyed by URL (legacy / openRemote-style paths), if present.
-        const url = meta.remote.urls.url;
-        if (url && meta.remote.delivery === "range") {
-          const blockSizes = new Set([meta.cache.chunkSizeBytes, RANGE_STREAM_CHUNK_SIZE]);
+        if (stableUrl && delivery === "range") {
+          const blockSizes = new Set([chunkSizeBytes, RANGE_STREAM_CHUNK_SIZE]);
           for (const blockSize of blockSizes) {
             try {
-              const cacheKey = await stableCacheKey(url, { blockSize });
+              const cacheKey = await stableCacheKey(stableUrl, { blockSize });
               await removeOpfsEntry(`${OPFS_DISKS_PATH}/${OPFS_REMOTE_CACHE_DIR}/${cacheKey}`, { recursive: true });
             } catch {
               // ignore
@@ -2024,7 +2144,7 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
           }
         }
       }
-      await store.deleteDisk(meta.id);
+      await store.deleteDisk(diskId);
       postOk(requestId, { ok: true });
       return;
     }
@@ -2222,10 +2342,14 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
       const diskId = hasOwnProp(payload, "id") ? payload.id : undefined;
       if (typeof diskId !== "string" || !diskId) throw new Error("Missing disk id");
       const meta = await requireDisk(backend, diskId);
+      const metaRec = meta as unknown as Record<string, unknown>;
       if (meta.source !== "local") {
         throw new Error("Remote disks cannot be exported");
       }
-      if (meta.remote) {
+      // Legacy remote-streaming local disk metadata (`LocalDiskImageMetadata.remote`).
+      // Treat as untrusted and do not observe inherited values.
+      const legacyRemoteRaw = hasOwnProp(metaRec, "remote") ? metaRec.remote : undefined;
+      if (legacyRemoteRaw) {
         throw new Error("Export is not supported for remote streaming disks; download from the original source instead.");
       }
       const port = msg.port;
@@ -2251,9 +2375,15 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
       void (async () => {
         try {
           if (meta.backend === "opfs") {
-            await opfsExportToPort(meta.fileName, port, options, progressCb, meta.opfsDirectory);
+            const fileNameRaw = ownString(metaRec, "fileName");
+            if (!fileNameRaw) {
+              throw new Error(`Corrupt local disk metadata (missing fileName) for id=${diskId}`);
+            }
+            const dirPathRaw = ownString(metaRec, "opfsDirectory");
+            const dirPath = typeof dirPathRaw === "string" && dirPathRaw.trim() ? dirPathRaw : undefined;
+            await opfsExportToPort(fileNameRaw, port, options, progressCb, dirPath);
           } else {
-            await idbExportToPort(meta.id, meta.sizeBytes, port, options, progressCb);
+            await idbExportToPort(diskId, meta.sizeBytes, port, options, progressCb);
           }
         } catch (err) {
           try {
