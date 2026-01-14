@@ -9,12 +9,10 @@
 ;
 ; Policy:
 ;   - This file exists for legacy filename compatibility (`virtio-input.inf`).
-;   - The canonical INF (`aero_virtio_input.inf`) is intentionally SUBSYS-only.
-;   - This legacy alias INF is allowed to diverge from the canonical INF only in
-;     the models sections (`[Aero.NTx86]` / `[Aero.NTamd64]`) to add the opt-in
-;     strict generic fallback HWID (`PCI\VEN_1AF4&DEV_1052&REV_01`).
-;   - Outside those models sections, from the first section header (`[Version]`)
-;     onward, it must remain byte-for-byte identical to `aero_virtio_input.inf`.
+;   - It is a filename-only alias of the canonical INF (`aero_virtio_input.inf`).
+;   - From the first section header (`[Version]`) onward, it must remain
+;     byte-for-byte identical to `aero_virtio_input.inf` (including the models
+;     / HWID match lines).
 ;   - Banner/comments may differ.
 ;   - Do not ship/install both INFs at the same time.
 ;

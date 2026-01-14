@@ -10,12 +10,13 @@ test images where you want input working immediately).
 >
 >
 > - Keyboard/mouse (`aero_virtio_input.inf`):
->   - Binds via `SUBSYS_00101AF4` / `SUBSYS_00111AF4` only (no generic fallback HWID in the canonical INF).
+>   - Binds via `SUBSYS_00101AF4` / `SUBSYS_00111AF4` (distinct Device Manager naming), and
+>   - also via strict generic fallback (no `SUBSYS`): `PCI\VEN_1AF4&DEV_1052&REV_01`
 > - Tablet/absolute pointer (`aero_virtio_tablet.inf`): `SUBSYS_00121AF4`
-> - Opt-in strict generic fallback (no `SUBSYS`): `PCI\VEN_1AF4&DEV_1052&REV_01`
->   - Provided only by the legacy filename alias INF: `virtio-input.inf.disabled` → rename to `virtio-input.inf` to enable.
->   - Alias sync policy: identical to `aero_virtio_input.inf` from `[Version]` onward **except** the models sections
->     (`[Aero.NTx86]` / `[Aero.NTamd64]`), where the alias adds the fallback match. Banner/comments may differ.
+>   - This match is more specific, so it wins over the generic fallback when both driver packages are installed.
+> - Legacy basename alias: `virtio-input.inf.disabled` → rename to `virtio-input.inf` to enable.
+>   - Filename-only alias: expected to be byte-identical to `aero_virtio_input.inf` from `[Version]` onward
+>     (banner/comments may differ).
 >   - Do **not** stage/install both basenames at once: choose **either** `aero_virtio_input.inf` **or** `virtio-input.inf`.
 
 The commands below assume you already have a **built driver package directory** containing:
