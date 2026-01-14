@@ -83,6 +83,45 @@ class QmpMsixParsingTests(unittest.TestCase):
         net = next(i for i in infos if i.vendor_id == 0x1AF4 and i.device_id == 0x1041)
         self.assertIsNone(net.msix_enabled)
 
+    def test_query_pci_msix_parses_msi_x_variants(self) -> None:
+        h = self.harness
+        query = [
+            {
+                "bus": 0,
+                "devices": [
+                    {
+                        "bus": 0,
+                        "slot": 6,
+                        "function": 0,
+                        "vendor_id": 0x1AF4,
+                        "device_id": 0x1041,
+                        # Some QEMU builds may expose the MSI-X capability as `msi-x`
+                        # with `enabled` as an integer.
+                        "capabilities": [{"id": "msi-x", "msi-x": {"enabled": 1}}],
+                    },
+                    {
+                        "bus": 0,
+                        "slot": 7,
+                        "function": 0,
+                        "vendor_id": 0x1AF4,
+                        "device_id": 0x1042,
+                        # Other builds may put the `enabled` bit directly on the capability
+                        # object (and use a string value).
+                        "capabilities": [{"id": "msi-x", "enabled": "disabled"}],
+                    },
+                ],
+            }
+        ]
+        infos = h._parse_qmp_query_pci_msix_info(query)
+
+        net = next(i for i in infos if i.vendor_id == 0x1AF4 and i.device_id == 0x1041)
+        self.assertEqual(net.msix_enabled, True)
+        self.assertEqual(net.bdf(), "00:06.0")
+
+        blk = next(i for i in infos if i.vendor_id == 0x1AF4 and i.device_id == 0x1042)
+        self.assertEqual(blk.msix_enabled, False)
+        self.assertEqual(blk.bdf(), "00:07.0")
+
     def test_query_pci_msix_recurses_pci_bridge_bus(self) -> None:
         h = self.harness
         query = [
