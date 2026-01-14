@@ -199,6 +199,8 @@ or:
 Note: some clients send both `apiKey` and `token` for compatibility. If both are
 provided, they must match.
 
+If `AUTH_MODE != none`, the client MUST authenticate within `SIGNALING_AUTH_TIMEOUT`. If the timeout is hit, credentials are invalid, or if the client sends a datagram frame before authenticating, the relay sends a `{"type":"error","code":"unauthorized"}` message and closes the WebSocket with close code **1008** (policy violation).
+
 ### Keepalive / idle timeouts (after authentication)
 
 After authentication completes, the relay applies an idle timeout and sends keepalive pings:
