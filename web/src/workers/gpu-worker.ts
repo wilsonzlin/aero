@@ -1526,13 +1526,6 @@ const tryReadScanoutRgba8 = (snap: ScanoutStateSnapshot): ScanoutReadback | null
     emitScanoutReadbackInvalid(snap, "Scanout: pitchBytes < rowBytes", { rowBytes: srcRowBytes, pitchBytes });
     return null;
   }
-  if (pitchBytes % srcBytesPerPixel !== 0) {
-    emitScanoutReadbackInvalid(snap, "Scanout: pitchBytes must be aligned to bytes-per-pixel", {
-      pitchBytes,
-      srcBytesPerPixel,
-    });
-    return null;
-  }
 
   const rowBytes = width * BYTES_PER_PIXEL_RGBA8;
   const outputBytesU64 = BigInt(width) * BigInt(height) * BigInt(BYTES_PER_PIXEL_RGBA8);
@@ -1659,6 +1652,7 @@ const tryReadScanoutRgba8 = (snap: ScanoutStateSnapshot): ScanoutReadback | null
   const canUseU32 =
     kind !== null &&
     (srcOffset & 3) === 0 &&
+    (pitchBytes & 3) === 0 &&
     !!srcU32 &&
     !!outU32 &&
     (out.byteOffset & 3) === 0;
@@ -4617,7 +4611,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                 postStub(typeof seq === "number" ? seq : undefined);
                 return true;
               }
-              if (pitchBytes < srcRowBytes || pitchBytes % srcBytesPerPixel !== 0) {
+              if (pitchBytes < srcRowBytes) {
                 postStub(typeof seq === "number" ? seq : undefined);
                 return true;
               }

@@ -200,9 +200,6 @@ export function readScanoutRgba8FromGuestRam(
       `scanout pitchBytes is too small: pitchBytes=${pitchBytes} < width*${srcBytesPerPixel}=${srcRowBytes}`,
     );
   }
-  if (pitchBytes % srcBytesPerPixel !== 0) {
-    throw new RangeError(`scanout pitchBytes must be a multiple of ${srcBytesPerPixel} (got ${pitchBytes})`);
-  }
 
   const rowBytes = width * 4;
   const totalBytes = rowBytes * height;

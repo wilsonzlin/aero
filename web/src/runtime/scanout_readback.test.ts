@@ -77,6 +77,37 @@ describe("runtime/scanout_readback", () => {
     ]);
   });
 
+  it("converts byte-granular pitch (pitchBytes not aligned to bytes-per-pixel)", () => {
+    const width = 2;
+    const height = 2;
+    const rowBytes = width * 4;
+    const pitchBytes = rowBytes + 1; // 1 byte padding at end of each row (not divisible by 4)
+
+    const guest = new Uint8Array(pitchBytes * height);
+    guest.fill(0xee);
+
+    // Row0 pixels.
+    guest.set([1, 2, 3, 0, 4, 5, 6, 0], 0);
+    // Row1 pixels (after pitchBytes).
+    guest.set([7, 8, 9, 0, 10, 11, 12, 0], pitchBytes);
+
+    const out = readScanoutRgba8FromGuestRam(guest, {
+      basePaddr: 0,
+      width,
+      height,
+      pitchBytes,
+      format: SCANOUT_FORMAT_B8G8R8X8,
+    });
+
+    expect(out.rgba8.byteLength).toBe(rowBytes * height);
+    expect(Array.from(out.rgba8)).toEqual([
+      // row0
+      3, 2, 1, 255, 6, 5, 4, 255,
+      // row1
+      9, 8, 7, 255, 12, 11, 10, 255,
+    ]);
+  });
+
   it("converts padded pitch without requiring last-row padding bytes", () => {
     const width = 2;
     const height = 2;

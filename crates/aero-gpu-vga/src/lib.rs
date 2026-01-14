@@ -302,9 +302,8 @@ pub struct VgaDevice {
     ///
     /// Aero's HLE BIOS allows `INT 10h AX=4F06` to set the scanline length in *bytes*, including
     /// values that are not representable as an integral number of pixels (e.g. 32bpp pitch not
-    /// divisible by 4). Keep this as an explicit byte override so scanout/panning can follow
-    /// BIOS-driven stride changes (and to support other integrations that may supply a
-    /// byte-granular pitch).
+    /// divisible by 4). Preserve this as an explicit byte override so scanout/panning can follow
+    /// BIOS-driven stride changes and integrations can supply a byte-granular pitch.
     ///
     /// When this value is non-zero, the SVGA scanout renderer uses it as the exact scanline
     /// stride in bytes (instead of deriving stride from `virt_width`). This keeps BIOS-driven
@@ -508,12 +507,9 @@ impl VgaDevice {
             if pitch_bytes == 0 {
                 return disabled;
             }
-            // Packed pixel scanout requires whole-pixel alignment so each scanline begins on a
-            // pixel boundary. This matches the assumptions made by scanout consumers (e.g. web
-            // readback paths require `pitchBytes % bytesPerPixel == 0`).
-            if pitch_bytes % bytes_per_pixel != 0 {
-                return disabled;
-            }
+            // `pitch_bytes` is byte-granular and may not be divisible by `bytes_per_pixel` (e.g.
+            // BIOS INT 10h AX=4F06 "set scanline length in bytes"). Consumers must treat it as a
+            // byte stride, not a pixel count.
 
             let row_bytes = match width.checked_mul(bytes_per_pixel) {
                 Some(v) => v,
@@ -3237,7 +3233,7 @@ mod tests {
 
     #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
     #[test]
-    fn scanout_update_disables_when_pitch_is_not_pixel_aligned() {
+    fn scanout_update_allows_byte_granular_pitch() {
         let mut dev = VgaDevice::new();
         dev.set_svga_lfb_base(0xD000_0000);
         dev.set_svga_mode(64, 32, 32, true);
@@ -3247,11 +3243,11 @@ mod tests {
 
         let update = dev.active_scanout_update();
         assert_eq!(update.source, SCANOUT_SOURCE_LEGACY_VBE_LFB);
-        assert_eq!(update.base_paddr_lo, 0);
+        assert_eq!(update.base_paddr_lo, 0xD000_0000);
         assert_eq!(update.base_paddr_hi, 0);
-        assert_eq!(update.width, 0);
-        assert_eq!(update.height, 0);
-        assert_eq!(update.pitch_bytes, 0);
+        assert_eq!(update.width, 64);
+        assert_eq!(update.height, 32);
+        assert_eq!(update.pitch_bytes, 64 * 4 + 1);
         assert_eq!(update.format, SCANOUT_FORMAT_B8G8R8X8);
     }
 
