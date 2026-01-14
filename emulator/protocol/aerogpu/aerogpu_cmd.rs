@@ -1785,42 +1785,12 @@ pub fn decode_cmd_set_shader_constants_f_payload_le(
 
     let hdr = decode_cmd_hdr_le(buf)?;
     let packet_len = validate_packet_len(buf, hdr)?;
-
-    let vec4_count = u32::from_le_bytes(buf[16..20].try_into().unwrap());
-    let float_count = vec4_count
-        .checked_mul(4)
-        .ok_or(AerogpuCmdDecodeError::BufferTooSmall)? as usize;
-    let payload_size_bytes = float_count
-        .checked_mul(4)
-        .ok_or(AerogpuCmdDecodeError::BufferTooSmall)?;
-    let payload_start = AerogpuCmdSetShaderConstantsF::SIZE_BYTES;
-    let payload_end = payload_start
-        .checked_add(payload_size_bytes)
-        .ok_or(AerogpuCmdDecodeError::BufferTooSmall)?;
-    if payload_end > packet_len {
-        return Err(AerogpuCmdDecodeError::BadSizeBytes {
-            found: hdr.size_bytes,
-        });
-    }
-
-    let cmd = AerogpuCmdSetShaderConstantsF {
+    let packet = AerogpuCmdPacket {
         hdr,
-        stage: u32::from_le_bytes(buf[8..12].try_into().unwrap()),
-        start_register: u32::from_le_bytes(buf[12..16].try_into().unwrap()),
-        vec4_count,
-        reserved0: u32::from_le_bytes(buf[20..24].try_into().unwrap()),
+        opcode: AerogpuCmdOpcode::from_u32(hdr.opcode),
+        payload: &buf[AerogpuCmdHdr::SIZE_BYTES..packet_len],
     };
-
-    let mut out = Vec::new();
-    out.try_reserve_exact(float_count)
-        .map_err(|_| AerogpuCmdDecodeError::CountOverflow)?;
-    for i in 0..float_count {
-        let off = payload_start + i * 4;
-        let bits = u32::from_le_bytes(buf[off..off + 4].try_into().unwrap());
-        out.push(f32::from_bits(bits));
-    }
-
-    Ok((cmd, out))
+    packet.decode_set_shader_constants_f_payload_le()
 }
 
 /// Decode UPLOAD_RESOURCE and return the raw payload bytes (without padding).
@@ -2449,6 +2419,60 @@ impl<'a> AerogpuCmdPacket<'a> {
             },
             blob_bytes,
         ))
+    }
+
+    pub fn decode_set_shader_constants_f_payload_le(
+        &self,
+    ) -> Result<(AerogpuCmdSetShaderConstantsF, Vec<f32>), AerogpuCmdDecodeError> {
+        if self.opcode != Some(AerogpuCmdOpcode::SetShaderConstantsF) {
+            return Err(AerogpuCmdDecodeError::UnexpectedOpcode {
+                found: self.hdr.opcode,
+                expected: AerogpuCmdOpcode::SetShaderConstantsF,
+            });
+        }
+        if self.payload.len() < 16 {
+            return Err(AerogpuCmdDecodeError::BufferTooSmall);
+        }
+
+        let stage = u32::from_le_bytes(self.payload[0..4].try_into().unwrap());
+        let start_register = u32::from_le_bytes(self.payload[4..8].try_into().unwrap());
+        let vec4_count = u32::from_le_bytes(self.payload[8..12].try_into().unwrap());
+        let reserved0 = u32::from_le_bytes(self.payload[12..16].try_into().unwrap());
+
+        let float_count = vec4_count
+            .checked_mul(4)
+            .ok_or(AerogpuCmdDecodeError::BufferTooSmall)? as usize;
+        let payload_size_bytes = float_count
+            .checked_mul(4)
+            .ok_or(AerogpuCmdDecodeError::BufferTooSmall)?;
+        let payload_start = 16usize;
+        let payload_end = payload_start
+            .checked_add(payload_size_bytes)
+            .ok_or(AerogpuCmdDecodeError::BufferTooSmall)?;
+        if payload_end > self.payload.len() {
+            return Err(AerogpuCmdDecodeError::BadSizeBytes {
+                found: self.hdr.size_bytes,
+            });
+        }
+
+        let cmd = AerogpuCmdSetShaderConstantsF {
+            hdr: self.hdr,
+            stage,
+            start_register,
+            vec4_count,
+            reserved0,
+        };
+
+        let mut out = Vec::new();
+        out.try_reserve_exact(float_count)
+            .map_err(|_| AerogpuCmdDecodeError::CountOverflow)?;
+        for i in 0..float_count {
+            let off = payload_start + i * 4;
+            let bits = u32::from_le_bytes(self.payload[off..off + 4].try_into().unwrap());
+            out.push(f32::from_bits(bits));
+        }
+
+        Ok((cmd, out))
     }
 
     pub fn decode_set_vertex_buffers_payload_le(
