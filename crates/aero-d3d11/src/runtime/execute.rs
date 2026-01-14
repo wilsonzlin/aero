@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use aero_gpu::bindings::bind_group_cache::{
@@ -1397,7 +1397,17 @@ impl D3D11Runtime {
             self.device.limits().max_storage_buffers_per_shader_stage;
         let max_storage_textures_per_shader_stage =
             self.device.limits().max_storage_textures_per_shader_stage;
-        let mut bindings = Vec::with_capacity(binding_count);
+        let max_uniform_buffers_per_shader_stage =
+            self.device.limits().max_uniform_buffers_per_shader_stage;
+        let max_sampled_textures_per_shader_stage =
+            self.device.limits().max_sampled_textures_per_shader_stage;
+        let max_samplers_per_shader_stage = self.device.limits().max_samplers_per_shader_stage;
+        let max_bindings_per_bind_group = self.device.limits().max_bindings_per_bind_group as usize;
+
+        // Keep bindings unique by `@binding(N)` while decoding. Duplicate bindings can arise from
+        // buggy command writers and would otherwise trigger wgpu validation panics when creating
+        // bind group layouts.
+        let mut bindings: BTreeMap<u32, BindingDef> = BTreeMap::new();
         for _ in 0..binding_count {
             if *cursor + 4 > payload.len() {
                 bail!("unexpected end of payload while decoding binding defs");
@@ -1444,13 +1454,204 @@ impl D3D11Runtime {
                 );
             }
 
-            bindings.push(BindingDef {
-                binding,
-                visibility,
-                kind,
-            });
+            match bindings.entry(binding) {
+                std::collections::btree_map::Entry::Vacant(entry) => {
+                    entry.insert(BindingDef {
+                        binding,
+                        visibility,
+                        kind,
+                    });
+                }
+                std::collections::btree_map::Entry::Occupied(mut entry) => {
+                    let existing = entry.get_mut();
+                    if existing.kind != kind {
+                        bail!(
+                            "binding @binding({binding}) kind mismatch ({:?} vs {:?})",
+                            existing.kind,
+                            kind
+                        );
+                    }
+                    existing.visibility |= visibility;
+                }
+            }
         }
-        Ok(bindings)
+
+        if bindings.len() > max_bindings_per_bind_group {
+            bail!(
+                "pipeline uses {} bindings in its bind group, but device limit max_bindings_per_bind_group={max_bindings_per_bind_group}",
+                bindings.len()
+            );
+        }
+
+        // wgpu enforces per-stage resource count limits. Validate early so callers get a clear
+        // error rather than a backend validation panic.
+        let mut uniform_buffers_vertex = 0u32;
+        let mut uniform_buffers_fragment = 0u32;
+        let mut uniform_buffers_compute = 0u32;
+        let mut sampled_textures_vertex = 0u32;
+        let mut sampled_textures_fragment = 0u32;
+        let mut sampled_textures_compute = 0u32;
+        let mut samplers_vertex = 0u32;
+        let mut samplers_fragment = 0u32;
+        let mut samplers_compute = 0u32;
+        let mut storage_buffers_vertex = 0u32;
+        let mut storage_buffers_fragment = 0u32;
+        let mut storage_buffers_compute = 0u32;
+        let mut storage_textures_vertex = 0u32;
+        let mut storage_textures_fragment = 0u32;
+        let mut storage_textures_compute = 0u32;
+
+        for def in bindings.values() {
+            let is_uniform_buffer = matches!(def.kind, BindingKind::UniformBuffer);
+            let is_sampled_texture = matches!(def.kind, BindingKind::Texture2D);
+            let is_sampler = matches!(def.kind, BindingKind::Sampler);
+            let is_storage_buffer = matches!(def.kind, BindingKind::StorageBuffer { .. });
+            let is_storage_texture =
+                matches!(def.kind, BindingKind::StorageTexture2DWriteOnly { .. });
+
+            if is_uniform_buffer {
+                if def.visibility.contains(wgpu::ShaderStages::VERTEX) {
+                    uniform_buffers_vertex = uniform_buffers_vertex.saturating_add(1);
+                }
+                if def.visibility.contains(wgpu::ShaderStages::FRAGMENT) {
+                    uniform_buffers_fragment = uniform_buffers_fragment.saturating_add(1);
+                }
+                if def.visibility.contains(wgpu::ShaderStages::COMPUTE) {
+                    uniform_buffers_compute = uniform_buffers_compute.saturating_add(1);
+                }
+            }
+            if is_sampled_texture {
+                if def.visibility.contains(wgpu::ShaderStages::VERTEX) {
+                    sampled_textures_vertex = sampled_textures_vertex.saturating_add(1);
+                }
+                if def.visibility.contains(wgpu::ShaderStages::FRAGMENT) {
+                    sampled_textures_fragment = sampled_textures_fragment.saturating_add(1);
+                }
+                if def.visibility.contains(wgpu::ShaderStages::COMPUTE) {
+                    sampled_textures_compute = sampled_textures_compute.saturating_add(1);
+                }
+            }
+            if is_sampler {
+                if def.visibility.contains(wgpu::ShaderStages::VERTEX) {
+                    samplers_vertex = samplers_vertex.saturating_add(1);
+                }
+                if def.visibility.contains(wgpu::ShaderStages::FRAGMENT) {
+                    samplers_fragment = samplers_fragment.saturating_add(1);
+                }
+                if def.visibility.contains(wgpu::ShaderStages::COMPUTE) {
+                    samplers_compute = samplers_compute.saturating_add(1);
+                }
+            }
+            if is_storage_buffer {
+                if def.visibility.contains(wgpu::ShaderStages::VERTEX) {
+                    storage_buffers_vertex = storage_buffers_vertex.saturating_add(1);
+                }
+                if def.visibility.contains(wgpu::ShaderStages::FRAGMENT) {
+                    storage_buffers_fragment = storage_buffers_fragment.saturating_add(1);
+                }
+                if def.visibility.contains(wgpu::ShaderStages::COMPUTE) {
+                    storage_buffers_compute = storage_buffers_compute.saturating_add(1);
+                }
+            }
+            if is_storage_texture {
+                if def.visibility.contains(wgpu::ShaderStages::VERTEX) {
+                    storage_textures_vertex = storage_textures_vertex.saturating_add(1);
+                }
+                if def.visibility.contains(wgpu::ShaderStages::FRAGMENT) {
+                    storage_textures_fragment = storage_textures_fragment.saturating_add(1);
+                }
+                if def.visibility.contains(wgpu::ShaderStages::COMPUTE) {
+                    storage_textures_compute = storage_textures_compute.saturating_add(1);
+                }
+            }
+        }
+
+        let max_uniform_buffers_per_shader_stage = u32::from(max_uniform_buffers_per_shader_stage);
+        let max_sampled_textures_per_shader_stage =
+            u32::from(max_sampled_textures_per_shader_stage);
+        let max_samplers_per_shader_stage = u32::from(max_samplers_per_shader_stage);
+
+        if uniform_buffers_vertex > max_uniform_buffers_per_shader_stage {
+            bail!(
+                "pipeline uses {uniform_buffers_vertex} uniform buffers in vertex stage, but device limit max_uniform_buffers_per_shader_stage={max_uniform_buffers_per_shader_stage}"
+            );
+        }
+        if uniform_buffers_fragment > max_uniform_buffers_per_shader_stage {
+            bail!(
+                "pipeline uses {uniform_buffers_fragment} uniform buffers in fragment stage, but device limit max_uniform_buffers_per_shader_stage={max_uniform_buffers_per_shader_stage}"
+            );
+        }
+        if uniform_buffers_compute > max_uniform_buffers_per_shader_stage {
+            bail!(
+                "pipeline uses {uniform_buffers_compute} uniform buffers in compute stage, but device limit max_uniform_buffers_per_shader_stage={max_uniform_buffers_per_shader_stage}"
+            );
+        }
+
+        if sampled_textures_vertex > max_sampled_textures_per_shader_stage {
+            bail!(
+                "pipeline uses {sampled_textures_vertex} sampled textures in vertex stage, but device limit max_sampled_textures_per_shader_stage={max_sampled_textures_per_shader_stage}"
+            );
+        }
+        if sampled_textures_fragment > max_sampled_textures_per_shader_stage {
+            bail!(
+                "pipeline uses {sampled_textures_fragment} sampled textures in fragment stage, but device limit max_sampled_textures_per_shader_stage={max_sampled_textures_per_shader_stage}"
+            );
+        }
+        if sampled_textures_compute > max_sampled_textures_per_shader_stage {
+            bail!(
+                "pipeline uses {sampled_textures_compute} sampled textures in compute stage, but device limit max_sampled_textures_per_shader_stage={max_sampled_textures_per_shader_stage}"
+            );
+        }
+
+        if samplers_vertex > max_samplers_per_shader_stage {
+            bail!(
+                "pipeline uses {samplers_vertex} samplers in vertex stage, but device limit max_samplers_per_shader_stage={max_samplers_per_shader_stage}"
+            );
+        }
+        if samplers_fragment > max_samplers_per_shader_stage {
+            bail!(
+                "pipeline uses {samplers_fragment} samplers in fragment stage, but device limit max_samplers_per_shader_stage={max_samplers_per_shader_stage}"
+            );
+        }
+        if samplers_compute > max_samplers_per_shader_stage {
+            bail!(
+                "pipeline uses {samplers_compute} samplers in compute stage, but device limit max_samplers_per_shader_stage={max_samplers_per_shader_stage}"
+            );
+        }
+
+        if storage_buffers_vertex > max_storage_buffers_per_shader_stage {
+            bail!(
+                "pipeline uses {storage_buffers_vertex} storage buffers in vertex stage, but device limit max_storage_buffers_per_shader_stage={max_storage_buffers_per_shader_stage}"
+            );
+        }
+        if storage_buffers_fragment > max_storage_buffers_per_shader_stage {
+            bail!(
+                "pipeline uses {storage_buffers_fragment} storage buffers in fragment stage, but device limit max_storage_buffers_per_shader_stage={max_storage_buffers_per_shader_stage}"
+            );
+        }
+        if storage_buffers_compute > max_storage_buffers_per_shader_stage {
+            bail!(
+                "pipeline uses {storage_buffers_compute} storage buffers in compute stage, but device limit max_storage_buffers_per_shader_stage={max_storage_buffers_per_shader_stage}"
+            );
+        }
+
+        if storage_textures_vertex > max_storage_textures_per_shader_stage {
+            bail!(
+                "pipeline uses {storage_textures_vertex} storage textures in vertex stage, but device limit max_storage_textures_per_shader_stage={max_storage_textures_per_shader_stage}"
+            );
+        }
+        if storage_textures_fragment > max_storage_textures_per_shader_stage {
+            bail!(
+                "pipeline uses {storage_textures_fragment} storage textures in fragment stage, but device limit max_storage_textures_per_shader_stage={max_storage_textures_per_shader_stage}"
+            );
+        }
+        if storage_textures_compute > max_storage_textures_per_shader_stage {
+            bail!(
+                "pipeline uses {storage_textures_compute} storage textures in compute stage, but device limit max_storage_textures_per_shader_stage={max_storage_textures_per_shader_stage}"
+            );
+        }
+
+        Ok(bindings.into_values().collect())
     }
 
     fn validate_storage_binding_capabilities(
