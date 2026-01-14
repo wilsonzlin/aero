@@ -102,6 +102,15 @@ SCAN_DBGCTL_TEXT_FILES = [
     ROOT / "scripts" / "parse_win7_dxgi_swapchain_trace.py",
     # The Win7 test runner references dbgctl flags in user-facing usage text. Validate these too.
     WIN7_TEST_RUNNER_SRC,
+    # Misc tooling/docs in source comments (keep in sync so examples remain valid).
+    ROOT
+    / "drivers"
+    / "aerogpu"
+    / "kmd"
+    / "tools"
+    / "wdk_abi_probe"
+    / "kmd_wdk_abi_probe.cpp",
+    ROOT / "drivers" / "aerogpu" / "tools" / "win7_dbgctl" / "src" / "aerogpu_fence_watch_math.h",
 ]
 
 # Source files that *invoke* dbgctl by composing argv arrays. Keep these in sync too so test tooling
