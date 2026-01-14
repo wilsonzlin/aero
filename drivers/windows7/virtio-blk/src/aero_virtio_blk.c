@@ -1638,7 +1638,7 @@ SCSI_ADAPTER_CONTROL_STATUS AerovblkHwAdapterControl(_In_ PVOID deviceExtension,
      * Stop the device before aborting in-flight requests to prevent the device
      * from continuing DMA while we tear down the queue.
      */
-    if (devExt->Vdev.CommonCfg != NULL) {
+    if (!devExt->SurpriseRemoved && devExt->Vdev.CommonCfg != NULL) {
       /* Best-effort: clear virtio MSI-X vector routing before resetting/teardown. */
       (void)VirtioPciDisableMsixVectors(&devExt->Vdev, /*QueueCount=*/1);
       VirtioPciResetDevice(&devExt->Vdev);
@@ -2012,16 +2012,35 @@ BOOLEAN AerovblkHwStartIo(_In_ PVOID deviceExtension, _Inout_ PSCSI_REQUEST_BLOC
     if (pnp != NULL && srb->DataTransferLength >= sizeof(*pnp)) {
       if (pnp->PnPAction == StorStopDevice || pnp->PnPAction == StorRemoveDevice) {
         STOR_LOCK_HANDLE lock;
+        BOOLEAN surpriseRemove;
 
         /*
          * Mark removed under the interrupt lock so we don't race with the I/O
          * submission path (AerovblkQueueRequest).
          */
         StorPortAcquireSpinLock(devExt, InterruptLock, &lock);
+        surpriseRemove = FALSE;
+        if (pnp->PnPAction == StorRemoveDevice && !devExt->Removed) {
+          /*
+           * Surprise removal: we did not see a prior stop, so the device may have
+           * already disappeared. Avoid further virtio BAR MMIO (reset/disable)
+           * and clear BAR-backed pointers/caches so accidental access becomes a
+           * no-op instead of touching unmapped MMIO.
+           */
+          devExt->SurpriseRemoved = TRUE;
+          surpriseRemove = TRUE;
+          devExt->Vdev.CommonCfg = NULL;
+          devExt->Vdev.NotifyBase = NULL;
+          devExt->Vdev.IsrStatus = NULL;
+          devExt->Vdev.DeviceCfg = NULL;
+          devExt->Vdev.QueueNotifyAddrCache = NULL;
+          devExt->Vdev.QueueNotifyAddrCacheCount = 0;
+          RtlZeroMemory(devExt->QueueNotifyAddrCache, sizeof(devExt->QueueNotifyAddrCache));
+        }
         devExt->Removed = TRUE;
         StorPortReleaseSpinLock(devExt, &lock);
 
-        if (devExt->Vdev.CommonCfg != NULL) {
+        if (!surpriseRemove && devExt->Vdev.CommonCfg != NULL) {
           (void)VirtioPciDisableMsixVectors(&devExt->Vdev, /*QueueCount=*/1);
           VirtioPciResetDevice(&devExt->Vdev);
         }
@@ -2039,6 +2058,7 @@ BOOLEAN AerovblkHwStartIo(_In_ PVOID deviceExtension, _Inout_ PSCSI_REQUEST_BLOC
         /* Clear removed under lock so StartIo/queue path sees consistent state. */
         StorPortAcquireSpinLock(devExt, InterruptLock, &lock);
         devExt->Removed = FALSE;
+        devExt->SurpriseRemoved = FALSE;
         StorPortReleaseSpinLock(devExt, &lock);
 
         allocateResources = (devExt->Vq.queue_size == 0 || devExt->RequestContexts == NULL) ? TRUE : FALSE;

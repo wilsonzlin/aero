@@ -159,6 +159,12 @@ typedef struct _AEROVBLK_DEVICE_EXTENSION {
     volatile LONG IoctlResetCount;
 
     BOOLEAN Removed;
+    /*
+     * When set, the device may have disappeared (surprise removal / hot-unplug).
+     * In that state, BAR0 MMIO access may fault, so hardware quiesce/reset must
+     * be avoided.
+     */
+    BOOLEAN SurpriseRemoved;
     SENSE_DATA LastSense;
 } AEROVBLK_DEVICE_EXTENSION, *PAEROVBLK_DEVICE_EXTENSION;
 
