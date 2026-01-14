@@ -40,6 +40,8 @@ def _synthetic_setup_text(
     include_cert_install_skip_policy: bool = True,
     include_signature_marker_files: bool = True,
     include_testsigning_policy_gate: bool = True,
+    include_verify_media_flag: bool = True,
+    include_installed_media_state: bool = True,
 ) -> str:
     lines: list[str] = []
     if include_cdd_base_path:
@@ -60,6 +62,18 @@ def _synthetic_setup_text(
             "/forcesigningpolicy:none /forcesigningpolicy:test /forcesigningpolicy:production",
         ]
     )
+
+    if include_verify_media_flag:
+        lines.extend(
+            [
+                "/verify-media",
+                'if "%ARG_VERIFY_MEDIA%"=="1" (',
+                "  call :verify_media_preflight",
+                ")",
+                ":verify_media_preflight",
+                "manifest.json",
+            ]
+        )
 
     if include_admin_gate and admin_gate_before_check_dispatch:
         lines.append("call :require_admin_stdout")
@@ -156,6 +170,16 @@ def _synthetic_setup_text(
             ]
         )
 
+    if include_installed_media_state:
+        lines.extend(
+            [
+                r'set "STATE_INSTALLED_MEDIA=C:\AeroGuestTools\installed-media.txt"',
+                "call :write_installed_media_state",
+                ":write_installed_media_state",
+                "installed-media.txt",
+            ]
+        )
+
     return "\n".join(lines) + "\n"
 
 
@@ -165,6 +189,7 @@ def _synthetic_uninstall_text() -> str:
             "testsigning.enabled-by-aero.txt",
             "nointegritychecks.enabled-by-aero.txt",
             "storage-preseed.skipped.txt",
+            "installed-media.txt",
         ]
     )
 
@@ -178,6 +203,7 @@ def _synthetic_verify_text() -> str:
             "/skipstorage",
             "testsigning.enabled-by-aero.txt",
             "nointegritychecks.enabled-by-aero.txt",
+            "installed-media.txt",
             "virtio_blk_boot_critical",
             "manifest.json",
             "signing_policy",
@@ -471,6 +497,46 @@ class LintGuestToolsScriptsTests(unittest.TestCase):
                 msg="expected missing cert-install skip-policy error. Errors:\n" + "\n".join(errs),
             )
 
+    def test_linter_fails_when_setup_missing_verify_media_support(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="aero-guest-tools-lint-") as tmp:
+            tmp_path = Path(tmp)
+            setup_cmd = tmp_path / "setup.cmd"
+            uninstall_cmd = tmp_path / "uninstall.cmd"
+            verify_ps1 = tmp_path / "verify.ps1"
+
+            setup_cmd.write_text(_synthetic_setup_text(include_verify_media_flag=False), encoding="utf-8")
+            uninstall_cmd.write_text(_synthetic_uninstall_text(), encoding="utf-8")
+            verify_ps1.write_text(_synthetic_verify_text(), encoding="utf-8")
+
+            errs = lint_guest_tools_scripts.lint_files(
+                setup_cmd=setup_cmd, uninstall_cmd=uninstall_cmd, verify_ps1=verify_ps1
+            )
+            self.assertTrue(errs, msg="expected lint errors, got none")
+            self.assertTrue(
+                any("verify-media" in e for e in errs),
+                msg="expected missing /verify-media error. Errors:\n" + "\n".join(errs),
+            )
+
+    def test_linter_fails_when_setup_missing_installed_media_state(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="aero-guest-tools-lint-") as tmp:
+            tmp_path = Path(tmp)
+            setup_cmd = tmp_path / "setup.cmd"
+            uninstall_cmd = tmp_path / "uninstall.cmd"
+            verify_ps1 = tmp_path / "verify.ps1"
+
+            setup_cmd.write_text(_synthetic_setup_text(include_installed_media_state=False), encoding="utf-8")
+            uninstall_cmd.write_text(_synthetic_uninstall_text(), encoding="utf-8")
+            verify_ps1.write_text(_synthetic_verify_text(), encoding="utf-8")
+
+            errs = lint_guest_tools_scripts.lint_files(
+                setup_cmd=setup_cmd, uninstall_cmd=uninstall_cmd, verify_ps1=verify_ps1
+            )
+            self.assertTrue(errs, msg="expected lint errors, got none")
+            self.assertTrue(
+                any("installed media provenance" in e for e in errs),
+                msg="expected missing installed-media.txt error. Errors:\n" + "\n".join(errs),
+            )
+
     def test_linter_fails_when_setup_missing_signature_state_markers(self) -> None:
         with tempfile.TemporaryDirectory(prefix="aero-guest-tools-lint-") as tmp:
             tmp_path = Path(tmp)
@@ -577,6 +643,40 @@ class LintGuestToolsScriptsTests(unittest.TestCase):
                 msg="expected missing verify signature marker awareness error. Errors:\n" + "\n".join(errs),
             )
 
+    def test_linter_fails_when_verify_missing_installed_media_reference(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="aero-guest-tools-lint-") as tmp:
+            tmp_path = Path(tmp)
+            setup_cmd = tmp_path / "setup.cmd"
+            uninstall_cmd = tmp_path / "uninstall.cmd"
+            verify_ps1 = tmp_path / "verify.ps1"
+
+            setup_cmd.write_text(_synthetic_setup_text(), encoding="utf-8")
+            uninstall_cmd.write_text(_synthetic_uninstall_text(), encoding="utf-8")
+            verify_ps1.write_text(
+                "\n".join(
+                    [
+                        "CriticalDeviceDatabase",
+                        "storage-preseed.skipped.txt",
+                        "/skipstorage",
+                        "testsigning.enabled-by-aero.txt",
+                        "nointegritychecks.enabled-by-aero.txt",
+                        "virtio_blk_boot_critical",
+                        "manifest.json",
+                        "signing_policy",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            errs = lint_guest_tools_scripts.lint_files(
+                setup_cmd=setup_cmd, uninstall_cmd=uninstall_cmd, verify_ps1=verify_ps1
+            )
+            self.assertTrue(errs, msg="expected lint errors, got none")
+            self.assertTrue(
+                any("installed media provenance" in e for e in errs),
+                msg="expected missing verify installed-media.txt reference error. Errors:\n" + "\n".join(errs),
+            )
+
     def test_linter_fails_when_uninstall_missing_storage_skip_marker_reference(self) -> None:
         with tempfile.TemporaryDirectory(prefix="aero-guest-tools-lint-") as tmp:
             tmp_path = Path(tmp)
@@ -598,6 +698,35 @@ class LintGuestToolsScriptsTests(unittest.TestCase):
             self.assertTrue(
                 any("storage preseed skipped" in e for e in errs),
                 msg="expected missing uninstall skipstorage marker reference error. Errors:\n" + "\n".join(errs),
+            )
+
+    def test_linter_fails_when_uninstall_missing_installed_media_reference(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="aero-guest-tools-lint-") as tmp:
+            tmp_path = Path(tmp)
+            setup_cmd = tmp_path / "setup.cmd"
+            uninstall_cmd = tmp_path / "uninstall.cmd"
+            verify_ps1 = tmp_path / "verify.ps1"
+
+            setup_cmd.write_text(_synthetic_setup_text(), encoding="utf-8")
+            uninstall_cmd.write_text(
+                "\n".join(
+                    [
+                        "testsigning.enabled-by-aero.txt",
+                        "nointegritychecks.enabled-by-aero.txt",
+                        "storage-preseed.skipped.txt",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            verify_ps1.write_text(_synthetic_verify_text(), encoding="utf-8")
+
+            errs = lint_guest_tools_scripts.lint_files(
+                setup_cmd=setup_cmd, uninstall_cmd=uninstall_cmd, verify_ps1=verify_ps1
+            )
+            self.assertTrue(errs, msg="expected lint errors, got none")
+            self.assertTrue(
+                any("installed media provenance file" in e for e in errs),
+                msg="expected missing uninstall installed-media.txt reference error. Errors:\n" + "\n".join(errs),
             )
 
 

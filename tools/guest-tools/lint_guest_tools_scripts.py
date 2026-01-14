@@ -323,6 +323,23 @@ def lint_files(*, setup_cmd: Path, uninstall_cmd: Path, verify_ps1: Path) -> Lis
             ),
         ),
         Invariant(
+            description="Supports /verify-media flag (preflight Guest Tools media integrity via manifest.json)",
+            expected_hint="/verify-media (or /verifymedia)",
+            predicate=_any_regex([r"/verify-media\b", r"/verifymedia\b"]),
+        ),
+        Invariant(
+            description="Media integrity preflight exists (verify_media_preflight)",
+            expected_hint=":verify_media_preflight label + manifest.json",
+            predicate=_all_regex([r"(?im)^:verify_media_preflight\b", r"manifest\.json"]),
+        ),
+        Invariant(
+            description="Wires /verify-media flag to verify_media_preflight",
+            expected_hint='If "%ARG_VERIFY_MEDIA%"=="1" (...) call :verify_media_preflight',
+            predicate=_regex(
+                r'(?is)if\s+"%ARG_VERIFY_MEDIA%"\s*==\s*"1"\s*\([\s\S]*?call\s+:?verify_media_preflight\b'
+            ),
+        ),
+        Invariant(
             description="Supports /check (or /validate) dry-run validation mode (no system changes)",
             expected_hint='Parses "/check"/"/validate" and jumps to :check_mode (e.g. if "%ARG_CHECK%"=="1" goto :check_mode)',
             predicate=lambda text: (
@@ -469,6 +486,16 @@ def lint_files(*, setup_cmd: Path, uninstall_cmd: Path, verify_ps1: Path) -> Lis
                 )(text)
             ),
         ),
+        Invariant(
+            description="Records installed media provenance (installed-media.txt)",
+            expected_hint="installed-media.txt + :write_installed_media_state",
+            predicate=_all_regex([r"installed-media\.txt", r"(?im)^:write_installed_media_state\b"]),
+        ),
+        Invariant(
+            description="Calls write_installed_media_state during install",
+            expected_hint="call :write_installed_media_state",
+            predicate=_regex(r"(?i)\bcall\s+:?write_installed_media_state\b"),
+        ),
     ]
 
     verify_invariants = [
@@ -497,6 +524,11 @@ def lint_files(*, setup_cmd: Path, uninstall_cmd: Path, verify_ps1: Path) -> Lis
             expected_hint="testsigning.enabled-by-aero.txt + nointegritychecks.enabled-by-aero.txt",
             predicate=_all_regex([r"testsigning\.enabled-by-aero\.txt", r"nointegritychecks\.enabled-by-aero\.txt"]),
         ),
+        Invariant(
+            description="verify reads installed media provenance written by setup.cmd (installed-media.txt)",
+            expected_hint="installed-media.txt",
+            predicate=_regex(r"installed-media\.txt"),
+        ),
     ]
 
     uninstall_invariants = [
@@ -514,6 +546,11 @@ def lint_files(*, setup_cmd: Path, uninstall_cmd: Path, verify_ps1: Path) -> Lis
             description="Uninstaller references marker file for storage preseed skipped by Guest Tools",
             expected_hint="storage-preseed.skipped.txt",
             predicate=_regex(r"storage-preseed\.skipped\.txt"),
+        ),
+        Invariant(
+            description="Uninstaller references installed media provenance file written by setup.cmd",
+            expected_hint="installed-media.txt",
+            predicate=_regex(r"installed-media\.txt"),
         ),
     ]
 
