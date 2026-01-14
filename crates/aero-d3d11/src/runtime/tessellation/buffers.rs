@@ -194,6 +194,12 @@ impl TessellationDrawScratchSizes {
                 "control_points must be > 0",
             ));
         }
+        // D3D11 patchlist topologies encode 1..=32 control points.
+        if params.control_points > 32 {
+            return Err(TessellationSizingError::InvalidParam(
+                "control_points must be <= 32",
+            ));
+        }
 
         let ds_output_stride_bytes = payload_stride_bytes(params.ds_output_register_count)?;
 
@@ -335,6 +341,14 @@ mod tests {
         ));
         assert!(matches!(
             TessellationDrawScratchSizes::new(TessellationSizingParams::new(1, 1, 1, 0)),
+            Err(TessellationSizingError::InvalidParam(_))
+        ));
+    }
+
+    #[test]
+    fn rejects_control_points_above_d3d11_limit() {
+        assert!(matches!(
+            TessellationDrawScratchSizes::new(TessellationSizingParams::new(1, 33, 1, 1)),
             Err(TessellationSizingError::InvalidParam(_))
         ));
     }
