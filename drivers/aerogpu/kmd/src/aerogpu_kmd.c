@@ -260,7 +260,7 @@ static AEROGPU_DISPLAY_MODE_CONFIG g_AeroGpuDisplayModeConfig = {0, 0, 0, 0};
  * Dbgctl escape gating.
  *
  * READ_GPA and MAP_SHARED_HANDLE are debug-only and potentially unsafe. Gate them behind
- * registry-controlled flags under the miniport service key:
+ * registry-controlled flags under the miniport service key (and require a privileged caller):
  *   HKLM\SYSTEM\CurrentControlSet\Services\aerogpu\Parameters
  *     - EnableReadGpaEscape (REG_DWORD)
  *     - EnableMapSharedHandleEscape (REG_DWORD)
@@ -4311,7 +4311,7 @@ static BOOLEAN AeroGpuTryReadRegistryDword(_In_ PDEVICE_OBJECT PhysicalDeviceObj
  * - PASSIVE_LEVEL only (registry + mapping APIs)
  * - strict size caps
  * - physical range validation (RAM only)
- * - security gated (DBG build or explicit registry opt-in + privileged caller)
+ * - security gated (service key opt-in + privileged caller)
  *
  * This is a debugging escape; treat it as a sharp tool.
  */
@@ -4319,22 +4319,8 @@ static BOOLEAN AeroGpuTryReadRegistryDword(_In_ PDEVICE_OBJECT PhysicalDeviceObj
 
 static BOOLEAN AeroGpuDbgctlReadGpaRegistryEnabled(_In_opt_ const AEROGPU_ADAPTER* Adapter)
 {
-#if DBG
     UNREFERENCED_PARAMETER(Adapter);
-    return TRUE;
-#else
-    if (!Adapter || !Adapter->PhysicalDeviceObject) {
-        return FALSE;
-    }
-
-    ULONG enabled = 0;
-    if (AeroGpuTryReadRegistryDword(Adapter->PhysicalDeviceObject, PLUGPLAY_REGKEY_DRIVER, L"Parameters", L"EnableDbgctlReadGpa", &enabled) ||
-        AeroGpuTryReadRegistryDword(Adapter->PhysicalDeviceObject, PLUGPLAY_REGKEY_DEVICE, L"Parameters", L"EnableDbgctlReadGpa", &enabled)) {
-        return enabled ? TRUE : FALSE;
-    }
-
-    return FALSE;
-#endif
+    return (g_AeroGpuEnableReadGpaEscape != 0) ? TRUE : FALSE;
 }
 
 static BOOLEAN AeroGpuDbgctlCallerIsAdminOrSeDebug(_In_ KPROCESSOR_MODE PreviousMode)
@@ -9716,26 +9702,6 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         return STATUS_NOT_SUPPORTED;
     }
 
-    /*
-     * Gate debug-only escapes that can leak data or pin arbitrary kernel objects.
-     *
-     * Return STATUS_NOT_SUPPORTED so guest-side tests can treat these as optional.
-     */
-    if (hdr->op == AEROGPU_ESCAPE_OP_READ_GPA && g_AeroGpuEnableReadGpaEscape == 0) {
-        AEROGPU_LOG_RATELIMITED(g_AeroGpuBlockedReadGpaEscapeCount,
-                                4,
-                                "blocked dbgctl escape READ_GPA (EnableReadGpaEscape=0) pid=%p",
-                                PsGetCurrentProcessId());
-        return STATUS_NOT_SUPPORTED;
-    }
-    if (hdr->op == AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE && g_AeroGpuEnableMapSharedHandleEscape == 0) {
-        AEROGPU_LOG_RATELIMITED(g_AeroGpuBlockedMapSharedHandleEscapeCount,
-                                4,
-                                "blocked dbgctl escape MAP_SHARED_HANDLE (EnableMapSharedHandleEscape=0) pid=%p",
-                                PsGetCurrentProcessId());
-        return STATUS_NOT_SUPPORTED;
-    }
-
     if (hdr->op == AEROGPU_ESCAPE_OP_QUERY_DEVICE_V2) {
         if (pEscape->PrivateDriverDataSize < sizeof(aerogpu_escape_query_device_v2_out)) {
             return STATUS_BUFFER_TOO_SMALL;
@@ -11215,9 +11181,20 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             return STATUS_INVALID_DEVICE_STATE;
         }
 
-        if (!AeroGpuDbgctlReadGpaRegistryEnabled(adapter) ||
-            !AeroGpuDbgctlCallerIsAdminOrSeDebug(ExGetPreviousMode())) {
-            return STATUS_ACCESS_DENIED;
+        if (!AeroGpuDbgctlReadGpaRegistryEnabled(adapter)) {
+            AEROGPU_LOG_RATELIMITED(g_AeroGpuBlockedReadGpaEscapeCount,
+                                    4,
+                                    "blocked dbgctl escape READ_GPA (EnableReadGpaEscape=0) pid=%p",
+                                    PsGetCurrentProcessId());
+            return STATUS_NOT_SUPPORTED;
+        }
+
+        if (!AeroGpuDbgctlCallerIsAdminOrSeDebug(ExGetPreviousMode())) {
+            AEROGPU_LOG_RATELIMITED(g_AeroGpuBlockedReadGpaEscapeCount,
+                                    4,
+                                    "blocked dbgctl escape READ_GPA (caller not admin/SeDebug) pid=%p",
+                                    PsGetCurrentProcessId());
+            return STATUS_NOT_SUPPORTED;
         }
 
         aerogpu_escape_read_gpa_inout* io = (aerogpu_escape_read_gpa_inout*)pEscape->pPrivateDriverData;
@@ -11712,6 +11689,26 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
     }
 
     if (hdr->op == AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE) {
+        if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
+            return STATUS_INVALID_DEVICE_STATE;
+        }
+
+        if (g_AeroGpuEnableMapSharedHandleEscape == 0) {
+            AEROGPU_LOG_RATELIMITED(g_AeroGpuBlockedMapSharedHandleEscapeCount,
+                                    4,
+                                    "blocked dbgctl escape MAP_SHARED_HANDLE (EnableMapSharedHandleEscape=0) pid=%p",
+                                    PsGetCurrentProcessId());
+            return STATUS_NOT_SUPPORTED;
+        }
+
+        if (!AeroGpuDbgctlCallerIsAdminOrSeDebug(ExGetPreviousMode())) {
+            AEROGPU_LOG_RATELIMITED(g_AeroGpuBlockedMapSharedHandleEscapeCount,
+                                    4,
+                                    "blocked dbgctl escape MAP_SHARED_HANDLE (caller not admin/SeDebug) pid=%p",
+                                    PsGetCurrentProcessId());
+            return STATUS_NOT_SUPPORTED;
+        }
+
         if (pEscape->PrivateDriverDataSize < sizeof(aerogpu_escape_map_shared_handle_inout)) {
             return STATUS_BUFFER_TOO_SMALL;
         }

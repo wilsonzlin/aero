@@ -464,6 +464,7 @@ Additional debug/control escapes used by `drivers/aerogpu/tools/win7_dbgctl`:
         and `--dump-last-submit` (alias: `--dump-last-cmd`))
       - disabled by default (returns `STATUS_NOT_SUPPORTED` unless explicitly enabled)
         - enable via `HKLM\SYSTEM\CurrentControlSet\Services\aerogpu\Parameters\EnableReadGpaEscape` (REG_DWORD=1)
+        - also requires a privileged caller (Administrator and/or `SeDebugPrivilege`)
       - safety: the KMD enforces a hard maximum payload per call and restricts reads to driver-tracked GPU-related regions
         (e.g. pending submission buffers, ring/fence, scanout/cursor framebuffers). It is not intended to be a generic
         physical-memory read primitive.
@@ -471,7 +472,8 @@ Additional debug/control escapes used by `drivers/aerogpu/tools/win7_dbgctl`:
   - `AEROGPU_ESCAPE_OP_QUERY_VBLANK` (see `aerogpu_dbgctl_escape.h`)
   - `AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE` (see `aerogpu_dbgctl_escape.h`)
       - disabled by default (returns `STATUS_NOT_SUPPORTED` unless explicitly enabled)
-       - enable via `HKLM\SYSTEM\CurrentControlSet\Services\aerogpu\Parameters\EnableMapSharedHandleEscape` (REG_DWORD=1)
+        - enable via `HKLM\SYSTEM\CurrentControlSet\Services\aerogpu\Parameters\EnableMapSharedHandleEscape` (REG_DWORD=1)
+        - also requires a privileged caller (Administrator and/or `SeDebugPrivilege`)
   - `AEROGPU_ESCAPE_OP_SELFTEST` (see `aerogpu_dbgctl_escape.h`)
 
 These are intended for a small user-mode tool to validate KMD↔emulator communication early.

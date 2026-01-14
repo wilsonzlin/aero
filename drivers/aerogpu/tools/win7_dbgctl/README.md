@@ -251,10 +251,19 @@ Minimum supported commands:
 `--read-gpa` and dependent commands (`--dump-scanout-bmp`, `--dump-scanout-png`, `--dump-cursor-bmp`, `--dump-cursor-png`,
 `--dump-last-cmd`, `--dump-last-submit`) are intentionally **locked down**:
 
-- **Release builds:** require an explicit registry opt-in:
-  - `HKR\\Parameters\\EnableDbgctlReadGpa = 1` (REG_DWORD)
-- **DBG builds:** registry opt-in is not required.
-- In both cases, the caller must be privileged (**Administrator** and/or have **SeDebugPrivilege** enabled), otherwise the KMD returns `STATUS_ACCESS_DENIED`.
+- Require an explicit registry opt-in:
+  - `HKLM\\SYSTEM\\CurrentControlSet\\Services\\aerogpu\\Parameters\\EnableReadGpaEscape = 1` (REG_DWORD)
+- The caller must be privileged (**Administrator** and/or have **SeDebugPrivilege** enabled).
+- If not enabled/authorized, the KMD returns `STATUS_NOT_SUPPORTED`.
+
+### Security gating for `--map-shared-handle`
+
+`--map-shared-handle` (dbgctl escape `AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE`) is also gated:
+
+- Require an explicit registry opt-in:
+  - `HKLM\\SYSTEM\\CurrentControlSet\\Services\\aerogpu\\Parameters\\EnableMapSharedHandleEscape = 1` (REG_DWORD)
+- The caller must be privileged (**Administrator** and/or have **SeDebugPrivilege** enabled).
+- If not enabled/authorized, the KMD returns `STATUS_NOT_SUPPORTED`.
 
 ## Usage
 
