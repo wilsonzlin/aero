@@ -413,55 +413,36 @@ impl Usb2MuxPort {
             v |= PORT_OWNER;
         }
 
-        if self.ehci.connected {
+        // `PORTSC.CCS` reflects physical connection status even when the port is owned by a
+        // companion controller (PORT_OWNER=1). When the mux routes the device to UHCI, EHCI should
+        // still be able to see the D+/D- line state so the guest driver can decide whether to claim
+        // ownership.
+        if let Some(dev) = self.device.as_ref() {
             v |= CCS;
-            if self.effective_owner == Usb2PortOwner::Ehci {
-                // Speed reporting:
-                // - High-speed devices set HSP and clear the line status bits.
-                // - Non-high-speed devices clear HSP and use LS (D+/D-) to indicate idle line state
-                //   so the EHCI driver can decide whether to hand off to a companion controller.
-                if let Some(dev) = self.device.as_ref() {
-                    match dev.speed() {
-                        UsbSpeed::High => {
-                            v |= HSP;
-                            v &= !LS_MASK;
-                        }
-                        UsbSpeed::Full | UsbSpeed::Low => {
-                            v &= !HSP;
-                            if !self.ehci.reset {
-                                let ls = if self.ehci.resuming {
-                                    // EHCI line status reports the raw D+/D- levels. While resuming,
-                                    // the host drives a K-state (D- high).
-                                    0b01
-                                } else {
-                                    match dev.speed() {
-                                        // EHCI 1.0 spec 2.3.9:
-                                        // - 0b10 = J-state (D+ high) -> full-speed idle
-                                        // - 0b01 = K-state (D- high) -> low-speed idle
-                                        UsbSpeed::Full => 0b10,
-                                        UsbSpeed::Low => 0b01,
-                                        UsbSpeed::High => unreachable!(),
-                                    }
-                                };
-                                v |= (ls as u32) << 10;
-                            }
-                        }
-                    }
-                } else if !self.ehci.reset {
-                    // No device object (should be rare); preserve previous MVP behaviour.
-                    let ls = if self.ehci.resuming { 0b01 } else { 0b10 };
-                    v |= (ls as u32) << 10;
-                }
-            } else if !self.ehci.reset {
-                // Port is not owned by EHCI; retain the previous MVP line status behaviour.
-                let ls = if self.ehci.resuming { 0b01 } else { 0b10 };
-                v |= ((ls as u32) << 10) & LS_MASK;
 
-                if let Some(dev) = self.device.as_ref() {
-                    if dev.speed() == UsbSpeed::High {
-                        v |= HSP;
+            // Speed reporting:
+            // - High-speed devices set HSP (only when EHCI owns the port).
+            // - Full/low-speed devices are distinguished via LS (line status).
+            let speed = dev.speed();
+            if self.effective_owner == Usb2PortOwner::Ehci && speed == UsbSpeed::High {
+                v |= HSP;
+            }
+
+            if !self.ehci.reset {
+                // EHCI 1.0 spec 2.3.9:
+                // - 0b10 = J-state (D+ high) -> full-speed idle
+                // - 0b01 = K-state (D- high) -> low-speed idle + resume signaling
+                // - 0b00 = SE0/undefined     -> treat as high-speed / no device
+                let ls = if self.ehci.resuming && speed != UsbSpeed::High {
+                    0b01
+                } else {
+                    match speed {
+                        UsbSpeed::High => 0b00,
+                        UsbSpeed::Full => 0b10,
+                        UsbSpeed::Low => 0b01,
                     }
-                }
+                };
+                v = (v & !LS_MASK) | ((ls as u32) << 10);
             }
         }
         if self.ehci.connect_change {
