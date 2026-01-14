@@ -339,3 +339,19 @@ fn cpu_by_index_nonzero_exposes_ap_state_when_smp_is_enabled() {
     let ap = machine.cpu_by_index(1);
     assert!(ap.halted);
 }
+
+#[test]
+fn cpu_by_index_exposes_ap_state_when_cpu_count_gt_one() {
+    let machine = Machine::new(MachineConfig {
+        cpu_count: 2,
+        ..Default::default()
+    })
+    .unwrap();
+
+    // vCPU1 (APIC ID 1) should exist and begin halted waiting for a SIPI.
+    let ap1 = machine.cpu_by_index(1);
+    assert!(
+        ap1.halted,
+        "expected AP to start halted waiting for a SIPI (cpu_count=2)"
+    );
+}
