@@ -85,4 +85,3 @@ fn vga_snapshot_roundtrip_restores_vbe_and_framebuffer() {
     let hash_after = framebuffer_hash_rgba8888(vga2.borrow().get_framebuffer());
     assert_eq!(hash_after, hash_before);
 }
-
