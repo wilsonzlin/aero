@@ -53,4 +53,3 @@ fn wddm_alloc_priv_desc_max_constants_match_mask_ranges() {
     assert_eq!(AEROGPU_WDDM_ALLOC_PRIV_DESC_MAX_WIDTH, 0xFFFF);
     assert_eq!(AEROGPU_WDDM_ALLOC_PRIV_DESC_MAX_HEIGHT, 0x7FFF);
 }
-
