@@ -88,11 +88,7 @@ impl XhciPciDevice {
 
         // Start from the canonical QEMU-style xHCI PCI profile so BAR definitions and class code are
         // consistent with the guest-visible config-space stub used by `PcPlatform`.
-        let mut config = profile::USB_XHCI_QEMU.build_config_space();
-
-        // Expose a single-vector MSI capability so guests can opt into message-signaled interrupts.
-        // MSI-X can be added later when a full xHCI implementation is available.
-        config.add_capability(Box::new(MsiCapability::new()));
+        let config = profile::USB_XHCI_QEMU.build_config_space();
 
         let mut dev = Self {
             config,

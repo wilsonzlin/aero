@@ -423,9 +423,11 @@ mod tests {
         );
         off += 1;
 
-        // In AML, PkgLength encodes the total length of the object *including* the PkgLength
-        // bytes themselves (but excluding the opcode byte(s)). `aero-acpi` follows that encoding.
-        // Our parser computes the end offset by anchoring at the start of the PkgLength field.
+        // In AML, PkgLength encodes the total length of the object *including* the PkgLength field
+        // itself (but excluding the opcode byte(s)). `aero-acpi` follows that encoding (see
+        // `aml_pkg_length_for_payload`).
+        //
+        // Compute the end offset by anchoring at the start of the PkgLength field.
         let prt_pkg_len_start = off;
         let prt_pkg_len = parse_pkg_length(dsdt, &mut off);
         let prt_pkg_end = prt_pkg_len_start + prt_pkg_len;
