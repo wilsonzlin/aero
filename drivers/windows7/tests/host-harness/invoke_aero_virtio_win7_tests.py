@@ -6406,7 +6406,10 @@ def _emit_virtio_blk_irq_host_marker(
     if "irq_message_count" not in out_fields:
         _set_if_missing(
             "irq_message_count",
-            blk_test_fields.get("messages") or blk_test_fields.get("irq_messages") or blk_test_fields.get("msi_messages"),
+            blk_test_fields.get("messages")
+            or blk_test_fields.get("message_count")
+            or blk_test_fields.get("irq_messages")
+            or blk_test_fields.get("msi_messages"),
         )
 
     def _apply_irq_diag(diag: dict[str, str]) -> None:
