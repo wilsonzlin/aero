@@ -439,7 +439,7 @@ Limitations (bring-up):
 This subset is validated via:
 
 - **Host-side unit tests** under `drivers/aerogpu/umd/d3d9/tests/` (command-stream and fixed-function/FVF translation coverage).
-  - **Win7 guest tests** under `drivers/aerogpu/tests/win7/` (recommended smoke tests:
+- **Win7 guest tests** under `drivers/aerogpu/tests/win7/` (recommended smoke tests:
   `d3d9ex_triangle`, `d3d9_mipmapped_texture_smoke`, `d3d9ex_fixedfunc_textured_triangle`,
   `d3d9ex_fixedfunc_texture_stage_state`, `d3d9_fixedfunc_xyz_diffuse`, `d3d9_fixedfunc_xyz_diffuse_tex1`,
   `d3d9_fixedfunc_textured_wvp`, `d3d9_fixedfunc_wvp_triangle`,
