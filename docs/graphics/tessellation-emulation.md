@@ -299,6 +299,15 @@ To support additional D3D programmable stages (HS/DS) without breaking the ABI, 
 resource-binding packets overload their trailing reserved field as a **`stage_ex` selector** when
 `shader_stage == COMPUTE`.
 
+Packets that currently support the `stage_ex` encoding (see `drivers/aerogpu/protocol/aerogpu_cmd.h`):
+- `CREATE_SHADER_DXBC`
+- `SET_TEXTURE`
+- `SET_SAMPLERS`
+- `SET_CONSTANT_BUFFERS`
+- `SET_SHADER_RESOURCE_BUFFERS` (SRV buffers, `t#` where the SRV is a buffer view)
+- `SET_UNORDERED_ACCESS_BUFFERS` (UAV buffers, `u#` where the UAV is a buffer view)
+- `SET_SHADER_CONSTANTS_F`
+
 Encoding invariant (see `drivers/aerogpu/protocol/aerogpu_cmd.h`):
 
 - If `shader_stage != COMPUTE`, the `stage_ex`/`reserved0` field must be 0 and is ignored.
