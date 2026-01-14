@@ -4285,12 +4285,15 @@ static BOOLEAN AeroGpuIsSupportedVidPnPixelFormat(_In_ D3DDDIFORMAT Format)
 static BOOLEAN AeroGpuIsSupportedVidPnVSyncFrequency(_In_ ULONG Numerator, _In_ ULONG Denominator)
 {
     /*
-     * AeroGPU's virtual scanout uses a fixed vblank cadence today, but Win7's
-     * VidPN construction may describe modes with slightly different refresh
-     * rates (e.g. 59.94 Hz encoded as 59940/1000 or rounded to 59 Hz).
+     * AeroGPU's MVP scanout uses a fixed ~60 Hz vblank cadence today.
      *
-     * Be permissive: accept any "reasonable" refresh rate so the OS can keep
-     * stable mode selections without us rejecting the VidPN.
+     * Win7's VidPN construction may describe modes with slightly different
+     * refresh rates due to EDID-derived fractional values (e.g. 59.94 Hz
+     * encoded as 60000/1001 or 59940/1000) or UI rounding (59 Hz).
+     *
+     * Be tolerant of minor encoding differences, but do not claim support for
+     * arbitrary refresh rates since the emulator scanout cadence is not yet
+     * mode-dependent.
      *
      * Treat 0/0 as uninitialized (allow) since some dxgkrnl helper paths may
      * leave frequency fields unset during intermediate VidPN construction.
@@ -4303,12 +4306,16 @@ static BOOLEAN AeroGpuIsSupportedVidPnVSyncFrequency(_In_ ULONG Numerator, _In_ 
         return FALSE;
     }
 
-    /* Accept common desktop refresh rates (30-240 Hz). */
+    /* Convert to milli-Hz for integer comparison. */
     const ULONGLONG num = (ULONGLONG)Numerator * 1000ull;
     const ULONGLONG den = (ULONGLONG)Denominator;
     const ULONGLONG mhz = num / den;
 
-    if (mhz < 30000ull || mhz > 240000ull) {
+    /*
+     * Accept ~60 Hz only (59-61 Hz inclusive) to match the MVP scanout/vblank
+     * implementation.
+     */
+    if (mhz < 59000ull || mhz > 61000ull) {
         return FALSE;
     }
     return TRUE;
