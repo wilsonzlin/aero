@@ -5758,6 +5758,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       booting = true;
       update();
       const config = configManager.getState().effective;
+      const vmRuntime = config.vmRuntime ?? "legacy";
       try {
         const platformFeatures = forceJitCspBlock.checked ? { ...report, jit_dynamic_wasm: false } : report;
         const diskManager = await diskManagerPromise;
@@ -5765,6 +5766,16 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
         bootDiskSelection = selection;
 
         workerCoordinator.start(config, { platformFeatures });
+        const cpuWorker = workerCoordinator.getCpuWorker();
+        if (vmRuntime === "machine" && cpuWorker) {
+          attachedCpuWorker = cpuWorker;
+          cpuWorker.postMessage({
+            type: "setBootDisks",
+            mounts: selection.mounts,
+            hdd: selection.hdd ?? null,
+            cd: selection.cd ?? null,
+          });
+        }
         const ioWorker = workerCoordinator.getIoWorker();
         if (ioWorker) {
           usbBroker.attachWorkerPort(ioWorker);
@@ -5775,8 +5786,10 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
           ioWorker.postMessage({
             type: "setBootDisks",
             mounts: selection.mounts,
-            hdd: selection.hdd ?? null,
-            cd: selection.cd ?? null,
+            // In machine runtime mode the CPU worker owns OPFS disks. Avoid sending disk metadata
+            // to io.worker so it doesn't open a competing SyncAccessHandle (InUse).
+            hdd: vmRuntime === "machine" ? null : (selection.hdd ?? null),
+            cd: vmRuntime === "machine" ? null : (selection.cd ?? null),
           } satisfies SetBootDisksMessage);
         }
         const gpuWorker = workerCoordinator.getWorker("gpu");
@@ -5967,6 +5980,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
   let schedulerWorker: Worker | null = null;
   let schedulerFrameStateSab: SharedArrayBuffer | null = null;
   let schedulerSharedFramebuffer: { sab: SharedArrayBuffer; offsetBytes: number } | null = null;
+  let attachedCpuWorker: Worker | null = null;
   let attachedIoWorker: Worker | null = null;
   let inputCapture: InputCapture | null = null;
   let inputCaptureCanvas: HTMLCanvasElement | null = null;
@@ -6061,6 +6075,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
     const statuses = workerCoordinator.getWorkerStatuses();
     const anyActive = Object.values(statuses).some((s) => s.state !== "stopped");
     const config = configManager.getState().effective;
+    const vmRuntime = config.vmRuntime ?? "legacy";
 
     startButton.disabled = booting || !support.ok || !report.wasmThreads || !config.enableWorkers || anyActive;
     stopButton.disabled = !anyActive;
@@ -6099,6 +6114,20 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
     jitDemoButton.disabled = statuses.jit.state !== "ready" || jitDemoInFlight;
     forceJitCspBlock.disabled = anyActive;
 
+    const cpuWorker = workerCoordinator.getCpuWorker();
+    if (cpuWorker !== attachedCpuWorker) {
+      if (cpuWorker && vmRuntime === "machine") {
+        const selection = bootDiskSelection;
+        cpuWorker.postMessage({
+          type: "setBootDisks",
+          mounts: selection?.mounts ?? {},
+          hdd: selection?.hdd ?? null,
+          cd: selection?.cd ?? null,
+        });
+      }
+      attachedCpuWorker = cpuWorker;
+    }
+
     const ioWorker = workerCoordinator.getIoWorker();
     if (ioWorker !== attachedIoWorker) {
       if (attachedIoWorker) {
@@ -6114,8 +6143,10 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
         ioWorker.postMessage({
           type: "setBootDisks",
           mounts: selection?.mounts ?? {},
-          hdd: selection?.hdd ?? null,
-          cd: selection?.cd ?? null,
+          // In machine runtime mode the CPU worker owns OPFS disks. Avoid sending disk metadata
+          // to io.worker so it doesn't open a competing SyncAccessHandle (InUse).
+          hdd: vmRuntime === "machine" ? null : (selection?.hdd ?? null),
+          cd: vmRuntime === "machine" ? null : (selection?.cd ?? null),
         } satisfies SetBootDisksMessage);
         void webHidManager.resyncAttachedDevices();
       }

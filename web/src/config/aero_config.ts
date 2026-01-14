@@ -479,20 +479,20 @@ export function parseAeroConfigOverrides(input: unknown): ParsedAeroConfigOverri
     if (parsed !== undefined) overrides.logLevel = parsed;
   }
 
-  if (hasOwn(input, "uiScale")) {
-    const parsed = parseUiScale(input.uiScale);
-    if (parsed) {
-      overrides.uiScale = parsed.value;
-      if ("issue" in parsed) issues.push({ key: "uiScale", message: parsed.issue });
-    }
-  }
-
   if (hasOwn(input, "vmRuntime")) {
     const parsed = parseVmRuntime(input.vmRuntime);
     if (parsed !== undefined) {
       overrides.vmRuntime = parsed;
     } else {
       issues.push({ key: "vmRuntime", message: 'vmRuntime must be "legacy" or "machine".' });
+    }
+  }
+
+  if (hasOwn(input, "uiScale")) {
+    const parsed = parseUiScale(input.uiScale);
+    if (parsed) {
+      overrides.uiScale = parsed.value;
+      if ("issue" in parsed) issues.push({ key: "uiScale", message: parsed.issue });
     }
   }
 
@@ -668,6 +668,17 @@ export function parseAeroConfigQueryOverrides(search: string): ParsedAeroQueryOv
     if (parsed !== undefined) {
       overrides.logLevel = parsed;
       lockedKeys.add("logLevel");
+    }
+  }
+
+  const vmRuntime = params.get("vmRuntime");
+  if (vmRuntime !== null) {
+    const parsed = parseVmRuntime(vmRuntime);
+    if (parsed !== undefined) {
+      overrides.vmRuntime = parsed;
+      lockedKeys.add("vmRuntime");
+    } else {
+      issues.push({ key: "vmRuntime", message: 'vmRuntime must be "legacy" or "machine".' });
     }
   }
 
