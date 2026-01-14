@@ -405,6 +405,16 @@ Feature report reads are also serialized per device: the main thread processes `
 requests in the same per-device FIFO as output/feature report writes so `GET_REPORT` cannot overtake
 earlier queued `SET_REPORT`/output writes for that device.
 
+Caching / coalescing behaviour (device model):
+
+- Successful `GET_REPORT Feature` results are **cached per reportId**. After the host responds, later
+  `GET_REPORT Feature` requests for the same reportId are served from the cached bytes without
+  issuing another host read until the cache is invalidated.
+- The cache entry for a reportId is invalidated when the guest sends `SET_REPORT Feature` for that
+  reportId (and on device reset).
+- At most **one in-flight** feature report request is tracked per reportId. While a request is
+  pending, subsequent guest polls NAK until the host responds (no duplicate host reads are issued).
+
 ## Security and UX constraints
 
 Passing through a physical device is **powerful and risky**. The UX must make
