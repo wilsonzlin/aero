@@ -622,6 +622,32 @@ mod tests {
     }
 
     #[test]
+    fn stream_packets_cap_work_for_extreme_deltas() {
+        let mut m = Ps2Mouse::new();
+        m.receive_byte(0xF4);
+        assert_eq!(m.pop_output(), Some(0xFA));
+
+        // Host input deltas are untrusted and can be arbitrarily large. Ensure that we cap packet
+        // generation so one injected event cannot loop for millions of iterations.
+        m.inject_motion(1_000_000_000, 0, 0);
+
+        let drained: Vec<u8> = std::iter::from_fn(|| m.pop_output()).collect();
+        assert_eq!(
+            drained.len(),
+            MAX_PACKETS_PER_INJECT * 3,
+            "expected inject_motion to generate at most MAX_PACKETS_PER_INJECT stream packets"
+        );
+
+        // Packets should encode a +127 X delta and 0 Y delta (repeated).
+        assert_eq!(drained[0..3], [0x08, 0x7F, 0x00]);
+        assert_eq!(
+            drained[drained.len() - 3..],
+            [0x08, 0x7F, 0x00],
+            "unexpected last packet bytes"
+        );
+    }
+
+    #[test]
     fn wheel_extension_adds_fourth_byte() {
         let mut m = Ps2Mouse::new();
 
