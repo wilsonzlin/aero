@@ -1,6 +1,6 @@
 use aero_gpu_trace::{
-    AerogpuSubmissionCapture, TraceMeta, TraceReadError, TraceReader, TraceWriter, CONTAINER_VERSION,
-    TRACE_FOOTER_SIZE,
+    AerogpuSubmissionCapture, BlobKind, TraceMeta, TraceReadError, TraceReader, TraceRecord,
+    TraceWriter, CONTAINER_VERSION, TRACE_FOOTER_SIZE,
 };
 use std::io::Cursor;
 
@@ -88,6 +88,20 @@ fn reject_trace_with_unknown_newer_container_version() {
         err,
         TraceReadError::UnsupportedContainerVersion(v) if v == bad_version
     ));
+}
+
+#[test]
+fn reject_trace_with_too_old_container_version() {
+    let mut bytes = minimal_trace_bytes(0);
+
+    // Set header container_version = 0 (unsupported).
+    bytes[12..16].copy_from_slice(&0u32.to_le_bytes());
+
+    let err = match TraceReader::open(Cursor::new(bytes)) {
+        Ok(_) => panic!("expected trace open to fail"),
+        Err(err) => err,
+    };
+    assert!(matches!(err, TraceReadError::UnsupportedContainerVersion(0)));
 }
 
 #[test]
@@ -183,6 +197,55 @@ fn reject_aerogpu_submission_record_in_container_v1() {
         .read_records_in_range(entry.start_offset, entry.end_offset)
         .unwrap_err();
     assert!(matches!(err, TraceReadError::UnknownRecordType(0x05)));
+}
+
+#[test]
+fn accept_aerogpu_submission_record_in_container_v2() {
+    let bytes = trace_with_aerogpu_submission_v2(0);
+
+    let mut reader = TraceReader::open(Cursor::new(bytes)).expect("TraceReader::open");
+    let entry = reader.frame_entries()[0];
+    let records = reader
+        .read_records_in_range(entry.start_offset, entry.end_offset)
+        .expect("TraceReader::read_records_in_range");
+
+    assert_eq!(records.len(), 4);
+    assert_eq!(records[0], TraceRecord::BeginFrame { frame_index: 0 });
+    match &records[1] {
+        TraceRecord::Blob {
+            blob_id,
+            kind,
+            bytes,
+        } => {
+            assert_eq!(*blob_id, 1);
+            assert_eq!(*kind, BlobKind::AerogpuCmdStream);
+            assert_eq!(bytes, b"dummy cmd stream bytes");
+        }
+        other => panic!("expected blob record, got {other:?}"),
+    }
+    match &records[2] {
+        TraceRecord::AerogpuSubmission {
+            record_version,
+            submit_flags,
+            context_id,
+            engine_id,
+            signal_fence,
+            cmd_stream_blob_id,
+            alloc_table_blob_id,
+            memory_ranges,
+        } => {
+            assert_eq!(*record_version, 1);
+            assert_eq!(*submit_flags, 0);
+            assert_eq!(*context_id, 0);
+            assert_eq!(*engine_id, 0);
+            assert_eq!(*signal_fence, 0);
+            assert_eq!(*cmd_stream_blob_id, 1);
+            assert_eq!(*alloc_table_blob_id, 0);
+            assert!(memory_ranges.is_empty());
+        }
+        other => panic!("expected aerogpu submission record, got {other:?}"),
+    }
+    assert_eq!(records[3], TraceRecord::Present { frame_index: 0 });
 }
 
 #[test]
