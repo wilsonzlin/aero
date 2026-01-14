@@ -51,13 +51,18 @@ fn build_gs_with_instance_count(count: u32) -> Vec<u8> {
 #[test]
 fn aerogpu_cmd_rejects_gs_instance_count_gt1() {
     pollster::block_on(async {
+        let test_name = concat!(module_path!(), "::aerogpu_cmd_rejects_gs_instance_count_gt1");
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
             Ok(exec) => exec,
             Err(e) => {
-                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                common::skip_or_panic(test_name, &format!("wgpu unavailable ({e:#})"));
                 return;
             }
         };
+
+        if !common::require_gs_prepass_or_skip(&exec, test_name) {
+            return;
+        }
 
         const RT: u32 = 1;
         const VS: u32 = 2;

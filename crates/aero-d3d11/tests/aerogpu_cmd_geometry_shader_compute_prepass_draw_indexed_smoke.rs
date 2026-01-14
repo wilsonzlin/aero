@@ -44,6 +44,10 @@ fn aerogpu_cmd_geometry_shader_compute_prepass_draw_indexed_smoke() {
             return;
         }
 
+        if !common::require_gs_prepass_or_skip(&exec, test_name) {
+            return;
+        }
+
         const RT: u32 = 1;
         const VB: u32 = 2;
         const IB: u32 = 3;

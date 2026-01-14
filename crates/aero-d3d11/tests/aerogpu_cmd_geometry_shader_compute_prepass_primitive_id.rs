@@ -15,8 +15,7 @@ const PS_PASSTHROUGH: &[u8] = include_bytes!("fixtures/ps_passthrough.dxbc");
 #[test]
 fn aerogpu_cmd_geometry_shader_compute_prepass_primitive_id() {
     pollster::block_on(async {
-        let test_name =
-            concat!(module_path!(), "::aerogpu_cmd_geometry_shader_compute_prepass_primitive_id");
+        let test_name = concat!(module_path!(), "::aerogpu_cmd_geometry_shader_compute_prepass_primitive_id");
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
             Ok(exec) => exec,
             Err(e) => {
@@ -24,12 +23,8 @@ fn aerogpu_cmd_geometry_shader_compute_prepass_primitive_id() {
                 return;
             }
         };
-        if !exec.supports_compute() {
-            common::skip_or_panic(test_name, "compute unsupported");
-            return;
-        }
-        if !exec.capabilities().supports_indirect_execution {
-            common::skip_or_panic(test_name, "indirect unsupported");
+
+        if !common::require_gs_prepass_or_skip(&exec, test_name) {
             return;
         }
 

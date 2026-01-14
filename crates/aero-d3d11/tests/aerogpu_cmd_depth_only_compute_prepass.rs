@@ -44,6 +44,10 @@ fn aerogpu_cmd_depth_only_compute_prepass_writes_depth() {
             return;
         }
 
+        if !common::require_gs_prepass_or_skip(&exec, test_name) {
+            return;
+        }
+
         const VB: u32 = 1;
         const C: u32 = 2;
         const D: u32 = 3;
