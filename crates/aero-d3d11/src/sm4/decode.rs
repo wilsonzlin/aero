@@ -157,6 +157,17 @@ pub fn decode_program(program: &Sm4Program) -> Result<Sm4Module, Sm4DecodeError>
             });
         }
         if i + len > toks.len() {
+            // If the official DXBC instruction-length field (bits 24..=30) looks valid, prefer a
+            // targeted "unsupported encoding" error over a generic bounds failure.
+            let official_len = ((opcode_token >> 24) & 0x7f) as usize;
+            if official_len != 0 && i + official_len <= toks.len() {
+                return Err(Sm4DecodeError {
+                    at_dword: i,
+                    kind: Sm4DecodeErrorKind::UnsupportedTokenEncoding {
+                        encoding: "Windows SDK DXBC (length in bits 24..30)",
+                    },
+                });
+            }
             return Err(Sm4DecodeError {
                 at_dword: i,
                 kind: Sm4DecodeErrorKind::InstructionOutOfBounds {
@@ -413,6 +424,15 @@ pub fn decode_program_decls(program: &Sm4Program) -> Result<Vec<Sm4Decl>, Sm4Dec
             });
         }
         if i + len > toks.len() {
+            let official_len = ((opcode_token >> 24) & 0x7f) as usize;
+            if official_len != 0 && i + official_len <= toks.len() {
+                return Err(Sm4DecodeError {
+                    at_dword: i,
+                    kind: Sm4DecodeErrorKind::UnsupportedTokenEncoding {
+                        encoding: "Windows SDK DXBC (length in bits 24..30)",
+                    },
+                });
+            }
             return Err(Sm4DecodeError {
                 at_dword: i,
                 kind: Sm4DecodeErrorKind::InstructionOutOfBounds {

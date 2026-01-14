@@ -3097,6 +3097,32 @@ fn rejects_windows_sdk_dxbc_token_encoding() {
 }
 
 #[test]
+fn rejects_windows_sdk_dxbc_token_encoding_when_length_bits_overflow_internal_len() {
+    // Use a real DXBC-looking opcode token for `if_nz`:
+    // - opcode = 31
+    // - length (bits 24..30) = 3 DWORDs
+    // - test boolean (bit 18) = nonzero
+    //
+    // In Aero's legacy encoding this would look like an absurd instruction length, so we should
+    // surface `UnsupportedTokenEncoding` rather than a generic out-of-bounds error.
+    let opcode_token = 0x0304_001fu32;
+
+    // Pad the token stream so the official length field is in-bounds.
+    let body = [opcode_token, 0, 0];
+
+    let tokens = make_sm5_program_tokens(0, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+
+    let err = decode_program(&program).expect_err("decode should fail");
+    assert_eq!(err.at_dword, 2);
+    assert!(matches!(
+        err.kind,
+        Sm4DecodeErrorKind::UnsupportedTokenEncoding { .. }
+    ));
+}
+
+#[test]
 fn decodes_atomic_add_via_structural_fallback() {
     // Pick an opcode that is not otherwise recognized by the decoder and rely on the structural
     // decoding path.
