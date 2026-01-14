@@ -188,11 +188,13 @@ HRESULT track_resource_allocation_locked(Device* dev, Resource* res, bool write)
   }
 
 // Ensure we have a valid WDDM allocation list bound before we try to write
-// entries into it. In real Win7 builds, `ensure_cmd_space(..., 0)` will acquire
+// entries into it. In real Win7 builds, `ensure_cmd_space()` will acquire
 // runtime-provided DMA buffers + allocation lists (CreateContext persistent
-// buffers or AllocateCb/GetCommandBufferCb fallback) without forcing a submit.
+// buffers or AllocateCb/GetCommandBufferCb fallback) without forcing a submit
+// as long as we request space for at least one command header.
 #if defined(_WIN32)
-  if (!ensure_cmd_space(dev, 0)) {
+  const size_t min_packet = align_up(sizeof(aerogpu_cmd_hdr), 4);
+  if (!ensure_cmd_space(dev, min_packet)) {
     return E_FAIL;
   }
 #endif
@@ -240,7 +242,8 @@ HRESULT track_resource_allocation_locked(Device* dev, Resource* res, bool write)
 #if defined(_WIN32)
     // AllocateCb/DeallocateCb runtimes deallocate the active allocation list on
     // every submit, so reacquire/rebind before retrying.
-    if (!ensure_cmd_space(dev, 0)) {
+    const size_t min_packet = align_up(sizeof(aerogpu_cmd_hdr), 4);
+    if (!ensure_cmd_space(dev, min_packet)) {
       return E_FAIL;
     }
 #endif
