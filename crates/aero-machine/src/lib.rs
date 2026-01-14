@@ -6132,10 +6132,6 @@ impl Machine {
             None
         };
 
-        // Render row-by-row to avoid allocating large intermediate buffers (and to keep the MMIO
-        // read path incremental for BAR-backed apertures).
-        let mut row = vec![0u8; row_bytes];
-
         match bpp {
             32 => {
                 if let Some((aerogpu, vram_off, pitch_bytes)) = vram_fast.as_ref() {
@@ -6145,31 +6141,26 @@ impl Machine {
                         let src_row_off = vram_off.saturating_add(y.saturating_mul(*pitch_bytes));
                         let src_row = &vram[src_row_off..src_row_off.saturating_add(row_bytes)];
                         let dst_row = &mut self.display_fb[y * width_usize..(y + 1) * width_usize];
-                        for (x, dst) in dst_row.iter_mut().enumerate() {
-                            let i = x * 4;
-                            let b = src_row.get(i).copied().unwrap_or(0);
-                            let g = src_row.get(i + 1).copied().unwrap_or(0);
-                            let r = src_row.get(i + 2).copied().unwrap_or(0);
-                            *dst = 0xFF00_0000
-                                | (u32::from(b) << 16)
-                                | (u32::from(g) << 8)
-                                | u32::from(r);
+                        for (src_px, dst) in src_row.chunks_exact(4).zip(dst_row.iter_mut()) {
+                            let b = src_px[0];
+                            let g = src_px[1];
+                            let r = src_px[2];
+                            *dst = u32::from_le_bytes([r, g, b, 0xFF]);
                         }
                     }
                 } else {
+                    // Render row-by-row to avoid allocating large intermediate buffers (and to keep
+                    // the MMIO read path incremental for BAR-backed apertures).
+                    let mut row = vec![0u8; row_bytes];
                     for y in 0..height_usize {
                         let row_addr = base.saturating_add((y as u64).saturating_mul(pitch));
                         self.mem.read_physical(row_addr, &mut row);
                         let dst_row = &mut self.display_fb[y * width_usize..(y + 1) * width_usize];
-                        for (x, dst) in dst_row.iter_mut().enumerate() {
-                            let i = x * 4;
-                            let b = row.get(i).copied().unwrap_or(0);
-                            let g = row.get(i + 1).copied().unwrap_or(0);
-                            let r = row.get(i + 2).copied().unwrap_or(0);
-                            *dst = 0xFF00_0000
-                                | (u32::from(b) << 16)
-                                | (u32::from(g) << 8)
-                                | u32::from(r);
+                        for (src_px, dst) in row.chunks_exact(4).zip(dst_row.iter_mut()) {
+                            let b = src_px[0];
+                            let g = src_px[1];
+                            let r = src_px[2];
+                            *dst = u32::from_le_bytes([r, g, b, 0xFF]);
                         }
                     }
                 }
@@ -6192,38 +6183,39 @@ impl Machine {
                     .unwrap_or(([[0u8; 3]; 256], 0xFF));
                 let scale_6bit_to_8bit = |c: u8| -> u8 { (c << 2) | (c >> 4) };
 
+                // Precompute a lookup table for each possible 8-bit pixel value (after applying
+                // PEL mask).
+                let mut lut = [0u32; 256];
+                for (idx, out) in lut.iter_mut().enumerate() {
+                    let pal_idx = (idx as u8 & pel_mask) as usize;
+                    let [r6, g6, b6] = pal[pal_idx];
+                    let b = scale_6bit_to_8bit(b6);
+                    let g = scale_6bit_to_8bit(g6);
+                    let r = scale_6bit_to_8bit(r6);
+                    *out = 0xFF00_0000 | (u32::from(b) << 16) | (u32::from(g) << 8) | u32::from(r);
+                }
+
                 if let Some((aerogpu, vram_off, pitch_bytes)) = vram_fast.as_ref() {
                     let dev = aerogpu.borrow();
                     let vram = &dev.vram;
                     for y in 0..height_usize {
                         let src_row_off = vram_off.saturating_add(y.saturating_mul(*pitch_bytes));
                         let src_row = &vram[src_row_off..src_row_off.saturating_add(row_bytes)];
-                        for x in 0..width_usize {
-                            let idx = (src_row.get(x).copied().unwrap_or(0) & pel_mask) as usize;
-                            let [r6, g6, b6] = pal[idx];
-                            let b = scale_6bit_to_8bit(b6);
-                            let g = scale_6bit_to_8bit(g6);
-                            let r = scale_6bit_to_8bit(r6);
-                            self.display_fb[y * width_usize + x] = 0xFF00_0000
-                                | (u32::from(b) << 16)
-                                | (u32::from(g) << 8)
-                                | u32::from(r);
+                        let dst_row = &mut self.display_fb[y * width_usize..(y + 1) * width_usize];
+                        for (src, dst) in src_row.iter().zip(dst_row.iter_mut()) {
+                            *dst = lut[*src as usize];
                         }
                     }
                 } else {
+                    // Render row-by-row to avoid allocating large intermediate buffers (and to keep
+                    // the MMIO read path incremental for BAR-backed apertures).
+                    let mut row = vec![0u8; row_bytes];
                     for y in 0..height_usize {
                         let row_addr = base.saturating_add((y as u64).saturating_mul(pitch));
                         self.mem.read_physical(row_addr, &mut row);
-                        for x in 0..width_usize {
-                            let idx = (row.get(x).copied().unwrap_or(0) & pel_mask) as usize;
-                            let [r6, g6, b6] = pal[idx];
-                            let b = scale_6bit_to_8bit(b6);
-                            let g = scale_6bit_to_8bit(g6);
-                            let r = scale_6bit_to_8bit(r6);
-                            self.display_fb[y * width_usize + x] = 0xFF00_0000
-                                | (u32::from(b) << 16)
-                                | (u32::from(g) << 8)
-                                | u32::from(r);
+                        let dst_row = &mut self.display_fb[y * width_usize..(y + 1) * width_usize];
+                        for (src, dst) in row.iter().zip(dst_row.iter_mut()) {
+                            *dst = lut[*src as usize];
                         }
                     }
                 }
