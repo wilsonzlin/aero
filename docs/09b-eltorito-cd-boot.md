@@ -103,17 +103,19 @@ Once `boot_catalog_lba` is read, convert to BIOS sectors if needed:
 ## 3) Boot Catalog (validation entry + boot entry scanning)
 
 The **Boot Catalog** is an array of 32-byte entries (typically stored in 2048-byte ISO blocks).
+The first catalog block normally begins with a **Validation Entry** at offset `0x00` (entry #0),
+followed by the “initial/default entry” at offset `0x20` (entry #1).
 
 In the Windows install ISO case, the bootable BIOS no-emulation entry is commonly the
-“initial/default entry” at offset `0x20` (entry #1), but Aero does **not** assume that; it scans
-entries for the first usable BIOS no-emulation boot entry.
+initial/default entry, but Aero does **not** assume that; it scans entries for the first usable BIOS
+no-emulation boot entry.
 
 Aero’s implemented behavior:
 
 1. Read the catalog starting at `boot_catalog_lba` (2048-byte ISO LBA).
    * We read a bounded prefix (currently **up to 4 ISO blocks**) for safety.
 2. Parse entry #0 (offset `0x00`) as the **Validation Entry** and validate it (checksum + key bytes).
-3. Scan subsequent 32-byte entries for a **bootable, no-emulation, BIOS/x86** boot entry:
+3. Scan subsequent 32-byte entries for the first **bootable, no-emulation, BIOS/x86** boot entry:
    * Bootable: `boot_indicator == 0x88`
    * No-emulation: `boot_media_type == 0x00`
    * Platform: **x86 BIOS** (platform id `0`)
@@ -129,7 +131,7 @@ The Validation Entry is a fixed-format 32-byte record that validates the catalog
 | Offset | Size | Field | Required value / rule |
 |---:|---:|---|---|
 | `0x00` | 1 | Header ID | Must be `0x01` |
-| `0x01` | 1 | Platform ID | Common values: `0x00` x86, `0xEF` EFI. Aero only needs x86. |
+| `0x01` | 1 | Platform ID | Common values: `0x00` x86 BIOS, `0xEF` EFI. This is the default platform for the initial/default entry; section headers can override it. Aero only boots BIOS/x86 entries. |
 | `0x02` | 2 | Reserved | Typically `0x0000` |
 | `0x04` | 24 | ID string | Ignored (space padded) |
 | `0x1C` | 2 | Checksum | See checksum rule below |
@@ -167,7 +169,7 @@ is typically the “Initial/Default Entry”.
 | `0x02` | 2 | Load Segment | `u16` LE. If `0`, BIOS must default to **`0x07C0`** |
 | `0x04` | 1 | System Type | Ignored by Aero for no-emulation |
 | `0x05` | 1 | Unused | Must be ignored |
-| `0x06` | 2 | Sector Count | `u16` LE, **count of 512-byte sectors to load**. If `0`, BIOS must default to **4 sectors** (2048 bytes) per spec. |
+| `0x06` | 2 | Sector Count | `u16` LE, **count of 512-byte sectors to load**. If `0`, BIOS must default to **4×512B sectors** (**2048 bytes**) for **no-emulation** boot (per spec; Windows install media relies on this). |
 | `0x08` | 4 | Load RBA | `u32` LE, **ISO LBA (2048-byte)** of boot image |
 | `0x0C` | 20 | Unused | Must be ignored |
 
@@ -176,8 +178,9 @@ Minimal acceptance rules:
 * Bootable (`boot_indicator == 0x88`)
 * No-emulation (`boot_media_type == 0x00`)
 
-Other media types (floppy/hdd emulation) and sectioned catalogs are intentionally unsupported in
-the minimal path.
+Other media types (floppy/hdd emulation) are intentionally unsupported in the minimal path. Aero
+does **not** implement interactive “boot menus”; if multiple bootable BIOS no-emulation entries
+exist, Aero will simply pick the **first** one it finds during the scan described above.
 
 ---
 
