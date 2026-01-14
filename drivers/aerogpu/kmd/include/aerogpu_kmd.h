@@ -341,6 +341,17 @@ typedef struct _AEROGPU_ADAPTER {
     PHYSICAL_ADDRESS FencePagePa;
     KSPIN_LOCK RingLock;
 
+    /*
+     * Cached IRQ enable mask (mirrors AEROGPU_MMIO_REG_IRQ_ENABLE when present).
+     *
+     * Concurrency notes:
+     * - Non-ISR paths update this under IrqEnableLock at DISPATCH_LEVEL.
+     * - The ISR (DIRQL) may update this without taking IrqEnableLock (for example, masking off
+     *   AEROGPU_IRQ_ERROR to avoid interrupt storms on a level-triggered/sticky ERROR status bit).
+     * - IrqEnableLock does *not* synchronize against the ISR, so callers that program
+     *   AEROGPU_MMIO_REG_IRQ_ENABLE must be careful not to re-enable ERROR delivery after
+     *   DeviceErrorLatched becomes set (see AeroGpuDdiControlInterrupt for the double-check pattern).
+     */
     KSPIN_LOCK IrqEnableLock;
     ULONG IrqEnableMask; /* Cached AEROGPU_MMIO_REG_IRQ_ENABLE value (when present). */
     volatile LONG DeviceErrorLatched; /* Set when the device signals AEROGPU_IRQ_ERROR. Cleared on StartDevice/RestartFromTimeout. */
