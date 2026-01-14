@@ -246,7 +246,7 @@ async fn chunked_manifest_endpoint_has_expected_headers() {
     assert!(resp.headers().contains_key(header::LAST_MODIFIED));
     assert_eq!(
         resp.headers()[header::CONTENT_LENGTH].to_str().unwrap(),
-        expected_manifest.as_bytes().len().to_string()
+        expected_manifest.len().to_string()
     );
     assert_eq!(
         resp.headers()["access-control-allow-origin"]
@@ -297,7 +297,7 @@ async fn chunked_manifest_alias_endpoint_works() {
     assert_eq!(resp.status(), StatusCode::OK);
     assert_eq!(
         resp.headers()[header::CONTENT_LENGTH].to_str().unwrap(),
-        expected_manifest.as_bytes().len().to_string()
+        expected_manifest.len().to_string()
     );
     let body = resp.into_body().collect().await.unwrap().to_bytes();
     assert!(body.is_empty());
@@ -341,7 +341,7 @@ async fn chunked_manifest_head_has_expected_headers_and_empty_body() {
     assert!(resp.headers().contains_key(header::LAST_MODIFIED));
     assert_eq!(
         resp.headers()[header::CONTENT_LENGTH].to_str().unwrap(),
-        expected_manifest.as_bytes().len().to_string()
+        expected_manifest.len().to_string()
     );
     assert_eq!(
         resp.headers()["access-control-allow-origin"]
@@ -520,7 +520,7 @@ async fn versioned_chunked_manifest_head_has_expected_headers_and_empty_body() {
     assert!(resp.headers().contains_key(header::LAST_MODIFIED));
     assert_eq!(
         resp.headers()[header::CONTENT_LENGTH].to_str().unwrap(),
-        expected_manifest.as_bytes().len().to_string()
+        expected_manifest.len().to_string()
     );
     assert_eq!(
         resp.headers()["access-control-allow-origin"]
@@ -571,7 +571,7 @@ async fn versioned_chunked_manifest_alias_endpoint_works() {
     assert_eq!(resp.status(), StatusCode::OK);
     assert_eq!(
         resp.headers()[header::CONTENT_LENGTH].to_str().unwrap(),
-        expected_manifest.as_bytes().len().to_string()
+        expected_manifest.len().to_string()
     );
     let body = resp.into_body().collect().await.unwrap().to_bytes();
     assert!(body.is_empty());
