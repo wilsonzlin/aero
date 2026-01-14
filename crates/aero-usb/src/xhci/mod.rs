@@ -2122,8 +2122,10 @@ impl XhciController {
         if slot_id == 0 {
             return;
         }
-        let endpoint_id = endpoint_id & 0x1f;
-        if endpoint_id == 0 {
+        // Doorbell target values outside 1..=31 are reserved by xHCI. Ignore them rather than
+        // masking so a guest cannot accidentally (or maliciously) alias an invalid target onto a
+        // real endpoint ID.
+        if endpoint_id == 0 || endpoint_id > 31 {
             return;
         }
 

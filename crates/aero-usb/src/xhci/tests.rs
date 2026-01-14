@@ -1651,6 +1651,12 @@ fn endpoint_doorbell_ignores_endpoint_id_zero() {
         "endpoint ID 0 is reserved and should not enqueue work"
     );
 
+    xhci.ring_doorbell(slot_id, 33);
+    assert!(
+        xhci.active_endpoints.is_empty(),
+        "invalid endpoint IDs must not alias onto valid doorbell targets"
+    );
+
     xhci.ring_doorbell(slot_id, 1);
     assert_eq!(xhci.active_endpoints.len(), 1);
 }
