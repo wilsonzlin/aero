@@ -394,6 +394,57 @@ export type XhciControllerBridgeHandle = {
     free(): void;
 };
 
+/**
+ * Guest-visible EHCI controller bridge handle.
+ *
+ * EHCI uses an MMIO BAR (unlike UHCI's I/O port space). Time is advanced in deterministic 1ms USB
+ * frames via {@link step_frames}.
+ */
+export type EhciControllerBridgeHandle = {
+    mmio_read(offset: number, size: number): number;
+    mmio_write(offset: number, size: number, value: number): void;
+
+    /**
+     * Advance the controller by `frames` USB frames (1ms each).
+     */
+    step_frames(frames: number): void;
+
+    /**
+     * Convenience wrapper for stepping a single USB frame (1ms).
+     *
+     * Optional for older WASM builds.
+     */
+    step_frame?(): void;
+
+    /**
+     * Alias for {@link step_frame}.
+     *
+     * Optional for older WASM builds.
+     */
+    tick_1ms?(): void;
+
+    irq_asserted(): boolean;
+
+    /**
+     * Update the device model's PCI command register (offset 0x04, low 16 bits).
+     *
+     * Optional for older WASM builds.
+     */
+    set_pci_command?(command: number): void;
+
+    /**
+     * Deterministic controller snapshot bytes.
+     *
+     * Optional for older WASM builds.
+     */
+    save_state?(): Uint8Array;
+    load_state?(bytes: Uint8Array): void;
+    snapshot_state?: () => Uint8Array;
+    restore_state?: (bytes: Uint8Array) => void;
+
+    free(): void;
+};
+
 export type GuestCpuBenchHarnessHandle = {
     payload_info(variant: string): unknown;
     run_payload_once(variant: string, itersPerRun: number): unknown;
@@ -699,6 +750,19 @@ export interface WasmApi {
             restore_state?: (bytes: Uint8Array) => void;
             free(): void;
         };
+    };
+
+    /**
+     * Guest-visible EHCI controller bridge.
+     *
+     * Optional and has multiple constructor signatures depending on the deployed WASM build:
+     * - `new (guestBase, guestSize)` for canonical builds (guestSize=0 means "use remainder of linear memory").
+     * - older/experimental bindings may accept fewer args; callers should treat this as optional and feature-detect.
+     */
+    EhciControllerBridge?: {
+        new (): EhciControllerBridgeHandle;
+        new (guestBase: number): EhciControllerBridgeHandle;
+        new (guestBase: number, guestSize: number): EhciControllerBridgeHandle;
     };
 
     /**
