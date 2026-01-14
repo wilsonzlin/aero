@@ -82,6 +82,7 @@ using aerogpu::d3d10_11::kD3D10UsageStaging;
 using aerogpu::d3d10_11::kD3D10CpuAccessRead;
 using aerogpu::d3d10_11::kD3D10CpuAccessWrite;
 using aerogpu::d3d10_11::kD3D10ResourceMiscShared;
+using aerogpu::d3d10_11::kD3D10ResourceMiscSharedKeyedMutex;
 
 struct AeroGpuAdapter;
 
@@ -2879,16 +2880,9 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     const bool is_ds = (res->bind_flags & kD3D10BindDepthStencil) != 0;
     bool is_shared = false;
     is_shared = (res->misc_flags & kD3D10ResourceMiscShared) != 0;
-#ifdef D3D10_DDI_RESOURCE_MISC_SHARED_KEYEDMUTEX
-    if (res->misc_flags & D3D10_DDI_RESOURCE_MISC_SHARED_KEYEDMUTEX) {
+    if (res->misc_flags & kD3D10ResourceMiscSharedKeyedMutex) {
       is_shared = true;
     }
-#endif
-#ifdef D3D10_RESOURCE_MISC_SHARED_KEYEDMUTEX
-    if (res->misc_flags & D3D10_RESOURCE_MISC_SHARED_KEYEDMUTEX) {
-      is_shared = true;
-    }
-#endif
     res->is_shared = is_shared;
     const bool want_guest_backed = !is_shared && !is_primary && !is_staging && !is_rt && !is_ds;
     cpu_visible = cpu_visible || want_guest_backed;
@@ -3072,16 +3066,9 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     const bool is_ds = (res->bind_flags & kD3D10BindDepthStencil) != 0;
     bool is_shared = false;
     is_shared = (res->misc_flags & kD3D10ResourceMiscShared) != 0;
-#ifdef D3D10_DDI_RESOURCE_MISC_SHARED_KEYEDMUTEX
-    if (res->misc_flags & D3D10_DDI_RESOURCE_MISC_SHARED_KEYEDMUTEX) {
+    if (res->misc_flags & kD3D10ResourceMiscSharedKeyedMutex) {
       is_shared = true;
     }
-#endif
-#ifdef D3D10_RESOURCE_MISC_SHARED_KEYEDMUTEX
-    if (res->misc_flags & D3D10_RESOURCE_MISC_SHARED_KEYEDMUTEX) {
-      is_shared = true;
-    }
-#endif
     if (is_shared && (res->mip_levels != 1 || res->array_size != 1)) {
       // Keep shared surface interop conservative: only support the legacy single-subresource layout.
       deallocate_if_needed();

@@ -2961,14 +2961,12 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
     const bool is_rt = (res->bind_flags & kD3D11BindRenderTarget) != 0;
     const bool is_ds = (res->bind_flags & kD3D11BindDepthStencil) != 0;
     bool is_shared = false;
-    if (res->misc_flags & D3D11_RESOURCE_MISC_SHARED) {
+    if (res->misc_flags & kD3D11ResourceMiscShared) {
       is_shared = true;
     }
-#ifdef D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX
-    if (res->misc_flags & D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX) {
+    if (res->misc_flags & kD3D11ResourceMiscSharedKeyedMutex) {
       is_shared = true;
     }
-#endif
     const bool want_guest_backed = !is_shared && !is_primary && !is_staging && !is_rt && !is_ds;
     cpu_visible = cpu_visible || want_guest_backed;
     res->is_shared = is_shared;
@@ -3110,14 +3108,12 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
     const bool is_rt = (res->bind_flags & kD3D11BindRenderTarget) != 0;
     const bool is_ds = (res->bind_flags & kD3D11BindDepthStencil) != 0;
     bool is_shared = false;
-    if (res->misc_flags & D3D11_RESOURCE_MISC_SHARED) {
+    if (res->misc_flags & kD3D11ResourceMiscShared) {
       is_shared = true;
     }
-#ifdef D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX
-    if (res->misc_flags & D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX) {
+    if (res->misc_flags & kD3D11ResourceMiscSharedKeyedMutex) {
       is_shared = true;
     }
-#endif
     if (is_shared && (res->mip_levels != 1 || res->array_size != 1)) {
       res->~Resource();
       return E_NOTIMPL;

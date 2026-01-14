@@ -142,6 +142,9 @@ constexpr uint32_t kD3D11FormatSupportDisplay = 0x80000;
 constexpr uint32_t kD3D11ResourceMiscShared = 0x2;
 // Back-compat alias used by D3D10 paths (D3D10_RESOURCE_MISC_SHARED).
 constexpr uint32_t kD3D10ResourceMiscShared = kD3D11ResourceMiscShared;
+constexpr uint32_t kD3D11ResourceMiscSharedKeyedMutex = 0x100;
+// Back-compat alias used by D3D10 paths (D3D10_RESOURCE_MISC_SHARED_KEYEDMUTEX).
+constexpr uint32_t kD3D10ResourceMiscSharedKeyedMutex = kD3D11ResourceMiscSharedKeyedMutex;
 
 inline uint32_t D3D11FormatSupportFlagsFromDxgiCapsMask(uint32_t caps) {
   uint32_t support = 0;
