@@ -1881,9 +1881,12 @@ fn validate_in_tree_infs(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
                         // This is intentionally byte-level so drift in comments/whitespace/ordering is
                         // detected.
                         if canonical_body.is_none() {
-                            canonical_body = Some(inf_functional_bytes(inf_path).with_context(
-                                || format!("{name}: read canonical virtio-input INF functional bytes"),
-                            )?);
+                            canonical_body =
+                                Some(inf_functional_bytes(inf_path).with_context(|| {
+                                    format!(
+                                        "{name}: read canonical virtio-input INF functional bytes"
+                                    )
+                                })?);
                         }
                         let alias_body = inf_functional_bytes(&alias).with_context(|| {
                             format!("{name}: read legacy virtio-input alias INF functional bytes")
@@ -2203,7 +2206,11 @@ fn inf_functional_bytes(path: &Path) -> Result<Vec<u8>> {
         while i < data.len() && data[i] != b'\n' {
             i += 1;
         }
-        let next_start = if i < data.len() && data[i] == b'\n' { i + 1 } else { i };
+        let next_start = if i < data.len() && data[i] == b'\n' {
+            i + 1
+        } else {
+            i
+        };
         let line = &data[line_start..next_start];
 
         let stripped = line

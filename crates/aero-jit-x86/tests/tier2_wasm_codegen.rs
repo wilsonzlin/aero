@@ -1538,7 +1538,10 @@ fn tier2_trace_wasm_matches_interpreter_on_sign_flag_guard() {
                 dst: v(0),
                 value: 0x8000_0000_0000_0000,
             },
-            Instr::Const { dst: v(1), value: 0 },
+            Instr::Const {
+                dst: v(1),
+                value: 0,
+            },
             Instr::BinOp {
                 dst: v(2),
                 op: BinOp::Xor,

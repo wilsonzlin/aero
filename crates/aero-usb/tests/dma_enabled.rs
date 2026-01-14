@@ -131,7 +131,10 @@ fn xhci_process_command_ring_does_not_touch_guest_memory_without_dma() {
 
     // `process_command_ring` should bail out before touching guest memory when DMA is disabled.
     let ring_empty = xhci.process_command_ring(&mut mem, 8);
-    assert!(ring_empty, "expected process_command_ring to report no progress without DMA");
+    assert!(
+        ring_empty,
+        "expected process_command_ring to report no progress without DMA"
+    );
     assert_eq!(
         mem.reads, 0,
         "xHCI process_command_ring must not DMA-read guest memory when dma_enabled() is false"
