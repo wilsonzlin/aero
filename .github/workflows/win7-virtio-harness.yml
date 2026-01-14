@@ -851,6 +851,7 @@ jobs:
           input_led_marker=""
           input_leds_marker=""
           input_binding_host_marker=""
+          input_bind_host_marker=""
           input_events_modifiers_marker=""
           input_events_buttons_marker=""
           input_events_wheel_marker=""
@@ -934,6 +935,7 @@ jobs:
               input_inject_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|' "${harness_log}" | tail -n 1 || true)"
               input_media_keys_inject_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MEDIA_KEYS_INJECT|' "${harness_log}" | tail -n 1 || true)"
               input_tablet_inject_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|' "${harness_log}" | tail -n 1 || true)"
+              input_bind_host_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_BIND|' "${harness_log}" | tail -n 1 || true)"
               input_binding_host_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_BINDING|' "${harness_log}" | tail -n 1 || true)"
               force_intx_host_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|CONFIG|force_intx=1' "${harness_log}" | tail -n 1 || true)"
               blk_irq_host_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_IRQ|' "${harness_log}" | tail -n 1 || true)"
@@ -1142,6 +1144,9 @@ jobs:
             fi
             if [[ "${{ inputs.require_virtio_input_binding }}" == "true" && -n "${input_binding_host_marker}" ]]; then
               echo "- Host virtio-input binding marker: \`${input_binding_host_marker}\`"
+            fi
+            if [[ -n "${input_bind_host_marker}" ]]; then
+              echo "- Host virtio-input bind marker: \`${input_bind_host_marker}\`"
             fi
             if [[ "${{ inputs.with_virtio_input_led }}" == "true" && -n "${input_led_marker}" ]]; then
               echo "- Guest virtio-input-led marker: \`${input_led_marker}\`"
