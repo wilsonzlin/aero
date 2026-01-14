@@ -46,8 +46,8 @@ Conversion details (bring-up):
 - Uses `w = 1/rhw` (with a safe fallback when `rhw==0`) and writes `clip.xyzw = {ndc.x*w, ndc.y*w, z*w, w}`.
 - `z` is treated as D3D9 NDC depth (`0..1`); viewport `MinZ`/`MaxZ` are currently ignored.
 - Converted vertices are uploaded into a scratch UP VB using the active fixed-function FVF stride/layout
-  (`POSITIONT=float4` + optional `COLOR0` and/or `TEXCOORD0`), and drawn with the corresponding internal fixed-function
-  passthrough VS variant.
+   (`POSITIONT=float4` + optional `COLOR0` and/or `TEXCOORD0`), and drawn with the corresponding internal fixed-function
+   passthrough VS variant (including a default-white diffuse variant when `D3DFVF_DIFFUSE` is omitted).
 
 This is used by the fixed-function FVFs:
 
