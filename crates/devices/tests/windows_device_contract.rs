@@ -399,6 +399,7 @@ fn windows_device_contract_virtio_input_inf_uses_distinct_keyboard_mouse_device_
 
     let hwid_kbd = "PCI\\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01";
     let hwid_mouse = "PCI\\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01";
+    let hwid_fallback = "PCI\\VEN_1AF4&DEV_1052&REV_01";
 
     for section in ["Aero.NTx86", "Aero.NTamd64"] {
         let (kbd_desc, kbd_install) = inf_model_entry_for_hwid(&inf_contents, section, hwid_kbd)
@@ -409,19 +410,18 @@ fn windows_device_contract_virtio_input_inf_uses_distinct_keyboard_mouse_device_
 
         assert_eq!(kbd_install, mouse_install, "{section}: install section mismatch");
 
-        // The canonical INF (`aero_virtio_input.inf`) intentionally does NOT include a generic
-        // `PCI\\VEN_1AF4&DEV_1052&REV_01` fallback match to avoid overlapping binding with the
-        // tablet INF. See `drivers/windows7/virtio-input/docs/pci-hwids.md` for details.
-        let hwid_fallback = "PCI\\VEN_1AF4&DEV_1052&REV_01";
-        assert!(
-            inf_model_entry_for_hwid(&inf_contents, section, hwid_fallback).is_none(),
-            "{section}: canonical INF must not include a generic fallback HWID model entry"
-        );
-
         assert_ne!(
             kbd_desc.to_ascii_lowercase(),
             mouse_desc.to_ascii_lowercase(),
             "{section}: keyboard/mouse DeviceDesc tokens must be distinct"
+        );
+
+        // The canonical INF (`aero_virtio_input.inf`) intentionally does NOT include a generic
+        // `PCI\\VEN_1AF4&DEV_1052&REV_01` fallback match to avoid overlapping binding with the
+        // tablet INF. See `drivers/windows7/virtio-input/docs/pci-hwids.md` for details.
+        assert!(
+            inf_model_entry_for_hwid(&inf_contents, section, hwid_fallback).is_none(),
+            "{section}: canonical INF must not include a generic fallback HWID model entry"
         );
 
         // The canonical INF is expected to use these tokens (kept in sync with docs/tests).

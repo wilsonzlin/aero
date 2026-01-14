@@ -517,9 +517,7 @@ def _parse_rust_u8_array(text: str, const_name: str, *, constants: dict[str, int
                         + "(only integer literals/constants are supported; avoid Rust expressions)"
                     ) from e
             if not (0 <= val <= 0xFF):
-                raise ValueError(
-                    f"{DEFAULT_PROFILE_RS_PATH.as_posix()}: {const_name}: u8 value out of range: {tok!r}"
-                )
+                raise ValueError(f"{DEFAULT_PROFILE_RS_PATH.as_posix()}: {const_name}: u8 value out of range: {tok!r}")
             values.append(val)
         return values
 
@@ -527,9 +525,7 @@ def _parse_rust_u8_array(text: str, const_name: str, *, constants: dict[str, int
     # 2) Const block form.
     # ---------------------------------------------------------------------
     try:
-        block = _extract_rust_block(
-            text, needle=f"pub const {const_name}:", ctx=DEFAULT_PROFILE_RS_PATH.as_posix()
-        )
+        block = _extract_rust_block(text, needle=f"pub const {const_name}:", ctx=DEFAULT_PROFILE_RS_PATH.as_posix())
     except ValueError:
         raise ValueError(f"{DEFAULT_PROFILE_RS_PATH.as_posix()}: missing u8 array const {const_name}")
 

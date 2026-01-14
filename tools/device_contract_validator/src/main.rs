@@ -1368,7 +1368,6 @@ fn validate_virtio_input_device_desc_split(
                 ms.raw_line,
             );
         }
-
         if require_fallback {
             let fb = fb_rev[0];
             let fb_desc = resolve_inf_device_desc(&fb.device_desc, &strings)?;
@@ -1480,9 +1479,9 @@ AeroVirtioInput.DeviceDesc    = "Aero VirtIO Input Device"
 %AeroVirtioMouse.DeviceDesc%    = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
 
 [Strings]
-AeroVirtioKeyboard.DeviceDesc = "Aero VirtIO Keyboard"
-AeroVirtioMouse.DeviceDesc    = "Aero VirtIO Mouse"
-"#;
+ AeroVirtioKeyboard.DeviceDesc = "Aero VirtIO Keyboard"
+ AeroVirtioMouse.DeviceDesc    = "Aero VirtIO Mouse"
+ "#;
         let err = validate(inf, true).unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("expected exactly one generic fallback model entry"));
@@ -1553,9 +1552,9 @@ AeroVirtioMouse.DeviceDesc    = "Aero VirtIO Mouse"
 
 [Strings]
 AeroVirtioKeyboard.DeviceDesc = "Aero VirtIO Keyboard"
-        AeroVirtioMouse.DeviceDesc    = "Aero VirtIO Mouse"
-        AeroVirtioInput.DeviceDesc    = "Aero VirtIO Input Device"
-        AeroVirtioTablet.DeviceDesc   = "Aero VirtIO Tablet Device"
+AeroVirtioMouse.DeviceDesc    = "Aero VirtIO Mouse"
+AeroVirtioInput.DeviceDesc    = "Aero VirtIO Input Device"
+AeroVirtioTablet.DeviceDesc   = "Aero VirtIO Tablet Device"
 "#;
         let err = validate(inf, true).unwrap_err();
         let msg = format!("{err:#}");
@@ -1787,6 +1786,9 @@ fn validate_in_tree_infs(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
 
                 let expected_rev = parse_contract_pci_revision_for_device(dev, &base)
                     .with_context(|| format!("{name}: parse contract PCI revision for {base}"))?;
+                // Do not require a specific `{base}&REV_XX` HWID string (some INFs further qualify
+                // binding with SUBSYS_...); instead, enforce that any HWIDs in this VEN/DEV family
+                // are revision-gated and match the contract revision below.
 
                 let mut missing_rev = BTreeSet::new();
                 let mut wrong_rev = BTreeSet::new();

@@ -3956,7 +3956,10 @@ def main() -> None:
 
         base_hwid = f"PCI\\VEN_{contract_any.vendor_id:04X}&DEV_{contract_any.device_id:04X}"
         strict_hwid = f"{base_hwid}&REV_{contract_rev:02X}"
-
+        # Do not require a specific `{base_hwid}&REV_XX` literal (some INFs further
+        # qualify binding with SUBSYS_...); instead, enforce that the INF binds to
+        # the expected VEN/DEV family and that all matches are revision-gated to
+        # the contract revision.
         relevant = [h for h in hwids if h.upper().startswith(base_hwid.upper())]
         if not relevant:
             errors.append(
@@ -4028,8 +4031,8 @@ def main() -> None:
 
         # The legacy alias INF is kept for compatibility with workflows that reference the
         # legacy `virtio-input.inf` name. It is allowed to diverge in the models sections
-        # (`[Aero.NTx86]` / `[Aero.NTamd64]`) to provide an opt-in strict fallback HWID,
-        # but must otherwise stay in sync with the canonical INF so behavior cannot drift.
+        # (`[Aero.NTx86]` / `[Aero.NTamd64]`) to provide an opt-in strict fallback HWID
+        # (no SUBSYS), but must otherwise stay in sync with the canonical INF.
         validate_virtio_input_model_lines(
             inf_path=virtio_input_alias,
             strict_hwid=strict_hwid,
