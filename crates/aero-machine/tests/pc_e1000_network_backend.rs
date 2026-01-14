@@ -249,3 +249,56 @@ fn pc_machine_e1000_network_backend_loopback() {
     assert_ne!(rx_status & 0x1, 0, "RX descriptor DD should be set");
     assert_ne!(rx_status & 0x2, 0, "RX descriptor EOP should be set");
 }
+
+#[test]
+fn pc_machine_poll_network_mirrors_e1000_bar_bases_when_cleared_to_zero() {
+    const RAM_SIZE: usize = 2 * 1024 * 1024;
+
+    let mut pc = PcMachine::new_with_e1000(RAM_SIZE, None);
+    assert!(pc.bus.platform.has_e1000());
+
+    let bdf = aero_devices::pci::profile::NIC_E1000_82540EM.bdf;
+
+    let bar0_base = {
+        let mut pci_cfg = pc.bus.platform.pci_cfg.borrow_mut();
+        let cfg = pci_cfg
+            .bus_mut()
+            .device_config(bdf)
+            .expect("E1000 config function must exist");
+        cfg.bar_range(0).expect("E1000 BAR0 must exist").base
+    };
+    assert_ne!(bar0_base, 0, "expected BIOS to assign E1000 BAR0 base");
+
+    // First poll synchronizes the device model's internal PCI config image from the canonical bus.
+    pc.poll_network();
+
+    let e1000 = pc.bus.platform.e1000().expect("e1000 enabled");
+    let bar0_reg_before = e1000.borrow().pci_config_read(0x10, 4);
+    assert_eq!(
+        bar0_reg_before as u64, bar0_base,
+        "expected poll_network() to mirror BAR0 into the E1000 model"
+    );
+
+    // Program BAR0 and BAR1 back to 0 in the canonical PCI config space, then poll again.
+    //
+    // Guests may unassign BARs by writing 0; poll_network must mirror that into the device model
+    // (distinguishing BAR-present-with-base=0 from BAR-absent).
+    {
+        let mut pci_cfg = pc.bus.platform.pci_cfg.borrow_mut();
+        pci_cfg.bus_mut().write_config(bdf, 0x10, 4, 0);
+        pci_cfg.bus_mut().write_config(bdf, 0x14, 4, 0);
+    }
+
+    pc.poll_network();
+
+    let bar0_reg_after = e1000.borrow().pci_config_read(0x10, 4);
+    assert_eq!(
+        bar0_reg_after, 0,
+        "expected poll_network() to mirror BAR0 base=0 into the E1000 model"
+    );
+    let bar1_reg_after = e1000.borrow().pci_config_read(0x14, 4);
+    assert_eq!(
+        bar1_reg_after, 0x1,
+        "expected poll_network() to mirror BAR1 base=0 (I/O indicator bit set) into the E1000 model"
+    );
+}
