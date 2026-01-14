@@ -74,6 +74,26 @@ def extract_validation_dbgctl_section(text: str) -> tuple[str, int] | None:
     return (m.group(1), start_line)
 
 
+def extract_validation_dbgctl_table_section(text: str) -> tuple[str, int] | None:
+    """
+    Returns (section_text, start_line_number) for the validation doc's dbgctl
+    command table section (5.3), or None if the section cannot be found.
+
+    This section contains a markdown table of commands where the `--...` flags
+    are listed without the `aerogpu_dbgctl` prefix, so it is not covered by the
+    line-based `aerogpu_dbgctl` invocation heuristic.
+    """
+    m = re.search(
+        r"^### 5\.3\b.*?\n(.*?)(?=^### 5\.4\b)",
+        text,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    if not m:
+        return None
+    start_line = text[: m.start(1)].count("\n") + 1
+    return (m.group(1), start_line)
+
+
 def iter_dbgctl_flag_refs(path: pathlib.Path) -> list[tuple[int, str]]:
     """
     Find referenced dbgctl `--...` flags in places that appear to be dbgctl
@@ -154,16 +174,18 @@ def main() -> int:
         return 1
 
     # Also ensure the Win7 validation playbook doesn't reference unknown dbgctl
-    # flags in its dbgctl command table (section 5.2).
+    # flags in its dbgctl sections.
     validation_text = read_text(WIN7_VALIDATION_DOC)
 
     extracted = extract_validation_dbgctl_section(validation_text)
+    extracted_table = extract_validation_dbgctl_table_section(validation_text)
+    rel = WIN7_VALIDATION_DOC.relative_to(ROOT)
+
     if not extracted:
-        rel = WIN7_VALIDATION_DOC.relative_to(ROOT)
-        print(
-            f"ERROR: failed to locate dbgctl section (### 5.2 .. ### 5.3) in {rel}",
-            file=sys.stderr,
-        )
+        print(f"ERROR: failed to locate dbgctl section (### 5.2 .. ### 5.3) in {rel}", file=sys.stderr)
+        return 1
+    if not extracted_table:
+        print(f"ERROR: failed to locate dbgctl table section (### 5.3 .. ### 5.4) in {rel}", file=sys.stderr)
         return 1
 
     section_text, section_start_line = extracted
@@ -174,10 +196,27 @@ def main() -> int:
 
     unknown_section = sorted({f for _, f in section_refs} - allowed_flags)
     if unknown_section:
-        rel = WIN7_VALIDATION_DOC.relative_to(ROOT)
-        print(f"ERROR: {rel} dbgctl command table references unknown flags:", file=sys.stderr)
+        print(f"ERROR: {rel} dbgctl section references unknown flags:", file=sys.stderr)
         for unknown_flag in unknown_section:
             for line_no, f in section_refs:
+                if f == unknown_flag:
+                    print(f"  - {rel}:{line_no}: {unknown_flag}", file=sys.stderr)
+        print("\nAllowed flags (extracted from aerogpu_dbgctl.cpp):", file=sys.stderr)
+        for f in sorted(allowed_flags):
+            print(f"  - {f}", file=sys.stderr)
+        return 1
+
+    table_text, table_start_line = extracted_table
+    table_refs: list[tuple[int, str]] = []
+    for idx, line in enumerate(table_text.splitlines(), start=0):
+        for flag in MD_FLAG_RE.findall(line):
+            table_refs.append((table_start_line + idx, flag))
+
+    unknown_table = sorted({f for _, f in table_refs} - allowed_flags)
+    if unknown_table:
+        print(f"ERROR: {rel} dbgctl command table references unknown flags:", file=sys.stderr)
+        for unknown_flag in unknown_table:
+            for line_no, f in table_refs:
                 if f == unknown_flag:
                     print(f"  - {rel}:{line_no}: {unknown_flag}", file=sys.stderr)
         print("\nAllowed flags (extracted from aerogpu_dbgctl.cpp):", file=sys.stderr)
