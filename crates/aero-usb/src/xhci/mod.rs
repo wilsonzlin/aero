@@ -3535,7 +3535,7 @@ impl XhciController {
                                         updated.parameter = u64::from_le_bytes(imm);
                                         updated.write_to(mem, trb_paddr);
                                     } else {
-                                        let buf_ptr = trb.pointer();
+                                        let buf_ptr = trb.parameter;
                                         mem.write_physical(buf_ptr, &data);
                                     }
                                     let completion = if transferred < requested_len {
@@ -3566,7 +3566,7 @@ impl XhciController {
                                 UsbOutResult::Timeout => (CompletionCode::UsbTransactionError, 0),
                             }
                         } else {
-                            let buf_ptr = trb.pointer();
+                            let buf_ptr = trb.parameter;
                             let mut buf = vec![0u8; requested_len];
                             mem.read_physical(buf_ptr, &mut buf);
                             match device.handle_out(0, &buf) {
