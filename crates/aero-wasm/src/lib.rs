@@ -4030,6 +4030,64 @@ impl Machine {
         })
     }
 
+    /// Construct a canonical Win7 storage topology machine backed by shared guest RAM.
+    ///
+    /// This is the shared-memory equivalent of [`Machine::new_win7_storage`].
+    ///
+    /// The backing storage is the linear-memory byte range `[guest_base, guest_base + guest_size)`.
+    #[cfg(target_arch = "wasm32")]
+    pub fn new_win7_storage_shared(guest_base: u32, guest_size: u32) -> Result<Self, JsValue> {
+        if guest_size == 0 {
+            return Err(js_error(
+                "Machine.new_win7_storage_shared: guest_size must be non-zero",
+            ));
+        }
+
+        let guest_size_u64 = crate::validate_shared_guest_ram_layout(
+            "Machine.new_win7_storage_shared",
+            guest_base,
+            guest_size,
+        )?;
+
+        let cfg = aero_machine::MachineConfig::win7_storage_defaults(guest_size_u64);
+
+        let mem =
+            memory::WasmSharedGuestMemory::new(guest_base, guest_size_u64).map_err(|e| {
+                js_error(format!(
+                    "Machine.new_win7_storage_shared: failed to init shared guest RAM backend: {e}"
+                ))
+            })?;
+        let inner = aero_machine::Machine::new_with_guest_memory(cfg, Box::new(mem))
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
+        let scanout_state = Self::scanout_state_ref();
+        Ok(Self {
+            inner,
+            mouse_buttons: 0,
+            mouse_buttons_known: true,
+
+            #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
+            scanout_state,
+            #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
+            last_published_scanout: None,
+        })
+    }
+
+    /// Construct a canonical Windows 7 storage topology machine (AHCI + IDE at the normative BDFs).
+    ///
+    /// This uses [`aero_machine::MachineConfig::win7_storage_defaults`], which matches
+    /// `docs/05-storage-topology-win7.md` and keeps non-storage devices conservative by default:
+    ///
+    /// - AHCI (ICH9) enabled at `00:02.0`
+    /// - IDE (PIIX3) enabled at `00:01.1` (with the multi-function ISA bridge at `00:01.0`)
+    /// - **Networking is disabled** in this preset (E1000/virtio-net off)
+    /// - USB is disabled (UHCI off)
+    pub fn new_win7_storage(ram_size_bytes: u32) -> Result<Self, JsValue> {
+        let cfg = aero_machine::MachineConfig::win7_storage_defaults(ram_size_bytes as u64);
+        Self::new_with_native_config(cfg)
+    }
+
     pub fn reset(&mut self) {
         self.inner.reset();
         self.mouse_buttons = 0;
