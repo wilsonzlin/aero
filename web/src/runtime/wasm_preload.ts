@@ -57,6 +57,13 @@ function isNodeEnv(): boolean {
   return typeof p?.versions?.node === "string";
 }
 
+function stripQueryAndHash(url: string): string {
+  const q = url.indexOf("?");
+  const h = url.indexOf("#");
+  const end = Math.min(q >= 0 ? q : url.length, h >= 0 ? h : url.length);
+  return end === url.length ? url : url.slice(0, end);
+}
+
 export async function precompileWasm(variant: WasmVariant): Promise<PrecompiledWasm> {
   const existing = precompilePromises[variant];
   if (existing) return existing;
@@ -70,16 +77,58 @@ export async function precompileWasm(variant: WasmVariant): Promise<PrecompiledW
       //
       // Note: this intentionally bypasses `compileStreaming` in Node since we are not
       // working with a real HTTP Response.
-      if (isNodeEnv() && !/^https?:/i.test(url)) {
+      //
+      // `data:` URLs are valid fetch targets (and are used by some bundlers). Avoid treating them
+      // as filesystem paths.
+      if (isNodeEnv() && !/^https?:/i.test(url) && !/^data:/i.test(url)) {
         // Keep the dynamic imports opaque to Vite/Rollup so browser builds don't try to resolve Node builtins.
         const fsPromises = "node:fs/promises";
         const nodeUrl = "node:url";
         const { readFile } = await import(/* @vite-ignore */ fsPromises);
-        const { fileURLToPath } = await import(/* @vite-ignore */ nodeUrl);
+        const { fileURLToPath, pathToFileURL } = await import(/* @vite-ignore */ nodeUrl);
 
-        const fileUrl = url.startsWith("file:") ? new URL(url) : new URL(WASM_BINARY_PATH[variant], import.meta.url);
-        const bytes = await readFile(fileURLToPath(fileUrl));
-        return await WebAssembly.compile(bytes);
+        const candidates: URL[] = [];
+        const pushCandidate = (candidate: URL): void => {
+          // `fileURLToPath` rejects query strings/hashes. Defensive: strip them if present.
+          candidate.search = "";
+          candidate.hash = "";
+          candidates.push(candidate);
+        };
+
+        if (url.startsWith("file:")) {
+          pushCandidate(new URL(url));
+        } else {
+          const stripped = stripQueryAndHash(url);
+          // Vite dev server can emit absolute filesystem URLs as `/@fs/<abs-path>`.
+          // Prefer using it when available, but fall back to the build output path if it doesn't exist.
+          if (stripped.startsWith("/@fs/")) {
+            // Strip the `/@fs` prefix but preserve the leading `/` of the absolute path.
+            pushCandidate(pathToFileURL(stripped.slice("/@fs".length)));
+          } else if (stripped.startsWith("/")) {
+            // Best-effort: interpret as an absolute filesystem path. This commonly fails for
+            // dev-server paths like `/web/src/...`, so we keep a fallback below.
+            pushCandidate(pathToFileURL(stripped));
+          } else {
+            // Interpret as a relative path to this module (most robust in Vitest/Node).
+            pushCandidate(new URL(stripped, import.meta.url));
+          }
+        }
+
+        // Fallback: load from the expected source-tree output path. This handles Vite-generated
+        // dev-server paths that are not directly readable from the filesystem (e.g. `/web/src/...`).
+        pushCandidate(new URL(WASM_BINARY_PATH[variant], import.meta.url));
+
+        let lastErr: unknown;
+        for (const candidate of candidates) {
+          try {
+            const bytes = await readFile(fileURLToPath(candidate));
+            return await WebAssembly.compile(bytes);
+          } catch (err) {
+            lastErr = err;
+          }
+        }
+
+        throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
       }
 
       const response = await fetch(url);

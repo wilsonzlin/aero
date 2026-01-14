@@ -109,4 +109,36 @@ describe("runtime/wasm_preload", () => {
       await rm(dir, { recursive: true, force: true });
     }
   });
+
+  it("precompiles from a Vite /@fs/ URL in Node without using fetch()", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "aero-wasm-preload-"));
+    try {
+      const wasmPath = join(dir, "aero_wasm_bg.wasm");
+      await writeFile(wasmPath, WASM_EMPTY_MODULE_BYTES);
+
+      // Vite can represent filesystem assets as `/@fs/<absolute-path>?url`.
+      const url = `/@fs/${wasmPath.slice(1)}?url`;
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (globalThis as any).__aeroWasmBinaryUrlOverride = { threaded: url };
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (globalThis as any).fetch = vi.fn(async () => {
+        throw new Error("fetch() should not be called for /@fs/ URLs in Node");
+      });
+
+      // `precompileWasm()` caches per variant, so load a fresh module instance.
+      vi.resetModules();
+      const { precompileWasm: precompileWasmFresh } = await import("./wasm_preload");
+
+      const compiled = await precompileWasmFresh("threaded");
+      expect(compiled.url).toBe(url);
+      expect(compiled.module).toBeInstanceOf(WebAssembly.Module);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      expect((globalThis as any).fetch).not.toHaveBeenCalled();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });
