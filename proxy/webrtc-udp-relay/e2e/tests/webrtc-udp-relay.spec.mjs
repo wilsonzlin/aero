@@ -594,6 +594,8 @@ async function spawnRelayServer(extraEnv = {}) {
         PREFER_V2: "true",
         // Auth is irrelevant for these tests, so disable it.
         AUTH_MODE: "none",
+        API_KEY: "",
+        JWT_SECRET: "",
         // Reduce noise in Playwright output.
         AERO_WEBRTC_UDP_RELAY_LOG_LEVEL: "error",
         ...extraEnv,
