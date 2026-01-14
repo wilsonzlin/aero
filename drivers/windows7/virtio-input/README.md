@@ -216,6 +216,12 @@ Tablet (absolute pointer) report delivery can also be validated end-to-end:
 - Expected guest marker:
   - `AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|PASS|...`
 
+To attach a `virtio-tablet-pci` device **without** QMP injection / marker enforcement (for example to validate
+enumeration only), run the host harness with:
+
+- PowerShell: `-WithVirtioTablet`
+- Python: `--with-virtio-tablet`
+
 ## Build
 
 ### Supported: WDK10 / MSBuild (CI path)
