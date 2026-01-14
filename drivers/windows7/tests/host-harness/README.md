@@ -819,30 +819,30 @@ To enable end-to-end testing:
       HID interface.
       - For an **Aero contract tablet** (HWID `...&SUBSYS_00121AF4&REV_01`), the intended INF is
         `drivers/windows7/virtio-input/inf/aero_virtio_tablet.inf`.
-      - `aero_virtio_tablet.inf` is the preferred binding for the contract tablet HWID and wins when it matches (it is a more
-        specific match than the strict generic fallback below).
-      - If your QEMU/device does **not** expose the Aero contract subsystem IDs:
-        - `aero_virtio_tablet.inf` will not match (it matches only the tablet subsystem-qualified HWID). In that case you
-          must either:
-          - Adjust/emulate the subsystem IDs to the contract values (so the tablet enumerates as
-            `...&SUBSYS_00121AF4&REV_01` and binds via `aero_virtio_tablet.inf`), **or**
-          - Install `aero_virtio_input.inf`: it includes the strict revision-gated generic fallback match
-            (`PCI\VEN_1AF4&DEV_1052&REV_01`) as long as the device reports `REV_01` (for QEMU, ensure
-            `x-pci-revision=0x01` is in effect; the harness does this by default).
-            - When binding via the generic fallback entry, Device Manager will show the generic
-              **Aero VirtIO Input Device** name.
-            - Caveat: avoid installing overlapping virtio-input INFs that can match the same HWIDs and steal device binding.
-        - The `*.inf.disabled` file under `drivers/windows7/virtio-input/inf/` is a filename alias only (optional
-          compatibility). Enabling it is **not** required for fallback binding.
-        - Note: documentation under `drivers/windows7/tests/` intentionally avoids spelling deprecated legacy INF basenames.
-          CI scans this tree for those strings. If you need to refer to a filename alias, refer to it generically as
-          the `*.inf.disabled` file.
+        - `aero_virtio_tablet.inf` is the preferred binding for the contract tablet HWID and wins when it matches (it is a more
+          specific match than the strict generic fallback below).
+        - If your QEMU/device does **not** expose the Aero contract subsystem IDs:
+          - `aero_virtio_tablet.inf` will not match (it matches only the tablet subsystem-qualified HWID).
+          - The canonical `aero_virtio_input.inf` is also SUBSYS-only, so it will not match either.
+          - To opt into a strict revision-gated generic fallback match (no `SUBSYS`):
+            - Enable the legacy virtio-input INF filename alias (the `*.inf.disabled` file under
+              `drivers/windows7/virtio-input/inf/`; drop the `.disabled` suffix).
+            - This adds the fallback HWID `PCI\VEN_1AF4&DEV_1052&REV_01` and can bind the tablet as the generic
+              **Aero VirtIO Input Device**.
+            - Ensure the device reports `REV_01` (for QEMU, ensure `x-pci-revision=0x01` is in effect; the harness does this by default).
+            - Do **not** install both `aero_virtio_input.inf` and the enabled alias INF at the same time.
+          - Preferred (contract) path: adjust/emulate the subsystem IDs to the contract values (so the tablet enumerates as
+            `...&SUBSYS_00121AF4&REV_01` and binds via `aero_virtio_tablet.inf`).
+          - Note: documentation under `drivers/windows7/tests/` intentionally avoids spelling deprecated legacy INF basenames.
+            CI scans this tree for those strings. If you need to refer to a filename alias, refer to it generically as
+            the `*.inf.disabled` file.
     - Once bound, the driver classifies the device as a tablet via `EV_BITS` (`EV_ABS` + `ABS_X`/`ABS_Y`).
       - When provisioning via `New-AeroWin7TestImage.ps1`, the tablet INF is installed by default when present; if you pass
         an explicit `-InfAllowList`, ensure it includes `aero_virtio_input.inf` (and `aero_virtio_tablet.inf` if you want
         to exercise the contract tablet binding specifically / validate tablet-specific INF matching).
-      - The optional `*.inf.disabled` filename alias is not required for fallback binding; only include it if you are
-        explicitly validating the filename-alias workflow.
+      - The optional `*.inf.disabled` filename alias is not required for **contract** (SUBSYS-qualified) binding.
+        It is only needed if you want to opt into strict generic fallback binding (no `SUBSYS`) for devices that do not
+        expose the Aero contract subsystem IDs, and/or if you are explicitly validating the filename-alias workflow.
 2. Run the host harness with `-WithInputTabletEvents` (aliases: `-WithVirtioInputTabletEvents`, `-RequireVirtioInputTabletEvents`,
          `-EnableVirtioInputTabletEvents`, `-WithTabletEvents`, `-EnableTabletEvents`) /
          `--with-input-tablet-events` (aliases: `--with-virtio-input-tablet-events`, `--with-tablet-events`,
