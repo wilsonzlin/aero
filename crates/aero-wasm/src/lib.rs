@@ -3952,7 +3952,10 @@ impl Machine {
         self.inner.serial_output_len().min(u64::from(u32::MAX)) as u32
     }
 
-    /// Returns and clears any accumulated ISA DebugCon output (port `0xE9`).
+    /// Returns and clears any accumulated DebugCon output (I/O port `0xE9`).
+    ///
+    /// Many emulators (Bochs/QEMU) expose a "debug console" sink at port `0xE9`, allowing guests to
+    /// print a byte with `out 0xE9, al`.
     pub fn debugcon_output(&mut self) -> Vec<u8> {
         self.inner.take_debugcon_output()
     }

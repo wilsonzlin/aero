@@ -41,6 +41,11 @@ a host-visible buffer:
 - `Machine::take_debugcon_output() -> Vec<u8>`
 - `Machine::debugcon_output_len() -> u64`
 
+In the browser runtime (`crates/aero-wasm`), the JS-facing `Machine` wrapper exposes the same log:
+
+- `Machine.debugcon_output() -> Uint8Array`
+- `Machine.debugcon_output_len() -> number`
+
 ---
 
 ## Native CLI runner (`aero-machine`)
@@ -56,7 +61,8 @@ bash ./scripts/safe-run.sh \
     --disk tests/fixtures/boot/boot_vga_serial_8s.img \
     --ram 64 \
     --max-insts 100000 \
-    --serial-out stdout
+    --serial-out stdout \
+    --debugcon-out stdout
 ```
 
 Note: the CLI opens the disk image as a native file-backed disk. By default it is **writable** (guest writes can modify the image). Use `--disk-ro` or a copy if you want a read-only base.

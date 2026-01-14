@@ -68,6 +68,12 @@ mod native {
         #[arg(long, default_value = "stdout")]
         serial_out: String,
 
+        /// Where to write accumulated DebugCon output bytes (I/O port `0xE9`).
+        ///
+        /// Use `none` to disable (default), `stdout` to write to stdout, or a file path.
+        #[arg(long, default_value = "none")]
+        debugcon_out: String,
+
         /// Dump the last VGA framebuffer to a PNG file on exit.
         #[arg(long)]
         vga_png: Option<PathBuf>,
@@ -126,6 +132,7 @@ mod native {
         }
 
         let mut serial_sink = open_serial_sink(&args.serial_out)?;
+        let mut debugcon_sink = open_optional_sink(&args.debugcon_out)?;
 
         let start = Instant::now();
         let mut total_executed: u64 = 0;
@@ -149,6 +156,9 @@ mod native {
 
             total_executed = total_executed.saturating_add(exit.executed());
             stream_serial(&mut machine, &mut serial_sink)?;
+            if let Some(out) = debugcon_sink.as_mut() {
+                stream_debugcon(&mut machine, out)?;
+            }
 
             match handle_exit(&mut machine, exit, total_executed)? {
                 LoopControl::Continue => continue,
@@ -159,6 +169,10 @@ mod native {
         // Flush any remaining serial bytes.
         stream_serial(&mut machine, &mut serial_sink)?;
         serial_sink.flush()?;
+        if let Some(out) = debugcon_sink.as_mut() {
+            stream_debugcon(&mut machine, out)?;
+            out.flush()?;
+        }
 
         if let Some(path) = &args.snapshot_save {
             let mut f = File::create(path).with_context(|| {
@@ -245,8 +259,23 @@ mod native {
         Ok(Box::new(BufWriter::new(f)))
     }
 
+    fn open_optional_sink(dest: &str) -> Result<Option<Box<dyn Write>>> {
+        if dest == "none" {
+            return Ok(None);
+        }
+        Ok(Some(open_serial_sink(dest)?))
+    }
+
     fn stream_serial(machine: &mut Machine, out: &mut dyn Write) -> Result<()> {
         let bytes = machine.take_serial_output();
+        if !bytes.is_empty() {
+            out.write_all(&bytes)?;
+        }
+        Ok(())
+    }
+
+    fn stream_debugcon(machine: &mut Machine, out: &mut dyn Write) -> Result<()> {
+        let bytes = machine.take_debugcon_output();
         if !bytes.is_empty() {
             out.write_all(&bytes)?;
         }
