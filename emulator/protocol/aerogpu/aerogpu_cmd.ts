@@ -1519,7 +1519,7 @@ export class AerogpuCmdWriter {
     this.view.setUint32(AEROGPU_CMD_STREAM_HEADER_OFF_FLAGS, 0, true);
   }
 
-  finish(): Uint8Array {
+  finish(): Uint8Array<ArrayBuffer> {
     if (this.len > 0xffffffff) {
       throw new Error(`command stream too large for u32 sizeBytes: ${this.len}`);
     }
