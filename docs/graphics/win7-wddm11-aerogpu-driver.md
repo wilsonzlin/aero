@@ -312,18 +312,20 @@ For each entrypoint:
 - **Can be deferred:** Hotplug/unplug events.
 
 #### `DxgkDdiRecommendFunctionalVidPn`
- 
+  
 - **Purpose:** Provide a baseline VidPN topology/mode set.
-- **AeroGPU MVP behavior:** Recommend a single path: source 0 → target 0, with a preferred mode (e.g., 1024×768@60, and optionally 1280×720@60, 1366×768@60).
+- **AeroGPU MVP behavior:** Recommend a single path: source 0 → target 0, with a preferred mode (EDID preferred timing or a conservative fallback such as 1024×768@60). Populate a small deterministic mode list so Windows cannot select arbitrary resolutions.
 - **Can be deferred:** Complex mode pruning, rotation, scaling.
- 
+  
 #### `DxgkDdiEnumVidPnCofuncModality`
- 
+  
 - **Purpose:** Validate/enumerate compatible modes/topologies for a given VidPN.
 - **AeroGPU MVP behavior:** Accept only:
   - 1 source, 1 target
   - Progressive scan
-  - A small whitelist of modes and pixel formats
+  - A small whitelist of modes and pixel formats (32bpp scanout-compatible):
+    - `D3DDDIFMT_X8R8G8B8`
+    - `D3DDDIFMT_A8R8G8B8` (byte-layout compatible; alpha ignored by scanout)
 - **Can be deferred:** Interlaced, custom timings, multiple paths.
  
 #### `DxgkDdiIsSupportedVidPn`
