@@ -11352,7 +11352,8 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPointerShape(_In_ const HANDLE hAdapter,
 
     /*
      * Cursor shape encoding:
-     * - Color / masked color: 32bpp pixels in A8R8G8B8 or X8R8G8B8 (little-endian BGRA/BGRX).
+     * - Color / masked color: 32bpp pixels in A8R8G8B8 or X8R8G8B8 (little-endian BGRA/BGRX;
+     *   X8 formats do not carry alpha and are treated as fully opaque for display).
      * - Monochrome: AND mask + XOR mask, each 1bpp, stacked vertically (classic Windows cursor encoding).
      *
      * We always write a 32bpp BGRA/BGRX cursor into the protocol cursor framebuffer and program

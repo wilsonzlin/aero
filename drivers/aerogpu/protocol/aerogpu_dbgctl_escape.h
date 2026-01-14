@@ -699,12 +699,16 @@ AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_set_cursor_visibility_in, v
  *   rows.
  * - Pixels are expected to be 32bpp little-endian BGRA/BGRX (matching the
  *   `AEROGPU_FORMAT_B8G8R8A8_UNORM` / `_B8G8R8X8_UNORM` formats).
+ *   For `*X8*` formats (`BGRX`), the high `X` byte is unused/undefined; when
+ *   treated as X8, the KMD ignores the stored `X` byte and forces alpha to
+ *   fully opaque (`A=0xFF`) for display.
  *
  * The total escape packet size must be:
  *   offsetof(aerogpu_escape_set_cursor_shape_in, pixels) + pitch_bytes * height
  *
- * `format` is advisory: the KMD may override it (for example, detecting XRGB vs
- * ARGB by scanning for any non-zero alpha bytes).
+ * `format` is advisory: the KMD may override it (for example, detecting whether
+ * the payload carries meaningful alpha (A8) vs unused X8 by scanning for any
+ * non-zero high/alpha bytes).
  */
 typedef struct aerogpu_escape_set_cursor_shape_in {
   aerogpu_escape_header hdr;
