@@ -407,6 +407,24 @@ static BOOLEAN AeroGpuComputeDefaultPitchBytes(_In_ ULONG Width, _Out_ ULONG* Pi
     return TRUE;
 }
 
+static __forceinline ULONG AeroGpuComputeVblankLineCountForActiveHeight(_In_ ULONG ActiveHeight)
+{
+    /*
+     * Mirror the heuristic used by AeroGpuDdiGetScanLine so the mode timing we
+     * advertise (VideoSignalInfo.TotalSize) is consistent with the scanline/vblank
+     * numbers we report back to dxgkrnl.
+     */
+    const ULONG height = ActiveHeight ? ActiveHeight : 1u;
+    ULONG vblankLines = height / 20;
+    if (vblankLines < 20) {
+        vblankLines = 20;
+    }
+    if (vblankLines > 40) {
+        vblankLines = 40;
+    }
+    return vblankLines;
+}
+
 static VOID AeroGpuLoadDisplayModeConfigFromRegistry(_In_opt_ PUNICODE_STRING RegistryPath)
 {
     g_AeroGpuDisplayModeConfig.PreferredWidth = 0;
@@ -4992,13 +5010,15 @@ static NTSTATUS APIENTRY AeroGpuDdiRecommendFunctionalVidPn(_In_ const HANDLE hA
         modeInfo->VideoSignalInfo.VideoStandard = D3DKMDT_VSS_OTHER;
         modeInfo->VideoSignalInfo.ActiveSize.cx = w;
         modeInfo->VideoSignalInfo.ActiveSize.cy = h;
-        modeInfo->VideoSignalInfo.TotalSize = modeInfo->VideoSignalInfo.ActiveSize;
+        modeInfo->VideoSignalInfo.TotalSize.cx = w;
+        modeInfo->VideoSignalInfo.TotalSize.cy = h + AeroGpuComputeVblankLineCountForActiveHeight(h);
         modeInfo->VideoSignalInfo.VSyncFreq.Numerator = 60;
         modeInfo->VideoSignalInfo.VSyncFreq.Denominator = 1;
-        modeInfo->VideoSignalInfo.HSyncFreq.Numerator = 60 * h;
+        modeInfo->VideoSignalInfo.HSyncFreq.Numerator = 60 * modeInfo->VideoSignalInfo.TotalSize.cy;
         modeInfo->VideoSignalInfo.HSyncFreq.Denominator = 1;
         {
-            ULONGLONG pixelRate = (ULONGLONG)60ull * (ULONGLONG)w * (ULONGLONG)h;
+            ULONGLONG pixelRate =
+                (ULONGLONG)60ull * (ULONGLONG)modeInfo->VideoSignalInfo.TotalSize.cx * (ULONGLONG)modeInfo->VideoSignalInfo.TotalSize.cy;
             if (pixelRate > (ULONGLONG)0xFFFFFFFFu) {
                 pixelRate = 0;
             }
@@ -5311,13 +5331,16 @@ static NTSTATUS APIENTRY AeroGpuDdiEnumVidPnCofuncModality(_In_ const HANDLE hAd
                 modeInfo->VideoSignalInfo.VideoStandard = D3DKMDT_VSS_OTHER;
                 modeInfo->VideoSignalInfo.ActiveSize.cx = w;
                 modeInfo->VideoSignalInfo.ActiveSize.cy = h;
-                modeInfo->VideoSignalInfo.TotalSize = modeInfo->VideoSignalInfo.ActiveSize;
+                modeInfo->VideoSignalInfo.TotalSize.cx = w;
+                modeInfo->VideoSignalInfo.TotalSize.cy = h + AeroGpuComputeVblankLineCountForActiveHeight(h);
                 modeInfo->VideoSignalInfo.VSyncFreq.Numerator = 60;
                 modeInfo->VideoSignalInfo.VSyncFreq.Denominator = 1;
-                modeInfo->VideoSignalInfo.HSyncFreq.Numerator = 60 * h;
+                modeInfo->VideoSignalInfo.HSyncFreq.Numerator = 60 * modeInfo->VideoSignalInfo.TotalSize.cy;
                 modeInfo->VideoSignalInfo.HSyncFreq.Denominator = 1;
                 {
-                    ULONGLONG pixelRate = (ULONGLONG)60ull * (ULONGLONG)w * (ULONGLONG)h;
+                    ULONGLONG pixelRate =
+                        (ULONGLONG)60ull * (ULONGLONG)modeInfo->VideoSignalInfo.TotalSize.cx *
+                        (ULONGLONG)modeInfo->VideoSignalInfo.TotalSize.cy;
                     if (pixelRate > (ULONGLONG)0xFFFFFFFFu) {
                         pixelRate = 0;
                     }
@@ -5555,13 +5578,7 @@ static NTSTATUS APIENTRY AeroGpuDdiGetScanLine(_In_ const HANDLE hAdapter, _Inou
     }
 
     const ULONG height = adapter->CurrentHeight ? adapter->CurrentHeight : 1u;
-    ULONG vblankLines = height / 20;
-    if (vblankLines < 20) {
-        vblankLines = 20;
-    }
-    if (vblankLines > 40) {
-        vblankLines = 40;
-    }
+    const ULONG vblankLines = AeroGpuComputeVblankLineCountForActiveHeight(height);
 
     const ULONG totalLines = height + vblankLines;
 
@@ -5832,13 +5849,15 @@ static NTSTATUS APIENTRY AeroGpuDdiRecommendMonitorModes(_In_ const HANDLE hAdap
         modeInfo->VideoSignalInfo.VideoStandard = D3DKMDT_VSS_OTHER;
         modeInfo->VideoSignalInfo.ActiveSize.cx = w;
         modeInfo->VideoSignalInfo.ActiveSize.cy = h;
-        modeInfo->VideoSignalInfo.TotalSize = modeInfo->VideoSignalInfo.ActiveSize;
+        modeInfo->VideoSignalInfo.TotalSize.cx = w;
+        modeInfo->VideoSignalInfo.TotalSize.cy = h + AeroGpuComputeVblankLineCountForActiveHeight(h);
         modeInfo->VideoSignalInfo.VSyncFreq.Numerator = 60;
         modeInfo->VideoSignalInfo.VSyncFreq.Denominator = 1;
-        modeInfo->VideoSignalInfo.HSyncFreq.Numerator = 60 * h;
+        modeInfo->VideoSignalInfo.HSyncFreq.Numerator = 60 * modeInfo->VideoSignalInfo.TotalSize.cy;
         modeInfo->VideoSignalInfo.HSyncFreq.Denominator = 1;
         {
-            ULONGLONG pixelRate = (ULONGLONG)60ull * (ULONGLONG)w * (ULONGLONG)h;
+            ULONGLONG pixelRate =
+                (ULONGLONG)60ull * (ULONGLONG)modeInfo->VideoSignalInfo.TotalSize.cx * (ULONGLONG)modeInfo->VideoSignalInfo.TotalSize.cy;
             if (pixelRate > (ULONGLONG)0xFFFFFFFFu) {
                 pixelRate = 0;
             }
