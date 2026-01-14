@@ -6188,19 +6188,19 @@ static NTSTATUS AerovNetDiagDispatchDeviceControl(_In_ PDEVICE_OBJECT DeviceObje
     Info.MsixTxVector = Adapter->MsixTxVector;
     CommonCfg = Adapter->Vdev.CommonCfg;
 
-  if (Adapter->UseMsix) {
-    Info.Flags |= AEROVNET_DIAG_FLAG_USE_MSIX;
-    if (Adapter->MsixAllOnVector0) {
-      Info.Flags |= AEROVNET_DIAG_FLAG_MSIX_ALL_ON_VECTOR0;
+    if (Adapter->UseMsix) {
+      Info.Flags |= AEROVNET_DIAG_FLAG_USE_MSIX;
+      if (Adapter->MsixAllOnVector0) {
+        Info.Flags |= AEROVNET_DIAG_FLAG_MSIX_ALL_ON_VECTOR0;
+      }
     }
-  }
-  if (Adapter->MsixVectorProgrammingFailed) {
-    Info.Flags |= AEROVNET_DIAG_FLAG_MSIX_VECTOR_PROGRAMMING_FAILED;
-  }
+    if (Adapter->MsixVectorProgrammingFailed) {
+      Info.Flags |= AEROVNET_DIAG_FLAG_MSIX_VECTOR_PROGRAMMING_FAILED;
+    }
 
-  if (Adapter->SurpriseRemoved) {
-    Info.Flags |= AEROVNET_DIAG_FLAG_SURPRISE_REMOVED;
-  }
+    if (Adapter->SurpriseRemoved) {
+      Info.Flags |= AEROVNET_DIAG_FLAG_SURPRISE_REMOVED;
+    }
 
     if (Adapter->State == AerovNetAdapterRunning) {
       Info.Flags |= AEROVNET_DIAG_FLAG_ADAPTER_RUNNING;
@@ -6254,22 +6254,22 @@ static NTSTATUS AerovNetDiagDispatchDeviceControl(_In_ PDEVICE_OBJECT DeviceObje
     Info.CtrlCmdTimeout = Adapter->StatCtrlVqCmdTimeout;
     Info.StatTxTcpCsumOffload = Adapter->StatTxTcpCsumOffload;
     Info.StatTxTcpCsumFallback = Adapter->StatTxTcpCsumFallback;
-  Info.StatTxUdpCsumOffload = Adapter->StatTxUdpCsumOffload;
-  Info.StatTxUdpCsumFallback = Adapter->StatTxUdpCsumFallback;
+    Info.StatTxUdpCsumOffload = Adapter->StatTxUdpCsumOffload;
+    Info.StatTxUdpCsumFallback = Adapter->StatTxUdpCsumFallback;
 
-  RtlCopyMemory(Info.PermanentMac, Adapter->PermanentMac, ETH_LENGTH_OF_ADDRESS);
-  RtlCopyMemory(Info.CurrentMac, Adapter->CurrentMac, ETH_LENGTH_OF_ADDRESS);
-  Info.LinkUp = Adapter->LinkUp ? 1u : 0u;
+    RtlCopyMemory(Info.PermanentMac, Adapter->PermanentMac, ETH_LENGTH_OF_ADDRESS);
+    RtlCopyMemory(Info.CurrentMac, Adapter->CurrentMac, ETH_LENGTH_OF_ADDRESS);
+    Info.LinkUp = Adapter->LinkUp ? 1u : 0u;
 
-  Info.InterruptCountVector0 = (ULONG)InterlockedCompareExchange(&Adapter->InterruptCountByVector[0], 0, 0);
-  Info.InterruptCountVector1 = (ULONG)InterlockedCompareExchange(&Adapter->InterruptCountByVector[1], 0, 0);
-  Info.InterruptCountVector2 = (ULONG)InterlockedCompareExchange(&Adapter->InterruptCountByVector[2], 0, 0);
-  Info.DpcCountVector0 = (ULONG)InterlockedCompareExchange(&Adapter->DpcCountByVector[0], 0, 0);
-  Info.DpcCountVector1 = (ULONG)InterlockedCompareExchange(&Adapter->DpcCountByVector[1], 0, 0);
-  Info.DpcCountVector2 = (ULONG)InterlockedCompareExchange(&Adapter->DpcCountByVector[2], 0, 0);
-  Info.RxBuffersDrained = (ULONG)InterlockedCompareExchange(&Adapter->RxBuffersDrained, 0, 0);
-  Info.TxBuffersDrained = (ULONG)InterlockedCompareExchange(&Adapter->TxBuffersDrained, 0, 0);
-  NdisReleaseSpinLock(&Adapter->Lock);
+    Info.InterruptCountVector0 = (ULONG)InterlockedCompareExchange(&Adapter->InterruptCountByVector[0], 0, 0);
+    Info.InterruptCountVector1 = (ULONG)InterlockedCompareExchange(&Adapter->InterruptCountByVector[1], 0, 0);
+    Info.InterruptCountVector2 = (ULONG)InterlockedCompareExchange(&Adapter->InterruptCountByVector[2], 0, 0);
+    Info.DpcCountVector0 = (ULONG)InterlockedCompareExchange(&Adapter->DpcCountByVector[0], 0, 0);
+    Info.DpcCountVector1 = (ULONG)InterlockedCompareExchange(&Adapter->DpcCountByVector[1], 0, 0);
+    Info.DpcCountVector2 = (ULONG)InterlockedCompareExchange(&Adapter->DpcCountByVector[2], 0, 0);
+    Info.RxBuffersDrained = (ULONG)InterlockedCompareExchange(&Adapter->RxBuffersDrained, 0, 0);
+    Info.TxBuffersDrained = (ULONG)InterlockedCompareExchange(&Adapter->TxBuffersDrained, 0, 0);
+    NdisReleaseSpinLock(&Adapter->Lock);
 
     // Read back the currently programmed MSI-X vectors from virtio common config.
     //
