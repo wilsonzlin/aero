@@ -791,11 +791,15 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
       throw new ApiError(502, "S3 did not return a response body", "S3_ERROR");
     }
 
+    // Manifest responses should be treated like other disk streaming endpoints: for compatibility
+    // with native clients and tooling, require identity (or absent) encoding and always respond
+    // with `Content-Encoding: identity`.
+    assertIdentityContentEncoding(s3Res.ContentEncoding);
     const headers = buildChunkedProxyHeaders({
       contentType: s3Res.ContentType ?? "application/json",
       cacheControl: buildChunkedCacheControl(deps.config),
       crossOriginResourcePolicy: deps.config.crossOriginResourcePolicy,
-      contentEncoding: s3Res.ContentEncoding,
+      contentEncoding: "identity",
     });
     if (typeof s3Res.ContentLength === "number") {
       headers["content-length"] = String(s3Res.ContentLength);
@@ -860,11 +864,12 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
       throw err;
     }
 
+    assertIdentityContentEncoding(head.ContentEncoding);
     const headers = buildChunkedProxyHeaders({
       contentType: head.ContentType ?? "application/json",
       cacheControl: buildChunkedCacheControl(deps.config),
       crossOriginResourcePolicy: deps.config.crossOriginResourcePolicy,
-      contentEncoding: head.ContentEncoding,
+      contentEncoding: "identity",
     });
     if (typeof head.ContentLength === "number") headers["content-length"] = String(head.ContentLength);
     if (head.ETag) headers["etag"] = head.ETag;

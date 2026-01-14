@@ -124,6 +124,7 @@ describe("chunked delivery", () => {
     expect(res.statusCode).toBe(200);
     expect(res.body).toBe(manifestJson);
     expect(res.headers["content-type"]).toBe("application/json");
+    expect(res.headers["content-encoding"]).toBe("identity");
     expect(res.headers["cache-control"]).toBe(CACHE_CONTROL_PRIVATE_NO_STORE);
     expect(res.headers["cross-origin-resource-policy"]).toBe("same-site");
     expect(res.headers["x-content-type-options"]).toBe("nosniff");
@@ -194,7 +195,7 @@ describe("chunked delivery", () => {
     expect(sawChunk).toBe(true);
   });
 
-  it("propagates Content-Encoding for the manifest when provided by S3", async () => {
+  it("rejects non-identity Content-Encoding for the manifest", async () => {
     const config = makeConfig();
     const store = new MemoryImageStore();
     const ownerId = "user-1";
@@ -211,12 +212,23 @@ describe("chunked delivery", () => {
       status: "complete",
     });
 
+    const manifestJson = JSON.stringify({ schema: "aero.chunked-disk-image.v1" });
+
     const s3 = {
       async send(command: unknown) {
+        if (command instanceof GetObjectCommand) {
+          expect(command.input.Key).toBe("images/user-1/image-1/v1/manifest.json");
+          return {
+            Body: Readable.from([manifestJson]),
+            ContentLength: manifestJson.length,
+            ContentType: "application/json",
+            ContentEncoding: "gzip",
+          };
+        }
         if (command instanceof HeadObjectCommand) {
           expect(command.input.Key).toBe("images/user-1/image-1/v1/manifest.json");
           return {
-            ContentLength: 10,
+            ContentLength: manifestJson.length,
             ContentType: "application/json",
             ContentEncoding: "gzip",
           };
@@ -228,14 +240,20 @@ describe("chunked delivery", () => {
     const app = buildApp({ config, s3, store });
     await app.ready();
 
-    const res = await app.inject({
+    const getRes = await app.inject({
+      method: "GET",
+      url: `/v1/images/${imageId}/chunked/manifest`,
+      headers: { "x-user-id": ownerId },
+    });
+    expect(getRes.statusCode).toBe(502);
+    expect(getRes.json()).toMatchObject({ error: { code: "S3_ERROR" } });
+
+    const headRes = await app.inject({
       method: "HEAD",
       url: `/v1/images/${imageId}/chunked/manifest`,
       headers: { "x-user-id": ownerId },
     });
-
-    expect(res.statusCode).toBe(200);
-    expect(res.headers["content-encoding"]).toBe("gzip");
+    expect(headRes.statusCode).toBe(502);
   });
 
   it("proxies a chunk object with identity encoding and no-transform", async () => {
@@ -428,6 +446,7 @@ describe("chunked delivery", () => {
     expect(manifestRes.headers["content-type"]).toBe("application/json");
     expect(manifestRes.headers["content-length"]).toBe("10");
     expect(manifestRes.headers["etag"]).toBe('"etag-manifest"');
+    expect(manifestRes.headers["content-encoding"]).toBe("identity");
     expect(manifestRes.headers["cache-control"]).toBe(CACHE_CONTROL_PRIVATE_NO_STORE);
     expect(manifestRes.headers["cross-origin-resource-policy"]).toBe("same-site");
     expect(manifestRes.headers["x-content-type-options"]).toBe("nosniff");
