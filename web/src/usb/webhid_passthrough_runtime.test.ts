@@ -432,6 +432,58 @@ describe("WebHidPassthroughRuntime", () => {
     expect(logger.mock.calls.some((call) => call[0] === "warn" && String(call[1]).includes("Dropping queued output reports"))).toBe(true);
   });
 
+  it("bounds per-device output report queue growth by bytes when sendReport stalls", async () => {
+    const logger = vi.fn();
+    const device = new FakeHidDevice();
+
+    const first = deferred<void>();
+    device.sendReport.mockImplementationOnce(() => first.promise);
+    device.sendReport.mockImplementation(async () => {});
+
+    const drain = vi
+      .fn()
+      .mockReturnValueOnce({ reportType: "output", reportId: 1, data: new Uint8Array([1, 1, 1]) })
+      .mockReturnValueOnce({ reportType: "output", reportId: 2, data: new Uint8Array([2, 2, 2]) })
+      .mockReturnValueOnce({ reportType: "output", reportId: 3, data: new Uint8Array([3, 3, 3]) })
+      .mockReturnValueOnce(null);
+
+    const bridge: WebHidPassthroughBridgeLike = {
+      push_input_report: vi.fn(),
+      drain_next_output_report: drain,
+      configured: vi.fn(() => true),
+      free: vi.fn(),
+    };
+
+    const runtime = new WebHidPassthroughRuntime({
+      createBridge: () => bridge,
+      pollIntervalMs: 0,
+      maxPendingOutputReportsPerDevice: 32,
+      // First report becomes in-flight, second is queued (3 bytes), third would exceed this 4-byte cap and is dropped.
+      maxPendingOutputReportBytesPerDevice: 4,
+      maxOutputReportsPerPoll: 8,
+      logger,
+    });
+    await runtime.attachDevice(device as unknown as HIDDevice);
+
+    runtime.pollOnce();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(device.sendReport).toHaveBeenCalledTimes(1);
+    expect(device.sendReport.mock.calls[0]![0]).toBe(1);
+
+    expect(logger.mock.calls.some((call) => call[0] === "warn" && String(call[1]).includes("maxPendingOutputReportBytesPerDevice"))).toBe(
+      true,
+    );
+
+    first.resolve(undefined);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // Second report should still run after the first finishes. Third should be dropped due to byte cap.
+    expect(device.sendReport).toHaveBeenCalledTimes(2);
+    expect(device.sendReport.mock.calls[1]![0]).toBe(2);
+  });
+
   it("executes output reports sequentially per device", async () => {
     const device = new FakeHidDevice();
 
