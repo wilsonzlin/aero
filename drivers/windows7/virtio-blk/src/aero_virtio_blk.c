@@ -1987,6 +1987,16 @@ BOOLEAN AerovblkHwStartIo(_In_ PVOID deviceExtension, _Inout_ PSCSI_REQUEST_BLOC
    * our single-LUN addressing model.
    */
   switch (srb->Function) {
+#ifdef SRB_FUNCTION_IO_CONTROL
+  /*
+   * Miniport IOCTLs can be delivered with varying addressing fields; handle
+   * early before enforcing the single-LUN addressing model.
+   */
+  case SRB_FUNCTION_IO_CONTROL:
+    AerovblkHandleIoControl(devExt, srb);
+    return TRUE;
+#endif
+
 #ifdef SRB_FUNCTION_NOOP
   /*
    * No-op SRB. Some StorPort stacks use this as a probe.
