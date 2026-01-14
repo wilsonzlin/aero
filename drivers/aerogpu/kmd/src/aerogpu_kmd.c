@@ -3380,6 +3380,20 @@ static VOID AeroGpuCleanupInternalSubmissions(_Inout_ AEROGPU_ADAPTER* Adapter)
             KeAcquireSpinLock(&Adapter->RingLock, &ringIrql);
             const ULONG headIndex = AeroGpuReadRegU32(Adapter, AEROGPU_LEGACY_REG_RING_HEAD);
             AeroGpuLegacyRingUpdateHeadSeqLocked(Adapter, headIndex);
+            const ULONG pending = Adapter->LegacyRingTailSeq - Adapter->LegacyRingHeadSeq;
+            if (pending > Adapter->RingEntryCount) {
+                /*
+                 * Defensive: legacy ring head/tail sequence tracking is expected to satisfy
+                 * `tail_seq - head_seq <= RingEntryCount`. If this invariant is violated (e.g. due to
+                 * device reset/tearing or corrupted cached indices), do not retire internal submissions
+                 * based on the potentially-invalid head sequence. Prematurely freeing internal
+                 * submission buffers can lead to use-after-free when the device later consumes stale
+                 * descriptors.
+                 */
+                KeReleaseSpinLock(&Adapter->RingLock, ringIrql);
+                KeReleaseSpinLock(&Adapter->PendingLock, oldIrql);
+                return;
+            }
             head = Adapter->LegacyRingHeadSeq;
             KeReleaseSpinLock(&Adapter->RingLock, ringIrql);
         }
