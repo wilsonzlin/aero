@@ -772,12 +772,14 @@ foreach ($driverBuildDir in $driverBuildDirs) {
 
       $src = $null
       $srcKind = $null
-      if (Test-Path -LiteralPath $srcFromBuildOut -PathType Leaf) {
-        $src = $srcFromBuildOut
-        $srcKind = "build outputs"
-      } elseif (Test-Path -LiteralPath $srcFromSourceDir -PathType Leaf) {
+      # Prefer the driver source tree (toolFiles is a driver-relative path list), but keep a fallback
+      # to build outputs so CI can still stage tools that were produced and staged into out/drivers/**.
+      if (Test-Path -LiteralPath $srcFromSourceDir -PathType Leaf) {
         $src = $srcFromSourceDir
         $srcKind = "driver source tree"
+      } elseif (Test-Path -LiteralPath $srcFromBuildOut -PathType Leaf) {
+        $src = $srcFromBuildOut
+        $srcKind = "build outputs"
       } else {
         throw "Driver '$driverNameForLog' requests tool file '$relPath' via '$($manifest.ManifestPath)', but it was not found in either build outputs ('$srcFromBuildOut') or driver source tree ('$srcFromSourceDir')."
       }
