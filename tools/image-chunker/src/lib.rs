@@ -321,6 +321,9 @@ pub async fn publish(args: PublishArgs) -> Result<()> {
         }
     };
 
+    // We'll reopen the disk in the reader thread for the upload pipeline.
+    drop(disk);
+
     let destination = resolve_publish_destination(&args, &prefix, computed_version.as_deref())?;
     let image_id = destination.image_id.clone();
     let version = destination.version.clone();
@@ -436,52 +439,41 @@ pub async fn publish(args: PublishArgs) -> Result<()> {
     // the producer will observe the channel closing instead of deadlocking on a full queue.
     drop(work_rx);
 
-    let mut producer_result: Result<()> = Ok(());
-    for index in 0..chunk_count {
-        let offset = match index.checked_mul(args.chunk_size) {
-            Some(v) => v,
-            None => {
-                producer_result = Err(anyhow!("chunk offset overflows u64"));
-                break;
-            }
-        };
-        let expected = match chunk_size_at_index(total_size, args.chunk_size, index) {
-            Ok(v) => v,
-            Err(err) => {
-                producer_result = Err(err);
-                break;
-            }
-        };
-        let expected_usize: usize = match expected.try_into() {
-            Ok(v) => v,
-            Err(_) => {
-                producer_result = Err(anyhow!("chunk size {expected} does not fit into usize"));
-                break;
-            }
-        };
+    let reader_path = args.file.clone();
+    let reader_format = args.format;
+    let reader_chunk_size = args.chunk_size;
+    let reader_chunk_count = chunk_count;
+    let reader_total_size = total_size;
+    let reader_handle = tokio::task::spawn_blocking(move || -> Result<()> {
+        let mut disk = open_disk_image(&reader_path, reader_format)
+            .with_context(|| format!("open disk image {}", reader_path.display()))?;
 
-        let mut buf = vec![0u8; expected_usize];
-        if let Err(err) = disk
-            .read_at(offset, &mut buf)
-            .map_err(|e| anyhow!(e))
-            .with_context(|| format!("read chunk {index} at offset {offset}"))
-        {
-            producer_result = Err(err);
-            break;
+        for index in 0..reader_chunk_count {
+            let offset = index
+                .checked_mul(reader_chunk_size)
+                .ok_or_else(|| anyhow!("chunk offset overflows u64"))?;
+            let expected = chunk_size_at_index(reader_total_size, reader_chunk_size, index)?;
+            let expected_usize: usize = expected
+                .try_into()
+                .map_err(|_| anyhow!("chunk size {expected} does not fit into usize"))?;
+
+            let mut buf = vec![0u8; expected_usize];
+            disk.read_at(offset, &mut buf)
+                .map_err(|e| anyhow!(e))
+                .with_context(|| format!("read chunk {index} at offset {offset}"))?;
+
+            let bytes = Bytes::from(buf);
+            work_tx
+                .send_blocking(ChunkJob { index, bytes })
+                .map_err(|err| anyhow!("internal worker channel closed unexpectedly: {err}"))?;
         }
+        Ok(())
+    });
 
-        let bytes = Bytes::from(buf);
-        if let Err(err) = work_tx
-            .send(ChunkJob { index, bytes })
-            .await
-            .map_err(|err| anyhow!("internal worker channel closed unexpectedly: {err}"))
-        {
-            producer_result = Err(err);
-            break;
-        }
-    }
-
-    drop(work_tx);
+    let reader_result: Result<()> = match reader_handle.await {
+        Ok(res) => res,
+        Err(err) => Err(anyhow!("disk reader panicked: {err}")),
+    };
 
     // Always await all worker tasks so we don't leave uploads running in the background if one
     // worker errors.
@@ -506,7 +498,7 @@ pub async fn publish(args: PublishArgs) -> Result<()> {
         .await
         .map_err(|err| anyhow!("result collector panicked: {err}"))??;
 
-    producer_result?;
+    reader_result?;
     worker_result?;
 
     pb.finish_with_message(format!("{chunk_count}/{chunk_count} chunks"));
