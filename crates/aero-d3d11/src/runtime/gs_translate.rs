@@ -333,6 +333,154 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
                     &input_sivs,
                 )?;
             }
+            Sm4Inst::Mul { dst, a, b } => {
+                bump_reg_max(dst.reg, &mut max_temp_reg, &mut max_output_reg);
+                scan_src_operand(
+                    a,
+                    &mut max_temp_reg,
+                    &mut max_output_reg,
+                    &mut max_gs_input_reg,
+                    verts_per_primitive,
+                    inst_index,
+                    "mul",
+                    &input_sivs,
+                )?;
+                scan_src_operand(
+                    b,
+                    &mut max_temp_reg,
+                    &mut max_output_reg,
+                    &mut max_gs_input_reg,
+                    verts_per_primitive,
+                    inst_index,
+                    "mul",
+                    &input_sivs,
+                )?;
+            }
+            Sm4Inst::Mad { dst, a, b, c } => {
+                bump_reg_max(dst.reg, &mut max_temp_reg, &mut max_output_reg);
+                scan_src_operand(
+                    a,
+                    &mut max_temp_reg,
+                    &mut max_output_reg,
+                    &mut max_gs_input_reg,
+                    verts_per_primitive,
+                    inst_index,
+                    "mad",
+                    &input_sivs,
+                )?;
+                scan_src_operand(
+                    b,
+                    &mut max_temp_reg,
+                    &mut max_output_reg,
+                    &mut max_gs_input_reg,
+                    verts_per_primitive,
+                    inst_index,
+                    "mad",
+                    &input_sivs,
+                )?;
+                scan_src_operand(
+                    c,
+                    &mut max_temp_reg,
+                    &mut max_output_reg,
+                    &mut max_gs_input_reg,
+                    verts_per_primitive,
+                    inst_index,
+                    "mad",
+                    &input_sivs,
+                )?;
+            }
+            Sm4Inst::Dp3 { dst, a, b } => {
+                bump_reg_max(dst.reg, &mut max_temp_reg, &mut max_output_reg);
+                scan_src_operand(
+                    a,
+                    &mut max_temp_reg,
+                    &mut max_output_reg,
+                    &mut max_gs_input_reg,
+                    verts_per_primitive,
+                    inst_index,
+                    "dp3",
+                    &input_sivs,
+                )?;
+                scan_src_operand(
+                    b,
+                    &mut max_temp_reg,
+                    &mut max_output_reg,
+                    &mut max_gs_input_reg,
+                    verts_per_primitive,
+                    inst_index,
+                    "dp3",
+                    &input_sivs,
+                )?;
+            }
+            Sm4Inst::Dp4 { dst, a, b } => {
+                bump_reg_max(dst.reg, &mut max_temp_reg, &mut max_output_reg);
+                scan_src_operand(
+                    a,
+                    &mut max_temp_reg,
+                    &mut max_output_reg,
+                    &mut max_gs_input_reg,
+                    verts_per_primitive,
+                    inst_index,
+                    "dp4",
+                    &input_sivs,
+                )?;
+                scan_src_operand(
+                    b,
+                    &mut max_temp_reg,
+                    &mut max_output_reg,
+                    &mut max_gs_input_reg,
+                    verts_per_primitive,
+                    inst_index,
+                    "dp4",
+                    &input_sivs,
+                )?;
+            }
+            Sm4Inst::Min { dst, a, b } => {
+                bump_reg_max(dst.reg, &mut max_temp_reg, &mut max_output_reg);
+                scan_src_operand(
+                    a,
+                    &mut max_temp_reg,
+                    &mut max_output_reg,
+                    &mut max_gs_input_reg,
+                    verts_per_primitive,
+                    inst_index,
+                    "min",
+                    &input_sivs,
+                )?;
+                scan_src_operand(
+                    b,
+                    &mut max_temp_reg,
+                    &mut max_output_reg,
+                    &mut max_gs_input_reg,
+                    verts_per_primitive,
+                    inst_index,
+                    "min",
+                    &input_sivs,
+                )?;
+            }
+            Sm4Inst::Max { dst, a, b } => {
+                bump_reg_max(dst.reg, &mut max_temp_reg, &mut max_output_reg);
+                scan_src_operand(
+                    a,
+                    &mut max_temp_reg,
+                    &mut max_output_reg,
+                    &mut max_gs_input_reg,
+                    verts_per_primitive,
+                    inst_index,
+                    "max",
+                    &input_sivs,
+                )?;
+                scan_src_operand(
+                    b,
+                    &mut max_temp_reg,
+                    &mut max_output_reg,
+                    &mut max_gs_input_reg,
+                    verts_per_primitive,
+                    inst_index,
+                    "max",
+                    &input_sivs,
+                )?;
+            }
             Sm4Inst::Emit { stream } => {
                 if *stream != 0 {
                     return Err(GsTranslateError::UnsupportedStream {
@@ -589,6 +737,45 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
                 let b = emit_src_vec4(inst_index, "add", b, &input_sivs)?;
                 let rhs = maybe_saturate(dst.saturate, format!("({a}) + ({b})"));
                 emit_write_masked(&mut w, inst_index, "add", dst.reg, dst.mask, rhs)?;
+            }
+            Sm4Inst::Mul { dst, a, b } => {
+                let a = emit_src_vec4(inst_index, "mul", a, &input_sivs)?;
+                let b = emit_src_vec4(inst_index, "mul", b, &input_sivs)?;
+                let rhs = maybe_saturate(dst.saturate, format!("({a}) * ({b})"));
+                emit_write_masked(&mut w, inst_index, "mul", dst.reg, dst.mask, rhs)?;
+            }
+            Sm4Inst::Mad { dst, a, b, c } => {
+                let a = emit_src_vec4(inst_index, "mad", a, &input_sivs)?;
+                let b = emit_src_vec4(inst_index, "mad", b, &input_sivs)?;
+                let c = emit_src_vec4(inst_index, "mad", c, &input_sivs)?;
+                let rhs = maybe_saturate(dst.saturate, format!("({a}) * ({b}) + ({c})"));
+                emit_write_masked(&mut w, inst_index, "mad", dst.reg, dst.mask, rhs)?;
+            }
+            Sm4Inst::Dp3 { dst, a, b } => {
+                let a = emit_src_vec4(inst_index, "dp3", a, &input_sivs)?;
+                let b = emit_src_vec4(inst_index, "dp3", b, &input_sivs)?;
+                let rhs = format!("vec4<f32>(dot(({a}).xyz, ({b}).xyz))");
+                let rhs = maybe_saturate(dst.saturate, rhs);
+                emit_write_masked(&mut w, inst_index, "dp3", dst.reg, dst.mask, rhs)?;
+            }
+            Sm4Inst::Dp4 { dst, a, b } => {
+                let a = emit_src_vec4(inst_index, "dp4", a, &input_sivs)?;
+                let b = emit_src_vec4(inst_index, "dp4", b, &input_sivs)?;
+                let rhs = format!("vec4<f32>(dot(({a}), ({b})))");
+                let rhs = maybe_saturate(dst.saturate, rhs);
+                emit_write_masked(&mut w, inst_index, "dp4", dst.reg, dst.mask, rhs)?;
+            }
+            Sm4Inst::Min { dst, a, b } => {
+                let a = emit_src_vec4(inst_index, "min", a, &input_sivs)?;
+                let b = emit_src_vec4(inst_index, "min", b, &input_sivs)?;
+                let rhs = maybe_saturate(dst.saturate, format!("min(({a}), ({b}))"));
+                emit_write_masked(&mut w, inst_index, "min", dst.reg, dst.mask, rhs)?;
+            }
+            Sm4Inst::Max { dst, a, b } => {
+                let a = emit_src_vec4(inst_index, "max", a, &input_sivs)?;
+                let b = emit_src_vec4(inst_index, "max", b, &input_sivs)?;
+                let rhs = maybe_saturate(dst.saturate, format!("max(({a}), ({b}))"));
+                emit_write_masked(&mut w, inst_index, "max", dst.reg, dst.mask, rhs)?;
             }
             Sm4Inst::Emit { stream: _ } => {
                 w.line("gs_emit(o0, o1, out_vertex_count, out_index_count, &emitted_count, &strip_len, &strip_prev0, &strip_prev1, overflow); // emit");

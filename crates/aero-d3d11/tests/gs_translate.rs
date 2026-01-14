@@ -51,6 +51,19 @@ fn reg_src(ty: u32, idx: u32) -> Vec<u32> {
     ]
 }
 
+fn imm32_vec4(values: [u32; 4]) -> Vec<u32> {
+    let mut out = Vec::with_capacity(1 + 4);
+    out.push(operand_token(
+        OPERAND_TYPE_IMMEDIATE32,
+        2,
+        OPERAND_SEL_SWIZZLE,
+        swizzle_bits(Swizzle::XYZW.0),
+        0,
+    ));
+    out.extend_from_slice(&values);
+    out
+}
+
 fn assert_wgsl_validates(wgsl: &str) {
     let module = naga::front::wgsl::parse_str(wgsl).expect("generated WGSL failed to parse");
     let mut validator = naga::valid::Validator::new(
@@ -188,6 +201,135 @@ fn sm4_gs_emit_cut_translates_to_wgsl_compute_prepass() {
         "expected generated WGSL to call gs_cut"
     );
 
+    assert_wgsl_validates(&wgsl);
+}
+
+#[test]
+fn sm4_gs_float_arithmetic_ops_translate_to_wgsl_compute_prepass() {
+    // Ensure the GS prepass translator supports a basic set of arithmetic ops that appear in
+    // real-world geometry shaders (mul/mad/dp3/dp4/min/max).
+    let version_token = 0x0003_0040u32; // nominal gs_4_0 (decoder uses program.stage/model)
+    let mut tokens = vec![version_token, 0];
+
+    // Geometry metadata declarations.
+    tokens.push(opcode_token(OPCODE_DCL_GS_INPUT_PRIMITIVE, 2));
+    tokens.push(3); // triangle (tokenized shader format)
+    tokens.push(opcode_token(OPCODE_DCL_GS_OUTPUT_TOPOLOGY, 2));
+    tokens.push(5); // triangle_strip
+    tokens.push(opcode_token(OPCODE_DCL_GS_MAX_OUTPUT_VERTEX_COUNT, 2));
+    tokens.push(1);
+
+    // dcl_output o0.xyzw / o1.xyzw (opcode values are irrelevant; decoder treats opcode>=0x100 as decl).
+    const DCL_DUMMY: u32 = 0x100;
+    tokens.push(opcode_token(DCL_DUMMY, 3));
+    tokens.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    tokens.push(opcode_token(DCL_DUMMY + 1, 3));
+    tokens.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 1, WriteMask::XYZW));
+
+    // mov o0.xyzw, l(1, 2, 3, 4)
+    let mut mov_o0 = vec![opcode_token(OPCODE_MOV, 0)];
+    mov_o0.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    mov_o0.extend_from_slice(&imm32_vec4([
+        1.0f32.to_bits(),
+        2.0f32.to_bits(),
+        3.0f32.to_bits(),
+        4.0f32.to_bits(),
+    ]));
+    mov_o0[0] = opcode_token(OPCODE_MOV, mov_o0.len() as u32);
+    tokens.extend_from_slice(&mov_o0);
+
+    // mov o1.xyzw, l(4, 3, 2, 1)
+    let mut mov_o1 = vec![opcode_token(OPCODE_MOV, 0)];
+    mov_o1.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 1, WriteMask::XYZW));
+    mov_o1.extend_from_slice(&imm32_vec4([
+        4.0f32.to_bits(),
+        3.0f32.to_bits(),
+        2.0f32.to_bits(),
+        1.0f32.to_bits(),
+    ]));
+    mov_o1[0] = opcode_token(OPCODE_MOV, mov_o1.len() as u32);
+    tokens.extend_from_slice(&mov_o1);
+
+    // mul o0.xyzw, o0.xyzw, l(2, 2, 2, 2)
+    let mut mul_o0 = vec![opcode_token(OPCODE_MUL, 0)];
+    mul_o0.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    mul_o0.extend_from_slice(&reg_src(OPERAND_TYPE_OUTPUT, 0));
+    mul_o0.extend_from_slice(&imm32_vec4([2.0f32.to_bits(); 4]));
+    mul_o0[0] = opcode_token(OPCODE_MUL, mul_o0.len() as u32);
+    tokens.extend_from_slice(&mul_o0);
+
+    // mad o1.xyzw, o0.xyzw, l(0.5, 0.5, 0.5, 0.5), o1.xyzw
+    let mut mad_o1 = vec![opcode_token(OPCODE_MAD, 0)];
+    mad_o1.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 1, WriteMask::XYZW));
+    mad_o1.extend_from_slice(&reg_src(OPERAND_TYPE_OUTPUT, 0));
+    mad_o1.extend_from_slice(&imm32_vec4([0.5f32.to_bits(); 4]));
+    mad_o1.extend_from_slice(&reg_src(OPERAND_TYPE_OUTPUT, 1));
+    mad_o1[0] = opcode_token(OPCODE_MAD, mad_o1.len() as u32);
+    tokens.extend_from_slice(&mad_o1);
+
+    // dp3 o1.xyzw, o0.xyzw, o1.xyzw
+    let mut dp3_o1 = vec![opcode_token(OPCODE_DP3, 0)];
+    dp3_o1.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 1, WriteMask::XYZW));
+    dp3_o1.extend_from_slice(&reg_src(OPERAND_TYPE_OUTPUT, 0));
+    dp3_o1.extend_from_slice(&reg_src(OPERAND_TYPE_OUTPUT, 1));
+    dp3_o1[0] = opcode_token(OPCODE_DP3, dp3_o1.len() as u32);
+    tokens.extend_from_slice(&dp3_o1);
+
+    // dp4 o0.xyzw, o0.xyzw, o1.xyzw
+    let mut dp4_o0 = vec![opcode_token(OPCODE_DP4, 0)];
+    dp4_o0.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    dp4_o0.extend_from_slice(&reg_src(OPERAND_TYPE_OUTPUT, 0));
+    dp4_o0.extend_from_slice(&reg_src(OPERAND_TYPE_OUTPUT, 1));
+    dp4_o0[0] = opcode_token(OPCODE_DP4, dp4_o0.len() as u32);
+    tokens.extend_from_slice(&dp4_o0);
+
+    // min o0.xyzw, o0.xyzw, l(0, 0, 0, 0)
+    let mut min_o0 = vec![opcode_token(OPCODE_MIN, 0)];
+    min_o0.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    min_o0.extend_from_slice(&reg_src(OPERAND_TYPE_OUTPUT, 0));
+    min_o0.extend_from_slice(&imm32_vec4([0; 4]));
+    min_o0[0] = opcode_token(OPCODE_MIN, min_o0.len() as u32);
+    tokens.extend_from_slice(&min_o0);
+
+    // max o1.xyzw, o1.xyzw, l(0, 0, 0, 0)
+    let mut max_o1 = vec![opcode_token(OPCODE_MAX, 0)];
+    max_o1.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 1, WriteMask::XYZW));
+    max_o1.extend_from_slice(&reg_src(OPERAND_TYPE_OUTPUT, 1));
+    max_o1.extend_from_slice(&imm32_vec4([0; 4]));
+    max_o1[0] = opcode_token(OPCODE_MAX, max_o1.len() as u32);
+    tokens.extend_from_slice(&max_o1);
+
+    // emit; ret
+    tokens.push(opcode_token(OPCODE_EMIT, 1));
+    tokens.push(opcode_token(OPCODE_RET, 1));
+
+    tokens[1] = tokens.len() as u32;
+
+    let program = Sm4Program {
+        stage: ShaderStage::Geometry,
+        model: ShaderModel { major: 4, minor: 0 },
+        tokens,
+    };
+
+    let module = decode_program(&program).expect("decode");
+    let wgsl = translate_gs_module_to_wgsl_compute_prepass(&module).expect("translate");
+
+    assert!(
+        wgsl.contains(") * ("),
+        "expected mul/mad to translate to a parenthesized multiply expression:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("dot(("),
+        "expected dp3/dp4 to translate via WGSL dot() intrinsic:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("min(("),
+        "expected min to translate via WGSL min() intrinsic:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("max(("),
+        "expected max to translate via WGSL max() intrinsic:\n{wgsl}"
+    );
     assert_wgsl_validates(&wgsl);
 }
 
