@@ -311,7 +311,11 @@ impl EhciController {
         // explicitly modelled are reserved and read back as 0; out-of-range reads are treated as
         // open bus.
         const EHCI_MMIO_SIZE: u64 = 0x100;
-        if offset < EHCI_MMIO_SIZE { 0 } else { 0xff }
+        if offset < EHCI_MMIO_SIZE {
+            0
+        } else {
+            0xff
+        }
     }
 
     fn mmio_write_u8(&mut self, offset: u64, value: u8) {
@@ -580,6 +584,7 @@ impl IoSnapshot for EhciController {
         if let Some(frindex) = r.u32(TAG_FRINDEX)? {
             self.regs.frindex = frindex & FRINDEX_MASK;
         }
+
         if let Some(periodic) = r.u32(TAG_PERIODICLISTBASE)? {
             self.regs.periodiclistbase = periodic & PERIODICLISTBASE_MASK;
         }
@@ -594,28 +599,19 @@ impl IoSnapshot for EhciController {
             self.write_ctrldssegment(seg);
         }
 
-        if let Some(legsupp) = r.u32(TAG_USBLEGSUP)? {
-            // CAPID/NEXT are read-only; only the semaphore bits are meaningful.
-            self.usblegsup = (legsupp & USBLEGSUP_RW_MASK) | USBLEGSUP_HEADER;
-            if self.usblegsup & USBLEGSUP_OS_SEM != 0 {
-                self.usblegsup &= !USBLEGSUP_BIOS_SEM;
-            }
-        }
-        if let Some(ctlsts) = r.u32(TAG_USBLEGCTLSTS)? {
-            self.usblegctlsts = ctlsts;
-        }
-        if let Some(v) = r.u32(TAG_USBLEGSUP)? {
-            self.usblegsup = (v & USBLEGSUP_RW_MASK) | USBLEGSUP_HEADER;
-            if self.usblegsup & USBLEGSUP_OS_SEM != 0 {
-                self.usblegsup &= !USBLEGSUP_BIOS_SEM;
-            }
-        }
-        if let Some(v) = r.u32(TAG_USBLEGCTLSTS)? {
-            self.usblegctlsts = v;
-        }
-
         if let Some(buf) = r.bytes(TAG_ROOT_HUB_PORTS) {
             self.hub.load_snapshot_ports(buf)?;
+        }
+
+        if let Some(usblegsup) = r.u32(TAG_USBLEGSUP)? {
+            let mut v = (usblegsup & USBLEGSUP_RW_MASK) | USBLEGSUP_HEADER;
+            if v & USBLEGSUP_OS_SEM != 0 {
+                v &= !USBLEGSUP_BIOS_SEM;
+            }
+            self.usblegsup = v;
+        }
+        if let Some(usblegctlsts) = r.u32(TAG_USBLEGCTLSTS)? {
+            self.usblegctlsts = usblegctlsts;
         }
 
         self.update_irq();

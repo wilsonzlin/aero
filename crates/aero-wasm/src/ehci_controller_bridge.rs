@@ -18,9 +18,10 @@ use wasm_bindgen::prelude::*;
 use js_sys::Uint8Array;
 
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotVersion, SnapshotWriter};
+use aero_usb::device::AttachedUsbDevice;
 use aero_usb::ehci::EhciController;
 use aero_usb::hub::UsbHubDevice;
-use aero_usb::{MemoryBus, UsbDeviceModel, UsbHubAttachError};
+use aero_usb::{MemoryBus, UsbDeviceModel, UsbHubAttachError, UsbWebUsbPassthroughDevice};
 
 const EHCI_BRIDGE_DEVICE_ID: [u8; 4] = *b"EHCB";
 const EHCI_BRIDGE_DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
@@ -105,6 +106,24 @@ fn detach_device_at_path(ctrl: &mut EhciController, path: &[u8]) -> Result<(), J
     }
 }
 
+fn reset_webusb_host_state_for_restore(dev: &mut AttachedUsbDevice) {
+    // If this is a WebUSB passthrough device, clear host-side bookkeeping that cannot be resumed
+    // after a snapshot restore (the browser side uses JS Promises).
+    let model_any = dev.model() as &dyn core::any::Any;
+    if let Some(webusb) = model_any.downcast_ref::<UsbWebUsbPassthroughDevice>() {
+        webusb.reset_host_state_for_restore();
+    }
+
+    // Recurse into nested hubs so downstream WebUSB devices also get reset.
+    if let Some(hub) = dev.as_hub_mut() {
+        for port in 0..hub.num_ports() {
+            if let Some(child) = hub.downstream_device_mut(port) {
+                reset_webusb_host_state_for_restore(child);
+            }
+        }
+    }
+}
+
 /// WASM export: reusable EHCI controller model for the browser I/O worker.
 ///
 /// The controller reads/writes guest RAM directly from the module's linear memory (shared across
@@ -121,7 +140,10 @@ pub struct EhciControllerBridge {
 impl EhciControllerBridge {
     /// Rust-only helper for tests: connect an arbitrary USB device model to a root port.
     pub fn connect_device_for_test(&mut self, root_port: usize, device: Box<dyn UsbDeviceModel>) {
-        self.ctrl.hub_mut().attach_at_path(&[root_port as u8], device).ok();
+        self.ctrl
+            .hub_mut()
+            .attach_at_path(&[root_port as u8], device)
+            .ok();
     }
 }
 
@@ -145,6 +167,7 @@ impl EhciControllerBridge {
         } else {
             guest_size as u64
         };
+
         // Keep guest RAM below the PCI MMIO BAR window (see `guest_ram_layout` contract).
         let guest_size_u64 = guest_size_u64.min(crate::guest_layout::PCI_MMIO_BASE);
 
@@ -190,7 +213,7 @@ impl EhciControllerBridge {
         if size == 0 {
             return 0;
         }
-        self.ctrl.mmio_read(offset as u64, size) as u32
+        self.ctrl.mmio_read(offset as u64, size)
     }
 
     pub fn mmio_write(&mut self, offset: u32, size: u8, value: u32) {
@@ -318,6 +341,15 @@ impl EhciControllerBridge {
             .load_state(ctrl_bytes)
             .map_err(|e| js_error(format!("Invalid EHCI controller snapshot: {e}")))?;
 
+        // WebUSB host actions are backed by JS Promises and cannot be resumed after restoring a VM
+        // snapshot. Reset any restored passthrough device state so guest retries re-emit actions.
+        let hub = self.ctrl.hub_mut();
+        for port in 0..hub.num_ports() {
+            if let Some(dev) = hub.port_device_mut(port) {
+                reset_webusb_host_state_for_restore(dev);
+            }
+        }
+
         Ok(())
     }
 
@@ -333,3 +365,4 @@ impl EhciControllerBridge {
         self.load_state(bytes)
     }
 }
+

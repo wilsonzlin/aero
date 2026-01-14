@@ -462,9 +462,9 @@ impl RootHub {
     }
 
     pub fn any_port_change(&self) -> bool {
-        self.ports.iter().any(|p| {
-            p.connect_change || p.enable_change || p.over_current_change
-        })
+        self.ports
+            .iter()
+            .any(|p| p.connect_change || p.enable_change || p.over_current_change)
     }
 
     pub fn device_mut_for_address(&mut self, address: u8) -> Option<&mut AttachedUsbDevice> {
