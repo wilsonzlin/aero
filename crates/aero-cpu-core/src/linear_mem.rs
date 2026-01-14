@@ -17,6 +17,41 @@ use crate::mem::CpuBus;
 use crate::state::{CpuMode, CpuState};
 
 #[inline]
+fn wrapped_segment_len(state: &CpuState, raw_addr: u64, remaining: usize) -> usize {
+    debug_assert!(remaining > 0);
+
+    // Long mode: no architectural masking. The only discontinuity comes from
+    // overflowing the u64 address space.
+    if state.mode == CpuMode::Long {
+        let rem_u64 = u64::try_from(remaining).unwrap_or(u64::MAX);
+        if raw_addr.checked_add(rem_u64.saturating_sub(1)).is_some() {
+            return remaining;
+        }
+
+        // Safe: overflow implies `raw_addr != 0`, so `u64::MAX - raw_addr + 1` fits in u64.
+        let until_wrap = (u64::MAX - raw_addr) + 1;
+        let until_wrap_usize = usize::try_from(until_wrap).unwrap_or(usize::MAX);
+        return remaining.min(until_wrap_usize);
+    }
+
+    // Non-long modes: linear addresses are 32-bit.
+    let addr32 = raw_addr & 0xFFFF_FFFF;
+    let mut max = 0x1_0000_0000u64 - addr32; // bytes until 32-bit wrap (inclusive)
+
+    // With A20 disabled (real/v8086): bit 20 is forced low. Contiguity in masked
+    // address space requires staying within a single 1MiB window (no bit-20
+    // boundary crossing).
+    if !state.a20_enabled && matches!(state.mode, CpuMode::Real | CpuMode::Vm86) {
+        let low20 = addr32 & 0x000F_FFFF;
+        let until_a20 = 0x1_00000u64 - low20;
+        max = max.min(until_a20);
+    }
+
+    let max_usize = usize::try_from(max).unwrap_or(usize::MAX);
+    remaining.min(max_usize)
+}
+
+#[inline]
 pub(crate) fn contiguous_masked_start(state: &CpuState, addr: u64, len: usize) -> Option<u64> {
     if len <= 1 {
         return Some(state.apply_a20(addr));
@@ -74,9 +109,16 @@ pub fn read_bytes_wrapped<B: CpuBus>(
         return bus.read_bytes(start, dst);
     }
 
-    for (i, slot) in dst.iter_mut().enumerate() {
-        let byte_addr = state.apply_a20(addr.wrapping_add(i as u64));
-        *slot = bus.read_u8(byte_addr)?;
+    // Slow path: split into contiguous runs in masked linear address space. This
+    // avoids per-byte `read_u8` overhead for large reads that cross an
+    // architectural wrap boundary (32-bit linear wrap, A20 alias wrap).
+    let mut offset = 0usize;
+    while offset < dst.len() {
+        let raw = addr.wrapping_add(offset as u64);
+        let start = state.apply_a20(raw);
+        let len = wrapped_segment_len(state, raw, dst.len() - offset);
+        bus.read_bytes(start, &mut dst[offset..offset + len])?;
+        offset += len;
     }
     Ok(())
 }
@@ -104,47 +146,12 @@ pub fn write_bytes_wrapped<B: CpuBus>(
     // arithmetic rather than scanning byte-by-byte. We also avoid allocating a
     // temporary `Vec` by running two passes: preflight, then commit.
 
-    #[inline]
-    fn segment_len(state: &CpuState, raw_addr: u64, remaining: usize) -> usize {
-        debug_assert!(remaining > 0);
-
-        // Long mode: no architectural masking. The only discontinuity comes from
-        // overflowing the u64 address space.
-        if state.mode == CpuMode::Long {
-            let rem_u64 = u64::try_from(remaining).unwrap_or(u64::MAX);
-            if raw_addr.checked_add(rem_u64.saturating_sub(1)).is_some() {
-                return remaining;
-            }
-
-            // Safe: overflow implies `raw_addr != 0`, so `u64::MAX - raw_addr + 1` fits in u64.
-            let until_wrap = (u64::MAX - raw_addr) + 1;
-            let until_wrap_usize = usize::try_from(until_wrap).unwrap_or(usize::MAX);
-            return remaining.min(until_wrap_usize);
-        }
-
-        // Non-long modes: linear addresses are 32-bit.
-        let addr32 = raw_addr & 0xFFFF_FFFF;
-        let mut max = 0x1_0000_0000u64 - addr32; // bytes until 32-bit wrap (inclusive)
-
-        // With A20 disabled (real/v8086): bit 20 is forced low. Contiguity in masked
-        // address space requires staying within a single 1MiB window (no bit-20
-        // boundary crossing).
-        if !state.a20_enabled && matches!(state.mode, CpuMode::Real | CpuMode::Vm86) {
-            let low20 = addr32 & 0x000F_FFFF;
-            let until_a20 = 0x1_00000u64 - low20;
-            max = max.min(until_a20);
-        }
-
-        let max_usize = usize::try_from(max).unwrap_or(usize::MAX);
-        remaining.min(max_usize)
-    }
-
     // Pass 1: preflight all segments.
     let mut offset = 0usize;
     while offset < src.len() {
         let raw = addr.wrapping_add(offset as u64);
         let start = state.apply_a20(raw);
-        let len = segment_len(state, raw, src.len() - offset);
+        let len = wrapped_segment_len(state, raw, src.len() - offset);
         bus.preflight_write_bytes(start, len)?;
         offset += len;
     }
@@ -154,7 +161,7 @@ pub fn write_bytes_wrapped<B: CpuBus>(
     while offset < src.len() {
         let raw = addr.wrapping_add(offset as u64);
         let start = state.apply_a20(raw);
-        let len = segment_len(state, raw, src.len() - offset);
+        let len = wrapped_segment_len(state, raw, src.len() - offset);
         bus.write_bytes(start, &src[offset..offset + len])?;
         offset += len;
     }

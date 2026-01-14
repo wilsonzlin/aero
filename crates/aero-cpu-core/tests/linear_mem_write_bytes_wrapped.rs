@@ -2,7 +2,7 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::thread_local;
 
-use aero_cpu_core::linear_mem::write_bytes_wrapped;
+use aero_cpu_core::linear_mem::{read_bytes_wrapped, write_bytes_wrapped};
 use aero_cpu_core::mem::{CpuBus, FlatTestBus};
 use aero_cpu_core::state::{CpuMode, CpuState};
 use aero_cpu_core::Exception;
@@ -222,6 +222,90 @@ impl CpuBus for SplitTestBus {
     }
 }
 
+struct CountingReadBus {
+    inner: SplitTestBus,
+    read_u8_calls: usize,
+    read_bytes_calls: usize,
+}
+
+impl CountingReadBus {
+    fn new(inner: SplitTestBus) -> Self {
+        Self {
+            inner,
+            read_u8_calls: 0,
+            read_bytes_calls: 0,
+        }
+    }
+}
+
+impl CpuBus for CountingReadBus {
+    fn read_u8(&mut self, vaddr: u64) -> Result<u8, Exception> {
+        self.read_u8_calls += 1;
+        self.inner.read_u8(vaddr)
+    }
+
+    fn read_u16(&mut self, vaddr: u64) -> Result<u16, Exception> {
+        self.inner.read_u16(vaddr)
+    }
+
+    fn read_u32(&mut self, vaddr: u64) -> Result<u32, Exception> {
+        self.inner.read_u32(vaddr)
+    }
+
+    fn read_u64(&mut self, vaddr: u64) -> Result<u64, Exception> {
+        self.inner.read_u64(vaddr)
+    }
+
+    fn read_u128(&mut self, vaddr: u64) -> Result<u128, Exception> {
+        self.inner.read_u128(vaddr)
+    }
+
+    fn write_u8(&mut self, vaddr: u64, val: u8) -> Result<(), Exception> {
+        self.inner.write_u8(vaddr, val)
+    }
+
+    fn write_u16(&mut self, vaddr: u64, val: u16) -> Result<(), Exception> {
+        self.inner.write_u16(vaddr, val)
+    }
+
+    fn write_u32(&mut self, vaddr: u64, val: u32) -> Result<(), Exception> {
+        self.inner.write_u32(vaddr, val)
+    }
+
+    fn write_u64(&mut self, vaddr: u64, val: u64) -> Result<(), Exception> {
+        self.inner.write_u64(vaddr, val)
+    }
+
+    fn write_u128(&mut self, vaddr: u64, val: u128) -> Result<(), Exception> {
+        self.inner.write_u128(vaddr, val)
+    }
+
+    fn read_bytes(&mut self, vaddr: u64, dst: &mut [u8]) -> Result<(), Exception> {
+        self.read_bytes_calls += 1;
+        self.inner.read_bytes(vaddr, dst)
+    }
+
+    fn write_bytes(&mut self, vaddr: u64, src: &[u8]) -> Result<(), Exception> {
+        self.inner.write_bytes(vaddr, src)
+    }
+
+    fn preflight_write_bytes(&mut self, vaddr: u64, len: usize) -> Result<(), Exception> {
+        self.inner.preflight_write_bytes(vaddr, len)
+    }
+
+    fn fetch(&mut self, vaddr: u64, max_len: usize) -> Result<[u8; 15], Exception> {
+        self.inner.fetch(vaddr, max_len)
+    }
+
+    fn io_read(&mut self, port: u16, size: u32) -> Result<u64, Exception> {
+        self.inner.io_read(port, size)
+    }
+
+    fn io_write(&mut self, port: u16, size: u32, val: u64) -> Result<(), Exception> {
+        self.inner.io_write(port, size, val)
+    }
+}
+
 #[derive(Clone)]
 struct FaultingPreflightBus {
     inner: FlatTestBus,
@@ -336,6 +420,25 @@ fn small_contiguous_write_still_uses_normal_semantics() {
     let src = [1u8, 2, 3, 4, 5, 6, 7, 8];
     write_bytes_wrapped(&state, &mut bus, 0x1234, &src).unwrap();
     assert_eq!(bus.slice(0x1234, src.len()), &src);
+}
+
+#[test]
+fn read_bytes_wrapped_large_32bit_wrap_uses_segment_reads() {
+    let state = CpuState::new(CpuMode::Bit32);
+
+    let mut inner = SplitTestBus::new(0x200000, 0xFFFF_F000, 0x1000);
+    inner.low.fill(0x22);
+    inner.high.fill(0x11);
+    let mut bus = CountingReadBus::new(inner);
+
+    let mut dst = vec![0u8; 0x100000];
+    read_bytes_wrapped(&state, &mut bus, 0xFFFF_F000, &mut dst).unwrap();
+
+    assert!(dst[..0x1000].iter().all(|&b| b == 0x11));
+    assert!(dst[0x1000..].iter().all(|&b| b == 0x22));
+
+    assert_eq!(bus.read_bytes_calls, 2);
+    assert_eq!(bus.read_u8_calls, 0);
 }
 
 #[test]
