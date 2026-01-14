@@ -59,18 +59,23 @@ fn aerogpu_features_lo_hi_match_implemented_capabilities() {
     let features_hi = m.read_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_FEATURES_HI));
     let features = (u64::from(features_hi) << 32) | u64::from(features_lo);
 
-    // Today `aero-machine` implements scanout + vblank + fence-page writeback only.
+    // `aero-machine` currently implements:
+    // - Scanout (framebuffer DMA-read)
+    // - VBlank sequencing / IRQs
+    // - Fence-page writeback
+    // - Cursor overlay
+    // - Error reporting registers
     let expected = pci::AEROGPU_FEATURE_SCANOUT
         | pci::AEROGPU_FEATURE_VBLANK
-        | pci::AEROGPU_FEATURE_FENCE_PAGE;
+        | pci::AEROGPU_FEATURE_FENCE_PAGE
+        | pci::AEROGPU_FEATURE_CURSOR
+        | pci::AEROGPU_FEATURE_ERROR_INFO;
 
     assert_eq!(
         features, expected,
         "unexpected AeroGPU feature bits: got=0x{features:016x} expected=0x{expected:016x}"
     );
 
-    // Guardrails: if scanout/vblank/fence-page are the only implemented features, cursor/transfer
-    // must not be advertised.
-    assert_eq!(features & pci::AEROGPU_FEATURE_CURSOR, 0);
+    // Guardrails: transfer is not implemented yet; ensure it is not advertised.
     assert_eq!(features & pci::AEROGPU_FEATURE_TRANSFER, 0);
 }
