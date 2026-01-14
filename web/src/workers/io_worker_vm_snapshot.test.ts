@@ -602,7 +602,10 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
     });
 
     const vramAdds = addCalls.filter((c) => c.id === VM_SNAPSHOT_DEVICE_ID_GPU_VRAM);
-    expect(vramAdds).toHaveLength(2);
+    expect(vramAdds.map((c) => c.id)).toEqual([VM_SNAPSHOT_DEVICE_ID_GPU_VRAM, VM_SNAPSHOT_DEVICE_ID_GPU_VRAM]);
+    // The WorkerVmSnapshot path stores `gpu.vram` as self-describing chunk blobs; the chunk index is
+    // forwarded via the `flags` field so the snapshot file can be streamed without coordinator copies.
+    expect(vramAdds.map((c) => c.version)).toEqual([1, 1]);
     expect(vramAdds.map((c) => c.flags)).toEqual([0, 1]);
 
     const readU16Le = (bytes: Uint8Array, off: number): number => (bytes[off]! | (bytes[off + 1]! << 8)) >>> 0;
