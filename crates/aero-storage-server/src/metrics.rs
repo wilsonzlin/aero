@@ -3,6 +3,7 @@ use std::{collections::HashSet, env, sync::Mutex, time::Duration};
 use prometheus::{
     Encoder, HistogramOpts, HistogramVec, IntCounterVec, IntGaugeVec, Opts, Registry, TextEncoder,
 };
+use tracing::warn;
 
 /// Prometheus metrics used by the storage server.
 ///
@@ -35,6 +36,8 @@ impl Default for Metrics {
 
 impl Metrics {
     pub fn new() -> Self {
+        const DEFAULT_MAX_IMAGE_IDS: usize = 100;
+
         let registry = Registry::new();
 
         let build_info = IntGaugeVec::new(
@@ -112,10 +115,40 @@ impl Metrics {
             .register(Box::new(store_errors_total.clone()))
             .expect("store_errors_total must register");
 
-        let max_image_ids = env::var("AERO_IMAGE_METRICS_MAX_IDS")
-            .ok()
-            .and_then(|value| value.parse::<usize>().ok())
-            .unwrap_or(100);
+        let max_image_ids = match env::var("AERO_IMAGE_METRICS_MAX_IDS") {
+            Ok(v) => {
+                let trimmed = v.trim();
+                if trimmed.is_empty() {
+                    warn!(
+                        env_var = "AERO_IMAGE_METRICS_MAX_IDS",
+                        value = %v,
+                        "Ignoring empty AERO_IMAGE_METRICS_MAX_IDS; using default {DEFAULT_MAX_IMAGE_IDS}"
+                    );
+                    DEFAULT_MAX_IMAGE_IDS
+                } else {
+                    match trimmed.parse::<usize>() {
+                        Ok(n) => n,
+                        Err(err) => {
+                            warn!(
+                                env_var = "AERO_IMAGE_METRICS_MAX_IDS",
+                                value = %v,
+                                error = %err,
+                                "Invalid AERO_IMAGE_METRICS_MAX_IDS; using default {DEFAULT_MAX_IMAGE_IDS}"
+                            );
+                            DEFAULT_MAX_IMAGE_IDS
+                        }
+                    }
+                }
+            }
+            Err(env::VarError::NotPresent) => DEFAULT_MAX_IMAGE_IDS,
+            Err(env::VarError::NotUnicode(_)) => {
+                warn!(
+                    env_var = "AERO_IMAGE_METRICS_MAX_IDS",
+                    "Ignoring AERO_IMAGE_METRICS_MAX_IDS because it is not valid unicode; using default {DEFAULT_MAX_IMAGE_IDS}"
+                );
+                DEFAULT_MAX_IMAGE_IDS
+            }
+        };
 
         let this = Self {
             registry,
@@ -227,8 +260,74 @@ impl Metrics {
 mod tests {
     use super::*;
 
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn restore_var(key: &str, prev: Option<std::ffi::OsString>) {
+        match prev {
+            Some(v) => std::env::set_var(key, v),
+            None => std::env::remove_var(key),
+        }
+    }
+
+    #[test]
+    fn max_image_ids_defaults_to_100_when_env_missing() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        const VAR: &str = "AERO_IMAGE_METRICS_MAX_IDS";
+        let prev = std::env::var_os(VAR);
+        std::env::remove_var(VAR);
+
+        let metrics = Metrics::new();
+        assert_eq!(metrics.max_image_ids, 100);
+
+        restore_var(VAR, prev);
+    }
+
+    #[test]
+    fn max_image_ids_parses_valid_value() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        const VAR: &str = "AERO_IMAGE_METRICS_MAX_IDS";
+        let prev = std::env::var_os(VAR);
+
+        std::env::set_var(VAR, "7");
+        let metrics = Metrics::new();
+        assert_eq!(metrics.max_image_ids, 7);
+
+        restore_var(VAR, prev);
+    }
+
+    #[test]
+    fn max_image_ids_invalid_value_uses_default() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        const VAR: &str = "AERO_IMAGE_METRICS_MAX_IDS";
+        let prev = std::env::var_os(VAR);
+
+        std::env::set_var(VAR, "not-a-number");
+        let metrics = Metrics::new();
+        assert_eq!(metrics.max_image_ids, 100);
+
+        restore_var(VAR, prev);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn max_image_ids_invalid_utf8_uses_default() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let _guard = ENV_LOCK.lock().unwrap();
+        const VAR: &str = "AERO_IMAGE_METRICS_MAX_IDS";
+        let prev = std::env::var_os(VAR);
+
+        std::env::set_var(VAR, OsString::from_vec(vec![0xFF, 0xFE, 0xFD]));
+        let metrics = Metrics::new();
+        assert_eq!(metrics.max_image_ids, 100);
+
+        restore_var(VAR, prev);
+    }
+
     #[test]
     fn overly_long_image_id_is_mapped_to_other_metric_label() {
+        let _guard = ENV_LOCK.lock().unwrap();
         let metrics = Metrics::new();
         let long_id = "a".repeat(crate::store::MAX_IMAGE_ID_LEN + 1);
 
