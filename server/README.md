@@ -17,3 +17,12 @@ For browser-side requirements (COOP/COEP / cross-origin isolation), see:
 ## Legacy protocol docs
 
 If you need the old endpoints/protocols for historical prototypes, see [`server/LEGACY.md`](./LEGACY.md).
+
+## Dev helpers (disk streaming)
+
+This directory also contains standalone dev-only helpers used by the disk streaming conformance tooling:
+
+- `server/range_server.js`: static file server with HTTP Range + CORS headers
+  - Used by `tools/disk-streaming-conformance/selftest_range_server.py`
+- `server/chunk_server.js`: static server for chunked disk images (`manifest.json` + `chunks/*.bin`)
+  - Used by `tools/disk-streaming-conformance/selftest_chunk_server.py`
