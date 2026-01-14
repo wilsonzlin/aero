@@ -966,8 +966,11 @@ struct Device {
   // `aerogpu_d3d9_driver.cpp`. The current FixedfuncStage0Src enum spans 10 values
   // (0..9), so we reserve 10*10 entries (color_src * 10 + alpha_src).
   Shader* fixedfunc_stage0_ps_variants[100] = {};
-  // True when cached world/view/proj transforms changed and the fixed-function
-  // fallback needs to re-upload the combined matrix constant registers.
+  // True when fixed-function WVP constant registers need to be refreshed.
+  //
+  // This is set both when cached WORLD/VIEW/PROJECTION transforms change and
+  // when switching back to the fixed-function WVP vertex shaders (user shaders
+  // may have written overlapping VS constant registers).
   bool fixedfunc_matrix_dirty = true;
 
   // Fixed-function "interop" fallbacks used when exactly one shader stage is
