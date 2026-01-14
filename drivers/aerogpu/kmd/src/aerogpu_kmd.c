@@ -3459,6 +3459,19 @@ static NTSTATUS APIENTRY AeroGpuDdiAcquirePostDisplayOwnership(
          */
         if (poweredOn && adapter->PostDisplayVblankWasEnabled && adapter->SupportsVblank &&
             adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ACK + sizeof(ULONG))) {
+            /*
+             * Dxgkrnl normally tells us which interrupt type to use via
+             * DxgkDdiControlInterrupt. If it skips that call during a
+             * post-display-ownership transition, we still need a valid type so
+             * the ISR can notify vblank delivery (Win7/WDDM 1.1 expects
+             * DXGK_INTERRUPT_TYPE_CRTC_VSYNC).
+             */
+            if (!adapter->VblankInterruptTypeValid) {
+                adapter->VblankInterruptType = DXGK_INTERRUPT_TYPE_CRTC_VSYNC;
+                KeMemoryBarrier();
+                adapter->VblankInterruptTypeValid = TRUE;
+            }
+
             KIRQL oldIrql;
             KeAcquireSpinLock(&adapter->IrqEnableLock, &oldIrql);
 
