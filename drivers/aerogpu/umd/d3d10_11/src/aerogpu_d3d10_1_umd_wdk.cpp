@@ -53,18 +53,14 @@
 #include "../../../protocol/aerogpu_umd_private.h"
 #include "../../../protocol/aerogpu_win7_abi.h"
 
-#ifndef NT_SUCCESS
-  #define NT_SUCCESS(Status) (((NTSTATUS)(Status)) >= 0)
-#endif
-
-#ifndef STATUS_TIMEOUT
-  #define STATUS_TIMEOUT ((NTSTATUS)0x00000102L)
-#endif
-
 // Implemented in `aerogpu_d3d10_umd_wdk.cpp` (D3D10.0 DDI).
 HRESULT AEROGPU_APIENTRY AeroGpuOpenAdapter10Wdk(D3D10DDIARG_OPENADAPTER* pOpenData);
 
 namespace {
+
+constexpr bool NtSuccess(NTSTATUS st) {
+  return st >= 0;
+}
 
 using aerogpu::d3d10_11::kInvalidHandle;
 using aerogpu::d3d10_11::AllocateGlobalHandle;
@@ -681,7 +677,7 @@ void InitKmtAdapterHandle(AeroGpuAdapter* adapter) {
   const NTSTATUS st = procs.pfn_open_adapter_from_hdc(&open);
   DeleteDC(hdc);
 
-  if (NT_SUCCESS(st) && open.hAdapter) {
+  if (NtSuccess(st) && open.hAdapter) {
     adapter->kmt_adapter = open.hAdapter;
   }
 }
@@ -731,7 +727,7 @@ void InitUmdPrivate(AeroGpuAdapter* adapter) {
     q.Type = static_cast<KMTQUERYADAPTERINFOTYPE>(type);
 
     const NTSTATUS st = procs.pfn_query_adapter_info(&q);
-    if (!NT_SUCCESS(st)) {
+    if (!NtSuccess(st)) {
       continue;
     }
 
