@@ -3,7 +3,7 @@
 use core::mem::offset_of;
 
 use aero_devices::clock::{Clock, ManualClock};
-use aero_devices::pci::PciBarMmioHandler;
+use aero_devices::pci::{PciBarMmioHandler, PciConfigSpace, PciDevice};
 use aero_devices_gpu::ring::write_fence_page;
 use aero_protocol::aerogpu::aerogpu_pci as pci;
 use aero_protocol::aerogpu::aerogpu_ring as ring;
@@ -345,8 +345,8 @@ pub(crate) fn composite_cursor_rgba8888_over_scanout(
         }
     }
 }
-#[derive(Debug, Clone)]
 pub struct AeroGpuMmioDevice {
+    config: PciConfigSpace,
     abi_version: u32,
     supported_features: u64,
 
@@ -438,7 +438,14 @@ impl Default for AeroGpuMmioDevice {
         // Default vblank pacing is 60Hz.
         let vblank_period_ns = 1_000_000_000u64.div_ceil(60);
         let scanout0_vblank_period_ns = vblank_period_ns.min(u64::from(u32::MAX)) as u32;
+
+        let mut config = aero_devices::pci::profile::AEROGPU.build_config_space();
+        // Start with decoding disabled; the canonical PCI config space (owned by `Machine`) will be
+        // mirrored into this internal copy from `Machine::sync_pci_intx_sources_to_interrupts`.
+        config.set_command(0);
+
         Self {
+            config,
             abi_version: pci::AEROGPU_ABI_VERSION_U32,
             supported_features: supported_features(),
 
@@ -692,6 +699,10 @@ impl AeroGpuMmioDevice {
     }
 
     pub fn irq_level(&self) -> bool {
+        // Respect PCI COMMAND.INTX_DISABLE (bit 10).
+        if (self.config.command() & (1 << 10)) != 0 {
+            return false;
+        }
         (self.irq_status & self.irq_enable) != 0
     }
 
@@ -1228,5 +1239,15 @@ impl PciBarMmioHandler for AeroGpuMmioDevice {
             cur = (cur & !mask) | (u32::from(bytes[i]) << shift);
             self.mmio_write_dword(aligned, cur);
         }
+    }
+}
+
+impl PciDevice for AeroGpuMmioDevice {
+    fn config(&self) -> &PciConfigSpace {
+        &self.config
+    }
+
+    fn config_mut(&mut self) -> &mut PciConfigSpace {
+        &mut self.config
     }
 }

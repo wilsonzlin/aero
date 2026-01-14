@@ -5521,7 +5521,20 @@ impl Machine {
                     })
                     .unwrap_or(0);
 
-                let mut level = aerogpu.borrow().irq_level();
+                // Tick vblank scheduling based on the deterministic platform clock so tests do not
+                // depend on wall clock time.
+                let clock_ns = self
+                    .platform_clock
+                    .as_ref()
+                    .map(|clock| aero_interrupts::clock::Clock::now_ns(clock))
+                    .unwrap_or(0);
+
+                let mut dev = aerogpu.borrow_mut();
+                // Keep the device model's internal PCI command register in sync so `irq_level` can
+                // respect COMMAND.INTX_DISABLE (bit 10).
+                dev.config_mut().set_command(command);
+                dev.tick_vblank(clock_ns);
+                let mut level = dev.irq_level();
 
                 // Redundantly gate on the canonical PCI command register as well (defensive).
                 if (command & (1 << 10)) != 0 {
@@ -7637,6 +7650,9 @@ impl Machine {
         let now_ns = clock.now_ns();
         let bus_master_enabled = (command & (1 << 2)) != 0;
         let mut dev = aerogpu.borrow_mut();
+        // Keep the device model's internal PCI command register coherent with the canonical PCI
+        // config space owned by the machine.
+        dev.config_mut().set_command(command);
         dev.tick_vblank(now_ns);
         dev.process(&mut self.mem, bus_master_enabled);
 
