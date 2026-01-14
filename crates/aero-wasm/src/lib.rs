@@ -5040,12 +5040,16 @@ impl Machine {
     }
 
     /// Current display output width in pixels (0 if no display scanout is available).
+    ///
+    /// This is the width of the last framebuffer produced by [`Machine::display_present`].
     pub fn display_width(&self) -> u32 {
         let (w, _) = self.inner.display_resolution();
         w
     }
 
     /// Current display output height in pixels (0 if no display scanout is available).
+    ///
+    /// This is the height of the last framebuffer produced by [`Machine::display_present`].
     pub fn display_height(&self) -> u32 {
         let (_, h) = self.inner.display_resolution();
         h
@@ -5061,8 +5065,15 @@ impl Machine {
     /// Returns `0` if no display scanout is available.
     ///
     /// # Safety contract (JS/host)
-    /// The caller must re-query this pointer after each [`Machine::display_present`] call because
-    /// the framebuffer pointer may change (e.g. due to resize/reallocation).
+    /// The returned pointer is a view into the `aero_machine::Machine`'s internal framebuffer cache
+    /// (a `Vec<u32>`).
+    ///
+    /// The caller must re-query both the pointer and length after each [`Machine::display_present`]
+    /// call because the underlying `Vec` can be resized/reallocated, invalidating any previously
+    /// returned pointer.
+    ///
+    /// Note: [`Machine::display_framebuffer_copy_rgba8888`] calls [`Machine::display_present`]
+    /// internally, so calling it also invalidates any previous pointer.
     #[cfg(target_arch = "wasm32")]
     pub fn display_framebuffer_ptr(&self) -> u32 {
         let fb = self.inner.display_framebuffer();
@@ -5086,9 +5097,6 @@ impl Machine {
     /// may change (e.g. due to resize/reallocation).
     pub fn display_framebuffer_len_bytes(&self) -> u32 {
         let fb = self.inner.display_framebuffer();
-        if fb.is_empty() {
-            return 0;
-        }
         let bytes = (fb.len() as u64).saturating_mul(4);
         bytes.min(u64::from(u32::MAX)) as u32
     }
