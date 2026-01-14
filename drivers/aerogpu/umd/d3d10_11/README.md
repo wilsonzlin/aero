@@ -26,6 +26,7 @@ Feature matrix for the Win7 WDK-backed UMDs:
 | Vertex buffer binding | **Multiple slots** supported (`StartSlot/NumBuffers` forwarded) | **Multiple slots** supported (`StartSlot/NumBuffers` forwarded) | **Multiple slots** supported (`StartSlot/NumBuffers` forwarded) |
 | Constant buffers | VS/PS supported (14 slots, whole-buffer binding) | VS/PS supported (14 slots, whole-buffer binding) | VS/PS/CS supported (14 slots, `{FirstConstant, NumConstants}` ranges supported) |
 | Samplers | VS/PS supported (16 slots; `CREATE_SAMPLER` + `SET_SAMPLERS`) | VS/PS supported (16 slots; `CREATE_SAMPLER` + `SET_SAMPLERS`) | VS/PS/CS supported (16 slots; basic filter/address modes) |
+| Geometry shaders (GS) | **Stubbed** (`GsSetShader*` no-op) | **Stubbed** (`GsSetShader*` no-op) | **Supported (partial)**: GS create + bind (GS handle carried via `BIND_SHADERS.reserved0`) |
 | Compute (CS) + UAV buffers | — | — | **Supported (partial)**: CS shaders + `AEROGPU_CMD_DISPATCH`; UAV **buffers** only (8 slots; no UAV textures / OM UAV binding) |
 
 \* All UMDs (D3D10 / D3D10.1 / D3D11) preserve the runtime-provided RTV slot count/list when emitting `SET_RENDER_TARGETS`: `color_count` reflects the runtime-provided slot count, clamped to `AEROGPU_MAX_RENDER_TARGETS` (8). `NULL` entries within `[0, color_count)` are valid and are encoded as `colors[i] = 0` (gaps are preserved).
@@ -36,8 +37,10 @@ Feature matrix for the Win7 WDK-backed UMDs:
 - Buffers + Texture2D resources
   - Texture2D **mip chains + array layers** (`MipLevels = 0` → full chain), including initial-data upload + subresource layout packing for guest-backed allocations
   - 16-bit packed formats (`B5G6R5_UNORM`, `B5G5R5A1_UNORM`)
-  - Block-compressed formats (BC1/BC2/BC3/BC7) and explicit sRGB variants are supported when the host ABI is new enough (ABI 1.2+; see `aerogpu_umd_private_v1.device_abi_version_u32`)
-- Vertex/pixel/compute shaders (DXBC payload passthrough)
+  - Block-compressed formats (BC1/BC2/BC3/BC7) and explicit sRGB variants are ABI-gated (ABI 1.2+; see `aerogpu_umd_private_v1.device_abi_version_u32`). On older ABIs, sRGB DXGI formats are mapped to UNORM for command-stream compatibility; BC formats are rejected.
+- Shaders (DXBC payload passthrough):
+  - D3D10/D3D10.1: VS/PS
+  - D3D11: VS/PS/GS/CS (GS stage bindings are limited; see below)
 - Input layout + vertex/index buffers, primitive topology
 - VS/PS binding tables:
   - D3D10 + D3D10.1: constant buffers, shader-resource views, samplers (whole-buffer constant-buffer binding)
@@ -59,22 +62,24 @@ Feature matrix for the Win7 WDK-backed UMDs:
 - **Subresource view selection** (SRV/RTV/DSV mip level + array slice): the UMDs currently only support “full-resource” views (no mip/array slicing; view descriptors must select mip 0 and cover the full resource when accepted) and bindings resolve to the underlying texture handle only. Supporting arbitrary per-view subresource selection requires protocol representation of “views” (or subresource selectors) rather than just raw texture handles.
 - **Texture UAVs + OM UAV binding**: the D3D11 UMD supports **buffer** UAVs in the CS stage (`AEROGPU_CMD_SET_UNORDERED_ACCESS_BUFFERS`), but does not support UAVs over textures, and rejects OM UAV binding (`OMSetRenderTargetsAndUnorderedAccessViews`) with `E_NOTIMPL`. Full UAV support requires protocol view/subresource selectors and a texture-UAV representation.
 - **Multiple viewports/scissor rects**: the protocol encodes only one viewport and one scissor rect. The UMD validates that any additional entries are identical/disabled; otherwise it reports `E_NOTIMPL`.
-- **DXGI format expansion** beyond the protocol’s current `enum aerogpu_format` list: only formats representable in the protocol can be encoded. Adding more DXGI formats requires extending `drivers/aerogpu/protocol/aerogpu_pci.h` + host support.
+- **DXGI format expansion** beyond the protocol’s current `enum aerogpu_format` list: only formats representable in the protocol can be encoded. The supported DXGI subset (including ABI-gated sRGB/BC policies) is centralized in `src/aerogpu_dxgi_format.h`. Adding more DXGI formats still requires extending `drivers/aerogpu/protocol/aerogpu_pci.h` + host support.
 - Stencil ops are protocol-limited: the current `aerogpu_depth_stencil_state` only carries **stencil enable + masks**; it does **not** encode stencil funcs/ops (or separate front/back face state).
 - Blend factors are protocol-limited: only `{Zero, One, SrcAlpha, InvSrcAlpha, DestAlpha, InvDestAlpha, Constant, InvConstant}` are representable. Other D3D10/11 blend factors (and unsupported blend ops) are rejected at `CreateBlendState` time (`E_NOTIMPL`) to avoid silent misrendering.
 
 ### Still stubbed / known gaps
 
-- Geometry shaders (GS) are supported via **host-side compute-prepass emulation** (WebGPU): when a GS is bound, the host expands primitives in compute into intermediate vertex/index buffers and then renders the expanded geometry with a normal render pipeline.
-  - Win7 test subset (current):
-    - Supported input topologies: `PointList` and `TriangleList` (non-adjacency).
-    - Supported output topology: `TriangleStream` (`triangle_strip`). `RestartStrip()` / `cut` terminates the current strip; the host expands strips into a triangle list (no primitive-restart indices).
-  - Known unsupported / not yet implemented:
-    - Stream-output (SO / `CreateGeometryShaderWithStreamOutput`, `SOSetTargets`, etc.).
-    - Multiple output streams (`EmitStream` / `CutStream`; only stream 0 supported).
-    - Adjacency input primitives.
-    - Geometry-stage resource bindings beyond what the Win7 tests exercise (CB/SRV/samplers/UAVs may be ignored/unsupported).
-  - ABI note: the GS handle is carried in `aerogpu_cmd_bind_shaders.reserved0` (legacy compat).
+- Geometry shaders (GS):
+  - D3D10/D3D10.1: GS DDIs are stubbed (`GsSetShader*` no-op).
+  - D3D11: `CreateGeometryShader` + `GsSetShader` are forwarded into the command stream (GS handle carried via `AEROGPU_CMD_BIND_SHADERS.reserved0`).
+  - Host/WebGPU execution is via **compute-prepass emulation**: when a GS is bound, the host expands primitives in compute into intermediate vertex/index buffers and then renders the expanded geometry with a normal render pipeline.
+    - Win7 test subset (current):
+      - Supported input topologies: `PointList` and `TriangleList` (non-adjacency).
+      - Supported output topology: `TriangleStream` (`triangle_strip`). `RestartStrip()` / `cut` terminates the current strip; the host expands strips into a triangle list (no primitive-restart indices).
+    - Known unsupported / not yet implemented:
+      - Stream-output (SO / `CreateGeometryShaderWithStreamOutput`, `SOSetTargets`, etc.).
+      - Multiple output streams (`EmitStream` / `CutStream`; only stream 0 supported).
+      - Adjacency input primitives.
+      - Geometry-stage resource bindings beyond what the Win7 tests exercise (CB/SRV/samplers/UAVs may be ignored/unsupported).
 - Tessellation (HS/DS) and other D3D11 features outside the implemented subset should fail cleanly (`E_NOTIMPL` / `SetErrorCb`).
 
 Unsupported functionality must fail cleanly (returning `E_NOTIMPL` / `E_INVALIDARG`) rather than crashing or dereferencing null DDI function pointers.
@@ -84,6 +89,7 @@ Host-side unit tests that exercise Map/Unmap and the newer resource/layout behav
 - `drivers/aerogpu/umd/d3d10_11/tests/map_unmap_tests.cpp` (CMake target: `aerogpu_d3d10_11_map_unmap_tests`; portable ABI build, no WDK required) covers Map/Unmap upload + staging readback, including mip/array layout (`TestGuestBackedTexture2DMipArray*`) and BC format paths (`Test*BcTexture*`).
   - Quick run (from repo root):
     - `cmake -S drivers/aerogpu/umd/d3d10_11/tests -B out/umd_d3d10_11_tests && cmake --build out/umd_d3d10_11_tests && ctest --test-dir out/umd_d3d10_11_tests -V`
+- `drivers/aerogpu/umd/d3d10_11/tests/dxgi_format_tests.cpp` (CMake target: `aerogpu_d3d10_11_dxgi_format_tests`) covers DXGI→AeroGPU format mapping and ABI-gated sRGB/BC policies in `src/aerogpu_dxgi_format.h`.
 - Command-stream/host validation for B5 formats, MRT, and state packets lives under `crates/aero-gpu/tests/` (run via `cargo test -p aero-gpu`)
   (for example: `aerogpu_d3d9_16bit_formats.rs`, `aerogpu_d3d9_clear_scissor.rs`, `aerogpu_d3d9_cmd_stream_state.rs`).
 
