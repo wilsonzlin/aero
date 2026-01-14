@@ -2103,13 +2103,15 @@ fn pf_error_code(present: bool, access: AccessType, is_user: bool, rsvd: bool) -
 
 #[inline]
 fn is_canonical_48(vaddr: u64) -> bool {
-    let sign = (vaddr >> 47) & 1;
-    let top = vaddr >> 48;
-    if sign == 0 {
-        top == 0
-    } else {
-        top == 0xffff
-    }
+    // Bits 48..63 must be sign-extension of bit 47.
+    //
+    // The top 17 bits (bits 47..63) must be either:
+    // - all 0s (positive canonical), or
+    // - all 1s (negative canonical).
+    //
+    // Branchless check: for canonical values, `(top17 + 1)` is either `1` or
+    // `0x20000`, both of which have bits 1..16 clear.
+    (((vaddr >> 47).wrapping_add(1)) & 0x1fffe) == 0
 }
 
 const CR0_WP: u64 = 1 << 16;
