@@ -3715,6 +3715,27 @@ HRESULT track_resource_allocation_locked(Device* dev, Resource* res, bool write)
       return device_lost_hresult(dev);
     }
 
+#if defined(_WIN32)
+    // AllocateCb/DeallocateCb runtimes may deallocate the active allocation list
+    // on every submission. Reacquire/rebind the recording buffers before retrying
+    // so the allocation tracker has a valid list to write into.
+    const size_t min_packet = align_up(sizeof(aerogpu_cmd_hdr), 4);
+    if (!wddm_ensure_recording_buffers(dev, min_packet)) {
+      return E_FAIL;
+    }
+#endif
+
+    // Allocation tracking requires a bound allocation-list buffer. In portable
+    // builds/tests we may toggle `hContext` without wiring a list; treat that as
+    // "tracking disabled" so unit tests focused on other behavior keep working.
+    if (!dev->alloc_list_tracker.list_base() || dev->alloc_list_tracker.list_capacity_effective() == 0) {
+#if defined(_WIN32)
+      return E_FAIL;
+#else
+      return S_OK;
+#endif
+    }
+
     if (write) {
       ref = dev->alloc_list_tracker.track_render_target_write(
           res->wddm_hAllocation, res->backing_alloc_id, res->share_token);

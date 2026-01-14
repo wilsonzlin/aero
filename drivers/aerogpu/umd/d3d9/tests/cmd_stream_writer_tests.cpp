@@ -9974,6 +9974,78 @@ bool TestDrawStateTrackingPreSplitRetainsAllocs() {
   return Check(alloc_list[1].WriteOperation == 0, "allocation list marks draw texture as read");
 }
 
+bool TestBlitStateTrackingPreSplitRetainsAllocs() {
+  // Same class of failure as TestDrawStateTrackingPreSplitRetainsAllocs, but for
+  // the D3D9 blit helper path (used by cursor overlay and other compositor
+  // operations).
+  //
+  // If the current submission's allocation list already contains tracked entries
+  // from earlier commands, blit draw-state tracking must pre-split so the final
+  // submission re-tracks *all* required allocations.
+  Adapter adapter{};
+  Device dev(&adapter);
+
+  dev.wddm_context.hContext = 1; // enable tracking in portable builds
+  D3DDDI_ALLOCATIONLIST alloc_list[2] = {};
+  dev.alloc_list_tracker.rebind(alloc_list, 2, 0xFFFFu);
+  dev.alloc_list_tracker.reset();
+
+  // Seed with a dummy allocation so the blit must split to fit dst+src.
+  const auto dummy = dev.alloc_list_tracker.track_buffer_read(/*hAllocation=*/0x1111u, /*alloc_id=*/99, /*share_token=*/0);
+  if (!Check(dummy.status == AllocRefStatus::kOk, "track_buffer_read dummy")) {
+    return false;
+  }
+  if (!Check(dev.alloc_list_tracker.list_len() == 1, "allocation list has dummy entry")) {
+    return false;
+  }
+
+  Resource dst{};
+  dst.handle = 0x2000u;
+  dst.kind = ResourceKind::Texture2D;
+  dst.format = static_cast<D3DDDIFORMAT>(21u); // D3DFMT_A8R8G8B8
+  dst.width = 64;
+  dst.height = 64;
+  dst.backing_alloc_id = 1;
+  dst.share_token = 0;
+  dst.wddm_hAllocation = 0x2000u;
+
+  Resource src{};
+  src.handle = 0x3000u;
+  src.kind = ResourceKind::Texture2D;
+  src.format = static_cast<D3DDDIFORMAT>(21u); // D3DFMT_A8R8G8B8
+  src.width = 32;
+  src.height = 32;
+  src.backing_alloc_id = 2;
+  src.share_token = 0;
+  src.wddm_hAllocation = 0x3000u;
+
+  RECT dst_rect{0, 0, 32, 32};
+  RECT src_rect{0, 0, 32, 32};
+
+  HRESULT hr = S_OK;
+  {
+    std::lock_guard<std::mutex> lock(dev.mutex);
+    hr = blit_alpha_locked(&dev, &dst, &dst_rect, &src, &src_rect, /*filter=*/1u);
+  }
+  if (!Check(hr == S_OK, "blit_alpha_locked")) {
+    return false;
+  }
+
+  if (!Check(dev.alloc_list_tracker.list_len() == 2, "allocation list contains blit deps after split")) {
+    return false;
+  }
+  if (!Check(alloc_list[0].hAllocation == dst.wddm_hAllocation, "allocation list contains blit dst mapping")) {
+    return false;
+  }
+  if (!Check(alloc_list[0].WriteOperation == 1, "allocation list marks blit dst as write")) {
+    return false;
+  }
+  if (!Check(alloc_list[1].hAllocation == src.wddm_hAllocation, "allocation list contains blit src mapping")) {
+    return false;
+  }
+  return Check(alloc_list[1].WriteOperation == 0, "allocation list marks blit src as read");
+}
+
 bool TestRenderTargetTrackingPreSplitRetainsAllocs() {
   // Similar to TestDrawStateTrackingPreSplitRetainsAllocs, but for Clear(): the
   // render-target tracking helper must not drop earlier tracked render targets
@@ -26710,6 +26782,7 @@ int main() {
   failures += !aerogpu::TestDeviceMiscExApisSucceed();
   failures += !aerogpu::TestAllocationListSplitResetsOnEmptySubmit();
   failures += !aerogpu::TestDrawStateTrackingPreSplitRetainsAllocs();
+  failures += !aerogpu::TestBlitStateTrackingPreSplitRetainsAllocs();
   failures += !aerogpu::TestRenderTargetTrackingPreSplitRetainsAllocs();
   failures += !aerogpu::TestDrawStateTrackingDedupsSharedAllocIds();
   failures += !aerogpu::TestRotateResourceIdentitiesTrackingPreSplitRetainsAllocs();
