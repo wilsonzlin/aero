@@ -131,6 +131,20 @@ fn enable_ehci_requires_enable_pc_platform() {
 }
 
 #[test]
+fn enable_xhci_requires_enable_pc_platform() {
+    let cfg = MachineConfig {
+        enable_pc_platform: false,
+        enable_xhci: true,
+        ..Default::default()
+    };
+
+    assert!(matches!(
+        Machine::new(cfg),
+        Err(MachineError::XhciRequiresPcPlatform)
+    ));
+}
+
+#[test]
 fn enable_aerogpu_requires_enable_pc_platform() {
     let cfg = MachineConfig {
         enable_pc_platform: false,

@@ -52,13 +52,13 @@ use aero_devices::acpi_pm::{
     register_acpi_pm, AcpiPmCallbacks, AcpiPmConfig, AcpiPmIo, SharedAcpiPmIo,
 };
 use aero_devices::clock::{Clock, ManualClock};
-use aero_devices::dma::{register_dma8237, Dma8237};
 use aero_devices::debugcon::{register_debugcon, SharedDebugConLog};
+use aero_devices::dma::{register_dma8237, Dma8237};
 use aero_devices::hpet;
 use aero_devices::i8042::{I8042Ports, SharedI8042Controller};
 use aero_devices::irq::{IrqLine, PlatformIrqLine};
 use aero_devices::pci::{
-    bios_post, msix::PCI_CAP_ID_MSIX, MsixCapability, register_pci_config_ports, PciBarDefinition,
+    bios_post, msix::PCI_CAP_ID_MSIX, register_pci_config_ports, MsixCapability, PciBarDefinition,
     PciBarMmioHandler, PciBarMmioRouter, PciBdf, PciConfigPorts, PciConfigSyncedMmioBar,
     PciCoreSnapshot, PciDevice, PciEcamConfig, PciEcamMmio, PciInterruptPin, PciIntxRouter,
     PciIntxRouterConfig, PciResourceAllocator, PciResourceAllocatorConfig, SharedPciConfigPorts,
@@ -70,12 +70,11 @@ use aero_devices::rtc_cmos::{register_rtc_cmos, RtcCmos, SharedRtcCmos};
 use aero_devices::serial::{register_serial16550, Serial16550, SharedSerial16550};
 use aero_devices::usb::ehci::EhciPciDevice;
 use aero_devices::usb::uhci::UhciPciDevice;
-use aero_usb::usb2_port::Usb2PortMux;
+use aero_devices::usb::xhci::XhciPciDevice;
 pub use aero_devices_input::Ps2MouseButton;
 use aero_devices_nvme::{NvmeController, NvmePciDevice};
 use aero_devices_storage::ata::AtaDrive;
 use aero_devices_storage::atapi::{AtapiCdrom, IsoBackend};
-use aero_storage::{MemBackend, RawDisk};
 use aero_devices_storage::pci_ahci::AhciPciDevice;
 use aero_devices_storage::pci_ide::{Piix3IdePciDevice, PRIMARY_PORTS, SECONDARY_PORTS};
 use aero_gpu_vga::{
@@ -97,12 +96,20 @@ use aero_platform::address_filter::AddressFilter;
 use aero_platform::chipset::{A20GateHandle, ChipsetState};
 use aero_platform::interrupts::msi::{MsiMessage, MsiTrigger};
 use aero_platform::interrupts::{
-    InterruptController as PlatformInterruptController, InterruptInput, IoApicMmio, PlatformInterrupts,
+    InterruptController as PlatformInterruptController, InterruptInput, IoApicMmio,
+    PlatformInterrupts,
 };
 use aero_platform::io::{IoPortBus, PortIoDevice as _};
 use aero_platform::memory::MemoryBus as PlatformMemoryBus;
 use aero_platform::reset::{ResetKind, ResetLatch};
+#[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+use aero_shared::scanout_state::{
+    ScanoutState, ScanoutStateUpdate, SCANOUT_FORMAT_B8G8R8X8, SCANOUT_SOURCE_LEGACY_TEXT,
+    SCANOUT_SOURCE_LEGACY_VBE_LFB, SCANOUT_SOURCE_WDDM,
+};
 use aero_snapshot as snapshot;
+use aero_storage::{MemBackend, RawDisk};
+use aero_usb::usb2_port::Usb2PortMux;
 use aero_virtio::devices::blk::VirtioBlk;
 use aero_virtio::devices::input::{VirtioInput, VirtioInputDeviceKind};
 use aero_virtio::devices::net::VirtioNet;
@@ -110,11 +117,6 @@ use aero_virtio::memory::{
     GuestMemory as VirtioGuestMemory, GuestMemoryError as VirtioGuestMemoryError,
 };
 use aero_virtio::pci::{InterruptSink as VirtioInterruptSink, VirtioPciDevice};
-#[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
-use aero_shared::scanout_state::{
-    ScanoutState, ScanoutStateUpdate, SCANOUT_FORMAT_B8G8R8X8, SCANOUT_SOURCE_LEGACY_TEXT,
-    SCANOUT_SOURCE_LEGACY_VBE_LFB, SCANOUT_SOURCE_WDDM,
-};
 use firmware::bda::BiosDataArea;
 use firmware::bios::{A20Gate, Bios, BiosBus, BiosConfig, FirmwareMemory};
 use memory::{
@@ -253,6 +255,11 @@ pub struct MachineConfig {
     ///
     /// Requires [`MachineConfig::enable_pc_platform`].
     pub enable_ehci: bool,
+    /// Whether to attach an xHCI (USB 3.x) controller at the canonical BDF
+    /// (`aero_devices::pci::profile::USB_XHCI_QEMU.bdf`, `00:0d.0`).
+    ///
+    /// Requires [`MachineConfig::enable_pc_platform`].
+    pub enable_xhci: bool,
     /// Whether to attach the legacy VGA/VBE device model.
     ///
     /// This is the transitional standalone VGA/VBE path used for BIOS/boot display and VGA-focused
@@ -345,6 +352,7 @@ impl Default for MachineConfig {
             enable_virtio_input: false,
             enable_uhci: false,
             enable_ehci: false,
+            enable_xhci: false,
             enable_aerogpu: false,
             enable_vga: true,
             enable_serial: true,
@@ -395,6 +403,7 @@ impl MachineConfig {
             enable_virtio_input: false,
             enable_uhci: false,
             enable_ehci: false,
+            enable_xhci: false,
             enable_aerogpu: false,
             enable_vga: true,
             enable_serial: true,
@@ -548,6 +557,7 @@ pub enum MachineError {
     VirtioInputRequiresPcPlatform,
     UhciRequiresPcPlatform,
     EhciRequiresPcPlatform,
+    XhciRequiresPcPlatform,
     AeroGpuConflictsWithVga,
     E1000RequiresPcPlatform,
     VirtioNetRequiresPcPlatform,
@@ -595,6 +605,9 @@ impl fmt::Display for MachineError {
             }
             MachineError::EhciRequiresPcPlatform => {
                 write!(f, "enable_ehci requires enable_pc_platform=true")
+            }
+            MachineError::XhciRequiresPcPlatform => {
+                write!(f, "enable_xhci requires enable_pc_platform=true")
             }
             MachineError::AeroGpuConflictsWithVga => {
                 write!(
@@ -1684,7 +1697,8 @@ fn sync_virtio_msix_from_platform(dev: &mut VirtioPciDevice, enabled: bool, func
         new_ctrl |= 1 << 14;
     }
     if new_ctrl != ctrl {
-        dev.config_mut().write(u16::from(off) + 0x02, 2, u32::from(new_ctrl));
+        dev.config_mut()
+            .write(u16::from(off) + 0x02, 2, u32::from(new_ctrl));
     }
 }
 
@@ -1972,6 +1986,29 @@ impl PciDevice for EhciPciConfigDevice {
         &mut self.cfg
     }
 }
+
+struct XhciPciConfigDevice {
+    cfg: aero_devices::pci::PciConfigSpace,
+}
+
+impl XhciPciConfigDevice {
+    fn new() -> Self {
+        Self {
+            cfg: aero_devices::pci::profile::USB_XHCI_QEMU.build_config_space(),
+        }
+    }
+}
+
+impl PciDevice for XhciPciConfigDevice {
+    fn config(&self) -> &aero_devices::pci::PciConfigSpace {
+        &self.cfg
+    }
+
+    fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
+        &mut self.cfg
+    }
+}
+
 // -----------------------------------------------------------------------------
 // VGA / SVGA integration (legacy VGA + Bochs VBE_DISPI)
 // -----------------------------------------------------------------------------
@@ -2957,12 +2994,14 @@ pub struct Machine {
     virtio_blk: Option<Rc<RefCell<VirtioPciDevice>>>,
     uhci: Option<Rc<RefCell<UhciPciDevice>>>,
     ehci: Option<Rc<RefCell<EhciPciDevice>>>,
+    xhci: Option<Rc<RefCell<XhciPciDevice>>>,
     /// ISA IRQ line handles used to deliver legacy IDE interrupts (IRQ14/15) without over/under-
     /// counting assertions when the machine polls device state.
     ide_irq14_line: Option<PlatformIrqLine>,
     ide_irq15_line: Option<PlatformIrqLine>,
     uhci_ns_remainder: u64,
     ehci_ns_remainder: u64,
+    xhci_ns_remainder: u64,
     bios: Bios,
     disk: SharedDisk,
     install_media: Option<SharedIsoDisk>,
@@ -3086,6 +3125,9 @@ impl Machine {
         if cfg.enable_ehci && !cfg.enable_pc_platform {
             return Err(MachineError::EhciRequiresPcPlatform);
         }
+        if cfg.enable_xhci && !cfg.enable_pc_platform {
+            return Err(MachineError::XhciRequiresPcPlatform);
+        }
         if cfg.enable_e1000 && !cfg.enable_pc_platform {
             return Err(MachineError::E1000RequiresPcPlatform);
         }
@@ -3137,10 +3179,12 @@ impl Machine {
             virtio_blk: None,
             uhci: None,
             ehci: None,
+            xhci: None,
             ide_irq14_line: None,
             ide_irq15_line: None,
             uhci_ns_remainder: 0,
             ehci_ns_remainder: 0,
+            xhci_ns_remainder: 0,
             bios: Bios::new(BiosConfig {
                 boot_drive,
                 ..Default::default()
@@ -3738,7 +3782,9 @@ impl Machine {
         let Some(interrupts) = &self.interrupts else {
             return;
         };
-        interrupts.borrow_mut().raise_irq(InterruptInput::IsaIrq(irq));
+        interrupts
+            .borrow_mut()
+            .raise_irq(InterruptInput::IsaIrq(irq));
     }
 
     /// Debug/testing helper: deassert ("lower") an ISA IRQ input line (0-15).
@@ -3749,7 +3795,9 @@ impl Machine {
         let Some(interrupts) = &self.interrupts else {
             return;
         };
-        interrupts.borrow_mut().lower_irq(InterruptInput::IsaIrq(irq));
+        interrupts
+            .borrow_mut()
+            .lower_irq(InterruptInput::IsaIrq(irq));
     }
 
     /// Debug/testing helper: write a single guest physical byte.
@@ -4325,10 +4373,15 @@ impl Machine {
     pub fn uhci(&self) -> Option<Rc<RefCell<UhciPciDevice>>> {
         self.uhci.clone()
     }
-    
+
     /// Returns the EHCI (USB 2.0) controller, if present.
     pub fn ehci(&self) -> Option<Rc<RefCell<EhciPciDevice>>> {
         self.ehci.clone()
+    }
+
+    /// Returns the xHCI (USB 3.x) controller, if present.
+    pub fn xhci(&self) -> Option<Rc<RefCell<XhciPciDevice>>> {
+        self.xhci.clone()
     }
 
     /// Attach a USB device model to a UHCI root hub port.
@@ -4417,10 +4470,7 @@ impl Machine {
     ///
     /// Path semantics match [`aero_usb::hub::RootHub::detach_at_path`]. If UHCI is not enabled on
     /// this machine, this call is a no-op.
-    pub fn usb_detach_at_path(
-        &mut self,
-        path: &[u8],
-    ) -> Result<(), aero_usb::UsbHubAttachError> {
+    pub fn usb_detach_at_path(&mut self, path: &[u8]) -> Result<(), aero_usb::UsbHubAttachError> {
         let Some(uhci) = &self.uhci else {
             return Ok(());
         };
@@ -4966,6 +5016,39 @@ impl Machine {
                 ticks -= 1;
             }
         }
+
+        if let Some(xhci) = self.xhci.as_ref() {
+            const NS_PER_MS: u64 = 1_000_000;
+
+            let bdf = aero_devices::pci::profile::USB_XHCI_QEMU.bdf;
+            let pci_state = self
+                .pci_cfg
+                .as_ref()
+                .map(|pci_cfg| {
+                    let mut pci_cfg = pci_cfg.borrow_mut();
+                    pci_cfg
+                        .bus_mut()
+                        .device_config(bdf)
+                        .map(|cfg| cfg.snapshot_state())
+                })
+                .unwrap_or(None);
+
+            // Keep the xHCI model's view of PCI config state in sync (including MSI capability
+            // state) so it can deliver MSI through `tick_1ms`.
+            let mut xhci = xhci.borrow_mut();
+            if let Some(state) = pci_state {
+                xhci.config_mut().restore_state(&state);
+            }
+
+            self.xhci_ns_remainder = self.xhci_ns_remainder.saturating_add(delta_ns);
+            let mut ticks = self.xhci_ns_remainder / NS_PER_MS;
+            self.xhci_ns_remainder %= NS_PER_MS;
+
+            while ticks != 0 {
+                xhci.tick_1ms(&mut self.mem.bus);
+                ticks -= 1;
+            }
+        }
     }
 
     /// Backward-compatible alias for [`Machine::tick_platform`].
@@ -5412,6 +5495,40 @@ impl Machine {
                 }
 
                 let mut level = ehci_dev.irq_level();
+
+                // Redundantly gate on the canonical PCI command register as well (defensive).
+                if (command & (1 << 10)) != 0 {
+                    level = false;
+                }
+
+                pci_intx.set_intx_level(bdf, pin, level, &mut *interrupts);
+            }
+
+            // xHCI legacy INTx (level-triggered).
+            if let Some(xhci) = &self.xhci {
+                let bdf: PciBdf = aero_devices::pci::profile::USB_XHCI_QEMU.bdf;
+                let pin = PciInterruptPin::IntA;
+
+                // Keep the xHCI model's internal PCI config state coherent so `irq_level()` can
+                // suppress legacy INTx when MSI is enabled.
+                let (command, pci_state) = self
+                    .pci_cfg
+                    .as_ref()
+                    .map(|pci_cfg| {
+                        let mut pci_cfg = pci_cfg.borrow_mut();
+                        let cfg = pci_cfg.bus_mut().device_config(bdf);
+                        let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+                        let pci_state = cfg.map(|cfg| cfg.snapshot_state());
+                        (command, pci_state)
+                    })
+                    .unwrap_or((0, None));
+
+                let mut xhci_dev = xhci.borrow_mut();
+                if let Some(state) = pci_state {
+                    xhci_dev.config_mut().restore_state(&state);
+                }
+
+                let mut level = xhci_dev.irq_level();
 
                 // Redundantly gate on the canonical PCI command register as well (defensive).
                 if (command & (1 << 10)) != 0 {
@@ -5914,6 +6031,7 @@ impl Machine {
         self.guest_time.reset();
         self.uhci_ns_remainder = 0;
         self.ehci_ns_remainder = 0;
+        self.xhci_ns_remainder = 0;
         self.restored_disk_overlays = None;
         self.display_fb.clear();
         self.display_width = 0;
@@ -5978,8 +6096,11 @@ impl Machine {
                 aero_gpu_vga::VGA_LEGACY_IO_END - aero_gpu_vga::VGA_LEGACY_IO_START + 1,
                 Box::new(VgaPortIoDevice { dev: vga.clone() }),
             );
-            self.io
-                .register_range(0x01CE, 0x0002, Box::new(VgaPortIoDevice { dev: vga.clone() }));
+            self.io.register_range(
+                0x01CE,
+                0x0002,
+                Box::new(VgaPortIoDevice { dev: vga.clone() }),
+            );
 
             // Map the VBE/SVGA linear framebuffer (LFB) at the VGA device's configured base.
             let (lfb_base, lfb_len) = {
@@ -6199,19 +6320,18 @@ impl Machine {
  
                 // Map the legacy VGA memory window (`0xA0000..0xC0000`) as an MMIO overlay that
                 // aliases `VRAM[0..128KiB]`.
-                self.mem
-                    .map_mmio_once(
-                        aero_gpu_vga::VGA_LEGACY_MEM_START as u64,
-                        LEGACY_VGA_WINDOW_SIZE as u64,
-                        {
-                            let aerogpu = aerogpu.clone();
-                            move || {
-                                Box::new(AeroGpuLegacyVgaMmio {
-                                    dev: aerogpu.clone(),
-                                })
-                            }
-                        },
-                    );
+                self.mem.map_mmio_once(
+                    aero_gpu_vga::VGA_LEGACY_MEM_START as u64,
+                    LEGACY_VGA_WINDOW_SIZE as u64,
+                    {
+                        let aerogpu = aerogpu.clone();
+                        move || {
+                            Box::new(AeroGpuLegacyVgaMmio {
+                                dev: aerogpu.clone(),
+                            })
+                        }
+                    },
+                );
             } else {
                 self.aerogpu = None;
                 self.aerogpu_mmio = None;
@@ -6364,8 +6484,10 @@ impl Machine {
             // Important: create the mux only when both controllers are first created. On subsequent
             // machine resets the `Rc` identities for the PCI devices are preserved, so re-creating
             // and re-attaching a new mux would drop any attached USB device models.
-            let attach_usb2_mux =
-                self.cfg.enable_uhci && self.cfg.enable_ehci && self.uhci.is_none() && self.ehci.is_none();
+            let attach_usb2_mux = self.cfg.enable_uhci
+                && self.cfg.enable_ehci
+                && self.uhci.is_none()
+                && self.ehci.is_none();
 
             let uhci = if self.cfg.enable_uhci {
                 pci_cfg.borrow_mut().bus_mut().add_device(
@@ -6394,6 +6516,29 @@ impl Machine {
                         Some(ehci.clone())
                     }
                     None => Some(Rc::new(RefCell::new(EhciPciDevice::default()))),
+                }
+            } else {
+                None
+            };
+
+            let xhci = if self.cfg.enable_xhci {
+                pci_cfg.borrow_mut().bus_mut().add_device(
+                    aero_devices::pci::profile::USB_XHCI_QEMU.bdf,
+                    Box::new(XhciPciConfigDevice::new()),
+                );
+                match &self.xhci {
+                    Some(xhci) => {
+                        xhci.borrow_mut().reset();
+                        Some(xhci.clone())
+                    }
+                    None => {
+                        let xhci = Rc::new(RefCell::new(XhciPciDevice::default()));
+                        // Provide an MSI sink so the xHCI device model can deliver MSI when the
+                        // guest enables it via PCI config space.
+                        xhci.borrow_mut()
+                            .set_msi_target(Some(Box::new(interrupts.clone())));
+                        Some(xhci)
+                    }
                 }
             } else {
                 None
@@ -6744,115 +6889,124 @@ impl Machine {
             // Map the full ACPI-reported PCI MMIO window so BAR relocation is reflected
             // immediately even when the guest OS programs a BAR outside the allocator's default
             // sub-window.
-            self.mem.map_mmio_once(
-                PCI_MMIO_BASE,
-                PCI_MMIO_SIZE,
-                || {
-                    let mut router = PciBarMmioRouter::new(PCI_MMIO_BASE, pci_cfg.clone());
-                    if let Some(ahci) = ahci.clone() {
-                        let bdf = aero_devices::pci::profile::SATA_AHCI_ICH9.bdf;
-                        router.register_handler(
+            self.mem.map_mmio_once(PCI_MMIO_BASE, PCI_MMIO_SIZE, || {
+                let mut router = PciBarMmioRouter::new(PCI_MMIO_BASE, pci_cfg.clone());
+                if let Some(ahci) = ahci.clone() {
+                    let bdf = aero_devices::pci::profile::SATA_AHCI_ICH9.bdf;
+                    router.register_handler(
+                        bdf,
+                        aero_devices::pci::profile::AHCI_ABAR_BAR_INDEX,
+                        PciConfigSyncedMmioBar::new(
+                            pci_cfg.clone(),
+                            ahci,
                             bdf,
                             aero_devices::pci::profile::AHCI_ABAR_BAR_INDEX,
-                            PciConfigSyncedMmioBar::new(
-                                pci_cfg.clone(),
-                                ahci,
-                                bdf,
-                                aero_devices::pci::profile::AHCI_ABAR_BAR_INDEX,
-                            ),
-                        );
-                    }
-                    if let Some(nvme) = nvme.clone() {
-                        let bdf = aero_devices::pci::profile::NVME_CONTROLLER.bdf;
-                        router.register_handler(
-                            bdf,
-                            0,
-                            PciConfigSyncedMmioBar::new(pci_cfg.clone(), nvme, bdf, 0),
-                        );
-                    }
-                    if let Some(ehci) = ehci.clone() {
-                        let bdf = aero_devices::pci::profile::USB_EHCI_ICH9.bdf;
-                        router.register_handler(
+                        ),
+                    );
+                }
+                if let Some(nvme) = nvme.clone() {
+                    let bdf = aero_devices::pci::profile::NVME_CONTROLLER.bdf;
+                    router.register_handler(
+                        bdf,
+                        0,
+                        PciConfigSyncedMmioBar::new(pci_cfg.clone(), nvme, bdf, 0),
+                    );
+                }
+                if let Some(ehci) = ehci.clone() {
+                    let bdf = aero_devices::pci::profile::USB_EHCI_ICH9.bdf;
+                    router.register_handler(
+                        bdf,
+                        EhciPciDevice::MMIO_BAR_INDEX,
+                        PciConfigSyncedMmioBar::new(
+                            pci_cfg.clone(),
+                            ehci,
                             bdf,
                             EhciPciDevice::MMIO_BAR_INDEX,
-                            PciConfigSyncedMmioBar::new(
-                                pci_cfg.clone(),
-                                ehci,
-                                bdf,
-                                EhciPciDevice::MMIO_BAR_INDEX,
-                            ),
-                        );
-                    }
-                    if let Some(vga) = vga.clone() {
-                        router.register_handler(
-                            VGA_PCI_BDF,
-                            VGA_PCI_BAR_INDEX,
-                            VgaLfbMmioHandler { dev: vga },
-                        );
-                    }
-                    if let Some(aerogpu) = aerogpu.clone() {
-                        let bdf = aero_devices::pci::profile::AEROGPU.bdf;
-                        router.register_handler(
+                        ),
+                    );
+                }
+                if let Some(xhci) = xhci.clone() {
+                    let bdf = aero_devices::pci::profile::USB_XHCI_QEMU.bdf;
+                    router.register_handler(
+                        bdf,
+                        XhciPciDevice::MMIO_BAR_INDEX,
+                        PciConfigSyncedMmioBar::new(
+                            pci_cfg.clone(),
+                            xhci,
                             bdf,
-                            aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX,
-                            AeroGpuBar1Mmio { dev: aerogpu },
-                        );
-                    }
-                    if let Some(e1000) = e1000.clone() {
-                        router.register_shared_handler(
-                            aero_devices::pci::profile::NIC_E1000_82540EM.bdf,
-                            0,
-                            e1000,
-                        );
-                    }
-                    if let Some(virtio_net) = virtio_net.clone() {
-                        router.register_handler(
+                            XhciPciDevice::MMIO_BAR_INDEX,
+                        ),
+                    );
+                }
+                if let Some(vga) = vga.clone() {
+                    router.register_handler(
+                        VGA_PCI_BDF,
+                        VGA_PCI_BAR_INDEX,
+                        VgaLfbMmioHandler { dev: vga },
+                    );
+                }
+                if let Some(aerogpu) = aerogpu.clone() {
+                    let bdf = aero_devices::pci::profile::AEROGPU.bdf;
+                    router.register_handler(
+                        bdf,
+                        aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX,
+                        AeroGpuBar1Mmio { dev: aerogpu },
+                    );
+                }
+                if let Some(e1000) = e1000.clone() {
+                    router.register_shared_handler(
+                        aero_devices::pci::profile::NIC_E1000_82540EM.bdf,
+                        0,
+                        e1000,
+                    );
+                }
+                if let Some(virtio_net) = virtio_net.clone() {
+                    router.register_handler(
+                        aero_devices::pci::profile::VIRTIO_NET.bdf,
+                        0,
+                        VirtioPciBar0Mmio::new(
+                            pci_cfg.clone(),
+                            virtio_net,
                             aero_devices::pci::profile::VIRTIO_NET.bdf,
-                            0,
-                            VirtioPciBar0Mmio::new(
-                                pci_cfg.clone(),
-                                virtio_net,
-                                aero_devices::pci::profile::VIRTIO_NET.bdf,
-                            ),
-                        );
-                    }
-                    if let Some(virtio_blk) = virtio_blk.clone() {
-                        router.register_handler(
+                        ),
+                    );
+                }
+                if let Some(virtio_blk) = virtio_blk.clone() {
+                    router.register_handler(
+                        aero_devices::pci::profile::VIRTIO_BLK.bdf,
+                        0,
+                        VirtioPciBar0Mmio::new(
+                            pci_cfg.clone(),
+                            virtio_blk,
                             aero_devices::pci::profile::VIRTIO_BLK.bdf,
-                            0,
-                            VirtioPciBar0Mmio::new(
-                                pci_cfg.clone(),
-                                virtio_blk,
-                                aero_devices::pci::profile::VIRTIO_BLK.bdf,
-                            ),
-                        );
-                    }
-                    if let Some(virtio_input_keyboard) = virtio_input_keyboard.clone() {
-                        let bdf = aero_devices::pci::profile::VIRTIO_INPUT_KEYBOARD.bdf;
-                        router.register_handler(
-                            bdf,
-                            0,
-                            VirtioPciBar0Mmio::new(pci_cfg.clone(), virtio_input_keyboard, bdf),
-                        );
-                    }
-                    if let Some(virtio_input_mouse) = virtio_input_mouse.clone() {
-                        let bdf = aero_devices::pci::profile::VIRTIO_INPUT_MOUSE.bdf;
-                        router.register_handler(
-                            bdf,
-                            0,
-                            VirtioPciBar0Mmio::new(pci_cfg.clone(), virtio_input_mouse, bdf),
-                        );
-                    }
-                    if let Some(aerogpu_mmio) = aerogpu_mmio.clone() {
-                        router.register_shared_handler(
-                            aero_devices::pci::profile::AEROGPU.bdf,
-                            aero_devices::pci::profile::AEROGPU_BAR0_INDEX,
-                            aerogpu_mmio,
-                        );
-                    }
-                    Box::new(router)
-                },
-            );
+                        ),
+                    );
+                }
+                if let Some(virtio_input_keyboard) = virtio_input_keyboard.clone() {
+                    let bdf = aero_devices::pci::profile::VIRTIO_INPUT_KEYBOARD.bdf;
+                    router.register_handler(
+                        bdf,
+                        0,
+                        VirtioPciBar0Mmio::new(pci_cfg.clone(), virtio_input_keyboard, bdf),
+                    );
+                }
+                if let Some(virtio_input_mouse) = virtio_input_mouse.clone() {
+                    let bdf = aero_devices::pci::profile::VIRTIO_INPUT_MOUSE.bdf;
+                    router.register_handler(
+                        bdf,
+                        0,
+                        VirtioPciBar0Mmio::new(pci_cfg.clone(), virtio_input_mouse, bdf),
+                    );
+                }
+                if let Some(aerogpu_mmio) = aerogpu_mmio.clone() {
+                    router.register_shared_handler(
+                        aero_devices::pci::profile::AEROGPU.bdf,
+                        aero_devices::pci::profile::AEROGPU_BAR0_INDEX,
+                        aerogpu_mmio,
+                    );
+                }
+                Box::new(router)
+            });
 
             // Register dispatchers for PCI I/O BARs allocated by BIOS POST.
             //
@@ -6984,6 +7138,7 @@ impl Machine {
             self.virtio_blk = virtio_blk;
             self.uhci = uhci;
             self.ehci = ehci;
+            self.xhci = xhci;
 
             // MMIO mappings persist in the physical bus; ensure the canonical PC regions exist.
             self.map_pc_platform_mmio_regions();
@@ -7011,6 +7166,7 @@ impl Machine {
             self.virtio_blk = None;
             self.uhci = None;
             self.ehci = None;
+            self.xhci = None;
         }
         if self.cfg.enable_serial {
             let uart: SharedSerial16550 = Rc::new(RefCell::new(Serial16550::new(0x3F8)));
@@ -7132,8 +7288,7 @@ impl Machine {
         //
         // When the selected boot drive is a CD-ROM (0xE0..=0xEF) and an install ISO is attached,
         // route BIOS reads to the ISO image bytes so El Torito boot + subsequent INT 13h reads work.
-        let use_install_media =
-            (0xE0..=0xEF).contains(&boot_drive) && self.install_media.is_some();
+        let use_install_media = (0xE0..=0xEF).contains(&boot_drive) && self.install_media.is_some();
         let bus: &mut dyn BiosBus = &mut self.mem;
         if use_install_media {
             // Clone the shared ISO handle so we can pass a mutable `BlockDevice` reference into the
@@ -7674,10 +7829,8 @@ impl Machine {
                 self.ap_cpus.as_mut_slice(),
                 &mut self.mem,
             );
-            let mut inner = aero_cpu_core::PagingBus::new_with_io(
-                phys,
-                StrictIoPortBus { io: &mut self.io },
-            );
+            let mut inner =
+                aero_cpu_core::PagingBus::new_with_io(phys, StrictIoPortBus { io: &mut self.io });
             std::mem::swap(&mut self.mmu, inner.mmu_mut());
             let mut bus = MachineCpuBus {
                 a20: self.chipset.a20(),
@@ -8102,7 +8255,10 @@ impl Machine {
                             // Note: The machine forces the BIOS to skip its byte-at-a-time clear loop
                             // by temporarily setting the VBE no-clear flag before dispatching the
                             // interrupt (see `force_vbe_no_clear` above).
-                            if ax_before == 0x4F02 && ax_after == 0x004F && (bx_before & 0x8000) == 0 {
+                            if ax_before == 0x4F02
+                                && ax_after == 0x004F
+                                && (bx_before & 0x8000) == 0
+                            {
                                 let bytes_per_pixel = (bpp as usize).div_ceil(8);
                                 let clear_len = (width as usize)
                                     .saturating_mul(height as usize)
@@ -8265,15 +8421,12 @@ impl Machine {
                     }
                     Some((mode, lfb_base, bytes_per_scan_line, start_x, start_y)) => {
                         if let Some(mode_info) = self.bios.video.vbe.find_mode(mode) {
-                            let pitch = u64::from(
-                                bytes_per_scan_line.max(mode_info.bytes_per_scan_line()),
-                            );
+                            let pitch =
+                                u64::from(bytes_per_scan_line.max(mode_info.bytes_per_scan_line()));
                             let bytes_per_pixel = u64::from(mode_info.bytes_per_pixel()).max(1);
                             let base = u64::from(lfb_base)
                                 .saturating_add(u64::from(start_y).saturating_mul(pitch))
-                                .saturating_add(
-                                    u64::from(start_x).saturating_mul(bytes_per_pixel),
-                                );
+                                .saturating_add(u64::from(start_x).saturating_mul(bytes_per_pixel));
 
                             scanout_state.publish(ScanoutStateUpdate {
                                 source: SCANOUT_SOURCE_LEGACY_VBE_LFB,
@@ -8385,6 +8538,8 @@ struct MachineUsbSnapshot {
     uhci_ns_remainder: u64,
     ehci: Option<Vec<u8>>,
     ehci_ns_remainder: u64,
+    xhci: Option<Vec<u8>>,
+    xhci_ns_remainder: u64,
 }
 
 impl MachineUsbSnapshot {
@@ -8392,11 +8547,13 @@ impl MachineUsbSnapshot {
     const TAG_UHCI_STATE: u16 = 2;
     const TAG_EHCI_NS_REMAINDER: u16 = 3;
     const TAG_EHCI_STATE: u16 = 4;
+    const TAG_XHCI_NS_REMAINDER: u16 = 5;
+    const TAG_XHCI_STATE: u16 = 6;
 }
 
 impl IoSnapshot for MachineUsbSnapshot {
     const DEVICE_ID: [u8; 4] = *b"USBC";
-    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 1);
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 2);
 
     fn save_state(&self) -> Vec<u8> {
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
@@ -8407,6 +8564,10 @@ impl IoSnapshot for MachineUsbSnapshot {
         if let Some(ehci) = &self.ehci {
             w.field_u64(Self::TAG_EHCI_NS_REMAINDER, self.ehci_ns_remainder);
             w.field_bytes(Self::TAG_EHCI_STATE, ehci.clone());
+        }
+        if let Some(xhci) = &self.xhci {
+            w.field_u64(Self::TAG_XHCI_NS_REMAINDER, self.xhci_ns_remainder);
+            w.field_bytes(Self::TAG_XHCI_STATE, xhci.clone());
         }
         w.finish()
     }
@@ -8420,6 +8581,9 @@ impl IoSnapshot for MachineUsbSnapshot {
 
         self.ehci_ns_remainder = r.u64(Self::TAG_EHCI_NS_REMAINDER)?.unwrap_or(0);
         self.ehci = r.bytes(Self::TAG_EHCI_STATE).map(|buf| buf.to_vec());
+
+        self.xhci_ns_remainder = r.u64(Self::TAG_XHCI_NS_REMAINDER)?.unwrap_or(0);
+        self.xhci = r.bytes(Self::TAG_XHCI_STATE).map(|buf| buf.to_vec());
         Ok(())
     }
 }
@@ -8656,7 +8820,8 @@ impl snapshot::SnapshotSource for Machine {
                     if let Some(cfg) = pci_cfg.bus_mut().device_config_mut(bdf) {
                         command = cfg.command();
                         if let Some(msix_off) = cfg.find_capability(PCI_CAP_ID_MSIX) {
-                            let ctrl = cfg.read(u16::from(msix_off) + MSIX_MESSAGE_CONTROL_OFFSET, 2)
+                            let ctrl = cfg
+                                .read(u16::from(msix_off) + MSIX_MESSAGE_CONTROL_OFFSET, 2)
                                 as u16;
                             msix_ctrl_bits = Some(ctrl & MSIX_MESSAGE_CONTROL_MIRROR_MASK);
                         }
@@ -8667,14 +8832,12 @@ impl snapshot::SnapshotSource for Machine {
                 virtio_net.set_pci_command(command);
 
                 if let Some(msix_ctrl_bits) = msix_ctrl_bits {
-                    if let Some(msix_off) =
-                        virtio_net.config_mut().find_capability(PCI_CAP_ID_MSIX)
+                    if let Some(msix_off) = virtio_net.config_mut().find_capability(PCI_CAP_ID_MSIX)
                     {
                         let ctrl_off = u16::from(msix_off) + MSIX_MESSAGE_CONTROL_OFFSET;
-                        let runtime_ctrl =
-                            virtio_net.config_mut().read(ctrl_off, 2) as u16;
-                        let new_ctrl = (runtime_ctrl & !MSIX_MESSAGE_CONTROL_MIRROR_MASK)
-                            | msix_ctrl_bits;
+                        let runtime_ctrl = virtio_net.config_mut().read(ctrl_off, 2) as u16;
+                        let new_ctrl =
+                            (runtime_ctrl & !MSIX_MESSAGE_CONTROL_MIRROR_MASK) | msix_ctrl_bits;
                         virtio_net
                             .config_mut()
                             .write(ctrl_off, 2, u32::from(new_ctrl));
@@ -8731,7 +8894,7 @@ impl snapshot::SnapshotSource for Machine {
             ));
         }
 
-        if self.uhci.is_some() || self.ehci.is_some() {
+        if self.uhci.is_some() || self.ehci.is_some() || self.xhci.is_some() {
             let mut wrapper = MachineUsbSnapshot::default();
 
             if let Some(uhci) = &self.uhci {
@@ -8786,10 +8949,31 @@ impl snapshot::SnapshotSource for Machine {
                 wrapper.ehci_ns_remainder = self.ehci_ns_remainder;
             }
 
+            if let Some(xhci) = &self.xhci {
+                let bdf = aero_devices::pci::profile::USB_XHCI_QEMU.bdf;
+                if let Some(pci_cfg) = &self.pci_cfg {
+                    let pci_state = {
+                        let mut pci_cfg = pci_cfg.borrow_mut();
+                        pci_cfg
+                            .bus_mut()
+                            .device_config(bdf)
+                            .map(|cfg| cfg.snapshot_state())
+                    };
+
+                    let mut xhci = xhci.borrow_mut();
+                    if let Some(state) = pci_state {
+                        xhci.config_mut().restore_state(&state);
+                    }
+                }
+
+                wrapper.xhci = Some(xhci.borrow().save_state());
+                wrapper.xhci_ns_remainder = self.xhci_ns_remainder;
+            }
+
             devices.push(snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
                 snapshot::DeviceId::USB,
                 &wrapper,
-                ));
+            ));
         }
         // Storage controller(s).
         //
@@ -8839,7 +9023,8 @@ impl snapshot::SnapshotSource for Machine {
                         command = cfg.command();
                         bar0_base = cfg.bar_range(0).map(|range| range.base).unwrap_or(0);
                         if let Some(msix_off) = cfg.find_capability(PCI_CAP_ID_MSIX) {
-                            let ctrl = cfg.read(u16::from(msix_off) + MSIX_MESSAGE_CONTROL_OFFSET, 2)
+                            let ctrl = cfg
+                                .read(u16::from(msix_off) + MSIX_MESSAGE_CONTROL_OFFSET, 2)
                                 as u16;
                             msix_ctrl_bits = Some(ctrl & MSIX_MESSAGE_CONTROL_MIRROR_MASK);
                         }
@@ -8855,8 +9040,8 @@ impl snapshot::SnapshotSource for Machine {
                     if let Some(msix_off) = nvme.config_mut().find_capability(PCI_CAP_ID_MSIX) {
                         let ctrl_off = u16::from(msix_off) + MSIX_MESSAGE_CONTROL_OFFSET;
                         let runtime_ctrl = nvme.config_mut().read(ctrl_off, 2) as u16;
-                        let new_ctrl = (runtime_ctrl & !MSIX_MESSAGE_CONTROL_MIRROR_MASK)
-                            | msix_ctrl_bits;
+                        let new_ctrl =
+                            (runtime_ctrl & !MSIX_MESSAGE_CONTROL_MIRROR_MASK) | msix_ctrl_bits;
                         nvme.config_mut().write(ctrl_off, 2, u32::from(new_ctrl));
                     }
                 }
@@ -8896,7 +9081,8 @@ impl snapshot::SnapshotSource for Machine {
                         command = cfg.command();
                         bar0_base = cfg.bar_range(0).map(|range| range.base).unwrap_or(0);
                         if let Some(msix_off) = cfg.find_capability(PCI_CAP_ID_MSIX) {
-                            let ctrl = cfg.read(u16::from(msix_off) + MSIX_MESSAGE_CONTROL_OFFSET, 2)
+                            let ctrl = cfg
+                                .read(u16::from(msix_off) + MSIX_MESSAGE_CONTROL_OFFSET, 2)
                                 as u16;
                             msix_ctrl_bits = Some(ctrl & MSIX_MESSAGE_CONTROL_MIRROR_MASK);
                         }
@@ -8910,13 +9096,12 @@ impl snapshot::SnapshotSource for Machine {
                     virtio_blk.config_mut().set_bar_base(0, bar0_base);
                 }
                 if let Some(msix_ctrl_bits) = msix_ctrl_bits {
-                    if let Some(msix_off) =
-                        virtio_blk.config_mut().find_capability(PCI_CAP_ID_MSIX)
+                    if let Some(msix_off) = virtio_blk.config_mut().find_capability(PCI_CAP_ID_MSIX)
                     {
                         let ctrl_off = u16::from(msix_off) + MSIX_MESSAGE_CONTROL_OFFSET;
                         let runtime_ctrl = virtio_blk.config_mut().read(ctrl_off, 2) as u16;
-                        let new_ctrl = (runtime_ctrl & !MSIX_MESSAGE_CONTROL_MIRROR_MASK)
-                            | msix_ctrl_bits;
+                        let new_ctrl =
+                            (runtime_ctrl & !MSIX_MESSAGE_CONTROL_MIRROR_MASK) | msix_ctrl_bits;
                         virtio_blk
                             .config_mut()
                             .write(ctrl_off, 2, u32::from(new_ctrl));
@@ -9055,6 +9240,7 @@ impl snapshot::SnapshotTarget for Machine {
         // deterministic default (0).
         self.uhci_ns_remainder = 0;
         self.ehci_ns_remainder = 0;
+        self.xhci_ns_remainder = 0;
     }
 
     fn restore_meta(&mut self, meta: snapshot::SnapshotMeta) {
@@ -9285,9 +9471,7 @@ impl snapshot::SnapshotTarget for Machine {
                         };
                         self.mem.map_mmio_once(lfb_base, lfb_len, {
                             let vga = vga.clone();
-                            move || {
-                                Box::new(VgaLfbMmioHandler { dev: vga })
-                            }
+                            move || Box::new(VgaLfbMmioHandler { dev: vga })
                         });
 
                         vga
@@ -9755,12 +9939,14 @@ impl snapshot::SnapshotTarget for Machine {
             const NS_PER_MS: u64 = 1_000_000;
 
             // Canonical encoding: `DeviceId::USB` stores a `USBC` wrapper that nests guest-visible
-            // controller snapshots (UHCI/EHCI) plus the machine's host-side sub-ms tick remainders.
+            // controller snapshots (UHCI/EHCI/xHCI) plus the machine's host-side sub-ms tick
+            // remainders.
             //
             // Note: older snapshot formats did not store sub-ms remainder state, so default to 0
             // unless we successfully decode a `USBC` wrapper containing a remainder value.
             self.uhci_ns_remainder = 0;
             self.ehci_ns_remainder = 0;
+            self.xhci_ns_remainder = 0;
             if matches!(state.data.get(8..12), Some(id) if id == b"USBC") {
                 let mut wrapper = MachineUsbSnapshot::default();
                 if wrapper.load_state(&state.data).is_ok() {
@@ -9771,6 +9957,10 @@ impl snapshot::SnapshotTarget for Machine {
                     if let (Some(ehci), Some(ehci_bytes)) = (&self.ehci, wrapper.ehci.as_ref()) {
                         self.ehci_ns_remainder = wrapper.ehci_ns_remainder % NS_PER_MS;
                         let _ = ehci.borrow_mut().load_state(ehci_bytes);
+                    }
+                    if let (Some(xhci), Some(xhci_bytes)) = (&self.xhci, wrapper.xhci.as_ref()) {
+                        self.xhci_ns_remainder = wrapper.xhci_ns_remainder % NS_PER_MS;
+                        let _ = xhci.borrow_mut().load_state(xhci_bytes);
                     }
                 }
             } else {
@@ -9988,8 +10178,8 @@ mod tests {
         let expected_uhci = vec![0x12, 0x34, 0x56];
         let expected_remainder = 42u64;
 
-        // `USBC` v1.0 only contained UHCI fields. Ensure the v1.1 decoder continues accepting it
-        // and defaults EHCI to empty/none.
+        // `USBC` v1.0 only contained UHCI fields. Ensure the v1.2 decoder continues accepting it
+        // and defaults EHCI/xHCI to empty/none.
         let mut w = SnapshotWriter::new(*b"USBC", SnapshotVersion::new(1, 0));
         w.field_u64(
             MachineUsbSnapshot::TAG_UHCI_NS_REMAINDER,
@@ -10005,6 +10195,8 @@ mod tests {
         assert_eq!(decoded.uhci_ns_remainder, expected_remainder);
         assert_eq!(decoded.ehci, None);
         assert_eq!(decoded.ehci_ns_remainder, 0);
+        assert_eq!(decoded.xhci, None);
+        assert_eq!(decoded.xhci_ns_remainder, 0);
     }
 
     #[test]
@@ -10014,12 +10206,14 @@ mod tests {
             uhci_ns_remainder: 500_123,
             ehci: Some(vec![4, 5, 6, 7]),
             ehci_ns_remainder: 250_456,
+            xhci: Some(vec![8, 9]),
+            xhci_ns_remainder: 123_456,
         };
 
         let bytes = snapshot.save_state();
 
         let mut decoded = MachineUsbSnapshot::default();
-        decoded.load_state(&bytes).expect("load USBC v1.1");
+        decoded.load_state(&bytes).expect("load USBC v1.2");
 
         assert_eq!(decoded, snapshot);
 
@@ -12696,7 +12890,10 @@ mod tests {
         restored.restore_snapshot_bytes(&snap).unwrap();
 
         assert_eq!(restored.cpu.pending.interrupt_inhibit(), expected_inhibit);
-        assert_eq!(restored.cpu.pending.external_interrupts(), &expected_external);
+        assert_eq!(
+            restored.cpu.pending.external_interrupts(),
+            &expected_external
+        );
     }
 
     #[test]

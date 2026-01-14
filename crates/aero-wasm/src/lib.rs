@@ -3585,6 +3585,12 @@ impl Machine {
                 if let Some(v) = get_bool("enable_uhci")? {
                     cfg.enable_uhci = v;
                 }
+                if let Some(v) = get_bool("enable_ehci")? {
+                    cfg.enable_ehci = v;
+                }
+                if let Some(v) = get_bool("enable_xhci")? {
+                    cfg.enable_xhci = v;
+                }
                 let mut enable_vga_set = false;
                 if let Some(v) = get_bool("enable_vga")? {
                     cfg.enable_vga = v;

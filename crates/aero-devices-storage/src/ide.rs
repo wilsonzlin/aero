@@ -1282,8 +1282,14 @@ mod tests {
 
         let v0 = ctl.read_u8(PRIMARY_CTRL + 1);
         let v1 = ctl.read_u8(PRIMARY_CTRL + 1);
-        assert_ne!(v0, 0, "drive address should not read as 0 when a drive is present");
-        assert_ne!(v0, 0xFF, "drive address should not float high when a drive is present");
+        assert_ne!(
+            v0, 0,
+            "drive address should not read as 0 when a drive is present"
+        );
+        assert_ne!(
+            v0, 0xFF,
+            "drive address should not float high when a drive is present"
+        );
         assert_eq!(v0, v1, "drive address reads should be stable");
     }
 
@@ -1302,7 +1308,10 @@ mod tests {
 
         ctl.write_u8(PRIMARY_BASE + 6, 0xE0);
         ctl.write_u8(PRIMARY_BASE + 7, ATA_CMD_IDENTIFY);
-        assert!(irq14.level(), "sanity check failed: IDENTIFY should assert IRQ");
+        assert!(
+            irq14.level(),
+            "sanity check failed: IDENTIFY should assert IRQ"
+        );
 
         // Drive Address reads must not clear the IRQ latch.
         let _ = ctl.read_u8(PRIMARY_CTRL + 1);
