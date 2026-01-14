@@ -19,7 +19,7 @@
 /*
  * Eventq handling:
  *
- * Aero contract v1 defines no eventq messages, but virtio-snd specifies
+ * Aero contract v1 defines no *required* eventq messages, but virtio-snd specifies
  * asynchronous PCM events (period-elapsed / XRUN). Newer device models may emit
  * these events; handle them defensively to avoid crashes and best-effort recover
  * from XRUN without relying on eventq for correctness.

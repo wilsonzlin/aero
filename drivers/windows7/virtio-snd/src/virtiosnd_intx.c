@@ -121,7 +121,7 @@ static VOID VirtIoSndDrainEventqUsed(_In_ USHORT QueueIndex, _In_opt_ void *Cook
     }
 
     /*
-     * Contract v1 defines no event messages, but the virtio-snd specification
+     * Contract v1 defines no *required* event messages, but the virtio-snd specification
      * reserves eventq for asynchronous notifications. Drain and (best-effort)
      * parse events so that:
      *  - future device models do not break this driver, and

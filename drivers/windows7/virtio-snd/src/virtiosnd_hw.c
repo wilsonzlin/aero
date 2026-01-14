@@ -662,7 +662,7 @@ VirtIoSndHwDrainEventqUsed(
     }
 
     /*
-     * Contract v1 defines no event messages; ignore contents. Still drain used
+     * Contract v1 defines no *required* event messages; ignore contents. Still drain used
      * entries to avoid ring space leaks if a future device emits events (or a
      * buggy device completes event buffers).
      */
