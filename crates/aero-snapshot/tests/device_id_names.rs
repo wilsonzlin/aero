@@ -56,6 +56,7 @@ fn platform_device_ids_have_stable_names_and_numbers() {
         (DeviceId::AEROGPU, 25u32, "AEROGPU"),
         (DeviceId::VIRTIO_INPUT_KEYBOARD, 26u32, "VIRTIO_INPUT_KEYBOARD"),
         (DeviceId::VIRTIO_INPUT_MOUSE, 27u32, "VIRTIO_INPUT_MOUSE"),
+        (DeviceId::GPU_VRAM, 28u32, "GPU_VRAM"),
     ];
 
     for (id, expected_num, expected_name) in cases {
