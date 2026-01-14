@@ -814,11 +814,17 @@ VirtIoSndWaveRtEventqCallback(_In_opt_ void* Context, _In_ ULONG Type, _In_ ULON
                 }
             }
 
-            /*
-             * Use the event as an additional wake-up mechanism for the stream
-             * engine. Timer-based wakeups remain active as a fallback.
-             */
-            (VOID)KeInsertQueueDpc(&stream->TimerDpc, NULL, NULL);
+             /*
+              * Use the event as an additional wake-up mechanism for the stream
+              * engine. Timer-based wakeups remain active as a fallback.
+              *
+              * Avoid repeatedly queueing the stream DPC while it is already
+              * running (e.g. polling-only mode drains eventq from within the
+              * stream DPC).
+              */
+            if (InterlockedCompareExchange(&stream->DpcActive, 0, 0) == 0) {
+                (VOID)KeInsertQueueDpc(&stream->TimerDpc, NULL, NULL);
+            }
         }
 
         KeReleaseSpinLock(&stream->Lock, streamIrql);
