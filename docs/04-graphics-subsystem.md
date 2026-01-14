@@ -204,6 +204,7 @@ Code pointers:
 
 - **Main thread scheduling:** `web/src/main/frameScheduler.ts` uses `ScanoutState` to decide whether to keep ticking the GPU worker even when the shared framebuffer is in the `PRESENTED` state.
 - **GPU worker output selection:** `web/src/workers/gpu-worker.ts` snapshots `ScanoutState` during `presentOnce()` and uses it to avoid “flashing back” to the legacy framebuffer after WDDM scanout is considered active.
+- **GPU worker WDDM scanout readback (when `base_paddr != 0`):** `web/src/workers/gpu-worker.ts` treats `base_paddr` as a guest physical address and can present WDDM scanout by reading from either the shared VRAM aperture (BAR1 backing) or guest RAM, normalizing to a tightly-packed RGBA8 buffer (`tryReadWddmScanoutFrame()`).
 - **Canonical Rust machine (optional):** `crates/aero-machine/src/lib.rs` can publish scanout-source updates into an `aero_shared::scanout_state::ScanoutState` provided by the host:
   - `Machine::set_scanout_state()` installs the shared descriptor.
   - `Machine::reset()` publishes `LEGACY_TEXT` on reset.
