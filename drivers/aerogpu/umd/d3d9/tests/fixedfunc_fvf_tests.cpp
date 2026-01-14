@@ -1487,6 +1487,40 @@ bool TestSetTextureStageStateUpdatesPsForTex1NoDiffuseFvfs() {
       }
     }
 
+    // Validate SetTexture(stage0) hot-swaps the internal fixed-function PS variant
+    // when fixed-function is active (no user shaders bound).
+    {
+      D3DDDI_HRESOURCE null_tex{};
+      hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, null_tex);
+      if (!Check(hr == S_OK, "XYZRHW|TEX1: SetTexture(stage0=null) succeeds")) {
+        return false;
+      }
+    }
+    {
+      std::lock_guard<std::mutex> lock(dev->mutex);
+      if (!Check(dev->ps != nullptr, "XYZRHW|TEX1: PS still bound after SetTexture(null)")) {
+        return false;
+      }
+      if (!Check(ShaderBytecodeEquals(dev->ps, fixedfunc::kPsPassthroughColor),
+                 "XYZRHW|TEX1: PS bytecode (no texture -> passthrough)")) {
+        return false;
+      }
+    }
+    hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, hTex);
+    if (!Check(hr == S_OK, "XYZRHW|TEX1: SetTexture(stage0=texture) succeeds")) {
+      return false;
+    }
+    {
+      std::lock_guard<std::mutex> lock(dev->mutex);
+      if (!Check(dev->ps != nullptr, "XYZRHW|TEX1: PS still bound after SetTexture(texture)")) {
+        return false;
+      }
+      if (!Check(ShaderBytecodeEquals(dev->ps, fixedfunc::kPsStage0ModulateTexture),
+                 "XYZRHW|TEX1: PS bytecode (texture restored -> modulate/texture)")) {
+        return false;
+      }
+    }
+
     // Validate SetTextureStageState does not fail for supported TEX1-without-diffuse paths.
     const auto SetTextureStageState = [&](uint32_t stage, uint32_t state, uint32_t value, const char* msg) -> bool {
       HRESULT hr2 = S_OK;
@@ -1577,6 +1611,40 @@ bool TestSetTextureStageStateUpdatesPsForTex1NoDiffuseFvfs() {
       }
       if (!Check(ShaderBytecodeEquals(dev->ps, fixedfunc::kPsStage0ModulateTexture),
                  "XYZ|TEX1: PS bytecode modulate/texture")) {
+        return false;
+      }
+    }
+
+    // Validate SetTexture(stage0) hot-swaps the internal fixed-function PS variant
+    // when fixed-function is active (no user shaders bound).
+    {
+      D3DDDI_HRESOURCE null_tex{};
+      hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, null_tex);
+      if (!Check(hr == S_OK, "XYZ|TEX1: SetTexture(stage0=null) succeeds")) {
+        return false;
+      }
+    }
+    {
+      std::lock_guard<std::mutex> lock(dev->mutex);
+      if (!Check(dev->ps != nullptr, "XYZ|TEX1: PS still bound after SetTexture(null)")) {
+        return false;
+      }
+      if (!Check(ShaderBytecodeEquals(dev->ps, fixedfunc::kPsPassthroughColor),
+                 "XYZ|TEX1: PS bytecode (no texture -> passthrough)")) {
+        return false;
+      }
+    }
+    hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, hTex);
+    if (!Check(hr == S_OK, "XYZ|TEX1: SetTexture(stage0=texture) succeeds")) {
+      return false;
+    }
+    {
+      std::lock_guard<std::mutex> lock(dev->mutex);
+      if (!Check(dev->ps != nullptr, "XYZ|TEX1: PS still bound after SetTexture(texture)")) {
+        return false;
+      }
+      if (!Check(ShaderBytecodeEquals(dev->ps, fixedfunc::kPsStage0ModulateTexture),
+                 "XYZ|TEX1: PS bytecode (texture restored -> modulate/texture)")) {
         return false;
       }
     }
