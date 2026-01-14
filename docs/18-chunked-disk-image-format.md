@@ -79,6 +79,7 @@ The disk image is split into fixed-size chunks:
 
 - `chunkSize` is **configurable** per image/version.
 - `chunkSize` **MUST** be a multiple of 512 bytes (ATA sector size).
+- `totalSize` **MUST** be a multiple of 512 bytes (disk images are sector-addressed).
 - Default: **4 MiB** (`4 * 1024 * 1024`) for a good balance of request count vs. over-fetch (this is also the default used by `aero-image-chunker`).
 - Larger values (e.g. **8 MiB**) can be reasonable if you expect predominantly sequential reads and want fewer requests/objects.
 
@@ -109,7 +110,9 @@ Where:
 - `<version>` is a content-addressed or otherwise immutable identifier (see §1.4).
 - Chunk filenames are `chunkIndex` formatted as **zero-padded decimal**, followed by `.bin`.
   - `chunkIndexWidth` is recommended to be **8** (up to 99,999,999 chunks).
-  - Zero-padding is not required for correctness, but is recommended for predictable URL formatting and for lexicographic ordering in tooling.
+  - `chunkIndexWidth` is a **minimum** width. Clients left-pad with `0` up to this width (but do not truncate if the index has more digits).
+    - If you don't want any padding, set `chunkIndexWidth = 1` and use unpadded decimal filenames (`0.bin`, `1.bin`, ..., `10.bin`, ...).
+  - Zero-padding is recommended for predictable URL formatting and for lexicographic ordering in tooling.
 
 Example URLs:
 
@@ -158,7 +161,10 @@ Recommended schema (v1):
 Notes:
 
 - `chunks.length` **MUST** equal `chunkCount` if present.
-- If `chunks` is omitted, the client assumes all chunks are size `chunkSize` except the last, which is derived from `totalSize`.
+- If `chunks` is present, each entry may omit `size` and/or `sha256`:
+  - missing `size` defaults to `chunkSize` (or the derived final chunk size for the last chunk)
+  - missing `sha256` means “no integrity check for this chunk”
+- If `chunks` is omitted, the client assumes all chunks are size `chunkSize` except the last (derived from `totalSize`), and no per-chunk checksums.
 - `totalSize` is the size in bytes of the **logical disk byte stream** (what the guest sees / `VirtualDisk::capacity_bytes()`).
   - For raw disk images, this is typically the same as the input file length.
   - For sparse/container formats (qcow2/VHD/AeroSparse), this may differ from the on-disk container file size.
