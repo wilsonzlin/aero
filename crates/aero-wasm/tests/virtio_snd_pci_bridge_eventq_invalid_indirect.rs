@@ -299,3 +299,137 @@ fn virtio_snd_pci_bridge_eventq_retains_event_when_first_chain_has_nested_indire
     guest.read_into(buf, &mut got_evt);
     assert_eq!(&got_evt, &expected_speaker_connected());
 }
+
+#[wasm_bindgen_test]
+fn virtio_snd_pci_bridge_eventq_retains_event_when_first_chain_indirect_len_is_zero() {
+    let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x20000);
+    let guest = common::GuestRegion {
+        base: guest_base,
+        size: guest_size,
+    };
+
+    let mut bridge =
+        VirtioSndPciBridge::new(guest_base, guest_size, None).expect("VirtioSndPciBridge::new");
+    bridge.set_pci_command(0x0006);
+
+    let _qsz = init_snd_eventq(&mut bridge);
+
+    const COMMON: u32 = 0x0000;
+    const NOTIFY: u32 = 0x1000;
+
+    let desc_table = 0x1000u32;
+    let avail = 0x2000u32;
+    let used = 0x3000u32;
+    let indirect_table = 0x4000u32;
+    let buf = 0x4100u32;
+
+    // Indirect descriptor with len=0: the virtqueue parser treats this as a zero-sized table.
+    write_desc(
+        &guest,
+        desc_table,
+        0,
+        indirect_table as u64,
+        0,
+        VIRTQ_DESC_F_INDIRECT,
+        0,
+    );
+    guest.fill(buf, 8, 0xAA);
+    write_desc(&guest, desc_table, 1, buf as u64, 8, VIRTQ_DESC_F_WRITE, 0);
+
+    guest.write_u16(avail, 0);
+    guest.write_u16(avail + 2, 2);
+    guest.write_u16(avail + 4, 0);
+    guest.write_u16(avail + 6, 1);
+    guest.write_u16(used, 0);
+    guest.write_u16(used + 2, 0);
+
+    let ring = WorkletBridge::new(8, 2).unwrap();
+    let sab = ring.shared_buffer();
+    bridge
+        .set_audio_ring_buffer(Some(sab), 8, 2)
+        .expect("set_audio_ring_buffer(Some)");
+
+    let notify_off = bridge.mmio_read(COMMON + 0x1e, 2);
+    bridge.mmio_write(
+        NOTIFY + notify_off * 4,
+        2,
+        u32::from(VIRTIO_SND_QUEUE_EVENT),
+    );
+
+    assert_eq!(guest.read_u16(used + 2), 2);
+    assert_eq!(guest.read_u32(used + 4), 0);
+    assert_eq!(guest.read_u32(used + 8), 0);
+    assert_eq!(guest.read_u32(used + 12), 1);
+    assert_eq!(guest.read_u32(used + 16), 8);
+
+    let mut got_evt = [0u8; 8];
+    guest.read_into(buf, &mut got_evt);
+    assert_eq!(&got_evt, &expected_speaker_connected());
+}
+
+#[wasm_bindgen_test]
+fn virtio_snd_pci_bridge_eventq_retains_event_when_first_chain_indirect_table_is_out_of_bounds() {
+    let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x20000);
+    let guest = common::GuestRegion {
+        base: guest_base,
+        size: guest_size,
+    };
+
+    let mut bridge =
+        VirtioSndPciBridge::new(guest_base, guest_size, None).expect("VirtioSndPciBridge::new");
+    bridge.set_pci_command(0x0006);
+
+    let _qsz = init_snd_eventq(&mut bridge);
+
+    const COMMON: u32 = 0x0000;
+    const NOTIFY: u32 = 0x1000;
+
+    let desc_table = 0x1000u32;
+    let avail = 0x2000u32;
+    let used = 0x3000u32;
+    let buf = 0x4100u32;
+
+    // Indirect descriptor pointing just past the end of guest RAM: the indirect table itself is
+    // unreadable, so chain parsing fails before the device sees it.
+    write_desc(
+        &guest,
+        desc_table,
+        0,
+        u64::from(guest_size),
+        16,
+        VIRTQ_DESC_F_INDIRECT,
+        0,
+    );
+    guest.fill(buf, 8, 0xAA);
+    write_desc(&guest, desc_table, 1, buf as u64, 8, VIRTQ_DESC_F_WRITE, 0);
+
+    guest.write_u16(avail, 0);
+    guest.write_u16(avail + 2, 2);
+    guest.write_u16(avail + 4, 0);
+    guest.write_u16(avail + 6, 1);
+    guest.write_u16(used, 0);
+    guest.write_u16(used + 2, 0);
+
+    let ring = WorkletBridge::new(8, 2).unwrap();
+    let sab = ring.shared_buffer();
+    bridge
+        .set_audio_ring_buffer(Some(sab), 8, 2)
+        .expect("set_audio_ring_buffer(Some)");
+
+    let notify_off = bridge.mmio_read(COMMON + 0x1e, 2);
+    bridge.mmio_write(
+        NOTIFY + notify_off * 4,
+        2,
+        u32::from(VIRTIO_SND_QUEUE_EVENT),
+    );
+
+    assert_eq!(guest.read_u16(used + 2), 2);
+    assert_eq!(guest.read_u32(used + 4), 0);
+    assert_eq!(guest.read_u32(used + 8), 0);
+    assert_eq!(guest.read_u32(used + 12), 1);
+    assert_eq!(guest.read_u32(used + 16), 8);
+
+    let mut got_evt = [0u8; 8];
+    guest.read_into(buf, &mut got_evt);
+    assert_eq!(&got_evt, &expected_speaker_connected());
+}
