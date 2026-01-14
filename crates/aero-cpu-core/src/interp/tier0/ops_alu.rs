@@ -780,22 +780,6 @@ fn shl(val: u64, count: u32, bits: u32, old_flags: u64) -> (u64, Option<u64>) {
     (res, Some(flags))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn shl_count_exceeding_operand_width_does_not_panic() {
-        // SHL uses a masked shift count (5 bits for <=32-bit operands), so an 8-bit operand can
-        // legally see counts > 8. This used to panic due to `bits - c` underflow when calculating
-        // CF.
-        let (res, flags) = shl(0x12, 46, 8, 0);
-        assert_eq!(res, 0);
-        assert!(flags.is_some());
-        assert_ne!(flags.unwrap() & FLAG_ZF, 0);
-    }
-}
-
 fn shr(val: u64, count: u32, bits: u32, old_flags: u64) -> (u64, Option<u64>) {
     let mask = mask_bits(bits);
     let c = count & if bits == 64 { 0x3F } else { 0x1F };
@@ -1152,5 +1136,21 @@ fn exec_cdx(state: &mut CpuState, m: Mnemonic) {
             state.write_reg(Register::RDX, if rax < 0 { u64::MAX } else { 0 });
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shl_count_exceeding_operand_width_does_not_panic() {
+        // SHL uses a masked shift count (5 bits for <=32-bit operands), so an 8-bit operand can
+        // legally see counts > 8. This used to panic due to `bits - c` underflow when calculating
+        // CF.
+        let (res, flags) = shl(0x12, 46, 8, 0);
+        assert_eq!(res, 0);
+        assert!(flags.is_some());
+        assert_ne!(flags.unwrap() & FLAG_ZF, 0);
     }
 }
