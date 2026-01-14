@@ -1,10 +1,6 @@
 use aero_usb::xhci::regs::*;
 use aero_usb::xhci::XhciController;
 
-mod util;
-
-use util::TestMemory;
-
 fn find_ext_cap(xhci: &mut XhciController, first: u64, id: u8) -> Option<u64> {
     // xHCI Extended Capabilities form a linked list. The "next" pointer is expressed in DWORDs.
     // Keep a small iteration bound so malformed guest-visible structures cannot loop forever.
@@ -30,7 +26,6 @@ fn find_ext_cap(xhci: &mut XhciController, first: u64, id: u8) -> Option<u64> {
 #[test]
 fn hccparams1_xecp_points_to_extended_capabilities() {
     let mut xhci = XhciController::with_port_count(4);
-    let _mem = TestMemory::new(XhciController::MMIO_SIZE as usize);
 
     let hccparams1 = xhci.mmio_read_u32(cap::HCCPARAMS1 as u64);
     assert_eq!(
@@ -52,7 +47,6 @@ fn hccparams1_xecp_points_to_extended_capabilities() {
 fn supported_protocol_capability_usb2_matches_port_count() {
     let port_count = 4u8;
     let mut xhci = XhciController::with_port_count(port_count);
-    let _mem = TestMemory::new(XhciController::MMIO_SIZE as usize);
 
     let hccparams1 = xhci.mmio_read_u32(cap::HCCPARAMS1 as u64);
     let xecp = (((hccparams1 >> 16) & 0xffff) as u64) * 4;

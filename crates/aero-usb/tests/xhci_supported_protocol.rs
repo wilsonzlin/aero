@@ -1,8 +1,6 @@
 use aero_usb::xhci::{regs, XhciController};
 use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel, UsbSpeed};
 
-mod util;
-
 fn find_ext_cap(xhci: &mut XhciController, first: u64, id: u8) -> Option<u64> {
     let mut off = first;
     for _ in 0..32 {
@@ -43,7 +41,6 @@ impl UsbDeviceModel for DummyFullSpeedDevice {
 #[test]
 fn xhci_exposes_supported_protocol_ext_cap_for_usb2_ports() {
     let mut xhci = XhciController::with_port_count(2);
-    let _mem = util::TestMemory::new(XhciController::MMIO_SIZE as usize);
 
     // Walk the extended capability list starting at HCCPARAMS1.xECP.
     let hccparams1 = xhci.mmio_read_u32(regs::cap::HCCPARAMS1 as u64);
