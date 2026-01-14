@@ -743,11 +743,7 @@ fn ehci_remote_wakeup_does_not_propagate_through_external_hub_without_hub_remote
         0,
         "unexpected resume state even though hub remote wake is disabled"
     );
-    assert_ne!(
-        portsc & PORTSC_SUSP,
-        0,
-        "port should remain suspended"
-    );
+    assert_ne!(portsc & PORTSC_SUSP, 0, "port should remain suspended");
     assert_eq!(portsc & PORTSC_LS_MASK, 0b10 << 10, "expected J-state");
     assert!(ehci.hub_mut().device_mut_for_address(2).is_none());
 }
@@ -1182,11 +1178,7 @@ fn ehci_remote_wakeup_does_not_propagate_through_nested_hubs_without_inner_hub_r
         0,
         "unexpected resume state even though inner hub remote wake is disabled"
     );
-    assert_ne!(
-        portsc & PORTSC_SUSP,
-        0,
-        "port should remain suspended"
-    );
+    assert_ne!(portsc & PORTSC_SUSP, 0, "port should remain suspended");
     assert_eq!(portsc & PORTSC_LS_MASK, 0b10 << 10, "expected J-state");
     assert!(ehci.hub_mut().device_mut_for_address(3).is_none());
 }
