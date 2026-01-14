@@ -1,4 +1,5 @@
 import type { AeroConfig } from "../config/aero_config";
+import { VRAM_BASE_PADDR } from "../arch/guest_phys.ts";
 import { openRingByKind } from "../ipc/ipc";
 import { ringCtrl } from "../ipc/layout";
 import { RingBuffer } from "../ipc/ring_buffer";
@@ -1813,22 +1814,25 @@ export class WorkerCoordinator {
       const info = this.workers[role];
       if (!info) continue;
 
-        const baseInit: WorkerInitMessage = {
-          kind: "init",
-          role,
-          controlSab: segments.control,
-          guestMemory: segments.guestMemory,
-          vgaFramebuffer: segments.vgaFramebuffer,
-          scanoutState: segments.scanoutState,
-          scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
-          cursorState: segments.cursorState,
-          cursorStateOffsetBytes: segments.cursorStateOffsetBytes,
-          ioIpcSab: segments.ioIpc,
-          sharedFramebuffer: segments.sharedFramebuffer,
-          sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
-          frameStateSab: this.frameStateSab,
-          platformFeatures: this.platformFeatures ?? undefined,
-        };
+      const baseInit: WorkerInitMessage = {
+        kind: "init",
+        role,
+        controlSab: segments.control,
+        guestMemory: segments.guestMemory,
+        vram: segments.vram,
+        vramBasePaddr: segments.vram ? VRAM_BASE_PADDR : undefined,
+        vramSizeBytes: segments.vram ? segments.vram.byteLength : undefined,
+        vgaFramebuffer: segments.vgaFramebuffer,
+        scanoutState: segments.scanoutState,
+        scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
+        cursorState: segments.cursorState,
+        cursorStateOffsetBytes: segments.cursorStateOffsetBytes,
+        ioIpcSab: segments.ioIpc,
+        sharedFramebuffer: segments.sharedFramebuffer,
+        sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
+        frameStateSab: this.frameStateSab,
+        platformFeatures: this.platformFeatures ?? undefined,
+      };
 
       if (perfChannel) {
         const workerKind = workerRoleToPerfWorkerKind(role);

@@ -178,6 +178,8 @@ function makeConfig(proxyUrl: string | null, extra: Partial<AeroConfig> = {}): A
   };
 }
 
+const TEST_VRAM_MIB = 1;
+
 function makeInit(segments: SharedMemorySegments): WorkerInitMessage {
   return {
     kind: "init",
@@ -277,7 +279,7 @@ describe("workers/net.worker (worker_threads)", () => {
   }, 20000);
 
   it("falls back to direct proxyUrl when POST /session is unavailable", async () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: TEST_VRAM_MIB });
 
     const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
     const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
@@ -325,7 +327,7 @@ describe("workers/net.worker (worker_threads)", () => {
   }, 40000);
 
   it("falls back to /l2 derived from base proxyUrl when POST /session is unavailable", async () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: TEST_VRAM_MIB });
 
     const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
     const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
@@ -378,7 +380,7 @@ describe("workers/net.worker (worker_threads)", () => {
   }, 40000);
 
   it("falls back to connecting directly when POST /session throws (network error)", async () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: TEST_VRAM_MIB });
 
     const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
     const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
@@ -427,7 +429,7 @@ describe("workers/net.worker (worker_threads)", () => {
   }, 40000);
 
   it("forwards NET_TX frames over the L2 tunnel and delivers inbound frames to NET_RX", async () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: TEST_VRAM_MIB });
 
     const netTxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_TX_QUEUE_KIND);
     const netRxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_RX_QUEUE_KIND);
@@ -748,7 +750,7 @@ describe("workers/net.worker (worker_threads)", () => {
   }, 20000);
 
   it("falls back to connecting directly when POST /session fails", async () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: TEST_VRAM_MIB });
 
     const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
     const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
@@ -792,7 +794,7 @@ describe("workers/net.worker (worker_threads)", () => {
   }, 40000);
 
   it("falls back to connecting directly when POST /session returns invalid JSON", async () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: TEST_VRAM_MIB });
 
     const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
     const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
@@ -836,7 +838,7 @@ describe("workers/net.worker (worker_threads)", () => {
   }, 40000);
 
   it("captures guest_tx + guest_rx frames into a PCAPNG when tracing is enabled", async () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: TEST_VRAM_MIB });
 
     const netTxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_TX_QUEUE_KIND);
     const netRxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_RX_QUEUE_KIND);
@@ -1026,7 +1028,7 @@ describe("workers/net.worker (worker_threads)", () => {
   }, 40000);
 
   it("pauses forwarding during VM snapshots and drains NET_TX/NET_RX without errors", async () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: TEST_VRAM_MIB });
 
     const netTxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_TX_QUEUE_KIND);
     const netRxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_RX_QUEUE_KIND);
@@ -1127,7 +1129,7 @@ describe("workers/net.worker (worker_threads)", () => {
   }, 40000);
 
   it("wakes promptly on shutdown commands even while pending RX frames are buffered", async () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: TEST_VRAM_MIB });
 
     const netRxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_RX_QUEUE_KIND);
     const commandRing = new RingBuffer(segments.control, ringRegionsForWorker("net").command.byteOffset);

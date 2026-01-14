@@ -49,6 +49,7 @@ describe("runtime/shared_layout", () => {
   // small to embed the demo shared framebuffer, the allocator falls back to a
   // standalone SharedArrayBuffer for the framebuffer.
   const TEST_GUEST_RAM_MIB = 1;
+  const TEST_VRAM_MIB = 1;
 
   it("places status + rings without overlap", () => {
     const regions: Array<{ name: string; start: number; end: number }> = [
@@ -94,7 +95,7 @@ describe("runtime/shared_layout", () => {
     expect(COMMAND_RING_CAPACITY_BYTES % RECORD_ALIGN).toBe(0);
     expect(EVENT_RING_CAPACITY_BYTES % RECORD_ALIGN).toBe(0);
 
-    const segments = allocateSharedMemorySegments({ guestRamMiB: TEST_GUEST_RAM_MIB });
+    const segments = allocateSharedMemorySegments({ guestRamMiB: TEST_GUEST_RAM_MIB, vramMiB: TEST_VRAM_MIB });
     for (const role of WORKER_ROLES) {
       const regions = ringRegionsForWorker(role);
 
@@ -109,35 +110,35 @@ describe("runtime/shared_layout", () => {
   it(
     "transfers messages across threads using a shared_layout ring",
     async () => {
-      const segments = allocateSharedMemorySegments({ guestRamMiB: TEST_GUEST_RAM_MIB });
+      const segments = allocateSharedMemorySegments({ guestRamMiB: TEST_GUEST_RAM_MIB, vramMiB: TEST_VRAM_MIB });
       const regions = ringRegionsForWorker("cpu");
       const ring = new RingBuffer(segments.control, regions.command.byteOffset);
 
-    const count = 100;
-    const worker = new Worker(new URL("./shared_layout_ring_consumer_worker.ts", import.meta.url), {
-      type: "module",
-      workerData: { sab: segments.control, offsetBytes: regions.command.byteOffset, count },
-      execArgv: ["--experimental-strip-types"],
-    } as unknown as WorkerOptions);
+      const count = 100;
+      const worker = new Worker(new URL("./shared_layout_ring_consumer_worker.ts", import.meta.url), {
+        type: "module",
+        workerData: { sab: segments.control, offsetBytes: regions.command.byteOffset, count },
+        execArgv: ["--experimental-strip-types"],
+      } as unknown as WorkerOptions);
 
-    try {
-      for (let i = 0; i < count; i++) {
-        const payload = new Uint8Array(4);
-        new DataView(payload.buffer).setUint32(0, i, true);
-        while (!ring.tryPush(payload)) {
-          await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      try {
+        for (let i = 0; i < count; i++) {
+          const payload = new Uint8Array(4);
+          new DataView(payload.buffer).setUint32(0, i, true);
+          while (!ring.tryPush(payload)) {
+            await new Promise<void>((resolve) => setTimeout(resolve, 0));
+          }
         }
-      }
 
-      const received = await new Promise<number[]>((resolve, reject) => {
-        worker.once("message", (msg) => resolve(msg as number[]));
-        worker.once("error", reject);
-        worker.once("exit", (code) => {
-          if (code !== 0) reject(new Error(`ring buffer worker exited with code ${code}`));
+        const received = await new Promise<number[]>((resolve, reject) => {
+          worker.once("message", (msg) => resolve(msg as number[]));
+          worker.once("error", reject);
+          worker.once("exit", (code) => {
+            if (code !== 0) reject(new Error(`ring buffer worker exited with code ${code}`));
+          });
         });
-      });
 
-      expect(received).toEqual(Array.from({ length: count }, (_, i) => i));
+        expect(received).toEqual(Array.from({ length: count }, (_, i) => i));
       } finally {
         await worker.terminate();
       }
@@ -148,7 +149,7 @@ describe("runtime/shared_layout", () => {
   );
 
   it("creates shared views for control + guest memory", () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: TEST_GUEST_RAM_MIB });
+    const segments = allocateSharedMemorySegments({ guestRamMiB: TEST_GUEST_RAM_MIB, vramMiB: TEST_VRAM_MIB });
     const views = createSharedMemoryViews(segments);
 
     expect(views.status.byteOffset).toBe(0);
@@ -158,12 +159,17 @@ describe("runtime/shared_layout", () => {
     expect(views.guestU8.byteOffset).toBe(views.guestLayout.guest_base);
     expect(views.guestU8.byteLength).toBe(views.guestLayout.guest_size);
     expect(views.guestU8.buffer).toBe(segments.guestMemory.buffer);
+    expect(segments.vram).toBeInstanceOf(SharedArrayBuffer);
+    expect(segments.vram!.byteLength).toBe(TEST_VRAM_MIB * 1024 * 1024);
+    expect(views.vramSizeBytes).toBe(TEST_VRAM_MIB * 1024 * 1024);
+    expect(views.vramU8.byteLength).toBe(TEST_VRAM_MIB * 1024 * 1024);
+    expect(views.vramU8.buffer).toBe(segments.vram);
     expect(views.sharedFramebuffer).toBe(segments.sharedFramebuffer);
     expect(views.sharedFramebufferOffsetBytes).toBe(segments.sharedFramebufferOffsetBytes);
   });
 
   it("allocates and initializes scanoutState", () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: TEST_GUEST_RAM_MIB });
+    const segments = allocateSharedMemorySegments({ guestRamMiB: TEST_GUEST_RAM_MIB, vramMiB: TEST_VRAM_MIB });
     expect(segments.scanoutState).toBeInstanceOf(SharedArrayBuffer);
     expect(segments.scanoutStateOffsetBytes).toBe(0);
 
@@ -191,19 +197,19 @@ describe("runtime/shared_layout", () => {
   });
 
   it("falls back to standalone shared framebuffer when guest RAM is too small to embed it", () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: TEST_VRAM_MIB });
     expect(segments.sharedFramebuffer).not.toBe(segments.guestMemory.buffer);
     expect(segments.sharedFramebufferOffsetBytes).toBe(0);
   });
 
   it("embeds shared framebuffer in guest memory when there is enough guest RAM", () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 16 });
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 16, vramMiB: TEST_VRAM_MIB });
     expect(segments.sharedFramebuffer).toBe(segments.guestMemory.buffer);
     expect(segments.sharedFramebufferOffsetBytes).toBe(RUNTIME_RESERVED_BYTES + CPU_WORKER_DEMO_FRAMEBUFFER_OFFSET_BYTES);
   });
 
   it("allocates ioIpc AIPC queues for device I/O + raw Ethernet frames", () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: TEST_GUEST_RAM_MIB });
+    const segments = allocateSharedMemorySegments({ guestRamMiB: TEST_GUEST_RAM_MIB, vramMiB: TEST_VRAM_MIB });
     const { queues } = parseIpcBuffer(segments.ioIpc);
 
     expect(queues.map((q) => q.kind).sort((a, b) => a - b)).toEqual([
@@ -223,7 +229,7 @@ describe("runtime/shared_layout", () => {
   });
 
   it("allocates a VGA/VBE framebuffer large enough for 1280x720x32bpp (VBE mode 0x160)", () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: TEST_GUEST_RAM_MIB });
+    const segments = allocateSharedMemorySegments({ guestRamMiB: TEST_GUEST_RAM_MIB, vramMiB: TEST_VRAM_MIB });
     expect(segments.vgaFramebuffer.byteLength).toBeGreaterThanOrEqual(requiredFramebufferBytes(1280, 720, 1280 * 4));
   });
 

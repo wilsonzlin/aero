@@ -1,6 +1,7 @@
 /// <reference lib="webworker" />
 
 import type { AeroConfig } from "../config/aero_config";
+import { VRAM_BASE_PADDR } from "../arch/guest_phys.ts";
 import { openRingByKind } from "../ipc/ipc";
 import { decodeCommand, encodeEvent, type Command, type Event } from "../ipc/protocol";
 import { RingBuffer } from "../ipc/ring_buffer";
@@ -221,6 +222,9 @@ type InputBatchRecycleMessage = { type: "in:input-batch-recycle"; buffer: ArrayB
 let role: WorkerRole = "io";
 let status!: Int32Array;
 let guestU8!: Uint8Array;
+let vramU8: Uint8Array | null = null;
+let vramBasePaddr = 0;
+let vramSizeBytes = 0;
 let guestBase = 0;
 let guestSize = 0;
 let guestLayout: GuestRamLayout | null = null;
@@ -3875,6 +3879,7 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
       const segments = {
         control: init.controlSab!,
         guestMemory: init.guestMemory!,
+        vram: init.vram,
         vgaFramebuffer: init.vgaFramebuffer!,
         scanoutState: init.scanoutState,
         scanoutStateOffsetBytes: init.scanoutStateOffsetBytes ?? 0,
@@ -3888,6 +3893,9 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
       const views = createSharedMemoryViews(segments);
       status = views.status;
       guestU8 = views.guestU8;
+      vramU8 = views.vramSizeBytes > 0 ? views.vramU8 : null;
+      vramBasePaddr = (init.vramBasePaddr ?? VRAM_BASE_PADDR) >>> 0;
+      vramSizeBytes = (init.vramSizeBytes ?? views.vramSizeBytes) >>> 0;
       guestLayout = views.guestLayout;
       guestBase = views.guestLayout.guest_base >>> 0;
       guestSize = views.guestLayout.guest_size >>> 0;

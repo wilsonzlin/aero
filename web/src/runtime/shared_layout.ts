@@ -1,7 +1,7 @@
 import { RECORD_ALIGN, queueKind, ringCtrl } from "../ipc/layout";
 import { requiredFramebufferBytes } from "../display/framebuffer_protocol";
 import { createIpcBuffer } from "../ipc/ipc";
-import { PCI_MMIO_BASE } from "../arch/guest_phys.ts";
+import { PCI_MMIO_BASE, VRAM_BASE_PADDR } from "../arch/guest_phys.ts";
 import { guestPaddrToRamOffset as guestPaddrToRamOffsetRaw, guestRangeInBounds as guestRangeInBoundsRaw } from "../arch/guest_ram_translate.ts";
 import {
   computeSharedFramebufferLayout,
@@ -183,6 +183,16 @@ export const GUEST_RAM_PRESETS_MIB = [256, 512, 1024, 2048, 3072, 3584] as const
 export type GuestRamMiB = number;
 export const DEFAULT_GUEST_RAM_MIB: GuestRamMiB = 512;
 
+/**
+ * Default VRAM aperture size (BAR1 backing) for the browser runtime.
+ *
+ * This is a standalone `SharedArrayBuffer` (not embedded in WASM linear memory) so multiple
+ * workers can access VRAM bytes directly.
+ *
+ * Tests should override this to avoid large allocations.
+ */
+export const DEFAULT_VRAM_MIB = 64;
+
 const WASM_PAGE_BYTES = 64 * 1024;
 const MAX_WASM32_PAGES = 65536;
 
@@ -288,6 +298,13 @@ function bytesToPages(bytes: number): number {
 export interface SharedMemorySegments {
   control: SharedArrayBuffer;
   guestMemory: WebAssembly.Memory;
+  /**
+   * Shared VRAM aperture (BAR1 backing).
+   *
+   * When present, this buffer backs guest physical addresses
+   * `[VRAM_BASE_PADDR, VRAM_BASE_PADDR + vram.byteLength)`.
+   */
+  vram?: SharedArrayBuffer;
   vgaFramebuffer: SharedArrayBuffer;
   ioIpc: SharedArrayBuffer;
   sharedFramebuffer: SharedArrayBuffer;
@@ -335,6 +352,17 @@ export interface SharedMemoryViews {
   guestLayout: GuestRamLayout;
   guestU8: Uint8Array;
   guestI32: Int32Array;
+  /**
+   * Flat byte view of the shared VRAM aperture.
+   *
+   * When the runtime is configured without VRAM (e.g. some unit tests), this is a zero-length
+   * `Uint8Array`.
+   */
+  vramU8: Uint8Array;
+  /**
+   * Size of the VRAM aperture in bytes (equals `vramU8.byteLength`).
+   */
+  vramSizeBytes: number;
   vgaFramebuffer: SharedArrayBuffer;
   sharedFramebuffer: SharedArrayBuffer;
   sharedFramebufferOffsetBytes: number;
@@ -494,8 +522,10 @@ export function ringRegionsForWorker(role: WorkerRole): RingRegions {
 
 export function allocateSharedMemorySegments(options?: {
   guestRamMiB?: GuestRamMiB;
+  vramMiB?: number;
 }): SharedMemorySegments {
   const guestRamMiB = options?.guestRamMiB ?? DEFAULT_GUEST_RAM_MIB;
+  const vramMiB = options?.vramMiB ?? DEFAULT_VRAM_MIB;
   const desiredGuestBytes = mibToBytes(guestRamMiB);
   const layout = computeGuestRamLayout(desiredGuestBytes);
   const pages = layout.wasm_pages;
@@ -532,6 +562,25 @@ export function allocateSharedMemorySegments(options?: {
   Atomics.store(status, StatusIndex.GuestSize, layout.guest_size | 0);
   Atomics.store(status, StatusIndex.RuntimeReserved, layout.runtime_reserved | 0);
   initControlRings(control);
+
+  // Shared VRAM aperture (BAR1 backing).
+  //
+  // Keep this separate from `guestMemory` so wasm32's linear memory limit does not constrain VRAM
+  // sizing and so workers can map BAR1 without relying on guest RAM address translation.
+  //
+  // `vramMiB=0` disables the segment (useful for unit tests).
+  let vram: SharedArrayBuffer | undefined = undefined;
+  const desiredVramBytes = clampToU32(Math.trunc(mibToBytes(vramMiB)));
+  if (desiredVramBytes > 0) {
+    try {
+      vram = new SharedArrayBuffer(desiredVramBytes);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `Failed to allocate shared VRAM aperture (${vramMiB} MiB at paddr=0x${VRAM_BASE_PADDR.toString(16)}). Try a smaller size. Error: ${msg}`,
+      );
+    }
+  }
 
   // Shared CPU→GPU framebuffer demo region.
   //
@@ -604,6 +653,7 @@ export function allocateSharedMemorySegments(options?: {
   return {
     control,
     guestMemory,
+    vram,
     // A single shared 32bpp framebuffer region used for early VGA/VBE display.
     //
     // Sized to accommodate the required VBE mode list (including 1280x720x32bpp),
@@ -670,6 +720,10 @@ export function createSharedMemoryViews(segments: SharedMemorySegments): SharedM
     Math.floor(guestLayout.guest_size / Int32Array.BYTES_PER_ELEMENT),
   );
 
+  const vramSab = segments.vram;
+  const vramU8 = vramSab instanceof SharedArrayBuffer ? new Uint8Array(vramSab) : new Uint8Array(0);
+  const vramSizeBytes = vramU8.byteLength;
+
   const scanoutState = segments.scanoutState;
   const scanoutStateOffsetBytes = segments.scanoutStateOffsetBytes ?? 0;
   const scanoutStateI32 =
@@ -684,6 +738,8 @@ export function createSharedMemoryViews(segments: SharedMemorySegments): SharedM
     guestLayout,
     guestU8,
     guestI32,
+    vramU8,
+    vramSizeBytes,
     vgaFramebuffer: segments.vgaFramebuffer,
     sharedFramebuffer: segments.sharedFramebuffer,
     sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,

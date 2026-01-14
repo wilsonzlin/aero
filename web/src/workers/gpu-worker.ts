@@ -94,6 +94,7 @@ import {
 } from "../gpu/dirty-rect-policy";
 import { readScanoutRgba8FromGuestRam } from "../runtime/scanout_readback";
 import type { AeroConfig } from '../config/aero_config';
+import { VRAM_BASE_PADDR } from '../arch/guest_phys.ts';
 import {
   createSharedMemoryViews,
   guestPaddrToRamOffset,
@@ -165,6 +166,10 @@ let role: WorkerRole = "gpu";
 let status: Int32Array | null = null;
 let guestU8: Uint8Array | null = null;
 let guestLayout: GuestRamLayout | null = null;
+let vramU8: Uint8Array | null = null;
+let vramBasePaddr = 0;
+let vramSizeBytes = 0;
+let vramMissingScanoutErrorSent = false;
 
 let frameState: Int32Array | null = null;
 
@@ -1987,6 +1992,27 @@ const presentOnce = async (): Promise<boolean> => {
         scanoutSnap = null;
       }
     }
+
+    // Back-compat/runtime guard: older unit tests/harnesses may start the GPU worker without
+    // providing a VRAM `SharedArrayBuffer`. If WDDM publishes a scanout descriptor pointing into
+    // the VRAM aperture, fail fast with a clear error instead of silently presenting garbage.
+    if (!vramMissingScanoutErrorSent && scanoutSnap?.source === SCANOUT_SOURCE_WDDM) {
+      const baseLo = scanoutSnap.basePaddrLo >>> 0;
+      const baseHi = scanoutSnap.basePaddrHi >>> 0;
+      if ((baseLo | baseHi) !== 0) {
+        const base = (BigInt(baseHi) << 32n) | BigInt(baseLo);
+        const vramBase = BigInt(vramBasePaddr >>> 0);
+        const vramEnd = vramBase + BigInt(vramSizeBytes >>> 0);
+        const baseInVram = vramSizeBytes > 0 && base >= vramBase && base < vramEnd;
+        if (baseInVram && !vramU8) {
+          vramMissingScanoutErrorSent = true;
+          postRuntimeError(
+            "WDDM scanout points into the VRAM aperture, but this GPU worker was started without a shared VRAM buffer. " +
+              "Ensure WorkerInitMessage.vram is provided by the coordinator (COOP/COEP + SharedArrayBuffer required).",
+          );
+        }
+      }
+    }
     if (isDeviceLost) return false;
 
     const sharedFramebufferSeqForClear = (() => {
@@ -2895,6 +2921,7 @@ const handleRuntimeInit = (init: WorkerInitMessage) => {
   const segments = {
     control: init.controlSab,
     guestMemory: init.guestMemory,
+    vram: init.vram,
     vgaFramebuffer: init.vgaFramebuffer,
     scanoutState: init.scanoutState,
     scanoutStateOffsetBytes: init.scanoutStateOffsetBytes ?? 0,
@@ -2916,7 +2943,10 @@ const handleRuntimeInit = (init: WorkerInitMessage) => {
   // (which may be >=4GiB); executors must translate them back into this view before slicing.
   guestLayout = views.guestLayout;
   guestU8 = views.guestU8;
-  guestLayout = views.guestLayout;
+  vramU8 = views.vramSizeBytes > 0 ? views.vramU8 : null;
+  vramBasePaddr = (init.vramBasePaddr ?? VRAM_BASE_PADDR) >>> 0;
+  vramSizeBytes = (init.vramSizeBytes ?? views.vramSizeBytes) >>> 0;
+  vramMissingScanoutErrorSent = false;
   if (aerogpuWasm) {
     try {
       // If aero-gpu-wasm is already loaded (e.g. via the webgl2_wgpu presenter), plumb the

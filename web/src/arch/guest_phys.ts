@@ -30,6 +30,19 @@
 export const PCI_MMIO_BASE = 0xe000_0000;
 
 /**
+ * Guest-physical base address of the shared VRAM aperture (BAR1 backing) used by the web runtime.
+ *
+ * This lives inside the PCI MMIO BAR allocation window starting at {@link PCI_MMIO_BASE}. The
+ * browser runtime uses a dedicated `SharedArrayBuffer` for VRAM so the I/O worker (MMIO writes)
+ * and GPU worker (scanout readback) can share the same bytes without embedding VRAM in WASM
+ * linear memory.
+ *
+ * NOTE: Keep this in sync with any Rust-side BAR / guest layout constants that assume a fixed
+ * BAR1/VRAM placement.
+ */
+export const VRAM_BASE_PADDR = PCI_MMIO_BASE;
+
+/**
  * PCI MMIO base expressed in MiB (3.5GiB).
  *
  * This is useful for UI/config validation.

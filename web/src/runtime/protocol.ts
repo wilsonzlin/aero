@@ -49,6 +49,23 @@ export type WorkerInitMessage = {
   role: WorkerRole;
   controlSab: SharedArrayBuffer;
   guestMemory: WebAssembly.Memory;
+  /**
+   * Shared VRAM aperture (BAR1 backing).
+   *
+   * Optional for back-compat with unit tests/harnesses that construct `WorkerInitMessage`
+   * manually. Workers that need VRAM should validate it is present before using it.
+   */
+  vram?: SharedArrayBuffer;
+  /**
+   * Guest-physical base address of the VRAM aperture (u32).
+   */
+  vramBasePaddr?: number;
+  /**
+   * Size in bytes of the VRAM aperture (u32).
+   *
+   * This typically equals `vram.byteLength` when `vram` is present.
+   */
+  vramSizeBytes?: number;
   vgaFramebuffer: SharedArrayBuffer;
   /**
    * Shared scanout descriptor used to select which framebuffer is currently presented.
