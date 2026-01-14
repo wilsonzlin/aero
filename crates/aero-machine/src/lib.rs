@@ -5597,7 +5597,7 @@ impl Machine {
 
     /// Returns the configured BIOS boot drive number (`DL`) used for the next firmware POST/boot.
     pub fn boot_drive(&self) -> u8 {
-        self.boot_drive
+        self.bios.boot_drive()
     }
 
     /// Returns whether the firmware "CD-first when present" boot policy is enabled.
@@ -11697,6 +11697,12 @@ impl Machine {
         let cd_boot_drive = self.bios.config().cd_boot_drive;
         let boot_from_cd_if_present = self.bios.config().boot_from_cd_if_present;
         self.boot_drive = boot_drive;
+        self.cfg.boot_drive = boot_drive;
+        self.cfg.boot_device = if (0xE0..=0xEF).contains(&boot_drive) {
+            BootDevice::Cdrom
+        } else {
+            BootDevice::Hdd
+        };
         // The BIOS is HLE and by default keeps the VBE linear framebuffer inside guest RAM so the
         // firmware-only tests can access it without MMIO routing.
         //
@@ -15571,6 +15577,19 @@ impl snapshot::SnapshotTarget for Machine {
         self.cpu.state.a20_enabled = self.chipset.a20().enabled();
         self.resync_guest_time_from_tsc();
 
+        // Snapshot restore can update firmware configuration (including the host-configured boot
+        // drive and CD-first policy flags). Keep the machine-level convenience fields in sync with
+        // the restored BIOS config so host introspection helpers (`boot_drive`, `boot_device`, etc)
+        // observe the restored policy without requiring an additional reset.
+        let boot_drive = self.bios.boot_drive();
+        self.boot_drive = boot_drive;
+        self.cfg.boot_drive = boot_drive;
+        self.cfg.boot_device = if (0xE0..=0xEF).contains(&boot_drive) {
+            BootDevice::Cdrom
+        } else {
+            BootDevice::Hdd
+        };
+
         // Snapshot restore applies `DEVICES` before `RAM`, so any cursor sync that reads from the
         // BIOS Data Area must happen *after* RAM is restored (here in `post_restore`).
         //
@@ -16620,9 +16639,13 @@ mod tests {
         let mut restored = Machine::new(cfg).unwrap();
         restored.restore_snapshot_bytes(&snap).unwrap();
         assert_eq!(restored.bios.config().boot_drive, 0xE0);
+        assert_eq!(restored.boot_drive(), 0xE0);
+        assert_eq!(restored.boot_device(), BootDevice::Cdrom);
 
         restored.reset();
         assert_eq!(restored.bios.config().boot_drive, 0xE0);
+        assert_eq!(restored.boot_drive(), 0xE0);
+        assert_eq!(restored.boot_device(), BootDevice::Cdrom);
     }
 
     #[test]
