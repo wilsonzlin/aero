@@ -992,6 +992,10 @@ Harness validation (non-normative, QEMU):
   host-side marker (for log scraping / diagnostics):
   - `AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_IRQ|PASS/FAIL/INFO|irq_mode=<intx|msi|msix>|irq_message_count=<n>|msix_config_vector=0x....|msix_queue_vector=0x....`
   - Additional optional fields may also appear (e.g. `irq_vectors`, `msi_vector`) depending on what the guest reports.
+- It may also mirror the generic `irq_*` fields on other per-test markers into stable per-device host markers:
+  - `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_IRQ|PASS/FAIL/INFO|irq_mode=...|irq_message_count=...|...`
+  - `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_IRQ|PASS/FAIL/INFO|irq_mode=...|irq_message_count=...|...`
+  - `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_IRQ|PASS/FAIL/INFO|irq_mode=...|irq_message_count=...|...`
 - Those fields (when emitted) are expected to appear on the guest marker:
   - `AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS/FAIL|irq_mode=...|...`
 - By default these are informational. To make MSI-X a **hard** harness requirement under QEMU:
