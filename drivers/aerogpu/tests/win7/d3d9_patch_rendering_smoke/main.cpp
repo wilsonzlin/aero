@@ -626,12 +626,11 @@ static int RunD3D9PatchRenderingSmoke(int argc, char** argv) {
   }
 
   D3DRECTPATCH_INFO rect_info;
-  if (!FillRectPatchInfo(&rect_info)) {
-    aerogpu_test::PrintfStdout("INFO: %s: unknown D3DRECTPATCH_INFO layout (size=%u); skipping",
+  const bool have_rect_info = FillRectPatchInfo(&rect_info);
+  if (!have_rect_info) {
+    aerogpu_test::PrintfStdout("INFO: %s: unknown D3DRECTPATCH_INFO layout (size=%u); skipping rect patch stages",
                                kTestName,
                                (unsigned)sizeof(D3DRECTPATCH_INFO));
-    reporter.SetSkipped("rect_patch_info_layout_unknown");
-    return reporter.Pass();
   }
 
   D3DTRIPATCH_INFO tri_info;
@@ -664,79 +663,82 @@ static int RunD3D9PatchRenderingSmoke(int argc, char** argv) {
     return reporter.FailHresult("CreateOffscreenPlainSurface", hr);
   }
 
-  // Stage 1: DrawRectPatch twice (cache hit path).
-  hr = dev->Clear(0, NULL, D3DCLEAR_TARGET, kClearRed, 1.0f, 0);
-  if (FAILED(hr)) {
-    return reporter.FailHresult("Clear", hr);
-  }
-  hr = dev->BeginScene();
-  if (FAILED(hr)) {
-    return reporter.FailHresult("BeginScene", hr);
-  }
-  hr = dev->DrawRectPatch(1, rect_segs, &rect_info);
-  if (FAILED(hr)) {
-    dev->EndScene();
-    return reporter.FailHresult("DrawRectPatch (first)", hr);
-  }
-  hr = dev->DrawRectPatch(1, rect_segs, &rect_info);
-  if (FAILED(hr)) {
-    dev->EndScene();
-    return reporter.FailHresult("DrawRectPatch (second)", hr);
-  }
-  hr = dev->EndScene();
-  if (FAILED(hr)) {
-    return reporter.FailHresult("EndScene", hr);
-  }
-  int stage_rc = ValidateBackbufferStage(kTestName,
-                                         &reporter,
-                                         "rect_twice",
-                                         dev.get(),
-                                         backbuffer.get(),
-                                         sysmem.get(),
-                                         desc,
-                                         dump,
-                                         kClearRed,
-                                         kRectBlue);
-  if (stage_rc != 0) {
-    return stage_rc;
-  }
+  int stage_rc = 0;
+  if (have_rect_info) {
+    // Stage 1: DrawRectPatch twice (cache hit path).
+    hr = dev->Clear(0, NULL, D3DCLEAR_TARGET, kClearRed, 1.0f, 0);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("Clear", hr);
+    }
+    hr = dev->BeginScene();
+    if (FAILED(hr)) {
+      return reporter.FailHresult("BeginScene", hr);
+    }
+    hr = dev->DrawRectPatch(1, rect_segs, &rect_info);
+    if (FAILED(hr)) {
+      dev->EndScene();
+      return reporter.FailHresult("DrawRectPatch (first)", hr);
+    }
+    hr = dev->DrawRectPatch(1, rect_segs, &rect_info);
+    if (FAILED(hr)) {
+      dev->EndScene();
+      return reporter.FailHresult("DrawRectPatch (second)", hr);
+    }
+    hr = dev->EndScene();
+    if (FAILED(hr)) {
+      return reporter.FailHresult("EndScene", hr);
+    }
+    stage_rc = ValidateBackbufferStage(kTestName,
+                                       &reporter,
+                                       "rect_twice",
+                                       dev.get(),
+                                       backbuffer.get(),
+                                       sysmem.get(),
+                                       desc,
+                                       dump,
+                                       kClearRed,
+                                       kRectBlue);
+    if (stage_rc != 0) {
+      return stage_rc;
+    }
 
-  // Delete the patch and re-draw with the same handle. This should still render.
-  hr = dev->DeletePatch(1);
-  if (FAILED(hr)) {
-    return reporter.FailHresult("DeletePatch", hr);
-  }
+    // Delete the patch and re-draw with the same handle. This should still render.
+    hr = dev->DeletePatch(1);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("DeletePatch", hr);
+    }
 
-  // Stage 2: DrawRectPatch after DeletePatch.
-  hr = dev->Clear(0, NULL, D3DCLEAR_TARGET, kClearRed, 1.0f, 0);
-  if (FAILED(hr)) {
-    return reporter.FailHresult("Clear", hr);
-  }
-  hr = dev->BeginScene();
-  if (FAILED(hr)) {
-    return reporter.FailHresult("BeginScene", hr);
-  }
-  hr = dev->DrawRectPatch(1, rect_segs, &rect_info);
-  if (FAILED(hr)) {
-    dev->EndScene();
-    return reporter.FailHresult("DrawRectPatch (after DeletePatch)", hr);
-  }
-  hr = dev->EndScene();
-  if (FAILED(hr)) {
-    return reporter.FailHresult("EndScene", hr);
-  }
-  stage_rc = ValidateBackbufferStage(kTestName,
-                                     &reporter,
-                                     "rect_after_delete",
-                                     dev.get(),
-                                     backbuffer.get(),
-                                     sysmem.get(),
-                                     desc,
-                                     dump,
-                                     kClearRed,
-                                     kRectBlue);
-  if (stage_rc != 0) {
-    return stage_rc;
+    // Stage 2: DrawRectPatch after DeletePatch.
+    hr = dev->Clear(0, NULL, D3DCLEAR_TARGET, kClearRed, 1.0f, 0);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("Clear", hr);
+    }
+    hr = dev->BeginScene();
+    if (FAILED(hr)) {
+      return reporter.FailHresult("BeginScene", hr);
+    }
+    hr = dev->DrawRectPatch(1, rect_segs, &rect_info);
+    if (FAILED(hr)) {
+      dev->EndScene();
+      return reporter.FailHresult("DrawRectPatch (after DeletePatch)", hr);
+    }
+    hr = dev->EndScene();
+    if (FAILED(hr)) {
+      return reporter.FailHresult("EndScene", hr);
+    }
+    stage_rc = ValidateBackbufferStage(kTestName,
+                                       &reporter,
+                                       "rect_after_delete",
+                                       dev.get(),
+                                       backbuffer.get(),
+                                       sysmem.get(),
+                                       desc,
+                                       dump,
+                                       kClearRed,
+                                       kRectBlue);
+    if (stage_rc != 0) {
+      return stage_rc;
+    }
   }
 
   // Stage 3: DrawTriPatch twice (cache hit path).
@@ -812,6 +814,12 @@ static int RunD3D9PatchRenderingSmoke(int argc, char** argv) {
                                      kTriYellow);
   if (stage_rc != 0) {
     return stage_rc;
+  }
+
+  if (!have_rect_info) {
+    // Tri patch stages passed, but we could not build a valid D3DRECTPATCH_INFO
+    // for this header vintage, so report the overall test as skipped.
+    reporter.SetSkipped("rect_patch_info_layout_unknown");
   }
 
   // Optional present for manual observation when running interactively.
