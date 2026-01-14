@@ -47,10 +47,10 @@ class QmpPciPreflightTests(unittest.TestCase):
                             "bus": {
                                 "number": 1,
                                 "devices": [
-                                    {"vendor_id": 0x1AF4, "device_id": 0x1041, "revision": 0x01},
-                                    {"vendor_id": 0x1AF4, "device_id": 0x1042, "revision": 0x01},
-                                    {"vendor_id": 0x1AF4, "device_id": 0x1052, "revision": 0x01},
-                                    {"vendor_id": 0x1AF4, "device_id": 0x1052, "revision": 0x01},
+                                    {"id": {"vendor_id": 0x1AF4, "device_id": 0x1041, "revision": 0x01}},
+                                    {"id": {"vendor_id": 0x1AF4, "device_id": 0x1042, "revision": 0x01}},
+                                    {"id": {"vendor_id": 0x1AF4, "device_id": 0x1052, "revision": 0x01}},
+                                    {"id": {"vendor_id": 0x1AF4, "device_id": 0x1052, "revision": 0x01}},
                                 ],
                             }
                         },
@@ -82,7 +82,7 @@ class QmpPciPreflightTests(unittest.TestCase):
             {
                 "devices": [
                     # Transitional IDs and non-REV_01 should still PASS in transitional mode.
-                    {"vendor_id": 0x1AF4, "device_id": 0x1000, "revision": 0x00},
+                    {"id": {"vendor_id": 0x1AF4, "device_id": 0x1000, "revision": 0x00}},
                 ]
             }
         ]
@@ -109,10 +109,10 @@ class QmpPciPreflightTests(unittest.TestCase):
         query = [
             {
                 "devices": [
-                    {"vendor_id": 0x1AF4, "device_id": 0x1041, "revision": 0x00},
-                    {"vendor_id": 0x1AF4, "device_id": 0x1042, "revision": 0x01},
-                    {"vendor_id": 0x1AF4, "device_id": 0x1052, "revision": 0x01},
-                    {"vendor_id": 0x1AF4, "device_id": 0x1052, "revision": 0x01},
+                    {"id": {"vendor_id": 0x1AF4, "device_id": 0x1041, "revision": 0x00}},
+                    {"id": {"vendor_id": 0x1AF4, "device_id": 0x1042, "revision": 0x01}},
+                    {"id": {"vendor_id": 0x1AF4, "device_id": 0x1052, "revision": 0x01}},
+                    {"id": {"vendor_id": 0x1AF4, "device_id": 0x1052, "revision": 0x01}},
                 ]
             }
         ]

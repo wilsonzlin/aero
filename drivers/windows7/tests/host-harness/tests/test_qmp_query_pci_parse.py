@@ -77,8 +77,7 @@ class QmpQueryPciParsingTests(unittest.TestCase):
                 "devices": [
                     {
                         # Some QEMU builds nest IDs under an `id` object.
-                        "id": {"vendor_id": "0x1af4", "device_id": "0x1041"},
-                        "revision": "0x01",
+                        "id": {"vendor_id": "0x1af4", "device_id": "0x1041", "revision": "0x01"},
                     },
                 ]
             }
@@ -109,9 +108,7 @@ class QmpQueryPciParsingTests(unittest.TestCase):
                                         "bus": 1,
                                         "slot": 2,
                                         "function": 0,
-                                        "vendor_id": 0x1AF4,
-                                        "device_id": 0x1041,
-                                        "revision": 0x01,
+                                        "id": {"vendor_id": 0x1AF4, "device_id": 0x1041, "revision": 0x01},
                                     }
                                 ],
                             }

@@ -572,13 +572,32 @@ def _iter_qmp_query_pci_devices(query_pci_result: object) -> list[_PciId]:
             if not isinstance(dev, dict):
                 continue
 
+            id_obj = dev.get("id")
+            id_dict = id_obj if isinstance(id_obj, dict) else None
+
             vendor, device = _qmp_device_vendor_device_id(dev)  # type: ignore[arg-type]
             if vendor is None or device is None:
                 continue
 
             subsys_vendor = _qmp_maybe_int(dev.get("subsystem_vendor_id"))
+            if subsys_vendor is None and id_dict is not None:
+                sv_obj = id_dict.get("subsystem_vendor_id")
+                if sv_obj is None:
+                    sv_obj = id_dict.get("subsystem_vendor")
+                subsys_vendor = _qmp_maybe_int(sv_obj)
             subsys = _qmp_maybe_int(dev.get("subsystem_id"))
+            if subsys is None and id_dict is not None:
+                s_obj = id_dict.get("subsystem_id")
+                if s_obj is None:
+                    s_obj = id_dict.get("subsystem")
+                subsys = _qmp_maybe_int(s_obj)
+
             rev = _qmp_maybe_int(dev.get("revision"))
+            if rev is None and id_dict is not None:
+                r_obj = id_dict.get("revision")
+                if r_obj is None:
+                    r_obj = id_dict.get("rev")
+                rev = _qmp_maybe_int(r_obj)
             devices.append(_PciId(vendor, device, subsys_vendor, subsys, rev))
 
     return devices
@@ -1020,9 +1039,15 @@ def _qmp_device_vendor_device_id(dev: dict[str, object]) -> tuple[Optional[int],
     id_obj = dev.get("id")
     if isinstance(id_obj, dict):
         if vendor is None:
-            vendor = _qmp_maybe_int(id_obj.get("vendor_id") or id_obj.get("vendor"))
+            vendor_obj = id_obj.get("vendor_id")
+            if vendor_obj is None:
+                vendor_obj = id_obj.get("vendor")
+            vendor = _qmp_maybe_int(vendor_obj)
         if device is None:
-            device = _qmp_maybe_int(id_obj.get("device_id") or id_obj.get("device"))
+            device_obj = id_obj.get("device_id")
+            if device_obj is None:
+                device_obj = id_obj.get("device")
+            device = _qmp_maybe_int(device_obj)
     return vendor, device
 
 

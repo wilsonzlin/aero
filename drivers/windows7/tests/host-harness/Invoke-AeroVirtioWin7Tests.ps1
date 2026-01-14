@@ -5164,6 +5164,34 @@ function Get-AeroPciIdsFromQueryPci {
       $rev = Convert-AeroPciInt $dev.revision
       $subVendor = Convert-AeroPciInt $dev.subsystem_vendor_id
       $subId = Convert-AeroPciInt $dev.subsystem_id
+      if (($null -eq $rev) -or ($null -eq $subVendor) -or ($null -eq $subId)) {
+        # Some QEMU builds nest PCI identity fields under an `id` object (query-pci schema).
+        $idObj = $null
+        try { $idObj = $dev.id } catch { }
+        if ($null -ne $idObj) {
+          if ($idObj -is [System.Collections.IDictionary]) {
+            if ($null -eq $rev) { $rev = Convert-AeroPciInt $idObj["revision"] }
+            if ($null -eq $subVendor) {
+              $subVendor = Convert-AeroPciInt $idObj["subsystem_vendor_id"]
+              if ($null -eq $subVendor) { $subVendor = Convert-AeroPciInt $idObj["subsystem_vendor"] }
+            }
+            if ($null -eq $subId) {
+              $subId = Convert-AeroPciInt $idObj["subsystem_id"]
+              if ($null -eq $subId) { $subId = Convert-AeroPciInt $idObj["subsystem"] }
+            }
+          } else {
+            if ($null -eq $rev) { $rev = Convert-AeroPciInt $idObj.revision }
+            if ($null -eq $subVendor) {
+              $subVendor = Convert-AeroPciInt $idObj.subsystem_vendor_id
+              if ($null -eq $subVendor) { $subVendor = Convert-AeroPciInt $idObj.subsystem_vendor }
+            }
+            if ($null -eq $subId) {
+              $subId = Convert-AeroPciInt $idObj.subsystem_id
+              if ($null -eq $subId) { $subId = Convert-AeroPciInt $idObj.subsystem }
+            }
+          }
+        }
+      }
 
       $devBus = Convert-AeroPciInt $dev.bus
       if ($null -eq $devBus) { $devBus = $busNum }
