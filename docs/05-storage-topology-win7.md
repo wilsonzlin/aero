@@ -80,9 +80,8 @@ boot sector / El Torito boot image:
 
 ### 1) Windows 7 install / recovery flow
 
-1. BIOS boot order is configured to boot from **CD-ROM (El Torito)** first. BIOS transfers control
-   to the CD boot image with a **CD boot drive number** in `DL` (recommend **`DL=0xE0`** for the
-   first CD-ROM drive).
+1. Configure Aero BIOS to boot from **CD-ROM (El Torito)** by selecting the first CD-ROM drive as
+   the boot drive (recommend **`DL=0xE0`**).
 2. The boot ISO is presented as an **ATAPI CD-ROM** on **PIIX3 IDE secondary master**.
 3. BIOS performs an **El Torito no-emulation** boot from that CD drive (see
    [`docs/09b-eltorito-cd-boot.md`](./09b-eltorito-cd-boot.md) for the detailed El Torito + INT 13h
@@ -107,8 +106,8 @@ drive number and then reset to re-run BIOS POST with the new `DL` value.
 
 ### 2) Normal boot (after installation)
 
-1. BIOS boot order boots from the **AHCI HDD** (ICH9 AHCI port 0) and enters the boot sector with
-   **`DL=0x80`**.
+1. Configure Aero BIOS to boot from the **AHCI HDD** (ICH9 AHCI port 0) by selecting the first HDD
+   as the boot drive (**`DL=0x80`**).
 2. The IDE CD-ROM may remain attached (useful for tooling/driver ISOs), but is not required.
 
 ---
