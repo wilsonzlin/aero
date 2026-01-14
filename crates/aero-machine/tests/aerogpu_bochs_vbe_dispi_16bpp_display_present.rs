@@ -72,6 +72,56 @@ fn aerogpu_bochs_vbe_dispi_16bpp_display_present_respects_offsets_and_stride() {
 }
 
 #[test]
+fn aerogpu_bochs_vbe_dispi_32bpp_display_present_respects_offsets_and_stride() {
+    let mut m = Machine::new(base_cfg()).unwrap();
+    m.reset();
+
+    // 2x2 visible, 4x4 virtual, 32bpp BGRX with a (1,1) visible offset.
+    m.io_write(0x01CE, 2, 0x0001);
+    m.io_write(0x01CF, 2, 2); // xres
+    m.io_write(0x01CE, 2, 0x0002);
+    m.io_write(0x01CF, 2, 2); // yres
+    m.io_write(0x01CE, 2, 0x0003);
+    m.io_write(0x01CF, 2, 32); // bpp
+    m.io_write(0x01CE, 2, 0x0006);
+    m.io_write(0x01CF, 2, 4); // virt_width
+    m.io_write(0x01CE, 2, 0x0007);
+    m.io_write(0x01CF, 2, 4); // virt_height
+    m.io_write(0x01CE, 2, 0x0008);
+    m.io_write(0x01CF, 2, 1); // x_offset
+    m.io_write(0x01CE, 2, 0x0009);
+    m.io_write(0x01CF, 2, 1); // y_offset
+    m.io_write(0x01CE, 2, 0x0004);
+    m.io_write(0x01CF, 2, 0x0041); // enable + lfb
+
+    let base = m.vbe_lfb_base();
+
+    // If the stride is computed incorrectly from xres instead of virt_width, the base offset
+    // would be 12 (1 scanline * 2px/line * 4 bytes/px + 1px * 4 bytes/px).
+    let wrong_base_off = 12u64;
+    m.write_physical_u32(base + wrong_base_off, 0x00FF_0000); // red (BGRX)
+
+    // Correct base offset uses virt_width (4) for stride: (1*4 + 1)*4 = 20.
+    let correct_base_off = 20u64;
+    // BGRX bytes [0x18, 0xAA, 0x84, 0x00] -> expected RGBA8888: 0xFF18AA84.
+    m.write_physical_u32(base + correct_base_off, 0x0084_AA18);
+
+    let reads_before = m
+        .aerogpu_bar1_mmio_read_count()
+        .expect("AeroGPU should expose a BAR1 MMIO read counter");
+
+    m.display_present();
+
+    assert_eq!(m.display_resolution(), (2, 2));
+    assert_eq!(m.display_framebuffer()[0], 0xFF18_AA84);
+
+    let reads_after = m
+        .aerogpu_bar1_mmio_read_count()
+        .expect("AeroGPU should expose a BAR1 MMIO read counter");
+    assert_eq!(reads_before, reads_after);
+}
+
+#[test]
 fn aerogpu_bochs_vbe_dispi_oversized_dimensions_do_not_oom_or_panic() {
     let mut m = Machine::new(base_cfg()).unwrap();
     m.reset();
