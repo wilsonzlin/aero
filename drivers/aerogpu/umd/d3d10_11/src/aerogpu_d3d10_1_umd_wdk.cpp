@@ -1249,19 +1249,42 @@ static void EmitSetRenderTargetsLocked(AeroGpuDevice* dev) {
   }
 }
 
-static void UnbindResourceFromOutputsLocked(AeroGpuDevice* dev, aerogpu_handle_t handle, AeroGpuResource* res) {
-  if (!dev || handle == 0) {
+static bool ResourcesAlias(const AeroGpuResource* a, const AeroGpuResource* b) {
+  if (!a || !b) {
+    return false;
+  }
+  if (a == b) {
+    return true;
+  }
+  // Shared resources can be opened multiple times (distinct AeroGpuResource
+  // objects) yet refer to the same underlying allocation. Treat those as
+  // aliasing for D3D SRV/RTV hazard mitigation.
+  if (a->share_token != 0 && a->share_token == b->share_token) {
+    return true;
+  }
+  if (a->backing_alloc_id != 0 &&
+      a->backing_alloc_id == b->backing_alloc_id &&
+      a->backing_offset_bytes == b->backing_offset_bytes) {
+    return true;
+  }
+  return false;
+}
+
+static void UnbindResourceFromOutputsLocked(AeroGpuDevice* dev, aerogpu_handle_t handle, const AeroGpuResource* res) {
+  if (!dev || (handle == 0 && !res)) {
     return;
   }
   bool changed = false;
   for (uint32_t i = 0; i < dev->current_rtv_count && i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
-    if (dev->current_rtvs[i] == handle || (res && dev->current_rtv_resources[i] == res)) {
+    if ((handle != 0 && dev->current_rtvs[i] == handle) ||
+        (res && ResourcesAlias(dev->current_rtv_resources[i], res))) {
       dev->current_rtvs[i] = 0;
       dev->current_rtv_resources[i] = nullptr;
       changed = true;
     }
   }
-  if (dev->current_dsv == handle || (res && dev->current_dsv_res == res)) {
+  if ((handle != 0 && dev->current_dsv == handle) ||
+      (res && ResourcesAlias(dev->current_dsv_res, res))) {
     dev->current_dsv = 0;
     dev->current_dsv_res = nullptr;
     changed = true;
@@ -7502,7 +7525,7 @@ void AEROGPU_APIENTRY SetRenderTargets(D3D10DDI_HDEVICE hDevice,
       return;
     }
     for (uint32_t slot = 0; slot < dev->current_vs_srvs.size(); ++slot) {
-      if (dev->current_vs_srvs[slot] == res) {
+      if (ResourcesAlias(dev->current_vs_srvs[slot], res)) {
         dev->current_vs_srvs[slot] = nullptr;
         auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_texture>(AEROGPU_CMD_SET_TEXTURE);
         cmd->shader_stage = AEROGPU_SHADER_STAGE_VERTEX;
@@ -7512,7 +7535,7 @@ void AEROGPU_APIENTRY SetRenderTargets(D3D10DDI_HDEVICE hDevice,
       }
     }
     for (uint32_t slot = 0; slot < dev->current_ps_srvs.size(); ++slot) {
-      if (dev->current_ps_srvs[slot] == res) {
+      if (ResourcesAlias(dev->current_ps_srvs[slot], res)) {
         dev->current_ps_srvs[slot] = nullptr;
         auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_texture>(AEROGPU_CMD_SET_TEXTURE);
         cmd->shader_stage = AEROGPU_SHADER_STAGE_PIXEL;
