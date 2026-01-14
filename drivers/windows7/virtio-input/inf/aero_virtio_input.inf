@@ -64,12 +64,14 @@ aero_virtio_input.sys = 1
 ; pass `x-pci-revision=0x01` (and preferably `disable-legacy=on`).
 ;
 ; This INF includes explicit model lines for the Aero contract v1 keyboard/mouse
-; virtio-input functions (SUBSYS_0010 and SUBSYS_0011).
+; virtio-input functions (SUBSYS_0010 and SUBSYS_0011), plus a strict REV-qualified
+; fallback HWID (no SUBSYS) to ensure Windows driver binding remains stable if a
+; contract-v1 virtio-input device ships with an unexpected subsystem ID.
 ;
-; It intentionally does *not* include a generic `PCI\VEN_1AF4&DEV_1052` + `REV_01`
-; fallback match; that fallback lives only in the optional legacy alias INF
-; (`virtio-input.inf.disabled`) so the canonical keyboard/mouse INF does not
-; overlap with tablet devices or other non-contract virtio-input functions.
+; Note: tablet-style virtio-input devices (absolute pointer / EV_ABS) typically
+; use `aero_virtio_tablet.inf` (SUBSYS_0012). If that INF is not installed, this
+; package's generic fallback model line can bind to the tablet as well; runtime
+; contract checks still validate the device kind.
 ;
 ; If your device enumerates with a different DEV id, add it here.
 ; You can confirm in Device Manager -> Details -> Hardware Ids.
@@ -77,10 +79,12 @@ aero_virtio_input.sys = 1
 [Aero.NTx86]
 %AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
 %AeroVirtioMouse.DeviceDesc%    = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
+%AeroVirtioInput.DeviceDesc%    = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&REV_01
 
 [Aero.NTamd64]
 %AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
 %AeroVirtioMouse.DeviceDesc%    = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
+%AeroVirtioInput.DeviceDesc%    = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&REV_01
 
 ;------------------------------------------------------------------------------
 ; DDInstall (x86)
