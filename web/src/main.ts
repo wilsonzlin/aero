@@ -5193,7 +5193,7 @@ function renderAudioPanel(): HTMLElement {
               data: encoder.encode(JSON.stringify({ timeIso, ...micRes.meta }, null, 2)),
             });
             summaryLines.push(
-              `microphone-buffered.wav: samples=${micRes.meta.samplesCaptured} sr=${micRes.meta.sampleRate} rms=${formatDbfsFromLinear(micRes.meta.signal.rms)}dBFS peak=${formatDbfsFromLinear(micRes.meta.signal.peakAbs)}dBFS`,
+              `microphone-buffered.wav: samples=${micRes.meta.samplesCaptured} sr=${micRes.meta.sampleRate} backend=${micRes.meta.backend ?? "n/a"} muted=${micRes.meta.muted ?? "n/a"} deviceIdHash=${micRes.meta.deviceIdHash ?? "n/a"} rms=${formatDbfsFromLinear(micRes.meta.signal.rms)}dBFS peak=${formatDbfsFromLinear(micRes.meta.signal.peakAbs)}dBFS`,
             );
           } else {
             summaryLines.push(`microphone-buffered: ${micRes.error}`);
