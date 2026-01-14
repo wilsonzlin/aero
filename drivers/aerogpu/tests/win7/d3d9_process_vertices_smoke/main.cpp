@@ -23,31 +23,45 @@ static HRESULT CreateDeviceExWithFallback(IDirect3D9Ex* d3d,
                                          HWND hwnd,
                                          D3DPRESENT_PARAMETERS* pp,
                                          DWORD create_flags,
-                                         IDirect3DDevice9Ex** out_dev) {
+                                         IDirect3DDevice9Ex** out_dev,
+                                         bool* out_used_software_vertex_processing,
+                                         HRESULT* out_hw_create_hr) {
   if (!d3d || !pp || !out_dev) {
     return E_INVALIDARG;
   }
 
-  HRESULT hr = d3d->CreateDeviceEx(D3DADAPTER_DEFAULT,
-                                   D3DDEVTYPE_HAL,
-                                   hwnd,
-                                   create_flags,
-                                   pp,
-                                   NULL,
-                                   out_dev);
-  if (FAILED(hr)) {
-    DWORD fallback_flags = create_flags;
-    fallback_flags &= ~D3DCREATE_HARDWARE_VERTEXPROCESSING;
-    fallback_flags |= D3DCREATE_SOFTWARE_VERTEXPROCESSING;
-    hr = d3d->CreateDeviceEx(D3DADAPTER_DEFAULT,
-                             D3DDEVTYPE_HAL,
-                             hwnd,
-                             fallback_flags,
-                             pp,
-                             NULL,
-                             out_dev);
+  if (out_used_software_vertex_processing) {
+    *out_used_software_vertex_processing = false;
   }
-  return hr;
+
+  const HRESULT hw_hr = d3d->CreateDeviceEx(D3DADAPTER_DEFAULT,
+                                            D3DDEVTYPE_HAL,
+                                            hwnd,
+                                            create_flags,
+                                            pp,
+                                            NULL,
+                                            out_dev);
+  if (out_hw_create_hr) {
+    *out_hw_create_hr = hw_hr;
+  }
+  if (SUCCEEDED(hw_hr)) {
+    return hw_hr;
+  }
+
+  DWORD fallback_flags = create_flags;
+  fallback_flags &= ~D3DCREATE_HARDWARE_VERTEXPROCESSING;
+  fallback_flags |= D3DCREATE_SOFTWARE_VERTEXPROCESSING;
+  const HRESULT sw_hr = d3d->CreateDeviceEx(D3DADAPTER_DEFAULT,
+                                            D3DDEVTYPE_HAL,
+                                            hwnd,
+                                            fallback_flags,
+                                            pp,
+                                            NULL,
+                                            out_dev);
+  if (SUCCEEDED(sw_hr) && out_used_software_vertex_processing) {
+    *out_used_software_vertex_processing = true;
+  }
+  return sw_hr;
 }
 
 static int RunD3D9ProcessVerticesSmoke(int argc, char** argv) {
@@ -134,16 +148,11 @@ static int RunD3D9ProcessVerticesSmoke(int argc, char** argv) {
 
   ComPtr<IDirect3DDevice9Ex> dev;
   DWORD create_flags = D3DCREATE_HARDWARE_VERTEXPROCESSING | D3DCREATE_NOWINDOWCHANGES;
-  hr = CreateDeviceExWithFallback(d3d.get(), hwnd, &pp, create_flags, dev.put());
+  bool used_software_vp = false;
+  HRESULT hw_create_hr = S_OK;
+  hr = CreateDeviceExWithFallback(d3d.get(), hwnd, &pp, create_flags, dev.put(), &used_software_vp, &hw_create_hr);
   if (FAILED(hr) || !dev) {
     return reporter.FailHresult("IDirect3D9Ex::CreateDeviceEx", hr);
-  }
-
-  // This test is specifically meant to validate the ProcessVertices DDI path. If we ended up with
-  // software vertex processing, the runtime may execute parts of the vertex processing on the CPU,
-  // which can mask driver-side ProcessVertices regressions (silent no-ops / memory corruption).
-  if (dev->GetSoftwareVertexProcessing()) {
-    return reporter.Fail("device is using software vertex processing; expected hardware vertex processing for ProcessVertices validation");
   }
 
   // Basic adapter sanity check to avoid false PASS when AeroGPU isn't active.
@@ -191,6 +200,20 @@ static int RunD3D9ProcessVerticesSmoke(int argc, char** argv) {
     if (umd_rc != 0) {
       return umd_rc;
     }
+  }
+
+  // This test is specifically meant to validate the ProcessVertices DDI path. If we ended up with
+  // software vertex processing, the runtime may execute parts of the vertex processing on the CPU,
+  // which can mask driver-side ProcessVertices regressions (silent no-ops / memory corruption).
+  if (used_software_vp || dev->GetSoftwareVertexProcessing()) {
+    if (used_software_vp) {
+      return reporter.Fail(
+          "CreateDeviceEx(HWVP) failed with %s; fell back to software vertex processing. "
+          "This can mask driver-side ProcessVertices regressions; cannot validate DDI.",
+          aerogpu_test::HresultToString(hw_create_hr).c_str());
+    }
+    return reporter.Fail(
+        "device is using software vertex processing; expected hardware vertex processing for ProcessVertices validation");
   }
 
   dev->SetRenderState(D3DRS_LIGHTING, FALSE);
