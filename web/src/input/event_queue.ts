@@ -1,3 +1,5 @@
+import { addI32Saturating } from "./int32";
+
 export const InputEventType = {
   /**
     * A PS/2 set-2 scancode sequence.
@@ -173,8 +175,8 @@ export class InputEventQueue {
       const base = INPUT_BATCH_HEADER_WORDS + (this.count - 1) * INPUT_BATCH_WORDS_PER_EVENT;
       if (this.words[base] === InputEventType.MouseMove) {
         this.words[base + 1] = timestampUs | 0;
-        this.words[base + 2] = (this.words[base + 2] + (dx | 0)) | 0;
-        this.words[base + 3] = (this.words[base + 3] + (dy | 0)) | 0;
+        this.words[base + 2] = addI32Saturating(this.words[base + 2] | 0, dx | 0);
+        this.words[base + 3] = addI32Saturating(this.words[base + 3] | 0, dy | 0);
         return;
       }
     }
@@ -191,8 +193,8 @@ export class InputEventQueue {
       const base = INPUT_BATCH_HEADER_WORDS + (this.count - 1) * INPUT_BATCH_WORDS_PER_EVENT;
       if (this.words[base] === InputEventType.MouseWheel) {
         this.words[base + 1] = timestampUs | 0;
-        this.words[base + 2] = (this.words[base + 2] + (dz | 0)) | 0;
-        this.words[base + 3] = (this.words[base + 3] + (dx | 0)) | 0;
+        this.words[base + 2] = addI32Saturating(this.words[base + 2] | 0, dz | 0);
+        this.words[base + 3] = addI32Saturating(this.words[base + 3] | 0, dx | 0);
         return;
       }
     }

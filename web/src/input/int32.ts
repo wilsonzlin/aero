@@ -18,3 +18,19 @@ export function negateI32Saturating(v: number): number {
   // even though it compares equal under `===`. Normalize to +0 for determinism.
   return neg === 0 ? 0 : neg;
 }
+
+/**
+ * Add two signed 32-bit integers with saturation.
+ *
+ * JavaScript's `|0` coercion turns numbers into i32 with wraparound semantics. For untrusted input
+ * (e.g. input batches), wraparound can turn large motion deltas into negative values. Saturating
+ * arithmetic is a safer default when accumulating host-provided deltas.
+ */
+export function addI32Saturating(a: number, b: number): number {
+  // `a`/`b` are expected to already be i32; keep this branch-only implementation fast.
+  const sum = a + b;
+  if (sum > I32_MAX) return I32_MAX;
+  if (sum < I32_MIN) return I32_MIN;
+  // Normalize -0 just like `negateI32Saturating` for determinism.
+  return sum === 0 ? 0 : (sum | 0);
+}
