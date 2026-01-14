@@ -571,6 +571,10 @@ Current behavior is intentionally bring-up level, with two paths:
   - for `D3DFVF_XYZ*` inputs: applies a CPU-side **World/View/Projection + viewport** transform to produce `XYZRHW`, and
   - for `D3DFVF_XYZRHW*` inputs: passes through the source `XYZRHW` position as-is (already `POSITIONT` screen space).
 
+  Unless `D3DPV_DONOTCOPYDATA` is set, the UMD clears the full destination vertex (`DestStride` bytes) before writing
+  outputs so any destination decl elements that are not written (e.g. dst has TEX0 but src does not) become 0 and the
+  output is deterministic.
+
   When the destination declaration includes `DIFFUSE`, the UMD copies it from the source when present, otherwise fills it
   with opaque white (matching fixed-function “no diffuse means white” behavior). `TEXCOORD0` is copied only when present
   in both the source and destination layouts.
