@@ -400,12 +400,10 @@ fn collect_files(
             .strip_prefix(&config.guest_tools_dir)
             .expect("walkdir under guest_tools_dir");
         let rel_str = path_to_slash(rel, entry.path())?;
-        if rel_str.eq_ignore_ascii_case("config/devices.cmd") {
+        if !should_include_guest_tools_tree_file(entry.path(), &rel_str) {
             continue;
         }
-        // Skip hidden files such as `.DS_Store` to keep outputs stable across hosts.
-        let file_name = rel_str.rsplit('/').next().unwrap_or(rel_str.as_str());
-        if file_name.starts_with('.') {
+        if rel_str.eq_ignore_ascii_case("config/devices.cmd") {
             continue;
         }
         out.push(FileToPackage {
@@ -447,10 +445,7 @@ fn collect_files(
                 .strip_prefix(&config.guest_tools_dir)
                 .expect("walkdir under guest_tools_dir");
             let rel_str = path_to_slash(rel, entry.path())?;
-            // Skip hidden files such as `.DS_Store` (and placeholder `.keep`) to keep outputs
-            // stable across hosts.
-            let file_name = rel_str.rsplit('/').next().unwrap_or(rel_str.as_str());
-            if file_name.starts_with('.') {
+            if !should_include_guest_tools_tree_file(entry.path(), &rel_str) {
                 continue;
             }
             out.push(FileToPackage {
@@ -1430,6 +1425,39 @@ fn should_include_driver_file(
     }
 
     Ok(true)
+}
+
+/// Returns false for files that should never be packaged into Guest Tools, regardless of the
+/// source directory.
+///
+/// The primary goal is to keep ISO/zip outputs stable across hosts, even when input trees were
+/// previously extracted on macOS/Windows and contain OS metadata artifacts.
+fn should_include_guest_tools_tree_file(path: &Path, rel_path: &str) -> bool {
+    // Skip hidden directories (e.g. `.vs/`) and macOS archive extraction artifacts to keep outputs
+    // stable across hosts. `walkdir` will still traverse them unless we filter at the file level.
+    if rel_path
+        .split('/')
+        .any(|c| c.starts_with('.') || c == "__MACOSX")
+    {
+        return false;
+    }
+
+    let file_name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+    // Skip hidden files such as `.DS_Store` to keep outputs stable across hosts.
+    if file_name.starts_with('.') {
+        return false;
+    }
+    // Also ignore common Windows shell metadata files to keep outputs stable for
+    // local builds on Windows.
+    let file_name_lower = file_name.to_ascii_lowercase();
+    if matches!(
+        file_name_lower.as_str(),
+        "thumbs.db" | "ehthumbs.db" | "desktop.ini"
+    ) {
+        return false;
+    }
+
+    true
 }
 
 fn is_private_key_extension(ext: &str) -> bool {
