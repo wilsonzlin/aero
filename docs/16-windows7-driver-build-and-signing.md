@@ -159,13 +159,13 @@ See also the examples under `drivers/_template/`:
 > Tablet devices bind via the separate `inf/aero_virtio_tablet.inf` (`SUBSYS_00121AF4`); that INF is more specific and wins
 > over any generic fallback when both packages are present.
 >
-> The repo also carries an optional legacy filename alias checked in disabled-by-default
-> (`inf/virtio-input.inf.disabled` → rename to `inf/virtio-input.inf`) for compatibility with tooling that expects the old
-> filename. It is allowed to diverge from `aero_virtio_input.inf` only in the models sections (`[Aero.NTx86]` / `[Aero.NTamd64]`)
-> to add an opt-in strict revision-gated generic fallback match (no `SUBSYS`): `PCI\VEN_1AF4&DEV_1052&REV_01`. Outside those
-> models sections, it must remain byte-for-byte identical (see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
+> If you need an opt-in strict revision-gated generic fallback match (`PCI\VEN_1AF4&DEV_1052&REV_01`) for environments where
+> subsystem IDs are not exposed/recognized, enable the optional legacy filename alias checked in disabled-by-default
+> (`inf/virtio-input.inf.disabled` → rename to `inf/virtio-input.inf`).
+> - The alias INF is allowed to differ from `aero_virtio_input.inf` in the models sections (`[Aero.NTx86]` / `[Aero.NTamd64]`)
+>   to provide the fallback entry, but should otherwise stay in sync (see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
 >
-> Avoid shipping/installing both filenames at once (they overlap on the keyboard/mouse HWIDs and can cause confusing driver selection).
+> Avoid shipping/installing both filenames at once (they match overlapping HWIDs and can cause confusing driver selection).
 > Prefer explicit `ci-package.json` `infFiles` allowlists so only one of the two INF basenames is packaged.
 
 ```powershell

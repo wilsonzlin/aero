@@ -255,15 +255,17 @@ Examples (illustrative) INF model entries:
 ; %AeroVirtioInput.DeviceDesc%  = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&REV_01
 
 ; aero_virtio_tablet.inf (optional tablet / absolute pointer)
-; Note: this SUBSYS-qualified HWID is more specific, so it wins over the generic fallback when both packages are installed.
+; Note: this SUBSYS-qualified HWID is more specific, so it wins over the optional generic fallback when both packages are installed.
 %AeroVirtioTablet.DeviceDesc%   = AeroVirtioTablet_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01
 
-; Legacy filename alias `virtio-input.inf` (checked in disabled-by-default as `virtio-input.inf.disabled`)
+; Optional legacy filename alias `virtio-input.inf` (checked in disabled-by-default as `virtio-input.inf.disabled`)
 ; - Exists for compatibility with workflows/tools that still reference `virtio-input.inf` instead of `aero_virtio_input.inf`.
+; - Adds an opt-in strict revision-gated generic fallback HWID match (no SUBSYS):
+;   %AeroVirtioInput.DeviceDesc% = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&REV_01
 ; - Allowed to diverge from `aero_virtio_input.inf` only in the models sections (`[Aero.NTx86]` / `[Aero.NTamd64]`) to add the
-;   opt-in strict generic fallback entry above (no SUBSYS).
-; - Outside those models sections, expected to remain byte-for-byte identical (see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
-; - Changes HWID matching behavior by adding the fallback, so do not install both INFs at the same time.
+;   fallback entry above.
+; - Outside those models sections, expected to stay in sync (see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
+; - Do not install both INFs at the same time: the alias changes HWID matching behavior by adding the fallback entry.
 ```
 
 ### Boot-critical storage (`CriticalDeviceDatabase`)
