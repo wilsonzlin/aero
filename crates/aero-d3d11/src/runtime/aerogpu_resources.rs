@@ -5,14 +5,14 @@ use aero_gpu::{
     decompress_bc1_rgba8, decompress_bc2_rgba8, decompress_bc3_rgba8, decompress_bc7_rgba8,
     expand_b5g5r5a1_unorm_to_rgba8, expand_b5g6r5_unorm_to_rgba8,
 };
+#[cfg(test)]
+use aero_protocol::aerogpu::aerogpu_cmd::AEROGPU_RESOURCE_USAGE_STORAGE;
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuHandle, AerogpuShaderStage, AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER,
     AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL, AEROGPU_RESOURCE_USAGE_INDEX_BUFFER,
     AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_SCANOUT,
     AEROGPU_RESOURCE_USAGE_TEXTURE, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
-#[cfg(test)]
-use aero_protocol::aerogpu::aerogpu_cmd::AEROGPU_RESOURCE_USAGE_STORAGE;
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
 use aero_protocol::aerogpu::aerogpu_ring::AerogpuAllocEntry;
 use anyhow::{anyhow, bail, Context, Result};

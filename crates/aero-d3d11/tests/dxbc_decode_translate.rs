@@ -577,12 +577,7 @@ fn decodes_and_translates_half_float_conversions_in_compute_shader_without_signa
     // - f32tof16 r1, r0
     // - f16tof32 r2, r1
     // - ret
-    let mut body = vec![
-        opcode_token(OPCODE_DCL_THREAD_GROUP, 4),
-        1,
-        1,
-        1,
-    ];
+    let mut body = vec![opcode_token(OPCODE_DCL_THREAD_GROUP, 4), 1, 1, 1];
 
     // mov r0, l(1, 2, 3, 4)
     body.push(opcode_token(OPCODE_MOV, (1 + 2 + 1 + 4) as u32));

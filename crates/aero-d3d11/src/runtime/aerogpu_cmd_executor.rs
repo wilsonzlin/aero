@@ -11916,8 +11916,8 @@ impl AerogpuD3d11Executor {
             entry_point,
             vs_input_signature: if stage == ShaderStage::Vertex {
                 if signature_driven {
-                    let module =
-                        crate::sm4::decode_program(&program).context("decode SM4/5 token stream")?;
+                    let module = crate::sm4::decode_program(&program)
+                        .context("decode SM4/5 token stream")?;
                     extract_vs_input_signature_unique_locations(&signatures, &module)
                         .context("extract VS input signature")?
                 } else {

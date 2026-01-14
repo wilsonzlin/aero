@@ -89,10 +89,13 @@ fn aerogpu_intx_is_gated_on_pci_command_intx_disable_in_apic_mode() {
     assert_ne!(bar0_base, 0, "AeroGPU BAR0 should be assigned by BIOS POST");
 
     // Trigger a vblank IRQ while INTx delivery is disabled in the PCI command register.
-    m.write_physical_u32(bar0_base + u64::from(proto::AEROGPU_MMIO_REG_SCANOUT0_ENABLE), 1);
-    let period_ns = u64::from(
-        m.read_physical_u32(bar0_base + u64::from(proto::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS)),
+    m.write_physical_u32(
+        bar0_base + u64::from(proto::AEROGPU_MMIO_REG_SCANOUT0_ENABLE),
+        1,
     );
+    let period_ns = u64::from(m.read_physical_u32(
+        bar0_base + u64::from(proto::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS),
+    ));
     assert_ne!(period_ns, 0, "test requires vblank pacing to be active");
     m.write_physical_u32(
         bar0_base + u64::from(proto::AEROGPU_MMIO_REG_IRQ_ENABLE),
@@ -102,8 +105,7 @@ fn aerogpu_intx_is_gated_on_pci_command_intx_disable_in_apic_mode() {
     // Advance to the next vblank edge so the device latches the vblank IRQ.
     m.tick_platform(period_ns);
 
-    let irq_status =
-        m.read_physical_u32(bar0_base + u64::from(proto::AEROGPU_MMIO_REG_IRQ_STATUS));
+    let irq_status = m.read_physical_u32(bar0_base + u64::from(proto::AEROGPU_MMIO_REG_IRQ_STATUS));
     assert_ne!(
         irq_status & proto::AEROGPU_IRQ_SCANOUT_VBLANK,
         0,
@@ -132,4 +134,3 @@ fn aerogpu_intx_is_gated_on_pci_command_intx_disable_in_apic_mode() {
         Some(VECTOR)
     );
 }
-

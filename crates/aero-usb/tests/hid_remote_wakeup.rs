@@ -683,7 +683,10 @@ fn hid_keyboard_remote_wakeup_does_not_propagate_through_usb2_port_mux_and_exter
         0,
         "unexpected UHCI USBSTS.RESUMEDETECT even though hub remote wake is disabled"
     );
-    assert!(!ctrl.irq_level(), "unexpected IRQ even though hub remote wake is disabled");
+    assert!(
+        !ctrl.irq_level(),
+        "unexpected IRQ even though hub remote wake is disabled"
+    );
 }
 
 #[test]
