@@ -7042,7 +7042,7 @@ static NTSTATUS APIENTRY AeroGpuDdiSubmitCommand(_In_ const HANDLE hAdapter,
          * If the command stream requires an alloc table but we were not able to build one, fail
          * the submission instead of sending an incomplete descriptor to the host/emulator.
          */
-        const BOOLEAN cmdNeedsAllocTable = AeroGpuCmdStreamRequiresAllocTable(dmaVa, pSubmitCommand->DmaBufferSize);
+        const BOOLEAN cmdNeedsAllocTable = AeroGpuCmdStreamRequiresAllocTable(dmaVa, dmaSizeBytes);
         const BOOLEAN listHasAllocIds = (allocTableSizeBytes != 0);
         const BOOLEAN needsAllocTable = cmdNeedsAllocTable || listHasAllocIds;
   
