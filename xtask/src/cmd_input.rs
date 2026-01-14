@@ -164,6 +164,8 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
         return Ok(());
     };
 
+    let rust_only_hint = rust_only_hint(&opts);
+
     let repo_root = paths::repo_root()?;
     let runner = Runner::new();
 
@@ -226,10 +228,9 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
                     ));
                 }
 
-                return Err(XtaskError::Message(
-                    "missing required command: node\n\nInstall Node, or run `cargo xtask input --rust-only` to skip npm + Playwright."
-                        .to_string(),
-                ));
+                return Err(XtaskError::Message(format!(
+                    "missing required command: node\n\nInstall Node, or run `{rust_only_hint}` to skip npm + Playwright."
+                )));
             }
             Err(err) => return Err(err),
         }
@@ -248,15 +249,15 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
             "WASM: wasm-pack test --node crates/aero-wasm {wasm_pack_focused_flags} --locked"
         );
         runner.run_step(&step_desc, &mut cmd)
-        .map_err(|err| match err {
-            XtaskError::Message(msg) if msg == "missing required command: wasm-pack" => {
-                XtaskError::Message(
-                    "missing required command: wasm-pack\n\nInstall wasm-pack (https://rustwasm.github.io/wasm-pack/installer/) or omit `--wasm`."
-                        .to_string(),
-                )
-            }
-            other => other,
-        })?;
+            .map_err(|err| match err {
+                XtaskError::Message(msg) if msg == "missing required command: wasm-pack" => {
+                    XtaskError::Message(
+                        "missing required command: wasm-pack\n\nInstall wasm-pack (https://rustwasm.github.io/wasm-pack/installer/) or omit `--wasm`."
+                            .to_string(),
+                    )
+                }
+                other => other,
+            })?;
     }
 
     if opts.rust_only {
@@ -276,9 +277,10 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
         repo_root.join("node_modules").is_dir() || repo_root.join("web/node_modules").is_dir();
     if !has_node_modules {
         return Err(XtaskError::Message(
-            "node_modules is missing; install Node dependencies first (e.g. `npm ci`), \
-             or run `cargo xtask input --rust-only` to skip npm + Playwright"
-                .to_string(),
+            format!(
+                "node_modules is missing; install Node dependencies first (e.g. `npm ci`), \
+                 or run `{rust_only_hint}` to skip npm + Playwright"
+            ),
         ));
     }
 
@@ -293,7 +295,7 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
         Ok(()) => {}
         Err(XtaskError::Message(msg)) if msg.starts_with("missing required command: npm") => {
             return Err(XtaskError::Message(format!(
-                "{msg}\n\nInstall Node tooling, or run `cargo xtask input --rust-only` to skip npm + Playwright."
+                "{msg}\n\nInstall Node tooling, or run `{rust_only_hint}` to skip npm + Playwright."
             )));
         }
         Err(err) => return Err(err),
@@ -309,7 +311,7 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
             Ok(()) => {}
             Err(XtaskError::Message(msg)) if msg.starts_with("missing required command: npm") => {
                 return Err(XtaskError::Message(format!(
-                    "{msg}\n\nInstall Node tooling, or run `cargo xtask input --rust-only` to skip npm + Playwright."
+                    "{msg}\n\nInstall Node tooling, or run `{rust_only_hint}` to skip npm + Playwright."
                 )));
             }
             Err(err) => return Err(err),
@@ -435,6 +437,24 @@ fn format_test_flags(tests: &[&str]) -> String {
         .map(|test| format!("--test {test}"))
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn rust_only_hint(opts: &InputOpts) -> String {
+    let mut args = vec!["cargo xtask input".to_string()];
+    if opts.usb_all {
+        args.push("--usb-all".into());
+    }
+    if opts.machine {
+        args.push("--machine".into());
+    }
+    if opts.wasm {
+        args.push("--wasm".into());
+    }
+    if opts.with_wasm {
+        args.push("--with-wasm".into());
+    }
+    args.push("--rust-only".into());
+    args.join(" ")
 }
 
 #[cfg(test)]
