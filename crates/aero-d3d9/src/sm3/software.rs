@@ -600,6 +600,7 @@ fn exec_op(
         | IrOp::Dp2Add { dst, modifiers, .. }
         | IrOp::Dp3 { dst, modifiers, .. }
         | IrOp::Dp4 { dst, modifiers, .. }
+        | IrOp::Dst { dst, modifiers, .. }
         | IrOp::Crs { dst, modifiers, .. }
         | IrOp::MatrixMul { dst, modifiers, .. }
         | IrOp::Rcp { dst, modifiers, .. }
@@ -737,6 +738,12 @@ fn exec_op(
                 src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
             );
             Vec4::splat(a.dot4(b))
+        }
+        IrOp::Dst { src0, src1, .. } => {
+            let a = exec_src(src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            let b = exec_src(src1, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
+            // D3D9 `dst`: x is always 1.0; y/z/w are pairwise products of src0 and src1.
+            Vec4::new(1.0, a.y * b.y, a.z * b.z, a.w * b.w)
         }
         IrOp::Crs { src0, src1, .. } => {
             let a = exec_src(
@@ -1361,6 +1368,12 @@ fn collect_used_pixel_inputs_op(op: &IrOp, out: &mut BTreeSet<(RegFile, u32)>) {
             ..
         }
         | IrOp::Dp4 {
+            src0,
+            src1,
+            modifiers,
+            ..
+        }
+        | IrOp::Dst {
             src0,
             src1,
             modifiers,

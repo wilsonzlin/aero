@@ -205,6 +205,17 @@ pub enum IrOp {
         src: Src,
         modifiers: InstModifiers,
     },
+    /// Distance vector helper (`dst`).
+    ///
+    /// `dst.x` is always 1.0, and the remaining components are pairwise products of `src0` and
+    /// `src1` (with swizzles/modifiers applied):
+    /// `dst = vec4(1, src0.y*src1.y, src0.z*src1.z, src0.w*src1.w)`.
+    Dst {
+        dst: Dst,
+        src0: Src,
+        src1: Src,
+        modifiers: InstModifiers,
+    },
     /// Cross product: `dst.xyz = cross(src0.xyz, src1.xyz)`.
     ///
     /// The W component is not well-specified; we set it to 1.0 for deterministic output.
@@ -781,6 +792,16 @@ fn format_op(op: &IrOp) -> String {
             "{} {}",
             format_inst("abs", modifiers),
             format_dst_src(dst, std::slice::from_ref(src))
+        ),
+        IrOp::Dst {
+            dst,
+            src0,
+            src1,
+            modifiers,
+        } => format!(
+            "{} {}",
+            format_inst("dst", modifiers),
+            format_dst_src(dst, &[src0.clone(), src1.clone()])
         ),
         IrOp::Crs {
             dst,

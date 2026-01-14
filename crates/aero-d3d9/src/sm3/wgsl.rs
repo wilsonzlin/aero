@@ -506,6 +506,12 @@ fn collect_op_usage(op: &IrOp, usage: &mut RegUsage) {
             src1,
             modifiers,
         }
+        | IrOp::Dst {
+            dst,
+            src0,
+            src1,
+            modifiers,
+        }
         | IrOp::Crs {
             dst,
             src0,
@@ -1339,6 +1345,30 @@ fn emit_op_line(
             let e = apply_float_result_modifiers(format!("vec4<f32>({dot})"), modifiers)?;
             emit_assign(dst, e)
         }
+        IrOp::Dst {
+            dst,
+            src0,
+            src1,
+            modifiers,
+        } => {
+            let (a, aty) = src_expr(src0, f32_defs)?;
+            let (b, bty) = src_expr(src1, f32_defs)?;
+            if aty != ScalarTy::F32 || bty != ScalarTy::F32 {
+                return Err(err("dst only supports float sources in WGSL lowering"));
+            }
+            let dst_ty = reg_scalar_ty(dst.reg.file).ok_or_else(|| err("unsupported dst file"))?;
+            if dst_ty != ScalarTy::F32 {
+                return Err(err("dst destination must be float"));
+            }
+            // D3D9 `dst`: x is always 1.0; y/z/w are pairwise products of src0 and src1.
+            let e = apply_float_result_modifiers(
+                format!(
+                    "vec4<f32>(1.0, ({a}).y * ({b}).y, ({a}).z * ({b}).z, ({a}).w * ({b}).w)"
+                ),
+                modifiers,
+            )?;
+            emit_assign(dst, e)
+        }
         IrOp::Crs {
             dst,
             src0,
@@ -1967,6 +1997,7 @@ fn op_modifiers(op: &IrOp) -> &InstModifiers {
         | IrOp::Dp2Add { modifiers, .. }
         | IrOp::Dp3 { modifiers, .. }
         | IrOp::Dp4 { modifiers, .. }
+        | IrOp::Dst { modifiers, .. }
         | IrOp::Crs { modifiers, .. }
         | IrOp::MatrixMul { modifiers, .. }
         | IrOp::Rcp { modifiers, .. }

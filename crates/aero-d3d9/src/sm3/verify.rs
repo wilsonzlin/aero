@@ -219,6 +219,12 @@ fn verify_op(op: &IrOp, stage: ShaderStage) -> Result<(), VerifyError> {
             src1,
             modifiers,
         }
+        | IrOp::Dst {
+            dst: _,
+            src0,
+            src1,
+            modifiers,
+        }
         | IrOp::Crs {
             dst: _,
             src0,

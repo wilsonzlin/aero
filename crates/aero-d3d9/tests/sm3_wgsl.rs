@@ -2117,6 +2117,50 @@ fn wgsl_crs_compiles() {
 }
 
 #[test]
+fn wgsl_dst_compiles() {
+    // vs_2_0:
+    //   dcl_position v0
+    //   dst r0, v0, v0
+    //   mov oPos, r0
+    //   end
+    let tokens = vec![
+        version_token(ShaderStage::Vertex, 2, 0),
+        // dcl_position v0
+        opcode_token(31, 1),
+        dst_token(1, 0, 0xF),
+        // dst r0, v0, v0
+        opcode_token(17, 3),
+        dst_token(0, 0, 0xF),
+        src_token(1, 0, 0xE4, 0),
+        src_token(1, 0, 0xE4, 0),
+        // mov oPos, r0
+        opcode_token(1, 2),
+        dst_token(4, 0, 0xF),
+        src_token(0, 0, 0xE4, 0),
+        // end
+        0x0000_FFFF,
+    ];
+
+    let decoded = decode_u32_tokens(&tokens).unwrap();
+    let ir = build_ir(&decoded).unwrap();
+    verify_ir(&ir).unwrap();
+
+    let wgsl = generate_wgsl(&ir).unwrap().wgsl;
+    // Ensure we exercised the custom lowering (pairwise products with a constant 1.0 in X).
+    assert!(wgsl.contains("vec4<f32>(1.0,"), "{wgsl}");
+    assert!(wgsl.contains(".y *"), "{wgsl}");
+    assert!(wgsl.contains(".z *"), "{wgsl}");
+
+    let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+}
+
+#[test]
 fn wgsl_ret_ends_shader_compiles() {
     // vs_3_0:
     //   dcl_position v0

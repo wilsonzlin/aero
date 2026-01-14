@@ -80,6 +80,11 @@ pub enum Opcode {
     Min,
     Max,
     Abs,
+    /// Distance vector helper (`dst`).
+    ///
+    /// D3D9 `dst` computes a vector whose X component is always 1.0, and whose Y/Z/W components
+    /// are pairwise products of the corresponding components of the two source operands.
+    Dst,
     /// Cross product (`dst.xyz = cross(src0.xyz, src1.xyz)`).
     Crs,
     /// Sign (`dst = sign(src)` component-wise).
@@ -139,6 +144,7 @@ impl Opcode {
             10 => Self::Min,
             11 => Self::Max,
             16 => Self::Lit, // 0x10
+            17 => Self::Dst, // 0x11
             12 => Self::Slt,
             13 => Self::Sge,
             14 => Self::Exp,
@@ -218,6 +224,7 @@ impl Opcode {
             Self::Min => "min",
             Self::Max => "max",
             Self::Abs => "abs",
+            Self::Dst => "dst",
             Self::Crs => "crs",
             Self::Sgn => "sgn",
             Self::Nrm => "nrm",
@@ -927,6 +934,7 @@ fn decode_operands_and_extras(
         | Opcode::Dp2
         | Opcode::Dp3
         | Opcode::Dp4
+        | Opcode::Dst
         | Opcode::Crs
         | Opcode::Pow
         | Opcode::M4x4
