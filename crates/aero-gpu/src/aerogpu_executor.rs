@@ -822,6 +822,17 @@ fn fs_main() -> @location(0) vec4<f32> {
         })
     }
 
+    /// Reset executor state and drop all tracked resources.
+    ///
+    /// This is primarily intended for tests so they can reuse a single `wgpu::Device` without
+    /// repeatedly creating/destroying devices (which can trigger allocator crashes on some
+    /// backends/drivers).
+    pub fn reset(&mut self) {
+        self.buffers.clear();
+        self.textures.clear();
+        self.state = ExecutorState::default();
+    }
+
     pub fn device(&self) -> &wgpu::Device {
         &self.device
     }
@@ -4281,6 +4292,8 @@ fn coalesce_ranges_u32(ranges: &mut Vec<Range<u32>>) {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Mutex, OnceLock};
+
     use super::*;
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -4353,6 +4366,47 @@ mod tests {
             )
             .await
             .ok()
+    }
+
+    fn shared_executor_bc_off() -> Option<&'static Mutex<AeroGpuExecutor>> {
+        static EXEC: OnceLock<Option<&'static Mutex<AeroGpuExecutor>>> = OnceLock::new();
+        EXEC.get_or_init(|| {
+            let Some((device, queue)) =
+                pollster::block_on(create_device_queue(wgpu::Features::empty()))
+            else {
+                return None;
+            };
+            let exec = AeroGpuExecutor::new(device, queue).expect("executor init must succeed");
+            Some(Box::leak(Box::new(Mutex::new(exec))))
+        })
+        .as_ref()
+        .copied()
+    }
+
+    fn shared_executor_bc_on() -> Option<&'static Mutex<AeroGpuExecutor>> {
+        static EXEC: OnceLock<Option<&'static Mutex<AeroGpuExecutor>>> = OnceLock::new();
+        EXEC.get_or_init(|| {
+            let Some((device, queue)) = pollster::block_on(create_device_queue(
+                wgpu::Features::TEXTURE_COMPRESSION_BC,
+            )) else {
+                return None;
+            };
+            let exec = AeroGpuExecutor::new(device, queue).expect("executor init must succeed");
+            Some(Box::leak(Box::new(Mutex::new(exec))))
+        })
+        .as_ref()
+        .copied()
+    }
+
+    fn with_executor<R>(bc_enabled: bool, f: impl FnOnce(&mut AeroGpuExecutor) -> R) -> Option<R> {
+        let exec = if bc_enabled {
+            shared_executor_bc_on()?
+        } else {
+            shared_executor_bc_off()?
+        };
+        let mut exec = exec.lock().unwrap();
+        exec.reset();
+        Some(f(&mut exec))
     }
 
     #[test]
@@ -4487,12 +4541,7 @@ mod tests {
     #[test]
     #[cfg(not(target_arch = "wasm32"))]
     fn map_format_conformance_bc_disabled() {
-        pollster::block_on(async {
-            let Some((device, queue)) = create_device_queue(wgpu::Features::empty()).await else {
-                return;
-            };
-            let exec = AeroGpuExecutor::new(device, queue).expect("executor init must succeed");
-
+        let Some(()) = with_executor(/*bc_enabled=*/ false, |exec| {
             for &format in ALL_PROTOCOL_FORMATS {
                 let got = exec.map_format(format as u32, /*width=*/ 4, /*height=*/ 4, 1);
                 match expected_map_bc_off(format) {
@@ -4526,20 +4575,15 @@ mod tests {
                     },
                 }
             }
-        });
+        }) else {
+            return;
+        };
     }
 
     #[test]
     #[cfg(not(target_arch = "wasm32"))]
     fn map_format_conformance_bc_enabled() {
-        pollster::block_on(async {
-            let Some((device, queue)) =
-                create_device_queue(wgpu::Features::TEXTURE_COMPRESSION_BC).await
-            else {
-                return;
-            };
-            let exec = AeroGpuExecutor::new(device, queue).expect("executor init must succeed");
-
+        let Some(()) = with_executor(/*bc_enabled=*/ true, |exec| {
             for &format in ALL_PROTOCOL_FORMATS {
                 let got = exec.map_format(format as u32, /*width=*/ 4, /*height=*/ 4, 1);
                 match expected_map_bc_on(format) {
@@ -4573,7 +4617,9 @@ mod tests {
                     },
                 }
             }
-        });
+        }) else {
+            return;
+        };
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -4858,13 +4904,7 @@ mod tests {
     #[test]
     #[cfg(not(target_arch = "wasm32"))]
     fn ia_buffers_are_bindable_as_storage_for_vertex_pulling() {
-        pollster::block_on(async {
-            let Some((device, queue)) = create_device_queue(wgpu::Features::empty()).await else {
-                return;
-            };
-
-            let mut exec = AeroGpuExecutor::new(device, queue).expect("executor init must succeed");
-
+        let Some(()) = with_executor(/*bc_enabled=*/ false, |exec| {
             // Ensure the backend supports compute+storage before asserting. Some downlevel
             // backends (e.g. WebGL2) cannot run vertex pulling compute prepasses.
             let wgsl = r#"
@@ -4918,7 +4958,7 @@ fn main() {
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                 });
             exec.device.poll(wgpu::Maintain::Wait);
-            let err = exec.device.pop_error_scope().await;
+            let err = pollster::block_on(exec.device.pop_error_scope());
             if err.is_some() {
                 // Compute/storage pipelines aren't available on this adapter.
                 return;
@@ -4951,27 +4991,21 @@ fn main() {
                     }],
                 });
                 exec.device.poll(wgpu::Maintain::Wait);
-                let err = exec.device.pop_error_scope().await;
+                let err = pollster::block_on(exec.device.pop_error_scope());
                 assert!(
                     err.is_none(),
                     "{label} buffer must be bindable as STORAGE for vertex pulling, got: {err:?}"
                 );
             }
-        });
+        }) else {
+            return;
+        };
     }
 
     #[test]
     #[cfg(not(target_arch = "wasm32"))]
     fn create_texture2d_bc_falls_back_when_dimensions_not_block_aligned_even_if_bc_enabled() {
-        pollster::block_on(async {
-            let Some((device, queue)) =
-                create_device_queue(wgpu::Features::TEXTURE_COMPRESSION_BC).await
-            else {
-                // Adapter/device does not support BC compression; nothing to validate here.
-                return;
-            };
-
-            let mut exec = AeroGpuExecutor::new(device, queue).expect("executor init must succeed");
+        let Some(()) = with_executor(/*bc_enabled=*/ true, |exec| {
             exec.exec_create_texture2d(
                 CreateTexture2dArgs {
                     texture_handle: 1,
@@ -4992,21 +5026,16 @@ fn main() {
             let tex = exec.textures.get(&1).expect("texture must exist");
             assert_eq!(tex.format, wgpu::TextureFormat::Rgba8Unorm);
             assert_eq!(tex.upload_transform, TextureUploadTransform::Bc1ToRgba8);
-        });
+        }) else {
+            // Adapter/device does not support BC compression; nothing to validate here.
+            return;
+        };
     }
 
     #[test]
     #[cfg(not(target_arch = "wasm32"))]
     fn create_texture2d_bc_falls_back_for_tiny_dimensions_even_if_bc_enabled() {
-        pollster::block_on(async {
-            let Some((device, queue)) =
-                create_device_queue(wgpu::Features::TEXTURE_COMPRESSION_BC).await
-            else {
-                // Adapter/device does not support BC compression; nothing to validate here.
-                return;
-            };
-
-            let mut exec = AeroGpuExecutor::new(device, queue).expect("executor init must succeed");
+        let Some(()) = with_executor(/*bc_enabled=*/ true, |exec| {
             // wgpu validation rejects creating BC textures unless the base mip is block-aligned
             // (4x4), even when the base mip is smaller than a full block (e.g. 1x1 BC1).
             exec.exec_create_texture2d(
@@ -5029,22 +5058,17 @@ fn main() {
             let tex = exec.textures.get(&1).expect("texture must exist");
             assert_eq!(tex.format, wgpu::TextureFormat::Rgba8Unorm);
             assert_eq!(tex.upload_transform, TextureUploadTransform::Bc1ToRgba8);
-        });
+        }) else {
+            // Adapter/device does not support BC compression; nothing to validate here.
+            return;
+        };
     }
 
     #[test]
     #[cfg(not(target_arch = "wasm32"))]
     fn create_texture2d_bc_falls_back_when_intermediate_mip_is_not_block_aligned_even_if_bc_enabled(
     ) {
-        pollster::block_on(async {
-            let Some((device, queue)) =
-                create_device_queue(wgpu::Features::TEXTURE_COMPRESSION_BC).await
-            else {
-                // Adapter/device does not support BC compression; nothing to validate here.
-                return;
-            };
-
-            let mut exec = AeroGpuExecutor::new(device, queue).expect("executor init must succeed");
+        let Some(()) = with_executor(/*bc_enabled=*/ true, |exec| {
             // 12x12 with mip_levels=2 produces mip1=6x6. Some backends conservatively validate that
             // mip levels >= 4 remain block-aligned, so we fall back to an RGBA8 texture + CPU
             // decompression.
@@ -5068,21 +5092,16 @@ fn main() {
             let tex = exec.textures.get(&1).expect("texture must exist");
             assert_eq!(tex.format, wgpu::TextureFormat::Rgba8Unorm);
             assert_eq!(tex.upload_transform, TextureUploadTransform::Bc1ToRgba8);
-        });
+        }) else {
+            // Adapter/device does not support BC compression; nothing to validate here.
+            return;
+        };
     }
 
     #[test]
     #[cfg(not(target_arch = "wasm32"))]
     fn copy_texture2d_rejects_host_format_mismatch_after_bc_fallback() {
-        pollster::block_on(async {
-            let Some((device, queue)) =
-                create_device_queue(wgpu::Features::TEXTURE_COMPRESSION_BC).await
-            else {
-                // Adapter/device does not support BC compression; nothing to validate here.
-                return;
-            };
-
-            let mut exec = AeroGpuExecutor::new(device, queue).expect("executor init must succeed");
+        let Some(()) = with_executor(/*bc_enabled=*/ true, |exec| {
             exec.exec_create_texture2d(
                 CreateTexture2dArgs {
                     texture_handle: 1,
@@ -5146,18 +5165,16 @@ fn main() {
                 }
                 other => panic!("expected validation error, got {other:?}"),
             }
-        });
+        }) else {
+            // Adapter/device does not support BC compression; nothing to validate here.
+            return;
+        };
     }
 
     #[test]
     #[cfg(not(target_arch = "wasm32"))]
     fn upload_resource_texture2d_supports_mip_array_subresource_offsets() {
-        pollster::block_on(async {
-            let Some((device, queue)) = create_device_queue(wgpu::Features::empty()).await else {
-                return;
-            };
-
-            let mut exec = AeroGpuExecutor::new(device, queue).expect("executor init must succeed");
+        let Some(()) = with_executor(/*bc_enabled=*/ false, |exec| {
             exec.exec_create_texture2d(
                 CreateTexture2dArgs {
                     texture_handle: 1,
@@ -5262,18 +5279,15 @@ fn main() {
                     "row {y} bytes"
                 );
             }
-        });
+        }) else {
+            return;
+        };
     }
 
     #[test]
     #[cfg(not(target_arch = "wasm32"))]
     fn upload_resource_texture2d_accepts_packed_mip_array_payload() {
-        pollster::block_on(async {
-            let Some((device, queue)) = create_device_queue(wgpu::Features::empty()).await else {
-                return;
-            };
-
-            let mut exec = AeroGpuExecutor::new(device, queue).expect("executor init must succeed");
+        let Some(()) = with_executor(/*bc_enabled=*/ false, |exec| {
             exec.exec_create_texture2d(
                 CreateTexture2dArgs {
                     texture_handle: 1,
@@ -5371,6 +5385,8 @@ fn main() {
                 )
                 .expect("readback must succeed");
             assert_eq!(&readback[0..4], &[0xDE, 0xAD, 0xBE, 0xEF]);
-        });
+        }) else {
+            return;
+        };
     }
 }

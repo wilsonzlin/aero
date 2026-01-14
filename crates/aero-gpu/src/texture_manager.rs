@@ -1132,103 +1132,123 @@ mod tests {
     use super::*;
 
     #[cfg(not(target_arch = "wasm32"))]
-    async fn create_device_queue() -> Option<(wgpu::Device, wgpu::Queue)> {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
+    use std::sync::OnceLock;
 
-            let needs_runtime_dir = std::env::var("XDG_RUNTIME_DIR")
-                .ok()
-                .map(|v| v.is_empty())
-                .unwrap_or(true);
+    #[cfg(not(target_arch = "wasm32"))]
+    fn device_queue() -> Option<(&'static wgpu::Device, &'static wgpu::Queue)> {
+        // wgpu device creation/destruction can crash on some platforms/backends (observed in CI),
+        // so reuse a single device/queue for all unit tests in this module and leak it to avoid
+        // dropping at process exit.
+        static DEVICE_QUEUE: OnceLock<Option<&'static (wgpu::Device, wgpu::Queue)>> =
+            OnceLock::new();
 
-            if needs_runtime_dir {
-                let dir = std::env::temp_dir().join(format!(
-                    "aero-gpu-texture-manager-xdg-runtime-{}",
-                    std::process::id()
-                ));
-                let _ = std::fs::create_dir_all(&dir);
-                let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
-                std::env::set_var("XDG_RUNTIME_DIR", &dir);
-            }
-        }
+        let pair = DEVICE_QUEUE
+            .get_or_init(|| {
+                let Some((device, queue)) = pollster::block_on(async {
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
 
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            // Prefer GL on Linux CI to avoid crashes in some Vulkan software adapters.
-            backends: if cfg!(target_os = "linux") {
-                wgpu::Backends::GL
-            } else {
-                wgpu::Backends::PRIMARY
-            },
-            ..Default::default()
-        });
+                        let needs_runtime_dir = std::env::var("XDG_RUNTIME_DIR")
+                            .ok()
+                            .map(|v| v.is_empty())
+                            .unwrap_or(true);
 
-        let adapter = match instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::LowPower,
-                compatible_surface: None,
-                force_fallback_adapter: true,
+                        if needs_runtime_dir {
+                            let dir = std::env::temp_dir().join(format!(
+                                "aero-gpu-texture-manager-xdg-runtime-{}",
+                                std::process::id()
+                            ));
+                            let _ = std::fs::create_dir_all(&dir);
+                            let _ = std::fs::set_permissions(
+                                &dir,
+                                std::fs::Permissions::from_mode(0o700),
+                            );
+                            std::env::set_var("XDG_RUNTIME_DIR", &dir);
+                        }
+                    }
+
+                    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+                        // Prefer GL on Linux CI to avoid crashes in some Vulkan software adapters.
+                        backends: if cfg!(target_os = "linux") {
+                            wgpu::Backends::GL
+                        } else {
+                            wgpu::Backends::PRIMARY
+                        },
+                        ..Default::default()
+                    });
+
+                    let adapter = match instance
+                        .request_adapter(&wgpu::RequestAdapterOptions {
+                            power_preference: wgpu::PowerPreference::LowPower,
+                            compatible_surface: None,
+                            force_fallback_adapter: true,
+                        })
+                        .await
+                    {
+                        Some(adapter) => Some(adapter),
+                        None => {
+                            instance
+                                .request_adapter(&wgpu::RequestAdapterOptions {
+                                    power_preference: wgpu::PowerPreference::LowPower,
+                                    compatible_surface: None,
+                                    force_fallback_adapter: false,
+                                })
+                                .await
+                        }
+                    };
+
+                    let adapter = adapter?;
+
+                    adapter
+                        .request_device(
+                            &wgpu::DeviceDescriptor {
+                                label: Some("aero-gpu texture_manager test device"),
+                                required_features: wgpu::Features::empty(),
+                                required_limits: wgpu::Limits::downlevel_defaults(),
+                            },
+                            None,
+                        )
+                        .await
+                        .ok()
+                }) else {
+                    return None;
+                };
+
+                Some(Box::leak(Box::new((device, queue))))
             })
-            .await
-        {
-            Some(adapter) => Some(adapter),
-            None => {
-                instance
-                    .request_adapter(&wgpu::RequestAdapterOptions {
-                        power_preference: wgpu::PowerPreference::LowPower,
-                        compatible_surface: None,
-                        force_fallback_adapter: false,
-                    })
-                    .await
-            }
-        };
+            .as_ref()
+            .copied()?;
 
-        let adapter = adapter?;
-
-        adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    label: Some("aero-gpu texture_manager test device"),
-                    required_features: wgpu::Features::empty(),
-                    required_limits: wgpu::Limits::downlevel_defaults(),
-                },
-                None,
-            )
-            .await
-            .ok()
+        Some((&pair.0, &pair.1))
     }
 
     #[test]
     #[cfg(not(target_arch = "wasm32"))]
     fn create_texture_bc_falls_back_when_dimensions_not_block_aligned() {
-        pollster::block_on(async {
-            let Some((device, queue)) = create_device_queue().await else {
-                return;
-            };
+        let Some((device, queue)) = device_queue() else {
+            return;
+        };
 
-            let mut caps = GpuCapabilities::from_device(&device);
-            // Simulate a BC-enabled device even if the underlying adapter doesn't support BC: the
-            // texture must still fall back based on its dimensions.
-            caps.supports_bc_texture_compression = true;
+        let mut caps = GpuCapabilities::from_device(device);
+        // Simulate a BC-enabled device even if the underlying adapter doesn't support BC: the
+        // texture must still fall back based on its dimensions.
+        caps.supports_bc_texture_compression = true;
 
-            let mut mgr = TextureManager::new(&device, &queue, caps);
-            mgr.create_texture(
-                1,
-                TextureDesc::new_2d(
-                    9,
-                    9,
-                    TextureFormat::Bc1RgbaUnorm,
-                    wgpu::TextureUsages::TEXTURE_BINDING,
-                ),
-            );
+        let mut mgr = TextureManager::new(device, queue, caps);
+        mgr.create_texture(
+            1,
+            TextureDesc::new_2d(
+                9,
+                9,
+                TextureFormat::Bc1RgbaUnorm,
+                wgpu::TextureUsages::TEXTURE_BINDING,
+            ),
+        );
 
-            let entry = mgr.textures.get(&1).expect("texture must exist");
-            assert_eq!(entry.selection.actual, wgpu::TextureFormat::Rgba8Unorm);
-            assert_eq!(
-                entry.selection.upload_transform,
-                TextureUploadTransform::Bc1ToRgba8
-            );
-        });
+        let entry = mgr.textures.get(&1).expect("texture must exist");
+        assert_eq!(entry.selection.actual, wgpu::TextureFormat::Rgba8Unorm);
+        assert_eq!(entry.selection.upload_transform, TextureUploadTransform::Bc1ToRgba8);
     }
 
     #[test]
@@ -1290,162 +1310,154 @@ mod tests {
     #[test]
     #[cfg(not(target_arch = "wasm32"))]
     fn texture_manager_view_rejects_out_of_range_base_mip_level() {
-        pollster::block_on(async {
-            let Some((device, queue)) = create_device_queue().await else {
-                return;
-            };
-            let caps = GpuCapabilities::from_device(&device);
+        let Some((device, queue)) = device_queue() else {
+            return;
+        };
+        let caps = GpuCapabilities::from_device(device);
 
-            let mut mgr = TextureManager::new(&device, &queue, caps);
-            mgr.create_texture(
+        let mut mgr = TextureManager::new(device, queue, caps);
+        mgr.create_texture(
+            1,
+            TextureDesc::new_2d(
+                4,
+                4,
+                TextureFormat::Rgba8Unorm,
+                wgpu::TextureUsages::TEXTURE_BINDING,
+            ),
+        );
+
+        let err = mgr
+            .view(
                 1,
-                TextureDesc::new_2d(
-                    4,
-                    4,
-                    TextureFormat::Rgba8Unorm,
-                    wgpu::TextureUsages::TEXTURE_BINDING,
-                ),
-            );
-
-            let err = mgr
-                .view(
-                    1,
-                    TextureViewDesc {
-                        base_mip_level: 1,
-                        ..Default::default()
-                    },
-                )
-                .unwrap_err();
-            assert!(matches!(
-                err,
-                TextureManagerError::ViewBaseMipLevelOutOfRange { .. }
-            ));
-        });
+                TextureViewDesc {
+                    base_mip_level: 1,
+                    ..Default::default()
+                },
+            )
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            TextureManagerError::ViewBaseMipLevelOutOfRange { .. }
+        ));
     }
 
     #[test]
     #[cfg(not(target_arch = "wasm32"))]
     fn texture_manager_view_rejects_out_of_bounds_array_range() {
-        pollster::block_on(async {
-            let Some((device, queue)) = create_device_queue().await else {
-                return;
-            };
-            let caps = GpuCapabilities::from_device(&device);
+        let Some((device, queue)) = device_queue() else {
+            return;
+        };
+        let caps = GpuCapabilities::from_device(device);
 
-            let mut mgr = TextureManager::new(&device, &queue, caps);
-            mgr.create_texture(
-                1,
-                TextureDesc {
-                    size: wgpu::Extent3d {
-                        width: 4,
-                        height: 4,
-                        depth_or_array_layers: 2,
-                    },
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format: TextureFormat::Rgba8Unorm,
-                    usage: wgpu::TextureUsages::TEXTURE_BINDING,
-                    label: None,
+        let mut mgr = TextureManager::new(device, queue, caps);
+        mgr.create_texture(
+            1,
+            TextureDesc {
+                size: wgpu::Extent3d {
+                    width: 4,
+                    height: 4,
+                    depth_or_array_layers: 2,
                 },
-            );
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                label: None,
+            },
+        );
 
-            let err = mgr
-                .view(
-                    1,
-                    TextureViewDesc {
-                        base_array_layer: 1,
-                        array_layer_count: Some(2),
-                        ..Default::default()
-                    },
-                )
-                .unwrap_err();
-            assert!(matches!(
-                err,
-                TextureManagerError::ViewArrayRangeOutOfBounds { .. }
-            ));
-        });
+        let err = mgr
+            .view(
+                1,
+                TextureViewDesc {
+                    base_array_layer: 1,
+                    array_layer_count: Some(2),
+                    ..Default::default()
+                },
+            )
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            TextureManagerError::ViewArrayRangeOutOfBounds { .. }
+        ));
     }
 
     #[test]
     #[cfg(not(target_arch = "wasm32"))]
     fn create_texture_sanitizes_zero_sized_descriptors() {
-        pollster::block_on(async {
-            let Some((device, queue)) = create_device_queue().await else {
-                return;
-            };
-            let caps = GpuCapabilities::from_device(&device);
+        let Some((device, queue)) = device_queue() else {
+            return;
+        };
+        let caps = GpuCapabilities::from_device(device);
 
-            let mut mgr = TextureManager::new(&device, &queue, caps);
-            mgr.create_texture(
-                1,
-                TextureDesc {
-                    size: wgpu::Extent3d {
-                        width: 0,
-                        height: 0,
-                        depth_or_array_layers: 0,
-                    },
-                    mip_level_count: 0,
-                    sample_count: 0,
-                    dimension: wgpu::TextureDimension::D2,
-                    format: TextureFormat::Rgba8Unorm,
-                    usage: wgpu::TextureUsages::TEXTURE_BINDING,
-                    label: None,
+        let mut mgr = TextureManager::new(device, queue, caps);
+        mgr.create_texture(
+            1,
+            TextureDesc {
+                size: wgpu::Extent3d {
+                    width: 0,
+                    height: 0,
+                    depth_or_array_layers: 0,
                 },
-            );
+                mip_level_count: 0,
+                sample_count: 0,
+                dimension: wgpu::TextureDimension::D2,
+                format: TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                label: None,
+            },
+        );
 
-            let entry = mgr.textures.get(&1).expect("texture must exist");
-            assert_eq!(entry.desc.size.width, 1);
-            assert_eq!(entry.desc.size.height, 1);
-            assert_eq!(entry.desc.size.depth_or_array_layers, 1);
-            assert_eq!(entry.desc.sample_count, 1);
-            assert_eq!(entry.desc.mip_level_count, 1);
-        });
+        let entry = mgr.textures.get(&1).expect("texture must exist");
+        assert_eq!(entry.desc.size.width, 1);
+        assert_eq!(entry.desc.size.height, 1);
+        assert_eq!(entry.desc.size.depth_or_array_layers, 1);
+        assert_eq!(entry.desc.sample_count, 1);
+        assert_eq!(entry.desc.mip_level_count, 1);
     }
 
     #[test]
     #[cfg(not(target_arch = "wasm32"))]
     fn write_texture_region_noops_on_zero_sized_extent() {
-        pollster::block_on(async {
-            let Some((device, queue)) = create_device_queue().await else {
-                return;
-            };
-            let caps = GpuCapabilities::from_device(&device);
+        let Some((device, queue)) = device_queue() else {
+            return;
+        };
+        let caps = GpuCapabilities::from_device(device);
 
-            let mut mgr = TextureManager::new(&device, &queue, caps);
-            mgr.create_texture(
-                1,
-                TextureDesc::new_2d(
-                    4,
-                    4,
-                    TextureFormat::Rgba8Unorm,
-                    wgpu::TextureUsages::TEXTURE_BINDING,
-                ),
-            );
+        let mut mgr = TextureManager::new(device, queue, caps);
+        mgr.create_texture(
+            1,
+            TextureDesc::new_2d(
+                4,
+                4,
+                TextureFormat::Rgba8Unorm,
+                wgpu::TextureUsages::TEXTURE_BINDING,
+            ),
+        );
 
-            device.push_error_scope(wgpu::ErrorFilter::Validation);
+        device.push_error_scope(wgpu::ErrorFilter::Validation);
 
-            mgr.write_texture_region(
-                1,
-                TextureRegion {
-                    origin: wgpu::Origin3d::ZERO,
-                    size: wgpu::Extent3d {
-                        width: 0,
-                        height: 4,
-                        depth_or_array_layers: 1,
-                    },
-                    mip_level: 0,
+        mgr.write_texture_region(
+            1,
+            TextureRegion {
+                origin: wgpu::Origin3d::ZERO,
+                size: wgpu::Extent3d {
+                    width: 0,
+                    height: 4,
+                    depth_or_array_layers: 1,
                 },
-                &[],
-            )
-            .unwrap();
+                mip_level: 0,
+            },
+            &[],
+        )
+        .unwrap();
 
-            device.poll(wgpu::Maintain::Wait);
-            let err = device.pop_error_scope().await;
-            assert!(
-                err.is_none(),
-                "expected zero-sized write_texture_region to be a no-op without validation errors, got: {err:?}"
-            );
-        });
+        device.poll(wgpu::Maintain::Wait);
+        let err = pollster::block_on(device.pop_error_scope());
+        assert!(
+            err.is_none(),
+            "expected zero-sized write_texture_region to be a no-op without validation errors, got: {err:?}"
+        );
     }
 }

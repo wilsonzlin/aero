@@ -471,9 +471,36 @@ fn is_bc_format(format: u32) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Mutex, OnceLock};
+
     use super::*;
     use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
     use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
+
+    fn shared_executor() -> Option<&'static Mutex<AeroGpuAcmdExecutor>> {
+        static EXEC: OnceLock<Option<&'static Mutex<AeroGpuAcmdExecutor>>> = OnceLock::new();
+        EXEC.get_or_init(|| {
+            let exec = match pollster::block_on(AeroGpuAcmdExecutor::new_headless()) {
+                Ok(exec) => exec,
+                Err(GpuError::Backend(message))
+                    if message == "no suitable wgpu adapter found" =>
+                {
+                    return None;
+                }
+                Err(err) => panic!("failed to create AeroGpuAcmdExecutor: {err}"),
+            };
+            Some(Box::leak(Box::new(Mutex::new(exec))))
+        })
+        .as_ref()
+        .copied()
+    }
+
+    fn with_executor<R>(f: impl FnOnce(&mut AeroGpuAcmdExecutor) -> R) -> Option<R> {
+        let exec = shared_executor()?;
+        let mut exec = exec.lock().unwrap();
+        exec.reset();
+        Some(f(&mut exec))
+    }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     enum MapExpectation {
@@ -601,9 +628,7 @@ mod tests {
 
     #[test]
     fn destroy_resource_clears_presented_scanout() {
-        pollster::block_on(async {
-            let mut exec = AeroGpuAcmdExecutor::new_headless().await.unwrap();
-
+        let Some(()) = with_executor(|exec| {
             const TEX: u32 = 1;
             const SCANOUT: u32 = 0;
 
@@ -627,19 +652,20 @@ mod tests {
             exec.execute_submission(&w.finish(), None).unwrap();
 
             // The scanout should be cleared rather than pointing at a destroyed texture.
-            let scanout = exec.read_presented_scanout_rgba8(SCANOUT).await.unwrap();
+            let scanout =
+                pollster::block_on(exec.read_presented_scanout_rgba8(SCANOUT)).unwrap();
             assert!(
                 scanout.is_none(),
                 "expected scanout to be cleared after destroy"
             );
-        });
+        }) else {
+            return;
+        };
     }
 
     #[test]
     fn set_render_targets_rejects_destroyed_original_handle_while_alias_alive() {
-        pollster::block_on(async {
-            let mut exec = AeroGpuAcmdExecutor::new_headless().await.unwrap();
-
+        let Some(()) = with_executor(|exec| {
             const ORIGINAL: u32 = 1;
             const ALIAS: u32 = 2;
             const TOKEN: u64 = 0x1122_3344_5566_7788;
@@ -672,14 +698,14 @@ mod tests {
                 message.contains("destroyed") || message.contains("was destroyed"),
                 "unexpected error: {message}"
             );
-        });
+        }) else {
+            return;
+        };
     }
 
     #[test]
     fn create_texture2d_rejects_zero_sized_textures() {
-        pollster::block_on(async {
-            let mut exec = AeroGpuAcmdExecutor::new_headless().await.unwrap();
-
+        let Some(()) = with_executor(|exec| {
             let mut w = AerogpuCmdWriter::new();
             w.create_texture2d(
                 /*texture_handle=*/ 1,
@@ -699,14 +725,14 @@ mod tests {
                 err.to_string().contains("width/height"),
                 "unexpected error: {err}"
             );
-        });
+        }) else {
+            return;
+        };
     }
 
     #[test]
     fn clear_x8_render_target_forces_opaque_alpha() {
-        pollster::block_on(async {
-            let mut exec = AeroGpuAcmdExecutor::new_headless().await.unwrap();
-
+        let Some(()) = with_executor(|exec| {
             const SCANOUT: u32 = 0;
             let cases = [
                 ("rgba_x8", AerogpuFormat::R8G8B8X8Unorm as u32),
@@ -735,16 +761,14 @@ mod tests {
                 exec.execute_submission(&w.finish(), None)
                     .unwrap_or_else(|e| panic!("{label}: execute_submission failed: {e:?}"));
 
-                let scanout = exec
-                    .read_presented_scanout_rgba8(SCANOUT)
-                    .await
-                    .unwrap_or_else(|e| {
-                        panic!("{label}: read_presented_scanout_rgba8 failed: {e:?}")
-                    })
+                let scanout = pollster::block_on(exec.read_presented_scanout_rgba8(SCANOUT))
+                    .unwrap_or_else(|e| panic!("{label}: read_presented_scanout_rgba8 failed: {e:?}"))
                     .expect("{label}: scanout should exist after present");
                 assert_eq!((scanout.0, scanout.1), (1, 1), "{label}");
                 assert_eq!(&scanout.2[0..4], &[0, 0, 0, 255], "{label}");
             }
-        });
+        }) else {
+            return;
+        };
     }
 }

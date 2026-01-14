@@ -10407,7 +10407,28 @@ mod tests {
         cmd, d3d9, guest_texture_linear_layout, AerogpuD3d9Error, AerogpuD3d9Executor,
         AerogpuFormat, D3d9SamplerState,
     };
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex, OnceLock};
+
+    fn shared_executor() -> Option<&'static Mutex<AerogpuD3d9Executor>> {
+        static EXEC: OnceLock<Option<&'static Mutex<AerogpuD3d9Executor>>> = OnceLock::new();
+        EXEC.get_or_init(|| {
+            let exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
+                Ok(exec) => exec,
+                Err(AerogpuD3d9Error::AdapterNotFound) => return None,
+                Err(err) => panic!("failed to create executor: {err}"),
+            };
+            Some(Box::leak(Box::new(Mutex::new(exec))))
+        })
+        .as_ref()
+        .copied()
+    }
+
+    fn with_executor<R>(f: impl FnOnce(&mut AerogpuD3d9Executor) -> R) -> Option<R> {
+        let exec = shared_executor()?;
+        let mut exec = exec.lock().unwrap();
+        exec.reset();
+        Some(f(&mut exec))
+    }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     struct BlockExpectation {
@@ -10585,49 +10606,47 @@ mod tests {
 
     #[test]
     fn d3d9_sampler_maxanisotropy_affects_sampler_only_when_anisotropic_supported() {
-        let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-            Ok(exec) => exec,
-            Err(AerogpuD3d9Error::AdapterNotFound) => return,
-            Err(err) => panic!("failed to create executor: {err}"),
-        };
+        let Some(()) = with_executor(|exec| {
+            // MAXANISOTROPY should have no effect unless anisotropic filtering is actually requested.
+            let default_sampler = exec.sampler_for_state(D3d9SamplerState::default());
+            let non_aniso = D3d9SamplerState {
+                max_anisotropy: 16,
+                ..Default::default()
+            };
+            let non_aniso_sampler = exec.sampler_for_state(non_aniso);
+            assert!(
+                Arc::ptr_eq(&default_sampler, &non_aniso_sampler),
+                "MAXANISOTROPY should not change the sampler when anisotropic filtering is not requested"
+            );
 
-        // MAXANISOTROPY should have no effect unless anisotropic filtering is actually requested.
-        let default_sampler = exec.sampler_for_state(D3d9SamplerState::default());
-        let non_aniso = D3d9SamplerState {
-            max_anisotropy: 16,
-            ..Default::default()
-        };
-        let non_aniso_sampler = exec.sampler_for_state(non_aniso);
-        assert!(
-            Arc::ptr_eq(&default_sampler, &non_aniso_sampler),
-            "MAXANISOTROPY should not change the sampler when anisotropic filtering is not requested"
-        );
+            if !exec
+                .downlevel_flags
+                .contains(wgpu::DownlevelFlags::ANISOTROPIC_FILTERING)
+            {
+                return;
+            }
 
-        if !exec
-            .downlevel_flags
-            .contains(wgpu::DownlevelFlags::ANISOTROPIC_FILTERING)
-        {
+            let aniso_2 = D3d9SamplerState {
+                min_filter: d3d9::D3DTEXF_ANISOTROPIC,
+                mag_filter: d3d9::D3DTEXF_ANISOTROPIC,
+                mip_filter: d3d9::D3DTEXF_LINEAR,
+                max_anisotropy: 2,
+                ..Default::default()
+            };
+
+            let aniso_16 = D3d9SamplerState {
+                max_anisotropy: 16,
+                ..aniso_2
+            };
+
+            let sampler_2 = exec.sampler_for_state(aniso_2);
+            let sampler_16 = exec.sampler_for_state(aniso_16);
+            assert!(
+                !Arc::ptr_eq(&sampler_2, &sampler_16),
+                "different MAXANISOTROPY values should produce distinct samplers when anisotropy is supported"
+            );
+        }) else {
             return;
-        }
-
-        let aniso_2 = D3d9SamplerState {
-            min_filter: d3d9::D3DTEXF_ANISOTROPIC,
-            mag_filter: d3d9::D3DTEXF_ANISOTROPIC,
-            mip_filter: d3d9::D3DTEXF_LINEAR,
-            max_anisotropy: 2,
-            ..Default::default()
         };
-
-        let aniso_16 = D3d9SamplerState {
-            max_anisotropy: 16,
-            ..aniso_2
-        };
-
-        let sampler_2 = exec.sampler_for_state(aniso_2);
-        let sampler_16 = exec.sampler_for_state(aniso_16);
-        assert!(
-            !Arc::ptr_eq(&sampler_2, &sampler_16),
-            "different MAXANISOTROPY values should produce distinct samplers when anisotropy is supported"
-        );
     }
 }
