@@ -887,7 +887,7 @@ static NDIS_STATUS AerovNetBuildTxHeader(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
 
   if (!Intent.WantTso && !Intent.WantTcpChecksum && !Intent.WantUdpChecksum) {
     // Normal packet: all zeros.
-    RtlZeroMemory(TxReq->HeaderVa, sizeof(VIRTIO_NET_HDR));
+    RtlZeroMemory(TxReq->HeaderVa, Adapter->RxHeaderBytes);
     return NDIS_STATUS_SUCCESS;
   }
 
@@ -959,6 +959,11 @@ static NDIS_STATUS AerovNetBuildTxHeader(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
     }
   }
 
+  // virtio-net uses a 10-byte header by default; when VIRTIO_NET_F_MRG_RXBUF is
+  // negotiated, the header grows to 12 bytes (adding num_buffers). The TX side
+  // still uses the same leading 10-byte layout, so zero the full header then
+  // copy the base fields.
+  RtlZeroMemory(TxReq->HeaderVa, Adapter->RxHeaderBytes);
   RtlCopyMemory(TxReq->HeaderVa, &BuiltHdr, sizeof(BuiltHdr));
   return NDIS_STATUS_SUCCESS;
 }
@@ -1004,7 +1009,7 @@ static VOID AerovNetFlushTxPendingLocked(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
     Needed = (uint16_t)(TxReq->SgList->NumberOfElements + 1);
 
     Sg[0].addr = (uint64_t)TxReq->HeaderPa.QuadPart;
-    Sg[0].len = (uint32_t)sizeof(VIRTIO_NET_HDR);
+    Sg[0].len = (uint32_t)Adapter->RxHeaderBytes;
     Sg[0].device_writes = VIRTIO_FALSE;
 
     for (I = 0; I < TxReq->SgList->NumberOfElements; I++) {
@@ -1116,7 +1121,7 @@ static NDIS_STATUS AerovNetAllocateTxResources(_Inout_ AEROVNET_ADAPTER* Adapter
   }
   RtlZeroMemory(Adapter->TxRequests, sizeof(AEROVNET_TX_REQUEST) * Adapter->TxRequestCount);
 
-  Adapter->TxHeaderBlockBytes = sizeof(VIRTIO_NET_HDR) * Adapter->TxRequestCount;
+  Adapter->TxHeaderBlockBytes = Adapter->RxHeaderBytes * Adapter->TxRequestCount;
   Adapter->TxHeaderBlockVa = MmAllocateContiguousMemorySpecifyCache(Adapter->TxHeaderBlockBytes, Low, High, Skip, MmCached);
   if (!Adapter->TxHeaderBlockVa) {
     return NDIS_STATUS_RESOURCES;
@@ -1131,8 +1136,8 @@ static NDIS_STATUS AerovNetAllocateTxResources(_Inout_ AEROVNET_ADAPTER* Adapter
     Tx->State = AerovNetTxFree;
     Tx->Cancelled = FALSE;
     Tx->Adapter = Adapter;
-    Tx->HeaderVa = Adapter->TxHeaderBlockVa + (sizeof(VIRTIO_NET_HDR) * I);
-    Tx->HeaderPa.QuadPart = Adapter->TxHeaderBlockPa.QuadPart + (sizeof(VIRTIO_NET_HDR) * I);
+    Tx->HeaderVa = Adapter->TxHeaderBlockVa + (Adapter->RxHeaderBytes * I);
+    Tx->HeaderPa.QuadPart = Adapter->TxHeaderBlockPa.QuadPart + ((ULONGLONG)Adapter->RxHeaderBytes * (ULONGLONG)I);
     InsertTailList(&Adapter->TxFreeList, &Tx->Link);
   }
 
@@ -2837,7 +2842,7 @@ static VOID AerovNetProcessSgList(_In_ PDEVICE_OBJECT DeviceObject, _In_opt_ PVO
     }
 
     Sg[0].addr = (uint64_t)TxReq->HeaderPa.QuadPart;
-    Sg[0].len = (uint32_t)sizeof(VIRTIO_NET_HDR);
+    Sg[0].len = (uint32_t)Adapter->RxHeaderBytes;
     Sg[0].device_writes = VIRTIO_FALSE;
 
     for (I = 0; I < ElemCount; I++) {
