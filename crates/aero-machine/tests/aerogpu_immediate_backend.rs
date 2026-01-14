@@ -35,7 +35,10 @@ fn aerogpu_immediate_backend_completes_fence_and_raises_intx() {
         cfg.set_command(cfg.command() | (1 << 1) | (1 << 2));
         cfg.bar_range(0).map(|r| r.base).unwrap_or(0)
     };
-    assert!(bar0_base != 0, "expected AeroGPU BAR0 to be assigned by BIOS POST");
+    assert!(
+        bar0_base != 0,
+        "expected AeroGPU BAR0 to be assigned by BIOS POST"
+    );
 
     // Minimal ring with a single submission that signals fence 1.
     const RING_GPA: u64 = 0x20_0000;
@@ -92,17 +95,16 @@ fn aerogpu_immediate_backend_completes_fence_and_raises_intx() {
         bar0_base + u64::from(pci::AEROGPU_MMIO_REG_IRQ_ENABLE),
         pci::AEROGPU_IRQ_FENCE,
     );
-    m.write_physical_u32(
-        bar0_base + u64::from(pci::AEROGPU_MMIO_REG_DOORBELL),
-        1,
-    );
+    m.write_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_DOORBELL), 1);
 
     // Let the device make forward progress: consume the ring entry and complete the fence.
     m.process_aerogpu();
 
     let completed_fence = {
-        let lo = m.read_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_LO));
-        let hi = m.read_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_HI));
+        let lo =
+            m.read_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_LO));
+        let hi =
+            m.read_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_HI));
         u64::from(lo) | (u64::from(hi) << 32)
     };
     assert_eq!(completed_fence, 1);

@@ -1186,11 +1186,18 @@ fn input_batch_keyboard_backend_does_not_switch_to_virtio_until_key_released() {
     // Batch 2: KeyScancode break + HID usage release. Backend must remain PS/2 for this batch so
     // press+release are delivered consistently (avoid stuck keys).
     let words_release: [u32; 10] = [
-        2, 0, // count, batch_ts
+        2,
+        0, // count, batch_ts
         // KeyScancode: 0xF0 0x1C (break)
-        1, 0, 0x0000_1CF0, 2, // type, ts, a, b
+        1,
+        0,
+        0x0000_1CF0,
+        2, // type, ts, a, b
         // KeyHidUsage: usage=0x04 (A), pressed=0
-        6, 0, 0x0004, 0,
+        6,
+        0,
+        0x0004,
+        0,
     ];
     m.inject_input_batch(&words_release);
     assert_eq!(drain_i8042_output(&mut m), vec![0x9e]);

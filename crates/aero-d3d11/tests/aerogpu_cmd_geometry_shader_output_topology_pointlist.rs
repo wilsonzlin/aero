@@ -2,8 +2,9 @@ mod common;
 
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
 use aero_d3d11::sm4::opcode::{
-    OPCODE_DCL_GS_INPUT_PRIMITIVE, OPCODE_DCL_GS_MAX_OUTPUT_VERTEX_COUNT, OPCODE_DCL_OUTPUT,
-    OPCODE_DCL_GS_OUTPUT_TOPOLOGY, OPCODE_EMIT, OPCODE_LEN_SHIFT, OPCODE_MOV, OPCODE_RET,
+    OPCODE_DCL_GS_INPUT_PRIMITIVE, OPCODE_DCL_GS_MAX_OUTPUT_VERTEX_COUNT,
+    OPCODE_DCL_GS_OUTPUT_TOPOLOGY, OPCODE_DCL_OUTPUT, OPCODE_EMIT, OPCODE_LEN_SHIFT, OPCODE_MOV,
+    OPCODE_RET,
 };
 use aero_dxbc::{test_utils as dxbc_test_utils, FourCC};
 use aero_gpu::guest_memory::VecGuestMemory;

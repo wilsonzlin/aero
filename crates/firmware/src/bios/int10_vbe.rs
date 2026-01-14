@@ -157,7 +157,11 @@ impl Bios {
                             // Derive a virtual width in pixels by flooring the byte pitch. This
                             // matches the contract tested by `boot_int10_vbe_panning` and keeps the
                             // value monotonic when the guest tweaks the stride.
-                            let pixels = if bpp == 0 { 0 } else { self.video.vbe.bytes_per_scan_line / bpp };
+                            let pixels = if bpp == 0 {
+                                0
+                            } else {
+                                self.video.vbe.bytes_per_scan_line / bpp
+                            };
                             self.video.vbe.logical_width_pixels = pixels.max(mode.width);
                             cpu.set_bx(self.video.vbe.bytes_per_scan_line);
                             cpu.set_cx(self.video.vbe.logical_width_pixels);

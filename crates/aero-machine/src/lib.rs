@@ -30,14 +30,14 @@ mod shared_iso_disk;
 mod vcpu_init;
 pub mod virtual_time;
 
-pub use guest_time::{GuestTime, DEFAULT_GUEST_CPU_HZ};
-pub use shared_disk::SharedDisk;
-pub use shared_iso_disk::SharedIsoDisk;
-use shared_iso_disk::SharedIsoDiskWeak;
 pub use aero_devices_gpu::{
     AeroGpuBackendCompletion, AeroGpuBackendSubmission, AeroGpuCommandBackend,
     ImmediateAeroGpuBackend, NullAeroGpuBackend,
 };
+pub use guest_time::{GuestTime, DEFAULT_GUEST_CPU_HZ};
+pub use shared_disk::SharedDisk;
+pub use shared_iso_disk::SharedIsoDisk;
+use shared_iso_disk::SharedIsoDiskWeak;
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
