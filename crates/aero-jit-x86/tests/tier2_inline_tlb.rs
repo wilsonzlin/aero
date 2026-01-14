@@ -1217,6 +1217,130 @@ fn tier2_inline_tlb_prefilled_ram_entry_bumps_physical_code_page_version() {
 }
 
 #[test]
+fn tier2_inline_tlb_code_version_bump_skips_out_of_bounds_physical_page() {
+    // The inline store fast-path bumps the code-version table entry for the *physical* page. That
+    // bump must be bounds-checked against `table_len` to avoid out-of-bounds writes.
+    //
+    // Regression targets:
+    // - using the virtual page number instead of the physical page number (would incorrectly bump a
+    //   valid in-bounds entry)
+    // - off-by-one bounds checks (e.g. `<=` instead of `<`) that bump an out-of-bounds entry
+    let trace = TraceIr {
+        prologue: Vec::new(),
+        body: vec![Instr::StoreMem {
+            addr: Operand::Const(0x1010),
+            src: Operand::Const(0xAB),
+            width: Width::W8,
+        }],
+        kind: TraceKind::Linear,
+    };
+    let plan = RegAllocPlan::default();
+    let wasm = Tier2WasmCodegen::new().compile_trace_with_options(
+        &trace,
+        &plan,
+        Tier2WasmOptions {
+            inline_tlb: true,
+            code_version_guard_import: true,
+            ..Default::default()
+        },
+    );
+    validate_wasm(&wasm);
+
+    // Only provide entries for physical pages 0 and 1. The store maps to physical page 2, which is
+    // out of bounds and should not be bumped.
+    let table_ptr: usize = 0x8000;
+    let table_len: u32 = 2;
+    let table_bytes = (table_len as usize) * 4;
+
+    let ram_len = table_ptr + table_bytes + 0x3000;
+    let mut ram = vec![0u8; ram_len];
+    // Sentinel bytes to detect whether the store targets vaddr or paddr.
+    ram[0x1010] = 0x11;
+    ram[0x2010] = 0x22;
+
+    // Initialize the in-bounds table entries with distinct values.
+    write_u32_le(&mut ram, table_ptr + 0, 5); // page 0
+    write_u32_le(&mut ram, table_ptr + 4, 10); // page 1
+    // Sentinel for the would-be out-of-bounds page 2 entry.
+    write_u32_le(&mut ram, table_ptr + 8, 0xDEAD_BEEF);
+
+    let cpu_ptr = ram.len() as u64;
+    let cpu_ptr_usize = cpu_ptr as usize;
+    let jit_ctx_ptr_usize = cpu_ptr_usize + (abi::CPU_STATE_SIZE as usize);
+    let total_len =
+        jit_ctx_ptr_usize + JitContext::TOTAL_BYTE_SIZE + (jit_ctx::TIER2_CTX_SIZE as usize);
+    let mut mem = vec![0u8; total_len];
+
+    // RAM at `ram_base = 0`.
+    mem[..ram.len()].copy_from_slice(&ram);
+
+    // Configure the code-version table (stored in the Tier-2 ctx region relative to `cpu_ptr`).
+    write_u32_le(
+        &mut mem,
+        cpu_ptr_usize + jit_ctx::CODE_VERSION_TABLE_PTR_OFFSET as usize,
+        table_ptr as u32,
+    );
+    write_u32_le(
+        &mut mem,
+        cpu_ptr_usize + jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET as usize,
+        table_len,
+    );
+
+    // CPU state at `cpu_ptr`, JIT context immediately following.
+    write_cpu_rip(&mut mem, cpu_ptr_usize, 0x1000);
+    write_cpu_rflags(&mut mem, cpu_ptr_usize, 0x2);
+
+    let tlb_salt = 0x1234_5678_9abc_def0u64;
+    let ctx = JitContext {
+        ram_base: 0,
+        tlb_salt,
+    };
+    ctx.write_header_to_mem(&mut mem, jit_ctx_ptr_usize);
+
+    // Prefill a TLB entry that maps vaddr page 1 (0x1000) to phys_base page 2 (0x2000). Since the
+    // code-version table only covers physical pages 0 and 1, the inline bump must skip.
+    let vaddr = 0x1010u64;
+    let vpn = vaddr >> PAGE_SHIFT;
+    let idx = (vpn & JIT_TLB_INDEX_MASK) as usize;
+    let entry_addr =
+        jit_ctx_ptr_usize + (JitContext::TLB_OFFSET as usize) + idx * (JIT_TLB_ENTRY_SIZE as usize);
+    let tag = (vpn ^ tlb_salt) | 1;
+    let tlb_data = (0x2000u64 & PAGE_BASE_MASK)
+        | (TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM);
+    mem[entry_addr..entry_addr + 8].copy_from_slice(&tag.to_le_bytes());
+    mem[entry_addr + 8..entry_addr + 16].copy_from_slice(&tlb_data.to_le_bytes());
+
+    let pages = (total_len.div_ceil(65_536)) as u32;
+    // Mark all pages as non-RAM for `mmu_translate`; the test relies on the prefilled TLB entry and
+    // should not call `mmu_translate` at all.
+    let (mut store, memory, func) = instantiate(&wasm, pages, 0);
+    memory.write(&mut store, 0, &mem).unwrap();
+
+    let ret = func
+        .call(&mut store, (cpu_ptr as i32, jit_ctx_ptr_usize as i32))
+        .unwrap() as u64;
+    assert_eq!(ret, 0x1000);
+
+    let mut got_mem = vec![0u8; total_len];
+    memory.read(&store, 0, &mut got_mem).unwrap();
+    let got_ram = &got_mem[..ram.len()];
+
+    // Store should use paddr=0x2010, not vaddr=0x1010.
+    assert_eq!(got_ram[0x1010], 0x11);
+    assert_eq!(got_ram[0x2010], 0xAB);
+
+    // Page 2 is out of bounds, so the bump should be skipped entirely.
+    assert_eq!(read_u32_le(got_ram, table_ptr + 0), 5);
+    assert_eq!(read_u32_le(got_ram, table_ptr + 4), 10);
+    assert_eq!(read_u32_le(got_ram, table_ptr + 8), 0xDEAD_BEEF);
+
+    let host = *store.data();
+    assert_eq!(host.mmu_translate_calls, 0);
+    assert_eq!(host.slow_mem_reads, 0);
+    assert_eq!(host.slow_mem_writes, 0);
+}
+
+#[test]
 fn tier2_inline_tlb_permission_retranslate_updates_is_ram_flag_for_load() {
     // If a cached entry is missing the required permission flag, the inline-TLB path calls
     // `mmu_translate` and must use the updated `tlb_data` for subsequent checks (including the
