@@ -375,6 +375,57 @@ fn xhci_tick_1ms_does_not_dma_when_dma_disabled() {
 }
 
 #[test]
+fn xhci_dma_on_run_probe_is_deferred_until_dma_is_available() {
+    let mut ctrl = XhciController::new();
+
+    // Program CRCR so the DMA-on-RUN probe has a target address.
+    let mut nodma = NoDmaCountingMem::default();
+    ctrl.mmio_write(&mut nodma, regs::REG_CRCR_LO, 4, 0x1000);
+    ctrl.mmio_write(&mut nodma, regs::REG_CRCR_HI, 4, 0);
+
+    // Latch the rising edge of RUN via a no-DMA bus. This must not touch guest memory or assert an
+    // interrupt yet, but it should leave the probe pending for a future tick.
+    ctrl.mmio_write(&mut nodma, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
+    assert_eq!(
+        nodma.reads, 0,
+        "setting RUN must not DMA when dma_enabled() is false"
+    );
+    assert_eq!(
+        nodma.writes, 0,
+        "setting RUN must not DMA-write when dma_enabled() is false"
+    );
+    assert!(
+        !ctrl.irq_level(),
+        "DMA-on-RUN interrupt must be deferred until DMA is available"
+    );
+
+    // On the next tick with DMA enabled, the deferred DMA-on-RUN probe should execute and assert
+    // an interrupt.
+    let mut mem = CountingMem::new(0x4000);
+    mem.data[0x1000..0x1004].copy_from_slice(&0x1122_3344u32.to_le_bytes());
+    ctrl.tick_1ms_with_dma(&mut mem);
+    assert!(
+        ctrl.irq_level(),
+        "tick should execute deferred DMA-on-RUN probe and assert IRQ"
+    );
+    assert!(
+        mem.reads >= 1,
+        "expected at least one DMA read when processing deferred DMA-on-RUN probe"
+    );
+
+    // Clear the pending interrupt.
+    ctrl.mmio_write(&mut mem, regs::REG_USBSTS, 4, regs::USBSTS_EINT);
+    assert!(!ctrl.irq_level());
+
+    // Subsequent ticks should not re-run the DMA-on-RUN probe (the probe is one-shot).
+    ctrl.tick_1ms_with_dma(&mut mem);
+    assert!(
+        !ctrl.irq_level(),
+        "DMA-on-RUN probe should not re-assert after it has completed"
+    );
+}
+
+#[test]
 fn xhci_doorbell_does_not_process_command_ring_without_dma() {
     let mut ctrl = XhciController::new();
     let mut mem = CountingMem::new(0x4000);
