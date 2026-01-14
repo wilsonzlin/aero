@@ -692,6 +692,289 @@ fn malformed_alloc_table_sets_error_irq_and_advances_head() {
 }
 
 #[test]
+fn malformed_alloc_table_abi_version_sets_error_irq_and_records_decode_error() {
+    let mut mem = VecMemory::new(0x40_000);
+    let mut regs = AeroGpuRegs::default();
+    let mut exec = AeroGpuExecutor::new(AeroGpuExecutorConfig {
+        verbose: false,
+        keep_last_submissions: 8,
+        fence_completion: AeroGpuFenceCompletionMode::Immediate,
+    });
+
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    write_ring(&mut mem, ring_gpa, ring_size, 8, 0, 1, regs.abi_version);
+
+    // Use an unsupported major version while keeping the rest of the table well-formed.
+    let alloc_table_gpa = 0x5000u64;
+    let wrong_major = regs.abi_version.wrapping_add(1 << 16);
+    let alloc_table_size_bytes =
+        write_alloc_table(&mut mem, alloc_table_gpa, wrong_major, AEROGPU_ALLOC_TABLE_MAGIC);
+
+    let cmd_gpa = 0x6000u64;
+    let cmd_size_bytes = write_cmd_stream_header(
+        &mut mem,
+        cmd_gpa,
+        regs.abi_version,
+        24,
+        AEROGPU_CMD_STREAM_MAGIC,
+    );
+
+    let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    write_submit_desc(
+        &mut mem,
+        desc_gpa,
+        cmd_gpa,
+        cmd_size_bytes,
+        alloc_table_gpa,
+        alloc_table_size_bytes,
+        2,
+    );
+
+    regs.ring_gpa = ring_gpa;
+    regs.ring_size_bytes = ring_size;
+    regs.ring_control = ring_control::ENABLE;
+
+    exec.process_doorbell(&mut regs, &mut mem);
+
+    assert_eq!(mem.read_u32(ring_gpa + RING_HEAD_OFFSET), 1);
+    assert_eq!(regs.completed_fence, 2);
+    assert_eq!(regs.stats.malformed_submissions, 1);
+    assert_ne!(regs.irq_status & irq_bits::ERROR, 0);
+
+    let record = exec
+        .last_submissions
+        .back()
+        .expect("missing submission record");
+    assert!(
+        record
+            .decode_errors
+            .contains(&AeroGpuSubmissionDecodeError::AllocTable(
+                AeroGpuAllocTableDecodeError::BadAbiVersion,
+            )),
+        "expected BadAbiVersion error, got: {:?}",
+        record.decode_errors
+    );
+}
+
+#[test]
+fn malformed_alloc_table_bad_entry_stride_sets_error_irq_and_records_decode_error() {
+    let mut mem = VecMemory::new(0x40_000);
+    let mut regs = AeroGpuRegs::default();
+    let mut exec = AeroGpuExecutor::new(AeroGpuExecutorConfig {
+        verbose: false,
+        keep_last_submissions: 8,
+        fence_completion: AeroGpuFenceCompletionMode::Immediate,
+    });
+
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    write_ring(&mut mem, ring_gpa, ring_size, 8, 0, 1, regs.abi_version);
+
+    // Allocation table header with an entry stride smaller than the required entry prefix.
+    let alloc_table_gpa = 0x5000u64;
+    let header_size = AEROGPU_ALLOC_TABLE_HEADER_SIZE_BYTES;
+    let bad_stride = AeroGpuAllocEntry::SIZE_BYTES - 1;
+    mem.write_u32(alloc_table_gpa + ALLOC_TABLE_MAGIC_OFFSET, AEROGPU_ALLOC_TABLE_MAGIC);
+    mem.write_u32(alloc_table_gpa + ALLOC_TABLE_ABI_VERSION_OFFSET, regs.abi_version);
+    mem.write_u32(alloc_table_gpa + ALLOC_TABLE_SIZE_BYTES_OFFSET, header_size);
+    mem.write_u32(alloc_table_gpa + ALLOC_TABLE_ENTRY_COUNT_OFFSET, 0);
+    mem.write_u32(
+        alloc_table_gpa + ALLOC_TABLE_ENTRY_STRIDE_BYTES_OFFSET,
+        bad_stride,
+    );
+    mem.write_u32(alloc_table_gpa + ALLOC_TABLE_RESERVED0_OFFSET, 0);
+
+    let cmd_gpa = 0x6000u64;
+    let cmd_size_bytes = write_cmd_stream_header(
+        &mut mem,
+        cmd_gpa,
+        regs.abi_version,
+        24,
+        AEROGPU_CMD_STREAM_MAGIC,
+    );
+
+    let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    write_submit_desc(
+        &mut mem,
+        desc_gpa,
+        cmd_gpa,
+        cmd_size_bytes,
+        alloc_table_gpa,
+        header_size,
+        3,
+    );
+
+    regs.ring_gpa = ring_gpa;
+    regs.ring_size_bytes = ring_size;
+    regs.ring_control = ring_control::ENABLE;
+
+    exec.process_doorbell(&mut regs, &mut mem);
+
+    assert_eq!(mem.read_u32(ring_gpa + RING_HEAD_OFFSET), 1);
+    assert_eq!(regs.completed_fence, 3);
+    assert_eq!(regs.stats.malformed_submissions, 1);
+    assert_ne!(regs.irq_status & irq_bits::ERROR, 0);
+
+    let record = exec
+        .last_submissions
+        .back()
+        .expect("missing submission record");
+    assert!(
+        record
+            .decode_errors
+            .contains(&AeroGpuSubmissionDecodeError::AllocTable(
+                AeroGpuAllocTableDecodeError::BadEntryStride,
+            )),
+        "expected BadEntryStride error, got: {:?}",
+        record.decode_errors
+    );
+}
+
+#[test]
+fn malformed_alloc_table_entries_out_of_bounds_sets_error_irq_and_records_decode_error() {
+    let mut mem = VecMemory::new(0x40_000);
+    let mut regs = AeroGpuRegs::default();
+    let mut exec = AeroGpuExecutor::new(AeroGpuExecutorConfig {
+        verbose: false,
+        keep_last_submissions: 8,
+        fence_completion: AeroGpuFenceCompletionMode::Immediate,
+    });
+
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    write_ring(&mut mem, ring_gpa, ring_size, 8, 0, 1, regs.abi_version);
+
+    // Declare one entry but provide a header size that does not cover it.
+    let alloc_table_gpa = 0x5000u64;
+    let header_size = AEROGPU_ALLOC_TABLE_HEADER_SIZE_BYTES;
+    mem.write_u32(alloc_table_gpa + ALLOC_TABLE_MAGIC_OFFSET, AEROGPU_ALLOC_TABLE_MAGIC);
+    mem.write_u32(alloc_table_gpa + ALLOC_TABLE_ABI_VERSION_OFFSET, regs.abi_version);
+    mem.write_u32(alloc_table_gpa + ALLOC_TABLE_SIZE_BYTES_OFFSET, header_size);
+    mem.write_u32(alloc_table_gpa + ALLOC_TABLE_ENTRY_COUNT_OFFSET, 1);
+    mem.write_u32(
+        alloc_table_gpa + ALLOC_TABLE_ENTRY_STRIDE_BYTES_OFFSET,
+        AeroGpuAllocEntry::SIZE_BYTES,
+    );
+    mem.write_u32(alloc_table_gpa + ALLOC_TABLE_RESERVED0_OFFSET, 0);
+
+    let cmd_gpa = 0x6000u64;
+    let cmd_size_bytes = write_cmd_stream_header(
+        &mut mem,
+        cmd_gpa,
+        regs.abi_version,
+        24,
+        AEROGPU_CMD_STREAM_MAGIC,
+    );
+
+    let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    write_submit_desc(
+        &mut mem,
+        desc_gpa,
+        cmd_gpa,
+        cmd_size_bytes,
+        alloc_table_gpa,
+        header_size,
+        4,
+    );
+
+    regs.ring_gpa = ring_gpa;
+    regs.ring_size_bytes = ring_size;
+    regs.ring_control = ring_control::ENABLE;
+
+    exec.process_doorbell(&mut regs, &mut mem);
+
+    assert_eq!(mem.read_u32(ring_gpa + RING_HEAD_OFFSET), 1);
+    assert_eq!(regs.completed_fence, 4);
+    assert_eq!(regs.stats.malformed_submissions, 1);
+    assert_ne!(regs.irq_status & irq_bits::ERROR, 0);
+
+    let record = exec
+        .last_submissions
+        .back()
+        .expect("missing submission record");
+    assert!(
+        record
+            .decode_errors
+            .contains(&AeroGpuSubmissionDecodeError::AllocTable(
+                AeroGpuAllocTableDecodeError::EntriesOutOfBounds,
+            )),
+        "expected EntriesOutOfBounds error, got: {:?}",
+        record.decode_errors
+    );
+}
+
+#[test]
+fn malformed_alloc_table_invalid_entry_sets_error_irq_and_records_decode_error() {
+    let mut mem = VecMemory::new(0x40_000);
+    let mut regs = AeroGpuRegs::default();
+    let mut exec = AeroGpuExecutor::new(AeroGpuExecutorConfig {
+        verbose: false,
+        keep_last_submissions: 8,
+        fence_completion: AeroGpuFenceCompletionMode::Immediate,
+    });
+
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    write_ring(&mut mem, ring_gpa, ring_size, 8, 0, 1, regs.abi_version);
+
+    // Entry with alloc_id == 0 is invalid.
+    let alloc_table_gpa = 0x5000u64;
+    let alloc_table_size_bytes = write_alloc_table_entries(
+        &mut mem,
+        alloc_table_gpa,
+        regs.abi_version,
+        AEROGPU_ALLOC_TABLE_MAGIC,
+        &[(0, 0, 0x9000, 0x1000)],
+    );
+
+    let cmd_gpa = 0x6000u64;
+    let cmd_size_bytes = write_cmd_stream_header(
+        &mut mem,
+        cmd_gpa,
+        regs.abi_version,
+        24,
+        AEROGPU_CMD_STREAM_MAGIC,
+    );
+
+    let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    write_submit_desc(
+        &mut mem,
+        desc_gpa,
+        cmd_gpa,
+        cmd_size_bytes,
+        alloc_table_gpa,
+        alloc_table_size_bytes,
+        5,
+    );
+
+    regs.ring_gpa = ring_gpa;
+    regs.ring_size_bytes = ring_size;
+    regs.ring_control = ring_control::ENABLE;
+
+    exec.process_doorbell(&mut regs, &mut mem);
+
+    assert_eq!(mem.read_u32(ring_gpa + RING_HEAD_OFFSET), 1);
+    assert_eq!(regs.completed_fence, 5);
+    assert_eq!(regs.stats.malformed_submissions, 1);
+    assert_ne!(regs.irq_status & irq_bits::ERROR, 0);
+
+    let record = exec
+        .last_submissions
+        .back()
+        .expect("missing submission record");
+    assert!(
+        record
+            .decode_errors
+            .contains(&AeroGpuSubmissionDecodeError::AllocTable(
+                AeroGpuAllocTableDecodeError::InvalidEntry,
+            )),
+        "expected InvalidEntry error, got: {:?}",
+        record.decode_errors
+    );
+}
+
+#[test]
 fn duplicate_alloc_id_in_alloc_table_sets_error_irq() {
     let mut mem = VecMemory::new(0x40_000);
     let mut regs = AeroGpuRegs::default();
@@ -881,6 +1164,99 @@ fn malformed_cmd_stream_size_sets_error_irq() {
                 AeroGpuCmdStreamDecodeError::StreamSizeTooLarge,
             )),
         "expected StreamSizeTooLarge error, got: {:?}",
+        record.decode_errors
+    );
+}
+
+#[test]
+fn malformed_cmd_stream_too_small_sets_error_irq_and_records_decode_error() {
+    let mut mem = VecMemory::new(0x40_000);
+    let mut regs = AeroGpuRegs::default();
+    let mut exec = AeroGpuExecutor::new(AeroGpuExecutorConfig {
+        verbose: false,
+        keep_last_submissions: 8,
+        fence_completion: AeroGpuFenceCompletionMode::Immediate,
+    });
+
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    write_ring(&mut mem, ring_gpa, ring_size, 8, 0, 1, regs.abi_version);
+
+    let cmd_gpa = 0x6000u64;
+    let cmd_size_bytes = CMD_STREAM_HEADER_SIZE_BYTES - 1;
+
+    let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    write_submit_desc(&mut mem, desc_gpa, cmd_gpa, cmd_size_bytes, 0, 0, 6);
+
+    regs.ring_gpa = ring_gpa;
+    regs.ring_size_bytes = ring_size;
+    regs.ring_control = ring_control::ENABLE;
+
+    exec.process_doorbell(&mut regs, &mut mem);
+
+    assert_eq!(mem.read_u32(ring_gpa + RING_HEAD_OFFSET), 1);
+    assert_eq!(regs.completed_fence, 6);
+    assert_eq!(regs.stats.malformed_submissions, 1);
+    assert_ne!(regs.irq_status & irq_bits::ERROR, 0);
+
+    let record = exec
+        .last_submissions
+        .back()
+        .expect("missing submission record");
+    assert!(
+        record
+            .decode_errors
+            .contains(&AeroGpuSubmissionDecodeError::CmdStream(
+                AeroGpuCmdStreamDecodeError::TooSmall,
+            )),
+        "expected TooSmall error, got: {:?}",
+        record.decode_errors
+    );
+}
+
+#[test]
+fn malformed_cmd_stream_bad_header_sets_error_irq_and_records_decode_error() {
+    let mut mem = VecMemory::new(0x40_000);
+    let mut regs = AeroGpuRegs::default();
+    let mut exec = AeroGpuExecutor::new(AeroGpuExecutorConfig {
+        verbose: false,
+        keep_last_submissions: 8,
+        fence_completion: AeroGpuFenceCompletionMode::Immediate,
+    });
+
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    write_ring(&mut mem, ring_gpa, ring_size, 8, 0, 1, regs.abi_version);
+
+    let cmd_gpa = 0x6000u64;
+    let cmd_size_bytes =
+        write_cmd_stream_header(&mut mem, cmd_gpa, regs.abi_version, 24, 0 /* bad magic */);
+
+    let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    write_submit_desc(&mut mem, desc_gpa, cmd_gpa, cmd_size_bytes, 0, 0, 7);
+
+    regs.ring_gpa = ring_gpa;
+    regs.ring_size_bytes = ring_size;
+    regs.ring_control = ring_control::ENABLE;
+
+    exec.process_doorbell(&mut regs, &mut mem);
+
+    assert_eq!(mem.read_u32(ring_gpa + RING_HEAD_OFFSET), 1);
+    assert_eq!(regs.completed_fence, 7);
+    assert_eq!(regs.stats.malformed_submissions, 1);
+    assert_ne!(regs.irq_status & irq_bits::ERROR, 0);
+
+    let record = exec
+        .last_submissions
+        .back()
+        .expect("missing submission record");
+    assert!(
+        record
+            .decode_errors
+            .contains(&AeroGpuSubmissionDecodeError::CmdStream(
+                AeroGpuCmdStreamDecodeError::BadHeader,
+            )),
+        "expected BadHeader error, got: {:?}",
         record.decode_errors
     );
 }
