@@ -1775,6 +1775,169 @@ fn tier2_loop_trace_invalidates_when_storemem_bumps_code_version_interpreter_mat
     assert_eq!(got_rflags, interp_state.cpu.rflags);
 }
 
+#[test]
+fn tier2_loop_trace_cross_page_store_bumps_both_pages_interpreter_matches_wasm() {
+    // Cross-page StoreMem should bump *all* spanned 4KiB pages.
+    //
+    // Write an 8-byte value starting at the last byte of page 0 so the store spans pages 0 and 1.
+    // Guard both pages each iteration and ensure the trace invalidates on the next iteration due
+    // to the bumped versions.
+    let entry_rip = 0x1000u64;
+    let side_exit_rip = 0x2000u64;
+    let store_addr = aero_jit_x86::PAGE_SIZE - 1; // spans into page 1 for an 8-byte store
+    let page0 = store_addr >> aero_jit_x86::PAGE_SHIFT;
+    let page1 = (store_addr + (Width::W64.bytes() as u64) - 1) >> aero_jit_x86::PAGE_SHIFT;
+    assert_eq!(page0, 0);
+    assert_eq!(page1, 1);
+
+    let initial_page0: u32 = 5;
+    let initial_page1: u32 = 7;
+
+    let trace = TraceIr {
+        prologue: vec![
+            Instr::Const {
+                dst: v(0),
+                value: store_addr,
+            },
+            Instr::Const {
+                dst: v(1),
+                value: 0x1122_3344_5566_7788,
+            },
+            // Loop termination threshold for the regression "no invalidation" path.
+            Instr::Const { dst: v(2), value: 3 },
+        ],
+        body: vec![
+            Instr::GuardCodeVersion {
+                page: page0,
+                expected: initial_page0,
+                exit_rip: entry_rip,
+            },
+            Instr::GuardCodeVersion {
+                page: page1,
+                expected: initial_page1,
+                exit_rip: entry_rip,
+            },
+            // Increment a counter in RAX.
+            Instr::LoadReg {
+                dst: v(3),
+                reg: Gpr::Rax,
+            },
+            Instr::Const { dst: v(4), value: 1 },
+            Instr::BinOp {
+                dst: v(5),
+                op: BinOp::Add,
+                lhs: Operand::Value(v(3)),
+                rhs: Operand::Value(v(4)),
+                flags: FlagSet::EMPTY,
+            },
+            Instr::StoreReg {
+                reg: Gpr::Rax,
+                src: Operand::Value(v(5)),
+            },
+            // Cross-page store (pages 0 and 1).
+            Instr::StoreMem {
+                addr: Operand::Value(v(0)),
+                src: Operand::Value(v(1)),
+                width: Width::W64,
+            },
+            // If counter < 3, keep looping. Otherwise, side-exit so we don't spin forever in
+            // regressions where invalidation doesn't happen.
+            Instr::BinOp {
+                dst: v(6),
+                op: BinOp::LtU,
+                lhs: Operand::Value(v(5)),
+                rhs: Operand::Value(v(2)),
+                flags: FlagSet::EMPTY,
+            },
+            Instr::Guard {
+                cond: Operand::Value(v(6)),
+                expected: true,
+                exit_rip: side_exit_rip,
+            },
+        ],
+        kind: TraceKind::Loop,
+    };
+
+    // ---- Tier-2 interpreter (reference) ---------------------------------------------------------
+    let env = RuntimeEnv::default();
+    env.page_versions.set_version(page0, initial_page0);
+    env.page_versions.set_version(page1, initial_page1);
+
+    let mut init_state = T2State::default();
+    init_state.cpu.gpr[Gpr::Rax.as_u8() as usize] = 0;
+    init_state.cpu.rip = entry_rip;
+    init_state.cpu.rflags = abi::RFLAGS_RESERVED1;
+
+    let mut interp_state = init_state.clone();
+    let mut bus = SimpleBus::new(GUEST_MEM_SIZE);
+    let expected = aero_jit_x86::tier2::interp::run_trace(
+        &trace,
+        &env,
+        &mut bus,
+        &mut interp_state,
+        5,
+    );
+    assert_eq!(expected.exit, RunExit::Invalidate { next_rip: entry_rip });
+    assert_eq!(
+        env.page_versions.version(page0),
+        initial_page0.wrapping_add(1)
+    );
+    assert_eq!(
+        env.page_versions.version(page1),
+        initial_page1.wrapping_add(1)
+    );
+
+    // ---- Optimize + compile to WASM ------------------------------------------------------------
+    let mut optimized = trace.clone();
+    let opt = optimize_trace(&mut optimized, &OptConfig::default());
+    let wasm = Tier2WasmCodegen::new().compile_trace(&optimized, &opt.regalloc);
+    validate_wasm(&wasm);
+
+    // ---- Execute the WASM trace via wasmi ------------------------------------------------------
+    let (mut store, memory, func) = instantiate_trace(&wasm, HostEnv::default());
+    let guest_mem_init = vec![0u8; GUEST_MEM_SIZE];
+    memory.write(&mut store, 0, &guest_mem_init).unwrap();
+
+    let mut cpu_bytes = vec![0u8; abi::CPU_STATE_SIZE as usize];
+    write_cpu_state(&mut cpu_bytes, &init_state.cpu);
+    memory
+        .write(&mut store, CPU_PTR as usize, &cpu_bytes)
+        .unwrap();
+
+    let table_ptr =
+        install_code_version_table(&memory, &mut store, &[initial_page0, initial_page1]);
+
+    let got_next_rip = func.call(&mut store, (CPU_PTR, JIT_CTX_PTR)).unwrap() as u64;
+    assert_eq!(got_next_rip, entry_rip);
+
+    let exit_reason = read_u32_from_memory(
+        &memory,
+        &store,
+        CPU_PTR as usize + jit_ctx::TRACE_EXIT_REASON_OFFSET as usize,
+    );
+    assert_eq!(exit_reason, jit_ctx::TRACE_EXIT_REASON_CODE_INVALIDATION);
+
+    let bumped0 = read_u32_from_memory(&memory, &store, table_ptr as usize);
+    let bumped1 = read_u32_from_memory(&memory, &store, table_ptr as usize + 4);
+    assert_eq!(bumped0, initial_page0.wrapping_add(1));
+    assert_eq!(bumped1, initial_page1.wrapping_add(1));
+
+    // Guest memory.
+    let mut got_guest_mem = vec![0u8; GUEST_MEM_SIZE];
+    memory.read(&store, 0, &mut got_guest_mem).unwrap();
+    assert_eq!(got_guest_mem.as_slice(), bus.mem());
+
+    // CPU state.
+    let mut got_cpu_bytes = vec![0u8; abi::CPU_STATE_SIZE as usize];
+    memory
+        .read(&store, CPU_PTR as usize, &mut got_cpu_bytes)
+        .unwrap();
+    let (got_gpr, got_rip, got_rflags) = read_cpu_state(&got_cpu_bytes);
+    assert_eq!(got_gpr, interp_state.cpu.gpr);
+    assert_eq!(got_rip, interp_state.cpu.rip);
+    assert_eq!(got_rflags, interp_state.cpu.rflags);
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 mod random_traces {
     use super::*;
