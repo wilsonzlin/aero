@@ -156,6 +156,86 @@ fn xhci_msi_pending_delivers_on_unmask_even_after_interrupt_cleared() {
 }
 
 #[test]
+fn xhci_msi_unprogrammed_address_sets_pending_and_delivers_after_programming() {
+    let mut dev = XhciPciDevice::default();
+
+    // Platform interrupt controller used as an MSI sink.
+    let interrupts = Rc::new(RefCell::new(PlatformInterrupts::new()));
+    interrupts
+        .borrow_mut()
+        .set_mode(PlatformInterruptMode::Apic);
+    dev.set_msi_target(Some(Box::new(interrupts.clone())));
+
+    let mut cpu = GuestCpu::new();
+    cpu.install_isr(0x45);
+
+    // Enable MSI before programming the message address. Real guests should program the address
+    // first, but device models should be robust against mis-ordered configuration.
+    let cap_offset = dev.config_mut().find_capability(PCI_CAP_ID_MSI).unwrap() as u16;
+    let ctrl = dev.config_mut().read(cap_offset + 0x02, 2) as u16;
+    let is_64bit = (ctrl & (1 << 7)) != 0;
+    let per_vector_masking = (ctrl & (1 << 8)) != 0;
+    assert!(
+        per_vector_masking,
+        "test requires per-vector masking/pending support"
+    );
+
+    let data_off = if is_64bit {
+        cap_offset + 0x0c
+    } else {
+        cap_offset + 0x08
+    };
+    dev.config_mut().write(data_off, 2, 0x0045);
+    dev.config_mut()
+        .write(cap_offset + 0x02, 2, u32::from(ctrl | 0x0001));
+
+    // Triggering while the MSI message address is unprogrammed should not deliver an interrupt, but
+    // should latch the MSI pending bit (when supported).
+    dev.raise_event_interrupt();
+    assert!(
+        !dev.irq_level(),
+        "legacy INTx must be suppressed while MSI is active"
+    );
+    assert_eq!(
+        interrupts.borrow_mut().get_pending(),
+        None,
+        "unprogrammed MSI address must not inject an interrupt"
+    );
+    assert_eq!(
+        dev.config()
+            .capability::<MsiCapability>()
+            .unwrap()
+            .pending_bits()
+            & 1,
+        1,
+        "device should latch MSI pending when message address is invalid"
+    );
+
+    // Clear the interrupt condition so delivery relies solely on the latched pending bit.
+    dev.clear_event_interrupt();
+
+    // Program a valid MSI address and service interrupts again without reasserting the interrupt
+    // condition. Pending delivery should now occur.
+    dev.config_mut().write(cap_offset + 0x04, 4, 0xfee0_0000);
+    if is_64bit {
+        dev.config_mut().write(cap_offset + 0x08, 4, 0);
+    }
+    dev.clear_event_interrupt();
+
+    cpu.service_next_interrupt(&mut interrupts.borrow_mut());
+    assert_eq!(cpu.handled_vectors, vec![0x45]);
+    assert_eq!(
+        dev.config()
+            .capability::<MsiCapability>()
+            .unwrap()
+            .pending_bits()
+            & 1,
+        0,
+        "pending bit should clear after delivery"
+    );
+}
+
+#[test]
 fn xhci_msix_interrupt_reaches_guest_idt_vector() {
     let mut dev = XhciPciDevice::default();
 
