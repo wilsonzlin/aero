@@ -84,10 +84,12 @@ aero_virtio_input.sys = 1
 ; You can confirm in Device Manager -> Details -> Hardware Ids.
 
 [Aero.NTx86]
+%AeroVirtioInput.DeviceDesc%       = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&REV_01
 %AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
 %AeroVirtioMouse.DeviceDesc%    = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
 
 [Aero.NTamd64]
+%AeroVirtioInput.DeviceDesc%       = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&REV_01
 %AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
 %AeroVirtioMouse.DeviceDesc%    = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
 
@@ -176,3 +178,4 @@ AeroVirtioInput.ServiceDesc = "Aero VirtIO Input KMDF HID Minidriver"
 
 AeroVirtioKeyboard.DeviceDesc = "Aero VirtIO Keyboard"
 AeroVirtioMouse.DeviceDesc    = "Aero VirtIO Mouse"
+AeroVirtioInput.DeviceDesc    = "Aero VirtIO Input Device"

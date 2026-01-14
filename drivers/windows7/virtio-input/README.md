@@ -542,8 +542,8 @@ extensions that are implemented in-tree (consumer/media keys).
 
 INF note: contract tablet devices bind via `inf/aero_virtio_tablet.inf` (HWID `PCI\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01`).
 The keyboard/mouse INF (`inf/aero_virtio_input.inf`) includes both subsystem-qualified IDs (`SUBSYS_0010`/`SUBSYS_0011`)
-for distinct Device Manager names and a revision-gated fallback `PCI\VEN_1AF4&DEV_1052&REV_01` for environments that do not
-expose Aero subsystem IDs.
+for distinct Device Manager names and a revision-gated generic fallback `PCI\VEN_1AF4&DEV_1052&REV_01` for environments
+that do not expose Aero subsystem IDs.
 
 Device kind / report descriptor selection:
 
