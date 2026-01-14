@@ -247,8 +247,9 @@ quietly accreting more responsibilities.
 - `aero_machine::Machine` now exposes an optional AeroGPU PCI function behind
   `MachineConfig::enable_aerogpu` (`A3A0:0001` at `00:07.0`) using the canonical PCI stack:
   - BAR1-backed VRAM + legacy VGA/VBE decode (boot display foundation), and
-  - a minimal BAR0 device model: ring/fence transport (no-op command execution) plus scanout/cursor
-    regs and vblank counters/IRQ semantics.
+  - a minimal BAR0 device model: ring/fence transport (default no-op fence completion; optional
+    submission bridge for out-of-process execution) plus scanout/cursor regs and vblank counters/IRQ
+    semantics.
 
   The remaining integration work is wiring the **full ring executor + command-execution backend boundary**
   into `aero-machine` (likely by reusing `crates/aero-devices-gpu`) and then retiring/deleting the legacy

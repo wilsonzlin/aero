@@ -17,8 +17,8 @@ import { planMachineBootDiskAttachment } from "../runtime/machine_disk_attach";
 import {
   type ConfigAckMessage,
   type ConfigUpdateMessage,
-  type AerogpuSubmitMessage,
   type AerogpuCompleteFenceMessage,
+  type AerogpuSubmitMessage,
   ErrorCode,
   MessageType,
   type ProtocolMessage,
@@ -2537,6 +2537,13 @@ ctx.onmessage = (ev) => {
         return { kind: runExitKindMap.Halted };
       },
       reset: () => void 0,
+      aerogpu_complete_fence: (fence: bigint) => {
+        try {
+          ctx.postMessage({ type: "__test.machine_cpu.aerogpu_complete_fence", fence });
+        } catch {
+          void 0;
+        }
+      },
     };
     if (enableBootDriveSpy) {
       dummy.setBootDrive = (drive: number) => {
@@ -2562,6 +2569,10 @@ ctx.onmessage = (ev) => {
       };
     }
     machine = dummy as unknown as InstanceType<WasmApi["Machine"]>;
+    // The dummy machine is only used in Node `worker_threads` integration tests (WASM is disabled),
+    // so enable AeroGPU submission-bridge semantics up-front to allow tests to validate the
+    // fence-completion forwarding path without requiring a full guest/GPU worker setup.
+    aerogpuBridgeEnabled = true;
     try {
       ctx.postMessage({ kind: "__test.machine_cpu.dummyMachineEnabled" });
     } catch {

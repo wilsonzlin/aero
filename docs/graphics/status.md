@@ -174,13 +174,16 @@ Test pointers (ABI conformance / drift detection):
 - [x] BDF `00:07.0`
 - [x] BAR1 VRAM + legacy VGA window aliasing
 - [~] BAR0 MMIO register block + ring/fence transport + scanout/vblank + error-info registers
-  - Ring processing is currently **no-op** (fence completion only); full command execution is not implemented.
+  - Ring processing defaults to a **no-op** executor (fence completion only), but the canonical
+    browser runtime can enable the AeroGPU **submission bridge** (`Machine::aerogpu_drain_submissions`
+    + `Machine::aerogpu_complete_fence`) to execute drained submissions out-of-process (GPU worker)
+    and then report fence completion back to the device model.
   - Error-info latches are implemented (ABI 1.3+) behind `AEROGPU_FEATURE_ERROR_INFO` (`AEROGPU_MMIO_REG_ERROR_*` + `AEROGPU_IRQ_ERROR`).
 
 Code pointers:
 
 - [`crates/aero-machine/src/lib.rs`](../../crates/aero-machine/src/lib.rs) (`MachineConfig::enable_aerogpu`, BAR1 aliasing, display helpers)
-- [`crates/aero-machine/src/aerogpu.rs`](../../crates/aero-machine/src/aerogpu.rs) (BAR0 register model, ring no-op, vblank tick)
+- [`crates/aero-machine/src/aerogpu.rs`](../../crates/aero-machine/src/aerogpu.rs) (BAR0 register model, ring decode + fence/vblank pacing, submission bridge)
 
 Test pointers:
 
@@ -464,14 +467,18 @@ Test pointers:
 
 This section lists integration blockers that prevent a full “Win7 WDDM + accelerated rendering” experience on the canonical machine today.
 
-### `aero-machine` AeroGPU command execution is stubbed
+### `aero-machine` AeroGPU command execution is not in-process by default
 
-- `MachineConfig::enable_aerogpu` exposes BAR0/BAR1 and implements transport + vblank/scanout register storage, but **does not execute** the AeroGPU command stream.
-  - Evidence: [`crates/aero-machine/src/aerogpu.rs`](../../crates/aero-machine/src/aerogpu.rs) treats submissions as no-op and only advances `completed_fence`.
+- `MachineConfig::enable_aerogpu` exposes BAR0/BAR1 and implements transport + vblank/scanout register storage, but does not execute the AeroGPU command stream in-process by default:
+  - Default bring-up behavior treats submissions as no-op and completes fences immediately (to avoid wedging early guests).
+  - Browser/WASM runtime can opt into out-of-process execution via the AeroGPU **submission bridge**
+    (`Machine::aerogpu_drain_submissions` → GPU worker executes ACMD → `Machine::aerogpu_complete_fence`).
+  - Evidence: [`crates/aero-machine/src/aerogpu.rs`](../../crates/aero-machine/src/aerogpu.rs) captures submissions into a drain queue when the bridge is enabled and otherwise inserts signaled fences directly into the completion set.
 
 Impact:
 
-- The in-tree Win7 driver can plausibly *detect/init* the device and use vblank pacing, but it cannot get accelerated D3D rendering via ACMD execution on the canonical machine yet.
+- Native `aero_machine` consumers that do not supply an executor (in-process backend or submission bridge) will not get accelerated rendering via ACMD execution.
+- The browser runtime can run a subset of ACMD out-of-process (GPU worker), but end-to-end validation is still required for a full “Win7 WDDM + accelerated rendering” experience.
 
 ### WDDM scanout publication into `ScanoutState` exists (MVP) but needs end-to-end validation
 

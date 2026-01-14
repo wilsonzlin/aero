@@ -349,6 +349,45 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
     }
   }, 20_000);
 
+  it("forwards AeroGPU fence completion messages into Machine.aerogpu_complete_fence (dummy machine)", async () => {
+    const segments = allocateTestSegments();
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      worker.postMessage({ kind: "__test.machine_cpu.enableDummyMachine" });
+
+      const workerReady = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "cpu",
+        10_000,
+      );
+
+      worker.postMessage({
+        kind: "config.update",
+        version: 1,
+        config: makeConfig(),
+      });
+      worker.postMessage(makeInit(segments));
+      await workerReady;
+
+      const fence = 123n;
+      const completion = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { type?: unknown }).type === "__test.machine_cpu.aerogpu_complete_fence" && (msg as any).fence === fence,
+        10_000,
+      );
+      worker.postMessage({ kind: "aerogpu.complete_fence", fence });
+      await completion;
+    } finally {
+      await worker.terminate();
+    }
+  }, 20_000);
+
   it("recycles input batch buffers when requested (even without WASM)", async () => {
     const segments = allocateTestSegments();
     const status = new Int32Array(segments.control, STATUS_OFFSET_BYTES, STATUS_INTS);

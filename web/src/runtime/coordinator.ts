@@ -44,8 +44,8 @@ import {
   type SetMicrophoneRingBufferMessage,
   type CursorSetImageMessage,
   type CursorSetStateMessage,
-  type AerogpuSubmitMessage,
   type AerogpuCompleteFenceMessage,
+  type AerogpuSubmitMessage,
   type WorkerInitMessage,
   type WasmReadyMessage,
 } from "./protocol";
@@ -2804,6 +2804,10 @@ export class WorkerCoordinator {
       return;
     }
 
+    this.sendAerogpuSubmitToGpuWorker(gpuInfo.worker, sub);
+  }
+
+  private sendAerogpuSubmitToGpuWorker(gpu: Worker, sub: AerogpuSubmitMessage): void {
     const cmdStream = sub.cmdStream;
     const allocTable = sub.allocTable;
     const flags = typeof sub.flags === "number" && Number.isFinite(sub.flags) ? sub.flags >>> 0 : undefined;
@@ -2828,7 +2832,7 @@ export class WorkerCoordinator {
     const transfer: Transferable[] = [cmdStream];
     if (allocTable) transfer.push(allocTable);
     try {
-      gpuInfo.worker.postMessage(msg, transfer);
+      gpu.postMessage(msg, transfer);
     } catch {
       // Some runtimes reject transfer lists (or individual buffers may be non-transferable).
       // Fall back to structured clone before forcing fence completion.
@@ -2847,7 +2851,6 @@ export class WorkerCoordinator {
     if (!cpuInfo) return;
     if (typeof fence !== "bigint") return;
     if (fence === 0n) return;
-
     const msg: AerogpuCompleteFenceMessage = { kind: "aerogpu.complete_fence", fence };
     try {
       cpuInfo.worker.postMessage(msg);

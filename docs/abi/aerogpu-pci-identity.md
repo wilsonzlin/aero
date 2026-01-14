@@ -30,8 +30,11 @@ The canonical machine supports **two mutually-exclusive** display configurations
     system-memory-backed (no dedicated VRAM segment). BAR1 exists for VGA/VBE compatibility and is
     outside the WDDM ABI (see `docs/graphics/win7-wddm11-aerogpu-driver.md`).
   - **BAR0 regs:** a minimal implementation of the versioned AeroGPU MMIO surface:
-    - ring/fence transport with a *no-op* executor (submissions are consumed and fences complete, but
-      the command stream is not executed), and
+    - ring/fence transport (submission decode + fence-page/IRQ plumbing). Default bring-up behavior
+      can complete fences without executing the command stream; browser/WASM runtimes can enable an
+      out-of-process “submission bridge” (`Machine::aerogpu_drain_submissions` +
+      `Machine::aerogpu_complete_fence`) so the GPU worker can execute submissions and report fence
+      completion, and
     - scanout0 register storage + vblank timing/IRQ semantics (per `drivers/aerogpu/protocol/vblank.md`;
       vblank time is a monotonic “nanoseconds since boot” value) so `Machine::display_present` can
       present the WDDM scanout framebuffer by reading its guest physical address from guest memory.
@@ -39,7 +42,8 @@ The canonical machine supports **two mutually-exclusive** display configurations
   The shared device-side library `crates/aero-devices-gpu` contains a reusable PCI wrapper + ring
   executor and can be paired with host-side backends for real **command execution** (feature-gated).
   A legacy sandbox integration surface also exists in `crates/emulator`. Neither is wired into
-  `aero_machine::Machine` yet (see: [`21-emulator-crate-migration.md`](../21-emulator-crate-migration.md)).
+  `aero_machine::Machine` yet (see: [`21-emulator-crate-migration.md`](../21-emulator-crate-migration.md));
+  the canonical browser runtime instead uses the machine’s submission bridge + the JS/WASM GPU worker executor.
 
   When the AeroGPU-owned VGA/VBE boot display path is active, firmware derives the VBE linear
   framebuffer base from AeroGPU BAR1: `PhysBasePtr = BAR1_BASE + 0x40000`

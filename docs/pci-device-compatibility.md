@@ -19,7 +19,9 @@ Note: the canonical `aero_machine::Machine` supports **two mutually-exclusive** 
     WDDM VRAM segment). BAR1 is outside the WDDM memory model (see
     `docs/graphics/win7-wddm11-aerogpu-driver.md`).
   - BAR0 implements a minimal MMIO surface sufficient for the in-tree Win7 KMD to initialize:
-    - ring/fence transport (no-op command execution; fences complete), and
+    - ring/fence transport (submission decode + fence-page/IRQ plumbing; default bring-up behavior
+      can complete fences without executing the command stream, while browser/WASM runtimes can
+      enable an out-of-process “submission bridge” and complete fences via `Machine::aerogpu_complete_fence`), and
     - scanout0 register storage + vblank counters/IRQ semantics for `WaitForVerticalBlankEvent`
       pacing (see `drivers/aerogpu/protocol/vblank.md`).
 - `MachineConfig::enable_vga=true`: expose the standalone legacy VGA/VBE implementation

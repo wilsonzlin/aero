@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { perf } from "../perf/perf";
+import { GPU_PROTOCOL_NAME, GPU_PROTOCOL_VERSION } from "../ipc/gpu-protocol";
 import { WorkerCoordinator } from "./coordinator";
 import { MessageType } from "./protocol";
 import { createSharedMemoryViews } from "./shared_layout";
 import { allocateHarnessSharedMemorySegments } from "./harness_shared_memory";
 import type { DiskImageMetadata } from "../storage/metadata";
-import { GPU_PROTOCOL_NAME, GPU_PROTOCOL_VERSION } from "../ipc/gpu-protocol";
 import {
   SCANOUT_FORMAT_B8G8R8X8,
   SCANOUT_SOURCE_LEGACY_TEXT,
@@ -263,6 +263,101 @@ describe("runtime/coordinator", () => {
 
     coordinator.stop();
     vi.useRealTimers();
+  });
+
+  it("forwards AeroGPU submit completions from the GPU worker to the CPU worker", () => {
+    const coordinator = new WorkerCoordinator();
+    const segments = allocateTestSegments();
+    const shared = createSharedMemoryViews(segments);
+    (coordinator as any).shared = shared;
+    (coordinator as any).activeConfig = {
+      vmRuntime: "machine",
+      guestMemoryMiB: TEST_GUEST_MIB,
+      vramMiB: TEST_VRAM_MIB,
+      enableWorkers: true,
+      enableWebGPU: false,
+      proxyUrl: null,
+      activeDiskImage: null,
+      logLevel: "info",
+    };
+
+    (coordinator as any).spawnWorker("cpu", segments);
+    (coordinator as any).spawnWorker("gpu", segments);
+    const cpuWorker = (coordinator as any).workers.cpu.worker as MockWorker;
+    const cpuInstanceId = (coordinator as any).workers.cpu.instanceId as number;
+    const gpuWorker = (coordinator as any).workers.gpu.worker as MockWorker;
+    const gpuInstanceId = (coordinator as any).workers.gpu.instanceId as number;
+
+    // Mark GPU worker READY so submissions are forwarded and requestIds are tracked.
+    (coordinator as any).onWorkerMessage("gpu", gpuInstanceId, { type: MessageType.READY, role: "gpu" });
+
+    const cmdStream = new ArrayBuffer(16);
+    (coordinator as any).onWorkerMessage("cpu", cpuInstanceId, {
+      kind: "aerogpu.submit",
+      contextId: 7,
+      signalFence: 42n,
+      cmdStream,
+    });
+
+    const submit = lastMessageOfType(gpuWorker, "submit_aerogpu") as { requestId?: unknown } | undefined;
+    expect(submit).toBeTruthy();
+    const requestId = submit && typeof submit.requestId === "number" ? submit.requestId : -1;
+    expect(requestId).toBeGreaterThan(0);
+
+    (coordinator as any).onWorkerMessage("gpu", gpuInstanceId, {
+      protocol: GPU_PROTOCOL_NAME,
+      protocolVersion: GPU_PROTOCOL_VERSION,
+      type: "submit_complete",
+      requestId,
+      completedFence: 42n,
+    });
+
+    expect(
+      cpuWorker.posted.some(
+        (entry) => (entry.message as { kind?: unknown }).kind === "aerogpu.complete_fence" && (entry.message as any).fence === 42n,
+      ),
+    ).toBe(true);
+  });
+
+  it("buffers AeroGPU submits while the GPU worker is not ready and flushes them on READY", () => {
+    const coordinator = new WorkerCoordinator();
+    const segments = allocateTestSegments();
+    const shared = createSharedMemoryViews(segments);
+    (coordinator as any).shared = shared;
+    (coordinator as any).activeConfig = {
+      vmRuntime: "machine",
+      guestMemoryMiB: TEST_GUEST_MIB,
+      vramMiB: TEST_VRAM_MIB,
+      enableWorkers: true,
+      enableWebGPU: false,
+      proxyUrl: null,
+      activeDiskImage: null,
+      logLevel: "info",
+    };
+
+    (coordinator as any).spawnWorker("cpu", segments);
+    (coordinator as any).spawnWorker("gpu", segments);
+    const cpuInstanceId = (coordinator as any).workers.cpu.instanceId as number;
+    const gpuWorker = (coordinator as any).workers.gpu.worker as MockWorker;
+    const gpuInstanceId = (coordinator as any).workers.gpu.instanceId as number;
+
+    const cmdStream = new ArrayBuffer(16);
+    (coordinator as any).onWorkerMessage("cpu", cpuInstanceId, {
+      kind: "aerogpu.submit",
+      contextId: 7,
+      signalFence: 123n,
+      cmdStream,
+    });
+
+    expect(gpuWorker.posted.some((msg) => (msg.message as { type?: unknown }).type === "submit_aerogpu")).toBe(false);
+
+    // Mark the GPU worker as ready; this should flush buffered submissions.
+    (coordinator as any).onWorkerMessage("gpu", gpuInstanceId, { type: MessageType.READY, role: "gpu" });
+
+    const submit = lastMessageOfType(gpuWorker, "submit_aerogpu") as { signalFence?: unknown; contextId?: unknown } | undefined;
+    expect(submit).toBeTruthy();
+    expect(submit?.contextId).toBe(7);
+    expect(submit?.signalFence).toBe(123n);
   });
 
   it("preserves the machine CPU worker entrypoint across restart()", () => {
