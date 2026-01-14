@@ -17,10 +17,10 @@ const WEBUSB_UHCI_BRIDGE_DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(
 // UHCI register offsets (0x20 bytes).
 const REG_USBCMD: u16 = 0x00;
 
-const ROOT_PORT_EXTERNAL_HUB: usize = 0;
+const ROOT_PORT_EXTERNAL_HUB: usize = aero_machine::Machine::UHCI_EXTERNAL_HUB_ROOT_PORT as usize;
 const ROOT_PORT_WEBUSB: usize = crate::webusb_ports::WEBUSB_ROOT_PORT as usize;
 // Must match `web/src/usb/uhci_external_hub.ts::DEFAULT_EXTERNAL_HUB_PORT_COUNT`.
-const EXTERNAL_HUB_PORT_COUNT: u8 = 16;
+const EXTERNAL_HUB_PORT_COUNT: u8 = aero_machine::Machine::UHCI_EXTERNAL_HUB_PORT_COUNT;
 
 #[wasm_bindgen]
 pub struct WebUsbUhciBridge {
