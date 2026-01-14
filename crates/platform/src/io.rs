@@ -6,6 +6,9 @@ pub trait PortIoDevice {
     fn reset(&mut self) {}
 }
 
+const IO_PORT_COUNT: usize = 0x1_0000;
+type IoPortTable = [Option<Box<dyn PortIoDevice>>; IO_PORT_COUNT];
+
 struct RangeDevice {
     start: u16,
     len: u16,
@@ -28,7 +31,8 @@ impl RangeDevice {
 /// Exact-port handlers are stored in a fixed-size 64Ki table (indexed by `u16`) for O(1)
 /// dispatch. This avoids `HashMap` overhead in tight port I/O loops.
 ///
-/// For a micro-benchmark harness, see `crates/platform/examples/io_port_bus_bench.rs`.
+/// For a Criterion microbench harness, see `crates/platform/benches/io_port_bus.rs` (run with
+/// `--features bench`).
 pub struct IoPortBus {
     /// Exact port dispatch table.
     ///
@@ -37,21 +41,22 @@ pub struct IoPortBus {
     ///
     /// (Memory note: `Option<Box<dyn PortIoDevice>>` is a fat pointer, so this is ~1MiB on
     /// 64-bit targets; allocated once per bus.)
-    devices: Box<[Option<Box<dyn PortIoDevice>>]>,
+    devices: Box<IoPortTable>,
     ranges: Vec<RangeDevice>,
 }
 
 impl IoPortBus {
     pub fn new() -> Self {
-        const IO_PORT_COUNT: usize = 0x1_0000;
-
         // `vec![None; IO_PORT_COUNT]` doesn't work here because `Option<Box<dyn PortIoDevice>>`
         // isn't `Clone`. Build the fixed table with `resize_with` instead.
         let mut devices = Vec::with_capacity(IO_PORT_COUNT);
         devices.resize_with(IO_PORT_COUNT, || None);
 
         Self {
-            devices: devices.into_boxed_slice(),
+            devices: match devices.into_boxed_slice().try_into() {
+                Ok(arr) => arr,
+                Err(_) => panic!("I/O port dispatch table size mismatch"),
+            },
             ranges: Vec::new(),
         }
     }
