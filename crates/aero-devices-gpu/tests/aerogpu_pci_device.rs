@@ -316,7 +316,9 @@ fn error_mmio_regs_latch_and_survive_irq_ack() {
     assert_eq!(dev.read(mmio::ERROR_FENCE_HI, 4), 0);
     assert_eq!(dev.read(mmio::ERROR_COUNT, 4), 0);
 
-    dev.regs.record_error(AerogpuErrorCode::Backend, 42);
+    // Use a fence value > u32::MAX to ensure ERROR_FENCE_LO/HI preserve full 64-bit fences.
+    let fence = 0x1_0000_0000u64 + 42;
+    dev.regs.record_error(AerogpuErrorCode::Backend, fence);
     dev.tick(&mut mem, 0);
 
     assert!(dev.irq_level());
@@ -324,8 +326,9 @@ fn error_mmio_regs_latch_and_survive_irq_ack() {
         dev.read(mmio::ERROR_CODE, 4) as u32,
         AerogpuErrorCode::Backend as u32
     );
-    assert_eq!(dev.read(mmio::ERROR_FENCE_LO, 4) as u32, 42);
-    assert_eq!(dev.read(mmio::ERROR_FENCE_HI, 4) as u32, 0);
+    let error_fence = (dev.read(mmio::ERROR_FENCE_LO, 4) as u64)
+        | ((dev.read(mmio::ERROR_FENCE_HI, 4) as u64) << 32);
+    assert_eq!(error_fence, fence);
     assert_eq!(dev.read(mmio::ERROR_COUNT, 4) as u32, 1);
 
     // IRQ_ACK clears only the status bit; the error payload remains latched.
@@ -337,8 +340,9 @@ fn error_mmio_regs_latch_and_survive_irq_ack() {
         dev.read(mmio::ERROR_CODE, 4) as u32,
         AerogpuErrorCode::Backend as u32
     );
-    assert_eq!(dev.read(mmio::ERROR_FENCE_LO, 4) as u32, 42);
-    assert_eq!(dev.read(mmio::ERROR_FENCE_HI, 4) as u32, 0);
+    let error_fence_after_ack = (dev.read(mmio::ERROR_FENCE_LO, 4) as u64)
+        | ((dev.read(mmio::ERROR_FENCE_HI, 4) as u64) << 32);
+    assert_eq!(error_fence_after_ack, fence);
     assert_eq!(dev.read(mmio::ERROR_COUNT, 4) as u32, 1);
 }
 
