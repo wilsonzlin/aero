@@ -2498,6 +2498,24 @@ struct AeroGpuDevice {
     vbe_bank: u16,
 
     // ---------------------------------------------------------------------
+    // Bochs VBE_DISPI register file (`0x01CE/0x01CF`) (minimal)
+    // ---------------------------------------------------------------------
+    vbe_dispi_index: u16,
+    vbe_dispi_xres: u16,
+    vbe_dispi_yres: u16,
+    vbe_dispi_bpp: u16,
+    vbe_dispi_enable: u16,
+    vbe_dispi_virt_width: u16,
+    vbe_dispi_virt_height: u16,
+    vbe_dispi_x_offset: u16,
+    vbe_dispi_y_offset: u16,
+    /// Whether the guest has written to VBE_DISPI registers directly.
+    ///
+    /// When false, BIOS INT 10h VBE mode sets mirror into these registers so guests that probe the
+    /// Bochs VBE_DISPI interface observe coherent state.
+    vbe_dispi_guest_owned: bool,
+
+    // ---------------------------------------------------------------------
     // Minimal VGA port state (permissive)
     // ---------------------------------------------------------------------
     misc_output: u8,
@@ -2529,6 +2547,14 @@ struct AeroGpuDevice {
 }
 
 impl AeroGpuDevice {
+    fn vbe_dispi_enabled(&self) -> bool {
+        (self.vbe_dispi_enable & 0x0001) != 0
+    }
+
+    fn vbe_active(&self) -> bool {
+        self.vbe_mode_active || self.vbe_dispi_enabled()
+    }
+
     fn default_dac_palette() -> [[u8; 3]; 256] {
         let mut out = [[0u8; 3]; 256];
         // Map an 8-bit (0..=255) channel value to a VGA 6-bit DAC value (0..=63) with rounding.
@@ -2600,6 +2626,16 @@ impl AeroGpuDevice {
             vram_mmio_reads: Cell::new(0),
             vbe_mode_active: false,
             vbe_bank: 0,
+            vbe_dispi_index: 0,
+            vbe_dispi_xres: 0,
+            vbe_dispi_yres: 0,
+            vbe_dispi_bpp: 0,
+            vbe_dispi_enable: 0,
+            vbe_dispi_virt_width: 0,
+            vbe_dispi_virt_height: 0,
+            vbe_dispi_x_offset: 0,
+            vbe_dispi_y_offset: 0,
+            vbe_dispi_guest_owned: false,
             misc_output: 0,
             seq_index: 0,
             seq_regs: [0; 256],
@@ -2625,6 +2661,16 @@ impl AeroGpuDevice {
         self.vram_mmio_reads.set(0);
         self.vbe_mode_active = false;
         self.vbe_bank = 0;
+        self.vbe_dispi_index = 0;
+        self.vbe_dispi_xres = 0;
+        self.vbe_dispi_yres = 0;
+        self.vbe_dispi_bpp = 0;
+        self.vbe_dispi_enable = 0;
+        self.vbe_dispi_virt_width = 0;
+        self.vbe_dispi_virt_height = 0;
+        self.vbe_dispi_x_offset = 0;
+        self.vbe_dispi_y_offset = 0;
+        self.vbe_dispi_guest_owned = false;
         self.misc_output = 0;
         self.seq_index = 0;
         self.seq_regs.fill(0);
@@ -2642,6 +2688,61 @@ impl AeroGpuDevice {
         self.dac_read_index = 0;
         self.dac_read_subindex = 0;
         self.dac_palette = Self::default_dac_palette();
+    }
+
+    fn vbe_dispi_read_reg(&self, index: u16) -> u16 {
+        match index {
+            0x0000 => 0xB0C5, // Bochs VBE_DISPI ID
+            0x0001 => self.vbe_dispi_xres,
+            0x0002 => self.vbe_dispi_yres,
+            0x0003 => self.vbe_dispi_bpp,
+            0x0004 => self.vbe_dispi_enable,
+            0x0005 => self.vbe_bank,
+            0x0006 => self.vbe_dispi_virt_width,
+            0x0007 => self.vbe_dispi_virt_height,
+            0x0008 => self.vbe_dispi_x_offset,
+            0x0009 => self.vbe_dispi_y_offset,
+            0x000A => {
+                let fb_base = VBE_LFB_OFFSET;
+                u16::try_from(self.vram.len().saturating_sub(fb_base) / (64 * 1024))
+                    .unwrap_or(u16::MAX)
+            }
+            _ => 0,
+        }
+    }
+
+    fn vbe_dispi_write_reg(&mut self, index: u16, value: u16) {
+        self.vbe_dispi_guest_owned = true;
+        match index {
+            0x0001 => {
+                self.vbe_dispi_xres = value;
+            }
+            0x0002 => {
+                self.vbe_dispi_yres = value;
+            }
+            0x0003 => {
+                self.vbe_dispi_bpp = value;
+            }
+            0x0004 => {
+                self.vbe_dispi_enable = value;
+            }
+            0x0005 => {
+                self.vbe_bank = value;
+            }
+            0x0006 => {
+                self.vbe_dispi_virt_width = value;
+            }
+            0x0007 => {
+                self.vbe_dispi_virt_height = value;
+            }
+            0x0008 => {
+                self.vbe_dispi_x_offset = value;
+            }
+            0x0009 => {
+                self.vbe_dispi_y_offset = value;
+            }
+            _ => {}
+        }
     }
 
     fn write_dac_data(&mut self, value: u8) {
@@ -2777,7 +2878,7 @@ impl AeroGpuDevice {
 
         // VBE banked window at 0xA0000 (64KiB). When VBE is active, map it into the VBE framebuffer
         // region, not the legacy VGA alias region.
-        if self.vbe_mode_active && off < 64 * 1024 {
+        if self.vbe_active() && off < 64 * 1024 {
             let bank_base = usize::from(self.vbe_bank) * 64 * 1024;
             let vbe_off = VBE_LFB_OFFSET
                 .checked_add(bank_base)
@@ -2797,7 +2898,7 @@ impl AeroGpuDevice {
     fn legacy_vga_write_u8(&mut self, window_off: u64, value: u8) {
         let off = usize::try_from(window_off).unwrap_or(usize::MAX);
 
-        if self.vbe_mode_active && off < 64 * 1024 {
+        if self.vbe_active() && off < 64 * 1024 {
             let bank_base = usize::from(self.vbe_bank) * 64 * 1024;
             let vbe_off = VBE_LFB_OFFSET
                 .checked_add(bank_base)
@@ -3137,6 +3238,49 @@ impl aero_platform::io::PortIoDevice for AeroGpuVgaPortWindow {
             let p = port.wrapping_add(i as u16);
             let b = ((value >> (i * 8)) & 0xFF) as u8;
             dev.vga_port_write_u8(p, b);
+        }
+    }
+}
+
+struct AeroGpuVbeDispiPortWindow {
+    dev: Rc<RefCell<AeroGpuDevice>>,
+}
+
+impl aero_platform::io::PortIoDevice for AeroGpuVbeDispiPortWindow {
+    fn read(&mut self, port: u16, size: u8) -> u32 {
+        // The Bochs VBE_DISPI interface is 16-bit register based (INDEX/DATA). Support only 16-bit
+        // accesses for now; this matches how most real-mode drivers interact with the interface.
+        if size == 0 {
+            return 0;
+        }
+        if size != 2 {
+            return u32::MAX;
+        }
+
+        let dev = self.dev.borrow();
+        match port {
+            aero_gpu_vga::VBE_DISPI_INDEX_PORT => u32::from(dev.vbe_dispi_index),
+            aero_gpu_vga::VBE_DISPI_DATA_PORT => {
+                u32::from(dev.vbe_dispi_read_reg(dev.vbe_dispi_index))
+            }
+            _ => 0,
+        }
+    }
+
+    fn write(&mut self, port: u16, size: u8, value: u32) {
+        if size != 2 {
+            return;
+        }
+
+        let value = (value & 0xFFFF) as u16;
+        let mut dev = self.dev.borrow_mut();
+        match port {
+            aero_gpu_vga::VBE_DISPI_INDEX_PORT => dev.vbe_dispi_index = value,
+            aero_gpu_vga::VBE_DISPI_DATA_PORT => {
+                let index = dev.vbe_dispi_index;
+                dev.vbe_dispi_write_reg(index, value);
+            }
+            _ => {}
         }
     }
 }
@@ -5368,8 +5512,14 @@ impl Machine {
             ScanoutSource::LegacyText
         } else if self.cfg.enable_aerogpu {
             // When AeroGPU is enabled (and standalone VGA is disabled), legacy VBE state is tracked
-            // in the BIOS HLE layer.
-            if self.bios.video.vbe.current_mode.is_some() {
+            // in the BIOS HLE layer. Guests may also program the Bochs VBE_DISPI registers directly
+            // (0x01CE/0x01CF), so also treat that as an active legacy VBE scanout.
+            let bochs_vbe = self
+                .aerogpu
+                .as_ref()
+                .is_some_and(|dev| dev.borrow().vbe_dispi_enabled());
+
+            if self.bios.video.vbe.current_mode.is_some() || bochs_vbe {
                 ScanoutSource::LegacyVbe
             } else if self.bios.cached_video_mode() == 0x13 {
                 ScanoutSource::LegacyVga
@@ -5431,39 +5581,92 @@ impl Machine {
     }
 
     fn display_present_aerogpu_vbe_lfb(&mut self) -> bool {
-        // If the BIOS has not set a VBE mode, fall back to the text-mode path.
-        let Some(mode_id) = self.bios.video.vbe.current_mode else {
-            return false;
-        };
+        let (width, height, bpp, bytes_per_pixel, pitch, start_x, start_y) =
+            if let Some(mode_id) = self.bios.video.vbe.current_mode {
+                // BIOS-driven VBE mode.
+                let Some(mode) = self.bios.video.vbe.find_mode(mode_id) else {
+                    return false;
+                };
 
-        let Some(mode) = self.bios.video.vbe.find_mode(mode_id) else {
-            return false;
-        };
+                let width = u32::from(mode.width);
+                let height = u32::from(mode.height);
+                if width == 0 || height == 0 {
+                    return false;
+                }
 
-        let width = u32::from(mode.width);
-        let height = u32::from(mode.height);
-        if width == 0 || height == 0 {
-            return false;
-        }
+                let bytes_per_pixel = usize::from(mode.bytes_per_pixel()).max(1);
+                if bytes_per_pixel > 8 {
+                    return false;
+                }
 
-        let bytes_per_pixel = usize::from(mode.bytes_per_pixel()).max(1);
-        if bytes_per_pixel > 8 {
-            return false;
-        }
+                let pitch = u64::from(
+                    self.bios
+                        .video
+                        .vbe
+                        .bytes_per_scan_line
+                        .max(mode.bytes_per_scan_line()),
+                );
+                if pitch == 0 {
+                    return false;
+                }
 
-        let pitch = u64::from(
-            self.bios
-                .video
-                .vbe
-                .bytes_per_scan_line
-                .max(mode.bytes_per_scan_line()),
-        );
-        if pitch == 0 {
-            return false;
-        }
+                let start_x = u64::from(self.bios.video.vbe.display_start_x);
+                let start_y = u64::from(self.bios.video.vbe.display_start_y);
 
-        let start_x = u64::from(self.bios.video.vbe.display_start_x);
-        let start_y = u64::from(self.bios.video.vbe.display_start_y);
+                (
+                    width,
+                    height,
+                    u16::from(mode.bpp),
+                    bytes_per_pixel,
+                    pitch,
+                    start_x,
+                    start_y,
+                )
+            } else {
+                // Guest-driven Bochs VBE_DISPI mode.
+                let Some(aerogpu) = self.aerogpu.as_ref() else {
+                    return false;
+                };
+                let dev = aerogpu.borrow();
+                if !dev.vbe_dispi_enabled() {
+                    return false;
+                }
+
+                let width = u32::from(dev.vbe_dispi_xres);
+                let height = u32::from(dev.vbe_dispi_yres);
+                if width == 0 || height == 0 {
+                    return false;
+                }
+
+                let bpp = dev.vbe_dispi_bpp;
+                let bytes_per_pixel = (bpp as usize).div_ceil(8).max(1);
+                if bytes_per_pixel > 8 {
+                    return false;
+                }
+
+                let pitch_pixels = if dev.vbe_dispi_virt_width != 0 {
+                    dev.vbe_dispi_virt_width
+                } else {
+                    dev.vbe_dispi_xres
+                };
+                let pitch = u64::from(pitch_pixels).saturating_mul(bytes_per_pixel as u64);
+                if pitch == 0 {
+                    return false;
+                }
+
+                let start_x = u64::from(dev.vbe_dispi_x_offset);
+                let start_y = u64::from(dev.vbe_dispi_y_offset);
+                (
+                    width,
+                    height,
+                    bpp,
+                    bytes_per_pixel,
+                    pitch,
+                    start_x,
+                    start_y,
+                )
+            };
+
         let base = u64::from(self.bios.video.vbe.lfb_base)
             .saturating_add(start_y.saturating_mul(pitch))
             .saturating_add(start_x.saturating_mul(bytes_per_pixel as u64));
@@ -5521,7 +5724,7 @@ impl Machine {
         // read path incremental for BAR-backed apertures).
         let mut row = vec![0u8; row_bytes];
 
-        match mode.bpp {
+        match bpp {
             32 => {
                 if let Some((aerogpu, vram_off, pitch_bytes)) = vram_fast.as_ref() {
                     let dev = aerogpu.borrow();
@@ -9322,6 +9525,18 @@ impl Machine {
                         }
                     },
                 );
+                self.io.register_shared_range(
+                    aero_gpu_vga::VBE_DISPI_IO_START,
+                    aero_gpu_vga::VBE_DISPI_IO_LEN,
+                    {
+                        let aerogpu = aerogpu.clone();
+                        move |_port| {
+                            Box::new(AeroGpuVbeDispiPortWindow {
+                                dev: aerogpu.clone(),
+                            })
+                        }
+                    },
+                );
 
                 // Map the legacy VGA memory window (`0xA0000..0xC0000`) as an MMIO overlay that
                 // aliases `VRAM[0..128KiB]`.
@@ -11385,9 +11600,44 @@ impl Machine {
 
         // Keep the AeroGPU legacy window mapping coherent with BIOS VBE state for banked access.
         if let Some(aerogpu) = &self.aerogpu {
+            let bios_mode_id = self.bios.video.vbe.current_mode;
+            let bios_vbe_active = bios_mode_id.is_some();
+
             let mut dev = aerogpu.borrow_mut();
-            dev.vbe_mode_active = self.bios.video.vbe.current_mode.is_some();
-            dev.vbe_bank = self.bios.video.vbe.bank;
+            dev.vbe_mode_active = bios_vbe_active;
+            if bios_vbe_active || !dev.vbe_dispi_guest_owned {
+                dev.vbe_bank = self.bios.video.vbe.bank;
+            }
+
+            // Mirror BIOS-driven VBE mode state into the Bochs VBE_DISPI register file when the
+            // guest has not explicitly taken ownership of the interface.
+            if !dev.vbe_dispi_guest_owned {
+                if let Some(mode_id) = bios_mode_id {
+                    if let Some(mode) = self.bios.video.vbe.find_mode(mode_id) {
+                        dev.vbe_dispi_xres = mode.width;
+                        dev.vbe_dispi_yres = mode.height;
+                        dev.vbe_dispi_bpp = mode.bpp as u16;
+                        // Bochs VBE_DISPI enable: bit0=enable, bit6=linear framebuffer.
+                        dev.vbe_dispi_enable = 0x0041;
+                        dev.vbe_dispi_virt_width =
+                            self.bios.video.vbe.logical_width_pixels.max(mode.width);
+                        dev.vbe_dispi_virt_height = mode.height;
+                        dev.vbe_dispi_x_offset = self.bios.video.vbe.display_start_x;
+                        dev.vbe_dispi_y_offset = self.bios.video.vbe.display_start_y;
+                    }
+                } else {
+                    // Ensure the Bochs register file does not advertise a stale enabled mode when
+                    // the BIOS has reverted to text mode.
+                    dev.vbe_dispi_xres = 0;
+                    dev.vbe_dispi_yres = 0;
+                    dev.vbe_dispi_bpp = 0;
+                    dev.vbe_dispi_enable = 0;
+                    dev.vbe_dispi_virt_width = 0;
+                    dev.vbe_dispi_virt_height = 0;
+                    dev.vbe_dispi_x_offset = 0;
+                    dev.vbe_dispi_y_offset = 0;
+                }
+            }
         }
     }
 
@@ -11755,8 +12005,6 @@ impl Machine {
                     }
                 }
 
-                dev.vbe_mode_active = self.bios.video.vbe.current_mode.is_some();
-                dev.vbe_bank = self.bios.video.vbe.bank;
             }
         }
         self.cpu.state.a20_enabled = self.chipset.a20().enabled();
