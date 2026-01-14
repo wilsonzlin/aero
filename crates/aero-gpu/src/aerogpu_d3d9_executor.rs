@@ -5613,6 +5613,7 @@ impl AerogpuD3d9Executor {
                 shader_stage,
                 slot,
                 texture,
+                stage_ex: _,
             } => {
                 let slot_idx = slot as usize;
                 if slot_idx >= MAX_SAMPLERS {

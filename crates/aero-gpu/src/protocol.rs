@@ -264,6 +264,12 @@ pub enum AeroGpuCmd<'a> {
     CreateShaderDxbc {
         shader_handle: u32,
         stage: u32,
+        /// Extended shader stage selector encoded in the packet's `reserved0` field.
+        ///
+        /// This is a raw ABI field used to disambiguate GS/HS/DS encoded with `stage=COMPUTE`.
+        /// Higher layers may interpret it with `aero_protocol::aerogpu::aerogpu_cmd::decode_stage_ex`
+        /// / `resolve_shader_stage_with_ex`.
+        stage_ex: u32,
         dxbc_size_bytes: u32,
         dxbc_bytes: &'a [u8],
     },
@@ -282,6 +288,10 @@ pub enum AeroGpuCmd<'a> {
         stage: u32,
         start_register: u32,
         vec4_count: u32,
+        /// Extended shader stage selector encoded in the packet's `reserved0` field.
+        ///
+        /// See `CreateShaderDxbc.stage_ex` for details.
+        stage_ex: u32,
         data: &'a [u8],
     },
 
@@ -350,6 +360,10 @@ pub enum AeroGpuCmd<'a> {
         shader_stage: u32,
         slot: u32,
         texture: u32,
+        /// Extended shader stage selector encoded in the packet's `reserved0` field.
+        ///
+        /// See `CreateShaderDxbc.stage_ex` for details.
+        stage_ex: u32,
     },
     SetSamplerState {
         shader_stage: u32,
@@ -371,24 +385,40 @@ pub enum AeroGpuCmd<'a> {
         shader_stage: u32,
         start_slot: u32,
         sampler_count: u32,
+        /// Extended shader stage selector encoded in the packet's `reserved0` field.
+        ///
+        /// See `CreateShaderDxbc.stage_ex` for details.
+        stage_ex: u32,
         handles_bytes: &'a [u8],
     },
     SetConstantBuffers {
         shader_stage: u32,
         start_slot: u32,
         buffer_count: u32,
+        /// Extended shader stage selector encoded in the packet's `reserved0` field.
+        ///
+        /// See `CreateShaderDxbc.stage_ex` for details.
+        stage_ex: u32,
         bindings_bytes: &'a [u8],
     },
     SetShaderResourceBuffers {
         shader_stage: u32,
         start_slot: u32,
         buffer_count: u32,
+        /// Extended shader stage selector encoded in the packet's `reserved0` field.
+        ///
+        /// See `CreateShaderDxbc.stage_ex` for details.
+        stage_ex: u32,
         bindings_bytes: &'a [u8],
     },
     SetUnorderedAccessBuffers {
         shader_stage: u32,
         start_slot: u32,
         uav_count: u32,
+        /// Extended shader stage selector encoded in the packet's `reserved0` field.
+        ///
+        /// See `CreateShaderDxbc.stage_ex` for details.
+        stage_ex: u32,
         bindings_bytes: &'a [u8],
     },
     SetRenderState {
@@ -677,6 +707,7 @@ pub fn parse_cmd_stream(
                 AeroGpuCmd::CreateShaderDxbc {
                     shader_handle: cmd.shader_handle,
                     stage: cmd.stage,
+                    stage_ex: cmd.reserved0,
                     dxbc_size_bytes: cmd.dxbc_size_bytes,
                     dxbc_bytes,
                 }
@@ -706,6 +737,7 @@ pub fn parse_cmd_stream(
             Some(AeroGpuOpcode::SetShaderConstantsF) => {
                 let cmd: protocol::AerogpuCmdSetShaderConstantsF = read_packed_prefix(packet)?;
                 let vec4_count = u32::from_le(cmd.vec4_count);
+                let stage_ex = u32::from_le(cmd.reserved0);
                 let data_len = (vec4_count as usize)
                     .checked_mul(16)
                     .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?;
@@ -720,6 +752,7 @@ pub fn parse_cmd_stream(
                     stage: u32::from_le(cmd.stage),
                     start_register: u32::from_le(cmd.start_register),
                     vec4_count,
+                    stage_ex,
                     data,
                 }
             }
@@ -906,6 +939,7 @@ pub fn parse_cmd_stream(
                     shader_stage: u32::from_le(cmd.shader_stage),
                     slot: u32::from_le(cmd.slot),
                     texture: u32::from_le(cmd.texture),
+                    stage_ex: u32::from_le(cmd.reserved0),
                 }
             }
             Some(AeroGpuOpcode::SetSamplerState) => {
@@ -937,6 +971,7 @@ pub fn parse_cmd_stream(
                 let cmd: protocol::AerogpuCmdSetSamplers = read_packed_prefix(packet)?;
                 let handles_start = size_of::<protocol::AerogpuCmdSetSamplers>();
                 let sampler_count = u32::from_le(cmd.sampler_count);
+                let stage_ex = u32::from_le(cmd.reserved0);
                 let count = usize::try_from(sampler_count)
                     .map_err(|_| AeroGpuCmdStreamParseError::BufferTooSmall)?;
                 let handles_len = count
@@ -952,6 +987,7 @@ pub fn parse_cmd_stream(
                     shader_stage: u32::from_le(cmd.shader_stage),
                     start_slot: u32::from_le(cmd.start_slot),
                     sampler_count,
+                    stage_ex,
                     handles_bytes,
                 }
             }
@@ -959,6 +995,7 @@ pub fn parse_cmd_stream(
                 let cmd: protocol::AerogpuCmdSetConstantBuffers = read_packed_prefix(packet)?;
                 let bindings_start = size_of::<protocol::AerogpuCmdSetConstantBuffers>();
                 let buffer_count = u32::from_le(cmd.buffer_count);
+                let stage_ex = u32::from_le(cmd.reserved0);
                 let count = usize::try_from(buffer_count)
                     .map_err(|_| AeroGpuCmdStreamParseError::BufferTooSmall)?;
                 let bindings_len = count
@@ -974,6 +1011,7 @@ pub fn parse_cmd_stream(
                     shader_stage: u32::from_le(cmd.shader_stage),
                     start_slot: u32::from_le(cmd.start_slot),
                     buffer_count,
+                    stage_ex,
                     bindings_bytes,
                 }
             }
@@ -981,6 +1019,7 @@ pub fn parse_cmd_stream(
                 let cmd: protocol::AerogpuCmdSetShaderResourceBuffers = read_packed_prefix(packet)?;
                 let bindings_start = size_of::<protocol::AerogpuCmdSetShaderResourceBuffers>();
                 let buffer_count = u32::from_le(cmd.buffer_count);
+                let stage_ex = u32::from_le(cmd.reserved0);
                 let count = usize::try_from(buffer_count)
                     .map_err(|_| AeroGpuCmdStreamParseError::BufferTooSmall)?;
                 let bindings_len = count
@@ -996,6 +1035,7 @@ pub fn parse_cmd_stream(
                     shader_stage: u32::from_le(cmd.shader_stage),
                     start_slot: u32::from_le(cmd.start_slot),
                     buffer_count,
+                    stage_ex,
                     bindings_bytes,
                 }
             }
@@ -1003,6 +1043,7 @@ pub fn parse_cmd_stream(
                 let cmd: protocol::AerogpuCmdSetUnorderedAccessBuffers = read_packed_prefix(packet)?;
                 let bindings_start = size_of::<protocol::AerogpuCmdSetUnorderedAccessBuffers>();
                 let uav_count = u32::from_le(cmd.uav_count);
+                let stage_ex = u32::from_le(cmd.reserved0);
                 let count =
                     usize::try_from(uav_count).map_err(|_| AeroGpuCmdStreamParseError::BufferTooSmall)?;
                 let bindings_len = count
@@ -1018,6 +1059,7 @@ pub fn parse_cmd_stream(
                     shader_stage: u32::from_le(cmd.shader_stage),
                     start_slot: u32::from_le(cmd.start_slot),
                     uav_count,
+                    stage_ex,
                     bindings_bytes,
                 }
             }

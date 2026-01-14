@@ -6,6 +6,7 @@ use crate::{
 
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdStreamHeader as ProtocolCmdStreamHeader,
+    AerogpuShaderStage, AerogpuShaderStageEx,
 };
 use aero_protocol::aerogpu::aerogpu_pci::{
     AEROGPU_ABI_MAJOR, AEROGPU_ABI_MINOR, AEROGPU_ABI_VERSION_U32,
@@ -627,11 +628,13 @@ fn protocol_parses_all_opcodes() {
         AeroGpuCmd::CreateShaderDxbc {
             shader_handle,
             stage,
+            stage_ex,
             dxbc_size_bytes,
             dxbc_bytes: parsed_dxbc,
         } => {
             assert_eq!(shader_handle, 0x33);
             assert_eq!(stage, 1);
+            assert_eq!(stage_ex, 0);
             assert_eq!(dxbc_size_bytes, dxbc_bytes.len() as u32);
             assert_eq!(parsed_dxbc, dxbc_bytes);
         }
@@ -660,11 +663,13 @@ fn protocol_parses_all_opcodes() {
             stage,
             start_register,
             vec4_count,
+            stage_ex,
             data,
         } => {
             assert_eq!(stage, 0);
             assert_eq!(start_register, 4);
             assert_eq!(vec4_count, 2);
+            assert_eq!(stage_ex, 0);
             assert_eq!(data, constants_bytes);
         }
         other => panic!("unexpected cmd: {other:?}"),
@@ -822,10 +827,12 @@ fn protocol_parses_all_opcodes() {
             shader_stage,
             slot,
             texture,
+            stage_ex,
         } => {
             assert_eq!(shader_stage, 1);
             assert_eq!(slot, 3);
             assert_eq!(texture, 0xC0);
+            assert_eq!(stage_ex, 0);
         }
         other => panic!("unexpected cmd: {other:?}"),
     }
@@ -867,11 +874,13 @@ fn protocol_parses_all_opcodes() {
             shader_stage,
             start_slot,
             sampler_count,
+            stage_ex,
             handles_bytes,
         } => {
             assert_eq!(shader_stage, 1);
             assert_eq!(start_slot, 3);
             assert_eq!(sampler_count, 2);
+            assert_eq!(stage_ex, 0);
             assert_eq!(handles_bytes, expected_sampler_handles);
         }
         other => panic!("unexpected cmd: {other:?}"),
@@ -882,11 +891,13 @@ fn protocol_parses_all_opcodes() {
             shader_stage,
             start_slot,
             buffer_count,
+            stage_ex,
             bindings_bytes,
         } => {
             assert_eq!(shader_stage, 1);
             assert_eq!(start_slot, 0);
             assert_eq!(buffer_count, 2);
+            assert_eq!(stage_ex, 0);
             assert_eq!(bindings_bytes, expected_cb_bindings);
         }
         other => panic!("unexpected cmd: {other:?}"),
@@ -897,11 +908,13 @@ fn protocol_parses_all_opcodes() {
             shader_stage,
             start_slot,
             buffer_count,
+            stage_ex,
             bindings_bytes,
         } => {
             assert_eq!(shader_stage, 1);
             assert_eq!(start_slot, 1);
             assert_eq!(buffer_count, 2);
+            assert_eq!(stage_ex, 0);
             assert_eq!(bindings_bytes, expected_srv_bindings);
         }
         other => panic!("unexpected cmd: {other:?}"),
@@ -912,11 +925,13 @@ fn protocol_parses_all_opcodes() {
             shader_stage,
             start_slot,
             uav_count,
+            stage_ex,
             bindings_bytes,
         } => {
             assert_eq!(shader_stage, 2);
             assert_eq!(start_slot, 0);
             assert_eq!(uav_count, 2);
+            assert_eq!(stage_ex, 0);
             assert_eq!(bindings_bytes, expected_uav_bindings);
         }
         other => panic!("unexpected cmd: {other:?}"),
@@ -1057,6 +1072,176 @@ fn protocol_parses_all_opcodes() {
 
     assert!(matches!(cmds.next(), Some(AeroGpuCmd::Flush)));
     assert!(cmds.next().is_none());
+}
+
+#[test]
+fn protocol_preserves_stage_ex_for_stage_bound_packets() {
+    let stage_compute = AerogpuShaderStage::Compute as u32;
+
+    // Use distinct non-zero values per opcode so copy/paste mistakes are caught.
+    let stage_ex_create_shader = AerogpuShaderStageEx::Hull as u32;
+    let stage_ex_set_texture = AerogpuShaderStageEx::Domain as u32;
+    let stage_ex_set_samplers = AerogpuShaderStageEx::Geometry as u32;
+    let stage_ex_set_constant_buffers = AerogpuShaderStageEx::Vertex as u32;
+    let stage_ex_set_srv_buffers = AerogpuShaderStageEx::Compute as u32;
+    let stage_ex_set_uav_buffers = AerogpuShaderStageEx::Hull as u32;
+    let stage_ex_set_constants_f = AerogpuShaderStageEx::Domain as u32;
+
+    let dxbc_bytes = [9u8, 8, 7, 6];
+
+    let constants_f32 = [1.0f32, 2.0, 3.0, 4.0];
+    let mut constants_bytes = Vec::new();
+    for v in constants_f32 {
+        constants_bytes.extend_from_slice(&v.to_le_bytes());
+    }
+
+    let stream = build_stream(|out| {
+        emit_packet(out, AeroGpuOpcode::CreateShaderDxbc as u32, |out| {
+            push_u32(out, 0x33); // shader_handle
+            push_u32(out, stage_compute); // stage
+            push_u32(out, dxbc_bytes.len() as u32); // dxbc_size_bytes
+            push_u32(out, stage_ex_create_shader); // reserved0 (stage_ex)
+            out.extend_from_slice(&dxbc_bytes);
+        });
+
+        emit_packet(out, AeroGpuOpcode::SetTexture as u32, |out| {
+            push_u32(out, stage_compute); // shader_stage
+            push_u32(out, 3); // slot
+            push_u32(out, 0xC0); // texture
+            push_u32(out, stage_ex_set_texture); // reserved0 (stage_ex)
+        });
+
+        emit_packet(out, AeroGpuOpcode::SetSamplers as u32, |out| {
+            push_u32(out, stage_compute); // shader_stage
+            push_u32(out, 0); // start_slot
+            push_u32(out, 1); // sampler_count
+            push_u32(out, stage_ex_set_samplers); // reserved0 (stage_ex)
+            push_u32(out, 0x55); // handles[0]
+        });
+
+        emit_packet(out, AeroGpuOpcode::SetConstantBuffers as u32, |out| {
+            push_u32(out, stage_compute); // shader_stage
+            push_u32(out, 0); // start_slot
+            push_u32(out, 1); // buffer_count
+            push_u32(out, stage_ex_set_constant_buffers); // reserved0 (stage_ex)
+                                             // binding[0]
+            push_u32(out, 0x90); // buffer
+            push_u32(out, 16); // offset_bytes
+            push_u32(out, 64); // size_bytes
+            push_u32(out, 0); // reserved0
+        });
+
+        emit_packet(out, AeroGpuOpcode::SetShaderResourceBuffers as u32, |out| {
+            push_u32(out, stage_compute); // shader_stage
+            push_u32(out, 0); // start_slot
+            push_u32(out, 1); // buffer_count
+            push_u32(out, stage_ex_set_srv_buffers); // reserved0 (stage_ex)
+                                           // binding[0]
+            push_u32(out, 0xA2); // buffer
+            push_u32(out, 8); // offset_bytes
+            push_u32(out, 32); // size_bytes
+            push_u32(out, 0); // reserved0
+        });
+
+        emit_packet(out, AeroGpuOpcode::SetUnorderedAccessBuffers as u32, |out| {
+            push_u32(out, stage_compute); // shader_stage
+            push_u32(out, 0); // start_slot
+            push_u32(out, 1); // uav_count
+            push_u32(out, stage_ex_set_uav_buffers); // reserved0 (stage_ex)
+                                           // binding[0]
+            push_u32(out, 0xA3); // buffer
+            push_u32(out, 0); // offset_bytes
+            push_u32(out, 128); // size_bytes
+            push_u32(out, 7); // initial_count
+        });
+
+        emit_packet(out, AeroGpuOpcode::SetShaderConstantsF as u32, |out| {
+            push_u32(out, stage_compute); // stage
+            push_u32(out, 4); // start_register
+            push_u32(out, 1); // vec4_count
+            push_u32(out, stage_ex_set_constants_f); // reserved0 (stage_ex)
+            out.extend_from_slice(&constants_bytes);
+        });
+    });
+
+    let parsed = parse_cmd_stream(&stream).expect("parse should succeed");
+    assert_eq!(parsed.cmds.len(), 7);
+
+    match &parsed.cmds[0] {
+        AeroGpuCmd::CreateShaderDxbc { stage, stage_ex, .. } => {
+            assert_eq!(*stage, stage_compute);
+            assert_eq!(*stage_ex, stage_ex_create_shader);
+        }
+        other => panic!("unexpected cmd[0]: {other:?}"),
+    }
+
+    match &parsed.cmds[1] {
+        AeroGpuCmd::SetTexture {
+            shader_stage,
+            stage_ex,
+            ..
+        } => {
+            assert_eq!(*shader_stage, stage_compute);
+            assert_eq!(*stage_ex, stage_ex_set_texture);
+        }
+        other => panic!("unexpected cmd[1]: {other:?}"),
+    }
+
+    match &parsed.cmds[2] {
+        AeroGpuCmd::SetSamplers {
+            shader_stage,
+            stage_ex,
+            ..
+        } => {
+            assert_eq!(*shader_stage, stage_compute);
+            assert_eq!(*stage_ex, stage_ex_set_samplers);
+        }
+        other => panic!("unexpected cmd[2]: {other:?}"),
+    }
+
+    match &parsed.cmds[3] {
+        AeroGpuCmd::SetConstantBuffers {
+            shader_stage,
+            stage_ex,
+            ..
+        } => {
+            assert_eq!(*shader_stage, stage_compute);
+            assert_eq!(*stage_ex, stage_ex_set_constant_buffers);
+        }
+        other => panic!("unexpected cmd[3]: {other:?}"),
+    }
+
+    match &parsed.cmds[4] {
+        AeroGpuCmd::SetShaderResourceBuffers {
+            shader_stage,
+            stage_ex,
+            ..
+        } => {
+            assert_eq!(*shader_stage, stage_compute);
+            assert_eq!(*stage_ex, stage_ex_set_srv_buffers);
+        }
+        other => panic!("unexpected cmd[4]: {other:?}"),
+    }
+
+    match &parsed.cmds[5] {
+        AeroGpuCmd::SetUnorderedAccessBuffers {
+            shader_stage,
+            stage_ex,
+            ..
+        } => {
+            assert_eq!(*shader_stage, stage_compute);
+            assert_eq!(*stage_ex, stage_ex_set_uav_buffers);
+        }
+        other => panic!("unexpected cmd[5]: {other:?}"),
+    }
+
+    match &parsed.cmds[6] {
+        AeroGpuCmd::SetShaderConstantsF { stage, stage_ex, .. } => {
+            assert_eq!(*stage, stage_compute);
+            assert_eq!(*stage_ex, stage_ex_set_constants_f);
+        }
+        other => panic!("unexpected cmd[6]: {other:?}"),
+    }
 }
 
 #[test]

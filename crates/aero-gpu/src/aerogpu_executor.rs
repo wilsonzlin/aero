@@ -1296,6 +1296,7 @@ fn fs_main() -> @location(0) vec4<f32> {
                     shader_stage,
                     slot,
                     texture,
+                    stage_ex: _,
                 } => self.exec_set_texture(shader_stage, slot, texture),
                 AeroGpuCmd::Clear {
                     flags,
