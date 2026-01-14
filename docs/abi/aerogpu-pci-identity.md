@@ -15,6 +15,9 @@ The canonical machine supports **two mutually-exclusive** display configurations
 - `MachineConfig::enable_aerogpu=true`: expose the canonical AeroGPU PCI identity at `00:07.0`
   (`A3A0:0001`) with the canonical BAR layout (BAR0 regs + BAR1 VRAM aperture).
 
+  Note: in `aero_machine`, `enable_aerogpu` requires `enable_pc_platform=true` (the PCI bus must be
+  present) and is mutually exclusive with `enable_vga`.
+
   In `aero_machine` today this provides:
 
   - **BAR1 VRAM aperture:** backed by a dedicated VRAM buffer for legacy VGA/VBE boot display
