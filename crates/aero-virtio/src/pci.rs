@@ -271,13 +271,6 @@ impl VirtioPciDevice {
         // mirrors the default `aero_devices::pci::PciDevice::reset` implementation, but needs to
         // live here as well because `VirtioPciDevice` overrides that trait method.
         self.config.disable_msi_msix();
-
-        // Clear any pending bits latched in the MSI-X Pending Bit Array (PBA) so reset deasserts
-        // all interrupts deterministically.
-        if let Some(msix) = self.config.capability_mut::<MsixCapability>() {
-            let zeros = vec![0u64; msix.snapshot_pba().len()];
-            let _ = msix.restore_pba(&zeros);
-        }
     }
 
     /// Returns whether the device is currently asserting its legacy INTx interrupt line.

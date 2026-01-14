@@ -2591,13 +2591,6 @@ impl PciDevice for NvmePciDevice {
             let cfg = self.config_mut();
             cfg.set_command(0);
             cfg.disable_msi_msix();
-
-            // Clear any pending bits latched in the MSI-X Pending Bit Array (PBA) so reset starts
-            // from a deterministic interrupt state.
-            if let Some(msix) = cfg.capability_mut::<MsixCapability>() {
-                let zeros = vec![0u64; msix.snapshot_pba().len()];
-                let _ = msix.restore_pba(&zeros);
-            }
         }
 
         // Reset controller register/queue state while preserving the attached disk backend.

@@ -476,16 +476,42 @@ impl PciConfigSpace {
     /// PCI capabilities list, and then bounds-checks the computed config-space offsets.
     pub fn disable_msi_msix(&mut self) {
         // Disable MSI by clearing Message Control bit 0 (MSI Enable).
+        //
+        // Also clear per-vector mask/pending registers when present so the next boot starts with a
+        // deterministic MSI state (real hardware resets these to 0 as part of function reset).
         if let Some(cap) = self.find_capability(crate::pci::msi::PCI_CAP_ID_MSI) {
             let ctrl_off = usize::from(cap).saturating_add(0x02);
             if ctrl_off.saturating_add(2) <= PCI_CONFIG_SPACE_SIZE {
                 let off = u16::from(cap).saturating_add(0x02);
                 let ctrl = self.read(off, 2) as u16;
                 self.write(off, 2, u32::from(ctrl & !0x0001));
+
+                let is_64bit = (ctrl & (1 << 7)) != 0;
+                let per_vector_masking = (ctrl & (1 << 8)) != 0;
+                if per_vector_masking {
+                    let mask_off = if is_64bit {
+                        u16::from(cap).saturating_add(0x10)
+                    } else {
+                        u16::from(cap).saturating_add(0x0c)
+                    };
+                    let pending_off = if is_64bit {
+                        u16::from(cap).saturating_add(0x14)
+                    } else {
+                        u16::from(cap).saturating_add(0x10)
+                    };
+
+                    // These registers are present only when `per_vector_masking` is set. They are
+                    // expected to reset to 0.
+                    self.write(mask_off, 4, 0);
+                    self.write(pending_off, 4, 0);
+                }
             }
         }
 
         // Disable MSI-X by clearing Message Control bits 15 (MSI-X Enable) and 14 (Function Mask).
+        //
+        // Also clear any latched pending bits in the MSI-X Pending Bit Array (PBA) so a subsequent
+        // re-enable cannot deliver stale interrupts after reset.
         if let Some(cap) = self.find_capability(crate::pci::msix::PCI_CAP_ID_MSIX) {
             let ctrl_off = usize::from(cap).saturating_add(0x02);
             if ctrl_off.saturating_add(2) <= PCI_CONFIG_SPACE_SIZE {
@@ -493,6 +519,11 @@ impl PciConfigSpace {
                 let ctrl = self.read(off, 2) as u16;
                 self.write(off, 2, u32::from(ctrl & !((1 << 15) | (1 << 14))));
             }
+        }
+
+        if let Some(msix) = self.capability_mut::<crate::pci::MsixCapability>() {
+            let zeros = vec![0u64; msix.snapshot_pba().len()];
+            let _ = msix.restore_pba(&zeros);
         }
     }
 
@@ -904,6 +935,24 @@ mod tests {
         let msi_ctrl = cfg.read(msi_off + 0x02, 2) as u16;
         cfg.write(msi_off + 0x02, 2, u32::from(msi_ctrl | 0x0001));
 
+        // Set the MSI per-vector mask and pending bits so we can assert reset clears them.
+        let is_64bit = (msi_ctrl & (1 << 7)) != 0;
+        let per_vector_masking = (msi_ctrl & (1 << 8)) != 0;
+        if per_vector_masking {
+            let mask_off = if is_64bit {
+                msi_off + 0x10
+            } else {
+                msi_off + 0x0c
+            };
+            let pending_off = if is_64bit {
+                msi_off + 0x14
+            } else {
+                msi_off + 0x10
+            };
+            cfg.write(mask_off, 4, 1);
+            cfg.write(pending_off, 4, 1);
+        }
+
         // Enable MSI-X and set Function Mask.
         let msix_off = cfg.find_capability(PCI_CAP_ID_MSIX).unwrap() as u16;
         let msix_ctrl = cfg.read(msix_off + 0x02, 2) as u16;
@@ -914,22 +963,37 @@ mod tests {
         );
 
         assert!(cfg.capability::<MsiCapability>().unwrap().enabled());
+        assert_eq!(cfg.capability::<MsiCapability>().unwrap().mask_bits(), 1);
+        assert_eq!(cfg.capability::<MsiCapability>().unwrap().pending_bits(), 1);
         assert!(cfg.capability::<MsixCapability>().unwrap().enabled());
         assert!(cfg
             .capability::<MsixCapability>()
             .unwrap()
             .function_masked());
+        {
+            // Triggering a masked MSI-X vector should set the PBA pending bit; reset must clear it.
+            let msix = cfg.capability_mut::<MsixCapability>().unwrap();
+            assert!(msix.trigger(0).is_none());
+            assert_eq!(msix.snapshot_pba()[0] & 1, 1);
+        }
 
         let mut dev = Dev { cfg };
         dev.reset();
 
         assert!(!dev.cfg.capability::<MsiCapability>().unwrap().enabled());
+        assert_eq!(dev.cfg.capability::<MsiCapability>().unwrap().mask_bits(), 0);
+        assert_eq!(dev.cfg.capability::<MsiCapability>().unwrap().pending_bits(), 0);
         assert!(!dev.cfg.capability::<MsixCapability>().unwrap().enabled());
         assert!(!dev
             .cfg
             .capability::<MsixCapability>()
             .unwrap()
             .function_masked());
+        assert_eq!(
+            dev.cfg.capability::<MsixCapability>().unwrap().snapshot_pba()[0] & 1,
+            0,
+            "reset should clear MSI-X PBA pending bits"
+        );
 
         // BAR base programming is preserved across reset.
         assert_eq!(dev.cfg.bar_range(0).unwrap().base, 0x1234_5000);

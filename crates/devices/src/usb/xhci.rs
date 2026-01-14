@@ -332,17 +332,6 @@ impl PciDevice for XhciPciDevice {
         self.config.set_command(0);
         self.config.disable_msi_msix();
 
-        // Clear any pending bits latched in the MSI-X Pending Bit Array (PBA) so reset starts from
-        // a deterministic interrupt state.
-        //
-        // This is important because `service_interrupts()` drains MSI-X pending messages
-        // independently of the current interrupt condition; leaving stale PBA bits set across reset
-        // could otherwise cause spurious interrupts when the guest later re-enables MSI-X.
-        if let Some(msix) = self.config.capability_mut::<MsixCapability>() {
-            let zeros = vec![0u64; msix.snapshot_pba().len()];
-            let _ = msix.restore_pba(&zeros);
-        }
-
         // Reset controller registers while keeping attached device models.
         //
         // Like UHCI/EHCI, a host controller reset should not "unplug" devices. The xHCI controller
