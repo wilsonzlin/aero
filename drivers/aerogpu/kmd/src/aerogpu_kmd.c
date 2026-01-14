@@ -1655,11 +1655,6 @@ static VOID AeroGpuFreeContiguousNonCached(_Inout_ AEROGPU_ADAPTER* Adapter, _In
         return;
     }
 
-    if (!Adapter) {
-        MmFreeContiguousMemorySpecifyCache(Va, Size, MmNonCached);
-        return;
-    }
-
     ASSERT(Size != 0);
     if (Size == 0) {
         return;
@@ -1668,6 +1663,20 @@ static VOID AeroGpuFreeContiguousNonCached(_Inout_ AEROGPU_ADAPTER* Adapter, _In
     UINT classIndex = 0;
     SIZE_T allocSize = 0;
     const BOOLEAN eligible = AeroGpuContigPoolClassForSize(Size, &classIndex, &allocSize);
+    const SIZE_T freeBytes = allocSize ? allocSize : Size;
+
+    if (!Adapter) {
+        /*
+         * Even though the pool is adapter-scoped, keep freeing correct when an adapter context
+         * isn't available (e.g. best-effort cleanup during partial init/teardown paths).
+         *
+         * Note: allocations made by AeroGpuAllocContiguous* are page-rounded when eligible for
+         * pooling, so the size passed to MmFreeContiguousMemorySpecifyCache must match the
+         * rounded allocation size.
+         */
+        MmFreeContiguousMemorySpecifyCache(Va, freeBytes, MmNonCached);
+        return;
+    }
 
     if (eligible) {
         BOOLEAN returned = FALSE;
@@ -1703,7 +1712,6 @@ static VOID AeroGpuFreeContiguousNonCached(_Inout_ AEROGPU_ADAPTER* Adapter, _In
         }
     }
 
-    const SIZE_T freeBytes = allocSize ? allocSize : Size;
     MmFreeContiguousMemorySpecifyCache(Va, freeBytes, MmNonCached);
 #if DBG
     InterlockedIncrement64(&Adapter->ContigPool.FreesToOs);
