@@ -8,7 +8,8 @@ Why:
   - Fence bookkeeping fields (LastSubmittedFence/LastCompletedFence/etc) are
     accessed across multiple contexts (submit thread, ISR/DPC, dbgctl escapes).
 
-This script scans `drivers/aerogpu/kmd/src/aerogpu_kmd.c` and enforces that
+This script scans AeroGPU Win7 KMD source files under `drivers/aerogpu/kmd/src/`
+and enforces that
 member accesses to the fence fields are never performed as plain loads/stores.
 In practice this means every occurrence must take the address of the field
 (`&Adapter->LastCompletedFence`, etc), so the value is read/written via an
@@ -30,7 +31,7 @@ def repo_root() -> pathlib.Path:
 
 
 ROOT = repo_root()
-SRC = ROOT / "drivers" / "aerogpu" / "kmd" / "src" / "aerogpu_kmd.c"
+SRC_DIR = ROOT / "drivers" / "aerogpu" / "kmd" / "src"
 
 
 FENCE_FIELDS = {
@@ -443,65 +444,71 @@ def _is_allowed_call(name: str | None) -> bool:
 
 
 def main() -> int:
-    if not SRC.exists():
-        print(f"OK: {SRC} not present; skipping.")
+    if not SRC_DIR.exists():
+        print(f"OK: {SRC_DIR} not present; skipping.")
         return 0
 
-    src_text = SRC.read_text(encoding="utf-8", errors="replace")
-    stripped = _strip_c_comments_and_literals(src_text)
-    tokens = _lex(stripped)
+    sources = sorted(SRC_DIR.rglob("*.c")) + sorted(SRC_DIR.rglob("*.cpp"))
+    if not sources:
+        print(f"OK: no AeroGPU KMD sources found under {SRC_DIR}; skipping.")
+        return 0
 
-    violations: list[tuple[str, int, int]] = []
+    all_violations: list[tuple[pathlib.Path, str, int, int, str]] = []
 
-    paren_stack: list[str | None] = []
-    prev: Token | None = None
+    for src in sources:
+        src_text = src.read_text(encoding="utf-8", errors="replace")
+        stripped = _strip_c_comments_and_literals(src_text)
+        tokens = _lex(stripped)
 
-    for i, tok in enumerate(tokens):
-        if tok.value == "(":
-            call_name: str | None = None
-            if prev is not None and prev.kind == "ident":
-                call_name = prev.value
-            paren_stack.append(call_name)
-        elif tok.value == ")":
-            if paren_stack:
-                paren_stack.pop()
+        paren_stack: list[str | None] = []
+        prev: Token | None = None
 
-        if tok.kind == "ident" and tok.value in FENCE_FIELDS and i >= 2 and tokens[i - 1].value in ("->", "."):
-            # Find the start of the object expression in `<obj>-><field>`.
-            obj_end_idx = i - 2
-            obj_start_idx = _member_expr_start(tokens, obj_end_idx)
-            if obj_start_idx is None:
-                violations.append((tok.value, tok.line, tok.col))
-                prev = tok
-                continue
+        for i, tok in enumerate(tokens):
+            if tok.value == "(":
+                call_name: str | None = None
+                if prev is not None and prev.kind == "ident":
+                    call_name = prev.value
+                paren_stack.append(call_name)
+            elif tok.value == ")":
+                if paren_stack:
+                    paren_stack.pop()
 
-            # Include any extra wrapping parens, so `&(Adapter->Field)` is treated
-            # the same as `&Adapter->Field`.
-            expr_start_idx = obj_start_idx
-            while expr_start_idx > 0 and tokens[expr_start_idx - 1].value == "(":
-                expr_start_idx -= 1
+            if tok.kind == "ident" and tok.value in FENCE_FIELDS and i >= 2 and tokens[i - 1].value in ("->", "."):
+                # Find the start of the object expression in `<obj>-><field>`.
+                obj_end_idx = i - 2
+                obj_start_idx = _member_expr_start(tokens, obj_end_idx)
+                if obj_start_idx is None:
+                    all_violations.append((src, tok.value, tok.line, tok.col, src_text))
+                    prev = tok
+                    continue
 
-            amp_idx = expr_start_idx - 1
-            if amp_idx < 0 or tokens[amp_idx].value != "&" or not _is_unary_address_of(tokens, amp_idx):
-                violations.append((tok.value, tok.line, tok.col))
-                prev = tok
-                continue
+                # Include any extra wrapping parens, so `&(Adapter->Field)` is treated
+                # the same as `&Adapter->Field`.
+                expr_start_idx = obj_start_idx
+                while expr_start_idx > 0 and tokens[expr_start_idx - 1].value == "(":
+                    expr_start_idx -= 1
 
-            enclosing = _nearest_enclosing_call(paren_stack)
-            if not _is_allowed_call(enclosing):
-                violations.append((tok.value, tok.line, tok.col))
+                amp_idx = expr_start_idx - 1
+                if amp_idx < 0 or tokens[amp_idx].value != "&" or not _is_unary_address_of(tokens, amp_idx):
+                    all_violations.append((src, tok.value, tok.line, tok.col, src_text))
+                    prev = tok
+                    continue
 
-        prev = tok
+                enclosing = _nearest_enclosing_call(paren_stack)
+                if not _is_allowed_call(enclosing):
+                    all_violations.append((src, tok.value, tok.line, tok.col, src_text))
 
-    if not violations:
+            prev = tok
+
+    if not all_violations:
         print("OK: AeroGPU KMD fence atomic access checks passed.")
         return 0
 
-    lines = src_text.splitlines()
-    print("ERROR: Found non-atomic fence field access in aerogpu_kmd.c:\n")
-    for field, line, col in violations:
+    print("ERROR: Found non-atomic fence field access in AeroGPU KMD sources:\n")
+    for src, field, line, col, src_text in all_violations:
+        lines = src_text.splitlines()
         context = lines[line - 1] if 1 <= line <= len(lines) else ""
-        print(f"- {field} at {SRC}:{line}:{col}")
+        print(f"- {field} at {src}:{line}:{col}")
         if context:
             print(f"    {context}")
             print(f"    {' ' * (col - 1)}^")
