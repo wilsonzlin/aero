@@ -1018,9 +1018,8 @@ AeroGPU command-stream executor executes translated GS DXBC over adjacency **lis
 (`LINELIST_ADJ`, `TRIANGLELIST_ADJ`) end-to-end today (see
 `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_linelistadj_emits_triangle.rs` and
 `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_trianglelistadj_emits_triangle.rs`). Adjacency
-strip topologies (`LINESTRIP_ADJ`, `TRIANGLESTRIP_ADJ`) are not yet supported end-to-end and currently
-route through scaffolding/synthetic expansion (or are rejected when a GS that truly requires strip
-adjacency is bound).
+strip topologies (`LINESTRIP_ADJ`, `TRIANGLESTRIP_ADJ`) are not yet supported for translated GS DXBC
+execution; these currently fall back to the generic placeholder/synthetic expansion path.
 
 #### 2.1.1c) GS input register payload layout (optional; matches in-tree `gs_translate`)
 
@@ -2521,8 +2520,9 @@ The translation layer needs a targeted, growing set of reference scenes with **p
    `RestartStrip()` boundaries; validates strip→list conversion.
 10. **GS instancing (`SV_GSInstanceID`)**: GS compiled with `[instance(2)]` uses `SV_GSInstanceID` to
     offset/colour output; validates the GS instance dispatch dimension and built-in mapping.
-11. **Adjacency input**: `TRIANGLELIST_ADJ` + GS consumes adjacency vertices; validates adjacency
-   topology decode + binding (even if the initial GS subset does not yet implement adjacency ops).
+11. **Adjacency input**: adjacency-list topology (`LINELIST_ADJ` / `TRIANGLELIST_ADJ`) + GS consumes
+    adjacency vertices; validates adjacency primitive assembly + translated GS execution (see
+    `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_{linelistadj,trianglelistadj}_emits_triangle.rs`).
 
 ### P2 scenes
 
