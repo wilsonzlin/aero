@@ -562,4 +562,74 @@ describe("GamepadCapture", () => {
     expect(words[ev1 + 2] >>> 0).toBe(expectedNeutral.packedLo >>> 0);
     expect(words[ev1 + 3] >>> 0).toBe(expectedNeutral.packedHi >>> 0);
   });
+
+  it("treats getGamepads() failures as disconnects and emits neutral once", () => {
+    type Btn = { pressed: boolean };
+    const makeButtons = (pressed: number[]): Btn[] => {
+      const buttons = Array.from({ length: 20 }, () => ({ pressed: false }));
+      for (const idx of pressed) buttons[idx]!.pressed = true;
+      return buttons;
+    };
+
+    type StubGamepad = {
+      buttons: Btn[];
+      axes: number[];
+      index: number;
+      connected: boolean;
+    };
+
+    const pad0: StubGamepad = { buttons: makeButtons([0]), axes: [0, 0, 0, 0], index: 0, connected: true };
+
+    let calls = 0;
+    const capture = new GamepadCapture({
+      deadzone: 0,
+      getGamepads: () => {
+        calls++;
+        if (calls === 1) {
+          return [pad0 as unknown as Gamepad];
+        }
+        throw new Error("getGamepads failed");
+      },
+    });
+    const queue = new InputEventQueue(16);
+
+    // First poll reports the active pad state.
+    capture.poll(queue, 1, { active: true });
+    expect(queue.size).toBe(1);
+
+    // Subsequent polls treat errors as no-pad, emitting neutral once.
+    capture.poll(queue, 2, { active: true });
+    expect(queue.size).toBe(2);
+    capture.poll(queue, 3, { active: true });
+    expect(queue.size).toBe(2);
+
+    const state: { posted: InputBatchMessage | null } = { posted: null };
+    const target: InputBatchTarget = {
+      postMessage: (msg, _transfer) => {
+        state.posted = msg;
+      },
+    };
+    queue.flush(target);
+    if (!state.posted) throw new Error("expected flush to post a batch");
+
+    const words = new Int32Array(state.posted.buffer);
+    expect(words[0]).toBe(2);
+
+    const expectedPad0 = packGamepadReport({ buttons: 1 << 0, hat: GAMEPAD_HAT_NEUTRAL, x: 0, y: 0, rx: 0, ry: 0 });
+    const expectedNeutral = packGamepadReport({ buttons: 0, hat: GAMEPAD_HAT_NEUTRAL, x: 0, y: 0, rx: 0, ry: 0 });
+
+    const base = 2;
+
+    const ev0 = base + 0 * 4;
+    expect(words[ev0]).toBe(InputEventType.GamepadReport);
+    expect(words[ev0 + 1]).toBe(1);
+    expect(words[ev0 + 2] >>> 0).toBe(expectedPad0.packedLo >>> 0);
+    expect(words[ev0 + 3] >>> 0).toBe(expectedPad0.packedHi >>> 0);
+
+    const ev1 = base + 1 * 4;
+    expect(words[ev1]).toBe(InputEventType.GamepadReport);
+    expect(words[ev1 + 1]).toBe(2);
+    expect(words[ev1 + 2] >>> 0).toBe(expectedNeutral.packedLo >>> 0);
+    expect(words[ev1 + 3] >>> 0).toBe(expectedNeutral.packedHi >>> 0);
+  });
 });
