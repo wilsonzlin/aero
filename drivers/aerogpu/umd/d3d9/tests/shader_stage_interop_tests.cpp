@@ -22,6 +22,15 @@ HRESULT AEROGPU_D3D9_CALL device_test_set_unmaterialized_user_shaders(
     D3DDDI_HDEVICE hDevice,
     D3D9DDI_HSHADER user_vs,
     D3D9DDI_HSHADER user_ps);
+
+// Host-test helper for SetTextureStageState. Portable host-side test builds may
+// compile a minimal D3D9DDI_DEVICEFUNCS table without `pfnSetTextureStageState`,
+// so tests should call this directly instead of relying on the vtable member.
+HRESULT AEROGPU_D3D9_CALL device_set_texture_stage_state(
+    D3DDDI_HDEVICE hDevice,
+    uint32_t stage,
+    uint32_t state,
+    uint32_t value);
 constexpr uint32_t kFvfXyzrhwDiffuse = kD3dFvfXyzRhw | kD3dFvfDiffuse;
 constexpr uint32_t kFvfXyzDiffuse = kD3dFvfXyz | kD3dFvfDiffuse;
 constexpr uint32_t kFvfXyzrhwTex1 = kD3dFvfXyzRhw | kD3dFvfTex1;
@@ -305,9 +314,6 @@ bool CreateDevice(CleanupDevice* cleanup) {
     return false;
   }
   if (!Check(cleanup->device_funcs.pfnSetTexture != nullptr, "pfnSetTexture")) {
-    return false;
-  }
-  if (!Check(cleanup->device_funcs.pfnSetTextureStageState != nullptr, "pfnSetTextureStageState")) {
     return false;
   }
   if (!Check(cleanup->device_funcs.pfnDrawPrimitiveUP != nullptr, "pfnDrawPrimitiveUP")) {
@@ -696,7 +702,7 @@ bool TestVsOnlyStage0StateUpdatesFixedfuncPs() {
   }
 
   // Disable stage0: PS should switch back to passthrough.
-  hr = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, /*stage=*/0, kD3dTssColorOp, kD3dTopDisable);
+  hr = device_set_texture_stage_state(cleanup.hDevice, /*stage=*/0, kD3dTssColorOp, kD3dTopDisable);
   if (!Check(hr == S_OK, "SetTextureStageState(COLOROP=DISABLE)")) {
     return false;
   }
@@ -895,7 +901,7 @@ bool TestVsOnlyUnsupportedStage0StateSetShaderSucceedsDrawFails() {
 
   // Set an unsupported stage0 op. This should not make subsequent state-setting
   // (including shader-stage interop) fail; draws should fail cleanly with INVALIDCALL.
-  hr = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, /*stage=*/0, kD3dTssColorOp, kD3dTopAddSigned2x);
+  hr = device_set_texture_stage_state(cleanup.hDevice, /*stage=*/0, kD3dTssColorOp, kD3dTopAddSigned2x);
   if (!Check(hr == S_OK, "SetTextureStageState(COLOROP=ADDSIGNED2X) succeeds")) {
     return false;
   }
@@ -938,7 +944,7 @@ bool TestVsOnlyUnsupportedStage0StateSetShaderSucceedsDrawFails() {
   }
 
   // Restore a supported stage0 op and ensure draws recover.
-  hr = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, /*stage=*/0, kD3dTssColorOp, kD3dTopDisable);
+  hr = device_set_texture_stage_state(cleanup.hDevice, /*stage=*/0, kD3dTssColorOp, kD3dTopDisable);
   if (!Check(hr == S_OK, "SetTextureStageState(COLOROP=DISABLE) succeeds")) {
     return false;
   }
@@ -1001,15 +1007,15 @@ bool TestVsOnlyUnsupportedStage0ArgStateSetShaderSucceedsDrawFails() {
   }
 
   // Configure an unsupported stage0 argument source (SPECULAR).
-  hr = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, /*stage=*/0, kD3dTssColorOp, kD3dTopSelectArg1);
+  hr = device_set_texture_stage_state(cleanup.hDevice, /*stage=*/0, kD3dTssColorOp, kD3dTopSelectArg1);
   if (!Check(hr == S_OK, "SetTextureStageState(COLOROP=SELECTARG1) succeeds")) {
     return false;
   }
-  hr = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, /*stage=*/0, kD3dTssColorArg1, kD3dTaSpecular);
+  hr = device_set_texture_stage_state(cleanup.hDevice, /*stage=*/0, kD3dTssColorArg1, kD3dTaSpecular);
   if (!Check(hr == S_OK, "SetTextureStageState(COLORARG1=SPECULAR) succeeds")) {
     return false;
   }
-  hr = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, /*stage=*/0, kD3dTssAlphaOp, kD3dTopDisable);
+  hr = device_set_texture_stage_state(cleanup.hDevice, /*stage=*/0, kD3dTssAlphaOp, kD3dTopDisable);
   if (!Check(hr == S_OK, "SetTextureStageState(ALPHAOP=DISABLE) succeeds")) {
     return false;
   }
@@ -1052,7 +1058,7 @@ bool TestVsOnlyUnsupportedStage0ArgStateSetShaderSucceedsDrawFails() {
   }
 
   // Restore a supported stage0 op and ensure draws recover.
-  hr = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, /*stage=*/0, kD3dTssColorOp, kD3dTopDisable);
+  hr = device_set_texture_stage_state(cleanup.hDevice, /*stage=*/0, kD3dTssColorOp, kD3dTopDisable);
   if (!Check(hr == S_OK, "SetTextureStageState(COLOROP=DISABLE) succeeds (recover)")) {
     return false;
   }
@@ -1123,7 +1129,7 @@ bool TestVsOnlyUnsupportedStage0AlphaOpSetShaderSucceedsDrawFails() {
   }
 
   // Make stage0 unsupported by setting an unsupported ALPHAOP.
-  hr = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, /*stage=*/0, kD3dTssAlphaOp, kD3dTopAddSigned2x);
+  hr = device_set_texture_stage_state(cleanup.hDevice, /*stage=*/0, kD3dTssAlphaOp, kD3dTopAddSigned2x);
   if (!Check(hr == S_OK, "SetTextureStageState(ALPHAOP=ADDSIGNED2X) succeeds")) {
     return false;
   }
@@ -1181,7 +1187,7 @@ bool TestVsOnlyUnsupportedStage0AlphaOpSetShaderSucceedsDrawFails() {
   }
 
   // Restore a supported alpha op and ensure draws recover.
-  hr = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, /*stage=*/0, kD3dTssAlphaOp, kD3dTopDisable);
+  hr = device_set_texture_stage_state(cleanup.hDevice, /*stage=*/0, kD3dTssAlphaOp, kD3dTopDisable);
   if (!Check(hr == S_OK, "SetTextureStageState(ALPHAOP=DISABLE) succeeds (recover)")) {
     return false;
   }
@@ -1265,11 +1271,11 @@ bool TestVsOnlyUnsupportedStage0AlphaArgStateSetShaderSucceedsDrawFails() {
   }
 
   // Configure an unsupported stage0 alpha argument source (SPECULAR).
-  hr = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, /*stage=*/0, kD3dTssAlphaOp, kD3dTopSelectArg1);
+  hr = device_set_texture_stage_state(cleanup.hDevice, /*stage=*/0, kD3dTssAlphaOp, kD3dTopSelectArg1);
   if (!Check(hr == S_OK, "SetTextureStageState(ALPHAOP=SELECTARG1) succeeds")) {
     return false;
   }
-  hr = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, /*stage=*/0, kD3dTssAlphaArg1, kD3dTaSpecular);
+  hr = device_set_texture_stage_state(cleanup.hDevice, /*stage=*/0, kD3dTssAlphaArg1, kD3dTaSpecular);
   if (!Check(hr == S_OK, "SetTextureStageState(ALPHAARG1=SPECULAR) succeeds")) {
     return false;
   }
@@ -1326,7 +1332,7 @@ bool TestVsOnlyUnsupportedStage0AlphaArgStateSetShaderSucceedsDrawFails() {
 
   // Restore a supported alpha op and ensure draws recover. Disabling ALPHAOP also
   // ensures the unsupported ALPHAARG1 source is ignored.
-  hr = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, /*stage=*/0, kD3dTssAlphaOp, kD3dTopDisable);
+  hr = device_set_texture_stage_state(cleanup.hDevice, /*stage=*/0, kD3dTssAlphaOp, kD3dTopDisable);
   if (!Check(hr == S_OK, "SetTextureStageState(ALPHAOP=DISABLE) succeeds (recover)")) {
     return false;
   }
@@ -1412,7 +1418,7 @@ bool TestVsOnlyUnsupportedStage1StateSetShaderSucceedsDrawFails() {
 
   // Enable stage1 with an unsupported op. This should not make shader binding
   // (state setting) fail, but draws must fail with INVALIDCALL.
-  hr = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, /*stage=*/1, kD3dTssColorOp, kD3dTopAddSigned2x);
+  hr = device_set_texture_stage_state(cleanup.hDevice, /*stage=*/1, kD3dTssColorOp, kD3dTopAddSigned2x);
   if (!Check(hr == S_OK, "SetTextureStageState(stage1 COLOROP=ADDSIGNED2X) succeeds")) {
     return false;
   }
@@ -1471,7 +1477,7 @@ bool TestVsOnlyUnsupportedStage1StateSetShaderSucceedsDrawFails() {
 
   // Disable stage1 to restore a supported stage chain (stage0 MODULATE with a
   // bound texture).
-  hr = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, /*stage=*/1, kD3dTssColorOp, kD3dTopDisable);
+  hr = device_set_texture_stage_state(cleanup.hDevice, /*stage=*/1, kD3dTssColorOp, kD3dTopDisable);
   if (!Check(hr == S_OK, "SetTextureStageState(stage1 COLOROP=DISABLE) succeeds (recover)")) {
     return false;
   }
@@ -1557,22 +1563,22 @@ bool TestVsOnlyUnsupportedStage2StateSetShaderSucceedsDrawFails() {
 
   // Enable stage1 in a supported way without requiring a stage1 texture (use
   // CURRENT so we don't sample an unbound stage1 slot).
-  hr = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, /*stage=*/1, kD3dTssColorOp, kD3dTopSelectArg1);
+  hr = device_set_texture_stage_state(cleanup.hDevice, /*stage=*/1, kD3dTssColorOp, kD3dTopSelectArg1);
   if (!Check(hr == S_OK, "SetTextureStageState(stage1 COLOROP=SELECTARG1) succeeds")) {
     return false;
   }
-  hr = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, /*stage=*/1, kD3dTssColorArg1, kD3dTaCurrent);
+  hr = device_set_texture_stage_state(cleanup.hDevice, /*stage=*/1, kD3dTssColorArg1, kD3dTaCurrent);
   if (!Check(hr == S_OK, "SetTextureStageState(stage1 COLORARG1=CURRENT) succeeds")) {
     return false;
   }
-  hr = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, /*stage=*/1, kD3dTssAlphaOp, kD3dTopDisable);
+  hr = device_set_texture_stage_state(cleanup.hDevice, /*stage=*/1, kD3dTssAlphaOp, kD3dTopDisable);
   if (!Check(hr == S_OK, "SetTextureStageState(stage1 ALPHAOP=DISABLE) succeeds")) {
     return false;
   }
 
   // Enable stage2 with an unsupported op. This should not make shader binding
   // (state setting) fail, but draws must fail with INVALIDCALL.
-  hr = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, /*stage=*/2, kD3dTssColorOp, kD3dTopAddSigned2x);
+  hr = device_set_texture_stage_state(cleanup.hDevice, /*stage=*/2, kD3dTssColorOp, kD3dTopAddSigned2x);
   if (!Check(hr == S_OK, "SetTextureStageState(stage2 COLOROP=ADDSIGNED2X) succeeds")) {
     return false;
   }
@@ -1630,7 +1636,7 @@ bool TestVsOnlyUnsupportedStage2StateSetShaderSucceedsDrawFails() {
   }
 
   // Disable stage2 to restore a supported stage chain.
-  hr = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, /*stage=*/2, kD3dTssColorOp, kD3dTopDisable);
+  hr = device_set_texture_stage_state(cleanup.hDevice, /*stage=*/2, kD3dTssColorOp, kD3dTopDisable);
   if (!Check(hr == S_OK, "SetTextureStageState(stage2 COLOROP=DISABLE) succeeds (recover)")) {
     return false;
   }
@@ -1718,15 +1724,15 @@ bool TestVsOnlyUnsupportedStage3StateSetShaderSucceedsDrawFails() {
   // (use CURRENT so we don't sample unbound slots). This ensures stage3 is
   // actually evaluated by the fixed-function stage-state decoder.
   for (uint32_t stage = 1; stage <= 2; ++stage) {
-    hr = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, stage, kD3dTssColorOp, kD3dTopSelectArg1);
+    hr = device_set_texture_stage_state(cleanup.hDevice, stage, kD3dTssColorOp, kD3dTopSelectArg1);
     if (!Check(hr == S_OK, "SetTextureStageState(stageN COLOROP=SELECTARG1) succeeds")) {
       return false;
     }
-    hr = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, stage, kD3dTssColorArg1, kD3dTaCurrent);
+    hr = device_set_texture_stage_state(cleanup.hDevice, stage, kD3dTssColorArg1, kD3dTaCurrent);
     if (!Check(hr == S_OK, "SetTextureStageState(stageN COLORARG1=CURRENT) succeeds")) {
       return false;
     }
-    hr = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, stage, kD3dTssAlphaOp, kD3dTopDisable);
+    hr = device_set_texture_stage_state(cleanup.hDevice, stage, kD3dTssAlphaOp, kD3dTopDisable);
     if (!Check(hr == S_OK, "SetTextureStageState(stageN ALPHAOP=DISABLE) succeeds")) {
       return false;
     }
@@ -1734,7 +1740,7 @@ bool TestVsOnlyUnsupportedStage3StateSetShaderSucceedsDrawFails() {
 
   // Enable stage3 with an unsupported op. This should not make shader binding
   // (state setting) fail, but draws must fail with INVALIDCALL.
-  hr = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, /*stage=*/3, kD3dTssColorOp, kD3dTopAddSigned2x);
+  hr = device_set_texture_stage_state(cleanup.hDevice, /*stage=*/3, kD3dTssColorOp, kD3dTopAddSigned2x);
   if (!Check(hr == S_OK, "SetTextureStageState(stage3 COLOROP=ADDSIGNED2X) succeeds")) {
     return false;
   }
@@ -1792,7 +1798,7 @@ bool TestVsOnlyUnsupportedStage3StateSetShaderSucceedsDrawFails() {
   }
 
   // Disable stage3 to restore a supported stage chain.
-  hr = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, /*stage=*/3, kD3dTssColorOp, kD3dTopDisable);
+  hr = device_set_texture_stage_state(cleanup.hDevice, /*stage=*/3, kD3dTssColorOp, kD3dTopDisable);
   if (!Check(hr == S_OK, "SetTextureStageState(stage3 COLOROP=DISABLE) succeeds (recover)")) {
     return false;
   }
@@ -1867,7 +1873,7 @@ bool TestVsOnlyUnsupportedStage0DestroyShaderSucceedsAndRebinds() {
   }
 
   // Unsupported stage0 op: shader binding must still succeed, but draws must fail.
-  hr = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, /*stage=*/0, kD3dTssColorOp, kD3dTopAddSigned2x);
+  hr = device_set_texture_stage_state(cleanup.hDevice, /*stage=*/0, kD3dTssColorOp, kD3dTopAddSigned2x);
   if (!Check(hr == S_OK, "SetTextureStageState(COLOROP=ADDSIGNED2X) succeeds")) {
     return false;
   }
@@ -1979,7 +1985,7 @@ bool TestVsOnlyUnsupportedStage0DestroyPixelShaderSucceedsAndRebinds() {
 
   // Unsupported stage0 op: state-setting must succeed, but draws must fail once we
   // return to VS-only interop (after destroying the user PS).
-  hr = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, /*stage=*/0, kD3dTssColorOp, kD3dTopAddSigned2x);
+  hr = device_set_texture_stage_state(cleanup.hDevice, /*stage=*/0, kD3dTssColorOp, kD3dTopAddSigned2x);
   if (!Check(hr == S_OK, "SetTextureStageState(COLOROP=ADDSIGNED2X) succeeds")) {
     return false;
   }
@@ -2131,7 +2137,7 @@ bool TestVsOnlyUnsupportedStage0ApplyStateBlockSetShaderSucceedsDrawFails() {
 
   // Make stage0 unsupported *before* applying the state block that binds a VS.
   // Regression: ApplyStateBlock must still succeed; only draws should fail.
-  hr = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, /*stage=*/0, kD3dTssColorOp, kD3dTopAddSigned2x);
+  hr = device_set_texture_stage_state(cleanup.hDevice, /*stage=*/0, kD3dTssColorOp, kD3dTopAddSigned2x);
   if (!Check(hr == S_OK, "SetTextureStageState(COLOROP=ADDSIGNED2X) succeeds")) {
     return false;
   }
@@ -2303,7 +2309,7 @@ bool TestVsOnlyApplyStateBlockSetsUnsupportedStage0StateSucceedsDrawFails() {
   if (!Check(hr == S_OK, "BeginStateBlock")) {
     return false;
   }
-  hr = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, /*stage=*/0, kD3dTssColorOp, kD3dTopAddSigned2x);
+  hr = device_set_texture_stage_state(cleanup.hDevice, /*stage=*/0, kD3dTssColorOp, kD3dTopAddSigned2x);
   if (!Check(hr == S_OK, "SetTextureStageState(COLOROP=ADDSIGNED2X) during BeginStateBlock succeeds")) {
     return false;
   }
@@ -2322,7 +2328,7 @@ bool TestVsOnlyApplyStateBlockSetsUnsupportedStage0StateSucceedsDrawFails() {
 
   // Restore a supported stage0 state and clear VS so ApplyStateBlock must set
   // both stage state and VS again.
-  hr = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, /*stage=*/0, kD3dTssColorOp, kD3dTopDisable);
+  hr = device_set_texture_stage_state(cleanup.hDevice, /*stage=*/0, kD3dTssColorOp, kD3dTopDisable);
   if (!Check(hr == S_OK, "SetTextureStageState(COLOROP=DISABLE) succeeds (restore)")) {
     cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
     return false;
@@ -2849,7 +2855,7 @@ bool TestPsOnlyIgnoresUnsupportedStage0State() {
   // Set an intentionally unsupported stage0 texture op. Since a user PS is
   // bound, fixed-function stage-state emulation must be ignored (D3D9 semantics)
   // and the draw must still succeed.
-  hr = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, /*stage=*/0, kD3dTssColorOp, kD3dTopAddSigned2x);
+  hr = device_set_texture_stage_state(cleanup.hDevice, /*stage=*/0, kD3dTssColorOp, kD3dTopAddSigned2x);
   if (!Check(hr == S_OK, "SetTextureStageState(COLOROP=ADDSIGNED2X)")) {
     return false;
   }
