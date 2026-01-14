@@ -2071,6 +2071,66 @@ mod tests {
     }
 
     #[test]
+    fn collect_used_pixel_inputs_includes_mad_predicate() {
+        // Ensure mad still visits instruction modifiers.
+        let op = IrOp::Mad {
+            dst: Dst {
+                reg: RegRef {
+                    file: RegFile::Temp,
+                    index: 0,
+                    relative: None,
+                },
+                mask: WriteMask::all(),
+            },
+            src0: src_temp(0),
+            src1: src_temp(1),
+            src2: src_temp(2),
+            modifiers: InstModifiers {
+                predicate: Some(PredicateRef {
+                    reg: RegRef {
+                        file: RegFile::Input,
+                        index: 7,
+                        relative: None,
+                    },
+                    component: SwizzleComponent::X,
+                    negate: false,
+                }),
+                ..InstModifiers::none()
+            },
+        };
+
+        let mut used = BTreeSet::new();
+        collect_used_pixel_inputs_op(&op, &mut used);
+        assert_eq!(used.len(), 1);
+        assert!(used.contains(&(RegFile::Input, 7)));
+    }
+
+    #[test]
+    fn collect_used_pixel_inputs_includes_lrp_src2() {
+        // Similar to dp2add/mad: `lrp` has three source operands.
+        let op = IrOp::Lrp {
+            dst: Dst {
+                reg: RegRef {
+                    file: RegFile::Temp,
+                    index: 0,
+                    relative: None,
+                },
+                mask: WriteMask::all(),
+            },
+            src0: src_input(0),
+            src1: src_input(1),
+            src2: src_input(2),
+            modifiers: InstModifiers::none(),
+        };
+
+        let mut used = BTreeSet::new();
+        collect_used_pixel_inputs_op(&op, &mut used);
+        assert!(used.contains(&(RegFile::Input, 0)));
+        assert!(used.contains(&(RegFile::Input, 1)));
+        assert!(used.contains(&(RegFile::Input, 2)));
+    }
+
+    #[test]
     fn collect_used_pixel_inputs_includes_lrp_predicate() {
         // Ensure lrp still visits instruction modifiers.
         let op = IrOp::Lrp {
