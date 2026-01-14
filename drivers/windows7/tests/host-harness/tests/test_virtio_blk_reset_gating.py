@@ -52,6 +52,22 @@ class VirtioBlkResetGatingTests(unittest.TestCase):
         self.assertIn("reason=query_after_reset_failed", str(msg))
         self.assertIn("err=5", str(msg))
 
+    def test_required_marker_fail_uses_marker_line_when_tail_truncated(self) -> None:
+        h = self.harness
+        # Simulate the rolling tail buffer losing the full marker line (but the main harness loop
+        # still captured it incrementally).
+        tail = b"AERO_VIRTIO_SELFTEST|RESULT|PASS\n"
+        marker_line = "AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|FAIL|reason=query_after_reset_failed|err=5"
+        msg = h._virtio_blk_reset_required_failure_message(
+            tail,
+            saw_fail=True,
+            marker_line=marker_line,
+        )
+        self.assertIsNotNone(msg)
+        self.assertTrue(str(msg).startswith("FAIL: VIRTIO_BLK_RESET_FAILED:"))
+        self.assertIn("reason=query_after_reset_failed", str(msg))
+        self.assertIn("err=5", str(msg))
+
     def test_required_marker_skip(self) -> None:
         h = self.harness
         tail = b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|SKIP|reason=not_supported\n"

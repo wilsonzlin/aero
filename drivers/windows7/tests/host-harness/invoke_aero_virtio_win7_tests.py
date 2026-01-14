@@ -2319,11 +2319,15 @@ def _virtio_snd_buffer_limits_required_failure_message(
     )
 
 
-def _virtio_blk_reset_skip_failure_message(tail: bytes) -> str:
+def _virtio_blk_reset_skip_failure_message(tail: bytes, *, marker_line: Optional[str] = None) -> str:
     # virtio-blk miniport reset marker:
     #   AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|PASS|performed=1|counter_before=...|counter_after=...
     #   AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|SKIP|reason=not_supported
-    marker = _try_extract_last_marker_line(tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|SKIP|")
+    marker = marker_line
+    if marker is None:
+        marker = _try_extract_last_marker_line(
+            tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|SKIP|"
+        )
     if marker is not None:
         fields = _parse_marker_kv_fields(marker)
         reason = fields.get("reason")
@@ -2335,10 +2339,14 @@ def _virtio_blk_reset_skip_failure_message(tail: bytes) -> str:
     return "FAIL: VIRTIO_BLK_RESET_SKIPPED: virtio-blk-reset test was skipped but --with-blk-reset was enabled"
 
 
-def _virtio_blk_reset_fail_failure_message(tail: bytes) -> str:
+def _virtio_blk_reset_fail_failure_message(tail: bytes, *, marker_line: Optional[str] = None) -> str:
     # virtio-blk miniport reset marker:
     #   AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|FAIL|reason=...|err=...
-    marker = _try_extract_last_marker_line(tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|FAIL|")
+    marker = marker_line
+    if marker is None:
+        marker = _try_extract_last_marker_line(
+            tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|FAIL|"
+        )
     if marker is not None:
         fields = _parse_marker_kv_fields(marker)
         reason = fields.get("reason", "").strip()
@@ -2475,6 +2483,7 @@ def _virtio_blk_reset_required_failure_message(
     saw_pass: bool = False,
     saw_fail: bool = False,
     saw_skip: bool = False,
+    marker_line: Optional[str] = None,
 ) -> Optional[str]:
     """
     Enforce that virtio-blk-reset ran and PASSed.
@@ -2482,14 +2491,24 @@ def _virtio_blk_reset_required_failure_message(
     Returns:
         A "FAIL: ..." message on failure, or None when the marker requirements are satisfied.
     """
+    # Prefer an explicit marker line when available (survives tail truncation).
+    if marker_line is not None:
+        status = _try_extract_marker_status(marker_line)
+        if status == "PASS":
+            return None
+        if status == "FAIL":
+            return _virtio_blk_reset_fail_failure_message(tail, marker_line=marker_line)
+        if status == "SKIP":
+            return _virtio_blk_reset_skip_failure_message(tail, marker_line=marker_line)
+
     # Prefer explicit "saw_*" flags tracked by the main harness loop (these survive tail truncation),
     # but keep a tail scan fallback to support direct unit tests (and any legacy call sites).
     if saw_pass or b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|PASS" in tail:
         return None
     if saw_fail or b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|FAIL" in tail:
-        return _virtio_blk_reset_fail_failure_message(tail)
+        return _virtio_blk_reset_fail_failure_message(tail, marker_line=marker_line)
     if saw_skip or b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|SKIP" in tail:
-        return _virtio_blk_reset_skip_failure_message(tail)
+        return _virtio_blk_reset_skip_failure_message(tail, marker_line=marker_line)
     return _virtio_blk_reset_missing_failure_message()
 
 
@@ -4407,6 +4426,8 @@ def main() -> int:
             virtio_blk_counters_marker_carry = b""
             virtio_blk_resize_marker_line: Optional[str] = None
             virtio_blk_resize_marker_carry = b""
+            virtio_blk_reset_marker_line: Optional[str] = None
+            virtio_blk_reset_marker_carry = b""
             virtio_blk_msix_marker_line: Optional[str] = None
             virtio_blk_msix_marker_carry = b""
             virtio_net_msix_marker_line: Optional[str] = None
@@ -4532,6 +4553,12 @@ def main() -> int:
                         chunk,
                         prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|",
                         carry=virtio_blk_resize_marker_carry,
+                    )
+                    virtio_blk_reset_marker_line, virtio_blk_reset_marker_carry = _update_last_marker_line_from_chunk(
+                        virtio_blk_reset_marker_line,
+                        chunk,
+                        prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|",
+                        carry=virtio_blk_reset_marker_carry,
                     )
                     virtio_blk_msix_marker_line, virtio_blk_msix_marker_carry = _update_last_marker_line_from_chunk(
                         virtio_blk_msix_marker_line,
@@ -4667,6 +4694,29 @@ def main() -> int:
                     ):
                         saw_virtio_blk_resize_skip = True
 
+                    # Prefer the incrementally captured marker line (virtio_blk_reset_marker_line) so we
+                    # don't miss PASS/FAIL/SKIP when the rolling tail buffer truncates earlier output.
+                    if virtio_blk_reset_marker_line is not None:
+                        toks = virtio_blk_reset_marker_line.split("|")
+                        status_tok = toks[3] if len(toks) >= 4 else ""
+                        if not saw_virtio_blk_reset_pass and status_tok == "PASS":
+                            saw_virtio_blk_reset_pass = True
+                        if not saw_virtio_blk_reset_skip and status_tok == "SKIP":
+                            saw_virtio_blk_reset_skip = True
+                        if not saw_virtio_blk_reset_fail and status_tok == "FAIL":
+                            saw_virtio_blk_reset_fail = True
+                            if need_blk_reset:
+                                print(
+                                    _virtio_blk_reset_fail_failure_message(
+                                        tail,
+                                        marker_line=virtio_blk_reset_marker_line,
+                                    ),
+                                    file=sys.stderr,
+                                )
+                                _print_tail(serial_log)
+                                result_code = 1
+                                break
+
                     if (
                         not saw_virtio_blk_reset_pass
                         and b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|PASS" in tail
@@ -4685,12 +4735,24 @@ def main() -> int:
 
                         if need_blk_reset:
                             if saw_virtio_blk_reset_skip:
-                                print(_virtio_blk_reset_skip_failure_message(tail), file=sys.stderr)
+                                print(
+                                    _virtio_blk_reset_skip_failure_message(
+                                        tail,
+                                        marker_line=virtio_blk_reset_marker_line,
+                                    ),
+                                    file=sys.stderr,
+                                )
                                 _print_tail(serial_log)
                                 result_code = 1
                                 break
                             if saw_virtio_blk_reset_fail:
-                                print(_virtio_blk_reset_fail_failure_message(tail), file=sys.stderr)
+                                print(
+                                    _virtio_blk_reset_fail_failure_message(
+                                        tail,
+                                        marker_line=virtio_blk_reset_marker_line,
+                                    ),
+                                    file=sys.stderr,
+                                )
                                 _print_tail(serial_log)
                                 result_code = 1
                                 break
@@ -5709,13 +5771,25 @@ def main() -> int:
 
                         if need_blk_reset:
                             if saw_virtio_blk_reset_fail:
-                                print(_virtio_blk_reset_fail_failure_message(tail), file=sys.stderr)
+                                print(
+                                    _virtio_blk_reset_fail_failure_message(
+                                        tail,
+                                        marker_line=virtio_blk_reset_marker_line,
+                                    ),
+                                    file=sys.stderr,
+                                )
                                 _print_tail(serial_log)
                                 result_code = 1
                                 break
                             if not saw_virtio_blk_reset_pass:
                                 if saw_virtio_blk_reset_skip:
-                                    print(_virtio_blk_reset_skip_failure_message(tail), file=sys.stderr)
+                                    print(
+                                        _virtio_blk_reset_skip_failure_message(
+                                            tail,
+                                            marker_line=virtio_blk_reset_marker_line,
+                                        ),
+                                        file=sys.stderr,
+                                    )
                                 else:
                                     print(_virtio_blk_reset_missing_failure_message(), file=sys.stderr)
                                 _print_tail(serial_log)
@@ -5934,6 +6008,7 @@ def main() -> int:
                                 saw_pass=saw_virtio_blk_reset_pass,
                                 saw_fail=saw_virtio_blk_reset_fail,
                                 saw_skip=saw_virtio_blk_reset_skip,
+                                marker_line=virtio_blk_reset_marker_line,
                             )
                             if msg is not None:
                                 print(msg, file=sys.stderr)
@@ -6516,6 +6591,12 @@ def main() -> int:
                             prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|",
                             carry=virtio_blk_resize_marker_carry,
                         )
+                        virtio_blk_reset_marker_line, virtio_blk_reset_marker_carry = _update_last_marker_line_from_chunk(
+                            virtio_blk_reset_marker_line,
+                            chunk2,
+                            prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|",
+                            carry=virtio_blk_reset_marker_carry,
+                        )
                         virtio_blk_msix_marker_line, virtio_blk_msix_marker_carry = _update_last_marker_line_from_chunk(
                             virtio_blk_msix_marker_line,
                             chunk2,
@@ -6637,6 +6718,18 @@ def main() -> int:
                             and b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|SKIP" in tail
                         ):
                             saw_virtio_blk_resize_skip = True
+
+                        # Prefer the incrementally captured marker line (virtio_blk_reset_marker_line) so we
+                        # don't miss PASS/FAIL/SKIP when the rolling tail buffer truncates earlier output.
+                        if virtio_blk_reset_marker_line is not None:
+                            toks = virtio_blk_reset_marker_line.split("|")
+                            status_tok = toks[3] if len(toks) >= 4 else ""
+                            if not saw_virtio_blk_reset_pass and status_tok == "PASS":
+                                saw_virtio_blk_reset_pass = True
+                            if not saw_virtio_blk_reset_skip and status_tok == "SKIP":
+                                saw_virtio_blk_reset_skip = True
+                            if not saw_virtio_blk_reset_fail and status_tok == "FAIL":
+                                saw_virtio_blk_reset_fail = True
 
                         if (
                             not saw_virtio_blk_reset_pass
@@ -7271,13 +7364,25 @@ def main() -> int:
                                         break
                             if need_blk_reset:
                                 if saw_virtio_blk_reset_fail:
-                                    print(_virtio_blk_reset_fail_failure_message(tail), file=sys.stderr)
+                                    print(
+                                        _virtio_blk_reset_fail_failure_message(
+                                            tail,
+                                            marker_line=virtio_blk_reset_marker_line,
+                                        ),
+                                        file=sys.stderr,
+                                    )
                                     _print_tail(serial_log)
                                     result_code = 1
                                     break
                                 if not saw_virtio_blk_reset_pass:
                                     if saw_virtio_blk_reset_skip:
-                                        print(_virtio_blk_reset_skip_failure_message(tail), file=sys.stderr)
+                                        print(
+                                            _virtio_blk_reset_skip_failure_message(
+                                                tail,
+                                                marker_line=virtio_blk_reset_marker_line,
+                                            ),
+                                            file=sys.stderr,
+                                        )
                                     else:
                                         print(_virtio_blk_reset_missing_failure_message(), file=sys.stderr)
                                     _print_tail(serial_log)
@@ -7495,6 +7600,7 @@ def main() -> int:
                                     saw_pass=saw_virtio_blk_reset_pass,
                                     saw_fail=saw_virtio_blk_reset_fail,
                                     saw_skip=saw_virtio_blk_reset_skip,
+                                    marker_line=virtio_blk_reset_marker_line,
                                 )
                                 if msg is not None:
                                     print(msg, file=sys.stderr)
@@ -7785,6 +7891,14 @@ def main() -> int:
                     virtio_blk_resize_marker_line = raw2.decode("utf-8", errors="replace").strip()
                 except Exception:
                     pass
+        if virtio_blk_reset_marker_carry:
+            raw = virtio_blk_reset_marker_carry.rstrip(b"\r")
+            raw2 = raw.lstrip()
+            if raw2.startswith(b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|"):
+                try:
+                    virtio_blk_reset_marker_line = raw2.decode("utf-8", errors="replace").strip()
+                except Exception:
+                    pass
         if virtio_blk_msix_marker_carry:
             raw = virtio_blk_msix_marker_carry.rstrip(b"\r")
             raw2 = raw.lstrip()
@@ -7831,7 +7945,7 @@ def main() -> int:
         )
         _emit_virtio_blk_counters_host_marker(tail, blk_counters_line=virtio_blk_counters_marker_line)
         _emit_virtio_blk_resize_host_marker(tail, blk_resize_line=virtio_blk_resize_marker_line)
-        _emit_virtio_blk_reset_host_marker(tail)
+        _emit_virtio_blk_reset_host_marker(tail, blk_reset_line=virtio_blk_reset_marker_line)
         _emit_virtio_net_large_host_marker(tail)
         _emit_virtio_net_udp_host_marker(tail)
         _emit_virtio_net_udp_dns_host_marker(tail)
