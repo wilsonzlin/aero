@@ -2,6 +2,7 @@ mod common;
 
 use aero_dxbc::{test_utils as dxbc_test_utils, FourCC};
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
+use aero_d3d11::sm4::opcode::{OPCODE_CUT, OPCODE_EMIT, OPCODE_LEN_MASK, OPCODE_LEN_SHIFT, OPCODE_MASK};
 use aero_d3d11::{DxbcFile, ShaderStage as Sm4ShaderStage, Sm4Inst, Sm4Program};
 use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
@@ -86,6 +87,35 @@ fn assert_gs_dxbc_decodes_as_geometry_and_has_emit(dxbc_bytes: &[u8]) {
         shdr.data.len() / 4,
         program.tokens.len(),
         "GS SHDR chunk payload length (dwords) must match declared token length"
+    );
+
+    // Sanity-check that the raw token stream uses the canonical opcode IDs, to catch numeric drift
+    // early even if higher-level decoding logic changes.
+    let mut saw_emit_opcode = false;
+    let mut saw_cut_opcode = false;
+    let toks = &program.tokens;
+    let mut i = 2usize;
+    while i < toks.len() {
+        let opcode_token = toks[i];
+        let opcode = opcode_token & OPCODE_MASK;
+        let len = ((opcode_token >> OPCODE_LEN_SHIFT) & OPCODE_LEN_MASK) as usize;
+        assert!(len != 0, "invalid opcode length 0 at dword {i}");
+        assert!(
+            i + len <= toks.len(),
+            "opcode at dword {i} with len={len} overruns token stream (len={})",
+            toks.len()
+        );
+        saw_emit_opcode |= opcode == OPCODE_EMIT;
+        saw_cut_opcode |= opcode == OPCODE_CUT;
+        i += len;
+    }
+    assert!(
+        saw_emit_opcode,
+        "GS DXBC token stream should use OPCODE_EMIT (0x{OPCODE_EMIT:x})"
+    );
+    assert!(
+        saw_cut_opcode,
+        "GS DXBC token stream should use OPCODE_CUT (0x{OPCODE_CUT:x})"
     );
 
     let module = aero_d3d11::sm4::decode_program(&program).expect("GS SM4 module should decode");
