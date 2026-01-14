@@ -176,6 +176,13 @@ l2Proxy:
     # Flush interval for capture writers (`0` disables periodic flushing; capture is flushed on close).
     flushIntervalMs: 1000
 
+  # Optional volumes/volumeMounts for the L2 proxy pod.
+  #
+  # Useful for persisting PCAPNG captures (mount a PVC at l2Proxy.capture.dir) or for making a
+  # capture directory writable when running with a read-only root filesystem.
+  extraVolumes: []
+  extraVolumeMounts: []
+
   # Extra environment variables to set directly on the container.
   extraEnv: []
 

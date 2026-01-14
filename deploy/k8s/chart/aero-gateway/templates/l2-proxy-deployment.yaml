@@ -81,6 +81,10 @@ spec:
       topologySpreadConstraints:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- with .Values.l2Proxy.extraVolumes }}
+      volumes:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: aero-l2-proxy
           image: "{{ .Values.l2Proxy.image.repository }}:{{ default .Chart.AppVersion .Values.l2Proxy.image.tag }}"
@@ -149,6 +153,10 @@ spec:
             - secretRef:
                 name: {{ include "aero-gateway.effectiveSecretName" . }}
             {{- end }}
+          {{- end }}
+          {{- with .Values.l2Proxy.extraVolumeMounts }}
+          volumeMounts:
+            {{- toYaml . | nindent 12 }}
           {{- end }}
           readinessProbe:
             httpGet:

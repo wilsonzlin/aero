@@ -35,6 +35,8 @@ l2Proxy:
     mode: "session"
   # Optional: L2 tunnel capture (PCAPNG) (debugging only; treat files as sensitive).
   #capture:
+  #  # Note: capture files are written into the pod filesystem unless you mount a volume at this path.
+  #  # For persistence, use l2Proxy.extraVolumes + l2Proxy.extraVolumeMounts and set dir to the mountPath.
   #  dir: /tmp/aero-l2-captures
   #  maxBytes: 67108864 # 64 MiB per capture file (includes PCAPNG overhead; 0 disables the cap)
   #  flushIntervalMs: 1000 # 0 disables periodic flushing (capture is flushed on close)

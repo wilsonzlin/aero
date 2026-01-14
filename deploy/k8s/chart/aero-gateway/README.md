@@ -154,6 +154,21 @@ l2Proxy:
     flushIntervalMs: 1000 # 0 disables periodic flushing (capture is flushed on close)
 ```
 
+To persist captures (or to support `readOnlyRootFilesystem`), mount a volume at the capture path:
+
+```yaml
+l2Proxy:
+  capture:
+    dir: /captures
+  extraVolumeMounts:
+    - name: captures
+      mountPath: /captures
+  extraVolumes:
+    - name: captures
+      persistentVolumeClaim:
+        claimName: my-capture-pvc
+```
+
 ## Metrics / ServiceMonitor (optional)
 
 `aero-l2-proxy` exposes Prometheus metrics at `GET /metrics` on port 8090.

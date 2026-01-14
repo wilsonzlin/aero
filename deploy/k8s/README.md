@@ -57,6 +57,8 @@ l2Proxy:
 > Privacy warning: captures contain raw network traffic and may include sensitive user data. Treat capture files as secrets and avoid enabling capture on internet-exposed production deployments unless you have an explicit retention/privacy plan.
 >
 > Note: `aero-l2-proxy` runs as a non-root container user. Prefer a capture directory under `/tmp` unless you mount a writable volume at the chosen path.
+>
+> To persist captures, mount a volume at `l2Proxy.capture.dir` using `l2Proxy.extraVolumes` and `l2Proxy.extraVolumeMounts` (see chart README).
 
 If you manage your Ingress separately, the equivalent nginx Ingress path addition looks like:
 
