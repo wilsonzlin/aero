@@ -84,3 +84,55 @@ fn wasmtime_backend_initializes_code_version_table_and_bumps_on_mem_write() {
     );
 }
 
+#[test]
+fn wasmtime_backend_bumps_both_pages_for_cross_page_mem_write() {
+    let memory_pages = 2u32;
+    let cpu_ptr = WasmtimeBackend::<CpuState>::DEFAULT_CPU_PTR;
+
+    let mut backend = WasmtimeBackend::<CpuState>::new_with_memory_pages(memory_pages, cpu_ptr);
+
+    let ptr_off = cpu_ptr as u64 + jit_ctx::CODE_VERSION_TABLE_PTR_OFFSET as u64;
+    let len_off = cpu_ptr as u64 + jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET as u64;
+    let table_ptr = u64::from(read_u32_le(&backend, ptr_off));
+    let table_len = read_u32_le(&backend, len_off);
+    assert!(
+        table_len > 1,
+        "expected code-version table to cover at least pages 0 and 1 (len={table_len})"
+    );
+
+    // Cross-page store: write an 8-byte value at the last byte of page 0 (0xFFF), which spans into
+    // page 1. The imported `mem_write_u64` helper should bump both page 0 and page 1 entries.
+    let entry_rip = 0x2000u64;
+    let mut b = IrBuilder::new(entry_rip);
+    let addr = b.const_int(Width::W64, aero_jit_x86::PAGE_SIZE - 1);
+    let value = b.const_int(Width::W64, 0x1122_3344_5566_7788);
+    b.store(Width::W64, addr, value);
+    let ir = b.finish(IrTerminator::ExitToInterpreter { next_rip: entry_rip });
+    let wasm = Tier1WasmCodegen::new().compile_block(&ir);
+
+    let table_index = backend.add_compiled_block(&wasm);
+    let mut cpu = CpuState {
+        rip: entry_rip,
+        ..Default::default()
+    };
+    let _exit = backend.execute(table_index, &mut cpu);
+
+    let page0_off = table_ptr;
+    let page1_off = table_ptr + 4;
+    assert_eq!(
+        read_u32_le(&backend, page0_off),
+        1,
+        "mem_write_u64 should bump page 0 for a cross-page store"
+    );
+    assert_eq!(
+        read_u32_le(&backend, page1_off),
+        1,
+        "mem_write_u64 should bump page 1 for a cross-page store"
+    );
+
+    // Sanity-check the store wrote through guest RAM.
+    let got = (0..8u64)
+        .map(|i| backend.read_u8((aero_jit_x86::PAGE_SIZE - 1) + i))
+        .collect::<Vec<_>>();
+    assert_eq!(got, 0x1122_3344_5566_7788u64.to_le_bytes());
+}
