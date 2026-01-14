@@ -486,13 +486,37 @@ Known gaps / limitations (enforced by code/tests):
 - Geometry shaders require compute-based emulation on WebGPU (no GS stage):
   - The executor routes draws through a compute prepass (expanded buffers + indirect args) followed by a normal render pass:
     - Code: [`crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`](../../crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs) (`gs_hs_ds_emulation_required`, `exec_draw_with_compute_prepass`)
+  - **Binding model:** `@group(3)` is reserved for extended D3D stages (GS/HS/DS) plus internal emulation helpers.
+    - D3D register bindings within a stage group use the shared offsets from
+      [`crates/aero-d3d11/src/binding_model.rs`](../../crates/aero-d3d11/src/binding_model.rs):
+      - `b#` / `cb#` → `@binding(BINDING_BASE_CBUFFER + slot)` (`BINDING_BASE_CBUFFER = 0`)
+      - `t#` → `@binding(BINDING_BASE_TEXTURE + slot)` (`BINDING_BASE_TEXTURE = 32`)
+      - `s#` → `@binding(BINDING_BASE_SAMPLER + slot)` (`BINDING_BASE_SAMPLER = 160`)
+      - `u#` → `@binding(BINDING_BASE_UAV + slot)` (`BINDING_BASE_UAV = 176`, `MAX_UAV_SLOTS = 8`)
+    - Internal-only helpers use `@binding >= BINDING_BASE_INTERNAL` (`256`) to stay disjoint from D3D register
+      spaces (e.g. IA vertex pulling, expanded-draw buffers).
   - The compute prepass includes a built-in WGSL path that emits deterministic synthetic triangle geometry for bring-up/fallback (see `GEOMETRY_PREPASS_CS_WGSL`).
   - For a small supported subset of geometry shaders with point-list and triangle-list input, the executor translates GS DXBC→WGSL compute at create time and can execute it as the prepass for point-list and triangle-list draws (`Draw` and `DrawIndexed`) (see `exec_geometry_shader_prepass_pointlist` and `exec_geometry_shader_prepass_trianglelist`):
     - Translator: [`crates/aero-d3d11/src/runtime/gs_translate.rs`](../../crates/aero-d3d11/src/runtime/gs_translate.rs)
     - Translator tests: [`crates/aero-d3d11/tests/gs_translate.rs`](../../crates/aero-d3d11/tests/gs_translate.rs)
+    - GS input feeding (current in-tree behavior):
+      - Point-list and triangle-list prepass paths populate GS `v#[]` from **VS outputs** via a minimal
+        VS-as-compute path (vertex pulling + a small VS opcode subset). If VS-as-compute translation fails,
+        draws fail unless the VS is a strict passthrough (or `AERO_D3D11_ALLOW_INCORRECT_GS_INPUTS=1` is set
+        to force IA-fill for debugging; may misrender).
   - Strip output expansion helpers for `CutVertex` / `RestartStrip` semantics:
     - Reference implementation: [`crates/aero-d3d11/src/runtime/strip_to_list.rs`](../../crates/aero-d3d11/src/runtime/strip_to_list.rs)
     - Unit tests: `crates/aero-d3d11/src/runtime/strip_to_list.rs` (module `tests`)
+  - Known GS emulation gaps / next steps:
+    - Broaden VS-as-compute feeding (opcode coverage + correct draw instancing semantics).
+    - Non-point GS input primitives beyond triangle list (line, strips) and adjacency topologies (`*_ADJ`) are not supported end-to-end.
+    - Instanced draws (`instance_count > 1`) with GS bound are not validated; treat as unsupported until dedicated tests exist.
+    - Some downlevel backends have very low per-stage storage-buffer limits (commonly `max_storage_buffers_per_shader_stage = 4`), which can block compute-prepass execution.
+  - Owning doc: [`docs/graphics/geometry-shader-emulation.md`](./geometry-shader-emulation.md)
+    - GS DXBC + ILAY fixtures: [`crates/aero-d3d11/tests/fixtures/README.md`](../../crates/aero-d3d11/tests/fixtures/README.md)
+    - Example GS test runs:
+      - `cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_point_to_triangle`
+      - `cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_restart_strip`
 - GS/HS/DS shader objects can be created/bound (the command stream binds these stages via
   `BIND_SHADERS`; newer streams may append `{gs,hs,ds}` handles after the stable 24-byte prefix—when
   present the appended handles are authoritative). HS/DS currently compile to minimal compute shaders
@@ -523,7 +547,7 @@ Known gaps / limitations (enforced by code/tests):
     during bring-up.
   - Patchlist topology **with HS+DS bound** routes through an initial tessellation compute prepass
     pipeline (currently PatchList3 only) that expands the patch list into an indexed triangle list
-    for rendering. Guest HS/DS DXBC is not executed yet; the pipeline uses placeholder/passthrough
+    for rendering. Guest HS/DS DXBC is not executed yet; the pipeline uses stub/passthrough
     stages (HS passthrough currently writes a fixed tess factor: `4.0`).
   - Tessellation building blocks live under `crates/aero-d3d11/src/runtime/tessellation/` (VS-as-compute
     stub, HS passthrough, layout pass, DS passthrough, index gen, sizing/guardrails).

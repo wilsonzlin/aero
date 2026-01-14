@@ -1075,9 +1075,12 @@ To populate `gs_inputs`, the runtime must:
    - Target design: copy the required output registers from the previous stage’s output register
      buffer (`vs_out_regs` or DS output regs) into the packed `gs_inputs`.
    - Current in-tree implementation note: the point-list and triangle-list translated-GS prepass
-     paths in `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs` populate `gs_inputs` via
-     vertex pulling plus a minimal VS-as-compute feeding path (simple VS subset), with an IA-fill
-     fallback for strict passthrough VS.
+     paths in `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs` populate `gs_inputs` from **VS
+     outputs** via vertex pulling plus a minimal VS-as-compute feeding path (simple SM4 subset), with
+     a guarded IA-fill fallback:
+     - If VS-as-compute translation fails, the executor only falls back to direct IA-fill when the
+       VS is a strict passthrough (or `AERO_D3D11_ALLOW_INCORRECT_GS_INPUTS=1` is set to force the
+       IA-fill fallback for debugging; may misrender). Otherwise the draw fails with a clear error.
 
 Note: an alternative design is to have the translated GS code read directly from the upstream stage
 register buffer, eliminating the extra packing step. This is a follow-up optimization.
@@ -1879,29 +1882,33 @@ with an implementation-defined workgroup size chosen by the translator/runtime.
 
 3. **GS (optional): geometry shader emulation**
     - Trigger: `gs != 0` or adjacency topology.
-    - Reads primitive inputs from the previous stage output (`vs_out_regs` for no tessellation,
-      otherwise `tess_out_vertices` + `tess_out_indices`).
+      - Reads primitive inputs from the previous stage output (`vs_out_regs` for no tessellation,
+        otherwise `tess_out_vertices` + `tess_out_indices`).
       - Optionally, implementations may pack upstream stage output registers into a dense `gs_inputs`
         buffer (see “GS input register payload layout”) and have the translated GS read from that.
-    - If the draw ran a tessellation phase, the runtime should reset `counters` + `indirect_args`
-      before starting GS allocation (since GS writes a new output stream into `gs_out_*`).
-    - Dispatch shape / ordering:
-      - **Deterministic bring-up (recommended):** dispatch a single thread
-        (`@workgroup_size(1)` and `global_invocation_id.x == 0`) and run nested loops:
-        - for `prim_id` in `0..(input_prim_count * instance_count)`:
-          - where `prim_id` is a flattened `(instance_id, primitive_id_in_instance)`:
-            - `instance_id = prim_id / input_prim_count`
-            - `primitive_id_in_instance = prim_id % input_prim_count`
-        - for `gs_instance_id` in `0..gs_instance_count`:
-        - execute the GS and append to local output counts, with capacity checks.
-        - This produces deterministic output ordering without atomics, and matches the in-tree
-          `gs_translate` WGSL strategy.
-      - **Parallel (future optimization):** use a 2D grid where:
-        - `global_invocation_id.x` = input `prim_id` in `0..(input_prim_count * instance_count)`
-        - `global_invocation_id.y` = `gs_instance_id` in `0..gs_instance_count`
-        - Requires atomic allocation (or a prefix-sum compaction pass) to produce a packed output
-          stream.
-    - Emits vertices/indices to `gs_out_*`, updates counters, then writes final `indirect_args`.
+      - Note (current in-tree translated-GS prepass):
+        - Point-list and triangle-list draws populate `gs_inputs` from **VS outputs** via a separate
+          VS-as-compute input-fill pass (vertex pulling + a minimal SM4 VS subset). If VS-as-compute
+          translation fails, the executor only falls back to IA-fill when the VS is a strict
+          passthrough (or `AERO_D3D11_ALLOW_INCORRECT_GS_INPUTS=1` is set to force IA-fill for
+          debugging; may misrender). Otherwise the draw fails with a clear error.
+      - If the draw ran a tessellation phase, the runtime should reset `counters` + `indirect_args`
+        before starting GS allocation (since GS writes a new output stream into `gs_out_*`).
+      - Dispatch shape / ordering:
+        - **Current in-tree strategy (`runtime/gs_translate.rs`):**
+        - Dispatch the translated GS compute entry point (`gs_main`) with `@workgroup_size(1)` and
+          `dispatch_workgroups(input_prim_count, 1, 1)`.
+        - Each invocation processes one input primitive (`prim_id = global_invocation_id.x`) and
+          loops `gs_instance_id` in `0..gs_instance_count` (matching `SV_GSInstanceID` semantics).
+        - Output allocation uses atomic counters; strip→list conversion and `cut`/restart semantics
+          are handled in WGSL.
+        - After `gs_main`, dispatch a 1-workgroup finalize entry point (`cs_finalize`) to write
+          `DrawIndexedIndirectArgs` from the counters and to deterministically suppress the draw on
+          overflow.
+      - **Synthetic-expansion prepass (scaffolding):** the built-in prepass WGSL in the executor
+        (`GEOMETRY_PREPASS_CS_WGSL`) uses `dispatch_workgroups(primitive_count, gs_instance_count, 1)`
+        and treats `global_invocation_id.y` as `SV_GSInstanceID`.
+    - Emits vertices/indices to `gs_out_*`, updates counters, then finalizes indirect args.
 
 4. **Final render**
     - Uses a render pipeline consisting of:
@@ -1995,36 +2002,54 @@ GS/HS/DS are compiled as compute entry points but keep the normal D3D binding mo
 Expansion compute pipelines require additional buffers that are not part of the D3D binding model
 (vertex pulling inputs, scratch outputs, counters, indirect args).
 
-Implementation note: the layout described below is the binding scheme. The current executor’s
-compute-prepass still uses an ad-hoc bind group layout for some output buffers, but vertex pulling
-already uses the reserved expansion-internal binding range (starting at `BINDING_BASE_INTERNAL =
-256`) within `VERTEX_PULLING_GROUP` (`@group(3)`), so it does not collide with the D3D register
-binding ranges. Future work is to unify all emulation kernels on the shared internal layout.
+Implementation note: the in-tree executor uses a **mixed** approach:
 
-##### 3.2.1) Alternative layout (current in-tree scaffolding): per-pass internal `@group(0)`
+- Most compute-prepass IO (expanded vertices/indices, counters/indirect args, uniforms like
+  `{primitive_count, instance_count}`) is bound in a **per-pass internal bind group** (typically
+  `@group(0)` with small binding numbers). This keeps prepass IO decoupled from the D3D binding model.
+- `@group(3)` is reserved for extended D3D stages (GS/HS/DS) plus any internal helpers that must
+  coexist with those stage bindings. Any such internal helpers use `@binding >= BINDING_BASE_INTERNAL
+  = 256` so they stay disjoint from the D3D register-space ranges (`b#`/`t#`/`s#`/`u#`).
+  - This split is also used to work within downlevel backend constraints (e.g.
+    `max_storage_buffers_per_shader_stage` can be as low as 4): the in-tree GS prepass uses separate
+    compute pipelines for GS-input fill (IA-fill or VS-as-compute, depending on topology) vs GS
+    execution so vertex pulling storage buffers are not bound alongside multiple expansion output
+    storage buffers.
 
-Not all in-tree emulation kernels currently use the unified “internal bindings in `@group(3)`”
-scheme described below.
+##### 3.2.1) Current in-tree layout: per-pass internal `@group(0)` + stage-scoped `@group(3)`
 
-Several scaffolding kernels instead use a **dedicated internal bind group** (typically
-`@group(0)` with small binding numbers) for stage IO / scratch buffers, and keep the translated
-GS/HS/DS **D3D resources** in `@group(3)`:
+The current in-tree emulation kernels generally use a **dedicated internal bind group**
+(`@group(0)` with small binding numbers) for stage IO / scratch buffers, and keep GS/HS/DS **D3D
+resources** in `@group(3)`:
 
+- Synthetic-expansion prepass (`GEOMETRY_PREPASS_CS_WGSL` in the executor): expansion outputs +
+  params in `@group(0)`, GS `cb#[]` in `@group(3)`.
+- Translated GS DXBC prepass (`runtime/gs_translate.rs`): expansion outputs + counters/indirect args +
+  params + `gs_inputs` in `@group(0)`, and referenced GS resources (`cb#`/`t#`/`s#`) in `@group(3)`.
+  - The in-tree translated-GS prepass builds `gs_inputs` via a separate **input fill** compute pass:
+    - IA vertex pulling bindings live in `@group(3)` (internal range), and the input-fill kernel
+      writes the packed register payload into a `@group(0)` storage buffer (`gs_inputs`).
+    - Point-list and triangle-list draws prefer VS-as-compute for this payload (minimal SM4 VS subset)
+      so the GS observes VS output registers. If VS-as-compute translation fails, the executor only
+      falls back to IA-fill when the VS is a strict passthrough (or
+      `AERO_D3D11_ALLOW_INCORRECT_GS_INPUTS=1` is set to force IA-fill for debugging; may misrender).
+      Otherwise the draw fails with a clear error.
 - HS translation (`translate_hs` in `shader_translate.rs`): `hs_in/hs_out_cp/hs_out_pc` at
   `@group(0) @binding(0..2)`, HS resources in `@group(3)`.
 - Tessellation DS evaluation (`runtime/tessellation/domain_eval.rs`): patch meta + HS outputs at
   `@group(0)`, DS resources in `@group(3)`.
-- GS scaffolding (`runtime/gs_translate.rs`): expansion outputs + counters + params + `gs_inputs` at
-  `@group(0)`, and (when referenced) GS D3D resources in `@group(3)` (`cb#[]`, `t#`, `s#`).
 
 This works because WebGPU bind groups are **per pipeline**: internal compute pipelines can choose
 different group layouts than application render pipelines. When using this layout style, the
 pipeline layout should still include empty group layouts for groups 1 and 2 so indices line up with
 the stage-scoped binding model (VS/PS/CS).
 
-These are not part of the D3D binding model, so they use a reserved binding-number range starting at
-`BINDING_BASE_INTERNAL = 256`. They live in the same bind group as GS/HS/DS resources (`@group(3)`),
-but are kept disjoint from the D3D register mappings by using `@binding >= 256`.
+These `@group(0)` bindings are not part of the D3D binding model, so they can use low binding numbers
+without colliding with stage-scoped D3D resource bindings.
+
+Internal-only helpers that *do* live in `@group(3)` (because they must coexist with GS/HS/DS resource
+tables) use `@binding >= BINDING_BASE_INTERNAL = 256`. Today this includes IA vertex pulling
+(`runtime/vertex_pulling.rs`) and index pulling (`runtime/index_pulling.rs`).
 
 Let:
 
@@ -2035,8 +2060,7 @@ Let:
   - `@binding(BINDING_BASE_UAV..BINDING_BASE_UAV + MAX_UAV_SLOTS)` for UAVs
 - Expansion-internal bindings start at `BINDING_BASE_INTERNAL = 256`.
 
-Within the chosen internal group, the expansion-internal bindings are reserved and stable so the
-runtime can share common helper WGSL across VS/GS/HS/DS compute variants:
+Target unified binding assignments (design notes; only partially implemented today):
 
 - `@binding(256)`: `ExpandParams` (uniform/storage; IA offsets/strides + draw/topology info)
 - `@binding(257..=264)`: vertex buffers `vb0..vb7` as read-only storage (after slot compaction)

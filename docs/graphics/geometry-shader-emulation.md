@@ -7,7 +7,7 @@ WebGPU render pipeline.
 This document describes:
 
 - what is **implemented today** (command-stream plumbing, binding model, compute-expansion/compute-prepass scaffolding + current limitations; plus a minimal SM4 GS DXBC→WGSL compute path that is executed for point-list and triangle-list draws (`Draw` and `DrawIndexed`)), and
-- the **next steps** (expand GS DXBC execution beyond the current point-list and triangle-list subset, expand VS-as-compute feeding for GS inputs (currently minimal), then grow opcode/topology/system-value coverage and bring up HS/DS emulation).
+- the **next steps** (expand GS DXBC execution beyond the current point-list and triangle-list subset, broaden VS-as-compute feeding for GS inputs (currently minimal; opcode coverage + instancing), then grow opcode/topology/system-value coverage and bring up HS/DS emulation).
 
 > Related: [`docs/16-d3d10-11-translation.md`](../16-d3d10-11-translation.md) (high-level D3D10/11→WebGPU mapping).
 >
@@ -66,17 +66,17 @@ Current status:
 - The executor routes draws through a compute prepass when GS/HS/DS stages are bound (or when D3D11-only
   topologies like adjacency/patchlists are used).
 - Patchlist draws without HS/DS and many GS cases still use built-in WGSL (“synthetic expansion”) to
-  generate expanded geometry.
+   generate expanded geometry.
 - Patchlist draws with HS+DS bound route through the tessellation prepass pipeline (VS-as-compute +
   HS/DS passthrough + tessellator layout + DS passthrough).
 - There is an initial “real GS” path for **point-list and triangle-list draws (`Draw` and `DrawIndexed`)**:
   if the bound GS DXBC can be translated by `crates/aero-d3d11/src/runtime/gs_translate.rs`, the executor
   executes that translated WGSL compute prepass at draw time.
   - Today, GS `v#[]` inputs are populated via vertex pulling:
-    - Point-list and triangle-list translated-GS prepass paths prefer feeding `v#[]` from a minimal
-      **VS-as-compute** implementation (so the GS observes VS output registers), but this VS execution
-      is still a small subset.
-    - The executor can fall back to filling `v#[]` directly from IA for strict passthrough VS.
+    - Point-list and triangle-list translated-GS prepass paths prefer feeding `v#[]` from **VS outputs**
+      via vertex pulling plus a minimal **VS-as-compute** implementation (simple SM4 subset). If
+      VS-as-compute translation fails, draws fail unless the VS is a strict passthrough (or
+      `AERO_D3D11_ALLOW_INCORRECT_GS_INPUTS=1` is set to force IA-fill for debugging; may misrender).
   - This requires an input layout.
 
 ### Why we expand strips into lists
@@ -119,6 +119,54 @@ There are currently three compute-prepass “modes”:
   mode remains useful for adjacency/patchlist scaffolding and for tests that force the compute-prepass
   path without a real GS.
 
+### Synthetic expansion vs translated GS prepass (current behavior)
+
+The executor currently uses **two distinct** compute prepass implementations for GS-like expansion:
+
+#### Built-in synthetic-expansion prepass (`GEOMETRY_PREPASS_CS_WGSL`)
+
+- **What it does:** emits deterministic synthetic primitives (triangles) and writes indirect draw args.
+- **What it does *not* do:** it does *not* execute any guest GS DXBC.
+- **Dispatch shape:** `dispatch_workgroups(primitive_count, gs_instance_count, 1)`.
+  - The WGSL treats:
+    - `global_invocation_id.x` as a synthetic `SV_PrimitiveID`, and
+    - `global_invocation_id.y` as a synthetic `SV_GSInstanceID` (used by GS instancing tests).
+- **Bindings:**
+  - `@group(0)` contains prepass IO (expanded vertices/indices, indirect args, counters, and a small uniform).
+  - `@group(3)` provides the GS stage resource table (`cb#/t#/s#`) and (optionally) internal IA vertex pulling
+    bindings.
+- **Used for:**
+  - adjacency/patchlist scaffolding,
+  - tessellation bring-up before real HS/DS execution exists, and
+  - tests that validate compute-prepass+indirect plumbing without requiring a translated GS.
+
+#### Translated GS DXBC prepass (`runtime/gs_translate.rs`)
+
+- **What it does:** executes a supported subset of guest GS DXBC as WGSL compute to produce expanded
+  vertices/indices and indirect args.
+- **When it runs:** currently for `PointList` and `TriangleList` draws (indexed or non-indexed) where the
+  bound GS DXBC successfully translated at `CREATE_SHADER_DXBC` time.
+- **Pass sequence (translated-GS prepass paths today):**
+  1. **Input fill:** a compute pass populates the packed `gs_inputs` payload from **VS outputs**, using
+     vertex pulling to load IA data and a small VS-as-compute translator (currently a minimal SM4 subset)
+     to execute the guest VS instruction stream for the subset needed by GS tests.
+     - If the VS is a strict passthrough, the executor can fill `gs_inputs` directly from the IA stream
+       (fast path).
+     - If VS-as-compute translation fails, draws fail unless `AERO_D3D11_ALLOW_INCORRECT_GS_INPUTS=1`
+       is set (debug-only fallback).
+  2. **GS execution:** the translated GS WGSL compute entry point runs once per input primitive
+     (`dispatch_workgroups(primitive_count, 1, 1)`) and loops `gs_instance_id` in `0..GS_INSTANCE_COUNT`.
+     It appends outputs using atomics, performing strip→list conversion and honoring `cut` semantics.
+  3. **Finalize:** a 1-workgroup dispatch runs `cs_finalize` to write `DrawIndexedIndirectArgs` from the
+     counters (and to deterministically skip the draw if overflow occurred).
+- **Bindings (translated GS prepass WGSL):**
+  - `@group(0)` contains prepass IO (expanded vertices/indices, counters+indirect args, params, and
+    `gs_inputs`).
+  - `@group(3)` contains referenced GS stage resources (`cb#`, `t#`, `s#`) following the shared binding
+    model in `binding_model.rs`.
+  - The IA vertex pulling bindings (`@group(3) @binding >= BINDING_BASE_INTERNAL`) are only required by
+    the **input fill** pass, not by the translated GS itself.
+
 Implemented today:
 
 - **GS/HS/DS bindings**: resource-binding opcodes can target GS (and future HS/DS) binding tables
@@ -152,10 +200,12 @@ Current limitations (high-level):
   - Other input topologies (line, strip, adjacency) still use the built-in synthetic expansion WGSL
     prepass.
 - VS-as-compute feeding for GS inputs is still incomplete:
-  - The translated-GS prepass paths prefer a minimal VS-as-compute feeding path so the GS observes
-    VS output registers (correct D3D11 semantics), but it is still a small subset (simple VS
-    expected).
-  - The executor can fall back to IA-fill for strict passthrough VS.
+  - The point-list and triangle-list translated-GS prepass paths prefer a minimal VS-as-compute
+    feeding path so the GS observes VS output registers (correct D3D11 semantics), but it is still a
+    small subset (simple VS expected).
+  - If VS-as-compute translation fails, the executor only falls back to IA-fill when the VS is a
+    strict passthrough (or `AERO_D3D11_ALLOW_INCORRECT_GS_INPUTS=1` is set to force IA-fill for
+    debugging; may misrender). Otherwise the draw fails with a clear error.
 - HS/DS are still scaffolding-only (no real HS/DS DXBC execution yet).
 
 Test pointers:
@@ -190,8 +240,10 @@ Supported:
 - `triangle` (`D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST`)
 
 Note: for the current translated-GS prepass paths, the GS `v#[]` inputs are populated via vertex
-pulling plus a minimal VS-as-compute feeding path (simple VS subset), with an IA-fill fallback for
-strict passthrough VS.
+pulling plus a minimal VS-as-compute feeding path (simple SM4 subset) so the GS observes VS output
+registers (correct D3D11 semantics). If VS-as-compute translation fails, the executor only falls
+back to IA-fill when the VS is a strict passthrough (or `AERO_D3D11_ALLOW_INCORRECT_GS_INPUTS=1` is
+set to force IA-fill for debugging; may misrender). Otherwise the draw fails with a clear error.
 
 Not yet supported end-to-end:
 
@@ -291,6 +343,18 @@ Known limitations include:
   - GS output cannot be captured into D3D stream-out buffers
 - **No adjacency (end-to-end)**
   - `lineadj` / `triadj` inputs are not supported by the command-stream executor yet
+- **Limited VS-as-compute feeding for GS inputs**
+  - The point-list and triangle-list translated-GS prepass paths run a small VS-as-compute translator
+    to populate the GS `v#[]` register payload from VS outputs. This currently supports a small VS
+    instruction subset (enough for the in-tree GS tests) and will fail translation for more complex
+    vertex shaders.
+  - If VS-as-compute translation fails, the executor only falls back to IA-fill when the VS is a strict
+    passthrough (or `AERO_D3D11_ALLOW_INCORRECT_GS_INPUTS=1` is set to force IA-fill for debugging; may
+    misrender). Otherwise the draw fails with a clear error.
+- **Draw instancing (`instance_count > 1`) is not validated**
+  - The emulation path preserves `instance_count` in the indirect draw args, but the current translated
+    GS prepass does not expand geometry per draw instance and does not currently fan out over
+    `SV_InstanceID`. Treat instanced draws with GS bound as unsupported until dedicated tests exist.
 - **Limited output topology / payload**
   - Output topology is limited to `pointlist`, `linestrip`, and `trianglestrip` (stream 0 only).
     Strip topologies are lowered to list topologies for rendering (`linestrip` → line list,
@@ -304,6 +368,12 @@ Known limitations include:
   - WebGPU does not expose rasterizer discard; the emulation always runs the render pass
 - **WebGL2 backend**
   - WebGL2 has no compute; GS emulation is WebGPU-only (or requires a separate CPU fallback path)
+- **Downlevel per-stage storage-buffer limits**
+  - Some downlevel backends have very low `max_storage_buffers_per_shader_stage` (commonly 4). GS
+    emulation binds multiple storage buffers (expanded vertices/indices, counters/indirect args, and
+    sometimes IA pulling buffers), so some prepass variants may not be available on those backends.
+    See `crates/aero-d3d11/tests/common/mod.rs` (`skip_if_compute_or_indirect_unsupported`) for the
+    current skip heuristics used by tests.
 
 Error policy:
 
@@ -340,14 +410,22 @@ Current uses:
 
 ## How to test
 
+GS-related tests use checked-in DXBC fixtures under `crates/aero-d3d11/tests/fixtures/`.
+See [`crates/aero-d3d11/tests/fixtures/README.md`](../../crates/aero-d3d11/tests/fixtures/README.md)
+for details (including how the GS fixtures are authored and how to dump token streams with
+`dxbc_dump`).
+
 End-to-end GS emulation (compute prepass executes guest GS DXBC) is covered by:
 
 - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_point_to_triangle.rs`
 - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_restart_strip.rs`
 - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_trianglelist_emits_triangle.rs`
+- `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_vs_as_compute_feeds_gs_inputs.rs`
+- `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_pointlist_draw_indexed.rs`
+- `crates/aero-d3d11/tests/aerogpu_cmd_gs_instance_count.rs`
 
 These tests require compute shaders and indirect execution, so they may skip on downlevel backends
-(e.g. WebGL2).
+(e.g. WebGL2, or wgpu-GL adapters with low storage-buffer binding limits).
 
 Example:
 
@@ -355,7 +433,11 @@ Example:
 cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_point_to_triangle
 cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_restart_strip
 cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_trianglelist_emits_triangle
+cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_vs_as_compute_feeds_gs_inputs
 ```
+
+To make skips fail-fast in CI-like environments, set `AERO_REQUIRE_WEBGPU=1` (tests will panic rather
+than printing “skipping ...”).
 
 For synthetic-expansion/scaffolding coverage, see:
 
@@ -385,12 +467,13 @@ bind group:
 - `@group(3)` for GS/HS/DS resources (selected either via the direct `shader_stage = GEOMETRY`
   encoding for GS, or via the `stage_ex` ABI extension when `shader_stage = COMPUTE` (required for
   HS/DS; optional GS compatibility encoding)).
-- Expansion-internal buffers (vertex pulling inputs, scratch outputs, counters, indirect args) are
-  also internal to the emulation path. In the baseline design they live in `@group(3)` using a
-  reserved high binding-number range (starting at `BINDING_BASE_INTERNAL = 256`, defined in
-  `crates/aero-d3d11/src/binding_model.rs`) so they do not collide with D3D register bindings (see
-  [`docs/16-d3d10-11-translation.md`](../16-d3d10-11-translation.md)).
-  - Vertex pulling already uses this reserved range so it can be shared across emulation kernels.
+- Internal emulation helpers use a mix of:
+  - **per-pass internal bindings** (most compute-prepass IO lives in `@group(0)` with small binding
+    numbers), and
+  - **reserved internal bindings in `@group(3)`** (for shared helpers like IA vertex pulling and the
+    expanded-draw vertex buffer).
+  Bindings in the internal reserved range start at `BINDING_BASE_INTERNAL = 256` (defined in
+  `crates/aero-d3d11/src/binding_model.rs`) so they do not collide with D3D register bindings.
 
 ### Binding number ranges within a stage group
 
@@ -466,8 +549,8 @@ Packets that carry a `stage_ex` selector in `reserved0` include: `SET_TEXTURE`, 
 
 GS emulation is significantly more expensive than native GS hardware support because it introduces:
 
-- **Extra passes**: one or more compute passes (GS itself, and potentially VS-as-compute once brought up)
-- **Extra passes**: one or more compute passes (GS itself, and (for some paths) VS-as-compute)
+- **Extra passes**: one or more compute passes (GS-input fill (IA-fill or VS-as-compute), GS itself, and
+  potentially additional expansion passes as tessellation/adjacency coverage grows)
   before the render pass.
 - **Intermediate buffers**: VS output + expanded vertex/index buffers + indirect args.
 - **Strip→list expansion cost**:
