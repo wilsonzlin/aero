@@ -48,10 +48,23 @@ fn read_u64_le(bytes: &[u8], offset: usize) -> Option<u64> {
 /// Parse ACPI AML `PkgLength` encoding.
 ///
 /// Returns (length, length_field_bytes).
+///
+/// Note: the returned `length` is the raw AML `PkgLength` value, which (per spec) includes the
+/// byte length of the `PkgLength` field itself, but does *not* include the opcode byte(s).
+///
+/// For multi-byte encodings, bits 4-5 of the lead byte are reserved and should be zero.
 fn parse_pkg_length(bytes: &[u8], offset: usize) -> Option<(usize, usize)> {
     let b0 = *bytes.get(offset)?;
     let follow_bytes = (b0 >> 6) as usize;
-    let mut len: usize = (b0 & 0x3F) as usize;
+    let mut len: usize = if follow_bytes == 0 {
+        (b0 & 0x3F) as usize
+    } else {
+        // Reserved bits; the aero-acpi generator should always emit these as zero.
+        if (b0 & 0x30) != 0 {
+            return None;
+        }
+        (b0 & 0x0F) as usize
+    };
     for i in 0..follow_bytes {
         let b = *bytes.get(offset + 1 + i)?;
         len |= (b as usize) << (4 + i * 8);
