@@ -147,9 +147,9 @@ Contract note:
     - Enabling the alias **does** change HWID matching behavior (it enables generic fallback binding). Install only one INF
       basename at a time to avoid overlapping matches.
   - Tablet devices bind via the separate tablet INF (`drivers/windows7/virtio-input/inf/aero_virtio_tablet.inf`,
-    `SUBSYS_00121AF4`). That HWID is more specific, so it wins over the generic fallback when both driver packages are
-    installed. If the tablet INF is not installed and you enable the legacy alias INF fallback, the generic fallback entry can
-    also bind to tablet devices (but will use the generic device name).
+    `SUBSYS_00121AF4`). That HWID is more specific, so it wins over the generic fallback when the alias fallback is enabled and
+    both driver packages are installed. If the tablet INF is not installed and you enable the legacy alias INF fallback, the
+    generic fallback entry can also bind to tablet devices (but will use the generic device name).
   - Do not ship/install both `aero_virtio_input.inf` and `virtio-input.inf` at the same time (duplicate overlapping INFs can
     lead to confusing PnP driver selection). Ship/install **only one** of the two filenames at a time.
 - The driver also validates the Revision ID at runtime.

@@ -241,11 +241,13 @@ The in-tree Aero Win7 virtio-input INFs are intentionally **revision-gated** (Ae
   - Canonical INF is SUBSYS-only (no strict generic fallback entry).
 - Tablet: `aero_virtio_tablet.inf` matches `SUBSYS_00121AF4` (Aero contract tablet). This HWID is more specific than the opt-in strict generic fallback, so it will win when it matches.
 - Optional legacy filename alias (disabled by default): `virtio-input.inf.disabled` (rename to `virtio-input.inf` to enable)
-  - Intended only for compatibility with workflows/tools that still look for `virtio-input.inf`.
-  - Adds an opt-in strict revision-gated generic fallback match (no `SUBSYS`): `PCI\VEN_1AF4&DEV_1052&REV_01`
+  - Intended for compatibility with workflows/tools that still look for `virtio-input.inf`, and as an opt-in path to enable
+    strict generic fallback binding when subsystem IDs are not exposed/recognized.
+  - Adds a strict revision-gated generic fallback match (no `SUBSYS`): `PCI\VEN_1AF4&DEV_1052&REV_01`
     (Device Manager name: **Aero VirtIO Input Device**).
-  - Alias sync policy: expected to match `aero_virtio_input.inf` from `[Version]` onward excluding the models sections
-    (`[Aero.NTx86]` / `[Aero.NTamd64]`); banner/comments may differ (see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
+  - Alias sync policy: expected to match `aero_virtio_input.inf` from `[Version]` onward **excluding** the models sections
+    (`[Aero.NTx86]` / `[Aero.NTamd64]`), where the alias adds the fallback match. Banner/comments may differ (see
+    `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
   - For normal installs, use the canonical `aero_virtio_input.inf`.
   - Do **not** ship/install it alongside `aero_virtio_input.inf` (install only one of the two filenames at a time).
 
