@@ -60,7 +60,7 @@ export type MachineHandle = {
      * Drain newly-decoded AeroGPU submissions (if supported by the current WASM build).
      *
      * Returns an array of objects:
-     * `{ cmdStream: Uint8Array, signalFence: BigInt, contextId: number, flags: number, allocTable: Uint8Array | null }`.
+     * `{ cmdStream: Uint8Array, signalFence: BigInt, contextId: number, engineId: number, flags: number, allocTable: Uint8Array | null }`.
      */
     aerogpu_drain_submissions?(): unknown;
     /**
