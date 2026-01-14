@@ -209,3 +209,31 @@ async fn install_media_iso_opfs_existing_unavailable_error_includes_operation_an
         "expected DedicatedWorker hint in message, got: {msg}"
     );
 }
+
+#[wasm_bindgen_test(async)]
+async fn snapshot_full_to_opfs_unavailable_error_includes_operation_and_hint() {
+    if aero_opfs::opfs_sync_access_supported() {
+        return;
+    }
+
+    let path = unique_path("opfs-error-snapshot-full", "aerosnap");
+    let mut m = aero_wasm::Machine::new(2 * 1024 * 1024).expect("Machine::new");
+    let err = m
+        .snapshot_full_to_opfs(path.clone())
+        .await
+        .expect_err("expected OPFS-backed snapshot save to fail when OPFS sync access unavailable");
+
+    let msg = js_error_message(err);
+    assert!(
+        msg.contains("Machine.snapshot_full_to_opfs"),
+        "expected operation name in message, got: {msg}"
+    );
+    assert!(
+        msg.contains(&path),
+        "expected OPFS path in message, got: {msg}"
+    );
+    assert!(
+        msg.contains("DedicatedWorker"),
+        "expected DedicatedWorker hint in message, got: {msg}"
+    );
+}

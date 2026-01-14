@@ -367,6 +367,7 @@ fn snapshot_save_to<W: Write + Seek>(
     cpu: Uint8Array,
     mmu: Uint8Array,
     devices: JsValue,
+    opfs_context: Option<(&str, &str)>,
 ) -> Result<(), JsValue> {
     let (guest_base, guest_size) = guest_region_from_layout_contract()?;
 
@@ -386,12 +387,16 @@ fn snapshot_save_to<W: Write + Seek>(
     };
 
     aero_snapshot::save_snapshot(&mut w, &mut source, aero_snapshot::SaveOptions::default())
-        .map_err(|e| js_error(format!("Failed to save snapshot: {e}")))?;
+        .map_err(|e| match opfs_context {
+            Some((operation, path)) => crate::opfs_snapshot_error_to_js(operation, path, e),
+            None => js_error(format!("Failed to save snapshot: {e}")),
+        })?;
     Ok(())
 }
 
 fn snapshot_restore_from<R: Read>(
     mut r: R,
+    opfs_context: Option<(&str, &str)>,
 ) -> Result<(CpuState, MmuState, Vec<DeviceState>), JsValue> {
     let (guest_base, guest_size) = guest_region_from_layout_contract()?;
     let mut target = WasmSnapshotTarget::new(guest_base, guest_size);
@@ -401,7 +406,10 @@ fn snapshot_restore_from<R: Read>(
         &mut target,
         aero_snapshot::RestoreOptions::default(),
     )
-    .map_err(|e| js_error(format!("Failed to restore snapshot: {e}")))?;
+    .map_err(|e| match opfs_context {
+        Some((operation, path)) => crate::opfs_snapshot_error_to_js(operation, path, e),
+        None => js_error(format!("Failed to restore snapshot: {e}")),
+    })?;
 
     let cpu = target
         .cpu
@@ -456,7 +464,13 @@ pub async fn vm_snapshot_save_to_opfs(
         .await
         .map_err(|e| crate::opfs_io_error_to_js("vm_snapshot_save_to_opfs", &path, e))?;
 
-    snapshot_save_to(&mut file, cpu, mmu, devices)?;
+    snapshot_save_to(
+        &mut file,
+        cpu,
+        mmu,
+        devices,
+        Some(("vm_snapshot_save_to_opfs", &path)),
+    )?;
 
     file.close()
         .map_err(|e| crate::opfs_io_error_to_js("vm_snapshot_save_to_opfs", &path, e))?;
@@ -469,7 +483,8 @@ pub async fn vm_snapshot_restore_from_opfs(path: String) -> Result<JsValue, JsVa
         .await
         .map_err(|e| crate::opfs_io_error_to_js("vm_snapshot_restore_from_opfs", &path, e))?;
 
-    let (cpu, mmu, devices) = snapshot_restore_from(&mut file)?;
+    let (cpu, mmu, devices) =
+        snapshot_restore_from(&mut file, Some(("vm_snapshot_restore_from_opfs", &path)))?;
 
     file.close()
         .map_err(|e| crate::opfs_io_error_to_js("vm_snapshot_restore_from_opfs", &path, e))?;
@@ -488,13 +503,13 @@ pub fn vm_snapshot_save(
     devices: JsValue,
 ) -> Result<Uint8Array, JsValue> {
     let mut cursor = Cursor::new(Vec::new());
-    snapshot_save_to(&mut cursor, cpu, mmu, devices)?;
+    snapshot_save_to(&mut cursor, cpu, mmu, devices, None)?;
     Ok(Uint8Array::from(cursor.get_ref().as_slice()))
 }
 
 #[wasm_bindgen]
 pub fn vm_snapshot_restore(bytes: Uint8Array) -> Result<JsValue, JsValue> {
     let data = bytes.to_vec();
-    let (cpu, mmu, devices) = snapshot_restore_from(Cursor::new(data))?;
+    let (cpu, mmu, devices) = snapshot_restore_from(Cursor::new(data), None)?;
     build_restore_result(cpu, mmu, devices)
 }

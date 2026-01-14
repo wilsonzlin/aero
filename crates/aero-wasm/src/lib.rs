@@ -2521,7 +2521,7 @@ mod legacy_demo_vm {
 
             self.inner
                 .save_snapshot_full_to(&mut file)
-                .map_err(|e| JsValue::from_str(&e.to_string()))?;
+                .map_err(|e| crate::opfs_snapshot_error_to_js("DemoVm.snapshot_full_to_opfs", &path, e))?;
 
             file.close().map_err(|e| {
                 crate::opfs_io_error_to_js("DemoVm.snapshot_full_to_opfs", &path, e)
@@ -2537,7 +2537,7 @@ mod legacy_demo_vm {
 
             self.inner
                 .save_snapshot_dirty_to(&mut file)
-                .map_err(|e| JsValue::from_str(&e.to_string()))?;
+                .map_err(|e| crate::opfs_snapshot_error_to_js("DemoVm.snapshot_dirty_to_opfs", &path, e))?;
 
             file.close().map_err(|e| {
                 crate::opfs_io_error_to_js("DemoVm.snapshot_dirty_to_opfs", &path, e)
@@ -2553,7 +2553,9 @@ mod legacy_demo_vm {
 
             self.inner
                 .restore_snapshot_from_checked(&mut file)
-                .map_err(|e| JsValue::from_str(&e.to_string()))?;
+                .map_err(|e| {
+                    crate::opfs_snapshot_error_to_js("DemoVm.restore_snapshot_from_opfs", &path, e)
+                })?;
 
             file.close().map_err(|e| {
                 crate::opfs_io_error_to_js("DemoVm.restore_snapshot_from_opfs", &path, e)
@@ -3005,6 +3007,21 @@ fn opfs_io_error_to_js(operation: &str, path: &str, err: std::io::Error) -> JsVa
     }
 
     Error::new(&msg).into()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn opfs_snapshot_error_to_js(
+    operation: &str,
+    path: &str,
+    err: aero_snapshot::SnapshotError,
+) -> JsValue {
+    match err {
+        aero_snapshot::SnapshotError::Io(e) => opfs_io_error_to_js(operation, path, e),
+        other => Error::new(&format!(
+            "{operation} failed for OPFS path \"{path}\": {other}"
+        ))
+        .into(),
+    }
 }
 
 #[wasm_bindgen]
@@ -3620,7 +3637,7 @@ impl Machine {
             },
         )
         .map_err(|e| {
-            JsValue::from_str(&format!(
+            js_error(format!(
                 "Machine.set_disk_aerospar_opfs_create failed for OPFS path \"{path}\": {e}"
             ))
         })?;
@@ -3660,7 +3677,7 @@ impl Machine {
             .await
             .map_err(|e| opfs_disk_error_to_js("Machine.set_disk_aerospar_opfs_open", &path, e))?;
         let disk = aero_storage::AeroSparseDisk::open(storage).map_err(|e| {
-            JsValue::from_str(&format!(
+            js_error(format!(
                 "Machine.set_disk_aerospar_opfs_open failed for OPFS path \"{path}\": {e}"
             ))
         })?;
@@ -4917,7 +4934,7 @@ impl Machine {
 
         self.inner
             .save_snapshot_full_to(&mut file)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            .map_err(|e| opfs_snapshot_error_to_js("Machine.snapshot_full_to_opfs", &path, e))?;
 
         file.close()
             .map_err(|e| opfs_io_error_to_js("Machine.snapshot_full_to_opfs", &path, e))?;
@@ -4932,7 +4949,7 @@ impl Machine {
 
         self.inner
             .save_snapshot_dirty_to(&mut file)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            .map_err(|e| opfs_snapshot_error_to_js("Machine.snapshot_dirty_to_opfs", &path, e))?;
 
         file.close()
             .map_err(|e| opfs_io_error_to_js("Machine.snapshot_dirty_to_opfs", &path, e))?;
@@ -4947,7 +4964,7 @@ impl Machine {
 
         self.inner
             .restore_snapshot_from_checked(&mut file)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            .map_err(|e| opfs_snapshot_error_to_js("Machine.restore_snapshot_from_opfs", &path, e))?;
 
         file.close()
             .map_err(|e| opfs_io_error_to_js("Machine.restore_snapshot_from_opfs", &path, e))?;
