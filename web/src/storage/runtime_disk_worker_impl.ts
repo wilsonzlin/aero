@@ -1344,11 +1344,15 @@ async function openRemoteBackedDisk(
     throw new Error(`invalid remote cacheBackend=${String(cacheBackendRaw)}`);
   }
 
-  const cacheLimitBytes = hasOwn(remote, "cacheLimitBytes") ? remote.cacheLimitBytes : undefined;
-  if (cacheLimitBytes !== undefined && cacheLimitBytes !== null) {
-    if (typeof cacheLimitBytes !== "number" || !Number.isSafeInteger(cacheLimitBytes) || cacheLimitBytes < 0) {
-      throw new Error(`invalid remote cacheLimitBytes=${String(cacheLimitBytes)}`);
+  const cacheLimitBytesRaw = hasOwn(remote, "cacheLimitBytes") ? remote.cacheLimitBytes : undefined;
+  let cacheLimitBytes: number | null | undefined = undefined;
+  if (cacheLimitBytesRaw === undefined || cacheLimitBytesRaw === null) {
+    cacheLimitBytes = cacheLimitBytesRaw;
+  } else {
+    if (typeof cacheLimitBytesRaw !== "number" || !Number.isSafeInteger(cacheLimitBytesRaw) || cacheLimitBytesRaw < 0) {
+      throw new Error(`invalid remote cacheLimitBytes=${String(cacheLimitBytesRaw)}`);
     }
+    cacheLimitBytes = cacheLimitBytesRaw;
   }
 
   let integrity: RemoteDiskIntegritySpec | undefined = undefined;
@@ -1417,7 +1421,7 @@ async function openRemoteBackedDisk(
       opts.credentials = credentials;
       opts.cacheBackend = cacheBackend;
       // Preserve `null` semantics for unbounded cache; `undefined` selects defaults.
-      opts.cacheLimitBytes = cacheLimitBytes as any;
+      opts.cacheLimitBytes = cacheLimitBytes;
       opts.cacheImageId = cacheImageId;
       opts.cacheVersion = rangeCacheVersion;
       opts.blockSize = chunkSize;
@@ -1429,11 +1433,11 @@ async function openRemoteBackedDisk(
       throw new Error("invalid remote manifestUrl");
     }
     const opts = Object.create(null) as RemoteChunkedDiskOpenOptions;
-    (opts as any).credentials = credentials;
-    (opts as any).cacheBackend = cacheBackend;
-    (opts as any).cacheLimitBytes = cacheLimitBytes as any;
-    (opts as any).cacheImageId = cacheImageId;
-    (opts as any).cacheVersion = version;
+    opts.credentials = credentials;
+    opts.cacheBackend = cacheBackend;
+    opts.cacheLimitBytes = cacheLimitBytes;
+    opts.cacheImageId = cacheImageId;
+    opts.cacheVersion = version;
     base = await RemoteChunkedDisk.open(manifestUrlRaw, opts);
   }
 

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { RemoteStreamingDisk } from "../platform/remote_disk";
 import { pickDefaultBackend } from "./metadata";
 import { RuntimeDiskWorker } from "./runtime_disk_worker_impl";
+import type { RuntimeDiskRequestMessage, RuntimeDiskResponseMessage } from "./runtime_disk_protocol";
 
 describe("runtime disk remote open option pollution", () => {
   it("open(spec=remote) ignores inherited RemoteDiskOpenSpec option fields", async () => {
@@ -24,9 +25,9 @@ describe("runtime disk remote open option pollution", () => {
       async readSectors() {},
       async writeSectors() {},
       async flush() {},
-    } as any);
+    } as unknown as RemoteStreamingDisk);
 
-    const posted: any[] = [];
+    const posted: RuntimeDiskResponseMessage[] = [];
     const worker = new RuntimeDiskWorker((msg) => posted.push(msg));
 
     try {
@@ -36,7 +37,7 @@ describe("runtime disk remote open option pollution", () => {
       Object.defineProperty(Object.prototype, "cacheBackend", { value: pollutedBackend, configurable: true, writable: true });
       Object.defineProperty(Object.prototype, "cacheLimitBytes", { value: null, configurable: true, writable: true });
 
-      await worker.handleMessage({
+      const req = {
         type: "request",
         requestId: 1,
         op: "open",
@@ -53,7 +54,8 @@ describe("runtime disk remote open option pollution", () => {
             },
           },
         },
-      } as any);
+      } satisfies RuntimeDiskRequestMessage;
+      await worker.handleMessage(req);
 
       expect(openSpy).toHaveBeenCalledTimes(1);
       const options = openSpy.mock.calls[0]![1]!;
@@ -66,11 +68,11 @@ describe("runtime disk remote open option pollution", () => {
     } finally {
       openSpy.mockRestore();
       if (credsExisting) Object.defineProperty(Object.prototype, "credentials", credsExisting);
-      else delete (Object.prototype as any).credentials;
+      else Reflect.deleteProperty(Object.prototype, "credentials");
       if (backendExisting) Object.defineProperty(Object.prototype, "cacheBackend", backendExisting);
-      else delete (Object.prototype as any).cacheBackend;
+      else Reflect.deleteProperty(Object.prototype, "cacheBackend");
       if (limitExisting) Object.defineProperty(Object.prototype, "cacheLimitBytes", limitExisting);
-      else delete (Object.prototype as any).cacheLimitBytes;
+      else Reflect.deleteProperty(Object.prototype, "cacheLimitBytes");
     }
   });
 
@@ -87,9 +89,9 @@ describe("runtime disk remote open option pollution", () => {
       async readSectors() {},
       async writeSectors() {},
       async flush() {},
-    } as any);
+    } as unknown as RemoteStreamingDisk);
 
-    const posted: any[] = [];
+    const posted: RuntimeDiskResponseMessage[] = [];
     const worker = new RuntimeDiskWorker((msg) => posted.push(msg));
 
     try {
@@ -97,12 +99,13 @@ describe("runtime disk remote open option pollution", () => {
       const pollutedBackend = defaultBackend === "opfs" ? "idb" : "opfs";
       Object.defineProperty(Object.prototype, "cacheBackend", { value: pollutedBackend, configurable: true, writable: true });
 
-      await worker.handleMessage({
+      const req = {
         type: "request",
         requestId: 1,
         op: "openRemote",
         payload: { url: "https://example.invalid/disk.img", options: {} },
-      } as any);
+      } satisfies RuntimeDiskRequestMessage;
+      await worker.handleMessage(req);
 
       expect(openSpy).toHaveBeenCalledTimes(1);
       const options = openSpy.mock.calls[0]![1]!;
@@ -110,7 +113,7 @@ describe("runtime disk remote open option pollution", () => {
     } finally {
       openSpy.mockRestore();
       if (backendExisting) Object.defineProperty(Object.prototype, "cacheBackend", backendExisting);
-      else delete (Object.prototype as any).cacheBackend;
+      else Reflect.deleteProperty(Object.prototype, "cacheBackend");
     }
   });
 });

@@ -170,14 +170,16 @@ describe("RemoteCacheManager", () => {
       Object.defineProperty(Object.prototype, "imageId", { value: "img", configurable: true, writable: true });
       Object.defineProperty(Object.prototype, "version", { value: "v1", configurable: true, writable: true });
       Object.defineProperty(Object.prototype, "deliveryType", { value: remoteRangeDeliveryType(1024), configurable: true, writable: true });
-      await expect(RemoteCacheManager.deriveCacheKey({} as any)).rejects.toThrow(/imageId/i);
+      await expect(RemoteCacheManager.deriveCacheKey({} as unknown as Parameters<typeof RemoteCacheManager.deriveCacheKey>[0])).rejects.toThrow(
+        /imageId/i,
+      );
     } finally {
       if (imageIdExisting) Object.defineProperty(Object.prototype, "imageId", imageIdExisting);
-      else delete (Object.prototype as any).imageId;
+      else Reflect.deleteProperty(Object.prototype, "imageId");
       if (versionExisting) Object.defineProperty(Object.prototype, "version", versionExisting);
-      else delete (Object.prototype as any).version;
+      else Reflect.deleteProperty(Object.prototype, "version");
       if (deliveryExisting) Object.defineProperty(Object.prototype, "deliveryType", deliveryExisting);
-      else delete (Object.prototype as any).deliveryType;
+      else Reflect.deleteProperty(Object.prototype, "deliveryType");
     }
   });
 
@@ -255,7 +257,7 @@ describe("RemoteCacheManager", () => {
     }
 
     // Inject an oversized meta.json entry.
-    (cacheDir as any).entriesMap.set("meta.json", { kind: "file", file: new HugeFile() });
+    (cacheDir as unknown as { entriesMap: Map<string, MemEntry> }).entriesMap.set("meta.json", { kind: "file", file: new HugeFile() });
 
     const meta = await mgr.readMeta(cacheKey);
     expect(meta).toBeNull();
@@ -388,10 +390,11 @@ describe("RemoteCacheManager", () => {
       const meta = validateRemoteCacheMetaV1(parsed);
       expect(meta).not.toBeNull();
       // A valid meta file with no chunkLastAccess must not observe the polluted inherited value.
-      expect((meta as any).chunkLastAccess).toBeUndefined();
+      if (!meta) throw new Error("expected meta");
+      expect(meta.chunkLastAccess).toBeUndefined();
     } finally {
       if (existing) Object.defineProperty(Object.prototype, "chunkLastAccess", existing);
-      else delete (Object.prototype as any).chunkLastAccess;
+      else Reflect.deleteProperty(Object.prototype, "chunkLastAccess");
     }
   });
 
