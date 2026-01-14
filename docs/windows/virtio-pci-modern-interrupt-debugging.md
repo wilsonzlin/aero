@@ -72,7 +72,9 @@ table (best-effort) and/or fail the harness when MSI-X is not enabled:
 - Request a larger MSI-X table (best-effort):
   - global: `-VirtioMsixVectors N` / `--virtio-msix-vectors N`
   - per device: `-Virtio{Net,Blk,Input,Snd}Vectors N` / `--virtio-{net,blk,input,snd}-vectors N`
-- Require MSI-X enabled (QMP introspection check): `-RequireVirtio{Net,Blk,Snd}Msix` / `--require-virtio-{net,blk,snd}-msix`
+- Require MSI-X (harness checks):
+  - QMP MSI-X-enabled check: `-RequireVirtio{Net,Blk,Snd}Msix` / `--require-virtio-{net,blk,snd}-msix`
+  - Guest marker check (virtio-input): `-RequireVirtioInputMsix` / `--require-virtio-input-msix`
 
 See: [`drivers/windows7/tests/guest-selftest/README.md`](../../drivers/windows7/tests/guest-selftest/README.md).
 
