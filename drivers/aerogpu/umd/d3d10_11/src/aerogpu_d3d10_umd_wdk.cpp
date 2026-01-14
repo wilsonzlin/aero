@@ -3491,6 +3491,10 @@ void APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hReso
       dev->current_ps_cb_resources[slot] = nullptr;
       dev->ps_constant_buffers[slot] = {};
     }
+    if (dev->current_gs_cb_resources[slot] == res) {
+      dev->current_gs_cb_resources[slot] = nullptr;
+      dev->gs_constant_buffers[slot] = {};
+    }
   }
 
   if (res->handle != kInvalidHandle) {
