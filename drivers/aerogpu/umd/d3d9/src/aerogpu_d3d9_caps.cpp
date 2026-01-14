@@ -202,6 +202,19 @@ struct caps_has_blend_op_caps<T, std::void_t<decltype(std::declval<T>().BlendOpC
   #define D3DBLENDOPCAPS_MAX 0x00000010u
 #endif
 
+#ifndef D3DTEXOPCAPS_DISABLE
+  #define D3DTEXOPCAPS_DISABLE 0x00000001u
+#endif
+#ifndef D3DTEXOPCAPS_SELECTARG1
+  #define D3DTEXOPCAPS_SELECTARG1 0x00000002u
+#endif
+#ifndef D3DTEXOPCAPS_SELECTARG2
+  #define D3DTEXOPCAPS_SELECTARG2 0x00000004u
+#endif
+#ifndef D3DTEXOPCAPS_MODULATE
+  #define D3DTEXOPCAPS_MODULATE 0x00000008u
+#endif
+
 template <typename CapsT>
 void maybe_set_blend_op_caps(CapsT* out) {
   if (!out) {
@@ -310,6 +323,15 @@ void fill_d3d9_caps(D3DCAPS9* out) {
   // NPOT textures are required for DWM (arbitrary window sizes). Do NOT set
   // D3DPTEXTURECAPS_POW2. Also avoid cubemap/volume caps until implemented.
   out->TextureCaps = D3DPTEXTURECAPS_ALPHA | D3DPTEXTURECAPS_MIPMAP;
+
+  // Fixed-function texture stage operation caps (TextureOpCaps) are used by apps
+  // and some runtimes to validate stage-state combiner operations. The UMD only
+  // implements a minimal stage0 subset; advertise just the operations we handle
+  // end-to-end.
+  out->TextureOpCaps = D3DTEXOPCAPS_DISABLE |
+                       D3DTEXOPCAPS_SELECTARG1 |
+                       D3DTEXOPCAPS_SELECTARG2 |
+                       D3DTEXOPCAPS_MODULATE;
 
   out->MaxTextureWidth = 4096;
   out->MaxTextureHeight = 4096;
@@ -506,7 +528,12 @@ HRESULT get_caps(Adapter* adapter, const D3D9DDIARG_GETCAPS* pGetCaps) {
        // StretchRect filtering only supports min/mag point/linear (no mip filtering).
        caps->StretchRectFilterCaps = D3DPTFILTERCAPS_MINFPOINT | D3DPTFILTERCAPS_MINFLINEAR |
                                      D3DPTFILTERCAPS_MAGFPOINT | D3DPTFILTERCAPS_MAGFLINEAR;
-       caps->TextureAddressCaps = D3DPTADDRESSCAPS_CLAMP | D3DPTADDRESSCAPS_WRAP | D3DPTADDRESSCAPS_MIRROR;
+       caps->TextureAddressCaps = D3DPTADDRESSCAPS_CLAMP | D3DPTADDRESSCAPS_WRAP |
+                                  D3DPTADDRESSCAPS_MIRROR;
+       caps->TextureOpCaps = D3DTEXOPCAPS_DISABLE |
+                             D3DTEXOPCAPS_SELECTARG1 |
+                             D3DTEXOPCAPS_SELECTARG2 |
+                             D3DTEXOPCAPS_MODULATE;
        caps->SrcBlendCaps = D3DPBLENDCAPS_ZERO | D3DPBLENDCAPS_ONE | D3DPBLENDCAPS_SRCALPHA | D3DPBLENDCAPS_INVSRCALPHA;
        caps->DestBlendCaps = caps->SrcBlendCaps;
       caps->MaxTextureWidth = 4096;

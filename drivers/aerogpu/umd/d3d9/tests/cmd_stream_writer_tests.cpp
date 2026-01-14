@@ -1188,6 +1188,17 @@ bool TestAdapterCapsAndQueryAdapterInfo() {
              "StretchRectFilterCaps does not include mip filter caps")) {
     return false;
   }
+  // Fixed-function texture stage operation caps must include the minimal stage0
+  // combiner ops that the UMD's fixed-function fallback supports.
+  const uint32_t required_texop_caps =
+      D3DTEXOPCAPS_DISABLE |
+      D3DTEXOPCAPS_SELECTARG1 |
+      D3DTEXOPCAPS_SELECTARG2 |
+      D3DTEXOPCAPS_MODULATE;
+  if (!Check((caps.TextureOpCaps & required_texop_caps) == required_texop_caps,
+             "TextureOpCaps includes DISABLE/SELECTARG1/SELECTARG2/MODULATE")) {
+    return false;
+  }
   // Patch rendering is implemented (DrawRectPatch/DrawTriPatch/DeletePatch), but
   // N-patches and quintic RT patches are not.
   if (!Check((caps.DevCaps & D3DDEVCAPS_RTPATCHES) != 0, "DevCaps advertises RTPATCHES")) {

@@ -211,6 +211,17 @@ static int RunD3D9CapsSmoke(int argc, char** argv) {
                          (unsigned long)caps.StretchRectFilterCaps);
   }
 
+  // Fixed-function texture stage operation caps must include the minimal stage0
+  // combiner ops that the UMD's fixed-function fallback supports.
+  const DWORD required_texop_caps =
+      D3DTEXOPCAPS_DISABLE |
+      D3DTEXOPCAPS_SELECTARG1 |
+      D3DTEXOPCAPS_SELECTARG2 |
+      D3DTEXOPCAPS_MODULATE;
+  if ((caps.TextureOpCaps & required_texop_caps) != required_texop_caps) {
+    return reporter.Fail("TextureOpCaps missing required ops (got 0x%08lX)", (unsigned long)caps.TextureOpCaps);
+  }
+
   if ((caps.ZCmpCaps & D3DPCMPCAPS_ALWAYS) == 0) {
     return reporter.Fail("ZCmpCaps missing D3DPCMPCAPS_ALWAYS");
   }
