@@ -1,29 +1,44 @@
+#[cfg(target_arch = "wasm32")]
+fn main() {}
+
+#[cfg(not(target_arch = "wasm32"))]
 use std::io::Cursor;
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
 
+#[cfg(not(target_arch = "wasm32"))]
 use aero_gpu::cmd::{
     BufferId, CommandOptimizer, GpuCmd, IndexFormat, LoadOp, Operations, PipelineId,
     RenderPassColorAttachmentDesc, RenderPassDesc, StoreOp, TextureViewId,
 };
+#[cfg(not(target_arch = "wasm32"))]
 use aero_gpu::{parse_cmd_stream, AeroGpuCmd};
+#[cfg(not(target_arch = "wasm32"))]
 use aero_gpu_trace::{BlobKind, TraceReader, TraceRecord};
+#[cfg(not(target_arch = "wasm32"))]
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuIndexFormat, AerogpuPrimitiveTopology, AerogpuVertexBufferBinding, AEROGPU_CLEAR_COLOR,
     AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
+#[cfg(not(target_arch = "wasm32"))]
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
+#[cfg(not(target_arch = "wasm32"))]
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
+#[cfg(not(target_arch = "wasm32"))]
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
 
+#[cfg(not(target_arch = "wasm32"))]
 const TRACE_CLEAR_RED: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../tests/fixtures/aerogpu_a3a0_clear_red.aerogputrace"
 ));
+#[cfg(not(target_arch = "wasm32"))]
 const TRACE_TRIANGLE: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../tests/fixtures/aerogpu_cmd_triangle.aerogputrace"
 ));
 
+#[cfg(not(target_arch = "wasm32"))]
 fn criterion_config() -> Criterion {
     match std::env::var("AERO_BENCH_PROFILE").as_deref() {
         Ok("ci") => Criterion::default()
@@ -39,6 +54,7 @@ fn criterion_config() -> Criterion {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn extract_cmd_stream_from_trace(trace_bytes: &[u8]) -> Vec<u8> {
     let mut reader =
         TraceReader::open(Cursor::new(trace_bytes)).expect("failed to open .aerogputrace fixture");
@@ -96,6 +112,7 @@ fn extract_cmd_stream_from_trace(trace_bytes: &[u8]) -> Vec<u8> {
         .1
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn build_synthetic_triangle_stream(draws: u32) -> Vec<u8> {
     let mut w = AerogpuCmdWriter::new();
 
@@ -144,6 +161,7 @@ fn build_synthetic_triangle_stream(draws: u32) -> Vec<u8> {
     w.finish()
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn dummy_render_pass_desc() -> RenderPassDesc {
     RenderPassDesc {
         label: None,
@@ -159,6 +177,7 @@ fn dummy_render_pass_desc() -> RenderPassDesc {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn translate_to_internal(cmds: &[AeroGpuCmd<'_>]) -> Vec<GpuCmd> {
     let mut out = Vec::with_capacity(cmds.len().saturating_add(2));
     out.push(GpuCmd::BeginRenderPass(dummy_render_pass_desc()));
@@ -236,6 +255,7 @@ fn translate_to_internal(cmds: &[AeroGpuCmd<'_>]) -> Vec<GpuCmd> {
     out
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn bench_cmd_stream_parse(c: &mut Criterion) {
     let clear_red = extract_cmd_stream_from_trace(TRACE_CLEAR_RED);
     let triangle = extract_cmd_stream_from_trace(TRACE_TRIANGLE);
@@ -262,6 +282,7 @@ fn bench_cmd_stream_parse(c: &mut Criterion) {
     group.finish();
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn bench_cmd_optimize(c: &mut Criterion) {
     // Larger, deterministic stream to get stable optimizer timings.
     let bytes = build_synthetic_triangle_stream(1024);
@@ -304,9 +325,11 @@ fn bench_cmd_optimize(c: &mut Criterion) {
     group.finish();
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 criterion_group! {
     name = benches;
     config = criterion_config();
     targets = bench_cmd_stream_parse, bench_cmd_optimize
 }
+#[cfg(not(target_arch = "wasm32"))]
 criterion_main!(benches);
