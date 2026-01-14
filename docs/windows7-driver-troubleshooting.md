@@ -389,6 +389,9 @@ If these entries are missing, re-run `setup.cmd` as Administrator and reboot onc
 1. Power off the VM.
 2. Verify the system disk image is still attached.
 3. Verify the boot order still prefers the disk.
+   - Aero note: in Aero’s BIOS, this corresponds to booting from the first HDD (`DL=0x80`). Ensure
+     the host/runtime sets the boot drive accordingly (e.g. `Machine::set_boot_drive(0x80)` then
+     `reset()`).
 4. If you can’t quickly resolve it, switch back to the known-good **AHCI** storage controller and boot Windows, then retry the switch to virtio-blk.
 
 ## Issue: Virtio device not found or Unknown device after switching

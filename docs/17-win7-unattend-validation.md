@@ -46,6 +46,11 @@ See also (related docs in this repo):
    - **CD1**: Aero config ISO (contains `autounattend.xml`)
 
 2. Ensure the VM boot order prefers **CD/DVD** first (so Windows Setup boots).
+   - Aero note: Aero’s BIOS uses the BIOS boot drive number (`DL`) rather than a persisted “boot
+     order”. To boot install media, set the boot drive to the first CD-ROM (**`DL=0xE0`**) and then
+     reset so BIOS POST re-runs with that selection.
+     - Rust: `aero_machine::Machine::set_boot_drive(0xE0); machine.reset();`
+     - JS/wasm: `machine.set_boot_drive(0xE0); machine.reset();`
 
 3. (Recommended) Make CD1 easy to identify:
    - ISO volume label: `AERO-CONFIG` (or similar)
