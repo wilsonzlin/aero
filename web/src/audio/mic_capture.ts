@@ -152,24 +152,47 @@ export class MicCapture extends EventTarget {
       const source = audioContext.createMediaStreamSource(stream);
       this.sourceNode = source;
 
-      const useWorklet = this.options.preferWorklet && isAudioWorkletSupported();
-      if (useWorklet) {
-        this.backend = "worklet";
-        await audioContext.audioWorklet.addModule(micWorkletProcessorUrl);
-        const node = new AudioWorkletNode(audioContext, "aero-mic-capture", {
-          numberOfInputs: 1,
-          numberOfOutputs: 1,
-          outputChannelCount: [1],
-          processorOptions: { ringBuffer: this.ringBuffer.sab },
-        });
-        node.port.onmessage = (ev) => {
-          this.dispatchEvent(new MessageEvent("message", { data: ev.data }));
-        };
-        source.connect(node);
-        node.connect(sinkGain);
-        this.workletNode = node;
-      } else {
+      const preferWorklet = this.options.preferWorklet && isAudioWorkletSupported();
+      let workletErr: unknown = null;
+      if (preferWorklet) {
+        try {
+          this.backend = "worklet";
+          await audioContext.audioWorklet.addModule(micWorkletProcessorUrl);
+          const node = new AudioWorkletNode(audioContext, "aero-mic-capture", {
+            numberOfInputs: 1,
+            numberOfOutputs: 1,
+            outputChannelCount: [1],
+            processorOptions: { ringBuffer: this.ringBuffer.sab },
+          });
+          node.port.onmessage = (ev) => {
+            this.dispatchEvent(new MessageEvent("message", { data: ev.data }));
+          };
+          source.connect(node);
+          node.connect(sinkGain);
+          this.workletNode = node;
+        } catch (err) {
+          workletErr = err;
+          // Fall back to ScriptProcessorNode when possible. This keeps microphone capture working
+          // in environments where AudioWorklet is present but fails to initialize (e.g. older
+          // browsers or restrictive CSP).
+          this.backend = null;
+          try {
+            this.workletNode?.disconnect();
+          } catch {
+            // ignore
+          }
+          this.workletNode = null;
+        }
+      }
+
+      if (!this.workletNode) {
         this.backend = "script";
+        if (typeof audioContext.createScriptProcessor !== "function") {
+          const message = workletErr instanceof Error ? workletErr.message : String(workletErr ?? "unknown");
+          throw new Error(
+            `Microphone capture cannot initialize: AudioWorklet failed (${message}) and ScriptProcessorNode is unavailable.`,
+          );
+        }
         const node = audioContext.createScriptProcessor(2048, 1, 1);
         node.onaudioprocess = (ev) => {
           if (this.muteRequested) return;

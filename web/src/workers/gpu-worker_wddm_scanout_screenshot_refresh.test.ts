@@ -239,7 +239,13 @@ describe("workers/gpu-worker WDDM scanout screenshot refresh", () => {
   }, 25_000);
 
   it("captures updated guest-RAM-backed scanout bytes even when requested between ticks", async () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 0 });
+    const segments = allocateHarnessSharedMemorySegments({
+      guestRamBytes: 1 * 1024 * 1024,
+      sharedFramebuffer: new SharedArrayBuffer(8),
+      sharedFramebufferOffsetBytes: 0,
+      ioIpcBytes: 0,
+      vramBytes: 0,
+    });
     const views = createSharedMemoryViews(segments);
 
     const basePaddr = 0x1000;

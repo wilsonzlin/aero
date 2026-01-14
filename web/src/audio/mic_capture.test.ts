@@ -178,3 +178,68 @@ test("MicCapture captures track debug info and clears it on stop", async () => {
     trackCapabilities: null,
   });
 });
+
+test("MicCapture falls back to ScriptProcessorNode when AudioWorklet initialization fails", async () => {
+  class FakeNode {
+    connect = vi.fn();
+    disconnect = vi.fn();
+  }
+
+  class FakeGainNode extends FakeNode {
+    gain = { value: 1 };
+  }
+
+  class FakeScriptProcessorNode extends FakeNode {
+    onaudioprocess: ((ev: unknown) => void) | null = null;
+  }
+
+  // Presence of AudioWorkletNode makes MicCapture *attempt* worklet first.
+  class FakeAudioWorkletNode extends FakeNode {
+    port = { onmessage: null as unknown };
+    constructor(..._args: unknown[]) {
+      super();
+    }
+  }
+
+  (globalThis as any).AudioWorkletNode = FakeAudioWorkletNode;
+
+  class FakeAudioContext {
+    sampleRate = 48_000;
+    destination = {};
+    audioWorklet = { addModule: vi.fn(async () => Promise.reject(new Error("worklet load failed"))) };
+
+    createGain(): FakeGainNode {
+      return new FakeGainNode();
+    }
+
+    createMediaStreamSource(_stream: unknown): FakeNode {
+      return new FakeNode();
+    }
+
+    createScriptProcessor(_bufferSize: number, _inChannels: number, _outChannels: number): FakeScriptProcessorNode {
+      return new FakeScriptProcessorNode();
+    }
+
+    resume = vi.fn(async () => undefined);
+    close = vi.fn(async () => undefined);
+  }
+
+  GLOBALS.AudioContext = FakeAudioContext;
+
+  const track = { addEventListener: vi.fn(), stop: vi.fn() };
+  const stream = {
+    getAudioTracks: () => [track],
+    getTracks: () => [track],
+  };
+
+  (navigator as unknown as { mediaDevices?: unknown }).mediaDevices = {
+    getUserMedia: vi.fn(async () => stream),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  };
+
+  const mic = new MicCapture({ sampleRate: 48_000, bufferMs: 50, preferWorklet: true });
+  await mic.start();
+  expect(mic.getDebugInfo().backend).toBe("script");
+  await mic.stop();
+});
