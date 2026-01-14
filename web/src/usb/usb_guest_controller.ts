@@ -1,37 +1,53 @@
 import type { UsbGuestControllerMode, UsbSelectedMessage } from "./usb_proxy_protocol";
 import { WEBUSB_GUEST_ROOT_PORT } from "./uhci_external_hub";
-import { applyUsbSelectedToWebUsbUhciBridge, type WebUsbUhciHotplugBridgeLike } from "./uhci_webusb_bridge";
+import { applyUsbSelectedToWebUsbUhciBridge } from "./uhci_webusb_bridge";
+import { applyUsbSelectedToWebUsbXhciBridge } from "./xhci_webusb_bridge";
 import type { UsbPassthroughBridgeLike } from "./webusb_passthrough_runtime";
 
 /**
- * Root port reserved for the guest-visible EHCI WebUSB passthrough device.
+ * Root port reserved for the guest-visible WebUSB passthrough device.
  *
- * Keep this consistent with the UHCI/xHCI convention:
+ * Keep this consistent with the UHCI/EHCI/xHCI convention:
  * - root port 0 is available for an external hub / WebHID / synthetic HID topology, and
  * - root port 1 is reserved for WebUSB passthrough.
  */
-export const EHCI_WEBUSB_GUEST_ROOT_PORT = WEBUSB_GUEST_ROOT_PORT;
-
 export function webUsbGuestRootPortForMode(mode: UsbGuestControllerMode): number {
-  return mode === "ehci" ? EHCI_WEBUSB_GUEST_ROOT_PORT : WEBUSB_GUEST_ROOT_PORT;
+  void mode;
+  return WEBUSB_GUEST_ROOT_PORT;
 }
 
-export type WebUsbGuestPassthroughBridgeLike = WebUsbUhciHotplugBridgeLike & UsbPassthroughBridgeLike;
+export type WebUsbGuestPassthroughBridgeLike = UsbPassthroughBridgeLike & {
+  set_connected(connected: boolean): void;
+};
 
 export function getWebUsbGuestBridgeForMode(
   mode: UsbGuestControllerMode,
-  bridges: { uhci: WebUsbGuestPassthroughBridgeLike | null; ehci: WebUsbGuestPassthroughBridgeLike | null },
+  bridges: {
+    uhci: WebUsbGuestPassthroughBridgeLike | null;
+    ehci: WebUsbGuestPassthroughBridgeLike | null;
+    xhci: WebUsbGuestPassthroughBridgeLike | null;
+  },
 ): WebUsbGuestPassthroughBridgeLike | null {
-  return mode === "ehci" ? bridges.ehci : bridges.uhci;
+  if (mode === "xhci") return bridges.xhci;
+  if (mode === "ehci") return bridges.ehci;
+  return bridges.uhci;
 }
 
 export function applyUsbSelectedToWebUsbBridgeForMode(
   mode: UsbGuestControllerMode,
-  bridges: { uhci: WebUsbGuestPassthroughBridgeLike | null; ehci: WebUsbGuestPassthroughBridgeLike | null },
+  bridges: {
+    uhci: WebUsbGuestPassthroughBridgeLike | null;
+    ehci: WebUsbGuestPassthroughBridgeLike | null;
+    xhci: WebUsbGuestPassthroughBridgeLike | null;
+  },
   msg: UsbSelectedMessage,
 ): WebUsbGuestPassthroughBridgeLike | null {
   const bridge = getWebUsbGuestBridgeForMode(mode, bridges);
   if (!bridge) return null;
-  applyUsbSelectedToWebUsbUhciBridge(bridge, msg);
+  if (mode === "ehci" || mode === "xhci") {
+    applyUsbSelectedToWebUsbXhciBridge(bridge, msg);
+  } else {
+    applyUsbSelectedToWebUsbUhciBridge(bridge, msg);
+  }
   return bridge;
 }
