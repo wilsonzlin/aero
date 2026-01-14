@@ -14,7 +14,7 @@ When the D3D9 runtime is using the fixed-function fallback path with an untransf
 
 ### CPU clip-space conversion (XYZ|DIFFUSE{,TEX1})
 
-For `D3DFVF_XYZ | D3DFVF_DIFFUSE{ | D3DFVF_TEX1}`, the draw paths apply the combined `WORLD0 * VIEW * PROJECTION` transform on the **CPU** and upload a clip-space copy of the referenced vertices into a scratch UP vertex buffer:
+For `D3DFVF_XYZ | D3DFVF_DIFFUSE{,TEX1}`, the draw paths apply the combined `WORLD0 * VIEW * PROJECTION` transform on the **CPU** and upload a clip-space copy of the referenced vertices into a scratch UP vertex buffer:
 
 - CPU conversion helper: `convert_xyz_to_clipspace_locked()` (`drivers/aerogpu/umd/d3d9/src/aerogpu_d3d9_driver.cpp`)
 - Used by: `DrawPrimitive*`, `DrawPrimitiveUP`, `DrawIndexedPrimitive*`, `DrawIndexedPrimitiveUP` fixed-function branches.
@@ -55,7 +55,7 @@ Conversion details (bring-up):
 
 This is used by the fixed-function FVFs:
 
-- `D3DFVF_XYZRHW | D3DFVF_DIFFUSE{ | D3DFVF_TEX1}`
+- `D3DFVF_XYZRHW | D3DFVF_DIFFUSE{,TEX1}`
 - `D3DFVF_XYZRHW | D3DFVF_TEX1` (driver supplies default diffuse white)
 
 ## `pfnProcessVertices` fixed-function CPU transform subset
