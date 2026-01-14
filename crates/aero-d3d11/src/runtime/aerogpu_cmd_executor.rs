@@ -235,11 +235,22 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
 
     if (primitive_count == 1u) {
-        // Clockwise centered triangle (matches default `FrontFace::Cw` + back-face culling).
-        // Keep it away from the corners so tests can assert untouched pixels.
-        out_vertices[0].pos = vec4<f32>(-0.5, -0.5, z, 1.0);
-        out_vertices[1].pos = vec4<f32>(0.0, 0.5, z, 1.0);
-        out_vertices[2].pos = vec4<f32>(0.5, -0.5, z, 1.0);
+        // Emit a single triangle.
+        //
+        // Most emulation smoke/depth tests expect a fullscreen-ish triangle so every pixel is
+        // affected. Patchlist-only emulation uses a centered triangle so tests can assert that
+        // corner pixels remain untouched.
+        if (params.counts.z != 0u) {
+            // Clockwise centered triangle (matches default `FrontFace::Cw` + back-face culling).
+            out_vertices[0].pos = vec4<f32>(-0.5, -0.5, z, 1.0);
+            out_vertices[1].pos = vec4<f32>(0.0, 0.5, z, 1.0);
+            out_vertices[2].pos = vec4<f32>(0.5, -0.5, z, 1.0);
+        } else {
+            // Clockwise full-screen-ish triangle (matches default `FrontFace::Cw` + back-face culling).
+            out_vertices[0].pos = vec4<f32>(-1.0, -1.0, z, 1.0);
+            out_vertices[1].pos = vec4<f32>(-1.0, 3.0, z, 1.0);
+            out_vertices[2].pos = vec4<f32>(3.0, -1.0, z, 1.0);
+        }
 
         out_vertices[0].o1 = c;
         out_vertices[1].o1 = c;
@@ -3295,6 +3306,12 @@ impl AerogpuD3d11Executor {
         // Prepare compute prepass output buffers.
         let uniform_align =
             (self.device.limits().min_uniform_buffer_offset_alignment as u64).max(1);
+        let patchlist_only_emulation = matches!(
+            self.state.primitive_topology,
+            CmdPrimitiveTopology::PatchList { .. }
+        ) && self.state.gs.is_none()
+            && self.state.hs.is_none()
+            && self.state.ds.is_none();
         let expanded_vertex_count = u64::from(primitive_count)
             .checked_mul(3)
             .ok_or_else(|| anyhow!("geometry prepass expanded vertex count overflow"))?;
@@ -3332,8 +3349,10 @@ impl AerogpuD3d11Executor {
         // Counts (`vec4<u32>`) for compute-based GS emulation:
         // - x: primitive_count (dispatch.x)
         // - y: instance_count (for indirect draw args)
+        // - z: placeholder mode (0 = fullscreen-ish triangle, 1 = centered triangle for patchlists)
         params_bytes[16..20].copy_from_slice(&primitive_count.to_le_bytes());
         params_bytes[20..24].copy_from_slice(&instance_count.to_le_bytes());
+        params_bytes[24..28].copy_from_slice(&u32::from(patchlist_only_emulation).to_le_bytes());
         let params_alloc = self
             .expansion_scratch
             .alloc_metadata(
@@ -3366,7 +3385,8 @@ impl AerogpuD3d11Executor {
         > = None;
         let mut vertex_pulling_bg: Option<wgpu::BindGroup> = None;
         let mut vertex_pulling_cs_wgsl: Option<String> = None;
-        if let Some(layout_handle) = self.state.input_layout {
+        if !patchlist_only_emulation {
+            if let Some(layout_handle) = self.state.input_layout {
             let vs = self
                 .resources
                 .shaders
@@ -3637,6 +3657,7 @@ impl AerogpuD3d11Executor {
             vertex_pulling_cs_wgsl = Some(format!("{ip_wgsl}\n{GEOMETRY_PREPASS_CS_WGSL}"));
             vertex_pulling_bgl = Some(ip_bgl);
             vertex_pulling_bg = Some(ip_bg);
+        }
         }
 
         // Build compute prepass pipeline + bind group.
