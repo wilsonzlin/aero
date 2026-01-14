@@ -411,6 +411,8 @@ Find `<DeviceInstancePath>` via **Device Manager → device → Details → “D
 
 After changing a toggle value, reboot the guest or disable/enable the device so Windows re-runs `START_DEVICE`.
 
+Backwards compatibility note: older installs may have these values under the per-device driver key (the software key for the device/driver instance). The driver checks the per-device `Device Parameters` key first and falls back to the driver key.
+
 Example (elevated `cmd.exe`, replace `<DeviceInstancePath>`):
 
 ```cmd
