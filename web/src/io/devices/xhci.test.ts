@@ -4,7 +4,7 @@ import type { IrqSink } from "../device_manager";
 import { XhciPciDevice, type XhciControllerBridgeLike } from "./xhci";
 
 describe("io/devices/xhci", () => {
-  it("exposes an xHCI MMIO BAR (BAR0) and correct class code", () => {
+  it("exposes the expected PCI identity and BAR layout", () => {
     const bridge: XhciControllerBridgeLike = {
       mmio_read: vi.fn(() => 0),
       mmio_write: vi.fn(),
@@ -15,8 +15,13 @@ describe("io/devices/xhci", () => {
     const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
 
     const dev = new XhciPciDevice({ bridge, irqSink });
+    expect(dev.bdf).toEqual({ bus: 0, device: 0x0d, function: 0 });
+    // Canonical QEMU-style xHCI ("qemu-xhci") PCI identity: 1b36:000d.
+    expect(dev.vendorId).toBe(0x1b36);
+    expect(dev.deviceId).toBe(0x000d);
     expect(dev.bars).toEqual([{ kind: "mmio32", size: 0x1_0000 }, null, null, null, null, null]);
     expect(dev.classCode).toBe(0x0c0330);
+    expect(dev.revisionId).toBe(0x01);
     expect(dev.irqLine).toBe(11);
   });
 

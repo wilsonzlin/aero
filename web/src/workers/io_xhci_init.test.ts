@@ -66,6 +66,11 @@ describe("workers/io_xhci_init", () => {
     const res = tryInitXhciDevice({ api, mgr, guestBase: 0x1000_0000, guestSize: 0x0200_0000 });
     expect(res).not.toBeNull();
     const { device: dev, bridge } = res!;
+    // xHCI should prefer the canonical 00:0d.0 BDF when unoccupied.
+    expect(dev.bdf).toEqual({ bus: 0, device: 0x0d, function: 0 });
+    // Canonical QEMU-style xHCI ("qemu-xhci") PCI identity: 1b36:000d.
+    expect(dev.vendorId).toBe(0x1b36);
+    expect(dev.deviceId).toBe(0x000d);
     expect((bridge as unknown as FakeXhciControllerBridge).base).toBe(0x1000_0000);
     expect((bridge as unknown as FakeXhciControllerBridge).size).toBe(0x0200_0000);
 
