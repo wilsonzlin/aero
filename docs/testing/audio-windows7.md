@@ -425,6 +425,7 @@ Collect:
 - Browser permission status + any `getUserMedia` error shown in the console.
 - If available: host media device inventory (from the QA bundle `host-media-devices.json`), including the `microphonePermissionState` and the list of detected `audioinput` devices (IDs are hashed).
 - Mic ring stats (buffered/dropped) if available in UI.
+- If using QA exports: capture backend from `microphone-buffered.json` (`backend=worklet` vs `backend=script`). `script` indicates a ScriptProcessorNode fallback (higher latency) and can explain timing-related capture issues.
 - Optional: if the web UI exposes it, use:
   - **Audio → “Export HDA codec state (json)”** (downloads the same gating state without opening the I/O worker console).
   - **Audio → “Export HDA controller state (bin)”** (deterministic snapshot bytes; useful for low-level reproduction/debugging).
