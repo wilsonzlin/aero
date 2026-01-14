@@ -1504,14 +1504,16 @@ impl WebHidPassthroughBridge {
 
 #[cfg(target_arch = "wasm32")]
 impl WebHidPassthroughBridge {
-    pub(crate) fn as_usb_device(&self) -> UsbHidPassthroughHandle {
+    #[doc(hidden)]
+    pub fn as_usb_device(&self) -> UsbHidPassthroughHandle {
         self.device.clone()
     }
 }
 
 #[cfg(target_arch = "wasm32")]
 impl UsbHidPassthroughBridge {
-    pub(crate) fn as_usb_device(&self) -> UsbHidPassthroughHandle {
+    #[doc(hidden)]
+    pub fn as_usb_device(&self) -> UsbHidPassthroughHandle {
         self.device.clone()
     }
 }
