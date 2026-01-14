@@ -427,11 +427,13 @@ To enable end-to-end testing:
      (it installs the shared `aero_virtio_input.sys` binary but matches the tablet HWID). When provisioning via
      `New-AeroWin7TestImage.ps1`, the tablet INF is installed by default when present; if you pass an explicit
      `-InfAllowList`, ensure it includes `aero_virtio_tablet.inf`.
-2. Run the host harness with `-WithInputTabletEvents` (alias: `-WithTabletEvents`) /
-   `--with-input-tablet-events` (alias: `--with-tablet-events`) so it:
-      - attaches `virtio-tablet-pci`
-      - injects a deterministic absolute-pointer sequence via QMP `input-send-event`
-      - requires the guest marker to PASS
+2. Run the host harness with `-WithInputTabletEvents` (aliases: `-WithVirtioInputTabletEvents`, `-EnableVirtioInputTabletEvents`,
+   `-WithTabletEvents`, `-EnableTabletEvents`) /
+   `--with-input-tablet-events` (aliases: `--with-virtio-input-tablet-events`, `--with-tablet-events`,
+   `--enable-virtio-input-tablet-events`, `--require-virtio-input-tablet-events`) so it:
+       - attaches `virtio-tablet-pci`
+       - injects a deterministic absolute-pointer sequence via QMP `input-send-event`
+       - requires the guest marker to PASS
 
 To attach `virtio-tablet-pci` **without** QMP injection / marker enforcement (for example to just validate device
 enumeration), use:

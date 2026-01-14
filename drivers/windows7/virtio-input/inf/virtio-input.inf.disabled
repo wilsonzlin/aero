@@ -10,6 +10,9 @@
 ; Note: this file is checked in disabled-by-default (as `*.inf.disabled`) to
 ; avoid accidentally shipping/installing **two** INFs that match the same HWIDs.
 ;
+; Maintenance note: from the `[Version]` section onward, this file must stay
+; byte-for-byte identical to `aero_virtio_input.inf` (CI enforces this).
+;
 ; Aero virtio-input PCI device -> HIDClass KMDF minidriver (Windows 7 SP1)
 ;
 ; Driver package contents (all files live in the same directory for "Have Disk..." installs):
