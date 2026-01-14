@@ -1895,10 +1895,43 @@ BOOLEAN AerovblkHwStartIo(_In_ PVOID deviceExtension, _Inout_ PSCSI_REQUEST_BLOC
     return TRUE;
   }
 
-  case SRB_FUNCTION_PNP:
+  case SRB_FUNCTION_PNP: {
+    /*
+     * Basic PnP handling for real-world StorPort stacks.
+     *
+     * Most PnP actions are non-critical and can be treated as no-op success.
+     * For stop/remove, ensure we stop DMA and abort outstanding I/O so the
+     * storage class stack doesn't see timeouts during teardown.
+     */
+    PSCSI_PNP_REQUEST_BLOCK pnp;
+
     InterlockedIncrement(&devExt->PnpSrbCount);
+    pnp = (PSCSI_PNP_REQUEST_BLOCK)srb->DataBuffer;
+    if (pnp != NULL && srb->DataTransferLength >= sizeof(*pnp)) {
+      if (pnp->PnPAction == StorStopDevice || pnp->PnPAction == StorRemoveDevice) {
+        STOR_LOCK_HANDLE lock;
+
+        devExt->Removed = TRUE;
+
+        if (devExt->Vdev.CommonCfg != NULL) {
+          (void)VirtioPciDisableMsixVectors(&devExt->Vdev, /*QueueCount=*/1);
+          VirtioPciResetDevice(&devExt->Vdev);
+        }
+
+        StorPortAcquireSpinLock(devExt, InterruptLock, &lock);
+        AerovblkAbortOutstandingRequestsLocked(devExt);
+        if (devExt->Vq.queue_size != 0) {
+          AerovblkResetVirtqueueLocked(devExt);
+        }
+        StorPortReleaseSpinLock(devExt, &lock);
+      } else if (pnp->PnPAction == StorStartDevice) {
+        devExt->Removed = FALSE;
+      }
+    }
+
     AerovblkCompleteSrb(devExt, srb, SRB_STATUS_SUCCESS);
     return TRUE;
+  }
 
   default:
     break;
