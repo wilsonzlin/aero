@@ -26,10 +26,11 @@ SCRIPT_SHA256="$(sha256sum "${ROOT_DIR}/scripts/prepare-freedos.sh" | awk '{ pri
 if [[ -f "${OUT_IMG}" && -f "${STAMP_PATH}" ]]; then
   stamped_zip_url="$(grep -E '^zip_url=' "${STAMP_PATH}" | cut -d= -f2- || true)"
   stamped_zip_sha256="$(grep -E '^zip_sha256=' "${STAMP_PATH}" | cut -d= -f2- || true)"
+  stamped_img_sha256="$(grep -E '^img_sha256=' "${STAMP_PATH}" | cut -d= -f2- || true)"
   stamped_script_sha256="$(grep -E '^script_sha256=' "${STAMP_PATH}" | cut -d= -f2- || true)"
 
   if [[ "${stamped_zip_url}" == "${ZIP_URL}" && "${stamped_zip_sha256}" == "${ZIP_SHA256}" && "${stamped_script_sha256}" == "${SCRIPT_SHA256}" ]]; then
-    if mtype -i "${OUT_IMG}" ::fdauto.bat | grep -q "AERO_FREEDOS_OK"; then
+    if [[ -n "${stamped_img_sha256}" && "$(sha256sum "${OUT_IMG}" | awk '{ print $1 }')" == "${stamped_img_sha256}" ]] && mtype -i "${OUT_IMG}" ::fdauto.bat | grep -q "AERO_FREEDOS_OK"; then
       if [[ -f "${ZIP_PATH}" ]]; then
         echo "${ZIP_SHA256}  ${ZIP_PATH}" | sha256sum -c -
       fi
@@ -76,9 +77,11 @@ awk 'NR==1 { print; print "echo AERO_FREEDOS_OK > COM1"; next } { print }' \
 mcopy -o -i "${TMP_IMG}" "${TMP_DIR}/fdauto_patched.bat" ::fdauto.bat
 
 mv "${TMP_IMG}" "${OUT_IMG}"
+IMG_SHA256="$(sha256sum "${OUT_IMG}" | awk '{ print $1 }')"
 cat > "${STAMP_PATH}" <<EOF
 zip_url=${ZIP_URL}
 zip_sha256=${ZIP_SHA256}
+img_sha256=${IMG_SHA256}
 script_sha256=${SCRIPT_SHA256}
 EOF
 trap - EXIT
