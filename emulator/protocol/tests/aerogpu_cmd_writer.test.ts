@@ -1128,6 +1128,10 @@ test("decodeStageEx treats reserved0==0 as legacy compute (and decodes nonzero s
 });
 
 test("AerogpuCmdWriter.createShaderDxbcEx encodes (stage=COMPUTE, reserved0=stageEx) for HS/DS", () => {
+  // These numeric values must match DXBC/D3D `D3D10_SB_PROGRAM_TYPE`.
+  assert.equal(AerogpuShaderStageEx.Hull, 3);
+  assert.equal(AerogpuShaderStageEx.Domain, 4);
+
   const w = new AerogpuCmdWriter();
   w.createShaderDxbcEx(1, AerogpuShaderStageEx.Hull, new Uint8Array([0xaa]));
   w.createShaderDxbcEx(2, AerogpuShaderStageEx.Domain, new Uint8Array([0xbb, 0xcc]));
