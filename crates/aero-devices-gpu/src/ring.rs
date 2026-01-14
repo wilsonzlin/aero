@@ -28,6 +28,12 @@ pub const RING_ENTRY_STRIDE_BYTES_OFFSET: u64 =
 pub const RING_FLAGS_OFFSET: u64 = offset_of!(protocol_ring::AerogpuRingHeader, flags) as u64;
 pub const RING_HEAD_OFFSET: u64 = offset_of!(protocol_ring::AerogpuRingHeader, head) as u64;
 pub const RING_TAIL_OFFSET: u64 = offset_of!(protocol_ring::AerogpuRingHeader, tail) as u64;
+pub const RING_RESERVED0_OFFSET: u64 =
+    offset_of!(protocol_ring::AerogpuRingHeader, reserved0) as u64;
+pub const RING_RESERVED1_OFFSET: u64 =
+    offset_of!(protocol_ring::AerogpuRingHeader, reserved1) as u64;
+pub const RING_RESERVED2_OFFSET: u64 =
+    offset_of!(protocol_ring::AerogpuRingHeader, reserved2) as u64;
 
 pub const SUBMIT_DESC_SIZE_BYTES_OFFSET: u64 =
     offset_of!(protocol_ring::AerogpuSubmitDesc, desc_size_bytes) as u64;
@@ -41,12 +47,18 @@ pub const SUBMIT_DESC_CMD_GPA_OFFSET: u64 =
     offset_of!(protocol_ring::AerogpuSubmitDesc, cmd_gpa) as u64;
 pub const SUBMIT_DESC_CMD_SIZE_BYTES_OFFSET: u64 =
     offset_of!(protocol_ring::AerogpuSubmitDesc, cmd_size_bytes) as u64;
+pub const SUBMIT_DESC_CMD_RESERVED0_OFFSET: u64 =
+    offset_of!(protocol_ring::AerogpuSubmitDesc, cmd_reserved0) as u64;
 pub const SUBMIT_DESC_ALLOC_TABLE_GPA_OFFSET: u64 =
     offset_of!(protocol_ring::AerogpuSubmitDesc, alloc_table_gpa) as u64;
 pub const SUBMIT_DESC_ALLOC_TABLE_SIZE_BYTES_OFFSET: u64 =
     offset_of!(protocol_ring::AerogpuSubmitDesc, alloc_table_size_bytes) as u64;
+pub const SUBMIT_DESC_ALLOC_TABLE_RESERVED0_OFFSET: u64 =
+    offset_of!(protocol_ring::AerogpuSubmitDesc, alloc_table_reserved0) as u64;
 pub const SUBMIT_DESC_SIGNAL_FENCE_OFFSET: u64 =
     offset_of!(protocol_ring::AerogpuSubmitDesc, signal_fence) as u64;
+pub const SUBMIT_DESC_RESERVED0_OFFSET: u64 =
+    offset_of!(protocol_ring::AerogpuSubmitDesc, reserved0) as u64;
 
 pub const ALLOC_TABLE_MAGIC_OFFSET: u64 =
     offset_of!(protocol_ring::AerogpuAllocTableHeader, magic) as u64;
@@ -58,6 +70,8 @@ pub const ALLOC_TABLE_ENTRY_COUNT_OFFSET: u64 =
     offset_of!(protocol_ring::AerogpuAllocTableHeader, entry_count) as u64;
 pub const ALLOC_TABLE_ENTRY_STRIDE_BYTES_OFFSET: u64 =
     offset_of!(protocol_ring::AerogpuAllocTableHeader, entry_stride_bytes) as u64;
+pub const ALLOC_TABLE_RESERVED0_OFFSET: u64 =
+    offset_of!(protocol_ring::AerogpuAllocTableHeader, reserved0) as u64;
 
 pub const ALLOC_ENTRY_ALLOC_ID_OFFSET: u64 =
     offset_of!(protocol_ring::AerogpuAllocEntry, alloc_id) as u64;
@@ -65,12 +79,16 @@ pub const ALLOC_ENTRY_FLAGS_OFFSET: u64 = offset_of!(protocol_ring::AerogpuAlloc
 pub const ALLOC_ENTRY_GPA_OFFSET: u64 = offset_of!(protocol_ring::AerogpuAllocEntry, gpa) as u64;
 pub const ALLOC_ENTRY_SIZE_BYTES_OFFSET: u64 =
     offset_of!(protocol_ring::AerogpuAllocEntry, size_bytes) as u64;
+pub const ALLOC_ENTRY_RESERVED0_OFFSET: u64 =
+    offset_of!(protocol_ring::AerogpuAllocEntry, reserved0) as u64;
 
 pub const FENCE_PAGE_MAGIC_OFFSET: u64 = offset_of!(protocol_ring::AerogpuFencePage, magic) as u64;
 pub const FENCE_PAGE_ABI_VERSION_OFFSET: u64 =
     offset_of!(protocol_ring::AerogpuFencePage, abi_version) as u64;
 pub const FENCE_PAGE_COMPLETED_FENCE_OFFSET: u64 =
     offset_of!(protocol_ring::AerogpuFencePage, completed_fence) as u64;
+pub const FENCE_PAGE_RESERVED0_OFFSET: u64 =
+    offset_of!(protocol_ring::AerogpuFencePage, reserved0) as u64;
 
 #[derive(Clone, Debug)]
 pub struct AeroGpuRingHeader {
@@ -311,6 +329,9 @@ mod tests {
         assert_eq!(RING_FLAGS_OFFSET, 20);
         assert_eq!(RING_HEAD_OFFSET, 24);
         assert_eq!(RING_TAIL_OFFSET, 28);
+        assert_eq!(RING_RESERVED0_OFFSET, 32);
+        assert_eq!(RING_RESERVED1_OFFSET, 36);
+        assert_eq!(RING_RESERVED2_OFFSET, 40);
 
         assert_eq!(AEROGPU_ALLOC_TABLE_MAGIC, 0x434F_4C41);
         assert_eq!(AEROGPU_ALLOC_TABLE_HEADER_SIZE_BYTES, 24);
@@ -319,6 +340,7 @@ mod tests {
         assert_eq!(ALLOC_TABLE_SIZE_BYTES_OFFSET, 8);
         assert_eq!(ALLOC_TABLE_ENTRY_COUNT_OFFSET, 12);
         assert_eq!(ALLOC_TABLE_ENTRY_STRIDE_BYTES_OFFSET, 16);
+        assert_eq!(ALLOC_TABLE_RESERVED0_OFFSET, 20);
 
         assert_eq!(SUBMIT_DESC_SIZE_BYTES_OFFSET, 0);
         assert_eq!(SUBMIT_DESC_FLAGS_OFFSET, 4);
@@ -326,20 +348,25 @@ mod tests {
         assert_eq!(SUBMIT_DESC_ENGINE_ID_OFFSET, 12);
         assert_eq!(SUBMIT_DESC_CMD_GPA_OFFSET, 16);
         assert_eq!(SUBMIT_DESC_CMD_SIZE_BYTES_OFFSET, 24);
+        assert_eq!(SUBMIT_DESC_CMD_RESERVED0_OFFSET, 28);
         assert_eq!(SUBMIT_DESC_ALLOC_TABLE_GPA_OFFSET, 32);
         assert_eq!(SUBMIT_DESC_ALLOC_TABLE_SIZE_BYTES_OFFSET, 40);
+        assert_eq!(SUBMIT_DESC_ALLOC_TABLE_RESERVED0_OFFSET, 44);
         assert_eq!(SUBMIT_DESC_SIGNAL_FENCE_OFFSET, 48);
+        assert_eq!(SUBMIT_DESC_RESERVED0_OFFSET, 56);
 
         assert_eq!(ALLOC_ENTRY_ALLOC_ID_OFFSET, 0);
         assert_eq!(ALLOC_ENTRY_FLAGS_OFFSET, 4);
         assert_eq!(ALLOC_ENTRY_GPA_OFFSET, 8);
         assert_eq!(ALLOC_ENTRY_SIZE_BYTES_OFFSET, 16);
+        assert_eq!(ALLOC_ENTRY_RESERVED0_OFFSET, 24);
 
         assert_eq!(AEROGPU_FENCE_PAGE_MAGIC, 0x434E_4546);
         assert_eq!(AEROGPU_FENCE_PAGE_SIZE_BYTES, 56);
         assert_eq!(FENCE_PAGE_MAGIC_OFFSET, 0);
         assert_eq!(FENCE_PAGE_ABI_VERSION_OFFSET, 4);
         assert_eq!(FENCE_PAGE_COMPLETED_FENCE_OFFSET, 8);
+        assert_eq!(FENCE_PAGE_RESERVED0_OFFSET, 16);
     }
 
     #[test]
