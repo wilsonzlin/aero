@@ -276,7 +276,11 @@ fn decodes_cmd_stream_dump_to_stable_listing() {
     assert!(listing.contains("header magic=0x444D4341"));
     let abi_major = (AEROGPU_ABI_VERSION_U32 >> 16) as u16;
     let abi_minor = (AEROGPU_ABI_VERSION_U32 & 0xFFFF) as u16;
-    assert!(listing.contains(&format!("abi={abi_major}.{abi_minor}")));
+    let expected_abi = format!("abi={abi_major}.{abi_minor}");
+    assert!(
+        listing.contains(&expected_abi),
+        "listing missing {expected_abi}: {listing}"
+    );
 
     // Packet listing includes offsets, opcode names, and packet sizes.
     assert!(listing.contains("0x00000018 CreateBuffer size_bytes=40"));
