@@ -6575,6 +6575,21 @@ static int DoReadGpaJson(const D3DKMT_FUNCS *f,
     return 1;
   }
 
+  // `aerogpu_escape_read_gpa_inout` has a fixed payload buffer. Refuse oversize requests
+  // rather than relying on the KMD to validate/clamp `size_bytes` (prevents potential
+  // overflows in buggy drivers and keeps JSON output bounded).
+  if (sizeBytes > AEROGPU_DBGCTL_READ_GPA_MAX_BYTES) {
+    if (outFile && *outFile) {
+      BestEffortDeleteOutputFile(outFile);
+    }
+    JsonWriteTopLevelError(out,
+                           "read-gpa",
+                           f,
+                           "Requested size exceeds AEROGPU_DBGCTL_READ_GPA_MAX_BYTES; use a smaller --size value",
+                           STATUS_INVALID_PARAMETER);
+    return 1;
+  }
+
   aerogpu_escape_read_gpa_inout io;
   ZeroMemory(&io, sizeof(io));
   io.hdr.version = AEROGPU_ESCAPE_VERSION;

@@ -82,6 +82,7 @@ Assert-ValidJson -ExpectedCommand "read-gpa" -Args @("--read-gpa", "0x0", "nope"
 Assert-ValidJson -ExpectedCommand "parse-args" -Args @("--status", "--out", "foo.bin")
 Assert-ValidJson -ExpectedCommand "parse-args" -Args @("--status", "--cmd-out", "foo.bin")
 Assert-ValidJson -ExpectedCommand "parse-args" -Args @("--status", "--alloc-out", "foo.bin")
+Assert-ValidJson -ExpectedCommand "read-gpa" -Args @("--read-gpa", "0x0", "--size", "999999", "--out", "read_gpa_too_large_test.bin")
 
 Write-Host "OK: dbgctl JSON output parsed successfully"
 
