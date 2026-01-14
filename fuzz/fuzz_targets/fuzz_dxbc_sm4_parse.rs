@@ -13,9 +13,113 @@ const MAX_INPUT_SIZE_BYTES: usize = 1024 * 1024; // 1 MiB
 /// absurd number of chunks.
 const MAX_DXBC_CHUNKS: u32 = 1024;
 
+/// Signature chunk parsing can allocate `param_count` entries + semantic name strings.
+/// Keep both the chunk size and declared entry count bounded.
+const MAX_SIGNATURE_CHUNK_BYTES: usize = 16 * 1024;
+const MAX_SIGNATURE_ENTRIES: usize = 256;
+
+/// Reflection parsers (`RDEF`/`CTAB`) can allocate entry tables and strings based on declared
+/// counts/offsets. Keep chunk sizes and declared entry counts bounded.
+const MAX_REFLECTION_CHUNK_BYTES: usize = 32 * 1024;
+const MAX_RDEF_CONSTANT_BUFFERS: usize = 128;
+const MAX_RDEF_RESOURCES: usize = 512;
+const MAX_RDEF_VARIABLES_PER_CBUFFER: usize = 512;
+const MAX_CTAB_CONSTANTS: usize = 512;
+
 /// Limit the size of the synthesized shader chunk used to help the fuzzer reach deeper parsing
 /// paths quickly. The raw fuzzer input is still fed into `DxbcFile::parse` unchanged.
 const MAX_PATCHED_SHADER_BYTES: usize = 64 * 1024;
+
+fn is_signature_fourcc(fourcc: FourCC) -> bool {
+    matches!(
+        fourcc.0,
+        [b'I', b'S', b'G', b'N']
+            | [b'I', b'S', b'G', b'1']
+            | [b'O', b'S', b'G', b'N']
+            | [b'O', b'S', b'G', b'1']
+            | [b'P', b'S', b'G', b'N']
+            | [b'P', b'S', b'G', b'1']
+            | [b'P', b'C', b'S', b'G']
+            | [b'P', b'C', b'G', b'1']
+    )
+}
+
+fn signature_param_count(bytes: &[u8]) -> Option<usize> {
+    if bytes.len() < 4 {
+        return None;
+    }
+    Some(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize)
+}
+
+fn should_parse_signature_chunk(bytes: &[u8]) -> bool {
+    if bytes.len() > MAX_SIGNATURE_CHUNK_BYTES {
+        return false;
+    }
+    signature_param_count(bytes).unwrap_or(0) <= MAX_SIGNATURE_ENTRIES
+}
+
+fn should_parse_rdef_chunk(bytes: &[u8]) -> bool {
+    if bytes.len() > MAX_REFLECTION_CHUNK_BYTES {
+        return false;
+    }
+    if bytes.len() < 28 {
+        // Truncated headers fail quickly without allocations; still safe to try.
+        return true;
+    }
+
+    let cb_count = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
+    let cb_offset = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]) as usize;
+    let rb_count = u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]) as usize;
+
+    if cb_count > MAX_RDEF_CONSTANT_BUFFERS || rb_count > MAX_RDEF_RESOURCES {
+        return false;
+    }
+
+    // Scan per-cbuffer var counts so a single small chunk can't request huge allocations.
+    if cb_count > 0 {
+        let cb_desc_len = 24usize;
+        let table_bytes = match cb_count.checked_mul(cb_desc_len) {
+            Some(v) => v,
+            None => return false,
+        };
+        let table_end = match cb_offset.checked_add(table_bytes) {
+            Some(v) => v,
+            None => return false,
+        };
+        if table_end <= bytes.len() {
+            for i in 0..cb_count {
+                let entry = cb_offset + i * cb_desc_len;
+                let var_count_off = entry + 4;
+                if var_count_off + 4 > bytes.len() {
+                    break;
+                }
+                let var_count = u32::from_le_bytes([
+                    bytes[var_count_off],
+                    bytes[var_count_off + 1],
+                    bytes[var_count_off + 2],
+                    bytes[var_count_off + 3],
+                ]) as usize;
+                if var_count > MAX_RDEF_VARIABLES_PER_CBUFFER {
+                    return false;
+                }
+            }
+        }
+    }
+
+    true
+}
+
+fn should_parse_ctab_chunk(bytes: &[u8]) -> bool {
+    if bytes.len() > MAX_REFLECTION_CHUNK_BYTES {
+        return false;
+    }
+    if bytes.len() < 16 {
+        // Truncated headers fail quickly without allocations; still safe to try.
+        return true;
+    }
+    let constant_count = u32::from_le_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as usize;
+    constant_count <= MAX_CTAB_CONSTANTS
+}
 
 fn exercise_dxbc(bytes: &[u8]) {
     // `DxbcFile::parse` validates every chunk offset in a loop, so adversarial inputs can encode
@@ -43,16 +147,38 @@ fn exercise_dxbc(bytes: &[u8]) {
         let _ = dxbc.debug_summary();
     }
 
+    let chunk_count = dxbc.header().chunk_count as usize;
+
     // Signature parsing (these return `Option<Result<...>>`; all outcomes are acceptable).
-    let _ = dxbc.get_signature(FourCC(*b"ISGN"));
-    let _ = dxbc.get_signature(FourCC(*b"OSGN"));
-    let _ = dxbc.get_signature(FourCC(*b"PSGN"));
+    // Keep it bounded by refusing containers with oversized signature chunks.
+    let safe_for_signatures = dxbc.chunks().take(chunk_count).all(|chunk| {
+        !is_signature_fourcc(chunk.fourcc) || should_parse_signature_chunk(chunk.data)
+    });
+    if safe_for_signatures {
+        let _ = dxbc.get_signature(FourCC(*b"ISGN"));
+        let _ = dxbc.get_signature(FourCC(*b"OSGN"));
+        let _ = dxbc.get_signature(FourCC(*b"PSGN"));
+        let _ = dxbc.get_signature(FourCC(*b"PCSG"));
+        let _ = dxbc.get_signature(FourCC(*b"PCG1"));
+    }
 
     // Other common DXBC reflection/debug chunks used by Aero.
     // Use the higher-level helpers so we also cover variant/fallback IDs and duplicate-chunk
     // handling (e.g. `RD11` for RDEF).
-    let _ = dxbc.get_rdef();
-    let _ = dxbc.get_ctab();
+    let safe_for_reflection = dxbc
+        .chunks()
+        .take(chunk_count)
+        .all(|chunk| match chunk.fourcc.0 {
+            [b'R', b'D', b'E', b'F'] | [b'R', b'D', b'1', b'1'] => {
+                should_parse_rdef_chunk(chunk.data)
+            }
+            [b'C', b'T', b'A', b'B'] => should_parse_ctab_chunk(chunk.data),
+            _ => true,
+        });
+    if safe_for_reflection {
+        let _ = dxbc.get_rdef();
+        let _ = dxbc.get_ctab();
+    }
 
     // SM4/SM5 token parsing (no GPU required).
     let _ = aero_dxbc::sm4::Sm4Program::parse_from_dxbc(&dxbc);
@@ -141,13 +267,20 @@ fn build_min_rdef_chunk(seed: &[u8]) -> Vec<u8> {
     // Single resource entry.
     let entry = header_len;
     out[entry..entry + 4].copy_from_slice(&(name_off as u32).to_le_bytes()); // name_offset
-    out[entry + 4..entry + 8].copy_from_slice(&u32::from(seed.get(1).copied().unwrap_or(0)).to_le_bytes()); // type
-    out[entry + 8..entry + 12].copy_from_slice(&u32::from(seed.get(2).copied().unwrap_or(0)).to_le_bytes()); // return type
-    out[entry + 12..entry + 16].copy_from_slice(&u32::from(seed.get(3).copied().unwrap_or(0)).to_le_bytes()); // dimension
-    out[entry + 16..entry + 20].copy_from_slice(&u32::from(seed.get(4).copied().unwrap_or(0)).to_le_bytes()); // num samples
-    out[entry + 20..entry + 24].copy_from_slice(&u32::from(seed.get(5).copied().unwrap_or(0)).to_le_bytes()); // bind point
-    out[entry + 24..entry + 28].copy_from_slice(&u32::from(seed.get(6).copied().unwrap_or(1)).to_le_bytes()); // bind count
-    out[entry + 28..entry + 32].copy_from_slice(&u32::from(seed.get(7).copied().unwrap_or(0)).to_le_bytes()); // flags
+    out[entry + 4..entry + 8]
+        .copy_from_slice(&u32::from(seed.get(1).copied().unwrap_or(0)).to_le_bytes()); // type
+    out[entry + 8..entry + 12]
+        .copy_from_slice(&u32::from(seed.get(2).copied().unwrap_or(0)).to_le_bytes()); // return type
+    out[entry + 12..entry + 16]
+        .copy_from_slice(&u32::from(seed.get(3).copied().unwrap_or(0)).to_le_bytes()); // dimension
+    out[entry + 16..entry + 20]
+        .copy_from_slice(&u32::from(seed.get(4).copied().unwrap_or(0)).to_le_bytes()); // num samples
+    out[entry + 20..entry + 24]
+        .copy_from_slice(&u32::from(seed.get(5).copied().unwrap_or(0)).to_le_bytes()); // bind point
+    out[entry + 24..entry + 28]
+        .copy_from_slice(&u32::from(seed.get(6).copied().unwrap_or(1)).to_le_bytes()); // bind count
+    out[entry + 28..entry + 32]
+        .copy_from_slice(&u32::from(seed.get(7).copied().unwrap_or(0)).to_le_bytes()); // flags
 
     // Name string.
     for i in 0..name_len {

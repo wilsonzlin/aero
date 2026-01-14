@@ -586,7 +586,14 @@ fn build_synthetic_dxbc(data: &[u8]) -> Vec<u8> {
 fn is_signature_fourcc(fourcc: FourCC) -> bool {
     matches!(
         fourcc.0,
-        *b"ISGN" | *b"ISG1" | *b"OSGN" | *b"OSG1" | *b"PSGN" | *b"PSG1" | *b"PCSG" | *b"PCG1"
+        [b'I', b'S', b'G', b'N']
+            | [b'I', b'S', b'G', b'1']
+            | [b'O', b'S', b'G', b'N']
+            | [b'O', b'S', b'G', b'1']
+            | [b'P', b'S', b'G', b'N']
+            | [b'P', b'S', b'G', b'1']
+            | [b'P', b'C', b'S', b'G']
+            | [b'P', b'C', b'G', b'1']
     )
 }
 
