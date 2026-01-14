@@ -38,6 +38,15 @@
 
 namespace aerogpu::d3d10_11 {
 
+#if defined(_WIN32)
+// Some WDK/SDK revisions omit the NT_SUCCESS helper macro in user-mode header
+// configurations. Prefer a local constexpr helper so WDK-only translation units
+// don't need to carry their own fallback macros.
+constexpr bool NtSuccess(NTSTATUS st) {
+  return st >= 0;
+}
+#endif
+
 constexpr aerogpu_handle_t kInvalidHandle = 0;
 constexpr uint32_t kDeviceDestroyLiveCookie = 0xA3E0D311u;
 constexpr uint32_t kMaxConstantBufferSlots = 14;

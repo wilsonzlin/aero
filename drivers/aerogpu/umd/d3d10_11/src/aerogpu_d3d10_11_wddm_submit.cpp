@@ -30,10 +30,6 @@
 namespace aerogpu::d3d10_11 {
 namespace {
 
-constexpr bool NtSuccess(NTSTATUS st) {
-  return st >= 0;
-}
-
 constexpr NTSTATUS kStatusTimeout = static_cast<NTSTATUS>(0x00000102L); // STATUS_TIMEOUT
 constexpr NTSTATUS kStatusInvalidParameter = static_cast<NTSTATUS>(0xC000000DL); // STATUS_INVALID_PARAMETER
 

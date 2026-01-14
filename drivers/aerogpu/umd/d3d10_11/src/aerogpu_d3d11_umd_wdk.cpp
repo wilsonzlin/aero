@@ -71,10 +71,6 @@ static_assert(std::is_member_object_pointer_v<decltype(&D3D11DDI_DEVICEFUNCS::pf
 static_assert(std::is_member_object_pointer_v<decltype(&D3D11DDI_DEVICECONTEXTFUNCS::pfnDraw)>,
               "Expected D3D11DDI_DEVICECONTEXTFUNCS::pfnDraw");
 
-constexpr bool NtSuccess(NTSTATUS st) {
-  return st >= 0;
-}
-
 using aerogpu::d3d10_11::AlignUpU64;
 using aerogpu::d3d10_11::AlignUpU32;
 

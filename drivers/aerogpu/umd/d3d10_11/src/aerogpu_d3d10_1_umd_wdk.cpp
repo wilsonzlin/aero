@@ -58,14 +58,11 @@ HRESULT AEROGPU_APIENTRY AeroGpuOpenAdapter10Wdk(D3D10DDIARG_OPENADAPTER* pOpenD
 
 namespace {
 
-constexpr bool NtSuccess(NTSTATUS st) {
-  return st >= 0;
-}
-
 using aerogpu::d3d10_11::kInvalidHandle;
 using aerogpu::d3d10_11::AllocateGlobalHandle;
 using aerogpu::d3d10_11::kD3DMapFlagDoNotWait;
 constexpr uint32_t kAeroGpuDeviceLiveCookie = 0xA3E0D301u;
+using aerogpu::d3d10_11::NtSuccess;
 using aerogpu::d3d10_11::kDxgiErrorWasStillDrawing;
 using aerogpu::d3d10_11::kHrPending;
 using aerogpu::d3d10_11::kHrWaitTimeout;

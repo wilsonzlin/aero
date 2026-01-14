@@ -53,11 +53,8 @@
 
 namespace {
 
-constexpr bool NtSuccess(NTSTATUS st) {
-  return st >= 0;
-}
-
 constexpr NTSTATUS kStatusTimeout = static_cast<NTSTATUS>(0x00000102L); // STATUS_TIMEOUT
+using aerogpu::d3d10_11::NtSuccess;
 using aerogpu::d3d10_11::kDxgiErrorWasStillDrawing;
 using aerogpu::d3d10_11::kHrPending;
 using aerogpu::d3d10_11::kHrWaitTimeout;
