@@ -267,6 +267,47 @@ fn a20_disabled_crossing_1mib_boundary_within_mmio_wraps_writes() {
 }
 
 #[test]
+fn a20_disabled_crossing_1mib_boundary_within_rom_wraps_reads() {
+    let mut bus = new_bus(false, 0);
+
+    // Map a ROM region that spans past a 1MiB boundary. With A20 disabled, accesses that cross
+    // the boundary must wrap back by 1MiB (bit20 forced low), even if the underlying ROM mapping
+    // is contiguous across that boundary.
+    let rom_len = (1 << 20) + 0x40usize;
+    let mut rom = vec![0xEEu8; rom_len];
+
+    // Bytes just before the 1MiB boundary within the ROM.
+    for i in 0..0x10usize {
+        rom[0x0F_FFF0 + i] = 0xA0u8.wrapping_add(i as u8);
+    }
+    // Bytes at the start of the ROM (where the wrapped portion should land).
+    for i in 0..0x30usize {
+        rom[i] = 0xB0u8.wrapping_add(i as u8);
+    }
+    // Bytes immediately after the boundary that would be read if the implementation incorrectly
+    // performed a linear read past the 1MiB boundary.
+    for i in 0..0x30usize {
+        rom[0x1_00000 + i] = 0xC0u8.wrapping_add(i as u8);
+    }
+
+    let rom_base = IOAPIC_MMIO_BASE;
+    bus.map_rom(rom_base, Arc::<[u8]>::from(rom)).unwrap();
+
+    let start = rom_base + 0x0F_FFF0;
+    let mut buf = [0u8; 0x40];
+    bus.read_physical(start, &mut buf);
+
+    let mut expected = [0u8; 0x40];
+    for i in 0..0x10usize {
+        expected[i] = 0xA0u8.wrapping_add(i as u8);
+    }
+    for i in 0..0x30usize {
+        expected[0x10 + i] = 0xB0u8.wrapping_add(i as u8);
+    }
+    assert_eq!(buf, expected);
+}
+
+#[test]
 fn a20_masking_does_not_apply_to_direct_ram_backend_access() {
     let mut bus = new_bus(false, 2 * 1024 * 1024);
 
