@@ -316,6 +316,7 @@ static NTSTATUS VirtioStatusQTrySubmit(_Inout_ PVIRTIO_STATUSQ Q)
     UINT16 head;
     NTSTATUS status;
     PDEVICE_CONTEXT devCtx;
+    BOOLEAN shouldNotify;
 
     if (Q == NULL || Q->PciDevice == NULL || Q->Vq == NULL) {
         return STATUS_INVALID_PARAMETER;
@@ -406,7 +407,22 @@ static NTSTATUS VirtioStatusQTrySubmit(_Inout_ PVIRTIO_STATUSQ Q)
     Q->PendingValid = FALSE;
 
     VirtqSplitPublish(Q->Vq, head);
-    if (VirtqSplitKickPrepare(Q->Vq)) {
+    /*
+     * Contract v1 uses "always notify" semantics (EVENT_IDX is not offered).
+     *
+     * Even if the device sets VIRTQ_USED_F_NO_NOTIFY, Aero drivers still notify
+     * after publishing new available entries to keep behavior deterministic and
+     * avoid relying on suppression bits that are out of scope for the contract.
+     *
+     * See docs/virtio/virtqueue-split-ring-win7.md and virtio-snd's split queue
+     * implementation for the same rationale.
+     */
+    shouldNotify = (Q->Vq->num_added != 0);
+    if (Q->Vq->event_idx) {
+        /* If EVENT_IDX is enabled, respect the standard virtio suppression logic. */
+        shouldNotify = VirtqSplitKickPrepare(Q->Vq);
+    }
+    if (shouldNotify) {
         VirtioPciNotifyQueue(Q->PciDevice, Q->QueueIndex);
     }
     VirtqSplitKickCommit(Q->Vq);
