@@ -1,6 +1,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use aero_devices::pci::{profile, PciBdf};
+use aero_devices::i8042::{I8042_DATA_PORT, I8042_STATUS_PORT};
 use aero_machine::{Machine, MachineConfig};
 use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel, UsbInResult};
 use aero_virtio::pci::VIRTIO_STATUS_DRIVER_OK;
@@ -27,6 +28,18 @@ fn bar0_base(m: &mut Machine, bdf: PciBdf) -> u64 {
     let bar0_lo = cfg_read(m, bdf, 0x10, 4);
     let bar0_hi = cfg_read(m, bdf, 0x14, 4);
     (u64::from(bar0_hi) << 32) | u64::from(bar0_lo & 0xFFFF_FFF0)
+}
+
+fn drain_i8042_output(m: &mut Machine) -> Vec<u8> {
+    let mut out = Vec::new();
+    for _ in 0..32 {
+        let status = m.io_read(I8042_STATUS_PORT, 1) as u8;
+        if (status & 0x01) == 0 {
+            break;
+        }
+        out.push(m.io_read(I8042_DATA_PORT, 1) as u8);
+    }
+    out
 }
 
 #[test]
@@ -234,5 +247,86 @@ fn inject_input_batch_keyboard_release_after_snapshot_restore_clears_usb_even_if
         kbd.handle_interrupt_in(0x81),
         UsbInResult::Data(vec![0, 0, 0, 0, 0, 0, 0, 0]),
         "expected key release after snapshot restore to clear USB state even if virtio becomes ready"
+    );
+}
+
+#[test]
+fn inject_input_batch_ps2_keyboard_release_after_snapshot_restore_reaches_i8042_even_if_virtio_becomes_ready(
+) {
+    let cfg = MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_virtio_input: true,
+        enable_uhci: true,
+        enable_synthetic_usb_hid: true,
+        // Keep i8042 enabled (PS/2 early-boot backend).
+        enable_i8042: true,
+        // Keep deterministic and focused.
+        enable_serial: false,
+        enable_vga: false,
+        enable_reset_ctrl: false,
+        enable_debugcon: false,
+        ..Default::default()
+    };
+
+    let mut src = Machine::new(cfg.clone()).unwrap();
+    assert!(
+        !src.virtio_input_keyboard_driver_ok(),
+        "virtio keyboard should start without DRIVER_OK"
+    );
+
+    // Ensure the i8042 output buffer starts empty.
+    let _ = drain_i8042_output(&mut src);
+
+    // Press 'A' while virtio is not ready and the USB keyboard is unconfigured; this should route
+    // via PS/2 Set-2 scancodes (i8042 backend).
+    let words_press: [u32; 10] = [
+        2, 0, // header
+        6, 0, 0x0104, 0, // KeyHidUsage press
+        1, 0, 0x1c, 1, // KeyScancode make (Set-2 0x1C)
+    ];
+    src.inject_input_batch(&words_press);
+
+    let out = drain_i8042_output(&mut src);
+    assert!(
+        out == vec![0x1e] || out == vec![0x1c],
+        "expected PS/2 key-down to produce a translated Set-1 byte (0x1e) or raw Set-2 byte (0x1c), got {out:02x?}"
+    );
+
+    let snap = src.take_snapshot_full().unwrap();
+
+    let mut restored = Machine::new(cfg).unwrap();
+    restored.restore_snapshot_bytes(&snap).unwrap();
+
+    // Flip virtio keyboard to DRIVER_OK before releasing (simulating a backend switch). Snapshot
+    // restore drops host-side pressed-key tracking, so without special handling the scancode break
+    // event would be routed away from PS/2 and the guest could remain stuck.
+    let bdf = profile::VIRTIO_INPUT_KEYBOARD.bdf;
+    let bar0 = bar0_base(&mut restored, bdf);
+    assert_ne!(bar0, 0, "virtio-input BAR0 must be assigned by BIOS POST");
+    let mut cmd = cfg_read(&mut restored, bdf, 0x04, 2) as u16;
+    cmd |= 0x0006; // MEM + BUSMASTER
+    cfg_write(&mut restored, bdf, 0x04, 2, u32::from(cmd));
+    restored.write_physical_u8(bar0 + 0x14, VIRTIO_STATUS_DRIVER_OK);
+    assert!(
+        restored.virtio_input_keyboard_driver_ok(),
+        "expected DRIVER_OK"
+    );
+
+    // Clear any buffered i8042 bytes before releasing.
+    let _ = drain_i8042_output(&mut restored);
+
+    // Release 'A' after restore.
+    let words_release: [u32; 10] = [
+        2, 0, // header
+        6, 0, 0x0004, 0, // KeyHidUsage release
+        1, 0, 0x1cf0, 2, // KeyScancode break (Set-2 0xF0 0x1C)
+    ];
+    restored.inject_input_batch(&words_release);
+
+    let out = drain_i8042_output(&mut restored);
+    assert!(
+        out == vec![0x9e] || out == vec![0xf0, 0x1c],
+        "expected PS/2 key-up to produce a translated Set-1 byte (0x9e) or raw Set-2 bytes (0xf0 0x1c), got {out:02x?}"
     );
 }

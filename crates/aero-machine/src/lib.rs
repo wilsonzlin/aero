@@ -9527,6 +9527,109 @@ impl Machine {
             })
         }
 
+        fn hid_usage_to_browser_code(usage: u8) -> Option<std::borrow::Cow<'static, str>> {
+            use std::borrow::Cow;
+
+            // Letters.
+            if (0x04..=0x1d).contains(&usage) {
+                let c = char::from_u32(u32::from(b'A' + (usage - 0x04)))?;
+                return Some(Cow::Owned(format!("Key{c}")));
+            }
+
+            // Digits.
+            if (0x1e..=0x26).contains(&usage) {
+                let c = char::from_u32(u32::from(b'1' + (usage - 0x1e)))?;
+                return Some(Cow::Owned(format!("Digit{c}")));
+            }
+            if usage == 0x27 {
+                return Some(Cow::Borrowed("Digit0"));
+            }
+
+            // Function keys.
+            if (0x3a..=0x45).contains(&usage) {
+                let n = (usage - 0x3a) + 1;
+                return Some(Cow::Owned(format!("F{n}")));
+            }
+
+            // Keep these values aligned with `aero_usb::hid::usage::keyboard_code_to_usage` and the
+            // shared fixture `docs/fixtures/hid_usage_keyboard.json`.
+            Some(match usage {
+                // Modifiers.
+                0xe0 => Cow::Borrowed("ControlLeft"),
+                0xe1 => Cow::Borrowed("ShiftLeft"),
+                0xe2 => Cow::Borrowed("AltLeft"),
+                0xe3 => Cow::Borrowed("MetaLeft"),
+                0xe4 => Cow::Borrowed("ControlRight"),
+                0xe5 => Cow::Borrowed("ShiftRight"),
+                0xe6 => Cow::Borrowed("AltRight"),
+                0xe7 => Cow::Borrowed("MetaRight"),
+
+                // Basic keys.
+                0x28 => Cow::Borrowed("Enter"),
+                0x29 => Cow::Borrowed("Escape"),
+                0x2a => Cow::Borrowed("Backspace"),
+                0x2b => Cow::Borrowed("Tab"),
+                0x2c => Cow::Borrowed("Space"),
+                0x2d => Cow::Borrowed("Minus"),
+                0x2e => Cow::Borrowed("Equal"),
+                0x2f => Cow::Borrowed("BracketLeft"),
+                0x30 => Cow::Borrowed("BracketRight"),
+                0x31 => Cow::Borrowed("Backslash"),
+                0x32 => Cow::Borrowed("IntlHash"),
+                0x33 => Cow::Borrowed("Semicolon"),
+                0x34 => Cow::Borrowed("Quote"),
+                0x35 => Cow::Borrowed("Backquote"),
+                0x36 => Cow::Borrowed("Comma"),
+                0x37 => Cow::Borrowed("Period"),
+                0x38 => Cow::Borrowed("Slash"),
+                0x39 => Cow::Borrowed("CapsLock"),
+
+                // Navigation / system.
+                0x46 => Cow::Borrowed("PrintScreen"),
+                0x47 => Cow::Borrowed("ScrollLock"),
+                0x48 => Cow::Borrowed("Pause"),
+                0x49 => Cow::Borrowed("Insert"),
+                0x4a => Cow::Borrowed("Home"),
+                0x4b => Cow::Borrowed("PageUp"),
+                0x4c => Cow::Borrowed("Delete"),
+                0x4d => Cow::Borrowed("End"),
+                0x4e => Cow::Borrowed("PageDown"),
+                0x4f => Cow::Borrowed("ArrowRight"),
+                0x50 => Cow::Borrowed("ArrowLeft"),
+                0x51 => Cow::Borrowed("ArrowDown"),
+                0x52 => Cow::Borrowed("ArrowUp"),
+
+                // Keypad.
+                0x53 => Cow::Borrowed("NumLock"),
+                0x54 => Cow::Borrowed("NumpadDivide"),
+                0x55 => Cow::Borrowed("NumpadMultiply"),
+                0x56 => Cow::Borrowed("NumpadSubtract"),
+                0x57 => Cow::Borrowed("NumpadAdd"),
+                0x58 => Cow::Borrowed("NumpadEnter"),
+                0x59 => Cow::Borrowed("Numpad1"),
+                0x5a => Cow::Borrowed("Numpad2"),
+                0x5b => Cow::Borrowed("Numpad3"),
+                0x5c => Cow::Borrowed("Numpad4"),
+                0x5d => Cow::Borrowed("Numpad5"),
+                0x5e => Cow::Borrowed("Numpad6"),
+                0x5f => Cow::Borrowed("Numpad7"),
+                0x60 => Cow::Borrowed("Numpad8"),
+                0x61 => Cow::Borrowed("Numpad9"),
+                0x62 => Cow::Borrowed("Numpad0"),
+                0x63 => Cow::Borrowed("NumpadDecimal"),
+                0x67 => Cow::Borrowed("NumpadEqual"),
+                0x85 => Cow::Borrowed("NumpadComma"),
+
+                // Other.
+                0x65 => Cow::Borrowed("ContextMenu"),
+                0x64 => Cow::Borrowed("IntlBackslash"),
+                0x87 => Cow::Borrowed("IntlRo"),
+                0x89 => Cow::Borrowed("IntlYen"),
+
+                _ => return None,
+            })
+        }
+
         for i in 0..count {
             let off = HEADER_WORDS + i * WORDS_PER_EVENT;
             let ty = words[off];
@@ -9584,6 +9687,10 @@ impl Machine {
                         // snapshot restore (host-side pressed-key tracking is not part of the
                         // snapshot format), where the guest still has a key held down but the host
                         // only sends the release event after restore.
+                        //
+                        // If the current backend selection is not PS/2, also best-effort deliver a
+                        // PS/2 break sequence so guests that previously observed the key-down via
+                        // i8042 do not remain stuck.
                         if usb_keyboard_present {
                             self.inject_usb_hid_keyboard_usage(usage, false);
                         }
@@ -9595,6 +9702,17 @@ impl Machine {
                                         input.inject_key(code, false);
                                         virtio_input_dirty = true;
                                     }
+                                }
+                            }
+                        }
+                        if !use_ps2_keyboard && ps2_available {
+                            if let Some(code) = hid_usage_to_browser_code(usage) {
+                                if let Some(bytes) =
+                                    aero_devices_input::scancode::browser_code_to_set2_bytes(
+                                        &code, false,
+                                    )
+                                {
+                                    self.inject_key_scancode_bytes(&bytes);
                                 }
                             }
                         }
