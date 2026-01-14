@@ -3974,7 +3974,7 @@ static VOID AeroGpuEmitReleaseSharedSurface(_Inout_ AEROGPU_ADAPTER* Adapter, _I
     InterlockedIncrement64(&Adapter->PerfTotalInternalSubmits);
 }
 
-static VOID AeroGpuTrackAllocation(_Inout_ AEROGPU_ADAPTER* Adapter, _Inout_ AEROGPU_ALLOCATION* Allocation)
+static BOOLEAN AeroGpuTrackAllocation(_Inout_ AEROGPU_ADAPTER* Adapter, _Inout_ AEROGPU_ALLOCATION* Allocation)
 {
     KIRQL oldIrql;
     AEROGPU_SHARE_TOKEN_REF* toFree = NULL;
@@ -3985,7 +3985,10 @@ static VOID AeroGpuTrackAllocation(_Inout_ AEROGPU_ADAPTER* Adapter, _Inout_ AER
      * AllocationsLock to allocate a tracking node.
      */
     const ULONG shareTokenCount = AeroGpuShareTokenRefIncrementLocked(Adapter, Allocation->ShareToken, &oldIrql, &toFree);
-    InsertTailList(&Adapter->Allocations, &Allocation->ListEntry);
+    const BOOLEAN ok = (Allocation->ShareToken == 0 || shareTokenCount != 0) ? TRUE : FALSE;
+    if (ok) {
+        InsertTailList(&Adapter->Allocations, &Allocation->ListEntry);
+    }
     KeReleaseSpinLock(&Adapter->AllocationsLock, oldIrql);
 
     if (toFree) {
@@ -3999,6 +4002,7 @@ static VOID AeroGpuTrackAllocation(_Inout_ AEROGPU_ADAPTER* Adapter, _Inout_ AER
             AEROGPU_LOG("ShareTokenRef++ token=0x%I64x failed (out of memory)", Allocation->ShareToken);
         }
     }
+    return ok;
 }
 
 static BOOLEAN AeroGpuTryUntrackAllocation(_Inout_ AEROGPU_ADAPTER* Adapter, _In_ const AEROGPU_ALLOCATION* Allocation)
@@ -8395,7 +8399,18 @@ static NTSTATUS APIENTRY AeroGpuDdiCreateAllocation(_In_ const HANDLE hAdapter,
             }
         }
 
-        AeroGpuTrackAllocation(adapter, alloc);
+        if (!AeroGpuTrackAllocation(adapter, alloc)) {
+            /*
+             * For shared allocations, share-token ref tracking is required for correct
+             * host-side lifetime management (final close -> RELEASE_SHARED_SURFACE).
+             * If we cannot allocate/track the token, fail CreateAllocation rather than
+             * leaking the host-side mapping.
+             */
+            ExFreePoolWithTag(alloc, AEROGPU_POOL_TAG);
+            info->hAllocation = NULL;
+            status = STATUS_INSUFFICIENT_RESOURCES;
+            goto Rollback;
+        }
 
         AeroGpuTraceCreateAllocation(adapter,
                                      callSeq,
@@ -8642,7 +8657,18 @@ static NTSTATUS APIENTRY AeroGpuDdiOpenAllocation(_In_ const HANDLE hAdapter,
         info->SupportedReadSegmentSet = 1;
         info->SupportedWriteSegmentSet = 1;
 
-        AeroGpuTrackAllocation(adapter, alloc);
+        if (!AeroGpuTrackAllocation(adapter, alloc)) {
+            /*
+             * Shared allocations must be tracked so the KMD can emit
+             * RELEASE_SHARED_SURFACE on final close. If we cannot track the token,
+             * fail OpenAllocation deterministically instead of leaking the host-side
+             * mapping.
+             */
+            ExFreePoolWithTag(alloc, AEROGPU_POOL_TAG);
+            info->hAllocation = NULL;
+            st = STATUS_INSUFFICIENT_RESOURCES;
+            goto Cleanup;
+        }
 
         AEROGPU_LOG("OpenAllocation: alloc_id=%lu share_token=0x%I64x size=%Iu",
                    alloc->AllocationId,
