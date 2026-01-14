@@ -1987,6 +1987,32 @@ BOOLEAN AerovblkHwStartIo(_In_ PVOID deviceExtension, _Inout_ PSCSI_REQUEST_BLOC
    * our single-LUN addressing model.
    */
   switch (srb->Function) {
+#ifdef SRB_FUNCTION_NOOP
+  /*
+   * No-op SRB. Some StorPort stacks use this as a probe.
+   */
+  case SRB_FUNCTION_NOOP:
+    AerovblkCompleteSrb(devExt, srb, SRB_STATUS_SUCCESS);
+    return TRUE;
+#endif
+
+#ifdef SRB_FUNCTION_DUMP_POINTERS
+  /*
+   * Crash dump pointer query. This miniport does not support dump stack
+   * integration; return success with zero payload so the caller can fall back.
+   */
+  case SRB_FUNCTION_DUMP_POINTERS:
+    srb->DataTransferLength = 0;
+    AerovblkCompleteSrb(devExt, srb, SRB_STATUS_SUCCESS);
+    return TRUE;
+#endif
+
+#ifdef SRB_FUNCTION_FREE_DUMP_POINTERS
+  case SRB_FUNCTION_FREE_DUMP_POINTERS:
+    AerovblkCompleteSrb(devExt, srb, SRB_STATUS_SUCCESS);
+    return TRUE;
+#endif
+
 #ifdef SRB_FUNCTION_CLAIM_DEVICE
   /*
    * StorPort device-claim SRB. No-op for this miniport (single device).
