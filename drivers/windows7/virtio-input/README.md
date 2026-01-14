@@ -189,7 +189,8 @@ If Windows grants fewer than `1 + numQueues` messages, the driver falls back to:
     - `virtio-input-irq|INFO|mode=intx`
     - `virtio-input-irq|INFO|mode=msi|messages=<n>` (message-signaled interrupts; MSI/MSI-X)
   - To request a larger MSI-X table size under QEMU in the in-tree harness (best-effort), run the host harness with:
-    `-VirtioMsixVectors N` / `--virtio-msix-vectors N`.
+    `-VirtioMsixVectors N` / `--virtio-msix-vectors N` (global) or `-VirtioInputVectors N` / `--virtio-input-vectors N`
+    (virtio-input only).
   - See `../tests/guest-selftest/README.md` for how to build/run the tool.
 
 ## Testing (in-tree harness)

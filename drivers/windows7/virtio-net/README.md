@@ -129,7 +129,8 @@ You can also use `aero-virtio-selftest.exe`:
   - `virtio-net-irq|INFO|mode=intx`
   - `virtio-net-irq|INFO|mode=msi|messages=<n>` (message-signaled interrupts; MSI/MSI-X)
 - To force MSI-X in the in-tree QEMU harness (and optionally fail if MSI-X is not enabled):
-  - Host: `-VirtioMsixVectors N` / `--virtio-msix-vectors N`
+  - Host (best-effort, global): `-VirtioMsixVectors N` / `--virtio-msix-vectors N`
+  - Host (best-effort, virtio-net only): `-VirtioNetVectors N` / `--virtio-net-vectors N`
   - Host (hard requirement): `-RequireVirtioNetMsix` / `--require-virtio-net-msix`
 - See `../tests/guest-selftest/README.md` for how to build/run the tool.
 

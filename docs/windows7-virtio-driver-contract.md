@@ -991,7 +991,9 @@ Harness validation (non-normative, QEMU):
   - `AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS/FAIL|irq_mode=...|...`
 - By default these are informational. To make MSI-X a **hard** harness requirement under QEMU:
   - Host harness:
-    - request a larger MSI-X table size (best-effort): `-VirtioMsixVectors N` / `--virtio-msix-vectors N`
+    - request a larger MSI-X table size (best-effort):
+      - global: `-VirtioMsixVectors N` / `--virtio-msix-vectors N`
+      - per device: `-Virtio{Net,Blk,Input,Snd}Vectors N` / `--virtio-{net,blk,input,snd}-vectors N`
     - fail if MSI-X is not enabled on the device: `-RequireVirtioBlkMsix` / `--require-virtio-blk-msix`
   - Guest selftest (virtio-blk only): `--expect-blk-msi` (or `AERO_VIRTIO_SELFTEST_EXPECT_BLK_MSI=1`)
 
