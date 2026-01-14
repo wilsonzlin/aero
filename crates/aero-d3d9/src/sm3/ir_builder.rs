@@ -1422,12 +1422,21 @@ fn apply_vertex_input_remap(ir: &mut ShaderIr) -> Result<(), BuildError> {
         remap.insert(v, loc);
     }
 
+    // Rewrite all declared input registers (including unused ones) so that
+    // `ShaderTranslation::semantic_locations` can report canonical WGSL locations for the full
+    // `dcl_*` set. This avoids collisions between remapped and non-remapped declarations on the
+    // host side (see `translate_entrypoint_sm3_remaps_unused_declared_semantics` regression test).
     for decl in &mut ir.inputs {
-        if decl.reg.file == RegFile::Input {
-            if let Some(&new_idx) = remap.get(&decl.reg.index) {
-                decl.reg.index = new_idx;
-            }
+        if decl.reg.file != RegFile::Input || decl.reg.relative.is_some() {
+            continue;
         }
+        let Some((usage, usage_index)) = semantic_to_decl_usage(&decl.semantic) else {
+            continue;
+        };
+        let loc = map
+            .location_for(usage, usage_index)
+            .map_err(|e| err_internal(&format!("failed to map vertex input semantic: {e}")))?;
+        decl.reg.index = loc;
     }
 
     remap_input_regs_in_block(&mut ir.body, &remap);
