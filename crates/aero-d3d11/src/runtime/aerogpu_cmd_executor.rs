@@ -8015,15 +8015,22 @@ impl AerogpuD3d11Executor {
         let (cmd, dxbc_bytes) = decode_cmd_create_shader_dxbc_payload_le(cmd_bytes)
             .map_err(|e| anyhow!("CREATE_SHADER_DXBC: invalid payload: {e:?}"))?;
         let shader_handle = cmd.shader_handle;
-        let stage_u32 = cmd.stage;
+        let stage_raw = cmd.stage;
+        let stage_ex = cmd.reserved0;
 
-        let stage = match stage_u32 {
-            x if x == AerogpuShaderStage::Vertex as u32 => Some(ShaderStage::Vertex),
-            x if x == AerogpuShaderStage::Pixel as u32 => Some(ShaderStage::Pixel),
-            x if x == AerogpuShaderStage::Compute as u32 => Some(ShaderStage::Compute),
-            x if x == AerogpuShaderStage::Geometry as u32 => None,
-            _ => bail!("CREATE_SHADER_DXBC: unknown shader stage {stage_u32}"),
-        };
+        // Geometry shaders are representable in the legacy `AerogpuShaderStage` enum, but the
+        // WebGPU-backed executor does not support them directly.
+        //
+        // Geometry/tessellation shaders are instead forwarded through the `stage_ex` ABI extension
+        // (stage=COMPUTE + reserved0=stage_ex).
+        if stage_raw == AerogpuShaderStage::Geometry as u32 {
+            return Ok(());
+        }
+
+        let stage =
+            ShaderStage::from_aerogpu_u32_with_stage_ex(stage_raw, stage_ex).ok_or_else(|| {
+                anyhow!("CREATE_SHADER_DXBC: unknown shader stage {stage_raw} (stage_ex={stage_ex})")
+            })?;
 
         let dxbc_hash_fnv1a64 = fnv1a64(dxbc_bytes);
         let dxbc = DxbcFile::parse(dxbc_bytes).context("DXBC parse failed")?;
@@ -8037,32 +8044,16 @@ impl AerogpuD3d11Executor {
         // are currently accepted-but-ignored by the WebGPU backend.
         validate_sm5_gs_streams(&program)?;
         let parsed_stage = match program.stage {
-            crate::ShaderStage::Vertex => Some(ShaderStage::Vertex),
-            crate::ShaderStage::Pixel => Some(ShaderStage::Pixel),
-            crate::ShaderStage::Compute => Some(ShaderStage::Compute),
-            // Geometry/hull/domain stages are not directly executed by the WebGPU backend.
-            //
-            // Accept the create to keep the command stream robust, but ignore the shader program.
-            // The corresponding handles may still be bound via `BIND_SHADERS` (legacy `reserved0`
-            // or the append-only GS/HS/DS extension) to trigger the compute-prepass emulation path
-            // and stage_ex binding routing, but we do not currently translate/execute the actual
-            // DXBC program.
-            crate::ShaderStage::Geometry | crate::ShaderStage::Hull | crate::ShaderStage::Domain => {
-                return Ok(());
-            }
+            crate::ShaderStage::Vertex => ShaderStage::Vertex,
+            crate::ShaderStage::Pixel => ShaderStage::Pixel,
+            crate::ShaderStage::Compute => ShaderStage::Compute,
+            crate::ShaderStage::Geometry => ShaderStage::Geometry,
+            crate::ShaderStage::Hull => ShaderStage::Hull,
+            crate::ShaderStage::Domain => ShaderStage::Domain,
             other => bail!("CREATE_SHADER_DXBC: unsupported DXBC shader stage {other:?}"),
         };
-        let Some(stage) = stage else {
-            bail!(
-                "CREATE_SHADER_DXBC: stage mismatch (cmd=Geometry, dxbc={:?})",
-                parsed_stage.expect("non-geometry DXBC stage mapped above")
-            );
-        };
-        if parsed_stage != Some(stage) {
-            bail!(
-                "CREATE_SHADER_DXBC: stage mismatch (cmd={stage:?}, dxbc={:?})",
-                parsed_stage.expect("non-geometry DXBC stage mapped above")
-            );
+        if parsed_stage != stage {
+            bail!("CREATE_SHADER_DXBC: stage mismatch (cmd={stage:?}, dxbc={parsed_stage:?})");
         }
 
         let signatures = parse_signatures(&dxbc).context("parse DXBC signatures")?;
@@ -8092,26 +8083,45 @@ impl AerogpuD3d11Executor {
 
         // Compute-stage DXBC frequently omits signature chunks entirely. The signature-driven
         // translator can still handle compute shaders, so only require ISGN/OSGN for VS/PS.
-        let signature_driven = stage == ShaderStage::Compute
-            || (signatures.isgn.is_some() && signatures.osgn.is_some());
-        let (wgsl, reflection) = if signature_driven {
-            let translated = try_translate_sm4_signature_driven(&dxbc, &program, &signatures)?;
-            (translated.wgsl, translated.reflection)
-        } else {
-            (
-                crate::wgsl_bootstrap::translate_sm4_to_wgsl_bootstrap(&program)
-                    .context("DXBC->WGSL translation failed")?
-                    .wgsl,
-                ShaderReflection::default(),
-            )
-        };
+        let signature_driven =
+            stage == ShaderStage::Compute || (signatures.isgn.is_some() && signatures.osgn.is_some());
 
         let entry_point = match stage {
             ShaderStage::Vertex => "vs_main",
             ShaderStage::Pixel => "fs_main",
             ShaderStage::Compute => "cs_main",
             // Geometry/tessellation stages are emulated via compute.
-            ShaderStage::Geometry | ShaderStage::Hull | ShaderStage::Domain => "cs_main",
+            ShaderStage::Geometry => "gs_main",
+            ShaderStage::Hull => "hs_main",
+            ShaderStage::Domain => "ds_main",
+        };
+
+        let (wgsl, reflection) = match stage {
+            ShaderStage::Geometry | ShaderStage::Hull | ShaderStage::Domain => {
+                // Placeholder geometry/tessellation path: we currently accept and store these DXBC
+                // shaders (via the `stage_ex` ABI extension) but cannot translate them yet.
+                //
+                // Compile a minimal compute shader so the pipeline cache can create a shader module
+                // and future code can bind the shader by handle.
+                (
+                    format!("@compute @workgroup_size(1)\nfn {entry_point}() {{}}\n"),
+                    ShaderReflection::default(),
+                )
+            }
+            ShaderStage::Vertex | ShaderStage::Pixel | ShaderStage::Compute => {
+                if signature_driven {
+                    let translated =
+                        try_translate_sm4_signature_driven(&dxbc, &program, &signatures)?;
+                    (translated.wgsl, translated.reflection)
+                } else {
+                    (
+                        crate::wgsl_bootstrap::translate_sm4_to_wgsl_bootstrap(&program)
+                            .context("DXBC->WGSL translation failed")?
+                            .wgsl,
+                        ShaderReflection::default(),
+                    )
+                }
+            }
         };
 
         let (hash, _module) = self.pipeline_cache.get_or_create_shader_module(
@@ -11828,9 +11838,8 @@ fn map_pipeline_cache_stage(stage: ShaderStage) -> aero_gpu::pipeline_key::Shade
     match stage {
         ShaderStage::Vertex => aero_gpu::pipeline_key::ShaderStage::Vertex,
         ShaderStage::Pixel => aero_gpu::pipeline_key::ShaderStage::Fragment,
-        ShaderStage::Compute => aero_gpu::pipeline_key::ShaderStage::Compute,
         // Geometry/tessellation stages are lowered/emulated via compute.
-        ShaderStage::Geometry | ShaderStage::Hull | ShaderStage::Domain => {
+        ShaderStage::Compute | ShaderStage::Geometry | ShaderStage::Hull | ShaderStage::Domain => {
             aero_gpu::pipeline_key::ShaderStage::Compute
         }
     }
