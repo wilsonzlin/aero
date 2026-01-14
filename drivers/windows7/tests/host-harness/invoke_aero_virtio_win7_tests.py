@@ -51,6 +51,8 @@ For convenience when scraping CI logs, the harness may also emit a host-side vir
 includes large-transfer fields:
 
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LARGE|PASS/FAIL/INFO|large_ok=...|large_bytes=...|large_fnv1a64=...|large_mbps=...|upload_ok=...|upload_bytes=...|upload_mbps=...`
+  - also mirrors best-effort interrupt allocation fields when present:
+    `msi=...|msi_messages=...`
 
 It may also mirror guest-side IRQ diagnostics (when present) into per-device host markers:
 
