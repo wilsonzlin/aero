@@ -93,9 +93,9 @@ do not affect PASS/FAIL):
 
 It may also mirror the guest's checksum offload marker (`virtio-net-offload-csum`) when present:
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_OFFLOAD_CSUM|PASS/FAIL/INFO|tx_csum=...|rx_csum=...|fallback=...|...`
-  - informational only; does not affect overall PASS/FAIL unless `--require-net-csum-offload` is enabled.
+  - informational only; does not affect overall PASS/FAIL unless `--require-net-csum-offload/--require-virtio-net-csum-offload` is enabled.
 
-It may also optionally flap the virtio-net link state via QMP `set_link` when `--with-net-link-flap` is enabled,
+It may also optionally flap the virtio-net link state via QMP `set_link` when `--with-net-link-flap/--with-virtio-net-link-flap/--require-virtio-net-link-flap/--enable-virtio-net-link-flap` is enabled,
 coordinated by a guest-side READY marker:
 
 - `AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|READY` (guest)
@@ -5278,7 +5278,7 @@ def main() -> int:
     # - --with-input-wheel
     # - --with-input-events-extended / --with-input-events-extra
     # - --with-input-tablet-events / --with-tablet-events / --with-virtio-input-tablet-events / --require-virtio-input-tablet-events / --enable-virtio-input-tablet-events
-    # - --with-net-link-flap
+    # - --with-net-link-flap / --with-virtio-net-link-flap / --require-virtio-net-link-flap / --enable-virtio-net-link-flap
     # - --with-blk-resize
     # - --require-virtio-*-msix
     # - --qemu-preflight-pci / --qmp-preflight-pci
