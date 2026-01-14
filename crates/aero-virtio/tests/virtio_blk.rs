@@ -555,8 +555,10 @@ fn virtio_blk_get_id_returns_backend_device_id() {
 fn virtio_blk_discard_returns_ok() {
     let (mut dev, caps, mut mem, backing, _flushes) = setup();
 
-    // Make the backing non-zero so the test also checks that DISCARD does not crash or scribble.
-    backing.borrow_mut()[512..1024].fill(0xa5);
+    // Make part of the discarded range non-zero, but leave the first sector zero. This ensures the
+    // device cannot rely on checking only the first sector when deciding whether to fall back to
+    // explicit zero writes.
+    backing.borrow_mut()[1024..1536].fill(0xa5);
 
     let header = 0x7000;
     let seg = 0x8000;
@@ -566,9 +568,9 @@ fn virtio_blk_discard_returns_ok() {
     write_u32_le(&mut mem, header + 4, 0).unwrap();
     write_u64_le(&mut mem, header + 8, 0).unwrap();
 
-    // One discard segment: sector 1, length 1 sector, flags 0.
+    // One discard segment: sector 1, length 2 sectors, flags 0.
     write_u64_le(&mut mem, seg, 1).unwrap();
-    write_u32_le(&mut mem, seg + 8, 1).unwrap();
+    write_u32_le(&mut mem, seg + 8, 2).unwrap();
     write_u32_le(&mut mem, seg + 12, 0).unwrap();
 
     mem.write(status, &[0xff]).unwrap();
@@ -586,7 +588,7 @@ fn virtio_blk_discard_returns_ok() {
     kick_queue0(&mut dev, &caps, &mut mem);
 
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
-    assert!(backing.borrow()[512..1024].iter().all(|b| *b == 0));
+    assert!(backing.borrow()[512..1536].iter().all(|b| *b == 0));
 }
 
 #[test]

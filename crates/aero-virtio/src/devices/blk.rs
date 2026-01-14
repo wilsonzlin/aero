@@ -1005,6 +1005,7 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                                 };
                                 chunk_size = chunk_size.max(blk_usize).max(512);
                                 let zero_buf = vec![0u8; chunk_size];
+                                let mut read_buf = vec![0u8; chunk_size];
 
                                 for (byte_off, byte_len) in ranges {
                                     if byte_len == 0 {
@@ -1017,19 +1018,35 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
 
                                     if !needs_zero_fallback {
                                         // If `discard_range` was a no-op, ensure guest-visible
-                                        // semantics by sampling the first sector and falling back
-                                        // to explicit zero writes when the data is still non-zero.
-                                        let sample_len =
-                                            (byte_len.min(VIRTIO_BLK_SECTOR_SIZE)) as usize;
-                                        let mut sample = [0u8; VIRTIO_BLK_SECTOR_SIZE as usize];
-                                        let dst = &mut sample[..sample_len];
-                                        match self.backend.read_at(byte_off, dst) {
-                                            Ok(()) => {
-                                                if !dst.iter().all(|b| *b == 0) {
+                                        // semantics by scanning the full discarded range and
+                                        // falling back to explicit zero writes when any byte
+                                        // remains non-zero.
+                                        let mut scan_off = byte_off;
+                                        let mut scan_remaining = byte_len;
+                                        while scan_remaining != 0 {
+                                            let take =
+                                                scan_remaining.min(read_buf.len() as u64) as usize;
+                                            match self.backend.read_at(scan_off, &mut read_buf[..take])
+                                            {
+                                                Ok(()) => {
+                                                    if read_buf[..take].iter().any(|b| *b != 0) {
+                                                        needs_zero_fallback = true;
+                                                        break;
+                                                    }
+                                                }
+                                                Err(_) => {
                                                     needs_zero_fallback = true;
+                                                    break;
                                                 }
                                             }
-                                            Err(_) => needs_zero_fallback = true,
+                                            scan_off = match scan_off.checked_add(take as u64) {
+                                                Some(v) => v,
+                                                None => {
+                                                    needs_zero_fallback = true;
+                                                    break;
+                                                }
+                                            };
+                                            scan_remaining = scan_remaining.saturating_sub(take as u64);
                                         }
                                     }
 
