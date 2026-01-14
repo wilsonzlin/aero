@@ -1728,6 +1728,16 @@ bool TestSetTextureStageStateUpdatesPsForTex1NoDiffuseFvfs() {
       return false;
     }
 
+    const auto SetTextureStageState = [&](uint32_t stage, uint32_t state, uint32_t value, const char* msg) -> bool {
+      HRESULT hr2 = S_OK;
+      if (cleanup.device_funcs.pfnSetTextureStageState) {
+        hr2 = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, stage, state, value);
+      } else {
+        hr2 = aerogpu::device_set_texture_stage_state(cleanup.hDevice, stage, state, value);
+      }
+      return Check(hr2 == S_OK, msg);
+    };
+
     dev->cmd.reset();
 
     HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzrhwTex1);
@@ -1746,14 +1756,41 @@ bool TestSetTextureStageStateUpdatesPsForTex1NoDiffuseFvfs() {
     }
 
     // Ensure a known starting point for stage0 state (matches D3D9 defaults).
-    {
-      std::lock_guard<std::mutex> lock(dev->mutex);
-      dev->texture_stage_states[0][kD3dTssColorOp] = kD3dTopModulate;
-      dev->texture_stage_states[0][kD3dTssColorArg1] = kD3dTaTexture;
-      dev->texture_stage_states[0][kD3dTssColorArg2] = kD3dTaDiffuse;
-      dev->texture_stage_states[0][kD3dTssAlphaOp] = kD3dTopSelectArg1;
-      dev->texture_stage_states[0][kD3dTssAlphaArg1] = kD3dTaTexture;
-      dev->texture_stage_states[0][kD3dTssAlphaArg2] = kD3dTaDiffuse;
+    if (!SetTextureStageState(/*stage=*/0,
+                              kD3dTssColorOp,
+                              kD3dTopModulate,
+                              "XYZRHW|TEX1: SetTextureStageState(COLOROP=MODULATE) succeeds")) {
+      return false;
+    }
+    if (!SetTextureStageState(/*stage=*/0,
+                              kD3dTssColorArg1,
+                              kD3dTaTexture,
+                              "XYZRHW|TEX1: SetTextureStageState(COLORARG1=TEXTURE) succeeds")) {
+      return false;
+    }
+    if (!SetTextureStageState(/*stage=*/0,
+                              kD3dTssColorArg2,
+                              kD3dTaDiffuse,
+                              "XYZRHW|TEX1: SetTextureStageState(COLORARG2=DIFFUSE) succeeds")) {
+      return false;
+    }
+    if (!SetTextureStageState(/*stage=*/0,
+                              kD3dTssAlphaOp,
+                              kD3dTopSelectArg1,
+                              "XYZRHW|TEX1: SetTextureStageState(ALPHAOP=SELECTARG1) succeeds")) {
+      return false;
+    }
+    if (!SetTextureStageState(/*stage=*/0,
+                              kD3dTssAlphaArg1,
+                              kD3dTaTexture,
+                              "XYZRHW|TEX1: SetTextureStageState(ALPHAARG1=TEXTURE) succeeds")) {
+      return false;
+    }
+    if (!SetTextureStageState(/*stage=*/0,
+                              kD3dTssAlphaArg2,
+                              kD3dTaDiffuse,
+                              "XYZRHW|TEX1: SetTextureStageState(ALPHAARG2=DIFFUSE) succeeds")) {
+      return false;
     }
 
     const VertexXyzrhwTex1 tri[3] = {
@@ -1813,17 +1850,6 @@ bool TestSetTextureStageStateUpdatesPsForTex1NoDiffuseFvfs() {
       }
     }
 
-    // Validate SetTextureStageState does not fail for supported TEX1-without-diffuse paths.
-    const auto SetTextureStageState = [&](uint32_t stage, uint32_t state, uint32_t value, const char* msg) -> bool {
-      HRESULT hr2 = S_OK;
-      if (cleanup.device_funcs.pfnSetTextureStageState) {
-        hr2 = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, stage, state, value);
-      } else {
-        hr2 = aerogpu::device_set_texture_stage_state(cleanup.hDevice, stage, state, value);
-      }
-      return Check(hr2 == S_OK, msg);
-    };
-
     if (!SetTextureStageState(/*stage=*/0,
                               kD3dTssColorOp,
                               kD3dTopDisable,
@@ -1856,6 +1882,16 @@ bool TestSetTextureStageStateUpdatesPsForTex1NoDiffuseFvfs() {
       return false;
     }
 
+    const auto SetTextureStageState = [&](uint32_t stage, uint32_t state, uint32_t value, const char* msg) -> bool {
+      HRESULT hr2 = S_OK;
+      if (cleanup.device_funcs.pfnSetTextureStageState) {
+        hr2 = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, stage, state, value);
+      } else {
+        hr2 = aerogpu::device_set_texture_stage_state(cleanup.hDevice, stage, state, value);
+      }
+      return Check(hr2 == S_OK, msg);
+    };
+
     dev->cmd.reset();
 
     HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzTex1);
@@ -1874,14 +1910,41 @@ bool TestSetTextureStageStateUpdatesPsForTex1NoDiffuseFvfs() {
     }
 
     // Ensure a known starting point for stage0 state (matches D3D9 defaults).
-    {
-      std::lock_guard<std::mutex> lock(dev->mutex);
-      dev->texture_stage_states[0][kD3dTssColorOp] = kD3dTopModulate;
-      dev->texture_stage_states[0][kD3dTssColorArg1] = kD3dTaTexture;
-      dev->texture_stage_states[0][kD3dTssColorArg2] = kD3dTaDiffuse;
-      dev->texture_stage_states[0][kD3dTssAlphaOp] = kD3dTopSelectArg1;
-      dev->texture_stage_states[0][kD3dTssAlphaArg1] = kD3dTaTexture;
-      dev->texture_stage_states[0][kD3dTssAlphaArg2] = kD3dTaDiffuse;
+    if (!SetTextureStageState(/*stage=*/0,
+                              kD3dTssColorOp,
+                              kD3dTopModulate,
+                              "XYZ|TEX1: SetTextureStageState(COLOROP=MODULATE) succeeds")) {
+      return false;
+    }
+    if (!SetTextureStageState(/*stage=*/0,
+                              kD3dTssColorArg1,
+                              kD3dTaTexture,
+                              "XYZ|TEX1: SetTextureStageState(COLORARG1=TEXTURE) succeeds")) {
+      return false;
+    }
+    if (!SetTextureStageState(/*stage=*/0,
+                              kD3dTssColorArg2,
+                              kD3dTaDiffuse,
+                              "XYZ|TEX1: SetTextureStageState(COLORARG2=DIFFUSE) succeeds")) {
+      return false;
+    }
+    if (!SetTextureStageState(/*stage=*/0,
+                              kD3dTssAlphaOp,
+                              kD3dTopSelectArg1,
+                              "XYZ|TEX1: SetTextureStageState(ALPHAOP=SELECTARG1) succeeds")) {
+      return false;
+    }
+    if (!SetTextureStageState(/*stage=*/0,
+                              kD3dTssAlphaArg1,
+                              kD3dTaTexture,
+                              "XYZ|TEX1: SetTextureStageState(ALPHAARG1=TEXTURE) succeeds")) {
+      return false;
+    }
+    if (!SetTextureStageState(/*stage=*/0,
+                              kD3dTssAlphaArg2,
+                              kD3dTaDiffuse,
+                              "XYZ|TEX1: SetTextureStageState(ALPHAARG2=DIFFUSE) succeeds")) {
+      return false;
     }
 
     const VertexXyzTex1 tri[3] = {
@@ -1940,16 +2003,6 @@ bool TestSetTextureStageStateUpdatesPsForTex1NoDiffuseFvfs() {
         return false;
       }
     }
-
-    const auto SetTextureStageState = [&](uint32_t stage, uint32_t state, uint32_t value, const char* msg) -> bool {
-      HRESULT hr2 = S_OK;
-      if (cleanup.device_funcs.pfnSetTextureStageState) {
-        hr2 = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, stage, state, value);
-      } else {
-        hr2 = aerogpu::device_set_texture_stage_state(cleanup.hDevice, stage, state, value);
-      }
-      return Check(hr2 == S_OK, msg);
-    };
 
     if (!SetTextureStageState(/*stage=*/0,
                               kD3dTssColorOp,
@@ -2626,9 +2679,8 @@ bool TestStageStateChangeRebindsShadersIfImplemented() {
       return Check(hr2 == S_OK, msg);
     }
     // Fallback for minimal portable builds that don't expose SetTextureStageState.
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    dev->texture_stage_states[stage][state] = value;
-    return true;
+    const HRESULT hr2 = aerogpu::device_set_texture_stage_state(cleanup.hDevice, stage, state, value);
+    return Check(hr2 == S_OK, msg);
   };
 
   // Ensure a known starting point for stage0 state (matches D3D9 defaults).
@@ -2937,8 +2989,14 @@ bool TestStage0OpExpansionSelectsShadersAndCaches() {
       }
     }
 
-    // Override stage0 state (D3D9 defaults are established by Device ctor, but
-    // tests mutate it directly to keep the harness small).
+    // Override stage0 state.
+    //
+    // NOTE: This test intentionally mutates `Device::texture_stage_states` directly
+    // (instead of calling SetTextureStageState repeatedly). The AeroGPU UMD updates
+    // the fixed-function stage0 PS selection on each SetTextureStageState call, so
+    // setting multiple states one-by-one would create intermediate PS variants and
+    // emit extra CREATE_SHADER_DXBC packets, making the caching assertions below
+    // (create exactly once across two draws) much noisier.
     {
       std::lock_guard<std::mutex> lock(dev->mutex);
       dev->texture_stage_states[0][kD3dTssColorOp] = c.color_op;

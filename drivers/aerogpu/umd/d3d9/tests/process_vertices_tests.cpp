@@ -1610,7 +1610,8 @@ void test_copy_xyzrhw_diffuse_infer_dest_stride_from_decl() {
   // Expected result: copy the first 20 bytes of each source vertex into the
   // destination stride. The fixed-function path zeros the full destination
   // stride to produce deterministic output for elements not written by the
-  // source FVF (e.g. dst has TEX0 but src does not), so TEX0 is cleared.
+  // source FVF/decl mapping (e.g. dst has TEX0 but src does not), so TEX0 is
+  // cleared.
   std::vector<uint8_t> expected = dst.storage;
   for (uint32_t i = 0; i < pv.VertexCount; ++i) {
     const size_t off = static_cast<size_t>(pv.DestIndex + i) * kDstStride;
