@@ -3,8 +3,11 @@
 #include <cstring>
  
 #include "aerogpu_d3d9_objects.h"
- 
+  
 namespace aerogpu {
+
+HRESULT AEROGPU_D3D9_CALL device_test_force_device_lost(D3DDDI_HDEVICE hDevice, HRESULT hr);
+
 namespace {
  
 // Stable device-lost HRESULT expected from hot DDIs.
@@ -106,13 +109,13 @@ bool TestDeviceLostDdiReturnsStableError() {
   if (!Check(dev != nullptr, "device pointer")) {
     return false;
   }
- 
-  // Manually force the device-lost state (portable build can't trigger real
-  // WDDM submission failures).
-  dev->device_lost.store(true, std::memory_order_release);
-  dev->device_lost_hr.store(static_cast<int32_t>(kStoredDeviceLostHr), std::memory_order_release);
-  dev->device_lost_reason.store(static_cast<uint32_t>(DeviceLostReason::WddmSubmitRender), std::memory_order_release);
- 
+  
+  // Force device-lost state (portable build can't trigger real WDDM submission failures).
+  hr = device_test_force_device_lost(create_dev.hDevice, kStoredDeviceLostHr);
+  if (!Check(hr == S_OK, "device_test_force_device_lost")) {
+    return false;
+  }
+  
   if (!Check(cleanup.device_funcs.pfnCheckDeviceState != nullptr, "CheckDeviceState must be available")) {
     return false;
   }

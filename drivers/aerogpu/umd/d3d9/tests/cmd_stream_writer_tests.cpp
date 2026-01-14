@@ -27637,9 +27637,11 @@ bool TestPatchCacheDistinguishesTexcoordSizeBetweenFloat1AndFloat2() {
   draw.pNumSegs = segs;
   draw.pRectPatchInfo = &info;
 
-  dev->patch_tessellate_count = 0;
-  dev->patch_cache_hit_count = 0;
-  dev->patch_cache.clear();
+  const uint64_t tessellate_base = dev->patch_tessellate_count;
+  const uint64_t cache_hit_base = dev->patch_cache_hit_count;
+  if (!Check(dev->patch_cache.empty(), "patch cache starts empty")) {
+    return false;
+  }
 
   // First draw: TEXCOORDSIZE1(0) (float1). Uses u only; v is ignored.
   constexpr uint32_t kTexcoordSize1Tex0 = 3u << 16u; // float1
@@ -27652,7 +27654,7 @@ bool TestPatchCacheDistinguishesTexcoordSizeBetweenFloat1AndFloat2() {
   if (!Check(hr == S_OK, "DrawRectPatch(float1)")) {
     return false;
   }
-  if (!Check(dev->patch_tessellate_count == 1, "DrawRectPatch(float1) tessellates once")) {
+  if (!Check(dev->patch_tessellate_count == tessellate_base + 1, "DrawRectPatch(float1) tessellates once")) {
     return false;
   }
 
@@ -27667,10 +27669,10 @@ bool TestPatchCacheDistinguishesTexcoordSizeBetweenFloat1AndFloat2() {
   if (!Check(hr == S_OK, "DrawRectPatch(float2)")) {
     return false;
   }
-  if (!Check(dev->patch_tessellate_count == 2, "DrawRectPatch(float2) does not reuse float1 tessellation")) {
+  if (!Check(dev->patch_tessellate_count == tessellate_base + 2, "DrawRectPatch(float2) does not reuse float1 tessellation")) {
     return false;
   }
-  if (!Check(dev->patch_cache_hit_count == 0, "DrawRectPatch(float2) does not increment cache hit count")) {
+  if (!Check(dev->patch_cache_hit_count == cache_hit_base, "DrawRectPatch(float2) does not increment cache hit count")) {
     return false;
   }
 

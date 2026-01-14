@@ -27337,6 +27337,17 @@ HRESULT AEROGPU_D3D9_CALL device_test_force_umd_private_features(D3DDDI_HDEVICE 
   return S_OK;
 }
 
+HRESULT AEROGPU_D3D9_CALL device_test_force_device_lost(D3DDDI_HDEVICE hDevice, HRESULT hr) {
+  if (!hDevice.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+  auto* dev = as_device(hDevice);
+  dev->device_lost.store(true, std::memory_order_release);
+  dev->device_lost_hr.store(static_cast<int32_t>(hr), std::memory_order_release);
+  dev->device_lost_reason.store(static_cast<uint32_t>(DeviceLostReason::WddmSubmitRender), std::memory_order_release);
+  return S_OK;
+}
+
 HRESULT AEROGPU_D3D9_CALL device_draw_primitive(
     D3DDDI_HDEVICE hDevice,
     D3DDDIPRIMITIVETYPE type,

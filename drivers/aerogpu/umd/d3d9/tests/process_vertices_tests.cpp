@@ -36,6 +36,7 @@ HRESULT AEROGPU_D3D9_CALL device_test_set_unmaterialized_user_shaders(
     D3DDDI_HDEVICE hDevice,
     D3D9DDI_HSHADER user_vs,
     D3D9DDI_HSHADER user_ps);
+HRESULT AEROGPU_D3D9_CALL device_test_force_device_lost(D3DDDI_HDEVICE hDevice, HRESULT hr);
 
 namespace {
 
@@ -281,8 +282,8 @@ void test_process_vertices_device_lost() {
   Device dev(&adapter);
   const D3DDDI_HDEVICE hDevice = make_device_handle(&dev);
 
-  dev.device_lost.store(true, std::memory_order_release);
-  dev.device_lost_hr.store(static_cast<int32_t>(E_FAIL), std::memory_order_release);
+  const HRESULT set_hr = device_test_force_device_lost(hDevice, E_FAIL);
+  assert(set_hr == S_OK);
 
   Resource dst;
   dst.kind = ResourceKind::Buffer;
