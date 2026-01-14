@@ -14,7 +14,7 @@ fn init_ipi_resets_target_ap_lapic_and_enters_wait_for_sipi() {
 
     // Dirty the AP's LAPIC state so we can verify INIT resets it.
     const LAPIC_SVR_OFF: u64 = 0xF0;
-    let dirty_svr = (1u32 << 8) | 0xFF;
+    let dirty_svr = (1u32 << 8) | 0x80;
     m.write_lapic_u32(1, LAPIC_SVR_OFF, dirty_svr);
     assert_eq!(m.read_lapic_u32(1, LAPIC_SVR_OFF), dirty_svr);
 
@@ -28,10 +28,11 @@ fn init_ipi_resets_target_ap_lapic_and_enters_wait_for_sipi() {
     m.write_lapic_u32(0, ICR_HIGH_OFF, icr_high);
     m.write_lapic_u32(0, ICR_LOW_OFF, icr_low);
 
-    // LAPIC SVR should reset to power-on default (0xFF with software-enable bit clear).
+    // LAPIC SVR should reset to the default spurious vector (0xFF). The platform keeps the LAPIC
+    // software-enable bit set so IOAPIC/MSI delivery continues to work after INIT.
     let svr = m.read_lapic_u32(1, LAPIC_SVR_OFF);
-    assert_eq!(svr, 0xFF);
-    assert_eq!(svr & (1 << 8), 0);
+    assert_eq!(svr & 0xFF, 0xFF);
+    assert_ne!(svr & (1 << 8), 0);
 
     // vCPU architectural state should be reset to a real-mode baseline and halted (wait-for-SIPI).
     let ap = m.vcpu_state(1).unwrap();
@@ -41,4 +42,3 @@ fn init_ipi_resets_target_ap_lapic_and_enters_wait_for_sipi() {
     assert_eq!(ap.rflags() & RFLAGS_IF, 0);
     assert_eq!(ap.msr.apic_base & IA32_APIC_BASE_BSP_BIT, 0);
 }
-

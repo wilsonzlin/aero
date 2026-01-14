@@ -244,21 +244,18 @@ fn browser_defaults_preset_is_valid_and_stable() {
 }
 
 #[test]
-fn cpu_by_index_nonzero_panics_with_smp_guidance() {
-    // `cpu_count > 1` is allowed so firmware can advertise a multi-CPU topology, but the canonical
-    // `Machine` still only executes vCPU0 today. Accessing other vCPU `CpuState`s should fail with
-    // an actionable message.
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let machine = Machine::new(MachineConfig {
-            cpu_count: 2,
-            ..Default::default()
-        })
-        .unwrap();
+fn cpu_by_index_out_of_range_panics_with_message() {
+    let machine = Machine::new(MachineConfig {
+        cpu_count: 2,
+        ..Default::default()
+    })
+    .unwrap();
 
-        let _ = machine.cpu_by_index(1);
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = machine.cpu_by_index(2);
     }));
 
-    let err = result.expect_err("expected cpu_by_index(1) to panic");
+    let err = result.expect_err("expected cpu_by_index(2) to panic");
     let msg = if let Some(s) = err.downcast_ref::<&str>() {
         (*s).to_string()
     } else if let Some(s) = err.downcast_ref::<String>() {
@@ -267,17 +264,6 @@ fn cpu_by_index_nonzero_panics_with_smp_guidance() {
         "<non-string panic payload>".to_string()
     };
 
-    assert!(msg.contains("SMP"), "message should mention SMP: {msg}");
-    assert!(
-        msg.contains("AP startup"),
-        "message should mention AP startup is missing: {msg}"
-    );
-    assert!(
-        msg.contains("LAPIC/IPI"),
-        "message should mention LAPIC/IPI is missing: {msg}"
-    );
-    assert!(
-        msg.contains("docs/21-smp.md"),
-        "message should point to SMP progress doc: {msg}"
-    );
+    assert!(msg.contains("out of range"), "message should mention range: {msg}");
+    assert!(msg.contains("cpu_count"), "message should mention cpu_count: {msg}");
 }

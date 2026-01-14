@@ -1029,20 +1029,13 @@ impl<'a> PerCpuSystemMemoryBus<'a> {
             // After INIT, application processors wait for a SIPI before executing.
             cpu.state.halted = true;
         }
-        if let Some(interrupts) = &self.interrupts {
-            interrupts.borrow().reset_lapic(apic_id);
-        }
     }
 
     fn reset_all_aps(&mut self) {
-        for (idx, cpu) in self.ap_cpus.iter_mut().enumerate() {
-            let apic_id = (idx + 1) as u8;
+        for cpu in self.ap_cpus.iter_mut() {
             vcpu_init::reset_ap_vcpu_to_init_state(cpu);
             set_cpu_apic_base_bsp_bit(cpu, false);
             cpu.state.halted = true;
-            if let Some(interrupts) = &self.interrupts {
-                interrupts.borrow().reset_lapic(apic_id);
-            }
         }
     }
 
@@ -1052,13 +1045,9 @@ impl<'a> PerCpuSystemMemoryBus<'a> {
             if Some(idx) == sender_idx {
                 continue;
             }
-            let apic_id = (idx + 1) as u8;
             vcpu_init::reset_ap_vcpu_to_init_state(cpu);
             set_cpu_apic_base_bsp_bit(cpu, false);
             cpu.state.halted = true;
-            if let Some(interrupts) = &self.interrupts {
-                interrupts.borrow().reset_lapic(apic_id);
-            }
         }
     }
     fn start_ap_by_apic_id(&mut self, apic_id: u8, vector: u8) {
