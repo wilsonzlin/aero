@@ -415,6 +415,7 @@ function Resolve-AeroWin7QemuMsixVectors {
 
   $helpText = $null
   if ($Vectors -le 0 -and (-not $ForceCheck)) { return 0 }
+  if ($DryRun) { return $Vectors }
 
   $helpText = Get-AeroWin7QemuDeviceHelpText -QemuSystem $QemuSystem -DeviceName $DeviceName
   if ($helpText -notmatch "(?m)^\s*vectors\b") {
@@ -5492,25 +5493,9 @@ if (-not [string]::IsNullOrEmpty($HttpLogPath)) {
     Write-Warning "Failed to prepare HTTP request log at '$HttpLogPath' (disabling HTTP log): $_"
     $HttpLogPath = ""
   }
-}
 
-Write-Host "Starting HTTP server on 127.0.0.1:$HttpPort$HttpPath ..."
-$httpLargePath = Get-AeroSelftestLargePath -Path $HttpPath
-Write-Host "  (large payload at 127.0.0.1:$HttpPort$httpLargePath, 1 MiB deterministic bytes)"
-Write-Host "  (guest: http://10.0.2.2:$HttpPort$HttpPath and http://10.0.2.2:$HttpPort$httpLargePath)"
-$httpListener = Start-AeroSelftestHttpServer -Port $HttpPort -Path $HttpPath
-
+$httpListener = $null
 $udpSocket = $null
-if ($DisableUdp) {
-  Write-Host "UDP echo server disabled (-DisableUdp)"
-} else {
-  Write-Host "Starting UDP echo server on 127.0.0.1:$UdpPort (guest: 10.0.2.2:$UdpPort) ..."
-  try {
-    $udpSocket = Start-AeroSelftestUdpEchoServer -Port $UdpPort
-  } catch {
-    throw "Failed to bind UDP echo server on 127.0.0.1:$UdpPort (port in use?): $_"
-  }
-}
 
 try {
   $qmpPort = $null
@@ -5848,6 +5833,23 @@ try {
       "-drive", $drive,
       "-device", $blk
     ) + $virtioSndArgs + $QemuExtraArgs
+  }
+
+  Write-Host "Starting HTTP server on 127.0.0.1:$HttpPort$HttpPath ..."
+  $httpLargePath = Get-AeroSelftestLargePath -Path $HttpPath
+  Write-Host "  (large payload at 127.0.0.1:$HttpPort$httpLargePath, 1 MiB deterministic bytes)"
+  Write-Host "  (guest: http://10.0.2.2:$HttpPort$HttpPath and http://10.0.2.2:$HttpPort$httpLargePath)"
+  $httpListener = Start-AeroSelftestHttpServer -Port $HttpPort -Path $HttpPath
+
+  if ($DisableUdp) {
+    Write-Host "UDP echo server disabled (-DisableUdp)"
+  } else {
+    Write-Host "Starting UDP echo server on 127.0.0.1:$UdpPort (guest: 10.0.2.2:$UdpPort) ..."
+    try {
+      $udpSocket = Start-AeroSelftestUdpEchoServer -Port $UdpPort
+    } catch {
+      throw "Failed to bind UDP echo server on 127.0.0.1:$UdpPort (port in use?): $_"
+    }
   }
 
   Write-Host "Launching QEMU:"
