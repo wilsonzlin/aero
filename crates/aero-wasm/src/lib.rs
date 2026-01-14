@@ -1563,6 +1563,21 @@ mod webhid_passthrough_bridge_tests {
         }]
     }
 
+    fn mouse_collections() -> Vec<webhid::HidCollectionInfo> {
+        vec![webhid::HidCollectionInfo {
+            usage_page: 0x01, // Generic Desktop
+            usage: 0x02,      // Mouse
+            collection_type: webhid::HidCollectionType::Application,
+            children: vec![],
+            input_reports: vec![webhid::HidReportInfo {
+                report_id: 0,
+                items: vec![make_minimal_item(0x09, 0x01)], // Button: Button 1
+            }],
+            output_reports: vec![],
+            feature_reports: vec![],
+        }]
+    }
+
     fn large_output_collections() -> Vec<webhid::HidCollectionInfo> {
         let mut item = make_minimal_item(0x01, 0x00); // Generic Desktop / Undefined
         item.report_count = 65;
@@ -1640,6 +1655,41 @@ mod webhid_passthrough_bridge_tests {
         assert_eq!(
             parse_interface_descriptor_fields(&bytes),
             Some((0x01, 0x01))
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn webhid_passthrough_bridge_infers_boot_mouse_interface_descriptor() {
+        let collections_json =
+            serde_wasm_bindgen::to_value(&mouse_collections()).expect("collections to JsValue");
+        let bridge = WebHidPassthroughBridge::new(
+            0x1234,
+            0x5678,
+            Some("WebHID".to_string()),
+            Some("Test Mouse".to_string()),
+            None,
+            collections_json,
+        )
+        .expect("WebHidPassthroughBridge::new ok");
+
+        let mut dev = bridge.as_usb_device();
+        let resp = dev.handle_control_request(
+            SetupPacket {
+                bm_request_type: 0x80,
+                b_request: 0x06,
+                w_value: 0x0200,
+                w_index: 0,
+                w_length: 256,
+            },
+            None,
+        );
+        let ControlResponse::Data(bytes) = resp else {
+            panic!("expected config descriptor bytes, got {resp:?}");
+        };
+
+        assert_eq!(
+            parse_interface_descriptor_fields(&bytes),
+            Some((0x01, 0x02))
         );
     }
 

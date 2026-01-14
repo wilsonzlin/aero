@@ -2190,6 +2190,21 @@ mod tests {
         }]
     }
 
+    fn mouse_collections() -> Vec<webhid::HidCollectionInfo> {
+        vec![webhid::HidCollectionInfo {
+            usage_page: 0x01, // Generic Desktop
+            usage: 0x02,      // Mouse
+            collection_type: webhid::HidCollectionType::Application,
+            children: vec![],
+            input_reports: vec![webhid::HidReportInfo {
+                report_id: 0,
+                items: vec![make_minimal_item(0x09, 0x01)], // Button: Button 1
+            }],
+            output_reports: vec![],
+            feature_reports: vec![],
+        }]
+    }
+
     fn parse_interface_descriptor_fields(bytes: &[u8]) -> Option<(u8, u8)> {
         const INTERFACE_DESC_OFFSET: usize = 9;
         if bytes.len() < INTERFACE_DESC_OFFSET + 9 {
@@ -2242,6 +2257,47 @@ mod tests {
         assert_eq!(
             parse_interface_descriptor_fields(&bytes),
             Some((0x01, 0x01))
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn webhid_attach_infers_boot_mouse_interface_descriptor() {
+        let mut rt = UhciRuntime::new(0, 0).expect("UhciRuntime::new");
+
+        let collections = mouse_collections();
+        let collections_json =
+            serde_wasm_bindgen::to_value(&collections).expect("collections to JsValue");
+
+        rt.webhid_attach(
+            1,
+            0x1234,
+            0x5678,
+            Some("Test Mouse".to_string()),
+            collections_json,
+            None,
+        )
+        .expect("webhid_attach ok");
+
+        let state = rt.webhid_devices.get(&1).expect("device state present");
+        let mut dev = state.dev.clone();
+
+        let resp = dev.handle_control_request(
+            SetupPacket {
+                bm_request_type: 0x80,
+                b_request: 0x06,
+                w_value: 0x0200,
+                w_index: 0,
+                w_length: 256,
+            },
+            None,
+        );
+        let ControlResponse::Data(bytes) = resp else {
+            panic!("expected config descriptor bytes, got {resp:?}");
+        };
+
+        assert_eq!(
+            parse_interface_descriptor_fields(&bytes),
+            Some((0x01, 0x02))
         );
     }
 }
