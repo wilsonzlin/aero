@@ -74,11 +74,50 @@ bool TestStencilMasksPropagateIntoCmdPacket() {
   return true;
 }
 
+bool TestDepthDisableDisablesDepthWrites() {
+  Device dev{};
+  dev.cmd.reset();
+
+  DepthStencilState dss{};
+  dss.depth_enable = 0u;
+  dss.depth_write_mask = 1u; // D3D11_DEPTH_WRITE_MASK_ALL (ignored when depth_enable=0)
+  dss.depth_func = 2u; // D3D11_COMPARISON_LESS
+  dss.stencil_enable = 0u;
+  dss.stencil_read_mask = 0xFFu;
+  dss.stencil_write_mask = 0xFFu;
+
+  if (!Check(EmitDepthStencilStateCmdLocked(&dev, &dss), "EmitDepthStencilStateCmdLocked(depth disable)")) {
+    return false;
+  }
+  dev.cmd.finalize();
+
+  const uint8_t* stream = dev.cmd.data();
+  const size_t stream_len = dev.cmd.size();
+  if (!Check(stream_len >= sizeof(aerogpu_cmd_stream_header) + sizeof(aerogpu_cmd_set_depth_stencil_state),
+             "stream contains header + depth-stencil packet (depth disable)")) {
+    return false;
+  }
+
+  const size_t pkt_off = sizeof(aerogpu_cmd_stream_header);
+  const auto* pkt = reinterpret_cast<const aerogpu_cmd_set_depth_stencil_state*>(stream + pkt_off);
+  if (!Check(pkt->hdr.opcode == AEROGPU_CMD_SET_DEPTH_STENCIL_STATE, "packet opcode (depth disable)")) {
+    return false;
+  }
+  if (!Check(pkt->state.depth_enable == 0u, "depth_enable propagated")) {
+    return false;
+  }
+  if (!Check(pkt->state.depth_write_enable == 0u, "depth_write_enable forced 0 when depth disabled")) {
+    return false;
+  }
+  return true;
+}
+
 } // namespace
 
 int main() {
   bool ok = true;
   ok &= TestStencilMasksPropagateIntoCmdPacket();
+  ok &= TestDepthDisableDisablesDepthWrites();
 
   if (!ok) {
     return 1;
@@ -86,4 +125,3 @@ int main() {
   std::fprintf(stderr, "PASS: aerogpu_d3d10_11_depth_stencil_state_tests\n");
   return 0;
 }
-
