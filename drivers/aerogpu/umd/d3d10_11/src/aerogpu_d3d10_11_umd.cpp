@@ -148,6 +148,7 @@ using aerogpu::d3d10_11::bind_flags_to_usage_flags;
 using aerogpu::d3d10_11::bytes_per_pixel_aerogpu;
 using aerogpu::d3d10_11::dxgi_index_format_to_aerogpu;
 using aerogpu::d3d10_11::f32_bits;
+using aerogpu::d3d10_11::FromHandle;
 using aerogpu::d3d10_11::HashSemanticName;
 
 constexpr aerogpu_handle_t kInvalidHandle = 0;
@@ -255,36 +256,36 @@ constexpr uint32_t kD3D10DepthWriteMaskZero = 0;
 constexpr uint32_t kD3D10DepthWriteMaskAll = 1;
 
 // DXGI_FORMAT subset (numeric values from dxgiformat.h).
-constexpr uint32_t kDxgiFormatR32G32B32A32Float = 2;
-constexpr uint32_t kDxgiFormatR32G32B32Float = 6;
-constexpr uint32_t kDxgiFormatR32G32Float = 16;
-constexpr uint32_t kDxgiFormatR8G8B8A8Typeless = 27;
-constexpr uint32_t kDxgiFormatR8G8B8A8Unorm = 28;
-constexpr uint32_t kDxgiFormatR8G8B8A8UnormSrgb = 29;
-constexpr uint32_t kDxgiFormatBc1Typeless = 70;
-constexpr uint32_t kDxgiFormatBc1Unorm = 71;
-constexpr uint32_t kDxgiFormatBc1UnormSrgb = 72;
-constexpr uint32_t kDxgiFormatBc2Typeless = 73;
-constexpr uint32_t kDxgiFormatBc2Unorm = 74;
-constexpr uint32_t kDxgiFormatBc2UnormSrgb = 75;
-constexpr uint32_t kDxgiFormatBc3Typeless = 76;
-constexpr uint32_t kDxgiFormatBc3Unorm = 77;
-constexpr uint32_t kDxgiFormatBc3UnormSrgb = 78;
-constexpr uint32_t kDxgiFormatD32Float = 40;
-constexpr uint32_t kDxgiFormatD24UnormS8Uint = 45;
-constexpr uint32_t kDxgiFormatR16Uint = 57;
-constexpr uint32_t kDxgiFormatR32Uint = 42;
-constexpr uint32_t kDxgiFormatB5G6R5Unorm = 85;
-constexpr uint32_t kDxgiFormatB5G5R5A1Unorm = 86;
-constexpr uint32_t kDxgiFormatB8G8R8A8Unorm = 87;
-constexpr uint32_t kDxgiFormatB8G8R8X8Unorm = 88;
-constexpr uint32_t kDxgiFormatB8G8R8A8Typeless = 90;
-constexpr uint32_t kDxgiFormatB8G8R8A8UnormSrgb = 91;
-constexpr uint32_t kDxgiFormatB8G8R8X8Typeless = 92;
-constexpr uint32_t kDxgiFormatB8G8R8X8UnormSrgb = 93;
-constexpr uint32_t kDxgiFormatBc7Typeless = 97;
-constexpr uint32_t kDxgiFormatBc7Unorm = 98;
-constexpr uint32_t kDxgiFormatBc7UnormSrgb = 99;
+using aerogpu::d3d10_11::kDxgiFormatR32G32B32A32Float;
+using aerogpu::d3d10_11::kDxgiFormatR32G32B32Float;
+using aerogpu::d3d10_11::kDxgiFormatR32G32Float;
+using aerogpu::d3d10_11::kDxgiFormatR8G8B8A8Typeless;
+using aerogpu::d3d10_11::kDxgiFormatR8G8B8A8Unorm;
+using aerogpu::d3d10_11::kDxgiFormatR8G8B8A8UnormSrgb;
+using aerogpu::d3d10_11::kDxgiFormatBc1Typeless;
+using aerogpu::d3d10_11::kDxgiFormatBc1Unorm;
+using aerogpu::d3d10_11::kDxgiFormatBc1UnormSrgb;
+using aerogpu::d3d10_11::kDxgiFormatBc2Typeless;
+using aerogpu::d3d10_11::kDxgiFormatBc2Unorm;
+using aerogpu::d3d10_11::kDxgiFormatBc2UnormSrgb;
+using aerogpu::d3d10_11::kDxgiFormatBc3Typeless;
+using aerogpu::d3d10_11::kDxgiFormatBc3Unorm;
+using aerogpu::d3d10_11::kDxgiFormatBc3UnormSrgb;
+using aerogpu::d3d10_11::kDxgiFormatD32Float;
+using aerogpu::d3d10_11::kDxgiFormatD24UnormS8Uint;
+using aerogpu::d3d10_11::kDxgiFormatR16Uint;
+using aerogpu::d3d10_11::kDxgiFormatR32Uint;
+using aerogpu::d3d10_11::kDxgiFormatB5G6R5Unorm;
+using aerogpu::d3d10_11::kDxgiFormatB5G5R5A1Unorm;
+using aerogpu::d3d10_11::kDxgiFormatB8G8R8A8Unorm;
+using aerogpu::d3d10_11::kDxgiFormatB8G8R8X8Unorm;
+using aerogpu::d3d10_11::kDxgiFormatB8G8R8A8Typeless;
+using aerogpu::d3d10_11::kDxgiFormatB8G8R8A8UnormSrgb;
+using aerogpu::d3d10_11::kDxgiFormatB8G8R8X8Typeless;
+using aerogpu::d3d10_11::kDxgiFormatB8G8R8X8UnormSrgb;
+using aerogpu::d3d10_11::kDxgiFormatBc7Typeless;
+using aerogpu::d3d10_11::kDxgiFormatBc7Unorm;
+using aerogpu::d3d10_11::kDxgiFormatBc7UnormSrgb;
 
 // D3D_FEATURE_LEVEL subset (numeric values from d3dcommon.h).
 constexpr uint32_t kD3DFeatureLevel10_0 = 0xA000;
@@ -913,12 +914,6 @@ struct AeroGpuDevice {
     cmd.reset();
   }
 };
-
-
-template <typename THandle, typename TObject>
-TObject* FromHandle(THandle h) {
-  return reinterpret_cast<TObject*>(h.pDrvPrivate);
-}
 
 void atomic_max_u64(std::atomic<uint64_t>* target, uint64_t value) {
   if (!target) {

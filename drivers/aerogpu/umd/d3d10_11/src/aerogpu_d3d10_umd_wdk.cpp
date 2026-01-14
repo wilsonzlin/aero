@@ -195,63 +195,40 @@ constexpr uint32_t AlignUpU32(uint32_t value, uint32_t alignment) {
 }
 
 // DXGI_FORMAT subset (numeric values from dxgiformat.h).
-constexpr uint32_t kDxgiFormatR32G32B32A32Float = 2;
-constexpr uint32_t kDxgiFormatR32G32B32Float = 6;
-constexpr uint32_t kDxgiFormatR32G32Float = 16;
-constexpr uint32_t kDxgiFormatR8G8B8A8Typeless = 27;
-constexpr uint32_t kDxgiFormatR8G8B8A8Unorm = 28;
-constexpr uint32_t kDxgiFormatR8G8B8A8UnormSrgb = 29;
-constexpr uint32_t kDxgiFormatBc1Typeless = 70;
-constexpr uint32_t kDxgiFormatBc1Unorm = 71;
-constexpr uint32_t kDxgiFormatBc1UnormSrgb = 72;
-constexpr uint32_t kDxgiFormatBc2Typeless = 73;
-constexpr uint32_t kDxgiFormatBc2Unorm = 74;
-constexpr uint32_t kDxgiFormatBc2UnormSrgb = 75;
-constexpr uint32_t kDxgiFormatBc3Typeless = 76;
-constexpr uint32_t kDxgiFormatBc3Unorm = 77;
-constexpr uint32_t kDxgiFormatBc3UnormSrgb = 78;
-constexpr uint32_t kDxgiFormatD32Float = 40;
-constexpr uint32_t kDxgiFormatD24UnormS8Uint = 45;
-constexpr uint32_t kDxgiFormatR16Uint = 57;
-constexpr uint32_t kDxgiFormatR32Uint = 42;
-constexpr uint32_t kDxgiFormatB5G6R5Unorm = 85;
-constexpr uint32_t kDxgiFormatB5G5R5A1Unorm = 86;
-constexpr uint32_t kDxgiFormatB8G8R8A8Unorm = 87;
-constexpr uint32_t kDxgiFormatB8G8R8X8Unorm = 88;
-constexpr uint32_t kDxgiFormatB8G8R8A8Typeless = 90;
-constexpr uint32_t kDxgiFormatB8G8R8A8UnormSrgb = 91;
-constexpr uint32_t kDxgiFormatB8G8R8X8Typeless = 92;
-constexpr uint32_t kDxgiFormatB8G8R8X8UnormSrgb = 93;
-constexpr uint32_t kDxgiFormatBc7Typeless = 97;
-constexpr uint32_t kDxgiFormatBc7Unorm = 98;
-constexpr uint32_t kDxgiFormatBc7UnormSrgb = 99;
+using aerogpu::d3d10_11::kDxgiFormatR32G32B32A32Float;
+using aerogpu::d3d10_11::kDxgiFormatR32G32B32Float;
+using aerogpu::d3d10_11::kDxgiFormatR32G32Float;
+using aerogpu::d3d10_11::kDxgiFormatR8G8B8A8Typeless;
+using aerogpu::d3d10_11::kDxgiFormatR8G8B8A8Unorm;
+using aerogpu::d3d10_11::kDxgiFormatR8G8B8A8UnormSrgb;
+using aerogpu::d3d10_11::kDxgiFormatBc1Typeless;
+using aerogpu::d3d10_11::kDxgiFormatBc1Unorm;
+using aerogpu::d3d10_11::kDxgiFormatBc1UnormSrgb;
+using aerogpu::d3d10_11::kDxgiFormatBc2Typeless;
+using aerogpu::d3d10_11::kDxgiFormatBc2Unorm;
+using aerogpu::d3d10_11::kDxgiFormatBc2UnormSrgb;
+using aerogpu::d3d10_11::kDxgiFormatBc3Typeless;
+using aerogpu::d3d10_11::kDxgiFormatBc3Unorm;
+using aerogpu::d3d10_11::kDxgiFormatBc3UnormSrgb;
+using aerogpu::d3d10_11::kDxgiFormatD32Float;
+using aerogpu::d3d10_11::kDxgiFormatD24UnormS8Uint;
+using aerogpu::d3d10_11::kDxgiFormatR16Uint;
+using aerogpu::d3d10_11::kDxgiFormatR32Uint;
+using aerogpu::d3d10_11::kDxgiFormatB5G6R5Unorm;
+using aerogpu::d3d10_11::kDxgiFormatB5G5R5A1Unorm;
+using aerogpu::d3d10_11::kDxgiFormatB8G8R8A8Unorm;
+using aerogpu::d3d10_11::kDxgiFormatB8G8R8X8Unorm;
+using aerogpu::d3d10_11::kDxgiFormatB8G8R8A8Typeless;
+using aerogpu::d3d10_11::kDxgiFormatB8G8R8A8UnormSrgb;
+using aerogpu::d3d10_11::kDxgiFormatB8G8R8X8Typeless;
+using aerogpu::d3d10_11::kDxgiFormatB8G8R8X8UnormSrgb;
+using aerogpu::d3d10_11::kDxgiFormatBc7Typeless;
+using aerogpu::d3d10_11::kDxgiFormatBc7Unorm;
+using aerogpu::d3d10_11::kDxgiFormatBc7UnormSrgb;
 
-uint32_t f32_bits(float v) {
-  uint32_t bits = 0;
-  static_assert(sizeof(bits) == sizeof(v), "float must be 32-bit");
-  std::memcpy(&bits, &v, sizeof(bits));
-  return bits;
-}
-
-// FNV-1a 32-bit hash for stable semantic name IDs.
-//
-// D3D semantic matching is case-insensitive. The AeroGPU ILAY protocol only stores a 32-bit hash
-// (not the original string), so we canonicalize to ASCII uppercase before hashing.
-uint32_t HashSemanticName(const char* s) {
-  if (!s) {
-    return 0;
-  }
-  uint32_t hash = 2166136261u;
-  for (const unsigned char* p = reinterpret_cast<const unsigned char*>(s); *p; ++p) {
-    unsigned char c = *p;
-    if (c >= 'a' && c <= 'z') {
-      c = static_cast<unsigned char>(c - 'a' + 'A');
-    }
-    hash ^= c;
-    hash *= 16777619u;
-  }
-  return hash;
-}
+using aerogpu::d3d10_11::f32_bits;
+using aerogpu::d3d10_11::HashSemanticName;
+using aerogpu::d3d10_11::FromHandle;
 
 static bool D3d9FormatToDxgi(uint32_t d3d9_format, uint32_t* dxgi_format_out, uint32_t* bpp_out) {
   return aerogpu::shared_surface::D3d9FormatToDxgi(d3d9_format, dxgi_format_out, bpp_out);
@@ -1201,11 +1178,6 @@ struct AeroGpuDevice {
     live_cookie = 0;
   }
 };
-
-template <typename THandle, typename TObject>
-TObject* FromHandle(THandle h) {
-  return reinterpret_cast<TObject*>(h.pDrvPrivate);
-}
 
 template <typename Fn, typename Handle, typename... Args>
 decltype(auto) CallCbMaybeHandle(Fn fn, Handle handle, Args&&... args) {
