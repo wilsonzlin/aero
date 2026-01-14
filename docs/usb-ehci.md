@@ -55,7 +55,7 @@ Current code locations:
 - Rust EHCI controller core: `crates/aero-usb/src/ehci/{mod.rs, regs.rs, hub.rs, schedule_async.rs, schedule_periodic.rs}`
 - Rust EHCI tests: `crates/aero-usb/tests/ehci*.rs`
 - Browser PCI device wrapper (worker runtime): `web/src/io/devices/ehci.ts` (+ `ehci.test.ts`)
-- Native PCI identity stub (not a full controller yet): `crates/devices/src/usb/ehci.rs`
+- Native PCI device wrapper (MMIO BAR + IRQ + DMA gating): `crates/devices/src/usb/ehci.rs`
 
 Important: the async + periodic schedule engines now exist in `aero-usb`. The sections below document
 the intended contracts and call out remaining limitations (e.g. no iTD/siTD, no split/TT).
