@@ -48,11 +48,11 @@ use aero_io_snapshot::io::storage::state::{
     NvmeCompletionQueueState, NvmeControllerState, NvmeSubmissionQueueState,
 };
 use aero_platform::interrupts::msi::MsiTrigger;
-use aero_storage::VirtualDisk;
+use aero_storage::{VirtualDisk, SECTOR_SIZE};
 use memory::{MemoryBus, MmioHandler};
 const PAGE_SIZE: usize = 4096;
 const PCI_COMMAND_MEM_ENABLE: u16 = 1 << 1;
-const NVME_LBA_SIZE: u64 = 512;
+const NVME_LBA_SIZE: u64 = SECTOR_SIZE as u64;
 // DoS guard: cap per-request DMA buffers. This should match the MDTS value we advertise in
 // Identify Controller (4MiB for 4KiB pages).
 const NVME_MAX_DMA_BYTES: usize = 4 * 1024 * 1024;
