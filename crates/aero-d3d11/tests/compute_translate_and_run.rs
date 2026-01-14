@@ -218,7 +218,7 @@ fn compute_translate_and_run_copy_raw_srv_to_uav() {
         rt.execute(&w.finish()).expect("execute command stream");
         rt.poll_wait();
         let got = rt.read_buffer(READBACK, 0, 16).await.expect("read buffer");
-        assert_eq!(got.as_slice(), bytemuck::cast_slice(&src_words));
+        assert_eq!(got.as_slice(), bytemuck::cast_slice::<u32, u8>(&src_words));
     });
 }
 
@@ -386,6 +386,6 @@ fn compute_translate_and_run_copy_structured_srv_to_uav() {
         rt.execute(&w.finish()).expect("execute command stream");
         rt.poll_wait();
         let got = rt.read_buffer(READBACK, 0, 16).await.expect("read buffer");
-        assert_eq!(got.as_slice(), bytemuck::cast_slice(&expected));
+        assert_eq!(got.as_slice(), bytemuck::cast_slice::<u32, u8>(&expected));
     });
 }
