@@ -174,6 +174,46 @@ fn ep0_transfer_engine_self_link_faults_and_emits_event() {
 }
 
 #[test]
+fn ep0_transfer_engine_link_loop_is_bounded_and_faults() {
+    // A malformed ring can contain a loop of Link TRBs that never reaches a transfer TRB. Ensure we
+    // don't burn an unbounded per-doorbell budget following links forever.
+    let mut mem = CountingMem::new(0x20_000, 100, 32);
+
+    let tr_ring = 0x1000u64;
+    let event_ring = 0x2000u64;
+
+    // Ring consists of two Link TRBs pointing at each other (A -> B -> A).
+    let mut link_a = Trb::new(tr_ring + TRB_LEN as u64, 0, 0);
+    link_a.set_cycle(true);
+    link_a.set_trb_type(TrbType::Link);
+    link_a.set_link_toggle_cycle(false);
+    link_a.write_to(&mut mem, tr_ring);
+
+    let mut link_b = Trb::new(tr_ring, 0, 0);
+    link_b.set_cycle(true);
+    link_b.set_trb_type(TrbType::Link);
+    link_b.set_link_toggle_cycle(false);
+    link_b.write_to(&mut mem, tr_ring + TRB_LEN as u64);
+
+    let mut xhci = Ep0TransferEngine::new_with_ports(1);
+    xhci.set_event_ring(event_ring, 8);
+    xhci.hub_mut().attach(0, Box::new(DummyDevice::default()));
+
+    let slot_id = xhci.enable_slot(0).expect("slot allocation");
+    assert!(xhci.configure_ep0(slot_id, tr_ring, true, 64));
+
+    xhci.ring_doorbell(&mut mem, slot_id, 1);
+
+    let ev = Trb::read_from(&mut mem, event_ring);
+    assert_eq!(ev.trb_type(), TrbType::TransferEvent);
+    assert_eq!(ev.completion_code_raw(), CompletionCode::TrbError.as_u8());
+    assert!(
+        ev.parameter == tr_ring || ev.parameter == tr_ring + TRB_LEN as u64,
+        "expected error event to reference a link TRB in the loop"
+    );
+}
+
+#[test]
 fn ep0_transfer_engine_data_stage_work_is_bounded_per_doorbell() {
     // Control DATA transfers are packetized and can be guest-amplified by choosing a tiny
     // max-packet-size. Ensure we bound the amount of per-call work so a single doorbell can't

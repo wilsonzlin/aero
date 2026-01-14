@@ -620,6 +620,11 @@ impl XhciTransferExecutor {
 
 const MAX_TRBS_PER_RUN: usize = 1024;
 const MAX_CONTROL_DATA_LEN: u32 = 64 * 1024;
+/// Maximum number of consecutive Link TRBs we'll follow while processing EP0.
+///
+/// This bounds malformed rings (e.g. Link TRB loops) so a guest cannot force the controller to burn
+/// `MAX_TRBS_PER_RUN` work every tick without ever reaching a transfer TRB.
+const MAX_EP0_LINK_TRBS_PER_RUN: usize = 32;
 /// Maximum number of control DATA packets processed per `ControlEndpoint::process` call.
 ///
 /// Control transfer DATA TRBs can specify up to `MAX_CONTROL_DATA_LEN` bytes. Processing that entire
@@ -926,6 +931,7 @@ impl ControlEndpoint {
         }
 
         let mut processed_any = false;
+        let mut consecutive_links = 0usize;
 
         for _ in 0..MAX_TRBS_PER_RUN {
             if now_ms < self.retry_at_ms {
@@ -946,6 +952,11 @@ impl ControlEndpoint {
 
             // Link TRBs are transparent to the endpoint state machine.
             if matches!(trb.trb_type(), XhciTrbType::Link) {
+                consecutive_links += 1;
+                if consecutive_links > MAX_EP0_LINK_TRBS_PER_RUN {
+                    self.fault_ring(mem, events, trb_addr, endpoint_id, slot_id);
+                    break;
+                }
                 if self.ring.consume(&trb).is_err() {
                     self.fault_ring(mem, events, trb_addr, endpoint_id, slot_id);
                     break;
@@ -953,6 +964,7 @@ impl ControlEndpoint {
                 processed_any = true;
                 continue;
             }
+            consecutive_links = 0;
 
             match &mut self.state {
                 ControlEp0State::ExpectSetup => {
