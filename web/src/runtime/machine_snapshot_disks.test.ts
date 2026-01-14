@@ -240,6 +240,96 @@ describe("runtime/machine_snapshot_disks", () => {
     expect(events).toEqual(["restore", "take", "aerospar"]);
   });
 
+  it("detects aerosparse base disks by header even when the file name has a non-.aerospar suffix", async () => {
+    const events: string[] = [];
+    const restore_snapshot_from_opfs = vi.fn(async (_path: string) => {
+      events.push("restore");
+    });
+    const take_restored_disk_overlays = vi.fn(() => {
+      events.push("take");
+      return [{ disk_id: 1, base_image: "aero/disks/win7.base", overlay_image: "" }];
+    });
+    const set_disk_aerospar_opfs_open = vi.fn(async (_path: string) => {
+      events.push("aerospar");
+    });
+
+    const machine = {
+      restore_snapshot_from_opfs,
+      take_restored_disk_overlays,
+      set_disk_aerospar_opfs_open,
+    } as unknown as InstanceType<WasmApi["Machine"]>;
+
+    const api = {
+      Machine: {
+        disk_id_primary_hdd: () => 1,
+        disk_id_install_media: () => 2,
+      },
+    } as unknown as WasmApi;
+
+    const originalNavigatorDesc = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+    try {
+      const header = new Uint8Array(64);
+      // "AEROSPAR"
+      header.set([0x41, 0x45, 0x52, 0x4f, 0x53, 0x50, 0x41, 0x52], 0);
+      const dv = new DataView(header.buffer);
+      dv.setUint32(8, 1, true); // version
+      dv.setUint32(12, 64, true); // header size
+      dv.setUint32(16, 1024 * 1024, true); // block size
+      const file = new Blob([header]);
+
+      const fileHandle = {
+        getFile: async () => file,
+      };
+      const disksDir = {
+        getDirectoryHandle: async (_name: string) => {
+          throw new Error("unexpected nested directory");
+        },
+        getFileHandle: async (name: string) => {
+          if (name !== "win7.base") throw new Error(`unexpected file request: ${name}`);
+          return fileHandle;
+        },
+      };
+      const aeroDir = {
+        getDirectoryHandle: async (name: string) => {
+          if (name !== "disks") throw new Error(`unexpected directory request: ${name}`);
+          return disksDir;
+        },
+        getFileHandle: async (_name: string) => {
+          throw new Error("unexpected file request at aero/");
+        },
+      };
+      const rootDir = {
+        getDirectoryHandle: async (name: string) => {
+          if (name !== "aero") throw new Error(`unexpected directory request: ${name}`);
+          return aeroDir;
+        },
+        getFileHandle: async (_name: string) => {
+          throw new Error("unexpected file request at root");
+        },
+      };
+
+      Object.defineProperty(globalThis, "navigator", {
+        value: {
+          storage: {
+            getDirectory: async () => rootDir,
+          },
+        },
+        configurable: true,
+      });
+
+      await restoreMachineSnapshotFromOpfsAndReattachDisks({ api, machine, path: "state/test.snap", logPrefix: "test" });
+
+      expect(set_disk_aerospar_opfs_open).toHaveBeenCalledWith("aero/disks/win7.base");
+      expect(events).toEqual(["restore", "take", "aerospar"]);
+    } finally {
+      if (originalNavigatorDesc) {
+        Object.defineProperty(globalThis, "navigator", originalNavigatorDesc);
+      } else {
+        delete (globalThis as unknown as { navigator?: unknown }).navigator;
+      }
+    }
+  });
+
   it("prefers Machine.set_disk_cow_opfs_open when available (supports non-raw base images)", async () => {
     const events: string[] = [];
     const restore_snapshot_from_opfs = vi.fn(async (_path: string) => {

@@ -204,13 +204,22 @@ export async function reattachMachineSnapshotDisks(opts: {
 
     if (diskId === (diskIdPrimary >>> 0)) {
       if (!overlay) {
-        const isAerosparBase = base.toLowerCase().endsWith(".aerospar");
+        const openAerospar =
+          typeof setDiskAerosparOpenAndSetOverlayRef === "function" ? setDiskAerosparOpenAndSetOverlayRef : setDiskAerosparOpen;
+        const canOpenAerospar = typeof openAerospar === "function";
+
+        // Prefer the aerosparse disk open path when possible. Disk overlay refs only preserve the OPFS
+        // path string (not the disk format metadata), and callers may reuse stable file names like
+        // `win7.base` even when the underlying file is an `.aerospar` image. Detect this case via the
+        // header when we can.
+        let isAerosparBase = base.toLowerCase().endsWith(".aerospar");
+        if (!isAerosparBase && canOpenAerospar) {
+          const blockSize = await tryReadAerosparseBlockSizeBytesFromOpfs(base, prefix);
+          isAerosparBase = blockSize != null;
+        }
+
         if (isAerosparBase) {
-          const openAerospar =
-            typeof setDiskAerosparOpenAndSetOverlayRef === "function"
-              ? setDiskAerosparOpenAndSetOverlayRef
-              : setDiskAerosparOpen;
-          if (typeof openAerospar !== "function") {
+          if (!canOpenAerospar) {
             throw new Error(
               `${prefix} Snapshot restore reported an aerosparse base disk for disk_id=${diskId}, but this WASM build cannot open it (missing Machine.set_disk_aerospar_opfs_open* exports).`,
             );
