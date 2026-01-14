@@ -1836,7 +1836,6 @@ fn find_else_first_op_index(ops: &[Instruction], if_index: usize) -> Option<usiz
 struct IfBounds {
     else_idx: Option<usize>,
     endif_idx: usize,
-    has_nested: bool,
 }
 
 fn find_if_bounds(ops: &[Instruction], if_index: usize) -> Option<IfBounds> {
@@ -1844,21 +1843,14 @@ fn find_if_bounds(ops: &[Instruction], if_index: usize) -> Option<IfBounds> {
     // depth so we ignore inner `else`/`endif` tokens.
     let mut depth = 0usize;
     let mut else_idx = None;
-    let mut has_nested = false;
     for (idx, inst) in ops.iter().enumerate().skip(if_index + 1) {
         match inst.op {
-            Op::If | Op::Ifc => {
-                if depth == 0 {
-                    has_nested = true;
-                }
-                depth += 1;
-            }
+            Op::If | Op::Ifc => depth += 1,
             Op::EndIf => {
                 if depth == 0 {
                     return Some(IfBounds {
                         else_idx,
                         endif_idx: idx,
-                        has_nested,
                     });
                 }
                 depth -= 1;
@@ -2129,6 +2121,98 @@ fn try_emit_predicated_assignment(
 }
 
 #[allow(clippy::too_many_arguments)]
+fn try_emit_predicated_ops_range(
+    wgsl: &mut String,
+    indent: usize,
+    ops: &[Instruction],
+    start: usize,
+    end: usize,
+    pred: &str,
+    const_defs_f32: &BTreeMap<u16, [f32; 4]>,
+    const_base: u32,
+    stage: ShaderStage,
+    sampler_texture_types: &HashMap<u16, TextureType>,
+) -> bool {
+    let mut i = start;
+    while i < end {
+        let inst = &ops[i];
+        match inst.op {
+            Op::Nop => {
+                i += 1;
+            }
+            Op::If | Op::Ifc => {
+                let bounds = match find_if_bounds(ops, i) {
+                    Some(b) => b,
+                    None => return false,
+                };
+                if bounds.endif_idx >= end {
+                    return false;
+                }
+                let cond = match if_condition_expr(inst, const_defs_f32, const_base) {
+                    Some(cond) => cond,
+                    None => return false,
+                };
+
+                let then_start = i + 1;
+                let then_end = bounds.else_idx.unwrap_or(bounds.endif_idx);
+                let then_pred = format!("({pred}) && ({cond})");
+                if !try_emit_predicated_ops_range(
+                    wgsl,
+                    indent,
+                    ops,
+                    then_start,
+                    then_end,
+                    &then_pred,
+                    const_defs_f32,
+                    const_base,
+                    stage,
+                    sampler_texture_types,
+                ) {
+                    return false;
+                }
+
+                if let Some(else_idx) = bounds.else_idx {
+                    let else_pred = format!("({pred}) && !({cond})");
+                    if !try_emit_predicated_ops_range(
+                        wgsl,
+                        indent,
+                        ops,
+                        else_idx + 1,
+                        bounds.endif_idx,
+                        &else_pred,
+                        const_defs_f32,
+                        const_base,
+                        stage,
+                        sampler_texture_types,
+                    ) {
+                        return false;
+                    }
+                }
+
+                i = bounds.endif_idx + 1;
+            }
+            Op::Else | Op::EndIf => return false,
+            _ => {
+                if !try_emit_predicated_assignment(
+                    wgsl,
+                    indent,
+                    pred,
+                    inst,
+                    const_defs_f32,
+                    const_base,
+                    stage,
+                    sampler_texture_types,
+                ) {
+                    return false;
+                }
+                i += 1;
+            }
+        }
+    }
+    true
+}
+
+#[allow(clippy::too_many_arguments)]
 fn try_emit_uniform_control_flow_if_predicated_block(
     wgsl: &mut String,
     indent: usize,
@@ -2148,9 +2232,6 @@ fn try_emit_uniform_control_flow_if_predicated_block(
     }
 
     let bounds = find_if_bounds(ops, if_index)?;
-    if bounds.has_nested {
-        return None;
-    }
 
     let then_start = if_index + 1;
     let then_end = bounds.else_idx.unwrap_or(bounds.endif_idx);
@@ -2185,41 +2266,35 @@ fn try_emit_uniform_control_flow_if_predicated_block(
 
     // Emit into a temporary buffer so we don't partially rewrite on failure.
     let mut tmp = String::new();
-    for inst in &ops[then_start..then_end] {
-        if inst.op == Op::Nop {
-            continue;
-        }
-        if !try_emit_predicated_assignment(
+    if !try_emit_predicated_ops_range(
+        &mut tmp,
+        indent,
+        ops,
+        then_start,
+        then_end,
+        &cond,
+        const_defs_f32,
+        const_base,
+        stage,
+        sampler_texture_types,
+    ) {
+        return None;
+    }
+    if let Some(else_idx) = bounds.else_idx {
+        let pred = format!("!({cond})");
+        if !try_emit_predicated_ops_range(
             &mut tmp,
             indent,
-            &cond,
-            inst,
+            ops,
+            else_idx + 1,
+            bounds.endif_idx,
+            &pred,
             const_defs_f32,
             const_base,
             stage,
             sampler_texture_types,
         ) {
             return None;
-        }
-    }
-    if let Some(else_idx) = bounds.else_idx {
-        let pred = format!("!({cond})");
-        for inst in &ops[(else_idx + 1)..bounds.endif_idx] {
-            if inst.op == Op::Nop {
-                continue;
-            }
-            if !try_emit_predicated_assignment(
-                &mut tmp,
-                indent,
-                &pred,
-                inst,
-                const_defs_f32,
-                const_base,
-                stage,
-                sampler_texture_types,
-            ) {
-                return None;
-            }
         }
     }
 
