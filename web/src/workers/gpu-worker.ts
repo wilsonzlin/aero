@@ -596,12 +596,57 @@ let hwCursorLastVramMissingEventKey: string | null = null;
 const getCursorPresenter = (): CursorPresenter | null => presenter as unknown as CursorPresenter | null;
 
 // -----------------------------------------------------------------------------
-// VM snapshot pause/resume (guest-memory write barrier)
+// VM snapshot pause/resume (guest-memory access barrier)
 // -----------------------------------------------------------------------------
 
 let snapshotPaused = false;
 let snapshotResumePromise: Promise<void> | null = null;
 let snapshotResumeResolve: (() => void) | null = null;
+
+type SnapshotGuestMemoryBackup = {
+  guestU8: Uint8Array | null;
+  guestU32: Uint32Array | null;
+  vramU8: Uint8Array | null;
+  vramU32: Uint32Array | null;
+};
+
+// When snapshot-paused, we must not touch guest RAM/VRAM. To enforce this across all
+// code paths (present/tick/screenshot/etc), we temporarily clear the worker's guest
+// memory views and restore them on resume.
+let snapshotGuestMemoryBackup: SnapshotGuestMemoryBackup | null = null;
+
+const disableGuestMemoryAccessForSnapshot = (): void => {
+  if (snapshotGuestMemoryBackup) return;
+  snapshotGuestMemoryBackup = { guestU8, guestU32, vramU8, vramU32 };
+  guestU8 = null;
+  guestU32 = null;
+  vramU8 = null;
+  vramU32 = null;
+  if (aerogpuWasm) {
+    try {
+      syncAerogpuWasmMemoryViews(aerogpuWasm);
+    } catch {
+      // Ignore; wasm module may not be initialized.
+    }
+  }
+};
+
+const restoreGuestMemoryAccessAfterSnapshot = (): void => {
+  const backup = snapshotGuestMemoryBackup;
+  if (!backup) return;
+  snapshotGuestMemoryBackup = null;
+  guestU8 = backup.guestU8;
+  guestU32 = backup.guestU32;
+  vramU8 = backup.vramU8;
+  vramU32 = backup.vramU32;
+  if (aerogpuWasm) {
+    try {
+      syncAerogpuWasmMemoryViews(aerogpuWasm);
+    } catch {
+      // Ignore; wasm module may not be initialized.
+    }
+  }
+};
 
 const waitUntilSnapshotResumed = async (): Promise<void> => {
   while (snapshotPaused) {
@@ -615,6 +660,7 @@ const waitUntilSnapshotResumed = async (): Promise<void> => {
 };
 
 const handleSnapshotResume = (): void => {
+  restoreGuestMemoryAccessAfterSnapshot();
   snapshotPaused = false;
   snapshotResumeResolve?.();
   snapshotResumePromise = null;
@@ -3231,6 +3277,13 @@ const handleTick = async () => {
     return;
   }
 
+  if (snapshotPaused) {
+    // Snapshot pause must act as a guest-memory access barrier (no scanout/cursor readback).
+    // We keep the worker responsive (metrics/heartbeats), but avoid any guest RAM/VRAM touches.
+    maybePostMetrics();
+    return;
+  }
+
   syncHardwareCursorFromState();
 
   // When scanout is owned by a ScanoutState-programmed framebuffer (e.g. WDDM scanout or legacy
@@ -3834,6 +3887,9 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                 await inFlight.catch(() => {});
               }
             }
+            // Once paused, prevent *any* guest RAM/VRAM access (including scanout/cursor readback)
+            // until the coordinator resumes the worker.
+            disableGuestMemoryAccessForSnapshot();
             ctx.postMessage({ kind: "vm.snapshot.paused", requestId, ok: true } satisfies VmSnapshotPausedMessage);
           } catch (err) {
             ctx.postMessage({
@@ -4162,6 +4218,14 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
               new Promise((resolve) => setTimeout(resolve, 750)),
             ]);
             await maybeSendReady();
+          }
+
+          if (snapshotPaused) {
+            // Snapshot pause must not touch guest RAM/VRAM. Respond with a stub screenshot (the
+            // caller can retry after resume if desired).
+            const seqNow = frameState ? lastPresentedSeq : undefined;
+            postStub(typeof seqNow === "number" ? seqNow : undefined);
+            return;
           }
           const includeCursor = req.includeCursor === true;
 
