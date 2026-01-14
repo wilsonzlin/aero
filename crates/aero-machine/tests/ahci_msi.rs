@@ -3,7 +3,7 @@
 use aero_devices::a20_gate::A20_GATE_PORT;
 use aero_devices::pci::msi::PCI_CAP_ID_MSI;
 use aero_devices::pci::profile::{AHCI_ABAR_BAR_INDEX, SATA_AHCI_ICH9};
-use aero_devices::pci::{PciBdf, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
+use aero_devices::pci::{MsiCapability, PciBdf, PciDevice, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_devices_storage::ata::ATA_CMD_IDENTIFY;
 use aero_machine::{Machine, MachineConfig};
 use aero_platform::interrupts::{
@@ -220,6 +220,137 @@ fn ahci_msi_masked_interrupt_sets_pending_and_redelivers_after_unmask() {
     // Second process: interrupt condition is still asserted, so delivery should occur due to the
     // pending bit even without a new rising edge.
     m.process_ahci();
+    assert_eq!(
+        PlatformInterruptController::get_pending(&*interrupts.borrow()),
+        Some(vector)
+    );
+}
+
+#[test]
+fn ahci_msi_unprogrammed_address_sets_pending_and_delivers_after_programming() {
+    let mut m = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_ahci: true,
+        // Keep the test focused on PCI + AHCI.
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    // Ensure high MMIO addresses decode correctly (avoid A20 aliasing).
+    m.io_write(A20_GATE_PORT, 1, 0x02);
+
+    let interrupts = m.platform_interrupts().expect("pc platform enabled");
+    interrupts
+        .borrow_mut()
+        .set_mode(PlatformInterruptMode::Apic);
+    assert_eq!(interrupts.borrow().mode(), PlatformInterruptMode::Apic);
+
+    let bdf = SATA_AHCI_ICH9.bdf;
+    let ahci = m.ahci().expect("AHCI should be enabled");
+
+    // Enable PCI memory decoding + bus mastering + INTx disable.
+    let cmd = cfg_read(&mut m, bdf, 0x04, 2) as u16;
+    cfg_write(
+        &mut m,
+        bdf,
+        0x04,
+        2,
+        u32::from(cmd | (1 << 1) | (1 << 2) | (1 << 10)),
+    );
+
+    // Enable MSI and program the vector, but leave the message address unprogrammed/invalid.
+    let base = find_capability(&mut m, bdf, PCI_CAP_ID_MSI).expect("AHCI should expose MSI");
+    let ctrl = cfg_read(&mut m, bdf, base + 0x02, 2) as u16;
+    let is_64bit = (ctrl & (1 << 7)) != 0;
+    let per_vector_masking = (ctrl & (1 << 8)) != 0;
+    assert!(per_vector_masking, "expected per-vector masking support");
+
+    let vector: u8 = 0x47;
+    // Address low dword left as 0: invalid LAPIC MSI address.
+    cfg_write(&mut m, bdf, base + 0x04, 4, 0);
+    if is_64bit {
+        cfg_write(&mut m, bdf, base + 0x08, 4, 0);
+        cfg_write(&mut m, bdf, base + 0x0c, 2, u32::from(vector));
+        cfg_write(&mut m, bdf, base + 0x10, 4, 0); // unmasked
+    } else {
+        cfg_write(&mut m, bdf, base + 0x08, 2, u32::from(vector));
+        cfg_write(&mut m, bdf, base + 0x0c, 4, 0); // unmasked
+    }
+    cfg_write(&mut m, bdf, base + 0x02, 2, u32::from(ctrl | 1)); // MSI enable
+
+    let abar = m
+        .pci_bar_base(bdf, AHCI_ABAR_BAR_INDEX)
+        .expect("AHCI BAR5 should exist");
+    assert_ne!(abar, 0);
+
+    // Guest memory layout for command list + table + DMA buffer.
+    let clb = 0x10000u64;
+    let fb = 0x11000u64;
+    let ctba = 0x12000u64;
+    let identify_buf = 0x13000u64;
+
+    // Program AHCI registers (port 0).
+    m.write_physical_u32(abar + HBA_GHC, GHC_IE | GHC_AE);
+    m.write_physical_u32(abar + PORT_BASE + PORT_REG_CLB, clb as u32);
+    m.write_physical_u32(abar + PORT_BASE + PORT_REG_CLBU, (clb >> 32) as u32);
+    m.write_physical_u32(abar + PORT_BASE + PORT_REG_FB, fb as u32);
+    m.write_physical_u32(abar + PORT_BASE + PORT_REG_FBU, (fb >> 32) as u32);
+    m.write_physical_u32(abar + PORT_BASE + PORT_REG_IE, PORT_IS_DHRS);
+    m.write_physical_u32(abar + PORT_BASE + PORT_REG_CMD, PORT_CMD_ST | PORT_CMD_FRE);
+
+    // Clear any prior port interrupt state and build an IDENTIFY command.
+    m.write_physical_u32(abar + PORT_BASE + PORT_REG_IS, PORT_IS_DHRS);
+    write_cmd_header(&mut m, clb, 0, ctba, 1, false);
+    write_cfis(&mut m, ctba, ATA_CMD_IDENTIFY, 0, 0);
+    write_prdt(&mut m, ctba, 0, identify_buf, 512);
+    m.write_physical_u32(abar + PORT_BASE + PORT_REG_CI, 1);
+
+    assert_eq!(
+        PlatformInterruptController::get_pending(&*interrupts.borrow()),
+        None
+    );
+
+    // First process: MSI is enabled but unprogrammed, so delivery is blocked and a pending bit is
+    // latched instead.
+    m.process_ahci();
+    m.poll_pci_intx_lines();
+    assert_eq!(
+        PlatformInterruptController::get_pending(&*interrupts.borrow()),
+        None
+    );
+
+    assert!(
+        ahci.borrow()
+            .config()
+            .capability::<MsiCapability>()
+            .is_some_and(|msi| (msi.pending_bits() & 1) != 0),
+        "MSI pending bit should latch in the device model when message address is invalid"
+    );
+
+    // Clear the interrupt condition before completing MSI programming so delivery relies solely on
+    // the pending bit.
+    m.write_physical_u32(abar + PORT_BASE + PORT_REG_IS, PORT_IS_DHRS);
+    m.process_ahci();
+    assert_eq!(
+        PlatformInterruptController::get_pending(&*interrupts.borrow()),
+        None
+    );
+
+    // Now program a valid MSI address; the next AHCI processing step should observe the pending
+    // bit and deliver without requiring a new rising edge.
+    cfg_write(&mut m, bdf, base + 0x04, 4, 0xfee0_0000);
+    if is_64bit {
+        cfg_write(&mut m, bdf, base + 0x08, 4, 0);
+    }
+    m.poll_pci_intx_lines();
+    m.process_ahci();
+
     assert_eq!(
         PlatformInterruptController::get_pending(&*interrupts.borrow()),
         Some(vector)
