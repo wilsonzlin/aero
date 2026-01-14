@@ -179,7 +179,7 @@ Key properties:
 - **Header is an array of 32-bit atomics** so it can be accessed from both Rust and JS via `AtomicU32` / `Int32Array + Atomics`.
 - **Double buffering** (`slot 0` and `slot 1`):
   - producer writes into the “back” slot, then publishes it by flipping `active_index` and incrementing `frame_seq`.
-- Producer also sets a `frame_dirty` flag (`SharedFramebufferHeaderIndex.FRAME_DIRTY`) on publish. This is a producer→consumer “new frame” / liveness flag that some implementations may `Atomics.wait` on. It can also be treated as a best-effort **consumer acknowledgement** (ACK): consumers clear it after they finish copying/presenting the active buffer, and producers may choose to throttle publishing until it is cleared to avoid overwriting a buffer that is still being read.
+- Producer also sets a `frame_dirty` flag (`SharedFramebufferHeaderIndex.FRAME_DIRTY`) on publish. This is a producer→consumer “new frame” / liveness flag. Implementations that want to block for new frames typically `Atomics.wait` on `frame_seq` (the canonical “new frame” address), and may also treat `frame_dirty` as a best-effort **consumer acknowledgement** (ACK): consumers clear it after they finish copying/presenting the active buffer, and producers may choose to throttle publishing until it is cleared to avoid overwriting a buffer that is still being read.
   (Not to be confused with the frame pacing state value `FRAME_DIRTY` in `web/src/ipc/gpu-protocol.ts`.)
   - Published by: `SharedFramebufferWriter::write_frame()` in `crates/aero-shared/src/shared_framebuffer.rs`
 - Cleared by consumers after consuming a frame (examples):
