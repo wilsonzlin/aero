@@ -7740,12 +7740,15 @@ impl AerogpuD3d11Executor {
             }
             &shadow[start_usize..start_usize + size_usize]
         } else if let Some(backing) = buf_res.backing {
-            allocs.validate_range(
-                backing.alloc_id,
-                backing.offset_bytes + start_bytes,
-                size_bytes,
-            )?;
-            let gpa = allocs.gpa(backing.alloc_id)? + backing.offset_bytes + start_bytes;
+            let backing_offset = backing
+                .offset_bytes
+                .checked_add(start_bytes)
+                .ok_or_else(|| anyhow!("DRAW_INDEXED: backing offset overflows u64"))?;
+            allocs.validate_range(backing.alloc_id, backing_offset, size_bytes)?;
+            let gpa = allocs
+                .gpa(backing.alloc_id)?
+                .checked_add(backing_offset)
+                .ok_or_else(|| anyhow!("DRAW_INDEXED: backing GPA overflows u64"))?;
             tmp_bytes.resize(size_usize, 0);
             guest_mem
                 .read(gpa, &mut tmp_bytes)
@@ -12315,16 +12318,15 @@ impl AerogpuD3d11Executor {
                 // The source is guest-backed; it has already been uploaded (see ensure_buffer_uploaded
                 // above), so reading from guest memory produces the same bytes the GPU copy will
                 // observe.
-                allocs.validate_range(
-                    backing.alloc_id,
-                    backing
-                        .offset_bytes
-                        .checked_add(src_offset_bytes)
-                        .ok_or_else(|| anyhow!("COPY_BUFFER: src backing offset overflow"))?,
-                    size_bytes,
-                )?;
-                let src_gpa =
-                    allocs.gpa(backing.alloc_id)? + backing.offset_bytes + src_offset_bytes;
+                let backing_offset = backing
+                    .offset_bytes
+                    .checked_add(src_offset_bytes)
+                    .ok_or_else(|| anyhow!("COPY_BUFFER: src backing offset overflow"))?;
+                allocs.validate_range(backing.alloc_id, backing_offset, size_bytes)?;
+                let src_gpa = allocs
+                    .gpa(backing.alloc_id)?
+                    .checked_add(backing_offset)
+                    .ok_or_else(|| anyhow!("COPY_BUFFER: src backing GPA overflows u64"))?;
                 let mut tmp = vec![0u8; size_usize];
                 guest_mem
                     .read(src_gpa, &mut tmp)
@@ -16320,12 +16322,15 @@ impl AerogpuD3d11Executor {
             );
         }
 
-        allocs.validate_range(
-            backing.alloc_id,
-            backing.offset_bytes + dirty.start,
-            dirty_len,
-        )?;
-        let gpa = allocs.gpa(backing.alloc_id)? + backing.offset_bytes + dirty.start;
+        let backing_offset = backing
+            .offset_bytes
+            .checked_add(dirty.start)
+            .ok_or_else(|| anyhow!("buffer upload: backing offset overflows u64"))?;
+        allocs.validate_range(backing.alloc_id, backing_offset, dirty_len)?;
+        let gpa = allocs
+            .gpa(backing.alloc_id)?
+            .checked_add(backing_offset)
+            .ok_or_else(|| anyhow!("buffer upload: GPA overflows u64"))?;
 
         // SAFETY: the buffer table is not mutated while we hold a raw pointer into it.
         let wgpu_buffer = unsafe { &*buf_ptr };
@@ -16361,8 +16366,12 @@ impl AerogpuD3d11Executor {
             let remaining = (dirty.end - offset) as usize;
             let n = remaining.min(CHUNK);
             let mut tmp = vec![0u8; n];
+            let chunk_offset = offset - dirty.start;
+            let chunk_gpa = gpa
+                .checked_add(chunk_offset)
+                .ok_or_else(|| anyhow!("buffer upload: chunk GPA overflows u64"))?;
             guest_mem
-                .read(gpa + (offset - dirty.start), &mut tmp)
+                .read(chunk_gpa, &mut tmp)
                 .map_err(anyhow_guest_mem)?;
 
             if wants_shadow {
