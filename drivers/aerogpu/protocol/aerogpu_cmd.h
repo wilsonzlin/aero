@@ -44,7 +44,7 @@ enum aerogpu_cmd_stream_flags {
 struct aerogpu_cmd_stream_header {
   uint32_t magic; /* AEROGPU_CMD_STREAM_MAGIC */
   uint32_t abi_version; /* AEROGPU_ABI_VERSION_U32 */
-  uint32_t size_bytes; /* Total bytes including this header (<= cmd_size_bytes; trailing bytes ignored) */
+  uint32_t size_bytes; /* Total bytes including this header (<= cmd_size_bytes; 4-byte aligned; trailing bytes ignored) */
   uint32_t flags; /* aerogpu_cmd_stream_flags */
   uint32_t reserved0;
   uint32_t reserved1;

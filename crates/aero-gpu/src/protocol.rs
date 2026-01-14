@@ -615,6 +615,13 @@ fn map_cmd_stream_header_error(
                 buffer_len: bytes.len(),
             }
         }
+        AerogpuCmdDecodeError::SizeNotAligned { found } => {
+            // Stream header declares an invalid size_bytes (e.g. not 4-byte aligned).
+            AeroGpuCmdStreamParseError::InvalidSizeBytes {
+                size_bytes: found,
+                buffer_len: bytes.len(),
+            }
+        }
         _ => AeroGpuCmdStreamParseError::BufferTooSmall,
     }
 }

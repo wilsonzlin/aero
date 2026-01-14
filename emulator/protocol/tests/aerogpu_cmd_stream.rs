@@ -442,13 +442,38 @@ fn stream_size_bytes_allows_trailing_buffer_bytes() {
 }
 
 #[test]
+fn stream_size_bytes_misaligned_is_an_error() {
+    let mut stream = build_stream(vec![build_packet(AerogpuCmdOpcode::Nop as u32, Vec::new())]);
+    // Set size_bytes to a value that is within the provided buffer but not 4-byte aligned.
+    let misaligned = (stream.len() as u32).saturating_sub(1);
+    assert!(misaligned >= AerogpuCmdStreamHeader::SIZE_BYTES as u32);
+    assert!(!misaligned.is_multiple_of(4));
+    stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
+        .copy_from_slice(&misaligned.to_le_bytes());
+
+    let err = match AerogpuCmdStreamIter::new(&stream) {
+        Ok(_) => panic!("expected SizeNotAligned error"),
+        Err(err) => err,
+    };
+    assert!(matches!(
+        err,
+        AerogpuCmdDecodeError::SizeNotAligned { found } if found == misaligned
+    ));
+}
+
+#[test]
 fn packet_size_bytes_misaligned_is_an_error() {
     let mut packet = Vec::new();
     push_u32(&mut packet, AerogpuCmdOpcode::Nop as u32);
     push_u32(&mut packet, 10); // misaligned size_bytes
     packet.extend_from_slice(&[0u8; 2]);
 
-    let stream = build_stream(vec![packet]);
+    let mut stream = build_stream(vec![packet]);
+    // Stream header size_bytes must be 4-byte aligned even when the packet itself is malformed.
+    // Treat the extra bytes at the end as trailing buffer padding (outside `size_bytes`).
+    let aligned_size = (stream.len() as u32) & !3u32;
+    stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
+        .copy_from_slice(&aligned_size.to_le_bytes());
     let mut iter = AerogpuCmdStreamIter::new(&stream).unwrap();
     match iter.next() {
         Some(Err(err)) => assert!(matches!(

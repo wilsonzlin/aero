@@ -48,6 +48,9 @@ export function decodeCmdStreamHeader(view: DataView, byteOffset = 0): AerogpuCm
   if (sizeBytes < AEROGPU_CMD_STREAM_HEADER_SIZE) {
     throw new Error(`cmd_stream.size_bytes too small: ${sizeBytes}`);
   }
+  if (sizeBytes % 4 !== 0) {
+    throw new Error(`cmd_stream.size_bytes is not 4-byte aligned: ${sizeBytes}`);
+  }
 
   return {
     abiVersion,

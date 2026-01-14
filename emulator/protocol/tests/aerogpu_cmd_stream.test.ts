@@ -5,6 +5,7 @@ import {
   AEROGPU_CMD_HDR_OFF_OPCODE,
   AEROGPU_CMD_HDR_OFF_SIZE_BYTES,
   AEROGPU_CMD_HDR_SIZE,
+  AEROGPU_CMD_STREAM_HEADER_OFF_SIZE_BYTES,
   AEROGPU_CMD_STREAM_HEADER_SIZE,
   AerogpuCmdOpcode,
   AerogpuCmdStreamIter,
@@ -60,6 +61,17 @@ test("AerogpuCmdStreamIter rejects misaligned packet size_bytes", () => {
   }, /not 4-byte aligned/);
 });
 
+test("AerogpuCmdStreamIter rejects misaligned cmd_stream.size_bytes", () => {
+  const w = new AerogpuCmdWriter();
+  w.flush();
+  const bytes = w.finish();
+
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  view.setUint32(AEROGPU_CMD_STREAM_HEADER_OFF_SIZE_BYTES, bytes.byteLength - 1, true);
+
+  assert.throws(() => new AerogpuCmdStreamIter(bytes), /cmd_stream\.size_bytes is not 4-byte aligned/);
+});
+
 test("AerogpuCmdStreamIter rejects packets that overrun the declared stream size", () => {
   const w = new AerogpuCmdWriter();
   w.flush();
@@ -82,4 +94,3 @@ test("AerogpuCmdStreamIter rejects buffers shorter than stream_header.size_bytes
   const truncated = bytes.subarray(0, bytes.byteLength - 1);
   assert.throws(() => new AerogpuCmdStreamIter(truncated), /Buffer too small/);
 });
-
