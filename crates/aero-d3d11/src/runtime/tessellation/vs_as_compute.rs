@@ -939,4 +939,39 @@ mod tests {
             "expected VS-as-compute WGSL to call load_attr_unorm10_10_10_2 for loc0, got:\n{wgsl}"
         );
     }
+
+    #[test]
+    fn vs_as_compute_uses_unorm8x2_loader_for_r8g8_unorm() {
+        let fmt = crate::input_layout::dxgi_format_info(49).expect("DXGI_FORMAT_R8G8_UNORM");
+        assert_eq!(fmt.component_type, DxgiFormatComponentType::Unorm8);
+        assert_eq!(fmt.component_count, 2);
+
+        let pulling = VertexPullingLayout {
+            d3d_slot_to_pulling_slot: BTreeMap::from([(0u32, 0u32)]),
+            pulling_slot_to_d3d_slot: vec![0u32],
+            required_strides: vec![0u32],
+            attributes: vec![VertexPullingAttribute {
+                shader_location: 0,
+                pulling_slot: 0,
+                offset_bytes: 0,
+                format: fmt,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                instance_step_rate: 0,
+            }],
+        };
+
+        let wgsl = build_vs_as_compute_passthrough_wgsl(
+            &pulling,
+            VsAsComputeConfig {
+                control_point_count: 1,
+                out_reg_count: 2,
+                indexed: false,
+            },
+        );
+
+        assert!(
+            wgsl.contains("load_attr_unorm8x2(0u, addr)"),
+            "expected VS-as-compute WGSL to call load_attr_unorm8x2 for loc0, got:\n{wgsl}"
+        );
+    }
 }
