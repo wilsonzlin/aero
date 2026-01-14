@@ -248,6 +248,7 @@ Because chunk URLs are versioned and immutable, they should be cached very aggre
 
 - `Content-Type: application/octet-stream`
 - `Content-Encoding: identity` (recommended; avoid transparent compression)
+  - For maximum compatibility with Aero’s reference clients and tooling, chunk responses should be served with no `Content-Encoding` or with `Content-Encoding: identity` (i.e. do not gzip/br-encode chunks in transit).
 - `Cache-Control: public, max-age=31536000, immutable, no-transform`
 - `ETag: "<strong etag>"` (optional but recommended; quoted entity-tag, visible ASCII)
 - `Access-Control-Allow-Origin: *` (if served cross-origin without credentials)
@@ -255,6 +256,7 @@ Because chunk URLs are versioned and immutable, they should be cached very aggre
 **Manifest (`manifest.json`):**
 
 - `Content-Type: application/json`
+- `Content-Encoding: identity` (recommended for compatibility with Aero’s Rust/native client + `aero-image-chunker verify`)
 - `Cache-Control: public, max-age=31536000, immutable` (when versioned/immutable as described above)
 - `ETag: "<strong etag>"` (optional; quoted entity-tag, visible ASCII)
 - `Access-Control-Allow-Origin: *` (same policy as chunks)
