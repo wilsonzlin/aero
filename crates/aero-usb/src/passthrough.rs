@@ -1393,6 +1393,14 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_load_rejects_truncated_before_completion_count() {
+        // Truncate after the action section but before `completion_count`.
+        let bytes = Encoder::new().u32(1).u32(0).finish();
+        let err = snapshot_load_err(bytes);
+        assert_eq!(err, SnapshotError::UnexpectedEof);
+    }
+
+    #[test]
     fn snapshot_load_rejects_truncated_action_id_field() {
         // Truncate after the action kind tag but before the u32 id.
         let bytes = Encoder::new().u32(1).u32(1).u8(1).finish();
@@ -1410,6 +1418,36 @@ mod tests {
             .u32(1) // action id
             .u8(0x80) // bmRequestType (missing the rest of SetupPacket)
             .finish();
+        let err = snapshot_load_err(bytes);
+        assert_eq!(err, SnapshotError::UnexpectedEof);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_truncated_control_out_action_setup_packet() {
+        // Truncate mid-SetupPacket for a ControlOut action.
+        let bytes = Encoder::new()
+            .u32(1) // next_id
+            .u32(1) // action_count
+            .u8(2) // ControlOut
+            .u32(1) // action id
+            .u8(0x00) // bmRequestType (missing the rest of SetupPacket)
+            .finish();
+        let err = snapshot_load_err(bytes);
+        assert_eq!(err, SnapshotError::UnexpectedEof);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_truncated_bulk_in_action_endpoint_field() {
+        // Truncate after the BulkIn action id but before the endpoint address.
+        let bytes = Encoder::new().u32(1).u32(1).u8(3).u32(1).finish();
+        let err = snapshot_load_err(bytes);
+        assert_eq!(err, SnapshotError::UnexpectedEof);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_truncated_bulk_out_action_endpoint_field() {
+        // Truncate after the BulkOut action id but before the endpoint address.
+        let bytes = Encoder::new().u32(1).u32(1).u8(4).u32(1).finish();
         let err = snapshot_load_err(bytes);
         assert_eq!(err, SnapshotError::UnexpectedEof);
     }
@@ -1519,9 +1557,31 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_load_rejects_truncated_before_has_control() {
+        // Truncate after the completion section but before `has_control`.
+        let bytes = Encoder::new().u32(1).u32(0).u32(0).finish();
+        let err = snapshot_load_err(bytes);
+        assert_eq!(err, SnapshotError::UnexpectedEof);
+    }
+
+    #[test]
     fn snapshot_load_rejects_truncated_completion_kind_tag() {
         // Truncate after the completion id but before the kind tag.
         let bytes = Encoder::new().u32(1).u32(0).u32(1).u32(1).finish();
+        let err = snapshot_load_err(bytes);
+        assert_eq!(err, SnapshotError::UnexpectedEof);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_truncated_completion_ok_in_length_field() {
+        // Truncate after the OkIn kind tag but before the payload length field.
+        let bytes = Encoder::new()
+            .u32(1) // next_id
+            .u32(0) // action_count
+            .u32(1) // completion_count
+            .u32(1) // completion id
+            .u8(1) // OkIn
+            .finish();
         let err = snapshot_load_err(bytes);
         assert_eq!(err, SnapshotError::UnexpectedEof);
     }
@@ -1535,6 +1595,20 @@ mod tests {
             .u32(1) // completion_count
             .u32(1) // completion id
             .u8(2) // OkOut
+            .finish();
+        let err = snapshot_load_err(bytes);
+        assert_eq!(err, SnapshotError::UnexpectedEof);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_truncated_completion_error_message_length_field() {
+        // Truncate after the Error kind tag but before the message length field.
+        let bytes = Encoder::new()
+            .u32(1) // next_id
+            .u32(0) // action_count
+            .u32(1) // completion_count
+            .u32(1) // completion id
+            .u8(4) // Error
             .finish();
         let err = snapshot_load_err(bytes);
         assert_eq!(err, SnapshotError::UnexpectedEof);
