@@ -102,9 +102,10 @@ fn extract_pci0_crs_bytes(aml: &[u8]) -> Vec<u8> {
     while i + 2 < aml.len() {
         // DeviceOp = ExtOpPrefix(0x5B) + 0x82.
         if aml[i] == 0x5B && aml[i + 1] == 0x82 {
+            let pkg_start = i + 2;
             let (pkg_len, pkg_len_bytes) =
-                parse_pkg_length(aml, i + 2).expect("DeviceOp PkgLength should parse");
-            let payload_start = i + 2 + pkg_len_bytes;
+                parse_pkg_length(aml, pkg_start).expect("DeviceOp PkgLength should parse");
+            let payload_start = pkg_start + pkg_len_bytes;
             let payload_len = pkg_len
                 .checked_sub(pkg_len_bytes)
                 .expect("DeviceOp PkgLength should include its own encoding bytes");
@@ -136,9 +137,10 @@ fn extract_pci0_crs_bytes(aml: &[u8]) -> Vec<u8> {
                             "PCI0._CRS should be a BufferOp (0x11)"
                         );
 
-                        let (buf_pkg_len, buf_pkg_len_bytes) = parse_pkg_length(aml, buf_op + 1)
+                        let buf_pkg_start = buf_op + 1;
+                        let (buf_pkg_len, buf_pkg_len_bytes) = parse_pkg_length(aml, buf_pkg_start)
                             .expect("BufferOp PkgLength should parse");
-                        let buf_payload_start = buf_op + 1 + buf_pkg_len_bytes;
+                        let buf_payload_start = buf_pkg_start + buf_pkg_len_bytes;
                         let buf_payload_len = buf_pkg_len
                             .checked_sub(buf_pkg_len_bytes)
                             .expect("BufferOp PkgLength should include its own encoding bytes");

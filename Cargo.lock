@@ -159,13 +159,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "aero-d3d9-shader"
-version = "0.1.0"
-dependencies = [
- "aero-dxbc",
-]
-
-[[package]]
 name = "aero-debug"
 version = "0.1.0"
 dependencies = [

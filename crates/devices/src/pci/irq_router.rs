@@ -344,21 +344,21 @@ mod tests {
         let b0 = *data
             .get(*offset)
             .unwrap_or_else(|| panic!("pkglen out of bounds at offset {offset}"));
-        *offset += 1;
-
         let follow = (b0 >> 6) as usize;
-        if follow == 0 {
-            return (b0 & 0x3f) as usize;
-        }
 
-        let mut len = (b0 & 0x0F) as usize;
+        // Low 6 bits hold the length when follow==0; otherwise only the low 4 bits are used (bits
+        // 4-5 are reserved and should be 0). Using 0x3F works for both cases because reserved bits
+        // are zeroed by encoders like ACPICA/iasl.
+        let mut len: usize = (b0 & 0x3F) as usize;
+        *offset += 1;
         for i in 0..follow {
+            let idx = *offset + i;
             let bi = *data
-                .get(*offset)
-                .unwrap_or_else(|| panic!("pkglen continuation out of bounds at offset {offset}"));
-            *offset += 1;
+                .get(idx)
+                .unwrap_or_else(|| panic!("pkglen continuation out of bounds at offset {idx}"));
             len |= (bi as usize) << (4 + (8 * i));
         }
+        *offset += follow;
         len
     }
 
