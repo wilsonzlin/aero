@@ -205,10 +205,10 @@ fn rx_drops_frames_outside_model_len_bounds_without_dma_writes() {
 
     write_rx_desc(&mut dma, 0x2000, 0x3000);
     write_rx_desc(&mut dma, 0x2010, 0x3400);
-    dma.write(0x3000, &vec![0xCCu8; 2048]);
+    dma.write(0x3000, &[0xCCu8; 2048]);
 
     // Too short.
-    dev.receive_frame(&mut dma, &vec![0u8; MIN_L2_FRAME_LEN - 1]);
+    dev.receive_frame(&mut dma, &[0u8; MIN_L2_FRAME_LEN - 1]);
     assert_eq!(dma.read_vec(0x3000, 64), vec![0xCCu8; 64]);
     let (len, status, errors) = read_rx_desc_fields(&mut dma, 0x2000);
     assert_eq!(len, 0);
@@ -217,7 +217,7 @@ fn rx_drops_frames_outside_model_len_bounds_without_dma_writes() {
     assert_eq!(dev.mmio_read_u32(REG_RDH), 0);
 
     // Too long.
-    dev.receive_frame(&mut dma, &vec![0u8; MAX_L2_FRAME_LEN + 1]);
+    dev.receive_frame(&mut dma, &[0u8; MAX_L2_FRAME_LEN + 1]);
     assert_eq!(dma.read_vec(0x3000, 64), vec![0xCCu8; 64]);
     let (len, status, errors) = read_rx_desc_fields(&mut dma, 0x2000);
     assert_eq!(len, 0);
