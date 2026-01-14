@@ -9,9 +9,10 @@ use aero_jit_x86::abi;
 use aero_jit_x86::jit_ctx;
 use aero_jit_x86::tier2::interp::{run_trace_with_cached_regs, RunExit, RuntimeEnv, T2State};
 use aero_jit_x86::tier2::ir::{
-    flag_to_set, BinOp, Block, BlockId, FlagValues, Function, Instr, Operand, Terminator, TraceIr,
-    TraceKind, ValueId,
+    BinOp, Block, BlockId, Function, Instr, Operand, Terminator, TraceIr, TraceKind, ValueId,
 };
+#[cfg(not(target_arch = "wasm32"))]
+use aero_jit_x86::tier2::ir::{flag_to_set, FlagValues};
 use aero_jit_x86::tier2::opt::{optimize_trace, OptConfig};
 use aero_jit_x86::tier2::profile::{ProfileData, TraceConfig};
 use aero_jit_x86::tier2::trace::TraceBuilder;
