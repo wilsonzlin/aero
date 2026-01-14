@@ -215,8 +215,8 @@ rather than a complete xHCI.
     - runtime interrupter 0 registers + ERST-backed guest event ring producer are modeled (used by
       Rust tests and by the web/WASM bridge via `step_frames()`/`poll()`).
   - A DMA read on the first transition of `USBCMD.RUN` (primarily to validate **PCI Bus Master Enable gating** in wrappers).
-  - A level-triggered interrupt condition surfaced as `irq_level()` (interrupter pending; USBSTS.EINT
-    is derived), used to validate **INTx disable gating**.
+  - A level-triggered interrupt condition surfaced as `irq_level()` (interrupter 0 interrupt enable +
+    pending; USBSTS.EINT is derived from pending), used to validate **INTx disable gating**.
   - DCBAAP register storage and controller-local slot allocation (Enable Slot scaffolding).
   - Partial slot / Address Device plumbing used by tests/harnesses:
     - resolves topology via Slot Context `RootHubPortNumber` + `RouteString`.
@@ -236,9 +236,9 @@ rather than a complete xHCI.
   - `poll()` drains any queued event TRBs into the guest event ring (`XhciController::service_event_ring`);
     DMA is gated on BME.
   - WebUSB passthrough device APIs (`set_connected`, `drain_actions`, `push_completion`, `reset`,
-    `pending_summary`). The passthrough device is attached to a reserved xHCI root port (currently
-    root port index `1`).
-  - `irq_asserted()` reflects `XhciController::irq_level()` (USBSTS.EINT / interrupter pending).
+    `pending_summary`) used by the web I/O worker to attach/detach a passthrough device behind a
+    reserved xHCI root port (currently root port index `1`).
+  - `irq_asserted()` reflects `XhciController::irq_level()` (interrupter 0 interrupt enable + pending).
   - Optional host-side topology mutation APIs for passthrough HID/hubs (`attach_hub`,
     `detach_at_path`, `attach_webhid_device`, `attach_usb_hid_passthrough_device`).
   - Deterministic snapshot/restore of controller state + tick counter (and WebUSB device state when
