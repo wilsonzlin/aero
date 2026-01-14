@@ -49,6 +49,8 @@ pub struct BindGroupLayout {
     pub sampler_group: u32,
     /// sampler_index -> (texture_binding, sampler_binding)
     pub sampler_bindings: HashMap<u32, (u32, u32)>,
+    /// sampler_index -> texture type (from `dcl_* s#`, defaulting to 2D when absent).
+    pub sampler_texture_types: HashMap<u32, TextureType>,
 }
 
 fn sampler_bind_group(stage: ShaderStage) -> u32 {
@@ -206,6 +208,33 @@ fn swizzle_suffix(swz: Swizzle) -> Option<String> {
     } else {
         Some(format!(".{}", s))
     }
+}
+
+fn wgsl_texture_type(ty: TextureType) -> Result<&'static str, WgslError> {
+    Ok(match ty {
+        TextureType::Texture1D => "texture_1d<f32>",
+        TextureType::Texture2D => "texture_2d<f32>",
+        TextureType::Texture3D => "texture_3d<f32>",
+        TextureType::TextureCube => "texture_cube<f32>",
+        TextureType::Unknown(v) => {
+            return Err(err(format!(
+                "unsupported sampler texture type: Unknown({v})"
+            )));
+        }
+    })
+}
+
+fn tex_coord_swizzle(ty: TextureType) -> Result<&'static str, WgslError> {
+    Ok(match ty {
+        TextureType::Texture1D => "x",
+        TextureType::Texture2D => "xy",
+        TextureType::Texture3D | TextureType::TextureCube => "xyz",
+        TextureType::Unknown(v) => {
+            return Err(err(format!(
+                "unsupported sampler texture type: Unknown({v})"
+            )));
+        }
+    })
 }
 
 fn default_vec4(ty: ScalarTy) -> &'static str {
@@ -876,6 +905,7 @@ fn emit_op_line(
     op: &IrOp,
     stage: ShaderStage,
     f32_defs: &BTreeMap<u32, [f32; 4]>,
+    sampler_types: &HashMap<u32, TextureType>,
 ) -> Result<String, WgslError> {
     match op {
         IrOp::Mov {
@@ -1406,15 +1436,21 @@ fn emit_op_line(
                 return Err(err("texsample destination must be float"));
             }
 
+            let tex_ty = sampler_types
+                .get(sampler)
+                .copied()
+                .unwrap_or(TextureType::Texture2D);
+            let swz = tex_coord_swizzle(tex_ty)?;
+
             let tex = format!("tex{sampler}");
             let samp = format!("samp{sampler}");
 
             let sample = match kind {
                 crate::sm3::ir::TexSampleKind::ImplicitLod { project } => {
                     let uv = if *project {
-                        format!("(({coord_e}).xy / ({coord_e}).w)")
+                        format!("(({coord_e}).{swz} / ({coord_e}).w)")
                     } else {
-                        format!("({coord_e}).xy")
+                        format!("({coord_e}).{swz}")
                     };
                     match stage {
                         // Vertex stage has no implicit derivatives, so use an explicit LOD.
@@ -1425,7 +1461,7 @@ fn emit_op_line(
                     }
                 }
                 crate::sm3::ir::TexSampleKind::ExplicitLod => {
-                    let uv = format!("({coord_e}).xy");
+                    let uv = format!("({coord_e}).{swz}");
                     let lod = format!("({coord_e}).w");
                     format!("textureSampleLevel({tex}, {samp}, {uv}, {lod})")
                 }
@@ -1447,7 +1483,7 @@ fn emit_op_line(
                         return Err(err("texldd gradients must be float"));
                     }
                     format!(
-                        "textureSampleGrad({tex}, {samp}, ({coord_e}).xy, ({ddx_e}).xy, ({ddy_e}).xy)"
+                        "textureSampleGrad({tex}, {samp}, ({coord_e}).{swz}, ({ddx_e}).{swz}, ({ddy_e}).{swz})"
                     )
                 }
             };
@@ -1572,6 +1608,7 @@ fn emit_block(
     depth: usize,
     stage: ShaderStage,
     f32_defs: &BTreeMap<u32, [f32; 4]>,
+    sampler_types: &HashMap<u32, TextureType>,
 ) -> Result<(), WgslError> {
     if depth > MAX_D3D9_SHADER_CONTROL_FLOW_NESTING {
         return Err(err(format!(
@@ -1579,7 +1616,7 @@ fn emit_block(
         )));
     }
     for stmt in &block.stmts {
-        emit_stmt(wgsl, stmt, indent, depth, stage, f32_defs)?;
+        emit_stmt(wgsl, stmt, indent, depth, stage, f32_defs, sampler_types)?;
     }
     Ok(())
 }
@@ -1591,6 +1628,7 @@ fn emit_stmt(
     depth: usize,
     stage: ShaderStage,
     f32_defs: &BTreeMap<u32, [f32; 4]>,
+    sampler_types: &HashMap<u32, TextureType>,
 ) -> Result<(), WgslError> {
     let pad = "  ".repeat(indent);
     match stmt {
@@ -1685,14 +1723,14 @@ fn emit_stmt(
                     _ => {
                         let pred_cond = predicate_expr(pred)?;
                         let _ = writeln!(wgsl, "{pad}if ({pred_cond}) {{");
-                        let line = emit_op_line(op, stage, f32_defs)?;
+                        let line = emit_op_line(op, stage, f32_defs, sampler_types)?;
                         let inner_pad = "  ".repeat(indent + 1);
                         let _ = writeln!(wgsl, "{inner_pad}{line}");
                         let _ = writeln!(wgsl, "{pad}}}");
                     }
                 }
             } else {
-                let line = emit_op_line(op, stage, f32_defs)?;
+                let line = emit_op_line(op, stage, f32_defs, sampler_types)?;
                 let _ = writeln!(wgsl, "{pad}{line}");
             }
         }
@@ -1703,10 +1741,26 @@ fn emit_stmt(
         } => {
             let cond = cond_expr(cond, f32_defs)?;
             let _ = writeln!(wgsl, "{pad}if ({cond}) {{");
-            emit_block(wgsl, then_block, indent + 1, depth + 1, stage, f32_defs)?;
+            emit_block(
+                wgsl,
+                then_block,
+                indent + 1,
+                depth + 1,
+                stage,
+                f32_defs,
+                sampler_types,
+            )?;
             if let Some(else_block) = else_block {
                 let _ = writeln!(wgsl, "{pad}}} else {{");
-                emit_block(wgsl, else_block, indent + 1, depth + 1, stage, f32_defs)?;
+                emit_block(
+                    wgsl,
+                    else_block,
+                    indent + 1,
+                    depth + 1,
+                    stage,
+                    f32_defs,
+                    sampler_types,
+                )?;
             }
             let _ = writeln!(wgsl, "{pad}}}");
         }
@@ -1758,7 +1812,15 @@ fn emit_stmt(
                 "{pad2}if ((_aero_loop_step > 0 && {loop_reg}.x > _aero_loop_end) || (_aero_loop_step < 0 && {loop_reg}.x < _aero_loop_end)) {{ break; }}"
             );
 
-            emit_block(wgsl, body, indent + 2, depth + 1, stage, f32_defs)?;
+            emit_block(
+                wgsl,
+                body,
+                indent + 2,
+                depth + 1,
+                stage,
+                f32_defs,
+                sampler_types,
+            )?;
 
             let _ = writeln!(wgsl, "{pad2}{loop_reg}.x = {loop_reg}.x + _aero_loop_step;");
             let _ = writeln!(wgsl, "{pad2}_aero_loop_iter = _aero_loop_iter + 1u;");
@@ -1936,25 +1998,23 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
         .collect();
 
     let mut sampler_bindings = HashMap::new();
+    let mut sampler_texture_types = HashMap::new();
     for s in &usage.samplers {
         let ty = sampler_type_map
             .get(s)
             .copied()
             .unwrap_or(TextureType::Texture2D);
-        if ty != TextureType::Texture2D {
-            return Err(err(format!(
-                "unsupported texture type for sampler s{s}: {ty:?} (only Texture2D is supported)"
-            )));
-        }
+        let wgsl_tex_ty = wgsl_texture_type(ty)?;
         // Binding contract matches the legacy token-stream translator and the AeroGPU executor:
         //   texture binding = 2*s
         //   sampler binding = 2*s + 1
         let tex_binding = s * 2;
         let samp_binding = tex_binding + 1;
         sampler_bindings.insert(*s, (tex_binding, samp_binding));
+        sampler_texture_types.insert(*s, ty);
         let _ = writeln!(
             wgsl,
-            "@group({sampler_group}) @binding({tex_binding}) var tex{s}: texture_2d<f32>;"
+            "@group({sampler_group}) @binding({tex_binding}) var tex{s}: {wgsl_tex_ty};"
         );
         let _ = writeln!(
             wgsl,
@@ -2177,7 +2237,15 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
             emit_const_decls(&mut wgsl);
 
             wgsl.push('\n');
-            emit_block(&mut wgsl, &ir.body, 1, 0, ShaderStage::Vertex, &f32_defs)?;
+            emit_block(
+                &mut wgsl,
+                &ir.body,
+                1,
+                0,
+                ShaderStage::Vertex,
+                &f32_defs,
+                &sampler_type_map,
+            )?;
 
             wgsl.push_str("  var out: VsOut;\n");
             wgsl.push_str("  out.pos = oPos;\n");
@@ -2393,7 +2461,15 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
             emit_const_decls(&mut wgsl);
 
             wgsl.push('\n');
-            emit_block(&mut wgsl, &ir.body, 1, 0, ShaderStage::Pixel, &f32_defs)?;
+            emit_block(
+                &mut wgsl,
+                &ir.body,
+                1,
+                0,
+                ShaderStage::Pixel,
+                &f32_defs,
+                &sampler_type_map,
+            )?;
 
             wgsl.push_str("  var out: FsOut;\n");
             for idx in &color_outputs {
@@ -2412,6 +2488,7 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
         bind_group_layout: BindGroupLayout {
             sampler_group,
             sampler_bindings,
+            sampler_texture_types,
         },
     })
 }
