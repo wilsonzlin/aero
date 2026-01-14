@@ -712,7 +712,7 @@ bool TestVsOnlyStage0StateUpdatesFixedfuncPs() {
   return true;
 }
 
-bool TestVsOnlyUnsupportedStage0DoesNotFailSetShader() {
+bool TestVsOnlyUnsupportedStage0StateSetShaderSucceedsDrawFails() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
     return false;
@@ -1385,7 +1385,7 @@ int main() {
   if (!aerogpu::TestVsOnlyStage0StateUpdatesFixedfuncPs()) {
     return 1;
   }
-  if (!aerogpu::TestVsOnlyUnsupportedStage0DoesNotFailSetShader()) {
+  if (!aerogpu::TestVsOnlyUnsupportedStage0StateSetShaderSucceedsDrawFails()) {
     return 1;
   }
   if (!aerogpu::TestPsOnlyBindsFixedfuncVs()) {

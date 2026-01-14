@@ -6001,23 +6001,43 @@ HRESULT ensure_passthrough_shaders_locked(Device* dev, Shader** vs_out, Shader**
     }
   }
 
-  // Use a known-good passthrough PS so this helper can be used even when stage0
-  // texture stage state is unsupported. This keeps SetShader/state blocks from
-  // failing just because fixed-function draws would fail.
-  Shader* ps = dev->fixedfunc_ps_interop;
-  if (!ps) {
-    const HRESULT ps_hr = ensure_passthrough_pixel_shader_locked(dev, &ps);
-    if (FAILED(ps_hr)) {
-      return ps_hr;
+  Shader* ps_out_value = nullptr;
+  if (ps_out) {
+    // Prefer the stage0-selected fixed-function PS when possible so non-strict
+    // callers (SetShader/state blocks/teardown) see the same kind of interop PS
+    // the draw path would select. However, this helper must always succeed in
+    // providing a minimal non-null VS+PS pair even when stage0 state is
+    // unsupported; draws remain guarded by strict validation.
+    Shader** ps_slot = &dev->fixedfunc_ps_interop;
+    const FixedfuncStage0Key stage0_key = fixedfunc_stage0_key_locked(dev);
+    if (stage0_key.supported) {
+      const HRESULT ps_hr = ensure_fixedfunc_pixel_shader_locked(dev, ps_slot);
+      if (FAILED(ps_hr)) {
+        // If stage0 selection fails for any reason, fall back to a known-good
+        // passthrough PS so the caller still receives a valid bind pair.
+        Shader* fallback_ps = nullptr;
+        const HRESULT fb_hr = ensure_passthrough_pixel_shader_locked(dev, &fallback_ps);
+        if (FAILED(fb_hr)) {
+          return fb_hr;
+        }
+        *ps_slot = fallback_ps;
+      }
+    } else {
+      Shader* fallback_ps = nullptr;
+      const HRESULT fb_hr = ensure_passthrough_pixel_shader_locked(dev, &fallback_ps);
+      if (FAILED(fb_hr)) {
+        return fb_hr;
+      }
+      *ps_slot = fallback_ps;
     }
-    dev->fixedfunc_ps_interop = ps;
+    ps_out_value = *ps_slot;
   }
 
   if (vs_out) {
     *vs_out = dev->fixedfunc_vs;
   }
   if (ps_out) {
-    *ps_out = ps;
+    *ps_out = ps_out_value;
   }
   return S_OK;
 }
@@ -6048,19 +6068,19 @@ HRESULT ensure_shader_bindings_locked(Device* dev, bool strict_draw_validation) 
         return (ps_hr == E_FAIL) ? kD3DErrInvalidCall : ps_hr;
       }
       // Non-draw bindings must tolerate unsupported stage0 combinations: preserve
-      // any already-selected fallback PS, otherwise bind a minimal passthrough PS
-      // so the command stream remains valid.
+      // state-setting (SetShader, state blocks, DestroyShader, etc) must not fail
+      // just because stage0 fixed-function PS selection is unsupported. Bind a
+      // known-good passthrough PS so the command stream remains valid; the strict
+      // draw path will still fail with INVALIDCALL.
       if (ps_hr != kD3DErrInvalidCall) {
         return ps_hr;
       }
-      if (!*ps_slot) {
-        Shader* fallback_ps = nullptr;
-        const HRESULT fb_hr = ensure_passthrough_pixel_shader_locked(dev, &fallback_ps);
-        if (FAILED(fb_hr)) {
-          return fb_hr;
-        }
-        *ps_slot = fallback_ps;
+      Shader* fallback_ps = nullptr;
+      const HRESULT fb_hr = ensure_passthrough_pixel_shader_locked(dev, &fallback_ps);
+      if (FAILED(fb_hr)) {
+        return fb_hr;
       }
+      *ps_slot = fallback_ps;
     }
     desired_ps = *ps_slot;
   } else if (!dev->user_vs && dev->user_ps) {
