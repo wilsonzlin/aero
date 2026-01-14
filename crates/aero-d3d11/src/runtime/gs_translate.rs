@@ -39,9 +39,9 @@
 //! - Structured control flow (`if`/`else`/`loop`/`switch` with `break`/`continue`)
 //!
 //! Resource support is also intentionally limited:
-//! - Read-only Texture2D ops (`sample`, `sample_l`, `ld`)
-//! - Read-only SRV buffer ops (`ld_raw`, `ld_structured`)
-//!
+//! - Read-only Texture2D ops (`sample`, `sample_l`, `ld`, `resinfo`)
+//! - Read-only SRV buffer ops (`ld_raw`, `ld_structured`, `bufinfo`)
+//! 
 //! Resource writes/stores/UAVs/atomics and barrier/synchronization instructions are not supported,
 //! and any
 //! unsupported instruction or operand shape is rejected by translation.
@@ -268,11 +268,16 @@ fn opcode_name(inst: &Sm4Inst) -> &'static str {
         Sm4Inst::FirstbitShi { .. } => "firstbit_shi",
         Sm4Inst::Sample { .. } => "sample",
         Sm4Inst::SampleL { .. } => "sample_l",
+        Sm4Inst::ResInfo { .. } => "resinfo",
         Sm4Inst::Ld { .. } => "ld",
         Sm4Inst::LdRaw { .. } => "ld_raw",
         Sm4Inst::StoreRaw { .. } => "store_raw",
         Sm4Inst::LdStructured { .. } => "ld_structured",
         Sm4Inst::StoreStructured { .. } => "store_structured",
+        Sm4Inst::BufInfoRaw { .. }
+        | Sm4Inst::BufInfoStructured { .. }
+        | Sm4Inst::BufInfoRawUav { .. }
+        | Sm4Inst::BufInfoStructuredUav { .. } => "bufinfo",
         Sm4Inst::Sync { .. } => "sync",
         Sm4Inst::Emit { .. } => "emit",
         Sm4Inst::Cut { .. } => "cut",
@@ -1485,6 +1490,46 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_impl(
                 used_textures.insert(texture.slot);
                 used_samplers.insert(sampler.slot);
             }
+            Sm4Inst::ResInfo {
+                dst,
+                mip_level,
+                texture,
+            } => {
+                bump_reg_max(dst.reg, &mut max_temp_reg, &mut max_output_reg);
+                scan_src_operand(
+                    mip_level,
+                    &mut max_temp_reg,
+                    &mut max_output_reg,
+                    &mut max_gs_input_reg,
+                    verts_per_primitive,
+                    inst_index,
+                    "resinfo",
+                    &input_sivs,
+                    &cbuffer_decls,
+                    &mut used_cbuffers,
+                )?;
+                if !texture2d_decls.contains(&texture.slot) {
+                    return Err(GsTranslateError::UnsupportedOperand {
+                        inst_index,
+                        opcode: "resinfo",
+                        msg: format!(
+                            "texture t{} used by resinfo is missing a dcl_resource_texture2d declaration",
+                            texture.slot
+                        ),
+                    });
+                }
+                if used_srv_buffers.contains(&texture.slot) {
+                    return Err(GsTranslateError::UnsupportedOperand {
+                        inst_index,
+                        opcode: "resinfo",
+                        msg: format!(
+                            "resource slot t{} is used as both a texture and a buffer SRV",
+                            texture.slot
+                        ),
+                    });
+                }
+                used_textures.insert(texture.slot);
+            }
             Sm4Inst::Ld {
                 dst,
                 coord,
@@ -1599,6 +1644,31 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_impl(
                     return Err(GsTranslateError::UnsupportedOperand {
                         inst_index,
                         opcode: "ld_structured",
+                        msg: format!(
+                            "resource slot t{} is used as both a texture and a buffer SRV",
+                            buffer.slot
+                        ),
+                    });
+                }
+                used_srv_buffers.insert(buffer.slot);
+            }
+            Sm4Inst::BufInfoRaw { dst, buffer }
+            | Sm4Inst::BufInfoStructured { dst, buffer, .. } => {
+                bump_reg_max(dst.reg, &mut max_temp_reg, &mut max_output_reg);
+                if !srv_buffer_decls.contains_key(&buffer.slot) {
+                    return Err(GsTranslateError::UnsupportedOperand {
+                        inst_index,
+                        opcode: opcode_name(inst),
+                        msg: format!(
+                            "buffer t{} used by bufinfo is missing a dcl_resource_buffer declaration",
+                            buffer.slot
+                        ),
+                    });
+                }
+                if used_textures.contains(&buffer.slot) {
+                    return Err(GsTranslateError::UnsupportedOperand {
+                        inst_index,
+                        opcode: opcode_name(inst),
                         msg: format!(
                             "resource slot t{} is used as both a texture and a buffer SRV",
                             buffer.slot
@@ -3179,6 +3249,38 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_impl(
                     let rhs = maybe_saturate(dst.saturate, rhs);
                     emit_write_masked(&mut w, inst_index, "sample_l", dst.reg, dst.mask, rhs)?;
                 }
+                Sm4Inst::ResInfo {
+                    dst,
+                    mip_level,
+                    texture,
+                } => {
+                    // `resinfo` is used by `Texture2D.GetDimensions` and produces integer values.
+                    //
+                    // Output packing for `Texture2D`:
+                    // - x = width
+                    // - y = height
+                    // - z = 1
+                    // - w = mip level count
+                    //
+                    // DXBC register files are untyped; store the raw `u32` bits into our `vec4<f32>`
+                    // register model via a bitcast.
+                    let mip_u = emit_src_vec4_u32(inst_index, "resinfo", mip_level, &input_sivs)?;
+                    let level_i = format!("i32(({mip_u}).x)");
+                    let dims_name = format!("resinfo_dims{inst_index}");
+                    w.line(&format!(
+                        "let {dims_name}: vec2<u32> = textureDimensions(t{}, {level_i});",
+                        texture.slot
+                    ));
+                    let levels_name = format!("resinfo_levels{inst_index}");
+                    w.line(&format!(
+                        "let {levels_name}: u32 = textureNumLevels(t{});",
+                        texture.slot
+                    ));
+                    let rhs = format!(
+                        "bitcast<vec4<f32>>(vec4<u32>(({dims_name}).x, ({dims_name}).y, 1u, {levels_name}))"
+                    );
+                    emit_write_masked(&mut w, inst_index, "resinfo", dst.reg, dst.mask, rhs)?;
+                }
                 Sm4Inst::Ld {
                     dst,
                     coord,
@@ -3286,6 +3388,32 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_impl(
 
                     let rhs = maybe_saturate(dst.saturate, f_name);
                     emit_write_masked(&mut w, inst_index, "ld_structured", dst.reg, dst.mask, rhs)?;
+                }
+                Sm4Inst::BufInfoRaw { dst, buffer } => {
+                    let dwords = format!("arrayLength(&t{}.data)", buffer.slot);
+                    let bytes = format!("({dwords}) * 4u");
+                    let rhs = format!("bitcast<vec4<f32>>(vec4<u32>(({bytes}), 0u, 0u, 0u))");
+                    emit_write_masked(&mut w, inst_index, "bufinfo", dst.reg, dst.mask, rhs)?;
+                }
+                Sm4Inst::BufInfoStructured {
+                    dst,
+                    buffer,
+                    stride_bytes,
+                } => {
+                    if *stride_bytes == 0 {
+                        return Err(GsTranslateError::UnsupportedInstruction {
+                            inst_index,
+                            opcode: "bufinfo_structured_stride_zero",
+                        });
+                    }
+                    let dwords = format!("arrayLength(&t{}.data)", buffer.slot);
+                    let byte_size = format!("({dwords}) * 4u");
+                    let stride = format!("{}u", stride_bytes);
+                    let elem_count = format!("({byte_size}) / ({stride})");
+                    let rhs = format!(
+                        "bitcast<vec4<f32>>(vec4<u32>(({elem_count}), ({stride}), 0u, 0u))"
+                    );
+                    emit_write_masked(&mut w, inst_index, "bufinfo", dst.reg, dst.mask, rhs)?;
                 }
                 Sm4Inst::Emit { stream: _ } => {
                     w.line(&format!("gs_emit({gs_emit_args}); // emit"));

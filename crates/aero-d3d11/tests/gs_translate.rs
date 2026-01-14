@@ -397,6 +397,171 @@ fn sm4_gs_ld_raw_emits_group3_srv_buffer_decl() {
 }
 
 #[test]
+fn sm4_gs_resinfo_emits_texture_dimensions_and_num_levels() {
+    let module = Sm4Module {
+        stage: ShaderStage::Geometry,
+        model: ShaderModel { major: 4, minor: 0 },
+        decls: vec![
+            Sm4Decl::GsInputPrimitive {
+                primitive: GsInputPrimitive::Point(1),
+            },
+            Sm4Decl::GsOutputTopology {
+                topology: GsOutputTopology::Point(1),
+            },
+            Sm4Decl::GsMaxOutputVertexCount { max: 1 },
+            Sm4Decl::ResourceTexture2D { slot: 0 },
+        ],
+        instructions: vec![
+            Sm4Inst::ResInfo {
+                dst: DstOperand {
+                    reg: RegisterRef {
+                        file: RegFile::Temp,
+                        index: 0,
+                    },
+                    mask: WriteMask::XYZW,
+                    saturate: false,
+                },
+                mip_level: SrcOperand {
+                    kind: SrcKind::ImmediateF32([0; 4]),
+                    swizzle: Swizzle::XXXX,
+                    modifier: OperandModifier::None,
+                },
+                texture: TextureRef { slot: 0 },
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let wgsl = translate_gs_module_to_wgsl_compute_prepass(&module).expect("translate");
+    assert!(
+        wgsl.contains(&format!(
+            "@group({BIND_GROUP_INTERNAL_EMULATION}) @binding({}) var t0: texture_2d<f32>;",
+            BINDING_BASE_TEXTURE
+        )),
+        "expected group(3) texture declaration in WGSL:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("textureDimensions(t0, i32("),
+        "expected resinfo lowering to query textureDimensions:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("textureNumLevels(t0)"),
+        "expected resinfo lowering to query textureNumLevels:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("bitcast<vec4<f32>>(vec4<u32>"),
+        "expected resinfo result to be packed as raw u32 bits:\n{wgsl}"
+    );
+    assert_wgsl_validates(&wgsl);
+}
+
+#[test]
+fn sm4_gs_bufinfo_raw_emits_array_length_in_bytes() {
+    let module = Sm4Module {
+        stage: ShaderStage::Geometry,
+        model: ShaderModel { major: 4, minor: 0 },
+        decls: vec![
+            Sm4Decl::GsInputPrimitive {
+                primitive: GsInputPrimitive::Point(1),
+            },
+            Sm4Decl::GsOutputTopology {
+                topology: GsOutputTopology::Point(1),
+            },
+            Sm4Decl::GsMaxOutputVertexCount { max: 1 },
+            Sm4Decl::ResourceBuffer {
+                slot: 1,
+                stride: 0,
+                kind: BufferKind::Raw,
+            },
+        ],
+        instructions: vec![
+            Sm4Inst::BufInfoRaw {
+                dst: DstOperand {
+                    reg: RegisterRef {
+                        file: RegFile::Temp,
+                        index: 0,
+                    },
+                    mask: WriteMask::XYZW,
+                    saturate: false,
+                },
+                buffer: BufferRef { slot: 1 },
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let wgsl = translate_gs_module_to_wgsl_compute_prepass(&module).expect("translate");
+    assert!(
+        wgsl.contains("struct AeroStorageBufferU32 { data: array<u32> };"),
+        "expected AeroStorageBufferU32 wrapper struct in WGSL:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains(&format!(
+            "@group({BIND_GROUP_INTERNAL_EMULATION}) @binding({}) var<storage, read> t1: AeroStorageBufferU32;",
+            BINDING_BASE_TEXTURE + 1
+        )),
+        "expected group(3) SRV buffer declaration in WGSL:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("arrayLength(&t1.data)"),
+        "expected bufinfo lowering to use arrayLength on the buffer:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("* 4u"),
+        "expected bufinfo lowering to convert dword count to bytes:\n{wgsl}"
+    );
+    assert_wgsl_validates(&wgsl);
+}
+
+#[test]
+fn sm4_gs_bufinfo_structured_emits_elem_count_and_stride() {
+    let module = Sm4Module {
+        stage: ShaderStage::Geometry,
+        model: ShaderModel { major: 4, minor: 0 },
+        decls: vec![
+            Sm4Decl::GsInputPrimitive {
+                primitive: GsInputPrimitive::Point(1),
+            },
+            Sm4Decl::GsOutputTopology {
+                topology: GsOutputTopology::Point(1),
+            },
+            Sm4Decl::GsMaxOutputVertexCount { max: 1 },
+            Sm4Decl::ResourceBuffer {
+                slot: 2,
+                stride: 16,
+                kind: BufferKind::Structured,
+            },
+        ],
+        instructions: vec![
+            Sm4Inst::BufInfoStructured {
+                dst: DstOperand {
+                    reg: RegisterRef {
+                        file: RegFile::Temp,
+                        index: 0,
+                    },
+                    mask: WriteMask::XYZW,
+                    saturate: false,
+                },
+                buffer: BufferRef { slot: 2 },
+                stride_bytes: 16,
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let wgsl = translate_gs_module_to_wgsl_compute_prepass(&module).expect("translate");
+    assert!(
+        wgsl.contains("arrayLength(&t2.data)"),
+        "expected structured bufinfo lowering to use arrayLength on the buffer:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("16u"),
+        "expected structured bufinfo lowering to bake in the declared stride:\n{wgsl}"
+    );
+    assert_wgsl_validates(&wgsl);
+}
+
+#[test]
 fn sm4_gs_emit_cut_translates_to_wgsl_compute_prepass() {
     // Build a minimal gs_4_0 token stream with:
     // - dcl_inputprimitive triangle
