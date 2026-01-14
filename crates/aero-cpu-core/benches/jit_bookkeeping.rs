@@ -18,7 +18,7 @@ use std::time::Duration;
 #[cfg(not(target_arch = "wasm32"))]
 use aero_cpu_core::jit::JitMetricsSink;
 #[cfg(not(target_arch = "wasm32"))]
-use aero_cpu_core::jit::cache::{CodeCache, CompiledBlockHandle, CompiledBlockMeta};
+use aero_cpu_core::jit::cache::{CodeCache, CompiledBlockHandle, CompiledBlockMeta, PageVersionSnapshot};
 #[cfg(not(target_arch = "wasm32"))]
 use aero_cpu_core::jit::profile::HotnessProfile;
 #[cfg(not(target_arch = "wasm32"))]
@@ -108,6 +108,34 @@ fn dummy_handle(entry_rip: u64, table_index: u32, byte_len: u32) -> CompiledBloc
             code_paddr: 0,
             byte_len,
             page_versions: Vec::new(),
+            instruction_count: 0,
+            inhibit_interrupts_after_block: false,
+        },
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[inline]
+fn dummy_handle_with_pages(
+    entry_rip: u64,
+    table_index: u32,
+    byte_len: u32,
+    pages: usize,
+) -> CompiledBlockHandle {
+    let mut page_versions = Vec::with_capacity(pages);
+    for i in 0..pages {
+        page_versions.push(PageVersionSnapshot {
+            page: i as u64,
+            version: i as u32,
+        });
+    }
+    CompiledBlockHandle {
+        entry_rip,
+        table_index,
+        meta: CompiledBlockMeta {
+            code_paddr: 0,
+            byte_len,
+            page_versions,
             instruction_count: 0,
             inhibit_interrupts_after_block: false,
         },
@@ -375,6 +403,43 @@ fn bench_code_cache(c: &mut Criterion) {
                 black_box(checksum);
             });
         });
+    }
+
+    group.finish();
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn bench_code_cache_clone_overhead(c: &mut Criterion) {
+    // Measure the cost of cloning handles with non-empty page-version metadata (which requires
+    // allocating + copying the `Vec<PageVersionSnapshot>`).
+    const OPS_PER_ITER: usize = 1024;
+    const PAGES: &[usize] = &[0, 1, 4, 16, 64];
+
+    let mut group = c.benchmark_group("jit/code_cache_clone");
+    group.throughput(Throughput::Elements(OPS_PER_ITER as u64));
+
+    for &pages in PAGES {
+        group.bench_with_input(
+            BenchmarkId::new("get_cloned_head_pages", pages),
+            &pages,
+            |b, &pages| {
+                let mut cache = CodeCache::new(1024, 0);
+                let rip = 0xDEAD_BEEF;
+                cache.insert(dummy_handle_with_pages(rip, 1, 16, pages));
+
+                b.iter(|| {
+                    let mut checksum = 0u64;
+                    for _ in 0..OPS_PER_ITER {
+                        let handle = cache.get_cloned(black_box(rip));
+                        checksum ^= handle
+                            .as_ref()
+                            .map(|h| h.meta.page_versions.len() as u64)
+                            .unwrap_or(0);
+                    }
+                    black_box(checksum);
+                });
+            },
+        );
     }
 
     group.finish();
@@ -752,6 +817,81 @@ fn bench_jit_runtime_prepare_block(c: &mut Criterion) {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+fn bench_jit_runtime_prepare_block_compile_request(c: &mut Criterion) {
+    const OPS_PER_ITER: usize = 2048;
+    let mut group = c.benchmark_group("jit/runtime_compile_request");
+    group.throughput(Throughput::Elements(OPS_PER_ITER as u64));
+
+    // Measures the end-to-end overhead of the hotness-triggered compile request path:
+    // - HotnessProfile `requested` insertion
+    // - `CompileRequestSink::request_compile` virtual call
+    // - (optional) `JitMetricsSink::record_compile_request`
+    #[derive(Clone)]
+    struct AtomicCompileSink(Arc<AtomicU64>);
+
+    impl CompileRequestSink for AtomicCompileSink {
+        fn request_compile(&mut self, _entry_rip: u64) {
+            self.0.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    group.bench_function("prepare_block_trigger_compile", |b| {
+        let config = JitConfig {
+            enabled: true,
+            hot_threshold: 1,
+            cache_max_blocks: 1024,
+            cache_max_bytes: 0,
+            // Keep bench setup lightweight; page-version tracking isn't exercised here.
+            code_version_max_pages: 0,
+            ..JitConfig::default()
+        };
+
+        let compile_counter = Arc::new(AtomicU64::new(0));
+        let mut jit = JitRuntime::new(config, NullBackend, AtomicCompileSink(compile_counter));
+
+        // Pre-generate a stable RIP set so no allocations occur in the measured loop.
+        let rips: Vec<u64> = (0..OPS_PER_ITER as u64).map(|i| 0xA000u64 + i).collect();
+
+        b.iter(|| {
+            jit.reset();
+            for &rip in &rips {
+                black_box(jit.prepare_block(black_box(rip)));
+            }
+            black_box(jit.stats_snapshot());
+        });
+    });
+
+    group.bench_function("prepare_block_trigger_compile_metrics_sink", |b| {
+        let config = JitConfig {
+            enabled: true,
+            hot_threshold: 1,
+            cache_max_blocks: 1024,
+            cache_max_bytes: 0,
+            // Keep bench setup lightweight; page-version tracking isn't exercised here.
+            code_version_max_pages: 0,
+            ..JitConfig::default()
+        };
+
+        let compile_counter = Arc::new(AtomicU64::new(0));
+        let metrics = Arc::new(CountingMetricsSink::default());
+        let mut jit = JitRuntime::new(config, NullBackend, AtomicCompileSink(compile_counter))
+            .with_metrics_sink(metrics);
+
+        let rips: Vec<u64> = (0..OPS_PER_ITER as u64).map(|i| 0xB000u64 + i).collect();
+
+        b.iter(|| {
+            jit.reset();
+            for &rip in &rips {
+                black_box(jit.prepare_block(black_box(rip)));
+            }
+            black_box(jit.stats_snapshot());
+        });
+    });
+
+    group.finish();
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn bench_jit_runtime_install_handle(c: &mut Criterion) {
     const OPS_PER_ITER: usize = 2048;
 
@@ -968,7 +1108,7 @@ fn bench_page_versions_snapshot_small(c: &mut Criterion) {
 criterion_group! {
     name = benches;
     config = criterion_config();
-    targets = bench_code_cache, bench_hotness_profile, bench_jit_runtime_prepare_block, bench_jit_runtime_install_handle, bench_page_version_tracker, bench_page_versions_snapshot_small
+    targets = bench_code_cache, bench_code_cache_clone_overhead, bench_hotness_profile, bench_jit_runtime_prepare_block, bench_jit_runtime_prepare_block_compile_request, bench_jit_runtime_install_handle, bench_page_version_tracker, bench_page_versions_snapshot_small
 }
 #[cfg(not(target_arch = "wasm32"))]
 criterion_main!(benches);
