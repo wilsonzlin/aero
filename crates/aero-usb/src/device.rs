@@ -143,6 +143,9 @@ impl AttachedUsbDevice {
             if let Some(webusb) = any.downcast_mut::<crate::UsbWebUsbPassthroughDevice>() {
                 webusb.reset_host_state_for_restore();
             }
+            if let Some(webhid) = any.downcast_mut::<UsbHidPassthroughHandle>() {
+                webhid.reset_host_state_for_restore();
+            }
         }
 
         if let Some(hub) = self.as_hub_mut() {

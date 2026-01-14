@@ -2,6 +2,7 @@
 
 use aero_machine::{Machine, MachineConfig};
 use aero_usb::hub::UsbHubDevice;
+use aero_usb::hid::UsbHidPassthroughHandle;
 use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel, UsbWebUsbPassthroughDevice};
 
 fn queue_webusb_control_in_action(dev: &UsbWebUsbPassthroughDevice) {
@@ -18,6 +19,38 @@ fn queue_webusb_control_in_action(dev: &UsbWebUsbPassthroughDevice) {
         handle.handle_control_request(setup, None),
         ControlResponse::Nak,
         "expected first control request to queue a host action and return NAK"
+    );
+}
+
+fn sample_hid_report_descriptor_input_2_bytes() -> Vec<u8> {
+    vec![
+        0x06, 0x00, 0xff, // Usage Page (Vendor-defined 0xFF00)
+        0x09, 0x01, // Usage (0x01)
+        0xa1, 0x01, // Collection (Application)
+        0x15, 0x00, // Logical Minimum (0)
+        0x26, 0xff, 0x00, // Logical Maximum (255)
+        0x75, 0x08, // Report Size (8)
+        0x95, 0x02, // Report Count (2)
+        0x81, 0x02, // Input (Data,Var,Abs)
+        0xc0, // End Collection
+    ]
+}
+
+fn queue_webhid_feature_report_request(dev: &UsbHidPassthroughHandle) {
+    // HID class request: GET_REPORT(feature, report_id=3)
+    let setup = SetupPacket {
+        bm_request_type: 0xA1, // DeviceToHost | Class | Interface
+        b_request: 0x01,       // GET_REPORT
+        w_value: (3u16 << 8) | 3u16,
+        w_index: 0,
+        w_length: 64,
+    };
+
+    let mut handle = dev.clone();
+    assert_eq!(
+        handle.handle_control_request(setup, None),
+        ControlResponse::Nak,
+        "expected GET_REPORT(feature) to queue a host request and return NAK"
     );
 }
 
@@ -205,4 +238,59 @@ fn snapshot_restore_clears_ehci_webusb_host_state_behind_hub() {
     let summary = webusb.pending_summary();
     assert_eq!(summary.queued_actions, 0);
     assert_eq!(summary.inflight_control, None);
+}
+
+#[test]
+fn snapshot_restore_clears_uhci_webhid_feature_report_host_state() {
+    let mut vm = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_uhci: true,
+        // Keep this test minimal/deterministic.
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    let webhid = UsbHidPassthroughHandle::new(
+        0x1234,
+        0x5678,
+        "Vendor".to_string(),
+        "Product".to_string(),
+        None,
+        sample_hid_report_descriptor_input_2_bytes(),
+        false,
+        None,
+        None,
+        None,
+    );
+
+    vm.usb_attach_root(0, Box::new(webhid.clone()))
+        .expect("attach WebHID passthrough device behind UHCI");
+
+    // Queue a host-side feature report request and simulate the host popping it before snapshot.
+    queue_webhid_feature_report_request(&webhid);
+    let req = webhid
+        .pop_feature_report_request()
+        .expect("expected queued feature report request");
+    assert_eq!(req.request_id, 1);
+
+    let snapshot = vm.take_snapshot_full().unwrap();
+    vm.restore_snapshot_bytes(&snapshot).unwrap();
+
+    // Host-side feature report requests are backed by asynchronous WebHID operations; after restore
+    // they must be cleared so the guest can re-issue a fresh request.
+    assert!(webhid.pop_feature_report_request().is_none());
+
+    // Re-issue the request; IDs should continue from the saved counter.
+    queue_webhid_feature_report_request(&webhid);
+    let req2 = webhid
+        .pop_feature_report_request()
+        .expect("expected feature report request after restore");
+    assert_eq!(req2.request_id, 2);
 }

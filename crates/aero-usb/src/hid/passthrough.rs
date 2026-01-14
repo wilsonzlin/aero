@@ -313,6 +313,20 @@ impl UsbHidPassthroughHandle {
         self.inner.borrow_mut().pending_output_reports.pop_front()
     }
 
+    /// Clears host-side asynchronous state that cannot be resumed after snapshot/restore.
+    ///
+    /// WebHID feature report reads are serviced asynchronously by the host (e.g. `HIDDevice.getFeatureReport`)
+    /// and are typically backed by JS Promises. After restoring a VM snapshot, any in-flight host operations
+    /// must be discarded so the guest can re-issue the request and the host can start a fresh operation.
+    ///
+    /// This intentionally preserves guest-visible state like cached feature reports and report images.
+    pub fn reset_host_state_for_restore(&self) {
+        let mut inner = self.inner.borrow_mut();
+        inner.feature_report_request_queue.clear();
+        inner.feature_report_requests_pending.clear();
+        inner.feature_report_requests_failed.clear();
+    }
+
     /// Drain the next pending host-side `GET_REPORT (Feature)` request issued by the guest.
     pub fn pop_feature_report_request(&self) -> Option<UsbHidPassthroughFeatureReportRequest> {
         self.inner
@@ -4312,5 +4326,85 @@ mod tests {
             .expect("expected second feature report request");
         assert_eq!(second.request_id, 2);
         assert_eq!(second.report_id, 4);
+    }
+
+    #[test]
+    fn reset_host_state_for_restore_requeues_feature_report_request_ids() {
+        // Queue a feature report request (id=1) and simulate the host popping it before the
+        // snapshot is taken.
+        let mut dev = UsbHidPassthroughHandle::new(
+            0x1234,
+            0x5678,
+            "Vendor".into(),
+            "Product".into(),
+            None,
+            sample_report_descriptor_with_ids(),
+            false,
+            None,
+            None,
+            None,
+        );
+        configure_device(&mut dev);
+
+        assert_eq!(
+            dev.handle_control_request(
+                SetupPacket {
+                    bm_request_type: 0xA1, // DeviceToHost | Class | Interface
+                    b_request: HID_REQUEST_GET_REPORT,
+                    w_value: (3u16 << 8) | 3u16, // Feature report, report_id=3.
+                    w_index: 0,
+                    w_length: 64,
+                },
+                None,
+            ),
+            ControlResponse::Nak
+        );
+
+        let first = dev
+            .pop_feature_report_request()
+            .expect("expected queued feature report request");
+        assert_eq!(first.request_id, 1);
+
+        let snapshot = dev.save_state();
+
+        let mut restored = UsbHidPassthroughHandle::new(
+            0x1234,
+            0x5678,
+            "Vendor".into(),
+            "Product".into(),
+            None,
+            sample_report_descriptor_with_ids(),
+            false,
+            None,
+            None,
+            None,
+        );
+        restored.load_state(&snapshot).unwrap();
+        configure_device(&mut restored);
+
+        // The host-side request queue/state is backed by asynchronous operations (e.g. JS Promises)
+        // and must be cleared after restore.
+        restored.reset_host_state_for_restore();
+
+        // The guest should be able to re-issue GET_REPORT and receive a fresh request ID.
+        assert_eq!(
+            restored.handle_control_request(
+                SetupPacket {
+                    bm_request_type: 0xA1,
+                    b_request: HID_REQUEST_GET_REPORT,
+                    w_value: (3u16 << 8) | 3u16,
+                    w_index: 0,
+                    w_length: 64,
+                },
+                None,
+            ),
+            ControlResponse::Nak
+        );
+
+        let second = restored
+            .pop_feature_report_request()
+            .expect("expected new feature report request after reset");
+        assert_eq!(second.request_id, 2);
+        assert_eq!(second.report_id, 3);
     }
 }
