@@ -386,6 +386,9 @@ If your ISO is BIOS-only, you can omit the UEFI boot entry.
 Aero’s legacy BIOS boots Windows install media via an **El Torito no-emulation** boot entry (the `...,e,...` entries in `oscdimg -bootdata`, and `-no-emul-boot` in `xorriso`).
 When booting from the first CD/ISO, the BIOS provides the boot drive number in `DL` as **`0xE0`**; when booting from the HDD instead, `DL` is **`0x80`**.
 In Aero, this `DL` value is selected by the host via `BiosConfig::boot_drive` / `MachineConfig::boot_drive` (or `Machine::set_boot_drive(...)` + `reset()`).
+For host convenience, firmware also supports an optional “CD-first when present” policy: keep the
+configured `boot_drive` as the HDD (typically `0x80`) and set `boot_from_cd_if_present=true` +
+`cd_boot_drive=0xE0` so BIOS attempts to boot from the ISO when attached, then falls back to HDD.
 For the canonical optical attachment point (PIIX3 IDE **secondary master ATAPI**), see [`docs/05-storage-topology-win7.md`](./05-storage-topology-win7.md).
 For INT 13h CD-extension expectations (including `AH=41h/42h/48h` for `DL=0xE0`), see
 [`docs/09b-eltorito-cd-boot.md`](./09b-eltorito-cd-boot.md).

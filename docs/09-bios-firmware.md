@@ -57,8 +57,14 @@ both:
 - a 512-byte-sector `BlockDevice` backend (for HDD drive numbers `0x80..=0xDF`), and
 - an optional 2048-byte-sector `CdromDevice` backend (for CD drive numbers `0xE0..=0xEF`).
 
-To boot install media, the host must select CD boot (`boot_drive=0xE0`) before reset (see
-[`docs/05-storage-topology-win7.md`](./05-storage-topology-win7.md)). When booting install media,
+To boot install media, the host must either:
+
+- select CD boot (`boot_drive=0xE0`) before reset, **or**
+- enable the optional firmware “CD-first when present” policy (`boot_from_cd_if_present=true`,
+  `cd_boot_drive=0xE0`) so BIOS attempts a CD boot when an ISO is attached and otherwise falls back
+  to the configured HDD boot drive.
+
+See [`docs/05-storage-topology-win7.md`](./05-storage-topology-win7.md). When booting install media,
 early Windows boot code reads ISO9660 logical blocks from the CD via the EDD path (`AH=42h`/`48h`).
 
 UEFI is **not** the canonical path today. If you see older docs implying an external BIOS blob or a
