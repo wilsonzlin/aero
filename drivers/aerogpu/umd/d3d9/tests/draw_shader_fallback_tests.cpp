@@ -270,8 +270,9 @@ bool TestPsOnlyDrawBindsFallbackVsXyzDiffuse() {
     return false;
   }
 
-  // XYZ|DIFFUSE is supported by the fixed-function fallback and requires the internal
-  // WVP VS variant when the app leaves VS NULL.
+  // XYZ|DIFFUSE is supported by the fixed-function fallback. The driver applies
+  // WORLD*VIEW*PROJECTION on the CPU at draw time and binds a passthrough VS when
+  // the app leaves VS NULL (PS-only interop).
   if (!Check(ctx.device_funcs.pfnSetFVF != nullptr, "pfnSetFVF")) {
     return false;
   }

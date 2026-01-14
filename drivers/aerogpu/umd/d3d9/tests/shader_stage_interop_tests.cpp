@@ -931,7 +931,7 @@ bool TestPsOnlyBindsFixedfuncVsXyzTex1() {
   return Check(saw_user_ps_bind, "saw BIND_SHADERS with user PS handle");
 }
 
-bool TestPsOnlyXyzDiffuseBindsWvpVs() {
+bool TestPsOnlyXyzDiffuseBindsPassthroughVs() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
     return false;
@@ -1210,7 +1210,7 @@ int main() {
   if (!aerogpu::TestPsOnlyBindsFixedfuncVsXyzTex1()) {
     return 1;
   }
-  if (!aerogpu::TestPsOnlyXyzDiffuseBindsWvpVs()) {
+  if (!aerogpu::TestPsOnlyXyzDiffuseBindsPassthroughVs()) {
     return 1;
   }
   if (!aerogpu::TestUnsupportedFvfPsOnlyFailsWithoutDraw()) {
