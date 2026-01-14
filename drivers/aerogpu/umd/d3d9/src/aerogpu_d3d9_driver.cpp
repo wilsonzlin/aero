@@ -17,6 +17,7 @@
 #include <memory>
 #include <mutex>
 #include <new>
+#include <optional>
 #include <thread>
 #include <type_traits>
 #include <unordered_map>
@@ -27949,19 +27950,27 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices(
 
 HRESULT AEROGPU_D3D9_CALL OpenAdapter(
     D3DDDIARG_OPENADAPTER* pOpenAdapter) {
-  const uint64_t iface_version =
-      pOpenAdapter ? aerogpu::d3d9_trace_pack_u32_u32(get_interface_version(pOpenAdapter), pOpenAdapter->Version) : 0;
-  aerogpu::D3d9TraceCall trace(aerogpu::D3d9TraceFunc::OpenAdapter,
-                               iface_version,
-                               aerogpu::d3d9_trace_arg_ptr(pOpenAdapter),
-                               pOpenAdapter ? aerogpu::d3d9_trace_arg_ptr(pOpenAdapter->pAdapterFuncs) : 0,
-                               0);
+  // Best-effort trace. Keep construction inside the entrypoint's try/catch so a
+  // tracing failure cannot escape across the DLL export boundary.
+  std::optional<aerogpu::D3d9TraceCall> trace;
+  const auto ret = [&trace](HRESULT hr) { return trace ? trace->ret(hr) : hr; };
   HDC hdc = nullptr;
   try {
-    if (!pOpenAdapter) {
-      return trace.ret(E_INVALIDARG);
+    const uint64_t iface_version =
+        pOpenAdapter ? aerogpu::d3d9_trace_pack_u32_u32(get_interface_version(pOpenAdapter), pOpenAdapter->Version) : 0;
+    try {
+      trace.emplace(aerogpu::D3d9TraceFunc::OpenAdapter,
+                    iface_version,
+                    aerogpu::d3d9_trace_arg_ptr(pOpenAdapter),
+                    pOpenAdapter ? aerogpu::d3d9_trace_arg_ptr(pOpenAdapter->pAdapterFuncs) : 0,
+                    0);
+    } catch (...) {
     }
- 
+
+    if (!pOpenAdapter) {
+      return ret(E_INVALIDARG);
+    }
+  
     LUID luid = aerogpu::default_luid();
 #if defined(_WIN32)
     // Some runtimes may call OpenAdapter/OpenAdapter2 without providing an HDC or
@@ -27981,9 +27990,9 @@ HRESULT AEROGPU_D3D9_CALL OpenAdapter(
         ReleaseDC(nullptr, hdc);
       }
 #endif
-      return trace.ret(E_INVALIDARG);
+      return ret(E_INVALIDARG);
     }
- 
+  
     const HRESULT hr = aerogpu::OpenAdapterCommon("OpenAdapter",
                                                   get_interface_version(pOpenAdapter),
                                                   pOpenAdapter->Version,
@@ -28064,41 +28073,49 @@ HRESULT AEROGPU_D3D9_CALL OpenAdapter(
       }
     }
   }
-  if (hdc) {
-    ReleaseDC(nullptr, hdc);
-  }
+    if (hdc) {
+      ReleaseDC(nullptr, hdc);
+    }
 #endif
-    return trace.ret(hr);
+    return ret(hr);
   } catch (const std::bad_alloc&) {
 #if defined(_WIN32)
     if (hdc) {
       ReleaseDC(nullptr, hdc);
     }
 #endif
-    return trace.ret(E_OUTOFMEMORY);
+    return ret(E_OUTOFMEMORY);
   } catch (...) {
 #if defined(_WIN32)
     if (hdc) {
       ReleaseDC(nullptr, hdc);
     }
 #endif
-    return trace.ret(E_FAIL);
+    return ret(E_FAIL);
   }
 }
 
 HRESULT AEROGPU_D3D9_CALL OpenAdapter2(
     D3DDDIARG_OPENADAPTER2* pOpenAdapter) {
-  const uint64_t iface_version =
-      pOpenAdapter ? aerogpu::d3d9_trace_pack_u32_u32(get_interface_version(pOpenAdapter), pOpenAdapter->Version) : 0;
-  aerogpu::D3d9TraceCall trace(aerogpu::D3d9TraceFunc::OpenAdapter2,
-                               iface_version,
-                               aerogpu::d3d9_trace_arg_ptr(pOpenAdapter),
-                               pOpenAdapter ? aerogpu::d3d9_trace_arg_ptr(pOpenAdapter->pAdapterFuncs) : 0,
-                               0);
+  // Best-effort trace. Keep construction inside the entrypoint's try/catch so a
+  // tracing failure cannot escape across the DLL export boundary.
+  std::optional<aerogpu::D3d9TraceCall> trace;
+  const auto ret = [&trace](HRESULT hr) { return trace ? trace->ret(hr) : hr; };
   HDC hdc = nullptr;
   try {
+    const uint64_t iface_version =
+        pOpenAdapter ? aerogpu::d3d9_trace_pack_u32_u32(get_interface_version(pOpenAdapter), pOpenAdapter->Version) : 0;
+    try {
+      trace.emplace(aerogpu::D3d9TraceFunc::OpenAdapter2,
+                    iface_version,
+                    aerogpu::d3d9_trace_arg_ptr(pOpenAdapter),
+                    pOpenAdapter ? aerogpu::d3d9_trace_arg_ptr(pOpenAdapter->pAdapterFuncs) : 0,
+                    0);
+    } catch (...) {
+    }
+
     if (!pOpenAdapter) {
-      return trace.ret(E_INVALIDARG);
+      return ret(E_INVALIDARG);
     }
 
     LUID luid = aerogpu::default_luid();
@@ -28120,7 +28137,7 @@ HRESULT AEROGPU_D3D9_CALL OpenAdapter2(
         ReleaseDC(nullptr, hdc);
       }
 #endif
-      return trace.ret(E_INVALIDARG);
+      return ret(E_INVALIDARG);
     }
 
     const HRESULT hr = aerogpu::OpenAdapterCommon("OpenAdapter2",
@@ -28205,36 +28222,44 @@ HRESULT AEROGPU_D3D9_CALL OpenAdapter2(
       ReleaseDC(nullptr, hdc);
     }
 #endif
-    return trace.ret(hr);
+    return ret(hr);
   } catch (const std::bad_alloc&) {
 #if defined(_WIN32)
     if (hdc) {
       ReleaseDC(nullptr, hdc);
     }
 #endif
-    return trace.ret(E_OUTOFMEMORY);
+    return ret(E_OUTOFMEMORY);
   } catch (...) {
 #if defined(_WIN32)
     if (hdc) {
       ReleaseDC(nullptr, hdc);
     }
 #endif
-    return trace.ret(E_FAIL);
+    return ret(E_FAIL);
   }
 }
 
 HRESULT AEROGPU_D3D9_CALL OpenAdapterFromHdc(
     D3DDDIARG_OPENADAPTERFROMHDC* pOpenAdapter) {
-  const uint64_t iface_version =
-      pOpenAdapter ? aerogpu::d3d9_trace_pack_u32_u32(get_interface_version(pOpenAdapter), pOpenAdapter->Version) : 0;
-  aerogpu::D3d9TraceCall trace(aerogpu::D3d9TraceFunc::OpenAdapterFromHdc,
-                               iface_version,
-                               pOpenAdapter ? aerogpu::d3d9_trace_arg_ptr(pOpenAdapter->hDc) : 0,
-                               aerogpu::d3d9_trace_arg_ptr(pOpenAdapter),
-                               pOpenAdapter ? aerogpu::d3d9_trace_arg_ptr(pOpenAdapter->pAdapterFuncs) : 0);
+  // Best-effort trace. Keep construction inside the entrypoint's try/catch so a
+  // tracing failure cannot escape across the DLL export boundary.
+  std::optional<aerogpu::D3d9TraceCall> trace;
+  const auto ret = [&trace](HRESULT hr) { return trace ? trace->ret(hr) : hr; };
   try {
+    const uint64_t iface_version =
+        pOpenAdapter ? aerogpu::d3d9_trace_pack_u32_u32(get_interface_version(pOpenAdapter), pOpenAdapter->Version) : 0;
+    try {
+      trace.emplace(aerogpu::D3d9TraceFunc::OpenAdapterFromHdc,
+                    iface_version,
+                    pOpenAdapter ? aerogpu::d3d9_trace_arg_ptr(pOpenAdapter->hDc) : 0,
+                    aerogpu::d3d9_trace_arg_ptr(pOpenAdapter),
+                    pOpenAdapter ? aerogpu::d3d9_trace_arg_ptr(pOpenAdapter->pAdapterFuncs) : 0);
+    } catch (...) {
+    }
+
     if (!pOpenAdapter) {
-      return trace.ret(E_INVALIDARG);
+      return ret(E_INVALIDARG);
     }
 
     LUID luid = aerogpu::default_luid();
@@ -28251,7 +28276,7 @@ HRESULT AEROGPU_D3D9_CALL OpenAdapterFromHdc(
                   static_cast<unsigned>(luid.LowPart));
     auto* adapter_funcs = reinterpret_cast<D3D9DDI_ADAPTERFUNCS*>(pOpenAdapter->pAdapterFuncs);
     if (!adapter_funcs) {
-      return trace.ret(E_INVALIDARG);
+      return ret(E_INVALIDARG);
     }
 
     const HRESULT hr = aerogpu::OpenAdapterCommon("OpenAdapterFromHdc",
@@ -28334,36 +28359,44 @@ HRESULT AEROGPU_D3D9_CALL OpenAdapterFromHdc(
     }
 #endif
 
-    return trace.ret(hr);
+    return ret(hr);
   } catch (const std::bad_alloc&) {
-    return trace.ret(E_OUTOFMEMORY);
+    return ret(E_OUTOFMEMORY);
   } catch (...) {
-    return trace.ret(E_FAIL);
+    return ret(E_FAIL);
   }
 }
 
 HRESULT AEROGPU_D3D9_CALL OpenAdapterFromLuid(
     D3DDDIARG_OPENADAPTERFROMLUID* pOpenAdapter) {
-  const uint64_t iface_version =
-      pOpenAdapter ? aerogpu::d3d9_trace_pack_u32_u32(get_interface_version(pOpenAdapter), pOpenAdapter->Version) : 0;
-  const uint64_t luid_packed = pOpenAdapter
-                                  ? aerogpu::d3d9_trace_pack_u32_u32(pOpenAdapter->AdapterLuid.LowPart,
-                                                                     static_cast<uint32_t>(pOpenAdapter->AdapterLuid.HighPart))
-                                  : 0;
-  aerogpu::D3d9TraceCall trace(aerogpu::D3d9TraceFunc::OpenAdapterFromLuid,
-                               iface_version,
-                               luid_packed,
-                               aerogpu::d3d9_trace_arg_ptr(pOpenAdapter),
-                               pOpenAdapter ? aerogpu::d3d9_trace_arg_ptr(pOpenAdapter->pAdapterFuncs) : 0);
+  // Best-effort trace. Keep construction inside the entrypoint's try/catch so a
+  // tracing failure cannot escape across the DLL export boundary.
+  std::optional<aerogpu::D3d9TraceCall> trace;
+  const auto ret = [&trace](HRESULT hr) { return trace ? trace->ret(hr) : hr; };
   try {
+    const uint64_t iface_version =
+        pOpenAdapter ? aerogpu::d3d9_trace_pack_u32_u32(get_interface_version(pOpenAdapter), pOpenAdapter->Version) : 0;
+    const uint64_t luid_packed = pOpenAdapter
+                                    ? aerogpu::d3d9_trace_pack_u32_u32(pOpenAdapter->AdapterLuid.LowPart,
+                                                                       static_cast<uint32_t>(pOpenAdapter->AdapterLuid.HighPart))
+                                    : 0;
+    try {
+      trace.emplace(aerogpu::D3d9TraceFunc::OpenAdapterFromLuid,
+                    iface_version,
+                    luid_packed,
+                    aerogpu::d3d9_trace_arg_ptr(pOpenAdapter),
+                    pOpenAdapter ? aerogpu::d3d9_trace_arg_ptr(pOpenAdapter->pAdapterFuncs) : 0);
+    } catch (...) {
+    }
+
     if (!pOpenAdapter) {
-      return trace.ret(E_INVALIDARG);
+      return ret(E_INVALIDARG);
     }
 
     const LUID luid = pOpenAdapter->AdapterLuid;
     auto* adapter_funcs = reinterpret_cast<D3D9DDI_ADAPTERFUNCS*>(pOpenAdapter->pAdapterFuncs);
     if (!adapter_funcs) {
-      return trace.ret(E_INVALIDARG);
+      return ret(E_INVALIDARG);
     }
 
     const HRESULT hr = aerogpu::OpenAdapterCommon("OpenAdapterFromLuid",
@@ -28432,10 +28465,10 @@ HRESULT AEROGPU_D3D9_CALL OpenAdapterFromLuid(
     }
 #endif
 
-    return trace.ret(hr);
+    return ret(hr);
   } catch (const std::bad_alloc&) {
-    return trace.ret(E_OUTOFMEMORY);
+    return ret(E_OUTOFMEMORY);
   } catch (...) {
-    return trace.ret(E_FAIL);
+    return ret(E_FAIL);
   }
 }
