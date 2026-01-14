@@ -483,6 +483,9 @@ If these entries are missing, re-run `setup.cmd` as Administrator and reboot onc
       - Note: the canonical in-tree keyboard/mouse INF (`aero_virtio_input.inf`) includes a strict revision-gated generic
         fallback match (`PCI\VEN_1AF4&DEV_1052&REV_01`) in addition to the subsystem-qualified keyboard/mouse IDs, so binding
         remains stable even if subsystem IDs are not exposed/recognized.
+      - If your tooling expects the legacy INF filename, enable the optional legacy alias INF
+        (`virtio-input.inf.disabled` → `virtio-input.inf`). From `[Version]` onward it must match
+        `aero_virtio_input.inf` byte-for-byte.
     - If the device reports `REV_00`, the in-tree Aero `aero_virtio_input.inf` will not bind; ensure your emulator/QEMU config sets `x-pci-revision=0x01` (and preferably `disable-legacy=on`).
 6. If Device Manager shows signing or driver errors for the input device, resolve them first (Code 52 / Code 28 / Code 10), then switch back to virtio-input.
 
