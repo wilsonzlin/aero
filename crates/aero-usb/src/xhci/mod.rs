@@ -3651,6 +3651,9 @@ impl XhciController {
         endpoint_id: u8,
         state: context::EndpointState,
     ) -> bool {
+        if slot_id == 0 {
+            return false;
+        }
         if endpoint_id == 0 || endpoint_id > 31 {
             return false;
         }
@@ -3685,6 +3688,8 @@ impl XhciController {
             if let Some(slot) = self.slots.get_mut(slot_idx) {
                 slot.endpoint_contexts[usize::from(endpoint_id - 1)] = ep_ctx;
                 slot.device_context_ptr = dev_ctx_ptr;
+            } else {
+                return false;
             }
         }
         true
