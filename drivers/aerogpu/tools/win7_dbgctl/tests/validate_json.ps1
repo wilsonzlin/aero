@@ -194,6 +194,26 @@ function Assert-ValidJsonFile {
     }
   }
 
+  if ($ExpectedCommand -eq "query-perf" -and $obj.ok) {
+    if (-not $obj.get_scanline) {
+      throw "Missing get_scanline section in query-perf JSON file: $JsonPath`n$jsonText"
+    }
+    if (-not $obj.contig_pool) {
+      throw "Missing contig_pool section in query-perf JSON file: $JsonPath`n$jsonText"
+    }
+    if (-not $obj.alloc_table) {
+      throw "Missing alloc_table section in query-perf JSON file: $JsonPath`n$jsonText"
+    }
+    if ($obj.contig_pool.available) {
+      Assert-ByteSizeObject -Obj $obj.contig_pool.bytes_saved -Context "contig_pool.bytes_saved"
+    }
+    if ($obj.alloc_table.available) {
+      Assert-U64HexDecObject -Obj $obj.alloc_table.count -Context "alloc_table.count"
+      Assert-U64HexDecObject -Obj $obj.alloc_table.entries -Context "alloc_table.entries"
+      Assert-U64HexDecObject -Obj $obj.alloc_table.readonly_entries -Context "alloc_table.readonly_entries"
+    }
+  }
+
   Remove-Item -ErrorAction SilentlyContinue $JsonPath
 }
 
@@ -206,6 +226,8 @@ Assert-ValidJson -ExpectedCommand "help" -Args @("/?")
 # File output mode: `--json=PATH` (and `--json PATH`) should create a JSON file and not print to stdout.
 Assert-ValidJsonFile -ExpectedCommand "status" -Args @("--status") -JsonPath "status_file_test.json"
 Assert-ValidJsonFile -ExpectedCommand "status" -Args @("--status", "--pretty") -JsonPath "status_pretty_file_test.json" -SeparateArg
+Assert-ValidJsonFile -ExpectedCommand "query-perf" -Args @("--query-perf") -JsonPath "query_perf_file_test.json"
+Assert-ValidJsonFile -ExpectedCommand "query-perf" -Args @("--query-perf", "--pretty") -JsonPath "query_perf_pretty_file_test.json" -SeparateArg
 # Parse errors should still write machine-readable JSON to file if `--json=PATH` is present anywhere.
 Assert-ValidJsonFile -ExpectedCommand "parse-args" -Args @("--status", "--query-fence") -JsonPath "parse_args_file_test.json"
 Assert-ValidJson -ExpectedCommand "list-displays" -Args @("--list-displays")
