@@ -1213,34 +1213,34 @@ impl AerogpuD3d9Executor {
             }
         }
 
-        // On Linux CI we prefer the GL backend for headless tests to avoid crashes seen with some
-        // Vulkan software adapters (lavapipe/llvmpipe).
-        let adapter = if cfg!(target_os = "linux") {
-            let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-                backends: wgpu::Backends::GL,
-                ..Default::default()
-            });
-            instance
-                .request_adapter(&wgpu::RequestAdapterOptions {
-                    power_preference: wgpu::PowerPreference::HighPerformance,
-                    compatible_surface: None,
-                    force_fallback_adapter: false,
-                })
-                .await
-        } else {
-            let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-                // Prefer "native" backends; this avoids initializing GL stacks on platforms where
-                // they're more likely to require a windowing system.
-                backends: wgpu::Backends::PRIMARY,
-                ..Default::default()
-            });
-            instance
-                .request_adapter(&wgpu::RequestAdapterOptions {
-                    power_preference: wgpu::PowerPreference::HighPerformance,
-                    compatible_surface: None,
-                    force_fallback_adapter: false,
-                })
-                .await
+        // Avoid wgpu's GL backend on Linux: wgpu-hal's GLES pipeline reflection can panic for some
+        // shader pipelines (observed in CI sandboxes), which turns these tests into hard failures.
+        //
+        // Prefer "native" backends across platforms; on Linux this means Vulkan.
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::PRIMARY,
+            ..Default::default()
+        });
+
+        // Prefer a fallback adapter first so headless CI can run without a hardware GPU.
+        let adapter = match instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                compatible_surface: None,
+                force_fallback_adapter: true,
+            })
+            .await
+        {
+            Some(adapter) => Some(adapter),
+            None => {
+                instance
+                    .request_adapter(&wgpu::RequestAdapterOptions {
+                        power_preference: wgpu::PowerPreference::HighPerformance,
+                        compatible_surface: None,
+                        force_fallback_adapter: false,
+                    })
+                    .await
+            }
         }
         .ok_or(AerogpuD3d9Error::AdapterNotFound)?;
 

@@ -43,12 +43,14 @@ fn texture_compression_disabled_by_env() -> bool {
 async fn create_executor_no_bc_features() -> Option<AerogpuD3d9Executor> {
     common::ensure_xdg_runtime_dir();
 
-    // Prefer GL on Linux CI to avoid crashes seen with some Vulkan software adapters
-    // (lavapipe/llvmpipe). These tests specifically exercise the CPU decompression fallback path,
-    // so relying on the GL backend is fine here.
+    // Avoid wgpu's GL backend on Linux: wgpu-hal's GLES pipeline reflection can panic for some
+    // shader pipelines (observed in CI sandboxes), which turns these tests into hard failures.
+    //
+    // These tests exercise the CPU decompression fallback path, so relying on native Vulkan
+    // features is not required.
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: if cfg!(target_os = "linux") {
-            wgpu::Backends::GL
+            wgpu::Backends::PRIMARY
         } else {
             wgpu::Backends::all()
         },

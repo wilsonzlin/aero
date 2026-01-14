@@ -26,11 +26,11 @@ fn create_test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
         }
     }
 
-    // Prefer GL on Linux CI to avoid crashes seen with some Vulkan software adapters
-    // (lavapipe/llvmpipe). These shader-cache tests don't rely on native Vulkan features.
+    // Avoid wgpu's GL backend on Linux: wgpu-hal's GLES pipeline reflection can panic for some
+    // shader pipelines (observed in CI sandboxes), which turns these tests into hard failures.
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: if cfg!(target_os = "linux") {
-            wgpu::Backends::GL
+            wgpu::Backends::PRIMARY
         } else {
             wgpu::Backends::all()
         },
