@@ -289,7 +289,7 @@ Outputs:
 - `out/artifacts/AeroVirtIO-Win7-<version>-x86.zip`
 - `out/artifacts/AeroVirtIO-Win7-<version>-x64.zip`
 - `out/artifacts/AeroVirtIO-Win7-<version>-bundle.zip`
-- `out/artifacts/AeroVirtIO-Win7-<version>.iso` (unless `-NoIso` is used; requires Rust/cargo for deterministic builds, or `-LegacyIso` for Windows IMAPI2 which is **not** deterministic)
+- `out/artifacts/AeroVirtIO-Win7-<version>.iso` (unless `-NoIso` is used; requires Rust/cargo for deterministic builds by default; use `-LegacyIso` for Windows IMAPI2 which is **not** deterministic)
 - `out/artifacts/AeroVirtIO-Win7-<version>-fat.vhd` (optional; when `-MakeFatImage` or `AERO_MAKE_FAT_IMAGE=1`; requires Windows + Administrator privileges; skipped unless `-FatImageStrict`)
 
 Integrity manifests (default; disable with `-NoManifest`):

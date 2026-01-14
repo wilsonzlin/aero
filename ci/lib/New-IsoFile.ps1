@@ -7,8 +7,8 @@ param(
     # Defaults to SOURCE_DATE_EPOCH if set, otherwise 0.
     [Nullable[long]] $SourceDateEpoch,
     # Force the legacy IMAPI2 implementation (Windows only, not deterministic).
-    # By default, this script uses the deterministic Rust ISO writer (`aero_iso`) when `cargo`
-    # is available, otherwise falling back to IMAPI2 on Windows.
+    # By default, this script requires `cargo` and uses the deterministic Rust ISO writer
+    # (`tools/packaging/aero_packager`, binary: `aero_iso`).
     [switch] $LegacyIso
 )
 
@@ -16,7 +16,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 # This script historically used Windows IMAPI2 (COM) to build ISOs. That path is inherently
-# non-deterministic. When `cargo` is available, we prefer the deterministic Rust ISO writer
+# non-deterministic. By default, we require `cargo` and use the deterministic Rust ISO writer
 # (`tools/packaging/aero_packager`, binary: `aero_iso`) so CI/local builds can produce
 # bit-identical ISO outputs across runs/hosts.
 # Use `-LegacyIso` to force the IMAPI2 path (Windows only, not deterministic).
@@ -91,16 +91,11 @@ function New-IsoFile {
         if ($LegacyIso) {
             throw "ISO creation with -LegacyIso requires Windows (IMAPI2)."
         }
-        throw "ISO creation requires either cargo (deterministic, cross-platform) or Windows IMAPI2. Install Rust/cargo, or run this script on Windows."
-    }
-
-    $inCi = (-not [string]::IsNullOrWhiteSpace($env:CI)) -or (-not [string]::IsNullOrWhiteSpace($env:GITHUB_ACTIONS))
-    if (-not $LegacyIso -and -not $hasCargo -and $inCi) {
-        throw "ISO creation requires cargo in CI for deterministic artifacts. Install Rust/cargo, or re-run with -LegacyIso to use IMAPI2 (not deterministic)."
+        throw "ISO creation requires cargo (deterministic, cross-platform). Install Rust/cargo, or (Windows only) re-run with -LegacyIso to use IMAPI2 (not deterministic)."
     }
 
     if (-not $LegacyIso -and -not $hasCargo) {
-        Write-Warning "cargo not found; falling back to legacy Windows IMAPI2 ISO creation (NOT deterministic). Install Rust/cargo for deterministic ISO outputs."
+        throw "ISO creation requires cargo for deterministic artifacts. Install Rust/cargo, or re-run with -LegacyIso to use Windows IMAPI2 (not deterministic)."
     }
 
     $fsi = New-Object -ComObject "IMAPI2FS.MsftFileSystemImage"

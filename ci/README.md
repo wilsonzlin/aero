@@ -205,16 +205,14 @@ ISO writer (`tools/packaging/aero_packager`, binary: `aero_iso`). This makes the
 `AeroVirtIO-Win7-*.iso` **bit-identical** across runs/hosts as long as the staged bundle directory
 contents (and `SOURCE_DATE_EPOCH`, if set) are identical.
 
-- When `cargo` is available, ISO creation is deterministic and works on Windows, Linux, and macOS (no IMAPI2 required).
-- On Windows only, if `cargo` is missing (or `-LegacyIso` is passed), it falls back to the legacy IMAPI2 ISO builder (**not deterministic**).
-- In CI, we require `cargo` to avoid accidentally producing non-deterministic ISO artifacts.
+- ISO creation requires `cargo` by default (deterministic, cross-platform).
 - Use `-NoIso` to skip ISO creation.
-- Use `-LegacyIso` to force the legacy Windows IMAPI2 path (not deterministic).
+- Use `-LegacyIso` to force the legacy Windows IMAPI2 path (**not deterministic**, Windows only).
 
 Notes:
 
 - `ci/package-drivers.ps1 -DeterminismSelfTest` checks that repeated runs produce identical `*-x86.zip`, `*-x64.zip`, and `*-bundle.zip` artifacts (and their `*.manifest.json` files), and identical `*.iso` artifacts (and its manifest) when ISO creation is enabled.
-- The legacy helper `ci/lib/New-IsoFile.ps1` also prefers `cargo`/`aero_iso` when available, falling back to IMAPI2 on Windows.
+- The legacy helper `ci/lib/New-IsoFile.ps1` also requires `cargo`/`aero_iso` by default, and uses IMAPI2 only when `-LegacyIso` is provided.
 
 ### Signing policy
 
