@@ -5098,6 +5098,73 @@ static HRESULT CreateShaderCommon(D3D10DDI_HDEVICE hDevice,
   return S_OK;
 }
 
+template <typename T, typename = void>
+struct has_member_pShaderCode : std::false_type {};
+template <typename T>
+struct has_member_pShaderCode<T, std::void_t<decltype(std::declval<T>().pShaderCode)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_CodeSize : std::false_type {};
+template <typename T>
+struct has_member_CodeSize<T, std::void_t<decltype(std::declval<T>().CodeSize)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_ShaderCodeSize : std::false_type {};
+template <typename T>
+struct has_member_ShaderCodeSize<T, std::void_t<decltype(std::declval<T>().ShaderCodeSize)>> : std::true_type {};
+
+template <typename FnPtr>
+struct CalcPrivateGeometryShaderWithStreamOutputSizeImpl;
+
+template <typename Ret, typename... Args>
+struct CalcPrivateGeometryShaderWithStreamOutputSizeImpl<Ret(AEROGPU_APIENTRY*)(Args...)> {
+  static Ret AEROGPU_APIENTRY Call(Args...) {
+    return static_cast<Ret>(sizeof(AeroGpuShader));
+  }
+};
+
+template <typename FnPtr>
+struct CreateGeometryShaderWithStreamOutputImpl;
+
+template <typename Ret, typename... Args>
+struct CreateGeometryShaderWithStreamOutputImpl<Ret(AEROGPU_APIENTRY*)(Args...)> {
+  static Ret AEROGPU_APIENTRY Call(Args... args) {
+    D3D10DDI_HDEVICE hDevice{};
+    D3D10DDI_HGEOMETRYSHADER hShader{};
+    const void* shader_code = nullptr;
+    SIZE_T shader_code_size = 0;
+
+    auto capture = [&](auto v) {
+      using T = std::decay_t<decltype(v)>;
+      if constexpr (std::is_same_v<T, D3D10DDI_HDEVICE>) {
+        hDevice = v;
+      } else if constexpr (std::is_same_v<T, D3D10DDI_HGEOMETRYSHADER>) {
+        hShader = v;
+      } else if constexpr (std::is_pointer_v<T>) {
+        using Pointee = std::remove_pointer_t<T>;
+        if constexpr (has_member_pShaderCode<Pointee>::value &&
+                      (has_member_CodeSize<Pointee>::value || has_member_ShaderCodeSize<Pointee>::value)) {
+          if (v) {
+            shader_code = v->pShaderCode;
+            if constexpr (has_member_CodeSize<Pointee>::value) {
+              shader_code_size = static_cast<SIZE_T>(v->CodeSize);
+            } else {
+              shader_code_size = static_cast<SIZE_T>(v->ShaderCodeSize);
+            }
+          }
+        }
+      }
+    };
+    (capture(args), ...);
+
+    if (!shader_code || shader_code_size == 0) {
+      return E_INVALIDARG;
+    }
+    const HRESULT hr = CreateShaderCommon(hDevice, shader_code, shader_code_size, hShader, AEROGPU_SHADER_STAGE_GEOMETRY);
+    return static_cast<Ret>(hr);
+  }
+};
+
 HRESULT AEROGPU_APIENTRY CreateVertexShader(D3D10DDI_HDEVICE hDevice,
                                             const D3D10DDIARG_CREATEVERTEXSHADER* pDesc,
                                             D3D10DDI_HVERTEXSHADER hShader,
@@ -9095,9 +9162,10 @@ HRESULT AEROGPU_APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, D3D10_1DDIARG_
   }
   __if_exists(D3D10_1DDI_DEVICEFUNCS::pfnCalcPrivateGeometryShaderWithStreamOutputSize) {
     pCreateDevice->pDeviceFuncs->pfnCalcPrivateGeometryShaderWithStreamOutputSize =
-        &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnCalcPrivateGeometryShaderWithStreamOutputSize)>::Call;
+        &CalcPrivateGeometryShaderWithStreamOutputSizeImpl<
+            decltype(pCreateDevice->pDeviceFuncs->pfnCalcPrivateGeometryShaderWithStreamOutputSize)>::Call;
     pCreateDevice->pDeviceFuncs->pfnCreateGeometryShaderWithStreamOutput =
-        &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnCreateGeometryShaderWithStreamOutput)>::Call;
+        &CreateGeometryShaderWithStreamOutputImpl<decltype(pCreateDevice->pDeviceFuncs->pfnCreateGeometryShaderWithStreamOutput)>::Call;
   }
 
   pCreateDevice->pDeviceFuncs->pfnCalcPrivateElementLayoutSize = &CalcPrivateElementLayoutSize;

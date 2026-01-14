@@ -6075,6 +6075,70 @@ HRESULT CreateShaderCommon(D3D10DDI_HDEVICE hDevice,
   return S_OK;
 }
 
+template <typename FnPtr>
+struct CalcPrivateGeometryShaderWithStreamOutputSizeImpl;
+
+template <typename Ret, typename... Args>
+struct CalcPrivateGeometryShaderWithStreamOutputSizeImpl<Ret(AEROGPU_APIENTRY*)(Args...)> {
+  static Ret AEROGPU_APIENTRY Call(Args...) {
+    return static_cast<Ret>(sizeof(AeroGpuShader));
+  }
+};
+
+template <typename FnPtr>
+struct CreateGeometryShaderWithStreamOutputImpl;
+
+template <typename Ret, typename... Args>
+struct CreateGeometryShaderWithStreamOutputImpl<Ret(AEROGPU_APIENTRY*)(Args...)> {
+  static Ret AEROGPU_APIENTRY Call(Args... args) {
+    D3D10DDI_HDEVICE hDevice{};
+    D3D10DDI_HSHADER hShader{};
+    const void* shader_code = nullptr;
+    size_t shader_code_size = 0;
+
+    auto capture = [&](auto v) {
+      using T = std::decay_t<decltype(v)>;
+      if constexpr (std::is_same_v<T, D3D10DDI_HDEVICE>) {
+        hDevice = v;
+      } else if constexpr (std::is_same_v<T, D3D10DDI_HSHADER>) {
+        hShader = v;
+      } else if constexpr (std::is_pointer_v<T>) {
+        if (!v || shader_code) {
+          return;
+        }
+
+        using Pointee = std::remove_pointer_t<T>;
+        if constexpr (std::is_void_v<Pointee> || std::is_arithmetic_v<Pointee> || std::is_enum_v<Pointee>) {
+          const void* maybe_code = static_cast<const void*>(v);
+          const size_t maybe_size = dxbc_size_from_header(maybe_code);
+          if (maybe_size) {
+            shader_code = maybe_code;
+            shader_code_size = maybe_size;
+          }
+          return;
+        }
+
+        // D3D10 WDK shader create args structs are not stable across SDK
+        // revisions, but they consistently begin with a DXBC pointer. Read the
+        // first field to recover the bytecode.
+        const void* code = nullptr;
+        std::memcpy(&code, v, sizeof(code));
+        const size_t size = dxbc_size_from_header(code);
+        if (size) {
+          shader_code = code;
+          shader_code_size = size;
+        }
+      }
+    };
+    (capture(args), ...);
+
+    if (!shader_code || shader_code_size == 0) {
+      return E_INVALIDARG;
+    }
+    return static_cast<Ret>(CreateShaderCommon(hDevice, shader_code, shader_code_size, hShader, AEROGPU_SHADER_STAGE_GEOMETRY));
+  }
+};
+
 HRESULT APIENTRY CreateVertexShader(D3D10DDI_HDEVICE hDevice,
                                     const D3D10DDIARG_CREATEVERTEXSHADER* pDesc,
                                     D3D10DDI_HSHADER hShader,
@@ -8679,6 +8743,15 @@ HRESULT APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, const D3D10DDIARG_CREA
   funcs.pfnCalcPrivateGeometryShaderSize = &CalcPrivateGeometryShaderSize;
   funcs.pfnCreateGeometryShader = &CreateGeometryShader;
   funcs.pfnDestroyGeometryShader = &DestroyGeometryShader;
+  __if_exists(D3D10DDI_DEVICEFUNCS::pfnCalcPrivateGeometryShaderWithStreamOutputSize) {
+    funcs.pfnCalcPrivateGeometryShaderWithStreamOutputSize =
+        &CalcPrivateGeometryShaderWithStreamOutputSizeImpl<
+            decltype(funcs.pfnCalcPrivateGeometryShaderWithStreamOutputSize)>::Call;
+  }
+  __if_exists(D3D10DDI_DEVICEFUNCS::pfnCreateGeometryShaderWithStreamOutput) {
+    funcs.pfnCreateGeometryShaderWithStreamOutput =
+        &CreateGeometryShaderWithStreamOutputImpl<decltype(funcs.pfnCreateGeometryShaderWithStreamOutput)>::Call;
+  }
 
   // Input layout.
   funcs.pfnCalcPrivateElementLayoutSize = &CalcPrivateElementLayoutSize;
