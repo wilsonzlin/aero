@@ -243,15 +243,15 @@ Global (applies to all virtio devices created by the harness):
 Per-device overrides (take precedence over the global value):
 
 - PowerShell:
-  - `-VirtioNetVectors N`
-  - `-VirtioBlkVectors N`
-  - `-VirtioInputVectors N`
-  - `-VirtioSndVectors N` (only relevant when `-WithVirtioSnd` is enabled)
+  - `-VirtioNetVectors N` (alias: `-VirtioNetMsixVectors`)
+  - `-VirtioBlkVectors N` (alias: `-VirtioBlkMsixVectors`)
+  - `-VirtioInputVectors N` (alias: `-VirtioInputMsixVectors`)
+  - `-VirtioSndVectors N` (alias: `-VirtioSndMsixVectors`; only relevant when `-WithVirtioSnd` is enabled)
 - Python:
-  - `--virtio-net-vectors N`
-  - `--virtio-blk-vectors N`
-  - `--virtio-input-vectors N`
-  - `--virtio-snd-vectors N` (only relevant when `--with-virtio-snd/--require-virtio-snd/--enable-virtio-snd` is enabled)
+  - `--virtio-net-vectors N` (alias: `--virtio-net-msix-vectors`)
+  - `--virtio-blk-vectors N` (alias: `--virtio-blk-msix-vectors`)
+  - `--virtio-input-vectors N` (alias: `--virtio-input-msix-vectors`)
+  - `--virtio-snd-vectors N` (alias: `--virtio-snd-msix-vectors`; only relevant when `--with-virtio-snd/--require-virtio-snd/--enable-virtio-snd` is enabled)
 
 Notes:
 

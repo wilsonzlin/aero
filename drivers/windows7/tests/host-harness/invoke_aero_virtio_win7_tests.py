@@ -5121,13 +5121,21 @@ def main() -> int:
     if args.virtio_msix_vectors is not None and args.virtio_msix_vectors <= 0:
         parser.error("--virtio-msix-vectors must be a positive integer")
     if args.virtio_net_vectors is not None and args.virtio_net_vectors <= 0:
-        parser.error("--virtio-net-vectors must be a positive integer")
+        parser.error(
+            "--virtio-net-vectors must be a positive integer (alias: --virtio-net-msix-vectors)"
+        )
     if args.virtio_blk_vectors is not None and args.virtio_blk_vectors <= 0:
-        parser.error("--virtio-blk-vectors must be a positive integer")
+        parser.error(
+            "--virtio-blk-vectors must be a positive integer (alias: --virtio-blk-msix-vectors)"
+        )
     if args.virtio_snd_vectors is not None and args.virtio_snd_vectors <= 0:
-        parser.error("--virtio-snd-vectors must be a positive integer")
+        parser.error(
+            "--virtio-snd-vectors must be a positive integer (alias: --virtio-snd-msix-vectors)"
+        )
     if args.virtio_input_vectors is not None and args.virtio_input_vectors <= 0:
-        parser.error("--virtio-input-vectors must be a positive integer")
+        parser.error(
+            "--virtio-input-vectors must be a positive integer (alias: --virtio-input-msix-vectors)"
+        )
 
     if args.require_virtio_snd_msix and not args.enable_virtio_snd:
         parser.error(
@@ -5200,7 +5208,8 @@ def main() -> int:
 
     if args.virtio_snd_vectors is not None and not args.enable_virtio_snd:
         parser.error(
-            "--virtio-snd-vectors requires --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd"
+            "--virtio-snd-vectors requires --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd "
+            "(alias: --virtio-snd-msix-vectors)"
         )
     if need_blk_resize:
         if args.virtio_transitional:
