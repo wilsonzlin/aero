@@ -31,6 +31,10 @@ fn conformance_smoke_runs_small_corpus() {
     let report = tmp.path().join("report.json");
 
     Command::new(env!("CARGO_BIN_EXE_xtask"))
+        // `xtask conformance` runs under `scripts/safe-run.sh`, which defaults to a 10 minute
+        // timeout. On cold builds (no Cargo cache) compiling the conformance harness can exceed
+        // that, so bump the timeout for this integration test to avoid flaky failures.
+        .env("AERO_TIMEOUT", "1200")
         .args([
             "conformance",
             "--cases",
