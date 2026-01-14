@@ -1867,15 +1867,11 @@ def _normalized_inf_lines_without_sections(path: Path, *, drop_sections: set[str
     dropping = False
 
     for raw in read_text(path).splitlines():
-        line = raw.strip()
+        # Use the same quote-aware comment stripping as the INF parsers elsewhere in this
+        # script (semicolons inside quoted strings are data, not comments).
+        line = _strip_inf_inline_comment(raw).strip()
         if not line:
             continue
-        if line.startswith(";"):
-            continue
-        if ";" in line:
-            line = line.split(";", 1)[0].rstrip()
-            if not line:
-                continue
 
         m = re.match(r"^\[(?P<section>[^\]]+)\]\s*$", line)
         if m:
