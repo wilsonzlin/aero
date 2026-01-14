@@ -14,13 +14,13 @@ import (
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/udpproto"
 )
 
-// DataChannelSender is the subset of pion/webrtc's DataChannel used by the relay.
-type DataChannelSender interface {
+// dataChannelSender is the subset of pion/webrtc's DataChannel used by the relay.
+type dataChannelSender interface {
 	Send(data []byte) error
 }
 
-// DestinationPolicy is implemented by policy.DestinationPolicy.
-type DestinationPolicy interface {
+// destinationPolicy is implemented by policy.DestinationPolicy.
+type destinationPolicy interface {
 	AllowUDP(remoteIP net.IP, remotePort uint16) error
 }
 
@@ -30,9 +30,9 @@ type DestinationPolicy interface {
 // A SessionRelay is bound to exactly one DataChannel ("udp") and multiplexes
 // guest-port semantics by maintaining a UDP socket per guest port.
 type SessionRelay struct {
-	dc      DataChannelSender
+	dc      dataChannelSender
 	cfg     Config
-	policy  DestinationPolicy
+	policy  destinationPolicy
 	codec   udpproto.Codec
 	session *Session
 	metrics *metrics.Metrics
@@ -53,7 +53,7 @@ type SessionRelay struct {
 	clientSupportsV2 atomic.Bool
 }
 
-func NewSessionRelay(dc DataChannelSender, cfg Config, policy DestinationPolicy, session *Session, m *metrics.Metrics) *SessionRelay {
+func NewSessionRelay(dc dataChannelSender, cfg Config, policy destinationPolicy, session *Session, m *metrics.Metrics) *SessionRelay {
 	cfg = cfg.withDefaults()
 	codec, err := udpproto.NewCodec(cfg.MaxDatagramPayloadBytes)
 	if err != nil {

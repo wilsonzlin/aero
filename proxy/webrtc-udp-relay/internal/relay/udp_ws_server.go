@@ -34,12 +34,12 @@ type udpWSControlMessage struct {
 	Message   string `json:"message,omitempty"`
 }
 
-// UDPWebSocketServer implements GET /udp, a WebSocket-based UDP relay fallback
+// udpWebSocketServer implements GET /udp, a WebSocket-based UDP relay fallback
 // that uses the same binary datagram framing as the WebRTC DataChannel.
 //
 // Each binary WebSocket message is treated as exactly one UDP relay datagram
 // frame (v1 or v2), as defined in PROTOCOL.md.
-type UDPWebSocketServer struct {
+type udpWebSocketServer struct {
 	cfg      config.Config
 	verifier auth.Verifier
 	log      *slog.Logger
@@ -55,7 +55,7 @@ type claimsVerifier interface {
 	VerifyAndExtractClaims(credential string) (auth.JWTClaims, error)
 }
 
-func NewUDPWebSocketServer(cfg config.Config, sessions *SessionManager, relayCfg Config, pol *policy.DestinationPolicy, logger *slog.Logger) (*UDPWebSocketServer, error) {
+func NewUDPWebSocketServer(cfg config.Config, sessions *SessionManager, relayCfg Config, pol *policy.DestinationPolicy, logger *slog.Logger) (*udpWebSocketServer, error) {
 	verifier, err := auth.NewVerifier(cfg)
 	if err != nil {
 		return nil, err
@@ -63,7 +63,7 @@ func NewUDPWebSocketServer(cfg config.Config, sessions *SessionManager, relayCfg
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
-	srv := &UDPWebSocketServer{
+	srv := &udpWebSocketServer{
 		cfg:      cfg,
 		verifier: verifier,
 		log:      logger,
@@ -91,7 +91,7 @@ func NewUDPWebSocketServer(cfg config.Config, sessions *SessionManager, relayCfg
 	return srv, nil
 }
 
-func (s *UDPWebSocketServer) checkOrigin(r *http.Request) bool {
+func (s *udpWebSocketServer) checkOrigin(r *http.Request) bool {
 	origins := r.Header.Values("Origin")
 	if len(origins) == 0 {
 		return true
@@ -111,7 +111,7 @@ func (s *UDPWebSocketServer) checkOrigin(r *http.Request) bool {
 	return origin.IsAllowed(normalizedOrigin, originHost, r.Host, s.cfg.AllowedOrigins)
 }
 
-func (s *UDPWebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (s *udpWebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Match /webrtc/signal: always return a JSON error to accidental HTTP callers
 	// and avoid Gorilla's default plain-text `http.Error` responses.
 	if !s.checkOrigin(r) {
