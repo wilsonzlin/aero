@@ -4231,6 +4231,34 @@ function Write-AeroQemuStderrTail {
   $lines | ForEach-Object { Write-Host $_ }
 }
 
+function Write-AeroVirtioInputBindDiagnostics {
+  param(
+    [Parameter(Mandatory = $true)] [string]$SerialLogPath
+  )
+
+  if ([string]::IsNullOrEmpty($SerialLogPath)) { return }
+  if (-not (Test-Path -LiteralPath $SerialLogPath)) { return }
+
+  # These lines are emitted by the guest selftest to make virtio-input driver binding issues actionable:
+  # - per-device bound service name (`SPDRP_SERVICE`)
+  # - missing REV_01 hint (contract-v1 requires x-pci-revision=0x01)
+  # - ConfigManagerErrorCode / DN_HAS_PROBLEM
+  $matches = @()
+  try {
+    $matches = Select-String -Path $SerialLogPath -SimpleMatch -Pattern @(
+      "virtio-input-bind:",
+      "AERO_VIRTIO_SELFTEST|TEST|virtio-input-bind|"
+    ) -ErrorAction SilentlyContinue
+  } catch {
+    return
+  }
+
+  if ($matches.Count -eq 0) { return }
+
+  Write-Host "`n--- virtio-input-bind diagnostics ---"
+  $matches | Select-Object -Last 50 | ForEach-Object { Write-Host $_.Line }
+}
+
 function Get-AeroFreeTcpPort {
   # Reserve an ephemeral port by binding to 0, then immediately releasing it. This is inherently
   # racy, but good enough for a best-effort QMP channel used only for graceful shutdown.
@@ -6705,6 +6733,7 @@ try {
     }
     "VIRTIO_INPUT_BIND_FAILED" {
       Write-Host "FAIL: VIRTIO_INPUT_BIND_FAILED: selftest RESULT=PASS but virtio-input-bind test reported FAIL (see serial log for bound service name / ConfigManager error details)"
+      Write-AeroVirtioInputBindDiagnostics -SerialLogPath $SerialLogPath
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue

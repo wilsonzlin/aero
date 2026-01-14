@@ -128,6 +128,7 @@ It also mirrors the standalone guest IRQ diagnostic lines (when present):
 from __future__ import annotations
 
 import argparse
+from collections import deque
 import http.server
 import hashlib
 import json
@@ -4809,6 +4810,7 @@ def main() -> int:
                                     "(see serial log for bound service name / ConfigManager error details)",
                                     file=sys.stderr,
                                 )
+                                _print_virtio_input_bind_diagnostics(serial_log)
                                 _print_tail(serial_log)
                                 result_code = 1
                                 break
@@ -6361,6 +6363,7 @@ def main() -> int:
                                         "(see serial log for bound service name / ConfigManager error details)",
                                         file=sys.stderr,
                                     )
+                                    _print_virtio_input_bind_diagnostics(serial_log)
                                     _print_tail(serial_log)
                                     result_code = 1
                                     break
@@ -7659,6 +7662,60 @@ def _check_required_virtio_input_bind_marker(
     if not saw_pass:
         return "MISSING_VIRTIO_INPUT_BIND"
     return None
+
+
+def _extract_serial_log_lines_matching(
+    path: Path,
+    *,
+    needles: list[bytes],
+    max_lines: int = 50,
+) -> list[str]:
+    """
+    Extract (up to) the last `max_lines` lines from `path` that contain any of `needles`.
+
+    This is used for actionable diagnostics when strict marker requirements fail. We avoid
+    relying on a small tail slice because the guest selftest can emit many lines after a
+    specific test, pushing earlier diagnostics out of the tail buffer.
+    """
+    if not needles or max_lines <= 0:
+        return []
+    dq: deque[str] = deque(maxlen=max_lines)
+    try:
+        with path.open("rb") as f:
+            for raw in f:
+                if any(n in raw for n in needles):
+                    try:
+                        dq.append(raw.rstrip(b"\r\n").decode("utf-8", errors="replace"))
+                    except Exception:
+                        # Best-effort: never fail the harness due to an encoding error.
+                        continue
+    except FileNotFoundError:
+        return []
+    except OSError:
+        return []
+    return list(dq)
+
+
+def _print_virtio_input_bind_diagnostics(serial_log: Path) -> None:
+    """
+    Print virtio-input PCI binding diagnostics from the guest serial log (best-effort).
+
+    The guest selftest emits detailed lines like:
+      virtio-input-bind: pci device ... service=<...>
+      virtio-input-bind: pci device ... bound_service=<...> (expected aero_virtio_input)
+      virtio-input-bind: pci device ... ConfigManagerErrorCode=<n>
+    """
+    lines = _extract_serial_log_lines_matching(
+        serial_log,
+        needles=[b"virtio-input-bind:"],
+        max_lines=50,
+    )
+    if not lines:
+        return
+    sys.stderr.write("\n--- virtio-input-bind diagnostics ---\n")
+    for line in lines:
+        sys.stderr.write(line)
+        sys.stderr.write("\n")
 
 
 def _try_extract_last_marker_line(tail: bytes, prefix: bytes) -> Optional[str]:
