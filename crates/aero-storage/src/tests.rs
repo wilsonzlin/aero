@@ -1,6 +1,7 @@
 use crate::{
     AeroCowDisk, AeroSparseConfig, AeroSparseDisk, AeroSparseHeader, BlockCachedDisk, DiskError,
-    DiskImage, MemBackend, RawDisk, StorageBackend, VirtualDisk, SECTOR_SIZE,
+    DiskImage, MemBackend, RawDisk, ReadOnlyBackend, ReadOnlyDisk, StorageBackend, VirtualDisk,
+    SECTOR_SIZE,
 };
 
 struct ReadCountingDisk<D> {
@@ -657,6 +658,54 @@ fn sparse_open_rejects_duplicate_physical_offsets() {
 
     let err = open_sparse_err(backend);
     assert!(matches!(err, DiskError::CorruptSparseImage(_)));
+}
+
+#[test]
+fn read_only_backend_allows_reads_but_blocks_writes_and_resize() {
+    let backend = MemBackend::from_vec(vec![1u8, 2, 3, 4]);
+    let mut ro = ReadOnlyBackend::new(backend);
+
+    let mut buf = [0u8; 4];
+    ro.read_at(0, &mut buf).unwrap();
+    assert_eq!(buf, [1, 2, 3, 4]);
+
+    let err = ro.write_at(0, &[9]).unwrap_err();
+    assert!(matches!(
+        err,
+        DiskError::NotSupported(ref msg) if msg == "read-only"
+    ));
+
+    let err = ro.set_len(0).unwrap_err();
+    assert!(matches!(
+        err,
+        DiskError::NotSupported(ref msg) if msg == "read-only"
+    ));
+
+    // Flush should still succeed; it does not mutate disk contents.
+    ro.flush().unwrap();
+}
+
+#[test]
+fn read_only_disk_allows_reads_but_blocks_writes() {
+    let mut raw = RawDisk::create(MemBackend::new(), 16).unwrap();
+    raw.write_at(0, &[1, 2, 3, 4]).unwrap();
+    raw.flush().unwrap();
+
+    let mut ro = ReadOnlyDisk::new(raw);
+    assert_eq!(ro.capacity_bytes(), 16);
+
+    let mut buf = [0u8; 4];
+    ro.read_at(0, &mut buf).unwrap();
+    assert_eq!(buf, [1, 2, 3, 4]);
+
+    let err = ro.write_at(0, &[9]).unwrap_err();
+    assert!(matches!(
+        err,
+        DiskError::NotSupported(ref msg) if msg == "read-only"
+    ));
+
+    // Still forwarded to allow inner disk state to be synchronized if needed.
+    ro.flush().unwrap();
 }
 
 #[test]

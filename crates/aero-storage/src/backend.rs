@@ -146,7 +146,7 @@ impl<B: StorageBackend> StorageBackend for ReadOnlyBackend<B> {
     }
 
     fn flush(&mut self) -> Result<()> {
-        Err(DiskError::NotSupported("read-only".into()))
+        self.inner.flush()
     }
 }
 

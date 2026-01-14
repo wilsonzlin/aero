@@ -33,8 +33,8 @@ fn read_only_backend_rejects_mutations() {
     let err = backend.write_at(0, &[9]).unwrap_err();
     assert!(matches!(err, DiskError::NotSupported(s) if s == "read-only"));
 
-    let err = backend.flush().unwrap_err();
-    assert!(matches!(err, DiskError::NotSupported(s) if s == "read-only"));
+    // Flush should still succeed; it does not mutate disk contents.
+    backend.flush().unwrap();
 }
 
 #[test]
@@ -48,4 +48,3 @@ fn disk_image_open_auto_can_be_wrapped_read_only() {
     let err = ro.write_at(0, &[1]).unwrap_err();
     assert!(matches!(err, DiskError::NotSupported(s) if s == "read-only"));
 }
-
