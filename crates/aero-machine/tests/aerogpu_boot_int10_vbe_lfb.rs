@@ -75,6 +75,7 @@ fn aerogpu_boot_sector_int10_vbe_mode_shows_vram_lfb() {
     };
     assert_ne!(bar1_base, 0);
     let lfb_base = bar1_base + VBE_LFB_OFFSET as u64;
+    assert_eq!(m.vbe_lfb_base(), lfb_base);
 
     // Write a red pixel at (0,0) in VBE packed-pixel B,G,R,X format.
     m.write_physical_u8(lfb_base, 0x00); // B

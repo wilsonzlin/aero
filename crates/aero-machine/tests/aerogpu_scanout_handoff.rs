@@ -72,7 +72,9 @@ fn build_boot_sector_vbe_then_wait_then_text_mode() -> [u8; 512] {
     i += 1;
 
     // Patch the JNE to loop_start.
-    let rel = loop_start as isize - i as isize;
+    // The `jne rel8` offset is relative to the instruction *after* the displacement byte.
+    let ip_after_jne = rel8_off + 1;
+    let rel = loop_start as isize - ip_after_jne as isize;
     sector[rel8_off] = i8::try_from(rel).expect("jne rel8 must fit") as u8;
 
     sector[510] = 0x55;
@@ -133,6 +135,10 @@ fn aerogpu_scanout_handoff_to_wddm_blocks_legacy_int10_steal() {
     // Wait for the guest to reach the wait loop after setting VBE mode.
     run_until_flag(&mut m, 0x01);
     assert_ne!(m.active_scanout_source(), ScanoutSource::Wddm);
+    // Ensure the guest is actually waiting (and not already halted due to a malformed loop jump).
+    if matches!(m.run_slice(1), RunExit::Halted { .. }) {
+        panic!("guest halted unexpectedly before host released the wait loop");
+    }
 
     enable_a20(&mut m);
 
