@@ -541,10 +541,8 @@ Current behavior is intentionally bring-up level, with two paths:
   When the destination declaration includes `DIFFUSE`, the UMD copies it from the source when present, otherwise fills it
   with opaque white (matching fixed-function “no diffuse means white” behavior). `TEXCOORD0` is copied only when present
   in both the source and destination layouts.
-
-  Note: when `D3DPV_DONOTCOPYDATA` is set in `ProcessVertices.Flags`, the UMD writes only the destination `POSITIONT`
-  (`XYZRHW`) and preserves any non-position destination bytes (it does not clear the destination vertex and does not copy
-  `DIFFUSE` / `TEXCOORD0` outputs).
+  - Flags: when `D3DPV_DONOTCOPYDATA` is set in `ProcessVertices.Flags`, the UMD writes only the output position
+    (`POSITIONT`) and preserves all other destination bytes (no DIFFUSE/TEX writes, no zeroing).
 - **Fallback memcpy-style path:** for all other cases, `ProcessVertices` performs a conservative buffer-to-buffer copy from
   the active stream 0 vertex buffer into the destination buffer. The copy is stride-aware (copies
   `min(stream0_stride, dest_stride)` bytes per vertex) and uses the same “upload/dirty-range” notifications used by
