@@ -409,6 +409,8 @@ def parse_guest_selftest_expected_service_names_text(*, text: str, file: Path) -
     patterns: Mapping[str, re.Pattern[str]] = {
         # virtio-net binding check inside VirtioNetTest().
         "virtio-net": re.compile(r'\bkExpectedService\s*\[\s*\]\s*=\s*L"(?P<svc>[^"]+)"'),
+        # virtio-input expected service name (PCI binding validation).
+        "virtio-input": re.compile(r'\bkVirtioInputExpectedService\b\s*=\s*L"(?P<svc>[^"]+)"'),
         # virtio-snd modern / transitional service name expectations.
         "virtio-snd": re.compile(r'\bkVirtioSndExpectedServiceModern\b\s*=\s*L"(?P<svc>[^"]+)"'),
         "virtio-snd-transitional": re.compile(

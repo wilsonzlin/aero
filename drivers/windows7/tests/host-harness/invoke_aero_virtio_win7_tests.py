@@ -2268,6 +2268,50 @@ def _virtio_blk_reset_required_failure_message(
     return _virtio_blk_reset_missing_failure_message()
 
 
+def _virtio_input_binding_required_failure_message(tail: bytes) -> Optional[str]:
+    """
+    Enforce that virtio-input PCI binding validation ran and PASSed.
+
+    Returns:
+        A "FAIL: ..." message on failure, or None when the marker requirements are satisfied.
+    """
+    prefix = b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-binding|"
+    if b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-binding|PASS" in tail:
+        return None
+
+    if b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-binding|FAIL" in tail:
+        marker_line = _try_extract_last_marker_line(tail, prefix)
+        reason = "unknown"
+        expected = ""
+        actual = ""
+        if marker_line is not None:
+            fields = _parse_marker_kv_fields(marker_line)
+            reason = fields.get("reason") or reason
+            expected = fields.get("expected") or ""
+            actual = fields.get("actual") or ""
+
+        details = f"reason={reason}"
+        if expected:
+            details += f" expected={expected}"
+        if actual:
+            details += f" actual={actual}"
+        return (
+            "FAIL: VIRTIO_INPUT_BINDING_FAILED: virtio-input-binding marker reported FAIL while "
+            f"--require-virtio-input-binding was enabled ({details})"
+        )
+
+    if b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-binding|SKIP" in tail:
+        return (
+            "FAIL: VIRTIO_INPUT_BINDING_SKIPPED: virtio-input-binding marker reported SKIP while "
+            "--require-virtio-input-binding was enabled (guest selftest too old?)"
+        )
+
+    return (
+        "FAIL: MISSING_VIRTIO_INPUT_BINDING: did not observe virtio-input-binding PASS marker while "
+        "--require-virtio-input-binding was enabled (guest selftest too old?)"
+    )
+
+
 @lru_cache(maxsize=None)
 def _qemu_device_help_text(qemu_system: str, device_name: str) -> str:
     try:
@@ -2918,6 +2962,15 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help=(
             "Require the guest virtio-input-msix marker to report mode=msix. "
             "This is optional so older guest selftest binaries (which don't emit the marker) can still run."
+        ),
+    )
+    parser.add_argument(
+        "--require-virtio-input-binding",
+        dest="require_virtio_input_binding",
+        action="store_true",
+        help=(
+            "Require the guest virtio-input-binding marker to PASS (ensures at least one virtio-input PCI device is "
+            "present and bound to the expected Aero driver service)."
         ),
     )
     parser.add_argument(
@@ -5478,6 +5531,13 @@ def main() -> int:
                                 _print_tail(serial_log)
                                 result_code = 1
                                 break
+                        if bool(getattr(args, "require_virtio_input_binding", False)):
+                            msg = _virtio_input_binding_required_failure_message(tail)
+                            if msg is not None:
+                                print(msg, file=sys.stderr)
+                                _print_tail(serial_log)
+                                result_code = 1
+                                break
                         irq_fail = _check_virtio_irq_mode_enforcement(
                             tail,
                             irq_diag_markers=irq_diag_markers,
@@ -6812,6 +6872,13 @@ def main() -> int:
                                     _print_tail(serial_log)
                                     result_code = 1
                                     break
+                            if bool(getattr(args, "require_virtio_input_binding", False)):
+                                msg = _virtio_input_binding_required_failure_message(tail)
+                                if msg is not None:
+                                    print(msg, file=sys.stderr)
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
                             irq_fail = _check_virtio_irq_mode_enforcement(
                                 tail,
                                 irq_diag_markers=irq_diag_markers,
@@ -6954,6 +7021,7 @@ def main() -> int:
         _emit_virtio_net_udp_dns_host_marker(tail)
         _emit_virtio_net_diag_host_marker(tail)
         _emit_virtio_net_msix_host_marker(tail)
+        _emit_virtio_input_binding_host_marker(tail)
         _emit_virtio_net_irq_host_marker(tail)
         _emit_virtio_snd_irq_host_marker(tail)
         _emit_virtio_snd_msix_host_marker(tail)
@@ -8381,6 +8449,52 @@ def _emit_virtio_blk_recovery_host_marker(
     for k in _VIRTIO_BLK_RECOVERY_KEYS:
         if k in counters:
             parts.append(f"{k}={_sanitize_marker_value(str(counters[k]))}")
+
+    print("|".join(parts))
+
+
+def _emit_virtio_input_binding_host_marker(tail: bytes) -> None:
+    """
+    Best-effort: emit a host-side marker mirroring the guest's virtio-input PCI binding validation.
+
+    Guest marker format:
+      AERO_VIRTIO_SELFTEST|TEST|virtio-input-binding|PASS|service=...|pnp_id=...
+      AERO_VIRTIO_SELFTEST|TEST|virtio-input-binding|FAIL|reason=...|expected=...|actual=...|pnp_id=...
+
+    This does not affect harness PASS/FAIL unless --require-virtio-input-binding is enabled; it's also useful for
+    log scraping/CI diagnostics.
+    """
+    marker_line = _try_extract_last_marker_line(
+        tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-binding|"
+    )
+    if marker_line is None:
+        return
+
+    status = _try_extract_marker_status(marker_line)
+    if status is None:
+        return
+
+    fields = _parse_marker_kv_fields(marker_line)
+    parts = [f"AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_BINDING|{status}"]
+
+    ordered = (
+        "reason",
+        "expected",
+        "actual",
+        "service",
+        "pnp_id",
+        "hwid0",
+        "cm_problem",
+        "cm_status",
+    )
+    for k in ordered:
+        if k in fields:
+            parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
+
+    extra = sorted(k for k in fields if k not in ordered)
+    for k in extra:
+        parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
+
     print("|".join(parts))
 
 
