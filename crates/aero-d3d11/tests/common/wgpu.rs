@@ -8,6 +8,9 @@ use anyhow::{anyhow, Context, Result};
 pub async fn create_device_queue_with_downlevel(
     device_label: &str,
 ) -> Result<(wgpu::Device, wgpu::Queue, wgpu::DownlevelCapabilities)> {
+    // Note: wgpu's `Device` and `Queue` are not `Clone`, and many tests move them into helper
+    // structs (e.g. resource managers). Keep this helper simple by creating a fresh device/queue
+    // per call.
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
