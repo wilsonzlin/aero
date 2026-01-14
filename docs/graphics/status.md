@@ -184,6 +184,28 @@ Representative test pointers:
 
 - [`crates/emulator/tests/aerogpu_d3d9_triangle_end_to_end.rs`](../../crates/emulator/tests/aerogpu_d3d9_triangle_end_to_end.rs)
 
+#### Shared device-side library (`crates/aero-devices-gpu`): regs/ring/executor + portable PCI wrapper
+
+The `crates/aero-devices-gpu` crate is the shared “device-side” home for:
+
+- MMIO register constants + backing `AeroGpuRegs`,
+- ring + fence page structs/helpers,
+- the ring executor (doorbell processing, submission decode, fence tracking, vsync/vblank pacing), and
+- a lightweight PCI device wrapper (`AeroGpuPciDevice`) that can be reused by multiple hosts.
+
+Code pointers:
+
+- [`crates/aero-devices-gpu/src/executor.rs`](../../crates/aero-devices-gpu/src/executor.rs)
+- [`crates/aero-devices-gpu/src/pci.rs`](../../crates/aero-devices-gpu/src/pci.rs)
+- [`crates/aero-devices-gpu/src/ring.rs`](../../crates/aero-devices-gpu/src/ring.rs)
+- [`crates/aero-devices-gpu/src/regs.rs`](../../crates/aero-devices-gpu/src/regs.rs)
+
+Test pointers:
+
+- [`crates/aero-devices-gpu/tests/aerogpu_executor_decode.rs`](../../crates/aero-devices-gpu/tests/aerogpu_executor_decode.rs)
+- [`crates/aero-devices-gpu/tests/aerogpu_pci_device.rs`](../../crates/aero-devices-gpu/tests/aerogpu_pci_device.rs)
+- [`crates/aero-devices-gpu/tests/vram_bar1.rs`](../../crates/aero-devices-gpu/tests/vram_bar1.rs)
+
 ### Host-side processors/executors (wgpu/WebGPU)
 
 The canonical “host-side” consumption of the AeroGPU command stream lives in `crates/aero-gpu/` and friends.

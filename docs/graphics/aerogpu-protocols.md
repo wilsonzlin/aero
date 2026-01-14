@@ -27,8 +27,11 @@ Note on the canonical machine (`aero_machine::Machine`):
   - scanout0/vblank register storage so the host can present a guest-programmed scanout framebuffer
     and the Win7 stack can use vblank pacing primitives (see `drivers/aerogpu/protocol/vblank.md`).
 
-  The full versioned-AeroGPU device model with real **command execution** (transfer/render ops,
-  worker backends, etc) lives in `crates/emulator` and is not yet wired into `aero_machine::Machine`.
+  A shared device-side library (`crates/aero-devices-gpu`) contains the canonical register/ring
+  definitions plus a ring executor (doorbell processing, fence tracking, vsync/vblank pacing) and
+  a reusable PCI wrapper. The full versioned-AeroGPU device model with real **command execution**
+  (transfer/render ops, worker backends, etc) lives in `crates/emulator` and is not yet wired into
+  `aero_machine::Machine`.
 - Boot display in the canonical machine is provided by `aero_gpu_vga` (legacy VGA ports + Bochs VBE)
   when `MachineConfig::enable_vga=true`, plus a minimal “Standard VGA”-like PCI stub at `00:0c.0`
   (`1234:1111`) used only for VBE LFB MMIO routing.
@@ -55,6 +58,11 @@ See:
 - `crates/emulator/src/gpu_worker/aerogpu_executor.rs` — execution/translation glue.
 - `crates/aero-gpu/src/protocol.rs` — host-side parser for the versioned command stream (`aerogpu_cmd.h`).
 - `emulator/protocol` — Rust/TypeScript mirror of the C headers (used by tooling/tests).
+
+**Shared device-side library:** `crates/aero-devices-gpu`
+
+- `crates/aero-devices-gpu/src/executor.rs` — ring executor (doorbell processing, fence/vblank pacing).
+- `crates/aero-devices-gpu/src/pci.rs` — reusable PCI/BAR0/BAR1 wrapper built on the executor.
 
 This is the ABI that the Windows 7 WDDM 1.1 driver stack (KMD + UMD) targets.
 Current status: UMDs in this repo emit the versioned command stream (`aerogpu_cmd.h`). The
