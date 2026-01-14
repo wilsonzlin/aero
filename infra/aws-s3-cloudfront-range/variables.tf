@@ -89,13 +89,19 @@ variable "cors_allowed_origins" {
   default     = []
 
   validation {
-    condition = length([
-      for o in var.cors_allowed_origins : o
-      if o == "*" || (
-        (length(o) >= 7 && substr(o, 0, 7) == "http://") || (length(o) >= 8 && substr(o, 0, 8) == "https://")
-      ) && substr(o, length(o) - 1, 1) != "/"
-    ]) == length(var.cors_allowed_origins)
-    error_message = "The cors_allowed_origins values must be full origins (http:// or https://) or \"*\", and must not end with a slash."
+    condition = (
+      length([
+        for o in var.cors_allowed_origins : o
+        if o == "*" || (
+          (length(o) >= 7 && substr(o, 0, 7) == "http://") || (length(o) >= 8 && substr(o, 0, 8) == "https://")
+        ) && substr(o, length(o) - 1, 1) != "/"
+      ]) == length(var.cors_allowed_origins)
+      && (
+        !var.cors_allow_credentials
+        || !contains([for o in var.cors_allowed_origins : lower(o)], "*")
+      )
+    )
+    error_message = "The cors_allowed_origins values must be full origins (http:// or https://) or \"*\" (no trailing slash). When cors_allow_credentials is true, \"*\" is not allowed."
   }
 }
 
