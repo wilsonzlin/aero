@@ -4353,7 +4353,11 @@ fn apply_aerogpu_snapshot_v2(
             }
             exec_state = bytes.get(payload_off..payload_end);
             off = payload_end;
-            continue;
+            // `EXEC` is currently the last tagged payload. The vblank timebase fields that follow
+            // are raw `u64`s, so their bytes may coincidentally match one of the section tags (for
+            // example, `now_ns` might begin with `b\"DACI\"`). Stop parsing tags after `EXEC` so we
+            // don't misinterpret the timebase as another section.
+            break;
         }
 
         break;
@@ -19520,6 +19524,42 @@ mod tests {
         // consumed by the VGA tag parser.
         assert_eq!(vram.attr_index, 0);
         assert!(!vram.attr_flip_flop);
+    }
+
+    #[test]
+    fn apply_aerogpu_snapshot_v2_does_not_misinterpret_timebase_as_tag() {
+        // The tagged payloads are followed by two raw `u64` timebase fields (`now_ns`,
+        // `next_vblank_ns`). If `now_ns` begins with bytes that match one of the 4-byte tags (for
+        // example `b"DACI"`), the v2 decoder must not attempt to parse it as another section.
+        let mut src_vram = new_minimal_aerogpu_device_for_snapshot_tests();
+        src_vram.dac_read_index = 0x12;
+        src_vram.dac_read_subindex = 0x34;
+        src_vram.dac_write_index = 0x56;
+        src_vram.dac_write_subindex = 0x78;
+        src_vram.dac_write_latch = [9, 10, 11];
+        src_vram.attr_index = 0x1F;
+        src_vram.attr_flip_flop = true;
+
+        let mut src_bar0 = AeroGpuMmioDevice::default();
+        let now_ns = u64::from_le_bytes(*b"DACI\0\0\0\0");
+        src_bar0.tick_vblank(now_ns);
+
+        let bytes = encode_aerogpu_snapshot_v2(&src_vram, &src_bar0);
+
+        let mut dst_vram = new_minimal_aerogpu_device_for_snapshot_tests();
+        let mut dst_bar0 = AeroGpuMmioDevice::default();
+        let _ = apply_aerogpu_snapshot_v2(&bytes, &mut dst_vram, &mut dst_bar0)
+            .expect("snapshot v2 should apply");
+
+        let regs = dst_bar0.snapshot_v1();
+        assert_eq!(regs.now_ns, now_ns);
+        assert_eq!(dst_vram.dac_read_index, src_vram.dac_read_index);
+        assert_eq!(dst_vram.dac_read_subindex, src_vram.dac_read_subindex);
+        assert_eq!(dst_vram.dac_write_index, src_vram.dac_write_index);
+        assert_eq!(dst_vram.dac_write_subindex, src_vram.dac_write_subindex);
+        assert_eq!(dst_vram.dac_write_latch, src_vram.dac_write_latch);
+        assert_eq!(dst_vram.attr_index, src_vram.attr_index);
+        assert_eq!(dst_vram.attr_flip_flop, src_vram.attr_flip_flop);
     }
 
     #[test]
