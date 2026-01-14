@@ -122,7 +122,20 @@ export class DiskManager {
         if (!entry) return;
         this.pending.delete(msg.requestId);
         if (msg.ok) entry.resolve(msg.result);
-        else entry.reject(Object.assign(new Error(msg.error?.message || "Disk worker error"), msg.error));
+        else {
+          const raw = msg.error as unknown;
+          const message =
+            raw && typeof raw === "object" && typeof (raw as { message?: unknown }).message === "string" && (raw as { message: string }).message
+              ? (raw as { message: string }).message
+              : "Disk worker error";
+          const err = new Error(message);
+          if (raw && typeof raw === "object") {
+            const details = raw as { name?: unknown; stack?: unknown };
+            if (typeof details.name === "string" && details.name) err.name = details.name;
+            if (typeof details.stack === "string" && details.stack) err.stack = details.stack;
+          }
+          entry.reject(err);
+        }
       }
     };
   }
@@ -434,7 +447,20 @@ export class DiskManager {
             return;
           }
           if (msg.type === "error") {
-            const err = Object.assign(new Error(msg.error?.message || "Export failed"), msg.error);
+            const raw = msg.error as unknown;
+            const message =
+              raw &&
+              typeof raw === "object" &&
+              typeof (raw as { message?: unknown }).message === "string" &&
+              (raw as { message: string }).message
+                ? (raw as { message: string }).message
+                : "Export failed";
+            const err = new Error(message);
+            if (raw && typeof raw === "object") {
+              const details = raw as { name?: unknown; stack?: unknown };
+              if (typeof details.name === "string" && details.name) err.name = details.name;
+              if (typeof details.stack === "string" && details.stack) err.stack = details.stack;
+            }
             controller.error(err);
             doneReject(err);
             channel.port2.close();

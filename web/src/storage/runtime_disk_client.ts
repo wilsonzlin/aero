@@ -60,8 +60,17 @@ export class RuntimeDiskClient {
       if (msg.ok) {
         entry.resolve((msg as any).result);
       } else {
-        const e = (msg as any).error;
-        const err = Object.assign(new Error(e?.message || "runtime disk worker error"), e);
+        const raw = (msg as any).error as unknown;
+        const message =
+          raw && typeof raw === "object" && typeof (raw as { message?: unknown }).message === "string" && (raw as { message: string }).message
+            ? (raw as { message: string }).message
+            : "runtime disk worker error";
+        const err = new Error(message);
+        if (raw && typeof raw === "object") {
+          const details = raw as { name?: unknown; stack?: unknown };
+          if (typeof details.name === "string" && details.name) err.name = details.name;
+          if (typeof details.stack === "string" && details.stack) err.stack = details.stack;
+        }
         entry.reject(err);
       }
     };
