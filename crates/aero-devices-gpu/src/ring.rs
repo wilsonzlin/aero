@@ -196,6 +196,25 @@ mod tests {
     }
 
     #[test]
+    fn ring_abi_matches_c_header() {
+        use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
+
+        assert_eq!(AEROGPU_RING_MAGIC, 0x474E_5241);
+        assert_eq!(AEROGPU_ABI_VERSION_U32, 0x0001_0003);
+
+        assert_eq!(AEROGPU_RING_HEADER_SIZE_BYTES, 64);
+        assert_eq!(RING_HEAD_OFFSET, 24);
+        assert_eq!(RING_TAIL_OFFSET, 28);
+
+        assert_eq!(AEROGPU_ALLOC_TABLE_MAGIC, 0x434F_4C41);
+        assert_eq!(AEROGPU_ALLOC_TABLE_HEADER_SIZE_BYTES, 24);
+
+        assert_eq!(AEROGPU_FENCE_PAGE_MAGIC, 0x434E_4546);
+        assert_eq!(AEROGPU_FENCE_PAGE_SIZE_BYTES, 56);
+        assert_eq!(FENCE_PAGE_COMPLETED_FENCE_OFFSET, 8);
+    }
+
+    #[test]
     fn slot_index_wraps_by_entry_count() {
         let abi_version = (AEROGPU_ABI_MAJOR << 16) | AEROGPU_ABI_MINOR;
         let hdr = make_valid_header_with_abi(abi_version);
@@ -227,6 +246,48 @@ mod tests {
             abi_version
         );
         assert_eq!(mem.read_u64(fence_gpa + FENCE_PAGE_COMPLETED_FENCE_OFFSET), 123);
+    }
+
+    #[test]
+    fn submit_desc_validate_prefix_rejects_too_small_size() {
+        let desc = AeroGpuSubmitDesc {
+            desc_size_bytes: 0,
+            flags: 0,
+            context_id: 0,
+            engine_id: 0,
+            cmd_gpa: 0,
+            cmd_size_bytes: 0,
+            alloc_table_gpa: 0,
+            alloc_table_size_bytes: 0,
+            signal_fence: 0,
+        };
+
+        assert!(matches!(
+            desc.validate_prefix(),
+            Err(protocol_ring::AerogpuRingDecodeError::BadSizeField { .. })
+        ));
+    }
+
+    #[test]
+    fn alloc_table_header_validate_prefix_rejects_wrong_magic() {
+        let abi_version = (AEROGPU_ABI_MAJOR << 16) | AEROGPU_ABI_MINOR;
+        let entry_count = 1u32;
+        let entry_stride = AeroGpuAllocEntry::SIZE_BYTES;
+        let size_bytes = (protocol_ring::AerogpuAllocTableHeader::SIZE_BYTES as u32)
+            + entry_count * entry_stride;
+        let hdr = AeroGpuAllocTableHeader {
+            magic: 0,
+            abi_version,
+            size_bytes,
+            entry_count,
+            entry_stride_bytes: entry_stride,
+            reserved0: 0,
+        };
+
+        assert!(matches!(
+            hdr.validate_prefix(),
+            Err(protocol_ring::AerogpuRingDecodeError::BadMagic { .. })
+        ));
     }
 }
 
