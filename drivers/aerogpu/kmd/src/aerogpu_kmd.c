@@ -82,6 +82,16 @@ extern BOOLEAN NTAPI SeTokenIsAdmin(_In_ PACCESS_TOKEN Token);
     (AEROGPU_FEATURE_FENCE_PAGE | AEROGPU_FEATURE_CURSOR | AEROGPU_FEATURE_SCANOUT | AEROGPU_FEATURE_VBLANK |    \
      AEROGPU_FEATURE_TRANSFER | AEROGPU_FEATURE_ERROR_INFO)
 
+/*
+ * Upper bound on the number of pending Render/Present meta handles.
+ *
+ * These handles are produced by DxgkDdiRender/DxgkDdiPresent and consumed by
+ * DxgkDdiSubmitCommand. If SubmitCommand never arrives (or repeatedly fails
+ * before taking the handle), PendingMetaHandles can otherwise grow without
+ * bound and consume nonpaged resources.
+ */
+#define AEROGPU_PENDING_META_HANDLES_MAX_COUNT 4096u
+
 #if DBG
 /*
  * DBG-only rate limiting for logs that can be triggered by misbehaving guests.
@@ -559,6 +569,24 @@ static VOID AeroGpuLoadDisplayModeConfigFromRegistry(_In_opt_ PUNICODE_STRING Re
 
 static VOID AeroGpuFreeSubmissionMeta(_In_opt_ AEROGPU_SUBMISSION_META* Meta);
 
+static __forceinline ULONGLONG AeroGpuSubmissionMetaTotalBytes(_In_opt_ const AEROGPU_SUBMISSION_META* Meta)
+{
+    if (!Meta) {
+        return 0;
+    }
+
+    /*
+     * Meta is allocated as:
+     *   FIELD_OFFSET(AEROGPU_SUBMISSION_META, Allocations) +
+     *   (AllocationCount * sizeof(aerogpu_legacy_submission_desc_allocation))
+     *
+     * Track both the pool allocation and any associated allocation table memory.
+     */
+    const SIZE_T metaBytes = FIELD_OFFSET(AEROGPU_SUBMISSION_META, Allocations) +
+                             ((SIZE_T)Meta->AllocationCount * sizeof(aerogpu_legacy_submission_desc_allocation));
+    return (ULONGLONG)metaBytes + (ULONGLONG)Meta->AllocTableSizeBytes;
+}
+
 static NTSTATUS AeroGpuMetaHandleStore(_Inout_ AEROGPU_ADAPTER* Adapter, _In_ AEROGPU_SUBMISSION_META* Meta, _Out_ ULONGLONG* HandleOut)
 {
     *HandleOut = 0;
@@ -574,6 +602,23 @@ static NTSTATUS AeroGpuMetaHandleStore(_Inout_ AEROGPU_ADAPTER* Adapter, _In_ AE
     KIRQL oldIrql;
     KeAcquireSpinLock(&Adapter->MetaHandleLock, &oldIrql);
 
+    if (Adapter->PendingMetaHandleCount >= AEROGPU_PENDING_META_HANDLES_MAX_COUNT) {
+        const ULONG pendingCount = Adapter->PendingMetaHandleCount;
+        const ULONGLONG pendingBytes = Adapter->PendingMetaHandleBytes;
+        KeReleaseSpinLock(&Adapter->MetaHandleLock, oldIrql);
+        ExFreePoolWithTag(entry, AEROGPU_POOL_TAG);
+#if DBG
+        static volatile LONG g_PendingMetaHandleCapLogCount = 0;
+        AEROGPU_LOG_RATELIMITED(g_PendingMetaHandleCapLogCount,
+                                8,
+                                "MetaHandleStore: pending meta handle cap hit (count=%lu max=%lu bytes=%I64u)",
+                                pendingCount,
+                                (ULONG)AEROGPU_PENDING_META_HANDLES_MAX_COUNT,
+                                pendingBytes);
+#endif
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+
     /* 0 is reserved to mean "no meta". */
     ULONGLONG handle = ++Adapter->NextMetaHandle;
     if (handle == 0) {
@@ -582,6 +627,8 @@ static NTSTATUS AeroGpuMetaHandleStore(_Inout_ AEROGPU_ADAPTER* Adapter, _In_ AE
 
     entry->Handle = handle;
     InsertTailList(&Adapter->PendingMetaHandles, &entry->ListEntry);
+    Adapter->PendingMetaHandleCount += 1;
+    Adapter->PendingMetaHandleBytes += AeroGpuSubmissionMetaTotalBytes(Meta);
 
     KeReleaseSpinLock(&Adapter->MetaHandleLock, oldIrql);
 
@@ -605,6 +652,15 @@ static AEROGPU_SUBMISSION_META* AeroGpuMetaHandleTake(_Inout_ AEROGPU_ADAPTER* A
         if (entry->Handle == Handle) {
             found = entry;
             RemoveEntryList(&entry->ListEntry);
+            if (Adapter->PendingMetaHandleCount != 0) {
+                Adapter->PendingMetaHandleCount -= 1;
+            }
+            const ULONGLONG bytes = AeroGpuSubmissionMetaTotalBytes(entry->Meta);
+            if (Adapter->PendingMetaHandleBytes >= bytes) {
+                Adapter->PendingMetaHandleBytes -= bytes;
+            } else {
+                Adapter->PendingMetaHandleBytes = 0;
+            }
             break;
         }
     }
@@ -630,6 +686,15 @@ static VOID AeroGpuMetaHandleFreeAll(_Inout_ AEROGPU_ADAPTER* Adapter)
         if (!IsListEmpty(&Adapter->PendingMetaHandles)) {
             PLIST_ENTRY le = RemoveHeadList(&Adapter->PendingMetaHandles);
             entry = CONTAINING_RECORD(le, AEROGPU_META_HANDLE_ENTRY, ListEntry);
+            if (Adapter->PendingMetaHandleCount != 0) {
+                Adapter->PendingMetaHandleCount -= 1;
+            }
+            const ULONGLONG bytes = AeroGpuSubmissionMetaTotalBytes(entry->Meta);
+            if (Adapter->PendingMetaHandleBytes >= bytes) {
+                Adapter->PendingMetaHandleBytes -= bytes;
+            } else {
+                Adapter->PendingMetaHandleBytes = 0;
+            }
         }
         KeReleaseSpinLock(&Adapter->MetaHandleLock, oldIrql);
 
@@ -2494,6 +2559,8 @@ static NTSTATUS APIENTRY AeroGpuDdiAddDevice(_In_ PDEVICE_OBJECT PhysicalDeviceO
     adapter->RecentSubmissionBytes = 0;
     KeInitializeSpinLock(&adapter->MetaHandleLock);
     InitializeListHead(&adapter->PendingMetaHandles);
+    adapter->PendingMetaHandleCount = 0;
+    adapter->PendingMetaHandleBytes = 0;
     adapter->NextMetaHandle = 0;
     KeInitializeSpinLock(&adapter->AllocationsLock);
     KeInitializeSpinLock(&adapter->CreateAllocationTraceLock);

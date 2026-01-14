@@ -285,6 +285,18 @@ typedef struct _AEROGPU_ADAPTER {
     volatile ULONG LastErrorMmioCount; /* Cached AEROGPU_MMIO_REG_ERROR_COUNT (0 if unknown / not supported). */
 
     LIST_ENTRY PendingMetaHandles;
+    /*
+     * Bookkeeping for PendingMetaHandles.
+     *
+     * Pending meta handles are produced by DxgkDdiRender/DxgkDdiPresent and
+     * consumed by DxgkDdiSubmitCommand. Under pathological call patterns (or if
+     * submits fail to arrive), this list can otherwise grow without bound and
+     * exhaust nonpaged resources.
+     *
+     * Protected by MetaHandleLock.
+     */
+    ULONG PendingMetaHandleCount;
+    DECLSPEC_ALIGN(8) ULONGLONG PendingMetaHandleBytes;
     KSPIN_LOCK MetaHandleLock;
     ULONGLONG NextMetaHandle;
 
