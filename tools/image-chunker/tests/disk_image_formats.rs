@@ -385,8 +385,7 @@ fn chunking_vhd_dynamic_uses_virtual_disk_bytes() {
     }
 }
 
-#[test]
-fn chunking_raw_uses_file_bytes() {
+fn assert_chunking_raw_uses_file_bytes(format: ImageFormat) {
     let disk_size_bytes = 4096u64;
     let chunk_size = 1024u64;
 
@@ -401,7 +400,7 @@ fn chunking_raw_uses_file_bytes() {
 
     let (manifest, chunks) = chunk_disk_to_vecs(
         tmp.path(),
-        ImageFormat::Raw,
+        format,
         chunk_size,
         ChecksumAlgorithm::Sha256,
     )
@@ -423,6 +422,17 @@ fn chunking_raw_uses_file_bytes() {
             .expect("sha256 present");
         assert_eq!(actual, expected, "sha256 mismatch for raw chunk {i}");
     }
+}
+
+#[test]
+fn chunking_raw_uses_file_bytes() {
+    assert_chunking_raw_uses_file_bytes(ImageFormat::Raw);
+}
+
+#[test]
+fn chunking_raw_auto_uses_file_bytes() {
+    // Raw images have no container magic; auto-detect should conservatively fall back to `raw`.
+    assert_chunking_raw_uses_file_bytes(ImageFormat::Auto);
 }
 
 #[test]
