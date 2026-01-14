@@ -2,14 +2,11 @@
 
 use anyhow::{anyhow, Context, Result};
 
-/// Creates a wgpu device/queue pair suitable for headless CI.
-///
-/// This mirrors the logic used by existing wgpu-based integration tests:
-/// - Prefer GL on Linux CI for better compatibility with software adapters.
-/// - Try `force_fallback_adapter = true` first, then retry without it.
-/// - On Unix, ensure `XDG_RUNTIME_DIR` points at a private directory so GL/WAYLAND stacks don't
-///   fail initialization in minimal CI environments.
-pub async fn create_device_queue(device_label: &str) -> Result<(wgpu::Device, wgpu::Queue, bool)> {
+/// Creates a wgpu device/queue pair suitable for headless CI and returns the adapter's downlevel
+/// capabilities.
+pub async fn create_device_queue_with_downlevel(
+    device_label: &str,
+) -> Result<(wgpu::Device, wgpu::Queue, wgpu::DownlevelCapabilities)> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -61,10 +58,7 @@ pub async fn create_device_queue(device_label: &str) -> Result<(wgpu::Device, wg
     }
     .ok_or_else(|| anyhow!("wgpu: no suitable adapter found"))?;
 
-    let supports_compute = adapter
-        .get_downlevel_capabilities()
-        .flags
-        .contains(wgpu::DownlevelFlags::COMPUTE_SHADERS);
+    let downlevel = adapter.get_downlevel_capabilities();
 
     let (device, queue) = adapter
         .request_device(
@@ -78,6 +72,19 @@ pub async fn create_device_queue(device_label: &str) -> Result<(wgpu::Device, wg
         .await
         .map_err(|e| anyhow!("wgpu: request_device failed: {e:?}"))?;
 
+    Ok((device, queue, downlevel))
+}
+
+/// Creates a wgpu device/queue pair suitable for headless CI.
+///
+/// This mirrors the logic used by existing wgpu-based integration tests:
+/// - Prefer GL on Linux CI for better compatibility with software adapters.
+/// - Try `force_fallback_adapter = true` first, then retry without it.
+/// - On Unix, ensure `XDG_RUNTIME_DIR` points at a private directory so GL/WAYLAND stacks don't
+///   fail initialization in minimal CI environments.
+pub async fn create_device_queue(device_label: &str) -> Result<(wgpu::Device, wgpu::Queue, bool)> {
+    let (device, queue, downlevel) = create_device_queue_with_downlevel(device_label).await?;
+    let supports_compute = downlevel.flags.contains(wgpu::DownlevelFlags::COMPUTE_SHADERS);
     Ok((device, queue, supports_compute))
 }
 

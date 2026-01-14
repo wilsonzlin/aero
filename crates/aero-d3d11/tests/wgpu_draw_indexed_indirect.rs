@@ -12,18 +12,27 @@ fn wgpu_draw_indexed_indirect_uses_args_written_by_compute() {
             "::wgpu_draw_indexed_indirect_uses_args_written_by_compute"
         );
 
-        let (device, queue, supports_compute) =
-            match common::wgpu::create_device_queue("aero-d3d11 draw_indexed_indirect test device")
-                .await
-            {
+        let (device, queue, downlevel) = match common::wgpu::create_device_queue_with_downlevel(
+            "aero-d3d11 draw_indexed_indirect test device",
+        )
+        .await
+        {
                 Ok(v) => v,
                 Err(err) => {
                     common::skip_or_panic(test_name, &format!("wgpu unavailable ({err:#})"));
                     return;
                 }
             };
+        let supports_compute = downlevel.flags.contains(wgpu::DownlevelFlags::COMPUTE_SHADERS);
         if !supports_compute {
             common::skip_or_panic(test_name, "compute unsupported");
+            return;
+        }
+        let supports_indirect = downlevel
+            .flags
+            .contains(wgpu::DownlevelFlags::INDIRECT_EXECUTION);
+        if !supports_indirect {
+            common::skip_or_panic(test_name, "indirect execution unsupported");
             return;
         }
 

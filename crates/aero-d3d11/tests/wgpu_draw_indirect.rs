@@ -9,25 +9,40 @@ fn wgpu_draw_indirect_renders_pixels() {
     pollster::block_on(async {
         let test_name = concat!(module_path!(), "::wgpu_draw_indirect_renders_pixels");
 
-        let (device, queue, supports_compute) =
-            match common::wgpu::create_device_queue("aero-d3d11 draw_indirect test device").await {
+        let (device, queue, downlevel) =
+            match common::wgpu::create_device_queue_with_downlevel(
+                "aero-d3d11 draw_indirect test device",
+            )
+            .await
+            {
                 Ok(v) => v,
                 Err(err) => {
                     common::skip_or_panic(test_name, &format!("wgpu unavailable ({err:#})"));
                     return;
                 }
             };
+        let supports_compute = downlevel.flags.contains(wgpu::DownlevelFlags::COMPUTE_SHADERS);
+        let supports_indirect = downlevel
+            .flags
+            .contains(wgpu::DownlevelFlags::INDIRECT_EXECUTION);
+        if !supports_indirect {
+            common::skip_or_panic(test_name, "indirect execution unsupported");
+            return;
+        }
 
         let (args_size, args_align) = DrawIndirectArgs::layout();
         assert_eq!(args_size, 16);
         assert_eq!(args_align, 4);
 
+        let args_usage = if supports_compute {
+            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::COPY_DST
+        } else {
+            wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::COPY_DST
+        };
         let args_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("aero-d3d11 draw_indirect args buffer"),
             size: args_size,
-            usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::INDIRECT
-                | wgpu::BufferUsages::COPY_DST,
+            usage: args_usage,
             mapped_at_creation: false,
         });
 
