@@ -405,8 +405,12 @@ impl XhciControllerBridge {
 
     /// Optional polling hook for JS wrappers that expect a `poll()` method.
     pub fn poll(&mut self) {
-        // Drain any queued event TRBs into the guest event ring. This performs DMA into guest memory
-        // and must therefore be gated on PCI Bus Master Enable (BME).
+        // Drain any queued event TRBs into the guest-configured event ring. This is non-advancing
+        // work: it should not mutate the controller's time base, only make forward progress on
+        // already-due operations.
+        //
+        // This performs DMA into guest memory and must therefore be gated on PCI Bus Master Enable
+        // (command bit 2).
         let dma_enabled = (self.pci_command & (1 << 2)) != 0;
         if !dma_enabled {
             return;
