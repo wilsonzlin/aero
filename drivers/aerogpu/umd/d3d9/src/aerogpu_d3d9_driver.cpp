@@ -8919,10 +8919,22 @@ static HRESULT device_open_resource_impl(
   res->width = d3d9_optional_resource_width(*pOpenResource);
   res->height = d3d9_optional_resource_height(*pOpenResource);
   res->depth = std::max(1u, d3d9_resource_depth(*pOpenResource));
-  res->mip_levels = std::max(1u, d3d9_resource_mip_levels(*pOpenResource));
   res->usage = d3d9_resource_usage(*pOpenResource);
   res->pool = d3d9_resource_pool(*pOpenResource);
   const uint32_t open_size_bytes = d3d9_resource_size(*pOpenResource);
+  const uint32_t requested_mip_levels = d3d9_resource_mip_levels(*pOpenResource);
+
+  uint32_t mip_levels = std::max(1u, requested_mip_levels);
+  if (open_size_bytes == 0 &&
+      requested_mip_levels == 0 &&
+      res->width != 0 &&
+      res->height != 0) {
+    // D3D9 OpenResource semantics: MipLevels=0 means "allocate the full mip chain"
+    // (same as CreateResource), but only when the runtime supplies an explicit
+    // width/height (otherwise we cannot infer the chain length here).
+    mip_levels = calc_full_mip_chain_levels_2d(res->width, res->height);
+  }
+  res->mip_levels = mip_levels;
 
   // AeroGPU cannot represent volume/cube textures in the protocol. Reject shared
   // allocations that describe them to avoid importing a handle that the host

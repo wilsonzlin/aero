@@ -2323,14 +2323,15 @@ bool TestCreateResourceMipLevelsZeroAllocatesFullMipChainForNonShared() {
     D3D9DDI_DEVICEFUNCS device_funcs{};
     D3DDDI_HADAPTER hAdapter{};
     D3DDDI_HDEVICE hDevice{};
-    D3DDDI_HRESOURCE hResource{};
     bool has_adapter = false;
     bool has_device = false;
-    bool has_resource = false;
+    std::vector<D3DDDI_HRESOURCE> resources;
 
     ~Cleanup() {
-      if (has_resource && device_funcs.pfnDestroyResource) {
-        device_funcs.pfnDestroyResource(hDevice, hResource);
+      if (has_device && device_funcs.pfnDestroyResource) {
+        for (auto& h : resources) {
+          device_funcs.pfnDestroyResource(hDevice, h);
+        }
       }
       if (has_device && device_funcs.pfnDestroyDevice) {
         device_funcs.pfnDestroyDevice(hDevice);
@@ -2378,69 +2379,86 @@ bool TestCreateResourceMipLevelsZeroAllocatesFullMipChainForNonShared() {
 
   // Bind a span-backed command buffer so we can validate CREATE_TEXTURE2D output.
   std::vector<uint8_t> dma(4096, 0);
-  dev->cmd.set_span(dma.data(), dma.size());
-  dev->cmd.reset();
 
   // D3DRESOURCETYPE::D3DRTYPE_TEXTURE == 3.
   constexpr uint32_t kD3dRTypeTexture = 3u;
 
-  D3D9DDIARG_CREATERESOURCE create_res{};
-  create_res.type = kD3dRTypeTexture;
-  create_res.format = 22u; // D3DFMT_X8R8G8B8
-  create_res.width = 128;
-  create_res.height = 128;
-  create_res.depth = 1;
-  create_res.mip_levels = 0; // D3D9: allocate full mip chain
-  create_res.usage = 0;
-  create_res.pool = 0; // default pool (GPU resource)
-  create_res.size = 0;
-  create_res.hResource.pDrvPrivate = nullptr;
-  create_res.pSharedHandle = nullptr; // non-shared
-  create_res.pPrivateDriverData = nullptr;
-  create_res.PrivateDriverDataSize = 0;
-  create_res.wddm_hAllocation = 0;
+  struct Case {
+    uint32_t width;
+    uint32_t height;
+    uint32_t expected_mip_levels;
+    const char* name;
+  };
 
-  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_res);
-  if (!Check(hr == S_OK, "CreateResource(MipLevels=0)")) {
-    return false;
-  }
-  cleanup.hResource = create_res.hResource;
-  cleanup.has_resource = true;
+  const Case cases[] = {
+      {64u, 64u, 7u, "64x64"},
+      {100u, 60u, 7u, "100x60"},
+  };
 
-  auto* res = reinterpret_cast<Resource*>(create_res.hResource.pDrvPrivate);
-  if (!Check(res != nullptr, "resource pointer")) {
-    return false;
-  }
-  constexpr uint32_t kExpectedMipLevels = 8; // log2(128) + 1
-  if (!Check(res->mip_levels == kExpectedMipLevels, "resource mip_levels == 8 for 128x128 with MipLevels=0")) {
-    return false;
-  }
+  for (const Case& c : cases) {
+    std::memset(dma.data(), 0, dma.size());
+    dev->cmd.set_span(dma.data(), dma.size());
+    dev->cmd.reset();
 
-  // X8R8G8B8: 4 bytes per pixel. Sum sizes for each level down to 1x1.
-  uint32_t w = 128;
-  uint32_t h = 128;
-  uint64_t expected_size = 0;
-  for (uint32_t level = 0; level < kExpectedMipLevels; ++level) {
-    expected_size += static_cast<uint64_t>(w) * static_cast<uint64_t>(h) * 4ull;
-    w = std::max(1u, w / 2);
-    h = std::max(1u, h / 2);
-  }
-  if (!Check(res->size_bytes == expected_size, "resource size_bytes matches full mip chain sum")) {
-    return false;
-  }
+    D3D9DDIARG_CREATERESOURCE create_res{};
+    create_res.type = kD3dRTypeTexture;
+    create_res.format = 22u; // D3DFMT_X8R8G8B8
+    create_res.width = c.width;
+    create_res.height = c.height;
+    create_res.depth = 1;
+    create_res.mip_levels = 0; // D3D9: allocate full mip chain
+    create_res.usage = 0;
+    create_res.pool = 0; // default pool (GPU resource)
+    create_res.size = 0;
+    create_res.hResource.pDrvPrivate = nullptr;
+    create_res.pSharedHandle = nullptr; // non-shared
+    create_res.pPrivateDriverData = nullptr;
+    create_res.PrivateDriverDataSize = 0;
+    create_res.wddm_hAllocation = 0;
 
-  dev->cmd.finalize();
-  if (!Check(ValidateStream(dma.data(), dma.size()), "stream validates")) {
-    return false;
-  }
+    char create_msg[128] = {};
+    std::snprintf(create_msg, sizeof(create_msg), "CreateResource(MipLevels=0 %s)", c.name);
+    hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_res);
+    if (!Check(hr == S_OK, create_msg)) {
+      return false;
+    }
+    cleanup.resources.push_back(create_res.hResource);
 
-  const CmdLoc create_loc = FindLastOpcode(dma.data(), dma.size(), AEROGPU_CMD_CREATE_TEXTURE2D);
-  if (!Check(create_loc.hdr != nullptr, "CREATE_TEXTURE2D emitted")) {
-    return false;
-  }
-  const auto* cmd = reinterpret_cast<const aerogpu_cmd_create_texture2d*>(create_loc.hdr);
-  if (!Check(cmd->mip_levels == kExpectedMipLevels, "CREATE_TEXTURE2D mip_levels uses computed full chain")) {
-    return false;
+    auto* res = reinterpret_cast<Resource*>(create_res.hResource.pDrvPrivate);
+    if (!Check(res != nullptr, "resource pointer")) {
+      return false;
+    }
+    if (!Check(res->mip_levels == c.expected_mip_levels, "resource expands MipLevels=0 to full chain")) {
+      return false;
+    }
+
+    Texture2dLayout expected{};
+    if (!Check(calc_texture2d_layout(static_cast<D3DDDIFORMAT>(create_res.format),
+                                     create_res.width,
+                                     create_res.height,
+                                     c.expected_mip_levels,
+                                     create_res.depth,
+                                     &expected),
+               "calc_texture2d_layout(full mip chain)")) {
+      return false;
+    }
+    if (!Check(res->size_bytes == expected.total_size_bytes, "resource size_bytes matches packed mip chain")) {
+      return false;
+    }
+
+    dev->cmd.finalize();
+    if (!Check(ValidateStream(dma.data(), dma.size()), "stream validates")) {
+      return false;
+    }
+
+    const CmdLoc create_loc = FindLastOpcode(dma.data(), dma.size(), AEROGPU_CMD_CREATE_TEXTURE2D);
+    if (!Check(create_loc.hdr != nullptr, "CREATE_TEXTURE2D emitted")) {
+      return false;
+    }
+    const auto* cmd = reinterpret_cast<const aerogpu_cmd_create_texture2d*>(create_loc.hdr);
+    if (!Check(cmd->mip_levels == c.expected_mip_levels, "CREATE_TEXTURE2D mip_levels uses computed full chain")) {
+      return false;
+    }
   }
 
   // Make cleanup safe: switch back to vector mode so subsequent destroy calls
