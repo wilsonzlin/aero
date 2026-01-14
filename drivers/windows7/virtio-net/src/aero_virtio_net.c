@@ -2425,6 +2425,9 @@ static NDIS_STATUS AerovNetVirtioStart(_Inout_ AEROVNET_ADAPTER* Adapter) {
 
   Adapter->RxHeaderBytes =
       (Adapter->GuestFeatures & VIRTIO_NET_F_MRG_RXBUF) ? (ULONG)sizeof(VIRTIO_NET_HDR_MRG_RXBUF) : (ULONG)sizeof(VIRTIO_NET_HDR);
+  // RxHeaderBytes also determines the virtio-net header length used for TX
+  // descriptor chains (the extra num_buffers field is unused on TX but is part
+  // of the negotiated header layout).
 
   // Offload support depends on negotiated virtio-net features.
   Adapter->TxChecksumSupported = (Adapter->GuestFeatures & VIRTIO_NET_F_CSUM) ? TRUE : FALSE;

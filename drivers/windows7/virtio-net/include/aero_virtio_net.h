@@ -263,6 +263,9 @@ typedef struct _AEROVNET_ADAPTER {
 
   ULONG Mtu;
   ULONG MaxFrameSize;
+  // virtio-net header length in bytes (10-byte virtio_net_hdr or 12-byte
+  // virtio_net_hdr_mrg_rxbuf). When VIRTIO_NET_F_MRG_RXBUF is negotiated, this
+  // applies to both RX and TX descriptor chains.
   ULONG RxHeaderBytes;
   ULONG RxBufferDataBytes;
   ULONG RxBufferTotalBytes;
