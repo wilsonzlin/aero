@@ -153,12 +153,13 @@ const SETS: usize = 64; // 256 entries per bank, 4-way set associative.
 struct TlbSet {
     entries: [[TlbEntry; WAYS]; SETS],
     next_way: [u8; SETS],
-    // Hints indicating whether any large-page entries have been inserted since
-    // the last time the corresponding entries were globally flushed. When all
-    // are `false`, `lookup` can take a fast 4KiB-only path.
-    has_1g: bool,
-    has_4m: bool,
-    has_2m: bool,
+    // Counts of valid large-page entries currently present in the set.
+    //
+    // When all are 0, `lookup` can take a fast 4KiB-only path that skips
+    // large-page probes and the per-way page-size compare.
+    count_1g: u16,
+    count_4m: u16,
+    count_2m: u16,
 }
 
 impl TlbSet {
@@ -166,9 +167,9 @@ impl TlbSet {
         Self {
             entries: [[TlbEntry::default(); WAYS]; SETS],
             next_way: [0; SETS],
-            has_1g: false,
-            has_4m: false,
-            has_2m: false,
+            count_1g: 0,
+            count_4m: 0,
+            count_2m: 0,
         }
     }
 
@@ -177,7 +178,7 @@ impl TlbSet {
         // Common case: TLB contains only 4KiB entries (no large pages have been
         // inserted since the last full flush), so we can skip page-size probes
         // and the page-size compare in the way loop.
-        if !self.has_1g && !self.has_2m && !self.has_4m {
+        if self.count_1g == 0 && self.count_2m == 0 && self.count_4m == 0 {
             let vbase = vaddr & !0xfff;
             let tag = vaddr >> 12;
             let set = set_index(tag);
@@ -215,22 +216,22 @@ impl TlbSet {
                 lookup_page_size!(PageSize::Size4K);
             }
             TlbLookupPageSizes::Size2MAnd4K => {
-                if self.has_2m {
+                if self.count_2m != 0 {
                     lookup_page_size!(PageSize::Size2M);
                 }
                 lookup_page_size!(PageSize::Size4K);
             }
             TlbLookupPageSizes::Size4MAnd4K => {
-                if self.has_4m {
+                if self.count_4m != 0 {
                     lookup_page_size!(PageSize::Size4M);
                 }
                 lookup_page_size!(PageSize::Size4K);
             }
             TlbLookupPageSizes::Size1G2MAnd4K => {
-                if self.has_1g {
+                if self.count_1g != 0 {
                     lookup_page_size!(PageSize::Size1G);
                 }
-                if self.has_2m {
+                if self.count_2m != 0 {
                     lookup_page_size!(PageSize::Size2M);
                 }
                 lookup_page_size!(PageSize::Size4K);
@@ -241,15 +242,6 @@ impl TlbSet {
     }
 
     fn insert(&mut self, entry: TlbEntry) {
-        // Track which page sizes exist in the set so lookup can skip scanning
-        // sizes that haven't been inserted yet.
-        match entry.page_size {
-            PageSize::Size1G => self.has_1g = true,
-            PageSize::Size4M => self.has_4m = true,
-            PageSize::Size2M => self.has_2m = true,
-            PageSize::Size4K => {}
-        }
-
         let tag = entry.vbase >> 12;
         let set = set_index(tag);
 
@@ -268,7 +260,34 @@ impl TlbSet {
 
         let way = self.next_way[set] as usize % WAYS;
         self.next_way[set] = self.next_way[set].wrapping_add(1);
+
+        let old = self.entries[set][way];
+        if old.valid {
+            match old.page_size {
+                PageSize::Size1G => {
+                    debug_assert!(self.count_1g > 0);
+                    self.count_1g -= 1;
+                }
+                PageSize::Size4M => {
+                    debug_assert!(self.count_4m > 0);
+                    self.count_4m -= 1;
+                }
+                PageSize::Size2M => {
+                    debug_assert!(self.count_2m > 0);
+                    self.count_2m -= 1;
+                }
+                PageSize::Size4K => {}
+            }
+        }
+
         self.entries[set][way] = entry;
+
+        match entry.page_size {
+            PageSize::Size1G => self.count_1g += 1,
+            PageSize::Size4M => self.count_4m += 1,
+            PageSize::Size2M => self.count_2m += 1,
+            PageSize::Size4K => {}
+        }
     }
 
     fn invalidate_address_all(&mut self, vaddr: u64) {
@@ -285,6 +304,21 @@ impl TlbSet {
                 let entry = &mut self.entries[set][way];
                 if entry.valid && entry.vbase == vbase && entry.page_size == page_size {
                     entry.valid = false;
+                    match page_size {
+                        PageSize::Size1G => {
+                            debug_assert!(self.count_1g > 0);
+                            self.count_1g -= 1;
+                        }
+                        PageSize::Size4M => {
+                            debug_assert!(self.count_4m > 0);
+                            self.count_4m -= 1;
+                        }
+                        PageSize::Size2M => {
+                            debug_assert!(self.count_2m > 0);
+                            self.count_2m -= 1;
+                        }
+                        PageSize::Size4K => {}
+                    }
                 }
             }
         }
@@ -308,20 +342,50 @@ impl TlbSet {
                 if entry.global {
                     if include_global {
                         entry.valid = false;
+                        match page_size {
+                            PageSize::Size1G => {
+                                debug_assert!(self.count_1g > 0);
+                                self.count_1g -= 1;
+                            }
+                            PageSize::Size4M => {
+                                debug_assert!(self.count_4m > 0);
+                                self.count_4m -= 1;
+                            }
+                            PageSize::Size2M => {
+                                debug_assert!(self.count_2m > 0);
+                                self.count_2m -= 1;
+                            }
+                            PageSize::Size4K => {}
+                        }
                     }
                     continue;
                 }
                 if entry.pcid == pcid {
                     entry.valid = false;
+                    match page_size {
+                        PageSize::Size1G => {
+                            debug_assert!(self.count_1g > 0);
+                            self.count_1g -= 1;
+                        }
+                        PageSize::Size4M => {
+                            debug_assert!(self.count_4m > 0);
+                            self.count_4m -= 1;
+                        }
+                        PageSize::Size2M => {
+                            debug_assert!(self.count_2m > 0);
+                            self.count_2m -= 1;
+                        }
+                        PageSize::Size4K => {}
+                    }
                 }
             }
         }
     }
 
     fn flush_all(&mut self) {
-        self.has_1g = false;
-        self.has_4m = false;
-        self.has_2m = false;
+        self.count_1g = 0;
+        self.count_4m = 0;
+        self.count_2m = 0;
         for set in 0..SETS {
             for way in 0..WAYS {
                 self.entries[set][way].valid = false;
@@ -330,9 +394,9 @@ impl TlbSet {
     }
 
     fn flush_non_global(&mut self) {
-        self.has_1g = false;
-        self.has_4m = false;
-        self.has_2m = false;
+        self.count_1g = 0;
+        self.count_4m = 0;
+        self.count_2m = 0;
         for set in 0..SETS {
             for way in 0..WAYS {
                 let entry = &mut self.entries[set][way];
@@ -342,9 +406,9 @@ impl TlbSet {
                 }
                 if entry.valid {
                     match entry.page_size {
-                        PageSize::Size1G => self.has_1g = true,
-                        PageSize::Size4M => self.has_4m = true,
-                        PageSize::Size2M => self.has_2m = true,
+                        PageSize::Size1G => self.count_1g += 1,
+                        PageSize::Size4M => self.count_4m += 1,
+                        PageSize::Size2M => self.count_2m += 1,
                         PageSize::Size4K => {}
                     }
                 }
@@ -353,9 +417,9 @@ impl TlbSet {
     }
 
     fn flush_pcid(&mut self, pcid: u16, include_global: bool) {
-        self.has_1g = false;
-        self.has_4m = false;
-        self.has_2m = false;
+        self.count_1g = 0;
+        self.count_4m = 0;
+        self.count_2m = 0;
         for set in 0..SETS {
             for way in 0..WAYS {
                 let entry = &mut self.entries[set][way];
@@ -372,9 +436,9 @@ impl TlbSet {
                     continue;
                 }
                 match entry.page_size {
-                    PageSize::Size1G => self.has_1g = true,
-                    PageSize::Size4M => self.has_4m = true,
-                    PageSize::Size2M => self.has_2m = true,
+                    PageSize::Size1G => self.count_1g += 1,
+                    PageSize::Size4M => self.count_4m += 1,
+                    PageSize::Size2M => self.count_2m += 1,
                     PageSize::Size4K => {}
                 }
             }
