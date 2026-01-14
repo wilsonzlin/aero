@@ -47,6 +47,8 @@ pub fn clean_path(path: &Path) -> PathBuf {
 }
 
 pub fn resolve_node_dir(repo_root: &Path, cli_override: Option<&str>) -> Result<PathBuf> {
+    let cli_override = cli_override.map(str::trim).filter(|v| !v.is_empty());
+
     // Prefer sharing detection logic with other tooling/CI by using the Node-based resolver when
     // available.
     let detect_script = repo_root.join("scripts/ci/detect-node-dir.mjs");
@@ -222,9 +224,29 @@ fn normalize_dir(repo_root: &Path, path: &str) -> PathBuf {
 
 fn env_var_nonempty(key: &str) -> Option<String> {
     let value = env::var(key).ok()?;
-    if value.trim().is_empty() {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
         None
     } else {
-        Some(value)
+        Some(trimmed.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clean_path_drops_curdir_components() {
+        let raw = PathBuf::from("./web/./");
+        assert_eq!(clean_path(&raw), PathBuf::from("web"));
+    }
+
+    #[test]
+    fn env_var_nonempty_trims_whitespace() {
+        const KEY: &str = "AERO_XTASK_TEST_TRIM";
+        std::env::set_var(KEY, "  web  ");
+        assert_eq!(env_var_nonempty(KEY).as_deref(), Some("web"));
+        std::env::remove_var(KEY);
     }
 }
