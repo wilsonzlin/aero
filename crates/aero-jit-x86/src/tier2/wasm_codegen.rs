@@ -1055,18 +1055,12 @@ impl Emitter<'_> {
                 self.f.instruction(&Instruction::I64Xor);
             }
             BinOp::Shl => {
-                self.f.instruction(&Instruction::I64Const(63));
-                self.f.instruction(&Instruction::I64And);
                 self.f.instruction(&Instruction::I64Shl);
             }
             BinOp::Shr => {
-                self.f.instruction(&Instruction::I64Const(63));
-                self.f.instruction(&Instruction::I64And);
                 self.f.instruction(&Instruction::I64ShrU);
             }
             BinOp::Sar => {
-                self.f.instruction(&Instruction::I64Const(63));
-                self.f.instruction(&Instruction::I64And);
                 self.f.instruction(&Instruction::I64ShrS);
             }
             BinOp::Eq => {
