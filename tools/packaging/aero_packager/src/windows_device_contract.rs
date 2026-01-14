@@ -66,6 +66,11 @@ fn validate_windows_device_contract(contract: &WindowsDeviceContract) -> Result<
             anyhow::bail!("windows-device-contract has a device entry with an empty device name");
         }
         let name_lower = name.to_ascii_lowercase();
+        if name_lower.starts_with("virtio-") && device.virtio_device_type.is_none() {
+            anyhow::bail!(
+                "windows-device-contract device {name} is missing virtio_device_type (required for virtio-* devices)"
+            );
+        }
         if !seen_device_names.insert(name_lower.clone()) {
             anyhow::bail!("windows-device-contract contains duplicate device entry: {name}");
         }
@@ -79,19 +84,13 @@ fn validate_windows_device_contract(contract: &WindowsDeviceContract) -> Result<
         // Contract v1 (AERO-W7-VIRTIO) is strict about virtio-pci being modern-only and revision-gated
         // (REV_01). Enforce these invariants at load time so both Guest Tools packaging and CI tooling
         // fail fast if a contract edit would silently drift back to transitional IDs.
-        if name_lower.starts_with("virtio-") {
+        if let Some(virtio_device_type) = device.virtio_device_type {
             if pci_vendor_id != 0x1AF4 {
                 anyhow::bail!(
-                    "windows-device-contract device {name} has unexpected pci_vendor_id {:#06X} (expected 0x1AF4 for virtio devices)",
+                    "windows-device-contract device {name} has unexpected pci_vendor_id {:#06X} (expected 0x1AF4 for devices with virtio_device_type)",
                     pci_vendor_id
                 );
             }
-
-            let virtio_device_type = device.virtio_device_type.ok_or_else(|| {
-                anyhow::anyhow!(
-                    "windows-device-contract device {name} is missing virtio_device_type (required for virtio-* devices)"
-                )
-            })?;
 
             // Modern virtio-pci device IDs are `0x1040 + virtio_device_type`.
             //
@@ -342,5 +341,57 @@ mod tests {
         let err_str = format!("{err:#}");
         assert!(err_str.contains("revision ID"), "{err_str}");
         assert!(err_str.contains("0x00"), "{err_str}");
+    }
+
+    #[test]
+    fn contract_loader_enforces_virtio_invariants_when_virtio_device_type_is_present() {
+        // virtio validation is keyed off virtio_device_type (not the `device` name prefix).
+        let file = write_contract(
+            r#"{
+  "schema_version": 1,
+  "contract_name": "test",
+  "contract_version": "0.0.0",
+  "devices": [
+    {
+      "device": "not-a-virtio-name",
+      "pci_vendor_id": "0x1234",
+      "pci_device_id": "0x1041",
+      "hardware_id_patterns": ["PCI\\VEN_1234&DEV_1041&REV_01"],
+      "driver_service_name": "svc",
+      "inf_name": "x.inf",
+      "virtio_device_type": 1
+    }
+  ]
+}"#,
+        );
+
+        let err = load_windows_device_contract(file.path()).unwrap_err();
+        let err_str = format!("{err:#}");
+        assert!(err_str.contains("0x1AF4"), "{err_str}");
+    }
+
+    #[test]
+    fn contract_loader_rejects_virtio_names_missing_virtio_device_type() {
+        let file = write_contract(
+            r#"{
+  "schema_version": 1,
+  "contract_name": "test",
+  "contract_version": "0.0.0",
+  "devices": [
+    {
+      "device": "virtio-blk",
+      "pci_vendor_id": "0x1AF4",
+      "pci_device_id": "0x1042",
+      "hardware_id_patterns": ["PCI\\VEN_1AF4&DEV_1042&REV_01"],
+      "driver_service_name": "svc",
+      "inf_name": "x.inf"
+    }
+  ]
+}"#,
+        );
+
+        let err = load_windows_device_contract(file.path()).unwrap_err();
+        let err_str = format!("{err:#}");
+        assert!(err_str.contains("missing virtio_device_type"), "{err_str}");
     }
 }
