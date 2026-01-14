@@ -1,6 +1,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use aero_io_snapshot::io::state::IoSnapshot as _;
+use aero_devices::i8042::I8042_DATA_PORT;
 use aero_usb::hid::KEYBOARD_LED_MASK;
 use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel};
 use aero_virtio::devices::input::{BTN_LEFT, KEY_A, VirtioInput};
@@ -60,6 +61,22 @@ fn machine_can_inject_virtio_input_and_synthetic_usb_hid() {
     );
     assert!(matches!(resp, ControlResponse::Ack));
     assert_eq!(m.usb_hid_keyboard_leds(), u32::from(KEYBOARD_LED_MASK));
+
+    // -----------------
+    // PS/2 (i8042) LEDs
+    // -----------------
+    //
+    // When PS/2 is present, expose LEDs as a HID-style bitmask (matching the USB/virtio helpers):
+    // - bit0: NumLock
+    // - bit1: CapsLock
+    // - bit2: ScrollLock
+    assert_eq!(m.ps2_keyboard_leds(), 0);
+    {
+        let inner = m.debug_inner_mut();
+        inner.io_write(I8042_DATA_PORT, 1, 0xED); // Set LEDs
+        inner.io_write(I8042_DATA_PORT, 1, 0x04); // CapsLock (PS/2 bit2)
+    }
+    assert_eq!(m.ps2_keyboard_leds(), 0x02);
 
     let mut usb_mouse = m
         .debug_inner()
@@ -157,6 +174,16 @@ fn machine_can_inject_virtio_input_and_synthetic_usb_hid() {
     assert!(
         after > before,
         "virtio-input keyboard should queue events after injection"
+    );
+    let leds = virtio_kbd
+        .borrow_mut()
+        .device_mut::<VirtioInput>()
+        .expect("virtio-input keyboard downcast")
+        .leds_mask();
+    assert_eq!(
+        m.virtio_input_keyboard_leds(),
+        u32::from(leds),
+        "Machine::virtio_input_keyboard_leds should reflect device state"
     );
 
     let virtio_mouse = m
