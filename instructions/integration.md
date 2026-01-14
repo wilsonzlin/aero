@@ -85,13 +85,17 @@ This is the **coordination hub**. You wire together the work from all other work
   message-signaled interrupts when enabled (see `crates/aero-devices-nvme/README.md`,
   `crates/aero-devices-nvme/tests/interrupts.rs`, and `pc_platform_nvme` tests).
   Note: Windows 7 has no in-box NVMe driver.
-- **MSI/MSI-X delivery targets LAPIC(s) (APIC-mode only)**:
+- **MSI/MSI-X delivery is LAPIC-based; in legacy PIC mode MSI vectors are not surfaced to the CPU**:
   `PlatformInterrupts::trigger_msi` decodes the MSI address/data and injects a fixed interrupt into
   the selected LAPIC(s) (destination ID `0xFF` broadcasts to all LAPICs; see
-  `crates/platform/src/interrupts/msi.rs` and `crates/platform-compat/tests/smp_msi_routing.rs`).
-  In **PIC mode** the platform polls the 8259 PIC instead of LAPICs, so MSIs are effectively
-  dropped/ignored until the guest switches to APIC mode. Also ensure the guest leaves the LAPIC
-  software-enabled (SVR[8]=1).
+  `crates/platform/src/interrupts/msi.rs`,
+  `crates/platform/src/interrupts/router.rs::{inject_fixed_for_apic,inject_fixed_broadcast}`, and
+  `crates/platform-compat/tests/smp_msi_routing.rs`).
+  Note: MSI injection intentionally bypasses `PlatformInterruptMode`, but while the platform is in
+  **Legacy PIC mode** the vCPU interrupt polling path (`InterruptController::get_pending` /
+  `PlatformInterrupts::get_pending_for_apic`) consults the 8259 PIC instead of LAPIC IRR state, so
+  MSI-delivered vectors will not be observed until the guest switches to APIC mode. Also ensure the
+  guest leaves the LAPIC software-enabled (SVR[8]=1).
 ---
 
 ## Key Crates & Directories
