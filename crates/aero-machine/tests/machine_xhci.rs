@@ -500,6 +500,112 @@ fn xhci_msi_masked_interrupt_sets_pending_and_redelivers_after_unmask() {
 }
 
 #[test]
+fn xhci_msi_unprogrammed_address_sets_pending_and_delivers_after_programming() {
+    let mut m = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_xhci: true,
+        // Keep the test focused on PCI + xHCI.
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    // Ensure high MMIO addresses decode correctly (avoid A20 aliasing).
+    m.io_write(A20_GATE_PORT, 1, 0x02);
+
+    let interrupts = m.platform_interrupts().expect("pc platform enabled");
+    interrupts
+        .borrow_mut()
+        .set_mode(PlatformInterruptMode::Apic);
+    assert_eq!(interrupts.borrow().mode(), PlatformInterruptMode::Apic);
+
+    let bdf = USB_XHCI_QEMU.bdf;
+
+    // Enable BAR0 MMIO decode + bus mastering.
+    let cmd = cfg_read(&mut m, bdf, 0x04, 2) as u16;
+    cfg_write(&mut m, bdf, 0x04, 2, u32::from(cmd | (1 << 1) | (1 << 2)));
+
+    // Enable MSI, but leave the message address unprogrammed/invalid.
+    let base =
+        find_capability(&mut m, bdf, PCI_CAP_ID_MSI).expect("xHCI should expose MSI capability");
+    let vector: u8 = 0x67;
+
+    // Address left as 0: invalid xAPIC MSI address.
+    cfg_write(&mut m, bdf, base + 0x04, 4, 0);
+    cfg_write(&mut m, bdf, base + 0x08, 4, 0);
+    cfg_write(&mut m, bdf, base + 0x0c, 2, u32::from(vector));
+    cfg_write(&mut m, bdf, base + 0x10, 4, 0); // unmask
+
+    let ctrl = cfg_read(&mut m, bdf, base + 0x02, 2) as u16;
+    cfg_write(&mut m, bdf, base + 0x02, 2, u32::from(ctrl | 1)); // MSI enable
+
+    // Mirror canonical MSI state into the device model.
+    m.tick_platform(0);
+
+    assert_eq!(
+        PlatformInterruptController::get_pending(&*interrupts.borrow()),
+        None
+    );
+
+    let xhci = m.xhci().expect("xHCI should be enabled");
+    xhci.borrow_mut().raise_event_interrupt();
+    m.poll_pci_intx_lines();
+
+    // MSI delivery is blocked by the invalid address; the device should latch its pending bit and
+    // must not fall back to INTx.
+    assert_eq!(
+        PlatformInterruptController::get_pending(&*interrupts.borrow()),
+        None
+    );
+    assert!(
+        !xhci.borrow().irq_level(),
+        "xHCI INTx should be suppressed while MSI is active"
+    );
+    assert!(
+        xhci.borrow()
+            .config()
+            .capability::<MsiCapability>()
+            .is_some_and(|msi| (msi.pending_bits() & 1) != 0),
+        "unprogrammed MSI address should set the pending bit in the device model"
+    );
+
+    // Clear the interrupt condition before completing MSI programming so delivery relies solely on
+    // the pending bit.
+    xhci.borrow_mut().clear_event_interrupt();
+    m.poll_pci_intx_lines();
+    assert_eq!(
+        PlatformInterruptController::get_pending(&*interrupts.borrow()),
+        None
+    );
+
+    // Now program a valid MSI address; the next service step should observe the pending bit and
+    // deliver without requiring a new rising edge.
+    cfg_write(&mut m, bdf, base + 0x04, 4, 0xfee0_0000);
+    cfg_write(&mut m, bdf, base + 0x08, 4, 0);
+    m.tick_platform(0);
+
+    // Ensure canonical PCI config sync does not clear the device-managed pending bit.
+    assert!(
+        xhci.borrow()
+            .config()
+            .capability::<MsiCapability>()
+            .is_some_and(|msi| (msi.pending_bits() & 1) != 0),
+        "canonical PCI config sync must not clear device-managed MSI pending bits"
+    );
+
+    xhci.borrow_mut().clear_event_interrupt();
+    assert_eq!(
+        PlatformInterruptController::get_pending(&*interrupts.borrow()),
+        Some(vector)
+    );
+}
+
+#[test]
 fn xhci_msix_triggers_lapic_vector_and_suppresses_intx() {
     let mut m = Machine::new(MachineConfig {
         ram_size_bytes: 2 * 1024 * 1024,
