@@ -4898,6 +4898,10 @@ void AEROGPU_APIENTRY ClearRTV(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRENDERTARGETV
     ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
     return;
   }
+  // Clear writes the currently bound render targets. Track them now so their
+  // backing allocations are included even if the targets are later unbound
+  // before submission.
+  track_current_state_allocs_for_submit_locked(dev);
   cmd->flags = AEROGPU_CLEAR_COLOR;
   cmd->color_rgba_f32[0] = f32_bits(rgba[0]);
   cmd->color_rgba_f32[1] = f32_bits(rgba[1]);
@@ -4940,6 +4944,12 @@ void AEROGPU_APIENTRY ClearDSV(D3D10DDI_HDEVICE hDevice,
   if (!cmd) {
     ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
     return;
+  }
+  if (flags != 0) {
+    // Clear writes the currently bound depth-stencil target. Track it now so its
+    // backing allocation is included even if it is later unbound before
+    // submission.
+    track_current_state_allocs_for_submit_locked(dev);
   }
   cmd->flags = flags;
   cmd->color_rgba_f32[0] = 0;
@@ -5844,6 +5854,12 @@ void AEROGPU_APIENTRY Draw(D3D10DDI_HDEVICE hDevice, uint32_t vertex_count, uint
     ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
     return;
   }
+  if (vertex_count != 0) {
+    // Track allocations referenced by the draw's *current* state so the eventual
+    // submission's allocation list includes resources used earlier in the command
+    // buffer even if they are later unbound.
+    track_current_state_allocs_for_submit_locked(dev);
+  }
   cmd->vertex_count = vertex_count;
   cmd->instance_count = 1;
   cmd->first_vertex = start_vertex;
@@ -5880,6 +5896,7 @@ void AEROGPU_APIENTRY DrawInstanced(D3D10DDI_HDEVICE hDevice,
     ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
     return;
   }
+  track_current_state_allocs_for_submit_locked(dev);
   cmd->vertex_count = vertex_count_per_instance;
   cmd->instance_count = instance_count;
   cmd->first_vertex = start_vertex;
@@ -5907,6 +5924,9 @@ void AEROGPU_APIENTRY DrawIndexed(D3D10DDI_HDEVICE hDevice, uint32_t index_count
   if (!cmd) {
     ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
     return;
+  }
+  if (index_count != 0) {
+    track_current_state_allocs_for_submit_locked(dev);
   }
   cmd->index_count = index_count;
   cmd->instance_count = 1;
@@ -5947,6 +5967,7 @@ void AEROGPU_APIENTRY DrawIndexedInstanced(D3D10DDI_HDEVICE hDevice,
     ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
     return;
   }
+  track_current_state_allocs_for_submit_locked(dev);
   cmd->index_count = index_count_per_instance;
   cmd->instance_count = instance_count;
   cmd->first_index = start_index;
