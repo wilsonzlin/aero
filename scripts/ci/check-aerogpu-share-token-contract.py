@@ -164,15 +164,19 @@ def check_no_pool_alloc_under_allocations_lock(errors: list[str]) -> None:
         r"\bKeAcquireSpinLockRaiseToDpc\s*\(\s*&\s*(?:Adapter|adapter)\s*->\s*AllocationsLock\b"
     )
 
-    # Allocation APIs that can take global locks and/or significantly extend the
+    # Pool operations that can take global locks and/or significantly extend the
     # critical section. We conservatively treat lookaside allocs as allocations
-    # too: they can fall back to pool allocation when the list is empty.
+    # too: they can fall back to pool allocation when the list is empty. Pool
+    # frees can also be expensive on some stacks, so keep them out of the
+    # AllocationsLock hold region as well.
     alloc_needles = (
         "ExAllocatePoolWithTag(",
         "ExAllocatePool(",
         "ExAllocatePool2(",
         "ExAllocateFromNPagedLookasideList(",
         "ExAllocateFromPagedLookasideList(",
+        "ExFreePoolWithTag(",
+        "ExFreePool(",
     )
     alloc_re = re.compile("|".join(re.escape(n) for n in alloc_needles))
 
