@@ -280,6 +280,11 @@ fn validate_sampler_texture_types(
     used_samplers: &BTreeSet<u16>,
     sampler_texture_types: &HashMap<u16, TextureType>,
 ) -> Result<(), ShaderTranslateError> {
+    // D3D9 supports 1D/2D/3D/Cube sampler declarations.
+    //
+    // Note: The D3D9 executor may fall back to dummy texture views for resource types that are
+    // not currently supported by the command stream (e.g. 3D textures), but unknown sampler
+    // texture type encodings are treated as malformed bytecode and must still be rejected.
     for &sampler in used_samplers {
         let ty = sampler_texture_types
             .get(&sampler)

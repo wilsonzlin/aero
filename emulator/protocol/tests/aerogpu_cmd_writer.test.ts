@@ -169,6 +169,8 @@ test("AerogpuCmdWriter emits pipeline and binding packets", () => {
   const w = new AerogpuCmdWriter();
 
   w.setShaderConstantsF(AerogpuShaderStage.Pixel, 4, new Float32Array([1, 2, 3, 4]));
+  w.setShaderConstantsI(AerogpuShaderStage.Pixel, 1, new Int32Array([-1, 2, 3, 4]));
+  w.setShaderConstantsB(AerogpuShaderStage.Pixel, 2, new Uint32Array([0, 1]));
   w.setTexture(AerogpuShaderStage.Pixel, 0, 99);
   w.setSamplerState(AerogpuShaderStage.Pixel, 0, 7, 42);
   w.setRenderState(10, 20);
@@ -188,6 +190,9 @@ test("AerogpuCmdWriter emits pipeline and binding packets", () => {
 
   const expected: Array<[number, number]> = [
     [AerogpuCmdOpcode.SetShaderConstantsF, AEROGPU_CMD_SET_SHADER_CONSTANTS_F_SIZE + 16],
+    [AerogpuCmdOpcode.SetShaderConstantsI, AEROGPU_CMD_SET_SHADER_CONSTANTS_I_SIZE + 16],
+    // Bool constants are encoded as vec4<u32> per register.
+    [AerogpuCmdOpcode.SetShaderConstantsB, AEROGPU_CMD_SET_SHADER_CONSTANTS_B_SIZE + 32],
     [AerogpuCmdOpcode.SetTexture, AEROGPU_CMD_SET_TEXTURE_SIZE],
     [AerogpuCmdOpcode.SetSamplerState, AEROGPU_CMD_SET_SAMPLER_STATE_SIZE],
     [AerogpuCmdOpcode.SetRenderState, AEROGPU_CMD_SET_RENDER_STATE_SIZE],
@@ -211,13 +216,35 @@ test("AerogpuCmdWriter emits pipeline and binding packets", () => {
   }
   assert.equal(cursor, bytes.byteLength);
 
-  // Validate variable-length constants packet.
+  // Validate variable-length constants packets.
   const pkt0Base = AEROGPU_CMD_STREAM_HEADER_SIZE;
   assert.equal(view.getUint32(pkt0Base + 16, true), 1);
   assert.equal(view.getFloat32(pkt0Base + AEROGPU_CMD_SET_SHADER_CONSTANTS_F_SIZE, true), 1);
 
+  const pkt1Base = pkt0Base + expected[0][1];
+  assert.equal(view.getUint32(pkt1Base + 16, true), 1);
+  assert.equal(view.getInt32(pkt1Base + AEROGPU_CMD_SET_SHADER_CONSTANTS_I_SIZE, true), -1);
+
+  const pkt2Base = pkt1Base + expected[1][1];
+  assert.equal(view.getUint32(pkt2Base + 16, true), 2);
+  const bPayloadBase = pkt2Base + AEROGPU_CMD_SET_SHADER_CONSTANTS_B_SIZE;
+  // Payload is expanded to vec4<u32> per bool register.
+  // bool0 = 0
+  assert.equal(view.getUint32(bPayloadBase + 0, true), 0);
+  assert.equal(view.getUint32(bPayloadBase + 4, true), 0);
+  assert.equal(view.getUint32(bPayloadBase + 8, true), 0);
+  assert.equal(view.getUint32(bPayloadBase + 12, true), 0);
+  // bool1 = 1
+  assert.equal(view.getUint32(bPayloadBase + 16, true), 1);
+  assert.equal(view.getUint32(bPayloadBase + 20, true), 1);
+  assert.equal(view.getUint32(bPayloadBase + 24, true), 1);
+  assert.equal(view.getUint32(bPayloadBase + 28, true), 1);
+
   // Validate byte-sized fields within nested state structs.
-  const blendBase = pkt0Base + expected[0][1] + expected[1][1] + expected[2][1] + expected[3][1];
+  const preBlendSize = expected
+    .slice(0, 6)
+    .reduce((acc, [, sizeBytes]) => acc + sizeBytes, 0);
+  const blendBase = pkt0Base + preBlendSize;
   // `aerogpu_cmd_set_blend_state`:
   // - hdr @ 0
   // - state.color_write_mask @ 8 + 16
@@ -230,11 +257,11 @@ test("AerogpuCmdWriter emits pipeline and binding packets", () => {
   assert.equal(view.getFloat32(blendBase + 40, true), 1.0);
   assert.equal(view.getUint32(blendBase + 56, true), 0xffff_ffff);
 
-  const depthBase = blendBase + expected[4][1];
+  const depthBase = blendBase + expected[6][1];
   assert.equal(view.getUint8(depthBase + 24), 0xaa);
   assert.equal(view.getUint8(depthBase + 25), 0xbb);
 
-  const rastBase = depthBase + expected[5][1];
+  const rastBase = depthBase + expected[7][1];
   assert.equal(view.getInt32(rastBase + 24, true), -1);
 });
 

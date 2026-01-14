@@ -83,6 +83,16 @@ fn protocol_parses_all_opcodes() {
     for v in constants_f32 {
         constants_bytes.extend_from_slice(&v.to_le_bytes());
     }
+    let constants_i32 = [-1i32, 2, 3, 4];
+    let mut constants_i_bytes = Vec::new();
+    for v in constants_i32 {
+        constants_i_bytes.extend_from_slice(&v.to_le_bytes());
+    }
+    let constants_b_u32 = [0u32, 1u32];
+    let mut constants_b_bytes = Vec::new();
+    for v in constants_b_u32 {
+        constants_b_bytes.extend_from_slice(&v.to_le_bytes());
+    }
 
     let constants_i32 = [1i32, 2, 3, 4, 5, 6, 7, 8];
     let mut constants_i_bytes = Vec::new();

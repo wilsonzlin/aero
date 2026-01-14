@@ -149,31 +149,31 @@ static constexpr uint32_t kVsPassthroughPosWhiteTex1Fog[] = {
 // (c240..c243; i.e. transpose for `dp4(v, cN)` row-vector multiplication).
 static constexpr uint32_t kVsWvpPosColorTex0[] = {
     0xFFFE0200u, // vs_2_0
- 
+
     0x04000009u, // dp4 (3 operands)
     0x40010000u, // oPos.x
     0x10E40000u, // v0.xyzw
     0x20E400F0u, // c240.xyzw
- 
+
     0x04000009u, // dp4
     0x40020000u, // oPos.y
     0x10E40000u, // v0.xyzw
     0x20E400F1u, // c241.xyzw
- 
+
     0x04000009u, // dp4
     0x40040000u, // oPos.z
     0x10E40000u, // v0.xyzw
     0x20E400F2u, // c242.xyzw
- 
+
     0x04000009u, // dp4
     0x40080000u, // oPos.w
     0x10E40000u, // v0.xyzw
     0x20E400F3u, // c243.xyzw
- 
+
     0x03000001u, // mov (2 operands)
     0x500F0000u, // oD0.xyzw
     0x10E40001u, // v1.xyzw
- 
+
     0x03000001u, // mov (2 operands)
     0x600F0000u, // oT0.xyzw
     0x10E40002u, // v2.xyzw

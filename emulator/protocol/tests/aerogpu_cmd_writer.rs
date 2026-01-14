@@ -642,6 +642,8 @@ fn cmd_writer_emits_pipeline_and_binding_packets() {
 
     let mut w = AerogpuCmdWriter::new();
     w.set_shader_constants_f(AerogpuShaderStage::Pixel, 4, &[1.0, 2.0, 3.0, 4.0]);
+    w.set_shader_constants_i(AerogpuShaderStage::Pixel, 1, &[-1, 2, 3, 4]);
+    w.set_shader_constants_b(AerogpuShaderStage::Pixel, 2, &[0, 1]);
     w.set_texture(AerogpuShaderStage::Pixel, 0, 99);
     w.set_sampler_state(AerogpuShaderStage::Pixel, 0, 7, 42);
     w.set_render_state(10, 20);
@@ -678,6 +680,15 @@ fn cmd_writer_emits_pipeline_and_binding_packets() {
         (
             AerogpuCmdOpcode::SetShaderConstantsF as u32,
             size_of::<AerogpuCmdSetShaderConstantsF>() + 16,
+        ),
+        (
+            AerogpuCmdOpcode::SetShaderConstantsI as u32,
+            size_of::<AerogpuCmdSetShaderConstantsI>() + 16,
+        ),
+        (
+            AerogpuCmdOpcode::SetShaderConstantsB as u32,
+            // Bool constants are encoded as vec4<u32> per register.
+            size_of::<AerogpuCmdSetShaderConstantsB>() + 32,
         ),
         (
             AerogpuCmdOpcode::SetTexture as u32,
@@ -736,7 +747,7 @@ fn cmd_writer_emits_pipeline_and_binding_packets() {
     }
     assert_eq!(cursor, buf.len());
 
-    // Validate the variable-length shader constants packet.
+    // Validate the variable-length shader constants packets.
     let pkt0_base = AerogpuCmdStreamHeader::SIZE_BYTES;
     assert_eq!(
         u32::from_le_bytes(
@@ -757,12 +768,50 @@ fn cmd_writer_emits_pipeline_and_binding_packets() {
         1.0
     );
 
+    let pkt1_base = pkt0_base + expected_sizes[0].1;
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[pkt1_base + offset_of!(AerogpuCmdSetShaderConstantsI, vec4_count)
+                ..pkt1_base + offset_of!(AerogpuCmdSetShaderConstantsI, vec4_count) + 4]
+                .try_into()
+                .unwrap()
+        ),
+        1
+    );
+    assert_eq!(
+        i32::from_le_bytes(
+            buf[pkt1_base + size_of::<AerogpuCmdSetShaderConstantsI>()
+                ..pkt1_base + size_of::<AerogpuCmdSetShaderConstantsI>() + 4]
+                .try_into()
+                .unwrap()
+        ),
+        -1
+    );
+
+    let pkt2_base = pkt1_base + expected_sizes[1].1;
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[pkt2_base + offset_of!(AerogpuCmdSetShaderConstantsB, bool_count)
+                ..pkt2_base + offset_of!(AerogpuCmdSetShaderConstantsB, bool_count) + 4]
+                .try_into()
+                .unwrap()
+        ),
+        2
+    );
+    // Payload must be expanded to vec4<u32> per bool register.
+    let payload_base = pkt2_base + size_of::<AerogpuCmdSetShaderConstantsB>();
+    let expected_payload: [u32; 8] = [0, 0, 0, 0, 1, 1, 1, 1];
+    for (i, expected) in expected_payload.into_iter().enumerate() {
+        let off = payload_base + i * 4;
+        assert_eq!(
+            u32::from_le_bytes(buf[off..off + 4].try_into().unwrap()),
+            expected
+        );
+    }
+
     // Validate nested state structs have their byte-sized fields populated.
-    let blend_base = pkt0_base
-        + expected_sizes[0].1
-        + expected_sizes[1].1
-        + expected_sizes[2].1
-        + expected_sizes[3].1;
+    let pre_blend_size: usize = expected_sizes[..6].iter().map(|(_, sz)| *sz).sum();
+    let blend_base = pkt0_base + pre_blend_size;
     let color_write_mask_off = offset_of!(AerogpuCmdSetBlendState, state)
         + offset_of!(AerogpuBlendState, color_write_mask);
     assert_eq!(buf[blend_base + color_write_mask_off], 0xF);
@@ -820,7 +869,7 @@ fn cmd_writer_emits_pipeline_and_binding_packets() {
         0x00FF_FF00
     );
 
-    let depth_base = blend_base + expected_sizes[4].1;
+    let depth_base = blend_base + expected_sizes[6].1;
     let stencil_read_mask_off = offset_of!(AerogpuCmdSetDepthStencilState, state)
         + offset_of!(AerogpuDepthStencilState, stencil_read_mask);
     let stencil_write_mask_off = offset_of!(AerogpuCmdSetDepthStencilState, state)
@@ -828,7 +877,7 @@ fn cmd_writer_emits_pipeline_and_binding_packets() {
     assert_eq!(buf[depth_base + stencil_read_mask_off], 0xAA);
     assert_eq!(buf[depth_base + stencil_write_mask_off], 0xBB);
 
-    let rast_base = depth_base + expected_sizes[5].1;
+    let rast_base = depth_base + expected_sizes[7].1;
     assert_eq!(
         i32::from_le_bytes(
             buf[rast_base

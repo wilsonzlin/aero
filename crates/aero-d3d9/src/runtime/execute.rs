@@ -143,15 +143,17 @@ pub enum ShaderStage {
     Fragment,
 }
 
-/// The D3D9 constant register file is modelled as a single uniform buffer containing
-/// `MAX_SHADER_CONSTANTS_F32_PER_STAGE` vec4 registers for the vertex stage followed by the same
-/// amount for the fragment stage. This matches the layout used by the shader translator
-/// (`crates/aero-d3d9/src/shader.rs`).
+/// The D3D9 float (`c#`) and integer (`i#`) constant register files share a single uniform buffer:
+/// - `c#`: 256 vec4<f32> for the vertex stage + 256 vec4<f32> for the fragment stage
+/// - `i#`: 256 vec4<i32> for the vertex stage + 256 vec4<i32> for the fragment stage
+///
+/// Bool constants are not currently exposed by this runtime API.
 const MAX_SHADER_CONSTANTS_F32_PER_STAGE: u16 = 256;
 const TOTAL_SHADER_CONSTANTS_F32_VEC4: u32 = (MAX_SHADER_CONSTANTS_F32_PER_STAGE as u32) * 2;
 const SHADER_CONSTANT_VEC4_SIZE_BYTES: u64 = 16;
-const SHADER_CONSTANTS_BUFFER_SIZE_BYTES: u64 =
-    (TOTAL_SHADER_CONSTANTS_F32_VEC4 as u64) * SHADER_CONSTANT_VEC4_SIZE_BYTES;
+const SHADER_CONSTANTS_BUFFER_SIZE_BYTES: u64 = (TOTAL_SHADER_CONSTANTS_F32_VEC4 as u64)
+    * SHADER_CONSTANT_VEC4_SIZE_BYTES
+    * 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IndexFormat {

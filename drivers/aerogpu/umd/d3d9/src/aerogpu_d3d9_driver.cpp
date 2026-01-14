@@ -19231,6 +19231,121 @@ struct aerogpu_d3d9_impl_pfnGetVertexDecl<Ret(*)(Args...)> {
 
 #endif // _WIN32 && AEROGPU_D3D9_USE_WDK_DDI
 
+HRESULT AEROGPU_D3D9_CALL device_set_shader_const_i(
+    D3DDDI_HDEVICE hDevice,
+    uint32_t stage,
+    uint32_t start_reg,
+    const int32_t* pData,
+    uint32_t vec4_count) {
+  const uint32_t st = stage;
+  const uint32_t start = start_reg;
+  const uint32_t count = vec4_count;
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceSetShaderConstI,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      static_cast<uint64_t>(st),
+                      d3d9_trace_pack_u32_u32(start, count),
+                      d3d9_trace_arg_ptr(pData));
+  if (!hDevice.pDrvPrivate || !pData || count == 0) {
+    return trace.ret(E_INVALIDARG);
+  }
+
+  // Be permissive: some header/runtime combinations may not use the exact {0,1}
+  // encoding at the DDI boundary. Match the shader binding path, which treats
+  // any non-VS stage as PS.
+  const uint32_t stage_norm =
+      (st == kD3d9ShaderStageVs) ? kD3d9ShaderStageVs : kD3d9ShaderStagePs;
+  if (start >= 256 || count > 256u - start) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  int32_t* dst = (stage_norm == kD3d9ShaderStageVs) ? dev->vs_consts_i
+                                                    : dev->ps_consts_i;
+  const uint32_t base = start * 4u;
+  const uint32_t elems = count * 4u;
+  for (uint32_t i = 0; i < elems; ++i) {
+    dst[base + i] = pData[i];
+  }
+  stateblock_record_shader_const_i_locked(dev, stage_norm, start, dst + base,
+                                          count);
+
+  const size_t payload_size =
+      static_cast<size_t>(count) * 4u * sizeof(int32_t);
+  auto* cmd = append_with_payload_locked<aerogpu_cmd_set_shader_constants_i>(
+      dev, AEROGPU_CMD_SET_SHADER_CONSTANTS_I, dst + base, payload_size);
+  if (!cmd) {
+    return trace.ret(E_OUTOFMEMORY);
+  }
+  cmd->stage = d3d9_stage_to_aerogpu_stage(stage_norm);
+  cmd->start_register = start;
+  cmd->vec4_count = count;
+  cmd->reserved0 = 0;
+  return trace.ret(S_OK);
+}
+
+HRESULT AEROGPU_D3D9_CALL device_set_shader_const_b(
+    D3DDDI_HDEVICE hDevice,
+    uint32_t stage,
+    uint32_t start_reg,
+    const BOOL* pData,
+    uint32_t bool_count) {
+  const uint32_t st = stage;
+  const uint32_t start = start_reg;
+  const uint32_t count = bool_count;
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceSetShaderConstB,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      static_cast<uint64_t>(st),
+                      d3d9_trace_pack_u32_u32(start, count),
+                      d3d9_trace_arg_ptr(pData));
+  if (!hDevice.pDrvPrivate || !pData || count == 0) {
+    return trace.ret(E_INVALIDARG);
+  }
+
+  const uint32_t stage_norm =
+      (st == kD3d9ShaderStageVs) ? kD3d9ShaderStageVs : kD3d9ShaderStagePs;
+  if (start >= 256 || count > 256u - start) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  uint8_t* dst = (stage_norm == kD3d9ShaderStageVs) ? dev->vs_consts_b
+                                                    : dev->ps_consts_b;
+  for (uint32_t i = 0; i < count; ++i) {
+    dst[start + i] = pData[i] ? 1u : 0u;
+  }
+  stateblock_record_shader_const_b_locked(dev, stage_norm, start, dst + start,
+                                          count);
+
+  // AeroGPU represents each bool register as a `vec4<u32>` (16 bytes) in the
+  // constants uniform buffer. Expand scalar bools into that representation.
+  std::vector<uint32_t> expanded;
+  expanded.resize(static_cast<size_t>(count) * 4u);
+  for (uint32_t i = 0; i < count; ++i) {
+    const uint32_t v = dst[start + i] ? 1u : 0u;
+    const size_t base = static_cast<size_t>(i) * 4u;
+    expanded[base + 0] = v;
+    expanded[base + 1] = v;
+    expanded[base + 2] = v;
+    expanded[base + 3] = v;
+  }
+
+  auto* cmd = append_with_payload_locked<aerogpu_cmd_set_shader_constants_b>(
+      dev,
+      AEROGPU_CMD_SET_SHADER_CONSTANTS_B,
+      expanded.data(),
+      expanded.size() * sizeof(uint32_t));
+  if (!cmd) {
+    return trace.ret(E_OUTOFMEMORY);
+  }
+  cmd->stage = d3d9_stage_to_aerogpu_stage(stage_norm);
+  cmd->start_register = start;
+  cmd->bool_count = count;
+  cmd->reserved0 = 0;
+  return trace.ret(S_OK);
+}
+
 // -----------------------------------------------------------------------------
 // Device cursor DDIs (portable build)
 // -----------------------------------------------------------------------------
@@ -19322,7 +19437,6 @@ HRESULT AEROGPU_D3D9_CALL device_show_cursor(D3DDDI_HDEVICE hDevice, BOOL bShow)
   return trace.ret(S_OK);
 }
 #endif
-
 HRESULT AEROGPU_D3D9_CALL device_blt(D3DDDI_HDEVICE hDevice, const D3D9DDIARG_BLT* pBlt) {
   const D3DDDI_HRESOURCE src_h = pBlt ? d3d9_arg_src_resource(*pBlt) : D3DDDI_HRESOURCE{};
   const D3DDDI_HRESOURCE dst_h = pBlt ? d3d9_arg_dst_resource(*pBlt) : D3DDDI_HRESOURCE{};
@@ -26503,6 +26617,8 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   pDeviceFuncs->pfnSetShader = device_set_shader;
   pDeviceFuncs->pfnDestroyShader = device_destroy_shader;
   pDeviceFuncs->pfnSetShaderConstF = device_set_shader_const_f;
+  pDeviceFuncs->pfnSetShaderConstI = device_set_shader_const_i;
+  pDeviceFuncs->pfnSetShaderConstB = device_set_shader_const_b;
 
   pDeviceFuncs->pfnSetStreamSource = device_set_stream_source;
   pDeviceFuncs->pfnSetIndices = device_set_indices;

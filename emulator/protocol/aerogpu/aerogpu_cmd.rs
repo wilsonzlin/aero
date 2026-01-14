@@ -907,6 +907,9 @@ pub struct AerogpuCmdSetShaderConstantsI {
     pub stage: u32,
     pub start_register: u32,
     pub vec4_count: u32,
+    /// `stage_ex` when `stage == AEROGPU_SHADER_STAGE_COMPUTE`.
+    ///
+    /// See [`AerogpuShaderStageEx`] for encoding rules.
     pub reserved0: u32,
 }
 
@@ -921,6 +924,9 @@ pub struct AerogpuCmdSetShaderConstantsB {
     pub stage: u32,
     pub start_register: u32,
     pub bool_count: u32,
+    /// `stage_ex` when `stage == AEROGPU_SHADER_STAGE_COMPUTE`.
+    ///
+    /// See [`AerogpuShaderStageEx`] for encoding rules.
     pub reserved0: u32,
 }
 
@@ -1791,6 +1797,105 @@ pub fn decode_cmd_set_shader_constants_f_payload_le(
         payload: &buf[AerogpuCmdHdr::SIZE_BYTES..packet_len],
     };
     packet.decode_set_shader_constants_f_payload_le()
+}
+
+/// Decode SET_SHADER_CONSTANTS_I and return the int payload.
+pub fn decode_cmd_set_shader_constants_i_payload_le(
+    buf: &[u8],
+) -> Result<(AerogpuCmdSetShaderConstantsI, Vec<i32>), AerogpuCmdDecodeError> {
+    if buf.len() < AerogpuCmdSetShaderConstantsI::SIZE_BYTES {
+        return Err(AerogpuCmdDecodeError::BufferTooSmall);
+    }
+
+    let hdr = decode_cmd_hdr_le(buf)?;
+    let packet_len = validate_packet_len(buf, hdr)?;
+
+    let vec4_count = u32::from_le_bytes(buf[16..20].try_into().unwrap());
+    let i32_count = vec4_count
+        .checked_mul(4)
+        .ok_or(AerogpuCmdDecodeError::BufferTooSmall)? as usize;
+    let payload_size_bytes = i32_count
+        .checked_mul(4)
+        .ok_or(AerogpuCmdDecodeError::BufferTooSmall)?;
+    let payload_start = AerogpuCmdSetShaderConstantsI::SIZE_BYTES;
+    let payload_end = payload_start
+        .checked_add(payload_size_bytes)
+        .ok_or(AerogpuCmdDecodeError::BufferTooSmall)?;
+    if payload_end > packet_len {
+        return Err(AerogpuCmdDecodeError::BadSizeBytes {
+            found: hdr.size_bytes,
+        });
+    }
+
+    let cmd = AerogpuCmdSetShaderConstantsI {
+        hdr,
+        stage: u32::from_le_bytes(buf[8..12].try_into().unwrap()),
+        start_register: u32::from_le_bytes(buf[12..16].try_into().unwrap()),
+        vec4_count,
+        reserved0: u32::from_le_bytes(buf[20..24].try_into().unwrap()),
+    };
+
+    let mut out = Vec::new();
+    out.try_reserve_exact(i32_count)
+        .map_err(|_| AerogpuCmdDecodeError::CountOverflow)?;
+    for i in 0..i32_count {
+        let off = payload_start + i * 4;
+        out.push(i32::from_le_bytes(buf[off..off + 4].try_into().unwrap()));
+    }
+
+    Ok((cmd, out))
+}
+
+/// Decode SET_SHADER_CONSTANTS_B and return the raw u32 payload.
+///
+/// Notes:
+/// - D3D9 bool constant registers are scalar.
+/// - AeroGPU represents each register as a `vec4<u32>` (replicated across all 4 lanes),
+///   so the returned payload length is `bool_count * 4`.
+pub fn decode_cmd_set_shader_constants_b_payload_le(
+    buf: &[u8],
+) -> Result<(AerogpuCmdSetShaderConstantsB, Vec<u32>), AerogpuCmdDecodeError> {
+    if buf.len() < AerogpuCmdSetShaderConstantsB::SIZE_BYTES {
+        return Err(AerogpuCmdDecodeError::BufferTooSmall);
+    }
+
+    let hdr = decode_cmd_hdr_le(buf)?;
+    let packet_len = validate_packet_len(buf, hdr)?;
+
+    let bool_count = u32::from_le_bytes(buf[16..20].try_into().unwrap());
+    let u32_count = (bool_count as usize)
+        .checked_mul(4)
+        .ok_or(AerogpuCmdDecodeError::BufferTooSmall)?;
+    let payload_size_bytes = u32_count
+        .checked_mul(4)
+        .ok_or(AerogpuCmdDecodeError::BufferTooSmall)?;
+    let payload_start = AerogpuCmdSetShaderConstantsB::SIZE_BYTES;
+    let payload_end = payload_start
+        .checked_add(payload_size_bytes)
+        .ok_or(AerogpuCmdDecodeError::BufferTooSmall)?;
+    if payload_end > packet_len {
+        return Err(AerogpuCmdDecodeError::BadSizeBytes {
+            found: hdr.size_bytes,
+        });
+    }
+
+    let cmd = AerogpuCmdSetShaderConstantsB {
+        hdr,
+        stage: u32::from_le_bytes(buf[8..12].try_into().unwrap()),
+        start_register: u32::from_le_bytes(buf[12..16].try_into().unwrap()),
+        bool_count,
+        reserved0: u32::from_le_bytes(buf[20..24].try_into().unwrap()),
+    };
+
+    let mut out = Vec::new();
+    out.try_reserve_exact(u32_count)
+        .map_err(|_| AerogpuCmdDecodeError::CountOverflow)?;
+    for i in 0..u32_count {
+        let off = payload_start + i * 4;
+        out.push(u32::from_le_bytes(buf[off..off + 4].try_into().unwrap()));
+    }
+
+    Ok((cmd, out))
 }
 
 /// Decode UPLOAD_RESOURCE and return the raw payload bytes (without padding).
