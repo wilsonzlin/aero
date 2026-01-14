@@ -7,6 +7,7 @@ use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
 use aero_d3d11::sm4::opcode::*;
 use aero_d3d11::FourCC;
 use aero_gpu::guest_memory::VecGuestMemory;
+use aero_protocol::aerogpu::aerogpu_cmd::AerogpuShaderStage;
 use aero_protocol::aerogpu::aerogpu_cmd::AerogpuShaderStageEx;
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 
