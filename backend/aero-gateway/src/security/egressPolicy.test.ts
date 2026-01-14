@@ -60,6 +60,20 @@ test('IP policy: blocks private/reserved IPs and allows public IPs', () => {
   assert.equal(isPublicIpAddress('::ffff:127.0.0.1'), false);
 });
 
+test("IP policy: rejects malformed IPv6 literals", () => {
+  // These are not valid IPv6 strings but can be accidentally accepted by
+  // overly-permissive parsers.
+  assert.equal(isPublicIpAddress("1:2:3:4:5:6:7:8:"), false);
+  assert.equal(isPublicIpAddress(":1:2:3:4:5:6:7:8"), false);
+  assert.equal(isPublicIpAddress("1:::2"), false);
+  assert.equal(isPublicIpAddress(":::1"), false);
+  assert.equal(isPublicIpAddress("1:2:3:4:5:6:7:8::"), false);
+
+  // IPv4-mapped IPv6 literals must use a canonical dotted-decimal tail.
+  assert.equal(isPublicIpAddress("::ffff:001.002.003.004"), false);
+  assert.equal(isPublicIpAddress("::ffff:010.0.0.1"), false);
+});
+
 test("IP policy: understands common non-canonical IPv4 forms", () => {
   // These forms are accepted by Node's resolver (`dns.lookup` / `getaddrinfo`).
   assert.equal(isPublicIpAddress("0177.0.0.1"), false); // octal => 127.0.0.1

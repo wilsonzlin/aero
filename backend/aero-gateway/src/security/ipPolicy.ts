@@ -264,44 +264,70 @@ function isPublicIpv4(bytes: Uint8Array): boolean {
 }
 
 function parseIpv6(ip: string): Uint8Array | null {
-  // Handle IPv4-mapped IPv6 like ::ffff:192.168.0.1
+  // Handle IPv4-mapped IPv6 like ::ffff:192.168.0.1.
+  //
+  // Note: the embedded IPv4 part must be in canonical dotted-decimal form
+  // (e.g. "::ffff:127.0.0.1"). We intentionally do NOT accept non-canonical
+  // inet_aton-style variants here (like "::ffff:010.0.0.1"), since Node's
+  // resolver does not treat those as numeric IPv6 literals.
   const hasV4Tail = ip.includes(".");
   let v4Tail: Uint8Array | null = null;
   let ipHead = ip;
   if (hasV4Tail) {
     const lastColon = ip.lastIndexOf(":");
     if (lastColon === -1) return null;
-    v4Tail = parseIpv4(ip.slice(lastColon + 1));
+    v4Tail = parseIpv4DottedDecimalStrict(ip.slice(lastColon + 1));
     if (!v4Tail) return null;
     ipHead = ip.slice(0, lastColon) + ":0:0"; // placeholder for 2 groups
   }
 
-  const pieces = ipHead.split("::");
-  if (pieces.length > 2) return null;
+  const doubleColon = ipHead.indexOf("::");
+  let leftPart = ipHead;
+  let rightPart = "";
+  let hasCompression = false;
+  if (doubleColon !== -1) {
+    // Only one "::" is allowed.
+    if (ipHead.indexOf("::", doubleColon + 2) !== -1) return null;
+    hasCompression = true;
+    leftPart = ipHead.slice(0, doubleColon);
+    rightPart = ipHead.slice(doubleColon + 2);
+  }
 
-  const left = pieces[0] ? pieces[0].split(":").filter(Boolean) : [];
-  const right = pieces[1] ? pieces[1].split(":").filter(Boolean) : [];
+  const leftGroups = leftPart === "" ? [] : leftPart.split(":");
+  const rightGroups = rightPart === "" ? [] : rightPart.split(":");
+
+  // Reject stray leading/trailing ":" and ":::". These create empty groups
+  // outside of the "::" compression marker.
+  for (const g of leftGroups) {
+    if (g === "") return null;
+  }
+  for (const g of rightGroups) {
+    if (g === "") return null;
+  }
 
   const leftNums: number[] = [];
   const rightNums: number[] = [];
 
-  for (const part of left) {
+  for (const part of leftGroups) {
     const n = parseHex16(part);
     if (n === null) return null;
     leftNums.push(n);
   }
-  for (const part of right) {
+  for (const part of rightGroups) {
     const n = parseHex16(part);
     if (n === null) return null;
     rightNums.push(n);
   }
 
   const totalGroups = leftNums.length + rightNums.length;
-  const needsCompression = pieces.length === 2;
-  if (!needsCompression && totalGroups !== 8) return null;
-  if (needsCompression && totalGroups > 8) return null;
+  if (!hasCompression && totalGroups !== 8) return null;
+  if (hasCompression) {
+    if (totalGroups > 8) return null;
+    // "::" must compress at least one 16-bit group.
+    if (totalGroups === 8) return null;
+  }
 
-  const zerosToInsert = needsCompression ? 8 - totalGroups : 0;
+  const zerosToInsert = hasCompression ? 8 - totalGroups : 0;
   const groups = [...leftNums, ...new Array(zerosToInsert).fill(0), ...rightNums];
   if (groups.length !== 8) return null;
 
@@ -321,6 +347,45 @@ function parseIpv6(ip: string): Uint8Array | null {
   }
 
   return bytes;
+}
+
+function parseIpv4DottedDecimalStrict(ip: string): Uint8Array | null {
+  // Strict dotted-decimal parser matching node:net's isIP() behavior:
+  // - exactly 4 decimal components
+  // - no leading zeros (except the single digit "0")
+  const bytes = new Uint8Array(4);
+  let part = 0;
+  let value = 0;
+  let digits = 0;
+  let leadingZero = false;
+
+  for (let i = 0; i <= ip.length; i += 1) {
+    if (i === ip.length || ip.charCodeAt(i) === 0x2e /* '.' */) {
+      if (digits === 0) return null;
+      if (leadingZero && digits > 1) return null;
+      if (part >= 4) return null;
+      bytes[part] = value;
+      part += 1;
+      value = 0;
+      digits = 0;
+      leadingZero = false;
+      continue;
+    }
+
+    const c = ip.charCodeAt(i);
+    if (c < 0x30 /* '0' */ || c > 0x39 /* '9' */) return null;
+    if (digits === 0) {
+      leadingZero = c === 0x30 /* '0' */;
+    } else if (leadingZero) {
+      // "00", "01", "001", etc are invalid.
+      return null;
+    }
+    value = value * 10 + (c - 0x30);
+    if (value > 255) return null;
+    digits += 1;
+  }
+
+  return part === 4 ? bytes : null;
 }
 
 function parseHex16(s: string): number | null {
