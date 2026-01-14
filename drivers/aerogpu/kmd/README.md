@@ -554,6 +554,8 @@ Additional debug/control escapes used by `drivers/aerogpu/tools/win7_dbgctl`:
   - disabled by default (returns `STATUS_NOT_SUPPORTED` unless explicitly enabled)
     - enable via `HKLM\SYSTEM\CurrentControlSet\Services\aerogpu\Parameters\EnableMapSharedHandleEscape` (REG_DWORD=1)
     - also requires a privileged caller (Administrator and/or `SeDebugPrivilege`)
+    - note: since this is loaded from the miniport service key in `DriverEntry`, you typically need to reboot (or otherwise fully reload the driver)
+      after changing it.
 - `AEROGPU_ESCAPE_OP_SELFTEST` (see `aerogpu_dbgctl_escape.h`)
 
 These are intended for a small user-mode tool to validate KMD↔emulator communication early.

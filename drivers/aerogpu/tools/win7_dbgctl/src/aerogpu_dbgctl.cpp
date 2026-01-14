@@ -828,14 +828,16 @@ static void PrintReadGpaNotSupportedHint(const wchar_t *label) {
   fwprintf(stderr,
            L"hint: READ_GPA is disabled (or not supported by this KMD build). To enable, set:\n"
            L"  HKLM\\SYSTEM\\CurrentControlSet\\Services\\aerogpu\\Parameters\\EnableReadGpaEscape = 1 (REG_DWORD)\n"
-           L"and run the tool as a privileged user (Administrator and/or SeDebugPrivilege).\n");
+           L"and run the tool as a privileged user (Administrator and/or SeDebugPrivilege).\n"
+           L"Note: the driver reads this key in DriverEntry; reboot/reload the driver after changing it.\n");
 }
 
 static void PrintMapSharedHandleNotSupportedHint() {
   fwprintf(stderr,
            L"hint: MAP_SHARED_HANDLE is disabled (or not supported by this KMD build). To enable, set:\n"
            L"  HKLM\\SYSTEM\\CurrentControlSet\\Services\\aerogpu\\Parameters\\EnableMapSharedHandleEscape = 1 (REG_DWORD)\n"
-           L"and run the tool as a privileged user (Administrator and/or SeDebugPrivilege).\n");
+           L"and run the tool as a privileged user (Administrator and/or SeDebugPrivilege).\n"
+           L"Note: the driver reads this key in DriverEntry; reboot/reload the driver after changing it.\n");
 }
 
 static DWORD NtStatusToWin32(const D3DKMT_FUNCS *f, NTSTATUS st) {

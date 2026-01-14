@@ -299,6 +299,8 @@ Minimum supported commands:
   - `HKLM\\SYSTEM\\CurrentControlSet\\Services\\aerogpu\\Parameters\\EnableMapSharedHandleEscape = 1` (REG_DWORD)
 - The caller must be privileged (**Administrator** and/or have **SeDebugPrivilege** enabled).
 - If not enabled/authorized, the KMD returns `STATUS_NOT_SUPPORTED` (`0xC00000BB`).
+- Note: since this is loaded from the miniport service key in `DriverEntry`, you typically need to reboot (or otherwise fully reload the driver)
+  after changing it.
 
 ## Usage
 
