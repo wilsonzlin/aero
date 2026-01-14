@@ -2410,16 +2410,28 @@ def _virtio_net_link_flap_fail_failure_message(tail: bytes) -> str:
     # virtio-net link flap marker:
     #   AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|FAIL|reason=...|...
     marker = _try_extract_last_marker_line(tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|FAIL|")
+    details = ""
     if marker is not None:
         fields = _parse_marker_kv_fields(marker)
-        reason = fields.get("reason", "").strip()
-        if reason:
-            return (
-                "FAIL: VIRTIO_NET_LINK_FLAP_FAILED: virtio-net-link-flap test reported FAIL while "
-                f"--with-net-link-flap was enabled (reason={reason})"
-            )
+        parts: list[str] = []
+        # Keep ordering stable so CI logs are deterministic (and easy to diff).
+        for k in (
+            "reason",
+            "down_sec",
+            "up_sec",
+            "http_attempts",
+            "cfg_vector",
+            "cfg_intr_down_delta",
+            "cfg_intr_up_delta",
+        ):
+            v = (fields.get(k) or "").strip()
+            if v:
+                parts.append(f"{k}={_sanitize_marker_value(v)}")
+        if parts:
+            details = " (" + " ".join(parts) + ")"
     return (
-        "FAIL: VIRTIO_NET_LINK_FLAP_FAILED: virtio-net-link-flap test reported FAIL while --with-net-link-flap was enabled"
+        "FAIL: VIRTIO_NET_LINK_FLAP_FAILED: virtio-net-link-flap test reported FAIL while "
+        f"--with-net-link-flap was enabled{details}"
     )
 
 
