@@ -17246,6 +17246,17 @@ HRESULT AEROGPU_D3D9_CALL device_generate_mip_sub_levels(
     return trace.ret(kD3DErrInvalidCall);
   }
 
+  const bool is_bc = is_block_compressed_format(res->format);
+
+  enum class BcKind {
+    kBc1,
+    kBc2,
+    kBc3,
+  };
+
+  BcKind bc_kind = BcKind::kBc1;
+  uint32_t bc_block_bytes = 0;
+
   enum class MipGenFormat {
     kA8R8G8B8,
     kX8R8G8B8,
@@ -17255,39 +17266,61 @@ HRESULT AEROGPU_D3D9_CALL device_generate_mip_sub_levels(
     kA1R5G5B5,
   };
 
-  MipGenFormat gen_format{};
-  switch (static_cast<uint32_t>(res->format)) {
-    case 21u: // D3DFMT_A8R8G8B8
-      gen_format = MipGenFormat::kA8R8G8B8;
-      break;
-    case 22u: // D3DFMT_X8R8G8B8
-      gen_format = MipGenFormat::kX8R8G8B8;
-      break;
-    case 23u: // D3DFMT_R5G6B5
-      gen_format = MipGenFormat::kR5G6B5;
-      break;
-    case 24u: // D3DFMT_X1R5G5B5
-      gen_format = MipGenFormat::kX1R5G5B5;
-      break;
-    case 25u: // D3DFMT_A1R5G5B5
-      gen_format = MipGenFormat::kA1R5G5B5;
-      break;
-    case 32u: // D3DFMT_A8B8G8R8
-      gen_format = MipGenFormat::kA8B8G8R8;
-      break;
-    default: {
-      static std::once_flag unsupported_fmt_once;
-      const uint32_t fmt_u32 = static_cast<uint32_t>(res->format);
-      std::call_once(unsupported_fmt_once, [fmt_u32] {
-        aerogpu::logf("aerogpu-d3d9: GenerateMipSubLevels unsupported format=%u\n", static_cast<unsigned>(fmt_u32));
-      });
+  MipGenFormat gen_format = MipGenFormat::kA8R8G8B8;
+  uint32_t bpp = 0;
+  if (is_bc) {
+    switch (static_cast<uint32_t>(res->format)) {
+      case static_cast<uint32_t>(kD3dFmtDxt1):
+        bc_kind = BcKind::kBc1;
+        bc_block_bytes = 8;
+        break;
+      case static_cast<uint32_t>(kD3dFmtDxt2):
+      case static_cast<uint32_t>(kD3dFmtDxt3):
+        bc_kind = BcKind::kBc2;
+        bc_block_bytes = 16;
+        break;
+      case static_cast<uint32_t>(kD3dFmtDxt4):
+      case static_cast<uint32_t>(kD3dFmtDxt5):
+        bc_kind = BcKind::kBc3;
+        bc_block_bytes = 16;
+        break;
+      default:
+        return trace.ret(kD3DErrInvalidCall);
+    }
+  } else {
+    switch (static_cast<uint32_t>(res->format)) {
+      case 21u: // D3DFMT_A8R8G8B8
+        gen_format = MipGenFormat::kA8R8G8B8;
+        break;
+      case 22u: // D3DFMT_X8R8G8B8
+        gen_format = MipGenFormat::kX8R8G8B8;
+        break;
+      case 23u: // D3DFMT_R5G6B5
+        gen_format = MipGenFormat::kR5G6B5;
+        break;
+      case 24u: // D3DFMT_X1R5G5B5
+        gen_format = MipGenFormat::kX1R5G5B5;
+        break;
+      case 25u: // D3DFMT_A1R5G5B5
+        gen_format = MipGenFormat::kA1R5G5B5;
+        break;
+      case 32u: // D3DFMT_A8B8G8R8
+        gen_format = MipGenFormat::kA8B8G8R8;
+        break;
+      default: {
+        static std::once_flag unsupported_fmt_once;
+        const uint32_t fmt_u32 = static_cast<uint32_t>(res->format);
+        std::call_once(unsupported_fmt_once, [fmt_u32] {
+          aerogpu::logf("aerogpu-d3d9: GenerateMipSubLevels unsupported format=%u\n", static_cast<unsigned>(fmt_u32));
+        });
+        return trace.ret(kD3DErrInvalidCall);
+      }
+    }
+
+    bpp = bytes_per_pixel(res->format);
+    if (bpp != 4u && bpp != 2u) {
       return trace.ret(kD3DErrInvalidCall);
     }
-  }
-
-  const uint32_t bpp = bytes_per_pixel(res->format);
-  if (bpp != 4u && bpp != 2u) {
-    return trace.ret(kD3DErrInvalidCall);
   }
 
   // Validate the mip-chain layout against the resource size to prevent OOB writes on malformed descriptors.
@@ -17489,6 +17522,299 @@ HRESULT AEROGPU_D3D9_CALL device_generate_mip_sub_levels(
     return static_cast<uint8_t>((sum + 2u) / 4u);
   };
 
+  auto read_u16_le = [](const uint8_t* p) -> uint16_t {
+    return static_cast<uint16_t>(p[0]) | (static_cast<uint16_t>(p[1]) << 8);
+  };
+  auto write_u16_le = [](uint8_t* p, uint16_t v) {
+    p[0] = static_cast<uint8_t>(v & 0xFFu);
+    p[1] = static_cast<uint8_t>((v >> 8) & 0xFFu);
+  };
+  auto read_u32_le = [](const uint8_t* p) -> uint32_t {
+    return static_cast<uint32_t>(p[0]) |
+           (static_cast<uint32_t>(p[1]) << 8) |
+           (static_cast<uint32_t>(p[2]) << 16) |
+           (static_cast<uint32_t>(p[3]) << 24);
+  };
+  auto write_u32_le = [](uint8_t* p, uint32_t v) {
+    p[0] = static_cast<uint8_t>(v & 0xFFu);
+    p[1] = static_cast<uint8_t>((v >> 8) & 0xFFu);
+    p[2] = static_cast<uint8_t>((v >> 16) & 0xFFu);
+    p[3] = static_cast<uint8_t>((v >> 24) & 0xFFu);
+  };
+  auto read_u64_le = [](const uint8_t* p) -> uint64_t {
+    uint64_t v = 0;
+    for (uint32_t i = 0; i < 8; ++i) {
+      v |= static_cast<uint64_t>(p[i]) << (8u * i);
+    }
+    return v;
+  };
+  auto write_u64_le = [](uint8_t* p, uint64_t v) {
+    for (uint32_t i = 0; i < 8; ++i) {
+      p[i] = static_cast<uint8_t>((v >> (8u * i)) & 0xFFu);
+    }
+  };
+
+  auto rgb565_to_rgba8 = [](uint16_t v) -> Rgba8 {
+    const uint8_t r5 = static_cast<uint8_t>((v >> 11) & 0x1Fu);
+    const uint8_t g6 = static_cast<uint8_t>((v >> 5) & 0x3Fu);
+    const uint8_t b5 = static_cast<uint8_t>((v >> 0) & 0x1Fu);
+    Rgba8 c{};
+    c.r = static_cast<uint8_t>((r5 << 3) | (r5 >> 2));
+    c.g = static_cast<uint8_t>((g6 << 2) | (g6 >> 4));
+    c.b = static_cast<uint8_t>((b5 << 3) | (b5 >> 2));
+    c.a = 0xFFu;
+    return c;
+  };
+  auto rgba8_to_rgb565 = [](const Rgba8& c) -> uint16_t {
+    const uint16_t r5 = static_cast<uint16_t>((static_cast<uint32_t>(c.r) * 31u + 127u) / 255u);
+    const uint16_t g6 = static_cast<uint16_t>((static_cast<uint32_t>(c.g) * 63u + 127u) / 255u);
+    const uint16_t b5 = static_cast<uint16_t>((static_cast<uint32_t>(c.b) * 31u + 127u) / 255u);
+    return static_cast<uint16_t>((r5 << 11) | (g6 << 5) | (b5 << 0));
+  };
+
+  auto bc_decode_color_palette = [&](uint16_t c0, uint16_t c1, bool allow_transparent, Rgba8 pal[4]) {
+    pal[0] = rgb565_to_rgba8(c0);
+    pal[1] = rgb565_to_rgba8(c1);
+    if (allow_transparent && c0 <= c1) {
+      pal[2].r = static_cast<uint8_t>((static_cast<uint32_t>(pal[0].r) + pal[1].r + 1u) / 2u);
+      pal[2].g = static_cast<uint8_t>((static_cast<uint32_t>(pal[0].g) + pal[1].g + 1u) / 2u);
+      pal[2].b = static_cast<uint8_t>((static_cast<uint32_t>(pal[0].b) + pal[1].b + 1u) / 2u);
+      pal[2].a = 0xFFu;
+      pal[3] = {};
+      pal[3].a = 0u;
+    } else {
+      pal[2].r = static_cast<uint8_t>((2u * pal[0].r + pal[1].r + 1u) / 3u);
+      pal[2].g = static_cast<uint8_t>((2u * pal[0].g + pal[1].g + 1u) / 3u);
+      pal[2].b = static_cast<uint8_t>((2u * pal[0].b + pal[1].b + 1u) / 3u);
+      pal[2].a = 0xFFu;
+
+      pal[3].r = static_cast<uint8_t>((pal[0].r + 2u * pal[1].r + 1u) / 3u);
+      pal[3].g = static_cast<uint8_t>((pal[0].g + 2u * pal[1].g + 1u) / 3u);
+      pal[3].b = static_cast<uint8_t>((pal[0].b + 2u * pal[1].b + 1u) / 3u);
+      pal[3].a = 0xFFu;
+    }
+  };
+
+  auto bc_decode_block_rgba = [&](const uint8_t* src_block, Rgba8 out[16]) {
+    uint8_t alpha[16];
+    for (uint32_t i = 0; i < 16; ++i) {
+      alpha[i] = 0xFFu;
+    }
+
+    const uint8_t* color_block = src_block;
+    if (bc_kind == BcKind::kBc2) {
+      const uint64_t a_bits = read_u64_le(src_block);
+      for (uint32_t i = 0; i < 16; ++i) {
+        const uint8_t nibble = static_cast<uint8_t>((a_bits >> (4u * i)) & 0xFu);
+        alpha[i] = static_cast<uint8_t>(nibble * 17u);
+      }
+      color_block += 8;
+    } else if (bc_kind == BcKind::kBc3) {
+      const uint8_t a0 = src_block[0];
+      const uint8_t a1 = src_block[1];
+      uint64_t idx_bits = 0;
+      for (uint32_t i = 0; i < 6; ++i) {
+        idx_bits |= static_cast<uint64_t>(src_block[2 + i]) << (8u * i);
+      }
+      uint8_t a_tab[8]{};
+      a_tab[0] = a0;
+      a_tab[1] = a1;
+      if (a0 > a1) {
+        for (uint32_t i = 2; i < 8; ++i) {
+          const uint32_t wa = 8u - i;
+          const uint32_t wb = i - 1u;
+          a_tab[i] = static_cast<uint8_t>((wa * a0 + wb * a1 + 3u) / 7u);
+        }
+      } else {
+        for (uint32_t i = 2; i < 6; ++i) {
+          const uint32_t wa = 6u - i;
+          const uint32_t wb = i - 1u;
+          a_tab[i] = static_cast<uint8_t>((wa * a0 + wb * a1 + 2u) / 5u);
+        }
+        a_tab[6] = 0u;
+        a_tab[7] = 255u;
+      }
+      for (uint32_t i = 0; i < 16; ++i) {
+        const uint8_t idx = static_cast<uint8_t>((idx_bits >> (3u * i)) & 0x7u);
+        alpha[i] = a_tab[idx];
+      }
+      color_block += 8;
+    }
+
+    const uint16_t c0 = read_u16_le(color_block + 0);
+    const uint16_t c1 = read_u16_le(color_block + 2);
+    const uint32_t idx_bits = read_u32_le(color_block + 4);
+
+    Rgba8 pal[4]{};
+    const bool allow_transparent = (bc_kind == BcKind::kBc1);
+    bc_decode_color_palette(c0, c1, allow_transparent, pal);
+
+    for (uint32_t i = 0; i < 16; ++i) {
+      const uint32_t idx = (idx_bits >> (2u * i)) & 0x3u;
+      out[i] = pal[idx];
+      if (bc_kind != BcKind::kBc1) {
+        out[i].a = alpha[i];
+      }
+    }
+  };
+
+  auto bc_encode_block_rgba = [&](const Rgba8 in[16], uint8_t* dst_block) {
+    uint8_t* color_block = dst_block;
+    if (bc_kind == BcKind::kBc2) {
+      uint64_t a_bits = 0;
+      for (uint32_t i = 0; i < 16; ++i) {
+        const uint32_t a4 = std::min<uint32_t>(15u, (static_cast<uint32_t>(in[i].a) + 8u) / 17u);
+        a_bits |= (static_cast<uint64_t>(a4) & 0xFu) << (4u * i);
+      }
+      write_u64_le(dst_block, a_bits);
+      color_block += 8;
+    } else if (bc_kind == BcKind::kBc3) {
+      uint8_t a_min = 255u;
+      uint8_t a_max = 0u;
+      for (uint32_t i = 0; i < 16; ++i) {
+        a_min = std::min(a_min, in[i].a);
+        a_max = std::max(a_max, in[i].a);
+      }
+      const uint8_t a0 = a_max;
+      const uint8_t a1 = a_min;
+      dst_block[0] = a0;
+      dst_block[1] = a1;
+
+      uint8_t a_tab[8]{};
+      a_tab[0] = a0;
+      a_tab[1] = a1;
+      if (a0 > a1) {
+        for (uint32_t i = 2; i < 8; ++i) {
+          const uint32_t wa = 8u - i;
+          const uint32_t wb = i - 1u;
+          a_tab[i] = static_cast<uint8_t>((wa * a0 + wb * a1 + 3u) / 7u);
+        }
+      } else {
+        for (uint32_t i = 2; i < 6; ++i) {
+          const uint32_t wa = 6u - i;
+          const uint32_t wb = i - 1u;
+          a_tab[i] = static_cast<uint8_t>((wa * a0 + wb * a1 + 2u) / 5u);
+        }
+        a_tab[6] = 0u;
+        a_tab[7] = 255u;
+      }
+
+      uint64_t idx_bits = 0;
+      for (uint32_t i = 0; i < 16; ++i) {
+        uint32_t best_idx = 0;
+        uint32_t best_err = 0xFFFFFFFFu;
+        for (uint32_t j = 0; j < 8; ++j) {
+          const int32_t d = static_cast<int32_t>(in[i].a) - static_cast<int32_t>(a_tab[j]);
+          const uint32_t err = static_cast<uint32_t>(d * d);
+          if (err < best_err) {
+            best_err = err;
+            best_idx = j;
+          }
+        }
+        idx_bits |= static_cast<uint64_t>(best_idx & 0x7u) << (3u * i);
+      }
+      for (uint32_t i = 0; i < 6; ++i) {
+        dst_block[2 + i] = static_cast<uint8_t>((idx_bits >> (8u * i)) & 0xFFu);
+      }
+      color_block += 8;
+    }
+
+    bool any_transparent = false;
+    if (bc_kind == BcKind::kBc1) {
+      for (uint32_t i = 0; i < 16; ++i) {
+        if (in[i].a < 128u) {
+          any_transparent = true;
+          break;
+        }
+      }
+    }
+
+    bool uniform_rgb = true;
+    for (uint32_t i = 1; i < 16; ++i) {
+      if (in[i].r != in[0].r || in[i].g != in[0].g || in[i].b != in[0].b) {
+        uniform_rgb = false;
+        break;
+      }
+    }
+
+    uint16_t c0 = 0;
+    uint16_t c1 = 0;
+    uint32_t c_idx_bits = 0;
+
+    if (uniform_rgb) {
+      c0 = rgba8_to_rgb565(in[0]);
+      c1 = c0;
+      if (any_transparent) {
+        for (uint32_t i = 0; i < 16; ++i) {
+          const uint32_t idx = in[i].a < 128u ? 3u : 0u;
+          c_idx_bits |= idx << (2u * i);
+        }
+      } else {
+        c_idx_bits = 0;
+      }
+    } else {
+      uint16_t min_c = 0xFFFFu;
+      uint16_t max_c = 0u;
+      for (uint32_t i = 0; i < 16; ++i) {
+        if (any_transparent && in[i].a < 128u) {
+          continue;
+        }
+        const uint16_t c = rgba8_to_rgb565(in[i]);
+        min_c = std::min(min_c, c);
+        max_c = std::max(max_c, c);
+      }
+      if (min_c == 0xFFFFu) {
+        min_c = 0u;
+        max_c = 0u;
+      }
+
+      if (any_transparent) {
+        c0 = min_c;
+        c1 = max_c;
+        if (c0 > c1) {
+          std::swap(c0, c1);
+        }
+      } else {
+        c0 = max_c;
+        c1 = min_c;
+        if (bc_kind == BcKind::kBc1 && c0 < c1) {
+          std::swap(c0, c1);
+        }
+      }
+
+      Rgba8 pal[4]{};
+      bc_decode_color_palette(c0, c1, any_transparent, pal);
+
+      for (uint32_t i = 0; i < 16; ++i) {
+        if (any_transparent && in[i].a < 128u) {
+          c_idx_bits |= 3u << (2u * i);
+          continue;
+        }
+        const uint32_t max_idx = any_transparent ? 3u : 4u;
+        uint32_t best_idx = 0;
+        uint32_t best_err = 0xFFFFFFFFu;
+        for (uint32_t j = 0; j < max_idx; ++j) {
+          const int32_t dr = static_cast<int32_t>(in[i].r) - static_cast<int32_t>(pal[j].r);
+          const int32_t dg = static_cast<int32_t>(in[i].g) - static_cast<int32_t>(pal[j].g);
+          const int32_t db = static_cast<int32_t>(in[i].b) - static_cast<int32_t>(pal[j].b);
+          const uint32_t err = static_cast<uint32_t>(dr * dr + dg * dg + db * db);
+          if (err < best_err) {
+            best_err = err;
+            best_idx = j;
+          }
+        }
+        c_idx_bits |= (best_idx & 0x3u) << (2u * i);
+      }
+    }
+
+    write_u16_le(color_block + 0, c0);
+    write_u16_le(color_block + 2, c1);
+    write_u32_le(color_block + 4, c_idx_bits);
+  };
+
+  std::vector<Rgba8> bc_src_pixels;
+  std::vector<Rgba8> bc_dst_pixels;
+
   for (uint32_t layer = 0; layer < layers; ++layer) {
     const uint64_t layer_base = static_cast<uint64_t>(layer) * layer_size_bytes;
     if (layer_base > res->size_bytes) {
@@ -17519,41 +17845,138 @@ HRESULT AEROGPU_D3D9_CALL device_generate_mip_sub_levels(
       const uint32_t dst_w = dst.width;
       const uint32_t dst_h = dst.height;
 
-      if (src_w == 0 || src_h == 0 || dst_w == 0 || dst_h == 0) {
-        return unlock_and_ret(kD3DErrInvalidCall);
-      }
+       if (src_w == 0 || src_h == 0 || dst_w == 0 || dst_h == 0) {
+         return unlock_and_ret(kD3DErrInvalidCall);
+       }
 
-      for (uint32_t y = 0; y < dst_h; ++y) {
-        const uint32_t sy0 = std::min<uint32_t>(2u * y, src_h - 1u);
-        const uint32_t sy1 = std::min<uint32_t>(2u * y + 1u, src_h - 1u);
+      if (is_bc) {
+        if (bc_block_bytes == 0) {
+          return unlock_and_ret(kD3DErrInvalidCall);
+        }
 
-        const uint8_t* row0 = src_base + static_cast<size_t>(sy0) * src.row_pitch_bytes;
-        const uint8_t* row1 = src_base + static_cast<size_t>(sy1) * src.row_pitch_bytes;
-        uint8_t* out_row = dst_base + static_cast<size_t>(y) * dst.row_pitch_bytes;
+        const uint32_t src_blocks_w = std::max(1u, (src_w + 3u) / 4u);
+        const uint32_t src_blocks_h = std::max(1u, (src_h + 3u) / 4u);
+        const uint32_t dst_blocks_w = std::max(1u, (dst_w + 3u) / 4u);
+        const uint32_t dst_blocks_h = std::max(1u, (dst_h + 3u) / 4u);
 
-        for (uint32_t x = 0; x < dst_w; ++x) {
-          const uint32_t sx0 = std::min<uint32_t>(2u * x, src_w - 1u);
-          const uint32_t sx1 = std::min<uint32_t>(2u * x + 1u, src_w - 1u);
+        const uint64_t src_expected_row = static_cast<uint64_t>(src_blocks_w) * bc_block_bytes;
+        const uint64_t dst_expected_row = static_cast<uint64_t>(dst_blocks_w) * bc_block_bytes;
+        if (src_expected_row != src.row_pitch_bytes || dst_expected_row != dst.row_pitch_bytes) {
+          return unlock_and_ret(kD3DErrInvalidCall);
+        }
+        if (static_cast<uint64_t>(src.row_pitch_bytes) * src_blocks_h != src.slice_pitch_bytes ||
+            static_cast<uint64_t>(dst.row_pitch_bytes) * dst_blocks_h != dst.slice_pitch_bytes) {
+          return unlock_and_ret(kD3DErrInvalidCall);
+        }
 
-          const uint8_t* p00 = row0 + static_cast<size_t>(sx0) * bpp;
-          const uint8_t* p10 = row0 + static_cast<size_t>(sx1) * bpp;
-          const uint8_t* p01 = row1 + static_cast<size_t>(sx0) * bpp;
-          const uint8_t* p11 = row1 + static_cast<size_t>(sx1) * bpp;
+        const uint64_t src_pixel_count_u64 = static_cast<uint64_t>(src_w) * static_cast<uint64_t>(src_h);
+        const uint64_t dst_pixel_count_u64 = static_cast<uint64_t>(dst_w) * static_cast<uint64_t>(dst_h);
+        if (src_pixel_count_u64 > std::numeric_limits<size_t>::max() ||
+            dst_pixel_count_u64 > std::numeric_limits<size_t>::max()) {
+          return unlock_and_ret(E_OUTOFMEMORY);
+        }
 
-          const Rgba8 c00 = decode(p00);
-          const Rgba8 c10 = decode(p10);
-          const Rgba8 c01 = decode(p01);
-          const Rgba8 c11 = decode(p11);
+        try {
+          bc_src_pixels.resize(static_cast<size_t>(src_pixel_count_u64));
+          bc_dst_pixels.resize(static_cast<size_t>(dst_pixel_count_u64));
+        } catch (...) {
+          return unlock_and_ret(E_OUTOFMEMORY);
+        }
 
-          Rgba8 out{};
-          out.r = avg4(c00.r, c10.r, c01.r, c11.r);
-          out.g = avg4(c00.g, c10.g, c01.g, c11.g);
-          out.b = avg4(c00.b, c10.b, c01.b, c11.b);
-          const bool opaque_alpha = (gen_format == MipGenFormat::kX8R8G8B8) ||
-                                    (gen_format == MipGenFormat::kX1R5G5B5);
-          out.a = opaque_alpha ? 0xFFu : avg4(c00.a, c10.a, c01.a, c11.a);
+        // Decompress src mip into RGBA8 pixels.
+        for (uint32_t by = 0; by < src_blocks_h; ++by) {
+          const uint8_t* row = src_base + static_cast<size_t>(by) * src.row_pitch_bytes;
+          for (uint32_t bx = 0; bx < src_blocks_w; ++bx) {
+            const uint8_t* block = row + static_cast<size_t>(bx) * bc_block_bytes;
+            Rgba8 block_px[16]{};
+            bc_decode_block_rgba(block, block_px);
 
-          encode(out_row + static_cast<size_t>(x) * bpp, out);
+            for (uint32_t py = 0; py < 4; ++py) {
+              const uint32_t y = by * 4u + py;
+              if (y >= src_h) {
+                continue;
+              }
+              for (uint32_t px = 0; px < 4; ++px) {
+                const uint32_t x = bx * 4u + px;
+                if (x >= src_w) {
+                  continue;
+                }
+                bc_src_pixels[static_cast<size_t>(y) * src_w + x] = block_px[py * 4u + px];
+              }
+            }
+          }
+        }
+
+        // Downsample into dst pixels using 2x2 box filter (clamped).
+        for (uint32_t y = 0; y < dst_h; ++y) {
+          const uint32_t sy0 = std::min<uint32_t>(2u * y, src_h - 1u);
+          const uint32_t sy1 = std::min<uint32_t>(2u * y + 1u, src_h - 1u);
+          for (uint32_t x = 0; x < dst_w; ++x) {
+            const uint32_t sx0 = std::min<uint32_t>(2u * x, src_w - 1u);
+            const uint32_t sx1 = std::min<uint32_t>(2u * x + 1u, src_w - 1u);
+
+            const Rgba8 c00 = bc_src_pixels[static_cast<size_t>(sy0) * src_w + sx0];
+            const Rgba8 c10 = bc_src_pixels[static_cast<size_t>(sy0) * src_w + sx1];
+            const Rgba8 c01 = bc_src_pixels[static_cast<size_t>(sy1) * src_w + sx0];
+            const Rgba8 c11 = bc_src_pixels[static_cast<size_t>(sy1) * src_w + sx1];
+
+            Rgba8 out{};
+            out.r = avg4(c00.r, c10.r, c01.r, c11.r);
+            out.g = avg4(c00.g, c10.g, c01.g, c11.g);
+            out.b = avg4(c00.b, c10.b, c01.b, c11.b);
+            out.a = avg4(c00.a, c10.a, c01.a, c11.a);
+            bc_dst_pixels[static_cast<size_t>(y) * dst_w + x] = out;
+          }
+        }
+
+        // Compress dst pixels into BC blocks.
+        for (uint32_t by = 0; by < dst_blocks_h; ++by) {
+          uint8_t* row = dst_base + static_cast<size_t>(by) * dst.row_pitch_bytes;
+          for (uint32_t bx = 0; bx < dst_blocks_w; ++bx) {
+            Rgba8 block_px[16]{};
+            for (uint32_t py = 0; py < 4; ++py) {
+              const uint32_t y = std::min<uint32_t>(by * 4u + py, dst_h - 1u);
+              for (uint32_t px = 0; px < 4; ++px) {
+                const uint32_t x = std::min<uint32_t>(bx * 4u + px, dst_w - 1u);
+                block_px[py * 4u + px] = bc_dst_pixels[static_cast<size_t>(y) * dst_w + x];
+              }
+            }
+            bc_encode_block_rgba(block_px, row + static_cast<size_t>(bx) * bc_block_bytes);
+          }
+        }
+      } else {
+        for (uint32_t y = 0; y < dst_h; ++y) {
+          const uint32_t sy0 = std::min<uint32_t>(2u * y, src_h - 1u);
+          const uint32_t sy1 = std::min<uint32_t>(2u * y + 1u, src_h - 1u);
+
+          const uint8_t* row0 = src_base + static_cast<size_t>(sy0) * src.row_pitch_bytes;
+          const uint8_t* row1 = src_base + static_cast<size_t>(sy1) * src.row_pitch_bytes;
+          uint8_t* out_row = dst_base + static_cast<size_t>(y) * dst.row_pitch_bytes;
+
+          for (uint32_t x = 0; x < dst_w; ++x) {
+            const uint32_t sx0 = std::min<uint32_t>(2u * x, src_w - 1u);
+            const uint32_t sx1 = std::min<uint32_t>(2u * x + 1u, src_w - 1u);
+
+            const uint8_t* p00 = row0 + static_cast<size_t>(sx0) * bpp;
+            const uint8_t* p10 = row0 + static_cast<size_t>(sx1) * bpp;
+            const uint8_t* p01 = row1 + static_cast<size_t>(sx0) * bpp;
+            const uint8_t* p11 = row1 + static_cast<size_t>(sx1) * bpp;
+
+            const Rgba8 c00 = decode(p00);
+            const Rgba8 c10 = decode(p10);
+            const Rgba8 c01 = decode(p01);
+            const Rgba8 c11 = decode(p11);
+
+            Rgba8 out{};
+            out.r = avg4(c00.r, c10.r, c01.r, c11.r);
+            out.g = avg4(c00.g, c10.g, c01.g, c11.g);
+            out.b = avg4(c00.b, c10.b, c01.b, c11.b);
+            const bool opaque_alpha = (gen_format == MipGenFormat::kX8R8G8B8) ||
+                                      (gen_format == MipGenFormat::kX1R5G5B5);
+            out.a = opaque_alpha ? 0xFFu : avg4(c00.a, c10.a, c01.a, c11.a);
+
+            encode(out_row + static_cast<size_t>(x) * bpp, out);
+          }
         }
       }
     }

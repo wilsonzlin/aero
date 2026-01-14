@@ -1,5 +1,6 @@
 #include <cstddef>
 #include <cstdint>
+#include <array>
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -6472,6 +6473,216 @@ bool TestGenerateMipSubLevelsBoxFilter2dA1R5G5B5() {
     return false;
   }
   return Check(upload_cmd->size_bytes == static_cast<uint64_t>(res->size_bytes) - mip1.offset_bytes, "UPLOAD_RESOURCE size covers mips");
+}
+
+bool TestGenerateMipSubLevelsBoxFilter2dBcUniform() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    bool has_adapter = false;
+    bool has_device = false;
+
+    ~Cleanup() {
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  if (!Check(open.hAdapter.pDrvPrivate != nullptr, "OpenAdapter2 returned adapter handle")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnCreateResource != nullptr, "CreateResource must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnGenerateMipSubLevels != nullptr, "GenerateMipSubLevels must be available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  struct Case {
+    uint32_t fmt;
+    uint32_t block_bytes;
+    const char* name;
+    std::array<uint8_t, 16> mip0_block;
+  };
+
+  const Case cases[] = {
+      // D3DFMT_DXT1: 8-byte block. Use a single block encoding an opaque red surface.
+      {static_cast<uint32_t>(kD3dFmtDxt1),
+       8u,
+       "DXT1",
+       {0x00, 0xF8, 0x00, 0xF8, 0x00, 0x00, 0x00, 0x00}},
+      // D3DFMT_DXT3: 16-byte block (explicit alpha). Alpha=255 for all texels.
+      {static_cast<uint32_t>(kD3dFmtDxt3),
+       16u,
+       "DXT3",
+       {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0xF8, 0x00, 0xF8, 0x00, 0x00, 0x00, 0x00}},
+      // D3DFMT_DXT5: 16-byte block (interpolated alpha). Alpha=255 for all texels.
+      {static_cast<uint32_t>(kD3dFmtDxt5),
+       16u,
+       "DXT5",
+       {0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xF8, 0x00, 0xF8, 0x00, 0x00, 0x00, 0x00}},
+  };
+
+  for (const Case& c : cases) {
+    // Create a 4x4 texture with 3 mip levels (4x4, 2x2, 1x1).
+    D3D9DDIARG_CREATERESOURCE create_res{};
+    create_res.type = 0;
+    create_res.format = c.fmt;
+    create_res.width = 4;
+    create_res.height = 4;
+    create_res.depth = 1;
+    create_res.mip_levels = 3;
+    create_res.usage = 0;
+    create_res.pool = 0;
+    create_res.size = 0;
+    create_res.hResource.pDrvPrivate = nullptr;
+    create_res.pSharedHandle = nullptr;
+    create_res.pPrivateDriverData = nullptr;
+    create_res.PrivateDriverDataSize = 0;
+    create_res.wddm_hAllocation = 0;
+
+    hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_res);
+    char create_msg[128] = {};
+    std::snprintf(create_msg, sizeof(create_msg), "CreateResource(4x4 %s texture mips)", c.name);
+    if (!Check(hr == S_OK, create_msg)) {
+      return false;
+    }
+
+    auto* res = reinterpret_cast<Resource*>(create_res.hResource.pDrvPrivate);
+    if (!Check(res != nullptr, "resource pointer")) {
+      return false;
+    }
+    if (!Check(res->backing_alloc_id == 0, "resource is host-allocated (alloc_id==0)")) {
+      return false;
+    }
+    if (!Check(res->storage.size() >= res->size_bytes, "resource storage sized")) {
+      return false;
+    }
+
+    // Fill mip0 with a known BC block. Mip generation should produce identical
+    // blocks for lower mips because the surface is uniform.
+    if (!Check(res->slice_pitch >= c.block_bytes, "mip0 slice_pitch large enough")) {
+      return false;
+    }
+    std::memcpy(res->storage.data(), c.mip0_block.data(), c.block_bytes);
+
+    dev->cmd.reset();
+    hr = cleanup.device_funcs.pfnGenerateMipSubLevels(create_dev.hDevice, create_res.hResource);
+    if (!Check(hr == S_OK, "GenerateMipSubLevels")) {
+      return false;
+    }
+
+    Texture2dMipLevelLayout mip1{};
+    Texture2dMipLevelLayout mip2{};
+    if (!Check(calc_texture2d_mip_level_layout(res->format, res->width, res->height, res->mip_levels, res->depth, 1, &mip1),
+               "mip1 layout")) {
+      return false;
+    }
+    if (!Check(calc_texture2d_mip_level_layout(res->format, res->width, res->height, res->mip_levels, res->depth, 2, &mip2),
+               "mip2 layout")) {
+      return false;
+    }
+    if (!Check(mip1.width == 2 && mip1.height == 2, "mip1 dims 2x2")) {
+      return false;
+    }
+    if (!Check(mip2.width == 1 && mip2.height == 1, "mip2 dims 1x1")) {
+      return false;
+    }
+    if (!Check(mip1.slice_pitch_bytes == c.block_bytes, "mip1 slice_pitch==1 block")) {
+      return false;
+    }
+    if (!Check(mip2.slice_pitch_bytes == c.block_bytes, "mip2 slice_pitch==1 block")) {
+      return false;
+    }
+
+    if (!Check(std::memcmp(res->storage.data() + static_cast<size_t>(mip1.offset_bytes), c.mip0_block.data(), c.block_bytes) == 0,
+               "mip1 bytes match")) {
+      return false;
+    }
+    if (!Check(std::memcmp(res->storage.data() + static_cast<size_t>(mip2.offset_bytes), c.mip0_block.data(), c.block_bytes) == 0,
+               "mip2 bytes match")) {
+      return false;
+    }
+
+    dev->cmd.finalize();
+    const uint8_t* buf = dev->cmd.data();
+    const size_t len = dev->cmd.bytes_used();
+
+    if (!Check(ValidateStream(buf, len), "stream validates")) {
+      return false;
+    }
+
+    // Host-allocated textures should embed updates via UPLOAD_RESOURCE.
+    if (!Check(CountOpcode(buf, len, AEROGPU_CMD_UPLOAD_RESOURCE) >= 1, "GenerateMipSubLevels emits UPLOAD_RESOURCE")) {
+      return false;
+    }
+    if (!Check(CountOpcode(buf, len, AEROGPU_CMD_RESOURCE_DIRTY_RANGE) == 0,
+               "GenerateMipSubLevels does not emit DIRTY_RANGE for host alloc")) {
+      return false;
+    }
+
+    const CmdLoc upload = FindLastOpcode(buf, len, AEROGPU_CMD_UPLOAD_RESOURCE);
+    if (!Check(upload.hdr != nullptr, "UPLOAD_RESOURCE packet present")) {
+      return false;
+    }
+    const auto* upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(upload.hdr);
+    if (!Check(upload_cmd->resource_handle == res->handle, "UPLOAD_RESOURCE resource_handle matches")) {
+      return false;
+    }
+    if (!Check(upload_cmd->offset_bytes == mip1.offset_bytes, "UPLOAD_RESOURCE offset starts at mip1")) {
+      return false;
+    }
+    if (!Check(upload_cmd->size_bytes == static_cast<uint64_t>(res->size_bytes) - mip1.offset_bytes,
+               "UPLOAD_RESOURCE size covers mips")) {
+      return false;
+    }
+
+    hr = cleanup.device_funcs.pfnDestroyResource(create_dev.hDevice, create_res.hResource);
+    char destroy_msg[128] = {};
+    std::snprintf(destroy_msg, sizeof(destroy_msg), "DestroyResource(%s)", c.name);
+    if (!Check(hr == S_OK, destroy_msg)) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 bool TestGenerateMipSubLevelsAllocBackedEmitsDirtyRange() {
@@ -27075,6 +27286,7 @@ int main() {
   failures += !aerogpu::TestGenerateMipSubLevelsBoxFilter2dX1R5G5B5();
   failures += !aerogpu::TestGenerateMipSubLevelsBoxFilter2dR5G6B5();
   failures += !aerogpu::TestGenerateMipSubLevelsBoxFilter2dA1R5G5B5();
+  failures += !aerogpu::TestGenerateMipSubLevelsBoxFilter2dBcUniform();
   failures += !aerogpu::TestGenerateMipSubLevelsAllocBackedEmitsDirtyRange();
   failures += !aerogpu::TestCreateResourceIgnoresStaleAllocPrivDataForNonShared();
   failures += !aerogpu::TestCreateResourceAllowsNullPrivateDataWhenNotAllocBacked();
