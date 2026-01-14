@@ -1381,7 +1381,7 @@ impl D3D9Runtime {
         if vec4_data.is_empty() {
             return Ok(());
         }
-        if vec4_data.len() % 4 != 0 {
+        if !vec4_data.len().is_multiple_of(4) {
             return Err(RuntimeError::Validation(format!(
                 "set_constants_f32: vec4_data length {} is not a multiple of 4",
                 vec4_data.len()

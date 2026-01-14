@@ -94,10 +94,10 @@ fn sm3_vertex_shader_duplicate_semantic_locations_are_an_error() {
     let tokens = vec![
         version_token(ShaderStage::Vertex, 2, 0),
         // dcl_position v0
-        31u32 | (2u32 << 24) | (0u32 << 16),
+        31u32 | (2u32 << 24),
         dst_token(1, 0, 0xF),
         // dcl_positiont v1
-        31u32 | (2u32 << 24) | (9u32 << 16) | (0u32 << 20),
+        31u32 | (2u32 << 24) | (9u32 << 16),
         dst_token(1, 1, 0xF),
         // add r0, v0, v1
         opcode_token(2, 3),

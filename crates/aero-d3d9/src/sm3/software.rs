@@ -175,6 +175,7 @@ fn read_reg_raw(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn exec_src(
     src: &Src,
     temps: &[Vec4],
@@ -202,6 +203,7 @@ fn exec_src(
     apply_src_modifier(v, src.modifier)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn exec_dst(
     dst: &Dst,
     temps: &mut [Vec4],
@@ -285,6 +287,7 @@ enum Flow {
     Discard,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn eval_cond(
     cond: &Cond,
     temps: &[Vec4],
@@ -308,6 +311,7 @@ fn eval_cond(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn exec_block(
     block: &Block,
     depth: usize,
@@ -357,7 +361,7 @@ fn exec_block(
             } => {
                 let take_then =
                     eval_cond(cond, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
-                let flow = if take_then {
+                if take_then {
                     exec_block(
                         then_block,
                         depth + 1,
@@ -395,8 +399,7 @@ fn exec_block(
                     )
                 } else {
                     Flow::Continue
-                };
-                flow
+                }
             }
             Stmt::Loop { init, body } => {
                 // D3D9 SM2/3 `loop aL, i#` has a finite trip count derived from the integer constant
@@ -509,6 +512,7 @@ fn exec_block(
     Flow::Continue
 }
 
+#[allow(clippy::too_many_arguments)]
 fn exec_op(
     op: &IrOp,
     temps: &mut [Vec4],

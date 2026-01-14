@@ -82,7 +82,7 @@ pub fn build_ir(shader: &DecodedShader) -> Result<ShaderIr, BuildError> {
             Opcode::End => break,
             Opcode::Nop => {}
             Opcode::If => {
-                if stack.len() - 1 >= MAX_CONTROL_FLOW_NESTING {
+                if stack.len() > MAX_CONTROL_FLOW_NESTING {
                     return Err(err(
                         inst,
                         format!(
@@ -98,7 +98,7 @@ pub fn build_ir(shader: &DecodedShader) -> Result<ShaderIr, BuildError> {
                 })
             }
             Opcode::Ifc => {
-                if stack.len() - 1 >= MAX_CONTROL_FLOW_NESTING {
+                if stack.len() > MAX_CONTROL_FLOW_NESTING {
                     return Err(err(
                         inst,
                         format!(
@@ -149,7 +149,7 @@ pub fn build_ir(shader: &DecodedShader) -> Result<ShaderIr, BuildError> {
                 )?;
             }
             Opcode::Loop => {
-                if stack.len() - 1 >= MAX_CONTROL_FLOW_NESTING {
+                if stack.len() > MAX_CONTROL_FLOW_NESTING {
                     return Err(err(
                         inst,
                         format!(
@@ -625,7 +625,7 @@ fn handle_def_bool(
 }
 
 fn build_loop_init(inst: &DecodedInstruction) -> Result<LoopInit, BuildError> {
-    let loop_reg = match inst.operands.get(0) {
+    let loop_reg = match inst.operands.first() {
         Some(Operand::Src(src)) => src,
         _ => return Err(err(inst, "loop missing loop register operand")),
     };

@@ -619,25 +619,26 @@ mod tests {
                 for &usage in ALL_USAGES {
                     let res = format_info(format, features, usage);
 
-                    let expects_ok = match (format, usage) {
+                    let expects_ok = matches!(
+                        (format, usage),
                         (
                             D3DFormat::A8R8G8B8
-                            | D3DFormat::X8R8G8B8
-                            | D3DFormat::R5G6B5
-                            | D3DFormat::A1R5G5B5
-                            | D3DFormat::X1R5G5B5
-                            | D3DFormat::A4R4G4B4,
+                                | D3DFormat::X8R8G8B8
+                                | D3DFormat::R5G6B5
+                                | D3DFormat::A1R5G5B5
+                                | D3DFormat::X1R5G5B5
+                                | D3DFormat::A4R4G4B4,
                             TextureUsageKind::Sampled | TextureUsageKind::RenderTarget,
-                        ) => true,
-                        (D3DFormat::Dxt1 | D3DFormat::Dxt3 | D3DFormat::Dxt5, TextureUsageKind::Sampled) => {
-                            true
-                        }
-                        (
-                            D3DFormat::D16 | D3DFormat::D24S8 | D3DFormat::D32,
-                            TextureUsageKind::DepthStencil,
-                        ) => true,
-                        _ => false,
-                    };
+                        )
+                            | (
+                                D3DFormat::Dxt1 | D3DFormat::Dxt3 | D3DFormat::Dxt5,
+                                TextureUsageKind::Sampled,
+                            )
+                            | (
+                                D3DFormat::D16 | D3DFormat::D24S8 | D3DFormat::D32,
+                                TextureUsageKind::DepthStencil,
+                            )
+                    );
 
                     assert_eq!(
                         res.is_ok(),
@@ -841,8 +842,8 @@ mod tests {
         assert_eq!(bgra8.d3d_mip_level_byte_len(7, 5, 0), 7 * 5 * 4);
         assert_eq!(bgra8.d3d_mip_level_pitch(7, 1), 3 * 4);
         assert_eq!(bgra8.d3d_mip_level_byte_len(7, 5, 1), 3 * 2 * 4);
-        assert_eq!(bgra8.d3d_mip_level_pitch(7, 2), 1 * 4);
-        assert_eq!(bgra8.d3d_mip_level_byte_len(7, 5, 2), 1 * 1 * 4);
+        assert_eq!(bgra8.d3d_mip_level_pitch(7, 2), 4);
+        assert_eq!(bgra8.d3d_mip_level_byte_len(7, 5, 2), 4);
         assert_eq!(bgra8.upload_bytes_per_row(7, 0), 7 * 4);
         assert_eq!(bgra8.upload_rows_per_image(5, 0), 5);
         assert_eq!(bgra8.upload_mip_level_byte_len(7, 5, 0), 7 * 5 * 4);
@@ -873,11 +874,11 @@ mod tests {
         assert!(!bc1.cpu_convert_to_bgra8);
         assert_eq!(bc1.d3d_mip_level_pitch(8, 0), 2 * 8);
         assert_eq!(bc1.d3d_mip_level_byte_len(8, 8, 0), 2 * 2 * 8);
-        assert_eq!(bc1.d3d_mip_level_pitch(8, 1), 1 * 8);
-        assert_eq!(bc1.d3d_mip_level_byte_len(8, 8, 1), 1 * 1 * 8);
+        assert_eq!(bc1.d3d_mip_level_pitch(8, 1), 8);
+        assert_eq!(bc1.d3d_mip_level_byte_len(8, 8, 1), 8);
         // 2x2 still occupies a full 4x4 block in D3D memory layout.
-        assert_eq!(bc1.d3d_mip_level_pitch(8, 2), 1 * 8);
-        assert_eq!(bc1.d3d_mip_level_byte_len(8, 8, 2), 1 * 1 * 8);
+        assert_eq!(bc1.d3d_mip_level_pitch(8, 2), 8);
+        assert_eq!(bc1.d3d_mip_level_byte_len(8, 8, 2), 8);
         assert_eq!(bc1.upload_bytes_per_row(8, 0), 2 * 8);
         assert_eq!(bc1.upload_rows_per_image(8, 0), 2);
         assert_eq!(bc1.upload_mip_level_byte_len(8, 8, 0), 2 * 2 * 8);
@@ -894,8 +895,8 @@ mod tests {
         assert!(!dxt5_fallback.upload_is_compressed);
         assert_eq!(dxt5_fallback.d3d_mip_level_pitch(7, 0), 2 * 16);
         assert_eq!(dxt5_fallback.d3d_mip_level_byte_len(7, 5, 0), 2 * 2 * 16);
-        assert_eq!(dxt5_fallback.d3d_mip_level_pitch(7, 1), 1 * 16);
-        assert_eq!(dxt5_fallback.d3d_mip_level_byte_len(7, 5, 1), 1 * 1 * 16);
+        assert_eq!(dxt5_fallback.d3d_mip_level_pitch(7, 1), 16);
+        assert_eq!(dxt5_fallback.d3d_mip_level_byte_len(7, 5, 1), 16);
         assert_eq!(dxt5_fallback.upload_bytes_per_row(7, 0), 7 * 4);
         assert_eq!(dxt5_fallback.upload_rows_per_image(5, 0), 5);
         assert_eq!(dxt5_fallback.upload_mip_level_byte_len(7, 5, 0), 7 * 5 * 4);

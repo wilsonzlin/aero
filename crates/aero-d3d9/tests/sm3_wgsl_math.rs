@@ -66,7 +66,7 @@ fn translates_exp_to_wgsl_exp2_with_predication_and_saturate() {
         0x0000_0000,
         0x0000_0000,
         // setp_gt p0, c0, c1 (compare code 0 = gt)
-        opcode_token(78, 3) | (0u32 << 16),
+        opcode_token(78, 3),
         dst_token(19, 0, 0xF),
         src_token(2, 0, 0xE4, 0),
         src_token(2, 1, 0xE4, 0),
@@ -159,7 +159,7 @@ fn translates_pow_to_wgsl_pow_with_predication_and_modifiers() {
         0x3F80_0000,
         0x0000_0000,
         // setp_gt p0, c0, c1 (compare op 0 = gt)
-        opcode_token(78, 3) | (0u32 << 16),
+        opcode_token(78, 3),
         dst_token(19, 0, 0xF),
         src_token(2, 0, 0xE4, 0),
         src_token(2, 1, 0xE4, 0),

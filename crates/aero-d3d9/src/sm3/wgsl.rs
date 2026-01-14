@@ -1999,10 +1999,10 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
 
             wgsl.push_str("  var out: VsOut;\n");
             wgsl.push_str("  out.pos = oPos;\n");
-            for ((file, index), _) in &vs_varying_locations {
+            for &(file, index) in vs_varying_locations.keys() {
                 let reg = RegRef {
-                    file: *file,
-                    index: *index,
+                    file,
+                    index,
                     relative: None,
                 };
                 let name = reg_var_name(&reg)?;

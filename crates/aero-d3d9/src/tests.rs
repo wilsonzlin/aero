@@ -67,19 +67,19 @@ fn assemble_vs_passthrough_with_dcl_sm3_decoder() -> Vec<u32> {
     // dcl_position v0
     out.extend(enc_inst_with_extra(
         0x001F,
-        (0u32 << 16) | (0u32 << 20),
+        0,
         &[enc_dst(1, 0, 0xF)],
     ));
     // dcl_texcoord0 v1.xy
     out.extend(enc_inst_with_extra(
         0x001F,
-        (5u32 << 16) | (0u32 << 20),
+        5u32 << 16,
         &[enc_dst(1, 1, 0x3)],
     ));
     // dcl_color0 v2
     out.extend(enc_inst_with_extra(
         0x001F,
-        (10u32 << 16) | (0u32 << 20),
+        10u32 << 16,
         &[enc_dst(1, 2, 0xF)],
     ));
 
