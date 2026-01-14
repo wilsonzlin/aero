@@ -48,7 +48,8 @@ Steps:
   2. cargo test -p aero-usb --locked --test uhci --test uhci_external_hub --test ehci --test hid_builtin_snapshot
      --test hid_usage_keyboard_fixture --test hid_usage_consumer_fixture
      (or: --usb-all to run the full aero-usb test suite)
-  3. (optional: --machine) cargo test -p aero-machine --lib --locked --test machine_uhci --test machine_xhci --test xhci_snapshot --test machine_xhci_usb_attach_at_path
+  3. (optional: --machine) cargo test -p aero-machine --lib --locked --test machine_uhci --test machine_uhci_synthetic_usb_hid
+     --test machine_uhci_synthetic_usb_hid_reports --test machine_xhci --test xhci_snapshot --test machine_xhci_usb_attach_at_path
   4. (optional: --wasm) wasm-pack test --node crates/aero-wasm --test webusb_uhci_bridge --test xhci_webusb_bridge --locked
   5. (optional: --with-wasm) cargo test -p aero-wasm --locked --test machine_input_injection --test machine_input_backends
   6. (unless --rust-only) npm -w web run test:unit -- src/input src/usb/ehci_webusb_root_port_rust_drift.test.ts src/usb/xhci_webusb_root_port_rust_drift.test.ts
@@ -134,6 +135,10 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
             "--test",
             "machine_uhci",
             "--test",
+            "machine_uhci_synthetic_usb_hid",
+            "--test",
+            "machine_uhci_synthetic_usb_hid_reports",
+            "--test",
             "machine_xhci",
             "--test",
             "xhci_snapshot",
@@ -141,7 +146,7 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
             "machine_xhci_usb_attach_at_path",
         ]);
         runner.run_step(
-            "Rust: cargo test -p aero-machine --lib --locked --test machine_uhci --test machine_xhci --test xhci_snapshot --test machine_xhci_usb_attach_at_path",
+            "Rust: cargo test -p aero-machine --lib --locked --test machine_uhci --test machine_uhci_synthetic_usb_hid --test machine_uhci_synthetic_usb_hid_reports --test machine_xhci --test xhci_snapshot --test machine_xhci_usb_attach_at_path",
             &mut cmd,
         )?;
     }
