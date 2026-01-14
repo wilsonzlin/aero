@@ -517,6 +517,16 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     return reporter.FailHresult("CreateRasterizerState(no depth clip)", hr);
   }
 
+  // Rasterizer state: scissor enabled, no culling, depth clip disabled (used for ClearState test).
+  D3D11_RASTERIZER_DESC rs_desc_scissor_no_depth_clip = rs_desc_scissor;
+  rs_desc_scissor_no_depth_clip.DepthClipEnable = FALSE;
+
+  ComPtr<ID3D11RasterizerState> rs_scissor_no_depth_clip;
+  hr = device->CreateRasterizerState(&rs_desc_scissor_no_depth_clip, rs_scissor_no_depth_clip.put());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("CreateRasterizerState(scissor no depth clip)", hr);
+  }
+
   // Blend state: standard alpha blending.
   D3D11_BLEND_DESC blend_desc;
   ZeroMemory(&blend_desc, sizeof(blend_desc));
@@ -1624,6 +1634,212 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
                            (unsigned long)center_sm0,
                            (unsigned long)expected_red);
     }
+  }
+
+  // Subtest 5: ClearState resets RS/OM state (scissor/cull/depth-clip/blend).
+  //
+  // This is specifically intended to validate the ClearState path in the UMD: if
+  // ClearState does not emit default RS/OM state packets, host-side state can
+  // "stick" across ClearState, causing clipped/incorrect output.
+  {
+    const int cx = kWidth / 2;
+    const int cy = kHeight / 2;
+    const D3D11_RECT small_scissor = {16, 16, 48, 48};
+
+    // Set a non-default state (scissor enabled + depth clip disabled + blending enabled), then draw once so the
+    // state is definitely active on the host before we call ClearState.
+    context->OMSetRenderTargets(1, rtvs, NULL);
+    context->RSSetViewports(1, &vp);
+    context->IASetInputLayout(input_layout.get());
+    context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    context->VSSetShader(vs.get(), NULL, 0);
+    context->PSSetShader(ps.get(), NULL, 0);
+    context->OMSetBlendState(alpha_blend.get(), blend_factor, 0xFFFFFFFFu);
+    context->RSSetState(rs_scissor_no_depth_clip.get());
+    context->RSSetScissorRects(1, &small_scissor);
+
+    UINT stride = sizeof(Vertex);
+    UINT offset = 0;
+    ID3D11Buffer* vbs0[] = {vb_fs.get()};
+    context->IASetVertexBuffers(0, 1, vbs0, &stride, &offset);
+
+    context->ClearRenderTargetView(rtv.get(), clear_red);
+    context->Draw(3, 0);
+
+    // Now ClearState and re-bind only the minimum required state for a draw. Do
+    // NOT explicitly set rasterizer/blend state; output should match defaults
+    // (no scissor, blending disabled, cull back, depth clip enabled).
+    context->ClearState();
+
+    context->OMSetRenderTargets(1, rtvs, NULL);
+    context->RSSetViewports(1, &vp);
+    context->IASetInputLayout(input_layout.get());
+    context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    context->VSSetShader(vs.get(), NULL, 0);
+    context->PSSetShader(ps.get(), NULL, 0);
+    ID3D11Buffer* vbs1[] = {vb_fs.get()};
+    context->IASetVertexBuffers(0, 1, vbs1, &stride, &offset);
+
+    context->ClearRenderTargetView(rtv.get(), clear_red);
+    context->Draw(3, 0);
+
+    context->OMSetRenderTargets(0, NULL, NULL);
+    context->CopyResource(staging.get(), rt_tex.get());
+    context->OMSetRenderTargets(1, rtvs, NULL);
+    context->Flush();
+
+    D3D11_MAPPED_SUBRESOURCE map;
+    ZeroMemory(&map, sizeof(map));
+    hr = context->Map(staging.get(), 0, D3D11_MAP_READ, 0, &map);
+    if (FAILED(hr)) {
+      return FailD3D11WithRemovedReason(&reporter, kTestName, "Map(staging) [ClearState]", hr, device.get());
+    }
+    map_rc = ValidateStagingMap("Map(staging) [ClearState]", map);
+    if (map_rc != 0) {
+      return map_rc;
+    }
+
+    const uint32_t center = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, cx, cy);
+    const uint32_t corner = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, 5, 5);
+
+    if (dump) {
+      const std::wstring bmp_path = aerogpu_test::JoinPath(dir, L"d3d11_rs_om_state_sanity_clear_state.bmp");
+      std::string err;
+      if (!aerogpu_test::WriteBmp32BGRA(bmp_path, kWidth, kHeight, map.pData, (int)map.RowPitch, &err)) {
+        aerogpu_test::PrintfStdout("INFO: %s: ClearState BMP dump failed: %s", kTestName, err.c_str());
+      } else {
+        reporter.AddArtifactPathW(bmp_path);
+      }
+      DumpTightBgra32(kTestName,
+                      &reporter,
+                      L"d3d11_rs_om_state_sanity_clear_state.bin",
+                      map.pData,
+                      map.RowPitch,
+                      kWidth,
+                      kHeight);
+    }
+    context->Unmap(staging.get(), 0);
+
+    const uint32_t expected_green = 0x8000FF00u;
+    if ((center & 0x00FFFFFFu) != (expected_green & 0x00FFFFFFu) ||
+        (corner & 0x00FFFFFFu) != (expected_green & 0x00FFFFFFu)) {
+      PrintDeviceRemovedReasonIfAny(kTestName, device.get());
+      return reporter.Fail("ClearState reset failed: center=0x%08lX corner=0x%08lX expected ~0x%08lX",
+                           (unsigned long)center,
+                           (unsigned long)corner,
+                           (unsigned long)expected_green);
+    }
+    const uint8_t center_a = (uint8_t)((center >> 24) & 0xFFu);
+    const uint8_t corner_a = (uint8_t)((corner >> 24) & 0xFFu);
+    if ((center_a < kExpectedAlphaHalf - kAlphaTol || center_a > kExpectedAlphaHalf + kAlphaTol) ||
+        (corner_a < kExpectedAlphaHalf - kAlphaTol || corner_a > kExpectedAlphaHalf + kAlphaTol)) {
+      PrintDeviceRemovedReasonIfAny(kTestName, device.get());
+      return reporter.Fail("ClearState alpha mismatch: center_a=%u corner_a=%u expected ~%u",
+                           (unsigned)center_a,
+                           (unsigned)corner_a,
+                           (unsigned)kExpectedAlphaHalf);
+    }
+
+    // Verify default culling: the CCW triangle should be culled, leaving clear red intact.
+    context->ClearRenderTargetView(rtv.get(), clear_red);
+    ID3D11Buffer* vbs2[] = {vb_cull.get()};
+    context->IASetVertexBuffers(0, 1, vbs2, &stride, &offset);
+    context->VSSetShader(vs.get(), NULL, 0);
+    context->Draw(3, 0);
+
+    context->OMSetRenderTargets(0, NULL, NULL);
+    context->CopyResource(staging.get(), rt_tex.get());
+    context->OMSetRenderTargets(1, rtvs, NULL);
+    context->Flush();
+
+    ZeroMemory(&map, sizeof(map));
+    hr = context->Map(staging.get(), 0, D3D11_MAP_READ, 0, &map);
+    if (FAILED(hr)) {
+      return FailD3D11WithRemovedReason(&reporter, kTestName, "Map(staging) [ClearState cull]", hr, device.get());
+    }
+    map_rc = ValidateStagingMap("Map(staging) [ClearState cull]", map);
+    if (map_rc != 0) {
+      return map_rc;
+    }
+
+    const uint32_t cull_center = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, cx, cy);
+    if (dump) {
+      const std::wstring bmp_path = aerogpu_test::JoinPath(dir, L"d3d11_rs_om_state_sanity_clear_state_cull.bmp");
+      std::string err;
+      if (!aerogpu_test::WriteBmp32BGRA(bmp_path, kWidth, kHeight, map.pData, (int)map.RowPitch, &err)) {
+        aerogpu_test::PrintfStdout("INFO: %s: ClearState-cull BMP dump failed: %s", kTestName, err.c_str());
+      } else {
+        reporter.AddArtifactPathW(bmp_path);
+      }
+      DumpTightBgra32(kTestName,
+                      &reporter,
+                      L"d3d11_rs_om_state_sanity_clear_state_cull.bin",
+                      map.pData,
+                      map.RowPitch,
+                      kWidth,
+                      kHeight);
+    }
+    context->Unmap(staging.get(), 0);
+
+    const uint32_t expected_red = 0xFFFF0000u;
+    if ((cull_center & 0x00FFFFFFu) != (expected_red & 0x00FFFFFFu) || ((cull_center >> 24) & 0xFFu) != 0xFFu) {
+      PrintDeviceRemovedReasonIfAny(kTestName, device.get());
+      return reporter.Fail("ClearState cull reset failed: center=0x%08lX expected ~0x%08lX",
+                           (unsigned long)cull_center,
+                           (unsigned long)expected_red);
+    }
+
+    // Verify default depth clip: VS outputs Z=-0.5, so with DepthClipEnable=TRUE it should be clipped.
+    context->ClearRenderTargetView(rtv.get(), clear_red);
+    ID3D11Buffer* vbs3[] = {vb_fs.get()};
+    context->IASetVertexBuffers(0, 1, vbs3, &stride, &offset);
+    context->VSSetShader(vs_depth_clip.get(), NULL, 0);
+    context->Draw(3, 0);
+
+    context->OMSetRenderTargets(0, NULL, NULL);
+    context->CopyResource(staging.get(), rt_tex.get());
+    context->OMSetRenderTargets(1, rtvs, NULL);
+    context->Flush();
+
+    ZeroMemory(&map, sizeof(map));
+    hr = context->Map(staging.get(), 0, D3D11_MAP_READ, 0, &map);
+    if (FAILED(hr)) {
+      return FailD3D11WithRemovedReason(&reporter, kTestName, "Map(staging) [ClearState depth clip]", hr, device.get());
+    }
+    map_rc = ValidateStagingMap("Map(staging) [ClearState depth clip]", map);
+    if (map_rc != 0) {
+      return map_rc;
+    }
+
+    const uint32_t depth_clip_center = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, cx, cy);
+    if (dump) {
+      const std::wstring bmp_path =
+          aerogpu_test::JoinPath(dir, L"d3d11_rs_om_state_sanity_clear_state_depth_clip.bmp");
+      std::string err;
+      if (!aerogpu_test::WriteBmp32BGRA(bmp_path, kWidth, kHeight, map.pData, (int)map.RowPitch, &err)) {
+        aerogpu_test::PrintfStdout("INFO: %s: ClearState-depth-clip BMP dump failed: %s", kTestName, err.c_str());
+      } else {
+        reporter.AddArtifactPathW(bmp_path);
+      }
+      DumpTightBgra32(kTestName,
+                      &reporter,
+                      L"d3d11_rs_om_state_sanity_clear_state_depth_clip.bin",
+                      map.pData,
+                      map.RowPitch,
+                      kWidth,
+                      kHeight);
+    }
+    context->Unmap(staging.get(), 0);
+
+    if ((depth_clip_center & 0x00FFFFFFu) != (expected_red & 0x00FFFFFFu) ||
+        ((depth_clip_center >> 24) & 0xFFu) != 0xFFu) {
+      PrintDeviceRemovedReasonIfAny(kTestName, device.get());
+      return reporter.Fail("ClearState depth-clip reset failed: center=0x%08lX expected ~0x%08lX",
+                           (unsigned long)depth_clip_center,
+                           (unsigned long)expected_red);
+    }
+
+    context->VSSetShader(vs.get(), NULL, 0);
   }
 
   return reporter.Pass();
