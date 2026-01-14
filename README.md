@@ -102,6 +102,7 @@ Quick map:
 ## Documentation
 
 - Architecture & subsystem docs: [`AGENTS.md`](./AGENTS.md)
+- Graphics status (implemented vs missing for Win7 UX): [`docs/graphics/status.md`](./docs/graphics/status.md)
 - Deployment/hosting (COOP/COEP, SharedArrayBuffer/WASM threads): [`docs/deployment.md`](./docs/deployment.md)
 - Releases (web artifacts + gateway images): [`docs/release.md`](./docs/release.md)
 - Windows 7 end-user setup:
