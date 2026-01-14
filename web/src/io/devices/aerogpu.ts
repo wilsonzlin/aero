@@ -41,6 +41,8 @@ const MAX_CURSOR_DIM = 256;
 // Cursor images are small but can still be tens/hundreds of KiB; avoid hashing every 8ms tick.
 const CURSOR_IMAGE_POLL_INTERVAL_MS = 64;
 
+const MAX_SAFE_U64_AS_NUMBER = BigInt(Number.MAX_SAFE_INTEGER);
+
 const FNV1A_INIT = 0x811c9dc5;
 const FNV1A_PRIME = 0x01000193;
 
@@ -298,27 +300,38 @@ export class AeroGpuPciDevice implements PciDevice, TickableDevice {
     // has actually touched the hardware cursor registers.
     if (!this.#forwardingActive) return;
 
-    // Best-effort policy: only render cursor when both:
-    // - CURSOR_ENABLE is set, and
-    // - we can safely read/convert the cursor bitmap.
-    const plan = this.#computeCursorImagePlan();
-    const renderEnabled = this.#cursorEnable && plan !== null;
+    let plan: CursorImagePlan | null = null;
+    let renderEnabled = false;
+    try {
+      // Best-effort policy: only render cursor when both:
+      // - CURSOR_ENABLE is set, and
+      // - we can safely read/convert the cursor bitmap.
+      plan = this.#computeCursorImagePlan();
+      renderEnabled = this.#cursorEnable && plan !== null;
 
-    // Image updates: only when enabled and either parameters changed or the backing bytes changed.
-    if (renderEnabled && plan) {
-      const shouldPoll = nowMs - this.#lastImagePollMs >= CURSOR_IMAGE_POLL_INTERVAL_MS;
-      const needImage = this.#imageParamsDirty || this.#lastSentImageKey !== plan.key;
-      if (needImage || shouldPoll) {
-        this.#lastImagePollMs = nowMs;
-        if (this.#maybeSendCursorImage(plan, { force: needImage })) {
-          // Ensure the presenter sees pixels before we enable the cursor state.
-          this.#stateDirty = true;
+      // Image updates: only when enabled and either parameters changed or the backing bytes changed.
+      if (renderEnabled && plan) {
+        const shouldPoll = nowMs - this.#lastImagePollMs >= CURSOR_IMAGE_POLL_INTERVAL_MS;
+        const needImage = this.#imageParamsDirty || this.#lastSentImageKey !== plan.key;
+        if (needImage || shouldPoll) {
+          this.#lastImagePollMs = nowMs;
+          if (this.#maybeSendCursorImage(plan, { force: needImage })) {
+            // Ensure the presenter sees pixels before we enable the cursor state.
+            this.#stateDirty = true;
+          }
+          this.#imageParamsDirty = false;
         }
+      } else {
+        // Stop repeatedly attempting invalid/disabled images until parameters change.
         this.#imageParamsDirty = false;
       }
-    } else {
-      // Stop repeatedly attempting invalid/disabled images until parameters change.
+    } catch {
+      // Device models should never crash the entire I/O worker. If cursor state becomes invalid (or a
+      // guest programs pathological values), fall back to disabling the overlay.
+      plan = null;
+      renderEnabled = false;
       this.#imageParamsDirty = false;
+      this.#stateDirty = true;
     }
 
     if (!this.#stateDirty && this.#lastSentEnabled === renderEnabled) {
@@ -382,13 +395,19 @@ export class AeroGpuPciDevice implements PciDevice, TickableDevice {
     //
     // `neededBytes` = pitch*(height-1) + rowBytes (same as Rust cursor validation).
     const neededBytes = BigInt(pitchBytes) * BigInt(height - 1) + BigInt(rowBytes);
+    if (neededBytes > MAX_SAFE_U64_AS_NUMBER) return null;
     // Detect u64 wrap (best-effort).
     const endGpa = fbGpa64 + neededBytes;
     if (endGpa < fbGpa64) return null;
     if (endGpa > 0xffff_ffff_ffff_ffffn) return null;
 
-    if (!guestRangeInBounds(this.#guestLayout, fbGpa, Number(neededBytes))) return null;
-    const baseRamOffset = guestPaddrToRamOffset(this.#guestLayout, fbGpa);
+    let baseRamOffset: number | null = null;
+    try {
+      if (!guestRangeInBounds(this.#guestLayout, fbGpa, Number(neededBytes))) return null;
+      baseRamOffset = guestPaddrToRamOffset(this.#guestLayout, fbGpa);
+    } catch {
+      return null;
+    }
     if (baseRamOffset === null) return null;
 
     const key = `${fbGpa64.toString(16)}:${pitchBytes}:${width}x${height}:${this.#cursorFormat >>> 0}`;
