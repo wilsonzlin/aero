@@ -1093,8 +1093,8 @@ fn protocol_preserves_stage_ex_for_stage_bound_packets() {
     let stage_ex_create_shader = AerogpuShaderStageEx::Hull as u32;
     let stage_ex_set_texture = AerogpuShaderStageEx::Domain as u32;
     let stage_ex_set_samplers = AerogpuShaderStageEx::Geometry as u32;
-    // Use DXBC program type 1 ("Vertex") as an intentionally-invalid stage_ex value; the parser
-    // should preserve it as an opaque u32.
+    // `stage_ex` is stored as a raw ABI field by the protocol parser; use a non-canonical value
+    // (1, matching DXBC program type "Vertex") to ensure it is preserved verbatim.
     let stage_ex_set_constant_buffers = 1u32;
     let stage_ex_set_srv_buffers = AerogpuShaderStageEx::Compute as u32;
     let stage_ex_set_uav_buffers = AerogpuShaderStageEx::Hull as u32;
