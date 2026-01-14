@@ -985,7 +985,7 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
             // registers. Otherwise, fall back to the legacy behavior (input index unchanged).
             let mut remap = HashMap::<u16, u16>::new();
             let mut used_locations = HashMap::<u32, u16>::new();
-            let map = AdaptiveLocationMap::new(input_dcl_order.clone())?;
+            let map = AdaptiveLocationMap::new(input_dcl_order.iter().copied())?;
             let mut can_remap = true;
             for &v in &used_vs_inputs {
                 let Some(&(usage, usage_index)) = input_dcl_map.get(&v) else {

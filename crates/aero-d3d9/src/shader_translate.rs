@@ -354,6 +354,9 @@ fn collect_semantic_locations_sm3(ir: &sm3::ir::ShaderIr) -> Vec<shader::Semanti
             input_dcl_order.push((usage, usage_index));
         }
     }
+    if input_dcl_order.is_empty() {
+        return Vec::new();
+    }
 
     let Ok(map) = AdaptiveLocationMap::new(input_dcl_order.iter().copied()) else {
         // If semantic remapping was enabled, the IR builder already succeeded in constructing a
