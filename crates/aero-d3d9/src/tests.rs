@@ -740,6 +740,15 @@ fn dxbc_container_roundtrip_extracts_shdr() {
 }
 
 #[test]
+fn dxbc_extraction_returns_raw_token_streams_unchanged() {
+    // D3D9 often provides the legacy SM2/SM3 token stream directly (no DXBC container wrapper).
+    // In this case we must treat the bytes as already-being shader bytecode.
+    let vs = to_bytes(&assemble_vs_passthrough());
+    let extracted = dxbc::extract_shader_bytecode(&vs).unwrap();
+    assert_eq!(extracted, vs);
+}
+
+#[test]
 fn dxbc_container_honors_total_size_when_buffer_has_trailing_bytes() {
     // DXBC headers carry a declared `total_size`. The shared `aero-dxbc` parser should treat any
     // trailing bytes in the backing buffer as out-of-container and ensure chunk slices never
