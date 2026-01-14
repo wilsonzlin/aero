@@ -5,6 +5,12 @@ translator (`crates/aero-d3d9/src/sm3/`).
 
 It tracks task-level status for shader bytecode → IR → WGSL lowering work.
 
+Translation output is cached:
+
+- Per-session in-memory cache: `crates/aero-d3d9/src/shader_translate.rs` (`ShaderCache`)
+- WASM-only persistent cache (IndexedDB/OPFS): `crates/aero-d3d9/src/runtime/shader_cache.rs` +
+  `web/gpu-cache/persistent_cache.ts` (wired into `crates/aero-gpu/src/aerogpu_d3d9_executor.rs`)
+
 For the broader “scratchpad task ID → implementation/test” audit, see
 [`task-489-sm3-dxbc-sharedsurface-audit.md`](./task-489-sm3-dxbc-sharedsurface-audit.md).
 
