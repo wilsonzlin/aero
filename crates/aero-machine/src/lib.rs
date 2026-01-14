@@ -14972,10 +14972,8 @@ impl snapshot::SnapshotTarget for Machine {
                 let mut level = {
                     let mut dev = aerogpu_mmio.borrow_mut();
                     dev.config_mut().set_command(command);
-                    dev.config_mut().set_bar_base(
-                        aero_devices::pci::profile::AEROGPU_BAR0_INDEX,
-                        bar0_base,
-                    );
+                    dev.config_mut()
+                        .set_bar_base(aero_devices::pci::profile::AEROGPU_BAR0_INDEX, bar0_base);
                     dev.config_mut().set_bar_base(
                         aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX,
                         bar1_base,

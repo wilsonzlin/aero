@@ -1950,7 +1950,9 @@ fn texld_sample_expr(
         // texldb: implicit LOD with bias (bias comes from coord.w).
         2 => {
             let coords = match ty {
-                TextureType::TextureCube | TextureType::Texture3D => format!("({}).xyz", coord_expr),
+                TextureType::TextureCube | TextureType::Texture3D => {
+                    format!("({}).xyz", coord_expr)
+                }
                 TextureType::Texture2D => format!("({}).xy", coord_expr),
                 TextureType::Texture1D => format!("({}).x", coord_expr),
                 _ => unreachable!(
@@ -1978,7 +1980,10 @@ fn texld_sample_expr(
                             s, s, coords, ddx, ddy
                         )
                     } else {
-                        format!("textureSampleBias(tex{}, samp{}, {}, {})", s, s, coords, bias)
+                        format!(
+                            "textureSampleBias(tex{}, samp{}, {}, {})",
+                            s, s, coords, bias
+                        )
                     }
                 }
             }

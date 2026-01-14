@@ -4039,7 +4039,7 @@ fn translate_entrypoint_rejects_invalid_tex_specific_field_after_fallback() {
     // can't smuggle an invalid `tex` encoding through by triggering SM3→legacy fallback first
     // (e.g. via an unknown opcode).
     let mut words = vec![0xFFFF_0300]; // ps_3_0
-    // Unknown opcode triggers fallback.
+                                       // Unknown opcode triggers fallback.
     words.extend(enc_inst(0x1234, &[]));
     // dcl_2d s0
     words.extend(enc_inst_with_extra(
@@ -4071,7 +4071,8 @@ fn translate_entrypoint_rejects_invalid_tex_specific_field_after_fallback() {
 }
 
 #[test]
-fn translate_entrypoint_rejects_relative_addressing_even_when_hidden_by_predication_after_fallback() {
+fn translate_entrypoint_rejects_relative_addressing_even_when_hidden_by_predication_after_fallback()
+{
     // The legacy translator strips predicate tokens (it does not model predication). Ensure this
     // cannot be abused to hide multi-token operand encodings like relative addressing by setting
     // the predication flag but omitting the predicate token.
@@ -4079,7 +4080,7 @@ fn translate_entrypoint_rejects_relative_addressing_even_when_hidden_by_predicat
     const PREDICATED: u32 = 0x1000_0000;
 
     let mut words = vec![0xFFFF_0300]; // ps_3_0
-    // Unknown opcode triggers fallback.
+                                       // Unknown opcode triggers fallback.
     words.extend(enc_inst(0x1234, &[]));
     // (p0.x) mov r0, c0[a0.x] ... but omit the predicate token and leave only the relative-address
     // token at the end.
@@ -4105,7 +4106,7 @@ fn translate_entrypoint_rejects_unknown_result_shift_after_fallback() {
     // Unknown result-shift encodings should be treated as malformed input even when legacy fallback
     // runs.
     let mut words = vec![0xFFFF_0300]; // ps_3_0
-    // Unknown opcode triggers fallback.
+                                       // Unknown opcode triggers fallback.
     words.extend(enc_inst(0x1234, &[]));
     // mov r0, c0 with shift bits set to 7 (reserved/unknown).
     let unknown_shift_mod_bits = 14u32; // saturate=0, shift_bits=7 => (7<<1)|0 = 14
