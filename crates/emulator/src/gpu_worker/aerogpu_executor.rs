@@ -1156,7 +1156,14 @@ const MAX_CMD_STREAM_SIZE_BYTES: u32 = 64 * 1024 * 1024;
 // Keep the external-backend pending submission queue bounded to avoid unbounded allocations when
 // the guest spams large command streams and the host fails to drain them promptly.
 const MAX_PENDING_SUBMISSIONS: usize = 256;
-const MAX_PENDING_SUBMISSIONS_TOTAL_BYTES: usize = 256 * 1024 * 1024; // 256MiB
+// Total memory cap (in bytes) for queued `AeroGpuBackendSubmission` payloads.
+//
+// Keep a tighter limit under `cfg(test)` so unit tests can exercise byte-based overflow handling
+// without allocating large buffers.
+#[cfg(test)]
+const MAX_PENDING_SUBMISSIONS_TOTAL_BYTES: usize = 4 * 1024;
+#[cfg(not(test))]
+const MAX_PENDING_SUBMISSIONS_TOTAL_BYTES: usize = 128 * 1024 * 1024; // 128MiB
 
 fn decode_alloc_table(
     mem: &mut dyn MemoryBus,
@@ -1798,7 +1805,6 @@ mod tests {
     fn deferred_mode_pending_submission_queue_is_bounded() {
         let mut mem = Bus::new(0x20000);
         let ring_gpa = 0x1000u64;
-        let cmd_gpa = 0x18000u64;
 
         let entry_count = 512u32;
         let stride = u64::from(AeroGpuSubmitDesc::SIZE_BYTES);
@@ -1806,11 +1812,12 @@ mod tests {
         let tail = (MAX_PENDING_SUBMISSIONS as u32) + 1;
         write_ring_header(&mut mem, ring_gpa, entry_count, 0, tail);
 
-        let cmd_size_bytes = write_vsync_present_cmd_stream(&mut mem, cmd_gpa);
         for i in 0..tail {
             let fence = u64::from(i) + 1;
             let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES + u64::from(i) * stride;
-            write_submit_desc_with_cmd(&mut mem, desc_gpa, fence, 0, cmd_gpa, cmd_size_bytes);
+            // Use empty (0-byte) submissions so this test focuses on the queue-length cap rather
+            // than the byte cap, which is intentionally small under `cfg(test)`.
+            write_submit_desc(&mut mem, desc_gpa, fence, 0);
         }
 
         let ring_size_bytes =
@@ -1843,6 +1850,69 @@ mod tests {
             drained.last().map(|s| s.signal_fence),
             Some(u64::from(tail))
         );
+    }
+
+    #[test]
+    fn deferred_mode_pending_submission_queue_is_bounded_by_bytes() {
+        let mut mem = Bus::new(0x20000);
+        let ring_gpa = 0x1000u64;
+        let cmd_gpa = 0x18000u64;
+
+        let entry_count = 512u32;
+        let stride = u64::from(AeroGpuSubmitDesc::SIZE_BYTES);
+
+        let cmd_size_bytes = write_vsync_present_cmd_stream(&mut mem, cmd_gpa);
+        let max_by_bytes =
+            u32::try_from(MAX_PENDING_SUBMISSIONS_TOTAL_BYTES / cmd_size_bytes as usize).unwrap();
+        assert!(
+            max_by_bytes > 0,
+            "test requires MAX_PENDING_SUBMISSIONS_TOTAL_BYTES to be >= one submission"
+        );
+        assert!(
+            max_by_bytes < MAX_PENDING_SUBMISSIONS as u32,
+            "test assumes byte cap is reached before the queue-length cap"
+        );
+
+        let tail = max_by_bytes + 1;
+        write_ring_header(&mut mem, ring_gpa, entry_count, 0, tail);
+
+        for i in 0..tail {
+            let fence = u64::from(i) + 1;
+            let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES + u64::from(i) * stride;
+            write_submit_desc_with_cmd(&mut mem, desc_gpa, fence, 0, cmd_gpa, cmd_size_bytes);
+        }
+
+        let ring_size_bytes =
+            u32::try_from(AEROGPU_RING_HEADER_SIZE_BYTES + u64::from(entry_count) * stride).unwrap();
+        let mut regs = AeroGpuRegs {
+            ring_gpa,
+            ring_size_bytes,
+            ring_control: ring_control::ENABLE,
+            irq_enable: irq_bits::FENCE | irq_bits::ERROR,
+            features: FEATURE_VBLANK,
+            ..Default::default()
+        };
+        regs.scanout0.enable = true;
+
+        let mut exec = AeroGpuExecutor::new(AeroGpuExecutorConfig {
+            verbose: false,
+            keep_last_submissions: 0,
+            fence_completion: AeroGpuFenceCompletionMode::Deferred,
+        });
+
+        exec.process_doorbell(&mut regs, &mut mem);
+
+        // Overflowing the byte cap should drop the oldest submission and complete its fence. Since
+        // the command stream is a vsynced PRESENT and vblank pacing is active, the in-flight entry
+        // is vblank-gated; dropping must force it ready to avoid deadlocking fence progress.
+        assert_eq!(regs.completed_fence, 1);
+        assert_eq!(regs.error_code, AerogpuErrorCode::Backend as u32);
+        assert_eq!(regs.error_fence, 1);
+
+        let drained = exec.drain_pending_submissions();
+        assert_eq!(drained.len(), max_by_bytes as usize);
+        assert_eq!(drained.first().map(|s| s.signal_fence), Some(2));
+        assert_eq!(drained.last().map(|s| s.signal_fence), Some(u64::from(tail)));
     }
 
     #[test]
