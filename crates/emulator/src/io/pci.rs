@@ -78,6 +78,12 @@ impl PciConfigSpace {
     }
 }
 
+impl Default for PciConfigSpace {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::PciConfigSpace;
@@ -95,11 +101,5 @@ mod tests {
         cfg.write(0xff, 2, 0x1234);
         cfg.write(0xfe, 4, 0x1234_5678);
         cfg.write(0, 3, 0xDEAD_BEEF);
-    }
-}
-
-impl Default for PciConfigSpace {
-    fn default() -> Self {
-        Self::new()
     }
 }
