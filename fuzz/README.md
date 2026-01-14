@@ -130,6 +130,19 @@ Build the default target set (CPU-only targets that don't require extra Cargo fe
 cd fuzz && cargo +"$nightly" fuzz build
 ```
 
+To build the same feature set used by the CI fuzz smoke workflow (`.github/workflows/fuzz.yml`):
+
+```bash
+cd fuzz && cargo +"$nightly" fuzz build --features ci-smoke
+```
+
+If you see `Blocking waiting for file lock on package cache` while building fuzz targets, you can
+isolate Cargo's registry/cache to the local directory:
+
+```bash
+cd fuzz && CARGO_HOME=$PWD/.cargo_home cargo +"$nightly" fuzz build --features ci-smoke
+```
+
 To build *everything* (including GPU/shader fuzzers), enable all Cargo features:
 
 ```bash
