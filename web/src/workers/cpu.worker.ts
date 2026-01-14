@@ -406,7 +406,7 @@ function initWasmVmA20View(vm: unknown): void {
   wasmVmA20View = null;
   if (!vm || typeof vm !== "object") return;
   const record = vm as Record<string, unknown>;
-  const fn = record.a20_enabled_ptr;
+  const fn = record.a20_enabled_ptr ?? record.a20EnabledPtr;
   if (typeof fn !== "function") return;
   let ptr: unknown;
   try {
