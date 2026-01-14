@@ -495,13 +495,15 @@ Limitations:
 
 Current behavior is intentionally bring-up level, with two paths:
 
-- **Fixed-function CPU transform (small subset):** when **no user shaders** are bound and the current fixed-function hint
+- **Fixed-function CPU transform (small subset):** when **no user vertex shader** is bound (pixel shader binding does not
+  affect `ProcessVertices`) and the current fixed-function hint
   (`dev->fvf`, set via `SetFVF` or inferred from `SetVertexDecl`) is one of:
   - `D3DFVF_XYZ | D3DFVF_DIFFUSE`
   - `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1`
+  - `D3DFVF_XYZ | D3DFVF_TEX1`
   the UMD reads vertices from **stream 0**, applies a CPU-side **World/View/Projection + viewport** transform, and writes
-  **screen-space `XYZRHW`** position into the destination layout described by `hVertexDecl`, copying `DIFFUSE` (and
-  `TEXCOORD0` when present).
+  **screen-space `XYZRHW`** position into the destination layout described by `hVertexDecl`, copying `DIFFUSE` and
+  `TEXCOORD0` when present in both the source and destination layouts.
 - **Fallback memcpy-style path:** for all other cases, `ProcessVertices` performs a conservative buffer-to-buffer copy from
   the active stream 0 vertex buffer into the destination buffer. The copy is stride-aware (copies
   `min(stream0_stride, dest_stride)` bytes per vertex) and uses the same “upload/dirty-range” notifications used by

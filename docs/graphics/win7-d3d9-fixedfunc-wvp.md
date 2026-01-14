@@ -23,8 +23,10 @@ It is referenced by the UMD README:
     `convert_xyzrhw_to_clipspace_locked()`.
 
 - **`pfnProcessVertices` fixed-function subset**:
-  - `device_process_vertices_internal()` implements a minimal CPU vertex pipeline for:
-    `D3DFVF_XYZ | D3DFVF_DIFFUSE{ | D3DFVF_TEX1}` when no user shaders are bound.
+  - `device_process_vertices_internal()` implements a minimal CPU vertex pipeline for (when no user **vertex** shader is
+    bound; pixel shader binding does not affect `ProcessVertices`):
+    - `D3DFVF_XYZ | D3DFVF_DIFFUSE{ | D3DFVF_TEX1}`
+    - `D3DFVF_XYZ | D3DFVF_TEX1`
   - It computes `WORLD0 * VIEW * PROJECTION`, then applies the D3D9 viewport transform and writes screen-space
     `XYZRHW` to the destination vertex buffer.
 
