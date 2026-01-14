@@ -187,13 +187,14 @@ bool ShaderContainsToken(const aerogpu::Shader* shader, uint32_t token) {
   if (!shader) {
     return false;
   }
-  if (shader->bytecode.size() < sizeof(uint32_t) || (shader->bytecode.size() % sizeof(uint32_t)) != 0) {
+  const size_t size = shader->bytecode.size();
+  if (size < sizeof(uint32_t) || (size % sizeof(uint32_t)) != 0) {
     return false;
   }
-  const auto* words = reinterpret_cast<const uint32_t*>(shader->bytecode.data());
-  const size_t count = shader->bytecode.size() / sizeof(uint32_t);
-  for (size_t i = 0; i < count; ++i) {
-    if (words[i] == token) {
+  for (size_t off = 0; off < size; off += sizeof(uint32_t)) {
+    uint32_t w = 0;
+    std::memcpy(&w, shader->bytecode.data() + off, sizeof(uint32_t));
+    if (w == token) {
       return true;
     }
   }
