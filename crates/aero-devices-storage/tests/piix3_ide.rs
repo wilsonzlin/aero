@@ -2838,6 +2838,96 @@ fn atapi_read_10_dma_via_bus_master() {
 }
 
 #[test]
+fn atapi_dma_is_gated_by_pci_bus_master_enable() {
+    let mut iso = MemIso::new(1);
+    let expected: Vec<u8> = (0..2048u32)
+        .map(|i| (i as u8).wrapping_mul(9).wrapping_add(3))
+        .collect();
+    iso.data[..2048].copy_from_slice(&expected);
+
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut().controller.attach_secondary_master_atapi(
+        aero_devices_storage::atapi::AtapiCdrom::new(Some(Box::new(iso))),
+    );
+
+    // Enable IO decode so we can issue commands and program BMIDE, but keep PCI Bus Master Enable
+    // cleared so `Piix3IdePciDevice::tick()` should not execute DMA.
+    ide.borrow_mut().config_mut().set_command(0x0001);
+
+    let mut ioports = IoPortBus::new();
+    register_piix3_ide_ports(&mut ioports, ide.clone());
+
+    // Select master on secondary channel.
+    ioports.write(SECONDARY_PORTS.cmd_base + 6, 1, 0xA0);
+
+    // Clear initial UNIT ATTENTION: TEST UNIT READY then REQUEST SENSE.
+    let tur = [0u8; 12];
+    send_atapi_packet(&mut ioports, SECONDARY_PORTS.cmd_base, 0, &tur, 0);
+    let _ = ioports.read(SECONDARY_PORTS.cmd_base + 7, 1);
+
+    let mut req_sense = [0u8; 12];
+    req_sense[0] = 0x03;
+    req_sense[4] = 18;
+    send_atapi_packet(&mut ioports, SECONDARY_PORTS.cmd_base, 0, &req_sense, 18);
+    for _ in 0..(18 / 2) {
+        let _ = ioports.read(SECONDARY_PORTS.cmd_base, 2);
+    }
+
+    let mut mem = Bus::new(0x20_000);
+    let bm_base = ide.borrow().bus_master_base();
+
+    let prd_addr = 0x1000u64;
+    let dma_buf = 0x3000u64;
+
+    // PRD entry: one 2048-byte segment, end-of-table.
+    mem.write_u32(prd_addr, dma_buf as u32);
+    mem.write_u16(prd_addr + 4, 2048);
+    mem.write_u16(prd_addr + 6, 0x8000);
+    ioports.write(bm_base + 8 + 4, 4, prd_addr as u32);
+
+    // Seed destination buffer to prove DMA doesn't run before bus mastering is enabled.
+    mem.write_physical(dma_buf, &vec![0xFFu8; 2048]);
+
+    // READ(10) for LBA=0, blocks=1 with DMA enabled (FEATURES bit0).
+    let mut read10 = [0u8; 12];
+    read10[0] = 0x28;
+    read10[2..6].copy_from_slice(&0u32.to_be_bytes());
+    read10[7..9].copy_from_slice(&1u16.to_be_bytes());
+    send_atapi_packet(&mut ioports, SECONDARY_PORTS.cmd_base, 0x01, &read10, 2048);
+
+    // ACK packet-phase IRQ so any later IRQ must be the DMA completion.
+    let _ = ioports.read(SECONDARY_PORTS.cmd_base + 7, 1);
+    assert!(!ide.borrow().controller.secondary_irq_pending());
+
+    // Start the secondary bus master engine, direction=read (device -> memory).
+    ioports.write(bm_base + 8, 1, 0x09);
+
+    // DMA must not run until PCI Bus Master Enable is set.
+    ide.borrow_mut().tick(&mut mem);
+    assert!(!ide.borrow().controller.secondary_irq_pending());
+    let bm_st = ioports.read(bm_base + 8 + 2, 1) as u8;
+    assert_eq!(bm_st & 0x07, 0x00);
+
+    let mut out = vec![0u8; 2048];
+    mem.read_physical(dma_buf, &mut out);
+    assert!(out.iter().all(|&b| b == 0xFF));
+
+    // Enable bus mastering and tick again; DMA should now complete.
+    ide.borrow_mut().config_mut().set_command(0x0005);
+    ide.borrow_mut().tick(&mut mem);
+
+    let bm_st = ioports.read(bm_base + 8 + 2, 1) as u8;
+    assert_eq!(bm_st & 0x07, 0x04);
+    assert!(ide.borrow().controller.secondary_irq_pending());
+
+    mem.read_physical(dma_buf, &mut out);
+    assert_eq!(out, expected);
+
+    let _ = ioports.read(SECONDARY_PORTS.cmd_base + 7, 1);
+    assert!(!ide.borrow().controller.secondary_irq_pending());
+}
+
+#[test]
 fn atapi_dma_succeeds_when_bus_master_is_started_before_command_is_issued() {
     let mut iso = MemIso::new(1);
     let expected: Vec<u8> = (0..2048u32)
