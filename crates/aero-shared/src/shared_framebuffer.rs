@@ -493,7 +493,7 @@ impl SharedFramebufferWriter {
     /// 1. `bufN_frame_seq = new_seq`
     /// 2. `active_index = N`
     /// 3. `frame_seq = new_seq` (last; used as the `Atomics.wait` address)
-    /// 4. `frame_dirty = 1`
+    /// 4. `frame_dirty = 1` (consumer may clear after it is finished copying/presenting)
     pub fn write_frame<F>(&self, f: F) -> u32
     where
         F: FnOnce(&mut [u8], Option<&mut [u32]>, SharedFramebufferLayout),

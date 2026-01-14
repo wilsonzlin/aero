@@ -149,6 +149,24 @@ impl FrameSource {
         self.shared
     }
 
+    /// Clear the shared framebuffer `frame_dirty` flag for a published frame.
+    ///
+    /// `frame_dirty` is a producer→consumer "new frame available" flag; consumers may clear it as a
+    /// best-effort acknowledgement once they are finished reading/copying the active buffer.
+    ///
+    /// This is **optional**, but enables producers to detect consumer liveness and can be used by
+    /// producers to throttle publishing (avoiding overwriting a buffer that is still being read).
+    ///
+    /// This method is sequence-guarded: it will only clear `frame_dirty` when the currently
+    /// published `frame_seq` matches `seq`, so callers won't accidentally acknowledge a newer frame.
+    pub fn ack_frame(&self, seq: u32) {
+        let header = self.shared.header();
+        if header.frame_seq.load(Ordering::SeqCst) != seq {
+            return;
+        }
+        header.frame_dirty.store(0, Ordering::SeqCst);
+    }
+
     pub fn poll_frame(&mut self) -> Option<FrameView<'_>> {
         let header = self.shared.header();
         let seq = header.frame_seq.load(Ordering::SeqCst);
@@ -161,10 +179,10 @@ impl FrameSource {
         // (e.g. `active_index` out of range) by clamping it to the valid slot range.
         let active_index = (header.active_index.load(Ordering::SeqCst) & 1) as usize;
         let active_buf_seq = header.buffer_frame_seq(active_index).load(Ordering::SeqCst);
-
-        // Clear the "new frame" flag. The CPU sets this to 1 on publish; clearing it
-        // is optional but allows basic monitoring of consumer liveness.
-        header.frame_dirty.store(0, Ordering::SeqCst);
+        // Note: do not clear `frame_dirty` here. `FrameView` exposes the active buffer by reference,
+        // so clearing early would allow throttled producers to re-use (and overwrite) the buffer
+        // while the caller is still reading it. Call `FrameSource::ack_frame(frame.seq)` once the
+        // frame has been fully consumed.
 
         let pixels = self.shared.framebuffer(active_index);
         let layout = self.shared.layout();
