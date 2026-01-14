@@ -288,8 +288,8 @@ Installs any certificate file(s) shipped under `certs\` (`*.cer`, `*.crt`, `*.p7
 
 This step is policy-driven:
 
-- If `signing_policy=test` (or certificate files are present), `setup.cmd` installs them.
-- If no certificate files are present and `signing_policy` does not require them, `setup.cmd` logs and continues.
+- If `signing_policy=test`, `setup.cmd` installs certificate file(s) from `certs\` (required for test-signed/custom-signed driver packages).
+- If `signing_policy=production` or `signing_policy=none`, `setup.cmd` does **not** install certificates by default, even if `certs\` contains files (it warns and ignores them). Use `setup.cmd /installcerts` only for advanced/debug scenarios.
 
 - **Trusted Root Certification Authorities**
 - **Trusted Publishers**
@@ -328,7 +328,7 @@ If `setup.cmd` fails (or you prefer to install components manually), you can typ
 
 If the Guest Tools media includes certificate file(s) (commonly under `X:\certs\` as `.cer`, `.crt`, or `.p7b`), import them.
 
-If your Guest Tools media has `manifest.json` `signing_policy=none`, it may ship **no** certificate files and this step is typically unnecessary (WHQL/production-signed drivers).
+If your Guest Tools media has `manifest.json` `signing_policy=production` or `signing_policy=none`, it should ship **no** certificate files and this step is typically unnecessary (WHQL/production-signed drivers).
 
 From an elevated Command Prompt:
 
