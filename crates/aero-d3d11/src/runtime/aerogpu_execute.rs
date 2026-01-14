@@ -8,21 +8,22 @@ use aero_gpu::indirect::{DrawIndexedIndirectArgs, DrawIndirectArgs};
 use aero_gpu::passthrough_vs::PassthroughVertexShaderKey;
 use aero_gpu::pipeline_cache::{PipelineCache, PipelineCacheConfig};
 use aero_gpu::pipeline_key::{
-    ColorTargetKey, RenderPipelineKey, ShaderHash, ShaderStage, VertexAttributeKey,
-    VertexBufferLayoutKey,
+    ColorTargetKey, ComputePipelineKey, PipelineLayoutKey, RenderPipelineKey, ShaderHash, ShaderStage,
+    VertexAttributeKey, VertexBufferLayoutKey,
 };
 use aero_gpu::stats::PipelineCacheStats;
 use aero_gpu::GpuCapabilities;
 use anyhow::{anyhow, bail, Context, Result};
 
 use crate::input_layout::{
-    fnv1a_32, map_layout_to_shader_locations_compact, InputLayoutBinding, InputLayoutDesc,
-    VertexBufferLayoutOwned, VsInputSignatureElement, MAX_INPUT_SLOTS,
+    fnv1a_32, map_layout_to_shader_locations_compact, DxgiFormatComponentType, InputLayoutBinding,
+    InputLayoutDesc, VertexBufferLayoutOwned, VsInputSignatureElement, MAX_INPUT_SLOTS,
 };
 use crate::wgsl_bootstrap::translate_sm4_to_wgsl_bootstrap;
 use crate::{
     parse_signatures, translate_sm4_module_to_wgsl, DxbcFile, ShaderReflection, Sm4Program,
 };
+use crate::binding_model::EXPANDED_VERTEX_MAX_VARYINGS;
 
 use super::aerogpu_state::{
     AerogpuHandle, BlendState, D3D11ShadowState, DepthStencilState, IndexBufferBinding,
@@ -69,6 +70,19 @@ pub struct ShaderResource {
 }
 
 #[derive(Debug, Clone)]
+pub struct GeometryShaderResource {
+    pub wgsl: String,
+    pub hash: ShaderHash,
+    pub reflection: ShaderReflection,
+    /// Number of vertices per input primitive declared by the GS (`dcl_inputprimitive`).
+    pub verts_per_primitive: u32,
+    /// Max number of vertices the GS may emit per primitive (`dcl_maxvertexcount`).
+    pub max_output_vertices: u32,
+    /// Number of input registers (`v#[]`) referenced by the GS.
+    pub input_reg_count: u32,
+}
+
+#[derive(Debug, Clone)]
 pub struct InputLayoutResource {
     layout: InputLayoutDesc,
 }
@@ -79,11 +93,40 @@ pub struct AerogpuResources {
     textures: HashMap<AerogpuHandle, TextureResource>,
     samplers: HashMap<AerogpuHandle, aero_gpu::bindings::samplers::CachedSampler>,
     shaders: HashMap<AerogpuHandle, ShaderResource>,
+    gs_shaders: HashMap<AerogpuHandle, GeometryShaderResource>,
     input_layouts: HashMap<AerogpuHandle, InputLayoutResource>,
 }
 
 const DEFAULT_BIND_GROUP_CACHE_CAPACITY: usize = 4096;
 const DUMMY_UNIFORM_SIZE_BYTES: u64 = 4096 * 16;
+
+/// Fixed expanded-geometry passthrough vertex shader used for geometry-shader emulation draws.
+///
+/// The GS prepass writes vertices in the same format as `runtime/gs_translate`:
+/// - `@location(0)` = clip-space position (`o0`)
+/// - `@location(1)` = first varying register (`o1`)
+///
+/// The shader forwards `o1` as `@location(1)` so it can be linked/trimmed against the bound pixel
+/// shader's input interface.
+const GS_EXPANDED_DRAW_PASSTHROUGH_VS_WGSL: &str = r#"
+struct VsIn {
+    @location(0) v0: vec4<f32>,
+    @location(1) v1: vec4<f32>,
+};
+
+struct VsOut {
+    @builtin(position) pos: vec4<f32>,
+    @location(1) o1: vec4<f32>,
+};
+
+@vertex
+fn vs_main(input: VsIn) -> VsOut {
+    var out: VsOut;
+    out.pos = input.v0;
+    out.o1 = input.v1;
+    return out;
+}
+"#;
 
 /// A minimal `aerogpu_cmd`-style executor focused on D3D10/11 rendering.
 ///
@@ -93,6 +136,7 @@ const DUMMY_UNIFORM_SIZE_BYTES: u64 = 4096 * 16;
 pub struct AerogpuCmdRuntime {
     device: wgpu::Device,
     queue: wgpu::Queue,
+    supports_compute: bool,
     supports_indirect_execution: bool,
 
     pub state: D3D11ShadowState,
@@ -266,6 +310,7 @@ impl AerogpuCmdRuntime {
         Ok(Self {
             device,
             queue,
+            supports_compute,
             supports_indirect_execution,
             state: D3D11ShadowState::default(),
             resources: AerogpuResources::default(),
@@ -295,6 +340,10 @@ impl AerogpuCmdRuntime {
         self.supports_indirect_execution
     }
 
+    pub fn supports_compute(&self) -> bool {
+        self.supports_compute
+    }
+
     pub fn poll_wait(&self) {
         #[cfg(not(target_arch = "wasm32"))]
         self.device.poll(wgpu::Maintain::Wait);
@@ -317,7 +366,14 @@ impl AerogpuCmdRuntime {
         if self.next_buffer_id == 0 {
             self.next_buffer_id = 1;
         }
-
+        // Geometry shader emulation (VS-as-compute + GS-as-compute) requires binding IA buffers as
+        // storage buffers. Some WebGPU backends (e.g. wgpu-GL) do not support compute at all; in
+        // that case, avoid adding STORAGE usage to keep buffer creation compatible.
+        let usage = if self.supports_compute {
+            usage | wgpu::BufferUsages::STORAGE
+        } else {
+            usage
+        };
         let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("aero-d3d11 aerogpu buffer"),
             size,
@@ -522,16 +578,11 @@ impl AerogpuCmdRuntime {
         }
 
         let stage = match program.stage {
-            crate::ShaderStage::Vertex => ShaderStage::Vertex,
-            crate::ShaderStage::Pixel => ShaderStage::Fragment,
-            // Geometry/hull/domain stages are not supported by this `AerogpuCmdRuntime` render-only
-            // executor yet.
-            //
-            // Note: GS emulation via compute exists elsewhere (see `runtime/aerogpu_cmd_executor.rs`),
-            // but it is not wired through this runtime.
-            crate::ShaderStage::Geometry
-            | crate::ShaderStage::Hull
-            | crate::ShaderStage::Domain => {
+            crate::ShaderStage::Vertex => Some(ShaderStage::Vertex),
+            crate::ShaderStage::Pixel => Some(ShaderStage::Fragment),
+            crate::ShaderStage::Geometry => None,
+            // Hull/domain stages are still accepted-but-ignored in this minimal runtime.
+            crate::ShaderStage::Hull | crate::ShaderStage::Domain => {
                 eprintln!(
                     "aero-d3d11 aerogpu_cmd_runtime: ignoring unsupported shader stage {:?} for handle {}",
                     program.stage, handle
@@ -568,6 +619,48 @@ impl AerogpuCmdRuntime {
                 }
             }
         }
+
+        if program.stage == crate::ShaderStage::Geometry {
+            let module = crate::sm4::decode_program(&program).context("decode SM4/5 token stream")?;
+            let prepass =
+                super::gs_translate::translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
+                    &module,
+                    "cs_main",
+                )
+                .map_err(|e| anyhow!(e))?;
+
+            // Reflect resource bindings using the shared D3D11 binding model (GS resources live in
+            // `@group(3)` and are visible to compute).
+            let bindings = crate::shader_translate::reflect_resource_bindings(&module)
+                .context("reflect GS resource bindings")?;
+            let reflection = ShaderReflection {
+                bindings,
+                ..Default::default()
+            };
+
+            // Register into the shared PipelineCache shader-module cache as a compute shader.
+            let (hash, _module) = self.pipelines.get_or_create_shader_module(
+                &self.device,
+                ShaderStage::Compute,
+                &prepass.wgsl,
+                Some("aerogpu geometry shader prepass CS"),
+            );
+
+            self.resources.gs_shaders.insert(
+                handle,
+                GeometryShaderResource {
+                    wgsl: prepass.wgsl,
+                    hash,
+                    reflection,
+                    verts_per_primitive: prepass.info.input_verts_per_primitive,
+                    max_output_vertices: prepass.info.max_output_vertex_count,
+                    input_reg_count: prepass.info.input_reg_count,
+                },
+            );
+            return Ok(());
+        }
+
+        let stage = stage.expect("non-GS stages handled above");
 
         let signature_driven = signatures.isgn.is_some() && signatures.osgn.is_some();
         let (wgsl, reflection, vs_input_signature) = if signature_driven {
@@ -635,12 +728,6 @@ impl AerogpuCmdRuntime {
         self.state.vs = vs;
         self.state.gs = gs;
         self.state.ps = ps;
-
-        if let Some(handle) = gs {
-            eprintln!(
-                "aero-d3d11 aerogpu_cmd_runtime: geometry shader {handle} bound but this runtime does not execute GS; ignoring"
-            );
-        }
     }
 
     pub fn set_input_layout(&mut self, layout: Option<AerogpuHandle>) {
@@ -848,11 +935,8 @@ impl AerogpuCmdRuntime {
             .state
             .ps
             .ok_or_else(|| anyhow!("draw without a bound PS"))?;
-
-        if let Some(handle) = self.state.gs {
-            eprintln!(
-                "aero-d3d11 aerogpu_cmd_runtime: geometry shader {handle} is ignored by this runtime"
-            );
+        if let Some(gs_handle) = self.state.gs {
+            return self.draw_internal_with_gs(kind, vs_handle, gs_handle, ps_handle);
         }
 
         let vs = self
@@ -1412,6 +1496,979 @@ impl AerogpuCmdRuntime {
         drop(pass);
         self.queue.submit([encoder.finish()]);
 
+        Ok(())
+    }
+
+    fn draw_internal_with_gs(
+        &mut self,
+        kind: DrawKind,
+        vs_handle: AerogpuHandle,
+        gs_handle: AerogpuHandle,
+        ps_handle: AerogpuHandle,
+    ) -> Result<()> {
+        if !self.supports_compute {
+            bail!("geometry shader emulation requires compute shaders, but this wgpu backend does not support compute");
+        }
+        if !self.supports_indirect_execution {
+            bail!("geometry shader emulation requires indirect draws, but this wgpu backend does not support indirect execution");
+        }
+
+        let vs = self
+            .resources
+            .shaders
+            .get(&vs_handle)
+            .ok_or_else(|| anyhow!("unknown VS handle {vs_handle}"))?;
+        let ps = self
+            .resources
+            .shaders
+            .get(&ps_handle)
+            .ok_or_else(|| anyhow!("unknown PS handle {ps_handle}"))?;
+        let gs = self
+            .resources
+            .gs_shaders
+            .get(&gs_handle)
+            .ok_or_else(|| anyhow!("unknown GS handle {gs_handle}"))?;
+
+        if vs.stage != ShaderStage::Vertex {
+            bail!("shader {vs_handle} is not a vertex shader");
+        }
+        if ps.stage != ShaderStage::Fragment {
+            bail!("shader {ps_handle} is not a pixel/fragment shader");
+        }
+
+        let (element_count, instance_count, draw_params) = match kind {
+            DrawKind::NonIndexed(args) => (
+                args.vertex_count,
+                args.instance_count,
+                super::vertex_pulling::VertexPullingDrawParams {
+                    first_vertex: args.first_vertex,
+                    first_instance: args.first_instance,
+                    base_vertex: 0,
+                    first_index: 0,
+                },
+            ),
+            DrawKind::Indexed(_) => {
+                bail!("geometry shader emulation in AerogpuCmdRuntime does not support indexed draws yet");
+            }
+        };
+
+        if element_count == 0 || instance_count == 0 {
+            return Ok(());
+        }
+
+        let primitive_topology = self.state.primitive_topology;
+        let verts_per_primitive = match primitive_topology {
+            PrimitiveTopology::PointList => 1u32,
+            PrimitiveTopology::LineList | PrimitiveTopology::LineStrip => 2u32,
+            PrimitiveTopology::TriangleList
+            | PrimitiveTopology::TriangleStrip
+            | PrimitiveTopology::TriangleFan => 3u32,
+        };
+        let primitive_count = primitive_count_from_element_count(primitive_topology, element_count);
+        if primitive_count == 0 {
+            return Ok(());
+        }
+
+        if verts_per_primitive != gs.verts_per_primitive {
+            bail!(
+                "geometry shader input primitive mismatch: IA topology {:?} implies {verts_per_primitive} verts/primitive, but GS expects {} verts/primitive",
+                primitive_topology,
+                gs.verts_per_primitive
+            );
+        }
+
+        // Build attachments and validate render target state early (mirrors the normal draw path).
+        let (color_attachments, color_target_keys, color_size) =
+            build_color_attachments(&self.resources, &self.state)?;
+        let (depth_attachment, depth_target_key, depth_state, depth_size) =
+            build_depth_attachment(&self.resources, &self.state)?;
+        let target_size = color_size
+            .or(depth_size)
+            .ok_or_else(|| anyhow!("draw without bound render targets"))?;
+
+        // ---------------------------------------------------------------------
+        // VS-as-compute: populate GS input payload (`gs_inputs`).
+        // ---------------------------------------------------------------------
+        let Some(layout_handle) = self.state.input_layout else {
+            bail!("geometry shader emulation requires an input layout (IASetInputLayout)");
+        };
+        let layout = self
+            .resources
+            .input_layouts
+            .get(&layout_handle)
+            .ok_or_else(|| anyhow!("unknown input layout handle {layout_handle}"))?;
+
+        let mut slot_strides = vec![0u32; MAX_INPUT_SLOTS as usize];
+        for (slot, binding) in self
+            .state
+            .vertex_buffers
+            .iter()
+            .enumerate()
+            .take(slot_strides.len())
+        {
+            if let Some(binding) = binding {
+                slot_strides[slot] = binding.stride;
+            }
+        }
+        let binding = InputLayoutBinding::new(&layout.layout, &slot_strides);
+
+        // If the VS signature is missing (bootstrap translation path), fall back to location-based
+        // packing so vertex pulling can still load attributes. This mirrors `build_vertex_state`.
+        let fallback_sig;
+        let sig = if vs.vs_input_signature.is_empty() {
+            fallback_sig = build_fallback_vs_signature(&layout.layout);
+            fallback_sig.as_slice()
+        } else {
+            vs.vs_input_signature.as_slice()
+        };
+
+        let pulling =
+            super::vertex_pulling::VertexPullingLayout::new(&binding, sig).map_err(|e| {
+                anyhow!(
+                    "failed to build vertex pulling layout for input layout {layout_handle}: {e}"
+                )
+            })?;
+
+        let mut slots: Vec<super::vertex_pulling::VertexPullingSlot> =
+            Vec::with_capacity(pulling.pulling_slot_to_d3d_slot.len());
+        let mut vertex_buffers: Vec<&wgpu::Buffer> =
+            Vec::with_capacity(pulling.pulling_slot_to_d3d_slot.len());
+        for &d3d_slot in &pulling.pulling_slot_to_d3d_slot {
+            let vb = self
+                .state
+                .vertex_buffers
+                .get(d3d_slot as usize)
+                .and_then(|v| *v)
+                .ok_or_else(|| anyhow!("missing vertex buffer binding for slot {d3d_slot}"))?;
+            let base_offset_bytes: u32 = vb.offset.try_into().map_err(|_| {
+                anyhow!(
+                    "vertex buffer slot {d3d_slot} offset {} out of range",
+                    vb.offset
+                )
+            })?;
+            let buf = self
+                .resources
+                .buffers
+                .get(&vb.buffer)
+                .ok_or_else(|| anyhow!("unknown vertex buffer {}", vb.buffer))?;
+            slots.push(super::vertex_pulling::VertexPullingSlot {
+                base_offset_bytes,
+                stride_bytes: vb.stride,
+            });
+            vertex_buffers.push(&buf.buffer);
+        }
+
+        let uniform_bytes = pulling.pack_uniform_bytes(&slots, draw_params);
+        let pulling_uniform = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("aero-d3d11 GS prepass vertex pulling uniform"),
+            size: uniform_bytes.len() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        self.queue.write_buffer(&pulling_uniform, 0, &uniform_bytes);
+
+        // Allocate GS input payload buffer.
+        let gs_inputs_len = u64::from(primitive_count)
+            .checked_mul(u64::from(verts_per_primitive))
+            .and_then(|v| v.checked_mul(u64::from(gs.input_reg_count)))
+            .ok_or_else(|| anyhow!("geometry prepass gs_inputs element count overflow"))?;
+        let gs_inputs_size = gs_inputs_len
+            .checked_mul(16)
+            .ok_or_else(|| anyhow!("geometry prepass gs_inputs buffer size overflow"))?;
+        let gs_inputs = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("aero-d3d11 GS prepass inputs"),
+            size: gs_inputs_size,
+            usage: wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+
+        // ---------------------------------------------------------------------
+        // GS-as-compute: expand geometry into (expanded vertices, expanded indices, indirect args).
+        // ---------------------------------------------------------------------
+        // `runtime::gs_translate` emits expanded vertices in the canonical packed format used by
+        // `runtime::wgsl_link::generate_passthrough_vs_wgsl`: position + 32 `vec4<f32>` varyings.
+        const EXPANDED_VERTEX_STRIDE_BYTES: u64 = (1u64 + EXPANDED_VERTEX_MAX_VARYINGS as u64) * 16;
+
+        let expanded_vertex_count = u64::from(primitive_count)
+            .checked_mul(u64::from(gs.max_output_vertices))
+            .ok_or_else(|| anyhow!("geometry prepass expanded vertex count overflow"))?;
+        let expanded_vertex_size = expanded_vertex_count
+            .checked_mul(EXPANDED_VERTEX_STRIDE_BYTES)
+            .ok_or_else(|| anyhow!("geometry prepass expanded vertex buffer size overflow"))?;
+
+        let max_tris_per_prim = gs.max_output_vertices.saturating_sub(2);
+        let expanded_index_count = u64::from(primitive_count)
+            .checked_mul(u64::from(max_tris_per_prim))
+            .and_then(|v| v.checked_mul(3))
+            .ok_or_else(|| anyhow!("geometry prepass expanded index count overflow"))?;
+        let expanded_index_size = expanded_index_count
+            .checked_mul(4)
+            .ok_or_else(|| anyhow!("geometry prepass expanded index buffer size overflow"))?;
+
+        let expanded_vertices = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("aero-d3d11 GS prepass expanded vertices"),
+            size: expanded_vertex_size.max(EXPANDED_VERTEX_STRIDE_BYTES),
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+        let expanded_indices = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("aero-d3d11 GS prepass expanded indices"),
+            size: expanded_index_size.max(4),
+            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+        let indirect_args = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("aero-d3d11 GS prepass indirect args"),
+            // `runtime::gs_translate` stores the GS prepass counters after the indirect args.
+            // Total size: DrawIndexedIndirectArgs (20 bytes) + counters (16 bytes).
+            size: DrawIndexedIndirectArgs::SIZE_BYTES + 16,
+            usage: wgpu::BufferUsages::INDIRECT
+                | wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let mut params_bytes = [0u8; 16];
+        params_bytes[0..4].copy_from_slice(&primitive_count.to_le_bytes());
+        params_bytes[4..8].copy_from_slice(&instance_count.to_le_bytes());
+        params_bytes[8..12].copy_from_slice(&draw_params.first_instance.to_le_bytes());
+        let gs_params = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("aero-d3d11 GS prepass params"),
+            size: params_bytes.len() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        self.queue.write_buffer(&gs_params, 0, &params_bytes);
+
+        // ---------------------------------------------------------------------
+        // If indirect-first-instance is unsupported, we can still draw if first_instance==0.
+        let indirect_first_instance_supported = self
+            .device
+            .features()
+            .contains(wgpu::Features::INDIRECT_FIRST_INSTANCE);
+        if draw_params.first_instance != 0 && !indirect_first_instance_supported {
+            bail!("geometry shader emulation requires INDIRECT_FIRST_INSTANCE for first_instance != 0");
+        }
+
+        // Clear GS prepass counters (stored after the indirect args).
+        self.queue.write_buffer(
+            &indirect_args,
+            DrawIndexedIndirectArgs::SIZE_BYTES,
+            &[0u8; 16],
+        );
+
+        // ---------------------------------------------------------------------
+        // Compile pipelines + bind groups.
+        // ---------------------------------------------------------------------
+        let vs_prepass_wgsl = build_vs_as_compute_gs_input_wgsl(
+            &pulling,
+            primitive_topology,
+            primitive_count,
+            verts_per_primitive,
+            gs.input_reg_count,
+            sig,
+        );
+        let (vs_cs_hash, _module) = self.pipelines.get_or_create_shader_module(
+            &self.device,
+            ShaderStage::Compute,
+            &vs_prepass_wgsl,
+            Some("aero-d3d11 VS-as-compute (GS prepass)"),
+        );
+        // Bind group 0: VS-as-compute output (gs_inputs).
+        let fill_bgl_entries = [wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: false },
+                has_dynamic_offset: false,
+                min_binding_size: wgpu::BufferSize::new(gs_inputs_size.max(16)),
+            },
+            count: None,
+        }];
+        let fill_bgl = self
+            .bind_group_layout_cache
+            .get_or_create(&self.device, &fill_bgl_entries);
+        let fill_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("aero-d3d11 GS prepass input fill bind group"),
+            layout: fill_bgl.layout.as_ref(),
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &gs_inputs,
+                    offset: 0,
+                    size: wgpu::BufferSize::new(gs_inputs_size.max(16)),
+                }),
+            }],
+        });
+
+        // Bind group 3: vertex pulling inputs.
+        let vp_bgl_entries = pulling.bind_group_layout_entries();
+        let vp_bgl = self
+            .bind_group_layout_cache
+            .get_or_create(&self.device, &vp_bgl_entries);
+        let mut vp_bg_entries: Vec<wgpu::BindGroupEntry<'_>> =
+            Vec::with_capacity(vertex_buffers.len() + 1);
+        for (slot, buf) in vertex_buffers.iter().enumerate() {
+            vp_bg_entries.push(wgpu::BindGroupEntry {
+                binding: super::vertex_pulling::VERTEX_PULLING_VERTEX_BUFFER_BINDING_BASE
+                    + slot as u32,
+                resource: buf.as_entire_binding(),
+            });
+        }
+        vp_bg_entries.push(wgpu::BindGroupEntry {
+            binding: super::vertex_pulling::VERTEX_PULLING_UNIFORM_BINDING,
+            resource: pulling_uniform.as_entire_binding(),
+        });
+        let vp_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("aero-d3d11 GS prepass vertex pulling bind group"),
+            layout: vp_bgl.layout.as_ref(),
+            entries: &vp_bg_entries,
+        });
+
+        let empty_bgl = self.bind_group_layout_cache.get_or_create(&self.device, &[]);
+        let empty_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("aero-d3d11 empty bind group"),
+            layout: empty_bgl.layout.as_ref(),
+            entries: &[],
+        });
+
+        // VS-as-compute pipeline layout: group0(gs_inputs) + group3(vertex pulling).
+        let fill_layout_key = PipelineLayoutKey {
+            bind_group_layout_hashes: vec![
+                fill_bgl.hash,
+                empty_bgl.hash,
+                empty_bgl.hash,
+                vp_bgl.hash,
+            ],
+        };
+        let fill_pipeline_layout = {
+            let device = &self.device;
+            let cache = &mut self.pipeline_layout_cache;
+            cache.get_or_create_with(&fill_layout_key, || {
+                let layouts: [&wgpu::BindGroupLayout; 4] = [
+                    fill_bgl.layout.as_ref(),
+                    empty_bgl.layout.as_ref(),
+                    empty_bgl.layout.as_ref(),
+                    vp_bgl.layout.as_ref(),
+                ];
+                Arc::new(device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("aero-d3d11 GS prepass fill pipeline layout"),
+                    bind_group_layouts: &layouts,
+                    push_constant_ranges: &[],
+                }))
+            })
+        };
+        let fill_cs_key = ComputePipelineKey {
+            shader: vs_cs_hash,
+            layout: fill_layout_key.clone(),
+            entry_point: "cs_main",
+        };
+
+        // GS prepass bind group 0: internal expansion outputs + parameters.
+        // Matches `runtime::gs_translate`:
+        // - @group(0) @binding(0) out_vertices
+        // - @group(0) @binding(1) out_indices
+        // - @group(0) @binding(2) out_state (indirect args + counters)
+        // - @group(0) @binding(4) params
+        // - @group(0) @binding(5) gs_inputs
+        const GS_BINDING_OUT_VERTICES: u32 = 0;
+        const GS_BINDING_OUT_INDICES: u32 = 1;
+        const GS_BINDING_OUT_STATE: u32 = 2;
+        const GS_BINDING_PARAMS: u32 = 4;
+        const GS_BINDING_INPUTS: u32 = 5;
+
+        let gs_internal_bgl_entries = [
+            wgpu::BindGroupLayoutEntry {
+                binding: GS_BINDING_OUT_VERTICES,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(EXPANDED_VERTEX_STRIDE_BYTES),
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: GS_BINDING_OUT_INDICES,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(4),
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: GS_BINDING_OUT_STATE,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(DrawIndexedIndirectArgs::SIZE_BYTES + 16),
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: GS_BINDING_PARAMS,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(16),
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: GS_BINDING_INPUTS,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(gs_inputs_size.max(16)),
+                },
+                count: None,
+            },
+        ];
+        let gs_internal_bgl = self
+            .bind_group_layout_cache
+            .get_or_create(&self.device, &gs_internal_bgl_entries);
+        let gs_internal_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("aero-d3d11 GS prepass internal bind group"),
+            layout: gs_internal_bgl.layout.as_ref(),
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: GS_BINDING_OUT_VERTICES,
+                    resource: expanded_vertices.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: GS_BINDING_OUT_INDICES,
+                    resource: expanded_indices.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: GS_BINDING_OUT_STATE,
+                    resource: indirect_args.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: GS_BINDING_PARAMS,
+                    resource: gs_params.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: GS_BINDING_INPUTS,
+                    resource: gs_inputs.as_entire_binding(),
+                },
+            ],
+        });
+
+        // GS shader resources live in `@group(3)` per the shared D3D11 binding model.
+        let mut gs_stage_bgl = empty_bgl.clone();
+        let mut gs_stage_bindings: Vec<crate::Binding> = Vec::new();
+        if !gs.reflection.bindings.is_empty() {
+            let stage_info = reflection_bindings::build_pipeline_bindings_info(
+                &self.device,
+                &mut self.bind_group_layout_cache,
+                [reflection_bindings::ShaderBindingSet::Guest(gs.reflection.bindings.as_slice())],
+                reflection_bindings::BindGroupIndexValidation::GuestShaders,
+            )?;
+            if stage_info.group_layouts.len() > 3 {
+                gs_stage_bgl = stage_info.group_layouts[3].clone();
+                gs_stage_bindings = stage_info.group_bindings[3].clone();
+            }
+        }
+        let gs_stage_bg = if gs_stage_bindings.is_empty() {
+            None
+        } else {
+            let provider = RuntimeBindGroupProvider {
+                resources: &self.resources,
+                stage_state: Some(&self.state.bindings.gs),
+                dummy_uniform: &self.dummy_uniform,
+                dummy_storage: &self.dummy_storage,
+                dummy_texture_view: &self.dummy_texture_view,
+                default_sampler: &self.default_sampler,
+            };
+            Some(reflection_bindings::build_bind_group(
+                &self.device,
+                &mut self.bind_group_cache,
+                &gs_stage_bgl,
+                &gs_stage_bindings,
+                &provider,
+            )?)
+        };
+
+        // GS prepass pipeline layout: group0(internal) + group3(stage resources).
+        let gs_layout_key = PipelineLayoutKey {
+            bind_group_layout_hashes: vec![
+                gs_internal_bgl.hash,
+                empty_bgl.hash,
+                empty_bgl.hash,
+                gs_stage_bgl.hash,
+            ],
+        };
+        let gs_pipeline_layout = {
+            let device = &self.device;
+            let cache = &mut self.pipeline_layout_cache;
+            let gs_stage_layout = gs_stage_bgl.layout.clone();
+            cache.get_or_create_with(&gs_layout_key, || {
+                let layouts: [&wgpu::BindGroupLayout; 4] = [
+                    gs_internal_bgl.layout.as_ref(),
+                    empty_bgl.layout.as_ref(),
+                    empty_bgl.layout.as_ref(),
+                    gs_stage_layout.as_ref(),
+                ];
+                Arc::new(device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("aero-d3d11 GS prepass pipeline layout"),
+                    bind_group_layouts: &layouts,
+                    push_constant_ranges: &[],
+                }))
+            })
+        };
+        let gs_cs_key = ComputePipelineKey {
+            shader: gs.hash,
+            layout: gs_layout_key.clone(),
+            entry_point: "cs_main",
+        };
+        let gs_finalize_key = ComputePipelineKey {
+            shader: gs.hash,
+            layout: gs_layout_key.clone(),
+            entry_point: "cs_finalize",
+        };
+
+        // ---------------------------------------------------------------------
+        // Encode passes.
+        // ---------------------------------------------------------------------
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("aero-d3d11 aerogpu GS prepass encoder"),
+            });
+
+        {
+            let fill_pipeline = self
+                .pipelines
+                .get_or_create_compute_pipeline(&self.device, fill_cs_key, |device, cs| {
+                    device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                        label: Some("aero-d3d11 VS-as-compute pipeline (GS prepass fill)"),
+                        layout: Some(fill_pipeline_layout.as_ref()),
+                        module: cs,
+                        entry_point: "cs_main",
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    })
+                })
+                .map_err(|e| anyhow!("wgpu pipeline cache: {e:?}"))?;
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("aero-d3d11 VS-as-compute pass (GS prepass fill)"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(fill_pipeline);
+            pass.set_bind_group(0, &fill_bg, &[]);
+            for group in 1..super::vertex_pulling::VERTEX_PULLING_GROUP {
+                pass.set_bind_group(group, &empty_bg, &[]);
+            }
+            pass.set_bind_group(super::vertex_pulling::VERTEX_PULLING_GROUP, &vp_bg, &[]);
+            pass.dispatch_workgroups(primitive_count * verts_per_primitive, 1, 1);
+        }
+
+        {
+            let gs_cs_pipeline = self
+                .pipelines
+                .get_or_create_compute_pipeline(&self.device, gs_cs_key, |device, cs| {
+                    device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                        label: Some("aero-d3d11 GS-as-compute pipeline"),
+                        layout: Some(gs_pipeline_layout.as_ref()),
+                        module: cs,
+                        entry_point: "cs_main",
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    })
+                })
+                .map_err(|e| anyhow!("wgpu pipeline cache: {e:?}"))?;
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("aero-d3d11 GS-as-compute pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(gs_cs_pipeline);
+            pass.set_bind_group(0, &gs_internal_bg, &[]);
+            pass.set_bind_group(1, &empty_bg, &[]);
+            pass.set_bind_group(2, &empty_bg, &[]);
+            if let Some(bg) = gs_stage_bg.as_ref() {
+                pass.set_bind_group(3, bg.as_ref(), &[]);
+            } else {
+                pass.set_bind_group(3, &empty_bg, &[]);
+            }
+            pass.dispatch_workgroups(primitive_count, 1, 1);
+        }
+        {
+            let gs_finalize_pipeline = self
+                .pipelines
+                .get_or_create_compute_pipeline(&self.device, gs_finalize_key, |device, cs| {
+                    device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                        label: Some("aero-d3d11 GS finalize pipeline"),
+                        layout: Some(gs_pipeline_layout.as_ref()),
+                        module: cs,
+                        entry_point: "cs_finalize",
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    })
+                })
+                .map_err(|e| anyhow!("wgpu pipeline cache: {e:?}"))?;
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("aero-d3d11 GS finalize pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(gs_finalize_pipeline);
+            pass.set_bind_group(0, &gs_internal_bg, &[]);
+            pass.set_bind_group(1, &empty_bg, &[]);
+            pass.set_bind_group(2, &empty_bg, &[]);
+            if let Some(bg) = gs_stage_bg.as_ref() {
+                pass.set_bind_group(3, bg.as_ref(), &[]);
+            } else {
+                pass.set_bind_group(3, &empty_bg, &[]);
+            }
+            pass.dispatch_workgroups(1, 1, 1);
+        }
+
+        // ---------------------------------------------------------------------
+        // Render pass: consume expanded buffers using a fixed passthrough VS + the bound PS.
+        // ---------------------------------------------------------------------
+        let (vs_base_hash, _module) = self.pipelines.get_or_create_shader_module(
+            &self.device,
+            ShaderStage::Vertex,
+            GS_EXPANDED_DRAW_PASSTHROUGH_VS_WGSL,
+            Some("aero-d3d11 aerogpu GS expanded passthrough VS"),
+        );
+
+        // Link VS/PS interfaces by trimming unused varyings (mirrors the normal pipeline path).
+        let ps_declared_inputs = super::wgsl_link::locations_in_struct(&ps.wgsl, "PsIn")?;
+        let vs_outputs =
+            super::wgsl_link::locations_in_struct(GS_EXPANDED_DRAW_PASSTHROUGH_VS_WGSL, "VsOut")?;
+
+        let mut ps_link_locations = ps_declared_inputs.clone();
+        let mut linked_ps_wgsl = std::borrow::Cow::Borrowed(ps.wgsl.as_str());
+        let ps_missing_locations: BTreeSet<u32> = ps_declared_inputs
+            .difference(&vs_outputs)
+            .copied()
+            .collect();
+        if !ps_missing_locations.is_empty() {
+            let ps_used_locations = super::wgsl_link::referenced_ps_input_locations(&ps.wgsl);
+            let used_missing: Vec<u32> = ps_missing_locations
+                .intersection(&ps_used_locations)
+                .copied()
+                .collect();
+            if let Some(&loc) = used_missing.first() {
+                bail!(
+                    "pixel shader reads @location({loc}), but expanded GS passthrough VS does not output it"
+                );
+            }
+
+            ps_link_locations = ps_declared_inputs
+                .intersection(&vs_outputs)
+                .copied()
+                .collect();
+            if ps_link_locations != ps_declared_inputs {
+                linked_ps_wgsl =
+                    std::borrow::Cow::Owned(super::wgsl_link::trim_ps_inputs_to_locations(
+                        linked_ps_wgsl.as_ref(),
+                        &ps_link_locations,
+                    ));
+            }
+        }
+
+        // Trim fragment outputs to the currently-bound render target slots.
+        let mut keep_output_locations = BTreeSet::new();
+        for (slot, handle) in self.state.render_targets.colors.iter().enumerate() {
+            if handle.is_some() {
+                keep_output_locations.insert(slot as u32);
+            }
+        }
+        let declared_outputs =
+            super::wgsl_link::declared_ps_output_locations(linked_ps_wgsl.as_ref())?;
+        let missing_outputs: BTreeSet<u32> = declared_outputs
+            .difference(&keep_output_locations)
+            .copied()
+            .collect();
+        if !missing_outputs.is_empty() {
+            linked_ps_wgsl = std::borrow::Cow::Owned(super::wgsl_link::trim_ps_outputs_to_locations(
+                linked_ps_wgsl.as_ref(),
+                &keep_output_locations,
+            ));
+        }
+
+        let linked_ps_hash = if linked_ps_wgsl.as_ref() == ps.wgsl.as_str() {
+            ps.hash
+        } else {
+            let (hash, _module) = self.pipelines.get_or_create_shader_module(
+                &self.device,
+                ShaderStage::Fragment,
+                linked_ps_wgsl.as_ref(),
+                Some("aero-d3d11 aerogpu GS expanded linked fragment shader"),
+            );
+            hash
+        };
+
+        let linked_vs_hash = if vs_outputs == ps_link_locations {
+            vs_base_hash
+        } else {
+            let linked_vs_wgsl = super::wgsl_link::trim_vs_outputs_to_locations(
+                GS_EXPANDED_DRAW_PASSTHROUGH_VS_WGSL,
+                &ps_link_locations,
+            );
+            let (hash, _module) = self.pipelines.get_or_create_shader_module(
+                &self.device,
+                ShaderStage::Vertex,
+                &linked_vs_wgsl,
+                Some("aero-d3d11 aerogpu GS expanded linked vertex shader"),
+            );
+            hash
+        };
+
+        // Expanded vertex buffer layout: position (`pos`) plus the full varying array. This draw
+        // path currently only consumes varying register 1 (`o1`) via `@location(1)`.
+        let expanded_layout = VertexBufferLayoutOwned {
+            array_stride: EXPANDED_VERTEX_STRIDE_BYTES,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: vec![
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32x4,
+                    offset: 0,
+                    shader_location: 0,
+                },
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32x4,
+                    // `ExpandedVertex { pos, varyings }` => varyings[1] is at offset
+                    // 16 (pos) + 16*1.
+                    offset: 32,
+                    shader_location: 1,
+                },
+            ],
+        };
+        let vertex_buffer_keys = vec![VertexBufferLayoutKey {
+            array_stride: expanded_layout.array_stride,
+            step_mode: expanded_layout.step_mode,
+            attributes: expanded_layout
+                .attributes
+                .iter()
+                .copied()
+                .map(VertexAttributeKey::from)
+                .collect(),
+        }];
+
+        let pipeline_bindings = reflection_bindings::build_pipeline_bindings_info(
+            &self.device,
+            &mut self.bind_group_layout_cache,
+            [
+                reflection_bindings::ShaderBindingSet::Guest(&[] as &[crate::Binding]),
+                reflection_bindings::ShaderBindingSet::Guest(ps.reflection.bindings.as_slice()),
+            ],
+            reflection_bindings::BindGroupIndexValidation::GuestShaders,
+        )?;
+        let reflection_bindings::PipelineBindingsInfo {
+            layout_key,
+            group_layouts,
+            group_bindings,
+        } = pipeline_bindings;
+
+        let pipeline_layout = {
+            let device = &self.device;
+            let cache = &mut self.pipeline_layout_cache;
+            cache.get_or_create_with(&layout_key, || {
+                let layout_refs: Vec<&wgpu::BindGroupLayout> =
+                    group_layouts.iter().map(|l| l.layout.as_ref()).collect();
+                Arc::new(device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("aero-d3d11 aerogpu GS expanded pipeline layout"),
+                    bind_group_layouts: &layout_refs,
+                    push_constant_ranges: &[],
+                }))
+            })
+        };
+
+        let cull_mode = self.state.rasterizer_state.cull_mode;
+        let front_face = self.state.rasterizer_state.front_face;
+        let key = RenderPipelineKey {
+            vertex_shader: linked_vs_hash,
+            fragment_shader: linked_ps_hash,
+            color_targets: color_target_keys,
+            depth_stencil: depth_target_key,
+            // The compute prepass emits expanded triangle-list geometry.
+            primitive_topology: wgpu::PrimitiveTopology::TriangleList,
+            strip_index_format: None,
+            cull_mode,
+            front_face,
+            vertex_buffers: vertex_buffer_keys,
+            sample_count: 1,
+            layout: layout_key,
+        };
+
+        let blend = self.state.blend_state;
+        let mut color_target_states: Vec<Option<wgpu::ColorTargetState>> = Vec::new();
+        for ct in &key.color_targets {
+            let Some(ct) = ct else {
+                color_target_states.push(None);
+                continue;
+            };
+            color_target_states.push(Some(wgpu::ColorTargetState {
+                format: ct.format,
+                blend: blend.blend,
+                write_mask: ct.write_mask,
+            }));
+        }
+        let depth_stencil_state = depth_state.clone();
+        let expanded_layout_for_pipeline = expanded_layout.clone();
+
+        let pipeline = self.pipelines.get_or_create_render_pipeline(
+            &self.device,
+            key,
+            move |device, vs_module, fs_module| {
+                let pipeline_layout = pipeline_layout.as_ref();
+                let vertex_buffers = [expanded_layout_for_pipeline.as_wgpu()];
+
+                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("aero-d3d11 aerogpu GS expanded render pipeline"),
+                    layout: Some(pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: vs_module,
+                        entry_point: "vs_main",
+                        buffers: &vertex_buffers,
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: fs_module,
+                        entry_point: "fs_main",
+                        targets: &color_target_states,
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        strip_index_format: None,
+                        front_face,
+                        cull_mode,
+                        ..Default::default()
+                    },
+                    depth_stencil: depth_stencil_state,
+                    multisample: wgpu::MultisampleState {
+                        count: 1,
+                        ..Default::default()
+                    },
+                    multiview: None,
+                })
+            },
+        )?;
+
+        let mut bind_groups: Vec<Arc<wgpu::BindGroup>> = Vec::with_capacity(group_layouts.len());
+        for (group_index, (layout, bindings)) in
+            group_layouts.iter().zip(group_bindings.iter()).enumerate()
+        {
+            let stage_state = match group_index as u32 {
+                0 => Some(&self.state.bindings.vs),
+                1 => Some(&self.state.bindings.ps),
+                _ => None,
+            };
+            let provider = RuntimeBindGroupProvider {
+                resources: &self.resources,
+                stage_state,
+                dummy_uniform: &self.dummy_uniform,
+                dummy_storage: &self.dummy_storage,
+                dummy_texture_view: &self.dummy_texture_view,
+                default_sampler: &self.default_sampler,
+            };
+            bind_groups.push(reflection_bindings::build_bind_group(
+                &self.device,
+                &mut self.bind_group_cache,
+                layout,
+                bindings,
+                &provider,
+            )?);
+        }
+
+        let scissor_enabled = self.state.rasterizer_state.scissor_enable;
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("aero-d3d11 aerogpu GS expanded draw pass"),
+            color_attachments: &color_attachments,
+            depth_stencil_attachment: depth_attachment,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+
+        pass.set_pipeline(pipeline);
+        for (group_index, bind_group) in bind_groups.iter().enumerate() {
+            pass.set_bind_group(group_index as u32, bind_group.as_ref(), &[]);
+        }
+
+        // Viewport/scissor are dynamic state; apply on every draw.
+        let mut skip_draw = false;
+        let default_viewport = Viewport {
+            x: 0.0,
+            y: 0.0,
+            width: target_size.0 as f32,
+            height: target_size.1 as f32,
+            min_depth: 0.0,
+            max_depth: 1.0,
+        };
+        let viewport_opt = self.state.viewport;
+        let mut viewport = viewport_opt.unwrap_or(default_viewport);
+        if !viewport.x.is_finite()
+            || !viewport.y.is_finite()
+            || !viewport.width.is_finite()
+            || !viewport.height.is_finite()
+            || !viewport.min_depth.is_finite()
+            || !viewport.max_depth.is_finite()
+        {
+            viewport = default_viewport;
+        }
+
+        let max_w = target_size.0 as f32;
+        let max_h = target_size.1 as f32;
+        let left = viewport.x.max(0.0);
+        let top = viewport.y.max(0.0);
+        let right = (viewport.x + viewport.width).max(0.0).min(max_w);
+        let bottom = (viewport.y + viewport.height).max(0.0).min(max_h);
+        let width = (right - left).max(0.0);
+        let height = (bottom - top).max(0.0);
+
+        let mut viewport_empty = false;
+        if viewport_opt.is_some() && (viewport.width <= 0.0 || viewport.height <= 0.0) {
+            viewport_empty = true;
+        }
+        if !viewport_empty && width > 0.0 && height > 0.0 {
+            let mut min_depth = viewport.min_depth.clamp(0.0, 1.0);
+            let mut max_depth = viewport.max_depth.clamp(0.0, 1.0);
+            if min_depth > max_depth {
+                std::mem::swap(&mut min_depth, &mut max_depth);
+            }
+            pass.set_viewport(left, top, width, height, min_depth, max_depth);
+        } else if viewport_opt.is_some() {
+            viewport_empty = true;
+        }
+
+        let mut scissor_empty = false;
+        if scissor_enabled {
+            if let Some(scissor) = self.state.scissor {
+                let x = scissor.x.min(target_size.0);
+                let y = scissor.y.min(target_size.1);
+                let width = scissor.width.min(target_size.0.saturating_sub(x));
+                let height = scissor.height.min(target_size.1.saturating_sub(y));
+                if width > 0 && height > 0 {
+                    pass.set_scissor_rect(x, y, width, height);
+                } else {
+                    scissor_empty = true;
+                    pass.set_scissor_rect(0, 0, target_size.0, target_size.1);
+                }
+            } else {
+                pass.set_scissor_rect(0, 0, target_size.0, target_size.1);
+            }
+        } else {
+            pass.set_scissor_rect(0, 0, target_size.0, target_size.1);
+        }
+
+        if viewport_empty || scissor_empty {
+            skip_draw = true;
+        }
+
+        pass.set_vertex_buffer(0, expanded_vertices.slice(..));
+        pass.set_index_buffer(expanded_indices.slice(..), wgpu::IndexFormat::Uint32);
+
+        if !skip_draw {
+            pass.draw_indexed_indirect(&indirect_args, 0);
+        }
+
+        drop(pass);
+        self.queue.submit([encoder.finish()]);
         Ok(())
     }
 
@@ -2168,6 +3225,16 @@ fn build_depth_attachment<'a>(
     ))
 }
 
+fn primitive_count_from_element_count(topology: PrimitiveTopology, element_count: u32) -> u32 {
+    match topology {
+        PrimitiveTopology::PointList => element_count,
+        PrimitiveTopology::LineList => element_count / 2,
+        PrimitiveTopology::LineStrip => element_count.saturating_sub(1),
+        PrimitiveTopology::TriangleList => element_count / 3,
+        PrimitiveTopology::TriangleStrip | PrimitiveTopology::TriangleFan => element_count.saturating_sub(2),
+    }
+}
+
 fn map_topology(topology: PrimitiveTopology) -> Result<wgpu::PrimitiveTopology> {
     Ok(match topology {
         PrimitiveTopology::PointList => wgpu::PrimitiveTopology::PointList,
@@ -2177,6 +3244,197 @@ fn map_topology(topology: PrimitiveTopology) -> Result<wgpu::PrimitiveTopology> 
         PrimitiveTopology::TriangleStrip => wgpu::PrimitiveTopology::TriangleStrip,
         PrimitiveTopology::TriangleFan => bail!("TriangleFan is not supported by WebGPU"),
     })
+}
+
+fn build_vs_as_compute_gs_input_wgsl(
+    pulling: &super::vertex_pulling::VertexPullingLayout,
+    topology: PrimitiveTopology,
+    primitive_count: u32,
+    verts_per_primitive: u32,
+    reg_count: u32,
+    vs_signature: &[VsInputSignatureElement],
+) -> String {
+    let mut wgsl = String::new();
+    wgsl.push_str(&pulling.wgsl_prelude());
+    wgsl.push('\n');
+
+    wgsl.push_str("struct Vec4F32Buffer { data: array<vec4<f32>> };\n\n");
+    wgsl.push_str("@group(0) @binding(0) var<storage, read_write> gs_inputs: Vec4F32Buffer;\n\n");
+    wgsl.push_str(
+        "fn aero_gs_default() -> vec4<f32> { return vec4<f32>(0.0, 0.0, 0.0, 1.0); }\n\n",
+    );
+
+    wgsl.push_str(&format!(
+        "const PRIMITIVE_COUNT: u32 = {primitive_count}u;\n",
+    ));
+    wgsl.push_str(&format!(
+        "const VERTS_PER_PRIM: u32 = {verts_per_primitive}u;\n",
+    ));
+    wgsl.push_str(&format!("const GS_INPUT_REG_COUNT: u32 = {reg_count}u;\n\n"));
+
+    // Generate per-location load helpers (expanded to vec4 with D3D defaults).
+    for attr in &pulling.attributes {
+        wgsl.push_str(&wgsl_load_attr_expanded_fn(attr));
+        wgsl.push('\n');
+    }
+
+    let vertex_index_expr = match topology {
+        PrimitiveTopology::PointList => "prim_id".to_owned(),
+        PrimitiveTopology::LineList => "(prim_id * 2u + vert_in_prim)".to_owned(),
+        PrimitiveTopology::LineStrip => "(prim_id + vert_in_prim)".to_owned(),
+        PrimitiveTopology::TriangleList => "(prim_id * 3u + vert_in_prim)".to_owned(),
+        PrimitiveTopology::TriangleStrip => "(prim_id + vert_in_prim)".to_owned(),
+        PrimitiveTopology::TriangleFan => "select(0u, prim_id + vert_in_prim, vert_in_prim != 0u)".to_owned(),
+    };
+
+    // Map pulling `@location` indices back to D3D input register indices.
+    let location_to_input_reg: HashMap<u32, u32> = vs_signature
+        .iter()
+        .map(|s| (s.shader_location, s.input_register))
+        .collect();
+    let mut reg_to_location: Vec<Option<u32>> = vec![None; reg_count as usize];
+    for attr in &pulling.attributes {
+        let reg = location_to_input_reg
+            .get(&attr.shader_location)
+            .copied()
+            .unwrap_or(attr.shader_location);
+        if reg >= reg_count {
+            continue;
+        }
+        // Keep the first mapping if duplicates exist (packed semantics are not supported yet).
+        if reg_to_location[reg as usize].is_none() {
+            reg_to_location[reg as usize] = Some(attr.shader_location);
+        }
+    }
+
+    wgsl.push_str(
+        r#"
+@compute @workgroup_size(1, 1, 1)
+fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let idx: u32 = gid.x;
+    let total: u32 = PRIMITIVE_COUNT * VERTS_PER_PRIM;
+    if (idx >= total) {
+        return;
+    }
+
+    let prim_id: u32 = idx / VERTS_PER_PRIM;
+    let vert_in_prim: u32 = idx % VERTS_PER_PRIM;
+"#,
+    );
+
+    wgsl.push_str(&format!(
+        "    let vertex_index: u32 = {vertex_index_expr};\n"
+    ));
+    wgsl.push_str(
+        r#"    let vertex_id_i32: i32 = i32(vertex_index + aero_vp_ia.first_vertex);
+    let instance_id: u32 = aero_vp_ia.first_instance;
+    let base_out: u32 = idx * GS_INPUT_REG_COUNT;
+"#,
+    );
+
+    // Write the GS input register payload.
+    for reg in 0..reg_count {
+        if let Some(loc) = reg_to_location[reg as usize] {
+            wgsl.push_str(&format!(
+                "    gs_inputs.data[base_out + {reg}u] = aero_vp_load_loc{loc}(vertex_id_i32, instance_id);\n"
+            ));
+        } else {
+            wgsl.push_str(&format!(
+                "    gs_inputs.data[base_out + {reg}u] = aero_gs_default();\n"
+            ));
+        }
+    }
+
+    wgsl.push_str("}\n");
+    wgsl
+}
+
+fn wgsl_load_attr_expanded_fn(attr: &super::vertex_pulling::VertexPullingAttribute) -> String {
+    // Returns a `vec4<f32>` where missing components are filled with D3D IA defaults.
+    //
+    // For scalar/vector float formats, D3D fills missing lanes with (0,0,0,1).
+    // For UNORM formats, we already return vec4<f32>.
+    let load_expr = match attr.format.component_type {
+        DxgiFormatComponentType::F32 => match attr.format.component_count {
+            1 => "load_attr_f32".to_owned(),
+            2 => "load_attr_f32x2".to_owned(),
+            3 => "load_attr_f32x3".to_owned(),
+            4 => "load_attr_f32x4".to_owned(),
+            _ => "load_attr_f32x4".to_owned(),
+        },
+        DxgiFormatComponentType::Unorm8 => "load_attr_unorm8x4".to_owned(),
+        DxgiFormatComponentType::Unorm10_10_10_2 => "load_attr_unorm10_10_10_2".to_owned(),
+        // TODO: extend vertex pulling prelude for additional DXGI types (F16, U32, U16).
+        _ => "load_attr_f32x4".to_owned(),
+    };
+
+    let elem_index_expr = match attr.step_mode {
+        wgpu::VertexStepMode::Vertex => "u32(vertex_id)".to_owned(),
+        wgpu::VertexStepMode::Instance => {
+            let step = attr.instance_step_rate.max(1);
+            format!("instance_id / {step}u")
+        }
+    };
+
+    let (load_stmt, expand_stmt) = match (attr.format.component_type, attr.format.component_count) {
+        (DxgiFormatComponentType::F32, 1) => (
+            format!(
+                "let v: f32 = {load_expr}({slot}u, addr);",
+                slot = attr.pulling_slot
+            ),
+            "return vec4<f32>(v, 0.0, 0.0, 1.0);".to_owned(),
+        ),
+        (DxgiFormatComponentType::F32, 2) => (
+            format!(
+                "let v: vec2<f32> = {load_expr}({slot}u, addr);",
+                slot = attr.pulling_slot
+            ),
+            "return vec4<f32>(v.x, v.y, 0.0, 1.0);".to_owned(),
+        ),
+        (DxgiFormatComponentType::F32, 3) => (
+            format!(
+                "let v: vec3<f32> = {load_expr}({slot}u, addr);",
+                slot = attr.pulling_slot
+            ),
+            "return vec4<f32>(v.x, v.y, v.z, 1.0);".to_owned(),
+        ),
+        (DxgiFormatComponentType::F32, 4) => (
+            format!(
+                "let v: vec4<f32> = {load_expr}({slot}u, addr);",
+                slot = attr.pulling_slot
+            ),
+            "return v;".to_owned(),
+        ),
+        (DxgiFormatComponentType::Unorm8, 4) | (DxgiFormatComponentType::Unorm10_10_10_2, 4) => (
+            format!(
+                "let v: vec4<f32> = {load_expr}({slot}u, addr);",
+                slot = attr.pulling_slot
+            ),
+            "return v;".to_owned(),
+        ),
+        _ => (
+            "let v: vec4<f32> = vec4<f32>(0.0);".to_owned(),
+            "return v;".to_owned(),
+        ),
+    };
+
+    format!(
+        r#"
+fn aero_vp_load_loc{loc}(vertex_id: i32, instance_id: u32) -> vec4<f32> {{
+    let slot: AeroVpIaSlot = aero_vp_ia.slots[{slot}u];
+    let elem: u32 = {elem_index};
+    let addr: u32 = slot.base_offset_bytes + elem * slot.stride_bytes + {offset}u;
+    {load_stmt}
+    {expand_stmt}
+}}
+"#,
+        loc = attr.shader_location,
+        slot = attr.pulling_slot,
+        elem_index = elem_index_expr,
+        offset = attr.offset_bytes,
+        load_stmt = load_stmt,
+        expand_stmt = expand_stmt
+    )
 }
 
 fn extract_vs_input_signature_unique_locations(

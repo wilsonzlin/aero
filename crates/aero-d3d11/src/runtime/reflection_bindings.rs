@@ -11,8 +11,8 @@ use anyhow::{bail, Result};
 
 use crate::binding_model::{
     BINDING_BASE_CBUFFER, BINDING_BASE_INTERNAL, BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE,
-    BINDING_BASE_UAV, BIND_GROUP_INTERNAL_EMULATION, D3D11_MAX_CONSTANT_BUFFER_SLOTS,
-    MAX_SAMPLER_SLOTS, MAX_TEXTURE_SLOTS, MAX_UAV_SLOTS,
+    BINDING_BASE_UAV, BIND_GROUP_INTERNAL_EMULATION, MAX_CBUFFER_SLOTS, MAX_SAMPLER_SLOTS,
+    MAX_TEXTURE_SLOTS, MAX_UAV_SLOTS,
 };
 
 /// The AeroGPU D3D11 binding model uses stage-scoped bind groups:
@@ -250,10 +250,10 @@ pub(super) fn binding_to_layout_entry(
 ) -> Result<wgpu::BindGroupLayoutEntry> {
     let ty = match &binding.kind {
         crate::BindingKind::ConstantBuffer { slot, reg_count } => {
-            if *slot >= D3D11_MAX_CONSTANT_BUFFER_SLOTS {
+            if *slot >= MAX_CBUFFER_SLOTS {
                 bail!(
-                    "cbuffer slot {slot} is out of range for D3D11 (max {})",
-                    D3D11_MAX_CONSTANT_BUFFER_SLOTS - 1
+                    "cbuffer slot {slot} is out of range for binding model (max {})",
+                    MAX_CBUFFER_SLOTS - 1
                 );
             }
             let expected = BINDING_BASE_CBUFFER + slot;
@@ -834,7 +834,7 @@ mod tests {
 
     #[test]
     fn binding_to_layout_entry_rejects_cbuffer_slot_out_of_range() {
-        let slot = D3D11_MAX_CONSTANT_BUFFER_SLOTS;
+        let slot = MAX_CBUFFER_SLOTS;
         let binding = crate::Binding {
             group: 0,
             binding: BINDING_BASE_CBUFFER + slot,
@@ -842,10 +842,10 @@ mod tests {
             kind: crate::BindingKind::ConstantBuffer { slot, reg_count: 1 },
         };
 
-        let err = binding_to_layout_entry(&binding).expect_err("slot 14 must be rejected");
+        let err = binding_to_layout_entry(&binding).expect_err("slot 32 must be rejected");
         let msg = err.to_string();
         assert!(
-            msg.contains("D3D11") && msg.contains("max 13"),
+            msg.contains("cbuffer") && msg.contains("out of range") && msg.contains("max 31"),
             "unexpected error: {msg}"
         );
     }
@@ -2854,10 +2854,10 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
     fn binding_to_layout_entry_rejects_out_of_range_slots() {
         let cb = crate::Binding {
             group: 0,
-            binding: BINDING_BASE_CBUFFER + D3D11_MAX_CONSTANT_BUFFER_SLOTS,
+            binding: BINDING_BASE_CBUFFER + MAX_CBUFFER_SLOTS,
             visibility: wgpu::ShaderStages::VERTEX,
             kind: crate::BindingKind::ConstantBuffer {
-                slot: D3D11_MAX_CONSTANT_BUFFER_SLOTS,
+                slot: MAX_CBUFFER_SLOTS,
                 reg_count: 1,
             },
         };
