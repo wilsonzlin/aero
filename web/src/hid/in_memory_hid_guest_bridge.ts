@@ -4,6 +4,10 @@ import type { HidGuestBridge, HidHostSink } from "./wasm_hid_guest_bridge";
 const MAX_BUFFERED_HID_INPUT_REPORTS_PER_DEVICE = 256;
 const MAX_HID_INPUT_REPORT_PAYLOAD_BYTES = 64;
 
+// `import.meta.env` is provided by Vite in browser builds, but is undefined when running
+// worker entrypoints directly under Node (e.g. worker_threads unit tests).
+const IS_DEV = (import.meta as unknown as { env?: { DEV?: unknown } }).env?.DEV === true;
+
 export function ensureArrayBufferBacked(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
   // HID proxy messages transfer the underlying ArrayBuffer between threads.
   // If a view is backed by a SharedArrayBuffer, it can't be transferred; copy.
@@ -18,8 +22,11 @@ export class InMemoryHidGuestBridge implements HidGuestBridge {
   readonly inputReports = new Map<number, HidInputReportMessage[]>();
 
   #inputCount = 0;
+  #host: HidHostSink;
 
-  constructor(private readonly host: HidHostSink) {}
+  constructor(host: HidHostSink) {
+    this.#host = host;
+  }
 
   attach(msg: HidAttachMessage): void {
     const isReattach = this.devices.has(msg.deviceId);
@@ -32,7 +39,7 @@ export class InMemoryHidGuestBridge implements HidGuestBridge {
       this.inputReports.set(msg.deviceId, []);
     }
     const pathHint = msg.guestPath ? ` path=${msg.guestPath.join(".")}` : msg.guestPort === undefined ? "" : ` port=${msg.guestPort}`;
-    this.host.log(
+    this.#host.log(
       `hid.attach deviceId=${msg.deviceId}${pathHint} vid=0x${msg.vendorId.toString(16).padStart(4, "0")} pid=0x${msg.productId.toString(16).padStart(4, "0")}`,
       msg.deviceId,
     );
@@ -41,7 +48,7 @@ export class InMemoryHidGuestBridge implements HidGuestBridge {
   detach(msg: HidDetachMessage): void {
     this.devices.delete(msg.deviceId);
     this.inputReports.delete(msg.deviceId);
-    this.host.log(`hid.detach deviceId=${msg.deviceId}`, msg.deviceId);
+    this.#host.log(`hid.detach deviceId=${msg.deviceId}`, msg.deviceId);
   }
 
   inputReport(msg: HidInputReportMessage): void {
@@ -70,8 +77,8 @@ export class InMemoryHidGuestBridge implements HidGuestBridge {
     }
 
     this.#inputCount += 1;
-    if (import.meta.env.DEV && (this.#inputCount & 0xff) === 0) {
-      this.host.log(
+    if (IS_DEV && (this.#inputCount & 0xff) === 0) {
+      this.#host.log(
         `hid.inputReport deviceId=${msg.deviceId} reportId=${msg.reportId} bytes=${msg.data.byteLength}`,
         msg.deviceId,
       );

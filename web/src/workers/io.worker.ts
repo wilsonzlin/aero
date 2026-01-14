@@ -226,6 +226,10 @@ import {
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
+// `import.meta.env` is injected by Vite for browser builds, but is undefined when
+// running the worker entrypoints directly under Node (e.g. worker_threads tests).
+const IS_DEV = (import.meta as unknown as { env?: { DEV?: unknown } }).env?.DEV === true;
+
 void installWorkerPerfHandlers();
 
 type InputBatchMessage = { type: "in:input-batch"; buffer: ArrayBuffer };
@@ -1763,7 +1767,7 @@ function maybeInitUhciDevice(): void {
           initialRingAttach: port === ctx ? (usbRingAttach ?? undefined) : undefined,
         });
         usbPassthroughRuntime.start();
-        if (import.meta.env.DEV) {
+        if (IS_DEV) {
           const timer = setInterval(() => {
             console.debug(`[io.worker] ${label} WebUSB pending_summary()`, usbPassthroughRuntime?.pendingSummary());
           }, 1000) as unknown as number;
@@ -1815,11 +1819,11 @@ function maybeInitUhciDevice(): void {
           initialRingAttach: usbRingAttach ?? undefined,
          });
          usbPassthroughRuntime.start();
-         if (import.meta.env.DEV) {
-           const timer = setInterval(() => {
-             console.debug("[io.worker] UHCI runtime WebUSB pending_summary()", usbPassthroughRuntime?.pendingSummary());
-           }, 1000) as unknown as number;
-           (timer as unknown as { unref?: () => void }).unref?.();
+         if (IS_DEV) {
+            const timer = setInterval(() => {
+              console.debug("[io.worker] UHCI runtime WebUSB pending_summary()", usbPassthroughRuntime?.pendingSummary());
+            }, 1000) as unknown as number;
+            (timer as unknown as { unref?: () => void }).unref?.();
            usbPassthroughDebugTimer = timer;
          }
        }
@@ -1877,7 +1881,7 @@ function maybeInitUhciDevice(): void {
           initialRingAttach: usbRingAttach ?? undefined,
        });
        usbPassthroughRuntime.start();
-       if (import.meta.env.DEV) {
+       if (IS_DEV) {
          const timer = setInterval(() => {
            console.debug("[io.worker] UHCI WebUSB pending_summary()", usbPassthroughRuntime?.pendingSummary());
          }, 1000) as unknown as number;
@@ -2578,30 +2582,34 @@ function drainHidInputRing(): void {
 }
 
 class CompositeHidGuestBridge implements HidGuestBridge {
-  constructor(private readonly sinks: HidGuestBridge[]) {}
+  #sinks: HidGuestBridge[];
+
+  constructor(sinks: HidGuestBridge[]) {
+    this.#sinks = sinks;
+  }
 
   attach(msg: HidAttachMessage): void {
-    for (const sink of this.sinks) sink.attach(msg);
+    for (const sink of this.#sinks) sink.attach(msg);
   }
 
   detach(msg: HidDetachMessage): void {
-    for (const sink of this.sinks) sink.detach(msg);
+    for (const sink of this.#sinks) sink.detach(msg);
   }
 
   inputReport(msg: HidInputReportMessage): void {
-    for (const sink of this.sinks) sink.inputReport(msg);
+    for (const sink of this.#sinks) sink.inputReport(msg);
   }
 
   featureReportResult(msg: HidFeatureReportResultMessage): void {
-    for (const sink of this.sinks) sink.featureReportResult?.(msg);
+    for (const sink of this.#sinks) sink.featureReportResult?.(msg);
   }
 
   poll(): void {
-    for (const sink of this.sinks) sink.poll?.();
+    for (const sink of this.#sinks) sink.poll?.();
   }
 
   destroy(): void {
-    for (const sink of this.sinks) sink.destroy?.();
+    for (const sink of this.#sinks) sink.destroy?.();
   }
 }
 
@@ -2624,8 +2632,7 @@ const hidHostSink: HidHostSink = {
     });
     if (res.path === "postMessage" && res.ringFailed) {
       hidOutputRingFallback += 1;
-      const shouldLog =
-        import.meta.env.DEV || hidOutputRingFallback <= 3 || (hidOutputRingFallback & 0xff) === 0;
+      const shouldLog = IS_DEV || hidOutputRingFallback <= 3 || (hidOutputRingFallback & 0xff) === 0;
       if (shouldLog) {
         let dropped = 0;
         try {
@@ -2692,7 +2699,7 @@ let wasmHidGuest: HidGuestBridge | null = null;
 function handleHidFeatureReportResult(msg: HidFeatureReportResultMessage): void {
   const wasm = wasmHidGuest;
   if (!wasm?.completeFeatureReportRequest) {
-    if (import.meta.env.DEV) {
+    if (IS_DEV) {
       console.warn("[hid] Received hid.featureReportResult but no WASM bridge is available", msg);
     }
     return;
@@ -2783,7 +2790,7 @@ function handleHidPassthroughAttachHub(msg: Extract<HidPassthroughMessage, { typ
   uhciRuntimeHubConfig.apply(uhciRuntime, {
     warn: (message, err) => console.warn(`[io.worker] ${message}`, err),
   });
-  if (import.meta.env.DEV) {
+  if (IS_DEV) {
     const hint = msg.portCount !== undefined ? ` ports=${msg.portCount}` : "";
     console.info(`[hid] attachHub path=${msg.guestPath.join(".")}${hint}`);
   }
@@ -2799,7 +2806,7 @@ function handleHidPassthroughAttach(msg: HidPassthroughAttachMessage): void {
   hidPassthroughInputReportCountById.delete(msg.deviceId);
   hidPassthroughDebugOutputRequested.delete(msg.deviceId);
 
-  if (import.meta.env.DEV) {
+  if (IS_DEV) {
     console.info(
       `[hid] attach deviceId=${msg.deviceId} path=${guestPath.join(".")} vid=${hex16(msg.vendorId)} pid=${hex16(msg.productId)}`,
     );
@@ -2807,7 +2814,7 @@ function handleHidPassthroughAttach(msg: HidPassthroughAttachMessage): void {
 
   // Dev-only smoke: issue a best-effort output/feature report request so the
   // worker→main→device round trip is exercised even before the USB stack is wired up.
-  if (import.meta.env.DEV && !hidPassthroughDebugOutputRequested.has(msg.deviceId)) {
+  if (IS_DEV && !hidPassthroughDebugOutputRequested.has(msg.deviceId)) {
     const report = findFirstSendableReport(msg.collections);
     if (!report) return;
 
@@ -2842,7 +2849,7 @@ function handleHidPassthroughDetach(msg: HidPassthroughDetachMessage): void {
   hidPassthroughInputReportCountById.delete(msg.deviceId);
   hidPassthroughDebugOutputRequested.delete(msg.deviceId);
 
-  if (import.meta.env.DEV) {
+  if (IS_DEV) {
     console.info(`[hid] detach deviceId=${msg.deviceId}`);
   }
 }
@@ -2863,7 +2870,7 @@ function handleHidPassthroughInputReport(msg: HidPassthroughInputReportMessage):
   while (history.length > HID_PASSTHROUGH_INPUT_REPORT_HISTORY_LIMIT) history.shift();
   hidPassthroughInputReportHistoryById.set(msg.deviceId, history);
 
-  if (import.meta.env.DEV && (count <= 3 || (count & 0x7f) === 0)) {
+  if (IS_DEV && (count <= 3 || (count & 0x7f) === 0)) {
     console.debug(
       `[hid] inputReport deviceId=${msg.deviceId} reportId=${msg.reportId} bytes=${msg.data.byteLength} #${count} ${entry.previewHex}`,
     );
@@ -2974,7 +2981,7 @@ function maybeInitWasmHidGuestBridge(): void {
   // After WASM is ready we no longer need to buffer every input report in JS.
   // Keeping the in-memory bridge in the hot path is useful for debugging in dev
   // mode, but it adds avoidable per-report allocations/copies in production.
-  if (import.meta.env.DEV) {
+  if (IS_DEV) {
     hidGuest = new CompositeHidGuestBridge([hidGuestInMemory, wasmHidGuest]);
   } else {
     hidGuest = wasmHidGuest;
@@ -3958,6 +3965,50 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
       }
     }
 
+    const hostOnly = machineHostOnlyMode;
+    if (hostOnly) {
+      perf.spanBegin("worker:init");
+      try {
+        role = init.role ?? "io";
+        const segments = {
+          control: init.controlSab!,
+          guestMemory: init.guestMemory!,
+          ioIpc: init.ioIpcSab!,
+          vram: init.vram,
+          sharedFramebuffer: init.sharedFramebuffer!,
+          sharedFramebufferOffsetBytes: init.sharedFramebufferOffsetBytes ?? 0,
+          scanoutState: init.scanoutState,
+          scanoutStateOffsetBytes: init.scanoutStateOffsetBytes ?? 0,
+          cursorState: init.cursorState,
+          cursorStateOffsetBytes: init.cursorStateOffsetBytes ?? 0,
+        };
+        ioIpcSab = segments.ioIpc;
+
+        // Establish the shared status view so we can publish READY without touching guest RAM.
+        const views = createSharedMemoryViews(segments);
+        status = views.status;
+        guestU8 = views.guestU8;
+        guestLayout = views.guestLayout;
+        guestBase = views.guestLayout.guest_base >>> 0;
+        guestSize = views.guestLayout.guest_size >>> 0;
+        sharedFramebuffer = { sab: segments.sharedFramebuffer, offsetBytes: segments.sharedFramebufferOffsetBytes ?? 0 };
+
+        const regions = ringRegionsForWorker(role);
+        commandRing = new RingBuffer(segments.control, regions.command.byteOffset);
+        eventRing = new RingBuffer(segments.control, regions.event.byteOffset);
+
+        pushEvent({ kind: "log", level: "info", message: "worker ready (machine runtime host-only)" });
+
+        setReadyFlag(status, role, true);
+        ctx.postMessage({ type: MessageType.READY, role } satisfies ProtocolMessage);
+        if (perf.traceEnabled) perf.instant("boot:worker:ready", "p", { role, mode: "machine" });
+      } finally {
+        perf.spanEnd("worker:init");
+      }
+
+      return;
+    }
+
     let wasmInitFatal = false;
     await perf.spanAsync("wasm:init", async () => {
       try {
@@ -4002,7 +4053,7 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
                 if (msg.type === "usb.demoResult" && msg.result.status !== "error") {
                   resetUsbDemoErrorDedup();
                 }
-                if (import.meta.env.DEV && msg.type === "usb.demoResult") {
+                if (IS_DEV && msg.type === "usb.demoResult") {
                   if (msg.result.status === "success") {
                     const bytes = msg.result.data;
                     const isDeviceDescriptor = bytes.length >= 12 && bytes[0] === 18 && bytes[1] === 1;
@@ -4054,7 +4105,7 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
           }
         }
 
-        if (import.meta.env.DEV && api.WebUsbUhciPassthroughHarness && !usbUhciHarnessRuntime) {
+        if (IS_DEV && api.WebUsbUhciPassthroughHarness && !usbUhciHarnessRuntime) {
           const ctor = api.WebUsbUhciPassthroughHarness;
           try {
             usbUhciHarnessRuntime = new WebUsbUhciHarnessRuntime({
@@ -4072,7 +4123,7 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
           }
         }
 
-        if (import.meta.env.DEV && api.WebUsbEhciPassthroughHarness && !usbEhciHarnessRuntime) {
+        if (IS_DEV && api.WebUsbEhciPassthroughHarness && !usbEhciHarnessRuntime) {
           const ctor = api.WebUsbEhciPassthroughHarness;
           try {
             // EHCI is a high-speed controller: disable the UHCI-only CONFIGURATION→OTHER_SPEED_CONFIGURATION
@@ -4214,7 +4265,7 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
           const idx = irq & 0xff;
           const flags = applyIrqRefCountChange(irqRefCounts, idx, true);
           if (flags & IRQ_REFCOUNT_ASSERT) enqueueIoEvent(encodeEvent({ kind: "irqRaise", irq: idx }));
-          if (import.meta.env.DEV && (flags & IRQ_REFCOUNT_SATURATED) && irqWarnedSaturated[idx] === 0) {
+          if (IS_DEV && (flags & IRQ_REFCOUNT_SATURATED) && irqWarnedSaturated[idx] === 0) {
             irqWarnedSaturated[idx] = 1;
             console.warn(`[io.worker] IRQ${idx} refcount saturated at 0xffff (raiseIrq without matching lowerIrq?)`);
           }
@@ -4223,7 +4274,7 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
           const idx = irq & 0xff;
           const flags = applyIrqRefCountChange(irqRefCounts, idx, false);
           if (flags & IRQ_REFCOUNT_DEASSERT) enqueueIoEvent(encodeEvent({ kind: "irqLower", irq: idx }));
-          if (import.meta.env.DEV && (flags & IRQ_REFCOUNT_UNDERFLOW) && irqWarnedUnderflow[idx] === 0) {
+          if (IS_DEV && (flags & IRQ_REFCOUNT_UNDERFLOW) && irqWarnedUnderflow[idx] === 0) {
             irqWarnedUnderflow[idx] = 1;
             console.warn(`[io.worker] IRQ${idx} refcount underflow (lowerIrq while already deasserted)`);
           }
@@ -4444,6 +4495,44 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       const requestId = snapshotMsg.requestId;
       if (typeof requestId !== "number") return;
 
+      // Machine runtime: the canonical `api.Machine` owns guest device models + guest RAM.
+      // Treat the IO worker as a host-only stub and respond to snapshot coordination messages
+      // without touching guest/device state.
+      if (machineHostOnlyMode) {
+        switch (snapshotMsg.kind) {
+          case "vm.snapshot.pause": {
+            snapshotPaused = true;
+            ctx.postMessage({ kind: "vm.snapshot.paused", requestId, ok: true } satisfies VmSnapshotPausedMessage);
+            return;
+          }
+          case "vm.snapshot.resume": {
+            snapshotPaused = false;
+            ctx.postMessage({ kind: "vm.snapshot.resumed", requestId, ok: true } satisfies VmSnapshotResumedMessage);
+            return;
+          }
+          case "vm.snapshot.saveToOpfs": {
+            ctx.postMessage({
+              kind: "vm.snapshot.saved",
+              requestId,
+              ok: false,
+              error: serializeVmSnapshotError(new Error("IO worker snapshots are unsupported in machine runtime.")),
+            } satisfies VmSnapshotSavedMessage);
+            return;
+          }
+          case "vm.snapshot.restoreFromOpfs": {
+            ctx.postMessage({
+              kind: "vm.snapshot.restored",
+              requestId,
+              ok: false,
+              error: serializeVmSnapshotError(new Error("IO worker snapshots are unsupported in machine runtime.")),
+            } satisfies VmSnapshotRestoredMessage);
+            return;
+          }
+          default:
+            return;
+        }
+      }
+
       switch (snapshotMsg.kind) {
         case "vm.snapshot.pause": {
           void pauseIoWorkerSnapshotAndDrainDiskIo({
@@ -4574,19 +4663,20 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       return;
     }
 
+    // Shared-memory init handshake.
+    if ((data as Partial<WorkerInitMessage>).kind === "init") {
+      void initWorker(data as WorkerInitMessage);
+      return;
+    }
+
+    // Machine runtime: IO worker is a host-only stub (no guest device models, no IO IPC server).
+    // Ignore all other messages to avoid accidental guest-memory writes or wasted CPU.
+    if (machineHostOnlyMode) {
+      return;
+    }
+
     const bootDisks = normalizeSetBootDisksMessage(data);
     if (bootDisks) {
-      if (machineHostOnlyMode) {
-        // In machine runtime, disk attachment is owned by the CPU worker. Ignore boot disk
-        // open requests here so we don't steal the exclusive OPFS sync access handle.
-        if (bootDisksInitResolve) {
-          bootDisksInitResolve();
-          bootDisksInitResolve = null;
-        }
-        pendingBootDisks = null;
-        maybeAnnounceMachineHostOnlyMode();
-        return;
-      }
       pendingBootDisks = bootDisks;
       if (bootDisksInitResolve) {
         bootDisksInitResolve();
@@ -5151,7 +5241,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
 
       // Dev-only smoke test: once a device is selected on the main thread, request the
       // first 18 bytes of the device descriptor to prove the cross-thread broker works.
-      if (msg.ok && import.meta.env.DEV && !usbDemo && !wasmApi?.UhciRuntime) {
+      if (msg.ok && IS_DEV && !usbDemo && !wasmApi?.UhciRuntime) {
         const id = usbDemoNextId++;
         const action: UsbHostAction = {
           kind: "controlIn",
@@ -5178,7 +5268,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
           handleUsbDemoFailure("onUsbCompletion", err);
         }
       }
-      if (import.meta.env.DEV) {
+      if (IS_DEV) {
         if (msg.completion.status === "success" && "data" in msg.completion) {
           const data = msg.completion.data;
           console.log("[io.worker] WebUSB completion success", msg.completion.kind, msg.completion.id, {
@@ -5189,12 +5279,6 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
           console.log("[io.worker] WebUSB completion", msg.completion);
         }
       }
-      return;
-    }
-
-    // First message is the shared-memory init handshake.
-    if ((data as Partial<WorkerInitMessage>).kind === "init") {
-      void initWorker(data as WorkerInitMessage);
       return;
     }
 
@@ -5348,7 +5432,7 @@ function startIoIpcServer(): void {
           }
           hidProxyInputRingForwarded += res.forwarded;
           hidProxyInputRingInvalid += res.invalid;
-          if (import.meta.env.DEV && (res.forwarded > 0 || res.invalid > 0) && (hidProxyInputRingForwarded & 0xff) === 0) {
+          if (IS_DEV && (res.forwarded > 0 || res.invalid > 0) && (hidProxyInputRingForwarded & 0xff) === 0) {
             console.debug(
               `[io.worker] hid.ring.init drained forwarded=${hidProxyInputRingForwarded} invalid=${hidProxyInputRingInvalid}`,
             );
@@ -5943,7 +6027,7 @@ let inputBatchDropWarns = 0;
 const MAX_INPUT_BATCH_DROP_WARNS = 8;
 
 function noteInputBatchDrop(reason: string, detail: string): void {
-  if (!import.meta.env.DEV) return;
+  if (!IS_DEV) return;
   if (inputBatchDropWarns >= MAX_INPUT_BATCH_DROP_WARNS) return;
   inputBatchDropWarns += 1;
   console.warn(`[io.worker] Dropping malformed input batch (${reason}): ${detail}`);

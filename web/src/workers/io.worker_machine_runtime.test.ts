@@ -1,0 +1,159 @@
+import { describe, expect, it } from "vitest";
+
+import { Worker, type WorkerOptions } from "node:worker_threads";
+
+import type { AeroConfig } from "../config/aero_config";
+import { allocateSharedMemorySegments, createSharedMemoryViews, StatusIndex } from "../runtime/shared_layout";
+import { MessageType, type ProtocolMessage, type WorkerInitMessage } from "../runtime/protocol";
+
+function arraysEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.byteLength !== b.byteLength) return false;
+  for (let i = 0; i < a.byteLength; i += 1) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
+async function waitForWorkerMessage(worker: Worker, predicate: (msg: unknown) => boolean, timeoutMs: number): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error(`timed out after ${timeoutMs}ms waiting for worker message`));
+    }, timeoutMs);
+    (timer as unknown as { unref?: () => void }).unref?.();
+
+    const onMessage = (msg: unknown) => {
+      const maybeProtocol = msg as Partial<ProtocolMessage> | undefined;
+      if (maybeProtocol?.type === MessageType.ERROR) {
+        cleanup();
+        const errMsg = typeof (maybeProtocol as { message?: unknown }).message === "string" ? (maybeProtocol as any).message : "";
+        reject(new Error(`worker reported error${errMsg ? `: ${errMsg}` : ""}`));
+        return;
+      }
+      let matched = false;
+      try {
+        matched = predicate(msg);
+      } catch (err) {
+        cleanup();
+        reject(err instanceof Error ? err : new Error(String(err)));
+        return;
+      }
+      if (!matched) return;
+      cleanup();
+      resolve(msg);
+    };
+
+    const onError = (err: unknown) => {
+      cleanup();
+      reject(err instanceof Error ? err : new Error(String(err)));
+    };
+
+    const onExit = (code: number) => {
+      cleanup();
+      reject(new Error(`worker exited before emitting the expected message (code=${code})`));
+    };
+
+    function cleanup(): void {
+      clearTimeout(timer);
+      worker.off("message", onMessage);
+      worker.off("error", onError);
+      worker.off("exit", onExit);
+    }
+
+    worker.on("message", onMessage);
+    worker.on("error", onError);
+    worker.on("exit", onExit);
+  });
+}
+
+function makeMachineConfig(): AeroConfig {
+  return {
+    guestMemoryMiB: 1,
+    enableWorkers: true,
+    enableWebGPU: false,
+    proxyUrl: null,
+    activeDiskImage: null,
+    logLevel: "info",
+    vmRuntime: "machine",
+  };
+}
+
+function makeInit(segments: ReturnType<typeof allocateSharedMemorySegments>): WorkerInitMessage {
+  return {
+    kind: "init",
+    role: "io",
+    controlSab: segments.control,
+    guestMemory: segments.guestMemory,
+    vram: segments.vram,
+    scanoutState: segments.scanoutState,
+    scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
+    cursorState: segments.cursorState,
+    cursorStateOffsetBytes: segments.cursorStateOffsetBytes,
+    ioIpcSab: segments.ioIpc,
+    sharedFramebuffer: segments.sharedFramebuffer,
+    sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
+  };
+}
+
+describe("workers/io.worker (machine runtime host-only mode)", () => {
+  it("reaches READY without initializing device models and does not write guest RAM", async () => {
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 0 });
+    const views = createSharedMemoryViews(segments);
+
+    // Fill guest RAM with a sentinel pattern and verify it remains unchanged.
+    // (Guest RAM is small in this unit test; for larger guests this would be too costly.)
+    views.guestU8.fill(0x5a);
+    const guestCopy = views.guestU8.slice();
+
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./io.worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      const readyPromise = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "io",
+        5000,
+      );
+
+      worker.postMessage({ kind: "config.update", version: 1, config: makeMachineConfig() });
+      worker.postMessage(makeInit(segments));
+
+      await readyPromise;
+
+      // Ensure the status flag was set (READY + shared status should be consistent).
+      expect(Atomics.load(views.status, StatusIndex.IoReady)).toBe(1);
+
+      // Wait a beat to catch any accidental background/tick writes.
+      await new Promise<void>((resolve) => setTimeout(resolve, 50));
+      expect(arraysEqual(views.guestU8, guestCopy)).toBe(true);
+
+      const pausedPromise = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { kind?: unknown }).kind === "vm.snapshot.paused" && (msg as { requestId?: unknown }).requestId === 1,
+        2000,
+      ) as Promise<{ kind: string; requestId: number; ok: boolean }>;
+      worker.postMessage({ kind: "vm.snapshot.pause", requestId: 1 });
+      const paused = await pausedPromise;
+      expect(paused.ok).toBe(true);
+
+      const resumedPromise = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { kind?: unknown }).kind === "vm.snapshot.resumed" && (msg as { requestId?: unknown }).requestId === 2,
+        2000,
+      ) as Promise<{ kind: string; requestId: number; ok: boolean }>;
+      worker.postMessage({ kind: "vm.snapshot.resume", requestId: 2 });
+      const resumed = await resumedPromise;
+      expect(resumed.ok).toBe(true);
+
+      // Confirm the pause/resume handling didn't accidentally touch guest RAM.
+      await new Promise<void>((resolve) => setTimeout(resolve, 50));
+      expect(arraysEqual(views.guestU8, guestCopy)).toBe(true);
+    } finally {
+      await worker.terminate();
+    }
+  }, 20000);
+});

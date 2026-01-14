@@ -78,12 +78,15 @@ function isFeatureReportRequest(value: unknown): value is FeatureReportRequest {
 
 export class WasmHidGuestBridge implements HidGuestBridge {
   readonly #bridges = new Map<number, HidPassthroughBridge>();
+  #api: WasmApi;
+  #host: HidHostSink;
+  #topology: HidTopologyManager;
 
-  constructor(
-    private readonly api: WasmApi,
-    private readonly host: HidHostSink,
-    private readonly topology: HidTopologyManager,
-  ) {}
+  constructor(api: WasmApi, host: HidHostSink, topology: HidTopologyManager) {
+    this.#api = api;
+    this.#host = host;
+    this.#topology = topology;
+  }
 
   attach(msg: HidAttachMessage): void {
     this.detach({ type: "hid.detach", deviceId: msg.deviceId });
@@ -91,8 +94,8 @@ export class WasmHidGuestBridge implements HidGuestBridge {
     const guestPath = guestPathHint;
 
     try {
-      const UsbBridge = this.api.UsbHidPassthroughBridge;
-      const synthesize = this.api.synthesize_webhid_report_descriptor;
+      const UsbBridge = this.#api.UsbHidPassthroughBridge;
+      const synthesize = this.#api.synthesize_webhid_report_descriptor;
 
       let bridge: HidPassthroughBridge;
       let kind: "webhid" | "usb-hid-passthrough" = "webhid";
@@ -112,7 +115,7 @@ export class WasmHidGuestBridge implements HidGuestBridge {
         );
         kind = "usb-hid-passthrough";
       } else {
-        bridge = new this.api.WebHidPassthroughBridge(
+        bridge = new this.#api.WebHidPassthroughBridge(
           msg.vendorId,
           msg.productId,
           undefined,
@@ -124,17 +127,17 @@ export class WasmHidGuestBridge implements HidGuestBridge {
 
       this.#bridges.set(msg.deviceId, bridge);
       if (guestPath) {
-        this.topology.attachDevice(msg.deviceId, guestPath, kind, bridge);
+        this.#topology.attachDevice(msg.deviceId, guestPath, kind, bridge);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      this.host.error(`hid.attach failed: ${message}`, msg.deviceId);
+      this.#host.error(`hid.attach failed: ${message}`, msg.deviceId);
       return;
     }
   }
 
   detach(msg: HidDetachMessage): void {
-    this.topology.detachDevice(msg.deviceId);
+    this.#topology.detachDevice(msg.deviceId);
     const existing = this.#bridges.get(msg.deviceId);
     if (!existing) return;
 
@@ -162,7 +165,7 @@ export class WasmHidGuestBridge implements HidGuestBridge {
       bridge.push_input_report(msg.reportId, data);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      this.host.error(`WebHID push_input_report failed: ${message}`, msg.deviceId);
+      this.#host.error(`WebHID push_input_report failed: ${message}`, msg.deviceId);
     }
   }
 
@@ -185,13 +188,13 @@ export class WasmHidGuestBridge implements HidGuestBridge {
             report = bridge.drain_next_output_report();
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
-            this.host.error(`drain_next_output_report failed: ${message}`, deviceId);
+            this.#host.error(`drain_next_output_report failed: ${message}`, deviceId);
             break;
           }
           if (!report) break;
 
           remainingReports -= 1;
-          this.host.sendReport({
+          this.#host.sendReport({
             deviceId,
             reportType: report.reportType,
             reportId: report.reportId,
@@ -214,12 +217,12 @@ export class WasmHidGuestBridge implements HidGuestBridge {
             req = next;
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
-            this.host.error(`drain_next_feature_report_request failed: ${message}`, deviceId);
+            this.#host.error(`drain_next_feature_report_request failed: ${message}`, deviceId);
             break;
           }
           if (!req) break;
           remainingFeatureRequests -= 1;
-          this.host.requestFeatureReport({ deviceId, requestId: req.requestId, reportId: req.reportId });
+          this.#host.requestFeatureReport({ deviceId, requestId: req.requestId, reportId: req.reportId });
         }
       }
     }
@@ -235,7 +238,7 @@ export class WasmHidGuestBridge implements HidGuestBridge {
       return fn.call(bridge, msg.requestId >>> 0, msg.reportId >>> 0, msg.data);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      this.host.error(`complete_feature_report_request failed: ${message}`, msg.deviceId);
+      this.#host.error(`complete_feature_report_request failed: ${message}`, msg.deviceId);
       return false;
     }
   }
@@ -250,7 +253,7 @@ export class WasmHidGuestBridge implements HidGuestBridge {
         return fn.call(bridge, msg.requestId >>> 0, msg.reportId >>> 0, msg.error);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        this.host.error(`fail_feature_report_request failed: ${message}`, msg.deviceId);
+        this.#host.error(`fail_feature_report_request failed: ${message}`, msg.deviceId);
         return false;
       }
     }
@@ -264,7 +267,7 @@ export class WasmHidGuestBridge implements HidGuestBridge {
       return complete.call(bridge, msg.requestId >>> 0, msg.reportId >>> 0, new Uint8Array());
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      this.host.error(`complete_feature_report_request (fail fallback) failed: ${message}`, msg.deviceId);
+      this.#host.error(`complete_feature_report_request (fail fallback) failed: ${message}`, msg.deviceId);
       return false;
     }
   }

@@ -57,6 +57,11 @@ export interface AeroConfig {
    * - "legacy": CPU-only `WasmVm` + JS I/O shims (status quo)
    * - "machine": canonical full-system `api.Machine` with AHCI/IDE
    *
+   * When set to `"machine"`, the canonical `api.Machine` owns guest device models and uses the
+   * shared `guestMemory` region directly. Legacy emulator workers (notably `io.worker`) should
+   * therefore enter a host-only mode to avoid initializing/ticking duplicate device models or
+   * touching guest RAM.
+   *
    * Defaults to "legacy".
    */
   vmRuntime?: AeroVmRuntime;
