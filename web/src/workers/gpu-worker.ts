@@ -3386,6 +3386,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
               const width = snap.width >>> 0;
               const height = snap.height >>> 0;
               const pitchBytes = snap.pitchBytes >>> 0;
+              const format = snap.format >>> 0;
 
               if (width === 0 || height === 0) {
                 postStub(typeof seq === "number" ? seq : undefined);
@@ -3394,6 +3395,15 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
 
               const rowBytes = width * BYTES_PER_PIXEL_RGBA8;
               if (!Number.isSafeInteger(rowBytes) || rowBytes <= 0) {
+                postStub(typeof seq === "number" ? seq : undefined);
+                return true;
+              }
+              // Only format supported by the shared scanout descriptor today.
+              if (format !== SCANOUT_FORMAT_B8G8R8X8) {
+                postStub(typeof seq === "number" ? seq : undefined);
+                return true;
+              }
+              if (pitchBytes < rowBytes || pitchBytes % BYTES_PER_PIXEL_RGBA8 !== 0) {
                 postStub(typeof seq === "number" ? seq : undefined);
                 return true;
               }
@@ -3406,6 +3416,22 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
               if (basePaddr > BigInt(Number.MAX_SAFE_INTEGER)) {
                 postStub(typeof seq === "number" ? seq : undefined);
                 return true;
+              }
+
+              // Ensure the final row address still fits the JS safe-integer subset so
+              // the scanout readback helper (and any fallback read) can safely index
+              // into the guest RAM view.
+              if (height > 1) {
+                const lastRowPaddr = basePaddr + BigInt(pitchBytes) * BigInt(height - 1);
+                if (lastRowPaddr > BigInt(Number.MAX_SAFE_INTEGER)) {
+                  postStub(typeof seq === "number" ? seq : undefined);
+                  return true;
+                }
+                const endPaddr = lastRowPaddr + BigInt(rowBytes);
+                if (endPaddr > BigInt(Number.MAX_SAFE_INTEGER)) {
+                  postStub(typeof seq === "number" ? seq : undefined);
+                  return true;
+                }
               }
               const outBytes = rowBytes * height;
               if (!Number.isSafeInteger(outBytes) || outBytes <= 0) {
@@ -3432,7 +3458,6 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
               ) {
                 out = cached.subarray(0, outBytes).slice();
               } else {
-                const format = snap.format >>> 0;
                 out = readScanoutRgba8FromGuestRam(guest, { basePaddr, width, height, pitchBytes, format }).rgba8;
               }
 
