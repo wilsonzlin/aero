@@ -112,6 +112,7 @@ Minimum supported commands:
   Dumps a KMD-provided perf/health counter snapshot, including:
   - fence + ring progress (ring0 head/tail),
   - submit counters (total / render / present / internal),
+  - per-submit allocation table counters (alloc_table count/entries/readonly_entries, when supported),
   - submit-path contiguous allocation pool counters (hit/miss/bytes_saved, when supported),
   - `DxgkDdiGetScanLine` (GetRasterStatus) telemetry (cache hits vs MMIO polls) when supported (DBG-only on newer KMDs),
   - ring push failures (submission path failures before reaching the device),
