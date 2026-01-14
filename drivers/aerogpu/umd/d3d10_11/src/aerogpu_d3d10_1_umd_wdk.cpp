@@ -3838,16 +3838,14 @@ void AEROGPU_APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOUR
       TrackWddmAllocForSubmitLocked(dev, bound, /*write=*/false);
     }
 
-    auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_constant_buffers>(
-        AEROGPU_CMD_SET_CONSTANT_BUFFERS, table.data(), table.size() * sizeof(table[0]));
-    if (!cmd) {
-      set_error(dev, E_OUTOFMEMORY);
+    if (!aerogpu::d3d10_11::EmitSetConstantBuffersCmdLocked(dev,
+                                                            shader_stage,
+                                                            /*start_slot=*/0,
+                                                            static_cast<uint32_t>(table.size()),
+                                                            table.data(),
+                                                            [&](HRESULT hr) { set_error(dev, hr); })) {
       return;
     }
-    cmd->shader_stage = shader_stage;
-    cmd->start_slot = 0;
-    cmd->buffer_count = static_cast<uint32_t>(table.size());
-    cmd->reserved0 = 0;
   };
 
   unbind_constant_buffers(AEROGPU_SHADER_STAGE_VERTEX, dev->vs_constant_buffers, dev->current_vs_cb_resources);
@@ -7695,16 +7693,14 @@ static void SetConstantBuffersCommon(D3D10DDI_HDEVICE hDevice,
     TrackWddmAllocForSubmitLocked(dev, new_resources[i], /*write=*/false);
   }
 
-  auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_constant_buffers>(
-      AEROGPU_CMD_SET_CONSTANT_BUFFERS, bindings.data(), buffer_count * sizeof(bindings[0]));
-  if (!cmd) {
-    set_error(dev, E_OUTOFMEMORY);
+  if (!aerogpu::d3d10_11::EmitSetConstantBuffersCmdLocked(dev,
+                                                          shader_stage,
+                                                          static_cast<uint32_t>(start_slot),
+                                                          static_cast<uint32_t>(buffer_count),
+                                                          bindings.data(),
+                                                          [&](HRESULT hr) { set_error(dev, hr); })) {
     return;
   }
-  cmd->shader_stage = shader_stage;
-  cmd->start_slot = static_cast<uint32_t>(start_slot);
-  cmd->buffer_count = static_cast<uint32_t>(buffer_count);
-  cmd->reserved0 = 0;
 
   for (UINT i = 0; i < buffer_count; i++) {
     (*table)[start_slot + i] = bindings[i];
@@ -7977,16 +7973,14 @@ void AEROGPU_APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
     }
 
     std::array<aerogpu_constant_buffer_binding, kMaxConstantBufferSlots> zeros{};
-    auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_constant_buffers>(
-        AEROGPU_CMD_SET_CONSTANT_BUFFERS, zeros.data(), zeros.size() * sizeof(zeros[0]));
-    if (!cmd) {
-      set_error(dev, E_OUTOFMEMORY);
+    if (!aerogpu::d3d10_11::EmitSetConstantBuffersCmdLocked(dev,
+                                                            shader_stage,
+                                                            /*start_slot=*/0,
+                                                            static_cast<uint32_t>(zeros.size()),
+                                                            zeros.data(),
+                                                            [&](HRESULT hr) { set_error(dev, hr); })) {
       return;
     }
-    cmd->shader_stage = shader_stage;
-    cmd->start_slot = 0;
-    cmd->buffer_count = static_cast<uint32_t>(zeros.size());
-    cmd->reserved0 = 0;
 
     table.fill({});
     resources.fill(nullptr);
@@ -8053,16 +8047,14 @@ void AEROGPU_APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
     }
 
     std::array<aerogpu_handle_t, kAeroGpuD3D10MaxSamplerSlots> zeros{};
-    auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_samplers>(
-        AEROGPU_CMD_SET_SAMPLERS, zeros.data(), zeros.size() * sizeof(zeros[0]));
-    if (!cmd) {
-      set_error(dev, E_OUTOFMEMORY);
+    if (!aerogpu::d3d10_11::EmitSetSamplersCmdLocked(dev,
+                                                     shader_stage,
+                                                     /*start_slot=*/0,
+                                                     static_cast<uint32_t>(zeros.size()),
+                                                     zeros.data(),
+                                                     [&](HRESULT hr) { set_error(dev, hr); })) {
       return;
     }
-    cmd->shader_stage = shader_stage;
-    cmd->start_slot = 0;
-    cmd->sampler_count = static_cast<uint32_t>(zeros.size());
-    cmd->reserved0 = 0;
 
     table.fill(0);
   };

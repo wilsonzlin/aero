@@ -5377,16 +5377,14 @@ void AEROGPU_APIENTRY VsSetConstantBuffers(D3D10DDI_HDEVICE hDevice,
     bindings[i] = b;
   }
 
-  auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_constant_buffers>(
-      AEROGPU_CMD_SET_CONSTANT_BUFFERS, bindings, static_cast<size_t>(count) * sizeof(bindings[0]));
-  if (!cmd) {
-    ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+  if (!aerogpu::d3d10_11::EmitSetConstantBuffersCmdLocked(dev,
+                                                          AEROGPU_SHADER_STAGE_VERTEX,
+                                                          start_slot,
+                                                          count,
+                                                          bindings,
+                                                          [&](HRESULT hr) { ReportDeviceErrorLocked(dev, hDevice, hr); })) {
     return;
   }
-  cmd->shader_stage = AEROGPU_SHADER_STAGE_VERTEX;
-  cmd->start_slot = start_slot;
-  cmd->buffer_count = count;
-  cmd->reserved0 = 0;
   for (uint32_t i = 0; i < count; i++) {
     dev->vs_constant_buffers[start_slot + i] = bindings[i];
   }
@@ -5437,16 +5435,14 @@ void AEROGPU_APIENTRY PsSetConstantBuffers(D3D10DDI_HDEVICE hDevice,
     bindings[i] = b;
   }
 
-  auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_constant_buffers>(
-      AEROGPU_CMD_SET_CONSTANT_BUFFERS, bindings, static_cast<size_t>(count) * sizeof(bindings[0]));
-  if (!cmd) {
-    ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+  if (!aerogpu::d3d10_11::EmitSetConstantBuffersCmdLocked(dev,
+                                                          AEROGPU_SHADER_STAGE_PIXEL,
+                                                          start_slot,
+                                                          count,
+                                                          bindings,
+                                                          [&](HRESULT hr) { ReportDeviceErrorLocked(dev, hDevice, hr); })) {
     return;
   }
-  cmd->shader_stage = AEROGPU_SHADER_STAGE_PIXEL;
-  cmd->start_slot = start_slot;
-  cmd->buffer_count = count;
-  cmd->reserved0 = 0;
   for (uint32_t i = 0; i < count; i++) {
     dev->ps_constant_buffers[start_slot + i] = bindings[i];
   }

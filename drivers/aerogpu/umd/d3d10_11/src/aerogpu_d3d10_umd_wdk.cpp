@@ -3588,16 +3588,13 @@ void APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hReso
       dev->current_vs_cb_resources[slot] = nullptr;
       dev->vs_constant_buffers[slot] = {};
       if (!oom) {
-        auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_constant_buffers>(
-            AEROGPU_CMD_SET_CONSTANT_BUFFERS, &null_cb, sizeof(null_cb));
-        if (!cmd) {
-          SetError(hDevice, E_OUTOFMEMORY);
+        if (!aerogpu::d3d10_11::EmitSetConstantBuffersCmdLocked(dev,
+                                                                AEROGPU_SHADER_STAGE_VERTEX,
+                                                                slot,
+                                                                /*buffer_count=*/1,
+                                                                &null_cb,
+                                                                [&](HRESULT hr) { SetError(hDevice, hr); })) {
           oom = true;
-        } else {
-          cmd->shader_stage = AEROGPU_SHADER_STAGE_VERTEX;
-          cmd->start_slot = slot;
-          cmd->buffer_count = 1;
-          cmd->reserved0 = 0;
         }
       }
     }
@@ -3605,16 +3602,13 @@ void APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hReso
       dev->current_ps_cb_resources[slot] = nullptr;
       dev->ps_constant_buffers[slot] = {};
       if (!oom) {
-        auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_constant_buffers>(
-            AEROGPU_CMD_SET_CONSTANT_BUFFERS, &null_cb, sizeof(null_cb));
-        if (!cmd) {
-          SetError(hDevice, E_OUTOFMEMORY);
+        if (!aerogpu::d3d10_11::EmitSetConstantBuffersCmdLocked(dev,
+                                                                AEROGPU_SHADER_STAGE_PIXEL,
+                                                                slot,
+                                                                /*buffer_count=*/1,
+                                                                &null_cb,
+                                                                [&](HRESULT hr) { SetError(hDevice, hr); })) {
           oom = true;
-        } else {
-          cmd->shader_stage = AEROGPU_SHADER_STAGE_PIXEL;
-          cmd->start_slot = slot;
-          cmd->buffer_count = 1;
-          cmd->reserved0 = 0;
         }
       }
     }
@@ -3622,16 +3616,13 @@ void APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hReso
       dev->current_gs_cb_resources[slot] = nullptr;
       dev->gs_constant_buffers[slot] = {};
       if (!oom) {
-        auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_constant_buffers>(
-            AEROGPU_CMD_SET_CONSTANT_BUFFERS, &null_cb, sizeof(null_cb));
-        if (!cmd) {
-          SetError(hDevice, E_OUTOFMEMORY);
+        if (!aerogpu::d3d10_11::EmitSetConstantBuffersCmdLocked(dev,
+                                                                AEROGPU_SHADER_STAGE_GEOMETRY,
+                                                                slot,
+                                                                /*buffer_count=*/1,
+                                                                &null_cb,
+                                                                [&](HRESULT hr) { SetError(hDevice, hr); })) {
           oom = true;
-        } else {
-          cmd->shader_stage = AEROGPU_SHADER_STAGE_GEOMETRY;
-          cmd->start_slot = slot;
-          cmd->buffer_count = 1;
-          cmd->reserved0 = 0;
         }
       }
     }
@@ -7438,16 +7429,14 @@ static void SetConstantBuffersLocked(AeroGpuDevice* dev,
     new_resources[i] = buf_res;
   }
 
-  auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_constant_buffers>(
-      AEROGPU_CMD_SET_CONSTANT_BUFFERS, bindings.data(), static_cast<size_t>(buffer_count) * sizeof(bindings[0]));
-  if (!cmd) {
-    SetError(hDevice, E_OUTOFMEMORY);
+  if (!aerogpu::d3d10_11::EmitSetConstantBuffersCmdLocked(dev,
+                                                          shader_stage,
+                                                          static_cast<uint32_t>(start_slot),
+                                                          static_cast<uint32_t>(buffer_count),
+                                                          bindings.data(),
+                                                          [&](HRESULT hr) { SetError(hDevice, hr); })) {
     return;
   }
-  cmd->shader_stage = shader_stage;
-  cmd->start_slot = start_slot;
-  cmd->buffer_count = buffer_count;
-  cmd->reserved0 = 0;
 
   for (UINT i = 0; i < buffer_count; i++) {
     table[start_slot + i] = bindings[i];
@@ -7604,17 +7593,14 @@ void APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
     }
 
     aerogpu_constant_buffer_binding zeros[kMaxConstantBufferSlots] = {};
-    auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_constant_buffers>(AEROGPU_CMD_SET_CONSTANT_BUFFERS,
-                                                                              zeros,
-                                                                              sizeof(zeros));
-    if (!cmd) {
-      SetError(hDevice, E_OUTOFMEMORY);
+    if (!aerogpu::d3d10_11::EmitSetConstantBuffersCmdLocked(dev,
+                                                            shader_stage,
+                                                            /*start_slot=*/0,
+                                                            /*buffer_count=*/kMaxConstantBufferSlots,
+                                                            zeros,
+                                                            [&](HRESULT hr) { SetError(hDevice, hr); })) {
       return false;
     }
-    cmd->shader_stage = shader_stage;
-    cmd->start_slot = 0;
-    cmd->buffer_count = kMaxConstantBufferSlots;
-    cmd->reserved0 = 0;
 
     std::memset(table, 0, sizeof(*table) * kMaxConstantBufferSlots);
     std::memset(resources, 0, sizeof(*resources) * kMaxConstantBufferSlots);
@@ -7647,17 +7633,14 @@ void APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
     }
 
     aerogpu_handle_t zeros[kMaxSamplerSlots] = {};
-    auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_samplers>(AEROGPU_CMD_SET_SAMPLERS,
-                                                                       zeros,
-                                                                       sizeof(zeros));
-    if (!cmd) {
-      SetError(hDevice, E_OUTOFMEMORY);
+    if (!aerogpu::d3d10_11::EmitSetSamplersCmdLocked(dev,
+                                                     shader_stage,
+                                                     /*start_slot=*/0,
+                                                     /*sampler_count=*/kMaxSamplerSlots,
+                                                     zeros,
+                                                     [&](HRESULT hr) { SetError(hDevice, hr); })) {
       return false;
     }
-    cmd->shader_stage = shader_stage;
-    cmd->start_slot = 0;
-    cmd->sampler_count = kMaxSamplerSlots;
-    cmd->reserved0 = 0;
 
     for (uint32_t slot = 0; slot < kMaxSamplerSlots; ++slot) {
       table[slot] = 0;

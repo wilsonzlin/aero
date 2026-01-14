@@ -2576,6 +2576,55 @@ inline bool EmitSetSamplersCmdLocked(DeviceT* dev,
   return EmitSetSamplersCmdLocked(dev, shader_stage, start_slot, sampler_count, samplers, EmitSetSamplersNoopSetError{});
 }
 
+// -------------------------------------------------------------------------------------------------
+// Resource binding helpers (SET_CONSTANT_BUFFERS)
+// -------------------------------------------------------------------------------------------------
+template <typename DeviceT, typename SetErrorFn>
+inline bool EmitSetConstantBuffersCmdLocked(DeviceT* dev,
+                                            uint32_t shader_stage,
+                                            uint32_t start_slot,
+                                            uint32_t buffer_count,
+                                            const aerogpu_constant_buffer_binding* buffers,
+                                            SetErrorFn&& set_error) {
+  if (!dev) {
+    return false;
+  }
+  if (buffer_count != 0 && !buffers) {
+    set_error(E_INVALIDARG);
+    return false;
+  }
+
+  auto* cmd = dev->cmd.template append_with_payload<aerogpu_cmd_set_constant_buffers>(
+      AEROGPU_CMD_SET_CONSTANT_BUFFERS, buffers, static_cast<size_t>(buffer_count) * sizeof(buffers[0]));
+  if (!cmd) {
+    set_error(E_OUTOFMEMORY);
+    return false;
+  }
+  cmd->shader_stage = shader_stage;
+  cmd->start_slot = start_slot;
+  cmd->buffer_count = buffer_count;
+  cmd->reserved0 = 0;
+  return true;
+}
+
+struct EmitSetConstantBuffersNoopSetError {
+  void operator()(HRESULT) const noexcept {}
+};
+
+template <typename DeviceT>
+inline bool EmitSetConstantBuffersCmdLocked(DeviceT* dev,
+                                            uint32_t shader_stage,
+                                            uint32_t start_slot,
+                                            uint32_t buffer_count,
+                                            const aerogpu_constant_buffer_binding* buffers) {
+  return EmitSetConstantBuffersCmdLocked(dev,
+                                         shader_stage,
+                                         start_slot,
+                                         buffer_count,
+                                         buffers,
+                                         EmitSetConstantBuffersNoopSetError{});
+}
+
 template <typename THandle, typename TObject>
 inline TObject* FromHandle(THandle h) {
   return reinterpret_cast<TObject*>(h.pDrvPrivate);

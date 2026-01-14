@@ -661,6 +661,138 @@ bool TestSetSamplersHelperEncodesPacket() {
   return true;
 }
 
+bool TestSetConstantBuffersHelperEncodesPacket() {
+  using aerogpu::d3d10_11::EmitSetConstantBuffersCmdLocked;
+
+  struct DummyDevice {
+    aerogpu::CmdWriter cmd;
+
+    DummyDevice() {
+      cmd.reset();
+    }
+  };
+
+  std::vector<HRESULT> errors;
+
+  // Happy path.
+  DummyDevice dev{};
+  aerogpu_constant_buffer_binding bindings[2]{};
+  bindings[0].buffer = 101;
+  bindings[0].offset_bytes = 16;
+  bindings[0].size_bytes = 64;
+  bindings[0].reserved0 = 0;
+  bindings[1].buffer = 0;
+  bindings[1].offset_bytes = 0;
+  bindings[1].size_bytes = 0;
+  bindings[1].reserved0 = 0;
+
+  const bool ok = EmitSetConstantBuffersCmdLocked(&dev,
+                                                  AEROGPU_SHADER_STAGE_VERTEX,
+                                                  /*start_slot=*/2,
+                                                  /*buffer_count=*/2,
+                                                  bindings,
+                                                  [&](HRESULT hr) { errors.push_back(hr); });
+  dev.cmd.finalize();
+
+  if (!Check(ok, "EmitSetConstantBuffersCmdLocked should succeed")) {
+    return false;
+  }
+  if (!Check(errors.empty(), "EmitSetConstantBuffersCmdLocked should not report errors")) {
+    return false;
+  }
+
+  const uint32_t expected_packet_bytes = static_cast<uint32_t>(
+      sizeof(aerogpu_cmd_set_constant_buffers) + sizeof(aerogpu_constant_buffer_binding) * 2);
+  if (!Check(dev.cmd.size() >= sizeof(aerogpu_cmd_stream_header) + expected_packet_bytes,
+             "SET_CONSTANT_BUFFERS packet emitted")) {
+    return false;
+  }
+
+  const auto* pkt = reinterpret_cast<const aerogpu_cmd_set_constant_buffers*>(dev.cmd.data() +
+                                                                              sizeof(aerogpu_cmd_stream_header));
+  if (!Check(pkt->hdr.opcode == AEROGPU_CMD_SET_CONSTANT_BUFFERS, "SET_CONSTANT_BUFFERS opcode")) {
+    return false;
+  }
+  if (!Check(pkt->hdr.size_bytes == expected_packet_bytes, "SET_CONSTANT_BUFFERS hdr.size_bytes")) {
+    return false;
+  }
+  if (!Check(pkt->shader_stage == AEROGPU_SHADER_STAGE_VERTEX, "SET_CONSTANT_BUFFERS shader_stage")) {
+    return false;
+  }
+  if (!Check(pkt->start_slot == 2, "SET_CONSTANT_BUFFERS start_slot")) {
+    return false;
+  }
+  if (!Check(pkt->buffer_count == 2, "SET_CONSTANT_BUFFERS buffer_count")) {
+    return false;
+  }
+  if (!Check(pkt->reserved0 == 0, "SET_CONSTANT_BUFFERS reserved0 cleared")) {
+    return false;
+  }
+
+  const auto* payload = reinterpret_cast<const aerogpu_constant_buffer_binding*>(
+      reinterpret_cast<const uint8_t*>(pkt) + sizeof(*pkt));
+  if (!Check(payload[0].buffer == bindings[0].buffer, "SET_CONSTANT_BUFFERS payload[0].buffer")) {
+    return false;
+  }
+  if (!Check(payload[0].offset_bytes == bindings[0].offset_bytes, "SET_CONSTANT_BUFFERS payload[0].offset_bytes")) {
+    return false;
+  }
+  if (!Check(payload[0].size_bytes == bindings[0].size_bytes, "SET_CONSTANT_BUFFERS payload[0].size_bytes")) {
+    return false;
+  }
+  if (!Check(payload[0].reserved0 == 0, "SET_CONSTANT_BUFFERS payload[0].reserved0")) {
+    return false;
+  }
+  if (!Check(payload[1].buffer == 0, "SET_CONSTANT_BUFFERS payload[1].buffer")) {
+    return false;
+  }
+
+  // Invalid argument path: non-zero count with null bindings pointer.
+  DummyDevice invalid{};
+  errors.clear();
+  const bool ok_invalid = EmitSetConstantBuffersCmdLocked(&invalid,
+                                                         AEROGPU_SHADER_STAGE_PIXEL,
+                                                         /*start_slot=*/0,
+                                                         /*buffer_count=*/1,
+                                                         /*buffers=*/nullptr,
+                                                         [&](HRESULT hr) { errors.push_back(hr); });
+  if (!Check(!ok_invalid,
+             "EmitSetConstantBuffersCmdLocked should fail when buffers==nullptr and buffer_count!=0")) {
+    return false;
+  }
+  if (!Check(errors.size() == 1 && errors[0] == E_INVALIDARG, "invalid buffers pointer reports E_INVALIDARG")) {
+    return false;
+  }
+  if (!Check(invalid.cmd.size() == sizeof(aerogpu_cmd_stream_header), "invalid args do not emit a packet")) {
+    return false;
+  }
+
+  // Insufficient-space path.
+  alignas(4) uint8_t tiny_buf[sizeof(aerogpu_cmd_stream_header)] = {};
+  struct TinyDevice {
+    aerogpu::CmdWriter cmd;
+    TinyDevice(uint8_t* buf, size_t cap) {
+      cmd.set_span(buf, cap);
+    }
+  };
+  TinyDevice tiny(tiny_buf, sizeof(tiny_buf));
+  errors.clear();
+  const bool ok2 = EmitSetConstantBuffersCmdLocked(&tiny,
+                                                   AEROGPU_SHADER_STAGE_VERTEX,
+                                                   /*start_slot=*/0,
+                                                   /*buffer_count=*/1,
+                                                   bindings,
+                                                   [&](HRESULT hr) { errors.push_back(hr); });
+  if (!Check(!ok2, "EmitSetConstantBuffersCmdLocked should fail when cmd append fails")) {
+    return false;
+  }
+  if (!Check(errors.size() == 1 && errors[0] == E_OUTOFMEMORY, "cmd append failure reports E_OUTOFMEMORY")) {
+    return false;
+  }
+
+  return true;
+}
+
 bool TestTrackWddmAllocForSubmitLockedHelper() {
   using aerogpu::d3d10_11::WddmSubmitAllocation;
 
@@ -9914,6 +10046,7 @@ int main() {
   ok &= TestPrimitiveTopologyHelperEmitsAndCaches();
   ok &= TestSetTextureHelperEncodesPacket();
   ok &= TestSetSamplersHelperEncodesPacket();
+  ok &= TestSetConstantBuffersHelperEncodesPacket();
   ok &= TestTrackWddmAllocForSubmitLockedHelper();
   ok &= TestDeviceFuncsTableNoNullEntriesHostOwned();
   ok &= TestDeviceFuncsTableNoNullEntriesGuestBacked();
