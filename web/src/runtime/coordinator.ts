@@ -2824,7 +2824,7 @@ export class WorkerCoordinator {
       // Some runtimes reject transfer lists (or individual buffers may be non-transferable).
       // Fall back to structured clone before forcing fence completion.
       try {
-        gpuInfo.worker.postMessage(msg);
+        gpu.postMessage(msg);
       } catch {
         // If we fail to post the submission, do not strand the guest waiting on a fence.
         this.aerogpuInFlightFencesByRequestId.delete(requestId);
