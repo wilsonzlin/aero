@@ -14,6 +14,7 @@ use aero_devices_gpu::vblank::{period_ns_from_hz, period_ns_to_reg};
 use aero_io_snapshot::io::state::{
     IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
 };
+use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
 use aero_protocol::aerogpu::aerogpu_cmd::{
     cmd_stream_has_vsync_present_reader, decode_cmd_stream_header_le,
     AerogpuCmdStreamHeader as ProtocolCmdStreamHeader,
@@ -298,6 +299,206 @@ impl AeroGpuCursorConfig {
         }
 
         Some(out)
+    }
+}
+
+impl AeroGpuMmioDevice {
+    /// Encode host-only AeroGPU execution state that is required to resume the device deterministically
+    /// after a full machine snapshot restore.
+    ///
+    /// This includes:
+    /// - submission-bridge mode (external completion),
+    /// - pending fence completion queue + backend completion set, and
+    /// - pending submission drain queue (WASM integration hook).
+    ///
+    /// Note: This is *not* part of the guest-visible BAR0 register file and is therefore stored as a
+    /// machine-level snapshot extension tag.
+    pub(crate) fn save_exec_snapshot_state_v1(&self) -> Vec<u8> {
+        const VERSION: u32 = 1;
+
+        let mut enc = Encoder::new()
+            .u32(VERSION)
+            .bool(self.submission_bridge_enabled)
+            .bool(self.doorbell_pending)
+            .bool(self.ring_reset_pending)
+            .bool(self.fence_page_dirty);
+
+        // Pending fences (ordered).
+        enc = enc.u32(self.pending_fence_completions.len() as u32);
+        for fence in &self.pending_fence_completions {
+            let kind = match fence.kind {
+                PendingFenceKind::Immediate => 0u8,
+                PendingFenceKind::Vblank => 1u8,
+            };
+            enc = enc
+                .u64(fence.fence_value)
+                .bool(fence.wants_irq)
+                .u8(kind);
+        }
+
+        // Backend completed fences (unordered); sort for deterministic encoding.
+        let mut completed: Vec<u64> = self.backend_completed_fences.iter().copied().collect();
+        completed.sort_unstable();
+        enc = enc.u32(completed.len() as u32);
+        for fence in completed {
+            enc = enc.u64(fence);
+        }
+
+        // Pending drained submissions (ordered).
+        enc = enc.u32(self.pending_submissions.len() as u32);
+        for sub in &self.pending_submissions {
+            let cmd_len: u32 = sub.cmd_stream.len().try_into().unwrap_or(u32::MAX);
+            enc = enc
+                .u32(sub.flags)
+                .u32(sub.context_id)
+                .u32(sub.engine_id)
+                .u64(sub.signal_fence)
+                .u32(cmd_len)
+                .bytes(&sub.cmd_stream);
+            match &sub.alloc_table {
+                None => {
+                    enc = enc.bool(false);
+                }
+                Some(bytes) => {
+                    let len: u32 = bytes.len().try_into().unwrap_or(u32::MAX);
+                    enc = enc.bool(true).u32(len).bytes(bytes);
+                }
+            }
+        }
+
+        enc.finish()
+    }
+
+    pub(crate) fn load_exec_snapshot_state_v1(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        // These structures are guest-controlled (via ring submissions) and can grow without bound.
+        // Snapshots may come from untrusted sources, so cap sizes to keep decode bounded.
+        const MAX_PENDING_FENCES: usize = 65_536;
+        const MAX_BACKEND_COMPLETED_FENCES: usize = 65_536;
+        const MAX_PENDING_SUBMISSIONS: usize = MAX_PENDING_AEROGPU_SUBMISSIONS;
+        const MAX_CMD_STREAM_BYTES: usize = MAX_CMD_STREAM_SIZE_BYTES as usize;
+        const MAX_ALLOC_TABLE_BYTES: usize = MAX_AEROGPU_ALLOC_TABLE_BYTES as usize;
+
+        let mut d = Decoder::new(bytes);
+
+        let version = d.u32()?;
+        if version != 1 {
+            return Err(SnapshotError::InvalidFieldEncoding(
+                "aerogpu.exec_state.version",
+            ));
+        }
+
+        let submission_bridge_enabled = d.bool()?;
+        let doorbell_pending = d.bool()?;
+        let ring_reset_pending = d.bool()?;
+        let fence_page_dirty = d.bool()?;
+
+        let pending_fence_count = d.u32()? as usize;
+        if pending_fence_count > MAX_PENDING_FENCES {
+            return Err(SnapshotError::InvalidFieldEncoding(
+                "aerogpu.exec_state.pending_fences",
+            ));
+        }
+        let mut pending_fence_completions = VecDeque::new();
+        pending_fence_completions
+            .try_reserve_exact(pending_fence_count)
+            .map_err(|_| SnapshotError::OutOfMemory)?;
+        for _ in 0..pending_fence_count {
+            let fence_value = d.u64()?;
+            let wants_irq = d.bool()?;
+            let kind = match d.u8()? {
+                0 => PendingFenceKind::Immediate,
+                1 => PendingFenceKind::Vblank,
+                _ => {
+                    return Err(SnapshotError::InvalidFieldEncoding(
+                        "aerogpu.exec_state.pending_fences.kind",
+                    ))
+                }
+            };
+            pending_fence_completions.push_back(PendingFenceCompletion {
+                fence_value,
+                wants_irq,
+                kind,
+            });
+        }
+
+        let completed_count = d.u32()? as usize;
+        if completed_count > MAX_BACKEND_COMPLETED_FENCES {
+            return Err(SnapshotError::InvalidFieldEncoding(
+                "aerogpu.exec_state.backend_completed",
+            ));
+        }
+        let mut backend_completed_fences = HashSet::new();
+        backend_completed_fences
+            .try_reserve(completed_count)
+            .map_err(|_| SnapshotError::OutOfMemory)?;
+        for _ in 0..completed_count {
+            backend_completed_fences.insert(d.u64()?);
+        }
+
+        let submission_count = d.u32()? as usize;
+        if submission_count > MAX_PENDING_SUBMISSIONS {
+            return Err(SnapshotError::InvalidFieldEncoding(
+                "aerogpu.exec_state.pending_submissions",
+            ));
+        }
+        let mut pending_submissions = VecDeque::new();
+        pending_submissions
+            .try_reserve_exact(submission_count)
+            .map_err(|_| SnapshotError::OutOfMemory)?;
+        for _ in 0..submission_count {
+            let flags = d.u32()?;
+            let context_id = d.u32()?;
+            let engine_id = d.u32()?;
+            let signal_fence = d.u64()?;
+
+            let cmd_len = d.u32()? as usize;
+            if cmd_len > MAX_CMD_STREAM_BYTES {
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "aerogpu.exec_state.pending_submissions.cmd_stream",
+                ));
+            }
+            let cmd_stream = d.bytes(cmd_len)?.to_vec();
+
+            let alloc_present = d.bool()?;
+            let alloc_table = if alloc_present {
+                let alloc_len = d.u32()? as usize;
+                if alloc_len > MAX_ALLOC_TABLE_BYTES {
+                    return Err(SnapshotError::InvalidFieldEncoding(
+                        "aerogpu.exec_state.pending_submissions.alloc_table",
+                    ));
+                }
+                Some(d.bytes(alloc_len)?.to_vec())
+            } else {
+                None
+            };
+
+            pending_submissions.push_back(AerogpuSubmission {
+                flags,
+                context_id,
+                engine_id,
+                signal_fence,
+                cmd_stream,
+                alloc_table,
+            });
+        }
+
+        d.finish()?;
+
+        // Apply decoded state.
+        self.submission_bridge_enabled = submission_bridge_enabled;
+        if submission_bridge_enabled {
+            // The submission bridge is mutually exclusive with the in-process backend.
+            self.backend = None;
+        }
+
+        self.doorbell_pending = doorbell_pending;
+        self.ring_reset_pending = ring_reset_pending;
+        self.fence_page_dirty = fence_page_dirty;
+        self.pending_fence_completions = pending_fence_completions;
+        self.backend_completed_fences = backend_completed_fences;
+        self.pending_submissions = pending_submissions;
+
+        Ok(())
     }
 }
 

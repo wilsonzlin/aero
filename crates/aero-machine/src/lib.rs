@@ -3309,9 +3309,21 @@ fn encode_aerogpu_snapshot_v2(vram: &AeroGpuDevice, bar0: &AeroGpuMmioDevice) ->
     out.push(vram.crtc_index);
     out.extend_from_slice(&vram.crtc_regs);
 
-    // Deterministic timebase. Stored as trailing fields so older decoders can ignore them.
+    // Optional trailing execution state (pending fences/submissions).
+    //
+    // This captures host-only state that is not visible through BAR0 registers but is required to
+    // resume the device deterministically after restoring a machine snapshot (e.g. vsync-paced
+    // fence completions and the WASM submission drain queue).
+    out.extend_from_slice(b"EXEC");
+    let exec_state = bar0.save_exec_snapshot_state_v1();
+    let exec_len_u32: u32 = exec_state.len().try_into().unwrap_or(u32::MAX);
+    out.extend_from_slice(&exec_len_u32.to_le_bytes());
+    out.extend_from_slice(&exec_state);
+
+    // Deterministic vblank timebase. Stored as trailing fields so older decoders can ignore them.
     out.extend_from_slice(&regs.now_ns.to_le_bytes());
     out.extend_from_slice(&regs.next_vblank_ns.unwrap_or(0).to_le_bytes());
+
     out
 }
 
@@ -3636,6 +3648,7 @@ fn apply_aerogpu_snapshot_v2(
             (0, false)
         };
     let mut restored_dac = false;
+    let mut exec_state: Option<&[u8]> = None;
     // Optional trailing sections:
     // - `DACP`: VGA DAC state (PEL mask + palette)
     // - `ATRG`: VGA Attribute Controller palette mapping regs
@@ -3736,6 +3749,29 @@ fn apply_aerogpu_snapshot_v2(
             continue;
         }
 
+        if tag == b"EXEC" {
+            // Format:
+            // - tag "EXEC"
+            // - u32 byte_len
+            // - payload bytes (AeroGpuMmioDevice::save_exec_snapshot_state_v1)
+            if bytes.len() < off.saturating_add(8) {
+                break;
+            }
+            let len_bytes = bytes
+                .get(off + 4..off + 8)
+                .unwrap_or(&[0u8, 0u8, 0u8, 0u8]);
+            let byte_len = u32::from_le_bytes([len_bytes[0], len_bytes[1], len_bytes[2], len_bytes[3]])
+                as usize;
+            let payload_off = off.saturating_add(8);
+            let payload_end = payload_off.saturating_add(byte_len);
+            if bytes.len() < payload_end {
+                break;
+            }
+            exec_state = bytes.get(payload_off..payload_end);
+            off = payload_end;
+            continue;
+        }
+
         break;
     }
     // Trailing deterministic vblank timebase (added after the error/DAC payloads).
@@ -3791,6 +3827,12 @@ fn apply_aerogpu_snapshot_v2(
         cursor_pitch_bytes,
         wddm_scanout_active,
     });
+
+    if let Some(exec_state) = exec_state {
+        if bar0.load_exec_snapshot_state_v1(exec_state).is_err() {
+            return None;
+        }
+    }
 
     Some(restored_dac)
 }
