@@ -155,6 +155,9 @@ fn default_vec4(ty: ScalarTy) -> &'static str {
 /// implementations.
 const WEBGPU_MIN_INTER_STAGE_LOCATIONS: u32 = 16;
 
+/// WebGPU guarantees support for at least 16 vertex input attributes (0..15).
+const WEBGPU_MIN_VERTEX_ATTRIBUTES: u32 = 16;
+
 /// Base location used for non-color / non-texcoord varyings when we can't derive a legacy mapping.
 ///
 /// Locations are reserved as:
@@ -1254,6 +1257,18 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
                 }
             }
             let has_inputs = !vs_inputs.is_empty();
+            if has_inputs && !ir.uses_semantic_locations {
+                // Without semantic-based remapping we treat v# indices as WGSL locations directly.
+                // Stay within WebGPU's guaranteed minimum to avoid generating shaders that won't
+                // validate on some devices.
+                if let Some(&max_v) = vs_inputs.iter().max() {
+                    if max_v >= WEBGPU_MIN_VERTEX_ATTRIBUTES {
+                        return Err(err(format!(
+                            "vertex shader uses input v{max_v} but semantic-based location mapping is unavailable; refusing to emit WGSL with @location({max_v}) (WebGPU guaranteed min maxVertexAttributes is {WEBGPU_MIN_VERTEX_ATTRIBUTES})"
+                        )));
+                    }
+                }
+            }
 
             // Inter-stage varyings written by the vertex shader.
             let mut vs_varyings = BTreeSet::<(RegFile, u32)>::new();
@@ -1297,7 +1312,7 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
                 wgsl.push_str("};\n\n");
             }
 
-            wgsl.push_str("struct VsOutput {\n  @builtin(position) pos: vec4<f32>,\n");
+            wgsl.push_str("struct VsOut {\n  @builtin(position) pos: vec4<f32>,\n");
             for ((file, index), loc) in &vs_varying_locations {
                 let reg = RegRef {
                     file: *file,
@@ -1310,9 +1325,9 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
             wgsl.push_str("};\n\n");
 
             if has_inputs {
-                wgsl.push_str("@vertex\nfn vs_main(input: VsInput) -> VsOutput {\n");
+                wgsl.push_str("@vertex\nfn vs_main(input: VsInput) -> VsOut {\n");
             } else {
-                wgsl.push_str("@vertex\nfn vs_main() -> VsOutput {\n");
+                wgsl.push_str("@vertex\nfn vs_main() -> VsOut {\n");
             }
 
             // Local temp registers.
@@ -1366,7 +1381,7 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
             wgsl.push('\n');
             emit_block(&mut wgsl, &ir.body, 1, &f32_defs)?;
 
-            wgsl.push_str("  var out: VsOutput;\n");
+            wgsl.push_str("  var out: VsOut;\n");
             wgsl.push_str("  out.pos = oPos;\n");
             for ((file, index), _) in &vs_varying_locations {
                 let reg = RegRef {
@@ -1419,7 +1434,7 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
             wgsl.push_str("};\n\n");
 
             if has_inputs {
-                wgsl.push_str("struct PsInput {\n");
+                wgsl.push_str("struct FsIn {\n");
                 for ((file, index), loc) in &ps_input_locations {
                     let reg = RegRef {
                         file: *file,
@@ -1430,7 +1445,7 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
                     let _ = writeln!(wgsl, "  @location({loc}) {name}: vec4<f32>,");
                 }
                 wgsl.push_str("};\n\n");
-                wgsl.push_str("@fragment\nfn fs_main(input: PsInput) -> FsOut {\n");
+                wgsl.push_str("@fragment\nfn fs_main(input: FsIn) -> FsOut {\n");
             } else {
                 // WGSL does not permit empty structs, so if the shader uses no varyings we omit the
                 // input parameter entirely.

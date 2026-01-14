@@ -31,6 +31,77 @@ fn src_token(regtype: u8, index: u32, swizzle: u8, srcmod: u8) -> u32 {
 }
 
 #[test]
+fn wgsl_vs20_reads_v0_writes_opos_compiles() {
+    // vs_2_0:
+    //   mov oPos, v0
+    //   end
+    let tokens = vec![
+        version_token(ShaderStage::Vertex, 2, 0),
+        opcode_token(1, 2),
+        dst_token(4, 0, 0xF),          // oPos
+        src_token(1, 0, 0xE4, 0),      // v0
+        0x0000_FFFF,                   // end
+    ];
+
+    let decoded = decode_u32_tokens(&tokens).unwrap();
+    let ir = build_ir(&decoded).unwrap();
+    verify_ir(&ir).unwrap();
+
+    let wgsl = generate_wgsl(&ir).unwrap().wgsl;
+    let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+
+    assert!(wgsl.contains("struct VsInput"), "{wgsl}");
+    assert!(wgsl.contains("@location(0) v0"), "{wgsl}");
+    assert!(wgsl.contains("@builtin(position)"), "{wgsl}");
+}
+
+#[test]
+fn wgsl_ps20_reads_t0_and_v0_compiles() {
+    // ps_2_0:
+    //   add r0, t0, v0
+    //   mov oC0, r0
+    //   end
+    let tokens = vec![
+        version_token(ShaderStage::Pixel, 2, 0),
+        // add r0, t0, v0
+        opcode_token(2, 3),
+        dst_token(0, 0, 0xF),     // r0
+        src_token(3, 0, 0xE4, 0), // t0
+        src_token(1, 0, 0xE4, 0), // v0
+        // mov oC0, r0
+        opcode_token(1, 2),
+        dst_token(8, 0, 0xF),     // oC0
+        src_token(0, 0, 0xE4, 0), // r0
+        // end
+        0x0000_FFFF,
+    ];
+
+    let decoded = decode_u32_tokens(&tokens).unwrap();
+    let ir = build_ir(&decoded).unwrap();
+    verify_ir(&ir).unwrap();
+
+    let wgsl = generate_wgsl(&ir).unwrap().wgsl;
+    let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+
+    assert!(wgsl.contains("struct FsIn"), "{wgsl}");
+    assert!(wgsl.contains("@location(0) v0"), "{wgsl}");
+    // Legacy mapping for t# starts at location 4.
+    assert!(wgsl.contains("@location(4) t0"), "{wgsl}");
+}
+
+#[test]
 fn wgsl_defb_if_compiles() {
     // ps_3_0:
     //   def c0, 1,0,0,1

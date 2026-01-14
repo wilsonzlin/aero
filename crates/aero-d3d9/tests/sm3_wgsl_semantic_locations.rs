@@ -134,8 +134,8 @@ fn sm3_vs_output_and_ps_input_semantics_share_locations() {
     .validate(&ps_module)
     .expect("ps wgsl validate");
 
-    let vs_loc = struct_member_location(&vs_module, "VsOutput", "o0");
-    let ps_loc = struct_member_location(&ps_module, "PsInput", "v0");
+    let vs_loc = struct_member_location(&vs_module, "VsOut", "o0");
+    let ps_loc = struct_member_location(&ps_module, "FsIn", "v0");
     assert_eq!(vs_loc, ps_loc, "VS and PS varyings must share locations");
     assert_eq!(vs_loc, 4, "TEXCOORD0 should map to legacy location 4");
 }
