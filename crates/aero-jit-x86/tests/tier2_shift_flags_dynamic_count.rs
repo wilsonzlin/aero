@@ -59,4 +59,3 @@ fn tier2_deopts_shift_with_flags_when_count_is_not_constant() {
         block.term
     );
 }
-

@@ -27,4 +27,3 @@ fn compile_tier1_bails_out_at_entry_for_unsupported_first_instruction() {
         "expected BailoutAtEntry, got {res:?}"
     );
 }
-

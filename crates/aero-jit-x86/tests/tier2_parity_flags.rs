@@ -68,4 +68,3 @@ fn jp_observes_pf_after_testflags_and32() {
     assert_eq!(exit, RunExit::SideExit { next_rip: 0x0e });
     assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 2);
 }
-

@@ -191,15 +191,23 @@ fn nested_and_const_masks_are_collapsed() {
             _ => None,
         })
         .collect();
-    assert_eq!(ands.len(), 1, "expected nested masks to collapse to one And");
+    assert_eq!(
+        ands.len(),
+        1,
+        "expected nested masks to collapse to one And"
+    );
     assert!(
-        matches!(ands[0], (Operand::Const(0x0f), _) | (_, Operand::Const(0x0f))),
+        matches!(
+            ands[0],
+            (Operand::Const(0x0f), _) | (_, Operand::Const(0x0f))
+        ),
         "expected collapsed mask of 0x0f, got {ands:?}"
     );
     assert!(
-        !ands
-            .iter()
-            .any(|(l, r)| matches!((l, r), (Operand::Const(0xff), _) | (_, Operand::Const(0xff)))),
+        !ands.iter().any(|(l, r)| matches!(
+            (l, r),
+            (Operand::Const(0xff), _) | (_, Operand::Const(0xff))
+        )),
         "unexpected remaining 0xff mask: {ands:?}"
     );
 
@@ -589,7 +597,9 @@ fn add_with_live_flags_is_not_strength_reduced_to_addr() {
         "expected add with flags to remain a BinOp::Add"
     );
     assert!(
-        !optimized.iter_instrs().any(|i| matches!(i, Instr::Addr { .. })),
+        !optimized
+            .iter_instrs()
+            .any(|i| matches!(i, Instr::Addr { .. })),
         "unexpected Addr introduced for add-with-flags"
     );
 
@@ -665,7 +675,11 @@ fn add_const_folds_into_existing_addr_disp() {
             _ => None,
         })
         .collect();
-    assert_eq!(addrs.len(), 1, "expected chained adds to fold into one Addr");
+    assert_eq!(
+        addrs.len(),
+        1,
+        "expected chained adds to fold into one Addr"
+    );
     assert_eq!(
         addrs[0],
         (Operand::Value(v(0)), Operand::Const(0), 1, 12),

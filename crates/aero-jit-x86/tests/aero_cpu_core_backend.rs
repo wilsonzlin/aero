@@ -9,7 +9,9 @@ use aero_cpu_core::exec::{
 use aero_cpu_core::jit::cache::CompiledBlockHandle;
 #[cfg(feature = "tier1-inline-tlb")]
 use aero_cpu_core::jit::runtime::JitBackend;
-use aero_cpu_core::jit::runtime::{CompileRequestSink, JitConfig, JitRuntime, DEFAULT_CODE_VERSION_MAX_PAGES};
+use aero_cpu_core::jit::runtime::{
+    CompileRequestSink, JitConfig, JitRuntime, DEFAULT_CODE_VERSION_MAX_PAGES,
+};
 use aero_cpu_core::state::CpuState;
 use aero_jit_x86::backend::{Tier1Cpu, WasmtimeBackend};
 #[cfg(feature = "tier1-inline-tlb")]
@@ -289,8 +291,7 @@ fn wasmtime_backend_executes_inline_tlb_load_store() {
         table_len <= DEFAULT_CODE_VERSION_MAX_PAGES as u64,
         "table_len should be clamped to DEFAULT_CODE_VERSION_MAX_PAGES"
     );
-    let min_pages =
-        (cpu_ptr + aero_jit_x86::PAGE_SIZE.saturating_sub(1)) / aero_jit_x86::PAGE_SIZE;
+    let min_pages = (cpu_ptr + aero_jit_x86::PAGE_SIZE.saturating_sub(1)) / aero_jit_x86::PAGE_SIZE;
     assert!(
         table_len >= min_pages,
         "table_len should cover the guest RAM window (0..cpu_ptr): len={} min={}",
@@ -427,10 +428,8 @@ fn wasmtime_backend_disables_code_version_table_when_out_of_memory() {
         },
     );
 
-    let mut backend: WasmtimeBackend<CpuState> = WasmtimeBackend::new_with_memory_pages(
-        memory_pages,
-        cpu_ptr,
-    );
+    let mut backend: WasmtimeBackend<CpuState> =
+        WasmtimeBackend::new_with_memory_pages(memory_pages, cpu_ptr);
     let idx = backend.add_compiled_block(&wasm);
 
     let cpu_ptr_u64 = cpu_ptr as u64;

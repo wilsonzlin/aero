@@ -50,4 +50,3 @@ fn tier2_tolerates_write_rip() {
         "expected lowered Tier-2 block to contain a StoreReg to RAX"
     );
 }
-

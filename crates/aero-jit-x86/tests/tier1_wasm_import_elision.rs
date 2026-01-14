@@ -3,9 +3,9 @@ use aero_jit_x86::tier1::Tier1WasmCodegen;
 #[cfg(feature = "tier1-inline-tlb")]
 use aero_jit_x86::tier1::Tier1WasmOptions;
 use aero_jit_x86::wasm::{
-    IMPORT_JIT_EXIT, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U64, IMPORT_MEM_READ_U8,
+    IMPORT_JIT_EXIT, IMPORT_MEMORY, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U64, IMPORT_MEM_READ_U8,
     IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32, IMPORT_MEM_WRITE_U64, IMPORT_MEM_WRITE_U8,
-    IMPORT_MEMORY, IMPORT_MODULE,
+    IMPORT_MODULE,
 };
 #[cfg(feature = "tier1-inline-tlb")]
 use aero_jit_x86::wasm::{IMPORT_JIT_EXIT_MMIO, IMPORT_MEM_READ_U32, IMPORT_MMU_TRANSLATE};
@@ -20,7 +20,11 @@ fn import_entries(wasm: &[u8]) -> Vec<(String, String, TypeRef)> {
                 let group = group.expect("parse import group");
                 for import in group {
                     let (_offset, import) = import.expect("parse import");
-                    out.push((import.module.to_string(), import.name.to_string(), import.ty));
+                    out.push((
+                        import.module.to_string(),
+                        import.name.to_string(),
+                        import.ty,
+                    ));
                 }
             }
         }
@@ -241,7 +245,10 @@ fn tier1_block_with_call_helper_imports_jit_exit() {
         assert_ne!(name, IMPORT_MEM_WRITE_U8);
     }
 
-    assert!(found_jit_exit, "expected env.jit_exit import for CallHelper block");
+    assert!(
+        found_jit_exit,
+        "expected env.jit_exit import for CallHelper block"
+    );
     assert_eq!(
         type_count(&wasm),
         2,
@@ -321,7 +328,10 @@ fn tier1_inline_tlb_mmio_fallback_does_not_import_jit_exit_mmio() {
         );
     }
 
-    assert!(found_translate, "expected env.mmu_translate import when inline_tlb=true");
+    assert!(
+        found_translate,
+        "expected env.mmu_translate import when inline_tlb=true"
+    );
     assert!(
         found_mem_read_u32,
         "expected env.mem_read_u32 import for MMIO fallback slow path"

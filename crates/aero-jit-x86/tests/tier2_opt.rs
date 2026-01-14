@@ -250,7 +250,10 @@ fn flag_elimination_keeps_flags_live_across_guard_code_version_exit() {
                 dst: v(0),
                 value: u64::MAX,
             },
-            Instr::Const { dst: v(1), value: 1 },
+            Instr::Const {
+                dst: v(1),
+                value: 1,
+            },
             // This addition sets CF, PF and ZF (result = 0), and clears the other ALU flags.
             Instr::BinOp {
                 dst: v(2),
@@ -396,14 +399,19 @@ fn const_fold_simplifies_idempotent_and_or() {
 
     // Both idempotent ops should fold away.
     assert!(
-        !optimized
-            .iter_instrs()
-            .any(|i| matches!(i, Instr::BinOp { op: BinOp::And | BinOp::Or, .. })),
+        !optimized.iter_instrs().any(|i| matches!(
+            i,
+            Instr::BinOp {
+                op: BinOp::And | BinOp::Or,
+                ..
+            }
+        )),
         "expected idempotent And/Or to be simplified away"
     );
 
     let out = passes::regalloc::run(&optimized);
-    let opt_run = run_trace_with_cached_regs(&optimized, &env, &mut bus1, &mut opt_state, 1, &out.cached);
+    let opt_run =
+        run_trace_with_cached_regs(&optimized, &env, &mut bus1, &mut opt_state, 1, &out.cached);
 
     assert_eq!(baseline.exit, opt_run.exit);
     assert_eq!(base_state, opt_state);
@@ -510,13 +518,7 @@ fn boolean_simplify_removes_nested_eq_and_simplifies_guards() {
         }
         let mut opt_state = base_state.clone();
 
-        let baseline = run_trace(
-            &trace,
-            &env,
-            &mut SimpleBus::new(256),
-            &mut base_state,
-            1,
-        );
+        let baseline = run_trace(&trace, &env, &mut SimpleBus::new(256), &mut base_state, 1);
         let optimized_run = run_trace(
             &optimized,
             &env,
@@ -584,13 +586,7 @@ fn boolean_simplify_eliminates_double_negation_on_boolean_values() {
         }
         let mut opt_state = base_state.clone();
 
-        let baseline = run_trace(
-            &trace,
-            &env,
-            &mut SimpleBus::new(256),
-            &mut base_state,
-            1,
-        );
+        let baseline = run_trace(&trace, &env, &mut SimpleBus::new(256), &mut base_state, 1);
         let optimized_run = run_trace(
             &optimized,
             &env,
@@ -601,10 +597,7 @@ fn boolean_simplify_eliminates_double_negation_on_boolean_values() {
 
         assert_eq!(baseline.exit, optimized_run.exit);
         assert_eq!(base_state, opt_state);
-        assert_eq!(
-            opt_state.cpu.gpr[Gpr::Rax.as_u8() as usize],
-            zf as u64
-        );
+        assert_eq!(opt_state.cpu.gpr[Gpr::Rax.as_u8() as usize], zf as u64);
     }
 }
 
@@ -671,13 +664,7 @@ fn boolean_simplify_collapses_triple_negation_on_non_boolean_values() {
         base_state.cpu.gpr[Gpr::Rax.as_u8() as usize] = rax;
         let mut opt_state = base_state.clone();
 
-        let baseline = run_trace(
-            &trace,
-            &env,
-            &mut SimpleBus::new(256),
-            &mut base_state,
-            1,
-        );
+        let baseline = run_trace(&trace, &env, &mut SimpleBus::new(256), &mut base_state, 1);
         let optimized_run = run_trace(
             &optimized,
             &env,
@@ -690,9 +677,9 @@ fn boolean_simplify_collapses_triple_negation_on_non_boolean_values() {
         assert_eq!(base_state, opt_state);
         assert_eq!(
             opt_state.cpu.gpr[Gpr::Rbx.as_u8() as usize],
-             (rax == 0) as u64
-         );
-     }
+            (rax == 0) as u64
+        );
+    }
 }
 
 #[test]
@@ -764,7 +751,8 @@ fn boolean_simplify_prefers_xor_when_eq_zero_value_is_reused() {
             rhs,
             flags,
             ..
-        } if flags.is_empty() => matches!((lhs, rhs), (Operand::Const(1), _) | (_, Operand::Const(1))),
+        } if flags.is_empty() =>
+            matches!((lhs, rhs), (Operand::Const(1), _) | (_, Operand::Const(1))),
         _ => false,
     }));
     assert_eq!(
@@ -782,13 +770,7 @@ fn boolean_simplify_prefers_xor_when_eq_zero_value_is_reused() {
         base_state.cpu.gpr[Gpr::Rax.as_u8() as usize] = rax;
         let mut opt_state = base_state.clone();
 
-        let baseline = run_trace(
-            &trace,
-            &env,
-            &mut SimpleBus::new(256),
-            &mut base_state,
-            1,
-        );
+        let baseline = run_trace(&trace, &env, &mut SimpleBus::new(256), &mut base_state, 1);
         let optimized_run = run_trace(
             &optimized,
             &env,

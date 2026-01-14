@@ -39,9 +39,7 @@ fn wasmtime_backend_initializes_code_version_table_and_bumps_on_mem_write() {
     let expected_len = {
         let cpu_ptr_u64 = u64::try_from(cpu_ptr).expect("cpu_ptr must be non-negative");
         u32::try_from(
-            cpu_ptr_u64
-                .saturating_add(aero_jit_x86::PAGE_SIZE - 1)
-                / aero_jit_x86::PAGE_SIZE,
+            cpu_ptr_u64.saturating_add(aero_jit_x86::PAGE_SIZE - 1) / aero_jit_x86::PAGE_SIZE,
         )
         .unwrap()
     };
@@ -67,7 +65,9 @@ fn wasmtime_backend_initializes_code_version_table_and_bumps_on_mem_write() {
     let addr = b.const_int(Width::W64, 0);
     let value = b.const_int(Width::W8, 0xAA);
     b.store(Width::W8, addr, value);
-    let ir = b.finish(IrTerminator::ExitToInterpreter { next_rip: entry_rip });
+    let ir = b.finish(IrTerminator::ExitToInterpreter {
+        next_rip: entry_rip,
+    });
     let wasm = Tier1WasmCodegen::new().compile_block(&ir);
 
     let table_index = backend.add_compiled_block(&wasm);
@@ -107,7 +107,9 @@ fn wasmtime_backend_bumps_both_pages_for_cross_page_mem_write() {
     let addr = b.const_int(Width::W64, aero_jit_x86::PAGE_SIZE - 1);
     let value = b.const_int(Width::W64, 0x1122_3344_5566_7788);
     b.store(Width::W64, addr, value);
-    let ir = b.finish(IrTerminator::ExitToInterpreter { next_rip: entry_rip });
+    let ir = b.finish(IrTerminator::ExitToInterpreter {
+        next_rip: entry_rip,
+    });
     let wasm = Tier1WasmCodegen::new().compile_block(&ir);
 
     let table_index = backend.add_compiled_block(&wasm);

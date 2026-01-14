@@ -264,7 +264,10 @@ pub fn run(trace: &mut TraceIr) -> bool {
                         }
 
                         // For boolean `b`, `LtU(b, 1)` is `b == 0` (NOT).
-                        if new == old && rhs == Operand::Const(1) && is_bool_operand(lhs, &bool_values) {
+                        if new == old
+                            && rhs == Operand::Const(1)
+                            && is_bool_operand(lhs, &bool_values)
+                        {
                             new = Instr::BinOp {
                                 dst,
                                 op: BinOp::Xor,

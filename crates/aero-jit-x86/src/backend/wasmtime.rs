@@ -524,10 +524,7 @@ fn define_mem_helpers(linker: &mut Linker<HostState>, memory: Memory) {
             .func_wrap(
                 IMPORT_MODULE,
                 IMPORT_MEM_WRITE_U8,
-                move |mut caller: Caller<'_, HostState>,
-                      cpu_ptr: i32,
-                      addr: i64,
-                      value: i32| {
+                move |mut caller: Caller<'_, HostState>, cpu_ptr: i32, addr: i64, value: i32| {
                     let addr_u = addr as u64;
                     {
                         let mem_mut = mem.data_mut(&mut caller);
@@ -548,10 +545,7 @@ fn define_mem_helpers(linker: &mut Linker<HostState>, memory: Memory) {
             .func_wrap(
                 IMPORT_MODULE,
                 IMPORT_MEM_WRITE_U16,
-                move |mut caller: Caller<'_, HostState>,
-                      cpu_ptr: i32,
-                      addr: i64,
-                      value: i32| {
+                move |mut caller: Caller<'_, HostState>, cpu_ptr: i32, addr: i64, value: i32| {
                     let addr_u = addr as u64;
                     {
                         let mem_mut = mem.data_mut(&mut caller);
@@ -571,10 +565,7 @@ fn define_mem_helpers(linker: &mut Linker<HostState>, memory: Memory) {
             .func_wrap(
                 IMPORT_MODULE,
                 IMPORT_MEM_WRITE_U32,
-                move |mut caller: Caller<'_, HostState>,
-                      cpu_ptr: i32,
-                      addr: i64,
-                      value: i32| {
+                move |mut caller: Caller<'_, HostState>, cpu_ptr: i32, addr: i64, value: i32| {
                     let addr_u = addr as u64;
                     {
                         let mem_mut = mem.data_mut(&mut caller);
@@ -594,10 +585,7 @@ fn define_mem_helpers(linker: &mut Linker<HostState>, memory: Memory) {
             .func_wrap(
                 IMPORT_MODULE,
                 IMPORT_MEM_WRITE_U64,
-                move |mut caller: Caller<'_, HostState>,
-                      cpu_ptr: i32,
-                      addr: i64,
-                      value: i64| {
+                move |mut caller: Caller<'_, HostState>, cpu_ptr: i32, addr: i64, value: i64| {
                     let addr_u = addr as u64;
                     {
                         let mem_mut = mem.data_mut(&mut caller);

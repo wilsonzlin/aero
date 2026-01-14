@@ -26,7 +26,10 @@ fn tier2_valueids_are_compacted_before_codegen() {
     let mut trace = TraceIr {
         prologue: vec![],
         body: vec![
-            Instr::Const { dst: high, value: 7 },
+            Instr::Const {
+                dst: high,
+                value: 7,
+            },
             Instr::StoreReg {
                 reg: Gpr::Rax,
                 src: Operand::Value(high),
@@ -50,4 +53,3 @@ fn tier2_valueids_are_compacted_before_codegen() {
         .validate_all(&wasm)
         .expect("generated wasm should validate");
 }
-

@@ -311,7 +311,10 @@ fn wasm_tier1_call_helper_bails_out_to_interpreter_without_trapping() {
     assert_eq!(next_rip, entry + 0x10);
     assert_eq!(out_cpu.rip, entry + 0x10);
     assert_eq!(out_cpu.gpr[Gpr::Rax.as_u8() as usize], 0x1234);
-    assert_eq!(out_cpu.gpr[Gpr::Rbx.as_u8() as usize], 0x1122_3344_5566_7788);
+    assert_eq!(
+        out_cpu.gpr[Gpr::Rbx.as_u8() as usize],
+        0x1122_3344_5566_7788
+    );
 }
 
 #[cfg(feature = "tier1-inline-tlb")]

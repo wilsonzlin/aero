@@ -4,10 +4,9 @@ use aero_jit_x86::tier2::ir::{Instr, Operand, TraceIr, TraceKind, ValueId};
 use aero_jit_x86::tier2::opt::RegAllocPlan;
 use aero_jit_x86::tier2::wasm_codegen::Tier2WasmCodegen;
 use aero_jit_x86::wasm::{
-    IMPORT_CODE_PAGE_VERSION,
-    IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32, IMPORT_MEM_READ_U64, IMPORT_MEM_READ_U8,
-    IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32, IMPORT_MEM_WRITE_U64, IMPORT_MEM_WRITE_U8,
-    IMPORT_MODULE,
+    IMPORT_CODE_PAGE_VERSION, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32, IMPORT_MEM_READ_U64,
+    IMPORT_MEM_READ_U8, IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32, IMPORT_MEM_WRITE_U64,
+    IMPORT_MEM_WRITE_U8, IMPORT_MODULE,
 };
 use aero_types::{Gpr, Width};
 use wasmparser::{Parser, Payload};

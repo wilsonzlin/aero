@@ -308,8 +308,5 @@ fn tier2_masks_shift_count_uses_6_bits_for_64bit_operands() {
 
     let (exit, state) = run_x86(CODE);
     assert_side_exit_at_int3(exit, CODE);
-    assert_eq!(
-        state.cpu.gpr[Gpr::Rax.as_u8() as usize],
-        1u64 << 32
-    );
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 1u64 << 32);
 }

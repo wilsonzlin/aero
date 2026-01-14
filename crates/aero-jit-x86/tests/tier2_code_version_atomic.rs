@@ -61,4 +61,3 @@ fn tier2_code_version_table_ops_use_atomics_for_shared_memory() {
     // Store fast-path should bump the version table with `i32.atomic.rmw.add`.
     assert_wasm_contains_op(&wasm, |op| matches!(op, Operator::I32AtomicRmwAdd { .. }));
 }
-

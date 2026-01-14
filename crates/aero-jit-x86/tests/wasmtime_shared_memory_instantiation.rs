@@ -7,9 +7,7 @@ use aero_jit_x86::tier2::opt::RegAllocPlan;
 use aero_jit_x86::tier2::{Tier2WasmCodegen, Tier2WasmOptions};
 use aero_jit_x86::wasm::IMPORT_MEMORY;
 use aero_jit_x86::wasm::IMPORT_MODULE;
-use wasmtime::{
-    Config, Engine, Linker, MemoryType, Module, SharedMemory, Store, TypedFunc,
-};
+use wasmtime::{Config, Engine, Linker, MemoryType, Module, SharedMemory, Store, TypedFunc};
 
 fn shared_engine() -> Engine {
     let mut config = Config::new();

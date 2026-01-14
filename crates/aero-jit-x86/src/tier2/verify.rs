@@ -69,9 +69,8 @@ pub fn verify_function(func: &Function) -> Result<(), String> {
 
         let mut defined_so_far: HashSet<ValueId> = HashSet::new();
         for (idx, inst) in block.instrs.iter().enumerate() {
-            verify_instr_operands_defined(inst, &defined_so_far).map_err(|e| {
-                format!("block {:?} instr[{idx}] {inst:?}: {e}", block.id)
-            })?;
+            verify_instr_operands_defined(inst, &defined_so_far)
+                .map_err(|e| format!("block {:?} instr[{idx}] {inst:?}: {e}", block.id))?;
 
             if let Some(dst) = inst.dst() {
                 if let Some(prev) = def_sites.get(&dst) {

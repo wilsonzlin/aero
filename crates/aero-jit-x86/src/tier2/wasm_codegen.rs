@@ -927,7 +927,8 @@ impl Emitter<'_> {
                         self.f.instruction(&Instruction::I64Add);
                         self.f.instruction(&Instruction::I32WrapI64);
                         if self.options.memory_shared {
-                            self.f.instruction(&Instruction::I32AtomicLoad(memarg(0, 2)));
+                            self.f
+                                .instruction(&Instruction::I32AtomicLoad(memarg(0, 2)));
                         } else {
                             self.f.instruction(&Instruction::I32Load(memarg(0, 2)));
                         }

@@ -481,7 +481,10 @@ fn tier2_trace_wasm_without_flag_usage_does_not_touch_rflags() {
                 dst: v(0),
                 reg: Gpr::Rax,
             },
-            Instr::Const { dst: v(1), value: 1 },
+            Instr::Const {
+                dst: v(1),
+                value: 1,
+            },
             Instr::BinOp {
                 dst: v(2),
                 op: BinOp::Add,
@@ -1150,7 +1153,10 @@ fn tier2_loop_trace_inline_code_version_guard_invalidates_after_store_bumps_tabl
                 dst: v(0),
                 reg: Gpr::Rax,
             },
-            Instr::Const { dst: v(1), value: 1 },
+            Instr::Const {
+                dst: v(1),
+                value: 1,
+            },
             Instr::BinOp {
                 dst: v(2),
                 op: BinOp::Add,
@@ -1163,7 +1169,10 @@ fn tier2_loop_trace_inline_code_version_guard_invalidates_after_store_bumps_tabl
                 src: Operand::Value(v(2)),
             },
             // Exit after 3 iterations if invalidation doesn't happen (avoid hanging forever).
-            Instr::Const { dst: v(3), value: 3 },
+            Instr::Const {
+                dst: v(3),
+                value: 3,
+            },
             Instr::BinOp {
                 dst: v(4),
                 op: BinOp::LtU,
@@ -1337,10 +1346,7 @@ mod random_traces {
                     } else {
                         rng.gen()
                     };
-                    body.push(Instr::Const {
-                        dst,
-                        value,
-                    });
+                    body.push(Instr::Const { dst, value });
                     values.push(dst);
                     if value <= (GUEST_MEM_SIZE - 8) as u64 {
                         safe_addrs.push(dst);
@@ -1417,11 +1423,7 @@ mod random_traces {
                     } else {
                         Operand::Const(rng.gen_range(0..(GUEST_MEM_SIZE - bytes)) as u64)
                     };
-                    body.push(Instr::LoadMem {
-                        dst,
-                        addr,
-                        width,
-                    });
+                    body.push(Instr::LoadMem { dst, addr, width });
                     values.push(dst);
                 }
                 80..=84 => {
@@ -1440,25 +1442,14 @@ mod random_traces {
                         Operand::Const(rng.gen_range(0..(GUEST_MEM_SIZE - bytes)) as u64)
                     };
                     let src = gen_operand(rng, &values);
-                    body.push(Instr::StoreMem {
-                        addr,
-                        src,
-                        width,
-                    });
+                    body.push(Instr::StoreMem { addr, src, width });
                 }
                 85..=89 => {
                     let dst = v(next_value);
                     next_value += 1;
-                    let flag = *[
-                        Flag::Cf,
-                        Flag::Pf,
-                        Flag::Af,
-                        Flag::Zf,
-                        Flag::Sf,
-                        Flag::Of,
-                    ]
-                    .choose(rng)
-                    .unwrap();
+                    let flag = *[Flag::Cf, Flag::Pf, Flag::Af, Flag::Zf, Flag::Sf, Flag::Of]
+                        .choose(rng)
+                        .unwrap();
                     body.push(Instr::LoadFlag { dst, flag });
                     values.push(dst);
                 }

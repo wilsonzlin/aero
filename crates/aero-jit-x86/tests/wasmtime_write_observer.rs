@@ -4,7 +4,9 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use aero_cpu_core::jit::cache::CompiledBlockHandle;
-use aero_cpu_core::jit::runtime::{JitBackend, JitConfig, JitRuntime, DEFAULT_CODE_VERSION_MAX_PAGES};
+use aero_cpu_core::jit::runtime::{
+    JitBackend, JitConfig, JitRuntime, DEFAULT_CODE_VERSION_MAX_PAGES,
+};
 use aero_cpu_core::state::CpuState;
 use aero_jit_x86::backend::{WasmBackend, WasmtimeBackend, WriteObserver};
 use aero_jit_x86::tier1::ir::{IrBuilder, IrTerminator};

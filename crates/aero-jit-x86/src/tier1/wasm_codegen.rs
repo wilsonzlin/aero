@@ -975,8 +975,9 @@ impl Emitter<'_> {
 
                         let emit_split_load = |this: &mut Self| {
                             // part0 = loadN(vaddr - shift_bytes) >> (shift_bytes * 8)
-                            this.func
-                                .instruction(&Instruction::LocalGet(this.layout.value_local(*addr)));
+                            this.func.instruction(&Instruction::LocalGet(
+                                this.layout.value_local(*addr),
+                            ));
                             this.func
                                 .instruction(&Instruction::LocalGet(this.layout.scratch_local()));
                             this.func.instruction(&Instruction::I64Sub);
@@ -993,7 +994,9 @@ impl Emitter<'_> {
                                 Width::W32 => this
                                     .func
                                     .instruction(&Instruction::I64Load32U(memarg(0, 2))),
-                                Width::W64 => this.func.instruction(&Instruction::I64Load(memarg(0, 3))),
+                                Width::W64 => {
+                                    this.func.instruction(&Instruction::I64Load(memarg(0, 3)))
+                                }
                                 _ => unreachable!(),
                             };
                             this.func
@@ -1007,8 +1010,9 @@ impl Emitter<'_> {
 
                             // part1 = (loadN(vaddr1) & ((1 << (shift_bytes * 8)) - 1))
                             //           << ((size_bytes * 8) - (shift_bytes * 8))
-                            this.func
-                                .instruction(&Instruction::LocalGet(this.layout.value_local(*addr)));
+                            this.func.instruction(&Instruction::LocalGet(
+                                this.layout.value_local(*addr),
+                            ));
                             this.func
                                 .instruction(&Instruction::I64Const(size_bytes as i64));
                             this.func.instruction(&Instruction::I64Add);
@@ -1028,7 +1032,9 @@ impl Emitter<'_> {
                                 Width::W32 => this
                                     .func
                                     .instruction(&Instruction::I64Load32U(memarg(0, 2))),
-                                Width::W64 => this.func.instruction(&Instruction::I64Load(memarg(0, 3))),
+                                Width::W64 => {
+                                    this.func.instruction(&Instruction::I64Load(memarg(0, 3)))
+                                }
                                 _ => unreachable!(),
                             };
 
@@ -1062,10 +1068,10 @@ impl Emitter<'_> {
                                 .instruction(&Instruction::LocalSet(this.layout.value_local(*dst)));
                         };
 
-                         // Page 0: translate.
-                         self.emit_translate_and_cache(MMU_ACCESS_READ, crate::TLB_FLAG_READ);
+                        // Page 0: translate.
+                        self.emit_translate_and_cache(MMU_ACCESS_READ, crate::TLB_FLAG_READ);
 
-                         if self.options.inline_tlb_mmio_exit {
+                        if self.options.inline_tlb_mmio_exit {
                             self.emit_mmio_exit(size_bytes, 0, None);
 
                             // Page 1: translate and ensure RAM. Use the original vaddr for the MMIO
@@ -1078,9 +1084,8 @@ impl Emitter<'_> {
                             self.func
                                 .instruction(&Instruction::I64Const(size_bytes as i64));
                             self.func.instruction(&Instruction::I64Add);
-                            self.func.instruction(&Instruction::LocalGet(
-                                self.layout.scratch_local(),
-                            ));
+                            self.func
+                                .instruction(&Instruction::LocalGet(self.layout.scratch_local()));
                             self.func.instruction(&Instruction::I64Sub);
                             self.func.instruction(&Instruction::LocalSet(
                                 self.layout.scratch_vaddr_local(),
@@ -1461,19 +1466,19 @@ impl Emitter<'_> {
                                             .instruction(&Instruction::I64Const(shift_bits as i64));
                                         this.func.instruction(&Instruction::I64ShrU);
                                     }
-                                     match nbytes {
-                                         1 => this
-                                             .func
-                                             .instruction(&Instruction::I64Store8(memarg(0, 0))),
-                                         2 => this
+                                    match nbytes {
+                                        1 => this
+                                            .func
+                                            .instruction(&Instruction::I64Store8(memarg(0, 0))),
+                                        2 => this
                                             .func
                                             .instruction(&Instruction::I64Store16(memarg(0, 1))),
-                                         4 => this
-                                             .func
-                                             .instruction(&Instruction::I64Store32(memarg(0, 2))),
-                                         _ => unreachable!("invalid store chunk size: {nbytes}"),
-                                     };
-                                 };
+                                        4 => this
+                                            .func
+                                            .instruction(&Instruction::I64Store32(memarg(0, 2))),
+                                        _ => unreachable!("invalid store chunk size: {nbytes}"),
+                                    };
+                                };
 
                             // Dispatch based on `shift_bytes` (bytes written to page 1). Note that in
                             // the cross-page case `shift_bytes` is always in the range [1, size_bytes).
@@ -1541,10 +1546,12 @@ impl Emitter<'_> {
                                         }
                                         this.func.instruction(&Instruction::Else);
                                         {
-                                            this.func.instruction(&Instruction::LocalGet(shift_local));
+                                            this.func
+                                                .instruction(&Instruction::LocalGet(shift_local));
                                             this.func.instruction(&Instruction::I64Const(3));
                                             this.func.instruction(&Instruction::I64Eq);
-                                            this.func.instruction(&Instruction::If(BlockType::Empty));
+                                            this.func
+                                                .instruction(&Instruction::If(BlockType::Empty));
                                             {
                                                 // n1=5, n2=3
                                                 emit_store_page0_chunk(this, 0, 4, 0);
@@ -1572,7 +1579,8 @@ impl Emitter<'_> {
                                                     this.func.instruction(&Instruction::LocalGet(
                                                         shift_local,
                                                     ));
-                                                    this.func.instruction(&Instruction::I64Const(5));
+                                                    this.func
+                                                        .instruction(&Instruction::I64Const(5));
                                                     this.func.instruction(&Instruction::I64Eq);
                                                     this.func.instruction(&Instruction::If(
                                                         BlockType::Empty,
@@ -1586,9 +1594,9 @@ impl Emitter<'_> {
                                                     }
                                                     this.func.instruction(&Instruction::Else);
                                                     {
-                                                        this.func.instruction(&Instruction::LocalGet(
-                                                            shift_local,
-                                                        ));
+                                                        this.func.instruction(
+                                                            &Instruction::LocalGet(shift_local),
+                                                        );
                                                         this.func
                                                             .instruction(&Instruction::I64Const(6));
                                                         this.func.instruction(&Instruction::I64Eq);
@@ -1634,10 +1642,7 @@ impl Emitter<'_> {
                             this.func.instruction(&Instruction::LocalSet(
                                 this.layout.scratch_vaddr_local(),
                             ));
-                            this.emit_translate_and_cache(
-                                MMU_ACCESS_WRITE,
-                                crate::TLB_FLAG_WRITE,
-                            );
+                            this.emit_translate_and_cache(MMU_ACCESS_WRITE, crate::TLB_FLAG_WRITE);
                             this.emit_bump_code_version_fastpath();
 
                             this.func.instruction(&Instruction::LocalGet(
@@ -1646,17 +1651,13 @@ impl Emitter<'_> {
                             this.func
                                 .instruction(&Instruction::I64Const(size_bytes as i64));
                             this.func.instruction(&Instruction::I64Add);
-                            this.func.instruction(&Instruction::LocalGet(
-                                this.layout.scratch_local(),
-                            ));
+                            this.func
+                                .instruction(&Instruction::LocalGet(this.layout.scratch_local()));
                             this.func.instruction(&Instruction::I64Sub);
                             this.func.instruction(&Instruction::LocalSet(
                                 this.layout.scratch_vaddr_local(),
                             ));
-                            this.emit_translate_and_cache(
-                                MMU_ACCESS_WRITE,
-                                crate::TLB_FLAG_WRITE,
-                            );
+                            this.emit_translate_and_cache(MMU_ACCESS_WRITE, crate::TLB_FLAG_WRITE);
                             this.emit_bump_code_version_fastpath();
                         };
 
@@ -1673,9 +1674,8 @@ impl Emitter<'_> {
                             self.func
                                 .instruction(&Instruction::I64Const(size_bytes as i64));
                             self.func.instruction(&Instruction::I64Add);
-                            self.func.instruction(&Instruction::LocalGet(
-                                self.layout.scratch_local(),
-                            ));
+                            self.func
+                                .instruction(&Instruction::LocalGet(self.layout.scratch_local()));
                             self.func.instruction(&Instruction::I64Sub);
                             self.func.instruction(&Instruction::LocalSet(
                                 self.layout.scratch_vaddr_local(),

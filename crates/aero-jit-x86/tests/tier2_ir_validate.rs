@@ -71,10 +71,7 @@ fn tier2_trace_ir_validate_rejects_duplicate_value_defs() {
 fn tier2_trace_ir_validate_rejects_side_exit_not_last() {
     let trace = TraceIr {
         prologue: vec![],
-        body: vec![
-            Instr::SideExit { exit_rip: 0x1234 },
-            Instr::Nop,
-        ],
+        body: vec![Instr::SideExit { exit_rip: 0x1234 }, Instr::Nop],
         kind: TraceKind::Linear,
     };
 
@@ -99,4 +96,3 @@ fn tier2_trace_ir_validate_rejects_empty_loop_body() {
         "unexpected error message: {err}"
     );
 }
-

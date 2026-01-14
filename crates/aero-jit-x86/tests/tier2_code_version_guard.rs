@@ -159,5 +159,8 @@ fn trace_builder_loop_guards_only_in_body() {
         .collect();
     assert_eq!(guarded_pages_in_body_prefix, vec![0, 2]);
 
-    assert_eq!(trace.ir.body[guarded_pages_in_body_prefix.len()], Instr::Nop);
+    assert_eq!(
+        trace.ir.body[guarded_pages_in_body_prefix.len()],
+        Instr::Nop
+    );
 }

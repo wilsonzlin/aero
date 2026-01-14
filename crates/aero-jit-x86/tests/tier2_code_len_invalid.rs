@@ -52,4 +52,3 @@ fn tier2_code_version_guard_ignores_trailing_invalid_page() {
         .collect();
     assert_eq!(guarded_pages, vec![entry_page]);
 }
-

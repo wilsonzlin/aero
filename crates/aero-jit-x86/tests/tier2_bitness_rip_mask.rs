@@ -26,4 +26,3 @@ fn tier2_cfg_builder_masks_32bit_entry_rip_for_block_keys() {
         "unexpected duplicate blocks for masked 32-bit RIP"
     );
 }
-
