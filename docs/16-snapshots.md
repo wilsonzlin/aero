@@ -252,11 +252,12 @@ The web runtime may also store **host-managed** snapshot state under reserved `d
 Current reserved web-only ids:
 
 - `device.1000000000` — `RuntimeDiskWorker` snapshot state (disk overlay refs + remote cache bindings). This is host-side persistence state and is separate from the guest-visible disk controller snapshot (`DeviceId::DISK_CONTROLLER`).
-- `device.1000000001+` — **Legacy** IO worker BAR1 VRAM (GPU VRAM) snapshot chunks (kept for restore compatibility).
-  - Newer builds snapshot BAR1 VRAM via the canonical `gpu.vram` (`DeviceId::GPU_VRAM = 28`) device blobs instead of this reserved-id range.
-  - Chunk `i` is stored as `device.${1000000001 + i}`.
+- `device.1000000001+` — **legacy/compat** IO worker BAR1 VRAM snapshot chunks (kept for restore compatibility).
+  - Older web builds stored the IO worker's SharedArrayBuffer-backed BAR1 VRAM mapping as raw chunk bytes under reserved `device.<id>` entries.
+  - Chunk `i` was stored as `device.${1000000001 + i}` and implicitly addressed as `start = i * chunkBytes` (`chunkBytes <= 64 MiB`).
   - Each chunk is **≤ 64 MiB** (`aero_snapshot::limits::MAX_DEVICE_ENTRY_LEN`), so the current 128 MiB web VRAM configuration uses up to 2 chunks.
-  - On restore, the IO worker applies these blobs directly into its SharedArrayBuffer-backed VRAM view and does **not** forward them to the coordinator (to avoid transferring 64–128 MiB through `postMessage`).
+  - Newer builds snapshot BAR1 VRAM via the canonical `gpu.vram` (`DeviceId::GPU_VRAM = 28`) device blobs, with explicit offset/length metadata embedded in each payload (no chunk size hint required).
+  - On restore, the IO worker applies these blobs directly into its BAR1 view and does **not** forward them to the coordinator (to avoid transferring 64–128 MiB through `postMessage`).
 
 #### Disk controllers (`DeviceId::DISK_CONTROLLER` = `6`)
 
