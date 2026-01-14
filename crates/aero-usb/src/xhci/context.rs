@@ -48,7 +48,7 @@ impl fmt::Display for ContextError {
 
 impl core::error::Error for ContextError {}
 
-fn read_context32_dwords(mem: &mut impl MemoryBus, paddr: u64) -> [u32; CONTEXT_DWORDS] {
+fn read_context32_dwords(mem: &mut (impl MemoryBus + ?Sized), paddr: u64) -> [u32; CONTEXT_DWORDS] {
     let mut raw = [0u8; CONTEXT_DWORDS * 4];
     mem.read_bytes(paddr, &mut raw);
     let mut out = [0u32; CONTEXT_DWORDS];
@@ -59,7 +59,11 @@ fn read_context32_dwords(mem: &mut impl MemoryBus, paddr: u64) -> [u32; CONTEXT_
     out
 }
 
-fn write_context32_dwords(mem: &mut impl MemoryBus, paddr: u64, dwords: &[u32; CONTEXT_DWORDS]) {
+fn write_context32_dwords(
+    mem: &mut (impl MemoryBus + ?Sized),
+    paddr: u64,
+    dwords: &[u32; CONTEXT_DWORDS],
+) {
     let mut raw = [0u8; CONTEXT_DWORDS * 4];
     for (i, dword) in dwords.iter().enumerate() {
         let off = i * 4;
@@ -68,11 +72,11 @@ fn write_context32_dwords(mem: &mut impl MemoryBus, paddr: u64, dwords: &[u32; C
     mem.write_physical(paddr, &raw);
 }
 
-fn read_u64_le(mem: &mut impl MemoryBus, paddr: u64) -> u64 {
+fn read_u64_le(mem: &mut (impl MemoryBus + ?Sized), paddr: u64) -> u64 {
     mem.read_u64(paddr)
 }
 
-fn write_u64_le(mem: &mut impl MemoryBus, paddr: u64, value: u64) {
+fn write_u64_le(mem: &mut (impl MemoryBus + ?Sized), paddr: u64, value: u64) {
     mem.write_physical(paddr, &value.to_le_bytes());
 }
 
@@ -107,13 +111,13 @@ pub struct InputControlContext {
 }
 
 impl InputControlContext {
-    pub fn read_from(mem: &mut impl MemoryBus, paddr: u64) -> Self {
+    pub fn read_from(mem: &mut (impl MemoryBus + ?Sized), paddr: u64) -> Self {
         Self {
             dwords: read_context32_dwords(mem, paddr),
         }
     }
 
-    pub fn write_to(&self, mem: &mut impl MemoryBus, paddr: u64) {
+    pub fn write_to(&self, mem: &mut (impl MemoryBus + ?Sized), paddr: u64) {
         write_context32_dwords(mem, paddr, &self.dwords);
     }
 
@@ -189,13 +193,13 @@ pub struct SlotContext {
 }
 
 impl SlotContext {
-    pub fn read_from(mem: &mut impl MemoryBus, paddr: u64) -> Self {
+    pub fn read_from(mem: &mut (impl MemoryBus + ?Sized), paddr: u64) -> Self {
         Self {
             dwords: read_context32_dwords(mem, paddr),
         }
     }
 
-    pub fn write_to(&self, mem: &mut impl MemoryBus, paddr: u64) {
+    pub fn write_to(&self, mem: &mut (impl MemoryBus + ?Sized), paddr: u64) {
         write_context32_dwords(mem, paddr, &self.dwords);
     }
 
@@ -299,13 +303,13 @@ pub struct EndpointContext {
 }
 
 impl EndpointContext {
-    pub fn read_from(mem: &mut impl MemoryBus, paddr: u64) -> Self {
+    pub fn read_from(mem: &mut (impl MemoryBus + ?Sized), paddr: u64) -> Self {
         Self {
             dwords: read_context32_dwords(mem, paddr),
         }
     }
 
-    pub fn write_to(&self, mem: &mut impl MemoryBus, paddr: u64) {
+    pub fn write_to(&self, mem: &mut (impl MemoryBus + ?Sized), paddr: u64) {
         write_context32_dwords(mem, paddr, &self.dwords);
     }
 
@@ -334,6 +338,11 @@ impl EndpointContext {
         ((self.dwords[0] >> 16) & 0xff) as u8
     }
 
+    /// Sets the Interval field (DW0 bits 16..=23).
+    pub fn set_interval(&mut self, interval: u8) {
+        self.dwords[0] = (self.dwords[0] & !(0xff << 16)) | ((interval as u32) << 16);
+    }
+
     /// Endpoint Type field (DW1 bits 3..=5).
     pub fn endpoint_type_raw(&self) -> u8 {
         ((self.dwords[1] >> 3) & 0x07) as u8
@@ -346,6 +355,12 @@ impl EndpointContext {
     /// Max Packet Size field (DW1 bits 16..=31).
     pub fn max_packet_size(&self) -> u16 {
         ((self.dwords[1] >> 16) & 0xffff) as u16
+    }
+
+    /// Sets the Max Packet Size field (DW1 bits 16..=31).
+    pub fn set_max_packet_size(&mut self, max_packet_size: u16) {
+        self.dwords[1] =
+            (self.dwords[1] & !(0xffff << 16)) | ((max_packet_size as u32) << 16);
     }
 
     /// TR Dequeue Pointer field (DW2-DW3).
@@ -367,6 +382,15 @@ impl EndpointContext {
     pub fn set_tr_dequeue_pointer(&mut self, ptr: u64, dcs: bool) {
         let ptr = ptr & !0x0f;
         let raw = ptr | (dcs as u64);
+        self.dwords[2] = raw as u32;
+        self.dwords[3] = (raw >> 32) as u32;
+    }
+
+    /// Sets the raw TR Dequeue Pointer field (DW2-DW3) verbatim.
+    ///
+    /// This preserves the DCS bit as well as any reserved low bits that may have been set by the
+    /// guest. Prefer [`Self::set_tr_dequeue_pointer`] when constructing a new context.
+    pub fn set_tr_dequeue_pointer_raw(&mut self, raw: u64) {
         self.dwords[2] = raw as u32;
         self.dwords[3] = (raw >> 32) as u32;
     }
@@ -396,13 +420,13 @@ impl InputContext32 {
         self.base
     }
 
-    pub fn input_control(&self, mem: &mut impl MemoryBus) -> InputControlContext {
+    pub fn input_control(&self, mem: &mut (impl MemoryBus + ?Sized)) -> InputControlContext {
         InputControlContext::read_from(mem, self.base)
     }
 
     pub fn write_input_control(
         &self,
-        mem: &mut impl MemoryBus,
+        mem: &mut (impl MemoryBus + ?Sized),
         ctx: &InputControlContext,
     ) -> Result<(), ContextError> {
         ctx.write_to(mem, self.base);
@@ -410,7 +434,10 @@ impl InputContext32 {
     }
 
     /// Reads the Slot Context (Device Context index 0).
-    pub fn slot_context(&self, mem: &mut impl MemoryBus) -> Result<SlotContext, ContextError> {
+    pub fn slot_context(
+        &self,
+        mem: &mut (impl MemoryBus + ?Sized),
+    ) -> Result<SlotContext, ContextError> {
         let addr = self
             .base
             .checked_add(CONTEXT_SIZE as u64)
@@ -421,7 +448,7 @@ impl InputContext32 {
     /// Writes the Slot Context (Device Context index 0).
     pub fn write_slot_context(
         &self,
-        mem: &mut impl MemoryBus,
+        mem: &mut (impl MemoryBus + ?Sized),
         ctx: &SlotContext,
     ) -> Result<(), ContextError> {
         let addr = self
@@ -442,7 +469,7 @@ impl InputContext32 {
     /// * ...
     pub fn endpoint_context(
         &self,
-        mem: &mut impl MemoryBus,
+        mem: &mut (impl MemoryBus + ?Sized),
         device_context_index: u8,
     ) -> Result<EndpointContext, ContextError> {
         if !(1..=31).contains(&device_context_index) {
@@ -464,7 +491,7 @@ impl InputContext32 {
     /// Writes an Endpoint Context by Device Context index (`1..=31`).
     pub fn write_endpoint_context(
         &self,
-        mem: &mut impl MemoryBus,
+        mem: &mut (impl MemoryBus + ?Sized),
         device_context_index: u8,
         ctx: &EndpointContext,
     ) -> Result<(), ContextError> {
@@ -499,13 +526,13 @@ impl DeviceContext32 {
         self.base
     }
 
-    pub fn slot_context(&self, mem: &mut impl MemoryBus) -> SlotContext {
+    pub fn slot_context(&self, mem: &mut (impl MemoryBus + ?Sized)) -> SlotContext {
         SlotContext::read_from(mem, self.base)
     }
 
     pub fn write_slot_context(
         &self,
-        mem: &mut impl MemoryBus,
+        mem: &mut (impl MemoryBus + ?Sized),
         ctx: &SlotContext,
     ) -> Result<(), ContextError> {
         ctx.write_to(mem, self.base);
@@ -514,7 +541,7 @@ impl DeviceContext32 {
 
     pub fn endpoint_context(
         &self,
-        mem: &mut impl MemoryBus,
+        mem: &mut (impl MemoryBus + ?Sized),
         device_context_index: u8,
     ) -> Result<EndpointContext, ContextError> {
         if !(1..=31).contains(&device_context_index) {
@@ -532,7 +559,7 @@ impl DeviceContext32 {
 
     pub fn write_endpoint_context(
         &self,
-        mem: &mut impl MemoryBus,
+        mem: &mut (impl MemoryBus + ?Sized),
         device_context_index: u8,
         ctx: &EndpointContext,
     ) -> Result<(), ContextError> {
@@ -581,7 +608,7 @@ impl Dcbaa {
 
     pub fn read_device_context_ptr(
         &self,
-        mem: &mut impl MemoryBus,
+        mem: &mut (impl MemoryBus + ?Sized),
         slot_id: u8,
     ) -> Result<u64, ContextError> {
         let addr = self.entry_addr(slot_id)?;
@@ -590,7 +617,7 @@ impl Dcbaa {
 
     pub fn write_device_context_ptr(
         &self,
-        mem: &mut impl MemoryBus,
+        mem: &mut (impl MemoryBus + ?Sized),
         slot_id: u8,
         device_context_ptr: u64,
     ) -> Result<(), ContextError> {

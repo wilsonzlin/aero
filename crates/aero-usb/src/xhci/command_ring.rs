@@ -1,5 +1,6 @@
 use crate::MemoryBus;
 
+use super::context::EndpointContext;
 use super::trb::{CompletionCode, Trb, TrbType, TRB_LEN};
 use alloc::vec;
 use alloc::vec::Vec;
@@ -29,7 +30,6 @@ const ICC_ADD_FLAGS_OFFSET: u64 = 4;
 const ICC_CTX_FLAG_SLOT: u32 = 1 << 0;
 const ICC_CTX_FLAG_EP0: u32 = 1 << 1;
 
-const EP_STATE_MASK: u32 = 0x7;
 const EP_STATE_RUNNING: u32 = 1;
 const EP_STATE_STOPPED: u32 = 3;
 
@@ -381,14 +381,9 @@ impl CommandRingProcessor {
             Err(code) => return code,
         };
 
-        let mut dw0 = match self.read_u32(mem, ep_ctx) {
-            Ok(v) => v,
-            Err(_) => return CompletionCode::ParameterError,
-        };
-        dw0 = (dw0 & !EP_STATE_MASK) | EP_STATE_STOPPED;
-        if self.write_u32(mem, ep_ctx, dw0).is_err() {
-            return CompletionCode::ParameterError;
-        }
+        let mut ctx = EndpointContext::read_from(mem, ep_ctx);
+        ctx.set_endpoint_state(EP_STATE_STOPPED as u8);
+        ctx.write_to(mem, ep_ctx);
         CompletionCode::Success
     }
 
@@ -400,15 +395,10 @@ impl CommandRingProcessor {
             Err(code) => return code,
         };
 
-        let mut dw0 = match self.read_u32(mem, ep_ctx) {
-            Ok(v) => v,
-            Err(_) => return CompletionCode::ParameterError,
-        };
+        let mut ctx = EndpointContext::read_from(mem, ep_ctx);
         // MVP: clear halted/stopped and allow transfers again.
-        dw0 = (dw0 & !EP_STATE_MASK) | EP_STATE_RUNNING;
-        if self.write_u32(mem, ep_ctx, dw0).is_err() {
-            return CompletionCode::ParameterError;
-        }
+        ctx.set_endpoint_state(EP_STATE_RUNNING as u8);
+        ctx.write_to(mem, ep_ctx);
         CompletionCode::Success
     }
 
@@ -432,16 +422,10 @@ impl CommandRingProcessor {
         if !self.check_range(ptr, TRB_LEN as u64) {
             return CompletionCode::ParameterError;
         }
-        let raw = ptr | dcs;
-
-        let dw2 = raw as u32;
-        let dw3 = (raw >> 32) as u32;
-        if self.write_u32(mem, ep_ctx + 8, dw2).is_err() {
-            return CompletionCode::ParameterError;
-        }
-        if self.write_u32(mem, ep_ctx + 12, dw3).is_err() {
-            return CompletionCode::ParameterError;
-        }
+        let dcs = dcs != 0;
+        let mut ctx = EndpointContext::read_from(mem, ep_ctx);
+        ctx.set_tr_dequeue_pointer(ptr, dcs);
+        ctx.write_to(mem, ep_ctx);
 
         // MVP: preserve existing endpoint state (typically Stopped) and only update the dequeue
         // pointer + DCS.
@@ -544,45 +528,14 @@ impl CommandRingProcessor {
         in_ep0: u64,
         out_ep0: u64,
     ) -> Result<(), CompletionCode> {
-        // Dword 0: Interval (bits 16..=23)
-        let in_dw0 = self
-            .read_u32(mem, in_ep0)
-            .map_err(|_| CompletionCode::ParameterError)?;
-        let interval = (in_dw0 >> 16) & 0xff;
+        let in_ctx = EndpointContext::read_from(mem, in_ep0);
+        let mut out_ctx = EndpointContext::read_from(mem, out_ep0);
 
-        let mut out_dw0 = self
-            .read_u32(mem, out_ep0)
-            .map_err(|_| CompletionCode::ParameterError)?;
-        out_dw0 &= !(0xff << 16);
-        out_dw0 |= interval << 16;
-        self.write_u32(mem, out_ep0, out_dw0)
-            .map_err(|_| CompletionCode::ParameterError)?;
-
-        // Dword 1: Max Packet Size (bits 16..=31)
-        let in_dw1 = self
-            .read_u32(mem, in_ep0 + 4)
-            .map_err(|_| CompletionCode::ParameterError)?;
-        let mps = (in_dw1 >> 16) & 0xffff;
-
-        let mut out_dw1 = self
-            .read_u32(mem, out_ep0 + 4)
-            .map_err(|_| CompletionCode::ParameterError)?;
-        out_dw1 &= !(0xffff << 16);
-        out_dw1 |= mps << 16;
-        self.write_u32(mem, out_ep0 + 4, out_dw1)
-            .map_err(|_| CompletionCode::ParameterError)?;
-
-        // TR Dequeue Pointer (dwords 2-3): copy as-is.
-        let in_dw2 = self
-            .read_u32(mem, in_ep0 + 8)
-            .map_err(|_| CompletionCode::ParameterError)?;
-        let in_dw3 = self
-            .read_u32(mem, in_ep0 + 12)
-            .map_err(|_| CompletionCode::ParameterError)?;
-        self.write_u32(mem, out_ep0 + 8, in_dw2)
-            .map_err(|_| CompletionCode::ParameterError)?;
-        self.write_u32(mem, out_ep0 + 12, in_dw3)
-            .map_err(|_| CompletionCode::ParameterError)?;
+        out_ctx.set_interval(in_ctx.interval());
+        out_ctx.set_max_packet_size(in_ctx.max_packet_size());
+        // TR Dequeue Pointer (dwords 2-3): copy verbatim (includes DCS + reserved low bits).
+        out_ctx.set_tr_dequeue_pointer_raw(in_ctx.tr_dequeue_pointer_raw());
+        out_ctx.write_to(mem, out_ep0);
 
         Ok(())
     }
