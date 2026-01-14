@@ -12161,15 +12161,17 @@ HRESULT AEROGPU_D3D9_CALL device_set_fvf(D3DDDI_HDEVICE hDevice, uint32_t fvf) {
 
   if (fvf == dev->fvf) {
     VertexDecl* decl = dev->vertex_decl;
-    if (fvf == kSupportedFvfXyzrhwDiffuse) {
+    if (fvf == kSupportedFvfXyzrhwDiffuse && dev->fvf_vertex_decl) {
       decl = dev->fvf_vertex_decl;
-    } else if (fvf == kSupportedFvfXyzrhwTex1) {
+    } else if (fvf == kSupportedFvfXyzrhwDiffuseTex1 && dev->fvf_vertex_decl_tex1) {
+      decl = dev->fvf_vertex_decl_tex1;
+    } else if (fvf == kSupportedFvfXyzrhwTex1 && dev->fvf_vertex_decl_tex1_nodiffuse) {
       decl = dev->fvf_vertex_decl_tex1_nodiffuse;
-    } else if (fvf == kSupportedFvfXyzDiffuse) {
+    } else if (fvf == kSupportedFvfXyzDiffuse && dev->fvf_vertex_decl_xyz_diffuse) {
       decl = dev->fvf_vertex_decl_xyz_diffuse;
-    } else if (fvf == kSupportedFvfXyzDiffuseTex1) {
+    } else if (fvf == kSupportedFvfXyzDiffuseTex1 && dev->fvf_vertex_decl_xyz_diffuse_tex1) {
       decl = dev->fvf_vertex_decl_xyz_diffuse_tex1;
-    } else if (fvf == kSupportedFvfXyzTex1) {
+    } else if (fvf == kSupportedFvfXyzTex1 && dev->fvf_vertex_decl_xyz_tex1) {
       decl = dev->fvf_vertex_decl_xyz_tex1;
     }
     stateblock_record_vertex_decl_locked(dev, decl, dev->fvf);
