@@ -258,6 +258,11 @@ input report.
 hid_hwheel_step = WheelEvent.deltaX.signum()
 ```
 
+When both `deltaY` and `deltaX` are present (e.g. trackpads), Aero can emit **one** HID mouse report
+that contains both the vertical wheel byte and the horizontal wheel (AC Pan) byte. The web runtime
+uses a combined `mouse_wheel2(wheel, hwheel)` injection path when available to preserve this
+“diagonal scroll in one frame” behavior.
+
 ### Report model
 
 The modeled mouse uses a 5-byte report in **HID report protocol**:
@@ -278,6 +283,10 @@ Byte 0: buttons
 Byte 1: X delta
 Byte 2: Y delta
 ```
+
+Note: because boot protocol reports cannot carry wheel/hwheel deltas, scroll input is ignored while
+the guest has selected boot protocol (though it still counts as user activity for remote-wakeup
+purposes).
 
 ---
 

@@ -1997,6 +1997,31 @@ mod tests {
     }
 
     #[test]
+    fn configured_mouse_wheel2_splits_large_deltas_into_multiple_reports() {
+        let mut dev = UsbCompositeHidInputHandle::new();
+        configure(&mut dev);
+
+        dev.mouse_wheel2(300, -300);
+
+        assert_eq!(
+            dev.handle_in_transfer(MOUSE_INTERRUPT_IN_EP, 5),
+            UsbInResult::Data(vec![0x00, 0x00, 0x00, 127u8, (-127i8) as u8])
+        );
+        assert_eq!(
+            dev.handle_in_transfer(MOUSE_INTERRUPT_IN_EP, 5),
+            UsbInResult::Data(vec![0x00, 0x00, 0x00, 127u8, (-127i8) as u8])
+        );
+        assert_eq!(
+            dev.handle_in_transfer(MOUSE_INTERRUPT_IN_EP, 5),
+            UsbInResult::Data(vec![0x00, 0x00, 0x00, 46u8, (-46i8) as u8])
+        );
+        assert_eq!(
+            dev.handle_in_transfer(MOUSE_INTERRUPT_IN_EP, 5),
+            UsbInResult::Nak
+        );
+    }
+
+    #[test]
     fn configured_mouse_wheel_and_hwheel_emit_two_separate_reports() {
         let mut dev = UsbCompositeHidInputHandle::new();
         configure(&mut dev);
