@@ -31,6 +31,7 @@ aero-acpi = { path = "../aero-acpi" }
 aero-io-snapshot = { path = "../aero-io-snapshot" }
 aero-snapshot = { path = "../aero-snapshot", features = ["io-snapshot"] }
 aero-usb = { path = "../aero-usb" }
+aero-pci-routing = { path = "../aero-pci-routing" }
 
 [[test]]
 name = "pc_platform_hda"

@@ -14,6 +14,7 @@ use aero_devices_storage::ata::AtaDrive;
 use aero_devices_storage::ata::ATA_CMD_READ_DMA_EXT;
 use aero_devices_storage::pci_ide::PRIMARY_PORTS;
 use aero_pc_platform::{PcPlatform, PcPlatformConfig, ResetEvent};
+use aero_pci_routing as pci_routing;
 use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
 use memory::MemoryBus as _;
 
@@ -356,10 +357,9 @@ fn pc_platform_reset_restores_pci_intx_interrupt_line_and_pin_registers() {
     );
 
     // Explicitly validate the PCI swizzle:
-    // line == pirq_to_gsi[(device + (pin-1)) & 3]
+    // use the canonical INTx swizzle helper to compute the expected `Interrupt Line` value.
     let pirq_to_gsi = PciIntxRouterConfig::default().pirq_to_gsi;
-    let pirq_index = (usize::from(bdf.device) + usize::from(pin_before - 1)) & 3;
-    let expected_line = u8::try_from(pirq_to_gsi[pirq_index]).unwrap();
+    let expected_line = pci_routing::irq_line_for_intx(pirq_to_gsi, bdf.device, pin_before);
     assert_eq!(line_before, expected_line);
 
     // Smash the guest-visible INTx routing metadata.
@@ -380,8 +380,7 @@ fn pc_platform_reset_restores_pci_intx_interrupt_line_and_pin_registers() {
     let line_after = read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, 0x3c);
     assert_eq!(pin_after, expected_pin.to_config_u8());
 
-    let pirq_index_after = (usize::from(bdf.device) + usize::from(pin_after - 1)) & 3;
-    let expected_line_after = u8::try_from(pirq_to_gsi[pirq_index_after]).unwrap();
+    let expected_line_after = pci_routing::irq_line_for_intx(pirq_to_gsi, bdf.device, pin_after);
     assert_eq!(line_after, expected_line_after);
 }
 

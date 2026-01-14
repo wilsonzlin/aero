@@ -591,6 +591,7 @@ dependencies = [
  "aero-net-e1000",
  "aero-pc-constants",
  "aero-pci-firmware-adapter",
+ "aero-pci-routing",
  "aero-platform",
  "aero-snapshot",
  "aero-storage",
