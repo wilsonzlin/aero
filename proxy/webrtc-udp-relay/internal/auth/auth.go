@@ -10,7 +10,7 @@ import (
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/config"
 )
 
-type Verifier interface {
+type verifier interface {
 	Verify(credential string) error
 }
 
@@ -18,7 +18,7 @@ type noopVerifier struct{}
 
 func (noopVerifier) Verify(string) error { return nil }
 
-func NewVerifier(cfg config.Config) (Verifier, error) {
+func NewVerifier(cfg config.Config) (verifier, error) {
 	switch cfg.AuthMode {
 	case config.AuthModeNone:
 		return noopVerifier{}, nil

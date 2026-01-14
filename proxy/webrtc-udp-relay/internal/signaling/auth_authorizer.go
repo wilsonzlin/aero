@@ -19,7 +19,11 @@ import (
 //     (preferred for browser clients).
 type authAuthorizer struct {
 	mode     config.AuthMode
-	verifier auth.Verifier
+	verifier credentialVerifier
+}
+
+type credentialVerifier interface {
+	Verify(credential string) error
 }
 
 type claimsVerifier interface {

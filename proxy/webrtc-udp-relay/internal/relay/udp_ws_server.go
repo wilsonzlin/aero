@@ -41,7 +41,7 @@ type udpWSControlMessage struct {
 // frame (v1 or v2), as defined in PROTOCOL.md.
 type udpWebSocketServer struct {
 	cfg      config.Config
-	verifier auth.Verifier
+	verifier credentialVerifier
 	log      *slog.Logger
 
 	sessions *SessionManager
@@ -49,6 +49,10 @@ type udpWebSocketServer struct {
 	policy   *policy.DestinationPolicy
 
 	upgrader websocket.Upgrader
+}
+
+type credentialVerifier interface {
+	Verify(credential string) error
 }
 
 type claimsVerifier interface {
