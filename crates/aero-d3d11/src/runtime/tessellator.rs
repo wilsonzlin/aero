@@ -543,4 +543,42 @@ fn main() {{
             .validate(&module)
             .expect("generated WGSL failed to validate");
     }
+
+    #[test]
+    fn triangle_integer_spec_levels_match_formulas_and_normalize() {
+        // Mirror the task-spec invariants on the primary helpers used by the tessellation
+        // implementation (`tri_*`), for a small set of representative tess factors.
+        const EPS: f32 = 1e-5;
+        for level in [1u32, 2, 3, 4, 16] {
+            let vc_expected = (level + 1) * (level + 2) / 2;
+            let ic_expected = level * level * 3;
+
+            let vc = tri_vertex_count(level);
+            let ic = tri_index_count(level);
+            assert_eq!(vc, vc_expected, "vertex_count formula mismatch for level={level}");
+            assert_eq!(ic, ic_expected, "index_count formula mismatch for level={level}");
+
+            // Vertex-domain barycentrics.
+            for v in 0..vc {
+                let loc = tri_vertex_domain_location(level, v);
+                let sum = loc[0] + loc[1] + loc[2];
+                assert!(
+                    (sum - 1.0).abs() <= EPS,
+                    "bary sum != 1 for level={level} v={v} (sum={sum})"
+                );
+            }
+
+            // Triangle connectivity indices.
+            let tri_count = level * level;
+            for t in 0..tri_count {
+                let [a, b, c] = tri_index_to_vertex_indices(level, t);
+                for (idx_i, idx) in [a, b, c].iter().copied().enumerate() {
+                    assert!(
+                        idx < vc,
+                        "index out of bounds for level={level} tri={t} idx[{idx_i}]={idx} vc={vc}"
+                    );
+                }
+            }
+        }
+    }
 }
