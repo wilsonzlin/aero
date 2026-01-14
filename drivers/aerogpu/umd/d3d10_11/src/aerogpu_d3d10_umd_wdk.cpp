@@ -6233,11 +6233,12 @@ void APIENTRY IaSetVertexBuffers(D3D10DDI_HDEVICE hDevice,
       return;
     }
   } else {
-    // Treat NumBuffers==0 as an unbind request for the single slot at StartSlot.
+    // Treat NumBuffers==0 as an unbind request from StartSlot to the end of the
+    // slot range (used by some D3D10 runtimes for state clearing).
     if (startSlot == kMaxVertexBufferSlots) {
       return;
     }
-    bind_count = 1;
+    bind_count = kMaxVertexBufferSlots - startSlot;
   }
 
   std::array<aerogpu_vertex_buffer_binding, kMaxVertexBufferSlots> bindings{};

@@ -441,6 +441,9 @@ static int RunD3D101Triangle(int argc, char** argv) {
     ID3D10Buffer* slot1_vbs[] = {dummy_vb.get()};
     device->IASetVertexBuffers(1, 1, slot1_vbs, &slot1_stride, &slot1_offset);
 
+    // Some D3D10 runtimes issue NumBuffers==0 calls to clear a tail range of slots.
+    device->IASetVertexBuffers(1, 0, NULL, NULL, NULL);
+
     ID3D10Buffer* null_vbs[] = {NULL};
     UINT zero = 0;
     device->IASetVertexBuffers(1, 1, null_vbs, &zero, &zero);
