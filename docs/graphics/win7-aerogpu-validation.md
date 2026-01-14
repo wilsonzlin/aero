@@ -561,6 +561,7 @@ For the canonical, up-to-date command list and global options, see:
 | `--dump-cursor-bmp <path>` | dumps the current cursor image to an uncompressed 32bpp BMP (requires `AEROGPU_ESCAPE_OP_READ_GPA`) | capture cursor pixels (cursor image/pitch/fb_gpa debugging) |
 | `--dump-cursor-png <path>` | dumps the current cursor image to a PNG (RGBA8; requires `AEROGPU_ESCAPE_OP_READ_GPA`) | same as above, but PNG output (preserves alpha) |
 | `--dump-createalloc` *(aliases: `--dump-createallocation`, `--dump-allocations`)* | recent `DxgkDdiCreateAllocation` trace entries (optionally `--csv <path>` for stable machine parsing) | diagnosing allocation flag mismatches and shared-surface ID issues |
+| `--map-shared-handle <HANDLE>` | maps a process-local NT shared handle (section object; common for DXGI shared handles) to a stable 32-bit **debug token** (requires `AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE`) | proving cross-process handle duplication/inheritance is working (debug-only; not the protocol `share_token`) |
 | `--dump-vblank` (alias: `--query-vblank`) | IRQ enable/status + vblank seq/time/period; prints `vblank_interrupt_type` when dxgkrnl has enabled vblank delivery via `DxgkDdiControlInterrupt` | DWM stutter / Basic fallback |
 | `--wait-vblank` | WDDM vblank wait pacing via `D3DKMTWaitForVerticalBlankEvent` (bounded by `--timeout-ms`) | verifying vblank interrupts/waits work |
 | `--query-scanline` | `D3DKMTGetScanLine` (scanline + vblank state) | sanity-check scanline/vblank state queries |
@@ -570,6 +571,9 @@ Note: commands that read guest memory (`--read-gpa`, `--dump-scanout-bmp`, `--du
 `HKLM\\SYSTEM\\CurrentControlSet\\Services\\aerogpu\\Parameters\\EnableReadGpaEscape = 1` (`REG_DWORD`) and reboot/reload the driver.
 The caller must also be privileged (**Administrator** and/or `SeDebugPrivilege`), otherwise the KMD will return `STATUS_NOT_SUPPORTED`.
 See `drivers/aerogpu/tools/win7_dbgctl/README.md` for the full gating/security behavior.
+
+Note: `--map-shared-handle` relies on `AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE`, which is also disabled by default. Enable via
+`HKLM\\SYSTEM\\CurrentControlSet\\Services\\aerogpu\\Parameters\\EnableMapSharedHandleEscape = 1` (`REG_DWORD`) and reboot/reload the driver.
 
 Common global options:
 
