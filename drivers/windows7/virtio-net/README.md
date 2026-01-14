@@ -198,6 +198,32 @@ These counters are printed during shutdown/teardown (`AerovNetVirtioStop`) as:
 aero_virtio_net: tx cancel stats: before_sg=<n> after_sg=<n> after_submit=<n>
 ```
 
+### Control virtqueue VLAN filter configuration (optional)
+
+When the host offers `VIRTIO_NET_F_CTRL_VQ` + `VIRTIO_NET_F_CTRL_VLAN`, the driver can program the device's VLAN
+filter table via the control virtqueue.
+
+The driver does **not** currently expose a Windows-standard VLAN configuration surface (for example, via an NDIS OID).
+Instead, it supports a simple **best-effort** per-device registry configuration:
+
+- Registry key (per device instance):
+  - `HKLM\\SYSTEM\\CurrentControlSet\\Enum\\<PNP_INSTANCE>\\Device Parameters\\AeroVirtioNet`
+- Value:
+  - `VlanId` (`REG_DWORD`)
+  - Valid range: `1..4094`
+
+On device start (after `DRIVER_OK`), if `VlanId` is present and the required virtio-net features were negotiated, the
+driver sends:
+
+- `VIRTIO_NET_CTRL_VLAN_ADD` with the configured VLAN ID
+
+Notes:
+
+- This is optional/compatibility behaviour and is **not required** by the AERO-W7-VIRTIO contract.
+- Changes take effect on the next device restart (disable/enable the adapter or reboot).
+- If the host device model does not implement VLAN filtering, the command is ignored/failed and the driver continues
+  to operate normally.
+
 ## Files
 
 - `src/aero_virtio_net.c` – NDIS miniport implementation + virtio-net datapath
