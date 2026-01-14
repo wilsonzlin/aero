@@ -1319,6 +1319,8 @@ For compatibility with older automation that gates on the legacy `virtio-input-l
 
 - Provisioning: older guest images require `--test-input-leds` / `New-AeroWin7TestImage.ps1 -TestInputLeds`. Newer guest
   selftest binaries also accept `--test-input-led` and still emit the legacy marker for compatibility.
+  - Note: if both `with_virtio_input_led=true` and `with_virtio_input_leds=true` are set, the workflow prefers the legacy
+    `--with-input-leds` path.
 
 To require virtio-input PCI binding/service validation (at least one virtio-input PCI device bound to the expected
 driver service), set the workflow input `require_virtio_input_binding=true`. This requires a guest selftest new enough

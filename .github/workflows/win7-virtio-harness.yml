@@ -703,6 +703,9 @@ jobs:
             if [[ "${with_virtio_input_media_keys}" == "true" ]]; then
               args+=(--with-input-media-keys)
             fi
+            if [[ "${with_virtio_input_leds}" == "true" && "${with_virtio_input_led}" == "true" ]]; then
+              echo "NOTE: workflow inputs with_virtio_input_leds=true and with_virtio_input_led=true; using legacy --with-input-leds"
+            fi
             if [[ "${with_virtio_input_leds}" == "true" ]]; then
               args+=(--with-input-leds)
             elif [[ "${with_virtio_input_led}" == "true" ]]; then
