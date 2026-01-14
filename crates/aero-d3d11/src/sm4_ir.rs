@@ -340,8 +340,8 @@ pub enum Sm4Inst {
     /// - Numeric float values (e.g. produced by float arithmetic or explicit integer->float
     ///   conversions).
     ///
-    /// When emitting WGSL `textureLoad`, the backend picks between `i32(f32)` and
-    /// `bitcast<i32>(f32)` per lane to recover an `i32` coordinate/LOD.
+    /// When emitting WGSL `textureLoad`, the backend currently interprets the source lanes
+    /// strictly as integer bits (i.e. `bitcast<i32>(f32)`) to recover an `i32` coordinate/LOD.
     Ld {
         dst: DstOperand,
         /// Texel coordinate (x/y in `.xy`).
