@@ -405,3 +405,12 @@ fn decode_rejects_dsx_in_vertex_shader() {
     let err = decode_u32_tokens(&tokens).unwrap_err();
     assert!(err.message.contains("only valid in pixel shaders"), "{err}");
 }
+
+#[test]
+fn decode_rejects_missing_end_token() {
+    // Valid version token but no terminating `end` instruction.
+    let tokens = vec![version_token(ShaderStage::Vertex, 3, 0)];
+
+    let err = decode_u32_tokens(&tokens).unwrap_err();
+    assert!(err.message.contains("missing end token"), "{err}");
+}

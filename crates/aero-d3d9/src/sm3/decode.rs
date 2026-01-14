@@ -744,6 +744,17 @@ pub fn decode_u32_tokens(tokens: &[u32]) -> Result<DecodedShader, DecodeError> {
         token_index += length;
     }
 
+    // D3D9 SM2/SM3 token streams are terminated by an `end` instruction (opcode 0xFFFF). Treat
+    // missing termination as malformed input: without an explicit end token, callers may
+    // accidentally accept truncated streams (e.g. empty shaders that only contain the version
+    // token) and downstream code may assume termination semantics that aren't satisfied.
+    if !matches!(instructions.last().map(|i| i.opcode), Some(Opcode::End)) {
+        return Err(DecodeError {
+            token_index: tokens.len().saturating_sub(1),
+            message: "missing end token".to_owned(),
+        });
+    }
+
     Ok(DecodedShader {
         version,
         instructions,
