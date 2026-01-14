@@ -11,7 +11,8 @@ fn conformance_help_prints_usage() {
         .success()
         .stdout(predicate::str::contains("cargo xtask conformance"))
         .stdout(predicate::str::contains("--cases"))
-        .stdout(predicate::str::contains("--report-path"));
+        .stdout(predicate::str::contains("--report-path"))
+        .stdout(predicate::str::contains("AERO_CONFORMANCE_REFERENCE"));
 }
 
 #[test]
