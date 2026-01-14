@@ -927,6 +927,28 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(off("aerogpu_escape_query_device_v2_out", "features_hi"), 32);
   assert.equal(off("aerogpu_escape_query_device_v2_out", "reserved0"), 40);
 
+  assert.equal(off("aerogpu_escape_query_perf_out", "last_submitted_fence"), 16);
+  assert.equal(off("aerogpu_escape_query_perf_out", "last_completed_fence"), 24);
+  assert.equal(off("aerogpu_escape_query_perf_out", "ring0_head"), 32);
+  assert.equal(off("aerogpu_escape_query_perf_out", "ring0_tail"), 36);
+  assert.equal(off("aerogpu_escape_query_perf_out", "ring0_size_bytes"), 40);
+  assert.equal(off("aerogpu_escape_query_perf_out", "ring0_entry_count"), 44);
+  assert.equal(off("aerogpu_escape_query_perf_out", "total_submissions"), 48);
+  assert.equal(off("aerogpu_escape_query_perf_out", "total_presents"), 56);
+  assert.equal(off("aerogpu_escape_query_perf_out", "total_render_submits"), 64);
+  assert.equal(off("aerogpu_escape_query_perf_out", "total_internal_submits"), 72);
+  assert.equal(off("aerogpu_escape_query_perf_out", "irq_fence_delivered"), 80);
+  assert.equal(off("aerogpu_escape_query_perf_out", "irq_vblank_delivered"), 88);
+  assert.equal(off("aerogpu_escape_query_perf_out", "irq_spurious"), 96);
+  assert.equal(off("aerogpu_escape_query_perf_out", "reset_from_timeout_count"), 104);
+  assert.equal(off("aerogpu_escape_query_perf_out", "last_reset_time_100ns"), 112);
+  assert.equal(off("aerogpu_escape_query_perf_out", "vblank_seq"), 120);
+  assert.equal(off("aerogpu_escape_query_perf_out", "last_vblank_time_ns"), 128);
+  assert.equal(off("aerogpu_escape_query_perf_out", "vblank_period_ns"), 136);
+  assert.equal(off("aerogpu_escape_query_perf_out", "reserved0"), 140);
+  assert.equal(off("aerogpu_escape_query_perf_out", "error_irq_count"), 144);
+  assert.equal(off("aerogpu_escape_query_perf_out", "last_error_fence"), 152);
+
   assert.equal(off("aerogpu_dbgctl_ring_desc", "signal_fence"), 0);
   assert.equal(off("aerogpu_dbgctl_ring_desc", "cmd_gpa"), 8);
   assert.equal(off("aerogpu_dbgctl_ring_desc", "cmd_size_bytes"), 16);

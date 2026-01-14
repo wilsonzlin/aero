@@ -2661,14 +2661,42 @@ fn rust_layout_matches_c_headers() {
         48
     );
     assert_eq!(
+        abi.offset("aerogpu_escape_query_perf_out", "total_presents"),
+        56
+    );
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_perf_out", "total_render_submits"),
+        64
+    );
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_perf_out", "total_internal_submits"),
+        72
+    );
+    assert_eq!(
         abi.offset("aerogpu_escape_query_perf_out", "irq_fence_delivered"),
         80
+    );
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_perf_out", "irq_vblank_delivered"),
+        88
+    );
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_perf_out", "irq_spurious"),
+        96
     );
     assert_eq!(
         abi.offset("aerogpu_escape_query_perf_out", "reset_from_timeout_count"),
         104
     );
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_perf_out", "last_reset_time_100ns"),
+        112
+    );
     assert_eq!(abi.offset("aerogpu_escape_query_perf_out", "vblank_seq"), 120);
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_perf_out", "last_vblank_time_ns"),
+        128
+    );
     assert_eq!(
         abi.offset("aerogpu_escape_query_perf_out", "vblank_period_ns"),
         136
