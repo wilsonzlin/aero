@@ -63,6 +63,13 @@ fn assert_rect_within_bounds(rect: Rect, width: u32, height: u32) {
     );
 }
 
+fn rect_contains(outer: Rect, inner: Rect) -> bool {
+    u64::from(outer.x) <= u64::from(inner.x)
+        && u64::from(outer.y) <= u64::from(inner.y)
+        && u64::from(outer.x) + u64::from(outer.w) >= u64::from(inner.x) + u64::from(inner.w)
+        && u64::from(outer.y) + u64::from(outer.h) >= u64::from(inner.y) + u64::from(inner.h)
+}
+
 #[test]
 fn merge_and_cap_rects_empty_input_is_a_noop() {
     // Canonical policy: the absence of dirty rects is treated as "no update", not "full frame".
@@ -142,9 +149,26 @@ fn merge_and_cap_rects_randomized_invariants() {
             out.rects.len()
         );
 
-        for r in out.rects {
-            assert_rect_within_bounds(r, width, height);
+        for r in &out.rects {
+            assert_rect_within_bounds(*r, width, height);
+        }
+
+        // Coverage invariant: every in-bounds input rect must be fully covered by at least one
+        // output rect (since merge/cap only unions rectangles; it should never "drop" coverage).
+        let mut clamped_inputs = Vec::new();
+        for &r in &rects {
+            if let Some(r) = r.clamp_to_bounds(width, height) {
+                if !r.is_empty() {
+                    clamped_inputs.push(r);
+                }
+            }
+        }
+        for in_r in clamped_inputs {
+            assert!(
+                out.rects.iter().copied().any(|out_r| rect_contains(out_r, in_r)),
+                "input rect not covered by outputs (bounds=({width},{height}) cap={cap}): input={in_r:?} outputs={:?}",
+                out.rects
+            );
         }
     }
 }
-
