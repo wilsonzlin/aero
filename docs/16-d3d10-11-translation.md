@@ -797,12 +797,13 @@ Rules:
   `lineadj`/`triadj`). Until adjacency emulation is implemented, the runtime MUST NOT reinterpret
   them as non-adjacency topologies; it should either route through emulation-path scaffolding or
   reject the draw with a clear error.
-- **Primitive restart (indexed strip topologies):** for `LINESTRIP`/`TRIANGLESTRIP` with indexed
-  draws, D3D11 uses a special index value to restart the strip (`0xFFFF` for u16 indices,
-  `0xFFFFFFFF` for u32 indices). The simple formulas above assume there are no restart indices. For
-  initial bring-up, treat any draw that contains restart indices as unsupported/invalid; a full
-  implementation will need a restart-aware strip assembly path (either a preprocessing pass that
-  expands strips into lists, or per-primitive bounds checks in the assembly stage).
+- **Primitive restart (indexed strip topologies):** for indexed `LINESTRIP`/`TRIANGLESTRIP` (and
+  their adjacency variants `LINESTRIP_ADJ`/`TRIANGLESTRIP_ADJ`), D3D11 uses a special index value to
+  restart the strip (`0xFFFF` for u16 indices, `0xFFFFFFFF` for u32 indices). The simple formulas
+  above assume there are no restart indices. For initial bring-up, treat any draw that contains
+  restart indices as unsupported/invalid; a full implementation will need a restart-aware strip
+  assembly path (either a preprocessing pass that expands strips into lists, or per-primitive bounds
+  checks in the assembly stage).
 
 For patchlist topologies:
 
