@@ -4574,20 +4574,33 @@ def main() -> None:
         #
         # Policy note:
         # - The canonical virtio-input INF binds to the SUBSYS-qualified keyboard/mouse
-        #   HWIDs for distinct naming *and* includes a strict, revision-gated generic
-        #   fallback HWID (no SUBSYS) for environments where subsystem IDs are not
-        #   exposed/recognized.
-        # - A legacy filename alias INF exists only for compatibility with the legacy
-        #   `virtio-input.inf` basename, and must remain byte-identical to the canonical
-        #   INF from the first section header (`[Version]`) onward (banner/comments may differ).
+        #   HWIDs for distinct naming and does NOT include the strict generic fallback
+        #   HWID (no SUBSYS).
+        # - A legacy filename alias INF can add an opt-in strict generic fallback match
+        #   for environments where subsystem IDs are not exposed/recognized.
         if device_name == "virtio-input":
             validate_virtio_input_model_lines(
                 inf_path=inf_path,
                 strict_hwid=strict_hwid,
                 contract_rev=contract_rev,
-                require_fallback=True,
+                require_fallback=False,
                 errors=errors,
             )
+            # The canonical keyboard/mouse INF is intentionally SUBSYS-only. Keep the exact
+            # strict generic fallback HWID string out of the canonical INF entirely (even
+            # in comments) so it can't be cargo-culted back into the models sections and
+            # so repo-wide greps remain a reliable guardrail.
+            strict_hwid_hits: list[str] = []
+            for line_no, raw in enumerate(read_text(inf_path).splitlines(), start=1):
+                if strict_hwid.lower() in raw.lower():
+                    strict_hwid_hits.append(f"{inf_path.as_posix()}:{line_no}: {raw.rstrip()}")
+            if strict_hwid_hits:
+                errors.append(
+                    format_error(
+                        f"{inf_path.as_posix()}: canonical virtio-input INF must not contain the strict generic fallback HWID ({strict_hwid}); fallback is available only via virtio-input.inf.disabled:",
+                        strict_hwid_hits,
+                    )
+                )
 
     # ---------------------------------------------------------------------
     # 6) INF alias drift guardrails (legacy filename aliases must stay in sync).
@@ -4601,20 +4614,33 @@ def main() -> None:
             f"{virtio_input_inf_dir.as_posix()}: both virtio-input.inf and virtio-input.inf.disabled exist; keep only one to avoid multiple matching INFs."
         )
 
-    # Policy: `virtio-input.inf.disabled` is a filename-only alias kept for legacy
-    # compatibility. From the first section header (`[Version]`) onward it must be
-    # byte-for-byte identical to the canonical INF (only the leading banner/comments
-    # may differ).
+    # Policy: `virtio-input.inf.disabled` is a legacy basename alias kept for compatibility.
+    # It is allowed to diverge from the canonical INF only in the models sections
+    # (`[Aero.NTx86]` / `[Aero.NTamd64]`) where it adds an opt-in strict generic
+    # fallback model entry (no SUBSYS). Outside those sections it must remain in sync.
     if not virtio_input_alias_disabled.exists():
         errors.append(
             f"missing required legacy filename alias INF: {virtio_input_alias_disabled.as_posix()} (keep it checked in disabled-by-default; developers may locally enable it by renaming to virtio-input.inf)"
         )
     else:
-        drift = check_inf_alias_drift(
+        virtio_input_contract_any = contract_ids["virtio-input (keyboard)"]
+        base_hwid = f"PCI\\VEN_{virtio_input_contract_any.vendor_id:04X}&DEV_{virtio_input_contract_any.device_id:04X}"
+        strict_hwid = f"{base_hwid}&REV_{contract_rev:02X}"
+
+        validate_virtio_input_model_lines(
+            inf_path=virtio_input_alias_disabled,
+            strict_hwid=strict_hwid,
+            contract_rev=contract_rev,
+            require_fallback=True,
+            errors=errors,
+        )
+
+        drift = check_inf_alias_drift_excluding_sections(
             canonical=virtio_input_canonical,
             alias=virtio_input_alias_disabled,
             repo_root=REPO_ROOT,
             label="virtio-input",
+            drop_sections={"Aero.NTx86", "Aero.NTamd64"},
         )
         if drift:
             errors.append(drift)
