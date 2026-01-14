@@ -468,6 +468,8 @@ fn decode_known_fields(
                 if abi_minor >= AEROGPU_STAGE_EX_MIN_ABI_MINOR && stage == 2 && stage_ex != 0 {
                     out.insert("stage_ex".into(), json!(stage_ex));
                     out.insert("stage_ex_name".into(), json!(stage_ex_name(stage_ex)));
+                } else if stage_ex != 0 {
+                    out.insert("reserved0".into(), json!(stage_ex));
                 }
                 out.insert("dxbc_size_bytes".into(), json!(dxbc_size_bytes));
                 out.insert("dxbc_len".into(), json!(dxbc.len()));
@@ -768,6 +770,8 @@ fn decode_known_fields(
                 {
                     out.insert("stage_ex".into(), json!(stage_ex));
                     out.insert("stage_ex_name".into(), json!(stage_ex_name(stage_ex)));
+                } else if stage_ex != 0 {
+                    out.insert("reserved0".into(), json!(stage_ex));
                 }
             } else {
                 out.insert("decode_error".into(), json!("truncated payload"));
@@ -861,6 +865,8 @@ fn decode_known_fields(
                 {
                     out.insert("stage_ex".into(), json!(stage_ex));
                     out.insert("stage_ex_name".into(), json!(stage_ex_name(stage_ex)));
+                } else if stage_ex != 0 {
+                    out.insert("reserved0".into(), json!(stage_ex));
                 }
                 if let Some(first) = handles.first() {
                     out.insert("sampler0".into(), json!(*first));
@@ -896,6 +902,8 @@ fn decode_known_fields(
             if abi_minor >= AEROGPU_STAGE_EX_MIN_ABI_MINOR && stage == 2 && stage_ex != 0 {
                 out.insert("stage_ex".into(), json!(stage_ex));
                 out.insert("stage_ex_name".into(), json!(stage_ex_name(stage_ex)));
+            } else if stage_ex != 0 {
+                out.insert("reserved0".into(), json!(stage_ex));
             }
             if let Some(float_count) = vec4_count.checked_mul(4) {
                 out.insert("float_count".into(), json!(float_count));
@@ -1043,6 +1051,8 @@ fn decode_known_fields(
                     {
                         out.insert("stage_ex".into(), json!(stage_ex));
                         out.insert("stage_ex_name".into(), json!(stage_ex_name(stage_ex)));
+                    } else if stage_ex != 0 {
+                        out.insert("reserved0".into(), json!(stage_ex));
                     }
                     if let Some(first) = bindings.first() {
                         let cb0_buffer = first.buffer;
@@ -1077,6 +1087,8 @@ fn decode_known_fields(
                     {
                         out.insert("stage_ex".into(), json!(stage_ex));
                         out.insert("stage_ex_name".into(), json!(stage_ex_name(stage_ex)));
+                    } else if stage_ex != 0 {
+                        out.insert("reserved0".into(), json!(stage_ex));
                     }
                     if let Some(first) = bindings.first() {
                         let srv0_buffer = first.buffer;
@@ -1111,6 +1123,8 @@ fn decode_known_fields(
                     {
                         out.insert("stage_ex".into(), json!(stage_ex));
                         out.insert("stage_ex_name".into(), json!(stage_ex_name(stage_ex)));
+                    } else if stage_ex != 0 {
+                        out.insert("reserved0".into(), json!(stage_ex));
                     }
                     if let Some(first) = bindings.first() {
                         let uav0_buffer = first.buffer;

@@ -1197,6 +1197,8 @@ pub fn decode_cmd_stream_listing(
                                 " stage_ex={stage_ex} stage_ex_name={}",
                                 stage_ex_name(stage_ex)
                             );
+                        } else if stage_ex != 0 {
+                            let _ = write!(line, " reserved0=0x{stage_ex:08X}");
                         }
                     }
                     AerogpuCmdOpcode::DestroyShader => {
@@ -1544,6 +1546,8 @@ pub fn decode_cmd_stream_listing(
                                 " stage_ex={stage_ex} stage_ex_name={}",
                                 stage_ex_name(stage_ex)
                             );
+                        } else if stage_ex != 0 {
+                            let _ = write!(line, " reserved0=0x{stage_ex:08X}");
                         }
                     }
                     AerogpuCmdOpcode::SetSamplerState => {
@@ -1648,6 +1652,8 @@ pub fn decode_cmd_stream_listing(
                                 " stage_ex={stage_ex} stage_ex_name={}",
                                 stage_ex_name(stage_ex)
                             );
+                        } else if stage_ex != 0 {
+                            let _ = write!(line, " reserved0=0x{stage_ex:08X}");
                         }
                         if let Some(first) = handles.first() {
                             let sampler0 = *first;
@@ -1710,6 +1716,8 @@ pub fn decode_cmd_stream_listing(
                                 " stage_ex={stage_ex} stage_ex_name={}",
                                 stage_ex_name(stage_ex)
                             );
+                        } else if stage_ex != 0 {
+                            let _ = write!(line, " reserved0=0x{stage_ex:08X}");
                         }
                         let data = &pkt.payload[16..payload_len];
                         let _ = write!(
@@ -1875,6 +1883,8 @@ pub fn decode_cmd_stream_listing(
                                 " stage_ex={stage_ex} stage_ex_name={}",
                                 stage_ex_name(stage_ex)
                             );
+                        } else if stage_ex != 0 {
+                            let _ = write!(line, " reserved0=0x{stage_ex:08X}");
                         }
 
                         if let Some(b0) = bindings.first() {
@@ -1917,6 +1927,8 @@ pub fn decode_cmd_stream_listing(
                                 " stage_ex={stage_ex} stage_ex_name={}",
                                 stage_ex_name(stage_ex)
                             );
+                        } else if stage_ex != 0 {
+                            let _ = write!(line, " reserved0=0x{stage_ex:08X}");
                         }
 
                         if let Some(b0) = bindings.first() {
@@ -1958,6 +1970,8 @@ pub fn decode_cmd_stream_listing(
                                 " stage_ex={stage_ex} stage_ex_name={}",
                                 stage_ex_name(stage_ex)
                             );
+                        } else if stage_ex != 0 {
+                            let _ = write!(line, " reserved0=0x{stage_ex:08X}");
                         }
 
                         if let Some(b0) = bindings.first() {
