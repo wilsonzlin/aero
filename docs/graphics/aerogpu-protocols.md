@@ -34,8 +34,9 @@ Note on the canonical machine (`aero_machine::Machine`):
   A shared device-side library (`crates/aero-devices-gpu`) contains the canonical register/ring
   definitions plus a ring executor (doorbell processing, fence tracking, vsync/vblank pacing) and
   a reusable PCI wrapper. Command execution is provided by host-side executors/backends (GPU worker
-  execution via the submission bridge, or an optional native wgpu backend). When no backend/bridge
-  is installed, `aero-machine` completes fences without executing ACMD so guests can boot.
+  execution via the submission bridge, or optional in-process backends such as the feature-gated
+  wgpu backend). When no backend/bridge is installed, `aero-machine` completes fences without
+  executing ACMD so guests can boot. See [`docs/graphics/status.md`](./status.md).
 - Boot display in the canonical machine is provided by `aero_gpu_vga` (legacy VGA ports + Bochs VBE)
   when `MachineConfig::enable_vga=true`. When the PC platform is enabled, the VBE LFB MMIO aperture
   is mapped directly at the configured LFB base inside the PCI MMIO window (no dedicated PCI VGA stub).

@@ -30,10 +30,10 @@ Canonical machine GPU device modes (today):
   - Exposes the canonical AeroGPU PCI identity at **`00:07.0`** (`VID:DID = A3A0:0001`).
   - Wires BAR1-backed VRAM (legacy VGA window aliasing / VBE compatibility mapping).
   - Exposes a minimal BAR0 MMIO surface used for bring-up (ABI/features, ring+fence transport +
-    submission capture + IRQs, scanout0/cursor registers, vblank counters; default behavior can
-    complete fences without executing ACMD, and browser runtimes can enable the AeroGPU submission
-    bridge to drain submissions for out-of-process execution; native builds can install a
-    feature-gated in-process wgpu backend; implementation: `crates/aero-machine/src/aerogpu.rs`).
+    submission decode/capture + IRQs, scanout0/cursor registers, vblank counters; default behavior
+    can complete fences without executing ACMD, and browser runtimes can enable the AeroGPU
+    submission bridge to drain submissions for out-of-process execution; native builds can install
+    a feature-gated in-process wgpu backend; implementation: `crates/aero-machine/src/aerogpu.rs`).
 - On the Rust side, the host can call `Machine::display_present()` to update a host-visible RGBA framebuffer cache (`Machine::display_framebuffer()` / `Machine::display_resolution()`).
   - In AeroGPU mode (no standalone VGA device model), `display_present()` prefers the WDDM scanout0 framebuffer once it has been claimed by a valid scanout config; otherwise it falls back to BIOS VBE LFB or BIOS text mode (see `Machine::display_present` in `crates/aero-machine/src/lib.rs`).
       - Once WDDM scanout is claimed, WDDM ownership remains sticky until VM reset. Writing `SCANOUT0_ENABLE=0` blanks presentation but does not release WDDM ownership back to legacy output.
@@ -365,9 +365,9 @@ Protocol references:
 Canonical machine note:
 
 - `MachineConfig::enable_aerogpu` wires BAR1 VRAM (plus legacy VGA window aliasing / VBE compatibility mapping) and an MVP BAR0 register block (ABI/features, ring/fence + IRQ transport, scanout0/cursor + vblank registers) that is sufficient for detection/bring-up and basic pacing.
-  Full AeroGPU command execution is not implemented in `aero-machine` yet (see the `MachineConfig::enable_aerogpu` docs in `crates/aero-machine/src/lib.rs`).
+  It decodes ring submissions and exposes them via a submission bridge for the browser runtime (GPU worker), and also supports optional in-process backends for native/tests. End-to-end Win7 validation is still pending (see `docs/graphics/status.md`).
 - The MVP BAR0 MMIO surface + ring/fence/vblank/scanout implementation in the canonical machine lives in: `crates/aero-machine/src/aerogpu.rs`.
-- A more complete AeroGPU PCI device model + ring executor exists in `crates/aero-devices-gpu/` (with a legacy sandbox integration surface in `crates/emulator/src/devices/pci/aerogpu.rs`), but it is not yet wired into the canonical browser machine (`crates/aero-machine`).
+- A shared AeroGPU device-side library exists in `crates/aero-devices-gpu/` (regs/ring/executor + optional backend boundary) and a legacy sandbox integration surface exists in `crates/emulator/src/devices/pci/aerogpu.rs`. The canonical browser machine (`crates/aero-machine` + `crates/aero-wasm` + web workers) currently has its own BAR0/BAR1 integration layer; consolidating these surfaces remains outstanding.
 
 ## How to validate (tests)
 

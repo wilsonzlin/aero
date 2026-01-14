@@ -35,7 +35,8 @@ The canonical machine (`aero_machine::Machine`) supports **two mutually-exclusiv
 
   Shared device-side building blocks (regs/ring/executor + reusable PCI wrapper) live in
   `crates/aero-devices-gpu`. Command execution is provided by host-side executors/backends (GPU
-  worker execution via the submission bridge, or an optional native wgpu backend).
+  worker execution via the submission bridge, or optional in-process backends in native/test
+  builds). See: [`docs/graphics/status.md`](./graphics/status.md).
 - `MachineConfig::enable_vga=true` (and `enable_aerogpu=false`): boot display is provided by
   `aero_gpu_vga` (VGA + Bochs VBE). When the PC platform is enabled, the VBE LFB MMIO aperture is
   mapped directly at the configured LFB base inside the PCI MMIO window (no dedicated PCI VGA stub).

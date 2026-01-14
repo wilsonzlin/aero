@@ -127,7 +127,8 @@ Current canonical machine note:
   Shared device-side building blocks (regs/ring/executor + reusable PCI wrapper) live in
   `crates/aero-devices-gpu`. A legacy sandbox integration surface remains in `crates/emulator`. Real
   **command execution** is provided by host-side executors/backends (GPU worker execution via the
-  submission bridge, or an optional native wgpu backend).
+  submission bridge, or optional in-process backends in native/test builds). See:
+  [`docs/graphics/status.md`](./graphics/status.md).
 - Boot display is provided by `aero_gpu_vga` (VGA + Bochs VBE) when `MachineConfig::enable_vga=true`.
   When the PC platform is enabled, the VBE LFB MMIO aperture is mapped directly at the configured
   LFB base inside the PCI MMIO window (no dedicated PCI VGA stub).

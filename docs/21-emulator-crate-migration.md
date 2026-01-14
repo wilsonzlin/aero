@@ -247,13 +247,14 @@ quietly accreting more responsibilities.
 - `aero_machine::Machine` now exposes an optional AeroGPU PCI function behind
   `MachineConfig::enable_aerogpu` (`A3A0:0001` at `00:07.0`) using the canonical PCI stack:
   - BAR1-backed VRAM + legacy VGA/VBE decode (boot display foundation), and
-  - a BAR0 device model: ring/fence transport + submission capture (default: fence-only fence
-    completion; optional submission bridge/backend for command execution) plus scanout/cursor regs
-    and vblank counters/IRQ semantics.
+  - a BAR0 device model: ring/fence transport + submission decode/capture (default bring-up behavior
+    can complete fences without executing commands; optional submission bridge/backend for command
+    execution) plus scanout/cursor regs and vblank counters/IRQ semantics.
 
-  The remaining integration work is converging the device-side implementation on the shared
-  `crates/aero-devices-gpu` building blocks (where it makes sense), and then retiring/deleting the
-  legacy emulator-local duplicates once no longer needed.
+  The remaining integration work is consolidating the multiple AeroGPU integration surfaces
+  (canonical machine glue vs `crates/aero-devices-gpu` vs legacy emulator paths) while preserving
+  the stable guest ABI, validating end-to-end Win7 driver behavior, and retiring/deleting emulator
+  duplicates once no longer needed.
 - Keep the driver/ABI contract anchored to:
   - `drivers/aerogpu/protocol/*` (source of truth)
   - `emulator/protocol` (Rust/TS mirror)
@@ -327,19 +328,19 @@ This is intentionally a sequence of small PRs (mirrors the style of the storage 
    - Reduce `crates/emulator/src/io/net/*` to thin compatibility shims (or delete entirely).
 
 6. **Platform/PCI wiring: delete the emulator’s bespoke PCI framework**
-     - Move remaining PCI/platform glue into `aero-pc-platform` and/or directly into `aero-machine`.
-     - Delete the emulator-local PCI framework once it is no longer used by the remaining legacy
-       device models:
-       - `crates/emulator/src/io/pci.rs`
-       - `crates/emulator/src/devices/pci/mod.rs` (after AeroGPU is extracted)
+      - Move remaining PCI/platform glue into `aero-pc-platform` and/or directly into `aero-machine`.
+      - Delete the emulator-local PCI framework once it is no longer used by the remaining legacy
+        device models:
+        - `crates/emulator/src/io/pci.rs`
+        - `crates/emulator/src/devices/pci/mod.rs` (after AeroGPU is extracted)
 
 7. **AeroGPU integration (finish extraction)**
    - Keep `crates/aero-devices-gpu` as the shared device-side home (or move it into `crates/devices`
      once stable).
-   - Wire the `crates/aero-devices-gpu` device model/ring executor into `aero_machine` behind
-     `MachineConfig::enable_aerogpu`, replacing/merging the current BAR0 ring/fence plumbing while
-     keeping scanout/vblank semantics consistent with the canonical protocol docs
-     (`drivers/aerogpu/protocol/vblank.md`).
+   - Consolidate the AeroGPU device model by reusing `crates/aero-devices-gpu`'s executor and/or
+     `AeroGpuPciDevice` inside `aero_machine` behind `MachineConfig::enable_aerogpu`, replacing the
+     current bespoke BAR0/BAR1 integration layer while keeping scanout/vblank semantics consistent
+     with the canonical protocol docs (`drivers/aerogpu/protocol/vblank.md`).
    - Retire/delete the legacy emulator-local AeroGPU PCI wrapper once no longer needed.
 
 8. **SMP integration decision**

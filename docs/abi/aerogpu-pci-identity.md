@@ -41,9 +41,12 @@ The canonical machine supports **two mutually-exclusive** display configurations
 
   The shared device-side library `crates/aero-devices-gpu` contains a reusable PCI wrapper + ring
   executor and can be paired with host-side backends for real **command execution** (feature-gated).
-  A legacy sandbox integration surface also exists in `crates/emulator`. Neither is wired into
-  `aero_machine::Machine` yet (see: [`21-emulator-crate-migration.md`](../21-emulator-crate-migration.md));
-  the canonical browser runtime instead uses the machine’s submission bridge + the JS/WASM GPU worker executor.
+  A legacy sandbox integration surface also exists in `crates/emulator`. The reusable
+  `aero-devices-gpu` PCI wrapper/executor is not yet the canonical `aero_machine::Machine`
+  integration (see: [`21-emulator-crate-migration.md`](../21-emulator-crate-migration.md)); the
+  canonical browser runtime instead uses the machine’s submission bridge + the JS/WASM GPU worker
+  executor. Native/test builds can also install an in-process backend. See:
+  [`docs/graphics/status.md`](../graphics/status.md).
 
   When the AeroGPU-owned VGA/VBE boot display path is active, firmware derives the VBE linear
   framebuffer base from AeroGPU BAR1: `PhysBasePtr = BAR1_BASE + 0x40000`

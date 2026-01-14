@@ -268,7 +268,8 @@ Note on boot display vs AeroGPU:
     `Machine::aerogpu_set_backend_wgpu`).
 
   Shared device-side building blocks (regs/ring/executor + reusable PCI wrapper) live in
-  `crates/aero-devices-gpu`. A legacy sandbox integration surface remains in `crates/emulator`.
+  `crates/aero-devices-gpu`. A legacy sandbox integration surface remains in `crates/emulator`
+  (see also: [`21-emulator-crate-migration.md`](./21-emulator-crate-migration.md)).
 - Long-term direction: the AeroGPU WDDM device (`PCI\\VEN_A3A0&DEV_0001`) should be the sole display
   adapter and also own VGA/VBE compatibility. This is already implemented in `aero_machine` when
   `MachineConfig::enable_aerogpu=true`; see:

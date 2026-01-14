@@ -20,10 +20,10 @@ Note: the canonical `aero_machine::Machine` supports **two mutually-exclusive** 
     `docs/graphics/win7-wddm11-aerogpu-driver.md`).
   - BAR0 implements a minimal MMIO surface sufficient for the in-tree Win7 KMD to initialize:
     - ring/fence transport (submission decode/capture + fence-page/IRQ plumbing; default bring-up
-      behavior can complete fences without executing the command stream, while browser/WASM runtimes
-      can enable an out-of-process “submission bridge” and complete fences via
-      `Machine::aerogpu_complete_fence`; native builds can install a feature-gated in-process
-      headless wgpu backend via `Machine::aerogpu_set_backend_wgpu`), and
+      behavior can complete fences without executing the command stream; browser/WASM runtimes can
+      enable an out-of-process “submission bridge” via `Machine::aerogpu_drain_submissions` +
+      `Machine::aerogpu_complete_fence`; native builds can install an in-process backend such as the
+      feature-gated headless wgpu backend via `Machine::aerogpu_set_backend_wgpu`), and
     - scanout0 register storage + vblank counters/IRQ semantics for `WaitForVerticalBlankEvent`
       pacing (see `drivers/aerogpu/protocol/vblank.md`).
 - `MachineConfig::enable_vga=true`: expose the standalone legacy VGA/VBE implementation

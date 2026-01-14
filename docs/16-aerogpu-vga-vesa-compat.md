@@ -22,8 +22,8 @@ The canonical `aero_machine::Machine` supports **two mutually-exclusive** displa
   VRAM aperture). In `aero_machine` today this wires the **BAR1 VRAM aperture** to a dedicated
   host-backed VRAM buffer and implements minimal **legacy VGA decode** (permissive VGA port I/O +
   a VRAM-backed `0xA0000..0xBFFFF` window). An MVP BAR0 device model is also present (ring/fence
-  transport + submission capture + scanout/cursor regs + vblank pacing; default bring-up behavior
-  can complete fences without executing ACMD, while browser/WASM runtimes can enable an
+  transport + submission decode/capture + scanout/cursor regs + vblank pacing; default bring-up
+  behavior can complete fences without executing ACMD, while browser/WASM runtimes can enable an
   out-of-process submission bridge),
   and `Machine::display_present()`
   will prefer the WDDM-programmed scanout framebuffer once scanout0 has been **claimed** (valid config +

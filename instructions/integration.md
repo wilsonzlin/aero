@@ -438,20 +438,24 @@ VRAM aperture) for stable Windows driver binding and enumeration. In `aero_machi
 backed by a dedicated VRAM buffer and implements permissive legacy VGA decode (VGA port I/O +
 VRAM-backed `0xA0000..0xBFFFF` window; see `docs/16-aerogpu-vga-vesa-compat.md`).
 
-BAR0 implements a **minimal MMIO + ring/fence transport** with submission capture and a pluggable
-command execution backend boundary. In the default/no-backend mode, `aero_machine` still completes
-fences without executing ACMD so the in-tree Win7 KMD can initialize and make forward progress even
-when no executor is available.
+BAR0 is implemented as a **minimal MMIO + ring/fence transport + submission decode/capture** surface.
+In the default/no-backend mode, `aero_machine` completes fences without executing ACMD so the in-tree
+Win7 KMD can initialize and make forward progress even when no executor is available.
 
 Command execution can be supplied by host-side executors/backends:
 
-- Browser runtime: out-of-process GPU worker execution via the WASM “submission bridge” (`aero-wasm`).
-- Native builds: optional in-process headless wgpu backend (feature-gated;
-  `Machine::aerogpu_set_backend_wgpu`).
+- Browser runtime: out-of-process GPU worker execution via the WASM “submission bridge”
+  (`Machine::aerogpu_drain_submissions` / `Machine::aerogpu_complete_fence`, exported from
+  `crates/aero-wasm`).
+- Native builds/tests: optional in-process backends (including a feature-gated headless wgpu backend
+  via `Machine::aerogpu_set_backend_wgpu`).
 
 `aero_machine` also implements scanout0 + vblank register storage (including vblank
 counters/timestamps and IRQ semantics) and a host presentation path that can read/present the
 guest-programmed scanout framebuffer via `Machine::display_present`.
+
+Shared device-side building blocks (regs/ring/executor + reusable PCI wrapper) live in
+`crates/aero-devices-gpu`, with a legacy/sandbox integration surface still in `crates/emulator`.
 
 When AeroGPU owns the boot display path, firmware derives the VBE mode-info linear framebuffer base
 from AeroGPU BAR1 (`PhysBasePtr = BAR1_BASE + 0x40000`, aka `VBE_LFB_OFFSET` in `aero_machine` /
