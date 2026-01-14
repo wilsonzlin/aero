@@ -12873,9 +12873,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             ((adapter->DeviceFeatures & AEROGPU_FEATURE_ERROR_INFO) != 0) &&
             (abiMinor >= 3) &&
             (adapter->Bar0Length >= (AEROGPU_MMIO_REG_ERROR_COUNT + sizeof(ULONG)));
-        const BOOLEAN accepting =
-            (InterlockedCompareExchange(&adapter->AcceptingSubmissions, 0, 0) != 0) ? TRUE : FALSE;
-        if (poweredOn && accepting && haveErrorRegs) {
+        if (mmioSafe && haveErrorRegs) {
             /*
              * Prefer device-reported error payload when the adapter is in D0, but avoid wiping out
              * cached KMD telemetry with empty/invalid MMIO values (e.g. after a device reset).
@@ -12892,9 +12890,11 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
              * Normally this is captured in the IRQ_ERROR ISR path, but caching it here ensures dbgctl can
              * still report stable values after power down even if the error interrupt was masked/lost.
              *
-             * Do not overwrite cached values with smaller/zero counts (e.g. after a device reset).
+             * Do not overwrite cached values when the device reports error_count==0 (no error
+             * payload). Otherwise, keep the cached MMIO payload in sync with what we observe here
+             * so powered-down QUERY_ERROR calls can still report the most recently observed error.
              */
-            if (mmioCount != 0 && mmioCount > cachedMmioCount) {
+            if (mmioCount != 0 && mmioCount != cachedMmioCount) {
                 AeroGpuAtomicWriteU64(&adapter->LastErrorTime100ns, KeQueryInterruptTime());
                 InterlockedExchange((volatile LONG*)&adapter->LastErrorMmioCount, (LONG)mmioCount);
 
