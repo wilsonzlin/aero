@@ -107,7 +107,8 @@ Note:
   The host harness mirrors these into `AERO_VIRTIO_WIN7_HOST|VIRTIO_*_IRQ_DIAG|...` markers for log scraping.
 - To assert that virtio-blk is actually using MSI/MSI-X (fail if the miniport reports INTx), run the guest
   selftest with `--expect-blk-msi` (or env var `AERO_VIRTIO_SELFTEST_EXPECT_BLK_MSI=1`). This is useful when
-  running the host harness with explicit MSI-X vectors (`--virtio-msix-vectors`) or when validating MSI/MSI-X support.
+  running the host harness with explicit MSI-X vectors (`--virtio-msix-vectors` or per-device `--virtio-<dev>-vectors`)
+  or when validating MSI/MSI-X support.
 - virtio-snd is optional. When a supported virtio-snd PCI function is detected, the selftest exercises playback
   automatically (even without `--test-snd`). Use `--require-snd` / `--test-snd` to make missing virtio-snd fail the
   overall selftest, and `--disable-snd` to force skipping playback + capture.
