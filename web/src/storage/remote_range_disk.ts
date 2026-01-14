@@ -691,6 +691,23 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
   private persistentCacheWritesDisabled = false;
   private readonly inMemoryChunks = new Map<number, Uint8Array>();
 
+  private disablePersistentCacheWrites(): void {
+    if (this.persistentCacheWritesDisabled) return;
+    this.persistentCacheWritesDisabled = true;
+
+    // Stop any queued background persistence work. Once we observe quota pressure, we treat the
+    // persistent cache as best-effort and avoid further writes for the remainder of the disk
+    // lifetime.
+    if (this.flushTimer !== null) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
+    this.flushPending = false;
+
+    // Prevent any pending metadata writes from firing after caching is disabled.
+    this.cancelPendingMetaPersist();
+  }
+
   private constructor(
     private readonly sourceId: string,
     private readonly lease: DiskAccessLease,
@@ -1381,7 +1398,7 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
             // Cache is best-effort: if persistence fails due to quota pressure, continue serving
             // reads by keeping the downloaded bytes in memory and disabling further persistent
             // cache writes for the disk lifetime.
-            this.persistentCacheWritesDisabled = true;
+            this.disablePersistentCacheWrites();
             this.inMemoryChunks.set(chunkIndex, bytes);
             if (generation === this.cacheGeneration) {
               this.lastFetchMs = performance.now() - start;
