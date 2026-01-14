@@ -40,10 +40,10 @@ constexpr uint32_t kD3dTssAlphaOp = 4u;
 // D3DTEXTUREOP values (from d3d9types.h).
 constexpr uint32_t kD3dTopDisable = 1u;
 constexpr uint32_t kD3dTopSelectArg1 = 2u;
-// Intentionally unsupported by the fixed-function stage0 subset.
+// Intentionally unsupported by the fixed-function texture stage subset.
 constexpr uint32_t kD3dTopAddSigned2x = 9u; // D3DTOP_ADDSIGNED2X
 // D3DTA_* source selector values (from d3d9types.h).
-constexpr uint32_t kD3dTaSpecular = 4u; // D3DTA_SPECULAR (unsupported by stage0 subset)
+constexpr uint32_t kD3dTaSpecular = 4u; // D3DTA_SPECULAR (unsupported by fixed-function texture stage subset)
 
 // D3DRS_* render state IDs (from d3d9types.h).
 constexpr uint32_t kD3dRsLighting = 137u; // D3DRS_LIGHTING
@@ -86,7 +86,7 @@ bool Check(bool cond, const char* msg) {
   return true;
 }
 
-// Minimal ps_2_0 instruction tokens used by stage0 fixed-function PS selection.
+// Minimal ps_2_0 instruction tokens used by fixed-function PS selection.
 constexpr uint32_t kPsOpMul = 0x04000005u;
 constexpr uint32_t kPsOpTexld = 0x04000042u;
 
@@ -2039,8 +2039,8 @@ bool TestUnsupportedFvfPsOnlyFailsWithoutDraw() {
     return false;
   }
 
-  // The draw-time shader binding helper (bind_draw_shaders_locked) runs before any
-  // UP uploads, so the draw must fail without emitting any draw packets.
+  // Draw-time shader binding/validation runs before any UP uploads, so the draw
+  // must fail without emitting any draw packets.
   if (!Check(dev->cmd.size() == baseline_size, "no additional commands emitted")) {
     return false;
   }

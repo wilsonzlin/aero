@@ -80,7 +80,7 @@ constexpr uint32_t kD3dTopAddSigned = 8u;
 constexpr uint32_t kD3dTopSubtract = 10u;
 constexpr uint32_t kD3dTopBlendDiffuseAlpha = 12u;
 constexpr uint32_t kD3dTopBlendTextureAlpha = 13u;
-// Intentionally unsupported by the fixed-function stage0 subset (used to validate
+// Intentionally unsupported by the fixed-function texture stage subset (used to validate
 // draw-time guardrails).
 constexpr uint32_t kD3dTopAddSmooth = 11u; // D3DTOP_ADDSMOOTH
 

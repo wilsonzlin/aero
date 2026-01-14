@@ -17014,7 +17014,7 @@ bool TestVsOnlyInteropSetShaderSucceedsWhenStage0Unsupported() {
   } cleanup;
 
   constexpr uint32_t kD3dTssColorOp = 1u;      // D3DTSS_COLOROP
-  constexpr uint32_t kD3dTopAddSmooth = 11u;   // D3DTOP_ADDSMOOTH (unsupported by stage0 subset)
+  constexpr uint32_t kD3dTopAddSmooth = 11u;   // D3DTOP_ADDSMOOTH (unsupported by fixed-function texture stage subset)
 
   D3DDDIARG_OPENADAPTER2 open{};
   open.Interface = 1;

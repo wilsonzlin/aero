@@ -424,7 +424,7 @@ Code anchors (see `src/aerogpu_d3d9_driver.cpp` unless noted):
   `kSupportedFvfXyzTex1` / `kSupportedFvfXyzNormal` / `kSupportedFvfXyzNormalTex1` /
   `kSupportedFvfXyzNormalDiffuse` / `kSupportedFvfXyzNormalDiffuseTex1`
 - `fixedfunc_fvf_supported()` (internal FVF-driven decl subset required by patch emulation; **XYZRHW + DIFFUSE (+ optional TEX1) variants only**)
-- `ensure_fixedfunc_pipeline_locked()` / `bind_draw_shaders_locked()` / `ensure_shader_bindings_locked()`
+- `ensure_fixedfunc_pipeline_locked()` / `ensure_shader_bindings_locked()`
 - Fixed-function PS generation from texture stage state (stages 0..3): `fixedfunc_ps_key_locked()` + `ensure_fixedfunc_pixel_shader_locked()` (`fixedfunc_ps20` token builder)
 - Fixed-function shader token streams: `src/aerogpu_d3d9_fixedfunc_shaders.h` (`fixedfunc::kVsPassthroughPosColor`, `fixedfunc::kVsPassthroughPosColorTex1`, `fixedfunc::kVsWvpPosColor`, `fixedfunc::kVsWvpPosColorTex0`, `fixedfunc::kVsTransformPosWhiteTex1`, etc)
 - XYZRHW conversion path: `fixedfunc_fvf_is_xyzrhw()` + `convert_xyzrhw_to_clipspace_locked()`
@@ -496,7 +496,7 @@ Implementation notes (bring-up):
         UMD may upload WVP constants at shader-unbind time (not just lazily at the next draw).
   - See also: `docs/graphics/win7-d3d9-fixedfunc-wvp.md` (WVP draw-time paths + `ProcessVertices` notes).
 - Shader-stage interop is supported: when exactly one stage is bound (VS-only or PS-only), the draw paths bind a
-  fixed-function fallback shader for the missing stage at draw time (see `bind_draw_shaders_locked()`).
+  fixed-function fallback shader for the missing stage at draw time (see `ensure_shader_bindings_locked()`).
   - VS-only interop (PS is NULL) uses a fixed-function PS generated from texture stage state (stages 0..3; validated by `d3d9_shader_stage_interop`).
   - PS-only interop (VS is NULL) uses a fixed-function VS derived from the active FVF (validated by `d3d9ex_ps_only_triangle`).
 - For indexed draws in this mode, indices may be expanded into a temporary vertex stream (conservative but sufficient
