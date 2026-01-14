@@ -221,6 +221,14 @@ impl UsbHidPassthroughHandle {
         const MAX_STRING_BYTES: usize = 16 * 1024;
         const MAX_REPORT_DESCRIPTOR_BYTES: usize = 1024 * 1024;
 
+        fn copy_bytes(bytes: &[u8]) -> SnapshotResult<Vec<u8>> {
+            let mut out = Vec::new();
+            out.try_reserve_exact(bytes.len())
+                .map_err(|_| SnapshotError::OutOfMemory)?;
+            out.extend_from_slice(bytes);
+            Ok(out)
+        }
+
         let r = SnapshotReader::parse(bytes, UsbHidPassthrough::DEVICE_ID)?;
         r.ensure_device_major(UsbHidPassthrough::DEVICE_VERSION.major)?;
 
@@ -250,7 +258,7 @@ impl UsbHidPassthroughHandle {
                 "manufacturer too large",
             ));
         }
-        let manufacturer = String::from_utf8(manufacturer.to_vec())
+        let manufacturer = String::from_utf8(copy_bytes(manufacturer)?)
             .map_err(|_| SnapshotError::InvalidFieldEncoding("manufacturer"))?;
 
         let Some(product) = r.bytes(HIDP_SNAP_TAG_PRODUCT) else {
@@ -259,7 +267,7 @@ impl UsbHidPassthroughHandle {
         if product.len() > MAX_STRING_BYTES {
             return Err(SnapshotError::InvalidFieldEncoding("product too large"));
         }
-        let product = String::from_utf8(product.to_vec())
+        let product = String::from_utf8(copy_bytes(product)?)
             .map_err(|_| SnapshotError::InvalidFieldEncoding("product"))?;
 
         let serial = match r.bytes(HIDP_SNAP_TAG_SERIAL) {
@@ -268,7 +276,7 @@ impl UsbHidPassthroughHandle {
                     return Err(SnapshotError::InvalidFieldEncoding("serial too large"));
                 }
                 Some(
-                    String::from_utf8(bytes.to_vec())
+                    String::from_utf8(copy_bytes(bytes)?)
                         .map_err(|_| SnapshotError::InvalidFieldEncoding("serial"))?,
                 )
             }
@@ -285,7 +293,7 @@ impl UsbHidPassthroughHandle {
             manufacturer,
             product,
             serial,
-            report_desc.to_vec(),
+            copy_bytes(report_desc)?,
             has_interrupt_out,
             max_packet_size,
             interface_subclass,
