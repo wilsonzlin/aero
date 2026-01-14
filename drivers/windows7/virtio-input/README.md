@@ -106,21 +106,22 @@ You need the following tools in `PATH` (usually by opening a WDK Developer Comma
 
 The in-tree INFs intentionally match only **Aero contract v1** hardware IDs (revision-gated `REV_01`):
 
-- `inf/aero_virtio_input.inf` (keyboard/mouse + strict fallback):
+- `inf/aero_virtio_input.inf` (keyboard/mouse; **SUBSYS-only**):
   - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01` (keyboard)
   - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01` (mouse)
-  - `PCI\VEN_1AF4&DEV_1052&REV_01` (strict generic fallback; no SUBSYS; shown as **Aero VirtIO Input Device**)
 - `inf/aero_virtio_tablet.inf` (tablet / absolute pointer):
   - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01` (tablet / absolute pointer)
-- Legacy filename alias: `inf/virtio-input.inf.disabled`
-  - Rename it to `inf/virtio-input.inf` to enable it (for workflows/tools that still reference `virtio-input.inf`).
-  - From the `[Version]` section onward, it is expected to remain byte-for-byte identical to `inf/aero_virtio_input.inf`
-    (different filename only; leading banner/comment block may differ; CI enforces this).
-  - Do **not** ship/install it alongside `aero_virtio_input.inf` (ship/install only one of the two filenames).
+- Optional legacy filename alias: `inf/virtio-input.inf.disabled` (rename to `inf/virtio-input.inf` to enable; do **not** ship/install alongside `aero_virtio_input.inf`)
+  - Adds an opt-in revision-gated generic fallback HWID for environments that do not expose the Aero subsystem IDs:
+    - `PCI\VEN_1AF4&DEV_1052&REV_01`
 
 The subsystem-gated IDs use distinct `DeviceDesc` strings, so the PCI functions appear as separate named devices in
-Device Manager (**Aero VirtIO Keyboard** / **Aero VirtIO Mouse** / **Aero VirtIO Tablet Device**). Devices that bind
-via the generic fallback entry appear as **Aero VirtIO Input Device**.
+Device Manager (**Aero VirtIO Keyboard** / **Aero VirtIO Mouse** / **Aero VirtIO Tablet Device**). When binding via the
+legacy alias INF's fallback entry, Device Manager will show **Aero VirtIO Input Device**.
+
+`inf/virtio-input.inf.disabled` is a legacy filename alias for workflows that still reference `virtio-input.inf`.
+Rename it to `virtio-input.inf` to enable it, but do **not** ship/install it alongside `aero_virtio_input.inf` —
+they match the same HWIDs, and overlapping INFs can lead to confusing binding/upgrade behavior.
 
 The INFs do **not** match:
 
@@ -138,13 +139,6 @@ To catch accidental INF edits that would break Aero’s Windows 7 virtio-input p
 ```
 
 This performs a lightweight static check (string/regex based) over `inf/aero_virtio_input.inf` by default and exits non-zero with an actionable error list if anything required is missing.
-
-To validate the optional legacy filename alias INF as well:
-
-```powershell
-.\scripts\verify-inf.ps1 -InfPath .\inf\virtio-input.inf.disabled
-```
-
 If your emulator/QEMU build uses a different PCI device ID, update:
 
 - `drivers/windows7/virtio-input/inf/aero_virtio_input.inf` → `[Aero.NTx86]` / `[Aero.NTamd64]` (keyboard/mouse)

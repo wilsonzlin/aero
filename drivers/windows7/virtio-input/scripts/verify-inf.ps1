@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 <#
 .SYNOPSIS
-  Statically validates virtio-input INFs against Aero contract expectations.
+  Statically validates aero_virtio_input.inf against Aero contract expectations.
 
 .DESCRIPTION
   This is a lightweight (regex/string based) validator intended to catch accidental INF
@@ -11,8 +11,7 @@
   - Must reference the expected catalog filename
   - Must target KMDF 1.9 (in-box on Win7 SP1)
   - Must include the contract v1 keyboard/mouse HWID set (revision gated, REV_01)
-  - Must include the strict, REV-qualified generic fallback HWID (no SUBSYS):
-    `PCI\VEN_1AF4&DEV_1052&REV_01`
+  - Must be SUBSYS-gated (no generic fallback HWID in the canonical keyboard/mouse INF)
   - Must not include a revision-less base HWID (`PCI\VEN_1AF4&DEV_1052`) (revision gating is required)
   - Must use distinct DeviceDesc strings for keyboard vs mouse (so they appear separately in Device Manager)
   - Must enable MSI/MSI-X and request enough message interrupts for virtio-input
@@ -161,8 +160,8 @@ function Add-Failure([System.Collections.Generic.List[string]]$Failures, [string
   }
 }
 
-  $exitCode = 0
-  try {
+$exitCode = 0
+try {
   $infPathResolved = Resolve-ExistingFile -Path $InfPath -ArgName '-InfPath'
 
   $rawLines = Read-InfLines -Path $infPathResolved
@@ -281,18 +280,16 @@ foreach ($installSect in $installWdfSections) {
 #------------------------------------------------------------------------------
 # Hardware IDs (Aero contract v1)
 #------------------------------------------------------------------------------
-# Hardware ID policy:
-# - The keyboard/mouse INF must include the SUBSYS-qualified Aero contract v1 keyboard/mouse IDs (distinct
-#   keyboard/mouse naming) plus the strict, REV-qualified generic fallback HWID (no SUBSYS) so driver binding
-#   remains revision-gated even if subsystem IDs are absent/ignored.
-$fallbackHwid = 'PCI\VEN_1AF4&DEV_1052&REV_01'
+# The canonical keyboard/mouse INF must include the SUBSYS-qualified Aero contract v1
+# keyboard/mouse IDs (distinct keyboard/mouse naming).
+#
+# It must *not* include a generic (no SUBSYS) fallback HWID; that mapping is available
+# only via the opt-in legacy alias INF (virtio-input.inf.disabled).
 $requiredHwids = @(
   # Aero contract v1 keyboard (SUBSYS_0010)
   'PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01',
   # Aero contract v1 mouse (SUBSYS_0011)
   'PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01',
-  # Strict generic fallback (no SUBSYS)
-  $fallbackHwid,
 )
 
 $modelSections = @('Aero.NTx86', 'Aero.NTamd64')
@@ -341,16 +338,6 @@ $requiredModelMappings = @(
     Regex = ('(?i)^' + [regex]::Escape('%AeroVirtioMouse.DeviceDesc%') + '\s*=\s*' + [regex]::Escape('AeroVirtioInput_Install.NTamd64') + '\s*,\s*' + [regex]::Escape('PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01') + '$')
     Message = 'Missing x64 mouse model line (expected %AeroVirtioMouse.DeviceDesc% = AeroVirtioInput_Install.NTamd64, ...SUBSYS_00111AF4... ).'
   },
-  @{
-    Name = 'NTx86 fallback mapping'
-    Regex = ('(?i)^' + [regex]::Escape('%AeroVirtioInput.DeviceDesc%') + '\s*=\s*' + [regex]::Escape('AeroVirtioInput_Install.NTx86') + '\s*,\s*' + [regex]::Escape($fallbackHwid) + '$')
-    Message = 'Missing x86 fallback model line (expected %AeroVirtioInput.DeviceDesc% = AeroVirtioInput_Install.NTx86, ...&REV_01 ).'
-  },
-  @{
-    Name = 'NTamd64 fallback mapping'
-    Regex = ('(?i)^' + [regex]::Escape('%AeroVirtioInput.DeviceDesc%') + '\s*=\s*' + [regex]::Escape('AeroVirtioInput_Install.NTamd64') + '\s*,\s*' + [regex]::Escape($fallbackHwid) + '$')
-    Message = 'Missing x64 fallback model line (expected %AeroVirtioInput.DeviceDesc% = AeroVirtioInput_Install.NTamd64, ...&REV_01 ).'
-  }
 )
 
 foreach ($m in $requiredModelMappings) {
@@ -375,6 +362,19 @@ foreach ($sect in $modelSections) {
         }
       }
     }
+  }
+}
+
+# Disallow generic (no SUBSYS) fallback model lines in the canonical INF.
+$genericFallbackHwid = 'PCI\VEN_1AF4&DEV_1052&REV_01'
+$genericFallbackHwidRegex = '(?i)' + [regex]::Escape($genericFallbackHwid)
+foreach ($sect in $modelSections) {
+  if (-not $sections.ContainsKey($sect)) { continue }
+  $count = (Get-MatchingLines -Lines $sections[$sect] -Regex $genericFallbackHwidRegex).Count
+  if ($count -ne 0) {
+    Add-Failure -Failures $failures -Message (("Generic fallback HWID must not appear in the canonical INF models section [{0}]: {1} " +
+      "(found {2} occurrences). If you need a fallback for environments that do not expose Aero subsystem IDs, " +
+      "enable the legacy alias INF (virtio-input.inf.disabled -> virtio-input.inf).") -f $sect, $genericFallbackHwid, $count)
   }
 }
 

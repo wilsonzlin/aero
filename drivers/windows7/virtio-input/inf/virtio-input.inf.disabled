@@ -11,9 +11,15 @@
 ; avoid accidentally shipping/installing **two** INFs that match the same HWIDs.
 ;
 ; Maintenance note: from the first section header (`[Version]`) onward, this
-; legacy alias must remain byte-for-byte identical to `aero_virtio_input.inf`.
-; Only the leading comment/banner block (above) may differ so the alias can
-; explain its legacy filename status.
+; legacy alias must remain in sync with `aero_virtio_input.inf` in all functional
+; content **outside** the models sections (`[Aero.NTx86]` / `[Aero.NTamd64]`).
+; The leading comment/banner block (above) may differ so the alias can explain
+; its legacy filename status.
+;
+; The models sections are allowed to differ to provide an opt-in revision-gated
+; generic fallback HWID (`PCI\VEN_1AF4&DEV_1052&REV_01`) for environments that do
+; not expose Aero's subsystem IDs (e.g. stock QEMU). CI enforces this via
+; `drivers/windows7/virtio-input/scripts/check-inf-alias.py`.
 ;
 ; Enforcement:
 ;   - CI: scripts/ci/check-windows7-virtio-contract-consistency.py
