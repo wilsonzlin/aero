@@ -6568,6 +6568,8 @@ static int DoQueryPerfJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, std::s
   JsonWriteU64HexDec(w, "fence_delivered", q.irq_fence_delivered);
   JsonWriteU64HexDec(w, "vblank_delivered", q.irq_vblank_delivered);
   JsonWriteU64HexDec(w, "spurious", q.irq_spurious);
+  JsonWriteU64HexDec(w, "error_irq_count", q.error_irq_count);
+  JsonWriteU64HexDec(w, "last_error_fence", q.last_error_fence);
   w.EndObject();
 
   w.Key("resets");
@@ -6582,6 +6584,41 @@ static int DoQueryPerfJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, std::s
   JsonWriteU64HexDec(w, "last_time_ns", q.last_vblank_time_ns);
   w.Key("period_ns");
   w.Uint32(q.vblank_period_ns);
+  w.EndObject();
+
+  // Last error snapshot (best-effort; may not be supported by older KMD/device builds).
+  w.Key("last_error");
+  w.BeginObject();
+  aerogpu_escape_query_error_out qe;
+  ZeroMemory(&qe, sizeof(qe));
+  qe.hdr.version = AEROGPU_ESCAPE_VERSION;
+  qe.hdr.op = AEROGPU_ESCAPE_OP_QUERY_ERROR;
+  qe.hdr.size = sizeof(qe);
+  qe.hdr.reserved0 = 0;
+  const NTSTATUS stErr = SendAerogpuEscape(f, hAdapter, &qe, sizeof(qe));
+  if (!NT_SUCCESS(stErr)) {
+    w.Key("supported");
+    w.Bool(false);
+    w.Key("error");
+    JsonWriteNtStatusError(w, f, stErr);
+  } else {
+    bool supported = true;
+    if ((qe.flags & AEROGPU_DBGCTL_QUERY_ERROR_FLAGS_VALID) != 0) {
+      supported = (qe.flags & AEROGPU_DBGCTL_QUERY_ERROR_FLAG_ERROR_SUPPORTED) != 0;
+    }
+    w.Key("supported");
+    w.Bool(supported);
+    JsonWriteU32Hex(w, "flags_u32_hex", qe.flags);
+    if (supported) {
+      w.Key("error_code");
+      w.Uint32(qe.error_code);
+      w.Key("error_code_name");
+      w.String(WideToUtf8(AerogpuErrorCodeName(qe.error_code)));
+      JsonWriteU64HexDec(w, "error_fence", qe.error_fence);
+      w.Key("error_count");
+      w.Uint32(qe.error_count);
+    }
+  }
   w.EndObject();
 
   w.EndObject();
