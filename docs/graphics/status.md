@@ -19,6 +19,8 @@ Coordination note:
 
 - [`docs/04-graphics-subsystem.md`](../04-graphics-subsystem.md) — architecture overview
 - [`docs/abi/aerogpu-pci-identity.md`](../abi/aerogpu-pci-identity.md) — canonical AeroGPU PCI identity contract
+- [`docs/graphics/aerogpu-executor-modes.md`](./aerogpu-executor-modes.md) — how the canonical machine (`aero_machine`) drives AeroGPU submission execution + fence forward progress (no-op bring-up vs submission bridge vs in-process backends)
+- [`docs/graphics/aerogpu-backing-alloc-id.md`](./aerogpu-backing-alloc-id.md) — stable `backing_alloc_id` semantics for Win7/WDDM 1.1 guest-backed resources (required for correct host-side alloc resolution)
 - [`docs/16-aerogpu-vga-vesa-compat.md`](../16-aerogpu-vga-vesa-compat.md) — required VGA/VBE compatibility + boot→WDDM scanout handoff
 - [`docs/graphics/win7-vblank-present-requirements.md`](./win7-vblank-present-requirements.md) — Win7 vblank/present timing contract (DWM stability)
 
