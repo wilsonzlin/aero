@@ -29,6 +29,17 @@ pub const SUPPORTED_FEATURES: u64 = FEATURE_FENCE_PAGE
         0
     };
 
+/// Namespaced feature-bit definitions.
+pub mod feature_bits {
+    use aero_protocol::aerogpu::aerogpu_pci as pci;
+
+    pub const FENCE_PAGE: u64 = pci::AEROGPU_FEATURE_FENCE_PAGE;
+    pub const CURSOR: u64 = pci::AEROGPU_FEATURE_CURSOR;
+    pub const SCANOUT: u64 = pci::AEROGPU_FEATURE_SCANOUT;
+    pub const VBLANK: u64 = pci::AEROGPU_FEATURE_VBLANK;
+    pub const TRANSFER: u64 = pci::AEROGPU_FEATURE_TRANSFER;
+}
+
 pub mod mmio {
     use aero_protocol::aerogpu::aerogpu_pci as pci;
 
@@ -184,6 +195,106 @@ impl AeroGpuRegs {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bar0_size_matches_protocol() {
+        assert_eq!(AEROGPU_PCI_BAR0_SIZE_BYTES, pci::AEROGPU_PCI_BAR0_SIZE_BYTES as u64);
+    }
+
+    #[test]
+    fn mmio_offsets_match_protocol() {
+        assert_eq!(mmio::MAGIC, pci::AEROGPU_MMIO_REG_MAGIC as u64);
+        assert_eq!(mmio::ABI_VERSION, pci::AEROGPU_MMIO_REG_ABI_VERSION as u64);
+        assert_eq!(mmio::FEATURES_LO, pci::AEROGPU_MMIO_REG_FEATURES_LO as u64);
+        assert_eq!(mmio::FEATURES_HI, pci::AEROGPU_MMIO_REG_FEATURES_HI as u64);
+
+        assert_eq!(mmio::RING_GPA_LO, pci::AEROGPU_MMIO_REG_RING_GPA_LO as u64);
+        assert_eq!(mmio::RING_GPA_HI, pci::AEROGPU_MMIO_REG_RING_GPA_HI as u64);
+        assert_eq!(mmio::RING_SIZE_BYTES, pci::AEROGPU_MMIO_REG_RING_SIZE_BYTES as u64);
+        assert_eq!(mmio::RING_CONTROL, pci::AEROGPU_MMIO_REG_RING_CONTROL as u64);
+
+        assert_eq!(mmio::FENCE_GPA_LO, pci::AEROGPU_MMIO_REG_FENCE_GPA_LO as u64);
+        assert_eq!(mmio::FENCE_GPA_HI, pci::AEROGPU_MMIO_REG_FENCE_GPA_HI as u64);
+
+        assert_eq!(
+            mmio::COMPLETED_FENCE_LO,
+            pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_LO as u64
+        );
+        assert_eq!(
+            mmio::COMPLETED_FENCE_HI,
+            pci::AEROGPU_MMIO_REG_COMPLETED_FENCE_HI as u64
+        );
+
+        assert_eq!(mmio::DOORBELL, pci::AEROGPU_MMIO_REG_DOORBELL as u64);
+
+        assert_eq!(mmio::IRQ_STATUS, pci::AEROGPU_MMIO_REG_IRQ_STATUS as u64);
+        assert_eq!(mmio::IRQ_ENABLE, pci::AEROGPU_MMIO_REG_IRQ_ENABLE as u64);
+        assert_eq!(mmio::IRQ_ACK, pci::AEROGPU_MMIO_REG_IRQ_ACK as u64);
+
+        assert_eq!(mmio::ERROR_CODE, pci::AEROGPU_MMIO_REG_ERROR_CODE as u64);
+        assert_eq!(mmio::ERROR_FENCE_LO, pci::AEROGPU_MMIO_REG_ERROR_FENCE_LO as u64);
+        assert_eq!(mmio::ERROR_FENCE_HI, pci::AEROGPU_MMIO_REG_ERROR_FENCE_HI as u64);
+        assert_eq!(mmio::ERROR_COUNT, pci::AEROGPU_MMIO_REG_ERROR_COUNT as u64);
+
+        assert_eq!(mmio::SCANOUT0_ENABLE, pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE as u64);
+        assert_eq!(mmio::SCANOUT0_WIDTH, pci::AEROGPU_MMIO_REG_SCANOUT0_WIDTH as u64);
+        assert_eq!(mmio::SCANOUT0_HEIGHT, pci::AEROGPU_MMIO_REG_SCANOUT0_HEIGHT as u64);
+        assert_eq!(mmio::SCANOUT0_FORMAT, pci::AEROGPU_MMIO_REG_SCANOUT0_FORMAT as u64);
+        assert_eq!(
+            mmio::SCANOUT0_PITCH_BYTES,
+            pci::AEROGPU_MMIO_REG_SCANOUT0_PITCH_BYTES as u64
+        );
+        assert_eq!(
+            mmio::SCANOUT0_FB_GPA_LO,
+            pci::AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_LO as u64
+        );
+        assert_eq!(
+            mmio::SCANOUT0_FB_GPA_HI,
+            pci::AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_HI as u64
+        );
+
+        assert_eq!(
+            mmio::SCANOUT0_VBLANK_SEQ_LO,
+            pci::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO as u64
+        );
+        assert_eq!(
+            mmio::SCANOUT0_VBLANK_SEQ_HI,
+            pci::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_HI as u64
+        );
+        assert_eq!(
+            mmio::SCANOUT0_VBLANK_TIME_NS_LO,
+            pci::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO as u64
+        );
+        assert_eq!(
+            mmio::SCANOUT0_VBLANK_TIME_NS_HI,
+            pci::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_HI as u64
+        );
+        assert_eq!(
+            mmio::SCANOUT0_VBLANK_PERIOD_NS,
+            pci::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS as u64
+        );
+
+        assert_eq!(mmio::CURSOR_ENABLE, pci::AEROGPU_MMIO_REG_CURSOR_ENABLE as u64);
+        assert_eq!(mmio::CURSOR_X, pci::AEROGPU_MMIO_REG_CURSOR_X as u64);
+        assert_eq!(mmio::CURSOR_Y, pci::AEROGPU_MMIO_REG_CURSOR_Y as u64);
+        assert_eq!(mmio::CURSOR_HOT_X, pci::AEROGPU_MMIO_REG_CURSOR_HOT_X as u64);
+        assert_eq!(mmio::CURSOR_HOT_Y, pci::AEROGPU_MMIO_REG_CURSOR_HOT_Y as u64);
+        assert_eq!(mmio::CURSOR_WIDTH, pci::AEROGPU_MMIO_REG_CURSOR_WIDTH as u64);
+        assert_eq!(mmio::CURSOR_HEIGHT, pci::AEROGPU_MMIO_REG_CURSOR_HEIGHT as u64);
+        assert_eq!(mmio::CURSOR_FORMAT, pci::AEROGPU_MMIO_REG_CURSOR_FORMAT as u64);
+        assert_eq!(
+            mmio::CURSOR_FB_GPA_LO,
+            pci::AEROGPU_MMIO_REG_CURSOR_FB_GPA_LO as u64
+        );
+        assert_eq!(
+            mmio::CURSOR_FB_GPA_HI,
+            pci::AEROGPU_MMIO_REG_CURSOR_FB_GPA_HI as u64
+        );
+        assert_eq!(
+            mmio::CURSOR_PITCH_BYTES,
+            pci::AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES as u64
+        );
+    }
 
     #[test]
     fn default_abi_version_is_protocol_version() {

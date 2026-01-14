@@ -35,7 +35,7 @@ pub use pci::{
     AeroGpuBar1VramMmio, AeroGpuDeviceConfig, AeroGpuPciDevice, LEGACY_VGA_PADDR_BASE,
     LEGACY_VGA_PADDR_END, LEGACY_VGA_VRAM_BYTES, VBE_LFB_OFFSET,
 };
-pub use regs::{irq_bits, mmio, ring_control, AeroGpuRegs};
+pub use regs::{feature_bits, irq_bits, mmio, ring_control, AeroGpuRegs};
 pub use ring::{
     AeroGpuAllocEntry, AeroGpuAllocTableHeader, AeroGpuRingHeader, AeroGpuSubmitDesc,
     AEROGPU_ALLOC_TABLE_MAGIC, AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_FENCE_PAGE_SIZE_BYTES,
