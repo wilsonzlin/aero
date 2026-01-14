@@ -1325,6 +1325,9 @@ impl UsbDeviceModel for UsbHubDevice {
             port.reset_change = false;
             if let Some(dev) = port.device.as_mut() {
                 dev.reset();
+                // A bus reset exits suspend. Ensure the downstream device model observes the
+                // cleared suspend state even if its `reset` implementation is a no-op.
+                dev.model_mut().set_suspended(false);
             }
         }
     }
@@ -1562,6 +1565,10 @@ impl UsbDeviceModel for UsbHubDevice {
                     match setup.w_value {
                         HUB_PORT_FEATURE_ENABLE => {
                             port.set_enabled(true);
+                            if let Some(dev) = port.device.as_mut() {
+                                dev.model_mut()
+                                    .set_suspended(upstream_suspended || port.suspended);
+                            }
                             ControlResponse::Ack
                         }
                         HUB_PORT_FEATURE_SUSPEND => {
@@ -1574,10 +1581,18 @@ impl UsbDeviceModel for UsbHubDevice {
                         }
                         HUB_PORT_FEATURE_POWER => {
                             port.set_powered(true);
+                            if let Some(dev) = port.device.as_mut() {
+                                dev.model_mut()
+                                    .set_suspended(upstream_suspended || port.suspended);
+                            }
                             ControlResponse::Ack
                         }
                         HUB_PORT_FEATURE_RESET => {
                             port.start_reset();
+                            if let Some(dev) = port.device.as_mut() {
+                                dev.model_mut()
+                                    .set_suspended(upstream_suspended || port.suspended);
+                            }
                             ControlResponse::Ack
                         }
                         _ => ControlResponse::Stall,
@@ -1596,6 +1611,10 @@ impl UsbDeviceModel for UsbHubDevice {
                     match setup.w_value {
                         HUB_PORT_FEATURE_ENABLE => {
                             port.set_enabled(false);
+                            if let Some(dev) = port.device.as_mut() {
+                                dev.model_mut()
+                                    .set_suspended(upstream_suspended || port.suspended);
+                            }
                             ControlResponse::Ack
                         }
                         HUB_PORT_FEATURE_SUSPEND => {
@@ -1608,6 +1627,10 @@ impl UsbDeviceModel for UsbHubDevice {
                         }
                         HUB_PORT_FEATURE_POWER => {
                             port.set_powered(false);
+                            if let Some(dev) = port.device.as_mut() {
+                                dev.model_mut()
+                                    .set_suspended(upstream_suspended || port.suspended);
+                            }
                             ControlResponse::Ack
                         }
                         HUB_PORT_FEATURE_C_PORT_CONNECTION => {
@@ -2253,6 +2276,71 @@ mod tests {
         assert!(
             !dev.0.borrow().suspended,
             "expected device to resume when upstream resumes"
+        );
+    }
+
+    #[test]
+    fn hub_disable_clears_device_suspended_state() {
+        #[derive(Default)]
+        struct State {
+            suspended: bool,
+        }
+
+        #[derive(Clone)]
+        struct Device(Rc<RefCell<State>>);
+
+        impl UsbDeviceModel for Device {
+            fn handle_control_request(
+                &mut self,
+                _setup: SetupPacket,
+                _data_stage: Option<&[u8]>,
+            ) -> ControlResponse {
+                ControlResponse::Ack
+            }
+
+            fn set_suspended(&mut self, suspended: bool) {
+                self.0.borrow_mut().suspended = suspended;
+            }
+        }
+
+        let mut hub = UsbHubDevice::new_with_ports(1);
+        hub.configuration = 1;
+
+        let dev = Device(Rc::new(RefCell::new(State::default())));
+        hub.attach(1, Box::new(dev.clone()));
+        hub.ports[0].set_powered(true);
+        hub.ports[0].set_enabled(true);
+
+        let suspend = SetupPacket {
+            bm_request_type: 0x23, // Host-to-device | Class | Other (port)
+            b_request: USB_REQUEST_SET_FEATURE,
+            w_value: HUB_PORT_FEATURE_SUSPEND,
+            w_index: 1,
+            w_length: 0,
+        };
+        assert_eq!(hub.handle_control_request(suspend, None), ControlResponse::Ack);
+        assert!(hub.ports[0].suspended);
+        assert!(dev.0.borrow().suspended);
+
+        let disable_port = SetupPacket {
+            bm_request_type: 0x23,
+            b_request: USB_REQUEST_CLEAR_FEATURE,
+            w_value: HUB_PORT_FEATURE_ENABLE,
+            w_index: 1,
+            w_length: 0,
+        };
+        assert_eq!(
+            hub.handle_control_request(disable_port, None),
+            ControlResponse::Ack
+        );
+        assert!(!hub.ports[0].enabled, "expected port to become disabled");
+        assert!(
+            !hub.ports[0].suspended,
+            "expected disabling the port to clear port suspend state"
+        );
+        assert!(
+            !dev.0.borrow().suspended,
+            "expected disabling the port to update device suspended state"
         );
     }
 
