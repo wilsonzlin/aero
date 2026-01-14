@@ -319,6 +319,13 @@ Full reference:
 
 - [`drivers/windows7/tests/host-harness/README.md`](../drivers/windows7/tests/host-harness/README.md)
 
+Optional self-hosted CI wrapper:
+
+- [`.github/workflows/win7-virtio-harness.yml`](../.github/workflows/win7-virtio-harness.yml) (`workflow_dispatch`)
+  - Use workflow inputs `with_virtio_input_events=true` and/or `with_virtio_input_tablet_events=true` to enable the optional
+    QMP injection-based end-to-end virtio-input tests (requires a guest image provisioned with `--test-input-events` /
+    `--test-input-tablet-events`).
+
 ### 4.1 Basic invocation (PowerShell)
 
 ```powershell
