@@ -14786,8 +14786,40 @@ bool TestGetShaderConstIBRoundTripImpl() {
       }
     }
 
-    // Stage normalization: any non-VS stage should behave like PS.
+    // Stage normalization on the getter path: any non-VS stage should behave like PS.
     constexpr uint32_t kWeirdStage = 42u;
+
+    std::array<GetIDataT, ps_i_count * 4> out_ps_i_norm{};
+    hr = cleanup.device_funcs.pfnGetShaderConstI(create_dev.hDevice,
+                                                 static_cast<GetIStageT>(kWeirdStage),
+                                                 static_cast<GetIStartT>(i_start),
+                                                 out_ps_i_norm.data(),
+                                                 static_cast<GetICountT>(ps_i_count));
+    if (!Check(hr == S_OK, "GetShaderConstI(weird stage, i5..i6)")) {
+      return false;
+    }
+    for (size_t i = 0; i < out_ps_i_norm.size(); ++i) {
+      if (!Check(static_cast<int32_t>(out_ps_i_norm[i]) == ps_i5_i6[i], "GetShaderConstI weird stage reads PS values")) {
+        return false;
+      }
+    }
+
+    std::array<GetBDataT, b_count> out_b_norm_stage{};
+    hr = cleanup.device_funcs.pfnGetShaderConstB(create_dev.hDevice,
+                                                 static_cast<GetBStageT>(kWeirdStage),
+                                                 static_cast<GetBStartT>(b_start),
+                                                 out_b_norm_stage.data(),
+                                                 static_cast<GetBCountT>(b_count));
+    if (!Check(hr == S_OK, "GetShaderConstB(weird stage, b7..b9)")) {
+      return false;
+    }
+    for (size_t i = 0; i < out_b_norm_stage.size(); ++i) {
+      if (!Check(static_cast<uint32_t>(out_b_norm_stage[i]) == expected_b[i], "GetShaderConstB weird stage reads PS values")) {
+        return false;
+      }
+    }
+
+    // Stage normalization: any non-VS stage should behave like PS.
     const uint32_t i_norm_start = 10;
     const int32_t i_norm[4] = {-9, -8, -7, -6};
     hr = cleanup.device_funcs.pfnSetShaderConstI(create_dev.hDevice, kWeirdStage, i_norm_start, i_norm, 1);
@@ -14824,7 +14856,49 @@ bool TestGetShaderConstIBRoundTripImpl() {
     if (!Check(hr == S_OK, "GetShaderConstB(PS, normalized)")) {
       return false;
     }
-    return Check(static_cast<uint32_t>(out_b_norm[0]) == 1u, "GetShaderConstB reads normalized stage values");
+    if (!Check(static_cast<uint32_t>(out_b_norm[0]) == 1u, "GetShaderConstB reads normalized stage values")) {
+      return false;
+    }
+
+    // Invalid arg/range handling: ensure outputs are zeroed before returning an error so callers
+    // can't accidentally consume uninitialized memory.
+    std::array<GetIDataT, 8> invalid_i{};
+    for (auto& v : invalid_i) {
+      v = static_cast<GetIDataT>(0x7F);
+    }
+    hr = cleanup.device_funcs.pfnGetShaderConstI(create_dev.hDevice,
+                                                 static_cast<GetIStageT>(kD3d9ShaderStagePs),
+                                                 static_cast<GetIStartT>(255u),
+                                                 invalid_i.data(),
+                                                 static_cast<GetICountT>(2));
+    if (!Check(hr == kD3DErrInvalidCall, "GetShaderConstI invalid range returns INVALIDCALL")) {
+      return false;
+    }
+    for (const auto& v : invalid_i) {
+      if (!Check(static_cast<uint64_t>(v) == 0u, "GetShaderConstI invalid range zeroes output")) {
+        return false;
+      }
+    }
+
+    std::array<GetBDataT, 2> invalid_b{};
+    for (auto& v : invalid_b) {
+      v = static_cast<GetBDataT>(0x7F);
+    }
+    hr = cleanup.device_funcs.pfnGetShaderConstB(create_dev.hDevice,
+                                                 static_cast<GetBStageT>(kD3d9ShaderStagePs),
+                                                 static_cast<GetBStartT>(255u),
+                                                 invalid_b.data(),
+                                                 static_cast<GetBCountT>(2));
+    if (!Check(hr == kD3DErrInvalidCall, "GetShaderConstB invalid range returns INVALIDCALL")) {
+      return false;
+    }
+    for (const auto& v : invalid_b) {
+      if (!Check(static_cast<uint64_t>(v) == 0u, "GetShaderConstB invalid range zeroes output")) {
+        return false;
+      }
+    }
+
+    return true;
   }
 }
 
