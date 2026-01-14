@@ -185,6 +185,7 @@ impl TlbSet {
             for way in 0..WAYS {
                 let entry = &self.entries[set][way];
                 if entry.vbase == vbase && entry.matches_pcid(pcid) {
+                    debug_assert_eq!(entry.page_size, PageSize::Size4K);
                     return Some(entry);
                 }
             }
