@@ -109,7 +109,9 @@ Examples of implementations:
 
 - `aero_storage::MemBackend` (tests)
 - `aero_storage::FileBackend` / `aero_storage::StdFileBackend` (native filesystem backend; non-wasm32)\
-  Used by host-side tooling such as [`tools/aero-disk-convert`](../tools/aero-disk-convert/src/main.rs)
+  Used by host-side tooling such as:
+  - [`tools/aero-disk-convert`](../tools/aero-disk-convert/src/main.rs)
+  - [`tools/image-chunker`](../tools/image-chunker/src/main.rs)
   and CLI/image tests.
 - `aero_opfs::OpfsByteStorage` (browser OPFS SyncAccessHandle; wasm32 only)
 
