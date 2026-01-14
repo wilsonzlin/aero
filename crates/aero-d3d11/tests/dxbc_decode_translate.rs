@@ -3178,20 +3178,20 @@ fn decodes_and_translates_discard_and_clip_in_pixel_shader() {
     let module = decode_program(&program).expect("SM4 decode");
     assert_eq!(module.instructions.len(), 4);
     assert!(matches!(
-        module.instructions[0],
+        &module.instructions[0],
         Sm4Inst::Discard {
             test: Sm4TestBool::NonZero,
             ..
         }
     ));
     assert!(matches!(
-        module.instructions[1],
+        &module.instructions[1],
         Sm4Inst::Discard {
             test: Sm4TestBool::Zero,
             ..
         }
     ));
-    assert!(matches!(module.instructions[2], Sm4Inst::Clip { .. }));
+    assert!(matches!(&module.instructions[2], Sm4Inst::Clip { .. }));
 
     let signatures = parse_signatures(&dxbc).expect("parse signatures");
     let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
@@ -3328,7 +3328,7 @@ fn decodes_and_translates_itof_conversion() {
     let module = decode_program(&program).expect("SM4 decode");
 
     assert!(
-        matches!(module.instructions[1], Sm4Inst::Itof { .. }),
+        matches!(&module.instructions[1], Sm4Inst::Itof { .. }),
         "expected second instruction to decode as itof: {:#?}",
         module.instructions
     );
@@ -3397,7 +3397,7 @@ fn decodes_and_translates_utof_conversion() {
     let module = decode_program(&program).expect("SM4 decode");
 
     assert!(
-        matches!(module.instructions[1], Sm4Inst::Utof { .. }),
+        matches!(&module.instructions[1], Sm4Inst::Utof { .. }),
         "expected second instruction to decode as utof: {:#?}",
         module.instructions
     );
@@ -3808,12 +3808,12 @@ fn decodes_and_translates_half_float_conversions() {
     let module = decode_program(&program).expect("SM4 decode");
 
     assert!(
-        matches!(module.instructions[1], Sm4Inst::F32ToF16 { .. }),
+        matches!(&module.instructions[1], Sm4Inst::F32ToF16 { .. }),
         "expected second instruction to decode as f32tof16: {:#?}",
         module.instructions
     );
     assert!(
-        matches!(module.instructions[2], Sm4Inst::F16ToF32 { .. }),
+        matches!(&module.instructions[2], Sm4Inst::F16ToF32 { .. }),
         "expected third instruction to decode as f16tof32: {:#?}",
         module.instructions
     );

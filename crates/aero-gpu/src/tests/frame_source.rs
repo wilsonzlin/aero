@@ -262,13 +262,14 @@ fn frame_source_does_not_clear_frame_dirty_until_acked() {
     writer.write_frame(|buf, _dirty, _layout| buf.fill(0x11));
     assert_eq!(shared.header().frame_dirty.load(Ordering::SeqCst), 1);
 
-    let frame = source.poll_frame().expect("new frame must be visible");
-    assert_eq!(frame.seq, 1);
+    let seq1 = {
+        let frame = source.poll_frame().expect("new frame must be visible");
+        assert_eq!(frame.seq, 1);
 
-    // Polling must not clear `frame_dirty` since the frame buffer is still exposed by reference.
-    assert_eq!(shared.header().frame_dirty.load(Ordering::SeqCst), 1);
-    let seq1 = frame.seq;
-    drop(frame);
+        // Polling must not clear `frame_dirty` since the frame buffer is still exposed by reference.
+        assert_eq!(shared.header().frame_dirty.load(Ordering::SeqCst), 1);
+        frame.seq
+    };
     source.ack_frame(seq1);
     assert_eq!(shared.header().frame_dirty.load(Ordering::SeqCst), 0);
 
@@ -280,9 +281,10 @@ fn frame_source_does_not_clear_frame_dirty_until_acked() {
     source.ack_frame(seq1);
     assert_eq!(shared.header().frame_dirty.load(Ordering::SeqCst), 1);
 
-    let frame2 = source.poll_frame().expect("new frame must be visible");
-    let seq2 = frame2.seq;
-    drop(frame2);
+    let seq2 = {
+        let frame2 = source.poll_frame().expect("new frame must be visible");
+        frame2.seq
+    };
     source.ack_frame(seq2);
     assert_eq!(shared.header().frame_dirty.load(Ordering::SeqCst), 0);
 }
