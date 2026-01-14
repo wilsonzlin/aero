@@ -118,17 +118,13 @@ The key MMIO responsibilities are:
 3. **Completion**
    - Completed fence value in MMIO and optionally a shared fence page.
 4. **Error reporting** (ABI 1.3+)
-   - When `AEROGPU_IRQ_ERROR` is asserted, the device latches a structured error
-     payload into `AEROGPU_MMIO_REG_ERROR_CODE` / `AEROGPU_MMIO_REG_ERROR_FENCE_*`
-     / `AEROGPU_MMIO_REG_ERROR_COUNT` for post-mortem debugging.
+   - `AEROGPU_IRQ_ERROR` indicates a device-side validation/execution failure.
+   - When `AEROGPU_FEATURE_ERROR_INFO` is present, additional read-only MMIO registers expose the
+     most recent error code/fence/count (`ERROR_*`) for low-bandwidth diagnostics from the guest.
 5. **Display output**
    - Scanout0 configuration (width/height/format/pitch/framebuffer GPA).
    - Optional vblank timing registers + vblank IRQ (required for Win7 DWM pacing when `AEROGPU_FEATURE_VBLANK` is set; see `vblank.md`).
    - Cursor configuration is reserved and feature-gated.
-5. **Error reporting**
-    - `IRQ_ERROR` indicates a device-side validation/execution failure.
-    - When `AEROGPU_FEATURE_ERROR_INFO` is present, additional read-only MMIO registers expose the
-      most recent error code/fence (`ERROR_*`) for low-bandwidth diagnostics from the guest.
 
 See `aerogpu_pci.h` for exact offsets and bit definitions.
 
