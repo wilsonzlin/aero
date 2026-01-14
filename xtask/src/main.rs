@@ -3,6 +3,7 @@ use std::env;
 use std::fs;
 use std::io;
 use std::path::Path;
+use std::path::PathBuf;
 
 use aero_acpi::{AcpiConfig, AcpiPlacement, AcpiTables};
 mod cmd_bios_rom;
@@ -71,6 +72,9 @@ fn main() {
 }
 
 fn try_main() -> Result<()> {
+    let repo_root = paths::repo_root()?;
+    maybe_isolate_cargo_home(&repo_root)?;
+
     let mut args = env::args().skip(1);
     let Some(cmd) = args.next() else {
         return help();
@@ -90,6 +94,69 @@ fn try_main() -> Result<()> {
         "-h" | "--help" | "help" => help(),
         other => Err(format!("unknown xtask subcommand `{other}` (run `cargo xtask help`)").into()),
     }
+}
+
+fn maybe_isolate_cargo_home(repo_root: &Path) -> Result<()> {
+    let Ok(raw) = env::var("AERO_ISOLATE_CARGO_HOME") else {
+        return Ok(());
+    };
+    let value = raw.trim();
+    if value.is_empty() {
+        return Ok(());
+    }
+
+    let is_false = matches!(
+        value,
+        "0" | "false" | "FALSE" | "no" | "NO" | "off" | "OFF"
+    );
+    if is_false {
+        return Ok(());
+    }
+
+    let mut cargo_home: PathBuf = if matches!(value, "1" | "true" | "TRUE" | "yes" | "YES" | "on" | "ON")
+    {
+        repo_root.join(".cargo-home")
+    } else {
+        let mut custom = value.to_string();
+
+        if custom == "~" || custom.starts_with("~/") {
+            match env::var("HOME").or_else(|_| env::var("USERPROFILE")) {
+                Ok(home) if !home.is_empty() => {
+                    custom = format!("{}{}", home.trim_end_matches('/'), &custom[1..]);
+                }
+                _ => {
+                    eprintln!(
+                        "warning: cannot expand '~' in AERO_ISOLATE_CARGO_HOME because HOME/USERPROFILE is unset; using literal path: {custom}"
+                    );
+                }
+            }
+        } else if custom.starts_with('~') {
+            eprintln!(
+                "warning: AERO_ISOLATE_CARGO_HOME only supports '~' or '~/' expansion; using literal path: {custom}"
+            );
+        }
+
+        let path = PathBuf::from(custom);
+        if path.is_absolute() {
+            path
+        } else {
+            repo_root.join(path)
+        }
+    };
+
+    fs::create_dir_all(&cargo_home).map_err(|e| {
+        XtaskError::Message(format!(
+            "failed to create isolated Cargo home directory {}: {e}",
+            cargo_home.display()
+        ))
+    })?;
+    // Ensure the path is normalized for consistent downstream env usage.
+    cargo_home = cargo_home
+        .canonicalize()
+        .unwrap_or(cargo_home);
+    env::set_var("CARGO_HOME", &cargo_home);
+
+    Ok(())
 }
 
 fn is_broken_pipe_panic(payload: &(dyn Any + Send)) -> bool {
