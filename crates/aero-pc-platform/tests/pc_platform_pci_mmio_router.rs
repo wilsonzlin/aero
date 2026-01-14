@@ -56,8 +56,10 @@ fn pci_mmio_window_routes_multiple_devices_and_tracks_bar_reprogramming() {
     assert_ne!(hda_base, e1000_base);
 
     // Assert the BAR allocations don't overlap (sanity check for the allocator).
-    let hda_end = hda_base + 0x4000u64;
-    let e1000_end = e1000_base + 0x20_000u64;
+    let hda_size = HDA_ICH6.bars[0].size;
+    let e1000_size = NIC_E1000_82540EM.bars[0].size;
+    let hda_end = hda_base + hda_size;
+    let e1000_end = e1000_base + e1000_size;
     assert!(
         hda_end <= e1000_base || e1000_end <= hda_base,
         "HDA BAR0 ({hda_base:#x}..{hda_end:#x}) overlaps E1000 BAR0 ({e1000_base:#x}..{e1000_end:#x})"
@@ -78,8 +80,8 @@ fn pci_mmio_window_routes_multiple_devices_and_tracks_bar_reprogramming() {
     let new_e1000_base = PCI_MMIO_BASE + 0x0040_0000;
     assert!(new_hda_base < alloc_cfg.mmio_base);
     assert!(new_e1000_base < alloc_cfg.mmio_base);
-    assert_eq!(new_hda_base % 0x4000, 0);
-    assert_eq!(new_e1000_base % 0x20_000, 0);
+    assert_eq!(new_hda_base % hda_size, 0);
+    assert_eq!(new_e1000_base % e1000_size, 0);
 
     write_cfg_u32(
         &mut pc,

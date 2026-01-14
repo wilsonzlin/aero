@@ -4043,7 +4043,7 @@ mod tests {
         let mut cpu = CpuState::new(CpuMode::Real);
         let mut mem = TestMemory::new(2 * 1024 * 1024);
 
-        handle_int19(&mut bios, &mut cpu, &mut mem, &mut disk);
+        handle_int19(&mut bios, &mut cpu, &mut mem, &mut disk, None);
 
         assert!(!cpu.halted);
         assert_eq!(cpu.rflags & FLAG_CF, 0);

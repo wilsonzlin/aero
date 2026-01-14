@@ -124,7 +124,7 @@ fn pc_platform_enumerates_hda_and_assigns_bar0() {
 
     let bar0_base = read_hda_bar0_base(&mut pc);
     assert_ne!(bar0_base, 0, "BAR0 should be assigned during BIOS POST");
-    assert_eq!(bar0_base % (0x4000u64), 0);
+    assert_eq!(bar0_base % HDA_ICH6.bars[0].size, 0);
 }
 
 #[test]
@@ -270,7 +270,7 @@ fn pc_platform_routes_hda_mmio_after_bar0_reprogramming() {
 
     let bar0_base = read_hda_bar0_base(&mut pc);
     let new_base = bar0_base + 0x1_0000;
-    assert_eq!(new_base % 0x4000, 0);
+    assert_eq!(new_base % HDA_ICH6.bars[0].size, 0);
 
     // Bring controller out of reset at the original BAR0 base.
     pc.memory.write_u32(bar0_base + 0x08, 1);

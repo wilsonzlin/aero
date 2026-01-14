@@ -502,6 +502,13 @@ impl PlatformInterrupts {
         self.lapics.len()
     }
 
+    /// Iterate over all LAPICs in the platform.
+    ///
+    /// This is used by MSI delivery logic (e.g. xAPIC broadcast and logical destination modes).
+    pub(crate) fn lapics_iter(&self) -> impl Iterator<Item = &LocalApic> + '_ {
+        self.lapics.iter().map(|lapic| lapic.as_ref())
+    }
+
     pub fn lapic(&self, cpu_index: usize) -> &LocalApic {
         self.lapics
             .get(cpu_index)
