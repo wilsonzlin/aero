@@ -21,8 +21,9 @@ class Win7VirtioHarnessWorkflowQemuSystemInputTests(unittest.TestCase):
         self.assertIn("qemu_system:", self.text)
         self.assertIn('qemu_system="${{ inputs.qemu_system }}"', self.text)
         self.assertIn("ERROR: workflow input 'qemu_system' is empty.", self.text)
+        self.assertIn('if [[ -d "${qemu_system}" ]]; then', self.text)
+        self.assertIn("workflow input 'qemu_system' is a directory", self.text)
 
 
 if __name__ == "__main__":
     unittest.main()
-
