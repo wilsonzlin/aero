@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 use std::collections::HashSet;
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -36,7 +37,7 @@ use aero_http_range::{
 
 #[derive(Clone, Debug)]
 pub struct Config {
-    pub bind: String,
+    pub bind: SocketAddr,
     pub public_dir: PathBuf,
     pub private_dir: PathBuf,
     pub token_secret: String,
@@ -50,6 +51,9 @@ pub struct Config {
 impl Config {
     pub fn from_env() -> Result<Self, ConfigError> {
         let bind = std::env::var("DISK_GATEWAY_BIND").unwrap_or_else(|_| "127.0.0.1:3000".into());
+        let bind: SocketAddr = bind
+            .parse()
+            .map_err(|_| ConfigError::InvalidEnv("DISK_GATEWAY_BIND"))?;
         let public_dir =
             std::env::var("DISK_GATEWAY_PUBLIC_DIR").unwrap_or_else(|_| "./public-images".into());
         let private_dir =
@@ -104,6 +108,58 @@ impl std::fmt::Display for ConfigError {
 }
 
 impl std::error::Error for ConfigError {}
+
+#[cfg(test)]
+mod config_env_tests {
+    use super::{Config, ConfigError};
+
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn set_var_scoped(key: &str, value: &str) -> Option<std::ffi::OsString> {
+        let prev = std::env::var_os(key);
+        std::env::set_var(key, value);
+        prev
+    }
+
+    fn restore_var(key: &str, prev: Option<std::ffi::OsString>) {
+        match prev {
+            Some(v) => std::env::set_var(key, v),
+            None => std::env::remove_var(key),
+        }
+    }
+
+    #[test]
+    fn from_env_uses_default_bind_when_missing() {
+        let _guard = ENV_LOCK.lock().unwrap();
+
+        let prev_bind = std::env::var_os("DISK_GATEWAY_BIND");
+        let prev_secret = set_var_scoped("DISK_GATEWAY_TOKEN_SECRET", "secret");
+        std::env::remove_var("DISK_GATEWAY_BIND");
+
+        let cfg = Config::from_env().expect("Config::from_env should succeed with defaults");
+        assert_eq!(cfg.bind, "127.0.0.1:3000".parse().unwrap());
+
+        restore_var("DISK_GATEWAY_BIND", prev_bind);
+        restore_var("DISK_GATEWAY_TOKEN_SECRET", prev_secret);
+    }
+
+    #[test]
+    fn from_env_rejects_invalid_bind_without_panicking() {
+        let _guard = ENV_LOCK.lock().unwrap();
+
+        let prev_bind = set_var_scoped("DISK_GATEWAY_BIND", "not-a-socket-addr");
+        let prev_secret = set_var_scoped("DISK_GATEWAY_TOKEN_SECRET", "secret");
+
+        let err = Config::from_env().expect_err("expected Config::from_env to reject invalid bind");
+        match err {
+            ConfigError::InvalidEnv(var) => assert_eq!(var, "DISK_GATEWAY_BIND"),
+            other => panic!("expected InvalidEnv, got {other:?}"),
+        }
+
+        restore_var("DISK_GATEWAY_BIND", prev_bind);
+        restore_var("DISK_GATEWAY_TOKEN_SECRET", prev_secret);
+    }
+}
 
 #[derive(Clone, Debug)]
 pub enum AllowedOrigins {
@@ -920,7 +976,7 @@ mod tests {
         let mut allowed = HashSet::new();
         allowed.insert("https://app.example".to_owned());
         Config {
-            bind: "127.0.0.1:0".into(),
+            bind: "127.0.0.1:0".parse().unwrap(),
             public_dir,
             private_dir,
             token_secret: "test-secret".into(),

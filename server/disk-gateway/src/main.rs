@@ -53,14 +53,15 @@ async fn async_main() {
         }
     };
 
-    let addr: SocketAddr = cfg
-        .bind
-        .parse()
-        .unwrap_or_else(|_| panic!("invalid DISK_GATEWAY_BIND: {}", cfg.bind));
+    let addr: SocketAddr = cfg.bind;
 
-    let listener = tokio::net::TcpListener::bind(addr)
-        .await
-        .unwrap_or_else(|err| panic!("failed to bind {addr}: {err}"));
+    let listener = match tokio::net::TcpListener::bind(addr).await {
+        Ok(listener) => listener,
+        Err(err) => {
+            eprintln!("disk-gateway: failed to bind {addr}: {err}");
+            std::process::exit(3);
+        }
+    };
 
     tracing::info!(
         bind = %addr,
