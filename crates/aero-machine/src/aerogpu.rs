@@ -3476,6 +3476,19 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct PanicMem;
+
+    impl MemoryBus for PanicMem {
+        fn read_physical(&mut self, _paddr: u64, _buf: &mut [u8]) {
+            panic!("unexpected DMA read");
+        }
+
+        fn write_physical(&mut self, _paddr: u64, _buf: &[u8]) {
+            panic!("unexpected DMA write");
+        }
+    }
+
     #[test]
     fn doorbell_desc_gpa_overflow_records_oob_and_advances_head_to_tail() {
         let mut dev = AeroGpuMmioDevice::default();
@@ -3912,6 +3925,42 @@ mod tests {
         };
 
         let mut mem = TestMem::default();
+        assert_eq!(cursor.read_rgba8888(&mut mem), None);
+    }
+
+    #[test]
+    fn scanout_read_rgba8888_returns_none_without_reading_memory_on_gpa_overflow() {
+        // If the scanout GPA arithmetic would overflow, return `None` before performing any DMA
+        // reads.
+        let state = AeroGpuScanout0State {
+            wddm_scanout_active: true,
+            enable: true,
+            width: 1,
+            height: 2,
+            format: pci::AerogpuFormat::R8G8B8A8Unorm as u32,
+            pitch_bytes: 4,
+            fb_gpa: u64::MAX - 2,
+        };
+
+        let mut mem = PanicMem::default();
+        assert_eq!(state.read_rgba8888(&mut mem), None);
+    }
+
+    #[test]
+    fn cursor_read_rgba8888_returns_none_without_reading_memory_on_gpa_overflow() {
+        // If the cursor GPA arithmetic would overflow, return `None` before performing any DMA
+        // reads.
+        let cursor = AeroGpuCursorConfig {
+            enable: true,
+            width: 1,
+            height: 2,
+            format: pci::AerogpuFormat::R8G8B8A8Unorm as u32,
+            pitch_bytes: 4,
+            fb_gpa: u64::MAX - 2,
+            ..Default::default()
+        };
+
+        let mut mem = PanicMem::default();
         assert_eq!(cursor.read_rgba8888(&mut mem), None);
     }
 
