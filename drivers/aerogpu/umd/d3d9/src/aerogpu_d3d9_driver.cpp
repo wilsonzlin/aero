@@ -2888,30 +2888,19 @@ inline constexpr bool fixedfunc_fvf_is_xyzrhw(uint32_t fvf) {
 }
 
 inline constexpr bool fixedfunc_fvf_has_normal(uint32_t fvf) {
-  const FixedFuncVariant variant = fixedfunc_variant_from_fvf(fvf);
-  return variant == FixedFuncVariant::XYZ_NORMAL ||
-         variant == FixedFuncVariant::XYZ_NORMAL_TEX1 ||
-         variant == FixedFuncVariant::XYZ_NORMAL_COLOR ||
-         variant == FixedFuncVariant::XYZ_NORMAL_COLOR_TEX1;
+  // For the fixed-function bring-up subset, `D3DFVF_NORMAL` cleanly identifies
+  // whether the active FVF includes normals. (Unsupported FVFs may still carry
+  // this bit; that is OK since lighting is only applied when we have a matching
+  // fixed-function pipeline variant.)
+  return (fvf & kD3dFvfNormal) != 0;
 }
 
 constexpr bool fixedfunc_fvf_needs_matrix(uint32_t fvf) {
   const FixedFuncVariant variant = fixedfunc_variant_from_fvf(fvf);
   // XYZ fixed-function vertices use internal VS variants that apply the cached
   // WORLD/VIEW/PROJECTION matrix via a reserved high VS constant range
-  // (c240..c243).
-  switch (variant) {
-    case FixedFuncVariant::XYZ_COLOR:
-    case FixedFuncVariant::XYZ_COLOR_TEX1:
-    case FixedFuncVariant::XYZ_TEX1:
-    case FixedFuncVariant::XYZ_NORMAL:
-    case FixedFuncVariant::XYZ_NORMAL_TEX1:
-    case FixedFuncVariant::XYZ_NORMAL_COLOR:
-    case FixedFuncVariant::XYZ_NORMAL_COLOR_TEX1:
-      return true;
-    default:
-      return false;
-  }
+  // (c240..c243). Pre-transformed (XYZRHW) variants do not.
+  return (variant != FixedFuncVariant::NONE) && !fixedfunc_variant_uses_rhw(variant);
 }
 // Fixed-function fallback shader constant register ranges.
 //
@@ -2974,50 +2963,38 @@ constexpr uint32_t kD3dTransformWorld0 = 256u;
 uint32_t fvf_decode_texcoord_size(uint32_t fvf, uint32_t tex_index);
 
 uint32_t fixedfunc_min_stride_bytes(uint32_t fvf) {
-  auto tex0_dim = [&]() -> uint32_t {
+  const FixedFuncVariant variant = fixedfunc_variant_from_fvf(fvf);
+  if (variant == FixedFuncVariant::NONE) {
+    return 0u;
+  }
+  const uint32_t base_fvf = fixedfunc_fvf_from_variant(variant);
+  if (base_fvf == 0) {
+    return 0u;
+  }
+
+  // Positions:
+  // - XYZRHW: float4 (x, y, z, rhw) => 16 bytes
+  // - XYZ: float3 (x, y, z) => 12 bytes
+  uint32_t stride = (base_fvf & kD3dFvfXyzRhw) ? 16u : 12u;
+
+  // NORMAL => float3 => 12 bytes.
+  if ((base_fvf & kD3dFvfNormal) != 0) {
+    stride += 12u;
+  }
+  // DIFFUSE => D3DCOLOR => 4 bytes.
+  if ((base_fvf & kD3dFvfDiffuse) != 0) {
+    stride += 4u;
+  }
+  // TEX1 => TEXCOORD0 => float{1,2,3,4} => dim * 4 bytes.
+  if ((base_fvf & kD3dFvfTex1) != 0) {
     const uint32_t dim = fvf_decode_texcoord_size(fvf, 0);
     if (dim < 1u || dim > 4u) {
       return 0u;
     }
-    return dim;
-  };
-
-  switch (fixedfunc_variant_from_fvf(fvf)) {
-    case FixedFuncVariant::RHW_COLOR:
-      return 20u;
-    case FixedFuncVariant::RHW_COLOR_TEX1: {
-      const uint32_t dim = tex0_dim();
-      return dim ? (16u + 4u + dim * 4u) : 0u;
-    }
-    case FixedFuncVariant::RHW_TEX1: {
-      const uint32_t dim = tex0_dim();
-      return dim ? (16u + dim * 4u) : 0u;
-    }
-    case FixedFuncVariant::XYZ_COLOR:
-      return 16u;
-    case FixedFuncVariant::XYZ_COLOR_TEX1: {
-      const uint32_t dim = tex0_dim();
-      return dim ? (12u + 4u + dim * 4u) : 0u;
-    }
-    case FixedFuncVariant::XYZ_TEX1: {
-      const uint32_t dim = tex0_dim();
-      return dim ? (12u + dim * 4u) : 0u;
-    }
-    case FixedFuncVariant::XYZ_NORMAL:
-      return 24u;
-    case FixedFuncVariant::XYZ_NORMAL_TEX1: {
-      const uint32_t dim = tex0_dim();
-      return dim ? (12u + 12u + dim * 4u) : 0u;
-    }
-    case FixedFuncVariant::XYZ_NORMAL_COLOR:
-      return 28u;
-    case FixedFuncVariant::XYZ_NORMAL_COLOR_TEX1: {
-      const uint32_t dim = tex0_dim();
-      return dim ? (12u + 12u + 4u + dim * 4u) : 0u;
-    }
-    default:
-      return 0u;
+    stride += dim * 4u;
   }
+
+  return stride;
 }
 
 HRESULT validate_fixedfunc_vertex_stride(uint32_t fvf, uint32_t stride_bytes) {
