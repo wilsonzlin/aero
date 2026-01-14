@@ -396,7 +396,11 @@ describe("InputCapture buffer recycling", () => {
       }
 
       const buckets = (capture as any).recycledBuffersBySize as Map<number, ArrayBuffer[]>;
-      expect(buckets.size).toBeLessThanOrEqual(8);
+      // The exact constant is internal, but we want to ensure the map is bounded (not one bucket per
+      // observed byteLength forever).
+      expect(buckets.size).toBe(8);
+      // The newest buckets should remain present after eviction.
+      expect(buckets.has(1024 + 99)).toBe(true);
     });
   });
 
