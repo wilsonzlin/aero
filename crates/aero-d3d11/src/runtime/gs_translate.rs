@@ -4586,6 +4586,56 @@ mod tests {
     }
 
     #[test]
+    fn gs_translate_defaults_to_output_regs_when_output_decls_missing() {
+        // Some SM4 token streams omit explicit `dcl_output` declarations even though the shader
+        // writes to output registers. The convenience helper should still export those outputs as
+        // varyings so the render pass sees the correct values.
+        let module = Sm4Module {
+            stage: ShaderStage::Geometry,
+            model: ShaderModel { major: 4, minor: 0 },
+            decls: vec![
+                Sm4Decl::GsInputPrimitive {
+                    primitive: GsInputPrimitive::Point(1),
+                },
+                Sm4Decl::GsOutputTopology {
+                    topology: GsOutputTopology::TriangleStrip(3),
+                },
+                Sm4Decl::GsMaxOutputVertexCount { max: 1 },
+            ],
+            instructions: vec![
+                Sm4Inst::Mov {
+                    dst: DstOperand {
+                        reg: RegisterRef {
+                            file: RegFile::Output,
+                            index: 1,
+                        },
+                        mask: WriteMask::XYZW,
+                        saturate: false,
+                    },
+                    src: SrcOperand {
+                        kind: SrcKind::ImmediateF32([0u32; 4]),
+                        swizzle: Swizzle::XYZW,
+                        modifier: OperandModifier::None,
+                    },
+                },
+                Sm4Inst::Emit { stream: 0 },
+                Sm4Inst::Ret,
+            ],
+        };
+
+        let wgsl = translate_gs_module_to_wgsl_compute_prepass(&module)
+            .expect("translation should succeed");
+        assert!(
+            wgsl.contains("out_vertices.data[vtx_idx].varyings[1u] = o1;"),
+            "expected output register o1 to be exported as varying when output decls are missing:\n{wgsl}"
+        );
+        assert!(
+            !wgsl.contains("varyings[0u]"),
+            "expected location 0 to remain reserved for position:\n{wgsl}"
+        );
+    }
+
+    #[test]
     fn gs_translate_emits_prepass_state_with_indirect_args_at_offset_0() {
         // Regression test: the executor feeds the GS prepass state buffer directly into
         // `draw_indexed_indirect`, so `DrawIndexedIndirectArgs` must be the first field in the
