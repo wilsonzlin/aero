@@ -2613,19 +2613,11 @@ impl AerogpuD3d9Executor {
         // Shader translation can surface sampler texture types via SM3 `dcl_*` declarations.
         //
         // The executor currently only supports binding 2D/cube textures from the command stream,
-        // but it can still compile shaders that declare 1D/3D samplers by providing dummy textures
-        // of the correct view dimension.
-        for &sampler in &cached.used_samplers {
-            let ty = cached
-                .sampler_texture_types
-                .get(&sampler)
-                .copied()
-                .unwrap_or(TextureType::Texture2D);
+        // so reject shaders that declare other sampler dimensions even if they do not issue any
+        // texture sampling instructions (future work: add volume/1D texture support).
+        for (&sampler, &ty) in &cached.sampler_texture_types {
             match ty {
-                TextureType::Texture1D
-                | TextureType::Texture2D
-                | TextureType::Texture3D
-                | TextureType::TextureCube => {}
+                TextureType::Texture2D | TextureType::TextureCube => {}
                 other => {
                     return Err(AerogpuD3d9Error::ShaderTranslation(format!(
                         "unsupported sampler texture type {other:?} (s{sampler})"
@@ -2710,17 +2702,9 @@ impl AerogpuD3d9Executor {
                     )
                     .map_err(|e| e.to_string())?;
 
-                    for &sampler in &translated.used_samplers {
-                        let ty = translated
-                            .sampler_texture_types
-                            .get(&sampler)
-                            .copied()
-                            .unwrap_or(TextureType::Texture2D);
+                    for (&sampler, &ty) in &translated.sampler_texture_types {
                         match ty {
-                            TextureType::Texture1D
-                            | TextureType::Texture2D
-                            | TextureType::Texture3D
-                            | TextureType::TextureCube => {}
+                            TextureType::Texture2D | TextureType::TextureCube => {}
                             other => {
                                 return Err(format!(
                                     "unsupported sampler texture type {other:?} (s{sampler})"
