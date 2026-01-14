@@ -1,6 +1,7 @@
 #![no_main]
 
 use aero_d3d9::sm3::{build_ir, decode_u8_le_bytes, verify_ir};
+use aero_dxbc::{test_utils as dxbc_test_utils, FourCC};
 use libfuzzer_sys::fuzz_target;
 
 /// Max fuzz input size to avoid pathological allocations in decode/IR paths.
@@ -79,66 +80,6 @@ fn src_token_rel_const(
         | ((modifier as u32) << 24);
     let rel = src_token(3, rel_reg_idx, rel_swizzle, 0);
     [base, rel]
-}
-
-fn align4(value: usize) -> usize {
-    (value + 3) & !3
-}
-
-fn build_dxbc_container(chunks: &[([u8; 4], &[u8])]) -> Vec<u8> {
-    // Minimal DXBC container builder (copied from `aero-dxbc` test utils).
-    //
-    // Layout:
-    // - magic:      4 bytes ("DXBC")
-    // - checksum:  16 bytes (unused here; all zeros)
-    // - reserved:   4 bytes (typically 1)
-    // - total_size: 4 bytes
-    // - chunk_count:4 bytes
-    // - chunk_offsets: chunk_count * 4 bytes
-    // - chunks:
-    //     - fourcc: 4 bytes
-    //     - size:   4 bytes
-    //     - data:   size bytes (padded to 4-byte alignment)
-    let header_size = 4 + 16 + 4 + 4 + 4 + (4 * chunks.len());
-    let chunk_bytes = chunks
-        .iter()
-        .map(|(_, data)| align4(8 + data.len()))
-        .sum::<usize>();
-
-    let mut out = Vec::with_capacity(header_size + chunk_bytes);
-
-    out.extend_from_slice(b"DXBC");
-    out.extend_from_slice(&[0u8; 16]); // checksum (MD5; ignored by parsers)
-    out.extend_from_slice(&1u32.to_le_bytes()); // reserved
-    out.extend_from_slice(&0u32.to_le_bytes()); // total_size placeholder
-    out.extend_from_slice(&(chunks.len() as u32).to_le_bytes());
-
-    // Reserve space for the chunk offset table and fill it in once we know the offsets.
-    let offsets_pos = out.len();
-    out.resize(out.len() + 4 * chunks.len(), 0);
-
-    let mut offsets = Vec::with_capacity(chunks.len());
-    for (fourcc, data) in chunks {
-        offsets.push(out.len() as u32);
-
-        out.extend_from_slice(fourcc);
-        out.extend_from_slice(&(data.len() as u32).to_le_bytes());
-        out.extend_from_slice(data);
-        out.resize(align4(out.len()), 0);
-    }
-
-    // Fill offsets.
-    for (i, offset) in offsets.iter().enumerate() {
-        let pos = offsets_pos + i * 4;
-        out[pos..pos + 4].copy_from_slice(&offset.to_le_bytes());
-    }
-
-    // Fill total_size.
-    let total_size = out.len() as u32;
-    let total_size_pos = 4 + 16 + 4;
-    out[total_size_pos..total_size_pos + 4].copy_from_slice(&total_size.to_le_bytes());
-
-    out
 }
 
 fn build_patched_shader(seed: &[u8]) -> Vec<u8> {
@@ -508,7 +449,8 @@ fuzz_target!(|data: &[u8]| {
     let _ = aero_d3d9::shader::parse(&patched);
     // Also wrap the patched SM2/3 token stream in a minimal DXBC container to exercise the DXBC
     // parsing and shader-bytecode extraction entrypoints in `aero_d3d9::dxbc`.
-    let patched_dxbc = build_dxbc_container(&[(*b"SHDR", patched.as_slice())]);
+    let patched_dxbc =
+        dxbc_test_utils::build_container(&[(FourCC(*b"SHDR"), patched.as_slice())]);
     let _ = aero_d3d9::shader::parse(&patched_dxbc);
     if let Ok(bytes) = aero_d3d9::dxbc::extract_shader_bytecode(&patched_dxbc) {
         decode_build_verify(bytes);
