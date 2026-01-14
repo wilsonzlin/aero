@@ -281,6 +281,44 @@ pointer), you can skip prefix inference and verify directly:
   --region us-east-1
 ```
 
+### Example: verify from a public CDN URL (HTTP mode)
+
+If you can fetch `manifest.json` and `chunks/*.bin` over plain HTTP(S), you can verify directly from
+the manifest URL (no AWS credentials required):
+
+```bash
+./tools/image-chunker/target/release/aero-image-chunker verify \
+  --manifest-url https://cdn.example.com/images/<imageId>/<version>/manifest.json \
+  --concurrency 8
+```
+
+The tool derives chunk URLs by resolving `chunks/<index>.bin` relative to `--manifest-url` (as
+specified in [`docs/18-chunked-disk-image-format.md`](../../docs/18-chunked-disk-image-format.md)).
+
+If the CDN requires headers (e.g. `Authorization`), pass them with `--header`:
+
+```bash
+./tools/image-chunker/target/release/aero-image-chunker verify \
+  --manifest-url https://example.com/images/<imageId>/<version>/manifest.json \
+  --header 'Authorization: Bearer <token>' \
+  --concurrency 8
+```
+
+Note: `--manifest-url` does not support “manifest-only” signed URLs where the auth material is in a
+query string on the manifest but not applicable to chunk URLs. For those deployments, either use
+cookie/header auth that applies uniformly, or verify via S3 mode (`--bucket` + `--prefix`).
+
+### Example: verify from a local manifest file + chunk directory (file mode)
+
+If you have downloaded the published artifacts to disk (e.g. `./images/<imageId>/<version>/`), you
+can verify from a local `manifest.json`:
+
+```bash
+./tools/image-chunker/target/release/aero-image-chunker verify \
+  --manifest-file ./images/<imageId>/<version>/manifest.json \
+  --concurrency 8
+```
+
 ## Verifying with `curl`
 
 If your bucket/prefix is publicly readable (or your local MinIO is configured to allow anonymous GETs), you can verify that the manifest and some chunks exist:
