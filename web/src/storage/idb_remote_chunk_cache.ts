@@ -46,6 +46,10 @@ type RemoteChunkRecord = {
 const MIN_CHUNK_SIZE_BYTES = 512 * 1024;
 const MAX_CHUNK_SIZE_BYTES = 8 * 1024 * 1024;
 
+function isSafeNonNegativeInt(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
 function validateChunkSize(chunkSize: number): void {
   if (!Number.isSafeInteger(chunkSize) || chunkSize <= 0) {
     throw new Error(`chunkSize must be a positive safe integer (got ${chunkSize})`);
@@ -70,10 +74,7 @@ function isQuotaExceededError(err: unknown): boolean {
   return name === "QuotaExceededError" || name === "NS_ERROR_DOM_QUOTA_REACHED";
 }
 
-function signatureMatches(
-  meta: RemoteChunkCacheMetaRecord,
-  expected: RemoteChunkCacheSignature,
-): boolean {
+function signatureMatches(meta: RemoteChunkCacheMetaRecord, expected: RemoteChunkCacheSignature): boolean {
   return (
     meta.imageId === expected.imageId &&
     meta.version === expected.version &&
@@ -82,6 +83,72 @@ function signatureMatches(
     meta.sizeBytes === expected.sizeBytes &&
     meta.chunkSize === expected.chunkSize
   );
+}
+
+function isValidMetaRecord(raw: unknown, cacheKey: string, signature: RemoteChunkCacheSignature): raw is RemoteChunkCacheMetaRecord {
+  if (!raw || typeof raw !== "object") return false;
+  const rec = raw as Partial<RemoteChunkCacheMetaRecord> & {
+    cacheKey?: unknown;
+    imageId?: unknown;
+    version?: unknown;
+    etag?: unknown;
+    lastModified?: unknown;
+    sizeBytes?: unknown;
+    chunkSize?: unknown;
+    bytesUsed?: unknown;
+    accessCounter?: unknown;
+  };
+
+  if (rec.cacheKey !== cacheKey) return false;
+  if (typeof rec.imageId !== "string" || rec.imageId !== signature.imageId) return false;
+  if (typeof rec.version !== "string" || rec.version !== signature.version) return false;
+
+  if (rec.etag !== undefined && rec.etag !== null && typeof rec.etag !== "string") return false;
+  if ((rec.etag ?? null) !== signature.etag) return false;
+
+  if (rec.lastModified !== undefined && rec.lastModified !== null && typeof rec.lastModified !== "string") return false;
+  if ((rec.lastModified ?? null) !== signature.lastModified) return false;
+
+  if (typeof rec.sizeBytes !== "number" || rec.sizeBytes !== signature.sizeBytes) return false;
+  if (typeof rec.chunkSize !== "number" || rec.chunkSize !== signature.chunkSize) return false;
+  if (!isSafeNonNegativeInt(rec.bytesUsed)) return false;
+  if (!isSafeNonNegativeInt(rec.accessCounter)) return false;
+  return true;
+}
+
+function expectedChunkByteLength(signature: RemoteChunkCacheSignature, chunkIndex: number): number {
+  // Use BigInt to avoid overflow when chunkIndex is large; the final length is always <= chunkSize
+  // (≤8 MiB), so converting back to number is safe.
+  const offset = BigInt(chunkIndex) * BigInt(signature.chunkSize);
+  const size = BigInt(signature.sizeBytes);
+  if (offset >= size) return 0;
+  const remaining = size - offset;
+  const chunkSize = BigInt(signature.chunkSize);
+  return Number(remaining < chunkSize ? remaining : chunkSize);
+}
+
+function bytesFromStoredChunkData(data: unknown): Uint8Array | null {
+  if (data instanceof ArrayBuffer) return new Uint8Array(data);
+  // Legacy/foreign implementations may persist `Uint8Array` instead of `ArrayBuffer`.
+  if (data instanceof Uint8Array) return data;
+  return null;
+}
+
+function arrayBufferExact(bytes: Uint8Array): ArrayBuffer {
+  if (bytes.buffer instanceof ArrayBuffer && bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength) {
+    return bytes.buffer;
+  }
+  // Copy into a new ArrayBuffer so persisted records always store the exact chunk payload.
+  return bytes.slice().buffer;
+}
+
+function safeByteLengthFromChunkRecord(rec: unknown): number {
+  if (!rec || typeof rec !== "object") return 0;
+  const r = rec as { byteLength?: unknown; data?: unknown };
+  const bytes = bytesFromStoredChunkData(r.data);
+  if (bytes) return bytes.byteLength;
+  if (isSafeNonNegativeInt(r.byteLength)) return r.byteLength;
+  return 0;
 }
 
 async function deleteAllChunksForCacheKey(
@@ -130,16 +197,19 @@ async function enforceCacheLimitInTx(opts: {
         return;
       }
 
-      const rec = cursor.value as RemoteChunkRecord;
-      const shouldSkip = protectedChunkIndex !== undefined && rec.chunkIndex === protectedChunkIndex;
+      const rec = cursor.value as unknown;
+      const chunkIndex = (rec as { chunkIndex?: unknown }).chunkIndex;
+      const shouldSkip = protectedChunkIndex !== undefined && chunkIndex === protectedChunkIndex;
       if (shouldSkip) {
         cursor.continue();
         return;
       }
 
       cursor.delete();
-      evicted.push(rec.chunkIndex);
-      meta.bytesUsed = Math.max(0, meta.bytesUsed - (rec.byteLength ?? rec.data.byteLength));
+      if (isSafeNonNegativeInt(chunkIndex)) {
+        evicted.push(chunkIndex);
+      }
+      meta.bytesUsed = Math.max(0, meta.bytesUsed - safeByteLengthFromChunkRecord(rec));
 
       if (meta.bytesUsed <= cacheLimitBytes) {
         resolve();
@@ -267,9 +337,12 @@ export class IdbRemoteChunkCache {
     try {
       tx = this.db.transaction(["remote_chunk_meta"], "readonly");
       const metaStore = tx.objectStore("remote_chunk_meta");
-      const meta = (await idbReq(metaStore.get(this.cacheKey))) as RemoteChunkCacheMetaRecord | undefined;
+      const meta = (await idbReq(metaStore.get(this.cacheKey))) as unknown;
       await idbTxDone(tx);
-      return { bytesUsed: meta?.bytesUsed ?? 0, cacheLimitBytes: this.cacheLimitBytes };
+      if (!isValidMetaRecord(meta, this.cacheKey, this.signature)) {
+        return { bytesUsed: 0, cacheLimitBytes: this.cacheLimitBytes };
+      }
+      return { bytesUsed: meta.bytesUsed, cacheLimitBytes: this.cacheLimitBytes };
     } catch (err) {
       if (isQuotaExceededError(err) || isQuotaExceededError(tx?.error)) {
         throw new IdbRemoteChunkCacheQuotaError(undefined, { cause: err });
@@ -303,17 +376,31 @@ export class IdbRemoteChunkCache {
     this.pendingAccess.clear();
 
     const reqs = indices.map(async (idx) => {
-      const rec = (await idbReq(chunksStore.get([this.cacheKey, idx]))) as RemoteChunkRecord | undefined;
+      const rec = (await idbReq(chunksStore.get([this.cacheKey, idx]))) as unknown;
       return { idx, rec };
     });
     const records = await Promise.all(reqs);
 
-    for (const { rec } of records) {
+    for (const { idx, rec } of records) {
       if (!rec) continue;
       meta.accessCounter += 1;
-      rec.lastAccess = meta.accessCounter;
-      rec.byteLength = rec.byteLength ?? rec.data.byteLength;
-      chunksStore.put(rec);
+
+      const bytes = bytesFromStoredChunkData((rec as { data?: unknown }).data);
+      if (!bytes) {
+        chunksStore.delete([this.cacheKey, idx]);
+        meta.bytesUsed = Math.max(0, meta.bytesUsed - safeByteLengthFromChunkRecord(rec));
+        continue;
+      }
+
+      const lastAccess = meta.accessCounter;
+      const normalized: RemoteChunkRecord = {
+        cacheKey: this.cacheKey,
+        chunkIndex: idx,
+        data: arrayBufferExact(bytes),
+        byteLength: bytes.byteLength,
+        lastAccess,
+      };
+      chunksStore.put(normalized);
     }
   }
 
@@ -366,19 +453,43 @@ export class IdbRemoteChunkCache {
       const meta = await this.getOrInitMetaAndMaybeClearInTx(metaStore, chunksStore);
 
       const reqs = missing.map(async (idx) => {
-        const rec = (await idbReq(chunksStore.get([this.cacheKey, idx]))) as RemoteChunkRecord | undefined;
+        const rec = (await idbReq(chunksStore.get([this.cacheKey, idx]))) as unknown;
         return { idx, rec };
       });
       const records = await Promise.all(reqs);
 
       for (const { idx, rec } of records) {
         if (!rec) continue;
+
+        // Defensive: IndexedDB contents are untrusted/can be corrupt. Never serve data unless the
+        // record is structurally valid and has the expected byte length for this chunk index.
+        const recObj = rec as Partial<RemoteChunkRecord> & { cacheKey?: unknown; chunkIndex?: unknown; data?: unknown };
+        if (recObj.cacheKey !== this.cacheKey || recObj.chunkIndex !== idx) {
+          chunksStore.delete([this.cacheKey, idx]);
+          meta.bytesUsed = Math.max(0, meta.bytesUsed - safeByteLengthFromChunkRecord(rec));
+          continue;
+        }
+
+        const bytes = bytesFromStoredChunkData(recObj.data);
+        const expectedLen = expectedChunkByteLength(this.signature, idx);
+        if (!bytes || expectedLen === 0 || bytes.byteLength !== expectedLen) {
+          // Corrupt/mismatched record: delete and treat as miss.
+          chunksStore.delete([this.cacheKey, idx]);
+          meta.bytesUsed = Math.max(0, meta.bytesUsed - safeByteLengthFromChunkRecord(rec));
+          continue;
+        }
+
         meta.accessCounter += 1;
-        rec.lastAccess = meta.accessCounter;
-        // Heal: older versions might not have `byteLength` populated.
-        rec.byteLength = rec.byteLength ?? rec.data.byteLength;
-        chunksStore.put(rec);
-        out.set(idx, new Uint8Array(rec.data));
+        const lastAccess = meta.accessCounter;
+        const healed: RemoteChunkRecord = {
+          cacheKey: this.cacheKey,
+          chunkIndex: idx,
+          data: arrayBufferExact(bytes),
+          byteLength: bytes.byteLength,
+          lastAccess,
+        };
+        chunksStore.put(healed);
+        out.set(idx, new Uint8Array(healed.data));
       }
 
       metaStore.put(meta);
@@ -438,8 +549,8 @@ export class IdbRemoteChunkCache {
         const meta = await this.getOrInitMetaAndMaybeClearInTx(metaStore, chunksStore);
         await this.applyPendingAccessInTx(meta, chunksStore);
 
-        const existing = (await idbReq(chunksStore.get([this.cacheKey, chunkIndex]))) as RemoteChunkRecord | undefined;
-        const oldBytes = existing?.byteLength ?? existing?.data?.byteLength ?? 0;
+        const existing = (await idbReq(chunksStore.get([this.cacheKey, chunkIndex]))) as unknown;
+        const oldBytes = safeByteLengthFromChunkRecord(existing);
 
         meta.accessCounter += 1;
         const lastAccess = meta.accessCounter;
@@ -559,10 +670,10 @@ export class IdbRemoteChunkCache {
     }
 
     const meta = await this.getOrInitMetaAndMaybeClearInTx(metaStore, chunksStore);
-    const existing = (await idbReq(chunksStore.get([this.cacheKey, chunkIndex]))) as RemoteChunkRecord | undefined;
+    const existing = (await idbReq(chunksStore.get([this.cacheKey, chunkIndex]))) as unknown;
     if (existing) {
       chunksStore.delete([this.cacheKey, chunkIndex]);
-      meta.bytesUsed = Math.max(0, meta.bytesUsed - (existing.byteLength ?? existing.data.byteLength));
+      meta.bytesUsed = Math.max(0, meta.bytesUsed - safeByteLengthFromChunkRecord(existing));
       metaStore.put(meta);
     }
 
@@ -600,8 +711,9 @@ export class IdbRemoteChunkCache {
             resolve();
             return;
           }
-          const rec = cursor.value as RemoteChunkRecord;
-          out.push(rec.chunkIndex);
+          const rec = cursor.value as unknown;
+          const idx = (rec as { chunkIndex?: unknown }).chunkIndex;
+          if (isSafeNonNegativeInt(idx)) out.push(idx);
           cursor.continue();
         };
       });
@@ -620,8 +732,8 @@ export class IdbRemoteChunkCache {
     const metaStore = tx.objectStore("remote_chunk_meta");
     const chunksStore = tx.objectStore("remote_chunks");
 
-    const meta = (await idbReq(metaStore.get(this.cacheKey))) as RemoteChunkCacheMetaRecord | undefined;
-    if (meta && signatureMatches(meta, this.signature)) {
+    const meta = (await idbReq(metaStore.get(this.cacheKey))) as unknown;
+    if (isValidMetaRecord(meta, this.cacheKey, this.signature) && signatureMatches(meta, this.signature)) {
       try {
         await idbTxDone(tx);
         return;
@@ -664,8 +776,8 @@ export class IdbRemoteChunkCache {
     metaStore: IDBObjectStore,
     chunksStore: IDBObjectStore,
   ): Promise<RemoteChunkCacheMetaRecord> {
-    const meta = (await idbReq(metaStore.get(this.cacheKey))) as RemoteChunkCacheMetaRecord | undefined;
-    if (meta && signatureMatches(meta, this.signature)) return meta;
+    const meta = (await idbReq(metaStore.get(this.cacheKey))) as unknown;
+    if (isValidMetaRecord(meta, this.cacheKey, this.signature) && signatureMatches(meta, this.signature)) return meta;
 
     // Either missing, or mismatched (should be rare here); treat as invalidation.
     await deleteAllChunksForCacheKey(chunksStore, this.cacheKey);
