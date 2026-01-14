@@ -125,6 +125,7 @@ const WEB_UNIT_TEST_PATHS: &[&str] = &[
     "src/usb/webusb_passthrough_runtime.test.ts",
     "src/usb/webhid_passthrough_runtime.test.ts",
     "src/usb/usb_proxy_protocol.test.ts",
+    "src/usb/usb_proxy_ring.test.ts",
     "src/usb/xhci_webusb_bridge.test.ts",
     "src/usb/xhci_webusb_passthrough_runtime.test.ts",
     "src/usb/uhci_machine_topology_rust_drift.test.ts",
