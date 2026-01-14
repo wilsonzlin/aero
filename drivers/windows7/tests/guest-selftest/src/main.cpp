@@ -734,6 +734,21 @@ static bool ValidateAerovblkMiniportInfo(Logger& log, const AerovblkQueryInfoRes
            VirtioFeaturesToString(info.NegotiatedFeatures).c_str(),
            abort_count, reset_dev_count, reset_bus_count, pnp_count, ioctl_reset_count);
 
+  // Optional flags diagnostics (variable-length contract).
+  constexpr size_t kFlagsEnd = offsetof(AEROVBLK_QUERY_INFO, Reserved0) + sizeof(ULONG);
+  if (res.returned_len >= kFlagsEnd) {
+    const ULONG flags = info.Reserved0;
+    log.Logf("virtio-blk-miniport-flags|INFO|raw=0x%08lx|removed=%d|surprise_removed=%d|reset_in_progress=%d|reset_pending=%d",
+             static_cast<unsigned long>(flags),
+             (flags & AEROVBLK_QUERY_FLAG_REMOVED) ? 1 : 0,
+             (flags & AEROVBLK_QUERY_FLAG_SURPRISE_REMOVED) ? 1 : 0,
+             (flags & AEROVBLK_QUERY_FLAG_RESET_IN_PROGRESS) ? 1 : 0,
+             (flags & AEROVBLK_QUERY_FLAG_RESET_PENDING) ? 1 : 0);
+  } else {
+    log.Logf("virtio-blk-miniport-flags|WARN|reason=missing_flags|returned_len=%zu|expected_min=%zu",
+             res.returned_len, kFlagsEnd);
+  }
+
   if (!have_counters) {
     log.Logf("virtio-blk: miniport query WARN (counters not reported; returned_len=%zu expected_min=%zu)",
              res.returned_len, kCountersEnd);
