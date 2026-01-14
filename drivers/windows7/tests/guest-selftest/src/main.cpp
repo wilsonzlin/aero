@@ -6443,25 +6443,40 @@ static VirtioNetUdpTestResult VirtioNetUdpEchoTest(Logger& log, USHORT port) {
       sendbuf[i] = static_cast<uint8_t>(i & 0xFFu);
     }
 
-    const int sent =
-        send(s, reinterpret_cast<const char*>(sendbuf.data()), static_cast<int>(sendbuf.size()), 0);
-    if (sent != static_cast<int>(sendbuf.size())) {
+    const int sent = send(s, reinterpret_cast<const char*>(sendbuf.data()), static_cast<int>(sendbuf.size()), 0);
+    if (sent == SOCKET_ERROR) {
       out.fail_reason = "send_failed";
       out.wsa_error = WSAGetLastError();
       log.Logf("virtio-net: UDP echo send(bytes=%lu) failed sent=%d wsa=%d", static_cast<unsigned long>(len),
                sent, out.wsa_error);
       return false;
     }
+    if (sent != static_cast<int>(sendbuf.size())) {
+      // UDP datagrams are expected to be sent atomically. Treat a short send as a failure, but do not
+      // report a WSA error code since the send call did not fail with SOCKET_ERROR.
+      out.fail_reason = "short_send";
+      out.wsa_error = 0;
+      log.Logf("virtio-net: UDP echo send(bytes=%lu) short sent=%d (expected=%lu)", static_cast<unsigned long>(len),
+               sent, static_cast<unsigned long>(len));
+      return false;
+    }
 
     std::vector<uint8_t> recvbuf(len + 16);
-    const int recvd =
-        recv(s, reinterpret_cast<char*>(recvbuf.data()), static_cast<int>(recvbuf.size()), 0);
-    if (recvd != static_cast<int>(len)) {
+    const int recvd = recv(s, reinterpret_cast<char*>(recvbuf.data()), static_cast<int>(recvbuf.size()), 0);
+    if (recvd == SOCKET_ERROR) {
       const int err = WSAGetLastError();
       out.wsa_error = err;
       out.fail_reason = (err == WSAETIMEDOUT || err == WSAEWOULDBLOCK) ? "timeout" : "recv_failed";
       log.Logf("virtio-net: UDP echo recv(bytes=%lu) failed recvd=%d wsa=%d", static_cast<unsigned long>(len),
                recvd, err);
+      return false;
+    }
+    if (recvd != static_cast<int>(len)) {
+      // Datagram received but has an unexpected length. Treat it as a failure, but do not report a
+      // WSA error code since recv() did not fail with SOCKET_ERROR.
+      out.wsa_error = 0;
+      out.fail_reason = "unexpected_len";
+      log.Logf("virtio-net: UDP echo recv(bytes=%lu) unexpected len recvd=%d", static_cast<unsigned long>(len), recvd);
       return false;
     }
 
