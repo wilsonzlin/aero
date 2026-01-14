@@ -8,7 +8,7 @@ SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 # - Rust (stable + nightly + wasm target + rust-src)
 # - Node (pinned via .nvmrc, matching CI)
 # - wasm-pack + wasm-opt (Binaryen)
-# - QEMU + boot test deps (mtools, nasm, unzip)
+# - QEMU + boot test deps (mtools, unzip)
 # - ACPICA tools (iasl)
 # - Playwright runtime deps (browser binaries installed separately via `npx playwright install`)
 RUN apt-get update \
@@ -28,7 +28,6 @@ RUN apt-get update \
     qemu-system-x86 \
     qemu-utils \
     mtools \
-    nasm \
     # ACPI validation
     acpica-tools \
     # wasm-opt
