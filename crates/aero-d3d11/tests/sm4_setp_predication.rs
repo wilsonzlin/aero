@@ -455,7 +455,8 @@ fn translates_setp_unordered_float_cmp_uses_nan_handling() {
     assert_wgsl_validates(&translated.wgsl);
 
     assert!(
-        translated.wgsl.contains("!= ((setp_a_0).x)") || translated.wgsl.contains("!= ((setp_b_0).x)"),
+        translated.wgsl.contains("!= ((setp_a_0).x)")
+            || translated.wgsl.contains("!= ((setp_b_0).x)"),
         "expected unordered setp compare to include NaN handling (`x != x`):\n{}",
         translated.wgsl
     );
@@ -1112,7 +1113,8 @@ fn decodes_and_translates_predicate_operand_swizzle_mask_and_negation() {
         translated.wgsl
     );
     assert!(
-        translated.wgsl.contains("!= ((setp_a_1).x)") || translated.wgsl.contains("!= ((setp_b_1).x)"),
+        translated.wgsl.contains("!= ((setp_a_1).x)")
+            || translated.wgsl.contains("!= ((setp_b_1).x)"),
         "expected lt_u setp to include unordered NaN handling (`x != x`):\n{}",
         translated.wgsl
     );

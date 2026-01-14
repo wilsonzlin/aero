@@ -770,7 +770,11 @@ fn windows_device_contract_aero_virtio_input_tablet_contract_and_inf_are_consist
         .and_then(|v| v.as_array())
         .expect("device entry missing hardware_id_patterns")
         .iter()
-        .map(|v| v.as_str().expect("hardware_id_patterns must be strings").to_string())
+        .map(|v| {
+            v.as_str()
+                .expect("hardware_id_patterns must be strings")
+                .to_string()
+        })
         .collect();
     assert_has_pattern(&patterns, "PCI\\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01");
     assert_has_pattern(&patterns, "PCI\\VEN_1AF4&DEV_1052&SUBSYS_00121AF4");
@@ -805,8 +809,7 @@ fn windows_device_contract_aero_virtio_input_tablet_contract_and_inf_are_consist
             inf_model_entry_for_hwid(&inf_contents, section, hwid_tablet)
                 .unwrap_or_else(|| panic!("missing {hwid_tablet} model entry in [{section}]"));
         assert_eq!(
-            tablet_desc,
-            "%AeroVirtioTablet.DeviceDesc%",
+            tablet_desc, "%AeroVirtioTablet.DeviceDesc%",
             "{section}: unexpected DeviceDesc token for tablet model entry"
         );
 

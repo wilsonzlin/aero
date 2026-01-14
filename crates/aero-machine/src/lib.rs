@@ -3657,13 +3657,14 @@ fn decode_aerogpu_snapshot_v1(bytes: &[u8]) -> Option<AeroGpuSnapshotV1> {
     // mis-parsing tag payloads as pending state by preferring tag detection at the expected offset
     // *after* the pending pairs.
     fn known_tag(bytes: &[u8], off: usize) -> bool {
-        bytes
-            .get(off..off.saturating_add(4))
-            .is_some_and(|tag| {
-                tag == b"DACP" || tag == b"ATRG" || tag == b"DACI" || tag == b"ATST"
-                    || tag == b"VREG"
-                    || tag == b"EXEC"
-            })
+        bytes.get(off..off.saturating_add(4)).is_some_and(|tag| {
+            tag == b"DACP"
+                || tag == b"ATRG"
+                || tag == b"DACI"
+                || tag == b"ATST"
+                || tag == b"VREG"
+                || tag == b"EXEC"
+        })
     }
     fn peek_flag(bytes: &[u8], off: usize) -> Option<u32> {
         bytes
@@ -3926,13 +3927,14 @@ fn apply_aerogpu_snapshot_v2(
     // See `decode_aerogpu_snapshot_v1` for rationale on the `pending_flag_u32` probe and tag-based
     // detection.
     fn known_tag(bytes: &[u8], off: usize) -> bool {
-        bytes
-            .get(off..off.saturating_add(4))
-            .is_some_and(|tag| {
-                tag == b"DACP" || tag == b"ATRG" || tag == b"DACI" || tag == b"ATST"
-                    || tag == b"VREG"
-                    || tag == b"EXEC"
-            })
+        bytes.get(off..off.saturating_add(4)).is_some_and(|tag| {
+            tag == b"DACP"
+                || tag == b"ATRG"
+                || tag == b"DACI"
+                || tag == b"ATST"
+                || tag == b"VREG"
+                || tag == b"EXEC"
+        })
     }
     fn peek_flag(bytes: &[u8], off: usize) -> Option<u32> {
         bytes

@@ -15,7 +15,10 @@ fn prefix_error(err: JsValue, prefix: &str) -> JsValue {
     // Prefer the JS Error message if available so we don't lose the original formatting.
     let msg = err
         .as_string()
-        .or_else(|| err.dyn_ref::<js_sys::Error>().and_then(|e| e.message().as_string()))
+        .or_else(|| {
+            err.dyn_ref::<js_sys::Error>()
+                .and_then(|e| e.message().as_string())
+        })
         .unwrap_or_else(|| format!("{err:?}"));
     js_error(format!("{prefix}.{msg}"))
 }
@@ -217,7 +220,9 @@ fn parse_report_info(value: &JsValue) -> Result<webhid::HidReportInfo, JsValue> 
     let mut items = Vec::with_capacity(len as usize);
     for i in 0..len {
         let item = items_arr.get(i);
-        items.push(parse_report_item(&item).map_err(|err| prefix_error(err, &format!("items[{i}]")))?);
+        items.push(
+            parse_report_item(&item).map_err(|err| prefix_error(err, &format!("items[{i}]")))?,
+        );
     }
     Ok(webhid::HidReportInfo { report_id, items })
 }

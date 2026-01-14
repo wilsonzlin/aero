@@ -783,7 +783,10 @@ fn ring_reset_clears_latched_error_payload() {
     let cmd_gpa = 0x4000u64;
     // Wrong magic -> CmdDecode error.
     mem.write_u32(cmd_gpa + CMD_STREAM_MAGIC_OFFSET, 0);
-    mem.write_u32(cmd_gpa + CMD_STREAM_ABI_VERSION_OFFSET, AEROGPU_ABI_VERSION_U32);
+    mem.write_u32(
+        cmd_gpa + CMD_STREAM_ABI_VERSION_OFFSET,
+        AEROGPU_ABI_VERSION_U32,
+    );
     mem.write_u32(cmd_gpa + CMD_STREAM_SIZE_BYTES_OFFSET, 16);
     mem.write_u32(cmd_gpa + CMD_STREAM_FLAGS_OFFSET, 0);
 

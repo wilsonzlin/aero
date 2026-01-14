@@ -1034,17 +1034,21 @@ impl IoSnapshot for AeroGpuPciDevice {
         let ring_reset_pending_dma = r.bool(TAG_RING_RESET_PENDING_DMA)?.unwrap_or(false);
         let snapshot_minor = r.header().device_version.minor;
 
-        let (scanout0_fb_gpa_pending_lo, scanout0_fb_gpa_lo_pending, cursor_fb_gpa_pending_lo, cursor_fb_gpa_lo_pending) =
-            if snapshot_minor >= 2 {
-                (
-                    r.u32(TAG_SCANOUT0_FB_GPA_PENDING_LO)?.unwrap_or(0),
-                    r.bool(TAG_SCANOUT0_FB_GPA_LO_PENDING)?.unwrap_or(false),
-                    r.u32(TAG_CURSOR_FB_GPA_PENDING_LO)?.unwrap_or(0),
-                    r.bool(TAG_CURSOR_FB_GPA_LO_PENDING)?.unwrap_or(false),
-                )
-            } else {
-                (0, false, 0, false)
-            };
+        let (
+            scanout0_fb_gpa_pending_lo,
+            scanout0_fb_gpa_lo_pending,
+            cursor_fb_gpa_pending_lo,
+            cursor_fb_gpa_lo_pending,
+        ) = if snapshot_minor >= 2 {
+            (
+                r.u32(TAG_SCANOUT0_FB_GPA_PENDING_LO)?.unwrap_or(0),
+                r.bool(TAG_SCANOUT0_FB_GPA_LO_PENDING)?.unwrap_or(false),
+                r.u32(TAG_CURSOR_FB_GPA_PENDING_LO)?.unwrap_or(0),
+                r.bool(TAG_CURSOR_FB_GPA_LO_PENDING)?.unwrap_or(false),
+            )
+        } else {
+            (0, false, 0, false)
+        };
 
         let pending_fence_completions_tag = if snapshot_minor <= 1 {
             TAG_PENDING_FENCE_COMPLETIONS_LEGACY
@@ -1060,7 +1064,9 @@ impl IoSnapshot for AeroGpuPciDevice {
                 let mut d = Decoder::new(buf);
                 let count = d.u32()? as usize;
                 if count > MAX_PENDING_FENCE_COMPLETIONS {
-                    return Err(SnapshotError::InvalidFieldEncoding("pending_fence_completions"));
+                    return Err(SnapshotError::InvalidFieldEncoding(
+                        "pending_fence_completions",
+                    ));
                 }
                 let mut out = VecDeque::new();
                 out.try_reserve(count)
