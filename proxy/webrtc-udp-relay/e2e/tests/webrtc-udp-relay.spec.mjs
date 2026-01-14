@@ -539,6 +539,14 @@ async function spawnRelayServer(extraEnv = {}) {
          // Allow the UDP echo server on localhost.
         DESTINATION_POLICY_PRESET: "dev",
         ALLOW_PRIVATE_NETWORKS: "true",
+        // Clear any per-deployment allow/deny lists so the dev preset is
+        // deterministic in local/CI runs.
+        UDP_DESTINATION_POLICY_PRESET: "",
+        POLICY_PRESET: "",
+        ALLOW_UDP_CIDRS: "",
+        DENY_UDP_CIDRS: "",
+        ALLOW_UDP_PORTS: "",
+        DENY_UDP_PORTS: "",
         // Ensure IPv4 echo responses can be v2 once the client demonstrates v2 support.
         PREFER_V2: "true",
         // Auth is irrelevant for these tests, so disable it.
