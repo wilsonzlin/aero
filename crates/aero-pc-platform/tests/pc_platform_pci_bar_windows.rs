@@ -17,6 +17,18 @@ impl MmioWindow {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct IoWindow {
+    start: u64,
+    end: u64, // exclusive
+}
+
+impl IoWindow {
+    fn contains(&self, start: u64, end: u64) -> bool {
+        start >= self.start && end <= self.end
+    }
+}
+
 fn ranges_overlap(a_start: u64, a_end: u64, b_start: u64, b_end: u64) -> bool {
     a_start < b_end && a_end > b_start
 }
@@ -215,6 +227,57 @@ fn parse_mmio_windows_from_crs(crs: &[u8]) -> Vec<MmioWindow> {
     windows
 }
 
+fn parse_io_windows_from_crs(crs: &[u8]) -> Vec<IoWindow> {
+    let mut windows = Vec::new();
+    let mut i = 0usize;
+
+    while i < crs.len() {
+        let tag = crs[i];
+        // EndTag (small item, tag=0x79 length=0).
+        if tag == 0x79 {
+            break;
+        }
+
+        // Small items have the high bit clear.
+        if (tag & 0x80) == 0 {
+            let len = (tag & 0x07) as usize;
+            i = i
+                .checked_add(1 + len)
+                .expect("ACPI small descriptor overflow");
+            continue;
+        }
+
+        // Large item: tag + 16-bit length.
+        let len =
+            usize::from(read_u16_le(crs, i + 1).expect("ACPI large descriptor length"));
+        let body_start = i + 3;
+        let body_end = body_start
+            .checked_add(len)
+            .expect("ACPI large descriptor overflow");
+        assert!(body_end <= crs.len(), "ACPI large descriptor truncated");
+
+        match tag {
+            // Word Address Space Descriptor (I/O).
+            0x88 if len >= 0x0D => {
+                let resource_type = crs[i + 3];
+                if resource_type == 0x01 {
+                    let start = u64::from(read_u16_le(crs, i + 8).expect("word.min"));
+                    let length = u64::from(read_u16_le(crs, i + 14).expect("word.length"));
+                    windows.push(IoWindow {
+                        start,
+                        end: start.saturating_add(length),
+                    });
+                }
+            }
+            _ => {}
+        }
+
+        i = body_end;
+    }
+
+    windows
+}
+
 #[test]
 fn pci_mmio_bars_stay_within_acpi_mmio_window_and_do_not_overlap_ecam() {
     let mut pc = PcPlatform::new_with_config(
@@ -258,6 +321,30 @@ fn pci_mmio_bars_stay_within_acpi_mmio_window_and_do_not_overlap_ecam() {
         "test expected at least one MMIO BAR to be allocated"
     );
 
+    let io_bars: Vec<(PciBdf, u8, PciBarRange)> = {
+        let mut pci_cfg = pc.pci_cfg.borrow_mut();
+        let bus = pci_cfg.bus_mut();
+        let mut out = Vec::new();
+        for bdf in bus.iter_device_addrs() {
+            let cfg = bus
+                .device_config(bdf)
+                .unwrap_or_else(|| panic!("PCI device disappeared: {bdf:?}"));
+            for bar in 0u8..6 {
+                let Some(range) = cfg.bar_range(bar) else {
+                    continue;
+                };
+                if range.base == 0 {
+                    continue;
+                }
+                if !matches!(range.kind, PciBarKind::Io) {
+                    continue;
+                }
+                out.push((bdf, bar, range));
+            }
+        }
+        out
+    };
+
     // Basic sanity: PCI BAR bases should be naturally aligned to their size.
     for (bdf, bar, range) in &mmio_bars {
         assert!(
@@ -286,10 +373,15 @@ fn pci_mmio_bars_stay_within_acpi_mmio_window_and_do_not_overlap_ecam() {
     let aml = &dsdt[36..];
     let crs = extract_pci0_crs_bytes(aml);
     let mmio_windows = parse_mmio_windows_from_crs(&crs);
+    let io_windows = parse_io_windows_from_crs(&crs);
 
     assert!(
         !mmio_windows.is_empty(),
         "expected PCI0._CRS to advertise at least one MMIO window"
+    );
+    assert!(
+        !io_windows.is_empty(),
+        "expected PCI0._CRS to advertise at least one I/O window"
     );
 
     let ecam_start = PCIE_ECAM_BASE;
@@ -307,10 +399,30 @@ fn pci_mmio_bars_stay_within_acpi_mmio_window_and_do_not_overlap_ecam() {
         );
     }
 
+    // I/O BAR ranges should also fit inside the ACPI-declared I/O windows.
+    for &(bdf, bar, range) in &io_bars {
+        let start = range.base;
+        let end = range.base.saturating_add(range.size);
+        assert!(
+            io_windows.iter().any(|w| w.contains(start, end)),
+            "PCI I/O BAR outside ACPI-declared PCI0._CRS I/O windows: {bdf:?} BAR{bar} start=0x{start:x} end=0x{end:x} windows={io_windows:?}",
+        );
+    }
+
+    // Ensure the allocator's I/O aperture is contained within the ACPI-declared windows.
+    let alloc_cfg = PciResourceAllocatorConfig::default();
+    let alloc_io_start = u64::from(alloc_cfg.io_base);
+    let alloc_io_end = alloc_io_start.saturating_add(u64::from(alloc_cfg.io_size));
+    assert!(
+        io_windows
+            .iter()
+            .any(|w| w.contains(alloc_io_start, alloc_io_end)),
+        "PciResourceAllocatorConfig::default() I/O window is not fully contained in any ACPI PCI0._CRS I/O window: allocator=[0x{alloc_io_start:x}..0x{alloc_io_end:x}) windows={io_windows:?}",
+    );
+
     // Ensure the allocator's entire MMIO aperture is contained within the ACPI-declared windows.
     // This makes the test fail if `PciResourceAllocatorConfig::default()` drifts outside `_CRS`,
     // even if the current set of devices doesn't allocate enough BAR space to hit the edges.
-    let alloc_cfg = PciResourceAllocatorConfig::default();
     let alloc_start = alloc_cfg.mmio_base;
     let alloc_end = alloc_start
         .checked_add(alloc_cfg.mmio_size)
