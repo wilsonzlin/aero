@@ -67,13 +67,6 @@ fn keyboard_collections() -> Vec<HidCollectionInfo> {
     }]
 }
 
-fn fixture_mouse_collections() -> Vec<HidCollectionInfo> {
-    parse_fixture_collections(include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../tests/fixtures/hid/webhid_normalized_mouse.json"
-    )))
-}
-
 #[test]
 fn webhid_fixture_json_roundtrips_and_synthesizes_descriptor() {
     for (fixture_name, fixture_json) in [

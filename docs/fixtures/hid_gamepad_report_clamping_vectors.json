@@ -60,6 +60,26 @@
     "bytes": [0, 0, 8, 127, 0, 0, 0, 0]
   },
   {
+    "name": "axis_large_positive_wraps_via_to_int32",
+    "buttons": 0,
+    "hat": 8,
+    "x": 2147483648,
+    "y": 0,
+    "rx": 1,
+    "ry": 0,
+    "bytes": [0, 0, 8, 129, 0, 1, 0, 0]
+  },
+  {
+    "name": "axis_large_positive_wraps_to_minus_one",
+    "buttons": 0,
+    "hat": 8,
+    "x": 4294967295,
+    "y": 0,
+    "rx": 0,
+    "ry": 0,
+    "bytes": [0, 0, 8, 255, 0, 0, 0, 0]
+  },
+  {
     "name": "buttons_mask_to_u16",
     "buttons": 65537,
     "hat": 8,
