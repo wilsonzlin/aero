@@ -413,6 +413,18 @@ jobs:
             disk_image_path="${disk_image_path%"${disk_image_path##*[![:space:]]}"}"
             qemu_system="${qemu_system#"${qemu_system%%[![:space:]]*}"}"
             qemu_system="${qemu_system%"${qemu_system##*[![:space:]]}"}"
+            timeout_seconds="${timeout_seconds#"${timeout_seconds%%[![:space:]]*}"}"
+            timeout_seconds="${timeout_seconds%"${timeout_seconds##*[![:space:]]}"}"
+            memory_mb="${memory_mb#"${memory_mb%%[![:space:]]*}"}"
+            memory_mb="${memory_mb%"${memory_mb##*[![:space:]]}"}"
+            smp="${smp#"${smp%%[![:space:]]*}"}"
+            smp="${smp%"${smp##*[![:space:]]}"}"
+            http_port="${http_port#"${http_port%%[![:space:]]*}"}"
+            http_port="${http_port%"${http_port##*[![:space:]]}"}"
+            http_path="${http_path#"${http_path%%[![:space:]]*}"}"
+            http_path="${http_path%"${http_path##*[![:space:]]}"}"
+            udp_port="${udp_port#"${udp_port%%[![:space:]]*}"}"
+            udp_port="${udp_port%"${udp_port##*[![:space:]]}"}"
             if [[ -z "${qemu_system}" ]]; then
               echo "ERROR: workflow input 'qemu_system' is empty."
               exit 1
@@ -559,6 +571,23 @@ jobs:
             require_net_csum_offload="${{ inputs.require_net_csum_offload }}"
             require_net_udp_csum_offload="${{ inputs.require_net_udp_csum_offload }}"
             with_snd_buffer_limits="${{ inputs.with_snd_buffer_limits }}"
+
+            virtio_snd_wav_peak_threshold="${virtio_snd_wav_peak_threshold#"${virtio_snd_wav_peak_threshold%%[![:space:]]*}"}"
+            virtio_snd_wav_peak_threshold="${virtio_snd_wav_peak_threshold%"${virtio_snd_wav_peak_threshold##*[![:space:]]}"}"
+            virtio_snd_wav_rms_threshold="${virtio_snd_wav_rms_threshold#"${virtio_snd_wav_rms_threshold%%[![:space:]]*}"}"
+            virtio_snd_wav_rms_threshold="${virtio_snd_wav_rms_threshold%"${virtio_snd_wav_rms_threshold##*[![:space:]]}"}"
+            virtio_msix_vectors="${virtio_msix_vectors#"${virtio_msix_vectors%%[![:space:]]*}"}"
+            virtio_msix_vectors="${virtio_msix_vectors%"${virtio_msix_vectors##*[![:space:]]}"}"
+            virtio_net_vectors="${virtio_net_vectors#"${virtio_net_vectors%%[![:space:]]*}"}"
+            virtio_net_vectors="${virtio_net_vectors%"${virtio_net_vectors##*[![:space:]]}"}"
+            virtio_blk_vectors="${virtio_blk_vectors#"${virtio_blk_vectors%%[![:space:]]*}"}"
+            virtio_blk_vectors="${virtio_blk_vectors%"${virtio_blk_vectors##*[![:space:]]}"}"
+            virtio_input_vectors="${virtio_input_vectors#"${virtio_input_vectors%%[![:space:]]*}"}"
+            virtio_input_vectors="${virtio_input_vectors%"${virtio_input_vectors##*[![:space:]]}"}"
+            virtio_snd_vectors="${virtio_snd_vectors#"${virtio_snd_vectors%%[![:space:]]*}"}"
+            virtio_snd_vectors="${virtio_snd_vectors%"${virtio_snd_vectors##*[![:space:]]}"}"
+            blk_resize_delta_mib="${blk_resize_delta_mib#"${blk_resize_delta_mib%%[![:space:]]*}"}"
+            blk_resize_delta_mib="${blk_resize_delta_mib%"${blk_resize_delta_mib##*[![:space:]]}"}"
 
             if [[ "${require_intx}" == "true" && "${require_msi}" == "true" ]]; then
               echo "ERROR: workflow inputs require_intx=true and require_msi=true are mutually exclusive" >&2
