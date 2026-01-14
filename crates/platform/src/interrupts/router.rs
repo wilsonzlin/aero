@@ -1582,5 +1582,54 @@ mod tests {
 
         assert_eq!(ints.lapics[0].get_pending_vector(), None);
         assert_eq!(ints.lapics[1].get_pending_vector(), Some(vector as u8));
+
+    #[test]
+    fn init_ipi_deassert_is_ignored_for_pending_init_and_reset_semantics() {
+        let mut ints = PlatformInterrupts::new_with_cpu_count(2);
+        ints.set_mode(PlatformInterruptMode::Apic);
+
+        assert!(
+            !ints.take_pending_init(1),
+            "new PlatformInterrupts should not start with pending INIT state"
+        );
+
+        let lapic1 = &ints.lapics[1];
+
+        // Prime LAPIC1 with non-default state that would be wiped by INIT assert/reset.
+        lapic_write_u32(lapic1, 0xF0, 0x1FF); // Enable (SVR[8]=1).
+        lapic_write_u32(lapic1, 0x80, 0x70); // TPR.
+        lapic1.inject_fixed_interrupt(0x80);
+
+        assert!(lapic1.is_pending(0x80));
+        assert_eq!(lapic_read_u32(lapic1, 0x80), 0x70);
+
+        // Send INIT deassert from LAPIC0 -> destination 1.
+        ints.lapic_mmio_write_for_apic(0, 0x310, &((1u32 << 24).to_le_bytes()));
+        ints.lapic_mmio_write_for_apic(0, 0x300, &((5u32 << 8).to_le_bytes()));
+
+        assert!(
+            !ints.take_pending_init(1),
+            "INIT deassert must not record a pending INIT-reset event"
+        );
+        assert!(
+            lapic1.is_pending(0x80),
+            "INIT deassert must not reset target LAPIC state"
+        );
+        assert_eq!(
+            lapic_read_u32(lapic1, 0x80),
+            0x70,
+            "INIT deassert must not reset LAPIC register state"
+        );
+
+        // Sanity: INIT assert should set the pending-init flag and reset the target LAPIC.
+        ints.lapic_mmio_write_for_apic(0, 0x310, &((1u32 << 24).to_le_bytes()));
+        ints.lapic_mmio_write_for_apic(0, 0x300, &(((5u32 << 8) | (1 << 14)).to_le_bytes()));
+
+        assert!(
+            ints.take_pending_init(1),
+            "INIT assert should record a pending INIT-reset event"
+        );
+        assert!(!lapic1.is_pending(0x80));
+        assert_eq!(lapic_read_u32(lapic1, 0x80), 0);
     }
 }
