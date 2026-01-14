@@ -1056,7 +1056,8 @@ pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
 
 The harness uses QEMU’s `-audiodev none,...` backend so it remains headless/CI-friendly.
 
-Note: When `-WithVirtioSnd` / `--with-virtio-snd` is enabled, the host harness expects the guest selftest to run:
+Note: When `-WithVirtioSnd` / `--with-virtio-snd` is enabled (aliases: `-RequireVirtioSnd`, `-EnableVirtioSnd`;
+`--require-virtio-snd`, `--enable-virtio-snd`), the host harness expects the guest selftest to run:
 
 - virtio-snd playback (`AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS`)
 - virtio-snd capture endpoint checks (`...|virtio-snd-capture|PASS`)
@@ -1080,8 +1081,10 @@ To enable it end-to-end:
 1. Provision the guest scheduled task with `--test-snd-buffer-limits` (or env var `AERO_VIRTIO_SELFTEST_TEST_SND_BUFFER_LIMITS=1`,
    for example via `New-AeroWin7TestImage.ps1 -TestSndBufferLimits`).
 2. Run the host harness with:
-   - PowerShell: `-WithVirtioSnd -WithSndBufferLimits`
-   - Python: `--with-virtio-snd --with-snd-buffer-limits`
+   - PowerShell: `-WithVirtioSnd/-RequireVirtioSnd/-EnableVirtioSnd -WithSndBufferLimits`
+   - Python: `--with-virtio-snd/--require-virtio-snd/--enable-virtio-snd --with-snd-buffer-limits`
+     (aliases for `--with-snd-buffer-limits`: `--with-virtio-snd-buffer-limits`, `--require-virtio-snd-buffer-limits`,
+     `--enable-snd-buffer-limits`, `--enable-virtio-snd-buffer-limits`)
 
 When `-WithSndBufferLimits` / `--with-snd-buffer-limits` is enabled, the harness requires the guest marker:
 `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|PASS|...`.
@@ -1146,8 +1149,10 @@ python3 -m unittest discover -s drivers/windows7/tests/host-harness/tests
 
 ### virtio-snd (audio) device
 
-To attach a virtio-snd device (virtio-sound-pci) during the run, enable it explicitly with `-WithVirtioSnd` / `--with-virtio-snd`.
-(Aliases `-EnableVirtioSnd` / `--enable-virtio-snd` are also accepted.)
+To attach a virtio-snd device (virtio-sound-pci) during the run, enable it explicitly with:
+
+- PowerShell: `-WithVirtioSnd` (aliases: `-RequireVirtioSnd`, `-EnableVirtioSnd`)
+- Python: `--with-virtio-snd` (aliases: `--require-virtio-snd`, `--enable-virtio-snd`)
 
 PowerShell:
 
