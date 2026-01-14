@@ -605,7 +605,7 @@ In the commands below, `aerogpu_dbgctl.exe` assumes you are running from the dir
   - Useful for diagnosing blank output caused by mode/pitch mismatches or a missing scanout surface address.
 
 - `aerogpu_dbgctl.exe --dump-scanout-bmp C:\\scanout.bmp`
-  - Dumps the scanout framebuffer to an uncompressed 32bpp BMP (requires the installed KMD to support `AEROGPU_ESCAPE_OP_READ_GPA`).
+  - Dumps the scanout framebuffer to an uncompressed 32bpp BMP (requires the installed KMD to support and enable `AEROGPU_ESCAPE_OP_READ_GPA`; see `drivers/aerogpu/tools/win7_dbgctl/README.md`).
   - Useful when the guest “seems alive” but the screen is blank/corrupted and you need a pixel artifact without relying on host-side capture.
 
 - `aerogpu_dbgctl.exe --dump-scanout-png C:\\scanout.png`
@@ -617,7 +617,7 @@ In the commands below, `aerogpu_dbgctl.exe` assumes you are running from the dir
   - Useful when the desktop is running but the cursor is missing/stuck/off-screen.
 
 - `aerogpu_dbgctl.exe --dump-cursor-bmp C:\\cursor.bmp`
-  - Dumps the current cursor image to an uncompressed 32bpp BMP (requires the installed KMD to support `AEROGPU_ESCAPE_OP_READ_GPA`).
+  - Dumps the current cursor image to an uncompressed 32bpp BMP (requires the installed KMD to support and enable `AEROGPU_ESCAPE_OP_READ_GPA`; see `drivers/aerogpu/tools/win7_dbgctl/README.md`).
   - Useful for debugging cursor image/pitch/fb_gpa issues without relying on host-side capture.
 
 - `aerogpu_dbgctl.exe --dump-cursor-png C:\\cursor.png`

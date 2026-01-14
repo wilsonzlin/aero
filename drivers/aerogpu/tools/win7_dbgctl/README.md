@@ -114,11 +114,11 @@ Minimum supported commands:
   Dumps the current scanout framebuffer to an **uncompressed 32bpp BMP** by:
   1) querying scanout state via `AEROGPU_ESCAPE_OP_QUERY_SCANOUT`, then
   2) reading framebuffer bytes from the reported `fb_gpa` via `AEROGPU_ESCAPE_OP_READ_GPA`, row-by-row (respecting pitch).
-  
+   
   Useful for diagnosing pitch/format/fb_gpa bugs **without screen capture / RDP**.
-  Note: this requires the installed KMD to support `AEROGPU_ESCAPE_OP_READ_GPA`; if unsupported, dbgctl will fail with
-  `STATUS_NOT_SUPPORTED` (`0xC00000BB`).
-  
+  Note: this requires the installed KMD to support `AEROGPU_ESCAPE_OP_READ_GPA` and have it enabled (see “Escape gating / security gating” below);
+  if disabled/unsupported, dbgctl will fail with `STATUS_NOT_SUPPORTED` (`0xC00000BB`).
+   
   Supported formats include:
   - `B8G8R8X8_UNORM` / `B8G8R8A8_UNORM`
   - `R8G8B8X8_UNORM` / `R8G8B8A8_UNORM`
@@ -141,10 +141,10 @@ Minimum supported commands:
   Dumps the current cursor framebuffer contents to an **uncompressed 32bpp BMP** using:
   - `AEROGPU_ESCAPE_OP_QUERY_CURSOR` to discover width/height/format/pitch/fb_gpa
   - `AEROGPU_ESCAPE_OP_READ_GPA` to read cursor bytes from guest physical memory
-  
+   
   Useful for diagnosing cursor image/pitch/fb_gpa bugs without relying on host-side captures.
-  Note: this requires the installed KMD to support `AEROGPU_ESCAPE_OP_READ_GPA`; if unsupported, dbgctl will fail with
-  `STATUS_NOT_SUPPORTED` (`0xC00000BB`).
+  Note: this requires the installed KMD to support `AEROGPU_ESCAPE_OP_READ_GPA` and have it enabled (see “Escape gating / security gating” below);
+  if disabled/unsupported, dbgctl will fail with `STATUS_NOT_SUPPORTED` (`0xC00000BB`).
 
 - `aerogpu_dbgctl --dump-cursor-png C:\cursor.png`  
   Same as `--dump-cursor-bmp`, but writes a PNG (RGBA8; preserves alpha).
@@ -153,6 +153,9 @@ Minimum supported commands:
   `aerogpu_dbgctl --read-gpa GPA N [--out FILE] [--force]`  
   Reads a **bounded** slice of guest physical memory (GPA) from buffers that the KMD/device tracks (for example: scanout framebuffer,
   cursor framebuffer, ring buffers, and driver-owned DMA buffers for pending submissions).
+   
+  Note: this requires the installed KMD to support `AEROGPU_ESCAPE_OP_READ_GPA` and have it enabled (see “Escape gating / security gating” below);
+  if disabled/unsupported, dbgctl will fail with `STATUS_NOT_SUPPORTED` (`0xC00000BB`).
   
   Notes:
   - The KMD enforces a per-escape maximum of `AEROGPU_DBGCTL_READ_GPA_MAX_BYTES` (currently 4096 bytes); dbgctl chunks reads when `--out` is used.
@@ -191,8 +194,8 @@ Minimum supported commands:
   dbgctl also writes a small metadata summary to `<cmd_path>.txt` (ring/fence/GPAs/sizes) when possible (one file per dumped submission).
   Note: this is appended to the full cmd path, so dumping `last_cmd_0.bin` produces `last_cmd_0.bin.txt`.
 
-  Note: this requires the installed KMD to support `AEROGPU_ESCAPE_OP_READ_GPA`; if unsupported, dbgctl will fail with
-  `STATUS_NOT_SUPPORTED` (`0xC00000BB`).
+  Note: this requires the installed KMD to support `AEROGPU_ESCAPE_OP_READ_GPA` and have it enabled (see “Escape gating / security gating” below);
+  if disabled/unsupported, dbgctl will fail with `STATUS_NOT_SUPPORTED` (`0xC00000BB`).
 
   Safety: by default dbgctl refuses to dump buffers larger than 1 MiB; use `--force` to override.
   On failure while dumping bytes, dbgctl best-effort deletes partially-written `.bin` outputs (`--cmd-out` / `--alloc-out`).
@@ -238,6 +241,7 @@ Minimum supported commands:
   Calls the KMD escape `AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE` to map a process-local Win32 shared handle to a stable 32-bit **debug token**.
   Note: this is *not* the `u64 share_token` used by `EXPORT_SHARED_SURFACE` / `IMPORT_SHARED_SURFACE`.
   Also note: the handle must be valid in the `aerogpu_dbgctl.exe` process (inherit/duplicate the handle into this process if needed).
+  Note: this escape is disabled by default; see “Escape gating / security gating” below.
 
 - `aerogpu_dbgctl --selftest`  
   Triggers a simple KMD-side self-test.
@@ -252,7 +256,7 @@ Minimum supported commands:
   If the escape transport fails (e.g. `D3DKMTEscape` / `D3DKMTCloseAdapter` failure), it returns **254**.
   If `--timeout-ms` is too small for all subtests to run, the KMD may fail with `TIME_BUDGET_EXHAUSTED`.
 
-### Security gating for `--read-gpa` (and dependent commands)
+### Escape gating / security gating (`--read-gpa` and `--map-shared-handle`)
 
 `--read-gpa` and dependent commands (`--dump-scanout-bmp`, `--dump-scanout-png`, `--dump-cursor-bmp`, `--dump-cursor-png`,
 `--dump-last-cmd`, `--dump-last-submit`) are intentionally **locked down**:
@@ -260,7 +264,9 @@ Minimum supported commands:
 - Require an explicit registry opt-in:
   - `HKLM\\SYSTEM\\CurrentControlSet\\Services\\aerogpu\\Parameters\\EnableReadGpaEscape = 1` (REG_DWORD)
 - The caller must be privileged (**Administrator** and/or have **SeDebugPrivilege** enabled).
-- If not enabled/authorized, the KMD returns `STATUS_NOT_SUPPORTED`.
+- If not enabled/authorized, the KMD returns `STATUS_NOT_SUPPORTED` (`0xC00000BB`).
+- Note: since this is loaded from the miniport service key in `DriverEntry`, you typically need to reboot (or otherwise fully reload the driver)
+  after changing it.
 
 ### Security gating for `--map-shared-handle`
 
@@ -269,7 +275,7 @@ Minimum supported commands:
 - Require an explicit registry opt-in:
   - `HKLM\\SYSTEM\\CurrentControlSet\\Services\\aerogpu\\Parameters\\EnableMapSharedHandleEscape = 1` (REG_DWORD)
 - The caller must be privileged (**Administrator** and/or have **SeDebugPrivilege** enabled).
-- If not enabled/authorized, the KMD returns `STATUS_NOT_SUPPORTED`.
+- If not enabled/authorized, the KMD returns `STATUS_NOT_SUPPORTED` (`0xC00000BB`).
 
 ## Usage
 
