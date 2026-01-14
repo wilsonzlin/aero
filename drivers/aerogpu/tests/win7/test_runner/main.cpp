@@ -136,9 +136,24 @@ static std::wstring BuildIndexedBinPath(const std::wstring& base, uint32_t index
   return out;
 }
 
+static void DeleteDbgctlCmdDumpOutputsBestEffort(const std::wstring& cmd_base_path) {
+  if (cmd_base_path.empty()) {
+    return;
+  }
+  DeleteFileW(cmd_base_path.c_str());
+  DeleteFileW((cmd_base_path + L".txt").c_str());
+  DeleteFileW((cmd_base_path + L".alloc_table.bin").c_str());
+  for (uint32_t j = 0; j < kDbgctlDumpLastSubmitCount; ++j) {
+    const std::wstring indexed = BuildIndexedBinPath(cmd_base_path, j);
+    DeleteFileW(indexed.c_str());
+    DeleteFileW((indexed + L".txt").c_str());
+    DeleteFileW((indexed + L".alloc_table.bin").c_str());
+  }
+}
+
 static bool AppendArtifactsToTestReportJsonObject(std::string* obj,
-                                                  const std::vector<std::wstring>& artifacts,
-                                                  std::string* err) {
+                                                   const std::vector<std::wstring>& artifacts,
+                                                   std::string* err) {
   if (err) {
     err->clear();
   }
@@ -852,15 +867,7 @@ static bool DumpDbgctlLastCmdDumpBestEffort(const std::wstring& dbgctl_path,
   // Best-effort: dump a small window of the most recent submissions (newest is index 0).
   // This improves hang triage without forcing the user to re-run dbgctl multiple times.
   // Avoid attaching stale artifacts from a previous run if dbgctl fails before writing new outputs.
-  DeleteFileW(cmd_base_path.c_str());
-  DeleteFileW((cmd_base_path + L".txt").c_str());
-  DeleteFileW((cmd_base_path + L".alloc_table.bin").c_str());
-  for (uint32_t j = 0; j < kDbgctlDumpLastSubmitCount; ++j) {
-    const std::wstring indexed = BuildIndexedBinPath(cmd_base_path, j);
-    DeleteFileW(indexed.c_str());
-    DeleteFileW((indexed + L".txt").c_str());
-    DeleteFileW((indexed + L".alloc_table.bin").c_str());
-  }
+  DeleteDbgctlCmdDumpOutputsBestEffort(cmd_base_path);
 
   const std::wstring timeout_arg = aerogpu_test::Utf8ToWideFallbackAcp(
       aerogpu_test::FormatString("%lu", (unsigned long)dbgctl_timeout_ms));
@@ -960,6 +967,10 @@ static bool DumpDbgctlLastCmdDumpBestEffort(const std::wstring& dbgctl_path,
       return true;
     }
     if (rr.exit_code == 1 && rr.err.empty() && attempt + 1 < attempts.size()) {
+      // Avoid attaching stale artifacts from an earlier attempt (for example, if dbgctl managed to
+      // write some outputs before failing). Each retry will re-run dbgctl with a more compatible
+      // argument set.
+      DeleteDbgctlCmdDumpOutputsBestEffort(cmd_base_path);
       continue;
     }
     if (err) {
