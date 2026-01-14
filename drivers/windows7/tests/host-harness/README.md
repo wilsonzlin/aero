@@ -1142,6 +1142,11 @@ marker (`...|virtio-net-link-flap|READY|...`) and requires the guest marker
 - The guest image must be provisioned with `--test-net-link-flap` (or env var `AERO_VIRTIO_SELFTEST_TEST_NET_LINK_FLAP=1`),
   for example via `New-AeroWin7TestImage.ps1 -TestNetLinkFlap`.
 
+To require virtio-net checksum offload to be exercised (at least one TX packet with checksum offload enabled),
+set the workflow input `require_net_csum_offload=true`. This checks the guest marker
+`AERO_VIRTIO_SELFTEST|TEST|virtio-net-offload-csum|PASS|tx_csum=...` and fails if it is missing/FAIL or reports
+`tx_csum=0`.
+
 To attach virtio-snd and require the guest virtio-snd playback/capture/duplex tests to PASS, set the workflow input
 `with_virtio_snd=true`. By default the workflow uses the `wav` backend (`virtio_snd_audio_backend=wav`), uploads
 `virtio-snd.wav`, and (by default) verifies the captured audio is non-silent (`virtio_snd_verify_wav=true`).
@@ -1210,6 +1215,8 @@ only if you explicitly want the base image to be mutated.
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|PASS` or `...|SKIP` (if `-WithVirtioSnd` / `--with-virtio-snd` is set, it must be `PASS`)
     - (only when `-WithSndBufferLimits` / `--with-snd-buffer-limits` is enabled) `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|PASS`
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS`
+    - (only when net checksum offload is required via `-RequireNetCsumOffload` / `--require-net-csum-offload`)
+      `AERO_VIRTIO_SELFTEST|TEST|virtio-net-offload-csum|PASS|tx_csum=...` (and `tx_csum > 0`)
     - (only when link flap is enabled via `-WithNetLinkFlap` / `--with-net-link-flap`) `AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|PASS`
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp|PASS`
 
@@ -1318,6 +1325,22 @@ The host harness mirrors the last observed line into a stable host-side marker f
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_DIAG|INFO/WARN|...`
 
 This is informational only and does not affect overall PASS/FAIL.
+
+### virtio-net checksum offload counters (`virtio-net-offload-csum`)
+
+The guest selftest emits a marker summarizing virtio-net checksum offload counters queried from the in-guest driver:
+
+- `AERO_VIRTIO_SELFTEST|TEST|virtio-net-offload-csum|PASS|tx_csum=...|rx_csum=...|fallback=...`
+
+This marker may be present even when checksum offload is not actually exercised (for example `tx_csum=0`).
+To make checksum offload a **hard requirement**, enable:
+
+- PowerShell: `-RequireNetCsumOffload`
+- Python: `--require-net-csum-offload`
+
+When enabled, the harness fails if the marker is missing/FAIL or reports `tx_csum=0` (deterministic tokens:
+`MISSING_VIRTIO_NET_CSUM_OFFLOAD`, `VIRTIO_NET_CSUM_OFFLOAD_FAILED`, `VIRTIO_NET_CSUM_OFFLOAD_MISSING_FIELDS`,
+`VIRTIO_NET_CSUM_OFFLOAD_ZERO`).
 
 ### virtio-snd negotiated mix format (`virtio-snd-format`)
 

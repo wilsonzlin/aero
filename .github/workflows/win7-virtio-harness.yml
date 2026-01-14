@@ -88,6 +88,11 @@ on:
         required: false
         default: false
         type: boolean
+      require_net_csum_offload:
+        description: Require at least one checksum-offloaded packet from the virtio-net driver (fails if tx_csum=0)
+        required: false
+        default: false
+        type: boolean
       # virtio-snd testing requires modern-only virtio-pci enumeration (disable-legacy=on, x-pci-revision=0x01).
       # Using the wav backend keeps the runner headless and produces an artifact for debugging regressions.
       with_virtio_snd:
@@ -183,6 +188,7 @@ jobs:
             echo "  blk_resize_delta_mib: '${{ inputs.blk_resize_delta_mib }}'"
             echo "  with_blk_reset: '${{ inputs.with_blk_reset }}'"
             echo "  with_net_link_flap: '${{ inputs.with_net_link_flap }}'"
+            echo "  require_net_csum_offload: '${{ inputs.require_net_csum_offload }}'"
             echo "  with_virtio_snd: '${{ inputs.with_virtio_snd }}'"
             echo "  with_snd_buffer_limits: '${{ inputs.with_snd_buffer_limits }}'"
             echo "  virtio_snd_audio_backend: '${{ inputs.virtio_snd_audio_backend }}'"
@@ -253,6 +259,7 @@ jobs:
             blk_resize_delta_mib="${{ inputs.blk_resize_delta_mib }}"
             with_blk_reset="${{ inputs.with_blk_reset }}"
             with_net_link_flap="${{ inputs.with_net_link_flap }}"
+            require_net_csum_offload="${{ inputs.require_net_csum_offload }}"
             with_snd_buffer_limits="${{ inputs.with_snd_buffer_limits }}"
 
             # Remove stale output from previous runs (self-hosted runners persist state).
@@ -313,6 +320,9 @@ jobs:
             fi
             if [[ "${with_net_link_flap}" == "true" ]]; then
               args+=(--with-net-link-flap)
+            fi
+            if [[ "${require_net_csum_offload}" == "true" ]]; then
+              args+=(--require-net-csum-offload)
             fi
             if [[ "${with_virtio_snd}" == "true" ]]; then
               args+=(--with-virtio-snd)
@@ -403,6 +413,7 @@ jobs:
           blk_reset_marker=""
           net_link_flap_marker=""
           net_link_flap_host_marker=""
+          net_offload_csum_marker=""
           snd_marker=""
           input_events_marker=""
           input_wheel_marker=""
@@ -430,6 +441,9 @@ jobs:
             blk_resize_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-blk-resize\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
             blk_reset_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-blk-reset\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
             net_link_flap_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-net-link-flap\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
+            net_offload_csum_marker="$(
+              grep -F 'AERO_VIRTIO_SELFTEST|TEST|virtio-net-offload-csum|' "${serial_log}" | tail -n 1 | tr -d '\r' || true
+            )"
             snd_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-snd\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
             input_events_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-input-events\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
             input_wheel_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-input-wheel\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
@@ -492,6 +506,9 @@ jobs:
             fi
             if [[ -n "${net_link_flap_marker}" ]]; then
               echo "- Guest virtio-net-link-flap marker: ${net_link_flap_marker}"
+            fi
+            if [[ -n "${net_offload_csum_marker}" ]]; then
+              echo "- Guest virtio-net-offload-csum marker: \`${net_offload_csum_marker}\`"
             fi
             if [[ -n "${blk_resize_request_marker}" ]]; then
               echo "- Host virtio-blk-resize request marker: \`${blk_resize_request_marker}\`"
