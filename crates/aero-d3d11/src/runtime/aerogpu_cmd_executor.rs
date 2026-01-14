@@ -4233,7 +4233,13 @@ impl AerogpuD3d11Executor {
 
         // Ensure any guest-backed resources referenced by the current binding state are uploaded
         // before entering the render pass.
-        self.ensure_bound_resources_uploaded(encoder, &pipeline_bindings, allocs, guest_mem)?;
+        self.ensure_bound_resources_uploaded(
+            ShaderStage::Pixel,
+            encoder,
+            &pipeline_bindings,
+            allocs,
+            guest_mem,
+        )?;
 
         // If sample_mask disables all samples, treat the draw as a no-op (mirrors the normal draw
         // path behavior).
@@ -4314,6 +4320,8 @@ impl AerogpuD3d11Executor {
         let expanded_vertex_alloc: ExpansionScratchAlloc;
         let expanded_index_alloc: ExpansionScratchAlloc;
         let indirect_args_alloc: ExpansionScratchAlloc;
+
+        let uniform_align = self.device.limits().min_uniform_buffer_offset_alignment as u64;
 
         let gs_prepass = if opcode == OPCODE_DRAW
             && self.state.primitive_topology == CmdPrimitiveTopology::PointList
@@ -5901,7 +5909,13 @@ impl AerogpuD3d11Executor {
 
         // Ensure any guest-backed resources referenced by the current binding state are uploaded
         // before entering the render pass.
-        self.ensure_bound_resources_uploaded(encoder, &pipeline_bindings, allocs, guest_mem)?;
+        self.ensure_bound_resources_uploaded(
+            ShaderStage::Vertex,
+            encoder,
+            &pipeline_bindings,
+            allocs,
+            guest_mem,
+        )?;
         if emulation_active {
             let Some(buf) = self.state.emulated_expanded_vertex_buffer else {
                 bail!("emulation_active is true but emulated_expanded_vertex_buffer is None");
@@ -12654,7 +12668,13 @@ impl AerogpuD3d11Executor {
 
         // Ensure any guest-backed resources referenced by the current binding state are uploaded
         // before entering the compute pass.
-        self.ensure_bound_resources_uploaded(encoder, &pipeline_bindings, allocs, guest_mem)?;
+        self.ensure_bound_resources_uploaded(
+            ShaderStage::Compute,
+            encoder,
+            &pipeline_bindings,
+            allocs,
+            guest_mem,
+        )?;
 
         // `PipelineCache` returns a reference tied to the mutable borrow. Convert it to a raw
         // pointer so we can continue mutating unrelated executor state while the compute pass is
@@ -12987,15 +13007,17 @@ impl AerogpuD3d11Executor {
 
     fn ensure_bound_resources_uploaded(
         &mut self,
+        stage: ShaderStage,
         encoder: &mut wgpu::CommandEncoder,
         pipeline_bindings: &reflection_bindings::PipelineBindingsInfo,
         allocs: &AllocTable,
         guest_mem: &mut dyn GuestMemory,
     ) -> Result<()> {
+        let group_stage_overrides = [(stage.as_bind_group_index(), stage)];
         self.ensure_group_bindings_resources_uploaded_with_stage_overrides(
             encoder,
             &pipeline_bindings.group_bindings,
-            &[],
+            &group_stage_overrides,
             allocs,
             guest_mem,
         )
@@ -21212,6 +21234,7 @@ fn cs_main() {
                     label: Some("srv buffer scratch test encoder"),
                 });
             exec.ensure_bound_resources_uploaded(
+                ShaderStage::Compute,
                 &mut encoder,
                 &pipeline_bindings,
                 &allocs,
@@ -21271,6 +21294,170 @@ fn cs_main() {
                 stage: ShaderStage::Compute,
                 stage_state: exec.bindings.stage(ShaderStage::Compute),
                 internal_buffers: &[],
+            };
+            let bound = provider
+                .srv_buffer(0)
+                .expect("provider should surface scratch binding");
+            assert_eq!(bound.id, scratch.id);
+            assert_eq!(bound.offset, 0);
+            assert_eq!(bound.size, Some(scratch.bind_size));
+        });
+    }
+
+    #[test]
+    fn srv_buffer_scratch_respects_stage_ex_bucket_for_hull_stage() {
+        pollster::block_on(async {
+            use reflection_bindings::BindGroupResourceProvider;
+
+            let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+                Ok(exec) => exec,
+                Err(e) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                    return;
+                }
+            };
+
+            let storage_align =
+                (exec.device.limits().min_storage_buffer_offset_alignment as u64).max(1);
+            if storage_align <= wgpu::COPY_BUFFER_ALIGNMENT {
+                skip_or_panic(
+                    module_path!(),
+                    &format!("storage alignment too small for scratch test ({storage_align})"),
+                );
+                return;
+            }
+
+            const BUF: u32 = 1;
+            let buf_size = storage_align
+                .checked_mul(2)
+                .and_then(|v| v.checked_add(64))
+                .expect("buf_size overflow");
+            let src = exec.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("srv buffer scratch hull test src"),
+                size: buf_size,
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_SRC
+                    | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+
+            // Fill buffer with a deterministic u32 pattern so the scratch copy can be validated by
+            // reading back the first copied word.
+            let mut data = Vec::with_capacity(buf_size as usize);
+            for i in 0..(buf_size / 4) {
+                data.extend_from_slice(&(i as u32).to_le_bytes());
+            }
+            exec.queue.write_buffer(&src, 0, &data);
+
+            exec.resources.buffers.insert(
+                BUF,
+                BufferResource {
+                    buffer: src,
+                    size: buf_size,
+                    gpu_size: buf_size,
+                    #[cfg(test)]
+                    usage: wgpu::BufferUsages::STORAGE
+                        | wgpu::BufferUsages::COPY_SRC
+                        | wgpu::BufferUsages::COPY_DST,
+                    backing: None,
+                    dirty: None,
+                },
+            );
+
+            let offset = storage_align - wgpu::COPY_BUFFER_ALIGNMENT;
+            let bind_size = 16u64;
+            exec.bindings.stage_mut(ShaderStage::Hull).set_srv_buffer(
+                0,
+                Some(BoundBuffer {
+                    buffer: BUF,
+                    offset,
+                    size: Some(bind_size),
+                }),
+            );
+
+            let binding = crate::Binding {
+                group: ShaderStage::Hull.as_bind_group_index(),
+                binding: BINDING_BASE_TEXTURE,
+                // HS/DS are emulated via compute; bind groups for these stages should use compute
+                // visibility.
+                visibility: wgpu::ShaderStages::COMPUTE,
+                kind: crate::BindingKind::SrvBuffer { slot: 0 },
+            };
+            let pipeline_bindings = reflection_bindings::build_pipeline_bindings_info(
+                &exec.device,
+                &mut exec.bind_group_layout_cache,
+                [reflection_bindings::ShaderBindingSet::Guest(std::slice::from_ref(
+                    &binding,
+                ))],
+                reflection_bindings::BindGroupIndexValidation::GuestShaders,
+            )
+            .expect("build pipeline bindings");
+
+            let allocs = AllocTable::new(None).expect("alloc table");
+            let mut guest_mem = VecGuestMemory::new(0);
+            let mut encoder = exec
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("srv buffer scratch hull test encoder"),
+                });
+            exec.ensure_bound_resources_uploaded(
+                ShaderStage::Hull,
+                &mut encoder,
+                &pipeline_bindings,
+                &allocs,
+                &mut guest_mem,
+            )
+            .expect("ensure bound resources uploaded");
+
+            let scratch = exec
+                .srv_buffer_scratch
+                .get(&(ShaderStage::Hull, 0))
+                .expect("scratch buffer should be allocated for unaligned HS SRV offset");
+
+            // Copy back the scratched bytes so we can validate the copy.
+            let staging = exec.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("srv buffer scratch hull test staging"),
+                size: scratch.bind_size,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            encoder.copy_buffer_to_buffer(&scratch.buffer, 0, &staging, 0, scratch.bind_size);
+            exec.queue.submit([encoder.finish()]);
+            exec.poll_wait();
+
+            let slice = staging.slice(..);
+            let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
+            slice.map_async(wgpu::MapMode::Read, move |v| {
+                sender.send(v).ok();
+            });
+            exec.poll_wait();
+            receiver
+                .receive()
+                .await
+                .expect("map_async dropped")
+                .expect("map_async failed");
+
+            let mapped = slice.get_mapped_range();
+            let got = u32::from_le_bytes(mapped[0..4].try_into().unwrap());
+            drop(mapped);
+            staging.unmap();
+            let expected = (offset / 4) as u32;
+            assert_eq!(got, expected);
+
+            // Verify that bind-group providers surface the scratch buffer for HS bindings.
+            let provider = CmdExecutorBindGroupProvider {
+                resources: &exec.resources,
+                legacy_constants: &exec.legacy_constants,
+                cbuffer_scratch: &exec.cbuffer_scratch,
+                srv_buffer_scratch: &exec.srv_buffer_scratch,
+                storage_align,
+                max_storage_binding_size: exec.device.limits().max_storage_buffer_binding_size as u64,
+                dummy_uniform: &exec.dummy_uniform,
+                dummy_storage: &exec.dummy_storage,
+                dummy_texture_view: &exec.dummy_texture_view,
+                default_sampler: &exec.default_sampler,
+                stage: ShaderStage::Hull,
+                stage_state: exec.bindings.stage(ShaderStage::Hull),
             };
             let bound = provider
                 .srv_buffer(0)
