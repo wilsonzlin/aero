@@ -1176,10 +1176,10 @@ jobs:
               echo "- Harness failure token: \`${failure_token}\`"
             fi
             if [[ -z "${failure_token}" && -n "${failure_line}" ]]; then
-              echo "- Harness failure: ${failure_line}"
+              echo "- Harness failure: \`${failure_line}\`"
             fi
             if [[ -z "${failure_token}" && -z "${failure_line}" && -n "${error_line}" ]]; then
-              echo "- Harness error: ${error_line}"
+              echo "- Harness error: \`${error_line}\`"
             fi
             if [[ "${{ steps.harness.outcome }}" != "success" && -n "${qemu_stderr_line}" ]]; then
               echo "- QEMU stderr (last line): \`${qemu_stderr_line}\`"
