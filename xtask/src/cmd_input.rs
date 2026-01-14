@@ -2,6 +2,7 @@ use crate::error::{Result, XtaskError};
 use crate::paths;
 use crate::runner::Runner;
 use crate::tools;
+use std::path::Path;
 use std::process::Command;
 
 #[derive(Default)]
@@ -9,6 +10,23 @@ struct InputOpts {
     e2e: bool,
     pw_extra_args: Vec<String>,
 }
+
+// Keep this list intentionally small to stay in-scope for input/USB changes and to keep CI/dev
+// runs fast.
+const INPUT_E2E_SPECS: &[&str] = &[
+    "tests/e2e/input_capture.spec.ts",
+    "tests/e2e/input_capture_io_worker.spec.ts",
+    "tests/e2e/input_batch_malformed.spec.ts",
+    "tests/e2e/io_worker_i8042.spec.ts",
+    "tests/e2e/io_worker_input_telemetry_drop_counter.spec.ts",
+    "tests/e2e/scancodes.spec.ts",
+    "tests/e2e/usb_hid_bridge.spec.ts",
+    "tests/e2e/virtio_input_backend_switch_keyboard.spec.ts",
+    "tests/e2e/virtio_input_backend_switch_keyboard_held.spec.ts",
+    "tests/e2e/virtio_input_backend_switch_mouse.spec.ts",
+    "tests/e2e/virtio_input_backend_switch_mouse_held.spec.ts",
+    "tests/e2e/workers_panel_input_capture.spec.ts",
+];
 
 pub fn print_help() {
     println!(
@@ -74,27 +92,7 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
     runner.run_step("Web: npm -w web run test:unit -- src/input", &mut cmd)?;
 
     if opts.e2e {
-        let mut cmd = tools::npm();
-        cmd.current_dir(&repo_root).args(["run", "test:e2e", "--"]);
-
-        // Keep this list intentionally small to stay in-scope for input/USB changes and to keep
-        // CI/dev runs fast. Developers can add extra Playwright args after `--`.
-        cmd.args([
-            "tests/e2e/input_capture.spec.ts",
-            "tests/e2e/input_capture_io_worker.spec.ts",
-            "tests/e2e/input_batch_malformed.spec.ts",
-            "tests/e2e/io_worker_i8042.spec.ts",
-            "tests/e2e/io_worker_input_telemetry_drop_counter.spec.ts",
-            "tests/e2e/scancodes.spec.ts",
-            "tests/e2e/usb_hid_bridge.spec.ts",
-            "tests/e2e/virtio_input_backend_switch_keyboard.spec.ts",
-            "tests/e2e/virtio_input_backend_switch_keyboard_held.spec.ts",
-            "tests/e2e/virtio_input_backend_switch_mouse.spec.ts",
-            "tests/e2e/virtio_input_backend_switch_mouse_held.spec.ts",
-            "tests/e2e/workers_panel_input_capture.spec.ts",
-        ]);
-        cmd.args(&opts.pw_extra_args);
-
+        let mut cmd = build_e2e_cmd(&repo_root, &opts.pw_extra_args);
         runner.run_step("E2E: npm run test:e2e -- <input specs>", &mut cmd)?;
     } else if !opts.pw_extra_args.is_empty() {
         return Err(XtaskError::Message(
@@ -131,4 +129,46 @@ fn parse_args(args: Vec<String>) -> Result<Option<InputOpts>> {
     }
 
     Ok(Some(opts))
+}
+
+fn build_e2e_cmd(repo_root: &Path, pw_extra_args: &[String]) -> Command {
+    let mut cmd = tools::npm();
+    cmd.current_dir(repo_root).args(["run", "test:e2e", "--"]);
+    cmd.args(INPUT_E2E_SPECS);
+    // Developers can add extra Playwright args after `--`.
+    cmd.args(pw_extra_args);
+    cmd
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn curated_e2e_specs_include_input_batch_malformed() {
+        assert!(
+            INPUT_E2E_SPECS.contains(&"tests/e2e/input_batch_malformed.spec.ts"),
+            "expected input_batch_malformed spec to be part of the input e2e subset"
+        );
+    }
+
+    #[test]
+    fn e2e_cmd_appends_extra_args_after_curated_specs() {
+        let extra_args = vec!["--project=chromium".to_string()];
+        let cmd = build_e2e_cmd(Path::new("."), &extra_args);
+        let args: Vec<String> = cmd
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+
+        let spec_start = args
+            .iter()
+            .position(|arg| arg == INPUT_E2E_SPECS[0])
+            .expect("expected curated specs to be present in the command args");
+        for (i, spec) in INPUT_E2E_SPECS.iter().enumerate() {
+            assert_eq!(args[spec_start + i], *spec);
+        }
+
+        assert_eq!(args[spec_start + INPUT_E2E_SPECS.len()], "--project=chromium");
+    }
 }
