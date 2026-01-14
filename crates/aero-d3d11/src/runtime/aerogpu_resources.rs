@@ -424,7 +424,8 @@ impl AerogpuResourceManager {
             (None, Some(dxbc)) => {
                 bail!("CreateShaderDxbc: stage mismatch (cmd=Geometry, dxbc={dxbc:?})");
             }
-            // DXBC GS/HS/DS stages are accepted-but-ignored; stage mismatch is irrelevant.
+            // DXBC GS/HS/DS stages are accepted-but-ignored by this resource-manager/runtime path;
+            // stage mismatch is irrelevant.
             (_, None) => return Ok(()),
         }
 
@@ -529,8 +530,8 @@ impl AerogpuResourceManager {
 
     pub fn destroy_shader(&mut self, handle: AerogpuHandle) -> Result<()> {
         // Destruction should be robust: some DXBC shader stages (GS/HS/DS) are accepted-but-ignored
-        // since the AeroGPU/WebGPU pipeline has no slot for them. In those cases we never insert a
-        // shader resource, so a later destroy should be a no-op rather than a hard error.
+        // by this resource-manager/runtime path. In those cases we never insert a shader resource,
+        // so a later destroy should be a no-op rather than a hard error.
         self.shaders.remove(&handle);
         Ok(())
     }

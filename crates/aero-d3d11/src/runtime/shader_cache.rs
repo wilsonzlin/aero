@@ -23,9 +23,9 @@ use super::bindings::ShaderStage;
 ///
 /// Note: This is separate from the JS-side `CACHE_SCHEMA_VERSION` because it is easy to forget
 /// to bump that global cache version when only the D3D11 translator changes.
-// Bump note (v2): enforce the SM5 GS stream-0 policy even when a previously persisted shader-cache
-// entry would otherwise allow an unsupported multi-stream geometry shader to be accepted as
-// "ignored" without re-parsing DXBC.
+// Bump note (v2): enforce the SM5 GS stream-0 policy even when older persisted shader-cache
+// entries would otherwise treat an unsupported multi-stream geometry shader as "ignored" without
+// re-parsing DXBC.
 pub const D3D11_TRANSLATOR_CACHE_VERSION: u32 = 2;
 
 fn default_d3d11_translator_cache_version() -> u32 {
@@ -69,10 +69,10 @@ pub enum PersistedShaderStage {
     Vertex,
     Pixel,
     Compute,
-    /// Shader stages that the AeroGPU WebGPU pipeline cannot execute (e.g. GS/HS/DS).
+    /// Shader stages that are not cached by the persistent shader cache (currently GS/HS/DS).
     ///
-    /// These are accepted-but-ignored by the command executor for robustness. Persisting the
-    /// "ignored" result avoids repeatedly parsing the same unsupported shaders.
+    /// Older cache versions may have stored these stages as `Ignored`; the executor treats such
+    /// entries as cache misses and falls back to the non-persistent shader-create path.
     Ignored,
 }
 
