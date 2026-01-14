@@ -81,11 +81,15 @@ Regression tests:
   an active endpoint immediately (so it does not continue consuming per-tick budgets without a new
   doorbell).
 - `crates/aero-usb/tests/xhci_usbcmd_run_gates_transfers.rs` asserts that transfer execution is
-  gated on `USBCMD.RUN` (transfers do not progress while halted and resume after RUN is set).
+  gated on `USBCMD.RUN` (transfers do not progress while halted) and that already-doorbelled
+  endpoints resume after `RUN` is re-enabled without requiring an additional doorbell.
 - `crates/aero-usb/tests/xhci_snapshot_halted_active_endpoint_no_dcbaap.rs` asserts that a restored
   controller does not execute a queued endpoint when the guest Device Context is unavailable
   (DCBAAP=0) and the controller-local shadow Endpoint Context marks it Halted. This prevents a
   malformed snapshot image from bypassing doorbell gating via `active_endpoints`.
+- `crates/aero-usb/tests/xhci_snapshot_halted_active_endpoint_shadow_state.rs` asserts that
+  controller-local shadow halt/stop state is always respected even if guest memory advertises a
+  running endpoint state.
 
 ---
 
