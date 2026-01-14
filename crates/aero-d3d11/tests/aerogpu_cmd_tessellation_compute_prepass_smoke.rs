@@ -13,30 +13,43 @@ use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 
 const VS_PASSTHROUGH: &[u8] = include_bytes!("fixtures/vs_passthrough.dxbc");
 const PS_PASSTHROUGH: &[u8] = include_bytes!("fixtures/ps_passthrough.dxbc");
-const HS_MINIMAL: &[u8] = include_bytes!("fixtures/hs_minimal.dxbc");
 const ILAY_POS3_COLOR: &[u8] = include_bytes!("fixtures/ilay_pos3_color.bin");
 
 const FOURCC_SHEX: FourCC = FourCC(*b"SHEX");
+
+use aero_d3d11::sm4::opcode::{OPCODE_DCL_INPUT_CONTROL_POINT_COUNT, OPCODE_LEN_SHIFT, OPCODE_RET};
 
 fn build_dxbc(chunks: &[(FourCC, Vec<u8>)]) -> Vec<u8> {
     dxbc_test_utils::build_container_owned(chunks)
 }
 
-fn build_minimal_sm4_program_chunk(program_type: u16) -> Vec<u8> {
-    // SM4+ version token layout:
+fn opcode_token(opcode: u32, len_dwords: u32) -> u32 {
+    opcode | (len_dwords << OPCODE_LEN_SHIFT)
+}
+
+fn build_minimal_sm5_program_chunk(program_type: u16, control_points: Option<u32>) -> Vec<u8> {
+    // SM5 version token layout:
     // - bits 0..=3: minor version
     // - bits 4..=7: major version
     // - bits 16..=31: program type (0=ps, 1=vs, 2=gs, 3=hs, 4=ds, 5=cs)
-    let major = 4u32;
+    let major = 5u32;
     let minor = 0u32;
     let version = (program_type as u32) << 16 | (major << 4) | minor;
 
-    // Declared length in DWORDs includes the version + length tokens.
-    let declared_len = 2u32;
+    // Build a minimal token stream, including `dcl_inputcontrolpoints` when requested so patchlist
+    // validation can proceed.
+    let mut tokens: Vec<u32> = vec![version, 0 /*patched below*/];
+    if let Some(control_points) = control_points {
+        tokens.push(opcode_token(OPCODE_DCL_INPUT_CONTROL_POINT_COUNT, 2));
+        tokens.push(control_points);
+    }
+    tokens.push(opcode_token(OPCODE_RET, 1));
+    tokens[1] = tokens.len() as u32;
 
-    let mut bytes = Vec::with_capacity(8);
-    bytes.extend_from_slice(&version.to_le_bytes());
-    bytes.extend_from_slice(&declared_len.to_le_bytes());
+    let mut bytes = Vec::with_capacity(tokens.len() * 4);
+    for t in tokens {
+        bytes.extend_from_slice(&t.to_le_bytes());
+    }
     bytes
 }
 
@@ -101,7 +114,9 @@ fn aerogpu_cmd_tessellation_compute_prepass_smoke() {
 
         // Minimal DS payload (program type 4 = domain shader). The current emulation path does not
         // execute the translated DS yet, but the executor still validates the stage and stores it.
-        let ds_dxbc = build_dxbc(&[(FOURCC_SHEX, build_minimal_sm4_program_chunk(4))]);
+        let ds_dxbc = build_dxbc(&[(FOURCC_SHEX, build_minimal_sm5_program_chunk(4, None))]);
+        // Minimal HS payload including `dcl_inputcontrolpoints` so patchlist validation succeeds.
+        let hs_dxbc = build_dxbc(&[(FOURCC_SHEX, build_minimal_sm5_program_chunk(3, Some(3)))]);
 
         let mut writer = AerogpuCmdWriter::new();
         writer.create_texture2d(
@@ -130,7 +145,7 @@ fn aerogpu_cmd_tessellation_compute_prepass_smoke() {
 
         writer.create_shader_dxbc(VS, AerogpuShaderStage::Vertex, VS_PASSTHROUGH);
         writer.create_shader_dxbc(PS, AerogpuShaderStage::Pixel, PS_PASSTHROUGH);
-        writer.create_shader_dxbc_ex(HS, AerogpuShaderStageEx::Hull, HS_MINIMAL);
+        writer.create_shader_dxbc_ex(HS, AerogpuShaderStageEx::Hull, &hs_dxbc);
         writer.create_shader_dxbc_ex(DS, AerogpuShaderStageEx::Domain, &ds_dxbc);
 
         writer.create_input_layout(IL, ILAY_POS3_COLOR);
