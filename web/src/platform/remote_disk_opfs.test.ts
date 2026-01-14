@@ -493,6 +493,69 @@ describe("RemoteStreamingDisk (OPFS chunk cache)", () => {
     }
   });
 
+  it("disables OPFS caching after a QuotaExceededError during flush (non-fatal)", async () => {
+    const root = new MemoryDirectoryHandle("root");
+    restoreOpfs = installMemoryOpfs(root).restore;
+
+    const blockSize = 512;
+    const cacheLimitBytes = blockSize * 8;
+    const image = makeTestImage(blockSize * 2);
+    const mock = installMockRangeFetch(image, { etag: '"e1"' });
+    restoreFetch = mock.restore;
+
+    const disk = await RemoteStreamingDisk.open("https://example.test/disk.img", {
+      blockSize,
+      cacheBackend: "opfs",
+      cacheLimitBytes,
+      prefetchSequentialBlocks: 0,
+      cacheImageId: "img-1",
+      cacheVersion: "v1",
+    });
+
+    const before = mock.stats.chunkRangeCalls;
+    await disk.read(0, 16);
+    expect(mock.stats.chunkRangeCalls).toBe(before + 1);
+
+    // Cache hit: should touch the LRU index (index.json) without extra network fetches.
+    await disk.read(0, 16);
+    expect(mock.stats.chunkRangeCalls).toBe(before + 1);
+
+    const originalCreateWritable = MemoryFileHandle.prototype.createWritable;
+    let indexWritableCalls = 0;
+    (MemoryFileHandle.prototype as unknown as { createWritable: unknown }).createWritable = async function (
+      this: MemoryFileHandle,
+      options?: { keepExistingData?: boolean },
+    ) {
+      if (this.name !== "index.json") {
+        return await originalCreateWritable.call(this, options);
+      }
+      indexWritableCalls += 1;
+      return {
+        write: async () => {
+          throw new DOMException("Quota exceeded", "QuotaExceededError");
+        },
+        close: async () => undefined,
+        abort: async () => undefined,
+      };
+    };
+
+    try {
+      await expect(disk.flush()).resolves.toBeUndefined();
+      expect(indexWritableCalls).toBeGreaterThan(0);
+
+      const telemetry = disk.getTelemetrySnapshot();
+      expect(telemetry.cacheLimitBytes).toBe(0);
+
+      // Cache is disabled after the quota failure, so we should re-fetch from the network.
+      await disk.read(0, 16);
+      expect(mock.stats.chunkRangeCalls).toBe(before + 2);
+
+      await disk.close();
+    } finally {
+      (MemoryFileHandle.prototype as unknown as { createWritable: unknown }).createWritable = originalCreateWritable;
+    }
+  });
+
   it("does not touch OPFS/IDB when cacheLimitBytes is 0", async () => {
     const blockSize = 512;
     const image = makeTestImage(blockSize * 2);

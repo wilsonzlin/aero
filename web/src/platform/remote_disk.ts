@@ -181,6 +181,19 @@ function validatorsMatch(expected: string, actual: string): boolean {
   return e === a;
 }
 
+function isQuotaExceededError(err: unknown): boolean {
+  // Browser/file system quota failures typically surface as a DOMException named
+  // "QuotaExceededError". Firefox uses a different name for the same condition.
+  if (!err) return false;
+  const name =
+    err instanceof DOMException || err instanceof Error
+      ? err.name
+      : typeof err === "object" && "name" in err
+        ? ((err as { name?: unknown }).name as unknown)
+        : undefined;
+  return name === "QuotaExceededError" || name === "NS_ERROR_DOM_QUOTA_REACHED";
+}
+
 function extractValidatorFromHeaders(headers: Headers): string | null {
   return headers.get("etag") ?? headers.get("last-modified");
 }
@@ -804,7 +817,21 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
   async flushCache(): Promise<void> {
     if (this.cacheLimitBytes === 0 || this.idbCacheDisabled || this.opfsCacheDisabled) return;
     if (this.cacheBackend === "idb") return;
-    await this.opfsCache?.flush();
+    if (!this.opfsCache) throw new Error("Remote disk OPFS cache not initialized");
+    try {
+      await this.opfsCache.flush();
+    } catch (err) {
+      if (isQuotaExceededError(err)) {
+        // Quota failures while persisting OPFS cache metadata (index.json) should never fail the
+        // caller's disk flush. Disable caching for the remainder of the disk lifetime so we don't
+        // repeatedly retry failing persistence paths.
+        this.opfsCacheDisabled = true;
+        this.rangeSet = new RangeSet();
+        this.cachedBytes = 0;
+        return;
+      }
+      throw err;
+    }
   }
 
   async readInto(offset: number, dest: Uint8Array, onLog?: (msg: string) => void): Promise<void> {
