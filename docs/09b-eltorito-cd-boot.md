@@ -33,8 +33,8 @@ You will see this conversion repeatedly:
 
 * ISO9660 volume descriptors start at **ISO LBA 16** → underlying 512-sector LBA `16 * 4 = 64`.
 * The Boot Record volume descriptor’s **boot catalog pointer** is an **ISO LBA**.
-* The boot catalog initial entry’s **`load_rba`** is an **ISO LBA**.
-* The boot catalog initial entry’s **`sector_count`** is in **512-byte sectors** (already the
+* The selected boot entry’s **`load_rba`** is an **ISO LBA**.
+* The selected boot entry’s **`sector_count`** is in **512-byte sectors** (already the
   underlying unit), even though the catalog’s LBAs are 2048-byte ISO LBAs.
 
 If you forget which fields are 2048-LBA vs 512-sector units, you will load the wrong bytes and
