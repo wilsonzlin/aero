@@ -283,11 +283,15 @@ bash ./scripts/safe-run.sh cargo test -p aero-machine --test boot_int10_aerogpu_
 bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_ring_noop_fence --locked
 bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_bar0_mmio_vblank --locked
 
-# Run D3D9 focused tests
+# Run D3D9 focused translator tests (no GPU required)
 bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test vertex_decl_translate --locked
 bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test d3d9_fixed_function --locked
 
-# Run D3D11 smoke test
+# Run D3D9 integration tests (wgpu/WebGPU; may skip unless AERO_REQUIRE_WEBGPU=1)
+bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test d3d9_vertex_input --locked
+bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test d3d9_blend_depth_stencil --locked
+
+# Run D3D11 command-executor smoke test (wgpu/WebGPU; may skip unless AERO_REQUIRE_WEBGPU=1)
 bash ./scripts/safe-run.sh cargo test -p aero-d3d11 --test aerogpu_cmd_smoke --locked
 ```
 
