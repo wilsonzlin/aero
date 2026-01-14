@@ -1041,6 +1041,73 @@ void SetError(D3D10DDI_HDEVICE hDevice, HRESULT hr) {
   }
 }
 
+// -----------------------------------------------------------------------------
+// D3D10 WDK DDI exception barrier
+// -----------------------------------------------------------------------------
+//
+// D3D10 DDIs are invoked through function tables filled during OpenAdapter/CreateDevice.
+// The runtime expects these callbacks to be "C ABI safe": no C++ exceptions may
+// escape. Even though individual entrypoints try to avoid allocations and catch
+// OOM in hot paths, defensively wrap every exported DDI entrypoint so a stray
+// exception (e.g. std::bad_alloc, std::system_error) cannot unwind into the
+// runtime.
+template <typename... Args>
+inline void ReportExceptionForArgs(HRESULT hr, Args... args) noexcept {
+  if constexpr (sizeof...(Args) == 0) {
+    return;
+  } else {
+    using First = std::tuple_element_t<0, std::tuple<Args...>>;
+    if constexpr (std::is_same_v<std::decay_t<First>, D3D10DDI_HDEVICE>) {
+      const auto tup = std::forward_as_tuple(args...);
+      const auto hDevice = std::get<0>(tup);
+      SetError(hDevice, hr);
+    }
+  }
+}
+
+template <auto Impl>
+struct aerogpu_d3d10_wdk_ddi_thunk;
+
+template <typename Ret, typename... Args, Ret(APIENTRY* Impl)(Args...)>
+struct aerogpu_d3d10_wdk_ddi_thunk<Impl> {
+  static Ret APIENTRY thunk(Args... args) noexcept {
+    try {
+      if constexpr (std::is_void_v<Ret>) {
+        Impl(args...);
+        return;
+      } else {
+        return Impl(args...);
+      }
+    } catch (const std::bad_alloc&) {
+      if constexpr (std::is_same_v<Ret, HRESULT>) {
+        return E_OUTOFMEMORY;
+      } else if constexpr (std::is_void_v<Ret>) {
+        ReportExceptionForArgs(E_OUTOFMEMORY, args...);
+        return;
+      } else if constexpr (std::is_same_v<Ret, SIZE_T>) {
+        ReportExceptionForArgs(E_OUTOFMEMORY, args...);
+        return sizeof(uint64_t);
+      } else {
+        return Ret{};
+      }
+    } catch (...) {
+      if constexpr (std::is_same_v<Ret, HRESULT>) {
+        return E_FAIL;
+      } else if constexpr (std::is_void_v<Ret>) {
+        ReportExceptionForArgs(E_FAIL, args...);
+        return;
+      } else if constexpr (std::is_same_v<Ret, SIZE_T>) {
+        ReportExceptionForArgs(E_FAIL, args...);
+        return sizeof(uint64_t);
+      } else {
+        return Ret{};
+      }
+    }
+  }
+};
+
+#define AEROGPU_D3D10_WDK_DDI(fn) aerogpu_d3d10_wdk_ddi_thunk<&fn>::thunk
+
 static void TrackWddmAllocForSubmitLocked(AeroGpuDevice* dev, const AeroGpuResource* res, bool write);
 static bool AerogpuFormatIsDepth(uint32_t aerogpu_format);
 
@@ -9248,163 +9315,164 @@ HRESULT APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, const D3D10DDIARG_CREA
   __if_exists(D3D10DDI_DEVICEFUNCS::pfnDrawInstanced) {
     using Fn = decltype(funcs.pfnDrawInstanced);
     if constexpr (std::is_convertible_v<decltype(&DrawInstanced), Fn>) {
-      funcs.pfnDrawInstanced = &DrawInstanced;
+      funcs.pfnDrawInstanced = AEROGPU_D3D10_WDK_DDI(DrawInstanced);
     }
   }
   __if_exists(D3D10DDI_DEVICEFUNCS::pfnDrawIndexedInstanced) {
     using Fn = decltype(funcs.pfnDrawIndexedInstanced);
     if constexpr (std::is_convertible_v<decltype(&DrawIndexedInstanced), Fn>) {
-      funcs.pfnDrawIndexedInstanced = &DrawIndexedInstanced;
+      funcs.pfnDrawIndexedInstanced = AEROGPU_D3D10_WDK_DDI(DrawIndexedInstanced);
     }
   }
   __if_exists(D3D10DDI_DEVICEFUNCS::pfnDrawAuto) {
     using Fn = decltype(funcs.pfnDrawAuto);
     if constexpr (std::is_convertible_v<decltype(&DrawAuto), Fn>) {
-      funcs.pfnDrawAuto = &DrawAuto;
+      funcs.pfnDrawAuto = AEROGPU_D3D10_WDK_DDI(DrawAuto);
     }
   }
   __if_exists(D3D10DDI_DEVICEFUNCS::pfnOpenResource) {
     using Fn = decltype(funcs.pfnOpenResource);
     if constexpr (std::is_convertible_v<decltype(&OpenResource), Fn>) {
-      funcs.pfnOpenResource = &OpenResource;
+      funcs.pfnOpenResource = AEROGPU_D3D10_WDK_DDI(OpenResource);
     }
   }
   __if_exists(D3D10DDI_DEVICEFUNCS::pfnClearState) {
-    funcs.pfnClearState = &ClearState;
+    funcs.pfnClearState = AEROGPU_D3D10_WDK_DDI(ClearState);
   }
   __if_exists(D3D10DDI_DEVICEFUNCS::pfnStagingResourceMap) {
-    funcs.pfnStagingResourceMap = &StagingResourceMap<>;
+    funcs.pfnStagingResourceMap = AEROGPU_D3D10_WDK_DDI(StagingResourceMap<>);
   }
   __if_exists(D3D10DDI_DEVICEFUNCS::pfnStagingResourceUnmap) {
-    funcs.pfnStagingResourceUnmap = &StagingResourceUnmap<>;
+    funcs.pfnStagingResourceUnmap = AEROGPU_D3D10_WDK_DDI(StagingResourceUnmap<>);
   }
   __if_exists(D3D10DDI_DEVICEFUNCS::pfnDynamicIABufferMapDiscard) {
-    funcs.pfnDynamicIABufferMapDiscard = &DynamicIABufferMapDiscard<>;
+    funcs.pfnDynamicIABufferMapDiscard = AEROGPU_D3D10_WDK_DDI(DynamicIABufferMapDiscard<>);
   }
   __if_exists(D3D10DDI_DEVICEFUNCS::pfnDynamicIABufferMapNoOverwrite) {
-    funcs.pfnDynamicIABufferMapNoOverwrite = &DynamicIABufferMapNoOverwrite<>;
+    funcs.pfnDynamicIABufferMapNoOverwrite = AEROGPU_D3D10_WDK_DDI(DynamicIABufferMapNoOverwrite<>);
   }
   __if_exists(D3D10DDI_DEVICEFUNCS::pfnDynamicIABufferUnmap) {
-    funcs.pfnDynamicIABufferUnmap = &DynamicIABufferUnmap<>;
+    funcs.pfnDynamicIABufferUnmap = AEROGPU_D3D10_WDK_DDI(DynamicIABufferUnmap<>);
   }
   __if_exists(D3D10DDI_DEVICEFUNCS::pfnDynamicConstantBufferMapDiscard) {
-    funcs.pfnDynamicConstantBufferMapDiscard = &DynamicConstantBufferMapDiscard<>;
+    funcs.pfnDynamicConstantBufferMapDiscard = AEROGPU_D3D10_WDK_DDI(DynamicConstantBufferMapDiscard<>);
   }
   __if_exists(D3D10DDI_DEVICEFUNCS::pfnDynamicConstantBufferUnmap) {
-    funcs.pfnDynamicConstantBufferUnmap = &DynamicConstantBufferUnmap<>;
+    funcs.pfnDynamicConstantBufferUnmap = AEROGPU_D3D10_WDK_DDI(DynamicConstantBufferUnmap<>);
   }
 
   // Lifecycle.
-  funcs.pfnDestroyDevice = &DestroyDevice;
+  funcs.pfnDestroyDevice = AEROGPU_D3D10_WDK_DDI(DestroyDevice);
 
   // Resources.
-  funcs.pfnCalcPrivateResourceSize = &CalcPrivateResourceSize;
-  funcs.pfnCreateResource = &CreateResource;
-  funcs.pfnDestroyResource = &DestroyResource;
-  funcs.pfnMap = &Map;
-  funcs.pfnUnmap = &Unmap;
-  funcs.pfnUpdateSubresourceUP = &UpdateSubresourceUP;
-  funcs.pfnCopyResource = &CopyResource;
-  funcs.pfnCopySubresourceRegion = &CopySubresourceRegion;
+  funcs.pfnCalcPrivateResourceSize = AEROGPU_D3D10_WDK_DDI(CalcPrivateResourceSize);
+  funcs.pfnCreateResource = AEROGPU_D3D10_WDK_DDI(CreateResource);
+  funcs.pfnDestroyResource = AEROGPU_D3D10_WDK_DDI(DestroyResource);
+  funcs.pfnMap = AEROGPU_D3D10_WDK_DDI(Map);
+  funcs.pfnUnmap = AEROGPU_D3D10_WDK_DDI(Unmap);
+  funcs.pfnUpdateSubresourceUP = AEROGPU_D3D10_WDK_DDI(UpdateSubresourceUP);
+  funcs.pfnCopyResource = AEROGPU_D3D10_WDK_DDI(CopyResource);
+  funcs.pfnCopySubresourceRegion = AEROGPU_D3D10_WDK_DDI(CopySubresourceRegion);
 
   // Views.
-  funcs.pfnCalcPrivateRenderTargetViewSize = &CalcPrivateRenderTargetViewSize;
-  funcs.pfnCreateRenderTargetView = &CreateRenderTargetView;
-  funcs.pfnDestroyRenderTargetView = &DestroyRenderTargetView;
+  funcs.pfnCalcPrivateRenderTargetViewSize = AEROGPU_D3D10_WDK_DDI(CalcPrivateRenderTargetViewSize);
+  funcs.pfnCreateRenderTargetView = AEROGPU_D3D10_WDK_DDI(CreateRenderTargetView);
+  funcs.pfnDestroyRenderTargetView = AEROGPU_D3D10_WDK_DDI(DestroyRenderTargetView);
 
-  funcs.pfnCalcPrivateDepthStencilViewSize = &CalcPrivateDepthStencilViewSize;
-  funcs.pfnCreateDepthStencilView = &CreateDepthStencilView;
-  funcs.pfnDestroyDepthStencilView = &DestroyDepthStencilView;
+  funcs.pfnCalcPrivateDepthStencilViewSize = AEROGPU_D3D10_WDK_DDI(CalcPrivateDepthStencilViewSize);
+  funcs.pfnCreateDepthStencilView = AEROGPU_D3D10_WDK_DDI(CreateDepthStencilView);
+  funcs.pfnDestroyDepthStencilView = AEROGPU_D3D10_WDK_DDI(DestroyDepthStencilView);
 
-  funcs.pfnCalcPrivateShaderResourceViewSize = &CalcPrivateShaderResourceViewSize;
-  funcs.pfnCreateShaderResourceView = &CreateShaderResourceView;
-  funcs.pfnDestroyShaderResourceView = &DestroyShaderResourceView;
+  funcs.pfnCalcPrivateShaderResourceViewSize = AEROGPU_D3D10_WDK_DDI(CalcPrivateShaderResourceViewSize);
+  funcs.pfnCreateShaderResourceView = AEROGPU_D3D10_WDK_DDI(CreateShaderResourceView);
+  funcs.pfnDestroyShaderResourceView = AEROGPU_D3D10_WDK_DDI(DestroyShaderResourceView);
 
   // Shaders.
-  funcs.pfnCalcPrivateVertexShaderSize = &CalcPrivateVertexShaderSize;
-  funcs.pfnCreateVertexShader = &CreateVertexShader;
-  funcs.pfnDestroyVertexShader = &DestroyVertexShader;
+  funcs.pfnCalcPrivateVertexShaderSize = AEROGPU_D3D10_WDK_DDI(CalcPrivateVertexShaderSize);
+  funcs.pfnCreateVertexShader = AEROGPU_D3D10_WDK_DDI(CreateVertexShader);
+  funcs.pfnDestroyVertexShader = AEROGPU_D3D10_WDK_DDI(DestroyVertexShader);
 
-  funcs.pfnCalcPrivatePixelShaderSize = &CalcPrivatePixelShaderSize;
-  funcs.pfnCreatePixelShader = &CreatePixelShader;
-  funcs.pfnDestroyPixelShader = &DestroyPixelShader;
+  funcs.pfnCalcPrivatePixelShaderSize = AEROGPU_D3D10_WDK_DDI(CalcPrivatePixelShaderSize);
+  funcs.pfnCreatePixelShader = AEROGPU_D3D10_WDK_DDI(CreatePixelShader);
+  funcs.pfnDestroyPixelShader = AEROGPU_D3D10_WDK_DDI(DestroyPixelShader);
 
-  funcs.pfnCalcPrivateGeometryShaderSize = &CalcPrivateGeometryShaderSize;
-  funcs.pfnCreateGeometryShader = &CreateGeometryShader;
-  funcs.pfnDestroyGeometryShader = &DestroyGeometryShader;
+  funcs.pfnCalcPrivateGeometryShaderSize = AEROGPU_D3D10_WDK_DDI(CalcPrivateGeometryShaderSize);
+  funcs.pfnCreateGeometryShader = AEROGPU_D3D10_WDK_DDI(CreateGeometryShader);
+  funcs.pfnDestroyGeometryShader = AEROGPU_D3D10_WDK_DDI(DestroyGeometryShader);
   __if_exists(D3D10DDI_DEVICEFUNCS::pfnCalcPrivateGeometryShaderWithStreamOutputSize) {
     funcs.pfnCalcPrivateGeometryShaderWithStreamOutputSize =
-        &CalcPrivateGeometryShaderWithStreamOutputSizeImpl<
-            decltype(funcs.pfnCalcPrivateGeometryShaderWithStreamOutputSize)>::Call;
+        AEROGPU_D3D10_WDK_DDI(CalcPrivateGeometryShaderWithStreamOutputSizeImpl<
+                              decltype(funcs.pfnCalcPrivateGeometryShaderWithStreamOutputSize)>::Call);
   }
   __if_exists(D3D10DDI_DEVICEFUNCS::pfnCreateGeometryShaderWithStreamOutput) {
     funcs.pfnCreateGeometryShaderWithStreamOutput =
-        &CreateGeometryShaderWithStreamOutputImpl<decltype(funcs.pfnCreateGeometryShaderWithStreamOutput)>::Call;
+        AEROGPU_D3D10_WDK_DDI(CreateGeometryShaderWithStreamOutputImpl<
+                              decltype(funcs.pfnCreateGeometryShaderWithStreamOutput)>::Call);
   }
 
   // Input layout.
-  funcs.pfnCalcPrivateElementLayoutSize = &CalcPrivateElementLayoutSize;
-  funcs.pfnCreateElementLayout = &CreateElementLayout;
-  funcs.pfnDestroyElementLayout = &DestroyElementLayout;
+  funcs.pfnCalcPrivateElementLayoutSize = AEROGPU_D3D10_WDK_DDI(CalcPrivateElementLayoutSize);
+  funcs.pfnCreateElementLayout = AEROGPU_D3D10_WDK_DDI(CreateElementLayout);
+  funcs.pfnDestroyElementLayout = AEROGPU_D3D10_WDK_DDI(DestroyElementLayout);
 
   // State objects.
-  funcs.pfnCalcPrivateBlendStateSize = &CalcPrivateBlendStateSize;
-  funcs.pfnCreateBlendState = &CreateBlendState;
-  funcs.pfnDestroyBlendState = &DestroyBlendState;
+  funcs.pfnCalcPrivateBlendStateSize = AEROGPU_D3D10_WDK_DDI(CalcPrivateBlendStateSize);
+  funcs.pfnCreateBlendState = AEROGPU_D3D10_WDK_DDI(CreateBlendState);
+  funcs.pfnDestroyBlendState = AEROGPU_D3D10_WDK_DDI(DestroyBlendState);
 
-  funcs.pfnCalcPrivateRasterizerStateSize = &CalcPrivateRasterizerStateSize;
-  funcs.pfnCreateRasterizerState = &CreateRasterizerState;
-  funcs.pfnDestroyRasterizerState = &DestroyRasterizerState;
+  funcs.pfnCalcPrivateRasterizerStateSize = AEROGPU_D3D10_WDK_DDI(CalcPrivateRasterizerStateSize);
+  funcs.pfnCreateRasterizerState = AEROGPU_D3D10_WDK_DDI(CreateRasterizerState);
+  funcs.pfnDestroyRasterizerState = AEROGPU_D3D10_WDK_DDI(DestroyRasterizerState);
 
-  funcs.pfnCalcPrivateDepthStencilStateSize = &CalcPrivateDepthStencilStateSize;
-  funcs.pfnCreateDepthStencilState = &CreateDepthStencilState;
-  funcs.pfnDestroyDepthStencilState = &DestroyDepthStencilState;
+  funcs.pfnCalcPrivateDepthStencilStateSize = AEROGPU_D3D10_WDK_DDI(CalcPrivateDepthStencilStateSize);
+  funcs.pfnCreateDepthStencilState = AEROGPU_D3D10_WDK_DDI(CreateDepthStencilState);
+  funcs.pfnDestroyDepthStencilState = AEROGPU_D3D10_WDK_DDI(DestroyDepthStencilState);
 
-  funcs.pfnCalcPrivateSamplerSize = &CalcPrivateSamplerSize;
-  funcs.pfnCreateSampler = &CreateSampler;
-  funcs.pfnDestroySampler = &DestroySampler;
+  funcs.pfnCalcPrivateSamplerSize = AEROGPU_D3D10_WDK_DDI(CalcPrivateSamplerSize);
+  funcs.pfnCreateSampler = AEROGPU_D3D10_WDK_DDI(CreateSampler);
+  funcs.pfnDestroySampler = AEROGPU_D3D10_WDK_DDI(DestroySampler);
 
   // Binding/state setting.
-  funcs.pfnIaSetInputLayout = &IaSetInputLayout;
-  funcs.pfnIaSetVertexBuffers = &IaSetVertexBuffers;
-  funcs.pfnIaSetIndexBuffer = &IaSetIndexBuffer;
-  funcs.pfnIaSetTopology = &IaSetTopology;
+  funcs.pfnIaSetInputLayout = AEROGPU_D3D10_WDK_DDI(IaSetInputLayout);
+  funcs.pfnIaSetVertexBuffers = AEROGPU_D3D10_WDK_DDI(IaSetVertexBuffers);
+  funcs.pfnIaSetIndexBuffer = AEROGPU_D3D10_WDK_DDI(IaSetIndexBuffer);
+  funcs.pfnIaSetTopology = AEROGPU_D3D10_WDK_DDI(IaSetTopology);
 
-  funcs.pfnVsSetShader = &VsSetShader;
-  funcs.pfnVsSetConstantBuffers = &VsSetConstantBuffers;
-  funcs.pfnVsSetShaderResources = &VsSetShaderResources;
-  funcs.pfnVsSetSamplers = &VsSetSamplers;
+  funcs.pfnVsSetShader = AEROGPU_D3D10_WDK_DDI(VsSetShader);
+  funcs.pfnVsSetConstantBuffers = AEROGPU_D3D10_WDK_DDI(VsSetConstantBuffers);
+  funcs.pfnVsSetShaderResources = AEROGPU_D3D10_WDK_DDI(VsSetShaderResources);
+  funcs.pfnVsSetSamplers = AEROGPU_D3D10_WDK_DDI(VsSetSamplers);
 
-  funcs.pfnGsSetShader = &GsSetShader;
-  funcs.pfnGsSetConstantBuffers = &GsSetConstantBuffers;
-  funcs.pfnGsSetShaderResources = &GsSetShaderResources;
-  funcs.pfnGsSetSamplers = &GsSetSamplers;
+  funcs.pfnGsSetShader = AEROGPU_D3D10_WDK_DDI(GsSetShader);
+  funcs.pfnGsSetConstantBuffers = AEROGPU_D3D10_WDK_DDI(GsSetConstantBuffers);
+  funcs.pfnGsSetShaderResources = AEROGPU_D3D10_WDK_DDI(GsSetShaderResources);
+  funcs.pfnGsSetSamplers = AEROGPU_D3D10_WDK_DDI(GsSetSamplers);
 
-  funcs.pfnPsSetShader = &PsSetShader;
-  funcs.pfnPsSetConstantBuffers = &PsSetConstantBuffers;
-  funcs.pfnPsSetShaderResources = &PsSetShaderResources;
-  funcs.pfnPsSetSamplers = &PsSetSamplers;
+  funcs.pfnPsSetShader = AEROGPU_D3D10_WDK_DDI(PsSetShader);
+  funcs.pfnPsSetConstantBuffers = AEROGPU_D3D10_WDK_DDI(PsSetConstantBuffers);
+  funcs.pfnPsSetShaderResources = AEROGPU_D3D10_WDK_DDI(PsSetShaderResources);
+  funcs.pfnPsSetSamplers = AEROGPU_D3D10_WDK_DDI(PsSetSamplers);
 
-  funcs.pfnSetViewports = &SetViewports;
-  funcs.pfnSetScissorRects = &SetScissorRects;
-  funcs.pfnSetRasterizerState = &SetRasterizerState;
-  funcs.pfnSetBlendState = &SetBlendState;
-  funcs.pfnSetDepthStencilState = &SetDepthStencilState;
-  funcs.pfnSetRenderTargets = &SetRenderTargets;
+  funcs.pfnSetViewports = AEROGPU_D3D10_WDK_DDI(SetViewports);
+  funcs.pfnSetScissorRects = AEROGPU_D3D10_WDK_DDI(SetScissorRects);
+  funcs.pfnSetRasterizerState = AEROGPU_D3D10_WDK_DDI(SetRasterizerState);
+  funcs.pfnSetBlendState = AEROGPU_D3D10_WDK_DDI(SetBlendState);
+  funcs.pfnSetDepthStencilState = AEROGPU_D3D10_WDK_DDI(SetDepthStencilState);
+  funcs.pfnSetRenderTargets = AEROGPU_D3D10_WDK_DDI(SetRenderTargets);
   __if_exists(D3D10DDI_DEVICEFUNCS::pfnSoSetTargets) {
-    funcs.pfnSoSetTargets = &SoSetTargetsImpl<decltype(funcs.pfnSoSetTargets)>::Call;
+    funcs.pfnSoSetTargets = AEROGPU_D3D10_WDK_DDI(SoSetTargetsImpl<decltype(funcs.pfnSoSetTargets)>::Call);
   }
 
   // Clears/draw.
-  funcs.pfnClearRenderTargetView = &ClearRenderTargetView;
-  funcs.pfnClearDepthStencilView = &ClearDepthStencilView;
-  funcs.pfnDraw = &Draw;
-  funcs.pfnDrawIndexed = &DrawIndexed;
+  funcs.pfnClearRenderTargetView = AEROGPU_D3D10_WDK_DDI(ClearRenderTargetView);
+  funcs.pfnClearDepthStencilView = AEROGPU_D3D10_WDK_DDI(ClearDepthStencilView);
+  funcs.pfnDraw = AEROGPU_D3D10_WDK_DDI(Draw);
+  funcs.pfnDrawIndexed = AEROGPU_D3D10_WDK_DDI(DrawIndexed);
 
   // Present.
-  funcs.pfnFlush = &Flush;
-  funcs.pfnPresent = &Present;
-  funcs.pfnRotateResourceIdentities = &RotateResourceIdentities;
+  funcs.pfnFlush = AEROGPU_D3D10_WDK_DDI(Flush);
+  funcs.pfnPresent = AEROGPU_D3D10_WDK_DDI(Present);
+  funcs.pfnRotateResourceIdentities = AEROGPU_D3D10_WDK_DDI(RotateResourceIdentities);
 
   if (!ValidateNoNullDdiTable("D3D10DDI_DEVICEFUNCS", &funcs, sizeof(funcs))) {
     DestroyKernelDeviceContext(device);
@@ -9460,10 +9528,10 @@ HRESULT OpenAdapterCommon(D3D10DDIARG_OPENADAPTER* pOpenData) {
 
   D3D10DDI_ADAPTERFUNCS funcs;
   InitAdapterFuncsWithStubs(&funcs);
-  funcs.pfnGetCaps = &GetCaps;
-  funcs.pfnCalcPrivateDeviceSize = &CalcPrivateDeviceSize;
-  funcs.pfnCreateDevice = &CreateDevice;
-  funcs.pfnCloseAdapter = &CloseAdapter;
+  funcs.pfnGetCaps = AEROGPU_D3D10_WDK_DDI(GetCaps);
+  funcs.pfnCalcPrivateDeviceSize = AEROGPU_D3D10_WDK_DDI(CalcPrivateDeviceSize);
+  funcs.pfnCreateDevice = AEROGPU_D3D10_WDK_DDI(CreateDevice);
+  funcs.pfnCloseAdapter = AEROGPU_D3D10_WDK_DDI(CloseAdapter);
   if (!ValidateNoNullDdiTable("D3D10DDI_ADAPTERFUNCS", &funcs, sizeof(funcs))) {
     pOpenData->hAdapter.pDrvPrivate = nullptr;
     DestroyKmtAdapterHandle(adapter);

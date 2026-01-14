@@ -839,6 +839,78 @@ static Device* DeviceFromContext(D3D11DDI_HDEVICECONTEXT hCtx) {
   return dev;
 }
 
+// -----------------------------------------------------------------------------
+// D3D11 WDK DDI exception barrier
+// -----------------------------------------------------------------------------
+//
+// D3D11 DDIs are invoked via runtime-filled function tables. The runtime expects
+// callbacks to be "C ABI safe": no C++ exceptions can escape into the D3D11
+// runtime. Even though most hot paths avoid allocations and report OOM via
+// SetErrorCb, wrap the exported DDI entrypoints defensively so unexpected C++
+// exceptions (e.g. std::bad_alloc, std::system_error) cannot unwind across the
+// ABI boundary.
+template <typename... Args>
+inline void ReportExceptionForArgs(HRESULT hr, Args... args) noexcept {
+  if constexpr (sizeof...(Args) == 0) {
+    return;
+  } else {
+    using First = std::tuple_element_t<0, std::tuple<Args...>>;
+    if constexpr (std::is_same_v<std::decay_t<First>, D3D11DDI_HDEVICE>) {
+      const auto tup = std::forward_as_tuple(args...);
+      const auto hDevice = std::get<0>(tup);
+      auto* dev = hDevice.pDrvPrivate ? FromHandle<D3D11DDI_HDEVICE, Device>(hDevice) : nullptr;
+      SetError(dev, hr);
+    } else if constexpr (std::is_same_v<std::decay_t<First>, D3D11DDI_HDEVICECONTEXT>) {
+      const auto tup = std::forward_as_tuple(args...);
+      const auto hCtx = std::get<0>(tup);
+      SetError(DeviceFromContext(hCtx), hr);
+    }
+  }
+}
+
+template <auto Impl>
+struct aerogpu_d3d11_wdk_ddi_thunk;
+
+template <typename Ret, typename... Args, Ret(AEROGPU_APIENTRY* Impl)(Args...)>
+struct aerogpu_d3d11_wdk_ddi_thunk<Impl> {
+  static Ret AEROGPU_APIENTRY thunk(Args... args) noexcept {
+    try {
+      if constexpr (std::is_void_v<Ret>) {
+        Impl(args...);
+        return;
+      } else {
+        return Impl(args...);
+      }
+    } catch (const std::bad_alloc&) {
+      if constexpr (std::is_same_v<Ret, HRESULT>) {
+        return E_OUTOFMEMORY;
+      } else if constexpr (std::is_void_v<Ret>) {
+        ReportExceptionForArgs(E_OUTOFMEMORY, args...);
+        return;
+      } else if constexpr (std::is_same_v<Ret, SIZE_T>) {
+        ReportExceptionForArgs(E_OUTOFMEMORY, args...);
+        return sizeof(uint64_t);
+      } else {
+        return Ret{};
+      }
+    } catch (...) {
+      if constexpr (std::is_same_v<Ret, HRESULT>) {
+        return E_FAIL;
+      } else if constexpr (std::is_void_v<Ret>) {
+        ReportExceptionForArgs(E_FAIL, args...);
+        return;
+      } else if constexpr (std::is_same_v<Ret, SIZE_T>) {
+        ReportExceptionForArgs(E_FAIL, args...);
+        return sizeof(uint64_t);
+      } else {
+        return Ret{};
+      }
+    }
+  }
+};
+
+#define AEROGPU_D3D11_WDK_DDI(fn) aerogpu_d3d11_wdk_ddi_thunk<&fn>::thunk
+
 static void ReportNotImpl(D3D11DDI_HDEVICE hDevice) {
   // Device-level void DDIs have no HRESULT return channel. Prefer to report
   // unsupported operations through SetErrorCb so the runtime can fail cleanly.
@@ -1979,9 +2051,9 @@ static void BindPresentAndRotate(TFuncs* funcs) {
   if constexpr (HasPresent<TFuncs>::value) {
     using Fn = decltype(funcs->pfnPresent);
     if constexpr (std::is_convertible_v<decltype(&Present11), Fn>) {
-      funcs->pfnPresent = &Present11;
+      funcs->pfnPresent = AEROGPU_D3D11_WDK_DDI(Present11);
     } else if constexpr (std::is_convertible_v<decltype(&Present11Device), Fn>) {
-      funcs->pfnPresent = &Present11Device;
+      funcs->pfnPresent = AEROGPU_D3D11_WDK_DDI(Present11Device);
     } else {
       funcs->pfnPresent = &DdiStub<Fn>::Call;
     }
@@ -1990,9 +2062,9 @@ static void BindPresentAndRotate(TFuncs* funcs) {
   if constexpr (HasRotateResourceIdentities<TFuncs>::value) {
     using Fn = decltype(funcs->pfnRotateResourceIdentities);
     if constexpr (std::is_convertible_v<decltype(&RotateResourceIdentities11), Fn>) {
-      funcs->pfnRotateResourceIdentities = &RotateResourceIdentities11;
+      funcs->pfnRotateResourceIdentities = AEROGPU_D3D11_WDK_DDI(RotateResourceIdentities11);
     } else if constexpr (std::is_convertible_v<decltype(&RotateResourceIdentities11Device), Fn>) {
-      funcs->pfnRotateResourceIdentities = &RotateResourceIdentities11Device;
+      funcs->pfnRotateResourceIdentities = AEROGPU_D3D11_WDK_DDI(RotateResourceIdentities11Device);
     } else {
       funcs->pfnRotateResourceIdentities = &DdiStub<Fn>::Call;
     }
@@ -12419,180 +12491,182 @@ HRESULT AEROGPU_APIENTRY CreateDevice11(D3D10DDI_HADAPTER hAdapter, D3D11DDIARG_
   InitDeviceContextFuncsWithStubs(ctx_funcs);
 
   // Device funcs.
-  pCreateDevice->pDeviceFuncs->pfnDestroyDevice = &DestroyDevice11;
+  pCreateDevice->pDeviceFuncs->pfnDestroyDevice = AEROGPU_D3D11_WDK_DDI(DestroyDevice11);
 
-  pCreateDevice->pDeviceFuncs->pfnCalcPrivateResourceSize = &CalcPrivateResourceSize11;
-  pCreateDevice->pDeviceFuncs->pfnCreateResource = &CreateResource11;
+  pCreateDevice->pDeviceFuncs->pfnCalcPrivateResourceSize = AEROGPU_D3D11_WDK_DDI(CalcPrivateResourceSize11);
+  pCreateDevice->pDeviceFuncs->pfnCreateResource = AEROGPU_D3D11_WDK_DDI(CreateResource11);
   __if_exists(D3D11DDI_DEVICEFUNCS::pfnOpenResource) {
-    pCreateDevice->pDeviceFuncs->pfnOpenResource = &OpenResource11;
+    pCreateDevice->pDeviceFuncs->pfnOpenResource = AEROGPU_D3D11_WDK_DDI(OpenResource11);
   }
-  pCreateDevice->pDeviceFuncs->pfnDestroyResource = &DestroyResource11;
+  pCreateDevice->pDeviceFuncs->pfnDestroyResource = AEROGPU_D3D11_WDK_DDI(DestroyResource11);
 
-  pCreateDevice->pDeviceFuncs->pfnCalcPrivateRenderTargetViewSize = &CalcPrivateRenderTargetViewSize11;
-  pCreateDevice->pDeviceFuncs->pfnCreateRenderTargetView = &CreateRenderTargetView11;
-  pCreateDevice->pDeviceFuncs->pfnDestroyRenderTargetView = &DestroyRenderTargetView11;
+  pCreateDevice->pDeviceFuncs->pfnCalcPrivateRenderTargetViewSize = AEROGPU_D3D11_WDK_DDI(CalcPrivateRenderTargetViewSize11);
+  pCreateDevice->pDeviceFuncs->pfnCreateRenderTargetView = AEROGPU_D3D11_WDK_DDI(CreateRenderTargetView11);
+  pCreateDevice->pDeviceFuncs->pfnDestroyRenderTargetView = AEROGPU_D3D11_WDK_DDI(DestroyRenderTargetView11);
 
-  pCreateDevice->pDeviceFuncs->pfnCalcPrivateDepthStencilViewSize = &CalcPrivateDepthStencilViewSize11;
-  pCreateDevice->pDeviceFuncs->pfnCreateDepthStencilView = &CreateDepthStencilView11;
-  pCreateDevice->pDeviceFuncs->pfnDestroyDepthStencilView = &DestroyDepthStencilView11;
+  pCreateDevice->pDeviceFuncs->pfnCalcPrivateDepthStencilViewSize = AEROGPU_D3D11_WDK_DDI(CalcPrivateDepthStencilViewSize11);
+  pCreateDevice->pDeviceFuncs->pfnCreateDepthStencilView = AEROGPU_D3D11_WDK_DDI(CreateDepthStencilView11);
+  pCreateDevice->pDeviceFuncs->pfnDestroyDepthStencilView = AEROGPU_D3D11_WDK_DDI(DestroyDepthStencilView11);
 
-  pCreateDevice->pDeviceFuncs->pfnCalcPrivateUnorderedAccessViewSize = &CalcPrivateUnorderedAccessViewSize11;
-  pCreateDevice->pDeviceFuncs->pfnCreateUnorderedAccessView = &CreateUnorderedAccessView11;
-  pCreateDevice->pDeviceFuncs->pfnDestroyUnorderedAccessView = &DestroyUnorderedAccessView11;
+  pCreateDevice->pDeviceFuncs->pfnCalcPrivateUnorderedAccessViewSize = AEROGPU_D3D11_WDK_DDI(CalcPrivateUnorderedAccessViewSize11);
+  pCreateDevice->pDeviceFuncs->pfnCreateUnorderedAccessView = AEROGPU_D3D11_WDK_DDI(CreateUnorderedAccessView11);
+  pCreateDevice->pDeviceFuncs->pfnDestroyUnorderedAccessView = AEROGPU_D3D11_WDK_DDI(DestroyUnorderedAccessView11);
 
-  pCreateDevice->pDeviceFuncs->pfnCalcPrivateShaderResourceViewSize = &CalcPrivateShaderResourceViewSize11;
-  pCreateDevice->pDeviceFuncs->pfnCreateShaderResourceView = &CreateShaderResourceView11;
-  pCreateDevice->pDeviceFuncs->pfnDestroyShaderResourceView = &DestroyShaderResourceView11;
+  pCreateDevice->pDeviceFuncs->pfnCalcPrivateShaderResourceViewSize = AEROGPU_D3D11_WDK_DDI(CalcPrivateShaderResourceViewSize11);
+  pCreateDevice->pDeviceFuncs->pfnCreateShaderResourceView = AEROGPU_D3D11_WDK_DDI(CreateShaderResourceView11);
+  pCreateDevice->pDeviceFuncs->pfnDestroyShaderResourceView = AEROGPU_D3D11_WDK_DDI(DestroyShaderResourceView11);
 
   __if_exists(D3D11DDI_DEVICEFUNCS::pfnCalcPrivateUnorderedAccessViewSize) {
-    pCreateDevice->pDeviceFuncs->pfnCalcPrivateUnorderedAccessViewSize = &CalcPrivateUnorderedAccessViewSize11;
+    pCreateDevice->pDeviceFuncs->pfnCalcPrivateUnorderedAccessViewSize = AEROGPU_D3D11_WDK_DDI(CalcPrivateUnorderedAccessViewSize11);
   }
   __if_exists(D3D11DDI_DEVICEFUNCS::pfnCreateUnorderedAccessView) {
-    pCreateDevice->pDeviceFuncs->pfnCreateUnorderedAccessView = &CreateUnorderedAccessView11;
+    pCreateDevice->pDeviceFuncs->pfnCreateUnorderedAccessView = AEROGPU_D3D11_WDK_DDI(CreateUnorderedAccessView11);
   }
   __if_exists(D3D11DDI_DEVICEFUNCS::pfnDestroyUnorderedAccessView) {
-    pCreateDevice->pDeviceFuncs->pfnDestroyUnorderedAccessView = &DestroyUnorderedAccessView11;
+    pCreateDevice->pDeviceFuncs->pfnDestroyUnorderedAccessView = AEROGPU_D3D11_WDK_DDI(DestroyUnorderedAccessView11);
   }
 
-  pCreateDevice->pDeviceFuncs->pfnCalcPrivateVertexShaderSize = &CalcPrivateVertexShaderSize11;
-  pCreateDevice->pDeviceFuncs->pfnCreateVertexShader = &CreateVertexShader11;
-  pCreateDevice->pDeviceFuncs->pfnDestroyVertexShader = &DestroyVertexShader11;
+  pCreateDevice->pDeviceFuncs->pfnCalcPrivateVertexShaderSize = AEROGPU_D3D11_WDK_DDI(CalcPrivateVertexShaderSize11);
+  pCreateDevice->pDeviceFuncs->pfnCreateVertexShader = AEROGPU_D3D11_WDK_DDI(CreateVertexShader11);
+  pCreateDevice->pDeviceFuncs->pfnDestroyVertexShader = AEROGPU_D3D11_WDK_DDI(DestroyVertexShader11);
 
-  pCreateDevice->pDeviceFuncs->pfnCalcPrivatePixelShaderSize = &CalcPrivatePixelShaderSize11;
-  pCreateDevice->pDeviceFuncs->pfnCreatePixelShader = &CreatePixelShader11;
-  pCreateDevice->pDeviceFuncs->pfnDestroyPixelShader = &DestroyPixelShader11;
+  pCreateDevice->pDeviceFuncs->pfnCalcPrivatePixelShaderSize = AEROGPU_D3D11_WDK_DDI(CalcPrivatePixelShaderSize11);
+  pCreateDevice->pDeviceFuncs->pfnCreatePixelShader = AEROGPU_D3D11_WDK_DDI(CreatePixelShader11);
+  pCreateDevice->pDeviceFuncs->pfnDestroyPixelShader = AEROGPU_D3D11_WDK_DDI(DestroyPixelShader11);
 
-  pCreateDevice->pDeviceFuncs->pfnCalcPrivateGeometryShaderSize = &CalcPrivateGeometryShaderSize11;
-  pCreateDevice->pDeviceFuncs->pfnCreateGeometryShader = &CreateGeometryShader11;
-  pCreateDevice->pDeviceFuncs->pfnDestroyGeometryShader = &DestroyGeometryShader11;
+  pCreateDevice->pDeviceFuncs->pfnCalcPrivateGeometryShaderSize = AEROGPU_D3D11_WDK_DDI(CalcPrivateGeometryShaderSize11);
+  pCreateDevice->pDeviceFuncs->pfnCreateGeometryShader = AEROGPU_D3D11_WDK_DDI(CreateGeometryShader11);
+  pCreateDevice->pDeviceFuncs->pfnDestroyGeometryShader = AEROGPU_D3D11_WDK_DDI(DestroyGeometryShader11);
 
   __if_exists(D3D11DDI_DEVICEFUNCS::pfnCalcPrivateGeometryShaderWithStreamOutputSize) {
     pCreateDevice->pDeviceFuncs->pfnCalcPrivateGeometryShaderWithStreamOutputSize =
-        &CalcPrivateGeometryShaderWithStreamOutputSizeImpl<
-            decltype(pCreateDevice->pDeviceFuncs->pfnCalcPrivateGeometryShaderWithStreamOutputSize)>::Call;
+        AEROGPU_D3D11_WDK_DDI(CalcPrivateGeometryShaderWithStreamOutputSizeImpl<
+                              decltype(pCreateDevice->pDeviceFuncs->pfnCalcPrivateGeometryShaderWithStreamOutputSize)>::Call);
   }
   __if_exists(D3D11DDI_DEVICEFUNCS::pfnCreateGeometryShaderWithStreamOutput) {
     pCreateDevice->pDeviceFuncs->pfnCreateGeometryShaderWithStreamOutput =
-        &CreateGeometryShaderWithStreamOutputImpl<
-            decltype(pCreateDevice->pDeviceFuncs->pfnCreateGeometryShaderWithStreamOutput)>::Call;
+        AEROGPU_D3D11_WDK_DDI(CreateGeometryShaderWithStreamOutputImpl<
+                              decltype(pCreateDevice->pDeviceFuncs->pfnCreateGeometryShaderWithStreamOutput)>::Call);
   }
 
   __if_exists(D3D11DDI_DEVICEFUNCS::pfnCalcPrivateComputeShaderSize) {
-    pCreateDevice->pDeviceFuncs->pfnCalcPrivateComputeShaderSize = &CalcPrivateComputeShaderSize11;
+    pCreateDevice->pDeviceFuncs->pfnCalcPrivateComputeShaderSize = AEROGPU_D3D11_WDK_DDI(CalcPrivateComputeShaderSize11);
   }
   __if_exists(D3D11DDI_DEVICEFUNCS::pfnCreateComputeShader) {
-    pCreateDevice->pDeviceFuncs->pfnCreateComputeShader = &CreateComputeShader11;
+    pCreateDevice->pDeviceFuncs->pfnCreateComputeShader = AEROGPU_D3D11_WDK_DDI(CreateComputeShader11);
   }
   __if_exists(D3D11DDI_DEVICEFUNCS::pfnDestroyComputeShader) {
-    pCreateDevice->pDeviceFuncs->pfnDestroyComputeShader = &DestroyComputeShader11;
+    pCreateDevice->pDeviceFuncs->pfnDestroyComputeShader = AEROGPU_D3D11_WDK_DDI(DestroyComputeShader11);
   }
 
-  pCreateDevice->pDeviceFuncs->pfnCalcPrivateElementLayoutSize = &CalcPrivateElementLayoutSize11;
-  pCreateDevice->pDeviceFuncs->pfnCreateElementLayout = &CreateElementLayout11;
-  pCreateDevice->pDeviceFuncs->pfnDestroyElementLayout = &DestroyElementLayout11;
+  pCreateDevice->pDeviceFuncs->pfnCalcPrivateElementLayoutSize = AEROGPU_D3D11_WDK_DDI(CalcPrivateElementLayoutSize11);
+  pCreateDevice->pDeviceFuncs->pfnCreateElementLayout = AEROGPU_D3D11_WDK_DDI(CreateElementLayout11);
+  pCreateDevice->pDeviceFuncs->pfnDestroyElementLayout = AEROGPU_D3D11_WDK_DDI(DestroyElementLayout11);
 
-  pCreateDevice->pDeviceFuncs->pfnCalcPrivateSamplerSize = &CalcPrivateSamplerSize11;
-  pCreateDevice->pDeviceFuncs->pfnCreateSampler = &CreateSampler11;
-  pCreateDevice->pDeviceFuncs->pfnDestroySampler = &DestroySampler11;
+  pCreateDevice->pDeviceFuncs->pfnCalcPrivateSamplerSize = AEROGPU_D3D11_WDK_DDI(CalcPrivateSamplerSize11);
+  pCreateDevice->pDeviceFuncs->pfnCreateSampler = AEROGPU_D3D11_WDK_DDI(CreateSampler11);
+  pCreateDevice->pDeviceFuncs->pfnDestroySampler = AEROGPU_D3D11_WDK_DDI(DestroySampler11);
 
-  pCreateDevice->pDeviceFuncs->pfnCalcPrivateBlendStateSize = &CalcPrivateBlendStateSize11;
-  pCreateDevice->pDeviceFuncs->pfnCreateBlendState = &CreateBlendState11;
-  pCreateDevice->pDeviceFuncs->pfnDestroyBlendState = &DestroyBlendState11;
+  pCreateDevice->pDeviceFuncs->pfnCalcPrivateBlendStateSize = AEROGPU_D3D11_WDK_DDI(CalcPrivateBlendStateSize11);
+  pCreateDevice->pDeviceFuncs->pfnCreateBlendState = AEROGPU_D3D11_WDK_DDI(CreateBlendState11);
+  pCreateDevice->pDeviceFuncs->pfnDestroyBlendState = AEROGPU_D3D11_WDK_DDI(DestroyBlendState11);
 
-  pCreateDevice->pDeviceFuncs->pfnCalcPrivateRasterizerStateSize = &CalcPrivateRasterizerStateSize11;
-  pCreateDevice->pDeviceFuncs->pfnCreateRasterizerState = &CreateRasterizerState11;
-  pCreateDevice->pDeviceFuncs->pfnDestroyRasterizerState = &DestroyRasterizerState11;
+  pCreateDevice->pDeviceFuncs->pfnCalcPrivateRasterizerStateSize = AEROGPU_D3D11_WDK_DDI(CalcPrivateRasterizerStateSize11);
+  pCreateDevice->pDeviceFuncs->pfnCreateRasterizerState = AEROGPU_D3D11_WDK_DDI(CreateRasterizerState11);
+  pCreateDevice->pDeviceFuncs->pfnDestroyRasterizerState = AEROGPU_D3D11_WDK_DDI(DestroyRasterizerState11);
 
-  pCreateDevice->pDeviceFuncs->pfnCalcPrivateDepthStencilStateSize = &CalcPrivateDepthStencilStateSize11;
-  pCreateDevice->pDeviceFuncs->pfnCreateDepthStencilState = &CreateDepthStencilState11;
-  pCreateDevice->pDeviceFuncs->pfnDestroyDepthStencilState = &DestroyDepthStencilState11;
+  pCreateDevice->pDeviceFuncs->pfnCalcPrivateDepthStencilStateSize = AEROGPU_D3D11_WDK_DDI(CalcPrivateDepthStencilStateSize11);
+  pCreateDevice->pDeviceFuncs->pfnCreateDepthStencilState = AEROGPU_D3D11_WDK_DDI(CreateDepthStencilState11);
+  pCreateDevice->pDeviceFuncs->pfnDestroyDepthStencilState = AEROGPU_D3D11_WDK_DDI(DestroyDepthStencilState11);
 
   __if_exists(D3D11DDI_DEVICEFUNCS::pfnGetDeviceRemovedReason) {
-    pCreateDevice->pDeviceFuncs->pfnGetDeviceRemovedReason = &GetDeviceRemovedReason11;
+    pCreateDevice->pDeviceFuncs->pfnGetDeviceRemovedReason = AEROGPU_D3D11_WDK_DDI(GetDeviceRemovedReason11);
   }
 
   BindPresentAndRotate(pCreateDevice->pDeviceFuncs);
 
   // Immediate context funcs.
-  ctx_funcs->pfnIaSetInputLayout = &IaSetInputLayout11;
-  ctx_funcs->pfnIaSetVertexBuffers = &IaSetVertexBuffers11;
-  ctx_funcs->pfnIaSetIndexBuffer = &IaSetIndexBuffer11;
-  ctx_funcs->pfnIaSetTopology = &IaSetTopology11;
+  ctx_funcs->pfnIaSetInputLayout = AEROGPU_D3D11_WDK_DDI(IaSetInputLayout11);
+  ctx_funcs->pfnIaSetVertexBuffers = AEROGPU_D3D11_WDK_DDI(IaSetVertexBuffers11);
+  ctx_funcs->pfnIaSetIndexBuffer = AEROGPU_D3D11_WDK_DDI(IaSetIndexBuffer11);
+  ctx_funcs->pfnIaSetTopology = AEROGPU_D3D11_WDK_DDI(IaSetTopology11);
   __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnSoSetTargets) {
     using Fn = decltype(ctx_funcs->pfnSoSetTargets);
-    ctx_funcs->pfnSoSetTargets = &SoSetTargetsThunk<Fn>::Impl;
+    ctx_funcs->pfnSoSetTargets = AEROGPU_D3D11_WDK_DDI(SoSetTargetsThunk<Fn>::Impl);
   }
 
-  ctx_funcs->pfnVsSetShader = &VsSetShader11;
-  ctx_funcs->pfnVsSetConstantBuffers = &VsSetConstantBuffers11;
-  ctx_funcs->pfnVsSetShaderResources = &VsSetShaderResources11;
-  ctx_funcs->pfnVsSetSamplers = &VsSetSamplers11;
+  ctx_funcs->pfnVsSetShader = AEROGPU_D3D11_WDK_DDI(VsSetShader11);
+  ctx_funcs->pfnVsSetConstantBuffers = AEROGPU_D3D11_WDK_DDI(VsSetConstantBuffers11);
+  ctx_funcs->pfnVsSetShaderResources = AEROGPU_D3D11_WDK_DDI(VsSetShaderResources11);
+  ctx_funcs->pfnVsSetSamplers = AEROGPU_D3D11_WDK_DDI(VsSetSamplers11);
 
-  ctx_funcs->pfnPsSetShader = &PsSetShader11;
-  ctx_funcs->pfnPsSetConstantBuffers = &PsSetConstantBuffers11;
-  ctx_funcs->pfnPsSetShaderResources = &PsSetShaderResources11;
-  ctx_funcs->pfnPsSetSamplers = &PsSetSamplers11;
+  ctx_funcs->pfnPsSetShader = AEROGPU_D3D11_WDK_DDI(PsSetShader11);
+  ctx_funcs->pfnPsSetConstantBuffers = AEROGPU_D3D11_WDK_DDI(PsSetConstantBuffers11);
+  ctx_funcs->pfnPsSetShaderResources = AEROGPU_D3D11_WDK_DDI(PsSetShaderResources11);
+  ctx_funcs->pfnPsSetSamplers = AEROGPU_D3D11_WDK_DDI(PsSetSamplers11);
 
-  ctx_funcs->pfnGsSetShader = &GsSetShader11;
-  ctx_funcs->pfnGsSetConstantBuffers = &GsSetConstantBuffers11;
-  ctx_funcs->pfnGsSetShaderResources = &GsSetShaderResources11;
-  ctx_funcs->pfnGsSetSamplers = &GsSetSamplers11;
+  ctx_funcs->pfnGsSetShader = AEROGPU_D3D11_WDK_DDI(GsSetShader11);
+  ctx_funcs->pfnGsSetConstantBuffers = AEROGPU_D3D11_WDK_DDI(GsSetConstantBuffers11);
+  ctx_funcs->pfnGsSetShaderResources = AEROGPU_D3D11_WDK_DDI(GsSetShaderResources11);
+  ctx_funcs->pfnGsSetSamplers = AEROGPU_D3D11_WDK_DDI(GsSetSamplers11);
 
-  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnHsSetShader) { ctx_funcs->pfnHsSetShader = &HsSetShader11; }
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnHsSetShader) { ctx_funcs->pfnHsSetShader = AEROGPU_D3D11_WDK_DDI(HsSetShader11); }
   __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnHsSetConstantBuffers) {
-    ctx_funcs->pfnHsSetConstantBuffers = &HsSetConstantBuffers11;
+    ctx_funcs->pfnHsSetConstantBuffers = AEROGPU_D3D11_WDK_DDI(HsSetConstantBuffers11);
   }
   __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnHsSetShaderResources) {
-    ctx_funcs->pfnHsSetShaderResources = &HsSetShaderResources11;
+    ctx_funcs->pfnHsSetShaderResources = AEROGPU_D3D11_WDK_DDI(HsSetShaderResources11);
   }
-  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnHsSetSamplers) { ctx_funcs->pfnHsSetSamplers = &HsSetSamplers11; }
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnHsSetSamplers) { ctx_funcs->pfnHsSetSamplers = AEROGPU_D3D11_WDK_DDI(HsSetSamplers11); }
 
-  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnDsSetShader) { ctx_funcs->pfnDsSetShader = &DsSetShader11; }
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnDsSetShader) { ctx_funcs->pfnDsSetShader = AEROGPU_D3D11_WDK_DDI(DsSetShader11); }
   __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnDsSetConstantBuffers) {
-    ctx_funcs->pfnDsSetConstantBuffers = &DsSetConstantBuffers11;
+    ctx_funcs->pfnDsSetConstantBuffers = AEROGPU_D3D11_WDK_DDI(DsSetConstantBuffers11);
   }
   __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnDsSetShaderResources) {
-    ctx_funcs->pfnDsSetShaderResources = &DsSetShaderResources11;
+    ctx_funcs->pfnDsSetShaderResources = AEROGPU_D3D11_WDK_DDI(DsSetShaderResources11);
   }
-  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnDsSetSamplers) { ctx_funcs->pfnDsSetSamplers = &DsSetSamplers11; }
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnDsSetSamplers) { ctx_funcs->pfnDsSetSamplers = AEROGPU_D3D11_WDK_DDI(DsSetSamplers11); }
 
-  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnCsSetShader) { ctx_funcs->pfnCsSetShader = &CsSetShader11; }
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnCsSetShader) { ctx_funcs->pfnCsSetShader = AEROGPU_D3D11_WDK_DDI(CsSetShader11); }
   __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnCsSetConstantBuffers) {
-    ctx_funcs->pfnCsSetConstantBuffers = &CsSetConstantBuffers11;
+    ctx_funcs->pfnCsSetConstantBuffers = AEROGPU_D3D11_WDK_DDI(CsSetConstantBuffers11);
   }
   __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnCsSetShaderResources) {
-    ctx_funcs->pfnCsSetShaderResources = &CsSetShaderResources11;
+    ctx_funcs->pfnCsSetShaderResources = AEROGPU_D3D11_WDK_DDI(CsSetShaderResources11);
   }
-  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnCsSetSamplers) { ctx_funcs->pfnCsSetSamplers = &CsSetSamplers11; }
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnCsSetSamplers) { ctx_funcs->pfnCsSetSamplers = AEROGPU_D3D11_WDK_DDI(CsSetSamplers11); }
   __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnCsSetUnorderedAccessViews) {
-    ctx_funcs->pfnCsSetUnorderedAccessViews = &CsSetUnorderedAccessViews11;
+    ctx_funcs->pfnCsSetUnorderedAccessViews = AEROGPU_D3D11_WDK_DDI(CsSetUnorderedAccessViews11);
   }
   __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnSetPredication) {
     using Fn = decltype(ctx_funcs->pfnSetPredication);
-    ctx_funcs->pfnSetPredication = &SetPredicationThunk<Fn>::Impl;
+    ctx_funcs->pfnSetPredication = AEROGPU_D3D11_WDK_DDI(SetPredicationThunk<Fn>::Impl);
   }
 
-  ctx_funcs->pfnSetViewports = &SetViewports11;
-  ctx_funcs->pfnSetScissorRects = &SetScissorRects11;
-  ctx_funcs->pfnSetRasterizerState = &SetRasterizerState11;
-  ctx_funcs->pfnSetBlendState = &SetBlendState11;
-  ctx_funcs->pfnSetDepthStencilState = &SetDepthStencilState11;
-  ctx_funcs->pfnSetRenderTargets = &SetRenderTargets11;
+  ctx_funcs->pfnSetViewports = AEROGPU_D3D11_WDK_DDI(SetViewports11);
+  ctx_funcs->pfnSetScissorRects = AEROGPU_D3D11_WDK_DDI(SetScissorRects11);
+  ctx_funcs->pfnSetRasterizerState = AEROGPU_D3D11_WDK_DDI(SetRasterizerState11);
+  ctx_funcs->pfnSetBlendState = AEROGPU_D3D11_WDK_DDI(SetBlendState11);
+  ctx_funcs->pfnSetDepthStencilState = AEROGPU_D3D11_WDK_DDI(SetDepthStencilState11);
+  ctx_funcs->pfnSetRenderTargets = AEROGPU_D3D11_WDK_DDI(SetRenderTargets11);
   __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnSetRenderTargetsAndUnorderedAccessViews) {
     ctx_funcs->pfnSetRenderTargetsAndUnorderedAccessViews =
-        &SetRenderTargetsAndUavsThunk<decltype(ctx_funcs->pfnSetRenderTargetsAndUnorderedAccessViews)>::Impl;
+        AEROGPU_D3D11_WDK_DDI(
+            SetRenderTargetsAndUavsThunk<decltype(ctx_funcs->pfnSetRenderTargetsAndUnorderedAccessViews)>::Impl);
   }
   __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnSetRenderTargetsAndUnorderedAccessViews11_1) {
     ctx_funcs->pfnSetRenderTargetsAndUnorderedAccessViews11_1 =
-        &SetRenderTargetsAndUavsThunk<decltype(ctx_funcs->pfnSetRenderTargetsAndUnorderedAccessViews11_1)>::Impl;
+        AEROGPU_D3D11_WDK_DDI(
+            SetRenderTargetsAndUavsThunk<decltype(ctx_funcs->pfnSetRenderTargetsAndUnorderedAccessViews11_1)>::Impl);
   }
 
-  ctx_funcs->pfnClearState = &ClearState11;
-  ctx_funcs->pfnClearRenderTargetView = &ClearRenderTargetView11;
+  ctx_funcs->pfnClearState = AEROGPU_D3D11_WDK_DDI(ClearState11);
+  ctx_funcs->pfnClearRenderTargetView = AEROGPU_D3D11_WDK_DDI(ClearRenderTargetView11);
   __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnClearUnorderedAccessViewUint) {
     using Fn = decltype(ctx_funcs->pfnClearUnorderedAccessViewUint);
     if constexpr (std::is_convertible_v<decltype(&ClearUnorderedAccessViewUint11), Fn>) {
-      ctx_funcs->pfnClearUnorderedAccessViewUint = &ClearUnorderedAccessViewUint11;
+      ctx_funcs->pfnClearUnorderedAccessViewUint = AEROGPU_D3D11_WDK_DDI(ClearUnorderedAccessViewUint11);
     } else {
       ctx_funcs->pfnClearUnorderedAccessViewUint = &DdiStub<Fn>::Call;
     }
@@ -12600,20 +12674,20 @@ HRESULT AEROGPU_APIENTRY CreateDevice11(D3D10DDI_HADAPTER hAdapter, D3D11DDIARG_
   __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnClearUnorderedAccessViewFloat) {
     using Fn = decltype(ctx_funcs->pfnClearUnorderedAccessViewFloat);
     if constexpr (std::is_convertible_v<decltype(&ClearUnorderedAccessViewFloat11), Fn>) {
-      ctx_funcs->pfnClearUnorderedAccessViewFloat = &ClearUnorderedAccessViewFloat11;
+      ctx_funcs->pfnClearUnorderedAccessViewFloat = AEROGPU_D3D11_WDK_DDI(ClearUnorderedAccessViewFloat11);
     } else {
       ctx_funcs->pfnClearUnorderedAccessViewFloat = &DdiStub<Fn>::Call;
     }
   }
-  ctx_funcs->pfnClearDepthStencilView = &ClearDepthStencilView11;
-  ctx_funcs->pfnDraw = &Draw11;
-  ctx_funcs->pfnDrawIndexed = &DrawIndexed11;
-  ctx_funcs->pfnDrawInstanced = &DrawInstanced11;
-  ctx_funcs->pfnDrawIndexedInstanced = &DrawIndexedInstanced11;
+  ctx_funcs->pfnClearDepthStencilView = AEROGPU_D3D11_WDK_DDI(ClearDepthStencilView11);
+  ctx_funcs->pfnDraw = AEROGPU_D3D11_WDK_DDI(Draw11);
+  ctx_funcs->pfnDrawIndexed = AEROGPU_D3D11_WDK_DDI(DrawIndexed11);
+  ctx_funcs->pfnDrawInstanced = AEROGPU_D3D11_WDK_DDI(DrawInstanced11);
+  ctx_funcs->pfnDrawIndexedInstanced = AEROGPU_D3D11_WDK_DDI(DrawIndexedInstanced11);
   __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnDrawInstancedIndirect) {
     using Fn = decltype(ctx_funcs->pfnDrawInstancedIndirect);
     if constexpr (std::is_convertible_v<decltype(&DrawInstancedIndirect11), Fn>) {
-      ctx_funcs->pfnDrawInstancedIndirect = &DrawInstancedIndirect11;
+      ctx_funcs->pfnDrawInstancedIndirect = AEROGPU_D3D11_WDK_DDI(DrawInstancedIndirect11);
     } else {
       ctx_funcs->pfnDrawInstancedIndirect = &DdiStub<Fn>::Call;
     }
@@ -12621,27 +12695,27 @@ HRESULT AEROGPU_APIENTRY CreateDevice11(D3D10DDI_HADAPTER hAdapter, D3D11DDIARG_
   __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnDrawIndexedInstancedIndirect) {
     using Fn = decltype(ctx_funcs->pfnDrawIndexedInstancedIndirect);
     if constexpr (std::is_convertible_v<decltype(&DrawIndexedInstancedIndirect11), Fn>) {
-      ctx_funcs->pfnDrawIndexedInstancedIndirect = &DrawIndexedInstancedIndirect11;
+      ctx_funcs->pfnDrawIndexedInstancedIndirect = AEROGPU_D3D11_WDK_DDI(DrawIndexedInstancedIndirect11);
     } else {
       ctx_funcs->pfnDrawIndexedInstancedIndirect = &DdiStub<Fn>::Call;
     }
   }
-  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnDispatch) { ctx_funcs->pfnDispatch = &Dispatch11; }
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnDispatch) { ctx_funcs->pfnDispatch = AEROGPU_D3D11_WDK_DDI(Dispatch11); }
   __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnDispatchIndirect) {
     using Fn = decltype(ctx_funcs->pfnDispatchIndirect);
     if constexpr (std::is_convertible_v<decltype(&DispatchIndirect11), Fn>) {
-      ctx_funcs->pfnDispatchIndirect = &DispatchIndirect11;
+      ctx_funcs->pfnDispatchIndirect = AEROGPU_D3D11_WDK_DDI(DispatchIndirect11);
     } else {
       ctx_funcs->pfnDispatchIndirect = &DdiStub<Fn>::Call;
     }
   }
 
-  ctx_funcs->pfnCopyResource = &CopyResource11;
-  ctx_funcs->pfnCopySubresourceRegion = &CopySubresourceRegion11;
+  ctx_funcs->pfnCopyResource = AEROGPU_D3D11_WDK_DDI(CopyResource11);
+  ctx_funcs->pfnCopySubresourceRegion = AEROGPU_D3D11_WDK_DDI(CopySubresourceRegion11);
   __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnCopyStructureCount) {
     using Fn = decltype(ctx_funcs->pfnCopyStructureCount);
     if constexpr (std::is_convertible_v<decltype(&CopyStructureCount11), Fn>) {
-      ctx_funcs->pfnCopyStructureCount = &CopyStructureCount11;
+      ctx_funcs->pfnCopyStructureCount = AEROGPU_D3D11_WDK_DDI(CopyStructureCount11);
     } else {
       ctx_funcs->pfnCopyStructureCount = &DdiStub<Fn>::Call;
     }
@@ -12649,19 +12723,19 @@ HRESULT AEROGPU_APIENTRY CreateDevice11(D3D10DDI_HADAPTER hAdapter, D3D11DDIARG_
 
   // Map can be HRESULT or void depending on interface version.
   if constexpr (std::is_same_v<decltype(ctx_funcs->pfnMap), decltype(&Map11)>) {
-    ctx_funcs->pfnMap = &Map11;
+    ctx_funcs->pfnMap = AEROGPU_D3D11_WDK_DDI(Map11);
   } else {
-    ctx_funcs->pfnMap = &Map11Void;
+    ctx_funcs->pfnMap = AEROGPU_D3D11_WDK_DDI(Map11Void);
   }
-  ctx_funcs->pfnUnmap = &Unmap11;
+  ctx_funcs->pfnUnmap = AEROGPU_D3D11_WDK_DDI(Unmap11);
   {
     using Fn = decltype(ctx_funcs->pfnUpdateSubresourceUP);
     if constexpr (std::is_convertible_v<decltype(&UpdateSubresourceUP11), Fn>) {
-      ctx_funcs->pfnUpdateSubresourceUP = &UpdateSubresourceUP11;
+      ctx_funcs->pfnUpdateSubresourceUP = AEROGPU_D3D11_WDK_DDI(UpdateSubresourceUP11);
     } else if constexpr (std::is_convertible_v<decltype(&UpdateSubresourceUP11Args), Fn>) {
-      ctx_funcs->pfnUpdateSubresourceUP = &UpdateSubresourceUP11Args;
+      ctx_funcs->pfnUpdateSubresourceUP = AEROGPU_D3D11_WDK_DDI(UpdateSubresourceUP11Args);
     } else if constexpr (std::is_convertible_v<decltype(&UpdateSubresourceUP11ArgsAndSysMem), Fn>) {
-      ctx_funcs->pfnUpdateSubresourceUP = &UpdateSubresourceUP11ArgsAndSysMem;
+      ctx_funcs->pfnUpdateSubresourceUP = AEROGPU_D3D11_WDK_DDI(UpdateSubresourceUP11ArgsAndSysMem);
     } else {
       ctx_funcs->pfnUpdateSubresourceUP = &DdiStub<Fn>::Call;
     }
@@ -12669,7 +12743,7 @@ HRESULT AEROGPU_APIENTRY CreateDevice11(D3D10DDI_HADAPTER hAdapter, D3D11DDIARG_
   __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnUpdateSubresource) {
     using Fn = decltype(ctx_funcs->pfnUpdateSubresource);
     if constexpr (std::is_convertible_v<decltype(&UpdateSubresourceUP11), Fn>) {
-      ctx_funcs->pfnUpdateSubresource = &UpdateSubresourceUP11;
+      ctx_funcs->pfnUpdateSubresource = AEROGPU_D3D11_WDK_DDI(UpdateSubresourceUP11);
     } else {
       ctx_funcs->pfnUpdateSubresource = &DdiStub<Fn>::Call;
     }
@@ -12677,45 +12751,45 @@ HRESULT AEROGPU_APIENTRY CreateDevice11(D3D10DDI_HADAPTER hAdapter, D3D11DDIARG_
 
   if constexpr (has_member_pfnStagingResourceMap<D3D11DDI_DEVICECONTEXTFUNCS>::value) {
     if constexpr (std::is_same_v<decltype(ctx_funcs->pfnStagingResourceMap), decltype(&StagingResourceMap11)>) {
-      ctx_funcs->pfnStagingResourceMap = &StagingResourceMap11;
+      ctx_funcs->pfnStagingResourceMap = AEROGPU_D3D11_WDK_DDI(StagingResourceMap11);
     } else {
-      ctx_funcs->pfnStagingResourceMap = &StagingResourceMap11Void;
+      ctx_funcs->pfnStagingResourceMap = AEROGPU_D3D11_WDK_DDI(StagingResourceMap11Void);
     }
   }
   if constexpr (has_member_pfnStagingResourceUnmap<D3D11DDI_DEVICECONTEXTFUNCS>::value) {
-    ctx_funcs->pfnStagingResourceUnmap = &StagingResourceUnmap11;
+    ctx_funcs->pfnStagingResourceUnmap = AEROGPU_D3D11_WDK_DDI(StagingResourceUnmap11);
   }
 
   if constexpr (has_member_pfnDynamicIABufferMapDiscard<D3D11DDI_DEVICECONTEXTFUNCS>::value) {
     if constexpr (std::is_same_v<decltype(ctx_funcs->pfnDynamicIABufferMapDiscard), decltype(&DynamicIABufferMapDiscard11)>) {
-      ctx_funcs->pfnDynamicIABufferMapDiscard = &DynamicIABufferMapDiscard11;
+      ctx_funcs->pfnDynamicIABufferMapDiscard = AEROGPU_D3D11_WDK_DDI(DynamicIABufferMapDiscard11);
     } else {
-      ctx_funcs->pfnDynamicIABufferMapDiscard = &DynamicIABufferMapDiscard11Void;
+      ctx_funcs->pfnDynamicIABufferMapDiscard = AEROGPU_D3D11_WDK_DDI(DynamicIABufferMapDiscard11Void);
     }
   }
   if constexpr (has_member_pfnDynamicIABufferMapNoOverwrite<D3D11DDI_DEVICECONTEXTFUNCS>::value) {
     if constexpr (std::is_same_v<decltype(ctx_funcs->pfnDynamicIABufferMapNoOverwrite), decltype(&DynamicIABufferMapNoOverwrite11)>) {
-      ctx_funcs->pfnDynamicIABufferMapNoOverwrite = &DynamicIABufferMapNoOverwrite11;
+      ctx_funcs->pfnDynamicIABufferMapNoOverwrite = AEROGPU_D3D11_WDK_DDI(DynamicIABufferMapNoOverwrite11);
     } else {
-      ctx_funcs->pfnDynamicIABufferMapNoOverwrite = &DynamicIABufferMapNoOverwrite11Void;
+      ctx_funcs->pfnDynamicIABufferMapNoOverwrite = AEROGPU_D3D11_WDK_DDI(DynamicIABufferMapNoOverwrite11Void);
     }
   }
   if constexpr (has_member_pfnDynamicIABufferUnmap<D3D11DDI_DEVICECONTEXTFUNCS>::value) {
-    ctx_funcs->pfnDynamicIABufferUnmap = &DynamicIABufferUnmap11;
+    ctx_funcs->pfnDynamicIABufferUnmap = AEROGPU_D3D11_WDK_DDI(DynamicIABufferUnmap11);
   }
 
   if constexpr (has_member_pfnDynamicConstantBufferMapDiscard<D3D11DDI_DEVICECONTEXTFUNCS>::value) {
     if constexpr (std::is_same_v<decltype(ctx_funcs->pfnDynamicConstantBufferMapDiscard), decltype(&DynamicConstantBufferMapDiscard11)>) {
-      ctx_funcs->pfnDynamicConstantBufferMapDiscard = &DynamicConstantBufferMapDiscard11;
+      ctx_funcs->pfnDynamicConstantBufferMapDiscard = AEROGPU_D3D11_WDK_DDI(DynamicConstantBufferMapDiscard11);
     } else {
-      ctx_funcs->pfnDynamicConstantBufferMapDiscard = &DynamicConstantBufferMapDiscard11Void;
+      ctx_funcs->pfnDynamicConstantBufferMapDiscard = AEROGPU_D3D11_WDK_DDI(DynamicConstantBufferMapDiscard11Void);
     }
   }
   if constexpr (has_member_pfnDynamicConstantBufferUnmap<D3D11DDI_DEVICECONTEXTFUNCS>::value) {
-    ctx_funcs->pfnDynamicConstantBufferUnmap = &DynamicConstantBufferUnmap11;
+    ctx_funcs->pfnDynamicConstantBufferUnmap = AEROGPU_D3D11_WDK_DDI(DynamicConstantBufferUnmap11);
   }
 
-  ctx_funcs->pfnFlush = &Flush11;
+  ctx_funcs->pfnFlush = AEROGPU_D3D11_WDK_DDI(Flush11);
   BindPresentAndRotate(ctx_funcs);
   if (!ValidateNoNullDdiTable("D3D11DDI_DEVICEFUNCS", pCreateDevice->pDeviceFuncs, sizeof(*pCreateDevice->pDeviceFuncs)) ||
       !ValidateNoNullDdiTable("D3D11DDI_DEVICECONTEXTFUNCS", ctx_funcs, sizeof(*ctx_funcs))) {
@@ -12786,13 +12860,13 @@ HRESULT OpenAdapter11Impl(D3D10DDIARG_OPENADAPTER* pOpenData) {
 
   auto* funcs = reinterpret_cast<D3D11DDI_ADAPTERFUNCS*>(pOpenData->pAdapterFuncs);
   *funcs = MakeStubAdapterFuncs11();
-  funcs->pfnGetCaps = &GetCaps11;
-  funcs->pfnCalcPrivateDeviceSize = &CalcPrivateDeviceSize11;
+  funcs->pfnGetCaps = AEROGPU_D3D11_WDK_DDI(GetCaps11);
+  funcs->pfnCalcPrivateDeviceSize = AEROGPU_D3D11_WDK_DDI(CalcPrivateDeviceSize11);
   if constexpr (has_member_pfnCalcPrivateDeviceContextSize<D3D11DDI_ADAPTERFUNCS>::value) {
-    funcs->pfnCalcPrivateDeviceContextSize = &CalcPrivateDeviceContextSize11;
+    funcs->pfnCalcPrivateDeviceContextSize = AEROGPU_D3D11_WDK_DDI(CalcPrivateDeviceContextSize11);
   }
-  funcs->pfnCreateDevice = &CreateDevice11;
-  funcs->pfnCloseAdapter = &CloseAdapter11;
+  funcs->pfnCreateDevice = AEROGPU_D3D11_WDK_DDI(CreateDevice11);
+  funcs->pfnCloseAdapter = AEROGPU_D3D11_WDK_DDI(CloseAdapter11);
   if (!ValidateNoNullDdiTable("D3D11DDI_ADAPTERFUNCS", funcs, sizeof(*funcs))) {
     pOpenData->hAdapter.pDrvPrivate = nullptr;
     DestroyKmtAdapterHandle(adapter);
