@@ -67,21 +67,27 @@ impl DecodeMode {
 /// `REP`/`REPNE` semantics for the same instruction stream.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub struct Prefixes {
-    /// `LOCK` prefix (`F0`)
+    /// Effective `LOCK` prefix byte (`F0`) after group1 "last prefix wins"
+    /// parsing.
     pub lock: bool,
-    /// `REP`/`REPE`/`REPZ` prefix byte (`F3`)
+    /// Effective `REP`/`REPE`/`REPZ` prefix byte (`F3`) after group1 "last
+    /// prefix wins" parsing.
     ///
-    /// This is byte-based metadata: it reflects whether an `F3` byte was present
-    /// in the legacy prefix region (including cases where `F3` is a *mandatory*
-    /// prefix for the opcode, e.g. `PAUSE`).
+    /// This includes cases where `F3` is a *mandatory* legacy prefix byte for
+    /// the opcode (e.g. `PAUSE`). It does not reflect the `pp` field of
+    /// VEX/EVEX encodings.
     pub rep: bool,
-    /// `REPNE`/`REPNZ` prefix byte (`F2`)
+    /// Effective `REPNE`/`REPNZ` prefix byte (`F2`) after group1 "last prefix
+    /// wins" parsing.
     ///
-    /// Like [`Prefixes::rep`], this reflects the presence of a legacy `F2` byte,
-    /// not the `pp` field of VEX/EVEX encodings.
+    /// Like [`Prefixes::rep`], this includes mandatory legacy prefix bytes, but
+    /// does not reflect the `pp` field of VEX/EVEX encodings.
     pub repne: bool,
 
     /// Segment override prefix, if present.
+    ///
+    /// In 64-bit mode, `ES`/`CS`/`SS`/`DS` overrides are ignored by the CPU and
+    /// are not reported here (only `FS`/`GS` are meaningful).
     pub segment: Option<Segment>,
 
     /// Operand-size override prefix byte (`66`).
@@ -91,7 +97,10 @@ pub struct Prefixes {
     /// mandatory prefix without an actual `66` byte; that is intentionally not
     /// represented here.
     pub operand_size_override: bool,
-    /// Address-size override prefix (`67`)
+    /// Address-size override prefix byte (`67`).
+    ///
+    /// This reflects whether a legacy `67` byte was present in the prefix
+    /// region.
     pub address_size_override: bool,
 
     /// REX prefix (64-bit mode only), raw byte value (`0x40..=0x4F`).
