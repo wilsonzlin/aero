@@ -2947,6 +2947,35 @@ fn validate_args(args: &PublishArgs) -> Result<()> {
     if args.retries == 0 {
         bail!("--retries must be > 0");
     }
+
+    // Defence-in-depth: chunked disk streaming reads bytes by offset; intermediary transforms can
+    // break deterministic byte addressing. The reference clients treat missing `no-transform` as a
+    // protocol error, so reject publish configurations that would generate incompatible artifacts.
+    fn has_no_transform(value: &str) -> bool {
+        value
+            .split(',')
+            .map(|t| t.trim())
+            .any(|t| t.eq_ignore_ascii_case("no-transform"))
+    }
+
+    if !has_no_transform(&args.cache_control_chunks) {
+        bail!(
+            "--cache-control-chunks must include 'no-transform' (got {:?})",
+            args.cache_control_chunks
+        );
+    }
+    if !has_no_transform(&args.cache_control_manifest) {
+        bail!(
+            "--cache-control-manifest must include 'no-transform' (got {:?})",
+            args.cache_control_manifest
+        );
+    }
+    if !has_no_transform(&args.cache_control_latest) {
+        bail!(
+            "--cache-control-latest must include 'no-transform' (got {:?})",
+            args.cache_control_latest
+        );
+    }
     Ok(())
 }
 
@@ -4291,6 +4320,54 @@ mod tests {
     #[test]
     fn default_chunk_size_is_4_mib() {
         assert_eq!(DEFAULT_CHUNK_SIZE_BYTES, 4 * 1024 * 1024);
+    }
+
+    #[test]
+    fn validate_args_rejects_cache_control_without_no_transform() {
+        let mut args = PublishArgs {
+            file: PathBuf::from("disk.img"),
+            format: InputFormat::Raw,
+            bucket: "bucket".to_string(),
+            prefix: "images/win7/v1/".to_string(),
+            image_id: None,
+            image_version: Some("v1".to_string()),
+            compute_version: ComputeVersion::None,
+            publish_latest: false,
+            cache_control_chunks: DEFAULT_CACHE_CONTROL_CHUNKS.to_string(),
+            cache_control_manifest: DEFAULT_CACHE_CONTROL_MANIFEST.to_string(),
+            cache_control_latest: DEFAULT_CACHE_CONTROL_LATEST.to_string(),
+            chunk_size: DEFAULT_CHUNK_SIZE_BYTES,
+            checksum: ChecksumAlgorithm::Sha256,
+            endpoint: None,
+            force_path_style: false,
+            region: "us-east-1".to_string(),
+            concurrency: DEFAULT_CONCURRENCY,
+            retries: DEFAULT_RETRIES,
+            no_meta: false,
+        };
+
+        args.cache_control_chunks = "public, max-age=60".to_string();
+        let err = validate_args(&args).expect_err("expected cache_control_chunks failure");
+        assert!(
+            err.to_string().contains("--cache-control-chunks"),
+            "unexpected error: {err}"
+        );
+
+        args.cache_control_chunks = DEFAULT_CACHE_CONTROL_CHUNKS.to_string();
+        args.cache_control_manifest = "public, max-age=60".to_string();
+        let err = validate_args(&args).expect_err("expected cache_control_manifest failure");
+        assert!(
+            err.to_string().contains("--cache-control-manifest"),
+            "unexpected error: {err}"
+        );
+
+        args.cache_control_manifest = DEFAULT_CACHE_CONTROL_MANIFEST.to_string();
+        args.cache_control_latest = "public, max-age=60".to_string();
+        let err = validate_args(&args).expect_err("expected cache_control_latest failure");
+        assert!(
+            err.to_string().contains("--cache-control-latest"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
