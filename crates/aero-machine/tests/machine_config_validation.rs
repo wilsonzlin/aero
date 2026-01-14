@@ -267,3 +267,25 @@ fn cpu_by_index_out_of_range_panics_with_message() {
     assert!(msg.contains("out of range"), "message should mention range: {msg}");
     assert!(msg.contains("cpu_count"), "message should mention cpu_count: {msg}");
 }
+
+#[test]
+fn cpu_by_index_nonzero_returns_ap_state() {
+    // `cpu_count > 1` is allowed so firmware can advertise a multi-CPU topology.
+    // `Machine::cpu_by_index` is a test helper for inspecting per-vCPU state deterministically.
+    let machine = Machine::new(MachineConfig {
+        cpu_count: 2,
+        ..Default::default()
+    })
+    .unwrap();
+
+    let ap = machine.cpu_by_index(1);
+    assert!(
+        ap.halted,
+        "APs should power up in a halted wait-for-SIPI state"
+    );
+    assert_eq!(
+        ap.msr.apic_base & (1 << 8),
+        0,
+        "BSP bit must be clear for application processors"
+    );
+}

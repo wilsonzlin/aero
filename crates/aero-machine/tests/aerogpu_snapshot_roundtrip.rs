@@ -1,5 +1,5 @@
 use aero_devices::pci::PciBdf;
-use aero_machine::{Machine, MachineConfig};
+use aero_machine::{Machine, MachineConfig, VBE_LFB_OFFSET};
 use aero_protocol::aerogpu::aerogpu_pci;
 use pretty_assertions::assert_eq;
 
@@ -64,7 +64,7 @@ fn aerogpu_snapshot_roundtrip_restores_bar0_regs_and_vram() {
     // ---------------------------------------------------------------------
     // 2) Program scanout registers (BAR0) and populate a tiny framebuffer in VRAM.
     // ---------------------------------------------------------------------
-    let fb_base = bar1_base + 0x20_000; // VBE LFB offset within VRAM.
+    let fb_base = bar1_base + VBE_LFB_OFFSET as u64;
     // Populate pixels in B8G8R8X8 (little-endian u32 = 0x00RRGGBB).
     vm.write_physical_u32(fb_base, 0x00FF_0000); // (0,0) red
     vm.write_physical_u32(fb_base + 4, 0x0000_FF00); // (1,0) green
