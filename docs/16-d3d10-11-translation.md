@@ -388,9 +388,10 @@ trample compute-shader state, Aero reserves a fourth bind group:
   args) are internal to the compute-expansion pipeline. The **target** design places these in
   `@group(3)` in a reserved binding-number range that does not overlap the D3D register mappings (see
   “Internal bindings” below).
-  - Note: the current executor’s placeholder compute-prepass uses an ad-hoc bind group layout and
-    does not yet implement this reserved-range scheme; see
-    [`docs/graphics/geometry-shader-emulation.md`](./graphics/geometry-shader-emulation.md).
+  - Note: the current executor’s placeholder compute-prepass still uses an ad-hoc bind group layout
+    for its output buffers, but vertex pulling has adopted the reserved internal binding range
+    (starting at `@binding(256)`) so it can coexist with D3D register bindings.
+    See [`docs/graphics/geometry-shader-emulation.md`](./graphics/geometry-shader-emulation.md).
 
 #### Only resources used by the shader are emitted/bound
 
@@ -999,10 +1000,10 @@ Expansion compute pipelines require additional buffers that are not part of the 
 (vertex pulling inputs, scratch outputs, counters, indirect args).
 
 Implementation note: the layout described below is the **target** binding scheme. The current
-executor’s placeholder compute-prepass still uses a separate bind group layout for its outputs, but
-the vertex-pulling helper bind group now uses the reserved expansion-internal binding range
-(starting at `@binding(256)`), so it does not collide with the D3D register binding ranges. Future
-work is to unify all emulation kernels on the shared internal layout.
+executor’s placeholder compute-prepass still uses a separate bind group layout for its output
+buffers, but vertex pulling already uses the reserved expansion-internal binding range (starting at
+`BINDING_BASE_EXPANSION_INTERNAL = 256`), so it does not collide with the D3D register binding
+ranges. Future work is to unify all emulation kernels on the shared internal layout.
 
 These are not part of the D3D binding model, so they use a reserved binding-number range within the
 reserved internal group (`@group(3)`) to avoid colliding with D3D register mappings.
