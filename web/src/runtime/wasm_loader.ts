@@ -470,7 +470,8 @@ export type MachineHandle = {
      * Attach an existing OPFS-backed ISO image as the canonical install media CD-ROM (`disk_id=1`).
      *
      * Newer wasm builds export this as `attach_install_media_iso_opfs`; older builds used
-     * `attach_install_media_opfs_iso`. Accept both for back-compat.
+     * `attach_install_media_opfs_iso`, and some builds expose an `_existing` suffix variant.
+     * Accept all for back-compat.
      */
     attach_install_media_iso_opfs?(path: string): Promise<void>;
     attach_install_media_opfs_iso?(path: string): Promise<void>;
