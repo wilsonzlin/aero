@@ -189,15 +189,19 @@ fn read_bdl_entry(mem: &dyn MemoryAccess, base: u64, index: usize) -> BdlEntry {
         };
     };
 
+    // A BDL entry is 16 bytes. Ensure the end-exclusive range `[addr, addr + 16)` does not overflow
+    // so reads of the entry fields never wrap around into low guest physical addresses.
+    if addr.checked_add(16).is_none() {
+        return BdlEntry {
+            addr: 0,
+            len: 0,
+            ioc: false,
+        };
+    }
+
     let buf_addr = mem.read_u64(addr);
-    let len = addr
-        .checked_add(8)
-        .map(|addr| mem.read_u32(addr))
-        .unwrap_or(0);
-    let flags = addr
-        .checked_add(12)
-        .map(|addr| mem.read_u32(addr))
-        .unwrap_or(0);
+    let len = mem.read_u32(addr + 8);
+    let flags = mem.read_u32(addr + 12);
     BdlEntry {
         addr: buf_addr,
         len,
@@ -218,7 +222,9 @@ fn dma_read_stream_bytes(
         return false;
     }
 
-    out.reserve(bytes);
+    if out.try_reserve(bytes).is_err() {
+        return false;
+    }
     let mut fire_ioc = false;
 
     // BDPL is 128-byte aligned in hardware; low bits must read as 0.
@@ -245,7 +251,11 @@ fn dma_read_stream_bytes(
         let start = out.len();
         out.resize(start + remaining, 0);
         if let Some(addr) = entry.addr.checked_add(*bdl_offset as u64) {
-            mem.read_physical(addr, &mut out[start..start + remaining]);
+            // `read_physical` reads bytes in the range `[addr, addr + remaining)`. Even if `addr`
+            // computed successfully, guard against `addr + remaining` overflowing.
+            if addr.checked_add(remaining as u64).is_some() {
+                mem.read_physical(addr, &mut out[start..start + remaining]);
+            }
         }
 
         *bdl_offset += remaining as u32;
@@ -314,7 +324,11 @@ fn dma_write_stream_bytes(
         }
 
         if let Some(addr) = entry.addr.checked_add(*bdl_offset as u64) {
-            mem.write_physical(addr, &bytes[..remaining]);
+            // `write_physical` writes bytes in the range `[addr, addr + remaining)`. Even if `addr`
+            // computed successfully, guard against `addr + remaining` overflowing.
+            if addr.checked_add(remaining as u64).is_some() {
+                mem.write_physical(addr, &bytes[..remaining]);
+            }
         }
         bytes = &bytes[remaining..];
         written += remaining;
@@ -2471,6 +2485,7 @@ impl HdaController {
 mod tests {
     use super::*;
     use crate::mem::GuestMemory;
+    use std::collections::BTreeMap;
 
     fn verb_12(verb_id: u16, payload8: u8) -> u32 {
         ((verb_id as u32) << 8) | payload8 as u32
@@ -2680,5 +2695,138 @@ mod tests {
             assert_eq!(hda.stream_rt[1].resample_out_scratch.capacity(), caps_in.2);
             assert_eq!(hda.stream_rt[1].capture_mono_scratch.capacity(), caps_in.3);
         }
+    }
+
+    #[test]
+    fn read_bdl_entry_does_not_overflow_descriptor_range() {
+        #[derive(Debug, Clone, Copy)]
+        struct PanicMem;
+
+        impl MemoryAccess for PanicMem {
+            fn read_physical(&self, _addr: u64, _buf: &mut [u8]) {
+                panic!("unexpected guest memory read");
+            }
+
+            fn write_physical(&mut self, _addr: u64, _buf: &[u8]) {
+                panic!("unexpected guest memory write");
+            }
+        }
+
+        let mem = PanicMem;
+
+        // Select a BDL base such that:
+        // - `base + 7 * 16` succeeds (addr = u64::MAX - 15)
+        // - but reading the 16-byte entry would overflow (`addr + 16`).
+        let base = u64::MAX - 127;
+        let entry = read_bdl_entry(&mem, base, 7);
+        assert_eq!(entry.addr, 0);
+        assert_eq!(entry.len, 0);
+        assert!(!entry.ioc);
+    }
+
+    #[derive(Debug, Default, Clone)]
+    struct OverflowCheckedMem {
+        bytes: BTreeMap<u64, u8>,
+    }
+
+    impl OverflowCheckedMem {
+        fn write(&mut self, addr: u64, buf: &[u8]) {
+            for (i, b) in buf.iter().copied().enumerate() {
+                self.bytes.insert(addr + i as u64, b);
+            }
+        }
+    }
+
+    impl MemoryAccess for OverflowCheckedMem {
+        fn read_physical(&self, addr: u64, buf: &mut [u8]) {
+            if buf.is_empty() {
+                return;
+            }
+            assert!(
+                addr.checked_add(buf.len() as u64).is_some(),
+                "unexpected overflow guest memory read at {addr:#x} len={}",
+                buf.len()
+            );
+            for (i, slot) in buf.iter_mut().enumerate() {
+                *slot = self.bytes.get(&(addr + i as u64)).copied().unwrap_or(0);
+            }
+        }
+
+        fn write_physical(&mut self, addr: u64, buf: &[u8]) {
+            if buf.is_empty() {
+                return;
+            }
+            assert!(
+                addr.checked_add(buf.len() as u64).is_some(),
+                "unexpected overflow guest memory write at {addr:#x} len={}",
+                buf.len()
+            );
+            self.write(addr, buf);
+        }
+    }
+
+    #[test]
+    fn dma_read_stream_bytes_does_not_overflow_dma_range() {
+        let mut mem = OverflowCheckedMem::default();
+
+        // One BDL entry pointing at a DMA address where `addr + len` would overflow.
+        let bdl_base = 0x1000u64;
+        let buf_addr = u64::MAX - 7;
+        mem.write(bdl_base, &buf_addr.to_le_bytes());
+        mem.write(bdl_base + 8, &8u32.to_le_bytes());
+        mem.write(bdl_base + 12, &0u32.to_le_bytes());
+
+        let mut sd = StreamDescriptor::default();
+        sd.cbl = 1;
+        sd.lvi = 0;
+        sd.bdpl = bdl_base as u32;
+        sd.bdpu = 0;
+
+        let mut bdl_index = 0u16;
+        let mut bdl_offset = 0u32;
+        let mut out = Vec::new();
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            dma_read_stream_bytes(&mem, &mut sd, &mut bdl_index, &mut bdl_offset, 8, &mut out);
+        }));
+        assert!(
+            result.is_ok(),
+            "dma_read_stream_bytes must not panic on DMA address range overflow"
+        );
+    }
+
+    #[test]
+    fn dma_write_stream_bytes_does_not_overflow_dma_range() {
+        let mut mem = OverflowCheckedMem::default();
+
+        let bdl_base = 0x2000u64;
+        let buf_addr = u64::MAX - 7;
+        mem.write(bdl_base, &buf_addr.to_le_bytes());
+        mem.write(bdl_base + 8, &8u32.to_le_bytes());
+        mem.write(bdl_base + 12, &0u32.to_le_bytes());
+
+        let mut sd = StreamDescriptor::default();
+        sd.cbl = 1;
+        sd.lvi = 0;
+        sd.bdpl = bdl_base as u32;
+        sd.bdpu = 0;
+
+        let mut bdl_index = 0u16;
+        let mut bdl_offset = 0u32;
+        let payload = [1u8; 8];
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            dma_write_stream_bytes(
+                &mut mem,
+                &mut sd,
+                &mut bdl_index,
+                &mut bdl_offset,
+                &payload,
+            );
+        }));
+        assert!(
+            result.is_ok(),
+            "dma_write_stream_bytes must not panic on DMA address range overflow"
+        );
     }
 }
