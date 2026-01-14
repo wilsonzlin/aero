@@ -274,6 +274,44 @@ fn assemble_vs_pos_only() -> Vec<u8> {
     to_bytes(&out)
 }
 
+fn assemble_ps_texld_s0() -> Vec<u8> {
+    // ps_2_0: texld r0, t0, s0; mov oC0, r0; end
+    let mut out = vec![0xFFFF0200];
+    out.extend(enc_inst(
+        0x0042,
+        &[
+            enc_dst(0, 0, 0xF),   // r0
+            enc_src(3, 0, 0xE4),  // t0
+            enc_src(10, 0, 0xE4), // s0
+        ],
+    ));
+    out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)]));
+    out.push(0x0000FFFF);
+    to_bytes(&out)
+}
+
+fn assemble_ps_texld_cube_s0() -> Vec<u8> {
+    // ps_2_0 with explicit cube sampler declaration for s0:
+    //   dcl_cube s0
+    //   texld r0, t0, s0
+    //   mov oC0, r0
+    //   end
+    let mut out = vec![0xFFFF0200];
+    let decl_token = 3u32 << 27; // D3DSAMPLER_TEXTURE_TYPE_CUBE
+    out.extend(enc_inst(0x001F, &[decl_token, enc_dst(10, 0, 0)]));
+    out.extend(enc_inst(
+        0x0042,
+        &[
+            enc_dst(0, 0, 0xF),   // r0
+            enc_src(3, 0, 0xE4),  // t0
+            enc_src(10, 0, 0xE4), // s0
+        ],
+    ));
+    out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)]));
+    out.push(0x0000FFFF);
+    to_bytes(&out)
+}
+
 #[wasm_bindgen_test(async)]
 async fn d3d9_executor_uses_persistent_shader_cache_on_wasm() {
     // Install a minimal stub `AeroPersistentGpuCache` so the Rust wasm persistent cache wrapper
@@ -599,6 +637,176 @@ async fn d3d9_executor_retranslates_on_persisted_reflection_entry_point_mismatch
     assert_eq!(
         entry_point_after, "vs_main",
         "expected retranslation to restore correct entry point metadata"
+    );
+}
+
+#[wasm_bindgen_test(async)]
+async fn d3d9_executor_retranslates_on_persisted_reflection_used_samplers_mask_mismatch() {
+    // Corrupting usedSamplersMask can cause missing texture flushes or bind group layouts that
+    // don't match the cached WGSL. The executor should detect this on persistent cache hit,
+    // invalidate+retry once, and then persist the corrected reflection.
+    let (api, store) = make_persistent_cache_stub();
+    let _guard = PersistentCacheApiGuard::install(&api, &store);
+
+    let mut exec = match AerogpuD3d9Executor::new_headless().await {
+        Ok(exec) => exec,
+        Err(err) => {
+            common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({err})"));
+            return;
+        }
+    };
+
+    let ps_bytes = assemble_ps_texld_s0();
+    let mut writer = AerogpuCmdWriter::new();
+    writer.create_shader_dxbc(1, AerogpuShaderStage::Pixel, &ps_bytes);
+    let stream = writer.finish();
+
+    exec.execute_cmd_stream_for_context_async(0, &stream)
+        .await
+        .expect("first shader create succeeds");
+
+    let map: Map = Reflect::get(&store, &JsValue::from_str("map"))
+        .expect("get store.map")
+        .dyn_into()
+        .expect("store.map should be a Map");
+    let keys = Array::from(&map.keys());
+    assert_eq!(keys.length(), 1, "expected one persisted shader entry");
+    let key = keys.get(0);
+    let cached = map.get(&key);
+
+    let reflection =
+        Reflect::get(&cached, &JsValue::from_str("reflection")).expect("get cached.reflection");
+    let used_mask_before = Reflect::get(&reflection, &JsValue::from_str("usedSamplersMask"))
+        .ok()
+        .and_then(|v| v.as_f64())
+        .map(|v| v as u32)
+        .unwrap_or(0);
+    assert_eq!(used_mask_before, 1, "expected shader to use s0");
+
+    // Corrupt usedSamplersMask.
+    let reflection_obj: Object = reflection
+        .clone()
+        .dyn_into()
+        .expect("cached.reflection should be an object");
+    Reflect::set(
+        &reflection_obj,
+        &JsValue::from_str("usedSamplersMask"),
+        &JsValue::from_f64(0.0),
+    )
+    .expect("set reflection.usedSamplersMask");
+
+    exec.reset();
+    exec.execute_cmd_stream_for_context_async(0, &stream)
+        .await
+        .expect("second shader create succeeds");
+
+    let get_calls = read_f64(&store, "getCalls") as u32;
+    let put_calls = read_f64(&store, "putCalls") as u32;
+    let delete_calls = read_f64(&store, "deleteCalls") as u32;
+    assert_eq!(get_calls, 3, "expected invalidate+retry after mismatch");
+    assert_eq!(put_calls, 2, "expected corrected shader to be persisted");
+    assert_eq!(
+        delete_calls, 1,
+        "expected corrupted cached entry to be deleted"
+    );
+
+    let cached_after = map.get(&key);
+    let reflection_after =
+        Reflect::get(&cached_after, &JsValue::from_str("reflection")).expect("get reflection");
+    let used_mask_after = Reflect::get(&reflection_after, &JsValue::from_str("usedSamplersMask"))
+        .ok()
+        .and_then(|v| v.as_f64())
+        .map(|v| v as u32)
+        .unwrap_or(0);
+    assert_eq!(
+        used_mask_after, used_mask_before,
+        "expected retranslation to restore usedSamplersMask"
+    );
+}
+
+#[wasm_bindgen_test(async)]
+async fn d3d9_executor_retranslates_on_persisted_reflection_cube_samplers_mask_mismatch() {
+    // Corrupting cubeSamplersMask can cause bind group layouts that don't match the cached WGSL
+    // (texture_cube vs texture_2d). The executor should detect this and invalidate+retry.
+    let (api, store) = make_persistent_cache_stub();
+    let _guard = PersistentCacheApiGuard::install(&api, &store);
+
+    let mut exec = match AerogpuD3d9Executor::new_headless().await {
+        Ok(exec) => exec,
+        Err(err) => {
+            common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({err})"));
+            return;
+        }
+    };
+
+    let ps_bytes = assemble_ps_texld_cube_s0();
+    let mut writer = AerogpuCmdWriter::new();
+    writer.create_shader_dxbc(1, AerogpuShaderStage::Pixel, &ps_bytes);
+    let stream = writer.finish();
+
+    exec.execute_cmd_stream_for_context_async(0, &stream)
+        .await
+        .expect("first shader create succeeds");
+
+    let map: Map = Reflect::get(&store, &JsValue::from_str("map"))
+        .expect("get store.map")
+        .dyn_into()
+        .expect("store.map should be a Map");
+    let keys = Array::from(&map.keys());
+    assert_eq!(keys.length(), 1, "expected one persisted shader entry");
+    let key = keys.get(0);
+    let cached = map.get(&key);
+
+    let reflection =
+        Reflect::get(&cached, &JsValue::from_str("reflection")).expect("get cached.reflection");
+    let cube_mask_before = Reflect::get(&reflection, &JsValue::from_str("cubeSamplersMask"))
+        .ok()
+        .and_then(|v| v.as_f64())
+        .map(|v| v as u32)
+        .unwrap_or(0);
+    assert_eq!(
+        cube_mask_before, 1,
+        "expected shader to use cube sampler s0"
+    );
+
+    // Corrupt cubeSamplersMask.
+    let reflection_obj: Object = reflection
+        .clone()
+        .dyn_into()
+        .expect("cached.reflection should be an object");
+    Reflect::set(
+        &reflection_obj,
+        &JsValue::from_str("cubeSamplersMask"),
+        &JsValue::from_f64(0.0),
+    )
+    .expect("set reflection.cubeSamplersMask");
+
+    exec.reset();
+    exec.execute_cmd_stream_for_context_async(0, &stream)
+        .await
+        .expect("second shader create succeeds");
+
+    let get_calls = read_f64(&store, "getCalls") as u32;
+    let put_calls = read_f64(&store, "putCalls") as u32;
+    let delete_calls = read_f64(&store, "deleteCalls") as u32;
+    assert_eq!(get_calls, 3, "expected invalidate+retry after mismatch");
+    assert_eq!(put_calls, 2, "expected corrected shader to be persisted");
+    assert_eq!(
+        delete_calls, 1,
+        "expected corrupted cached entry to be deleted"
+    );
+
+    let cached_after = map.get(&key);
+    let reflection_after =
+        Reflect::get(&cached_after, &JsValue::from_str("reflection")).expect("get reflection");
+    let cube_mask_after = Reflect::get(&reflection_after, &JsValue::from_str("cubeSamplersMask"))
+        .ok()
+        .and_then(|v| v.as_f64())
+        .map(|v| v as u32)
+        .unwrap_or(0);
+    assert_eq!(
+        cube_mask_after, cube_mask_before,
+        "expected retranslation to restore cubeSamplersMask"
     );
 }
 

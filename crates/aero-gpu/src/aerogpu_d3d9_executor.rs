@@ -481,6 +481,53 @@ impl PersistentShaderStage {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
+fn derive_sampler_masks_from_wgsl(wgsl: &str) -> (u16, u16) {
+    // The D3D9 translator declares sampler bindings using stable names:
+    //   var tex{s}: texture_2d<f32> / texture_cube<f32>
+    //   var samp{s}: sampler
+    //
+    // Persisted reflection includes sampler masks used by the executor to:
+    // - flush textures before draw
+    // - select bind group layouts (2D vs Cube view_dimension)
+    //
+    // When cached reflection is stale/corrupt, the masks can become inconsistent with the cached
+    // WGSL. Derive masks from WGSL declarations for validation on persistent cache hits.
+    let mut used = 0u16;
+    let mut cube = 0u16;
+
+    for line in wgsl.lines() {
+        let Some(pos) = line.find("var tex") else {
+            continue;
+        };
+        let rest = &line[pos + "var tex".len()..];
+        let mut digits_end = 0usize;
+        for (i, ch) in rest.char_indices() {
+            if ch.is_ascii_digit() {
+                digits_end = i + ch.len_utf8();
+            } else {
+                break;
+            }
+        }
+        if digits_end == 0 {
+            continue;
+        }
+        let Ok(idx) = rest[..digits_end].parse::<u32>() else {
+            continue;
+        };
+        if idx >= MAX_SAMPLERS as u32 {
+            continue;
+        }
+        let bit = 1u16 << idx;
+        used |= bit;
+        if line.contains("texture_cube<f32>") {
+            cube |= bit;
+        }
+    }
+
+    (used, cube)
+}
+
 #[derive(Debug)]
 struct InputLayout {
     decl: VertexDeclaration,
@@ -2801,6 +2848,39 @@ impl AerogpuD3d9Executor {
                     );
                 }
             };
+
+            if source == aero_d3d9::runtime::ShaderCacheSource::Persistent {
+                let (wgsl_used_samplers_mask, wgsl_cube_samplers_mask) =
+                    derive_sampler_masks_from_wgsl(wgsl.as_str());
+                if wgsl_used_samplers_mask != reflection.used_samplers_mask
+                    || wgsl_cube_samplers_mask != reflection.cube_samplers_mask
+                {
+                    debug!(
+                        shader_handle,
+                        expected_used = reflection.used_samplers_mask,
+                        expected_cube = reflection.cube_samplers_mask,
+                        derived_used = wgsl_used_samplers_mask,
+                        derived_cube = wgsl_cube_samplers_mask,
+                        "cached shader sampler mask metadata does not match WGSL; invalidating and retranslating"
+                    );
+                    if !invalidated_once {
+                        invalidated_once = true;
+                        let _ = self
+                            .persistent_shader_cache
+                            .invalidate(dxbc_bytes, flags.clone())
+                            .await;
+                        self.stats.set_d3d9_shader_cache_disabled(
+                            self.persistent_shader_cache.is_persistent_disabled(),
+                        );
+                        continue;
+                    }
+                    return self.create_shader_dxbc_in_memory(
+                        shader_handle,
+                        expected_stage,
+                        dxbc_bytes,
+                    );
+                }
+            }
 
             // Optional: validate cached WGSL on persistent hit to guard against corruption/staleness.
             let module = if source == aero_d3d9::runtime::ShaderCacheSource::Persistent {
