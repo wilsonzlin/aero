@@ -815,6 +815,7 @@ fn vs_as_compute_loads_extended_formats() {
             return;
         }
 
+        #[allow(clippy::too_many_arguments)]
         async fn run_case(
             device: &wgpu::Device,
             queue: &wgpu::Queue,
