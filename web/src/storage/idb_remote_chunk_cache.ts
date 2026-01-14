@@ -258,11 +258,19 @@ export class IdbRemoteChunkCache {
   }
 
   async getStatus(): Promise<{ bytesUsed: number; cacheLimitBytes: number | null }> {
-    const tx = this.db.transaction(["remote_chunk_meta"], "readonly");
-    const metaStore = tx.objectStore("remote_chunk_meta");
-    const meta = (await idbReq(metaStore.get(this.cacheKey))) as RemoteChunkCacheMetaRecord | undefined;
-    await idbTxDone(tx);
-    return { bytesUsed: meta?.bytesUsed ?? 0, cacheLimitBytes: this.cacheLimitBytes };
+    let tx: IDBTransaction | null = null;
+    try {
+      tx = this.db.transaction(["remote_chunk_meta"], "readonly");
+      const metaStore = tx.objectStore("remote_chunk_meta");
+      const meta = (await idbReq(metaStore.get(this.cacheKey))) as RemoteChunkCacheMetaRecord | undefined;
+      await idbTxDone(tx);
+      return { bytesUsed: meta?.bytesUsed ?? 0, cacheLimitBytes: this.cacheLimitBytes };
+    } catch (err) {
+      if (isQuotaExceededError(err) || isQuotaExceededError(tx?.error)) {
+        throw new IdbRemoteChunkCacheQuotaError(undefined, { cause: err });
+      }
+      throw err;
+    }
   }
 
   private touchCacheKey(chunkIndex: number, bytes: Uint8Array): void {
@@ -565,25 +573,39 @@ export class IdbRemoteChunkCache {
   }
 
   async listChunkIndices(): Promise<number[]> {
-    const tx = this.db.transaction(["remote_chunks"], "readonly");
+    let tx: IDBTransaction | null = null;
+    try {
+      tx = this.db.transaction(["remote_chunks"], "readonly");
+    } catch (err) {
+      // Cache status queries are best-effort and should not fail due to quota.
+      if (isQuotaExceededError(err)) return [];
+      throw err;
+    }
+
     const chunksStore = tx.objectStore("remote_chunks");
     const range = IDBKeyRange.bound([this.cacheKey, -Infinity], [this.cacheKey, Infinity]);
     const out: number[] = [];
-    await new Promise<void>((resolve, reject) => {
-      const req = chunksStore.openCursor(range);
-      req.onerror = () => reject(req.error ?? new Error("IndexedDB cursor failed"));
-      req.onsuccess = () => {
-        const cursor = req.result;
-        if (!cursor) {
-          resolve();
-          return;
-        }
-        const rec = cursor.value as RemoteChunkRecord;
-        out.push(rec.chunkIndex);
-        cursor.continue();
-      };
-    });
-    await idbTxDone(tx);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const req = chunksStore.openCursor(range);
+        req.onerror = () => reject(req.error ?? new Error("IndexedDB cursor failed"));
+        req.onsuccess = () => {
+          const cursor = req.result;
+          if (!cursor) {
+            resolve();
+            return;
+          }
+          const rec = cursor.value as RemoteChunkRecord;
+          out.push(rec.chunkIndex);
+          cursor.continue();
+        };
+      });
+      await idbTxDone(tx);
+    } catch (err) {
+      // Best-effort: if the DB is at quota and the cursor/tx fails, report empty.
+      if (isQuotaExceededError(err) || isQuotaExceededError(tx.error)) return [];
+      throw err;
+    }
     out.sort((a, b) => a - b);
     return out;
   }

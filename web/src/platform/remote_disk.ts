@@ -699,20 +699,36 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
     }
     if (this.cacheBackend === "idb") {
       if (!this.idbCache) throw new Error("Remote disk IDB cache not initialized");
-      const status = await this.idbCache.getStatus();
-      this.cachedBytes = status.bytesUsed;
-      const indices = await this.idbCache.listChunkIndices();
-      const set = new RangeSet();
-      for (const idx of indices) {
-        const r = this.blockRange(idx);
-        set.insert(r.start, r.end);
+      try {
+        const status = await this.idbCache.getStatus();
+        this.cachedBytes = status.bytesUsed;
+        const indices = await this.idbCache.listChunkIndices();
+        const set = new RangeSet();
+        for (const idx of indices) {
+          const r = this.blockRange(idx);
+          set.insert(r.start, r.end);
+        }
+        return {
+          totalSize: this.totalSize,
+          cachedBytes: status.bytesUsed,
+          cachedRanges: set.getRanges(),
+          cacheLimitBytes: this.cacheLimitBytes,
+        };
+      } catch (err) {
+        if (err instanceof IdbRemoteChunkCacheQuotaError) {
+          // If quota pressure is severe enough to break cache bookkeeping reads, treat the cache as
+          // disabled (but keep the disk usable).
+          this.idbCacheDisabled = true;
+          this.cachedBytes = 0;
+          return {
+            totalSize: this.totalSize,
+            cachedBytes: 0,
+            cachedRanges: [],
+            cacheLimitBytes: 0,
+          };
+        }
+        throw err;
       }
-      return {
-        totalSize: this.totalSize,
-        cachedBytes: status.bytesUsed,
-        cachedRanges: set.getRanges(),
-        cacheLimitBytes: this.cacheLimitBytes,
-      };
     }
 
     if (!this.opfsCache) throw new Error("Remote disk OPFS cache not initialized");
