@@ -2850,8 +2850,8 @@ static VOID AerovNetInterruptDpcWork(_Inout_ AEROVNET_ADAPTER* Adapter, _In_ BOO
           TxReq = (AEROVNET_TX_REQUEST*)Cookie;
 
           if (TxReq) {
-            Adapter->StatTxPackets++;
             if (TxReq->Nb) {
+              Adapter->StatTxPackets++;
               Adapter->StatTxBytes += NET_BUFFER_DATA_LENGTH(TxReq->Nb);
             } else {
               Adapter->StatTxErrors++;
@@ -4396,7 +4396,10 @@ static VOID AerovNetMiniportCancelSend(_In_ NDIS_HANDLE MiniportAdapterContext, 
   for (Entry = Adapter->TxSubmittedList.Flink; Entry != &Adapter->TxSubmittedList; Entry = Entry->Flink) {
     AEROVNET_TX_REQUEST* TxReq = CONTAINING_RECORD(Entry, AEROVNET_TX_REQUEST, Link);
     if (TxReq->Nbl != NULL && NET_BUFFER_LIST_CANCEL_ID(TxReq->Nbl) == CancelId) {
-      InterlockedIncrement(&g_AerovNetDbgTxCancelAfterSubmit);
+      if (!TxReq->Cancelled) {
+        TxReq->Cancelled = TRUE;
+        InterlockedIncrement(&g_AerovNetDbgTxCancelAfterSubmit);
+      }
     }
   }
 #endif
