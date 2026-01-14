@@ -1363,7 +1363,17 @@ static std::string ReadJsonFileOrEmpty(const std::wstring& path) {
   if (!aerogpu_test::ReadFileBytes(path, &bytes, &err)) {
     return std::string();
   }
-  return TrimAsciiWhitespace(std::string(bytes.begin(), bytes.end()));
+  std::string s(bytes.begin(), bytes.end());
+  // Be tolerant of UTF-8 BOMs produced by some editors/tools.
+  if (s.size() >= 3 && (unsigned char)s[0] == 0xEF && (unsigned char)s[1] == 0xBB && (unsigned char)s[2] == 0xBF) {
+    s = s.substr(3);
+  }
+  s = TrimAsciiWhitespace(s);
+  // If a BOM appears after leading whitespace (rare), trim again.
+  if (s.size() >= 3 && (unsigned char)s[0] == 0xEF && (unsigned char)s[1] == 0xBB && (unsigned char)s[2] == 0xBF) {
+    s = s.substr(3);
+  }
+  return TrimAsciiWhitespace(s);
 }
 
 static bool ContainsJsonKeyWithColon(const std::string& obj, const char* key) {
