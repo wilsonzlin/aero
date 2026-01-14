@@ -78,7 +78,6 @@ static int RunPerfStateSanity(int argc, char** argv) {
   }
 
   bool saw_nonzero_fence = false;
-  bool have_contig_pool = false;
   uint64_t last_contig_pool_hit = 0;
   uint64_t last_contig_pool_miss = 0;
   uint64_t last_contig_pool_bytes_saved = 0;
@@ -138,9 +137,6 @@ static int RunPerfStateSanity(int argc, char** argv) {
 
     const bool have_contig =
         (q.hdr.size >= offsetof(aerogpu_escape_query_perf_out, contig_pool_bytes_saved) + sizeof(q.contig_pool_bytes_saved));
-    if (i == 0) {
-      have_contig_pool = have_contig;
-    }
     if (have_contig) {
       // Counters are monotonic for the lifetime of the adapter; validate basic invariants.
       const uint64_t hit = (uint64_t)q.contig_pool_hit;
