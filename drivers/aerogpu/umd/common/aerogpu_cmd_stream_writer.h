@@ -101,6 +101,22 @@ class SpanCmdStreamWriter {
     return error_;
   }
 
+  // Captures the current write cursor + error state so callers can roll back
+  // partially appended packets when implementing transactional updates.
+  struct Checkpoint {
+    size_t bytes_used = 0;
+    CmdStreamError error = CmdStreamError::kOk;
+  };
+
+  Checkpoint checkpoint() const {
+    return Checkpoint{cursor_, error_};
+  }
+
+  void rollback(const Checkpoint& cp) {
+    cursor_ = (cp.bytes_used <= capacity_) ? cp.bytes_used : capacity_;
+    error_ = cp.error;
+  }
+
   size_t bytes_remaining() const {
     // When cursor_==0 the stream header has not been (re-)initialized yet, but
     // it still consumes space in the backing buffer.
@@ -298,6 +314,28 @@ class VectorCmdStreamWriter {
 
   CmdStreamError error() const {
     return error_;
+  }
+
+  struct Checkpoint {
+    size_t bytes_used = 0;
+    CmdStreamError error = CmdStreamError::kOk;
+  };
+
+  Checkpoint checkpoint() const {
+    return Checkpoint{buf_.size(), error_};
+  }
+
+  void rollback(const Checkpoint& cp) {
+    size_t new_size = cp.bytes_used;
+    if (new_size > buf_.size()) {
+      new_size = buf_.size();
+    }
+    // Never leave a partially formed stream header in place.
+    if (new_size != 0 && new_size < sizeof(aerogpu_cmd_stream_header)) {
+      new_size = sizeof(aerogpu_cmd_stream_header);
+    }
+    buf_.resize(new_size);
+    error_ = cp.error;
   }
 
   size_t bytes_remaining() const {
@@ -506,6 +544,23 @@ class CmdStreamWriter {
 
   CmdStreamError error() const {
     return (mode_ == Mode::Span) ? span_.error() : vec_.error();
+  }
+
+  struct Checkpoint {
+    size_t bytes_used = 0;
+    CmdStreamError error = CmdStreamError::kOk;
+  };
+
+  Checkpoint checkpoint() const {
+    return Checkpoint{bytes_used(), error()};
+  }
+
+  void rollback(const Checkpoint& cp) {
+    if (mode_ == Mode::Span) {
+      span_.rollback(SpanCmdStreamWriter::Checkpoint{cp.bytes_used, cp.error});
+    } else {
+      vec_.rollback(VectorCmdStreamWriter::Checkpoint{cp.bytes_used, cp.error});
+    }
   }
 
   size_t bytes_remaining() const {

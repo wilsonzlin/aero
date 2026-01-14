@@ -11573,6 +11573,22 @@ void AEROGPU_APIENTRY RotateResourceIdentities11(D3D11DDI_HDEVICECONTEXT hCtx, D
     }
   }
 
+  // Treat RotateResourceIdentities as a transaction: if rebinding packets cannot
+  // be appended (OOM), roll back the command stream and undo the rotation so the
+  // runtime-visible state remains unchanged.
+  const auto cmd_checkpoint = dev->cmd.checkpoint();
+  const uint32_t prev_rtv_count = dev->current_rtv_count;
+  const std::array<aerogpu_handle_t, AEROGPU_MAX_RENDER_TARGETS> prev_rtvs = dev->current_rtvs;
+  const aerogpu_handle_t prev_dsv = dev->current_dsv;
+  aerogpu_handle_t prev_vs_srvs[kMaxShaderResourceSlots] = {};
+  aerogpu_handle_t prev_ps_srvs[kMaxShaderResourceSlots] = {};
+  aerogpu_handle_t prev_gs_srvs[kMaxShaderResourceSlots] = {};
+  aerogpu_handle_t prev_cs_srvs[kMaxShaderResourceSlots] = {};
+  std::memcpy(prev_vs_srvs, dev->vs_srvs, sizeof(prev_vs_srvs));
+  std::memcpy(prev_ps_srvs, dev->ps_srvs, sizeof(prev_ps_srvs));
+  std::memcpy(prev_gs_srvs, dev->gs_srvs, sizeof(prev_gs_srvs));
+  std::memcpy(prev_cs_srvs, dev->cs_srvs, sizeof(prev_cs_srvs));
+
   struct ResourceIdentity {
     aerogpu_handle_t handle = 0;
     uint32_t backing_alloc_id = 0;
@@ -11632,6 +11648,29 @@ void AEROGPU_APIENTRY RotateResourceIdentities11(D3D11DDI_HDEVICECONTEXT hCtx, D
     res->mapped_size = id.mapped_size;
   };
 
+  auto rollback_rotation = [&](bool report_oom) {
+    dev->cmd.rollback(cmd_checkpoint);
+
+    // Undo the rotation (rotate right by one).
+    ResourceIdentity undo_saved = take_identity(resources[numResources - 1]);
+    for (UINT i = numResources - 1; i > 0; --i) {
+      put_identity(resources[i], take_identity(resources[i - 1]));
+    }
+    put_identity(resources[0], std::move(undo_saved));
+
+    dev->current_rtv_count = prev_rtv_count;
+    dev->current_rtvs = prev_rtvs;
+    dev->current_dsv = prev_dsv;
+    std::memcpy(dev->vs_srvs, prev_vs_srvs, sizeof(prev_vs_srvs));
+    std::memcpy(dev->ps_srvs, prev_ps_srvs, sizeof(prev_ps_srvs));
+    std::memcpy(dev->gs_srvs, prev_gs_srvs, sizeof(prev_gs_srvs));
+    std::memcpy(dev->cs_srvs, prev_cs_srvs, sizeof(prev_cs_srvs));
+
+    if (report_oom) {
+      SetError(dev, E_OUTOFMEMORY);
+    }
+  };
+
   // Capture the pre-rotation AeroGPU handles so we can remap bound handle slots
   // (which store raw protocol handles, not resource pointers).
   std::vector<aerogpu_handle_t> old_handles;
@@ -11684,13 +11723,7 @@ void AEROGPU_APIENTRY RotateResourceIdentities11(D3D11DDI_HDEVICECONTEXT hCtx, D
   if (outputs_need_rebind) {
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
     if (!cmd) {
-      // Undo the rotation (rotate right by one).
-      ResourceIdentity undo_saved = take_identity(resources[numResources - 1]);
-      for (UINT i = numResources - 1; i > 0; --i) {
-        put_identity(resources[i], take_identity(resources[i - 1]));
-      }
-      put_identity(resources[0], std::move(undo_saved));
-      SetError(dev, E_OUTOFMEMORY);
+      rollback_rotation(/*report_oom=*/true);
       return;
     }
 
@@ -11723,11 +11756,19 @@ void AEROGPU_APIENTRY RotateResourceIdentities11(D3D11DDI_HDEVICECONTEXT hCtx, D
   for (uint32_t slot = 0; slot < kMaxShaderResourceSlots; ++slot) {
     const aerogpu_handle_t new_vs = remap_handle(dev->vs_srvs[slot]);
     if (new_vs != dev->vs_srvs[slot]) {
-      SetShaderResourceSlotLocked(dev, AEROGPU_SHADER_STAGE_VERTEX, slot, new_vs);
+      if (!SetTextureLocked(dev, AEROGPU_SHADER_STAGE_VERTEX, slot, new_vs)) {
+        rollback_rotation(/*report_oom=*/false);
+        return;
+      }
+      dev->vs_srvs[slot] = new_vs;
     }
     const aerogpu_handle_t new_ps = remap_handle(dev->ps_srvs[slot]);
     if (new_ps != dev->ps_srvs[slot]) {
-      SetShaderResourceSlotLocked(dev, AEROGPU_SHADER_STAGE_PIXEL, slot, new_ps);
+      if (!SetTextureLocked(dev, AEROGPU_SHADER_STAGE_PIXEL, slot, new_ps)) {
+        rollback_rotation(/*report_oom=*/false);
+        return;
+      }
+      dev->ps_srvs[slot] = new_ps;
     }
   }
 
@@ -11735,20 +11776,28 @@ void AEROGPU_APIENTRY RotateResourceIdentities11(D3D11DDI_HDEVICECONTEXT hCtx, D
     if (!is_rotated(dev->current_cs_srvs[slot])) {
       continue;
     }
-    SetShaderResourceSlotLocked(dev,
-                                AEROGPU_SHADER_STAGE_COMPUTE,
-                                slot,
-                                dev->current_cs_srvs[slot] ? dev->current_cs_srvs[slot]->handle : 0);
+    const aerogpu_handle_t new_cs = dev->current_cs_srvs[slot] ? dev->current_cs_srvs[slot]->handle : 0;
+    if (new_cs != dev->cs_srvs[slot]) {
+      if (!SetTextureLocked(dev, AEROGPU_SHADER_STAGE_COMPUTE, slot, new_cs)) {
+        rollback_rotation(/*report_oom=*/false);
+        return;
+      }
+      dev->cs_srvs[slot] = new_cs;
+    }
   }
 
   for (uint32_t slot = 0; slot < dev->current_gs_srvs.size(); ++slot) {
     if (!is_rotated(dev->current_gs_srvs[slot])) {
       continue;
     }
-    SetShaderResourceSlotLocked(dev,
-                                AEROGPU_SHADER_STAGE_GEOMETRY,
-                                slot,
-                                dev->current_gs_srvs[slot] ? dev->current_gs_srvs[slot]->handle : 0);
+    const aerogpu_handle_t new_gs = dev->current_gs_srvs[slot] ? dev->current_gs_srvs[slot]->handle : 0;
+    if (new_gs != dev->gs_srvs[slot]) {
+      if (!SetTextureLocked(dev, AEROGPU_SHADER_STAGE_GEOMETRY, slot, new_gs)) {
+        rollback_rotation(/*report_oom=*/false);
+        return;
+      }
+      dev->gs_srvs[slot] = new_gs;
+    }
   }
 
 #if defined(AEROGPU_UMD_TRACE_RESOURCES)
