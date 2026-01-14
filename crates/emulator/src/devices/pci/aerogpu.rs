@@ -157,8 +157,9 @@ impl AeroGpuPciDevice {
             vram_size: cfg.vram_size_bytes as usize,
             vram_bar_base: bar1,
             lfb_offset: AEROGPU_PCI_BAR1_LFB_OFFSET,
-            // Back only planes 0/1 (text mode) in the reserved legacy VGA window (128KiB).
-            legacy_plane_count: 2,
+            // Reserve the full 4-plane VGA planar region (256KiB) so switching between VBE and
+            // legacy modes doesn't clobber plane contents.
+            legacy_plane_count: 4,
         });
 
         Self {
