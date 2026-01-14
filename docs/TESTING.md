@@ -113,6 +113,16 @@ cargo xtask test-all --pw-project chromium --pw-project firefox
 cargo xtask test-all --pw-project chromium -- --grep smoke
 ```
 
+### Minimal Rust sanity checks (no Node / no Playwright)
+
+If you want a fast, Rust-only smoke check (useful while iterating, or when debugging CI failures), run:
+
+```bash
+bash ./scripts/safe-run.sh cargo test -p aero-platform --locked
+bash ./scripts/safe-run.sh cargo check -p aero-machine --locked
+bash ./scripts/safe-run.sh cargo check -p aero-wasm --target wasm32-unknown-unknown --locked
+```
+
 ### Focused test runners
 
 If you're working on a specific subsystem, `xtask` also provides smaller suites, and some subsystems
