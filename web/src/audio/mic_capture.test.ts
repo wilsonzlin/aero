@@ -3,6 +3,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import { MicCapture } from "./mic_capture";
 
 const GLOBALS = globalThis as unknown as { AudioContext?: unknown };
+const ORIGINAL_AUDIO_WORKLET_NODE = (globalThis as any).AudioWorkletNode as unknown;
 
 const ORIGINAL_AUDIO_CONTEXT = GLOBALS.AudioContext;
 const ORIGINAL_MEDIA_DEVICES = (navigator as unknown as { mediaDevices?: unknown }).mediaDevices;
@@ -18,6 +19,12 @@ afterEach(() => {
     (navigator as unknown as { mediaDevices?: unknown }).mediaDevices = ORIGINAL_MEDIA_DEVICES;
   } else {
     delete (navigator as unknown as { mediaDevices?: unknown }).mediaDevices;
+  }
+
+  if (ORIGINAL_AUDIO_WORKLET_NODE) {
+    (globalThis as any).AudioWorkletNode = ORIGINAL_AUDIO_WORKLET_NODE;
+  } else {
+    delete (globalThis as any).AudioWorkletNode;
   }
 });
 
@@ -89,4 +96,85 @@ test("MicCapture exposes AudioContext.sampleRate as actualSampleRate (even if re
   expect(mic.ringBuffer.capacity).toBe(Math.max(1, Math.floor((actualSampleRate * mic.options.bufferMs) / 1000)));
 
   await mic.stop();
+});
+
+test("MicCapture captures track debug info and clears it on stop", async () => {
+  class FakeNode {
+    connect = vi.fn();
+    disconnect = vi.fn();
+  }
+
+  class FakeGainNode extends FakeNode {
+    gain = { value: 1 };
+  }
+
+  class FakeAudioWorkletNode extends FakeNode {
+    port = { onmessage: null as unknown };
+    constructor(..._args: unknown[]) {
+      super();
+    }
+  }
+
+  (globalThis as any).AudioWorkletNode = FakeAudioWorkletNode;
+
+  class FakeAudioContext {
+    sampleRate = 48_000;
+    destination = {};
+    audioWorklet = { addModule: vi.fn(async () => undefined) };
+
+    createGain(): FakeGainNode {
+      return new FakeGainNode();
+    }
+
+    createMediaStreamSource(_stream: unknown): FakeNode {
+      return new FakeNode();
+    }
+
+    createScriptProcessor(): never {
+      throw new Error("Unexpected ScriptProcessorNode path");
+    }
+
+    resume = vi.fn(async () => undefined);
+    close = vi.fn(async () => undefined);
+  }
+
+  GLOBALS.AudioContext = FakeAudioContext;
+
+  const track = {
+    label: "Test Mic",
+    addEventListener: vi.fn(),
+    stop: vi.fn(),
+    getSettings: vi.fn(() => ({ deviceId: "raw-device-id", sampleRate: 48_000 })),
+    getConstraints: vi.fn(() => ({ deviceId: { exact: "raw-device-id" } })),
+    getCapabilities: vi.fn(() => ({ deviceId: "raw-device-id", echoCancellation: [true, false] })),
+  };
+  const stream = {
+    getAudioTracks: () => [track],
+    getTracks: () => [track],
+  };
+
+  (navigator as unknown as { mediaDevices?: unknown }).mediaDevices = {
+    getUserMedia: vi.fn(async () => stream),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  };
+
+  const mic = new MicCapture({ sampleRate: 48_000, bufferMs: 50, preferWorklet: true });
+  await mic.start();
+
+  const dbg = mic.getDebugInfo();
+  expect(dbg.backend).toBe("worklet");
+  expect(dbg.trackLabel).toBe("Test Mic");
+  expect(dbg.trackSettings).toEqual({ deviceId: "raw-device-id", sampleRate: 48_000 });
+  expect(dbg.trackConstraints).toEqual({ deviceId: { exact: "raw-device-id" } });
+  expect(dbg.trackCapabilities).toEqual({ deviceId: "raw-device-id", echoCancellation: [true, false] });
+
+  await mic.stop();
+  expect(mic.getDebugInfo()).toEqual({
+    backend: null,
+    trackLabel: null,
+    trackSettings: null,
+    trackConstraints: null,
+    trackCapabilities: null,
+  });
 });
