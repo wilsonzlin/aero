@@ -1,9 +1,9 @@
 use std::ops::Range;
 
-use aero_cpu_core::interp::tier0::exec::StepExit;
+use aero_cpu_core::interp::tier0::exec::{self, StepExit};
 use aero_cpu_core::interp::tier0::Tier0Config;
 use aero_cpu_core::state::{gpr, CpuMode, CpuState as CoreState};
-use aero_cpu_core::{CpuBus, CpuCore, Exception};
+use aero_cpu_core::{AssistReason, CpuBus, Exception};
 
 use crate::corpus::TestCase;
 use crate::{CpuState, ExecOutcome, Fault};
@@ -35,26 +35,29 @@ impl AeroBackend {
             mem: case.memory.clone(),
         };
 
-        let mut cpu = CpuCore::new(CpuMode::Long);
-        import_state(&case.init, &mut cpu.state);
+        let mut cpu = CoreState::new(CpuMode::Long);
+        import_state(&case.init, &mut cpu);
 
-        let step = aero_cpu_core::interp::tier0::exec::step_with_config(
-            &self.cfg,
-            &mut cpu.state,
-            &mut bus,
-        );
-
-        let fault = match step {
-            Ok(StepExit::Assist { .. }) => Some(Fault::Unsupported("tier-0 assist exit")),
-            Ok(_) => None,
-            Err(e) => Some(map_exception(e, self.mem_fault_signal)),
+        let fault = match exec::step_with_config(&self.cfg, &mut cpu, &mut bus) {
+            Ok(exit) => match exit {
+                StepExit::Continue | StepExit::ContinueInhibitInterrupts | StepExit::Branch => None,
+                StepExit::Halted => Some(Fault::Unsupported("tier0 halted")),
+                StepExit::BiosInterrupt(_) => Some(Fault::Unsupported("tier0 bios interrupt")),
+                StepExit::Assist { reason, .. } => Some(Fault::Unsupported(match reason {
+                    AssistReason::Io => "tier0 assist: io",
+                    AssistReason::Privileged => "tier0 assist: privileged",
+                    AssistReason::Interrupt => "tier0 assist: interrupt",
+                    AssistReason::Cpuid => "tier0 assist: cpuid",
+                    AssistReason::Msr => "tier0 assist: msr",
+                    AssistReason::Unsupported => "tier0 assist: unsupported",
+                })),
+            },
+            Err(e) => Some(map_tier0_exception(e, self.mem_fault_signal)),
         };
-        let state = export_state(&cpu.state);
-        let memory = bus.mem;
 
         ExecOutcome {
-            state,
-            memory,
+            state: export_state(&cpu),
+            memory: bus.mem,
             fault,
         }
     }
@@ -141,58 +144,60 @@ impl AeroBackend {
     }
 }
 
-fn map_exception(exception: Exception, mem_fault_signal: i32) -> Fault {
+fn map_tier0_exception(exception: Exception, mem_fault_signal: i32) -> Fault {
     match exception {
         Exception::InvalidOpcode => Fault::Signal(libc::SIGILL),
         Exception::MemoryFault => Fault::Signal(mem_fault_signal),
         Exception::DivideError => Fault::Signal(libc::SIGFPE),
+        // Leave the name intact to make mismatches readable (and because it is already stable).
         Exception::Unimplemented(name) => Fault::Unsupported(name),
-        Exception::GeneralProtection(_) => Fault::Unsupported("#GP"),
-        Exception::PageFault { .. } => Fault::Unsupported("#PF"),
-        Exception::SegmentNotPresent(_) => Fault::Unsupported("#NP"),
-        Exception::StackSegment(_) => Fault::Unsupported("#SS"),
-        Exception::InvalidTss(_) => Fault::Unsupported("#TS"),
-        Exception::DeviceNotAvailable => Fault::Unsupported("#NM"),
-        Exception::X87Fpu => Fault::Unsupported("#MF"),
-        Exception::SimdFloatingPointException => Fault::Unsupported("#XM"),
+        Exception::GeneralProtection(_) => Fault::Unsupported("tier0 exception: #GP"),
+        Exception::PageFault { .. } => Fault::Unsupported("tier0 exception: #PF"),
+        Exception::SegmentNotPresent(_) => Fault::Unsupported("tier0 exception: #NP"),
+        Exception::StackSegment(_) => Fault::Unsupported("tier0 exception: #SS"),
+        Exception::InvalidTss(_) => Fault::Unsupported("tier0 exception: #TS"),
+        Exception::DeviceNotAvailable => Fault::Unsupported("tier0 exception: #NM"),
+        Exception::X87Fpu => Fault::Unsupported("tier0 exception: #MF"),
+        Exception::SimdFloatingPointException => Fault::Unsupported("tier0 exception: #XM"),
     }
 }
 
 fn import_state(input: &CpuState, core: &mut CoreState) {
-    core.write_gpr64(gpr::RAX, input.rax);
-    core.write_gpr64(gpr::RBX, input.rbx);
-    core.write_gpr64(gpr::RCX, input.rcx);
-    core.write_gpr64(gpr::RDX, input.rdx);
-    core.write_gpr64(gpr::RSI, input.rsi);
-    core.write_gpr64(gpr::RDI, input.rdi);
-    core.write_gpr64(gpr::R8, input.r8);
-    core.write_gpr64(gpr::R9, input.r9);
-    core.write_gpr64(gpr::R10, input.r10);
-    core.write_gpr64(gpr::R11, input.r11);
-    core.write_gpr64(gpr::R12, input.r12);
-    core.write_gpr64(gpr::R13, input.r13);
-    core.write_gpr64(gpr::R14, input.r14);
-    core.write_gpr64(gpr::R15, input.r15);
+    core.gpr[gpr::RAX] = input.rax;
+    core.gpr[gpr::RBX] = input.rbx;
+    core.gpr[gpr::RCX] = input.rcx;
+    core.gpr[gpr::RDX] = input.rdx;
+    core.gpr[gpr::RSI] = input.rsi;
+    core.gpr[gpr::RDI] = input.rdi;
+    core.gpr[gpr::R8] = input.r8;
+    core.gpr[gpr::R9] = input.r9;
+    core.gpr[gpr::R10] = input.r10;
+    core.gpr[gpr::R11] = input.r11;
+    core.gpr[gpr::R12] = input.r12;
+    core.gpr[gpr::R13] = input.r13;
+    core.gpr[gpr::R14] = input.r14;
+    core.gpr[gpr::R15] = input.r15;
+    // Use `set_rflags` to preserve reserved-bit semantics and clear any lazy flags state.
     core.set_rflags(input.rflags);
     core.set_rip(input.rip);
 }
 
 fn export_state(core: &CoreState) -> CpuState {
     CpuState {
-        rax: core.read_gpr64(gpr::RAX),
-        rbx: core.read_gpr64(gpr::RBX),
-        rcx: core.read_gpr64(gpr::RCX),
-        rdx: core.read_gpr64(gpr::RDX),
-        rsi: core.read_gpr64(gpr::RSI),
-        rdi: core.read_gpr64(gpr::RDI),
-        r8: core.read_gpr64(gpr::R8),
-        r9: core.read_gpr64(gpr::R9),
-        r10: core.read_gpr64(gpr::R10),
-        r11: core.read_gpr64(gpr::R11),
-        r12: core.read_gpr64(gpr::R12),
-        r13: core.read_gpr64(gpr::R13),
-        r14: core.read_gpr64(gpr::R14),
-        r15: core.read_gpr64(gpr::R15),
+        rax: core.gpr[gpr::RAX],
+        rbx: core.gpr[gpr::RBX],
+        rcx: core.gpr[gpr::RCX],
+        rdx: core.gpr[gpr::RDX],
+        rsi: core.gpr[gpr::RSI],
+        rdi: core.gpr[gpr::RDI],
+        r8: core.gpr[gpr::R8],
+        r9: core.gpr[gpr::R9],
+        r10: core.gpr[gpr::R10],
+        r11: core.gpr[gpr::R11],
+        r12: core.gpr[gpr::R12],
+        r13: core.gpr[gpr::R13],
+        r14: core.gpr[gpr::R14],
+        r15: core.gpr[gpr::R15],
         rflags: core.rflags(),
         rip: core.rip(),
     }
@@ -211,7 +216,9 @@ fn fnv1a_hash_256(bytes: &[u8]) -> u32 {
 
 #[derive(Debug)]
 struct ConformanceBus {
+    /// Base virtual address for the `mem` slice; `mem[0]` corresponds to `base`.
     base: u64,
+    /// Backing memory image (data + code region).
     mem: Vec<u8>,
 }
 
@@ -234,27 +241,27 @@ impl CpuBus for ConformanceBus {
     }
 
     fn read_u16(&mut self, vaddr: u64) -> Result<u16, Exception> {
-        let range = self.range(vaddr, 2)?;
-        let bytes: [u8; 2] = self.mem[range].try_into().expect("range length checked");
-        Ok(u16::from_le_bytes(bytes))
+        let mut buf = [0u8; 2];
+        self.read_bytes(vaddr, &mut buf)?;
+        Ok(u16::from_le_bytes(buf))
     }
 
     fn read_u32(&mut self, vaddr: u64) -> Result<u32, Exception> {
-        let range = self.range(vaddr, 4)?;
-        let bytes: [u8; 4] = self.mem[range].try_into().expect("range length checked");
-        Ok(u32::from_le_bytes(bytes))
+        let mut buf = [0u8; 4];
+        self.read_bytes(vaddr, &mut buf)?;
+        Ok(u32::from_le_bytes(buf))
     }
 
     fn read_u64(&mut self, vaddr: u64) -> Result<u64, Exception> {
-        let range = self.range(vaddr, 8)?;
-        let bytes: [u8; 8] = self.mem[range].try_into().expect("range length checked");
-        Ok(u64::from_le_bytes(bytes))
+        let mut buf = [0u8; 8];
+        self.read_bytes(vaddr, &mut buf)?;
+        Ok(u64::from_le_bytes(buf))
     }
 
     fn read_u128(&mut self, vaddr: u64) -> Result<u128, Exception> {
-        let range = self.range(vaddr, 16)?;
-        let bytes: [u8; 16] = self.mem[range].try_into().expect("range length checked");
-        Ok(u128::from_le_bytes(bytes))
+        let mut buf = [0u8; 16];
+        self.read_bytes(vaddr, &mut buf)?;
+        Ok(u128::from_le_bytes(buf))
     }
 
     fn write_u8(&mut self, vaddr: u64, val: u8) -> Result<(), Exception> {
@@ -264,26 +271,30 @@ impl CpuBus for ConformanceBus {
     }
 
     fn write_u16(&mut self, vaddr: u64, val: u16) -> Result<(), Exception> {
-        let range = self.range(vaddr, 2)?;
-        self.mem[range].copy_from_slice(&val.to_le_bytes());
-        Ok(())
+        self.write_bytes(vaddr, &val.to_le_bytes())
     }
 
     fn write_u32(&mut self, vaddr: u64, val: u32) -> Result<(), Exception> {
-        let range = self.range(vaddr, 4)?;
-        self.mem[range].copy_from_slice(&val.to_le_bytes());
-        Ok(())
+        self.write_bytes(vaddr, &val.to_le_bytes())
     }
 
     fn write_u64(&mut self, vaddr: u64, val: u64) -> Result<(), Exception> {
-        let range = self.range(vaddr, 8)?;
-        self.mem[range].copy_from_slice(&val.to_le_bytes());
-        Ok(())
+        self.write_bytes(vaddr, &val.to_le_bytes())
     }
 
     fn write_u128(&mut self, vaddr: u64, val: u128) -> Result<(), Exception> {
-        let range = self.range(vaddr, 16)?;
-        self.mem[range].copy_from_slice(&val.to_le_bytes());
+        self.write_bytes(vaddr, &val.to_le_bytes())
+    }
+
+    fn read_bytes(&mut self, vaddr: u64, dst: &mut [u8]) -> Result<(), Exception> {
+        let range = self.range(vaddr, dst.len())?;
+        dst.copy_from_slice(&self.mem[range]);
+        Ok(())
+    }
+
+    fn write_bytes(&mut self, vaddr: u64, src: &[u8]) -> Result<(), Exception> {
+        let range = self.range(vaddr, src.len())?;
+        self.mem[range].copy_from_slice(src);
         Ok(())
     }
 
@@ -291,14 +302,56 @@ impl CpuBus for ConformanceBus {
         self.range(vaddr, len).map(|_| ())
     }
 
+    fn supports_bulk_copy(&self) -> bool {
+        true
+    }
+
+    fn bulk_copy(&mut self, dst: u64, src: u64, len: usize) -> Result<bool, Exception> {
+        if len == 0 || dst == src {
+            return Ok(true);
+        }
+
+        let src_range = self.range(src, len)?;
+        let dst_range = self.range(dst, len)?;
+
+        if src_range.start == dst_range.start {
+            return Ok(true);
+        }
+        self.mem.copy_within(src_range, dst_range.start);
+        Ok(true)
+    }
+
+    fn supports_bulk_set(&self) -> bool {
+        true
+    }
+
+    fn bulk_set(&mut self, dst: u64, pattern: &[u8], repeat: usize) -> Result<bool, Exception> {
+        if repeat == 0 || pattern.is_empty() {
+            return Ok(true);
+        }
+
+        let total = pattern
+            .len()
+            .checked_mul(repeat)
+            .ok_or(Exception::MemoryFault)?;
+        let range = self.range(dst, total)?;
+        let dst_slice = &mut self.mem[range];
+
+        if pattern.len() == 1 {
+            dst_slice.fill(pattern[0]);
+            return Ok(true);
+        }
+
+        for chunk in dst_slice.chunks_exact_mut(pattern.len()) {
+            chunk.copy_from_slice(pattern);
+        }
+        Ok(true)
+    }
+
     fn fetch(&mut self, vaddr: u64, max_len: usize) -> Result<[u8; 15], Exception> {
         let mut buf = [0u8; 15];
         let len = max_len.min(15);
-        if len == 0 {
-            return Ok(buf);
-        }
-        let range = self.range(vaddr, len)?;
-        buf[..len].copy_from_slice(&self.mem[range]);
+        self.read_bytes(vaddr, &mut buf[..len])?;
         Ok(buf)
     }
 
@@ -314,6 +367,8 @@ impl CpuBus for ConformanceBus {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::corpus::{self, TemplateKind};
+    use crate::FLAG_FIXED_1;
 
     #[test]
     fn conformance_bus_rejects_port_io() {
@@ -342,5 +397,51 @@ mod tests {
         assert_eq!(bus.read_u8(0x0fff).unwrap_err(), Exception::MemoryFault);
         assert_eq!(bus.read_u8(0x1000 + 16).unwrap_err(), Exception::MemoryFault);
         assert_eq!(bus.fetch(0x1000 + 8, 15).unwrap_err(), Exception::MemoryFault);
+    }
+
+    #[test]
+    fn tier0_backend_executes_and_maps_faults() {
+        let templates = corpus::templates();
+        let add = templates
+            .iter()
+            .find(|t| matches!(t.kind, TemplateKind::AddRaxRbx))
+            .expect("add template missing");
+        let ud2 = templates
+            .iter()
+            .find(|t| matches!(t.kind, TemplateKind::Ud2))
+            .expect("ud2 template missing");
+        let mem_fault = templates
+            .iter()
+            .find(|t| matches!(t.kind, TemplateKind::MovRaxM64Abs0))
+            .expect("mem fault template missing");
+
+        let mem_fault_signal = libc::SIGSEGV;
+        let mut backend = AeroBackend::new(mem_fault_signal);
+        let mem_base = 0x1000u64;
+        let mut rng = corpus::XorShift64::new(0x_0bad_f00d_f00d_f00d);
+
+        let mut add_case = TestCase::generate(0, add, &mut rng, mem_base);
+        add_case.init.rax = 1;
+        add_case.init.rbx = 2;
+        add_case.init.rflags = FLAG_FIXED_1;
+        let expected_rip = add_case.init.rip.wrapping_add(add.bytes.len() as u64);
+
+        let add_out = backend.execute(&add_case);
+        assert_eq!(add_out.fault, None);
+        assert_eq!(add_out.state.rax, 3);
+        assert_eq!(add_out.state.rip, expected_rip);
+
+        let mut ud2_case = TestCase::generate(1, ud2, &mut rng, mem_base);
+        ud2_case.init.rflags = FLAG_FIXED_1;
+        let ud2_out = backend.execute(&ud2_case);
+        assert_eq!(ud2_out.fault, Some(Fault::Signal(libc::SIGILL)));
+
+        let mut mem_fault_case = TestCase::generate(2, mem_fault, &mut rng, mem_base);
+        mem_fault_case.init.rflags = FLAG_FIXED_1;
+        let mem_fault_out = backend.execute(&mem_fault_case);
+        assert_eq!(
+            mem_fault_out.fault,
+            Some(Fault::Signal(mem_fault_signal))
+        );
     }
 }
