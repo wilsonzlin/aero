@@ -97,9 +97,13 @@ setup/boot.
 1. Select **CD0** as the BIOS boot drive (**`DL=0xE0`**) *before* reset. In `aero_machine`, this is
    `Machine::set_boot_drive(0xE0)` followed by `Machine::reset()`. BIOS transfers control to the CD
    boot image with that CD drive number in `DL`.
-   - Optional convenience: hosts may instead enable a “CD-first when present” policy
-     (`firmware::bios::BiosConfig::boot_from_cd_if_present = true`) so firmware attempts CD boot
-     first and falls back to the configured HDD boot drive when no CD is attached.
+   - Optional convenience: hosts may instead enable the firmware “CD-first when present” policy so
+     firmware attempts a CD boot when install media is attached and otherwise falls back to the
+     configured HDD boot drive (useful for “boot ISO once, then boot HDD after eject”):
+     - Rust: `machine.set_cd_boot_drive(0xE0); machine.set_boot_from_cd_if_present(true);` (keep
+       `boot_drive=0x80` as the fallback), then `machine.reset()`.
+     - Config: `firmware::bios::BiosConfig::cd_boot_drive = 0xE0` +
+       `firmware::bios::BiosConfig::boot_from_cd_if_present = true`.
 2. The boot ISO must be attached and presented as an **ATAPI CD-ROM** on **PIIX3 IDE secondary
    master** (`disk_id=1`) before BIOS POST/boot:
    - Rust: `Machine::attach_install_media_iso_bytes(...)` (in-memory ISO) or
