@@ -251,9 +251,20 @@ import {
   AEROGPU_WDDM_ALLOC_PRIV_VERSION_2,
 } from "../aerogpu/aerogpu_wddm_alloc.ts";
 
-// This constant is part of the stable Windows device contract; we intentionally lock its numeric
-// value so it cannot drift due to coordinated edits across the C/Rust/TS mirrors.
-test("AEROGPU_PCI_BAR1_VBE_LFB_OFFSET_BYTES is 0x40_000 (stable device contract)", () => {
+// These constants are part of the stable Windows device contract; we intentionally lock their
+// numeric values so they cannot drift due to coordinated edits across the C/Rust/TS mirrors.
+test("AeroGPU PCI identity + BAR layout constants are stable (device contract)", () => {
+  assert.equal(AEROGPU_PCI_VENDOR_ID, 0xa3a0);
+  assert.equal(AEROGPU_PCI_DEVICE_ID, 0x0001);
+  assert.equal(AEROGPU_PCI_SUBSYSTEM_VENDOR_ID, 0xa3a0);
+  assert.equal(AEROGPU_PCI_SUBSYSTEM_ID, 0x0001);
+  assert.equal(AEROGPU_PCI_CLASS_CODE_DISPLAY_CONTROLLER, 0x03);
+  assert.equal(AEROGPU_PCI_SUBCLASS_VGA_COMPATIBLE, 0x00);
+  assert.equal(AEROGPU_PCI_PROG_IF, 0x00);
+  assert.equal(AEROGPU_PCI_BAR0_INDEX, 0);
+  assert.equal(AEROGPU_PCI_BAR0_SIZE_BYTES, 64 * 1024);
+  assert.equal(AEROGPU_PCI_BAR1_INDEX, 1);
+  assert.equal(AEROGPU_PCI_BAR1_SIZE_BYTES, 64 * 1024 * 1024);
   assert.equal(AEROGPU_PCI_BAR1_VBE_LFB_OFFSET_BYTES, 0x40_000);
 });
 
