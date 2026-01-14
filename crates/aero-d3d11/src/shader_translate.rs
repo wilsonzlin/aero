@@ -6948,6 +6948,7 @@ impl WgslWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sm4_ir::{PredicateOperand, PredicateRef};
     use aero_dxbc::test_utils as dxbc_test_utils;
 
     fn assert_wgsl_validates(wgsl: &str) {
@@ -8072,6 +8073,92 @@ mod tests {
             err,
             ShaderTranslateError::MalformedControlFlow { inst_index: 0, .. }
         ));
+    }
+
+    #[test]
+    fn predicated_breakc_is_translated() {
+        let isgn = DxbcSignature {
+            parameters: Vec::new(),
+        };
+        let osgn = DxbcSignature {
+            parameters: vec![sig_param("SV_Target", 0, 0)],
+        };
+
+        let module = Sm4Module {
+            stage: ShaderStage::Pixel,
+            model: crate::sm4::ShaderModel { major: 4, minor: 0 },
+            decls: Vec::new(),
+            instructions: vec![
+                Sm4Inst::Loop,
+                Sm4Inst::Predicated {
+                    pred: PredicateOperand {
+                        reg: PredicateRef { index: 0 },
+                        component: 0,
+                        invert: false,
+                    },
+                    inner: Box::new(Sm4Inst::BreakC {
+                        op: Sm4CmpOp::Eq,
+                        a: dummy_coord(),
+                        b: dummy_coord(),
+                    }),
+                },
+                Sm4Inst::EndLoop,
+                Sm4Inst::Ret,
+            ],
+        };
+
+        let translated = translate_ps(&module, &isgn, &osgn, None).expect("translate");
+        assert_wgsl_validates(&translated.wgsl);
+        assert!(translated.wgsl.contains("loop {"), "{}", translated.wgsl);
+        assert!(
+            translated.wgsl.contains("if (p0.x &&"),
+            "{}",
+            translated.wgsl
+        );
+        assert!(translated.wgsl.contains("break;"), "{}", translated.wgsl);
+    }
+
+    #[test]
+    fn predicated_continuec_is_translated() {
+        let isgn = DxbcSignature {
+            parameters: Vec::new(),
+        };
+        let osgn = DxbcSignature {
+            parameters: vec![sig_param("SV_Target", 0, 0)],
+        };
+
+        let module = Sm4Module {
+            stage: ShaderStage::Pixel,
+            model: crate::sm4::ShaderModel { major: 4, minor: 0 },
+            decls: Vec::new(),
+            instructions: vec![
+                Sm4Inst::Loop,
+                Sm4Inst::Predicated {
+                    pred: PredicateOperand {
+                        reg: PredicateRef { index: 0 },
+                        component: 0,
+                        invert: false,
+                    },
+                    inner: Box::new(Sm4Inst::ContinueC {
+                        op: Sm4CmpOp::Eq,
+                        a: dummy_coord(),
+                        b: dummy_coord(),
+                    }),
+                },
+                Sm4Inst::EndLoop,
+                Sm4Inst::Ret,
+            ],
+        };
+
+        let translated = translate_ps(&module, &isgn, &osgn, None).expect("translate");
+        assert_wgsl_validates(&translated.wgsl);
+        assert!(translated.wgsl.contains("loop {"), "{}", translated.wgsl);
+        assert!(
+            translated.wgsl.contains("if (p0.x &&"),
+            "{}",
+            translated.wgsl
+        );
+        assert!(translated.wgsl.contains("continue;"), "{}", translated.wgsl);
     }
 
     #[test]

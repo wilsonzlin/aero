@@ -676,7 +676,11 @@ fn decodes_and_translates_half_float_conversions_in_compute_shader_without_signa
     assert!(translated.wgsl.contains("@compute"));
     assert!(translated.wgsl.contains("pack2x16float"));
     assert!(translated.wgsl.contains("unpack2x16float"));
-    assert!(translated.wgsl.contains("& 0xffffu"));
+    assert!(
+        translated.wgsl.contains("bitcast<vec4<f32>>(vec4<u32>"),
+        "expected half-float pack to preserve raw bits via bitcast:\n{}",
+        translated.wgsl
+    );
     assert_wgsl_validates(&translated.wgsl);
 }
 
