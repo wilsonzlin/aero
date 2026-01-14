@@ -119,3 +119,27 @@ fn std_file_backend_read_only_rejects_writes_and_allows_flush() {
     // Flush is a no-op for read-only file handles.
     backend.flush().unwrap();
 }
+
+#[test]
+fn std_file_backend_with_read_only_flag_blocks_mutations_even_on_rw_handle() {
+    let file = tempfile::tempfile().unwrap();
+    let mut backend = StdFileBackend::from_file(file);
+    backend.set_len(4096).unwrap();
+    backend.write_at(0, b"rw").unwrap();
+
+    // Flip into read-only mode at the backend layer without changing OS permissions.
+    let mut backend = backend.with_read_only(true);
+    assert!(backend.is_read_only());
+
+    let err = backend.write_at(0, b"x").unwrap_err();
+    assert!(matches!(err, DiskError::NotSupported(s) if s == "read-only backend"));
+
+    let err = backend.set_len(8).unwrap_err();
+    assert!(matches!(err, DiskError::NotSupported(s) if s == "read-only backend"));
+
+    // Reads and flush should still work.
+    let mut buf = [0u8; 2];
+    backend.read_at(0, &mut buf).unwrap();
+    assert_eq!(&buf, b"rw");
+    backend.flush().unwrap();
+}
