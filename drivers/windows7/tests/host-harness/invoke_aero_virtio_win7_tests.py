@@ -5014,6 +5014,9 @@ def main() -> int:
     # Any remaining args are passed directly to QEMU.
     args, qemu_extra = parser.parse_known_args()
     args.qemu_system = _resolve_executable_path(args.qemu_system)
+    if not args.qemu_system or not str(args.qemu_system).strip():
+        print("ERROR: qemu system binary is empty", file=sys.stderr)
+        return 2
     if args.qemu_system:
         try:
             has_sep = os.sep in args.qemu_system or (os.altsep is not None and os.altsep in args.qemu_system)
