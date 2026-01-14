@@ -20,6 +20,33 @@ typedef struct _VIRTIOSND_QUEUE_SPLIT_LOCK_STATE {
     BOOLEAN AtDpcLevel;
 } VIRTIOSND_QUEUE_SPLIT_LOCK_STATE;
 
+static __forceinline BOOLEAN VirtioSndQueueSplitShouldLogRare(_Inout_ volatile LONG* Counter)
+{
+    LONG n;
+    ULONG u;
+
+    /*
+     * Virtqueue contents are device-controlled. Avoid unbounded DbgPrintEx spam if a buggy/malicious
+     * device corrupts the used ring and causes repeated drain failures.
+     *
+     * Log the first few occurrences, then exponentially back off (powers of two).
+     */
+    if (Counter == NULL) {
+        return TRUE;
+    }
+
+    n = InterlockedIncrement(Counter);
+    if (n <= 4) {
+        return TRUE;
+    }
+    if (n < 0) {
+        return TRUE;
+    }
+
+    u = (ULONG)n;
+    return ((u & (u - 1u)) == 0u) ? TRUE : FALSE;
+}
+
 static __forceinline VOID
 VirtioSndQueueSplitLock(_Inout_ VIRTIOSND_QUEUE_SPLIT* qs, _Out_ VIRTIOSND_QUEUE_SPLIT_LOCK_STATE* state)
 {
@@ -410,6 +437,7 @@ VirtioSndQueueSplitDrainUsed(VIRTIOSND_QUEUE_SPLIT* qs,
                              EVT_VIRTIOSND_QUEUE_SPLIT_USED* Callback,
                              void* Context)
 {
+    static volatile LONG s_drainUsedErrorLog;
     if (qs == NULL || qs->Vq == NULL || Callback == NULL) {
         return;
     }
@@ -431,7 +459,12 @@ VirtioSndQueueSplitDrainUsed(VIRTIOSND_QUEUE_SPLIT* qs,
             return;
         }
         if (!NT_SUCCESS(status)) {
-            VIRTIOSND_TRACE_ERROR("queue[%u] VirtqSplitGetUsed failed: 0x%08X\n", (UINT)qs->QueueIndex, (UINT)status);
+            if (VirtioSndQueueSplitShouldLogRare(&s_drainUsedErrorLog)) {
+                VIRTIOSND_TRACE_ERROR(
+                    "queue[%u] VirtqSplitGetUsed failed: 0x%08X\n",
+                    (UINT)qs->QueueIndex,
+                    (UINT)status);
+            }
             return;
         }
 
