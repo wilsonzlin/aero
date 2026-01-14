@@ -21,6 +21,7 @@ class Win7VirtioHarnessWorkflowJobSummaryDryRunQemuCmdTests(unittest.TestCase):
         # In dry_run mode, the python harness prints a JSON argv array on the first stdout line
         # and a copy/paste command line on the second stdout line. The workflow should surface
         # that in the job summary.
+        self.assertIn("dry_run_qemu_json", self.text)
         self.assertIn("dry_run_qemu_cmdline", self.text)
         self.assertIn("awk '/^\\[\"/{getline", self.text)
         self.assertIn(
@@ -30,6 +31,8 @@ class Win7VirtioHarnessWorkflowJobSummaryDryRunQemuCmdTests(unittest.TestCase):
 
         # Ensure the summary prints the QEMU and harness commands on dry_run success too.
         self.assertIn("- Dry run: true (QEMU not launched)", self.text)
+        self.assertIn("Dry run QEMU argv (JSON)", self.text)
+        self.assertIn("```json", self.text)
         self.assertIn(
             'if [[ ( "${{ steps.harness.outcome }}" != "success" || "${{ inputs.dry_run }}" == "true" ) && -n "${harness_cmdline}" ]]; then',
             self.text,

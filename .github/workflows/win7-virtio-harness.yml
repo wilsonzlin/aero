@@ -1017,6 +1017,7 @@ jobs:
           qemu_stderr_line=""
           harness_cmdline=""
           dry_run_qemu_cmdline=""
+          dry_run_qemu_json=""
           qemu_cmdline=""
           runner_line=""
           python_version_line=""
@@ -1158,16 +1159,17 @@ jobs:
             failure_token="$(grep -Eo 'FAIL: [A-Z0-9_]+:' "${harness_log}" | tail -n 1 | sed -e 's/^FAIL: //' -e 's/:$//' || true)"
             # Fallback: the full last failure line (useful when no structured token is present).
             failure_line="$(grep -F 'FAIL:' "${harness_log}" | tail -n 1 | tr -d '\r' || true)"
-            # Fallback: last explicit "ERROR:" line.
-            error_line="$(grep -F 'ERROR:' "${harness_log}" | tail -n 1 | tr -d '\r' || true)"
-            harness_cmdline="$(awk '/Executing harness:/{getline; sub(/^[[:space:]]+/, ""); print}' "${harness_log}" | tail -n 1 | tr -d '\r' || true)"
-            qemu_cmdline="$(awk '/Launching QEMU:/{getline; sub(/^[[:space:]]+/, ""); print}' "${harness_log}" | tail -n 1 | tr -d '\r' || true)"
-            dry_run_qemu_cmdline="$(awk '/^\["/{getline; sub(/^[[:space:]]+/, ""); print; exit}' "${harness_log}" | tr -d '\r' || true)"
-            if [[ "${{ inputs.dry_run }}" == "true" && -z "${qemu_cmdline}" && -n "${dry_run_qemu_cmdline}" ]]; then
-              qemu_cmdline="${dry_run_qemu_cmdline}"
-            fi
-            runner_line="$(grep -m1 -F 'Runner:' "${harness_log}" | tr -d '\r' || true)"
-            python_version_line="$(grep -m1 -F 'python3:' "${harness_log}" | tr -d '\r' || true)"
+              # Fallback: last explicit "ERROR:" line.
+              error_line="$(grep -F 'ERROR:' "${harness_log}" | tail -n 1 | tr -d '\r' || true)"
+              harness_cmdline="$(awk '/Executing harness:/{getline; sub(/^[[:space:]]+/, ""); print}' "${harness_log}" | tail -n 1 | tr -d '\r' || true)"
+              qemu_cmdline="$(awk '/Launching QEMU:/{getline; sub(/^[[:space:]]+/, ""); print}' "${harness_log}" | tail -n 1 | tr -d '\r' || true)"
+              dry_run_qemu_json="$(awk '/^\["/{print; exit}' "${harness_log}" | tr -d '\r' || true)"
+              dry_run_qemu_cmdline="$(awk '/^\["/{getline; sub(/^[[:space:]]+/, ""); print; exit}' "${harness_log}" | tr -d '\r' || true)"
+              if [[ "${{ inputs.dry_run }}" == "true" && -z "${qemu_cmdline}" && -n "${dry_run_qemu_cmdline}" ]]; then
+                qemu_cmdline="${dry_run_qemu_cmdline}"
+              fi
+              runner_line="$(grep -m1 -F 'Runner:' "${harness_log}" | tr -d '\r' || true)"
+              python_version_line="$(grep -m1 -F 'python3:' "${harness_log}" | tr -d '\r' || true)"
             qemu_version_line="$(grep -m1 -F 'qemu:' "${harness_log}" | tr -d '\r' || true)"
           fi
           if [[ -f "${qemu_stderr_log}" ]]; then
@@ -1244,6 +1246,15 @@ jobs:
             fi
             if [[ ( "${{ steps.harness.outcome }}" != "success" || "${{ inputs.dry_run }}" == "true" ) && -n "${qemu_cmdline}" ]]; then
               echo "- QEMU command: \`${qemu_cmdline}\`"
+            fi
+            if [[ "${{ inputs.dry_run }}" == "true" && -n "${dry_run_qemu_json}" ]]; then
+              echo ""
+              echo "<details><summary>Dry run QEMU argv (JSON)</summary>"
+              echo ""
+              echo '```json'
+              echo "${dry_run_qemu_json}"
+              echo '```'
+              echo "</details>"
             fi
             if [[ -n "${result_marker}" ]]; then
               echo "- Guest result marker: \`${result_marker}\`"
