@@ -1397,6 +1397,18 @@ mod tests {
     };
     use memory::Bus;
 
+    #[test]
+    fn executor_dtos_are_reexported_from_aero_devices_gpu() {
+        let cfg = aero_devices_gpu::executor::AeroGpuExecutorConfig::default();
+        let _: AeroGpuExecutorConfig = cfg;
+
+        let mode = aero_devices_gpu::executor::AeroGpuFenceCompletionMode::Immediate;
+        let _: AeroGpuFenceCompletionMode = mode;
+
+        let err = aero_devices_gpu::executor::AeroGpuCmdStreamDecodeError::BadHeader;
+        let _: AeroGpuCmdStreamDecodeError = err;
+    }
+
     fn write_ring_header(
         mem: &mut dyn MemoryBus,
         gpa: u64,
