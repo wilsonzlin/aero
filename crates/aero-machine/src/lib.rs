@@ -12130,10 +12130,9 @@ mod tests {
             .unwrap_or(0);
         assert_ne!(bar1_base, 0, "AeroGPU BAR1 should be assigned by BIOS POST");
 
-        let expected = u64::from(
-            u32::try_from(bar1_base + VBE_LFB_OFFSET as u64).expect("LFB base should fit in u32"),
-        );
-        assert_eq!(m.vbe_lfb_base(), expected);
+        let expected = u32::try_from(bar1_base + VBE_LFB_OFFSET as u64)
+            .expect("LFB base should fit in u32");
+        assert_eq!(m.vbe_lfb_base(), u64::from(expected));
     }
 
     #[test]
