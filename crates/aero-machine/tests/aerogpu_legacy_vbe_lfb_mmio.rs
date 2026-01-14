@@ -52,7 +52,7 @@ fn aerogpu_legacy_vbe_lfb_banked_window_maps_into_vram() {
     let pitch = 64u64 * 4;
     let pixel_off = y * pitch + x * 4;
     let bank = (pixel_off / 65_536) as u16;
-    let bank_off = (pixel_off % 65_536) as u64;
+    let bank_off = pixel_off % 65_536;
 
     // Select bank 1 via Bochs VBE_DISPI.
     m.io_write(0x01CE, 2, 0x0005);

@@ -192,7 +192,7 @@ fn virtio_input_device_cfg_mmio_exposes_expected_name_devids_and_ev_bits() {
         // ------------------------------
         // VIRTIO_INPUT_CFG_ID_NAME (str)
         // ------------------------------
-        m.write_physical_u8(dev_cfg + 0, VIRTIO_INPUT_CFG_ID_NAME);
+        m.write_physical_u8(dev_cfg, VIRTIO_INPUT_CFG_ID_NAME);
         m.write_physical_u8(dev_cfg + 1, 0);
         let size = m.read_physical_u8(dev_cfg + 2);
         assert_ne!(size, 0, "expected non-zero name size for {bdf:?}");
@@ -212,7 +212,7 @@ fn virtio_input_device_cfg_mmio_exposes_expected_name_devids_and_ev_bits() {
         // --------------------------------
         // VIRTIO_INPUT_CFG_ID_DEVIDS (8B)
         // --------------------------------
-        m.write_physical_u8(dev_cfg + 0, VIRTIO_INPUT_CFG_ID_DEVIDS);
+        m.write_physical_u8(dev_cfg, VIRTIO_INPUT_CFG_ID_DEVIDS);
         m.write_physical_u8(dev_cfg + 1, 0);
         let size = m.read_physical_u8(dev_cfg + 2);
         assert_eq!(size, 8, "{bdf:?} expected devids size=8");
@@ -222,7 +222,7 @@ fn virtio_input_device_cfg_mmio_exposes_expected_name_devids_and_ev_bits() {
         // --------------------------------
         // VIRTIO_INPUT_CFG_EV_BITS (bitmap)
         // --------------------------------
-        m.write_physical_u8(dev_cfg + 0, VIRTIO_INPUT_CFG_EV_BITS);
+        m.write_physical_u8(dev_cfg, VIRTIO_INPUT_CFG_EV_BITS);
         m.write_physical_u8(dev_cfg + 1, 0); // subsel = 0 -> event type bitmap
         let size = m.read_physical_u8(dev_cfg + 2);
         assert_eq!(size, 128, "{bdf:?} expected ev bitmap size=128");
