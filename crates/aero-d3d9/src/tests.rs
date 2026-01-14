@@ -514,6 +514,67 @@ fn assemble_ps3_predicated_mov() -> Vec<u32> {
     out
 }
 
+fn assemble_ps3_dp2_constant() -> Vec<u32> {
+    // ps_3_0
+    let mut out = vec![0xFFFF0300];
+    // def c0, 0.0, 0.0, 0.25, 0.5
+    out.extend(enc_inst_sm3(
+        0x0051,
+        &[
+            enc_dst(2, 0, 0xF),
+            0x0000_0000,
+            0x0000_0000,
+            0x3E80_0000,
+            0x3F00_0000,
+        ],
+    ));
+    // def c1, 0.5, 1.0, 0.0, 0.0
+    out.extend(enc_inst_sm3(
+        0x0051,
+        &[
+            enc_dst(2, 1, 0xF),
+            0x3F00_0000,
+            0x3F80_0000,
+            0x0000_0000,
+            0x0000_0000,
+        ],
+    ));
+    // def c2, 1.0, 0.0, 0.0, 0.0 (alpha)
+    out.extend(enc_inst_sm3(
+        0x0051,
+        &[
+            enc_dst(2, 2, 0xF),
+            0x3F80_0000,
+            0x0000_0000,
+            0x0000_0000,
+            0x0000_0000,
+        ],
+    ));
+
+    // dp2 r0.xyz, c0.zwxy, c1.yxwz
+    out.extend(enc_inst_sm3(
+        0x005A,
+        &[
+            enc_dst(0, 0, 0x7),
+            enc_src(2, 0, 0x4E), // c0.zwxy
+            enc_src(2, 1, 0xB1), // c1.yxwz
+        ],
+    ));
+    // mov r0.w, c2.x
+    out.extend(enc_inst_sm3(
+        0x0001,
+        &[enc_dst(0, 0, 0x8), enc_src(2, 2, 0x00)],
+    ));
+    // mov oC0, r0
+    out.extend(enc_inst_sm3(
+        0x0001,
+        &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)],
+    ));
+
+    out.push(0x0000FFFF);
+    out
+}
+
 fn assemble_ps3_loop_accumulate() -> Vec<u32> {
     // ps_3_0
     let mut out = vec![0xFFFF0300];
@@ -1341,6 +1402,55 @@ fn sm3_exp_log_pow_pixel_compare() {
     assert_eq!(
         hash.to_hex().as_str(),
         "1806680cf63f0d89928fe033c641adc922232f74f257867de050efb43f50edb9"
+    );
+}
+
+#[test]
+fn sm3_dp2_constant_pixel_compare() {
+    let vs = build_sm3_ir(&assemble_vs_passthrough_sm3_decoder());
+    let ps = build_sm3_ir(&assemble_ps3_dp2_constant());
+
+    let decl = build_vertex_decl_pos_tex_color();
+
+    let quad = [
+        (software::Vec4::new(-1.0, -1.0, 0.0, 1.0), (0.0, 1.0), software::Vec4::new(1.0, 1.0, 1.0, 1.0)),
+        (software::Vec4::new(1.0, -1.0, 0.0, 1.0), (1.0, 1.0), software::Vec4::new(1.0, 1.0, 1.0, 1.0)),
+        (software::Vec4::new(1.0, 1.0, 0.0, 1.0), (1.0, 0.0), software::Vec4::new(1.0, 1.0, 1.0, 1.0)),
+        (software::Vec4::new(-1.0, 1.0, 0.0, 1.0), (0.0, 0.0), software::Vec4::new(1.0, 1.0, 1.0, 1.0)),
+    ];
+    let indices: [u16; 6] = [0, 1, 2, 0, 2, 3];
+
+    let mut vb = Vec::new();
+    for (pos, (u, v), color) in quad {
+        push_vec4(&mut vb, pos);
+        push_vec2(&mut vb, u, v);
+        push_vec4(&mut vb, color);
+    }
+
+    let mut rt = software::RenderTarget::new(8, 8, software::Vec4::ZERO);
+    let constants = zero_constants();
+    sm3::software::draw(
+        &mut rt,
+        sm3::software::DrawParams {
+            vs: &vs,
+            ps: &ps,
+            vertex_decl: &decl,
+            vertex_buffer: &vb,
+            indices: Some(&indices),
+            constants: &constants,
+            textures: &HashMap::new(),
+            sampler_states: &HashMap::new(),
+            blend_state: state::BlendState::default(),
+        },
+    );
+
+    // dp2 result = dot(c0.zw, c1.yx) = 0.25 * 1.0 + 0.5 * 0.5 = 0.5.
+    assert_eq!(rt.get(4, 4).to_rgba8(), [128, 128, 128, 255]);
+
+    let hash = blake3::hash(&rt.to_rgba8());
+    assert_eq!(
+        hash.to_hex().as_str(),
+        "23ac9a3eadbe0b53bf8c503a2ea1d36b41d487bfaf72abc450387b3b6ae9bfa5"
     );
 }
 
