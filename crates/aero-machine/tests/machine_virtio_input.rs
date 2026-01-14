@@ -1033,18 +1033,9 @@ fn virtio_input_input_batch_routes_extra_mouse_buttons_via_virtio() {
     // InputEventQueue batch:
     // - MouseButtons: BTN_FORWARD down (bit 5), then up.
     let words: [u32; 10] = [
-        2,
-        0,
-        // InputEventType.MouseButtons
-        3,
-        0,
-        0x20,
-        0,
-        // InputEventType.MouseButtons
-        3,
-        0,
-        0,
-        0,
+        2, 0, // InputEventType.MouseButtons
+        3, 0, 0x20, 0, // InputEventType.MouseButtons
+        3, 0, 0, 0,
     ];
     m.inject_input_batch(&words);
 
