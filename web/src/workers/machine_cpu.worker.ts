@@ -251,6 +251,15 @@ function initInputDiagnosticsTelemetry(): void {
   const st = status;
   if (!st) return;
   try {
+    // Reset counters as well: the shared status SAB may outlive a worker instance when the VM is
+    // reset/restarted in-place.
+    Atomics.store(st, StatusIndex.IoInputBatchCounter, 0);
+    Atomics.store(st, StatusIndex.IoInputEventCounter, 0);
+    Atomics.store(st, StatusIndex.IoInputBatchReceivedCounter, 0);
+    Atomics.store(st, StatusIndex.IoInputBatchDropCounter, 0);
+    Atomics.store(st, StatusIndex.IoKeyboardBackendSwitchCounter, 0);
+    Atomics.store(st, StatusIndex.IoMouseBackendSwitchCounter, 0);
+
     // 0 = ps2 (see `web/src/input/input_backend_status.ts`).
     Atomics.store(st, StatusIndex.IoInputKeyboardBackend, 0);
     Atomics.store(st, StatusIndex.IoInputMouseBackend, 0);

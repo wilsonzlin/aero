@@ -167,6 +167,12 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
     Atomics.store(status, StatusIndex.IoInputEventLatencyAvgUs, 111);
     Atomics.store(status, StatusIndex.IoInputEventLatencyEwmaUs, 222);
     Atomics.store(status, StatusIndex.IoInputEventLatencyMaxUs, 333);
+    Atomics.store(status, StatusIndex.IoInputBatchCounter, 99);
+    Atomics.store(status, StatusIndex.IoInputEventCounter, 199);
+    Atomics.store(status, StatusIndex.IoInputBatchReceivedCounter, 299);
+    Atomics.store(status, StatusIndex.IoInputBatchDropCounter, 399);
+    Atomics.store(status, StatusIndex.IoKeyboardBackendSwitchCounter, 499);
+    Atomics.store(status, StatusIndex.IoMouseBackendSwitchCounter, 599);
 
     const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
     const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
@@ -204,6 +210,12 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
       expect(Atomics.load(status, StatusIndex.IoInputEventLatencyAvgUs)).toBe(0);
       expect(Atomics.load(status, StatusIndex.IoInputEventLatencyEwmaUs)).toBe(0);
       expect(Atomics.load(status, StatusIndex.IoInputEventLatencyMaxUs)).toBe(0);
+      expect(Atomics.load(status, StatusIndex.IoInputBatchCounter)).toBe(0);
+      expect(Atomics.load(status, StatusIndex.IoInputEventCounter)).toBe(0);
+      expect(Atomics.load(status, StatusIndex.IoInputBatchReceivedCounter)).toBe(0);
+      expect(Atomics.load(status, StatusIndex.IoInputBatchDropCounter)).toBe(0);
+      expect(Atomics.load(status, StatusIndex.IoKeyboardBackendSwitchCounter)).toBe(0);
+      expect(Atomics.load(status, StatusIndex.IoMouseBackendSwitchCounter)).toBe(0);
     } finally {
       await worker.terminate();
     }
