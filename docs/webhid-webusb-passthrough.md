@@ -122,6 +122,11 @@ I/O worker owns the USB device model” split is wired end-to-end in the web run
 - **WebHID:** main↔worker report forwarding (`hid.*`)
 - **WebUSB:** main↔worker host action/completion forwarding (`usb.*`) for guest-visible passthrough (UHCI by default; EHCI/xHCI when available)
 
+> Runtime note: the current end-to-end passthrough wiring targets the **legacy** browser runtime
+> (`vmRuntime=legacy`), where the guest-visible USB controller/device models live in the I/O worker.
+> In `vmRuntime=machine`, the I/O worker runs in a host-only stub mode (no guest USB stack), so
+> WebHID/WebUSB passthrough is not yet available.
+
 Already implemented:
 
 - **Rust device models (`aero-usb`)**
