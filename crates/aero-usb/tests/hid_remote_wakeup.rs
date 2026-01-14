@@ -666,9 +666,7 @@ fn hid_keyboard_remote_wakeup_propagates_through_usb2_port_mux_and_external_hub_
     keyboard.key_event(0x04, true); // HID usage for KeyA.
 
     assert!(!ctrl.irq_level(), "no IRQ expected before ticking the hub");
-    for _ in 0..5 {
-        ctrl.tick_1ms(&mut mem);
-    }
+    ctrl.tick_1ms(&mut mem);
 
     let portsc = ctrl.io_read(REG_PORTSC1, 2) as u16;
     assert_ne!(
