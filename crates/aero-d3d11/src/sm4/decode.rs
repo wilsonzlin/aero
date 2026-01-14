@@ -3,10 +3,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::sm4_ir::{
     BufferKind, BufferRef, CmpOp, CmpType, ComputeBuiltin, DstOperand, GsInputPrimitive,
-    GsOutputTopology, HsDomain, HsOutputTopology, HsPartitioning, HullShaderPhase,
-    OperandModifier, PredicateDstOperand, PredicateOperand, PredicateRef, RegFile, RegisterRef,
-    SamplerRef, Sm4CmpOp, Sm4Decl, Sm4Inst, Sm4Module, Sm4TestBool, SrcKind, SrcOperand, Swizzle,
-    TextureRef, UavRef, WriteMask,
+    GsOutputTopology, HsDomain, HsOutputTopology, HsPartitioning, HullShaderPhase, OperandModifier,
+    PredicateDstOperand, PredicateOperand, PredicateRef, RegFile, RegisterRef, SamplerRef,
+    Sm4CmpOp, Sm4Decl, Sm4Inst, Sm4Module, Sm4TestBool, SrcKind, SrcOperand, Swizzle, TextureRef,
+    UavRef, WriteMask,
 };
 
 use super::opcode::*;
