@@ -284,6 +284,13 @@ mod tests {
     use std::thread;
 
     #[test]
+    fn cursor_format_default_matches_aerogpu_protocol() {
+        let state = CursorState::new();
+        assert_eq!(state.snapshot().format, CURSOR_FORMAT_B8G8R8A8);
+        assert_eq!(CURSOR_FORMAT_B8G8R8A8, AerogpuFormat::B8G8R8A8Unorm as u32);
+    }
+
+    #[test]
     fn cursor_format_constants_match_aerogpu_format_discriminants() {
         assert_eq!(CURSOR_FORMAT_B8G8R8A8, AerogpuFormat::B8G8R8A8Unorm as u32);
         assert_eq!(CURSOR_FORMAT_B8G8R8X8, AerogpuFormat::B8G8R8X8Unorm as u32);
