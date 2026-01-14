@@ -5,7 +5,6 @@ use std::collections::VecDeque;
 
 use aero_devices::clock::{Clock, ManualClock};
 use aero_devices::pci::{PciBarMmioHandler, PciConfigSpace, PciDevice};
-use aero_devices_gpu::ring::write_fence_page;
 use aero_protocol::aerogpu::aerogpu_cmd::{
     decode_cmd_hdr_le, decode_cmd_stream_header_le, AerogpuCmdHdr, AerogpuCmdOpcode,
     AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AEROGPU_PRESENT_FLAG_VSYNC,
@@ -22,6 +21,16 @@ use aero_shared::scanout_state::{
 const RING_HEAD_OFFSET: u64 = offset_of!(ring::AerogpuRingHeader, head) as u64;
 const RING_TAIL_OFFSET: u64 = offset_of!(ring::AerogpuRingHeader, tail) as u64;
 const RING_HEADER_SIZE_BYTES: u64 = ring::AerogpuRingHeader::SIZE_BYTES as u64;
+
+fn write_fence_page(mem: &mut dyn MemoryBus, gpa: u64, abi_version: u32, completed_fence: u64) {
+    // AeroGPU fence page layout:
+    //   u32 magic
+    //   u32 abi_version
+    //   u64 completed_fence
+    mem.write_u32(gpa, ring::AEROGPU_FENCE_PAGE_MAGIC);
+    mem.write_u32(gpa + 4, abi_version);
+    mem.write_u64(gpa + 8, completed_fence);
+}
 
 // -----------------------------------------------------------------------------
 // Defensive caps (host readback paths)
