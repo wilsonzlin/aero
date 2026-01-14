@@ -543,6 +543,8 @@ Known gaps / limitations (enforced by code/tests):
       - `cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_restart_strip`
       - `cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_reads_srv_buffer_translated_prepass`
       - `cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_texture_t0_translated_prepass`
+      - `cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_trianglelist_emits_triangle`
+      - `cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_vs_as_compute_feeds_gs_inputs`
 - GS/HS/DS shader objects can be created/bound (the command stream binds these stages via
   `BIND_SHADERS`; newer streams may append `{gs,hs,ds}` handles after the stable 24-byte prefix—when
   present the appended handles are authoritative). HS/DS currently compile to minimal compute shaders
