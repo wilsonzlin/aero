@@ -2494,6 +2494,48 @@ inline bool SetPrimitiveTopologyLocked(DeviceT* dev, uint32_t topology) {
 }
 
 // -------------------------------------------------------------------------------------------------
+// Input assembler helpers (SET_VERTEX_BUFFERS)
+// -------------------------------------------------------------------------------------------------
+//
+// The caller is expected to hold `dev->mutex`.
+template <typename DeviceT, typename SetErrorFn>
+inline bool EmitSetVertexBuffersCmdLocked(DeviceT* dev,
+                                          uint32_t start_slot,
+                                          uint32_t buffer_count,
+                                          const aerogpu_vertex_buffer_binding* bindings,
+                                          SetErrorFn&& set_error) {
+  if (!dev) {
+    return false;
+  }
+  if (buffer_count != 0 && !bindings) {
+    set_error(E_INVALIDARG);
+    return false;
+  }
+
+  auto* cmd = dev->cmd.template append_with_payload<aerogpu_cmd_set_vertex_buffers>(
+      AEROGPU_CMD_SET_VERTEX_BUFFERS, bindings, static_cast<size_t>(buffer_count) * sizeof(bindings[0]));
+  if (!cmd) {
+    set_error(E_OUTOFMEMORY);
+    return false;
+  }
+  cmd->start_slot = start_slot;
+  cmd->buffer_count = buffer_count;
+  return true;
+}
+
+struct EmitSetVertexBuffersNoopSetError {
+  void operator()(HRESULT) const noexcept {}
+};
+
+template <typename DeviceT>
+inline bool EmitSetVertexBuffersCmdLocked(DeviceT* dev,
+                                          uint32_t start_slot,
+                                          uint32_t buffer_count,
+                                          const aerogpu_vertex_buffer_binding* bindings) {
+  return EmitSetVertexBuffersCmdLocked(dev, start_slot, buffer_count, bindings, EmitSetVertexBuffersNoopSetError{});
+}
+
+// -------------------------------------------------------------------------------------------------
 // Resource binding helpers (SET_TEXTURE)
 // -------------------------------------------------------------------------------------------------
 //

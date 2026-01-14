@@ -5000,15 +5000,13 @@ void AEROGPU_APIENTRY SetVertexBuffer(D3D10DDI_HDEVICE hDevice,
   binding.offset_bytes = offset;
   binding.reserved0 = 0;
 
-  auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_vertex_buffers>(AEROGPU_CMD_SET_VERTEX_BUFFERS,
-                                                                           &binding,
-                                                                           sizeof(binding));
-  if (!cmd) {
-    ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
+  if (!aerogpu::d3d10_11::EmitSetVertexBuffersCmdLocked(dev,
+                                                        /*start_slot=*/0,
+                                                        /*buffer_count=*/1,
+                                                        &binding,
+                                                        [&](HRESULT hr) { ReportDeviceErrorLocked(dev, hDevice, hr); })) {
     return;
   }
-  cmd->start_slot = 0;
-  cmd->buffer_count = 1;
   dev->current_vb_alloc = vb_alloc;
   // Vertex buffers are read by Draw.
   track_alloc_for_submit_locked(dev, vb_alloc, /*write=*/false);

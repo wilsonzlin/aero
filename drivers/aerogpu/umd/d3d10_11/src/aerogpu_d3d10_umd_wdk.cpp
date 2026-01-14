@@ -3551,15 +3551,12 @@ void APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hReso
     binding.reserved0 = 0;
 
     if (!oom) {
-      auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_vertex_buffers>(AEROGPU_CMD_SET_VERTEX_BUFFERS,
-                                                                               &binding,
-                                                                               sizeof(binding));
-      if (!cmd) {
-        SetError(hDevice, E_OUTOFMEMORY);
+      if (!aerogpu::d3d10_11::EmitSetVertexBuffersCmdLocked(dev,
+                                                            slot,
+                                                            /*buffer_count=*/1,
+                                                            &binding,
+                                                            [&](HRESULT hr) { SetError(hDevice, hr); })) {
         oom = true;
-      } else {
-        cmd->start_slot = slot;
-        cmd->buffer_count = 1;
       }
     }
   }
@@ -7230,15 +7227,13 @@ void APIENTRY IaSetVertexBuffers(D3D10DDI_HDEVICE hDevice,
     new_resources[i] = vb_res;
   }
 
-  auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_vertex_buffers>(AEROGPU_CMD_SET_VERTEX_BUFFERS,
-                                                                           bindings.data(),
-                                                                           static_cast<size_t>(bind_count) * sizeof(bindings[0]));
-  if (!cmd) {
-    SetError(hDevice, E_OUTOFMEMORY);
+  if (!aerogpu::d3d10_11::EmitSetVertexBuffersCmdLocked(dev,
+                                                        static_cast<uint32_t>(startSlot),
+                                                        static_cast<uint32_t>(bind_count),
+                                                        bindings.data(),
+                                                        [&](HRESULT hr) { SetError(hDevice, hr); })) {
     return;
   }
-  cmd->start_slot = startSlot;
-  cmd->buffer_count = bind_count;
 
   for (UINT i = 0; i < bind_count; ++i) {
     const uint32_t slot = static_cast<uint32_t>(startSlot + i);
@@ -7699,15 +7694,13 @@ void APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
   dev->current_topology = AEROGPU_TOPOLOGY_TRIANGLELIST;
 
   std::array<aerogpu_vertex_buffer_binding, kMaxVertexBufferSlots> vb_zeros{};
-  auto* vb_cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_vertex_buffers>(AEROGPU_CMD_SET_VERTEX_BUFFERS,
-                                                                              vb_zeros.data(),
-                                                                              sizeof(vb_zeros));
-  if (!vb_cmd) {
-    SetError(hDevice, E_OUTOFMEMORY);
+  if (!aerogpu::d3d10_11::EmitSetVertexBuffersCmdLocked(dev,
+                                                        /*start_slot=*/0,
+                                                        /*buffer_count=*/kMaxVertexBufferSlots,
+                                                        vb_zeros.data(),
+                                                        [&](HRESULT hr) { SetError(hDevice, hr); })) {
     return;
   }
-  vb_cmd->start_slot = 0;
-  vb_cmd->buffer_count = kMaxVertexBufferSlots;
 
   dev->current_vb_res = nullptr;
   dev->current_vb_stride = 0;

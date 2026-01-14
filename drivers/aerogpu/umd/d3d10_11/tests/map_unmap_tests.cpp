@@ -793,6 +793,128 @@ bool TestSetConstantBuffersHelperEncodesPacket() {
   return true;
 }
 
+bool TestSetVertexBuffersHelperEncodesPacket() {
+  using aerogpu::d3d10_11::EmitSetVertexBuffersCmdLocked;
+
+  struct DummyDevice {
+    aerogpu::CmdWriter cmd;
+
+    DummyDevice() {
+      cmd.reset();
+    }
+  };
+
+  std::vector<HRESULT> errors;
+
+  // Happy path.
+  DummyDevice dev{};
+  aerogpu_vertex_buffer_binding bindings[2]{};
+  bindings[0].buffer = 10;
+  bindings[0].stride_bytes = 32;
+  bindings[0].offset_bytes = 4;
+  bindings[0].reserved0 = 0;
+  bindings[1].buffer = 20;
+  bindings[1].stride_bytes = 16;
+  bindings[1].offset_bytes = 0;
+  bindings[1].reserved0 = 0;
+
+  const bool ok = EmitSetVertexBuffersCmdLocked(&dev,
+                                                /*start_slot=*/1,
+                                                /*buffer_count=*/2,
+                                                bindings,
+                                                [&](HRESULT hr) { errors.push_back(hr); });
+  dev.cmd.finalize();
+
+  if (!Check(ok, "EmitSetVertexBuffersCmdLocked should succeed")) {
+    return false;
+  }
+  if (!Check(errors.empty(), "EmitSetVertexBuffersCmdLocked should not report errors")) {
+    return false;
+  }
+
+  const uint32_t expected_packet_bytes =
+      static_cast<uint32_t>(sizeof(aerogpu_cmd_set_vertex_buffers) + sizeof(aerogpu_vertex_buffer_binding) * 2);
+  if (!Check(dev.cmd.size() >= sizeof(aerogpu_cmd_stream_header) + expected_packet_bytes,
+             "SET_VERTEX_BUFFERS packet emitted")) {
+    return false;
+  }
+
+  const auto* pkt =
+      reinterpret_cast<const aerogpu_cmd_set_vertex_buffers*>(dev.cmd.data() + sizeof(aerogpu_cmd_stream_header));
+  if (!Check(pkt->hdr.opcode == AEROGPU_CMD_SET_VERTEX_BUFFERS, "SET_VERTEX_BUFFERS opcode")) {
+    return false;
+  }
+  if (!Check(pkt->hdr.size_bytes == expected_packet_bytes, "SET_VERTEX_BUFFERS hdr.size_bytes")) {
+    return false;
+  }
+  if (!Check(pkt->start_slot == 1, "SET_VERTEX_BUFFERS start_slot")) {
+    return false;
+  }
+  if (!Check(pkt->buffer_count == 2, "SET_VERTEX_BUFFERS buffer_count")) {
+    return false;
+  }
+
+  const auto* payload =
+      reinterpret_cast<const aerogpu_vertex_buffer_binding*>(reinterpret_cast<const uint8_t*>(pkt) + sizeof(*pkt));
+  if (!Check(payload[0].buffer == bindings[0].buffer, "SET_VERTEX_BUFFERS payload[0].buffer")) {
+    return false;
+  }
+  if (!Check(payload[0].stride_bytes == bindings[0].stride_bytes, "SET_VERTEX_BUFFERS payload[0].stride_bytes")) {
+    return false;
+  }
+  if (!Check(payload[0].offset_bytes == bindings[0].offset_bytes, "SET_VERTEX_BUFFERS payload[0].offset_bytes")) {
+    return false;
+  }
+  if (!Check(payload[0].reserved0 == 0, "SET_VERTEX_BUFFERS payload[0].reserved0")) {
+    return false;
+  }
+  if (!Check(payload[1].buffer == bindings[1].buffer, "SET_VERTEX_BUFFERS payload[1].buffer")) {
+    return false;
+  }
+
+  // Invalid argument path: non-zero count with null bindings pointer.
+  DummyDevice invalid{};
+  errors.clear();
+  const bool ok_invalid = EmitSetVertexBuffersCmdLocked(&invalid,
+                                                       /*start_slot=*/0,
+                                                       /*buffer_count=*/1,
+                                                       /*bindings=*/nullptr,
+                                                       [&](HRESULT hr) { errors.push_back(hr); });
+  if (!Check(!ok_invalid, "EmitSetVertexBuffersCmdLocked should fail when bindings==nullptr and buffer_count!=0")) {
+    return false;
+  }
+  if (!Check(errors.size() == 1 && errors[0] == E_INVALIDARG, "invalid bindings pointer reports E_INVALIDARG")) {
+    return false;
+  }
+  if (!Check(invalid.cmd.size() == sizeof(aerogpu_cmd_stream_header), "invalid args do not emit a packet")) {
+    return false;
+  }
+
+  // Insufficient-space path.
+  alignas(4) uint8_t tiny_buf[sizeof(aerogpu_cmd_stream_header)] = {};
+  struct TinyDevice {
+    aerogpu::CmdWriter cmd;
+    TinyDevice(uint8_t* buf, size_t cap) {
+      cmd.set_span(buf, cap);
+    }
+  };
+  TinyDevice tiny(tiny_buf, sizeof(tiny_buf));
+  errors.clear();
+  const bool ok2 = EmitSetVertexBuffersCmdLocked(&tiny,
+                                                 /*start_slot=*/0,
+                                                 /*buffer_count=*/1,
+                                                 bindings,
+                                                 [&](HRESULT hr) { errors.push_back(hr); });
+  if (!Check(!ok2, "EmitSetVertexBuffersCmdLocked should fail when cmd append fails")) {
+    return false;
+  }
+  if (!Check(errors.size() == 1 && errors[0] == E_OUTOFMEMORY, "cmd append failure reports E_OUTOFMEMORY")) {
+    return false;
+  }
+
+  return true;
+}
+
 bool TestTrackWddmAllocForSubmitLockedHelper() {
   using aerogpu::d3d10_11::WddmSubmitAllocation;
 
@@ -10047,6 +10169,7 @@ int main() {
   ok &= TestSetTextureHelperEncodesPacket();
   ok &= TestSetSamplersHelperEncodesPacket();
   ok &= TestSetConstantBuffersHelperEncodesPacket();
+  ok &= TestSetVertexBuffersHelperEncodesPacket();
   ok &= TestTrackWddmAllocForSubmitLockedHelper();
   ok &= TestDeviceFuncsTableNoNullEntriesHostOwned();
   ok &= TestDeviceFuncsTableNoNullEntriesGuestBacked();
