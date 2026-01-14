@@ -3,6 +3,7 @@ use aero_d3d11::{parse_signatures, DxbcFile, FourCC};
 const FOURCC_PCSG: FourCC = FourCC(*b"PCSG");
 const FOURCC_PCG1: FourCC = FourCC(*b"PCG1");
 
+// Explicit argument lists mirror on-disk signature entry layout fields (keeps call sites readable).
 #[allow(clippy::too_many_arguments)]
 fn build_signature_chunk_v0_one_entry(
     semantic_name: &str,
@@ -44,6 +45,7 @@ fn build_signature_chunk_v0_one_entry(
     bytes
 }
 
+// Explicit argument lists mirror on-disk signature entry layout fields (keeps call sites readable).
 #[allow(clippy::too_many_arguments)]
 fn build_signature_chunk_v1_one_entry(
     semantic_name: &str,
