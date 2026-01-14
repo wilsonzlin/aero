@@ -10,6 +10,10 @@ use memory::{GuestMemory, GuestMemoryError, GuestMemoryResult};
 use std::cell::RefCell;
 use std::rc::Rc;
 
+mod bar_probe_masks;
+
+use bar_probe_masks::mmio32_probe_mask;
+
 #[test]
 fn ehci_pci_config_and_bar_mmio() {
     let mut dev = EhciPciDevice::default();
@@ -229,7 +233,10 @@ fn ehci_pci_snapshot_roundtrip_restores_pci_and_controller_state() {
     );
 
     // Reading the BAR should still return the size mask because BAR probing was active.
-    assert_eq!(restored.config_mut().read(bar_offset, 4), 0xffff_f000);
+    assert_eq!(
+        restored.config_mut().read(bar_offset, 4),
+        mmio32_probe_mask(EhciPciDevice::MMIO_BAR_SIZE, false)
+    );
 
     // Controller state should restore (compare controller snapshots for an easy equality check).
     assert_eq!(

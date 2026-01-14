@@ -436,11 +436,15 @@ fn pc_platform_xhci_bar0_size_probe_reports_expected_mask() {
     let bdf = USB_XHCI_QEMU.bdf;
 
     let bar0_raw = read_xhci_bar0_raw(&mut pc);
+    let bar0_flags = bar0_raw & 0xf;
+    let bar0_size =
+        u32::try_from(USB_XHCI_QEMU.bars[0].size).expect("xHCI BAR0 size should fit in u32");
+    let expected_mask = !(bar0_size - 1) | bar0_flags;
 
     // BAR size probing: write all-ones and read back the size mask.
     write_cfg_u32(&mut pc, bdf, 0x10, 0xFFFF_FFFF);
     let got = read_cfg_u32(&mut pc, bdf, 0x10);
-    assert_eq!(got, 0xFFFF_0000);
+    assert_eq!(got, expected_mask);
 
     // Restore the original BAR so other reads reflect the programmed base.
     write_cfg_u32(&mut pc, bdf, 0x10, bar0_raw);

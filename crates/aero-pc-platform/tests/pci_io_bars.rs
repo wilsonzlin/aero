@@ -85,8 +85,9 @@ fn pci_io_bar4_probe_returns_size_mask_and_relocation_updates_io_decode() {
     let bdf = find_free_bdf(&mut pc);
 
     // Add a PCI function that exposes a single 16-byte I/O BAR at BAR4.
+    const BAR4_SIZE: u32 = 0x10;
     let mut cfg = PciConfigSpace::new(0x1234, 0x0001);
-    cfg.set_bar_definition(4, PciBarDefinition::Io { size: 0x10 });
+    cfg.set_bar_definition(4, PciBarDefinition::Io { size: BAR4_SIZE });
     pc.pci_cfg
         .borrow_mut()
         .bus_mut()
@@ -103,7 +104,11 @@ fn pci_io_bar4_probe_returns_size_mask_and_relocation_updates_io_decode() {
     assert_ne!(bar4, 0);
     assert_ne!(bar4 & 0x1, 0);
     let old_base = (bar4 & 0xFFFF_FFFC) as u16;
-    assert_eq!(old_base % 0x10, 0, "BAR4 base should be 16-byte aligned");
+    assert_eq!(
+        old_base % BAR4_SIZE as u16,
+        0,
+        "BAR4 base should be 16-byte aligned"
+    );
 
     // With I/O decoding enabled, reads should hit the device.
     assert_eq!(pc.io.read(old_base, 1), 0);
@@ -123,8 +128,9 @@ fn pci_io_bar4_probe_returns_size_mask_and_relocation_updates_io_decode() {
     assert_eq!(pc.io.read(old_base, 1), 0);
 
     // Probe BAR4 size mask.
+    let expected_mask = (!(BAR4_SIZE - 1) & 0xFFFF_FFFC) | 0x1;
     write_cfg_u32(&mut pc, bdf, 0x20, 0xFFFF_FFFF);
-    assert_eq!(read_cfg_u32(&mut pc, bdf, 0x20), 0xFFFF_FFF1);
+    assert_eq!(read_cfg_u32(&mut pc, bdf, 0x20), expected_mask);
 
     // Relocate to a new base inside the ACPI-reported PCI I/O window.
     //

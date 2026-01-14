@@ -106,6 +106,10 @@ fn read_u32(dev: &mut Piix3IdePciDevice, offset: u16) -> u32 {
     dev.config_mut().read(offset, 4)
 }
 
+fn io_probe_mask(size: u32) -> u32 {
+    (!(size.saturating_sub(1)) & 0xFFFF_FFFC) | 0x1
+}
+
 #[derive(Debug, Default)]
 struct RecordingDisk {
     capacity_bytes: u64,
@@ -222,31 +226,31 @@ fn pci_bar_probing_and_programming_matches_piix3_profile() {
 
     // BAR0 (8-byte I/O).
     dev.config_mut().write(0x10, 4, 0xffff_ffff);
-    assert_eq!(read_u32(&mut dev, 0x10), 0xffff_fff9);
+    assert_eq!(read_u32(&mut dev, 0x10), io_probe_mask(8));
     dev.config_mut().write(0x10, 4, 0x0000_1f03);
     assert_eq!(read_u32(&mut dev, 0x10), 0x0000_1f01);
 
     // BAR1 (4-byte I/O).
     dev.config_mut().write(0x14, 4, 0xffff_ffff);
-    assert_eq!(read_u32(&mut dev, 0x14), 0xffff_fffd);
+    assert_eq!(read_u32(&mut dev, 0x14), io_probe_mask(4));
     dev.config_mut().write(0x14, 4, 0x0000_3f07);
     assert_eq!(read_u32(&mut dev, 0x14), 0x0000_3f05);
 
     // BAR2 (8-byte I/O).
     dev.config_mut().write(0x18, 4, 0xffff_ffff);
-    assert_eq!(read_u32(&mut dev, 0x18), 0xffff_fff9);
+    assert_eq!(read_u32(&mut dev, 0x18), io_probe_mask(8));
     dev.config_mut().write(0x18, 4, 0x0000_1703);
     assert_eq!(read_u32(&mut dev, 0x18), 0x0000_1701);
 
     // BAR3 (4-byte I/O).
     dev.config_mut().write(0x1c, 4, 0xffff_ffff);
-    assert_eq!(read_u32(&mut dev, 0x1c), 0xffff_fffd);
+    assert_eq!(read_u32(&mut dev, 0x1c), io_probe_mask(4));
     dev.config_mut().write(0x1c, 4, 0x0000_3707);
     assert_eq!(read_u32(&mut dev, 0x1c), 0x0000_3705);
 
     // BAR4 (16-byte I/O).
     dev.config_mut().write(0x20, 4, 0xffff_ffff);
-    assert_eq!(read_u32(&mut dev, 0x20), 0xffff_fff1);
+    assert_eq!(read_u32(&mut dev, 0x20), io_probe_mask(16));
     dev.config_mut().write(0x20, 4, 0x0000_c123);
     assert_eq!(read_u32(&mut dev, 0x20), 0x0000_c121);
 }
