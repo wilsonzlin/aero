@@ -8067,6 +8067,56 @@ fn translate_entrypoint_allows_unused_volume_sampler_declaration() {
 }
 
 #[test]
+fn translate_entrypoint_allows_unused_1d_sampler_declaration() {
+    // Like volume samplers, 1D sampler declarations are permitted as long as the sampler is never
+    // actually used by a texture op. The translation entrypoint should not emit any WGSL bindings
+    // for unused samplers.
+    //
+    // Minimal ps_3_0:
+    //   dcl_1d s0
+    //   def c0, 1, 0, 0, 1
+    //   mov oC0, c0
+    //   end
+    let mut words = vec![0xFFFF_0300];
+    // dcl_1d s0
+    words.extend(enc_inst_with_extra(
+        0x001F,
+        1u32 << 16,
+        &[enc_dst(10, 0, 0xF)],
+    ));
+    // def c0, 1.0, 0.0, 0.0, 1.0
+    words.extend(enc_inst(
+        0x0051,
+        &[
+            enc_dst(2, 0, 0xF),
+            1.0f32.to_bits(),
+            0.0f32.to_bits(),
+            0.0f32.to_bits(),
+            1.0f32.to_bits(),
+        ],
+    ));
+    // mov oC0, c0
+    words.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(2, 0, 0xE4)]));
+    words.push(0x0000_FFFF);
+
+    let bytes = to_bytes(&words);
+    let translated =
+        shader_translate::translate_d3d9_shader_to_wgsl(&bytes, shader::WgslOptions::default())
+            .unwrap();
+    assert!(!translated.used_samplers.contains(&0));
+    assert!(
+        !translated.wgsl.contains("texture_1d"),
+        "wgsl:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        !translated.wgsl.contains("textureSample"),
+        "wgsl:\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
 fn translate_entrypoint_rejects_used_volume_sampler() {
     // The D3D9 runtime currently only supports 2D + cube textures. Ensure we reject used
     // volume (3D) samplers at the translation entrypoint rather than emitting WGSL that would
