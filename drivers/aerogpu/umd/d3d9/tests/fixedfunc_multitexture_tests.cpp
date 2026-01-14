@@ -2715,6 +2715,172 @@ bool TestFixedfuncFourStageEmitsFourTexldAndRebindsOnStage3Change() {
   return true;
 }
 
+bool TestFixedfuncStage4StateIsIgnoredBeyondMaxTextureStages() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<aerogpu::Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzrhwDiffuseTex1);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE|TEX1)")) {
+    return false;
+  }
+
+  D3DDDI_HRESOURCE hTex0{};
+  D3DDDI_HRESOURCE hTex1{};
+  D3DDDI_HRESOURCE hTex2{};
+  D3DDDI_HRESOURCE hTex3{};
+  if (!CreateDummyTexture(&cleanup, &hTex0) ||
+      !CreateDummyTexture(&cleanup, &hTex1) ||
+      !CreateDummyTexture(&cleanup, &hTex2) ||
+      !CreateDummyTexture(&cleanup, &hTex3)) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, hTex0);
+  if (!Check(hr == S_OK, "SetTexture(stage0)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/1, hTex1);
+  if (!Check(hr == S_OK, "SetTexture(stage1)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/2, hTex2);
+  if (!Check(hr == S_OK, "SetTexture(stage2)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/3, hTex3);
+  if (!Check(hr == S_OK, "SetTexture(stage3)")) {
+    return false;
+  }
+
+  // Configure a 4-stage chain (0..3).
+  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, 0, kD3dTssColorOp, kD3dTopSelectArg1);
+  if (!Check(hr == S_OK, "TSS stage0 COLOROP=SELECTARG1")) {
+    return false;
+  }
+  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, 0, kD3dTssColorArg1, kD3dTaTexture);
+  if (!Check(hr == S_OK, "TSS stage0 COLORARG1=TEXTURE")) {
+    return false;
+  }
+  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, 0, kD3dTssAlphaOp, kD3dTopSelectArg1);
+  if (!Check(hr == S_OK, "TSS stage0 ALPHAOP=SELECTARG1")) {
+    return false;
+  }
+  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, 0, kD3dTssAlphaArg1, kD3dTaTexture);
+  if (!Check(hr == S_OK, "TSS stage0 ALPHAARG1=TEXTURE")) {
+    return false;
+  }
+
+  for (uint32_t stage = 1; stage <= 3; ++stage) {
+    hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, stage, kD3dTssColorOp, kD3dTopModulate);
+    if (!Check(hr == S_OK, "TSS stageN COLOROP=MODULATE")) {
+      return false;
+    }
+    hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, stage, kD3dTssColorArg1, kD3dTaTexture);
+    if (!Check(hr == S_OK, "TSS stageN COLORARG1=TEXTURE")) {
+      return false;
+    }
+    hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, stage, kD3dTssColorArg2, kD3dTaCurrent);
+    if (!Check(hr == S_OK, "TSS stageN COLORARG2=CURRENT")) {
+      return false;
+    }
+    hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, stage, kD3dTssAlphaOp, kD3dTopSelectArg1);
+    if (!Check(hr == S_OK, "TSS stageN ALPHAOP=SELECTARG1")) {
+      return false;
+    }
+    hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, stage, kD3dTssAlphaArg1, kD3dTaCurrent);
+    if (!Check(hr == S_OK, "TSS stageN ALPHAARG1=CURRENT")) {
+      return false;
+    }
+  }
+
+  const VertexXyzrhwDiffuseTex1 tri[3] = {
+      {0.0f, 0.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 0.0f, 0.0f},
+      {16.0f, 0.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 1.0f, 0.0f},
+      {0.0f, 16.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 0.0f, 1.0f},
+  };
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(tri[0]));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(first 4-stage)")) {
+    return false;
+  }
+
+  aerogpu_handle_t ps_before = 0;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->ps != nullptr, "fixed-function PS bound")) {
+      return false;
+    }
+    if (!Check(CountToken(dev->ps, kPsOpTexld) >= 4, "fixed-function PS contains >= 4 texld")) {
+      return false;
+    }
+    if (!Check(TexldSamplerMask(dev->ps) == 0xFu, "fixed-function PS texld uses samplers s0..s3")) {
+      return false;
+    }
+    ps_before = dev->ps->handle;
+  }
+  if (!Check(ps_before != 0, "first draw bound non-zero PS handle")) {
+    return false;
+  }
+
+  // Stage4 is beyond the maximum supported fixed-function stage chain. Set an
+  // unsupported stage-state op and ensure it is ignored (draws succeed, PS stays
+  // stable).
+  dev->cmd.reset();
+  hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, 4, kD3dTssColorOp, kD3dTopAddSmooth);
+  if (!Check(hr == S_OK, "TSS stage4 COLOROP=ADDSMOOTH (ignored)")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(tri[0]));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(second 4-stage, stage4 invalid)")) {
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->ps != nullptr, "fixed-function PS still bound")) {
+      return false;
+    }
+    if (!Check(dev->ps->handle == ps_before, "stage4 state change keeps PS handle stable")) {
+      return false;
+    }
+    if (!Check(CountToken(dev->ps, kPsOpTexld) >= 4, "still contains >= 4 texld after stage4 state")) {
+      return false;
+    }
+    if (!Check(TexldSamplerMask(dev->ps) == 0xFu, "still uses samplers s0..s3 after stage4 state")) {
+      return false;
+    }
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+
+  size_t ps_creates = 0;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_CREATE_SHADER_DXBC)) {
+    const auto* cs = reinterpret_cast<const aerogpu_cmd_create_shader_dxbc*>(hdr);
+    if (cs->stage == AEROGPU_SHADER_STAGE_PIXEL) {
+      ++ps_creates;
+    }
+  }
+  if (!Check(ps_creates == 0, "stage4 state does not create a new fixed-function PS")) {
+    return false;
+  }
+
+  return true;
+}
+
 } // namespace
 
 int main() {
@@ -2761,6 +2927,9 @@ int main() {
     return 1;
   }
   if (!TestFixedfuncFourStageEmitsFourTexldAndRebindsOnStage3Change()) {
+    return 1;
+  }
+  if (!TestFixedfuncStage4StateIsIgnoredBeyondMaxTextureStages()) {
     return 1;
   }
   return 0;
