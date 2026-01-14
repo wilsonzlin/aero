@@ -1819,7 +1819,8 @@ const tryReadWddmScanoutFrame = (snap: ScanoutStateSnapshot): WddmScanoutFrameIn
 
   const pitchBytes = snap.pitchBytes >>> 0;
   const rowBytes = width * BYTES_PER_PIXEL_RGBA8;
-  if (pitchBytes < rowBytes) return null;
+  if (!Number.isSafeInteger(rowBytes) || rowBytes <= 0) return null;
+  if (pitchBytes < rowBytes || pitchBytes % BYTES_PER_PIXEL_RGBA8 !== 0) return null;
 
   // base_paddr is a guest physical address (u64). Clamp to the safe-integer subset
   // so we can index into JS typed arrays.
@@ -1828,6 +1829,10 @@ const tryReadWddmScanoutFrame = (snap: ScanoutStateSnapshot): WddmScanoutFrameIn
   const basePaddrNum = Number(basePaddr);
 
   const requiredBytes = rowBytes * height;
+  if (!Number.isSafeInteger(requiredBytes) || requiredBytes <= 0) return null;
+  // Avoid attempting absurd allocations if the descriptor is corrupt.
+  const MAX_WDDM_SCANOUT_BYTES = 256 * 1024 * 1024;
+  if (requiredBytes > MAX_WDDM_SCANOUT_BYTES) return null;
   if (
     !wddmScanoutRgba ||
     wddmScanoutWidth !== width ||
