@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { WasmApi } from "../runtime/wasm_loader";
 import { applyUsbSelectedToWebUsbGuestBridge, chooseWebUsbGuestBridge } from "./io_webusb_guest_selection";
 
 describe("webusb xhci selection (io worker)", () => {
@@ -20,25 +19,10 @@ describe("webusb xhci selection (io worker)", () => {
       free: vi.fn(),
     };
 
-    // Mock a WasmApi that exposes both controllers.
-    const api = {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      UhciControllerBridge: function FakeUhciBridge(): any {
-        return uhci;
-      },
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      XhciControllerBridge: function FakeXhciBridge(): any {
-        return xhci;
-      },
-    } as unknown as WasmApi;
-    void api;
-
-    // In the real IO worker these instances come from the WASM bridges; for this unit test we
-    // construct them via the mocked API to ensure both exist at the same time.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const uhciBridge = new (api.UhciControllerBridge as any)(0, 0);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const xhciBridge = new (api.XhciControllerBridge as any)(0, 0);
+    // In the real IO worker these instances come from WASM exports. For this unit test, plain JS
+    // objects are sufficient as long as they satisfy the `WebUsbGuestBridgeLike` shape.
+    const uhciBridge = uhci;
+    const xhciBridge = xhci;
 
     const picked = chooseWebUsbGuestBridge({ xhciBridge, uhciBridge });
     expect(picked?.kind).toBe("xhci");
@@ -62,4 +46,3 @@ describe("webusb xhci selection (io worker)", () => {
     expect(xhci.reset).toHaveBeenCalledTimes(1);
   });
 });
-
