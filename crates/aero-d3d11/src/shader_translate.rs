@@ -6,8 +6,8 @@ use crate::binding_model::{
     D3D11_MAX_CONSTANT_BUFFER_SLOTS, MAX_SAMPLER_SLOTS, MAX_TEXTURE_SLOTS, MAX_UAV_SLOTS,
 };
 use crate::signature::{DxbcSignature, DxbcSignatureParameter, ShaderSignatures};
-use crate::sm4::ShaderStage;
 use crate::sm4::opcode::opcode_name;
+use crate::sm4::ShaderStage;
 use crate::sm4_ir::{
     OperandModifier, RegFile, RegisterRef, Sm4Decl, Sm4Inst, Sm4Module, SrcKind, Swizzle, WriteMask,
 };
@@ -65,17 +65,28 @@ pub struct Binding {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BindingKind {
-    ConstantBuffer { slot: u32, reg_count: u32 },
-    Texture2D { slot: u32 },
+    ConstantBuffer {
+        slot: u32,
+        reg_count: u32,
+    },
+    Texture2D {
+        slot: u32,
+    },
     /// A `t#` SRV that is backed by a buffer (e.g. `ByteAddressBuffer`, `StructuredBuffer`).
     ///
     /// In WGSL this maps to a `var<storage, read>` binding.
-    SrvBuffer { slot: u32 },
-    Sampler { slot: u32 },
+    SrvBuffer {
+        slot: u32,
+    },
+    Sampler {
+        slot: u32,
+    },
     /// A `u#` UAV that is backed by a buffer (e.g. `RWByteAddressBuffer`, `RWStructuredBuffer`).
     ///
     /// In WGSL this maps to a `var<storage, read_write>` binding.
-    UavBuffer { slot: u32 },
+    UavBuffer {
+        slot: u32,
+    },
 }
 
 #[derive(Debug)]
@@ -120,7 +131,11 @@ pub enum ShaderTranslateError {
     },
     PixelShaderMissingSvTarget0,
     MissingThreadGroupSize,
-    InvalidThreadGroupSize { x: u32, y: u32, z: u32 },
+    InvalidThreadGroupSize {
+        x: u32,
+        y: u32,
+        z: u32,
+    },
 }
 
 impl fmt::Display for ShaderTranslateError {
@@ -262,7 +277,10 @@ pub fn reflect_resource_bindings(module: &Sm4Module) -> Result<Vec<Binding>, Sha
     Ok(scan_resources(module, None)?.bindings(module.stage))
 }
 
-fn translate_cs(module: &Sm4Module, rdef: Option<RdefChunk>) -> Result<ShaderTranslation, ShaderTranslateError> {
+fn translate_cs(
+    module: &Sm4Module,
+    rdef: Option<RdefChunk>,
+) -> Result<ShaderTranslation, ShaderTranslateError> {
     let io = build_cs_io_maps(module);
     let resources = scan_resources(module, rdef.as_ref())?;
 
@@ -473,14 +491,16 @@ fn translate_ps(
             w.line(&format!("out.target0 = {expr};"));
         }
 
-        let depth_reg = io.ps_sv_depth_register.expect("ps_has_depth_output implies depth reg");
-        let depth_param = io
-            .outputs
-            .get(&depth_reg)
-            .ok_or(ShaderTranslateError::SignatureMissingRegister {
-                io: "output",
-                register: depth_reg,
-            })?;
+        let depth_reg = io
+            .ps_sv_depth_register
+            .expect("ps_has_depth_output implies depth reg");
+        let depth_param =
+            io.outputs
+                .get(&depth_reg)
+                .ok_or(ShaderTranslateError::SignatureMissingRegister {
+                    io: "output",
+                    register: depth_reg,
+                })?;
         let depth_expr = apply_sig_mask_to_scalar(&format!("o{depth_reg}"), depth_param.param.mask);
         w.line(&format!("out.depth = {depth_expr};"));
         w.line("return out;");
@@ -488,14 +508,15 @@ fn translate_ps(
         let target_reg = io
             .ps_sv_target0_register
             .ok_or(ShaderTranslateError::PixelShaderMissingSvTarget0)?;
-        let target_param = io
-            .outputs
-            .get(&target_reg)
-            .ok_or(ShaderTranslateError::SignatureMissingRegister {
-                io: "output",
-                register: target_reg,
-            })?;
-        let return_expr = apply_sig_mask_to_vec4(&format!("o{target_reg}"), target_param.param.mask);
+        let target_param =
+            io.outputs
+                .get(&target_reg)
+                .ok_or(ShaderTranslateError::SignatureMissingRegister {
+                    io: "output",
+                    register: target_reg,
+                })?;
+        let return_expr =
+            apply_sig_mask_to_vec4(&format!("o{target_reg}"), target_param.param.mask);
         w.line(&format!("return {return_expr};"));
     }
     w.dedent();
@@ -924,7 +945,12 @@ fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
                 scan_src_regs(index, &mut scan_reg);
                 scan_src_regs(offset, &mut scan_reg);
             }
-            Sm4Inst::StoreStructured { index, offset, value, .. } => {
+            Sm4Inst::StoreStructured {
+                index,
+                offset,
+                value,
+                ..
+            } => {
                 scan_src_regs(index, &mut scan_reg);
                 scan_src_regs(offset, &mut scan_reg);
                 scan_src_regs(value, &mut scan_reg);
@@ -1873,12 +1899,7 @@ fn scan_resources(
             Sm4Inst::Else | Sm4Inst::EndIf => {}
             Sm4Inst::Mov { dst: _, src } => scan_src(src)?,
             Sm4Inst::Utof { dst: _, src } => scan_src(src)?,
-            Sm4Inst::Movc {
-                dst: _,
-                cond,
-                a,
-                b,
-            } => {
+            Sm4Inst::Movc { dst: _, cond, a, b } => {
                 scan_src(cond)?;
                 scan_src(a)?;
                 scan_src(b)?;
@@ -1993,10 +2014,7 @@ fn scan_resources(
                 srv_buffers.insert(buffer.slot);
             }
             Sm4Inst::StoreRaw {
-                uav,
-                addr,
-                value,
-                ..
+                uav, addr, value, ..
             } => {
                 scan_src(addr)?;
                 scan_src(value)?;
@@ -2157,25 +2175,25 @@ fn emit_temp_and_output_decls(
     let mut temps = BTreeSet::<u32>::new();
     let mut outputs = BTreeSet::<u32>::new();
 
-        for inst in &module.instructions {
-            let mut scan_reg = |reg: RegisterRef| match reg.file {
-                RegFile::Temp => {
-                    temps.insert(reg.index);
-                }
-                RegFile::Output => {
+    for inst in &module.instructions {
+        let mut scan_reg = |reg: RegisterRef| match reg.file {
+            RegFile::Temp => {
+                temps.insert(reg.index);
+            }
+            RegFile::Output => {
+                outputs.insert(reg.index);
+            }
+            RegFile::OutputDepth => {
+                // Depth output registers are mapped to a concrete `o#` register by the output
+                // signature. Ensure the mapped register is declared if present.
+                if let Some(depth_reg) = io.ps_sv_depth_register {
+                    outputs.insert(depth_reg);
+                } else {
                     outputs.insert(reg.index);
                 }
-                RegFile::OutputDepth => {
-                    // Depth output registers are mapped to a concrete `o#` register by the output
-                    // signature. Ensure the mapped register is declared if present.
-                    if let Some(depth_reg) = io.ps_sv_depth_register {
-                        outputs.insert(depth_reg);
-                    } else {
-                        outputs.insert(reg.index);
-                    }
-                }
-                RegFile::Input => {}
-            };
+            }
+            RegFile::Input => {}
+        };
 
         match inst {
             Sm4Inst::If { cond, .. } => {
@@ -2298,10 +2316,7 @@ fn emit_temp_and_output_decls(
                 scan_src_regs(value, &mut scan_reg);
             }
             Sm4Inst::LdStructured {
-                dst,
-                index,
-                offset,
-                ..
+                dst, index, offset, ..
             } => {
                 scan_reg(dst.reg);
                 scan_src_regs(index, &mut scan_reg);
@@ -2693,11 +2708,10 @@ fn emit_instructions(
                 w.line(&format!(
                     "let {cond_bits} = bitcast<vec4<u32>>({cond_vec});"
                 ));
-                w.line(&format!(
-                    "let {cond_bool} = {cond_bits} != vec4<u32>(0u);"
-                ));
+                w.line(&format!("let {cond_bool} = {cond_bits} != vec4<u32>(0u);"));
 
-                let expr = maybe_saturate(dst, format!("select(({b_vec}), ({a_vec}), {cond_bool})"));
+                let expr =
+                    maybe_saturate(dst, format!("select(({b_vec}), ({a_vec}), {cond_bool})"));
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "movc", ctx)?;
             }
             Sm4Inst::Utof { dst, src } => {
@@ -3225,10 +3239,7 @@ fn emit_instructions(
                 let opcode = opcode_name(*opcode)
                     .map(str::to_owned)
                     .unwrap_or_else(|| format!("opcode_{opcode}"));
-                return Err(ShaderTranslateError::UnsupportedInstruction {
-                    inst_index,
-                    opcode,
-                });
+                return Err(ShaderTranslateError::UnsupportedInstruction { inst_index, opcode });
             }
             Sm4Inst::Emit { .. } => {
                 return Err(ShaderTranslateError::UnsupportedInstruction {
@@ -3344,17 +3355,19 @@ fn emit_src_vec4(
     ctx: &EmitCtx<'_>,
 ) -> Result<String, ShaderTranslateError> {
     let base = match &src.kind {
-        SrcKind::Register(reg) => match reg.file {
-            RegFile::Temp => format!("r{}", reg.index),
-            RegFile::Output => format!("o{}", reg.index),
-            RegFile::OutputDepth => {
-                let depth_reg = ctx.io.ps_sv_depth_register.ok_or(
-                    ShaderTranslateError::MissingSignature("pixel output SV_Depth"),
-                )?;
-                format!("o{depth_reg}")
+        SrcKind::Register(reg) => {
+            match reg.file {
+                RegFile::Temp => format!("r{}", reg.index),
+                RegFile::Output => format!("o{}", reg.index),
+                RegFile::OutputDepth => {
+                    let depth_reg = ctx.io.ps_sv_depth_register.ok_or(
+                        ShaderTranslateError::MissingSignature("pixel output SV_Depth"),
+                    )?;
+                    format!("o{depth_reg}")
+                }
+                RegFile::Input => ctx.io.read_input_vec4(ctx.stage, reg.index)?,
             }
-            RegFile::Input => ctx.io.read_input_vec4(ctx.stage, reg.index)?,
-        },
+        }
         SrcKind::GsInput { .. } => return Err(ShaderTranslateError::UnsupportedStage(ctx.stage)),
         SrcKind::ConstantBuffer { slot, reg } => {
             // Size is determined by scanning, so the declared array is always
@@ -3530,9 +3543,12 @@ fn emit_write_masked(
         RegFile::Temp => format!("r{}", dst.index),
         RegFile::Output => format!("o{}", dst.index),
         RegFile::OutputDepth => {
-            let depth_reg = ctx.io.ps_sv_depth_register.ok_or(
-                ShaderTranslateError::MissingSignature("pixel output SV_Depth"),
-            )?;
+            let depth_reg =
+                ctx.io
+                    .ps_sv_depth_register
+                    .ok_or(ShaderTranslateError::MissingSignature(
+                        "pixel output SV_Depth",
+                    ))?;
             format!("o{depth_reg}")
         }
         RegFile::Input => {
@@ -3877,7 +3893,8 @@ mod tests {
         let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
         let signatures = ShaderSignatures::default();
 
-        let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+        let translated =
+            translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
 
         assert_wgsl_validates(&translated.wgsl);
         assert!(translated.wgsl.contains("@compute"));
@@ -4074,9 +4091,7 @@ mod tests {
             translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
 
         assert_wgsl_validates(&translated.wgsl);
-        assert!(translated
-            .wgsl
-            .contains("@builtin(local_invocation_index)"));
+        assert!(translated.wgsl.contains("@builtin(local_invocation_index)"));
         assert!(translated
             .wgsl
             .contains("bitcast<f32>(input.local_invocation_index)"));
@@ -4170,9 +4185,11 @@ mod tests {
             translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
 
         assert_wgsl_validates(&translated.wgsl);
-        assert!(translated
-            .wgsl
-            .contains("textureSampleLevel("), "{}", translated.wgsl);
+        assert!(
+            translated.wgsl.contains("textureSampleLevel("),
+            "{}",
+            translated.wgsl
+        );
         assert!(
             !translated.wgsl.contains("textureSample("),
             "{}",
