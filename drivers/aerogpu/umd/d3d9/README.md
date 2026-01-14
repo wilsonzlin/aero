@@ -474,10 +474,13 @@ These DDIs are present in the Win7 D3D9UMDDI surface but are not implemented yet
 
 *(none)*
 
-### Patch rendering (N-Patch / Bezier patches)
+### Patch rendering (Bezier / RT patches)
 
 Patch rendering DDIs (`pfnDrawRectPatch` / `pfnDrawTriPatch` / `pfnDeletePatch`) are implemented for a bring-up subset
-(see “Fixed-function vertex formats (FVF)” above); they are no longer treated as “stubs”:
+(see “Fixed-function vertex formats (FVF)” above); they are no longer treated as “stubs”.
+
+Note: These DDIs correspond to D3D9 **RT patches** (`D3DDEVCAPS_RTPATCHES`) / Bezier patch rendering. They are distinct from
+the D3D9 “N-patches” / Truform feature (`D3DDEVCAPS_NPATCHES`).
 
 - `pfnDrawRectPatch` / `pfnDrawTriPatch` / `pfnDeletePatch`
 
