@@ -17492,7 +17492,7 @@ fn main() {{
     }
 
     #[test]
-    fn set_unordered_access_buffers_rejects_non_compute_stage() {
+    fn set_unordered_access_buffers_stage_ex_routes_to_extended_stage_bucket() {
         pollster::block_on(async {
             let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
                 Ok(exec) => exec,
@@ -17502,27 +17502,74 @@ fn main() {{
                 }
             };
 
-            // SET_UNORDERED_ACCESS_BUFFERS must reject non-compute stages for now.
-            let mut cmd = Vec::new();
-            cmd.extend_from_slice(
+            const BUF_GEOM: u32 = 1;
+            const BUF_CS: u32 = 2;
+            let allocs = AllocTable::new(None).unwrap();
+
+            for &handle in &[BUF_GEOM, BUF_CS] {
+                let mut cmd_bytes = Vec::new();
+                cmd_bytes.extend_from_slice(&(AerogpuCmdOpcode::CreateBuffer as u32).to_le_bytes());
+                cmd_bytes.extend_from_slice(&40u32.to_le_bytes()); // size_bytes
+                cmd_bytes.extend_from_slice(&handle.to_le_bytes());
+                cmd_bytes.extend_from_slice(&AEROGPU_RESOURCE_USAGE_STORAGE.to_le_bytes());
+                cmd_bytes.extend_from_slice(&16u64.to_le_bytes()); // size_bytes
+                cmd_bytes.extend_from_slice(&0u32.to_le_bytes()); // backing_alloc_id
+                cmd_bytes.extend_from_slice(&0u32.to_le_bytes()); // backing_offset_bytes
+                cmd_bytes.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+                exec.exec_create_buffer(&cmd_bytes, &allocs)
+                    .expect("CREATE_BUFFER should succeed");
+            }
+
+            // Bind CS u0 first (legacy compute encoding: stage=COMPUTE, stage_ex=0).
+            let mut cs_cmd = Vec::new();
+            cs_cmd.extend_from_slice(
                 &(AerogpuCmdOpcode::SetUnorderedAccessBuffers as u32).to_le_bytes(),
             );
-            cmd.extend_from_slice(&(24u32 + 16u32).to_le_bytes());
-            cmd.extend_from_slice(&0u32.to_le_bytes()); // stage = vertex (invalid)
-            cmd.extend_from_slice(&0u32.to_le_bytes()); // start_slot
-            cmd.extend_from_slice(&1u32.to_le_bytes()); // uav_count
-            cmd.extend_from_slice(&0u32.to_le_bytes()); // stage_ex / reserved0
-            cmd.extend_from_slice(&0x3000u32.to_le_bytes()); // buffer
-            cmd.extend_from_slice(&0u32.to_le_bytes()); // offset_bytes
-            cmd.extend_from_slice(&0u32.to_le_bytes()); // size_bytes (0 = full)
-            cmd.extend_from_slice(&0u32.to_le_bytes()); // initial_count (ignored)
+            cs_cmd.extend_from_slice(&(24u32 + 16u32).to_le_bytes());
+            cs_cmd.extend_from_slice(&(AerogpuShaderStage::Compute as u32).to_le_bytes());
+            cs_cmd.extend_from_slice(&0u32.to_le_bytes()); // start_slot
+            cs_cmd.extend_from_slice(&1u32.to_le_bytes()); // uav_count
+            cs_cmd.extend_from_slice(&0u32.to_le_bytes()); // stage_ex
+            cs_cmd.extend_from_slice(&BUF_CS.to_le_bytes());
+            cs_cmd.extend_from_slice(&0u32.to_le_bytes()); // offset_bytes
+            cs_cmd.extend_from_slice(&0u32.to_le_bytes()); // size_bytes
+            cs_cmd.extend_from_slice(&0u32.to_le_bytes()); // initial_count
+            exec.exec_set_unordered_access_buffers(&cs_cmd)
+                .expect("SET_UNORDERED_ACCESS_BUFFERS (compute) should succeed");
 
-            let err = exec
-                .exec_set_unordered_access_buffers(&cmd)
-                .expect_err("SET_UNORDERED_ACCESS_BUFFERS should reject non-compute stage");
-            assert!(
-                err.to_string().contains("compute"),
-                "unexpected error: {err:#}"
+            // Bind extended-stage u0 via stage_ex encoding: stage=COMPUTE, stage_ex=GEOMETRY (2).
+            let mut geom_cmd = Vec::new();
+            geom_cmd.extend_from_slice(
+                &(AerogpuCmdOpcode::SetUnorderedAccessBuffers as u32).to_le_bytes(),
+            );
+            geom_cmd.extend_from_slice(&(24u32 + 16u32).to_le_bytes());
+            geom_cmd.extend_from_slice(&(AerogpuShaderStage::Compute as u32).to_le_bytes());
+            geom_cmd.extend_from_slice(&0u32.to_le_bytes()); // start_slot
+            geom_cmd.extend_from_slice(&1u32.to_le_bytes()); // uav_count
+            geom_cmd.extend_from_slice(&2u32.to_le_bytes()); // stage_ex = GEOMETRY (DXBC program type)
+            geom_cmd.extend_from_slice(&BUF_GEOM.to_le_bytes());
+            geom_cmd.extend_from_slice(&0u32.to_le_bytes()); // offset_bytes
+            geom_cmd.extend_from_slice(&0u32.to_le_bytes()); // size_bytes
+            geom_cmd.extend_from_slice(&0u32.to_le_bytes()); // initial_count
+            exec.exec_set_unordered_access_buffers(&geom_cmd)
+                .expect("SET_UNORDERED_ACCESS_BUFFERS (stage_ex geometry) should succeed");
+
+            // CS state must remain separate from stage_ex GS/HS/DS state.
+            assert_eq!(
+                exec.bindings.stage(ShaderStage::Compute).uav_buffer(0),
+                Some(BoundBuffer {
+                    buffer: BUF_CS,
+                    offset: 0,
+                    size: None,
+                })
+            );
+            assert_eq!(
+                exec.bindings.stage(ShaderStage::Geometry).uav_buffer(0),
+                Some(BoundBuffer {
+                    buffer: BUF_GEOM,
+                    offset: 0,
+                    size: None,
+                })
             );
         });
     }
