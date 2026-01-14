@@ -30,6 +30,10 @@ type MachineVgaWorkerStartMessage = {
    *
    * When set, the boot sector programs the Bochs VBE registers (0x01CE/0x01CF) for a 32bpp mode
    * and writes a single red pixel through the banked 0xA0000 window.
+   *
+   * Note: this uses the Bochs VBE_DISPI port interface provided by the standalone VGA/VBE device
+   * model (`MachineConfig::enable_vga=true`). It is not the same as the BIOS INT 10h VBE path used
+   * by the AeroGPU-owned boot display wiring (`enable_aerogpu=true`).
    */
   vbeMode?: { width: number; height: number };
   /**
