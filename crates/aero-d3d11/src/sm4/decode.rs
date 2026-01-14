@@ -569,12 +569,13 @@ mod tests {
             tokens,
         };
 
-        let module = super::decode_program(&program).expect("decode should succeed");
-        assert!(module
-            .decls
-            .iter()
-            .any(|d| matches!(d, Sm4Decl::InputControlPointCount { count: 4 })));
-        assert!(matches!(module.instructions.as_slice(), [Sm4Inst::Ret]));
+        // The runtime extracts tessellation metadata using the decl-only decoder, so ensure the
+        // lightweight scan sees the declaration without requiring full instruction decoding.
+        let decls = super::decode_program_decls(&program).expect("decode decls should succeed");
+        assert!(matches!(
+            decls.as_slice(),
+            [Sm4Decl::InputControlPointCount { count: 4 }]
+        ));
     }
 
     #[test]
