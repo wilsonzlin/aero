@@ -13572,11 +13572,12 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
 
                 if (mmioFence != 0) {
                     AeroGpuAtomicWriteU64(&adapter->LastErrorFence, mmioFence);
-                } else if (mmioCount != cachedMmioCount) {
+                } else {
                     /*
-                     * If this is a *new* device-reported error payload but the device does not provide
-                     * an associated fence (ERROR_FENCE==0), explicitly clear the cached fence so
-                     * powered-down QUERY_ERROR calls do not report a stale fence from a prior error.
+                     * We refreshed the cached error payload because something about it changed
+                     * (count/code/fence). If the device did not provide an associated fence
+                     * (ERROR_FENCE==0), explicitly clear the cached fence so powered-down QUERY_ERROR
+                     * calls do not report a stale fence from a prior error.
                      */
                     AeroGpuAtomicWriteU64(&adapter->LastErrorFence, 0);
                 }
@@ -13590,13 +13591,22 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
              */
             if (mmioCount != 0) {
                 /*
-                 * If the device reports an error payload, treat ERROR_CODE==0 as "unknown" and surface
-                 * it as INTERNAL. This is more informative than preserving an old cached code.
+                 * Prefer device-provided payload fields, but be defensive:
+                 * - If ERROR_CODE is 0, preserve a previously cached non-zero code when we believe
+                 *   we're observing the same payload (tolerate MMIO tearing).
+                 * - If this appears to be a *new* payload (count/code/fence changed) but ERROR_CODE is
+                 *   0, treat it as INTERNAL rather than reporting a stale prior code.
                  */
-                out->error_code = (mmioCode != 0) ? mmioCode : (ULONG)AEROGPU_ERROR_INTERNAL;
+                if (mmioCode != 0) {
+                    out->error_code = mmioCode;
+                } else if (shouldRefreshCache) {
+                    out->error_code = (ULONG)AEROGPU_ERROR_INTERNAL;
+                } else if (out->error_code == 0) {
+                    out->error_code = (ULONG)AEROGPU_ERROR_INTERNAL;
+                }
                 if (mmioFence != 0) {
                     out->error_fence = (uint64_t)mmioFence;
-                } else if (mmioCount != cachedMmioCount) {
+                } else if (shouldRefreshCache) {
                     /*
                      * New error payload without a fence: avoid reporting a stale cached fence that may
                      * refer to an unrelated prior error.
