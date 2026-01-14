@@ -134,10 +134,119 @@ def _forbid(body: str, what: str, pattern: str) -> str | None:
 
 
 def _strip_c_comments(text: str) -> str:
-    # Best-effort stripping for guardrail regexes.
-    text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
-    text = re.sub(r"//.*", "", text)
-    return text
+    """
+    Best-effort stripping for guardrail regexes.
+
+    We want to ignore comment contents and string/char literals so that:
+      - "count * sizeof" in comments/log strings doesn't trip the forbid checks.
+      - '//' or '/*' inside strings doesn't cause us to accidentally delete real code.
+
+    This is a minimal lexer (not a full C parser) but is sufficient for our static scan.
+    """
+
+    out: list[str] = []
+    i = 0
+    state = "code"
+
+    while i < len(text):
+        ch = text[i]
+        nxt = text[i + 1] if i + 1 < len(text) else ""
+
+        if state == "code":
+            if ch == "/" and nxt == "/":
+                state = "line_comment"
+                out.append(" ")
+                out.append(" ")
+                i += 2
+                continue
+            if ch == "/" and nxt == "*":
+                state = "block_comment"
+                out.append(" ")
+                out.append(" ")
+                i += 2
+                continue
+            if ch == '"':
+                state = "string"
+                out.append(" ")
+                i += 1
+                continue
+            if ch == "'":
+                state = "char"
+                out.append(" ")
+                i += 1
+                continue
+            out.append(ch)
+            i += 1
+            continue
+
+        if state == "line_comment":
+            if ch == "\n":
+                state = "code"
+                out.append("\n")
+            else:
+                out.append(" ")
+            i += 1
+            continue
+
+        if state == "block_comment":
+            if ch == "*" and nxt == "/":
+                state = "code"
+                out.append(" ")
+                out.append(" ")
+                i += 2
+                continue
+            if ch == "\n":
+                out.append("\n")
+            else:
+                out.append(" ")
+            i += 1
+            continue
+
+        if state == "string":
+            if ch == "\\":
+                # Skip escaped character.
+                out.append(" ")
+                if i + 1 < len(text):
+                    out.append(" ")
+                i += 2
+                continue
+            if ch == '"':
+                state = "code"
+                out.append(" ")
+                i += 1
+                continue
+            if ch == "\n":
+                # Malformed string; recover to code on newline.
+                state = "code"
+                out.append("\n")
+                i += 1
+                continue
+            out.append(" ")
+            i += 1
+            continue
+
+        if state == "char":
+            if ch == "\\":
+                out.append(" ")
+                if i + 1 < len(text):
+                    out.append(" ")
+                i += 2
+                continue
+            if ch == "'":
+                state = "code"
+                out.append(" ")
+                i += 1
+                continue
+            if ch == "\n":
+                state = "code"
+                out.append("\n")
+                i += 1
+                continue
+            out.append(" ")
+            i += 1
+            continue
+
+    return "".join(out)
 
 
 def main() -> int:
