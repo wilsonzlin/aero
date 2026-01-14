@@ -5461,7 +5461,6 @@ function Try-AeroQmpSetLink {
               name = $name
               up   = [bool]$Up
             }
-            }
           }
         }
         $writer.WriteLine(($cmd | ConvertTo-Json -Compress -Depth 10))
