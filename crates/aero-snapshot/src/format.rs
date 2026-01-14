@@ -164,6 +164,8 @@ impl DeviceId {
     /// See `docs/16-snapshots.md` and `web/src/workers/vm_snapshot_wasm.ts` for the stable mapping
     /// to the string kind `gpu.vram`.
     pub const GPU_VRAM: DeviceId = DeviceId(28);
+    /// Guest-visible virtio-input (virtio-pci) tablet function state (PCI `00:0A.2`).
+    pub const VIRTIO_INPUT_TABLET: DeviceId = DeviceId(29);
 
     pub fn name(self) -> Option<&'static str> {
         match self {
@@ -194,6 +196,7 @@ impl DeviceId {
             DeviceId::AEROGPU => Some("AEROGPU"),
             DeviceId::VIRTIO_INPUT_KEYBOARD => Some("VIRTIO_INPUT_KEYBOARD"),
             DeviceId::VIRTIO_INPUT_MOUSE => Some("VIRTIO_INPUT_MOUSE"),
+            DeviceId::VIRTIO_INPUT_TABLET => Some("VIRTIO_INPUT_TABLET"),
             DeviceId::GPU_VRAM => Some("GPU_VRAM"),
             _ => None,
         }

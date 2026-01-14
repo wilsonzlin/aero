@@ -301,6 +301,30 @@ fn enable_virtio_input_requires_enable_pc_platform() {
 }
 
 #[test]
+fn enable_virtio_input_tablet_requires_enable_virtio_input() {
+    let cfg = MachineConfig {
+        enable_pc_platform: true,
+        enable_virtio_input: false,
+        enable_virtio_input_tablet: true,
+        ..Default::default()
+    };
+
+    let err = match Machine::new(cfg) {
+        Ok(_) => panic!("virtio-input tablet without virtio-input must be rejected"),
+        Err(e) => e,
+    };
+    assert!(matches!(
+        err,
+        MachineError::VirtioInputTabletRequiresVirtioInput
+    ));
+    assert!(
+        err.to_string()
+            .contains("enable_virtio_input_tablet requires enable_virtio_input=true"),
+        "unexpected error message: {err}"
+    );
+}
+
+#[test]
 fn vga_lfb_base_that_overflows_pci_mmio_window_is_rejected_when_pc_platform_is_enabled() {
     // Pick a base that is inside the PCI MMIO window but whose LFB aperture would cross the end of
     // the window (IOAPIC MMIO begins at 0xFEC0_0000).

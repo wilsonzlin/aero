@@ -3,8 +3,8 @@
 use aero_devices::pci::{profile, PciBdf};
 use aero_machine::{Machine, MachineConfig};
 use aero_virtio::devices::input::{
-    VirtioInput, BTN_LEFT, EV_KEY, EV_LED, EV_REL, EV_SYN, KEY_A, KEY_VOLUMEUP, LED_CAPSL,
-    REL_HWHEEL, REL_WHEEL, REL_X, REL_Y, SYN_REPORT,
+    VirtioInput, ABS_X, ABS_Y, BTN_LEFT, EV_ABS, EV_KEY, EV_LED, EV_REL, EV_SYN, KEY_A,
+    KEY_VOLUMEUP, LED_CAPSL, REL_HWHEEL, REL_WHEEL, REL_X, REL_Y, SYN_REPORT,
 };
 use aero_virtio::pci::{
     VIRTIO_STATUS_ACKNOWLEDGE, VIRTIO_STATUS_DRIVER, VIRTIO_STATUS_DRIVER_OK,
@@ -43,6 +43,123 @@ fn write_desc(m: &mut Machine, table: u64, index: u16, addr: u64, len: u32, flag
     m.write_physical_u32(base + 8, len);
     m.write_physical_u16(base + 12, flags);
     m.write_physical_u16(base + 14, 0);
+}
+
+#[test]
+fn inject_virtio_abs_delivers_abs_events_to_guest_when_tablet_enabled() {
+    let mut m = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_virtio_input: true,
+        enable_virtio_input_tablet: true,
+        // Keep deterministic and focused.
+        enable_serial: false,
+        enable_i8042: false,
+        enable_vga: false,
+        enable_reset_ctrl: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    let bdf = profile::VIRTIO_INPUT_TABLET.bdf;
+    let bar0 = bar0_base(&mut m, bdf);
+    assert_ne!(bar0, 0, "virtio-input BAR0 must be assigned by BIOS POST");
+
+    // Enable PCI BAR0 MMIO decoding + bus mastering (virtio DMA).
+    let mut cmd = cfg_read(&mut m, bdf, 0x04, 2) as u16;
+    cmd |= 0x0006; // MEM + BUSMASTER
+    cfg_write(&mut m, bdf, 0x04, 2, u32::from(cmd));
+
+    let common = bar0;
+    let notify = bar0 + 0x1000;
+
+    // Feature negotiation (modern virtio-pci).
+    m.write_physical_u8(common + 0x14, VIRTIO_STATUS_ACKNOWLEDGE);
+    m.write_physical_u8(
+        common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
+    );
+
+    // Read offered features (low/high dwords) and accept them as-is.
+    m.write_physical_u32(common, 0);
+    let f0 = m.read_physical_u32(common + 0x04);
+    m.write_physical_u32(common + 0x08, 0);
+    m.write_physical_u32(common + 0x0c, f0);
+
+    m.write_physical_u32(common, 1);
+    let f1 = m.read_physical_u32(common + 0x04);
+    m.write_physical_u32(common + 0x08, 1);
+    m.write_physical_u32(common + 0x0c, f1);
+
+    m.write_physical_u8(
+        common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK,
+    );
+    assert_ne!(
+        m.read_physical_u8(common + 0x14) & VIRTIO_STATUS_FEATURES_OK,
+        0
+    );
+    m.write_physical_u8(
+        common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE
+            | VIRTIO_STATUS_DRIVER
+            | VIRTIO_STATUS_FEATURES_OK
+            | VIRTIO_STATUS_DRIVER_OK,
+    );
+    assert!(m.virtio_input_tablet_driver_ok());
+
+    // Configure virtqueue 0 (eventq).
+    let desc = 0x10000u64;
+    let avail = 0x11000u64;
+    let used = 0x12000u64;
+
+    m.write_physical_u16(common + 0x16, 0); // queue_select
+    m.write_physical_u64(common + 0x20, desc);
+    m.write_physical_u64(common + 0x28, avail);
+    m.write_physical_u64(common + 0x30, used);
+    m.write_physical_u16(common + 0x1c, 1); // queue_enable
+
+    // Post 3 buffers (ABS_X, ABS_Y, SYN_REPORT).
+    let bufs = [0x13000u64, 0x13020u64, 0x13040u64];
+    for (i, &buf) in bufs.iter().enumerate() {
+        m.write_physical(buf, &[0u8; 8]);
+        write_desc(&mut m, desc, i as u16, buf, 8, VIRTQ_DESC_F_WRITE);
+    }
+
+    // avail ring: flags=0, idx=bufs.len(), ring=[0..N-1].
+    m.write_physical_u16(avail, 0);
+    m.write_physical_u16(avail + 2, bufs.len() as u16);
+    for (i, _buf) in bufs.iter().enumerate() {
+        m.write_physical_u16(avail + 4 + (i as u64) * 2, i as u16);
+    }
+
+    // used ring: flags=0, idx=0.
+    m.write_physical_u16(used, 0);
+    m.write_physical_u16(used + 2, 0);
+
+    // Notify queue 0 so the device can cache the posted buffers.
+    m.write_physical_u16(notify, 0);
+    m.process_virtio_input();
+    assert_eq!(m.read_physical_u16(used + 2), 0);
+
+    // Inject an absolute move and expect it to land immediately.
+    m.inject_virtio_abs(123, 456);
+
+    assert_eq!(m.read_physical_u16(used + 2), 3);
+    let got0 = m.read_physical_bytes(bufs[0], 8);
+    let got1 = m.read_physical_bytes(bufs[1], 8);
+    let got2 = m.read_physical_bytes(bufs[2], 8);
+
+    let parse = |bytes: &[u8]| {
+        let type_ = u16::from_le_bytes([bytes[0], bytes[1]]);
+        let code = u16::from_le_bytes([bytes[2], bytes[3]]);
+        let value = i32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
+        (type_, code, value)
+    };
+
+    assert_eq!(parse(&got0), (EV_ABS, ABS_X, 123));
+    assert_eq!(parse(&got1), (EV_ABS, ABS_Y, 456));
+    assert_eq!(parse(&got2), (EV_SYN, SYN_REPORT, 0));
 }
 
 #[test]

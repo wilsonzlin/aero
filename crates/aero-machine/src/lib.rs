@@ -569,6 +569,18 @@ pub struct MachineConfig {
     ///
     /// Requires [`MachineConfig::enable_pc_platform`].
     pub enable_virtio_input: bool,
+    /// Whether to attach an optional virtio-input tablet (absolute pointing device) function.
+    ///
+    /// This exposes a third function in the same multi-function virtio-input device at the
+    /// canonical Windows 7 BDF:
+    /// - Tablet: `aero_devices::pci::profile::VIRTIO_INPUT_TABLET.bdf` (`00:0a.2`)
+    ///
+    /// The tablet function reports `EV_ABS` events (`ABS_X`/`ABS_Y`) and is intended to back
+    /// absolute pointer / touchscreen-style input when the guest driver is installed.
+    ///
+    /// Requires [`MachineConfig::enable_virtio_input`] (function 0 must exist and be marked as
+    /// multi-function for OSes to enumerate additional functions).
+    pub enable_virtio_input_tablet: bool,
     /// Whether to attach an Intel PIIX3 UHCI (USB 1.1) controller at the canonical BDF
     /// (`aero_devices::pci::profile::USB_UHCI_PIIX3.bdf`, `00:01.2`).
     ///
@@ -783,6 +795,7 @@ impl Default for MachineConfig {
             enable_ide: false,
             enable_virtio_blk: false,
             enable_virtio_input: false,
+            enable_virtio_input_tablet: false,
             enable_uhci: false,
             enable_ehci: false,
             enable_xhci: false,
@@ -840,6 +853,7 @@ impl MachineConfig {
             enable_ide: true,
             enable_virtio_blk: false,
             enable_virtio_input: false,
+            enable_virtio_input_tablet: false,
             enable_uhci: false,
             enable_ehci: false,
             enable_xhci: false,
@@ -1028,6 +1042,7 @@ pub enum MachineError {
     IdeRequiresPcPlatform,
     VirtioBlkRequiresPcPlatform,
     VirtioInputRequiresPcPlatform,
+    VirtioInputTabletRequiresVirtioInput,
     UhciRequiresPcPlatform,
     SyntheticUsbHidRequiresUhci,
     EhciRequiresPcPlatform,
@@ -1099,6 +1114,12 @@ impl fmt::Display for MachineError {
             }
             MachineError::VirtioInputRequiresPcPlatform => {
                 write!(f, "enable_virtio_input requires enable_pc_platform=true")
+            }
+            MachineError::VirtioInputTabletRequiresVirtioInput => {
+                write!(
+                    f,
+                    "enable_virtio_input_tablet requires enable_virtio_input=true"
+                )
             }
             MachineError::UhciRequiresPcPlatform => {
                 write!(f, "enable_uhci requires enable_pc_platform=true")
@@ -2205,6 +2226,28 @@ impl VirtioInputMousePciConfigDevice {
 }
 
 impl PciDevice for VirtioInputMousePciConfigDevice {
+    fn config(&self) -> &aero_devices::pci::PciConfigSpace {
+        &self.cfg
+    }
+
+    fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
+        &mut self.cfg
+    }
+}
+
+struct VirtioInputTabletPciConfigDevice {
+    cfg: aero_devices::pci::PciConfigSpace,
+}
+
+impl VirtioInputTabletPciConfigDevice {
+    fn new() -> Self {
+        Self {
+            cfg: aero_devices::pci::profile::VIRTIO_INPUT_TABLET.build_config_space(),
+        }
+    }
+}
+
+impl PciDevice for VirtioInputTabletPciConfigDevice {
     fn config(&self) -> &aero_devices::pci::PciConfigSpace {
         &self.cfg
     }
@@ -4918,6 +4961,7 @@ pub struct Machine {
     virtio_net: Option<Rc<RefCell<VirtioPciDevice>>>,
     virtio_input_keyboard: Option<Rc<RefCell<VirtioPciDevice>>>,
     virtio_input_mouse: Option<Rc<RefCell<VirtioPciDevice>>>,
+    virtio_input_tablet: Option<Rc<RefCell<VirtioPciDevice>>>,
     vga: Option<Rc<RefCell<VgaDevice>>>,
     aerogpu: Option<Rc<RefCell<AeroGpuDevice>>>,
     aerogpu_mmio: Option<Rc<RefCell<AeroGpuMmioDevice>>>,
@@ -5112,6 +5156,9 @@ impl Machine {
         if cfg.enable_e1000 && cfg.enable_virtio_net {
             return Err(MachineError::MultipleNicsEnabled);
         }
+        if cfg.enable_virtio_input_tablet && !cfg.enable_virtio_input {
+            return Err(MachineError::VirtioInputTabletRequiresVirtioInput);
+        }
         if cfg.enable_aerogpu {
             if !cfg.enable_pc_platform {
                 return Err(MachineError::AeroGpuRequiresPcPlatform);
@@ -5215,6 +5262,7 @@ impl Machine {
             virtio_net: None,
             virtio_input_keyboard: None,
             virtio_input_mouse: None,
+            virtio_input_tablet: None,
             vga: None,
             aerogpu: None,
             aerogpu_mmio: None,
@@ -7189,6 +7237,11 @@ impl Machine {
     pub fn virtio_input_mouse(&self) -> Option<Rc<RefCell<VirtioPciDevice>>> {
         self.virtio_input_mouse.clone()
     }
+
+    /// Returns the virtio-input tablet (virtio-pci) device, if present.
+    pub fn virtio_input_tablet(&self) -> Option<Rc<RefCell<VirtioPciDevice>>> {
+        self.virtio_input_tablet.clone()
+    }
     /// Returns the VGA/SVGA device, if present.
     pub fn vga(&self) -> Option<Rc<RefCell<VgaDevice>>> {
         self.vga.clone()
@@ -8765,6 +8818,43 @@ impl Machine {
                 pci_intx.set_intx_level(bdf, pin, level, &mut *interrupts);
             }
 
+            // virtio-input tablet legacy INTx (level-triggered).
+            if let Some(virtio_input_tablet) = &self.virtio_input_tablet {
+                let bdf: PciBdf = aero_devices::pci::profile::VIRTIO_INPUT_TABLET.bdf;
+                let pin = PciInterruptPin::IntA;
+
+                let (command, msix_enabled, msix_masked) = self
+                    .pci_cfg
+                    .as_ref()
+                    .map(|pci_cfg| {
+                        let mut pci_cfg = pci_cfg.borrow_mut();
+                        match pci_cfg.bus_mut().device_config(bdf) {
+                            Some(cfg) => {
+                                let msix = cfg.capability::<MsixCapability>();
+                                (
+                                    cfg.command(),
+                                    msix.is_some_and(|msix| msix.enabled()),
+                                    msix.is_some_and(|msix| msix.function_masked()),
+                                )
+                            }
+                            None => (0, false, false),
+                        }
+                    })
+                    .unwrap_or((0, false, false));
+
+                let mut level = {
+                    let mut dev = virtio_input_tablet.borrow_mut();
+                    sync_msix_capability_into_config(dev.config_mut(), msix_enabled, msix_masked);
+                    dev.set_pci_command(command);
+                    dev.irq_level()
+                };
+                if (command & (1 << 10)) != 0 {
+                    level = false;
+                }
+
+                pci_intx.set_intx_level(bdf, pin, level, &mut *interrupts);
+            }
+
             // virtio-blk legacy INTx (level-triggered).
             if let Some(virtio_blk) = &self.virtio_blk {
                 let bdf: PciBdf = aero_devices::pci::profile::VIRTIO_BLK.bdf;
@@ -9440,6 +9530,15 @@ impl Machine {
             .is_some_and(|dev| dev.borrow().driver_ok())
     }
 
+    /// Whether the guest driver for the virtio-input tablet has reached `DRIVER_OK`.
+    ///
+    /// Returns `false` if virtio-input is disabled or the tablet function is absent.
+    pub fn virtio_input_tablet_driver_ok(&self) -> bool {
+        self.virtio_input_tablet
+            .as_ref()
+            .is_some_and(|dev| dev.borrow().driver_ok())
+    }
+
     /// Inject a Linux input key event (`EV_KEY` + `KEY_*`) into the virtio-input keyboard device.
     ///
     /// This is a no-op when virtio-input is disabled.
@@ -9568,6 +9667,30 @@ impl Machine {
         }
         self.process_virtio_input();
         self.sync_pci_intx_sources_to_interrupts();
+    }
+
+    /// Inject a Linux input absolute motion event (`EV_ABS` + `ABS_X/ABS_Y`) into the virtio-input
+    /// tablet device.
+    ///
+    /// This is a no-op when the virtio-input tablet function is absent.
+    pub fn inject_virtio_abs(&mut self, x: i32, y: i32) {
+        let Some(tablet) = &self.virtio_input_tablet else {
+            return;
+        };
+        {
+            let mut dev = tablet.borrow_mut();
+            let Some(input) = dev.device_mut::<VirtioInput>() else {
+                return;
+            };
+            input.inject_abs_move(x, y);
+        }
+        self.process_virtio_input();
+        self.sync_pci_intx_sources_to_interrupts();
+    }
+
+    // Explicit alias for parity with wasm-facing naming.
+    pub fn inject_virtio_tablet_abs(&mut self, x: i32, y: i32) {
+        self.inject_virtio_abs(x, y);
     }
 
     // ---------------------------------------------------------------------
@@ -11276,6 +11399,26 @@ impl Machine {
                 None
             };
 
+            let virtio_input_tablet =
+                if self.cfg.enable_virtio_input && self.cfg.enable_virtio_input_tablet {
+                    pci_cfg.borrow_mut().bus_mut().add_device(
+                        aero_devices::pci::profile::VIRTIO_INPUT_TABLET.bdf,
+                        Box::new(VirtioInputTabletPciConfigDevice::new()),
+                    );
+                    match &self.virtio_input_tablet {
+                        Some(dev) => {
+                            dev.borrow_mut().reset();
+                            Some(dev.clone())
+                        }
+                        None => Some(Rc::new(RefCell::new(VirtioPciDevice::new(
+                            Box::new(VirtioInput::new(VirtioInputDeviceKind::Tablet)),
+                            Box::new(VirtioMsixInterruptSink::new(interrupts.clone())),
+                        )))),
+                    }
+                } else {
+                    None
+                };
+
             let e1000 = if self.cfg.enable_e1000 {
                 let mac = self.cfg.e1000_mac_addr.unwrap_or(DEFAULT_E1000_MAC_ADDR);
                 pci_cfg.borrow_mut().bus_mut().add_device(
@@ -11389,6 +11532,22 @@ impl Machine {
                     (command, bar0_base)
                 };
                 let mut dev = virtio_input_mouse.borrow_mut();
+                dev.set_pci_command(command);
+                if let Some(bar0_base) = bar0_base {
+                    dev.config_mut().set_bar_base(0, bar0_base);
+                }
+            }
+
+            if let Some(virtio_input_tablet) = virtio_input_tablet.as_ref() {
+                let bdf = aero_devices::pci::profile::VIRTIO_INPUT_TABLET.bdf;
+                let (command, bar0_base) = {
+                    let mut pci_cfg = pci_cfg.borrow_mut();
+                    let cfg = pci_cfg.bus_mut().device_config(bdf);
+                    let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+                    let bar0_base = cfg.and_then(|cfg| cfg.bar_range(0)).map(|range| range.base);
+                    (command, bar0_base)
+                };
+                let mut dev = virtio_input_tablet.borrow_mut();
                 dev.set_pci_command(command);
                 if let Some(bar0_base) = bar0_base {
                     dev.config_mut().set_bar_base(0, bar0_base);
@@ -11641,6 +11800,14 @@ impl Machine {
                         VirtioPciBar0Mmio::new(pci_cfg.clone(), virtio_input_mouse, bdf),
                     );
                 }
+                if let Some(virtio_input_tablet) = virtio_input_tablet.clone() {
+                    let bdf = aero_devices::pci::profile::VIRTIO_INPUT_TABLET.bdf;
+                    router.register_handler(
+                        bdf,
+                        0,
+                        VirtioPciBar0Mmio::new(pci_cfg.clone(), virtio_input_tablet, bdf),
+                    );
+                }
                 if let Some(aerogpu_mmio) = aerogpu_mmio.clone() {
                     router.register_shared_handler(
                         aero_devices::pci::profile::AEROGPU.bdf,
@@ -11779,6 +11946,7 @@ impl Machine {
             self.virtio_net = virtio_net;
             self.virtio_input_keyboard = virtio_input_keyboard;
             self.virtio_input_mouse = virtio_input_mouse;
+            self.virtio_input_tablet = virtio_input_tablet;
             self.ahci = ahci;
             self.nvme = nvme;
             self.ide = ide;
@@ -12486,6 +12654,13 @@ impl Machine {
             self.process_virtio_input_device(
                 &virtio,
                 aero_devices::pci::profile::VIRTIO_INPUT_MOUSE.bdf,
+                &pci_cfg,
+            );
+        }
+        if let Some(virtio) = self.virtio_input_tablet.clone() {
+            self.process_virtio_input_device(
+                &virtio,
+                aero_devices::pci::profile::VIRTIO_INPUT_TABLET.bdf,
                 &pci_cfg,
             );
         }
@@ -14158,6 +14333,50 @@ impl snapshot::SnapshotSource for Machine {
                 &*virtio_input_mouse.borrow(),
             ));
         }
+
+        if let Some(virtio_input_tablet) = &self.virtio_input_tablet {
+            let bdf = aero_devices::pci::profile::VIRTIO_INPUT_TABLET.bdf;
+            if let Some(pci_cfg) = &self.pci_cfg {
+                let (command, bar0_base, msix_ctrl_bits) = {
+                    let mut pci_cfg = pci_cfg.borrow_mut();
+                    let mut command = 0;
+                    let mut bar0_base = None;
+                    let mut msix_ctrl_bits = None;
+                    if let Some(cfg) = pci_cfg.bus_mut().device_config_mut(bdf) {
+                        command = cfg.command();
+                        bar0_base = cfg.bar_range(0).map(|range| range.base);
+                        if let Some(msix_off) = cfg.find_capability(PCI_CAP_ID_MSIX) {
+                            let ctrl = cfg
+                                .read(u16::from(msix_off) + MSIX_MESSAGE_CONTROL_OFFSET, 2)
+                                as u16;
+                            msix_ctrl_bits = Some(ctrl & MSIX_MESSAGE_CONTROL_MIRROR_MASK);
+                        }
+                    }
+                    (command, bar0_base, msix_ctrl_bits)
+                };
+
+                let mut dev = virtio_input_tablet.borrow_mut();
+                dev.set_pci_command(command);
+                if let Some(bar0_base) = bar0_base {
+                    dev.config_mut().set_bar_base(0, bar0_base);
+                }
+
+                if let Some(msix_ctrl_bits) = msix_ctrl_bits {
+                    if let Some(msix_off) = dev.config_mut().find_capability(PCI_CAP_ID_MSIX) {
+                        let ctrl_off = u16::from(msix_off) + MSIX_MESSAGE_CONTROL_OFFSET;
+                        let runtime_ctrl = dev.config_mut().read(ctrl_off, 2) as u16;
+                        let new_ctrl =
+                            (runtime_ctrl & !MSIX_MESSAGE_CONTROL_MIRROR_MASK) | msix_ctrl_bits;
+                        dev.config_mut().write(ctrl_off, 2, u32::from(new_ctrl));
+                    }
+                }
+            }
+
+            devices.push(snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
+                snapshot::DeviceId::VIRTIO_INPUT_TABLET,
+                &*virtio_input_tablet.borrow(),
+            ));
+        }
         if self.uhci.is_some() || self.ehci.is_some() || self.xhci.is_some() {
             let mut wrapper = MachineUsbSnapshot::default();
 
@@ -15329,7 +15548,7 @@ impl snapshot::SnapshotTarget for Machine {
             virtio.rewind_queue_next_avail_to_next_used(0);
         }
 
-        // Restore virtio-input keyboard/mouse after the interrupt controller + PCI INTx router so
+        // Restore virtio-input keyboard/mouse/tablet after the interrupt controller + PCI INTx router so
         // any restored legacy INTx level can be re-driven deterministically.
         //
         // Virtio-input can cache guest-provided event buffers internally without producing used
@@ -15337,7 +15556,7 @@ impl snapshot::SnapshotTarget for Machine {
         // and are not currently serialized in snapshot state. Clear them before applying the
         // transport snapshot, then rewind the event queue progress so the transport will re-pop
         // the guest-provided buffers post-restore.
-        let mut restored_virtio_input = false;
+        let mut restored_virtio_input_pair = false;
         if let (Some(virtio), Some(state)) = (
             &self.virtio_input_keyboard,
             by_id.remove(&snapshot::DeviceId::VIRTIO_INPUT_KEYBOARD),
@@ -15348,7 +15567,7 @@ impl snapshot::SnapshotTarget for Machine {
             }
             let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(&state, &mut *virtio);
             virtio.rewind_queue_next_avail_to_next_used(0);
-            restored_virtio_input = true;
+            restored_virtio_input_pair = true;
         }
         if let (Some(virtio), Some(state)) = (
             &self.virtio_input_mouse,
@@ -15360,12 +15579,23 @@ impl snapshot::SnapshotTarget for Machine {
             }
             let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(&state, &mut *virtio);
             virtio.rewind_queue_next_avail_to_next_used(0);
-            restored_virtio_input = true;
+            restored_virtio_input_pair = true;
+        }
+        if let (Some(virtio), Some(state)) = (
+            &self.virtio_input_tablet,
+            by_id.remove(&snapshot::DeviceId::VIRTIO_INPUT_TABLET),
+        ) {
+            let mut virtio = virtio.borrow_mut();
+            if let Some(input) = virtio.device_mut::<VirtioInput>() {
+                aero_virtio::devices::VirtioDevice::reset(input);
+            }
+            let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(&state, &mut *virtio);
+            virtio.rewind_queue_next_avail_to_next_used(0);
         }
 
         // Backward compatibility: older snapshots stored both virtio-input PCI functions under the
         // single wrapper id `DeviceId::VIRTIO_INPUT` (inner snapshot 4CC `VINP`).
-        if !restored_virtio_input {
+        if !restored_virtio_input_pair {
             if let Some(state) = by_id.remove(&snapshot::DeviceId::VIRTIO_INPUT) {
                 if matches!(state.data.get(8..12), Some(id) if id == b"VINP") {
                     let mut wrapper = MachineVirtioInputSnapshot::default();
