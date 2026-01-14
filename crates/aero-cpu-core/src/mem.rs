@@ -296,39 +296,6 @@ impl FlatTestBus {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::FlatTestBus;
-    use crate::test_util::capture_panic_location;
-
-    #[test]
-    fn flat_test_bus_load_panics_at_call_site() {
-        let mut bus = FlatTestBus::new(0);
-        let data = [0u8; 1];
-
-        let expected_file = file!();
-        let expected_line = line!() + 2;
-        let (file, line) = capture_panic_location(|| {
-            bus.load(0, &data);
-        });
-        assert_eq!(file, expected_file);
-        assert_eq!(line, expected_line);
-    }
-
-    #[test]
-    fn flat_test_bus_slice_panics_at_call_site() {
-        let bus = FlatTestBus::new(0);
-
-        let expected_file = file!();
-        let expected_line = line!() + 2;
-        let (file, line) = capture_panic_location(|| {
-            let _ = bus.slice(0, 1);
-        });
-        assert_eq!(file, expected_file);
-        assert_eq!(line, expected_line);
-    }
-}
-
 impl CpuBus for FlatTestBus {
     fn read_u8(&mut self, vaddr: u64) -> Result<u8, Exception> {
         let idx = usize::try_from(vaddr).map_err(|_| Exception::MemoryFault)?;
@@ -457,5 +424,38 @@ impl CpuBus for FlatTestBus {
 
     fn io_write(&mut self, _port: u16, _size: u32, _val: u64) -> Result<(), Exception> {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::FlatTestBus;
+    use crate::test_util::capture_panic_location;
+
+    #[test]
+    fn flat_test_bus_load_panics_at_call_site() {
+        let mut bus = FlatTestBus::new(0);
+        let data = [0u8; 1];
+
+        let expected_file = file!();
+        let expected_line = line!() + 2;
+        let (file, line) = capture_panic_location(|| {
+            bus.load(0, &data);
+        });
+        assert_eq!(file, expected_file);
+        assert_eq!(line, expected_line);
+    }
+
+    #[test]
+    fn flat_test_bus_slice_panics_at_call_site() {
+        let bus = FlatTestBus::new(0);
+
+        let expected_file = file!();
+        let expected_line = line!() + 2;
+        let (file, line) = capture_panic_location(|| {
+            let _ = bus.slice(0, 1);
+        });
+        assert_eq!(file, expected_file);
+        assert_eq!(line, expected_line);
     }
 }
