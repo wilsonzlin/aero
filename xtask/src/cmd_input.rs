@@ -209,6 +209,9 @@ Environment:
                         Override the Node workspace directory for the web unit-test step.
                         If set to `web`, step 6 runs `npm run test:unit -- ...` inside `web/`.
   AERO_WASM_PACKAGES    When running `--e2e`, defaults to `core` unless already set.
+  AERO_ALLOW_UNSUPPORTED_NODE
+                        Set to 1 to bypass Node version enforcement (see `.nvmrc` + `scripts/check-node-version.mjs`).
+                        Not recommended, especially with `--wasm` (wasm-pack tooling can hang on unsupported Node majors).
 
 Examples:
   cargo xtask input

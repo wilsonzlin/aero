@@ -255,6 +255,10 @@ cargo xtask input --usb-all
 cargo xtask input --machine
 
 # Also run the targeted WASM USB/input regression tests (runs in Node; does not require `node_modules`).
+# Note: `cargo xtask input --wasm` enforces the Node.js *major* version from `.nvmrc` (CI baseline).
+# If you need to bypass the check (unsupported Node), you can run:
+#   AERO_ALLOW_UNSUPPORTED_NODE=1 cargo xtask input --wasm --rust-only
+# but expect wasm-pack tooling to be flaky/hang in unsupported Node releases.
 cargo xtask input --wasm --rust-only
 
 # Also run the aero-wasm input integration smoke tests (public Machine API surface + backend wiring).
