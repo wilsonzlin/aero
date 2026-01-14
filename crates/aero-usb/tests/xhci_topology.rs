@@ -180,6 +180,56 @@ fn xhci_detach_clears_slot_device_binding() {
 }
 
 #[test]
+fn xhci_detach_at_path_clears_slot_device_binding_for_downstream_device() {
+    let mut ctrl = XhciController::new();
+    let mut mem = TestMemory::new(0x4000);
+
+    ctrl.set_dcbaap(0x1000);
+
+    let mut hub_dev = UsbHubDevice::with_port_count(8);
+    hub_dev.attach(3, Box::new(UsbHidKeyboardHandle::new()));
+    ctrl.attach_device(0, Box::new(hub_dev));
+
+    let completion = ctrl.enable_slot(&mut mem);
+    assert_eq!(completion.completion_code, CommandCompletionCode::Success);
+    let slot_id = completion.slot_id;
+
+    let mut slot_ctx = SlotContext::default();
+    slot_ctx.set_root_hub_port_number(1);
+    slot_ctx
+        .set_route_string_from_root_ports(&[3])
+        .expect("encode route string");
+    let completion = ctrl.address_device(slot_id, slot_ctx);
+    assert_eq!(completion.completion_code, CommandCompletionCode::Success);
+
+    assert!(ctrl.slot_device_mut(slot_id).is_some());
+    assert!(
+        ctrl.slot_state(slot_id).expect("slot state").device_attached(),
+        "slot state should record attached device"
+    );
+
+    // Detach the downstream device behind the already attached hub.
+    ctrl.detach_at_path(&[0, 3]).expect("detach_at_path");
+
+    assert!(
+        ctrl.slot_device_mut(slot_id).is_none(),
+        "slot must no longer resolve after downstream detach"
+    );
+    assert!(
+        !ctrl.slot_state(slot_id)
+            .expect("slot state")
+            .device_attached(),
+        "slot state should record detached device"
+    );
+
+    // Re-attaching a device at the same topology path does not automatically re-bind an existing
+    // slot; the guest must issue Address Device again.
+    ctrl.attach_at_path(&[0, 3], Box::new(UsbHidKeyboardHandle::new()))
+        .expect("attach_at_path");
+    assert!(ctrl.slot_device_mut(slot_id).is_none());
+}
+
+#[test]
 fn xhci_attach_at_path_rejects_downstream_port_over_15() {
     let mut ctrl = XhciController::new();
     let res = ctrl.attach_at_path(&[0, 16], Box::new(UsbHidKeyboardHandle::new()));
