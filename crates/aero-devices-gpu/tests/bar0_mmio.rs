@@ -692,7 +692,10 @@ fn error_mmio_regs_latch_and_irq_ack_clears_only_status() {
     let cmd0_gpa = 0x4000u64;
     // Wrong magic -> BadHeader.
     mem.write_u32(cmd0_gpa + CMD_STREAM_MAGIC_OFFSET, 0);
-    mem.write_u32(cmd0_gpa + CMD_STREAM_ABI_VERSION_OFFSET, AEROGPU_ABI_VERSION_U32);
+    mem.write_u32(
+        cmd0_gpa + CMD_STREAM_ABI_VERSION_OFFSET,
+        AEROGPU_ABI_VERSION_U32,
+    );
     mem.write_u32(cmd0_gpa + CMD_STREAM_SIZE_BYTES_OFFSET, 16);
     mem.write_u32(cmd0_gpa + CMD_STREAM_FLAGS_OFFSET, 0);
 

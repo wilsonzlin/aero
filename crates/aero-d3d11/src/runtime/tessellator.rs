@@ -555,8 +555,14 @@ fn main() {{
 
             let vc = tri_vertex_count(level);
             let ic = tri_index_count(level);
-            assert_eq!(vc, vc_expected, "vertex_count formula mismatch for level={level}");
-            assert_eq!(ic, ic_expected, "index_count formula mismatch for level={level}");
+            assert_eq!(
+                vc, vc_expected,
+                "vertex_count formula mismatch for level={level}"
+            );
+            assert_eq!(
+                ic, ic_expected,
+                "index_count formula mismatch for level={level}"
+            );
 
             // Vertex-domain barycentrics.
             for v in 0..vc {

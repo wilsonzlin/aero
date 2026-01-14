@@ -1,5 +1,7 @@
 use aero_gpu_trace::{AerogpuSubmissionCapture, TraceMeta, TraceReader, TraceWriter};
-use aero_protocol::aerogpu::aerogpu_cmd::{AEROGPU_CLEAR_COLOR, AEROGPU_RESOURCE_USAGE_RENDER_TARGET};
+use aero_protocol::aerogpu::aerogpu_cmd::{
+    AEROGPU_CLEAR_COLOR, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+};
 use aero_protocol::aerogpu::aerogpu_pci::{AerogpuFormat, AEROGPU_ABI_VERSION_U32};
 use aero_protocol::aerogpu::aerogpu_ring::AEROGPU_SUBMIT_FLAG_PRESENT;
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
@@ -89,4 +91,3 @@ fn aerogpu_cmd_clear_b8g8r8a8_trace_fixture_is_stable() {
         fs::read(&path).expect("fixture file missing; run with AERO_UPDATE_TRACE_FIXTURES=1");
     assert_eq!(bytes, fixture);
 }
-

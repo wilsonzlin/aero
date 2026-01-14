@@ -1109,7 +1109,11 @@ impl VgaDevice {
         if offset == 0 {
             return None;
         }
-        Some(if self.crtc_byte_mode() { offset } else { offset << 1 })
+        Some(if self.crtc_byte_mode() {
+            offset
+        } else {
+            offset << 1
+        })
     }
 
     fn ensure_buffers(&mut self, width: u32, height: u32) {
