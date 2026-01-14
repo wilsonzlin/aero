@@ -212,14 +212,11 @@ impl Qcow2Header {
 pub struct Qcow2Disk<B> {
     backend: B,
     header: Qcow2Header,
-    // If a backing disk is present, it must be `Send` so the QCOW2 wrapper can be moved into
-    // device worker threads on native targets (the emulator's `DiskBackend` requires `Send`).
+    // Optional backing disk (QCOW2 "backing file").
     //
-    // Note: `VirtualDisk` itself is intentionally *not* `Send` so wasm32 builds can use
-    // non-thread-safe backends (e.g. OPFS handles). Requiring `Send` only on the optional backing
-    // layer keeps the common `Qcow2Disk::open` path usable on wasm32 while still making the type
-    // `Send` on native.
-    backing: Option<Box<dyn VirtualDisk + Send>>,
+    // `VirtualDisk` is `Send` on native targets (see `VirtualDiskSend`), but intentionally not
+    // `Send` on wasm32 where backends may wrap non-thread-safe JS handles.
+    backing: Option<Box<dyn VirtualDisk>>,
     l1_table: Vec<u64>,
     refcount_table: Vec<u64>,
     metadata_clusters: Vec<u64>,
@@ -234,7 +231,7 @@ impl<B: StorageBackend> Qcow2Disk<B> {
         Self::open_parsed(backend, header, None)
     }
 
-    pub fn open_with_parent(mut backend: B, parent: Box<dyn VirtualDisk + Send>) -> Result<Self> {
+    pub fn open_with_parent(mut backend: B, parent: Box<dyn VirtualDisk>) -> Result<Self> {
         let header = Qcow2Header::parse(&mut backend, true)?;
         if header.backing_file_offset == 0 || header.backing_file_size == 0 {
             return Err(DiskError::InvalidConfig(
@@ -250,7 +247,7 @@ impl<B: StorageBackend> Qcow2Disk<B> {
         Self::open_parsed(backend, header, Some(parent))
     }
 
-    pub fn open_with_backing(backend: B, backing: Box<dyn VirtualDisk + Send>) -> Result<Self> {
+    pub fn open_with_backing(backend: B, backing: Box<dyn VirtualDisk>) -> Result<Self> {
         // Backwards-compatible alias for older call sites/tests.
         Self::open_with_parent(backend, backing)
     }
@@ -259,14 +256,14 @@ impl<B: StorageBackend> Qcow2Disk<B> {
         self.backend
     }
 
-    pub fn into_backend_and_backing(self) -> (B, Option<Box<dyn VirtualDisk + Send>>) {
+    pub fn into_backend_and_backing(self) -> (B, Option<Box<dyn VirtualDisk>>) {
         (self.backend, self.backing)
     }
 
     fn open_parsed(
         mut backend: B,
         header: Qcow2Header,
-        backing: Option<Box<dyn VirtualDisk + Send>>,
+        backing: Option<Box<dyn VirtualDisk>>,
     ) -> Result<Self> {
         let cluster_size = header.cluster_size();
 

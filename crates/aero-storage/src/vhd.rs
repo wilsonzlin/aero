@@ -178,7 +178,7 @@ pub struct VhdDisk<B> {
     bat: Vec<u32>,
     bitmap_cache: LruCache<u64, Arc<Vec<u8>>>,
     fixed_data_offset: u64,
-    parent: Option<Box<dyn VirtualDisk + Send>>,
+    parent: Option<Box<dyn VirtualDisk>>,
 }
 
 impl<B: StorageBackend> VhdDisk<B> {
@@ -475,7 +475,7 @@ impl<B: StorageBackend> VhdDisk<B> {
         }
     }
 
-    pub fn open_differencing(mut backend: B, parent: Box<dyn VirtualDisk + Send>) -> Result<Self> {
+    pub fn open_differencing(mut backend: B, parent: Box<dyn VirtualDisk>) -> Result<Self> {
         let len = backend.len()?;
         if len < SECTOR_SIZE as u64 {
             return Err(DiskError::CorruptImage("vhd file too small"));
@@ -713,7 +713,7 @@ impl<B: StorageBackend> VhdDisk<B> {
     /// backing disk themselves (which may itself be another disk image format) and supply it here.
     ///
     /// Alias for [`VhdDisk::open_differencing`].
-    pub fn open_with_parent(backend: B, parent: Box<dyn VirtualDisk + Send>) -> Result<Self> {
+    pub fn open_with_parent(backend: B, parent: Box<dyn VirtualDisk>) -> Result<Self> {
         Self::open_differencing(backend, parent)
     }
 

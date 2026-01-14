@@ -256,7 +256,7 @@ impl<B: StorageBackend> DiskImage<B> {
     pub fn open_with_parent(
         format: DiskFormat,
         backend: B,
-        parent: Box<dyn crate::VirtualDisk + Send>,
+        parent: Box<dyn crate::VirtualDisk>,
     ) -> Result<Self> {
         match format {
             DiskFormat::Qcow2 => Ok(Self::Qcow2(Qcow2Disk::open_with_parent(backend, parent)?)),
@@ -280,7 +280,7 @@ impl<B: StorageBackend> DiskImage<B> {
     /// If the detected image format does not require a parent, the parent is ignored.
     pub fn open_auto_with_parent(
         mut backend: B,
-        parent: Box<dyn crate::VirtualDisk + Send>,
+        parent: Box<dyn crate::VirtualDisk>,
     ) -> Result<Self> {
         let format = detect_format(&mut backend)?;
 
