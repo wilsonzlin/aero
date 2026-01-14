@@ -2,6 +2,8 @@
 //!
 //! Source of truth: `drivers/aerogpu/protocol/aerogpu_pci.h`.
 
+use core::fmt;
+
 /// ABI major version (breaking changes).
 pub const AEROGPU_ABI_MAJOR: u32 = 1;
 /// ABI minor version (backwards-compatible extensions).
@@ -27,6 +29,18 @@ pub struct AerogpuAbiVersion {
 pub enum AerogpuAbiError {
     UnsupportedMajor { found: u16 },
 }
+
+impl fmt::Display for AerogpuAbiError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            AerogpuAbiError::UnsupportedMajor { found } => {
+                write!(f, "unsupported ABI major version {found}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for AerogpuAbiError {}
 
 /// Parse an ABI version and validate it according to the protocol rules:
 /// - reject unsupported major versions

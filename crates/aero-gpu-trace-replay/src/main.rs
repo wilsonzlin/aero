@@ -1,4 +1,4 @@
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{bail, Context, Result};
 use clap::{CommandFactory, Parser, Subcommand};
 use std::fs;
 use std::io::{BufReader, BufWriter};
@@ -117,7 +117,7 @@ fn decode_cmd_stream_cmd(path: PathBuf, strict: bool, json: bool) -> Result<()> 
     let bytes = fs::read(&path).with_context(|| format!("read cmd stream {}", path.display()))?;
     if json {
         let report = aero_gpu_trace_replay::cmd_stream_decode::decode_cmd_stream(&bytes)
-            .map_err(|err| anyhow!("decode cmd stream {}: {err:?}", path.display()))?;
+            .with_context(|| format!("decode cmd stream {}", path.display()))?;
 
         if strict {
             for rec in &report.records {

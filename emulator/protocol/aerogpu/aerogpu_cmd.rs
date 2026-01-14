@@ -4,6 +4,7 @@
 //! ABI is validated by `emulator/protocol/tests/aerogpu_abi.rs` and `emulator/protocol/tests/aerogpu_abi.test.ts`.
 
 use super::aerogpu_pci::{parse_and_validate_abi_version_u32, AerogpuAbiError};
+use core::fmt;
 
 pub type AerogpuHandle = u32;
 
@@ -1295,6 +1296,46 @@ pub enum AerogpuCmdDecodeError {
 impl From<AerogpuAbiError> for AerogpuCmdDecodeError {
     fn from(value: AerogpuAbiError) -> Self {
         Self::Abi(value)
+    }
+}
+
+impl fmt::Display for AerogpuCmdDecodeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            AerogpuCmdDecodeError::BufferTooSmall => write!(f, "buffer too small"),
+            AerogpuCmdDecodeError::BadMagic { found } => write!(f, "bad magic 0x{found:08X}"),
+            AerogpuCmdDecodeError::Abi(err) => write!(f, "abi error: {err}"),
+            AerogpuCmdDecodeError::BadSizeBytes { found } => write!(f, "bad size_bytes {found}"),
+            AerogpuCmdDecodeError::SizeNotAligned { found } => {
+                write!(f, "size_bytes {found} is not 4-byte aligned")
+            }
+            AerogpuCmdDecodeError::PacketOverrunsStream {
+                offset,
+                packet_size_bytes,
+                stream_size_bytes,
+            } => write!(
+                f,
+                "packet overruns stream: offset={offset} packet_size_bytes={packet_size_bytes} stream_size_bytes={stream_size_bytes}"
+            ),
+            AerogpuCmdDecodeError::UnexpectedOpcode { found, expected } => write!(
+                f,
+                "unexpected opcode 0x{found:08X} (expected {expected:?})"
+            ),
+            AerogpuCmdDecodeError::PayloadSizeMismatch { expected, found } => write!(
+                f,
+                "payload size mismatch (expected {expected} bytes, found {found} bytes)"
+            ),
+            AerogpuCmdDecodeError::CountOverflow => write!(f, "count overflow"),
+        }
+    }
+}
+
+impl std::error::Error for AerogpuCmdDecodeError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            AerogpuCmdDecodeError::Abi(err) => Some(err),
+            _ => None,
+        }
     }
 }
 
