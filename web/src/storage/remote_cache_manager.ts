@@ -118,7 +118,8 @@ export interface RemoteCacheFile {
 export interface RemoteCacheWritableFileStream {
   write(data: string | Uint8Array): Promise<void>;
   close(): Promise<void>;
-  abort?(): Promise<void>;
+  abort?(reason?: unknown): Promise<void>;
+  truncate?(size: number): Promise<void>;
 }
 
 export interface RemoteCacheFileHandle {
@@ -371,10 +372,7 @@ export class RemoteCacheManager {
       // Defensive: some implementations behave like `keepExistingData=true` when the options bag is
       // unsupported. Truncate explicitly so overwriting a shorter file doesn't leave trailing bytes.
       try {
-        const maybeTruncate = (writable as unknown as { truncate?: unknown }).truncate;
-        if (typeof maybeTruncate === "function") {
-          await (maybeTruncate as (size: number) => Promise<void>).call(writable, 0);
-        }
+        await writable.truncate?.(0);
       } catch {
         // ignore
       }
@@ -384,10 +382,7 @@ export class RemoteCacheManager {
       await writable.close();
     } catch (err) {
       try {
-        const abort = (writable as unknown as { abort?: unknown }).abort;
-        if (typeof abort === "function") {
-          await (abort as (reason?: unknown) => Promise<void>).call(writable, err);
-        }
+        await writable.abort?.(err);
       } catch {
         // ignore abort failures
       }
