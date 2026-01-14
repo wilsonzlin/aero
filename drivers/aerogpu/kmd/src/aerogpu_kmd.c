@@ -2969,6 +2969,20 @@ static __forceinline BOOLEAN AeroGpuV1SubmitPathUsable(_In_ const AEROGPU_ADAPTE
         return FALSE;
     }
 
+    /*
+     * Sanity-check the current head/tail distance. The v1 ABI defines head/tail as
+     * monotonically increasing counters (mod 2^32). The pending distance is
+     * `tail - head` in unsigned arithmetic (wrap-around-safe).
+     *
+     * If the ring is corrupted (e.g. clobbered head/tail), the subtraction can
+     * yield a very large number. Treat this as "ring unusable" to avoid any
+     * out-of-bounds indexing in the submission path.
+     */
+    const uint32_t pending = (uint32_t)(ringHeader->tail - ringHeader->head);
+    if (pending > ringEntryCount) {
+        return FALSE;
+    }
+
     return TRUE;
 }
 
