@@ -52,6 +52,7 @@ const AERO_USB_FOCUSED_TESTS: &[&str] = &[
     "webusb_passthrough_uhci",
     "hid_builtin_snapshot",
     "hid_composite_mouse_snapshot_compat",
+    "hid_mouse_snapshot_compat",
     "hid_configuration_snapshot_clamping",
     "hid_consumer_control_snapshot_clamping",
     "hid_gamepad_snapshot_clamping",
