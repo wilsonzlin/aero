@@ -85,6 +85,7 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
     // This avoids wgpu device creation and stays in pure parsing/bounds-checking code.
     let _ = cmd::decode_cmd_stream_header_le(cmd_bytes);
     if let Ok(iter) = cmd::AerogpuCmdStreamIter::new(cmd_bytes) {
+        let abi_minor = pci::abi_minor(iter.header().abi_version);
         for pkt in iter.take(1024) {
             let Ok(pkt) = pkt else { continue };
             // Also exercise the stage_ex decode helper for arbitrary `(shader_stage, reserved0)`
@@ -98,6 +99,8 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
                 let reserved0 = u32::from_le_bytes(pkt.payload[12..16].try_into().unwrap());
                 let _ = cmd::decode_stage_ex(a0, reserved0);
                 let _ = cmd::decode_stage_ex(a1, reserved0);
+                let _ = cmd::decode_stage_ex_gated(abi_minor, a0, reserved0);
+                let _ = cmd::decode_stage_ex_gated(abi_minor, a1, reserved0);
                 let _ = cmd::resolve_stage(a0, reserved0);
                 let _ = cmd::resolve_stage(a1, reserved0);
                 let _ = cmd::resolve_shader_stage_with_ex(a0, reserved0);
@@ -873,6 +876,32 @@ fuzz_target!(|data: &[u8]| {
     cmd_bad_abi[4..8].copy_from_slice(&unsupported_abi_version.to_le_bytes());
     cmd_bad_abi[8..12].copy_from_slice(&(header_size as u32).to_le_bytes());
     fuzz_cmd_stream(&cmd_bad_abi);
+    // Legacy ABI minor (< stage_ex): ensure `decode_stage_ex_gated` takes its "ignore reserved0"
+    // branch for compute-stage packets.
+    let legacy_abi_minor_u32 = (cmd::AEROGPU_STAGE_EX_MIN_ABI_MINOR as u32).saturating_sub(1);
+    let legacy_abi_version = (pci::AEROGPU_ABI_MAJOR << 16) | legacy_abi_minor_u32;
+    let mut cmd_stage_ex_legacy = vec![0u8; header_size + cmd::AerogpuCmdSetTexture::SIZE_BYTES];
+    let cmd_stage_ex_legacy_size_u32 = cmd_stage_ex_legacy.len() as u32;
+    cmd_stage_ex_legacy[0..4].copy_from_slice(&cmd::AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
+    cmd_stage_ex_legacy[4..8].copy_from_slice(&legacy_abi_version.to_le_bytes());
+    cmd_stage_ex_legacy[8..12].copy_from_slice(&cmd_stage_ex_legacy_size_u32.to_le_bytes());
+    cmd_stage_ex_legacy[12..16].fill(0);
+    cmd_stage_ex_legacy[16..24].fill(0);
+    let mut off = cmd::AerogpuCmdStreamHeader::SIZE_BYTES;
+    if let Some(pkt) = write_pkt_hdr(
+        cmd_stage_ex_legacy.as_mut_slice(),
+        &mut off,
+        cmd::AerogpuCmdOpcode::SetTexture as u32,
+        cmd::AerogpuCmdSetTexture::SIZE_BYTES,
+    ) {
+        if let Some(shader_stage) = cmd_stage_ex_legacy.get_mut(pkt + 8..pkt + 12) {
+            shader_stage.copy_from_slice(&(cmd::AerogpuShaderStage::Compute as u32).to_le_bytes());
+        }
+        if let Some(reserved0) = cmd_stage_ex_legacy.get_mut(pkt + 20..pkt + 24) {
+            reserved0.copy_from_slice(&(cmd::AerogpuShaderStageEx::Hull as u32).to_le_bytes());
+        }
+    }
+    fuzz_cmd_stream(&cmd_stage_ex_legacy);
     // Header size_bytes too small.
     let mut cmd_bad_size_small = vec![0u8; header_size];
     cmd_bad_size_small[0..4].copy_from_slice(&cmd::AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
