@@ -274,6 +274,10 @@ re-download a published `manifest.json` + `chunks/*.bin` and validate schema, ch
 optional per-chunk checksums end-to-end (supports S3-backed verification, direct HTTP verification
 via `--manifest-url` for public/CDN-hosted images, and local verification via `--manifest-file`).
 
+Verification is **fail-fast**: it stops on the first mismatch and reports it. For quick smoke
+checks, use chunk sampling (`--chunk-sample N`) to verify a handful of random chunks plus the final
+chunk.
+
 Note on input formats:
 
 - The chunked format is defined in terms of the **logical disk byte stream** (what the guest sees),

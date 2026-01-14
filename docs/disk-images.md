@@ -104,7 +104,8 @@ To generate a chunked image (manifest + chunks) from a local disk image, use the
     - S3 mode via `--bucket` + `--prefix` / `--manifest-key`
     - direct HTTP via `--manifest-url` (e.g. CDN-hosted images)
     - local verification via `--manifest-file` (no S3 required)
-
+    - verification is fail-fast (stops on the first mismatch); use `--chunk-sample N` for smoke checks
+ 
 ## Inspecting streaming performance (telemetry + controls)
 
 The dev UI includes a **Remote disk image (streaming)** panel that can open a remote disk via the runtime disk worker and display live stats:
