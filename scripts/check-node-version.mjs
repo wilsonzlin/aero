@@ -65,6 +65,9 @@ if (!current) {
 
 const versionCmp = compareVersions(current, expected);
 const allowUnsupported = envFlag("AERO_ALLOW_UNSUPPORTED_NODE");
+// Some commands (notably `cargo xtask test-all` when running wasm-pack tests) require the same Node
+// *major* as CI to avoid toolchain flakiness/hangs in unsupported Node releases.
+const enforceMajor = envFlag("AERO_ENFORCE_NODE_MAJOR");
 const tooOld = versionCmp < 0;
 
 // CI pins an exact Node.js version in .nvmrc. We enforce this as a minimum, but allow newer
@@ -86,6 +89,25 @@ if (tooOld) {
     log("");
     log("Fix:");
     log(`- Install/use Node v${expected.raw} (the version CI uses).`);
+    log("  If you use nvm:");
+    log("    nvm install");
+    log("    nvm use");
+    process.exit(1);
+  }
+} else if (enforceMajor && current.major !== expected.major) {
+  const log = allowUnsupported ? console.warn : console.error;
+  log(`${allowUnsupported ? "warning" : "error"}: Unsupported Node.js major version.`);
+  log(`- Detected: v${current.raw}`);
+  log(`- CI uses:  v${expected.raw} (from .nvmrc)`);
+  log(`- Required (major): ${expected.major}.x`);
+  log(`- Recommended: ${recommendedRange}`);
+
+  if (allowUnsupported) {
+    log(`- Override: AERO_ALLOW_UNSUPPORTED_NODE=1 (skipping Node version enforcement)`);
+  } else {
+    log("");
+    log("Fix:");
+    log(`- Install/use Node ${expected.major}.x (CI baseline).`);
     log("  If you use nvm:");
     log("    nvm install");
     log("    nvm use");
