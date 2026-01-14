@@ -847,7 +847,7 @@ fn hid_keyboard_remote_wakeup_sets_uhci_resume_detect_through_external_hub() {
 }
 
 #[test]
-fn hid_keyboard_remote_wakeup_propagates_through_external_hub_without_hub_remote_wakeup() {
+fn hid_keyboard_remote_wakeup_does_not_propagate_through_external_hub_without_hub_remote_wakeup() {
     let mut ctrl = UhciController::new();
 
     // Attach an external hub to root port 0 (the browser runtime's synthetic HID topology).
@@ -972,27 +972,30 @@ fn hid_keyboard_remote_wakeup_propagates_through_external_hub_without_hub_remote
         "resume-detect must not be asserted before remote wake triggers"
     );
 
-    // Inject a keypress while suspended. Remote wakeup is driven by the downstream device's
-    // DEVICE_REMOTE_WAKEUP feature; intermediate hubs do not need to have their own
-    // DEVICE_REMOTE_WAKEUP enabled for the resume signal to propagate upstream.
+    // Inject a keypress while suspended. Since DEVICE_REMOTE_WAKEUP is disabled on the hub, it
+    // must not propagate the downstream remote wake request upstream.
     keyboard.key_event(0x04, true); // HID usage for KeyA.
 
     assert!(!ctrl.irq_level(), "no IRQ expected before ticking the hub");
-    ctrl.tick_1ms(&mut mem);
+    for _ in 0..5 {
+        ctrl.tick_1ms(&mut mem);
+    }
 
     let portsc = ctrl.io_read(REG_PORTSC1, 2) as u16;
-    assert!(
-        portsc & PORTSC_RD != 0,
-        "expected Resume Detect after remote wake via external hub (hub remote wake need not be enabled)"
+    assert_eq!(
+        portsc & PORTSC_RD,
+        0,
+        "unexpected Resume Detect even though hub remote wake is disabled"
     );
     let usbsts = ctrl.io_read(REG_USBSTS, 2) as u16;
-    assert!(
-        usbsts & USBSTS_RESUMEDETECT != 0,
-        "expected UHCI USBSTS.RESUMEDETECT to latch from root hub Resume Detect"
+    assert_eq!(
+        usbsts & USBSTS_RESUMEDETECT,
+        0,
+        "unexpected UHCI USBSTS.RESUMEDETECT even though hub remote wake is disabled"
     );
     assert!(
-        ctrl.irq_level(),
-        "expected IRQ level high when USBINTR.RESUME is enabled and USBSTS.RESUMEDETECT is set"
+        !ctrl.irq_level(),
+        "unexpected IRQ even though hub remote wake is disabled"
     );
 }
 
@@ -1224,7 +1227,8 @@ fn hid_keyboard_remote_wakeup_sets_uhci_resume_detect_through_nested_hubs() {
 }
 
 #[test]
-fn hid_keyboard_remote_wakeup_propagates_through_nested_hubs_without_inner_hub_remote_wakeup() {
+fn hid_keyboard_remote_wakeup_does_not_propagate_through_nested_hubs_without_inner_hub_remote_wakeup(
+) {
     let mut ctrl = UhciController::new();
 
     // Attach an external hub to root port 0.
@@ -1417,27 +1421,30 @@ fn hid_keyboard_remote_wakeup_propagates_through_nested_hubs_without_inner_hub_r
         "resume-detect must not be asserted before remote wake triggers"
     );
 
-    // Inject a keypress while suspended. Remote wakeup is driven by the downstream device's
-    // DEVICE_REMOTE_WAKEUP feature; intermediate hubs do not need to have their own
-    // DEVICE_REMOTE_WAKEUP enabled for the resume signal to propagate upstream.
+    // Inject a keypress while suspended. Since DEVICE_REMOTE_WAKEUP is disabled on the inner hub,
+    // it must not propagate the downstream remote wake request upstream.
     keyboard.key_event(0x04, true); // HID usage for KeyA.
 
     assert!(!ctrl.irq_level(), "no IRQ expected before ticking the hub");
-    ctrl.tick_1ms(&mut mem);
+    for _ in 0..5 {
+        ctrl.tick_1ms(&mut mem);
+    }
 
     let portsc = ctrl.io_read(REG_PORTSC1, 2) as u16;
-    assert!(
-        portsc & PORTSC_RD != 0,
-        "expected Resume Detect after remote wake via nested hubs (intermediate hub remote wake need not be enabled)"
+    assert_eq!(
+        portsc & PORTSC_RD,
+        0,
+        "unexpected Resume Detect even though inner-hub remote wake is disabled"
     );
     let usbsts = ctrl.io_read(REG_USBSTS, 2) as u16;
-    assert!(
-        usbsts & USBSTS_RESUMEDETECT != 0,
-        "expected UHCI USBSTS.RESUMEDETECT to latch from root hub Resume Detect"
+    assert_eq!(
+        usbsts & USBSTS_RESUMEDETECT,
+        0,
+        "unexpected UHCI USBSTS.RESUMEDETECT even though inner-hub remote wake is disabled"
     );
     assert!(
-        ctrl.irq_level(),
-        "expected IRQ level high when USBINTR.RESUME is enabled and USBSTS.RESUMEDETECT is set"
+        !ctrl.irq_level(),
+        "unexpected IRQ even though inner-hub remote wake is disabled"
     );
 }
 

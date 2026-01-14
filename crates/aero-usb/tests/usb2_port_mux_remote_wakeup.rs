@@ -589,7 +589,7 @@ fn ehci_remote_wakeup_enters_resume_state_through_external_hub() {
 }
 
 #[test]
-fn ehci_remote_wakeup_propagates_through_external_hub_without_hub_remote_wakeup() {
+fn ehci_remote_wakeup_does_not_propagate_through_external_hub_without_hub_remote_wakeup() {
     let mut ehci = EhciController::new_with_port_count(1);
     ehci.hub_mut().attach(0, Box::new(UsbHubDevice::new()));
 
@@ -708,36 +708,25 @@ fn ehci_remote_wakeup_propagates_through_external_hub_without_hub_remote_wakeup(
         "expected root port to be suspended"
     );
 
-    // Inject a keypress while suspended. Remote wakeup is driven by the downstream device's
-    // DEVICE_REMOTE_WAKEUP feature; intermediate hubs do not need to have their own
-    // DEVICE_REMOTE_WAKEUP enabled for the resume signal to propagate upstream.
+    // Inject a keypress while suspended. Since DEVICE_REMOTE_WAKEUP is disabled on the hub, it
+    // must not propagate the downstream remote wake request upstream.
     keyboard.key_event(0x04, true); // HID usage for KeyA.
 
-    // Tick once to allow the root hub to observe the remote wakeup request.
-    ehci.tick_1ms(&mut mem);
-
-    let portsc = ehci.mmio_read(reg_portsc(0), 4);
-    assert_ne!(
-        portsc & PORTSC_FPR,
-        0,
-        "expected resume state after remote wakeup through external hub (hub remote wake need not be enabled)"
-    );
-    assert_eq!(
-        portsc & PORTSC_LS_MASK,
-        0b01 << 10,
-        "expected K-state while resuming"
-    );
-
-    // After the resume timer expires, the port should exit suspend/resume and return to J state.
-    for _ in 0..20 {
+    for _ in 0..5 {
         ehci.tick_1ms(&mut mem);
     }
-    let portsc = ehci.mmio_read(reg_portsc(0), 4);
-    assert_eq!(portsc & (PORTSC_SUSP | PORTSC_FPR), 0);
-    assert_eq!(portsc & PORTSC_LS_MASK, 0b10 << 10);
 
-    // The device should be reachable again after resume.
-    assert!(ehci.hub_mut().device_mut_for_address(2).is_some());
+    let portsc = ehci.mmio_read(reg_portsc(0), 4);
+    assert_eq!(
+        portsc & PORTSC_FPR,
+        0,
+        "unexpected resume state even though hub remote wake is disabled"
+    );
+    assert_ne!(
+        portsc & PORTSC_SUSP,
+        0,
+        "port should remain suspended when hub remote wake is disabled"
+    );
 }
 
 #[test]
@@ -969,7 +958,7 @@ fn ehci_remote_wakeup_enters_resume_state_through_nested_hubs() {
 }
 
 #[test]
-fn ehci_remote_wakeup_propagates_through_nested_hubs_without_inner_hub_remote_wakeup() {
+fn ehci_remote_wakeup_does_not_propagate_through_nested_hubs_without_inner_hub_remote_wakeup() {
     let mut ehci = EhciController::new_with_port_count(1);
     ehci.hub_mut().attach(0, Box::new(UsbHubDevice::new()));
 
@@ -1156,34 +1145,23 @@ fn ehci_remote_wakeup_propagates_through_nested_hubs_without_inner_hub_remote_wa
         "expected root port to be suspended"
     );
 
-    // Inject a keypress while suspended. Remote wakeup is driven by the downstream device's
-    // DEVICE_REMOTE_WAKEUP feature; intermediate hubs do not need to have their own
-    // DEVICE_REMOTE_WAKEUP enabled for the resume signal to propagate upstream.
+    // Inject a keypress while suspended. Since DEVICE_REMOTE_WAKEUP is disabled on the inner hub,
+    // it must not propagate the downstream remote wake request upstream.
     keyboard.key_event(0x04, true); // HID usage for KeyA.
 
-    // Tick once to allow the root hub to observe the remote wakeup request.
-    ehci.tick_1ms(&mut mem);
-
-    let portsc = ehci.mmio_read(reg_portsc(0), 4);
-    assert_ne!(
-        portsc & PORTSC_FPR,
-        0,
-        "expected resume state after remote wakeup through nested hubs (intermediate hub remote wake need not be enabled)"
-    );
-    assert_eq!(
-        portsc & PORTSC_LS_MASK,
-        0b01 << 10,
-        "expected K-state while resuming"
-    );
-
-    // After the resume timer expires, the port should exit suspend/resume and return to J state.
-    for _ in 0..20 {
+    for _ in 0..5 {
         ehci.tick_1ms(&mut mem);
     }
-    let portsc = ehci.mmio_read(reg_portsc(0), 4);
-    assert_eq!(portsc & (PORTSC_SUSP | PORTSC_FPR), 0);
-    assert_eq!(portsc & PORTSC_LS_MASK, 0b10 << 10);
 
-    // The device should be reachable again after resume.
-    assert!(ehci.hub_mut().device_mut_for_address(3).is_some());
+    let portsc = ehci.mmio_read(reg_portsc(0), 4);
+    assert_eq!(
+        portsc & PORTSC_FPR,
+        0,
+        "unexpected resume state even though inner-hub remote wake is disabled"
+    );
+    assert_ne!(
+        portsc & PORTSC_SUSP,
+        0,
+        "port should remain suspended when inner-hub remote wake is disabled"
+    );
 }
