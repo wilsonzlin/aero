@@ -201,7 +201,9 @@ fn make_vhd_dynamic_empty(virtual_size: u64, block_size: u32) -> MemBackend {
     let mut storage = MemBackend::with_len(file_len).unwrap();
 
     storage.write_at(0, &footer).unwrap();
-    storage.write_at(file_len - (SECTOR as u64), &footer).unwrap();
+    storage
+        .write_at(file_len - (SECTOR as u64), &footer)
+        .unwrap();
 
     let mut dyn_header = [0u8; 1024];
     dyn_header[0..8].copy_from_slice(b"cxsparse");
@@ -233,7 +235,9 @@ fn make_vhd_dynamic_with_pattern() -> MemBackend {
     let block_total_size = bitmap_size + block_size as u64;
     let new_footer_offset = old_footer_offset + block_total_size;
 
-    storage.set_len(new_footer_offset + (SECTOR as u64)).unwrap();
+    storage
+        .set_len(new_footer_offset + (SECTOR as u64))
+        .unwrap();
 
     let bat_entry = (old_footer_offset / (SECTOR as u64)) as u32;
     storage

@@ -486,7 +486,10 @@ fn pc_platform_virtio_blk_msix_snapshot_restore_preserves_vector_mask_pending_an
 
     // Unmask after restore. This should immediately deliver the pending vector and clear the PBA.
     restored.memory.write_u32(entry0_2 + 0xc, 0);
-    assert_eq!(restored.interrupts.borrow().get_pending(), Some(vector as u8));
+    assert_eq!(
+        restored.interrupts.borrow().get_pending(),
+        Some(vector as u8)
+    );
     restored.interrupts.borrow_mut().acknowledge(vector as u8);
     restored.interrupts.borrow_mut().eoi(vector as u8);
     assert_eq!(restored.interrupts.borrow().get_pending(), None);

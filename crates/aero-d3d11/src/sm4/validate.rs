@@ -74,7 +74,8 @@ pub(crate) fn scan_sm5_nonzero_gs_stream(program: &Sm4Program) -> Option<Sm5GsSt
                 };
                 operand_pos += 1;
 
-                let ty = (operand_token >> sm4_opcode::OPERAND_TYPE_SHIFT) & sm4_opcode::OPERAND_TYPE_MASK;
+                let ty = (operand_token >> sm4_opcode::OPERAND_TYPE_SHIFT)
+                    & sm4_opcode::OPERAND_TYPE_MASK;
                 if ty != sm4_opcode::OPERAND_TYPE_IMMEDIATE32 {
                     i += len;
                     continue;
@@ -155,7 +156,8 @@ mod tests {
             << sm4_opcode::OPERAND_SELECTION_MODE_SHIFT;
         token |= (sm4_opcode::OPERAND_TYPE_IMMEDIATE32 & sm4_opcode::OPERAND_TYPE_MASK)
             << sm4_opcode::OPERAND_TYPE_SHIFT;
-        token |= (sm4_opcode::OPERAND_INDEX_DIMENSION_0D & sm4_opcode::OPERAND_INDEX_DIMENSION_MASK)
+        token |= (sm4_opcode::OPERAND_INDEX_DIMENSION_0D
+            & sm4_opcode::OPERAND_INDEX_DIMENSION_MASK)
             << sm4_opcode::OPERAND_INDEX_DIMENSION_SHIFT;
         token
     }
@@ -212,10 +214,7 @@ mod tests {
 
     #[test]
     fn detects_nonzero_emitthen_cut_stream_scalar_immediate() {
-        assert_detects_nonzero_stream(
-            sm4_opcode::OPCODE_EMITTHENCUT_STREAM,
-            "emitthen_cut_stream",
-        );
+        assert_detects_nonzero_stream(sm4_opcode::OPCODE_EMITTHENCUT_STREAM, "emitthen_cut_stream");
     }
 
     #[test]

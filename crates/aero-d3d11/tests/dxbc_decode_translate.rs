@@ -3845,8 +3845,7 @@ fn decodes_and_translates_f32tof16_sat_clamps_input_before_packing() {
         0.5f32.to_bits(),
         42.0f32.to_bits(),
     ]);
-    let f32tof16_len_without_ext =
-        1u32 + f32tof16_dst.len() as u32 + f32tof16_src.len() as u32;
+    let f32tof16_len_without_ext = 1u32 + f32tof16_dst.len() as u32 + f32tof16_src.len() as u32;
     body.extend_from_slice(&opcode_token_with_sat(
         OPCODE_F32TOF16,
         f32tof16_len_without_ext,
