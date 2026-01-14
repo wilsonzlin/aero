@@ -75,7 +75,7 @@ import { HdaPciDevice, type HdaControllerBridgeLike } from "../io/devices/hda";
 import { PciTestDevice } from "../io/devices/pci_test_device";
 import { AeroGpuPciDevice } from "../io/devices/aerogpu";
 import { UhciPciDevice, type UhciControllerBridgeLike } from "../io/devices/uhci";
-import { EhciPciDevice } from "../io/devices/ehci";
+import { EhciPciDevice, type EhciControllerBridgeLike } from "../io/devices/ehci";
 import { XhciPciDevice } from "../io/devices/xhci";
 import { VirtioInputPciFunction, hidUsageToLinuxKeyCode, type VirtioInputPciDeviceLike } from "../io/devices/virtio_input";
 import { VirtioNetPciDevice } from "../io/devices/virtio_net";
@@ -554,6 +554,9 @@ let e1000Bridge: E1000Bridge | null = null;
 let hdaDevice: HdaPciDevice | null = null;
 type HdaControllerBridge = InstanceType<NonNullable<WasmApi["HdaControllerBridge"]>>;
 let hdaControllerBridge: HdaControllerBridge | null = null;
+
+type CtorWithLength<T> = { length: number; new (...args: unknown[]): T };
+type AnyNewable<T> = { new (...args: unknown[]): T };
 
 type VirtioInputPciDevice = VirtioInputPciDeviceLike;
 let virtioInputKeyboard: VirtioInputPciFunction | null = null;
@@ -1518,8 +1521,7 @@ function maybeInitE1000Device(): void {
     // `guestSize=0` is treated as "use remainder of linear memory" by the Rust bridge.
     const base = guestBase >>> 0;
     const size = guestSize >>> 0;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const Ctor = Bridge as any;
+    const Ctor = Bridge as unknown as CtorWithLength<E1000Bridge>;
     try {
       bridge = Ctor.length >= 3 ? new Ctor(base, size, undefined) : new Ctor(base, size);
     } catch {
@@ -1564,8 +1566,7 @@ function maybeInitVirtioInput(): void {
   const transportArg: unknown = mode === "transitional" ? true : mode === "legacy" ? "legacy" : undefined;
 
   // wasm-bindgen's JS glue can enforce constructor arity; try a few common layouts.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const AnyCtor = Ctor as any;
+  const AnyCtor = Ctor as unknown as AnyNewable<VirtioInputPciDevice>;
   let keyboardDev: VirtioInputPciDevice | null = null;
   let mouseDev: VirtioInputPciDevice | null = null;
   try {
@@ -1613,24 +1614,24 @@ function maybeInitVirtioInput(): void {
 
   if (mode !== "modern") {
     const probeLegacyIo = (dev: VirtioInputPciDeviceLike): boolean => {
-      const devAny = dev as any;
+      const devAny = dev as unknown as Record<string, unknown>;
       const read =
         typeof devAny.legacy_io_read === "function"
-          ? devAny.legacy_io_read
+          ? (devAny.legacy_io_read as (offset: number, size: number) => number)
           : typeof devAny.io_read === "function"
-            ? devAny.io_read
+            ? (devAny.io_read as (offset: number, size: number) => number)
             : null;
       const write =
         typeof devAny.legacy_io_write === "function"
-          ? devAny.legacy_io_write
+          ? (devAny.legacy_io_write as (offset: number, size: number, value: number) => void)
           : typeof devAny.io_write === "function"
-            ? devAny.io_write
+            ? (devAny.io_write as (offset: number, size: number, value: number) => void)
             : null;
       if (!read || !write) return false;
 
       // virtio-pci legacy IO is gated by PCI command bit0 (I/O enable). For the probe we
       // temporarily enable I/O decoding inside the bridge so the read is meaningful.
-      const setCmd = typeof devAny.set_pci_command === "function" ? devAny.set_pci_command : null;
+      const setCmd = typeof devAny.set_pci_command === "function" ? (devAny.set_pci_command as (command: number) => void) : null;
       try {
         if (setCmd) {
           try {
@@ -1770,10 +1771,8 @@ function maybeInitUhciDevice(): void {
         // fall back to the other variant if instantiation fails.
         const base = guestBase >>> 0;
         const size = guestSize >>> 0;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const Ctor = Bridge as any;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        let bridge: any;
+        const Ctor = Bridge as unknown as CtorWithLength<UhciControllerBridge>;
+        let bridge: UhciControllerBridge;
         try {
           bridge = Ctor.length >= 2 ? new Ctor(base, size) : new Ctor(base);
         } catch {
@@ -2071,10 +2070,8 @@ function maybeInitEhciDevice(): void {
   const Bridge = (api as unknown as { EhciControllerBridge?: unknown }).EhciControllerBridge;
   if (typeof Bridge !== "function") return;
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const Ctor = Bridge as any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let bridge: any;
+  const Ctor = Bridge as unknown as CtorWithLength<EhciControllerBridgeLike>;
+  let bridge: EhciControllerBridgeLike | null = null;
   try {
     const base = guestBase >>> 0;
     const size = guestSize >>> 0;
@@ -2104,6 +2101,7 @@ function maybeInitEhciDevice(): void {
       }
     }
 
+    if (!bridge) throw new Error("EHCI bridge unavailable");
     const dev = new EhciPciDevice({ bridge, irqSink: mgr.irqSink });
     mgr.registerPciDevice(dev);
     mgr.addTickable(dev);
@@ -2150,10 +2148,8 @@ function maybeInitHdaDevice(): void {
   const Bridge = api.HdaControllerBridge;
   if (!Bridge) return;
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const Ctor = Bridge as any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let bridge: any;
+  const Ctor = Bridge as unknown as AnyNewable<HdaControllerBridge>;
+  let bridge: HdaControllerBridge | null = null;
   try {
     const base = guestBase >>> 0;
     const size = guestSize >>> 0;
@@ -2172,6 +2168,7 @@ function maybeInitHdaDevice(): void {
         bridge = new Ctor(base);
       }
     }
+    if (!bridge) throw new Error("HDA bridge unavailable");
     const dev = new HdaPciDevice({ bridge: bridge as HdaControllerBridgeLike, irqSink: mgr.irqSink });
     hdaControllerBridge = bridge;
     // Debug/diagnostics: expose the live HDA bridge in the worker global so DevTools snippets (and
@@ -2180,8 +2177,7 @@ function maybeInitHdaDevice(): void {
     // See `docs/testing/audio-windows7.md` for the Win7 audio smoke-test checklist and debugging
     // snippets that use this handle.
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (globalThis as any).__aeroAudioHdaBridge = bridge;
+      (globalThis as unknown as { __aeroAudioHdaBridge?: unknown }).__aeroAudioHdaBridge = bridge;
     } catch {
       // ignore
     }
