@@ -48,6 +48,82 @@ pub fn alloc_guest_region_bytes(min_bytes: u32) -> (u32, u32) {
     (guest_base, guest_size)
 }
 
+/// Convenience wrapper for a wasm-bindgen test guest RAM region.
+///
+/// This provides bounds-checked helpers for reading/writing guest bytes without creating
+/// long-lived `&mut [u8]` borrows across VM/device execution (which can violate Rust aliasing
+/// assumptions when the VM/bridge dereferences the same memory via raw pointers).
+#[derive(Clone, Copy, Debug)]
+pub struct GuestRegion {
+    pub base: u32,
+    pub size: u32,
+}
+
+impl GuestRegion {
+    /// Allocate a new guest region using [`alloc_guest_region_bytes`].
+    pub fn alloc(min_bytes: u32) -> Self {
+        let (base, size) = alloc_guest_region_bytes(min_bytes);
+        Self { base, size }
+    }
+
+    #[inline]
+    fn abs(&self, paddr: u32, len: u32) -> u32 {
+        let end = paddr
+            .checked_add(len)
+            .expect("guest address overflow (paddr+len)");
+        assert!(
+            end <= self.size,
+            "guest access out of bounds: paddr=0x{paddr:x} len=0x{len:x} guest_size=0x{size:x}",
+            size = self.size
+        );
+        self.base
+            .checked_add(paddr)
+            .expect("guest linear address overflow (guest_base+paddr)")
+    }
+
+    pub fn write_bytes(&self, paddr: u32, bytes: &[u8]) {
+        let addr = self.abs(paddr, bytes.len() as u32);
+        unsafe { write_bytes(addr, bytes) };
+    }
+
+    pub fn read_into(&self, paddr: u32, dst: &mut [u8]) {
+        let addr = self.abs(paddr, dst.len() as u32);
+        // Safety: `abs` bounds-checks and `alloc_guest_region_bytes` guarantees the region exists.
+        unsafe {
+            core::ptr::copy_nonoverlapping(addr as *const u8, dst.as_mut_ptr(), dst.len());
+        }
+    }
+
+    pub fn fill(&self, paddr: u32, byte_len: u32, value: u8) {
+        let addr = self.abs(paddr, byte_len);
+        // Safety: `abs` bounds-checks and `alloc_guest_region_bytes` guarantees the region exists.
+        unsafe {
+            core::slice::from_raw_parts_mut(addr as *mut u8, byte_len as usize).fill(value);
+        }
+    }
+
+    pub fn write_u16(&self, paddr: u32, value: u16) {
+        self.write_bytes(paddr, &value.to_le_bytes());
+    }
+
+    pub fn write_u32(&self, paddr: u32, value: u32) {
+        let addr = self.abs(paddr, 4);
+        unsafe { write_u32(addr, value) };
+    }
+
+    pub fn write_u64(&self, paddr: u32, value: u64) {
+        let addr = self.abs(paddr, 8);
+        unsafe {
+            core::ptr::write_unaligned(addr as *mut u64, value);
+        }
+    }
+
+    pub fn read_u32(&self, paddr: u32) -> u32 {
+        let addr = self.abs(paddr, 4);
+        unsafe { read_u32(addr) }
+    }
+}
+
 /// Write a little-endian u32 to an absolute linear-memory address.
 pub unsafe fn write_u32(addr: u32, value: u32) {
     unsafe {

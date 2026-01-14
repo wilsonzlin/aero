@@ -7,35 +7,25 @@ use wasm_bindgen_test::wasm_bindgen_test;
 
 mod common;
 
-fn write_u64_le(mem: &mut [u8], addr: u32, value: u64) {
-    let addr = addr as usize;
-    mem[addr..addr + 8].copy_from_slice(&value.to_le_bytes());
-}
-
-fn write_u16_le(mem: &mut [u8], addr: u32, value: u16) {
-    let addr = addr as usize;
-    mem[addr..addr + 2].copy_from_slice(&value.to_le_bytes());
-}
-
 /// Minimal legacy TX descriptor layout (16 bytes).
-fn write_tx_desc(mem: &mut [u8], addr: u32, buf_addr: u64, len: u16, cmd: u8, status: u8) {
-    write_u64_le(mem, addr, buf_addr);
-    write_u16_le(mem, addr + 8, len);
-    mem[(addr + 10) as usize] = 0; // cso
-    mem[(addr + 11) as usize] = cmd;
-    mem[(addr + 12) as usize] = status;
-    mem[(addr + 13) as usize] = 0; // css
-    write_u16_le(mem, addr + 14, 0); // special
+fn write_tx_desc(guest: &common::GuestRegion, addr: u32, buf_addr: u64, len: u16, cmd: u8, status: u8) {
+    guest.write_u64(addr, buf_addr);
+    guest.write_u16(addr + 8, len);
+    guest.write_bytes(addr + 10, &[0]); // cso
+    guest.write_bytes(addr + 11, &[cmd]);
+    guest.write_bytes(addr + 12, &[status]);
+    guest.write_bytes(addr + 13, &[0]); // css
+    guest.write_u16(addr + 14, 0); // special
 }
 
 /// Minimal legacy RX descriptor layout (16 bytes).
-fn write_rx_desc(mem: &mut [u8], addr: u32, buf_addr: u64, status: u8) {
-    write_u64_le(mem, addr, buf_addr);
-    write_u16_le(mem, addr + 8, 0); // length
-    write_u16_le(mem, addr + 10, 0); // checksum
-    mem[(addr + 12) as usize] = status;
-    mem[(addr + 13) as usize] = 0; // errors
-    write_u16_le(mem, addr + 14, 0); // special
+fn write_rx_desc(guest: &common::GuestRegion, addr: u32, buf_addr: u64, status: u8) {
+    guest.write_u64(addr, buf_addr);
+    guest.write_u16(addr + 8, 0); // length
+    guest.write_u16(addr + 10, 0); // checksum
+    guest.write_bytes(addr + 12, &[status]);
+    guest.write_bytes(addr + 13, &[0]); // errors
+    guest.write_u16(addr + 14, 0); // special
 }
 
 fn build_test_frame(payload: &[u8]) -> Vec<u8> {
@@ -50,9 +40,9 @@ fn build_test_frame(payload: &[u8]) -> Vec<u8> {
 #[wasm_bindgen_test]
 fn e1000_bridge_smoke_tx_rx_and_bme_gating() {
     // Synthetic guest RAM region above the bounded `runtime_alloc` heap.
-    let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x40_000);
-    let guest =
-        unsafe { core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size as usize) };
+    let guest = common::GuestRegion::alloc(0x40_000);
+    let guest_base = guest.base;
+    let guest_size = guest.size;
 
     let mut bridge = E1000Bridge::new(guest_base, guest_size, None).expect("E1000Bridge::new");
 
@@ -82,26 +72,26 @@ fn e1000_bridge_smoke_tx_rx_and_bme_gating() {
     bridge.mmio_write(0x0100, 4, 1 << 1); // RCTL.EN (defaults to 2048 buffer)
 
     // Populate RX descriptors with guest buffers.
-    write_rx_desc(guest, 0x2000, 0x3000, 0);
-    write_rx_desc(guest, 0x2010, 0x3400, 0);
-    write_rx_desc(guest, 0x2020, 0x3800, 0);
+    write_rx_desc(&guest, 0x2000, 0x3000, 0);
+    write_rx_desc(&guest, 0x2010, 0x3400, 0);
+    write_rx_desc(&guest, 0x2020, 0x3800, 0);
 
     // With BME disabled, host RX frames should be queued but must not DMA into guest memory yet.
     let pkt_in = build_test_frame(b"host->guest");
-    guest[0x3000..0x3000 + pkt_in.len()].fill(0xAA);
+    guest.fill(0x3000, pkt_in.len() as u32, 0xAA);
     bridge.receive_frame(&Uint8Array::from(pkt_in.as_slice()));
+    let mut check = vec![0u8; pkt_in.len()];
+    guest.read_into(0x3000, &mut check);
     assert!(
-        guest[0x3000..0x3000 + pkt_in.len()]
-            .iter()
-            .all(|&b| b == 0xAA),
+        check.iter().all(|&b| b == 0xAA),
         "RX buffer should not be written while PCI bus mastering is disabled"
     );
 
     // Guest TX: descriptor 0 points at packet buffer 0x4000.
     let pkt_out = build_test_frame(b"guest->host");
-    guest[0x4000..0x4000 + pkt_out.len()].copy_from_slice(&pkt_out);
+    guest.write_bytes(0x4000, &pkt_out);
     write_tx_desc(
-        guest,
+        &guest,
         0x1000,
         0x4000,
         pkt_out.len() as u16,
@@ -126,7 +116,9 @@ fn e1000_bridge_smoke_tx_rx_and_bme_gating() {
     tx.copy_to(&mut tx_bytes);
     assert_eq!(tx_bytes, pkt_out);
 
-    assert_eq!(&guest[0x3000..0x3000 + pkt_in.len()], pkt_in.as_slice());
+    let mut rx = vec![0u8; pkt_in.len()];
+    guest.read_into(0x3000, &mut rx);
+    assert_eq!(rx, pkt_in);
 
     assert!(
         bridge.irq_level(),
@@ -143,10 +135,12 @@ fn e1000_bridge_smoke_tx_rx_and_bme_gating() {
     //
     // Use the second RX buffer so we can validate that the frame would have been DMA'd if it were
     // accepted.
-    guest[0x3400..0x3400 + 16].fill(0xAA);
+    guest.fill(0x3400, 16, 0xAA);
     bridge.receive_frame(&Uint8Array::new_with_length((MIN_L2_FRAME_LEN - 1) as u32));
     bridge.poll();
-    assert_eq!(&guest[0x3400..0x3400 + 16], &[0xAA; 16]);
+    let mut buf = [0u8; 16];
+    guest.read_into(0x3400, &mut buf);
+    assert_eq!(buf, [0xAA; 16]);
     assert!(
         !bridge.irq_level(),
         "expected no IRQ asserted after short frame is dropped"
@@ -154,7 +148,8 @@ fn e1000_bridge_smoke_tx_rx_and_bme_gating() {
 
     bridge.receive_frame(&Uint8Array::new_with_length((MAX_L2_FRAME_LEN + 1) as u32));
     bridge.poll();
-    assert_eq!(&guest[0x3400..0x3400 + 16], &[0xAA; 16]);
+    guest.read_into(0x3400, &mut buf);
+    assert_eq!(buf, [0xAA; 16]);
     assert!(
         !bridge.irq_level(),
         "expected no IRQ asserted after oversized frame is dropped"
@@ -164,7 +159,9 @@ fn e1000_bridge_smoke_tx_rx_and_bme_gating() {
     let pkt_in2 = build_test_frame(b"host->guest2");
     bridge.receive_frame(&Uint8Array::from(pkt_in2.as_slice()));
     bridge.poll();
-    assert_eq!(&guest[0x3400..0x3400 + pkt_in2.len()], pkt_in2.as_slice());
+    let mut rx2 = vec![0u8; pkt_in2.len()];
+    guest.read_into(0x3400, &mut rx2);
+    assert_eq!(rx2, pkt_in2);
 
     assert!(
         bridge.irq_level(),
