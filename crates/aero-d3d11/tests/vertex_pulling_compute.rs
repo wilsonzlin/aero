@@ -1078,7 +1078,7 @@ fn compute_can_vertex_pull_snorm8_u8_and_i8_formats() {
 
         // Storage buffer words are `u32`, so ensure the byte length is a multiple of 4 so
         // `arrayLength()` exposes the final partial word (important for unaligned reads near EOF).
-        while vb.len() % 4 != 0 {
+        while !vb.len().is_multiple_of(4) {
             vb.push(0);
         }
 
