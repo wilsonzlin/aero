@@ -45,7 +45,9 @@ the browser-side streaming client expectations, use the dependency-free conforma
 For quick local sanity checks against the repo’s dev servers:
 
 - `python3 tools/disk-streaming-conformance/selftest_range_server.py`
+- `python3 tools/disk-streaming-conformance/selftest_range_server_private.py`
 - `python3 tools/disk-streaming-conformance/selftest_chunk_server.py`
+- `python3 tools/disk-streaming-conformance/selftest_chunk_server_private.py`
 
 Use `--strict` to fail on warnings (recommended when validating CDN/edge behavior).
 

@@ -24,5 +24,7 @@ This directory also contains standalone dev-only helpers used by the disk stream
 
 - `server/range_server.js`: static file server with HTTP Range + CORS headers
   - Used by `tools/disk-streaming-conformance/selftest_range_server.py`
+  - Supports `--auth-token <Authorization-value>` for private-mode selftests
 - `server/chunk_server.js`: static server for chunked disk images (`manifest.json` + `chunks/*.bin`)
   - Used by `tools/disk-streaming-conformance/selftest_chunk_server.py`
+  - Supports `--auth-token <Authorization-value>` for private-mode selftests
