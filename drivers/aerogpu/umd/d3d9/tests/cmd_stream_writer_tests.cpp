@@ -10595,6 +10595,7 @@ bool TestDestroyBoundShaderUnbinds() {
 
   auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
   auto* sh = reinterpret_cast<Shader*>(hShader.pDrvPrivate);
+  const aerogpu_handle_t destroyed_handle = sh ? sh->handle : 0;
 
   hr = cleanup.device_funcs.pfnSetShader(create_dev.hDevice, kD3d9ShaderStageVs, hShader);
   if (!Check(hr == S_OK, "SetShader(VS)")) {
@@ -10610,7 +10611,9 @@ bool TestDestroyBoundShaderUnbinds() {
   }
   cleanup.has_shader = false;
 
-  if (!Check(dev->vs == nullptr, "DestroyShader clears cached vs pointer")) {
+  // The host rejects null shader binds; destroying a bound shader must rebind a
+  // replacement (fixed-function or internal fallback) before emitting DESTROY_SHADER.
+  if (!Check(dev->vs != nullptr && dev->vs->handle != destroyed_handle, "DestroyShader rebinds a non-null VS")) {
     return false;
   }
 
@@ -10624,7 +10627,10 @@ bool TestDestroyBoundShaderUnbinds() {
   }
 
   const auto* bind_cmd = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(bind.hdr);
-  if (!Check(bind_cmd->vs == 0, "bind_shaders clears vs handle")) {
+  if (!Check(bind_cmd->vs != 0 && bind_cmd->ps != 0, "bind_shaders binds non-null shaders")) {
+    return false;
+  }
+  if (!Check(bind_cmd->vs != destroyed_handle && bind_cmd->ps != destroyed_handle, "bind_shaders unbinds destroyed handle")) {
     return false;
   }
 
