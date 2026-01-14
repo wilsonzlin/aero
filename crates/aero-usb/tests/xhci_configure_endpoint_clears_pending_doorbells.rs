@@ -110,8 +110,6 @@ fn xhci_configure_endpoint_drop_clears_pending_doorbells() {
     let mut ctrl = XhciController::new();
     ctrl.attach_device(0, Box::new(InterruptInDevice));
     while ctrl.pop_pending_event().is_some() {}
-    // Transfers only execute while the controller is running (USBCMD.RUN=1).
-    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     ctrl.set_dcbaap(dcbaa);
     let enable = ctrl.enable_slot(&mut mem);
@@ -171,8 +169,6 @@ fn xhci_configure_endpoint_deconfigure_clears_pending_doorbells() {
     let mut ctrl = XhciController::new();
     ctrl.attach_device(0, Box::new(InterruptInDevice));
     while ctrl.pop_pending_event().is_some() {}
-    // Transfers only execute while the controller is running (USBCMD.RUN=1).
-    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     ctrl.set_dcbaap(dcbaa);
     let enable = ctrl.enable_slot(&mut mem);
