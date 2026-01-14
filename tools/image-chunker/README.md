@@ -43,7 +43,7 @@ To publish other disk image formats, use `--format`:
 - `raw`: treat the input as a raw disk image (`.img`).
 - `qcow2`: open QCOW2 v2/v3 and publish the *expanded disk view*.
 - `vhd`: open VHD (fixed/dynamic) and publish the *expanded disk view*.
-- `aerosparse`: open Aero sparse (`AEROSPAR`) and publish the *expanded disk view*.
+- `aerosparse` (alias: `aerospar`): open Aero sparse (`AEROSPAR`) and publish the *expanded disk view*.
 - `auto`: auto-detect the format from magic values.
 
 For container formats (`qcow2`, `vhd`, `aerosparse`), the published chunks correspond to the **logical disk byte stream** (what the guest sees), not the on-disk container file bytes.
