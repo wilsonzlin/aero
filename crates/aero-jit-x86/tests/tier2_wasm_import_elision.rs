@@ -2127,6 +2127,218 @@ fn tier2_inline_tlb_skips_code_version_table_locals_when_cross_page_store_uses_v
 }
 
 #[test]
+fn tier2_inline_tlb_skips_code_version_table_locals_when_cross_page_store_uses_addr_value() {
+    let trace = TraceIr {
+        prologue: Vec::new(),
+        body: vec![
+            // Keep inline-TLB enabled by including a same-page access.
+            Instr::LoadMem {
+                dst: ValueId(0),
+                addr: Operand::Const(0),
+                width: Width::W8,
+            },
+            Instr::Const {
+                dst: ValueId(1),
+                value: aero_jit_x86::PAGE_SIZE,
+            },
+            Instr::Const {
+                dst: ValueId(2),
+                value: 0,
+            },
+            Instr::Addr {
+                dst: ValueId(3),
+                base: Operand::Value(ValueId(1)),
+                index: Operand::Value(ValueId(2)),
+                scale: 1,
+                disp: -2,
+            },
+            // A constant cross-page store always takes the slow helper path and therefore does not
+            // need the code-version table locals, even when expressed via an Addr.
+            Instr::StoreMem {
+                addr: Operand::Value(ValueId(3)),
+                src: Operand::Const(0x1122_3344),
+                width: Width::W32,
+            },
+        ],
+        kind: TraceKind::Linear,
+    };
+    let plan = RegAllocPlan::default();
+    let wasm = Tier2WasmCodegen::new().compile_trace_with_options(
+        &trace,
+        &plan,
+        Tier2WasmOptions {
+            inline_tlb: true,
+            code_version_guard_import: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !loads_code_version_table_locals(&wasm),
+        "expected trace with only cross-page stores to not load code-version table ptr/len locals"
+    );
+}
+
+#[test]
+fn tier2_inline_tlb_skips_code_version_table_locals_when_cross_page_store_uses_binop_value() {
+    let trace = TraceIr {
+        prologue: Vec::new(),
+        body: vec![
+            // Keep inline-TLB enabled by including a same-page access.
+            Instr::LoadMem {
+                dst: ValueId(0),
+                addr: Operand::Const(0),
+                width: Width::W8,
+            },
+            Instr::Const {
+                dst: ValueId(1),
+                value: aero_jit_x86::PAGE_SIZE,
+            },
+            Instr::Const {
+                dst: ValueId(2),
+                value: u64::MAX - 1, // -2 (wrapping)
+            },
+            Instr::BinOp {
+                dst: ValueId(3),
+                op: aero_jit_x86::tier2::ir::BinOp::Add,
+                lhs: Operand::Value(ValueId(1)),
+                rhs: Operand::Value(ValueId(2)),
+                flags: aero_types::FlagSet::EMPTY,
+            },
+            // A constant cross-page store always takes the slow helper path and therefore does not
+            // need the code-version table locals, even when expressed via a BinOp.
+            Instr::StoreMem {
+                addr: Operand::Value(ValueId(3)),
+                src: Operand::Const(0x1122_3344),
+                width: Width::W32,
+            },
+        ],
+        kind: TraceKind::Linear,
+    };
+    let plan = RegAllocPlan::default();
+    let wasm = Tier2WasmCodegen::new().compile_trace_with_options(
+        &trace,
+        &plan,
+        Tier2WasmOptions {
+            inline_tlb: true,
+            code_version_guard_import: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !loads_code_version_table_locals(&wasm),
+        "expected trace with only cross-page stores to not load code-version table ptr/len locals"
+    );
+}
+
+#[test]
+fn tier2_inline_tlb_skips_code_version_table_locals_when_cross_page_u64_store_uses_addr_value() {
+    let trace = TraceIr {
+        prologue: Vec::new(),
+        body: vec![
+            // Keep inline-TLB enabled by including a same-page access.
+            Instr::LoadMem {
+                dst: ValueId(0),
+                addr: Operand::Const(0),
+                width: Width::W8,
+            },
+            Instr::Const {
+                dst: ValueId(1),
+                value: aero_jit_x86::PAGE_SIZE,
+            },
+            Instr::Const {
+                dst: ValueId(2),
+                value: 0,
+            },
+            Instr::Addr {
+                dst: ValueId(3),
+                base: Operand::Value(ValueId(1)),
+                index: Operand::Value(ValueId(2)),
+                scale: 1,
+                disp: -4,
+            },
+            // A constant cross-page u64 store always takes the slow helper path and therefore does
+            // not need the code-version table locals.
+            Instr::StoreMem {
+                addr: Operand::Value(ValueId(3)),
+                src: Operand::Const(0x1122_3344_5566_7788),
+                width: Width::W64,
+            },
+        ],
+        kind: TraceKind::Linear,
+    };
+    let plan = RegAllocPlan::default();
+    let wasm = Tier2WasmCodegen::new().compile_trace_with_options(
+        &trace,
+        &plan,
+        Tier2WasmOptions {
+            inline_tlb: true,
+            code_version_guard_import: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !loads_code_version_table_locals(&wasm),
+        "expected trace with only cross-page stores to not load code-version table ptr/len locals"
+    );
+}
+
+#[test]
+fn tier2_inline_tlb_skips_code_version_table_locals_when_cross_page_u64_store_uses_binop_value() {
+    let trace = TraceIr {
+        prologue: Vec::new(),
+        body: vec![
+            // Keep inline-TLB enabled by including a same-page access.
+            Instr::LoadMem {
+                dst: ValueId(0),
+                addr: Operand::Const(0),
+                width: Width::W8,
+            },
+            Instr::Const {
+                dst: ValueId(1),
+                value: aero_jit_x86::PAGE_SIZE,
+            },
+            Instr::Const {
+                dst: ValueId(2),
+                value: u64::MAX - 3, // -4 (wrapping)
+            },
+            Instr::BinOp {
+                dst: ValueId(3),
+                op: aero_jit_x86::tier2::ir::BinOp::Add,
+                lhs: Operand::Value(ValueId(1)),
+                rhs: Operand::Value(ValueId(2)),
+                flags: aero_types::FlagSet::EMPTY,
+            },
+            // A constant cross-page u64 store always takes the slow helper path and therefore does
+            // not need the code-version table locals.
+            Instr::StoreMem {
+                addr: Operand::Value(ValueId(3)),
+                src: Operand::Const(0x1122_3344_5566_7788),
+                width: Width::W64,
+            },
+        ],
+        kind: TraceKind::Linear,
+    };
+    let plan = RegAllocPlan::default();
+    let wasm = Tier2WasmCodegen::new().compile_trace_with_options(
+        &trace,
+        &plan,
+        Tier2WasmOptions {
+            inline_tlb: true,
+            code_version_guard_import: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !loads_code_version_table_locals(&wasm),
+        "expected trace with only cross-page stores to not load code-version table ptr/len locals"
+    );
+}
+
+#[test]
 fn tier2_inline_tlb_loads_code_version_table_locals_for_same_page_store_fast_path() {
     // The inline-TLB store fast-path bumps the code-version table; ensure we load the table
     // pointer/length locals when a store might take the fast path.
