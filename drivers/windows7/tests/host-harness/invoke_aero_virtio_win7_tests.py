@@ -2591,6 +2591,56 @@ def _virtio_input_led_required_failure_message(
     )
 
 
+def _virtio_input_tablet_events_skip_failure_message(
+    tail: bytes, *, marker_line: Optional[str] = None
+) -> str:
+    # Guest marker:
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|READY
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|PASS|...
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|FAIL|...
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|SKIP|flag_not_set
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|SKIP|no_tablet_device
+    #
+    # Some newer guests may include a `reason=` field, while older markers use token-only reasons
+    # after `|SKIP|` (no `=`).
+    prefix = b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|SKIP|"
+    prefix_str = "AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|SKIP|"
+    marker = marker_line
+    if marker is not None and not marker.startswith(prefix_str):
+        marker = None
+    if marker is None:
+        marker = _try_extract_last_marker_line(tail, prefix)
+    if marker is not None:
+        fields = _parse_marker_kv_fields(marker)
+        reason = fields.get("reason")
+        if not reason:
+            # Backcompat: `...|SKIP|flag_not_set`/`...|SKIP|no_tablet_device` (no `reason=` key).
+            try:
+                toks = marker.split("|")
+                if toks and "SKIP" in toks:
+                    idx = toks.index("SKIP")
+                    if idx + 1 < len(toks):
+                        tok = toks[idx + 1].strip()
+                        if tok and "=" not in tok:
+                            reason = tok
+            except Exception:
+                reason = reason
+        if reason:
+            if reason == "flag_not_set":
+                return (
+                    "FAIL: VIRTIO_INPUT_TABLET_EVENTS_SKIPPED: virtio-input-tablet-events test was skipped (flag_not_set) but "
+                    "--with-input-tablet-events/--with-tablet-events was enabled (provision the guest with --test-input-tablet-events/--test-tablet-events)"
+                )
+            return (
+                f"FAIL: VIRTIO_INPUT_TABLET_EVENTS_SKIPPED: virtio-input-tablet-events test was skipped ({reason}) but "
+                "--with-input-tablet-events/--with-tablet-events was enabled"
+            )
+    return (
+        "FAIL: VIRTIO_INPUT_TABLET_EVENTS_SKIPPED: virtio-input-tablet-events test was skipped but "
+        "--with-input-tablet-events/--with-tablet-events was enabled"
+    )
+
+
 def _virtio_blk_reset_required_failure_message(
     tail: bytes,
     *,
@@ -5614,8 +5664,10 @@ def main() -> int:
                     if need_input_tablet_events:
                         if saw_virtio_input_tablet_events_skip:
                             print(
-                                "FAIL: VIRTIO_INPUT_TABLET_EVENTS_SKIPPED: virtio-input-tablet-events test was skipped (flag_not_set) but "
-                                "--with-input-tablet-events/--with-tablet-events was enabled (provision the guest with --test-input-tablet-events/--test-tablet-events)",
+                                _virtio_input_tablet_events_skip_failure_message(
+                                    tail,
+                                    marker_line=virtio_input_tablet_events_marker_line,
+                                ),
                                 file=sys.stderr,
                             )
                             _print_tail(serial_log)
@@ -6172,8 +6224,10 @@ def main() -> int:
                                 if not saw_virtio_input_tablet_events_pass:
                                     if saw_virtio_input_tablet_events_skip:
                                         print(
-                                            "FAIL: VIRTIO_INPUT_TABLET_EVENTS_SKIPPED: virtio-input-tablet-events test was skipped (flag_not_set) but "
-                                            "--with-input-tablet-events/--with-tablet-events was enabled (provision the guest with --test-input-tablet-events/--test-tablet-events)",
+                                            _virtio_input_tablet_events_skip_failure_message(
+                                                tail,
+                                                marker_line=virtio_input_tablet_events_marker_line,
+                                            ),
                                             file=sys.stderr,
                                         )
                                     else:
@@ -6639,8 +6693,10 @@ def main() -> int:
                             if not saw_virtio_input_tablet_events_pass:
                                 if saw_virtio_input_tablet_events_skip:
                                     print(
-                                        "FAIL: VIRTIO_INPUT_TABLET_EVENTS_SKIPPED: virtio-input-tablet-events test was skipped (flag_not_set) but "
-                                        "--with-input-tablet-events/--with-tablet-events was enabled (provision the guest with --test-input-tablet-events/--test-tablet-events)",
+                                        _virtio_input_tablet_events_skip_failure_message(
+                                            tail,
+                                            marker_line=virtio_input_tablet_events_marker_line,
+                                        ),
                                         file=sys.stderr,
                                     )
                                 else:
@@ -8650,8 +8706,10 @@ def main() -> int:
                                 if not saw_virtio_input_tablet_events_pass:
                                     if saw_virtio_input_tablet_events_skip:
                                         print(
-                                            "FAIL: VIRTIO_INPUT_TABLET_EVENTS_SKIPPED: virtio-input-tablet-events test was skipped (flag_not_set) but "
-                                            "--with-input-tablet-events/--with-tablet-events was enabled (provision the guest with --test-input-tablet-events/--test-tablet-events)",
+                                            _virtio_input_tablet_events_skip_failure_message(
+                                                tail,
+                                                marker_line=virtio_input_tablet_events_marker_line,
+                                            ),
                                             file=sys.stderr,
                                         )
                                     else:

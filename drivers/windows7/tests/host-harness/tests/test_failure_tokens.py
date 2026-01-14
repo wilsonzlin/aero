@@ -261,6 +261,26 @@ class FailureTokenTests(unittest.TestCase):
         self.assertRegex(msg, _TOKEN_RE)
         self.assertTrue(msg.startswith("FAIL: VIRTIO_NET_LINK_FLAP_SKIPPED:"))
 
+    def test_virtio_input_tablet_events_skip_tokens(self) -> None:
+        h = self.harness
+
+        msg = h._virtio_input_tablet_events_skip_failure_message(
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|SKIP|flag_not_set\n"
+        )
+        self.assertRegex(msg, _TOKEN_RE)
+        self.assertTrue(msg.startswith("FAIL: VIRTIO_INPUT_TABLET_EVENTS_SKIPPED:"))
+        self.assertIn("--test-input-tablet-events", msg)
+        self.assertIn("--test-tablet-events", msg)
+
+        # virtio-input-tablet-events can also be skipped for reasons other than provisioning.
+        msg2 = h._virtio_input_tablet_events_skip_failure_message(
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|SKIP|no_tablet_device\n"
+        )
+        self.assertRegex(msg2, _TOKEN_RE)
+        self.assertTrue(msg2.startswith("FAIL: VIRTIO_INPUT_TABLET_EVENTS_SKIPPED:"))
+        self.assertIn("no_tablet_device", msg2)
+        self.assertNotIn("--test-input-tablet-events", msg2)
+
     def test_virtio_input_leds_required_tokens(self) -> None:
         h = self.harness
 
