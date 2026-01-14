@@ -109,7 +109,17 @@ pub const NVME_MSIX_TABLE_SIZE: u16 = 1;
 pub const NVME_MSIX_TABLE_BAR: u8 = 0;
 pub const NVME_MSIX_TABLE_OFFSET: u32 = 0x3000;
 
+#[deprecated(
+    note = "NVMe MSI-X capability is now included in the canonical PCI profile (aero_devices::pci::profile::NVME_CONTROLLER). \
+Callers should build config space from the profile instead of manually adding MSI-X."
+)]
 pub fn add_nvme_msix_capability(config: &mut PciConfigSpace) {
+    // Avoid accidentally inserting multiple MSI-X capabilities if callers already built config
+    // space from the canonical profile.
+    if config.capability::<MsixCapability>().is_some() {
+        return;
+    }
+
     let table_size = NVME_MSIX_TABLE_SIZE;
     let table_offset = NVME_MSIX_TABLE_OFFSET;
     let table_bytes = u32::from(table_size).saturating_mul(16);
