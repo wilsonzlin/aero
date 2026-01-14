@@ -187,13 +187,8 @@ fn snapshot_restore_clears_ehci_webusb_host_state() {
     .unwrap();
 
     let webusb = UsbWebUsbPassthroughDevice::new();
-    {
-        let ehci = vm.ehci().expect("ehci enabled");
-        let mut ehci = ehci.borrow_mut();
-        ehci.controller_mut()
-            .hub_mut()
-            .attach(1, Box::new(webusb.clone()));
-    }
+    vm.usb_ehci_attach_root(1, Box::new(webusb.clone()))
+        .expect("attach WebUSB device behind EHCI");
 
     queue_webusb_control_in_action(&webusb);
     assert_eq!(webusb.pending_summary().queued_actions, 1);
