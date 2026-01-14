@@ -501,6 +501,9 @@ Then reboot (or disable/enable the device). With the included `hidtest.exe`, you
 - `hidtest.exe --keyboard --led-spam 10000`
 - `hidtest.exe --keyboard --counters` (watch `LedWritesRequested` vs `LedWritesSubmitted`/`StatusQSubmits`, `StatusQCompletions`, and `StatusQFull`; with drop-on-full enabled also watch `VirtioStatusDrops` / `LedWritesDropped`)
 
+By default, `--led-spam` alternates the LED output report between `0` and `0x1F` (all 5 defined HID boot keyboard LED bits).
+To spam a different “on” pattern, combine with `--led 0xMASK` (or `--led-hidd` / `--led-ioctl-set-output`).
+
 ## QEMU / emulator notes (expected device)
 
 virtio-input appears as a **PCI virtio** function. In QEMU this is typically created with devices like:

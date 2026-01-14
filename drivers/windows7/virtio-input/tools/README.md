@@ -27,6 +27,7 @@ Currently:
     - `hidtest.exe --keyboard --led-spam 10000`
     - `hidtest.exe --keyboard --reset-counters` (start from a clean monotonic-counter baseline; requires write access, rerun elevated if needed)
     - `hidtest.exe --keyboard --counters` (watch `LedWritesRequested` vs `LedWritesSubmitted`/`StatusQSubmits`, `StatusQCompletions`, and `StatusQFull`; with drop-on-full enabled also watch `VirtioStatusDrops` / `LedWritesDropped`)
+    - Note: by default `--led-spam` alternates `0` and `0x1F` (all 5 defined HID boot keyboard LED bits). Override the “on” value by combining with `--led 0xMASK` (or `--led-hidd` / `--led-ioctl-set-output`).
   - Useful for diagnosing buffered input when there are no pending `IOCTL_HID_READ_REPORT` IRPs:
     - `hidtest.exe --counters`
       - watch `PendingRingDepth`/`PendingRingDrops` (READ_REPORT backlog in `PendingReportRing[]`)

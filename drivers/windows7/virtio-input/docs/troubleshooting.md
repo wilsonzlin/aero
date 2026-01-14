@@ -218,6 +218,9 @@ hidtest.exe --keyboard --led-spam 10000
 hidtest.exe --keyboard --counters
 ```
 
+By default, `--led-spam` alternates the LED output report between `0` and `0x1F` (all 5 defined HID boot keyboard LED bits).
+To spam a different “on” pattern, combine with `--led 0xMASK` (or `--led-hidd` / `--led-ioctl-set-output`).
+
 If `--reset-counters` fails, rerun elevated; it requires opening the HID interface with write access.
 Note: `--reset-counters` clears monotonic counters and max-depths, but current-state depth gauges may remain non-zero if the driver still has queued work.
 
