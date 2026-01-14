@@ -22,16 +22,22 @@ Canonical naming (see [`docs/adr/0016-win7-virtio-driver-naming.md`](../../../do
 > that still reference `virtio-input.inf` instead of `aero_virtio_input.inf`.
 >
 > The alias INF is checked in disabled-by-default; rename it to `virtio-input.inf` to enable it.
-> It is a filename-only alias: from the first section header (`[Version]`) onward, it is expected to stay **byte-for-byte
-> identical** to `inf/aero_virtio_input.inf` (only the banner/comments may differ; helper: `scripts/check-inf-alias.py`). It
-> does not change HWID matching behavior. CI enforces this via `scripts/ci/check-windows7-virtio-contract-consistency.py`.
 >
-> The canonical keyboard/mouse INF (`inf/aero_virtio_input.inf`) already includes the strict revision-gated generic fallback
-> HWID (`PCI\VEN_1AF4&DEV_1052&REV_01`) in addition to the subsystem-qualified keyboard/mouse IDs; enabling the alias is **not**
-> required to get fallback binding.
+> Policy:
 >
-> Do not ship/install the alias alongside `aero_virtio_input.inf`: it is intended as a compatibility filename alias,
-> not a second distinct driver package. Ship/install **only one** of the two filenames (`aero_virtio_input.inf` *or*
+> - The canonical keyboard/mouse INF (`inf/aero_virtio_input.inf`) is intentionally **SUBSYS-only**:
+>   it matches only the Aero contract keyboard/mouse subsystem IDs (`SUBSYS_0010`/`SUBSYS_0011`) for distinct
+>   Device Manager names.
+> - The legacy alias INF is allowed to differ from `inf/aero_virtio_input.inf` in the models sections
+>   (`[Aero.NTx86]` / `[Aero.NTamd64]`) to add an **opt-in**, strict **REV-gated** generic fallback HWID match
+>   for environments that do not expose subsystem IDs.
+> - Outside the models sections, it is expected to stay in sync with `inf/aero_virtio_input.inf`
+>   (helper: `scripts/check-inf-alias.py`; CI: `scripts/ci/check-windows7-virtio-contract-consistency.py`).
+>
+> Enabling the alias is required to get strict revision-gated **generic fallback binding** (no `SUBSYS`).
+>
+> Do not ship/install the alias alongside `aero_virtio_input.inf`: it overlaps the canonical bindings (and can cause
+> confusing PnP selection). Ship/install **only one** of the two filenames (`aero_virtio_input.inf` *or*
 > `virtio-input.inf`) at a time.
 > (Tablet uses the separate `inf/aero_virtio_tablet.inf`.)
 
