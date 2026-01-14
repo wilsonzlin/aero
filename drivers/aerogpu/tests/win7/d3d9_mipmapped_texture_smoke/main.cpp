@@ -550,7 +550,9 @@ static int RunD3D9MipmappedTextureSmoke(int argc, char** argv) {
   const UINT kSysLevels = 4;
   const D3DFORMAT kSysFmt = D3DFMT_X8R8G8B8;
 
-  const D3DCOLOR kSysMipColors[kSysLevels] = {
+  // Avoid using a non-literal array bound so the test stays buildable with older
+  // MSVC toolchains (VS2010 build scripts).
+  const D3DCOLOR kSysMipColors[4] = {
       D3DCOLOR_XRGB(0xCC, 0x00, 0xCC), // mip0: purple
       D3DCOLOR_XRGB(0x00, 0xCC, 0xCC), // mip1: cyan
       D3DCOLOR_XRGB(0xCC, 0xCC, 0x00), // mip2: yellow
