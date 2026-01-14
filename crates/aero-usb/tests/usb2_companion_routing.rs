@@ -4,7 +4,7 @@ use std::rc::Rc;
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_usb::ehci::regs::{
     reg_portsc, CONFIGFLAG_CF, PORTSC_HSP, PORTSC_PED, PORTSC_PO, PORTSC_PR as EHCI_PORTSC_PR,
-    REG_CONFIGFLAG,
+    PORTSC_SUSP, REG_CONFIGFLAG,
 };
 use aero_usb::ehci::EhciController;
 use aero_usb::hid::keyboard::UsbHidKeyboardHandle;
@@ -304,5 +304,107 @@ fn usb2_companion_routing_snapshot_roundtrip_is_order_independent() {
         assert_eq!(mux.borrow().port_device(0).unwrap().address(), 1);
         assert!(ehci.hub_mut().device_mut_for_address(1).is_some());
         assert!(uhci.hub_mut().device_mut_for_address(1).is_none());
+    }
+}
+
+#[test]
+fn usb2_companion_routing_snapshot_restore_preserves_device_suspend_state() {
+    #[derive(Clone)]
+    struct SuspendedSpy(Rc<RefCell<bool>>);
+
+    impl SuspendedSpy {
+        fn new() -> Self {
+            Self(Rc::new(RefCell::new(false)))
+        }
+
+        fn suspended(&self) -> bool {
+            *self.0.borrow()
+        }
+    }
+
+    impl UsbDeviceModel for SuspendedSpy {
+        fn reset(&mut self) {
+            *self.0.borrow_mut() = false;
+        }
+
+        fn handle_control_request(
+            &mut self,
+            _setup: SetupPacket,
+            _data_stage: Option<&[u8]>,
+        ) -> ControlResponse {
+            ControlResponse::Ack
+        }
+
+        fn set_suspended(&mut self, suspended: bool) {
+            *self.0.borrow_mut() = suspended;
+        }
+    }
+
+    let mux = Rc::new(RefCell::new(Usb2PortMux::new(1)));
+
+    let mut uhci = UhciController::new();
+    uhci.hub_mut().attach_usb2_port_mux(0, mux.clone(), 0);
+
+    let mut ehci = EhciController::new_with_port_count(1);
+    ehci.hub_mut().attach_usb2_port_mux(0, mux.clone(), 0);
+
+    let spy = SuspendedSpy::new();
+    mux.borrow_mut().attach(0, Box::new(spy.clone()));
+
+    let mut mem = TestMemory::new(0x20_000);
+    uhci_reset_root_port(&mut uhci, &mut mem);
+
+    // Claim the port for EHCI so the EHCI view becomes the effective owner.
+    ehci.mmio_write(REG_CONFIGFLAG, 4, CONFIGFLAG_CF);
+    ehci_reset_port(&mut ehci, &mut mem, 0);
+
+    // Suspend the device through the owning (EHCI) view.
+    let portsc = ehci.mmio_read(reg_portsc(0), 4);
+    ehci.mmio_write(reg_portsc(0), 4, portsc | PORTSC_SUSP);
+    assert!(
+        spy.suspended(),
+        "device model should observe suspend while owned by EHCI"
+    );
+
+    let ehci_snapshot = ehci.save_state();
+    let uhci_snapshot = uhci.save_state();
+
+    // Restore order: EHCI first, then UHCI. This previously left the device in the *UHCI* suspend
+    // state (false) because the mux applied the last-loaded view record unconditionally.
+    {
+        let mux = Rc::new(RefCell::new(Usb2PortMux::new(1)));
+        let mut uhci = UhciController::new();
+        uhci.hub_mut().attach_usb2_port_mux(0, mux.clone(), 0);
+        let mut ehci = EhciController::new_with_port_count(1);
+        ehci.hub_mut().attach_usb2_port_mux(0, mux.clone(), 0);
+
+        let spy = SuspendedSpy::new();
+        mux.borrow_mut().attach(0, Box::new(spy.clone()));
+
+        ehci.load_state(&ehci_snapshot)
+            .expect("EHCI snapshot restore should succeed");
+        uhci.load_state(&uhci_snapshot)
+            .expect("UHCI snapshot restore should succeed");
+
+        assert!(spy.suspended(), "device should remain suspended after restore");
+    }
+
+    // Restore order: UHCI first, then EHCI.
+    {
+        let mux = Rc::new(RefCell::new(Usb2PortMux::new(1)));
+        let mut uhci = UhciController::new();
+        uhci.hub_mut().attach_usb2_port_mux(0, mux.clone(), 0);
+        let mut ehci = EhciController::new_with_port_count(1);
+        ehci.hub_mut().attach_usb2_port_mux(0, mux.clone(), 0);
+
+        let spy = SuspendedSpy::new();
+        mux.borrow_mut().attach(0, Box::new(spy.clone()));
+
+        uhci.load_state(&uhci_snapshot)
+            .expect("UHCI snapshot restore should succeed");
+        ehci.load_state(&ehci_snapshot)
+            .expect("EHCI snapshot restore should succeed");
+
+        assert!(spy.suspended(), "device should remain suspended after restore");
     }
 }

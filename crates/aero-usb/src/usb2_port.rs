@@ -287,14 +287,18 @@ impl Usb2PortMux {
         let view = d.bytes(view_len)?;
         d.finish()?;
 
-        p.load_snapshot_record(ViewKind::Ehci, view)?;
-
         // Recompute effective ownership without triggering transfer_owner/reset side effects.
+        //
+        // This must happen *before* loading the view snapshot record so downstream restoration
+        // logic (e.g. suspended-state propagation into the shared device model) is consistent even
+        // if UHCI and EHCI restore in different orders.
         p.effective_owner = if !self.configflag || p.port_owner {
             Usb2PortOwner::Companion
         } else {
             Usb2PortOwner::Ehci
         };
+
+        p.load_snapshot_record(ViewKind::Ehci, view)?;
 
         Ok(())
     }
@@ -495,21 +499,16 @@ impl Usb2MuxPort {
 
     fn load_snapshot_record(&mut self, view: ViewKind, buf: &[u8]) -> SnapshotResult<()> {
         let mut pd = Decoder::new(buf);
-        let st = match view {
-            ViewKind::Uhci => &mut self.uhci,
-            ViewKind::Ehci => &mut self.ehci,
-        };
-
-        st.connected = pd.bool()?;
-        st.connect_change = pd.bool()?;
-        st.enabled = pd.bool()?;
-        st.enable_change = pd.bool()?;
-        st.resume_detect = pd.bool()?;
-        st.reset = pd.bool()?;
-        st.reset_countdown_ms = pd.u8()?;
-        st.suspended = pd.bool()?;
-        st.resuming = pd.bool()?;
-        st.resume_countdown_ms = pd.u8()?;
+        let connected = pd.bool()?;
+        let connect_change = pd.bool()?;
+        let enabled = pd.bool()?;
+        let enable_change = pd.bool()?;
+        let resume_detect = pd.bool()?;
+        let reset = pd.bool()?;
+        let reset_countdown_ms = pd.u8()?;
+        let suspended = pd.bool()?;
+        let resuming = pd.bool()?;
+        let resume_countdown_ms = pd.u8()?;
         let has_device_state = pd.bool()?;
         let device_state = if has_device_state {
             let len = pd.u32()? as usize;
@@ -523,6 +522,24 @@ impl Usb2MuxPort {
             None
         };
         pd.finish()?;
+
+        {
+            let st = match view {
+                ViewKind::Uhci => &mut self.uhci,
+                ViewKind::Ehci => &mut self.ehci,
+            };
+
+            st.connected = connected;
+            st.connect_change = connect_change;
+            st.enabled = enabled;
+            st.enable_change = enable_change;
+            st.resume_detect = resume_detect;
+            st.reset = reset;
+            st.reset_countdown_ms = reset_countdown_ms;
+            st.suspended = suspended;
+            st.resuming = resuming;
+            st.resume_countdown_ms = resume_countdown_ms;
+        }
 
         if let Some(device_state) = device_state {
             if let Some(dev) = self.device.as_mut() {
@@ -539,8 +556,23 @@ impl Usb2MuxPort {
         }
 
         // Ensure the device model observes the restored suspended state.
-        if let Some(dev) = self.device.as_mut() {
-            dev.model_mut().set_suspended(st.suspended);
+        //
+        // The port mux stores *two* independent port-status views (UHCI + EHCI) for a single shared
+        // device model. Only the effective owner should drive device-level suspend/resume, so avoid
+        // applying a non-owning view's snapshot record (which would make snapshot restore order
+        // dependent).
+        let view_owner = match view {
+            ViewKind::Uhci => Usb2PortOwner::Companion,
+            ViewKind::Ehci => Usb2PortOwner::Ehci,
+        };
+        if view_owner == self.effective_owner {
+            if let Some(dev) = self.device.as_mut() {
+                let suspended = match self.effective_owner {
+                    Usb2PortOwner::Companion => self.uhci.suspended,
+                    Usb2PortOwner::Ehci => self.ehci.suspended,
+                };
+                dev.model_mut().set_suspended(suspended);
+            }
         }
 
         Ok(())
