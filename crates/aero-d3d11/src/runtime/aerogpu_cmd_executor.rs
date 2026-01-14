@@ -9078,7 +9078,9 @@ impl AerogpuD3d11Executor {
         //
         // Also accept the legacy `stage=Geometry` encoding for robustness, but ignore it (it cannot
         // be executed by the WebGPU backend).
-        if stage_raw == AerogpuShaderStage::Geometry as u32 {
+        if stage_raw
+            == aero_protocol::aerogpu::aerogpu_cmd::AerogpuShaderStage::Geometry as u32
+        {
             let dxbc = DxbcFile::parse(dxbc_bytes).context("DXBC parse failed")?;
             let program = Sm4Program::parse_from_dxbc(&dxbc).context("DXBC decode failed")?;
             validate_sm5_gs_streams(&program)?;
