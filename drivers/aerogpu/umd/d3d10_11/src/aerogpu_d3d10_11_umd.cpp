@@ -230,11 +230,11 @@ using aerogpu::d3d10_11::kD3D11CpuAccessWrite;
 using aerogpu::d3d10_11::kD3D11CpuAccessRead;
 
 // D3D11_MAP subset (numeric values from d3d11.h).
-constexpr uint32_t kD3D11MapRead = 1;
-constexpr uint32_t kD3D11MapWrite = 2;
-constexpr uint32_t kD3D11MapReadWrite = 3;
-constexpr uint32_t kD3D11MapWriteDiscard = 4;
-constexpr uint32_t kD3D11MapWriteNoOverwrite = 5;
+using aerogpu::d3d10_11::kD3D11MapRead;
+using aerogpu::d3d10_11::kD3D11MapWrite;
+using aerogpu::d3d10_11::kD3D11MapReadWrite;
+using aerogpu::d3d10_11::kD3D11MapWriteDiscard;
+using aerogpu::d3d10_11::kD3D11MapWriteNoOverwrite;
 
 // D3D11_MAP_FLAG_DO_NOT_WAIT (numeric value from d3d11.h).
 using aerogpu::d3d10_11::kD3D11MapFlagDoNotWait;

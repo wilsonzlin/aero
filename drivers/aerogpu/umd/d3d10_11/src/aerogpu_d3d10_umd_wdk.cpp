@@ -3527,11 +3527,11 @@ void APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hReso
 }
 
 // D3D10_DDI_MAP subset (numeric values from d3d10umddi.h / d3d10.h).
-constexpr uint32_t kD3DMapRead = 1;
-constexpr uint32_t kD3DMapWrite = 2;
-constexpr uint32_t kD3DMapReadWrite = 3;
-constexpr uint32_t kD3DMapWriteDiscard = 4;
-constexpr uint32_t kD3DMapWriteNoOverwrite = 5;
+using aerogpu::d3d10_11::kD3DMapRead;
+using aerogpu::d3d10_11::kD3DMapWrite;
+using aerogpu::d3d10_11::kD3DMapReadWrite;
+using aerogpu::d3d10_11::kD3DMapWriteDiscard;
+using aerogpu::d3d10_11::kD3DMapWriteNoOverwrite;
 
 static void InitLockArgsForMap(D3DDDICB_LOCK* lock, uint32_t subresource, uint32_t map_type, uint32_t map_flags) {
   if (!lock) {

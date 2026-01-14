@@ -47,6 +47,19 @@ constexpr uint32_t kMaxUavSlots = 8;
 // Back-compat alias: older code used this name for the compute UAV buffer slot count.
 constexpr uint32_t kMaxUnorderedAccessBufferSlots = kMaxUavSlots;
 
+// D3D10/D3D11 Map type subset (numeric values from d3d10.h/d3d11.h).
+constexpr uint32_t kD3DMapRead = 1;
+constexpr uint32_t kD3DMapWrite = 2;
+constexpr uint32_t kD3DMapReadWrite = 3;
+constexpr uint32_t kD3DMapWriteDiscard = 4;
+constexpr uint32_t kD3DMapWriteNoOverwrite = 5;
+// Back-compat aliases used by older portable code.
+constexpr uint32_t kD3D11MapRead = kD3DMapRead;
+constexpr uint32_t kD3D11MapWrite = kD3DMapWrite;
+constexpr uint32_t kD3D11MapReadWrite = kD3DMapReadWrite;
+constexpr uint32_t kD3D11MapWriteDiscard = kD3DMapWriteDiscard;
+constexpr uint32_t kD3D11MapWriteNoOverwrite = kD3DMapWriteNoOverwrite;
+
 // D3D10/D3D11 Map flag subset (numeric values from d3d10.h/d3d11.h).
 constexpr uint32_t kD3DMapFlagDoNotWait = 0x100000;
 // Back-compat alias used by older portable code.
