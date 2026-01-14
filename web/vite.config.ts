@@ -282,6 +282,8 @@ export default defineConfig({
         ipc_demo: resolve(rootDir, "demo/ipc_demo.html"),
         webusb_diagnostics: resolve(rootDir, "webusb_diagnostics.html"),
         webgl2_fallback_demo: resolve(rootDir, "webgl2_fallback_demo.html"),
+        wddm_scanout_smoke: resolve(rootDir, "wddm-scanout-smoke.html"),
+        wddm_scanout_debug: resolve(rootDir, "wddm-scanout-debug.html"),
       },
     },
   },

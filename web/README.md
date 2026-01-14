@@ -7,6 +7,13 @@
 This directory contains shared runtime modules (`web/src/...`) and the developer-facing WASM build
 scripts used by the browser host.
 
+## Useful pages (manual / diagnostics)
+
+When serving the repo-root harness (`npm run dev` / `npm run dev:harness`) these are available under `/web/…`:
+
+- `web/wddm-scanout-debug.html` — interactive WDDM scanoutState validation (base_paddr/pitch/XRGB alpha forcing)
+- `web/wddm-scanout-smoke.html` — non-interactive smoke harness used by Playwright (`tests/e2e/wddm_scanout_smoke.spec.ts`)
+
 ## Commands
 
 From the repo root:
