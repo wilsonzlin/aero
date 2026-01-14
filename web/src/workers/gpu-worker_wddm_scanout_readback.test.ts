@@ -15,6 +15,7 @@ import {
   SCANOUT_FORMAT_B8G8R8X8_SRGB,
   SCANOUT_FORMAT_R8G8B8A8,
   SCANOUT_FORMAT_R8G8B8X8,
+  SCANOUT_FORMAT_R8G8B8X8_SRGB,
   SCANOUT_SOURCE_LEGACY_VBE_LFB,
   SCANOUT_STATE_GENERATION_BUSY_BIT,
   ScanoutStateIndex,
@@ -541,6 +542,132 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
 
       const px = new Uint8Array(shot.rgba8);
       expect(Array.from(px)).toEqual([0x37, 0x00, 0x00, 0x11]);
+    } finally {
+      await worker.terminate();
+    }
+  }, 20_000);
+
+  it("decodes sRGB X8 scanout formats from guest RAM (linearizes, forces alpha=255)", async () => {
+    const segments = allocateHarnessSharedMemorySegments({
+      guestRamBytes: 64 * 1024,
+      sharedFramebuffer: new SharedArrayBuffer(8),
+      sharedFramebufferOffsetBytes: 0,
+      ioIpcBytes: 0,
+      vramBytes: 0,
+    });
+    const views = createSharedMemoryViews(segments);
+
+    const width = 1;
+    const height = 1;
+    const pitchBytes = 4;
+
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./gpu-worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      const initMsg: WorkerInitMessage = {
+        kind: "init",
+        role: "gpu",
+        controlSab: segments.control,
+        guestMemory: segments.guestMemory,
+        ioIpcSab: segments.ioIpc,
+        sharedFramebuffer: segments.sharedFramebuffer,
+        sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
+        scanoutState: segments.scanoutState,
+        scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
+      };
+
+      worker.postMessage(initMsg);
+      await waitForWorkerMessage(
+        worker,
+        (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "gpu",
+        10_000,
+      );
+
+      const sharedFrameState = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
+      const frameState = new Int32Array(sharedFrameState);
+      Atomics.store(frameState, FRAME_STATUS_INDEX, FRAME_PRESENTED);
+      Atomics.store(frameState, FRAME_SEQ_INDEX, 0);
+
+      worker.postMessage({
+        protocol: GPU_PROTOCOL_NAME,
+        protocolVersion: GPU_PROTOCOL_VERSION,
+        type: "init",
+        sharedFrameState,
+        sharedFramebuffer: segments.sharedFramebuffer,
+        sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
+      });
+
+      await waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { protocol?: unknown; type?: unknown }).protocol === GPU_PROTOCOL_NAME && (msg as { type?: unknown }).type === "ready",
+        10_000,
+      );
+
+      // Case 1: BGRX sRGB (R byte is in the 3rd position).
+      const basePaddrBgrx = 0x3000;
+      views.guestU8.fill(0);
+      views.guestU8.set([0x00, 0x00, 0x80, 0x00], basePaddrBgrx);
+      publishScanoutState(views.scanoutStateI32!, {
+        source: SCANOUT_SOURCE_WDDM,
+        basePaddrLo: basePaddrBgrx >>> 0,
+        basePaddrHi: 0,
+        width,
+        height,
+        pitchBytes,
+        format: SCANOUT_FORMAT_B8G8R8X8_SRGB,
+      });
+
+      {
+        const requestId = 1;
+        const shotPromise = waitForWorkerMessage(
+          worker,
+          (msg) =>
+            (msg as { protocol?: unknown; type?: unknown; requestId?: unknown }).protocol === GPU_PROTOCOL_NAME &&
+            (msg as { type?: unknown }).type === "screenshot" &&
+            (msg as { requestId?: unknown }).requestId === requestId,
+          10_000,
+        );
+        worker.postMessage({ protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION, type: "screenshot", requestId });
+        const shot = (await shotPromise) as { width: number; height: number; rgba8: ArrayBuffer };
+        expect(shot.width).toBe(width);
+        expect(shot.height).toBe(height);
+        expect(Array.from(new Uint8Array(shot.rgba8))).toEqual([0x37, 0x00, 0x00, 0xff]);
+      }
+
+      // Case 2: RGBX sRGB (R byte is in the 1st position).
+      const basePaddrRgbx = 0x4000;
+      views.guestU8.set([0x80, 0x00, 0x00, 0x00], basePaddrRgbx);
+      publishScanoutState(views.scanoutStateI32!, {
+        source: SCANOUT_SOURCE_WDDM,
+        basePaddrLo: basePaddrRgbx >>> 0,
+        basePaddrHi: 0,
+        width,
+        height,
+        pitchBytes,
+        format: SCANOUT_FORMAT_R8G8B8X8_SRGB,
+      });
+
+      {
+        const requestId = 2;
+        const shotPromise = waitForWorkerMessage(
+          worker,
+          (msg) =>
+            (msg as { protocol?: unknown; type?: unknown; requestId?: unknown }).protocol === GPU_PROTOCOL_NAME &&
+            (msg as { type?: unknown }).type === "screenshot" &&
+            (msg as { requestId?: unknown }).requestId === requestId,
+          10_000,
+        );
+        worker.postMessage({ protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION, type: "screenshot", requestId });
+        const shot = (await shotPromise) as { width: number; height: number; rgba8: ArrayBuffer };
+        expect(shot.width).toBe(width);
+        expect(shot.height).toBe(height);
+        expect(Array.from(new Uint8Array(shot.rgba8))).toEqual([0x37, 0x00, 0x00, 0xff]);
+      }
     } finally {
       await worker.terminate();
     }
