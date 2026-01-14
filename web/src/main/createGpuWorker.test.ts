@@ -38,7 +38,7 @@ describe("main/createGpuWorker", () => {
           if (!this.pendingSubmit) break;
           const { requestId, fence } = this.pendingSubmit;
           this.pendingSubmit = null;
-          // Only complete after a tick to model vsync-paced submissions.
+          // Only complete after a tick to model a worker that requires periodic ticks for progress.
           this.dispatchMessage({ ...GPU_MESSAGE_BASE, type: "submit_complete", requestId, completedFence: fence });
           break;
         }

@@ -232,14 +232,11 @@ export function createGpuWorker(params: CreateGpuWorkerParams): GpuWorkerHandle 
     { resolve: (msg: GpuRuntimeSubmitCompleteMessage) => void; reject: (err: unknown) => void }
   >();
 
-  // Some AeroGPU submissions (notably vsync-paced PRESENT packets) defer their
-  // `submit_complete` notification until the worker receives a `tick`.
-  //
-  // In the full VM runtime, the frame scheduler drives `tick` continuously while scanout
-  // is WDDM-owned (or while the shared framebuffer is dirty). `createGpuWorker()` is a
-  // lower-level harness helper and does not run a scheduler, so we run a lightweight
-  // tick pump while there are pending submit requests to avoid deadlocking callers that
-  // await `submitAerogpu()`.
+  // `createGpuWorker()` is a lower-level harness helper and does not run the normal
+  // frame scheduler. Some worker operations (presentation backends, internal polling,
+  // and historical VSYNC submit completion gating) can depend on receiving periodic
+  // `tick` messages, so run a lightweight tick pump while there are pending submits to
+  // avoid deadlocking callers that await `submitAerogpu()`.
   let shutdownRequested = false;
   let tickPumpActive = false;
   let tickPumpRafId: number | null = null;
