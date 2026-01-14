@@ -1209,7 +1209,7 @@ static ULONGLONG AeroGpuReadCompletedFence(_In_ const AEROGPU_ADAPTER* Adapter)
     return AeroGpuReadRegU64HiLoHi(Adapter, AEROGPU_MMIO_REG_COMPLETED_FENCE_LO, AEROGPU_MMIO_REG_COMPLETED_FENCE_HI);
 }
 
-static BOOLEAN AeroGpuTryReadErrorFence32(_In_ const AEROGPU_ADAPTER* Adapter, _Out_ ULONG* FenceOut)
+static BOOLEAN AeroGpuTryReadErrorFence64(_In_ const AEROGPU_ADAPTER* Adapter, _Out_ ULONGLONG* FenceOut)
 {
     if (FenceOut) {
         *FenceOut = 0;
@@ -1231,9 +1231,6 @@ static BOOLEAN AeroGpuTryReadErrorFence32(_In_ const AEROGPU_ADAPTER* Adapter, _
 
     /*
      * Error registers are part of the versioned (AGPU) ABI v1.3+ contract.
-     *
-     * Even though the fence itself is a 64-bit field in the device ABI, Win7's WDDM
-     * fence IDs are 32-bit. Treat values outside the 32-bit range as "unknown".
      */
     if (Adapter->AbiKind != AEROGPU_ABI_KIND_V1) {
         return FALSE;
@@ -1251,10 +1248,10 @@ static BOOLEAN AeroGpuTryReadErrorFence32(_In_ const AEROGPU_ADAPTER* Adapter, _
 
     const ULONGLONG fence =
         AeroGpuReadRegU64HiLoHi(Adapter, AEROGPU_MMIO_REG_ERROR_FENCE_LO, AEROGPU_MMIO_REG_ERROR_FENCE_HI);
-    if (fence == 0 || fence > 0xFFFFFFFFull) {
+    if (fence == 0) {
         return FALSE;
     }
-    *FenceOut = (ULONG)fence;
+    *FenceOut = fence;
     return TRUE;
 }
 
@@ -1297,6 +1294,27 @@ static __forceinline ULONGLONG AeroGpuAtomicExchangeU64(_Inout_ volatile ULONGLO
 static __forceinline ULONG AeroGpuAtomicReadU32(_In_ volatile ULONG* Value)
 {
     return (ULONG)InterlockedCompareExchange((volatile LONG*)Value, 0, 0);
+}
+
+/*
+ * Extend Win7/WDDM 1.1 32-bit DMA fences into the AeroGPU v1 protocol's required
+ * monotonic 64-bit fence domain.
+ *
+ * Must be called with Adapter->PendingLock held so submissions cannot race and
+ * observe inconsistent epoch transitions.
+ */
+static __forceinline ULONGLONG AeroGpuV1ExtendFenceLocked(_Inout_ AEROGPU_ADAPTER* Adapter, _In_ ULONG Fence32)
+{
+    if (!Adapter) {
+        return (ULONGLONG)Fence32;
+    }
+
+    if (Fence32 < Adapter->V1LastFence32) {
+        Adapter->V1FenceEpoch += 1;
+    }
+    Adapter->V1LastFence32 = Fence32;
+
+    return (((ULONGLONG)Adapter->V1FenceEpoch) << 32) | (ULONGLONG)Fence32;
 }
 
 static const char* AeroGpuErrorCodeName(_In_ ULONG Code)
@@ -3945,6 +3963,15 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
     /* StartDevice implies the adapter is entering D0. Keep submissions blocked until init completes. */
     InterlockedExchange(&adapter->DevicePowerState, (LONG)DxgkDevicePowerStateD0);
     InterlockedExchange(&adapter->AcceptingSubmissions, 0);
+
+    /*
+     * Reset fence bookkeeping on each (re)start so v1 ring submissions always begin from a
+     * well-defined 64-bit fence extension epoch.
+     */
+    InterlockedExchange64((volatile LONGLONG*)&adapter->LastSubmittedFence, 0);
+    InterlockedExchange64((volatile LONGLONG*)&adapter->LastCompletedFence, 0);
+    adapter->V1FenceEpoch = 0;
+    adapter->V1LastFence32 = 0;
 
     const ULONG magic = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_MAGIC);
     ULONG abiVersion = 0;
@@ -8721,13 +8748,15 @@ static NTSTATUS APIENTRY AeroGpuDdiBuildPagingBuffer(_In_ const HANDLE hAdapter,
 }
 
 static NTSTATUS APIENTRY AeroGpuDdiSubmitCommand(_In_ const HANDLE hAdapter,
-                                                 _In_ const DXGKARG_SUBMITCOMMAND* pSubmitCommand)
+                                                  _In_ const DXGKARG_SUBMITCOMMAND* pSubmitCommand)
 {
     AEROGPU_ADAPTER* adapter = (AEROGPU_ADAPTER*)hAdapter;
     if (!adapter || !pSubmitCommand) {
         return STATUS_INVALID_PARAMETER;
     }
 
+    const ULONG fence32 = (ULONG)pSubmitCommand->SubmissionFenceId;
+    ULONGLONG fence = (ULONGLONG)fence32;
     ULONG dmaSizeBytes = (ULONG)pSubmitCommand->DmaBufferSize;
     ULONG type = (dmaSizeBytes != 0) ? AEROGPU_SUBMIT_RENDER : AEROGPU_SUBMIT_PAGING;
     ULONG contextId = 0;
@@ -8770,8 +8799,6 @@ static NTSTATUS APIENTRY AeroGpuDdiSubmitCommand(_In_ const HANDLE hAdapter,
         }
         return STATUS_DEVICE_NOT_READY;
     }
-
-    const ULONGLONG fence = (ULONGLONG)pSubmitCommand->SubmissionFenceId;
 
     AEROGPU_SUBMISSION_META* meta = NULL;
     if (metaHandle != 0) {
@@ -9014,7 +9041,7 @@ static NTSTATUS APIENTRY AeroGpuDdiSubmitCommand(_In_ const HANDLE hAdapter,
 
         desc->version = AEROGPU_LEGACY_SUBMISSION_DESC_VERSION;
         desc->type = type;
-        desc->fence = (uint32_t)fence;
+        desc->fence = (uint32_t)fence32;
         desc->reserved0 = 0;
         desc->dma_buffer_gpa = (uint64_t)dmaPa.QuadPart;
         desc->dma_buffer_size = dmaSizeBytes;
@@ -9035,7 +9062,7 @@ static NTSTATUS APIENTRY AeroGpuDdiSubmitCommand(_In_ const HANDLE hAdapter,
         return STATUS_INSUFFICIENT_RESOURCES;
     }
     RtlZeroMemory(sub, sizeof(*sub));
-    sub->Fence = fence;
+    sub->Fence = 0;
     sub->DmaCopyVa = dmaVa;
     sub->DmaCopySize = dmaSizeBytes;
     sub->DmaCopyPa = dmaPa;
@@ -9058,6 +9085,7 @@ static NTSTATUS APIENTRY AeroGpuDdiSubmitCommand(_In_ const HANDLE hAdapter,
     if (AeroGpuIsDeviceErrorLatched(adapter)) {
         ringSt = STATUS_GRAPHICS_DEVICE_REMOVED;
     } else if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
+        fence = AeroGpuV1ExtendFenceLocked(adapter, fence32);
         uint32_t submitFlags = 0;
         if (type == AEROGPU_SUBMIT_PRESENT) {
             submitFlags |= AEROGPU_SUBMIT_FLAG_PRESENT;
@@ -9074,10 +9102,12 @@ static NTSTATUS APIENTRY AeroGpuDdiSubmitCommand(_In_ const HANDLE hAdapter,
                                          fence,
                                          NULL);
     } else {
-        ringSt = AeroGpuLegacyRingPushSubmit(adapter, (ULONG)fence, (ULONG)descSize, descPa);
+        fence = (ULONGLONG)fence32;
+        ringSt = AeroGpuLegacyRingPushSubmit(adapter, fence32, (ULONG)descSize, descPa);
     }
 
     if (NT_SUCCESS(ringSt)) {
+        sub->Fence = fence;
         sub->AllocTableVa = allocTableVa;
         sub->AllocTablePa = allocTablePa;
         sub->AllocTableSizeBytes = allocTableSizeBytes;
@@ -9180,31 +9210,32 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
         /* Ack in the ISR to deassert the (level-triggered) interrupt line. */
         AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, status);
 
-        ULONG completedFence32 = 0;
-        ULONG lastSubmitted32Snapshot = 0;
+        ULONGLONG completedFence64 = 0;
+        ULONGLONG lastSubmittedFenceSnapshot = AeroGpuAtomicReadU64(&adapter->LastSubmittedFence);
+        ULONGLONG lastCompletedFenceSnapshot = AeroGpuAtomicReadU64(&adapter->LastCompletedFence);
         BOOLEAN haveCompletedFence = FALSE;
         if ((handled & (AEROGPU_IRQ_FENCE | AEROGPU_IRQ_ERROR)) != 0) {
-            const ULONGLONG completedFence64 = AeroGpuReadCompletedFence(adapter);
+            completedFence64 = AeroGpuReadCompletedFence(adapter);
 
             /*
-             * Win7 fences are ULONGs. Clamp to avoid sending a fence that appears
-             * to go backwards (e.g. if MMIO tears or the device reports a bogus
-             * value).
+             * Clamp in the *extended* fence domain.
+             *
+             * For the v1 protocol, the KMD must submit monotonically increasing 64-bit fences
+             * (see AeroGpuV1ExtendFenceLocked). When reporting to dxgkrnl we truncate to 32-bit.
              */
-            completedFence32 = (ULONG)completedFence64;
-            const ULONG lastCompleted32 = (ULONG)AeroGpuAtomicReadU64(&adapter->LastCompletedFence);
-            const ULONG lastSubmitted32 = (ULONG)AeroGpuAtomicReadU64(&adapter->LastSubmittedFence);
-            lastSubmitted32Snapshot = lastSubmitted32;
-            if (completedFence32 < lastCompleted32) {
-                completedFence32 = lastCompleted32;
+            lastSubmittedFenceSnapshot = AeroGpuAtomicReadU64(&adapter->LastSubmittedFence);
+            lastCompletedFenceSnapshot = AeroGpuAtomicReadU64(&adapter->LastCompletedFence);
+            if (completedFence64 < lastCompletedFenceSnapshot) {
+                completedFence64 = lastCompletedFenceSnapshot;
             }
-            if (completedFence32 > lastSubmitted32) {
-                completedFence32 = lastSubmitted32;
+            if (completedFence64 > lastSubmittedFenceSnapshot) {
+                completedFence64 = lastSubmittedFenceSnapshot;
             }
 
-            AeroGpuAtomicWriteU64(&adapter->LastCompletedFence, (ULONGLONG)completedFence32);
+            AeroGpuAtomicWriteU64(&adapter->LastCompletedFence, completedFence64);
             haveCompletedFence = TRUE;
         }
+        const ULONG completedFence32 = (ULONG)completedFence64;
 
         BOOLEAN sentDxgkFault = FALSE;
         ULONG faultedFence32 = 0;
@@ -9260,40 +9291,36 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
              * arrives before a vsync-delayed fence completes), report the *next* in-flight fence so the
              * faulted fence ID is not trivially <= the last completed fence.
              */
-            ULONG errorFence32 = 0;
-            ULONG mmioErrorFence32 = 0;
+            ULONGLONG errorFence = 0;
+            ULONGLONG mmioErrorFence = 0;
             BOOLEAN haveMmioErrorFence = FALSE;
-            if (AeroGpuTryReadErrorFence32(adapter, &mmioErrorFence32)) {
-                const ULONG lastCompleted32Snapshot =
-                    haveCompletedFence ? completedFence32 : (ULONG)AeroGpuAtomicReadU64(&adapter->LastCompletedFence);
-                if (mmioErrorFence32 >= lastCompleted32Snapshot && mmioErrorFence32 <= lastSubmitted32Snapshot) {
+            if (haveErrorRegs && AeroGpuTryReadErrorFence64(adapter, &mmioErrorFence)) {
+                const ULONGLONG lastCompletedForError = haveCompletedFence ? completedFence64 : lastCompletedFenceSnapshot;
+                if (mmioErrorFence >= lastCompletedForError && mmioErrorFence <= lastSubmittedFenceSnapshot) {
                     /*
                      * If the device did not report a fence completion bit in this interrupt, prefer to
                      * report an in-flight fence (> last_completed) so dxgkrnl can associate the fault
                      * with a queued DMA buffer.
                      */
-                    if (((handled & AEROGPU_IRQ_FENCE) != 0) || (mmioErrorFence32 > lastCompleted32Snapshot)) {
-                        errorFence32 = mmioErrorFence32;
+                    if (((handled & AEROGPU_IRQ_FENCE) != 0) || (mmioErrorFence > lastCompletedForError)) {
+                        errorFence = mmioErrorFence;
                         haveMmioErrorFence = TRUE;
                     }
                 }
             }
 
             if (!haveMmioErrorFence) {
-                errorFence32 =
-                    haveCompletedFence ? completedFence32 : (ULONG)AeroGpuAtomicReadU64(&adapter->LastCompletedFence);
-                if (((handled & AEROGPU_IRQ_FENCE) == 0) && (errorFence32 < lastSubmitted32Snapshot) &&
-                    (errorFence32 != 0xFFFFFFFFu)) {
-                    ULONG nextFence = errorFence32 + 1;
-                    if (nextFence > lastSubmitted32Snapshot) {
-                        nextFence = lastSubmitted32Snapshot;
+                errorFence = haveCompletedFence ? completedFence64 : lastCompletedFenceSnapshot;
+                if (((handled & AEROGPU_IRQ_FENCE) == 0) && (errorFence < lastSubmittedFenceSnapshot) && (errorFence != ~0ull)) {
+                    ULONGLONG nextFence = errorFence + 1;
+                    if (nextFence > lastSubmittedFenceSnapshot) {
+                        nextFence = lastSubmittedFenceSnapshot;
                     }
-                    errorFence32 = nextFence;
+                    errorFence = nextFence;
                 }
             }
-            const ULONGLONG errorFence = (ULONGLONG)errorFence32;
             AeroGpuAtomicWriteU64(&adapter->LastErrorFence, errorFence);
-            faultedFence32 = errorFence32;
+            faultedFence32 = (ULONG)errorFence;
 
             const ULONGLONG n = (ULONGLONG)InterlockedIncrement64((volatile LONGLONG*)&adapter->ErrorIrqCount);
 
@@ -11206,7 +11233,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
          * caller-provided buffer.
          */
         if (pEscape->PrivateDriverDataSize <
-            (offsetof(aerogpu_escape_query_fence_out, last_completed_fence) + sizeof(aerogpu_escape_u64))) {
+             (offsetof(aerogpu_escape_query_fence_out, last_completed_fence) + sizeof(aerogpu_escape_u64))) {
             return STATUS_BUFFER_TOO_SMALL;
         }
 

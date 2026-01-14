@@ -387,6 +387,14 @@ typedef struct _AEROGPU_ADAPTER {
     DECLSPEC_ALIGN(8) volatile ULONGLONG LastSubmittedFence;
     DECLSPEC_ALIGN(8) volatile ULONGLONG LastCompletedFence;
 
+    /*
+     * v1 fence extension state (Win7/WDDM 1.1 32-bit SubmissionFenceId -> AeroGPU v1 64-bit fences).
+     *
+     * Protected by PendingLock.
+     */
+    ULONG V1FenceEpoch;
+    ULONG V1LastFence32;
+
     /* ---- dbgctl performance/health counters ------------------------------ */
 
     /* Monotonic counters updated via interlocked operations. */

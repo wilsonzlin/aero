@@ -1002,3 +1002,44 @@ fn backend_completion_error_advances_fence_and_sets_error_irq() {
     assert_eq!(regs.stats.gpu_exec_errors, 1);
     assert_ne!(regs.irq_status & irq_bits::ERROR, 0);
 }
+
+#[test]
+fn fence_wrap_completion_requires_extended_64bit_fences() {
+    /*
+     * The AeroGPU v1 ring protocol requires monotonically increasing 64-bit fences.
+     *
+     * Win7/WDDM 1.1 fences are only 32-bit; when they wrap, the KMD must extend them into a
+     * monotonic 64-bit domain so the executor's `desc.signal_fence > last_fence` scheduling keeps
+     * progressing.
+     */
+    let mut mem = VecMemory::new(0x40_000);
+    let mut regs = AeroGpuRegs::default();
+    let mut exec = AeroGpuExecutor::new(AeroGpuExecutorConfig {
+        verbose: false,
+        keep_last_submissions: 0,
+        fence_completion: AeroGpuFenceCompletionMode::Immediate,
+    });
+
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    write_ring(&mut mem, ring_gpa, ring_size, 8, 0, 2, regs.abi_version);
+
+    // Simulate a 32-bit wrap: 0xFFFF_FFFF -> 0x0000_0000, extended into a 64-bit epoch domain.
+    let fence0 = 0x0000_0000_FFFF_FFFFu64;
+    let fence1 = 0x0000_0001_0000_0000u64;
+
+    let desc0_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    let desc1_gpa = desc0_gpa + u64::from(AeroGpuSubmitDesc::SIZE_BYTES);
+    write_submit_desc(&mut mem, desc0_gpa, 0, 0, 0, 0, fence0);
+    write_submit_desc(&mut mem, desc1_gpa, 0, 0, 0, 0, fence1);
+
+    regs.ring_gpa = ring_gpa;
+    regs.ring_size_bytes = ring_size;
+    regs.ring_control = ring_control::ENABLE;
+
+    exec.process_doorbell(&mut regs, &mut mem);
+
+    assert_eq!(mem.read_u32(ring_gpa + RING_HEAD_OFFSET), 2);
+    assert_eq!(regs.completed_fence, fence1);
+    assert_eq!(regs.stats.malformed_submissions, 0);
+}
