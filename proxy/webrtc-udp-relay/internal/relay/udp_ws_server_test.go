@@ -120,6 +120,17 @@ func dialWS(t *testing.T, baseURL, path string) *websocket.Conn {
 	return c
 }
 
+func dialWSWithHeader(t *testing.T, baseURL, path string, header http.Header) *websocket.Conn {
+	t.Helper()
+	wsURL := "ws" + strings.TrimPrefix(baseURL, "http") + path
+	c, _, err := websocket.DefaultDialer.Dial(wsURL, header)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+	return c
+}
+
 func readWSJSON(t *testing.T, c *websocket.Conn, timeout time.Duration) map[string]any {
 	t.Helper()
 
@@ -344,6 +355,79 @@ func TestUDPWebSocketServer_JWTRejectsConcurrentSessionsWithSameSID(t *testing.T
 	}
 
 	c2 := dialWS(t, ts.URL, "/udp?token="+tokenB)
+	errMsg := readWSJSON(t, c2, 2*time.Second)
+	if errMsg["type"] != "error" || errMsg["code"] != "session_already_active" {
+		t.Fatalf("expected session_already_active error, got %#v", errMsg)
+	}
+}
+
+func TestUDPWebSocketServer_JWTAuthViaHeader(t *testing.T) {
+	cfg := config.Config{
+		AuthMode:                 config.AuthModeJWT,
+		JWTSecret:                "supersecret",
+		SignalingAuthTimeout:     50 * time.Millisecond,
+		MaxSignalingMessageBytes: 64 * 1024,
+	}
+	m := metrics.New()
+	sm := NewSessionManager(cfg, m, nil)
+	relayCfg := DefaultConfig()
+
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	if err != nil {
+		t.Fatalf("NewUDPWebSocketServer: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("GET /udp", srv)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	token := makeTestJWTWithIat(cfg.JWTSecret, "sess_test", time.Now().Unix()-10)
+	h := http.Header{}
+	h.Set("Authorization", "Bearer "+token)
+	c := dialWSWithHeader(t, ts.URL, "/udp", h)
+	ready := readWSJSON(t, c, 2*time.Second)
+	if ready["type"] != "ready" {
+		t.Fatalf("expected ready message, got %#v", ready)
+	}
+}
+
+func TestUDPWebSocketServer_JWTRejectsConcurrentSessionsWithSameSID_HeaderAlias(t *testing.T) {
+	cfg := config.Config{
+		AuthMode:                 config.AuthModeJWT,
+		JWTSecret:                "supersecret",
+		SignalingAuthTimeout:     50 * time.Millisecond,
+		MaxSignalingMessageBytes: 64 * 1024,
+	}
+	m := metrics.New()
+	sm := NewSessionManager(cfg, m, nil)
+	relayCfg := DefaultConfig()
+
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	if err != nil {
+		t.Fatalf("NewUDPWebSocketServer: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("GET /udp", srv)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	now := time.Now().Unix()
+	tokenA := makeTestJWTWithIat(cfg.JWTSecret, "sess_test", now-10)
+	tokenB := makeTestJWTWithIat(cfg.JWTSecret, "sess_test", now-9)
+
+	h1 := http.Header{}
+	h1.Set("Authorization", "Bearer "+tokenA)
+	c1 := dialWSWithHeader(t, ts.URL, "/udp", h1)
+	ready := readWSJSON(t, c1, 2*time.Second)
+	if ready["type"] != "ready" {
+		t.Fatalf("expected ready message, got %#v", ready)
+	}
+
+	h2 := http.Header{}
+	h2.Set("Authorization", "ApiKey "+tokenB)
+	c2 := dialWSWithHeader(t, ts.URL, "/udp", h2)
 	errMsg := readWSJSON(t, c2, 2*time.Second)
 	if errMsg["type"] != "error" || errMsg["code"] != "session_already_active" {
 		t.Fatalf("expected session_already_active error, got %#v", errMsg)

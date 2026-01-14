@@ -198,12 +198,14 @@ supports proxying UDP over a WebSocket connection:
 ### Authentication
 
 Because browsers cannot attach arbitrary headers to WebSocket upgrade requests,
-`/udp` supports the same credential delivery patterns as signaling:
+`/udp` supports multiple credential delivery patterns:
 
-1. **Query string** (less preferred; may leak into logs/history):
+1. **Upgrade request headers** (best for non-browser clients; avoids query-string leakage):
+   - Same header formats as the HTTP signaling endpoints (see "Authentication" above).
+2. **Query string** (less preferred; may leak into logs/history):
    - `AUTH_MODE=api_key` → `?apiKey=...` (or `?token=...` for compatibility)
    - `AUTH_MODE=jwt` → `?token=...` (or `?apiKey=...` for compatibility)
-2. **First WebSocket message** (preferred): a JSON **text** message:
+3. **First WebSocket message** (preferred for browser clients): a JSON **text** message:
 
 ```json
 {"type":"auth","apiKey":"..."}
@@ -632,10 +634,12 @@ The relay currently accepts only **HS256** JWTs and enforces the following claim
 
 WebSocket credentials can be provided via either:
 
-1. **URL query string** (works for all clients):
+1. **Upgrade request headers** (best for non-browser clients; avoids query-string leakage):
+   - Same header formats as the HTTP signaling endpoints (see "Authentication" above).
+2. **URL query string** (works for all clients):
    - `AUTH_MODE=api_key` → `?apiKey=...` (or `?token=...` for compatibility)
    - `AUTH_MODE=jwt` → `?token=...` (or `?apiKey=...` for compatibility)
-2. **First WebSocket message** (recommended when possible):
+3. **First WebSocket message** (recommended for browser clients when possible):
 
    ```json
    {"type":"auth","apiKey":"..."}

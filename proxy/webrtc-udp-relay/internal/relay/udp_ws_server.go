@@ -201,7 +201,10 @@ func (s *udpWebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !authenticated {
-		if cred, err := auth.CredentialFromQuery(s.cfg.AuthMode, r.URL.Query()); err == nil {
+		// Allow non-browser clients to authenticate via upgrade request headers.
+		// Browsers cannot attach arbitrary headers to WebSocket upgrade requests,
+		// so query-string and first-message auth remain the primary mechanisms.
+		if cred, err := auth.CredentialFromRequest(s.cfg.AuthMode, r); err == nil {
 			var verifyErr error
 			if s.cfg.AuthMode == config.AuthModeJWT {
 				cv, ok := s.verifier.(claimsVerifier)

@@ -479,10 +479,12 @@ When a session is hard-closed, the relay terminates the associated WebRTC PeerCo
 #### Authentication
 
 Because browsers can't set arbitrary headers on WebSocket upgrade requests, the signaling server
-supports two auth delivery options. These apply to WebSocket endpoints including `/webrtc/signal`
-and the `/udp` data plane fallback:
+supports multiple auth delivery options for WebSocket endpoints including `/webrtc/signal` and the
+`/udp` data plane fallback:
 
-1. **Preferred:** send credentials in the first WebSocket message:
+1. **Best for non-browser clients:** send credentials in the WebSocket upgrade request headers (same as HTTP endpoints).
+
+2. **Preferred for browser clients:** send credentials in the first WebSocket message:
 
 ```json
 {"type":"auth","apiKey":"..."}
@@ -496,7 +498,7 @@ or:
 
 Some clients send both `apiKey` and `token` for compatibility. If both are provided, they must match.
 
-2. **Alternative:** include credentials in the WebSocket URL query string:
+3. **Alternative:** include credentials in the WebSocket URL query string:
 
 - `AUTH_MODE=none` → no credentials required
 - `AUTH_MODE=api_key` → `?apiKey=...` (or `?token=...` for compatibility)
