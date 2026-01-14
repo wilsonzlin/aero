@@ -2468,30 +2468,6 @@ BOOLEAN AerovblkHwStartIo(_In_ PVOID deviceExtension, _Inout_ PSCSI_REQUEST_BLOC
     return TRUE;
   }
 
-  if (srb->Function == SRB_FUNCTION_IO_CONTROL) {
-    AerovblkHandleIoControl(devExt, srb);
-    return TRUE;
-  }
-
-  if (srb->Function == SRB_FUNCTION_FLUSH || srb->Function == SRB_FUNCTION_SHUTDOWN) {
-    /*
-     * StorPort may issue cache flushes via SRB function codes rather than
-     * SCSI CDBs (SCSIOP_SYNCHRONIZE_CACHE*). Ensure we translate those into a
-     * virtio-blk flush request when supported. If flush is not supported, treat
-     * as a no-op per StorPort expectations.
-     *
-     * On resource exhaustion (no free request context / virtqueue full),
-     * AerovblkQueueRequest returns FALSE and the SRB is left pending so StorPort
-     * can retry/requeue.
-     */
-    if (!devExt->SupportsFlush) {
-      AerovblkCompleteSrb(devExt, srb, SRB_STATUS_SUCCESS);
-      return TRUE;
-    }
-
-    return AerovblkQueueRequest(devExt, srb, VIRTIO_BLK_T_FLUSH, 0, NULL, FALSE);
-  }
-
   if (srb->Function != SRB_FUNCTION_EXECUTE_SCSI) {
     AerovblkCompleteSrb(devExt, srb, SRB_STATUS_SUCCESS);
     return TRUE;
