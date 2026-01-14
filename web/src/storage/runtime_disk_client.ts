@@ -38,6 +38,14 @@ export type DiskStats = {
   remote: RemoteDiskTelemetrySnapshot | null;
 };
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasOwn(obj: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(obj, key);
+}
+
 export class RuntimeDiskClient {
   private readonly worker: Worker;
   private nextRequestId = 1;
@@ -52,32 +60,40 @@ export class RuntimeDiskClient {
 
     this.worker.onmessage = (event) => {
       const data = event.data as unknown;
-      if (!data || typeof data !== "object") return;
+      if (!isRecord(data)) return;
+      // Treat worker messages as untrusted; ignore inherited fields (prototype pollution).
       const msg = data as Record<string, unknown>;
-      if (msg["type"] !== "response") return;
-      const requestId = msg["requestId"];
+      const type = hasOwn(msg, "type") ? msg["type"] : undefined;
+      if (type !== "response") return;
+      const requestId = hasOwn(msg, "requestId") ? msg["requestId"] : undefined;
       if (typeof requestId !== "number") return;
 
       const entry = this.pending.get(requestId);
       if (!entry) return;
       this.pending.delete(requestId);
 
-      if (msg["ok"] === true) {
-        entry.resolve(msg["result"]);
-      } else if (msg["ok"] === false) {
-        const raw = msg["error"];
+      const ok = hasOwn(msg, "ok") ? msg["ok"] : undefined;
+      if (ok === true) {
+        entry.resolve(hasOwn(msg, "result") ? msg["result"] : undefined);
+        return;
+      }
+      if (ok === false) {
+        const raw = hasOwn(msg, "error") ? msg["error"] : undefined;
         const message =
-          raw && typeof raw === "object" && typeof (raw as { message?: unknown }).message === "string" && (raw as { message: string }).message
+          isRecord(raw) && hasOwn(raw, "message") && typeof (raw as { message?: unknown }).message === "string" && (raw as { message: string }).message
             ? (raw as { message: string }).message
             : "runtime disk worker error";
         const err = new Error(message);
-        if (raw && typeof raw === "object") {
+        if (isRecord(raw)) {
           const details = raw as { name?: unknown; stack?: unknown };
-          if (typeof details.name === "string" && details.name) err.name = details.name;
-          if (typeof details.stack === "string" && details.stack) err.stack = details.stack;
+          if (hasOwn(details, "name") && typeof details.name === "string" && details.name) err.name = details.name;
+          if (hasOwn(details, "stack") && typeof details.stack === "string" && details.stack) err.stack = details.stack;
         }
         entry.reject(err);
+        return;
       }
+
+      entry.reject(new Error("runtime disk worker response missing ok"));
     };
 
     this.worker.onerror = (event) => {

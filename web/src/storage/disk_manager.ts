@@ -14,6 +14,14 @@ import {
 } from "./metadata";
 import type { ImportProgress } from "./import_export";
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasOwn(obj: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(obj, key);
+}
+
 export type RemoteCacheStatusSerializable = {
   cacheKey: string;
   imageId: string;
@@ -110,31 +118,41 @@ export class DiskManager {
       });
 
     this.worker.onmessage = (event: MessageEvent<DiskWorkerMessage>) => {
-      const msg = event.data;
-      if (!msg || typeof msg !== "object") return;
-      if (msg.type === "progress") {
-        const entry = this.pending.get(msg.requestId);
-        entry?.onProgress?.(msg);
+      const data = event.data as unknown;
+      if (!isRecord(data)) return;
+      // Treat worker messages as untrusted; ignore inherited fields (prototype pollution).
+      const msg = data as Record<string, unknown>;
+      const type = hasOwn(msg, "type") ? msg.type : undefined;
+      const requestId = hasOwn(msg, "requestId") ? msg.requestId : undefined;
+      if (typeof requestId !== "number" || !Number.isSafeInteger(requestId) || requestId < 0) return;
+
+      if (type === "progress") {
+        const entry = this.pending.get(requestId);
+        entry?.onProgress?.(msg as any);
         return;
       }
-      if (msg.type === "response") {
-        const entry = this.pending.get(msg.requestId);
+      if (type === "response") {
+        const entry = this.pending.get(requestId);
         if (!entry) return;
-        this.pending.delete(msg.requestId);
-        if (msg.ok) entry.resolve(msg.result);
-        else {
-          const raw = msg.error as unknown;
+        this.pending.delete(requestId);
+        const ok = hasOwn(msg, "ok") ? msg.ok : undefined;
+        if (ok === true) {
+          entry.resolve(hasOwn(msg, "result") ? msg.result : undefined);
+        } else if (ok === false) {
+          const raw = hasOwn(msg, "error") ? (msg.error as unknown) : undefined;
           const message =
-            raw && typeof raw === "object" && typeof (raw as { message?: unknown }).message === "string" && (raw as { message: string }).message
+            isRecord(raw) && hasOwn(raw, "message") && typeof (raw as { message?: unknown }).message === "string" && (raw as { message: string }).message
               ? (raw as { message: string }).message
               : "Disk worker error";
           const err = new Error(message);
-          if (raw && typeof raw === "object") {
+          if (isRecord(raw)) {
             const details = raw as { name?: unknown; stack?: unknown };
-            if (typeof details.name === "string" && details.name) err.name = details.name;
-            if (typeof details.stack === "string" && details.stack) err.stack = details.stack;
+            if (hasOwn(details, "name") && typeof details.name === "string" && details.name) err.name = details.name;
+            if (hasOwn(details, "stack") && typeof details.stack === "string" && details.stack) err.stack = details.stack;
           }
           entry.reject(err);
+        } else {
+          entry.reject(new Error("Disk worker response missing ok"));
         }
       }
     };
