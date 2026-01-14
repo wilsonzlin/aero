@@ -91,7 +91,17 @@ static int RunD3D9FixedFuncTexturedWvp(int argc, char** argv) {
                            NULL,
                            dev.put());
   if (FAILED(hr)) {
-    return reporter.FailHresult("IDirect3D9Ex::CreateDeviceEx (HWVP required)", hr);
+    create_flags = D3DCREATE_SOFTWARE_VERTEXPROCESSING | D3DCREATE_NOWINDOWCHANGES;
+    hr = d3d->CreateDeviceEx(D3DADAPTER_DEFAULT,
+                             D3DDEVTYPE_HAL,
+                             hwnd,
+                             create_flags,
+                             &pp,
+                             NULL,
+                             dev.put());
+  }
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3D9Ex::CreateDeviceEx", hr);
   }
 
   D3DADAPTER_IDENTIFIER9 ident;
