@@ -140,6 +140,51 @@ impl ShaderTranslation {
     pub fn stage(&self) -> shader::ShaderStage {
         self.version.stage
     }
+
+    /// Bind group index used for texture/sampler bindings in this shader stage.
+    ///
+    /// Contract:
+    /// - group(0): constants buffer shared by VS/PS
+    /// - group(1): VS texture/sampler bindings
+    /// - group(2): PS texture/sampler bindings
+    pub fn sampler_group(&self) -> u32 {
+        match self.stage() {
+            shader::ShaderStage::Vertex => 1,
+            shader::ShaderStage::Pixel => 2,
+        }
+    }
+
+    /// Compute a compact mask of D3D9 sampler registers referenced by the translated WGSL.
+    ///
+    /// Only sampler indices `0..=15` participate in the mask.
+    pub fn used_samplers_mask(&self) -> u16 {
+        let mut mask = 0u16;
+        for &s in &self.used_samplers {
+            if s < 16 {
+                mask |= 1u16 << s;
+            }
+        }
+        mask
+    }
+
+    /// Binding numbers used for `@group(self.sampler_group()) @binding(n)` declarations for the
+    /// given D3D9 sampler register `s`.
+    ///
+    /// Contract:
+    /// - texture binding = `2*s`
+    /// - sampler binding = `2*s + 1`
+    pub fn sampler_binding_pair(s: u16) -> (u32, u32) {
+        let tex_binding = u32::from(s) * 2;
+        (tex_binding, tex_binding + 1)
+    }
+
+    /// Returns the `TextureType` declared for `s#` (`dcl_* s#`) when present, defaulting to 2D.
+    pub fn sampler_texture_type(&self, s: u16) -> TextureType {
+        self.sampler_texture_types
+            .get(&s)
+            .copied()
+            .unwrap_or(TextureType::Texture2D)
+    }
 }
 
 /// High-level D3D9 shader translation entrypoint with a best-effort compatibility fallback.
