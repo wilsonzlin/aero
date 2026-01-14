@@ -1293,13 +1293,26 @@ export class WebHidBroker {
       })();
       this.#drainOutputRing({ stopAtTail });
     }
-    const attachPromise = this.#pendingAttachResults.get(deviceId)?.promise;
+
     const base = {
       type: "hid.featureReportResult" as const,
       requestId: msg.requestId,
       deviceId,
       reportId,
     };
+
+    // If the device is not attached (and not in the middle of attaching), respond immediately
+    // rather than queueing work. This keeps memory bounded even if a worker sends feature report
+    // requests for stale/unknown deviceIds.
+    const pendingAttach = this.#pendingAttachResults.get(deviceId);
+    if (!this.#attachedToWorker.has(deviceId) && !pendingAttach) {
+      const error = this.#deviceById.has(deviceId) ? `DeviceId=${deviceId} is not attached.` : `Unknown deviceId=${deviceId}.`;
+      const res: HidFeatureReportResultMessage = { ...base, ok: false, error };
+      this.#postToWorker(worker, res);
+      return;
+    }
+
+    const attachPromise = pendingAttach?.promise;
     // Use the same per-device FIFO as output/feature report sends so receiveFeatureReport
     // requests are serialized relative to any queued report I/O for that device.
     const ok = this.#enqueueDeviceSend(deviceId, () => async () => {
