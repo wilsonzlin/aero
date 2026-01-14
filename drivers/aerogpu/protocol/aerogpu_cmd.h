@@ -166,7 +166,8 @@ enum aerogpu_shader_stage {
 /*
  * Extended shader stage selector.
  *
- * The baseline AeroGPU shader stage ABI mirrors WebGPU and only includes VS/PS/CS.
+ * The baseline AeroGPU shader stage ABI largely mirrors WebGPU (VS/PS/CS) and also includes the
+ * D3D10+ geometry shader stage (GS).
  * To support APIs that have additional programmable stages (e.g. D3D11 GS/HS/DS),
  * some packets reuse their `reserved0` field as an "extended stage" selector when
  * `shader_stage == AEROGPU_SHADER_STAGE_COMPUTE`.
