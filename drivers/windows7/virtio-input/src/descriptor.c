@@ -81,6 +81,8 @@ const UCHAR VirtioInputKeyboardReportDescriptor[] = {
  * Keep in sync with tools/hidtest (VIRTIO_INPUT_EXPECTED_KBD_REPORT_DESC_LEN).
  *
  * Total: 104 bytes (65 bytes for keyboard+LEDs, plus 39 bytes for Consumer Control).
+ *
+ * CI guardrail: scripts/ci/check-win7-virtio-input-hid-descriptor-sync.py
  */
 C_ASSERT(sizeof(VirtioInputKeyboardReportDescriptor) == 104);
 
@@ -134,6 +136,8 @@ const UCHAR VirtioInputMouseReportDescriptor[] = {
  * Keep in sync with tools/hidtest (VIRTIO_INPUT_EXPECTED_MOUSE_REPORT_DESC_LEN).
  *
  * Total: 57 bytes (8 buttons + X/Y/Wheel + AC Pan).
+ *
+ * CI guardrail: scripts/ci/check-win7-virtio-input-hid-descriptor-sync.py
  */
 C_ASSERT(sizeof(VirtioInputMouseReportDescriptor) == 57);
 
@@ -182,6 +186,8 @@ const UCHAR VirtioInputTabletReportDescriptor[] = {
  * Keep in sync with tools/hidtest (VIRTIO_INPUT_EXPECTED_TABLET_REPORT_DESC_LEN).
  *
  * Total: 47 bytes (8 buttons + absolute X/Y).
+ *
+ * CI guardrail: scripts/ci/check-win7-virtio-input-hid-descriptor-sync.py
  */
 C_ASSERT(sizeof(VirtioInputTabletReportDescriptor) == 47);
 
