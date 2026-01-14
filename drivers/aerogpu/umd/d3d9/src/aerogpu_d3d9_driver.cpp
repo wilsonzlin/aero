@@ -7655,7 +7655,13 @@ bool wddm_ensure_recording_buffers(Device* dev, size_t bytes_needed) {
     wddm_deallocate_active_buffers(dev);
   }
 
-  const uint32_t request_bytes = min_buffer_bytes;
+  // AllocateCb/DeallocateCb acquisition uses the requested buffer sizes as a hint
+  // (and some runtimes treat them as a hard requirement). Request at least one
+  // page so the returned command buffer can accommodate common fixed-size packets
+  // after an allocation-list split without immediately forcing a re-acquire
+  // (which would rebind/reset the allocation list tracker and drop tracked
+  // alloc_ids).
+  const uint32_t request_bytes = std::max<uint32_t>(min_buffer_bytes, 4096u);
 
   // Prefer GetCommandBufferCb when available; fall back to AllocateCb for older
   // runtimes that require explicit per-submit allocation + DeallocateCb.
