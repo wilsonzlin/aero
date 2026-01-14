@@ -384,7 +384,9 @@ static int RunD3D9ProcessVerticesSanity(int argc, char** argv) {
   // Use identity transforms and a tiny viewport so the expected output is
   // deterministic and exactly representable as IEEE floats.
   {
-    const D3DVIEWPORT9 vp = {0u, 0u, 2u, 2u, 0.0f, 1.0f};
+    // Use a non-default depth range to ensure ProcessVertices output Z remains in
+    // normalized depth (NDC 0..1) rather than being pre-mapped to MinZ/MaxZ.
+    const D3DVIEWPORT9 vp = {0u, 0u, 2u, 2u, 0.25f, 0.75f};
     hr = dev->SetViewport(&vp);
     if (FAILED(hr)) {
       return reporter.FailHresult("SetViewport", hr);
@@ -410,8 +412,8 @@ static int RunD3D9ProcessVerticesSanity(int argc, char** argv) {
     }
 
     const VertexXyzDiffuse srcs[2] = {
-        {0.0f, 0.0f, 0.5f, D3DCOLOR_XRGB(1, 2, 3)},
-        {0.0f, 0.0f, 0.5f, D3DCOLOR_XRGB(4, 5, 6)},
+        {0.0f, 0.0f, 0.0f, D3DCOLOR_XRGB(1, 2, 3)},
+        {0.0f, 0.0f, 0.0f, D3DCOLOR_XRGB(4, 5, 6)},
     };
 
     ComPtr<IDirect3DVertexBuffer9> src_xyz_vb;
@@ -483,7 +485,7 @@ static int RunD3D9ProcessVerticesSanity(int argc, char** argv) {
       return reporter.FailHresult("dst_xyz_vb->Lock", hr);
     }
 
-    const Vertex expected = {0.5f, 0.5f, 0.5f, 1.0f, srcs[1].color};
+    const Vertex expected = {0.5f, 0.5f, 0.0f, 1.0f, srcs[1].color};
     unsigned char xyz_prefix_expected[sizeof(Vertex)];
     memset(xyz_prefix_expected, 0xCD, sizeof(xyz_prefix_expected));
     const bool xyz_prefix_ok = (memcmp(dst_xyz_ptr, xyz_prefix_expected, sizeof(xyz_prefix_expected)) == 0);
@@ -501,7 +503,7 @@ static int RunD3D9ProcessVerticesSanity(int argc, char** argv) {
 
   // Validate TEX1 variant: XYZ|DIFFUSE|TEX1 -> XYZRHW|DIFFUSE|TEX1.
   {
-    const VertexXyzDiffuseTex1 src = {0.0f, 0.0f, 0.5f, D3DCOLOR_XRGB(10, 20, 30), 0.25f, 0.75f};
+    const VertexXyzDiffuseTex1 src = {0.0f, 0.0f, 0.0f, D3DCOLOR_XRGB(10, 20, 30), 0.25f, 0.75f};
 
     ComPtr<IDirect3DVertexBuffer9> src_vb_tex;
     hr = dev->CreateVertexBuffer(sizeof(src),
@@ -574,7 +576,7 @@ static int RunD3D9ProcessVerticesSanity(int argc, char** argv) {
       return reporter.FailHresult("dst_vb_tex->Lock", hr);
     }
 
-    const VertexXyzrhwDiffuseTex1 expected = {0.5f, 0.5f, 0.5f, 1.0f, src.color, src.u, src.v};
+    const VertexXyzrhwDiffuseTex1 expected = {0.5f, 0.5f, 0.0f, 1.0f, src.color, src.u, src.v};
     const bool tex_bytes_match = (memcmp(dst_tex_ptr, &expected, sizeof(expected)) == 0);
 
     hr = dst_vb_tex->Unlock();

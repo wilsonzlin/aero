@@ -132,6 +132,62 @@ void test_xyz_diffuse() {
   assert(diffuse == 0xAABBCCDDu);
 }
 
+void test_xyz_diffuse_z_stays_ndc() {
+  Adapter adapter;
+  Device dev(&adapter);
+
+  dev.fvf = kFvfXyz | kFvfDiffuse;
+  // Non-default depth range: ProcessVertices output z should stay in NDC (0..1)
+  // rather than being mapped to MinZ/MaxZ.
+  dev.viewport = {0.0f, 0.0f, 100.0f, 100.0f, 0.25f, 0.75f};
+
+  // Source VB: XYZ|DIFFUSE (float3 + u32) = 16 bytes.
+  Resource src;
+  src.kind = ResourceKind::Buffer;
+  src.size_bytes = 16;
+  src.storage.resize(16);
+  write_f32(src.storage, 0, 0.0f);
+  write_f32(src.storage, 4, 0.0f);
+  write_f32(src.storage, 8, 0.0f);
+  write_u32(src.storage, 12, 0x01020304u);
+
+  Resource dst;
+  dst.kind = ResourceKind::Buffer;
+  dst.size_bytes = 20;
+  dst.storage.resize(20);
+
+  const D3DVERTEXELEMENT9_COMPAT elems[] = {
+      {0, 0, kDeclTypeFloat4, kDeclMethodDefault, kDeclUsagePositionT, 0},
+      {0, 16, kDeclTypeD3dColor, kDeclMethodDefault, kDeclUsageColor, 0},
+      {0xFF, 0, kDeclTypeUnused, 0, 0, 0},
+  };
+  VertexDecl decl;
+  decl.blob.resize(sizeof(elems));
+  std::memcpy(decl.blob.data(), elems, sizeof(elems));
+
+  dev.streams[0].vb = &src;
+  dev.streams[0].offset_bytes = 0;
+  dev.streams[0].stride_bytes = 16;
+
+  D3DDDIARG_PROCESSVERTICES pv{};
+  pv.SrcStartIndex = 0;
+  pv.DestIndex = 0;
+  pv.VertexCount = 1;
+  pv.hDestBuffer.pDrvPrivate = &dst;
+  pv.hVertexDecl.pDrvPrivate = &decl;
+  pv.Flags = 0;
+  pv.DestStride = 20;
+
+  D3DDDI_HDEVICE hDevice{};
+  hDevice.pDrvPrivate = &dev;
+
+  const HRESULT hr = device_process_vertices(hDevice, &pv);
+  assert(SUCCEEDED(hr));
+
+  const float z = read_f32(dst.storage, 8);
+  assert(std::fabs(z - 0.0f) < 1e-4f);
+}
+
 void test_xyz_diffuse_tex1() {
   Adapter adapter;
   Device dev(&adapter);
@@ -468,6 +524,7 @@ void test_copy_xyzrhw_diffuse_offsets() {
 
 int main() {
   aerogpu::test_xyz_diffuse();
+  aerogpu::test_xyz_diffuse_z_stays_ndc();
   aerogpu::test_xyz_diffuse_tex1();
   aerogpu::test_xyz_diffuse_offsets();
   aerogpu::test_xyz_diffuse_tex1_offsets();
