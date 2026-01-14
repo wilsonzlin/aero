@@ -3724,7 +3724,7 @@ fn translates_float_ne_as_ordered_comparison() {
     let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
     let module = decode_program(&program).expect("SM4 decode");
     assert!(matches!(
-        module.instructions.get(0),
+        module.instructions.first(),
         Some(Sm4Inst::Cmp {
             ty: CmpType::F32,
             op: CmpOp::Ne,
