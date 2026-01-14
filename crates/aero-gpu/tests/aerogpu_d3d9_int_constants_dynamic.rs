@@ -14,10 +14,6 @@ const CMD_STREAM_SIZE_BYTES_OFFSET: usize =
     core::mem::offset_of!(ProtocolCmdStreamHeader, size_bytes);
 const CMD_HDR_SIZE_BYTES_OFFSET: usize = core::mem::offset_of!(ProtocolCmdHdr, size_bytes);
 
-fn push_u8(out: &mut Vec<u8>, v: u8) {
-    out.push(v);
-}
-
 fn push_u16(out: &mut Vec<u8>, v: u16) {
     out.extend_from_slice(&v.to_le_bytes());
 }
@@ -88,6 +84,7 @@ fn enc_dst(reg_type: u8, reg_num: u16, mask: u8) -> u32 {
 }
 
 fn enc_inst(opcode: u16, params: &[u32]) -> Vec<u32> {
+    // Encode length as operand-count (some tooling emits this and `aero-d3d9` normalizes it).
     let token = (opcode as u32) | ((params.len() as u32) << 24);
     let mut v = vec![token];
     v.extend_from_slice(params);
@@ -105,31 +102,64 @@ fn to_bytes(words: &[u32]) -> Vec<u8> {
 fn assemble_vs_passthrough_pos() -> Vec<u8> {
     // vs_2_0: mov oPos, v0; end
     let mut words = vec![0xFFFE_0200];
-    words.extend(enc_inst(0x0001, &[enc_dst(4, 0, 0xF), enc_src(1, 0, 0xE4)]));
+    words.extend(enc_inst(
+        0x0001,
+        &[enc_dst(4, 0, 0xF), enc_src(1, 0, 0xE4)],
+    ));
     words.push(0x0000_FFFF);
     to_bytes(&words)
 }
 
-fn assemble_ps_if_b0_select_c0_c1() -> Vec<u8> {
-    // ps_2_0:
-    //   if b0
-    //     mov oC0, c0
-    //   else
-    //     mov oC0, c1
-    //   endif
+fn assemble_ps_rep_i0_add_blue() -> Vec<u8> {
+    // ps_3_0:
+    //   def c0, 0,1,0,1  ; green
+    //   def c1, 0,0,1,0  ; blue increment
+    //   mov r0, c0
+    //   rep i0           ; repeats i0.x times
+    //     add r0, r0, c1
+    //   endrep
+    //   mov oC0, r0
     //   end
-    let mut words = vec![0xFFFF_0200];
-    words.extend(enc_inst(0x0028, &[enc_src(14, 0, 0xE4)])); // if b0
-    words.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(2, 0, 0xE4)])); // mov oC0, c0
-    words.extend(enc_inst(0x002A, &[])); // else
-    words.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(2, 1, 0xE4)])); // mov oC0, c1
-    words.extend(enc_inst(0x002B, &[])); // endif
+    let mut words = vec![0xFFFF_0300];
+    let f0 = 0.0f32.to_bits();
+    let f1 = 1.0f32.to_bits();
+
+    // def c0, 0,1,0,1
+    words.extend(enc_inst(0x0051, &[enc_dst(2, 0, 0xF), f0, f1, f0, f1]));
+    // def c1, 0,0,1,0
+    words.extend(enc_inst(0x0051, &[enc_dst(2, 1, 0xF), f0, f0, f1, f0]));
+
+    // mov r0, c0
+    words.extend(enc_inst(
+        0x0001,
+        &[enc_dst(0, 0, 0xF), enc_src(2, 0, 0xE4)],
+    ));
+    // rep i0
+    words.extend(enc_inst(0x0026, &[enc_src(7, 0, 0xE4)]));
+    // add r0, r0, c1
+    words.extend(enc_inst(
+        0x0002,
+        &[
+            enc_dst(0, 0, 0xF),
+            enc_src(0, 0, 0xE4),
+            enc_src(2, 1, 0xE4),
+        ],
+    ));
+    // endrep
+    words.extend(enc_inst(0x0027, &[]));
+
+    // mov oC0, r0
+    words.extend(enc_inst(
+        0x0001,
+        &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)],
+    ));
+
     words.push(0x0000_FFFF);
     to_bytes(&words)
 }
 
 #[test]
-fn d3d9_bool_constants_affect_pixel_shader_control_flow() {
+fn d3d9_int_constants_updates_are_visible_between_draws() {
     let mut exec = match common::d3d9_executor(module_path!()) {
         Some(exec) => exec,
         None => return,
@@ -148,8 +178,7 @@ fn d3d9_bool_constants_affect_pixel_shader_control_flow() {
     const OPC_SET_VIEWPORT: u32 = AerogpuCmdOpcode::SetViewport as u32;
     const OPC_SET_SCISSOR: u32 = AerogpuCmdOpcode::SetScissor as u32;
     const OPC_CLEAR: u32 = AerogpuCmdOpcode::Clear as u32;
-    const OPC_SET_SHADER_CONSTANTS_F: u32 = AerogpuCmdOpcode::SetShaderConstantsF as u32;
-    const OPC_SET_SHADER_CONSTANTS_B: u32 = AerogpuCmdOpcode::SetShaderConstantsB as u32;
+    const OPC_SET_SHADER_CONSTANTS_I: u32 = AerogpuCmdOpcode::SetShaderConstantsI as u32;
     const OPC_DRAW: u32 = AerogpuCmdOpcode::Draw as u32;
     const OPC_PRESENT: u32 = AerogpuCmdOpcode::Present as u32;
 
@@ -165,7 +194,7 @@ fn d3d9_bool_constants_affect_pixel_shader_control_flow() {
     let width = 64u32;
     let height = 64u32;
 
-    // Two non-overlapping triangles so we can observe both bool branches in one frame.
+    // Two non-overlapping triangles so we can observe both i0 values in one frame.
     let mut vb_data = Vec::new();
     let verts = [
         // Left triangle (clockwise winding).
@@ -186,7 +215,7 @@ fn d3d9_bool_constants_affect_pixel_shader_control_flow() {
     assert_eq!(vb_data.len(), 6 * 16);
 
     let vs_bytes = assemble_vs_passthrough_pos();
-    let ps_bytes = assemble_ps_if_b0_select_c0_c1();
+    let ps_bytes = assemble_ps_rep_i0_add_blue();
 
     // D3DVERTEXELEMENT9 stream (little-endian).
     // Element 0: POSITION0 float4 at stream 0 offset 0.
@@ -194,16 +223,16 @@ fn d3d9_bool_constants_affect_pixel_shader_control_flow() {
     let mut vertex_decl = Vec::new();
     push_u16(&mut vertex_decl, 0); // stream
     push_u16(&mut vertex_decl, 0); // offset
-    push_u8(&mut vertex_decl, 3); // type = FLOAT4
-    push_u8(&mut vertex_decl, 0); // method
-    push_u8(&mut vertex_decl, 0); // usage = POSITION
-    push_u8(&mut vertex_decl, 0); // usage_index
+    vertex_decl.push(3); // type = FLOAT4
+    vertex_decl.push(0); // method
+    vertex_decl.push(0); // usage = POSITION
+    vertex_decl.push(0); // usage_index
     push_u16(&mut vertex_decl, 0x00FF); // stream = 0xFF
     push_u16(&mut vertex_decl, 0); // offset
-    push_u8(&mut vertex_decl, 17); // type = UNUSED
-    push_u8(&mut vertex_decl, 0); // method
-    push_u8(&mut vertex_decl, 0); // usage
-    push_u8(&mut vertex_decl, 0); // usage_index
+    vertex_decl.push(17); // type = UNUSED
+    vertex_decl.push(0); // method
+    vertex_decl.push(0); // usage
+    vertex_decl.push(0); // usage_index
     assert_eq!(vertex_decl.len(), 16);
 
     let stream = build_stream(|out| {
@@ -325,37 +354,17 @@ fn d3d9_bool_constants_affect_pixel_shader_control_flow() {
             push_u32(out, 0); // stencil
         });
 
-        // c0 = red, c1 = green.
-        emit_packet(out, OPC_SET_SHADER_CONSTANTS_F, |out| {
+        // First draw: i0.x = 0 => rep executes 0 times => green.
+        emit_packet(out, OPC_SET_SHADER_CONSTANTS_I, |out| {
             push_u32(out, 1); // AEROGPU_SHADER_STAGE_PIXEL
             push_u32(out, 0); // start_register
-            push_u32(out, 2); // vec4_count
+            push_u32(out, 1); // vec4_count
             push_u32(out, 0); // reserved0
-                              // c0 = red
-            push_f32(out, 1.0);
-            push_f32(out, 0.0);
-            push_f32(out, 0.0);
-            push_f32(out, 1.0);
-            // c1 = green
-            push_f32(out, 0.0);
-            push_f32(out, 1.0);
-            push_f32(out, 0.0);
-            push_f32(out, 1.0);
+            push_i32(out, 0);
+            push_i32(out, 0);
+            push_i32(out, 0);
+            push_i32(out, 0);
         });
-
-        // b0 = false => select c1 (green).
-        emit_packet(out, OPC_SET_SHADER_CONSTANTS_B, |out| {
-            push_u32(out, 1); // AEROGPU_SHADER_STAGE_PIXEL
-            push_u32(out, 0); // start_register
-            push_u32(out, 1); // bool_count
-            push_u32(out, 0); // reserved0
-                              // Payload: vec4<u32> per bool register (replicated across lanes).
-            for _ in 0..4 {
-                push_u32(out, 0);
-            }
-        });
-
-        // Left triangle.
         emit_packet(out, OPC_DRAW, |out| {
             push_u32(out, 3); // vertex_count
             push_u32(out, 1); // instance_count
@@ -363,19 +372,17 @@ fn d3d9_bool_constants_affect_pixel_shader_control_flow() {
             push_u32(out, 0); // first_instance
         });
 
-        // b0 = true => select c0 (red).
-        emit_packet(out, OPC_SET_SHADER_CONSTANTS_B, |out| {
+        // Second draw: i0.x = 1 => rep executes once => green+blue => cyan.
+        emit_packet(out, OPC_SET_SHADER_CONSTANTS_I, |out| {
             push_u32(out, 1); // AEROGPU_SHADER_STAGE_PIXEL
             push_u32(out, 0); // start_register
-            push_u32(out, 1); // bool_count
+            push_u32(out, 1); // vec4_count
             push_u32(out, 0); // reserved0
-                              // Payload: vec4<u32> per bool register (replicated across lanes).
-            for _ in 0..4 {
-                push_u32(out, 1);
-            }
+            push_i32(out, 1);
+            push_i32(out, 0);
+            push_i32(out, 0);
+            push_i32(out, 0);
         });
-
-        // Right triangle.
         emit_packet(out, OPC_DRAW, |out| {
             push_u32(out, 3); // vertex_count
             push_u32(out, 1); // instance_count
@@ -404,8 +411,9 @@ fn d3d9_bool_constants_affect_pixel_shader_control_flow() {
 
     // Background.
     assert_eq!(px(32, 2), [0, 0, 0, 255]);
-    // Left triangle (b0=false -> green).
+    // Left triangle (rep count 0 => green).
     assert_eq!(px(16, 22), [0, 255, 0, 255]);
-    // Right triangle (b0=true -> red).
-    assert_eq!(px(48, 22), [255, 0, 0, 255]);
+    // Right triangle (rep count 1 => cyan).
+    assert_eq!(px(48, 22), [0, 255, 255, 255]);
 }
+
