@@ -160,6 +160,16 @@ pub fn aerogpu_executor_or_skip(
 }
 
 #[allow(dead_code)]
+#[cfg(target_arch = "wasm32")]
+pub fn aerogpu_executor_bc(
+) -> Option<std::sync::MutexGuard<'static, aero_gpu::aerogpu_executor::AeroGpuExecutor>> {
+    // `AeroGpuExecutor` stores WebGPU handles that are not `Send`/`Sync` on wasm32, so we cannot
+    // safely cache a shared executor behind a `static` mutex.
+    None
+}
+
+#[allow(dead_code)]
+#[cfg(not(target_arch = "wasm32"))]
 pub fn aerogpu_executor_bc(
 ) -> Option<std::sync::MutexGuard<'static, aero_gpu::aerogpu_executor::AeroGpuExecutor>> {
     use std::sync::{Mutex, OnceLock};
@@ -252,6 +262,16 @@ pub fn aerogpu_executor_bc(
 }
 
 #[allow(dead_code)]
+#[cfg(target_arch = "wasm32")]
+pub fn aerogpu_executor_bc_or_skip(
+    test_name: &str,
+) -> Option<std::sync::MutexGuard<'static, aero_gpu::aerogpu_executor::AeroGpuExecutor>> {
+    skip_or_panic(test_name, "BC-only executor is host-only");
+    None
+}
+
+#[allow(dead_code)]
+#[cfg(not(target_arch = "wasm32"))]
 pub fn aerogpu_executor_bc_or_skip(
     test_name: &str,
 ) -> Option<std::sync::MutexGuard<'static, aero_gpu::aerogpu_executor::AeroGpuExecutor>> {
