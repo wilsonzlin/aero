@@ -3135,6 +3135,8 @@ fn encode_aerogpu_snapshot_v2(vram: &AeroGpuDevice, bar0: &AeroGpuMmioDevice) ->
     // snapshot/restore deterministic even if the VM is checkpointed between the two dword writes.
     out.extend_from_slice(&regs.scanout0_fb_gpa_pending_lo.to_le_bytes());
     out.extend_from_slice(&(regs.scanout0_fb_gpa_lo_pending as u32).to_le_bytes());
+    out.extend_from_slice(&regs.cursor_fb_gpa_pending_lo.to_le_bytes());
+    out.extend_from_slice(&(regs.cursor_fb_gpa_lo_pending as u32).to_le_bytes());
 
     // Optional trailing VGA DAC state (palette + PEL mask).
     //
@@ -3146,7 +3148,6 @@ fn encode_aerogpu_snapshot_v2(vram: &AeroGpuDevice, bar0: &AeroGpuMmioDevice) ->
     for entry in &vram.dac_palette {
         out.extend_from_slice(entry);
     }
-
     // Optional trailing VGA Attribute Controller state (palette mapping registers).
     //
     // The AeroGPU "legacy text scanout" path resolves text-mode colors via the VGA Attribute
@@ -3176,7 +3177,6 @@ fn encode_aerogpu_snapshot_v2(vram: &AeroGpuDevice, bar0: &AeroGpuMmioDevice) ->
     out.extend_from_slice(b"ATST");
     out.push(vram.attr_index);
     out.push(vram.attr_flip_flop as u8);
-
     // Optional trailing VGA port register file (misc + seq/gc/crtc indices + regs).
     //
     // While the AeroGPU legacy VGA frontend is intentionally permissive and does not implement a
@@ -3283,6 +3283,20 @@ fn decode_aerogpu_snapshot_v1(bytes: &[u8]) -> Option<AeroGpuSnapshotV1> {
         } else {
             (0, false)
         };
+    let (cursor_fb_gpa_pending_lo, cursor_fb_gpa_lo_pending) =
+        if has_error_payload && bytes.len() >= off.saturating_add(8) {
+            // Cursor pending payload was added before the optional VGA DAC payload; avoid consuming
+            // the "DACP" tag as if it were a pending cursor address.
+            if bytes.get(off..off.saturating_add(4)) == Some(b"DACP".as_slice()) {
+                (0, false)
+            } else {
+                let pending_lo = read_u32(bytes, &mut off).unwrap_or(0);
+                let pending = read_u32(bytes, &mut off).unwrap_or(0) != 0;
+                (pending_lo, pending)
+            }
+        } else {
+            (0, false)
+        };
     let vga_dac = {
         const TAG: &[u8; 4] = b"DACP";
         const PALETTE_LEN: usize = 256 * 3;
@@ -3341,6 +3355,8 @@ fn decode_aerogpu_snapshot_v1(bytes: &[u8]) -> Option<AeroGpuSnapshotV1> {
             cursor_height,
             cursor_format,
             cursor_fb_gpa,
+            cursor_fb_gpa_pending_lo,
+            cursor_fb_gpa_lo_pending,
             cursor_pitch_bytes,
             wddm_scanout_active,
         },
@@ -3466,6 +3482,21 @@ fn apply_aerogpu_snapshot_v2(
             let pending_lo = read_u32(bytes, &mut off).unwrap_or(0);
             let pending = read_u32(bytes, &mut off).unwrap_or(0) != 0;
             (pending_lo, pending)
+        } else {
+            (0, false)
+        };
+    let (cursor_fb_gpa_pending_lo, cursor_fb_gpa_lo_pending) =
+        if has_error_payload && bytes.len() >= off.saturating_add(8) {
+            // Cursor pending payload was added before the tagged VGA state payloads. Avoid
+            // consuming a tag as if it were a pending cursor address.
+            let tag = bytes.get(off..off.saturating_add(4));
+            if tag == Some(b"DACP".as_slice()) || tag == Some(b"ATRG".as_slice()) {
+                (0, false)
+            } else {
+                let pending_lo = read_u32(bytes, &mut off).unwrap_or(0);
+                let pending = read_u32(bytes, &mut off).unwrap_or(0) != 0;
+                (pending_lo, pending)
+            }
         } else {
             (0, false)
         };
@@ -3608,6 +3639,8 @@ fn apply_aerogpu_snapshot_v2(
         cursor_height,
         cursor_format,
         cursor_fb_gpa,
+        cursor_fb_gpa_pending_lo,
+        cursor_fb_gpa_lo_pending,
         cursor_pitch_bytes,
         wddm_scanout_active,
     });

@@ -473,7 +473,8 @@ pub struct AeroGpuMmioDevice {
     cursor_height: u32,
     cursor_format: u32,
     cursor_fb_gpa: u64,
-    #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+    /// Pending LO dword for `CURSOR_FB_GPA` while waiting for the HI write commit.
+    cursor_fb_gpa_pending_lo: u32,
     cursor_fb_gpa_lo_pending: bool,
     cursor_pitch_bytes: u32,
     #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
@@ -542,6 +543,8 @@ pub(crate) struct AeroGpuMmioSnapshotV1 {
     pub cursor_height: u32,
     pub cursor_format: u32,
     pub cursor_fb_gpa: u64,
+    pub cursor_fb_gpa_pending_lo: u32,
+    pub cursor_fb_gpa_lo_pending: bool,
     pub cursor_pitch_bytes: u32,
 
     /// Host-only latch tracking whether the guest has claimed WDDM scanout ownership.
@@ -605,7 +608,7 @@ impl Default for AeroGpuMmioDevice {
             cursor_height: 0,
             cursor_format: 0,
             cursor_fb_gpa: 0,
-            #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+            cursor_fb_gpa_pending_lo: 0,
             cursor_fb_gpa_lo_pending: false,
             cursor_pitch_bytes: 0,
             #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
@@ -1033,6 +1036,8 @@ impl AeroGpuMmioDevice {
             cursor_height: self.cursor_height,
             cursor_format: self.cursor_format,
             cursor_fb_gpa: self.cursor_fb_gpa,
+            cursor_fb_gpa_pending_lo: self.cursor_fb_gpa_pending_lo,
+            cursor_fb_gpa_lo_pending: self.cursor_fb_gpa_lo_pending,
             cursor_pitch_bytes: self.cursor_pitch_bytes,
 
             wddm_scanout_active: self.wddm_scanout_active,
@@ -1094,6 +1099,8 @@ impl AeroGpuMmioDevice {
         self.cursor_height = snap.cursor_height;
         self.cursor_format = snap.cursor_format;
         self.cursor_fb_gpa = snap.cursor_fb_gpa;
+        self.cursor_fb_gpa_pending_lo = snap.cursor_fb_gpa_pending_lo;
+        self.cursor_fb_gpa_lo_pending = snap.cursor_fb_gpa_lo_pending;
         self.cursor_pitch_bytes = snap.cursor_pitch_bytes;
 
         #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
@@ -1103,7 +1110,6 @@ impl AeroGpuMmioDevice {
             // not part of the snapshot payload.
             self.scanout0_dirty = true;
             self.cursor_dirty = true;
-            self.cursor_fb_gpa_lo_pending = false;
         }
 
         // Snapshot v1 does not preserve these internal execution latches.
@@ -1604,7 +1610,13 @@ impl AeroGpuMmioDevice {
             x if x == pci::AEROGPU_MMIO_REG_CURSOR_WIDTH as u64 => self.cursor_width,
             x if x == pci::AEROGPU_MMIO_REG_CURSOR_HEIGHT as u64 => self.cursor_height,
             x if x == pci::AEROGPU_MMIO_REG_CURSOR_FORMAT as u64 => self.cursor_format,
-            x if x == pci::AEROGPU_MMIO_REG_CURSOR_FB_GPA_LO as u64 => self.cursor_fb_gpa as u32,
+            x if x == pci::AEROGPU_MMIO_REG_CURSOR_FB_GPA_LO as u64 => {
+                if self.cursor_fb_gpa_lo_pending {
+                    self.cursor_fb_gpa_pending_lo
+                } else {
+                    self.cursor_fb_gpa as u32
+                }
+            }
             x if x == pci::AEROGPU_MMIO_REG_CURSOR_FB_GPA_HI as u64 => {
                 (self.cursor_fb_gpa >> 32) as u32
             }
@@ -1767,11 +1779,8 @@ impl AeroGpuMmioDevice {
             x if x == pci::AEROGPU_MMIO_REG_CURSOR_ENABLE as u64 => {
                 let new_enable = value != 0;
                 if self.cursor_enable && !new_enable {
-                    // Clear torn-update tracking so a stale LO write can't block future publishes.
-                    #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
-                    {
-                        self.cursor_fb_gpa_lo_pending = false;
-                    }
+                    self.cursor_fb_gpa_pending_lo = 0;
+                    self.cursor_fb_gpa_lo_pending = false;
                 }
                 self.cursor_enable = new_enable;
                 #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
@@ -1829,22 +1838,23 @@ impl AeroGpuMmioDevice {
                 }
             }
             x if x == pci::AEROGPU_MMIO_REG_CURSOR_FB_GPA_LO as u64 => {
-                self.cursor_fb_gpa =
-                    (self.cursor_fb_gpa & 0xffff_ffff_0000_0000) | u64::from(value);
-                // Avoid publishing a torn 64-bit cursor base update. Defer until the HI write.
+                self.cursor_fb_gpa_pending_lo = value;
+                self.cursor_fb_gpa_lo_pending = true;
                 #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
                 {
-                    self.cursor_fb_gpa_lo_pending = true;
                     self.cursor_dirty = true;
                 }
             }
             x if x == pci::AEROGPU_MMIO_REG_CURSOR_FB_GPA_HI as u64 => {
-                self.cursor_fb_gpa =
-                    (self.cursor_fb_gpa & 0x0000_0000_ffff_ffff) | (u64::from(value) << 32);
+                let lo = if self.cursor_fb_gpa_lo_pending {
+                    u64::from(self.cursor_fb_gpa_pending_lo)
+                } else {
+                    self.cursor_fb_gpa & 0xffff_ffff
+                };
+                self.cursor_fb_gpa = (u64::from(value) << 32) | lo;
+                self.cursor_fb_gpa_lo_pending = false;
                 #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
                 {
-                    // Drivers typically write LO then HI; treat HI as the commit point.
-                    self.cursor_fb_gpa_lo_pending = false;
                     self.cursor_dirty = true;
                 }
             }
