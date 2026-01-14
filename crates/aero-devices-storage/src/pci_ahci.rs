@@ -73,7 +73,12 @@ impl AhciPciDevice {
     pub fn new(num_ports: usize) -> Self {
         let irq = AtomicIrqLine::default();
         let controller = AhciController::new(Box::new(irq.clone()), num_ports);
-        let config = profile::SATA_AHCI_ICH9.build_config_space();
+        let mut config = profile::SATA_AHCI_ICH9.build_config_space();
+        // Expose MSI so modern guests can use message-signaled interrupts instead of legacy INTx.
+        //
+        // Note: this is wired up in `aero-pc-platform` by polling `irq_pending_raw()` and
+        // triggering the MSI capability via the canonical PCI config bus.
+        config.add_capability(Box::new(MsiCapability::new()));
         Self {
             config,
             controller,
@@ -161,6 +166,15 @@ impl AhciPciDevice {
         if intx_disabled {
             return false;
         }
+        self.irq.level()
+    }
+
+    /// Returns whether the controller currently has an interrupt pending, ignoring PCI INTx gating.
+    ///
+    /// Unlike [`AhciPciDevice::intx_level`], this is **not** suppressed by the PCI Command register
+    /// Interrupt Disable bit (bit 10). Platforms can use this to implement MSI delivery where
+    /// INTx-disable should not block interrupts.
+    pub fn irq_pending_raw(&self) -> bool {
         self.irq.level()
     }
 
@@ -664,6 +678,31 @@ mod tests {
         assert!(
             !dev.config_mut().capability::<MsiCapability>().unwrap().enabled(),
             "MSI must be disabled after PCI device reset"
+        );
+    }
+
+    #[test]
+    fn irq_pending_raw_ignores_pci_intx_disable() {
+        let mut dev = AhciPciDevice::new(1);
+        dev.config_mut().set_command(PCI_COMMAND_MEM_ENABLE);
+
+        // Synthesize an asserted interrupt by setting PxIS + PxIE with GHC.IE enabled.
+        let mut state = dev.controller.snapshot_state();
+        state.hba.ghc |= 1 << 1; // GHC.IE
+        state.ports[0].is = 1; // PxIS.DHRS
+        state.ports[0].ie = 1; // PxIE.DHRE (enable)
+        dev.controller.restore_state(&state);
+
+        assert!(dev.irq_pending_raw());
+        assert!(dev.intx_level(), "baseline: INTx should be asserted");
+
+        // Setting COMMAND.INTX_DISABLE should gate only legacy INTx.
+        let cmd = dev.config().command();
+        dev.config_mut().set_command(cmd | (1 << 10));
+        assert!(!dev.intx_level(), "INTx should be gated by INTX_DISABLE");
+        assert!(
+            dev.irq_pending_raw(),
+            "raw pending should remain asserted when INTx is disabled"
         );
     }
 }

@@ -11,9 +11,9 @@ use aero_devices::irq::{IrqLine, PlatformIrqLine};
 use aero_devices::pci::profile::{AHCI_ABAR_BAR_INDEX, AHCI_ABAR_SIZE_U32};
 use aero_devices::pci::{
     bios_post, register_pci_config_ports, msix::PCI_CAP_ID_MSIX, MsiCapability, MsixCapability,
-    PciBarDefinition, PciBdf, PciConfigPorts, PciDevice, PciEcamConfig, PciEcamMmio, PciInterruptPin,
-    PciIntxRouter, PciIntxRouterConfig, PciResourceAllocator, PciResourceAllocatorConfig,
-    SharedPciConfigPorts,
+    PciBarDefinition, PciBdf, PciConfigPorts, PciDevice, PciEcamConfig, PciEcamMmio,
+    PciInterruptPin, PciIntxRouter, PciIntxRouterConfig, PciResourceAllocator,
+    PciResourceAllocatorConfig, SharedPciConfigPorts,
 };
 use aero_devices::pic8259::register_pic8259_on_platform_interrupts;
 use aero_devices::pit8254::{register_pit8254, Pit8254, SharedPit8254};
@@ -199,6 +199,8 @@ impl AhciPciConfigDevice {
                 prefetchable: false,
             },
         );
+        // Expose MSI in the guest-visible PCI function config space.
+        config.add_capability(Box::new(MsiCapability::new()));
         Self { config }
     }
 }
