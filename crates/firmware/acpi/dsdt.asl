@@ -64,9 +64,9 @@ DefinitionBlock ("dsdt.aml", "DSDT", 2, "AERO  ", "AEROACPI", 0x00000001)
         /*
          * Motherboard resources device.
          *
-         * Reserving the fixed-function ACPI PM I/O ports (and reset port)
-         * prevents OS resource allocators from treating them as free PCI I/O
-         * space.
+         * Reserving the fixed-function ACPI PM I/O ports (and reset port), plus
+         * platform-owned legacy I/O ports (IMCR/A20/i8042), prevents OS resource
+         * allocators from treating them as free PCI I/O space.
          */
         Device (SYS0)
         {
@@ -83,6 +83,11 @@ DefinitionBlock ("dsdt.aml", "DSDT", 2, "AERO  ", "AEROACPI", 0x00000001)
                 IO (Decode16, 0x0404, 0x0404, 0x01, 0x02) // PM1a_CNT_BLK
                 IO (Decode16, 0x0408, 0x0408, 0x01, 0x04) // PM_TMR_BLK
                 IO (Decode16, 0x0420, 0x0420, 0x01, 0x08) // GPE0_BLK
+ 
+                // Legacy chipset ports used by the platform.
+                IO (Decode16, 0x0022, 0x0022, 0x01, 0x02) // IMCR (0x22..0x23)
+                IO (Decode16, 0x0092, 0x0092, 0x01, 0x01) // A20 gate (0x92)
+                IO (Decode16, 0x0060, 0x0060, 0x01, 0x05) // i8042 (0x60..0x64)
 
                 // Reset port used by the FADT ResetReg.
                 IO (Decode16, 0x0CF9, 0x0CF9, 0x01, 0x01)
@@ -102,7 +107,6 @@ DefinitionBlock ("dsdt.aml", "DSDT", 2, "AERO  ", "AEROACPI", 0x00000001)
             Name (_UID, Zero)
             Name (_STA, 0x0F)
         }
-
         Device (PCI0)
         {
             Name (_HID, EisaId ("PNP0A03"))

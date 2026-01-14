@@ -1071,8 +1071,9 @@ fn aml_sleep_state(name: [u8; 4], slp_typ: u64) -> Vec<u8> {
 
 fn sys0_crs(cfg: &AcpiConfig) -> Vec<u8> {
     // Motherboard resources device (PNP0C02) reserving the fixed-feature ACPI
-    // PM I/O ports and reset port. This prevents OS resource allocators from
-    // treating these ports as free PCI I/O space.
+    // PM I/O ports and other platform-owned legacy I/O ports. This prevents
+    // OS resource allocators from treating these ports as free PCI I/O space
+    // (avoids PCI I/O BAR collisions; important for Windows 7 compatibility).
     let mut out = Vec::new();
     out.extend_from_slice(&io_port_descriptor(cfg.smi_cmd_port, cfg.smi_cmd_port, 1, 1));
     out.extend_from_slice(&io_port_descriptor(cfg.pm1a_evt_blk, cfg.pm1a_evt_blk, 1, 4));
@@ -1084,6 +1085,12 @@ fn sys0_crs(cfg: &AcpiConfig) -> Vec<u8> {
         1,
         cfg.gpe0_blk_len,
     ));
+    // IMCR ports used by the DSDT `_PIC` method (OperationRegion IMCR at 0x22).
+    out.extend_from_slice(&io_port_descriptor(0x0022, 0x0022, 1, 2));
+    // A20 gate port used by the platform A20 device.
+    out.extend_from_slice(&io_port_descriptor(0x0092, 0x0092, 1, 1));
+    // PS/2 i8042 keyboard controller (data + status/command ports).
+    out.extend_from_slice(&io_port_descriptor(0x0060, 0x0060, 1, 5));
     // Reset port used by the FADT ResetReg.
     out.extend_from_slice(&io_port_descriptor(0x0CF9, 0x0CF9, 1, 1));
     out.extend_from_slice(&[0x79, 0x00]); // EndTag

@@ -597,10 +597,59 @@ fn dsdt_system_resources_device_reserves_acpi_pm_ports() {
         "expected SYS0._CRS ResourceTemplate to end with EndTag"
     );
 
+    let smi_cmd = io_port_descriptor(cfg.smi_cmd_port, cfg.smi_cmd_port, 1, 1);
+    assert!(
+        crs.windows(smi_cmd.len()).any(|w| w == smi_cmd),
+        "expected SYS0._CRS to reserve the SMI_CMD port"
+    );
+
     let pm1a_evt = io_port_descriptor(cfg.pm1a_evt_blk, cfg.pm1a_evt_blk, 1, 4);
     assert!(
         crs.windows(pm1a_evt.len()).any(|w| w == pm1a_evt),
         "expected SYS0._CRS to reserve the PM1a_EVT_BLK I/O range"
+    );
+
+    let pm1a_cnt = io_port_descriptor(cfg.pm1a_cnt_blk, cfg.pm1a_cnt_blk, 1, 2);
+    assert!(
+        crs.windows(pm1a_cnt.len()).any(|w| w == pm1a_cnt),
+        "expected SYS0._CRS to reserve the PM1a_CNT_BLK I/O range"
+    );
+
+    let pm_tmr = io_port_descriptor(cfg.pm_tmr_blk, cfg.pm_tmr_blk, 1, 4);
+    assert!(
+        crs.windows(pm_tmr.len()).any(|w| w == pm_tmr),
+        "expected SYS0._CRS to reserve the PM_TMR_BLK I/O range"
+    );
+
+    let gpe0 = io_port_descriptor(cfg.gpe0_blk, cfg.gpe0_blk, 1, cfg.gpe0_blk_len);
+    assert!(
+        crs.windows(gpe0.len()).any(|w| w == gpe0),
+        "expected SYS0._CRS to reserve the GPE0_BLK I/O range"
+    );
+
+    // Legacy platform-owned ports which must not be used for PCI I/O BAR allocation.
+    let imcr = io_port_descriptor(0x0022, 0x0022, 1, 2);
+    assert!(
+        crs.windows(imcr.len()).any(|w| w == imcr),
+        "expected SYS0._CRS to reserve IMCR ports 0x22..0x23"
+    );
+
+    let a20 = io_port_descriptor(0x0092, 0x0092, 1, 1);
+    assert!(
+        crs.windows(a20.len()).any(|w| w == a20),
+        "expected SYS0._CRS to reserve A20 gate port 0x92"
+    );
+
+    let i8042 = io_port_descriptor(0x0060, 0x0060, 1, 5);
+    assert!(
+        crs.windows(i8042.len()).any(|w| w == i8042),
+        "expected SYS0._CRS to reserve i8042 keyboard controller ports 0x60..0x64"
+    );
+
+    let reset = io_port_descriptor(0x0CF9, 0x0CF9, 1, 1);
+    assert!(
+        crs.windows(reset.len()).any(|w| w == reset),
+        "expected SYS0._CRS to reserve the reset port (0xCF9)"
     );
 }
 
