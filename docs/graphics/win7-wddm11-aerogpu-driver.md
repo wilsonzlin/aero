@@ -534,14 +534,14 @@ See:
 #### `DxgkDdiInterruptRoutine`
   
  - **Purpose:** Handle device interrupts at DIRQL and notify dxgkrnl.
- - **AeroGPU MVP behavior:**
-   - Read `AEROGPU_MMIO_REG_IRQ_STATUS` and handle causes:
-     - `AEROGPU_IRQ_SCANOUT_VBLANK` (vblank tick for scanout 0)
-     - `AEROGPU_IRQ_FENCE` (completed fence advanced; read `AEROGPU_MMIO_REG_COMPLETED_FENCE_LO/HI`)
-     - `AEROGPU_IRQ_ERROR` (treat as fatal device error; ABI 1.3+ also latches an error payload into `AEROGPU_MMIO_REG_ERROR_*`)
-   - Acknowledge via `AEROGPU_MMIO_REG_IRQ_ACK` (write-1-to-clear).
-   - Call the appropriate Dxgk callback to queue DPC work and report interrupt type.
- - **Can be deferred:** Multiple interrupt sources beyond vblank + fence.
+  - **AeroGPU MVP behavior:**
+    - Read `AEROGPU_MMIO_REG_IRQ_STATUS` and handle causes:
+      - `AEROGPU_IRQ_SCANOUT_VBLANK` (vblank tick for scanout 0)
+      - `AEROGPU_IRQ_FENCE` (completed fence advanced; read `AEROGPU_MMIO_REG_COMPLETED_FENCE_LO/HI`)
+      - `AEROGPU_IRQ_ERROR` (treat as fatal device error; ABI 1.3+ may also latch an error payload into `AEROGPU_MMIO_REG_ERROR_*` when `AEROGPU_FEATURE_ERROR_INFO` is set)
+    - Acknowledge via `AEROGPU_MMIO_REG_IRQ_ACK` (write-1-to-clear).
+    - Call the appropriate Dxgk callback to queue DPC work and report interrupt type.
+  - **Can be deferred:** Multiple interrupt sources beyond vblank + fence.
  
 #### `DxgkDdiDpcRoutine`
   
@@ -778,10 +778,10 @@ The register names below are the canonical ones from `drivers/aerogpu/protocol/a
    - `AEROGPU_MMIO_REG_IRQ_ENABLE` (RW): enable mask (line asserted when `(STATUS & ENABLE) != 0`)
    - `AEROGPU_MMIO_REG_IRQ_ACK` (WO): write-1-to-clear (W1C)
    - Cause bits:
-     - `AEROGPU_IRQ_FENCE`: completed fence advanced
-     - `AEROGPU_IRQ_SCANOUT_VBLANK`: scanout0 vblank tick (only if `AEROGPU_FEATURE_VBLANK` is set)
-     - `AEROGPU_IRQ_ERROR`: fatal device error
-   - Error reporting (ABI 1.3+; latched when `AEROGPU_IRQ_ERROR` is asserted):
+      - `AEROGPU_IRQ_FENCE`: completed fence advanced
+      - `AEROGPU_IRQ_SCANOUT_VBLANK`: scanout0 vblank tick (only if `AEROGPU_FEATURE_VBLANK` is set)
+      - `AEROGPU_IRQ_ERROR`: fatal device error
+   - Error reporting (ABI 1.3+; only when `AEROGPU_FEATURE_ERROR_INFO` is set; latched when `AEROGPU_IRQ_ERROR` is asserted):
      - `AEROGPU_MMIO_REG_ERROR_CODE` (RO): stable `enum aerogpu_error_code`
      - `AEROGPU_MMIO_REG_ERROR_FENCE_LO/HI` (RO): fence associated with the error (if known)
      - `AEROGPU_MMIO_REG_ERROR_COUNT` (RO): monotonically increasing error counter

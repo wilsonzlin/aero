@@ -157,6 +157,9 @@ The interrupt line is asserted when `(IRQ_STATUS & IRQ_ENABLE) != 0`.
 When `AEROGPU_IRQ_ERROR` is asserted, the device also latches structured error
 details into the following **read-only** MMIO registers:
 
+> These registers are present only when `AEROGPU_FEATURE_ERROR_INFO` is set in
+> `AEROGPU_MMIO_REG_FEATURES_LO/HI`.
+
 | Offset | Name | Access | Description |
 |---:|---|:--:|---|
 | `0x0310` | `AEROGPU_MMIO_REG_ERROR_CODE` | RO | `enum aerogpu_error_code` (stable error code) |
