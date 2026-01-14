@@ -62,6 +62,12 @@ It exists so the GPU worker can be ticked/woken even when the legacy shared fram
   - `web/src/main/frameScheduler.ts` (decides when to tick the GPU worker)
   - `web/src/workers/gpu-worker.ts` (chooses between legacy framebuffer and other output sources)
 
+Related shared-memory descriptor: **hardware cursor state** uses the same seqlock pattern:
+
+- CursorState layout + publish protocol (Rust): `crates/aero-shared/src/cursor_state.rs`
+- CursorState layout + publish protocol (TS mirror): `web/src/ipc/cursor_state.ts`
+- Consumed by the GPU worker: `web/src/workers/gpu-worker.ts` (cursor snapshot + presenter cursor APIs / compositing)
+
 ### 4) Host-side AeroGPU execution / translation building blocks (implemented)
 
 The repo also contains substantial implemented host-side GPU infrastructure (even though full guest WDDM integration is still evolving):
@@ -101,7 +107,7 @@ At a high level, the runtime is:
 └────────────────────────────┘
 ```
 
-The details of worker orchestration are outside the scope of this doc, but the “presentation boundary” (what memory is shared and how) is fully defined by the two structures below.
+The details of worker orchestration are outside the scope of this doc, but the “presentation boundary” (what memory is shared and how) is defined by the shared-memory structures below.
 
 ## Frame pacing / “new frame” state (SharedArrayBuffer)
 
