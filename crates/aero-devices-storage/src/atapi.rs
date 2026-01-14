@@ -1,7 +1,7 @@
 use std::io;
 
 use aero_io_snapshot::io::storage::state::{IdeAtapiDeviceState, MAX_IDE_DATA_BUFFER_BYTES};
-use aero_storage::{DiskError, VirtualDisk};
+use aero_storage::{DiskError, VirtualDisk, SECTOR_SIZE as ATA_SECTOR_SIZE};
 
 /// Underlying `VirtualDisk` trait object used by ISO/CD backends.
 ///
@@ -254,7 +254,7 @@ impl AtapiCdrom {
         // Packet size 12 bytes.
         words[0] |= 1;
 
-        let mut out = vec![0u8; 512];
+        let mut out = vec![0u8; ATA_SECTOR_SIZE];
         for (i, w) in words.iter().enumerate() {
             out[i * 2..i * 2 + 2].copy_from_slice(&w.to_le_bytes());
         }

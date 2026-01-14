@@ -182,7 +182,7 @@ impl VirtualDisk for SharedDisk {
 
 #[cfg(target_arch = "wasm32")]
 impl BlockDevice for SharedDisk {
-    fn read_sector(&mut self, lba: u64, buf: &mut [u8; 512]) -> Result<(), BiosDiskError> {
+    fn read_sector(&mut self, lba: u64, buf: &mut [u8; SECTOR_SIZE]) -> Result<(), BiosDiskError> {
         self.inner
             .try_borrow_mut()
             .expect("shared disk refcell should not already be borrowed")
@@ -201,7 +201,7 @@ impl BlockDevice for SharedDisk {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl BlockDevice for SharedDisk {
-    fn read_sector(&mut self, lba: u64, buf: &mut [u8; 512]) -> Result<(), BiosDiskError> {
+    fn read_sector(&mut self, lba: u64, buf: &mut [u8; SECTOR_SIZE]) -> Result<(), BiosDiskError> {
         self.inner
             .lock()
             .expect("shared disk mutex should not be poisoned")
@@ -221,7 +221,7 @@ impl BlockDevice for SharedDisk {
 #[cfg(test)]
 mod tests {
     use super::SharedDisk;
-    use aero_storage::{AeroSparseConfig, AeroSparseDisk, MemBackend, VirtualDisk};
+    use aero_storage::{AeroSparseConfig, AeroSparseDisk, MemBackend, VirtualDisk, SECTOR_SIZE};
 
     #[test]
     fn shared_disk_forwards_discard_range_to_inner_disk() {
@@ -237,13 +237,13 @@ mod tests {
         let mut shared = SharedDisk::new(Box::new(disk));
 
         // Allocate and write a non-zero sector so we can observe it being discarded.
-        shared.write_at(0, &[0x5A; 512]).unwrap();
+        shared.write_at(0, &[0x5A; SECTOR_SIZE]).unwrap();
 
         // Discard the entire first sparse block (4096 bytes). Reads should return zeros.
         shared.discard_range(0, 4096).unwrap();
 
-        let mut buf = [0xCCu8; 512];
+        let mut buf = [0xCCu8; SECTOR_SIZE];
         shared.read_at(0, &mut buf).unwrap();
-        assert_eq!(buf, [0u8; 512]);
+        assert_eq!(buf, [0u8; SECTOR_SIZE]);
     }
 }

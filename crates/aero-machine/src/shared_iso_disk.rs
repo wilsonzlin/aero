@@ -160,7 +160,7 @@ impl IsoBackend for SharedIsoDisk {
 }
 
 impl BlockDevice for SharedIsoDisk {
-    fn read_sector(&mut self, lba: u64, buf: &mut [u8; 512]) -> Result<(), BiosDiskError> {
+    fn read_sector(&mut self, lba: u64, buf: &mut [u8; SECTOR_SIZE]) -> Result<(), BiosDiskError> {
         self.inner_mut()
             .read_sectors(lba, buf)
             .map_err(|_err| BiosDiskError::OutOfRange)
@@ -172,7 +172,11 @@ impl BlockDevice for SharedIsoDisk {
 }
 
 impl CdromDevice for SharedIsoDisk {
-    fn read_sector(&mut self, lba: u64, buf: &mut [u8; 2048]) -> Result<(), BiosDiskError> {
+    fn read_sector(
+        &mut self,
+        lba: u64,
+        buf: &mut [u8; AtapiCdrom::SECTOR_SIZE],
+    ) -> Result<(), BiosDiskError> {
         let offset = lba
             .checked_mul(AtapiCdrom::SECTOR_SIZE as u64)
             .ok_or(BiosDiskError::OutOfRange)?;

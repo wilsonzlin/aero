@@ -307,6 +307,7 @@ impl Default for BusMasterChannel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aero_storage::SECTOR_SIZE;
     use memory::{Bus, MemoryBus};
 
     #[test]
@@ -421,7 +422,7 @@ mod tests {
         // Direction=ToMemory.
         bm.write(0, 1, 0x09);
 
-        let mut req = DmaRequest::ata_read(vec![0xA5; 512]);
+        let mut req = DmaRequest::ata_read(vec![0xA5; SECTOR_SIZE]);
         let err = bm.execute_dma(&mut mem, &mut req).unwrap_err();
         assert_eq!(err, DmaError::PrdTooShort);
         assert_ne!(
@@ -465,7 +466,9 @@ mod tests {
         bm.write(4, 4, prd_base as u32);
         bm.write(0, 1, 0x09); // direction=ToMemory
 
-        let buf: Vec<u8> = (0u16..512u16).map(|v| (v & 0xff) as u8).collect();
+        let buf: Vec<u8> = (0u16..(SECTOR_SIZE as u16))
+            .map(|v| (v & 0xff) as u8)
+            .collect();
         let mut req = DmaRequest::ata_read(buf.clone());
         let err = bm.execute_dma(&mut mem, &mut req).unwrap_err();
         assert_eq!(err, DmaError::PrdMissingEndOfTable);
