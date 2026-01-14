@@ -42,7 +42,7 @@ import {
 import { probeRemoteDisk, stableCacheKey } from "../platform/remote_disk";
 import { removeOpfsEntry } from "../platform/opfs";
 import { CHUNKED_DISK_CHUNK_SIZE, RANGE_STREAM_CHUNK_SIZE } from "./chunk_sizes.ts";
-import { RemoteCacheManager, remoteChunkedDeliveryType, remoteRangeDeliveryType } from "./remote_cache_manager";
+import { RemoteCacheManager, remoteChunkedDeliveryType, remoteRangeDeliveryType, type RemoteCacheStatus } from "./remote_cache_manager";
 import { assertNonSecretUrl, assertValidLeaseEndpoint } from "./url_safety";
 
 type DiskWorkerError = { message: string; name?: string; stack?: string };
@@ -82,6 +82,7 @@ const OPFS_REMOTE_CHUNK_MAX_BYTES = 64 * 1024 * 1024;
 const MAX_REMOTE_BLOCK_SIZE_BYTES = 64 * 1024 * 1024; // 64 MiB
 const MAX_REMOTE_PREFETCH_SEQUENTIAL_BLOCKS = 1024;
 const MAX_REMOTE_PREFETCH_SEQUENTIAL_BYTES = 512 * 1024 * 1024; // 512 MiB
+const MAX_REMOTE_CACHES_LIST = 10_000;
 
 function assertValidIdbRemoteChunkSize(value: number, field: string): void {
   if (!Number.isSafeInteger(value) || value <= 0) {
@@ -1303,6 +1304,59 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
         requestId,
         dryRun ? { ok: true, pruned, examined, prunedKeys } : { ok: true, pruned, examined },
       );
+      return;
+    }
+
+    case "list_remote_caches": {
+      if (backend !== "opfs") {
+        // Remote cache inspection is currently only supported for the OPFS backend.
+        postOk(requestId, { ok: true, caches: [], corruptKeys: [] });
+        return;
+      }
+
+      const remoteCacheDir = await opfsGetRemoteCacheDir();
+      const entries = remoteCacheDir.entries?.bind(remoteCacheDir);
+      if (!entries) {
+        // Best-effort: if directory iteration is unavailable, we cannot enumerate caches.
+        postOk(requestId, { ok: true, caches: [], corruptKeys: [] });
+        return;
+      }
+
+      const manager = await RemoteCacheManager.openOpfs();
+
+      const caches: RemoteCacheStatus[] = [];
+      const corruptKeys: string[] = [];
+      let seen = 0;
+
+      for await (const [name, handle] of entries()) {
+        // Caches are stored as directories under `aero/disks/remote-cache/<cacheKey>/`.
+        if (handle.kind !== "directory") continue;
+
+        seen += 1;
+        if (seen > MAX_REMOTE_CACHES_LIST) {
+          // Defensive bound: avoid unbounded allocations / work on attacker-controlled OPFS state.
+          throw new Error(
+            `Refusing to list remote caches: found more than ${MAX_REMOTE_CACHES_LIST} cache directories`,
+          );
+        }
+
+        let status: RemoteCacheStatus | null = null;
+        try {
+          status = await manager.getCacheStatus(name);
+        } catch {
+          status = null;
+        }
+        if (status) {
+          caches.push(status);
+        } else {
+          corruptKeys.push(name);
+        }
+      }
+
+      caches.sort((a, b) => b.lastAccessedAtMs - a.lastAccessedAtMs || a.cacheKey.localeCompare(b.cacheKey));
+      corruptKeys.sort((a, b) => a.localeCompare(b));
+
+      postOk(requestId, { ok: true, caches, corruptKeys });
       return;
     }
 

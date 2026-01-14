@@ -1,0 +1,100 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { installMemoryOpfs, MemoryDirectoryHandle } from "../test_utils/memory_opfs";
+
+let restoreOpfs: (() => void) | null = null;
+let hadOriginalSelf = false;
+let originalSelf: unknown = undefined;
+
+afterEach(() => {
+  vi.useRealTimers();
+
+  restoreOpfs?.();
+  restoreOpfs = null;
+
+  if (!hadOriginalSelf) {
+    Reflect.deleteProperty(globalThis as unknown as { self?: unknown }, "self");
+  } else {
+    (globalThis as unknown as { self?: unknown }).self = originalSelf;
+  }
+  hadOriginalSelf = false;
+  originalSelf = undefined;
+});
+
+describe("disk_worker list_remote_caches", () => {
+  it("lists RemoteCacheManager caches and reports corrupt keys", async () => {
+    vi.resetModules();
+    vi.useFakeTimers();
+    const nowMs = 1_700_000_000_000;
+    vi.setSystemTime(nowMs);
+
+    const root = new MemoryDirectoryHandle("root");
+    restoreOpfs = installMemoryOpfs(root).restore;
+
+    hadOriginalSelf = Object.prototype.hasOwnProperty.call(globalThis, "self");
+    originalSelf = (globalThis as unknown as { self?: unknown }).self;
+
+    const requestId = 1;
+    let resolveResponse: ((msg: any) => void) | null = null;
+    const response = new Promise<any>((resolve) => {
+      resolveResponse = resolve;
+    });
+
+    const workerScope: any = {
+      postMessage(msg: any) {
+        if (msg?.type === "response" && msg.requestId === requestId) {
+          resolveResponse?.(msg);
+        }
+      },
+    };
+    (globalThis as unknown as { self?: unknown }).self = workerScope;
+
+    await import("./disk_worker.ts");
+
+    const { RemoteCacheManager, remoteRangeDeliveryType } = await import("./remote_cache_manager");
+    const { opfsGetRemoteCacheDir } = await import("./metadata");
+
+    const manager = await RemoteCacheManager.openOpfs();
+    const opened = await manager.openCache(
+      { imageId: "img", version: "v1", deliveryType: remoteRangeDeliveryType(1024) },
+      { chunkSizeBytes: 1024, validators: { sizeBytes: 1024 * 1024 } },
+    );
+    await manager.recordCachedRange(opened.cacheKey, 0, 4096);
+
+    const corruptKey = "rc1_corrupt";
+    {
+      const remoteCacheDir = await opfsGetRemoteCacheDir();
+      const dir = await remoteCacheDir.getDirectoryHandle(corruptKey, { create: true });
+      const handle = await dir.getFileHandle("meta.json", { create: true });
+      const writable = await handle.createWritable({ keepExistingData: false });
+      await writable.write("{ this is not valid json");
+      await writable.close();
+    }
+
+    workerScope.onmessage?.({
+      data: {
+        type: "request",
+        requestId,
+        backend: "opfs",
+        op: "list_remote_caches",
+        payload: {},
+      },
+    });
+
+    const resp = await response;
+    expect(resp.ok).toBe(true);
+    expect(resp.result).toMatchObject({
+      ok: true,
+      corruptKeys: [corruptKey],
+    });
+
+    const list = resp.result as { caches: any[]; corruptKeys: string[] };
+    expect(list.caches).toHaveLength(1);
+    expect(list.caches[0]).toMatchObject({
+      cacheKey: opened.cacheKey,
+      cachedBytes: 4096,
+      lastAccessedAtMs: nowMs,
+    });
+  });
+});
+

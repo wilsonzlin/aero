@@ -14,6 +14,28 @@ import {
 } from "./metadata";
 import type { ImportProgress } from "./import_export";
 
+export type RemoteCacheStatusSerializable = {
+  cacheKey: string;
+  imageId: string;
+  imageVersion: string;
+  deliveryType: string;
+  chunkSizeBytes: number;
+  sizeBytes: number;
+  etag?: string;
+  lastModified?: string;
+  createdAtMs: number;
+  lastAccessedAtMs: number;
+  cachedBytes: number;
+  cachedRanges: Array<{ start: number; end: number }>;
+  cachedChunks: number;
+};
+
+export type ListRemoteCachesResult = {
+  ok: true;
+  caches: RemoteCacheStatusSerializable[];
+  corruptKeys: string[];
+};
+
 export type ExportHandle = {
   stream: ReadableStream<Uint8Array>;
   done: Promise<{ checksumCrc32: string }>;
@@ -295,6 +317,10 @@ export class DiskManager {
   }): Promise<PruneRemoteCachesResult>;
   pruneRemoteCaches(options: { olderThanMs: number; maxCaches?: number; dryRun?: boolean }): Promise<PruneRemoteCachesResult> {
     return this.request("prune_remote_caches", options);
+  }
+
+  async listRemoteCaches(): Promise<ListRemoteCachesResult> {
+    return this.request("list_remote_caches", {});
   }
 
   async addRemoteDisk(options: {
