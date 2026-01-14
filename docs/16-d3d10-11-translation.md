@@ -809,11 +809,14 @@ If you change the required scratch layouts/bindings, update the allocator usage 
     - Purpose: stores post-DS vertices + optional indices.
     - Usage (vertices): `STORAGE | VERTEX`
     - Usage (indices): `STORAGE | INDEX`
+    - Index element type (baseline): `u32` (`wgpu::IndexFormat::Uint32`). A future optimization may
+      choose `u16` when the expanded vertex count is known to fit.
 
 3. **GS-out (`gs_out_vertices`, `gs_out_indices`)**
     - Purpose: stores post-GS vertices + indices suitable for final rasterization.
     - Usage (vertices): `STORAGE | VERTEX`
     - Usage (indices): `STORAGE | INDEX`
+    - Index element type (baseline): `u32` (`wgpu::IndexFormat::Uint32`).
     - Capacity sizing: derived from `input_prim_count * instance_count * gs_maxvertexcount`, plus
       additional expansion when emitting list primitives without an index buffer (see below).
 
@@ -1011,6 +1014,8 @@ with an implementation-defined workgroup size chosen by the translator/runtime.
       - The original pixel shader.
     - Issues `drawIndirect` or `drawIndexedIndirect` depending on whether an index buffer was
       generated.
+      - When drawing indexed expansion output, bind the generated index buffer as
+        `wgpu::IndexFormat::Uint32` (baseline).
 
 **Passthrough VS strategy (concrete)**
 
