@@ -148,8 +148,13 @@ func TestSessionManager_CreateSessionWithKey_AllowsDifferentKeys(t *testing.T) {
 	if s1.ID() == s2.ID() {
 		t.Fatalf("expected distinct public session IDs, got %q", s1.ID())
 	}
-	if got := sm.ActiveSessions(); got != 2 {
-		t.Fatalf("ActiveSessions=%d, want 2", got)
+	activeSessions := func() int {
+		sm.mu.Lock()
+		defer sm.mu.Unlock()
+		return len(sm.sessions)
+	}
+	if got := activeSessions(); got != 2 {
+		t.Fatalf("active sessions=%d, want 2", got)
 	}
 }
 

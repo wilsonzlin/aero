@@ -633,9 +633,13 @@ func TestServer_WebRTCOffer_CanceledRequestClosesSession(t *testing.T) {
 		t.Fatalf("timed out waiting for handler to start ICE gathering wait")
 	}
 
-	if got := sm.ActiveSessions(); got != 1 {
+	if sess, err := sm.CreateSessionWithKey(""); err == nil {
+		sess.Close()
 		cancel()
-		t.Fatalf("active sessions=%d, want 1", got)
+		t.Fatalf("expected max sessions to be reached")
+	} else if !errors.Is(err, relay.ErrTooManySessions) {
+		cancel()
+		t.Fatalf("CreateSessionWithKey: %v", err)
 	}
 
 	cancel()
@@ -648,15 +652,20 @@ func TestServer_WebRTCOffer_CanceledRequestClosesSession(t *testing.T) {
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if sm.ActiveSessions() == 0 {
+		sess, err := sm.CreateSessionWithKey("")
+		if err == nil {
+			sess.Close()
 			if got := m.Get(metrics.ICEGatheringTimeout); got != 0 {
 				t.Fatalf("%s=%d, want 0", metrics.ICEGatheringTimeout, got)
 			}
 			return
 		}
+		if !errors.Is(err, relay.ErrTooManySessions) {
+			t.Fatalf("CreateSessionWithKey: %v", err)
+		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("expected session to be released after cancellation; active=%d", sm.ActiveSessions())
+	t.Fatalf("expected session to be released after cancellation")
 }
 
 func TestServer_Offer_CanceledRequestClosesSession(t *testing.T) {
@@ -752,9 +761,13 @@ func TestServer_Offer_CanceledRequestClosesSession(t *testing.T) {
 		t.Fatalf("timed out waiting for handler to start ICE gathering wait")
 	}
 
-	if got := sm.ActiveSessions(); got != 1 {
+	if sess, err := sm.CreateSessionWithKey(""); err == nil {
+		sess.Close()
 		cancel()
-		t.Fatalf("active sessions=%d, want 1", got)
+		t.Fatalf("expected max sessions to be reached")
+	} else if !errors.Is(err, relay.ErrTooManySessions) {
+		cancel()
+		t.Fatalf("CreateSessionWithKey: %v", err)
 	}
 
 	cancel()
@@ -767,15 +780,20 @@ func TestServer_Offer_CanceledRequestClosesSession(t *testing.T) {
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if sm.ActiveSessions() == 0 {
+		sess, err := sm.CreateSessionWithKey("")
+		if err == nil {
+			sess.Close()
 			if got := m.Get(metrics.ICEGatheringTimeout); got != 0 {
 				t.Fatalf("%s=%d, want 0", metrics.ICEGatheringTimeout, got)
 			}
 			return
 		}
+		if !errors.Is(err, relay.ErrTooManySessions) {
+			t.Fatalf("CreateSessionWithKey: %v", err)
+		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("expected session to be released after cancellation; active=%d", sm.ActiveSessions())
+	t.Fatalf("expected session to be released after cancellation")
 }
 
 type unauthorizedAuthorizer struct{}
