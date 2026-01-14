@@ -2230,7 +2230,6 @@ mod hda_dma_oob_tests {
         hda.process(&mut mem, 128);
     }
 }
-
 #[wasm_bindgen]
 pub struct AeroApi {
     version: String,

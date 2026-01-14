@@ -353,12 +353,13 @@ describe("InputCapture buffer recycling", () => {
       expect(posted).toHaveLength(2);
       expect(postedByteLengths).toHaveLength(2);
       expect(recycledFromFirstFlush).not.toBeNull();
+      const recycled = recycledFromFirstFlush!;
       // When the worker returns a buffer, the next flush should reuse it (no fresh allocation).
-      expect(posted[1]).toBe(recycledFromFirstFlush);
+      expect(posted[1]).toBe(recycled);
       expect(postedByteLengths[1]).toBe(postedByteLengths[0]);
       expect(postedByteLengths[1]).toBeGreaterThan(0);
       // Returned buffers should be a separate instance than what we originally posted (detached).
-      expect(posted[0]).not.toBe(recycledFromFirstFlush);
+      expect(posted[0]).not.toBe(recycled);
     });
   });
 
@@ -407,15 +408,16 @@ describe("InputCapture buffer recycling", () => {
       expect(posted).toHaveLength(2);
       expect(postedByteLengths).toHaveLength(2);
       expect(recycledFromFirstFlush).not.toBeNull();
+      const recycled = recycledFromFirstFlush!;
 
       // Sanity: the grown queue should have a larger backing buffer than the default 128-event queue.
       // Default: (2 + 128*4) * 4 = 2056 bytes; grown: (2 + 256*4) * 4 = 4104 bytes.
       expect(postedByteLengths[0]).toBeGreaterThan(2056);
 
       // The second flush should still be able to reuse the recycled buffer of that larger size.
-      expect(posted[1]).toBe(recycledFromFirstFlush);
+      expect(posted[1]).toBe(recycled);
       expect(postedByteLengths[1]).toBe(postedByteLengths[0]);
-      expect(posted[0]).not.toBe(recycledFromFirstFlush);
+      expect(posted[0]).not.toBe(recycled);
     });
   });
 
