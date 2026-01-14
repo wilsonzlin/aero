@@ -120,6 +120,18 @@ and block devices.
   `L2TunnelRingBackend`) live in `crates/aero-net-backend` and are re-exported by `emulator::io::net`
   for compatibility.
 
+#### `crates/aero-smp-model` (`aero-smp-model`)
+
+**What it does**
+
+- A **minimal deterministic SMP/APIC model** (`SmpMachine`) used for unit tests and snapshot
+  validation (INIT/SIPI bring-up, IPI delivery, deterministic scheduling).
+
+**How it fits**
+
+- This is not part of the canonical VM wiring stack; it exists to keep a small, fully deterministic
+  SMP model available for testing without colliding with `aero_machine::Machine`.
+
 ### Legacy / prototypes (excluded from workspace)
 
 These were valuable stepping stones, but they are **not** used by production wiring anymore and are kept under `crates/legacy/` for reference.
