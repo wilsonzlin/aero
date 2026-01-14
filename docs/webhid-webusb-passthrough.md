@@ -408,6 +408,13 @@ Feature report reads are also serialized per device: the main thread processes `
 requests in the same per-device FIFO as output/feature report writes so `GET_REPORT` cannot overtake
 earlier queued `SET_REPORT`/output writes for that device.
 
+Length normalization / safety:
+
+- The main thread normalizes the returned payload length to the descriptor-derived feature report
+  length (truncating or zero-padding when the browser returns a different length).
+- If the expected feature report length is unknown, the result is capped (currently 4096 bytes) to
+  avoid unbounded allocations from a bogus device/browser.
+
 Caching / coalescing behaviour (device model):
 
 - Successful `GET_REPORT Feature` results are **cached per reportId**. After the host responds, later
