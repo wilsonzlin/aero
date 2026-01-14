@@ -383,6 +383,7 @@ async function main(): Promise<void> {
       ioIpcSab: segments.ioIpc,
       sharedFramebuffer: segments.sharedFramebuffer,
       sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
+      vgaFramebuffer: segments.sharedFramebuffer,
       scanoutState: segments.scanoutState,
       scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
     };

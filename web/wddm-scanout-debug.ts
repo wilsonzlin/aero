@@ -601,6 +601,7 @@ async function main() {
     ioIpcSab: segments.ioIpc,
     sharedFramebuffer: segments.sharedFramebuffer,
     sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
+    vgaFramebuffer: segments.sharedFramebuffer,
     frameStateSab: sharedFrameState,
   } satisfies WorkerInitMessage);
 
