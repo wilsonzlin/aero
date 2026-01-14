@@ -246,6 +246,10 @@ Notes:
       (and WARN variants like `virtio-<dev>-irq|WARN|reason=...`).
   The host harness mirrors the per-test fields into `AERO_VIRTIO_WIN7_HOST|VIRTIO_*_IRQ|...` markers, and the
   standalone lines into `AERO_VIRTIO_WIN7_HOST|VIRTIO_*_IRQ_DIAG|...` markers for log scraping/CI.
+- Dedicated MSI-X **TEST markers** are also emitted for some devices (used by the host harness when `--require-virtio-*-msix` is enabled):
+  - `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-msix|PASS|mode=intx/msix|...`
+  - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|PASS|mode=intx/msix|...`
+  - `AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|PASS|mode=intx/msix|...`
 - If no supported virtio-snd PCI function is detected (and no capture flags are set), the tool emits
   `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP` and `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set`.
 - The optional virtio-input end-to-end event delivery markers are always emitted:
