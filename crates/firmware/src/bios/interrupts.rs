@@ -1844,8 +1844,8 @@ fn build_e820_map(
 mod tests {
     use super::super::{
         ivt, A20Gate, BiosConfig, BlockDevice, CdromDevice, DiskError, ElToritoBootInfo,
-        ElToritoBootMediaType, InMemoryDisk, TestMemory, BDA_BASE, EBDA_BASE, MAX_TTY_OUTPUT_BYTES,
-        PCIE_ECAM_BASE, PCIE_ECAM_SIZE,
+        ElToritoBootMediaType, InMemoryDisk, TestMemory, BDA_BASE, EBDA_BASE, EBDA_SIZE,
+        MAX_TTY_OUTPUT_BYTES, PCIE_ECAM_BASE, PCIE_ECAM_SIZE,
     };
     use super::*;
     use aero_cpu_core::state::{gpr, CpuMode, CpuState, FLAG_CF, FLAG_ZF};
@@ -3894,6 +3894,372 @@ mod tests {
                         FOUR_GIB,
                         high_end,
                         "NVS (high RAM)",
+                    );
+                }
+            }
+        }
+    }
+
+    fn collect_e820_via_int15(total_memory: u64) -> Vec<E820Entry> {
+        let mut bios = Bios::new(BiosConfig {
+            memory_size_bytes: total_memory,
+            boot_drive: 0x80,
+            ..BiosConfig::default()
+        });
+        let mut bus = TestMemory::new(2 * 1024 * 1024);
+        let mut cpu = CpuState::new(CpuMode::Real);
+        set_real_mode_seg(&mut cpu.segments.es, 0);
+
+        // Buffer in low memory where INT 15h writes the E820 entry.
+        const BUF_OFF: u16 = 0x0500;
+        cpu.gpr[gpr::RDI] = BUF_OFF as u64;
+
+        let mut entries = Vec::new();
+        let mut idx: u64 = 0;
+        loop {
+            cpu.gpr[gpr::RAX] = 0xE820;
+            cpu.gpr[gpr::RDX] = 0x534D_4150; // 'SMAP'
+            cpu.gpr[gpr::RCX] = 24; // request extended attributes
+            cpu.gpr[gpr::RBX] = idx;
+
+            handle_int15(&mut bios, &mut cpu, &mut bus);
+            assert_eq!(
+                cpu.rflags & FLAG_CF,
+                0,
+                "INT 15h E820 failed for total_memory=0x{total_memory:x}, idx={idx}"
+            );
+            assert_eq!(
+                cpu.gpr[gpr::RAX],
+                0x534D_4150,
+                "INT 15h E820 did not return 'SMAP' signature"
+            );
+            assert_eq!(
+                cpu.gpr[gpr::RCX],
+                24,
+                "INT 15h E820 should return 24 bytes when caller requests extended attributes"
+            );
+
+            let buf_addr = u64::from(BUF_OFF);
+            entries.push(E820Entry {
+                base: bus.read_u64(buf_addr),
+                length: bus.read_u64(buf_addr + 8),
+                region_type: bus.read_u32(buf_addr + 16),
+                extended_attributes: bus.read_u32(buf_addr + 20),
+            });
+
+            idx = cpu.gpr[gpr::RBX] & 0xFFFF_FFFF;
+            if idx == 0 {
+                break;
+            }
+        }
+        entries
+    }
+
+    fn assert_e820_sorted_non_overlapping(entries: &[E820Entry]) {
+        let mut last_end = 0u64;
+        for entry in entries {
+            assert_ne!(entry.length, 0, "E820 should not emit zero-length entries");
+            assert!(
+                entry.base >= last_end,
+                "E820 entries overlap or are out of order: last_end=0x{last_end:x}, entry={entry:?}"
+            );
+            last_end = entry.base.saturating_add(entry.length);
+        }
+    }
+
+    fn sum_usable_ram(entries: &[E820Entry]) -> u64 {
+        entries
+            .iter()
+            .filter(|e| e.region_type == E820_RAM)
+            .map(|e| e.length)
+            .sum()
+    }
+
+    fn overlap_len(a_start: u64, a_end: u64, b_start: u64, b_end: u64) -> u64 {
+        let start = a_start.max(b_start);
+        let end = a_end.min(b_end);
+        end.saturating_sub(start)
+    }
+
+    fn expected_usable_ram(total_memory: u64) -> u64 {
+        // Guest RAM exists everywhere E820 reports as RAM, including the legacy reserved windows
+        // below 1MiB (EBDA + VGA/BIOS).
+        //
+        // The amount of *usable* RAM is therefore the configured RAM size minus any reserved bytes
+        // that overlap real RAM below 1MiB. PCI/ECAM holes do not reduce usable RAM because those
+        // bytes are remapped above 4GiB.
+        const ONE_MIB: u64 = 0x0010_0000;
+        const VGA_START: u64 = 0x000A_0000;
+        let ebda_start = EBDA_BASE;
+        let ebda_end = EBDA_BASE + EBDA_SIZE as u64;
+        let vga_start = VGA_START;
+        let vga_end = ONE_MIB;
+        let reserved_low = overlap_len(ebda_start, ebda_end, 0, total_memory)
+            + overlap_len(vga_start, vga_end, 0, total_memory);
+        total_memory.saturating_sub(reserved_low)
+    }
+
+    #[test]
+    fn int15_e820_layout_across_guest_ram_sizes() {
+        // These values are part of the platform contract (Q35-style layout). The firmware tests
+        // should fail loudly if they drift, even though `aero-pc-constants`' own tests do not run
+        // when executing `cargo test -p firmware`.
+        assert_eq!(PCIE_ECAM_BASE, 0xB000_0000);
+        assert_eq!(PCIE_ECAM_SIZE, 0x1000_0000);
+        assert_eq!(EBDA_BASE, 0x0009_F000);
+        assert_eq!(EBDA_SIZE, 0x1000);
+
+        struct Case {
+            name: &'static str,
+            total_memory: u64,
+            expected: Vec<E820Entry>,
+        }
+
+        const ONE_MIB: u64 = 0x0010_0000;
+        const FOUR_GIB: u64 = 0x1_0000_0000;
+        const VGA_START: u64 = 0x000A_0000;
+
+        let cases = [
+            // RAM < 640KiB edge case: ensure we clamp the conventional RAM entry so we never
+            // report more usable RAM than exists.
+            Case {
+                name: "512KiB",
+                total_memory: 512 * 1024,
+                expected: vec![
+                    E820Entry {
+                        base: 0x0000_0000,
+                        length: 512 * 1024,
+                        region_type: E820_RAM,
+                        extended_attributes: 1,
+                    },
+                    E820Entry {
+                        base: EBDA_BASE,
+                        length: EBDA_SIZE as u64,
+                        region_type: E820_RESERVED,
+                        extended_attributes: 1,
+                    },
+                    E820Entry {
+                        base: VGA_START,
+                        length: ONE_MIB - VGA_START,
+                        region_type: E820_RESERVED,
+                        extended_attributes: 1,
+                    },
+                ],
+            },
+            Case {
+                name: "16MiB",
+                total_memory: 16 * 1024 * 1024,
+                expected: vec![
+                    E820Entry {
+                        base: 0x0000_0000,
+                        length: EBDA_BASE,
+                        region_type: E820_RAM,
+                        extended_attributes: 1,
+                    },
+                    E820Entry {
+                        base: EBDA_BASE,
+                        length: EBDA_SIZE as u64,
+                        region_type: E820_RESERVED,
+                        extended_attributes: 1,
+                    },
+                    E820Entry {
+                        base: VGA_START,
+                        length: ONE_MIB - VGA_START,
+                        region_type: E820_RESERVED,
+                        extended_attributes: 1,
+                    },
+                    E820Entry {
+                        base: ONE_MIB,
+                        length: 16 * 1024 * 1024 - ONE_MIB,
+                        region_type: E820_RAM,
+                        extended_attributes: 1,
+                    },
+                ],
+            },
+            Case {
+                name: "32MiB",
+                total_memory: 32 * 1024 * 1024,
+                expected: vec![
+                    E820Entry {
+                        base: 0x0000_0000,
+                        length: EBDA_BASE,
+                        region_type: E820_RAM,
+                        extended_attributes: 1,
+                    },
+                    E820Entry {
+                        base: EBDA_BASE,
+                        length: EBDA_SIZE as u64,
+                        region_type: E820_RESERVED,
+                        extended_attributes: 1,
+                    },
+                    E820Entry {
+                        base: VGA_START,
+                        length: ONE_MIB - VGA_START,
+                        region_type: E820_RESERVED,
+                        extended_attributes: 1,
+                    },
+                    E820Entry {
+                        base: ONE_MIB,
+                        length: 32 * 1024 * 1024 - ONE_MIB,
+                        region_type: E820_RAM,
+                        extended_attributes: 1,
+                    },
+                ],
+            },
+            Case {
+                name: "just below ECAM base",
+                total_memory: PCIE_ECAM_BASE - 1,
+                expected: vec![
+                    E820Entry {
+                        base: 0x0000_0000,
+                        length: EBDA_BASE,
+                        region_type: E820_RAM,
+                        extended_attributes: 1,
+                    },
+                    E820Entry {
+                        base: EBDA_BASE,
+                        length: EBDA_SIZE as u64,
+                        region_type: E820_RESERVED,
+                        extended_attributes: 1,
+                    },
+                    E820Entry {
+                        base: VGA_START,
+                        length: ONE_MIB - VGA_START,
+                        region_type: E820_RESERVED,
+                        extended_attributes: 1,
+                    },
+                    E820Entry {
+                        base: ONE_MIB,
+                        length: (PCIE_ECAM_BASE - 1) - ONE_MIB,
+                        region_type: E820_RAM,
+                        extended_attributes: 1,
+                    },
+                ],
+            },
+            Case {
+                name: "exactly ECAM base",
+                total_memory: PCIE_ECAM_BASE,
+                expected: vec![
+                    E820Entry {
+                        base: 0x0000_0000,
+                        length: EBDA_BASE,
+                        region_type: E820_RAM,
+                        extended_attributes: 1,
+                    },
+                    E820Entry {
+                        base: EBDA_BASE,
+                        length: EBDA_SIZE as u64,
+                        region_type: E820_RESERVED,
+                        extended_attributes: 1,
+                    },
+                    E820Entry {
+                        base: VGA_START,
+                        length: ONE_MIB - VGA_START,
+                        region_type: E820_RESERVED,
+                        extended_attributes: 1,
+                    },
+                    E820Entry {
+                        base: ONE_MIB,
+                        length: PCIE_ECAM_BASE - ONE_MIB,
+                        region_type: E820_RAM,
+                        extended_attributes: 1,
+                    },
+                ],
+            },
+            Case {
+                name: "just above ECAM base",
+                total_memory: PCIE_ECAM_BASE + 16 * 1024 * 1024,
+                expected: vec![
+                    E820Entry {
+                        base: 0x0000_0000,
+                        length: EBDA_BASE,
+                        region_type: E820_RAM,
+                        extended_attributes: 1,
+                    },
+                    E820Entry {
+                        base: EBDA_BASE,
+                        length: EBDA_SIZE as u64,
+                        region_type: E820_RESERVED,
+                        extended_attributes: 1,
+                    },
+                    E820Entry {
+                        base: VGA_START,
+                        length: ONE_MIB - VGA_START,
+                        region_type: E820_RESERVED,
+                        extended_attributes: 1,
+                    },
+                    E820Entry {
+                        base: ONE_MIB,
+                        length: PCIE_ECAM_BASE - ONE_MIB,
+                        region_type: E820_RAM,
+                        extended_attributes: 1,
+                    },
+                    E820Entry {
+                        base: PCIE_ECAM_BASE,
+                        length: PCIE_ECAM_SIZE,
+                        region_type: E820_RESERVED,
+                        extended_attributes: 1,
+                    },
+                    E820Entry {
+                        base: 0xC000_0000,
+                        length: FOUR_GIB - 0xC000_0000,
+                        region_type: E820_RESERVED,
+                        extended_attributes: 1,
+                    },
+                    E820Entry {
+                        base: FOUR_GIB,
+                        length: 16 * 1024 * 1024,
+                        region_type: E820_RAM,
+                        extended_attributes: 1,
+                    },
+                ],
+            },
+        ];
+
+        for case in cases {
+            let entries = collect_e820_via_int15(case.total_memory);
+            assert_e820_sorted_non_overlapping(&entries);
+
+            assert_eq!(
+                entries, case.expected,
+                "Unexpected E820 map for {} (total_memory=0x{:x})",
+                case.name, case.total_memory
+            );
+
+            // All returned entries must include the "enabled" extended attributes bit.
+            for entry in &entries {
+                assert_eq!(
+                    entry.extended_attributes, 1,
+                    "E820 entry should be marked enabled: {entry:?}"
+                );
+            }
+
+            // Total usable RAM should equal the configured guest size minus the legacy reserved
+            // low-memory windows, regardless of whether RAM is remapped above 4GiB.
+            assert_eq!(
+                sum_usable_ram(&entries),
+                expected_usable_ram(case.total_memory),
+                "Unexpected total usable RAM for {} (total_memory=0x{:x})",
+                case.name,
+                case.total_memory
+            );
+
+            // Regression checks: ensure no RAM overlaps the EBDA or VGA/BIOS reserved windows.
+            let reserved_low = [
+                (EBDA_BASE, EBDA_BASE + EBDA_SIZE as u64),
+                (VGA_START, ONE_MIB),
+            ];
+            for entry in &entries {
+                if entry.region_type != E820_RAM {
+                    continue;
+                }
+                let entry_end = entry.base.saturating_add(entry.length);
+                for &(r_base, r_end) in &reserved_low {
+                    let overlap_start = entry.base.max(r_base);
+                    let overlap_end = entry_end.min(r_end);
+                    assert!(
+                        overlap_end <= overlap_start,
+                        "RAM entry overlaps reserved low-memory window: entry={entry:?}, reserved=0x{r_base:x}..0x{r_end:x}"
                     );
                 }
             }
