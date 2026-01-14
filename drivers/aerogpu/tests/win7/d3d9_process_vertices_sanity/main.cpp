@@ -587,6 +587,102 @@ static int RunD3D9ProcessVerticesSanity(int argc, char** argv) {
     if (!tex_bytes_match) {
       return reporter.Fail("ProcessVertices XYZ|TEX1 output bytes did not match expected output");
     }
+
+    // Also validate SrcStartIndex/DestIndex offsets for the TEX1 path.
+    {
+      const VertexXyzDiffuseTex1 srcs[2] = {
+          {0.0f, 0.0f, 0.0f, D3DCOLOR_XRGB(1, 2, 3), 0.10f, 0.20f},
+          {2.0f, 0.0f, 0.0f, D3DCOLOR_XRGB(4, 5, 6), 0.30f, 0.40f},
+      };
+
+      ComPtr<IDirect3DVertexBuffer9> src_off;
+      hr = dev->CreateVertexBuffer(sizeof(srcs),
+                                   0,
+                                   D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1,
+                                   D3DPOOL_DEFAULT,
+                                   src_off.put(),
+                                   NULL);
+      if (FAILED(hr) || !src_off) {
+        return reporter.FailHresult("CreateVertexBuffer(src_tex_off)", hr);
+      }
+
+      void* src_off_ptr = NULL;
+      hr = src_off->Lock(0, sizeof(srcs), &src_off_ptr, 0);
+      if (FAILED(hr) || !src_off_ptr) {
+        return reporter.FailHresult("src_tex_off->Lock", hr);
+      }
+      memcpy(src_off_ptr, srcs, sizeof(srcs));
+      hr = src_off->Unlock();
+      if (FAILED(hr)) {
+        return reporter.FailHresult("src_tex_off->Unlock", hr);
+      }
+
+      // Destination: 3 vertices so we can write into DestIndex=2.
+      ComPtr<IDirect3DVertexBuffer9> dst_off;
+      hr = dev->CreateVertexBuffer(sizeof(VertexXyzrhwDiffuseTex1) * 3,
+                                   0,
+                                   D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_TEX1,
+                                   D3DPOOL_SYSTEMMEM,
+                                   dst_off.put(),
+                                   NULL);
+      if (FAILED(hr) || !dst_off) {
+        return reporter.FailHresult("CreateVertexBuffer(dst_tex_off)", hr);
+      }
+
+      void* dst_off_ptr = NULL;
+      hr = dst_off->Lock(0, sizeof(VertexXyzrhwDiffuseTex1) * 3, &dst_off_ptr, 0);
+      if (FAILED(hr) || !dst_off_ptr) {
+        return reporter.FailHresult("dst_tex_off->Lock (init)", hr);
+      }
+      memset(dst_off_ptr, 0xCD, sizeof(VertexXyzrhwDiffuseTex1) * 3);
+      hr = dst_off->Unlock();
+      if (FAILED(hr)) {
+        return reporter.FailHresult("dst_tex_off->Unlock (init)", hr);
+      }
+
+      hr = dev->SetFVF(D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("SetFVF(XYZ|DIFFUSE|TEX1) (offset case)", hr);
+      }
+      hr = dev->SetStreamSource(0, src_off.get(), 0, sizeof(VertexXyzDiffuseTex1));
+      if (FAILED(hr)) {
+        return reporter.FailHresult("SetStreamSource(src_tex_off)", hr);
+      }
+
+      hr = dev->ProcessVertices(/*SrcStartIndex=*/1,
+                                /*DestIndex=*/2,
+                                /*VertexCount=*/1,
+                                dst_off.get(),
+                                decl_tex.get(),
+                                /*Flags=*/0);
+      if (FAILED(hr)) {
+        return reporter.FailHresult("IDirect3DDevice9::ProcessVertices(tex1 offset)", hr);
+      }
+
+      hr = dst_off->Lock(0, sizeof(VertexXyzrhwDiffuseTex1) * 3, &dst_off_ptr, D3DLOCK_READONLY);
+      if (FAILED(hr) || !dst_off_ptr) {
+        return reporter.FailHresult("dst_tex_off->Lock (read)", hr);
+      }
+
+      unsigned char prefix_expected[sizeof(VertexXyzrhwDiffuseTex1) * 2];
+      memset(prefix_expected, 0xCD, sizeof(prefix_expected));
+      const bool prefix_ok = (memcmp(dst_off_ptr, prefix_expected, sizeof(prefix_expected)) == 0);
+
+      const VertexXyzrhwDiffuseTex1 expected_off = {2.5f, 0.5f, 0.0f, 1.0f, srcs[1].color, srcs[1].u, srcs[1].v};
+      const bool written_ok =
+          (memcmp((const unsigned char*)dst_off_ptr + sizeof(VertexXyzrhwDiffuseTex1) * 2,
+                  &expected_off,
+                  sizeof(expected_off)) == 0);
+
+      hr = dst_off->Unlock();
+      if (FAILED(hr)) {
+        return reporter.FailHresult("dst_tex_off->Unlock (read)", hr);
+      }
+
+      if (!prefix_ok || !written_ok) {
+        return reporter.Fail("ProcessVertices TEX1 offset case mismatch (SrcStartIndex/DestIndex handling)");
+      }
+    }
   }
 
   aerogpu_test::PrintfStdout("INFO: %s: ProcessVertices OK", kTestName);
