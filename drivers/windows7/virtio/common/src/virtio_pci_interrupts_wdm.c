@@ -280,7 +280,7 @@ VOID VirtioPciWdmInterruptDisconnect(_Inout_ PVIRTIO_PCI_WDM_INTERRUPTS Interrup
     if (Interrupts->u.Message.ConnectionContext != NULL) {
         IO_DISCONNECT_INTERRUPT_PARAMETERS params;
         RtlZeroMemory(&params, sizeof(params));
-        params.Version = CONNECT_MESSAGE_BASED;
+        params.Version = DISCONNECT_MESSAGE_BASED;
         params.MessageBased.ConnectionContext = Interrupts->u.Message.ConnectionContext;
         IoDisconnectInterruptEx(&params);
         Interrupts->u.Message.ConnectionContext = NULL;

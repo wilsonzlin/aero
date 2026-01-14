@@ -174,7 +174,7 @@ NTSTATUS VirtioMsixConnect(_In_ PDEVICE_OBJECT DeviceObject,
     }
 
     RtlZeroMemory(&params, sizeof(params));
-    params.Version = 2; /* CONNECT_MESSAGE_BASED */
+    params.Version = CONNECT_MESSAGE_BASED;
     params.MessageBased.PhysicalDeviceObject = PhysicalDeviceObject;
     params.MessageBased.ServiceRoutine = VirtioMsixIsr;
     params.MessageBased.ServiceContext = Msix;
@@ -262,7 +262,7 @@ VOID VirtioMsixDisconnect(_Inout_ PVIRTIO_MSIX_WDM Msix)
 
     if (Msix->ConnectionContext != NULL) {
         RtlZeroMemory(&params, sizeof(params));
-        params.Version = 2; /* CONNECT_MESSAGE_BASED */
+        params.Version = DISCONNECT_MESSAGE_BASED;
         params.MessageBased.ConnectionContext = Msix->ConnectionContext;
         IoDisconnectInterruptEx(&params);
         Msix->ConnectionContext = NULL;
