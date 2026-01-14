@@ -1450,8 +1450,8 @@ def _test_cors_vary_origin(
     *,
     resp: HttpResponse | None,
     origin: str | None,
+    name: str = "CORS: Vary includes Origin when Allow-Origin echoes a specific origin",
 ) -> TestResult:
-    name = "CORS: Vary includes Origin when Allow-Origin echoes a specific origin"
     if origin is None:
         return TestResult(name=name, status="SKIP", details="skipped (no origin provided)")
     if resp is None:
@@ -1485,8 +1485,8 @@ def _test_cors_allow_credentials_sane(
     *,
     resp: HttpResponse | None,
     origin: str | None,
+    name: str = "CORS: Allow-Credentials does not contradict Allow-Origin",
 ) -> TestResult:
-    name = "CORS: Allow-Credentials does not contradict Allow-Origin"
     if origin is None:
         return TestResult(name=name, status="SKIP", details="skipped (no origin provided)")
     if resp is None:
@@ -1910,6 +1910,47 @@ def _test_cors_expose_etag_if_present(*, name: str, resp: HttpResponse | None, o
     return TestResult(name=name, status="WARN", details=f"ETag not exposed via Access-Control-Expose-Headers: {expose!r}")
 
 
+def _test_cors_expose_last_modified_if_present(
+    *, name: str, resp: HttpResponse | None, origin: str | None
+) -> TestResult:
+    if origin is None:
+        return TestResult(name=name, status="SKIP", details="skipped (no origin provided)")
+    if resp is None:
+        return TestResult(name=name, status="SKIP", details="skipped (no response)")
+    last_modified = _header(resp, "Last-Modified")
+    if last_modified is None:
+        return TestResult(name=name, status="SKIP", details="skipped (no Last-Modified header)")
+    expose = _header(resp, "Access-Control-Expose-Headers")
+    if expose is None:
+        return TestResult(
+            name=name,
+            status="WARN",
+            details=(
+                "Last-Modified is present but Access-Control-Expose-Headers is missing "
+                "(browsers won't expose Last-Modified to JS)"
+            ),
+        )
+    tokens = _csv_tokens(expose)
+    if "*" in tokens or "last-modified" in tokens:
+        return TestResult(name=name, status="PASS", details=f"Expose-Headers={expose!r}")
+    return TestResult(
+        name=name,
+        status="WARN",
+        details=f"Last-Modified not exposed via Access-Control-Expose-Headers: {expose!r}",
+    )
+
+
+def _test_x_content_type_options_nosniff(*, name: str, resp: HttpResponse | None) -> TestResult:
+    if resp is None:
+        return TestResult(name=name, status="SKIP", details="skipped (no response)")
+    xcto = _header(resp, "X-Content-Type-Options")
+    if xcto is None:
+        return TestResult(name=name, status="WARN", details="missing X-Content-Type-Options (recommended: nosniff)")
+    if xcto.strip().lower() != "nosniff":
+        return TestResult(name=name, status="WARN", details=f"unexpected X-Content-Type-Options {xcto!r} (expected 'nosniff')")
+    return TestResult(name=name, status="PASS")
+
+
 def _main_chunked(args: argparse.Namespace) -> int:
     origin: str | None = args.origin
     timeout_s: float = args.timeout
@@ -1986,6 +2027,27 @@ def _main_chunked(args: argparse.Namespace) -> int:
             name="manifest: CORS exposes ETag when present",
             resp=manifest_resp,
             origin=origin,
+        )
+    )
+    results.append(
+        _test_cors_expose_last_modified_if_present(
+            name="manifest: CORS exposes Last-Modified when present",
+            resp=manifest_resp,
+            origin=origin,
+        )
+    )
+    results.append(
+        _test_cors_allow_credentials_sane(
+            resp=manifest_resp,
+            origin=origin,
+            name="manifest: CORS Allow-Credentials does not contradict Allow-Origin",
+        )
+    )
+    results.append(
+        _test_cors_vary_origin(
+            resp=manifest_resp,
+            origin=origin,
+            name="manifest: CORS Vary includes Origin when Allow-Origin echoes a specific origin",
         )
     )
     results.append(
@@ -2119,6 +2181,12 @@ def _main_chunked(args: argparse.Namespace) -> int:
                     )
                 )
                 results.append(
+                    _test_x_content_type_options_nosniff(
+                        name=f"chunk {label}: X-Content-Type-Options is nosniff",
+                        resp=chunk_resp,
+                    )
+                )
+                results.append(
                     _test_chunked_chunk_encoding(
                         name=f"chunk {label}: Content-Encoding is absent or identity",
                         resp=chunk_resp,
@@ -2144,6 +2212,27 @@ def _main_chunked(args: argparse.Namespace) -> int:
                         name=f"chunk {label}: CORS exposes ETag when present",
                         resp=chunk_resp,
                         origin=origin,
+                    )
+                )
+                results.append(
+                    _test_cors_expose_last_modified_if_present(
+                        name=f"chunk {label}: CORS exposes Last-Modified when present",
+                        resp=chunk_resp,
+                        origin=origin,
+                    )
+                )
+                results.append(
+                    _test_cors_allow_credentials_sane(
+                        resp=chunk_resp,
+                        origin=origin,
+                        name=f"chunk {label}: CORS Allow-Credentials does not contradict Allow-Origin",
+                    )
+                )
+                results.append(
+                    _test_cors_vary_origin(
+                        resp=chunk_resp,
+                        origin=origin,
+                        name=f"chunk {label}: CORS Vary includes Origin when Allow-Origin echoes a specific origin",
                     )
                 )
                 results.append(

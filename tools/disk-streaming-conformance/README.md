@@ -88,6 +88,12 @@ ORIGIN='https://app.example.com' \
 python3 tools/disk-streaming-conformance/conformance.py
 ```
 
+For chunked mode, you can use:
+
+- `MODE=chunked`
+- `MANIFEST_URL=...` (or `BASE_URL=...` as a prefix containing `manifest.json`)
+- `MAX_BYTES_PER_CHUNK=...`
+
 ### Private image (Authorization header)
 
 Provide `TOKEN`/`--token` only when testing a **private** image. The tool will assert that requests without the token are denied (401/403) and that requests with the token succeed.
@@ -191,6 +197,7 @@ Summary: 19 passed, 0 failed, 0 warned, 2 skipped
 - Missing/mismatched `ETag` on `304 Not Modified` responses
 - Missing recommended content headers (e.g. `X-Content-Type-Options: nosniff`)
 - Unexpected `Content-Encoding` (disk bytes must be served as identity / no compression transforms)
+- (Chunked mode) manifest/chunk caching headers missing `immutable` (recommended for versioned, CDN-hosted artifacts)
 - Private responses missing `Cache-Control: no-store`
 - `If-Range` mismatch returning `412` instead of `200`
 - `If-Modified-Since` not returning `304` (this check is WARN-only by default)
