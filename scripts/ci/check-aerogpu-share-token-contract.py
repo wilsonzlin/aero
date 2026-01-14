@@ -163,6 +163,17 @@ def check_no_pool_alloc_under_allocations_lock(errors: list[str]) -> None:
         r"\bKeAcquireSpinLockRaiseToDpc\s*\(\s*&\s*(?:Adapter|adapter)\s*->\s*AllocationsLock\b"
     )
 
+    # Allocation APIs that can take global locks and/or significantly extend the
+    # critical section. We conservatively treat lookaside allocs as allocations
+    # too: they can fall back to pool allocation when the list is empty.
+    alloc_needles = (
+        "ExAllocatePoolWithTag(",
+        "ExAllocatePool(",
+        "ExAllocatePool2(",
+        "ExAllocateFromNPagedLookasideList(",
+        "ExAllocateFromPagedLookasideList(",
+    )
+
     # This helper is named "*Locked" and is expected to be entered with the lock
     # held by the caller.
     lock_held = True
@@ -175,9 +186,9 @@ def check_no_pool_alloc_under_allocations_lock(errors: list[str]) -> None:
         elif re_lock_acquire.search(line) or re_lock_acquire_raise.search(line):
             lock_held = True
 
-        if "ExAllocatePoolWithTag(" in line and lock_held:
+        if lock_held and any(needle in line for needle in alloc_needles):
             errors.append(
-                f"{kmd_path.relative_to(ROOT)}:{file_line}: ExAllocatePoolWithTag called while Adapter->AllocationsLock is held"
+                f"{kmd_path.relative_to(ROOT)}:{file_line}: allocation call while Adapter->AllocationsLock is held"
             )
 
 
