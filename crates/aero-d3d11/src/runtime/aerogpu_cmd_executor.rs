@@ -3533,6 +3533,17 @@ impl AerogpuD3d11Executor {
             stage_ex
         };
 
+        // Legacy compatibility: some older command streams encoded GS/HS/DS directly via
+        // `shader_stage = 3/4/5` instead of using the `stage_ex` ABI extension. Accept these only
+        // for pre-stage_ex ABI minors to avoid silently misrouting bindings in modern streams.
+        if self.cmd_stream_abi_minor < AEROGPU_STAGE_EX_MIN_ABI_MINOR {
+            match stage_raw {
+                4 => return Ok(ShaderStage::Hull),
+                5 => return Ok(ShaderStage::Domain),
+                _ => {}
+            }
+        }
+
         let stage = resolve_stage(stage_raw, stage_ex).map_err(|e| {
             anyhow!("{opcode}: {e} (shader_stage={stage_raw}, stage_ex={stage_ex})")
         })?;
