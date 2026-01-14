@@ -339,6 +339,9 @@ impl AeroGpuPciDevice {
         self.regs.completed_fence = 0;
         self.regs.irq_status = 0;
         self.update_irq_level();
+        // A ring reset discards any pending doorbell notification. The guest is expected to
+        // reinitialize the ring state (including head/tail) before submitting more work.
+        self.doorbell_pending = false;
         // DMA portion (updating ring head + fence page) will run on the next tick if bus mastering
         // is enabled.
         self.ring_reset_pending_dma = true;

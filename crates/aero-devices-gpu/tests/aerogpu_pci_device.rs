@@ -164,6 +164,69 @@ fn pci_wrapper_gates_aerogpu_dma_on_pci_command_bme_bit() {
 }
 
 #[test]
+fn ring_reset_clears_pending_doorbell_even_when_dma_is_disabled() {
+    let mut mem = VecMemory::new(0x20_000);
+    let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default());
+    // Enable MMIO decode but leave bus mastering disabled.
+    dev.config_mut().set_command(1 << 1);
+
+    // Ring layout in guest memory (one no-op submission that signals fence=42).
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    let entry_count = 8u32;
+    let entry_stride = AeroGpuSubmitDesc::SIZE_BYTES;
+    mem.write_u32(ring_gpa + RING_MAGIC_OFFSET, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa + RING_ABI_VERSION_OFFSET, dev.regs.abi_version);
+    mem.write_u32(ring_gpa + RING_SIZE_BYTES_OFFSET, ring_size);
+    mem.write_u32(ring_gpa + RING_ENTRY_COUNT_OFFSET, entry_count);
+    mem.write_u32(ring_gpa + RING_ENTRY_STRIDE_BYTES_OFFSET, entry_stride);
+    mem.write_u32(ring_gpa + RING_FLAGS_OFFSET, 0);
+    mem.write_u32(ring_gpa + RING_HEAD_OFFSET, 0);
+    mem.write_u32(ring_gpa + RING_TAIL_OFFSET, 1);
+
+    let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    mem.write_u32(
+        desc_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET,
+        AeroGpuSubmitDesc::SIZE_BYTES,
+    );
+    mem.write_u64(desc_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, 42);
+
+    // Fence page.
+    let fence_gpa = 0x3000u64;
+    dev.write(mmio::FENCE_GPA_LO, 4, fence_gpa as u64);
+    dev.write(mmio::FENCE_GPA_HI, 4, (fence_gpa >> 32) as u64);
+
+    dev.write(mmio::RING_GPA_LO, 4, ring_gpa as u64);
+    dev.write(mmio::RING_GPA_HI, 4, (ring_gpa >> 32) as u64);
+    dev.write(mmio::RING_SIZE_BYTES, 4, ring_size as u64);
+    dev.write(mmio::RING_CONTROL, 4, ring_control::ENABLE as u64);
+    dev.write(mmio::IRQ_ENABLE, 4, irq_bits::FENCE as u64);
+
+    // Queue a doorbell while DMA is disabled.
+    dev.write(mmio::DOORBELL, 4, 1);
+
+    // Now reset the ring while DMA is still disabled, but keep it enabled afterward.
+    dev.write(
+        mmio::RING_CONTROL,
+        4,
+        (ring_control::RESET | ring_control::ENABLE) as u64,
+    );
+
+    // Tick once with DMA disabled: this should not process the doorbell.
+    dev.tick(&mut mem, 0);
+    assert_eq!(dev.regs.completed_fence, 0);
+
+    // Enable bus mastering and tick again. If the reset did not clear the pending doorbell, the
+    // old submission would still complete here.
+    dev.config_mut().set_command((1 << 1) | (1 << 2));
+    dev.tick(&mut mem, 0);
+    assert_eq!(
+        dev.regs.completed_fence, 0,
+        "ring reset must drop any pending doorbell notification"
+    );
+}
+
+#[test]
 fn pci_wrapper_gates_aerogpu_intx_on_pci_command_intx_disable_bit() {
     let mut mem = VecMemory::new(0x20_000);
     let mut dev = new_test_device(AeroGpuDeviceConfig::default());
