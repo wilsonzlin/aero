@@ -198,8 +198,8 @@ bash ./scripts/ci/run-vga-vbe-tests.sh
 | ID | Status | Task | Where | How to test |
 |----|--------|------|-------|-------------|
 | AGPU-PROTO-001 | Implemented | Rust mirrors of `drivers/aerogpu/protocol/*.h` (PCI IDs, MMIO regs, ring ABI, command ABI) | `emulator/protocol/aerogpu/*.rs` | `bash ./scripts/safe-run.sh cargo test -p aero-protocol --locked` |
-| AGPU-PROTO-002 | Implemented | TypeScript mirrors + iterators/writers (consumed by `web/src/workers/`) | `emulator/protocol/aerogpu/*.ts` | `npm run test:protocol` |
-| AGPU-PROTO-003 | Implemented | ABI drift / conformance tests (Rust + TS) | `emulator/protocol/tests/*` | `bash ./scripts/safe-run.sh cargo test -p aero-protocol --locked` and `npm run test:protocol` |
+| AGPU-PROTO-002 | Implemented | TypeScript mirrors + iterators/writers (consumed by `web/src/workers/`) | `emulator/protocol/aerogpu/*.ts` | `bash ./scripts/safe-run.sh npm run test:protocol` |
+| AGPU-PROTO-003 | Implemented | ABI drift / conformance tests (Rust + TS) | `emulator/protocol/tests/*` | `bash ./scripts/safe-run.sh cargo test -p aero-protocol --locked` and `bash ./scripts/safe-run.sh npm run test:protocol` |
 
 ### AeroGPU device model + scanout plumbing (the real remaining work)
 
@@ -316,11 +316,11 @@ bash ./scripts/safe-run.sh cargo test -p aero-dxbc --locked
 bash ./scripts/safe-run.sh cargo xtask wasm-check
 
 # Run protocol TypeScript tests (Node test runner)
-npm run test:protocol
+bash ./scripts/safe-run.sh npm run test:protocol
 
 # Browser e2e: WDDM scanout state presentation (no Win7 guest; validates BGRX->RGBA + alpha policy)
-npm run test:e2e -- tests/e2e/wddm_scanout_smoke.spec.ts
-npm run test:e2e -- tests/e2e/wddm_scanout_vram_smoke.spec.ts
+bash ./scripts/safe-run.sh npm run test:e2e -- tests/e2e/wddm_scanout_smoke.spec.ts
+bash ./scripts/safe-run.sh npm run test:e2e -- tests/e2e/wddm_scanout_vram_smoke.spec.ts
 
 # Manual (interactive): WDDM scanout debug harness (toggle scanoutState source/base_paddr/pitch and XRGB alpha forcing)
 # Open `/web/wddm-scanout-debug.html` under a COOP/COEP-enabled dev server (e.g. `npm run dev:harness`).

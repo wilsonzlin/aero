@@ -567,8 +567,13 @@ Workers should treat these as immutable for the lifetime of a VM instance.
 
 ### Tests / validation pointers
 
-- E2E (guest RAM scanout): `tests/e2e/wddm_scanout_smoke.spec.ts` (harness: `web/wddm-scanout-smoke.ts`)
-- E2E (VRAM aperture scanout): `tests/e2e/wddm_scanout_vram_smoke.spec.ts` (harness: `web/wddm-scanout-vram-smoke.ts`)
+- Rust: scanout handoff + disable semantics
+  - `bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_scanout_handoff --locked`
+  - `bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_scanout_disable_publishes_wddm_disabled --locked`
+- E2E (guest RAM scanout): `bash ./scripts/safe-run.sh npm run test:e2e -- tests/e2e/wddm_scanout_smoke.spec.ts`
+  (harness: `web/wddm-scanout-smoke.ts`)
+- E2E (VRAM aperture scanout): `bash ./scripts/safe-run.sh npm run test:e2e -- tests/e2e/wddm_scanout_vram_smoke.spec.ts`
+  (harness: `web/wddm-scanout-vram-smoke.ts`)
 
 ---
 

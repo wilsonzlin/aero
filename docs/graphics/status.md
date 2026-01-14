@@ -695,6 +695,7 @@ bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_immediate_b
 
 # AeroGPU protocol + host-side command processing
 bash ./scripts/safe-run.sh cargo test -p aero-protocol --locked
+bash ./scripts/safe-run.sh npm run test:protocol
 bash ./scripts/safe-run.sh cargo test -p aero-gpu --locked
 
 # D3D translation layers
