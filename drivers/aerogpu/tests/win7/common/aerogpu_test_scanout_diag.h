@@ -13,35 +13,31 @@ struct AerogpuScanoutDiag {
   uint32_t mmio_enable;
 };
 
-static inline bool TryQueryAerogpuScanoutDiag(uint32_t adapter,
-                                              uint32_t vidpn_source_id,
-                                              AerogpuScanoutDiag* out_diag) {
+static inline void InitAerogpuScanoutDiag(AerogpuScanoutDiag* out_diag) {
   if (!out_diag) {
-    return false;
+    return;
   }
-
   out_diag->ok = false;
   out_diag->flags_valid = false;
   out_diag->post_display_ownership_released = false;
   out_diag->flags_u32 = 0;
   out_diag->cached_enable = 0;
   out_diag->mmio_enable = 0;
+}
 
-  aerogpu_test::kmt::D3DKMT_FUNCS kmt;
-  std::string kmt_err;
-  if (!aerogpu_test::kmt::LoadD3DKMT(&kmt, &kmt_err)) {
+static inline bool TryQueryAerogpuScanoutDiagWithKmt(const aerogpu_test::kmt::D3DKMT_FUNCS* kmt,
+                                                     uint32_t adapter,
+                                                     uint32_t vidpn_source_id,
+                                                     AerogpuScanoutDiag* out_diag) {
+  if (!kmt || !out_diag) {
     return false;
   }
+  InitAerogpuScanoutDiag(out_diag);
 
   aerogpu_escape_query_scanout_out_v2 q;
   aerogpu_test::kmt::NTSTATUS st = 0;
-  const bool ok =
-      aerogpu_test::kmt::AerogpuQueryScanoutV2(&kmt,
-                                               (aerogpu_test::kmt::D3DKMT_HANDLE)adapter,
-                                               vidpn_source_id,
-                                               &q,
-                                               &st);
-  aerogpu_test::kmt::UnloadD3DKMT(&kmt);
+  const bool ok = aerogpu_test::kmt::AerogpuQueryScanoutV2(
+      kmt, (aerogpu_test::kmt::D3DKMT_HANDLE)adapter, vidpn_source_id, &q, &st);
   if (!ok) {
     return false;
   }
@@ -59,6 +55,25 @@ static inline bool TryQueryAerogpuScanoutDiag(uint32_t adapter,
         ((out_diag->flags_u32 & AEROGPU_DBGCTL_QUERY_SCANOUT_FLAG_POST_DISPLAY_OWNERSHIP_RELEASED) != 0);
   }
   return true;
+}
+
+static inline bool TryQueryAerogpuScanoutDiag(uint32_t adapter,
+                                              uint32_t vidpn_source_id,
+                                              AerogpuScanoutDiag* out_diag) {
+  InitAerogpuScanoutDiag(out_diag);
+  if (!out_diag) {
+    return false;
+  }
+
+  aerogpu_test::kmt::D3DKMT_FUNCS kmt;
+  std::string kmt_err;
+  if (!aerogpu_test::kmt::LoadD3DKMT(&kmt, &kmt_err)) {
+    return false;
+  }
+
+  const bool ok = TryQueryAerogpuScanoutDiagWithKmt(&kmt, adapter, vidpn_source_id, out_diag);
+  aerogpu_test::kmt::UnloadD3DKMT(&kmt);
+  return ok;
 }
 
 }  // namespace aerogpu_test
