@@ -184,7 +184,7 @@ cd fuzz && cargo fuzz run fuzz_aerogpu_bc_decompress -- -runs=10000
 
 # DXBC parsing
 cd fuzz && cargo fuzz run fuzz_dxbc_parse -- -runs=10000
-cd fuzz && cargo fuzz run fuzz_dxbc_parse -- -runs=10000 -dict=fuzz_targets/fuzz_dxbc_sm4_parse.dict
+cd fuzz && cargo fuzz run fuzz_dxbc_parse -- -runs=10000 -dict=fuzz_targets/fuzz_dxbc_parse.dict
   
 # DXBC container + signature + SM4/SM5 token parsing
 cd fuzz && cargo fuzz run fuzz_dxbc_sm4_parse -- -runs=10000
