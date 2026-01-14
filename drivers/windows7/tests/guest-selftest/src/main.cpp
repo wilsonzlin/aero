@@ -5852,6 +5852,19 @@ struct VirtioInputLedTestResult {
   LONG led_writes_dropped_delta = 0;
 };
 
+// When an overlapped HID write times out, we must keep the OVERLAPPED and buffer alive until the I/O completes
+// (even if we attempted to cancel it). In pathological driver/hardware failure cases, cancellation may not complete
+// promptly; in that case we "abandon" the write by leaking its resources so the selftest can fail fast without
+// risking use-after-free.
+struct AbandonedHidWrite {
+  HANDLE handle = INVALID_HANDLE_VALUE;
+  HANDLE event = nullptr;
+  OVERLAPPED ov{};
+  std::vector<uint8_t> buf;
+};
+
+static std::vector<AbandonedHidWrite*> g_abandoned_hid_writes;
+
 static bool HidWriteWithTimeout(HANDLE h, const uint8_t* buf, DWORD len, DWORD timeout_ms, DWORD* err_out) {
   if (err_out) *err_out = ERROR_SUCCESS;
   if (!buf || len == 0 || h == INVALID_HANDLE_VALUE) {
@@ -5859,47 +5872,85 @@ static bool HidWriteWithTimeout(HANDLE h, const uint8_t* buf, DWORD len, DWORD t
     return false;
   }
 
-  HANDLE ev = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-  if (!ev) {
+  // Duplicate the handle so, in timeout cases, the caller can still safely close the original handle without
+  // blocking on (or invalidating) the outstanding write.
+  HANDLE dup = INVALID_HANDLE_VALUE;
+  if (!DuplicateHandle(GetCurrentProcess(), h, GetCurrentProcess(), &dup, 0, FALSE, DUPLICATE_SAME_ACCESS)) {
     if (err_out) *err_out = GetLastError();
     return false;
   }
 
-  OVERLAPPED ov{};
-  ov.hEvent = ev;
+  auto cleanup = [&](AbandonedHidWrite* op) {
+    if (!op) return;
+    if (op->event) CloseHandle(op->event);
+    if (op->handle != INVALID_HANDLE_VALUE) CloseHandle(op->handle);
+    delete op;
+  };
 
-  DWORD bytes = 0;
-  BOOL ok = WriteFile(h, buf, len, nullptr, &ov);
-  DWORD err = ok ? ERROR_SUCCESS : GetLastError();
-  if (!ok && err != ERROR_IO_PENDING) {
-    CloseHandle(ev);
+  AbandonedHidWrite* op = new AbandonedHidWrite();
+  op->handle = dup;
+  op->buf.assign(buf, buf + len);
+
+  op->event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+  if (!op->event) {
+    DWORD err = GetLastError();
+    cleanup(op);
     if (err_out) *err_out = err;
     return false;
   }
 
-  const DWORD wait = WaitForSingleObject(ev, timeout_ms);
+  memset(&op->ov, 0, sizeof(op->ov));
+  op->ov.hEvent = op->event;
+
+  DWORD bytes = 0;
+  BOOL ok = WriteFile(op->handle, op->buf.data(), len, nullptr, &op->ov);
+  DWORD err = ok ? ERROR_SUCCESS : GetLastError();
+  if (!ok && err != ERROR_IO_PENDING) {
+    cleanup(op);
+    if (err_out) *err_out = err;
+    return false;
+  }
+
+  const DWORD wait = WaitForSingleObject(op->event, timeout_ms);
   if (wait == WAIT_TIMEOUT) {
-    // Best-effort: cancel the outstanding write so CloseHandle doesn't hang.
-    CancelIo(h);
-    CloseHandle(ev);
+    // Attempt cancellation, but never return while the OVERLAPPED/buffer might still be referenced by the kernel.
+    CancelIo(op->handle);
+
+    const DWORD cancel_wait = WaitForSingleObject(op->event, 250);
+    if (cancel_wait == WAIT_OBJECT_0) {
+      (void)GetOverlappedResult(op->handle, &op->ov, &bytes, FALSE);
+      cleanup(op);
+    } else {
+      // Cancellation didn't complete promptly; abandon the write to avoid use-after-free.
+      g_abandoned_hid_writes.push_back(op);
+    }
+
     if (err_out) *err_out = ERROR_TIMEOUT;
     return false;
   }
   if (wait == WAIT_FAILED) {
     err = GetLastError();
-    CancelIo(h);
-    CloseHandle(ev);
+    CancelIo(op->handle);
+
+    const DWORD cancel_wait = WaitForSingleObject(op->event, 250);
+    if (cancel_wait == WAIT_OBJECT_0) {
+      (void)GetOverlappedResult(op->handle, &op->ov, &bytes, FALSE);
+      cleanup(op);
+    } else {
+      g_abandoned_hid_writes.push_back(op);
+    }
+
     if (err_out) *err_out = err;
     return false;
   }
 
-  if (!GetOverlappedResult(h, &ov, &bytes, FALSE)) {
+  if (!GetOverlappedResult(op->handle, &op->ov, &bytes, FALSE)) {
     err = GetLastError();
-    CloseHandle(ev);
+    cleanup(op);
     if (err_out) *err_out = err;
     return false;
   }
-  CloseHandle(ev);
+  cleanup(op);
 
   if (bytes != len) {
     if (err_out) *err_out = ERROR_WRITE_FAULT;
