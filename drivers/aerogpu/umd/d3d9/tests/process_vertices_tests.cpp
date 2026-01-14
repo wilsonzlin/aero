@@ -40,6 +40,7 @@ constexpr uint8_t kDeclUsagePositionT = 9;
 constexpr uint8_t kDeclUsageColor = 10;
 
 constexpr uint32_t kFvfXyz = 0x00000002u;
+constexpr uint32_t kFvfXyzrhw = 0x00000004u;
 constexpr uint32_t kFvfDiffuse = 0x00000040u;
 constexpr uint32_t kFvfTex1 = 0x00000100u;
 
@@ -375,6 +376,93 @@ void test_xyz_diffuse_tex1_offsets() {
   assert(std::fabs(v - 0.75f) < 1e-4f);
 }
 
+void test_copy_xyzrhw_diffuse_offsets() {
+  Adapter adapter;
+  Device dev(&adapter);
+
+  // Use a non-fixedfunc-supported FVF so the DDI falls back to the memcpy-style
+  // ProcessVertices implementation (used by the Win7 smoke test path).
+  dev.fvf = kFvfXyzrhw | kFvfDiffuse;
+
+  // Source VB: XYZRHW|DIFFUSE (float4 + u32) = 20 bytes.
+  Resource src;
+  src.kind = ResourceKind::Buffer;
+  src.size_bytes = 4 * 20;
+  src.storage.resize(src.size_bytes);
+
+  // Vertex 0 is a distinctive sentinel; we process starting at vertex 1 so a
+  // SrcStartIndex bug is caught.
+  write_f32(src.storage, 0, -1000.0f);
+  write_f32(src.storage, 4, -1000.0f);
+  write_f32(src.storage, 8, -1000.0f);
+  write_f32(src.storage, 12, 1.0f);
+  write_u32(src.storage, 16, 0x01020304u);
+
+  // Vertices 1..3 are a small triangle.
+  const float verts[3][4] = {
+      {10.0f, 20.0f, 0.5f, 1.0f},
+      {30.0f, 40.0f, 0.5f, 1.0f},
+      {50.0f, 60.0f, 0.5f, 1.0f},
+  };
+  const uint32_t colors[3] = {0xAABBCCDDu, 0x11223344u, 0x55667788u};
+  for (size_t i = 0; i < 3; ++i) {
+    const size_t base = (i + 1) * 20;
+    write_f32(src.storage, base + 0, verts[i][0]);
+    write_f32(src.storage, base + 4, verts[i][1]);
+    write_f32(src.storage, base + 8, verts[i][2]);
+    write_f32(src.storage, base + 12, verts[i][3]);
+    write_u32(src.storage, base + 16, colors[i]);
+  }
+
+  // Destination VB: 6 vertices of XYZRHW|DIFFUSE.
+  Resource dst;
+  dst.kind = ResourceKind::Buffer;
+  dst.size_bytes = 6 * 20;
+  dst.storage.resize(dst.size_bytes);
+  std::memset(dst.storage.data(), 0xCD, dst.storage.size());
+
+  // Provide a plausible destination declaration (unused by the memcpy-style
+  // path, but present in the DDI args).
+  const D3DVERTEXELEMENT9_COMPAT elems[] = {
+      {0, 0, kDeclTypeFloat4, kDeclMethodDefault, kDeclUsagePositionT, 0},
+      {0, 16, kDeclTypeD3dColor, kDeclMethodDefault, kDeclUsageColor, 0},
+      {0xFF, 0, kDeclTypeUnused, 0, 0, 0},
+  };
+  VertexDecl decl;
+  decl.blob.resize(sizeof(elems));
+  std::memcpy(decl.blob.data(), elems, sizeof(elems));
+
+  dev.streams[0].vb = &src;
+  dev.streams[0].offset_bytes = 0;
+  dev.streams[0].stride_bytes = 20;
+
+  D3DDDIARG_PROCESSVERTICES pv{};
+  pv.SrcStartIndex = 1;
+  pv.DestIndex = 3;
+  pv.VertexCount = 3;
+  pv.hDestBuffer.pDrvPrivate = &dst;
+  pv.hVertexDecl.pDrvPrivate = &decl;
+  pv.Flags = 0;
+  pv.DestStride = 20;
+
+  D3DDDI_HDEVICE hDevice{};
+  hDevice.pDrvPrivate = &dev;
+
+  const HRESULT hr = device_process_vertices(hDevice, &pv);
+  assert(SUCCEEDED(hr));
+
+  // Destination indices [0..2] should remain untouched (0xCD fill), verifying
+  // DestIndex handling.
+  for (size_t i = 0; i < 3 * 20; ++i) {
+    assert(dst.storage[i] == 0xCD);
+  }
+
+  // Destination indices [3..5] should match source indices [1..3].
+  const size_t src_off = 1 * 20;
+  const size_t dst_off = 3 * 20;
+  assert(std::memcmp(dst.storage.data() + dst_off, src.storage.data() + src_off, 3 * 20) == 0);
+}
+
 } // namespace
 } // namespace aerogpu
 
@@ -383,5 +471,6 @@ int main() {
   aerogpu::test_xyz_diffuse_tex1();
   aerogpu::test_xyz_diffuse_offsets();
   aerogpu::test_xyz_diffuse_tex1_offsets();
+  aerogpu::test_copy_xyzrhw_diffuse_offsets();
   return 0;
 }
