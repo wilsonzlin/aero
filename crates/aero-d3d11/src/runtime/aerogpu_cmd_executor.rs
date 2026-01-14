@@ -3049,10 +3049,13 @@ impl AerogpuD3d11Executor {
             .expect("legacy constants buffer exists for every stage");
         let depth_params_size = wgpu::BufferSize::new(16).expect("non-zero buffer size");
 
-        // Optionally set up vertex pulling bindings for the compute prepass. This is needed for the
-        // eventual VS-as-compute implementation, but we only enable it when an input layout is
-        // bound (some placeholder tests bind VS/PS but omit ILAY/VBs because the current prepass
-        // doesn't execute the VS yet).
+        // Optionally set up vertex/index pulling bindings for the compute prepass. This is needed
+        // for the eventual VS-as-compute implementation.
+        //
+        // - Vertex pulling requires an input layout + vertex buffers, so we only enable it when an
+        //   input layout is bound.
+        // - Indexed draws can still bind index pulling even without an input layout (useful for
+        //   future VS-as-compute shaders that use only `SV_VertexID`).
         let mut vertex_pulling_bgl: Option<aero_gpu::bindings::layout_cache::CachedBindGroupLayout> =
             None;
         let mut vertex_pulling_bg: Option<wgpu::BindGroup> = None;
