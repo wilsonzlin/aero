@@ -250,8 +250,9 @@ captured stdout/stderr.
 ### Capturing driver status on failures (dbgctl)
 
 If you have `aerogpu_dbgctl.exe` available in the guest, the runner can automatically capture:
-
+ 
 - an `aerogpu_dbgctl --status` snapshot, and
+- an `aerogpu_dbgctl --query-error` snapshot, and
 - a recent cmd-stream dump (`aerogpu_dbgctl --dump-last-submit --count 4`)
 
 after test failures/timeouts. These artifacts are best-effort and intended to make “what did the guest last submit?”
@@ -297,8 +298,9 @@ bin\aerogpu_test_runner.exe --log-dir=logs --dbgctl=aerogpu_dbgctl.exe
 ```
 
 By default these artifacts are written next to the per-test logs (or next to `report.json` when `--json` is used):
-
+ 
 - `dbgctl_<test>_status.txt`
+- `dbgctl_<test>_query_error.txt`
 - `dbgctl_<test>_dump_last_cmd.txt`
 - `dbgctl_<test>_cmd_*.bin` + siblings (`.txt` metadata, and on AGPU an optional `.alloc_table.bin`)
 
