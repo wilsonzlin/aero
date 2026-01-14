@@ -400,6 +400,11 @@ fn block_cache_eviction_writeback_failure_keeps_dirty_block_resident() {
     // Force an eviction of block 0 (dirty). Write-back fails, so the operation errors out.
     let err = cached.read_at(32, &mut tmp).unwrap_err(); // block 2 would evict block 0
     assert!(matches!(err, DiskError::Io(_)));
+    assert_eq!(
+        cached.stats().writebacks,
+        0,
+        "failed write-back attempts should not be counted as successful writebacks"
+    );
 
     // The dirty block must still be cached and readable even after the failed eviction attempt.
     let mut buf = [0u8; 4];

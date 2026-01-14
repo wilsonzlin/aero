@@ -8,6 +8,7 @@ pub struct BlockCacheStats {
     pub hits: u64,
     pub misses: u64,
     pub evictions: u64,
+    /// Number of dirty cached blocks successfully written back to the underlying disk.
     pub writebacks: u64,
 }
 
@@ -115,7 +116,6 @@ impl<D: VirtualDisk> BlockCachedDisk<D> {
         if !entry.dirty {
             return Ok(());
         }
-        self.stats.writebacks += 1;
         let start = block_idx
             .checked_mul(self.block_size as u64)
             .ok_or(DiskError::OffsetOverflow)?;
@@ -125,6 +125,7 @@ impl<D: VirtualDisk> BlockCachedDisk<D> {
         let max_len = (self.inner.capacity_bytes() - start).min(self.block_size as u64);
         self.inner
             .write_at(start, &entry.data[..max_len as usize])?;
+        self.stats.writebacks += 1;
         Ok(())
     }
 }
@@ -221,8 +222,8 @@ impl<D: VirtualDisk> VirtualDisk for BlockCachedDisk<D> {
                 continue;
             }
 
-            self.stats.writebacks += 1;
             self.inner.write_at(start, &entry.data[..max_len])?;
+            self.stats.writebacks += 1;
             entry.dirty = false;
         }
 
@@ -279,8 +280,8 @@ impl<D: VirtualDisk> VirtualDisk for BlockCachedDisk<D> {
                 continue;
             }
 
-            self.stats.writebacks += 1;
             self.inner.write_at(start, &entry.data[..max_len])?;
+            self.stats.writebacks += 1;
             entry.dirty = false;
         }
 
