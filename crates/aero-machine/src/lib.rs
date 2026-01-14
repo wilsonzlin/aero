@@ -6878,6 +6878,15 @@ impl Machine {
             .is_some_and(|kbd| kbd.configured())
     }
 
+    /// Returns the current HID boot keyboard LED bitmask (NumLock/CapsLock/ScrollLock/Compose/Kana)
+    /// as last set by the guest OS, or 0 if the synthetic USB HID keyboard is not present.
+    pub fn usb_hid_keyboard_leds(&self) -> u8 {
+        self.usb_hid_keyboard
+            .as_ref()
+            .map(|kbd| kbd.leds())
+            .unwrap_or(0)
+    }
+
     /// Returns the synthetic USB HID mouse handle, if present.
     pub fn usb_hid_mouse_handle(&self) -> Option<aero_usb::hid::UsbHidMouseHandle> {
         self.usb_hid_mouse.clone()

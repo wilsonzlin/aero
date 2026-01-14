@@ -1,6 +1,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use aero_io_snapshot::io::state::IoSnapshot as _;
+use aero_usb::hid::KEYBOARD_LED_MASK;
 use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel};
 use aero_virtio::devices::input::{BTN_LEFT, KEY_A, VirtioInput};
 
@@ -44,6 +45,21 @@ fn machine_can_inject_virtio_input_and_synthetic_usb_hid() {
     let resp = usb_kbd.handle_control_request(setup, None);
     assert!(matches!(resp, ControlResponse::Ack));
     assert!(m.usb_hid_keyboard_configured());
+
+    assert_eq!(m.usb_hid_keyboard_leds(), 0);
+    let leds = [0xffu8];
+    let resp = usb_kbd.handle_control_request(
+        SetupPacket {
+            bm_request_type: 0x21, // HostToDevice | Class | Interface
+            b_request: 0x09,       // SET_REPORT
+            w_value: 2u16 << 8,    // Output report, ID 0
+            w_index: 0,
+            w_length: 1,
+        },
+        Some(&leds),
+    );
+    assert!(matches!(resp, ControlResponse::Ack));
+    assert_eq!(m.usb_hid_keyboard_leds(), u32::from(KEYBOARD_LED_MASK));
 
     let mut usb_mouse = m
         .debug_inner()

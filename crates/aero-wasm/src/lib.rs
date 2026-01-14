@@ -6089,6 +6089,12 @@ impl Machine {
         self.inner.usb_hid_keyboard_configured()
     }
 
+    /// Returns the current HID boot keyboard LED bitmask (NumLock/CapsLock/ScrollLock/Compose/Kana)
+    /// as last set by the guest OS, or 0 if the synthetic USB HID keyboard is not present.
+    pub fn usb_hid_keyboard_leds(&self) -> u32 {
+        u32::from(self.inner.usb_hid_keyboard_leds())
+    }
+
     /// Whether the guest has configured the synthetic USB HID mouse (`SET_CONFIGURATION != 0`).
     pub fn usb_hid_mouse_configured(&self) -> bool {
         self.inner.usb_hid_mouse_configured()

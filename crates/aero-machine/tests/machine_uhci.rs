@@ -9,6 +9,7 @@ use aero_machine::{Machine, MachineConfig};
 use aero_snapshot as snapshot;
 use aero_usb::hid::{
     UsbHidConsumerControlHandle, UsbHidGamepadHandle, UsbHidKeyboardHandle, UsbHidMouseHandle,
+    KEYBOARD_LED_MASK,
 };
 use aero_usb::hub::UsbHubDevice;
 use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel, UsbInResult};
@@ -400,6 +401,65 @@ fn machine_synthetic_usb_hid_consumer_injection_produces_report() {
         other => panic!("expected consumer report data, got {other:?}"),
     };
     assert_eq!(report, vec![0xe9, 0x00]);
+}
+
+#[test]
+fn machine_synthetic_usb_hid_keyboard_set_report_updates_machine_led_state() {
+    let cfg = MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_uhci: true,
+        enable_synthetic_usb_hid: true,
+        // Keep the machine minimal/deterministic for this device-model test.
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        ..Default::default()
+    };
+
+    let m = Machine::new(cfg).unwrap();
+    assert_eq!(m.usb_hid_keyboard_leds(), 0);
+
+    let mut keyboard = m
+        .usb_hid_keyboard_handle()
+        .expect("synthetic USB HID keyboard handle should be present");
+
+    assert_eq!(
+        keyboard.handle_control_request(
+            SetupPacket {
+                bm_request_type: 0x00,
+                b_request: 0x09, // SET_CONFIGURATION
+                w_value: 1,
+                w_index: 0,
+                w_length: 0,
+            },
+            None,
+        ),
+        ControlResponse::Ack,
+        "keyboard should accept SET_CONFIGURATION"
+    );
+
+    // HID boot keyboard LEDs are set via SET_REPORT(Output).
+    let leds = [0xffu8];
+    assert_eq!(
+        keyboard.handle_control_request(
+            SetupPacket {
+                bm_request_type: 0x21, // HostToDevice | Class | Interface
+                b_request: 0x09,       // SET_REPORT
+                w_value: 2u16 << 8,    // Output report, ID 0
+                w_index: 0,            // interface 0
+                w_length: 1,
+            },
+            Some(&leds),
+        ),
+        ControlResponse::Ack,
+        "keyboard should accept SET_REPORT(Output)"
+    );
+
+    assert_eq!(m.usb_hid_keyboard_leds(), KEYBOARD_LED_MASK);
 }
 
 #[test]
