@@ -1771,6 +1771,35 @@ static NTSTATUS AeroGpuAllocTableScratchEnsureCapacityLocked(_Inout_ AEROGPU_ALL
     return STATUS_SUCCESS;
 }
 
+static __forceinline uint32_t AeroGpuAllocTableEntryFlagsFromAllocationListEntry(_In_ const DXGK_ALLOCATIONLIST* Entry)
+{
+    /*
+     * Win7/WDDM 1.1 supplies per-allocation access metadata for each submission in the allocation list.
+     *
+     * Propagate this into `aerogpu_alloc_entry.flags` so the host can reject attempts to write back
+     * into guest memory that the runtime did not mark as writable for the current submission.
+     *
+     * Fail-open for compatibility: if we cannot determine write access reliably, leave READONLY
+     * clear and log (DBG-only, rate-limited).
+     */
+    if (!Entry) {
+        return 0;
+    }
+
+#if defined(AEROGPU_KMD_USE_WDK_DDI) && AEROGPU_KMD_USE_WDK_DDI
+    const BOOLEAN written = (Entry->WriteOperation != 0);
+    return written ? 0u : (uint32_t)AEROGPU_ALLOC_FLAG_READONLY;
+#else
+#if DBG
+    static volatile LONG g_BuildAllocTableReadonlyFallbackLogCount = 0;
+    AEROGPU_LOG_RATELIMITED(g_BuildAllocTableReadonlyFallbackLogCount,
+                            8,
+                            "BuildAllocTable: allocation list access flags unavailable; not setting AEROGPU_ALLOC_FLAG_READONLY");
+#endif
+    return 0;
+#endif
+}
+
 static NTSTATUS AeroGpuBuildAllocTableFillScratch(_In_reads_opt_(Count) const DXGK_ALLOCATIONLIST* List,
                                                   _In_ UINT Count,
                                                   _Inout_updates_(TmpEntriesCap) struct aerogpu_alloc_entry* TmpEntries,
@@ -1827,6 +1856,8 @@ static NTSTATUS AeroGpuBuildAllocTableFillScratch(_In_reads_opt_(Count) const DX
 #endif
             continue;
         }
+
+        const uint32_t entryFlags = AeroGpuAllocTableEntryFlagsFromAllocationListEntry(&List[i]);
 
         UINT slot = (allocId * 2654435761u) & mask;
         for (;;) {
@@ -1885,6 +1916,11 @@ static NTSTATUS AeroGpuBuildAllocTableFillScratch(_In_reads_opt_(Count) const DX
                 /* Merge per-submit access flags across duplicate alloc_id entries (aliases). */
                 if (writeOp && entryIndex < entryCount) {
                     TmpEntries[entryIndex].flags &= ~(uint32_t)AEROGPU_ALLOC_FLAG_READONLY;
+                }
+
+                /* Merge submission-time access flags: READONLY only if all aliases are read-only. */
+                if (entryIndex < entryCount) {
+                    TmpEntries[entryIndex].flags &= entryFlags;
                 }
                 break;
             }
