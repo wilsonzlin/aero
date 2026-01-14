@@ -31,9 +31,9 @@ This directory contains the host-side scripts used to run the Windows 7 guest se
       - (optional) Consumer Control / media keys: `--test-input-media-keys`
         (or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_MEDIA_KEYS=1`; if provisioning via `New-AeroWin7TestImage.ps1`, pass
         `-TestInputMediaKeys` (alias: `-TestMediaKeys`))
-      - (optional) keyboard LED/statusq smoke test: `--test-input-led`
-        (or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_LED=1`; if provisioning via `New-AeroWin7TestImage.ps1`, pass
-        `-TestInputLed`)
+      - (optional) keyboard LED/statusq smoke test: `--test-input-led` (compat: `--test-input-leds`)
+        (env vars: `AERO_VIRTIO_SELFTEST_TEST_INPUT_LED=1` / `AERO_VIRTIO_SELFTEST_TEST_INPUT_LEDS=1`;
+        if provisioning via `New-AeroWin7TestImage.ps1`, pass `-TestInputLed` / `-TestInputLeds`)
       - tablet / absolute pointer: `--test-input-tablet-events` (alias: `--test-tablet-events`)
         (or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_TABLET_EVENTS=1` / `AERO_VIRTIO_SELFTEST_TEST_TABLET_EVENTS=1`)
       - Pair these with host-side QMP injection flags (so the harness injects events and requires the corresponding
@@ -42,7 +42,8 @@ This directory contains the host-side scripts used to run the Windows 7 guest se
         - wheel: PowerShell `-WithInputWheel` / Python `--with-input-wheel`
         - extended events: PowerShell `-WithInputEventsExtended` / Python `--with-input-events-extended`
         - media keys: PowerShell `-WithInputMediaKeys` / Python `--with-input-media-keys`
-        - LED/statusq: PowerShell `-WithInputLed` / Python `--with-input-led` (no QMP injection required)
+        - LED/statusq: PowerShell `-WithInputLed` / Python `--with-input-led` (compat: `-WithInputLeds` / `--with-input-leds`;
+          no QMP injection required)
         - tablet: PowerShell `-WithInputTabletEvents` / Python `--with-input-tablet-events`
     - To enable the optional end-to-end virtio-net link flap regression test (QMP `set_link` + guest link state polling),
       the guest selftest must be provisioned with:
@@ -667,6 +668,24 @@ python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
   --snapshot
 ```
 
+### virtio-input keyboard LED/statusq (HID output reports)
+
+virtio-input also has an **output** path used for keyboard LED state (CapsLock/NumLock/etc). In the Aero Win7 virtio-input
+stack this is transported over the virtio-input **status queue** (statusq).
+
+To regression-test this path end-to-end (user-mode HID `WriteFile` → KMDF HID minidriver → virtio statusq → device
+consumes/completes), the guest selftest includes an optional `virtio-input-leds` section.
+
+To enable the check:
+
+1. Provision the guest image so the scheduled selftest runs with `--test-input-leds`
+   (for example via `New-AeroWin7TestImage.ps1 -TestInputLeds`, or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_LEDS=1`).
+2. Run the host harness with `-WithInputLeds` / `--with-input-leds` so it requires the guest marker:
+   `AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|PASS|writes=<n>`.
+
+When enabled, a guest `virtio-input-leds|SKIP|flag_not_set` causes a hard failure (PowerShell: `VIRTIO_INPUT_LEDS_SKIPPED`;
+Python: `FAIL: VIRTIO_INPUT_LEDS_SKIPPED: ...`). If the guest emits no marker at all after `virtio-input` completes, the
+harness fails early (PowerShell: `MISSING_VIRTIO_INPUT_LEDS`; Python: `FAIL: MISSING_VIRTIO_INPUT_LEDS: ...`).
 ### virtio-input tablet (absolute pointer) event delivery (QMP input injection)
 
 When a virtio tablet device (`virtio-tablet-pci`) is attached, the guest selftest can optionally validate **absolute
@@ -1217,6 +1236,7 @@ only if you explicitly want the base image to be mutated.
     - (only when virtio-input binding gating is enabled via `-RequireVirtioInputBinding` / `--require-virtio-input-binding`)
       `AERO_VIRTIO_SELFTEST|TEST|virtio-input-binding|PASS`
     - (only when LED/statusq testing is enabled via `-WithInputLed` / `--with-input-led`) `AERO_VIRTIO_SELFTEST|TEST|virtio-input-led|PASS`
+    - (only when `-WithInputLeds` / `--with-input-leds` is enabled) `AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|PASS`
     - (only when virtio-input event injection is enabled via `-WithInputEvents`/`--with-input-events` or implied by wheel/extended flags)
       `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS`
     - (only when wheel injection is enabled via `-WithInputWheel` / `--with-input-wheel`) `AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|PASS`

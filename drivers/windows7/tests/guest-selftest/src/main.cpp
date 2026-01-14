@@ -101,6 +101,9 @@ struct Options {
   // If set, run an end-to-end virtio-input event delivery test that reads actual HID input reports.
   // This is intended to be paired with host-side QMP `input-send-event` injection.
   bool test_input_events = false;
+  // If set, run a virtio-input keyboard LED/statusq smoke test that writes HID output reports.
+  // This exercises the virtio-input status queue end-to-end (user-mode WriteFile -> KMDF HID miniport -> virtqueue).
+  bool test_input_leds = false;
   // If set, run an end-to-end virtio-input tablet (absolute pointer) event delivery test.
   // This is intended to be paired with host-side QMP `input-send-event` injection of `abs` events.
   bool test_input_tablet_events = false;
@@ -4852,6 +4855,17 @@ static VirtioInputHidPaths FindVirtioInputHidPaths(Logger& log) {
   return out;
 }
 
+static HANDLE OpenHidDeviceForWrite(const wchar_t* path) {
+  const DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE;
+  const DWORD flags = FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED;
+  const DWORD desired_accesses[] = {GENERIC_READ | GENERIC_WRITE, GENERIC_WRITE};
+  for (const DWORD access : desired_accesses) {
+    HANDLE h = CreateFileW(path, access, share, nullptr, OPEN_EXISTING, flags, nullptr);
+    if (h != INVALID_HANDLE_VALUE) return h;
+  }
+  return INVALID_HANDLE_VALUE;
+}
+
 static HANDLE OpenHidDeviceForRead(const wchar_t* path) {
   const DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE;
   const DWORD flags = FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED;
@@ -5837,17 +5851,6 @@ struct VirtioInputLedTestResult {
   LONG led_writes_submitted_delta = 0;
   LONG led_writes_dropped_delta = 0;
 };
-
-static HANDLE OpenHidDeviceForWrite(const wchar_t* path) {
-  const DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE;
-  const DWORD flags = FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED;
-  const DWORD desired_accesses[] = {GENERIC_READ | GENERIC_WRITE, GENERIC_WRITE};
-  for (const DWORD access : desired_accesses) {
-    HANDLE h = CreateFileW(path, access, share, nullptr, OPEN_EXISTING, flags, nullptr);
-    if (h != INVALID_HANDLE_VALUE) return h;
-  }
-  return INVALID_HANDLE_VALUE;
-}
 
 static bool HidWriteWithTimeout(HANDLE h, const uint8_t* buf, DWORD len, DWORD timeout_ms, DWORD* err_out) {
   if (err_out) *err_out = ERROR_SUCCESS;
@@ -10752,6 +10755,8 @@ static void PrintUsage() {
       "  --test-snd                Alias for --require-snd\n"
       "  --test-input-events       Run virtio-input end-to-end HID input report test (optional)\n"
       "                           (or set env var AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS=1)\n"
+      "  --test-input-leds         Run virtio-input keyboard LED/statusq output report smoke test (optional)\n"
+      "                           (or set env var AERO_VIRTIO_SELFTEST_TEST_INPUT_LEDS=1)\n"
       "  --require-input-msix      Fail if virtio-input is not using MSI-X interrupts\n"
       "                           (or set env var AERO_VIRTIO_SELFTEST_REQUIRE_INPUT_MSIX=1)\n"
       "  --test-input-events-extended  Also test modifiers/buttons/wheel via additional markers:\n"
@@ -10871,6 +10876,8 @@ int wmain(int argc, wchar_t** argv) {
       opt.require_snd = true;
     } else if (arg == L"--test-input-events") {
       opt.test_input_events = true;
+    } else if (arg == L"--test-input-leds") {
+      opt.test_input_leds = true;
     } else if (arg == L"--test-input-events-extended") {
       opt.test_input_events = true;
       opt.test_input_events_modifiers = true;
@@ -10965,6 +10972,10 @@ int wmain(int argc, wchar_t** argv) {
   if (EnvVarTruthy(L"AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS_WHEEL")) {
     opt.test_input_events = true;
     opt.test_input_events_wheel = true;
+  }
+
+  if (!opt.test_input_leds && EnvVarTruthy(L"AERO_VIRTIO_SELFTEST_TEST_INPUT_LEDS")) {
+    opt.test_input_leds = true;
   }
 
   if (!opt.test_input_tablet_events &&
@@ -11440,8 +11451,16 @@ int wmain(int argc, wchar_t** argv) {
   }
 
   // virtio-input statusq / keyboard LED smoke test.
-  if (!opt.test_input_led) {
+  //
+  // Compatibility note:
+  // - Newer harnesses/selftests use `virtio-input-led` (`--test-input-led` / `--with-input-led`).
+  // - Earlier versions used `virtio-input-leds` (`--test-input-leds` / `--with-input-leds`).
+  //
+  // Treat both flags as enabling the same underlying test and emit both markers.
+  const bool want_input_led = opt.test_input_led || opt.test_input_leds;
+  if (!want_input_led) {
     log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-input-led|SKIP|flag_not_set");
+    log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|SKIP|flag_not_set");
   } else {
     const auto led = VirtioInputLedTest(log, input);
     if (led.ok) {
@@ -11453,15 +11472,18 @@ int wmain(int argc, wchar_t** argv) {
           static_cast<long>(led.statusq_full_delta), static_cast<long>(led.statusq_drops_delta),
           static_cast<long>(led.led_writes_requested_delta), static_cast<long>(led.led_writes_submitted_delta),
           static_cast<long>(led.led_writes_dropped_delta));
+      log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|PASS|writes=%d", led.sent);
     } else {
       log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-input-led|FAIL|reason=%s|err=%lu|sent=%d|format=%s|led=%s",
                led.reason.empty() ? "unknown" : led.reason.c_str(),
                static_cast<unsigned long>(led.win32_error), led.sent, led.format.empty() ? "-" : led.format.c_str(),
                led.led_name.empty() ? "-" : led.led_name.c_str());
+      log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|FAIL|reason=%s|err=%lu|writes=%d",
+               led.reason.empty() ? "unknown" : led.reason.c_str(),
+               static_cast<unsigned long>(led.win32_error), led.sent);
       all_ok = false;
     }
   }
-
   const bool want_input_modifiers = opt.test_input_events_modifiers;
   const bool want_input_buttons = opt.test_input_events_buttons;
   const bool want_input_wheel = opt.test_input_events_wheel;

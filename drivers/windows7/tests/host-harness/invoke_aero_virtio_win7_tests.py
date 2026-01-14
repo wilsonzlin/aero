@@ -57,6 +57,7 @@ It:
   - when --with-virtio-snd is enabled, virtio-snd, virtio-snd-capture, and virtio-snd-duplex must PASS (not SKIP)
   - when --with-snd-buffer-limits is enabled, virtio-snd-buffer-limits must PASS (not FAIL/SKIP/missing)
   - when --with-input-events (alias: --with-virtio-input-events) is enabled, virtio-input-events must PASS (not FAIL/missing)
+  - when --with-input-leds is enabled, virtio-input-leds must PASS (not SKIP/FAIL/missing)
   - when --with-input-media-keys is enabled, virtio-input-media-keys must PASS (not FAIL/missing)
   - when --with-input-led is enabled, virtio-input-led must PASS (not FAIL/SKIP/missing)
   - when --with-input-tablet-events/--with-tablet-events is enabled, virtio-input-tablet-events must PASS (not FAIL/missing)
@@ -2541,6 +2542,49 @@ def _virtio_net_link_flap_required_failure_message(
     )
 
 
+def _virtio_input_leds_required_failure_message(
+    tail: bytes,
+    *,
+    saw_pass: bool = False,
+    saw_fail: bool = False,
+    saw_skip: bool = False,
+) -> Optional[str]:
+    """
+    Enforce that virtio-input-leds ran and PASSed.
+
+    Returns:
+        A "FAIL: ..." message on failure, or None when the marker requirements are satisfied.
+    """
+    # Prefer explicit "saw_*" flags tracked by the main harness loop (these survive tail truncation),
+    # but keep a tail scan fallback to support direct unit tests (and any legacy call sites).
+    if saw_pass or b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|PASS" in tail:
+        return None
+    if saw_fail or b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|FAIL" in tail:
+        return (
+            "FAIL: VIRTIO_INPUT_LEDS_FAILED: virtio-input-leds test reported FAIL while --with-input-leds was enabled"
+        )
+    if saw_skip or b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|SKIP" in tail:
+        marker = _try_extract_last_marker_line(
+            tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|SKIP|"
+        )
+        if marker is not None:
+            prefix = "AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|SKIP|"
+            reason = marker[len(prefix) :].strip()
+            if reason:
+                return (
+                    f"FAIL: VIRTIO_INPUT_LEDS_SKIPPED: virtio-input-leds test was skipped ({reason}) "
+                    "but --with-input-leds was enabled (provision the guest with --test-input-leds)"
+                )
+        return (
+            "FAIL: VIRTIO_INPUT_LEDS_SKIPPED: virtio-input-leds test was skipped but --with-input-leds was enabled "
+            "(provision the guest with --test-input-leds)"
+        )
+    return (
+        "FAIL: MISSING_VIRTIO_INPUT_LEDS: did not observe virtio-input-leds PASS marker while --with-input-leds was enabled "
+        "(guest selftest too old or missing --test-input-leds)"
+    )
+
+
 @lru_cache(maxsize=None)
 def _qemu_device_help_text(qemu_system: str, device_name: str) -> str:
     try:
@@ -3054,6 +3098,19 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--with-input-leds",
+        "--with-virtio-input-leds",
+        "--require-virtio-input-leds",
+        "--enable-virtio-input-leds",
+        dest="with_input_leds",
+        action="store_true",
+        help=(
+            "Require the guest virtio-input-leds selftest marker to PASS. This validates the virtio-input statusq output path "
+            "end-to-end (user-mode HID output report write -> KMDF HID minidriver -> virtqueue). "
+            "This requires a guest image provisioned with --test-input-leds (or env var)."
+        ),
+    )
+    parser.add_argument(
         "--with-input-media-keys",
         "--with-virtio-input-media-keys",
         "--require-virtio-input-media-keys",
@@ -3409,6 +3466,7 @@ def main() -> int:
     need_input_wheel = bool(getattr(args, "with_input_wheel", False))
     need_input_events_extended = bool(getattr(args, "with_input_events_extended", False))
     need_input_events = bool(args.with_input_events) or need_input_wheel or need_input_events_extended
+    need_input_leds = bool(getattr(args, "with_input_leds", False))
     need_input_media_keys = bool(getattr(args, "with_input_media_keys", False))
     need_input_led = bool(getattr(args, "with_input_led", False))
     need_input_tablet_events = bool(getattr(args, "with_input_tablet_events", False))
@@ -3559,6 +3617,11 @@ def main() -> int:
                 "/--with-input-events-extended/--with-input-events-extra requires "
                 "QEMU virtio-keyboard-pci and virtio-mouse-pci support. Upgrade QEMU or omit input event injection."
             )
+
+    if need_input_leds and not args.dry_run and not _qemu_has_device(args.qemu_system, "virtio-keyboard-pci"):
+        parser.error(
+            "--with-input-leds requires QEMU virtio-keyboard-pci support. Upgrade QEMU or omit LED/statusq validation."
+        )
 
     if (
         need_input_media_keys
@@ -4343,6 +4406,9 @@ def main() -> int:
             saw_virtio_input_bind_pass = False
             saw_virtio_input_bind_fail = False
             virtio_input_marker_time: Optional[float] = None
+            saw_virtio_input_leds_pass = False
+            saw_virtio_input_leds_fail = False
+            saw_virtio_input_leds_skip = False
             saw_virtio_input_events_ready = False
             saw_virtio_input_events_pass = False
             saw_virtio_input_events_fail = False
@@ -4608,6 +4674,21 @@ def main() -> int:
                     ):
                         saw_virtio_input_bind_fail = True
                     if (
+                        not saw_virtio_input_leds_pass
+                        and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|PASS" in tail
+                    ):
+                        saw_virtio_input_leds_pass = True
+                    if (
+                        not saw_virtio_input_leds_fail
+                        and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|FAIL" in tail
+                    ):
+                        saw_virtio_input_leds_fail = True
+                    if (
+                        not saw_virtio_input_leds_skip
+                        and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|SKIP" in tail
+                    ):
+                        saw_virtio_input_leds_skip = True
+                    if (
                         not saw_virtio_input_events_ready
                         and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|READY" in tail
                     ):
@@ -4744,6 +4825,24 @@ def main() -> int:
                         and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|SKIP" in tail
                     ):
                         saw_virtio_input_tablet_events_skip = True
+
+                    # If input LED/statusq testing is required, fail fast when the guest reports SKIP/FAIL
+                    # for virtio-input-leds (e.g. the guest was provisioned without --test-input-leds).
+                    if need_input_leds and (saw_virtio_input_leds_skip or saw_virtio_input_leds_fail):
+                        msg = _virtio_input_leds_required_failure_message(
+                            tail,
+                            saw_pass=saw_virtio_input_leds_pass,
+                            saw_fail=saw_virtio_input_leds_fail,
+                            saw_skip=saw_virtio_input_leds_skip,
+                        )
+                        if msg is None:
+                            raise AssertionError(
+                                "need_input_leds is enabled and saw skip/fail, but required marker helper returned None"
+                            )
+                        print(msg, file=sys.stderr)
+                        _print_tail(serial_log)
+                        result_code = 1
+                        break
 
                     # If input events are required, fail fast when the guest reports SKIP/FAIL for
                     # virtio-input-events. This saves CI time when the guest image was provisioned
@@ -5149,6 +5248,18 @@ def main() -> int:
                                 _print_tail(serial_log)
                                 result_code = 1
                                 break
+                            if need_input_leds:
+                                msg = _virtio_input_leds_required_failure_message(
+                                    tail,
+                                    saw_pass=saw_virtio_input_leds_pass,
+                                    saw_fail=saw_virtio_input_leds_fail,
+                                    saw_skip=saw_virtio_input_leds_skip,
+                                )
+                                if msg is not None:
+                                    print(msg, file=sys.stderr)
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
                             if need_input_events:
                                 if saw_virtio_input_events_fail:
                                     print(
@@ -5553,6 +5664,18 @@ def main() -> int:
                                     print(_virtio_blk_reset_skip_failure_message(tail), file=sys.stderr)
                                 else:
                                     print(_virtio_blk_reset_missing_failure_message(), file=sys.stderr)
+                                _print_tail(serial_log)
+                                result_code = 1
+                                break
+                        if need_input_leds:
+                            msg = _virtio_input_leds_required_failure_message(
+                                tail,
+                                saw_pass=saw_virtio_input_leds_pass,
+                                saw_fail=saw_virtio_input_leds_fail,
+                                saw_skip=saw_virtio_input_leds_skip,
+                            )
+                            if msg is not None:
+                                print(msg, file=sys.stderr)
                                 _print_tail(serial_log)
                                 result_code = 1
                                 break
@@ -6130,6 +6253,29 @@ def main() -> int:
                 # guest selftest is too old (or misconfigured) and fail early to avoid burning the full
                 # virtio-net timeout.
                 if (
+                    need_input_leds
+                    and virtio_input_marker_time is not None
+                    and not saw_virtio_input_leds_pass
+                    and not saw_virtio_input_leds_fail
+                    and not saw_virtio_input_leds_skip
+                    and time.monotonic() - virtio_input_marker_time > 20.0
+                ):
+                    msg = _virtio_input_leds_required_failure_message(
+                        tail,
+                        saw_pass=saw_virtio_input_leds_pass,
+                        saw_fail=saw_virtio_input_leds_fail,
+                        saw_skip=saw_virtio_input_leds_skip,
+                    )
+                    if msg is None:
+                        raise AssertionError(
+                            "need_input_leds is enabled and marker is missing, but required marker helper returned None"
+                        )
+                    print(msg, file=sys.stderr)
+                    _print_tail(serial_log)
+                    result_code = 1
+                    break
+
+                if (
                     need_input_events
                     and virtio_input_marker_time is not None
                     and not saw_virtio_input_events_ready
@@ -6521,6 +6667,21 @@ def main() -> int:
                             and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-bind|FAIL" in tail
                         ):
                             saw_virtio_input_bind_fail = True
+                        if (
+                            not saw_virtio_input_leds_pass
+                            and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|PASS" in tail
+                        ):
+                            saw_virtio_input_leds_pass = True
+                        if (
+                            not saw_virtio_input_leds_fail
+                            and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|FAIL" in tail
+                        ):
+                            saw_virtio_input_leds_fail = True
+                        if (
+                            not saw_virtio_input_leds_skip
+                            and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|SKIP" in tail
+                        ):
+                            saw_virtio_input_leds_skip = True
                         if (
                             not saw_virtio_input_events_ready
                             and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|READY" in tail
@@ -7104,6 +7265,18 @@ def main() -> int:
                                         print(_virtio_blk_reset_skip_failure_message(tail), file=sys.stderr)
                                     else:
                                         print(_virtio_blk_reset_missing_failure_message(), file=sys.stderr)
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
+                            if need_input_leds:
+                                msg = _virtio_input_leds_required_failure_message(
+                                    tail,
+                                    saw_pass=saw_virtio_input_leds_pass,
+                                    saw_fail=saw_virtio_input_leds_fail,
+                                    saw_skip=saw_virtio_input_leds_skip,
+                                )
+                                if msg is not None:
+                                    print(msg, file=sys.stderr)
                                     _print_tail(serial_log)
                                     result_code = 1
                                     break

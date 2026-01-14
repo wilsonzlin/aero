@@ -54,6 +54,12 @@ drivers/windows7/tests/
   input report delivery when the host harness injects a deterministic media key via QMP (`input-send-event`).
   - By default the guest selftest reports `virtio-input-media-keys|SKIP|flag_not_set`; provision the guest to run the
     selftest with `--test-input-media-keys` to enable it.
+- Emits an optional `virtio-input-led` (and legacy `virtio-input-leds`) marker that can be used to validate the virtio-input
+  **statusq output path** end-to-end (user-mode HID output report write → KMDF HID minidriver → virtio statusq →
+  device consumes/completes).
+  - By default the guest selftest reports `virtio-input-led|SKIP|flag_not_set`; provision the guest to run the selftest
+    with `--test-input-led` (or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_LED=1`) to enable it.
+    - Legacy: `--test-input-leds` / env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_LEDS=1`.
 - Emits a `virtio-input-tablet-events` marker that can be used to validate **end-to-end absolute pointer (tablet)**
   input report delivery when the host harness attaches a `virtio-tablet-pci` device and injects deterministic QMP
   `abs` + click events (`input-send-event`).
@@ -102,22 +108,29 @@ drivers/windows7/tests/
        AERO_VIRTIO_SELFTEST|TEST|virtio-input-binding|PASS|service=aero_virtio_input|pnp_id=<...>|hwid0=<...>
        AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet|SKIP|not_present|tablet_devices=0|tablet_collections=0
        AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|SKIP|flag_not_set
+       AERO_VIRTIO_SELFTEST|TEST|virtio-input-led|SKIP|flag_not_set
+       AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|SKIP|flag_not_set
        AERO_VIRTIO_SELFTEST|TEST|virtio-input-media-keys|SKIP|flag_not_set
        AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|SKIP|flag_not_set
-
+ 
   # Optional: end-to-end virtio-input event delivery (requires `--test-input-events` in the guest and host-side QMP injection):
   # AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|READY
   # AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS|...
+
+  # Optional: virtio-input keyboard LED/statusq output report writes (requires `--test-input-led` (legacy: `--test-input-leds`) in the guest):
+  # AERO_VIRTIO_SELFTEST|TEST|virtio-input-led|PASS|...
+  # AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|PASS|writes=<n>
 
   # Optional: end-to-end virtio-input media keys (Consumer Control) event delivery (requires `--test-input-media-keys` in the guest and host-side QMP injection):
   # AERO_VIRTIO_SELFTEST|TEST|virtio-input-media-keys|READY
   # AERO_VIRTIO_SELFTEST|TEST|virtio-input-media-keys|PASS|...
 
-   # Optional: end-to-end virtio-input tablet (absolute pointer) event delivery (requires `--test-input-tablet-events` / `--test-tablet-events` in the guest and host-side QMP injection):
-   # AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|READY
-   # AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|PASS|...
+  # Optional: end-to-end virtio-input tablet (absolute pointer) event delivery (requires `--test-input-tablet-events` / `--test-tablet-events` in the guest and host-side QMP injection):
+  # AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|READY
+  # AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|PASS|...
+
   # (virtio-snd is emitted as PASS/FAIL/SKIP depending on device/config):
-   AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP
+  AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP
   AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set
   # or:
   AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS
@@ -376,6 +389,9 @@ The provisioning media generator (`host-harness/New-AeroWin7TestImage.ps1`) can 
       This requires provisioning the guest with `--test-input-led` (or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_LED=1`;
       if using `New-AeroWin7TestImage.ps1`, pass `-TestInputLed`).
       - This test is guest-driven (HID keyboard LED output reports → virtio-input statusq) and does not require QMP injection.
+      - Compatibility: `-WithInputLeds` / `--with-input-leds` instead requires `AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|PASS|writes=<n>`
+        (provision the guest with `--test-input-leds` / env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_LEDS=1`; if using
+        `New-AeroWin7TestImage.ps1`, pass `-TestInputLeds`).
     - When `-WithInputTabletEvents` (aliases: `-WithVirtioInputTabletEvents`, `-WithTabletEvents`) /
       `--with-input-tablet-events` (aliases: `--with-virtio-input-tablet-events`, `--with-tablet-events`) is enabled,
       the harness attaches `virtio-tablet-pci`, injects a

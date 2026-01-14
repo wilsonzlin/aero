@@ -179,6 +179,34 @@ class FailureTokenTests(unittest.TestCase):
         self.assertRegex(msg, _TOKEN_RE)
         self.assertTrue(msg.startswith("FAIL: VIRTIO_NET_LINK_FLAP_SKIPPED:"))
 
+    def test_virtio_input_leds_required_tokens(self) -> None:
+        h = self.harness
+
+        msg = h._virtio_input_leds_required_failure_message(
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|SKIP|flag_not_set\n"
+        )
+        assert msg is not None
+        self.assertRegex(msg, _TOKEN_RE)
+        self.assertTrue(msg.startswith("FAIL: VIRTIO_INPUT_LEDS_SKIPPED:"))
+
+        msg = h._virtio_input_leds_required_failure_message(
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|FAIL|reason=timeout\n"
+        )
+        assert msg is not None
+        self.assertRegex(msg, _TOKEN_RE)
+        self.assertTrue(msg.startswith("FAIL: VIRTIO_INPUT_LEDS_FAILED:"))
+
+        msg = h._virtio_input_leds_required_failure_message(b"unrelated log output\n")
+        assert msg is not None
+        self.assertRegex(msg, _TOKEN_RE)
+        self.assertTrue(msg.startswith("FAIL: MISSING_VIRTIO_INPUT_LEDS:"))
+
+        self.assertIsNone(
+            h._virtio_input_leds_required_failure_message(
+                b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|PASS|writes=3\n"
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
