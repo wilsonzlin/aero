@@ -638,9 +638,9 @@ Limitations:
 - Only the fixed-function fallback path is supported (no user shaders).
 - Only pre-transformed `XYZRHW` control points are supported: patch entrypoints require `fixedfunc_fvf_supported(dev->fvf)`,
   i.e. `D3DFVF_XYZRHW | D3DFVF_DIFFUSE` (+ optional `D3DFVF_TEX1`).
-- When `D3DFVF_TEX1` is used for patches, tessellation consumes `TEXCOORD0` as `(u, v)` (requires at least `float2`;
-  `float3/float4` are accepted and extra components are ignored; `float1` is rejected with `D3DERR_INVALIDCALL` since the
-  CPU tessellation path writes only `(u, v)` pairs).
+- When `D3DFVF_TEX1` is used for patches, tessellation consumes `TEXCOORD0`:
+  - `float1`: uses `.x` as `u` and treats `v = 0`
+  - `float2/float3/float4`: uses `.xy` as `(u, v)` (extra components are ignored)
 - Only Bezier cubic patches are supported (`Basis=BEZIER`, `Degree=CUBIC`).
 
 ### ProcessVertices

@@ -2904,14 +2904,6 @@ bool fixedfunc_fvf_supported(uint32_t fvf) {
   // vertex declaration (e.g. patch emulation) are limited to pre-transformed
   // XYZRHW + DIFFUSE variants (optionally TEX1).
   const uint32_t base = fixedfunc_fvf_base(fvf);
-  // Patch tessellation only consumes (u, v). Reject TEXCOORDSIZE1(0) (float1),
-  // but allow float2/3/4 since the first two components are still available.
-  if ((base & kD3dFvfTex1) != 0) {
-    // Texcoord-0 size bits (two bits at offset 16): 3 -> float1.
-    if ((fvf & (0x3u << 16u)) == (0x3u << 16u)) {
-      return false;
-    }
-  }
   return (base == kSupportedFvfXyzrhwDiffuse) || (base == kSupportedFvfXyzrhwDiffuseTex1);
 }
 
@@ -20658,7 +20650,8 @@ namespace {
 bool patch_sig_equal(const PatchCacheSignature& a, const PatchCacheSignature& b) {
   if (a.kind != b.kind) return false;
   // D3DFVF_TEXCOORDSIZE* bits can contain garbage for *unused* texcoord sets.
-  // Patch emulation only consumes TEXCOORD0.xy when TEX1 is present, so ignore
+  // Patch emulation consumes TEXCOORD0.x (float1) / TEXCOORD0.xy (float2+) when TEX1
+  // is present, so ignore
   // all TEXCOORDSIZE bits when matching patch cache signatures (stride_bytes
   // still distinguishes float2 vs float3/float4 layouts).
   if ((a.fvf & ~kD3dFvfTexCoordSizeMask) != (b.fvf & ~kD3dFvfTexCoordSizeMask)) return false;
@@ -20743,11 +20736,23 @@ HRESULT tessellate_rect_patch_cubic(
     const uint8_t* control_points,
     uint32_t stride_bytes,
     bool has_tex0,
+    uint32_t tex0_dim,
     uint32_t seg_u,
     uint32_t seg_v,
     PatchCacheEntry* out) {
   if (!control_points || stride_bytes < 20 || seg_u == 0 || seg_v == 0 || !out) {
     return E_INVALIDARG;
+  }
+  if (has_tex0) {
+    if (tex0_dim < 1u || tex0_dim > 4u) {
+      return E_INVALIDARG;
+    }
+    if (stride_bytes < 24u) {
+      return E_INVALIDARG;
+    }
+    if (tex0_dim >= 2u && stride_bytes < 28u) {
+      return E_INVALIDARG;
+    }
   }
   // Only cubic Bezier rect patches are supported: 4x4 control points.
   PatchEvalPoint cp[16]{};
@@ -20760,9 +20765,14 @@ HRESULT tessellate_rect_patch_cubic(
     uint32_t c = 0;
     std::memcpy(&c, src + 16, sizeof(c));
     unpack_color_u32(c, &cp[i]);
-    if (has_tex0 && stride_bytes >= 28) {
+    if (has_tex0) {
+      // TEXCOORD0 is always stored immediately after DIFFUSE.
+      // - float1: u at +20, v implicitly 0
+      // - float2+: u at +20, v at +24
       cp[i].u = read_f32_unaligned(src + 20);
-      cp[i].v = read_f32_unaligned(src + 24);
+      if (tex0_dim >= 2u) {
+        cp[i].v = read_f32_unaligned(src + 24);
+      }
     }
   }
 
@@ -20830,9 +20840,11 @@ HRESULT tessellate_rect_patch_cubic(
       write_f32_unaligned(dst + 8, p.z);
       write_f32_unaligned(dst + 12, p.rhw);
       std::memcpy(dst + 16, &color, sizeof(color));
-      if (has_tex0 && stride_bytes >= 28) {
+      if (has_tex0) {
         write_f32_unaligned(dst + 20, p.u);
-        write_f32_unaligned(dst + 24, p.v);
+        if (tex0_dim >= 2u) {
+          write_f32_unaligned(dst + 24, p.v);
+        }
       }
     }
   }
@@ -20859,10 +20871,22 @@ HRESULT tessellate_tri_patch_cubic(
     const uint8_t* control_points,
     uint32_t stride_bytes,
     bool has_tex0,
+    uint32_t tex0_dim,
     uint32_t segs,
     PatchCacheEntry* out) {
   if (!control_points || stride_bytes < 20 || segs == 0 || !out) {
     return E_INVALIDARG;
+  }
+  if (has_tex0) {
+    if (tex0_dim < 1u || tex0_dim > 4u) {
+      return E_INVALIDARG;
+    }
+    if (stride_bytes < 24u) {
+      return E_INVALIDARG;
+    }
+    if (tex0_dim >= 2u && stride_bytes < 28u) {
+      return E_INVALIDARG;
+    }
   }
 
   // Only cubic Bezier tri patches are supported: 10 control points.
@@ -20876,9 +20900,11 @@ HRESULT tessellate_tri_patch_cubic(
     uint32_t c = 0;
     std::memcpy(&c, src + 16, sizeof(c));
     unpack_color_u32(c, &cp[i]);
-    if (has_tex0 && stride_bytes >= 28) {
+    if (has_tex0) {
       cp[i].u = read_f32_unaligned(src + 20);
-      cp[i].v = read_f32_unaligned(src + 24);
+      if (tex0_dim >= 2u) {
+        cp[i].v = read_f32_unaligned(src + 24);
+      }
     }
   }
 
@@ -20968,9 +20994,11 @@ HRESULT tessellate_tri_patch_cubic(
       write_f32_unaligned(dst + 8, p.z);
       write_f32_unaligned(dst + 12, p.rhw);
       std::memcpy(dst + 16, &color, sizeof(color));
-      if (has_tex0 && stride_bytes >= 28) {
+      if (has_tex0) {
         write_f32_unaligned(dst + 20, p.u);
-        write_f32_unaligned(dst + 24, p.v);
+        if (tex0_dim >= 2u) {
+          write_f32_unaligned(dst + 24, p.v);
+        }
       }
     }
   }
@@ -21124,15 +21152,16 @@ HRESULT AEROGPU_D3D9_CALL device_draw_rect_patch(
   }
 
   HRESULT hr = S_OK;
-  const uint32_t fvf_base = dev->fvf & ~kD3dFvfTexCoordSizeMask;
+  const uint32_t fvf_base = fixedfunc_fvf_base(dev->fvf);
   const bool has_tex0 = (fvf_base == kSupportedFvfXyzrhwDiffuseTex1);
+  const uint32_t tex0_dim = has_tex0 ? fvf_decode_texcoord_size(dev->fvf, 0) : 0u;
   bool hit = (handle != 0) && patch_sig_equal(entry->sig, sig) && !entry->vertices.empty() && !entry->indices_u16.empty();
   if (hit) {
     dev->patch_cache_hit_count++;
   } else {
     dev->patch_tessellate_count++;
     entry->sig = sig;
-    hr = tessellate_rect_patch_cubic(control_bytes, ss.stride_bytes, has_tex0, seg_u, seg_v, entry);
+    hr = tessellate_rect_patch_cubic(control_bytes, ss.stride_bytes, has_tex0, tex0_dim, seg_u, seg_v, entry);
     if (FAILED(hr)) {
       if (handle != 0) {
         dev->patch_cache.erase(handle);
@@ -21398,15 +21427,16 @@ HRESULT AEROGPU_D3D9_CALL device_draw_tri_patch(
   }
 
   HRESULT hr = S_OK;
-  const uint32_t fvf_base = dev->fvf & ~kD3dFvfTexCoordSizeMask;
+  const uint32_t fvf_base = fixedfunc_fvf_base(dev->fvf);
   const bool has_tex0 = (fvf_base == kSupportedFvfXyzrhwDiffuseTex1);
+  const uint32_t tex0_dim = has_tex0 ? fvf_decode_texcoord_size(dev->fvf, 0) : 0u;
   const bool hit = (handle != 0) && patch_sig_equal(entry->sig, sig) && !entry->vertices.empty() && !entry->indices_u16.empty();
   if (hit) {
     dev->patch_cache_hit_count++;
   } else {
     dev->patch_tessellate_count++;
     entry->sig = sig;
-    hr = tessellate_tri_patch_cubic(control_bytes, ss.stride_bytes, has_tex0, segs, entry);
+    hr = tessellate_tri_patch_cubic(control_bytes, ss.stride_bytes, has_tex0, tex0_dim, segs, entry);
     if (FAILED(hr)) {
       if (handle != 0) {
         dev->patch_cache.erase(handle);
