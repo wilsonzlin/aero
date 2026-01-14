@@ -546,6 +546,31 @@ fn tier2_masks_64bit_shift_count_for_flag_updates() {
 }
 
 #[test]
+fn tier2_masks_64bit_shift_count_to_zero_leaves_flags_unchanged() {
+    // mov rax, 1
+    // shl rax, 64       ; x86 masks to 6 bits => count==0 => flags unchanged
+    // jz +3             ; must take if ZF was already 1
+    // mov al, 0
+    // int3
+    // mov al, 1
+    // int3
+    const CODE: &[u8] = &[
+        0x48, 0xC7, 0xC0, 0x01, 0x00, 0x00, 0x00, // mov rax, 1
+        0x48, 0xC1, 0xE0, 0x40, // shl rax, 64
+        0x74, 0x03, // jz +3
+        0xB0, 0x00, // mov al, 0
+        0xCC, // int3
+        0xB0, 0x01, // mov al, 1
+        0xCC, // int3
+    ];
+
+    let init_rflags = aero_jit_x86::abi::RFLAGS_RESERVED1 | RFLAGS_ZF;
+    let (_func, exit, state) = run_x86_with_rflags(CODE, init_rflags);
+    assert_eq!(exit, RunExit::SideExit { next_rip: 18 });
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 1);
+}
+
+#[test]
 fn tier2_shr_count_1_sets_of_from_old_msb() {
     // mov al, 0x81
     // shr al, 1
