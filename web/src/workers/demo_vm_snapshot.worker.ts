@@ -133,11 +133,14 @@ async function handleInit(ramBytes: number): Promise<DemoVmWorkerInitResult> {
   const syncAccessHandles = typeof createSyncAccessHandle === "function";
 
   const streamingSnapshots =
-    typeof (newVm as unknown as { snapshot_full_to_opfs?: unknown }).snapshot_full_to_opfs === "function";
+    typeof (newVm as unknown as { snapshot_full_to_opfs?: unknown }).snapshot_full_to_opfs === "function" ||
+    typeof (newVm as unknown as { snapshotFullToOpfs?: unknown }).snapshotFullToOpfs === "function";
   const streamingDirtySnapshots =
-    typeof (newVm as unknown as { snapshot_dirty_to_opfs?: unknown }).snapshot_dirty_to_opfs === "function";
+    typeof (newVm as unknown as { snapshot_dirty_to_opfs?: unknown }).snapshot_dirty_to_opfs === "function" ||
+    typeof (newVm as unknown as { snapshotDirtyToOpfs?: unknown }).snapshotDirtyToOpfs === "function";
   const streamingRestore =
-    typeof (newVm as unknown as { restore_snapshot_from_opfs?: unknown }).restore_snapshot_from_opfs === "function";
+    typeof (newVm as unknown as { restore_snapshot_from_opfs?: unknown }).restore_snapshot_from_opfs === "function" ||
+    typeof (newVm as unknown as { restoreSnapshotFromOpfs?: unknown }).restoreSnapshotFromOpfs === "function";
 
   const initialLen = getSerialOutputLenFromVm(newVm);
   if (initialLen !== null) {
@@ -169,9 +172,13 @@ async function handleRunSteps(steps: number): Promise<DemoVmWorkerStepResult> {
 async function handleSnapshotFullToOpfs(path: string): Promise<DemoVmWorkerSerialOutputLenResult> {
   const current = ensureVm();
 
-  const fn = (current as unknown as { snapshot_full_to_opfs?: (path: string) => unknown }).snapshot_full_to_opfs;
+  const fn =
+    (current as unknown as { snapshot_full_to_opfs?: (path: string) => unknown }).snapshot_full_to_opfs ??
+    (current as unknown as { snapshotFullToOpfs?: (path: string) => unknown }).snapshotFullToOpfs;
   if (typeof fn !== "function") {
-    throw new Error("DemoVm.snapshot_full_to_opfs is unavailable (WASM build missing streaming snapshot exports).");
+    throw new Error(
+      "DemoVm snapshotFullToOpfs export is unavailable (WASM build missing streaming snapshot exports).",
+    );
   }
 
   stopStepLoop();
@@ -190,9 +197,13 @@ async function handleSnapshotFullToOpfs(path: string): Promise<DemoVmWorkerSeria
 async function handleSnapshotDirtyToOpfs(path: string): Promise<DemoVmWorkerSerialOutputLenResult> {
   const current = ensureVm();
 
-  const fn = (current as unknown as { snapshot_dirty_to_opfs?: (path: string) => unknown }).snapshot_dirty_to_opfs;
+  const fn =
+    (current as unknown as { snapshot_dirty_to_opfs?: (path: string) => unknown }).snapshot_dirty_to_opfs ??
+    (current as unknown as { snapshotDirtyToOpfs?: (path: string) => unknown }).snapshotDirtyToOpfs;
   if (typeof fn !== "function") {
-    throw new Error("DemoVm.snapshot_dirty_to_opfs is unavailable (WASM build missing streaming dirty snapshot exports).");
+    throw new Error(
+      "DemoVm snapshotDirtyToOpfs export is unavailable (WASM build missing streaming dirty snapshot exports).",
+    );
   }
 
   stopStepLoop();
@@ -211,9 +222,11 @@ async function handleSnapshotDirtyToOpfs(path: string): Promise<DemoVmWorkerSeri
 async function handleRestoreFromOpfs(path: string): Promise<DemoVmWorkerSerialOutputLenResult> {
   const current = ensureVm();
 
-  const fn = (current as unknown as { restore_snapshot_from_opfs?: (path: string) => unknown }).restore_snapshot_from_opfs;
+  const fn =
+    (current as unknown as { restore_snapshot_from_opfs?: (path: string) => unknown }).restore_snapshot_from_opfs ??
+    (current as unknown as { restoreSnapshotFromOpfs?: (path: string) => unknown }).restoreSnapshotFromOpfs;
   if (typeof fn !== "function") {
-    throw new Error("DemoVm.restore_snapshot_from_opfs is unavailable (WASM build missing streaming restore exports).");
+    throw new Error("DemoVm restoreSnapshotFromOpfs export is unavailable (WASM build missing streaming restore exports).");
   }
 
   stopStepLoop();
