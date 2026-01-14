@@ -1158,19 +1158,77 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     if (this.invalidationPromise) {
       await this.invalidationPromise;
     }
+    if (this.persistentCacheWritesDisabled) {
+      // Persistent caching is disabled (quota pressure). Flushing is a no-op so callers don't
+      // trigger additional best-effort persistence work.
+      return;
+    }
     await this.flushPendingMetaPersist(this.cacheGeneration).catch(() => {
       // best-effort metadata persistence
     });
     await this.metaWriteChain.catch(() => {
       // best-effort metadata persistence
     });
-    await this.ensureOpen().flush();
+    try {
+      await this.ensureOpen().flush();
+    } catch (err) {
+      if (isQuotaExceededError(err)) {
+        this.disablePersistentCacheWrites();
+        return;
+      }
+      throw err;
+    }
   }
 
   async clearCache(): Promise<void> {
     if (this.closed) throw new Error("RemoteRangeDisk is closed");
     if (this.invalidationPromise) {
       await this.invalidationPromise;
+    }
+
+    if (this.persistentCacheWritesDisabled) {
+      // Persistent caching is disabled (quota pressure). Avoid any further persistent writes, but
+      // still drop the on-disk cache best-effort so that callers can free up storage.
+      this.fetchAbort.abort();
+
+      const inflight = [...this.inflightChunks.values()].map((e) => e.promise);
+      this.cacheGeneration += 1;
+      this.lastReadEnd = null;
+      this.inMemoryChunks.clear();
+      this.resetTelemetry();
+
+      if (this.flushTimer !== null) {
+        clearTimeout(this.flushTimer);
+        this.flushTimer = null;
+      }
+      this.flushPending = false;
+
+      this.cancelPendingMetaPersist();
+      await Promise.allSettled(inflight);
+      this.inflightChunks.clear();
+
+      // Best-effort: allow any metadata write in-flight to settle before deleting the cache dir.
+      await this.metaWriteChain.catch(() => {});
+      this.metaWriteChain = Promise.resolve();
+      this.meta = null;
+      this.rangeSet = new RangeSet();
+
+      // Close the persistent cache handle so OPFS can remove the backing file.
+      const oldCache = this.cache;
+      await oldCache?.close?.().catch(() => {});
+
+      // Best-effort delete: if this fails, reads still work in memory/network mode.
+      await this.metadataStore.delete(this.cacheId).catch(() => {});
+
+      // Keep a non-null cache handle so `ensureOpen()` keeps working. This in-memory disk is not
+      // used for reads (we read from `inMemoryChunks` once persistence is disabled), but avoids
+      // special-casing `ensureOpen()` throughout the implementation.
+      this.cache = MemorySparseDisk.create({ diskSizeBytes: this.capacityBytesValue, blockSizeBytes: this.opts.chunkSize });
+
+      // Allow subsequent reads after the clear completes.
+      this.fetchAbort = new AbortController();
+      this.fetchSignal = abortAny([this.abort.signal, this.fetchAbort.signal]);
+      return;
     }
 
     // Cancel outstanding downloads before we close/delete the cache backing file.
@@ -1777,7 +1835,18 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
       await Promise.allSettled([...this.inflightWrites]);
 
       const oldCache = this.cache;
-      await oldCache?.close?.();
+      try {
+        await oldCache?.close?.();
+      } catch (err) {
+        if (isQuotaExceededError(err)) {
+          // If we can't flush/close cleanly due to quota pressure, disable persistence and fall back
+          // to memory/network reads. We'll still continue the invalidation flow to refresh remote
+          // validators.
+          this.disablePersistentCacheWrites();
+        } else {
+          throw err;
+        }
+      }
       this.cache = null;
 
       await this.metaWriteChain.catch(() => {
@@ -1787,7 +1856,9 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
       this.meta = null;
       this.rangeSet = new RangeSet();
 
-      await this.metadataStore.delete(this.cacheId);
+      await this.metadataStore.delete(this.cacheId).catch(() => {
+        // best-effort cache invalidation
+      });
 
       await this.maybeRefreshLease();
       const remote = await probeRemoteImage(this.lease, this.opts.fetchFn, { signal: this.fetchSignal });
@@ -1795,10 +1866,26 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
       this.remoteEtag = remote.etag;
       this.remoteLastModified = remote.lastModified;
 
-      const cache = await this.sparseCacheFactory.create(this.cacheId, {
-        diskSizeBytes: remote.sizeBytes,
-        blockSizeBytes: this.opts.chunkSize,
-      });
+      if (this.persistentCacheWritesDisabled) {
+        // Persistent caching disabled: keep reads working via in-memory downloads only.
+        this.cache = MemorySparseDisk.create({ diskSizeBytes: remote.sizeBytes, blockSizeBytes: this.opts.chunkSize });
+        return;
+      }
+
+      let cache: RemoteRangeDiskSparseCache;
+      try {
+        cache = await this.sparseCacheFactory.create(this.cacheId, {
+          diskSizeBytes: remote.sizeBytes,
+          blockSizeBytes: this.opts.chunkSize,
+        });
+      } catch (err) {
+        if (isQuotaExceededError(err)) {
+          this.disablePersistentCacheWrites();
+          this.cache = MemorySparseDisk.create({ diskSizeBytes: remote.sizeBytes, blockSizeBytes: this.opts.chunkSize });
+          return;
+        }
+        throw err;
+      }
       this.cache = cache;
 
       const now = Date.now();
@@ -1819,7 +1906,19 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
       };
       this.meta = metaToPersist;
       this.metaDirty = false;
-      await this.metadataStore.write(this.cacheId, metaToPersist);
+      try {
+        await this.metadataStore.write(this.cacheId, metaToPersist);
+      } catch (err) {
+        if (isQuotaExceededError(err)) {
+          this.disablePersistentCacheWrites();
+          await cache.close?.().catch(() => {});
+          this.cache = MemorySparseDisk.create({ diskSizeBytes: remote.sizeBytes, blockSizeBytes: this.opts.chunkSize });
+          this.meta = null;
+          this.rangeSet = new RangeSet();
+          return;
+        }
+        throw err;
+      }
     })();
 
     try {
