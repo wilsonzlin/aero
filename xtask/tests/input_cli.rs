@@ -215,8 +215,12 @@ fn input_help_mentions_flags_and_steps() {
             "src/workers/uhci_runtime_hub_config.test.ts",
         ))
         .stdout(predicate::str::contains(
+            "src/workers/io_worker_vm_snapshot.test.ts",
+        ))
+        .stdout(predicate::str::contains(
             "src/workers/usb_snapshot_container.test.ts",
         ))
+        .stdout(predicate::str::contains("src/workers/vm_snapshot_wasm.test.ts"))
         .stdout(predicate::str::contains(
             "src/usb/usb_guest_controller.test.ts",
         ))
