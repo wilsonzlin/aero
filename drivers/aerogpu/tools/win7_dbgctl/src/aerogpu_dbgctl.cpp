@@ -41,6 +41,10 @@ typedef LONG NTSTATUS;
 #define STATUS_INVALID_PARAMETER ((NTSTATUS)0xC000000DL)
 #endif
 
+#ifndef STATUS_INVALID_DEVICE_STATE
+#define STATUS_INVALID_DEVICE_STATE ((NTSTATUS)0xC0000184L)
+#endif
+
 #ifndef STATUS_TIMEOUT
 #define STATUS_TIMEOUT ((NTSTATUS)0xC0000102L)
 #endif
@@ -1118,28 +1122,89 @@ typedef struct EscapeThreadCtx {
   HANDLE done_event;
 } EscapeThreadCtx;
 
-static DWORD WINAPI EscapeThreadProc(LPVOID param) {
-  EscapeThreadCtx *ctx = (EscapeThreadCtx *)param;
-  if (!ctx || !ctx->f || !ctx->f->Escape || !ctx->buf || ctx->bufSize == 0) {
-    if (ctx) {
-      ctx->status = STATUS_INVALID_PARAMETER;
-    }
+typedef struct EscapeWorker {
+  HANDLE request_event;
+  volatile EscapeThreadCtx *ctx;
+} EscapeWorker;
+
+static EscapeWorker *g_escape_worker = NULL;
+static CRITICAL_SECTION g_escape_worker_cs;
+static bool g_escape_worker_cs_inited = false;
+
+static void InitEscapeWorkerCs() {
+  if (!g_escape_worker_cs_inited) {
+    InitializeCriticalSection(&g_escape_worker_cs);
+    g_escape_worker_cs_inited = true;
+  }
+}
+
+static DWORD WINAPI EscapeWorkerThreadProc(LPVOID param) {
+  EscapeWorker *worker = (EscapeWorker *)param;
+  if (!worker || !worker->request_event) {
     return 0;
   }
 
-  D3DKMT_ESCAPE e;
-  ZeroMemory(&e, sizeof(e));
-  e.hAdapter = ctx->hAdapter;
-  e.Type = D3DKMT_ESCAPE_DRIVERPRIVATE;
-  e.Flags.Value = ctx->flags_value;
-  e.pPrivateDriverData = ctx->buf;
-  e.PrivateDriverDataSize = ctx->bufSize;
-  ctx->status = ctx->f->Escape(&e);
+  for (;;) {
+    DWORD w = WaitForSingleObject(worker->request_event, INFINITE);
+    if (w != WAIT_OBJECT_0) {
+      continue;
+    }
 
-  if (ctx->done_event) {
-    SetEvent(ctx->done_event);
+    EscapeThreadCtx *ctx =
+        (EscapeThreadCtx *)InterlockedExchangePointer((PVOID *)&worker->ctx, NULL);
+    if (!ctx) {
+      continue;
+    }
+
+    if (!ctx->f || !ctx->f->Escape || !ctx->buf || ctx->bufSize == 0) {
+      ctx->status = STATUS_INVALID_PARAMETER;
+      if (ctx->done_event) {
+        SetEvent(ctx->done_event);
+      }
+      continue;
+    }
+
+    D3DKMT_ESCAPE e;
+    ZeroMemory(&e, sizeof(e));
+    e.hAdapter = ctx->hAdapter;
+    e.Type = D3DKMT_ESCAPE_DRIVERPRIVATE;
+    e.Flags.Value = ctx->flags_value;
+    e.pPrivateDriverData = ctx->buf;
+    e.PrivateDriverDataSize = ctx->bufSize;
+    ctx->status = ctx->f->Escape(&e);
+
+    if (ctx->done_event) {
+      SetEvent(ctx->done_event);
+    }
   }
+
+  // Unreachable (thread runs until process exit), but keep MSVC happy.
   return 0;
+}
+
+static EscapeWorker *CreateEscapeWorker() {
+  EscapeWorker *worker =
+      (EscapeWorker *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*worker));
+  if (!worker) {
+    return NULL;
+  }
+
+  worker->request_event = CreateEventW(NULL, FALSE, FALSE, NULL);
+  if (!worker->request_event) {
+    HeapFree(GetProcessHeap(), 0, worker);
+    return NULL;
+  }
+
+  HANDLE thread = CreateThread(NULL, 0, EscapeWorkerThreadProc, worker, 0, NULL);
+  if (!thread) {
+    CloseHandle(worker->request_event);
+    HeapFree(GetProcessHeap(), 0, worker);
+    return NULL;
+  }
+
+  // We don't need the thread handle after creation.
+  CloseHandle(thread);
+  return worker;
 }
 
 static NTSTATUS SendAerogpuEscapeEx(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, void *buf, UINT bufSize,
@@ -1155,9 +1220,31 @@ static NTSTATUS SendAerogpuEscapeEx(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapte
     return f->Escape(&e);
   }
 
-  // Like the vblank wait helper, run escapes on a worker thread so a buggy kernel driver cannot
-  // hang the dbgctl process forever. If the call times out, leak the context (the thread may be
-  // blocked inside the kernel thunk) and set a global so we avoid calling D3DKMTCloseAdapter.
+  // Run escapes on a worker thread so a buggy kernel driver cannot hang dbgctl forever.
+  //
+  // IMPORTANT: This uses a single long-lived worker thread rather than creating a new thread per
+  // escape call. Many dbgctl commands (e.g. watch-fence) can issue thousands of escapes and would
+  // otherwise be prohibitively slow.
+  //
+  // If the call times out, leak the context (the worker thread may be blocked inside the kernel
+  // thunk) and set a global so we avoid calling D3DKMTCloseAdapter. Future calls will lazily spin
+  // up a new worker thread.
+
+  InitEscapeWorkerCs();
+
+  EscapeWorker *worker = NULL;
+  EnterCriticalSection(&g_escape_worker_cs);
+  worker = g_escape_worker;
+  if (!worker) {
+    worker = CreateEscapeWorker();
+    if (!worker) {
+      LeaveCriticalSection(&g_escape_worker_cs);
+      return STATUS_INSUFFICIENT_RESOURCES;
+    }
+    g_escape_worker = worker;
+  }
+  LeaveCriticalSection(&g_escape_worker_cs);
+
   EscapeThreadCtx *ctx = (EscapeThreadCtx *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*ctx));
   if (!ctx) {
     return STATUS_INSUFFICIENT_RESOURCES;
@@ -1183,30 +1270,37 @@ static NTSTATUS SendAerogpuEscapeEx(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapte
     return STATUS_INSUFFICIENT_RESOURCES;
   }
 
-  HANDLE thread = CreateThread(NULL, 0, EscapeThreadProc, ctx, 0, NULL);
-  if (!thread) {
+  if (InterlockedCompareExchangePointer((PVOID *)&worker->ctx, ctx, NULL) != NULL) {
+    // Unexpected: another escape is already in-flight on the worker. This should not happen
+    // in normal dbgctl usage (single-threaded), but handle defensively.
     CloseHandle(ctx->done_event);
     HeapFree(GetProcessHeap(), 0, bufCopy);
     HeapFree(GetProcessHeap(), 0, ctx);
-    return STATUS_INSUFFICIENT_RESOURCES;
+    return STATUS_INVALID_DEVICE_STATE;
   }
+  SetEvent(worker->request_event);
 
   DWORD w = WaitForSingleObject(ctx->done_event, g_escape_timeout_ms);
   if (w == WAIT_OBJECT_0) {
-    // Thread completed; safe to copy results back and clean up.
+    // Worker completed; safe to copy results back and clean up.
     const NTSTATUS st = ctx->status;
     if (NT_SUCCESS(st)) {
       memcpy(buf, ctx->buf, bufSize);
     }
-    CloseHandle(thread);
     CloseHandle(ctx->done_event);
     HeapFree(GetProcessHeap(), 0, ctx->buf);
     HeapFree(GetProcessHeap(), 0, ctx);
     return st;
   }
 
-  // Timeout or failure; avoid deadlock-prone cleanup.
-  CloseHandle(thread);
+  // Timeout or failure; avoid deadlock-prone cleanup. Abandon the worker so future calls create a
+  // fresh thread (this one may be stuck in the kernel).
+  EnterCriticalSection(&g_escape_worker_cs);
+  if (g_escape_worker == worker) {
+    g_escape_worker = NULL;
+  }
+  LeaveCriticalSection(&g_escape_worker_cs);
+
   InterlockedExchange(&g_skip_close_adapter, 1);
   return (w == WAIT_TIMEOUT) ? STATUS_TIMEOUT : STATUS_INVALID_PARAMETER;
 }
