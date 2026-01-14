@@ -118,6 +118,17 @@ The BIOS uses the following **drive numbers** in `DL`:
 > Note: The configured [`BiosConfig::boot_drive`] determines which device’s boot path is executed
 > during POST (HDD/MBR vs El Torito) and what value is passed to the boot image in `DL`.
 >
+> Also note that this BIOS currently models **exactly one** INT 13h “boot device” at a time: the
+> selected `boot_drive` is treated as present, and other drive numbers are treated as not present.
+>
+> - For HDD drive numbers (`0x80..=0xDF`), presence is derived from the BDA “fixed disk count”
+>   field (0x40:0x75), which the BIOS initializes based on `boot_drive`.
+> - For CD drive numbers (`0xE0..=0xEF`), presence is `drive == boot_drive`.
+>
+> In particular, when booting from a CD drive number, the BIOS reports **no fixed disks** via the
+> BDA and HDD drive numbers (`0x80..`) are not present. Conversely, when booting from an HDD drive
+> number, CD drive numbers are not present.
+>
 > INT 13h note: for CD drive numbers, the BIOS implements **INT 13h Extensions** (at minimum
 > AH=41h/42h/48h) and treats the DAP `LBA` and `count` fields as **2048-byte logical blocks**
 > (ISO LBAs), with `AH=48h` reporting `bytes_per_sector = 2048`.
