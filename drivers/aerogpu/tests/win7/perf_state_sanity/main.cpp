@@ -39,6 +39,11 @@ static int RunPerfStateSanity(int argc, char** argv) {
     interval_ms = 1;
   }
 
+  SYSTEM_INFO sysinfo;
+  ZeroMemory(&sysinfo, sizeof(sysinfo));
+  GetSystemInfo(&sysinfo);
+  const uint64_t page_size = (uint64_t)sysinfo.dwPageSize;
+
   D3DKMT_FUNCS kmt;
   std::string kmt_err;
   if (!aerogpu_test::kmt::LoadD3DKMT(&kmt, &kmt_err)) {
@@ -166,6 +171,23 @@ static int RunPerfStateSanity(int argc, char** argv) {
         return reporter.Fail("Contig pool bytes_saved is non-zero but hit==0 (hit=%I64u bytes_saved=%I64u)",
                              (unsigned long long)hit,
                              (unsigned long long)bytes_saved);
+      }
+      if (page_size != 0) {
+        if ((bytes_saved % page_size) != 0) {
+          aerogpu_test::kmt::CloseAdapter(&kmt, adapter);
+          aerogpu_test::kmt::UnloadD3DKMT(&kmt);
+          return reporter.Fail("Contig pool bytes_saved is not page-aligned (bytes_saved=%I64u page_size=%I64u)",
+                               (unsigned long long)bytes_saved,
+                               (unsigned long long)page_size);
+        }
+        if (hit != 0 && (bytes_saved / page_size) < hit) {
+          aerogpu_test::kmt::CloseAdapter(&kmt, adapter);
+          aerogpu_test::kmt::UnloadD3DKMT(&kmt);
+          return reporter.Fail("Contig pool bytes_saved is inconsistent with hit count (hit=%I64u bytes_saved=%I64u page_size=%I64u)",
+                               (unsigned long long)hit,
+                               (unsigned long long)bytes_saved,
+                               (unsigned long long)page_size);
+        }
       }
 
       last_contig_pool_hit = hit;
