@@ -3140,8 +3140,9 @@ test("treats MAX_ALLOWED_REMOTES_PER_BINDING as a per-guest-port limit (not per-
         const guestPortA = 10_000;
         const guestPortB = 10_001;
 
-        const respA = await sendAndRecvText(guestPortA, echoPortA, "hello A");
         const respB = await sendAndRecvText(guestPortB, echoPortB, "hello B");
+        // Send to A last so the delayed datagram cannot race with the B response.
+        const respA = await sendAndRecvText(guestPortA, echoPortA, "hello A");
 
         const late = await waitForDatagram({ timeoutMs: 4_000 });
         if (!late) throw new Error("timed out waiting for delayed datagram");
