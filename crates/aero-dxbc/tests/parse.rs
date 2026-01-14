@@ -77,6 +77,7 @@ fn malformed_bad_magic_is_error() {
 
     let err = DxbcFile::parse(&bytes).unwrap_err();
     assert!(matches!(err, DxbcError::MalformedHeader { .. }));
+    assert!(err.context().contains("bad magic"));
 }
 
 #[test]
@@ -84,6 +85,8 @@ fn malformed_truncated_header_is_error() {
     let bytes = vec![0u8; 10];
     let err = DxbcFile::parse(&bytes).unwrap_err();
     assert!(matches!(err, DxbcError::MalformedHeader { .. }));
+    assert!(err.context().contains("need at least"));
+    assert!(err.context().contains("got"));
 }
 
 #[test]
@@ -312,6 +315,8 @@ fn malformed_chunk_offset_out_of_bounds_is_error() {
 
     let err = DxbcFile::parse(&bytes).unwrap_err();
     assert!(matches!(err, DxbcError::OutOfBounds { .. }));
+    assert!(err.context().contains("chunk 0"));
+    assert!(err.context().contains("header"));
 }
 
 #[test]
@@ -363,6 +368,8 @@ fn malformed_chunk_size_out_of_bounds_is_error() {
         err,
         DxbcError::MalformedOffsets { .. } | DxbcError::OutOfBounds { .. }
     ));
+    assert!(err.context().contains("chunk 0"));
+    assert!(err.context().contains("overflows") || err.context().contains("outside total_size"));
 }
 
 #[test]
@@ -419,6 +426,8 @@ fn malformed_chunk_offset_integer_wrap_is_error() {
         err,
         DxbcError::MalformedOffsets { .. } | DxbcError::OutOfBounds { .. }
     ));
+    assert!(err.context().contains("chunk 0"));
+    assert!(err.context().contains("overflows") || err.context().contains("outside total_size"));
 }
 
 #[test]
@@ -436,4 +445,6 @@ fn malformed_chunk_offset_misaligned_after_offset_table_is_error() {
 
     let err = DxbcFile::parse(&bytes).unwrap_err();
     assert!(matches!(err, DxbcError::OutOfBounds { .. }));
+    assert!(err.context().contains("chunk 0"));
+    assert!(err.context().contains("data"));
 }
