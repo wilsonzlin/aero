@@ -155,6 +155,27 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
             &format!("WASM: wasm-pack test --node ({})", wasm_crate_dir.display()),
             &mut cmd,
         )?;
+
+        // Compile-check key crates for wasm32 (even though they are not the wasm-pack entrypoint).
+        //
+        // This catches `Send`/threading bound regressions that can break browser storage backends
+        // (e.g. mounting a JS-backed `VirtualDisk` as an ATAPI CD-ROM).
+        let mut cmd = Command::new("cargo");
+        cmd.current_dir(&repo_root)
+            .env("AERO_REQUIRE_WEBGPU", &require_webgpu)
+            .arg("check");
+        if cargo_locked {
+            cmd.args(cargo_locked_args);
+        }
+        cmd.args([
+            "--target",
+            "wasm32-unknown-unknown",
+            "-p",
+            "aero-devices-storage",
+            "-p",
+            "aero-machine",
+        ]);
+        runner.run_step("WASM: cargo check (wasm32) aero-devices-storage + aero-machine", &mut cmd)?;
     }
 
     let mut resolved_node_dir: Option<PathBuf> = None;
