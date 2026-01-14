@@ -401,6 +401,48 @@ fn ata_slave_absent_floats_bus_high_and_does_not_raise_irq() {
 }
 
 #[test]
+fn status_read_while_slave_absent_selected_does_not_ack_master_irq() {
+    let capacity = 4 * SECTOR_SIZE as u64;
+    let disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut()
+        .controller
+        .attach_primary_master_ata(AtaDrive::new(Box::new(disk)).unwrap());
+    ide.borrow_mut().config_mut().set_command(0x0001); // IO decode
+
+    let mut io = IoPortBus::new();
+    register_piix3_ide_ports(&mut io, ide.clone());
+
+    // Issue IDENTIFY DEVICE on the master to assert an interrupt and enter a data phase.
+    io.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    io.write(PRIMARY_PORTS.cmd_base + 7, 1, 0xEC);
+    assert!(ide.borrow().controller.primary_irq_pending());
+
+    // Select absent slave and read STATUS. This should return bus-high but must not acknowledge the
+    // master's interrupt.
+    io.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xF0);
+    assert_eq!(io.read(PRIMARY_PORTS.cmd_base + 7, 1) as u8, 0xFF);
+    assert!(
+        ide.borrow().controller.primary_irq_pending(),
+        "STATUS read for absent slave should not clear the master's IRQ latch"
+    );
+
+    // Select master again and acknowledge the IRQ.
+    io.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    let _ = io.read(PRIMARY_PORTS.cmd_base + 7, 1);
+    assert!(!ide.borrow().controller.primary_irq_pending());
+
+    // Drain the IDENTIFY data to complete the command and then acknowledge its completion IRQ.
+    for _ in 0..256 {
+        let _ = io.read(PRIMARY_PORTS.cmd_base, 2);
+    }
+    assert!(ide.borrow().controller.primary_irq_pending());
+    let _ = io.read(PRIMARY_PORTS.cmd_base + 7, 1);
+    assert!(!ide.borrow().controller.primary_irq_pending());
+}
+
+#[test]
 fn drive_address_master_present_is_stable_and_nonzero() {
     let capacity = 4 * SECTOR_SIZE as u64;
     let disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
