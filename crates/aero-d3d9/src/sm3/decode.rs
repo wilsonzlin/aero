@@ -82,8 +82,13 @@ pub enum Opcode {
     Abs,
     /// Distance vector helper (`dst`).
     ///
-    /// D3D9 `dst` computes a vector whose X component is always 1.0, and whose Y/Z/W components
-    /// are pairwise products of the corresponding components of the two source operands.
+    /// D3D9 `dst` computes a packed helper vector:
+    /// - `dst.x = 1.0`
+    /// - `dst.y = src0.y * src1.y`
+    /// - `dst.z = src0.z`
+    /// - `dst.w = src1.w`
+    ///
+    /// Swizzles and source modifiers are applied to both operands before this packing.
     Dst,
     /// Cross product (`dst.xyz = cross(src0.xyz, src1.xyz)`).
     Crs,
@@ -175,9 +180,9 @@ impl Opcode {
             46 => Self::Mova,
             65 => Self::TexKill, // 0x41
             66 => Self::Tex,     // 0x42 (texld/texldp)
-            77 => Self::TexLdd,  // 0x4D
-            78 => Self::Setp,    // 0x4E
-            79 => Self::TexLdl,  // 0x4F
+            93 => Self::TexLdd,  // 0x5D
+            94 => Self::Setp,    // 0x5E
+            95 => Self::TexLdl,  // 0x5F
             81 => Self::Def,     // 0x51
             82 => Self::DefI,    // 0x52
             83 => Self::DefB,    // 0x53
@@ -226,7 +231,6 @@ impl Opcode {
             Self::Min => 10,
             Self::Max => 11,
             Self::Abs => 35,
-            Self::Dst => 17,
             Self::Crs => 33,
             Self::Sgn => 34,
             Self::Slt => 12,
@@ -248,9 +252,9 @@ impl Opcode {
             Self::Breakc => 45,
             Self::TexKill => 65,
             Self::Tex => 66,
-            Self::TexLdd => 77,
-            Self::Setp => 78,
-            Self::TexLdl => 79,
+            Self::TexLdd => 93,
+            Self::Setp => 94,
+            Self::TexLdl => 95,
             Self::Def => 81,
             Self::DefI => 82,
             Self::DefB => 83,

@@ -60,7 +60,7 @@ fn sm3_dp2_decodes_builds_and_lowers_to_valid_wgsl() {
         0.0f32.to_bits(),
         0.0f32.to_bits(),
         // setp_eq p0.x, c0.x, c0.x  (cmp code 1 = eq, encoded in opcode token bits 16..)
-        opcode_token(78, 3) | (1u32 << 16),
+        opcode_token(94, 3) | (1u32 << 16),
         dst_token(19, 0, 0x1),
         src_token(2, 0, 0x00, 0), // c0.xxxx
         src_token(2, 0, 0x00, 0), // c0.xxxx

@@ -758,7 +758,7 @@ fn assemble_ps3_predicated_lrp() -> Vec<u32> {
 
     // setp_eq p0, c0, c0  (compare op 1 = eq)
     out.extend(enc_inst_with_extra(
-        0x004E,
+        0x005E,
         1u32 << 16,
         &[
             enc_dst(19, 0, 0xF), // p0
@@ -830,7 +830,7 @@ fn assemble_ps3_predicated_lrp_operand_count_len() -> Vec<u32> {
 
     // setp_eq p0, c0, c0  (compare op 1 = eq)
     out.extend(enc_inst_with_extra_operand_count_len(
-        0x004E,
+        0x005E,
         1u32 << 16,
         &[
             enc_dst(19, 0, 0xF), // p0
@@ -955,7 +955,7 @@ fn assemble_ps3_predicated_mov() -> Vec<u32> {
 
     // setp_gt p0.x, v0.x, c0.x (compare op 0 = gt)
     out.extend(enc_inst(
-        0x004E,
+        0x005E,
         &[
             enc_dst(19, 0, 0x1), // p0.x
             enc_src(1, 0, 0x00), // v0.x
@@ -1924,7 +1924,7 @@ fn assemble_ps3_predicated_exp_log_pow_modifiers() -> Vec<u32> {
 
     // setp_gt p0.x, v0.x, c0.x (compare op 0 = gt)
     out.extend(enc_inst(
-        0x004E,
+        0x005E,
         &[
             enc_dst(19, 0, 0x1), // p0.x
             enc_src(1, 0, 0x00), // v0.x

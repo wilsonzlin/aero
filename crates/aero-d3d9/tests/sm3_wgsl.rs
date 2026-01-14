@@ -641,7 +641,7 @@ fn wgsl_dcl_1d_sampler_texldd_emits_texture_sample_grad_x() {
         opcode_token(31, 1) | (1u32 << 16),
         dst_token(10, 0, 0xF),
         // texldd r0, c0, c1, c2, s0
-        opcode_token(77, 5),
+        opcode_token(93, 5),
         dst_token(0, 0, 0xF),
         src_token(2, 0, 0xE4, 0),
         src_token(2, 1, 0xE4, 0),
@@ -997,7 +997,7 @@ fn wgsl_texldd_emits_texture_sample_grad() {
     let tokens = vec![
         version_token(ShaderStage::Pixel, 3, 0),
         // texldd r0, c0, c1, c2, s0
-        opcode_token(77, 5),
+        opcode_token(93, 5),
         dst_token(0, 0, 0xF),
         src_token(2, 0, 0xE4, 0),
         src_token(2, 1, 0xE4, 0),
@@ -1044,7 +1044,7 @@ fn wgsl_dcl_cube_sampler_texldd_emits_texture_sample_grad_xyz() {
         opcode_token(31, 1) | (3u32 << 16),
         dst_token(10, 0, 0xF),
         // texldd r0, c0, c1, c2, s0
-        opcode_token(77, 5),
+        opcode_token(93, 5),
         dst_token(0, 0, 0xF),
         src_token(2, 0, 0xE4, 0),
         src_token(2, 1, 0xE4, 0),
@@ -1094,7 +1094,7 @@ fn wgsl_dcl_volume_sampler_texldd_emits_texture_sample_grad_xyz() {
         opcode_token(31, 1) | (4u32 << 16),
         dst_token(10, 0, 0xF),
         // texldd r0, c0, c1, c2, s0
-        opcode_token(77, 5),
+        opcode_token(93, 5),
         dst_token(0, 0, 0xF),
         src_token(2, 0, 0xE4, 0),
         src_token(2, 1, 0xE4, 0),
@@ -1195,7 +1195,7 @@ fn wgsl_texldl_emits_texture_sample_level_explicit_lod() {
     let tokens = vec![
         version_token(ShaderStage::Pixel, 3, 0),
         // texldl r0, c0, s1
-        opcode_token(79, 3),
+        opcode_token(95, 3),
         dst_token(0, 0, 0xF),
         src_token(2, 0, 0xE4, 0),
         src_token(10, 1, 0xE4, 0),
@@ -1250,7 +1250,7 @@ fn wgsl_dcl_1d_sampler_texldl_emits_texture_sample_level_x_lod() {
         opcode_token(31, 1) | (1u32 << 16),
         dst_token(10, 0, 0xF),
         // texldl r0, c0, s0
-        opcode_token(79, 3),
+        opcode_token(95, 3),
         dst_token(0, 0, 0xF),
         src_token(2, 0, 0xE4, 0),
         src_token(10, 0, 0xE4, 0),
@@ -1300,7 +1300,7 @@ fn wgsl_dcl_cube_sampler_texldl_emits_texture_sample_level_xyz_lod() {
         opcode_token(31, 1) | (3u32 << 16),
         dst_token(10, 0, 0xF),
         // texldl r0, c0, s0
-        opcode_token(79, 3),
+        opcode_token(95, 3),
         dst_token(0, 0, 0xF),
         src_token(2, 0, 0xE4, 0),
         src_token(10, 0, 0xE4, 0),
@@ -1350,7 +1350,7 @@ fn wgsl_dcl_volume_sampler_texldl_emits_texture_sample_level_xyz_lod() {
         opcode_token(31, 1) | (4u32 << 16),
         dst_token(10, 0, 0xF),
         // texldl r0, c0, s0
-        opcode_token(79, 3),
+        opcode_token(95, 3),
         dst_token(0, 0, 0xF),
         src_token(2, 0, 0xE4, 0),
         src_token(10, 0, 0xE4, 0),
@@ -1396,7 +1396,7 @@ fn wgsl_vs_texldd_is_rejected() {
     let tokens = vec![
         version_token(ShaderStage::Vertex, 3, 0),
         // texldd r0, c0, c1, c2, s0
-        opcode_token(77, 5),
+        opcode_token(93, 5),
         dst_token(0, 0, 0xF),
         src_token(2, 0, 0xE4, 0),
         src_token(2, 1, 0xE4, 0),
@@ -1650,7 +1650,7 @@ fn wgsl_setp_and_predication_compiles() {
         0x3F40_0000,
         0x3F80_0000,
         // setp_ge p0, c0.x, c1.x  (compare op 2 = ge)
-        opcode_token(78, 3) | (2u32 << 16),
+        opcode_token(94, 3) | (2u32 << 16),
         dst_token(19, 0, 0xF),
         src_token(2, 0, 0x00, 0), // c0.xxxx
         src_token(2, 1, 0x00, 0), // c1.xxxx
@@ -1854,7 +1854,7 @@ fn wgsl_dsx_dsy_derivatives_compile() {
         0x0000_0000,
         0x0000_0000,
         // setp_ge p0, c1.x, c2.x  (compare op 2 = ge)
-        opcode_token(78, 3) | (2u32 << 16),
+        opcode_token(94, 3) | (2u32 << 16),
         dst_token(19, 0, 0xF),
         src_token(2, 1, 0x00, 0), // c1.xxxx
         src_token(2, 2, 0x00, 0), // c2.xxxx
@@ -1917,7 +1917,7 @@ fn wgsl_dsx_dsy_can_feed_texldd_gradients() {
         dst_token(0, 2, 0xF),
         src_token(3, 0, 0xE4, 0), // t0
         // texldd r0, t0, r1, r2, s0
-        opcode_token(77, 5),
+        opcode_token(93, 5),
         dst_token(0, 0, 0xF),
         src_token(3, 0, 0xE4, 0),  // t0
         src_token(0, 1, 0xE4, 0),  // r1
@@ -1974,7 +1974,7 @@ fn wgsl_predicated_derivative_avoids_non_uniform_control_flow() {
         opcode_token(31, 1) | (5u32 << 16),
         dst_token(1, 0, 0xF),
         // setp_gt p0, v0.x, c0.x  (compare op 0 = gt)
-        opcode_token(78, 3),
+        opcode_token(94, 3),
         dst_token(19, 0, 0xF),
         src_token(1, 0, 0x00, 0), // v0.xxxx
         src_token(2, 0, 0x00, 0), // c0.xxxx
@@ -2030,7 +2030,7 @@ fn wgsl_predicated_texld_avoids_non_uniform_control_flow() {
         opcode_token(31, 1) | (5u32 << 16),
         dst_token(1, 0, 0xF),
         // setp_gt p0, v0.x, c0.x  (compare op 0 = gt)
-        opcode_token(78, 3),
+        opcode_token(94, 3),
         dst_token(19, 0, 0xF),
         src_token(1, 0, 0x00, 0), // v0.xxxx
         src_token(2, 0, 0x00, 0), // c0.xxxx
@@ -2086,7 +2086,7 @@ fn wgsl_predicated_texldp_avoids_non_uniform_control_flow() {
         opcode_token(31, 1) | (5u32 << 16),
         dst_token(1, 0, 0xF),
         // setp_gt p0, v0.x, c0.x  (compare op 0 = gt)
-        opcode_token(78, 3),
+        opcode_token(94, 3),
         dst_token(19, 0, 0xF),
         src_token(1, 0, 0x00, 0), // v0.xxxx
         src_token(2, 0, 0x00, 0), // c0.xxxx
@@ -2146,12 +2146,12 @@ fn wgsl_predicated_texldd_is_valid_with_non_uniform_predicate() {
         opcode_token(31, 1) | (5u32 << 16),
         dst_token(1, 0, 0xF),
         // setp_gt p0, v0.x, c0.x  (compare op 0 = gt)
-        opcode_token(78, 3),
+        opcode_token(94, 3),
         dst_token(19, 0, 0xF),
         src_token(1, 0, 0x00, 0), // v0.xxxx
         src_token(2, 0, 0x00, 0), // c0.xxxx
         // texldd (p0) r0, v0, c1, c2, s0
-        opcode_token(77, 6) | 0x1000_0000, // predicated
+        opcode_token(93, 6) | 0x1000_0000, // predicated
         dst_token(0, 0, 0xF),
         src_token(1, 0, 0xE4, 0),  // v0
         src_token(2, 1, 0xE4, 0),  // c1 (ddx)
