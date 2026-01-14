@@ -12,15 +12,15 @@ use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 const VS_PASSTHROUGH: &[u8] = include_bytes!("fixtures/vs_passthrough.dxbc");
 const PS_PASSTHROUGH: &[u8] = include_bytes!("fixtures/ps_passthrough.dxbc");
 
-/// Regression test for the "dummy GS handle" pattern used by bring-up tests:
-/// binding a non-zero GS handle via the legacy `BIND_SHADERS.reserved0` field
-/// should force the compute-prepass path even when no GS shader was created.
+/// Regression test: the GS/HS/DS compute-prepass path can be forced without binding any
+/// GS/HS/DS shaders by selecting a primitive topology that cannot be expressed in a WebGPU render
+/// pipeline (adjacency).
 #[test]
-fn aerogpu_cmd_geometry_shader_compute_prepass_dummy_gs_handle() {
+fn aerogpu_cmd_geometry_shader_compute_prepass_forced_by_adjacency_topology_legacy_bind_shaders() {
     pollster::block_on(async {
         let test_name = concat!(
             module_path!(),
-            "::aerogpu_cmd_geometry_shader_compute_prepass_dummy_gs_handle"
+            "::aerogpu_cmd_geometry_shader_compute_prepass_forced_by_adjacency_topology_legacy_bind_shaders"
         );
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
             Ok(exec) => exec,
@@ -37,7 +37,6 @@ fn aerogpu_cmd_geometry_shader_compute_prepass_dummy_gs_handle() {
         const RT: u32 = 1;
         const VS: u32 = 2;
         const PS: u32 = 3;
-        const DUMMY_GS: u32 = 0xCAFE_BABE;
 
         let mut writer = AerogpuCmdWriter::new();
         writer.create_texture2d(
@@ -68,13 +67,11 @@ fn aerogpu_cmd_geometry_shader_compute_prepass_dummy_gs_handle() {
             /*multisample=*/ false,
         );
 
-        // Force the compute-prepass path by binding a *dummy* GS handle that does not exist.
-        //
-        // Use a topology that *is* supported by WebGPU render pipelines; the draw should still go
-        // through the compute-prepass path because GS/HS/DS emulation is requested.
-        writer.bind_shaders_with_gs(VS, DUMMY_GS, PS, 0);
-        writer.set_primitive_topology(AerogpuPrimitiveTopology::TriangleList);
-        writer.draw(3, 1, 0, 0);
+        // Force the GS/HS/DS emulation path via an adjacency topology (D3D11-only). A line-list-adj
+        // primitive consumes 4 vertices.
+        writer.bind_shaders(VS, PS, 0);
+        writer.set_primitive_topology(AerogpuPrimitiveTopology::LineListAdj);
+        writer.draw(4, 1, 0, 0);
 
         let stream = writer.finish();
         let mut guest_mem = VecGuestMemory::new(0);

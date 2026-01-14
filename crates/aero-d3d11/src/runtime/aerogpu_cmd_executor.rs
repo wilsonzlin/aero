@@ -1776,6 +1776,12 @@ impl AerogpuD3d11Executor {
         // reject `STORAGE_BINDING` usage. Some downlevel/native backends also only expose a subset
         // of storage texture formats, so we probe format support via a validation error scope.
         if device.limits().max_storage_textures_per_shader_stage > 0 {
+            // Some backends/devices expose storage textures but only for a subset of formats. wgpu
+            // validates `create_texture` immediately and panics on invalid usage/format combos, so
+            // probe each format individually and keep only the ones that are actually supported.
+            //
+            // Note: `new_with_caps` does not have access to the originating `wgpu::Adapter`, so we
+            // cannot query `adapter.get_texture_format_features` here.
             for format in [
                 crate::StorageTextureFormat::Rgba8Unorm,
                 crate::StorageTextureFormat::Rgba8Snorm,

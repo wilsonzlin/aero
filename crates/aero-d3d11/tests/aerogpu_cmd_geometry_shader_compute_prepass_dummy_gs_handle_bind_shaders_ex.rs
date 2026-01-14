@@ -12,15 +12,15 @@ use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 const VS_PASSTHROUGH: &[u8] = include_bytes!("fixtures/vs_passthrough.dxbc");
 const PS_PASSTHROUGH: &[u8] = include_bytes!("fixtures/ps_passthrough.dxbc");
 
-/// Same as `aerogpu_cmd_geometry_shader_compute_prepass_dummy_gs_handle`, but uses the
-/// append-only `BIND_SHADERS` ABI extension (`bind_shaders_ex`) instead of the legacy
-/// `reserved0` field.
+/// Same as `aerogpu_cmd_geometry_shader_compute_prepass_forced_by_adjacency_topology_legacy_bind_shaders`,
+/// but emits the append-only `BIND_SHADERS` ABI extension (`bind_shaders_ex`) to ensure extended
+/// shader-binding packets interoperate correctly with topology-forced emulation.
 #[test]
-fn aerogpu_cmd_geometry_shader_compute_prepass_dummy_gs_handle_bind_shaders_ex() {
+fn aerogpu_cmd_geometry_shader_compute_prepass_forced_by_adjacency_topology_bind_shaders_ex() {
     pollster::block_on(async {
         let test_name = concat!(
             module_path!(),
-            "::aerogpu_cmd_geometry_shader_compute_prepass_dummy_gs_handle_bind_shaders_ex"
+            "::aerogpu_cmd_geometry_shader_compute_prepass_forced_by_adjacency_topology_bind_shaders_ex"
         );
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
             Ok(exec) => exec,
@@ -37,7 +37,6 @@ fn aerogpu_cmd_geometry_shader_compute_prepass_dummy_gs_handle_bind_shaders_ex()
         const RT: u32 = 1;
         const VS: u32 = 2;
         const PS: u32 = 3;
-        const DUMMY_GS: u32 = 0xCAFE_BABE;
 
         let mut writer = AerogpuCmdWriter::new();
         writer.create_texture2d(
@@ -68,11 +67,12 @@ fn aerogpu_cmd_geometry_shader_compute_prepass_dummy_gs_handle_bind_shaders_ex()
             /*multisample=*/ false,
         );
 
-        // Force the compute-prepass path by binding a *dummy* GS handle that does not exist,
-        // but via the extended BIND_SHADERS ABI (`{gs, hs, ds}` appended payload).
-        writer.bind_shaders_ex(VS, PS, 0, DUMMY_GS, 0, 0);
-        writer.set_primitive_topology(AerogpuPrimitiveTopology::TriangleList);
-        writer.draw(3, 1, 0, 0);
+        // Force the compute-prepass path via an adjacency topology (D3D11-only). A line-list-adj
+        // primitive consumes 4 vertices. Use `bind_shaders_ex` even though `{gs,hs,ds}=0` to ensure
+        // the extended encoding does not interfere with topology-based emulation.
+        writer.bind_shaders_ex(VS, PS, 0, 0, 0, 0);
+        writer.set_primitive_topology(AerogpuPrimitiveTopology::LineListAdj);
+        writer.draw(4, 1, 0, 0);
 
         let stream = writer.finish();
         let mut guest_mem = VecGuestMemory::new(0);
