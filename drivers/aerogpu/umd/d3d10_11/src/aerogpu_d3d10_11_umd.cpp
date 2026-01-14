@@ -782,6 +782,13 @@ struct AeroGpuResource {
   // A real WDDM build should map these updates onto real allocations.
   std::vector<uint8_t> storage;
 
+  // Fence value of the most recent GPU submission that writes into this resource.
+  //
+  // This is used for staging readback Map(READ)/Map(DO_NOT_WAIT) synchronization so
+  // a read map does not spuriously fail due to unrelated in-flight work that
+  // doesn't touch the resource.
+  uint64_t last_gpu_write_fence = 0;
+
   // Map/unmap tracking.
   bool mapped_via_allocation = false;
   void* mapped_ptr = nullptr;
@@ -863,6 +870,11 @@ struct AeroGpuDevice {
 
   std::vector<AeroGpuResource*> live_resources;
 
+  // Staging resources with CPU read access written by commands recorded since the
+  // last submission. After submission, their `last_gpu_write_fence` is updated
+  // to the returned fence value.
+  std::vector<AeroGpuResource*> pending_staging_writes;
+
 
   // Cached state.
   //
@@ -916,6 +928,28 @@ void atomic_max_u64(std::atomic<uint64_t>* target, uint64_t value) {
   uint64_t cur = target->load(std::memory_order_relaxed);
   while (cur < value && !target->compare_exchange_weak(cur, value, std::memory_order_relaxed)) {
   }
+}
+
+void TrackStagingWriteLocked(AeroGpuDevice* dev, AeroGpuResource* dst) {
+  if (!dev || !dst) {
+    return;
+  }
+
+  // Track staging readback resources so Map(READ)/Map(DO_NOT_WAIT) can wait on
+  // the fence that actually produces the bytes, instead of waiting on the
+  // device's latest fence (which may include unrelated work).
+  if (dst->usage != kD3D11UsageStaging) {
+    return;
+  }
+  if ((dst->cpu_access_flags & kD3D11CpuAccessRead) == 0) {
+    return;
+  }
+
+  if (std::find(dev->pending_staging_writes.begin(), dev->pending_staging_writes.end(), dst) !=
+      dev->pending_staging_writes.end()) {
+    return;
+  }
+  dev->pending_staging_writes.push_back(dst);
 }
 
 void AddLiveResourceLocked(AeroGpuDevice* dev, AeroGpuResource* res) {
@@ -1384,6 +1418,7 @@ uint64_t submit_locked(AeroGpuDevice* dev, HRESULT* out_hr) {
         *out_hr = hr;
       }
       dev->cmd.reset();
+      dev->pending_staging_writes.clear();
       return 0;
     }
 
@@ -1417,6 +1452,13 @@ uint64_t submit_locked(AeroGpuDevice* dev, HRESULT* out_hr) {
 
     atomic_max_u64(&dev->last_submitted_fence, fence);
 
+    for (AeroGpuResource* res : dev->pending_staging_writes) {
+      if (res) {
+        res->last_gpu_write_fence = fence;
+      }
+    }
+    dev->pending_staging_writes.clear();
+
     dev->cmd.reset();
     return fence;
   }
@@ -1432,6 +1474,13 @@ uint64_t submit_locked(AeroGpuDevice* dev, HRESULT* out_hr) {
 
   atomic_max_u64(&dev->last_submitted_fence, fence);
   atomic_max_u64(&dev->last_completed_fence, fence);
+
+  for (AeroGpuResource* res : dev->pending_staging_writes) {
+    if (res) {
+      res->last_gpu_write_fence = fence;
+    }
+  }
+  dev->pending_staging_writes.clear();
 
   dev->referenced_allocs.clear();
   dev->cmd.reset();
@@ -1961,6 +2010,12 @@ void AEROGPU_APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOUR
     return;
   }
 
+  if (!dev->pending_staging_writes.empty()) {
+    dev->pending_staging_writes.erase(
+        std::remove(dev->pending_staging_writes.begin(), dev->pending_staging_writes.end(), res),
+        dev->pending_staging_writes.end());
+  }
+
   // Ensure the device state does not retain dangling pointers after the
   // resource is destroyed (portable build does not have runtime-managed
   // refcounting to prevent this).
@@ -2316,17 +2371,17 @@ HRESULT map_resource_locked(AeroGpuDevice* dev,
     return E_INVALIDARG;
   }
 
-  // Staging readback maps are synchronization points. For bring-up we conservatively
-  // submit and wait for the latest fence whenever the CPU requests a read.
+  // Staging readback maps are synchronization points. Submit pending work and
+  // then wait for the fence that last wrote this resource, instead of waiting
+  // for the device's latest fence (which may include unrelated work).
   if (want_read) {
     const bool do_not_wait = (map_flags & AEROGPU_D3D11_MAP_FLAG_DO_NOT_WAIT) != 0;
     HRESULT submit_hr = S_OK;
-    const uint64_t submitted_fence = submit_locked(dev, &submit_hr);
+    (void)submit_locked(dev, &submit_hr);
     if (FAILED(submit_hr)) {
       return submit_hr;
     }
-    const uint64_t last_fence = dev->last_submitted_fence.load(std::memory_order_relaxed);
-    const uint64_t fence = submitted_fence > last_fence ? submitted_fence : last_fence;
+    const uint64_t fence = res->last_gpu_write_fence;
     if (fence != 0) {
       if (do_not_wait) {
         const HRESULT wait_hr = AeroGpuWaitForFence(dev, fence, /*timeout_ms=*/0);
@@ -3294,6 +3349,7 @@ void AEROGPU_APIENTRY CopyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE 
   // Copy reads from the source resource and writes the destination resource.
   track_resource_alloc_for_submit_locked(dev, dst, /*write=*/true);
   track_resource_alloc_for_submit_locked(dev, src, /*write=*/false);
+  TrackStagingWriteLocked(dev, dst);
 
   struct CopySimMapping {
     uint8_t* data = nullptr;
@@ -3537,6 +3593,7 @@ HRESULT AEROGPU_APIENTRY CopySubresourceRegion(D3D10DDI_HDEVICE hDevice,
   // Copy reads from the source resource and writes the destination resource.
   track_resource_alloc_for_submit_locked(dev, dst, /*write=*/true);
   track_resource_alloc_for_submit_locked(dev, src, /*write=*/false);
+  TrackStagingWriteLocked(dev, dst);
 
   struct CopySimMapping {
     uint8_t* data = nullptr;
@@ -5785,6 +5842,7 @@ void AEROGPU_APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice, D3D10DD
     bool is_shared_alias = false;
     AeroGpuResource::WddmIdentity wddm;
     std::vector<uint8_t> storage;
+    uint64_t last_gpu_write_fence = 0;
     bool mapped = false;
     bool mapped_write = false;
     uint32_t mapped_subresource = 0;
@@ -5808,6 +5866,7 @@ void AEROGPU_APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice, D3D10DD
     id.is_shared_alias = res->is_shared_alias;
     id.wddm = std::move(res->wddm);
     id.storage = std::move(res->storage);
+    id.last_gpu_write_fence = res->last_gpu_write_fence;
     id.mapped = res->mapped;
     id.mapped_write = res->mapped_write;
     id.mapped_subresource = res->mapped_subresource;
@@ -5831,6 +5890,7 @@ void AEROGPU_APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice, D3D10DD
     res->is_shared_alias = id.is_shared_alias;
     res->wddm = std::move(id.wddm);
     res->storage = std::move(id.storage);
+    res->last_gpu_write_fence = id.last_gpu_write_fence;
     res->mapped = id.mapped;
     res->mapped_write = id.mapped_write;
     res->mapped_subresource = id.mapped_subresource;

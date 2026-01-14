@@ -2144,10 +2144,18 @@ bool TestMapDoNotWaitReportsStillDrawing() {
     return false;
   }
 
+  TestResource src{};
+  if (!Check(CreateStagingBuffer(&dev, /*byte_width=*/16, AEROGPU_D3D11_CPU_ACCESS_WRITE, &src), "CreateStagingBuffer(src)")) {
+    return false;
+  }
+
   TestResource buf{};
   if (!Check(CreateStagingBuffer(&dev, /*byte_width=*/16, AEROGPU_D3D11_CPU_ACCESS_READ, &buf), "CreateStagingBuffer")) {
     return false;
   }
+
+  // Record a copy so the staging READ buffer has an associated "GPU write" fence.
+  dev.device_funcs.pfnCopyResource(dev.hDevice, buf.hResource, src.hResource);
 
   dev.harness.completed_fence.store(0, std::memory_order_relaxed);
   const HRESULT flush_hr = dev.device_funcs.pfnFlush(dev.hDevice);
@@ -2210,6 +2218,89 @@ bool TestMapDoNotWaitReportsStillDrawing() {
   dev.device_funcs.pfnUnmap(dev.hDevice, buf.hResource, /*subresource=*/0);
 
   dev.device_funcs.pfnDestroyResource(dev.hDevice, buf.hResource);
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, src.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
+bool TestMapDoNotWaitIgnoresUnrelatedInFlightWork() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/true),
+             "InitTestDevice(map DO_NOT_WAIT unrelated fences)")) {
+    return false;
+  }
+
+  TestResource src{};
+  TestResource dst{};
+  if (!Check(CreateStagingBuffer(&dev, /*byte_width=*/16, AEROGPU_D3D11_CPU_ACCESS_WRITE, &src), "CreateStagingBuffer(src)")) {
+    return false;
+  }
+  if (!Check(CreateStagingBuffer(&dev, /*byte_width=*/16, AEROGPU_D3D11_CPU_ACCESS_READ, &dst), "CreateStagingBuffer(dst)")) {
+    return false;
+  }
+
+  // Record a copy that writes into `dst`.
+  dev.device_funcs.pfnCopyResource(dev.hDevice, dst.hResource, src.hResource);
+
+  dev.harness.completed_fence.store(0, std::memory_order_relaxed);
+  HRESULT hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(hr == S_OK, "Flush after CopyResource")) {
+    return false;
+  }
+  const uint64_t fence1 = dev.harness.last_submitted_fence.load(std::memory_order_relaxed);
+  if (!Check(fence1 != 0, "CopyResource submission produced a non-zero fence")) {
+    return false;
+  }
+
+  // Mark the copy fence complete.
+  dev.harness.completed_fence.store(fence1, std::memory_order_relaxed);
+  dev.harness.fence_cv.notify_all();
+
+  // Submit unrelated work (a standalone Flush) to advance the device's latest fence.
+  hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(hr == S_OK, "Flush unrelated work")) {
+    return false;
+  }
+  const uint64_t fence2 = dev.harness.last_submitted_fence.load(std::memory_order_relaxed);
+  if (!Check(fence2 > fence1, "Unrelated submission produced a later fence")) {
+    return false;
+  }
+
+  // Keep `fence2` incomplete while `fence1` is complete.
+  dev.harness.completed_fence.store(fence1, std::memory_order_relaxed);
+  dev.harness.fence_cv.notify_all();
+
+  // Map(DO_NOT_WAIT) should succeed because the last write to `dst` (fence1) is complete, even
+  // though newer unrelated work (fence2) is still in flight.
+  dev.harness.wait_call_count.store(0, std::memory_order_relaxed);
+  dev.harness.last_wait_timeout_ms.store(~0u, std::memory_order_relaxed);
+
+  AEROGPU_DDI_MAPPED_SUBRESOURCE mapped = {};
+  hr = dev.device_funcs.pfnMap(dev.hDevice,
+                               dst.hResource,
+                               /*subresource=*/0,
+                               AEROGPU_DDI_MAP_READ,
+                               AEROGPU_D3D11_MAP_FLAG_DO_NOT_WAIT,
+                               &mapped);
+  if (!Check(hr == S_OK, "Map(DO_NOT_WAIT) should not fail due to unrelated in-flight work")) {
+    return false;
+  }
+  if (!Check(dev.harness.wait_call_count.load(std::memory_order_relaxed) == 1,
+             "Map(DO_NOT_WAIT) should issue exactly one fence wait poll")) {
+    return false;
+  }
+  if (!Check(dev.harness.last_wait_timeout_ms.load(std::memory_order_relaxed) == 0,
+             "Map(DO_NOT_WAIT) should pass timeout_ms=0 to fence wait")) {
+    return false;
+  }
+  if (!Check(mapped.pData != nullptr, "Map returned a non-null pointer")) {
+    return false;
+  }
+  dev.device_funcs.pfnUnmap(dev.hDevice, dst.hResource, /*subresource=*/0);
+
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, dst.hResource);
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, src.hResource);
   dev.device_funcs.pfnDestroyDevice(dev.hDevice);
   dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
   return true;
@@ -2222,10 +2313,18 @@ bool TestMapBlockingWaitUsesInfiniteTimeout() {
     return false;
   }
 
+  TestResource src{};
+  if (!Check(CreateStagingBuffer(&dev, /*byte_width=*/16, AEROGPU_D3D11_CPU_ACCESS_WRITE, &src), "CreateStagingBuffer(src)")) {
+    return false;
+  }
+
   TestResource buf{};
   if (!Check(CreateStagingBuffer(&dev, /*byte_width=*/16, AEROGPU_D3D11_CPU_ACCESS_READ, &buf), "CreateStagingBuffer")) {
     return false;
   }
+
+  // Record a copy so the staging READ buffer has an associated "GPU write" fence.
+  dev.device_funcs.pfnCopyResource(dev.hDevice, buf.hResource, src.hResource);
 
   dev.harness.completed_fence.store(0, std::memory_order_relaxed);
   const HRESULT flush_hr = dev.device_funcs.pfnFlush(dev.hDevice);
@@ -2269,6 +2368,7 @@ bool TestMapBlockingWaitUsesInfiniteTimeout() {
   dev.device_funcs.pfnUnmap(dev.hDevice, buf.hResource, /*subresource=*/0);
 
   dev.device_funcs.pfnDestroyResource(dev.hDevice, buf.hResource);
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, src.hResource);
   dev.device_funcs.pfnDestroyDevice(dev.hDevice);
   dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
   return true;
@@ -8743,6 +8843,7 @@ int main() {
   ok &= TestMapAlreadyMappedFails();
   ok &= TestMapSubresourceValidation();
   ok &= TestMapDoNotWaitReportsStillDrawing();
+  ok &= TestMapDoNotWaitIgnoresUnrelatedInFlightWork();
   ok &= TestMapBlockingWaitUsesInfiniteTimeout();
   ok &= TestInvalidUnmapReportsError();
   ok &= TestInvalidSpecializedUnmapReportsError();
