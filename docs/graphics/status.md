@@ -317,7 +317,7 @@ Representative test pointers:
 - Executor tests: [`crates/aero-gpu/tests/`](../../crates/aero-gpu/tests/)
   - [`crates/aero-gpu/tests/aerogpu_d3d9_triangle.rs`](../../crates/aero-gpu/tests/aerogpu_d3d9_triangle.rs)
   - [`crates/aero-gpu/tests/aerogpu_d3d9_fixedfunc_triangle.rs`](../../crates/aero-gpu/tests/aerogpu_d3d9_fixedfunc_triangle.rs)
-- Guest-side Win7 tests live under [`drivers/aerogpu/tests/win7/`](../../drivers/aerogpu/tests/win7/) (see [`drivers/aerogpu/tests/win7/README.md`](../../drivers/aerogpu/tests/win7/README.md))
+- Guest-side Win7 tests live under [`drivers/aerogpu/tests/win7/`](../../drivers/aerogpu/tests/win7/) (see [`drivers/aerogpu/tests/win7/README.md`](../../drivers/aerogpu/tests/win7/README.md)), including fixed-function WVP regression coverage (`d3d9_fixedfunc_wvp_triangle`, `d3d9_fixedfunc_textured_wvp`).
 
 Known gaps / limitations (enforced by code):
 
