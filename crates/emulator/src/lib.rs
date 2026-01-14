@@ -1,6 +1,13 @@
 #![doc = r#"
 Device + I/O stack crate for Aero.
 
+## Status (legacy/compat)
+
+`crates/emulator` is **not** the canonical “VM wiring” layer.
+
+- Canonical VM wiring: `crates/aero-machine` (`aero_machine::Machine`)
+- Repo migration plan + deletion targets: `docs/21-emulator-crate-migration.md`
+
 ## Canonical VM entrypoint
 
 The canonical full-system machine wiring lives in `crates/aero-machine` as [`aero_machine::Machine`].
