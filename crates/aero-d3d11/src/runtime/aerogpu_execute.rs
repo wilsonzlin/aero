@@ -8,13 +8,14 @@ use aero_gpu::indirect::{DrawIndexedIndirectArgs, DrawIndirectArgs};
 use aero_gpu::passthrough_vs::PassthroughVertexShaderKey;
 use aero_gpu::pipeline_cache::{PipelineCache, PipelineCacheConfig};
 use aero_gpu::pipeline_key::{
-    ColorTargetKey, ComputePipelineKey, PipelineLayoutKey, RenderPipelineKey, ShaderHash, ShaderStage,
-    VertexAttributeKey, VertexBufferLayoutKey,
+    ColorTargetKey, ComputePipelineKey, PipelineLayoutKey, RenderPipelineKey, ShaderHash,
+    ShaderStage, VertexAttributeKey, VertexBufferLayoutKey,
 };
 use aero_gpu::stats::PipelineCacheStats;
 use aero_gpu::GpuCapabilities;
 use anyhow::{anyhow, bail, Context, Result};
 
+use crate::binding_model::EXPANDED_VERTEX_MAX_VARYINGS;
 use crate::input_layout::{
     fnv1a_32, map_layout_to_shader_locations_compact, DxgiFormatComponentType, InputLayoutBinding,
     InputLayoutDesc, VertexBufferLayoutOwned, VsInputSignatureElement, MAX_INPUT_SLOTS,
@@ -23,7 +24,6 @@ use crate::wgsl_bootstrap::translate_sm4_to_wgsl_bootstrap;
 use crate::{
     parse_signatures, translate_sm4_module_to_wgsl, DxbcFile, ShaderReflection, Sm4Program,
 };
-use crate::binding_model::EXPANDED_VERTEX_MAX_VARYINGS;
 
 use super::aerogpu_state::{
     AerogpuHandle, BlendState, D3D11ShadowState, DepthStencilState, IndexBufferBinding,
@@ -621,11 +621,11 @@ impl AerogpuCmdRuntime {
         }
 
         if program.stage == crate::ShaderStage::Geometry {
-            let module = crate::sm4::decode_program(&program).context("decode SM4/5 token stream")?;
+            let module =
+                crate::sm4::decode_program(&program).context("decode SM4/5 token stream")?;
             let prepass =
                 super::gs_translate::translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
-                    &module,
-                    "cs_main",
+                    &module, "cs_main",
                 )
                 .map_err(|e| anyhow!(e))?;
 
@@ -1825,7 +1825,9 @@ impl AerogpuCmdRuntime {
             entries: &vp_bg_entries,
         });
 
-        let empty_bgl = self.bind_group_layout_cache.get_or_create(&self.device, &[]);
+        let empty_bgl = self
+            .bind_group_layout_cache
+            .get_or_create(&self.device, &[]);
         let empty_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("aero-d3d11 empty bind group"),
             layout: empty_bgl.layout.as_ref(),
@@ -1851,11 +1853,13 @@ impl AerogpuCmdRuntime {
                     empty_bgl.layout.as_ref(),
                     vp_bgl.layout.as_ref(),
                 ];
-                Arc::new(device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("aero-d3d11 GS prepass fill pipeline layout"),
-                    bind_group_layouts: &layouts,
-                    push_constant_ranges: &[],
-                }))
+                Arc::new(
+                    device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                        label: Some("aero-d3d11 GS prepass fill pipeline layout"),
+                        bind_group_layouts: &layouts,
+                        push_constant_ranges: &[],
+                    }),
+                )
             })
         };
         let fill_cs_key = ComputePipelineKey {
@@ -1904,7 +1908,9 @@ impl AerogpuCmdRuntime {
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: false },
                     has_dynamic_offset: false,
-                    min_binding_size: wgpu::BufferSize::new(DrawIndexedIndirectArgs::SIZE_BYTES + 16),
+                    min_binding_size: wgpu::BufferSize::new(
+                        DrawIndexedIndirectArgs::SIZE_BYTES + 16,
+                    ),
                 },
                 count: None,
             },
@@ -1966,7 +1972,9 @@ impl AerogpuCmdRuntime {
             let stage_info = reflection_bindings::build_pipeline_bindings_info(
                 &self.device,
                 &mut self.bind_group_layout_cache,
-                [reflection_bindings::ShaderBindingSet::Guest(gs.reflection.bindings.as_slice())],
+                [reflection_bindings::ShaderBindingSet::Guest(
+                    gs.reflection.bindings.as_slice(),
+                )],
                 reflection_bindings::BindGroupIndexValidation::GuestShaders,
             )?;
             if stage_info.group_layouts.len() > 3 {
@@ -2014,11 +2022,13 @@ impl AerogpuCmdRuntime {
                     empty_bgl.layout.as_ref(),
                     gs_stage_layout.as_ref(),
                 ];
-                Arc::new(device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("aero-d3d11 GS prepass pipeline layout"),
-                    bind_group_layouts: &layouts,
-                    push_constant_ranges: &[],
-                }))
+                Arc::new(
+                    device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                        label: Some("aero-d3d11 GS prepass pipeline layout"),
+                        bind_group_layouts: &layouts,
+                        push_constant_ranges: &[],
+                    }),
+                )
             })
         };
         let gs_cs_key = ComputePipelineKey {
@@ -2184,10 +2194,11 @@ impl AerogpuCmdRuntime {
             .copied()
             .collect();
         if !missing_outputs.is_empty() {
-            linked_ps_wgsl = std::borrow::Cow::Owned(super::wgsl_link::trim_ps_outputs_to_locations(
-                linked_ps_wgsl.as_ref(),
-                &keep_output_locations,
-            ));
+            linked_ps_wgsl =
+                std::borrow::Cow::Owned(super::wgsl_link::trim_ps_outputs_to_locations(
+                    linked_ps_wgsl.as_ref(),
+                    &keep_output_locations,
+                ));
         }
 
         let linked_ps_hash = if linked_ps_wgsl.as_ref() == ps.wgsl.as_str() {
@@ -2270,11 +2281,13 @@ impl AerogpuCmdRuntime {
             cache.get_or_create_with(&layout_key, || {
                 let layout_refs: Vec<&wgpu::BindGroupLayout> =
                     group_layouts.iter().map(|l| l.layout.as_ref()).collect();
-                Arc::new(device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("aero-d3d11 aerogpu GS expanded pipeline layout"),
-                    bind_group_layouts: &layout_refs,
-                    push_constant_ranges: &[],
-                }))
+                Arc::new(
+                    device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                        label: Some("aero-d3d11 aerogpu GS expanded pipeline layout"),
+                        bind_group_layouts: &layout_refs,
+                        push_constant_ranges: &[],
+                    }),
+                )
             })
         };
 
@@ -3231,7 +3244,9 @@ fn primitive_count_from_element_count(topology: PrimitiveTopology, element_count
         PrimitiveTopology::LineList => element_count / 2,
         PrimitiveTopology::LineStrip => element_count.saturating_sub(1),
         PrimitiveTopology::TriangleList => element_count / 3,
-        PrimitiveTopology::TriangleStrip | PrimitiveTopology::TriangleFan => element_count.saturating_sub(2),
+        PrimitiveTopology::TriangleStrip | PrimitiveTopology::TriangleFan => {
+            element_count.saturating_sub(2)
+        }
     }
 }
 
@@ -3270,7 +3285,9 @@ fn build_vs_as_compute_gs_input_wgsl(
     wgsl.push_str(&format!(
         "const VERTS_PER_PRIM: u32 = {verts_per_primitive}u;\n",
     ));
-    wgsl.push_str(&format!("const GS_INPUT_REG_COUNT: u32 = {reg_count}u;\n\n"));
+    wgsl.push_str(&format!(
+        "const GS_INPUT_REG_COUNT: u32 = {reg_count}u;\n\n"
+    ));
 
     // Generate per-location load helpers (expanded to vec4 with D3D defaults).
     for attr in &pulling.attributes {
@@ -3284,7 +3301,9 @@ fn build_vs_as_compute_gs_input_wgsl(
         PrimitiveTopology::LineStrip => "(prim_id + vert_in_prim)".to_owned(),
         PrimitiveTopology::TriangleList => "(prim_id * 3u + vert_in_prim)".to_owned(),
         PrimitiveTopology::TriangleStrip => "(prim_id + vert_in_prim)".to_owned(),
-        PrimitiveTopology::TriangleFan => "select(0u, prim_id + vert_in_prim, vert_in_prim != 0u)".to_owned(),
+        PrimitiveTopology::TriangleFan => {
+            "select(0u, prim_id + vert_in_prim, vert_in_prim != 0u)".to_owned()
+        }
     };
 
     // Map pulling `@location` indices back to D3D input register indices.

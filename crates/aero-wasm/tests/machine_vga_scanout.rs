@@ -1,7 +1,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 
-use aero_wasm::{Machine, RunExitKind};
 use aero_gpu_vga::{VBE_DISPI_DATA_PORT, VBE_DISPI_INDEX_PORT};
+use aero_wasm::{Machine, RunExitKind};
 
 const _: () = {
     assert!(VBE_DISPI_DATA_PORT == VBE_DISPI_INDEX_PORT + 1);

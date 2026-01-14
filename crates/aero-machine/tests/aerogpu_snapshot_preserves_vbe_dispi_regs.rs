@@ -69,4 +69,3 @@ fn aerogpu_snapshot_preserves_vbe_dispi_register_file_and_scanout() {
     assert_eq!(restored.display_resolution(), (64, 64));
     assert_eq!(restored.display_framebuffer(), expected_fb.as_slice());
 }
-

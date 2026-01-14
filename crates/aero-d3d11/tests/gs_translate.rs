@@ -1994,11 +1994,11 @@ fn gs_translate_supports_breakc_inside_switch_case() {
     };
 
     let wgsl = translate_gs_module_to_wgsl_compute_prepass(&module).expect("translate");
-    assert!(wgsl.contains("switch("), "expected switch statement:\n{wgsl}");
     assert!(
-        wgsl.contains("case 0i:"),
-        "expected case label:\n{wgsl}"
+        wgsl.contains("switch("),
+        "expected switch statement:\n{wgsl}"
     );
+    assert!(wgsl.contains("case 0i:"), "expected case label:\n{wgsl}");
     assert!(
         wgsl.contains("if (") && wgsl.contains("break;"),
         "expected conditional break in WGSL:\n{wgsl}"

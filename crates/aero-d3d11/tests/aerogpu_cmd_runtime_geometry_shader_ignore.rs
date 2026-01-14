@@ -145,7 +145,8 @@ fn aerogpu_cmd_runtime_geometry_shader_emulation_renders_triangle() {
         const IL: u32 = 6;
 
         rt.create_shader_dxbc(VS, DXBC_VS_PASSTHROUGH).unwrap();
-        rt.create_shader_dxbc(GS, DXBC_GS_POINT_TO_TRIANGLE).unwrap();
+        rt.create_shader_dxbc(GS, DXBC_GS_POINT_TO_TRIANGLE)
+            .unwrap();
         rt.create_shader_dxbc(PS, &build_ps_solid_green_dxbc())
             .unwrap();
         rt.create_input_layout(IL, ILAY_POS3_COLOR).unwrap();
