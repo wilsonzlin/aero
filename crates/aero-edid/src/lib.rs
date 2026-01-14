@@ -46,6 +46,18 @@ impl Timing {
             && self.refresh_hz <= u8::MAX as u16
             && (self.width as u32) <= 0x0FFF
             && (self.height as u32) <= 0x0FFF
+            // Range limits descriptor also stores horizontal rate in kHz as u8.
+            // Avoid generating a preferred mode whose horizontal scan rate
+            // cannot be represented.
+            && {
+                // Approximate the vertical blanking used by the synthesizer.
+                let v_active = self.height as u32;
+                let v_blank = ((v_active + 19) / 20).max(MIN_V_BLANK);
+                let v_total = v_active + v_blank;
+                // Horizontal frequency in kHz is v_total * refresh / 1000.
+                let h_freq_khz = ((v_total as u64) * (self.refresh_hz as u64) + 500) / 1000;
+                h_freq_khz <= u8::MAX as u64
+            }
             && {
                 let min_pixel_clock_hz = (self.width as u64 + MIN_H_BLANK as u64)
                     * (self.height as u64 + MIN_V_BLANK as u64)
@@ -903,6 +915,20 @@ mod tests {
         // EDID range limits encode vertical rate as u8, so values above 255Hz cannot be
         // represented without internal inconsistency.
         let edid = generate_edid(Timing::new(640, 480, 300));
+        assert_eq!(
+            &edid[54..72],
+            &[
+                0x64, 0x19, 0x00, 0x40, 0x41, 0x00, 0x26, 0x30, 0x18, 0x88, 0x36, 0x00, 0x54,
+                0x0E, 0x11, 0x00, 0x00, 0x18
+            ]
+        );
+    }
+
+    #[test]
+    fn excessive_horizontal_frequency_falls_back_to_default() {
+        // This timing fits within the DTD pixel clock limit, but the implied horizontal scan rate
+        // is ~986kHz and cannot be represented in the range limits descriptor (u8 kHz).
+        let edid = generate_edid(Timing::new(640, 4095, 240));
         assert_eq!(
             &edid[54..72],
             &[
