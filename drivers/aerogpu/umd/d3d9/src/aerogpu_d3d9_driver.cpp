@@ -12157,8 +12157,28 @@ HRESULT AEROGPU_D3D9_CALL device_set_texture_stage_state(
   if (stage == 0 &&
       (state == kD3dTssColorOp || state == kD3dTssColorArg1 || state == kD3dTssColorArg2 ||
        state == kD3dTssAlphaOp || state == kD3dTssAlphaArg1 || state == kD3dTssAlphaArg2) &&
-      fixedfunc_fvf_supported(dev->fvf) && !dev->user_vs && !dev->user_ps) {
-    Shader** ps_slot = (dev->fvf == kSupportedFvfXyzrhwDiffuse) ? &dev->fixedfunc_ps : &dev->fixedfunc_ps_tex1;
+      fixedfunc_supported_fvf(dev->fvf) && !dev->user_vs && !dev->user_ps) {
+    Shader** ps_slot = nullptr;
+    switch (dev->fvf) {
+      case kSupportedFvfXyzrhwDiffuse:
+      case kSupportedFvfXyzDiffuse:
+        ps_slot = &dev->fixedfunc_ps;
+        break;
+      case kSupportedFvfXyzrhwDiffuseTex1:
+      case kSupportedFvfXyzrhwTex1:
+        ps_slot = &dev->fixedfunc_ps_tex1;
+        break;
+      case kSupportedFvfXyzDiffuseTex1:
+      case kSupportedFvfXyzTex1:
+        ps_slot = &dev->fixedfunc_ps_xyz_diffuse_tex1;
+        break;
+      default:
+        ps_slot = nullptr;
+        break;
+    }
+    if (!ps_slot) {
+      return trace.ret(kD3DErrInvalidCall);
+    }
     const HRESULT ps_hr = ensure_fixedfunc_pixel_shader_locked(dev, ps_slot);
     if (FAILED(ps_hr)) {
       return trace.ret(ps_hr);

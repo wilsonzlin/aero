@@ -12,9 +12,9 @@
 
 namespace aerogpu {
 
-// Host-test wrapper (defined in `src/aerogpu_d3d9_driver.cpp` under "Host-side
-// test entrypoints"). This is not part of the portable D3D9DDI_DEVICEFUNCS ABI,
-// but unit tests call it directly to validate fixed-function behavior.
+// Host-test helper (defined in `src/aerogpu_d3d9_driver.cpp` under "Host-side
+// test entrypoints"). Unit tests may call this directly when the device vtable
+// does not expose SetTextureStageState in a given build configuration.
 HRESULT AEROGPU_D3D9_CALL device_set_texture_stage_state(
     D3DDDI_HDEVICE hDevice,
     uint32_t stage,
@@ -1478,9 +1478,21 @@ bool TestSetTextureStageStateUpdatesPsForTex1NoDiffuseFvfs() {
       }
     }
 
-    // Validate SetTextureStageState does not fail for supported TEX1-without-diffuse paths.
-    hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, /*stage=*/0, kD3dTssColorOp, kD3dTopDisable);
-    if (!Check(hr == S_OK, "XYZRHW|TEX1: SetTextureStageState(COLOROP=DISABLE) succeeds")) {
+    const auto SetTextureStageState = [&](uint32_t stage, uint32_t state, uint32_t value,
+                                          const char* msg) -> bool {
+      HRESULT hr2 = S_OK;
+      if (cleanup.device_funcs.pfnSetTextureStageState) {
+        hr2 = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, stage, state, value);
+      } else {
+        hr2 = aerogpu::device_set_texture_stage_state(cleanup.hDevice, stage, state, value);
+      }
+      return Check(hr2 == S_OK, msg);
+    };
+
+    if (!SetTextureStageState(/*stage=*/0,
+                              kD3dTssColorOp,
+                              kD3dTopDisable,
+                              "XYZRHW|TEX1: SetTextureStageState(COLOROP=DISABLE) succeeds")) {
       return false;
     }
     {
@@ -1560,8 +1572,21 @@ bool TestSetTextureStageStateUpdatesPsForTex1NoDiffuseFvfs() {
       }
     }
 
-    hr = aerogpu::device_set_texture_stage_state(cleanup.hDevice, /*stage=*/0, kD3dTssColorOp, kD3dTopDisable);
-    if (!Check(hr == S_OK, "XYZ|TEX1: SetTextureStageState(COLOROP=DISABLE) succeeds")) {
+    const auto SetTextureStageState = [&](uint32_t stage, uint32_t state, uint32_t value,
+                                          const char* msg) -> bool {
+      HRESULT hr2 = S_OK;
+      if (cleanup.device_funcs.pfnSetTextureStageState) {
+        hr2 = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, stage, state, value);
+      } else {
+        hr2 = aerogpu::device_set_texture_stage_state(cleanup.hDevice, stage, state, value);
+      }
+      return Check(hr2 == S_OK, msg);
+    };
+
+    if (!SetTextureStageState(/*stage=*/0,
+                              kD3dTssColorOp,
+                              kD3dTopDisable,
+                              "XYZ|TEX1: SetTextureStageState(COLOROP=DISABLE) succeeds")) {
       return false;
     }
     {
