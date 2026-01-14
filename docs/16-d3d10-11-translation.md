@@ -1879,32 +1879,28 @@ Recommended layout (32 bytes per patch):
 
 ```wgsl
 struct TessPatchConstants {
-  // Edge tess factors (float bits) packed into a 4-wide vector for simplicity.
+  // Edge tess factors (f32 values) packed into a 4-wide vector for simplicity.
   //
   // Domain mapping:
   // - tri domain:   edge[0..2] = xyz, edge[3] unused
   // - quad domain:  edge[0..3] = xyzw
   // - isoline:      edge[0..1] = xy,  edge[2..3] unused
-  edge_factors_bits: vec4<u32>;
+  edge_factors: vec4<f32>;
 
-  // Inside tess factors (float bits).
+  // Inside tess factors (f32 values).
   //
   // Domain mapping:
   // - tri domain:   inside[0] = x, inside[1..3] unused
   // - quad domain:  inside[0..1] = xy, inside[2..3] unused
   // - isoline:      unused (all zero)
-  inside_factors_bits: vec4<u32>;
+  inside_factors: vec4<f32>;
 }
 // Bind group index is `3` in the baseline design (shared with GS/HS/DS resources).
 @group(3) @binding(275) var<storage, read_write> tess_patch_constants: array<TessPatchConstants>;
 ```
 
-HS writes `f32` tess factors by storing their bit patterns:
-
-- `edge_factors_bits[i] = bitcast<u32>(edge_factor_i)`
-- `inside_factors_bits[i] = bitcast<u32>(inside_factor_i)`
-
-Unused lanes MUST be written as 0 so tools and debug readbacks are deterministic.
+HS writes `f32` tess factors directly. Unused lanes MUST be written as `0.0` so tools and debug
+readbacks are deterministic.
 
 Indexing rule (same as `tess_patch_state`):
 
