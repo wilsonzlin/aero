@@ -151,7 +151,6 @@ fn wddm_scanout_state_format_mapping_rejects_unsupported_formats_deterministical
     let snap1 = scanout_state.snapshot();
     assert_eq!(snap0, snap1);
 }
-
 #[test]
 fn wddm_scanout_state_defers_fb_gpa_updates_until_hi_written() {
     let scanout_state = Arc::new(ScanoutState::new());

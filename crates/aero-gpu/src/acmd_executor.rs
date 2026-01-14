@@ -645,6 +645,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_arch = "wasm32"))]
     fn destroy_resource_clears_presented_scanout() {
         let Some(()) = with_executor(|exec| {
             const TEX: u32 = 1;
@@ -681,6 +682,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_arch = "wasm32"))]
     fn set_render_targets_rejects_destroyed_original_handle_while_alias_alive() {
         let Some(()) = with_executor(|exec| {
             const ORIGINAL: u32 = 1;
@@ -721,6 +723,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_arch = "wasm32"))]
     fn create_texture2d_rejects_zero_sized_textures() {
         let Some(()) = with_executor(|exec| {
             let mut w = AerogpuCmdWriter::new();
@@ -748,6 +751,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_arch = "wasm32"))]
     fn clear_x8_render_target_forces_opaque_alpha() {
         let Some(()) = with_executor(|exec| {
             const SCANOUT: u32 = 0;

@@ -188,6 +188,7 @@ fn xhci_tick_advances_mfindex_and_flushes_events_after_erst_configured() {
 
     // Pre-fill a would-be event ring slot so we can detect accidental writes before ERST is configured.
     let ring_base = 0x2000usize;
+    let ring_base_u64 = ring_base as u64;
     mem.data[ring_base..ring_base + TRB_LEN].fill(0xA5);
 
     // Tick without an event ring: MFINDEX should advance, but the PSC event should remain queued.
@@ -215,14 +216,14 @@ fn xhci_tick_advances_mfindex_and_flushes_events_after_erst_configured() {
         &mut mem,
         regs::REG_INTR0_ERDP_HI,
         4,
-        ((ring_base as u64) >> 32) as u32,
+        (ring_base_u64 >> 32) as u32,
     );
     xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
 
     xhci.tick_1ms(&mut mem);
     assert_eq!(xhci.pending_event_count(), 0);
 
-    let ev = Trb::read_from(&mut mem, ring_base as u64);
+    let ev = Trb::read_from(&mut mem, ring_base_u64);
     assert_eq!(ev.trb_type(), TrbType::PortStatusChangeEvent);
     assert!(ev.cycle());
 }

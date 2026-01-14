@@ -10279,6 +10279,9 @@ impl AerogpuD3d11Executor {
             let entry_point = match stage {
                 ShaderStage::Vertex => "vs_main",
                 ShaderStage::Pixel => "fs_main",
+                ShaderStage::Geometry | ShaderStage::Hull | ShaderStage::Domain => {
+                    unreachable!("ignored shader stages should be filtered before creating WGSL modules")
+                }
                 ShaderStage::Compute => "cs_main",
                 ShaderStage::Geometry | ShaderStage::Hull | ShaderStage::Domain => {
                     unreachable!("ignored shader stage should have returned earlier: {stage:?}")

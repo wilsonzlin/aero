@@ -2402,7 +2402,7 @@ fn eq_case_insensitive(a: &str, b: &str) -> bool {
     a.eq_ignore_ascii_case(b)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
 

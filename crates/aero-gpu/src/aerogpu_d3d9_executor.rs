@@ -3016,7 +3016,7 @@ impl AerogpuD3d9Executor {
                         expected_dim_key = reflection.sampler_dim_key,
                         derived_used = wgsl_used_samplers_mask,
                         derived_dim_key = wgsl_sampler_dim_key,
-                        "cached shader sampler mask metadata does not match WGSL; invalidating and retranslating"
+                        "cached shader sampler metadata does not match WGSL; invalidating and retranslating"
                     );
                     if !invalidated_once {
                         invalidated_once = true;
@@ -10678,9 +10678,7 @@ mod tests {
         build_alpha_test_wgsl_variant, cmd, d3d9, guest_texture_linear_layout, AerogpuD3d9Error,
         AerogpuD3d9Executor, AerogpuFormat, D3d9SamplerState,
     };
-    use std::sync::Arc;
-    #[cfg(not(target_arch = "wasm32"))]
-    use std::sync::{Mutex, OnceLock};
+    use std::sync::{Arc, Mutex, OnceLock};
 
     #[cfg(not(target_arch = "wasm32"))]
     fn shared_executor() -> Option<&'static Mutex<AerogpuD3d9Executor>> {
@@ -10961,6 +10959,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_arch = "wasm32"))]
     fn d3d9_sampler_maxanisotropy_affects_sampler_only_when_anisotropic_supported() {
         let Some(()) = with_executor(|exec| {
             // MAXANISOTROPY should have no effect unless anisotropic filtering is actually requested.
