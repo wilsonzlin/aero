@@ -2641,6 +2641,123 @@ def _virtio_input_tablet_events_skip_failure_message(
     )
 
 
+def _virtio_input_wheel_skip_failure_message(tail: bytes, *, marker_line: Optional[str] = None) -> str:
+    # Guest marker:
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|PASS|wheel_total=...|hwheel_total=...|...
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|FAIL|reason=...|wheel_total=...|hwheel_total=...|...
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|SKIP|flag_not_set
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|SKIP|not_observed|wheel_total=...|hwheel_total=...
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|SKIP|input_events_failed|reason=...|err=...|wheel_total=...|hwheel_total=...
+    prefix = b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|SKIP|"
+    prefix_str = "AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|SKIP|"
+    marker = marker_line
+    if marker is not None and not marker.startswith(prefix_str):
+        marker = None
+    if marker is None:
+        marker = _try_extract_last_marker_line(tail, prefix)
+    if marker is not None:
+        fields = _parse_marker_kv_fields(marker)
+        code = ""
+        try:
+            toks = marker.split("|")
+            if toks and "SKIP" in toks:
+                idx = toks.index("SKIP")
+                if idx + 1 < len(toks):
+                    tok = toks[idx + 1].strip()
+                    if tok and "=" not in tok:
+                        code = tok
+        except Exception:
+            code = code
+
+        parts: list[str] = []
+        if code:
+            parts.append(code)
+        # Surface additional details when present (notably `reason=`/`err=` for input_events_failed).
+        for k in ("reason", "err", "wheel_total", "hwheel_total"):
+            v = (fields.get(k) or "").strip()
+            if v:
+                parts.append(f"{k}={_sanitize_marker_value(v)}")
+        details = ""
+        if parts:
+            details = " (" + " ".join(parts) + ")"
+
+        if code == "flag_not_set":
+            return (
+                "FAIL: VIRTIO_INPUT_WHEEL_SKIPPED: virtio-input-wheel test was skipped (flag_not_set) but "
+                "--with-input-wheel/--with-virtio-input-wheel/--require-virtio-input-wheel/--enable-virtio-input-wheel was enabled "
+                "(provision the guest with --test-input-events)"
+            )
+        return (
+            f"FAIL: VIRTIO_INPUT_WHEEL_SKIPPED: virtio-input-wheel test was skipped{details} but "
+            "--with-input-wheel/--with-virtio-input-wheel/--require-virtio-input-wheel/--enable-virtio-input-wheel was enabled"
+        )
+    return (
+        "FAIL: VIRTIO_INPUT_WHEEL_SKIPPED: virtio-input-wheel test was skipped but "
+        "--with-input-wheel/--with-virtio-input-wheel/--require-virtio-input-wheel/--enable-virtio-input-wheel was enabled"
+    )
+
+
+def _virtio_input_wheel_fail_failure_message(tail: bytes, *, marker_line: Optional[str] = None) -> str:
+    # Guest marker:
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|FAIL|reason=missing_axis|wheel_total=...|hwheel_total=...|saw_wheel=...|saw_hwheel=...
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|FAIL|reason=unexpected_delta|wheel_total=...|hwheel_total=...|expected_wheel=...|expected_hwheel=...|wheel_events=...|hwheel_events=...|...
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|FAIL|reason=delta_mismatch|wheel_total=...|hwheel_total=...|expected_wheel=...|expected_hwheel=...|wheel_events=...|hwheel_events=...|...
+    prefix = b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|FAIL|"
+    prefix_str = "AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|FAIL|"
+    marker = marker_line
+    if marker is not None and not marker.startswith(prefix_str):
+        marker = None
+    if marker is None:
+        marker = _try_extract_last_marker_line(tail, prefix)
+    if marker is not None:
+        fields = _parse_marker_kv_fields(marker)
+        reason = (fields.get("reason") or "").strip()
+        if not reason:
+            # Backcompat: allow `...|FAIL|missing_axis|...` (no `reason=` field).
+            try:
+                toks = marker.split("|")
+                if toks and "FAIL" in toks:
+                    idx = toks.index("FAIL")
+                    if idx + 1 < len(toks):
+                        tok = toks[idx + 1].strip()
+                        if tok and "=" not in tok:
+                            reason = tok
+            except Exception:
+                reason = reason
+
+        parts: list[str] = []
+        if reason:
+            parts.append(f"reason={_sanitize_marker_value(reason)}")
+        for k in (
+            "wheel_total",
+            "hwheel_total",
+            "expected_wheel",
+            "expected_hwheel",
+            "wheel_events",
+            "hwheel_events",
+            "saw_wheel",
+            "saw_hwheel",
+            "saw_wheel_expected",
+            "saw_hwheel_expected",
+            "wheel_unexpected_last",
+            "hwheel_unexpected_last",
+        ):
+            v = (fields.get(k) or "").strip()
+            if v:
+                parts.append(f"{k}={_sanitize_marker_value(v)}")
+        details = ""
+        if parts:
+            details = " (" + " ".join(parts) + ")"
+        return (
+            "FAIL: VIRTIO_INPUT_WHEEL_FAILED: virtio-input-wheel test reported FAIL while "
+            f"--with-input-wheel/--with-virtio-input-wheel/--require-virtio-input-wheel/--enable-virtio-input-wheel was enabled{details}"
+        )
+    return (
+        "FAIL: VIRTIO_INPUT_WHEEL_FAILED: virtio-input-wheel test reported FAIL while "
+        "--with-input-wheel/--with-virtio-input-wheel/--require-virtio-input-wheel/--enable-virtio-input-wheel was enabled"
+    )
+
+
 def _virtio_blk_reset_required_failure_message(
     tail: bytes,
     *,
@@ -5644,8 +5761,10 @@ def main() -> int:
                     if need_input_wheel:
                         if saw_virtio_input_wheel_skip:
                             print(
-                                "FAIL: VIRTIO_INPUT_WHEEL_SKIPPED: virtio-input-wheel test was skipped but "
-                                "--with-input-wheel/--with-virtio-input-wheel/--require-virtio-input-wheel/--enable-virtio-input-wheel was enabled",
+                                _virtio_input_wheel_skip_failure_message(
+                                    tail,
+                                    marker_line=virtio_input_wheel_marker_line,
+                                ),
                                 file=sys.stderr,
                             )
                             _print_tail(serial_log)
@@ -5653,8 +5772,10 @@ def main() -> int:
                             break
                         if saw_virtio_input_wheel_fail:
                             print(
-                                "FAIL: VIRTIO_INPUT_WHEEL_FAILED: virtio-input-wheel test reported FAIL while "
-                                "--with-input-wheel/--with-virtio-input-wheel/--require-virtio-input-wheel/--enable-virtio-input-wheel was enabled",
+                                _virtio_input_wheel_fail_failure_message(
+                                    tail,
+                                    marker_line=virtio_input_wheel_marker_line,
+                                ),
                                 file=sys.stderr,
                             )
                             _print_tail(serial_log)
@@ -6197,8 +6318,10 @@ def main() -> int:
                                 if not saw_virtio_input_wheel_pass:
                                     if saw_virtio_input_wheel_skip:
                                         print(
-                                            "FAIL: VIRTIO_INPUT_WHEEL_SKIPPED: virtio-input-wheel test was skipped but "
-                                            "--with-input-wheel/--with-virtio-input-wheel/--require-virtio-input-wheel/--enable-virtio-input-wheel was enabled",
+                                            _virtio_input_wheel_skip_failure_message(
+                                                tail,
+                                                marker_line=virtio_input_wheel_marker_line,
+                                            ),
                                             file=sys.stderr,
                                         )
                                     else:
@@ -6657,8 +6780,10 @@ def main() -> int:
                         if need_input_wheel:
                             if saw_virtio_input_wheel_fail:
                                 print(
-                                    "FAIL: VIRTIO_INPUT_WHEEL_FAILED: virtio-input-wheel test reported FAIL while "
-                                    "--with-input-wheel/--with-virtio-input-wheel/--require-virtio-input-wheel/--enable-virtio-input-wheel was enabled",
+                                    _virtio_input_wheel_fail_failure_message(
+                                        tail,
+                                        marker_line=virtio_input_wheel_marker_line,
+                                    ),
                                     file=sys.stderr,
                                 )
                                 _print_tail(serial_log)
@@ -6667,8 +6792,10 @@ def main() -> int:
                             if not saw_virtio_input_wheel_pass:
                                 if saw_virtio_input_wheel_skip:
                                     print(
-                                        "FAIL: VIRTIO_INPUT_WHEEL_SKIPPED: virtio-input-wheel test was skipped but "
-                                        "--with-input-wheel/--with-virtio-input-wheel/--require-virtio-input-wheel/--enable-virtio-input-wheel was enabled",
+                                        _virtio_input_wheel_skip_failure_message(
+                                            tail,
+                                            marker_line=virtio_input_wheel_marker_line,
+                                        ),
                                         file=sys.stderr,
                                     )
                                 else:
@@ -8724,8 +8851,10 @@ def main() -> int:
                             if need_input_wheel:
                                 if saw_virtio_input_wheel_fail:
                                     print(
-                                        "FAIL: VIRTIO_INPUT_WHEEL_FAILED: virtio-input-wheel test reported FAIL while "
-                                        "--with-input-wheel/--with-virtio-input-wheel/--require-virtio-input-wheel/--enable-virtio-input-wheel was enabled",
+                                        _virtio_input_wheel_fail_failure_message(
+                                            tail,
+                                            marker_line=virtio_input_wheel_marker_line,
+                                        ),
                                         file=sys.stderr,
                                     )
                                     _print_tail(serial_log)
@@ -8734,8 +8863,10 @@ def main() -> int:
                                 if not saw_virtio_input_wheel_pass:
                                     if saw_virtio_input_wheel_skip:
                                         print(
-                                            "FAIL: VIRTIO_INPUT_WHEEL_SKIPPED: virtio-input-wheel test was skipped but "
-                                            "--with-input-wheel/--with-virtio-input-wheel/--require-virtio-input-wheel/--enable-virtio-input-wheel was enabled",
+                                            _virtio_input_wheel_skip_failure_message(
+                                                tail,
+                                                marker_line=virtio_input_wheel_marker_line,
+                                            ),
                                             file=sys.stderr,
                                         )
                                     else:

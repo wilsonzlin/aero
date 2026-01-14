@@ -281,6 +281,47 @@ class FailureTokenTests(unittest.TestCase):
         self.assertIn("no_tablet_device", msg2)
         self.assertNotIn("--test-input-tablet-events", msg2)
 
+    def test_virtio_input_wheel_skip_tokens_include_reason_details(self) -> None:
+        h = self.harness
+
+        msg = h._virtio_input_wheel_skip_failure_message(
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|SKIP|flag_not_set\n"
+        )
+        self.assertRegex(msg, _TOKEN_RE)
+        self.assertTrue(msg.startswith("FAIL: VIRTIO_INPUT_WHEEL_SKIPPED:"))
+        self.assertIn("flag_not_set", msg)
+        self.assertIn("--test-input-events", msg)
+
+        msg2 = h._virtio_input_wheel_skip_failure_message(
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|SKIP|not_observed|wheel_total=0|hwheel_total=0\n"
+        )
+        self.assertRegex(msg2, _TOKEN_RE)
+        self.assertTrue(msg2.startswith("FAIL: VIRTIO_INPUT_WHEEL_SKIPPED:"))
+        self.assertIn("not_observed", msg2)
+        self.assertIn("wheel_total=0", msg2)
+        self.assertNotIn("--test-input-events", msg2)
+
+        msg3 = h._virtio_input_wheel_skip_failure_message(
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|SKIP|input_events_failed|reason=timeout|err=5|wheel_total=0|hwheel_total=0\n"
+        )
+        self.assertRegex(msg3, _TOKEN_RE)
+        self.assertTrue(msg3.startswith("FAIL: VIRTIO_INPUT_WHEEL_SKIPPED:"))
+        self.assertIn("input_events_failed", msg3)
+        self.assertIn("reason=timeout", msg3)
+        self.assertIn("err=5", msg3)
+
+    def test_virtio_input_wheel_fail_tokens_include_reason_and_counters(self) -> None:
+        h = self.harness
+        msg = h._virtio_input_wheel_fail_failure_message(
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|FAIL|reason=missing_axis|wheel_total=0|hwheel_total=120|saw_wheel=0|saw_hwheel=1\n"
+        )
+        self.assertRegex(msg, _TOKEN_RE)
+        self.assertTrue(msg.startswith("FAIL: VIRTIO_INPUT_WHEEL_FAILED:"))
+        self.assertIn("reason=missing_axis", msg)
+        self.assertIn("wheel_total=0", msg)
+        self.assertIn("hwheel_total=120", msg)
+        self.assertIn("saw_hwheel=1", msg)
+
     def test_virtio_input_leds_required_tokens(self) -> None:
         h = self.harness
 

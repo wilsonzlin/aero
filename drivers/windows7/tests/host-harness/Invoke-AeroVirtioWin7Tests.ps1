@@ -8156,7 +8156,34 @@ try {
       $scriptExitCode = 1
     }
     "VIRTIO_INPUT_WHEEL_SKIPPED" {
-      Write-Host "FAIL: VIRTIO_INPUT_WHEEL_SKIPPED: virtio-input-wheel test was skipped but -WithInputWheel/-WithVirtioInputWheel/-EnableVirtioInputWheel was enabled"
+      $code = "unknown"
+      $reason = ""
+      $err = ""
+      $wheelTotal = ""
+      $hwheelTotal = ""
+      $line = Try-ExtractLastAeroMarkerLine `
+        -Tail $result.Tail `
+        -Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|SKIP|" `
+        -SerialLogPath $SerialLogPath
+      if ($null -ne $line) {
+        if ($line -match "\|SKIP\|([^|\r\n=]+)(?:\||$)") { $code = $Matches[1] }
+        if ($line -match "(?:^|\|)reason=([^|\r\n]+)") { $reason = $Matches[1] }
+        if ($line -match "(?:^|\|)err=([^|\r\n]+)") { $err = $Matches[1] }
+        if ($line -match "(?:^|\|)wheel_total=([^|\r\n]+)") { $wheelTotal = $Matches[1] }
+        if ($line -match "(?:^|\|)hwheel_total=([^|\r\n]+)") { $hwheelTotal = $Matches[1] }
+      }
+      if ($code -eq "flag_not_set") {
+        Write-Host "FAIL: VIRTIO_INPUT_WHEEL_SKIPPED: virtio-input-wheel test was skipped (flag_not_set) but -WithInputWheel/-WithVirtioInputWheel/-EnableVirtioInputWheel was enabled (provision the guest with --test-input-events)"
+      } else {
+        $parts = @()
+        if ($code -ne "unknown") { $parts += $code }
+        if (-not [string]::IsNullOrEmpty($reason)) { $parts += "reason=$reason" }
+        if (-not [string]::IsNullOrEmpty($err)) { $parts += "err=$err" }
+        if (-not [string]::IsNullOrEmpty($wheelTotal)) { $parts += "wheel_total=$wheelTotal" }
+        if (-not [string]::IsNullOrEmpty($hwheelTotal)) { $parts += "hwheel_total=$hwheelTotal" }
+        $details = if ($parts.Count -gt 0) { " (" + ($parts -join " ") + ")" } else { "" }
+        Write-Host "FAIL: VIRTIO_INPUT_WHEEL_SKIPPED: virtio-input-wheel test was skipped$details but -WithInputWheel/-WithVirtioInputWheel/-EnableVirtioInputWheel was enabled"
+      }
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -8164,7 +8191,24 @@ try {
       $scriptExitCode = 1
     }
     "VIRTIO_INPUT_WHEEL_FAILED" {
-      Write-Host "FAIL: VIRTIO_INPUT_WHEEL_FAILED: virtio-input-wheel test reported FAIL while -WithInputWheel/-WithVirtioInputWheel/-EnableVirtioInputWheel was enabled"
+      $reason = "unknown"
+      $wheelTotal = ""
+      $hwheelTotal = ""
+      $line = Try-ExtractLastAeroMarkerLine `
+        -Tail $result.Tail `
+        -Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|FAIL|" `
+        -SerialLogPath $SerialLogPath
+      if ($null -ne $line) {
+        if ($line -match "reason=([^|\r\n]+)") { $reason = $Matches[1] }
+        elseif ($line -match "\|FAIL\|([^|\r\n=]+)(?:\||$)") { $reason = $Matches[1] }
+        if ($line -match "(?:^|\|)wheel_total=([^|\r\n]+)") { $wheelTotal = $Matches[1] }
+        if ($line -match "(?:^|\|)hwheel_total=([^|\r\n]+)") { $hwheelTotal = $Matches[1] }
+      }
+      $details = "(reason=$reason"
+      if (-not [string]::IsNullOrEmpty($wheelTotal)) { $details += " wheel_total=$wheelTotal" }
+      if (-not [string]::IsNullOrEmpty($hwheelTotal)) { $details += " hwheel_total=$hwheelTotal" }
+      $details += ")"
+      Write-Host "FAIL: VIRTIO_INPUT_WHEEL_FAILED: virtio-input-wheel test reported FAIL while -WithInputWheel/-WithVirtioInputWheel/-EnableVirtioInputWheel was enabled $details"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
