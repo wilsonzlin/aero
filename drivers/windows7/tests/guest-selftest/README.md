@@ -265,7 +265,7 @@ Notes:
     - `virtio-blk` additionally includes `msix_config_vector=0x....` and `msix_queue_vector=0x....` when the
       virtio-blk miniport IOCTL exposes them.
   - The tool also emits standalone diagnostics (best-effort):
-    - `virtio-blk-miniport-irq|INFO|mode=<intx|msi|unknown>|message_count=<n>|msix_config_vector=0x....|msix_queue0_vector=0x....`
+    - `virtio-blk-miniport-irq|INFO|mode=<intx|msi|unknown>|messages=<n>|message_count=<n>|msix_config_vector=0x....|msix_queue0_vector=0x....`
       (and WARN variants like `virtio-blk-miniport-irq|WARN|...` when the miniport contract is missing/truncated)
     - `virtio-<dev>-irq|INFO|mode=intx`
     - `virtio-<dev>-irq|INFO|mode=msi|messages=<n>`

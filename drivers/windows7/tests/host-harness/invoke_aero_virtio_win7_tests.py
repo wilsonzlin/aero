@@ -4980,6 +4980,13 @@ def _try_parse_virtio_irq_marker_line(line: str) -> Optional[tuple[str, dict[str
         # diagnostics even if the guest marker format changes slightly.
         fields["msg"] = "|".join(extra_parts)
 
+    # Backward compatible: virtio-blk miniport IRQ diagnostics historically used `message_count=<n>`
+    # instead of the `messages=<n>` key used by other virtio devices. Normalize so downstream host
+    # markers are stable.
+    if "message_count" in fields:
+        fields.setdefault("messages", fields["message_count"])
+        del fields["message_count"]
+
     return f"virtio-{dev}", fields
 
 

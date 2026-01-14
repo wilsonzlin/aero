@@ -764,8 +764,11 @@ static bool ValidateAerovblkMiniportInfo(Logger& log, const AerovblkQueryInfoRes
              res.returned_len, kMsgCountEnd);
   }
 
-  log.Logf("virtio-blk-miniport-irq|INFO|mode=%s|message_count=%s|msix_config_vector=0x%04x|msix_queue0_vector=0x%04x",
-           mode, msg_count.c_str(), static_cast<unsigned>(msix_cfg), static_cast<unsigned>(msix_q0));
+  // Keep `message_count` for backward compatibility with older log parsers, but prefer the
+  // `messages` key used by other virtio IRQ diagnostics.
+  log.Logf(
+      "virtio-blk-miniport-irq|INFO|mode=%s|messages=%s|message_count=%s|msix_config_vector=0x%04x|msix_queue0_vector=0x%04x",
+      mode, msg_count.c_str(), msg_count.c_str(), static_cast<unsigned>(msix_cfg), static_cast<unsigned>(msix_q0));
   return true;
 }
 
