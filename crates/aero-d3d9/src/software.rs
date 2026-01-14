@@ -3,7 +3,7 @@
 //! This exists to make the shader translation and state mapping testable without
 //! requiring a GPU / WebGPU implementation in CI.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::ops::{Add, Mul, Neg, Sub};
 
 use crate::{
@@ -389,6 +389,7 @@ fn exec_src(
     inputs_v: &HashMap<u16, Vec4>,
     inputs_t: &HashMap<u16, Vec4>,
     constants: &[Vec4; 256],
+    bool_consts: &BTreeMap<u16, bool>,
 ) -> Vec4 {
     let v = match src.reg.file {
         RegisterFile::Temp => temps
@@ -398,6 +399,13 @@ fn exec_src(
         RegisterFile::Input => inputs_v.get(&src.reg.index).copied().unwrap_or(Vec4::ZERO),
         RegisterFile::Texture => inputs_t.get(&src.reg.index).copied().unwrap_or(Vec4::ZERO),
         RegisterFile::Const => constants[src.reg.index as usize],
+        RegisterFile::ConstBool => {
+            if bool_consts.get(&src.reg.index).copied().unwrap_or(false) {
+                Vec4::splat(1.0)
+            } else {
+                Vec4::splat(0.0)
+            }
+        }
         _ => Vec4::ZERO,
     };
     let v = swizzle(v, src.swizzle);
@@ -472,6 +480,7 @@ fn run_vertex_shader(
             *slot = Vec4::new(val[0], val[1], val[2], val[3]);
         }
     }
+    let bool_consts = &ir.const_defs_bool;
 
     let mut active = true;
     let mut if_stack = Vec::<IfFrame>::new();
@@ -482,7 +491,7 @@ fn run_vertex_shader(
             Op::End => break,
             Op::If => {
                 let cond = if active {
-                    exec_src(inst.src[0], &temps, inputs, &empty_t, &constants).x != 0.0
+                    exec_src(inst.src[0], &temps, inputs, &empty_t, &constants, bool_consts).x != 0.0
                 } else {
                     false
                 };
@@ -494,8 +503,8 @@ fn run_vertex_shader(
             }
             Op::Ifc => {
                 let cond = if active {
-                    let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants).x;
-                    let b = exec_src(inst.src[1], &temps, inputs, &empty_t, &constants).x;
+                    let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants, bool_consts).x;
+                    let b = exec_src(inst.src[1], &temps, inputs, &empty_t, &constants, bool_consts).x;
                     eval_compare_op(inst.imm.unwrap_or(0), a, b)
                 } else {
                     false
@@ -522,7 +531,7 @@ fn run_vertex_shader(
                     Op::Nop => {}
                     Op::Mov => {
                         let dst = inst.dst.unwrap();
-                        let v = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants);
+                        let v = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants, bool_consts);
                         let v = apply_result_modifier(v, inst.result_modifier);
                         exec_dst(
                             dst,
@@ -536,8 +545,8 @@ fn run_vertex_shader(
                     }
                     Op::Add => {
                         let dst = inst.dst.unwrap();
-                        let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants);
-                        let b = exec_src(inst.src[1], &temps, inputs, &empty_t, &constants);
+                        let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants, bool_consts);
+                        let b = exec_src(inst.src[1], &temps, inputs, &empty_t, &constants, bool_consts);
                         let v = apply_result_modifier(a + b, inst.result_modifier);
                         exec_dst(
                             dst,
@@ -551,8 +560,8 @@ fn run_vertex_shader(
                     }
                     Op::Sub => {
                         let dst = inst.dst.unwrap();
-                        let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants);
-                        let b = exec_src(inst.src[1], &temps, inputs, &empty_t, &constants);
+                        let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants, bool_consts);
+                        let b = exec_src(inst.src[1], &temps, inputs, &empty_t, &constants, bool_consts);
                         let v = apply_result_modifier(a - b, inst.result_modifier);
                         exec_dst(
                             dst,
@@ -566,8 +575,8 @@ fn run_vertex_shader(
                     }
                     Op::Mul => {
                         let dst = inst.dst.unwrap();
-                        let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants);
-                        let b = exec_src(inst.src[1], &temps, inputs, &empty_t, &constants);
+                        let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants, bool_consts);
+                        let b = exec_src(inst.src[1], &temps, inputs, &empty_t, &constants, bool_consts);
                         let v = apply_result_modifier(a * b, inst.result_modifier);
                         exec_dst(
                             dst,
@@ -581,8 +590,8 @@ fn run_vertex_shader(
                     }
                     Op::Min => {
                         let dst = inst.dst.unwrap();
-                        let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants);
-                        let b = exec_src(inst.src[1], &temps, inputs, &empty_t, &constants);
+                        let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants, bool_consts);
+                        let b = exec_src(inst.src[1], &temps, inputs, &empty_t, &constants, bool_consts);
                         let v = Vec4::new(a.x.min(b.x), a.y.min(b.y), a.z.min(b.z), a.w.min(b.w));
                         let v = apply_result_modifier(v, inst.result_modifier);
                         exec_dst(
@@ -597,8 +606,8 @@ fn run_vertex_shader(
                     }
                     Op::Max => {
                         let dst = inst.dst.unwrap();
-                        let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants);
-                        let b = exec_src(inst.src[1], &temps, inputs, &empty_t, &constants);
+                        let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants, bool_consts);
+                        let b = exec_src(inst.src[1], &temps, inputs, &empty_t, &constants, bool_consts);
                         let v = Vec4::new(a.x.max(b.x), a.y.max(b.y), a.z.max(b.z), a.w.max(b.w));
                         let v = apply_result_modifier(v, inst.result_modifier);
                         exec_dst(
@@ -613,9 +622,9 @@ fn run_vertex_shader(
                     }
                     Op::Mad => {
                         let dst = inst.dst.unwrap();
-                        let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants);
-                        let b = exec_src(inst.src[1], &temps, inputs, &empty_t, &constants);
-                        let c = exec_src(inst.src[2], &temps, inputs, &empty_t, &constants);
+                        let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants, bool_consts);
+                        let b = exec_src(inst.src[1], &temps, inputs, &empty_t, &constants, bool_consts);
+                        let c = exec_src(inst.src[2], &temps, inputs, &empty_t, &constants, bool_consts);
                         let v = apply_result_modifier(a * b + c, inst.result_modifier);
                         exec_dst(
                             dst,
@@ -629,9 +638,9 @@ fn run_vertex_shader(
                     }
                     Op::Lrp => {
                         let dst = inst.dst.unwrap();
-                        let t = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants);
-                        let a = exec_src(inst.src[1], &temps, inputs, &empty_t, &constants);
-                        let b = exec_src(inst.src[2], &temps, inputs, &empty_t, &constants);
+                        let t = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants, bool_consts);
+                        let a = exec_src(inst.src[1], &temps, inputs, &empty_t, &constants, bool_consts);
+                        let b = exec_src(inst.src[2], &temps, inputs, &empty_t, &constants, bool_consts);
                         let v = apply_result_modifier(t * a + (Vec4::splat(1.0) - t) * b, inst.result_modifier);
                         exec_dst(
                             dst,
@@ -645,8 +654,8 @@ fn run_vertex_shader(
                     }
                     Op::Dp3 => {
                         let dst = inst.dst.unwrap();
-                        let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants);
-                        let b = exec_src(inst.src[1], &temps, inputs, &empty_t, &constants);
+                        let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants, bool_consts);
+                        let b = exec_src(inst.src[1], &temps, inputs, &empty_t, &constants, bool_consts);
                         let d = Vec4::splat(a.dot3(b));
                         let d = apply_result_modifier(d, inst.result_modifier);
                         exec_dst(
@@ -661,8 +670,8 @@ fn run_vertex_shader(
                     }
                     Op::Dp4 => {
                         let dst = inst.dst.unwrap();
-                        let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants);
-                        let b = exec_src(inst.src[1], &temps, inputs, &empty_t, &constants);
+                        let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants, bool_consts);
+                        let b = exec_src(inst.src[1], &temps, inputs, &empty_t, &constants, bool_consts);
                         let d = Vec4::splat(a.dot4(b));
                         let d = apply_result_modifier(d, inst.result_modifier);
                         exec_dst(
@@ -677,7 +686,7 @@ fn run_vertex_shader(
                     }
                     Op::Rcp => {
                         let dst = inst.dst.unwrap();
-                        let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants);
+                        let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants, bool_consts);
                         let v = Vec4::new(1.0 / a.x, 1.0 / a.y, 1.0 / a.z, 1.0 / a.w);
                         let v = apply_result_modifier(v, inst.result_modifier);
                         exec_dst(
@@ -692,7 +701,7 @@ fn run_vertex_shader(
                     }
                     Op::Rsq => {
                         let dst = inst.dst.unwrap();
-                        let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants);
+                        let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants, bool_consts);
                         let inv_sqrt = |v: f32| 1.0 / v.sqrt();
                         let v =
                             Vec4::new(inv_sqrt(a.x), inv_sqrt(a.y), inv_sqrt(a.z), inv_sqrt(a.w));
@@ -709,7 +718,7 @@ fn run_vertex_shader(
                     }
                     Op::Exp => {
                         let dst = inst.dst.unwrap();
-                        let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants);
+                        let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants, bool_consts);
                         let v = Vec4::new(a.x.exp2(), a.y.exp2(), a.z.exp2(), a.w.exp2());
                         let v = apply_result_modifier(v, inst.result_modifier);
                         exec_dst(
@@ -724,7 +733,7 @@ fn run_vertex_shader(
                     }
                     Op::Log => {
                         let dst = inst.dst.unwrap();
-                        let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants);
+                        let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants, bool_consts);
                         let v = Vec4::new(a.x.log2(), a.y.log2(), a.z.log2(), a.w.log2());
                         let v = apply_result_modifier(v, inst.result_modifier);
                         exec_dst(
@@ -739,8 +748,8 @@ fn run_vertex_shader(
                     }
                     Op::Pow => {
                         let dst = inst.dst.unwrap();
-                        let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants);
-                        let b = exec_src(inst.src[1], &temps, inputs, &empty_t, &constants);
+                        let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants, bool_consts);
+                        let b = exec_src(inst.src[1], &temps, inputs, &empty_t, &constants, bool_consts);
                         let v = Vec4::new(
                             a.x.powf(b.x),
                             a.y.powf(b.y),
@@ -760,7 +769,7 @@ fn run_vertex_shader(
                     }
                     Op::Frc => {
                         let dst = inst.dst.unwrap();
-                        let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants);
+                        let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants, bool_consts);
                         let fract = |v: f32| v - v.floor();
                         let v = Vec4::new(fract(a.x), fract(a.y), fract(a.z), fract(a.w));
                         let v = apply_result_modifier(v, inst.result_modifier);
@@ -776,9 +785,9 @@ fn run_vertex_shader(
                     }
                     Op::Cmp => {
                         let dst = inst.dst.unwrap();
-                        let cond = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants);
-                        let a = exec_src(inst.src[1], &temps, inputs, &empty_t, &constants);
-                        let b = exec_src(inst.src[2], &temps, inputs, &empty_t, &constants);
+                        let cond = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants, bool_consts);
+                        let a = exec_src(inst.src[1], &temps, inputs, &empty_t, &constants, bool_consts);
+                        let b = exec_src(inst.src[2], &temps, inputs, &empty_t, &constants, bool_consts);
                         let pick = |cond: f32, a: f32, b: f32| if cond >= 0.0 { a } else { b };
                         let v = Vec4::new(
                             pick(cond.x, a.x, b.x),
@@ -799,8 +808,8 @@ fn run_vertex_shader(
                     }
                     Op::Slt | Op::Sge | Op::Seq | Op::Sne => {
                         let dst = inst.dst.unwrap();
-                        let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants);
-                        let b = exec_src(inst.src[1], &temps, inputs, &empty_t, &constants);
+                        let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants, bool_consts);
+                        let b = exec_src(inst.src[1], &temps, inputs, &empty_t, &constants, bool_consts);
                         let cmp = |a: f32, b: f32| {
                             let v = match inst.op {
                                 Op::Slt => a < b,
@@ -861,6 +870,7 @@ fn run_pixel_shader(
             *slot = Vec4::new(val[0], val[1], val[2], val[3]);
         }
     }
+    let bool_consts = &ir.const_defs_bool;
 
     let mut active = true;
     let mut if_stack = Vec::<IfFrame>::new();
@@ -870,7 +880,7 @@ fn run_pixel_shader(
             Op::End => break,
             Op::If => {
                 let cond = if active {
-                    exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants).x != 0.0
+                    exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants, bool_consts).x != 0.0
                 } else {
                     false
                 };
@@ -882,8 +892,8 @@ fn run_pixel_shader(
             }
             Op::Ifc => {
                 let cond = if active {
-                    let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants).x;
-                    let b = exec_src(inst.src[1], &temps, inputs_v, inputs_t, &constants).x;
+                    let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants, bool_consts).x;
+                    let b = exec_src(inst.src[1], &temps, inputs_v, inputs_t, &constants, bool_consts).x;
                     eval_compare_op(inst.imm.unwrap_or(0), a, b)
                 } else {
                     false
@@ -910,7 +920,7 @@ fn run_pixel_shader(
                     Op::Nop => {}
                     Op::Mov => {
                         let dst = inst.dst.unwrap();
-                        let v = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants);
+                        let v = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants, bool_consts);
                         let v = apply_result_modifier(v, inst.result_modifier);
                         exec_dst(
                             dst,
@@ -924,8 +934,8 @@ fn run_pixel_shader(
                     }
                     Op::Add => {
                         let dst = inst.dst.unwrap();
-                        let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants);
-                        let b = exec_src(inst.src[1], &temps, inputs_v, inputs_t, &constants);
+                        let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants, bool_consts);
+                        let b = exec_src(inst.src[1], &temps, inputs_v, inputs_t, &constants, bool_consts);
                         let v = apply_result_modifier(a + b, inst.result_modifier);
                         exec_dst(
                             dst,
@@ -939,8 +949,8 @@ fn run_pixel_shader(
                     }
                     Op::Sub => {
                         let dst = inst.dst.unwrap();
-                        let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants);
-                        let b = exec_src(inst.src[1], &temps, inputs_v, inputs_t, &constants);
+                        let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants, bool_consts);
+                        let b = exec_src(inst.src[1], &temps, inputs_v, inputs_t, &constants, bool_consts);
                         let v = apply_result_modifier(a - b, inst.result_modifier);
                         exec_dst(
                             dst,
@@ -954,8 +964,8 @@ fn run_pixel_shader(
                     }
                     Op::Mul => {
                         let dst = inst.dst.unwrap();
-                        let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants);
-                        let b = exec_src(inst.src[1], &temps, inputs_v, inputs_t, &constants);
+                        let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants, bool_consts);
+                        let b = exec_src(inst.src[1], &temps, inputs_v, inputs_t, &constants, bool_consts);
                         let v = apply_result_modifier(a * b, inst.result_modifier);
                         exec_dst(
                             dst,
@@ -969,8 +979,8 @@ fn run_pixel_shader(
                     }
                     Op::Min => {
                         let dst = inst.dst.unwrap();
-                        let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants);
-                        let b = exec_src(inst.src[1], &temps, inputs_v, inputs_t, &constants);
+                        let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants, bool_consts);
+                        let b = exec_src(inst.src[1], &temps, inputs_v, inputs_t, &constants, bool_consts);
                         let v = Vec4::new(a.x.min(b.x), a.y.min(b.y), a.z.min(b.z), a.w.min(b.w));
                         let v = apply_result_modifier(v, inst.result_modifier);
                         exec_dst(
@@ -985,8 +995,8 @@ fn run_pixel_shader(
                     }
                     Op::Max => {
                         let dst = inst.dst.unwrap();
-                        let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants);
-                        let b = exec_src(inst.src[1], &temps, inputs_v, inputs_t, &constants);
+                        let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants, bool_consts);
+                        let b = exec_src(inst.src[1], &temps, inputs_v, inputs_t, &constants, bool_consts);
                         let v = Vec4::new(a.x.max(b.x), a.y.max(b.y), a.z.max(b.z), a.w.max(b.w));
                         let v = apply_result_modifier(v, inst.result_modifier);
                         exec_dst(
@@ -1001,9 +1011,9 @@ fn run_pixel_shader(
                     }
                     Op::Mad => {
                         let dst = inst.dst.unwrap();
-                        let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants);
-                        let b = exec_src(inst.src[1], &temps, inputs_v, inputs_t, &constants);
-                        let c = exec_src(inst.src[2], &temps, inputs_v, inputs_t, &constants);
+                        let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants, bool_consts);
+                        let b = exec_src(inst.src[1], &temps, inputs_v, inputs_t, &constants, bool_consts);
+                        let c = exec_src(inst.src[2], &temps, inputs_v, inputs_t, &constants, bool_consts);
                         let v = apply_result_modifier(a * b + c, inst.result_modifier);
                         exec_dst(
                             dst,
@@ -1017,9 +1027,9 @@ fn run_pixel_shader(
                     }
                     Op::Lrp => {
                         let dst = inst.dst.unwrap();
-                        let t = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants);
-                        let a = exec_src(inst.src[1], &temps, inputs_v, inputs_t, &constants);
-                        let b = exec_src(inst.src[2], &temps, inputs_v, inputs_t, &constants);
+                        let t = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants, bool_consts);
+                        let a = exec_src(inst.src[1], &temps, inputs_v, inputs_t, &constants, bool_consts);
+                        let b = exec_src(inst.src[2], &temps, inputs_v, inputs_t, &constants, bool_consts);
                         let v = apply_result_modifier(t * a + (Vec4::splat(1.0) - t) * b, inst.result_modifier);
                         exec_dst(
                             dst,
@@ -1033,8 +1043,8 @@ fn run_pixel_shader(
                     }
                     Op::Dp3 => {
                         let dst = inst.dst.unwrap();
-                        let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants);
-                        let b = exec_src(inst.src[1], &temps, inputs_v, inputs_t, &constants);
+                        let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants, bool_consts);
+                        let b = exec_src(inst.src[1], &temps, inputs_v, inputs_t, &constants, bool_consts);
                         let d = Vec4::splat(a.dot3(b));
                         let d = apply_result_modifier(d, inst.result_modifier);
                         exec_dst(
@@ -1049,8 +1059,8 @@ fn run_pixel_shader(
                     }
                     Op::Dp4 => {
                         let dst = inst.dst.unwrap();
-                        let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants);
-                        let b = exec_src(inst.src[1], &temps, inputs_v, inputs_t, &constants);
+                        let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants, bool_consts);
+                        let b = exec_src(inst.src[1], &temps, inputs_v, inputs_t, &constants, bool_consts);
                         let d = Vec4::splat(a.dot4(b));
                         let d = apply_result_modifier(d, inst.result_modifier);
                         exec_dst(
@@ -1065,7 +1075,7 @@ fn run_pixel_shader(
                     }
                     Op::Rcp => {
                         let dst = inst.dst.unwrap();
-                        let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants);
+                        let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants, bool_consts);
                         let v = Vec4::new(1.0 / a.x, 1.0 / a.y, 1.0 / a.z, 1.0 / a.w);
                         let v = apply_result_modifier(v, inst.result_modifier);
                         exec_dst(
@@ -1080,7 +1090,7 @@ fn run_pixel_shader(
                     }
                     Op::Rsq => {
                         let dst = inst.dst.unwrap();
-                        let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants);
+                        let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants, bool_consts);
                         let inv_sqrt = |v: f32| 1.0 / v.sqrt();
                         let v =
                             Vec4::new(inv_sqrt(a.x), inv_sqrt(a.y), inv_sqrt(a.z), inv_sqrt(a.w));
@@ -1097,7 +1107,7 @@ fn run_pixel_shader(
                     }
                     Op::Exp => {
                         let dst = inst.dst.unwrap();
-                        let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants);
+                        let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants, bool_consts);
                         let v = Vec4::new(a.x.exp2(), a.y.exp2(), a.z.exp2(), a.w.exp2());
                         let v = apply_result_modifier(v, inst.result_modifier);
                         exec_dst(
@@ -1112,7 +1122,7 @@ fn run_pixel_shader(
                     }
                     Op::Log => {
                         let dst = inst.dst.unwrap();
-                        let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants);
+                        let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants, bool_consts);
                         let v = Vec4::new(a.x.log2(), a.y.log2(), a.z.log2(), a.w.log2());
                         let v = apply_result_modifier(v, inst.result_modifier);
                         exec_dst(
@@ -1127,8 +1137,8 @@ fn run_pixel_shader(
                     }
                     Op::Pow => {
                         let dst = inst.dst.unwrap();
-                        let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants);
-                        let b = exec_src(inst.src[1], &temps, inputs_v, inputs_t, &constants);
+                        let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants, bool_consts);
+                        let b = exec_src(inst.src[1], &temps, inputs_v, inputs_t, &constants, bool_consts);
                         let v = Vec4::new(
                             a.x.powf(b.x),
                             a.y.powf(b.y),
@@ -1148,7 +1158,7 @@ fn run_pixel_shader(
                     }
                     Op::Frc => {
                         let dst = inst.dst.unwrap();
-                        let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants);
+                        let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants, bool_consts);
                         let fract = |v: f32| v - v.floor();
                         let v = Vec4::new(fract(a.x), fract(a.y), fract(a.z), fract(a.w));
                         let v = apply_result_modifier(v, inst.result_modifier);
@@ -1164,9 +1174,9 @@ fn run_pixel_shader(
                     }
                     Op::Cmp => {
                         let dst = inst.dst.unwrap();
-                        let cond = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants);
-                        let a = exec_src(inst.src[1], &temps, inputs_v, inputs_t, &constants);
-                        let b = exec_src(inst.src[2], &temps, inputs_v, inputs_t, &constants);
+                        let cond = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants, bool_consts);
+                        let a = exec_src(inst.src[1], &temps, inputs_v, inputs_t, &constants, bool_consts);
+                        let b = exec_src(inst.src[2], &temps, inputs_v, inputs_t, &constants, bool_consts);
                         let pick = |cond: f32, a: f32, b: f32| if cond >= 0.0 { a } else { b };
                         let v = Vec4::new(
                             pick(cond.x, a.x, b.x),
@@ -1187,8 +1197,8 @@ fn run_pixel_shader(
                     }
                     Op::Slt | Op::Sge | Op::Seq | Op::Sne => {
                         let dst = inst.dst.unwrap();
-                        let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants);
-                        let b = exec_src(inst.src[1], &temps, inputs_v, inputs_t, &constants);
+                        let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants, bool_consts);
+                        let b = exec_src(inst.src[1], &temps, inputs_v, inputs_t, &constants, bool_consts);
                         let cmp = |a: f32, b: f32| {
                             let v = match inst.op {
                                 Op::Slt => a < b,
@@ -1214,7 +1224,7 @@ fn run_pixel_shader(
                     }
                     Op::Texld => {
                         let dst = inst.dst.unwrap();
-                        let coord = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants);
+                        let coord = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants, bool_consts);
                         let s = inst.sampler.expect("texld requires sampler index");
                         let tex = textures.get(&s).expect("missing bound texture");
                         let samp = sampler_states.get(&s).copied().unwrap_or_default();

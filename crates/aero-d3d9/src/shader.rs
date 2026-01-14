@@ -196,6 +196,8 @@ pub struct ShaderProgram {
     pub instructions: Vec<Instruction>,
     /// `def c#` constants embedded in the shader bytecode.
     pub const_defs_f32: BTreeMap<u16, [f32; 4]>,
+    /// `defb b#` constants embedded in the shader bytecode.
+    pub const_defs_bool: BTreeMap<u16, bool>,
     pub used_samplers: BTreeSet<u16>,
     /// Texture type declared for each sampler register (`dcl_2d`, `dcl_cube`, etc).
     ///
@@ -491,6 +493,7 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
     let mut idx = 1usize;
     let mut instructions = Vec::new();
     let mut const_defs_f32 = BTreeMap::<u16, [f32; 4]>::new();
+    let mut const_defs_bool = BTreeMap::<u16, bool>::new();
     let mut used_samplers = BTreeSet::new();
     let mut used_consts = BTreeSet::new();
     let mut used_inputs = BTreeSet::new();
@@ -649,6 +652,32 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
                 vals[i] = f32::from_bits(params[1 + i]);
             }
             const_defs_f32.insert(reg_num, vals);
+            continue;
+        }
+        // `defb` (define boolean constant) defines an embedded boolean constant register value
+        // (`b#`).
+        //
+        // Boolean registers are scalar in D3D9; we model them as a splatted vec4<f32> with values
+        // {0.0, 1.0} so the rest of the legacy translator can continue to treat operands as
+        // vectors.
+        if opcode == 0x0053 {
+            if params.len() != 2 {
+                return Err(ShaderError::UnexpectedEof);
+            }
+            let dst_token = params[0];
+            let reg_type = decode_reg_type(dst_token);
+            if reg_type != 14 {
+                return Err(ShaderError::UnsupportedRegisterType(reg_type));
+            }
+            let reg_num = decode_reg_num(dst_token);
+            if u32::from(reg_num) > MAX_D3D9_SHADER_REGISTER_INDEX {
+                return Err(ShaderError::RegisterIndexTooLarge {
+                    file: RegisterFile::ConstBool,
+                    index: reg_num,
+                    max: MAX_D3D9_SHADER_REGISTER_INDEX,
+                });
+            }
+            const_defs_bool.insert(reg_num, params[1] != 0);
             continue;
         }
 
@@ -933,6 +962,7 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
         version,
         instructions,
         const_defs_f32,
+        const_defs_bool,
         used_samplers,
         sampler_texture_types,
         used_consts,
@@ -961,6 +991,7 @@ pub struct ShaderIr {
     pub temp_count: u16,
     pub ops: Vec<Instruction>,
     pub const_defs_f32: BTreeMap<u16, [f32; 4]>,
+    pub const_defs_bool: BTreeMap<u16, bool>,
     pub used_samplers: BTreeSet<u16>,
     pub sampler_texture_types: HashMap<u16, TextureType>,
     pub used_consts: BTreeSet<u16>,
@@ -975,6 +1006,7 @@ pub fn to_ir(program: &ShaderProgram) -> ShaderIr {
         temp_count: program.temp_count,
         ops: program.instructions.clone(),
         const_defs_f32: program.const_defs_f32.clone(),
+        const_defs_bool: program.const_defs_bool.clone(),
         used_samplers: program.used_samplers.clone(),
         sampler_texture_types: program.sampler_texture_types.clone(),
         used_consts: program.used_consts.clone(),
@@ -1171,8 +1203,9 @@ pub fn generate_wgsl_with_options(
     };
 
     // D3D9 boolean constants (`b#`). The legacy translator currently does not support dynamic bool
-    // constant updates from the host; declare any referenced `b#` registers as compile-time false
-    // so shaders using `if b#` still translate/validate.
+    // constant updates from the host; declare referenced `b#` registers as compile-time values
+    // (defaulting to false unless overridden by `defb`) so shaders using `if b#` still
+    // translate/validate.
     let mut used_bool_consts = BTreeSet::<u16>::new();
     for inst in &ir.ops {
         if let Some(dst) = inst.dst {
@@ -1225,7 +1258,9 @@ pub fn generate_wgsl_with_options(
                 wgsl.push_str(&format!("  var r{}: vec4<f32> = vec4<f32>(0.0);\n", i));
             }
             for b in &used_bool_consts {
-                wgsl.push_str(&format!("  let b{}: vec4<f32> = vec4<f32>(0.0);\n", b));
+                let v = ir.const_defs_bool.get(b).copied().unwrap_or(false);
+                let v = if v { "1.0" } else { "0.0" };
+                wgsl.push_str(&format!("  let b{}: vec4<f32> = vec4<f32>({v});\n", b));
             }
             for &v in &ir.used_inputs {
                 wgsl.push_str(&format!("  let v{}: vec4<f32> = input.v{};\n", v, v));
@@ -1363,7 +1398,9 @@ pub fn generate_wgsl_with_options(
                 wgsl.push_str(&format!("  var r{}: vec4<f32> = vec4<f32>(0.0);\n", i));
             }
             for b in &used_bool_consts {
-                wgsl.push_str(&format!("  let b{}: vec4<f32> = vec4<f32>(0.0);\n", b));
+                let v = ir.const_defs_bool.get(b).copied().unwrap_or(false);
+                let v = if v { "1.0" } else { "0.0" };
+                wgsl.push_str(&format!("  let b{}: vec4<f32> = vec4<f32>({v});\n", b));
             }
             // Load inputs.
             if has_inputs {

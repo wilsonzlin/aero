@@ -317,6 +317,50 @@ fn assemble_ps3_tex_ifc_def() -> Vec<u32> {
     out
 }
 
+fn assemble_ps3_defb_if(branch: bool) -> Vec<u32> {
+    // ps_3_0
+    let mut out = vec![0xFFFF0300];
+    // def c0, 1.0, 0.0, 0.0, 1.0 (red)
+    out.extend(enc_inst(
+        0x0051,
+        &[
+            enc_dst(2, 0, 0xF),
+            0x3F80_0000,
+            0x0000_0000,
+            0x0000_0000,
+            0x3F80_0000,
+        ],
+    ));
+    // def c1, 0.0, 1.0, 0.0, 1.0 (green)
+    out.extend(enc_inst(
+        0x0051,
+        &[
+            enc_dst(2, 1, 0xF),
+            0x0000_0000,
+            0x3F80_0000,
+            0x0000_0000,
+            0x3F80_0000,
+        ],
+    ));
+    // defb b0, <branch>
+    out.extend(enc_inst(
+        0x0053,
+        &[enc_dst(14, 0, 0x0), if branch { 1 } else { 0 }],
+    ));
+    // if b0
+    out.extend(enc_inst(0x0028, &[enc_src(14, 0, 0x00)]));
+    // mov oC0, c0
+    out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(2, 0, 0xE4)]));
+    // else
+    out.extend(enc_inst(0x002A, &[]));
+    // mov oC0, c1
+    out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(2, 1, 0xE4)]));
+    // endif
+    out.extend(enc_inst(0x002B, &[]));
+    out.push(0x0000FFFF);
+    out
+}
+
 fn assemble_ps3_predicated_lrp() -> Vec<u32> {
     // ps_3_0
     let mut out = vec![0xFFFF0300];
@@ -1524,6 +1568,52 @@ fn micro_ps3_ifc_def_pixel_compare() {
         hash.to_hex().as_str(),
         "fa291c33b86c387331d23b7163e6622bb9553e866980db89570ac967770c0ee3"
     );
+}
+
+#[test]
+fn micro_ps3_defb_if_pixel_compare() {
+    let vs = shader::to_ir(&shader::parse(&to_bytes(&assemble_vs_passthrough())).unwrap());
+    let decl = build_vertex_decl_pos_tex_color();
+
+    let mut vb = Vec::new();
+    let white = software::Vec4::new(1.0, 1.0, 1.0, 1.0);
+    for (pos_x, pos_y) in [(-0.5, -0.5), (0.5, -0.5), (0.0, 0.5)] {
+        push_vec4(&mut vb, software::Vec4::new(pos_x, pos_y, 0.0, 1.0));
+        push_vec2(&mut vb, 0.0, 0.0);
+        push_vec4(&mut vb, white);
+    }
+
+    let constants = zero_constants();
+    let textures = HashMap::new();
+    let sampler_states = HashMap::new();
+
+    for (branch, expected, expected_wgsl) in [
+        (true, [255, 0, 0, 255], "let b0: vec4<f32> = vec4<f32>(1.0);"),
+        (false, [0, 255, 0, 255], "let b0: vec4<f32> = vec4<f32>(0.0);"),
+    ] {
+        let ps = shader::to_ir(&shader::parse(&to_bytes(&assemble_ps3_defb_if(branch))).unwrap());
+
+        let wgsl = shader::generate_wgsl(&ps).unwrap();
+        assert!(wgsl.wgsl.contains(expected_wgsl));
+
+        let mut rt = software::RenderTarget::new(16, 16, software::Vec4::ZERO);
+        software::draw(
+            &mut rt,
+            software::DrawParams {
+                vs: &vs,
+                ps: &ps,
+                vertex_decl: &decl,
+                vertex_buffer: &vb,
+                indices: None,
+                constants: &constants,
+                textures: &textures,
+                sampler_states: &sampler_states,
+                blend_state: state::BlendState::default(),
+            },
+        );
+
+        assert_eq!(rt.get(8, 8).to_rgba8(), expected);
+    }
 }
 
 #[test]
