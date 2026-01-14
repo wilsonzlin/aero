@@ -142,6 +142,47 @@ test("ACMD COPY_BUFFER writeback supports BAR1 VRAM aperture (PCI/MMIO hole)", (
   assert.deepEqual(Array.from(guest.subarray(0, 4)), [0x11, 0x11, 0x11, 0x11]);
 });
 
+test("ACMD COPY_TEXTURE2D writeback supports BAR1 VRAM aperture (row_pitch_bytes preserved)", () => {
+  const guest = new Uint8Array(0x200);
+  guest.fill(0x11);
+  const vram = new Uint8Array(0x200);
+  vram.fill(0x22);
+
+  const allocTableBuf = buildAllocTable([{ allocId: 99, flags: 0, gpa: PCI_MMIO_BASE, sizeBytes: vram.byteLength }]);
+  const allocTable = decodeAerogpuAllocTable(allocTableBuf);
+
+  const width = 2;
+  const height = 2;
+  const rowPitchBytes = 16; // padded (rowBytes=8)
+
+  // 2x2 RGBA8 texture upload (tightly packed).
+  const upload = new Uint8Array([
+    // row0
+    1, 2, 3, 4, 5, 6, 7, 8,
+    // row1
+    9, 10, 11, 12, 13, 14, 15, 16,
+  ]);
+
+  const w = new AerogpuCmdWriter();
+  w.createTexture2d(3, 0, AerogpuFormat.R8G8B8A8Unorm, width, height, 1, 1, 0, 0, 0); // src (host-owned)
+  w.createTexture2d(4, 0, AerogpuFormat.R8G8B8A8Unorm, width, height, 1, 1, rowPitchBytes, 99, 0); // dst backed by VRAM
+  w.uploadResource(3, 0n, upload);
+  w.copyTexture2d(4, 3, 0, 0, 0, 0, 0, 0, 0, 0, width, height, AEROGPU_COPY_FLAG_WRITEBACK_DST);
+
+  const state = createAerogpuCpuExecutorState();
+  executeAerogpuCmdStream(state, w.finish().buffer, { allocTable, guestU8: guest, vramU8: vram });
+
+  // Expected VRAM layout: 2 rows, each with rowPitchBytes=16 but only 8 bytes of pixel data.
+  const expected = new Uint8Array(rowPitchBytes * height);
+  expected.fill(0x22);
+  expected.set(upload.subarray(0, width * 4), 0);
+  expected.set(upload.subarray(width * 4, width * 4 * 2), rowPitchBytes);
+
+  assert.deepEqual(Array.from(vram.subarray(0, expected.byteLength)), Array.from(expected));
+  // Prove we didn't touch guest RAM.
+  assert.deepEqual(Array.from(guest.subarray(0, expected.byteLength)), new Array(expected.byteLength).fill(0x11));
+});
+
 test("ACMD COPY_BUFFER writeback rejects READONLY allocs", () => {
   const guest = new Uint8Array(256);
   const allocTableBuf = buildAllocTable([{ allocId: 42, flags: AEROGPU_ALLOC_FLAG_READONLY, gpa: 100, sizeBytes: 128 }]);
