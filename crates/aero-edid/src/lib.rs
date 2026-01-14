@@ -526,6 +526,52 @@ mod tests {
         })
     }
 
+    fn parse_manufacturer_id(raw: u16) -> Option<[u8; 3]> {
+        // EDID manufacturer ID encoding: 5-bit packed letters (A=1..Z=26).
+        let a = ((raw >> 10) & 0x1F) as u8;
+        let b = ((raw >> 5) & 0x1F) as u8;
+        let c = (raw & 0x1F) as u8;
+
+        fn decode(v: u8) -> Option<u8> {
+            if (1..=26).contains(&v) {
+                Some(b'A' + v - 1)
+            } else {
+                None
+            }
+        }
+
+        Some([decode(a)?, decode(b)?, decode(c)?])
+    }
+
+    fn parse_standard_timing(bytes: [u8; 2]) -> Option<(u16, u16, u16)> {
+        // EDID uses 0x01,0x01 to represent "unused".
+        if bytes == [0x01, 0x01] {
+            return None;
+        }
+
+        // Horizontal resolution in pixels: (byte1 + 31) * 8.
+        let h_active = (bytes[0] as u16 + 31) * 8;
+        if h_active == 0 {
+            return None;
+        }
+
+        let aspect = bytes[1] >> 6;
+        let v_active = match aspect {
+            // 00: 16:10
+            0 => (h_active as u32 * 10 / 16) as u16,
+            // 01: 4:3
+            1 => (h_active as u32 * 3 / 4) as u16,
+            // 10: 5:4
+            2 => (h_active as u32 * 4 / 5) as u16,
+            // 11: 16:9
+            3 => (h_active as u32 * 9 / 16) as u16,
+            _ => return None,
+        };
+
+        let refresh = (bytes[1] & 0x3F) as u16 + 60;
+        Some((h_active, v_active, refresh))
+    }
+
     fn validate_descriptor(desc: &[u8]) {
         assert_eq!(desc.len(), 18);
         if let Some(dtd) = parse_dtd(desc) {
@@ -574,6 +620,50 @@ mod tests {
 
         // The checksum byte should match our checksum function.
         assert_eq!(edid[127], checksum_byte(&edid));
+    }
+
+    #[test]
+    fn base_edid_fields_are_reasonable() {
+        let edid = read_edid(0).expect("missing base EDID");
+
+        // Manufacturer ID: "AER"
+        let mfg_raw = u16::from_be_bytes([edid[8], edid[9]]);
+        assert_eq!(
+            parse_manufacturer_id(mfg_raw).expect("invalid manufacturer ID"),
+            *b"AER"
+        );
+
+        // Product code: 0x0001 (little-endian).
+        assert_eq!(u16::from_le_bytes([edid[10], edid[11]]), 0x0001);
+
+        // EDID version/revision: 1.4.
+        assert_eq!(edid[18], 1);
+        assert_eq!(edid[19], 4);
+
+        // Digital input flag set.
+        assert_eq!(edid[20] & 0x80, 0x80);
+
+        // Features byte advertises sRGB + preferred timing.
+        assert_eq!(edid[24] & 0x06, 0x06);
+
+        // No extension blocks.
+        assert_eq!(edid[126], 0);
+
+        // Monitor name descriptor should be present and contain "AERO VGA".
+        assert_eq!(&edid[72..77], &[0, 0, 0, 0xFC, 0x00]);
+        assert_eq!(&edid[77..85], b"AERO VGA");
+        assert_eq!(edid[85], 0x0A);
+
+        // Standard timings are either unused (0x0101) or decodable.
+        for i in 0..8usize {
+            let off = 38 + i * 2;
+            let pair = [edid[off], edid[off + 1]];
+            if let Some((w, h, r)) = parse_standard_timing(pair) {
+                assert!(w > 0 && h > 0 && r >= 60);
+            } else {
+                assert_eq!(pair, [0x01, 0x01]);
+            }
+        }
     }
 
     #[test]
