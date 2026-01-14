@@ -128,7 +128,7 @@ struct PublishArgs {
     #[arg(long, default_value = DEFAULT_CACHE_CONTROL_LATEST)]
     cache_control_latest: String,
 
-    /// Chunk size in bytes.
+    /// Chunk size in bytes (must be a multiple of 512).
     #[arg(long, default_value_t = DEFAULT_CHUNK_SIZE_BYTES)]
     chunk_size: u64,
 
