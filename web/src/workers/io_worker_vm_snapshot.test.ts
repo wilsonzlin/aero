@@ -1779,6 +1779,55 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
     ]);
   });
 
+  it("supports camelCase WorkerVmSnapshot builder method naming (save path)", async () => {
+    const addCalls: Array<{ id: number }> = [];
+    const saveCalls: Array<{ path: string }> = [];
+
+    class FakeBuilder {
+      setCpuStateV2(_cpu: Uint8Array, _mmu: Uint8Array): void {
+        // ignore
+      }
+
+      addDeviceState(id: number, _version: number, _flags: number, _data: Uint8Array): void {
+        addCalls.push({ id });
+      }
+
+      async snapshotFullToOpfs(path: string): Promise<void> {
+        saveCalls.push({ path });
+      }
+
+      free(): void {
+        // ignore
+      }
+    }
+
+    const api = { WorkerVmSnapshot: FakeBuilder } as unknown as WasmApi;
+
+    const usbState = new Uint8Array([0x01, 0x02]);
+    const i8042State = new Uint8Array([0x02]);
+
+    await saveIoWorkerVmSnapshotToOpfs({
+      api,
+      path: "state/test.snap",
+      cpu: new ArrayBuffer(4),
+      mmu: new ArrayBuffer(8),
+      guestBase: 0,
+      guestSize: 0x1000,
+      runtimes: {
+        usbXhciControllerBridge: null,
+        usbUhciRuntime: { save_state: () => usbState },
+        usbUhciControllerBridge: null,
+        usbEhciControllerBridge: null,
+        i8042: { save_state: () => i8042State },
+        netE1000: null,
+        netStack: null,
+      },
+    });
+
+    expect(saveCalls).toEqual([{ path: "state/test.snap" }]);
+    expect(addCalls.map((c) => c.id)).toEqual([VM_SNAPSHOT_DEVICE_ID_USB, VM_SNAPSHOT_DEVICE_ID_I8042]);
+  });
+
   it("applies device blobs from WorkerVmSnapshot builder restore", async () => {
     const usbState = new Uint8Array([0x01, 0x02]);
     const i8042State = new Uint8Array([0x02]);
@@ -1858,6 +1907,45 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
       "net.e1000",
       "net.stack",
     ]);
+  });
+
+  it("supports camelCase WorkerVmSnapshot builder method naming (restore path)", async () => {
+    const usbState = new Uint8Array([0x01, 0x02]);
+    const usbLoad = vi.fn();
+
+    class FakeBuilder {
+      async restoreSnapshotFromOpfs(_path: string): Promise<unknown> {
+        return {
+          cpu: new Uint8Array([0xaa]),
+          mmu: new Uint8Array([0xbb]),
+          devices: [{ id: VM_SNAPSHOT_DEVICE_ID_USB, version: 1, flags: 0, data: usbState }],
+        };
+      }
+
+      free(): void {
+        // ignore
+      }
+    }
+
+    const api = { WorkerVmSnapshot: FakeBuilder } as unknown as WasmApi;
+
+    const res = await restoreIoWorkerVmSnapshotFromOpfs({
+      api,
+      path: "state/test.snap",
+      guestBase: 0,
+      guestSize: 0x1000,
+      runtimes: {
+        usbXhciControllerBridge: null,
+        usbUhciRuntime: { load_state: usbLoad },
+        usbUhciControllerBridge: null,
+        usbEhciControllerBridge: null,
+        netE1000: null,
+        netStack: null,
+      },
+    });
+
+    expect(usbLoad).toHaveBeenCalledWith(usbState);
+    expect(res.devices?.map((d) => d.kind)).toEqual(["usb"]);
   });
 
   it("merges coordinator + restored device blobs when saving (fresh overrides restored)", async () => {

@@ -1304,7 +1304,27 @@ export async function saveIoWorkerVmSnapshotToOpfs(opts: {
 
   const builder = new saveExport.Ctor(opts.guestBase >>> 0, opts.guestSize >>> 0);
   try {
-    builder.set_cpu_state_v2(new Uint8Array(opts.cpu), new Uint8Array(opts.mmu));
+    const setCpuState =
+      (builder as unknown as { set_cpu_state_v2?: unknown }).set_cpu_state_v2 ??
+      (builder as unknown as { setCpuStateV2?: unknown }).setCpuStateV2;
+    if (typeof setCpuState !== "function") {
+      throw new Error("WorkerVmSnapshot.set_cpu_state_v2 is unavailable in this WASM build.");
+    }
+    await Promise.resolve((setCpuState as (cpu: Uint8Array, mmu: Uint8Array) => unknown).call(builder, new Uint8Array(opts.cpu), new Uint8Array(opts.mmu)));
+
+    const addDevice =
+      (builder as unknown as { add_device_state?: unknown }).add_device_state ??
+      (builder as unknown as { addDeviceState?: unknown }).addDeviceState;
+    if (typeof addDevice !== "function") {
+      throw new Error("WorkerVmSnapshot.add_device_state is unavailable in this WASM build.");
+    }
+
+    const snapshotFull =
+      (builder as unknown as { snapshot_full_to_opfs?: unknown }).snapshot_full_to_opfs ??
+      (builder as unknown as { snapshotFullToOpfs?: unknown }).snapshotFullToOpfs;
+    if (typeof snapshotFull !== "function") {
+      throw new Error("WorkerVmSnapshot.snapshot_full_to_opfs is unavailable in this WASM build.");
+    }
 
     for (const device of devices) {
       const id = vmSnapshotDeviceKindToId(device.kind);
@@ -1325,15 +1345,15 @@ export async function saveIoWorkerVmSnapshotToOpfs(opts: {
       } else if (ioWorkerVramSnapshotChunkIndexFromDeviceId(id) !== null) {
         version = 1;
         flags = 0;
-      } else {
-        const parsed = parseAeroIoSnapshotVersion(device.bytes);
-        version = parsed.version;
-        flags = parsed.flags;
-      }
-      builder.add_device_state(id, version, flags, device.bytes);
+        } else {
+          const parsed = parseAeroIoSnapshotVersion(device.bytes);
+          version = parsed.version;
+          flags = parsed.flags;
+        }
+      await Promise.resolve((addDevice as (id: number, version: number, flags: number, data: Uint8Array) => unknown).call(builder, id, version, flags, device.bytes));
     }
 
-    await builder.snapshot_full_to_opfs(opts.path);
+    await Promise.resolve((snapshotFull as (path: string) => unknown).call(builder, opts.path));
   } finally {
     try {
       builder.free();
@@ -1583,7 +1603,14 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
 
   const builder = new restoreExport.Ctor(opts.guestBase >>> 0, opts.guestSize >>> 0);
   try {
-    const res = await builder.restore_snapshot_from_opfs(opts.path);
+    const restore =
+      (builder as unknown as { restore_snapshot_from_opfs?: unknown }).restore_snapshot_from_opfs ??
+      (builder as unknown as { restoreSnapshotFromOpfs?: unknown }).restoreSnapshotFromOpfs;
+    if (typeof restore !== "function") {
+      throw new Error("WorkerVmSnapshot.restore_snapshot_from_opfs is unavailable in this WASM build.");
+    }
+
+    const res = await Promise.resolve((restore as (path: string) => unknown).call(builder, opts.path));
     const rec = res as { cpu?: unknown; mmu?: unknown; devices?: unknown };
     if (!(rec?.cpu instanceof Uint8Array) || !(rec?.mmu instanceof Uint8Array) || !Array.isArray(rec.devices)) {
       throw new Error("WASM snapshot restore returned an unexpected result shape (expected {cpu:Uint8Array, mmu:Uint8Array, devices:Array}).");
