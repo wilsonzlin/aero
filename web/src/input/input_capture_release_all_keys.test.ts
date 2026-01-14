@@ -4,6 +4,14 @@ import { InputEventType } from "./event_queue";
 import { InputCapture } from "./input_capture";
 import { decodeInputBatchEvents, decodePackedBytes, makeCanvasStub, withStubbedDocument } from "./test_utils";
 
+type InputCaptureReleaseAllKeysHarness = {
+  hasFocus: boolean;
+  pressedCodes: Set<string>;
+  queue: { size: number };
+  handleKeyDown(event: KeyboardEvent): void;
+  releaseAllKeys(): void;
+};
+
 describe("InputCapture.releaseAllKeys", () => {
   it("emits the full PrintScreen break scancode sequence on releaseAllKeys", () => {
     withStubbedDocument(() => {
@@ -13,9 +21,9 @@ describe("InputCapture.releaseAllKeys", () => {
       const ioWorker = { postMessage: (msg: unknown) => posted.push(msg) };
       const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: false });
 
-      (capture as any).hasFocus = true;
+      (capture as unknown as InputCaptureReleaseAllKeysHarness).hasFocus = true;
 
-      (capture as any).handleKeyDown({
+      (capture as unknown as InputCaptureReleaseAllKeysHarness).handleKeyDown({
         code: "PrintScreen",
         repeat: false,
         timeStamp: 0,
@@ -27,12 +35,12 @@ describe("InputCapture.releaseAllKeys", () => {
         stopPropagation: vi.fn(),
       } as unknown as KeyboardEvent);
 
-      expect((capture as any).pressedCodes.has("PrintScreen")).toBe(true);
-      expect((capture as any).queue.size).toBe(2); // HID usage + scancode make
+      expect((capture as unknown as InputCaptureReleaseAllKeysHarness).pressedCodes.has("PrintScreen")).toBe(true);
+      expect((capture as unknown as InputCaptureReleaseAllKeysHarness).queue.size).toBe(2); // HID usage + scancode make
 
-      (capture as any).releaseAllKeys();
-      expect((capture as any).pressedCodes.size).toBe(0);
-      expect((capture as any).queue.size).toBe(5);
+      (capture as unknown as InputCaptureReleaseAllKeysHarness).releaseAllKeys();
+      expect((capture as unknown as InputCaptureReleaseAllKeysHarness).pressedCodes.size).toBe(0);
+      expect((capture as unknown as InputCaptureReleaseAllKeysHarness).queue.size).toBe(5);
 
       capture.flushNow();
       expect(posted).toHaveLength(1);
@@ -76,9 +84,9 @@ describe("InputCapture.releaseAllKeys", () => {
       const ioWorker = { postMessage: (msg: unknown) => posted.push(msg) };
       const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: false });
 
-      (capture as any).hasFocus = true;
+      (capture as unknown as InputCaptureReleaseAllKeysHarness).hasFocus = true;
 
-      (capture as any).handleKeyDown({
+      (capture as unknown as InputCaptureReleaseAllKeysHarness).handleKeyDown({
         code: "Pause",
         repeat: false,
         timeStamp: 0,
@@ -91,11 +99,11 @@ describe("InputCapture.releaseAllKeys", () => {
       } as unknown as KeyboardEvent);
 
       // Pause make is an 8-byte scancode sequence split into two events + HID usage.
-      expect((capture as any).queue.size).toBe(3);
+      expect((capture as unknown as InputCaptureReleaseAllKeysHarness).queue.size).toBe(3);
 
-      (capture as any).releaseAllKeys();
+      (capture as unknown as InputCaptureReleaseAllKeysHarness).releaseAllKeys();
       // releaseAllKeys should add only a HID usage release (Pause has no PS/2 break sequence).
-      expect((capture as any).queue.size).toBe(4);
+      expect((capture as unknown as InputCaptureReleaseAllKeysHarness).queue.size).toBe(4);
 
       capture.flushNow();
       expect(posted).toHaveLength(1);

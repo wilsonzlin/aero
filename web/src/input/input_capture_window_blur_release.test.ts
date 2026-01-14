@@ -4,6 +4,16 @@ import { InputEventType } from "./event_queue";
 import { InputCapture } from "./input_capture";
 import { decodeInputBatchEvents, decodePackedBytes, makeCanvasStub, withStubbedDocument } from "./test_utils";
 
+type InputCaptureFocusHarness = {
+  hasFocus: boolean;
+  pressedCodes: Set<string>;
+  mouseButtons: number;
+  handleKeyDown(event: KeyboardEvent): void;
+  handleMouseDown(event: MouseEvent): void;
+  handleWindowBlur(): void;
+  handleVisibilityChange(): void;
+};
+
 function expectAllReleasedBatch(posted: any[]): void {
   expect(posted).toHaveLength(1);
   const msg = posted[0] as { buffer: ArrayBuffer };
@@ -36,12 +46,12 @@ describe("InputCapture focus loss", () => {
 
       const posted: any[] = [];
       const ioWorker = { postMessage: (msg: unknown) => posted.push(msg) };
-      const capture = new InputCapture(canvas, ioWorker as any, { enableGamepad: false, recycleBuffers: false });
+      const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: false });
 
-      (capture as any).hasFocus = true;
+      (capture as unknown as InputCaptureFocusHarness).hasFocus = true;
 
       // Press and hold KeyA + mouse left button.
-      (capture as any).handleKeyDown({
+      (capture as unknown as InputCaptureFocusHarness).handleKeyDown({
         code: "KeyA",
         repeat: false,
         timeStamp: 0,
@@ -52,7 +62,7 @@ describe("InputCapture focus loss", () => {
         preventDefault: vi.fn(),
         stopPropagation: vi.fn(),
       } as unknown as KeyboardEvent);
-      (capture as any).handleMouseDown({
+      (capture as unknown as InputCaptureFocusHarness).handleMouseDown({
         button: 0,
         timeStamp: 1,
         target: canvas,
@@ -60,17 +70,17 @@ describe("InputCapture focus loss", () => {
         stopPropagation: vi.fn(),
       } as unknown as MouseEvent);
 
-      expect((capture as any).pressedCodes.size).toBe(1);
-      expect((capture as any).pressedCodes.has("KeyA")).toBe(true);
-      expect((capture as any).mouseButtons).toBe(1);
+      expect((capture as unknown as InputCaptureFocusHarness).pressedCodes.size).toBe(1);
+      expect((capture as unknown as InputCaptureFocusHarness).pressedCodes.has("KeyA")).toBe(true);
+      expect((capture as unknown as InputCaptureFocusHarness).mouseButtons).toBe(1);
       expect(posted).toHaveLength(0);
 
       // Losing window focus should immediately flush a batch containing releases.
-      (capture as any).handleWindowBlur();
+      (capture as unknown as InputCaptureFocusHarness).handleWindowBlur();
 
       expectAllReleasedBatch(posted);
-      expect((capture as any).pressedCodes.size).toBe(0);
-      expect((capture as any).mouseButtons).toBe(0);
+      expect((capture as unknown as InputCaptureFocusHarness).pressedCodes.size).toBe(0);
+      expect((capture as unknown as InputCaptureFocusHarness).mouseButtons).toBe(0);
     });
   });
 
@@ -80,11 +90,11 @@ describe("InputCapture focus loss", () => {
 
       const posted: any[] = [];
       const ioWorker = { postMessage: (msg: unknown) => posted.push(msg) };
-      const capture = new InputCapture(canvas, ioWorker as any, { enableGamepad: false, recycleBuffers: false });
+      const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: false });
 
-      (capture as any).hasFocus = true;
+      (capture as unknown as InputCaptureFocusHarness).hasFocus = true;
 
-      (capture as any).handleKeyDown({
+      (capture as unknown as InputCaptureFocusHarness).handleKeyDown({
         code: "KeyA",
         repeat: false,
         timeStamp: 0,
@@ -95,7 +105,7 @@ describe("InputCapture focus loss", () => {
         preventDefault: vi.fn(),
         stopPropagation: vi.fn(),
       } as unknown as KeyboardEvent);
-      (capture as any).handleMouseDown({
+      (capture as unknown as InputCaptureFocusHarness).handleMouseDown({
         button: 0,
         timeStamp: 1,
         target: canvas,
@@ -106,11 +116,11 @@ describe("InputCapture focus loss", () => {
       doc.visibilityState = "hidden";
       expect(posted).toHaveLength(0);
 
-      (capture as any).handleVisibilityChange();
+      (capture as unknown as InputCaptureFocusHarness).handleVisibilityChange();
 
       expectAllReleasedBatch(posted);
-      expect((capture as any).pressedCodes.size).toBe(0);
-      expect((capture as any).mouseButtons).toBe(0);
+      expect((capture as unknown as InputCaptureFocusHarness).pressedCodes.size).toBe(0);
+      expect((capture as unknown as InputCaptureFocusHarness).mouseButtons).toBe(0);
     });
   });
 });
