@@ -2883,6 +2883,12 @@ constexpr bool fixedfunc_fvf_is_xyzrhw(uint32_t fvf) {
          (fvf == kSupportedFvfXyzrhwTex1);
 }
 
+constexpr bool fixedfunc_fvf_needs_matrix(uint32_t fvf) {
+  return (fvf == kSupportedFvfXyzDiffuse) ||
+         (fvf == kSupportedFvfXyzDiffuseTex1) ||
+         (fvf == kSupportedFvfXyzTex1);
+}
+
 #pragma pack(push, 1)
 struct D3DVERTEXELEMENT9_COMPAT {
   uint16_t Stream;
@@ -4745,8 +4751,9 @@ Shader* fixedfunc_vs_variant_for_fvf_locked(const Device* dev) {
   }
   switch (dev->fvf) {
     case kSupportedFvfXyzrhwDiffuse:
-    case kSupportedFvfXyzDiffuse:
       return dev->fixedfunc_vs;
+    case kSupportedFvfXyzDiffuse:
+      return dev->fixedfunc_vs_xyz_diffuse;
     case kSupportedFvfXyzrhwDiffuseTex1:
       return dev->fixedfunc_vs_tex1;
     case kSupportedFvfXyzrhwTex1:
@@ -4981,12 +4988,18 @@ static HRESULT ensure_fixedfunc_vs_fallback_locked(Device* dev, Shader** out_vs)
     case kSupportedFvfXyzrhwDiffuseTex1:
       vs = dev->fixedfunc_vs_tex1;
       break;
+    case kSupportedFvfXyzrhwTex1:
+      vs = dev->fixedfunc_vs_tex1_nodiffuse;
+      break;
     case kSupportedFvfXyzDiffuse:
-      // XYZ+DIFFUSE uses the same passthrough VS slot as the XYZRHW variant.
-      vs = dev->fixedfunc_vs;
+      // XYZ vertices require a WVP transform in the VS.
+      vs = dev->fixedfunc_vs_xyz_diffuse;
       break;
     case kSupportedFvfXyzDiffuseTex1:
       vs = dev->fixedfunc_vs_xyz_diffuse_tex1;
+      break;
+    case kSupportedFvfXyzTex1:
+      vs = dev->fixedfunc_vs_xyz_tex1;
       break;
     default:
       return kD3DErrInvalidCall;
@@ -12391,9 +12404,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_vertex_decl(
     }
   }
   dev->fvf = implied_fvf;
-  if (implied_fvf == kSupportedFvfXyzDiffuse ||
-      implied_fvf == kSupportedFvfXyzDiffuseTex1 ||
-      implied_fvf == kSupportedFvfXyzTex1) {
+  if (fixedfunc_fvf_needs_matrix(implied_fvf)) {
     // Switching to the WVP-fixed-function path must refresh the reserved VS
     // constant range, even if transforms did not change (user shaders may have
     // written overlapping registers).
@@ -12646,10 +12657,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_shader(
   // WVP matrix. A user vertex shader may have written overlapping registers, so
   // when the app later switches back to fixed-function (without necessarily
   // changing FVF/decl), we must re-upload the matrix constants.
-  if (stage == kD3d9ShaderStageVs && sh &&
-      (dev->fvf == kSupportedFvfXyzDiffuse ||
-       dev->fvf == kSupportedFvfXyzDiffuseTex1 ||
-       dev->fvf == kSupportedFvfXyzTex1)) {
+  if (stage == kD3d9ShaderStageVs && sh && fixedfunc_fvf_needs_matrix(dev->fvf)) {
     dev->fixedfunc_matrix_dirty = true;
   }
 
@@ -12745,10 +12753,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_shader_const_f(
 
   // If the app writes to the fixed-function reserved matrix constant range,
   // treat it as clobbered and re-upload on the next fixed-function draw.
-  if (stage_norm == kD3d9ShaderStageVs &&
-      (dev->fvf == kSupportedFvfXyzDiffuse ||
-       dev->fvf == kSupportedFvfXyzDiffuseTex1 ||
-       dev->fvf == kSupportedFvfXyzTex1)) {
+  if (stage_norm == kD3d9ShaderStageVs && fixedfunc_fvf_needs_matrix(dev->fvf)) {
     const uint32_t end_reg = start_reg + vec4_count;
     const uint32_t ff_start = kFixedfuncMatrixStartRegister;
     const uint32_t ff_end = kFixedfuncMatrixStartRegister + kFixedfuncMatrixVec4Count;

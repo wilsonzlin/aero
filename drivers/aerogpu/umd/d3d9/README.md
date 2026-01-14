@@ -397,8 +397,7 @@ Implementation notes (bring-up):
 - Shader-stage interop is supported: when exactly one stage is bound (VS-only or PS-only), `ensure_draw_pipeline_locked()`
   binds a fixed-function fallback shader for the missing stage at draw time.
   - VS-only interop (PS is NULL) uses a stage0 fixed-function PS variant (validated by `d3d9_shader_stage_interop`).
-  - PS-only interop (VS is NULL) synthesizes a minimal fixed-function VS based on the active FVF (limited to the `DIFFUSE`
-    and `DIFFUSE|TEX1` bring-up subset).
+  - PS-only interop (VS is NULL) uses a fixed-function VS derived from the active FVF (limited to the bring-up subset).
 - For indexed draws in this mode, indices may be expanded into a temporary vertex stream (conservative but sufficient
   for bring-up).
 - Patch rendering (`DrawRectPatch` / `DrawTriPatch`) is supported for the bring-up subset of **cubic Bezier patches**:

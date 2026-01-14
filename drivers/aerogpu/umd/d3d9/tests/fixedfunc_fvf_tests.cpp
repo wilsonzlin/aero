@@ -566,7 +566,8 @@ bool TestFvfXyzDiffuseEmitsInputLayoutAndShaders() {
     return false;
   }
 
-  // XYZ is currently treated as already clip-space (no WVP transforms).
+  // XYZ vertices are transformed by the fixed-function WVP path. The device
+  // initializes transforms to identity, so these inputs are already clip-space.
   const VertexXyzDiffuse tri[3] = {
       {-1.0f, -1.0f, 0.0f, 0xFFFF0000u},
       {1.0f, -1.0f, 0.0f, 0xFF00FF00u},

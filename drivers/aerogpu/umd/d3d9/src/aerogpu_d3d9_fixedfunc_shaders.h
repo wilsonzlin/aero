@@ -184,24 +184,29 @@ static constexpr uint32_t kVsTransformPosWhiteTex1[] = {
     0x40010000u, // oPos.x
     0x10E40000u, // v0.xyzw
     0x20E40000u, // c0.xyzw
-    0x03000009u, // dp4 (3 operands)
+    0x03000009u, // dp4
     0x40020000u, // oPos.y
     0x10E40000u, // v0.xyzw
     0x20E40001u, // c1.xyzw
-    0x03000009u, // dp4 (3 operands)
+
+    0x03000009u, // dp4
     0x40040000u, // oPos.z
     0x10E40000u, // v0.xyzw
     0x20E40002u, // c2.xyzw
-    0x03000009u, // dp4 (3 operands)
+
+    0x03000009u, // dp4
     0x40080000u, // oPos.w
     0x10E40000u, // v0.xyzw
     0x20E40003u, // c3.xyzw
+
     0x02000001u, // mov (2 operands)
     0x500F0000u, // oD0.xyzw
     0x20E40004u, // c4.xyzw
+
     0x02000001u, // mov (2 operands)
     0x600F0000u, // oT0.xyzw
     0x10E40001u, // v1.xyzw
+
     0x0000FFFFu, // end
 };
 
