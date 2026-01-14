@@ -20,6 +20,15 @@ use std::fmt;
 pub const AEROGPU_INPUT_LAYOUT_BLOB_MAGIC: u32 = 0x5941_4C49;
 pub const AEROGPU_INPUT_LAYOUT_BLOB_VERSION: u32 = 1;
 
+/// ILAY blob header flags (stored in the `reserved0` field).
+///
+/// The guest and host ABI leaves `reserved0` available for forward-compatible extensions.
+/// When this flag is set, the input layout describes a vertex buffer produced by geometry shader
+/// emulation (packed post-GS vertex outputs) rather than a conventional D3D11 input layout. In that
+/// mode, the runtime can bypass WebGPU's vertex attribute limits by using storage-buffer vertex
+/// pulling in a generated pass-through vertex shader.
+pub const AEROGPU_INPUT_LAYOUT_BLOB_FLAG_GS_EMULATION_OUTPUT: u32 = 1u32 << 0;
+
 /// Mirrors `D3D11_APPEND_ALIGNED_ELEMENT`.
 pub const D3D11_APPEND_ALIGNED_ELEMENT: u32 = 0xFFFF_FFFF;
 
@@ -75,6 +84,7 @@ pub struct InputLayoutBlobHeader {
     pub magic: u32,
     pub version: u32,
     pub element_count: u32,
+    pub flags: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -346,6 +356,7 @@ impl InputLayoutDesc {
                 max: MAX_INPUT_LAYOUT_ELEMENTS,
             });
         }
+        let flags = read_u32_le(&blob[12..16]);
 
         let expected_size = HEADER_SIZE + (element_count as usize) * ELEMENT_SIZE;
         // Forward-compat: allow trailing bytes so newer ILAY blob versions can append fields after
@@ -391,6 +402,7 @@ impl InputLayoutDesc {
                 magic,
                 version,
                 element_count,
+                flags,
             },
             elements,
         })
@@ -1145,7 +1157,8 @@ mod tests {
             InputLayoutBlobHeader {
                 magic: AEROGPU_INPUT_LAYOUT_BLOB_MAGIC,
                 version: AEROGPU_INPUT_LAYOUT_BLOB_VERSION,
-                element_count: 1
+                element_count: 1,
+                flags: 0,
             }
         );
         assert_eq!(parsed.elements.len(), 1);

@@ -122,3 +122,11 @@ pub const BINDING_INTERNAL_DRAW_PARAMS: u32 = BINDING_INTERNAL_EXPANDED_VERTICES
 ///
 /// SM4/SM5 pixel shaders can reference up to `v0..v31`, so we store 32 `vec4<f32>` slots.
 pub const EXPANDED_VERTEX_MAX_VARYINGS: u32 = 32;
+/// Internal binding number used by host-generated geometry-shader-emulation shaders.
+///
+/// Geometry shader emulation renders from a storage buffer containing packed post-GS vertex outputs,
+/// and uses storage-buffer vertex pulling to avoid WebGPU's 16-vertex-attribute limit.
+///
+/// This binding intentionally lives in the internal binding range so it cannot collide with
+/// D3D11 register spaces (`b#`/`t#`/`s#`/`u#`).
+pub const BINDING_GS_EMUL_VERTEX_OUTPUTS: u32 = BINDING_INTERNAL_EXPANDED_VERTICES;
