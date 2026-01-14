@@ -399,11 +399,11 @@ echo Verifying Guest Tools media integrity ^(/verify-media^)...
 rem Locate manifest.json (either alongside setup.cmd or one directory above).
 set "MEDIA_ROOT="
 for %%I in ("%SCRIPT_DIR%..") do set "MEDIA_ROOT=%%~fI"
-set "MANIFEST=!MEDIA_ROOT!\manifest.json"
-set "ROOT=!MEDIA_ROOT!"
+set "MANIFEST=%SCRIPT_DIR%manifest.json"
+set "ROOT=%SCRIPT_DIR%"
 if not exist "!MANIFEST!" (
-  set "MANIFEST=%SCRIPT_DIR%manifest.json"
-  set "ROOT=%SCRIPT_DIR%"
+  set "MANIFEST=!MEDIA_ROOT!\manifest.json"
+  set "ROOT=!MEDIA_ROOT!"
 )
 
 if not exist "!MANIFEST!" (
@@ -649,8 +649,11 @@ setlocal EnableDelayedExpansion
 rem Optional: record which Guest Tools build produced the media (if provided).
 set "MEDIA_ROOT="
 for %%I in ("%SCRIPT_DIR%..") do set "MEDIA_ROOT=%%~fI"
-set "MANIFEST=!MEDIA_ROOT!\manifest.json"
-if not exist "!MANIFEST!" set "MANIFEST=%SCRIPT_DIR%manifest.json"
+rem Prefer manifest.json next to setup.cmd. Fall back to the media root one directory above.
+rem This avoids accidentally picking up an unrelated parent-directory manifest when the media
+rem is extracted under a folder that also happens to contain a manifest.json.
+set "MANIFEST=%SCRIPT_DIR%manifest.json"
+if not exist "!MANIFEST!" set "MANIFEST=!MEDIA_ROOT!\manifest.json"
 if not exist "!MANIFEST!" (
   endlocal & (
     rem Back-compat: without a manifest, assume test-signed behavior.

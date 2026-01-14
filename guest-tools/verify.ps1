@@ -1334,7 +1334,7 @@ try {
     # - Packager output: verify.ps1 + manifest.json live at the media root.
     # - Some manual/legacy layouts place scripts under a subdirectory (e.g. guest-tools\verify.ps1)
     #   with manifest.json at the media root one directory above. Match setup.cmd/uninstall.cmd:
-    #   prefer manifest.json at the parent directory, then fall back to next to verify.ps1.
+    #   prefer manifest.json next to verify.ps1, then fall back to the parent directory.
     $mediaRoot = $scriptDir
     $localManifest = Join-Path $scriptDir "manifest.json"
     $parentRoot = $null
@@ -1343,12 +1343,12 @@ try {
     if ($parentRoot) { $parentManifest = Join-Path $parentRoot "manifest.json" }
 
     $manifestPath = $localManifest
-    if ($parentManifest -and (Test-Path $parentManifest)) {
-        $manifestPath = $parentManifest
-        $mediaRoot = $parentRoot
-    } elseif (Test-Path $localManifest) {
+    if (Test-Path $localManifest) {
         $manifestPath = $localManifest
         $mediaRoot = $scriptDir
+    } elseif ($parentManifest -and (Test-Path $parentManifest)) {
+        $manifestPath = $parentManifest
+        $mediaRoot = $parentRoot
     }
     $mStatus = "PASS"
     $mSummary = ""

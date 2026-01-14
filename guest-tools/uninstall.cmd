@@ -243,8 +243,11 @@ setlocal EnableDelayedExpansion
 rem Optional: record which Guest Tools build produced the media (if provided).
 set "MEDIA_ROOT="
 for %%I in ("%SCRIPT_DIR%..") do set "MEDIA_ROOT=%%~fI"
-set "MANIFEST=!MEDIA_ROOT!\manifest.json"
-if not exist "!MANIFEST!" set "MANIFEST=%SCRIPT_DIR%manifest.json"
+rem Prefer manifest.json next to uninstall.cmd. Fall back to the media root one directory above.
+rem This avoids accidentally picking up an unrelated parent-directory manifest when the media
+rem is extracted under a folder that also happens to contain a manifest.json.
+set "MANIFEST=%SCRIPT_DIR%manifest.json"
+if not exist "!MANIFEST!" set "MANIFEST=!MEDIA_ROOT!\manifest.json"
 if not exist "!MANIFEST!" (
   endlocal & (
     rem Back-compat: without a manifest, assume test-signed behavior.
