@@ -236,32 +236,62 @@ impl PciBus {
 
                     // Canonical `PciConfigSpace` treats any aligned 32-bit write of `0xFFFF_FFFF`
                     // to a BAR register as a size probe. For subword BAR writes we emulate byte
-                    // enables via a read-modify-write, which can accidentally synthesize an
-                    // all-ones dword for the high dword of a 64-bit BAR. Real hardware does not
-                    // treat that as a probe because not all byte lanes were written.
-                    if merged == 0xFFFF_FFFF
-                        && bar > 0
-                        && cfg.bar_definition(bar).is_none()
-                        && matches!(
-                            cfg.bar_definition(bar - 1),
-                            Some(PciBarDefinition::Mmio64 { .. })
-                        )
-                    {
-                        let Some(old) = cfg.bar_range(bar - 1) else {
-                            return;
-                        };
-                        let new_base =
-                            (old.base & 0x0000_0000_FFFF_FFFF) | (u64::from(merged) << 32);
-                        cfg.set_bar_base(bar - 1, new_base);
-                        let new = cfg.bar_range(bar - 1).unwrap_or(old);
+                    // enables via a read-modify-write, which can synthesize an all-ones dword even
+                    // when the guest did not write all byte lanes (for example, if other bytes
+                    // were already 0xFF from the current programmed base).
+                    //
+                    // Real hardware does not treat that as a probe because the byte enables were
+                    // not all asserted in the same transaction.
+                    if merged == 0xFFFF_FFFF {
+                        // High dword of a 64-bit BAR.
+                        if bar > 0
+                            && cfg.bar_definition(bar).is_none()
+                            && matches!(
+                                cfg.bar_definition(bar - 1),
+                                Some(PciBarDefinition::Mmio64 { .. })
+                            )
+                        {
+                            let Some(old) = cfg.bar_range(bar - 1) else {
+                                return;
+                            };
+                            let new_base =
+                                (old.base & 0x0000_0000_FFFF_FFFF) | (u64::from(merged) << 32);
+                            cfg.set_bar_base(bar - 1, new_base);
+                            let new = cfg.bar_range(bar - 1).unwrap_or(old);
 
-                        if old == new {
-                            PciConfigWriteEffects::default()
-                        } else {
-                            PciConfigWriteEffects {
-                                bar: Some((bar - 1, PciBarChange::Changed { old, new })),
-                                ..Default::default()
+                            if old == new {
+                                PciConfigWriteEffects::default()
+                            } else {
+                                PciConfigWriteEffects {
+                                    bar: Some((bar - 1, PciBarChange::Changed { old, new })),
+                                    ..Default::default()
+                                }
                             }
+                        } else if let Some(def) = cfg.bar_definition(bar) {
+                            let Some(old) = cfg.bar_range(bar) else {
+                                return;
+                            };
+                            let new_base = match def {
+                                PciBarDefinition::Io { .. } => u64::from(merged & 0xFFFF_FFFC),
+                                PciBarDefinition::Mmio32 { .. } => u64::from(merged & 0xFFFF_FFF0),
+                                PciBarDefinition::Mmio64 { .. } => {
+                                    (old.base & 0xFFFF_FFFF_0000_0000)
+                                        | u64::from(merged & 0xFFFF_FFF0)
+                                }
+                            };
+                            cfg.set_bar_base(bar, new_base);
+                            let new = cfg.bar_range(bar).unwrap_or(old);
+
+                            if old == new {
+                                PciConfigWriteEffects::default()
+                            } else {
+                                PciConfigWriteEffects {
+                                    bar: Some((bar, PciBarChange::Changed { old, new })),
+                                    ..Default::default()
+                                }
+                            }
+                        } else {
+                            cfg.write_with_effects(aligned, 4, merged)
                         }
                     } else {
                         cfg.write_with_effects(aligned, 4, merged)
@@ -902,6 +932,41 @@ mod tests {
         // Dword writes that cover the command register should also refresh decoding.
         bus.write_config(bdf, 0x04, 4, 0x0000_0002);
         assert_eq!(bus.mapped_mmio_bars().len(), 1);
+    }
+
+    #[test]
+    fn bar_subword_write_that_would_form_all_ones_does_not_trigger_probe() {
+        let mut bus = PciBus::new();
+        let bdf = PciBdf::new(0, 1, 0);
+
+        let mut dev = Stub::new(0x1234, 0x0003);
+        dev.cfg.set_bar_definition(
+            0,
+            PciBarDefinition::Mmio32 {
+                size: 0x10,
+                prefetchable: false,
+            },
+        );
+        bus.add_device(bdf, Box::new(dev));
+
+        // Two 16-bit writes that together would make the full DWORD `0xFFFF_FFFF`.
+        //
+        // A naive read-modify-write implementation can synthesize that value and accidentally
+        // trigger BAR size probe semantics (which are only supposed to happen on a full 32-bit
+        // write of 0xFFFF_FFFF).
+        bus.write_config(bdf, 0x12, 2, 0xFFFF);
+        bus.write_config(bdf, 0x10, 2, 0xFFFF);
+
+        let cfg = bus.device_config(bdf).expect("device should exist");
+        assert_eq!(
+            cfg.bar_range(0).expect("bar0").base,
+            0xFFFF_FFF0,
+            "subword BAR writes should program the BAR, not enter probe mode"
+        );
+        assert!(
+            !cfg.snapshot_state().bar_probe[0],
+            "subword BAR writes must not set probe flag"
+        );
     }
 
     #[test]
