@@ -1635,7 +1635,7 @@ fn collect_used_pixel_inputs_op(op: &IrOp, out: &mut BTreeSet<(RegFile, u32)>) {
             collect_used_pixel_inputs_src(src_lt, out);
             collect_used_pixel_inputs_modifiers(modifiers, out);
         }
-        // Ops with 3 source operands.
+        // Ops with 3 source operands (mad/lrp/dp2add).
         IrOp::Dp2Add {
             src0,
             src1,
