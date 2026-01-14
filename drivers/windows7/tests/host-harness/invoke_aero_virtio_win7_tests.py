@@ -2435,6 +2435,17 @@ def _build_qemu_args_dry_run(
     return qemu_args
 
 
+def _format_commandline_for_host(argv: list[str]) -> str:
+    """
+    Best-effort copy/paste commandline string for the current host platform.
+
+    This is for logs/debugging only; the harness always executes QEMU via an argv array.
+    """
+    if os.name == "nt":
+        return subprocess.list2cmdline([str(a) for a in argv])
+    return " ".join(shlex.quote(str(a)) for a in argv)
+
+
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument("--qemu-system", required=True, help="Path to qemu-system-* binary")
@@ -3330,12 +3341,7 @@ def main() -> int:
         # First line: machine-readable JSON argv array.
         print(json.dumps(qemu_args, separators=(",", ":")))
         # Second line: best-effort single-line command for copy/paste.
-        # - POSIX: shlex.quote for a shell-safe argv reconstruction.
-        # - Windows: list2cmdline for CreateProcess/cmd.exe-style quoting.
-        if os.name == "nt":
-            print(subprocess.list2cmdline([str(a) for a in qemu_args]))
-        else:
-            print(" ".join(shlex.quote(str(a)) for a in qemu_args))
+        print(_format_commandline_for_host(qemu_args))
         print("")
         print("DryRun: derived settings:")
         mode = "transitional" if args.virtio_transitional else "contract-v1"
@@ -3722,7 +3728,7 @@ def main() -> int:
             irq_mode_devices.append("virtio-snd")
 
         print("Launching QEMU:")
-        print("  " + " ".join(shlex.quote(str(a)) for a in qemu_args))
+        print("  " + _format_commandline_for_host(qemu_args))
         stderr_f = qemu_stderr_log.open("wb")
         proc = subprocess.Popen(qemu_args, stderr=stderr_f)
         result_code: Optional[int] = None
