@@ -529,6 +529,39 @@ fn assemble_ps3_tex_ifc_def() -> Vec<u32> {
     out
 }
 
+fn assemble_ps3_texld_cube() -> Vec<u32> {
+    // ps_3_0
+    let mut out = vec![0xFFFF0300];
+    // dcl_texcoord0 v0
+    out.extend(enc_inst_with_extra_sm3(
+        0x001F,
+        5u32 << 16,
+        &[enc_dst(1, 0, 0xF)],
+    ));
+    // dcl_cube s0
+    out.extend(enc_inst_with_extra_sm3(
+        0x001F,
+        3u32 << 16,
+        &[enc_dst(10, 0, 0xF)],
+    ));
+    // texld r0, v0, s0
+    out.extend(enc_inst_sm3(
+        0x0042,
+        &[
+            enc_dst(0, 0, 0xF),   // r0
+            enc_src(1, 0, 0xE4),  // v0
+            enc_src(10, 0, 0xE4), // s0
+        ],
+    ));
+    // mov oC0, r0
+    out.extend(enc_inst_sm3(
+        0x0001,
+        &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)],
+    ));
+    out.push(0x0000FFFF);
+    out
+}
+
 fn assemble_ps3_defb_if(branch: bool) -> Vec<u32> {
     // ps_3_0
     let mut out = vec![0xFFFF0300];
@@ -2371,6 +2404,32 @@ fn build_vertex_decl_pos_tex_color() -> state::VertexDecl {
     )
 }
 
+fn build_vertex_decl_pos_tex4_color() -> state::VertexDecl {
+    state::VertexDecl::new(
+        48,
+        vec![
+            state::VertexElement {
+                offset: 0,
+                ty: state::VertexElementType::Float4,
+                usage: state::VertexUsage::Position,
+                usage_index: 0,
+            },
+            state::VertexElement {
+                offset: 16,
+                ty: state::VertexElementType::Float4,
+                usage: state::VertexUsage::TexCoord,
+                usage_index: 0,
+            },
+            state::VertexElement {
+                offset: 32,
+                ty: state::VertexElementType::Float4,
+                usage: state::VertexUsage::Color,
+                usage_index: 0,
+            },
+        ],
+    )
+}
+
 fn push_f32(out: &mut Vec<u8>, v: f32) {
     out.extend_from_slice(&v.to_le_bytes());
 }
@@ -2469,7 +2528,7 @@ fn micro_textured_quad_pixel_compare() {
     let tex = software::Texture2D::from_rgba8(2, 2, &tex_bytes);
 
     let mut textures = HashMap::new();
-    textures.insert(0u16, tex);
+    textures.insert(0u16, tex.into());
 
     let mut sampler_states = HashMap::new();
     sampler_states.insert(
@@ -2545,7 +2604,7 @@ fn micro_ps3_ifc_def_pixel_compare() {
     let tex = software::Texture2D::from_rgba8(2, 2, &tex_bytes);
 
     let mut textures = HashMap::new();
-    textures.insert(0u16, tex);
+    textures.insert(0u16, tex.into());
 
     let mut sampler_states = HashMap::new();
     sampler_states.insert(
@@ -2724,6 +2783,83 @@ fn micro_ps2_dp2_masked_xy_pixel_compare() {
     //   dp2 r0.xy, c0, c0 => dot(c0.xy, c0.xy) = 0.3125 written into x/y only
     //   => r0 = (0.3125, 0.3125, 0.3, 0.4)
     assert_eq!(rt.get(8, 8).to_rgba8(), [80, 80, 77, 102]);
+}
+
+#[test]
+fn sm3_texld_cube_samples_face_colors() {
+    let vs = build_sm3_ir(&assemble_vs_passthrough());
+    let ps = build_sm3_ir(&assemble_ps3_texld_cube());
+    let decl = build_vertex_decl_pos_tex4_color();
+
+    let cube = software::TextureCube::new([
+        software::Texture2D::from_rgba8(1, 1, &[255, 0, 0, 255]),   // +X red
+        software::Texture2D::from_rgba8(1, 1, &[0, 255, 0, 255]),   // -X green
+        software::Texture2D::from_rgba8(1, 1, &[0, 0, 255, 255]),   // +Y blue
+        software::Texture2D::from_rgba8(1, 1, &[255, 255, 0, 255]), // -Y yellow
+        software::Texture2D::from_rgba8(1, 1, &[255, 0, 255, 255]), // +Z magenta
+        software::Texture2D::from_rgba8(1, 1, &[0, 255, 255, 255]), // -Z cyan
+    ]);
+    let mut textures = HashMap::new();
+    textures.insert(0u16, cube.into());
+
+    let mut sampler_states = HashMap::new();
+    sampler_states.insert(
+        0u16,
+        state::SamplerState {
+            min_filter: state::FilterMode::Point,
+            mag_filter: state::FilterMode::Point,
+            address_u: state::AddressMode::Clamp,
+            address_v: state::AddressMode::Clamp,
+        },
+    );
+
+    let constants = zero_constants();
+    let positions = [
+        software::Vec4::new(-1.0, -1.0, 0.0, 1.0),
+        software::Vec4::new(3.0, -1.0, 0.0, 1.0),
+        software::Vec4::new(-1.0, 3.0, 0.0, 1.0),
+    ];
+    let white = software::Vec4::new(1.0, 1.0, 1.0, 1.0);
+
+    for (dir, expected) in [
+        (software::Vec4::new(1.0, 0.0, 0.0, 1.0), [255, 0, 0, 255]),
+        (software::Vec4::new(-1.0, 0.0, 0.0, 1.0), [0, 255, 0, 255]),
+        (software::Vec4::new(0.0, 1.0, 0.0, 1.0), [0, 0, 255, 255]),
+        (
+            software::Vec4::new(0.0, -1.0, 0.0, 1.0),
+            [255, 255, 0, 255],
+        ),
+        (software::Vec4::new(0.0, 0.0, 1.0, 1.0), [255, 0, 255, 255]),
+        (
+            software::Vec4::new(0.0, 0.0, -1.0, 1.0),
+            [0, 255, 255, 255],
+        ),
+    ] {
+        let mut vb = Vec::new();
+        for pos in positions {
+            push_vec4(&mut vb, pos);
+            push_vec4(&mut vb, dir);
+            push_vec4(&mut vb, white);
+        }
+
+        let mut rt = software::RenderTarget::new(8, 8, software::Vec4::ZERO);
+        sm3::software::draw(
+            &mut rt,
+            sm3::software::DrawParams {
+                vs: &vs,
+                ps: &ps,
+                vertex_decl: &decl,
+                vertex_buffer: &vb,
+                indices: None,
+                constants: &constants,
+                textures: &textures,
+                sampler_states: &sampler_states,
+                blend_state: state::BlendState::default(),
+            },
+        );
+
+        assert_eq!(rt.get(4, 4).to_rgba8(), expected, "dir={dir:?}");
+    }
 }
 
 #[test]

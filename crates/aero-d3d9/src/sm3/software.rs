@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use crate::software::{RenderTarget, Texture2D, Vec4};
+use crate::software::{RenderTarget, Texture, Vec4};
 use crate::state::{
     BlendFactor, BlendOp, BlendState, SamplerState, VertexDecl, VertexElementType, VertexUsage,
 };
@@ -14,7 +14,9 @@ use crate::vertex::{AdaptiveLocationMap, DeclUsage, VertexLocationMap};
 
 use super::wgsl::varying_location;
 use crate::shader_limits::MAX_D3D9_SHADER_CONTROL_FLOW_NESTING;
-use crate::sm3::decode::{ResultShift, SrcModifier, Swizzle, SwizzleComponent, WriteMask};
+use crate::sm3::decode::{
+    ResultShift, SrcModifier, Swizzle, SwizzleComponent, TextureType, WriteMask,
+};
 use crate::sm3::ir::{
     Block, CompareOp, Cond, Dst, InstModifiers, IrOp, PredicateRef, RegFile, RegRef, Semantic, Src,
     Stmt, TexSampleKind,
@@ -370,7 +372,8 @@ fn exec_block(
     inputs_v: &HashMap<u16, Vec4>,
     inputs_t: &HashMap<u16, Vec4>,
     constants: &ConstBank,
-    textures: &HashMap<u16, Texture2D>,
+    sampler_types: &HashMap<u32, TextureType>,
+    textures: &HashMap<u16, Texture>,
     sampler_states: &HashMap<u16, SamplerState>,
     o_pos: &mut Vec4,
     o_attr: &mut HashMap<u16, Vec4>,
@@ -394,6 +397,7 @@ fn exec_block(
                     inputs_v,
                     inputs_t,
                     constants,
+                    sampler_types,
                     textures,
                     sampler_states,
                     o_pos,
@@ -423,6 +427,7 @@ fn exec_block(
                         inputs_v,
                         inputs_t,
                         constants,
+                        sampler_types,
                         textures,
                         sampler_states,
                         o_pos,
@@ -442,6 +447,7 @@ fn exec_block(
                         inputs_v,
                         inputs_t,
                         constants,
+                        sampler_types,
                         textures,
                         sampler_states,
                         o_pos,
@@ -511,6 +517,7 @@ fn exec_block(
                         inputs_v,
                         inputs_t,
                         constants,
+                        sampler_types,
                         textures,
                         sampler_states,
                         o_pos,
@@ -580,7 +587,8 @@ fn exec_op(
     inputs_v: &HashMap<u16, Vec4>,
     inputs_t: &HashMap<u16, Vec4>,
     constants: &ConstBank,
-    textures: &HashMap<u16, Texture2D>,
+    sampler_types: &HashMap<u32, TextureType>,
+    textures: &HashMap<u16, Texture>,
     sampler_states: &HashMap<u16, SamplerState>,
     o_pos: &mut Vec4,
     o_attr: &mut HashMap<u16, Vec4>,
@@ -1002,26 +1010,52 @@ fn exec_op(
             sampler,
             ..
         } => {
-            // Reference model: use `software::Texture2D` sampling.
-            let coord_v = exec_src(
-                coord, temps, addrs, loops, preds, inputs_v, inputs_t, constants,
-            );
+            let coord_v =
+                exec_src(coord, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
             let sampler_u16 = u16::try_from(*sampler).ok();
-            let (u, v) = match kind {
-                TexSampleKind::ImplicitLod { project: true } => {
-                    let w = coord_v.w.max(f32::EPSILON);
-                    (coord_v.x / w, coord_v.y / w)
-                }
-                TexSampleKind::ImplicitLod { project: false }
-                | TexSampleKind::Bias
-                | TexSampleKind::ExplicitLod
-                | TexSampleKind::Grad => (coord_v.x, coord_v.y),
-            };
 
             if let Some(s) = sampler_u16 {
-                let tex = textures.get(&s);
                 let samp = sampler_states.get(&s).copied().unwrap_or_default();
-                tex.map(|t| t.sample(samp, (u, v))).unwrap_or(Vec4::ZERO)
+                let ty = sampler_types
+                    .get(sampler)
+                    .copied()
+                    .unwrap_or(TextureType::Texture2D);
+
+                match ty {
+                    TextureType::Texture2D => {
+                        let (u, v) = match kind {
+                            TexSampleKind::ImplicitLod { project: true } => {
+                                let w = coord_v.w.max(f32::EPSILON);
+                                (coord_v.x / w, coord_v.y / w)
+                            }
+                            TexSampleKind::ImplicitLod { project: false }
+                            | TexSampleKind::Bias
+                            | TexSampleKind::ExplicitLod
+                            | TexSampleKind::Grad => (coord_v.x, coord_v.y),
+                        };
+                        match textures.get(&s) {
+                            Some(Texture::Texture2D(tex)) => tex.sample(samp, (u, v)),
+                            _ => Vec4::ZERO,
+                        }
+                    }
+                    TextureType::TextureCube => {
+                        let (x, y, z) = match kind {
+                            TexSampleKind::ImplicitLod { project: true } => {
+                                let w = coord_v.w.max(f32::EPSILON);
+                                (coord_v.x / w, coord_v.y / w, coord_v.z / w)
+                            }
+                            TexSampleKind::ImplicitLod { project: false }
+                            | TexSampleKind::Bias
+                            | TexSampleKind::ExplicitLod
+                            | TexSampleKind::Grad => (coord_v.x, coord_v.y, coord_v.z),
+                        };
+                        match textures.get(&s) {
+                            Some(Texture::TextureCube(tex)) => tex.sample(samp, (x, y, z)),
+                            _ => Vec4::ZERO,
+                        }
+                    }
+                    _ => Vec4::ZERO,
+                }
             } else {
                 Vec4::ZERO
             }
@@ -1144,6 +1178,9 @@ fn run_vertex_shader(
     ir: &crate::sm3::ir::ShaderIr,
     inputs: &HashMap<u16, Vec4>,
     constants: &ConstBank,
+    sampler_types: &HashMap<u32, TextureType>,
+    textures: &HashMap<u16, Texture>,
+    sampler_states: &HashMap<u16, SamplerState>,
 ) -> VsOut {
     let mut temps = vec![Vec4::ZERO; 32];
     let mut addrs = vec![Vec4::ZERO; 4];
@@ -1156,7 +1193,6 @@ fn run_vertex_shader(
     let mut o_out = HashMap::<u16, Vec4>::new();
     let mut dummy_color = Vec4::ZERO;
     let empty_t = HashMap::new();
-    let empty_tex = HashMap::new();
 
     exec_block(
         &ir.body,
@@ -1168,8 +1204,9 @@ fn run_vertex_shader(
         inputs,
         &empty_t,
         constants,
-        &empty_tex,
-        &HashMap::new(),
+        sampler_types,
+        textures,
+        sampler_states,
         &mut o_pos,
         &mut o_attr,
         &mut o_tex,
@@ -1190,7 +1227,8 @@ fn run_pixel_shader(
     inputs_v: &HashMap<u16, Vec4>,
     inputs_t: &HashMap<u16, Vec4>,
     constants: &ConstBank,
-    textures: &HashMap<u16, Texture2D>,
+    sampler_types: &HashMap<u32, TextureType>,
+    textures: &HashMap<u16, Texture>,
     sampler_states: &HashMap<u16, SamplerState>,
 ) -> Option<Vec4> {
     let mut temps = vec![Vec4::ZERO; 32];
@@ -1214,6 +1252,7 @@ fn run_pixel_shader(
         inputs_v,
         inputs_t,
         constants,
+        sampler_types,
         textures,
         sampler_states,
         &mut dummy_pos,
@@ -1248,7 +1287,7 @@ pub struct DrawParams<'a> {
     pub vertex_buffer: &'a [u8],
     pub indices: Option<&'a [u16]>,
     pub constants: &'a [Vec4; 256],
-    pub textures: &'a HashMap<u16, Texture2D>,
+    pub textures: &'a HashMap<u16, Texture>,
     pub sampler_states: &'a HashMap<u16, SamplerState>,
     pub blend_state: BlendState,
 }
@@ -1263,7 +1302,8 @@ struct PsInputLocation {
 struct PixelContext<'a> {
     ps: &'a crate::sm3::ir::ShaderIr,
     constants: ConstBank,
-    textures: &'a HashMap<u16, Texture2D>,
+    sampler_types: HashMap<u32, TextureType>,
+    textures: &'a HashMap<u16, Texture>,
     sampler_states: &'a HashMap<u16, SamplerState>,
     blend_state: BlendState,
     ps_inputs: Vec<PsInputLocation>,
@@ -1556,6 +1596,10 @@ pub fn draw(target: &mut RenderTarget, params: DrawParams<'_>) {
 
     let vs_constants = prepare_constants(constants, vs);
     let ps_constants = prepare_constants(constants, ps);
+    let vs_sampler_types: HashMap<u32, TextureType> =
+        vs.samplers.iter().map(|s| (s.index, s.texture_type)).collect();
+    let ps_sampler_types: HashMap<u32, TextureType> =
+        ps.samplers.iter().map(|s| (s.index, s.texture_type)).collect();
 
     let mut vs_output_semantics = HashMap::<u32, Semantic>::new();
     for decl in &vs.outputs {
@@ -1654,7 +1698,14 @@ pub fn draw(target: &mut RenderTarget, params: DrawParams<'_>) {
             attr,
             tex,
             out,
-        } = run_vertex_shader(vs, &inputs, &vs_constants);
+        } = run_vertex_shader(
+            vs,
+            &inputs,
+            &vs_constants,
+            &vs_sampler_types,
+            textures,
+            sampler_states,
+        );
         let inv_w = 1.0 / cp.w.max(f32::EPSILON);
         let ndc_x = cp.x * inv_w;
         let ndc_y = cp.y * inv_w;
@@ -1693,6 +1744,7 @@ pub fn draw(target: &mut RenderTarget, params: DrawParams<'_>) {
     let ctx = PixelContext {
         ps,
         constants: ps_constants,
+        sampler_types: ps_sampler_types,
         textures,
         sampler_states,
         blend_state,
@@ -1819,6 +1871,7 @@ fn rasterize_triangle(
                     &inputs_v,
                     &inputs_t,
                     &ctx.constants,
+                    &ctx.sampler_types,
                     ctx.textures,
                     ctx.sampler_states,
                 ) {

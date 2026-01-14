@@ -11,6 +11,7 @@ use crate::{
         Dst, Op, RegisterFile, ResultModifier, ResultShift, ShaderIr, Src, SrcModifier, Swizzle,
         WriteMask,
     },
+    sm3::decode::TextureType,
     state::{
         AddressMode, BlendFactor, BlendOp, BlendState, FilterMode, SamplerState, VertexDecl,
         VertexElementType,
@@ -277,6 +278,90 @@ impl Texture2D {
                 lerp(cx0, cx1, ty)
             }
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct TextureCube {
+    /// Faces are ordered as +X, -X, +Y, -Y, +Z, -Z (matching D3D9 and WebGPU).
+    pub faces: [Texture2D; 6],
+}
+
+impl TextureCube {
+    pub fn new(faces: [Texture2D; 6]) -> Self {
+        // Cube textures require all faces to be square and have identical dimensions.
+        let w = faces[0].width;
+        let h = faces[0].height;
+        assert_eq!(w, h, "cube face 0 must be square");
+        for (i, face) in faces.iter().enumerate() {
+            assert_eq!(face.width, w, "cube face {i} width mismatch");
+            assert_eq!(face.height, h, "cube face {i} height mismatch");
+        }
+        Self { faces }
+    }
+
+    fn dir_to_face_uv(dir: (f32, f32, f32)) -> (usize, (f32, f32)) {
+        let (x, y, z) = dir;
+        let ax = x.abs();
+        let ay = y.abs();
+        let az = z.abs();
+
+        // Map the direction vector onto one of the cube faces, then project to 2D.
+        // This matches the cube map addressing model used by D3D/GL/Vulkan.
+        let (face, sc, tc, ma) = if ax >= ay && ax >= az {
+            if x >= 0.0 {
+                // +X
+                (0usize, -z, -y, ax)
+            } else {
+                // -X
+                (1usize, z, -y, ax)
+            }
+        } else if ay >= ax && ay >= az {
+            if y >= 0.0 {
+                // +Y
+                (2usize, x, z, ay)
+            } else {
+                // -Y
+                (3usize, x, -z, ay)
+            }
+        } else if z >= 0.0 {
+            // +Z
+            (4usize, x, -y, az)
+        } else {
+            // -Z
+            (5usize, -x, -y, az)
+        };
+
+        if ma <= f32::EPSILON {
+            return (face, (0.5, 0.5));
+        }
+
+        let u = 0.5 * (sc / ma + 1.0);
+        let v = 0.5 * (tc / ma + 1.0);
+        (face, (u, v))
+    }
+
+    pub fn sample(&self, sampler: SamplerState, dir: (f32, f32, f32)) -> Vec4 {
+        let (face, uv) = Self::dir_to_face_uv(dir);
+        self.faces[face].sample(sampler, uv)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum Texture {
+    Texture2D(Texture2D),
+    TextureCube(TextureCube),
+}
+
+impl From<Texture2D> for Texture {
+    fn from(value: Texture2D) -> Self {
+        Texture::Texture2D(value)
+    }
+}
+
+impl From<TextureCube> for Texture {
+    fn from(value: TextureCube) -> Self {
+        Texture::TextureCube(value)
     }
 }
 
@@ -1196,7 +1281,7 @@ fn run_pixel_shader(
     inputs_v: &HashMap<u16, Vec4>,
     inputs_t: &HashMap<u16, Vec4>,
     constants_in: &[Vec4; 256],
-    textures: &HashMap<u16, Texture2D>,
+    textures: &HashMap<u16, Texture>,
     sampler_states: &HashMap<u16, SamplerState>,
 ) -> Vec4 {
     let mut temps = vec![Vec4::ZERO; ir.temp_count as usize];
@@ -1896,16 +1981,43 @@ fn run_pixel_shader(
                             bool_consts,
                         );
                         let s = inst.sampler.expect("texld requires sampler index");
-                        let tex = textures.get(&s).expect("missing bound texture");
                         let samp = sampler_states.get(&s).copied().unwrap_or_default();
                         let project = inst.imm.unwrap_or(0) != 0;
-                        let (u, v) = if project {
-                            let w = coord.w.max(f32::EPSILON);
-                            (coord.x / w, coord.y / w)
-                        } else {
-                            (coord.x, coord.y)
+
+                        let tex_ty = ir
+                            .sampler_texture_types
+                            .get(&s)
+                            .copied()
+                            .unwrap_or(TextureType::Texture2D);
+
+                        let sampled = match tex_ty {
+                            TextureType::Texture2D => {
+                                let (u, v) = if project {
+                                    let w = coord.w.max(f32::EPSILON);
+                                    (coord.x / w, coord.y / w)
+                                } else {
+                                    (coord.x, coord.y)
+                                };
+                                match textures.get(&s) {
+                                    Some(Texture::Texture2D(tex)) => tex.sample(samp, (u, v)),
+                                    _ => Vec4::ZERO,
+                                }
+                            }
+                            TextureType::TextureCube => {
+                                let (x, y, z) = if project {
+                                    let w = coord.w.max(f32::EPSILON);
+                                    (coord.x / w, coord.y / w, coord.z / w)
+                                } else {
+                                    (coord.x, coord.y, coord.z)
+                                };
+                                match textures.get(&s) {
+                                    Some(Texture::TextureCube(tex)) => tex.sample(samp, (x, y, z)),
+                                    _ => Vec4::ZERO,
+                                }
+                            }
+                            _ => Vec4::ZERO,
                         };
-                        let sampled = tex.sample(samp, (u, v));
+
                         let sampled = apply_result_modifier(sampled, inst.result_modifier);
                         exec_dst(
                             dst,
@@ -1962,7 +2074,7 @@ pub struct DrawParams<'a> {
     pub vertex_buffer: &'a [u8],
     pub indices: Option<&'a [u16]>,
     pub constants: &'a [Vec4; 256],
-    pub textures: &'a HashMap<u16, Texture2D>,
+    pub textures: &'a HashMap<u16, Texture>,
     pub sampler_states: &'a HashMap<u16, SamplerState>,
     pub blend_state: BlendState,
 }
@@ -1970,7 +2082,7 @@ pub struct DrawParams<'a> {
 struct PixelContext<'a> {
     ps: &'a ShaderIr,
     constants: &'a [Vec4; 256],
-    textures: &'a HashMap<u16, Texture2D>,
+    textures: &'a HashMap<u16, Texture>,
     sampler_states: &'a HashMap<u16, SamplerState>,
     blend_state: BlendState,
 }
