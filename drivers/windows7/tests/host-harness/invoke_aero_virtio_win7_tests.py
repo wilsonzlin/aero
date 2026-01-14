@@ -1452,6 +1452,8 @@ def main() -> int:
             tail = b""
             irq_diag_markers: dict[str, dict[str, str]] = {}
             irq_diag_carry = b""
+            virtio_blk_marker_line: Optional[str] = None
+            virtio_blk_marker_carry = b""
             saw_virtio_blk_pass = False
             saw_virtio_blk_fail = False
             saw_virtio_input_pass = False
@@ -1497,6 +1499,12 @@ def main() -> int:
                     # incrementally so they are not lost if the rolling tail buffer is truncated.
                     irq_diag_carry = _update_virtio_irq_markers_from_chunk(
                         irq_diag_markers, chunk, carry=irq_diag_carry
+                    )
+                    virtio_blk_marker_line, virtio_blk_marker_carry = _update_last_marker_line_from_chunk(
+                        virtio_blk_marker_line,
+                        chunk,
+                        prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|",
+                        carry=virtio_blk_marker_carry,
                     )
                     tail += chunk
                     if len(tail) > 131072:
@@ -2541,15 +2549,26 @@ def main() -> int:
                 # Surface host-side audio failures even if the guest selftest passed.
                 result_code = 4
 
-        _emit_virtio_blk_irq_host_marker(tail)
-        _emit_virtio_net_large_host_marker(tail)
-        _emit_virtio_net_irq_host_marker(tail)
-        _emit_virtio_snd_irq_host_marker(tail)
-        _emit_virtio_input_irq_host_marker(tail)
         # Flush any pending non-newline-terminated IRQ diagnostic line so it can still be surfaced.
         if irq_diag_carry:
             for dev, fields in _parse_virtio_irq_markers(irq_diag_carry).items():
                 irq_diag_markers[dev] = fields
+        # Flush any pending non-newline-terminated virtio-blk TEST marker (rare, but keep behavior
+        # deterministic if the serial log ends without a trailing newline).
+        if virtio_blk_marker_carry:
+            raw = virtio_blk_marker_carry.rstrip(b"\r")
+            raw2 = raw.lstrip()
+            if raw2.startswith(b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|"):
+                try:
+                    virtio_blk_marker_line = raw2.decode("utf-8", errors="replace").strip()
+                except Exception:
+                    pass
+
+        _emit_virtio_blk_irq_host_marker(tail, blk_test_line=virtio_blk_marker_line, irq_diag_markers=irq_diag_markers)
+        _emit_virtio_net_large_host_marker(tail)
+        _emit_virtio_net_irq_host_marker(tail)
+        _emit_virtio_snd_irq_host_marker(tail)
+        _emit_virtio_input_irq_host_marker(tail)
         _emit_virtio_irq_host_markers(tail, markers=irq_diag_markers)
 
         return result_code if result_code is not None else 2
@@ -3104,6 +3123,36 @@ def _update_virtio_irq_markers_from_chunk(
     return new_carry
 
 
+def _update_last_marker_line_from_chunk(
+    last: Optional[str], chunk: bytes, *, prefix: bytes, carry: bytes = b""
+) -> tuple[Optional[str], bytes]:
+    """
+    Incrementally track the last full line that starts with `prefix`.
+
+    Returns `(last_line, carry)` where `carry` is any potentially incomplete last line
+    (i.e. the bytes after the last `\\n`).
+    """
+    if not chunk and not carry:
+        return last, b""
+
+    data = carry + chunk
+    parts = data.split(b"\n")
+    new_carry = parts.pop() if parts else b""
+
+    for raw in parts:
+        if raw.endswith(b"\r"):
+            raw = raw[:-1]
+        raw2 = raw.lstrip()
+        if not raw2.startswith(prefix):
+            continue
+        try:
+            last = raw2.decode("utf-8", errors="replace").strip()
+        except Exception:
+            continue
+
+    return last, new_carry
+
+
 def _emit_virtio_irq_host_markers(
     tail: bytes, *, markers: Optional[dict[str, dict[str, str]]] = None
 ) -> None:
@@ -3174,7 +3223,12 @@ def _emit_virtio_net_large_host_marker(tail: bytes) -> None:
     print("|".join(parts))
 
 
-def _emit_virtio_blk_irq_host_marker(tail: bytes) -> None:
+def _emit_virtio_blk_irq_host_marker(
+    tail: bytes,
+    *,
+    blk_test_line: Optional[str] = None,
+    irq_diag_markers: Optional[dict[str, dict[str, str]]] = None,
+) -> None:
     """
     Best-effort: emit a host-side marker describing the guest's virtio-blk interrupt mode/vectors.
 
@@ -3185,10 +3239,13 @@ def _emit_virtio_blk_irq_host_marker(tail: bytes) -> None:
     #
     # Prefer the per-test marker when present, but fill in missing fields from the standalone
     # diagnostics so the host marker is still produced for older selftest binaries.
-    blk_test_line = _try_extract_last_marker_line(tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|")
+    if blk_test_line is None:
+        blk_test_line = _try_extract_last_marker_line(tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|")
     blk_test_fields = _parse_marker_kv_fields(blk_test_line) if blk_test_line is not None else {}
 
-    irq_diag = _parse_virtio_irq_markers(tail).get("virtio-blk")
+    if irq_diag_markers is None:
+        irq_diag_markers = _parse_virtio_irq_markers(tail)
+    irq_diag = irq_diag_markers.get("virtio-blk")
 
     out_fields: dict[str, str] = {}
 
