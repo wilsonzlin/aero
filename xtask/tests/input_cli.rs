@@ -133,6 +133,21 @@ fn input_help_mentions_flags_and_steps() {
             "src/platform/webusb_troubleshooting.test.ts",
         ))
         .stdout(predicate::str::contains(
+            "src/workers/io_hid_input_ring.test.ts",
+        ))
+        .stdout(predicate::str::contains(
+            "src/workers/io_hid_output_report_forwarding.test.ts",
+        ))
+        .stdout(predicate::str::contains(
+            "src/workers/io_hid_passthrough.test.ts",
+        ))
+        .stdout(predicate::str::contains(
+            "src/workers/io_hid_passthrough_legacy_adapter.test.ts",
+        ))
+        .stdout(predicate::str::contains(
+            "src/workers/io_hid_topology_mux.test.ts",
+        ))
+        .stdout(predicate::str::contains(
             "src/workers/io_webusb_guest_selection.test.ts",
         ))
         .stdout(predicate::str::contains("src/workers/io_xhci_init.test.ts"))
