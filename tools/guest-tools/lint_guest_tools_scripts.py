@@ -159,6 +159,27 @@ def _has_install_certs_policy_gate(text: str) -> bool:
     return False
 
 
+def _has_testsigning_policy_gate(text: str) -> bool:
+    """
+    Guardrail for signature policy: production/none media should not prompt/modify
+    Test Signing unless explicitly requested.
+    """
+
+    block = _label_block(text, "maybe_enable_testsigning")
+    if block is None:
+        return False
+
+    sp_var = r"(?:%SIGNING_POLICY%|!SIGNING_POLICY!)"
+    ft_var = r"(?:%ARG_FORCE_TESTSIGN%|!ARG_FORCE_TESTSIGN!)"
+
+    # Current implementation uses a combined IF with an early exit /b 0. Accept
+    # minor variations (whitespace, delayed expansion) but keep semantics.
+    return re.search(
+        rf'(?is)if\s+/i\s+not\s+"{sp_var}"\s*==\s*"test"\s+if\s+not\s+"{ft_var}"\s*==\s*"1"\s*\(.*?exit\s+/b\s+0',
+        block,
+    ) is not None
+
+
 def _check_mode_dispatch_precedes_admin_requirement(text: str) -> bool:
     """
     Ensure /check mode runs before any "install mode" admin gate.
@@ -343,7 +364,7 @@ def lint_files(*, setup_cmd: Path, uninstall_cmd: Path, verify_ps1: Path) -> Lis
                     is None
                 )
                 and re.search(
-                    r"(?i)\bcall\s+:?(install_certs|stage_all_drivers|preseed_storage_boot|maybe_enable_testsigning|skip_storage_preseed)\b",
+                    r"(?i)\bcall\s+:?(install_certs|stage_all_drivers|preseed_storage_boot|maybe_enable_testsigning|skip_storage_preseed|require_admin_stdout|require_admin)\b",
                     block,
                 )
                 is None
@@ -384,6 +405,37 @@ def lint_files(*, setup_cmd: Path, uninstall_cmd: Path, verify_ps1: Path) -> Lis
             ),
             predicate=_has_install_certs_policy_gate,
         ),
+        Invariant(
+            description="Test Signing changes are gated by signing_policy (production/none does not prompt by default)",
+            expected_hint='In :maybe_enable_testsigning, non-test signing_policy should early-exit unless /testsigning was requested (ARG_FORCE_TESTSIGN=1).',
+            predicate=_has_testsigning_policy_gate,
+        ),
+        Invariant(
+            description="Writes marker file when enabling Test Signing (used by uninstall/verify)",
+            expected_hint='testsigning.enabled-by-aero.txt (written via > \"%STATE_TESTSIGN%\" ...)',
+            predicate=lambda text: (
+                re.search(r"testsigning\.enabled-by-aero\.txt", text, re.IGNORECASE) is not None
+                and _any_regex(
+                    [
+                        r'(?im)[>]{1,2}\s*"?([%!])STATE_TESTSIGN\1"?',
+                        r"(?im)[>]{1,2}[^\r\n]*testsigning\.enabled-by-aero\.txt",
+                    ]
+                )(text)
+            ),
+        ),
+        Invariant(
+            description="Writes marker file when enabling nointegritychecks (used by uninstall/verify)",
+            expected_hint='nointegritychecks.enabled-by-aero.txt (written via > \"%STATE_NOINTEGRITY%\" ...)',
+            predicate=lambda text: (
+                re.search(r"nointegritychecks\.enabled-by-aero\.txt", text, re.IGNORECASE) is not None
+                and _any_regex(
+                    [
+                        r'(?im)[>]{1,2}\s*"?([%!])STATE_NOINTEGRITY\1"?',
+                        r"(?im)[>]{1,2}[^\r\n]*nointegritychecks\.enabled-by-aero\.txt",
+                    ]
+                )(text)
+            ),
+        ),
     ]
 
     verify_invariants = [
@@ -406,6 +458,11 @@ def lint_files(*, setup_cmd: Path, uninstall_cmd: Path, verify_ps1: Path) -> Lis
             description="manifest.json signing_policy is parsed (verify reports effective signing policy)",
             expected_hint="manifest.json + signing_policy",
             predicate=_all_contains(["manifest.json", "signing_policy"]),
+        ),
+        Invariant(
+            description="verify reads Guest Tools signature-mode marker files written by setup.cmd",
+            expected_hint="testsigning.enabled-by-aero.txt + nointegritychecks.enabled-by-aero.txt",
+            predicate=_all_regex([r"testsigning\.enabled-by-aero\.txt", r"nointegritychecks\.enabled-by-aero\.txt"]),
         ),
     ]
 

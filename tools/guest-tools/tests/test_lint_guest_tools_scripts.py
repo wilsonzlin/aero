@@ -36,6 +36,8 @@ def _synthetic_setup_text(
     include_storage_skip_marker: bool = True,
     include_cert_policy_gating: bool = True,
     include_cert_install_skip_policy: bool = True,
+    include_signature_marker_files: bool = True,
+    include_testsigning_policy_gate: bool = True,
 ) -> str:
     lines: list[str] = []
     if include_cdd_base_path:
@@ -92,6 +94,16 @@ def _synthetic_setup_text(
             ]
         )
 
+    if include_signature_marker_files:
+        lines.extend(
+            [
+                r'set "STATE_TESTSIGN=C:\AeroGuestTools\testsigning.enabled-by-aero.txt"',
+                r'> "%STATE_TESTSIGN%" echo marker',
+                r'set "STATE_NOINTEGRITY=C:\AeroGuestTools\nointegritychecks.enabled-by-aero.txt"',
+                r'> "%STATE_NOINTEGRITY%" echo marker',
+            ]
+        )
+
     if include_cert_policy_gating:
         lines.append('if /i "%SIGNING_POLICY%"=="test" set "CERTS_REQUIRED=1"')
 
@@ -109,6 +121,16 @@ def _synthetic_setup_text(
             ]
         )
     lines.append('"%SYS32%\\certutil.exe" -addstore -f Root "%CERT_FILE%"')
+
+    if include_testsigning_policy_gate:
+        lines.extend(
+            [
+                ":maybe_enable_testsigning",
+                'if /i not "%SIGNING_POLICY%"=="test" if not "%ARG_FORCE_TESTSIGN%"=="1" (',
+                "  exit /b 0",
+                ")",
+            ]
+        )
 
     return "\n".join(lines) + "\n"
 
@@ -130,6 +152,8 @@ def _synthetic_verify_text() -> str:
             "CriticalDeviceDatabase",
             "storage-preseed.skipped.txt",
             "/skipstorage",
+            "testsigning.enabled-by-aero.txt",
+            "nointegritychecks.enabled-by-aero.txt",
             "virtio_blk_boot_critical",
             "manifest.json",
             "signing_policy",
