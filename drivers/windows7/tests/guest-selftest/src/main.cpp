@@ -7701,6 +7701,13 @@ struct VirtioNetLinkFlapTestResult {
   double up_sec = 0.0;
   std::optional<IN_ADDR> ip_after;
   int http_attempts = 0;
+  // Best-effort: virtio-net config interrupt observability via aero_virtio_net diag IOCTL.
+  // When present, these counters help validate that link flap transitions were driven by config interrupts
+  // (not polling), and aid debugging when the test fails.
+  std::optional<uint16_t> cfg_vector;
+  std::optional<uint32_t> cfg_intr_before;
+  std::optional<uint32_t> cfg_intr_down;
+  std::optional<uint32_t> cfg_intr_up;
 };
 
 static VirtioNetLinkFlapTestResult VirtioNetLinkFlapTest(Logger& log, const Options& opt,
@@ -7709,6 +7716,101 @@ static VirtioNetLinkFlapTestResult VirtioNetLinkFlapTest(Logger& log, const Opti
   if (adapter.instance_id.empty()) {
     out.reason = "missing_adapter_guid";
     return out;
+  }
+
+  struct DiagSnapshot {
+    bool ok = false;
+    DWORD err = ERROR_SUCCESS;
+    DWORD bytes = 0;
+    AEROVNET_DIAG_INFO info{};
+  };
+
+  constexpr size_t kDiagCountersEnd = offsetof(AEROVNET_DIAG_INFO, TxBuffersDrained) + sizeof(uint32_t);
+
+  auto query_diag = [&]() -> DiagSnapshot {
+    DiagSnapshot d{};
+    HANDLE h = CreateFileW(AEROVNET_DIAG_DEVICE_PATH, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) {
+      d.ok = false;
+      d.err = GetLastError();
+      d.bytes = 0;
+      return d;
+    }
+    DWORD bytes = 0;
+    const BOOL ok = DeviceIoControl(h, AEROVNET_DIAG_IOCTL_QUERY, nullptr, 0, &d.info, sizeof(d.info), &bytes, nullptr);
+    d.ok = ok ? true : false;
+    d.err = ok ? ERROR_SUCCESS : GetLastError();
+    d.bytes = bytes;
+    CloseHandle(h);
+    return d;
+  };
+
+  auto choose_cfg_vector = [&](const DiagSnapshot& d) -> std::optional<uint16_t> {
+    if (!d.ok) return std::nullopt;
+    if (d.bytes < kDiagCountersEnd) return std::nullopt;
+
+    // INTx: all interrupts (including config changes) are counted in vector 0.
+    if (d.info.InterruptMode == AEROVNET_INTERRUPT_MODE_INTX) return static_cast<uint16_t>(0);
+
+    // MSI/MSI-X: prefer the explicit virtio config vector if it's in the tracked range (0..2).
+    if (d.info.MsixConfigVector != kVirtioPciMsiNoVector && d.info.MsixConfigVector < 3) {
+      return static_cast<uint16_t>(d.info.MsixConfigVector);
+    }
+
+    // Fall back to vector 0 when we can't determine the mapping (e.g. MSI without vectors).
+    if (d.info.MessageCount > 0) return static_cast<uint16_t>(0);
+    return std::nullopt;
+  };
+
+  auto cfg_intr_count = [&](const DiagSnapshot& d, uint16_t vec) -> std::optional<uint32_t> {
+    if (!d.ok) return std::nullopt;
+    if (d.bytes < kDiagCountersEnd) return std::nullopt;
+    switch (vec) {
+      case 0:
+        return static_cast<uint32_t>(d.info.InterruptCountVector0);
+      case 1:
+        return static_cast<uint32_t>(d.info.InterruptCountVector1);
+      case 2:
+        return static_cast<uint32_t>(d.info.InterruptCountVector2);
+      default:
+        return std::nullopt;
+    }
+  };
+
+  auto cfg_fields = [&]() -> std::string {
+    std::string s;
+    if (out.cfg_vector.has_value()) {
+      s += "|cfg_vector=" + std::to_string(static_cast<unsigned>(*out.cfg_vector));
+    }
+    if (out.cfg_intr_before.has_value()) {
+      s += "|cfg_intr_before=" + std::to_string(static_cast<unsigned long>(*out.cfg_intr_before));
+    }
+    if (out.cfg_intr_down.has_value()) {
+      s += "|cfg_intr_down=" + std::to_string(static_cast<unsigned long>(*out.cfg_intr_down));
+    }
+    if (out.cfg_intr_up.has_value()) {
+      s += "|cfg_intr_up=" + std::to_string(static_cast<unsigned long>(*out.cfg_intr_up));
+    }
+    if (out.cfg_intr_before.has_value() && out.cfg_intr_down.has_value()) {
+      s += "|cfg_intr_down_delta=" +
+           std::to_string(static_cast<unsigned long>(*out.cfg_intr_down - *out.cfg_intr_before));
+    }
+    if (out.cfg_intr_down.has_value() && out.cfg_intr_up.has_value()) {
+      s += "|cfg_intr_up_delta=" + std::to_string(static_cast<unsigned long>(*out.cfg_intr_up - *out.cfg_intr_down));
+    }
+    return s;
+  };
+
+  // Snapshot virtio-net interrupt counters before notifying the host that we're ready. This helps avoid races where
+  // the host flaps the link immediately after observing the READY marker.
+  {
+    const auto d = query_diag();
+    const auto cfg_vec = choose_cfg_vector(d);
+    if (cfg_vec.has_value()) {
+      out.cfg_vector = *cfg_vec;
+      out.cfg_intr_before = cfg_intr_count(d, *cfg_vec);
+    }
   }
 
   log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|READY|adapter=%s|guid=%s",
@@ -7739,12 +7841,28 @@ static VirtioNetLinkFlapTestResult VirtioNetLinkFlapTest(Logger& log, const Opti
   out.down_sec = (GetTickCount() - down_start) / 1000.0;
   if (!saw_down) {
     out.reason = "timeout_waiting_link_down";
-    log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|FAIL|reason=%s|adapter=%s|guid=%s|down_sec=%.2f",
+    const std::string extra = cfg_fields();
+    log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|FAIL|reason=%s|adapter=%s|guid=%s|down_sec=%.2f%s",
              out.reason.c_str(), WideToUtf8(adapter.friendly_name).c_str(), WideToUtf8(adapter.instance_id).c_str(),
-             out.down_sec);
+             out.down_sec, extra.c_str());
     return out;
   }
   log.Logf("virtio-net-link-flap: observed link DOWN down_sec=%.2f", out.down_sec);
+
+  // Best-effort: confirm that we observed at least one config interrupt between READY and link-down.
+  if (out.cfg_vector.has_value()) {
+    const auto d = query_diag();
+    out.cfg_intr_down = cfg_intr_count(d, *out.cfg_vector);
+    if (out.cfg_intr_before.has_value() && out.cfg_intr_down.has_value() &&
+        *out.cfg_intr_down <= *out.cfg_intr_before) {
+      out.reason = "config_irq_missing_down";
+      const std::string extra = cfg_fields();
+      log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|FAIL|reason=%s|adapter=%s|guid=%s|down_sec=%.2f%s",
+               out.reason.c_str(), WideToUtf8(adapter.friendly_name).c_str(), WideToUtf8(adapter.instance_id).c_str(),
+               out.down_sec, extra.c_str());
+      return out;
+    }
+  }
 
   // Wait for link to come back up with a valid non-APIPA IPv4.
   const DWORD up_start = GetTickCount();
@@ -7766,13 +7884,29 @@ static VirtioNetLinkFlapTestResult VirtioNetLinkFlapTest(Logger& log, const Opti
   out.up_sec = (GetTickCount() - up_start) / 1000.0;
   if (!saw_up) {
     out.reason = "timeout_waiting_link_up";
+    const std::string extra = cfg_fields();
     log.Logf(
-        "AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|FAIL|reason=%s|adapter=%s|guid=%s|down_sec=%.2f|up_sec=%.2f",
+        "AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|FAIL|reason=%s|adapter=%s|guid=%s|down_sec=%.2f|up_sec=%.2f%s",
         out.reason.c_str(), WideToUtf8(adapter.friendly_name).c_str(), WideToUtf8(adapter.instance_id).c_str(),
-        out.down_sec, out.up_sec);
+        out.down_sec, out.up_sec, extra.c_str());
     return out;
   }
   log.Logf("virtio-net-link-flap: observed link UP up_sec=%.2f", out.up_sec);
+
+  // Best-effort: confirm that we observed another config interrupt between link-down and link-up.
+  if (out.cfg_vector.has_value()) {
+    const auto d = query_diag();
+    out.cfg_intr_up = cfg_intr_count(d, *out.cfg_vector);
+    if (out.cfg_intr_down.has_value() && out.cfg_intr_up.has_value() && *out.cfg_intr_up <= *out.cfg_intr_down) {
+      out.reason = "config_irq_missing_up";
+      const std::string extra = cfg_fields();
+      log.Logf(
+          "AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|FAIL|reason=%s|adapter=%s|guid=%s|down_sec=%.2f|up_sec=%.2f%s",
+          out.reason.c_str(), WideToUtf8(adapter.friendly_name).c_str(), WideToUtf8(adapter.instance_id).c_str(),
+          out.down_sec, out.up_sec, extra.c_str());
+      return out;
+    }
+  }
 
   // Confirm datapath after recovery.
   {
@@ -7788,10 +7922,11 @@ static VirtioNetLinkFlapTestResult VirtioNetLinkFlapTest(Logger& log, const Opti
     }
     if (!ok) {
       out.reason = "http_get_failed";
+      const std::string extra = cfg_fields();
       log.Logf(
-          "AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|FAIL|reason=%s|adapter=%s|guid=%s|down_sec=%.2f|up_sec=%.2f|http_attempts=%d",
+          "AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|FAIL|reason=%s|adapter=%s|guid=%s|down_sec=%.2f|up_sec=%.2f|http_attempts=%d%s",
           out.reason.c_str(), WideToUtf8(adapter.friendly_name).c_str(), WideToUtf8(adapter.instance_id).c_str(),
-          out.down_sec, out.up_sec, out.http_attempts);
+          out.down_sec, out.up_sec, out.http_attempts, extra.c_str());
       return out;
     }
   }
@@ -7804,10 +7939,11 @@ static VirtioNetLinkFlapTestResult VirtioNetLinkFlapTest(Logger& log, const Opti
 
   out.ok = true;
   out.reason.clear();
+  const std::string extra = cfg_fields();
   log.Logf(
-      "AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|PASS|adapter=%s|guid=%s|down_sec=%.2f|up_sec=%.2f|ipv4=%u.%u.%u.%u|http_attempts=%d",
+      "AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|PASS|adapter=%s|guid=%s|down_sec=%.2f|up_sec=%.2f|ipv4=%u.%u.%u.%u|http_attempts=%d%s",
       WideToUtf8(adapter.friendly_name).c_str(), WideToUtf8(adapter.instance_id).c_str(), out.down_sec, out.up_sec, a,
-      b, c, d, out.http_attempts);
+      b, c, d, out.http_attempts, extra.c_str());
   return out;
 }
 
