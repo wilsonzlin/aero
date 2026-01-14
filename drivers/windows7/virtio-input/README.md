@@ -498,7 +498,7 @@ All values are `REG_DWORD`.
 
 | Value | Default | Meaning |
 | --- | --- | --- |
-| `DiagnosticsMask` | `0x0000000F` (DBG builds) | Enables diagnostic logging when the driver is built with diagnostics (`VIOINPUT_DIAGNOSTICS==1`). Set to `0` to disable all logging. See `src/log.h` for bit definitions. In diagnostics builds, this can also be changed at runtime via `IOCTL_VIOINPUT_SET_LOG_MASK` (e.g. `hidtest.exe --set-log-mask 0x...`). |
+| `DiagnosticsMask` | `0x0000000F` (DBG builds) | Enables diagnostic logging when the driver is built with diagnostics (`VIOINPUT_DIAGNOSTICS==1`). Set to `0` to disable all logging. See `src/log.h` for bit definitions. In diagnostics builds, this can also be changed at runtime via `IOCTL_VIOINPUT_SET_LOG_MASK` (e.g. `hidtest.exe --set-log-mask 0x...`; add `--json` for machine-readable output). |
 | `StatusQDropOnFull` | `0` | Debug knob for the virtio status queue (used for keyboard LED writes). When nonzero, pending statusq writes are dropped when the virtqueue is full. |
 
 Most changes take effect the next time the driver is started (reboot or disable/enable the device). In diagnostics builds, `DiagnosticsMask` can also be changed at runtime via IOCTLs (see above).
@@ -515,7 +515,7 @@ reg add HKLM\System\CurrentControlSet\Services\aero_virtio_input\Parameters ^
 Then reboot (or disable/enable the device). With the included `hidtest.exe`, you can generate many LED writes and observe drops via:
 
 - `hidtest.exe --keyboard --state` (confirm `StatusQDropOnFull` is enabled, and that `StatusQActive=1` / `KeyboardLedSupportedMask!=0` so LED output is actually enabled)
-  - Machine-readable: `hidtest.exe --keyboard --state-json`
+  - Machine-readable: `hidtest.exe --keyboard --state --json` (or `--state-json`)
 - `hidtest.exe --keyboard --reset-counters` (start from a clean monotonic-counter baseline; requires write access, rerun elevated if needed)
 - `hidtest.exe --keyboard --led-cycle` (cycle the 5 HID boot keyboard LED bits: Num/Caps/Scroll/Compose/Kana)
 - `hidtest.exe --keyboard --led-spam 10000`
