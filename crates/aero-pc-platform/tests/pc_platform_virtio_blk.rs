@@ -1788,7 +1788,7 @@ fn pc_platform_virtio_blk_msix_function_mask_defers_delivery_until_unmasked() {
     let vector = 0x65u32;
     let table_base = bar0_base + u64::from(table & !0x7);
     let pba_base = bar0_base + u64::from(pba & !0x7);
-    pc.memory.write_u32(table_base + 0x0, 0xfee0_0000);
+    pc.memory.write_u32(table_base, 0xfee0_0000);
     pc.memory.write_u32(table_base + 0x4, 0);
     pc.memory.write_u32(table_base + 0x8, vector);
     pc.memory.write_u32(table_base + 0xc, 0); // unmasked
