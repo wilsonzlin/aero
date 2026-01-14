@@ -7883,6 +7883,98 @@ void AEROGPU_APIENTRY ClearDepthStencilView11(D3D11DDI_HDEVICECONTEXT hCtx,
   cmd->stencil = stencil;
 }
 
+static void ClearUavBufferLocked(Device* dev, const UnorderedAccessView* uav, const uint32_t pattern_u32[4]) {
+  if (!dev || !uav || !uav->resource || !pattern_u32) {
+    return;
+  }
+  auto* res = uav->resource;
+  if (res->kind != ResourceKind::Buffer) {
+    SetError(dev, E_NOTIMPL);
+    return;
+  }
+
+  const uint64_t off = static_cast<uint64_t>(uav->buffer.offset_bytes);
+  uint64_t size = static_cast<uint64_t>(uav->buffer.size_bytes);
+  if (off > res->size_bytes) {
+    SetError(dev, E_INVALIDARG);
+    return;
+  }
+  if (size == 0 || size > res->size_bytes - off) {
+    size = res->size_bytes - off;
+  }
+  if (size == 0) {
+    return;
+  }
+
+  if (off > res->storage.size() || size > res->storage.size() - static_cast<size_t>(off)) {
+    SetError(dev, E_FAIL);
+    return;
+  }
+
+  // D3D11's ClearUnorderedAccessView* for buffers is defined in terms of a 4x32-bit
+  // pattern. For structured/raw buffers, this is effectively a 16-byte repeating
+  // pattern; for typed buffers, the driver may interpret the components based on
+  // the view format. For bring-up, use the repeated 16-byte pattern.
+  uint8_t pattern_bytes[16];
+  std::memcpy(pattern_bytes, pattern_u32, sizeof(pattern_bytes));
+
+  uint8_t* dst = res->storage.data() + static_cast<size_t>(off);
+  for (uint64_t i = 0; i < size; i += sizeof(pattern_bytes)) {
+    const size_t n = static_cast<size_t>(std::min<uint64_t>(sizeof(pattern_bytes), size - i));
+    std::memcpy(dst + static_cast<size_t>(i), pattern_bytes, n);
+  }
+
+  // Clearing a UAV writes into the resource; enforce the D3D11 hazard rule by
+  // unbinding any aliasing SRVs (typically already handled by UAV binding).
+  UnbindResourceFromSrvsLocked(dev, res->handle, res);
+
+  EmitUploadLocked(dev, res, off, size);
+}
+
+void AEROGPU_APIENTRY ClearUnorderedAccessViewUint11(D3D11DDI_HDEVICECONTEXT hCtx,
+                                                     D3D11DDI_HUNORDEREDACCESSVIEW hUav,
+                                                     const UINT values[4]) {
+  auto* dev = DeviceFromContext(hCtx);
+  if (!dev || !values) {
+    return;
+  }
+  if (!hUav.pDrvPrivate) {
+    SetError(dev, E_INVALIDARG);
+    return;
+  }
+  auto* uav = FromHandle<D3D11DDI_HUNORDEREDACCESSVIEW, UnorderedAccessView>(hUav);
+  if (!uav || !uav->resource) {
+    SetError(dev, E_INVALIDARG);
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  const uint32_t pattern_u32[4] = {values[0], values[1], values[2], values[3]};
+  ClearUavBufferLocked(dev, uav, pattern_u32);
+}
+
+void AEROGPU_APIENTRY ClearUnorderedAccessViewFloat11(D3D11DDI_HDEVICECONTEXT hCtx,
+                                                      D3D11DDI_HUNORDEREDACCESSVIEW hUav,
+                                                      const FLOAT values[4]) {
+  auto* dev = DeviceFromContext(hCtx);
+  if (!dev || !values) {
+    return;
+  }
+  if (!hUav.pDrvPrivate) {
+    SetError(dev, E_INVALIDARG);
+    return;
+  }
+  auto* uav = FromHandle<D3D11DDI_HUNORDEREDACCESSVIEW, UnorderedAccessView>(hUav);
+  if (!uav || !uav->resource) {
+    SetError(dev, E_INVALIDARG);
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  const uint32_t pattern_u32[4] = {f32_bits(values[0]), f32_bits(values[1]), f32_bits(values[2]), f32_bits(values[3])};
+  ClearUavBufferLocked(dev, uav, pattern_u32);
+}
+
 void AEROGPU_APIENTRY Draw11(D3D11DDI_HDEVICECONTEXT hCtx, UINT VertexCount, UINT StartVertexLocation) {
   auto* dev = DeviceFromContext(hCtx);
   if (!dev) {
@@ -10356,6 +10448,22 @@ HRESULT AEROGPU_APIENTRY CreateDevice11(D3D10DDI_HADAPTER hAdapter, D3D11DDIARG_
 
   ctx_funcs->pfnClearState = &ClearState11;
   ctx_funcs->pfnClearRenderTargetView = &ClearRenderTargetView11;
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnClearUnorderedAccessViewUint) {
+    using Fn = decltype(ctx_funcs->pfnClearUnorderedAccessViewUint);
+    if constexpr (std::is_convertible_v<decltype(&ClearUnorderedAccessViewUint11), Fn>) {
+      ctx_funcs->pfnClearUnorderedAccessViewUint = &ClearUnorderedAccessViewUint11;
+    } else {
+      ctx_funcs->pfnClearUnorderedAccessViewUint = &DdiStub<Fn>::Call;
+    }
+  }
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnClearUnorderedAccessViewFloat) {
+    using Fn = decltype(ctx_funcs->pfnClearUnorderedAccessViewFloat);
+    if constexpr (std::is_convertible_v<decltype(&ClearUnorderedAccessViewFloat11), Fn>) {
+      ctx_funcs->pfnClearUnorderedAccessViewFloat = &ClearUnorderedAccessViewFloat11;
+    } else {
+      ctx_funcs->pfnClearUnorderedAccessViewFloat = &DdiStub<Fn>::Call;
+    }
+  }
   ctx_funcs->pfnClearDepthStencilView = &ClearDepthStencilView11;
   ctx_funcs->pfnDraw = &Draw11;
   ctx_funcs->pfnDrawIndexed = &DrawIndexed11;
