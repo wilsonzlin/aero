@@ -251,11 +251,15 @@ To intentionally exercise MSI-X paths (and optionally **require** MSI-X):
   - `virtio-input`: `AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|PASS|mode=msix|...`
     - PowerShell: `-RequireVirtioInputMsix`
     - Python: `--require-virtio-input-msix`
-    - (Optional guest-side hard requirement: `aero-virtio-selftest.exe --require-input-msix`)
+    - Optional guest-side hard requirement:
+      - Guest selftest: `--require-input-msix` (or `AERO_VIRTIO_SELFTEST_REQUIRE_INPUT_MSIX=1`)
+      - Provisioning: `New-AeroWin7TestImage.ps1 -RequireInputMsix` (alias: `-RequireVirtioInputMsix`)
 - For virtio-blk specifically, you can also make MSI/MSI-X a **guest-side** hard requirement:
   - Guest selftest: `--expect-blk-msi` (or `AERO_VIRTIO_SELFTEST_EXPECT_BLK_MSI=1`)
+  - Provisioning: `New-AeroWin7TestImage.ps1 -ExpectBlkMsi`
 - For virtio-net specifically, you can also make MSI-X a **guest-side** hard requirement:
   - Guest selftest: `--require-net-msix` (or `AERO_VIRTIO_SELFTEST_REQUIRE_NET_MSIX=1`)
+  - Provisioning: `New-AeroWin7TestImage.ps1 -RequireNetMsix` (alias: `-RequireVirtioNetMsix`)
 
 ### virtio-net “offload-sensitive” large transfers
 
