@@ -1,6 +1,6 @@
 #![cfg(not(target_arch = "wasm32"))]
 
-use aero_storage::{DiskImage, MemBackend, VirtualDisk};
+use aero_storage::{DiskImage, MemBackend, VirtualDisk, SECTOR_SIZE};
 use proptest::prelude::*;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
@@ -19,7 +19,7 @@ fn write_be_u64(buf: &mut [u8], offset: usize, val: u64) {
     buf[offset..offset + 8].copy_from_slice(&val.to_be_bytes());
 }
 
-fn vhd_footer_checksum(raw: &[u8; 512]) -> u32 {
+fn vhd_footer_checksum(raw: &[u8; SECTOR_SIZE]) -> u32 {
     let mut sum: u32 = 0;
     for (i, b) in raw.iter().enumerate() {
         if (64..68).contains(&i) {
@@ -41,8 +41,8 @@ fn vhd_dynamic_header_checksum(raw: &[u8; 1024]) -> u32 {
     !sum
 }
 
-fn make_vhd_footer(virtual_size: u64, disk_type: u32, data_offset: u64) -> [u8; 512] {
-    let mut footer = [0u8; 512];
+fn make_vhd_footer(virtual_size: u64, disk_type: u32, data_offset: u64) -> [u8; SECTOR_SIZE] {
+    let mut footer = [0u8; SECTOR_SIZE];
     footer[0..8].copy_from_slice(b"conectix");
     write_be_u32(&mut footer, 8, 2); // features
     write_be_u32(&mut footer, 12, 0x0001_0000); // file_format_version
@@ -59,9 +59,9 @@ fn base_vhd_fixed() -> Vec<u8> {
     let virtual_size: u64 = 64 * 1024;
     let footer = make_vhd_footer(virtual_size, 2, u64::MAX);
 
-    let file_len = (virtual_size + 512) as usize;
+    let file_len = (virtual_size + (SECTOR_SIZE as u64)) as usize;
     let mut out = vec![0u8; file_len];
-    out[virtual_size as usize..virtual_size as usize + 512].copy_from_slice(&footer);
+    out[virtual_size as usize..virtual_size as usize + SECTOR_SIZE].copy_from_slice(&footer);
     out
 }
 
@@ -69,21 +69,21 @@ fn base_vhd_dynamic() -> Vec<u8> {
     let virtual_size: u64 = 64 * 1024;
     let block_size: u32 = 4096;
 
-    let dyn_header_offset = 512u64;
+    let dyn_header_offset = SECTOR_SIZE as u64;
     let table_offset = dyn_header_offset + 1024;
 
     let blocks = virtual_size.div_ceil(block_size as u64);
     let max_table_entries = blocks as u32;
     let bat_bytes = max_table_entries as u64 * 4;
-    let bat_size = bat_bytes.div_ceil(512) * 512;
+    let bat_size = bat_bytes.div_ceil(SECTOR_SIZE as u64) * (SECTOR_SIZE as u64);
 
     let footer = make_vhd_footer(virtual_size, 3, dyn_header_offset);
-    let file_len = (512 + 1024 + bat_size + 512) as usize;
+    let file_len = ((SECTOR_SIZE as u64) + 1024 + bat_size + (SECTOR_SIZE as u64)) as usize;
     let mut out = vec![0u8; file_len];
 
     // Footer copy at 0 and footer at EOF.
-    out[..512].copy_from_slice(&footer);
-    out[file_len - 512..].copy_from_slice(&footer);
+    out[..SECTOR_SIZE].copy_from_slice(&footer);
+    out[file_len - SECTOR_SIZE..].copy_from_slice(&footer);
 
     // Dynamic header.
     let mut dyn_header = [0u8; 1024];
