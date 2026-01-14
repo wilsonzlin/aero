@@ -220,9 +220,19 @@ impl UsbPassthroughDevice {
     }
 
     fn alloc_id(&mut self) -> u32 {
-        let id = self.next_id;
-        self.next_id = self.next_id.wrapping_add(1).max(1);
-        id
+        // Allocate a new non-zero transfer ID, skipping any IDs that are currently in-flight.
+        //
+        // `id` is part of the Rust<->TypeScript wire contract and must fit in a JS number, so we
+        // use `u32` and wrap on overflow. Skipping in-flight IDs ensures that a wrap-around cannot
+        // collide with transfers that are still pending (the in-flight set is small, so this loop
+        // is bounded).
+        loop {
+            let id = self.next_id.max(1);
+            self.next_id = self.next_id.wrapping_add(1).max(1);
+            if !self.is_inflight_id(id) {
+                return id;
+            }
+        }
     }
 
     fn is_inflight_id(&self, id: u32) -> bool {
@@ -1183,6 +1193,27 @@ mod tests {
             dev.pop_action().is_none(),
             "completion consumption should drop any stale queued action"
         );
+    }
+
+    #[test]
+    fn alloc_id_skips_inflight_id_collisions() {
+        let mut dev = UsbPassthroughDevice::new();
+        dev.next_id = 1;
+
+        // Pretend there's already an in-flight transfer with id=1.
+        dev.ep_inflight.insert(0x81, EpInflight { id: 1, len: 8 });
+
+        // Now allocate a new ID via a new IN transfer; it should not reuse id=1.
+        assert_eq!(dev.handle_in_transfer(0x82, 8), UsbInResult::Nak);
+        let action = dev.pop_action().expect("expected queued action");
+        let id = match action {
+            UsbHostAction::BulkIn { id, endpoint, .. } => {
+                assert_eq!(endpoint, 0x82);
+                id
+            }
+            other => panic!("unexpected action: {other:?}"),
+        };
+        assert_ne!(id, 1);
     }
 
     #[test]
