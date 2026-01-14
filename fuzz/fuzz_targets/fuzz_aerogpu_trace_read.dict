@@ -3,13 +3,21 @@
 "AEROTOC\x00"
 
 # Common little-endian u32 values used by the container format.
-"\x20\x00\x00\x00" # 32 (header/footer size)
-"\x10\x00\x00\x00" # 16 (TOC header size / blob header size)
-"\x30\x00\x00\x00" # 48 (TOC len for 1 frame)
+# 32 (header/footer size)
+"\x20\x00\x00\x00"
+# 16 (TOC header size / blob header size)
+"\x10\x00\x00\x00"
+# 48 (TOC len for 1 frame)
+"\x30\x00\x00\x00"
 
 # RecordType values (first byte in RecordHeader).
-"\x01" # BeginFrame
-"\x02" # Present
-"\x03" # Packet
-"\x04" # Blob
-"\x05" # AerogpuSubmission
+# BeginFrame
+"\x01"
+# Present
+"\x02"
+# Packet
+"\x03"
+# Blob
+"\x04"
+# AerogpuSubmission
+"\x05"
