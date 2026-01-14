@@ -1988,6 +1988,11 @@ fn sm5_uav_and_raw_buffer_opcode_constants_match_d3d11_tokenized_format() {
     assert_eq!(OPCODE_INE, 0x50);
     assert_eq!(OPCODE_ULT, 0x51);
     assert_eq!(OPCODE_UGE, 0x52);
+    // Integer / bitwise opcodes.
+    assert_eq!(OPCODE_IMUL, 0x70);
+    assert_eq!(OPCODE_AND, 0x71);
+    assert_eq!(OPCODE_OR, 0x72);
+    assert_eq!(OPCODE_USHR, 0x73);
     assert_eq!(OPCODE_DCL_THREAD_GROUP, 0x11f);
     assert_eq!(OPCODE_DCL_RESOURCE_RAW, 0x205);
     assert_eq!(OPCODE_DCL_RESOURCE_STRUCTURED, 0x206);
