@@ -12927,6 +12927,198 @@ bool TestFixedfuncFogEmitsConstants() {
   return true;
 }
 
+bool TestFixedfuncFogConstantsDedupAndReuploadOnChange() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetRenderState != nullptr, "pfnSetRenderState is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Portable D3DRS_* numeric values (from d3d9types.h).
+  constexpr uint32_t kD3dRsFogEnable = 28u;     // D3DRS_FOGENABLE
+  constexpr uint32_t kD3dRsFogColor = 34u;      // D3DRS_FOGCOLOR
+  constexpr uint32_t kD3dRsFogTableMode = 35u;  // D3DRS_FOGTABLEMODE
+  constexpr uint32_t kD3dRsFogStart = 36u;      // D3DRS_FOGSTART (float bits)
+  constexpr uint32_t kD3dRsFogEnd = 37u;        // D3DRS_FOGEND   (float bits)
+  constexpr uint32_t kD3dFogLinear = 3u;        // D3DFOG_LINEAR
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzrhwDiffuseTex1);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE|TEX1)")) {
+    return false;
+  }
+
+  // Enable linear fog and pick values with exact float representations so payload
+  // comparisons are stable.
+  constexpr float fog_start = 0.25f;
+  constexpr float fog_end = 0.75f;
+  constexpr float inv_range = 2.0f;
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogEnable, 1u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGENABLE=1)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogTableMode, kD3dFogLinear);
+  if (!Check(hr == S_OK, "SetRenderState(FOGTABLEMODE=LINEAR)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogColor, 0xFFFF0000u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGCOLOR=red)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogStart, F32Bits(fog_start));
+  if (!Check(hr == S_OK, "SetRenderState(FOGSTART)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogEnd, F32Bits(fog_end));
+  if (!Check(hr == S_OK, "SetRenderState(FOGEND)")) {
+    return false;
+  }
+
+  const VertexXyzrhwDiffuseTex1 tri[3] = {
+      {0.0f, 0.0f, 0.25f, 1.0f, 0xFF00FF00u, 0.0f, 0.0f},
+      {1.0f, 0.0f, 0.25f, 1.0f, 0xFF00FF00u, 1.0f, 0.0f},
+      {0.0f, 1.0f, 0.25f, 1.0f, 0xFF00FF00u, 0.0f, 1.0f},
+  };
+
+  auto count_fog_uploads_with_expected_payload = [&](const float expected[8]) -> size_t {
+    size_t uploads = 0;
+    const uint8_t* buf = dev->cmd.data();
+    const size_t len = dev->cmd.bytes_used();
+    for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
+      const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
+      if (sc->stage != AEROGPU_SHADER_STAGE_PIXEL || sc->start_register != 1u || sc->vec4_count != 2u) {
+        continue;
+      }
+      const size_t need = sizeof(*sc) + sizeof(float) * 8u;
+      if (hdr->size_bytes < need) {
+        continue;
+      }
+      const auto* payload = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(sc) + sizeof(*sc));
+      if (std::memcmp(payload, expected, sizeof(float) * 8u) == 0) {
+        ++uploads;
+      }
+    }
+    return uploads;
+  };
+
+  // First draw: expect an upload of fog constants.
+  {
+    dev->cmd.reset();
+    hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+        cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwDiffuseTex1));
+    if (!Check(hr == S_OK, "DrawPrimitiveUP(fog enabled; first draw)")) {
+      return false;
+    }
+    dev->cmd.finalize();
+    const uint8_t* buf = dev->cmd.data();
+    const size_t len = dev->cmd.bytes_used();
+    if (!Check(ValidateStream(buf, len), "ValidateStream(fog constants first draw)")) {
+      return false;
+    }
+    const float expected[8] = {
+        // c1: fog color (RGBA from ARGB red).
+        1.0f, 0.0f, 0.0f, 1.0f,
+        // c2: fog params (x=fog_start, y=inv_fog_range, z/w unused).
+        fog_start, inv_range, 0.0f, 0.0f,
+    };
+    if (!Check(count_fog_uploads_with_expected_payload(expected) == 1, "fog constants first draw: uploaded once")) {
+      return false;
+    }
+  }
+
+  // Second draw without changing fog state: expect no redundant constant upload.
+  {
+    dev->cmd.reset();
+    hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+        cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwDiffuseTex1));
+    if (!Check(hr == S_OK, "DrawPrimitiveUP(fog enabled; second draw)")) {
+      return false;
+    }
+    dev->cmd.finalize();
+    const uint8_t* buf = dev->cmd.data();
+    const size_t len = dev->cmd.bytes_used();
+    if (!Check(ValidateStream(buf, len), "ValidateStream(fog constants second draw)")) {
+      return false;
+    }
+    size_t fog_uploads = 0;
+    for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
+      const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
+      if (sc->stage == AEROGPU_SHADER_STAGE_PIXEL && sc->start_register == 1u && sc->vec4_count == 2u) {
+        ++fog_uploads;
+      }
+    }
+    if (!Check(fog_uploads == 0, "fog constants second draw: no fog constant upload")) {
+      return false;
+    }
+  }
+
+  // Change fog color: expect a fresh constant upload with new payload.
+  {
+    dev->cmd.reset();
+    hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogColor, 0xFF00FF00u);
+    if (!Check(hr == S_OK, "SetRenderState(FOGCOLOR=green)")) {
+      return false;
+    }
+
+    hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+        cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwDiffuseTex1));
+    if (!Check(hr == S_OK, "DrawPrimitiveUP(fog enabled; after fogcolor change)")) {
+      return false;
+    }
+    dev->cmd.finalize();
+    const uint8_t* buf = dev->cmd.data();
+    const size_t len = dev->cmd.bytes_used();
+    if (!Check(ValidateStream(buf, len), "ValidateStream(fog constants after color change)")) {
+      return false;
+    }
+
+    const float expected[8] = {
+        // c1: fog color (RGBA from ARGB green).
+        0.0f, 1.0f, 0.0f, 1.0f,
+        // c2: fog params unchanged.
+        fog_start, inv_range, 0.0f, 0.0f,
+    };
+    if (!Check(count_fog_uploads_with_expected_payload(expected) == 1,
+               "fog constants after color change: uploaded once")) {
+      return false;
+    }
+  }
+
+  // Fourth draw without further changes: expect no redundant upload.
+  {
+    dev->cmd.reset();
+    hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+        cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwDiffuseTex1));
+    if (!Check(hr == S_OK, "DrawPrimitiveUP(fog enabled; fourth draw)")) {
+      return false;
+    }
+    dev->cmd.finalize();
+    const uint8_t* buf = dev->cmd.data();
+    const size_t len = dev->cmd.bytes_used();
+    if (!Check(ValidateStream(buf, len), "ValidateStream(fog constants fourth draw)")) {
+      return false;
+    }
+    size_t fog_uploads = 0;
+    for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
+      const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
+      if (sc->stage == AEROGPU_SHADER_STAGE_PIXEL && sc->start_register == 1u && sc->vec4_count == 2u) {
+        ++fog_uploads;
+      }
+    }
+    if (!Check(fog_uploads == 0, "fog constants fourth draw: no fog constant upload")) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 bool TestFixedfuncFogVertexModeEmitsConstants() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -13538,6 +13730,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestFixedfuncFogEmitsConstants()) {
+    return 1;
+  }
+  if (!aerogpu::TestFixedfuncFogConstantsDedupAndReuploadOnChange()) {
     return 1;
   }
   if (!aerogpu::TestFixedfuncFogVertexModeEmitsConstants()) {
