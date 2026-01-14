@@ -30,11 +30,13 @@ pub fn write_iso9660_joliet_from_dir(
 
     // Collect files first so we can sort deterministically regardless of filesystem enumeration.
     let mut files: Vec<FileToPackage> = Vec::new();
+    let packaged_root = format!("iso_from_dir({})", in_dir.display());
     for entry in walkdir::WalkDir::new(in_dir)
         .follow_links(false)
         .into_iter()
     {
         let entry = entry?;
+        crate::bail_if_symlink(&entry, &packaged_root)?;
         if !entry.file_type().is_file() {
             continue;
         }

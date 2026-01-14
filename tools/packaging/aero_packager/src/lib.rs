@@ -559,6 +559,7 @@ fn collect_files(
             .sort_by_file_name()
         {
             let entry = entry?;
+            bail_if_symlink(&entry, "guest_tools/tools")?;
             if !entry.file_type().is_file() {
                 continue;
             }
