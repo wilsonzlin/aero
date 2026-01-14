@@ -212,7 +212,7 @@ async function main() {
       onEvents: (msg) => {
         if (!status) return;
         for (const ev of msg.events) {
-          status.textContent += `gpu_event ${ev.severity} ${ev.category}: ${ev.message}\n`;
+          status.textContent += `gpu_event ${ev.severity} ${ev.category}${ev.backend_kind ? ` (${ev.backend_kind})` : ""}: ${ev.message}\n`;
           eventLog.push(ev);
         }
         window.__aeroTest = { ...(window.__aeroTest ?? {}), events: eventLog };
