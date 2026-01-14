@@ -1131,6 +1131,120 @@ mod tests {
         );
     }
 
+    #[test]
+    fn validate_args_rejects_zero_chunk_size() {
+        let args = PublishArgs {
+            file: PathBuf::from("disk.img"),
+            format: ImageFormat::Auto,
+            bucket: "bucket".to_string(),
+            prefix: "images/win7/sha256-abc/".to_string(),
+            image_id: None,
+            image_version: None,
+            compute_version: ComputeVersion::None,
+            publish_latest: false,
+            cache_control_chunks: DEFAULT_CACHE_CONTROL_CHUNKS.to_string(),
+            cache_control_manifest: DEFAULT_CACHE_CONTROL_MANIFEST.to_string(),
+            cache_control_latest: DEFAULT_CACHE_CONTROL_LATEST.to_string(),
+            chunk_size: 0,
+            checksum: ChecksumAlgorithm::Sha256,
+            endpoint: None,
+            force_path_style: false,
+            region: "us-east-1".to_string(),
+            concurrency: 1,
+            retries: 1,
+            no_meta: false,
+        };
+        let err = validate_args(&args).expect_err("expected validation failure");
+        assert!(
+            err.to_string().contains("--chunk-size must be > 0"),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn validate_args_rejects_zero_concurrency() {
+        let args = PublishArgs {
+            file: PathBuf::from("disk.img"),
+            format: ImageFormat::Auto,
+            bucket: "bucket".to_string(),
+            prefix: "images/win7/sha256-abc/".to_string(),
+            image_id: None,
+            image_version: None,
+            compute_version: ComputeVersion::None,
+            publish_latest: false,
+            cache_control_chunks: DEFAULT_CACHE_CONTROL_CHUNKS.to_string(),
+            cache_control_manifest: DEFAULT_CACHE_CONTROL_MANIFEST.to_string(),
+            cache_control_latest: DEFAULT_CACHE_CONTROL_LATEST.to_string(),
+            chunk_size: SECTOR_SIZE as u64,
+            checksum: ChecksumAlgorithm::Sha256,
+            endpoint: None,
+            force_path_style: false,
+            region: "us-east-1".to_string(),
+            concurrency: 0,
+            retries: 1,
+            no_meta: false,
+        };
+        let err = validate_args(&args).expect_err("expected validation failure");
+        assert!(
+            err.to_string().contains("--concurrency must be > 0"),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn validate_args_rejects_zero_retries() {
+        let args = PublishArgs {
+            file: PathBuf::from("disk.img"),
+            format: ImageFormat::Auto,
+            bucket: "bucket".to_string(),
+            prefix: "images/win7/sha256-abc/".to_string(),
+            image_id: None,
+            image_version: None,
+            compute_version: ComputeVersion::None,
+            publish_latest: false,
+            cache_control_chunks: DEFAULT_CACHE_CONTROL_CHUNKS.to_string(),
+            cache_control_manifest: DEFAULT_CACHE_CONTROL_MANIFEST.to_string(),
+            cache_control_latest: DEFAULT_CACHE_CONTROL_LATEST.to_string(),
+            chunk_size: SECTOR_SIZE as u64,
+            checksum: ChecksumAlgorithm::Sha256,
+            endpoint: None,
+            force_path_style: false,
+            region: "us-east-1".to_string(),
+            concurrency: 1,
+            retries: 0,
+            no_meta: false,
+        };
+        let err = validate_args(&args).expect_err("expected validation failure");
+        assert!(
+            err.to_string().contains("--retries must be > 0"),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn chunk_object_key_rejects_index_out_of_range() {
+        let err = chunk_object_key(MAX_CHUNKS).expect_err("expected failure");
+        assert!(
+            err.to_string().contains("exceeds max supported index"),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn chunk_size_at_index_returns_zero_when_offset_is_past_end() -> Result<()> {
+        assert_eq!(chunk_size_at_index(8, 4, 2)?, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn chunk_size_at_index_rejects_offset_overflow() {
+        let err = chunk_size_at_index(16, u64::MAX, 2).expect_err("expected overflow error");
+        assert!(
+            err.to_string().contains("offset overflows"),
+            "unexpected error: {err:?}"
+        );
+    }
+
     #[tokio::test]
     async fn publish_rejects_too_many_chunks() -> Result<()> {
         let dir = tempfile::tempdir().context("create tempdir")?;
