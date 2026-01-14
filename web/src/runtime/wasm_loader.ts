@@ -667,6 +667,7 @@ export interface WasmApi {
         inject_rel(dx: number, dy: number): void;
         inject_button(btn: number, pressed: boolean): void;
         inject_wheel(delta: number): void;
+        inject_hwheel?(delta: number): void;
         free(): void;
     };
 

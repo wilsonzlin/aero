@@ -2,9 +2,9 @@ use aero_platform::interrupts::msi::MsiMessage;
 use aero_virtio::devices::input::{
     VirtioInput, VirtioInputDeviceKind, VirtioInputEvent, BTN_BACK, BTN_EXTRA, BTN_FORWARD,
     BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, BTN_SIDE, BTN_TASK, EV_KEY, EV_LED, EV_REL, EV_SYN, KEY_A,
-    KEY_F1, KEY_F12, KEY_NUMLOCK, KEY_SCROLLLOCK, LED_CAPSL, LED_NUML, LED_SCROLLL, REL_WHEEL,
-    REL_HWHEEL, REL_X, REL_Y, SYN_REPORT,
-    VIRTIO_INPUT_CFG_EV_BITS, VIRTIO_INPUT_CFG_ID_DEVIDS, VIRTIO_INPUT_CFG_ID_NAME,
+    KEY_F1, KEY_F12, KEY_NUMLOCK, KEY_SCROLLLOCK, LED_CAPSL, LED_NUML, LED_SCROLLL, REL_HWHEEL,
+    REL_WHEEL, REL_X, REL_Y, SYN_REPORT, VIRTIO_INPUT_CFG_EV_BITS, VIRTIO_INPUT_CFG_ID_DEVIDS,
+    VIRTIO_INPUT_CFG_ID_NAME,
 };
 use aero_virtio::memory::{
     read_u16_le, read_u32_le, write_u16_le, write_u32_le, write_u64_le, GuestMemory, GuestRam,
@@ -569,11 +569,11 @@ fn virtio_input_config_exposes_name_devids_and_ev_bits() {
     assert_ne!(rel_bits[(REL_X / 8) as usize] & (1u8 << (REL_X % 8)), 0);
     assert_ne!(rel_bits[(REL_Y / 8) as usize] & (1u8 << (REL_Y % 8)), 0);
     assert_ne!(
-        rel_bits[(REL_HWHEEL / 8) as usize] & (1u8 << (REL_HWHEEL % 8)),
+        rel_bits[(REL_WHEEL / 8) as usize] & (1u8 << (REL_WHEEL % 8)),
         0
     );
     assert_ne!(
-        rel_bits[(REL_WHEEL / 8) as usize] & (1u8 << (REL_WHEEL % 8)),
+        rel_bits[(REL_HWHEEL / 8) as usize] & (1u8 << (REL_HWHEEL % 8)),
         0
     );
 }

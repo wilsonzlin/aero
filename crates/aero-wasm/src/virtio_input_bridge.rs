@@ -263,6 +263,14 @@ impl VirtioInputPciDeviceCore {
         self.input_mut().inject_wheel(delta);
         self.poll(mem);
     }
+
+    pub fn inject_hwheel(&mut self, delta: i32, mem: &mut dyn GuestMemory) {
+        if self.kind != VirtioInputDeviceKind::Mouse {
+            return;
+        }
+        self.input_mut().inject_hwheel(delta);
+        self.poll(mem);
+    }
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -697,6 +705,11 @@ mod wasm {
         /// Inject a mouse wheel event (mouse devices only).
         pub fn inject_wheel(&mut self, delta: i32) {
             self.inner.inject_wheel(delta, &mut self.mem);
+        }
+
+        /// Inject a horizontal mouse wheel event (mouse devices only).
+        pub fn inject_hwheel(&mut self, delta: i32) {
+            self.inner.inject_hwheel(delta, &mut self.mem);
         }
     }
 }

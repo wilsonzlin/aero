@@ -39,7 +39,7 @@ export const InputEventType = {
     *
     * Payload:
     *   a = dz (signed 32-bit, positive = wheel up)
-    *   b = unused
+    *   b = dx (signed 32-bit, positive = wheel right / REL_HWHEEL)
     */
   MouseWheel: 4,
   /**
@@ -155,17 +155,18 @@ export class InputEventQueue {
     this.push(InputEventType.MouseButtons, timestampUs, buttons | 0, 0);
   }
 
-  pushMouseWheel(timestampUs: number, dz: number): void {
+  pushMouseWheel(timestampUs: number, dz: number, dx = 0): void {
     // Merge with previous wheel event.
     if (this.count > 0) {
       const base = HEADER_WORDS + (this.count - 1) * WORDS_PER_EVENT;
       if (this.words[base] === InputEventType.MouseWheel) {
         this.words[base + 1] = timestampUs | 0;
         this.words[base + 2] = (this.words[base + 2] + (dz | 0)) | 0;
+        this.words[base + 3] = (this.words[base + 3] + (dx | 0)) | 0;
         return;
       }
     }
-    this.push(InputEventType.MouseWheel, timestampUs, dz | 0, 0);
+    this.push(InputEventType.MouseWheel, timestampUs, dz | 0, dx | 0);
   }
 
   pushGamepadReport(timestampUs: number, packedLo: number, packedHi: number): void {

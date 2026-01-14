@@ -5435,9 +5435,11 @@ function handleInputBatch(buffer: ArrayBuffer): void {
       }
       case InputEventType.MouseWheel: {
         const dz = words[off + 2] | 0;
+        const dx = words[off + 3] | 0;
         if (mouseInputBackend === "virtio") {
           if (virtioMouseOk && virtioMouse) {
-            virtioMouse.injectWheel(dz);
+            if (dz !== 0) virtioMouse.injectWheel(dz);
+            if (dx !== 0) virtioMouse.injectHWheel(dx);
           }
         } else if (mouseInputBackend === "ps2") {
           if (i8042Wasm) {

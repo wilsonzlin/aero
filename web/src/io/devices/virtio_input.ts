@@ -28,6 +28,7 @@ export type VirtioInputPciDeviceLike = {
   inject_rel(dx: number, dy: number): void;
   inject_button(btn: number, pressed: boolean): void;
   inject_wheel(delta: number): void;
+  inject_hwheel?(delta: number): void;
   free(): void;
 };
 
@@ -704,6 +705,18 @@ export class VirtioInputPciFunction implements PciDevice, TickableDevice {
     if (this.#destroyed) return;
     try {
       this.#dev.inject_wheel(delta | 0);
+    } catch {
+      // ignore
+    }
+    this.#syncIrq();
+  }
+
+  injectHWheel(delta: number): void {
+    if (this.#destroyed) return;
+    const fn = this.#dev.inject_hwheel;
+    if (!fn) return;
+    try {
+      fn.call(this.#dev, delta | 0);
     } catch {
       // ignore
     }

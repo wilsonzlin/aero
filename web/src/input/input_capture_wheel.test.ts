@@ -131,6 +131,52 @@ describe("InputCapture wheel handling", () => {
     });
   });
 
+  it("emits horizontal wheel deltas (deltaX) as the MouseWheel b-field", () => {
+    withStubbedDocument(() => {
+      const canvas = {
+        tabIndex: 0,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        focus: () => {},
+      } as unknown as HTMLCanvasElement;
+
+      const posted: any[] = [];
+      const ioWorker = {
+        postMessage: (msg: unknown) => posted.push(msg),
+      };
+
+      const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: false });
+      (capture as any).hasFocus = true;
+
+      const preventDefault = vi.fn();
+      const stopPropagation = vi.fn();
+
+      // 100px in DOM_DELTA_PIXEL mode -> 1 horizontal "click".
+      (capture as any).handleWheel({
+        deltaX: 100,
+        deltaY: 0,
+        deltaMode: 0,
+        preventDefault,
+        stopPropagation,
+        timeStamp: 1,
+      } as unknown as WheelEvent);
+
+      capture.flushNow();
+
+      expect(preventDefault).toHaveBeenCalledTimes(1);
+      expect(stopPropagation).toHaveBeenCalledTimes(1);
+
+      expect(posted).toHaveLength(1);
+      const msg = posted[0] as { buffer: ArrayBuffer };
+      const words = decodeFirstEventWords(msg.buffer);
+
+      expect(words[0]).toBe(1);
+      expect(words[2]).toBe(InputEventType.MouseWheel);
+      expect(words[4]).toBe(0);
+      expect(words[5]).toBe(1);
+    });
+  });
+
   it("drops fractional wheel remainder when capture is blurred so it cannot cause a later spurious tick", () => {
     withStubbedDocument(() => {
       const canvas = {
@@ -158,6 +204,7 @@ describe("InputCapture wheel handling", () => {
       // Blur should reset remainder.
       (capture as any).handleBlur();
       expect((capture as any).wheelFrac).toBe(0);
+      expect((capture as any).wheelFracX).toBe(0);
 
       // Resume capture and ensure the next small wheel delta does not immediately tick.
       (capture as any).hasFocus = true;

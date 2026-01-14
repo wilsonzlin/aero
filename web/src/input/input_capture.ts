@@ -191,6 +191,7 @@ export class InputCapture {
   private mouseFracX = 0;
   private mouseFracY = 0;
   private wheelFrac = 0;
+  private wheelFracX = 0;
 
   private touchActiveId: number | null = null;
   private touchLastX = 0;
@@ -517,14 +518,17 @@ export class InputCapture {
     event.preventDefault();
     event.stopPropagation();
 
-    this.wheelFrac += wheelEventToDeltaSteps(event);
+    this.wheelFrac += wheelDeltaToSteps((event as any).deltaY, (event as any).deltaMode, { invert: true });
+    this.wheelFracX += wheelDeltaToSteps((event as any).deltaX, (event as any).deltaMode, { invert: false });
+
     const dz = this.takeWholeWheelDelta();
-    if (dz === 0) {
+    const dx = this.takeWholeWheelDeltaX();
+    if (dz === 0 && dx === 0) {
       return;
     }
 
     const tsUs = toTimestampUs(event.timeStamp);
-    this.queue.pushMouseWheel(tsUs, dz);
+    this.queue.pushMouseWheel(tsUs, dz, dx);
   };
 
   private readonly handleContextMenu = (event: Event): void => {
@@ -798,31 +802,39 @@ export class InputCapture {
       return;
     }
 
-    // Two-finger gesture: translate average vertical movement into a wheel.
+    // Two-finger gesture: translate average movement into wheel deltas.
     if (this.touchPointers.size === 2) {
       this.touchHadMultiTouch = true;
 
+      let sumXBefore = 0;
       let sumYBefore = 0;
       for (const p of this.touchPointers.values()) {
+        sumXBefore += p.x;
         sumYBefore += p.y;
       }
 
       prev.x = x;
       prev.y = y;
 
+      let sumXAfter = 0;
       let sumYAfter = 0;
       for (const p of this.touchPointers.values()) {
+        sumXAfter += p.x;
         sumYAfter += p.y;
       }
 
+      const dxAvg = (sumXAfter - sumXBefore) / 2;
       const dyAvg = (sumYAfter - sumYBefore) / 2;
-      // Match wheelEventToDeltaSteps pixel behavior: ~100px per wheel "click", and invert so
+      // Match `wheelDeltaToSteps` pixel behavior: ~100px per wheel "click". Vertical is inverted so
       // positive is wheel up.
       this.wheelFrac += (-dyAvg) / 100;
+      this.wheelFracX += dxAvg / 100;
+
       const dz = this.takeWholeWheelDelta();
-      if (dz !== 0) {
+      const dx = this.takeWholeWheelDeltaX();
+      if (dz !== 0 || dx !== 0) {
         const tsUs = toTimestampUs(event.timeStamp);
-        this.queue.pushMouseWheel(tsUs, dz);
+        this.queue.pushMouseWheel(tsUs, dz, dx);
       }
       return;
     }
@@ -1116,6 +1128,7 @@ export class InputCapture {
     this.mouseFracX = 0;
     this.mouseFracY = 0;
     this.wheelFrac = 0;
+    this.wheelFracX = 0;
   }
 
   private clearTouchState(): void {
@@ -1204,6 +1217,12 @@ export class InputCapture {
   private takeWholeWheelDelta(): number {
     const whole = this.wheelFrac < 0 ? Math.ceil(this.wheelFrac) : Math.floor(this.wheelFrac);
     this.wheelFrac -= whole;
+    return whole | 0;
+  }
+
+  private takeWholeWheelDeltaX(): number {
+    const whole = this.wheelFracX < 0 ? Math.ceil(this.wheelFracX) : Math.floor(this.wheelFracX);
+    this.wheelFracX -= whole;
     return whole | 0;
   }
 
@@ -1478,11 +1497,16 @@ function buttonToMask(button: number): number {
   }
 }
 
-function wheelEventToDeltaSteps(event: WheelEvent): number {
+function wheelDeltaToSteps(rawDelta: unknown, rawDeltaMode: unknown, opts: { invert: boolean }): number {
   // Preserve fractional deltas (trackpads, high-resolution wheels) by allowing callers to
   // accumulate and quantize later.
-  let delta = event.deltaY;
-  switch (event.deltaMode) {
+  let delta = typeof rawDelta === "number" ? rawDelta : 0;
+  if (!Number.isFinite(delta)) {
+    delta = 0;
+  }
+
+  const deltaMode = typeof rawDeltaMode === "number" ? rawDeltaMode : 0;
+  switch (deltaMode) {
     case 0: // WheelEvent.DOM_DELTA_PIXEL
       delta /= 100;
       break;
@@ -1493,8 +1517,12 @@ function wheelEventToDeltaSteps(event: WheelEvent): number {
       delta *= 3;
       break;
   }
-  // DOM: deltaY > 0 is scroll down; PS/2: positive is wheel up.
-  return -delta;
+
+  if (opts.invert) {
+    // DOM: deltaY > 0 is scroll down; input backends typically treat positive as wheel up.
+    delta = -delta;
+  }
+  return delta;
 }
 
 function touchListFirst(list: TouchList | null | undefined): Touch | null {
