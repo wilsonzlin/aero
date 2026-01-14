@@ -466,6 +466,86 @@ fn tier1_inline_tlb_mmio_exit_can_elide_slow_mem_helpers() {
 
 #[cfg(feature = "tier1-inline-tlb")]
 #[test]
+fn tier1_inline_tlb_mmio_exit_elides_slow_helpers_for_same_page_constant_access_without_cross_page_fastpath(
+) {
+    let mut b = IrBuilder::new(0x1000);
+    let addr = b.const_int(Width::W64, 0);
+    let _value = b.load(Width::W64, addr);
+    let src = b.const_int(Width::W64, 0x1122_3344_5566_7788);
+    b.store(Width::W64, addr, src);
+    let ir = b.finish(IrTerminator::Jump { target: 0x2000 });
+    ir.validate().unwrap();
+
+    let wasm = Tier1WasmCodegen::new().compile_block_with_options(
+        &ir,
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_mmio_exit: true,
+            inline_tlb_cross_page_fastpath: false,
+            ..Default::default()
+        },
+    );
+    let imports = import_entries(&wasm);
+
+    assert_eq!(
+        imports.len(),
+        3,
+        "expected same-page constant inline-TLB block to only import env.memory + env.mmu_translate + env.jit_exit_mmio, got {imports:?}"
+    );
+    for (module, name, _ty) in &imports {
+        assert_eq!(module, IMPORT_MODULE);
+        assert_ne!(name, IMPORT_MEM_READ_U64);
+        assert_ne!(name, IMPORT_MEM_WRITE_U64);
+    }
+}
+
+#[cfg(feature = "tier1-inline-tlb")]
+#[test]
+fn tier1_inline_tlb_mmio_exit_imports_slow_helpers_for_cross_page_constant_access_without_cross_page_fastpath(
+) {
+    let mut b = IrBuilder::new(0x1000);
+    // A 16-bit access at 0xFFF crosses the 4KiB boundary.
+    let addr = b.const_int(Width::W64, 0xfff);
+    let _value = b.load(Width::W16, addr);
+    let src = b.const_int(Width::W16, 0x1234);
+    b.store(Width::W16, addr, src);
+    let ir = b.finish(IrTerminator::Jump { target: 0x2000 });
+    ir.validate().unwrap();
+
+    let wasm = Tier1WasmCodegen::new().compile_block_with_options(
+        &ir,
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_mmio_exit: true,
+            inline_tlb_cross_page_fastpath: false,
+            ..Default::default()
+        },
+    );
+    let imports = import_entries(&wasm);
+
+    let mut found_mem_read_u16 = false;
+    let mut found_mem_write_u16 = false;
+    for (module, name, _ty) in &imports {
+        if module == IMPORT_MODULE && name == IMPORT_MEM_READ_U16 {
+            found_mem_read_u16 = true;
+        }
+        if module == IMPORT_MODULE && name == IMPORT_MEM_WRITE_U16 {
+            found_mem_write_u16 = true;
+        }
+    }
+
+    assert!(
+        found_mem_read_u16,
+        "expected cross-page constant 16-bit load to import env.mem_read_u16, got {imports:?}"
+    );
+    assert!(
+        found_mem_write_u16,
+        "expected cross-page constant 16-bit store to import env.mem_write_u16, got {imports:?}"
+    );
+}
+
+#[cfg(feature = "tier1-inline-tlb")]
+#[test]
 fn tier1_inline_tlb_mmio_fallback_imports_slow_helpers_for_load_and_store() {
     let mut b = IrBuilder::new(0x1000);
     let addr = b.const_int(Width::W64, 0);

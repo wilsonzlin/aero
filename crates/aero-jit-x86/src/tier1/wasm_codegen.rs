@@ -359,6 +359,106 @@ impl Tier1WasmCodegen {
             options.inline_tlb = false;
         }
 
+        let mut const_values: Vec<Option<u64>> = vec![None; block.value_types.len()];
+        for inst in &block.insts {
+            match inst {
+                IrInst::Const { dst, value, width } => {
+                    const_values[dst.0 as usize] = Some(width.truncate(*value));
+                }
+                IrInst::Trunc { dst, src, width } => {
+                    if let Some(v) = const_values[src.0 as usize] {
+                        const_values[dst.0 as usize] = Some(width.truncate(v));
+                    }
+                }
+                IrInst::BinOp {
+                    dst,
+                    op,
+                    lhs,
+                    rhs,
+                    width,
+                    ..
+                } => {
+                    let (Some(lhs), Some(rhs)) = (
+                        const_values[lhs.0 as usize],
+                        const_values[rhs.0 as usize],
+                    ) else {
+                        continue;
+                    };
+
+                    let mask = width.mask();
+                    let trunc = |v: u64| v & mask;
+                    let shift_mask: u64 = if *width == Width::W64 { 63 } else { 31 };
+
+                    let res = match *op {
+                        BinOp::Add => lhs.wrapping_add(rhs),
+                        BinOp::Sub => lhs.wrapping_sub(rhs),
+                        BinOp::And => lhs & rhs,
+                        BinOp::Or => lhs | rhs,
+                        BinOp::Xor => lhs ^ rhs,
+                        BinOp::Shl => {
+                            let amt = (rhs & shift_mask) as u32;
+                            lhs.wrapping_shl(amt)
+                        }
+                        BinOp::Shr => {
+                            let amt = (rhs & shift_mask) as u32;
+                            lhs.wrapping_shr(amt)
+                        }
+                        BinOp::Sar => {
+                            let lhs_trunc = lhs & mask;
+                            let sign_bit = 1u64 << (width.bits() - 1);
+                            let lhs_sext = if (lhs_trunc & sign_bit) != 0 {
+                                lhs_trunc | !mask
+                            } else {
+                                lhs_trunc
+                            };
+                            let amt = (rhs & shift_mask) as u32;
+                            (lhs_sext as i64).wrapping_shr(amt) as u64
+                        }
+                    };
+                    const_values[dst.0 as usize] = Some(trunc(res));
+                }
+                _ => {}
+            }
+        }
+
+        let may_cross_page = |addr: ValueId, size_bytes: u32| -> bool {
+            if size_bytes <= 1 {
+                return false;
+            }
+            let cross_limit = crate::PAGE_OFFSET_MASK
+                .saturating_sub(size_bytes.saturating_sub(1) as u64);
+            let addr = const_values
+                .get(addr.0 as usize)
+                .copied()
+                .flatten()
+                .unwrap_or(u64::MAX);
+            (addr & crate::PAGE_OFFSET_MASK) > cross_limit
+        };
+
+        let mut may_cross_page_load_u16 = false;
+        let mut may_cross_page_load_u32 = false;
+        let mut may_cross_page_load_u64 = false;
+        let mut may_cross_page_store_u16 = false;
+        let mut may_cross_page_store_u32 = false;
+        let mut may_cross_page_store_u64 = false;
+        for inst in &block.insts {
+            match *inst {
+                IrInst::Load { addr, width, .. } => match width {
+                    Width::W8 => {}
+                    Width::W16 => may_cross_page_load_u16 |= may_cross_page(addr, 2),
+                    Width::W32 => may_cross_page_load_u32 |= may_cross_page(addr, 4),
+                    Width::W64 => may_cross_page_load_u64 |= may_cross_page(addr, 8),
+                },
+                IrInst::Store { addr, width, .. } => match width {
+                    Width::W8 => {}
+                    Width::W16 => may_cross_page_store_u16 |= may_cross_page(addr, 2),
+                    Width::W32 => may_cross_page_store_u32 |= may_cross_page(addr, 4),
+                    Width::W64 => may_cross_page_store_u64 |= may_cross_page(addr, 8),
+                },
+                _ => {}
+            }
+        }
+
         // Decide which slow-path helper imports are actually required by this block under the
         // selected options.
         //
@@ -372,15 +472,15 @@ impl Tier1WasmCodegen {
         let needs_mem_read_u16 = uses_load_u16
             && (!options.inline_tlb
                 || !options.inline_tlb_mmio_exit
-                || !options.inline_tlb_cross_page_fastpath);
+                || (!options.inline_tlb_cross_page_fastpath && may_cross_page_load_u16));
         let needs_mem_read_u32 = uses_load_u32
             && (!options.inline_tlb
                 || !options.inline_tlb_mmio_exit
-                || !options.inline_tlb_cross_page_fastpath);
+                || (!options.inline_tlb_cross_page_fastpath && may_cross_page_load_u32));
         let needs_mem_read_u64 = uses_load_u64
             && (!options.inline_tlb
                 || !options.inline_tlb_mmio_exit
-                || !options.inline_tlb_cross_page_fastpath);
+                || (!options.inline_tlb_cross_page_fastpath && may_cross_page_load_u64));
 
         let needs_mem_write_u8 = uses_store_u8
             && (!options.inline_tlb
@@ -390,17 +490,17 @@ impl Tier1WasmCodegen {
             && (!options.inline_tlb
                 || !options.inline_tlb_stores
                 || !options.inline_tlb_mmio_exit
-                || !options.inline_tlb_cross_page_fastpath);
+                || (!options.inline_tlb_cross_page_fastpath && may_cross_page_store_u16));
         let needs_mem_write_u32 = uses_store_u32
             && (!options.inline_tlb
                 || !options.inline_tlb_stores
                 || !options.inline_tlb_mmio_exit
-                || !options.inline_tlb_cross_page_fastpath);
+                || (!options.inline_tlb_cross_page_fastpath && may_cross_page_store_u32));
         let needs_mem_write_u64 = uses_store_u64
             && (!options.inline_tlb
                 || !options.inline_tlb_stores
                 || !options.inline_tlb_mmio_exit
-                || !options.inline_tlb_cross_page_fastpath);
+                || (!options.inline_tlb_cross_page_fastpath && may_cross_page_store_u64));
 
         let mut module = Module::new();
 
@@ -1061,6 +1161,19 @@ impl Emitter<'_> {
                     return;
                 }
 
+                if self.options.inline_tlb_mmio_exit
+                    && !self.options.inline_tlb_cross_page_fastpath
+                    && slow_read.is_none()
+                {
+                    // When MMIO exits are enabled and the cross-page fast-path is disabled, the
+                    // code generator normally falls back to the slow helper on boundary-crossing
+                    // accesses. If we didn't import the slow helper, the import selection logic
+                    // has proven that cross-page loads of this width cannot occur, so we can skip
+                    // the cross-page check entirely.
+                    emit_same_page_load(self);
+                    return;
+                }
+
                 // Cross-page accesses default to the slow helper for correctness unless the
                 // optional split-access fast-path is enabled.
                 let cross_limit =
@@ -1447,6 +1560,16 @@ impl Emitter<'_> {
                 if size_bytes == 1 {
                     // An 8-bit store can never cross a page boundary, so we can skip the cross-page
                     // check and its associated slow-path fallback entirely.
+                    emit_same_page_store(self);
+                    return;
+                }
+
+                if self.options.inline_tlb_mmio_exit
+                    && !self.options.inline_tlb_cross_page_fastpath
+                    && slow_write.is_none()
+                {
+                    // See the analogous load case above: if we didn't import the slow helper, this
+                    // store is guaranteed not to cross a page boundary.
                     emit_same_page_store(self);
                     return;
                 }
