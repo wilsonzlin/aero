@@ -3290,7 +3290,17 @@ try {
         tools_dir = $toolsDir
         tools_dir_present = $false
         tools_dir_readable = $null
+        files = @()
         exe_files = @()
+        total_size_bytes = 0
+        total_exe_size_bytes = 0
+        extension_stats = @()
+        manifest_present = $null
+        manifest_parse_ok = $null
+        manifest_includes_tools = $null
+        manifest_tools_files_listed = $null
+        manifest_listed_files_present = $null
+        manifest_unlisted_files_present = $null
         inventory_errors = @()
     }
 
