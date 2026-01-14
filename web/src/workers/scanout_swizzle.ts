@@ -70,13 +70,29 @@ export function convertScanoutToRgba8(opts: ConvertScanoutOptions): boolean {
     const srcU32 = new Uint32Array(src.buffer, src.byteOffset, srcWordsPerRow * height);
     const dstU32 = new Uint32Array(dst.buffer, dst.byteOffset, dstWordsPerRow * height);
 
-    const swizzle = opts.kind === "bgra" ? swizzleBgraToRgba32 : swizzleBgrxToRgba32;
-    for (let y = 0; y < height; y += 1) {
-      let srcIdx = y * srcWordsPerRow;
-      let dstIdx = y * dstWordsPerRow;
-      const rowEnd = dstIdx + width;
-      while (dstIdx < rowEnd) {
-        dstU32[dstIdx++] = swizzle(srcU32[srcIdx++]!);
+    if (opts.kind === "bgra") {
+      for (let y = 0; y < height; y += 1) {
+        let srcIdx = y * srcWordsPerRow;
+        let dstIdx = y * dstWordsPerRow;
+        const rowEnd = dstIdx + width;
+        while (dstIdx < rowEnd) {
+          const v = srcU32[srcIdx++]!;
+          // BGRA u32 = 0xAARRGGBB -> RGBA u32 = 0xAABBGGRR
+          dstU32[dstIdx++] =
+            (v & 0xff00_0000) | ((v & 0x00ff_0000) >>> 16) | (v & 0x0000_ff00) | ((v & 0x0000_00ff) << 16);
+        }
+      }
+    } else {
+      for (let y = 0; y < height; y += 1) {
+        let srcIdx = y * srcWordsPerRow;
+        let dstIdx = y * dstWordsPerRow;
+        const rowEnd = dstIdx + width;
+        while (dstIdx < rowEnd) {
+          const v = srcU32[srcIdx++]!;
+          // BGRX u32 = 0xXXRRGGBB -> RGBA u32 = 0xFFBBGGRR
+          dstU32[dstIdx++] =
+            0xff00_0000 | ((v & 0x00ff_0000) >>> 16) | (v & 0x0000_ff00) | ((v & 0x0000_00ff) << 16);
+        }
       }
     }
     return true;
@@ -102,4 +118,3 @@ export function convertScanoutToRgba8(opts: ConvertScanoutOptions): boolean {
   }
   return false;
 }
-
