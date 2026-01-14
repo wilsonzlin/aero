@@ -143,7 +143,10 @@ pub fn run(
 
     let mem_base = reference.memory_base();
     let mut rng = corpus::XorShift64::new(seed);
-    let mut report = ConformanceReport::new_for_templates(cases, &templates);
+    // Coverage "expected" must remain the full set even when a template filter is active,
+    // so `ConformanceReport::new()` always uses the complete template corpus to build the
+    // expected coverage key list. Counts are incremented only for the executed templates.
+    let mut report = ConformanceReport::new(cases);
     let filter_env = std::env::var("AERO_CONFORMANCE_FILTER")
         .ok()
         .map(|v| v.trim().to_string())
@@ -409,6 +412,35 @@ mod tests {
                 .iter()
                 .any(|t| t.coverage_key == "add_mem" || t.coverage_key == "add32"),
             "expected name-based filtering to include non-\"add\" coverage keys"
+        );
+    }
+
+    #[test]
+    fn coverage_expected_is_full_set_even_when_filtered() {
+        if !cfg!(all(target_arch = "x86_64", unix)) {
+            // The conformance runner requires the host reference backend.
+            return;
+        }
+
+        let all_expected = ConformanceReport::new(1).coverage.expected;
+
+        let _isolate = EnvGuard::set("AERO_CONFORMANCE_REFERENCE_ISOLATE", "1");
+        let _filter = EnvGuard::set("AERO_CONFORMANCE_FILTER", "add");
+        let report = run(1, 0x1234_5678_9abc_def0, None).expect("run should succeed");
+
+        assert_eq!(
+            report.coverage.expected, all_expected,
+            "expected coverage.expected to always be the full set even when filtering is enabled"
+        );
+
+        // Counts should only include executed templates.
+        assert!(
+            report
+                .coverage
+                .counts
+                .keys()
+                .all(|k| report.coverage.expected.contains(k)),
+            "unexpected coverage key in counts"
         );
     }
 
