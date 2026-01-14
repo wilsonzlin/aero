@@ -61,6 +61,18 @@ For the consolidated virtio-input end-to-end validation plan (device model + dri
     - When enabled, the test emits a readiness marker (`AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|READY`), then waits
       (with a hard timeout) for host-injected events (intended to be paired with QMP `input-send-event` injection) and emits
       `...|PASS|...` or `...|FAIL|reason=...|...`.
+  - Optional end-to-end **scroll wheel** smoke test (`virtio-input-wheel`):
+    - Runs as part of the `--test-input-events` flow (no separate guest flag).
+    - Intended to be paired with host-side QMP injection (`input-send-event`) when the harness is run with:
+      - PowerShell: `-WithInputWheel`
+      - Python: `--with-input-wheel`
+    - Validates that the mouse HID input reports include:
+      - vertical wheel (HID Generic Desktop `Wheel`)
+      - horizontal wheel (HID Consumer `AC Pan`, sourced from Linux `REL_HWHEEL`)
+    - Expected injected deltas (deterministic):
+      - wheel: `+1`
+      - horizontal pan: `-2`
+    - Emits `AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|PASS/FAIL/SKIP|...`.
   - Optional end-to-end **tablet (absolute pointer)** event delivery smoke test (`virtio-input-tablet-events`):
     - Disabled by default (requires host-side QMP injection).
     - Enable with `--test-input-tablet-events` (alias: `--test-tablet-events`) or env var
@@ -155,14 +167,18 @@ The host harness parses these markers from COM1 serial:
  AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS|irq_mode=msix|msix_config_vector=0x0000|msix_queue_vector=0x0001
  AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS|...
  AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|SKIP|flag_not_set
+ AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|SKIP|flag_not_set
  AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|SKIP|flag_not_set
- 
+  
  # Optional: end-to-end virtio-input event delivery (requires host-side QMP injection):
  # AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|READY
  # AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS|...
- # Optional: end-to-end virtio-input tablet (absolute pointer) event delivery (requires host-side QMP injection):
- # AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|READY
- # AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|PASS|...
+ #
+ # Optional: end-to-end virtio-input mouse wheel delivery (requires host-side QMP injection and --test-input-events):
+ # AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|PASS|wheel_total=...|hwheel_total=...|...
+  # Optional: end-to-end virtio-input tablet (absolute pointer) event delivery (requires host-side QMP injection):
+  # AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|READY
+  # AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|PASS|...
  
  # virtio-snd may be SKIP/PASS/FAIL depending on flags and device presence.
  # Capture is reported separately as "virtio-snd-capture".
