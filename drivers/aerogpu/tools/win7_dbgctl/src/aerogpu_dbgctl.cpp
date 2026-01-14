@@ -766,6 +766,7 @@ static void PrintUsage() {
            L"  --query-umd-private\n"
            L"  --query-segments\n"
            L"  --query-fence\n"
+           L"  --query-error\n"
            L"  --watch-fence  (requires: --samples N --interval-ms M)\n"
            L"  --query-perf  (alias: --perf)\n"
            L"  --query-scanout\n"
@@ -3039,6 +3040,45 @@ static int DoQueryFence(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
           (unsigned long long)q.error_irq_count);
   wprintf(L"Last error fence:     0x%I64x (%I64u)\n", (unsigned long long)q.last_error_fence,
           (unsigned long long)q.last_error_fence);
+  return 0;
+}
+
+static int DoQueryError(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
+  aerogpu_escape_query_error_out q;
+  ZeroMemory(&q, sizeof(q));
+  q.hdr.version = AEROGPU_ESCAPE_VERSION;
+  q.hdr.op = AEROGPU_ESCAPE_OP_QUERY_ERROR;
+  q.hdr.size = sizeof(q);
+  q.hdr.reserved0 = 0;
+
+  NTSTATUS st = SendAerogpuEscape(f, hAdapter, &q, sizeof(q));
+  if (!NT_SUCCESS(st)) {
+    if (st == STATUS_NOT_SUPPORTED) {
+      wprintf(L"QueryError: (not supported by this KMD; upgrade AeroGPU driver)\n");
+      return 2;
+    }
+    PrintNtStatus(L"D3DKMTEscape(query-error) failed", f, st);
+    return 2;
+  }
+
+  bool supported = true;
+  if ((q.flags & AEROGPU_DBGCTL_QUERY_ERROR_FLAGS_VALID) != 0) {
+    supported = (q.flags & AEROGPU_DBGCTL_QUERY_ERROR_FLAG_ERROR_SUPPORTED) != 0;
+  }
+  if (!supported) {
+    wprintf(L"QueryError: (not supported by this KMD; upgrade AeroGPU driver)\n");
+    return 2;
+  }
+
+  const bool latched = ((q.flags & AEROGPU_DBGCTL_QUERY_ERROR_FLAGS_VALID) != 0) &&
+                       ((q.flags & AEROGPU_DBGCTL_QUERY_ERROR_FLAG_ERROR_LATCHED) != 0);
+
+  wprintf(L"Last error:\n");
+  wprintf(L"  latched: %s\n", latched ? L"true" : L"false");
+  wprintf(L"  code:    %lu (%s)\n", (unsigned long)q.error_code, AerogpuErrorCodeName(q.error_code));
+  wprintf(L"  fence:   0x%I64x (%I64u)\n", (unsigned long long)q.error_fence, (unsigned long long)q.error_fence);
+  wprintf(L"  count:   %lu\n", (unsigned long)q.error_count);
+  wprintf(L"  flags:   0x%08lx\n", (unsigned long)q.flags);
   return 0;
 }
 
@@ -6775,6 +6815,63 @@ static int DoQueryFenceJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, std::
   return 0;
 }
 
+static int DoQueryErrorJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, std::string *out) {
+  if (!out) {
+    return 1;
+  }
+
+  aerogpu_escape_query_error_out q;
+  ZeroMemory(&q, sizeof(q));
+  q.hdr.version = AEROGPU_ESCAPE_VERSION;
+  q.hdr.op = AEROGPU_ESCAPE_OP_QUERY_ERROR;
+  q.hdr.size = sizeof(q);
+  q.hdr.reserved0 = 0;
+
+  const NTSTATUS st = SendAerogpuEscape(f, hAdapter, &q, sizeof(q));
+  if (!NT_SUCCESS(st)) {
+    JsonWriteTopLevelError(out, "query-error", f, "D3DKMTEscape(query-error) failed", st);
+    return 2;
+  }
+
+  bool supported = true;
+  if ((q.flags & AEROGPU_DBGCTL_QUERY_ERROR_FLAGS_VALID) != 0) {
+    supported = (q.flags & AEROGPU_DBGCTL_QUERY_ERROR_FLAG_ERROR_SUPPORTED) != 0;
+  }
+
+  JsonWriter w(out);
+  w.BeginObject();
+  w.Key("schema_version");
+  w.Uint32(1);
+  w.Key("command");
+  w.String("query-error");
+  w.Key("ok");
+  w.Bool(true);
+  w.Key("supported");
+  w.Bool(supported);
+  JsonWriteU32Hex(w, "flags_u32_hex", q.flags);
+  if ((q.flags & AEROGPU_DBGCTL_QUERY_ERROR_FLAGS_VALID) != 0) {
+    w.Key("latched");
+    w.Bool((q.flags & AEROGPU_DBGCTL_QUERY_ERROR_FLAG_ERROR_LATCHED) != 0);
+  } else {
+    w.Key("latched");
+    w.Null();
+  }
+
+  if (supported) {
+    w.Key("error_code");
+    w.Uint32(q.error_code);
+    w.Key("error_code_name");
+    w.String(WideToUtf8(AerogpuErrorCodeName(q.error_code)));
+    JsonWriteU64HexDec(w, "error_fence", q.error_fence);
+    w.Key("error_count");
+    w.Uint32(q.error_count);
+  }
+
+  w.EndObject();
+  out->push_back('\n');
+  return 0;
+}
+
 static int DoWatchFenceJson(const D3DKMT_FUNCS *f,
                             D3DKMT_HANDLE hAdapter,
                             uint32_t samples,
@@ -10124,6 +10221,7 @@ int wmain(int argc, wchar_t **argv) {
     CMD_QUERY_UMD_PRIVATE,
     CMD_QUERY_SEGMENTS,
     CMD_QUERY_FENCE,
+    CMD_QUERY_ERROR,
     CMD_WATCH_FENCE,
     CMD_QUERY_PERF,
     CMD_QUERY_SCANOUT,
@@ -10786,6 +10884,12 @@ int wmain(int argc, wchar_t **argv) {
       }
       continue;
     }
+    if (wcscmp(a, L"--query-error") == 0) {
+      if (!SetCommand(CMD_QUERY_ERROR)) {
+        return 1;
+      }
+      continue;
+    }
     if (wcscmp(a, L"--watch-fence") == 0) {
       if (!SetCommand(CMD_WATCH_FENCE)) {
         return 1;
@@ -11163,6 +11267,9 @@ int wmain(int argc, wchar_t **argv) {
     case CMD_QUERY_FENCE:
       rc = DoQueryFenceJson(&f, open.hAdapter, &json);
       break;
+    case CMD_QUERY_ERROR:
+      rc = DoQueryErrorJson(&f, open.hAdapter, &json);
+      break;
     case CMD_QUERY_SEGMENTS:
       rc = DoQuerySegmentsJson(&f, open.hAdapter, &json);
       break;
@@ -11244,6 +11351,9 @@ int wmain(int argc, wchar_t **argv) {
       break;
     case CMD_QUERY_FENCE:
       rc = DoQueryFence(&f, open.hAdapter);
+      break;
+    case CMD_QUERY_ERROR:
+      rc = DoQueryError(&f, open.hAdapter);
       break;
     case CMD_WATCH_FENCE:
       rc = DoWatchFence(&f, open.hAdapter, watchSamples, watchIntervalMs, timeoutMsSet ? timeoutMs : 0);
