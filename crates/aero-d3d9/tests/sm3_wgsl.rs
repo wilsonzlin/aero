@@ -1838,6 +1838,51 @@ fn wgsl_missing_dcl_uses_v0_writes_oc0_compiles() {
 }
 
 #[test]
+fn sm3_translate_to_wgsl_wrapper_produces_bind_layout() {
+    // ps_2_0:
+    //   texld r0, c0, s0
+    //   mov oC0, r0
+    //   end
+    let tokens = vec![
+        version_token(ShaderStage::Pixel, 2, 0),
+        // texld r0, c0, s0
+        opcode_token(66, 3),
+        dst_token(0, 0, 0xF),
+        src_token(2, 0, 0xE4, 0),
+        src_token(10, 0, 0xE4, 0),
+        // mov oC0, r0
+        opcode_token(1, 2),
+        dst_token(8, 0, 0xF),
+        src_token(0, 0, 0xE4, 0),
+        // end
+        0x0000_FFFF,
+    ];
+
+    let mut bytes = Vec::with_capacity(tokens.len() * 4);
+    for t in tokens {
+        bytes.extend_from_slice(&t.to_le_bytes());
+    }
+
+    let out = aero_d3d9::sm3::wgsl::translate_to_wgsl(&bytes).unwrap();
+    assert_eq!(out.version.stage, ShaderStage::Pixel);
+    assert_eq!(out.entry_point, "fs_main");
+    assert_eq!(out.bind_group_layout.sampler_group, 2);
+    assert_eq!(out.bind_group_layout.sampler_bindings.get(&0), Some(&(0, 1)));
+    assert_eq!(
+        out.bind_group_layout.sampler_texture_types.get(&0),
+        Some(&TextureType::Texture2D)
+    );
+
+    let module = naga::front::wgsl::parse_str(&out.wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+}
+
+#[test]
 fn wgsl_ps3_vpos_misctype_builtin_compiles() {
     // ps_3_0:
     //   mov oC0, misc0  (vPos)
