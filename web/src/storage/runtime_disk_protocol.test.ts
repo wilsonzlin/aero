@@ -195,4 +195,92 @@ describe("runtime disk worker protocol", () => {
     expect(resp.ok).toBe(false);
     expect(String(resp.error.message)).toMatch(/unaligned|multiple/i);
   });
+
+  it("validates readInto SAB bounds + SAB requirement", async () => {
+    const posted: any[] = [];
+    const disk = {
+      sectorSize: 512,
+      capacityBytes: 4096,
+      async readSectors() {},
+      async writeSectors() {},
+      async flush() {},
+    };
+    const openDisk: OpenDiskFn = async () => ({ disk, readOnly: false, backendSnapshot: null });
+    const worker = new RuntimeDiskWorker((msg) => posted.push(msg), openDisk);
+
+    await worker.handleMessage({
+      type: "request",
+      requestId: 1,
+      op: "open",
+      payload: { spec: { kind: "local", meta: dummyLocalMeta } },
+    });
+    const handle = posted.shift().result.handle as number;
+
+    const sab = new SharedArrayBuffer(1024);
+    // OOB: 800 + 512 > 1024.
+    await worker.handleMessage({
+      type: "request",
+      requestId: 2,
+      op: "readInto",
+      payload: { handle, lba: 0, byteLength: 512, dest: { sab, offsetBytes: 800 } },
+    });
+    const oobResp = posted.shift();
+    expect(oobResp.ok).toBe(false);
+    expect(String(oobResp.error.message)).toMatch(/out of bounds/i);
+
+    // Require SAB: reject ArrayBuffer.
+    await worker.handleMessage({
+      type: "request",
+      requestId: 3,
+      op: "readInto",
+      payload: { handle, lba: 0, byteLength: 512, dest: { sab: new ArrayBuffer(1024) as any, offsetBytes: 0 } },
+    } as any);
+    const sabResp = posted.shift();
+    expect(sabResp.ok).toBe(false);
+    expect(String(sabResp.error.message)).toMatch(/SharedArrayBuffer/i);
+  });
+
+  it("validates writeFrom SAB bounds + SAB requirement", async () => {
+    const posted: any[] = [];
+    const disk = {
+      sectorSize: 512,
+      capacityBytes: 4096,
+      async readSectors() {},
+      async writeSectors() {},
+      async flush() {},
+    };
+    const openDisk: OpenDiskFn = async () => ({ disk, readOnly: false, backendSnapshot: null });
+    const worker = new RuntimeDiskWorker((msg) => posted.push(msg), openDisk);
+
+    await worker.handleMessage({
+      type: "request",
+      requestId: 1,
+      op: "open",
+      payload: { spec: { kind: "local", meta: dummyLocalMeta } },
+    });
+    const handle = posted.shift().result.handle as number;
+
+    const sab = new SharedArrayBuffer(1024);
+    // OOB: 800 + 512 > 1024.
+    await worker.handleMessage({
+      type: "request",
+      requestId: 2,
+      op: "writeFrom",
+      payload: { handle, lba: 0, src: { sab, offsetBytes: 800, byteLength: 512 } },
+    });
+    const oobResp = posted.shift();
+    expect(oobResp.ok).toBe(false);
+    expect(String(oobResp.error.message)).toMatch(/out of bounds/i);
+
+    // Require SAB: reject ArrayBuffer.
+    await worker.handleMessage({
+      type: "request",
+      requestId: 3,
+      op: "writeFrom",
+      payload: { handle, lba: 0, src: { sab: new ArrayBuffer(1024) as any, offsetBytes: 0, byteLength: 512 } },
+    } as any);
+    const sabResp = posted.shift();
+    expect(sabResp.ok).toBe(false);
+    expect(String(sabResp.error.message)).toMatch(/SharedArrayBuffer/i);
+  });
 });

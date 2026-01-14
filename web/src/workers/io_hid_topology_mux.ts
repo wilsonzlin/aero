@@ -19,6 +19,7 @@ export function isXhciTopologyBridgeLike(value: unknown): value is XhciTopologyB
   if (!value || typeof value !== "object") return false;
   const obj = value as Record<string, unknown>;
   return (
+    typeof obj.free === "function" &&
     typeof obj.attach_hub === "function" &&
     typeof obj.detach_at_path === "function" &&
     typeof obj.attach_webhid_device === "function" &&
