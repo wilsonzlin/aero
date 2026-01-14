@@ -18,6 +18,7 @@ pub mod domain_eval;
 pub mod layout_pass;
 pub mod pipeline;
 pub mod tessellator;
+pub mod tri_domain_integer;
 pub mod vs_as_compute;
 
 use super::expansion_scratch::{ExpansionScratchAllocator, ExpansionScratchError};
