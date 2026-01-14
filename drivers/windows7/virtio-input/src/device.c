@@ -1643,13 +1643,20 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
                 VirtioPciResetDevice(&deviceContext->PciDevice);
                 return STATUS_NOT_SUPPORTED;
             }
-        } else {
+        } else if (deviceContext->PciSubsystemDeviceId != VIOINPUT_PCI_SUBSYSTEM_ID_KEYBOARD &&
+                   deviceContext->PciSubsystemDeviceId != VIOINPUT_PCI_SUBSYSTEM_ID_MOUSE &&
+                   deviceContext->PciSubsystemDeviceId != VIOINPUT_PCI_SUBSYSTEM_ID_TABLET) {
             /*
              * Optional: accept absolute-pointer devices (virtio-tablet) even when
              * the device does not advertise contract-v1 ID_NAME strings, by
              * classifying based on EV_BITS instead of ID_NAME.
              *
              * Restrict this fallback to tablets only; keep keyboard/mouse strict.
+             *
+             * Additionally, only do this when the PCI subsystem device ID is NOT
+             * one of the Aero contract kinds (0x0010/0x0011/0x0012). If it *is*
+             * a contract kind, then ID_NAME must be one of the contract strings
+             * and we should not guess.
              */
             UCHAR typeBits[128];
             UCHAR typeSize;

@@ -74,12 +74,13 @@ The in-tree Windows 7 virtio-input driver is **strict by default** (Aero contrac
   - `Aero Virtio Mouse`
   - `Aero Virtio Tablet`
 - For keyboard/mouse devices, if the name is unrecognized the driver fails start (Code 10) rather than guessing.
-- For tablet/absolute-pointer devices (`EV_ABS`), if the name is unrecognized the driver can fall back to identifying the
-  device as a tablet when it advertises `EV_ABS` with `ABS_X`/`ABS_Y` in `EV_BITS`.
+- For tablet/absolute-pointer devices (`EV_ABS`), if the name is unrecognized **and** the PCI subsystem device ID does **not**
+  indicate an Aero contract kind (`0x0010`/`0x0011`/`0x0012`), the driver can fall back to identifying the device as a tablet
+  when it advertises `EV_ABS` with `ABS_X`/`ABS_Y` in `EV_BITS`.
   - When this fallback is used, the device is treated as **non-contract**:
     - PCI subsystem kind cross-check is skipped.
     - `ID_DEVIDS.Product` mismatch is tolerated (but bustype/vendor/version are still validated).
-    - `ABS_INFO` is still required for coordinate scaling (strict-mode behavior).
+    - `ABS_INFO` is best-effort; if unavailable, the driver falls back to the translation layer’s default coordinate scaling range (`0..32767`).
 - If the PCI **Subsystem Device ID** indicates a contract kind (`0x0010` keyboard, `0x0011` mouse, `0x0012` tablet),
   it is cross-checked against `ID_NAME` **for strict ID_NAME matches** and mismatches fail start (Code 10). Unknown subsystem IDs
   (`0` or other values) are allowed.
