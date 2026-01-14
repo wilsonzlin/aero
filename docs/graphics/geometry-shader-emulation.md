@@ -73,10 +73,10 @@ Current status:
   if the bound GS DXBC can be translated by `crates/aero-d3d11/src/runtime/gs_translate.rs`, the executor
   executes that translated WGSL compute prepass at draw time.
   - Today, GS `v#[]` inputs are populated via vertex pulling:
-    - Point-list translated-GS prepass paths currently populate `v#[]` directly from IA vertex buffers
-      (so only passthrough-style VS/GS combinations are expected to work).
-    - Triangle-list translated-GS prepass paths prefer feeding `v#[]` from a minimal **VS-as-compute**
-      implementation, so the GS observes VS output registers (correct D3D11 semantics).
+    - Point-list and triangle-list translated-GS prepass paths prefer feeding `v#[]` from a minimal
+      **VS-as-compute** implementation (so the GS observes VS output registers), but this VS execution
+      is still a small subset.
+    - The executor can fall back to filling `v#[]` directly from IA for strict passthrough VS.
   - This requires an input layout.
 
 ### Why we expand strips into lists
@@ -153,10 +153,10 @@ Current limitations (high-level):
   - Other input topologies (line, strip, adjacency) still use the built-in synthetic expansion WGSL
     prepass.
 - VS-as-compute feeding for GS inputs is still incomplete:
-  - The point-list translated-GS prepass path fills GS `v#[]` inputs directly from IA vertex buffers
-    via vertex pulling (passthrough-style VS/GS combinations only).
-  - The triangle-list translated-GS prepass path prefers a minimal VS-as-compute feeding path so the
-    GS observes VS output registers, but it is still a small subset (simple VS expected).
+  - The translated-GS prepass paths prefer a minimal VS-as-compute feeding path so the GS observes
+    VS output registers (correct D3D11 semantics), but it is still a small subset (simple VS
+    expected).
+  - The executor can fall back to IA-fill for strict passthrough VS.
 - HS/DS are still scaffolding-only (no real HS/DS DXBC execution yet).
 
 Test pointers:
@@ -190,9 +190,9 @@ Supported:
 - `point` (`D3D11_PRIMITIVE_TOPOLOGY_POINTLIST`)
 - `triangle` (`D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST`)
 
-Note: for the current translated-GS prepass paths, the GS `v#[]` inputs are populated directly from
-vertex pulling. Point-list draws currently fill `v#[]` directly from IA (passthrough-only), while
-triangle-list draws prefer feeding `v#[]` from a minimal VS-as-compute path.
+Note: for the current translated-GS prepass paths, the GS `v#[]` inputs are populated via vertex
+pulling plus a minimal VS-as-compute feeding path (simple VS subset), with an IA-fill fallback for
+strict passthrough VS.
 
 Not yet supported end-to-end:
 
