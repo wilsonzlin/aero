@@ -282,13 +282,37 @@ inline uint32_t HashSemanticName(const char* s) {
 // Aligns `value` up to the next multiple of `alignment`. `alignment` must be a
 // power of two.
 constexpr uint64_t AlignUpU64(uint64_t value, uint64_t alignment) {
+  if (alignment == 0) {
+    return value;
+  }
   return (value + alignment - 1) & ~(alignment - 1);
+}
+
+// Aligns `value` down to the previous multiple of `alignment`. `alignment` must
+// be a power of two.
+constexpr uint64_t AlignDownU64(uint64_t value, uint64_t alignment) {
+  if (alignment == 0) {
+    return value;
+  }
+  return value & ~(alignment - 1);
 }
 
 // Aligns `value` up to the next multiple of `alignment`. `alignment` must be a
 // power of two.
 constexpr uint32_t AlignUpU32(uint32_t value, uint32_t alignment) {
+  if (alignment == 0) {
+    return value;
+  }
   return static_cast<uint32_t>((value + alignment - 1) & ~(alignment - 1));
+}
+
+// Aligns `value` down to the previous multiple of `alignment`. `alignment` must
+// be a power of two.
+constexpr uint32_t AlignDownU32(uint32_t value, uint32_t alignment) {
+  if (alignment == 0) {
+    return value;
+  }
+  return static_cast<uint32_t>(value & ~(alignment - 1));
 }
 
 struct AerogpuTextureFormatLayout {

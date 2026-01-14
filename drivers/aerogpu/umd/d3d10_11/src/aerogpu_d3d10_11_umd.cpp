@@ -292,25 +292,11 @@ using aerogpu::d3d10_11::kD3D11DdiCapsTypeMultisampleQualityLevels;
 using aerogpu::d3d10_11::kD3D11ResourceMiscShared;
 
 using AeroGpuAdapter = aerogpu::d3d10_11::Adapter;
+using aerogpu::d3d10_11::AlignUpU64;
+using aerogpu::d3d10_11::AlignDownU64;
 
 uint32_t d3d11_format_support_flags(const AeroGpuAdapter* adapter, uint32_t dxgi_format) {
   return aerogpu::d3d10_11::D3D11FormatSupportFlags(adapter, dxgi_format);
-}
-
-uint64_t AlignUpU64(uint64_t value, uint64_t alignment) {
-  if (alignment == 0) {
-    return value;
-  }
-  const uint64_t mask = alignment - 1;
-  return (value + mask) & ~mask;
-}
-
-uint64_t AlignDownU64(uint64_t value, uint64_t alignment) {
-  if (alignment == 0) {
-    return value;
-  }
-  const uint64_t mask = alignment - 1;
-  return value & ~mask;
 }
 
 bool compute_texture2d_subresource_layout(uint32_t aerogpu_format,
