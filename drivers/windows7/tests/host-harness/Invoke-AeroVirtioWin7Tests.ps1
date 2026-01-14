@@ -243,6 +243,7 @@ param(
   # For virtio-snd, this also requires the guest to report running in MSI-X mode via:
   #   AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|PASS|mode=msix|...
   [Parameter(Mandatory = $false)]
+  [Alias("RequireNetMsix")]
   [switch]$RequireVirtioNetMsix,
 
   [Parameter(Mandatory = $false)]
@@ -260,6 +261,7 @@ param(
   # (or env var AERO_VIRTIO_SELFTEST_REQUIRE_INPUT_MSIX=1). When provisioning via New-AeroWin7TestImage.ps1,
   # pass -RequireInputMsix.
   [Parameter(Mandatory = $false)]
+  [Alias("RequireInputMsix")]
   [switch]$RequireVirtioInputMsix,
 
   # If set, require the guest virtio-input-binding marker to PASS (ensures at least one virtio-input PCI device is
