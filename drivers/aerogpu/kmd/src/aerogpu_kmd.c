@@ -128,6 +128,10 @@ extern BOOLEAN NTAPI SeTokenIsAdmin(_In_ PACCESS_TOKEN Token);
 #define AEROGPU_LOG_RATELIMITED(counter, burst, fmt, ...) ((void)0)
 #endif
 
+#if DBG
+static volatile LONG g_PendingMetaHandleCapLogCount = 0;
+#endif
+
 /*
  * Optional CreateAllocation tracing.
  *
@@ -698,6 +702,37 @@ static __forceinline ULONGLONG AeroGpuSubmissionMetaTotalBytes(_In_opt_ const AE
     return (ULONGLONG)metaBytes + (ULONGLONG)Meta->AllocTableSizeBytes;
 }
 
+static __forceinline BOOLEAN AeroGpuMetaHandleAtCapacity(_Inout_ AEROGPU_ADAPTER* Adapter,
+                                                         _Out_opt_ ULONG* PendingCountOut,
+                                                         _Out_opt_ ULONGLONG* PendingBytesOut)
+{
+    if (PendingCountOut) {
+        *PendingCountOut = 0;
+    }
+    if (PendingBytesOut) {
+        *PendingBytesOut = 0;
+    }
+    if (!Adapter) {
+        return TRUE;
+    }
+
+    ULONG count = 0;
+    ULONGLONG bytes = 0;
+    KIRQL oldIrql;
+    KeAcquireSpinLock(&Adapter->MetaHandleLock, &oldIrql);
+    count = Adapter->PendingMetaHandleCount;
+    bytes = Adapter->PendingMetaHandleBytes;
+    KeReleaseSpinLock(&Adapter->MetaHandleLock, oldIrql);
+
+    if (PendingCountOut) {
+        *PendingCountOut = count;
+    }
+    if (PendingBytesOut) {
+        *PendingBytesOut = bytes;
+    }
+    return count >= AEROGPU_PENDING_META_HANDLES_MAX_COUNT;
+}
+
 static NTSTATUS AeroGpuMetaHandleStore(_Inout_ AEROGPU_ADAPTER* Adapter, _In_ AEROGPU_SUBMISSION_META* Meta, _Out_ ULONGLONG* HandleOut)
 {
     *HandleOut = 0;
@@ -719,7 +754,6 @@ static NTSTATUS AeroGpuMetaHandleStore(_Inout_ AEROGPU_ADAPTER* Adapter, _In_ AE
         KeReleaseSpinLock(&Adapter->MetaHandleLock, oldIrql);
         ExFreePoolWithTag(entry, AEROGPU_POOL_TAG);
 #if DBG
-        static volatile LONG g_PendingMetaHandleCapLogCount = 0;
         AEROGPU_LOG_RATELIMITED(g_PendingMetaHandleCapLogCount,
                                 8,
                                 "MetaHandleStore: pending meta handle cap hit (count=%lu max=%lu bytes=%I64u)",
@@ -7758,6 +7792,20 @@ static NTSTATUS APIENTRY AeroGpuDdiRender(_In_ const HANDLE hContext, _Inout_ DX
     }
 
     if (pRender->AllocationListSize && pRender->pAllocationList) {
+        ULONG pendingCount = 0;
+        ULONGLONG pendingBytes = 0;
+        if (AeroGpuMetaHandleAtCapacity(adapter, &pendingCount, &pendingBytes)) {
+#if DBG
+            AEROGPU_LOG_RATELIMITED(g_PendingMetaHandleCapLogCount,
+                                    8,
+                                    "DdiRender: pending meta handle cap hit (count=%lu max=%lu bytes=%I64u)",
+                                    pendingCount,
+                                    (ULONG)AEROGPU_PENDING_META_HANDLES_MAX_COUNT,
+                                    pendingBytes);
+#endif
+            return STATUS_INSUFFICIENT_RESOURCES;
+        }
+
         AEROGPU_SUBMISSION_META* meta = NULL;
         NTSTATUS st = AeroGpuBuildAndAttachMeta(adapter,
                                                 pRender->AllocationListSize,
@@ -7806,6 +7854,20 @@ static NTSTATUS APIENTRY AeroGpuDdiPresent(_In_ const HANDLE hContext, _Inout_ D
     }
 
     if (pPresent->AllocationListSize && pPresent->pAllocationList) {
+        ULONG pendingCount = 0;
+        ULONGLONG pendingBytes = 0;
+        if (AeroGpuMetaHandleAtCapacity(adapter, &pendingCount, &pendingBytes)) {
+#if DBG
+            AEROGPU_LOG_RATELIMITED(g_PendingMetaHandleCapLogCount,
+                                    8,
+                                    "DdiPresent: pending meta handle cap hit (count=%lu max=%lu bytes=%I64u)",
+                                    pendingCount,
+                                    (ULONG)AEROGPU_PENDING_META_HANDLES_MAX_COUNT,
+                                    pendingBytes);
+#endif
+            return STATUS_INSUFFICIENT_RESOURCES;
+        }
+
         AEROGPU_SUBMISSION_META* meta = NULL;
         NTSTATUS st = AeroGpuBuildAndAttachMeta(adapter,
                                                 pPresent->AllocationListSize,
