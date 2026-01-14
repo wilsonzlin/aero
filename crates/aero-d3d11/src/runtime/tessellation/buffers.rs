@@ -123,17 +123,8 @@ pub fn patch_count_total_from_element_count(
             "control_points must be <= 32",
         ));
     }
-    if element_count == 0 {
-        return Err(TessellationSizingError::InvalidParam(
-            "element_count must be > 0",
-        ));
-    }
     let cp = control_points as u32;
-    if element_count % cp != 0 {
-        return Err(TessellationSizingError::InvalidParam(
-            "element_count must be divisible by control_points",
-        ));
-    }
+    // D3D11-style primitive count computation: floor division (excess elements are ignored).
     Ok(element_count / cp)
 }
 
@@ -395,8 +386,9 @@ mod tests {
             4,
             "12 vertices with 3 control points => 4 patches"
         );
-        assert!(patch_count_total_from_element_count(11, 3).is_err());
-        assert!(patch_count_total_from_element_count(0, 3).is_err());
+        // D3D-style behavior uses floor division (extra elements are ignored).
+        assert_eq!(patch_count_total_from_element_count(11, 3).unwrap(), 3);
+        assert_eq!(patch_count_total_from_element_count(0, 3).unwrap(), 0);
         assert!(patch_count_total_from_element_count(3, 0).is_err());
         assert!(patch_count_total_from_element_count(3, 33).is_err());
     }

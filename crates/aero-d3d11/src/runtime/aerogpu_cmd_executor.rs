@@ -899,6 +899,25 @@ impl CmdPrimitiveTopology {
             _ => unreachable!(),
         }
     }
+
+    fn primitive_count_from_element_count(self, element_count: u32) -> u32 {
+        match self {
+            CmdPrimitiveTopology::PointList => element_count,
+            CmdPrimitiveTopology::LineList | CmdPrimitiveTopology::LineListAdj => element_count / 2,
+            CmdPrimitiveTopology::LineStrip | CmdPrimitiveTopology::LineStripAdj => {
+                element_count.saturating_sub(1)
+            }
+            CmdPrimitiveTopology::TriangleList | CmdPrimitiveTopology::TriangleListAdj => {
+                element_count / 3
+            }
+            CmdPrimitiveTopology::TriangleStrip
+            | CmdPrimitiveTopology::TriangleStripAdj
+            | CmdPrimitiveTopology::TriangleFan => element_count.saturating_sub(2),
+            CmdPrimitiveTopology::PatchList { control_points } => {
+                element_count / u32::from(control_points.max(1))
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -3022,19 +3041,10 @@ impl AerogpuD3d11Executor {
             OPCODE_DRAW_INDEXED => (read_u32_le(cmd_bytes, 8)?, read_u32_le(cmd_bytes, 12)?),
             _ => unreachable!(),
         };
-        let primitive_count: u32 = match self.state.primitive_topology {
-            CmdPrimitiveTopology::PointList => element_count,
-            CmdPrimitiveTopology::LineList | CmdPrimitiveTopology::LineListAdj => element_count / 2,
-            CmdPrimitiveTopology::LineStrip | CmdPrimitiveTopology::LineStripAdj => {
-                element_count.saturating_sub(1)
-            }
-            CmdPrimitiveTopology::TriangleList
-            | CmdPrimitiveTopology::TriangleListAdj
-            | CmdPrimitiveTopology::PatchList { .. } => element_count / 3,
-            CmdPrimitiveTopology::TriangleStrip
-            | CmdPrimitiveTopology::TriangleStripAdj
-            | CmdPrimitiveTopology::TriangleFan => element_count.saturating_sub(2),
-        };
+        let primitive_count: u32 = self
+            .state
+            .primitive_topology
+            .primitive_count_from_element_count(element_count);
 
         // Consume the draw packet now so errors include consistent cursor information.
         stream.iter.next().expect("peeked Some").map_err(|err| {
@@ -13934,6 +13944,26 @@ mod tests {
             panic!("AERO_REQUIRE_WEBGPU is enabled but {test_name} cannot run: {reason}");
         }
         eprintln!("skipping {test_name}: {reason}");
+    }
+
+    #[test]
+    fn patchlist_primitive_count_divides_by_control_points() {
+        assert_eq!(
+            CmdPrimitiveTopology::PatchList { control_points: 4 }
+                .primitive_count_from_element_count(12),
+            3
+        );
+        // Floor division: remaining vertices are ignored.
+        assert_eq!(
+            CmdPrimitiveTopology::PatchList { control_points: 4 }
+                .primitive_count_from_element_count(11),
+            2
+        );
+        assert_eq!(
+            CmdPrimitiveTopology::PatchList { control_points: 4 }
+                .primitive_count_from_element_count(0),
+            0
+        );
     }
 
     #[test]
