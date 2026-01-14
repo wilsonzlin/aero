@@ -2062,6 +2062,118 @@ async fn missing_chunked_chunk_returns_404_for_versioned_route_with_cors_and_cac
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn chunked_endpoints_do_not_serve_artifacts_for_unknown_image_ids() {
+    let dir = tempdir().expect("tempdir");
+    // Create a valid catalog with a single image. The chunked endpoints should enforce that the
+    // image ID exists in the catalog, even if chunked artifacts exist on disk.
+    tokio::fs::write(dir.path().join("disk.img"), b"raw image bytes")
+        .await
+        .expect("write disk.img");
+    let catalog = serde_json::json!({
+        "images": [
+            { "id": IMAGE_ID, "file": "disk.img", "name": "Disk", "public": true }
+        ]
+    })
+    .to_string();
+    tokio::fs::write(dir.path().join("manifest.json"), catalog)
+        .await
+        .expect("write manifest.json");
+
+    // Chunked artifacts for a different image ID.
+    let other_id = "other";
+    let chunk_root = dir.path().join("chunked").join(other_id);
+    tokio::fs::create_dir_all(chunk_root.join("chunks"))
+        .await
+        .expect("create chunk dirs");
+    tokio::fs::write(
+        chunk_root.join("manifest.json"),
+        serde_json::json!({
+            "schema": "aero.chunked-disk-image.v1",
+            "imageId": other_id,
+            "version": "v1",
+            "mimeType": "application/octet-stream",
+            "totalSize": 2,
+            "chunkSize": 2,
+            "chunkCount": 1,
+            "chunkIndexWidth": 8,
+            "chunks": [
+                { "size": 2 }
+            ]
+        })
+        .to_string(),
+    )
+    .await
+    .expect("write other manifest.json");
+    tokio::fs::write(chunk_root.join("chunks/00000000.bin"), b"ab")
+        .await
+        .expect("write other chunk0");
+
+    let store = Arc::new(LocalFsImageStore::new(dir.path()).with_require_manifest(true));
+    let metrics = Arc::new(Metrics::new());
+    let state = ImagesState::new(store, metrics);
+    let app = http::router_with_state(state);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/images/other/chunked/manifest.json")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        resp.headers()[header::CACHE_CONTROL].to_str().unwrap(),
+        "no-store, no-transform"
+    );
+    assert_eq!(
+        resp.headers()["access-control-allow-origin"]
+            .to_str()
+            .unwrap(),
+        "*"
+    );
+    assert_eq!(
+        resp.headers()["cross-origin-resource-policy"]
+            .to_str()
+            .unwrap(),
+        "same-site"
+    );
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    assert!(body.is_empty());
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/images/other/chunked/chunks/00000000.bin")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        resp.headers()[header::CACHE_CONTROL].to_str().unwrap(),
+        "no-store, no-transform"
+    );
+    assert_eq!(
+        resp.headers()["access-control-allow-origin"]
+            .to_str()
+            .unwrap(),
+        "*"
+    );
+    assert_eq!(
+        resp.headers()["cross-origin-resource-policy"]
+            .to_str()
+            .unwrap(),
+        "same-site"
+    );
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    assert!(body.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn overly_long_raw_chunked_version_segment_is_rejected_early() {
     let (app, _dir, _manifest) = setup_app(None).await;
 
