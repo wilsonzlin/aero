@@ -1,8 +1,8 @@
-//! Legacy storage subsystem helpers and controller models.
+//! Storage subsystem helpers and controller models.
 //!
-//! Note: The AHCI/IDE/NVMe controller implementations in this module are in the process of being
-//! migrated to the canonical controller crates (`aero-devices-storage` and `aero-devices-nvme`) per
-//! `docs/20-storage-trait-consolidation.md`.
+//! Note: The in-tree legacy IDE and NVMe implementations have been removed in favor of the
+//! canonical device crates (`aero-devices-storage` / `aero-devices-nvme`). AHCI/NVMe remain as thin
+//! compatibility wrappers where needed for the legacy emulator device harness.
 
 pub mod adapters;
 pub mod ahci;

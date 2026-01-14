@@ -54,8 +54,6 @@ See also:
   Defined in: [`crates/emulator/src/io/storage/disk.rs`](../crates/emulator/src/io/storage/disk.rs)
 - `emulator::io::storage::disk::DiskBackend` (legacy, sync, sector-addressed backend)\
   Defined in: [`crates/emulator/src/io/storage/disk.rs`](../crates/emulator/src/io/storage/disk.rs)
-- `emulator::io::storage::ide::atapi::IsoBackend` (legacy, read-only 2048-byte-sector CD/ISO backend for ATAPI)\
-  Defined in: [`crates/emulator/src/io/storage/ide/atapi.rs`](../crates/emulator/src/io/storage/ide/atapi.rs)
 
 ### Rust (asynchronous, browser-oriented)
 
