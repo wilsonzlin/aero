@@ -8,8 +8,9 @@ use std::collections::HashMap;
 
 use crate::software::{RenderTarget, Texture2D, Vec4};
 use crate::state::{
-    BlendFactor, BlendOp, BlendState, SamplerState, VertexDecl, VertexElementType,
+    BlendFactor, BlendOp, BlendState, SamplerState, VertexDecl, VertexElementType, VertexUsage,
 };
+use crate::vertex::{DeclUsage, StandardLocationMap, VertexLocationMap};
 
 use crate::sm3::decode::{ResultShift, SrcModifier, Swizzle, SwizzleComponent, WriteMask};
 use crate::sm3::ir::{
@@ -1005,13 +1006,36 @@ pub fn draw(target: &mut RenderTarget, params: DrawParams<'_>) {
     let vs_constants = prepare_constants(constants, vs);
     let ps_constants = prepare_constants(constants, ps);
 
+    // Vertex shader IR may canonicalize `v#` indices to WGSL `@location(n)` values based on DCL
+    // semantics. Mirror that mapping here so the software interpreter sees the same inputs as the
+    // GPU path.
+    let input_keys: Vec<u16> = vertex_decl
+        .elements
+        .iter()
+        .enumerate()
+        .map(|(slot, element)| {
+            if !vs.uses_semantic_locations {
+                return slot as u16;
+            }
+            let usage = match element.usage {
+                VertexUsage::Position => DeclUsage::Position,
+                VertexUsage::TexCoord => DeclUsage::TexCoord,
+                VertexUsage::Color => DeclUsage::Color,
+            };
+            let loc = StandardLocationMap
+                .location_for(usage, element.usage_index)
+                .unwrap_or(slot as u32);
+            u16::try_from(loc).unwrap_or(slot as u16)
+        })
+        .collect();
+
     let fetch_vertex = |vertex_index: u32| -> HashMap<u16, Vec4> {
         let base = vertex_index as usize * vertex_decl.stride as usize;
         let mut inputs = HashMap::<u16, Vec4>::new();
-        for (slot, element) in vertex_decl.elements.iter().enumerate() {
+        for (key, element) in input_keys.iter().copied().zip(&vertex_decl.elements) {
             let off = base + element.offset as usize;
             let bytes = &vertex_buffer[off..off + element.ty.byte_size()];
-            inputs.insert(slot as u16, read_vertex_element(bytes, element.ty));
+            inputs.insert(key, read_vertex_element(bytes, element.ty));
         }
         inputs
     };

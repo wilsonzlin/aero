@@ -621,11 +621,9 @@ mod tests {
 
                     let expects_ok = match (format, usage) {
                         (
-                            D3DFormat::A8R8G8B8 | D3DFormat::X8R8G8B8,
-                            TextureUsageKind::Sampled | TextureUsageKind::RenderTarget,
-                        ) => true,
-                        (
-                            D3DFormat::R5G6B5
+                            D3DFormat::A8R8G8B8
+                            | D3DFormat::X8R8G8B8
+                            | D3DFormat::R5G6B5
                             | D3DFormat::A1R5G5B5
                             | D3DFormat::X1R5G5B5
                             | D3DFormat::A4R4G4B4,
