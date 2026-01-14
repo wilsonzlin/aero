@@ -128,58 +128,115 @@ fn parse_el_torito_boot_info(iso_path: &Path) -> std::io::Result<ElToritoBootInf
     };
 
     // Boot catalog is a single ISO sector (2048 bytes).
+
+    // The El Torito boot catalog may span more than one ISO block (though typical images, including
+    // Windows install media, keep the bootable entries in the first block). To match the firmware
+    // parser's behavior, read a small bounded window and scan for the first bootable BIOS
+    // no-emulation entry.
+    const MAX_CATALOG_BLOCKS: u64 = 4;
+    let meta_len = file.metadata()?.len();
+    let total_blocks = meta_len / ISO_SECTOR_SIZE;
+    let available_blocks = total_blocks.saturating_sub(u64::from(boot_catalog_lba));
+    let blocks_to_read = available_blocks.min(MAX_CATALOG_BLOCKS).max(1);
+
+    let mut catalog = vec![0u8; (blocks_to_read * ISO_SECTOR_SIZE) as usize];
     read_exact_at(
         &mut file,
         u64::from(boot_catalog_lba) * ISO_SECTOR_SIZE,
-        &mut buf,
+        &mut catalog,
     )?;
 
-    // Validation Entry (first 32 bytes).
-    if buf[0] != 0x01 {
+    fn validate_validation_entry(entry: &[u8]) -> std::io::Result<()> {
+        if entry.len() < 32 || entry[0] != 0x01 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "El Torito validation entry header id mismatch",
+            ));
+        }
+        if entry[30] != 0x55 || entry[31] != 0xAA {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "El Torito validation entry key bytes mismatch",
+            ));
+        }
+
+        // Checksum over 16-bit words (little-endian) must sum to 0.
+        let mut sum: u16 = 0;
+        for chunk in entry[0..32].chunks_exact(2) {
+            sum = sum.wrapping_add(u16::from_le_bytes([chunk[0], chunk[1]]));
+        }
+        if sum != 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "El Torito validation entry checksum mismatch",
+            ));
+        }
+        Ok(())
+    }
+
+    if catalog.len() < 64 {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
-            "El Torito validation entry header id mismatch",
-        ));
-    }
-    if buf[30] != 0x55 || buf[31] != 0xAA {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "El Torito validation entry key bytes mismatch",
+            "El Torito boot catalog too small",
         ));
     }
 
-    // Initial/Default Entry (next 32 bytes).
-    let entry = &buf[0x20..0x40];
-    if entry[0] != 0x88 {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "El Torito initial entry is not marked bootable",
-        ));
+    let validation = &catalog[0..32];
+    validate_validation_entry(validation)?;
+
+    // The initial/default entry uses the platform id from the validation entry; section headers can
+    // override this for subsequent entries.
+    let mut current_platform_id = validation[1];
+
+    for entry in catalog.chunks_exact(32).skip(1) {
+        match entry[0] {
+            // Section header.
+            0x90 | 0x91 => {
+                current_platform_id = entry[1];
+            }
+            // Boot entry.
+            0x00 | 0x88 => {
+                // BIOS/x86 platform id is 0.
+                if current_platform_id != 0 {
+                    continue;
+                }
+                // Require bootable + no-emulation.
+                if entry[0] != 0x88 || entry[1] != 0 {
+                    continue;
+                }
+
+                let load_segment = u16::from_le_bytes([entry[2], entry[3]]);
+                let load_segment = if load_segment == 0 {
+                    EL_TORITO_DEFAULT_LOAD_SEGMENT
+                } else {
+                    load_segment
+                };
+
+                let boot_image_sector_count_512 = u16::from_le_bytes([entry[6], entry[7]]);
+                let boot_image_sector_count_512 = if boot_image_sector_count_512 == 0 {
+                    // Per El Torito, the default load size when the catalog field is zero is 4
+                    // 512-byte virtual sectors (2048 bytes). Windows install media commonly relies
+                    // on this default for `etfsboot.com`.
+                    EL_TORITO_DEFAULT_SECTOR_COUNT_512
+                } else {
+                    boot_image_sector_count_512
+                };
+                let boot_image_lba = u32::from_le_bytes([entry[8], entry[9], entry[10], entry[11]]);
+
+                return Ok(ElToritoBootInfo {
+                    boot_image_lba,
+                    boot_image_sector_count_512,
+                    load_segment,
+                });
+            }
+            _ => {}
+        }
     }
 
-    let load_segment = u16::from_le_bytes([entry[2], entry[3]]);
-    let load_segment = if load_segment == 0 {
-        EL_TORITO_DEFAULT_LOAD_SEGMENT
-    } else {
-        load_segment
-    };
-
-    let boot_image_sector_count_512 = u16::from_le_bytes([entry[6], entry[7]]);
-    let boot_image_sector_count_512 = if boot_image_sector_count_512 == 0 {
-        // Per El Torito, the default load size when the catalog field is zero is 4 512-byte
-        // virtual sectors (2048 bytes). Windows install media commonly relies on this default for
-        // `etfsboot.com`.
-        EL_TORITO_DEFAULT_SECTOR_COUNT_512
-    } else {
-        boot_image_sector_count_512
-    };
-    let boot_image_lba = u32::from_le_bytes([entry[8], entry[9], entry[10], entry[11]]);
-
-    Ok(ElToritoBootInfo {
-        boot_image_lba,
-        boot_image_sector_count_512,
-        load_segment,
-    })
+    Err(std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        "no bootable BIOS no-emulation entry found in El Torito catalog",
+    ))
 }
 
 fn resolve_win7_iso_path() -> Option<PathBuf> {
