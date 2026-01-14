@@ -488,3 +488,136 @@ fn virtio_input_inject_key_syncs_legacy_intx_into_pic() {
     m.inject_virtio_key(KEY_A, true);
     assert_eq!(interrupts.borrow().get_pending(), Some(expected_vector));
 }
+
+#[test]
+fn virtio_input_eventq_dma_is_gated_on_pci_bus_master_enable() {
+    let mut m = new_test_machine();
+    enable_a20(&mut m);
+
+    let bdf = profile::VIRTIO_INPUT_KEYBOARD.bdf;
+
+    // Enable PCI memory decoding but keep Bus Master Enable (BME) clear initially.
+    let pci_cfg = m
+        .pci_config_ports()
+        .expect("pci config ports should exist when pc platform is enabled");
+    let cmd = {
+        let mut pci_cfg = pci_cfg.borrow_mut();
+        pci_cfg.bus_mut().read_config(bdf, 0x04, 2) as u16
+    };
+    set_pci_command(&m, bdf, (cmd | (1 << 1)) & !(1 << 2));
+
+    let bar0_base = read_bar0_base(&m, bdf);
+    assert_ne!(bar0_base, 0);
+
+    // Canonical virtio capability layout for Aero profiles (BAR0 offsets).
+    const COMMON: u64 = profile::VIRTIO_COMMON_CFG_BAR0_OFFSET as u64;
+    const NOTIFY: u64 = profile::VIRTIO_NOTIFY_CFG_BAR0_OFFSET as u64;
+
+    // Minimal feature negotiation: accept all device features and reach DRIVER_OK.
+    m.write_physical_u8(bar0_base + COMMON + 0x14, VIRTIO_STATUS_ACKNOWLEDGE);
+    m.write_physical_u8(
+        bar0_base + COMMON + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
+    );
+    m.write_physical_u32(bar0_base + COMMON, 0);
+    let f0 = m.read_physical_u32(bar0_base + COMMON + 0x04);
+    m.write_physical_u32(bar0_base + COMMON + 0x08, 0);
+    m.write_physical_u32(bar0_base + COMMON + 0x0c, f0);
+    m.write_physical_u32(bar0_base + COMMON, 1);
+    let f1 = m.read_physical_u32(bar0_base + COMMON + 0x04);
+    m.write_physical_u32(bar0_base + COMMON + 0x08, 1);
+    m.write_physical_u32(bar0_base + COMMON + 0x0c, f1);
+    m.write_physical_u8(
+        bar0_base + COMMON + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK,
+    );
+    m.write_physical_u8(
+        bar0_base + COMMON + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE
+            | VIRTIO_STATUS_DRIVER
+            | VIRTIO_STATUS_FEATURES_OK
+            | VIRTIO_STATUS_DRIVER_OK,
+    );
+
+    // Configure event queue 0 with 4 writable event buffers so a key press+release (EV_KEY+EV_SYN x2)
+    // can be delivered once DMA is permitted.
+    let desc = 0x00b0_0000;
+    let avail = 0x00b1_0000;
+    let used = 0x00b2_0000;
+    let event0 = 0x00b3_0000;
+    let event1 = 0x00b3_0010;
+    let event2 = 0x00b3_0020;
+    let event3 = 0x00b3_0030;
+
+    let zero_page = vec![0u8; 0x1000];
+    m.write_physical(desc, &zero_page);
+    m.write_physical(avail, &zero_page);
+    m.write_physical(used, &zero_page);
+    for buf in [event0, event1, event2, event3] {
+        m.write_physical(buf, &[0u8; 8]);
+    }
+
+    // Select queue 0 and program ring addresses.
+    m.write_physical_u16(bar0_base + COMMON + 0x16, 0);
+    m.write_physical_u64(bar0_base + COMMON + 0x20, desc);
+    m.write_physical_u64(bar0_base + COMMON + 0x28, avail);
+    m.write_physical_u64(bar0_base + COMMON + 0x30, used);
+    m.write_physical_u16(bar0_base + COMMON + 0x1c, 1);
+
+    write_desc(&mut m, desc, 0, event0, 8, VIRTQ_DESC_F_WRITE);
+    write_desc(&mut m, desc, 1, event1, 8, VIRTQ_DESC_F_WRITE);
+    write_desc(&mut m, desc, 2, event2, 8, VIRTQ_DESC_F_WRITE);
+    write_desc(&mut m, desc, 3, event3, 8, VIRTQ_DESC_F_WRITE);
+
+    // Post all descriptor chains.
+    m.write_physical_u16(avail, 0);
+    m.write_physical_u16(avail + 2, 4);
+    m.write_physical_u16(avail + 4, 0);
+    m.write_physical_u16(avail + 6, 1);
+    m.write_physical_u16(avail + 8, 2);
+    m.write_physical_u16(avail + 10, 3);
+    m.write_physical_u16(used, 0);
+    m.write_physical_u16(used + 2, 0);
+
+    // Notify queue 0, but DMA should be gated while BME=0.
+    m.write_physical_u16(bar0_base + NOTIFY, 0);
+    m.process_virtio_input();
+    assert_eq!(
+        m.read_physical_u16(used + 2),
+        0,
+        "expected no DMA while PCI BME=0"
+    );
+
+    // Host injects key press + release while BME is disabled. The events should remain buffered in
+    // the device model without touching guest memory.
+    m.inject_virtio_key(KEY_A, true);
+    m.inject_virtio_key(KEY_A, false);
+
+    assert_eq!(m.read_physical_u16(used + 2), 0);
+    assert_eq!(m.read_physical_bytes(event0, 8), &[0u8; 8]);
+    assert_eq!(m.read_physical_bytes(event2, 8), &[0u8; 8]);
+
+    let virtio_kb = m.virtio_input_keyboard().expect("virtio-input enabled");
+    let pending = virtio_kb
+        .borrow_mut()
+        .device_mut::<VirtioInput>()
+        .unwrap()
+        .pending_events_len();
+    assert_eq!(pending, 4, "expected 4 queued events (press+release)");
+
+    // Now enable Bus Master Enable and allow the device to DMA. The pending events should be
+    // delivered immediately into the already-posted buffers.
+    set_pci_command(&m, bdf, cmd | (1 << 1) | (1 << 2));
+    m.process_virtio_input();
+
+    assert_eq!(m.read_physical_u16(used + 2), 4);
+    assert_eq!(m.read_physical_bytes(event0, 8), &[1, 0, 30, 0, 1, 0, 0, 0]);
+    assert_eq!(m.read_physical_bytes(event2, 8), &[1, 0, 30, 0, 0, 0, 0, 0]);
+
+    let pending = virtio_kb
+        .borrow_mut()
+        .device_mut::<VirtioInput>()
+        .unwrap()
+        .pending_events_len();
+    assert_eq!(pending, 0, "expected all pending events to be delivered once DMA is enabled");
+}
