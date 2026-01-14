@@ -359,9 +359,14 @@ for /r "%MEDIA%\AERO\drivers" %%F in (*.inf) do (
 
     $matches = @()
     if ($isRelative) {
-      $matches = $infIndex | Where-Object { $_.RelPathWinNoLeaf -ieq $entryWin -or $_.RelPathWin -ieq $entryWin }
+      # Wrap in @() so $matches is always an array (not $null) under strict mode when there are no results.
+      $matches = @(
+        $infIndex | Where-Object { $_.RelPathWinNoLeaf -ieq $entryWin -or $_.RelPathWin -ieq $entryWin }
+      )
     } else {
-      $matches = $infIndex | Where-Object { $_.Name -ieq $entryWin }
+      $matches = @(
+        $infIndex | Where-Object { $_.Name -ieq $entryWin }
+      )
     }
 
     if ($matches.Count -eq 0) {
@@ -419,7 +424,10 @@ for /r "%MEDIA%\AERO\drivers" %%F in (*.inf) do (
   Write-Host "Will install INF(s): $resolvedListStr"
   $readmeDriverInstallDesc = "Install allowlisted driver .inf files via pnputil ($allowListSource): $resolvedListStr"
 
-  $ignored = $infIndex | Where-Object { -not $resolvedRelPathSet.ContainsKey($_.RelPathWin.ToLowerInvariant()) }
+  # Wrap in @() so $ignored is always an array (not $null) under strict mode when there are no results.
+  $ignored = @(
+    $infIndex | Where-Object { -not $resolvedRelPathSet.ContainsKey($_.RelPathWin.ToLowerInvariant()) }
+  )
   if ($ignored.Count -gt 0) {
     $ignoredStr = ($ignored | Select-Object -ExpandProperty RelPathWin | Sort-Object) -join ", "
     Write-Warning "The following INF(s) are present under -DriversDir but will NOT be installed unless allowlisted: $ignoredStr"
