@@ -257,8 +257,10 @@ cargo xtask input --rust-only --with-wasm
 wasm-pack test --node crates/aero-wasm --test webusb_uhci_bridge --locked
 wasm-pack test --node crates/aero-wasm --test xhci_webusb_bridge --locked
 wasm-pack test --node crates/aero-wasm --test xhci_webusb_snapshot --locked
+wasm-pack test --node crates/aero-wasm --test usb_snapshot --locked
 wasm-pack test --node crates/aero-wasm --test machine_input_injection_wasm --locked
 wasm-pack test --node crates/aero-wasm --test usb_hid_bridge_mouse_reports_wasm --locked
+wasm-pack test --node crates/aero-wasm --test usb_hid_bridge_consumer_reports_wasm --locked
 wasm-pack test --node crates/aero-wasm --test webhid_interrupt_out_policy_wasm --locked
 wasm-pack test --node crates/aero-wasm --test webhid_report_descriptor_synthesis_wasm --locked
 
@@ -283,14 +285,14 @@ cargo xtask input --e2e
 # If you're running in a constrained sandbox, consider using safe-run:
 bash ./scripts/safe-run.sh cargo xtask input
 bash ./scripts/safe-run.sh cargo xtask input --rust-only
-bash ./scripts/safe-run.sh wasm-pack test --node crates/aero-wasm --test webusb_uhci_bridge --test xhci_webusb_bridge --test xhci_webusb_snapshot --test machine_input_injection_wasm --test usb_hid_bridge_mouse_reports_wasm --test webhid_interrupt_out_policy_wasm --test webhid_report_descriptor_synthesis_wasm --locked
+bash ./scripts/safe-run.sh wasm-pack test --node crates/aero-wasm --test webusb_uhci_bridge --test xhci_webusb_bridge --test xhci_webusb_snapshot --test usb_snapshot --test machine_input_injection_wasm --test usb_hid_bridge_mouse_reports_wasm --test usb_hid_bridge_consumer_reports_wasm --test webhid_interrupt_out_policy_wasm --test webhid_report_descriptor_synthesis_wasm --locked
 
 # Note: `safe-run.sh` defaults to a 10-minute timeout (`AERO_TIMEOUT=600`). On a cold build,
 # `cargo xtask input` can exceed this, and `wasm-pack test` can be substantially slower (it may
 # rebuild many targets even if you pass `--test ...`). Bump the timeout if you see a timeout kill:
 AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo xtask input --rust-only
 # For wasm-pack, 20 minutes is sometimes still not enough on a very cold build.
-AERO_TIMEOUT=2400 bash ./scripts/safe-run.sh wasm-pack test --node crates/aero-wasm --test webusb_uhci_bridge --test xhci_webusb_bridge --test xhci_webusb_snapshot --test machine_input_injection_wasm --test usb_hid_bridge_mouse_reports_wasm --test webhid_interrupt_out_policy_wasm --test webhid_report_descriptor_synthesis_wasm --locked
+AERO_TIMEOUT=2400 bash ./scripts/safe-run.sh wasm-pack test --node crates/aero-wasm --test webusb_uhci_bridge --test xhci_webusb_bridge --test xhci_webusb_snapshot --test usb_snapshot --test machine_input_injection_wasm --test usb_hid_bridge_mouse_reports_wasm --test usb_hid_bridge_consumer_reports_wasm --test webhid_interrupt_out_policy_wasm --test webhid_report_descriptor_synthesis_wasm --locked
 
 # You can also limit web wasm-pack builds to the core runtime package (useful for Playwright E2E):
 AERO_WASM_PACKAGES=core npm -w web run wasm:build

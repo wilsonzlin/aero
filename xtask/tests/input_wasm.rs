@@ -132,6 +132,10 @@ fn said_runs_wasm_pack_without_node_modules() -> Result<(), Box<dyn std::error::
         "expected wasm-pack to include xhci_webusb_snapshot, argv={wasm_pack:?}"
     );
     assert!(
+        wasm_pack.iter().any(|arg| arg == "usb_snapshot"),
+        "expected wasm-pack to include usb_snapshot, argv={wasm_pack:?}"
+    );
+    assert!(
         wasm_pack
             .iter()
             .any(|arg| arg == "machine_input_injection_wasm"),
@@ -142,6 +146,12 @@ fn said_runs_wasm_pack_without_node_modules() -> Result<(), Box<dyn std::error::
             .iter()
             .any(|arg| arg == "usb_hid_bridge_mouse_reports_wasm"),
         "expected wasm-pack to include usb_hid_bridge_mouse_reports_wasm, argv={wasm_pack:?}"
+    );
+    assert!(
+        wasm_pack
+            .iter()
+            .any(|arg| arg == "usb_hid_bridge_consumer_reports_wasm"),
+        "expected wasm-pack to include usb_hid_bridge_consumer_reports_wasm, argv={wasm_pack:?}"
     );
     assert!(
         wasm_pack
