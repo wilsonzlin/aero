@@ -1332,6 +1332,32 @@ export class I8042Controller implements PortIoHandler {
     return ((packed >>> 8) & 0x03) as OutputSource;
   }
 
+  #pullKeyboardOutput(): boolean {
+    if (!this.#keyboardPortEnabled()) return false;
+    const kb = this.#keyboard.popOutputByte();
+    if (kb === null) return false;
+    if (this.#translationEnabled()) {
+      const out = this.#translator.feed(kb);
+      if (out !== null && this.#outQueue.length < MAX_CONTROLLER_OUTPUT_QUEUE) {
+        this.#outQueue.push(this.#packOut(out, OUTPUT_SOURCE_KEYBOARD));
+      }
+    } else if (this.#outQueue.length < MAX_CONTROLLER_OUTPUT_QUEUE) {
+      this.#outQueue.push(this.#packOut(kb, OUTPUT_SOURCE_KEYBOARD));
+    }
+    // Return true if we consumed a device byte, even if translation produced no output (e.g. F0 prefix).
+    return true;
+  }
+
+  #pullMouseOutput(): boolean {
+    if (!this.#mousePortEnabled()) return false;
+    const ms = this.#mouse.popOutputByte();
+    if (ms === null) return false;
+    if (this.#outQueue.length < MAX_CONTROLLER_OUTPUT_QUEUE) {
+      this.#outQueue.push(this.#packOut(ms, OUTPUT_SOURCE_MOUSE));
+    }
+    return true;
+  }
+
   #enqueue(value: number, source: OutputSource): void {
     if (this.#outQueue.length >= MAX_CONTROLLER_OUTPUT_QUEUE) return;
     this.#outQueue.push(this.#packOut(value, source));
@@ -1346,32 +1372,6 @@ export class I8042Controller implements PortIoHandler {
     // - keyboard and mouse bytes can interleave fairly when both devices have pending output.
     if (this.#outQueue.length !== 0) return;
 
-    const pullKeyboard = (): boolean => {
-      if (!this.#keyboardPortEnabled()) return false;
-      const kb = this.#keyboard.popOutputByte();
-      if (kb === null) return false;
-      if (this.#translationEnabled()) {
-        const out = this.#translator.feed(kb);
-        if (out !== null && this.#outQueue.length < MAX_CONTROLLER_OUTPUT_QUEUE) {
-          this.#outQueue.push(this.#packOut(out, OUTPUT_SOURCE_KEYBOARD));
-        }
-      } else if (this.#outQueue.length < MAX_CONTROLLER_OUTPUT_QUEUE) {
-        this.#outQueue.push(this.#packOut(kb, OUTPUT_SOURCE_KEYBOARD));
-      }
-      // Return true if we consumed a device byte, even if translation produced no output (e.g. F0 prefix).
-      return true;
-    };
-
-    const pullMouse = (): boolean => {
-      if (!this.#mousePortEnabled()) return false;
-      const ms = this.#mouse.popOutputByte();
-      if (ms === null) return false;
-      if (this.#outQueue.length < MAX_CONTROLLER_OUTPUT_QUEUE) {
-        this.#outQueue.push(this.#packOut(ms, OUTPUT_SOURCE_MOUSE));
-      }
-      return true;
-    };
-
     // Keep pulling until we have at least one output byte available, or both device queues are empty.
     // When both devices have output, pull 1 byte from each (order depends on `#preferMouse`) so
     // bytes can interleave (mirroring Rust's `prefer_mouse` behavior).
@@ -1379,11 +1379,11 @@ export class I8042Controller implements PortIoHandler {
       const takeMouseFirst = this.#preferMouse;
       let progressed = false;
       if (takeMouseFirst) {
-        progressed = pullMouse() || progressed;
-        progressed = pullKeyboard() || progressed;
+        if (this.#pullMouseOutput()) progressed = true;
+        if (this.#pullKeyboardOutput()) progressed = true;
       } else {
-        progressed = pullKeyboard() || progressed;
-        progressed = pullMouse() || progressed;
+        if (this.#pullKeyboardOutput()) progressed = true;
+        if (this.#pullMouseOutput()) progressed = true;
       }
       if (!progressed) break;
     }
