@@ -24,6 +24,7 @@ pub const REG_CRCR_LO: u64 = (CAPLENGTH_BYTES as u64) + (op::CRCR as u64);
 pub const REG_CRCR_HI: u64 = REG_CRCR_LO + 4;
 pub const REG_DCBAAP_LO: u64 = (CAPLENGTH_BYTES as u64) + (op::DCBAAP as u64);
 pub const REG_DCBAAP_HI: u64 = REG_DCBAAP_LO + 4;
+/// Configure register (CONFIG), 32-bit.
 pub const REG_CONFIG: u64 = (CAPLENGTH_BYTES as u64) + (op::CONFIG as u64);
 
 /// Runtime register absolute offsets (subset).

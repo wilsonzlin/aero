@@ -673,8 +673,18 @@ impl XhciController {
             return CommandCompletion::failure(CommandCompletionCode::ContextStateError);
         }
 
+        // xHCI requires software to set CONFIG.MaxSlotsEn. For bring-up convenience we treat a
+        // zero value as "use the architectural maximum" (32 slots).
+        let mut max_slots_en = (self.config & 0xff) as usize;
+        if max_slots_en == 0 {
+            max_slots_en = usize::from(regs::MAX_SLOTS);
+        }
+        max_slots_en = max_slots_en
+            .min(usize::from(regs::MAX_SLOTS))
+            .min(self.slots.len().saturating_sub(1));
+
         let slot_id = match (1u8..)
-            .take(self.slots.len().saturating_sub(1))
+            .take(max_slots_en)
             .find(|&id| !self.slots[usize::from(id)].enabled)
         {
             Some(id) => id,
@@ -744,6 +754,9 @@ impl XhciController {
                     return true;
                 }
                 RingPoll::Err(_) => {
+                    // Malformed guest ring pointers/TRBs should surface as a sticky host controller
+                    // error so we stop processing further commands.
+                    self.host_controller_error = true;
                     self.command_ring = Some(cursor);
                     return true;
                 }
@@ -1128,6 +1141,10 @@ impl XhciController {
         cmd_paddr: u64,
         trb: Trb,
     ) {
+        // Slot Context dword3 bits 31:27 contain xHC-owned Slot State fields. Preserve them when the
+        // guest requests a Slot Context update.
+        const SLOT_STATE_MASK_DWORD3: u32 = 0xF800_0000;
+
         let slot_id = trb.slot_id();
         let slot_idx = usize::from(slot_id);
 
@@ -1183,14 +1200,24 @@ impl XhciController {
         };
 
         if icc.add_context(0) {
-            let slot_ctx = SlotContext::read_from(mem, input_ctx_ptr + CONTEXT_SIZE as u64);
+            let mut slot_ctx = SlotContext::read_from(mem, input_ctx_ptr + CONTEXT_SIZE as u64);
+            let out_slot = SlotContext::read_from(mem, dev_ctx_ptr);
+            let merged_dw3 = (slot_ctx.dword(3) & !SLOT_STATE_MASK_DWORD3)
+                | (out_slot.dword(3) & SLOT_STATE_MASK_DWORD3);
+            slot_ctx.set_dword(3, merged_dw3);
             slot_ctx.write_to(mem, dev_ctx_ptr);
             let slot_state = &mut self.slots[slot_idx];
             slot_state.slot_context = slot_ctx;
             slot_state.device_context_ptr = dev_ctx_ptr;
         }
 
-        let ep0_ctx = EndpointContext::read_from(mem, input_ctx_ptr + (2 * CONTEXT_SIZE) as u64);
+        // MVP: update the EP0 interval/max-packet-size and TR Dequeue Pointer fields. Preserve
+        // endpoint state and other xHC-owned fields in the output context.
+        let in_ep0 = EndpointContext::read_from(mem, input_ctx_ptr + (2 * CONTEXT_SIZE) as u64);
+        let mut ep0_ctx = EndpointContext::read_from(mem, dev_ctx_ptr + CONTEXT_SIZE as u64);
+        ep0_ctx.set_interval(in_ep0.interval());
+        ep0_ctx.set_max_packet_size(in_ep0.max_packet_size());
+        ep0_ctx.set_tr_dequeue_pointer_raw(in_ep0.tr_dequeue_pointer_raw());
         ep0_ctx.write_to(mem, dev_ctx_ptr + CONTEXT_SIZE as u64);
 
         let slot_state = &mut self.slots[slot_idx];
@@ -1198,6 +1225,9 @@ impl XhciController {
         slot_state.transfer_rings[0] =
             Some(RingCursor::new(ep0_ctx.tr_dequeue_pointer(), ep0_ctx.dcs()));
         slot_state.device_context_ptr = dev_ctx_ptr;
+        if let Some(state) = self.ep0_control_td.get_mut(slot_idx) {
+            *state = ControlTdState::default();
+        }
 
         self.queue_command_completion_event(cmd_paddr, CompletionCode::Success, slot_id);
     }
@@ -1661,6 +1691,10 @@ impl XhciController {
 
     fn maybe_process_command_ring(&mut self, mem: &mut dyn MemoryBus) {
         if !self.cmd_kick {
+            return;
+        }
+        if self.host_controller_error {
+            self.cmd_kick = false;
             return;
         }
         if (self.usbcmd & regs::USBCMD_RUN) == 0 {

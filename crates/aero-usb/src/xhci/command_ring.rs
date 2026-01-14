@@ -1307,7 +1307,19 @@ impl CommandRingProcessor {
         }
 
         trb.set_cycle(self.event_ring.cycle_state);
-        self.write_trb(mem, addr, trb).map_err(|_| ())?;
+        // Defensive: verify that the event write actually landed in guest memory. Some `MemoryBus`
+        // implementations treat out-of-range writes as no-ops; failing to detect that would cause
+        // the guest to miss critical events without the controller entering a fatal error state.
+        let bytes = trb.to_bytes();
+        if !self.check_range(addr, TRB_LEN as u64) {
+            return Err(());
+        }
+        mem.write_physical(addr, &bytes);
+        let mut verify = [0u8; TRB_LEN];
+        mem.read_physical(addr, &mut verify);
+        if verify != bytes {
+            return Err(());
+        }
         self.event_ring.advance();
         Ok(())
     }
@@ -1326,15 +1338,13 @@ impl CommandRingProcessor {
         }
         let mut bytes = [0u8; TRB_LEN];
         mem.read_physical(addr, &mut bytes);
-        Ok(Trb::from_bytes(bytes))
-    }
-
-    fn write_trb(&self, mem: &mut dyn MemoryBus, addr: u64, trb: Trb) -> Result<(), ()> {
-        if !self.check_range(addr, TRB_LEN as u64) {
+        // Treat an all-ones fetch as an invalid DMA read (commonly returned for unmapped memory).
+        // This avoids "successfully" processing garbage TRBs when the guest misprograms ring
+        // pointers or when DMA is unavailable.
+        if bytes.iter().all(|&b| b == 0xFF) {
             return Err(());
         }
-        mem.write_physical(addr, &trb.to_bytes());
-        Ok(())
+        Ok(Trb::from_bytes(bytes))
     }
 
     fn read_u32(&self, mem: &mut dyn MemoryBus, addr: u64) -> Result<u32, ()> {

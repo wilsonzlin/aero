@@ -1018,3 +1018,148 @@ fn controller_snapshot_roundtrip_is_deterministic() {
     let snapshot3 = restored.save_state();
     assert_eq!(snapshot1, snapshot3);
 }
+
+#[test]
+fn controller_mmio_doorbell_processes_command_ring_and_posts_events() {
+    use super::interrupter::{IMAN_IE, IMAN_IP};
+    use super::regs;
+
+    let mut mem = TestMem::new(0x20_000);
+
+    // All xHCI context pointers are 64-byte aligned in our model.
+    let dcbaa = 0x1000u64;
+    let dev_ctx = 0x2000u64;
+    let input_ctx = 0x3000u64;
+    let cmd_ring = 0x4000u64;
+    let event_ring = 0x5000u64;
+    let erst = 0x6000u64;
+
+    // Device context EP0 starts with MPS=8.
+    mem.write_u32(dev_ctx + 0x20 + 4, 8u32 << 16);
+
+    // Input control context: Drop=0, Add = Slot + EP0.
+    mem.write_u32(input_ctx + 0x00, 0);
+    mem.write_u32(input_ctx + 0x04, (1 << 0) | (1 << 1));
+
+    // Input EP0 context requests MPS=64 and Interval=5.
+    mem.write_u32(input_ctx + 0x40 + 0, 5u32 << 16);
+    mem.write_u32(input_ctx + 0x40 + 4, 64u32 << 16);
+    mem.write_u32(input_ctx + 0x40 + 8, 0xdead_bee0);
+    mem.write_u32(input_ctx + 0x40 + 12, 0);
+
+    // Command ring:
+    //  - TRB0: Enable Slot
+    //  - TRB1: cycle=0 sentinel (ring empty after TRB0)
+    {
+        let mut trb0 = Trb::new(0, 0, 0);
+        trb0.set_trb_type(TrbType::EnableSlotCommand);
+        trb0.set_cycle(true);
+        mem.write_trb(cmd_ring + 0 * 16, trb0);
+    }
+    {
+        let mut stop = Trb::new(0, 0, 0);
+        stop.set_trb_type(TrbType::NoOpCommand);
+        stop.set_cycle(false);
+        mem.write_trb(cmd_ring + 1 * 16, stop);
+    }
+
+    // Event Ring Segment Table (ERST) with a single segment pointing at `event_ring`.
+    mem.write_u64(erst + 0, event_ring);
+    mem.write_u32(erst + 8, 16); // segment size in TRBs
+    mem.write_u32(erst + 12, 0);
+
+    let mut ctrl = super::XhciController::new();
+
+    // Program controller state via MMIO.
+    ctrl.mmio_write(&mut mem, regs::REG_DCBAAP_LO, 4, dcbaa as u32);
+    ctrl.mmio_write(&mut mem, regs::REG_DCBAAP_HI, 4, (dcbaa >> 32) as u32);
+    ctrl.mmio_write(&mut mem, regs::REG_CONFIG, 4, 8); // MaxSlotsEn
+
+    // Command ring base + RCS=1.
+    ctrl.mmio_write(&mut mem, regs::REG_CRCR_LO, 4, (cmd_ring as u32) | 1);
+    ctrl.mmio_write(&mut mem, regs::REG_CRCR_HI, 4, (cmd_ring >> 32) as u32);
+
+    // Program interrupter 0 event ring.
+    ctrl.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
+    ctrl.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 1);
+    ctrl.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, erst as u32);
+    ctrl.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_HI, 4, (erst >> 32) as u32);
+    ctrl.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, event_ring as u32);
+    ctrl.mmio_write(&mut mem, regs::REG_INTR0_ERDP_HI, 4, (event_ring >> 32) as u32);
+
+    // Start controller and clear the synthetic RUN-transition IRQ.
+    ctrl.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
+    ctrl.mmio_write(&mut mem, regs::REG_USBSTS, 4, regs::USBSTS_EINT);
+    assert!(!ctrl.irq_level(), "IRQ should be clear before ringing doorbell");
+
+    // Ring the command doorbell (DB0).
+    ctrl.mmio_write(&mut mem, regs::DBOFF_VALUE as u64, 4, 0);
+
+    // Enable Slot -> one completion event.
+    let ev0 = mem.read_trb(event_ring + 0 * 16);
+    assert_eq!(ev0.trb_type(), TrbType::CommandCompletionEvent);
+    assert_eq!(event_completion_code(ev0), CompletionCode::Success.as_u8());
+    assert_eq!(ev0.pointer(), cmd_ring + 0 * 16);
+    assert_eq!(ev0.slot_id(), 1);
+
+    // Interrupt should be asserted for the completion event.
+    assert!(ctrl.irq_level());
+    assert_ne!(ctrl.mmio_read(&mut mem, regs::REG_USBSTS, 4) & regs::USBSTS_EINT, 0);
+
+    // Clear interrupt pending state so we can observe a second interrupt.
+    ctrl.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IP | IMAN_IE);
+    ctrl.mmio_write(&mut mem, regs::REG_USBSTS, 4, regs::USBSTS_EINT);
+    assert!(!ctrl.irq_level());
+
+    // Enable Slot clears DCBAA[1] to 0; install the device context pointer after it completes.
+    mem.write_u64(dcbaa + 8, dev_ctx);
+
+    // Command ring continuation at TRB1/TRB2:
+    //  - TRB1: No-Op Command
+    //  - TRB2: Evaluate Context (slot 1, input_ctx)
+    //  - TRB3: cycle=0 sentinel
+    {
+        let mut trb1 = Trb::new(0, 0, 0);
+        trb1.set_trb_type(TrbType::NoOpCommand);
+        trb1.set_slot_id(0);
+        trb1.set_cycle(true);
+        mem.write_trb(cmd_ring + 1 * 16, trb1);
+    }
+    {
+        let mut trb2 = Trb::new(input_ctx, 0, 0);
+        trb2.set_trb_type(TrbType::EvaluateContextCommand);
+        trb2.set_slot_id(1);
+        trb2.set_cycle(true);
+        mem.write_trb(cmd_ring + 2 * 16, trb2);
+    }
+    {
+        let mut stop = Trb::new(0, 0, 0);
+        stop.set_trb_type(TrbType::NoOpCommand);
+        stop.set_cycle(false);
+        mem.write_trb(cmd_ring + 3 * 16, stop);
+    }
+
+    // Ring the command doorbell (DB0) again.
+    ctrl.mmio_write(&mut mem, regs::DBOFF_VALUE as u64, 4, 0);
+
+    // Two commands -> two completion events.
+    let ev1 = mem.read_trb(event_ring + 1 * 16);
+    let ev2 = mem.read_trb(event_ring + 2 * 16);
+    assert_eq!(ev1.trb_type(), TrbType::CommandCompletionEvent);
+    assert_eq!(ev2.trb_type(), TrbType::CommandCompletionEvent);
+    assert_eq!(event_completion_code(ev1), CompletionCode::Success.as_u8());
+    assert_eq!(event_completion_code(ev2), CompletionCode::Success.as_u8());
+    assert_eq!(ev1.pointer(), cmd_ring + 1 * 16);
+    assert_eq!(ev2.pointer(), cmd_ring + 2 * 16);
+    assert_eq!(ev2.slot_id(), 1);
+
+    // EP0 max packet size should have been updated to 64.
+    let mut buf = [0u8; 4];
+    mem.read_physical(dev_ctx + 0x20 + 4, &mut buf);
+    let out_dw1 = u32::from_le_bytes(buf);
+    assert_eq!((out_dw1 >> 16) & 0xffff, 64);
+
+    // Interrupt should be asserted for the second batch of events.
+    assert!(ctrl.irq_level());
+    assert_ne!(ctrl.mmio_read(&mut mem, regs::REG_USBSTS, 4) & regs::USBSTS_EINT, 0);
+}
