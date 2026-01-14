@@ -5,9 +5,17 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 publish = false
 
+[features]
+default = []
+# Native in-process executor backend wrapper (wgpu-based). Kept feature-gated so
+# `aero-devices-gpu` remains lightweight and WASM-friendly by default.
+aerogpu-native = ["dep:aero-gpu", "dep:pollster"]
+
 [dependencies]
 aero-devices = { path = "../devices" }
 aero-protocol = { path = "../../emulator/protocol" }
+aero-gpu = { path = "../aero-gpu", optional = true }
 memory = { path = "../memory" }
+pollster = { version = "0.3", optional = true }
 
 [dev-dependencies]

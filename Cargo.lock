@@ -199,8 +199,10 @@ name = "aero-devices-gpu"
 version = "0.1.0"
 dependencies = [
  "aero-devices",
+ "aero-gpu",
  "aero-protocol",
  "memory",
+ "pollster",
 ]
 
 [[package]]

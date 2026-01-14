@@ -27,6 +27,8 @@ pub use backend::{
     AeroGpuBackendCompletion, AeroGpuBackendScanout, AeroGpuBackendSubmission, AeroGpuCommandBackend,
     ImmediateAeroGpuBackend, NullAeroGpuBackend,
 };
+#[cfg(all(feature = "aerogpu-native", not(target_arch = "wasm32")))]
+pub use backend::NativeAeroGpuBackend;
 pub use executor::{AeroGpuExecutor, AeroGpuExecutorConfig, AeroGpuFenceCompletionMode};
 pub use memory::MemoryBus;
 pub use pci::{

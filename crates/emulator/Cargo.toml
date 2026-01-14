@@ -5,7 +5,7 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 [features]
 default = []
-aerogpu-native = ["dep:aero-gpu", "dep:pollster"]
+aerogpu-native = ["dep:aero-gpu", "dep:pollster", "aero-devices-gpu/aerogpu-native"]
 aerogpu-exec = ["dep:anyhow", "dep:aero-d3d11", "dep:aero-gpu", "dep:pollster"]
 # Alias for the WebGPU-backed AeroGPU command executor.
 aerogpu-webgpu = ["aerogpu-exec"]
