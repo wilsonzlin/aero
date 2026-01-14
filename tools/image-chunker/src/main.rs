@@ -3308,6 +3308,62 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn compute_image_version_sha256_hashes_virtual_disk_bytes_for_vhd_fixed_with_footer_copy(
+    ) -> Result<()> {
+        use std::io::Write;
+
+        let virtual_size = 64 * 1024u64;
+        let mut data = vec![0u8; virtual_size as usize];
+        data[0..10].copy_from_slice(b"hello vhd!");
+
+        let mut footer = [0u8; SECTOR_SIZE];
+        footer[0..8].copy_from_slice(b"conectix");
+        footer[8..12].copy_from_slice(&2u32.to_be_bytes()); // features
+        footer[12..16].copy_from_slice(&0x0001_0000u32.to_be_bytes()); // file_format_version
+        footer[16..24].copy_from_slice(&u64::MAX.to_be_bytes()); // data_offset for fixed disks
+        footer[40..48].copy_from_slice(&virtual_size.to_be_bytes()); // original_size
+        footer[48..56].copy_from_slice(&virtual_size.to_be_bytes()); // current_size
+        footer[60..64].copy_from_slice(&2u32.to_be_bytes()); // disk_type fixed
+                                                             // checksum at 64..68 (big-endian)
+        let checksum = {
+            let mut sum: u32 = 0;
+            for (i, b) in footer.iter().enumerate() {
+                if (64..68).contains(&i) {
+                    continue;
+                }
+                sum = sum.wrapping_add(*b as u32);
+            }
+            !sum
+        };
+        footer[64..68].copy_from_slice(&checksum.to_be_bytes());
+
+        // Fixed VHD with an optional footer copy at offset 0 (payload begins at offset 512).
+        let mut tmp = tempfile::NamedTempFile::new().context("create tempfile")?;
+        tmp.as_file_mut()
+            .write_all(&footer)
+            .context("write vhd footer copy")?;
+        tmp.as_file_mut()
+            .write_all(&data)
+            .context("write vhd payload")?;
+        tmp.as_file_mut()
+            .write_all(&footer)
+            .context("write vhd footer")?;
+        tmp.as_file_mut().flush().context("flush vhd image")?;
+
+        let physical_len = tmp.as_file().metadata().context("stat temp vhd")?.len();
+        assert_eq!(
+            physical_len,
+            virtual_size + (SECTOR_SIZE as u64) * 2,
+            "expected fixed VHD file len to be footer copy + data + footer"
+        );
+
+        let expected_version = format!("sha256-{}", sha256_hex(&data));
+        let version = compute_image_version_sha256(tmp.path(), InputFormat::Auto).await?;
+        assert_eq!(version, expected_version);
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn compute_image_version_sha256_hashes_virtual_disk_bytes_for_qcow2() -> Result<()> {
         use std::io::Write;
 
