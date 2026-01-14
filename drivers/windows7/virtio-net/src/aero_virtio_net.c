@@ -5135,6 +5135,10 @@ static NTSTATUS AerovNetDiagDispatchDeviceControl(_In_ PDEVICE_OBJECT DeviceObje
   Info.StatTxTcpCsumFallback = Adapter->StatTxTcpCsumFallback;
   Info.StatTxUdpCsumOffload = Adapter->StatTxUdpCsumOffload;
   Info.StatTxUdpCsumFallback = Adapter->StatTxUdpCsumFallback;
+
+  RtlCopyMemory(Info.PermanentMac, Adapter->PermanentMac, sizeof(Info.PermanentMac));
+  RtlCopyMemory(Info.CurrentMac, Adapter->CurrentMac, sizeof(Info.CurrentMac));
+  Info.LinkUp = Adapter->LinkUp ? 1u : 0u;
   NdisReleaseSpinLock(&Adapter->Lock);
 
   // Read back the currently programmed MSI-X vectors from virtio common config.

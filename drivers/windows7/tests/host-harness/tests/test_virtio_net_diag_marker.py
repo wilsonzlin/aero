@@ -123,6 +123,20 @@ class VirtioNetDiagMarkerTests(unittest.TestCase):
             "ctrl_error_flags=0x00000000|ctrl_cmd_sent=10|ctrl_cmd_ok=9|ctrl_cmd_err=1|ctrl_cmd_timeout=0",
         )
 
+    def test_emits_mac_and_link_fields(self) -> None:
+        tail = (
+            b"virtio-net-diag|INFO|irq_mode=msix|irq_message_count=3|ctrl_cmd_timeout=0|"
+            b"perm_mac=52:54:00:12:34:56|cur_mac=52:54:00:65:43:21|link_up=1|"
+            b"stat_tx_err=0|stat_rx_err=0|stat_rx_no_buf=0\n"
+        )
+        out = self._emit(tail)
+        self.assertEqual(
+            out,
+            "AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_DIAG|INFO|irq_mode=msix|irq_message_count=3|ctrl_cmd_timeout=0|"
+            "perm_mac=52:54:00:12:34:56|cur_mac=52:54:00:65:43:21|link_up=1|"
+            "stat_tx_err=0|stat_rx_err=0|stat_rx_no_buf=0",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

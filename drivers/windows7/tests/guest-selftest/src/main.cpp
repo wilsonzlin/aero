@@ -303,6 +303,19 @@ static std::string HexDump(const uint8_t* p, size_t len) {
   return out;
 }
 
+static std::string MacToString(const uint8_t mac[6]) {
+  if (!mac) return {};
+  char buf[32];
+  snprintf(buf, sizeof(buf), "%02x:%02x:%02x:%02x:%02x:%02x",
+           static_cast<unsigned>(mac[0]),
+           static_cast<unsigned>(mac[1]),
+           static_cast<unsigned>(mac[2]),
+           static_cast<unsigned>(mac[3]),
+           static_cast<unsigned>(mac[4]),
+           static_cast<unsigned>(mac[5]));
+  return std::string(buf);
+}
+
 template <typename T>
 class ComPtr {
  public:
@@ -1255,11 +1268,8 @@ static void EmitVirtioNetDiagMarker(Logger& log) {
     const DWORD err = GetLastError();
     if (err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND) {
       log.LogLine("virtio-net-diag|WARN|reason=not_supported");
-      log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|SKIP|reason=not_supported");
     } else {
       log.Logf("virtio-net-diag|WARN|reason=open_failed|err=%lu", static_cast<unsigned long>(err));
-      log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|SKIP|reason=open_failed|err=%lu",
-               static_cast<unsigned long>(err));
     }
     return;
   }
@@ -1272,14 +1282,10 @@ static void EmitVirtioNetDiagMarker(Logger& log) {
 
   if (!ok) {
     log.Logf("virtio-net-diag|WARN|reason=ioctl_failed|err=%lu", static_cast<unsigned long>(err));
-    log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|SKIP|reason=ioctl_failed|err=%lu",
-             static_cast<unsigned long>(err));
     return;
   }
   if (bytes < sizeof(ULONG) * 2) {
     log.Logf("virtio-net-diag|WARN|reason=short_read|bytes=%lu", static_cast<unsigned long>(bytes));
-    log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|SKIP|reason=short_read|bytes=%lu",
-             static_cast<unsigned long>(bytes));
     return;
   }
 
@@ -1294,16 +1300,6 @@ static void EmitVirtioNetDiagMarker(Logger& log) {
       mode = "msi";
     }
   }
-
-  auto vec_to_string = [](USHORT v) -> std::string {
-    if (v == kVirtioPciMsiNoVector) return "none";
-    return std::to_string(static_cast<unsigned int>(v));
-  };
-
-  log.Logf(
-      "AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|PASS|mode=%s|messages=%lu|config_vector=%s|rx_vector=%s|tx_vector=%s",
-      mode, static_cast<unsigned long>(info.MessageCount), vec_to_string(info.MsixConfigVector).c_str(),
-      vec_to_string(info.MsixRxVector).c_str(), vec_to_string(info.MsixTxVector).c_str());
 
   const char* rx_err_flags_s = "unknown";
   const char* tx_err_flags_s = "unknown";
@@ -1438,6 +1434,26 @@ static void EmitVirtioNetDiagMarker(Logger& log) {
     ctrl_cmd_timeout_s = ctrl_cmd_timeout_buf;
   }
 
+  const char* perm_mac_s = "unknown";
+  const char* cur_mac_s = "unknown";
+  std::string perm_mac_str;
+  std::string cur_mac_str;
+  if (bytes >= offsetof(AEROVNET_DIAG_INFO, PermanentMac) + 6) {
+    perm_mac_str = MacToString(info.PermanentMac);
+    perm_mac_s = perm_mac_str.c_str();
+  }
+  if (bytes >= offsetof(AEROVNET_DIAG_INFO, CurrentMac) + 6) {
+    cur_mac_str = MacToString(info.CurrentMac);
+    cur_mac_s = cur_mac_str.c_str();
+  }
+
+  const char* link_up_s = "unknown";
+  char link_up_buf[8];
+  if (bytes >= offsetof(AEROVNET_DIAG_INFO, LinkUp) + sizeof(UCHAR)) {
+    snprintf(link_up_buf, sizeof(link_up_buf), "%u", static_cast<unsigned>(info.LinkUp));
+    link_up_s = link_up_buf;
+  }
+
   log.Logf(
       "virtio-net-diag|INFO|host_features=%s|guest_features=%s|irq_mode=%s|irq_message_count=%lu|"
       "msix_config_vector=0x%04x|msix_rx_vector=0x%04x|msix_tx_vector=0x%04x|"
@@ -1450,6 +1466,7 @@ static void EmitVirtioNetDiagMarker(Logger& log) {
       "tx_tso_v4=%u|tx_tso_v6=%u|tx_tso_max_size=%s|"
       "ctrl_vq=%s|ctrl_rx=%s|ctrl_vlan=%s|ctrl_mac_addr=%s|ctrl_queue_index=%s|ctrl_queue_size=%s|"
       "ctrl_error_flags=%s|ctrl_cmd_sent=%s|ctrl_cmd_ok=%s|ctrl_cmd_err=%s|ctrl_cmd_timeout=%s|"
+      "perm_mac=%s|cur_mac=%s|link_up=%s|"
       "stat_tx_err=%llu|stat_rx_err=%llu|stat_rx_no_buf=%llu",
       VirtioFeaturesToString(info.HostFeatures).c_str(), VirtioFeaturesToString(info.GuestFeatures).c_str(), mode,
       static_cast<unsigned long>(info.MessageCount), static_cast<unsigned>(info.MsixConfigVector),
@@ -1458,7 +1475,9 @@ static void EmitVirtioNetDiagMarker(Logger& log) {
       tx_err_flags_s, info.TxChecksumV4Enabled, info.TxChecksumV6Enabled, udp4_s, udp6_s, tx_tcp_offload_s,
       tx_tcp_fallback_s, tx_udp_offload_s, tx_udp_fallback_s, info.TxTsoV4Enabled, info.TxTsoV6Enabled, tso_max_s,
       ctrl_vq_s, ctrl_rx_s, ctrl_vlan_s, ctrl_mac_s, ctrl_q_index_s, ctrl_q_size_s, ctrl_err_flags_s, ctrl_cmd_sent_s,
-      ctrl_cmd_ok_s, ctrl_cmd_err_s, ctrl_cmd_timeout_s, static_cast<unsigned long long>(info.StatTxErrors),
+      ctrl_cmd_ok_s, ctrl_cmd_err_s, ctrl_cmd_timeout_s,
+      perm_mac_s, cur_mac_s, link_up_s,
+      static_cast<unsigned long long>(info.StatTxErrors),
       static_cast<unsigned long long>(info.StatRxErrors), static_cast<unsigned long long>(info.StatRxNoBuffers));
 }
 

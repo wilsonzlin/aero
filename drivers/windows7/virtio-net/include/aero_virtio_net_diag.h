@@ -118,10 +118,15 @@ typedef struct _AEROVNET_DIAG_INFO {
     uint64_t CtrlCmdOk;
     uint64_t CtrlCmdErr;
     uint64_t CtrlCmdTimeout;
-
     uint64_t StatTxTcpCsumOffload;
     uint64_t StatTxTcpCsumFallback;
     uint64_t StatTxUdpCsumOffload;
     uint64_t StatTxUdpCsumFallback;
+
+    /* Adapter identity/state (appended). */
+    uint8_t PermanentMac[6];
+    uint8_t CurrentMac[6];
+    uint8_t LinkUp;
+    uint8_t Reserved3;
 } AEROVNET_DIAG_INFO;
 #pragma pack(pop)
