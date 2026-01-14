@@ -252,7 +252,7 @@ Code pointers:
   - Supported formats today (AeroGPU `AerogpuFormat` discriminants): `B8G8R8X8` / `B8G8R8A8` / `R8G8B8X8` / `R8G8B8A8` (plus `_SRGB` variants). X8 formats force `A=255`; A8 formats preserve alpha. `_SRGB` variants are layout-identical (swizzle only; no gamma conversion during readback).
   - Note: `base_paddr == 0` is treated as a placeholder scanout descriptor for the host-side AeroGPU path when `source=WDDM` (no guest-memory readback). Legacy VBE scanout expects a real framebuffer.
   - The RAM-vs-VRAM resolution and the VRAM base-paddr contract are documented in [`docs/16-aerogpu-vga-vesa-compat.md`](./16-aerogpu-vga-vesa-compat.md#vram-bar1-backing-as-a-sharedarraybuffer).
-  - Unit tests: `web/src/workers/gpu-worker_wddm_scanout_readback.test.ts`, `web/src/workers/gpu-worker_scanout_vram_missing.test.ts`, `web/src/workers/gpu-worker_wddm_tick_gate.test.ts`.
+  - Unit tests: `web/src/workers/gpu-worker_wddm_scanout_readback.test.ts`, `web/src/workers/gpu-worker_wddm_scanout_screenshot_refresh.test.ts`, `web/src/workers/gpu-worker_scanout_vram_missing.test.ts`, `web/src/workers/gpu-worker_wddm_tick_gate.test.ts`.
 - **Canonical Rust machine (optional):** `crates/aero-machine/src/lib.rs` can publish scanout-source updates into an `aero_shared::scanout_state::ScanoutState` provided by the host:
   - `Machine::set_scanout_state()` installs the shared descriptor.
   - `Machine::reset()` publishes `LEGACY_TEXT` on reset.
