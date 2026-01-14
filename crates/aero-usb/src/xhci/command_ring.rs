@@ -1018,10 +1018,7 @@ impl CommandRingProcessor {
         if !self.slots_enabled.get(idx).copied().unwrap_or(false) {
             return CompletionCode::SlotNotEnabledError;
         }
-        if cmd.configure_endpoint_deconfigure() {
-            // Deconfigure mode not supported yet.
-            return CompletionCode::ParameterError;
-        }
+        let deconfigure = cmd.configure_endpoint_deconfigure();
 
         // Configure Endpoint is only valid once Address Device has bound the slot to a topology.
         let (root_port, route) = {
@@ -1045,6 +1042,45 @@ impl CommandRingProcessor {
         let input_ctx_ptr = cmd.pointer();
         if (input_ctx_ptr & (CONTEXT_ALIGN - 1)) != 0 {
             return CompletionCode::ParameterError;
+        }
+
+        if deconfigure {
+            // Deconfigure mode (xHCI 1.2 §6.4.3.5): disable all non-EP0 endpoints.
+            //
+            // Minimal semantics for this command-ring processor: clear the endpoint contexts that
+            // the MVP supports (DCI 2..=5) and drop the corresponding internal endpoint state.
+            //
+            // (This processor only models endpoint contexts up to index 5, so it does not assume a
+            // full 32-entry Device Context is resident in guest memory.)
+            let min_device_ctx_len = 6 * CONTEXT_SIZE;
+            if !self.check_range(dev_ctx_ptr, min_device_ctx_len) {
+                return CompletionCode::ParameterError;
+            }
+
+            // Ensure the input context pointer is at least readable (ICC + Slot Context).
+            let min_input_ctx_len = 2 * CONTEXT_SIZE;
+            if !self.check_range(input_ctx_ptr, min_input_ctx_len) {
+                return CompletionCode::ParameterError;
+            }
+
+            let mut updates: Vec<(u8, Option<EndpointState>)> = Vec::new();
+            for idx in 2u8..=5 {
+                let out_addr = dev_ctx_ptr + (u64::from(idx) * CONTEXT_SIZE);
+                if let Err(code) = self.clear_context(mem, out_addr) {
+                    return code;
+                }
+                updates.push((idx, None));
+            }
+
+            if let Some(slot) = self.internal_slot_mut(slot_id) {
+                for (dci, state) in updates {
+                    if let Some(ep) = slot.endpoints.get_mut(dci as usize) {
+                        *ep = state;
+                    }
+                }
+            }
+
+            return CompletionCode::Success;
         }
 
         // Must be able to read at least the Input Control Context + Slot Context.
@@ -1488,6 +1524,19 @@ mod tests {
         }
     }
 
+    #[derive(Clone, Debug)]
+    struct DummyDevice;
+
+    impl UsbDeviceModel for DummyDevice {
+        fn handle_control_request(
+            &mut self,
+            _setup: SetupPacket,
+            _data_stage: Option<&[u8]>,
+        ) -> crate::ControlResponse {
+            crate::ControlResponse::Stall
+        }
+    }
+
     #[test]
     fn endpoint_commands_update_internal_endpoint_state() {
         let mut mem = TestMem::new(0x20_000);
@@ -1610,5 +1659,97 @@ mod tests {
         assert!(!ep.cycle);
         assert!(!ep.stopped);
         assert!(!ep.halted);
+    }
+
+    #[test]
+    fn configure_endpoint_deconfigure_clears_mvp_endpoint_contexts_and_state() {
+        let mut mem = TestMem::new(0x20_000);
+        let mem_size = mem.data.len() as u64;
+
+        let dcbaa = 0x1000u64;
+        let dev_ctx = 0x2000u64;
+        let input_ctx = 0x3000u64;
+        let event_ring = 0x4000u64;
+
+        let max_slots = 8;
+        let slot_id = 1u8;
+
+        let mut processor = CommandRingProcessor::new(
+            mem_size,
+            max_slots,
+            dcbaa,
+            CommandRing::new(0),
+            EventRing::new(event_ring, 16),
+        );
+
+        // Enable the slot and install DCBAA[slot_id] -> device context pointer.
+        let (code, enabled_slot_id) = processor.handle_enable_slot(&mut mem);
+        assert_eq!(code, CompletionCode::Success);
+        assert_eq!(enabled_slot_id, slot_id);
+        mem.write_u64(dcbaa + 8, dev_ctx);
+
+        // Ensure the slot appears addressed and bound to a real device.
+        processor.attach_root_port(1, Box::new(DummyDevice));
+        {
+            let slot = processor.slots[usize::from(slot_id)]
+                .as_mut()
+                .expect("slot state should exist");
+            slot.root_port = Some(1);
+            slot.route = Vec::new();
+            slot.address = 1;
+
+            // Seed internal endpoint states for DCI 3..=5.
+            for dci in 3u8..=5 {
+                slot.endpoints[usize::from(dci)] = Some(EndpointState {
+                    dequeue_ptr: 0x5000 + u64::from(dci) * 0x10,
+                    cycle: true,
+                    stopped: false,
+                    halted: false,
+                });
+            }
+        }
+
+        // Seed non-zero bytes into the corresponding Device Context endpoint contexts.
+        for dci in 3u8..=5 {
+            let addr = dev_ctx + u64::from(dci) * CONTEXT_SIZE;
+            mem.write_u32(addr + 0, 0xdead_beef);
+            mem.write_u32(addr + 4, 0xfeed_f00d);
+        }
+
+        // Build a deconfigure Configure Endpoint TRB.
+        // Input context pointer must be readable/aligned; contents are ignored in deconfigure mode.
+        mem.write_u32(input_ctx + 0, 0); // drop flags
+        mem.write_u32(input_ctx + 4, 0); // add flags
+
+        let mut trb = Trb::new(input_ctx, 0, 0);
+        trb.set_trb_type(TrbType::ConfigureEndpointCommand);
+        trb.set_slot_id(slot_id);
+        trb.set_configure_endpoint_deconfigure(true);
+
+        let result = processor.handle_configure_endpoint(&mut mem, trb);
+        assert_eq!(result, CompletionCode::Success);
+
+        // All MVP endpoint contexts should be cleared.
+        for dci in 2u8..=5 {
+            let addr = dev_ctx + u64::from(dci) * CONTEXT_SIZE;
+            for i in 0..8u64 {
+                assert_eq!(
+                    processor.read_u32(&mut mem, addr + i * 4).unwrap(),
+                    0,
+                    "expected endpoint context dci={dci} dword{i} to be cleared"
+                );
+            }
+        }
+
+        // Internal endpoint state should be dropped as well.
+        let slot = processor.slots[usize::from(slot_id)]
+            .as_ref()
+            .expect("slot state should exist");
+        for dci in 2u8..=5 {
+            assert!(
+                slot.endpoints[usize::from(dci)].is_none(),
+                "expected internal endpoint state for dci={dci} to be cleared"
+            );
+        }
     }
 }
