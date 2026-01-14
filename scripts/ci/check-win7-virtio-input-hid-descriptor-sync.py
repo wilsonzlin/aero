@@ -21,6 +21,7 @@ Optional extra guardrail:
 
 from __future__ import annotations
 
+from collections import defaultdict
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -102,6 +103,132 @@ def count_hex_byte_literals(text: str) -> int:
     return len(re.findall(r"\b0x[0-9A-Fa-f]{2}\b", text))
 
 
+def extract_hex_bytes(text: str) -> list[int]:
+    return [int(b, 16) for b in re.findall(r"\b0x([0-9A-Fa-f]{2})\b", text)]
+
+
+@dataclass(frozen=True)
+class HidReportDescriptorParsed:
+    # True if the descriptor uses report IDs at all. If true, HID report payloads
+    # include an extra leading Report ID byte (as reflected by HidP_GetCaps).
+    report_id_used: bool
+    report_ids: set[int]
+    input_bits_by_report_id: dict[int, int]
+    output_bits_by_report_id: dict[int, int]
+    feature_bits_by_report_id: dict[int, int]
+
+
+def parse_hid_report_descriptor(data: list[int]) -> HidReportDescriptorParsed:
+    """
+    Minimal HID report descriptor parser sufficient for the virtio-input report
+    descriptors in this repo.
+
+    We track only the global items that affect report sizing:
+      - Report Size (0x75)
+      - Report Count (0x95)
+      - Report ID (0x85)
+    and the main items that contribute to report payload size:
+      - Input (0x81)
+      - Output (0x91)
+      - Feature (0xB1)
+
+    All other items are skipped.
+    """
+
+    input_bits: dict[int, int] = defaultdict(int)
+    output_bits: dict[int, int] = defaultdict(int)
+    feature_bits: dict[int, int] = defaultdict(int)
+
+    report_ids: set[int] = set()
+    report_id_used = False
+
+    report_size_bits = 0
+    report_count = 0
+    current_report_id = 0
+
+    i = 0
+    while i < len(data):
+        prefix = data[i]
+        i += 1
+
+        if prefix == 0xFE:
+            # Long item: 0xFE, length, tag, <data...>
+            if i + 2 > len(data):
+                raise ValueError("truncated long item header")
+            length = data[i]
+            i += 1
+            _tag = data[i]
+            i += 1
+            if i + length > len(data):
+                raise ValueError("truncated long item data")
+            i += length
+            continue
+
+        size_code = prefix & 0x03
+        size = 4 if size_code == 3 else size_code  # 0,1,2,4 bytes
+        type_code = (prefix >> 2) & 0x03
+        tag = (prefix >> 4) & 0x0F
+
+        if i + size > len(data):
+            raise ValueError("truncated item data")
+        raw = data[i : i + size]
+        i += size
+
+        value = int.from_bytes(bytes(raw), "little", signed=False) if size else 0
+
+        # Global items (type=1).
+        if type_code == 1 and tag == 7:  # Report Size
+            report_size_bits = value
+            continue
+        if type_code == 1 and tag == 9:  # Report Count
+            report_count = value
+            continue
+        if type_code == 1 and tag == 8:  # Report ID
+            report_id_used = True
+            current_report_id = value
+            report_ids.add(current_report_id)
+            continue
+
+        # Main items (type=0).
+        if type_code == 0 and tag == 8:  # Input
+            input_bits[current_report_id] += report_size_bits * report_count
+            continue
+        if type_code == 0 and tag == 9:  # Output
+            output_bits[current_report_id] += report_size_bits * report_count
+            continue
+        if type_code == 0 and tag == 11:  # Feature
+            feature_bits[current_report_id] += report_size_bits * report_count
+            continue
+
+    return HidReportDescriptorParsed(
+        report_id_used=report_id_used,
+        report_ids=report_ids,
+        input_bits_by_report_id=dict(input_bits),
+        output_bits_by_report_id=dict(output_bits),
+        feature_bits_by_report_id=dict(feature_bits),
+    )
+
+
+def ceil_div(a: int, b: int) -> int:
+    return (a + b - 1) // b
+
+
+def report_len_bytes(bits: int, report_id_used: bool) -> int:
+    if bits == 0:
+        return 0
+    n = ceil_div(bits, 8)
+    if report_id_used:
+        n += 1
+    return n
+
+
+def max_report_len_bytes(bits_by_report_id: dict[int, int], report_id_used: bool) -> int:
+    if not bits_by_report_id:
+        return 0
+    max_bits = max(bits_by_report_id.values())
+    return report_len_bytes(max_bits, report_id_used)
+
+
 def extract_c_assert_sizeof(text: str, symbol: str) -> int:
     m = re.search(
         rf"C_ASSERT\s*\(\s*sizeof\s*\(\s*{re.escape(symbol)}\s*\)\s*==\s*(\d+)\s*[uUlL]*\s*\)\s*;",
@@ -128,6 +255,17 @@ def extract_enum_int(text: str, name: str) -> int:
     return int(m.group(1))
 
 
+def extract_enum_int_literal(text: str, name: str) -> int:
+    # Like extract_enum_int, but accepts both decimal and hex literals.
+    m = re.search(
+        rf"\b{re.escape(name)}\b\s*=\s*(0x[0-9A-Fa-f]+|\d+)\s*[uUlL]*\s*,",
+        text,
+    )
+    if not m:
+        raise ValueError(f"could not find '{name} = <int>,' in hid_translate.h")
+    return int(m.group(1), 0)
+
+
 def main() -> int:
     descriptor_c = Path("drivers/windows7/virtio-input/src/descriptor.c")
     hidtest_c = Path("drivers/windows7/virtio-input/tools/hidtest/main.c")
@@ -148,9 +286,12 @@ def main() -> int:
 
     print("Win7 virtio-input HID descriptor sync check:")
 
+    desc_bytes_by_kind: dict[str, list[int]] = {}
+
     for spec in SPECS:
         init = extract_braced_initializer(descriptor_text, spec.array_name)
         init = strip_c_comments(init)
+        desc_bytes_by_kind[spec.kind] = extract_hex_bytes(init)
         computed = count_hex_byte_literals(init)
         asserted = extract_c_assert_sizeof(descriptor_text, spec.array_name)
         expected = extract_c_define_int(hidtest_text, spec.hidtest_len_macro)
@@ -174,9 +315,15 @@ def main() -> int:
         hidtest_kbd_input = extract_c_define_int(hidtest_text, "VIRTIO_INPUT_EXPECTED_KBD_INPUT_LEN")
         hidtest_mouse_input = extract_c_define_int(hidtest_text, "VIRTIO_INPUT_EXPECTED_MOUSE_INPUT_LEN")
         hidtest_tablet_input = extract_c_define_int(hidtest_text, "VIRTIO_INPUT_EXPECTED_TABLET_INPUT_LEN")
+        hidtest_kbd_output = extract_c_define_int(hidtest_text, "VIRTIO_INPUT_EXPECTED_KBD_OUTPUT_LEN")
         translate_kbd_size = extract_enum_int(translate_text, "HID_TRANSLATE_KEYBOARD_REPORT_SIZE")
         translate_mouse_size = extract_enum_int(translate_text, "HID_TRANSLATE_MOUSE_REPORT_SIZE")
         translate_tablet_size = extract_enum_int(translate_text, "HID_TRANSLATE_TABLET_REPORT_SIZE")
+        translate_consumer_size = extract_enum_int(translate_text, "HID_TRANSLATE_CONSUMER_REPORT_SIZE")
+        translate_kbd_id = extract_enum_int_literal(translate_text, "HID_TRANSLATE_REPORT_ID_KEYBOARD")
+        translate_mouse_id = extract_enum_int_literal(translate_text, "HID_TRANSLATE_REPORT_ID_MOUSE")
+        translate_consumer_id = extract_enum_int_literal(translate_text, "HID_TRANSLATE_REPORT_ID_CONSUMER")
+        translate_tablet_id = extract_enum_int_literal(translate_text, "HID_TRANSLATE_REPORT_ID_TABLET")
 
         print(
             "  input report sizes:"
@@ -184,6 +331,7 @@ def main() -> int:
             f" mouse hidtest={hidtest_mouse_input} translate={translate_mouse_size},"
             f" tablet hidtest={hidtest_tablet_input} translate={translate_tablet_size}"
         )
+        print(f"  keyboard output report size: hidtest={hidtest_kbd_output}")
 
         if hidtest_kbd_input != translate_kbd_size:
             failures.append(
@@ -211,6 +359,160 @@ def main() -> int:
                     [
                         "tablet input report length mismatch:",
                         f"  hidtest VIRTIO_INPUT_EXPECTED_TABLET_INPUT_LEN : {hidtest_tablet_input}",
+                        f"  hid_translate.h HID_TRANSLATE_TABLET_REPORT_SIZE : {translate_tablet_size}",
+                    ]
+                )
+            )
+
+        # Optional extra guardrail: parse the HID report descriptors and ensure
+        # report IDs + report sizes match the translator/hidtest expectations.
+        kbd_desc = parse_hid_report_descriptor(desc_bytes_by_kind["keyboard"])
+        mouse_desc = parse_hid_report_descriptor(desc_bytes_by_kind["mouse"])
+        tablet_desc = parse_hid_report_descriptor(desc_bytes_by_kind["tablet"])
+
+        # Report ID sets.
+        expected_kbd_ids = {translate_kbd_id, translate_consumer_id}
+        expected_mouse_ids = {translate_mouse_id}
+        expected_tablet_ids = {translate_tablet_id}
+
+        if kbd_desc.report_ids != expected_kbd_ids:
+            failures.append(
+                "\n".join(
+                    [
+                        "keyboard descriptor report IDs mismatch:",
+                        f"  descriptor report IDs : {sorted(kbd_desc.report_ids)}",
+                        f"  expected (translate)  : {sorted(expected_kbd_ids)}",
+                    ]
+                )
+            )
+        if mouse_desc.report_ids != expected_mouse_ids:
+            failures.append(
+                "\n".join(
+                    [
+                        "mouse descriptor report IDs mismatch:",
+                        f"  descriptor report IDs : {sorted(mouse_desc.report_ids)}",
+                        f"  expected (translate)  : {sorted(expected_mouse_ids)}",
+                    ]
+                )
+            )
+        if tablet_desc.report_ids != expected_tablet_ids:
+            failures.append(
+                "\n".join(
+                    [
+                        "tablet descriptor report IDs mismatch:",
+                        f"  descriptor report IDs : {sorted(tablet_desc.report_ids)}",
+                        f"  expected (translate)  : {sorted(expected_tablet_ids)}",
+                    ]
+                )
+            )
+
+        # Derive max Input/Output lengths as reported by HidP_GetCaps.
+        kbd_input_len_from_desc = max_report_len_bytes(kbd_desc.input_bits_by_report_id, kbd_desc.report_id_used)
+        kbd_output_len_from_desc = max_report_len_bytes(kbd_desc.output_bits_by_report_id, kbd_desc.report_id_used)
+        mouse_input_len_from_desc = max_report_len_bytes(mouse_desc.input_bits_by_report_id, mouse_desc.report_id_used)
+        tablet_input_len_from_desc = max_report_len_bytes(
+            tablet_desc.input_bits_by_report_id, tablet_desc.report_id_used
+        )
+
+        print(
+            "  report sizes derived from descriptors:"
+            f" kbd in={kbd_input_len_from_desc} out={kbd_output_len_from_desc},"
+            f" mouse in={mouse_input_len_from_desc},"
+            f" tablet in={tablet_input_len_from_desc}"
+        )
+
+        if kbd_input_len_from_desc != hidtest_kbd_input:
+            failures.append(
+                "\n".join(
+                    [
+                        "keyboard input report length mismatch (derived from report descriptor):",
+                        f"  descriptor-derived max input len : {kbd_input_len_from_desc}",
+                        f"  hidtest VIRTIO_INPUT_EXPECTED_KBD_INPUT_LEN : {hidtest_kbd_input}",
+                    ]
+                )
+            )
+        if kbd_output_len_from_desc != hidtest_kbd_output:
+            failures.append(
+                "\n".join(
+                    [
+                        "keyboard output report length mismatch (derived from report descriptor):",
+                        f"  descriptor-derived max output len : {kbd_output_len_from_desc}",
+                        f"  hidtest VIRTIO_INPUT_EXPECTED_KBD_OUTPUT_LEN : {hidtest_kbd_output}",
+                    ]
+                )
+            )
+        if mouse_input_len_from_desc != hidtest_mouse_input:
+            failures.append(
+                "\n".join(
+                    [
+                        "mouse input report length mismatch (derived from report descriptor):",
+                        f"  descriptor-derived input len : {mouse_input_len_from_desc}",
+                        f"  hidtest VIRTIO_INPUT_EXPECTED_MOUSE_INPUT_LEN : {hidtest_mouse_input}",
+                    ]
+                )
+            )
+        if tablet_input_len_from_desc != hidtest_tablet_input:
+            failures.append(
+                "\n".join(
+                    [
+                        "tablet input report length mismatch (derived from report descriptor):",
+                        f"  descriptor-derived input len : {tablet_input_len_from_desc}",
+                        f"  hidtest VIRTIO_INPUT_EXPECTED_TABLET_INPUT_LEN : {hidtest_tablet_input}",
+                    ]
+                )
+            )
+
+        # Per-report-ID input sizes (ensures consumer report doesn't drift).
+        kbd_id_bits = kbd_desc.input_bits_by_report_id.get(translate_kbd_id, 0)
+        consumer_id_bits = kbd_desc.input_bits_by_report_id.get(translate_consumer_id, 0)
+        mouse_id_bits = mouse_desc.input_bits_by_report_id.get(translate_mouse_id, 0)
+        tablet_id_bits = tablet_desc.input_bits_by_report_id.get(translate_tablet_id, 0)
+
+        kbd_id_len = report_len_bytes(kbd_id_bits, kbd_desc.report_id_used)
+        consumer_id_len = report_len_bytes(consumer_id_bits, kbd_desc.report_id_used)
+        mouse_id_len = report_len_bytes(mouse_id_bits, mouse_desc.report_id_used)
+        tablet_id_len = report_len_bytes(tablet_id_bits, tablet_desc.report_id_used)
+
+        if kbd_id_len != translate_kbd_size:
+            failures.append(
+                "\n".join(
+                    [
+                        "keyboard Report ID input length mismatch (derived from report descriptor):",
+                        f"  report id: {translate_kbd_id}",
+                        f"  descriptor-derived len : {kbd_id_len}",
+                        f"  hid_translate.h HID_TRANSLATE_KEYBOARD_REPORT_SIZE : {translate_kbd_size}",
+                    ]
+                )
+            )
+        if consumer_id_len != translate_consumer_size:
+            failures.append(
+                "\n".join(
+                    [
+                        "consumer Report ID input length mismatch (derived from report descriptor):",
+                        f"  report id: {translate_consumer_id}",
+                        f"  descriptor-derived len : {consumer_id_len}",
+                        f"  hid_translate.h HID_TRANSLATE_CONSUMER_REPORT_SIZE : {translate_consumer_size}",
+                    ]
+                )
+            )
+        if mouse_id_len != translate_mouse_size:
+            failures.append(
+                "\n".join(
+                    [
+                        "mouse Report ID input length mismatch (derived from report descriptor):",
+                        f"  report id: {translate_mouse_id}",
+                        f"  descriptor-derived len : {mouse_id_len}",
+                        f"  hid_translate.h HID_TRANSLATE_MOUSE_REPORT_SIZE : {translate_mouse_size}",
+                    ]
+                )
+            )
+        if tablet_id_len != translate_tablet_size:
+            failures.append(
+                "\n".join(
+                    [
+                        "tablet Report ID input length mismatch (derived from report descriptor):",
+                        f"  report id: {translate_tablet_id}",
+                        f"  descriptor-derived len : {tablet_id_len}",
                         f"  hid_translate.h HID_TRANSLATE_TABLET_REPORT_SIZE : {translate_tablet_size}",
                     ]
                 )
