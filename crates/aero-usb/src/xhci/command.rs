@@ -201,9 +201,19 @@ impl XhciEndpointManager {
             TrbType::StopEndpointCommand => self.cmd_stop_endpoint(slot_id, endpoint_id),
             TrbType::ResetEndpointCommand => self.cmd_reset_endpoint(slot_id, endpoint_id),
             TrbType::SetTrDequeuePointerCommand => {
-                let ptr = trb.parameter & !0x0f;
-                let dcs = (trb.parameter & 0x01) != 0;
-                self.cmd_set_tr_dequeue_pointer(slot_id, endpoint_id, ptr, dcs)
+                // Bits 1..=3 are reserved in the parameter field (bit0 is DCS). Treat reserved low
+                // bits as invalid rather than masking them away so malformed commands cannot alias
+                // a different aligned ring pointer.
+                if (trb.parameter & 0x0e) != 0 {
+                    CompletionCode::ParameterError
+                } else if ((trb.status >> 16) & 0xffff) != 0 {
+                    // Stream ID in DW2 bits 16..=31. Streams are not supported by this model.
+                    CompletionCode::ParameterError
+                } else {
+                    let ptr = trb.parameter & !0x0f;
+                    let dcs = (trb.parameter & 0x01) != 0;
+                    self.cmd_set_tr_dequeue_pointer(slot_id, endpoint_id, ptr, dcs)
+                }
             }
             _ => CompletionCode::TrbError,
         };
@@ -533,5 +543,77 @@ mod tests {
                 trb_pointer: ring_base,
             }]
         );
+    }
+
+    #[test]
+    fn set_tr_dequeue_pointer_rejects_reserved_bits() {
+        let mut mgr = XhciEndpointManager::new(1);
+        mgr.enable_slot(1).unwrap();
+
+        let ring_base = 0x1000u64;
+        mgr.configure_endpoint(1, 1, ring_base, true).unwrap();
+
+        let new_ptr = ring_base + TRB_LEN as u64;
+        let mut cmd = Trb::default();
+        cmd.set_trb_type(TrbType::SetTrDequeuePointerCommand);
+        cmd.set_slot_id(1);
+        cmd.set_endpoint_id(1);
+        // Deliberately set reserved low bits 1..=3. The command executor must treat this as an
+        // invalid parameter and must not mask the bits away.
+        cmd.parameter = (new_ptr & !0x0f) | 0x0f;
+
+        mgr.execute_command_trb(cmd, 0x2000);
+        assert_eq!(
+            mgr.drain_events(),
+            vec![Event::CommandCompletion {
+                completion_code: CompletionCode::ParameterError,
+                slot_id: 1,
+                endpoint_id: 1,
+                command_trb_pointer: 0x2000,
+            }]
+        );
+
+        let slot = mgr.slots[1].as_ref().unwrap();
+        let ep = slot.endpoints[1].as_ref().unwrap();
+        assert_eq!(
+            ep.ring.dequeue_ptr(),
+            ring_base,
+            "endpoint ring must not be updated when reserved TRDP bits are set"
+        );
+        assert!(ep.ring.cycle_state());
+    }
+
+    #[test]
+    fn set_tr_dequeue_pointer_rejects_nonzero_stream_id() {
+        let mut mgr = XhciEndpointManager::new(1);
+        mgr.enable_slot(1).unwrap();
+
+        let ring_base = 0x1000u64;
+        mgr.configure_endpoint(1, 1, ring_base, true).unwrap();
+
+        let new_ptr = ring_base + TRB_LEN as u64;
+        let mut cmd = set_tr_dequeue_ptr_cmd(1, 1, new_ptr, true);
+        // Stream ID lives in DW2 bits 16..=31. Streams are unsupported by this model.
+        cmd.status = 1u32 << 16;
+
+        mgr.execute_command_trb(cmd, 0x2000);
+        assert_eq!(
+            mgr.drain_events(),
+            vec![Event::CommandCompletion {
+                completion_code: CompletionCode::ParameterError,
+                slot_id: 1,
+                endpoint_id: 1,
+                command_trb_pointer: 0x2000,
+            }]
+        );
+
+        let slot = mgr.slots[1].as_ref().unwrap();
+        let ep = slot.endpoints[1].as_ref().unwrap();
+        assert_eq!(
+            ep.ring.dequeue_ptr(),
+            ring_base,
+            "endpoint ring must not be updated when Stream ID is nonzero"
+        );
+        assert!(ep.ring.cycle_state());
     }
 }
