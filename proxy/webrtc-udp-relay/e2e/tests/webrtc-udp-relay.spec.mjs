@@ -979,6 +979,19 @@ test("rejects concurrent WebRTC sessions with the same JWT sid", async ({ page }
             ws.addEventListener("error", () => reject(new Error("ws error")), { once: true });
           });
 
+        const waitForClosed = async (ws) =>
+          await new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => reject(new Error("timed out waiting for websocket close")), 10_000);
+            ws.addEventListener(
+              "close",
+              (event) => {
+                clearTimeout(timeout);
+                resolve({ closeCode: event.code, closeReason: event.reason });
+              },
+              { once: true },
+            );
+          });
+
         const waitForAnswer = async (ws) =>
           await new Promise((resolve, reject) => {
             const timeout = setTimeout(() => reject(new Error("timed out waiting for answer")), 10_000);
@@ -1061,7 +1074,8 @@ test("rejects concurrent WebRTC sessions with the same JWT sid", async ({ page }
           pc.addEventListener("icegatheringstatechange", onState);
         });
 
-        ws1.send(JSON.stringify({ type: "offer", sdp: { type: "offer", sdp: pc.localDescription.sdp } }));
+        const offerSDP = pc.localDescription.sdp;
+        ws1.send(JSON.stringify({ type: "offer", sdp: { type: "offer", sdp: offerSDP } }));
         await waitForAnswer(ws1);
 
         const ws2 = new WebSocket(`ws://127.0.0.1:${relayPort}/webrtc/signal`);
@@ -1073,17 +1087,31 @@ test("rejects concurrent WebRTC sessions with the same JWT sid", async ({ page }
         ws2.send(JSON.stringify({ type: "offer", sdp: { type: "offer", sdp: "v=0" } }));
         const ws2Res = await ws2ClosePromise;
 
+        const ws1ClosedPromise = waitForClosed(ws1);
         ws1.close();
         pc.close();
-        return ws2Res;
+        await ws1ClosedPromise;
+
+        // The JWT sid quota key should be released once the first session is closed.
+        const ws3 = new WebSocket(`ws://127.0.0.1:${relayPort}/webrtc/signal`);
+        await waitForOpen(ws3);
+        ws3.send(JSON.stringify({ type: "auth", token }));
+        ws3.send(JSON.stringify({ type: "offer", sdp: { type: "offer", sdp: offerSDP } }));
+        await waitForAnswer(ws3);
+        const ws3ClosedPromise = waitForClosed(ws3);
+        ws3.close();
+        await ws3ClosedPromise;
+
+        return { ws2Res, reused: true };
       },
       { relayPort: relay.port, token },
     );
 
-    expect(res.errMsg?.type).toBe("error");
-    expect(res.errMsg?.code).toBe("session_already_active");
-    expect(res.closeCode).toBe(1008);
-    expect(["session_already_active", "session already active", ""]).toContain(res.closeReason ?? "");
+    expect(res.ws2Res.errMsg?.type).toBe("error");
+    expect(res.ws2Res.errMsg?.code).toBe("session_already_active");
+    expect(res.ws2Res.closeCode).toBe(1008);
+    expect(["session_already_active", "session already active", ""]).toContain(res.ws2Res.closeReason ?? "");
+    expect(res.reused).toBe(true);
   } finally {
     await Promise.all([web.close(), relay.kill()]);
   }
