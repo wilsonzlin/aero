@@ -301,3 +301,60 @@ fn blendtexturealpha_in_alphaop_implicitly_samples_texture() {
         "expected ALPHAOP=BLENDTEXTUREALPHA to reference stage texture alpha:\n{wgsl}"
     );
 }
+
+#[test]
+fn blendtexturealphapm_op_implicitly_samples_texture() {
+    // `BLENDTEXTUREALPHAPM` implicitly uses the stage texture alpha even if args do not reference
+    // `D3DTA_TEXTURE`.
+    let base_stage = TextureStageState {
+        color_op: TextureOp::BlendTextureAlphaPm,
+        color_arg0: TextureArg::Current,
+        color_arg1: TextureArg::Current,
+        color_arg2: TextureArg::Diffuse,
+        alpha_op: TextureOp::SelectArg1,
+        alpha_arg0: TextureArg::Current,
+        alpha_arg1: TextureArg::Current,
+        alpha_arg2: TextureArg::Current,
+        ..Default::default()
+    };
+
+    let mut stages_tc0 = [TextureStageState::default(); 8];
+    stages_tc0[0] = TextureStageState {
+        texcoord_index: None,
+        ..base_stage
+    };
+    let mut stages_tc1 = stages_tc0;
+    stages_tc1[0].texcoord_index = Some(1);
+
+    let desc_tc0 = FixedFunctionShaderDesc {
+        fvf: Fvf(Fvf::XYZ | ((2u32) << Fvf::TEXCOUNT_SHIFT)),
+        stages: stages_tc0,
+        alpha_test: AlphaTestState::default(),
+        fog: FogState::default(),
+        lighting: LightingState::default(),
+    };
+    let desc_tc1 = FixedFunctionShaderDesc {
+        stages: stages_tc1,
+        ..desc_tc0.clone()
+    };
+
+    assert_ne!(
+        desc_tc0.state_hash(),
+        desc_tc1.state_hash(),
+        "texcoord_index should affect the state hash when BLENDTEXTUREALPHAPM is used"
+    );
+
+    let wgsl = generate_fixed_function_shaders(&desc_tc0).fragment_wgsl;
+    assert!(
+        wgsl.contains("textureSample(tex0, samp0"),
+        "expected BLENDTEXTUREALPHAPM to emit a texture sample:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("tex0_color.a"),
+        "expected BLENDTEXTUREALPHAPM to reference stage texture alpha:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("1.0 - (tex0_color.a)"),
+        "expected BLENDTEXTUREALPHAPM to use (1 - tex_a) weight:\n{wgsl}"
+    );
+}
