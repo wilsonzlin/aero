@@ -415,7 +415,9 @@ Collect:
 
 - Browser permission status + any `getUserMedia` error shown in the console.
 - Mic ring stats (buffered/dropped) if available in UI.
-- Optional: if the web UI exposes it, use **Audio → “Export HDA codec state (json)”** (downloads the same gating state without opening the I/O worker console).
+- Optional: if the web UI exposes it, use:
+  - **Audio → “Export HDA codec state (json)”** (downloads the same gating state without opening the I/O worker console).
+  - **Audio → “Export HDA controller state (bin)”** (deterministic snapshot bytes; useful for low-level reproduction/debugging).
 - Or use **Audio → “Export audio QA bundle (tar)”** to grab all relevant host-side artifacts in one file.
 - **HDA codec gating state** (pin/power/amp) from the I/O worker DevTools console:
   ```js

@@ -4331,6 +4331,59 @@ function renderAudioPanel(): HTMLElement {
     },
   }) as HTMLButtonElement;
 
+  const exportHdaControllerStateButton = el("button", {
+    text: "Export HDA controller state (bin)",
+    onclick: async () => {
+      status.textContent = "";
+      try {
+        const ioWorker = workerCoordinator.getIoWorker();
+        if (!ioWorker) {
+          throw new Error("I/O worker is not running. Start workers before exporting HDA controller state.");
+        }
+
+        const requestId = hdaSnapshotStateRequestId++;
+        const response = await new Promise<HdaSnapshotStateResultMessage>((resolve, reject) => {
+          const timeout = window.setTimeout(() => {
+            cleanup();
+            reject(new Error("Timed out waiting for IO worker HDA snapshot state response."));
+          }, 3000);
+          (timeout as unknown as { unref?: () => void }).unref?.();
+
+          const onMessage = (ev: MessageEvent<unknown>) => {
+            const msg = ev.data as Partial<HdaSnapshotStateResultMessage> | null;
+            if (!msg || msg.type !== "hda.snapshotStateResult") return;
+            if (msg.requestId !== requestId) return;
+            cleanup();
+            resolve(msg as HdaSnapshotStateResultMessage);
+          };
+
+          const cleanup = () => {
+            window.clearTimeout(timeout);
+            ioWorker.removeEventListener("message", onMessage);
+          };
+
+          ioWorker.addEventListener("message", onMessage);
+          ioWorker.postMessage({ type: "hda.snapshotState", requestId });
+        });
+
+        if (!response.ok) {
+          throw new Error(response.error || "Failed to fetch HDA snapshot state.");
+        }
+        if (!(response.bytes instanceof Uint8Array)) {
+          throw new Error("Invalid HDA snapshot state response.");
+        }
+
+        const timeIso = new Date().toISOString();
+        const ts = timeIso.replaceAll(":", "-").replaceAll(".", "-");
+        const payload = ensureArrayBufferBacked(response.bytes);
+        downloadFile(new Blob([payload], { type: "application/octet-stream" }), `aero-hda-controller-state-${ts}.bin`);
+        status.textContent = "Saved HDA controller state.";
+      } catch (err) {
+        status.textContent = err instanceof Error ? err.message : String(err);
+      }
+    },
+  }) as HTMLButtonElement;
+
   const exportQaBundleButton = el("button", {
     text: "Export audio QA bundle (tar)",
     onclick: async () => {
@@ -4665,7 +4718,7 @@ function renderAudioPanel(): HTMLElement {
     { class: "panel" },
     el("h2", { text: "Audio" }),
     el("div", { class: "row" }, button, workerButton, hdaDemoButton, virtioSndDemoButton, loopbackButton),
-    el("div", { class: "row" }, exportMetricsButton, exportHdaCodecStateButton, exportQaBundleButton),
+    el("div", { class: "row" }, exportMetricsButton, exportHdaCodecStateButton, exportHdaControllerStateButton, exportQaBundleButton),
     status,
   );
 }
