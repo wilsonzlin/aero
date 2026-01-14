@@ -180,6 +180,20 @@ const postRuntimeError = (message: string) => {
   ctx.postMessage({ type: MessageType.ERROR, role, message } satisfies ProtocolMessage);
 };
 
+function toTransferableArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  // `Uint8Array.buffer` is `ArrayBufferLike` (can be SharedArrayBuffer), but screenshot/cursor
+  // protocols transfer the buffer across worker boundaries. Ensure we always return a plain
+  // `ArrayBuffer` with tight-packed bytes.
+  const buf = bytes.buffer;
+  if (buf instanceof ArrayBuffer && bytes.byteOffset === 0 && bytes.byteLength === buf.byteLength) {
+    return buf;
+  }
+
+  const out = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(out).set(bytes);
+  return out;
+}
+
 let role: WorkerRole = "gpu";
 let status: Int32Array | null = null;
 let guestU8: Uint8Array | null = null;
@@ -4031,7 +4045,8 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
       const req = msg as GpuRuntimeScreenshotRequestMessage;
       void (async () => {
         const postStub = (seq?: number) => {
-          const rgba8 = new Uint8Array([0, 0, 0, 255]).buffer;
+          const rgba8 = new ArrayBuffer(4);
+          new Uint8Array(rgba8).set([0, 0, 0, 255]);
           postToMain(
             {
               type: "screenshot",
@@ -4798,7 +4813,8 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
         // Best-effort: if the active presenter backend does not implement presented readback yet,
         // we fall back to `presenter.screenshot()` (source bytes).
         const postStub = (seq?: number) => {
-          const rgba8 = new Uint8Array([0, 0, 0, 255]).buffer;
+          const rgba8 = new ArrayBuffer(4);
+          new Uint8Array(rgba8).set([0, 0, 0, 255]);
           postToMain(
             {
               type: "screenshot_presented",
