@@ -19551,11 +19551,39 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {{
             const SHARE_TOKEN: u64 = 0x0123_4567_89ab_cdef;
             const VS: u32 = 3;
             const PS: u32 = 4;
+            const IL: u32 = 5;
+            const VB: u32 = 6;
             const ALLOC_ID: u32 = 1;
             const BUF_SIZE: u64 = 16;
 
             const VS_PASSTHROUGH: &[u8] =
                 include_bytes!("../../tests/fixtures/vs_passthrough.dxbc");
+            const ILAY_POS3_COLOR: &[u8] =
+                include_bytes!("../../tests/fixtures/ilay_pos3_color.bin");
+
+            #[repr(C)]
+            #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+            struct Vertex {
+                pos: [f32; 3],
+                color: [f32; 4],
+            }
+
+            // Dummy fullscreen triangle vertex buffer (matches `vs_passthrough` + `ilay_pos3_color`).
+            let verts = [
+                Vertex {
+                    pos: [-1.0, -1.0, 0.0],
+                    color: [1.0, 0.0, 0.0, 1.0],
+                },
+                Vertex {
+                    pos: [-1.0, 3.0, 0.0],
+                    color: [0.0, 1.0, 0.0, 1.0],
+                },
+                Vertex {
+                    pos: [3.0, -1.0, 0.0],
+                    color: [0.0, 0.0, 1.0, 1.0],
+                },
+            ];
+            let vb_bytes = bytemuck::bytes_of(&verts);
 
             #[derive(Clone, Copy)]
             struct SigParam {
@@ -19726,12 +19754,31 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {{
             writer.create_buffer(BUF, AEROGPU_RESOURCE_USAGE_STORAGE, BUF_SIZE, ALLOC_ID, 0);
             writer.export_shared_surface(BUF, SHARE_TOKEN);
             writer.import_shared_surface(BUF_ALIAS, SHARE_TOKEN);
+            writer.create_buffer(
+                VB,
+                AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
+                vb_bytes.len() as u64,
+                0,
+                0,
+            );
+            writer.upload_resource(VB, 0, vb_bytes);
 
             writer.create_shader_dxbc(VS, AerogpuShaderStage::Vertex, VS_PASSTHROUGH);
             writer.create_shader_dxbc(
                 PS,
                 AerogpuShaderStage::Pixel,
                 &build_ps_dcl_resource_raw_t0_solid_green_dxbc(),
+            );
+            writer.create_input_layout(IL, ILAY_POS3_COLOR);
+            writer.set_input_layout(IL);
+            writer.set_vertex_buffers(
+                0,
+                &[aero_protocol::aerogpu::aerogpu_cmd::AerogpuVertexBufferBinding {
+                    buffer: VB,
+                    stride_bytes: core::mem::size_of::<Vertex>() as u32,
+                    offset_bytes: 0,
+                    reserved0: 0,
+                }],
             );
             writer.bind_shaders(VS, PS, 0);
             writer.set_primitive_topology(AerogpuPrimitiveTopology::TriangleList);
