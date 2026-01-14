@@ -2077,6 +2077,10 @@ struct TrackStagingWriteNoopSetError {
   void operator()(HRESULT) const noexcept {}
 };
 
+// Forward declaration so `TrackStagingWriteLocked` can force a submission when it
+// cannot grow the `pending_staging_writes` vector (OOM).
+uint64_t submit_locked(Device* dev, bool want_present, HRESULT* out_hr);
+
 template <typename DeviceT, typename ResourceT, typename SetErrorFn>
 inline void TrackStagingWriteLocked(DeviceT* dev, ResourceT* dst, SetErrorFn&& set_error) {
   if (!dev || !dst) {
@@ -2113,6 +2117,27 @@ inline void TrackStagingWriteLocked(DeviceT* dev, ResourceT* dst, SetErrorFn&& s
   try {
     tracked.push_back(dst);
   } catch (...) {
+    // If we cannot record the staging write due to OOM, fall back to an
+    // immediate submission so we can still stamp the staging fence without
+    // needing to grow `pending_staging_writes`.
+    //
+    // This avoids Map(READ) observing stale `last_gpu_write_fence==0` and
+    // returning data before the GPU/host has written back into the staging
+    // allocation.
+    if constexpr (std::is_same_v<std::remove_cv_t<DeviceT>, Device> &&
+                  std::is_same_v<std::remove_cv_t<ResourceT>, Resource>) {
+      HRESULT submit_hr = S_OK;
+      const uint64_t fence = submit_locked(static_cast<Device*>(dev), /*want_present=*/false, &submit_hr);
+      if (FAILED(submit_hr)) {
+        set_error(submit_hr);
+        return;
+      }
+      if (fence != 0) {
+        dst->last_gpu_write_fence = fence;
+      }
+      return;
+    }
+
     set_error(E_OUTOFMEMORY);
   }
 }
