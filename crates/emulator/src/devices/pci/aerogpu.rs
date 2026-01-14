@@ -320,19 +320,7 @@ impl AeroGpuPciDevice {
             return;
         }
 
-        let fb_gpa = desc.fb_gpa;
-        state.publish(ScanoutStateUpdate {
-            source: SCANOUT_SOURCE_WDDM,
-            base_paddr_lo: fb_gpa as u32,
-            base_paddr_hi: (fb_gpa >> 32) as u32,
-            width: desc.width,
-            height: desc.height,
-            pitch_bytes: desc.pitch_bytes,
-            // `ScanoutState` currently only has a single format value; treat the WDDM scanout
-            // surface as the canonical Windows/VBE-style BGRA/X8 format.
-            format: SCANOUT_FORMAT_B8G8R8X8,
-        });
-
+        state.publish(self.regs.scanout0.to_scanout_state_update(SCANOUT_SOURCE_WDDM));
         self.last_published_scanout0 = Some(desc);
     }
 
@@ -496,6 +484,7 @@ impl AeroGpuPciDevice {
             mmio::SCANOUT0_ENABLE => {
                 let new_enable = value != 0;
                 let old_enable = self.regs.scanout0.enable;
+                self.regs.scanout0.enable = new_enable;
                 if old_enable && !new_enable {
                     // When scanout is disabled, stop vblank scheduling and drop any pending vblank IRQ.
                     self.next_vblank = None;
@@ -505,7 +494,6 @@ impl AeroGpuPciDevice {
                     }
                     self.update_irq_level();
                 }
-                self.regs.scanout0.enable = new_enable;
                 if !new_enable {
                     // Reset torn-update tracking so a stale LO write can't block future publishes.
                     self.scanout0_fb_gpa_lo_pending = false;
