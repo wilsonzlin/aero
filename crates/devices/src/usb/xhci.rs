@@ -8,7 +8,9 @@
 //!   - MMIO decode is gated on `COMMAND.MEM` (bit 1)
 //!   - DMA is gated on `COMMAND.BME` (bit 2)
 //!   - legacy INTx signalling is gated on `COMMAND.INTX_DISABLE` (bit 10)
-//! - Optional MSI delivery via the device's MSI capability
+//! - Optional MSI delivery when the guest enables MSI
+//! - Optional MSI-X delivery (vector 0) when the guest enables MSI-X (table/PBA in BAR0)
+//! - Snapshot/restore of PCI config + controller + interrupt latch state
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -27,7 +29,7 @@ use memory::MmioHandler;
 
 use crate::irq::IrqLine;
 use crate::pci::capabilities::PCI_CONFIG_SPACE_SIZE;
-use crate::pci::{profile, MsiCapability, PciConfigSpace, PciConfigSpaceState, PciDevice};
+use crate::pci::{profile, MsiCapability, MsixCapability, PciConfigSpace, PciConfigSpaceState, PciDevice};
 
 pub use aero_usb::xhci::{regs, XhciController};
 
@@ -98,6 +100,18 @@ impl XhciPciDevice {
             config.add_capability(Box::new(MsiCapability::new()));
         }
 
+        // Backwards compatibility: older profiles may omit MSI-X. Expose a minimal one-vector
+        // table/PBA in BAR0 so guests can program MSI-X even when only interrupter 0 is used.
+        if config.capability::<MsixCapability>().is_none() {
+            config.add_capability(Box::new(MsixCapability::new(
+                profile::XHCI_MSIX_TABLE_SIZE,
+                profile::XHCI_MSIX_TABLE_BAR,
+                profile::XHCI_MSIX_TABLE_OFFSET,
+                profile::XHCI_MSIX_PBA_BAR,
+                profile::XHCI_MSIX_PBA_OFFSET,
+            )));
+        }
+
         Self {
             config,
             controller,
@@ -142,22 +156,60 @@ impl XhciPciDevice {
             .is_some_and(|cap| cap.enabled())
     }
 
+    fn msix_enabled(&self) -> bool {
+        self.config
+            .capability::<MsixCapability>()
+            .is_some_and(|cap| cap.enabled())
+    }
+
     fn msi_active(&self) -> bool {
         self.msi_target.is_some() && self.msi_enabled()
+    }
+
+    fn msix_active(&self) -> bool {
+        self.msi_target.is_some() && self.msix_enabled()
     }
 
     fn service_interrupts(&mut self) {
         let level = self.irq.level() || self.controller.irq_level();
 
-        // MSI delivery is edge-triggered. Fire on a rising edge of the interrupt condition.
-        if level && !self.last_irq_level {
-            if let (Some(target), Some(msi)) = (
-                self.msi_target.as_mut(),
-                self.config.capability_mut::<MsiCapability>(),
-            ) {
-                // Ignore the return value: if the guest masked the vector, the capability will set
-                // its pending bit and we should not fall back to INTx while MSI is enabled.
-                let _ = msi.trigger(&mut **target);
+        // MSI/MSI-X delivery is edge-triggered. Use the INTx-derived level as an internal
+        // "interrupt requested" signal and trigger MSI/MSI-X on a rising edge.
+        //
+        // For masked MSI/MSI-X vectors, the PCI capability logic latches a pending bit but does not
+        // automatically re-deliver on unmask; re-trigger while the interrupt condition persists so
+        // guests can observe delivery after unmask.
+        if level {
+            if let Some(target) = self.msi_target.as_mut() {
+                // Prefer MSI-X over MSI when enabled to avoid double delivery.
+                if let Some(msix) = self.config.capability_mut::<MsixCapability>() {
+                    if msix.enabled() {
+                        // Single-vector MSI-X: table entry 0, pending bit 0.
+                        let pending = msix
+                            .snapshot_pba()
+                            .first()
+                            .is_some_and(|word| (word & 1) != 0);
+                        if !self.last_irq_level || pending {
+                            if let Some(msg) = msix.trigger(0) {
+                                target.as_mut().trigger_msi(msg);
+                            }
+                        }
+                        self.last_irq_level = level;
+                        return;
+                    }
+                }
+
+                if let Some(msi) = self.config.capability_mut::<MsiCapability>() {
+                    if msi.enabled() {
+                        let pending = msi.pending_bits() != 0;
+                        if !self.last_irq_level || pending {
+                            // Ignore the return value: if the guest masked the vector, the
+                            // capability will set its pending bit and we should not fall back to
+                            // INTx while MSI is enabled.
+                            let _ = msi.trigger(&mut **target);
+                        }
+                    }
+                }
             }
         }
 
@@ -166,10 +218,10 @@ impl XhciPciDevice {
 
     /// Returns the current level of the device's legacy INTx line.
     ///
-    /// This is gated by PCI `COMMAND.INTX_DISABLE` (bit 10) and is suppressed while MSI is active
-    /// so interrupts are not delivered twice.
+    /// This is gated by PCI `COMMAND.INTX_DISABLE` (bit 10) and is suppressed while MSI/MSI-X is
+    /// active so interrupts are not delivered twice.
     pub fn irq_level(&self) -> bool {
-        if self.msi_active() {
+        if self.msix_active() || self.msi_active() {
             return false;
         }
 
@@ -324,8 +376,38 @@ impl MmioHandler for XhciPciDevice {
             return all_ones(size);
         }
 
-        let dma_enabled = (self.config.command() & (1 << 2)) != 0;
+        // MSI-X table/PBA live inside BAR0. Dispatch these accesses before forwarding to the xHCI
+        // controller register model so guests can program MSI-X vectors via BAR MMIO.
+        if let Some(msix) = self.config.capability_mut::<MsixCapability>() {
+            if msix.table_bir() == Self::MMIO_BAR_INDEX {
+                let base = u64::from(msix.table_offset());
+                let end = base.saturating_add(msix.table_len_bytes() as u64);
+                if offset >= base && offset < end {
+                    let mut data = [0u8; 8];
+                    msix.table_read(offset - base, &mut data[..size]);
+                    let mut out = 0u64;
+                    for i in 0..size {
+                        out |= u64::from(data[i]) << (i * 8);
+                    }
+                    return out;
+                }
+            }
+            if msix.pba_bir() == Self::MMIO_BAR_INDEX {
+                let base = u64::from(msix.pba_offset());
+                let end = base.saturating_add(msix.pba_len_bytes() as u64);
+                if offset >= base && offset < end {
+                    let mut data = [0u8; 8];
+                    msix.pba_read(offset - base, &mut data[..size]);
+                    let mut out = 0u64;
+                    for i in 0..size {
+                        out |= u64::from(data[i]) << (i * 8);
+                    }
+                    return out;
+                }
+            }
+        }
 
+        let dma_enabled = (self.config.command() & (1 << 2)) != 0;
         if dma_enabled {
             if let Some(mem) = self.dma_mem.as_ref() {
                 let mut mem_ref = mem.borrow_mut();
@@ -353,6 +435,35 @@ impl MmioHandler for XhciPciDevice {
             return;
         }
 
+        if let Some(msix) = self.config.capability_mut::<MsixCapability>() {
+            if msix.table_bir() == Self::MMIO_BAR_INDEX {
+                let base = u64::from(msix.table_offset());
+                let end = base.saturating_add(msix.table_len_bytes() as u64);
+                if offset >= base && offset < end {
+                    let mut data = [0u8; 8];
+                    for i in 0..size {
+                        data[i] = ((value >> (i * 8)) & 0xff) as u8;
+                    }
+                    msix.table_write(offset - base, &data[..size]);
+                    self.service_interrupts();
+                    return;
+                }
+            }
+            if msix.pba_bir() == Self::MMIO_BAR_INDEX {
+                let base = u64::from(msix.pba_offset());
+                let end = base.saturating_add(msix.pba_len_bytes() as u64);
+                if offset >= base && offset < end {
+                    let mut data = [0u8; 8];
+                    for i in 0..size {
+                        data[i] = ((value >> (i * 8)) & 0xff) as u8;
+                    }
+                    msix.pba_write(offset - base, &data[..size]);
+                    self.service_interrupts();
+                    return;
+                }
+            }
+        }
+
         let dma_enabled = (self.config.command() & (1 << 2)) != 0;
         let masked = value & all_ones(size);
 
@@ -376,13 +487,17 @@ impl MmioHandler for XhciPciDevice {
 
 impl IoSnapshot for XhciPciDevice {
     const DEVICE_ID: [u8; 4] = *b"XHCP";
-    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 1);
+    // v1.2: include MSI-X table + PBA state (if present) in addition to PCI config + controller +
+    // IRQ latch.
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 2);
 
     fn save_state(&self) -> Vec<u8> {
         const TAG_PCI: u16 = 1;
         const TAG_IRQ: u16 = 2;
         const TAG_LAST_IRQ: u16 = 3;
         const TAG_CONTROLLER: u16 = 4;
+        const TAG_MSIX_TABLE: u16 = 5;
+        const TAG_MSIX_PBA: u16 = 6;
 
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
 
@@ -397,6 +512,16 @@ impl IoSnapshot for XhciPciDevice {
         w.field_bytes(TAG_LAST_IRQ, Encoder::new().bool(self.last_irq_level).finish());
         w.field_bytes(TAG_CONTROLLER, self.controller.save_state());
 
+        if let Some(msix) = self.config.capability::<MsixCapability>() {
+            w.field_bytes(TAG_MSIX_TABLE, msix.snapshot_table().to_vec());
+
+            let mut pba = Vec::with_capacity(msix.snapshot_pba().len().saturating_mul(8));
+            for word in msix.snapshot_pba() {
+                pba.extend_from_slice(&word.to_le_bytes());
+            }
+            w.field_bytes(TAG_MSIX_PBA, pba);
+        }
+
         w.finish()
     }
 
@@ -405,6 +530,8 @@ impl IoSnapshot for XhciPciDevice {
         const TAG_IRQ: u16 = 2;
         const TAG_LAST_IRQ: u16 = 3;
         const TAG_CONTROLLER: u16 = 4;
+        const TAG_MSIX_TABLE: u16 = 5;
+        const TAG_MSIX_PBA: u16 = 6;
 
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
@@ -431,6 +558,21 @@ impl IoSnapshot for XhciPciDevice {
                 bar_base,
                 bar_probe,
             });
+        }
+
+        if r.bytes(TAG_MSIX_TABLE).is_some() || r.bytes(TAG_MSIX_PBA).is_some() {
+            let Some(msix) = self.config.capability_mut::<MsixCapability>() else {
+                return Err(aero_io_snapshot::io::state::SnapshotError::InvalidFieldEncoding(
+                    "snapshot contains MSI-X state but device has no MSI-X capability",
+                ));
+            };
+
+            if let Some(buf) = r.bytes(TAG_MSIX_TABLE) {
+                msix.restore_table(buf)?;
+            }
+            if let Some(buf) = r.bytes(TAG_MSIX_PBA) {
+                msix.restore_pba_bytes(buf)?;
+            }
         }
 
         if let Some(buf) = r.bytes(TAG_IRQ) {

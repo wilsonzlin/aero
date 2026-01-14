@@ -324,14 +324,40 @@ pub const XHCI_MMIO_BAR_SIZE: u64 = XHCI_MMIO_BAR_SIZE_U32 as u64;
 pub const XHCI_BARS: [PciBarProfile; 1] =
     [PciBarProfile::mem32(XHCI_MMIO_BAR_INDEX, XHCI_MMIO_BAR_SIZE, false)];
 
+// -----------------------------------------------------------------------------
+// xHCI MSI-X configuration (BAR0-backed MSI-X table + PBA)
+// -----------------------------------------------------------------------------
+//
+// We expose a minimal MSI-X capability for the canonical xHCI controller so modern guests can
+// prefer MSI-X over legacy INTx/MSI. The current xHCI model only uses interrupter 0, so one vector
+// is sufficient.
+//
+// Layout:
+// - Table: BAR0 + 0x8000, one 16-byte entry (vector 0)
+// - PBA:   BAR0 + 0x9000, 8 bytes (bit 0)
+pub const XHCI_MSIX_TABLE_SIZE: u16 = 1;
+pub const XHCI_MSIX_TABLE_BAR: u8 = XHCI_MMIO_BAR_INDEX;
+pub const XHCI_MSIX_TABLE_OFFSET: u32 = 0x8000;
+pub const XHCI_MSIX_PBA_BAR: u8 = XHCI_MMIO_BAR_INDEX;
+pub const XHCI_MSIX_PBA_OFFSET: u32 = 0x9000;
+
 /// Canonical capabilities exposed by the QEMU-style xHCI profile.
 ///
-/// The current xHCI device model uses a single interrupt vector/condition, so a single-vector MSI
-/// capability is sufficient.
-pub const XHCI_CAPS: [PciCapabilityProfile; 1] = [PciCapabilityProfile::Msi {
-    is_64bit: true,
-    per_vector_masking: true,
-}];
+/// xHCI uses a single interrupter (vector 0) in the current device model. We expose both MSI and
+/// MSI-X so guests can choose their preferred interrupt mechanism.
+pub const XHCI_CAPS: [PciCapabilityProfile; 2] = [
+    PciCapabilityProfile::Msi {
+        is_64bit: true,
+        per_vector_masking: true,
+    },
+    PciCapabilityProfile::Msix {
+        table_size: XHCI_MSIX_TABLE_SIZE,
+        table_bar: XHCI_MSIX_TABLE_BAR,
+        table_offset: XHCI_MSIX_TABLE_OFFSET,
+        pba_bar: XHCI_MSIX_PBA_BAR,
+        pba_offset: XHCI_MSIX_PBA_OFFSET,
+    },
+];
 /// PCI BAR index used for the AHCI ABAR MMIO window on the Intel ICH9 profile.
 pub const AHCI_ABAR_BAR_INDEX: u8 = 5;
 

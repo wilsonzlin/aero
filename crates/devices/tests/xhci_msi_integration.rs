@@ -1,8 +1,12 @@
+use aero_io_snapshot::io::state::IoSnapshot;
 use aero_devices::pci::{
-    PciBdf, PciDevice, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig,
+    msix::PCI_CAP_ID_MSIX, MsixCapability, PciBdf, PciDevice, PciInterruptPin, PciIntxRouter,
+    PciIntxRouterConfig,
 };
 use aero_devices::usb::xhci::XhciPciDevice;
 use aero_platform::interrupts::{InterruptController, PlatformInterruptMode, PlatformInterrupts};
+use aero_platform::interrupts::msi::{MsiMessage, MsiTrigger};
+use memory::MmioHandler;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -82,6 +86,57 @@ fn xhci_msi_interrupt_reaches_guest_idt_vector() {
 }
 
 #[test]
+fn xhci_msix_interrupt_reaches_guest_idt_vector() {
+    let mut dev = XhciPciDevice::default();
+
+    // Platform interrupt controller used as an MSI sink.
+    let interrupts = Rc::new(RefCell::new(PlatformInterrupts::new()));
+    interrupts
+        .borrow_mut()
+        .set_mode(PlatformInterruptMode::Apic);
+    dev.set_msi_target(Some(Box::new(interrupts.clone())));
+
+    let mut cpu = GuestCpu::new();
+    cpu.install_isr(0x45);
+
+    // Program BAR0 base and enable MEM decoding so the MSI-X table/PBA region is accessible.
+    dev.config_mut()
+        .set_bar_base(XhciPciDevice::MMIO_BAR_INDEX, 0x1000_0000);
+    dev.config_mut().set_command(0x2);
+
+    // Enable MSI-X in config space.
+    let cap_offset = dev
+        .config_mut()
+        .find_capability(PCI_CAP_ID_MSIX)
+        .unwrap() as u16;
+    let ctrl = dev.config_mut().read(cap_offset + 0x02, 2) as u16;
+    dev.config_mut()
+        .write(cap_offset + 0x02, 2, u32::from(ctrl | (1 << 15)));
+
+    // Program MSI-X table entry 0 via BAR0 MMIO.
+    let table_base = u64::from(
+        dev.config_mut()
+            .capability::<MsixCapability>()
+            .unwrap()
+            .table_offset(),
+    );
+    MmioHandler::write(&mut dev, table_base + 0x00, 4, 0xfee0_0000);
+    MmioHandler::write(&mut dev, table_base + 0x04, 4, 0);
+    MmioHandler::write(&mut dev, table_base + 0x08, 4, 0x0045);
+    MmioHandler::write(&mut dev, table_base + 0x0c, 4, 0); // unmasked
+
+    dev.raise_event_interrupt();
+
+    assert!(
+        !dev.irq_level(),
+        "legacy INTx must be suppressed while MSI-X is active"
+    );
+
+    cpu.service_next_interrupt(&mut interrupts.borrow_mut());
+    assert_eq!(cpu.handled_vectors, vec![0x45]);
+}
+
+#[test]
 fn xhci_intx_fallback_routes_through_pci_intx_router() {
     let mut dev = XhciPciDevice::default();
     let bdf = PciBdf::new(0, 0, 0);
@@ -131,4 +186,64 @@ fn xhci_irq_level_is_gated_by_pci_command_intx_disable() {
 
     dev.clear_event_interrupt();
     assert!(!dev.irq_level());
+}
+
+#[test]
+fn xhci_msix_snapshot_roundtrip_preserves_table_and_pba() {
+    #[derive(Default)]
+    struct NoopMsiSink;
+    impl MsiTrigger for NoopMsiSink {
+        fn trigger_msi(&mut self, _message: MsiMessage) {}
+    }
+
+    let mut dev = XhciPciDevice::default();
+    dev.set_msi_target(Some(Box::new(NoopMsiSink::default())));
+
+    // Make BAR0 MMIO accessible so we can program the MSI-X table via guest-style MMIO writes.
+    dev.config_mut()
+        .set_bar_base(XhciPciDevice::MMIO_BAR_INDEX, 0x1000_0000);
+    dev.config_mut().set_command(0x2);
+
+    // Enable MSI-X in config space.
+    let cap_offset = dev
+        .config_mut()
+        .find_capability(PCI_CAP_ID_MSIX)
+        .unwrap() as u16;
+    let ctrl = dev.config_mut().read(cap_offset + 0x02, 2) as u16;
+    dev.config_mut()
+        .write(cap_offset + 0x02, 2, u32::from(ctrl | (1 << 15)));
+
+    let table_base = u64::from(
+        dev.config_mut()
+            .capability::<MsixCapability>()
+            .unwrap()
+            .table_offset(),
+    );
+
+    // Program entry 0 but keep it masked so the device sets PBA[0] when an interrupt fires.
+    MmioHandler::write(&mut dev, table_base + 0x00, 4, 0xfee0_0000);
+    MmioHandler::write(&mut dev, table_base + 0x04, 4, 0);
+    MmioHandler::write(&mut dev, table_base + 0x08, 4, 0x0045);
+    MmioHandler::write(&mut dev, table_base + 0x0c, 4, 1); // masked
+
+    dev.raise_event_interrupt();
+    dev.clear_event_interrupt();
+
+    let msix = dev.config().capability::<MsixCapability>().unwrap();
+    let table_before = msix.snapshot_table().to_vec();
+    let pba_before = msix.snapshot_pba().to_vec();
+    assert_eq!(
+        pba_before.first().copied().unwrap_or(0) & 1,
+        1,
+        "masked MSI-X delivery should set PBA bit 0"
+    );
+
+    let snapshot = dev.save_state();
+
+    let mut restored = XhciPciDevice::default();
+    restored.load_state(&snapshot).unwrap();
+
+    let msix_restored = restored.config().capability::<MsixCapability>().unwrap();
+    assert_eq!(msix_restored.snapshot_table(), table_before.as_slice());
+    assert_eq!(msix_restored.snapshot_pba(), pba_before.as_slice());
 }
