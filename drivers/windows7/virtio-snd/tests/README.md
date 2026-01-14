@@ -89,6 +89,8 @@ Note: for multi-config generators (Visual Studio, Ninja Multi-Config), add:
 
 - `--config <cfg>` to `cmake --build`
 - `-C <cfg>` to `ctest`
+- The Bash helper script (`scripts/run-host-tests.sh`) does not currently accept a configuration
+  parameter; use the direct commands above if you configured a multi-config generator.
 
 ## Subset: `host/` only
 

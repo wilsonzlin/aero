@@ -129,3 +129,6 @@ ctest --test-dir out/virtiosnd-host-tests --output-on-failure
 Note: for multi-config generators (Visual Studio, Ninja Multi-Config), pass `-Configuration <cfg>`
 to the PowerShell runner, or add `--config <cfg>` / `ctest -C <cfg>` when invoking CMake/CTest
 directly.
+
+The Bash helper script (`scripts/run-host-tests.sh`) does not currently accept a configuration
+parameter; use the direct commands above if you configured a multi-config generator.
