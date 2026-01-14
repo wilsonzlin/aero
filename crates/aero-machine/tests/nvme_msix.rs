@@ -530,6 +530,19 @@ fn snapshot_restore_preserves_nvme_msix_pending_bit_and_delivers_after_unmask() 
         "expected MSI-X pending bit 0 to be set while function-masked"
     );
 
+    // Clear the NVMe interrupt condition before snapshotting by consuming the completion entry
+    // (advance CQ0 head). Pending MSI-X delivery must still occur later due to the PBA pending bit.
+    m.write_physical_u32(bar0_base + 0x1004, 1); // CQ0 head = 1
+    assert!(
+        !nvme.borrow().irq_pending(),
+        "expected NVMe interrupt condition to be cleared after consuming CQ0 completion"
+    );
+    assert_ne!(
+        m.read_physical_u64(bar0_base + pba_offset) & 1,
+        0,
+        "expected MSI-X pending bit 0 to remain set after clearing interrupt condition"
+    );
+
     let snapshot = m.take_snapshot_full().unwrap();
 
     // Mutate state after snapshot: clear function mask and deliver the pending MSI-X vector.
@@ -593,6 +606,11 @@ fn snapshot_restore_preserves_nvme_msix_pending_bit_and_delivers_after_unmask() 
         pba_bits & 1,
         0,
         "expected MSI-X pending bit 0 to survive snapshot/restore"
+    );
+    let nvme = m.nvme().expect("nvme enabled");
+    assert!(
+        !nvme.borrow().irq_pending(),
+        "expected NVMe interrupt condition to remain cleared across snapshot/restore"
     );
 
     // Clear Function Mask post-restore and verify the pending vector is delivered and the pending
@@ -869,6 +887,19 @@ fn snapshot_restore_preserves_nvme_msix_vector_mask_pending_bit_and_delivers_aft
         "expected MSI-X pending bit 0 to be set while the entry is masked"
     );
 
+    // Clear the NVMe interrupt condition before snapshotting by consuming the completion entry
+    // (advance CQ0 head). Pending MSI-X delivery must still occur later due to the PBA pending bit.
+    m.write_physical_u32(bar0_base + 0x1004, 1); // CQ0 head = 1
+    assert!(
+        !nvme.borrow().irq_pending(),
+        "expected NVMe interrupt condition to be cleared after consuming CQ0 completion"
+    );
+    assert_ne!(
+        m.read_physical_u64(bar0_base + pba_offset) & 1,
+        0,
+        "expected MSI-X pending bit 0 to remain set after clearing interrupt condition"
+    );
+
     let snapshot = m.take_snapshot_full().unwrap();
 
     // Mutate state after snapshot: unmask the entry and observe delivery + pending-bit clear.
@@ -930,6 +961,11 @@ fn snapshot_restore_preserves_nvme_msix_vector_mask_pending_bit_and_delivers_aft
         pba_bits & 1,
         0,
         "expected MSI-X pending bit 0 to survive snapshot/restore"
+    );
+    let nvme = m.nvme().expect("nvme enabled");
+    assert!(
+        !nvme.borrow().irq_pending(),
+        "expected NVMe interrupt condition to remain cleared across snapshot/restore"
     );
 
     // Unmask after restore and expect immediate delivery (and pending-bit clear).
