@@ -14716,6 +14716,7 @@ mod tests {
         eprintln!("skipping {test_name}: {reason}");
     }
 
+    #[allow(dead_code)]
     fn gs_passthrough_position_location(locations: &BTreeSet<u32>) -> u32 {
         // Choose the lowest location not used by varyings. We store the clip-space position as a
         // vertex attribute in the generated vertex buffer and then forward it to
@@ -14731,6 +14732,7 @@ mod tests {
         loc
     }
 
+    #[allow(dead_code)]
     fn wgsl_gs_passthrough_vertex_shader(locations: &BTreeSet<u32>) -> Result<String> {
         // The GS emulation passthrough shader expects its vertex buffer to contain:
         // - clip-space position at a dedicated `@location(P)` chosen to not collide with varyings.

@@ -596,6 +596,7 @@ fn aero_vp_load_loc{loc}(vertex_id: i32, instance_id: u32) -> vec4<f32> {{
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::input_layout::{InputLayoutBinding, InputLayoutDesc, VsInputSignatureElement};
     use std::collections::BTreeMap;
 
     #[test]
@@ -623,7 +624,7 @@ mod tests {
             wiring_bindings, layout_bindings,
             "VS-as-compute vertex pulling bindings must match VertexPullingLayout"
         );
-    use crate::input_layout::{InputLayoutBinding, InputLayoutDesc, VsInputSignatureElement};
+    }
 
     #[test]
     fn generated_wgsl_parses_without_a_device() {
