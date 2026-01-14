@@ -318,6 +318,11 @@ pub const OPCODE_DCL_HS_OUTPUT_CONTROL_POINT_COUNT: u32 = 0x116;
 /// Upstream: `D3D11_SB_OPCODE_DCL_DS_DOMAIN`.
 pub const OPCODE_DCL_DS_DOMAIN: u32 = 0x119;
 
+/// `dcl_inputcontrolpoints` (hull/domain shader input patch control point count).
+///
+/// Upstream: `D3D11_SB_OPCODE_DCL_INPUT_CONTROL_POINT_COUNT`.
+pub const OPCODE_DCL_INPUT_CONTROL_POINT_COUNT: u32 = 0x112;
+
 /// `dcl_thread_group` declaration.
 ///
 /// Upstream: `D3D11_SB_OPCODE_DCL_THREAD_GROUP`.

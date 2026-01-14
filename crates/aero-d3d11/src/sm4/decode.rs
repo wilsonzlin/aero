@@ -1958,6 +1958,16 @@ pub fn decode_decl(opcode: u32, inst_toks: &[u32], at: usize) -> Result<Sm4Decl,
     // Geometry + tessellation metadata declarations do not use an operand token; they carry
     // a small immediate payload (or no payload) instead.
     match opcode {
+        OPCODE_DCL_INPUT_CONTROL_POINT_COUNT => {
+            if r.is_eof() {
+                return Ok(Sm4Decl::Unknown { opcode });
+            }
+            let count = r.read_u32()?;
+            if !r.is_eof() {
+                return Ok(Sm4Decl::Unknown { opcode });
+            }
+            return Ok(Sm4Decl::InputControlPointCount { count });
+        }
         OPCODE_DCL_GS_INPUT_PRIMITIVE => {
             if r.is_eof() {
                 return Ok(Sm4Decl::Unknown { opcode });

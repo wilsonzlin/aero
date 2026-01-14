@@ -201,6 +201,14 @@ pub enum Sm4Decl {
         y: u32,
         z: u32,
     },
+    /// Hull/domain shader input patch control point count (`dcl_inputcontrolpoints N`).
+    ///
+    /// This declares the number of control points per *input* patch consumed by the shader:
+    /// - For HS, it must match the IA patchlist primitive topology (`PatchListN`).
+    /// - For DS, it is expected to match the HS output control point count.
+    InputControlPointCount {
+        count: u32,
+    },
     /// Non-executable `customdata` block.
     ///
     /// This is emitted by the SM4/SM5 encoder for comments, debug data, immediate constant
