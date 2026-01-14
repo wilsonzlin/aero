@@ -354,6 +354,8 @@ The current implementation targets:
 
 - VB/IB draws: `DrawPrimitive*` / `DrawIndexedPrimitive*` with DEFAULT-pool buffers, including dynamic
   `Lock/Unlock` dirty-range tracking (`d3d9ex_multiframe_triangle`, `d3d9ex_vb_dirty_range`).
+  - Dynamic buffer locks honor `D3DLOCK_DISCARD` / `D3DLOCK_NOOVERWRITE` via buffer renaming + in-flight range tracking
+    (validated by `d3d9_dynamic_vb_lock_semantics`).
 - User-pointer draws: `DrawPrimitiveUP` / `DrawIndexedPrimitiveUP` (`d3d9ex_triangle`,
   `d3d9ex_draw_indexed_primitive_up`, `d3d9ex_fixedfunc_textured_triangle`, `d3d9ex_fixedfunc_texture_stage_state`).
 
@@ -511,7 +513,7 @@ This subset is validated via:
   `d3d9_caps_smoke`, `d3d9_validate_device_sanity`, `d3d9ex_getters_sanity`, `d3d9_get_state_roundtrip`, `d3d9ex_stateblock_sanity`,
   `d3d9ex_draw_indexed_primitive_up`, `d3d9ex_scissor_sanity`, `d3d9ex_query_latency`, `d3d9ex_event_query`, `d3d9ex_submit_fence_stress`,
   `d3d9ex_stretchrect`, `d3d9_raster_status_sanity`, `d3d9ex_multiframe_triangle`, `d3d9ex_vb_dirty_range`,
-  `d3d9ex_shared_surface`, `d3d9ex_shared_surface_ipc`, and the DWM-focused `d3d9ex_dwm_ddi_sanity` / `d3d9ex_dwm_probe`).
+  `d3d9_dynamic_vb_lock_semantics`, `d3d9ex_shared_surface`, `d3d9ex_shared_surface_ipc`, and the DWM-focused `d3d9ex_dwm_ddi_sanity` / `d3d9ex_dwm_probe`).
   - On Win7 x64, `d3d9ex_shared_surface_wow64` validates cross-bitness shared-surface interop (WOW64 producer → native consumer; DWM scenario).
   - For DWM-like multi-producer batching / alloc_id collision coverage, also run `d3d9ex_shared_surface_many_producers` and `d3d9ex_alloc_id_persistence`.
 
