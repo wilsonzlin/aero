@@ -452,6 +452,40 @@ class HarnessVectorsFlagValidationTests(unittest.TestCase):
             finally:
                 sys.argv = old_argv
 
+    def test_rejects_virtio_snd_wav_path_directory(self) -> None:
+        h = self.harness
+
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            wav_dir = tmp / "out.wav"
+            wav_dir.mkdir()
+
+            old_argv = sys.argv
+            try:
+                sys.argv = [
+                    "invoke_aero_virtio_win7_tests.py",
+                    "--qemu-system",
+                    "qemu-system-x86_64",
+                    "--disk-image",
+                    "disk.img",
+                    "--with-virtio-snd",
+                    "--virtio-snd-audio-backend",
+                    "wav",
+                    "--virtio-snd-wav-path",
+                    str(wav_dir),
+                    "--dry-run",
+                ]
+                stderr = io.StringIO()
+                with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as cm:
+                    h.main()
+                self.assertEqual(cm.exception.code, 2)
+                self.assertIn("--virtio-snd-wav-path must be a file path", stderr.getvalue())
+            finally:
+                sys.argv = old_argv
+
 
 if __name__ == "__main__":
     unittest.main()

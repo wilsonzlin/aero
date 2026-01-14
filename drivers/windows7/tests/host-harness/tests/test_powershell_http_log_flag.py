@@ -25,6 +25,21 @@ class PowerShellHarnessHttpLogFlagTests(unittest.TestCase):
             "HttpLogPath default must be empty so existing behavior stays unchanged",
         )
 
+        # Safety: never delete directories when the user passes a path intended to be a file.
+        # The harness should explicitly detect and reject a directory HttpLogPath.
+        self.assertRegex(
+            text,
+            r"Test-Path\s+-LiteralPath\s+\$HttpLogPath\s+-PathType\s+Container",
+            "PowerShell harness should guard against HttpLogPath being a directory",
+        )
+
+        # Safety: virtio-snd wav output path should also reject directory paths before Remove-Item.
+        self.assertRegex(
+            text,
+            r"Test-Path\s+-LiteralPath\s+\$VirtioSndWavPath\s+-PathType\s+Container",
+            "PowerShell harness should guard against VirtioSndWavPath being a directory",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

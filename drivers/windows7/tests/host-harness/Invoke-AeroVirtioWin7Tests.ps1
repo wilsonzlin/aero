@@ -5227,6 +5227,9 @@ if (-not [string]::IsNullOrEmpty($HttpLogPath)) {
     }
     $HttpLogPath = Join-Path (Resolve-Path -LiteralPath $httpLogParent).Path (Split-Path -Leaf $HttpLogPath)
     if (Test-Path -LiteralPath $HttpLogPath) {
+      if (Test-Path -LiteralPath $HttpLogPath -PathType Container) {
+        throw "HTTP request log path is a directory: $HttpLogPath"
+      }
       Remove-Item -LiteralPath $HttpLogPath -Force
     }
     # Create an empty file so CI artifacts include it even if the guest never makes requests.
@@ -5469,6 +5472,9 @@ try {
           $VirtioSndWavPath = Join-Path (Resolve-Path -LiteralPath $wavParent).Path (Split-Path -Leaf $VirtioSndWavPath)
 
           if (Test-Path -LiteralPath $VirtioSndWavPath) {
+            if (Test-Path -LiteralPath $VirtioSndWavPath -PathType Container) {
+              throw "VirtioSndWavPath is a directory: $VirtioSndWavPath"
+            }
             Remove-Item -LiteralPath $VirtioSndWavPath -Force
           }
 
@@ -5550,6 +5556,9 @@ try {
           $VirtioSndWavPath = Join-Path (Resolve-Path -LiteralPath $wavParent).Path (Split-Path -Leaf $VirtioSndWavPath)
 
           if (Test-Path -LiteralPath $VirtioSndWavPath) {
+            if (Test-Path -LiteralPath $VirtioSndWavPath -PathType Container) {
+              throw "VirtioSndWavPath is a directory: $VirtioSndWavPath"
+            }
             Remove-Item -LiteralPath $VirtioSndWavPath -Force
           }
 

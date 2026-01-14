@@ -2878,6 +2878,22 @@ def main() -> int:
             parser.error("--virtio-snd-* options require --with-virtio-snd/--enable-virtio-snd")
     elif args.virtio_snd_audio_backend == "wav" and not args.virtio_snd_wav_path:
         parser.error("--virtio-snd-wav-path is required when --virtio-snd-audio-backend=wav")
+    elif args.virtio_snd_audio_backend == "wav":
+        # Prepare the wav output path eagerly so we fail fast with a clear error instead of letting
+        # QEMU fail to create the file (or accidentally overwriting a directory path).
+        wav_path = Path(args.virtio_snd_wav_path).resolve()
+        if wav_path.exists() and wav_path.is_dir():
+            parser.error(f"--virtio-snd-wav-path must be a file path (got directory): {wav_path}")
+        if not args.dry_run:
+            try:
+                wav_path.parent.mkdir(parents=True, exist_ok=True)
+            except OSError as e:
+                parser.error(f"failed to create virtio-snd wav output directory {wav_path.parent}: {e}")
+            try:
+                if wav_path.exists():
+                    wav_path.unlink()
+            except OSError as e:
+                parser.error(f"failed to remove existing virtio-snd wav output file {wav_path}: {e}")
 
     if args.virtio_snd_verify_wav:
         if not args.enable_virtio_snd:
