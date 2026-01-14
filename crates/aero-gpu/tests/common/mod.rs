@@ -45,24 +45,10 @@ pub fn d3d9_executor(
 pub fn d3d9_executor(
     test_name: &str,
 ) -> Option<std::sync::MutexGuard<'static, aero_gpu::AerogpuD3d9Executor>> {
-    #[cfg(target_arch = "wasm32")]
-    {
-        let _ = test_name;
-        // `AerogpuD3d9Executor` is not `Send`/`Sync` on wasm32 (it contains WebGPU/wasm-bindgen
-        // types like `JsValue`). The integration tests in this crate are not executed for the
-        // `wasm32-unknown-unknown` target in CI (they are only compiled via `--no-run`), so return
-        // `None` to keep the test crates compiling without pulling non-`Sync` types into `static`
-        // variables.
-        return None;
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
     use std::sync::{Mutex, OnceLock};
 
-    #[cfg(not(target_arch = "wasm32"))]
     static EXEC: OnceLock<Option<&'static Mutex<aero_gpu::AerogpuD3d9Executor>>> = OnceLock::new();
 
-    #[cfg(not(target_arch = "wasm32"))]
     let exec = EXEC.get_or_init(|| {
         let exec = match pollster::block_on(aero_gpu::AerogpuD3d9Executor::new_headless()) {
             Ok(exec) => exec,
@@ -72,16 +58,13 @@ pub fn d3d9_executor(
         Some(Box::leak(Box::new(Mutex::new(exec))))
     });
 
-    #[cfg(not(target_arch = "wasm32"))]
     let Some(exec) = exec.as_ref() else {
         skip_or_panic(test_name, "wgpu adapter not found");
         return None;
     };
 
-    #[cfg(not(target_arch = "wasm32"))]
     let mut exec = exec.lock().unwrap_or_else(|poison| poison.into_inner());
     exec.reset();
-    #[cfg(not(target_arch = "wasm32"))]
     Some(exec)
 }
 
@@ -108,25 +91,12 @@ pub async fn aerogpu_executor(
     test_name: &str,
 ) -> Option<futures_intrusive::sync::MutexGuard<'static, aero_gpu::aerogpu_executor::AeroGpuExecutor>>
 {
-    #[cfg(target_arch = "wasm32")]
-    {
-        let _ = test_name;
-        // `AeroGpuExecutor` stores wgpu `Device`/`Queue` handles which are not `Send`/`Sync` on wasm.
-        // The integration tests in this crate are not executed for the `wasm32-unknown-unknown`
-        // target in CI (they are only compiled via `--no-run`). Return `None` to keep these test
-        // crates compiling without introducing non-`Sync` statics.
-        return None;
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
     use futures_intrusive::sync::Mutex;
     use std::sync::OnceLock;
 
-    #[cfg(not(target_arch = "wasm32"))]
     static EXEC: OnceLock<Option<&'static Mutex<aero_gpu::aerogpu_executor::AeroGpuExecutor>>> =
         OnceLock::new();
 
-    #[cfg(not(target_arch = "wasm32"))]
     let exec = EXEC.get_or_init(|| {
         ensure_xdg_runtime_dir();
 
@@ -170,16 +140,13 @@ pub async fn aerogpu_executor(
         Some(Box::leak(Box::new(Mutex::new(exec, true))))
     });
 
-    #[cfg(not(target_arch = "wasm32"))]
     let Some(exec) = exec.as_ref() else {
         skip_or_panic(test_name, "no wgpu adapter available");
         return None;
     };
 
-    #[cfg(not(target_arch = "wasm32"))]
     let mut exec = exec.lock().await;
     exec.reset();
-    #[cfg(not(target_arch = "wasm32"))]
     Some(exec)
 }
 
