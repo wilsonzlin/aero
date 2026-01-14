@@ -1938,7 +1938,7 @@ mod tests {
                     reflection: ShaderReflection::default(),
                 },
             );
-            rt.bind_shaders(Some(VS), Some(PS));
+            rt.bind_shaders(Some(VS), None, Some(PS));
 
             let mut colors = [None; 8];
             colors[0] = Some(RT0);
