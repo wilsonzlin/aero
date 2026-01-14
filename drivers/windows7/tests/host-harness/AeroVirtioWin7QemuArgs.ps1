@@ -79,6 +79,60 @@ function Assert-AeroWin7QemuSupportsAeroW7VirtioContractV1 {
   }
 }
 
+function Get-AeroWin7QemuDeviceListHelpText {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$QemuSystem
+  )
+
+  $help = & $QemuSystem -device help 2>&1
+  $exitCode = $LASTEXITCODE
+  if ($exitCode -ne 0) {
+    $helpText = ($help | Out-String).Trim()
+    throw "Failed to query QEMU device list ($QemuSystem -device help). Output:`n$helpText"
+  }
+
+  return ($help | Out-String)
+}
+
+function Resolve-AeroVirtioSndPciDeviceName {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$QemuSystem
+  )
+
+  # QEMU device naming has changed over time. Prefer the modern name but fall back
+  # if a distro build exposes a legacy alias.
+  $helpText = Get-AeroWin7QemuDeviceListHelpText -QemuSystem $QemuSystem
+
+  if ($helpText -match "virtio-sound-pci") { return "virtio-sound-pci" }
+  if ($helpText -match "virtio-snd-pci") { return "virtio-snd-pci" }
+
+  throw "QEMU does not advertise a virtio-snd PCI device (expected 'virtio-sound-pci' or 'virtio-snd-pci'). Upgrade QEMU or omit -WithVirtioSnd/-EnableVirtioSnd and pass custom QEMU args via -QemuExtraArgs."
+}
+
+function Assert-AeroWin7QemuSupportsVirtioSndPciDevice {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$QemuSystem
+  )
+
+  $deviceName = Resolve-AeroVirtioSndPciDeviceName -QemuSystem $QemuSystem
+  $helpText = Get-AeroWin7QemuDeviceHelpText -QemuSystem $QemuSystem -DeviceName $deviceName
+
+  if ($helpText -notmatch "(?m)^\s*disable-legacy\b") {
+    throw "QEMU device '$deviceName' does not expose 'disable-legacy'. AERO-W7-VIRTIO v1 virtio-snd requires modern-only virtio-pci enumeration (DEV_1059). Upgrade QEMU."
+  }
+  if ($helpText -notmatch "(?m)^\s*x-pci-revision\b") {
+    throw "QEMU device '$deviceName' does not expose 'x-pci-revision'. AERO-W7-VIRTIO v1 virtio-snd requires PCI Revision ID 0x01 (REV_01). Upgrade QEMU."
+  }
+
+  return $deviceName
+}
+
 function Quote-AeroWin7QemuKeyvalValue {
   [CmdletBinding()]
   param(

@@ -342,6 +342,13 @@ if (-not $DisableUdp) {
   }
 }
 
+$virtioSndPciDeviceName = ""
+if ($WithVirtioSnd) {
+  # Fail fast with a clear message if the selected QEMU binary lacks virtio-snd support (or the
+  # device properties needed for the Aero contract v1 identity).
+  $virtioSndPciDeviceName = Assert-AeroWin7QemuSupportsVirtioSndPciDevice -QemuSystem $QemuSystem
+}
+
 function Start-AeroSelftestHttpServer {
   param(
     [Parameter(Mandatory = $true)] [int]$Port,
@@ -649,26 +656,6 @@ function Read-NewText {
   } finally {
     $fs.Dispose()
   }
-}
-
-function Resolve-AeroVirtioSndPciDeviceName {
-  param(
-    [Parameter(Mandatory = $true)] [string]$QemuSystem
-  )
-
-  # QEMU device naming has changed over time. Prefer the modern name but fall back
-  # if a distro build exposes a legacy alias.
-  $helpText = ""
-  try {
-    $helpText = (& $QemuSystem -device help 2>&1 | Out-String)
-  } catch {
-    throw "Failed to query QEMU device list ('$QemuSystem -device help'): $_"
-  }
-
-  if ($helpText -match "virtio-sound-pci") { return "virtio-sound-pci" }
-  if ($helpText -match "virtio-snd-pci") { return "virtio-snd-pci" }
-
-  throw "QEMU binary '$QemuSystem' does not advertise a virtio-snd PCI device. Upgrade QEMU or pass a custom device via -QemuExtraArgs."
 }
 
 function Wait-AeroSelftestResult {
@@ -1333,24 +1320,40 @@ function Get-AeroVirtioSoundDeviceArg {
     # Optional MSI-X vector count (`vectors=` device property).
     [Parameter(Mandatory = $false)] [int]$MsixVectors = 0,
     # Optional name of the PowerShell parameter that requested this override (for clearer warnings).
-    [Parameter(Mandatory = $false)] [string]$VectorsParamName = "-VirtioMsixVectors"
+    [Parameter(Mandatory = $false)] [string]$VectorsParamName = "-VirtioMsixVectors",
+
+    # Optional pre-resolved virtio-snd PCI device name (virtio-sound-pci / virtio-snd-pci).
+    [Parameter(Mandatory = $false)] [string]$DeviceName = ""
   )
 
-  # Determine which QEMU virtio-snd PCI device name is available and validate it supports
-  # the Aero contract v1 configuration we need.
-  #
-  # The strict Aero INF (`aero_virtio_snd.inf`) matches only the modern virtio-snd PCI ID
-  # (`PCI\VEN_1AF4&DEV_1059`) and requires `REV_01`, so we must:
-  #   - force modern-only virtio-pci enumeration (`disable-legacy=on` => `DEV_1059`)
-  #   - force PCI Revision ID 0x01 (`x-pci-revision=0x01` => `REV_01`)
-  $deviceName = Resolve-AeroVirtioSndPciDeviceName -QemuSystem $QemuSystem
-  $helpText = Get-AeroWin7QemuDeviceHelpText -QemuSystem $QemuSystem -DeviceName $deviceName
-
-  if ($helpText -notmatch "(?m)^\s*disable-legacy\b") {
-    throw "QEMU device '$deviceName' does not expose 'disable-legacy'. AERO-W7-VIRTIO v1 virtio-snd requires modern-only virtio-pci enumeration (DEV_1059). Upgrade QEMU."
+  $deviceName = $DeviceName
+  if ([string]::IsNullOrEmpty($deviceName)) {
+    # Determine which QEMU virtio-snd PCI device name is available and validate it supports
+    # the Aero contract v1 configuration we need.
+    #
+    # The strict Aero INF (`aero_virtio_snd.inf`) matches only the modern virtio-snd PCI ID
+    # (`PCI\VEN_1AF4&DEV_1059`) and requires `REV_01`, so we must:
+    #   - force modern-only virtio-pci enumeration (`disable-legacy=on` => `DEV_1059`)
+    #   - force PCI Revision ID 0x01 (`x-pci-revision=0x01` => `REV_01`)
+    if ($ModernOnly) {
+      $deviceName = Assert-AeroWin7QemuSupportsVirtioSndPciDevice -QemuSystem $QemuSystem
+    } else {
+      $deviceName = Resolve-AeroVirtioSndPciDeviceName -QemuSystem $QemuSystem
+    }
   }
-  if ($helpText -notmatch "(?m)^\s*x-pci-revision\b") {
-    throw "QEMU device '$deviceName' does not expose 'x-pci-revision'. AERO-W7-VIRTIO v1 virtio-snd requires PCI Revision ID 0x01 (REV_01). Upgrade QEMU."
+
+  $helpText = $null
+  if ($ModernOnly -or $MsixVectors -gt 0) {
+    $helpText = Get-AeroWin7QemuDeviceHelpText -QemuSystem $QemuSystem -DeviceName $deviceName
+  }
+
+  if ($ModernOnly) {
+    if ($helpText -notmatch "(?m)^\s*disable-legacy\b") {
+      throw "QEMU device '$deviceName' does not expose 'disable-legacy'. AERO-W7-VIRTIO v1 virtio-snd requires modern-only virtio-pci enumeration (DEV_1059). Upgrade QEMU."
+    }
+    if ($helpText -notmatch "(?m)^\s*x-pci-revision\b") {
+      throw "QEMU device '$deviceName' does not expose 'x-pci-revision'. AERO-W7-VIRTIO v1 virtio-snd requires PCI Revision ID 0x01 (REV_01). Upgrade QEMU."
+    }
   }
 
   if ($MsixVectors -gt 0 -and ($helpText -notmatch "(?m)^\s*vectors\b")) {
@@ -1358,7 +1361,11 @@ function Get-AeroVirtioSoundDeviceArg {
     $MsixVectors = 0
   }
 
-  $arg = "$deviceName,disable-legacy=on,x-pci-revision=0x01,audiodev=snd0"
+  $arg = "$deviceName"
+  if ($ModernOnly) {
+    $arg += ",disable-legacy=on,x-pci-revision=0x01"
+  }
+  $arg += ",audiodev=snd0"
   if ($MsixVectors -gt 0) {
     $arg += ",vectors=$MsixVectors"
   }
@@ -3625,7 +3632,7 @@ try {
         }
       }
 
-      $virtioSndDevice = Get-AeroVirtioSoundDeviceArg -QemuSystem $QemuSystem -ModernOnly $false -MsixVectors $requestedVirtioSndVectors -VectorsParamName $virtioSndVectorsFlag
+      $virtioSndDevice = Get-AeroVirtioSoundDeviceArg -QemuSystem $QemuSystem -ModernOnly $false -MsixVectors $requestedVirtioSndVectors -VectorsParamName $virtioSndVectorsFlag -DeviceName $virtioSndPciDeviceName
       $virtioSndArgs = @(
         "-audiodev", $audiodev,
         "-device", $virtioSndDevice
@@ -3706,7 +3713,7 @@ try {
         }
       }
 
-      $virtioSndDevice = Get-AeroVirtioSoundDeviceArg -QemuSystem $QemuSystem -ModernOnly $true -MsixVectors $requestedVirtioSndVectors -VectorsParamName $virtioSndVectorsFlag
+      $virtioSndDevice = Get-AeroVirtioSoundDeviceArg -QemuSystem $QemuSystem -ModernOnly $true -MsixVectors $requestedVirtioSndVectors -VectorsParamName $virtioSndVectorsFlag -DeviceName $virtioSndPciDeviceName
       $virtioSndArgs = @(
         "-audiodev", $audiodev,
         "-device", $virtioSndDevice
