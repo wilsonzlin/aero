@@ -420,7 +420,12 @@ In a Win7 VM with AeroGPU installed and working correctly:
 * `d3d9_raster_status_pacing` samples `IDirect3DDevice9::GetRasterStatus` and fails if `InVBlank` never becomes true or scanline is stuck (useful for `DxgkDdiGetScanLine` bring-up)
 * `d3d9_validate_device_sanity` creates a D3D9Ex device and calls `IDirect3DDevice9Ex::ValidateDevice` after setting a few common render/sampler states (expects `D3D_OK` and `NumPasses >= 1`; prints a warning if it is not single-pass)
 * `d3d9_get_state_roundtrip` validates D3D9Ex fixed-function state caching and `Set*`/`Get*` roundtrips (`GetRenderState`, `GetSamplerState`, `GetViewport`, `GetTransform`, `GetTextureStageState`) and exercises `IDirect3DStateBlock9` record/apply restore behavior (expects all queried values to round-trip exactly)
+* `d3d9_process_vertices_sanity` validates `IDirect3DDevice9::ProcessVertices` by reading back the transformed vertex bytes from a system-memory destination VB (covers pass-through XYZRHW and deterministic fixed-function XYZ→XYZRHW transform cases)
 * `d3d9_mipmapped_texture_smoke` uploads a small mipmapped texture, renders with it, and validates mip selection/sampling via readback (sanity-check for basic D3D9 texture upload + sampling paths)
+* `d3d9_fixedfunc_xyz_diffuse` draws a fixed-function triangle using `D3DFVF_XYZ|D3DFVF_DIFFUSE` and validates output via backbuffer readback (expects **corner clear + center diffuse**, within tolerance)
+* `d3d9_fixedfunc_xyz_diffuse_tex1` draws a fixed-function textured triangle using `D3DFVF_XYZ|D3DFVF_DIFFUSE|D3DFVF_TEX1` and validates that the modulated diffuse×texture colors appear at four sample points via readback
+* `d3d9_patch_rendering_smoke` exercises the D3D9 patch path (`DrawRectPatch`, `DeletePatch`, `DrawTriPatch`) and validates that the patch outputs expected colors over a clear background (smoke test for patch caching/invalidation paths)
+* `d3d9_patch_sanity` validates basic patch-cap behavior: if patch caps are advertised it creates and renders a simple Bezier tri-patch and validates **corner red + center blue** via readback (otherwise the test is skipped)
 * `d3d9_texture_16bit_sampling` validates sampling correctness for common 16-bit texture formats (sanity-check for format conversion + sampling paths)
 * `d3d9ex_triangle` renders a blue triangle over a red clear and confirms **corner red + center blue** via readback
 * `d3d9ex_fixedfunc_textured_triangle` draws a fixed-function textured triangle and validates output via readback (sanity-check for fixed-function texturing)
