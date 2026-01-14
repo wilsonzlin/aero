@@ -474,6 +474,31 @@ fn decode_known_fields(
                 out.insert("decode_error".into(), json!("truncated payload"));
             }
         }
+        AerogpuCmdOpcode::BindShaders => match pkt.decode_bind_shaders_payload_le() {
+            Ok((cmd, ex)) => {
+                // Avoid taking references to packed fields.
+                let vs = cmd.vs;
+                let ps = cmd.ps;
+                let cs = cmd.cs;
+                out.insert("vs".into(), json!(vs));
+                out.insert("ps".into(), json!(ps));
+                out.insert("cs".into(), json!(cs));
+
+                if let Some(ex) = ex {
+                    out.insert("gs".into(), json!(ex.gs));
+                    out.insert("hs".into(), json!(ex.hs));
+                    out.insert("ds".into(), json!(ex.ds));
+                } else {
+                    let gs = cmd.gs();
+                    if gs != 0 {
+                        out.insert("gs".into(), json!(gs));
+                    }
+                }
+            }
+            Err(err) => {
+                out.insert("decode_error".into(), json!(format!("{:?}", err)));
+            }
+        },
         AerogpuCmdOpcode::CreateInputLayout => match pkt.decode_create_input_layout_payload_le() {
             Ok((cmd, blob)) => {
                 let input_layout_handle = cmd.input_layout_handle;
@@ -1119,8 +1144,6 @@ fn decode_known_fields(
                 out.insert("share_token".into(), json!(v.to_string()));
             }
         }
-        AerogpuCmdOpcode::Flush => {}
-        AerogpuCmdOpcode::Nop => {}
         AerogpuCmdOpcode::DebugMarker => {
             let marker = String::from_utf8_lossy(pkt.payload)
                 .trim_end_matches('\0')

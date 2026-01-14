@@ -439,6 +439,18 @@ fn build_fixture_cmd_stream() -> Vec<u8> {
     assert_eq!(payload.len(), 16);
     push_packet(&mut out, AerogpuCmdOpcode::SetScissor as u32, &payload);
 
+    // BIND_SHADERS(vs=0x1111, ps=0x2222, cs=0x3333, ex={gs=0x4444, hs=0x5555, ds=0x6666}).
+    let mut payload = Vec::new();
+    push_u32_le(&mut payload, 0x1111); // vs
+    push_u32_le(&mut payload, 0x2222); // ps
+    push_u32_le(&mut payload, 0x3333); // cs
+    push_u32_le(&mut payload, 0); // reserved0
+    push_u32_le(&mut payload, 0x4444); // gs
+    push_u32_le(&mut payload, 0x5555); // hs
+    push_u32_le(&mut payload, 0x6666); // ds
+    assert_eq!(payload.len(), 28);
+    push_packet(&mut out, AerogpuCmdOpcode::BindShaders as u32, &payload);
+
     // Patch header.size_bytes.
     let size_bytes = out.len() as u32;
     out[8..12].copy_from_slice(&size_bytes.to_le_bytes());
@@ -608,6 +620,14 @@ fn decodes_cmd_stream_dump_to_stable_listing() {
 
     assert!(listing.contains("SetScissor"));
     assert!(listing.contains("x=1 y=2 width=3 height=4"));
+
+    assert!(listing.contains("BindShaders"));
+    assert!(listing.contains("vs=4369")); // 0x1111
+    assert!(listing.contains("ps=8738")); // 0x2222
+    assert!(listing.contains("cs=13107")); // 0x3333
+    assert!(listing.contains("gs=17476")); // 0x4444
+    assert!(listing.contains("hs=21845")); // 0x5555
+    assert!(listing.contains("ds=26214")); // 0x6666
 }
 
 #[test]
@@ -974,6 +994,14 @@ fn json_listing_decodes_new_opcodes() {
     assert_eq!(scissor["decoded"]["y"], 2);
     assert_eq!(scissor["decoded"]["width"], 3);
     assert_eq!(scissor["decoded"]["height"], 4);
+
+    let bind = find_packet("BindShaders");
+    assert_eq!(bind["decoded"]["vs"], 0x1111);
+    assert_eq!(bind["decoded"]["ps"], 0x2222);
+    assert_eq!(bind["decoded"]["cs"], 0x3333);
+    assert_eq!(bind["decoded"]["gs"], 0x4444);
+    assert_eq!(bind["decoded"]["hs"], 0x5555);
+    assert_eq!(bind["decoded"]["ds"], 0x6666);
 }
 
 #[test]
