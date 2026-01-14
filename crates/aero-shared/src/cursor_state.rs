@@ -150,16 +150,85 @@ impl CursorState {
         }
     }
 
+    /// Best-effort snapshot of the cursor state.
+    ///
+    /// This uses the same seqlock-style protocol as [`CursorState::snapshot`], but will return
+    /// `None` instead of spinning forever if the busy bit is wedged (e.g. writer panicked/crashed
+    /// while holding the write lock).
+    pub fn try_snapshot(&self) -> Option<CursorStateSnapshot> {
+        // Use a hard iteration bound to guarantee we will not spin forever if the writer wedges.
+        //
+        // This is intentionally large enough to tolerate transient contention while still
+        // preventing hangs in tests and production builds if the busy bit is stuck.
+        const MAX_SPINS: usize = 1_000_000;
+
+        for _spins in 0..MAX_SPINS {
+            let gen0 = self.generation.load(Ordering::SeqCst);
+            if gen0 & CURSOR_STATE_GENERATION_BUSY_BIT != 0 {
+                // Writer in progress.
+                std::hint::spin_loop();
+                test_yield();
+                continue;
+            }
+
+            let enable = self.enable.load(Ordering::SeqCst);
+            let x = self.x.load(Ordering::SeqCst) as i32;
+            let y = self.y.load(Ordering::SeqCst) as i32;
+            let hot_x = self.hot_x.load(Ordering::SeqCst);
+            let hot_y = self.hot_y.load(Ordering::SeqCst);
+            let width = self.width.load(Ordering::SeqCst);
+            let height = self.height.load(Ordering::SeqCst);
+            let pitch_bytes = self.pitch_bytes.load(Ordering::SeqCst);
+            let format = self.format.load(Ordering::SeqCst);
+            let base_paddr_lo = self.base_paddr_lo.load(Ordering::SeqCst);
+            let base_paddr_hi = self.base_paddr_hi.load(Ordering::SeqCst);
+
+            let gen1 = self.generation.load(Ordering::SeqCst);
+            if gen0 != gen1 {
+                test_yield();
+                continue;
+            }
+
+            return Some(CursorStateSnapshot {
+                generation: gen0,
+                enable,
+                x,
+                y,
+                hot_x,
+                hot_y,
+                width,
+                height,
+                pitch_bytes,
+                format,
+                base_paddr_lo,
+                base_paddr_hi,
+            });
+        }
+
+        None
+    }
+
     /// Publish a complete cursor update.
     ///
     /// Protocol:
     /// 1) Mark the state as "in progress" by setting [`CURSOR_STATE_GENERATION_BUSY_BIT`].
     /// 2) Store all non-generation fields.
     /// 3) Increment `generation` (busy bit cleared) as the final publish step.
+    ///
+    /// Panics if the busy bit is wedged and the write lock cannot be acquired.
     pub fn publish(&self, update: CursorStateUpdate) -> u32 {
+        self.try_publish(update).expect("CursorState::publish: timed out (writer busy bit stuck)")
+    }
+
+    /// Best-effort publish of a complete cursor update.
+    ///
+    /// Returns `None` when the write lock cannot be acquired (e.g. busy bit wedged).
+    pub fn try_publish(&self, update: CursorStateUpdate) -> Option<u32> {
         // Acquire the write lock by setting the busy bit.
+        const MAX_SPINS: usize = 1_000_000;
         let mut start = self.generation.load(Ordering::SeqCst);
-        loop {
+        let mut acquired = false;
+        for _spins in 0..MAX_SPINS {
             if start & CURSOR_STATE_GENERATION_BUSY_BIT != 0 {
                 std::hint::spin_loop();
                 start = self.generation.load(Ordering::SeqCst);
@@ -172,9 +241,15 @@ impl CursorState {
                 Ordering::SeqCst,
                 Ordering::SeqCst,
             ) {
-                Ok(_) => break,
+                Ok(_) => {
+                    acquired = true;
+                    break;
+                }
                 Err(actual) => start = actual,
             }
+        }
+        if !acquired {
+            return None;
         }
 
         test_yield();
@@ -208,52 +283,15 @@ impl CursorState {
         // Final publish step: increment generation and clear the busy bit.
         let new_generation = start.wrapping_add(1) & !CURSOR_STATE_GENERATION_BUSY_BIT;
         self.generation.store(new_generation, Ordering::SeqCst);
-        new_generation
+        Some(new_generation)
     }
 
+    /// Snapshot the cursor state.
+    ///
+    /// Panics if the state cannot be snapshotted (e.g. busy bit wedged).
     pub fn snapshot(&self) -> CursorStateSnapshot {
-        loop {
-            let gen0 = self.generation.load(Ordering::SeqCst);
-            if gen0 & CURSOR_STATE_GENERATION_BUSY_BIT != 0 {
-                // Writer in progress.
-                std::hint::spin_loop();
-                test_yield();
-                continue;
-            }
-
-            let enable = self.enable.load(Ordering::SeqCst);
-            let x = self.x.load(Ordering::SeqCst) as i32;
-            let y = self.y.load(Ordering::SeqCst) as i32;
-            let hot_x = self.hot_x.load(Ordering::SeqCst);
-            let hot_y = self.hot_y.load(Ordering::SeqCst);
-            let width = self.width.load(Ordering::SeqCst);
-            let height = self.height.load(Ordering::SeqCst);
-            let pitch_bytes = self.pitch_bytes.load(Ordering::SeqCst);
-            let format = self.format.load(Ordering::SeqCst);
-            let base_paddr_lo = self.base_paddr_lo.load(Ordering::SeqCst);
-            let base_paddr_hi = self.base_paddr_hi.load(Ordering::SeqCst);
-
-            let gen1 = self.generation.load(Ordering::SeqCst);
-            if gen0 != gen1 {
-                test_yield();
-                continue;
-            }
-
-            return CursorStateSnapshot {
-                generation: gen0,
-                enable,
-                x,
-                y,
-                hot_x,
-                hot_y,
-                width,
-                height,
-                pitch_bytes,
-                format,
-                base_paddr_lo,
-                base_paddr_hi,
-            };
-        }
+        self.try_snapshot()
+            .expect("CursorState::snapshot: timed out (writer busy bit stuck or update rate too high)")
     }
 }
 
@@ -321,6 +359,74 @@ mod tests {
     #[test]
     fn cursor_state_struct_matches_declared_u32_len() {
         assert_eq!(core::mem::size_of::<CursorState>(), CURSOR_STATE_BYTE_LEN);
+    }
+
+    #[test]
+    fn try_snapshot_returns_none_when_busy_bit_is_stuck() {
+        let state = CursorState::new();
+        state
+            .generation
+            .store(CURSOR_STATE_GENERATION_BUSY_BIT, Ordering::SeqCst);
+        assert!(state.try_snapshot().is_none());
+    }
+
+    #[test]
+    fn snapshot_panics_when_busy_bit_is_stuck() {
+        let state = CursorState::new();
+        state
+            .generation
+            .store(CURSOR_STATE_GENERATION_BUSY_BIT, Ordering::SeqCst);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = state.snapshot();
+        }));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn try_publish_returns_none_when_busy_bit_is_stuck() {
+        let state = CursorState::new();
+        state
+            .generation
+            .store(CURSOR_STATE_GENERATION_BUSY_BIT, Ordering::SeqCst);
+        assert!(state
+            .try_publish(CursorStateUpdate {
+                enable: 0,
+                x: 0,
+                y: 0,
+                hot_x: 0,
+                hot_y: 0,
+                width: 0,
+                height: 0,
+                pitch_bytes: 0,
+                format: CURSOR_FORMAT_B8G8R8A8,
+                base_paddr_lo: 0,
+                base_paddr_hi: 0,
+            })
+            .is_none());
+    }
+
+    #[test]
+    fn publish_panics_when_busy_bit_is_stuck() {
+        let state = CursorState::new();
+        state
+            .generation
+            .store(CURSOR_STATE_GENERATION_BUSY_BIT, Ordering::SeqCst);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = state.publish(CursorStateUpdate {
+                enable: 0,
+                x: 0,
+                y: 0,
+                hot_x: 0,
+                hot_y: 0,
+                width: 0,
+                height: 0,
+                pitch_bytes: 0,
+                format: CURSOR_FORMAT_B8G8R8A8,
+                base_paddr_lo: 0,
+                base_paddr_hi: 0,
+            });
+        }));
+        assert!(result.is_err());
     }
 
     #[test]

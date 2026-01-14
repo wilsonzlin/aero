@@ -134,16 +134,75 @@ impl ScanoutState {
         }
     }
 
+    /// Best-effort snapshot of the scanout state.
+    ///
+    /// This uses the same seqlock-style protocol as [`ScanoutState::snapshot`], but will return
+    /// `None` instead of spinning forever if the busy bit is wedged (e.g. writer panicked/crashed
+    /// while holding the write lock).
+    pub fn try_snapshot(&self) -> Option<ScanoutStateSnapshot> {
+        // Use a hard iteration bound to guarantee we will not spin forever if the writer wedges.
+        const MAX_SPINS: usize = 1_000_000;
+
+        for _spins in 0..MAX_SPINS {
+            let gen0 = self.generation.load(Ordering::SeqCst);
+            if gen0 & SCANOUT_STATE_GENERATION_BUSY_BIT != 0 {
+                // Writer in progress.
+                std::hint::spin_loop();
+                test_yield();
+                continue;
+            }
+
+            let source = self.source.load(Ordering::SeqCst);
+            let base_paddr_lo = self.base_paddr_lo.load(Ordering::SeqCst);
+            let base_paddr_hi = self.base_paddr_hi.load(Ordering::SeqCst);
+            let width = self.width.load(Ordering::SeqCst);
+            let height = self.height.load(Ordering::SeqCst);
+            let pitch_bytes = self.pitch_bytes.load(Ordering::SeqCst);
+            let format = self.format.load(Ordering::SeqCst);
+
+            let gen1 = self.generation.load(Ordering::SeqCst);
+            if gen0 != gen1 {
+                test_yield();
+                continue;
+            }
+
+            return Some(ScanoutStateSnapshot {
+                generation: gen0,
+                source,
+                base_paddr_lo,
+                base_paddr_hi,
+                width,
+                height,
+                pitch_bytes,
+                format,
+            });
+        }
+
+        None
+    }
+
     /// Publish a complete scanout update.
     ///
     /// Protocol:
     /// 1) Mark the state as "in progress" by setting [`SCANOUT_STATE_GENERATION_BUSY_BIT`].
     /// 2) Store all non-generation fields.
     /// 3) Increment `generation` (busy bit cleared) as the final publish step.
+    ///
+    /// Panics if the busy bit is wedged and the write lock cannot be acquired.
     pub fn publish(&self, update: ScanoutStateUpdate) -> u32 {
+        self.try_publish(update)
+            .expect("ScanoutState::publish: timed out (writer busy bit stuck)")
+    }
+
+    /// Best-effort publish of a complete scanout update.
+    ///
+    /// Returns `None` when the write lock cannot be acquired (e.g. busy bit wedged).
+    pub fn try_publish(&self, update: ScanoutStateUpdate) -> Option<u32> {
         // Acquire the write lock by setting the busy bit.
+        const MAX_SPINS: usize = 1_000_000;
         let mut start = self.generation.load(Ordering::SeqCst);
-        loop {
+        let mut acquired = false;
+        for _spins in 0..MAX_SPINS {
             if start & SCANOUT_STATE_GENERATION_BUSY_BIT != 0 {
                 std::hint::spin_loop();
                 start = self.generation.load(Ordering::SeqCst);
@@ -156,9 +215,15 @@ impl ScanoutState {
                 Ordering::SeqCst,
                 Ordering::SeqCst,
             ) {
-                Ok(_) => break,
+                Ok(_) => {
+                    acquired = true;
+                    break;
+                }
                 Err(actual) => start = actual,
             }
+        }
+        if !acquired {
+            return None;
         }
 
         test_yield();
@@ -184,44 +249,15 @@ impl ScanoutState {
         // Final publish step: increment generation and clear the busy bit.
         let new_generation = start.wrapping_add(1) & !SCANOUT_STATE_GENERATION_BUSY_BIT;
         self.generation.store(new_generation, Ordering::SeqCst);
-        new_generation
+        Some(new_generation)
     }
 
+    /// Snapshot the scanout state.
+    ///
+    /// Panics if the state cannot be snapshotted (e.g. busy bit wedged).
     pub fn snapshot(&self) -> ScanoutStateSnapshot {
-        loop {
-            let gen0 = self.generation.load(Ordering::SeqCst);
-            if gen0 & SCANOUT_STATE_GENERATION_BUSY_BIT != 0 {
-                // Writer in progress.
-                std::hint::spin_loop();
-                test_yield();
-                continue;
-            }
-
-            let source = self.source.load(Ordering::SeqCst);
-            let base_paddr_lo = self.base_paddr_lo.load(Ordering::SeqCst);
-            let base_paddr_hi = self.base_paddr_hi.load(Ordering::SeqCst);
-            let width = self.width.load(Ordering::SeqCst);
-            let height = self.height.load(Ordering::SeqCst);
-            let pitch_bytes = self.pitch_bytes.load(Ordering::SeqCst);
-            let format = self.format.load(Ordering::SeqCst);
-
-            let gen1 = self.generation.load(Ordering::SeqCst);
-            if gen0 != gen1 {
-                test_yield();
-                continue;
-            }
-
-            return ScanoutStateSnapshot {
-                generation: gen0,
-                source,
-                base_paddr_lo,
-                base_paddr_hi,
-                width,
-                height,
-                pitch_bytes,
-                format,
-            };
-        }
+        self.try_snapshot()
+            .expect("ScanoutState::snapshot: timed out (writer busy bit stuck or update rate too high)")
     }
 }
 
@@ -273,6 +309,66 @@ mod tests {
     #[test]
     fn scanout_state_struct_matches_declared_u32_len() {
         assert_eq!(core::mem::size_of::<ScanoutState>(), SCANOUT_STATE_BYTE_LEN);
+    }
+
+    #[test]
+    fn try_snapshot_returns_none_when_busy_bit_is_stuck() {
+        let state = ScanoutState::new();
+        state
+            .generation
+            .store(SCANOUT_STATE_GENERATION_BUSY_BIT, Ordering::SeqCst);
+        assert!(state.try_snapshot().is_none());
+    }
+
+    #[test]
+    fn snapshot_panics_when_busy_bit_is_stuck() {
+        let state = ScanoutState::new();
+        state
+            .generation
+            .store(SCANOUT_STATE_GENERATION_BUSY_BIT, Ordering::SeqCst);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = state.snapshot();
+        }));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn try_publish_returns_none_when_busy_bit_is_stuck() {
+        let state = ScanoutState::new();
+        state
+            .generation
+            .store(SCANOUT_STATE_GENERATION_BUSY_BIT, Ordering::SeqCst);
+        assert!(state
+            .try_publish(ScanoutStateUpdate {
+                source: SCANOUT_SOURCE_LEGACY_TEXT,
+                base_paddr_lo: 0,
+                base_paddr_hi: 0,
+                width: 0,
+                height: 0,
+                pitch_bytes: 0,
+                format: SCANOUT_FORMAT_B8G8R8X8,
+            })
+            .is_none());
+    }
+
+    #[test]
+    fn publish_panics_when_busy_bit_is_stuck() {
+        let state = ScanoutState::new();
+        state
+            .generation
+            .store(SCANOUT_STATE_GENERATION_BUSY_BIT, Ordering::SeqCst);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = state.publish(ScanoutStateUpdate {
+                source: SCANOUT_SOURCE_LEGACY_TEXT,
+                base_paddr_lo: 0,
+                base_paddr_hi: 0,
+                width: 0,
+                height: 0,
+                pitch_bytes: 0,
+                format: SCANOUT_FORMAT_B8G8R8X8,
+            });
+        }));
+        assert!(result.is_err());
     }
 
     #[test]
