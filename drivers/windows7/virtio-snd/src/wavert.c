@@ -2065,11 +2065,11 @@ VirtIoSndWaveRtBuildFormatTableFromCaps(
 {
     static const UCHAR kVirtioFormats[] = {
         VIRTIO_SND_PCM_FMT_S16,
-        VIRTIO_SND_PCM_FMT_U8,
         VIRTIO_SND_PCM_FMT_S24,
         VIRTIO_SND_PCM_FMT_S32,
         VIRTIO_SND_PCM_FMT_FLOAT,
         VIRTIO_SND_PCM_FMT_FLOAT64,
+        VIRTIO_SND_PCM_FMT_U8,
     };
 
     ULONG fmtIdx;

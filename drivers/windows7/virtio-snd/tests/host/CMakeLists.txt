@@ -43,6 +43,15 @@ add_executable(virtiosnd_control_proto_tests
 target_link_libraries(virtiosnd_control_proto_tests PRIVATE virtiosnd_host_shim)
 add_test(NAME virtiosnd_control_proto_tests COMMAND virtiosnd_control_proto_tests)
 
+add_executable(virtiosnd_pcm_selection_tests
+    test_pcm_selection.c
+    ${VIRTIOSND_SRC}/virtio_snd_proto.c
+    ${VIRTIOSND_SRC}/virtiosnd_control_proto.c
+)
+
+target_link_libraries(virtiosnd_pcm_selection_tests PRIVATE virtiosnd_host_shim)
+add_test(NAME virtiosnd_pcm_selection_tests COMMAND virtiosnd_pcm_selection_tests)
+
 add_executable(virtiosnd_control_engine_tests
     test_control_engine.c
     ${VIRTIOSND_SRC}/virtio_snd_proto.c

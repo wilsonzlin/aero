@@ -42,22 +42,27 @@ typedef struct _VIRTIOSND_PCM_CONFIG {
 } VIRTIOSND_PCM_CONFIG;
 
 /*
- * Select a (format, rate, channels) triple from a device's advertised PCM_INFO
- * masks.
+ * Select a deterministic "best" (channels, format, rate) tuple from a device's
+ * advertised PCM_INFO.
  *
- * Deterministic selection policy (in priority order):
- *   1) S16 @ 48kHz  (legacy contract v1 default)
- *   2) S16 @ 44.1kHz
- *   3) S24 @ 48kHz  (24-bit samples in a 32-bit container)
- *   4) S24 @ 44.1kHz
- *   5) S32 @ 48kHz
- *   6) S32 @ 44.1kHz
+ * This is used during START_DEVICE (VIO-020) so the driver can pick a single
+ * stream configuration and then expose exactly one mix format per pin via
+ * WaveRT/KSDATARANGE.
  *
- * Channel policy (default selection):
- *   - Playback stream 0: require stereo (2ch)
- *   - Capture stream 1: require mono (1ch)
+ * Selection policy:
+ *  - Prefer the legacy Aero contract v1 default when available:
+ *      - playback: 2ch, S16, 48kHz
+ *      - capture:  1ch, S16, 48kHz
+ *  - Otherwise pick the first supported entry from these priority lists:
+ *      formats: S16, S24, S32, FLOAT, FLOAT64, U8
+ *      rates:   48kHz, 44.1kHz, 96kHz, 88.2kHz, 192kHz, 176.4kHz, 384kHz,
+ *              64kHz, 32kHz, 22.05kHz, 16kHz, 11.025kHz, 8kHz, 5.512kHz
+ *  - Channels are selected as the stream's preferred channel count (2 playback,
+ *    1 capture) if it falls within the device-advertised range. Otherwise, the
+ *    lowest supported channel count is chosen.
  *
- * If no supported combination exists, returns STATUS_NOT_SUPPORTED.
+ * Returns STATUS_SUCCESS on success or STATUS_NOT_SUPPORTED if no supported
+ * configuration exists.
  */
 _Must_inspect_result_ NTSTATUS VirtioSndCtrlSelectPcmConfig(
     _In_ const VIRTIO_SND_PCM_INFO* Info,
@@ -76,11 +81,11 @@ _Must_inspect_result_ NTSTATUS VirtioSndCtrlBuildPcmInfoReq(_Out_ VIRTIO_SND_PCM
  * Resp points at the raw device-written response bytes beginning with the
  * status field (VIRTIO_SND_HDR_RESP).
  */
-_Must_inspect_result_ NTSTATUS VirtioSndCtrlParsePcmInfoResp(
-    _In_reads_bytes_(RespLen) const void* Resp,
-    _In_ ULONG RespLen,
-    _Out_ VIRTIO_SND_PCM_INFO* PlaybackInfo,
-    _Out_ VIRTIO_SND_PCM_INFO* CaptureInfo);
+ _Must_inspect_result_ NTSTATUS VirtioSndCtrlParsePcmInfoResp(
+     _In_reads_bytes_(RespLen) const void* Resp,
+     _In_ ULONG RespLen,
+     _Out_ VIRTIO_SND_PCM_INFO* PlaybackInfo,
+     _Out_ VIRTIO_SND_PCM_INFO* CaptureInfo);
 
 /*
  * Build a VIRTIO_SND_R_PCM_SET_PARAMS request for a fixed-format contract-v1

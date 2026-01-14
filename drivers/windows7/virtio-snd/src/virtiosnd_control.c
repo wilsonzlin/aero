@@ -719,6 +719,9 @@ NTSTATUS
 VirtioSndCtrlPcmInfoAll(_Inout_ VIRTIOSND_CONTROL* Ctrl, _Out_ VIRTIO_SND_PCM_INFO* PlaybackInfo, _Out_ VIRTIO_SND_PCM_INFO* CaptureInfo)
 {
     NTSTATUS status;
+    NTSTATUS selStatus;
+    VIRTIOSND_PCM_CONFIG playbackCfg;
+    VIRTIOSND_PCM_CONFIG captureCfg;
 
     if (Ctrl == NULL || PlaybackInfo == NULL || CaptureInfo == NULL) {
         return STATUS_INVALID_PARAMETER;
@@ -731,93 +734,95 @@ VirtioSndCtrlPcmInfoAll(_Inout_ VIRTIOSND_CONTROL* Ctrl, _Out_ VIRTIO_SND_PCM_IN
     RtlZeroMemory(CaptureInfo, sizeof(*CaptureInfo));
 
     status = VirtioSndCtrlPcmInfoQuery(Ctrl, PlaybackInfo, CaptureInfo);
-    if (NT_SUCCESS(status)) {
-        NTSTATUS selStatus;
-        VIRTIOSND_PCM_CONFIG playbackCfg;
-        VIRTIOSND_PCM_CONFIG captureCfg;
-
-        Ctrl->Caps[VIRTIO_SND_PLAYBACK_STREAM_ID].Formats = PlaybackInfo->formats;
-        Ctrl->Caps[VIRTIO_SND_PLAYBACK_STREAM_ID].Rates = PlaybackInfo->rates;
-        Ctrl->Caps[VIRTIO_SND_PLAYBACK_STREAM_ID].ChannelsMin = PlaybackInfo->channels_min;
-        Ctrl->Caps[VIRTIO_SND_PLAYBACK_STREAM_ID].ChannelsMax = PlaybackInfo->channels_max;
-
-        Ctrl->Caps[VIRTIO_SND_CAPTURE_STREAM_ID].Formats = CaptureInfo->formats;
-        Ctrl->Caps[VIRTIO_SND_CAPTURE_STREAM_ID].Rates = CaptureInfo->rates;
-        Ctrl->Caps[VIRTIO_SND_CAPTURE_STREAM_ID].ChannelsMin = CaptureInfo->channels_min;
-        Ctrl->Caps[VIRTIO_SND_CAPTURE_STREAM_ID].ChannelsMax = CaptureInfo->channels_max;
-
-        InterlockedExchange(&Ctrl->CapsValid, 1);
-
-        /*
-         * Multi-format PCM negotiation (VIO-020): select a single configuration
-         * per stream from the advertised masks, keeping the legacy S16/48kHz
-         * contract-v1 format as the preferred default when available.
-         */
-        selStatus = VirtioSndCtrlSelectPcmConfig(PlaybackInfo, VIRTIO_SND_PLAYBACK_STREAM_ID, &playbackCfg);
-        if (!NT_SUCCESS(selStatus)) {
-            VIRTIOSND_TRACE_ERROR(
-                "ctrl: PCM negotiation failed for playback: status=0x%08X formats=0x%I64x rates=0x%I64x ch=[%u,%u]\n",
-                (UINT)selStatus,
-                PlaybackInfo->formats,
-                PlaybackInfo->rates,
-                PlaybackInfo->channels_min,
-                PlaybackInfo->channels_max);
-            return selStatus;
-        }
-
-        selStatus = VirtioSndCtrlSelectPcmConfig(CaptureInfo, VIRTIO_SND_CAPTURE_STREAM_ID, &captureCfg);
-        if (!NT_SUCCESS(selStatus)) {
-            VIRTIOSND_TRACE_ERROR(
-                "ctrl: PCM negotiation failed for capture: status=0x%08X formats=0x%I64x rates=0x%I64x ch=[%u,%u]\n",
-                (UINT)selStatus,
-                CaptureInfo->formats,
-                CaptureInfo->rates,
-                CaptureInfo->channels_min,
-                CaptureInfo->channels_max);
-            return selStatus;
-        }
-
-        Ctrl->SelectedFormat[VIRTIO_SND_PLAYBACK_STREAM_ID].Channels = playbackCfg.Channels;
-        Ctrl->SelectedFormat[VIRTIO_SND_PLAYBACK_STREAM_ID].Format = playbackCfg.Format;
-        Ctrl->SelectedFormat[VIRTIO_SND_PLAYBACK_STREAM_ID].Rate = playbackCfg.Rate;
-        Ctrl->SelectedFormat[VIRTIO_SND_PLAYBACK_STREAM_ID].Padding = 0;
-
-        Ctrl->SelectedFormat[VIRTIO_SND_CAPTURE_STREAM_ID].Channels = captureCfg.Channels;
-        Ctrl->SelectedFormat[VIRTIO_SND_CAPTURE_STREAM_ID].Format = captureCfg.Format;
-        Ctrl->SelectedFormat[VIRTIO_SND_CAPTURE_STREAM_ID].Rate = captureCfg.Rate;
-        Ctrl->SelectedFormat[VIRTIO_SND_CAPTURE_STREAM_ID].Padding = 0;
-
-        {
-            ULONG hz;
-            USHORT bytes;
-
-            hz = 0;
-            bytes = 0;
-            (VOID)VirtioSndPcmRateToHz(playbackCfg.Rate, &hz);
-            (VOID)VirtioSndPcmFormatToBytesPerSample(playbackCfg.Format, &bytes);
-            VIRTIOSND_TRACE(
-                "ctrl: negotiated playback: ch=%u fmt=0x%02x rate=0x%02x (%lu Hz, %u bits)\n",
-                playbackCfg.Channels,
-                playbackCfg.Format,
-                playbackCfg.Rate,
-                hz,
-                (UINT)bytes * 8u);
-
-            hz = 0;
-            bytes = 0;
-            (VOID)VirtioSndPcmRateToHz(captureCfg.Rate, &hz);
-            (VOID)VirtioSndPcmFormatToBytesPerSample(captureCfg.Format, &bytes);
-            VIRTIOSND_TRACE(
-                "ctrl: negotiated capture: ch=%u fmt=0x%02x rate=0x%02x (%lu Hz, %u bits)\n",
-                captureCfg.Channels,
-                captureCfg.Format,
-                captureCfg.Rate,
-                hz,
-                (UINT)bytes * 8u);
-        }
+    if (!NT_SUCCESS(status)) {
+        return status;
     }
 
-    return status;
+    /*
+     * Multi-format PCM negotiation (VIO-020): select a single configuration per
+     * stream from the advertised masks, keeping the legacy S16/48kHz contract-v1
+     * format as the preferred default when available.
+     */
+    selStatus = VirtioSndCtrlSelectPcmConfig(PlaybackInfo, VIRTIO_SND_PLAYBACK_STREAM_ID, &playbackCfg);
+    if (!NT_SUCCESS(selStatus)) {
+        VIRTIOSND_TRACE_ERROR(
+            "ctrl: PCM negotiation failed for playback: status=0x%08X formats=0x%I64x rates=0x%I64x ch=[%u,%u]\n",
+            (UINT)selStatus,
+            PlaybackInfo->formats,
+            PlaybackInfo->rates,
+            PlaybackInfo->channels_min,
+            PlaybackInfo->channels_max);
+        return selStatus;
+    }
+
+    selStatus = VirtioSndCtrlSelectPcmConfig(CaptureInfo, VIRTIO_SND_CAPTURE_STREAM_ID, &captureCfg);
+    if (!NT_SUCCESS(selStatus)) {
+        VIRTIOSND_TRACE_ERROR(
+            "ctrl: PCM negotiation failed for capture: status=0x%08X formats=0x%I64x rates=0x%I64x ch=[%u,%u]\n",
+            (UINT)selStatus,
+            CaptureInfo->formats,
+            CaptureInfo->rates,
+            CaptureInfo->channels_min,
+            CaptureInfo->channels_max);
+        return selStatus;
+    }
+
+    /*
+     * Persist capabilities and the negotiated configuration for later use by
+     * WaveRT format enumeration and VIRTIO_SND_R_PCM_SET_PARAMS.
+     */
+    Ctrl->Caps[VIRTIO_SND_PLAYBACK_STREAM_ID].Formats = PlaybackInfo->formats;
+    Ctrl->Caps[VIRTIO_SND_PLAYBACK_STREAM_ID].Rates = PlaybackInfo->rates;
+    Ctrl->Caps[VIRTIO_SND_PLAYBACK_STREAM_ID].ChannelsMin = PlaybackInfo->channels_min;
+    Ctrl->Caps[VIRTIO_SND_PLAYBACK_STREAM_ID].ChannelsMax = PlaybackInfo->channels_max;
+
+    Ctrl->Caps[VIRTIO_SND_CAPTURE_STREAM_ID].Formats = CaptureInfo->formats;
+    Ctrl->Caps[VIRTIO_SND_CAPTURE_STREAM_ID].Rates = CaptureInfo->rates;
+    Ctrl->Caps[VIRTIO_SND_CAPTURE_STREAM_ID].ChannelsMin = CaptureInfo->channels_min;
+    Ctrl->Caps[VIRTIO_SND_CAPTURE_STREAM_ID].ChannelsMax = CaptureInfo->channels_max;
+
+    Ctrl->SelectedFormat[VIRTIO_SND_PLAYBACK_STREAM_ID].Channels = playbackCfg.Channels;
+    Ctrl->SelectedFormat[VIRTIO_SND_PLAYBACK_STREAM_ID].Format = playbackCfg.Format;
+    Ctrl->SelectedFormat[VIRTIO_SND_PLAYBACK_STREAM_ID].Rate = playbackCfg.Rate;
+    Ctrl->SelectedFormat[VIRTIO_SND_PLAYBACK_STREAM_ID].Padding = 0;
+
+    Ctrl->SelectedFormat[VIRTIO_SND_CAPTURE_STREAM_ID].Channels = captureCfg.Channels;
+    Ctrl->SelectedFormat[VIRTIO_SND_CAPTURE_STREAM_ID].Format = captureCfg.Format;
+    Ctrl->SelectedFormat[VIRTIO_SND_CAPTURE_STREAM_ID].Rate = captureCfg.Rate;
+    Ctrl->SelectedFormat[VIRTIO_SND_CAPTURE_STREAM_ID].Padding = 0;
+
+    InterlockedExchange(&Ctrl->CapsValid, 1);
+
+    {
+        ULONG hz;
+        USHORT bytes;
+
+        hz = 0;
+        bytes = 0;
+        (VOID)VirtioSndPcmRateToHz(playbackCfg.Rate, &hz);
+        (VOID)VirtioSndPcmFormatToBytesPerSample(playbackCfg.Format, &bytes);
+        VIRTIOSND_TRACE(
+            "ctrl: negotiated playback: ch=%u fmt=0x%02x rate=0x%02x (%lu Hz, %u bits)\n",
+            playbackCfg.Channels,
+            playbackCfg.Format,
+            playbackCfg.Rate,
+            hz,
+            (UINT)bytes * 8u);
+
+        hz = 0;
+        bytes = 0;
+        (VOID)VirtioSndPcmRateToHz(captureCfg.Rate, &hz);
+        (VOID)VirtioSndPcmFormatToBytesPerSample(captureCfg.Format, &bytes);
+        VIRTIOSND_TRACE(
+            "ctrl: negotiated capture: ch=%u fmt=0x%02x rate=0x%02x (%lu Hz, %u bits)\n",
+            captureCfg.Channels,
+            captureCfg.Format,
+            captureCfg.Rate,
+            hz,
+            (UINT)bytes * 8u);
+    }
+
+    return STATUS_SUCCESS;
 }
 
 static NTSTATUS

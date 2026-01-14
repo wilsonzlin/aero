@@ -282,6 +282,28 @@ static void test_pcm_info_resp_parsing(void)
     TEST_ASSERT(out0.stream_id == VIRTIO_SND_PLAYBACK_STREAM_ID);
     TEST_ASSERT(out1.stream_id == VIRTIO_SND_CAPTURE_STREAM_ID);
 
+    /*
+     * Multi-format negotiation:
+     * The parser should accept responses that do not include the Aero contract v1
+     * fixed format (S16/48kHz), as long as at least one supported tuple exists.
+     */
+    info0.formats = VIRTIO_SND_PCM_FMT_MASK(VIRTIO_SND_PCM_FMT_S24);
+    info0.rates = VIRTIO_SND_PCM_RATE_MASK_48000;
+    RtlCopyMemory(resp + sizeof(hdr), &info0, sizeof(info0));
+    status = VirtioSndCtrlParsePcmInfoResp(resp, (ULONG)sizeof(resp), &out0, &out1);
+    TEST_ASSERT(status == STATUS_SUCCESS);
+
+    info0.formats = VIRTIO_SND_PCM_FMT_MASK_S16;
+    info0.rates = VIRTIO_SND_PCM_RATE_MASK(VIRTIO_SND_PCM_RATE_44100);
+    RtlCopyMemory(resp + sizeof(hdr), &info0, sizeof(info0));
+    status = VirtioSndCtrlParsePcmInfoResp(resp, (ULONG)sizeof(resp), &out0, &out1);
+    TEST_ASSERT(status == STATUS_SUCCESS);
+
+    /* Restore contract default values for subsequent validation tests. */
+    info0.formats = VIRTIO_SND_PCM_FMT_MASK_S16;
+    info0.rates = VIRTIO_SND_PCM_RATE_MASK_48000;
+    RtlCopyMemory(resp + sizeof(hdr), &info0, sizeof(info0));
+
     /* Direction validation. */
     info0.direction = VIRTIO_SND_D_INPUT;
     RtlCopyMemory(resp + sizeof(hdr), &info0, sizeof(info0));
@@ -305,7 +327,7 @@ static void test_pcm_info_resp_parsing(void)
     info1.rates = VIRTIO_SND_PCM_RATE_MASK_48000;
     RtlCopyMemory(resp + sizeof(hdr) + sizeof(info0), &info1, sizeof(info1));
 
-    /* Channel range validation. */
+    /* Channel range validation (min > max is rejected). */
     info1.channels_min = 2;
     RtlCopyMemory(resp + sizeof(hdr) + sizeof(info0), &info1, sizeof(info1));
     status = VirtioSndCtrlParsePcmInfoResp(resp, (ULONG)sizeof(resp), &out0, &out1);
