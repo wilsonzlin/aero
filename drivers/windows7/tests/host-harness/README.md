@@ -474,7 +474,7 @@ run the harness with:
 Guest image requirement:
 
 - Provision the guest selftest to run with `--test-input-media-keys` (or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_MEDIA_KEYS=1`).
-  One way to bake this into the scheduled task is `New-AeroWin7TestImage.ps1 -TestInputMediaKeys`.
+  One way to bake this into the scheduled task is `New-AeroWin7TestImage.ps1 -TestInputMediaKeys` (alias: `-TestMediaKeys`).
 
 When enabled, the harness:
 
@@ -485,7 +485,7 @@ When enabled, the harness:
 
 The harness also emits a host-side marker for the injection step (useful for debugging/log scraping):
 
-- `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MEDIA_KEYS_INJECT|PASS|attempt=<n>|kbd_mode=device/broadcast|qcode=volumeup`
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MEDIA_KEYS_INJECT|PASS|attempt=<n>|kbd_mode=device/broadcast`
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MEDIA_KEYS_INJECT|FAIL|attempt=<n>|reason=...`
 
 If QMP injection fails (for example the QEMU build does not support multimedia qcodes), the harness fails with a clear token:
