@@ -271,8 +271,7 @@ typedef struct _VIRTIOSND_DEVICE_EXTENSION {
     PKEVENT EventqStreamNotify[VIRTIOSND_EVENTQ_MAX_NOTIFY_STREAMS];
 
     /*
-     * PERIOD_ELAPSED bookkeeping used by WaveRT to coalesce its periodic timer
-     * with event-driven wakeups (avoid double PacketCount increments).
+     * PERIOD_ELAPSED diagnostic bookkeeping.
      *
      * Sequence counters are incremented once per PERIOD_ELAPSED event.
      * The timestamp is in 100ns units (KeQueryInterruptTime).

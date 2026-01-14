@@ -773,7 +773,15 @@ VirtIoSndHwDrainEventqUsed(
                  * signal it best-effort. The WaveRT miniport still uses timer-based
                  * pacing for contract v1 compatibility.
                  */
-                (VOID)VirtIoSndEventqSignalStreamNotificationEvent(dx, evt.Data);
+                if (dx->EventqCallback == NULL) {
+                    /*
+                     * If a higher-level callback (WaveRT) is registered, it will
+                     * queue the WaveRT DPC, which in turn signals the notification
+                     * event after updating PacketCount. Avoid double-signaling
+                     * the event here.
+                     */
+                    (VOID)VirtIoSndEventqSignalStreamNotificationEvent(dx, evt.Data);
+                }
                 /*
                  * Keep per-stream PERIOD_ELAPSED bookkeeping for WaveRT's DPC
                  * routine to coalesce timer ticks vs event-driven wakeups.
