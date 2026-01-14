@@ -440,7 +440,9 @@ typedef struct aerogpu_escape_query_error_out {
   /*
    * Flags:
    * - Bit 31: flags are valid (newer KMDs).
-   * - Bit 0: error MMIO registers are supported/valid.
+   * - Bit 0: error state is supported.
+   *   - If the device exposes optional MMIO error registers, fields are sourced from them.
+   *   - Otherwise fields are best-effort from the KMD's IRQ_ERROR latch/counters.
    */
   aerogpu_escape_u32 flags;
   aerogpu_escape_u32 error_code; /* enum aerogpu_error_code */

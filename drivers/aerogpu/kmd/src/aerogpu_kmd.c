@@ -10705,31 +10705,35 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         if (!adapter->Bar0) {
             return STATUS_SUCCESS;
         }
- 
+
+        /*
+         * Always expose best-effort error state based on the KMD's IRQ_ERROR latch, even if the
+         * device does not expose the optional MMIO error registers.
+         *
+         * If the MMIO error registers are present and the device is powered on, prefer those
+         * for richer details.
+         */
+        out->flags |= AEROGPU_DBGCTL_QUERY_ERROR_FLAG_ERROR_SUPPORTED;
+
+        /* Avoid MMIO reads while powered down; return best-effort cached state. */
+        out->error_fence = AeroGpuAtomicReadU64(&adapter->LastErrorFence);
+        const ULONGLONG errorCount = AeroGpuAtomicReadU64(&adapter->ErrorIrqCount);
+        out->error_count = (errorCount > 0xFFFFFFFFull) ? 0xFFFFFFFFu : (ULONG)errorCount;
+        if (AeroGpuIsDeviceErrorLatched(adapter)) {
+            out->error_code = (ULONG)AEROGPU_ERROR_INTERNAL;
+        }
+
         const ULONG abiMinor = (ULONG)(adapter->DeviceAbiVersion & 0xFFFFu);
         const BOOLEAN haveErrorRegs =
             (adapter->AbiKind == AEROGPU_ABI_KIND_V1) &&
             (abiMinor >= 3) &&
             (adapter->Bar0Length >= (AEROGPU_MMIO_REG_ERROR_COUNT + sizeof(ULONG)));
-        if (!haveErrorRegs) {
-            return STATUS_SUCCESS;
-        }
-  
-        out->flags |= AEROGPU_DBGCTL_QUERY_ERROR_FLAG_ERROR_SUPPORTED;
-        if (poweredOn) {
+        if (poweredOn && haveErrorRegs) {
             out->error_code = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_ERROR_CODE);
             out->error_fence = AeroGpuReadRegU64HiLoHi(adapter,
                                                        AEROGPU_MMIO_REG_ERROR_FENCE_LO,
                                                        AEROGPU_MMIO_REG_ERROR_FENCE_HI);
             out->error_count = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_ERROR_COUNT);
-        } else {
-            /* Avoid MMIO reads while powered down; return best-effort cached state. */
-            out->error_fence = AeroGpuAtomicReadU64(&adapter->LastErrorFence);
-            const ULONGLONG errorCount = AeroGpuAtomicReadU64(&adapter->ErrorIrqCount);
-            out->error_count = (errorCount > 0xFFFFFFFFull) ? 0xFFFFFFFFu : (ULONG)errorCount;
-            if (InterlockedCompareExchange(&adapter->DeviceErrorLatched, 0, 0) != 0) {
-                out->error_code = (ULONG)AEROGPU_ERROR_INTERNAL;
-            }
         }
         return STATUS_SUCCESS;
     }
