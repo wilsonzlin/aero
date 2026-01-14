@@ -285,6 +285,17 @@ pub trait UsbDeviceModel: Any {
     /// Resets device state due to a USB bus reset (e.g. PORTSC reset).
     fn reset(&mut self) {}
 
+    /// Reset any host-side asynchronous state that cannot survive snapshot/restore.
+    ///
+    /// Some device models are backed by host-managed asynchronous operations (e.g. WebUSB/WebHID
+    /// passthrough with JS Promise bookkeeping). Those host operations cannot be resumed after
+    /// restoring a VM snapshot. Host integrations should traverse the restored USB topology and
+    /// call this hook on all attached devices before resuming execution.
+    ///
+    /// The default implementation is a no-op because most device models are fully deterministic and
+    /// snapshot-safe.
+    fn reset_host_state_for_restore(&mut self) {}
+
     /// Abort any in-flight control transfer state.
     ///
     /// USB allows a new SETUP packet on endpoint 0 to abort the previous control transfer.

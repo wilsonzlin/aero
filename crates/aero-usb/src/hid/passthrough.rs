@@ -366,6 +366,10 @@ impl UsbHidPassthroughHandle {
 }
 
 impl UsbDeviceModel for UsbHidPassthroughHandle {
+    fn reset_host_state_for_restore(&mut self) {
+        UsbHidPassthroughHandle::reset_host_state_for_restore(self);
+    }
+
     fn reset(&mut self) {
         self.inner.borrow_mut().reset();
     }
@@ -851,6 +855,10 @@ impl UsbHidPassthrough {
 }
 
 impl UsbDeviceModel for UsbHidPassthrough {
+    fn reset_host_state_for_restore(&mut self) {
+        UsbHidPassthrough::reset_host_state_for_restore(self);
+    }
+
     fn reset(&mut self) {
         self.address = 0;
         self.configuration = 0;

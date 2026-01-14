@@ -138,18 +138,7 @@ impl AttachedUsbDevice {
     /// snapshot. Host integrations should traverse the restored USB topology and call this helper
     /// (or a controller-specific wrapper that delegates to it) before resuming execution.
     pub fn reset_host_state_for_restore(&mut self) {
-        {
-            let any = self.model_mut() as &mut dyn Any;
-            if let Some(webusb) = any.downcast_mut::<crate::UsbWebUsbPassthroughDevice>() {
-                webusb.reset_host_state_for_restore();
-            }
-            if let Some(webhid) = any.downcast_mut::<UsbHidPassthroughHandle>() {
-                webhid.reset_host_state_for_restore();
-            }
-            if let Some(webhid) = any.downcast_mut::<UsbHidPassthrough>() {
-                webhid.reset_host_state_for_restore();
-            }
-        }
+        self.model.reset_host_state_for_restore();
 
         if let Some(hub) = self.as_hub_mut() {
             for port in 0..hub.num_ports() {

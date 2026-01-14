@@ -142,6 +142,10 @@ impl UsbDeviceModel for UsbWebUsbPassthroughDevice {
         self.0.borrow().speed
     }
 
+    fn reset_host_state_for_restore(&mut self) {
+        UsbWebUsbPassthroughDevice::reset_host_state_for_restore(self);
+    }
+
     fn reset(&mut self) {
         self.0.borrow_mut().passthrough.reset();
     }
