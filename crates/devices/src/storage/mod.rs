@@ -27,7 +27,27 @@ pub use aero_storage_adapters::AeroVirtualDiskAsDeviceBackend as AeroStorageDisk
 /// [`DeviceBackendAsAeroVirtualDisk`].
 ///
 /// See `docs/20-storage-trait-consolidation.md`.
+#[cfg(not(target_arch = "wasm32"))]
 pub trait DiskBackend: Send {
+    /// Total disk size in bytes.
+    fn len(&self) -> u64;
+    #[inline]
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    fn read_at(&self, offset: u64, buf: &mut [u8]) -> io::Result<()>;
+    fn write_at(&mut self, offset: u64, buf: &[u8]) -> io::Result<()>;
+    fn flush(&mut self) -> io::Result<()>;
+}
+
+/// wasm32 build: disk backends do not need to be `Send`.
+///
+/// Browser disk handles (OPFS, JS-backed sparse formats, etc.) are often `!Send` because they wrap
+/// JS objects. Keeping this trait `!Send` allows the full-system wasm build to use those backends
+/// without an unsound `unsafe impl Send`.
+#[cfg(target_arch = "wasm32")]
+pub trait DiskBackend {
     /// Total disk size in bytes.
     fn len(&self) -> u64;
     #[inline]
@@ -166,14 +186,14 @@ impl VirtualDrive {
     ///
     /// Note: this constructor assumes the disk capacity is a multiple of 512 bytes. Prefer
     /// [`VirtualDrive::try_new_from_aero_virtual_disk`] when accepting arbitrary disks.
-    pub fn new_from_aero_virtual_disk(disk: Box<dyn aero_storage::VirtualDisk + Send>) -> Self {
+    pub fn new_from_aero_virtual_disk(disk: Box<dyn aero_storage::VirtualDisk>) -> Self {
         Self::new(512, Box::new(AeroStorageDiskAdapter::new(disk)))
     }
 
     /// Like [`VirtualDrive::new_from_aero_virtual_disk`], but returns an error if the disk capacity
     /// is not a multiple of 512 bytes.
     pub fn try_new_from_aero_virtual_disk(
-        disk: Box<dyn aero_storage::VirtualDisk + Send>,
+        disk: Box<dyn aero_storage::VirtualDisk>,
     ) -> io::Result<Self> {
         if !disk
             .capacity_bytes()
@@ -197,7 +217,7 @@ impl VirtualDrive {
     /// [`VirtualDrive::try_new_from_aero_storage`] when accepting arbitrary disks.
     pub fn new_from_aero_storage<D>(disk: D) -> Self
     where
-        D: aero_storage::VirtualDisk + Send + 'static,
+        D: aero_storage::VirtualDisk + 'static,
     {
         Self::new_from_aero_virtual_disk(Box::new(disk))
     }
@@ -206,7 +226,7 @@ impl VirtualDrive {
     /// not a multiple of 512 bytes.
     pub fn try_new_from_aero_storage<D>(disk: D) -> io::Result<Self>
     where
-        D: aero_storage::VirtualDisk + Send + 'static,
+        D: aero_storage::VirtualDisk + 'static,
     {
         Self::try_new_from_aero_virtual_disk(Box::new(disk))
     }

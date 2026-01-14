@@ -109,14 +109,19 @@ impl From<NvmeDiskBackend> for AeroVirtualDiskAsNvmeBackend {
 /// `aero-devices` crate. That crate re-exports this wrapper as
 /// `aero_devices::storage::AeroStorageDiskAdapter` for ergonomic use at call sites.
 pub struct AeroVirtualDiskAsDeviceBackend {
-    disk: Mutex<Box<dyn VirtualDisk + Send>>,
+    disk: Mutex<Box<dyn VirtualDisk>>,
 }
 
 impl AeroVirtualDiskAsDeviceBackend {
     /// `aero-devices` is byte-addressed, but we still enforce 512-byte sector alignment.
     pub const SECTOR_SIZE: u64 = SECTOR_SIZE as u64;
 
-    pub fn new(disk: Box<dyn VirtualDisk + Send>) -> Self {
+    ///
+    /// Note: `aero_storage::VirtualDisk` is conditionally `Send` (it is `Send` on native targets,
+    /// but may be `!Send` on wasm32). This wrapper intentionally accepts `Box<dyn VirtualDisk>`
+    /// without requiring `Send` so browser backends like OPFS can be wired in without an unsound
+    /// `unsafe impl Send`.
+    pub fn new(disk: Box<dyn VirtualDisk>) -> Self {
         Self {
             disk: Mutex::new(disk),
         }
@@ -198,8 +203,8 @@ impl AeroVirtualDiskAsDeviceBackend {
     }
 }
 
-impl From<Box<dyn VirtualDisk + Send>> for AeroVirtualDiskAsDeviceBackend {
-    fn from(disk: Box<dyn VirtualDisk + Send>) -> Self {
+impl From<Box<dyn VirtualDisk>> for AeroVirtualDiskAsDeviceBackend {
+    fn from(disk: Box<dyn VirtualDisk>) -> Self {
         Self::new(disk)
     }
 }

@@ -760,13 +760,12 @@ mod tests {
             counts: counts.clone(),
         }));
 
-        let chipset = ChipsetState::new(true);
-        let filter = AddressFilter::new(chipset.a20());
-        let mut mem = MemoryBus::new(filter, 0x2000);
-
         let mut dev = XhciPciDevice::default();
         dev.set_dma_memory_bus(Some(bus));
         dev.config_mut().set_command(1 << 1); // MEM
+        let chipset = ChipsetState::new(true);
+        let filter = AddressFilter::new(chipset.a20());
+        let mut mem = MemoryBus::new(filter, 0x2000);
 
         // Point CRCR somewhere arbitrary; the controller ignores the contents but should touch the
         // DMA bus on RUN transitions when BME is enabled.
@@ -774,6 +773,10 @@ mod tests {
         MmioHandler::write(&mut dev, regs::REG_CRCR_HI, 4, 0);
 
         // BME disabled: RUN should not touch the DMA bus (NoDma adapter).
+        //
+        // The controller's synthetic DMA-on-RUN probe runs on the next 1ms tick (to support
+        // integrations that cannot perform DMA during the MMIO write itself), so tick once to
+        // validate gating behavior.
         MmioHandler::write(&mut dev, regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
         // DMA-on-RUN is executed by the controller tick; with BME clear this must not attempt DMA.
         dev.tick_1ms(&mut mem);
@@ -804,15 +807,15 @@ mod tests {
 
         let bus: Rc<RefCell<dyn memory::MemoryBus>> = Rc::new(RefCell::new(DummyBus));
 
+        let mut dev = XhciPciDevice::default();
+        dev.set_dma_memory_bus(Some(bus));
+        dev.config_mut().set_command((1 << 1) | (1 << 2)); // MEM | BME
         let chipset = ChipsetState::new(true);
         let filter = AddressFilter::new(chipset.a20());
         let mut mem = MemoryBus::new(filter, 0x2000);
 
-        let mut dev = XhciPciDevice::default();
-        dev.set_dma_memory_bus(Some(bus));
-        dev.config_mut().set_command((1 << 1) | (1 << 2)); // MEM | BME
-
-        // Trigger the controller's interrupt condition.
+        // Trigger the controller's interrupt condition. The DMA-on-RUN probe is executed on the
+        // next tick.
         MmioHandler::write(&mut dev, regs::REG_CRCR_LO, 4, 0x1000);
         MmioHandler::write(&mut dev, regs::REG_CRCR_HI, 4, 0);
         MmioHandler::write(&mut dev, regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
@@ -839,13 +842,12 @@ mod tests {
 
         let bus: Rc<RefCell<dyn memory::MemoryBus>> = Rc::new(RefCell::new(DummyBus));
 
-        let chipset = ChipsetState::new(true);
-        let filter = AddressFilter::new(chipset.a20());
-        let mut mem = MemoryBus::new(filter, 0x2000);
-
         let mut dev = XhciPciDevice::default();
         dev.set_dma_memory_bus(Some(bus));
         dev.config_mut().set_command((1 << 1) | (1 << 2)); // MEM | BME
+        let chipset = ChipsetState::new(true);
+        let filter = AddressFilter::new(chipset.a20());
+        let mut mem = MemoryBus::new(filter, 0x2000);
 
         MmioHandler::write(&mut dev, regs::REG_CRCR_LO, 4, 0x1234);
         MmioHandler::write(&mut dev, regs::REG_CRCR_HI, 4, 0);
