@@ -1,5 +1,5 @@
 use aero_io_snapshot::io::state::codec::Encoder;
-use aero_io_snapshot::io::state::{IoSnapshot, SnapshotError, SnapshotVersion, SnapshotWriter};
+use aero_io_snapshot::io::state::{IoSnapshot, SnapshotError, SnapshotWriter};
 use aero_usb::hid::{UsbHidKeyboardHandle, UsbHidMouseHandle, UsbHidPassthroughHandle};
 use aero_usb::hub::UsbHubDevice;
 use aero_usb::passthrough::{UsbHostAction, UsbHostCompletion, UsbHostCompletionIn};
@@ -937,7 +937,7 @@ fn snapshot_restore_rejects_oversized_usb_device_snapshots() {
 
     let ports = Encoder::new().vec_bytes(&[port0, port1]).finish();
 
-    let mut w = SnapshotWriter::new(*b"UHCI", SnapshotVersion::new(1, 0));
+    let mut w = SnapshotWriter::new(*b"UHCI", UhciController::DEVICE_VERSION);
     w.field_bytes(TAG_ROOT_HUB_PORTS, ports);
     let snapshot = w.finish();
 
