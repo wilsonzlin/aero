@@ -1,5 +1,7 @@
 #![cfg(feature = "aerogpu-native")]
 
+mod common;
+
 const NS_PER_MS: u64 = 1_000_000;
 
 use aero_protocol::aerogpu::aerogpu_cmd::{
@@ -11,7 +13,6 @@ use aero_protocol::aerogpu::aerogpu_ring::AEROGPU_ALLOC_TABLE_MAGIC;
 use emulator::devices::aerogpu_regs::{irq_bits, mmio, ring_control, FEATURE_TRANSFER};
 use emulator::devices::aerogpu_ring::{AEROGPU_RING_HEADER_SIZE_BYTES, AEROGPU_RING_MAGIC};
 use emulator::devices::pci::aerogpu::{AeroGpuDeviceConfig, AeroGpuPciDevice};
-use emulator::gpu_worker::aerogpu_backend::NativeAeroGpuBackend;
 use emulator::gpu_worker::aerogpu_executor::{AeroGpuExecutorConfig, AeroGpuFenceCompletionMode};
 use emulator::io::pci::{MmioDevice, PciDevice};
 use memory::Bus;
@@ -91,9 +92,14 @@ fn aerogpu_copy_texture2d_writeback_updates_guest_memory() {
     let mut mem = Bus::new(0x20_000);
 
     let mut dev = new_test_device();
-    dev.set_backend(Box::new(
-        NativeAeroGpuBackend::new_headless().expect("native backend should initialize"),
-    ));
+    let backend = match common::native_backend(concat!(
+        module_path!(),
+        "::aerogpu_copy_texture2d_writeback_updates_guest_memory"
+    )) {
+        Some(backend) => backend,
+        None => return,
+    };
+    dev.set_backend(backend);
     assert_ne!(dev.regs.features & FEATURE_TRANSFER, 0);
 
     // Ring layout in guest memory.
@@ -273,9 +279,14 @@ fn aerogpu_copy_buffer_writeback_updates_guest_memory() {
     let mut mem = Bus::new(0x20_000);
 
     let mut dev = new_test_device();
-    dev.set_backend(Box::new(
-        NativeAeroGpuBackend::new_headless().expect("native backend should initialize"),
-    ));
+    let backend = match common::native_backend(concat!(
+        module_path!(),
+        "::aerogpu_copy_buffer_writeback_updates_guest_memory"
+    )) {
+        Some(backend) => backend,
+        None => return,
+    };
+    dev.set_backend(backend);
     assert_ne!(dev.regs.features & FEATURE_TRANSFER, 0);
 
     // Ring layout in guest memory.
@@ -416,9 +427,14 @@ fn aerogpu_copy_buffer_writeback_respects_offsets() {
     let mut mem = Bus::new(0x20_000);
 
     let mut dev = new_test_device();
-    dev.set_backend(Box::new(
-        NativeAeroGpuBackend::new_headless().expect("native backend should initialize"),
-    ));
+    let backend = match common::native_backend(concat!(
+        module_path!(),
+        "::aerogpu_copy_buffer_writeback_respects_offsets"
+    )) {
+        Some(backend) => backend,
+        None => return,
+    };
+    dev.set_backend(backend);
     assert_ne!(dev.regs.features & FEATURE_TRANSFER, 0);
 
     // Ring layout in guest memory.
@@ -579,9 +595,14 @@ fn aerogpu_copy_texture2d_writeback_subrect_updates_guest_memory() {
     let mut mem = Bus::new(0x20_000);
 
     let mut dev = new_test_device();
-    dev.set_backend(Box::new(
-        NativeAeroGpuBackend::new_headless().expect("native backend should initialize"),
-    ));
+    let backend = match common::native_backend(concat!(
+        module_path!(),
+        "::aerogpu_copy_texture2d_writeback_subrect_updates_guest_memory"
+    )) {
+        Some(backend) => backend,
+        None => return,
+    };
+    dev.set_backend(backend);
     assert_ne!(dev.regs.features & FEATURE_TRANSFER, 0);
 
     // Ring layout in guest memory.
@@ -785,9 +806,14 @@ fn aerogpu_copy_buffer_writeback_requires_guest_backing() {
     let mut mem = Bus::new(0x20_000);
 
     let mut dev = new_test_device();
-    dev.set_backend(Box::new(
-        NativeAeroGpuBackend::new_headless().expect("native backend should initialize"),
-    ));
+    let backend = match common::native_backend(concat!(
+        module_path!(),
+        "::aerogpu_copy_buffer_writeback_requires_guest_backing"
+    )) {
+        Some(backend) => backend,
+        None => return,
+    };
+    dev.set_backend(backend);
     assert_ne!(dev.regs.features & FEATURE_TRANSFER, 0);
 
     // Ring layout in guest memory.
@@ -901,9 +927,14 @@ fn aerogpu_copy_texture2d_writeback_requires_guest_backing() {
     let mut mem = Bus::new(0x20_000);
 
     let mut dev = new_test_device();
-    dev.set_backend(Box::new(
-        NativeAeroGpuBackend::new_headless().expect("native backend should initialize"),
-    ));
+    let backend = match common::native_backend(concat!(
+        module_path!(),
+        "::aerogpu_copy_texture2d_writeback_requires_guest_backing"
+    )) {
+        Some(backend) => backend,
+        None => return,
+    };
+    dev.set_backend(backend);
     assert_ne!(dev.regs.features & FEATURE_TRANSFER, 0);
 
     // Ring layout in guest memory.

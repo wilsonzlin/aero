@@ -16,7 +16,6 @@ use emulator::devices::aerogpu_ring::{
     AEROGPU_ALLOC_TABLE_MAGIC, AEROGPU_RING_HEADER_SIZE_BYTES, AEROGPU_RING_MAGIC,
 };
 use emulator::devices::pci::aerogpu::{AeroGpuDeviceConfig, AeroGpuPciDevice};
-use emulator::gpu_worker::aerogpu_backend::NativeAeroGpuBackend;
 use emulator::gpu_worker::aerogpu_executor::{AeroGpuExecutorConfig, AeroGpuFenceCompletionMode};
 use emulator::io::pci::{MmioDevice, PciDevice};
 use memory::Bus;
@@ -172,21 +171,14 @@ fn aerogpu_ring_submission_executes_d3d9_cmd_stream_and_presents_scanout() {
     let mut mem = Bus::new(0x40_000);
 
     let mut dev = new_test_device();
-    let backend = match NativeAeroGpuBackend::new_headless() {
-        Ok(backend) => backend,
-        Err(aero_gpu::AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(
-                concat!(
-                    module_path!(),
-                    "::aerogpu_ring_submission_executes_d3d9_cmd_stream_and_presents_scanout"
-                ),
-                "wgpu request_adapter returned None",
-            );
-            return;
-        }
-        Err(err) => panic!("failed to initialize native AeroGPU backend: {err}"),
+    let backend = match common::native_backend(concat!(
+        module_path!(),
+        "::aerogpu_ring_submission_executes_d3d9_cmd_stream_and_presents_scanout"
+    )) {
+        Some(backend) => backend,
+        None => return,
     };
-    dev.set_backend(Box::new(backend));
+    dev.set_backend(backend);
 
     // Ring layout in guest memory.
     let ring_gpa = 0x1000u64;
@@ -536,21 +528,14 @@ fn aerogpu_ring_submission_executes_d3d9_cmd_stream_with_alloc_table_and_dirty_r
     let mut mem = Bus::new(0x80_000);
 
     let mut dev = new_test_device();
-    let backend = match NativeAeroGpuBackend::new_headless() {
-        Ok(backend) => backend,
-        Err(aero_gpu::AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(
-                concat!(
-                    module_path!(),
-                    "::aerogpu_ring_submission_executes_d3d9_cmd_stream_with_alloc_table_and_dirty_ranges"
-                ),
-                "wgpu request_adapter returned None",
-            );
-            return;
-        }
-        Err(err) => panic!("failed to initialize native AeroGPU backend: {err}"),
+    let backend = match common::native_backend(concat!(
+        module_path!(),
+        "::aerogpu_ring_submission_executes_d3d9_cmd_stream_with_alloc_table_and_dirty_ranges"
+    )) {
+        Some(backend) => backend,
+        None => return,
     };
-    dev.set_backend(Box::new(backend));
+    dev.set_backend(backend);
 
     // Ring layout in guest memory.
     let ring_gpa = 0x1000u64;
@@ -933,21 +918,14 @@ fn aerogpu_ring_submission_executes_win7_fixedfunc_triangle_stream() {
     let mut mem = Bus::new(0x40_000);
 
     let mut dev = new_test_device();
-    let backend = match NativeAeroGpuBackend::new_headless() {
-        Ok(backend) => backend,
-        Err(aero_gpu::AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(
-                concat!(
-                    module_path!(),
-                    "::aerogpu_ring_submission_executes_win7_fixedfunc_triangle_stream"
-                ),
-                "wgpu request_adapter returned None",
-            );
-            return;
-        }
-        Err(err) => panic!("failed to initialize native AeroGPU backend: {err}"),
+    let backend = match common::native_backend(concat!(
+        module_path!(),
+        "::aerogpu_ring_submission_executes_win7_fixedfunc_triangle_stream"
+    )) {
+        Some(backend) => backend,
+        None => return,
     };
-    dev.set_backend(Box::new(backend));
+    dev.set_backend(backend);
 
     // Ring layout in guest memory.
     let ring_gpa = 0x1000u64;
@@ -1221,21 +1199,14 @@ fn aerogpu_ring_submission_isolates_pixel_constants_per_context() {
     let mut mem = Bus::new(0x60_000);
 
     let mut dev = new_test_device();
-    let backend = match NativeAeroGpuBackend::new_headless() {
-        Ok(backend) => backend,
-        Err(aero_gpu::AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(
-                concat!(
-                    module_path!(),
-                    "::aerogpu_ring_submission_isolates_pixel_constants_per_context"
-                ),
-                "wgpu request_adapter returned None",
-            );
-            return;
-        }
-        Err(err) => panic!("failed to initialize native AeroGPU backend: {err}"),
+    let backend = match common::native_backend(concat!(
+        module_path!(),
+        "::aerogpu_ring_submission_isolates_pixel_constants_per_context"
+    )) {
+        Some(backend) => backend,
+        None => return,
     };
-    dev.set_backend(Box::new(backend));
+    dev.set_backend(backend);
 
     // Ring layout in guest memory.
     let ring_gpa = 0x1000u64;
@@ -1627,21 +1598,14 @@ fn aerogpu_ring_submission_copy_texture2d_writeback_writes_guest_memory() {
     let mut mem = Bus::new(0x40_000);
 
     let mut dev = new_test_device();
-    let backend = match NativeAeroGpuBackend::new_headless() {
-        Ok(backend) => backend,
-        Err(aero_gpu::AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(
-                concat!(
-                    module_path!(),
-                    "::aerogpu_ring_submission_copy_texture2d_writeback_writes_guest_memory"
-                ),
-                "wgpu request_adapter returned None",
-            );
-            return;
-        }
-        Err(err) => panic!("failed to initialize native AeroGPU backend: {err}"),
+    let backend = match common::native_backend(concat!(
+        module_path!(),
+        "::aerogpu_ring_submission_copy_texture2d_writeback_writes_guest_memory"
+    )) {
+        Some(backend) => backend,
+        None => return,
     };
-    dev.set_backend(Box::new(backend));
+    dev.set_backend(backend);
 
     // Ring layout in guest memory.
     let ring_gpa = 0x1000u64;
@@ -1816,21 +1780,14 @@ fn aerogpu_ring_submission_completes_fence_on_d3d9_executor_error() {
     let mut mem = Bus::new(0x40_000);
 
     let mut dev = new_test_device();
-    let backend = match NativeAeroGpuBackend::new_headless() {
-        Ok(backend) => backend,
-        Err(aero_gpu::AerogpuD3d9Error::AdapterNotFound) => {
-            common::skip_or_panic(
-                concat!(
-                    module_path!(),
-                    "::aerogpu_ring_submission_completes_fence_on_d3d9_executor_error"
-                ),
-                "wgpu request_adapter returned None",
-            );
-            return;
-        }
-        Err(err) => panic!("failed to initialize native AeroGPU backend: {err}"),
+    let backend = match common::native_backend(concat!(
+        module_path!(),
+        "::aerogpu_ring_submission_completes_fence_on_d3d9_executor_error"
+    )) {
+        Some(backend) => backend,
+        None => return,
     };
-    dev.set_backend(Box::new(backend));
+    dev.set_backend(backend);
 
     // Ring layout in guest memory.
     let ring_gpa = 0x1000u64;
