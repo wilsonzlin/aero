@@ -10,6 +10,7 @@ export interface ProxyConfig {
   dohAnswerTtlSeconds: number;
   dohMaxAnswerTtlSeconds: number;
   dohMaxAnswers: number;
+  dohCorsAllowOrigins: string[];
   wsMaxPayloadBytes: number;
   wsStreamHighWaterMarkBytes: number;
   udpWsBufferedAmountLimitBytes: number;
@@ -42,6 +43,33 @@ function readEnvBool(name: string, fallback: boolean): boolean {
   throw new Error(`Invalid ${name}=${raw} (expected 0/1/true/false)`);
 }
 
+function readEnvOriginAllowlist(name: string): string[] {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === "") return [];
+
+  const parts = raw
+    .split(",")
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
+
+  const out: string[] = [];
+  for (const part of parts) {
+    if (part === "*") {
+      out.push("*");
+      continue;
+    }
+    try {
+      const url = new URL(part);
+      out.push(url.origin);
+    } catch {
+      throw new Error(`Invalid ${name} origin: ${part}`);
+    }
+  }
+
+  // Deduplicate while preserving order.
+  return out.filter((value, idx) => out.indexOf(value) === idx);
+}
+
 export function loadConfigFromEnv(): ProxyConfig {
   const tcpMuxMaxStreams = readEnvInt("AERO_PROXY_TCP_MUX_MAX_STREAMS", 1024);
   if (tcpMuxMaxStreams < 1) {
@@ -61,6 +89,7 @@ export function loadConfigFromEnv(): ProxyConfig {
   const dohAnswerTtlSeconds = readEnvInt("AERO_PROXY_DOH_ANSWER_TTL_SECONDS", 60);
   const dohMaxAnswerTtlSeconds = readEnvInt("AERO_PROXY_DOH_MAX_ANSWER_TTL_SECONDS", 300);
   const dohMaxAnswers = readEnvInt("AERO_PROXY_DOH_MAX_ANSWERS", 16);
+  const dohCorsAllowOrigins = readEnvOriginAllowlist("AERO_PROXY_DOH_CORS_ALLOW_ORIGINS");
 
   const udpRelayInboundFilterModeRaw = (process.env.AERO_PROXY_UDP_RELAY_INBOUND_FILTER_MODE ?? "address_and_port")
     .trim()
@@ -92,6 +121,7 @@ export function loadConfigFromEnv(): ProxyConfig {
     dohAnswerTtlSeconds,
     dohMaxAnswerTtlSeconds,
     dohMaxAnswers,
+    dohCorsAllowOrigins,
     wsMaxPayloadBytes: readEnvInt("AERO_PROXY_WS_MAX_PAYLOAD_BYTES", 1 * 1024 * 1024),
     wsStreamHighWaterMarkBytes: readEnvInt("AERO_PROXY_WS_STREAM_HWM_BYTES", 64 * 1024),
     udpWsBufferedAmountLimitBytes: readEnvInt("AERO_PROXY_UDP_WS_BUFFER_LIMIT_BYTES", 1 * 1024 * 1024),

@@ -197,7 +197,8 @@ This provides a local proxy that the emulator (and the browser networking client
 Notes:
 
 - DoH endpoints are normal `fetch()` calls, so browser clients generally need them to be **same-origin** (or served with
-  permissive CORS). The easiest local-dev approach is proxying `/dns-query` + `/dns-json` through Vite.
+  permissive CORS). The easiest local-dev approach is proxying `/dns-query` + `/dns-json` through Vite; alternatively,
+  `net-proxy` supports an explicit CORS allowlist via `AERO_PROXY_DOH_CORS_ALLOW_ORIGINS` (see `net-proxy/README.md`).
 - `net-proxy` DoH endpoints are intentionally lightweight and are **unauthenticated** (no session cookie) and not
   policy-filtered by `AERO_PROXY_OPEN` / `AERO_PROXY_ALLOW` (the policy applies to `/tcp`, `/tcp-mux`, `/udp`).
 

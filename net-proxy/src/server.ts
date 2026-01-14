@@ -277,6 +277,35 @@ function sendDnsMessage(res: http.ServerResponse, statusCode: number, message: B
   res.end(message);
 }
 
+function setDohCorsHeaders(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  config: ProxyConfig,
+  opts: { allowMethods?: string } = {}
+): void {
+  if (config.dohCorsAllowOrigins.length === 0) return;
+
+  const requestOrigin = req.headers.origin;
+  if (config.dohCorsAllowOrigins.includes("*")) {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+  } else if (typeof requestOrigin === "string" && config.dohCorsAllowOrigins.includes(requestOrigin)) {
+    res.setHeader("Access-Control-Allow-Origin", requestOrigin);
+    res.setHeader("Vary", "Origin");
+  } else {
+    return;
+  }
+
+  if (opts.allowMethods) {
+    res.setHeader("Access-Control-Allow-Methods", opts.allowMethods);
+  }
+
+  const requestedHeaders = req.headers["access-control-request-headers"];
+  const requestedHeadersValue = typeof requestedHeaders === "string" ? requestedHeaders : "";
+  // Always allow Content-Type for RFC8484 POST, even if the client didn't send a preflight header.
+  const allowHeaders = requestedHeadersValue ? `Content-Type, ${requestedHeadersValue}` : "Content-Type";
+  res.setHeader("Access-Control-Allow-Headers", allowHeaders);
+}
+
 async function handleDnsQuery(req: http.IncomingMessage, res: http.ServerResponse, url: URL, config: ProxyConfig): Promise<void> {
   if (req.method !== "GET" && req.method !== "POST") {
     sendDnsMessage(res, 405, encodeDnsResponse({ id: 0, rcode: 1 }));
@@ -496,21 +525,31 @@ export async function startProxyServer(overrides: Partial<ProxyConfig> = {}): Pr
         return;
       }
 
-      if (req.method === "GET" && url.pathname === "/metrics") {
-        const body = metrics.prometheusText();
-        res.writeHead(200, {
-          "content-type": "text/plain; version=0.0.4; charset=utf-8",
-          "content-length": Buffer.byteLength(body),
-          "cache-control": "no-store"
-        });
-        res.end(body);
-        return;
-      }
+        if (req.method === "GET" && url.pathname === "/metrics") {
+          const body = metrics.prometheusText();
+          res.writeHead(200, {
+            "content-type": "text/plain; version=0.0.4; charset=utf-8",
+            "content-length": Buffer.byteLength(body),
+            "cache-control": "no-store"
+          });
+          res.end(body);
+          return;
+        }
 
-      if (url.pathname === "/dns-query") {
-        await handleDnsQuery(req, res, url, config);
-        return;
-      }
+        if (url.pathname === "/dns-query" || url.pathname === "/dns-json") {
+          const allowMethods = url.pathname === "/dns-query" ? "GET, POST, OPTIONS" : "GET, OPTIONS";
+          setDohCorsHeaders(req, res, config, { allowMethods });
+          if (req.method === "OPTIONS") {
+            res.writeHead(204);
+            res.end();
+            return;
+          }
+        }
+
+        if (url.pathname === "/dns-query") {
+          await handleDnsQuery(req, res, url, config);
+          return;
+        }
 
       if (req.method === "GET" && url.pathname === "/dns-json") {
         await handleDnsJson(req, res, url, config);

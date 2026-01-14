@@ -338,3 +338,47 @@ test("GET /dns-json rejects missing/too-long names", async () => {
     assert.equal(tooLongBody.error, "name too long");
   });
 });
+
+test("DoH endpoints support optional CORS allowlist (preflight + response headers)", async () => {
+  await withProxyServer({ open: true, dohCorsAllowOrigins: ["http://localhost:5173"] }, async (baseUrl) => {
+    const preflight = await fetch(`${baseUrl}/dns-query`, {
+      method: "OPTIONS",
+      headers: {
+        Origin: "http://localhost:5173",
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "content-type"
+      }
+    });
+    assert.equal(preflight.status, 204);
+    assert.equal(preflight.headers.get("access-control-allow-origin"), "http://localhost:5173");
+    assert.ok((preflight.headers.get("access-control-allow-methods") ?? "").includes("POST"));
+    assert.ok((preflight.headers.get("access-control-allow-headers") ?? "").toLowerCase().includes("content-type"));
+
+    const id = 0x9999;
+    const query = encodeDnsQuery("localhost", 1, id);
+    const resp = await fetch(`${baseUrl}/dns-query`, {
+      method: "POST",
+      headers: {
+        Origin: "http://localhost:5173",
+        "content-type": "application/dns-message",
+        accept: "application/dns-message"
+      },
+      body: query
+    });
+    assert.equal(resp.status, 200);
+    assert.equal(resp.headers.get("access-control-allow-origin"), "http://localhost:5173");
+  });
+
+  await withProxyServer({ open: true, dohCorsAllowOrigins: ["http://localhost:5173"] }, async (baseUrl) => {
+    const resp = await fetch(`${baseUrl}/dns-query`, {
+      method: "POST",
+      headers: {
+        Origin: "https://evil.example",
+        "content-type": "application/dns-message"
+      },
+      body: encodeDnsQuery("localhost", 1, 0xaaaa)
+    });
+    assert.equal(resp.status, 200);
+    assert.equal(resp.headers.get("access-control-allow-origin"), null);
+  });
+});
