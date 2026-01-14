@@ -535,11 +535,11 @@ describe("InputCapture wheel handling", () => {
       });
 
       expect(posted).toHaveLength(1);
-      const words = new Int32Array((posted[0] as { buffer: ArrayBuffer }).buffer);
-      expect(words[0]).toBe(1);
-      expect(words[2]).toBe(InputEventType.MouseMove);
-      expect(words[4]).toBe(1);
-      expect(words[5]).toBe(0);
+      const events = decodeInputBatchEvents((posted[0] as { buffer: ArrayBuffer }).buffer);
+      expect(events).toHaveLength(1);
+      expect(events[0]!.type).toBe(InputEventType.MouseMove);
+      expect(events[0]!.a).toBe(1);
+      expect(events[0]!.b).toBe(0);
     });
   });
 });
