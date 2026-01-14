@@ -297,6 +297,10 @@ The D3D9 implementation is split into:
   - Translation: [`crates/aero-d3d9/src/shader.rs`](../../crates/aero-d3d9/src/shader.rs) emits `@group(3) @binding(0)` `HalfPixel` uniform + clip-space XY adjustment when `WgslOptions::half_pixel_center` is enabled.
   - Execution: [`crates/aero-gpu/src/aerogpu_d3d9_executor.rs`](../../crates/aero-gpu/src/aerogpu_d3d9_executor.rs) creates/binds the group(3) bind group and updates the uniform on `AeroGpuCmd::SetViewport`.
   - Test: [`crates/aero-gpu/tests/aerogpu_d3d9_half_pixel_center.rs`](../../crates/aero-gpu/tests/aerogpu_d3d9_half_pixel_center.rs) (`bash ./scripts/safe-run.sh cargo test -p aero-gpu --test aerogpu_d3d9_half_pixel_center --locked`)
+- [x] SM3 derivatives (`dsx`/`dsy`) and gradient sampling (`texldd`) (✅ Task 216/217 closed)
+  - Translation: [`crates/aero-d3d9/src/sm3/`](../../crates/aero-d3d9/src/sm3/) lowers derivatives to WGSL `dpdx`/`dpdy`.
+  - Legacy-fallback translation: [`crates/aero-d3d9/src/shader.rs`](../../crates/aero-d3d9/src/shader.rs) also supports `dsx`/`dsy` for best-effort compatibility.
+  - Tests: `crates/aero-d3d9/tests/sm3_wgsl.rs` (derivatives + `texldd`), `crates/aero-d3d9/src/tests.rs` (fallback path).
 
 Code pointers:
 
