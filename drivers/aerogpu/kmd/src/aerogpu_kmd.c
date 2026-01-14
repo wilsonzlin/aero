@@ -496,9 +496,17 @@ static VOID AeroGpuAppendEdidStandardTimings(_In_reads_bytes_(128) const UCHAR* 
         if (rem != 0) {
             const ULONG down = vActive & ~7u;
             const ULONG up = (vActive + 7u) & ~7u;
-            const ULONG diffDown = vActive - down;
-            const ULONG diffUp = up - vActive;
-            const ULONG aligned = (diffDown <= diffUp) ? down : up;
+
+            /*
+             * Choose the closest multiple-of-8 to the exact rational value
+             * (hActive * num / den), not just to the floored integer.
+             */
+            const ULONGLONG downProd = (ULONGLONG)down * den;
+            const ULONGLONG upProd = (ULONGLONG)up * den;
+            const ULONGLONG diffDown = (prod > downProd) ? (prod - downProd) : (downProd - prod);
+            const ULONGLONG diffUp = (prod > upProd) ? (prod - upProd) : (upProd - prod);
+
+            const ULONG aligned = (diffUp < diffDown) ? up : down;
             if (aligned != 0) {
                 vActive = aligned;
             }
