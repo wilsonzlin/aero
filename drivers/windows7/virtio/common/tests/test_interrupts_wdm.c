@@ -395,6 +395,56 @@ static void test_intx_dpc_can_run_during_connect(void)
     VirtioPciWdmInterruptDisconnect(&intr);
 }
 
+static void test_intx_evt_dpc_can_run_during_connect(void)
+{
+    VIRTIO_PCI_WDM_INTERRUPTS intr;
+    DEVICE_OBJECT dev;
+    CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
+    interrupts_test_ctx_t ctx;
+    io_connect_interrupt_hook_ctx_t hook_ctx;
+    NTSTATUS status;
+    volatile UCHAR isr_reg = 0;
+
+    desc = make_int_desc();
+    RtlZeroMemory(&ctx, sizeof(ctx));
+    RtlZeroMemory(&hook_ctx, sizeof(hook_ctx));
+
+    /* Make callbacks usable even if the DPC runs before connect returns. */
+    ctx.expected = &intr;
+
+    /* Pre-set ISR byte so the hooked interrupt sees queue work. */
+    isr_reg = VIRTIO_PCI_ISR_QUEUE_INTERRUPT;
+
+    WdkTestResetKeInsertQueueDpcCounts();
+    WdkTestSetIoConnectInterruptHook(io_connect_interrupt_hook_trigger_interrupt_and_run_dpc, &hook_ctx);
+
+    status = VirtioPciWdmInterruptConnect(&dev, NULL, &desc, &isr_reg, evt_config, evt_queue, evt_dpc, &ctx, &intr);
+    assert(status == STATUS_SUCCESS);
+    assert(intr.Mode == VirtioPciWdmInterruptModeIntx);
+
+    assert(hook_ctx.call_count == 1);
+    assert(isr_reg == 0);
+    assert(intr.u.Intx.Intx.IsrCount == 1);
+    assert(intr.u.Intx.Intx.DpcCount == 1);
+    assert(intr.u.Intx.Intx.DpcInFlight == 0);
+    assert(intr.u.Intx.Intx.Dpc.Inserted == FALSE);
+    assert(WdkTestGetKeInsertQueueDpcCount() == 1);
+
+    /* With EvtDpc installed, the helper should not call the per-bit callbacks. */
+    assert(ctx.config_calls == 0);
+    assert(ctx.queue_calls == 0);
+    assert(ctx.dpc_calls == 1);
+    assert(ctx.dpc_config_calls == 0);
+    assert(ctx.dpc_queue_calls == 1);
+    assert(ctx.last_message_id == VIRTIO_PCI_WDM_MESSAGE_ID_NONE);
+    assert(ctx.last_is_config == FALSE);
+    assert(ctx.last_queue_index == VIRTIO_PCI_WDM_QUEUE_INDEX_UNKNOWN);
+
+    WdkTestClearIoConnectInterruptHook();
+
+    VirtioPciWdmInterruptDisconnect(&intr);
+}
+
 static void test_message_connect_disconnect_calls_wdk_routines(void)
 {
     VIRTIO_PCI_WDM_INTERRUPTS intr;
@@ -942,6 +992,55 @@ static void test_message_dpc_can_run_during_connect(void)
     VirtioPciWdmInterruptDisconnect(&intr);
 }
 
+static void test_message_evt_dpc_can_run_during_connect(void)
+{
+    VIRTIO_PCI_WDM_INTERRUPTS intr;
+    DEVICE_OBJECT dev;
+    DEVICE_OBJECT pdo;
+    CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
+    interrupts_test_ctx_t ctx;
+    io_connect_interrupt_ex_hook_ctx_t hook_ctx;
+    NTSTATUS status;
+
+    desc = make_msg_desc(2); /* msg0=config, msg1=queue0 */
+    RtlZeroMemory(&ctx, sizeof(ctx));
+    RtlZeroMemory(&hook_ctx, sizeof(hook_ctx));
+
+    hook_ctx.message_id_to_trigger = 1;
+
+    /* Make callbacks usable even if the DPC runs before connect returns. */
+    ctx.expected = &intr;
+
+    WdkTestResetKeInsertQueueDpcCounts();
+    WdkTestSetIoConnectInterruptExHook(io_connect_interrupt_ex_hook_trigger_message_and_run_dpc, &hook_ctx);
+
+    status = VirtioPciWdmInterruptConnect(&dev, &pdo, &desc, NULL, evt_config, evt_queue, evt_dpc, &ctx, &intr);
+    assert(status == STATUS_SUCCESS);
+
+    /* Hook must have fired exactly once and the DPC should already have run. */
+    assert(hook_ctx.call_count == 1);
+    assert(intr.Mode == VirtioPciWdmInterruptModeMessage);
+    assert(intr.u.Message.IsrCount == 1);
+    assert(intr.u.Message.DpcCount == 1);
+    assert(intr.u.Message.DpcInFlight == 0);
+    assert(intr.u.Message.MessageDpcs[1].Inserted == FALSE);
+    assert(WdkTestGetKeInsertQueueDpcCount() == 1);
+
+    /* With EvtDpc installed, the helper should not call the per-bit callbacks. */
+    assert(ctx.config_calls == 0);
+    assert(ctx.queue_calls == 0);
+    assert(ctx.dpc_calls == 1);
+    assert(ctx.dpc_config_calls == 0);
+    assert(ctx.dpc_queue_calls == 1);
+    assert(ctx.last_message_id == 1);
+    assert(ctx.last_is_config == FALSE);
+    assert(ctx.last_queue_index == 0);
+
+    WdkTestClearIoConnectInterruptExHook();
+
+    VirtioPciWdmInterruptDisconnect(&intr);
+}
+
 static void test_message_isr_increments_dpc_inflight_before_queueing_dpc(void)
 {
     VIRTIO_PCI_WDM_INTERRUPTS intr;
@@ -1000,6 +1099,7 @@ int main(void)
     test_connect_validation();
     test_intx_connect_and_dispatch();
     test_intx_dpc_can_run_during_connect();
+    test_intx_evt_dpc_can_run_during_connect();
     test_message_connect_disconnect_calls_wdk_routines();
     test_message_single_vector_default_mapping_dispatches_queue_work();
     test_message_isr_does_not_read_isr_status_byte();
@@ -1015,6 +1115,7 @@ int main(void)
     test_message_isr_returns_false_for_out_of_range_message_id();
     test_message_interrupt_during_connect_is_handled();
     test_message_dpc_can_run_during_connect();
+    test_message_evt_dpc_can_run_during_connect();
     test_message_isr_increments_dpc_inflight_before_queueing_dpc();
 
     printf("virtio_interrupts_wdm_tests: PASS\n");
