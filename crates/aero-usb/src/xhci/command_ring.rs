@@ -6,7 +6,7 @@ use crate::{MemoryBus, SetupPacket, UsbDeviceModel, UsbSpeed};
 
 use super::context::{
     EndpointContext, EndpointType, InputContext32, SlotContext, SLOT_STATE_ADDRESSED,
-    SLOT_STATE_CONFIGURED, XHCI_ROUTE_STRING_MAX_DEPTH, XHCI_ROUTE_STRING_MAX_PORT,
+    SLOT_STATE_CONFIGURED, SLOT_STATE_DEFAULT, XHCI_ROUTE_STRING_MAX_DEPTH, XHCI_ROUTE_STRING_MAX_PORT,
 };
 use super::trb::{CompletionCode, Trb, TrbType, TRB_LEN};
 
@@ -883,10 +883,7 @@ impl CommandRingProcessor {
         if !self.slots_enabled.get(idx).copied().unwrap_or(false) {
             return CompletionCode::SlotNotEnabledError;
         }
-        if cmd.address_device_bsr() {
-            // We do not implement the "Block Set Address Request" mode yet.
-            return CompletionCode::ParameterError;
-        }
+        let bsr = cmd.address_device_bsr();
 
         let dev_ctx_ptr = match self.read_device_context_ptr(mem, slot_id) {
             Ok(ptr) => ptr,
@@ -954,25 +951,29 @@ impl CommandRingProcessor {
             return CompletionCode::TrbError;
         };
 
-        // USB-level side effect: issue SET_ADDRESS to the attached device.
+        // USB-level side effect: optionally issue SET_ADDRESS to the attached device. When BSR=1
+        // (Block Set Address Request), software is responsible for issuing SET_ADDRESS itself via a
+        // normal control transfer.
         let speed = {
             let Some(dev) = self.find_device_by_topology(root_port, &route) else {
                 return CompletionCode::ContextStateError;
             };
             let speed = dev.speed();
-            let setup = SetupPacket {
-                bm_request_type: 0x00, // HostToDevice | Standard | Device
-                b_request: USB_REQUEST_SET_ADDRESS,
-                w_value: addr as u16,
-                w_index: 0,
-                w_length: 0,
-            };
-            if dev.handle_setup(setup) != UsbOutResult::Ack {
-                return CompletionCode::TrbError;
-            }
-            match dev.handle_in(0, 0) {
-                UsbInResult::Data(data) if data.is_empty() => {}
-                _ => return CompletionCode::TrbError,
+            if !bsr {
+                let setup = SetupPacket {
+                    bm_request_type: 0x00, // HostToDevice | Standard | Device
+                    b_request: USB_REQUEST_SET_ADDRESS,
+                    w_value: addr as u16,
+                    w_index: 0,
+                    w_length: 0,
+                };
+                if dev.handle_setup(setup) != UsbOutResult::Ack {
+                    return CompletionCode::TrbError;
+                }
+                match dev.handle_in(0, 0) {
+                    UsbInResult::Data(data) if data.is_empty() => {}
+                    _ => return CompletionCode::TrbError,
+                }
             }
             speed
         };
@@ -1030,8 +1031,12 @@ impl CommandRingProcessor {
         };
         let mut out_slot_ctx = SlotContext::read_from(mem, out_slot_addr);
         out_slot_ctx.set_speed(psiv);
-        // Address Device transitions the slot to the Addressed state (xHCI 1.2 §4.6.5).
-        out_slot_ctx.set_slot_state(SLOT_STATE_ADDRESSED);
+        // Address Device transitions the slot to the Default/Addressed state (xHCI 1.2 §4.6.5).
+        out_slot_ctx.set_slot_state(if bsr {
+            SLOT_STATE_DEFAULT
+        } else {
+            SLOT_STATE_ADDRESSED
+        });
         out_slot_ctx.write_to(mem, out_slot_addr);
 
         // Apply EP0 Context (preserve Endpoint State field).
@@ -2097,6 +2102,77 @@ mod tests {
             3,
             "expected speed to match the attached UsbSpeed::High device"
         );
+    }
+
+    #[test]
+    fn address_device_bsr_does_not_issue_set_address() {
+        use crate::xhci::context::InputControlContext;
+
+        let mut mem = TestMem::new(0x20_000);
+        let mem_size = mem.data.len() as u64;
+
+        let dcbaa = 0x1000u64;
+        let dev_ctx = 0x2000u64;
+        let input_ctx = 0x3000u64;
+        let ep0_ring = 0x5000u64;
+
+        let mut processor = CommandRingProcessor::new(
+            mem_size,
+            8,
+            dcbaa,
+            CommandRing::new(0),
+            EventRing::new(0, 0),
+        );
+        processor.attach_root_port(1, Box::new(DummyDevice));
+
+        // Enable the slot and install its DCBAA entry to point at our device context.
+        let (code, slot_id) = processor.handle_enable_slot(&mut mem);
+        assert_eq!(code, CompletionCode::Success);
+        assert_eq!(slot_id, 1);
+        mem.write_u64(dcbaa + 8, dev_ctx);
+
+        // Build an Input Context with Slot + EP0.
+        let mut icc = InputControlContext::default();
+        icc.set_add_flags(ICC_CTX_FLAG_SLOT | ICC_CTX_FLAG_EP0);
+        icc.write_to(&mut mem, input_ctx);
+
+        let mut slot_ctx = SlotContext::default();
+        slot_ctx.set_route_string(0);
+        slot_ctx.set_root_hub_port_number(1);
+        slot_ctx.set_context_entries(1);
+        slot_ctx.write_to(&mut mem, input_ctx + INPUT_SLOT_CTX_OFFSET);
+
+        let mut ep0_ctx = EndpointContext::default();
+        // Endpoint Type field is DW1 bits 3..=5: 4 => Control.
+        ep0_ctx.set_dword(1, 4u32 << 3);
+        ep0_ctx.set_tr_dequeue_pointer(ep0_ring, true);
+        ep0_ctx.write_to(&mut mem, input_ctx + INPUT_EP0_CTX_OFFSET);
+
+        let mut trb = Trb::new(input_ctx, 0, 0);
+        trb.set_trb_type(TrbType::AddressDeviceCommand);
+        trb.set_slot_id(slot_id);
+        trb.set_address_device_bsr(true);
+
+        assert_eq!(
+            processor.handle_address_device(&mut mem, trb),
+            CompletionCode::Success
+        );
+
+        let dev = processor
+            .port_device(1)
+            .expect("root port device must still exist");
+        assert_eq!(
+            dev.address(),
+            0,
+            "BSR=1 must not issue SET_ADDRESS to the attached device"
+        );
+
+        let slot = processor.slots[usize::from(slot_id)]
+            .as_ref()
+            .expect("slot state must exist");
+        let out_slot_ctx = SlotContext::read_from(&mut mem, dev_ctx + DEVICE_SLOT_CTX_OFFSET);
+        assert_eq!(out_slot_ctx.usb_device_address(), slot.address);
+        assert_eq!(out_slot_ctx.slot_state(), SLOT_STATE_DEFAULT);
     }
 
     #[test]
