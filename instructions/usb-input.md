@@ -391,8 +391,11 @@ bash ./scripts/safe-run.sh cargo test -p aero-usb --locked \
   --test uhci \
   --test uhci_external_hub \
   --test ehci \
+  --test ehci_ports \
   --test ehci_snapshot_roundtrip \
   --test usb2_companion_routing \
+  --test usb2_port_mux_remote_wakeup \
+  --test hid_remote_wakeup \
   --test webusb_passthrough_uhci \
   --test hid_builtin_snapshot \
   --test hid_composite_mouse_snapshot_compat \
