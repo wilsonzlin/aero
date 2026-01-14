@@ -116,6 +116,36 @@ fn ia_load_r8g8b8a8_unorm(slot: u32, vertex_index: u32, element_offset_bytes: u3
   return vec4<f32>(r, g, b, a);
 }
 
+// DXGI_FORMAT_R8G8B8A8_SNORM
+fn ia_load_r8g8b8a8_snorm(slot: u32, vertex_index: u32, element_offset_bytes: u32) -> vec4<f32> {
+  let addr = ia_vertex_byte_addr(slot, vertex_index, element_offset_bytes);
+  let packed = ia_load_u32(slot, addr);
+  return unpack4x8snorm(packed);
+}
+
+// DXGI_FORMAT_R8G8B8A8_UINT
+fn ia_load_r8g8b8a8_uint(slot: u32, vertex_index: u32, element_offset_bytes: u32) -> vec4<u32> {
+  let addr = ia_vertex_byte_addr(slot, vertex_index, element_offset_bytes);
+  let packed = ia_load_u32(slot, addr);
+  return vec4<u32>(
+    packed & 0xffu,
+    (packed >> 8u) & 0xffu,
+    (packed >> 16u) & 0xffu,
+    (packed >> 24u) & 0xffu
+  );
+}
+
+// DXGI_FORMAT_R8G8B8A8_SINT
+fn ia_load_r8g8b8a8_sint(slot: u32, vertex_index: u32, element_offset_bytes: u32) -> vec4<i32> {
+  let addr = ia_vertex_byte_addr(slot, vertex_index, element_offset_bytes);
+  let packed = ia_load_u32(slot, addr);
+  let x = (bitcast<i32>(packed << 24u)) >> 24u;
+  let y = (bitcast<i32>(packed << 16u)) >> 24u;
+  let z = (bitcast<i32>(packed << 8u)) >> 24u;
+  let w = bitcast<i32>(packed) >> 24u;
+  return vec4<i32>(x, y, z, w);
+}
+
 // DXGI_FORMAT_R8G8_UNORM
 fn ia_load_r8g8_unorm(slot: u32, vertex_index: u32, element_offset_bytes: u32) -> vec2<f32> {
   let addr = ia_vertex_byte_addr(slot, vertex_index, element_offset_bytes);
@@ -123,6 +153,32 @@ fn ia_load_r8g8_unorm(slot: u32, vertex_index: u32, element_offset_bytes: u32) -
   let r = f32(packed & 0xffu) / 255.0;
   let g = f32((packed >> 8u) & 0xffu) / 255.0;
   return vec2<f32>(r, g);
+}
+
+// DXGI_FORMAT_R8G8_SNORM
+fn ia_load_r8g8_snorm(slot: u32, vertex_index: u32, element_offset_bytes: u32) -> vec2<f32> {
+  let addr = ia_vertex_byte_addr(slot, vertex_index, element_offset_bytes);
+  let packed = ia_load_u32(slot, addr);
+  return unpack4x8snorm(packed).xy;
+}
+
+// DXGI_FORMAT_R8G8_UINT
+fn ia_load_r8g8_uint(slot: u32, vertex_index: u32, element_offset_bytes: u32) -> vec2<u32> {
+  let addr = ia_vertex_byte_addr(slot, vertex_index, element_offset_bytes);
+  let packed = ia_load_u32(slot, addr);
+  return vec2<u32>(
+    packed & 0xffu,
+    (packed >> 8u) & 0xffu
+  );
+}
+
+// DXGI_FORMAT_R8G8_SINT
+fn ia_load_r8g8_sint(slot: u32, vertex_index: u32, element_offset_bytes: u32) -> vec2<i32> {
+  let addr = ia_vertex_byte_addr(slot, vertex_index, element_offset_bytes);
+  let packed = ia_load_u32(slot, addr);
+  let x = (bitcast<i32>(packed << 24u)) >> 24u;
+  let y = (bitcast<i32>(packed << 16u)) >> 24u;
+  return vec2<i32>(x, y);
 }
 
 // DXGI_FORMAT_R10G10B10A2_UNORM

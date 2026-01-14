@@ -1012,3 +1012,214 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
         }
     });
 }
+
+#[test]
+fn compute_can_vertex_pull_snorm8_u8_and_i8_formats() {
+    pollster::block_on(async {
+        let test_name = concat!(
+            module_path!(),
+            "::compute_can_vertex_pull_snorm8_u8_and_i8_formats"
+        );
+        let mut rt = match D3D11Runtime::new_for_tests().await {
+            Ok(rt) => rt,
+            Err(err) => {
+                common::skip_or_panic(test_name, &format!("wgpu unavailable ({err:#})"));
+                return;
+            }
+        };
+        if !rt.supports_compute() {
+            common::skip_or_panic(test_name, "compute unsupported");
+            return;
+        }
+
+        const VB: u32 = 1;
+        const META: u32 = 2;
+        const OUT: u32 = 3;
+        const SHADER: u32 = 4;
+        const PIPELINE: u32 = 5;
+
+        // Two vertices packed into one vertex buffer with an intentionally unaligned base offset.
+        //
+        // Vertex layout (stride=24 bytes):
+        // - offset 0:  DXGI_FORMAT_R8G8_SNORM           [2 bytes] (+2 padding)
+        // - offset 4:  DXGI_FORMAT_R8G8_UINT            [2 bytes] (+2 padding)
+        // - offset 8:  DXGI_FORMAT_R8G8_SINT            [2 bytes] (+2 padding)
+        // - offset 12: DXGI_FORMAT_R8G8B8A8_SNORM       [4 bytes]
+        // - offset 16: DXGI_FORMAT_R8G8B8A8_UINT        [4 bytes]
+        // - offset 20: DXGI_FORMAT_R8G8B8A8_SINT        [4 bytes]
+        //
+        // Base offset = 3 bytes so the shader must stitch unaligned `u32` reads (shift=24).
+        let mut vb = Vec::<u8>::new();
+        vb.extend_from_slice(&[0u8; 3]); // base offset padding
+
+        // v0
+        vb.extend_from_slice(&[0x80, 0x7F]); // r8g8_snorm = (-1, 1)
+        vb.extend_from_slice(&[0u8; 2]); // padding
+        vb.extend_from_slice(&[0x00, 0xFF]); // r8g8_uint = (0, 255)
+        vb.extend_from_slice(&[0u8; 2]); // padding
+        vb.extend_from_slice(&[0x80, 0x7F]); // r8g8_sint = (-128, 127)
+        vb.extend_from_slice(&[0u8; 2]); // padding
+        vb.extend_from_slice(&[0x80, 0x00, 0x7F, 0x80]); // r8g8b8a8_snorm = (-1,0,1,-1)
+        vb.extend_from_slice(&[0x01, 0x02, 0x03, 0x04]); // r8g8b8a8_uint = (1,2,3,4)
+        vb.extend_from_slice(&[0xFF, 0x00, 0x01, 0x80]); // r8g8b8a8_sint = (-1,0,1,-128)
+        assert_eq!(vb.len(), 3 + 24);
+
+        // v1
+        vb.extend_from_slice(&[0x00, 0x80]); // r8g8_snorm = (0,-1)
+        vb.extend_from_slice(&[0u8; 2]); // padding
+        vb.extend_from_slice(&[0xFF, 0x01]); // r8g8_uint = (255, 1)
+        vb.extend_from_slice(&[0u8; 2]); // padding
+        vb.extend_from_slice(&[0xFF, 0x00]); // r8g8_sint = (-1, 0)
+        vb.extend_from_slice(&[0u8; 2]); // padding
+        vb.extend_from_slice(&[0x00, 0x7F, 0x00, 0x7F]); // r8g8b8a8_snorm = (0,1,0,1)
+        vb.extend_from_slice(&[0xFF, 0x00, 0x80, 0x40]); // r8g8b8a8_uint = (255,0,128,64)
+        vb.extend_from_slice(&[0x7F, 0x80, 0x00, 0xFF]); // r8g8b8a8_sint = (127,-128,0,-1)
+        assert_eq!(vb.len(), 3 + 24 * 2);
+
+        // Storage buffer words are `u32`, so ensure the byte length is a multiple of 4 so
+        // `arrayLength()` exposes the final partial word (important for unaligned reads near EOF).
+        while vb.len() % 4 != 0 {
+            vb.push(0);
+        }
+
+        let mut meta = IaMeta::default();
+        meta.vb[0].base_offset_bytes = 3;
+        meta.vb[0].stride_bytes = 24;
+
+        let output_vec4s = 2u32 * 6u32;
+        let output_size = output_vec4s as u64 * 16;
+
+        let wgsl = format!(
+            r#"
+{VERTEX_PULLING_WGSL}
+
+struct OutBuf {{
+  data: array<vec4<f32>>,
+}};
+
+@group(2) @binding({out_binding}) var<storage, read_write> out_buf: OutBuf;
+
+@compute @workgroup_size(1)
+fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
+  let idx = gid.x;
+  let base = idx * 6u;
+
+  let sn2 = ia_load_r8g8_snorm(0u, idx, 0u);
+  let u2 = ia_load_r8g8_uint(0u, idx, 4u);
+  let i2 = ia_load_r8g8_sint(0u, idx, 8u);
+  let sn4 = ia_load_r8g8b8a8_snorm(0u, idx, 12u);
+  let u4 = ia_load_r8g8b8a8_uint(0u, idx, 16u);
+  let i4 = ia_load_r8g8b8a8_sint(0u, idx, 20u);
+
+  out_buf.data[base + 0u] = vec4<f32>(sn2.x, sn2.y, 0.0, 1.0);
+  out_buf.data[base + 1u] = vec4<f32>(f32(u2.x), f32(u2.y), 0.0, 1.0);
+  out_buf.data[base + 2u] = vec4<f32>(f32(i2.x), f32(i2.y), 0.0, 1.0);
+  out_buf.data[base + 3u] = sn4;
+  out_buf.data[base + 4u] = vec4<f32>(f32(u4.x), f32(u4.y), f32(u4.z), f32(u4.w));
+  out_buf.data[base + 5u] = vec4<f32>(f32(i4.x), f32(i4.y), f32(i4.z), f32(i4.w));
+}}
+"#,
+            out_binding = IA_BINDING_VERTEX_BUFFER_END
+        );
+
+        let mut bindings: Vec<BindingDesc> = Vec::new();
+        bindings.push(BindingDesc {
+            binding: IA_BINDING_META,
+            ty: BindingType::UniformBuffer,
+            visibility: ShaderStageFlags::COMPUTE,
+            storage_texture_format: None,
+        });
+        for i in 0..IA_MAX_VERTEX_BUFFERS as u32 {
+            bindings.push(BindingDesc {
+                binding: IA_BINDING_VERTEX_BUFFER_BASE + i,
+                ty: BindingType::StorageBufferReadOnly,
+                visibility: ShaderStageFlags::COMPUTE,
+                storage_texture_format: None,
+            });
+        }
+        bindings.push(BindingDesc {
+            binding: IA_BINDING_VERTEX_BUFFER_END,
+            ty: BindingType::StorageBufferReadWrite,
+            visibility: ShaderStageFlags::COMPUTE,
+            storage_texture_format: None,
+        });
+
+        let mut writer = CmdWriter::new();
+        writer.create_buffer(VB, vb.len() as u64, BufferUsage::VERTEX);
+        writer.create_buffer(META, meta.as_bytes().len() as u64, BufferUsage::UNIFORM);
+        writer.create_buffer(
+            OUT,
+            output_size,
+            BufferUsage::STORAGE | BufferUsage::MAP_READ,
+        );
+
+        writer.update_buffer(VB, 0, &vb);
+        writer.update_buffer(META, 0, meta.as_bytes());
+
+        writer.create_shader_module_wgsl(SHADER, &wgsl);
+        writer.create_compute_pipeline(PIPELINE, SHADER, &bindings);
+
+        writer.begin_compute_pass();
+        writer.set_pipeline(PipelineKind::Compute, PIPELINE);
+        writer.set_bind_buffer(IA_BINDING_META, META, 0, 0);
+        for i in 0..IA_MAX_VERTEX_BUFFERS as u32 {
+            writer.set_bind_buffer(IA_BINDING_VERTEX_BUFFER_BASE + i, VB, 0, 0);
+        }
+        writer.set_bind_buffer(IA_BINDING_VERTEX_BUFFER_END, OUT, 0, 0);
+        writer.dispatch(2, 1, 1);
+        writer.end_compute_pass();
+
+        rt.execute(&writer.finish())
+            .expect("compute dispatch with vertex pulling should succeed");
+
+        let bytes = rt
+            .read_buffer(OUT, 0, output_size)
+            .await
+            .expect("read output buffer");
+        assert_eq!(
+            bytes.len(),
+            output_size as usize,
+            "unexpected output buffer size"
+        );
+
+        let mut floats = Vec::<f32>::with_capacity(bytes.len() / 4);
+        for chunk in bytes.chunks_exact(4) {
+            floats.push(f32::from_le_bytes(chunk.try_into().unwrap()));
+        }
+        assert_eq!(floats.len(), (output_vec4s * 4) as usize);
+
+        let vec4 = |idx: usize| -> [f32; 4] {
+            let base = idx * 4;
+            [
+                floats[base],
+                floats[base + 1],
+                floats[base + 2],
+                floats[base + 3],
+            ]
+        };
+
+        let expected = [
+            // v0
+            [-1.0, 1.0, 0.0, 1.0],          // r8g8_snorm
+            [0.0, 255.0, 0.0, 1.0],         // r8g8_uint
+            [-128.0, 127.0, 0.0, 1.0],      // r8g8_sint
+            [-1.0, 0.0, 1.0, -1.0],         // r8g8b8a8_snorm
+            [1.0, 2.0, 3.0, 4.0],           // r8g8b8a8_uint
+            [-1.0, 0.0, 1.0, -128.0],       // r8g8b8a8_sint
+            // v1
+            [0.0, -1.0, 0.0, 1.0],          // r8g8_snorm
+            [255.0, 1.0, 0.0, 1.0],         // r8g8_uint
+            [-1.0, 0.0, 0.0, 1.0],          // r8g8_sint
+            [0.0, 1.0, 0.0, 1.0],           // r8g8b8a8_snorm
+            [255.0, 0.0, 128.0, 64.0],      // r8g8b8a8_uint
+            [127.0, -128.0, 0.0, -1.0],     // r8g8b8a8_sint
+        ];
+
+        for (i, exp) in expected.iter().enumerate() {
+            let got = vec4(i);
+            for lane in 0..4 {
+                assert_f32_near(got[lane], exp[lane], &format!("vec4[{i}].{lane}"));
+            }
+        }
+    });
+}
