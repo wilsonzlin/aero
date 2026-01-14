@@ -40,7 +40,7 @@ ROOT = repo_root()
 # For the doc/protocol contract checks, we only scan documentation and protocol
 # headers/comments. We intentionally do not scan driver source trees where legacy
 # identifiers may still appear. (We do read the KMD source for a targeted
-# lock/allocate guardrail; see check_no_pool_alloc_under_allocations_lock.)
+# spinlock/pool-op guardrail; see check_no_pool_ops_under_allocations_lock.)
 SCAN_PATHS: list[pathlib.Path] = [
     ROOT / "docs",
     ROOT / "instructions",
