@@ -32,7 +32,8 @@ For the consolidated virtio-input end-to-end validation plan (device model + dri
   - Detect a virtio network adapter (SetupAPI hardware IDs).
   - Wait for link + DHCP IPv4 address (non-APIPA).
   - Deterministic UDP echo roundtrip to the host harness (exercises UDP TX/RX):
-    - Sends two UDP datagrams to `10.0.2.2:<udp_port>` and expects the payload to be echoed back.
+    - Sends a small datagram (32 bytes) and a near-MTU datagram (1400 bytes) to `10.0.2.2:<udp_port>` and expects the
+      payload to be echoed back.
     - Default `udp_port` is `18081` (configurable via `--udp-port`).
     - This is intended to exercise UDP checksum offload paths end-to-end.
   - DNS resolution (`getaddrinfo`)
@@ -271,17 +272,19 @@ AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP
 AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set
 AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|flag_not_set
 AERO_VIRTIO_SELFTEST|TEST|virtio-snd-eventq|SKIP|device_missing
+AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp|PASS|bytes=1400|small_bytes=32|mtu_bytes=1400
 AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS
 AERO_VIRTIO_SELFTEST|RESULT|PASS
 
- # Example: virtio-snd present => playback + capture markers:
-   AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS
-   AERO_VIRTIO_SELFTEST|TEST|virtio-snd-eventq|INFO|completions=...|pcm_period=...|xrun=...
-   AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|PASS|mode=...|init_hr=0x...|expected_failure=...|buffer_bytes=...
-   AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|PASS|method=wasapi|frames=...|non_silence=...|silence_only=...
-   AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|PASS|frames=...|non_silence=...
-   AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS
-  AERO_VIRTIO_SELFTEST|RESULT|PASS
+# Example: virtio-snd present => playback + capture markers:
+AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS
+AERO_VIRTIO_SELFTEST|TEST|virtio-snd-eventq|INFO|completions=...|pcm_period=...|xrun=...
+AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|PASS|mode=...|init_hr=0x...|expected_failure=...|buffer_bytes=...
+AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|PASS|method=wasapi|frames=...|non_silence=...|silence_only=...
+AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|PASS|frames=...|non_silence=...
+AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp|PASS|bytes=1400|small_bytes=32|mtu_bytes=1400
+AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS
+AERO_VIRTIO_SELFTEST|RESULT|PASS
 
 # Example: virtio-snd failure => overall FAIL:
 AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|...
@@ -354,6 +357,10 @@ Notes:
 - The `virtio-net` marker includes large transfer diagnostics:
   - `large_ok`, `large_bytes`, `large_fnv1a64`, `large_mbps`
   - `upload_ok`, `upload_bytes`, `upload_mbps`
+- The `virtio-net-udp` marker includes UDP echo diagnostics:
+  - `bytes`: size of the last attempted UDP datagram (typically 1400 on PASS)
+  - `small_bytes`, `mtu_bytes`: configured payload sizes
+  - `reason`, `wsa`: failure diagnostics (WSA error code), and `reason=-` on PASS
 - The `virtio-net` marker also includes best-effort MSI/MSI-X allocation diagnostics:
   - `msi`: `1` when Windows assigned message-signaled interrupts; `0` for INTx; `-1` if the query failed
   - `msi_messages`: number of allocated messages (`0` for INTx; `-1` if the query failed)

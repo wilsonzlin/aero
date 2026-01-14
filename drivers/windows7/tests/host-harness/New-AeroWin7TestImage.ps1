@@ -45,6 +45,17 @@ param(
   [Parameter(Mandatory = $false)]
   [string]$DnsHost = "host.lan",
 
+  # Optional: UDP echo server port for the virtio-net UDP smoke test (guest reaches host loopback as 10.0.2.2 via slirp).
+  #
+  # This is only passed to the guest scheduled task when explicitly specified, so older guest selftest binaries
+  # (which do not support the --udp-port argument) can still be provisioned.
+  #
+  # If you override this, you must also run the host harness with the matching UDP port
+  # (PowerShell: Invoke-AeroVirtioWin7Tests.ps1 -UdpPort <port>; Python: invoke_aero_virtio_win7_tests.py --udp-port <port>).
+  [Parameter(Mandatory = $false)]
+  [ValidateRange(1, 65535)]
+  [int]$UdpPort = 18081,
+
   # Optional: bake a fixed virtio-blk test directory into the scheduled task.
   # Example: "D:\\aero-virtio-selftest\\"
   [Parameter(Mandatory = $false)]
@@ -438,6 +449,11 @@ if (-not [string]::IsNullOrEmpty($BlkRoot)) {
   $blkArg = " --blk-root " + '\"' + $BlkRoot + '\"'
 }
 
+$udpArg = ""
+if ($PSBoundParameters.ContainsKey("UdpPort")) {
+  $udpArg = " --udp-port $UdpPort"
+}
+
 $expectBlkMsiArg = ""
 if ($ExpectBlkMsi) {
   $expectBlkMsiArg = " --expect-blk-msi"
@@ -583,7 +599,7 @@ $enableTestSigningCmd
 
 REM Configure auto-run on boot (runs as SYSTEM).
 schtasks /Create /F /TN "AeroVirtioSelftest" /SC ONSTART /RU SYSTEM ^
-  /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --http-url \"$HttpUrl\" --dns-host \"$DnsHost\"$blkArg$expectBlkMsiArg$testBlkResizeArg$testInputEventsArg$testInputEventsExtendedArg$testInputMediaKeysArg$testInputTabletEventsArg$requireSndArg$disableSndArg$disableSndCaptureArg$testSndCaptureArg$requireSndCaptureArg$requireNonSilenceArg$testSndBufferLimitsArg$allowVirtioSndTransitionalArg" >> "%LOG%" 2>&1
+  /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --http-url \"$HttpUrl\" --dns-host \"$DnsHost\"$udpArg$blkArg$expectBlkMsiArg$testBlkResizeArg$testInputEventsArg$testInputEventsExtendedArg$testInputMediaKeysArg$testInputTabletEventsArg$requireSndArg$disableSndArg$disableSndCaptureArg$testSndCaptureArg$requireSndCaptureArg$requireNonSilenceArg$testSndBufferLimitsArg$allowVirtioSndTransitionalArg" >> "%LOG%" 2>&1
 
 echo [AERO] provision done >> "%LOG%"
 $autoRebootCmd
@@ -639,6 +655,10 @@ After reboot, the host harness can boot the VM and parse PASS/FAIL from COM1 ser
   - The virtio-blk runtime resize test (`virtio-blk-resize`) is disabled by default (requires host-side QMP resize).
     - To enable it (required when running the host harness with `-WithBlkResize` / `--with-blk-resize`),
       generate this media with `-TestBlkResize` (adds `--test-blk-resize` to the scheduled task).
+  - The virtio-net selftest also performs a UDP echo smoke test against the host harness (10.0.2.2:<port>).
+    - Default UDP port: 18081 (must match the host harness UDP echo server port).
+    - If you need to override the port, regenerate this media with `-UdpPort <port>` (adds `--udp-port` to the scheduled task)
+      and run the host harness with the same port.
   - The virtio-input end-to-end event delivery tests (HID input reports) are disabled by default.
     - To enable keyboard/mouse injection (required when running the host harness with `-WithInputEvents` / `--with-input-events`),
       generate this media with `-TestInputEvents` (adds `--test-input-events` to the scheduled task).

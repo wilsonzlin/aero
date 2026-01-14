@@ -912,6 +912,8 @@ only if you explicitly want the base image to be mutated.
 - Starts a tiny UDP echo server on `127.0.0.1:<UdpPort>`
   - QEMU slirp/user networking exposes host as `10.0.2.2` inside the guest, so the guest can send a UDP datagram to
     `10.0.2.2:<UdpPort>` and expect an identical echo reply.
+  - Note: This port must match the guest selftest's `--udp-port` (default: `18081`). If you override the host harness UDP
+    port, provision the guest scheduled task with the same value (for example via `New-AeroWin7TestImage.ps1 -UdpPort <port>`).
 - Launches QEMU with:
   - `-chardev file,...` + `-serial chardev:...` (guest COM1 → host log)
   - `virtio-net-pci,disable-legacy=on,x-pci-revision=0x01` with `-netdev user` (modern-only; enumerates as `PCI\VEN_1AF4&DEV_1041&REV_01`)
