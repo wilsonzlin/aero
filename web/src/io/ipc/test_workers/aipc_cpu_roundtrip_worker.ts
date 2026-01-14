@@ -2,9 +2,10 @@ import { parentPort, workerData } from "node:worker_threads";
 
 import { openRingByKind } from "../../../ipc/ipc.ts";
 import { queueKind } from "../../../ipc/layout.ts";
+import { VRAM_BASE_PADDR } from "../../../arch/guest_phys.ts";
 import { AeroIpcIoClient } from "../aero_ipc_io.ts";
 
-const { ipcBuffer } = workerData as { ipcBuffer: SharedArrayBuffer };
+const { ipcBuffer, vram } = workerData as { ipcBuffer: SharedArrayBuffer; vram?: SharedArrayBuffer };
 
 const cmdQ = openRingByKind(ipcBuffer, queueKind.CMD);
 const evtQ = openRingByKind(ipcBuffer, queueKind.EVT);
@@ -75,6 +76,17 @@ try {
   io.mmioWrite(pciBar0Base, 4, 0xcafe_babe);
   const pciMmio0 = io.mmioRead(pciBar0Base, 4);
 
+  // VRAM-backed MMIO range (BAR1-style aperture) integration test.
+  let vramMmio = 0;
+  let vramBytes: number[] | null = null;
+  if (vram instanceof SharedArrayBuffer) {
+    const vramU8 = new Uint8Array(vram);
+    const base = BigInt(VRAM_BASE_PADDR >>> 0);
+    io.mmioWrite(base + 0x10n, 4, 0xdead_beef);
+    vramMmio = io.mmioRead(base + 0x10n, 4) >>> 0;
+    vramBytes = Array.from(vramU8.subarray(0x10, 0x14));
+  }
+
   parentPort!.postMessage({
     ok: true,
     status64,
@@ -89,6 +101,8 @@ try {
     pciDeviceId,
     pciBar0,
     pciMmio0,
+    vramMmio,
+    vramBytes,
   });
 } catch (err) {
   parentPort!.postMessage({ ok: false, error: err instanceof Error ? err.message : String(err) });

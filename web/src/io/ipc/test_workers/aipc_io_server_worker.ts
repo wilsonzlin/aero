@@ -3,10 +3,12 @@ import { workerData } from "node:worker_threads";
 import { openRingByKind } from "../../../ipc/ipc.ts";
 import { queueKind } from "../../../ipc/layout.ts";
 import { encodeEvent } from "../../../ipc/protocol.ts";
+import { VRAM_BASE_PADDR } from "../../../arch/guest_phys.ts";
 import { DeviceManager } from "../../device_manager.ts";
 import { IRQ_REFCOUNT_ASSERT, IRQ_REFCOUNT_DEASSERT, applyIrqRefCountChange } from "../../irq_refcount.ts";
 import type { IrqSink } from "../../device_manager.ts";
 import type { MmioHandler } from "../../bus/mmio.ts";
+import { MmioRamHandler } from "../../bus/mmio_ram.ts";
 import { I8042Controller } from "../../devices/i8042.ts";
 import { PciTestDevice } from "../../devices/pci_test_device.ts";
 import { UART_COM1, Uart16550, type SerialOutputSink } from "../../devices/uart16550.ts";
@@ -15,6 +17,7 @@ import { AeroIpcIoServer } from "../aero_ipc_io.ts";
 const { ipcBuffer, tickIntervalMs } = workerData as {
   ipcBuffer: SharedArrayBuffer;
   tickIntervalMs?: number;
+  vram?: SharedArrayBuffer;
 };
 
 const cmdQ = openRingByKind(ipcBuffer, queueKind.CMD);
@@ -55,6 +58,20 @@ const mgr = new DeviceManager(irqSink);
 const i8042 = new I8042Controller(mgr.irqSink, { systemControl });
 mgr.registerPortIo(0x0060, 0x0060, i8042);
 mgr.registerPortIo(0x0064, 0x0064, i8042);
+
+// Optional: map a BAR1-style VRAM aperture at the front of the PCI MMIO window.
+//
+// This mirrors the real web runtime: the guest CPU accesses VRAM via MMIO reads/writes into the
+// PCI/MMIO hole (e.g. 0xE000_0000) and the IO worker routes those accesses into a shared VRAM
+// buffer.
+const vram = (workerData as { vram?: unknown }).vram;
+if (vram instanceof SharedArrayBuffer) {
+  const vramU8 = new Uint8Array(vram);
+  if (vramU8.byteLength > 0) {
+    mgr.pciBus.reserveMmio(BigInt(vramU8.byteLength));
+    mgr.registerMmio(BigInt(VRAM_BASE_PADDR >>> 0), BigInt(vramU8.byteLength), new MmioRamHandler(vramU8));
+  }
+}
 
 mgr.registerPciDevice(new PciTestDevice());
 

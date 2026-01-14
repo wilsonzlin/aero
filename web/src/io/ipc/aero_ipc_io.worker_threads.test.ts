@@ -25,16 +25,17 @@ describe("io/ipc/aero_ipc_io (worker_threads)", () => {
       { kind: queueKind.CMD, capacityBytes: 1 << 16 },
       { kind: queueKind.EVT, capacityBytes: 1 << 16 },
     ]);
+    const vram = new SharedArrayBuffer(0x1000);
 
     const ioWorker = new Worker(new URL("./test_workers/aipc_io_server_worker.ts", import.meta.url), {
       type: "module",
-      workerData: { ipcBuffer, tickIntervalMs: 1 },
+      workerData: { ipcBuffer, tickIntervalMs: 1, vram },
       execArgv: ["--experimental-strip-types"],
     } as unknown as WorkerOptions);
 
     const cpuWorker = new Worker(new URL("./test_workers/aipc_cpu_roundtrip_worker.ts", import.meta.url), {
       type: "module",
-      workerData: { ipcBuffer },
+      workerData: { ipcBuffer, vram },
       execArgv: ["--experimental-strip-types"],
     } as unknown as WorkerOptions);
 
@@ -52,11 +53,13 @@ describe("io/ipc/aero_ipc_io (worker_threads)", () => {
           mmio0?: number;
           pciVendorId?: number;
           pciDeviceId?: number;
-          pciBar0?: number;
-          pciMmio0?: number;
-          error?: string;
-        },
-      ];
+           pciBar0?: number;
+           pciMmio0?: number;
+           vramMmio?: number;
+           vramBytes?: number[] | null;
+           error?: string;
+         },
+       ];
 
       expect(result.ok).toBe(true);
       expect(result.error).toBeUndefined();
@@ -88,6 +91,10 @@ describe("io/ipc/aero_ipc_io (worker_threads)", () => {
       expect(result.pciDeviceId).toBe(0x5678);
       expect((result.pciBar0 ?? 0) & 0xf).toBe(0); // BAR0 is mmio32 so low 4 bits are 0.
       expect(result.pciMmio0).toBe(0xcafe_babe);
+
+      // VRAM-backed BAR1-style MMIO range.
+      expect(result.vramMmio).toBe(0xdead_beef);
+      expect(result.vramBytes).toEqual([0xef, 0xbe, 0xad, 0xde]);
     } finally {
       await cpuWorker.terminate();
       await ioWorker.terminate();
