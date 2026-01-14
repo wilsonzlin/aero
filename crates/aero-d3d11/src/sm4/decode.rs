@@ -490,13 +490,10 @@ pub fn decode_program_decls(program: &Sm4Program) -> Result<Vec<Sm4Decl>, Sm4Dec
         //
         // Continue scanning the full stream and collect any declaration opcodes we encounter
         // instead of stopping at the first non-declaration.
-        if opcode < DECLARATION_OPCODE_MIN {
-            i += len;
-            continue;
+        if opcode >= DECLARATION_OPCODE_MIN {
+            let decl = decode_decl(opcode, inst_toks, i).unwrap_or(Sm4Decl::Unknown { opcode });
+            decls.push(decl);
         }
-
-        let decl = decode_decl(opcode, inst_toks, i).unwrap_or(Sm4Decl::Unknown { opcode });
-        decls.push(decl);
         i += len;
     }
 

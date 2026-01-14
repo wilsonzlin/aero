@@ -8300,6 +8300,11 @@ impl AerogpuD3d11Executor {
                             "patchlist control point count mismatch: hull shader expects {expected} input control points, but primitive topology is PatchList{actual}"
                         );
                     }
+                } else {
+                    // Some minimal HS token streams used by bring-up tests may omit
+                    // `dcl_inputcontrolpoints`. The current tessellation emulation path derives the
+                    // input control point count from the IA patchlist topology, so treat missing
+                    // metadata as "unknown" rather than rejecting the draw outright.
                 }
                 if self.state.ds.is_none() {
                     bail!(

@@ -662,7 +662,8 @@ fn ds_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
         }}
         let bary = tri_vertex_domain_location(pmeta.tess_level, local_v);
         let pos = p0 * bary.x + p1 * bary.y + p2 * bary.z;
-        // Mirror the `ds_tri_passthrough.dxbc` fixture: encode barycentric coordinates into COLOR0.
+        // Mirror the `ds_tri_passthrough.dxbc` fixture: write the domain location
+        // (`SV_DomainLocation`) into the first varying / COLOR0.
         let col = vec4<f32>(bary.x, bary.y, bary.z, 1.0);
 
         let out_vid = pmeta.vertex_base + local_v;
