@@ -190,10 +190,11 @@ treat the implementation as “bring-up” quality rather than a complete xHCI.
       - Supported Protocol (USB 2.0 + speed IDs) sized to `port_count`.
     - Operational registers (subset): USBCMD, USBSTS, CRCR, DCBAAP.
   - DBOFF/RTSOFF report realistic offsets. The doorbell array is **partially** implemented:
+    - command ring doorbell (doorbell 0) is latched and triggers bounded command ring processing
+      (No-Op / Enable Slot / Address Device subset) while the controller is running (queuing Command
+      Completion Events)
     - device endpoint doorbells are latched and can drive a bounded endpoint-0 control transfer
       executor (Setup/Data/Status TRBs) when the controller is ticked
-    - command ring doorbell (doorbell 0) is latched and triggers bounded command ring processing
-      (No-Op / Enable Slot / Address Device subset) while the controller is running.
     - runtime interrupter 0 registers + ERST-backed guest event ring producer are modeled (used by
       Rust tests and by the web/WASM bridge via `step_frames()`/`poll()`).
   - A DMA read on the first transition of `USBCMD.RUN` (primarily to validate **PCI Bus Master Enable gating** in wrappers).
@@ -201,7 +202,9 @@ treat the implementation as “bring-up” quality rather than a complete xHCI.
     pending), used to validate **INTx disable gating**.
   - DCBAAP register storage and controller-local slot allocation (Enable Slot scaffolding).
   - Partial slot / Address Device plumbing used by tests/harnesses:
-    - resolves topology via Slot Context `RootHubPortNumber` + `RouteString`, and
+    - resolves topology via Slot Context `RootHubPortNumber` + `RouteString`.
+      - Route String encodes up to 5 downstream hub tiers as 4-bit port numbers (1..=15) terminated
+        by 0; the least-significant nibble is closest to the device (so hex digits read root→device).
     - supports a limited Address Device command handler (Input Context parsing + EP0 `SET_ADDRESS` +
       Slot/EP0 context mirroring).
   - USB2-only root hub/port model: PORTSC operational registers + reset timer + Port Status Change
@@ -350,8 +353,8 @@ xHCI is a large spec. The MVP intentionally leaves out many features that guests
   (`Enable Slot`, `Address Device`, `Configure Endpoint`, etc). A subset of command processing is
   exposed today via doorbell 0, but full coverage/state machines remain incomplete.
 - **Non-control transfer execution via Normal TRBs** (bulk/interrupt endpoints) integrated into the
-  guest-visible controller and driven by a transfer tick loop (the web/WASM bridge does not yet run
-  this loop).
+  guest-visible controller and driven by a transfer tick loop. The Rust transfer executor is covered
+  by unit tests, but it is not yet wired into the controller MMIO model.
 - **USB 3.x SuperSpeed** (5/10/20Gbps link speeds) and related link state machinery.
 - **Isochronous transfers** (audio/video devices).
 - **MSI-X** interrupt delivery. (MSI support is platform-dependent; the web runtime uses INTx only today.)
