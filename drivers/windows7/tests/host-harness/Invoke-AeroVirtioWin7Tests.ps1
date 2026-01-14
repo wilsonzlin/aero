@@ -906,7 +906,10 @@ function Sanitize-AeroMarkerValue {
 
 function Try-EmitAeroVirtioBlkIrqMarker {
   param(
-    [Parameter(Mandatory = $true)] [string]$Tail
+    [Parameter(Mandatory = $true)] [string]$Tail,
+    # Optional: if provided, fall back to parsing the full serial log when the rolling tail buffer does not
+    # contain any virtio-blk IRQ marker data (e.g. because the tail was truncated).
+    [Parameter(Mandatory = $false)] [string]$SerialLogPath = ""
   )
 
   # Collect IRQ fields from (a) the virtio-blk per-test marker (IOCTL-derived fields) and/or
@@ -959,6 +962,42 @@ function Try-EmitAeroVirtioBlkIrqMarker {
   $irqMatches = [regex]::Matches($Tail, "(?m)^virtio-blk-irq\\|[^`r`n]*")
   if ($irqMatches.Count -gt 0) {
     & $addLineFields $irqMatches[$irqMatches.Count - 1].Value
+  }
+
+  if ($fields.Count -eq 0 -and (-not [string]::IsNullOrEmpty($SerialLogPath)) -and (Test-Path -LiteralPath $SerialLogPath)) {
+    # Tail truncation fallback: scan the full serial log line-by-line and keep the last blk markers we care about.
+    $lastBlkLine = $null
+    $lastBlkIrqLine = $null
+    try {
+      $fs = [System.IO.File]::Open($SerialLogPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+      try {
+        $sr = [System.IO.StreamReader]::new($fs, [System.Text.Encoding]::UTF8, $true, 4096, $true)
+        try {
+          while ($true) {
+            $line = $sr.ReadLine()
+            if ($null -eq $line) { break }
+            if ($line -match "^\s*AERO_VIRTIO_SELFTEST\|TEST\|virtio-blk\|") {
+              $lastBlkLine = $line.Trim()
+            }
+            if ($line -match "^\s*virtio-blk-irq\|") {
+              $lastBlkIrqLine = $line.Trim()
+            }
+          }
+        } finally {
+          $sr.Dispose()
+        }
+      } finally {
+        $fs.Dispose()
+      }
+    } catch { }
+
+    if ($null -ne $lastBlkLine) {
+      $blkLine = $lastBlkLine
+      & $addLineFields $lastBlkLine
+    }
+    if ($null -ne $lastBlkIrqLine) {
+      & $addLineFields $lastBlkIrqLine
+    }
   }
 
   if ($fields.Count -eq 0) { return }
@@ -2314,7 +2353,7 @@ try {
     }
   }
 
-  Try-EmitAeroVirtioBlkIrqMarker -Tail $result.Tail
+  Try-EmitAeroVirtioBlkIrqMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioNetLargeMarker -Tail $result.Tail
   Try-EmitAeroVirtioIrqDiagnosticsMarkers -Tail $result.Tail -SerialLogPath $SerialLogPath
 
