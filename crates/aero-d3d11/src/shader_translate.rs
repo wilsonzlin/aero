@@ -3770,8 +3770,8 @@ fn emit_instructions(
 
 fn emit_src_vec4(
     src: &crate::sm4_ir::SrcOperand,
-    inst_index: usize,
-    opcode: &'static str,
+    _inst_index: usize,
+    _opcode: &'static str,
     ctx: &EmitCtx<'_>,
 ) -> Result<String, ShaderTranslateError> {
     let base = match &src.kind {
@@ -3888,8 +3888,8 @@ fn emit_src_vec4_u32_int(
 }
 fn emit_src_vec4_i32(
     src: &crate::sm4_ir::SrcOperand,
-    inst_index: usize,
-    opcode: &'static str,
+    _inst_index: usize,
+    _opcode: &'static str,
     ctx: &EmitCtx<'_>,
 ) -> Result<String, ShaderTranslateError> {
     let base = match &src.kind {
