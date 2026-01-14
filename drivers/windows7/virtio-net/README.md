@@ -158,6 +158,9 @@ You can also use `aero-virtio-selftest.exe`:
     - global: `-VirtioMsixVectors N` / `--virtio-msix-vectors N`
     - virtio-net only: `-VirtioNetVectors N` / `--virtio-net-vectors N`
   - Host (hard requirement): `-RequireVirtioNetMsix` / `--require-virtio-net-msix`
+  - Guest (hard requirement / fail-fast): `aero-virtio-selftest.exe --require-net-msix`
+    - If provisioning the guest via `drivers/windows7/tests/host-harness/New-AeroWin7TestImage.ps1`, bake this into the
+      scheduled task with `-RequireNetMsix`.
   - See `../tests/guest-selftest/README.md` for how to build/run the tool.
 
 See also: [`docs/windows/virtio-pci-modern-interrupt-debugging.md`](../../../docs/windows/virtio-pci-modern-interrupt-debugging.md).
