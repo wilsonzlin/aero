@@ -127,6 +127,13 @@ The driver’s render loop:
 3. Submits it to the virtio-snd TX queue as a PCM transfer for stream id 0.
 4. Signals the WaveRT notification event for the audio engine.
 
+Notes:
+
+- The **period boundary** is driven by a periodic WaveRT timer/DPC for contract-v1 compatibility.
+  - If a non-contract device emits virtio-snd `eventq` PCM notifications (`PCM_PERIOD_ELAPSED` / `PCM_XRUN`), the driver
+    may treat them as *best-effort* enhancements (for example queueing the period DPC as an extra wakeup source and
+    attempting XRUN recovery), but **must remain correct** if `eventq` is silent or absent.
+
 Because TX completions are not used for timing, virtqueue “used” processing is
 treated as backpressure/resource reclamation only.
 
