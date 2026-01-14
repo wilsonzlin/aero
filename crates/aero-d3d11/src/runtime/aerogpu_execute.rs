@@ -779,12 +779,12 @@ impl AerogpuCmdRuntime {
     ) -> Result<()> {
         self.draw_expanded_passthrough_internal(
             expanded_vertex_buffer,
-            DrawKind::NonIndexed {
+            DrawKind::NonIndexed(DrawIndirectArgs {
                 vertex_count,
                 instance_count,
                 first_vertex,
                 first_instance,
-            },
+            }),
         )
     }
 
@@ -1631,12 +1631,12 @@ impl AerogpuCmdRuntime {
         pass.set_vertex_buffer(0, expanded_vb.buffer.slice(..));
 
         match kind {
-            DrawKind::NonIndexed {
+            DrawKind::NonIndexed(DrawIndirectArgs {
                 vertex_count,
                 instance_count,
                 first_vertex,
                 first_instance,
-            } => pass.draw(
+            }) => pass.draw(
                 first_vertex..first_vertex + vertex_count,
                 first_instance..first_instance + instance_count,
             ),
