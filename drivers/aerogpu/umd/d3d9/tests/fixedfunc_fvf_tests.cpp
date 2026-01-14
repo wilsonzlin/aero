@@ -8400,6 +8400,116 @@ bool TestStage1TextureEnableAddsSecondTexld() {
   return Check(ShaderContainsToken(ps_with_tex1, kPsSampler1), "stage1 enabled => PS references s1");
 }
 
+bool TestStage1ColorDisableIgnoresUnsupportedAlphaAndDoesNotSampleTexture1() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzrhwDiffuseTex1);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE|TEX1)")) {
+    return false;
+  }
+
+  D3DDDI_HRESOURCE hTex0{};
+  if (!CreateDummyTexture(&cleanup, &hTex0)) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, hTex0);
+  if (!Check(hr == S_OK, "SetTexture(stage0)")) {
+    return false;
+  }
+
+  D3DDDI_HRESOURCE hTex1{};
+  if (!CreateDummyTexture(&cleanup, &hTex1)) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/1, hTex1);
+  if (!Check(hr == S_OK, "SetTexture(stage1)")) {
+    return false;
+  }
+
+  const auto SetTextureStageState = [&](uint32_t stage, uint32_t state, uint32_t value, const char* msg) -> bool {
+    HRESULT hr2 = S_OK;
+    if (cleanup.device_funcs.pfnSetTextureStageState) {
+      hr2 = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, stage, state, value);
+    } else {
+      hr2 = aerogpu::device_set_texture_stage_state(cleanup.hDevice, stage, state, value);
+    }
+    return Check(hr2 == S_OK, msg);
+  };
+
+  // Stage0: modulate tex0 * diffuse.
+  if (!SetTextureStageState(0, kD3dTssColorOp, kD3dTopModulate, "stage0 COLOROP=MODULATE")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssColorArg1, kD3dTaTexture, "stage0 COLORARG1=TEXTURE")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssColorArg2, kD3dTaDiffuse, "stage0 COLORARG2=DIFFUSE")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssAlphaOp, kD3dTopSelectArg1, "stage0 ALPHAOP=SELECTARG1")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssAlphaArg1, kD3dTaTexture, "stage0 ALPHAARG1=TEXTURE")) {
+    return false;
+  }
+
+  // Stage1: explicitly disabled via COLOROP=DISABLE. Per D3D9 semantics, this
+  // terminates the stage chain; stage1 alpha state must be ignored.
+  //
+  // Set unsupported alpha state + unsupported color args to ensure draw-time PS
+  // selection does not attempt to decode/validate them.
+  if (!SetTextureStageState(1, kD3dTssColorOp, kD3dTopDisable, "stage1 COLOROP=DISABLE")) {
+    return false;
+  }
+  if (!SetTextureStageState(1, kD3dTssColorArg1, kD3dTaSpecular, "stage1 COLORARG1=SPECULAR (unsupported)")) {
+    return false;
+  }
+  if (!SetTextureStageState(1, kD3dTssAlphaOp, kD3dTopAddSmooth, "stage1 ALPHAOP=ADDSMOOTH (unsupported)")) {
+    return false;
+  }
+  if (!SetTextureStageState(1, kD3dTssAlphaArg1, kD3dTaTexture, "stage1 ALPHAARG1=TEXTURE")) {
+    return false;
+  }
+
+  const VertexXyzrhwDiffuseTex1 tri[3] = {
+      {0.0f, 0.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 0.0f, 0.0f},
+      {1.0f, 0.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 1.0f, 0.0f},
+      {0.0f, 1.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 0.0f, 1.0f},
+  };
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwDiffuseTex1));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(stage1 COLOROP=DISABLE)")) {
+    return false;
+  }
+
+  Shader* ps = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    ps = dev->ps;
+  }
+  if (!Check(ps != nullptr, "PS bound")) {
+    return false;
+  }
+  if (!Check(ShaderCountToken(ps, kPsOpTexld) == 1, "stage1 disabled => exactly 1 texld")) {
+    return false;
+  }
+  if (!Check(ShaderContainsToken(ps, kPsSampler0), "stage1 disabled => PS references s0")) {
+    return false;
+  }
+  return Check(!ShaderContainsToken(ps, kPsSampler1), "stage1 disabled => PS does not reference s1");
+}
+
 bool TestStage0UnsupportedArgFailsAtDraw() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -10936,6 +11046,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestStage1TextureEnableAddsSecondTexld()) {
+    return 1;
+  }
+  if (!aerogpu::TestStage1ColorDisableIgnoresUnsupportedAlphaAndDoesNotSampleTexture1()) {
     return 1;
   }
   if (!aerogpu::TestStage0UnsupportedArgFailsAtDraw()) {
