@@ -2879,6 +2879,18 @@ static VOID AeroGpuCleanupInternalSubmissions(_Inout_ AEROGPU_ADAPTER* Adapter)
                 KeReleaseSpinLock(&Adapter->PendingLock, oldIrql);
                 return;
             }
+            /*
+             * Legacy ring head is device-owned (MMIO). Avoid MMIO reads unless the
+             * adapter is in D0 and accepting submissions; DPCs can run during
+             * resume/teardown windows where MMIO may be inaccessible.
+             */
+            if ((DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange(&Adapter->DevicePowerState, 0, 0) !=
+                    DxgkDevicePowerStateD0 ||
+                InterlockedCompareExchange(&Adapter->AcceptingSubmissions, 0, 0) == 0 ||
+                Adapter->Bar0Length < (AEROGPU_LEGACY_REG_RING_HEAD + sizeof(ULONG))) {
+                KeReleaseSpinLock(&Adapter->PendingLock, oldIrql);
+                return;
+            }
             KIRQL ringIrql;
             KeAcquireSpinLock(&Adapter->RingLock, &ringIrql);
             const ULONG headIndex = AeroGpuReadRegU32(Adapter, AEROGPU_LEGACY_REG_RING_HEAD);
