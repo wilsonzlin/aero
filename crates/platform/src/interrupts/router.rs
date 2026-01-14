@@ -1219,19 +1219,19 @@ mod tests {
         program_ioapic_entry(&mut ints, 1, u32::from(vector) | (1 << 15), 1 << 24);
 
         ints.raise_irq(InterruptInput::Gsi(1));
-        assert_eq!(ints.get_pending_for_apic(1), Some(vector));
-        assert_eq!(ints.get_pending_for_apic(0), None);
+        assert_eq!(ints.get_pending_for_cpu(1), Some(vector));
+        assert_eq!(ints.get_pending_for_cpu(0), None);
 
         // ACK moves the vector into ISR; the IOAPIC must not redeliver while Remote-IRR is set.
-        ints.acknowledge_for_apic(1, vector);
-        assert_eq!(ints.get_pending_for_apic(1), None);
-        assert_eq!(ints.get_pending_for_apic(0), None);
+        ints.acknowledge_for_cpu(1, vector);
+        assert_eq!(ints.get_pending_for_cpu(1), None);
+        assert_eq!(ints.get_pending_for_cpu(0), None);
 
         // EOI on the non-BSP LAPIC must clear Remote-IRR and trigger redelivery when the line is
         // still asserted.
-        ints.eoi_for_apic(1, vector);
-        assert_eq!(ints.get_pending_for_apic(1), Some(vector));
-        assert_eq!(ints.get_pending_for_apic(0), None);
+        ints.eoi_for_cpu(1, vector);
+        assert_eq!(ints.get_pending_for_cpu(1), Some(vector));
+        assert_eq!(ints.get_pending_for_cpu(0), None);
     }
 
     #[test]
