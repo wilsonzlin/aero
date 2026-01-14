@@ -445,3 +445,14 @@ fn decode_rejects_unsupported_shader_model() {
     let err = decode_u32_tokens(&tokens).unwrap_err();
     assert!(err.message.contains("unsupported shader model"), "{err}");
 }
+
+#[test]
+fn decode_rejects_unsupported_shader_model_minor() {
+    // D3D9 only defines 2.0/2.1 and 3.0. Reject other minor versions as malformed.
+    let tokens = vec![
+        version_token(ShaderStage::Pixel, 3, 1),
+        0x0000_FFFF,
+    ];
+    let err = decode_u32_tokens(&tokens).unwrap_err();
+    assert!(err.message.contains("unsupported shader model"), "{err}");
+}

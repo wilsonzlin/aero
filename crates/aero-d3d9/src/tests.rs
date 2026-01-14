@@ -4479,6 +4479,17 @@ fn supports_shader_model_3() {
 }
 
 #[test]
+fn rejects_unsupported_shader_model_minor_legacy_translator() {
+    // D3D9 only defines 2.0/2.1 and 3.0.
+    let bytes = to_bytes(&[0xFFFF_0301, 0x0000_FFFF]);
+    let err = shader::parse(&bytes).unwrap_err();
+    assert!(
+        matches!(err, shader::ShaderError::UnsupportedVersion(_)),
+        "{err:?}"
+    );
+}
+
+#[test]
 fn rejects_missing_end_token_legacy_translator() {
     // Version token only, with no terminating `end` instruction.
     let bytes = to_bytes(&[0xFFFE0200]);

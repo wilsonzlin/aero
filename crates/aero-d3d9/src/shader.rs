@@ -510,7 +510,12 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
         0xFFFF => ShaderStage::Pixel,
         _ => return Err(ShaderError::UnsupportedVersion(version_token)),
     };
-    if !(major == 2 || major == 3) {
+    let supported_version = match major {
+        2 => minor <= 1,
+        3 => minor == 0,
+        _ => false,
+    };
+    if !supported_version {
         return Err(ShaderError::UnsupportedVersion(version_token));
     }
     let version = ShaderVersion {

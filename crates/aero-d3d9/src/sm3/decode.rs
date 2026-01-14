@@ -676,7 +676,12 @@ pub fn decode_u32_tokens(tokens: &[u32]) -> Result<DecodedShader, DecodeError> {
         token_index: 0,
         message: format!("unknown shader version token 0x{version_token:08x}"),
     })?;
-    if major != 2 && major != 3 {
+    let supported_version = match major {
+        2 => minor <= 1,
+        3 => minor == 0,
+        _ => false,
+    };
+    if !supported_version {
         return Err(DecodeError {
             token_index: 0,
             message: format!("unsupported shader model {major}.{minor}"),
