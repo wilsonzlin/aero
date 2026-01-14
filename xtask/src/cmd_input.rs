@@ -4,6 +4,7 @@ use crate::runner::Runner;
 use crate::tools;
 use std::env;
 use std::path::Path;
+use std::path::PathBuf;
 use std::process::Command;
 
 #[derive(Default, Debug)]
@@ -301,11 +302,14 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
         return Ok(());
     }
 
+    let node_dir = resolve_node_dir_for_input(&repo_root)?;
+
     // `npm ci` from the repo root installs workspace deps under `./node_modules/`, but some
     // setups may install within `web/` directly. Accept either so `cargo xtask input` can still
     // provide a helpful missing-deps hint without being overly strict about layout.
-    let has_node_modules =
-        repo_root.join("node_modules").is_dir() || repo_root.join("web/node_modules").is_dir();
+    let has_node_modules = repo_root.join("node_modules").is_dir()
+        || repo_root.join("web/node_modules").is_dir()
+        || node_dir.join("node_modules").is_dir();
     if !has_node_modules {
         return Err(XtaskError::Message(format!(
             "node_modules is missing; install Node dependencies first (e.g. `npm ci`), \
@@ -314,8 +318,12 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
     }
 
     let mut cmd = tools::npm();
-    cmd.current_dir(&repo_root)
-        .args(["-w", "web", "run", "test:unit", "--"]);
+    if node_dir == repo_root {
+        cmd.current_dir(&repo_root)
+            .args(["-w", "web", "run", "test:unit", "--"]);
+    } else {
+        cmd.current_dir(&node_dir).args(["run", "test:unit", "--"]);
+    }
     cmd.args(WEB_UNIT_TEST_PATHS.iter().copied());
     match runner.run_step(
         "Web: npm -w web run test:unit -- src/input src/hid src/platform/* (plus WebUSB/WebHID topology guards)",
@@ -466,6 +474,53 @@ fn format_test_flags(tests: &[&str]) -> String {
         .map(|test| format!("--test {test}"))
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn resolve_node_dir_for_input(repo_root: &Path) -> Result<PathBuf> {
+    fn env_nonempty(key: &str) -> Option<String> {
+        let value = env::var(key).ok()?;
+        let value = value.trim();
+        if value.is_empty() {
+            None
+        } else {
+            Some(value.to_string())
+        }
+    }
+
+    // `cargo xtask test-all` uses `paths::resolve_node_dir`, which can run a Node-based resolver
+    // for consistency with CI. `cargo xtask input` intentionally stays sandbox-friendly and avoids
+    // requiring Node to execute *additional* detection scripts in test mode, so we resolve the
+    // node dir using a simple Rust fallback here.
+    let override_dir = env_nonempty("AERO_NODE_DIR").or_else(|| env_nonempty("AERO_WEB_DIR"));
+    if let Some(dir) = override_dir {
+        let path = PathBuf::from(&dir);
+        let resolved = if path.is_absolute() {
+            path
+        } else {
+            repo_root.join(path)
+        };
+        if resolved.join("package.json").is_file() {
+            return Ok(resolved);
+        }
+        return Err(XtaskError::Message(format!(
+            "package.json not found in node dir override `{dir}` (set AERO_NODE_DIR to a directory that contains package.json)"
+        )));
+    }
+
+    for candidate in [
+        repo_root.to_path_buf(),
+        repo_root.join("frontend"),
+        repo_root.join("web"),
+    ] {
+        if candidate.join("package.json").is_file() {
+            return Ok(candidate);
+        }
+    }
+
+    Err(XtaskError::Message(
+        "unable to locate package.json; set AERO_NODE_DIR to the Node workspace directory"
+            .to_string(),
+    ))
 }
 
 fn rust_only_hint(opts: &InputOpts) -> String {
