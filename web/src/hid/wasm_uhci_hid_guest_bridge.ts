@@ -36,13 +36,19 @@ export type UhciRuntimeHidApi = {
   webhid_drain_output_reports(): Array<{ deviceId: number; reportType: "output" | "feature"; reportId: number; data: Uint8Array }> | null;
 
   webhid_drain_feature_report_requests?(): Array<{ deviceId: number; requestId: number; reportId: number }> | null;
-  webhid_complete_feature_report_request?(
-    deviceId: number,
-    requestId: number,
-    reportId: number,
-    ok: boolean,
-    data?: Uint8Array,
-  ): boolean;
+  /**
+   * Complete a guest `GET_REPORT (Feature)` request.
+   *
+   * API compatibility notes (older ↔ newer WASM builds):
+   *
+   * - Newer builds: `webhid_complete_feature_report_request(deviceId, requestId, reportId, ok, data?) -> boolean`
+   * - Older builds: `webhid_complete_feature_report_request(deviceId, requestId, reportId, data) -> void` +
+   *   optional `webhid_fail_feature_report_request(deviceId, requestId, reportId) -> void`
+   */
+  webhid_complete_feature_report_request?:
+    | ((deviceId: number, requestId: number, reportId: number, ok: boolean, data?: Uint8Array) => boolean)
+    | ((deviceId: number, requestId: number, reportId: number, data: Uint8Array) => void);
+  webhid_fail_feature_report_request?(deviceId: number, requestId: number, reportId: number): void;
 
   /**
    * Legacy completion API (pre `webhid_complete_feature_report_request`) used by older WASM builds.
@@ -226,9 +232,31 @@ export class WasmUhciHidGuestBridge implements HidGuestBridge {
 
   completeFeatureReportRequest(msg: { deviceId: number; requestId: number; reportId: number; data: Uint8Array }): boolean {
     try {
-      const apply = this.#uhci.webhid_complete_feature_report_request;
-      if (typeof apply === "function") {
-        return apply.call(this.#uhci, msg.deviceId >>> 0, msg.requestId >>> 0, msg.reportId >>> 0, true, msg.data);
+      const complete = this.#uhci.webhid_complete_feature_report_request;
+      const fail = this.#uhci.webhid_fail_feature_report_request;
+      if (typeof complete === "function") {
+        // Split API (success+fail are separate): complete(deviceId, requestId, reportId, data)
+        if (typeof fail === "function" || complete.length === 4) {
+          (complete as (deviceId: number, requestId: number, reportId: number, data: Uint8Array) => void).call(
+            this.#uhci,
+            msg.deviceId >>> 0,
+            msg.requestId >>> 0,
+            msg.reportId >>> 0,
+            msg.data,
+          );
+          return true;
+        }
+
+        // Unified API: complete(deviceId, requestId, reportId, ok, data?) -> boolean
+        const res = (complete as (deviceId: number, requestId: number, reportId: number, ok: boolean, data?: Uint8Array) => boolean).call(
+          this.#uhci,
+          msg.deviceId >>> 0,
+          msg.requestId >>> 0,
+          msg.reportId >>> 0,
+          true,
+          msg.data,
+        );
+        return typeof res === "boolean" ? res : true;
       }
       const legacy = this.#uhci.webhid_push_feature_report_result;
       if (typeof legacy === "function") {
@@ -245,9 +273,23 @@ export class WasmUhciHidGuestBridge implements HidGuestBridge {
 
   failFeatureReportRequest(msg: { deviceId: number; requestId: number; reportId: number; error?: string }): boolean {
     try {
-      const apply = this.#uhci.webhid_complete_feature_report_request;
-      if (typeof apply === "function") {
-        return apply.call(this.#uhci, msg.deviceId >>> 0, msg.requestId >>> 0, msg.reportId >>> 0, false);
+      const fail = this.#uhci.webhid_fail_feature_report_request;
+      if (typeof fail === "function") {
+        fail.call(this.#uhci, msg.deviceId >>> 0, msg.requestId >>> 0, msg.reportId >>> 0);
+        return true;
+      }
+
+      const complete = this.#uhci.webhid_complete_feature_report_request;
+      if (typeof complete === "function") {
+        // Unified API (ok flag), or a runtime that doesn't provide a separate `fail` entrypoint.
+        // Best-effort: attempt the unified call shape and fall back to legacy helpers if it throws.
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const res = (complete as any).call(this.#uhci, msg.deviceId >>> 0, msg.requestId >>> 0, msg.reportId >>> 0, false);
+          return typeof res === "boolean" ? res : true;
+        } catch {
+          // Fall through to legacy helpers (if any).
+        }
       }
       const legacy = this.#uhci.webhid_push_feature_report_result;
       if (typeof legacy === "function") {
