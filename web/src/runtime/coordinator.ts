@@ -331,8 +331,10 @@ export class WorkerCoordinator {
   // as real devices move between workers (e.g. HDA in the IO worker).
   //
   // When unset (null), these resolve to a mode-specific default:
-  // - Demo mode (`activeDiskImage == null`): cpu owns both rings (tone/loopback demos).
-  // - VM mode   (`activeDiskImage != null`): io owns both rings (real devices live in IO worker).
+  // - Machine runtime (`vmRuntime == "machine"`): io owns both rings (real devices live in IO worker).
+  // - Legacy runtime:
+  //   - Demo mode (`activeDiskImage == null`): cpu owns both rings (tone/loopback demos).
+  //   - VM mode   (`activeDiskImage != null`): io owns both rings (real devices live in IO worker).
   private audioRingBufferOwnerOverride: RingBufferOwner | null = null;
   private micRingBufferOwnerOverride: RingBufferOwner | null = null;
 
@@ -533,8 +535,8 @@ export class WorkerCoordinator {
 
     this.broadcastConfig(config);
 
-    // `activeDiskImage` toggles whether we're in demo vs VM mode; when no explicit ring
-    // owner override is set, recompute the default forwarding targets.
+    // When no explicit ring owner override is set, recompute the default forwarding
+    // targets (machine runtime vs legacy demo/VM mode).
     this.syncMicrophoneRingBufferAttachments();
     this.syncAudioRingBufferAttachments();
   }
@@ -1038,8 +1040,10 @@ export class WorkerCoordinator {
   }
 
   private defaultAudioRingBufferOwner(): RingBufferOwner {
-    // Demo mode (no disk): the CPU worker runs the tone/loopback demos.
-    // VM mode (disk present): audio devices live in the IO worker.
+    // Machine runtime: audio devices live in the IO worker, regardless of disk state.
+    if (this.activeConfig?.vmRuntime === "machine") return "io";
+    // Legacy demo mode (no disk): the CPU worker runs the tone/loopback demos.
+    // Legacy VM mode (disk present): audio devices live in the IO worker.
     return this.activeConfig?.activeDiskImage ? "io" : "cpu";
   }
 
@@ -1048,8 +1052,10 @@ export class WorkerCoordinator {
   }
 
   private defaultMicrophoneRingBufferOwner(): RingBufferOwner {
-    // Demo mode: loopback demo consumes mic samples in CPU worker.
-    // VM mode: microphone is consumed by the IO worker device model.
+    // Machine runtime: microphone is consumed by the IO worker device model, regardless of disk state.
+    if (this.activeConfig?.vmRuntime === "machine") return "io";
+    // Legacy demo mode: loopback demo consumes mic samples in CPU worker.
+    // Legacy VM mode: microphone is consumed by the IO worker device model.
     return this.activeConfig?.activeDiskImage ? "io" : "cpu";
   }
 
@@ -2321,6 +2327,7 @@ function aeroConfigsEqual(a: AeroConfig, b: AeroConfig): boolean {
     a.enableWebGPU === b.enableWebGPU &&
     a.proxyUrl === b.proxyUrl &&
     a.activeDiskImage === b.activeDiskImage &&
+    a.vmRuntime === b.vmRuntime &&
     a.logLevel === b.logLevel &&
     a.uiScale === b.uiScale &&
     (a.vmRuntime ?? "legacy") === (b.vmRuntime ?? "legacy") &&

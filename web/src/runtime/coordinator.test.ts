@@ -259,7 +259,7 @@ describe("runtime/coordinator", () => {
     expect(statuses.io.state).toBe("starting");
   });
 
-  it("forwards audio/mic rings to CPU only in demo mode by default (SPSC)", () => {
+  it("forwards audio/mic rings to CPU only in legacy demo mode by default (SPSC)", () => {
     const coordinator = new WorkerCoordinator();
     const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: TEST_VRAM_MIB });
     const shared = createSharedMemoryViews(segments);
@@ -270,6 +270,7 @@ describe("runtime/coordinator", () => {
       enableWebGPU: false,
       proxyUrl: null,
       activeDiskImage: null,
+      vmRuntime: "legacy",
       logLevel: "info",
     };
     (coordinator as any).spawnWorker("cpu", segments);
@@ -299,7 +300,7 @@ describe("runtime/coordinator", () => {
     expect(ioMic?.ringBuffer).toBe(null);
   });
 
-  it("forwards audio/mic rings to IO only in VM mode by default (SPSC)", () => {
+  it("forwards audio/mic rings to IO only in legacy VM mode by default (SPSC)", () => {
     const coordinator = new WorkerCoordinator();
     const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: TEST_VRAM_MIB });
     const shared = createSharedMemoryViews(segments);
@@ -310,6 +311,7 @@ describe("runtime/coordinator", () => {
       enableWebGPU: false,
       proxyUrl: null,
       activeDiskImage: "disk.img",
+      vmRuntime: "legacy",
       logLevel: "info",
     };
     (coordinator as any).spawnWorker("cpu", segments);
@@ -338,6 +340,50 @@ describe("runtime/coordinator", () => {
     expect(ioMic?.type).toBe("setMicrophoneRingBuffer");
     expect(ioMic?.ringBuffer).toBe(micSab);
   });
+
+  it.each([null, "disk.img"] as const)(
+    "forwards audio/mic rings to IO only in machine runtime by default (SPSC, activeDiskImage=%s)",
+    (activeDiskImage) => {
+      const coordinator = new WorkerCoordinator();
+      const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
+      const shared = createSharedMemoryViews(segments);
+      (coordinator as any).shared = shared;
+      (coordinator as any).activeConfig = {
+        guestMemoryMiB: 1,
+        enableWorkers: true,
+        enableWebGPU: false,
+        proxyUrl: null,
+        activeDiskImage,
+        vmRuntime: "machine",
+        logLevel: "info",
+      };
+      (coordinator as any).spawnWorker("cpu", segments);
+      (coordinator as any).spawnWorker("io", segments);
+
+      const cpuWorker = (coordinator as any).workers.cpu.worker as MockWorker;
+      const ioWorker = (coordinator as any).workers.io.worker as MockWorker;
+
+      const audioSab = new SharedArrayBuffer(1024);
+      coordinator.setAudioRingBuffer(audioSab, 128, 2, 48_000);
+
+      const cpuAudio = cpuWorker.posted.at(-1)?.message as { ringBuffer?: unknown; type?: unknown } | undefined;
+      const ioAudio = ioWorker.posted.at(-1)?.message as { ringBuffer?: unknown; type?: unknown } | undefined;
+      expect(cpuAudio?.type).toBe("setAudioRingBuffer");
+      expect(cpuAudio?.ringBuffer).toBe(null);
+      expect(ioAudio?.type).toBe("setAudioRingBuffer");
+      expect(ioAudio?.ringBuffer).toBe(audioSab);
+
+      const micSab = new SharedArrayBuffer(256);
+      coordinator.setMicrophoneRingBuffer(micSab, 48_000);
+
+      const cpuMic = cpuWorker.posted.at(-1)?.message as { ringBuffer?: unknown; type?: unknown } | undefined;
+      const ioMic = ioWorker.posted.at(-1)?.message as { ringBuffer?: unknown; type?: unknown } | undefined;
+      expect(cpuMic?.type).toBe("setMicrophoneRingBuffer");
+      expect(cpuMic?.ringBuffer).toBe(null);
+      expect(ioMic?.type).toBe("setMicrophoneRingBuffer");
+      expect(ioMic?.ringBuffer).toBe(micSab);
+    },
+  );
 
   it("can re-route audio ring ownership via setAudioRingBufferOwner", () => {
     const coordinator = new WorkerCoordinator();
