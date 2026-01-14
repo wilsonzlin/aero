@@ -368,6 +368,7 @@ pub fn opcode_name(opcode: u32) -> Option<&'static str> {
         OPCODE_SAMPLE => Some("sample"),
         OPCODE_SAMPLE_L => Some("sample_l"),
         OPCODE_LD => Some("ld"),
+        OPCODE_LD_UAV_RAW => Some("ld_uav_raw"),
         OPCODE_LD_RAW => Some("ld_raw"),
         OPCODE_LD_STRUCTURED => Some("ld_structured"),
         OPCODE_STORE_RAW => Some("store_raw"),
@@ -433,5 +434,15 @@ mod tests {
         assert_eq!(opcode_name(OPCODE_ULT), Some("ult"));
         assert_eq!(opcode_name(OPCODE_UGE), Some("uge"));
         assert_eq!(opcode_name(OPCODE_SYNC), Some("sync"));
+    }
+
+    #[test]
+    fn opcode_name_includes_uav_and_stream_ops() {
+        assert_eq!(opcode_name(OPCODE_LD_UAV_RAW), Some("ld_uav_raw"));
+        assert_eq!(opcode_name(OPCODE_EMITTHENCUT), Some("emitthen_cut"));
+        assert_eq!(
+            opcode_name(OPCODE_EMITTHENCUT_STREAM),
+            Some("emitthen_cut_stream")
+        );
     }
 }
