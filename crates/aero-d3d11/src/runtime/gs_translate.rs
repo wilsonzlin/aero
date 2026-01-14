@@ -849,20 +849,12 @@ fn emit_src_vec4(
                 };
                 expand_u32_to_vec4(u32_expr, info.mask)
             }
-            other => {
-                // Keep this non-exhaustive: new `RegFile` variants should not break GS translation
-                // compilation; instead they should yield a descriptive runtime error.
-                let msg = match other {
-                    RegFile::OutputDepth => {
-                        "RegFile::OutputDepth is not supported in GS prepass".to_owned()
-                    }
-                    _ => format!("unsupported source register file {other:?}"),
-                };
+            RegFile::OutputDepth => {
                 return Err(GsTranslateError::UnsupportedOperand {
                     inst_index,
                     opcode,
-                    msg,
-                });
+                    msg: "RegFile::OutputDepth is not supported in GS prepass".to_owned(),
+                })
             }
         },
         SrcKind::GsInput { reg, vertex } => format!("gs_load_input(prim_id, {reg}u, {vertex}u)"),
