@@ -1,7 +1,9 @@
 import { expect, test } from "@playwright/test";
 
 test("IO worker survives malformed in:input-batch messages", async ({ page }) => {
-  test.setTimeout(30_000);
+  // Worker startup + WASM init can be slow under high parallel load (e.g. CI, Grind swarm). Keep
+  // this test's budget generous to avoid false failures while still bounding hangs.
+  test.setTimeout(60_000);
   await page.goto("/", { waitUntil: "load" });
 
   const support = await page.evaluate(() => {
@@ -217,7 +219,7 @@ test("IO worker survives malformed in:input-batch messages", async ({ page }) =>
         scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
       });
 
-      await waitForAtomic(StatusIndex.IoReady, 1, 10_000);
+      await waitForAtomic(StatusIndex.IoReady, 1, 20_000);
 
       // Preflight: ensure the worker has fully started and can process a valid batch before we
       // inject malformed payloads (avoids flakiness if IoReady is observed slightly before the
