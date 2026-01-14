@@ -431,6 +431,182 @@ fn vs_as_compute_supports_index_pulling() {
 }
 
 #[test]
+fn vs_as_compute_index_pulling_applies_first_index_and_base_vertex() {
+    pollster::block_on(async {
+        let (device, queue, supports_compute) =
+            match common::wgpu::create_device_queue("aero-d3d11 VS-as-compute test device").await {
+                Ok(v) => v,
+                Err(err) => {
+                    common::skip_or_panic(module_path!(), &format!("{err:#}"));
+                    return;
+                }
+            };
+        if !supports_compute {
+            common::skip_or_panic(module_path!(), "compute unsupported");
+            return;
+        }
+
+        let (vs_signature, out_reg_count) = load_vs_passthrough_signature().unwrap();
+        let layout = InputLayoutDesc::parse(include_bytes!("fixtures/ilay_pos3_color.bin"))
+            .context("parse ILAY")
+            .unwrap();
+        let stride = 28u32;
+        let slot_strides = [stride];
+        let binding = InputLayoutBinding::new(&layout, &slot_strides);
+        let pulling = VertexPullingLayout::new(&binding, &vs_signature)
+            .context("pulling layout")
+            .unwrap();
+
+        // Five vertices. We'll fetch vertices 2, 3, 4 after applying base_vertex=2.
+        let vertices = [
+            ([100.0f32, 0.0, 0.0], [1.0f32, 0.0, 0.0, 1.0]),  // v0
+            ([0.0f32, 100.0, 0.0], [0.0f32, 1.0, 0.0, 1.0]),  // v1
+            ([0.0f32, 0.0, 100.0], [0.0f32, 0.0, 1.0, 1.0]),  // v2
+            ([200.0f32, 0.0, 0.0], [1.0f32, 1.0, 0.0, 1.0]),  // v3
+            ([0.0f32, 200.0, 0.0], [0.0f32, 1.0, 1.0, 1.0]),  // v4
+        ];
+        let mut vb_bytes = Vec::new();
+        for (pos, col) in vertices {
+            for f in pos {
+                vb_bytes.extend_from_slice(&f.to_le_bytes());
+            }
+            for f in col {
+                vb_bytes.extend_from_slice(&f.to_le_bytes());
+            }
+        }
+        let vb = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("VS-as-compute indexed vb (first_index/base_vertex)"),
+            size: vb_bytes.len() as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&vb, 0, &vb_bytes);
+
+        // Index buffer contains an extra leading element that will be skipped by first_index=1.
+        // The drawn indices are [0, 1, 2], and base_vertex=2 shifts these to vertex IDs [2, 3, 4].
+        let indices_full = [999u16, 0, 1, 2];
+        let words = pack_u16_indices_to_words(&indices_full);
+        let ib = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("VS-as-compute index buffer words (first_index/base_vertex)"),
+            size: (words.len() * 4) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&ib, 0, bytemuck::cast_slice(&words));
+
+        let first_index = 1u32;
+        let base_vertex = 2i32;
+        let params = IndexPullingParams {
+            first_index,
+            base_vertex,
+            index_format: INDEX_FORMAT_U16,
+            _pad0: 0,
+        };
+        let params_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("VS-as-compute index params (first_index/base_vertex)"),
+            size: 16,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&params_buf, 0, &params.to_le_bytes());
+
+        let ia_uniform_bytes = pulling.pack_uniform_bytes(
+            &[VertexPullingSlot {
+                base_offset_bytes: 0,
+                stride_bytes: stride,
+            }],
+            VertexPullingDrawParams {
+                first_vertex: 0,
+                first_instance: 0,
+                base_vertex,
+                first_index,
+            },
+        );
+        let ia_uniform = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("VS-as-compute indexed ia uniform (first_index/base_vertex)"),
+            size: ia_uniform_bytes.len() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&ia_uniform, 0, &ia_uniform_bytes);
+
+        let index_count = 3u32;
+        let instance_count = 1u32;
+        let control_point_count = 1u32;
+
+        let cfg = VsAsComputeConfig {
+            control_point_count,
+            out_reg_count,
+            indexed: true,
+        };
+        let pipeline = VsAsComputePipeline::new(&device, &pulling, cfg).unwrap();
+
+        let mut scratch = ExpansionScratchAllocator::new(ExpansionScratchDescriptor::default());
+        let vs_out_regs = alloc_vs_out_regs(
+            &mut scratch,
+            &device,
+            index_count,
+            instance_count,
+            out_reg_count,
+        )
+        .unwrap();
+
+        let bg = pipeline
+            .create_bind_group_group3(
+                &device,
+                &pulling,
+                &[&vb],
+                wgpu::BufferBinding {
+                    buffer: &ia_uniform,
+                    offset: 0,
+                    size: None,
+                },
+                Some(wgpu::BufferBinding {
+                    buffer: &params_buf,
+                    offset: 0,
+                    size: None,
+                }),
+                Some(&ib),
+                &vs_out_regs,
+            )
+            .unwrap();
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("VS-as-compute indexed encoder (first_index/base_vertex)"),
+        });
+        pipeline
+            .dispatch(&mut encoder, index_count, instance_count, &bg)
+            .unwrap();
+        queue.submit([encoder.finish()]);
+
+        let bytes = read_back_buffer(
+            &device,
+            &queue,
+            vs_out_regs.buffer.as_ref(),
+            vs_out_regs.offset,
+            vs_out_regs.size,
+        )
+        .await
+        .unwrap();
+        let words: Vec<u32> = bytemuck::cast_slice::<u8, u32>(&bytes).to_vec();
+        let vecs = unpack_vec4_u32_as_f32(&words);
+
+        let expected: Vec<[f32; 4]> = vec![
+            // abs_index 1 => idx 0 => vertex_id 2
+            [0.0, 0.0, 100.0, 1.0],
+            [0.0, 0.0, 1.0, 1.0],
+            // abs_index 2 => idx 1 => vertex_id 3
+            [200.0, 0.0, 0.0, 1.0],
+            [1.0, 1.0, 0.0, 1.0],
+            // abs_index 3 => idx 2 => vertex_id 4
+            [0.0, 200.0, 0.0, 1.0],
+            [0.0, 1.0, 1.0, 1.0],
+        ];
+        assert_eq!(vecs, expected);
+    });
+}
+
+#[test]
 fn vs_as_compute_rejects_non_multiple_of_control_points() {
     pollster::block_on(async {
         let (device, queue, supports_compute) =
