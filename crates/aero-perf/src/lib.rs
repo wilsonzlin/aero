@@ -230,18 +230,30 @@ pub trait InstructionRetirement {
 /// `step()` result:
 ///
 /// ```rust
-/// use aero_cpu_core::exec::{ExecutedTier, StepOutcome};
-/// use aero_perf::{retire_from_step_outcome, PerfCounters, PerfWorker};
+/// use aero_perf::{retire_from_step_outcome, InstructionRetirement, PerfCounters, PerfWorker};
 /// use std::sync::Arc;
+///
+/// enum FakeOutcome {
+///     InterruptDelivered,
+///     Block { instructions_retired: u64 },
+/// }
+///
+/// impl InstructionRetirement for FakeOutcome {
+///     fn instructions_retired(&self) -> u64 {
+///         match *self {
+///             FakeOutcome::InterruptDelivered => 0,
+///             FakeOutcome::Block {
+///                 instructions_retired,
+///             } => instructions_retired,
+///         }
+///     }
+/// }
 ///
 /// let shared = Arc::new(PerfCounters::new());
 /// let mut perf = PerfWorker::new(shared);
 ///
 /// // Dispatcher outcomes report the number of retired guest instructions.
-/// let outcome = StepOutcome::Block {
-///     tier: ExecutedTier::Interpreter,
-///     entry_rip: 0,
-///     next_rip: 1,
+/// let outcome = FakeOutcome::Block {
 ///     instructions_retired: 3,
 /// };
 /// retire_from_step_outcome(&mut perf, &outcome);

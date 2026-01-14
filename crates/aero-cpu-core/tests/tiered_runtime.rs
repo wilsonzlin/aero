@@ -470,6 +470,7 @@ fn runtime_reset_clears_cache_hotness_and_page_versions() {
         hot_threshold: 1_000,
         cache_max_blocks: 16,
         cache_max_bytes: 0,
+        code_version_max_pages: DEFAULT_CODE_VERSION_MAX_PAGES,
     };
 
     let compile = RecordingCompileSink::default();
@@ -508,6 +509,7 @@ fn runtime_reset_allows_retriggering_compile_requests() {
         hot_threshold: 3,
         cache_max_blocks: 16,
         cache_max_bytes: 0,
+        code_version_max_pages: DEFAULT_CODE_VERSION_MAX_PAGES,
     };
 
     let compile = RecordingCompileSink::default();

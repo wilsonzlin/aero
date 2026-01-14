@@ -259,6 +259,7 @@ fn run_blocks_with_perf_counts_across_multiple_blocks() {
         hot_threshold: 1,
         cache_max_blocks: 1,
         cache_max_bytes: 0,
+        code_version_max_pages: 64,
     };
     let jit = JitRuntime::new(
         config,
