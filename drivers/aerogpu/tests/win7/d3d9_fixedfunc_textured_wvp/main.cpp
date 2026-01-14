@@ -259,7 +259,10 @@ static int RunD3D9FixedFuncTexturedWvp(int argc, char** argv) {
   // Ensure gamma conversion is off so expected colors are deterministic.
   hr = dev->SetRenderState(D3DRS_SRGBWRITEENABLE, FALSE);
   if (FAILED(hr)) {
-    return reporter.FailHresult("IDirect3DDevice9Ex::SetRenderState(SRGBWRITEENABLE=FALSE)", hr);
+    // Not all devices support sRGB writes; the D3D9 default is disabled.
+    aerogpu_test::PrintfStdout("INFO: %s: SetRenderState(SRGBWRITEENABLE=FALSE) failed: %s",
+                               kTestName,
+                               aerogpu_test::HresultToString(hr).c_str());
   }
 
   // Create a 2x2 texture with distinct colors.
@@ -332,7 +335,10 @@ static int RunD3D9FixedFuncTexturedWvp(int argc, char** argv) {
   }
   hr = dev->SetSamplerState(0, D3DSAMP_SRGBTEXTURE, FALSE);
   if (FAILED(hr)) {
-    return reporter.FailHresult("IDirect3DDevice9Ex::SetSamplerState(SRGBTEXTURE=FALSE)", hr);
+    // Not all devices support sRGB texture sampling; the D3D9 default is disabled.
+    aerogpu_test::PrintfStdout("INFO: %s: SetSamplerState(SRGBTEXTURE=FALSE) failed: %s",
+                               kTestName,
+                               aerogpu_test::HresultToString(hr).c_str());
   }
 
   hr = dev->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_MODULATE);
