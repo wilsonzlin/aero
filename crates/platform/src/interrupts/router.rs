@@ -347,6 +347,11 @@ impl PlatformInterrupts {
                         flag.store(true, Ordering::SeqCst);
                     }
                     lapic.reset_state(apic_id);
+                    // Keep the LAPIC enabled for platform-level interrupt injection.
+                    //
+                    // Real hardware clears SVR[8] on reset; our platform keeps it set so IOAPIC/MSI
+                    // delivery to an AP works deterministically during early bring-up.
+                    Self::enable_lapic_software(lapic.as_ref());
                 }
             }
             DeliveryMode::Startup => {
@@ -362,6 +367,17 @@ impl PlatformInterrupts {
                 // Other delivery modes are currently ignored.
             }
         }
+    }
+
+    fn enable_lapic_software(lapic: &LocalApic) {
+        // `LocalApic::reset_state` models the power-on SVR value (0xFF with the software-enable
+        // bit cleared). At the platform level we keep LAPICs enabled by default so external
+        // interrupt injection (IOAPIC/MSI) continues to work after INIT/RESET modelling.
+        let mut buf = [0u8; 4];
+        lapic.mmio_read(0xF0, &mut buf);
+        let mut svr = u32::from_le_bytes(buf);
+        svr |= 1 << 8;
+        lapic.mmio_write(0xF0, &svr.to_le_bytes());
     }
 
     /// Like [`InterruptController::get_pending`], but scoped to a specific vCPU.
@@ -793,6 +809,7 @@ impl PlatformInterrupts {
             return;
         };
         lapic.reset_state(apic_id);
+        Self::enable_lapic_software(lapic);
     }
     pub fn get_pending_for_apic(&self, apic_id: u8) -> Option<u8> {
         match self.mode {
@@ -1478,6 +1495,28 @@ mod tests {
         ints.lapics[1].mmio_write(0xF0, &(0x1FFu32).to_le_bytes());
         ints.lapics[1].inject_fixed_interrupt(vector);
         assert_eq!(ints.get_pending_for_apic(1), Some(vector));
+    }
+
+    #[test]
+    fn init_ipi_reset_keeps_target_lapic_enabled_for_ioapic_delivery() {
+        let mut ints = PlatformInterrupts::new_with_cpu_count(2);
+        ints.set_mode(PlatformInterruptMode::Apic);
+
+        // Route GSI1 -> vector 0x60 to LAPIC1 (APIC ID 1), edge-triggered, unmasked.
+        program_ioapic_entry(&mut ints, 1, 0x60, 1 << 24);
+
+        // Send INIT IPI (level=assert) from CPU0 -> CPU1 via ICR.
+        ints.lapic_mmio_write_for_apic(0, 0x310, &((1u32 << 24).to_le_bytes()));
+        ints.lapic_mmio_write_for_apic(0, 0x300, &(((5u32 << 8) | (1 << 14)).to_le_bytes()));
+        assert!(
+            ints.take_pending_init(1),
+            "INIT IPI should set the pending-init flag"
+        );
+
+        // IOAPIC delivery should still work immediately after INIT reset (no guest SVR write).
+        ints.raise_irq(InterruptInput::Gsi(1));
+        assert_eq!(ints.get_pending_for_apic(0), None);
+        assert_eq!(ints.get_pending_for_apic(1), Some(0x60));
     }
 
     fn lapic_read_u32(lapic: &LocalApic, offset: u64) -> u32 {
