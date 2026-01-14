@@ -4117,7 +4117,7 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPowerState(_In_ const HANDLE hAdapter,
                             ? TRUE
                             : FALSE;
         }
-        if (canSubmit && !AeroGpuIsDeviceErrorLatched(adapter)) {
+        if (canSubmit) {
             InterlockedExchange(&adapter->AcceptingSubmissions, 1);
         }
 
@@ -10756,8 +10756,10 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
          */
         if ((DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange(&adapter->DevicePowerState, 0, 0) !=
                 DxgkDevicePowerStateD0 ||
-            InterlockedCompareExchange(&adapter->AcceptingSubmissions, 0, 0) == 0) {
+            InterlockedCompareExchange(&adapter->AcceptingSubmissions, 0, 0) == 0 ||
+            AeroGpuIsDeviceErrorLatched(adapter)) {
             io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_INVALID_STATE;
+            InterlockedExchange(&adapter->PerfSelftestLastErrorCode, (LONG)io->error_code);
             return STATUS_SUCCESS;
         }
 
