@@ -96,30 +96,35 @@ async function main(): Promise<void> {
     const pendingScreenshot = new Map<number, { resolve: (msg: any) => void; reject: (err: unknown) => void }>();
 
     worker.addEventListener("message", (event) => {
-      const msg = event.data as any;
-      if (!msg || typeof msg !== "object" || typeof msg.type !== "string") return;
+      const msg = event.data as unknown;
+      if (!msg || typeof msg !== "object") return;
+      const record = msg as Record<string, unknown>;
+      const type = record.type;
+      if (typeof type !== "string") return;
 
-      switch (msg.type) {
+      switch (type) {
         case "ready":
           readyResolve();
           break;
         case "submit_complete": {
-          const pending = pendingSubmit.get(msg.requestId);
+          const requestId = typeof record.requestId === "number" ? record.requestId : Number.NaN;
+          const pending = pendingSubmit.get(requestId);
           if (!pending) break;
-          pendingSubmit.delete(msg.requestId);
+          pendingSubmit.delete(requestId);
           pending.resolve();
           break;
         }
         case "screenshot": {
-          const pending = pendingScreenshot.get(msg.requestId);
+          const requestId = typeof record.requestId === "number" ? record.requestId : Number.NaN;
+          const pending = pendingScreenshot.get(requestId);
           if (!pending) break;
-          pendingScreenshot.delete(msg.requestId);
+          pendingScreenshot.delete(requestId);
           pending.resolve(msg);
           break;
         }
         case "error":
           readyResolve();
-          fatalError = String(msg.message ?? "unknown worker error");
+          fatalError = String(record.message ?? "unknown worker error");
           break;
       }
     });
@@ -201,7 +206,8 @@ async function main(): Promise<void> {
     const writer = new AerogpuCmdWriter();
     // Prefer the ABI 1.2+ sRGB variant when available; the CPU executor treats it the same as
     // UNORM (no colorspace conversion), so this remains a pure row_pitch_bytes/backing test.
-    const format = (AerogpuFormat as any).R8G8B8A8UnormSrgb ?? AerogpuFormat.R8G8B8A8Unorm;
+    const srgbFormat = (AerogpuFormat as unknown as Record<string, unknown>).R8G8B8A8UnormSrgb;
+    const format = typeof srgbFormat === "number" ? srgbFormat : AerogpuFormat.R8G8B8A8Unorm;
     writer.createTexture2d(
       /* textureHandle */ 1,
       /* usageFlags */ AEROGPU_RESOURCE_USAGE_RENDER_TARGET,

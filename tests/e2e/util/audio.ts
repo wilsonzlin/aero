@@ -29,13 +29,18 @@ export async function waitForAudioOutputNonSilent(
 
   await page.waitForFunction(
     ({ globalVarName, threshold, framesToInspect }) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const out = (globalThis as any)[globalVarName];
-      if (!out?.ringBuffer?.samples || !out?.ringBuffer?.writeIndex) return false;
-      const samples: Float32Array = out.ringBuffer.samples;
-      const writeIndex: Uint32Array = out.ringBuffer.writeIndex;
-      const cc = out.ringBuffer.channelCount | 0;
-      const cap = out.ringBuffer.capacityFrames | 0;
+      const g = globalThis as unknown as Record<string, unknown>;
+      const out = g[globalVarName];
+      if (!out || typeof out !== "object") return false;
+      const ringBuffer = (out as Record<string, unknown>).ringBuffer;
+      if (!ringBuffer || typeof ringBuffer !== "object") return false;
+      const ring = ringBuffer as Record<string, unknown>;
+      const samples = ring.samples;
+      const writeIndex = ring.writeIndex;
+      if (!(samples instanceof Float32Array)) return false;
+      if (!(writeIndex instanceof Uint32Array)) return false;
+      const cc = typeof ring.channelCount === "number" ? ring.channelCount | 0 : 0;
+      const cap = typeof ring.capacityFrames === "number" ? ring.capacityFrames | 0 : 0;
       if (cc <= 0 || cap <= 0) return false;
 
       const write = Atomics.load(writeIndex, 0) >>> 0;
@@ -68,13 +73,18 @@ export async function getAudioOutputMaxAbsSample(
   const frames = Number.isFinite(framesToInspect) ? framesToInspect : 1024;
   return await page.evaluate(
     ({ globalVarName, framesToInspect }) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const out = (globalThis as any)[globalVarName];
-      if (!out?.ringBuffer?.samples || !out?.ringBuffer?.writeIndex) return null;
-      const samples: Float32Array = out.ringBuffer.samples;
-      const writeIndex: Uint32Array = out.ringBuffer.writeIndex;
-      const cc = out.ringBuffer.channelCount | 0;
-      const cap = out.ringBuffer.capacityFrames | 0;
+      const g = globalThis as unknown as Record<string, unknown>;
+      const out = g[globalVarName];
+      if (!out || typeof out !== "object") return null;
+      const ringBuffer = (out as Record<string, unknown>).ringBuffer;
+      if (!ringBuffer || typeof ringBuffer !== "object") return null;
+      const ring = ringBuffer as Record<string, unknown>;
+      const samples = ring.samples;
+      const writeIndex = ring.writeIndex;
+      if (!(samples instanceof Float32Array)) return null;
+      if (!(writeIndex instanceof Uint32Array)) return null;
+      const cc = typeof ring.channelCount === "number" ? ring.channelCount | 0 : 0;
+      const cap = typeof ring.capacityFrames === "number" ? ring.capacityFrames | 0 : 0;
       if (cc <= 0 || cap <= 0) return null;
 
       const write = Atomics.load(writeIndex, 0) >>> 0;
@@ -97,4 +107,3 @@ export async function getAudioOutputMaxAbsSample(
     { globalVarName, framesToInspect: frames },
   );
 }
-

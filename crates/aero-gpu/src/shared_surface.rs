@@ -102,7 +102,7 @@ impl SharedSurfaceTable {
             return Ok(());
         }
         if self.refcounts.contains_key(&handle) {
-            // Underlying handles remain reserved as long as any aliases still reference them. If
+            // Underlying handles remain reserved while aliases still reference them. If
             // the original handle was destroyed, it must not be reused as a new original until
             // the underlying resource is fully released.
             return Err(SharedSurfaceError::HandleStillInUse(handle));
@@ -214,7 +214,7 @@ impl SharedSurfaceTable {
             return Ok(());
         }
         if self.refcounts.contains_key(&out_resource_handle) {
-            // Underlying handles remain reserved as long as any aliases still reference them. If
+            // Underlying handles remain reserved while aliases still reference them. If
             // an original handle was destroyed, it must not be reused as a new alias handle until
             // the underlying resource is fully released.
             return Err(SharedSurfaceError::HandleStillInUse(out_resource_handle));

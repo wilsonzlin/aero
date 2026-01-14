@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { Counter, Histogram, Registry, collectDefaultMetrics } from 'prom-client';
 
 const kStartTime = Symbol('metricsStartTime');
+type RequestWithStartTime = { [kStartTime]?: bigint };
 
 export type DnsMetrics = Readonly<{
   dnsQueriesTotal: Counter<'qtype' | 'rcode' | 'source'>;
@@ -92,11 +93,11 @@ export function setupMetrics(app: FastifyInstance): MetricsBundle {
   });
 
   app.addHook('onRequest', async (request) => {
-    (request as any)[kStartTime] = process.hrtime.bigint();
+    (request as RequestWithStartTime)[kStartTime] = process.hrtime.bigint();
   });
 
   app.addHook('onResponse', async (request, reply) => {
-    const start = (request as any)[kStartTime] as bigint | undefined;
+    const start = (request as RequestWithStartTime)[kStartTime];
     if (!start) return;
 
     const durationSeconds = Number(process.hrtime.bigint() - start) / 1e9;

@@ -2,6 +2,7 @@ import { fnv1a32Hex } from "./src/utils/fnv1a";
 import { startFrameScheduler } from "./src/main/frameScheduler";
 import { WorkerCoordinator } from "./src/runtime/coordinator";
 import { GPU_PROTOCOL_NAME, GPU_PROTOCOL_VERSION, isGpuWorkerMessageBase } from "./src/ipc/gpu-protocol";
+import type { AeroConfig } from "./src/config/aero_config";
 import { SHARED_FRAMEBUFFER_HEADER_U32_LEN, SharedFramebufferHeaderIndex } from "./src/ipc/shared-layout";
 
 declare global {
@@ -69,7 +70,7 @@ async function main() {
     proxyUrl: null,
     activeDiskImage: null,
     logLevel: "info",
-  } as const;
+  } satisfies AeroConfig;
 
   const support = coordinator.checkSupport();
   if (!support.ok) {
@@ -77,7 +78,7 @@ async function main() {
     return;
   }
 
-  coordinator.start(config as any);
+  coordinator.start(config);
   coordinator.setBootDisks({}, null, null);
 
   const gpuWorker = coordinator.getWorker("gpu");
@@ -119,26 +120,27 @@ async function main() {
   });
 
   gpuWorker.addEventListener("message", (event: MessageEvent) => {
-    const msg = event.data as any;
-    if (!isGpuWorkerMessageBase(msg) || typeof msg.type !== "string") return;
-    if (msg.type === "ready") {
+    const msg = event.data as unknown;
+    if (!isGpuWorkerMessageBase(msg) || typeof (msg as { type?: unknown }).type !== "string") return;
+    const typed = msg as { type: string; requestId?: number; width?: number; height?: number; rgba8?: ArrayBuffer; message?: string };
+    if (typed.type === "ready") {
       presenterReadyResolved = true;
       presenterReadyResolve?.();
       presenterReadyResolve = null;
       presenterReadyReject = null;
       return;
     }
-    if (msg.type === "screenshot") {
-      const pending = pendingScreenshots.get(msg.requestId);
+    if (typed.type === "screenshot") {
+      const pending = pendingScreenshots.get(typed.requestId ?? -1);
       if (!pending) return;
-      pendingScreenshots.delete(msg.requestId);
-      pending.resolve({ width: msg.width, height: msg.height, pixels: msg.rgba8 });
+      pendingScreenshots.delete(typed.requestId ?? -1);
+      pending.resolve({ width: typed.width ?? 0, height: typed.height ?? 0, pixels: typed.rgba8 ?? new ArrayBuffer(0) });
       return;
     }
-    if (msg.type === "error") {
-      log(`gpu-worker error: ${msg.message ?? "unknown"}`);
+    if (typed.type === "error") {
+      log(`gpu-worker error: ${typed.message ?? "unknown"}`);
       if (!presenterReadyResolved && presenterReadyReject) {
-        presenterReadyReject(new Error(String(msg.message ?? "gpu-worker init error")));
+        presenterReadyReject(new Error(String(typed.message ?? "gpu-worker init error")));
         presenterReadyResolve = null;
         presenterReadyReject = null;
       }

@@ -497,11 +497,12 @@ class FakeIDBFactory {
 }
 
 function installFakeIndexedDb(): void {
-  if (typeof (globalThis as any).indexedDB === "undefined") {
-    (globalThis as any).indexedDB = new FakeIDBFactory();
+  const g = globalThis as unknown as Record<string, unknown>;
+  if (typeof g.indexedDB === "undefined") {
+    g.indexedDB = new FakeIDBFactory();
   }
-  if (typeof (globalThis as any).IDBKeyRange === "undefined") {
-    (globalThis as any).IDBKeyRange = FakeIDBKeyRange;
+  if (typeof g.IDBKeyRange === "undefined") {
+    g.IDBKeyRange = FakeIDBKeyRange;
   }
 }
 

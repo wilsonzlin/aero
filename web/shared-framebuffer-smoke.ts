@@ -126,33 +126,51 @@ async function main() {
 
   const ready = new Promise<void>((resolve, reject) => {
     const onMessage = (event: MessageEvent) => {
-      const msg = event.data as any;
+      const msg = event.data as unknown;
       if (!msg || typeof msg !== "object") return;
-      if (msg.protocol !== GPU_PROTOCOL_NAME || msg.protocolVersion !== GPU_PROTOCOL_VERSION) return;
-      if (msg.type === "ready") {
+      const typed = msg as { protocol?: unknown; protocolVersion?: unknown; type?: unknown; message?: unknown };
+      if (typed.protocol !== GPU_PROTOCOL_NAME || typed.protocolVersion !== GPU_PROTOCOL_VERSION) return;
+      if (typed.type === "ready") {
         gpu.removeEventListener("message", onMessage);
         resolve();
-      } else if (msg.type === "error") {
+      } else if (typed.type === "error") {
         gpu.removeEventListener("message", onMessage);
-        reject(new Error(String(msg.message ?? "unknown error")));
+        reject(new Error(String(typed.message ?? "unknown error")));
       }
     };
     gpu.addEventListener("message", onMessage);
   });
 
   gpu.addEventListener("message", (event: MessageEvent) => {
-    const msg = event.data as any;
+    const msg = event.data as unknown;
     if (!msg || typeof msg !== "object") return;
-    if (msg.protocol !== GPU_PROTOCOL_NAME || msg.protocolVersion !== GPU_PROTOCOL_VERSION) return;
-    if (msg.type === "error") {
-      renderError(String(msg.message ?? "gpu worker error"));
+    const typed = msg as {
+      protocol?: unknown;
+      protocolVersion?: unknown;
+      type?: unknown;
+      message?: unknown;
+      requestId?: unknown;
+      width?: unknown;
+      height?: unknown;
+      rgba8?: unknown;
+      frameSeq?: unknown;
+    };
+    if (typed.protocol !== GPU_PROTOCOL_NAME || typed.protocolVersion !== GPU_PROTOCOL_VERSION) return;
+    if (typed.type === "error") {
+      renderError(String(typed.message ?? "gpu worker error"));
       return;
     }
-    if (msg.type === "screenshot") {
-      const pending = pendingScreenshots.get(msg.requestId);
+    if (typed.type === "screenshot") {
+      if (typeof typed.requestId !== "number") return;
+      const pending = pendingScreenshots.get(typed.requestId);
       if (!pending) return;
-      pendingScreenshots.delete(msg.requestId);
-      pending.resolve({ width: msg.width, height: msg.height, rgba8: msg.rgba8, frameSeq: msg.frameSeq });
+      pendingScreenshots.delete(typed.requestId);
+      pending.resolve({
+        width: typeof typed.width === "number" ? typed.width : 0,
+        height: typeof typed.height === "number" ? typed.height : 0,
+        rgba8: typed.rgba8 instanceof ArrayBuffer ? typed.rgba8 : new ArrayBuffer(0),
+        frameSeq: typeof typed.frameSeq === "number" ? typed.frameSeq : 0,
+      });
     }
   });
 

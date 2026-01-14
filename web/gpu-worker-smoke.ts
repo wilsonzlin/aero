@@ -207,9 +207,9 @@ async function main() {
         window.__aeroTest = { ...(window.__aeroTest ?? {}), lastStats: msg, lastWasmStats: msg.wasm };
 
         if (telemetryEl) {
-          const scanout = (msg as any).scanout as any;
-          const outputSource = (msg as any).outputSource as any;
-          const presentUpload = (msg as any).presentUpload as any;
+          const scanout = msg.scanout;
+          const outputSource = msg.outputSource;
+          const presentUpload = msg.presentUpload;
           const lines: string[] = [];
           if (typeof outputSource === "string") {
             lines.push(`outputSource=${outputSource}`);
@@ -228,9 +228,7 @@ async function main() {
             // Newer workers include `format_str` directly so consumers don't have to reimplement
             // the AerogpuFormat enum mapping.
             const fmt =
-              typeof (scanout as any).format_str === "string"
-                ? (scanout as any).format_str
-                : aerogpuFormatToString(typeof (scanout as any).format === "number" ? (scanout as any).format : Number.NaN);
+              typeof scanout.format_str === "string" ? scanout.format_str : aerogpuFormatToString(scanout.format);
             const gen = typeof scanout.generation === "number" ? scanout.generation : "?";
             lines.push(`scanout=${src} gen=${gen} base=${base} ${w}x${h} pitch=${pitch} fmt=${fmt}`);
           }
@@ -238,7 +236,9 @@ async function main() {
         }
 
         if (msg.backendKind === "webgl2_wgpu" && !loggedFrameTimings) {
-          const frameTimings = (msg.wasm as any)?.frameTimings;
+          const wasm = msg.wasm;
+          const frameTimings =
+            wasm && typeof wasm === "object" ? (wasm as Record<string, unknown>).frameTimings : undefined;
           if (frameTimings) {
             loggedFrameTimings = true;
             console.log("[gpu-worker] wasm frame timings", frameTimings);

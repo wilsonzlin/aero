@@ -457,7 +457,7 @@ impl EndpointContext {
 
     /// Sets the raw TR Dequeue Pointer field (DW2-DW3) verbatim.
     ///
-    /// This preserves the DCS bit as well as any reserved low bits that may have been set by the
+    /// This preserves the DCS bit and any reserved low bits that may have been set by the
     /// guest. Prefer [`Self::set_tr_dequeue_pointer`] when constructing a new context.
     pub fn set_tr_dequeue_pointer_raw(&mut self, raw: u64) {
         self.dwords[2] = raw as u32;

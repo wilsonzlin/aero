@@ -927,8 +927,7 @@ function renderAudioPanel(): HTMLElement {
   try {
     const g = globalThis as unknown;
     if (g && (typeof g === "object" || typeof g === "function")) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (g as any).__aeroWorkerCoordinator = workerCoordinator;
+      (g as { __aeroWorkerCoordinator?: unknown }).__aeroWorkerCoordinator = workerCoordinator;
     }
   } catch {
     // Best-effort only.

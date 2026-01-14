@@ -26,11 +26,13 @@ function $(id: string): HTMLElement | null {
 
 async function tryComputeCapsHash(): Promise<string> {
   try {
-    const gpu: any = (globalThis as any).navigator?.gpu;
-    if (!gpu?.requestAdapter) return "";
-    const adapter = await gpu.requestAdapter();
+    const gpu = (globalThis as unknown as { navigator?: { gpu?: unknown } }).navigator?.gpu;
+    if (!gpu || typeof gpu !== "object") return "";
+    const requestAdapter = (gpu as { requestAdapter?: unknown }).requestAdapter;
+    if (typeof requestAdapter !== "function") return "";
+    const adapter = await (requestAdapter as (options?: unknown) => Promise<unknown>).call(gpu);
     if (!adapter) return "";
-    return await computeWebGpuCapsHash(adapter);
+    return await computeWebGpuCapsHash(adapter as GPUAdapter);
   } catch {
     return "";
   }
@@ -47,14 +49,15 @@ async function main(): Promise<void> {
   const capsHash = await tryComputeCapsHash();
 
   await initD3d11();
-  const result = (await run_d3d11_shader_cache_demo(capsHash || null)) as any;
+  const result = (await run_d3d11_shader_cache_demo(capsHash || null)) as unknown;
+  const resultRecord = result && typeof result === "object" ? (result as Record<string, unknown>) : {};
 
-  const translateCalls = num(result?.translateCalls);
-  const persistentHits = num(result?.persistentHits);
-  const persistentMisses = num(result?.persistentMisses);
-  const cacheDisabled = Boolean(result?.cacheDisabled);
-  const d3d11TranslatorCacheVersion = num(result?.d3d11TranslatorCacheVersion);
-  const source = typeof result?.source === "string" ? result.source : "";
+  const translateCalls = num(resultRecord["translateCalls"]);
+  const persistentHits = num(resultRecord["persistentHits"]);
+  const persistentMisses = num(resultRecord["persistentMisses"]);
+  const cacheDisabled = Boolean(resultRecord["cacheDisabled"]);
+  const d3d11TranslatorCacheVersion = num(resultRecord["d3d11TranslatorCacheVersion"]);
+  const source = typeof resultRecord["source"] === "string" ? resultRecord["source"] : "";
 
   window.__d3d11ShaderCacheDemo = {
     backend: "d3d11",
@@ -95,4 +98,3 @@ void main().catch((err) => {
   const status = $("status");
   if (status) status.textContent = `error: ${message}\n`;
 });
-

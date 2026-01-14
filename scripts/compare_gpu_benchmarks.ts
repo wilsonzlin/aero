@@ -239,7 +239,7 @@ export function compareGpuBenchmarks({
     const cOk = c?.status === "ok";
 
     for (const [metricName, threshold] of Object.entries(suiteThresholds.metrics ?? {})) {
-      const better = (threshold as any)?.better;
+      const better = (threshold as { better?: unknown } | null | undefined)?.better;
       if (better !== "lower" && better !== "higher") {
         throw new Error(`thresholds: gpu.metrics.${metricName}.better must be "lower" or "higher"`);
       }

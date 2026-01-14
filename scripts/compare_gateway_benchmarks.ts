@@ -112,13 +112,13 @@ export function compareGatewayBenchmarks({
 
   const cases: any[] = [];
   for (const [metricName, threshold] of Object.entries(suiteThresholds.metrics ?? {})) {
-    const better = (threshold as any)?.better;
+    const better = (threshold as { better?: unknown } | null | undefined)?.better;
     if (better !== "lower" && better !== "higher") {
       throw new Error(`thresholds: gateway.metrics.${metricName}.better must be "lower" or "higher"`);
     }
 
-    const b = (baseGateway as any)[metricName];
-    const c = (candGateway as any)[metricName];
+    const b = (baseGateway as Record<string, unknown>)[metricName];
+    const c = (candGateway as Record<string, unknown>)[metricName];
     const unit = (b?.unit ?? c?.unit ?? "").toString();
 
     let effectiveThreshold: any = threshold;

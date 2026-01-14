@@ -51,30 +51,31 @@ export const guestCpuScenario: Scenario = {
 
       await page.waitForFunction(() => Boolean(window.aero?.bench?.runGuestCpuBench));
 
-      const run = await page.evaluate(async () => {
+      const run = (await page.evaluate(async () => {
         return await window.aero.bench.runGuestCpuBench({
           variant: "alu64",
           mode: "interpreter",
           seconds: 0.25,
         });
-      });
+      })) as unknown;
+      const runRecord = run && typeof run === "object" ? (run as Record<string, unknown>) : null;
 
       if (
-        run &&
-        typeof run === "object" &&
-        "expected_checksum" in run &&
-        "observed_checksum" in run &&
-        (run as any).expected_checksum !== (run as any).observed_checksum
+        runRecord &&
+        "expected_checksum" in runRecord &&
+        "observed_checksum" in runRecord &&
+        runRecord.expected_checksum !== runRecord.observed_checksum
       ) {
         throw new Error(
-          `Guest CPU checksum mismatch: expected=${String((run as any).expected_checksum)} observed=${String(
-            (run as any).observed_checksum,
-          )}`,
+          `Guest CPU checksum mismatch: expected=${String(runRecord.expected_checksum)} observed=${String(runRecord.observed_checksum)}`,
         );
       }
 
       const perfExport = await page.evaluate(() => window.aero.perf.export());
-      const exportedGuestCpu = (perfExport as any)?.benchmarks?.guest_cpu;
+      const perfRecord = perfExport && typeof perfExport === "object" ? (perfExport as Record<string, unknown>) : null;
+      const benchmarks =
+        perfRecord && typeof perfRecord.benchmarks === "object" ? (perfRecord.benchmarks as Record<string, unknown>) : null;
+      const exportedGuestCpu = benchmarks ? benchmarks.guest_cpu : null;
       if (!exportedGuestCpu) {
         throw new Error("Expected window.aero.perf.export() to include benchmarks.guest_cpu after guest CPU bench run");
       }
@@ -82,15 +83,17 @@ export const guestCpuScenario: Scenario = {
       await ctx.artifacts.writeJson("guest_cpu_bench.json", run, "other");
       await ctx.artifacts.writeJson("perf_export.json", perfExport, "perf_export");
 
-      const mipsMean = (run as any)?.mips_mean ?? (run as any)?.mips;
+      const mipsMean = runRecord ? runRecord.mips_mean ?? runRecord.mips : undefined;
       if (typeof mipsMean !== "number" || !Number.isFinite(mipsMean)) {
         throw new Error("Expected guest CPU bench run to include a numeric mips_mean (or mips)");
       }
       ctx.metrics.set({ id: "guest_cpu_alu64_mips", unit: "count", value: mipsMean });
 
+      const variant = typeof runRecord?.variant === "string" ? runRecord.variant : "unknown";
+      const mode = typeof runRecord?.mode === "string" ? runRecord.mode : "unknown";
+      const checksum = runRecord?.observed_checksum ?? "unknown";
       ctx.log(
-        `guest_cpu: variant=${(run as any)?.variant ?? "unknown"} mode=${(run as any)?.mode ?? "unknown"} ` +
-          `mips_mean=${mipsMean.toFixed(2)} checksum=${(run as any)?.observed_checksum ?? "unknown"}`,
+        `guest_cpu: variant=${variant} mode=${mode} mips_mean=${mipsMean.toFixed(2)} checksum=${String(checksum)}`,
       );
     } finally {
       try {
@@ -101,4 +104,3 @@ export const guestCpuScenario: Scenario = {
     }
   },
 };
-

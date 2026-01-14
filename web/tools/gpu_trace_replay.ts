@@ -1169,7 +1169,7 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
         return;
       }
 
-      // Underlying handles remain reserved as long as any aliases still reference them. If an
+      // Underlying handles remain reserved while aliases still reference them. If an
       // original handle was destroyed, it must not be reused as a new alias handle until the
       // underlying resource is fully released.
       if (acmdSharedRefcounts.has(outHandle)) {

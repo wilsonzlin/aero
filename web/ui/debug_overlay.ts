@@ -203,44 +203,49 @@ export class DebugOverlay {
       );
     }
 
-    const gpuStats = (s as any).gpuStats as any;
-    const backendKind = typeof gpuStats?.backendKind === "string" ? (gpuStats.backendKind as string) : null;
+    const gpuStats = (s as Record<string, unknown>).gpuStats;
+    const gpuStatsRecord = gpuStats && typeof gpuStats === "object" ? (gpuStats as Record<string, unknown>) : null;
+    const backendKind = typeof gpuStatsRecord?.backendKind === "string" ? gpuStatsRecord.backendKind : null;
     if (backendKind) {
       lines.push(`Backend: ${backendKind}`);
     }
-    const counters = gpuStats?.counters && typeof gpuStats.counters === "object" ? (gpuStats.counters as any) : null;
+    const counters =
+      gpuStatsRecord?.counters && typeof gpuStatsRecord.counters === "object"
+        ? (gpuStatsRecord.counters as Record<string, unknown>)
+        : null;
     if (counters) {
-      const presentsAttempted = typeof counters.presents_attempted === "number" ? (counters.presents_attempted as number) : null;
-      const presentsSucceeded = typeof counters.presents_succeeded === "number" ? (counters.presents_succeeded as number) : null;
+      const presentsAttempted = typeof counters.presents_attempted === "number" ? counters.presents_attempted : null;
+      const presentsSucceeded = typeof counters.presents_succeeded === "number" ? counters.presents_succeeded : null;
       const recoveriesAttempted =
-        typeof counters.recoveries_attempted === "number" ? (counters.recoveries_attempted as number) : null;
+        typeof counters.recoveries_attempted === "number" ? counters.recoveries_attempted : null;
       const recoveriesSucceeded =
-        typeof counters.recoveries_succeeded === "number" ? (counters.recoveries_succeeded as number) : null;
+        typeof counters.recoveries_succeeded === "number" ? counters.recoveries_succeeded : null;
       const surfaceReconfigures =
-        typeof counters.surface_reconfigures === "number" ? (counters.surface_reconfigures as number) : null;
+        typeof counters.surface_reconfigures === "number" ? counters.surface_reconfigures : null;
       lines.push(
         `Presents: ${presentsSucceeded ?? "?"}/${presentsAttempted ?? "?"}  Recoveries: ${recoveriesSucceeded ?? "?"}/${recoveriesAttempted ?? "?"}  Surface reconfigures: ${surfaceReconfigures ?? "?"}`,
       );
 
       const recoveriesAttemptedWddm =
-        typeof counters.recoveries_attempted_wddm === "number" ? (counters.recoveries_attempted_wddm as number) : null;
+        typeof counters.recoveries_attempted_wddm === "number" ? counters.recoveries_attempted_wddm : null;
       const recoveriesSucceededWddm =
-        typeof counters.recoveries_succeeded_wddm === "number" ? (counters.recoveries_succeeded_wddm as number) : null;
+        typeof counters.recoveries_succeeded_wddm === "number" ? counters.recoveries_succeeded_wddm : null;
       if (recoveriesAttemptedWddm != null || recoveriesSucceededWddm != null) {
         lines.push(`Recoveries (WDDM): ${recoveriesSucceededWddm ?? "?"}/${recoveriesAttemptedWddm ?? "?"}`);
       }
     }
 
     const outputSource = typeof s.outputSource === "string" ? s.outputSource : null;
-    const presentUpload = s.presentUpload && typeof s.presentUpload === "object" ? (s.presentUpload as any) : null;
+    const presentUpload =
+      s.presentUpload && typeof s.presentUpload === "object" ? (s.presentUpload as Record<string, unknown>) : null;
     if (outputSource || presentUpload) {
-      const uploadKind = typeof presentUpload?.kind === "string" ? (presentUpload.kind as string) : "n/a";
+      const uploadKind = typeof presentUpload?.kind === "string" ? presentUpload.kind : "n/a";
       const uploadDirtyCount = typeof presentUpload?.dirtyRectCount === "number" ? presentUpload.dirtyRectCount : null;
       const uploadDesc = uploadKind === "dirty_rects" ? `dirty_rects(n=${uploadDirtyCount ?? "?"})` : uploadKind;
       lines.push(`Presenter: source ${outputSource ?? "n/a"}  upload ${uploadDesc}`);
     }
 
-    const scanout = s.scanout && typeof s.scanout === "object" ? (s.scanout as any) : null;
+    const scanout = s.scanout && typeof s.scanout === "object" ? (s.scanout as Record<string, unknown>) : null;
     if (scanout) {
       const base = typeof scanout.base_paddr === "string" ? scanout.base_paddr : "n/a";
       const gen = typeof scanout.generation === "number" ? scanout.generation : null;
@@ -257,14 +262,18 @@ export class DebugOverlay {
     }
 
     // Best-effort: show the most recent structured GPU event, if the frame scheduler forwarded it.
-    const gpuEvents = Array.isArray((s as any).gpuEvents) ? ((s as any).gpuEvents as any[]) : [];
+    const gpuEventsRaw = (s as Record<string, unknown>).gpuEvents;
+    const gpuEvents = Array.isArray(gpuEventsRaw) ? gpuEventsRaw : [];
     if (gpuEvents.length > 0) {
-      const last = gpuEvents[gpuEvents.length - 1] as any;
-      const sev = typeof last?.severity === "string" ? (last.severity as string) : "error";
-      const cat = typeof last?.category === "string" ? (last.category as string) : "Unknown";
-      const backend = typeof last?.backend_kind === "string" ? (last.backend_kind as string) : null;
-      const msg = typeof last?.message === "string" ? (last.message as string) : String(last?.message ?? "");
-      lines.push(`Last event: ${sev}/${cat}${backend ? ` (${backend})` : ""}: ${msg}`);
+      const last = gpuEvents[gpuEvents.length - 1];
+      const lastRecord = last && typeof last === "object" ? (last as Record<string, unknown>) : null;
+      if (lastRecord) {
+        const sev = typeof lastRecord.severity === "string" ? lastRecord.severity : "error";
+        const cat = typeof lastRecord.category === "string" ? lastRecord.category : "Unknown";
+        const backend = typeof lastRecord.backend_kind === "string" ? lastRecord.backend_kind : null;
+        const msg = typeof lastRecord.message === "string" ? lastRecord.message : String(lastRecord.message ?? "");
+        lines.push(`Last event: ${sev}/${cat}${backend ? ` (${backend})` : ""}: ${msg}`);
+      }
     }
 
     lines.push(
@@ -311,10 +320,11 @@ export class DebugOverlay {
 }
 
 if (typeof globalThis !== "undefined") {
-  const g = globalThis as any;
-  if (!g.AeroDebugOverlay) {
+  const g = globalThis as unknown as Record<string, unknown>;
+  const existing = g.AeroDebugOverlay;
+  if (!existing || typeof existing !== "object") {
     g.AeroDebugOverlay = { DebugOverlay };
-  } else if (!g.AeroDebugOverlay.DebugOverlay) {
-    g.AeroDebugOverlay.DebugOverlay = DebugOverlay;
+  } else if (!(existing as Record<string, unknown>).DebugOverlay) {
+    (existing as Record<string, unknown>).DebugOverlay = DebugOverlay;
   }
 }

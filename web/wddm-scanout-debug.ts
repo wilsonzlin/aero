@@ -498,7 +498,7 @@ async function main() {
     lose: $("loseContextBtn") as HTMLButtonElement,
     restore: $("restoreContextBtn") as HTMLButtonElement,
   };
-  const isDev = (import.meta as any).env?.DEV === true;
+  const isDev = (import.meta as unknown as { env?: { DEV?: boolean } }).env?.DEV === true;
   debugUi.lose.disabled = true;
   debugUi.restore.disabled = true;
   if (!isDev) {

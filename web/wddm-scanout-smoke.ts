@@ -320,26 +320,31 @@ async function main(): Promise<void> {
     const pendingPresentedScreenshot = new Map<number, { resolve: (msg: any) => void; reject: (err: unknown) => void }>();
 
     worker.addEventListener("message", (event) => {
-      const msg = event.data as any;
-      if (!msg || typeof msg !== "object" || typeof msg.type !== "string") return;
+      const msg = event.data as unknown;
+      if (!msg || typeof msg !== "object") return;
+      const record = msg as Record<string, unknown>;
+      const type = record.type;
+      if (typeof type !== "string") return;
 
-      switch (msg.type) {
+      switch (type) {
         case "ready":
-          backendKind = String(msg.backendKind ?? "unknown");
+          backendKind = String(record.backendKind ?? "unknown");
           readyCount += 1;
           readyResolve();
           break;
         case "screenshot": {
-          const pending = pendingScreenshot.get(msg.requestId);
+          const requestId = typeof record.requestId === "number" ? record.requestId : Number.NaN;
+          const pending = pendingScreenshot.get(requestId);
           if (!pending) break;
-          pendingScreenshot.delete(msg.requestId);
+          pendingScreenshot.delete(requestId);
           pending.resolve(msg);
           break;
         }
         case "screenshot_presented": {
-          const pending = pendingPresentedScreenshot.get(msg.requestId);
+          const requestId = typeof record.requestId === "number" ? record.requestId : Number.NaN;
+          const pending = pendingPresentedScreenshot.get(requestId);
           if (!pending) break;
-          pendingPresentedScreenshot.delete(msg.requestId);
+          pendingPresentedScreenshot.delete(requestId);
           pending.resolve(msg);
           break;
         }
@@ -350,10 +355,10 @@ async function main(): Promise<void> {
           lastStats = msg;
           break;
         case "events":
-          if (Array.isArray(msg.events)) gpuEvents.push(...msg.events);
+          if (Array.isArray(record.events)) gpuEvents.push(...(record.events as unknown[]));
           break;
         case "error":
-          fatalError = String(msg.message ?? "unknown worker error");
+          fatalError = String(record.message ?? "unknown worker error");
           readyResolve();
           break;
       }

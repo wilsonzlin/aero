@@ -25,8 +25,7 @@ export function log(level: LogLevel, event: LogEvent, fields: Record<string, unk
 export function formatError(err: unknown): { message: string; name?: string; code?: unknown } {
   if (err instanceof Error) {
     // `code` is often non-standard (NodeJS.ErrnoException) but extremely useful.
-    return { name: err.name, message: err.message, code: (err as any).code };
+    return { name: err.name, message: err.message, code: (err as { code?: unknown }).code };
   }
   return { message: String(err) };
 }
-

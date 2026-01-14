@@ -323,7 +323,7 @@ async function runTieredVm(iterations: number, threshold: number) {
   const cpu_state_align = readMaybeU32(jitAbi, 'cpu_state_align');
   const cpu_rip_off = readMaybeU32(jitAbi, 'cpu_rip_off');
   const cpu_rflags_off = readMaybeU32(jitAbi, 'cpu_rflags_off');
-  const cpu_gpr_off = (jitAbi as any)?.cpu_gpr_off;
+  const cpu_gpr_off_raw = (jitAbi as { cpu_gpr_off?: unknown } | null | undefined)?.cpu_gpr_off;
   if (
     cpu_state_size === undefined ||
     cpu_state_size === 0 ||
@@ -331,9 +331,15 @@ async function runTieredVm(iterations: number, threshold: number) {
     cpu_state_align === 0 ||
     cpu_rip_off === undefined ||
     cpu_rflags_off === undefined ||
-    !(cpu_gpr_off instanceof Uint32Array) ||
-    cpu_gpr_off.length !== 16
+    !(cpu_gpr_off_raw instanceof Uint32Array) ||
+    cpu_gpr_off_raw.length !== 16
   ) {
+    const cpu_gpr_off_ctor = cpu_gpr_off_raw && typeof cpu_gpr_off_raw === 'object' ? (cpu_gpr_off_raw as { constructor?: unknown }).constructor : null;
+    const cpu_gpr_off_type = typeof cpu_gpr_off_ctor === 'function' ? cpu_gpr_off_ctor.name : typeof cpu_gpr_off_raw;
+    const cpu_gpr_off_len =
+      cpu_gpr_off_raw && typeof cpu_gpr_off_raw === 'object' && typeof (cpu_gpr_off_raw as { length?: unknown }).length === 'number'
+        ? (cpu_gpr_off_raw as { length: number }).length
+        : undefined;
     postToMain({
       type: 'CpuWorkerError',
       reason: `Invalid jit_abi_constants payload from aero-wasm: ${JSON.stringify({
@@ -341,12 +347,13 @@ async function runTieredVm(iterations: number, threshold: number) {
         cpu_state_align,
         cpu_rip_off,
         cpu_rflags_off,
-        cpu_gpr_off_type: cpu_gpr_off?.constructor?.name,
-        cpu_gpr_off_len: cpu_gpr_off?.length,
+        cpu_gpr_off_type,
+        cpu_gpr_off_len,
       })}`,
     });
     return;
   }
+  const cpu_gpr_off = cpu_gpr_off_raw;
 
   if ((cpu_state_align & (cpu_state_align - 1)) !== 0 || cpu_state_size % cpu_state_align !== 0) {
     postToMain({

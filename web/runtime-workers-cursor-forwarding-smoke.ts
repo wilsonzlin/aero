@@ -1,5 +1,6 @@
 import { startFrameScheduler } from "./src/main/frameScheduler";
 import { GPU_PROTOCOL_NAME, GPU_PROTOCOL_VERSION, isGpuWorkerMessageBase } from "./src/ipc/gpu-protocol";
+import type { AeroConfig } from "./src/config/aero_config";
 import { WorkerCoordinator } from "./src/runtime/coordinator";
 import { SHARED_FRAMEBUFFER_HEADER_U32_LEN, SharedFramebufferHeaderIndex } from "./src/ipc/shared-layout";
 
@@ -64,7 +65,7 @@ async function main() {
     proxyUrl: null,
     activeDiskImage: null,
     logLevel: "info",
-  } as const;
+  } satisfies AeroConfig;
 
   const support = coordinator.checkSupport();
   if (!support.ok) {
@@ -73,7 +74,7 @@ async function main() {
   }
 
   try {
-    coordinator.start(config as any);
+    coordinator.start(config);
     coordinator.setBootDisks({}, null, null);
 
     const gpuWorker = coordinator.getWorker("gpu");

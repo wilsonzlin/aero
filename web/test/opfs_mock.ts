@@ -178,8 +178,9 @@ export class MemFileSystemDirectoryHandle {
 export function installOpfsMock(): MemFileSystemDirectoryHandle {
   const root = new MemFileSystemDirectoryHandle("opfs-root");
   // Node.js defines a getter-only `navigator`; add a `storage.getDirectory` method to it.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const nav = globalThis.navigator as any;
+  const nav = globalThis.navigator as unknown as {
+    storage?: { getDirectory?: () => Promise<MemFileSystemDirectoryHandle> };
+  };
   nav.storage = {
     getDirectory: async () => root,
   };

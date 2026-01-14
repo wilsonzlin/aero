@@ -48,9 +48,18 @@ export const run = async (page: Page, baseUrl: string): Promise<MemoryStabilityR
   // failing the entire scenario.
   let telemetryAvailable = false;
   try {
-    await page.waitForFunction(() => (window as any).aero?.perf?.memoryTelemetry?.sampleNow, {
-      timeout: 5_000,
-    });
+    await page.waitForFunction(
+      () => {
+        const aero = (window as unknown as { aero?: unknown }).aero;
+        if (!aero || typeof aero !== 'object') return false;
+        const perf = (aero as { perf?: unknown }).perf;
+        if (!perf || typeof perf !== 'object') return false;
+        const memoryTelemetry = (perf as { memoryTelemetry?: unknown }).memoryTelemetry;
+        if (!memoryTelemetry || typeof memoryTelemetry !== 'object') return false;
+        return typeof (memoryTelemetry as { sampleNow?: unknown }).sampleNow === 'function';
+      },
+      { timeout: 5_000 },
+    );
     telemetryAvailable = true;
   } catch {
     telemetryAvailable = false;

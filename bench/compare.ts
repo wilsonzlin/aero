@@ -120,7 +120,7 @@ function formatConfigSummary(cfg: any): string | null {
 
   const parts: string[] = [];
   for (const key of keys) {
-    const value = (cfg as any)[key];
+    const value = (cfg as Record<string, unknown>)[key];
     parts.push(`config.${key}=${value === undefined ? "unset" : String(value)}`);
   }
   return parts.join(" ");
@@ -207,9 +207,11 @@ function compareConfig(baseline: any, candidate: any): StorageContextCheck {
   ];
 
   const diffs: string[] = [];
+  const baselineRec = baselineCfg as Record<string, unknown>;
+  const candidateRec = candidateCfg as Record<string, unknown>;
   for (const key of keys) {
-    const a = (baselineCfg as any)[key];
-    const b = (candidateCfg as any)[key];
+    const a = baselineRec[key];
+    const b = candidateRec[key];
     if (a !== b) diffs.push(`config.${key}: ${a === undefined ? "unset" : a} -> ${b === undefined ? "unset" : b}`);
   }
 
@@ -326,7 +328,7 @@ export function buildStorageCompareResult(params: {
   const cases: any[] = [];
 
   for (const [metricName, threshold] of Object.entries(params.suiteThresholds.metrics ?? {})) {
-    const better = (threshold as any)?.better;
+    const better = (threshold as { better?: unknown } | null | undefined)?.better;
     if (better !== "lower" && better !== "higher") {
       throw new Error(`thresholds: storage.metrics.${metricName}.better must be "lower" or "higher"`);
     }
@@ -368,7 +370,7 @@ export function buildStorageCompareResult(params: {
       continue;
     }
 
-    const adjustedThreshold = { ...(threshold as any) };
+    const adjustedThreshold = { ...(threshold as Record<string, unknown>) };
     if (params.overrideMaxRegressionPct != null) adjustedThreshold.maxRegressionPct = params.overrideMaxRegressionPct;
     if (params.overrideExtremeCv != null) adjustedThreshold.extremeCvThreshold = params.overrideExtremeCv;
 

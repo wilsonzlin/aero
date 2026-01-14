@@ -155,44 +155,63 @@ async function main() {
   >();
   let nextRequestId = 1;
 
-  let readyPayload: any = null;
+  let readyPayload: Record<string, unknown> | null = null;
   let latestTelemetry: GpuTelemetrySnapshot | null = null;
 
   const ready = new Promise<void>((resolve, reject) => {
     const onMessage = (event: MessageEvent) => {
-      const msg = event.data as any;
+      const msg = event.data as unknown;
       if (!msg || typeof msg !== "object") return;
-      if (msg.protocol !== GPU_PROTOCOL_NAME || msg.protocolVersion !== GPU_PROTOCOL_VERSION) return;
-      if (msg.type === "ready") {
-        readyPayload = msg;
+      const typed = msg as { protocol?: unknown; protocolVersion?: unknown; type?: unknown; message?: unknown };
+      if (typed.protocol !== GPU_PROTOCOL_NAME || typed.protocolVersion !== GPU_PROTOCOL_VERSION) return;
+      if (typed.type === "ready") {
+        readyPayload = msg as Record<string, unknown>;
         gpu.removeEventListener("message", onMessage);
         resolve();
-      } else if (msg.type === "error") {
+      } else if (typed.type === "error") {
         gpu.removeEventListener("message", onMessage);
-        reject(new Error(String(msg.message ?? "unknown error")));
+        reject(new Error(String(typed.message ?? "unknown error")));
       }
     };
     gpu.addEventListener("message", onMessage);
   });
 
   gpu.addEventListener("message", (event: MessageEvent) => {
-    const msg = event.data as any;
+    const msg = event.data as unknown;
     if (!msg || typeof msg !== "object") return;
-    if (msg.protocol !== GPU_PROTOCOL_NAME || msg.protocolVersion !== GPU_PROTOCOL_VERSION) return;
-    if (msg.type === "error") {
-      renderError(String(msg.message ?? "gpu worker error"));
+    const typed = msg as {
+      protocol?: unknown;
+      protocolVersion?: unknown;
+      type?: unknown;
+      message?: unknown;
+      requestId?: unknown;
+      width?: unknown;
+      height?: unknown;
+      rgba8?: unknown;
+      frameSeq?: unknown;
+      telemetry?: unknown;
+    };
+    if (typed.protocol !== GPU_PROTOCOL_NAME || typed.protocolVersion !== GPU_PROTOCOL_VERSION) return;
+    if (typed.type === "error") {
+      renderError(String(typed.message ?? "gpu worker error"));
       return;
     }
-    if (msg.type === "screenshot") {
-      const pending = pendingScreenshots.get(msg.requestId);
+    if (typed.type === "screenshot") {
+      if (typeof typed.requestId !== "number") return;
+      const pending = pendingScreenshots.get(typed.requestId);
       if (!pending) return;
-      pendingScreenshots.delete(msg.requestId);
-      pending.resolve({ width: msg.width, height: msg.height, rgba8: msg.rgba8, frameSeq: msg.frameSeq });
+      pendingScreenshots.delete(typed.requestId);
+      pending.resolve({
+        width: typeof typed.width === "number" ? typed.width : 0,
+        height: typeof typed.height === "number" ? typed.height : 0,
+        rgba8: typed.rgba8 instanceof ArrayBuffer ? typed.rgba8 : new ArrayBuffer(0),
+        frameSeq: typeof typed.frameSeq === "number" ? typed.frameSeq : 0,
+      });
       return;
     }
-    if (msg.type === "metrics") {
-      if (msg.telemetry && typeof msg.telemetry === "object") {
-        latestTelemetry = msg.telemetry as GpuTelemetrySnapshot;
+    if (typed.type === "metrics") {
+      if (typed.telemetry && typeof typed.telemetry === "object") {
+        latestTelemetry = typed.telemetry as GpuTelemetrySnapshot;
       }
     }
   });
@@ -248,7 +267,7 @@ async function main() {
     const deadline = performance.now() + 2_000;
     while (performance.now() < deadline) {
       const telem = latestTelemetry;
-      const count = (telem as any)?.textureUpload?.bytesPerFrame?.stats?.count;
+      const count = telem?.textureUpload.bytesPerFrame.stats.count;
       if (typeof count === "number" && count > 0) {
         return telem!;
       }
@@ -289,7 +308,7 @@ async function main() {
 
     const fullUploadEstimate = width * height * 4;
     const telemetry = await waitForTelemetryFrame();
-    const uploadBytesMax = (telemetry as any)?.textureUpload?.bytesPerFrame?.stats?.max;
+    const uploadBytesMax = telemetry?.textureUpload.bytesPerFrame.stats.max;
     if (typeof uploadBytesMax !== "number") {
       throw new Error("GPU telemetry missing textureUpload.bytesPerFrame.stats.max");
     }

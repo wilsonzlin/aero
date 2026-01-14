@@ -66,7 +66,9 @@ export const storageIoScenario: Scenario = {
       });
 
       const perfExport = await page.evaluate(() => window.aero.perf.export());
-      const exportedStorage = (perfExport as any)?.benchmarks?.storage;
+      const perfRecord = perfExport && typeof perfExport === "object" ? (perfExport as Record<string, unknown>) : null;
+      const benchmarks = perfRecord && typeof perfRecord.benchmarks === "object" ? (perfRecord.benchmarks as Record<string, unknown>) : null;
+      const exportedStorage = benchmarks ? benchmarks.storage : null;
       if (!exportedStorage) {
         throw new Error("Expected window.aero.perf.export() to include benchmarks.storage after storage bench run");
       }
