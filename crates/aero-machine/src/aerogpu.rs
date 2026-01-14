@@ -1413,6 +1413,13 @@ impl AeroGpuMmioDevice {
 
             x if x == pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE as u64 => {
                 let new_enable = value != 0;
+                // `wddm_scanout_active` is a sticky host-side latch used to prevent legacy VGA/VBE
+                // scanout from stealing ownership once the guest has successfully programmed a WDDM
+                // scanout. An explicit disable (`SCANOUT0_ENABLE=0`) must release that latch so the
+                // machine can fall back to legacy scanout paths.
+                if !new_enable {
+                    self.wddm_scanout_active = false;
+                }
                 if self.scanout0_enable && !new_enable {
                     self.next_vblank_ns = None;
                     self.irq_status &= !pci::AEROGPU_IRQ_SCANOUT_VBLANK;
