@@ -1195,7 +1195,8 @@ async fn verify_chunk_once(
         })
         .with_context(|| format!("GET s3://{bucket}/{key}"))?;
 
-    if let Some(content_length) = resp.content_length() {
+    let content_length = resp.content_length();
+    if let Some(content_length) = content_length {
         let len_u64: u64 = content_length.try_into().map_err(|_| {
             anyhow!("invalid Content-Length {content_length} for s3://{bucket}/{key}")
         })?;
@@ -1204,6 +1205,12 @@ async fn verify_chunk_once(
                 "size mismatch: expected {expected_size} bytes, got {len_u64} bytes (Content-Length)"
             );
         }
+    }
+
+    // If we don't have a checksum to verify, `Content-Length` already validated the size. Avoid
+    // streaming the entire object body unnecessarily.
+    if expected_sha256.is_none() && content_length.is_some() {
+        return Ok(());
     }
 
     let mut reader = resp.body.into_async_read();
