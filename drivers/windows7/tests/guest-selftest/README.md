@@ -161,10 +161,10 @@ The host harness parses these markers from COM1 serial:
 
 ```
  AERO_VIRTIO_SELFTEST|START|...
- # virtio-blk includes interrupt diagnostics (from the miniport IOCTL query) as key/value fields so the
- # host harness can mirror them into a host-side marker (VIRTIO_BLK_IRQ). Older guests may emit just
- # `AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS` with no extra fields.
- AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS|irq_mode=msix|msix_config_vector=0x0000|msix_queue_vector=0x0001
+ # virtio-blk includes interrupt diagnostics (from the miniport IOCTL query) and I/O throughput metrics
+ # as key/value fields so the host harness can mirror them into host-side markers (VIRTIO_BLK_IRQ / VIRTIO_BLK_IO).
+ # Older guests may emit just `AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS` with no extra fields.
+ AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS|irq_mode=msix|msix_config_vector=0x0000|msix_queue_vector=0x0001|write_ok=1|write_bytes=33554432|write_mbps=123.45|flush_ok=1|read_ok=1|read_bytes=33554432|read_mbps=234.56
  AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS|...
  AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|SKIP|flag_not_set
  AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|SKIP|flag_not_set
@@ -257,6 +257,10 @@ Notes:
 - The virtio-net section also emits an optional ctrl virtqueue diagnostic line (not parsed by the harness):
   - `virtio-net-ctrl-vq|INFO|...`
   - This is best-effort and may emit `...|diag_unavailable` if the in-guest driver did not expose the registry-backed diagnostics.
+- The `virtio-blk` marker includes basic file I/O diagnostics:
+  - `write_ok`, `write_bytes`, `write_mbps`
+  - `flush_ok`
+  - `read_ok`, `read_bytes`, `read_mbps`
 - The duplex marker (`virtio-snd-duplex`) is emitted whenever the virtio-snd section runs:
   - `SKIP|flag_not_set` when virtio-snd is skipped (and capture smoke testing is not forced).
   - `PASS|frames=...|non_silence=...` when the duplex test runs successfully.

@@ -2406,15 +2406,34 @@ static bool VirtioBlkReportLuns(Logger& log, HANDLE hPhysicalDrive) {
   return true;
 }
 
-static bool VirtioBlkTest(Logger& log, const Options& opt,
-                          std::optional<AerovblkQueryInfoResult>* miniport_info_out = nullptr,
-                          DEVINST* devinst_out = nullptr) {
+struct VirtioBlkTestResult {
+  bool ok = false;
+
+  bool write_ok = false;
+  uint64_t write_bytes = 0;
+  double write_mbps = 0.0;
+
+  bool flush_ok = false;
+
+  // Read path includes both readback verification and a separate sequential read pass.
+  bool read_ok = false;
+  uint64_t read_bytes = 0;
+  double read_mbps = 0.0;
+
+  // Best-effort internal diagnostics; not currently emitted in the public marker.
+  bool verify_ok = false;
+};
+
+static VirtioBlkTestResult VirtioBlkTest(Logger& log, const Options& opt,
+                                         std::optional<AerovblkQueryInfoResult>* miniport_info_out = nullptr,
+                                         DEVINST* devinst_out = nullptr) {
+  VirtioBlkTestResult out{};
   if (miniport_info_out) miniport_info_out->reset();
   if (devinst_out) *devinst_out = 0;
   const auto disks = DetectVirtioDiskNumbers(log);
   if (disks.empty()) {
     log.LogLine("virtio-blk: no virtio disk devices detected");
-    return false;
+    return out;
   }
 
   std::wstring base_dir;
@@ -2440,14 +2459,14 @@ static bool VirtioBlkTest(Logger& log, const Options& opt,
     log.Logf("virtio-blk: unable to determine drive letter for test dir: %s",
              WideToUtf8(base_dir).c_str());
     log.LogLine("virtio-blk: specify --blk-root (e.g. D:\\aero-test\\) on a virtio volume");
-    return false;
+    return out;
   }
 
   const auto base_disk = DiskNumberForDriveLetter(*base_drive);
   if (!base_disk.has_value()) {
     log.Logf("virtio-blk: unable to query disk number for %lc:", *base_drive);
     log.LogLine("virtio-blk: specify --blk-root (e.g. D:\\aero-test\\) on a virtio volume");
-    return false;
+    return out;
   }
 
   if (devinst_out) {
@@ -2457,7 +2476,7 @@ static bool VirtioBlkTest(Logger& log, const Options& opt,
   if (disks.count(*base_disk) == 0 && !DriveLetterLooksLikeVirtio(log, *base_drive)) {
     log.Logf("virtio-blk: test dir is on disk %lu (not detected as virtio)", *base_disk);
     log.LogLine("virtio-blk: ensure a virtio disk is formatted/mounted with a drive letter, or pass --blk-root");
-    return false;
+    return out;
   }
 
   // Exercise aero_virtio_blk.sys miniport IOCTL_SCSI_MINIPORT query contract via \\.\PhysicalDrive<N>.
@@ -2465,7 +2484,7 @@ static bool VirtioBlkTest(Logger& log, const Options& opt,
     HANDLE pd = OpenPhysicalDriveForIoctl(log, *base_disk);
     if (pd == INVALID_HANDLE_VALUE) {
       log.LogLine("virtio-blk: miniport query FAIL (unable to open PhysicalDrive)");
-      return false;
+      return out;
     }
 
     const auto info = QueryAerovblkMiniportInfo(log, pd);
@@ -2508,18 +2527,18 @@ static bool VirtioBlkTest(Logger& log, const Options& opt,
       if (!ForceAerovblkMiniportReset(log, pd, &did_reset)) {
         log.LogLine("virtio-blk: miniport force reset FAIL");
         CloseHandle(pd);
-        return false;
+        return out;
       }
       if (did_reset) {
         const auto info2 = QueryAerovblkMiniportInfo(log, pd);
         if (!info2.has_value()) {
           log.LogLine("virtio-blk: miniport query after reset FAIL");
           CloseHandle(pd);
-          return false;
+          return out;
         }
         if (!ValidateAerovblkMiniportInfo(log, *info2)) {
           CloseHandle(pd);
-          return false;
+          return out;
         }
         constexpr size_t kCountersEnd = offsetof(AEROVBLK_QUERY_INFO, IoctlResetCount) + sizeof(ULONG);
         if (info->returned_len >= kCountersEnd && info2->returned_len >= kCountersEnd) {
@@ -2528,7 +2547,7 @@ static bool VirtioBlkTest(Logger& log, const Options& opt,
                      static_cast<unsigned long>(info->info.IoctlResetCount),
                      static_cast<unsigned long>(info2->info.IoctlResetCount));
             CloseHandle(pd);
-            return false;
+            return out;
           }
         } else {
           log.Logf("virtio-blk: miniport reset counter SKIP (counters not reported; before_len=%zu after_len=%zu)",
@@ -2548,8 +2567,8 @@ static bool VirtioBlkTest(Logger& log, const Options& opt,
     const bool report_luns_ok = VirtioBlkReportLuns(log, pd);
     CloseHandle(pd);
 
-    if (!query_ok) return false;
-    if (!report_luns_ok) return false;
+    if (!query_ok) return out;
+    if (!report_luns_ok) return out;
   }
 
   const std::wstring test_file = JoinPath(base_dir, L"virtio-blk-test.bin");
@@ -2561,12 +2580,27 @@ static bool VirtioBlkTest(Logger& log, const Options& opt,
 
   std::vector<uint8_t> buf(chunk_bytes);
 
-  HANDLE h = CreateFileW(test_file.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
-                         FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
+  HANDLE h = INVALID_HANDLE_VALUE;
+  bool file_created = false;
+
+  auto cleanup = [&]() {
+    if (h != INVALID_HANDLE_VALUE) {
+      CloseHandle(h);
+      h = INVALID_HANDLE_VALUE;
+    }
+    if (file_created) {
+      DeleteFileW(test_file.c_str());
+      file_created = false;
+    }
+  };
+
+  h = CreateFileW(test_file.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
+                  FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
   if (h == INVALID_HANDLE_VALUE) {
     log.Logf("virtio-blk: CreateFile failed: %lu", GetLastError());
-    return false;
+    return out;
   }
+  file_created = true;
 
   // Sequential write.
   {
@@ -2583,32 +2617,36 @@ static bool VirtioBlkTest(Logger& log, const Options& opt,
       if (!WriteFile(h, buf.data(), to_write, &written, nullptr) || written != to_write) {
         log.Logf("virtio-blk: WriteFile failed at offset=%llu err=%lu", written_total,
                  GetLastError());
-        CloseHandle(h);
-        DeleteFileW(test_file.c_str());
-        return false;
+        out.write_ok = false;
+        out.write_bytes = written_total;
+        cleanup();
+        return out;
       }
       written_total += written;
     }
     const double sec = std::max(0.000001, t.SecondsSinceStart());
+    out.write_ok = true;
+    out.write_bytes = written_total;
+    out.write_mbps = (written_total / (1024.0 * 1024.0)) / sec;
     log.Logf("virtio-blk: write ok bytes=%llu mbps=%.2f", written_total,
-             (written_total / (1024.0 * 1024.0)) / sec);
+             out.write_mbps);
   }
 
   if (!FlushFileBuffers(h)) {
     log.Logf("virtio-blk: FlushFileBuffers failed: %lu", GetLastError());
-    CloseHandle(h);
-    DeleteFileW(test_file.c_str());
-    return false;
+    out.flush_ok = false;
+    cleanup();
+    return out;
   }
+  out.flush_ok = true;
   log.LogLine("virtio-blk: flush ok");
 
   // Readback verify.
   if (SetFilePointer(h, 0, nullptr, FILE_BEGIN) == INVALID_SET_FILE_POINTER &&
       GetLastError() != NO_ERROR) {
     log.Logf("virtio-blk: SetFilePointer failed: %lu", GetLastError());
-    CloseHandle(h);
-    DeleteFileW(test_file.c_str());
-    return false;
+    cleanup();
+    return out;
   }
 
   {
@@ -2619,34 +2657,36 @@ static bool VirtioBlkTest(Logger& log, const Options& opt,
       DWORD read = 0;
       if (!ReadFile(h, buf.data(), to_read, &read, nullptr) || read != to_read) {
         log.Logf("virtio-blk: ReadFile failed at offset=%llu err=%lu", read_total, GetLastError());
-        CloseHandle(h);
-        DeleteFileW(test_file.c_str());
-        return false;
+        out.verify_ok = false;
+        cleanup();
+        return out;
       }
       for (uint32_t i = 0; i < to_read; i++) {
         const uint8_t expected = static_cast<uint8_t>((read_total + i) & 0xFF);
         if (buf[i] != expected) {
           log.Logf("virtio-blk: data mismatch at offset=%llu expected=0x%02x got=0x%02x",
                    (read_total + i), expected, buf[i]);
-          CloseHandle(h);
-          DeleteFileW(test_file.c_str());
-          return false;
+          out.verify_ok = false;
+          cleanup();
+          return out;
         }
       }
       read_total += read;
     }
+    out.verify_ok = true;
     log.Logf("virtio-blk: readback verify ok bytes=%llu", read_total);
   }
 
   CloseHandle(h);
+  h = INVALID_HANDLE_VALUE;
 
   // Separate sequential read pass (reopen file).
   h = CreateFileW(test_file.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
                   FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
   if (h == INVALID_HANDLE_VALUE) {
     log.Logf("virtio-blk: reopen for read failed: %lu", GetLastError());
-    DeleteFileW(test_file.c_str());
-    return false;
+    cleanup();
+    return out;
   }
 
   {
@@ -2656,21 +2696,25 @@ static bool VirtioBlkTest(Logger& log, const Options& opt,
       DWORD read = 0;
       if (!ReadFile(h, buf.data(), chunk_bytes, &read, nullptr)) {
         log.Logf("virtio-blk: sequential ReadFile failed err=%lu", GetLastError());
-        CloseHandle(h);
-        DeleteFileW(test_file.c_str());
-        return false;
+        out.read_ok = false;
+        cleanup();
+        return out;
       }
       if (read == 0) break;
       read_total += read;
     }
     const double sec = std::max(0.000001, t.SecondsSinceStart());
+    out.read_ok = true;
+    out.read_bytes = read_total;
+    out.read_mbps = (read_total / (1024.0 * 1024.0)) / sec;
     log.Logf("virtio-blk: sequential read ok bytes=%llu mbps=%.2f", read_total,
-             (read_total / (1024.0 * 1024.0)) / sec);
+             out.read_mbps);
   }
 
-  CloseHandle(h);
-  DeleteFileW(test_file.c_str());
-  return true;
+  cleanup();
+  out.read_ok = out.read_ok && out.verify_ok;
+  out.ok = out.write_ok && out.flush_ok && out.read_ok;
+  return out;
 }
 
 static std::optional<uint64_t> QueryAerovblkCapacityChangeEvents(Logger& log, HANDLE hPhysicalDrive) {
@@ -7977,7 +8021,9 @@ int wmain(int argc, wchar_t** argv) {
 
   std::optional<AerovblkQueryInfoResult> blk_miniport_info;
   DEVINST blk_devinst = 0;
-  const bool blk_ok = VirtioBlkTest(log, opt, &blk_miniport_info, &blk_devinst);
+  const auto blk = VirtioBlkTest(log, opt, &blk_miniport_info, &blk_devinst);
+
+  std::string marker = std::string("AERO_VIRTIO_SELFTEST|TEST|virtio-blk|") + (blk.ok ? "PASS" : "FAIL");
   if (blk_miniport_info.has_value()) {
     // Only include interrupt diagnostics if the miniport returned the extended fields.
     constexpr size_t kIrqModeEnd = offsetof(AEROVBLK_QUERY_INFO, InterruptMode) + sizeof(ULONG);
@@ -7986,7 +8032,6 @@ int wmain(int argc, wchar_t** argv) {
     constexpr size_t kMsgCountEnd = offsetof(AEROVBLK_QUERY_INFO, MessageCount) + sizeof(ULONG);
 
     if (blk_miniport_info->returned_len >= kIrqModeEnd) {
-      std::string marker = std::string("AERO_VIRTIO_SELFTEST|TEST|virtio-blk|") + (blk_ok ? "PASS" : "FAIL");
       marker += "|irq_mode=";
       marker += AerovblkIrqModeForMarker(blk_miniport_info->info);
 
@@ -8003,11 +8048,8 @@ int wmain(int argc, wchar_t** argv) {
         marker += "|msix_queue_vector=";
         marker += vec;
       }
-
-      log.LogLine(marker);
-    } else {
-      log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-blk|%s", blk_ok ? "PASS" : "FAIL");
     }
+
 
     /*
      * Dedicated marker for MSI/MSI-X diagnostics (used by the host harness).
@@ -8025,19 +8067,38 @@ int wmain(int argc, wchar_t** argv) {
       }
       log.Logf(
           "AERO_VIRTIO_SELFTEST|TEST|virtio-blk-msix|PASS|mode=%s|messages=%lu|config_vector=%u|queue_vector=%u",
-          mode,
-          static_cast<unsigned long>(info.MessageCount),
-          static_cast<unsigned>(info.MsixConfigVector),
+          mode, static_cast<unsigned long>(info.MessageCount), static_cast<unsigned>(info.MsixConfigVector),
           static_cast<unsigned>(info.MsixQueue0Vector));
     } else {
       log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-blk-msix|SKIP|reason=ioctl_payload_v1_or_truncated|returned_len=%zu",
                blk_miniport_info->returned_len);
     }
   } else {
-    log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-blk|%s", blk_ok ? "PASS" : "FAIL");
     log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-blk-msix|SKIP|reason=no_miniport_info");
   }
-  all_ok = all_ok && blk_ok;
+
+  // Always include perf fields (stable ordering) so the host harness can surface throughput regressions.
+  char write_mbps[32];
+  char read_mbps[32];
+  snprintf(write_mbps, sizeof(write_mbps), "%.2f", blk.write_mbps);
+  snprintf(read_mbps, sizeof(read_mbps), "%.2f", blk.read_mbps);
+  marker += "|write_ok=";
+  marker += std::to_string(blk.write_ok ? 1 : 0);
+  marker += "|write_bytes=";
+  marker += std::to_string(static_cast<unsigned long long>(blk.write_bytes));
+  marker += "|write_mbps=";
+  marker += write_mbps;
+  marker += "|flush_ok=";
+  marker += std::to_string(blk.flush_ok ? 1 : 0);
+  marker += "|read_ok=";
+  marker += std::to_string(blk.read_ok ? 1 : 0);
+  marker += "|read_bytes=";
+  marker += std::to_string(static_cast<unsigned long long>(blk.read_bytes));
+  marker += "|read_mbps=";
+  marker += read_mbps;
+  log.LogLine(marker);
+
+  all_ok = all_ok && blk.ok;
 
   if (blk_devinst != 0) {
     EmitVirtioIrqMarkerForDevInst(log, "virtio-blk", blk_devinst);

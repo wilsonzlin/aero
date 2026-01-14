@@ -3347,6 +3347,7 @@ def main() -> int:
                     pass
 
         _emit_virtio_blk_irq_host_marker(tail, blk_test_line=virtio_blk_marker_line, irq_diag_markers=irq_diag_markers)
+        _emit_virtio_blk_io_host_marker(tail, blk_test_line=virtio_blk_marker_line)
         _emit_virtio_net_large_host_marker(tail)
         _emit_virtio_net_irq_host_marker(tail)
         _emit_virtio_snd_irq_host_marker(tail)
@@ -4299,6 +4300,43 @@ def _emit_virtio_snd_buffer_limits_host_marker(tail: bytes) -> None:
     fields = _parse_marker_kv_fields(marker_line)
     parts = [f"AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_BUFFER_LIMITS|{status}"]
     for k in ("mode", "expected_failure", "buffer_bytes", "init_hr", "hr", "reason"):
+        if k in fields:
+            parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
+    print("|".join(parts))
+
+
+def _emit_virtio_blk_io_host_marker(tail: bytes, *, blk_test_line: Optional[str] = None) -> None:
+    """
+    Best-effort: emit a host-side marker describing the guest's virtio-blk file I/O throughput.
+
+    This does not affect harness PASS/FAIL; it's only for log scraping/diagnostics.
+    """
+    if blk_test_line is None:
+        blk_test_line = _try_extract_last_marker_line(tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|")
+    if blk_test_line is None:
+        return
+
+    fields = _parse_marker_kv_fields(blk_test_line)
+    # Backward compatible: older guest selftests will not include the I/O perf fields. Emit nothing
+    # unless we see at least one throughput/byte count key.
+    if (
+        "write_bytes" not in fields
+        and "write_mbps" not in fields
+        and "read_bytes" not in fields
+        and "read_mbps" not in fields
+    ):
+        return
+
+    status = _try_extract_marker_status(blk_test_line) or "INFO"
+    # Fall back to per-phase ok flags when the marker does not include a PASS/FAIL token.
+    if status not in ("PASS", "FAIL"):
+        if fields.get("write_ok") == "0" or fields.get("flush_ok") == "0" or fields.get("read_ok") == "0":
+            status = "FAIL"
+        elif fields.get("write_ok") == "1" and fields.get("flush_ok") == "1" and fields.get("read_ok") == "1":
+            status = "PASS"
+
+    parts = [f"AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_IO|{status}"]
+    for k in ("write_ok", "write_bytes", "write_mbps", "flush_ok", "read_ok", "read_bytes", "read_mbps"):
         if k in fields:
             parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
     print("|".join(parts))
