@@ -3,6 +3,13 @@
 version = 4
 
 [[package]]
+name = "aero-acpi"
+version = "0.1.0"
+dependencies = [
+ "aero-pci-routing",
+]
+
+[[package]]
 name = "aero-audio"
 version = "0.1.0"
 dependencies = [
@@ -118,6 +125,10 @@ dependencies = [
 
 [[package]]
 name = "aero-dxbc"
+version = "0.1.0"
+
+[[package]]
+name = "aero-edid"
 version = "0.1.0"
 
 [[package]]
@@ -688,6 +699,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f449e6c6c08c865631d4890cfacf252b3d396c9bcc83adb6623cdb02a8336c41"
 
 [[package]]
+name = "firmware"
+version = "0.1.0"
+dependencies = [
+ "aero-acpi",
+ "aero-cpu-core",
+ "aero-edid",
+ "aero-pc-constants",
+ "aero-pci-routing",
+ "font8x8",
+ "memory",
+]
+
+[[package]]
 name = "fnv"
 version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -704,6 +728,12 @@ name = "foldhash"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
+
+[[package]]
+name = "font8x8"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "875488b8711a968268c7cf5d139578713097ca4635a76044e8fe8eedf831d07e"
 
 [[package]]
 name = "foreign-types"
@@ -1371,6 +1401,7 @@ dependencies = [
  "aero-virtio",
  "arbitrary",
  "base64 0.22.1",
+ "firmware",
  "libfuzzer-sys",
  "memory",
  "sha2",
@@ -2811,6 +2842,6 @@ dependencies = [
 
 [[package]]
 name = "zmij"
-version = "1.0.13"
+version = "1.0.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ac93432f5b761b22864c774aac244fa5c0fd877678a4c37ebf6cf42208f9c9ec"
+checksum = "bd8f3f50b848df28f887acb68e41201b5aea6bc8a8dacc00fb40635ff9a72fea"
