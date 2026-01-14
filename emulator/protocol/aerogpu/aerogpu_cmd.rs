@@ -185,6 +185,17 @@ impl AerogpuShaderStage {
 /// - 5 = Compute
 ///
 /// It intentionally does **not** match `AerogpuShaderStage` (legacy AeroGPU stage enum).
+///
+/// ## ABI note (`stage_ex` in binding packets)
+///
+/// Some binding packets overload a trailing `reserved0` field to carry `stage_ex` (e.g.
+/// `SET_TEXTURE`, `SET_SAMPLERS`, `SET_CONSTANT_BUFFERS`, `SET_SHADER_RESOURCE_BUFFERS`,
+/// `SET_UNORDERED_ACCESS_BUFFERS`, `SET_SHADER_CONSTANTS_F`).
+///
+/// In those packets, `stage_ex == 0` is treated as the legacy/default "no stage_ex" value because
+/// old guests always write `0` into reserved fields. As a result, the DXBC program-type value
+/// `0 = Pixel` is not carried through the overloaded `reserved0` field; VS/PS continue to bind via
+/// the legacy `shader_stage` field with `stage_ex = 0`.
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AerogpuShaderStageEx {
@@ -226,19 +237,31 @@ impl AerogpuShaderStageEx {
 /// The "stage_ex" ABI extension overloads the `reserved0` field of certain binding commands
 /// (e.g. `SET_TEXTURE`, `SET_SAMPLERS`, `SET_CONSTANT_BUFFERS`) to carry an extended shader stage.
 /// The overload is only active when the legacy `shader_stage` field equals
-/// `AEROGPU_SHADER_STAGE_COMPUTE`.
+/// `AEROGPU_SHADER_STAGE_COMPUTE`, and only when `reserved0 != 0` (because older guests always
+/// write 0 to reserved fields).
 pub fn decode_stage_ex(shader_stage: u32, reserved0: u32) -> Option<AerogpuShaderStageEx> {
-    if shader_stage == AerogpuShaderStage::Compute as u32 {
-        AerogpuShaderStageEx::from_u32(reserved0)
-    } else {
-        None
+    if shader_stage != AerogpuShaderStage::Compute as u32 {
+        return None;
     }
+    // `reserved0 == 0` is reserved for legacy/default "no stage_ex" (old guests always write 0).
+    if reserved0 == 0 {
+        return None;
+    }
+    AerogpuShaderStageEx::from_u32(reserved0)
 }
 
 /// Encode the extended shader stage ("stage_ex") into `(shader_stage, reserved0)`.
 ///
 /// The returned `shader_stage` is always `AEROGPU_SHADER_STAGE_COMPUTE`.
+///
+/// Note: `stage_ex == 0` (DXBC Pixel program-type) cannot be encoded into `reserved0`, because
+/// `reserved0 == 0` is treated as the legacy/default "no stage_ex" value for backwards
+/// compatibility.
 pub fn encode_stage_ex(stage_ex: AerogpuShaderStageEx) -> (u32, u32) {
+    assert!(
+        stage_ex != AerogpuShaderStageEx::Pixel,
+        "encode_stage_ex: stage_ex=0 (Pixel) cannot be encoded into reserved0; use the legacy shader_stage field"
+    );
     (AerogpuShaderStage::Compute as u32, stage_ex as u32)
 }
 
@@ -518,6 +541,9 @@ pub struct AerogpuCmdSetShaderConstantsF {
     pub stage: u32,
     pub start_register: u32,
     pub vec4_count: u32,
+    /// `stage_ex` ABI extension tag.
+    ///
+    /// See [`AerogpuShaderStageEx`] for encoding rules.
     pub reserved0: u32,
 }
 
@@ -845,6 +871,9 @@ pub struct AerogpuCmdSetTexture {
     pub shader_stage: u32,
     pub slot: u32,
     pub texture: AerogpuHandle,
+    /// `stage_ex` ABI extension tag.
+    ///
+    /// See [`AerogpuShaderStageEx`] for encoding rules.
     pub reserved0: u32,
 }
 
@@ -912,6 +941,9 @@ pub struct AerogpuCmdSetSamplers {
     pub shader_stage: u32,
     pub start_slot: u32,
     pub sampler_count: u32,
+    /// `stage_ex` ABI extension tag.
+    ///
+    /// See [`AerogpuShaderStageEx`] for encoding rules.
     pub reserved0: u32,
 }
 
@@ -939,6 +971,9 @@ pub struct AerogpuCmdSetConstantBuffers {
     pub shader_stage: u32,
     pub start_slot: u32,
     pub buffer_count: u32,
+    /// `stage_ex` ABI extension tag.
+    ///
+    /// See [`AerogpuShaderStageEx`] for encoding rules.
     pub reserved0: u32,
 }
 
@@ -966,6 +1001,9 @@ pub struct AerogpuCmdSetShaderResourceBuffers {
     pub shader_stage: u32,
     pub start_slot: u32,
     pub buffer_count: u32,
+    /// `stage_ex` ABI extension tag.
+    ///
+    /// See [`AerogpuShaderStageEx`] for encoding rules.
     pub reserved0: u32,
 }
 
@@ -993,6 +1031,9 @@ pub struct AerogpuCmdSetUnorderedAccessBuffers {
     pub shader_stage: u32,
     pub start_slot: u32,
     pub uav_count: u32,
+    /// `stage_ex` ABI extension tag.
+    ///
+    /// See [`AerogpuShaderStageEx`] for encoding rules.
     pub reserved0: u32,
 }
 

@@ -173,6 +173,24 @@ enum aerogpu_shader_stage {
  *
  * Note: this intentionally does **not** match `enum aerogpu_shader_stage` (legacy AeroGPU stage
  * enum).
+ *
+ * ABI note (binding packets using `stage_ex`):
+ * Some resource-binding packets (SET_TEXTURE / SET_SAMPLERS / SET_CONSTANT_BUFFERS /
+ * SET_SHADER_RESOURCE_BUFFERS / SET_UNORDERED_ACCESS_BUFFERS / SET_SHADER_CONSTANTS_F) overload a
+ * trailing `reserved0` field to carry `stage_ex`.
+ *
+ * For backwards compatibility with older guests, `stage_ex == 0` in those packets is treated as
+ * the legacy/default "no stage_ex" value (because old guests always write 0 into reserved fields).
+ * As a result, the DXBC program-type value `0 = Pixel` is not carried through the overloaded
+ * `reserved0` field; VS/PS continue to bind via the legacy `shader_stage` field with `stage_ex = 0`.
+ *
+ * Encoding rule (binding packets):
+ * - VS: shader_stage = VERTEX,  stage_ex = 0
+ * - PS: shader_stage = PIXEL,   stage_ex = 0
+ * - CS: shader_stage = COMPUTE, stage_ex = 0
+ * - GS: shader_stage = COMPUTE, stage_ex = GEOMETRY (2)
+ * - HS: shader_stage = COMPUTE, stage_ex = HULL     (3)
+ * - DS: shader_stage = COMPUTE, stage_ex = DOMAIN   (4)
  */
 enum aerogpu_shader_stage_ex {
   AEROGPU_SHADER_STAGE_EX_PIXEL = 0,
@@ -539,7 +557,7 @@ struct aerogpu_cmd_set_shader_constants_f {
   uint32_t stage; /* enum aerogpu_shader_stage */
   uint32_t start_register;
   uint32_t vec4_count;
-  uint32_t reserved0;
+  uint32_t reserved0; /* stage_ex: enum aerogpu_shader_stage_ex (0 = legacy/default; see aerogpu_shader_stage_ex docs) */
 };
 #pragma pack(pop)
 
@@ -857,7 +875,7 @@ struct aerogpu_cmd_set_texture {
   uint32_t shader_stage; /* enum aerogpu_shader_stage */
   uint32_t slot;
   aerogpu_handle_t texture; /* 0 = unbind */
-  uint32_t reserved0;
+  uint32_t reserved0; /* stage_ex: enum aerogpu_shader_stage_ex (0 = legacy/default; see aerogpu_shader_stage_ex docs) */
 };
 #pragma pack(pop)
 
@@ -911,7 +929,7 @@ struct aerogpu_cmd_set_samplers {
   uint32_t shader_stage; /* enum aerogpu_shader_stage */
   uint32_t start_slot;
   uint32_t sampler_count;
-  uint32_t reserved0;
+  uint32_t reserved0; /* stage_ex: enum aerogpu_shader_stage_ex (0 = legacy/default; see aerogpu_shader_stage_ex docs) */
 };
 #pragma pack(pop)
 
@@ -944,7 +962,7 @@ struct aerogpu_cmd_set_constant_buffers {
   uint32_t shader_stage; /* enum aerogpu_shader_stage */
   uint32_t start_slot;
   uint32_t buffer_count;
-  uint32_t reserved0;
+  uint32_t reserved0; /* stage_ex: enum aerogpu_shader_stage_ex (0 = legacy/default; see aerogpu_shader_stage_ex docs) */
 };
 #pragma pack(pop)
 
@@ -977,7 +995,7 @@ struct aerogpu_cmd_set_shader_resource_buffers {
   uint32_t shader_stage; /* enum aerogpu_shader_stage */
   uint32_t start_slot;
   uint32_t buffer_count;
-  uint32_t reserved0;
+  uint32_t reserved0; /* stage_ex: enum aerogpu_shader_stage_ex (0 = legacy/default; see aerogpu_shader_stage_ex docs) */
 };
 #pragma pack(pop)
 
@@ -1010,7 +1028,7 @@ struct aerogpu_cmd_set_unordered_access_buffers {
   uint32_t shader_stage; /* enum aerogpu_shader_stage */
   uint32_t start_slot;
   uint32_t uav_count;
-  uint32_t reserved0;
+  uint32_t reserved0; /* stage_ex: enum aerogpu_shader_stage_ex (0 = legacy/default; see aerogpu_shader_stage_ex docs) */
 };
 #pragma pack(pop)
 

@@ -10,7 +10,6 @@ use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 #[test]
 fn stage_ex_encode_decode_roundtrip() {
     let all = [
-        AerogpuShaderStageEx::Pixel,
         AerogpuShaderStageEx::Vertex,
         AerogpuShaderStageEx::Geometry,
         AerogpuShaderStageEx::Hull,
@@ -23,6 +22,12 @@ fn stage_ex_encode_decode_roundtrip() {
         assert_eq!(shader_stage, AerogpuShaderStage::Compute as u32);
         assert_eq!(decode_stage_ex(shader_stage, reserved0), Some(stage_ex));
     }
+
+    // Backwards-compat: reserved0==0 must *not* be interpreted as Pixel.
+    assert_eq!(
+        decode_stage_ex(AerogpuShaderStage::Compute as u32, 0),
+        None
+    );
 
     // Non-compute legacy stage never uses stage_ex.
     assert_eq!(

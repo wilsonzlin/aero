@@ -344,7 +344,6 @@ test("alignUp handles values > 2^31 without signed 32-bit wrap", () => {
 
 test("stage_ex encode/decode helpers roundtrip", () => {
   const all = [
-    AerogpuShaderStageEx.Pixel,
     AerogpuShaderStageEx.Vertex,
     AerogpuShaderStageEx.Geometry,
     AerogpuShaderStageEx.Hull,
@@ -357,6 +356,12 @@ test("stage_ex encode/decode helpers roundtrip", () => {
     assert.equal(shaderStage, AerogpuShaderStage.Compute);
     assert.equal(decodeStageEx(shaderStage, reserved0), stageEx);
   }
+
+  // Backwards-compat: reserved0==0 must *not* be interpreted as Pixel.
+  assert.equal(decodeStageEx(AerogpuShaderStage.Compute, 0), undefined);
+
+  // encodeStageEx cannot encode DXBC `Pixel` (0) because reserved0==0 is reserved for legacy/default.
+  assert.throws(() => encodeStageEx(AerogpuShaderStageEx.Pixel));
 
   assert.equal(decodeStageEx(AerogpuShaderStage.Vertex, AerogpuShaderStageEx.Geometry), undefined);
 });

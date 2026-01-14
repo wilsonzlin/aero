@@ -749,6 +749,9 @@ impl AerogpuCmdWriter {
     /// Stage-ex aware variant of [`Self::set_texture`].
     ///
     /// Encodes `stage_ex` into `reserved0` and sets the legacy `shader_stage` to `COMPUTE`.
+    ///
+    /// Note: `stage_ex = 0` (DXBC Pixel program-type) cannot be encoded here because
+    /// `reserved0 == 0` is reserved for legacy/default "no stage_ex".
     pub fn set_texture_ex(
         &mut self,
         stage_ex: AerogpuShaderStageEx,
@@ -883,6 +886,9 @@ impl AerogpuCmdWriter {
     /// Stage-ex aware variant of [`Self::set_samplers`].
     ///
     /// Encodes `stage_ex` into `reserved0` and sets the legacy `shader_stage` to `COMPUTE`.
+    ///
+    /// Note: `stage_ex = 0` (DXBC Pixel program-type) cannot be encoded here because
+    /// `reserved0 == 0` is reserved for legacy/default "no stage_ex".
     pub fn set_samplers_ex(
         &mut self,
         stage_ex: AerogpuShaderStageEx,
@@ -993,6 +999,9 @@ impl AerogpuCmdWriter {
     /// Stage-ex aware variant of [`Self::set_constant_buffers`].
     ///
     /// Encodes `stage_ex` into `reserved0` and sets the legacy `shader_stage` to `COMPUTE`.
+    ///
+    /// Note: `stage_ex = 0` (DXBC Pixel program-type) cannot be encoded here because
+    /// `reserved0 == 0` is reserved for legacy/default "no stage_ex".
     pub fn set_constant_buffers_ex(
         &mut self,
         stage_ex: AerogpuShaderStageEx,
@@ -1229,6 +1238,9 @@ impl AerogpuCmdWriter {
     /// Stage-ex aware variant of [`Self::set_shader_constants_f`].
     ///
     /// Encodes `stage_ex` into `reserved0` and sets the legacy `stage` field to `COMPUTE`.
+    ///
+    /// Note: `stage_ex = 0` (DXBC Pixel program-type) cannot be encoded here because
+    /// `reserved0 == 0` is reserved for legacy/default "no stage_ex".
     pub fn set_shader_constants_f_ex(
         &mut self,
         stage_ex: AerogpuShaderStageEx,
