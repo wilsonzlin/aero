@@ -6036,6 +6036,9 @@ impl AerogpuD3d11Executor {
                         *rt = None;
                     }
                 }
+                while let Some(None) = self.state.render_targets.last() {
+                    self.state.render_targets.pop();
+                }
                 if self.state.depth_stencil == Some(underlying) {
                     self.state.depth_stencil = None;
                 }
@@ -6088,6 +6091,9 @@ impl AerogpuD3d11Executor {
                 if rt.is_some_and(|rt| rt == handle) {
                     *rt = None;
                 }
+            }
+            while let Some(None) = self.state.render_targets.last() {
+                self.state.render_targets.pop();
             }
             if self.state.depth_stencil == Some(handle) {
                 self.state.depth_stencil = None;
