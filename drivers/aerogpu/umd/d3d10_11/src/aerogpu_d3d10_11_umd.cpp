@@ -154,6 +154,7 @@ using aerogpu::d3d10_11::HashSemanticName;
 using aerogpu::d3d10_11::aerogpu_sampler_filter_from_d3d_filter;
 using aerogpu::d3d10_11::aerogpu_sampler_address_from_d3d_mode;
 using aerogpu::d3d10_11::kInvalidHandle;
+using aerogpu::d3d10_11::kDeviceDestroyLiveCookie;
 using aerogpu::d3d10_11::atomic_max_u64;
 
 constexpr HRESULT kDxgiErrorWasStillDrawing = static_cast<HRESULT>(0x887A000Au); // DXGI_ERROR_WAS_STILL_DRAWING
@@ -815,6 +816,10 @@ struct AeroGpuDepthStencilState {
 
 
 struct AeroGpuDevice {
+  // Cookie used to guard against accidental double-destroy or destroys of
+  // uninitialized device private storage. DestroyDevice checks this value before
+  // running the destructor.
+  uint32_t destroy_cookie = kDeviceDestroyLiveCookie;
   AeroGpuAdapter* adapter = nullptr;
   std::mutex mutex;
 
@@ -1501,6 +1506,17 @@ void AEROGPU_APIENTRY DestroyDevice(D3D10DDI_HDEVICE hDevice) {
   if (!hDevice.pDrvPrivate) {
     return;
   }
+
+  // Be robust to runtimes that destroy a device handle even when CreateDevice
+  // failed or DestroyDevice is called twice.
+  uint32_t cookie = 0;
+  std::memcpy(&cookie, hDevice.pDrvPrivate, sizeof(cookie));
+  if (cookie != kDeviceDestroyLiveCookie) {
+    return;
+  }
+  const uint32_t cleared = 0;
+  std::memcpy(hDevice.pDrvPrivate, &cleared, sizeof(cleared));
+
   auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
   dev->~AeroGpuDevice();
 }

@@ -757,6 +757,27 @@ bool TestDestroyAfterFailedCreateInputLayoutIsSafe() {
   return true;
 }
 
+bool TestDestroyDeviceIsIdempotentAndIgnoresGarbage() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev), "InitTestDevice(destroy device idempotent)")) {
+    return false;
+  }
+
+  // Destroy should be safe even if invoked on an uninitialized device handle
+  // (some runtimes may call Destroy after a failed Create).
+  std::vector<uint8_t> garbage(sizeof(void*) * 16, 0xCC);
+  D3D10DDI_HDEVICE garbage_device{};
+  garbage_device.pDrvPrivate = garbage.data();
+  dev.device_funcs.pfnDestroyDevice(garbage_device);
+
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  // Some runtimes may destroy a device twice. This must not crash.
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
 bool TestCreateSamplerNullDescIsSafeToDestroy() {
   TestDevice dev{};
   if (!Check(InitTestDevice(&dev), "InitTestDevice(sampler null desc)")) {
@@ -1164,6 +1185,7 @@ int main() {
   ok &= TestSetNullRasterizerStateEmitsDefaultPacket();
   ok &= TestDestroyAfterFailedCreateVertexShaderIsSafe();
   ok &= TestDestroyAfterFailedCreateInputLayoutIsSafe();
+  ok &= TestDestroyDeviceIsIdempotentAndIgnoresGarbage();
   ok &= TestCreateSamplerNullDescIsSafeToDestroy();
   ok &= TestCreateResourceNullDescIsSafeToDestroy();
   ok &= TestCreateResourceUnsupportedDimensionIsSafeToDestroy();
