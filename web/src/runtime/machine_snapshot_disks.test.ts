@@ -399,6 +399,7 @@ describe("runtime/machine_snapshot_disks", () => {
       dv.setUint32(8, 1, true); // version
       dv.setUint32(12, 64, true); // header size
       dv.setUint32(16, 1024 * 1024, true); // block size
+      dv.setBigUint64(24, 1024n * 1024n, true); // disk size bytes (must be non-zero + sector-aligned)
       const file = new Blob([header]);
 
       const fileHandle = {
@@ -492,6 +493,7 @@ describe("runtime/machine_snapshot_disks", () => {
       dv.setUint32(8, 1, true); // version
       dv.setUint32(12, 64, true); // header size
       dv.setUint32(16, 1024 * 1024, true); // block size
+      dv.setBigUint64(24, 1024n * 1024n, true); // disk size bytes (must be non-zero + sector-aligned)
       const file = new Blob([header]);
 
       const fileHandle = {
