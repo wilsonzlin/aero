@@ -360,6 +360,11 @@ Supported instructions/opcodes:
     - `ld_raw`
     - `ld_structured`
     - `bufinfo` (`ByteAddressBuffer.GetDimensions` / `StructuredBuffer.GetDimensions`)
+  - UAV buffers (SM5 subset):
+    - `ld_uav_raw`, `ld_structured_uav`
+    - `store_raw`, `store_structured`
+    - `atomic_add`
+    - `bufinfo` (`RWByteAddressBuffer.GetDimensions` / `RWStructuredBuffer.GetDimensions`)
 
 Supported operand surface (initial):
 
@@ -371,6 +376,7 @@ Supported operand surface (initial):
 - resources used by the supported read-only ops above:
   - `t#` Texture2D (requires `dcl_resource_texture2d`)
   - `t#` SRV buffer (requires `dcl_resource_buffer`)
+  - `u#` UAV buffer (requires `dcl_uav_raw` / `dcl_uav_structured`)
   - `s#` sampler (requires `dcl_sampler`)
 - immediate32 `vec4` constants (treated as raw 32-bit lane values; typically `f32` bit patterns)
 - swizzles, write masks, destination saturate (`_sat`), and basic operand modifiers (`abs` / `-` / `-abs`)
@@ -380,9 +386,9 @@ Supported operand surface (initial):
     `0..GS_INSTANCE_COUNT` per input primitive, values `0..(n-1)`; default is `n=1`, so the ID is
     always `0`)
 
-Unsupported today (non-exhaustive): resource writes/stores/UAVs, barrier/synchronization opcodes
-(`sync`), and most other SM4/SM5 instructions. Unsupported features fail translation with a clear
-error.
+Unsupported today (non-exhaustive): typed UAV stores, texture UAV stores, barrier/synchronization
+opcodes (`sync`), and most other SM4/SM5 instructions. Unsupported features fail translation with a
+clear error.
 
 ---
 
