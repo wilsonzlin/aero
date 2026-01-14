@@ -13,10 +13,13 @@ const MAX_OPS: usize = 1024;
 
 // Minimal UHCI schedule seed layout (all within MEM_SIZE).
 const FRAME_LIST_BASE: u32 = 0x1000;
-const TD_SETUP_ADDR: u32 = 0x2000;
-const TD_STATUS_ADDR: u32 = 0x2010;
-const TD_INTR_ADDR: u32 = 0x2020;
-const SETUP_BUF_ADDR: u32 = 0x3000;
+const TD_SETUP_ADDR0: u32 = 0x2000;
+const TD_STATUS_ADDR0: u32 = 0x2010;
+const TD_SETUP_ADDR1: u32 = 0x2020;
+const TD_STATUS_ADDR1: u32 = 0x2030;
+const TD_INTR_ADDR: u32 = 0x2040;
+const SETUP_BUF_ADDR0: u32 = 0x3000;
+const SETUP_BUF_ADDR1: u32 = 0x3010;
 const INTR_BUF_ADDR: u32 = 0x3100;
 
 // UHCI link pointer bits / token PIDs / status bits (duplicated from `aero-usb` internals).
@@ -138,43 +141,70 @@ fuzz_target!(|data: &[u8]| {
     // does not happen to contain a well-formed frame list/QH/TD structure.
     //
     // Frame list: all entries point at a short TD chain:
-    //   SETUP (SET_CONFIGURATION 1) -> STATUS IN (ZLP) -> interrupt IN (boot keyboard report) -> T
+    //   SETUP (SET_ADDRESS 1) -> STATUS IN (ZLP)
+    //     -> SETUP (SET_CONFIGURATION 1) -> STATUS IN (ZLP)
+    //     -> interrupt IN (boot keyboard report) -> T
     //
     // This drives:
     // - endpoint-0 control transfer state machine (`AttachedUsbDevice`)
     // - interrupt IN polling (`UsbHidKeyboard`)
     // - schedule walking (including per-frame budgets/cycle guards)
     for i in 0..1024u32 {
-        bus.write_u32(FRAME_LIST_BASE + i * 4, TD_SETUP_ADDR);
+        bus.write_u32(FRAME_LIST_BASE + i * 4, TD_SETUP_ADDR0);
     }
-    // SETUP TD.
-    bus.write_u32(TD_SETUP_ADDR, TD_STATUS_ADDR);
-    bus.write_u32(TD_SETUP_ADDR + 4, TD_STATUS_ACTIVE);
+    // SET_ADDRESS SETUP TD (dev_addr=0).
+    bus.write_u32(TD_SETUP_ADDR0, TD_STATUS_ADDR0);
+    bus.write_u32(TD_SETUP_ADDR0 + 4, TD_STATUS_ACTIVE);
     bus.write_u32(
-        TD_SETUP_ADDR + 8,
+        TD_SETUP_ADDR0 + 8,
         PID_SETUP | (7u32 << 21), // max_len = 8
     );
-    bus.write_u32(TD_SETUP_ADDR + 12, SETUP_BUF_ADDR);
-    // STATUS (control IN, ZLP) TD.
-    bus.write_u32(TD_STATUS_ADDR, TD_INTR_ADDR);
-    bus.write_u32(TD_STATUS_ADDR + 4, TD_STATUS_ACTIVE);
+    bus.write_u32(TD_SETUP_ADDR0 + 12, SETUP_BUF_ADDR0);
+    // SET_ADDRESS STATUS (control IN, ZLP) TD.
+    bus.write_u32(TD_STATUS_ADDR0, TD_SETUP_ADDR1);
+    bus.write_u32(TD_STATUS_ADDR0 + 4, TD_STATUS_ACTIVE);
     bus.write_u32(
-        TD_STATUS_ADDR + 8,
+        TD_STATUS_ADDR0 + 8,
         PID_IN | (0x7ffu32 << 21), // max_len = 0
     );
-    bus.write_u32(TD_STATUS_ADDR + 12, 0);
+    bus.write_u32(TD_STATUS_ADDR0 + 12, 0);
+
+    // SET_CONFIGURATION SETUP TD (dev_addr=1).
+    bus.write_u32(TD_SETUP_ADDR1, TD_STATUS_ADDR1);
+    bus.write_u32(TD_SETUP_ADDR1 + 4, TD_STATUS_ACTIVE);
+    bus.write_u32(
+        TD_SETUP_ADDR1 + 8,
+        PID_SETUP | (1u32 << 8) | (7u32 << 21), // dev_addr=1, max_len=8
+    );
+    bus.write_u32(TD_SETUP_ADDR1 + 12, SETUP_BUF_ADDR1);
+
+    // SET_CONFIGURATION STATUS (control IN, ZLP) TD (dev_addr=1).
+    bus.write_u32(TD_STATUS_ADDR1, TD_INTR_ADDR);
+    bus.write_u32(TD_STATUS_ADDR1 + 4, TD_STATUS_ACTIVE);
+    bus.write_u32(
+        TD_STATUS_ADDR1 + 8,
+        PID_IN | (1u32 << 8) | (0x7ffu32 << 21), // dev_addr=1, max_len=0
+    );
+    bus.write_u32(TD_STATUS_ADDR1 + 12, 0);
+
     // Interrupt IN TD (endpoint 1, 8 bytes).
     bus.write_u32(TD_INTR_ADDR, LINK_PTR_TERMINATE);
     bus.write_u32(TD_INTR_ADDR + 4, TD_STATUS_ACTIVE);
     bus.write_u32(
         TD_INTR_ADDR + 8,
-        PID_IN | (1u32 << 15) | (7u32 << 21), // ep=1, max_len=8
+        PID_IN | (1u32 << 8) | (1u32 << 15) | (7u32 << 21), // dev_addr=1, ep=1, max_len=8
     );
     bus.write_u32(TD_INTR_ADDR + 12, INTR_BUF_ADDR);
 
+    // SET_ADDRESS(1) setup packet (standard, device, host-to-device).
+    bus.write_bytes(
+        SETUP_BUF_ADDR0,
+        &[0x00, 0x05, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00],
+    );
+
     // SET_CONFIGURATION(1) setup packet (standard, device, host-to-device).
     bus.write_bytes(
-        SETUP_BUF_ADDR,
+        SETUP_BUF_ADDR1,
         &[0x00, 0x09, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00],
     );
 
