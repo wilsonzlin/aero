@@ -148,7 +148,7 @@ fn aerogpu_scanout_handoff_to_wddm_blocks_legacy_int10_steal() {
     m.write_physical_u8(scratch_base + 2, 0xCC);
     m.write_physical_u8(scratch_base + 3, 0x00);
 
-    let (bar0_base, bar1_base, command) = {
+    let (bar0_base, bar1_base) = {
         let pci_cfg = m.pci_config_ports().expect("pc platform enabled");
         let mut pci_cfg = pci_cfg.borrow_mut();
         let cfg = pci_cfg
@@ -158,21 +158,10 @@ fn aerogpu_scanout_handoff_to_wddm_blocks_legacy_int10_steal() {
         (
             cfg.bar_range(0).expect("AeroGPU BAR0 must exist").base,
             cfg.bar_range(1).expect("AeroGPU BAR1 must exist").base,
-            cfg.command(),
         )
     };
     assert_ne!(bar0_base, 0);
     assert_ne!(bar1_base, 0);
-
-    // The WDDM scanout path reads from guest RAM (device-initiated DMA), so it requires PCI Bus
-    // Master Enable (BME). BIOS POST intentionally leaves BME disabled by default.
-    {
-        let pci_cfg = m.pci_config_ports().expect("pc platform enabled");
-        let mut pci_cfg = pci_cfg.borrow_mut();
-        pci_cfg
-            .bus_mut()
-            .write_config(profile::AEROGPU.bdf, 0x04, 2, u32::from(command | (1 << 2)));
-    }
 
     m.write_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_WIDTH), width);
     m.write_physical_u32(

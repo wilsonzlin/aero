@@ -7149,6 +7149,15 @@ impl Machine {
         } else {
             self.bios.post(&mut self.cpu.state, bus, &mut self.disk);
         }
+
+        // The firmware's BDA initialization derives the "fixed disk count" (0x40:0x75) from the
+        // configured boot drive number. When booting via El Torito (`DL=0xE0..=0xEF`), the firmware
+        // sets this count to 0 to avoid inflating it based on the CD drive number.
+        //
+        // In the canonical machine, however, we always expose HDD0 at `DL=0x80` *in addition to*
+        // any CD boot device. Patch the BDA so BIOS INT 13h `drive_present()` checks can still
+        // succeed for HDD accesses while booting from CD.
+        self.mem.write_u8(firmware::bios::BDA_BASE + 0x75, 1);
         // Once PCI BARs are assigned, update the BIOS VBE LFB base for any display configurations
         // that derive it from PCI resources (AeroGPU BAR1).
         self.sync_bios_vbe_lfb_base_to_display_wiring();
