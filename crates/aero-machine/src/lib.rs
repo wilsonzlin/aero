@@ -8729,15 +8729,18 @@ impl Machine {
             // configuration.
             if let Some(virtio_net) = virtio_net.as_ref() {
                 let bdf = aero_devices::pci::profile::VIRTIO_NET.bdf;
-                let command = {
+                let (command, bar0_base) = {
                     let mut pci_cfg = pci_cfg.borrow_mut();
-                    pci_cfg
-                        .bus_mut()
-                        .device_config(bdf)
-                        .map(|cfg| cfg.command())
-                        .unwrap_or(0)
+                    let cfg = pci_cfg.bus_mut().device_config(bdf);
+                    let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+                    let bar0_base = cfg.and_then(|cfg| cfg.bar_range(0)).map(|range| range.base);
+                    (command, bar0_base)
                 };
-                virtio_net.borrow_mut().set_pci_command(command);
+                let mut dev = virtio_net.borrow_mut();
+                dev.set_pci_command(command);
+                if let Some(bar0_base) = bar0_base {
+                    dev.config_mut().set_bar_base(0, bar0_base);
+                }
             }
 
             if let Some(virtio_input_keyboard) = virtio_input_keyboard.as_ref() {
@@ -8902,10 +8905,8 @@ impl Machine {
 
                 let mut ehci = ehci.borrow_mut();
                 ehci.config_mut().set_command(command);
-                if bar0_base != 0 {
-                    ehci.config_mut()
-                        .set_bar_base(EhciPciDevice::MMIO_BAR_INDEX, bar0_base);
-                }
+                ehci.config_mut()
+                    .set_bar_base(EhciPciDevice::MMIO_BAR_INDEX, bar0_base);
             }
 
             let vga = self.vga.clone();
@@ -11204,12 +11205,14 @@ impl snapshot::SnapshotSource for Machine {
             // configuration.
             let bdf = aero_devices::pci::profile::VIRTIO_NET.bdf;
             if let Some(pci_cfg) = &self.pci_cfg {
-                let (command, msix_ctrl_bits) = {
+                let (command, bar0_base, msix_ctrl_bits) = {
                     let mut pci_cfg = pci_cfg.borrow_mut();
                     let mut command = 0;
+                    let mut bar0_base = None;
                     let mut msix_ctrl_bits = None;
                     if let Some(cfg) = pci_cfg.bus_mut().device_config_mut(bdf) {
                         command = cfg.command();
+                        bar0_base = cfg.bar_range(0).map(|range| range.base);
                         if let Some(msix_off) = cfg.find_capability(PCI_CAP_ID_MSIX) {
                             let ctrl = cfg
                                 .read(u16::from(msix_off) + MSIX_MESSAGE_CONTROL_OFFSET, 2)
@@ -11217,10 +11220,13 @@ impl snapshot::SnapshotSource for Machine {
                             msix_ctrl_bits = Some(ctrl & MSIX_MESSAGE_CONTROL_MIRROR_MASK);
                         }
                     }
-                    (command, msix_ctrl_bits)
+                    (command, bar0_base, msix_ctrl_bits)
                 };
                 let mut virtio_net = virtio_net.borrow_mut();
                 virtio_net.set_pci_command(command);
+                if let Some(bar0_base) = bar0_base {
+                    virtio_net.config_mut().set_bar_base(0, bar0_base);
+                }
 
                 if let Some(msix_ctrl_bits) = msix_ctrl_bits {
                     if let Some(msix_off) = virtio_net.config_mut().find_capability(PCI_CAP_ID_MSIX)
