@@ -753,6 +753,67 @@ func TestUDPWebSocketServer_InboundFilterAny_AllowsUnexpectedSourcePort(t *testi
 	}
 }
 
+func TestUDPWebSocketServer_RemoteAllowlistEvictionIncrementsMetric(t *testing.T) {
+	cfg := config.Config{
+		AuthMode:                 config.AuthModeNone,
+		SignalingAuthTimeout:     50 * time.Millisecond,
+		MaxSignalingMessageBytes: 64 * 1024,
+	}
+	m := metrics.New()
+	sm := NewSessionManager(cfg, m, nil)
+	relayCfg := DefaultConfig()
+	relayCfg.InboundFilterMode = InboundFilterAddressAndPort
+	relayCfg.RemoteAllowlistIdleTimeout = time.Minute
+	relayCfg.MaxAllowedRemotesPerBinding = 1
+
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	if err != nil {
+		t.Fatalf("NewUDPWebSocketServer: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("GET /udp", srv)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	c := dialWS(t, ts.URL, "/udp")
+	_ = readWSJSON(t, c, 2*time.Second) // ready
+
+	in := udpproto.Frame{
+		GuestPort:  1234,
+		RemoteIP:   netip.MustParseAddr("127.0.0.1"),
+		RemotePort: 30001,
+		Payload:    []byte("x"),
+	}
+	pkt1, err := udpproto.DefaultCodec.EncodeFrameV1(in)
+	if err != nil {
+		t.Fatalf("EncodeV1: %v", err)
+	}
+	if err := c.WriteMessage(websocket.BinaryMessage, pkt1); err != nil {
+		t.Fatalf("WriteMessage #1: %v", err)
+	}
+
+	// Sending to a second remote endpoint on the same guest port binding should
+	// evict the first allowlist entry when the cap is 1.
+	in.RemotePort = 30002
+	pkt2, err := udpproto.DefaultCodec.EncodeFrameV1(in)
+	if err != nil {
+		t.Fatalf("EncodeV1 #2: %v", err)
+	}
+	if err := c.WriteMessage(websocket.BinaryMessage, pkt2); err != nil {
+		t.Fatalf("WriteMessage #2: %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if m.Get(metrics.UDPRemoteAllowlistEvictionsTotal) > 0 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("expected %s metric increment", metrics.UDPRemoteAllowlistEvictionsTotal)
+}
+
 func TestUDPWebSocketServer_DroppedByPolicyIncrementsMetric(t *testing.T) {
 	echo, echoPort := startUDPEchoServer(t, "udp4", net.IPv4(127, 0, 0, 1))
 	defer echo.Close()
