@@ -172,9 +172,8 @@ fn generate_edid_preferred_mode_is_sane() {
 
 #[test]
 fn generate_edid_synthesized_mode_is_sane() {
-    // 1366×768 is not part of our hardcoded known DTD table, so this exercises
-    // the synthesizer path via the public API.
-    let preferred = aero_edid::Timing::new(1366, 768, 60);
+    // Use a non-table timing to exercise the synthesizer path via the public API.
+    let preferred = aero_edid::Timing::new(1360, 768, 60);
     let edid = aero_edid::generate_edid(preferred);
     assert!(checksum_ok(&edid));
 

@@ -142,7 +142,7 @@ pub fn generate_edid(preferred: Timing) -> [u8; EDID_BLOCK_SIZE] {
     edid[34] = 0x54;
 
     // Established timings: 640x480@60, 800x600@60, 1024x768@60.
-    edid[35] = 0x05;
+    edid[35] = 0x21;
     edid[36] = 0x08;
     edid[37] = 0x00;
 
@@ -374,6 +374,17 @@ fn known_dtd_bytes(t: Timing) -> Option<[u8; 18]> {
             0x54, 0x0E, 0x11, // image size: 340mm x 270mm
             0x00, 0x00, // borders
             0x1E, // flags: digital separate sync, +hsync, +vsync
+        ],
+        // 1366×768 @ 60Hz (CVT-like; common laptop panel timing).
+        (1366, 768, 60) => [
+            0x66, 0x21, // pixel clock: 85.50 MHz
+            0x56, 0xAA, 0x51, // hactive=1366, hblank=426
+            0x00, 0x1E, 0x30, // vactive=768, vblank=30
+            0x46, 0x8F, // hsync offset=70, hsync pulse=143
+            0x33, 0x00, // vsync offset=3, vsync pulse=3
+            0x54, 0x0E, 0x11, // image size: 340mm x 270mm
+            0x00, 0x00, // borders
+            0x1C, // flags: digital separate sync, -hsync, +vsync
         ],
         // 1920×1080 @ 60Hz (CEA-861 1080p60).
         (1920, 1080, 60) => [
@@ -821,7 +832,7 @@ mod tests {
         assert_eq!(edid[85], 0x0A);
 
         // Established timings: 640x480@60, 800x600@60, 1024x768@60.
-        assert_eq!(edid[35], 0x05);
+        assert_eq!(edid[35], 0x21);
         assert_eq!(edid[36], 0x08);
         assert_eq!(edid[37], 0x00);
 
@@ -940,8 +951,8 @@ mod tests {
 
     #[test]
     fn synthesized_timing_is_parsable_and_has_valid_ranges() {
-        // 1366×768 is intentionally not in `known_dtd_bytes()` so we exercise the synthesizer.
-        let preferred = Timing::new(1366, 768, 60);
+        // Use a non-table timing to exercise the synthesizer.
+        let preferred = Timing::new(1360, 768, 60);
         let edid = generate_edid(preferred);
         assert!(checksum_ok(&edid));
 
