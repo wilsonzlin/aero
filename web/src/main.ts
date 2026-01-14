@@ -233,7 +233,18 @@ async function openBootDisks(manager: DiskManager): Promise<OpenedBootDisks> {
 // Updated by the microphone UI and read by the worker coordinator so that
 // newly-started workers inherit the current mic attachment (if any).
 // `sampleRate` is the actual capture sample rate (AudioContext.sampleRate).
-let micAttachment: { ringBuffer: SharedArrayBuffer; sampleRate: number } | null = null;
+type MicAttachmentInfo = {
+  ringBuffer: SharedArrayBuffer;
+  sampleRate: number;
+  /** Hashed deviceId (fnv1a32 of UTF-8). Avoids exporting raw device IDs. */
+  deviceIdHash: string | null;
+  bufferMs: number | null;
+  echoCancellation: boolean | null;
+  noiseSuppression: boolean | null;
+  autoGainControl: boolean | null;
+  muted: boolean | null;
+};
+let micAttachment: MicAttachmentInfo | null = null;
 
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -4120,6 +4131,12 @@ function renderAudioPanel(): HTMLElement {
 
   type MicWavSnapshotMeta = {
     sampleRate: number;
+    deviceIdHash: string | null;
+    bufferMs: number | null;
+    echoCancellation: boolean | null;
+    noiseSuppression: boolean | null;
+    autoGainControl: boolean | null;
+    muted: boolean | null;
     capacitySamples: number;
     readPos: number;
     writePos: number;
@@ -4341,7 +4358,20 @@ function renderAudioPanel(): HTMLElement {
       const droppedSamples = Atomics.load(header, MIC_DROPPED_SAMPLES_INDEX) >>> 0;
       const available = (writePos - readPos) >>> 0;
       const bufferedSamples = Math.min(available, capacitySamples);
-      return { sampleRate: att.sampleRate, capacitySamples, readPos, writePos, bufferedSamples, droppedSamples };
+      return {
+        sampleRate: att.sampleRate,
+        deviceIdHash: att.deviceIdHash,
+        bufferMs: att.bufferMs,
+        echoCancellation: att.echoCancellation,
+        noiseSuppression: att.noiseSuppression,
+        autoGainControl: att.autoGainControl,
+        muted: att.muted,
+        capacitySamples,
+        readPos,
+        writePos,
+        bufferedSamples,
+        droppedSamples,
+      };
     } catch {
       return { sampleRate: att.sampleRate, error: "Failed to snapshot microphone ring counters." };
     }
@@ -4382,6 +4412,12 @@ function renderAudioPanel(): HTMLElement {
       const signal = computeAudioSignalStats(mono, 1);
       const meta: MicWavSnapshotMeta = {
         sampleRate,
+        deviceIdHash: att.deviceIdHash,
+        bufferMs: att.bufferMs,
+        echoCancellation: att.echoCancellation,
+        noiseSuppression: att.noiseSuppression,
+        autoGainControl: att.autoGainControl,
+        muted: att.muted,
         capacitySamples,
         readPos,
         writePos,
@@ -5245,7 +5281,18 @@ function renderMicrophonePanel(): HTMLElement {
         await mic.start();
         mic.setMuted(mutedInput.checked);
 
-        micAttachment = { ringBuffer: mic.ringBuffer.sab, sampleRate: mic.actualSampleRate };
+        const encoder = new TextEncoder();
+        const deviceIdHash = deviceSelect.value ? fnv1a32Hex(encoder.encode(deviceSelect.value)) : null;
+        micAttachment = {
+          ringBuffer: mic.ringBuffer.sab,
+          sampleRate: mic.actualSampleRate,
+          deviceIdHash,
+          bufferMs: Math.max(10, Number(bufferMsInput.value || 0) | 0),
+          echoCancellation: echoCancellation.checked,
+          noiseSuppression: noiseSuppression.checked,
+          autoGainControl: autoGainControl.checked,
+          muted: mutedInput.checked,
+        };
         attachToWorkers();
         update();
       } catch (err) {
@@ -5276,6 +5323,7 @@ function renderMicrophonePanel(): HTMLElement {
 
   mutedInput.addEventListener("change", () => {
     mic?.setMuted(mutedInput.checked);
+    if (micAttachment) micAttachment.muted = mutedInput.checked;
     update();
   });
 
