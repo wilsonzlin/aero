@@ -8,6 +8,13 @@ fn repo_root() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
+fn parse_windows_device_contract_json() -> serde_json::Value {
+    // Be tolerant of UTF-8 BOMs produced by some editors/tools.
+    let contract = include_str!("../../../docs/windows-device-contract.json");
+    let contract = contract.strip_prefix('\u{feff}').unwrap_or(contract);
+    serde_json::from_str(contract).expect("parse windows-device-contract.json")
+}
+
 fn parse_hex_u16(value: &str) -> u16 {
     let value = value
         .trim()
@@ -291,9 +298,7 @@ fn parse_inf_addreg_dword(contents: &str, section_name: &str, value_name: &str) 
 
 #[test]
 fn windows_device_contract_virtio_input_matches_pci_profile() {
-    let contract: serde_json::Value =
-        serde_json::from_str(include_str!("../../../docs/windows-device-contract.json"))
-            .expect("parse windows-device-contract.json");
+    let contract = parse_windows_device_contract_json();
 
     let devices = contract
         .get("devices")
@@ -338,9 +343,7 @@ fn windows_device_contract_virtio_input_matches_pci_profile() {
 
 #[test]
 fn windows_device_contract_virtio_input_inf_installs_declared_service() {
-    let contract: serde_json::Value =
-        serde_json::from_str(include_str!("../../../docs/windows-device-contract.json"))
-            .expect("parse windows-device-contract.json");
+    let contract = parse_windows_device_contract_json();
 
     let devices = contract
         .get("devices")
@@ -377,9 +380,7 @@ fn windows_device_contract_virtio_input_inf_installs_declared_service() {
 
 #[test]
 fn windows_device_contract_virtio_input_inf_uses_distinct_keyboard_mouse_device_descs() {
-    let contract: serde_json::Value =
-        serde_json::from_str(include_str!("../../../docs/windows-device-contract.json"))
-            .expect("parse windows-device-contract.json");
+    let contract = parse_windows_device_contract_json();
 
     let devices = contract
         .get("devices")
@@ -408,17 +409,10 @@ fn windows_device_contract_virtio_input_inf_uses_distinct_keyboard_mouse_device_
         let (mouse_desc, mouse_install) =
             inf_model_entry_for_hwid(&inf_contents, section, hwid_mouse)
                 .unwrap_or_else(|| panic!("missing {hwid_mouse} model entry in [{section}]"));
-        let (fallback_desc, fallback_install) =
-            inf_model_entry_for_hwid(&inf_contents, section, hwid_fallback)
-                .unwrap_or_else(|| panic!("missing {hwid_fallback} model entry in [{section}]"));
 
         assert_eq!(
             kbd_install, mouse_install,
             "{section}: install section mismatch"
-        );
-        assert_eq!(
-            fallback_install, kbd_install,
-            "{section}: fallback install section mismatch"
         );
 
         assert_ne!(
@@ -426,15 +420,9 @@ fn windows_device_contract_virtio_input_inf_uses_distinct_keyboard_mouse_device_
             mouse_desc.to_ascii_lowercase(),
             "{section}: keyboard/mouse DeviceDesc tokens must be distinct"
         );
-        assert_ne!(
-            fallback_desc.to_ascii_lowercase(),
-            kbd_desc.to_ascii_lowercase(),
-            "{section}: fallback DeviceDesc token must be generic (not keyboard)"
-        );
-        assert_ne!(
-            fallback_desc.to_ascii_lowercase(),
-            mouse_desc.to_ascii_lowercase(),
-            "{section}: fallback DeviceDesc token must be generic (not mouse)"
+        assert!(
+            inf_model_entry_for_hwid(&inf_contents, section, hwid_fallback).is_none(),
+            "{section}: canonical INF must not contain generic fallback model entry {hwid_fallback}"
         );
         assert!(
             inf_model_entry_for_hwid(&inf_contents, section, hwid_fallback_revisionless).is_none(),
@@ -444,7 +432,6 @@ fn windows_device_contract_virtio_input_inf_uses_distinct_keyboard_mouse_device_
         // The canonical INF is expected to use these tokens (kept in sync with docs/tests).
         assert_eq!(kbd_desc, "%AeroVirtioKeyboard.DeviceDesc%");
         assert_eq!(mouse_desc, "%AeroVirtioMouse.DeviceDesc%");
-        assert_eq!(fallback_desc, "%AeroVirtioInput.DeviceDesc%");
     }
 
     let strings = inf_strings(&inf_contents);
@@ -481,8 +468,10 @@ fn windows_device_contract_virtio_input_alias_inf_includes_generic_fallback_mode
     // `aero_virtio_input.inf`, kept for compatibility with older tooling/workflows that still
     // reference `virtio-input.inf`.
     //
-    // Contract: if the alias INF exists, it must be byte-identical to the canonical INF from the
-    // first section header (`[Version]`) onward (only the banner/comments may differ).
+    // Contract: if the alias INF exists, it must match the canonical INF from the first section
+    // header (`[Version]`) onward outside the models sections (`[Aero.NTx86]` / `[Aero.NTamd64]`).
+    // The alias is allowed to add an opt-in strict REV-qualified generic fallback match (no
+    // SUBSYS) in those models sections only.
 
     let inf_dir = repo_root().join("drivers/windows7/virtio-input/inf");
     let alias_enabled = inf_dir.join("virtio-input.inf");
@@ -522,10 +511,36 @@ fn windows_device_contract_virtio_input_alias_inf_includes_generic_fallback_mode
         panic!("INF missing [Version] section header");
     }
 
+    fn strip_inf_sections(contents: &str, sections: &[&str]) -> String {
+        let mut out = String::new();
+        let mut skipping = false;
+        for line in contents.split_inclusive('\n') {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with('[') {
+                if let Some(end) = trimmed.find(']') {
+                    let name = trimmed[1..end].trim();
+                    skipping = sections.iter().any(|s| name.eq_ignore_ascii_case(s));
+                } else {
+                    skipping = false;
+                }
+            }
+            if !skipping {
+                out.push_str(line);
+            }
+        }
+        out
+    }
+
     assert_eq!(
-        inf_from_version_onward(&inf_contents),
-        inf_from_version_onward(&canonical_contents),
-        "alias INF {} must be byte-identical to canonical INF {} from [Version] onward",
+        strip_inf_sections(
+            inf_from_version_onward(&inf_contents),
+            &["Aero.NTx86", "Aero.NTamd64"],
+        ),
+        strip_inf_sections(
+            inf_from_version_onward(&canonical_contents),
+            &["Aero.NTx86", "Aero.NTamd64"],
+        ),
+        "alias INF {} must match canonical INF {} outside models sections",
         alias_path.display(),
         canonical_path.display()
     );
@@ -603,9 +618,7 @@ fn windows_device_contract_virtio_input_alias_inf_includes_generic_fallback_mode
 
 #[test]
 fn windows_device_contract_virtio_snd_matches_pci_profile() {
-    let contract: serde_json::Value =
-        serde_json::from_str(include_str!("../../../docs/windows-device-contract.json"))
-            .expect("parse windows-device-contract.json");
+    let contract = parse_windows_device_contract_json();
 
     let devices = contract
         .get("devices")
@@ -683,9 +696,7 @@ fn windows_device_contract_virtio_snd_inf_opts_into_msi() {
 
 #[test]
 fn windows_device_contract_virtio_blk_matches_pci_profile() {
-    let contract: serde_json::Value =
-        serde_json::from_str(include_str!("../../../docs/windows-device-contract.json"))
-            .expect("parse windows-device-contract.json");
+    let contract = parse_windows_device_contract_json();
 
     let devices = contract
         .get("devices")
@@ -713,9 +724,7 @@ fn windows_device_contract_virtio_blk_matches_pci_profile() {
 
 #[test]
 fn windows_device_contract_virtio_net_matches_pci_profile() {
-    let contract: serde_json::Value =
-        serde_json::from_str(include_str!("../../../docs/windows-device-contract.json"))
-            .expect("parse windows-device-contract.json");
+    let contract = parse_windows_device_contract_json();
 
     let devices = contract
         .get("devices")
