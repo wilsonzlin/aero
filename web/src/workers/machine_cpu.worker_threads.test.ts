@@ -10,7 +10,6 @@ import {
   STATUS_INTS,
   STATUS_OFFSET_BYTES,
   StatusIndex,
-  allocateSharedMemorySegments,
   createIoIpcSab,
   type SharedMemorySegments,
 } from "../runtime/shared_layout";
