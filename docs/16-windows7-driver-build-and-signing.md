@@ -180,7 +180,7 @@ and (when `out/drivers/aerogpu/<arch>/` exists, i.e. after `ci/build-drivers.ps1
 - `out/drivers/aerogpu/x86/tools/win7_dbgctl/bin/aerogpu_dbgctl.exe`
 - `out/drivers/aerogpu/x64/tools/win7_dbgctl/bin/aerogpu_dbgctl.exe`
 
-When these signed packages are packaged into Guest Tools, dbgctl is shipped at:
+When these signed packages are packaged into Guest Tools, dbgctl is shipped inside the AeroGPU driver directory at:
 
 - `drivers/amd64/aerogpu/tools/win7_dbgctl/bin/aerogpu_dbgctl.exe`
 - `drivers/x86/aerogpu/tools/win7_dbgctl/bin/aerogpu_dbgctl.exe`
