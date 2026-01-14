@@ -934,7 +934,7 @@ describe("runtime/coordinator", () => {
     (coordinator as any).spawnWorker("cpu", segments);
     (coordinator as any).spawnWorker("io", segments);
 
-    coordinator.setBootDisks({ type: "setBootDisks", mounts: {}, hdd: null, cd: null });
+    coordinator.setBootDisks({}, null, null);
 
     const cpuWorker = (coordinator as any).workers.cpu.worker as MockWorker;
     const ioWorker = (coordinator as any).workers.io.worker as MockWorker;
@@ -989,7 +989,7 @@ describe("runtime/coordinator", () => {
     (coordinator as any).spawnWorker("cpu", segments);
     (coordinator as any).spawnWorker("io", segments);
 
-    coordinator.setBootDisks({ type: "setBootDisks", mounts: { hddId: "disk1" }, hdd: null, cd: null });
+    coordinator.setBootDisks({ hddId: "disk1" }, null, null);
 
     const cpuWorker = (coordinator as any).workers.cpu.worker as MockWorker;
     const ioWorker = (coordinator as any).workers.io.worker as MockWorker;
