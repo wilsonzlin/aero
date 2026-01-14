@@ -17,8 +17,8 @@ use aero_gpu::{parse_cmd_stream, AeroGpuCmd};
 use aero_gpu_trace::{BlobKind, TraceReader, TraceRecord};
 #[cfg(not(target_arch = "wasm32"))]
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    AerogpuIndexFormat, AerogpuPrimitiveTopology, AerogpuVertexBufferBinding, AEROGPU_CLEAR_COLOR,
-    AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
+    AerogpuIndexFormat, AerogpuPrimitiveTopology, AerogpuShaderStage, AerogpuVertexBufferBinding,
+    AEROGPU_CLEAR_COLOR, AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
@@ -124,6 +124,13 @@ fn build_synthetic_triangle_stream(draws: u32) -> Vec<u8> {
         0,
         0,
     );
+    w.create_buffer(
+        3,
+        AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
+        256, // index data (still requires 4-byte alignment)
+        0,
+        0,
+    );
     w.create_texture2d(
         2,
         AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
@@ -152,11 +159,40 @@ fn build_synthetic_triangle_stream(draws: u32) -> Vec<u8> {
         // Intentionally repeat state to give the optimizer something to remove.
         w.set_vertex_buffers(0, &[vb]);
         w.set_primitive_topology(AerogpuPrimitiveTopology::TriangleList);
-        // Contiguous ranges so optional draw coalescing can trigger.
-        w.draw(3, 1, i.saturating_mul(3), 0);
+        w.set_index_buffer(3, AerogpuIndexFormat::Uint16, 0);
+        // Contiguous index ranges so optional draw coalescing can trigger.
+        w.draw_indexed(3, 1, i.saturating_mul(3), 0, 0);
     }
 
     // Present terminates the submission for most real workloads.
+    w.present(0, 0);
+    w.finish()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn build_synthetic_payload_stream() -> Vec<u8> {
+    // A deterministic stream that exercises variable-length packets.
+    let mut w = AerogpuCmdWriter::new();
+
+    let dxbc = vec![0xA5u8; 16 * 1024];
+    w.create_shader_dxbc(0x10, AerogpuShaderStage::Vertex, &dxbc);
+    w.create_shader_dxbc(0x11, AerogpuShaderStage::Pixel, &dxbc);
+    w.bind_shaders(0x10, 0x11, 0);
+
+    let constants: Vec<f32> = (0..256).map(|i| (i as f32) * 0.001).collect();
+    w.set_shader_constants_f(AerogpuShaderStage::Vertex, 0, &constants);
+
+    // Include an UPLOAD_RESOURCE payload as well; parsing should remain safe regardless of size.
+    w.create_buffer(
+        1,
+        AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
+        16 * 1024, // must be 4-byte aligned
+        0,
+        0,
+    );
+    let upload = vec![0x3Cu8; 16 * 1024];
+    w.upload_resource(1, 0, &upload);
+
     w.present(0, 0);
     w.finish()
 }
@@ -260,12 +296,14 @@ fn bench_cmd_stream_parse(c: &mut Criterion) {
     let clear_red = extract_cmd_stream_from_trace(TRACE_CLEAR_RED);
     let triangle = extract_cmd_stream_from_trace(TRACE_TRIANGLE);
     let synthetic = build_synthetic_triangle_stream(1024);
+    let synthetic_payloads = build_synthetic_payload_stream();
 
     let mut group = c.benchmark_group("cmd_stream_parse");
     for (name, bytes) in [
         ("fixture_clear_red", clear_red),
         ("fixture_triangle", triangle),
         ("synthetic_triangle_1024", synthetic),
+        ("synthetic_payloads", synthetic_payloads),
     ] {
         group.throughput(criterion::Throughput::Bytes(bytes.len() as u64));
         group.bench_with_input(
