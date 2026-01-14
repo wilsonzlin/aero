@@ -1,7 +1,7 @@
 /// <reference lib="webworker" />
 
 import type { AeroConfig } from "../config/aero_config";
-import { VRAM_BASE_PADDR } from "../arch/guest_phys.ts";
+import { PCI_MMIO_BASE, VRAM_BASE_PADDR } from "../arch/guest_phys.ts";
 import { openRingByKind } from "../ipc/ipc";
 import { decodeCommand, encodeEvent, type Command, type Event } from "../ipc/protocol";
 import { RingBuffer } from "../ipc/ring_buffer";
@@ -4688,7 +4688,13 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
         try {
           // Reserve a dedicated VRAM aperture at the front of the PCI MMIO BAR window so future PCI
           // BAR allocations cannot overlap guest-visible VRAM.
-          mgr.pciBus.reserveMmio(sizeBytes);
+          //
+          // If `vramBasePaddr` is overridden above the PCI MMIO base, reserve the entire
+          // `[PCI_MMIO_BASE, vramBasePaddr + vramSize)` span so BAR allocation still skips the full
+          // mapped VRAM aperture.
+          const mmioBase = BigInt(PCI_MMIO_BASE >>> 0);
+          const reserveBytes = base >= mmioBase ? base + sizeBytes - mmioBase : sizeBytes;
+          mgr.pciBus.reserveMmio(reserveBytes);
         } catch (err) {
           console.warn("[io.worker] Failed to reserve VRAM aperture in PCI MMIO window", err);
         }
