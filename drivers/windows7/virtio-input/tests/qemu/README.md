@@ -251,9 +251,9 @@ The in-tree Aero Win7 virtio-input INFs are intentionally **revision-gated** (Ae
   - For normal installs, use the canonical `aero_virtio_input.inf`.
   - Do **not** ship/install it alongside `aero_virtio_input.inf` (install only one of the two filenames at a time).
 
-If your device is `REV_01` but does not expose the Aero subsystem IDs, Windows will not bind the canonical SUBSYS-only
-`aero_virtio_input.inf`. Enable/install the legacy alias INF (`virtio-input.inf`) to bind via the strict revision-gated generic
-fallback entry (the device will show up as **Aero VirtIO Input Device**).
+If your device is `REV_01` but does not expose the Aero subsystem IDs, Windows will not bind the canonical `aero_virtio_input.inf`.
+Enable the legacy alias INF to opt into the strict revision-gated generic fallback entry (the device will show up as
+**Aero VirtIO Input Device**).
 If you expect distinct keyboard/mouse names, ensure the subsystem IDs are present (`SUBSYS_0010` / `SUBSYS_0011`).
 
 If the device reports `REV_00`, Windows will not bind (the INFs are revision-gated). Ensure `x-pci-revision=0x01` is set.
