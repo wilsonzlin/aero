@@ -1093,6 +1093,20 @@ async fn verify_chunk_http(
         .with_context(|| format!("GET {url} (chunk {index})"));
     }
 
+    let content_length = resp.content_length();
+    if let Some(len) = content_length {
+        if len != expected_size {
+            bail!(
+                "size mismatch for chunk {index} ({url}): expected {expected_size} bytes, got {len} bytes (Content-Length)"
+            );
+        }
+        // If we don't have a checksum to verify, Content-Length already validated the size. Avoid
+        // downloading the body unnecessarily.
+        if expected_sha256.is_none() {
+            return Ok(len);
+        }
+    }
+
     let mut hasher = expected_sha256.map(|_| Sha256::new());
     let mut total: u64 = 0;
     while let Some(chunk) = resp
@@ -1374,7 +1388,6 @@ async fn verify_s3(args: &VerifyArgs) -> Result<()> {
     )
     .await?;
 
-    eprintln!("OK.");
     Ok(())
 }
 
@@ -1610,6 +1623,7 @@ async fn verify_chunks(
     chunk_sample: Option<u64>,
     chunk_sample_seed: Option<u64>,
 ) -> Result<()> {
+    let started_at = Instant::now();
     let chunk_count = manifest.chunk_count;
 
     let verify_all = match chunk_sample {
@@ -1779,14 +1793,16 @@ async fn verify_chunks(
 
     pb.finish_and_clear();
 
+    let elapsed = started_at.elapsed();
+
     if checked != total_chunks_to_verify {
         bail!("internal error: only checked {checked}/{total_chunks_to_verify} chunks");
     }
 
-    eprintln!(
-        "Chunk verification summary: checked {checked} chunks ({total_bytes_to_verify} bytes), failures: {failure_count}"
-    );
     if failure_count > 0 {
+        eprintln!(
+            "Chunk verification summary: checked {checked} chunks ({total_bytes_to_verify} bytes), failures: {failure_count} (elapsed {elapsed:.2?})"
+        );
         if !samples.is_empty() {
             eprintln!("First {} failures:", samples.len());
             for failure in samples {
@@ -1799,6 +1815,9 @@ async fn verify_chunks(
         bail!("chunk verification failed with {failure_count} failures");
     }
 
+    println!(
+        "Verified {checked}/{total_chunks_to_verify} chunks ({total_bytes_to_verify} bytes) in {elapsed:.2?}"
+    );
     Ok(())
 }
 
