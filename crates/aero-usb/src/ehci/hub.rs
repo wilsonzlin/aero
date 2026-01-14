@@ -122,44 +122,43 @@ impl Port {
 
         if self.connected {
             v |= PORTSC_CCS;
-        }
-
-        // Speed reporting:
-        //
-        // - High-speed devices are indicated via PORTSC.HSP (when EHCI-owned).
-        // - Full/low-speed devices are distinguished via PORTSC.LS (line status).
-        //
-        // This is required so guest EHCI drivers can correctly program QH/qTD endpoint speed
-        // fields (and decide whether to hand off a port to a companion controller).
-        if self.connected {
+ 
+            // Speed reporting:
+            //
+            // Guest EHCI drivers consult PORTSC.HSP + PORTSC.LS (line status) to determine the
+            // attached device speed and decide whether to hand off a port to a companion controller.
+            //
+            // Contract (matches `Usb2PortMux`):
+            // - High-speed devices set HSP (when EHCI-owned) and clear the LS bits.
+            // - Full-speed devices clear HSP and report idle J-state via LS=0b01.
+            // - Low-speed devices clear HSP and report idle K-state via LS=0b10.
+            // - While resuming at full/low speed, report a K-state.
             if let Some(dev) = self.device.as_ref() {
                 let speed = dev.speed();
 
-                // PORTSC.HSP is only meaningful when EHCI owns the port.
+                // PORTSC.HSP is only meaningful when EHCI owns the port (PORT_OWNER=0).
                 if !self.port_owner && speed == UsbSpeed::High {
                     v |= PORTSC_HSP;
                 }
 
-                // PORTSC.LS encodes D+/D- line state. Provide a deterministic steady-state mapping
-                // to allow guests to distinguish full-speed vs low-speed.
-                //
-                // EHCI 1.0 spec 2.3.9:
-                // - 0b10 = J-state (D+ high)  -> full-speed device idle
-                // - 0b01 = K-state (D- high)  -> low-speed device idle (pull-up on D-)
-                // - 0b00 = SE0/undefined      -> treat as high-speed / no device
                 if !self.reset {
-                    let ls = if self.resuming && speed != UsbSpeed::High {
-                        // While resuming at low/full speed, the host drives a K-state (D- high).
-                        0b01u32
+                    let ls: u32 = if speed == UsbSpeed::High {
+                        0
+                    } else if self.resuming {
+                        0b10
                     } else {
                         match speed {
-                            UsbSpeed::High => 0b00u32,
-                            UsbSpeed::Full => 0b10u32,
-                            UsbSpeed::Low => 0b01u32,
+                            UsbSpeed::Full => 0b01, // J-state (D+ high)
+                            UsbSpeed::Low => 0b10,  // K-state (D- high)
+                            UsbSpeed::High => 0,
                         }
                     };
                     v |= ls << 10;
                 }
+            } else if !self.reset {
+                // No device object (should be rare); preserve previous MVP behaviour.
+                let ls = if self.resuming { 0b10 } else { 0b01 };
+                v |= (ls as u32) << 10;
             }
         }
 

@@ -378,6 +378,9 @@ impl IoSnapshot for XhciController {
 
         // Snapshot tags must remain stable within a major version, but early xHCI snapshots had a
         // brief period where the header version and the tag layout disagreed:
+        // - v0.3 used:
+        //   - 11: host_controller_error (bool)
+        //   - 12: ports
         //
         // Version 0.4 swapped those tags to resolve a collision introduced in 0.3. Some historical
         // snapshots used the 0.4 header while still encoding fields using the 0.3 tag mapping, so:

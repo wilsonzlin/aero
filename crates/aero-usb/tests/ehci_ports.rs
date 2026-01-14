@@ -137,22 +137,24 @@ fn ehci_portsc_reports_device_speed_via_hsp_and_line_status() {
     let portsc0 = ehci.mmio_read(reg_portsc(0), 4);
     assert_ne!(portsc0 & PORTSC_PO, 0);
     assert_eq!(portsc0 & PORTSC_HSP, 0);
+    assert_eq!(portsc0 & PORTSC_LS_MASK, 0, "high-speed should clear LS bits");
 
     // Full-speed device: HSP clear, LS encodes J-state (D+ high).
     let portsc1 = ehci.mmio_read(reg_portsc(1), 4);
     assert_eq!(portsc1 & PORTSC_HSP, 0);
-    assert_eq!(portsc1 & PORTSC_LS_MASK, 0b10 << 10);
+    assert_eq!(portsc1 & PORTSC_LS_MASK, 0b01 << 10);
 
     // Low-speed device: HSP clear, LS encodes K-state (D- high).
     let portsc2 = ehci.mmio_read(reg_portsc(2), 4);
     assert_eq!(portsc2 & PORTSC_HSP, 0);
-    assert_eq!(portsc2 & PORTSC_LS_MASK, 0b01 << 10);
+    assert_eq!(portsc2 & PORTSC_LS_MASK, 0b10 << 10);
 
     // Route ports to EHCI ownership and ensure the high-speed bit becomes visible.
     ehci.mmio_write(REG_CONFIGFLAG, 4, CONFIGFLAG_CF);
     let portsc0 = ehci.mmio_read(reg_portsc(0), 4);
     assert_eq!(portsc0 & PORTSC_PO, 0);
     assert_ne!(portsc0 & PORTSC_HSP, 0);
+    assert_eq!(portsc0 & PORTSC_LS_MASK, 0, "high-speed should clear LS bits");
 
     // While companion-owned, HSP must remain clear.
     ehci.mmio_write(reg_portsc(0), 4, portsc0 | PORTSC_PO);
@@ -183,17 +185,18 @@ fn ehci_portsc_line_status_flips_to_k_state_during_resume_for_full_speed() {
 
     let portsc = ehci.mmio_read(reg_portsc(0), 4);
     assert_eq!(portsc & PORTSC_HSP, 0);
-    assert_eq!(portsc & PORTSC_LS_MASK, 0b10 << 10, "expected J-state when idle");
+    assert_eq!(portsc & PORTSC_LS_MASK, 0b01 << 10, "expected J-state when idle");
 
     // Suspend the port, then force resume and verify line status flips to K state.
     ehci.mmio_write(reg_portsc(0), 4, portsc | PORTSC_SUSP);
     let portsc = ehci.mmio_read(reg_portsc(0), 4);
     assert_ne!(portsc & PORTSC_SUSP, 0);
+    assert_eq!(portsc & PORTSC_LS_MASK, 0b01 << 10, "expected J-state while suspended");
 
     ehci.mmio_write(reg_portsc(0), 4, portsc | PORTSC_FPR);
     let portsc = ehci.mmio_read(reg_portsc(0), 4);
     assert_ne!(portsc & PORTSC_FPR, 0);
-    assert_eq!(portsc & PORTSC_LS_MASK, 0b01 << 10, "expected K-state while resuming");
+    assert_eq!(portsc & PORTSC_LS_MASK, 0b10 << 10, "expected K-state while resuming");
 
     // After the resume timer expires, the port should exit suspend/resume and return to J state.
     for _ in 0..20 {
@@ -201,6 +204,38 @@ fn ehci_portsc_line_status_flips_to_k_state_during_resume_for_full_speed() {
     }
     let portsc = ehci.mmio_read(reg_portsc(0), 4);
     assert_eq!(portsc & (PORTSC_SUSP | PORTSC_FPR), 0);
-    assert_eq!(portsc & PORTSC_LS_MASK, 0b10 << 10);
+    assert_eq!(
+        portsc & PORTSC_LS_MASK,
+        0b01 << 10,
+        "expected J-state after resume"
+    );
 }
 
+#[test]
+fn ehci_portsc_reports_low_speed_line_status() {
+    let mut ehci = EhciController::new_with_port_count(1);
+    ehci.hub_mut().attach(
+        0,
+        Box::new(SpeedOnlyDevice {
+            speed: UsbSpeed::Low,
+        }),
+    );
+
+    // Claim ports for EHCI (clears PORT_OWNER).
+    ehci.mmio_write(REG_CONFIGFLAG, 4, CONFIGFLAG_CF);
+
+    // Reset the port to enable it.
+    ehci.mmio_write(reg_portsc(0), 4, PORTSC_PP | PORTSC_PR);
+    let mut mem = TestMemory::new(0x1000);
+    for _ in 0..50 {
+        ehci.tick_1ms(&mut mem);
+    }
+
+    let portsc = ehci.mmio_read(reg_portsc(0), 4);
+    assert_eq!(portsc & PORTSC_HSP, 0, "low-speed device should clear HSP");
+    assert_eq!(
+        (portsc & PORTSC_LS_MASK) >> 10,
+        0b10,
+        "low-speed device should report idle K-state via LS"
+    );
+}
