@@ -1008,13 +1008,15 @@ inline void SetRenderTargetsStateLocked(Device* dev,
   }
 }
 
-// The current AeroGPU host executors only support render target bindings that
-// are a contiguous prefix starting at slot 0 (i.e. there must not be a non-zero
-// RTV handle after a null slot). D3D11 allows such "gaps", typically produced
-// when the runtime unbinds outputs to resolve hazards (SRV/RTV aliasing).
+// Optional helper: normalize RTV bindings to a contiguous prefix.
 //
-// Normalize this state by truncating the RTV list at the first null slot and
-// clearing any subsequent slots.
+// D3D11 allows "gaps" in the RTV array (a null RTV in slot 0 with a non-null RTV
+// in slot 1, etc). Some bring-up backends may prefer to avoid gaps; callers can
+// use this helper to truncate the RTV list at the first null slot and clear any
+// subsequent slots.
+//
+// Note: `EmitSetRenderTargetsCmdFromStateLocked` does *not* call this helper;
+// it encodes gaps as-is to preserve D3D11 semantics.
 inline void NormalizeRenderTargetsNoGapsLocked(Device* dev) {
   if (!dev) {
     return;
@@ -1049,8 +1051,6 @@ inline bool EmitSetRenderTargetsCmdFromStateLocked(Device* dev) {
   if (!dev) {
     return false;
   }
-
-  NormalizeRenderTargetsNoGapsLocked(dev);
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
   if (!cmd) {

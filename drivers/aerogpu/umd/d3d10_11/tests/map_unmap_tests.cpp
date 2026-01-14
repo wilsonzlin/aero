@@ -1973,6 +1973,170 @@ bool TestStagingMapFlagsValidation() {
   return true;
 }
 
+bool TestMapAlreadyMappedFails() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false),
+             "InitTestDevice(map already mapped)")) {
+    return false;
+  }
+
+  TestResource buf{};
+  if (!Check(CreateStagingBuffer(&dev, /*byte_width=*/16, AEROGPU_D3D11_CPU_ACCESS_WRITE, &buf), "CreateStagingBuffer")) {
+    return false;
+  }
+
+  AEROGPU_DDI_MAPPED_SUBRESOURCE mapped = {};
+  HRESULT hr = dev.device_funcs.pfnMap(dev.hDevice,
+                                       buf.hResource,
+                                       /*subresource=*/0,
+                                       AEROGPU_DDI_MAP_WRITE,
+                                       /*map_flags=*/0,
+                                       &mapped);
+  if (!Check(hr == S_OK, "Map should succeed initially")) {
+    return false;
+  }
+
+  AEROGPU_DDI_MAPPED_SUBRESOURCE mapped2 = {};
+  hr = dev.device_funcs.pfnMap(dev.hDevice,
+                               buf.hResource,
+                               /*subresource=*/0,
+                               AEROGPU_DDI_MAP_WRITE,
+                               /*map_flags=*/0,
+                               &mapped2);
+  if (!Check(hr == E_FAIL, "Map on already mapped subresource should fail")) {
+    return false;
+  }
+
+  dev.harness.errors.clear();
+  dev.device_funcs.pfnUnmap(dev.hDevice, buf.hResource, /*subresource=*/0);
+  if (!Check(dev.harness.errors.empty(), "Unmap after failed Map should not report errors")) {
+    return false;
+  }
+
+  mapped = {};
+  hr = dev.device_funcs.pfnMap(dev.hDevice,
+                               buf.hResource,
+                               /*subresource=*/0,
+                               AEROGPU_DDI_MAP_WRITE,
+                               /*map_flags=*/0,
+                               &mapped);
+  if (!Check(hr == S_OK, "Map should succeed again after Unmap")) {
+    return false;
+  }
+  dev.device_funcs.pfnUnmap(dev.hDevice, buf.hResource, /*subresource=*/0);
+
+  TestResource tex{};
+  if (!Check(CreateStagingTexture2D(&dev,
+                                    /*width=*/3,
+                                    /*height=*/2,
+                                    AEROGPU_D3D11_CPU_ACCESS_WRITE,
+                                    &tex),
+             "CreateStagingTexture2D")) {
+    return false;
+  }
+
+  AEROGPU_DDI_MAPPED_SUBRESOURCE tex_map = {};
+  hr = dev.device_funcs.pfnStagingResourceMap(dev.hDevice,
+                                              tex.hResource,
+                                              /*subresource=*/0,
+                                              AEROGPU_DDI_MAP_WRITE,
+                                              /*map_flags=*/0,
+                                              &tex_map);
+  if (!Check(hr == S_OK, "StagingResourceMap should succeed initially")) {
+    return false;
+  }
+
+  AEROGPU_DDI_MAPPED_SUBRESOURCE tex_map2 = {};
+  hr = dev.device_funcs.pfnStagingResourceMap(dev.hDevice,
+                                              tex.hResource,
+                                              /*subresource=*/0,
+                                              AEROGPU_DDI_MAP_WRITE,
+                                              /*map_flags=*/0,
+                                              &tex_map2);
+  if (!Check(hr == E_FAIL, "StagingResourceMap on already mapped subresource should fail")) {
+    return false;
+  }
+
+  dev.harness.errors.clear();
+  dev.device_funcs.pfnStagingResourceUnmap(dev.hDevice, tex.hResource, /*subresource=*/0);
+  if (!Check(dev.harness.errors.empty(), "Valid StagingResourceUnmap after failed Map should not report errors")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, tex.hResource);
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, buf.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
+bool TestMapSubresourceValidation() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false),
+             "InitTestDevice(map subresource validation)")) {
+    return false;
+  }
+
+  TestResource buf{};
+  if (!Check(CreateStagingBuffer(&dev, /*byte_width=*/16, AEROGPU_D3D11_CPU_ACCESS_WRITE, &buf), "CreateStagingBuffer")) {
+    return false;
+  }
+
+  AEROGPU_DDI_MAPPED_SUBRESOURCE mapped = {};
+  HRESULT hr = dev.device_funcs.pfnMap(dev.hDevice,
+                                       buf.hResource,
+                                       /*subresource=*/1,
+                                       AEROGPU_DDI_MAP_WRITE,
+                                       /*map_flags=*/0,
+                                       &mapped);
+  if (!Check(hr == E_INVALIDARG, "Map on buffer with subresource!=0 should fail")) {
+    return false;
+  }
+
+  TestResource tex{};
+  if (!Check(CreateStagingTexture2DWithFormatAndDesc(&dev,
+                                                     /*width=*/4,
+                                                     /*height=*/4,
+                                                     kDxgiFormatB8G8R8A8Unorm,
+                                                     AEROGPU_D3D11_CPU_ACCESS_WRITE,
+                                                     /*mip_levels=*/2,
+                                                     /*array_size=*/2,
+                                                     &tex),
+             "CreateStagingTexture2D(mips=2, array=2)")) {
+    return false;
+  }
+
+  mapped = {};
+  hr = dev.device_funcs.pfnStagingResourceMap(dev.hDevice,
+                                              tex.hResource,
+                                              /*subresource=*/4,
+                                              AEROGPU_DDI_MAP_WRITE,
+                                              /*map_flags=*/0,
+                                              &mapped);
+  if (!Check(hr == E_INVALIDARG, "StagingResourceMap with out-of-range subresource should fail")) {
+    return false;
+  }
+
+  // Sanity: the last valid subresource should still map successfully.
+  mapped = {};
+  hr = dev.device_funcs.pfnStagingResourceMap(dev.hDevice,
+                                              tex.hResource,
+                                              /*subresource=*/3,
+                                              AEROGPU_DDI_MAP_WRITE,
+                                              /*map_flags=*/0,
+                                              &mapped);
+  if (!Check(hr == S_OK, "StagingResourceMap on last subresource should succeed")) {
+    return false;
+  }
+  dev.device_funcs.pfnStagingResourceUnmap(dev.hDevice, tex.hResource, /*subresource=*/3);
+
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, tex.hResource);
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, buf.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
 bool TestMapDoNotWaitReportsStillDrawing() {
   TestDevice dev{};
   if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true, /*async_fences=*/true),
@@ -8789,6 +8953,8 @@ int main() {
   ok &= TestMapCpuAccessValidation();
   ok &= TestMapFlagsValidation();
   ok &= TestStagingMapFlagsValidation();
+  ok &= TestMapAlreadyMappedFails();
+  ok &= TestMapSubresourceValidation();
   ok &= TestMapDoNotWaitReportsStillDrawing();
   ok &= TestMapBlockingWaitUsesInfiniteTimeout();
   ok &= TestInvalidUnmapReportsError();
