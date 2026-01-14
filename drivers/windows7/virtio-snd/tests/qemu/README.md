@@ -391,6 +391,8 @@ The selftest logs to:
       If the capture endpoint is missing, the capture test is reported as `SKIP|endpoint_missing` unless `--require-snd-capture` is set.
     - `--test-snd-capture` runs a capture smoke test (WASAPI, fallback to waveIn) that records for a short interval.
       This passes even on silence by default; use `--require-non-silence` to require a non-silent buffer.
+    - `--test-snd-buffer-limits` runs a WASAPI buffer sizing stress test and emits:
+      `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|PASS/FAIL|...`
     - `--require-snd-capture` fails the overall selftest if the capture endpoint is missing (instead of `SKIP`).
     - If no supported virtio-snd PCI function is detected (and no capture flags are set), the tool emits
       `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP` (and `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set`).

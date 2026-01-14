@@ -106,6 +106,24 @@ class HarnessArgAliasTests(unittest.TestCase):
                 )
                 self.assertTrue(args.with_input_wheel)
 
+    def test_snd_buffer_limits_aliases_set_flag(self) -> None:
+        for flag in (
+            "--with-snd-buffer-limits",
+            "--with-virtio-snd-buffer-limits",
+            "--enable-snd-buffer-limits",
+        ):
+            with self.subTest(flag=flag):
+                args = self._parse(
+                    [
+                        "--qemu-system",
+                        "qemu-system-x86_64",
+                        "--disk-image",
+                        "disk.img",
+                        flag,
+                    ]
+                )
+                self.assertTrue(args.with_snd_buffer_limits)
+
     def test_with_input_events_extended_aliases_set_flag(self) -> None:
         for flag in ("--with-input-events-extended", "--with-input-events-extra"):
             with self.subTest(flag=flag):

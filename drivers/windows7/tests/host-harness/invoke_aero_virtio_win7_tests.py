@@ -44,12 +44,13 @@ It:
     `--with-virtio-input-events` or `--with-input-tablet-events`/`--with-tablet-events` is enabled)
   - verify host-side MSI-X enablement on virtio PCI functions via QMP/QEMU introspection (when `--require-virtio-*-msix` is enabled)
   (unix socket on POSIX; TCP loopback fallback on Windows)
- - tails the serial log until it sees AERO_VIRTIO_SELFTEST|RESULT|PASS/FAIL
-   - in default (non-transitional) mode, a PASS result also requires per-test markers for virtio-blk, virtio-input,
-      virtio-snd (PASS or SKIP), virtio-snd-capture (PASS or SKIP), virtio-snd-duplex (PASS or SKIP), and virtio-net
+- tails the serial log until it sees AERO_VIRTIO_SELFTEST|RESULT|PASS/FAIL
+  - in default (non-transitional) mode, a PASS result also requires per-test markers for virtio-blk, virtio-input,
+     virtio-snd (PASS or SKIP), virtio-snd-capture (PASS or SKIP), virtio-snd-duplex (PASS or SKIP), virtio-net,
      and virtio-net-udp so older selftest binaries cannot accidentally pass
-   - when --with-virtio-snd is enabled, virtio-snd, virtio-snd-capture, and virtio-snd-duplex must PASS (not SKIP)
-   - when --with-input-events (alias: --with-virtio-input-events) is enabled, virtio-input-events must PASS (not FAIL/missing)
+  - when --with-virtio-snd is enabled, virtio-snd, virtio-snd-capture, and virtio-snd-duplex must PASS (not SKIP)
+  - when --with-snd-buffer-limits is enabled, virtio-snd-buffer-limits must PASS (not FAIL/SKIP/missing)
+  - when --with-input-events (alias: --with-virtio-input-events) is enabled, virtio-input-events must PASS (not FAIL/missing)
   - when --with-input-tablet-events/--with-tablet-events is enabled, virtio-input-tablet-events must PASS (not FAIL/missing)
   - when --with-blk-resize is enabled, virtio-blk-resize must PASS (not SKIP/FAIL/missing)
 

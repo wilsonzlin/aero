@@ -494,6 +494,22 @@ python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
 
 Note: `--with-virtio-snd` requires a guest image provisioned with virtio-snd capture/duplex selftests enabled (otherwise the harness will fail on `virtio-snd-duplex|SKIP|flag_not_set`). See: [`drivers/windows7/tests/host-harness/README.md`](../drivers/windows7/tests/host-harness/README.md).
 
+Example: require the virtio-snd buffer limits stress test to PASS:
+
+```bash
+python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
+  --qemu-system qemu-system-x86_64 \
+  --disk-image ./win7-aero-tests.qcow2 \
+  --snapshot \
+  --with-virtio-snd \
+  --with-snd-buffer-limits \
+  --timeout-seconds 600
+```
+
+Note: `--with-snd-buffer-limits` requires a guest image provisioned with the selftest flag `--test-snd-buffer-limits`
+(so the guest emits `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|PASS/FAIL|...`). If the guest reports
+`SKIP|flag_not_set` or the marker is missing entirely, the harness treats it as a hard failure.
+
 ---
 
 ## Quick Start Checklist
