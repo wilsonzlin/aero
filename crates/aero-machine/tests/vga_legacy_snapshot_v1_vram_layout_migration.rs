@@ -2,7 +2,7 @@
 
 use std::io::Cursor;
 
-use aero_gpu_vga::{SVGA_LFB_BASE, VBE_FRAMEBUFFER_OFFSET};
+use aero_gpu_vga::VBE_FRAMEBUFFER_OFFSET;
 use aero_machine::{Machine, MachineConfig};
 use aero_snapshot as snapshot;
 use pretty_assertions::assert_eq;
@@ -92,7 +92,7 @@ fn machine_restore_migrates_legacy_vga_snapshot_v1_vram_layout() {
     vm.io_write(0x01CF, 2, 0x0041);
 
     // Write one red pixel at (0,0) in packed 32bpp BGRX.
-    vm.write_physical_u32(u64::from(SVGA_LFB_BASE), 0x00FF_0000);
+    vm.write_physical_u32(vm.vbe_lfb_base(), 0x00FF_0000);
 
     // Build a legacy `VgaSnapshotV1` payload that simulates the pre-partition VRAM layout:
     // packed-pixel VBE framebuffer starts at vram[0..].

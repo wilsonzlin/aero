@@ -4967,7 +4967,7 @@ impl Machine {
             let bytes_per_pixel = ((regs.bpp as u32).saturating_add(7)) / 8;
             let pitch_bytes = stride_pixels.saturating_mul(bytes_per_pixel);
 
-            let base = aero_gpu_vga::SVGA_LFB_BASE as u64;
+            let base = u64::from(vga.borrow().lfb_base());
             self.publish_scanout(ScanoutStateUpdate {
                 source: SCANOUT_SOURCE_LEGACY_VBE_LFB,
                 base_paddr_lo: base as u32,

@@ -1,6 +1,5 @@
 #![cfg(target_arch = "wasm32")]
 
-use aero_gpu_vga::SVGA_LFB_BASE;
 use aero_wasm::{Machine, RunExitKind};
 use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -410,7 +409,7 @@ fn wasm_machine_vbe_present_reports_expected_pixel() {
     if scanout_ptr != 0 {
         let snap = unsafe { snapshot_scanout_state(scanout_ptr) };
         assert_eq!(snap.source, SCANOUT_SOURCE_LEGACY_VBE_LFB);
-        assert_eq!(snap.base_paddr, SVGA_LFB_BASE as u64);
+        assert_eq!(snap.base_paddr, u64::from(machine.vbe_lfb_base()));
         assert_eq!(snap.width, 64);
         assert_eq!(snap.height, 64);
         assert_eq!(snap.pitch_bytes, 64 * 4);
