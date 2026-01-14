@@ -287,12 +287,14 @@ To validate power-transition robustness end-to-end:
 
 1. Capture a baseline driver snapshot:
    - `aerogpu_dbgctl --status`
+   - `aerogpu_dbgctl --query-error`
 2. Exercise **sleep/resume** (and/or hibernate/resume) in the Win7 guest.
 3. Exercise a PnP power transition by **disabling and re-enabling** the AeroGPU adapter:
    - Device Manager → Display adapters → AeroGPU → Disable / Enable
 4. Re-run:
    - `aerogpu_dbgctl --status`
-   - The Win7 guest test suite (recommended: `drivers/aerogpu/tests/win7/bin/aerogpu_test_runner.exe`)
+   - `aerogpu_dbgctl --query-error`
+    - The Win7 guest test suite (recommended: `drivers/aerogpu/tests/win7/bin/aerogpu_test_runner.exe`)
 
 Expected: no IRQ storms or hangs during the transition, the desktop returns, and fences/ring state continue to advance
 after resume.
