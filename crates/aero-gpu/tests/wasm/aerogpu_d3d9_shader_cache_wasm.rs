@@ -1637,3 +1637,92 @@ async fn d3d9_executor_retranslates_on_persisted_wgsl_unknown_uniform_binding() 
         "expected retranslation to remove unexpected uniform binding"
     );
 }
+
+#[wasm_bindgen_test(async)]
+async fn d3d9_executor_retranslates_on_persisted_wgsl_sampler_type_mismatch() {
+    // If cached WGSL is corrupted to use an unexpected sampler type (e.g. sampler_comparison),
+    // pipeline creation would fail later due to bind group layout mismatch. Detect this on
+    // persistent cache hit and invalidate+retry.
+    let (api, store) = make_persistent_cache_stub();
+    let _guard = PersistentCacheApiGuard::install(&api, &store);
+
+    let mut exec = match AerogpuD3d9Executor::new_headless().await {
+        Ok(exec) => exec,
+        Err(err) => {
+            common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({err})"));
+            return;
+        }
+    };
+
+    let ps_bytes = assemble_ps_texld_s0();
+    let mut writer = AerogpuCmdWriter::new();
+    writer.create_shader_dxbc(1, AerogpuShaderStage::Pixel, &ps_bytes);
+    let stream = writer.finish();
+
+    exec.execute_cmd_stream_for_context_async(0, &stream)
+        .await
+        .expect("first shader create succeeds");
+
+    let map: Map = Reflect::get(&store, &JsValue::from_str("map"))
+        .expect("get store.map")
+        .dyn_into()
+        .expect("store.map should be a Map");
+    let keys = Array::from(&map.keys());
+    assert_eq!(keys.length(), 1, "expected one persisted shader entry");
+    let key = keys.get(0);
+    let cached = map.get(&key);
+    assert!(
+        !cached.is_undefined() && !cached.is_null(),
+        "expected persisted cache entry to exist"
+    );
+
+    let wgsl_before = Reflect::get(&cached, &JsValue::from_str("wgsl"))
+        .ok()
+        .and_then(|v| v.as_string())
+        .unwrap_or_default();
+    assert!(
+        wgsl_before.contains("var samp0: sampler;"),
+        "expected cached WGSL to declare samp0 as a filtering sampler"
+    );
+
+    let wgsl_corrupt = wgsl_before.replace(
+        "var samp0: sampler;",
+        "var samp0: sampler_comparison;",
+    );
+    let cached_obj: Object = cached
+        .clone()
+        .dyn_into()
+        .expect("cached entry should be an object");
+    Reflect::set(
+        &cached_obj,
+        &JsValue::from_str("wgsl"),
+        &JsValue::from_str(&wgsl_corrupt),
+    )
+    .expect("set cached.wgsl");
+
+    exec.reset();
+    exec.execute_cmd_stream_for_context_async(0, &stream)
+        .await
+        .expect("second shader create succeeds");
+
+    let get_calls = read_f64(&store, "getCalls") as u32;
+    let put_calls = read_f64(&store, "putCalls") as u32;
+    let delete_calls = read_f64(&store, "deleteCalls") as u32;
+    assert_eq!(get_calls, 3, "expected invalidate+retry after mismatch");
+    assert_eq!(put_calls, 2, "expected corrected shader to be persisted");
+    assert_eq!(
+        delete_calls, 1,
+        "expected corrupted cached entry to be deleted"
+    );
+
+    let cached_after = map.get(&key);
+    let wgsl_after = Reflect::get(&cached_after, &JsValue::from_str("wgsl"))
+        .ok()
+        .and_then(|v| v.as_string())
+        .unwrap_or_default();
+    assert!(
+        wgsl_after.contains("var samp0: sampler;")
+            && !wgsl_after.contains("sampler_comparison"),
+        "expected retranslation to restore samp0 sampler type"
+    );
+}
