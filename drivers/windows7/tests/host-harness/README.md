@@ -75,6 +75,9 @@ pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
   -TimeoutSeconds 600
 ```
 
+`-HttpLogPath` is optional; when set, the harness appends one line per HTTP request (`method path status bytes`) to the file
+(best-effort; logging failures are ignored).
+
 ### QEMU virtio PCI ID preflight (host-side QMP `query-pci`)
 
 To catch QEMU/device-arg misconfiguration early, the harness can optionally query QEMU's PCI topology via QMP
