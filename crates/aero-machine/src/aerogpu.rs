@@ -1718,7 +1718,8 @@ mod tests {
             0
         );
 
-        dev.record_error(pci::AerogpuErrorCode::Backend, 42);
+        let fence = 0x1_0000_0000u64 + 42;
+        dev.record_error(pci::AerogpuErrorCode::Backend, fence);
 
         assert!(dev.irq_level());
         assert_eq!(
@@ -1727,11 +1728,11 @@ mod tests {
         );
         assert_eq!(
             dev.mmio_read_dword(pci::AEROGPU_MMIO_REG_ERROR_FENCE_LO as u64),
-            42
+            42,
         );
         assert_eq!(
             dev.mmio_read_dword(pci::AEROGPU_MMIO_REG_ERROR_FENCE_HI as u64),
-            0
+            1,
         );
         assert_eq!(
             dev.mmio_read_dword(pci::AEROGPU_MMIO_REG_ERROR_COUNT as u64),
@@ -1748,11 +1749,11 @@ mod tests {
         );
         assert_eq!(
             dev.mmio_read_dword(pci::AEROGPU_MMIO_REG_ERROR_FENCE_LO as u64),
-            42
+            42,
         );
         assert_eq!(
             dev.mmio_read_dword(pci::AEROGPU_MMIO_REG_ERROR_FENCE_HI as u64),
-            0
+            1,
         );
         assert_eq!(
             dev.mmio_read_dword(pci::AEROGPU_MMIO_REG_ERROR_COUNT as u64),
