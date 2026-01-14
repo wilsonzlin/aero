@@ -329,7 +329,14 @@ impl PciDevice for XhciPciDevice {
         self.config.set_command(0);
         self.config.disable_msi_msix();
 
-        self.controller = XhciController::new();
+        // Reset controller registers while keeping attached device models.
+        //
+        // Like UHCI/EHCI, a host controller reset should not "unplug" devices. The xHCI controller
+        // model implements `USBCMD.HCRST` as an in-place reset that preserves physical connection
+        // state while clearing guest-visible operational state.
+        let mut bus = AeroUsbMemoryBus::NoDma;
+        self.controller
+            .mmio_write(&mut bus, regs::REG_USBCMD, 4, regs::USBCMD_HCRST);
         self.irq.set_level(false);
         self.last_irq_level = false;
     }

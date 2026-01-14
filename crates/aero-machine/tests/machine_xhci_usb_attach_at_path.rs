@@ -72,6 +72,71 @@ fn machine_usb_xhci_attach_at_path_attaches_keyboard_behind_nested_hub() {
 }
 
 #[test]
+fn machine_reset_preserves_host_attached_xhci_devices() {
+    let cfg = MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_xhci: true,
+        // Keep this test minimal/deterministic.
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        ..Default::default()
+    };
+
+    let mut m = Machine::new(cfg).unwrap();
+
+    // Host attach a USB hub at xHCI root port 0 and a keyboard behind hub port 1.
+    m.usb_xhci_attach_at_path(&[0], Box::new(UsbHubDevice::with_port_count(2)))
+        .expect("attach hub at root port 0");
+
+    let keyboard = UsbHidKeyboardHandle::new();
+    m.usb_xhci_attach_at_path(&[0, 1], Box::new(keyboard))
+        .expect("attach keyboard behind hub");
+
+    // Verify that the keyboard is reachable before reset.
+    {
+        let xhci = m.xhci().expect("xhci enabled");
+        let mut xhci = xhci.borrow_mut();
+        let ctrl = xhci.controller_mut();
+        assert!(
+            ctrl.find_device_by_topology(1, &[1]).is_some(),
+            "keyboard should be reachable before reset"
+        );
+    }
+
+    // Reset the whole machine (this calls `XhciPciDevice::reset()`).
+    m.reset();
+
+    let xhci = m.xhci().expect("xhci enabled after reset");
+    let mut xhci = xhci.borrow_mut();
+    let ctrl = xhci.controller_mut();
+
+    // The host controller reset should not unplug devices; the root port must still report a
+    // connected device.
+    let portsc0 = ctrl.read_portsc(0);
+    assert!(
+        (portsc0 & regs::PORTSC_CCS) != 0,
+        "port 0 should still report a connected device after reset"
+    );
+    assert!(
+        (portsc0 & regs::PORTSC_CSC) == 0,
+        "port 0 connect-status-change bit should be cleared by host controller reset"
+    );
+
+    let kb_dev = ctrl
+        .find_device_by_topology(1, &[1])
+        .expect("keyboard should still be reachable after reset");
+    assert!(
+        (kb_dev.model() as &dyn Any).is::<UsbHidKeyboardHandle>(),
+        "routed device should still be the attached keyboard model after reset"
+    );
+}
+
+#[test]
 fn machine_usb_xhci_attach_is_noop_when_xhci_is_disabled() {
     let cfg = MachineConfig {
         ram_size_bytes: 2 * 1024 * 1024,
