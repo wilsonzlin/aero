@@ -214,6 +214,48 @@ describe("InputCapture wheel handling", () => {
     });
   });
 
+  it("ignores non-finite wheel deltas (NaN/Infinity) without emitting guest events", () => {
+    withStubbedDocument(() => {
+      const canvas = {
+        tabIndex: 0,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        focus: () => {},
+      } as unknown as HTMLCanvasElement;
+
+      const posted: any[] = [];
+      const ioWorker = {
+        postMessage: (msg: unknown) => posted.push(msg),
+      };
+
+      const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: false });
+
+      // Simulate the canvas being focused.
+      (capture as any).hasFocus = true;
+
+      const preventDefault = vi.fn();
+      const stopPropagation = vi.fn();
+
+      (capture as any).handleWheel({
+        deltaY: Number.POSITIVE_INFINITY,
+        deltaX: Number.NaN,
+        deltaMode: 0,
+        preventDefault,
+        stopPropagation,
+        timeStamp: 1,
+      } as unknown as WheelEvent);
+
+      // Non-finite deltas clamp to zero, so no wheel event should be queued.
+      expect((capture as any).queue.size).toBe(0);
+
+      capture.flushNow();
+
+      expect(preventDefault).toHaveBeenCalledTimes(1);
+      expect(stopPropagation).toHaveBeenCalledTimes(1);
+      expect(posted).toHaveLength(0);
+    });
+  });
+
   it("preserves fractional wheel deltas across events (no per-event truncation)", () => {
     withStubbedDocument(() => {
       const canvas = {
