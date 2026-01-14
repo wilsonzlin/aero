@@ -21,8 +21,9 @@ Status:
   modern guests (or Windows 7 only when an xHCI driver is installed).
 - EHCI supports minimal async/periodic schedule walking (control/bulk + interrupt polling) and
   snapshot/restore; see [`docs/usb-ehci.md`](./usb-ehci.md) for current scope/limitations.
-- The web runtime currently exposes an xHCI *placeholder* (a minimal MMIO register file + snapshot
-  plumbing). It is not yet a functional guest-visible USB controller.
+- The web runtime currently exposes an xHCI PCI function backed by `XhciControllerBridge`, but the
+  controller is still missing key guest-visible functionality (doorbells, guest event ring, etc), so
+  treat it as a placeholder for now.
 
 > Canonical USB stack selection: see [ADR 0015](./adr/0015-canonical-usb-stack.md) (`crates/aero-usb` + `crates/aero-wasm` + `web/`).
 
@@ -35,6 +36,28 @@ Related docs:
 - IRQ line semantics in the web runtime: [`docs/irq-semantics.md`](./irq-semantics.md)
 
 ---
+
+## Goals and scope (MVP)
+
+**MVP goal:** enough xHCI behavior for modern guests to enumerate USB 2.0 devices and poll interrupt
+endpoints reliably (HID), with deterministic snapshot/restore and a path toward high-speed passthrough.
+
+The intended xHCI MVP covers:
+
+1. **PCI function identity + MMIO BAR + INTx**
+2. **USB2-only root hub ports** (connect/disconnect/reset/change) and delivery of port-change events
+   via the guest-visible event ring
+3. **Command ring + event ring** integration sufficient for OS driver bring-up (slot enable, address
+   device, configure endpoints, and a minimal subset of endpoint commands)
+4. **Transfers**
+   - Endpoint 0 control transfers via Setup/Data/Status TRBs
+   - Interrupt + bulk endpoints via Normal TRBs
+5. **Snapshot/restore**
+   - Guest RAM owns rings/contexts/buffers; device snapshot captures guest-visible regs + controller
+     bookkeeping required for forward progress.
+
+SuperSpeed, isochronous transfers, MSI-X, streams, and other advanced features remain out of scope
+for the initial xHCI MVP.
 
 ## PCI identity and wiring
 
@@ -174,6 +197,20 @@ runtime interrupter registers, and guest event ring model are not implemented ye
 - Context parsing helpers (`context`)
 
 These are used by tests and by higher-level “transfer engine” harnesses.
+
+#### Command ring + endpoint-management helpers (used by tests)
+
+`crates/aero-usb/src/xhci/` includes a few early building blocks that model **parts** of xHCI
+command/event behavior:
+
+- `command_ring::CommandRingProcessor`: parses a guest command ring and writes completion events into
+  a guest event ring (single-segment).
+  - Implemented commands: `NoOp`, `Evaluate Context`, `Stop Endpoint`, `Reset Endpoint`,
+    `Set TR Dequeue Pointer`.
+- `command`: a minimal endpoint-management state machine used by tests and by early enumeration
+  harnesses.
+
+These are not yet wired into the guest-visible `XhciController` MMIO surface.
 
 #### Transfers (non-control endpoints via Normal TRBs)
 
