@@ -3717,7 +3717,7 @@ impl Machine {
         &mut self,
         path: String,
     ) -> Result<(), JsValue> {
-        let disk = aero_opfs::OpfsSendDisk::open_existing(&path)
+        let disk = aero_opfs::OpfsBackend::open_existing(&path)
             .await
             .map_err(|e| {
                 opfs_disk_error_to_js("Machine.attach_install_media_iso_opfs_existing", &path, e)
@@ -3872,7 +3872,7 @@ impl Machine {
         &mut self,
         path: String,
     ) -> Result<(), JsValue> {
-        let disk = aero_opfs::OpfsSendDisk::open_existing(&path)
+        let disk = aero_opfs::OpfsBackend::open_existing(&path)
             .await
             .map_err(|e| {
                 opfs_disk_error_to_js(
@@ -4320,7 +4320,7 @@ impl Machine {
     /// Note: this requires OPFS `FileSystemSyncAccessHandle` support (worker-only).
     #[cfg(target_arch = "wasm32")]
     pub async fn attach_install_media_iso_opfs(&mut self, path: String) -> Result<(), JsValue> {
-        let disk = aero_opfs::OpfsSendDisk::open_existing(&path)
+        let disk = aero_opfs::OpfsBackend::open_existing(&path)
             .await
             .map_err(|e| opfs_disk_error_to_js("Machine.attach_install_media_iso_opfs", &path, e))?;
 
@@ -4359,7 +4359,7 @@ impl Machine {
         &mut self,
         path: String,
     ) -> Result<(), JsValue> {
-        let disk = aero_opfs::OpfsSendDisk::open_existing(&path)
+        let disk = aero_opfs::OpfsBackend::open_existing(&path)
             .await
             .map_err(|e| {
                 opfs_disk_error_to_js("Machine.attach_install_media_iso_opfs_for_restore", &path, e)
@@ -5552,7 +5552,7 @@ impl Machine {
                         )));
                     }
 
-                    let disk = aero_opfs::OpfsSendDisk::open_existing(&base_image)
+                    let disk = aero_opfs::OpfsBackend::open_existing(&base_image)
                         .await
                         .map_err(|e| opfs_error(disk_id, "base_image", &base_image, e))?;
                     self.inner
