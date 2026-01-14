@@ -20,6 +20,10 @@ static NDIS_HANDLE g_NdisDriverHandle = NULL;
 static volatile LONG g_AerovNetDbgTxCancelBeforeSg = 0;
 static volatile LONG g_AerovNetDbgTxCancelAfterSg = 0;
 static volatile LONG g_AerovNetDbgTxCancelAfterSubmit = 0;
+static volatile LONG g_AerovNetDbgTxTcpCsumOffload = 0;
+static volatile LONG g_AerovNetDbgTxTcpCsumFallback = 0;
+static volatile LONG g_AerovNetDbgTxUdpCsumOffload = 0;
+static volatile LONG g_AerovNetDbgTxUdpCsumFallback = 0;
 #endif
 static VOID AerovNetFreeCtrlPendingRequests(_Inout_ AEROVNET_ADAPTER* Adapter);
 
@@ -835,12 +839,261 @@ static VOID AerovNetFillRxQueueLocked(_Inout_ AEROVNET_ADAPTER* Adapter) {
   }
 }
 
+static __forceinline USHORT AerovNetReadBe16(_In_reads_bytes_(2) const UCHAR* Buf) {
+  return (USHORT)(((USHORT)Buf[0] << 8) | (USHORT)Buf[1]);
+}
+
+static ULONG AerovNetChecksumAdd(_In_ ULONG Sum, _In_reads_bytes_(Len) const UCHAR* Buf, _In_ ULONG Len) {
+  ULONG I;
+
+  if (!Buf) {
+    return Sum;
+  }
+
+  for (I = 0; I + 1 < Len; I += 2) {
+    Sum += ((ULONG)Buf[I] << 8) | (ULONG)Buf[I + 1];
+  }
+
+  if ((Len & 1u) != 0) {
+    Sum += (ULONG)Buf[Len - 1] << 8;
+  }
+
+  return Sum;
+}
+
+static USHORT AerovNetChecksumFinish(_In_ ULONG Sum) {
+  while ((Sum >> 16) != 0) {
+    Sum = (Sum & 0xFFFFu) + (Sum >> 16);
+  }
+
+  {
+    USHORT Csum = (USHORT)~(USHORT)Sum;
+    // RFC 768/793: if the computed checksum is 0, transmit it as all-ones.
+    return (Csum == 0) ? (USHORT)0xFFFFu : Csum;
+  }
+}
+
+static BOOLEAN AerovNetWriteNetBufferData(_Inout_ PNET_BUFFER Nb, _In_ ULONG Offset, _In_reads_bytes_(Len) const UCHAR* Data, _In_ ULONG Len) {
+  PMDL Mdl;
+  ULONG MdlOffset;
+  ULONG Skip;
+
+  if (!Nb || !Data) {
+    return FALSE;
+  }
+
+  if (Offset + Len > NET_BUFFER_DATA_LENGTH(Nb)) {
+    return FALSE;
+  }
+
+  Mdl = NET_BUFFER_CURRENT_MDL(Nb);
+  MdlOffset = NET_BUFFER_CURRENT_MDL_OFFSET(Nb);
+  Skip = Offset;
+
+  while (Mdl) {
+    ULONG ByteCount;
+    ULONG Available;
+
+    ByteCount = MmGetMdlByteCount(Mdl);
+    if (ByteCount < MdlOffset) {
+      return FALSE;
+    }
+
+    Available = ByteCount - MdlOffset;
+    if (Skip < Available) {
+      break;
+    }
+
+    Skip -= Available;
+    Mdl = NDIS_MDL_LINKAGE(Mdl);
+    MdlOffset = 0;
+  }
+
+  if (!Mdl) {
+    return FALSE;
+  }
+
+  MdlOffset += Skip;
+
+  while (Len != 0 && Mdl) {
+    ULONG ByteCount;
+    PUCHAR Va;
+    ULONG Available;
+    ULONG ToCopy;
+
+    ByteCount = MmGetMdlByteCount(Mdl);
+    if (ByteCount < MdlOffset) {
+      return FALSE;
+    }
+
+    Va = (PUCHAR)MmGetSystemAddressForMdlSafe(Mdl, NormalPagePriority);
+    if (!Va) {
+      return FALSE;
+    }
+
+    Available = ByteCount - MdlOffset;
+    ToCopy = (Len < Available) ? Len : Available;
+    RtlCopyMemory(Va + MdlOffset, Data, ToCopy);
+
+    Data += ToCopy;
+    Len -= ToCopy;
+
+    Mdl = NDIS_MDL_LINKAGE(Mdl);
+    MdlOffset = 0;
+  }
+
+  return (Len == 0) ? TRUE : FALSE;
+}
+
+static BOOLEAN AerovNetComputeAndWriteL4Checksum(_Inout_ PNET_BUFFER Nb,
+                                                _In_reads_bytes_(FrameLen) const UCHAR* Frame,
+                                                _In_ ULONG FrameLen,
+                                                _In_ UCHAR ExpectedL4Proto) {
+  VIRTIO_NET_HDR_OFFLOAD_FRAME_INFO Info;
+  VIRTIO_NET_HDR_OFFLOAD_STATUS St;
+  ULONG L4TotalLen;
+  ULONG Sum;
+  ULONG CsumAbsOffset;
+  USHORT Csum;
+
+  if (!Nb || !Frame || FrameLen < 14) {
+    return FALSE;
+  }
+
+  RtlZeroMemory(&Info, sizeof(Info));
+  St = VirtioNetHdrOffloadParseFrame((const uint8_t*)Frame, (size_t)FrameLen, &Info);
+  if (St != VIRTIO_NET_HDR_OFFLOAD_STATUS_OK) {
+    return FALSE;
+  }
+
+  if (Info.IsFragmented) {
+    // Transport checksum offload doesn't apply to fragmented packets; assume the
+    // stack already produced a correct checksum.
+    return TRUE;
+  }
+
+  if (Info.L4Proto != ExpectedL4Proto) {
+    return FALSE;
+  }
+
+  if (Info.L3Proto == (uint8_t)VIRTIO_NET_HDR_OFFLOAD_L3_IPV4) {
+    const UCHAR* Ip;
+    ULONG TotalLen;
+
+    if (FrameLen < (ULONG)Info.L3Offset + 20u) {
+      return FALSE;
+    }
+
+    Ip = Frame + Info.L3Offset;
+    TotalLen = AerovNetReadBe16(Ip + 2);
+    if (TotalLen < (ULONG)Info.L3Len) {
+      return FALSE;
+    }
+
+    L4TotalLen = TotalLen - (ULONG)Info.L3Len;
+  } else if (Info.L3Proto == (uint8_t)VIRTIO_NET_HDR_OFFLOAD_L3_IPV6) {
+    const UCHAR* Ip6;
+    ULONG PayloadLen;
+    ULONG ExtLen;
+
+    if (FrameLen < (ULONG)Info.L3Offset + 40u) {
+      return FALSE;
+    }
+
+    Ip6 = Frame + Info.L3Offset;
+    PayloadLen = AerovNetReadBe16(Ip6 + 4);
+
+    if (Info.L3Len < 40u) {
+      return FALSE;
+    }
+
+    ExtLen = (ULONG)Info.L3Len - 40u;
+    if (PayloadLen < ExtLen) {
+      return FALSE;
+    }
+
+    L4TotalLen = PayloadLen - ExtLen;
+  } else {
+    return FALSE;
+  }
+
+  if (FrameLen < (ULONG)Info.L4Offset + L4TotalLen) {
+    return FALSE;
+  }
+
+  // Build pseudo header checksum.
+  Sum = 0;
+
+  if (Info.L3Proto == (uint8_t)VIRTIO_NET_HDR_OFFLOAD_L3_IPV4) {
+    const UCHAR* Ip = Frame + Info.L3Offset;
+    // IPv4 pseudo header: src(4) + dst(4) + zero+proto(2) + length(2).
+    Sum = AerovNetChecksumAdd(Sum, Ip + 12, 8);
+    Sum += (USHORT)Info.L4Proto;
+    Sum += (USHORT)L4TotalLen;
+  } else {
+    const UCHAR* Ip6 = Frame + Info.L3Offset;
+    // IPv6 pseudo header: src(16) + dst(16) + length(4) + zero(3) + next(1).
+    Sum = AerovNetChecksumAdd(Sum, Ip6 + 8, 32);
+    Sum += (USHORT)((L4TotalLen >> 16) & 0xFFFFu);
+    Sum += (USHORT)(L4TotalLen & 0xFFFFu);
+    Sum += (USHORT)Info.L4Proto;
+  }
+
+  // Add L4 header+payload, with the checksum field treated as zero.
+  CsumAbsOffset = (ULONG)Info.CsumStart + (ULONG)Info.CsumOffset;
+
+  if (CsumAbsOffset + 1u >= FrameLen) {
+    return FALSE;
+  }
+
+  {
+    const UCHAR* L4 = Frame + Info.L4Offset;
+    ULONG I;
+    ULONG Abs;
+
+    // Word-wise sum over the L4 region (big-endian 16-bit words).
+    Abs = (ULONG)Info.L4Offset;
+    for (I = 0; I + 1 < L4TotalLen; I += 2) {
+      UCHAR B0 = L4[I];
+      UCHAR B1 = L4[I + 1];
+
+      if (Abs == CsumAbsOffset || Abs == CsumAbsOffset + 1u) {
+        B0 = 0;
+      }
+      if (Abs + 1u == CsumAbsOffset || Abs + 1u == CsumAbsOffset + 1u) {
+        B1 = 0;
+      }
+
+      Sum += ((ULONG)B0 << 8) | (ULONG)B1;
+      Abs += 2;
+    }
+
+    if ((L4TotalLen & 1u) != 0) {
+      UCHAR B = L4[L4TotalLen - 1];
+      if (Abs == CsumAbsOffset || Abs == CsumAbsOffset + 1u) {
+        B = 0;
+      }
+      Sum += (ULONG)B << 8;
+    }
+  }
+
+  Csum = AerovNetChecksumFinish(Sum);
+
+  {
+    UCHAR Bytes[2];
+    Bytes[0] = (UCHAR)(Csum >> 8);
+    Bytes[1] = (UCHAR)(Csum & 0xFF);
+    return AerovNetWriteNetBufferData(Nb, CsumAbsOffset, Bytes, sizeof(Bytes));
+  }
+}
+
 static NDIS_STATUS AerovNetBuildTxHeader(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ AEROVNET_TX_REQUEST* TxReq) {
   AEROVNET_VIRTIO_NET_HDR BuiltHdr;
   AEROVNET_TX_OFFLOAD_INTENT Intent;
   AEROVNET_OFFLOAD_PARSE_INFO Info;
   ULONG FrameLen;
   UCHAR HeaderBytes[256];
+  UCHAR FullFrameBytes[2048];
   ULONG CopyLen;
   PVOID FramePtr;
   AEROVNET_OFFLOAD_RESULT OffRes;
@@ -892,16 +1145,47 @@ static NDIS_STATUS AerovNetBuildTxHeader(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
   }
 
   FrameLen = NET_BUFFER_DATA_LENGTH(TxReq->Nb);
-  CopyLen = (FrameLen < sizeof(HeaderBytes)) ? FrameLen : (ULONG)sizeof(HeaderBytes);
-
-  FramePtr = NdisGetDataBuffer(TxReq->Nb, CopyLen, HeaderBytes, 1, 0);
+  if (Intent.WantTso) {
+    CopyLen = (FrameLen < sizeof(HeaderBytes)) ? FrameLen : (ULONG)sizeof(HeaderBytes);
+    FramePtr = NdisGetDataBuffer(TxReq->Nb, CopyLen, HeaderBytes, 1, 0);
+  } else {
+    // For checksum-only offloads, the frames are small (<= 1522 bytes). Copy the
+    // entire frame so header parsing doesn't fail for large IPv6 extension
+    // header chains.
+    CopyLen = (FrameLen < sizeof(FullFrameBytes)) ? FrameLen : (ULONG)sizeof(FullFrameBytes);
+    FramePtr = NdisGetDataBuffer(TxReq->Nb, CopyLen, FullFrameBytes, 1, 0);
+  }
   if (!FramePtr) {
     return NDIS_STATUS_INVALID_PACKET;
   }
 
   OffRes = AerovNetBuildTxVirtioNetHdr((const uint8_t*)FramePtr, (size_t)CopyLen, &Intent, &BuiltHdr, &Info);
   if (OffRes != AEROVNET_OFFLOAD_OK) {
-    return NDIS_STATUS_INVALID_PACKET;
+    // TSO cannot be emulated in software at this layer; reject.
+    if (Intent.WantTso) {
+      return NDIS_STATUS_INVALID_PACKET;
+    }
+
+    // For checksum-only requests, fall back to software checksumming when
+    // possible (or send with no offload metadata for non-applicable frames).
+    if (Intent.WantTcpChecksum) {
+      if (!AerovNetComputeAndWriteL4Checksum(TxReq->Nb, (const UCHAR*)FramePtr, CopyLen, 6u)) {
+        return NDIS_STATUS_INVALID_PACKET;
+      }
+#if DBG
+      InterlockedIncrement(&g_AerovNetDbgTxTcpCsumFallback);
+#endif
+    } else if (Intent.WantUdpChecksum) {
+      if (!AerovNetComputeAndWriteL4Checksum(TxReq->Nb, (const UCHAR*)FramePtr, CopyLen, 17u)) {
+        return NDIS_STATUS_INVALID_PACKET;
+      }
+#if DBG
+      InterlockedIncrement(&g_AerovNetDbgTxUdpCsumFallback);
+#endif
+    }
+
+    RtlZeroMemory(TxReq->HeaderVa, Adapter->RxHeaderBytes);
+    return NDIS_STATUS_SUCCESS;
   }
 
   // Validate negotiated capabilities and the offload enablement that was in
@@ -925,7 +1209,25 @@ static NDIS_STATUS AerovNetBuildTxHeader(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
     }
   } else {
     if (!Adapter->TxChecksumSupported) {
-      return NDIS_STATUS_INVALID_PACKET;
+      // Host doesn't support checksum offload; compute in software.
+      if (Intent.WantTcpChecksum) {
+        if (!AerovNetComputeAndWriteL4Checksum(TxReq->Nb, (const UCHAR*)FramePtr, CopyLen, 6u)) {
+          return NDIS_STATUS_INVALID_PACKET;
+        }
+#if DBG
+        InterlockedIncrement(&g_AerovNetDbgTxTcpCsumFallback);
+#endif
+      } else if (Intent.WantUdpChecksum) {
+        if (!AerovNetComputeAndWriteL4Checksum(TxReq->Nb, (const UCHAR*)FramePtr, CopyLen, 17u)) {
+          return NDIS_STATUS_INVALID_PACKET;
+        }
+#if DBG
+        InterlockedIncrement(&g_AerovNetDbgTxUdpCsumFallback);
+#endif
+      }
+
+      RtlZeroMemory(TxReq->HeaderVa, Adapter->RxHeaderBytes);
+      return NDIS_STATUS_SUCCESS;
     }
     if (Intent.WantTcpChecksum && Intent.WantUdpChecksum) {
       return NDIS_STATUS_INVALID_PACKET;
@@ -933,11 +1235,25 @@ static NDIS_STATUS AerovNetBuildTxHeader(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
     if (Info.IpVersion == 4) {
       if (Intent.WantTcpChecksum) {
         if (!TxReq->TxChecksumV4Enabled) {
-          return NDIS_STATUS_INVALID_PACKET;
+          if (!AerovNetComputeAndWriteL4Checksum(TxReq->Nb, (const UCHAR*)FramePtr, CopyLen, 6u)) {
+            return NDIS_STATUS_INVALID_PACKET;
+          }
+#if DBG
+          InterlockedIncrement(&g_AerovNetDbgTxTcpCsumFallback);
+#endif
+          RtlZeroMemory(TxReq->HeaderVa, Adapter->RxHeaderBytes);
+          return NDIS_STATUS_SUCCESS;
         }
       } else if (Intent.WantUdpChecksum) {
         if (!TxReq->TxUdpChecksumV4Enabled) {
-          return NDIS_STATUS_INVALID_PACKET;
+          if (!AerovNetComputeAndWriteL4Checksum(TxReq->Nb, (const UCHAR*)FramePtr, CopyLen, 17u)) {
+            return NDIS_STATUS_INVALID_PACKET;
+          }
+#if DBG
+          InterlockedIncrement(&g_AerovNetDbgTxUdpCsumFallback);
+#endif
+          RtlZeroMemory(TxReq->HeaderVa, Adapter->RxHeaderBytes);
+          return NDIS_STATUS_SUCCESS;
         }
       } else {
         return NDIS_STATUS_INVALID_PACKET;
@@ -945,11 +1261,25 @@ static NDIS_STATUS AerovNetBuildTxHeader(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
     } else if (Info.IpVersion == 6) {
       if (Intent.WantTcpChecksum) {
         if (!TxReq->TxChecksumV6Enabled) {
-          return NDIS_STATUS_INVALID_PACKET;
+          if (!AerovNetComputeAndWriteL4Checksum(TxReq->Nb, (const UCHAR*)FramePtr, CopyLen, 6u)) {
+            return NDIS_STATUS_INVALID_PACKET;
+          }
+#if DBG
+          InterlockedIncrement(&g_AerovNetDbgTxTcpCsumFallback);
+#endif
+          RtlZeroMemory(TxReq->HeaderVa, Adapter->RxHeaderBytes);
+          return NDIS_STATUS_SUCCESS;
         }
       } else if (Intent.WantUdpChecksum) {
         if (!TxReq->TxUdpChecksumV6Enabled) {
-          return NDIS_STATUS_INVALID_PACKET;
+          if (!AerovNetComputeAndWriteL4Checksum(TxReq->Nb, (const UCHAR*)FramePtr, CopyLen, 17u)) {
+            return NDIS_STATUS_INVALID_PACKET;
+          }
+#if DBG
+          InterlockedIncrement(&g_AerovNetDbgTxUdpCsumFallback);
+#endif
+          RtlZeroMemory(TxReq->HeaderVa, Adapter->RxHeaderBytes);
+          return NDIS_STATUS_SUCCESS;
         }
       } else {
         return NDIS_STATUS_INVALID_PACKET;
@@ -958,6 +1288,14 @@ static NDIS_STATUS AerovNetBuildTxHeader(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
       return NDIS_STATUS_INVALID_PACKET;
     }
   }
+
+#if DBG
+  if (Intent.WantUdpChecksum) {
+    InterlockedIncrement(&g_AerovNetDbgTxUdpCsumOffload);
+  } else if (Intent.WantTcpChecksum || Intent.WantTso) {
+    InterlockedIncrement(&g_AerovNetDbgTxTcpCsumOffload);
+  }
+#endif
 
   // virtio-net uses a 10-byte header by default; when VIRTIO_NET_F_MRG_RXBUF is
   // negotiated, the header grows to 12 bytes (adding num_buffers). The TX side
@@ -2253,6 +2591,11 @@ static VOID AerovNetVirtioStop(_Inout_ AEROVNET_ADAPTER* Adapter) {
            InterlockedCompareExchange(&g_AerovNetDbgTxCancelBeforeSg, 0, 0),
            InterlockedCompareExchange(&g_AerovNetDbgTxCancelAfterSg, 0, 0),
            InterlockedCompareExchange(&g_AerovNetDbgTxCancelAfterSubmit, 0, 0));
+  DbgPrint("aero_virtio_net: tx csum stats: tcp_offload=%ld tcp_fallback=%ld udp_offload=%ld udp_fallback=%ld\n",
+           InterlockedCompareExchange(&g_AerovNetDbgTxTcpCsumOffload, 0, 0),
+           InterlockedCompareExchange(&g_AerovNetDbgTxTcpCsumFallback, 0, 0),
+           InterlockedCompareExchange(&g_AerovNetDbgTxUdpCsumOffload, 0, 0),
+           InterlockedCompareExchange(&g_AerovNetDbgTxUdpCsumFallback, 0, 0));
 #endif
 
   AerovNetFreeTxResources(Adapter);
