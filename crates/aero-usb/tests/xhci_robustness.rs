@@ -264,4 +264,15 @@ fn xhci_doorbell0_sets_host_controller_error_on_open_bus_command_ring_fetch() {
     xhci.mmio_write(&mut mem, u64::from(regs::DBOFF_VALUE), 4, 0);
     let sts2 = xhci.mmio_read(&mut mem, regs::REG_USBSTS, 4);
     assert_ne!(sts2 & regs::USBSTS_HCE, 0, "HCE should remain set");
+
+    // HCE is *not* RW1C. Real controllers require a reset to clear it, so emulate that stickiness
+    // even though we treat USBSTS as RW1C for other bits (e.g. USBSTS.EINT).
+    xhci.mmio_write(&mut mem, regs::REG_USBSTS, 4, regs::USBSTS_HCE);
+    let sts3 = xhci.mmio_read(&mut mem, regs::REG_USBSTS, 4);
+    assert_ne!(sts3 & regs::USBSTS_HCE, 0, "USBSTS write must not clear HCE");
+
+    // Host Controller Reset should clear HCE.
+    xhci.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_HCRST);
+    let sts4 = xhci.mmio_read(&mut mem, regs::REG_USBSTS, 4);
+    assert_eq!(sts4 & regs::USBSTS_HCE, 0, "HCRST should clear HCE");
 }
