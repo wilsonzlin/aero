@@ -10,13 +10,30 @@ fn wasm_machine_display_present_exposes_framebuffer_cache() {
 
     machine.display_present();
 
+    // `display_width`/`display_height`/`display_framebuffer_len_bytes` reflect the last
+    // `display_present` call.
+    let width1 = machine.display_width();
+    let height1 = machine.display_height();
+    assert!(width1 > 0, "expected non-zero display_width");
+    assert!(height1 > 0, "expected non-zero display_height");
+    assert_eq!(machine.display_stride_bytes(), width1 * 4);
+
+    let len1 = machine.display_framebuffer_len_bytes();
+    let expected_len1 = u64::from(width1) * u64::from(height1) * 4;
+    assert!(
+        expected_len1 <= u64::from(u32::MAX),
+        "framebuffer too large for u32"
+    );
+    assert_eq!(len1, expected_len1 as u32);
+
+    // `display_framebuffer_copy_rgba8888` calls `display_present` internally, so it can reallocate
+    // the underlying framebuffer cache. Re-query the ptr/len after calling it.
+    let copied = machine.display_framebuffer_copy_rgba8888();
     let width = machine.display_width();
     let height = machine.display_height();
-    assert!(width > 0, "expected non-zero display_width");
-    assert!(height > 0, "expected non-zero display_height");
-    assert_eq!(machine.display_stride_bytes(), width * 4);
-
     let len = machine.display_framebuffer_len_bytes();
+    assert_eq!(copied.len(), len as usize);
+
     let expected_len = u64::from(width) * u64::from(height) * 4;
     assert!(
         expected_len <= u64::from(u32::MAX),
@@ -29,9 +46,5 @@ fn wasm_machine_display_present_exposes_framebuffer_cache() {
 
     // Safety: ptr/len is a view into the module's own linear memory.
     let fb = unsafe { core::slice::from_raw_parts(ptr as *const u8, len as usize) };
-
-    let copied = machine.display_framebuffer_copy_rgba8888();
-    assert_eq!(copied.len(), len as usize);
     assert_eq!(copied.as_slice(), fb);
 }
-
