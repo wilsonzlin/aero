@@ -7,7 +7,9 @@ use std::sync::Arc;
 
 use aero_machine::{Machine, MachineConfig};
 use aero_protocol::aerogpu::aerogpu_pci as pci;
-use aero_shared::scanout_state::{ScanoutState, SCANOUT_FORMAT_B8G8R8X8, SCANOUT_SOURCE_WDDM};
+use aero_shared::scanout_state::{
+    ScanoutState, SCANOUT_FORMAT_B8G8R8X8, SCANOUT_SOURCE_LEGACY_TEXT, SCANOUT_SOURCE_WDDM,
+};
 use pretty_assertions::assert_eq;
 
 #[test]
@@ -77,11 +79,11 @@ fn aerogpu_scanout0_enable_publishes_wddm_scanout_state() {
     assert_eq!(snap.pitch_bytes, 800 * 4);
     assert_eq!(snap.format, SCANOUT_FORMAT_B8G8R8X8);
 
-    // Disabling scanout should publish a disabled descriptor (width/height=0) while keeping the
-    // scanout source in WDDM mode (blanked).
+    // Disabling scanout should release WDDM scanout ownership and revert to the legacy descriptor.
     m.write_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE), 0);
     m.process_aerogpu();
     let snap2 = scanout_state.snapshot();
+    assert_eq!(snap2.source, SCANOUT_SOURCE_LEGACY_TEXT);
     assert_eq!(snap2.width, 0);
     assert_eq!(snap2.height, 0);
 }

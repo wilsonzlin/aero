@@ -7,7 +7,7 @@ use aero_devices::pci::profile;
 use aero_machine::{Machine, MachineConfig, RunExit};
 use aero_protocol::aerogpu::aerogpu_pci as pci;
 use aero_shared::scanout_state::{
-    ScanoutState, SCANOUT_SOURCE_LEGACY_VBE_LFB, SCANOUT_SOURCE_WDDM,
+    ScanoutState, SCANOUT_FORMAT_B8G8R8X8, SCANOUT_SOURCE_LEGACY_VBE_LFB, SCANOUT_SOURCE_WDDM,
 };
 use pretty_assertions::assert_eq;
 
@@ -191,4 +191,5 @@ fn aerogpu_scanout_disable_reverts_to_legacy_vbe_with_panning_and_stride() {
     assert_eq!(snap.width, 1024);
     assert_eq!(snap.height, 768);
     assert_eq!(snap.pitch_bytes, u32::from(bytes_per_scan_line));
+    assert_eq!(snap.format, SCANOUT_FORMAT_B8G8R8X8);
 }
