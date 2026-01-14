@@ -499,23 +499,23 @@ for (const pkg of packagesToBuild) {
         args.push("--locked");
     }
 
-    const pkgEnv = { ...baseEnv };
+    const env = { ...baseEnv };
     if (pkgUsesThreads) {
         // Threaded/shared-memory builds use the pinned nightly toolchain so `-Z build-std`
         // is reproducible (see scripts/toolchains.json).
-        pkgEnv.RUSTUP_TOOLCHAIN = wasmThreadedToolchain;
+        env.RUSTUP_TOOLCHAIN = wasmThreadedToolchain;
         if (wasmThreadedToolchainBinDir) {
-            pkgEnv.PATH = `${wasmThreadedToolchainBinDir}${path.delimiter}${baseEnv.PATH ?? ""}`;
+            env.PATH = `${wasmThreadedToolchainBinDir}${path.delimiter}${baseEnv.PATH ?? ""}`;
         }
     }
     const rustflags = rustflagsForPkg(pkg, pkgUsesThreads);
     if (rustflags) {
-        pkgEnv.RUSTFLAGS = rustflags;
+        env.RUSTFLAGS = rustflags;
     } else {
-        delete pkgEnv.RUSTFLAGS;
+        delete env.RUSTFLAGS;
     }
 
-    const result = spawnSync("wasm-pack", args, { env: pkgEnv, stdio: "inherit" });
+    const result = spawnSync("wasm-pack", args, { env, stdio: "inherit" });
     if ((result.status ?? 1) !== 0) {
         process.exit(result.status ?? 1);
     }
