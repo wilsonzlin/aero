@@ -7868,7 +7868,29 @@ try {
       $scriptExitCode = 1
     }
     "VIRTIO_BLK_RESIZE_FAILED" {
-      Write-Host "FAIL: VIRTIO_BLK_RESIZE_FAILED: virtio-blk-resize test reported FAIL while -WithBlkResize was enabled"
+      $reason = "unknown"
+      $err = "unknown"
+      $disk = ""
+      $oldBytes = ""
+      $lastBytes = ""
+      $line = Try-ExtractLastAeroMarkerLine `
+        -Tail $result.Tail `
+        -Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|FAIL|" `
+        -SerialLogPath $SerialLogPath
+      if ($null -ne $line) {
+        if ($line -match "reason=([^|\r\n]+)") { $reason = $Matches[1] }
+        elseif ($line -match "\|FAIL\|([^|\r\n=]+)(?:\||$)") { $reason = $Matches[1] }
+        if ($line -match "(?:^|\|)err=([^|\r\n]+)") { $err = $Matches[1] }
+        if ($line -match "(?:^|\|)disk=([^|\r\n]+)") { $disk = $Matches[1] }
+        if ($line -match "(?:^|\|)old_bytes=([^|\r\n]+)") { $oldBytes = $Matches[1] }
+        if ($line -match "(?:^|\|)last_bytes=([^|\r\n]+)") { $lastBytes = $Matches[1] }
+      }
+      $details = "(reason=$reason err=$err"
+      if (-not [string]::IsNullOrEmpty($disk)) { $details += " disk=$disk" }
+      if (-not [string]::IsNullOrEmpty($oldBytes)) { $details += " old_bytes=$oldBytes" }
+      if (-not [string]::IsNullOrEmpty($lastBytes)) { $details += " last_bytes=$lastBytes" }
+      $details += ")"
+      Write-Host "FAIL: VIRTIO_BLK_RESIZE_FAILED: virtio-blk-resize test reported FAIL while -WithBlkResize was enabled $details"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue

@@ -2837,6 +2837,92 @@ def _virtio_input_wheel_fail_failure_message(tail: bytes, *, marker_line: Option
     )
 
 
+def _virtio_blk_resize_skip_failure_message(tail: bytes, *, marker_line: Optional[str] = None) -> str:
+    # Guest marker:
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|READY|disk=<n>|old_bytes=<bytes>
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|PASS|disk=<n>|old_bytes=<bytes>|new_bytes=<bytes>|elapsed_ms=<ms>
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|FAIL|reason=<...>|disk=<n>|old_bytes=<bytes>|last_bytes=<bytes>|err=<win32>
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|SKIP|flag_not_set
+    prefix = b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|SKIP|"
+    prefix_str = "AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|SKIP|"
+    marker = marker_line
+    if marker is not None and not marker.startswith(prefix_str):
+        marker = None
+    if marker is None:
+        marker = _try_extract_last_marker_line(tail, prefix)
+    if marker is not None:
+        fields = _parse_marker_kv_fields(marker)
+        reason = fields.get("reason")
+        if not reason:
+            # Backcompat: `...|SKIP|flag_not_set` (no `reason=` key).
+            try:
+                toks = marker.split("|")
+                if toks and "SKIP" in toks:
+                    idx = toks.index("SKIP")
+                    if idx + 1 < len(toks):
+                        tok = toks[idx + 1].strip()
+                        if tok and "=" not in tok:
+                            reason = tok
+            except Exception:
+                reason = reason
+        if reason:
+            if reason == "flag_not_set":
+                return (
+                    "FAIL: VIRTIO_BLK_RESIZE_SKIPPED: virtio-blk-resize test was skipped (flag_not_set) but "
+                    "--with-blk-resize was enabled (provision the guest with --test-blk-resize)"
+                )
+            return (
+                f"FAIL: VIRTIO_BLK_RESIZE_SKIPPED: virtio-blk-resize test was skipped ({reason}) but "
+                "--with-blk-resize was enabled"
+            )
+    return "FAIL: VIRTIO_BLK_RESIZE_SKIPPED: virtio-blk-resize test was skipped but --with-blk-resize was enabled"
+
+
+def _virtio_blk_resize_fail_failure_message(tail: bytes, *, marker_line: Optional[str] = None) -> str:
+    # Guest marker:
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|FAIL|reason=<...>|disk=<n>|old_bytes=<bytes>|last_bytes=<bytes>|err=<win32>
+    prefix = b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|FAIL|"
+    prefix_str = "AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|FAIL|"
+    marker = marker_line
+    if marker is not None and not marker.startswith(prefix_str):
+        marker = None
+    if marker is None:
+        marker = _try_extract_last_marker_line(tail, prefix)
+    if marker is not None:
+        fields = _parse_marker_kv_fields(marker)
+        reason = (fields.get("reason") or "").strip()
+        if not reason:
+            # Backcompat: allow `...|FAIL|timeout|err=...` (no `reason=` key).
+            try:
+                toks = marker.split("|")
+                if toks and "FAIL" in toks:
+                    idx = toks.index("FAIL")
+                    if idx + 1 < len(toks):
+                        tok = toks[idx + 1].strip()
+                        if tok and "=" not in tok:
+                            reason = tok
+            except Exception:
+                reason = reason
+        parts: list[str] = []
+        if reason:
+            parts.append(f"reason={_sanitize_marker_value(reason)}")
+        for k in ("disk", "old_bytes", "last_bytes", "err"):
+            v = (fields.get(k) or "").strip()
+            if v:
+                parts.append(f"{k}={_sanitize_marker_value(v)}")
+        details = ""
+        if parts:
+            details = " (" + " ".join(parts) + ")"
+        return (
+            "FAIL: VIRTIO_BLK_RESIZE_FAILED: virtio-blk-resize test reported FAIL while "
+            f"--with-blk-resize was enabled{details}"
+        )
+    return (
+        "FAIL: VIRTIO_BLK_RESIZE_FAILED: virtio-blk-resize test reported FAIL while "
+        "--with-blk-resize was enabled"
+    )
+
+
 def _virtio_blk_reset_required_failure_message(
     tail: bytes,
     *,
@@ -5922,8 +6008,10 @@ def main() -> int:
                     if need_blk_resize:
                         if saw_virtio_blk_resize_skip:
                             print(
-                                "FAIL: VIRTIO_BLK_RESIZE_SKIPPED: virtio-blk-resize test was skipped (flag_not_set) but "
-                                "--with-blk-resize was enabled (provision the guest with --test-blk-resize)",
+                                _virtio_blk_resize_skip_failure_message(
+                                    tail,
+                                    marker_line=virtio_blk_resize_marker_line,
+                                ),
                                 file=sys.stderr,
                             )
                             _print_tail(serial_log)
@@ -5931,7 +6019,10 @@ def main() -> int:
                             break
                         if saw_virtio_blk_resize_fail:
                             print(
-                                "FAIL: VIRTIO_BLK_RESIZE_FAILED: virtio-blk-resize test reported FAIL while --with-blk-resize was enabled",
+                                _virtio_blk_resize_fail_failure_message(
+                                    tail,
+                                    marker_line=virtio_blk_resize_marker_line,
+                                ),
                                 file=sys.stderr,
                             )
                             _print_tail(serial_log)
@@ -6218,7 +6309,10 @@ def main() -> int:
                             if need_blk_resize:
                                 if saw_virtio_blk_resize_fail:
                                     print(
-                                        "FAIL: VIRTIO_BLK_RESIZE_FAILED: selftest RESULT=PASS but virtio-blk-resize test reported FAIL",
+                                        _virtio_blk_resize_fail_failure_message(
+                                            tail,
+                                            marker_line=virtio_blk_resize_marker_line,
+                                        ),
                                         file=sys.stderr,
                                     )
                                     _print_tail(serial_log)
@@ -6227,8 +6321,10 @@ def main() -> int:
                                 if not saw_virtio_blk_resize_pass:
                                     if saw_virtio_blk_resize_skip:
                                         print(
-                                            "FAIL: VIRTIO_BLK_RESIZE_SKIPPED: virtio-blk-resize test was skipped (flag_not_set) but "
-                                            "--with-blk-resize was enabled (provision the guest with --test-blk-resize)",
+                                            _virtio_blk_resize_skip_failure_message(
+                                                tail,
+                                                marker_line=virtio_blk_resize_marker_line,
+                                            ),
                                             file=sys.stderr,
                                         )
                                     else:
@@ -6400,8 +6496,10 @@ def main() -> int:
                             if need_input_wheel:
                                 if saw_virtio_input_wheel_fail:
                                     print(
-                                        "FAIL: VIRTIO_INPUT_WHEEL_FAILED: selftest RESULT=PASS but virtio-input-wheel test reported FAIL "
-                                        "while --with-input-wheel/--with-virtio-input-wheel/--require-virtio-input-wheel/--enable-virtio-input-wheel was enabled",
+                                        _virtio_input_wheel_fail_failure_message(
+                                            tail,
+                                            marker_line=virtio_input_wheel_marker_line,
+                                        ),
                                         file=sys.stderr,
                                     )
                                     _print_tail(serial_log)
@@ -6785,7 +6883,10 @@ def main() -> int:
                         if need_blk_resize:
                             if saw_virtio_blk_resize_fail:
                                 print(
-                                    "FAIL: VIRTIO_BLK_RESIZE_FAILED: virtio-blk-resize test reported FAIL while --with-blk-resize was enabled",
+                                    _virtio_blk_resize_fail_failure_message(
+                                        tail,
+                                        marker_line=virtio_blk_resize_marker_line,
+                                    ),
                                     file=sys.stderr,
                                 )
                                 _print_tail(serial_log)
@@ -6794,8 +6895,10 @@ def main() -> int:
                             if not saw_virtio_blk_resize_pass:
                                 if saw_virtio_blk_resize_skip:
                                     print(
-                                        "FAIL: VIRTIO_BLK_RESIZE_SKIPPED: virtio-blk-resize test was skipped (flag_not_set) but "
-                                        "--with-blk-resize was enabled (provision the guest with --test-blk-resize)",
+                                        _virtio_blk_resize_skip_failure_message(
+                                            tail,
+                                            marker_line=virtio_blk_resize_marker_line,
+                                        ),
                                         file=sys.stderr,
                                     )
                                 else:
@@ -8448,7 +8551,10 @@ def main() -> int:
                                 if need_blk_resize:
                                     if saw_virtio_blk_resize_fail:
                                         print(
-                                            "FAIL: VIRTIO_BLK_RESIZE_FAILED: selftest RESULT=PASS but virtio-blk-resize test reported FAIL",
+                                            _virtio_blk_resize_fail_failure_message(
+                                                tail,
+                                                marker_line=virtio_blk_resize_marker_line,
+                                            ),
                                             file=sys.stderr,
                                         )
                                         _print_tail(serial_log)
@@ -8457,8 +8563,10 @@ def main() -> int:
                                     if not saw_virtio_blk_resize_pass:
                                         if saw_virtio_blk_resize_skip:
                                             print(
-                                                "FAIL: VIRTIO_BLK_RESIZE_SKIPPED: virtio-blk-resize test was skipped (flag_not_set) but "
-                                                "--with-blk-resize was enabled (provision the guest with --test-blk-resize)",
+                                                _virtio_blk_resize_skip_failure_message(
+                                                    tail,
+                                                    marker_line=virtio_blk_resize_marker_line,
+                                                ),
                                                 file=sys.stderr,
                                             )
                                         else:
@@ -8833,7 +8941,10 @@ def main() -> int:
                             if need_blk_resize:
                                 if saw_virtio_blk_resize_fail:
                                     print(
-                                        "FAIL: VIRTIO_BLK_RESIZE_FAILED: virtio-blk-resize test reported FAIL while --with-blk-resize was enabled",
+                                        _virtio_blk_resize_fail_failure_message(
+                                            tail,
+                                            marker_line=virtio_blk_resize_marker_line,
+                                        ),
                                         file=sys.stderr,
                                     )
                                     _print_tail(serial_log)
@@ -8842,8 +8953,10 @@ def main() -> int:
                                 if not saw_virtio_blk_resize_pass:
                                     if saw_virtio_blk_resize_skip:
                                         print(
-                                            "FAIL: VIRTIO_BLK_RESIZE_SKIPPED: virtio-blk-resize test was skipped (flag_not_set) but "
-                                            "--with-blk-resize was enabled (provision the guest with --test-blk-resize)",
+                                            _virtio_blk_resize_skip_failure_message(
+                                                tail,
+                                                marker_line=virtio_blk_resize_marker_line,
+                                            ),
                                             file=sys.stderr,
                                         )
                                     else:

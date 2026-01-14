@@ -270,6 +270,28 @@ class FailureTokenTests(unittest.TestCase):
         self.assertRegex(msg, _TOKEN_RE)
         self.assertTrue(msg.startswith("FAIL: MISSING_VIRTIO_BLK_RESET:"))
 
+    def test_virtio_blk_resize_skip_tokens_include_provisioning_hint(self) -> None:
+        h = self.harness
+        msg = h._virtio_blk_resize_skip_failure_message(
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|SKIP|flag_not_set\n"
+        )
+        self.assertRegex(msg, _TOKEN_RE)
+        self.assertTrue(msg.startswith("FAIL: VIRTIO_BLK_RESIZE_SKIPPED:"))
+        self.assertIn("--test-blk-resize", msg)
+
+    def test_virtio_blk_resize_fail_tokens_include_reason_and_err(self) -> None:
+        h = self.harness
+        msg = h._virtio_blk_resize_fail_failure_message(
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|FAIL|reason=timeout|disk=1|old_bytes=512|last_bytes=512|err=1460\n"
+        )
+        self.assertRegex(msg, _TOKEN_RE)
+        self.assertTrue(msg.startswith("FAIL: VIRTIO_BLK_RESIZE_FAILED:"))
+        self.assertIn("reason=timeout", msg)
+        self.assertIn("err=1460", msg)
+        self.assertIn("disk=1", msg)
+        self.assertIn("old_bytes=512", msg)
+        self.assertIn("last_bytes=512", msg)
+
     def test_virtio_net_link_flap_skip_tokens(self) -> None:
         h = self.harness
 
