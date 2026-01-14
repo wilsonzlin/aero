@@ -19,11 +19,58 @@ import {
 import { AerogpuFormat } from "../../../emulator/protocol/aerogpu/aerogpu_pci";
 
 describe("ipc/cursor_state", () => {
+  it("publishCursorState + snapshotCursorState roundtrips values", () => {
+    const cursorSab = new SharedArrayBuffer(CURSOR_STATE_BYTE_LEN);
+    const words = wrapCursorState(cursorSab, 0);
+
+    const update = {
+      enable: 1,
+      x: -123,
+      y: 456,
+      hotX: 0x89ab_cdef,
+      hotY: 0x0123_4567,
+      width: 0x8000_0001,
+      height: 0xffff_ffff,
+      pitchBytes: 0x8000_0000,
+      format: CURSOR_FORMAT_B8G8R8A8,
+      basePaddrLo: 0x89ab_cdef,
+      basePaddrHi: 0x0123_4567,
+    };
+
+    const generation = publishCursorState(words, update);
+    const snap = snapshotCursorState(words);
+
+    expect((snap.generation & CURSOR_STATE_GENERATION_BUSY_BIT) >>> 0).toBe(0);
+    expect(snap.generation >>> 0).toBe(generation >>> 0);
+    expect(snap).toEqual({ generation: generation >>> 0, ...update });
+  });
+
   it("cursor format constants match AerogpuFormat discriminants", () => {
     expect(CURSOR_FORMAT_B8G8R8A8).toBe(AerogpuFormat.B8G8R8A8Unorm);
     expect(CURSOR_FORMAT_B8G8R8X8).toBe(AerogpuFormat.B8G8R8X8Unorm);
     expect(CURSOR_FORMAT_R8G8B8A8).toBe(AerogpuFormat.R8G8B8A8Unorm);
     expect(CURSOR_FORMAT_R8G8B8X8).toBe(AerogpuFormat.R8G8B8X8Unorm);
+  });
+
+  it("wrapCursorState validates bounds and 4-byte alignment", () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect(() => wrapCursorState(new ArrayBuffer(CURSOR_STATE_BYTE_LEN) as any)).toThrow(TypeError);
+
+    const cursorSab = new SharedArrayBuffer(CURSOR_STATE_BYTE_LEN);
+    expect(() => wrapCursorState(cursorSab, NaN)).toThrow(RangeError);
+    expect(() => wrapCursorState(cursorSab, Infinity)).toThrow(RangeError);
+    expect(() => wrapCursorState(cursorSab, -4)).toThrow(RangeError);
+    expect(() => wrapCursorState(cursorSab, 2)).toThrow(RangeError);
+    // Any positive aligned offset into a minimum-sized SAB would exceed bounds.
+    expect(() => wrapCursorState(cursorSab, 4)).toThrow(RangeError);
+
+    const tooSmall = new SharedArrayBuffer(CURSOR_STATE_BYTE_LEN - 4);
+    expect(() => wrapCursorState(tooSmall, 0)).toThrow(RangeError);
+
+    const withOffset = new SharedArrayBuffer(CURSOR_STATE_BYTE_LEN * 2);
+    const words = wrapCursorState(withOffset, CURSOR_STATE_BYTE_LEN);
+    expect(words.length).toBe(CURSOR_STATE_U32_LEN);
+    expect(words.byteOffset).toBe(CURSOR_STATE_BYTE_LEN);
   });
 
   it("wrapCursorState validates size and publish wraps across the busy-bit boundary", () => {
@@ -64,6 +111,136 @@ describe("ipc/cursor_state", () => {
     });
     expect(g2 >>> 0).toBe(0);
     expect((g2 & CURSOR_STATE_GENERATION_BUSY_BIT) >>> 0).toBe(0);
+  });
+
+  it("snapshot retries when generation changes mid-read", () => {
+    const cursorSab = new SharedArrayBuffer(CURSOR_STATE_BYTE_LEN);
+    const words = wrapCursorState(cursorSab, 0);
+
+    const genStart = 123;
+    const genNext = (genStart + 1) >>> 0;
+
+    // Initial payload (generation N).
+    Atomics.store(words, CursorStateIndex.GENERATION, genStart | 0);
+    Atomics.store(words, CursorStateIndex.ENABLE, 1);
+    Atomics.store(words, CursorStateIndex.X, 11);
+    Atomics.store(words, CursorStateIndex.Y, 22);
+    Atomics.store(words, CursorStateIndex.HOT_X, 33);
+    Atomics.store(words, CursorStateIndex.HOT_Y, 44);
+    Atomics.store(words, CursorStateIndex.WIDTH, 55);
+    Atomics.store(words, CursorStateIndex.HEIGHT, 66);
+    Atomics.store(words, CursorStateIndex.PITCH_BYTES, 77);
+    Atomics.store(words, CursorStateIndex.FORMAT, CURSOR_FORMAT_B8G8R8A8 | 0);
+    Atomics.store(words, CursorStateIndex.BASE_PADDR_LO, 88);
+    Atomics.store(words, CursorStateIndex.BASE_PADDR_HI, 99);
+
+    const originalLoad = Atomics.load;
+    let generationLoads = 0;
+    let didFlipGeneration = false;
+
+    // Force a generation flip right before the first loop's final generation read.
+    (Atomics as unknown as { load: typeof Atomics.load }).load = ((arr: Int32Array, idx: number): number => {
+      if (arr === words && idx === CursorStateIndex.GENERATION) {
+        generationLoads += 1;
+        if (generationLoads === 2) {
+          // Simulate writer publishing a new generation between the two generation reads.
+          Atomics.store(words, CursorStateIndex.X, 111);
+          Atomics.store(words, CursorStateIndex.Y, 222);
+          Atomics.store(words, CursorStateIndex.HOT_X, 333);
+          Atomics.store(words, CursorStateIndex.HOT_Y, 444);
+          Atomics.store(words, CursorStateIndex.WIDTH, 555);
+          Atomics.store(words, CursorStateIndex.HEIGHT, 666);
+          Atomics.store(words, CursorStateIndex.PITCH_BYTES, 777);
+          Atomics.store(words, CursorStateIndex.BASE_PADDR_LO, 888);
+          Atomics.store(words, CursorStateIndex.BASE_PADDR_HI, 999);
+          Atomics.store(words, CursorStateIndex.GENERATION, genNext | 0);
+          didFlipGeneration = true;
+        }
+      }
+      return originalLoad(arr, idx);
+    }) as typeof Atomics.load;
+
+    try {
+      const snap = snapshotCursorState(words);
+      expect(didFlipGeneration).toBe(true);
+      // Two generation reads per loop, so a forced retry implies >=4 loads.
+      expect(generationLoads).toBe(4);
+      expect(snap.generation >>> 0).toBe(genNext);
+      expect((snap.generation & CURSOR_STATE_GENERATION_BUSY_BIT) >>> 0).toBe(0);
+      expect(snap.enable >>> 0).toBe(1);
+      expect(snap.format >>> 0).toBe(CURSOR_FORMAT_B8G8R8A8);
+      expect(snap.x | 0).toBe(111);
+      expect(snap.y | 0).toBe(222);
+      expect(snap.hotX >>> 0).toBe(333);
+      expect(snap.hotY >>> 0).toBe(444);
+      expect(snap.width >>> 0).toBe(555);
+      expect(snap.height >>> 0).toBe(666);
+      expect(snap.pitchBytes >>> 0).toBe(777);
+      expect(snap.basePaddrLo >>> 0).toBe(888);
+      expect(snap.basePaddrHi >>> 0).toBe(999);
+    } finally {
+      (Atomics as unknown as { load: typeof Atomics.load }).load = originalLoad;
+    }
+  });
+
+  it("snapshot will not return while the busy bit is set", () => {
+    const cursorSab = new SharedArrayBuffer(CURSOR_STATE_BYTE_LEN);
+    const words = wrapCursorState(cursorSab, 0);
+
+    const stableGen = 42;
+    // Pretend a writer is in progress by setting the busy bit.
+    Atomics.store(words, CursorStateIndex.GENERATION, (stableGen | CURSOR_STATE_GENERATION_BUSY_BIT) | 0);
+    Atomics.store(words, CursorStateIndex.ENABLE, 1);
+    Atomics.store(words, CursorStateIndex.FORMAT, CURSOR_FORMAT_B8G8R8A8 | 0);
+
+    const originalLoad = Atomics.load;
+    let generationLoads = 0;
+
+    // After snapshot observes the busy bit once, clear it so snapshot can complete.
+    (Atomics as unknown as { load: typeof Atomics.load }).load = ((arr: Int32Array, idx: number): number => {
+      const v = originalLoad(arr, idx);
+      if (arr === words && idx === CursorStateIndex.GENERATION) {
+        generationLoads += 1;
+        if (generationLoads === 1) {
+          // Writer releases lock and publishes the final generation.
+          Atomics.store(words, CursorStateIndex.GENERATION, stableGen | 0);
+        }
+      }
+      return v;
+    }) as typeof Atomics.load;
+
+    try {
+      const snap = snapshotCursorState(words);
+      expect(generationLoads).toBe(3);
+      expect((snap.generation & CURSOR_STATE_GENERATION_BUSY_BIT) >>> 0).toBe(0);
+      expect(snap.generation >>> 0).toBe(stableGen);
+    } finally {
+      (Atomics as unknown as { load: typeof Atomics.load }).load = originalLoad;
+    }
+  });
+
+  it("snapshot times out if the busy bit is stuck", () => {
+    const cursorSab = new SharedArrayBuffer(CURSOR_STATE_BYTE_LEN);
+    const words = wrapCursorState(cursorSab, 0);
+
+    const stableGen = 42;
+    Atomics.store(words, CursorStateIndex.GENERATION, (stableGen | CURSOR_STATE_GENERATION_BUSY_BIT) | 0);
+    Atomics.store(words, CursorStateIndex.ENABLE, 1);
+    Atomics.store(words, CursorStateIndex.FORMAT, CURSOR_FORMAT_B8G8R8A8 | 0);
+
+    // Force the time-based bailout to trigger on the first spin check.
+    const originalNow = performance.now;
+    let nowCalls = 0;
+    (performance as unknown as { now: typeof performance.now }).now = (() => {
+      nowCalls += 1;
+      return nowCalls === 1 ? 0 : 1000;
+    }) as typeof performance.now;
+
+    try {
+      expect(() => snapshotCursorState(words)).toThrow(/timed out/);
+    } finally {
+      (performance as unknown as { now: typeof performance.now }).now = originalNow;
+    }
   });
 
   it("snapshot observes coherent state while another worker publishes updates", async () => {
