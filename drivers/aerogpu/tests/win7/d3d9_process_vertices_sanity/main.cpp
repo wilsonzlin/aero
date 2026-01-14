@@ -287,6 +287,98 @@ static int RunD3D9ProcessVerticesSanity(int argc, char** argv) {
     return reporter.Fail("ProcessVertices output bytes did not match expected output");
   }
 
+  // Validate non-zero SrcStartIndex/DestIndex in the common XYZRHW passthrough case.
+  {
+    const Vertex src_off_verts[3] = {
+        {1.0f, 2.0f, 0.0f, 1.0f, D3DCOLOR_XRGB(1, 2, 3)},
+        {3.0f, 4.0f, 0.5f, 0.5f, D3DCOLOR_XRGB(4, 5, 6)},
+        {5.0f, 6.0f, 1.0f, 2.0f, D3DCOLOR_XRGB(7, 8, 9)},
+    };
+
+    ComPtr<IDirect3DVertexBuffer9> src_off_vb;
+    hr = dev->CreateVertexBuffer(sizeof(src_off_verts),
+                                 0,
+                                 D3DFVF_XYZRHW | D3DFVF_DIFFUSE,
+                                 D3DPOOL_DEFAULT,
+                                 src_off_vb.put(),
+                                 NULL);
+    if (FAILED(hr) || !src_off_vb) {
+      return reporter.FailHresult("CreateVertexBuffer(src_off)", hr);
+    }
+
+    void* src_off_ptr = NULL;
+    hr = src_off_vb->Lock(0, sizeof(src_off_verts), &src_off_ptr, 0);
+    if (FAILED(hr) || !src_off_ptr) {
+      return reporter.FailHresult("src_off_vb->Lock", hr);
+    }
+    memcpy(src_off_ptr, src_off_verts, sizeof(src_off_verts));
+    hr = src_off_vb->Unlock();
+    if (FAILED(hr)) {
+      return reporter.FailHresult("src_off_vb->Unlock", hr);
+    }
+
+    ComPtr<IDirect3DVertexBuffer9> dst_off_vb;
+    hr = dev->CreateVertexBuffer(sizeof(src_off_verts),
+                                 0,
+                                 D3DFVF_XYZRHW | D3DFVF_DIFFUSE,
+                                 D3DPOOL_SYSTEMMEM,
+                                 dst_off_vb.put(),
+                                 NULL);
+    if (FAILED(hr) || !dst_off_vb) {
+      return reporter.FailHresult("CreateVertexBuffer(dst_off)", hr);
+    }
+
+    void* dst_off_ptr = NULL;
+    hr = dst_off_vb->Lock(0, sizeof(src_off_verts), &dst_off_ptr, 0);
+    if (FAILED(hr) || !dst_off_ptr) {
+      return reporter.FailHresult("dst_off_vb->Lock", hr);
+    }
+    memset(dst_off_ptr, 0xCD, sizeof(src_off_verts));
+    hr = dst_off_vb->Unlock();
+    if (FAILED(hr)) {
+      return reporter.FailHresult("dst_off_vb->Unlock", hr);
+    }
+
+    hr = dev->SetFVF(D3DFVF_XYZRHW | D3DFVF_DIFFUSE);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetFVF(XYZRHW|DIFFUSE) (offset case)", hr);
+    }
+    hr = dev->SetStreamSource(0, src_off_vb.get(), 0, sizeof(Vertex));
+    if (FAILED(hr)) {
+      return reporter.FailHresult("SetStreamSource(src_off)", hr);
+    }
+
+    hr = dev->ProcessVertices(/*SrcStartIndex=*/1,
+                              /*DestIndex=*/2,
+                              /*VertexCount=*/1,
+                              dst_off_vb.get(),
+                              decl.get(),
+                              /*Flags=*/0);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("IDirect3DDevice9::ProcessVertices(offset)", hr);
+    }
+
+    hr = dst_off_vb->Lock(0, sizeof(src_off_verts), &dst_off_ptr, D3DLOCK_READONLY);
+    if (FAILED(hr) || !dst_off_ptr) {
+      return reporter.FailHresult("dst_off_vb->Lock (read)", hr);
+    }
+
+    const size_t stride = sizeof(Vertex);
+    unsigned char expected_prefix[2 * sizeof(Vertex)];
+    memset(expected_prefix, 0xCD, sizeof(expected_prefix));
+    const bool prefix_ok = (memcmp(dst_off_ptr, expected_prefix, sizeof(expected_prefix)) == 0);
+    const bool written_ok = (memcmp((const unsigned char*)dst_off_ptr + (2 * stride), &src_off_verts[1], stride) == 0);
+
+    hr = dst_off_vb->Unlock();
+    if (FAILED(hr)) {
+      return reporter.FailHresult("dst_off_vb->Unlock (read)", hr);
+    }
+
+    if (!prefix_ok || !written_ok) {
+      return reporter.Fail("ProcessVertices offset case mismatch (SrcStartIndex/DestIndex handling)");
+    }
+  }
+
   // Also validate a simple XYZ->XYZRHW fixed-function transform case.
   //
   // Use identity transforms and a tiny viewport so the expected output is
@@ -317,10 +409,13 @@ static int RunD3D9ProcessVerticesSanity(int argc, char** argv) {
       return reporter.FailHresult("SetTransform(PROJECTION)", hr);
     }
 
-    const VertexXyzDiffuse src = {0.0f, 0.0f, 0.5f, D3DCOLOR_XRGB(1, 2, 3)};
+    const VertexXyzDiffuse srcs[2] = {
+        {0.0f, 0.0f, 0.5f, D3DCOLOR_XRGB(1, 2, 3)},
+        {0.0f, 0.0f, 0.5f, D3DCOLOR_XRGB(4, 5, 6)},
+    };
 
     ComPtr<IDirect3DVertexBuffer9> src_xyz_vb;
-    hr = dev->CreateVertexBuffer(sizeof(src),
+    hr = dev->CreateVertexBuffer(sizeof(srcs),
                                  0,
                                  D3DFVF_XYZ | D3DFVF_DIFFUSE,
                                  D3DPOOL_DEFAULT,
@@ -331,18 +426,18 @@ static int RunD3D9ProcessVerticesSanity(int argc, char** argv) {
     }
 
     void* src_xyz_ptr = NULL;
-    hr = src_xyz_vb->Lock(0, sizeof(src), &src_xyz_ptr, 0);
+    hr = src_xyz_vb->Lock(0, sizeof(srcs), &src_xyz_ptr, 0);
     if (FAILED(hr) || !src_xyz_ptr) {
       return reporter.FailHresult("src_xyz_vb->Lock", hr);
     }
-    memcpy(src_xyz_ptr, &src, sizeof(src));
+    memcpy(src_xyz_ptr, srcs, sizeof(srcs));
     hr = src_xyz_vb->Unlock();
     if (FAILED(hr)) {
       return reporter.FailHresult("src_xyz_vb->Unlock", hr);
     }
 
     ComPtr<IDirect3DVertexBuffer9> dst_xyz_vb;
-    hr = dev->CreateVertexBuffer(sizeof(Vertex),
+    hr = dev->CreateVertexBuffer(sizeof(Vertex) * 2,
                                  0,
                                  D3DFVF_XYZRHW | D3DFVF_DIFFUSE,
                                  D3DPOOL_SYSTEMMEM,
@@ -350,6 +445,17 @@ static int RunD3D9ProcessVerticesSanity(int argc, char** argv) {
                                  NULL);
     if (FAILED(hr) || !dst_xyz_vb) {
       return reporter.FailHresult("CreateVertexBuffer(dst_xyz)", hr);
+    }
+
+    void* dst_xyz_init_ptr = NULL;
+    hr = dst_xyz_vb->Lock(0, sizeof(Vertex) * 2, &dst_xyz_init_ptr, 0);
+    if (FAILED(hr) || !dst_xyz_init_ptr) {
+      return reporter.FailHresult("dst_xyz_vb->Lock (init)", hr);
+    }
+    memset(dst_xyz_init_ptr, 0xCD, sizeof(Vertex) * 2);
+    hr = dst_xyz_vb->Unlock();
+    if (FAILED(hr)) {
+      return reporter.FailHresult("dst_xyz_vb->Unlock (init)", hr);
     }
 
     hr = dev->SetFVF(D3DFVF_XYZ | D3DFVF_DIFFUSE);
@@ -361,8 +467,8 @@ static int RunD3D9ProcessVerticesSanity(int argc, char** argv) {
       return reporter.FailHresult("SetStreamSource(src_xyz)", hr);
     }
 
-    hr = dev->ProcessVertices(/*SrcStartIndex=*/0,
-                              /*DestIndex=*/0,
+    hr = dev->ProcessVertices(/*SrcStartIndex=*/1,
+                              /*DestIndex=*/1,
                               /*VertexCount=*/1,
                               dst_xyz_vb.get(),
                               decl.get(),
@@ -372,20 +478,23 @@ static int RunD3D9ProcessVerticesSanity(int argc, char** argv) {
     }
 
     void* dst_xyz_ptr = NULL;
-    hr = dst_xyz_vb->Lock(0, sizeof(Vertex), &dst_xyz_ptr, D3DLOCK_READONLY);
+    hr = dst_xyz_vb->Lock(0, sizeof(Vertex) * 2, &dst_xyz_ptr, D3DLOCK_READONLY);
     if (FAILED(hr) || !dst_xyz_ptr) {
       return reporter.FailHresult("dst_xyz_vb->Lock", hr);
     }
 
-    const Vertex expected = {0.5f, 0.5f, 0.5f, 1.0f, src.color};
-    const bool xyz_bytes_match = (memcmp(dst_xyz_ptr, &expected, sizeof(expected)) == 0);
+    const Vertex expected = {0.5f, 0.5f, 0.5f, 1.0f, srcs[1].color};
+    unsigned char xyz_prefix_expected[sizeof(Vertex)];
+    memset(xyz_prefix_expected, 0xCD, sizeof(xyz_prefix_expected));
+    const bool xyz_prefix_ok = (memcmp(dst_xyz_ptr, xyz_prefix_expected, sizeof(xyz_prefix_expected)) == 0);
+    const bool xyz_written_ok = (memcmp((const unsigned char*)dst_xyz_ptr + sizeof(Vertex), &expected, sizeof(expected)) == 0);
 
     hr = dst_xyz_vb->Unlock();
     if (FAILED(hr)) {
       return reporter.FailHresult("dst_xyz_vb->Unlock", hr);
     }
 
-    if (!xyz_bytes_match) {
+    if (!xyz_prefix_ok || !xyz_written_ok) {
       return reporter.Fail("ProcessVertices XYZ->XYZRHW output bytes did not match expected output");
     }
   }
