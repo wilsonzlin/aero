@@ -395,17 +395,19 @@ GS/HS/DS binds never trample compute-shader state, Aero reserves a fourth stage-
 - The AeroGPU command stream distinguishes “which D3D stage is being bound” using the `stage_ex`
   extension carried in reserved fields of the resource-binding opcodes (see the ABI section below).
 - Expansion-specific internal buffers (vertex pulling inputs, scratch outputs, counters, indirect
-  args) are internal to the compute-expansion pipeline. The current implementation places these in a
-  dedicated internal bind group (`@group(4)`, `BIND_GROUP_INTERNAL_EMULATION`) using a reserved
+  args) are internal to the compute-expansion pipeline. In the baseline design these live alongside
+  GS/HS/DS resources in the reserved extended-stage bind group (`@group(3)`) using a reserved
   binding-number range starting at `BINDING_BASE_INTERNAL = 256` (see “Internal bindings” below).
+  - Implementations may temporarily place these in a dedicated internal bind group (`@group(4)`,
+    `BIND_GROUP_INTERNAL_EMULATION`) as long as the device supports at least 5 bind groups.
   - Note: the current executor’s placeholder compute-prepass still uses an ad-hoc bind group layout
     for some output buffers, but vertex pulling already uses the reserved internal binding range.
-  - Implementation detail: the in-tree vertex pulling WGSL currently uses `@group(4)` (see
+  - Implementation detail: the in-tree vertex pulling WGSL uses `@group(3)` (see
     `VERTEX_PULLING_GROUP` in `crates/aero-d3d11/src/runtime/vertex_pulling.rs`) and pads pipeline
     layouts with empty groups so indices line up. Because the binding numbers are already in the
-    reserved `>= 256` range, it can be merged into `@group(3)` later if we need to run on devices
-    where `maxBindGroups == 4` (the WebGPU minimum).
-  - See [`docs/graphics/geometry-shader-emulation.md`](./graphics/geometry-shader-emulation.md).
+    reserved `>= 256` range, it can safely coexist with `stage_ex` GS/HS/DS bindings in the same
+    group without collisions.
+  See [`docs/graphics/geometry-shader-emulation.md`](./graphics/geometry-shader-emulation.md).
 
 #### Only resources used by the shader are emitted/bound
 
@@ -1035,51 +1037,48 @@ with an implementation-defined workgroup size chosen by the translator/runtime.
 
 The final render stage uses a small **passthrough vertex shader** plus the original pixel shader.
 The passthrough VS uses normal WebGPU vertex inputs (no storage-buffer reads in the vertex stage)
-and is “bit-preserving”: it accepts `vec4<u32>` lanes and bitcasts them into the types expected by
-the pixel shader interface.
+and forwards attributes from the expansion output vertex buffer.
 
-The D3D11 command executor generates this passthrough WGSL on demand (see
-`wgsl_gs_passthrough_vertex_shader` in `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`).
-Conceptually:
+The current in-tree executor uses a built-in passthrough VS template
+`EXPANDED_DRAW_PASSTHROUGH_VS_WGSL` (and generates trimmed/depth-clamped variants on demand; see
+`get_or_create_render_pipeline_for_expanded_draw` in
+`crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`). Conceptually:
 
 ```wgsl
 struct VsIn {
-  // P is chosen to not collide with varying locations.
-  @location(P) pos_bits: vec4<u32>,
-  // One attribute per varying required by the PS.
-  @location(N) vN_bits: vec4<u32>,
+  @location(0) v0: vec4<f32>,
+  @location(1) v1: vec4<f32>,
 };
 
 struct VsOut {
   @builtin(position) pos: vec4<f32>,
-  // For each varying location N: the translated PS input type.
-  // Today Aero normalizes all varyings to `vec4<f32>` for interface compatibility.
-  @location(N) vN: vec4<f32>,
+  @location(1) o1: vec4<f32>,
 };
 
 @vertex
 fn vs_main(input: VsIn) -> VsOut {
   var out: VsOut;
-  out.pos = bitcast<vec4<f32>>(input.pos_bits);
-  // For each varying location N:
-  //   out.vN = bitcast<vec4<f32>>(input.vN_bits);
+  out.pos = input.v0;
+  out.o1 = input.v1;
   return out;
 }
 ```
 
 Notes:
 
-- The executor chooses `P` as the lowest `@location` not used by varyings, to avoid colliding with
-  the pixel shader’s input interface.
+- The executor links the expanded VS and the application PS by trimming unused PS inputs / VS
+  outputs. If the PS reads a varying location the passthrough VS cannot provide, the draw fails with
+  a clear error.
 - This path is limited by WebGPU’s vertex input limits (`max_vertex_attributes` and the highest used
   `@location`). When exceeded, the executor fails with a clear “GS passthrough” error.
 - The passthrough VS has no bindings; however the render pipeline layout must still include the PS
   bind group(s) (typically `@group(1)`). Implementations may include an empty `@group(0)` or the
   original VS layout for cache compatibility, but no VS resources are required by the passthrough VS
   itself.
-- Implementation note: the in-tree placeholder GS prepass currently writes `vec4<f32>` attributes.
-  When switching to the `ExpandedVertex` bit-preserving layout described above, update the
-  passthrough VS generator and the vertex buffer formats to use `Uint32x4`.
+- Implementation note: the in-tree placeholder expansion prepass currently writes `vec4<f32>`
+  attributes (`pos` + `o1`). When switching to the bit-preserving `ExpandedVertex` layout described
+  above, update the passthrough VS template and vertex buffer formats (e.g. use `Uint32x4` +
+  `bitcast`).
 
 #### 2.5) Render-pass splitting constraints
 
@@ -1118,9 +1117,8 @@ Expansion compute pipelines require additional buffers that are not part of the 
 Implementation note: the layout described below is the **target** binding scheme. The current
 executor’s placeholder compute-prepass still uses a separate bind group layout for its output
 buffers. Vertex pulling already uses the reserved expansion-internal binding range (starting at
-`BINDING_BASE_INTERNAL = 256`), but is currently bound in a dedicated internal bind group
-(`@group(4)`, `VERTEX_PULLING_GROUP`). Future work is to unify all emulation kernels on the shared
-internal layout (ideally `@group(3)` so we stay within the baseline 4 bind groups).
+`BINDING_BASE_INTERNAL = 256`) within `VERTEX_PULLING_GROUP` (`@group(3)`). Future work is to unify
+all emulation kernels on the shared internal layout.
 
 These are not part of the D3D binding model, so they use a reserved binding-number range starting at
 `BINDING_BASE_INTERNAL = 256`. In the baseline design they live in the same bind group as GS/HS/DS
