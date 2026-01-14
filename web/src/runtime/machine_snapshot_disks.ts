@@ -50,6 +50,8 @@ async function tryReadAerosparseBlockSizeBytesFromOpfs(path: string, prefix: str
     const blockSizeBytes = dv.getUint32(16, true);
     if (version !== 1 || headerSize !== AEROSPARSE_HEADER_SIZE_BYTES) return null;
     // Mirror the Rust-side aerosparse header validation (looser, but enough to avoid nonsense).
+    const diskSizeBytes = dv.getBigUint64(24, true);
+    if (diskSizeBytes === 0n || diskSizeBytes % 512n !== 0n) return null;
     if (blockSizeBytes === 0 || blockSizeBytes % 512 !== 0 || !isPowerOfTwo(blockSizeBytes) || blockSizeBytes > 64 * 1024 * 1024) {
       return null;
     }
