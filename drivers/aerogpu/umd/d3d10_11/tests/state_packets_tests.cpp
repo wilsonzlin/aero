@@ -778,6 +778,109 @@ bool TestDestroyDeviceIsIdempotentAndIgnoresGarbage() {
   return true;
 }
 
+bool TestDestroyChildObjectsAfterDestroyDeviceIsSafe() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev), "InitTestDevice(destroy children after device)")) {
+    return false;
+  }
+
+  // Create a buffer resource (allocates CPU-visible storage).
+  AEROGPU_DDIARG_CREATERESOURCE res_desc{};
+  res_desc.Dimension = AEROGPU_DDI_RESOURCE_DIMENSION_BUFFER;
+  res_desc.BindFlags = 0;
+  res_desc.MiscFlags = 0;
+  res_desc.Usage = AEROGPU_D3D11_USAGE_DEFAULT;
+  res_desc.CPUAccessFlags = 0;
+  res_desc.ByteWidth = 16;
+  res_desc.StructureByteStride = 0;
+  res_desc.pInitialData = nullptr;
+  res_desc.InitialDataCount = 0;
+  res_desc.SampleDescCount = 1;
+  res_desc.SampleDescQuality = 0;
+  res_desc.ResourceFlags = 0;
+
+  D3D10DDI_HRESOURCE hRes{};
+  const SIZE_T res_size = dev.device_funcs.pfnCalcPrivateResourceSize(dev.hDevice, &res_desc);
+  if (!Check(res_size >= sizeof(void*), "CalcPrivateResourceSize (child-after-device)")) {
+    return false;
+  }
+  std::vector<uint8_t> res_mem(static_cast<size_t>(res_size), 0);
+  hRes.pDrvPrivate = res_mem.data();
+  if (!Check(dev.device_funcs.pfnCreateResource(dev.hDevice, &res_desc, hRes) == S_OK, "CreateResource(buffer)")) {
+    return false;
+  }
+
+  // Create a sampler.
+  AEROGPU_DDIARG_CREATESAMPLER samp_desc{};
+  samp_desc.Filter = 0; // MIN_MAG_MIP_POINT
+  samp_desc.AddressU = 3; // CLAMP
+  samp_desc.AddressV = 3;
+  samp_desc.AddressW = 3;
+
+  D3D10DDI_HSAMPLER hSampler{};
+  const SIZE_T samp_size = dev.device_funcs.pfnCalcPrivateSamplerSize(dev.hDevice, &samp_desc);
+  if (!Check(samp_size >= sizeof(void*), "CalcPrivateSamplerSize (child-after-device)")) {
+    return false;
+  }
+  std::vector<uint8_t> samp_mem(static_cast<size_t>(samp_size), 0);
+  hSampler.pDrvPrivate = samp_mem.data();
+  if (!Check(dev.device_funcs.pfnCreateSampler(dev.hDevice, &samp_desc, hSampler) == S_OK, "CreateSampler")) {
+    return false;
+  }
+
+  // Create a vertex shader (allocates DXBC blob storage).
+  const uint8_t dxbc[] = {0x44, 0x58, 0x42, 0x43}; // "DXBC"
+  AEROGPU_DDIARG_CREATESHADER sh_desc{};
+  sh_desc.pCode = dxbc;
+  sh_desc.CodeSize = static_cast<uint32_t>(sizeof(dxbc));
+
+  D3D10DDI_HSHADER hShader{};
+  const SIZE_T sh_size = dev.device_funcs.pfnCalcPrivateShaderSize(dev.hDevice, &sh_desc);
+  if (!Check(sh_size >= sizeof(void*), "CalcPrivateShaderSize (child-after-device)")) {
+    return false;
+  }
+  std::vector<uint8_t> sh_mem(static_cast<size_t>(sh_size), 0);
+  hShader.pDrvPrivate = sh_mem.data();
+  if (!Check(dev.device_funcs.pfnCreateVertexShader(dev.hDevice, &sh_desc, hShader) == S_OK, "CreateVertexShader")) {
+    return false;
+  }
+
+  // Create an input layout (allocates blob storage).
+  AEROGPU_DDI_INPUT_ELEMENT_DESC elem{};
+  elem.SemanticName = "POSITION";
+  elem.SemanticIndex = 0;
+  elem.Format = 28; // DXGI_FORMAT_R32G32B32_FLOAT
+  elem.InputSlot = 0;
+  elem.AlignedByteOffset = 0;
+  elem.InputSlotClass = 0;
+  elem.InstanceDataStepRate = 0;
+
+  AEROGPU_DDIARG_CREATEINPUTLAYOUT il_desc{};
+  il_desc.pElements = &elem;
+  il_desc.NumElements = 1;
+
+  D3D10DDI_HELEMENTLAYOUT hLayout{};
+  const SIZE_T il_size = dev.device_funcs.pfnCalcPrivateInputLayoutSize(dev.hDevice, &il_desc);
+  if (!Check(il_size >= sizeof(void*), "CalcPrivateInputLayoutSize (child-after-device)")) {
+    return false;
+  }
+  std::vector<uint8_t> il_mem(static_cast<size_t>(il_size), 0);
+  hLayout.pDrvPrivate = il_mem.data();
+  if (!Check(dev.device_funcs.pfnCreateInputLayout(dev.hDevice, &il_desc, hLayout) == S_OK, "CreateInputLayout")) {
+    return false;
+  }
+
+  // Destroy the device first, then destroy child objects. This must not crash.
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.device_funcs.pfnDestroyInputLayout(dev.hDevice, hLayout);
+  dev.device_funcs.pfnDestroyShader(dev.hDevice, hShader);
+  dev.device_funcs.pfnDestroySampler(dev.hDevice, hSampler);
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, hRes);
+
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
 bool TestCreateSamplerNullDescIsSafeToDestroy() {
   TestDevice dev{};
   if (!Check(InitTestDevice(&dev), "InitTestDevice(sampler null desc)")) {
@@ -1186,6 +1289,7 @@ int main() {
   ok &= TestDestroyAfterFailedCreateVertexShaderIsSafe();
   ok &= TestDestroyAfterFailedCreateInputLayoutIsSafe();
   ok &= TestDestroyDeviceIsIdempotentAndIgnoresGarbage();
+  ok &= TestDestroyChildObjectsAfterDestroyDeviceIsSafe();
   ok &= TestCreateSamplerNullDescIsSafeToDestroy();
   ok &= TestCreateResourceNullDescIsSafeToDestroy();
   ok &= TestCreateResourceUnsupportedDimensionIsSafeToDestroy();

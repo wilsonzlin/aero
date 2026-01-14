@@ -166,6 +166,15 @@ constexpr HRESULT kHrNtStatusGraphicsGpuBusy =
     static_cast<HRESULT>(0xD01E0102u); // HRESULT_FROM_NT(STATUS_GRAPHICS_GPU_BUSY)
 constexpr uint32_t kAeroGpuTimeoutMsInfinite = ~0u;
 
+bool IsDeviceLive(D3D10DDI_HDEVICE hDevice) {
+  if (!hDevice.pDrvPrivate) {
+    return false;
+  }
+  uint32_t cookie = 0;
+  std::memcpy(&cookie, hDevice.pDrvPrivate, sizeof(cookie));
+  return cookie == kDeviceDestroyLiveCookie;
+}
+
 
 // -------------------------------------------------------------------------------------------------
 // Optional bring-up logging for adapter caps queries.
@@ -1974,13 +1983,28 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
 void AEROGPU_APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hResource) {
   AEROGPU_D3D10_11_LOG_CALL();
   AEROGPU_D3D10_TRACEF("DestroyResource hDevice=%p hResource=%p", hDevice.pDrvPrivate, hResource.pDrvPrivate);
-  if (!hDevice.pDrvPrivate || !hResource.pDrvPrivate) {
+  if (!hResource.pDrvPrivate) {
+    return;
+  }
+
+  auto* res = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(hResource);
+  if (!res) {
+    return;
+  }
+
+  // Be robust to runtimes that destroy child objects after DestroyDevice has
+  // already run (device memory still allocated but no longer contains a live
+  // mutex/cmd writer).
+  if (!IsDeviceLive(hDevice)) {
+    res->handle = kInvalidHandle;
+    res->~AeroGpuResource();
     return;
   }
 
   auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
-  auto* res = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(hResource);
-  if (!dev || !res) {
+  if (!dev) {
+    res->handle = kInvalidHandle;
+    res->~AeroGpuResource();
     return;
   }
 
@@ -3903,13 +3927,25 @@ HRESULT AEROGPU_APIENTRY CreatePixelShader(D3D10DDI_HDEVICE hDevice,
 void AEROGPU_APIENTRY DestroyShader(D3D10DDI_HDEVICE hDevice, D3D10DDI_HSHADER hShader) {
   AEROGPU_D3D10_11_LOG_CALL();
   AEROGPU_D3D10_TRACEF("DestroyShader hDevice=%p hShader=%p", hDevice.pDrvPrivate, hShader.pDrvPrivate);
-  if (!hDevice.pDrvPrivate || !hShader.pDrvPrivate) {
+  if (!hShader.pDrvPrivate) {
+    return;
+  }
+
+  auto* sh = FromHandle<D3D10DDI_HSHADER, AeroGpuShader>(hShader);
+  if (!sh) {
+    return;
+  }
+
+  // If the device has already been destroyed, we can't safely lock its mutex or
+  // append commands. Still destruct the shader object to free its DXBC blob.
+  if (!IsDeviceLive(hDevice)) {
+    sh->~AeroGpuShader();
     return;
   }
 
   auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
-  auto* sh = FromHandle<D3D10DDI_HSHADER, AeroGpuShader>(hShader);
-  if (!dev || !sh) {
+  if (!dev) {
+    sh->~AeroGpuShader();
     return;
   }
 
@@ -4013,9 +4049,21 @@ void AEROGPU_APIENTRY DestroyInputLayout(D3D10DDI_HDEVICE hDevice, D3D10DDI_HELE
     return;
   }
 
-  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
   auto* layout = FromHandle<D3D10DDI_HELEMENTLAYOUT, AeroGpuInputLayout>(hLayout);
-  if (!dev || !layout) {
+  if (!layout) {
+    return;
+  }
+
+  // If the device has already been destroyed, we can't safely lock its mutex or
+  // append commands. Still destruct the input layout object to free its blob.
+  if (!IsDeviceLive(hDevice)) {
+    layout->~AeroGpuInputLayout();
+    return;
+  }
+
+  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  if (!dev) {
+    layout->~AeroGpuInputLayout();
     return;
   }
 
@@ -4208,13 +4256,25 @@ HRESULT AEROGPU_APIENTRY CreateSampler(D3D10DDI_HDEVICE hDevice,
 }
 
 void AEROGPU_APIENTRY DestroySampler(D3D10DDI_HDEVICE hDevice, D3D10DDI_HSAMPLER hSampler) {
-  if (!hDevice.pDrvPrivate || !hSampler.pDrvPrivate) {
+  if (!hSampler.pDrvPrivate) {
+    return;
+  }
+
+  auto* s = FromHandle<D3D10DDI_HSAMPLER, AeroGpuSampler>(hSampler);
+  if (!s) {
+    return;
+  }
+
+  // If the device has already been destroyed, we can't safely lock its mutex or
+  // append commands. Still destruct the sampler object.
+  if (!IsDeviceLive(hDevice)) {
+    s->~AeroGpuSampler();
     return;
   }
 
   auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
-  auto* s = FromHandle<D3D10DDI_HSAMPLER, AeroGpuSampler>(hSampler);
-  if (!dev || !s) {
+  if (!dev) {
+    s->~AeroGpuSampler();
     return;
   }
 
