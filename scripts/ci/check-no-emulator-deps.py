@@ -84,7 +84,58 @@ def workspace_cargo_tomls(root: Path) -> list[Path]:
     return out
 
 
-def dep_table_violations(doc: dict, *, path: str) -> list[str]:
+def workspace_emulator_aliases(root_doc: dict, *, path: str) -> set[str]:
+    """
+    Return the set of `[workspace.dependencies]` keys that resolve to the `emulator` package.
+
+    Why this matters
+    ----------------
+
+    Cargo lets crates inherit dependency specs from the workspace root:
+
+      [workspace.dependencies]
+      emulator_compat = { package = "emulator", path = "crates/emulator" }
+
+      # crates/some-crate/Cargo.toml
+      [dependencies]
+      emulator_compat = { workspace = true }
+
+    Without resolving `workspace = true`, a policy check that only looks for a
+    literal `package = "emulator"` in the crate-local dependency table would miss
+    this (and accidentally allow the legacy `crates/emulator` stack to creep back
+    into the canonical dependency graph).
+    """
+
+    deps = root_doc.get("workspace", {}).get("dependencies", {})
+    if deps is None:
+        deps = {}
+    if not isinstance(deps, dict):  # pragma: no cover
+        raise RuntimeError(f"{path}: workspace.dependencies must be a table")
+
+    aliases: set[str] = set()
+    for dep_name, dep_spec in deps.items():
+        if not isinstance(dep_name, str):
+            continue
+
+        # Simple case: `emulator = { ... }`
+        if dep_name == "emulator":
+            aliases.add(dep_name)
+            continue
+
+        pkg = None
+        if isinstance(dep_spec, dict):
+            pkg = dep_spec.get("package")
+        # Cargo defaults the package name to the dependency key.
+        if pkg is None:
+            pkg = dep_name
+
+        if pkg == "emulator":
+            aliases.add(dep_name)
+
+    return aliases
+
+
+def dep_table_violations(doc: dict, *, path: str, workspace_emulator_deps: set[str]) -> list[str]:
     """Return human-readable violations for a parsed Cargo.toml."""
 
     def check_table(table: dict, label: str) -> list[str]:
@@ -108,6 +159,15 @@ def dep_table_violations(doc: dict, *, path: str) -> list[str]:
                 if pkg == "emulator":
                     violations.append(
                         f"{path}: {label} dependency '{dep_name}' renames forbidden package 'emulator'"
+                    )
+                    continue
+
+                # Workspace-inherited dependency case:
+                #   emulator_compat = { workspace = true }
+                # with `[workspace.dependencies.emulator_compat] package = "emulator" ...`
+                if dep_spec.get("workspace") is True and dep_name in workspace_emulator_deps:
+                    violations.append(
+                        f"{path}: {label} dependency '{dep_name}' uses workspace dependency that resolves to forbidden package 'emulator'"
                     )
 
         return violations
@@ -147,6 +207,14 @@ def main() -> int:
         return 2
 
     root = repo_root()
+    root_toml_path = root / "Cargo.toml"
+    try:
+        root_doc = tomllib.loads(root_toml_path.read_text(encoding="utf-8"))
+    except Exception as exc:  # pragma: no cover
+        print(f"error: failed to parse root Cargo.toml: {exc}", file=sys.stderr)
+        return 2
+
+    workspace_emulator_deps = workspace_emulator_aliases(root_doc, path="Cargo.toml")
     violations: list[str] = []
 
     for cargo_toml in workspace_cargo_tomls(root):
@@ -168,7 +236,9 @@ def main() -> int:
             violations.append(f"{rel}: invalid TOML: {exc}")
             continue
 
-        violations.extend(dep_table_violations(doc, path=rel))
+        violations.extend(
+            dep_table_violations(doc, path=rel, workspace_emulator_deps=workspace_emulator_deps)
+        )
 
     if violations:
         sys.stderr.write(
