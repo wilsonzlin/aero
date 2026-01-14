@@ -963,6 +963,7 @@ jobs:
           blk_miniport_reset_recovery_host_marker=""
           qemu_stderr_line=""
           harness_cmdline=""
+          dry_run_qemu_cmdline=""
           qemu_cmdline=""
           runner_line=""
           python_version_line=""
@@ -1105,6 +1106,10 @@ jobs:
               error_line="$(grep -F 'ERROR:' "${harness_log}" | tail -n 1 | tr -d '\r' || true)"
               harness_cmdline="$(awk '/Executing harness:/{getline; sub(/^[[:space:]]+/, ""); print}' "${harness_log}" | tail -n 1 | tr -d '\r' || true)"
               qemu_cmdline="$(awk '/Launching QEMU:/{getline; sub(/^[[:space:]]+/, ""); print}' "${harness_log}" | tail -n 1 | tr -d '\r' || true)"
+              dry_run_qemu_cmdline="$(awk '/^\["/{getline; sub(/^[[:space:]]+/, ""); print; exit}' "${harness_log}" | tr -d '\r' || true)"
+              if [[ "${{ inputs.dry_run }}" == "true" && -z "${qemu_cmdline}" && -n "${dry_run_qemu_cmdline}" ]]; then
+                qemu_cmdline="${dry_run_qemu_cmdline}"
+              fi
               runner_line="$(grep -m1 -F 'Runner:' "${harness_log}" | tr -d '\r' || true)"
               python_version_line="$(grep -m1 -F 'python3:' "${harness_log}" | tr -d '\r' || true)"
               qemu_version_line="$(grep -m1 -F 'qemu:' "${harness_log}" | tr -d '\r' || true)"
@@ -1175,10 +1180,10 @@ jobs:
             if [[ "${{ steps.harness.outcome }}" != "success" && -n "${qemu_stderr_line}" ]]; then
               echo "- QEMU stderr (last line): \`${qemu_stderr_line}\`"
             fi
-            if [[ "${{ steps.harness.outcome }}" != "success" && -n "${harness_cmdline}" ]]; then
+            if [[ ( "${{ steps.harness.outcome }}" != "success" || "${{ inputs.dry_run }}" == "true" ) && -n "${harness_cmdline}" ]]; then
               echo "- Harness command: \`${harness_cmdline}\`"
             fi
-            if [[ "${{ steps.harness.outcome }}" != "success" && -n "${qemu_cmdline}" ]]; then
+            if [[ ( "${{ steps.harness.outcome }}" != "success" || "${{ inputs.dry_run }}" == "true" ) && -n "${qemu_cmdline}" ]]; then
               echo "- QEMU command: \`${qemu_cmdline}\`"
             fi
             if [[ -n "${result_marker}" ]]; then
