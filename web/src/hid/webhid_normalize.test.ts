@@ -177,7 +177,7 @@ describe("normalizeCollections(WebHID)", () => {
     expect(Object.isFrozen(normalized[0].inputReports[0].items[0].designators)).toBe(false);
 
     // Mutating output should not mutate input.
-    (normalized[0] as any).usagePage = 0xff;
+    normalized[0]!.usagePage = 0xff;
     (normalized[0].children as unknown as HidCollectionInfo[]).push(
       mockCollection({ usagePage: 1, usage: 1, type: "logical" }) as unknown as HidCollectionInfo,
     );
@@ -247,7 +247,8 @@ describe("normalizeCollections(WebHID)", () => {
     });
 
     const normalized = normalizeCollections([root]);
-    const item = normalized[0]?.inputReports[0]?.items[0] as any;
+    const item = normalized[0]?.inputReports[0]?.items[0];
+    if (!item) throw new Error("expected normalized report item");
     expect(item.isRelative).toBe(true);
     expect(item.isWrapped).toBe(true);
     expect("wrap" in item).toBe(false);

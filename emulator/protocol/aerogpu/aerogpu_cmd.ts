@@ -2637,25 +2637,6 @@ export class AerogpuCmdWriter {
     this.dispatchStageEx(groupCountX, groupCountY, groupCountZ, stageEx);
   }
 
-  /**
-   * Stage-ex aware variant of {@link dispatch}.
-   *
-   * Encodes `stageEx` into the DISPATCH packet's `reserved0` field.
-   *
-   * Note: `stageEx = 0` is reserved for legacy/default Compute dispatch. Use {@link dispatch} instead.
-   */
-  dispatchEx(stageEx: AerogpuShaderStageEx, groupCountX: number, groupCountY: number, groupCountZ: number): void {
-    // DISPATCH does not carry a legacy `shader_stage` field; it is implicitly Compute. Reuse the
-    // shared stage_ex encoder to validate invariants and canonicalize `stageEx=Compute` to 0.
-    const reserved0 = encodeStageExReserved0(AerogpuShaderStage.Compute, stageEx);
-
-    const base = this.appendRaw(AerogpuCmdOpcode.Dispatch, AEROGPU_CMD_DISPATCH_SIZE);
-    this.view.setUint32(base + 8, groupCountX, true);
-    this.view.setUint32(base + 12, groupCountY, true);
-    this.view.setUint32(base + 16, groupCountZ, true);
-    this.view.setUint32(base + 20, reserved0, true);
-  }
-
   present(scanoutId: number, flags: number): void {
     const base = this.appendRaw(AerogpuCmdOpcode.Present, AEROGPU_CMD_PRESENT_SIZE);
     this.view.setUint32(base + 8, scanoutId, true);

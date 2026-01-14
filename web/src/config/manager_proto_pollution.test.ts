@@ -33,11 +33,12 @@ describe("AeroConfigManager prototype pollution hardening", () => {
       queryString: "",
     });
 
-    manager.updateStoredConfig({ __forceProtoPollution: true } as any);
+    manager.updateStoredConfig(
+      { __forceProtoPollution: true } as unknown as Parameters<(typeof AeroConfigManager)["prototype"]["updateStoredConfig"]>[0],
+    );
 
     const storedConfig = (manager as unknown as { storedConfig: Record<string, unknown> }).storedConfig;
     expect(Object.getPrototypeOf(storedConfig)).toBe(null);
-    expect((storedConfig as any).polluted).toBeUndefined();
+    expect(storedConfig.polluted).toBeUndefined();
   });
 });
-

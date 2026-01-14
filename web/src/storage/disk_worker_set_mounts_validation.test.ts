@@ -122,9 +122,9 @@ describe("disk_worker set_mounts validation", () => {
       expect({ ...(resp.result ?? {}) }).toEqual({});
     } finally {
       if (hddExisting) Object.defineProperty(Object.prototype, "hddId", hddExisting);
-      else delete (Object.prototype as any).hddId;
+      else Reflect.deleteProperty(Object.prototype, "hddId");
       if (cdExisting) Object.defineProperty(Object.prototype, "cdId", cdExisting);
-      else delete (Object.prototype as any).cdId;
+      else Reflect.deleteProperty(Object.prototype, "cdId");
     }
   }, 20_000);
 

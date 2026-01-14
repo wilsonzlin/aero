@@ -193,7 +193,7 @@ describe("createDiskAccessLeaseFromLeaseEndpoint", () => {
       await expect(lease.refresh()).rejects.toThrow(/stream lease response url/i);
     } finally {
       if (existing) Object.defineProperty(Object.prototype, "url", existing);
-      else delete (Object.prototype as any).url;
+      else Reflect.deleteProperty(Object.prototype, "url");
     }
   });
 
@@ -217,7 +217,7 @@ describe("createDiskAccessLeaseFromLeaseEndpoint", () => {
       await expect(lease.refresh()).rejects.toThrow(/missing chunked\.manifestUrl/i);
     } finally {
       if (existing) Object.defineProperty(Object.prototype, "chunked", existing);
-      else delete (Object.prototype as any).chunked;
+      else Reflect.deleteProperty(Object.prototype, "chunked");
     }
   });
 });

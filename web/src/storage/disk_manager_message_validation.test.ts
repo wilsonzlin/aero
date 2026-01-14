@@ -40,7 +40,7 @@ describe("DiskManager message validation", () => {
       const result = { ok: true, caches: [], corruptKeys: [] };
 
       // Missing `type` must not be satisfied by prototype pollution.
-      w.emit({ requestId: 1, ok: true, result } as any);
+      w.emit({ requestId: 1, ok: true, result });
 
       const raced = await Promise.race([p.then(() => "resolved", () => "rejected"), Promise.resolve("pending")]);
       expect(raced).toBe("pending");
@@ -50,9 +50,8 @@ describe("DiskManager message validation", () => {
       await expect(p).resolves.toEqual(result);
     } finally {
       if (existing) Object.defineProperty(Object.prototype, "type", existing);
-      else delete (Object.prototype as any).type;
+      else Reflect.deleteProperty(Object.prototype, "type");
       manager.close();
     }
   });
 });
-

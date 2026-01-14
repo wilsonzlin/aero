@@ -19,8 +19,7 @@ describe("bench/guest_cpu_bench option validation", () => {
       runGuestCpuBench({
         variant: "alu32",
         mode: "interpreter",
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        seconds: Number.POSITIVE_INFINITY as any,
+        seconds: Number.POSITIVE_INFINITY,
       }),
     ).rejects.toThrow(/seconds.*finite/i);
   });
@@ -71,8 +70,7 @@ describe("bench/guest_cpu_bench option validation", () => {
       runGuestCpuBench({
         variant: "alu32",
         mode: "interpreter",
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        iters: Number.NaN as any,
+        iters: Number.NaN,
       }),
     ).rejects.toThrow(/iters.*finite/i);
   });
