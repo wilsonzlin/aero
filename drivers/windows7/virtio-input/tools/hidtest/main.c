@@ -3505,7 +3505,7 @@ static void selftest_add_failure(SELFTEST_FAILURE failures[SELFTEST_MAX_FAILURES
     (*count)++;
 }
 
-static void json_print_selftest_device_info(const SELFTEST_DEVICE_INFO *info)
+static void json_print_selftest_device_info(const SELFTEST_DEVICE_INFO *info, const WCHAR *kind)
 {
     if (info == NULL || !info->found) {
         wprintf(L"null");
@@ -3529,6 +3529,14 @@ static void json_print_selftest_device_info(const SELFTEST_DEVICE_INFO *info)
     } else {
         wprintf(L"null");
     }
+    wprintf(L",\"isVirtio\":");
+    if (info->attr_valid) {
+        wprintf(is_virtio_input_device(&info->attr) ? L"true" : L"false");
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\"kind\":");
+    json_print_string_w(kind);
     wprintf(L",\"ver\":");
     if (info->attr_valid) {
         wprintf(L"%u", (unsigned)info->attr.VersionNumber);
@@ -4070,11 +4078,11 @@ static int run_selftest_json(const OPTIONS *opt)
     if (opt->json) {
         size_t i;
         wprintf(L"{\"pass\":%ls,\"keyboard\":", pass ? L"true" : L"false");
-        json_print_selftest_device_info(&kbd);
+        json_print_selftest_device_info(&kbd, L"keyboard");
         wprintf(L",\"mouse\":");
-        json_print_selftest_device_info(&mouse);
+        json_print_selftest_device_info(&mouse, L"mouse");
         wprintf(L",\"tablet\":");
-        json_print_selftest_device_info(&tablet);
+        json_print_selftest_device_info(&tablet, L"tablet");
         wprintf(L",\"failures\":[");
         for (i = 0; i < failure_count; i++) {
             const SELFTEST_FAILURE *f = &failures[i];
