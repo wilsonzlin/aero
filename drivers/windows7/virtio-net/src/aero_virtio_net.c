@@ -715,6 +715,11 @@ static VOID AerovNetCleanupAdapter(_Inout_ AEROVNET_ADAPTER* Adapter) {
   AerovNetFreeVq(Adapter, &Adapter->TxVq);
   AerovNetFreeVq(Adapter, &Adapter->CtrlVq);
 
+  if (Adapter->CtrlVqRegKey) {
+    ZwClose(Adapter->CtrlVqRegKey);
+    Adapter->CtrlVqRegKey = NULL;
+  }
+
   if (Adapter->Bar0Va) {
     NdisMUnmapIoSpace(Adapter->MiniportAdapterHandle, Adapter->Bar0Va, Adapter->Bar0Length);
     Adapter->Bar0Va = NULL;
@@ -1260,6 +1265,101 @@ static NDIS_STATUS AerovNetSetupVq(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ AE
   return NDIS_STATUS_SUCCESS;
 }
 
+static VOID AerovNetCtrlVqRegistryWriteDword(_In_ HANDLE Key, _In_ PCWSTR Name, _In_ ULONG Value) {
+  UNICODE_STRING ValueName;
+
+  if (Key == NULL || Name == NULL) {
+    return;
+  }
+
+  RtlInitUnicodeString(&ValueName, Name);
+  (VOID)ZwSetValueKey(Key, &ValueName, 0, REG_DWORD, &Value, sizeof(Value));
+}
+
+static VOID AerovNetCtrlVqRegistryWriteQword(_In_ HANDLE Key, _In_ PCWSTR Name, _In_ ULONGLONG Value) {
+  UNICODE_STRING ValueName;
+
+  if (Key == NULL || Name == NULL) {
+    return;
+  }
+
+  RtlInitUnicodeString(&ValueName, Name);
+  (VOID)ZwSetValueKey(Key, &ValueName, 0, REG_QWORD, &Value, sizeof(Value));
+}
+
+static VOID AerovNetCtrlVqRegistryUpdate(_Inout_ AEROVNET_ADAPTER* Adapter) {
+  HANDLE Key;
+
+  if (!Adapter) {
+    return;
+  }
+
+  Key = Adapter->CtrlVqRegKey;
+  if (Key == NULL) {
+    return;
+  }
+
+  AerovNetCtrlVqRegistryWriteQword(Key, L"HostFeatures", (ULONGLONG)Adapter->HostFeatures);
+  AerovNetCtrlVqRegistryWriteQword(Key, L"GuestFeatures", (ULONGLONG)Adapter->GuestFeatures);
+
+  AerovNetCtrlVqRegistryWriteDword(Key, L"CtrlVqNegotiated", (Adapter->GuestFeatures & VIRTIO_NET_F_CTRL_VQ) ? 1u : 0u);
+  AerovNetCtrlVqRegistryWriteDword(Key, L"CtrlRxNegotiated", (Adapter->GuestFeatures & VIRTIO_NET_F_CTRL_RX) ? 1u : 0u);
+  AerovNetCtrlVqRegistryWriteDword(Key, L"CtrlVlanNegotiated", (Adapter->GuestFeatures & VIRTIO_NET_F_CTRL_VLAN) ? 1u : 0u);
+  AerovNetCtrlVqRegistryWriteDword(Key, L"CtrlMacAddrNegotiated", (Adapter->GuestFeatures & VIRTIO_NET_F_CTRL_MAC_ADDR) ? 1u : 0u);
+
+  AerovNetCtrlVqRegistryWriteDword(Key, L"CtrlVqQueueIndex", (ULONG)Adapter->CtrlVq.QueueIndex);
+  AerovNetCtrlVqRegistryWriteDword(Key, L"CtrlVqQueueSize", (ULONG)Adapter->CtrlVq.QueueSize);
+
+  AerovNetCtrlVqRegistryWriteQword(Key, L"CtrlVqCmdSent", Adapter->StatCtrlVqCmdSent);
+  AerovNetCtrlVqRegistryWriteQword(Key, L"CtrlVqCmdOk", Adapter->StatCtrlVqCmdOk);
+  AerovNetCtrlVqRegistryWriteQword(Key, L"CtrlVqCmdErr", Adapter->StatCtrlVqCmdErr);
+  AerovNetCtrlVqRegistryWriteQword(Key, L"CtrlVqCmdTimeout", Adapter->StatCtrlVqCmdTimeout);
+}
+
+static VOID AerovNetCtrlVqRegistryInit(_Inout_ AEROVNET_ADAPTER* Adapter) {
+  NTSTATUS Status;
+  PDEVICE_OBJECT Pdo;
+  HANDLE DevKey;
+  HANDLE Key;
+  UNICODE_STRING SubkeyName;
+  OBJECT_ATTRIBUTES Oa;
+
+  if (!Adapter) {
+    return;
+  }
+  if (Adapter->CtrlVqRegKey != NULL) {
+    return;
+  }
+
+  Pdo = NULL;
+  DevKey = NULL;
+  Key = NULL;
+
+  NdisMGetDeviceProperty(Adapter->MiniportAdapterHandle, &Pdo, NULL, NULL, NULL, NULL);
+  if (Pdo == NULL) {
+    return;
+  }
+
+  Status = IoOpenDeviceRegistryKey(Pdo, PLUGPLAY_REGKEY_DEVICE, KEY_CREATE_SUB_KEY | KEY_SET_VALUE, &DevKey);
+  if (!NT_SUCCESS(Status) || DevKey == NULL) {
+    return;
+  }
+
+  RtlInitUnicodeString(&SubkeyName, L"Device Parameters\\AeroVirtioNet");
+  InitializeObjectAttributes(&Oa, &SubkeyName, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, DevKey, NULL);
+
+  Status = ZwCreateKey(&Key, KEY_SET_VALUE, &Oa, 0, NULL, REG_OPTION_NON_VOLATILE, NULL);
+  ZwClose(DevKey);
+  DevKey = NULL;
+
+  if (!NT_SUCCESS(Status) || Key == NULL) {
+    return;
+  }
+
+  Adapter->CtrlVqRegKey = Key;
+  AerovNetCtrlVqRegistryUpdate(Adapter);
+}
+
 typedef struct _AEROVNET_CTRL_REQUEST {
   LIST_ENTRY Link;
   UCHAR Class;
@@ -1499,6 +1599,7 @@ static NDIS_STATUS AerovNetCtrlSendCommand(_Inout_ AEROVNET_ADAPTER* Adapter, _I
 
   if (Status != NDIS_STATUS_SUCCESS) {
     AerovNetCtrlFreeRequest(Req);
+    AerovNetCtrlVqRegistryUpdate(Adapter);
     return Status;
   }
 
@@ -1528,13 +1629,16 @@ static NDIS_STATUS AerovNetCtrlSendCommand(_Inout_ AEROVNET_ADAPTER* Adapter, _I
       if (AckOut) {
         *AckOut = FinalAck;
       }
-      return (FinalAck == VIRTIO_NET_OK) ? NDIS_STATUS_SUCCESS : NDIS_STATUS_FAILURE;
+      Status = (FinalAck == VIRTIO_NET_OK) ? NDIS_STATUS_SUCCESS : NDIS_STATUS_FAILURE;
+      AerovNetCtrlVqRegistryUpdate(Adapter);
+      return Status;
     }
 
     if (KeQueryInterruptTime() >= Deadline100ns) {
       NdisAcquireSpinLock(&Adapter->Lock);
       Adapter->StatCtrlVqCmdTimeout++;
       NdisReleaseSpinLock(&Adapter->Lock);
+      AerovNetCtrlVqRegistryUpdate(Adapter);
       return NDIS_STATUS_FAILURE;
     }
 
@@ -1740,6 +1844,8 @@ static NDIS_STATUS AerovNetVirtioStart(_Inout_ AEROVNET_ADAPTER* Adapter) {
     return NDIS_STATUS_FAILURE;
   }
 
+  AerovNetCtrlVqRegistryInit(Adapter);
+
   /*
    * Contract v1 ring invariants (docs/windows7-virtio-driver-contract.md §2.3):
    * - MUST offer INDIRECT_DESC
@@ -1772,6 +1878,7 @@ static NDIS_STATUS AerovNetVirtioStart(_Inout_ AEROVNET_ADAPTER* Adapter) {
   }
 
   Adapter->GuestFeatures = (UINT64)NegotiatedFeatures;
+  AerovNetCtrlVqRegistryUpdate(Adapter);
 
   Adapter->RxHeaderBytes =
       (Adapter->GuestFeatures & VIRTIO_NET_F_MRG_RXBUF) ? (ULONG)sizeof(VIRTIO_NET_HDR_MRG_RXBUF) : (ULONG)sizeof(VIRTIO_NET_HDR);
@@ -1876,6 +1983,7 @@ static NDIS_STATUS AerovNetVirtioStart(_Inout_ AEROVNET_ADAPTER* Adapter) {
 
     DbgPrint("virtio-net-ctrl-vq|INFO|init|queue_index=%hu|queue_size=%hu|features=0x%I64x\n", Adapter->CtrlVq.QueueIndex,
              Adapter->CtrlVq.QueueSize, (ULONGLONG)Adapter->GuestFeatures);
+    AerovNetCtrlVqRegistryUpdate(Adapter);
   }
 
   // Allocate packet buffers.

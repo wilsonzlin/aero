@@ -48,6 +48,13 @@
 #define STATUS_NOT_SUPPORTED static_cast<ULONG>(0xC00000BBu)
 #endif
 
+#ifndef RegDisposition_OpenExisting
+// Some SDK environments omit the REGDISPOSITION enum constants used by
+// ConfigManager registry helpers. `RegDisposition_OpenExisting` is the standard
+// "open only" value.
+#define RegDisposition_OpenExisting static_cast<REGDISPOSITION>(1)
+#endif
+
 namespace {
 
 struct Options {
@@ -3933,6 +3940,89 @@ struct VirtioNetAdapter {
   std::vector<std::wstring> hardware_ids; // SPDRP_HARDWAREID (optional; for debugging/contract checks)
 };
 
+struct VirtioNetCtrlVqDiag {
+  uint64_t host_features = 0;
+  uint64_t guest_features = 0;
+  DWORD ctrl_vq_negotiated = 0;
+  DWORD ctrl_rx_negotiated = 0;
+  DWORD ctrl_vlan_negotiated = 0;
+  DWORD ctrl_mac_addr_negotiated = 0;
+  DWORD ctrl_vq_queue_index = 0;
+  DWORD ctrl_vq_queue_size = 0;
+  uint64_t cmd_sent = 0;
+  uint64_t cmd_ok = 0;
+  uint64_t cmd_err = 0;
+  uint64_t cmd_timeout = 0;
+};
+
+static std::optional<DWORD> ReadRegDword(HKEY key, const wchar_t* name) {
+  if (!key || !name) return std::nullopt;
+  DWORD type = 0;
+  DWORD value = 0;
+  DWORD size = sizeof(value);
+  const LONG rc = RegQueryValueExW(key, name, nullptr, &type, reinterpret_cast<LPBYTE>(&value), &size);
+  if (rc != ERROR_SUCCESS) return std::nullopt;
+  if (type != REG_DWORD || size != sizeof(value)) return std::nullopt;
+  return value;
+}
+
+static std::optional<uint64_t> ReadRegQword(HKEY key, const wchar_t* name) {
+  if (!key || !name) return std::nullopt;
+  DWORD type = 0;
+  ULONGLONG value = 0;
+  DWORD size = sizeof(value);
+  const LONG rc = RegQueryValueExW(key, name, nullptr, &type, reinterpret_cast<LPBYTE>(&value), &size);
+  if (rc != ERROR_SUCCESS) return std::nullopt;
+  if (type != REG_QWORD || size != sizeof(value)) return std::nullopt;
+  return static_cast<uint64_t>(value);
+}
+
+static std::optional<VirtioNetCtrlVqDiag> QueryVirtioNetCtrlVqDiag(Logger& log, const VirtioNetAdapter& adapter) {
+  if (adapter.devinst == 0) return std::nullopt;
+
+  HKEY dev_key = nullptr;
+  CONFIGRET cr = CM_Open_DevNode_Key(adapter.devinst,
+                                    KEY_READ,
+                                    0,
+                                    RegDisposition_OpenExisting,
+                                    &dev_key,
+                                    CM_REGISTRY_HARDWARE);
+  if (cr != CR_SUCCESS || !dev_key) {
+    log.Logf("virtio-net: ctrl_vq diag: CM_Open_DevNode_Key failed cr=%lu", static_cast<unsigned long>(cr));
+    return std::nullopt;
+  }
+
+  HKEY aero_key = nullptr;
+  const LONG rc = RegOpenKeyExW(dev_key, L"Device Parameters\\AeroVirtioNet", 0, KEY_READ, &aero_key);
+  RegCloseKey(dev_key);
+  dev_key = nullptr;
+
+  if (rc != ERROR_SUCCESS || !aero_key) {
+    return std::nullopt;
+  }
+
+  VirtioNetCtrlVqDiag out{};
+
+  if (auto v = ReadRegQword(aero_key, L"HostFeatures")) out.host_features = *v;
+  if (auto v = ReadRegQword(aero_key, L"GuestFeatures")) out.guest_features = *v;
+
+  if (auto v = ReadRegDword(aero_key, L"CtrlVqNegotiated")) out.ctrl_vq_negotiated = *v;
+  if (auto v = ReadRegDword(aero_key, L"CtrlRxNegotiated")) out.ctrl_rx_negotiated = *v;
+  if (auto v = ReadRegDword(aero_key, L"CtrlVlanNegotiated")) out.ctrl_vlan_negotiated = *v;
+  if (auto v = ReadRegDword(aero_key, L"CtrlMacAddrNegotiated")) out.ctrl_mac_addr_negotiated = *v;
+
+  if (auto v = ReadRegDword(aero_key, L"CtrlVqQueueIndex")) out.ctrl_vq_queue_index = *v;
+  if (auto v = ReadRegDword(aero_key, L"CtrlVqQueueSize")) out.ctrl_vq_queue_size = *v;
+
+  if (auto v = ReadRegQword(aero_key, L"CtrlVqCmdSent")) out.cmd_sent = *v;
+  if (auto v = ReadRegQword(aero_key, L"CtrlVqCmdOk")) out.cmd_ok = *v;
+  if (auto v = ReadRegQword(aero_key, L"CtrlVqCmdErr")) out.cmd_err = *v;
+  if (auto v = ReadRegQword(aero_key, L"CtrlVqCmdTimeout")) out.cmd_timeout = *v;
+
+  RegCloseKey(aero_key);
+  return out;
+}
+
 static std::vector<VirtioNetAdapter> DetectVirtioNetAdapters(Logger& log) {
   std::vector<VirtioNetAdapter> out;
 
@@ -4816,6 +4906,24 @@ static VirtioNetTestResult VirtioNetTest(Logger& log, const Options& opt) {
     } else {
       log.LogLine("virtio-net: interrupt mode query failed");
     }
+  }
+
+  if (const auto diag = QueryVirtioNetCtrlVqDiag(log, *chosen)) {
+    log.Logf("virtio-net-ctrl-vq|INFO|host_features=0x%016I64x|guest_features=0x%016I64x|ctrl_vq=%lu|ctrl_rx=%lu|ctrl_vlan=%lu|ctrl_mac_addr=%lu|queue_index=%lu|queue_size=%lu|cmd_sent=%llu|cmd_ok=%llu|cmd_err=%llu|cmd_timeout=%llu",
+             static_cast<unsigned long long>(diag->host_features),
+             static_cast<unsigned long long>(diag->guest_features),
+             static_cast<unsigned long>(diag->ctrl_vq_negotiated),
+             static_cast<unsigned long>(diag->ctrl_rx_negotiated),
+             static_cast<unsigned long>(diag->ctrl_vlan_negotiated),
+             static_cast<unsigned long>(diag->ctrl_mac_addr_negotiated),
+             static_cast<unsigned long>(diag->ctrl_vq_queue_index),
+             static_cast<unsigned long>(diag->ctrl_vq_queue_size),
+             static_cast<unsigned long long>(diag->cmd_sent),
+             static_cast<unsigned long long>(diag->cmd_ok),
+             static_cast<unsigned long long>(diag->cmd_err),
+             static_cast<unsigned long long>(diag->cmd_timeout));
+  } else {
+    log.LogLine("virtio-net-ctrl-vq|INFO|diag_unavailable");
   }
 
   if (!DnsResolveWithFallback(log, opt.dns_host)) return out;

@@ -214,6 +214,10 @@ typedef struct _AEROVNET_ADAPTER {
   virtio_os_ops_t VirtioOps;
   virtio_os_ndis_ctx_t VirtioOpsCtx;
 
+  // Optional per-device registry key for exposing ctrl_vq diagnostics to the
+  // guest selftest (best-effort).
+  HANDLE CtrlVqRegKey;
+
   UINT64 HostFeatures;
   UINT64 GuestFeatures;
 
