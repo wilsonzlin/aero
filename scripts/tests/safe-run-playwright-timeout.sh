@@ -67,6 +67,18 @@ exit 0
 EOF
 chmod +x "${bin_dir}/npm"
 
+cat > "${bin_dir}/npx" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "${bin_dir}/npx"
+
+cat > "${bin_dir}/playwright" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "${bin_dir}/playwright"
+
 cat > "${bin_dir}/cargo" <<'EOF'
 #!/usr/bin/env bash
 exit 0
@@ -122,5 +134,28 @@ out="$(
 timeout_val="$(extract_timeout "${out}")"
 assert_eq "npm-test-unit-keeps-default-timeout" "${timeout_val}" "600"
 
-echo "All safe-run Playwright timeout checks passed."
+###############################################################################
+# Case 5: `npx playwright test` bumps timeout to AERO_PLAYWRIGHT_TIMEOUT when AERO_TIMEOUT is unset.
+###############################################################################
+out="$(
+  PATH="${bin_dir}:${PATH}" \
+  AERO_MEM_LIMIT=unlimited \
+  AERO_PLAYWRIGHT_TIMEOUT=37 \
+  bash "${test_repo}/scripts/safe-run.sh" npx playwright test 2>&1 >/dev/null
+)"
+timeout_val="$(extract_timeout "${out}")"
+assert_eq "npx-playwright-test-uses-playwright-timeout-when-aero-timeout-unset" "${timeout_val}" "37"
 
+###############################################################################
+# Case 6: `playwright test` bumps timeout to AERO_PLAYWRIGHT_TIMEOUT when AERO_TIMEOUT is unset.
+###############################################################################
+out="$(
+  PATH="${bin_dir}:${PATH}" \
+  AERO_MEM_LIMIT=unlimited \
+  AERO_PLAYWRIGHT_TIMEOUT=37 \
+  bash "${test_repo}/scripts/safe-run.sh" playwright test 2>&1 >/dev/null
+)"
+timeout_val="$(extract_timeout "${out}")"
+assert_eq "playwright-test-uses-playwright-timeout-when-aero-timeout-unset" "${timeout_val}" "37"
+
+echo "All safe-run Playwright timeout checks passed."

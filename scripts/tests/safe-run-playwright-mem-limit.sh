@@ -72,6 +72,18 @@ exit 0
 EOF
 chmod +x "${bin_dir}/npm"
 
+cat > "${bin_dir}/npx" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "${bin_dir}/npx"
+
+cat > "${bin_dir}/playwright" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "${bin_dir}/playwright"
+
 cat > "${bin_dir}/cargo" <<'EOF'
 #!/usr/bin/env bash
 exit 0
@@ -128,5 +140,29 @@ out="$(
 )"
 mem_val="$(extract_mem_limit "${out}")"
 assert_eq "npm-test-unit-uses-node-test-mem-limit" "${mem_val}" "7G"
+
+###############################################################################
+# Case 5: `npx playwright test` uses AERO_PLAYWRIGHT_MEM_LIMIT when AERO_MEM_LIMIT is unset.
+###############################################################################
+out="$(
+  PATH="${bin_dir}:${PATH}" \
+  AERO_TIMEOUT=600 \
+  AERO_PLAYWRIGHT_MEM_LIMIT=11G \
+  bash "${test_repo}/scripts/safe-run.sh" npx playwright test 2>&1 >/dev/null
+)"
+mem_val="$(extract_mem_limit "${out}")"
+assert_eq "npx-playwright-test-uses-playwright-mem-limit-when-aero-mem-unset" "${mem_val}" "11G"
+
+###############################################################################
+# Case 6: `playwright test` uses AERO_PLAYWRIGHT_MEM_LIMIT when AERO_MEM_LIMIT is unset.
+###############################################################################
+out="$(
+  PATH="${bin_dir}:${PATH}" \
+  AERO_TIMEOUT=600 \
+  AERO_PLAYWRIGHT_MEM_LIMIT=11G \
+  bash "${test_repo}/scripts/safe-run.sh" playwright test 2>&1 >/dev/null
+)"
+mem_val="$(extract_mem_limit "${out}")"
+assert_eq "playwright-test-uses-playwright-mem-limit-when-aero-mem-unset" "${mem_val}" "11G"
 
 echo "All safe-run Playwright memory-limit checks passed."
