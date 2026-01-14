@@ -43,6 +43,7 @@ use aero_jit_x86::{
 };
 
 use crate::RunExitKind;
+use crate::guest_phys::{GuestRamChunk, translate_guest_paddr_chunk};
 use crate::guest_phys::{GuestRamRange, guest_ram_phys_end_exclusive, translate_guest_paddr_range};
 use crate::jit_write_log::GuestWriteLog;
 
@@ -1122,9 +1123,29 @@ impl WasmTieredVm {
     /// This bumps the internal page-version tracker so any compiled blocks covering the modified
     /// pages are rejected or recompiled.
     pub fn jit_on_guest_write(&mut self, paddr: u64, len: u32) {
-        self.dispatcher
-            .jit_mut()
-            .on_guest_write(paddr, len as usize);
+        // Only bump versions for guest-physical ranges that map to RAM. The page-version table is
+        // exposed to JIT code as a raw pointer; allowing out-of-RAM writes to grow the dense table
+        // would risk reallocating and invalidating the shared pointer.
+        let mut remaining = len as usize;
+        if remaining == 0 {
+            return;
+        }
+        let mut cur = paddr;
+        while remaining != 0 {
+            let chunk = translate_guest_paddr_chunk(self.guest_size, cur, remaining);
+            let (is_ram, chunk_len) = match chunk {
+                GuestRamChunk::Ram { len, .. } => (true, len),
+                GuestRamChunk::Hole { len } | GuestRamChunk::OutOfBounds { len } => (false, len),
+            };
+            if chunk_len == 0 {
+                break;
+            }
+            if is_ram {
+                self.dispatcher.jit_mut().on_guest_write(cur, chunk_len);
+            }
+            cur = cur.saturating_add(chunk_len as u64);
+            remaining = remaining.saturating_sub(chunk_len);
+        }
     }
 
     /// Drain de-duplicated Tier-1 compilation requests (entry RIPs) as `BigInt` values.
@@ -2044,6 +2065,17 @@ export function installAeroTieredMmioTestShims() {
 
         assert!(table_len > 0, "expected non-zero code version table len");
         assert!(table_ptr != 0, "expected non-zero code version table ptr");
+
+        // Ensure the ABI buffer matches the runtime's actual table pointer/len.
+        let (rt_ptr, rt_len) = vm.dispatcher.jit_mut().code_version_table_ptr_len();
+        assert_eq!(rt_len as u32, table_len);
+        assert_eq!(rt_ptr as usize as u32, table_ptr);
+
+        // Out-of-RAM writes must not grow/reallocate the table (pointer/len must remain stable).
+        vm.jit_on_guest_write(0x1_0000_0000, 1);
+        let (rt_ptr2, rt_len2) = vm.dispatcher.jit_mut().code_version_table_ptr_len();
+        assert_eq!(rt_len2, rt_len);
+        assert_eq!(rt_ptr2, rt_ptr);
 
         // Bump a single page and ensure the corresponding table entry increments.
         let paddr = 0x1000u64;
