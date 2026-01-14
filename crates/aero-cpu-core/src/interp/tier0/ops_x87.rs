@@ -17,6 +17,7 @@ pub fn handles_mnemonic(m: Mnemonic) -> bool {
         m,
         Mnemonic::Finit
             | Mnemonic::Fninit
+            | Mnemonic::Fnop
             | Mnemonic::Fclex
             | Mnemonic::Fnclex
             | Mnemonic::Ffree
@@ -89,6 +90,7 @@ pub fn exec<B: CpuBus>(
             x87.fninit();
             Ok(ExecOutcome::Continue)
         }
+        Mnemonic::Fnop => Ok(ExecOutcome::Continue),
         Mnemonic::Fclex | Mnemonic::Fnclex => {
             x87.fnclex();
             Ok(ExecOutcome::Continue)

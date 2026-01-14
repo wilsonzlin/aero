@@ -51,8 +51,16 @@ fn x87_em_has_priority_over_ts() {
 }
 
 #[test]
-fn unimplemented_x87_still_traps_nm_when_ts_is_set() {
-    // fnop (Tier-0 does not implement this mnemonic yet, but it must still obey CR0.TS gating).
+fn fnop_executes_when_fp_available() {
+    // fnop
+    let code = [0xD9, 0xD0];
+    let mut state = CpuState::new(CpuMode::Bit32);
+    assert_eq!(exec_single(&code, &mut state), Ok(StepExit::Continue));
+}
+
+#[test]
+fn fnop_ts_raises_nm() {
+    // fnop
     let code = [0xD9, 0xD0];
     let mut state = CpuState::new(CpuMode::Bit32);
     state.control.cr0 |= CR0_TS;
@@ -60,6 +68,19 @@ fn unimplemented_x87_still_traps_nm_when_ts_is_set() {
         exec_single(&code, &mut state),
         Err(Exception::DeviceNotAvailable)
     );
+}
+
+#[test]
+fn fnop_no_wait_does_not_raise_mf() {
+    // fnop
+    let code = [0xD9, 0xD0];
+    let mut state = CpuState::new(CpuMode::Bit32);
+    state.control.cr0 |= CR0_NE;
+    state.fpu.fcw = 0x037E; // unmask invalid operation
+    state.fpu.fsw = 0x0001; // pending invalid operation
+    assert_eq!(exec_single(&code, &mut state), Ok(StepExit::Continue));
+    assert!(!state.irq13_pending);
+    assert_eq!(state.fpu.fsw & 0x3F, 0x0001);
 }
 
 #[test]
