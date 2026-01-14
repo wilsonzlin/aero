@@ -55,7 +55,7 @@ fn aerogpu_ring_reset_updates_ring_head_once_dma_is_enabled() {
     let ring_size_bytes =
         ring::AerogpuRingHeader::SIZE_BYTES as u32 + entry_count * entry_stride_bytes;
 
-    m.write_physical_u32(ring_gpa + 0, ring::AEROGPU_RING_MAGIC);
+    m.write_physical_u32(ring_gpa, ring::AEROGPU_RING_MAGIC);
     m.write_physical_u32(ring_gpa + 4, pci::AEROGPU_ABI_VERSION_U32);
     m.write_physical_u32(ring_gpa + 8, ring_size_bytes);
     m.write_physical_u32(ring_gpa + 12, entry_count);
@@ -65,7 +65,7 @@ fn aerogpu_ring_reset_updates_ring_head_once_dma_is_enabled() {
     m.write_physical_u32(ring_gpa + 28, 5); // tail
 
     // Pre-fill the fence page with a sentinel so we can detect whether DMA wrote it.
-    m.write_physical_u32(fence_gpa + 0, 0xDEAD_BEEF);
+    m.write_physical_u32(fence_gpa, 0xDEAD_BEEF);
 
     // Program BAR0 ring + fence registers.
     m.write_physical_u32(
@@ -107,7 +107,7 @@ fn aerogpu_ring_reset_updates_ring_head_once_dma_is_enabled() {
 
     // With COMMAND.BME=0, head is unchanged and the fence page was not written.
     assert_eq!(m.read_physical_u32(ring_gpa + 24), 0);
-    assert_eq!(m.read_physical_u32(fence_gpa + 0), 0xDEAD_BEEF);
+    assert_eq!(m.read_physical_u32(fence_gpa), 0xDEAD_BEEF);
 
     // Enable PCI Bus Mastering so the device is allowed to DMA into guest memory.
     let command = command | (1 << 2);
@@ -117,7 +117,7 @@ fn aerogpu_ring_reset_updates_ring_head_once_dma_is_enabled() {
     // Ring reset DMA now runs: head := tail, and the fence page is re-initialized.
     assert_eq!(m.read_physical_u32(ring_gpa + 24), 5);
     assert_eq!(
-        m.read_physical_u32(fence_gpa + 0),
+        m.read_physical_u32(fence_gpa),
         ring::AEROGPU_FENCE_PAGE_MAGIC
     );
     assert_eq!(m.read_physical_u64(fence_gpa + 8), 0);
