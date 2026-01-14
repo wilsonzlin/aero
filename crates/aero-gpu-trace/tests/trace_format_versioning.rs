@@ -86,6 +86,24 @@ fn reject_trace_with_toc_offset_out_of_bounds() {
 }
 
 #[test]
+fn reject_trace_with_toc_len_smaller_than_expected() {
+    let mut bytes = minimal_trace_bytes(0);
+
+    let footer_size = TRACE_FOOTER_SIZE as usize;
+    let footer_start = bytes.len() - footer_size;
+
+    // Set toc_len to the TOC header size only (16). This is enough to read the header but
+    // mismatches the expected length once frame_count is read.
+    bytes[footer_start + 24..footer_start + 32].copy_from_slice(&16u64.to_le_bytes());
+
+    let err = match TraceReader::open(Cursor::new(bytes)) {
+        Ok(_) => panic!("expected trace open to fail"),
+        Err(err) => err,
+    };
+    assert!(matches!(err, TraceReadError::TocOutOfBounds));
+}
+
+#[test]
 fn reject_trace_with_toc_entry_out_of_bounds() {
     let mut bytes = minimal_trace_bytes(0);
 
@@ -104,6 +122,46 @@ fn reject_trace_with_toc_entry_out_of_bounds() {
     let entry_start = toc_offset + 16; // TOC_HEADER_SIZE
     let start_offset_field = entry_start + 8;
     bytes[start_offset_field..start_offset_field + 8].copy_from_slice(&0u64.to_le_bytes());
+
+    let err = match TraceReader::open(Cursor::new(bytes)) {
+        Ok(_) => panic!("expected trace open to fail"),
+        Err(err) => err,
+    };
+    assert!(matches!(err, TraceReadError::TocOutOfBounds));
+}
+
+#[test]
+fn reject_trace_with_toc_entry_end_before_start() {
+    let mut bytes = minimal_trace_bytes(0);
+
+    let footer_size = TRACE_FOOTER_SIZE as usize;
+    let footer_start = bytes.len() - footer_size;
+    let toc_offset = read_u64_le(&bytes, footer_start + 16) as usize;
+
+    // Corrupt the first TOC entry's end_offset to be 0, which must be < start_offset.
+    let entry_start = toc_offset + 16; // TOC_HEADER_SIZE
+    let end_offset_field = entry_start + 24;
+    bytes[end_offset_field..end_offset_field + 8].copy_from_slice(&0u64.to_le_bytes());
+
+    let err = match TraceReader::open(Cursor::new(bytes)) {
+        Ok(_) => panic!("expected trace open to fail"),
+        Err(err) => err,
+    };
+    assert!(matches!(err, TraceReadError::TocOutOfBounds));
+}
+
+#[test]
+fn reject_trace_with_toc_entry_present_out_of_bounds() {
+    let mut bytes = minimal_trace_bytes(0);
+
+    let footer_size = TRACE_FOOTER_SIZE as usize;
+    let footer_start = bytes.len() - footer_size;
+    let toc_offset = read_u64_le(&bytes, footer_start + 16) as usize;
+
+    // Set present_offset to a non-zero value outside the frame range.
+    let entry_start = toc_offset + 16; // TOC_HEADER_SIZE
+    let present_offset_field = entry_start + 16;
+    bytes[present_offset_field..present_offset_field + 8].copy_from_slice(&u64::MAX.to_le_bytes());
 
     let err = match TraceReader::open(Cursor::new(bytes)) {
         Ok(_) => panic!("expected trace open to fail"),
