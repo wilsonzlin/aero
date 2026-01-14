@@ -5410,94 +5410,102 @@ bool build_fixedfunc_ps(const FixedfuncPixelShaderKey& key, std::vector<uint32_t
     return false;
   }
 
-  Builder b;
-  if (!b.begin()) {
+  // Builder methods use std::vector::push_back without per-call exception guards.
+  // Wrap the entire emission in a catch-all so no std::bad_alloc (or other)
+  // exceptions can escape driver code under memory pressure.
+  try {
+    Builder b;
+    if (!b.begin()) {
+      return false;
+    }
+
+    // r3 = diffuse (baseline current)
+    constexpr uint32_t kCurReg = 3;
+    b.mov(dst_temp(kCurReg, /*mask=*/0xFu), src_input(/*reg=*/0));
+
+    for (uint32_t stage = 0; stage < key.stage_count && stage < kFixedfuncMaxTextureStages; ++stage) {
+      const auto& st = key.stages[stage];
+
+      // r0 = texN
+      if (st.uses_texture) {
+        b.texld(dst_temp(/*reg=*/0, /*mask=*/0xFu), src_texcoord(/*reg=*/0), src_sampler(stage));
+      }
+
+      // StageN RGB into r3.xyz (mask 0x7), alpha into r3.w (mask 0x8).
+      if (!build_stage_state(b, st.color, kCurReg, kCurReg, /*mask=*/0x7u)) {
+        return false;
+      }
+      if (!build_stage_state(b, st.alpha, kCurReg, kCurReg, /*mask=*/0x8u)) {
+        return false;
+      }
+    }
+
+    if (key.fog_enabled) {
+      // Fixed-function fog is applied after the fixed-function texture stage chain
+      // (blend the final RGB toward FOGCOLOR). This is implemented as:
+      //
+      //   fog_amount = saturate((fog_coord - fog_start) * inv_fog_range)
+      //   rgb = lerp(rgb, fog_color, fog_amount)
+      //
+      // Where:
+      // - `fog_coord` is sourced from TEXCOORD0.z, populated by the fixed-function
+      //   fallback vertex shaders:
+      //   - for XYZRHW vertices: input POSITIONT.z
+      //   - for XYZ vertices: post-projection depth (clip_z / clip_w)
+      // - `fog_start` and `inv_fog_range` are provided in `c2.{x,y}`
+      // - `fog_color` is provided in `c1.rgb`
+      //
+      // Notes:
+      // - Only RGB is fogged; alpha is preserved (D3D9 fixed-function semantics).
+      // - We use a dedicated constant register `c3 = 0` (defined via `def`) so the
+      //   clamp is deterministic regardless of any app-written PS constant state.
+
+      constexpr uint32_t kFogColorReg = 1;  // c1
+      constexpr uint32_t kFogParamsReg = 2; // c2
+      constexpr uint32_t kZeroReg = 3;      // c3 (def 0)
+
+      constexpr uint32_t kFogAmountReg = 5; // r5
+      constexpr uint32_t kFogTmpReg = 6;    // r6
+
+      b.def_const(kZeroReg, 0.0f, 0.0f, 0.0f, 0.0f);
+
+      // r5 = fog_coord (replicate scalar)
+      b.mov(dst_temp(kFogAmountReg, /*mask=*/0xFu), src_texcoord(/*reg=*/0, swizzle_zzzz()));
+      // r5 = (fog_coord - fog_start) * inv_fog_range
+      b.add(dst_temp(kFogAmountReg, /*mask=*/0xFu),
+            src_temp(kFogAmountReg),
+            src_const(kFogParamsReg, swizzle_xxxx(), SrcMod::Neg));
+      b.mul(dst_temp(kFogAmountReg, /*mask=*/0xFu),
+            src_temp(kFogAmountReg),
+            src_const(kFogParamsReg, swizzle_yyyy()));
+
+      // Clamp to [0, 1].
+      b.max(dst_temp(kFogAmountReg, /*mask=*/0xFu), src_temp(kFogAmountReg), src_const(kZeroReg));
+      b.min(dst_temp(kFogAmountReg, /*mask=*/0xFu),
+            src_temp(kFogAmountReg),
+            src_const(kZeroReg, swizzle_xyzw(), SrcMod::Comp));
+
+      // r6.rgb = fog_color.rgb - cur.rgb
+      b.add(dst_temp(kFogTmpReg, /*mask=*/0x7u),
+            src_const(kFogColorReg),
+            src_temp(kCurReg, swizzle_xyzw(), SrcMod::Neg));
+      // r6.rgb *= fog_amount
+      b.mul(dst_temp(kFogTmpReg, /*mask=*/0x7u),
+            src_temp(kFogTmpReg),
+            src_temp(kFogAmountReg, swizzle_xxxx()));
+      // cur.rgb += r6.rgb
+      b.add(dst_temp(kCurReg, /*mask=*/0x7u), src_temp(kCurReg), src_temp(kFogTmpReg));
+    }
+
+    b.mov(dst_oc0(/*mask=*/0xFu), src_temp(kCurReg));
+    b.end();
+
+    *out_tokens = std::move(b.tokens);
+    return true;
+  } catch (...) {
+    out_tokens->clear();
     return false;
   }
-
-  // r3 = diffuse (baseline current)
-  constexpr uint32_t kCurReg = 3;
-  b.mov(dst_temp(kCurReg, /*mask=*/0xFu), src_input(/*reg=*/0));
-
-  for (uint32_t stage = 0; stage < key.stage_count && stage < kFixedfuncMaxTextureStages; ++stage) {
-    const auto& st = key.stages[stage];
-
-    // r0 = texN
-    if (st.uses_texture) {
-      b.texld(dst_temp(/*reg=*/0, /*mask=*/0xFu), src_texcoord(/*reg=*/0), src_sampler(stage));
-    }
-
-    // StageN RGB into r3.xyz (mask 0x7), alpha into r3.w (mask 0x8).
-    if (!build_stage_state(b, st.color, kCurReg, kCurReg, /*mask=*/0x7u)) {
-      return false;
-    }
-    if (!build_stage_state(b, st.alpha, kCurReg, kCurReg, /*mask=*/0x8u)) {
-      return false;
-    }
-  }
-
-  if (key.fog_enabled) {
-    // Fixed-function fog is applied after the fixed-function texture stage chain
-    // (blend the final RGB toward FOGCOLOR). This is implemented as:
-    //
-    //   fog_amount = saturate((fog_coord - fog_start) * inv_fog_range)
-    //   rgb = lerp(rgb, fog_color, fog_amount)
-    //
-    // Where:
-    // - `fog_coord` is sourced from TEXCOORD0.z, populated by the fixed-function
-    //   fallback vertex shaders:
-    //   - for XYZRHW vertices: input POSITIONT.z
-    //   - for XYZ vertices: post-projection depth (clip_z / clip_w)
-    // - `fog_start` and `inv_fog_range` are provided in `c2.{x,y}`
-    // - `fog_color` is provided in `c1.rgb`
-    //
-    // Notes:
-    // - Only RGB is fogged; alpha is preserved (D3D9 fixed-function semantics).
-    // - We use a dedicated constant register `c3 = 0` (defined via `def`) so the
-    //   clamp is deterministic regardless of any app-written PS constant state.
-
-    constexpr uint32_t kFogColorReg = 1;  // c1
-    constexpr uint32_t kFogParamsReg = 2; // c2
-    constexpr uint32_t kZeroReg = 3;      // c3 (def 0)
-
-    constexpr uint32_t kFogAmountReg = 5; // r5
-    constexpr uint32_t kFogTmpReg = 6;    // r6
-
-    b.def_const(kZeroReg, 0.0f, 0.0f, 0.0f, 0.0f);
-
-    // r5 = fog_coord (replicate scalar)
-    b.mov(dst_temp(kFogAmountReg, /*mask=*/0xFu), src_texcoord(/*reg=*/0, swizzle_zzzz()));
-    // r5 = (fog_coord - fog_start) * inv_fog_range
-    b.add(dst_temp(kFogAmountReg, /*mask=*/0xFu),
-          src_temp(kFogAmountReg),
-          src_const(kFogParamsReg, swizzle_xxxx(), SrcMod::Neg));
-    b.mul(dst_temp(kFogAmountReg, /*mask=*/0xFu),
-          src_temp(kFogAmountReg),
-          src_const(kFogParamsReg, swizzle_yyyy()));
-
-    // Clamp to [0, 1].
-    b.max(dst_temp(kFogAmountReg, /*mask=*/0xFu), src_temp(kFogAmountReg), src_const(kZeroReg));
-    b.min(dst_temp(kFogAmountReg, /*mask=*/0xFu),
-          src_temp(kFogAmountReg),
-          src_const(kZeroReg, swizzle_xyzw(), SrcMod::Comp));
-
-    // r6.rgb = fog_color.rgb - cur.rgb
-    b.add(dst_temp(kFogTmpReg, /*mask=*/0x7u),
-          src_const(kFogColorReg),
-          src_temp(kCurReg, swizzle_xyzw(), SrcMod::Neg));
-    // r6.rgb *= fog_amount
-    b.mul(dst_temp(kFogTmpReg, /*mask=*/0x7u),
-          src_temp(kFogTmpReg),
-          src_temp(kFogAmountReg, swizzle_xxxx()));
-    // cur.rgb += r6.rgb
-    b.add(dst_temp(kCurReg, /*mask=*/0x7u), src_temp(kCurReg), src_temp(kFogTmpReg));
-  }
-
-  b.mov(dst_oc0(/*mask=*/0xFu), src_temp(kCurReg));
-  b.end();
-
-  *out_tokens = std::move(b.tokens);
-  return true;
 }
 
 } // namespace fixedfunc_ps20
