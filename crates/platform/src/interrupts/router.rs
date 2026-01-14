@@ -1623,6 +1623,7 @@ mod tests {
 
         assert_eq!(ints.lapics[0].get_pending_vector(), None);
         assert_eq!(ints.lapics[1].get_pending_vector(), Some(vector as u8));
+    }
 
     #[test]
     fn init_ipi_deassert_is_ignored_for_pending_init_and_reset_semantics() {
