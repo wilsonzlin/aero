@@ -7654,9 +7654,13 @@ static NTSTATUS APIENTRY AeroGpuDdiRestartFromTimeout(_In_ const HANDLE hAdapter
             KIRQL ringIrql;
             KeAcquireSpinLock(&adapter->RingLock, &ringIrql);
 
-            const BOOLEAN haveRing =
-                (adapter->RingVa && adapter->RingEntryCount != 0 && adapter->RingSizeBytes >= sizeof(struct aerogpu_ring_header)) ? TRUE
-                                                                                                                                    : FALSE;
+            const ULONG ringEntryCount = adapter->RingEntryCount;
+            const BOOLEAN ringEntryCountPow2 =
+                (ringEntryCount != 0 && (ringEntryCount & (ringEntryCount - 1)) == 0) ? TRUE : FALSE;
+            const ULONGLONG ringMinBytes =
+                (ULONGLONG)sizeof(struct aerogpu_ring_header) + ((ULONGLONG)ringEntryCount * (ULONGLONG)sizeof(struct aerogpu_submit_desc));
+            const BOOLEAN ringSizeOk = (ringMinBytes <= (ULONGLONG)adapter->RingSizeBytes) ? TRUE : FALSE;
+            const BOOLEAN haveRing = (adapter->RingVa && ringEntryCountPow2 && ringSizeOk) ? TRUE : FALSE;
             if (!haveRing) {
                 adapter->RingHeader = NULL;
             }
@@ -7743,7 +7747,17 @@ static NTSTATUS APIENTRY AeroGpuDdiRestartFromTimeout(_In_ const HANDLE hAdapter
             KIRQL ringIrql;
             KeAcquireSpinLock(&adapter->RingLock, &ringIrql);
 
+            BOOLEAN ringOk = FALSE;
             if (adapter->RingVa && adapter->RingEntryCount != 0) {
+                const ULONGLONG minRingBytes =
+                    (ULONGLONG)adapter->RingEntryCount * (ULONGLONG)sizeof(aerogpu_legacy_ring_entry);
+                ringOk = (minRingBytes <= (ULONGLONG)adapter->RingSizeBytes) ? TRUE : FALSE;
+            }
+
+            if (ringOk) {
+                if (adapter->RingTail >= adapter->RingEntryCount) {
+                    adapter->RingTail = 0;
+                }
                 AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_BASE_LO, adapter->RingPa.LowPart);
                 AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_BASE_HI, (ULONG)(adapter->RingPa.QuadPart >> 32));
                 AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_ENTRY_COUNT, adapter->RingEntryCount);
@@ -7885,8 +7899,19 @@ static NTSTATUS APIENTRY AeroGpuDdiRestartFromTimeout(_In_ const HANDLE hAdapter
         }
     }
 
-    if (adapter->RingVa && adapter->RingEntryCount != 0 &&
-        (adapter->AbiKind != AEROGPU_ABI_KIND_V1 || adapter->RingHeader != NULL)) {
+    BOOLEAN ringReady = FALSE;
+    if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
+        ringReady = (adapter->RingVa && adapter->RingHeader && adapter->RingEntryCount != 0) ? TRUE : FALSE;
+    } else {
+        if (adapter->RingVa && adapter->RingEntryCount != 0) {
+            const ULONGLONG minRingBytes =
+                (ULONGLONG)adapter->RingEntryCount * (ULONGLONG)sizeof(aerogpu_legacy_ring_entry);
+            if (minRingBytes <= (ULONGLONG)adapter->RingSizeBytes && adapter->RingTail < adapter->RingEntryCount) {
+                ringReady = TRUE;
+            }
+        }
+    }
+    if (ringReady) {
         /* Ensure the submission paths are unblocked once the restart has restored ring/MMIO state. */
         InterlockedExchange(&adapter->AcceptingSubmissions, 1);
     }
