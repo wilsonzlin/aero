@@ -314,6 +314,51 @@ mod tests {
     }
 
     #[test]
+    fn ring_header_validate_prefix_reports_expected_errors() {
+        use aero_protocol::aerogpu::aerogpu_pci::AerogpuAbiError;
+
+        let abi_version = (AEROGPU_ABI_MAJOR << 16) | AEROGPU_ABI_MINOR;
+
+        let mut hdr = make_valid_header_with_abi(abi_version);
+        hdr.magic = 0;
+        assert!(matches!(
+            hdr.validate_prefix(),
+            Err(protocol_ring::AerogpuRingDecodeError::BadMagic { .. })
+        ));
+
+        let hdr = make_valid_header_with_abi(((AEROGPU_ABI_MAJOR + 1) << 16) | AEROGPU_ABI_MINOR);
+        assert!(matches!(
+            hdr.validate_prefix(),
+            Err(protocol_ring::AerogpuRingDecodeError::Abi(AerogpuAbiError::UnsupportedMajor { .. }))
+        ));
+
+        let mut hdr = make_valid_header_with_abi(abi_version);
+        hdr.entry_count = 3;
+        hdr.size_bytes = (AEROGPU_RING_HEADER_SIZE_BYTES
+            + hdr.entry_count as u64 * hdr.entry_stride_bytes as u64) as u32;
+        assert!(matches!(
+            hdr.validate_prefix(),
+            Err(protocol_ring::AerogpuRingDecodeError::BadEntryCount { found: 3 })
+        ));
+
+        let mut hdr = make_valid_header_with_abi(abi_version);
+        hdr.entry_stride_bytes = AeroGpuSubmitDesc::SIZE_BYTES - 1;
+        hdr.size_bytes = (AEROGPU_RING_HEADER_SIZE_BYTES
+            + hdr.entry_count as u64 * hdr.entry_stride_bytes as u64) as u32;
+        assert!(matches!(
+            hdr.validate_prefix(),
+            Err(protocol_ring::AerogpuRingDecodeError::BadStrideField { .. })
+        ));
+
+        let mut hdr = make_valid_header_with_abi(abi_version);
+        hdr.size_bytes -= 1;
+        assert!(matches!(
+            hdr.validate_prefix(),
+            Err(protocol_ring::AerogpuRingDecodeError::BadSizeField { .. })
+        ));
+    }
+
+    #[test]
     fn alloc_table_header_validate_prefix_rejects_wrong_magic() {
         let abi_version = (AEROGPU_ABI_MAJOR << 16) | AEROGPU_ABI_MINOR;
         let entry_count = 1u32;
@@ -368,6 +413,94 @@ mod tests {
             hdr.validate_prefix(),
             Err(protocol_ring::AerogpuRingDecodeError::BadSizeField { .. })
         ));
+    }
+
+    #[test]
+    fn read_from_decodes_ring_and_submit_and_alloc_structs() {
+        let mut mem = VecMemory::new(0x2000);
+
+        // Ring header.
+        let ring_gpa = 0x100u64;
+        let abi_version = (AEROGPU_ABI_MAJOR << 16) | AEROGPU_ABI_MINOR;
+        let entry_count = 8u32;
+        let entry_stride = AeroGpuSubmitDesc::SIZE_BYTES;
+        let ring_size_bytes = (AEROGPU_RING_HEADER_SIZE_BYTES
+            + entry_count as u64 * entry_stride as u64) as u32;
+
+        mem.write_u32(ring_gpa + 0, AEROGPU_RING_MAGIC);
+        mem.write_u32(ring_gpa + 4, abi_version);
+        mem.write_u32(ring_gpa + 8, ring_size_bytes);
+        mem.write_u32(ring_gpa + 12, entry_count);
+        mem.write_u32(ring_gpa + 16, entry_stride);
+        mem.write_u32(ring_gpa + 20, 0xAABB_CCDD);
+        mem.write_u32(ring_gpa + RING_HEAD_OFFSET, 5);
+        mem.write_u32(ring_gpa + RING_TAIL_OFFSET, 6);
+
+        let ring = AeroGpuRingHeader::read_from(&mut mem, ring_gpa);
+        assert_eq!(ring.magic, AEROGPU_RING_MAGIC);
+        assert_eq!(ring.abi_version, abi_version);
+        assert_eq!(ring.size_bytes, ring_size_bytes);
+        assert_eq!(ring.entry_count, entry_count);
+        assert_eq!(ring.entry_stride_bytes, entry_stride);
+        assert_eq!(ring.flags, 0xAABB_CCDD);
+        assert_eq!(ring.head, 5);
+        assert_eq!(ring.tail, 6);
+
+        // Submit descriptor.
+        let desc_gpa = 0x200u64;
+        mem.write_u32(desc_gpa + 0, AeroGpuSubmitDesc::SIZE_BYTES);
+        mem.write_u32(desc_gpa + 4, AeroGpuSubmitDesc::FLAG_PRESENT);
+        mem.write_u32(desc_gpa + 8, 123);
+        mem.write_u32(desc_gpa + 12, 456);
+        mem.write_u64(desc_gpa + 16, 0xDEAD_BEEFu64);
+        mem.write_u32(desc_gpa + 24, 0x1000);
+        mem.write_u64(desc_gpa + 32, 0xCAFE_BABEu64);
+        mem.write_u32(desc_gpa + 40, 0x2000);
+        mem.write_u64(desc_gpa + 48, 0x1122_3344_5566_7788u64);
+
+        let desc = AeroGpuSubmitDesc::read_from(&mut mem, desc_gpa);
+        assert_eq!(desc.desc_size_bytes, AeroGpuSubmitDesc::SIZE_BYTES);
+        assert_eq!(desc.flags, AeroGpuSubmitDesc::FLAG_PRESENT);
+        assert_eq!(desc.context_id, 123);
+        assert_eq!(desc.engine_id, 456);
+        assert_eq!(desc.cmd_gpa, 0xDEAD_BEEFu64);
+        assert_eq!(desc.cmd_size_bytes, 0x1000);
+        assert_eq!(desc.alloc_table_gpa, 0xCAFE_BABEu64);
+        assert_eq!(desc.alloc_table_size_bytes, 0x2000);
+        assert_eq!(desc.signal_fence, 0x1122_3344_5566_7788u64);
+
+        // Alloc table header.
+        let alloc_hdr_gpa = 0x300u64;
+        let alloc_entry_count = 1u32;
+        let alloc_stride = AeroGpuAllocEntry::SIZE_BYTES;
+        let alloc_size_bytes =
+            (protocol_ring::AerogpuAllocTableHeader::SIZE_BYTES as u32) + alloc_entry_count * alloc_stride;
+        mem.write_u32(alloc_hdr_gpa + 0, AEROGPU_ALLOC_TABLE_MAGIC);
+        mem.write_u32(alloc_hdr_gpa + 4, abi_version);
+        mem.write_u32(alloc_hdr_gpa + 8, alloc_size_bytes);
+        mem.write_u32(alloc_hdr_gpa + 12, alloc_entry_count);
+        mem.write_u32(alloc_hdr_gpa + 16, alloc_stride);
+        mem.write_u32(alloc_hdr_gpa + 20, 0);
+
+        let alloc_hdr = AeroGpuAllocTableHeader::read_from(&mut mem, alloc_hdr_gpa);
+        assert_eq!(alloc_hdr.magic, AEROGPU_ALLOC_TABLE_MAGIC);
+        assert_eq!(alloc_hdr.abi_version, abi_version);
+        assert_eq!(alloc_hdr.size_bytes, alloc_size_bytes);
+        assert_eq!(alloc_hdr.entry_count, alloc_entry_count);
+        assert_eq!(alloc_hdr.entry_stride_bytes, alloc_stride);
+
+        // Alloc entry.
+        let alloc_entry_gpa = 0x400u64;
+        mem.write_u32(alloc_entry_gpa + 0, 7);
+        mem.write_u32(alloc_entry_gpa + 4, 0x55AA);
+        mem.write_u64(alloc_entry_gpa + 8, 0x1000_0000);
+        mem.write_u64(alloc_entry_gpa + 16, 0x2000);
+
+        let entry = AeroGpuAllocEntry::read_from(&mut mem, alloc_entry_gpa);
+        assert_eq!(entry.alloc_id, 7);
+        assert_eq!(entry.flags, 0x55AA);
+        assert_eq!(entry.gpa, 0x1000_0000);
+        assert_eq!(entry.size_bytes, 0x2000);
     }
 }
 
