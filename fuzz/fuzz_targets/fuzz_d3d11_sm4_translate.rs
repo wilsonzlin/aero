@@ -104,57 +104,24 @@ fn build_signature_chunk_v0(params: &[SigParam<'_>]) -> Vec<u8> {
 }
 
 fn build_signature_chunk_v1(params: &[SigParam<'_>]) -> Vec<u8> {
-    // v1 signature layout:
-    // - header: param_count (u32), param_offset (u32)
-    // - entries: 32 bytes each
-    // - string table: null-terminated semantic names
-    const HEADER_LEN: usize = 8;
-    const ENTRY_LEN: usize = 32;
-
     let param_count = params.len().min(MAX_SYNTH_SIGNATURE_PARAMS);
-    let table_offset = HEADER_LEN;
-    let table_len = ENTRY_LEN * param_count;
-    let mut out = Vec::with_capacity(HEADER_LEN + table_len + 64);
-
-    out.extend_from_slice(&(param_count as u32).to_le_bytes());
-    out.extend_from_slice(&(table_offset as u32).to_le_bytes());
-
-    // Reserve entry table space.
-    out.resize(HEADER_LEN + table_len, 0);
-
-    // Emit semantic names after the entry table.
-    let mut string_base = HEADER_LEN + table_len;
-    for (idx, p) in params.iter().take(param_count).enumerate() {
-        let entry_off = HEADER_LEN + idx * ENTRY_LEN;
-        let name_off = string_base as u32;
-
-        // Semantic name bytes must be valid UTF-8 for the signature parser.
-        let name = if core::str::from_utf8(p.semantic_name).is_ok() {
-            p.semantic_name
-        } else {
-            b"BADSEM"
-        };
-
-        // entry[0..4] = semantic_name_offset
-        out[entry_off..entry_off + 4].copy_from_slice(&name_off.to_le_bytes());
-        out[entry_off + 4..entry_off + 8].copy_from_slice(&p.semantic_index.to_le_bytes());
-        out[entry_off + 8..entry_off + 12].copy_from_slice(&p.system_value_type.to_le_bytes());
-        out[entry_off + 12..entry_off + 16].copy_from_slice(&p.component_type.to_le_bytes());
-        out[entry_off + 16..entry_off + 20].copy_from_slice(&p.register.to_le_bytes());
-
-        // mask/rw bytes + reserved bytes.
-        out[entry_off + 20] = p.mask;
-        out[entry_off + 21] = p.read_write_mask;
-        // bytes 22..23 left as 0.
-        out[entry_off + 24..entry_off + 28].copy_from_slice(&(p.stream as u32).to_le_bytes());
-        // min_precision at 28..32 left as 0.
-
-        out.extend_from_slice(name);
-        out.push(0);
-        string_base = out.len();
-    }
-
-    out
+    let entries: Vec<dxbc_test_utils::SignatureEntryDesc<'_>> = params
+        .iter()
+        .take(param_count)
+        .map(|p| dxbc_test_utils::SignatureEntryDesc {
+            // Semantic name bytes must be valid UTF-8 for the signature parser.
+            semantic_name: core::str::from_utf8(p.semantic_name).unwrap_or("BADSEM"),
+            semantic_index: p.semantic_index,
+            system_value_type: p.system_value_type,
+            component_type: p.component_type,
+            register: p.register,
+            mask: p.mask,
+            read_write_mask: p.read_write_mask,
+            stream: u32::from(p.stream),
+            min_precision: 0,
+        })
+        .collect();
+    dxbc_test_utils::build_signature_chunk_v1(&entries)
 }
 
 #[derive(Clone)]
