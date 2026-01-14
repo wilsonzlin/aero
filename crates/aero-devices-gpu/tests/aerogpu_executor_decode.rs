@@ -754,6 +754,129 @@ fn malformed_cmd_stream_size_sets_error_irq() {
 }
 
 #[test]
+fn cmd_stream_too_large_sets_error_irq_and_advances_head() {
+    let mut mem = VecMemory::new(0x40_000);
+    let mut regs = AeroGpuRegs::default();
+    let mut exec = AeroGpuExecutor::new(AeroGpuExecutorConfig {
+        verbose: false,
+        keep_last_submissions: 8,
+        fence_completion: AeroGpuFenceCompletionMode::Immediate,
+    });
+
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    write_ring(&mut mem, ring_gpa, ring_size, 8, 0, 1, regs.abi_version);
+
+    // Declare a backing buffer size and cmd stream header size that exceed the executor's
+    // MAX_CMD_STREAM_SIZE_BYTES guard (64 MiB), without requiring the test to allocate that much.
+    let cmd_gpa = 0x6000u64;
+    let huge_size_bytes = 64u32 * 1024 * 1024 + 4;
+    write_cmd_stream_header(
+        &mut mem,
+        cmd_gpa,
+        regs.abi_version,
+        huge_size_bytes,
+        AEROGPU_CMD_STREAM_MAGIC,
+    );
+
+    let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    write_submit_desc(&mut mem, desc_gpa, cmd_gpa, huge_size_bytes, 0, 0, 77);
+
+    regs.ring_gpa = ring_gpa;
+    regs.ring_size_bytes = ring_size;
+    regs.ring_control = ring_control::ENABLE;
+
+    exec.process_doorbell(&mut regs, &mut mem);
+
+    assert_eq!(mem.read_u32(ring_gpa + RING_HEAD_OFFSET), 1);
+    assert_eq!(regs.completed_fence, 77);
+    assert_eq!(regs.stats.malformed_submissions, 1);
+    assert_ne!(regs.irq_status & irq_bits::ERROR, 0);
+
+    let record = exec
+        .last_submissions
+        .back()
+        .expect("missing submission record");
+    assert!(
+        record
+            .decode_errors
+            .contains(&AeroGpuSubmissionDecodeError::CmdStream(
+                AeroGpuCmdStreamDecodeError::TooLarge,
+            )),
+        "expected TooLarge error, got: {:?}",
+        record.decode_errors
+    );
+}
+
+#[test]
+fn alloc_table_too_large_sets_error_irq_and_advances_head() {
+    let mut mem = VecMemory::new(0x40_000);
+    let mut regs = AeroGpuRegs::default();
+    let mut exec = AeroGpuExecutor::new(AeroGpuExecutorConfig {
+        verbose: false,
+        keep_last_submissions: 8,
+        fence_completion: AeroGpuFenceCompletionMode::Immediate,
+    });
+
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    write_ring(&mut mem, ring_gpa, ring_size, 8, 0, 1, regs.abi_version);
+
+    // Declare an alloc table size that exceeds the executor's MAX_ALLOC_TABLE_SIZE_BYTES guard
+    // (16 MiB), without requiring the test to allocate that much.
+    let alloc_table_gpa = 0x5000u64;
+    let huge_size_bytes = 16u32 * 1024 * 1024 + 4;
+    mem.write_u32(alloc_table_gpa + ALLOC_TABLE_MAGIC_OFFSET, AEROGPU_ALLOC_TABLE_MAGIC);
+    mem.write_u32(
+        alloc_table_gpa + ALLOC_TABLE_ABI_VERSION_OFFSET,
+        regs.abi_version,
+    );
+    mem.write_u32(alloc_table_gpa + ALLOC_TABLE_SIZE_BYTES_OFFSET, huge_size_bytes);
+    mem.write_u32(alloc_table_gpa + ALLOC_TABLE_ENTRY_COUNT_OFFSET, 0);
+    mem.write_u32(
+        alloc_table_gpa + ALLOC_TABLE_ENTRY_STRIDE_BYTES_OFFSET,
+        AeroGpuAllocEntry::SIZE_BYTES,
+    );
+    mem.write_u32(alloc_table_gpa + ALLOC_TABLE_RESERVED0_OFFSET, 0);
+
+    let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    write_submit_desc(
+        &mut mem,
+        desc_gpa,
+        0,
+        0,
+        alloc_table_gpa,
+        huge_size_bytes,
+        88,
+    );
+
+    regs.ring_gpa = ring_gpa;
+    regs.ring_size_bytes = ring_size;
+    regs.ring_control = ring_control::ENABLE;
+
+    exec.process_doorbell(&mut regs, &mut mem);
+
+    assert_eq!(mem.read_u32(ring_gpa + RING_HEAD_OFFSET), 1);
+    assert_eq!(regs.completed_fence, 88);
+    assert_eq!(regs.stats.malformed_submissions, 1);
+    assert_ne!(regs.irq_status & irq_bits::ERROR, 0);
+
+    let record = exec
+        .last_submissions
+        .back()
+        .expect("missing submission record");
+    assert!(
+        record
+            .decode_errors
+            .contains(&AeroGpuSubmissionDecodeError::AllocTable(
+                AeroGpuAllocTableDecodeError::TooLarge,
+            )),
+        "expected TooLarge error, got: {:?}",
+        record.decode_errors
+    );
+}
+
+#[test]
 fn inconsistent_cmd_stream_descriptor_sets_error_irq_and_advances_head() {
     let mut mem = VecMemory::new(0x40_000);
     let mut regs = AeroGpuRegs::default();
