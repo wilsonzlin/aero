@@ -416,6 +416,28 @@ fn xhci_controller_run_does_not_dma_when_dma_disabled() {
 }
 
 #[test]
+fn xhci_controller_run_does_not_dma_when_crcr_is_zero() {
+    let mut ctrl = XhciController::new();
+    let mut mem = CountingMem::new(0x4000);
+
+    // Leave CRCR unset (0) and set RUN. The controller should not touch guest memory at address 0
+    // while executing the DMA-on-RUN probe.
+    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
+    ctrl.tick_1ms_with_dma(&mut mem);
+
+    assert_eq!(mem.reads, 0, "expected no DMA reads when CRCR is unset");
+    assert!(
+        !ctrl.irq_level(),
+        "DMA-on-RUN probe must not assert an interrupt when CRCR is unset"
+    );
+    assert_eq!(
+        ctrl.mmio_read(regs::REG_USBSTS, 4) as u32 & regs::USBSTS_EINT,
+        0,
+        "USBSTS.EINT must remain clear when no interrupt is pending"
+    );
+}
+
+#[test]
 fn xhci_snapshot_preserves_pending_dma_on_run_probe() {
     let mut ctrl = XhciController::new();
 

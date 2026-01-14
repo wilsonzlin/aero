@@ -4145,7 +4145,12 @@ impl XhciController {
 
         // Read a dword from CRCR and surface an interrupt. The data itself is ignored; the goal is
         // to touch the memory bus when bus mastering is enabled so wrappers can gate the access.
-        let paddr = self.crcr & !0x3f;
+        let paddr = self.crcr & regs::CRCR_PTR_MASK;
+        if paddr == 0 {
+            // No command ring pointer configured; avoid touching guest memory at address 0.
+            self.pending_dma_on_run = false;
+            return;
+        }
         let mut buf = [0u8; 4];
         mem.read_bytes(paddr, &mut buf);
         self.interrupter0.set_interrupt_pending(true);
