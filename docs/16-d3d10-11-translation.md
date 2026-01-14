@@ -884,6 +884,10 @@ idx = ((prim_id * GS_INPUT_VERTS_PER_PRIM + vertex_in_prim) * GS_INPUT_REG_COUNT
 Where:
 
 - `prim_id` is the GS `SV_PrimitiveID` (`0..input_prim_count`).
+- If the draw uses D3D instancing and the implementation chooses to preserve instancing in the GS
+  phase, `prim_id` is typically flattened to include the instance dimension:
+  - `prim_id = instance_id * input_prim_count + primitive_id_in_instance`
+  - and `gs_inputs` must be packed for `input_prim_count * instance_count` primitives.
 - `vertex_in_prim` is the vertex index within the input primitive (`0..GS_INPUT_VERTS_PER_PRIM`),
   where `GS_INPUT_VERTS_PER_PRIM` depends on the GS declared input primitive:
   - point: 1
