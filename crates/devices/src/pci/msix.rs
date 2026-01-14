@@ -31,6 +31,17 @@ pub struct MsixCapability {
 }
 
 impl MsixCapability {
+    fn mask_unused_pba_bits(&mut self) {
+        let bits = usize::from(self.table_size) % 64;
+        if bits == 0 {
+            return;
+        }
+        let Some(last) = self.pba.last_mut() else {
+            return;
+        };
+        *last &= (1u64 << bits) - 1;
+    }
+
     pub fn new(
         table_size: u16,
         table_bir: u8,
@@ -161,6 +172,7 @@ impl MsixCapability {
             ));
         }
         self.pba.copy_from_slice(words);
+        self.mask_unused_pba_bits();
         Ok(())
     }
 
@@ -184,6 +196,7 @@ impl MsixCapability {
             // `chunks_exact(8)` guarantees the slice length.
             self.pba[i] = u64::from_le_bytes(chunk.try_into().unwrap());
         }
+        self.mask_unused_pba_bits();
         Ok(())
     }
 
@@ -539,5 +552,17 @@ mod tests {
         msix.pba_read(0, &mut pba);
         let bits = u64::from_le_bytes(pba);
         assert_eq!(bits & (1 << 1), 1 << 1);
+    }
+
+    #[test]
+    fn restore_pba_masks_reserved_bits() {
+        // MSI-X table size 1 => only pending bit 0 is architecturally valid.
+        let mut cap = MsixCapability::new(1, 0, 0x1000, 0, 0x2000);
+        cap.restore_pba(&[u64::MAX]).unwrap();
+        assert_eq!(
+            cap.snapshot_pba()[0],
+            1,
+            "reserved MSI-X PBA bits should be masked to zero"
+        );
     }
 }
