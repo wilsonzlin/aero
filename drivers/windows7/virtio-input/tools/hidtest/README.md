@@ -147,7 +147,7 @@ hidtest.exe --selftest --json
 The JSON output is an object with:
 
 - `pass` (bool)
-- `keyboard`, `mouse`, `tablet` (object or null; `tablet` is null unless `--tablet` is used or a tablet interface is detected)
+- `keyboard`, `mouse`, `tablet` (object or null; `tablet` is null unless `--tablet` is used)
 - `failures` (array)
 
 The JSON output includes additional fields for the optional collection descriptor check:
