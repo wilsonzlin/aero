@@ -1450,6 +1450,48 @@ describe("runtime/coordinator", () => {
     expect(((coordinator as any).aerogpuInFlightFencesByRequestId as Map<number, bigint>).size).toBe(0);
   });
 
+  it("bounds pending aerogpu.submit queue while GPU is not ready and force-completes dropped fences", () => {
+    const coordinator = new WorkerCoordinator();
+    const segments = allocateTestSegments();
+    const shared = createSharedMemoryViews(segments);
+    (coordinator as any).shared = shared;
+    (coordinator as any).spawnWorker("cpu", segments);
+    (coordinator as any).spawnWorker("gpu", segments);
+
+    const cpuInfo = (coordinator as any).workers.cpu as { instanceId: number; worker: MockWorker };
+    const cpuWorker = cpuInfo.worker;
+    cpuWorker.posted.length = 0;
+
+    const total = 300;
+    for (let i = 1; i <= total; i += 1) {
+      (coordinator as any).onWorkerMessage("cpu", cpuInfo.instanceId, {
+        kind: "aerogpu.submit",
+        contextId: 0,
+        signalFence: BigInt(i),
+        cmdStream: new Uint8Array([i & 0xff]).buffer,
+      });
+    }
+
+    const pending = (coordinator as any).pendingAerogpuSubmissions as unknown[];
+    const pendingLen = pending.length;
+    expect(pendingLen).toBeGreaterThan(0);
+    expect(pendingLen).toBeLessThanOrEqual(total);
+
+    const dropped = total - pendingLen;
+    expect(dropped).toBeGreaterThan(0);
+
+    const completions = cpuWorker.posted
+      .map((p) => p.message as { kind?: unknown; fence?: unknown })
+      .filter((m) => m.kind === "aerogpu.complete_fence");
+    expect(completions).toHaveLength(dropped);
+
+    // Dropped submissions are FIFO; expect the earliest fences to be completed first.
+    const completedFences = completions.map((m) => m.fence);
+    for (let i = 1; i <= dropped; i += 1) {
+      expect(completedFences).toContain(BigInt(i));
+    }
+  });
+
   it("forces completion of in-flight AeroGPU fences when the GPU worker is terminated", () => {
     const coordinator = new WorkerCoordinator();
     const segments = allocateTestSegments();
