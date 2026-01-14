@@ -1542,6 +1542,26 @@ static int selftest_validate_device(const wchar_t *device_name, const SELECTED_D
         ok = 0;
     }
 
+    {
+        DWORD coll_len = 0;
+        DWORD coll_err = 0;
+        if (query_collection_descriptor_length(dev->handle, &coll_len, &coll_err)) {
+            if (coll_len == expected_desc_len) {
+                selftest_logf(device_name, L"CollectionDescriptorLength", L"PASS", L"expected=%lu got=%lu",
+                              (unsigned long)expected_desc_len, (unsigned long)coll_len);
+            } else {
+                selftest_logf(device_name, L"CollectionDescriptorLength", L"FAIL", L"expected=%lu got=%lu",
+                              (unsigned long)expected_desc_len, (unsigned long)coll_len);
+                ok = 0;
+            }
+        } else if (coll_err == ERROR_INVALID_FUNCTION || coll_err == ERROR_NOT_SUPPORTED) {
+            selftest_logf(device_name, L"CollectionDescriptorLength", L"SKIP", L"reason=unsupported");
+        } else {
+            selftest_logf(device_name, L"IOCTL_HID_GET_COLLECTION_DESCRIPTOR", L"FAIL", L"err=%lu", (unsigned long)coll_err);
+            ok = 0;
+        }
+    }
+
     selftest_logf(device_name, L"RESULT", ok ? L"PASS" : L"FAIL", L"");
     return ok;
 }
@@ -1692,6 +1712,41 @@ static int query_report_descriptor_length(HANDLE handle, DWORD *len_out)
 
     *len_out = bytes;
     return 1;
+}
+
+static int query_collection_descriptor_length(HANDLE handle, DWORD *len_out, DWORD *err_out)
+{
+    BYTE buf[4096];
+    DWORD bytes = 0;
+    BOOL ok;
+
+    if (len_out == NULL) {
+        return 0;
+    }
+    *len_out = 0;
+    if (err_out != NULL) {
+        *err_out = 0;
+    }
+
+    ZeroMemory(buf, sizeof(buf));
+
+    ok = DeviceIoControl(handle, IOCTL_HID_GET_COLLECTION_DESCRIPTOR, NULL, 0, buf, (DWORD)sizeof(buf), &bytes, NULL);
+    if (ok && bytes != 0) {
+        *len_out = bytes;
+        return 1;
+    }
+
+    bytes = 0;
+    ok = DeviceIoControl(handle, IOCTL_HID_GET_COLLECTION_DESCRIPTOR_ALT, NULL, 0, buf, (DWORD)sizeof(buf), &bytes, NULL);
+    if (ok && bytes != 0) {
+        *len_out = bytes;
+        return 1;
+    }
+
+    if (err_out != NULL) {
+        *err_out = GetLastError();
+    }
+    return 0;
 }
 
 static int query_hid_descriptor_report_length(HANDLE handle, DWORD *len_out)
