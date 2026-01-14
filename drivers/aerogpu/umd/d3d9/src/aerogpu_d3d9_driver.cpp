@@ -10902,7 +10902,7 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices(
     }
   }
 
-  if (bounding_overlap) {
+  if (bounding_overlap && src_stride != dst_stride) {
     // Stride conversions can overlap even when the first dst byte is higher than
     // the first src byte (or vice versa). Rather than trying to infer a safe
     // iteration direction, stage the source bytes before writing any destination
