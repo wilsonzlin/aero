@@ -1944,6 +1944,72 @@ impl PciDevice for VgaPciConfigDevice {
         &mut self.cfg
     }
 }
+
+struct AeroGpuPciConfigDevice {
+    cfg: aero_devices::pci::PciConfigSpace,
+}
+
+impl AeroGpuPciConfigDevice {
+    fn new() -> Self {
+        Self {
+            cfg: aero_devices::pci::profile::AEROGPU.build_config_space(),
+        }
+    }
+}
+
+impl PciDevice for AeroGpuPciConfigDevice {
+    fn config(&self) -> &aero_devices::pci::PciConfigSpace {
+        &self.cfg
+    }
+
+    fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
+        &mut self.cfg
+    }
+}
+
+struct VgaLfbMmio {
+    dev: Rc<RefCell<VgaDevice>>,
+}
+
+impl MmioHandler for VgaLfbMmio {
+    fn read(&mut self, offset: u64, size: usize) -> u64 {
+        if size == 0 {
+            return 0;
+        }
+        let size = match size {
+            1 | 2 | 4 | 8 => size,
+            _ => size.clamp(1, 8),
+        };
+
+        let base = u64::from(aero_gpu_vga::SVGA_LFB_BASE).wrapping_add(offset);
+        let mut out = 0u64;
+        let mut dev = self.dev.borrow_mut();
+        for i in 0..size {
+            let paddr = base.wrapping_add(i as u64);
+            let b = dev.mem_read_u8(u32::try_from(paddr).unwrap_or(0)) as u64;
+            out |= b << (i * 8);
+        }
+        out
+    }
+
+    fn write(&mut self, offset: u64, size: usize, value: u64) {
+        if size == 0 {
+            return;
+        }
+        let size = match size {
+            1 | 2 | 4 | 8 => size,
+            _ => size.clamp(1, 8),
+        };
+
+        let base = u64::from(aero_gpu_vga::SVGA_LFB_BASE).wrapping_add(offset);
+        let mut dev = self.dev.borrow_mut();
+        for i in 0..size {
+            let paddr = base.wrapping_add(i as u64);
+            let b = ((value >> (i * 8)) & 0xFF) as u8;
+            dev.mem_write_u8(u32::try_from(paddr).unwrap_or(0), b);
+        }
+    }
+}
 // -----------------------------------------------------------------------------
 // AeroGPU legacy VGA compatibility (VRAM backing store + aliasing)
 // -----------------------------------------------------------------------------
@@ -5847,6 +5913,14 @@ Track progress: docs/21-smp.md\n\
                 }
             };
             register_pci_config_ports(&mut self.io, pci_cfg.clone());
+
+            if self.cfg.enable_aerogpu {
+                // Canonical AeroGPU PCI identity contract (00:07.0, A3A0:0001).
+                pci_cfg.borrow_mut().bus_mut().add_device(
+                    aero_devices::pci::profile::AEROGPU.bdf,
+                    Box::new(AeroGpuPciConfigDevice::new()),
+                );
+            }
 
             if use_legacy_vga {
                 // VGA-compatible PCI device so the linear framebuffer is reachable via the PCI
