@@ -5836,7 +5836,21 @@ def main() -> int:
 
         print("Launching QEMU:")
         print("  " + _format_commandline_for_host(qemu_args))
-        stderr_f = qemu_stderr_log.open("wb")
+        try:
+            stderr_f = qemu_stderr_log.open("wb")
+        except OSError as e:
+            print(f"ERROR: failed to open QEMU stderr log: {qemu_stderr_log}: {e}", file=sys.stderr)
+            if udp_server is not None:
+                udp_server.close()
+            httpd.shutdown()
+            if qmp_socket is not None:
+                try:
+                    qmp_socket.unlink()
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    pass
+            return 2
         try:
             proc = subprocess.Popen(qemu_args, stderr=stderr_f)
         except FileNotFoundError:
