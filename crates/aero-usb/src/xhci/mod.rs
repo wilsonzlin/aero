@@ -1492,13 +1492,21 @@ impl XhciController {
         }
 
         let icc = InputControlContext::read_from(mem, input_ctx_ptr);
-        if icc.drop_flags() != 0 {
-            self.queue_command_completion_event(cmd_paddr, CompletionCode::ParameterError, slot_id);
-            return;
-        }
-        if icc.add_flags() == 0 {
-            self.queue_command_completion_event(cmd_paddr, CompletionCode::ParameterError, slot_id);
-            return;
+        let drop_flags = icc.drop_flags();
+        let add_flags = icc.add_flags();
+        let deconfigure = trb.configure_endpoint_deconfigure();
+
+        if !deconfigure {
+            // Configure Endpoint supports both dropping and adding contexts. Reject commands that
+            // do nothing so we don't treat malformed guest programming as success.
+            if drop_flags == 0 && add_flags == 0 {
+                self.queue_command_completion_event(
+                    cmd_paddr,
+                    CompletionCode::ParameterError,
+                    slot_id,
+                );
+                return;
+            }
         }
 
         let dev_ctx_ptr = match self.read_device_context_ptr(mem, slot_id) {
@@ -1521,6 +1529,59 @@ impl XhciController {
             }
         };
 
+        if deconfigure {
+            // Deconfigure mode (xHCI 1.2 §6.4.3.5): disable all non-EP0 endpoints.
+            //
+            // Minimal semantics:
+            // - Clear Endpoint Contexts for DCI 2..=31 in guest memory (Disabled state).
+            // - Clear controller-local ring cursors and shadow endpoint contexts.
+            // - Update Slot Context Context Entries to 1 (EP0 only).
+            // - Drop any transfer-executor state so stale endpoints cannot poll.
+            for endpoint_id in 2u8..=31 {
+                let out_addr = dev_ctx_ptr + (endpoint_id as u64 * CONTEXT_SIZE as u64);
+                EndpointContext::default().write_to(mem, out_addr);
+                let idx = usize::from(endpoint_id - 1);
+                let slot_state = &mut self.slots[slot_idx];
+                slot_state.endpoint_contexts[idx] = EndpointContext::default();
+                slot_state.transfer_rings[idx] = None;
+                slot_state.device_context_ptr = dev_ctx_ptr;
+            }
+
+            // Reflect EP0-only configuration in the Slot Context.
+            let mut slot_ctx = SlotContext::read_from(mem, dev_ctx_ptr);
+            slot_ctx.set_context_entries(1);
+            slot_ctx.write_to(mem, dev_ctx_ptr);
+            {
+                let slot_state = &mut self.slots[slot_idx];
+                slot_state.slot_context = slot_ctx;
+                slot_state.device_context_ptr = dev_ctx_ptr;
+            }
+
+            // Drop any cached endpoint execution state.
+            if let Some(exec) = self.transfer_executors.get_mut(slot_idx) {
+                *exec = None;
+            }
+            // Remove any non-EP0 endpoints from the active list so we stop polling immediately.
+            self.active_endpoints
+                .retain(|ep| ep.slot_id != slot_id || ep.endpoint_id == 1);
+
+            self.queue_command_completion_event(cmd_paddr, CompletionCode::Success, slot_id);
+            return;
+        }
+
+        // Slot Context / EP0 are not supported drop targets in this model.
+        const DROP_DISALLOWED: u32 = (1u32 << 0) | (1u32 << 1);
+        if (drop_flags & DROP_DISALLOWED) != 0 {
+            self.queue_command_completion_event(cmd_paddr, CompletionCode::ParameterError, slot_id);
+            return;
+        }
+
+        // Reject contradictory add+drop for the same context.
+        if (add_flags & drop_flags) != 0 {
+            self.queue_command_completion_event(cmd_paddr, CompletionCode::ParameterError, slot_id);
+            return;
+        }
+
         // Slot Context (bit0) is optional.
         if icc.add_context(0) {
             let slot_ctx = SlotContext::read_from(mem, input_ctx_ptr + CONTEXT_SIZE as u64);
@@ -1528,6 +1589,30 @@ impl XhciController {
             let slot_state = &mut self.slots[slot_idx];
             slot_state.slot_context = slot_ctx;
             slot_state.device_context_ptr = dev_ctx_ptr;
+        }
+
+        // Clear any dropped endpoint contexts first.
+        if drop_flags != 0 {
+            for endpoint_id in 2u8..=31 {
+                if !icc.drop_context(endpoint_id) {
+                    continue;
+                }
+                let out_addr = dev_ctx_ptr + (endpoint_id as u64 * CONTEXT_SIZE as u64);
+                EndpointContext::default().write_to(mem, out_addr);
+                let idx = usize::from(endpoint_id - 1);
+                let slot_state = &mut self.slots[slot_idx];
+                slot_state.endpoint_contexts[idx] = EndpointContext::default();
+                slot_state.transfer_rings[idx] = None;
+                slot_state.device_context_ptr = dev_ctx_ptr;
+            }
+
+            // Drop any cached endpoint execution state since the executor cannot remove endpoints
+            // individually.
+            if let Some(exec) = self.transfer_executors.get_mut(slot_idx) {
+                *exec = None;
+            }
+            self.active_endpoints
+                .retain(|ep| ep.slot_id != slot_id || !icc.drop_context(ep.endpoint_id));
         }
 
         // Configure all added endpoint contexts.
@@ -2907,10 +2992,7 @@ impl XhciController {
             // When a transfer results in an endpoint halt (STALL/TRB error), reflect that into the
             // guest Endpoint Context so software can observe the halted state and issue Reset
             // Endpoint.
-            if exec
-                .endpoint_state(ep_addr)
-                .is_some_and(|st| st.halted)
-            {
+            if exec.endpoint_state(ep_addr).is_some_and(|st| st.halted) {
                 if self.write_endpoint_state_to_context(
                     mem,
                     slot_id,
