@@ -409,26 +409,50 @@ pub fn align_copy_bytes_per_row(bytes_per_row: u32) -> u32 {
 mod tests {
     use super::*;
 
-    const ALL_FORMATS: &[D3DFormat] = &[
-        D3DFormat::A8R8G8B8,
-        D3DFormat::X8R8G8B8,
-        D3DFormat::R5G6B5,
-        D3DFormat::A1R5G5B5,
-        D3DFormat::X1R5G5B5,
-        D3DFormat::A4R4G4B4,
-        D3DFormat::Dxt1,
-        D3DFormat::Dxt3,
-        D3DFormat::Dxt5,
-        D3DFormat::D16,
-        D3DFormat::D24S8,
-        D3DFormat::D32,
+    macro_rules! d3d_formats {
+        ($($variant:ident),+ $(,)?) => {
+            // Keep an explicit list for table-driven tests.
+            const ALL_FORMATS: &[D3DFormat] = &[$(D3DFormat::$variant),+];
+
+            // Ensure the list above stays in sync with the enum definition: adding a new
+            // `D3DFormat` variant will fail to compile until it is included in this list.
+            fn assert_d3d_format_is_exhaustive(f: D3DFormat) {
+                match f {
+                    $(D3DFormat::$variant => {},)+
+                }
+            }
+        };
+    }
+
+    d3d_formats![
+        A8R8G8B8,
+        X8R8G8B8,
+        R5G6B5,
+        A1R5G5B5,
+        X1R5G5B5,
+        A4R4G4B4,
+        Dxt1,
+        Dxt3,
+        Dxt5,
+        D16,
+        D24S8,
+        D32,
     ];
 
-    const ALL_USAGES: &[TextureUsageKind] = &[
-        TextureUsageKind::Sampled,
-        TextureUsageKind::RenderTarget,
-        TextureUsageKind::DepthStencil,
-    ];
+    macro_rules! texture_usages {
+        ($($variant:ident),+ $(,)?) => {
+            const ALL_USAGES: &[TextureUsageKind] = &[$(TextureUsageKind::$variant),+];
+
+            // Ensure new `TextureUsageKind` variants force test updates (no wildcard arm).
+            fn assert_texture_usage_kind_is_exhaustive(u: TextureUsageKind) {
+                match u {
+                    $(TextureUsageKind::$variant => {},)+
+                }
+            }
+        };
+    }
+
+    texture_usages![Sampled, RenderTarget, DepthStencil];
 
     #[test]
     fn format_test_tables_have_no_duplicates() {
@@ -484,15 +508,6 @@ mod tests {
         // variants are introduced. The `expected_ok` match further below is intentionally
         // exhaustive (no wildcard arm) so adding a new `D3DFormat` variant will fail to compile
         // until the expected behavior is captured in this test.
-
-        // Ensure new TextureUsageKind variants force test updates (no wildcard arm).
-        fn _assert_texture_usage_kind_is_exhaustive(u: TextureUsageKind) {
-            match u {
-                TextureUsageKind::Sampled => {}
-                TextureUsageKind::RenderTarget => {}
-                TextureUsageKind::DepthStencil => {}
-            }
-        }
 
         #[derive(Debug)]
         struct ExpectedOk {
@@ -674,7 +689,8 @@ mod tests {
 
             for &format in ALL_FORMATS {
                 for &usage in ALL_USAGES {
-                    _assert_texture_usage_kind_is_exhaustive(usage);
+                    assert_d3d_format_is_exhaustive(format);
+                    assert_texture_usage_kind_is_exhaustive(usage);
 
                     let res = format_info(format, features, usage);
 
