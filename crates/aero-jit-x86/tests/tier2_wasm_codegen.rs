@@ -1,3 +1,5 @@
+#![cfg(not(target_arch = "wasm32"))]
+
 use aero_cpu_core::jit::runtime::PageVersionTracker;
 use aero_cpu_core::state::RFLAGS_DF;
 use aero_types::{Flag, FlagSet, Gpr, Width};
