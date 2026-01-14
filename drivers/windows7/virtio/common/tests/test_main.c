@@ -676,6 +676,52 @@ static void test_event_idx_ring_size_and_kick(void)
     virtqueue_split_free_ring(&os_ops, &os_ctx, &ring);
 }
 
+static void test_event_idx_kick_wraparound_math(void)
+{
+    test_os_ctx_t os_ctx;
+    virtio_os_ops_t os_ops;
+    virtio_dma_buffer_t ring;
+    virtqueue_split_t vq;
+    const uint16_t qsz = 8;
+    const uint32_t align = 4;
+
+    test_os_ctx_init(&os_ctx);
+    test_os_get_ops(&os_ops);
+
+    assert(virtqueue_split_alloc_ring(&os_ops, &os_ctx, qsz, align, VIRTIO_TRUE, &ring) == VIRTIO_OK);
+    assert(virtqueue_split_init(&vq,
+                                &os_ops,
+                                &os_ctx,
+                                0,
+                                qsz,
+                                align,
+                                &ring,
+                                VIRTIO_TRUE,
+                                VIRTIO_FALSE,
+                                0) == VIRTIO_OK);
+    assert(vq.avail_event != NULL);
+
+    /*
+     * Validate vring_need_event() wrap-around behaviour via kick_prepare().
+     *
+     * Simulate old_idx close to 0xffff and new_idx after wrapping to 0x0001.
+     */
+    vq.avail_idx = 1;
+    vq.last_kick_avail = 0xfffeu;
+    *vq.avail_event = 0;
+    assert(virtqueue_split_kick_prepare(&vq) == VIRTIO_TRUE);
+    assert(vq.last_kick_avail == 1);
+
+    vq.avail_idx = 1;
+    vq.last_kick_avail = 0xfffeu;
+    *vq.avail_event = 2;
+    assert(virtqueue_split_kick_prepare(&vq) == VIRTIO_FALSE);
+    assert(vq.last_kick_avail == 1);
+
+    virtqueue_split_destroy(&vq);
+    virtqueue_split_free_ring(&os_ops, &os_ctx, &ring);
+}
+
 static void test_used_no_notify_kick_suppression(void)
 {
     test_os_ctx_t os_ctx;
@@ -1554,6 +1600,7 @@ int main(void)
     test_wraparound_event_idx();
     test_small_queue_align();
     test_event_idx_ring_size_and_kick();
+    test_event_idx_kick_wraparound_math();
     test_used_no_notify_kick_suppression();
     test_invalid_queue_align();
     test_invalid_used_id();
