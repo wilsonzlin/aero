@@ -5,16 +5,12 @@ use aero_d3d11::{
     RegisterRef, ShaderModel, ShaderSignatures, ShaderStage, Sm4Decl, Sm4Inst, Sm4Module, SrcKind,
     SrcOperand, Swizzle, UavRef, WriteMask,
 };
+use aero_dxbc::test_utils as dxbc_test_utils;
 
 fn dummy_dxbc() -> DxbcFile<'static> {
     // Minimal DXBC container with no chunks. The translator only uses the DXBC input for
     // diagnostics today, so this is sufficient for unit tests.
-    let mut bytes = Vec::new();
-    bytes.extend_from_slice(b"DXBC");
-    bytes.extend_from_slice(&[0u8; 16]); // checksum
-    bytes.extend_from_slice(&1u32.to_le_bytes()); // reserved
-    bytes.extend_from_slice(&(32u32).to_le_bytes()); // total_size
-    bytes.extend_from_slice(&(0u32).to_le_bytes()); // chunk_count
+    let bytes = dxbc_test_utils::build_container(&[]);
     assert_eq!(bytes.len(), 32);
     // Leak to extend lifetime for the test.
     let leaked: &'static [u8] = Box::leak(bytes.into_boxed_slice());
