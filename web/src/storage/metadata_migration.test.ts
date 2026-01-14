@@ -80,6 +80,34 @@ describe("disk metadata schema migration", () => {
     expect((state.disks as any)["__proto__"]?.id).toBe("__proto__");
   });
 
+  it("does not allow Object.prototype mount IDs to affect upgraded mount configs", () => {
+    const v2 = {
+      version: METADATA_VERSION,
+      disks: {},
+      mounts: {},
+    };
+
+    const hddExisting = Object.getOwnPropertyDescriptor(Object.prototype, "hddId");
+    const cdExisting = Object.getOwnPropertyDescriptor(Object.prototype, "cdId");
+    if ((hddExisting && hddExisting.configurable === false) || (cdExisting && cdExisting.configurable === false)) {
+      // Extremely unlikely, but avoid breaking the test environment.
+      return;
+    }
+
+    try {
+      Object.defineProperty(Object.prototype, "hddId", { value: "evil", configurable: true });
+      Object.defineProperty(Object.prototype, "cdId", { value: "evil2", configurable: true });
+      const { state } = upgradeDiskManagerStateJson(JSON.stringify(v2));
+      expect(state.mounts.hddId).toBeUndefined();
+      expect(state.mounts.cdId).toBeUndefined();
+    } finally {
+      if (hddExisting) Object.defineProperty(Object.prototype, "hddId", hddExisting);
+      else delete (Object.prototype as any).hddId;
+      if (cdExisting) Object.defineProperty(Object.prototype, "cdId", cdExisting);
+      else delete (Object.prototype as any).cdId;
+    }
+  });
+
   it("upgrades v1 disk records (IndexedDB) by adding the v2 discriminant", () => {
     const v1Disk = {
       id: "d2",

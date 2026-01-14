@@ -27,7 +27,9 @@ export type SetBootDisksMessage = {
 };
 
 export function emptySetBootDisksMessage(): SetBootDisksMessage {
-  return { type: "setBootDisks", mounts: {}, hdd: null, cd: null };
+  // Use a null-prototype mounts record so callers never observe inherited IDs (e.g. if
+  // `Object.prototype.hddId` is polluted).
+  return { type: "setBootDisks", mounts: Object.create(null) as MountConfig, hdd: null, cd: null };
 }
 
 function isObjectLikeRecord(value: unknown): value is Record<string, unknown> {
@@ -53,7 +55,8 @@ export function normalizeSetBootDisksMessage(msg: unknown): SetBootDisksMessage 
   // Mount IDs are the only fields used outside the disk metadata. Normalize to a plain object and
   // accept only string values so downstream code can treat them as opaque IDs without re-validating.
   const mountsRaw = Object.prototype.hasOwnProperty.call(rec, "mounts") ? rec.mounts : undefined;
-  const mounts: MountConfig = {};
+  // Null prototype prevents inherited IDs from being observed if the global prototype is polluted.
+  const mounts: MountConfig = Object.create(null) as MountConfig;
   const sanitizeMountId = (value: unknown): string | undefined => {
     if (typeof value !== "string") return undefined;
     const trimmed = value.trim();

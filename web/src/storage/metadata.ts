@@ -148,6 +148,12 @@ function hasOwnProp(obj: object, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(obj, key);
 }
 
+function emptyMountConfig(): MountConfig {
+  // Use a null-prototype object so callers never observe inherited mount IDs (e.g. if
+  // `Object.prototype.hddId` is polluted).
+  return Object.create(null) as MountConfig;
+}
+
 // Avoid prototype pollution when treating untrusted disk IDs as record keys.
 //
 // Setting `obj["__proto__"] = value` mutates the object's prototype; using `defineProperty` creates
@@ -162,7 +168,7 @@ function safeRecordSet<T>(record: Record<string, T>, key: string, value: T): voi
 }
 
 function normalizeMountConfig(raw: unknown): MountConfig {
-  const mounts: MountConfig = {};
+  const mounts: MountConfig = emptyMountConfig();
   if (!raw || typeof raw !== "object") return mounts;
   const rec = raw as Record<string, unknown>;
   const sanitizeId = (value: unknown): string | undefined => {
@@ -461,7 +467,7 @@ export async function opfsGetRemoteCacheDir(): Promise<FileSystemDirectoryHandle
 }
 
 export function emptyState(): DiskManagerState {
-  return { version: METADATA_VERSION, disks: {}, mounts: {} };
+  return { version: METADATA_VERSION, disks: {}, mounts: emptyMountConfig() };
 }
 
 export async function opfsReadState(): Promise<DiskManagerState> {
@@ -564,11 +570,11 @@ export function createOpfsMetadataStore(): DiskMetadataStore {
     },
     async getMounts() {
       const state = await opfsReadState();
-      return state.mounts || {};
+      return state.mounts || emptyMountConfig();
     },
     async setMounts(mounts: MountConfig) {
       await opfsUpdateState((state) => {
-        state.mounts = { ...mounts };
+        state.mounts = normalizeMountConfig(mounts);
       });
     },
   };
@@ -624,12 +630,13 @@ export function createIdbMetadataStore(): DiskMetadataStore {
       const rec = (await idbReq(tx.objectStore("mounts").get("mounts"))) as MountsRecord | undefined;
       await idbTxDone(tx);
       db.close();
-      return (rec && rec.value) || {};
+      return normalizeMountConfig(rec?.value);
     },
     async setMounts(mounts: MountConfig) {
       const db = await openDiskManagerDb();
       const tx = db.transaction(["mounts"], "readwrite");
-      tx.objectStore("mounts").put({ key: "mounts", value: { ...mounts } } satisfies MountsRecord);
+      const normalized = normalizeMountConfig(mounts);
+      tx.objectStore("mounts").put({ key: "mounts", value: { ...normalized } } satisfies MountsRecord);
       await idbTxDone(tx);
       db.close();
     },
