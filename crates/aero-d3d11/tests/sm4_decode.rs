@@ -609,7 +609,7 @@ fn does_not_misclassify_unknown_instruction_as_decl() {
     const DCL_DUMMY: u32 = 0x100;
     // Pick an opcode that is not implemented by our decoder, but is still in the
     // executable-instruction range (< 0x100).
-    const OPCODE_UNKNOWN: u32 = 0x10;
+    const OPCODE_UNKNOWN: u32 = 0x20;
 
     let mut body = Vec::<u32>::new();
 
@@ -3330,6 +3330,8 @@ fn decodes_float_cmp_opcodes() {
         (OPCODE_NE, CmpOp::Ne),
         (OPCODE_LT, CmpOp::Lt),
         (OPCODE_GE, CmpOp::Ge),
+        (OPCODE_GT, CmpOp::Gt),
+        (OPCODE_LE, CmpOp::Le),
     ];
 
     let mut expected = Vec::<Sm4Inst>::new();
@@ -3372,6 +3374,48 @@ fn decodes_float_cmp_opcodes() {
     let module = decode_program(&program).expect("decode");
 
     assert_eq!(module.instructions, expected);
+}
+
+#[test]
+fn decodes_float_cmp_ignores_saturate_modifier() {
+    let mut body = Vec::<u32>::new();
+
+    // lt_sat r0, r1, r2
+    let len_without_ext = 1u32 + 2 + 2 + 2;
+    let mut lt = opcode_token_with_sat(OPCODE_LT, len_without_ext);
+    lt.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    lt.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[1],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    lt.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[2],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    body.extend_from_slice(&lt);
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 0 is pixel shader.
+    let tokens = make_sm5_program_tokens(0, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+    let module = decode_program(&program).expect("decode");
+
+    // Saturate is ignored for compares (predicate mask bits must remain unmodified).
+    assert_eq!(
+        module.instructions[0],
+        Sm4Inst::Cmp {
+            dst: dst(RegFile::Temp, 0, WriteMask::XYZW),
+            a: src_reg(RegFile::Temp, 1),
+            b: src_reg(RegFile::Temp, 2),
+            op: aero_d3d11::CmpOp::Lt,
+            ty: aero_d3d11::CmpType::F32,
+        }
+    );
 }
 
 #[test]
