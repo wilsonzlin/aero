@@ -885,12 +885,31 @@ static NDIS_STATUS AerovNetBuildTxHeader(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
     if (!Adapter->TxChecksumSupported) {
       return NDIS_STATUS_INVALID_PACKET;
     }
+    if (Intent.WantTcpChecksum && Intent.WantUdpChecksum) {
+      return NDIS_STATUS_INVALID_PACKET;
+    }
     if (Info.IpVersion == 4) {
-      if (!TxReq->TxChecksumV4Enabled) {
+      if (Intent.WantTcpChecksum) {
+        if (!TxReq->TxChecksumV4Enabled) {
+          return NDIS_STATUS_INVALID_PACKET;
+        }
+      } else if (Intent.WantUdpChecksum) {
+        if (!TxReq->TxUdpChecksumV4Enabled) {
+          return NDIS_STATUS_INVALID_PACKET;
+        }
+      } else {
         return NDIS_STATUS_INVALID_PACKET;
       }
     } else if (Info.IpVersion == 6) {
-      if (!TxReq->TxChecksumV6Enabled) {
+      if (Intent.WantTcpChecksum) {
+        if (!TxReq->TxChecksumV6Enabled) {
+          return NDIS_STATUS_INVALID_PACKET;
+        }
+      } else if (Intent.WantUdpChecksum) {
+        if (!TxReq->TxUdpChecksumV6Enabled) {
+          return NDIS_STATUS_INVALID_PACKET;
+        }
+      } else {
         return NDIS_STATUS_INVALID_PACKET;
       }
     } else {
@@ -3622,6 +3641,8 @@ static VOID AerovNetMiniportSendNetBufferLists(_In_ NDIS_HANDLE MiniportAdapterC
       // consult live adapter config (which can change via OID).
       TxReq->TxChecksumV4Enabled = Adapter->TxChecksumV4Enabled;
       TxReq->TxChecksumV6Enabled = Adapter->TxChecksumV6Enabled;
+      TxReq->TxUdpChecksumV4Enabled = Adapter->TxUdpChecksumV4Enabled;
+      TxReq->TxUdpChecksumV6Enabled = Adapter->TxUdpChecksumV6Enabled;
       TxReq->TxTsoV4Enabled = Adapter->TxTsoV4Enabled;
       TxReq->TxTsoV6Enabled = Adapter->TxTsoV6Enabled;
       TxReq->Nbl = Nbl;
