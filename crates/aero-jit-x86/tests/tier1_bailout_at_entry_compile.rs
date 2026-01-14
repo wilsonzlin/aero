@@ -8,9 +8,10 @@ use tier1_common::SimpleBus;
 fn compile_tier1_bails_out_at_entry_for_unsupported_first_instruction() {
     let entry = 0x1000u64;
 
-    // 0xF5 = CMC, which is currently unsupported by the Tier-1 decoder and is decoded as
-    // `InstKind::Invalid`.
-    let code = [0xF5];
+    // Pick an opcode that the Tier-1 minimal decoder treats as `InstKind::Invalid` so compilation
+    // produces an "exit to interpreter at entry RIP" block.
+    let invalid = tier1_common::pick_invalid_opcode(64);
+    let code = [invalid];
 
     let mut bus = SimpleBus::new(0x2000);
     bus.load(entry, &code);

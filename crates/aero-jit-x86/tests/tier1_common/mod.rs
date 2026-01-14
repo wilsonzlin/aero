@@ -5,6 +5,7 @@ use aero_cpu_core::state::{
 };
 use aero_jit_x86::{abi, Tier1Bus};
 use aero_types::{Flag, Gpr, Width};
+use aero_x86::tier1::{decode_one_mode, InstKind};
 
 #[derive(Clone, Debug)]
 pub struct SimpleBus {
@@ -167,4 +168,40 @@ pub fn write_cpu_to_wasm_bytes(cpu: &CpuState, bytes: &mut [u8]) {
     let rflags = cpu.rflags_snapshot();
     let rflags_off = abi::CPU_RFLAGS_OFF as usize;
     bytes[rflags_off..rflags_off + 8].copy_from_slice(&rflags.to_le_bytes());
+}
+
+/// Find a single-byte opcode that the Tier-1 minimal decoder (`aero_x86::tier1`) currently decodes
+/// as [`InstKind::Invalid`].
+///
+/// Tests that need an "unsupported instruction" should prefer using this helper instead of
+/// hard-coding a particular opcode: the Tier-1 decoder is intentionally incomplete and may gain
+/// support for additional instructions over time.
+#[must_use]
+pub fn pick_invalid_opcode(bitness: u32) -> u8 {
+    // Use a fixed RIP and stable trailing bytes so the result is deterministic.
+    let rip = 0x1000u64;
+    for opcode in 0u16..=0xff {
+        let opcode = opcode as u8;
+        // Avoid bytes that are treated as prefixes by the minimal decoder; those can change
+        // instruction semantics based on the following bytes.
+        if matches!(opcode, 0x66 | 0x67 | 0xf2 | 0xf3 | 0x0f) {
+            continue;
+        }
+        if bitness == 64 && (0x40..=0x4f).contains(&opcode) {
+            // REX prefix.
+            continue;
+        }
+
+        // The Tier-1 decoder expects up to 15 bytes; provide stable trailing bytes so decoding
+        // doesn't depend on whatever happens to follow in the test harness memory.
+        let mut bytes = [0u8; 15];
+        bytes[0] = opcode;
+        bytes[1] = 0xeb; // arbitrary non-prefix byte (also used by some tests for `JMP rel8`)
+
+        let inst = decode_one_mode(rip, &bytes, bitness);
+        if inst.len == 1 && matches!(inst.kind, InstKind::Invalid) {
+            return opcode;
+        }
+    }
+    panic!("failed to find an opcode that decodes as InstKind::Invalid for bitness={bitness}");
 }

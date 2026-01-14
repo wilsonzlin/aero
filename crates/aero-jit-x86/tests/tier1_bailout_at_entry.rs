@@ -57,10 +57,12 @@ impl Tier1WasmRegistry for PanicRegistry {
 }
 
 /// Tiny interpreter that supports:
-/// - 0xF5: CMC (unsupported by the Tier-1 decoder; treated as a no-op here)
+/// - A single "unsupported" opcode (decoded as `InstKind::Invalid` by the Tier-1 decoder; treated
+///   as a no-op here)
 /// - 0xEB imm8: JMP rel8
 struct MiniInterpreter {
     bus: SimpleBus,
+    unsupported_opcode: u8,
 }
 
 impl Interpreter<TestCpu> for MiniInterpreter {
@@ -69,8 +71,8 @@ impl Interpreter<TestCpu> for MiniInterpreter {
         let mut instructions_retired = 0u64;
         loop {
             match self.bus.read_u8(rip) {
-                0xf5 => {
-                    // CMC (treated as a no-op for this mini interpreter)
+                op if op == self.unsupported_opcode => {
+                    // Unsupported instruction (treated as a no-op for this mini interpreter).
                     rip = rip.wrapping_add(1);
                     instructions_retired += 1;
                 }
@@ -96,21 +98,25 @@ impl Interpreter<TestCpu> for MiniInterpreter {
 #[test]
 fn tier1_zero_progress_block_is_not_installed() {
     let entry = 0x1000u64;
+    let invalid = tier1_common::pick_invalid_opcode(64);
 
     // A tight loop:
-    //   cmc
+    //   <unsupported>
     //   jmp <entry>
     //
-    // The Tier-1 decoder doesn't support 0xF5 (CMC), so Tier-1 compilation will
-    // produce an `ExitToInterpreter { next_rip: entry }` terminator with no
-    // side-effecting IR instructions. This should be treated as "non-compilable"
-    // to avoid JIT thrash.
-    let code = [0xf5, 0xeb, 0xfd]; // CMC; JMP -3
+    // The Tier-1 decoder treats the first instruction as `InstKind::Invalid`, so Tier-1
+    // compilation will produce an `ExitToInterpreter { next_rip: entry }` terminator with no
+    // side-effecting IR instructions. This should be treated as "non-compilable" to avoid JIT
+    // thrash.
+    let code = [invalid, 0xeb, 0xfd]; // <invalid>; JMP -3
 
     let mut bus = SimpleBus::new(0x2000);
     bus.load(entry, &code);
 
-    let interpreter = MiniInterpreter { bus: bus.clone() };
+    let interpreter = MiniInterpreter {
+        bus: bus.clone(),
+        unsupported_opcode: invalid,
+    };
     let queue = Tier1CompileQueue::new();
     let config = JitConfig {
         enabled: true,

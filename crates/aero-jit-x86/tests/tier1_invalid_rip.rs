@@ -7,8 +7,9 @@ use tier1_common::SimpleBus;
 #[test]
 fn invalid_instruction_does_not_advance_rip() {
     // add eax, 1
-    // int3  (unsupported in the Tier-1 decoder -> InstKind::Invalid)
-    let code = [0x83, 0xC0, 0x01, 0xCC];
+    // <unsupported opcode>  (decoded as InstKind::Invalid)
+    let invalid = tier1_common::pick_invalid_opcode(64);
+    let code = [0x83, 0xC0, 0x01, invalid];
 
     let entry_rip = 0x1000u64;
     let mut bus = SimpleBus::new(0x2000);

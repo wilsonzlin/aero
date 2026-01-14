@@ -6,14 +6,15 @@ use tier1_common::SimpleBus;
 
 #[test]
 fn tier1_compilation_byte_len_excludes_trailing_invalid() {
-    // push rbx; cmc (unsupported by Tier-1 decoder)
+    // push rbx; <unsupported opcode>
     //
     // Tier-1 should compile a block that executes the PUSH and then side-exits to the interpreter
-    // at the unsupported CMC instruction. The `byte_len` metadata should cover only the executed
-    // bytes (ie. exclude the trailing Invalid instruction).
+    // at the unsupported instruction. The `byte_len` metadata should cover only the executed bytes
+    // (ie. exclude the trailing Invalid instruction).
     let entry = 0x1000u64;
     let mut bus = SimpleBus::new(0x2000);
-    bus.load(entry, &[0x53, 0xf5]);
+    let invalid = tier1_common::pick_invalid_opcode(64);
+    bus.load(entry, &[0x53, invalid]);
 
     let compilation =
         compile_tier1_block(&bus, entry, 64, BlockLimits::default()).expect("compile_tier1_block");

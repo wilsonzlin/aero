@@ -36,8 +36,8 @@ impl Tier1WasmRegistry for NoopRegistry {
 fn tier1_code_version_guard_ignores_trailing_invalid_page() {
     // Place an executed instruction at the last byte of a page, followed by an unsupported opcode
     // on the next page:
-    //   0x0FFF: push rbx  (1 byte, executed)
-    //   0x1000: cmc       (unsupported by Tier1, causes Invalid terminator; not executed)
+    //   0x0FFF: push rbx          (1 byte, executed)
+    //   0x1000: <unsupported op>  (decoded as Invalid terminator; not executed)
     //
     // `Tier1Compilation::byte_len` is expected to cover only executed bytes, so the page-version
     // snapshot should not include the second page. Modifying bytes in that second page should not
@@ -45,7 +45,8 @@ fn tier1_code_version_guard_ignores_trailing_invalid_page() {
     let entry = 0x0fff_u64;
     let mut bus = SimpleBus::new(0x3000);
     bus.load(entry, &[0x53]); // push rbx
-    bus.load(0x1000, &[0xf5]); // cmc (unsupported by Tier-1)
+    let invalid = tier1_common::pick_invalid_opcode(64);
+    bus.load(0x1000, &[invalid]); // invalid/unsupported opcode (decoded as Invalid by Tier-1)
 
     let queue = Tier1CompileQueue::new();
     let config = JitConfig {
