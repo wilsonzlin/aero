@@ -6811,10 +6811,9 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices_internal(
     for (uint32_t i = 0; i < vertex_count; ++i) {
       const uint8_t* src = src_vertices + static_cast<size_t>(i) * src_stride;
       uint8_t* dst = dst_vertices + static_cast<size_t>(i) * dst_stride;
-      // Deterministic output: clear any destination elements that are not written
-      // by the source FVF/decl mapping (e.g. dst has TEX0 but src does not).
-      // Honor D3DPV_DONOTCOPYDATA by preserving the existing destination vertex
-      // data where we are not explicitly writing.
+      // Deterministic output: clear destination bytes that are not written by the
+      // fixed-function mapping (e.g. dst has TEX0 but src does not), unless the
+      // caller requested D3DPV_DONOTCOPYDATA.
       if (!do_not_copy_data) {
         std::memset(dst, 0, dst_stride);
       }
@@ -25368,6 +25367,7 @@ auto* const kDeviceDestroyVertexDeclImpl = device_destroy_vertex_decl;
 auto* const kDeviceCreateShaderImpl = device_create_shader;
 auto* const kDeviceSetShaderImpl = device_set_shader;
 auto* const kDeviceDestroyShaderImpl = device_destroy_shader;
+auto* const kDeviceSetTextureStageStateImpl = device_set_texture_stage_state;
 auto* const kDeviceDrawPrimitiveImpl = device_draw_primitive;
 auto* const kDeviceDrawIndexedPrimitiveImpl = device_draw_indexed_primitive;
 auto* const kDeviceDrawPrimitiveUpImpl = device_draw_primitive_up;
@@ -25429,63 +25429,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_texture_stage_state(
     uint32_t stage,
     uint32_t state,
     uint32_t value) {
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
-  return device_set_texture_stage_state_dispatch(hDevice, stage, state, value);
-#else
-  // Portable host-side tests compile a minimal D3D9DDI_DEVICEFUNCS table which
-  // does not include SetTextureStageState. Provide a small direct-call helper so
-  // tests can still exercise fixed-function stage0 PS selection behavior.
-  if (!hDevice.pDrvPrivate) {
-    return E_INVALIDARG;
-  }
-  if (stage >= 16 || state >= 256) {
-    return kD3DErrInvalidCall;
-  }
-
-  auto* dev = as_device(hDevice);
-  std::lock_guard<std::mutex> lock(dev->mutex);
-  dev->texture_stage_states[stage][state] = value;
-  stateblock_record_texture_stage_state_locked(dev, stage, state, value);
-
-  // Mirror the stage0 fixed-function PS update hook from the DDI paths.
-  if (stage == 0 &&
-      (state == kD3dTssColorOp || state == kD3dTssColorArg1 || state == kD3dTssColorArg2 ||
-       state == kD3dTssAlphaOp || state == kD3dTssAlphaArg1 || state == kD3dTssAlphaArg2) &&
-      !dev->user_ps) {
-    Shader** ps_slot = nullptr;
-    if (dev->user_vs) {
-      ps_slot = &dev->fixedfunc_ps_interop;
-    } else if (fixedfunc_supported_fvf(dev->fvf)) {
-      switch (dev->fvf) {
-        case kSupportedFvfXyzrhwDiffuse:
-        case kSupportedFvfXyzDiffuse:
-          ps_slot = &dev->fixedfunc_ps;
-          break;
-        case kSupportedFvfXyzrhwDiffuseTex1:
-        case kSupportedFvfXyzrhwTex1:
-          ps_slot = &dev->fixedfunc_ps_tex1;
-          break;
-        case kSupportedFvfXyzDiffuseTex1:
-        case kSupportedFvfXyzTex1:
-          ps_slot = &dev->fixedfunc_ps_xyz_diffuse_tex1;
-          break;
-        default:
-          ps_slot = nullptr;
-          break;
-      }
-      if (!ps_slot) {
-        return kD3DErrInvalidCall;
-      }
-    }
-    if (ps_slot) {
-      const HRESULT ps_hr = ensure_fixedfunc_pixel_shader_locked(dev, ps_slot);
-      if (FAILED(ps_hr)) {
-        return ps_hr;
-      }
-    }
-  }
-  return S_OK;
-#endif
+  return kDeviceSetTextureStageStateImpl(hDevice, stage, state, value);
 }
 
 HRESULT AEROGPU_D3D9_CALL device_draw_primitive(

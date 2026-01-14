@@ -6048,7 +6048,7 @@ bool TestGenerateMipSubLevelsBoxFilter2d() {
   }
 
   // Host-allocated textures should embed updates via UPLOAD_RESOURCE.
-  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_UPLOAD_RESOURCE) >= 1, "GenerateMipSubLevels emits UPLOAD_RESOURCE")) {
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_UPLOAD_RESOURCE) == 1, "GenerateMipSubLevels emits exactly one UPLOAD_RESOURCE")) {
     return false;
   }
   if (!Check(CountOpcode(buf, len, AEROGPU_CMD_RESOURCE_DIRTY_RANGE) == 0, "GenerateMipSubLevels does not emit DIRTY_RANGE for host alloc")) {
@@ -6066,7 +6066,23 @@ bool TestGenerateMipSubLevelsBoxFilter2d() {
   if (!Check(upload_cmd->offset_bytes == mip1.offset_bytes, "UPLOAD_RESOURCE offset starts at mip1")) {
     return false;
   }
-  return Check(upload_cmd->size_bytes == static_cast<uint64_t>(res->size_bytes) - mip1.offset_bytes, "UPLOAD_RESOURCE size covers mips");
+  const uint64_t expected_size = static_cast<uint64_t>(res->size_bytes) - mip1.offset_bytes;
+  if (!Check(upload_cmd->size_bytes == expected_size, "UPLOAD_RESOURCE size covers mips")) {
+    return false;
+  }
+  const uint8_t expected_payload[sizeof(expected_mip1) + sizeof(expected_mip2)] = {
+      // mip1 bytes (2x2)
+      0, 0, 3, 0xFF, 0, 0, 5, 0xFF,
+      0, 0, 11, 0xFF, 0, 0, 13, 0xFF,
+      // mip2 bytes (1x1)
+      0, 0, 8, 0xFF,
+  };
+  static_assert(sizeof(expected_payload) == 20, "unexpected test payload size");
+  const auto* payload = reinterpret_cast<const uint8_t*>(upload_cmd) + sizeof(*upload_cmd);
+  if (!Check(std::memcmp(payload, expected_payload, sizeof(expected_payload)) == 0, "UPLOAD_RESOURCE payload matches mip bytes")) {
+    return false;
+  }
+  return true;
 }
 
 bool TestGenerateMipSubLevelsBoxFilter2dArrayTexture() {
