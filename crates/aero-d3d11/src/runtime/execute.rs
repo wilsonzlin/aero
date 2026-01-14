@@ -1280,27 +1280,10 @@ impl D3D11Runtime {
             RenderPipelineVariants::NonStrip(create_pipeline(topology, None))
         };
 
-        // The list-topology variant is only needed when we are going to emulate strip primitive
-        // restart (currently on the wgpu GL backend).
-        let strip_to_list_pipeline = if self.emulate_strip_restart {
-            match topology {
-                wgpu::PrimitiveTopology::TriangleStrip => {
-                    Some(create_pipeline(wgpu::PrimitiveTopology::TriangleList, None))
-                }
-                wgpu::PrimitiveTopology::LineStrip => {
-                    Some(create_pipeline(wgpu::PrimitiveTopology::LineList, None))
-                }
-                _ => None,
-            }
-        } else {
-            None
-        };
-
         self.resources.render_pipelines.insert(
             pipeline_id,
             RenderPipelineResource {
                 pipelines,
-                strip_to_list_pipeline,
                 topology,
                 bind_group_layout,
                 bindings,
@@ -1892,9 +1875,6 @@ impl D3D11Runtime {
         // render pass lifetime. Since we may change bindings between draws, we keep every bind
         // group we create in an arena for the duration of the pass.
         let mut bind_group_arena: Vec<Arc<wgpu::BindGroup>> = Vec::new();
-        // Temporary index buffers created when expanding strip primitives into list primitives.
-        // Buffers bound via `set_index_buffer` must remain alive for the duration of the pass.
-        let mut strip_index_buffer_arena: Vec<Arc<wgpu::Buffer>> = Vec::new();
         let mut current_bind_group: Option<*const wgpu::BindGroup> = None;
         let mut bind_group_dirty = true;
 
@@ -1938,9 +1918,7 @@ impl D3D11Runtime {
                         &mut render_pass,
                         resources,
                         pipeline_id,
-                        RenderPipelineVariant::Normal {
-                            strip_index_format: state.index_buffer.map(|ib| ib.format),
-                        },
+                        state.index_buffer.map(|ib| ib.format),
                         &mut bound_pipeline,
                     )?;
                     if pipeline_changed {
@@ -2005,9 +1983,7 @@ impl D3D11Runtime {
                         &mut render_pass,
                         resources,
                         pipeline_id,
-                        RenderPipelineVariant::Normal {
-                            strip_index_format: state.index_buffer.map(|ib| ib.format),
-                        },
+                        state.index_buffer.map(|ib| ib.format),
                         &mut bound_pipeline,
                     )?;
                     let pipeline = resources
@@ -2077,44 +2053,11 @@ impl D3D11Runtime {
                         bail!("DrawIndexed without an index buffer bound");
                     };
 
-                    // Primitive restart (strip cuts) is required for D3D-style indexed strip
-                    // topologies. Some wgpu backends have historically not honored the native
-                    // WebGPU restart semantics, so we expand strips into list primitives on the CPU
-                    // (using a shadow copy of the index buffer contents) and use a list-topology
-                    // pipeline variant.
-                    let expanded_strip_indices = if emulate_strip_restart
-                        && matches!(
-                            pipeline.topology,
-                            wgpu::PrimitiveTopology::LineStrip
-                                | wgpu::PrimitiveTopology::TriangleStrip
-                        ) {
-                        let index_buf = resources
-                            .buffers
-                            .get(&index.buffer)
-                            .ok_or_else(|| anyhow!("unknown index buffer {}", index.buffer))?;
-                        expand_indexed_strip_to_list(
-                            pipeline.topology,
-                            index_buf,
-                            index,
-                            first_index,
-                            index_count,
-                        )?
-                    } else {
-                        None
-                    };
-
-                    let pipeline_variant = if expanded_strip_indices.is_some() {
-                        RenderPipelineVariant::StripToList
-                    } else {
-                        RenderPipelineVariant::Normal {
-                            strip_index_format: Some(index.format),
-                        }
-                    };
                     sync_render_pipeline(
                         &mut render_pass,
                         resources,
                         pipeline_id,
-                        pipeline_variant,
+                        Some(index.format),
                         &mut bound_pipeline,
                     )?;
 
@@ -2149,65 +2092,39 @@ impl D3D11Runtime {
                         )?;
                         vertex_buffers_synced = true;
                     }
-                    if let Some(expanded) = expanded_strip_indices {
-                        if expanded.is_empty() {
-                            continue;
-                        }
 
-                        let byte_len = expanded
-                            .len()
-                            .checked_mul(std::mem::size_of::<u32>())
-                            .ok_or_else(|| anyhow!("expanded index buffer size overflows usize"))?;
-                        let size = u64::try_from(byte_len).map_err(|_| {
-                            anyhow!("expanded index buffer size does not fit in u64")
-                        })?;
+                    sync_index_buffer(&mut render_pass, resources, index, &mut bound_index_buffer)?;
 
-                        let tmp = device.create_buffer(&wgpu::BufferDescriptor {
-                            label: Some("aero-d3d11 strip-to-list index buffer"),
-                            size,
-                            usage: wgpu::BufferUsages::INDEX,
-                            mapped_at_creation: true,
-                        });
-                        {
-                            let mut mapped = tmp.slice(..).get_mapped_range_mut();
-                            for (dst, idx) in mapped.chunks_exact_mut(4).zip(expanded.iter()) {
-                                // WebGPU uses little-endian index buffers.
-                                dst.copy_from_slice(&idx.to_le_bytes());
-                            }
-                        }
-                        tmp.unmap();
-                        let tmp = Arc::new(tmp);
-                        let buf_ptr = Arc::as_ptr(&tmp);
-                        strip_index_buffer_arena.push(tmp);
-                        let buf_ref = unsafe { &*buf_ptr };
-                        render_pass.set_index_buffer(buf_ref.slice(..), wgpu::IndexFormat::Uint32);
-                        // Ensure future draws that rely on `state.index_buffer` rebind it.
-                        bound_index_buffer = None;
+                    let instances = first_instance..first_instance + instance_count;
 
-                        let index_len = u32::try_from(expanded.len()).map_err(|_| {
-                            anyhow!(
-                                "expanded index count does not fit in u32 (len={})",
-                                expanded.len()
-                            )
-                        })?;
-                        render_pass.draw_indexed(
-                            0..index_len,
-                            base_vertex,
-                            first_instance..first_instance + instance_count,
-                        );
-                    } else {
-                        sync_index_buffer(
+                    // Primitive restart (strip cuts) is required for D3D-style indexed strip
+                    // topologies. wgpu's GL backend has historically had correctness issues with
+                    // native primitive restart, so emulate restart by splitting the draw into
+                    // multiple segments that omit restart indices entirely.
+                    if emulate_strip_restart
+                        && matches!(
+                            pipeline.topology,
+                            wgpu::PrimitiveTopology::LineStrip
+                                | wgpu::PrimitiveTopology::TriangleStrip
+                        )
+                        && draw_indexed_strip_restart_emulated(
                             &mut render_pass,
                             resources,
                             index,
-                            &mut bound_index_buffer,
-                        )?;
-                        render_pass.draw_indexed(
-                            first_index..first_index + index_count,
+                            first_index,
+                            index_count,
                             base_vertex,
-                            first_instance..first_instance + instance_count,
-                        );
+                            instances.clone(),
+                        )?
+                    {
+                        continue;
                     }
+
+                    render_pass.draw_indexed(
+                        first_index..first_index + index_count,
+                        base_vertex,
+                        instances,
+                    );
                 }
                 _ => bail!(
                     "opcode {:?} not allowed inside render pass",
@@ -2568,26 +2485,16 @@ fn build_bind_group(
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum RenderPipelineVariant {
-    Normal {
-        strip_index_format: Option<wgpu::IndexFormat>,
-    },
-    /// Use the list-topology fallback pipeline for indexed strip draws (handles primitive restart
-    /// by explicit index expansion).
-    StripToList,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct BoundRenderPipeline {
     id: u32,
-    variant: RenderPipelineVariant,
+    strip_index_format: Option<wgpu::IndexFormat>,
 }
 
 fn sync_render_pipeline<'a>(
     pass: &mut wgpu::RenderPass<'a>,
     resources: &'a D3D11Resources,
     pipeline_id: u32,
-    variant: RenderPipelineVariant,
+    strip_index_format: Option<wgpu::IndexFormat>,
     bound: &mut Option<BoundRenderPipeline>,
 ) -> Result<()> {
     let pipeline = resources
@@ -2595,37 +2502,21 @@ fn sync_render_pipeline<'a>(
         .get(&pipeline_id)
         .ok_or_else(|| anyhow!("unknown render pipeline {pipeline_id}"))?;
 
-    let variant = match variant {
-        RenderPipelineVariant::Normal { strip_index_format } => {
-            let strip_index_format = if pipeline.pipelines.uses_strip_index_format() {
-                strip_index_format
-            } else {
-                None
-            };
-            RenderPipelineVariant::Normal { strip_index_format }
-        }
-        RenderPipelineVariant::StripToList => RenderPipelineVariant::StripToList,
+    let strip_index_format = if pipeline.pipelines.uses_strip_index_format() {
+        strip_index_format
+    } else {
+        None
     };
 
     let desired = BoundRenderPipeline {
         id: pipeline_id,
-        variant,
+        strip_index_format,
     };
     if bound == &Some(desired) {
         return Ok(());
     }
 
-    match variant {
-        RenderPipelineVariant::Normal { strip_index_format } => {
-            pass.set_pipeline(pipeline.pipelines.get(strip_index_format));
-        }
-        RenderPipelineVariant::StripToList => {
-            let list_pipeline = pipeline.strip_to_list_pipeline.as_ref().ok_or_else(|| {
-                anyhow!("render pipeline {pipeline_id} does not have a strip-to-list variant")
-            })?;
-            pass.set_pipeline(list_pipeline);
-        }
-    }
+    pass.set_pipeline(pipeline.pipelines.get(strip_index_format));
     *bound = Some(desired);
     Ok(())
 }
@@ -2698,47 +2589,56 @@ fn sync_index_buffer<'a>(
     Ok(())
 }
 
-fn expand_indexed_strip_to_list(
-    topology: wgpu::PrimitiveTopology,
-    index_buf: &BufferResource,
-    index_binding: BoundIndexBuffer,
+fn draw_indexed_strip_restart_emulated<'a>(
+    pass: &mut wgpu::RenderPass<'a>,
+    resources: &'a D3D11Resources,
+    index: BoundIndexBuffer,
     first_index: u32,
     index_count: u32,
-) -> Result<Option<Vec<u32>>> {
-    let Some(shadow) = index_buf.shadow.as_deref() else {
-        return Ok(None);
-    };
+    base_vertex: i32,
+    instances: std::ops::Range<u32>,
+) -> Result<bool> {
     if index_count == 0 {
-        return Ok(None);
+        return Ok(false);
     }
 
-    let index_size_bytes: u64 = match index_binding.format {
-        wgpu::IndexFormat::Uint16 => 2,
-        wgpu::IndexFormat::Uint32 => 4,
+    let buf = resources
+        .buffers
+        .get(&index.buffer)
+        .ok_or_else(|| anyhow!("unknown index buffer {}", index.buffer))?;
+    let Some(shadow) = buf.shadow.as_deref() else {
+        // Shadow is optional; fall back to wgpu's built-in behavior if we cannot inspect the index
+        // data.
+        return Ok(false);
     };
 
-    let start_byte = index_binding
+    let (stride_bytes, restart_value) = match index.format {
+        wgpu::IndexFormat::Uint16 => (2u64, u16::MAX as u32),
+        wgpu::IndexFormat::Uint32 => (4u64, u32::MAX),
+    };
+
+    let start_byte = index
         .offset
-        .checked_add(u64::from(first_index) * index_size_bytes)
-        .ok_or_else(|| anyhow!("strip index buffer slice start overflows u64"))?;
+        .checked_add(u64::from(first_index) * stride_bytes)
+        .ok_or_else(|| anyhow!("DrawIndexed index buffer slice start overflows u64"))?;
     let slice_len_bytes = u64::from(index_count)
-        .checked_mul(index_size_bytes)
-        .ok_or_else(|| anyhow!("strip index buffer slice length overflows u64"))?;
+        .checked_mul(stride_bytes)
+        .ok_or_else(|| anyhow!("DrawIndexed index buffer slice length overflows u64"))?;
     let end_byte = start_byte
         .checked_add(slice_len_bytes)
-        .ok_or_else(|| anyhow!("strip index buffer slice end overflows u64"))?;
+        .ok_or_else(|| anyhow!("DrawIndexed index buffer slice end overflows u64"))?;
 
-    if end_byte > index_buf.size {
+    if end_byte > buf.size {
         bail!(
             "DrawIndexed index buffer slice out of bounds: start={start_byte} end={end_byte} buffer_size={}",
-            index_buf.size
+            buf.size
         );
     }
 
     let start = usize::try_from(start_byte)
-        .map_err(|_| anyhow!("index buffer slice start does not fit in usize"))?;
+        .map_err(|_| anyhow!("DrawIndexed index buffer slice start does not fit in usize"))?;
     let end = usize::try_from(end_byte)
-        .map_err(|_| anyhow!("index buffer slice end does not fit in usize"))?;
+        .map_err(|_| anyhow!("DrawIndexed index buffer slice end does not fit in usize"))?;
     if end > shadow.len() {
         bail!(
             "DrawIndexed index buffer slice out of bounds for shadow copy: end={end} shadow_size={}",
@@ -2748,73 +2648,59 @@ fn expand_indexed_strip_to_list(
 
     let bytes = &shadow[start..end];
 
-    let has_restart = match index_binding.format {
-        wgpu::IndexFormat::Uint16 => bytes
-            .chunks_exact(2)
-            .any(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]) == 0xFFFF),
-        wgpu::IndexFormat::Uint32 => bytes.chunks_exact(4).any(|chunk| {
-            u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]) == 0xFFFF_FFFF
-        }),
-    };
-    if !has_restart {
-        return Ok(None);
-    }
+    let mut seg_start = 0u32;
+    let mut did_restart = false;
 
-    let mut indices_with_cuts: Vec<u32> = Vec::with_capacity(index_count as usize);
-
-    match index_binding.format {
+    match index.format {
         wgpu::IndexFormat::Uint16 => {
-            if !bytes.len().is_multiple_of(2) {
-                bail!("index buffer slice is not a multiple of 2 bytes");
-            }
-            for chunk in bytes.chunks_exact(2) {
-                let v = u16::from_le_bytes([chunk[0], chunk[1]]);
-                if v == 0xFFFF {
-                    indices_with_cuts.push(super::strip_to_list::CUT);
-                } else {
-                    indices_with_cuts.push(u32::from(v));
+            for (i, chunk) in bytes.chunks_exact(2).enumerate() {
+                let idx = u16::from_le_bytes([chunk[0], chunk[1]]) as u32;
+                if idx == restart_value {
+                    did_restart = true;
+                    let i = i as u32;
+                    if i > seg_start {
+                        pass.draw_indexed(
+                            first_index + seg_start..first_index + i,
+                            base_vertex,
+                            instances.clone(),
+                        );
+                    }
+                    seg_start = i + 1;
                 }
             }
         }
         wgpu::IndexFormat::Uint32 => {
-            if !bytes.len().is_multiple_of(4) {
-                bail!("index buffer slice is not a multiple of 4 bytes");
-            }
-            for chunk in bytes.chunks_exact(4) {
-                let v = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-                if v == 0xFFFF_FFFF {
-                    indices_with_cuts.push(super::strip_to_list::CUT);
-                } else {
-                    indices_with_cuts.push(v);
+            for (i, chunk) in bytes.chunks_exact(4).enumerate() {
+                let idx = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+                if idx == restart_value {
+                    did_restart = true;
+                    let i = i as u32;
+                    if i > seg_start {
+                        pass.draw_indexed(
+                            first_index + seg_start..first_index + i,
+                            base_vertex,
+                            instances.clone(),
+                        );
+                    }
+                    seg_start = i + 1;
                 }
             }
         }
     }
 
-    let out = match topology {
-        wgpu::PrimitiveTopology::TriangleStrip => {
-            super::strip_to_list::strip_to_triangle_list(&indices_with_cuts)
-        }
-        wgpu::PrimitiveTopology::LineStrip => {
-            let mut out = Vec::new();
-            let mut prev: Option<u32> = None;
-            for idx in indices_with_cuts {
-                if idx == super::strip_to_list::CUT {
-                    prev = None;
-                    continue;
-                }
-                if let Some(p) = prev {
-                    out.push(p);
-                    out.push(idx);
-                }
-                prev = Some(idx);
-            }
-            out
-        }
-        _ => return Ok(None),
-    };
+    if !did_restart {
+        return Ok(false);
+    }
 
-    Ok(Some(out))
+    if seg_start < index_count {
+        pass.draw_indexed(
+            first_index + seg_start..first_index + index_count,
+            base_vertex,
+            instances,
+        );
+    }
+
+    Ok(true)
 }
 
 fn map_buffer_usage(usage: BufferUsage, supports_compute: bool) -> wgpu::BufferUsages {

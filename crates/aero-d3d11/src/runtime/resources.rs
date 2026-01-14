@@ -110,12 +110,6 @@ impl RenderPipelineVariants {
 #[derive(Debug)]
 pub struct RenderPipelineResource {
     pub pipelines: RenderPipelineVariants,
-    /// Optional non-strip pipeline used when expanding indexed strips into list primitives.
-    ///
-    /// wgpu's `PrimitiveState.strip_index_format` semantics are backend-dependent. The protocol
-    /// runtime falls back to explicit strip→list expansion (handling primitive restart indices)
-    /// when needed, which requires a separate pipeline with a list topology.
-    pub strip_to_list_pipeline: Option<wgpu::RenderPipeline>,
     pub topology: wgpu::PrimitiveTopology,
     pub bind_group_layout: CachedBindGroupLayout,
     pub bindings: Vec<BindingDef>,
