@@ -40,18 +40,6 @@ FENCE_FIELDS = {
     "LastNotifiedErrorFence",
 }
 
-ALLOWED_CALLS = {
-    # Preferred abstraction.
-    "AeroGpuAtomicReadU64",
-    "AeroGpuAtomicWriteU64",
-    "AeroGpuAtomicExchangeU64",
-    "AeroGpuAtomicCompareExchangeU64",
-    # Direct interlocked operations (still atomic on x86 if alignment is correct).
-    "InterlockedCompareExchange64",
-    "InterlockedExchange64",
-    "InterlockedExchangeAdd64",
-}
-
 TYPE_KEYWORDS = {
     # C type/qualifier keywords commonly used in casts.
     "const",
@@ -438,6 +426,22 @@ def _nearest_enclosing_call(paren_stack: list[str | None]) -> str | None:
     return None
 
 
+def _is_allowed_call(name: str | None) -> bool:
+    """
+    Fence fields must only be touched through atomic helpers. We accept:
+      - `AeroGpuAtomic*U64` (driver abstraction)
+      - `Interlocked*64` (direct atomic operations; alignment is ensured by C_ASSERT + DBG ASSERTs elsewhere)
+    """
+
+    if name is None:
+        return False
+    if name.startswith("AeroGpuAtomic") and name.endswith("U64"):
+        return True
+    if name.startswith("Interlocked") and name.endswith("64"):
+        return True
+    return False
+
+
 def main() -> int:
     if not SRC.exists():
         print(f"OK: {SRC} not present; skipping.")
@@ -484,7 +488,7 @@ def main() -> int:
                 continue
 
             enclosing = _nearest_enclosing_call(paren_stack)
-            if enclosing not in ALLOWED_CALLS:
+            if not _is_allowed_call(enclosing):
                 violations.append((tok.value, tok.line, tok.col))
 
         prev = tok
