@@ -791,48 +791,169 @@ impl XhciController {
         self.queue_command_completion_event(cmd_paddr, code, slot_id);
     }
 
+    fn read_device_context_ptr_for_endpoint_cmd<M: MemoryBus + ?Sized>(
+        &self,
+        mem: &mut M,
+        slot_id: u8,
+    ) -> Result<u64, CompletionCode> {
+        let slot_idx = usize::from(slot_id);
+        if slot_id == 0 || slot_idx >= self.slots.len() || !self.slots[slot_idx].enabled {
+            return Err(CompletionCode::SlotNotEnabledError);
+        }
+
+        let Some(dcbaa_entry) = self.dcbaap_entry_paddr(slot_id) else {
+            return Err(CompletionCode::ContextStateError);
+        };
+        let dev_ctx_raw = mem.read_u64(dcbaa_entry);
+        let dev_ctx_ptr = dev_ctx_raw & !0x3f;
+        if dev_ctx_ptr == 0 || (dev_ctx_raw & 0x3f) != 0 {
+            return Err(CompletionCode::ContextStateError);
+        }
+        Ok(dev_ctx_ptr)
+    }
+
+    fn endpoint_context_ptr_for_cmd<M: MemoryBus + ?Sized>(
+        &self,
+        mem: &mut M,
+        slot_id: u8,
+        endpoint_id: u8,
+    ) -> Result<(u64, u64), CompletionCode> {
+        if endpoint_id == 0 || endpoint_id > 31 {
+            return Err(CompletionCode::ParameterError);
+        }
+        let dev_ctx_ptr = self.read_device_context_ptr_for_endpoint_cmd(mem, slot_id)?;
+        let offset = u64::from(endpoint_id) * CONTEXT_SIZE as u64;
+        let ep_ctx_ptr = dev_ctx_ptr
+            .checked_add(offset)
+            .ok_or(CompletionCode::ParameterError)?;
+        Ok((dev_ctx_ptr, ep_ctx_ptr))
+    }
+
     fn cmd_stop_endpoint<M: MemoryBus + ?Sized>(&mut self, mem: &mut M, cmd_paddr: u64, trb: Trb) {
+        const EP_STATE_STOPPED: u8 = 3;
+
         let slot_id = trb.slot_id();
         let endpoint_id = trb.endpoint_id();
-        let result = self.stop_endpoint(mem, slot_id, endpoint_id);
-        let code = match result.completion_code {
-            CommandCompletionCode::Success => CompletionCode::Success,
-            CommandCompletionCode::ContextStateError => CompletionCode::ContextStateError,
-            CommandCompletionCode::ParameterError => CompletionCode::ParameterError,
-            CommandCompletionCode::NoSlotsAvailableError => CompletionCode::NoSlotsAvailableError,
-            CommandCompletionCode::Unknown(_) => CompletionCode::TrbError,
+
+        let code = match self.endpoint_context_ptr_for_cmd(mem, slot_id, endpoint_id) {
+            Ok((dev_ctx_ptr, ep_ctx_ptr)) => {
+                let mut ep_ctx = EndpointContext::read_from(mem, ep_ctx_ptr);
+                if ep_ctx.endpoint_state() == 0 {
+                    CompletionCode::EndpointNotEnabledError
+                } else {
+                    ep_ctx.set_endpoint_state(EP_STATE_STOPPED);
+                    ep_ctx.write_to(mem, ep_ctx_ptr);
+
+                    let slot_idx = usize::from(slot_id);
+                    let slot = &mut self.slots[slot_idx];
+                    slot.endpoint_contexts[usize::from(endpoint_id - 1)] = ep_ctx;
+                    slot.device_context_ptr = dev_ctx_ptr;
+
+                    CompletionCode::Success
+                }
+            }
+            Err(code) => code,
         };
+
         // xHCI completion events retain the original slot ID for endpoint commands.
         self.queue_command_completion_event(cmd_paddr, code, slot_id);
     }
 
     fn cmd_reset_endpoint<M: MemoryBus + ?Sized>(&mut self, mem: &mut M, cmd_paddr: u64, trb: Trb) {
+        const EP_STATE_RUNNING: u8 = 1;
+
         let slot_id = trb.slot_id();
         let endpoint_id = trb.endpoint_id();
-        let result = self.reset_endpoint(mem, slot_id, endpoint_id);
-        let code = match result.completion_code {
-            CommandCompletionCode::Success => CompletionCode::Success,
-            CommandCompletionCode::ContextStateError => CompletionCode::ContextStateError,
-            CommandCompletionCode::ParameterError => CompletionCode::ParameterError,
-            CommandCompletionCode::NoSlotsAvailableError => CompletionCode::NoSlotsAvailableError,
-            CommandCompletionCode::Unknown(_) => CompletionCode::TrbError,
+
+        let code = match self.endpoint_context_ptr_for_cmd(mem, slot_id, endpoint_id) {
+            Ok((dev_ctx_ptr, ep_ctx_ptr)) => {
+                let mut ep_ctx = EndpointContext::read_from(mem, ep_ctx_ptr);
+                if ep_ctx.endpoint_state() == 0 {
+                    CompletionCode::EndpointNotEnabledError
+                } else {
+                    ep_ctx.set_endpoint_state(EP_STATE_RUNNING);
+                    ep_ctx.write_to(mem, ep_ctx_ptr);
+
+                    let slot_idx = usize::from(slot_id);
+                    let slot = &mut self.slots[slot_idx];
+                    slot.endpoint_contexts[usize::from(endpoint_id - 1)] = ep_ctx;
+                    slot.device_context_ptr = dev_ctx_ptr;
+
+                    if endpoint_id == 1 {
+                        if let Some(state) = self.ep0_control_td.get_mut(slot_idx) {
+                            *state = ControlTdState::default();
+                        }
+                    }
+
+                    // Clear any transfer-executor halted state for this endpoint so new doorbells can run.
+                    if let Some(ep_addr) = Self::ep_addr_from_endpoint_id(endpoint_id) {
+                        if let Some(slot_exec) = self.transfer_executors.get_mut(slot_idx) {
+                            if let Some(mut exec) = slot_exec.take() {
+                                exec.reset_endpoint(ep_addr);
+                                *slot_exec = Some(exec);
+                            }
+                        }
+                    }
+
+                    CompletionCode::Success
+                }
+            }
+            Err(code) => code,
         };
+
         self.queue_command_completion_event(cmd_paddr, code, slot_id);
     }
 
     fn cmd_set_tr_dequeue_pointer<M: MemoryBus + ?Sized>(&mut self, mem: &mut M, cmd_paddr: u64, trb: Trb) {
         let slot_id = trb.slot_id();
         let endpoint_id = trb.endpoint_id();
-        let tr_dequeue_ptr = trb.parameter & !0x0f;
-        let dcs = (trb.parameter & 0x01) != 0;
-        let result = self.set_tr_dequeue_pointer(mem, slot_id, endpoint_id, tr_dequeue_ptr, dcs);
-        let code = match result.completion_code {
-            CommandCompletionCode::Success => CompletionCode::Success,
-            CommandCompletionCode::ContextStateError => CompletionCode::ContextStateError,
-            CommandCompletionCode::ParameterError => CompletionCode::ParameterError,
-            CommandCompletionCode::NoSlotsAvailableError => CompletionCode::NoSlotsAvailableError,
-            CommandCompletionCode::Unknown(_) => CompletionCode::TrbError,
+
+        let code = match self.endpoint_context_ptr_for_cmd(mem, slot_id, endpoint_id) {
+            Ok((dev_ctx_ptr, ep_ctx_ptr)) => {
+                // Bits 1..=3 are reserved in the parameter field (bit0 is DCS).
+                if (trb.parameter & 0x0e) != 0 {
+                    CompletionCode::ParameterError
+                } else if ((trb.status >> 16) & 0xffff) != 0 {
+                    // Stream ID in DW2 bits 16..=31. Streams are not supported by this model.
+                    CompletionCode::ParameterError
+                } else {
+                    let ptr = trb.parameter & !0x0f;
+                    let dcs = (trb.parameter & 0x01) != 0;
+                    if ptr == 0 {
+                        return self.queue_command_completion_event(
+                            cmd_paddr,
+                            CompletionCode::ParameterError,
+                            slot_id,
+                        );
+                    }
+
+                    let mut ep_ctx = EndpointContext::read_from(mem, ep_ctx_ptr);
+                    if ep_ctx.endpoint_state() == 0 {
+                        CompletionCode::EndpointNotEnabledError
+                    } else {
+                        ep_ctx.set_tr_dequeue_pointer(ptr, dcs);
+                        ep_ctx.write_to(mem, ep_ctx_ptr);
+
+                        let slot_idx = usize::from(slot_id);
+                        let slot = &mut self.slots[slot_idx];
+                        slot.endpoint_contexts[usize::from(endpoint_id - 1)] = ep_ctx;
+                        slot.transfer_rings[usize::from(endpoint_id - 1)] =
+                            Some(RingCursor::new(ptr, dcs));
+                        slot.device_context_ptr = dev_ctx_ptr;
+
+                        if endpoint_id == 1 {
+                            if let Some(state) = self.ep0_control_td.get_mut(slot_idx) {
+                                *state = ControlTdState::default();
+                            }
+                        }
+
+                        CompletionCode::Success
+                    }
+                }
+            }
+            Err(code) => code,
         };
+
         self.queue_command_completion_event(cmd_paddr, code, slot_id);
     }
 
