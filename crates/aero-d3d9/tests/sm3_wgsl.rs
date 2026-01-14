@@ -739,3 +739,70 @@ fn wgsl_predicated_texkill_is_nested_under_if() {
     .validate(&module)
     .expect("wgsl validate");
 }
+
+#[test]
+fn wgsl_vs_outputs_and_ps_inputs_use_consistent_locations() {
+    // vs_2_0:
+    //   dcl_positiont v0
+    //   dcl_color0 v7
+    //   mov oPos, v0
+    //   mov oD0, v7
+    //   end
+    //
+    // ps_2_0:
+    //   mov oC0, v0
+    //   end
+    //
+    // The vertex shader should expose oD0 at @location(0), and the pixel shader should read v0
+    // from @location(0). The VS also remaps COLOR0 v7 -> @location(6) via StandardLocationMap.
+    let vs_tokens = vec![
+        version_token(ShaderStage::Vertex, 2, 0),
+        // dcl_positiont v0
+        31u32 | (2u32 << 24) | (9u32 << 16),
+        dst_token(1, 0, 0xF),
+        // dcl_color0 v7
+        31u32 | (2u32 << 24) | (10u32 << 16),
+        dst_token(1, 7, 0xF),
+        // mov oPos, v0
+        opcode_token(1, 2),
+        dst_token(4, 0, 0xF),
+        src_token(1, 0, 0xE4, 0),
+        // mov oD0, v7
+        opcode_token(1, 2),
+        dst_token(5, 0, 0xF),
+        src_token(1, 7, 0xE4, 0),
+        0x0000_FFFF,
+    ];
+    let ps_tokens = vec![
+        version_token(ShaderStage::Pixel, 2, 0),
+        // mov oC0, v0
+        opcode_token(1, 2),
+        dst_token(8, 0, 0xF),
+        src_token(1, 0, 0xE4, 0),
+        0x0000_FFFF,
+    ];
+
+    let vs_decoded = decode_u32_tokens(&vs_tokens).unwrap();
+    let vs_ir = build_ir(&vs_decoded).unwrap();
+    verify_ir(&vs_ir).unwrap();
+    let vs_wgsl = generate_wgsl(&vs_ir).unwrap().wgsl;
+    assert!(vs_wgsl.contains("@location(6) v6"), "{vs_wgsl}");
+    assert!(vs_wgsl.contains("@location(0) oD0"), "{vs_wgsl}");
+
+    let ps_decoded = decode_u32_tokens(&ps_tokens).unwrap();
+    let ps_ir = build_ir(&ps_decoded).unwrap();
+    verify_ir(&ps_ir).unwrap();
+    let ps_wgsl = generate_wgsl(&ps_ir).unwrap().wgsl;
+    assert!(ps_wgsl.contains("struct FsIn"), "{ps_wgsl}");
+    assert!(ps_wgsl.contains("@location(0) v0"), "{ps_wgsl}");
+
+    // Ensure both shaders are valid WGSL modules.
+    let vs_mod = naga::front::wgsl::parse_str(&vs_wgsl).expect("vs wgsl parse");
+    let ps_mod = naga::front::wgsl::parse_str(&ps_wgsl).expect("ps wgsl parse");
+    let mut validator = naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    );
+    validator.validate(&vs_mod).expect("vs wgsl validate");
+    validator.validate(&ps_mod).expect("ps wgsl validate");
+}
