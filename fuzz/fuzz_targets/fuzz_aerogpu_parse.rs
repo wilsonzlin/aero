@@ -1770,7 +1770,7 @@ fuzz_target!(|data: &[u8]| {
     w.set_texture_ex(cmd::AerogpuShaderStageEx::Hull, /*slot=*/ 1, tex_handle);
     w.set_texture_ex(cmd::AerogpuShaderStageEx::Domain, /*slot=*/ 2, tex_handle);
     w.set_samplers_ex(
-        cmd::AerogpuShaderStageEx::Vertex,
+        cmd::AerogpuShaderStageEx::Geometry,
         /*start_slot=*/ 0,
         &[stage_ex_sampler_handle],
     );
