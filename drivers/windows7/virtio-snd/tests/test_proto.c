@@ -393,6 +393,76 @@ static void test_control_set_params_uses_selected_format(void)
     virtio_test_queue_destroy(&q);
 }
 
+static void test_control_select_format_respects_caps_when_valid(void)
+{
+    VIRTIO_TEST_QUEUE q;
+    VIRTIOSND_DMA_CONTEXT dma;
+    VIRTIOSND_CONTROL ctrl;
+    NTSTATUS status;
+
+    virtio_test_queue_init(&q, TRUE);
+    RtlZeroMemory(&dma, sizeof(dma));
+    VirtioSndCtrlInit(&ctrl, &dma, &q.queue);
+
+    /*
+     * When CapsValid is set, VirtioSndCtrlSelectFormat should reject selections
+     * that are not present in the cached PCM_INFO masks/ranges.
+     */
+    ctrl.Caps[VIRTIO_SND_PLAYBACK_STREAM_ID].Formats = VIRTIO_SND_PCM_FMT_MASK_S16;
+    ctrl.Caps[VIRTIO_SND_PLAYBACK_STREAM_ID].Rates = VIRTIO_SND_PCM_RATE_MASK_48000;
+    ctrl.Caps[VIRTIO_SND_PLAYBACK_STREAM_ID].ChannelsMin = 2;
+    ctrl.Caps[VIRTIO_SND_PLAYBACK_STREAM_ID].ChannelsMax = 2;
+
+    ctrl.Caps[VIRTIO_SND_CAPTURE_STREAM_ID].Formats = VIRTIO_SND_PCM_FMT_MASK_S16;
+    ctrl.Caps[VIRTIO_SND_CAPTURE_STREAM_ID].Rates = VIRTIO_SND_PCM_RATE_MASK_48000;
+    ctrl.Caps[VIRTIO_SND_CAPTURE_STREAM_ID].ChannelsMin = 1;
+    ctrl.Caps[VIRTIO_SND_CAPTURE_STREAM_ID].ChannelsMax = 1;
+
+    InterlockedExchange(&ctrl.CapsValid, 1);
+
+    /* Unsupported format */
+    status = VirtioSndCtrlSelectFormat(
+        &ctrl,
+        VIRTIO_SND_PLAYBACK_STREAM_ID,
+        2u,
+        (UCHAR)VIRTIO_SND_PCM_FMT_S24,
+        (UCHAR)VIRTIO_SND_PCM_RATE_48000);
+    assert(status == STATUS_NOT_SUPPORTED);
+
+    /* Unsupported rate */
+    status = VirtioSndCtrlSelectFormat(
+        &ctrl,
+        VIRTIO_SND_PLAYBACK_STREAM_ID,
+        2u,
+        (UCHAR)VIRTIO_SND_PCM_FMT_S16,
+        (UCHAR)VIRTIO_SND_PCM_RATE_44100);
+    assert(status == STATUS_NOT_SUPPORTED);
+
+    /* Unsupported channels */
+    status = VirtioSndCtrlSelectFormat(
+        &ctrl,
+        VIRTIO_SND_PLAYBACK_STREAM_ID,
+        3u,
+        (UCHAR)VIRTIO_SND_PCM_FMT_S16,
+        (UCHAR)VIRTIO_SND_PCM_RATE_48000);
+    assert(status == STATUS_NOT_SUPPORTED);
+
+    /* Valid selection */
+    status = VirtioSndCtrlSelectFormat(
+        &ctrl,
+        VIRTIO_SND_PLAYBACK_STREAM_ID,
+        2u,
+        (UCHAR)VIRTIO_SND_PCM_FMT_S16,
+        (UCHAR)VIRTIO_SND_PCM_RATE_48000);
+    assert(status == STATUS_SUCCESS);
+    assert(ctrl.SelectedFormat[VIRTIO_SND_PLAYBACK_STREAM_ID].Channels == 2u);
+    assert(ctrl.SelectedFormat[VIRTIO_SND_PLAYBACK_STREAM_ID].Format == VIRTIO_SND_PCM_FMT_S16);
+    assert(ctrl.SelectedFormat[VIRTIO_SND_PLAYBACK_STREAM_ID].Rate == VIRTIO_SND_PCM_RATE_48000);
+
+    VirtioSndCtrlUninit(&ctrl);
+    virtio_test_queue_destroy(&q);
+}
+
 static void test_control_timeout_then_late_completion_runs_at_dpc_level(void)
 {
     VIRTIO_TEST_QUEUE q;
@@ -757,6 +827,7 @@ int main(void)
     test_rx_builds_hdr_payload_status_chain();
     test_control_set_params_formats_channels();
     test_control_set_params_uses_selected_format();
+    test_control_select_format_respects_caps_when_valid();
     test_control_timeout_then_late_completion_runs_at_dpc_level();
     test_control_uninit_cancels_timed_out_request();
     test_control_cancel_all_frees_timed_out_request();
