@@ -286,8 +286,7 @@ fn usb2_port_mux_ehci_remote_wakeup_enters_resume_state_through_external_hub() {
 }
 
 #[test]
-fn usb2_port_mux_ehci_remote_wakeup_propagates_through_external_hub_without_hub_remote_wakeup(
-) {
+fn usb2_port_mux_ehci_remote_wakeup_propagates_through_external_hub_without_hub_remote_wakeup() {
     let mux = Rc::new(RefCell::new(Usb2PortMux::new(1)));
     let mut ehci = EhciController::new_with_port_count(1);
     ehci.hub_mut().attach_usb2_port_mux(0, mux.clone(), 0);
@@ -422,7 +421,11 @@ fn usb2_port_mux_ehci_remote_wakeup_propagates_through_external_hub_without_hub_
         0,
         "expected resume state after remote wakeup through external hub (hub remote wake need not be enabled)"
     );
-    assert_ne!(portsc & PORTSC_SUSP, 0, "port should remain suspended while resuming");
+    assert_ne!(
+        portsc & PORTSC_SUSP,
+        0,
+        "port should remain suspended while resuming"
+    );
     assert_eq!(
         portsc & PORTSC_LS_MASK,
         0b01 << 10,

@@ -15,9 +15,8 @@ mod tests {
     fn make_valid_header_with_abi(abi_version: u32) -> AeroGpuRingHeader {
         let entry_count = 8;
         let entry_stride_bytes = AeroGpuSubmitDesc::SIZE_BYTES;
-        let size_bytes =
-            (AEROGPU_RING_HEADER_SIZE_BYTES + (entry_count as u64 * entry_stride_bytes as u64))
-                as u32;
+        let size_bytes = (AEROGPU_RING_HEADER_SIZE_BYTES
+            + (entry_count as u64 * entry_stride_bytes as u64)) as u32;
 
         AeroGpuRingHeader {
             magic: AEROGPU_RING_MAGIC,
@@ -63,4 +62,3 @@ mod tests {
         assert!(!hdr.is_valid(hdr.size_bytes - 1));
     }
 }
-

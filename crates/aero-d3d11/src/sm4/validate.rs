@@ -150,7 +150,8 @@ mod tests {
             << sm4_opcode::OPERAND_SELECTION_MODE_SHIFT;
         token |= (sm4_opcode::OPERAND_TYPE_IMMEDIATE32 & sm4_opcode::OPERAND_TYPE_MASK)
             << sm4_opcode::OPERAND_TYPE_SHIFT;
-        token |= (sm4_opcode::OPERAND_INDEX_DIMENSION_0D & sm4_opcode::OPERAND_INDEX_DIMENSION_MASK)
+        token |= (sm4_opcode::OPERAND_INDEX_DIMENSION_0D
+            & sm4_opcode::OPERAND_INDEX_DIMENSION_MASK)
             << sm4_opcode::OPERAND_INDEX_DIMENSION_SHIFT;
         token
     }
