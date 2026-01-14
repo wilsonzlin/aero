@@ -111,20 +111,21 @@ Per-driver overrides can be configured in the packaging spec via `allow_extensio
 The packager expects:
 
 ```
-guest-tools/
-  setup.cmd
-  uninstall.cmd
-  verify.cmd
-  verify.ps1
-  README.md
-  THIRD_PARTY_NOTICES.md
-  licenses/ (optional)
-  config/
-    README.md (optional)
-    devices.cmd   (generated during packaging)
-  certs/          (optional when signing_policy is production/none)
-    README.md (optional but recommended)
-    *.{cer,crt,p7b} (required for signing_policy=test; optional otherwise)
+ guest-tools/
+   setup.cmd
+   uninstall.cmd
+   verify.cmd
+   verify.ps1
+   README.md
+   THIRD_PARTY_NOTICES.md
+   tools/          (optional; extra guest-side utilities; see filtering notes below)
+   licenses/ (optional)
+   config/
+     README.md (optional)
+     devices.cmd   (generated during packaging)
+   certs/          (optional when signing_policy is production/none)
+     README.md (optional but recommended)
+     *.{cer,crt,p7b} (required for signing_policy=test; optional otherwise)
 ```
 
 `config/devices.cmd` is generated during packaging from a Windows device contract JSON
@@ -178,6 +179,7 @@ The ISO/zip root layout matches what `guest-tools/setup.cmd` expects:
     README.md (optional)
     *.{cer,crt,p7b} (optional)
   licenses/ (optional)
+  tools/    (optional; extra guest-side utilities)
   drivers/
     x86/
       ...
