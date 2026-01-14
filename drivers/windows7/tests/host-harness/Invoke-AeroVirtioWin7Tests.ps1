@@ -8156,7 +8156,29 @@ try {
       $scriptExitCode = 1
     }
     "VIRTIO_INPUT_MEDIA_KEYS_FAILED" {
-      Write-Host "FAIL: VIRTIO_INPUT_MEDIA_KEYS_FAILED: virtio-input-media-keys test reported FAIL while -WithInputMediaKeys was enabled"
+      $reason = "unknown"
+      $err = "unknown"
+      $reports = ""
+      $volumeUpDown = ""
+      $volumeUpUp = ""
+      $line = Try-ExtractLastAeroMarkerLine `
+        -Tail $result.Tail `
+        -Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-input-media-keys|FAIL|" `
+        -SerialLogPath $SerialLogPath
+      if ($null -ne $line) {
+        if ($line -match "reason=([^|\r\n]+)") { $reason = $Matches[1] }
+        elseif ($line -match "\|FAIL\|([^|\r\n=]+)(?:\||$)") { $reason = $Matches[1] }
+        if ($line -match "(?:^|\|)err=([^|\r\n]+)") { $err = $Matches[1] }
+        if ($line -match "(?:^|\|)reports=([^|\r\n]+)") { $reports = $Matches[1] }
+        if ($line -match "(?:^|\|)volume_up_down=([^|\r\n]+)") { $volumeUpDown = $Matches[1] }
+        if ($line -match "(?:^|\|)volume_up_up=([^|\r\n]+)") { $volumeUpUp = $Matches[1] }
+      }
+      $details = "(reason=$reason err=$err"
+      if (-not [string]::IsNullOrEmpty($reports)) { $details += " reports=$reports" }
+      if (-not [string]::IsNullOrEmpty($volumeUpDown)) { $details += " volume_up_down=$volumeUpDown" }
+      if (-not [string]::IsNullOrEmpty($volumeUpUp)) { $details += " volume_up_up=$volumeUpUp" }
+      $details += ")"
+      Write-Host "FAIL: VIRTIO_INPUT_MEDIA_KEYS_FAILED: virtio-input-media-keys test reported FAIL while -WithInputMediaKeys was enabled $details"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue

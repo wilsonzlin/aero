@@ -2693,6 +2693,54 @@ def _virtio_input_events_fail_failure_message(
     )
 
 
+def _virtio_input_media_keys_fail_failure_message(tail: bytes, *, marker_line: Optional[str] = None) -> str:
+    # Guest marker:
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-input-media-keys|FAIL|reason=<...>|err=<win32>|reports=<n>|volume_up_down=<0/1>|volume_up_up=<0/1>
+    prefix = b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-media-keys|FAIL|"
+    prefix_str = "AERO_VIRTIO_SELFTEST|TEST|virtio-input-media-keys|FAIL|"
+    marker = marker_line
+    if marker is not None and not marker.startswith(prefix_str):
+        marker = None
+    if marker is None:
+        marker = _try_extract_last_marker_line(tail, prefix)
+    if marker is not None:
+        fields = _parse_marker_kv_fields(marker)
+        reason = (fields.get("reason") or "").strip()
+        if not reason:
+            # Backcompat: allow token-only FAIL markers (no `reason=` key).
+            try:
+                toks = marker.split("|")
+                if toks and "FAIL" in toks:
+                    idx = toks.index("FAIL")
+                    if idx + 1 < len(toks):
+                        tok = toks[idx + 1].strip()
+                        if tok and "=" not in tok:
+                            reason = tok
+            except Exception:
+                reason = reason
+        parts: list[str] = []
+        if reason:
+            parts.append(f"reason={_sanitize_marker_value(reason)}")
+        err = (fields.get("err") or "").strip()
+        if err:
+            parts.append(f"err={_sanitize_marker_value(err)}")
+        for k in ("reports", "volume_up_down", "volume_up_up"):
+            v = (fields.get(k) or "").strip()
+            if v:
+                parts.append(f"{k}={_sanitize_marker_value(v)}")
+        details = ""
+        if parts:
+            details = " (" + " ".join(parts) + ")"
+        return (
+            "FAIL: VIRTIO_INPUT_MEDIA_KEYS_FAILED: virtio-input-media-keys test reported FAIL while "
+            f"--with-input-media-keys was enabled{details}"
+        )
+    return (
+        "FAIL: VIRTIO_INPUT_MEDIA_KEYS_FAILED: virtio-input-media-keys test reported FAIL while "
+        "--with-input-media-keys was enabled"
+    )
+
+
 def _virtio_input_tablet_events_skip_failure_message(
     tail: bytes, *, marker_line: Optional[str] = None
 ) -> str:
@@ -5978,7 +6026,10 @@ def main() -> int:
                             break
                         if saw_virtio_input_media_keys_fail:
                             print(
-                                "FAIL: VIRTIO_INPUT_MEDIA_KEYS_FAILED: virtio-input-media-keys test reported FAIL while --with-input-media-keys was enabled",
+                                _virtio_input_media_keys_fail_failure_message(
+                                    tail,
+                                    marker_line=virtio_input_media_keys_marker_line,
+                                ),
                                 file=sys.stderr,
                             )
                             _print_tail(serial_log)
@@ -6515,8 +6566,10 @@ def main() -> int:
                             if need_input_media_keys:
                                 if saw_virtio_input_media_keys_fail:
                                     print(
-                                        "FAIL: VIRTIO_INPUT_MEDIA_KEYS_FAILED: selftest RESULT=PASS but virtio-input-media-keys test reported FAIL "
-                                        "while --with-input-media-keys was enabled",
+                                        _virtio_input_media_keys_fail_failure_message(
+                                            tail,
+                                            marker_line=virtio_input_media_keys_marker_line,
+                                        ),
                                         file=sys.stderr,
                                     )
                                     _print_tail(serial_log)
@@ -6961,7 +7014,10 @@ def main() -> int:
                         if need_input_media_keys:
                             if saw_virtio_input_media_keys_fail:
                                 print(
-                                    "FAIL: VIRTIO_INPUT_MEDIA_KEYS_FAILED: virtio-input-media-keys test reported FAIL while --with-input-media-keys was enabled",
+                                    _virtio_input_media_keys_fail_failure_message(
+                                        tail,
+                                        marker_line=virtio_input_media_keys_marker_line,
+                                    ),
                                     file=sys.stderr,
                                 )
                                 _print_tail(serial_log)
@@ -9025,7 +9081,10 @@ def main() -> int:
                             if need_input_media_keys:
                                 if saw_virtio_input_media_keys_fail:
                                     print(
-                                        "FAIL: VIRTIO_INPUT_MEDIA_KEYS_FAILED: virtio-input-media-keys test reported FAIL while --with-input-media-keys was enabled",
+                                        _virtio_input_media_keys_fail_failure_message(
+                                            tail,
+                                            marker_line=virtio_input_media_keys_marker_line,
+                                        ),
                                         file=sys.stderr,
                                     )
                                     _print_tail(serial_log)
