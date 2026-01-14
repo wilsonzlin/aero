@@ -1377,6 +1377,7 @@ impl D3D11Runtime {
         cursor: &mut usize,
         binding_count: usize,
     ) -> Result<Vec<BindingDef>> {
+        let features = self.device.features();
         let max_storage_buffers_per_shader_stage =
             self.device.limits().max_storage_buffers_per_shader_stage;
         let max_storage_textures_per_shader_stage =
@@ -1436,6 +1437,27 @@ impl D3D11Runtime {
                 bail!(
                     "binding @binding({binding}) requires storage textures, but this device reports max_storage_textures_per_shader_stage=0"
                 );
+            }
+
+            // WebGPU only allows writable storage buffers/textures in the compute stage. wgpu
+            // exposes optional native-only features to enable writable storage in vertex/fragment
+            // stages. If those features are absent, fail fast with a clear diagnostic rather than
+            // triggering a wgpu validation panic during pipeline creation.
+            let writable_storage = matches!(kind, BindingKind::StorageBuffer { read_only: false })
+                || matches!(kind, BindingKind::StorageTexture2DWriteOnly { .. });
+            if writable_storage {
+                if visibility.contains(wgpu::ShaderStages::VERTEX)
+                    && !features.contains(wgpu::Features::VERTEX_WRITABLE_STORAGE)
+                {
+                    bail!(
+                        "binding @binding({binding}) uses writable storage in vertex stage, but device does not support wgpu::Features::VERTEX_WRITABLE_STORAGE"
+                    );
+                }
+                if visibility.contains(wgpu::ShaderStages::FRAGMENT) {
+                    bail!(
+                        "binding @binding({binding}) uses writable storage in fragment stage, which is not supported by this wgpu/WebGPU build"
+                    );
+                }
             }
 
             match bindings.entry(binding) {

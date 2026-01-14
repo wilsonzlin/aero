@@ -105,6 +105,7 @@ pub(super) fn build_pipeline_bindings_info<'a, I>(
 where
     I: IntoIterator<Item = ShaderBindingSet<'a>>,
 {
+    let features = device.features();
     let max_uniform_binding_size = device.limits().max_uniform_buffer_binding_size as u64;
     let max_storage_buffers_per_shader_stage = device.limits().max_storage_buffers_per_shader_stage;
     let max_uniform_buffers_per_shader_stage = device.limits().max_uniform_buffers_per_shader_stage;
@@ -174,6 +175,35 @@ where
                     binding.group,
                     binding.binding,
                 );
+            }
+
+            // WebGPU only allows writable storage buffers/textures in the compute stage. wgpu
+            // exposes optional native-only features to enable writable storage in vertex/fragment
+            // stages. If those features are absent, fail fast with a clear diagnostic rather than
+            // triggering a wgpu validation panic during pipeline creation.
+            let writable_storage = matches!(
+                binding.kind,
+                crate::BindingKind::UavBuffer { .. }
+                    | crate::BindingKind::UavTexture2DWriteOnly { .. }
+                    | crate::BindingKind::ExpansionStorageBuffer { read_only: false }
+            );
+            if writable_storage {
+                if binding.visibility.contains(wgpu::ShaderStages::VERTEX)
+                    && !features.contains(wgpu::Features::VERTEX_WRITABLE_STORAGE)
+                {
+                    bail!(
+                        "{shader_kind} binding @group({}) @binding({}) uses writable storage in vertex stage, but device does not support wgpu::Features::VERTEX_WRITABLE_STORAGE",
+                        binding.group,
+                        binding.binding
+                    );
+                }
+                if binding.visibility.contains(wgpu::ShaderStages::FRAGMENT) {
+                    bail!(
+                        "{shader_kind} binding @group({}) @binding({}) uses writable storage in fragment stage, which is not supported by this wgpu/WebGPU build",
+                        binding.group,
+                        binding.binding
+                    );
+                }
             }
 
             if let crate::BindingKind::ConstantBuffer { slot, reg_count } = binding.kind {
