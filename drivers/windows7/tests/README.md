@@ -76,12 +76,14 @@ drivers/windows7/tests/
     HID interface.
     - For an **Aero contract tablet** (HWID `...&SUBSYS_00121AF4&REV_01`), the intended INF is
       `drivers/windows7/virtio-input/inf/aero_virtio_tablet.inf`.
-    - If your QEMU/device does **not** expose the Aero contract subsystem IDs, `aero_virtio_tablet.inf` will not bind
-      (it is SUBSYS-qualified). In that case you must either:
-      - Adjust/emulate the subsystem IDs to the contract values (so the tablet enumerates as
-        `...&SUBSYS_00121AF4&REV_01` and binds via `aero_virtio_tablet.inf`), **or**
-      - Bind via the revision-gated fallback match in `drivers/windows7/virtio-input/inf/aero_virtio_input.inf`
-        (`PCI\VEN_1AF4&DEV_1052&REV_01`) (expected for stock QEMU `virtio-tablet-pci` devices with non-Aero subsystem IDs).
+      - If your QEMU/device does **not** expose the Aero contract subsystem IDs, `aero_virtio_tablet.inf` will not bind
+        (it is SUBSYS-qualified). In that case you must either:
+        - Adjust/emulate the subsystem IDs to the contract values (so the tablet enumerates as
+          `...&SUBSYS_00121AF4&REV_01` and binds via `aero_virtio_tablet.inf`), **or**
+      - Enable/install the optional legacy filename alias INF
+        (`drivers/windows7/virtio-input/inf/virtio-input.inf.disabled` → rename to `virtio-input.inf` to enable), which
+        provides the strict revision-gated generic fallback match (`PCI\VEN_1AF4&DEV_1052&REV_01`) (expected for stock QEMU
+        `virtio-tablet-pci` devices with non-Aero subsystem IDs).
         - When binding via the fallback entry, Device Manager will show the generic **Aero VirtIO Input Device** name.
     - Once bound, the driver classifies the device as a tablet via `EV_BITS` (`EV_ABS` + `ABS_X`/`ABS_Y`).
 - Optionally runs a virtio-snd test (PCI detection + endpoint enumeration + short playback) when a supported virtio-snd
