@@ -13,10 +13,63 @@ struct Vertex {
   DWORD color;
 };
 
+static bool FillRectPatchInfo(D3DRECTPATCH_INFO* out) {
+  if (!out) {
+    return false;
+  }
+  ZeroMemory(out, sizeof(*out));
+
+  // D3DRECTPATCH_INFO layout varies across header vintages; use sizeof() to pick
+  // a compatible layout and memcpy into the runtime struct so this test can
+  // build on older toolchains/SDKs.
+  //
+  // Known layouts:
+  // - 16 bytes: {StartVertexOffset, NumVertices, Basis, Degree}
+  // - 28 bytes: {StartVertexOffsetWidth, StartVertexOffsetHeight, Width, Height, Stride, Basis, Degree}
+  if (sizeof(D3DRECTPATCH_INFO) == 16) {
+    struct Info16 {
+      UINT StartVertexOffset;
+      UINT NumVertices;
+      D3DBASISTYPE Basis;
+      D3DDEGREETYPE Degree;
+    };
+    Info16 info;
+    info.StartVertexOffset = 0;
+    info.NumVertices = 16;
+    info.Basis = D3DBASIS_BEZIER;
+    info.Degree = D3DDEGREE_CUBIC;
+    memcpy(out, &info, sizeof(info));
+    return true;
+  }
+  if (sizeof(D3DRECTPATCH_INFO) == 28) {
+    struct Info28 {
+      UINT StartVertexOffsetWidth;
+      UINT StartVertexOffsetHeight;
+      UINT Width;
+      UINT Height;
+      UINT Stride;
+      D3DBASISTYPE Basis;
+      D3DDEGREETYPE Degree;
+    };
+    Info28 info;
+    info.StartVertexOffsetWidth = 0;
+    info.StartVertexOffsetHeight = 0;
+    info.Width = 4;
+    info.Height = 4;
+    info.Stride = 4;
+    info.Basis = D3DBASIS_BEZIER;
+    info.Degree = D3DDEGREE_CUBIC;
+    memcpy(out, &info, sizeof(info));
+    return true;
+  }
+
+  return false;
+}
+
 static void DumpTightBgra32(const char* test_name,
-                            aerogpu_test::TestReporter* reporter,
-                            const wchar_t* file_name,
-                            const void* data,
+                             aerogpu_test::TestReporter* reporter,
+                             const wchar_t* file_name,
+                             const void* data,
                             int row_pitch,
                             int width,
                             int height) {
@@ -411,6 +464,179 @@ static int RunD3D9PatchSanity(int argc, char** argv) {
   hr = dev->DeletePatch(patch);
   if (FAILED(hr)) {
     return reporter.FailHresult("IDirect3DDevice9Ex::DeletePatch", hr);
+  }
+
+  // Create + draw a simple cubic rect patch.
+  //
+  // NOTE: Some D3D9 header vintages use a different D3DRECTPATCH_INFO layout;
+  // FillRectPatchInfo() handles the known variants.
+  const DWORD kGreen = D3DCOLOR_XRGB(0, 255, 0);
+
+  // Build a planar 4x4 control point grid so the cubic Bezier surface evaluates
+  // to a rectangle in screen space.
+  const float x0 = (float)kWidth * 0.25f;
+  const float x1 = (float)kWidth * 0.75f;
+  const float y0 = (float)kHeight * 0.25f;
+  const float y1 = (float)kHeight * 0.75f;
+
+  Vertex rect_cp[16];
+  for (int j = 0; j < 4; ++j) {
+    const float v = (float)j / 3.0f;
+    const float y = y0 + (y1 - y0) * v;
+    for (int i = 0; i < 4; ++i) {
+      const float u = (float)i / 3.0f;
+      const float x = x0 + (x1 - x0) * u;
+      Vertex vert;
+      vert.x = x;
+      vert.y = y;
+      vert.z = 0.5f;
+      vert.rhw = 1.0f;
+      vert.color = kGreen;
+      rect_cp[j * 4 + i] = vert;
+    }
+  }
+
+  ComPtr<IDirect3DVertexBuffer9> vb_rect;
+  hr = dev->CreateVertexBuffer(sizeof(rect_cp),
+                               0,
+                               D3DFVF_XYZRHW | D3DFVF_DIFFUSE,
+                               D3DPOOL_DEFAULT,
+                               vb_rect.put(),
+                               NULL);
+  if (FAILED(hr)) {
+    hr = dev->CreateVertexBuffer(sizeof(rect_cp),
+                                 0,
+                                 D3DFVF_XYZRHW | D3DFVF_DIFFUSE,
+                                 D3DPOOL_SYSTEMMEM,
+                                 vb_rect.put(),
+                                 NULL);
+  }
+  if (FAILED(hr)) {
+    return reporter.FailHresult("CreateVertexBuffer(rect patch)", hr);
+  }
+
+  void* vb_rect_ptr = NULL;
+  hr = vb_rect->Lock(0, sizeof(rect_cp), &vb_rect_ptr, 0);
+  if (FAILED(hr) || !vb_rect_ptr) {
+    return reporter.FailHresult("IDirect3DVertexBuffer9::Lock(rect patch)", FAILED(hr) ? hr : E_FAIL);
+  }
+  memcpy(vb_rect_ptr, rect_cp, sizeof(rect_cp));
+  vb_rect->Unlock();
+
+  hr = dev->SetStreamSource(0, vb_rect.get(), 0, sizeof(Vertex));
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3DDevice9Ex::SetStreamSource(rect patch)", hr);
+  }
+  hr = dev->SetFVF(D3DFVF_XYZRHW | D3DFVF_DIFFUSE);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3DDevice9Ex::SetFVF(rect patch)", hr);
+  }
+
+  D3DPATCHHANDLE rect_patch = 0;
+  float rect_segs[4] = {2.0f, 2.0f, 2.0f, 2.0f};
+  D3DRECTPATCH_INFO rinfo;
+  if (!FillRectPatchInfo(&rinfo)) {
+    aerogpu_test::PrintfStdout("INFO: %s: unknown D3DRECTPATCH_INFO layout (size=%u); skipping rect patch",
+                               kTestName,
+                               (unsigned)sizeof(D3DRECTPATCH_INFO));
+    reporter.SetSkipped("rect_patch_info_layout_unknown");
+    return reporter.Pass();
+  }
+
+  hr = dev->CreateRectPatch(&rect_patch, rect_segs, &rinfo);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3DDevice9Ex::CreateRectPatch", hr);
+  }
+
+  hr = dev->Clear(0, NULL, D3DCLEAR_TARGET, kRed, 1.0f, 0);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3DDevice9Ex::Clear(rect patch)", hr);
+  }
+
+  hr = dev->BeginScene();
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3DDevice9Ex::BeginScene(rect patch)", hr);
+  }
+
+  hr = dev->DrawRectPatch(rect_patch, rect_segs, &rinfo);
+  if (FAILED(hr)) {
+    dev->EndScene();
+    return reporter.FailHresult("IDirect3DDevice9Ex::DrawRectPatch", hr);
+  }
+
+  hr = dev->EndScene();
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3DDevice9Ex::EndScene(rect patch)", hr);
+  }
+
+  // Read back before Present: with DISCARD swap effects, contents after Present are undefined.
+  backbuffer.reset();
+  hr = dev->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, backbuffer.put());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3DDevice9Ex::GetBackBuffer(rect patch)", hr);
+  }
+
+  ZeroMemory(&desc, sizeof(desc));
+  hr = backbuffer->GetDesc(&desc);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3DSurface9::GetDesc(rect patch)", hr);
+  }
+
+  sysmem.reset();
+  hr = dev->CreateOffscreenPlainSurface(desc.Width,
+                                        desc.Height,
+                                        desc.Format,
+                                        D3DPOOL_SYSTEMMEM,
+                                        sysmem.put(),
+                                        NULL);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("CreateOffscreenPlainSurface(rect patch)", hr);
+  }
+
+  hr = dev->GetRenderTargetData(backbuffer.get(), sysmem.get());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("GetRenderTargetData(rect patch)", hr);
+  }
+
+  ZeroMemory(&lr, sizeof(lr));
+  hr = sysmem->LockRect(&lr, NULL, D3DLOCK_READONLY);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3DSurface9::LockRect(rect patch)", hr);
+  }
+
+  const uint32_t center2 = aerogpu_test::ReadPixelBGRA(lr.pBits, (int)lr.Pitch, cx, cy);
+  const uint32_t corner2 = aerogpu_test::ReadPixelBGRA(lr.pBits, (int)lr.Pitch, 5, 5);
+  const uint32_t expected2 = 0xFF00FF00u;        // BGRA green.
+  const uint32_t expected_corner2 = 0xFFFF0000u; // BGRA red.
+  if ((center2 & 0x00FFFFFFu) != (expected2 & 0x00FFFFFFu) ||
+      (corner2 & 0x00FFFFFFu) != (expected_corner2 & 0x00FFFFFFu)) {
+    if (dump) {
+      std::string err;
+      const std::wstring bmp_path = aerogpu_test::JoinPath(aerogpu_test::GetModuleDir(), L"d3d9_patch_sanity_rect.bmp");
+      if (aerogpu_test::WriteBmp32BGRA(bmp_path,
+                                       (int)desc.Width,
+                                       (int)desc.Height,
+                                       lr.pBits,
+                                       (int)lr.Pitch,
+                                       &err)) {
+        reporter.AddArtifactPathW(bmp_path);
+      } else {
+        aerogpu_test::PrintfStdout("INFO: %s: rect BMP dump failed: %s", kTestName, err.c_str());
+      }
+    }
+    sysmem->UnlockRect();
+    return reporter.Fail("rect patch pixel mismatch: center=0x%08lX expected 0x%08lX; corner(5,5)=0x%08lX expected 0x%08lX",
+                         (unsigned long)center2,
+                         (unsigned long)expected2,
+                         (unsigned long)corner2,
+                         (unsigned long)expected_corner2);
+  }
+
+  sysmem->UnlockRect();
+
+  hr = dev->DeletePatch(rect_patch);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3DDevice9Ex::DeletePatch(rect)", hr);
   }
 
   return reporter.Pass();
