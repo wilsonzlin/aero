@@ -12564,9 +12564,6 @@ fn map_buffer_usage_flags(flags: u32, supports_compute: bool) -> wgpu::BufferUsa
     if flags & AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER != 0 {
         usage |= wgpu::BufferUsages::UNIFORM;
     }
-    if flags & AEROGPU_RESOURCE_USAGE_STORAGE != 0 {
-        usage |= wgpu::BufferUsages::STORAGE;
-    }
     // Allow readback for tests / future host interop.
     usage |= wgpu::BufferUsages::COPY_SRC;
     usage
@@ -14612,7 +14609,7 @@ mod tests {
     }
 
     #[test]
-    fn map_buffer_usage_flags_adds_storage_for_vertex_index_when_compute_supported() {
+    fn map_buffer_usage_flags_gates_storage_on_compute_support() {
         let vb = map_buffer_usage_flags(AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER, true);
         assert!(vb.contains(wgpu::BufferUsages::VERTEX));
         assert!(vb.contains(wgpu::BufferUsages::STORAGE));
@@ -14626,6 +14623,12 @@ mod tests {
 
         let ib_no_compute = map_buffer_usage_flags(AEROGPU_RESOURCE_USAGE_INDEX_BUFFER, false);
         assert!(!ib_no_compute.contains(wgpu::BufferUsages::STORAGE));
+
+        let storage = map_buffer_usage_flags(AEROGPU_RESOURCE_USAGE_STORAGE, true);
+        assert!(storage.contains(wgpu::BufferUsages::STORAGE));
+
+        let storage_no_compute = map_buffer_usage_flags(AEROGPU_RESOURCE_USAGE_STORAGE, false);
+        assert!(!storage_no_compute.contains(wgpu::BufferUsages::STORAGE));
     }
 
     #[test]
