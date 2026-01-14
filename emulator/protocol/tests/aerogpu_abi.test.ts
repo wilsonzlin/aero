@@ -627,6 +627,9 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(size("aerogpu_escape_query_scanout_out_v2"), 80);
   assert.equal(size("aerogpu_escape_query_cursor_out"), 72);
   assert.equal(size("aerogpu_escape_query_error_out"), 40);
+  assert.equal(size("aerogpu_escape_set_cursor_position_in"), 24);
+  assert.equal(size("aerogpu_escape_set_cursor_visibility_in"), 24);
+  assert.equal(size("aerogpu_escape_set_cursor_shape_in"), 49);
   assert.equal(size("aerogpu_escape_map_shared_handle_inout"), 32);
   assert.equal(size("aerogpu_escape_read_gpa_inout"), 40 + 4096);
   assert.equal(size("aerogpu_dbgctl_createallocation_desc"), 56);
@@ -1065,6 +1068,19 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(off("aerogpu_escape_query_cursor_out", "fb_gpa"), 56);
   assert.equal(off("aerogpu_escape_query_cursor_out", "pitch_bytes"), 64);
   assert.equal(off("aerogpu_escape_query_cursor_out", "reserved1"), 68);
+
+  assert.equal(off("aerogpu_escape_set_cursor_position_in", "x"), 16);
+  assert.equal(off("aerogpu_escape_set_cursor_position_in", "y"), 20);
+  assert.equal(off("aerogpu_escape_set_cursor_visibility_in", "visible"), 16);
+  assert.equal(off("aerogpu_escape_set_cursor_shape_in", "width"), 16);
+  assert.equal(off("aerogpu_escape_set_cursor_shape_in", "height"), 20);
+  assert.equal(off("aerogpu_escape_set_cursor_shape_in", "hot_x"), 24);
+  assert.equal(off("aerogpu_escape_set_cursor_shape_in", "hot_y"), 28);
+  assert.equal(off("aerogpu_escape_set_cursor_shape_in", "pitch_bytes"), 32);
+  assert.equal(off("aerogpu_escape_set_cursor_shape_in", "format"), 36);
+  assert.equal(off("aerogpu_escape_set_cursor_shape_in", "reserved0"), 40);
+  assert.equal(off("aerogpu_escape_set_cursor_shape_in", "reserved1"), 44);
+  assert.equal(off("aerogpu_escape_set_cursor_shape_in", "pixels"), 48);
   assert.equal(off("aerogpu_escape_map_shared_handle_inout", "shared_handle"), 16);
   assert.equal(off("aerogpu_escape_map_shared_handle_inout", "debug_token"), 24);
   assert.equal(off("aerogpu_escape_map_shared_handle_inout", "share_token"), 24);
@@ -1377,6 +1393,9 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(konst("AEROGPU_ESCAPE_OP_DUMP_VBLANK"), 5n);
   assert.equal(konst("AEROGPU_ESCAPE_OP_DUMP_RING_V2"), 6n);
   assert.equal(konst("AEROGPU_ESCAPE_OP_QUERY_CURSOR"), 11n);
+  assert.equal(konst("AEROGPU_ESCAPE_OP_SET_CURSOR_SHAPE"), 15n);
+  assert.equal(konst("AEROGPU_ESCAPE_OP_SET_CURSOR_POSITION"), 16n);
+  assert.equal(konst("AEROGPU_ESCAPE_OP_SET_CURSOR_VISIBILITY"), 17n);
   assert.equal(konst("AEROGPU_ESCAPE_OP_READ_GPA"), 13n);
   assert.equal(konst("AEROGPU_ESCAPE_OP_QUERY_ERROR"), 14n);
   assert.equal(konst("AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS"), 32n);
