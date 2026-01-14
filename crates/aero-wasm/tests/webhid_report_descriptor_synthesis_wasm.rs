@@ -1,6 +1,7 @@
 #![cfg(target_arch = "wasm32")]
 
 use js_sys::JSON;
+use wasm_bindgen::JsCast;
 use wasm_bindgen_test::wasm_bindgen_test;
 
 // Some browser-only APIs used by `aero-wasm` are worker-only (e.g. OPFS sync access handles).
@@ -60,3 +61,33 @@ fn synthesize_webhid_normalized_mouse_descriptor_matches_expected_bytes() {
     assert_eq!(bytes, expected.to_vec());
 }
 
+#[wasm_bindgen_test]
+fn synthesize_webhid_report_descriptor_error_includes_field_path() {
+    let fixture = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tests/fixtures/hid/webhid_normalized_mouse.json"
+    ));
+    let collections = JSON::parse(fixture).expect("parse webhid_normalized_mouse.json fixture");
+
+    // Introduce a schema error: `usagePage` must be a number, but we set it to a string.
+    let arr = js_sys::Array::from(&collections);
+    let first = arr.get(0);
+    js_sys::Reflect::set(
+        &first,
+        &wasm_bindgen::JsValue::from_str("usagePage"),
+        &wasm_bindgen::JsValue::from_str("not-a-number"),
+    )
+    .expect("Reflect::set should succeed");
+
+    let err = aero_wasm::synthesize_webhid_report_descriptor(collections)
+        .expect_err("expected schema error");
+    let msg = err
+        .as_string()
+        .or_else(|| err.dyn_ref::<js_sys::Error>().and_then(|e| e.message().as_string()))
+        .unwrap_or_else(|| format!("{err:?}"));
+
+    assert!(
+        msg.contains("at [0].usagePage"),
+        "expected error message to include field path; got: {msg}"
+    );
+}
