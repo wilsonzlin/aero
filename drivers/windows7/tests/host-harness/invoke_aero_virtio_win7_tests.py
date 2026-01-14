@@ -11,7 +11,7 @@ Note: In the default (non-transitional) mode, this harness uses *modern-only* vi
 virtio-blk/virtio-net/virtio-input so the Win7 drivers bind to the Aero contract v1 IDs
 (DEV_1041/DEV_1042/DEV_1052) and strict `&REV_01` INFs can bind under QEMU.
 
-When `--with-virtio-snd` is enabled, the harness also configures virtio-snd as a modern-only
+When `--with-virtio-snd/--require-virtio-snd/--enable-virtio-snd` is enabled, the harness also configures virtio-snd as a modern-only
 virtio-pci device and forces the Aero contract v1 revision (`disable-legacy=on,x-pci-revision=0x01`)
 so the canonical Win7 INF (`aero_virtio_snd.inf`) can bind to `PCI\\VEN_1AF4&DEV_1059&REV_01` under QEMU.
 
@@ -38,32 +38,32 @@ It:
 - optionally enables a QMP monitor to:
   - request a graceful QEMU shutdown so side-effectful devices (notably the `wav` audiodev backend) can flush/finalize
     their output files before verification
-  - verify QEMU-emitted virtio PCI Vendor/Device/Revision IDs via `query-pci` (when `--qemu-preflight-pci` is enabled)
-  - trigger a virtio-blk runtime resize via `blockdev-resize` / legacy `block_resize` (when `--with-blk-resize` is enabled)
+  - verify QEMU-emitted virtio PCI Vendor/Device/Revision IDs via `query-pci` (when `--qemu-preflight-pci/--qmp-preflight-pci` is enabled)
+  - trigger a virtio-blk runtime resize via `blockdev-resize` / legacy `block_resize` (when `--with-blk-resize/--with-virtio-blk-resize/--require-virtio-blk-resize/--enable-virtio-blk-resize` is enabled)
   - inject deterministic virtio-input events:
-    - keyboard + relative mouse: `--with-input-events` / `--with-virtio-input-events`
+    - keyboard + relative mouse: `--with-input-events/--with-virtio-input-events/--require-virtio-input-events/--enable-virtio-input-events`
       - prefers QMP `input-send-event`, with backcompat fallbacks when unavailable
     - mouse wheel: `--with-input-wheel` (aliases: `--with-virtio-input-wheel`, `--require-virtio-input-wheel`, `--enable-virtio-input-wheel`)
       (requires QMP `input-send-event`)
-    - Consumer Control (media keys): `--with-input-media-keys` / `--with-virtio-input-media-keys`
+    - Consumer Control (media keys): `--with-input-media-keys/--with-virtio-input-media-keys/--require-virtio-input-media-keys/--enable-virtio-input-media-keys`
       - prefers QMP `input-send-event`, with backcompat fallbacks when unavailable
-    - tablet / absolute pointer: `--with-input-tablet-events` / `--with-tablet-events` (requires QMP `input-send-event`)
+    - tablet / absolute pointer: `--with-input-tablet-events/--with-tablet-events/--with-virtio-input-tablet-events/--require-virtio-input-tablet-events/--enable-virtio-input-tablet-events` (requires QMP `input-send-event`)
   - verify host-side MSI-X enablement on virtio PCI functions via QMP/QEMU introspection (when `--require-virtio-*-msix` is enabled)
   (unix socket on POSIX; TCP loopback fallback on Windows)
 - tails the serial log until it sees AERO_VIRTIO_SELFTEST|RESULT|PASS/FAIL
   - in default (non-transitional) mode, a PASS result also requires per-test markers for virtio-blk, virtio-input,
      virtio-input-bind, virtio-snd (PASS or SKIP), virtio-snd-capture (PASS or SKIP), virtio-snd-duplex (PASS or SKIP),
      virtio-net, and virtio-net-udp so older selftest binaries cannot accidentally pass
-  - when --with-virtio-snd is enabled, virtio-snd, virtio-snd-capture, and virtio-snd-duplex must PASS (not SKIP)
-  - when --with-snd-buffer-limits is enabled, virtio-snd-buffer-limits must PASS (not FAIL/SKIP/missing)
+  - when --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd is enabled, virtio-snd, virtio-snd-capture, and virtio-snd-duplex must PASS (not SKIP)
+  - when --with-snd-buffer-limits/--with-virtio-snd-buffer-limits/--require-virtio-snd-buffer-limits/--enable-snd-buffer-limits/--enable-virtio-snd-buffer-limits is enabled, virtio-snd-buffer-limits must PASS (not FAIL/SKIP/missing)
   - when --with-input-events/--with-virtio-input-events/--require-virtio-input-events/--enable-virtio-input-events is enabled, virtio-input-events must PASS (not FAIL/missing)
   - when --with-input-leds/--with-virtio-input-leds/--require-virtio-input-leds/--enable-virtio-input-leds is enabled, virtio-input-leds must PASS (not SKIP/FAIL/missing) (provision the guest with
     --test-input-leds; newer guest selftests also accept --test-input-led and emit the legacy marker)
   - when --with-input-media-keys/--with-virtio-input-media-keys/--require-virtio-input-media-keys/--enable-virtio-input-media-keys is enabled, virtio-input-media-keys must PASS (not FAIL/missing)
   - when --with-input-led/--with-virtio-input-led/--require-virtio-input-led/--enable-virtio-input-led is enabled, virtio-input-led must PASS (not FAIL/SKIP/missing)
   - when --with-input-tablet-events/--with-tablet-events/--with-virtio-input-tablet-events/--require-virtio-input-tablet-events/--enable-virtio-input-tablet-events is enabled, virtio-input-tablet-events must PASS (not FAIL/missing)
-  - when --with-blk-resize is enabled, virtio-blk-resize must PASS (not SKIP/FAIL/missing)
-  - when --with-blk-reset is enabled, virtio-blk-reset must PASS (not SKIP/FAIL/missing)
+  - when --with-blk-resize/--with-virtio-blk-resize/--require-virtio-blk-resize/--enable-virtio-blk-resize is enabled, virtio-blk-resize must PASS (not SKIP/FAIL/missing)
+  - when --with-blk-reset/--with-virtio-blk-reset/--require-virtio-blk-reset/--enable-virtio-blk-reset is enabled, virtio-blk-reset must PASS (not SKIP/FAIL/missing)
 
 For convenience when scraping CI logs, the harness may also emit stable host-side summary markers (best-effort;
 do not affect PASS/FAIL):
@@ -5835,7 +5835,9 @@ def main() -> int:
         try:
             if args.qemu_preflight_pci:
                 if qmp_endpoint is None:
-                    raise AssertionError("--qemu-preflight-pci requested but QMP endpoint is not configured")
+                    raise AssertionError(
+                        "--qemu-preflight-pci/--qmp-preflight-pci requested but QMP endpoint is not configured"
+                    )
                 try:
                     _qmp_pci_preflight(
                         qmp_endpoint,
