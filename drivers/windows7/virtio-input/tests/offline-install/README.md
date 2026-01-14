@@ -8,16 +8,15 @@ test images where you want input working immediately).
 > Ensure your virtio-input PCI device reports `REV_01` (for example in QEMU:
 > `-device virtio-*-pci,...,x-pci-revision=0x01`) or Windows will not bind the staged driver.
 >
-> 
-> - Keyboard/mouse (canonical; recommended): `aero_virtio_input.inf`
->   - contract IDs: `SUBSYS_00101AF4` / `SUBSYS_00111AF4` (distinct Device Manager names when subsystem IDs are present)
->   - strict fallback (no `SUBSYS`): `PCI\VEN_1AF4&DEV_1052&REV_01` (when subsystem IDs are not exposed/recognized; Device Manager name: **Aero VirtIO Input Device**)
+>
+> - Keyboard/mouse (`aero_virtio_input.inf`):
+>   - Binds via `SUBSYS_00101AF4` / `SUBSYS_00111AF4` only (no generic fallback HWID in the canonical INF).
 > - Tablet/absolute pointer (`aero_virtio_tablet.inf`): `SUBSYS_00121AF4`
-> - Optional legacy filename alias: `virtio-input.inf.disabled` → rename to `virtio-input.inf` to enable (disabled by default).
->   - Filename-only alias for workflows/tools that still reference `virtio-input.inf`.
->   - From the first section header (`[Version]`) onward, expected to be byte-for-byte identical to `aero_virtio_input.inf`
->     (only the leading banner/comments may differ; see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
->   - Do **not** stage both filenames at once (`aero_virtio_input.inf` and `virtio-input.inf`): they match the same HWIDs.
+> - Opt-in strict generic fallback (no `SUBSYS`): `PCI\VEN_1AF4&DEV_1052&REV_01`
+>   - Provided only by the legacy filename alias INF: `virtio-input.inf.disabled` → rename to `virtio-input.inf` to enable.
+>   - Alias sync policy: identical to `aero_virtio_input.inf` from `[Version]` onward **except** the models sections
+>     (`[Aero.NTx86]` / `[Aero.NTamd64]`), where the alias adds the fallback match. Banner/comments may differ.
+>   - Do **not** stage/install both basenames at once: choose **either** `aero_virtio_input.inf` **or** `virtio-input.inf`.
 
 The commands below assume you already have a **built driver package directory** containing:
 
