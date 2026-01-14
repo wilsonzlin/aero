@@ -1705,8 +1705,11 @@ impl UsbHub for UsbHubDevice {
     }
 
     fn downstream_device_mut_for_address(&mut self, address: u8) -> Option<&mut AttachedUsbDevice> {
+        if self.upstream_suspended {
+            return None;
+        }
         for port in &mut self.ports {
-            if !(port.enabled && port.powered) {
+            if !(port.enabled && port.powered) || port.suspended {
                 continue;
             }
             if let Some(dev) = port.device.as_mut() {

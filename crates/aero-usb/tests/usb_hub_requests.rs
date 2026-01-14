@@ -662,6 +662,45 @@ fn usb_hub_port_suspend_set_and_clear_feature() {
 }
 
 #[test]
+fn usb_hub_port_suspend_disables_routing_until_resumed() {
+    let mut hub = UsbHubDevice::new();
+    hub.attach(1, Box::new(DummyUsbDevice));
+    assert_eq!(
+        hub.handle_control_request(set_configuration(1), None),
+        ControlResponse::Ack
+    );
+
+    // Power + reset so the downstream device becomes routable.
+    assert_eq!(
+        hub.handle_control_request(hub_set_feature_port(1, HUB_PORT_FEATURE_POWER), None),
+        ControlResponse::Ack
+    );
+    assert_eq!(
+        hub.handle_control_request(hub_set_feature_port(1, HUB_PORT_FEATURE_RESET), None),
+        ControlResponse::Ack
+    );
+    for _ in 0..50 {
+        UsbHub::tick_1ms(&mut hub);
+    }
+
+    assert!(hub.child_device_mut_for_address(0).is_some());
+
+    // Suspend the port: routing should be disabled while suspended.
+    assert_eq!(
+        hub.handle_control_request(hub_set_feature_port(1, HUB_PORT_FEATURE_SUSPEND), None),
+        ControlResponse::Ack
+    );
+    assert!(hub.child_device_mut_for_address(0).is_none());
+
+    // Resume the port: routing should return.
+    assert_eq!(
+        hub.handle_control_request(hub_clear_feature_port(1, HUB_PORT_FEATURE_SUSPEND), None),
+        ControlResponse::Ack
+    );
+    assert!(hub.child_device_mut_for_address(0).is_some());
+}
+
+#[test]
 fn usb_hub_hub_descriptor_fields_are_stable_and_correct_length() {
     const HUB_DESCRIPTOR_TYPE: u16 = 0x29;
     const HUB_NUM_PORTS: usize = 4;
