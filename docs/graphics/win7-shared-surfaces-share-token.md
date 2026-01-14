@@ -20,8 +20,9 @@ That `HANDLE` is typically an **NT handle** (notably for DXGI shared handles), w
 
 Therefore: **AeroGPU must not use the numeric user-mode shared `HANDLE` value as a protocol share identifier.**
 
-Note: some D3D9Ex implementations use “token-style” shared handles that are not real NT handles and cannot be duplicated
-with `DuplicateHandle`. Even in that case, the numeric value is not a robust protocol key: the stable cross-process
+Note: some D3D9Ex implementations use “token-style” shared handles that are not real NT handles. They cannot be duplicated
+with `DuplicateHandle`, and they should not be passed to `CloseHandle` (a numeric token could collide with an unrelated
+valid handle value in the current process). Even in that case, the numeric value is not a robust protocol key: the stable cross-process
 identifier is still `share_token` preserved in WDDM allocation private data.
 
 ## AeroGPU contract: `share_token` is a stable token persisted in WDDM allocation private data
