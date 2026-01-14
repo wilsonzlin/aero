@@ -501,3 +501,5 @@ layout directly:
 - Rust (HS/DS-only convenience): `aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter::bind_shaders_hs_ds(hs, ds)`
 - TypeScript: `AerogpuCmdWriter.bindShadersEx(vs, ps, cs, gs, hs, ds)`
 - TypeScript (HS/DS-only convenience): `AerogpuCmdWriter.bindShadersHsDs(hs, ds)`
+- C++ (UMD `CmdStreamWriter`): `aerogpu::CmdWriter::bind_shaders_ex(vs, ps, cs, gs, hs, ds, mirror_gs_to_reserved0=false)`
+- C++ (UMD HS/DS-only convenience): `aerogpu::CmdWriter::bind_shaders_hs_ds(hs, ds)`
