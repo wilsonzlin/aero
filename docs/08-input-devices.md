@@ -738,6 +738,28 @@ The repository includes a concrete browser-side input capture implementation:
   - the browser does not perform its default action (scroll, navigate, etc.), and
   - other app-level/global listeners do not observe the event while the VM is actively capturing input.
 
+#### Workers panel VM canvas UX (`InputCapture`)
+
+The primary interactive UI is the **Workers panel** VM canvas:
+
+- The VGA canvas element is created/rendered by `web/src/main.ts::renderWorkersPanel`.
+- That canvas is wired through `web/src/input/input_capture.ts` (`InputCapture`), and flushed to the I/O worker (`web/src/workers/io.worker.ts`).
+
+Expected user interaction:
+
+- **Click the VM canvas** to focus it and request pointer lock.
+  - Pointer lock is required for relative mouse deltas (`movementX`/`movementY`) and to prevent the cursor from leaving the canvas.
+- While capture is active, **keyboard / mouse / gamepad** input is batched and forwarded to the I/O worker.
+- To **exit pointer lock**, press **Escape** (browser default).
+  - Optionally, hosts can configure a *host-only* pointer-lock release chord via `InputCaptureOptions.releasePointerLockChord`.
+    - When set, the chord is swallowed (not forwarded to the guest) and the matching keyup is also suppressed.
+- On **blur** (canvas blur or window blur) or **page visibility change** (`document.visibilityState === "hidden"`),
+  `InputCapture` exits pointer lock and performs an immediate **release-all flush**:
+  - emits "key up" for any pressed keys,
+  - sets mouse buttons to `0`,
+  - emits a neutral gamepad report (if enabled),
+  - flushes the batch immediately so the guest cannot get stuck keys/buttons while the tab is backgrounded.
+
 #### Worker Transport / Wire Format
 
 Input batches are delivered to the I/O worker via `postMessage` with:
@@ -745,6 +767,9 @@ Input batches are delivered to the I/O worker via `postMessage` with:
 ```ts
 { type: 'in:input-batch', buffer: ArrayBuffer, recycle?: true }
 ```
+
+On the receiving side, batches are handled by `web/src/workers/io.worker.ts` (see the `"in:input-batch"` message
+case and `handleInputBatch(...)`).
 
 `buffer` contains a small `Int32Array`-compatible payload:
 
@@ -758,6 +783,7 @@ Event types are defined in `web/src/input/event_queue.ts` (`InputEventType`):
 
 - `KeyScancode (1)`: `a=packedBytesLE`, `b=byteLen` (PS/2 Set 2 bytes including `0xE0`/`0xF0`). Long sequences are split across multiple `KeyScancode` events in-order (max 4 bytes per event).
 - `KeyHidUsage (6)`: `a=(usage & 0xFF) | ((pressed ? 1 : 0) << 8)`, `b=unused` (USB HID keyboard usage events on Usage Page 0x07). Emitted in addition to `KeyScancode` so the runtime can drive both PS/2 and USB HID paths from the same captured input.
+- `HidUsage16 (7)`: `a=(usagePage & 0xFFFF) | ((pressed ? 1 : 0) << 16)`, `b=usageId & 0xFFFF` (e.g. Consumer Control / media keys on Usage Page `0x0C`)
 - `MouseMove (2)`: `a=dx`, `b=dy` (PS/2 coords: `dx` right, `dy` up)
 - `MouseButtons (3)`: `a=buttons` (bit0..bit7 = buttons 1..8; DOM mapping typically uses bit0..bit4 for left/right/middle/back/forward, with bit5+ as additional buttons)
 - `MouseWheel (4)`: `a=dz` (positive=wheel up), `b=dx` (positive=wheel right / horizontal scroll; used as `REL_HWHEEL` on virtio-input)
@@ -777,6 +803,22 @@ back to the sender once processed:
 
 This avoids allocating a new `ArrayBuffer` per flush on the main thread.
 
+#### Capture lifecycle (focus / pointer lock / release-all flush)
+
+See `web/src/input/input_capture.ts` for the exact event listeners and gating conditions. At a high level:
+
+- Capture becomes active when the window is focused, the page is visible, and the canvas is focused **or** pointer lock is active.
+- `keydown` / `keyup` events are listened on `window` (capture phase) and translated into:
+  - PS/2 Set-2 scancode bytes (`InputEventType.KeyScancode`),
+  - USB HID keyboard usages (`InputEventType.KeyHidUsage`), and
+  - additional HID usages on other pages (`InputEventType.HidUsage16`, e.g. Consumer Control / media keys),
+  then enqueued into `InputEventQueue`.
+  - The I/O worker decides which events to consume based on the active backend (PS/2 vs USB vs virtio), to avoid duplicates.
+- `mousemove` events are listened on `document` (capture phase) while pointer lock is active and forwarded as relative deltas (`MouseMove`).
+  - Y is inverted once in `InputCapture` so `MouseMove` is already in PS/2 coordinate space (positive is up).
+- `wheel` events are forwarded as `MouseWheel` with both vertical (`dz`) and horizontal (`dx`) scroll components.
+- On blur / hidden-page, `InputCapture` emits a release-all snapshot and flushes immediately (see above).
+
 #### Consumption + routing in the I/O worker
 
 Input batches are consumed in the I/O worker (`web/src/workers/io.worker.ts`) by handling `message` events with `type: "in:input-batch"`.
@@ -787,7 +829,7 @@ The worker decodes the `InputEventType` stream and routes each event into the cu
 - **virtio-input fast path**: routed to the virtio-input PCI functions (once the guest sets `DRIVER_OK`).
 - **USB HID**: routed to synthetic USB HID devices behind the UHCI external hub (or to passthrough devices when enabled).
 
-### Scancode Translation
+#### Scancode Translation
 
 ```rust
 // Scancode translation is generated from a single source-of-truth table:
@@ -872,7 +914,7 @@ Current implementation details:
   - Current backend selection order (matches `web/src/workers/io.worker.ts`):
     - **Keyboard:** virtio-input (once the guest sets `DRIVER_OK`) → synthetic USB keyboard (once configured) → PS/2 i8042
     - **Mouse:** virtio-input (once the guest sets `DRIVER_OK`) → PS/2 i8042 while the synthetic USB mouse is unconfigured → synthetic USB mouse (once configured; or if PS/2 is unavailable)
-  - **Gamepad:** synthetic USB gamepad (no virtio/PS/2 fallback)
+    - **Gamepad:** synthetic USB gamepad (no virtio/PS/2 fallback)
 
 For USB HID **gamepad** details (including the composite HID topology and the exact
 gamepad report descriptor + byte layout), see

@@ -141,17 +141,21 @@ export class JitWorkerClient {
             return;
           }
           const response = value as JitTier1CompiledResponse;
-          if ("module" in response && response.module) {
+          if ("module" in response && response.module instanceof WebAssembly.Module) {
             resolve({
-              module: response.module as WebAssembly.Module,
+              module: response.module,
               entryRip: response.entryRip,
               codeByteLen: response.codeByteLen,
               exitToInterpreter: response.exitToInterpreter,
             });
             return;
           }
+          if (!("wasmBytes" in response) || !(response.wasmBytes instanceof ArrayBuffer)) {
+            reject(new Error("Invalid JIT tier1 response: missing module/wasmBytes payload."));
+            return;
+          }
           resolve({
-            wasmBytes: response.wasmBytes as ArrayBuffer,
+            wasmBytes: response.wasmBytes,
             entryRip: response.entryRip,
             codeByteLen: response.codeByteLen,
             exitToInterpreter: response.exitToInterpreter,

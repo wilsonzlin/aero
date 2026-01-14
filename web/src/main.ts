@@ -5553,6 +5553,8 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       return;
     }
 
+    // `jitClient.compile()` should only ever return `jit:compiled` or `jit:error`, but the
+    // protocol types are a shared union that also includes Tier-1 responses.
     if (response.type !== "jit:compiled") {
       jitDemoLine.textContent = `jit: unexpected response (${response.type})`;
       jitDemoError.textContent = "JIT demo expected a jit:compiled response.";
