@@ -45,9 +45,9 @@ const DEFAULT_MAX_RECORDS = 1 << 15;
 const DEFAULT_MAX_STRINGS = 1 << 11;
 
 function resolvePerformance(): PerformanceLike | undefined {
-  const perf = (globalThis as any).performance as PerformanceLike | undefined;
-  if (!perf || typeof perf.now !== "function") return undefined;
-  return perf;
+  const perf = (globalThis as unknown as { performance?: unknown }).performance;
+  if (!perf || typeof (perf as PerformanceLike).now !== "function") return undefined;
+  return perf as PerformanceLike;
 }
 
 export function nowEpochUs(): number {
@@ -339,4 +339,3 @@ export class TraceRecorder {
     return events;
   }
 }
-

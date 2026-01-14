@@ -193,11 +193,10 @@ function isDedicatedWorkerGlobalScope(): boolean {
     .DedicatedWorkerGlobalScope;
   if (!ctor) return false;
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return globalThis instanceof (ctor as any);
+    return globalThis instanceof (ctor as unknown as Function);
   } catch {
     // Some runtimes don't expose a usable constructor; fall back to a heuristic.
-    return typeof (globalThis as typeof globalThis & { document?: unknown }).document === "undefined";
+    return typeof document === "undefined";
   }
 }
 

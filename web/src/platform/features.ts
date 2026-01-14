@@ -170,13 +170,10 @@ export function detectPlatformFeatures(): PlatformFeatureReport {
     typeof navigator !== "undefined" &&
     typeof navigator.storage !== "undefined" &&
     typeof (navigator.storage as StorageManager & { getDirectory?: unknown }).getDirectory === "function";
-  const opfsSyncAccessHandle =
-    opfs &&
-    typeof (globalThis as typeof globalThis & { FileSystemFileHandle?: unknown }).FileSystemFileHandle !== "undefined" &&
-    typeof (
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (globalThis as any).FileSystemFileHandle?.prototype?.createSyncAccessHandle
-    ) === "function";
+  const fileHandleCtor = (globalThis as typeof globalThis & { FileSystemFileHandle?: unknown }).FileSystemFileHandle;
+  const fileHandleProto = (fileHandleCtor as { prototype?: unknown } | undefined)?.prototype;
+  const createSyncAccessHandle = (fileHandleProto as { createSyncAccessHandle?: unknown } | undefined)?.createSyncAccessHandle;
+  const opfsSyncAccessHandle = opfs && typeof createSyncAccessHandle === "function";
 
   const audioContextCtor = getAudioContextCtor();
   const audioWorklet = typeof AudioWorkletNode !== "undefined" && typeof audioContextCtor !== "undefined";

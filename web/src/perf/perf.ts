@@ -46,15 +46,17 @@ type WorkerTraceExportResponseMessage = {
 type WorkerExportResult = WorkerTraceExportResponseMessage & { timedOut: boolean };
 
 function isWindowGlobal(): boolean {
-  return typeof (globalThis as any).document !== "undefined";
+  return typeof document !== "undefined";
 }
 
-function ensureAeroGlobal(): any {
-  const g = globalThis as any;
+function ensureAeroGlobal(): Record<string, unknown> {
+  const g = globalThis as unknown as { aero?: unknown };
   // Be defensive: callers may have set `globalThis.aero` (i.e. `window.aero`) to
   // a non-object value.
-  if (!g.aero || typeof g.aero !== "object") g.aero = {};
-  return g.aero;
+  if (!g.aero || typeof g.aero !== "object") {
+    (g as { aero: Record<string, unknown> }).aero = {};
+  }
+  return g.aero as Record<string, unknown>;
 }
 
 export class AeroPerf {

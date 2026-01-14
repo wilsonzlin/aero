@@ -35,7 +35,7 @@ export interface EnsurePersistentStorageResult extends PersistentStorageInfo {
 
 function getStorageManager(): StorageManager | undefined {
   // `navigator` doesn't exist in all runtimes (e.g. Node, some webviews).
-  const nav = (globalThis as any).navigator as Navigator | undefined;
+  const nav = (globalThis as unknown as { navigator?: unknown }).navigator as Navigator | undefined;
   return nav?.storage;
 }
 
@@ -121,4 +121,3 @@ export async function ensurePersistentStorage(): Promise<EnsurePersistentStorage
     return { supported: true, persisted: false, granted: false };
   }
 }
-

@@ -268,8 +268,9 @@ export function hasOpfsSyncAccessHandle(): boolean {
   if (!hasOpfs()) return false;
   const ctor = (globalThis as typeof globalThis & { FileSystemFileHandle?: unknown }).FileSystemFileHandle;
   if (!ctor) return false;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return typeof (ctor as any).prototype?.createSyncAccessHandle === "function";
+  const proto = (ctor as { prototype?: unknown }).prototype;
+  const createSyncAccessHandle = (proto as { createSyncAccessHandle?: unknown } | undefined)?.createSyncAccessHandle;
+  return typeof createSyncAccessHandle === "function";
 }
 
 export function pickDefaultBackend(): DiskBackend {
