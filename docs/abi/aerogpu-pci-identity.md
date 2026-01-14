@@ -63,7 +63,9 @@ The canonical machine supports **two mutually-exclusive** display configurations
     through a transitional Bochs/QEMU-compatible “Standard VGA” PCI function (`1234:1111` at
     `00:0c.0`). The VBE LFB is exposed via BAR0 inside the PCI MMIO window; the BAR base is assigned
     by BIOS POST / the PCI resource allocator (and may vary when other PCI devices are present)
-    unless pinned via `MachineConfig::{vga_lfb_base,vga_vram_bar_base}`.
+    unless pinned via `MachineConfig::{vga_lfb_base,vga_vram_bar_base}`. The machine mirrors the
+    assigned BAR base into the BIOS VBE `PhysBasePtr` and the VGA device model so mode info and MMIO
+    routing remain coherent.
 
 See also:
 
