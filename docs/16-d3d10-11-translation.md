@@ -1119,7 +1119,9 @@ with an implementation-defined workgroup size chosen by the translator/runtime.
     - Trigger: `hs != 0 || ds != 0 || topology is patchlist`.
     - HS patch-constant pass (per patch):
       - Reads control points from `vs_out`.
-      - Writes tess factors + patch constants to scratch (per patch).
+      - Computes tessellation level(s) and writes them to `tess_patch_state[patch_id]`:
+        - P2a tri-domain: `tess_level_u = T`, `tess_level_v = 0`
+      - Writes any additional patch constants needed by DS to scratch (per patch; future work).
       - Dispatch mapping (recommended):
         - `global_invocation_id.x` = `patch_id` (`0..patch_count`)
         - `global_invocation_id.y` = `instance_id` (`0..instance_count`) (optional; may flatten instances)
@@ -1134,6 +1136,8 @@ with an implementation-defined workgroup size chosen by the translator/runtime.
       - Generates tessellated domain points and evaluates DS.
       - For P2a tri-domain, the doc specifies a concrete uniform grid enumeration and triangle-list
         index generation (see “Tri-domain grid enumeration” above).
+      - Uses `tess_patch_state` to coordinate per-patch output ranges (`base_vertex/base_index`) when
+        emitting into the shared `tess_out_*` buffers.
       - Writes `tess_out_vertices` + `tess_out_indices`, updates counters, then writes final
         `indirect_args`.
 
