@@ -179,7 +179,7 @@ impl HdaMmioReg {
     /// - Reading across adjacent registers (e.g. dword at `SDnLVI` spanning `LVI+FIFOW`).
     pub fn decode_byte(offset: u32) -> Option<HdaMmioRegByte> {
         // Global registers.
-        if offset >= HDA_GCAP && offset < HDA_GCAP + 2 {
+        if (HDA_GCAP..HDA_GCAP + 2).contains(&offset) {
             return Some(HdaMmioRegByte {
                 reg: HdaMmioReg::Gcap,
                 byte: (offset - HDA_GCAP) as u8,
@@ -197,37 +197,37 @@ impl HdaMmioReg {
                 byte: 0,
             });
         }
-        if offset >= HDA_GCTL && offset < HDA_GCTL + 4 {
+        if (HDA_GCTL..HDA_GCTL + 4).contains(&offset) {
             return Some(HdaMmioRegByte {
                 reg: HdaMmioReg::Gctl,
                 byte: (offset - HDA_GCTL) as u8,
             });
         }
-        if offset >= HDA_WAKEEN && offset < HDA_WAKEEN + 2 {
+        if (HDA_WAKEEN..HDA_WAKEEN + 2).contains(&offset) {
             return Some(HdaMmioRegByte {
                 reg: HdaMmioReg::Wakeen,
                 byte: (offset - HDA_WAKEEN) as u8,
             });
         }
-        if offset >= HDA_STATESTS && offset < HDA_STATESTS + 2 {
+        if (HDA_STATESTS..HDA_STATESTS + 2).contains(&offset) {
             return Some(HdaMmioRegByte {
                 reg: HdaMmioReg::Statests,
                 byte: (offset - HDA_STATESTS) as u8,
             });
         }
-        if offset >= HDA_GSTS && offset < HDA_GSTS + 2 {
+        if (HDA_GSTS..HDA_GSTS + 2).contains(&offset) {
             return Some(HdaMmioRegByte {
                 reg: HdaMmioReg::Gsts,
                 byte: (offset - HDA_GSTS) as u8,
             });
         }
-        if offset >= HDA_INTCTL && offset < HDA_INTCTL + 4 {
+        if (HDA_INTCTL..HDA_INTCTL + 4).contains(&offset) {
             return Some(HdaMmioRegByte {
                 reg: HdaMmioReg::Intctl,
                 byte: (offset - HDA_INTCTL) as u8,
             });
         }
-        if offset >= HDA_INTSTS && offset < HDA_INTSTS + 4 {
+        if (HDA_INTSTS..HDA_INTSTS + 4).contains(&offset) {
             return Some(HdaMmioRegByte {
                 reg: HdaMmioReg::Intsts,
                 byte: (offset - HDA_INTSTS) as u8,
@@ -235,25 +235,25 @@ impl HdaMmioReg {
         }
 
         // CORB registers.
-        if offset >= HDA_CORBLBASE && offset < HDA_CORBLBASE + 4 {
+        if (HDA_CORBLBASE..HDA_CORBLBASE + 4).contains(&offset) {
             return Some(HdaMmioRegByte {
                 reg: HdaMmioReg::Corb(CorbReg::Lbase),
                 byte: (offset - HDA_CORBLBASE) as u8,
             });
         }
-        if offset >= HDA_CORBUBASE && offset < HDA_CORBUBASE + 4 {
+        if (HDA_CORBUBASE..HDA_CORBUBASE + 4).contains(&offset) {
             return Some(HdaMmioRegByte {
                 reg: HdaMmioReg::Corb(CorbReg::Ubase),
                 byte: (offset - HDA_CORBUBASE) as u8,
             });
         }
-        if offset >= HDA_CORBWP && offset < HDA_CORBWP + 2 {
+        if (HDA_CORBWP..HDA_CORBWP + 2).contains(&offset) {
             return Some(HdaMmioRegByte {
                 reg: HdaMmioReg::Corb(CorbReg::Wp),
                 byte: (offset - HDA_CORBWP) as u8,
             });
         }
-        if offset >= HDA_CORBRP && offset < HDA_CORBRP + 2 {
+        if (HDA_CORBRP..HDA_CORBRP + 2).contains(&offset) {
             return Some(HdaMmioRegByte {
                 reg: HdaMmioReg::Corb(CorbReg::Rp),
                 byte: (offset - HDA_CORBRP) as u8,
@@ -279,25 +279,25 @@ impl HdaMmioReg {
         }
 
         // RIRB registers.
-        if offset >= HDA_RIRBLBASE && offset < HDA_RIRBLBASE + 4 {
+        if (HDA_RIRBLBASE..HDA_RIRBLBASE + 4).contains(&offset) {
             return Some(HdaMmioRegByte {
                 reg: HdaMmioReg::Rirb(RirbReg::Lbase),
                 byte: (offset - HDA_RIRBLBASE) as u8,
             });
         }
-        if offset >= HDA_RIRBUBASE && offset < HDA_RIRBUBASE + 4 {
+        if (HDA_RIRBUBASE..HDA_RIRBUBASE + 4).contains(&offset) {
             return Some(HdaMmioRegByte {
                 reg: HdaMmioReg::Rirb(RirbReg::Ubase),
                 byte: (offset - HDA_RIRBUBASE) as u8,
             });
         }
-        if offset >= HDA_RIRBWP && offset < HDA_RIRBWP + 2 {
+        if (HDA_RIRBWP..HDA_RIRBWP + 2).contains(&offset) {
             return Some(HdaMmioRegByte {
                 reg: HdaMmioReg::Rirb(RirbReg::Wp),
                 byte: (offset - HDA_RIRBWP) as u8,
             });
         }
-        if offset >= HDA_RINTCNT && offset < HDA_RINTCNT + 2 {
+        if (HDA_RINTCNT..HDA_RINTCNT + 2).contains(&offset) {
             return Some(HdaMmioRegByte {
                 reg: HdaMmioReg::Rirb(RirbReg::RintCnt),
                 byte: (offset - HDA_RINTCNT) as u8,
@@ -323,13 +323,13 @@ impl HdaMmioReg {
         }
 
         // DMA position buffer registers.
-        if offset >= HDA_DPLBASE && offset < HDA_DPLBASE + 4 {
+        if (HDA_DPLBASE..HDA_DPLBASE + 4).contains(&offset) {
             return Some(HdaMmioRegByte {
                 reg: HdaMmioReg::Dplbase,
                 byte: (offset - HDA_DPLBASE) as u8,
             });
         }
-        if offset >= HDA_DPUBASE && offset < HDA_DPUBASE + 4 {
+        if (HDA_DPUBASE..HDA_DPUBASE + 4).contains(&offset) {
             return Some(HdaMmioRegByte {
                 reg: HdaMmioReg::Dpubase,
                 byte: (offset - HDA_DPUBASE) as u8,

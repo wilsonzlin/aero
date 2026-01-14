@@ -221,7 +221,7 @@ impl AhciController {
                 }
 
                 let shift = ((off & 3) * 8) as u32;
-                let byte = ((value >> (idx * 8)) & 0xFF) as u32;
+                let byte = (value >> (idx * 8)) & 0xFF;
                 write_val |= byte << shift;
                 be_mask |= 0xFFu32 << shift;
                 idx += 1;

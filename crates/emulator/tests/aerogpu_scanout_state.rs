@@ -27,8 +27,10 @@ fn publishes_wddm_scanout_state_on_enable_transition() {
     let mut mem = DummyMemory;
     let scanout = Arc::new(ScanoutState::new());
 
-    let mut cfg = AeroGpuDeviceConfig::default();
-    cfg.vram_size_bytes = 2 * 1024 * 1024;
+    let cfg = AeroGpuDeviceConfig {
+        vram_size_bytes: 2 * 1024 * 1024,
+        ..Default::default()
+    };
     let mut dev = AeroGpuPciDevice::new(cfg, 0, 0);
     dev.set_scanout_state(Some(scanout.clone()));
     // Enable PCI MMIO decode so BAR0 writes are accepted.

@@ -672,7 +672,7 @@ mod tests {
 
         // 32-bit read at CIV spans CIV/LVI/SR (2 bytes).
         let got = ctrl.nabm_read(NABM_PO_CIV, 4);
-        let expected_sr = (SR_BCIS | SR_LVBCI | SR_DCH) as u16;
+        let expected_sr = SR_BCIS | SR_LVBCI | SR_DCH;
         let expected =
             u32::from_le_bytes([1, 5, (expected_sr & 0xff) as u8, (expected_sr >> 8) as u8]);
         assert_eq!(got, expected);
@@ -700,7 +700,7 @@ mod tests {
         // 4-byte write starting at CIV, spanning into SR.
         {
             let mut ctrl = controller_with_sr_irq_bits_set();
-            ctrl.nabm_write(NABM_PO_CIV, 4, u32::from((SR_BCIS | SR_LVBCI) as u32) << 16);
+            ctrl.nabm_write(NABM_PO_CIV, 4, u32::from(SR_BCIS | SR_LVBCI) << 16);
             let sr = ctrl.nabm_read(NABM_PO_SR, 2) as u16;
             assert_eq!(sr & (SR_BCIS | SR_LVBCI), 0);
         }

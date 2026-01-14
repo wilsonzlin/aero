@@ -354,7 +354,7 @@ impl<B: DiskBackend> aero_storage::VirtualDisk for VirtualDiskFromEmuDiskBackend
 
         // Only allocate the scratch buffer when we actually need RMW.
         let mut scratch = Vec::new();
-        if (offset % sector_size_u64) != 0 || (end % sector_size_u64) != 0 {
+        if !offset.is_multiple_of(sector_size_u64) || !end.is_multiple_of(sector_size_u64) {
             scratch.resize(sector_size_usize, 0);
         }
 
@@ -459,7 +459,7 @@ impl<B: DiskBackend> aero_storage::VirtualDisk for VirtualDiskFromEmuDiskBackend
 
         // Only allocate the scratch buffer when we actually need RMW.
         let mut scratch = Vec::new();
-        if (offset % sector_size_u64) != 0 || (end % sector_size_u64) != 0 {
+        if !offset.is_multiple_of(sector_size_u64) || !end.is_multiple_of(sector_size_u64) {
             scratch.resize(sector_size_usize, 0);
         }
 

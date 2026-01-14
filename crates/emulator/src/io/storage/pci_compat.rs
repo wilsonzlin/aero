@@ -172,9 +172,9 @@ pub fn config_write(cfg: &mut PciConfigSpace, offset: u16, size: usize, value: u
         // BAR alignment assertions while still behaving like real hardware for hostile/unaligned
         // config accesses.
         let bytes = value.to_le_bytes();
-        for i in 0..size {
+        for (i, byte) in bytes.iter().take(size).enumerate() {
             let byte_off = offset.wrapping_add(i as u16);
-            let byte_val = u32::from(bytes[i]);
+            let byte_val = u32::from(*byte);
 
             if !validate_access(byte_off, 1) {
                 continue;

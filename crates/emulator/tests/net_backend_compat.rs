@@ -50,7 +50,6 @@ fn queue_backend_paths_work() {
             rx_dropped_oversize_bytes: 0,
             rx_dropped_full: 1,
             rx_dropped_full_bytes: 3,
-            ..Default::default()
         }
     );
 }
@@ -91,7 +90,6 @@ fn ring_backend_paths_work() {
             rx_dropped_oversize_bytes: 0,
             rx_corrupt: 0,
             rx_broken: false,
-            ..Default::default()
         }
     );
 }
@@ -159,7 +157,6 @@ fn network_backend_is_implemented_for_arc_mutex() {
             rx_dropped_oversize_bytes: 0,
             rx_dropped_full: 0,
             rx_dropped_full_bytes: 0,
-            ..Default::default()
         }
     );
 }

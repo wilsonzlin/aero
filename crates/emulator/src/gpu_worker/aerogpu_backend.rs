@@ -58,6 +58,7 @@ mod tests {
 
         fn accepts_canonical(_backend: &mut dyn aero_devices_gpu::backend::AeroGpuCommandBackend) {}
 
-        accepts_canonical(&mut StubBackend::default());
+        let mut backend = StubBackend;
+        accepts_canonical(&mut backend);
     }
 }

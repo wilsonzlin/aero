@@ -1065,8 +1065,10 @@ mod tests {
     fn backend_exec_error_sets_error_irq_and_fence_advances() {
         let mut mem = PhysicalMemoryBus::new(Box::new(DenseMemory::new(0x10000).unwrap()));
 
-        let mut cfg = AeroGpuDeviceConfig::default();
-        cfg.vram_size_bytes = 2 * 1024 * 1024;
+        let cfg = AeroGpuDeviceConfig {
+            vram_size_bytes: 2 * 1024 * 1024,
+            ..Default::default()
+        };
         let mut dev = AeroGpuPciDevice::new(cfg, 0, 0);
         dev.set_backend(Box::new(FailOnceBackend::default()));
 
@@ -1192,8 +1194,10 @@ mod tests {
     {
         let mut mem = PhysicalMemoryBus::new(Box::new(DenseMemory::new(0x10000).unwrap()));
 
-        let mut cfg = AeroGpuDeviceConfig::default();
-        cfg.vram_size_bytes = 2 * 1024 * 1024;
+        let cfg = AeroGpuDeviceConfig {
+            vram_size_bytes: 2 * 1024 * 1024,
+            ..Default::default()
+        };
         let mut dev = AeroGpuPciDevice::new(cfg, 0, 0);
         dev.set_backend(Box::new(FailOnceBackend::default()));
 

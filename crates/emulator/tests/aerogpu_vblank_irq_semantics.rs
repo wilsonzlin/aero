@@ -24,13 +24,16 @@ fn enable_mmio_decode_only(dev: &mut AeroGpuPciDevice) {
 
 #[test]
 fn vblank_irq_status_not_latched_while_masked_or_on_reenable() {
-    let mut mem = NoDmaMemory::default();
-    let mut cfg = AeroGpuDeviceConfig::default();
+    let mut mem = NoDmaMemory;
     // Keep the interval comfortably above typical test runtime jitter so the "not immediately"
     // assertions don't become timing-sensitive.
-    cfg.vblank_hz = Some(60);
+    //
     // Keep VRAM small for tests (the device allocates BAR1 VRAM backing).
-    cfg.vram_size_bytes = 2 * 1024 * 1024;
+    let cfg = AeroGpuDeviceConfig {
+        vblank_hz: Some(60),
+        vram_size_bytes: 2 * 1024 * 1024,
+        ..Default::default()
+    };
     let mut dev = AeroGpuPciDevice::new(cfg, 0, 0);
     enable_mmio_decode_only(&mut dev);
 
