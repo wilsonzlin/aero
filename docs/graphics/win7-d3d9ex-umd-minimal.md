@@ -383,6 +383,8 @@ These are commonly required by compositor-style workloads:
 * `D3DCAPS9::SrcBlendCaps` / `DestBlendCaps`:
   * `D3DPBLENDCAPS_ONE`, `D3DPBLENDCAPS_ZERO`
   * `D3DPBLENDCAPS_SRCALPHA`, `D3DPBLENDCAPS_INVSRCALPHA`
+  * Recommended for compositor-style fades/tints: `D3DPBLENDCAPS_BLENDFACTOR`, `D3DPBLENDCAPS_INVBLENDFACTOR`
+    (and implement `D3DRS_BLENDFACTOR` + `D3DBLEND_BLENDFACTOR` / `D3DBLEND_INVBLENDFACTOR` correctly).
 * `D3DCAPS9::MaxTextureWidth/Height`:
   * Must be at least the maximum expected window size (recommend **4096** to start; 8192 if easy).
 * `D3DCAPS9::MaxSimultaneousTextures`:
