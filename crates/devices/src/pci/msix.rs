@@ -291,8 +291,11 @@ impl MsixCapability {
 
     /// Returns the MSI message that should be delivered for the given table entry index.
     ///
-    /// - When MSI-X is disabled, or the vector is masked, this returns `None` and sets the pending
-    ///   bit for the vector.
+    /// - When MSI-X is disabled (MSI-X Enable = 0), this returns `None` and does not mutate the
+    ///   Pending Bit Array (PBA).
+    /// - When MSI-X is enabled but delivery is blocked (function mask, vector mask, or the table
+    ///   entry is not fully programmed), this returns `None` and sets the PBA pending bit for the
+    ///   vector.
     /// - When delivery is successful, the pending bit is cleared.
     pub fn trigger(&mut self, vector: u16) -> Option<MsiMessage> {
         if !self.enabled {
