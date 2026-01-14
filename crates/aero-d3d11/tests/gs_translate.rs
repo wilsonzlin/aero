@@ -51,6 +51,14 @@ fn reg_src(ty: u32, idx: u32) -> Vec<u32> {
     ]
 }
 
+fn reg_src_swizzle_modifier(ty: u32, idx: u32, swz: [u8; 4], modifier: u32) -> Vec<u32> {
+    vec![
+        operand_token(ty, 2, OPERAND_SEL_SWIZZLE, swizzle_bits(swz), 1) | OPERAND_EXTENDED_BIT,
+        modifier << 6,
+        idx,
+    ]
+}
+
 fn imm32_vec4(values: [u32; 4]) -> Vec<u32> {
     let mut out = Vec::with_capacity(1 + 4);
     out.push(operand_token(
@@ -847,6 +855,72 @@ fn sm4_gs_mul_translates_to_wgsl_compute_prepass() {
     assert!(
         wgsl.contains(") * ("),
         "expected generated WGSL to contain a mul expression:\n{wgsl}"
+    );
+    assert_wgsl_validates(&wgsl);
+}
+
+#[test]
+fn sm4_gs_mul_respects_swizzle_modifier_and_saturate() {
+    let mut tokens = base_gs_tokens();
+
+    // mov r0.xyzw, l(1, 2, 3, 4)
+    let mut mov_r0 = vec![opcode_token(OPCODE_MOV, 0)];
+    mov_r0.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    mov_r0.extend_from_slice(&imm32_vec4([
+        1.0f32.to_bits(),
+        2.0f32.to_bits(),
+        3.0f32.to_bits(),
+        4.0f32.to_bits(),
+    ]));
+    mov_r0[0] = opcode_token(OPCODE_MOV, mov_r0.len() as u32);
+    tokens.extend_from_slice(&mov_r0);
+
+    // mov r1.xyzw, l(5, 6, 7, 8)
+    let mut mov_r1 = vec![opcode_token(OPCODE_MOV, 0)];
+    mov_r1.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 1, WriteMask::XYZW));
+    mov_r1.extend_from_slice(&imm32_vec4([
+        5.0f32.to_bits(),
+        6.0f32.to_bits(),
+        7.0f32.to_bits(),
+        8.0f32.to_bits(),
+    ]));
+    mov_r1[0] = opcode_token(OPCODE_MOV, mov_r1.len() as u32);
+    tokens.extend_from_slice(&mov_r1);
+
+    // mul_sat o0.xyzw, -r0.wzyx, abs(r1.zyxw)
+    let mut mul_o0 = vec![opcode_token(OPCODE_MUL, 0) | OPCODE_EXTENDED_BIT];
+    // Extended opcode token (type=0) with saturate bit set (bit 13).
+    mul_o0.push(1u32 << 13);
+    mul_o0.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    mul_o0.extend_from_slice(&reg_src_swizzle_modifier(
+        OPERAND_TYPE_TEMP,
+        0,
+        [3, 2, 1, 0],
+        1,
+    ));
+    mul_o0.extend_from_slice(&reg_src_swizzle_modifier(
+        OPERAND_TYPE_TEMP,
+        1,
+        [2, 1, 0, 3],
+        2,
+    ));
+    mul_o0[0] = opcode_token(OPCODE_MUL, mul_o0.len() as u32) | OPCODE_EXTENDED_BIT;
+    tokens.extend_from_slice(&mul_o0);
+
+    tokens.push(opcode_token(OPCODE_RET, 1));
+
+    let wgsl = wgsl_from_tokens(tokens);
+    assert!(
+        wgsl.contains(".wzyx"),
+        "expected src swizzle to be preserved:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("abs("),
+        "expected abs modifier to be preserved:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("clamp(("),
+        "expected saturate flag to lower to clamp():\n{wgsl}"
     );
     assert_wgsl_validates(&wgsl);
 }
