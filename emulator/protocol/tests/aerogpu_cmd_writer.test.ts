@@ -853,6 +853,10 @@ test("AerogpuCmdWriter stage_ex optional parameters reject stageEx=0 (DXBC Pixel
   assert.throws(() =>
     new AerogpuCmdWriter().setShaderConstantsF(AerogpuShaderStage.Vertex, 0, new Float32Array([1, 2, 3, 4]), zero),
   );
+  assert.throws(() =>
+    new AerogpuCmdWriter().setShaderConstantsI(AerogpuShaderStage.Vertex, 0, new Int32Array([1, 2, 3, 4]), zero),
+  );
+  assert.throws(() => new AerogpuCmdWriter().setShaderConstantsB(AerogpuShaderStage.Vertex, 0, [1], zero));
 });
 
 test("AerogpuCmdWriter.createShaderDxbc encodes stage=Pixel and keeps reserved0=0", () => {

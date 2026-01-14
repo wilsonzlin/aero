@@ -2129,7 +2129,7 @@ export class AerogpuCmdWriter {
     stage: AerogpuShaderStage,
     startRegister: number,
     data: Int32Array | readonly number[],
-    stageEx?: AerogpuShaderStageEx,
+    stageEx?: AerogpuShaderStageEx | null,
   ): void {
     if (data.length % 4 !== 0) {
       throw new Error(`SET_SHADER_CONSTANTS_I data must be int4-aligned (got ${data.length} ints)`);
@@ -2137,16 +2137,13 @@ export class AerogpuCmdWriter {
 
     const vec4Count = data.length / 4;
     const unpadded = AEROGPU_CMD_SET_SHADER_CONSTANTS_I_SIZE + data.length * 4;
+    const stageEnc = stageEx === null || stageEx === undefined ? stage : AerogpuShaderStage.Compute;
+    const reserved0 = encodeStageExReserved0(stageEnc, stageEx);
     const base = this.appendRaw(AerogpuCmdOpcode.SetShaderConstantsI, unpadded);
-    if (stageEx !== undefined) {
-      this.view.setUint32(base + 8, AerogpuShaderStage.Compute, true);
-      this.view.setUint32(base + 20, stageEx, true);
-    } else {
-      this.view.setUint32(base + 8, stage, true);
-      this.view.setUint32(base + 20, 0, true);
-    }
+    this.view.setUint32(base + 8, stageEnc, true);
     this.view.setUint32(base + 12, startRegister, true);
     this.view.setUint32(base + 16, vec4Count, true);
+    this.view.setUint32(base + 20, reserved0, true);
     for (let i = 0; i < data.length; i++) {
       this.view.setInt32(base + AEROGPU_CMD_SET_SHADER_CONSTANTS_I_SIZE + i * 4, data[i]!, true);
     }
@@ -2165,21 +2162,8 @@ export class AerogpuCmdWriter {
     startRegister: number,
     data: Int32Array | readonly number[],
   ): void {
-    if (data.length % 4 !== 0) {
-      throw new Error(`SET_SHADER_CONSTANTS_I data must be int4-aligned (got ${data.length} ints)`);
-    }
-
-    const [stage, reserved0] = encodeStageEx(stageEx);
-    const vec4Count = data.length / 4;
-    const unpadded = AEROGPU_CMD_SET_SHADER_CONSTANTS_I_SIZE + data.length * 4;
-    const base = this.appendRaw(AerogpuCmdOpcode.SetShaderConstantsI, unpadded);
-    this.view.setUint32(base + 8, stage, true);
-    this.view.setUint32(base + 12, startRegister, true);
-    this.view.setUint32(base + 16, vec4Count, true);
-    this.view.setUint32(base + 20, reserved0, true);
-    for (let i = 0; i < data.length; i++) {
-      this.view.setInt32(base + AEROGPU_CMD_SET_SHADER_CONSTANTS_I_SIZE + i * 4, data[i]!, true);
-    }
+    // Delegate to the stageEx-optional variant so packet encoding logic stays in one place.
+    this.setShaderConstantsI(AerogpuShaderStage.Compute, startRegister, data, stageEx);
   }
 
   /**
@@ -2192,20 +2176,17 @@ export class AerogpuCmdWriter {
     stage: AerogpuShaderStage,
     startRegister: number,
     data: Uint32Array | readonly (boolean | number)[],
-    stageEx?: AerogpuShaderStageEx,
+    stageEx?: AerogpuShaderStageEx | null,
   ): void {
     const boolCount = data.length;
     const unpadded = AEROGPU_CMD_SET_SHADER_CONSTANTS_B_SIZE + boolCount * 16;
+    const stageEnc = stageEx === null || stageEx === undefined ? stage : AerogpuShaderStage.Compute;
+    const reserved0 = encodeStageExReserved0(stageEnc, stageEx);
     const base = this.appendRaw(AerogpuCmdOpcode.SetShaderConstantsB, unpadded);
-    if (stageEx !== undefined) {
-      this.view.setUint32(base + 8, AerogpuShaderStage.Compute, true);
-      this.view.setUint32(base + 20, stageEx, true);
-    } else {
-      this.view.setUint32(base + 8, stage, true);
-      this.view.setUint32(base + 20, 0, true);
-    }
+    this.view.setUint32(base + 8, stageEnc, true);
     this.view.setUint32(base + 12, startRegister, true);
     this.view.setUint32(base + 16, boolCount, true);
+    this.view.setUint32(base + 20, reserved0, true);
     const payloadBase = base + AEROGPU_CMD_SET_SHADER_CONSTANTS_B_SIZE;
     for (let i = 0; i < boolCount; i++) {
       const v = data[i] ? 1 : 0;
@@ -2230,22 +2211,8 @@ export class AerogpuCmdWriter {
     startRegister: number,
     data: Uint32Array | readonly (boolean | number)[],
   ): void {
-    const [stage, reserved0] = encodeStageEx(stageEx);
-    const boolCount = data.length;
-    const unpadded = AEROGPU_CMD_SET_SHADER_CONSTANTS_B_SIZE + boolCount * 16;
-    const base = this.appendRaw(AerogpuCmdOpcode.SetShaderConstantsB, unpadded);
-    this.view.setUint32(base + 8, stage, true);
-    this.view.setUint32(base + 12, startRegister, true);
-    this.view.setUint32(base + 16, boolCount, true);
-    this.view.setUint32(base + 20, reserved0, true);
-    const payloadBase = base + AEROGPU_CMD_SET_SHADER_CONSTANTS_B_SIZE;
-    for (let i = 0; i < boolCount; i++) {
-      const v = data[i] ? 1 : 0;
-      this.view.setUint32(payloadBase + i * 16 + 0, v, true);
-      this.view.setUint32(payloadBase + i * 16 + 4, v, true);
-      this.view.setUint32(payloadBase + i * 16 + 8, v, true);
-      this.view.setUint32(payloadBase + i * 16 + 12, v, true);
-    }
+    // Delegate to the stageEx-optional variant so packet encoding logic stays in one place.
+    this.setShaderConstantsB(AerogpuShaderStage.Compute, startRegister, data, stageEx);
   }
 
   createInputLayout(inputLayoutHandle: AerogpuHandle, blob: Uint8Array): void {
