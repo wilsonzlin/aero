@@ -21715,31 +21715,61 @@ HRESULT try_draw_instanced_indexed_primitive_locked(
       static_cast<uint64_t>(dev->index_offset_bytes) + static_cast<uint64_t>(start_index) * index_size;
   const uint64_t src_index_size = static_cast<uint64_t>(index_count) * index_size;
 
-  // Read + expand indices on the CPU.
+  // Read indices on the CPU so we can validate `min_index/num_vertices` and,
+  // for TRIANGLELIST/LINELIST/POINTLIST, expand them for a single concatenated draw.
   ScopedResourceRead index_src;
   hr = index_src.lock(dev, dev->index_buffer, src_index_offset, src_index_size, "instancing IB");
   if (FAILED(hr) || !index_src.data) {
     return FAILED(hr) ? hr : E_INVALIDARG;
   }
 
-  const uint64_t expanded_index_count_u64 =
-      static_cast<uint64_t>(index_count) * static_cast<uint64_t>(cfg.instance_count);
-  const uint64_t expanded_index_bytes_u64 = expanded_index_count_u64 * 4u;
-  if (expanded_index_count_u64 == 0 || expanded_index_bytes_u64 == 0 || expanded_index_bytes_u64 > 0x7FFFFFFFu) {
-    return E_INVALIDARG;
+  const uint64_t max_index_excl_u64 = static_cast<uint64_t>(min_index) + static_cast<uint64_t>(num_vertices);
+  if (max_index_excl_u64 == 0 || max_index_excl_u64 > 0x1'0000'0000ull) {
+    // Overflow or empty range.
+    return kD3DErrInvalidCall;
   }
-  const uint32_t expanded_index_count = static_cast<uint32_t>(expanded_index_count_u64);
-  const uint32_t expanded_index_bytes = static_cast<uint32_t>(expanded_index_bytes_u64);
 
+  const bool use_expanded_indices = single_draw_safe;
+  uint32_t expanded_index_count = 0;
+  uint32_t expanded_index_bytes = 0;
   std::vector<uint32_t> expanded_indices;
-  try {
-    expanded_indices.resize(static_cast<size_t>(expanded_index_count));
-  } catch (...) {
-    return E_OUTOFMEMORY;
-  }
+  if (use_expanded_indices) {
+    const uint64_t expanded_index_count_u64 =
+        static_cast<uint64_t>(index_count) * static_cast<uint64_t>(cfg.instance_count);
+    const uint64_t expanded_index_bytes_u64 = expanded_index_count_u64 * 4u;
+    if (expanded_index_count_u64 == 0 || expanded_index_bytes_u64 == 0 || expanded_index_bytes_u64 > 0x7FFFFFFFu) {
+      return E_INVALIDARG;
+    }
+    expanded_index_count = static_cast<uint32_t>(expanded_index_count_u64);
+    expanded_index_bytes = static_cast<uint32_t>(expanded_index_bytes_u64);
 
-  for (uint32_t inst = 0; inst < cfg.instance_count; ++inst) {
-    const uint32_t base = inst * num_vertices;
+    try {
+      expanded_indices.resize(static_cast<size_t>(expanded_index_count));
+    } catch (...) {
+      return E_OUTOFMEMORY;
+    }
+
+    for (uint32_t inst = 0; inst < cfg.instance_count; ++inst) {
+      const uint32_t base = inst * num_vertices;
+      for (uint32_t i = 0; i < index_count; ++i) {
+        uint32_t idx = 0;
+        if (index_size == 4) {
+          std::memcpy(&idx, index_src.data + static_cast<size_t>(i) * 4u, sizeof(idx));
+        } else {
+          uint16_t idx16 = 0;
+          std::memcpy(&idx16, index_src.data + static_cast<size_t>(i) * 2u, sizeof(idx16));
+          idx = idx16;
+        }
+        const uint64_t idx_u64 = idx;
+        if (idx_u64 < static_cast<uint64_t>(min_index) || idx_u64 >= max_index_excl_u64) {
+          return kD3DErrInvalidCall;
+        }
+        expanded_indices[static_cast<size_t>(inst) * index_count + i] = (idx - min_index) + base;
+      }
+    }
+  } else {
+    // We will issue one draw per instance (strip/fan). Reuse the app's index
+    // buffer and adjust base_vertex instead of expanding indices.
     for (uint32_t i = 0; i < index_count; ++i) {
       uint32_t idx = 0;
       if (index_size == 4) {
@@ -21749,10 +21779,10 @@ HRESULT try_draw_instanced_indexed_primitive_locked(
         std::memcpy(&idx16, index_src.data + static_cast<size_t>(i) * 2u, sizeof(idx16));
         idx = idx16;
       }
-      if (idx < min_index || idx >= min_index + num_vertices) {
+      const uint64_t idx_u64 = idx;
+      if (idx_u64 < static_cast<uint64_t>(min_index) || idx_u64 >= max_index_excl_u64) {
         return kD3DErrInvalidCall;
       }
-      expanded_indices[static_cast<size_t>(inst) * index_count + i] = (idx - min_index) + base;
     }
   }
 
@@ -21848,6 +21878,7 @@ HRESULT try_draw_instanced_indexed_primitive_locked(
   for (uint32_t s = 0; s < 16; ++s) {
     saved_streams[s] = dev->streams[s];
   }
+  const bool index_modified = use_expanded_indices;
   Resource* saved_ib = dev->index_buffer;
   const D3DDDIFORMAT saved_fmt = dev->index_format;
   const uint32_t saved_offset = dev->index_offset_bytes;
@@ -21904,65 +21935,77 @@ HRESULT try_draw_instanced_indexed_primitive_locked(
     }
   }
 
-  // Upload expanded index buffer and bind it.
-  hr = ensure_up_index_buffer_locked(dev, expanded_index_bytes);
-  if (FAILED(hr)) {
-    (void)restore_streams();
-    return hr;
-  }
-  hr = emit_upload_buffer_locked(dev, dev->up_index_buffer, expanded_indices.data(), expanded_index_bytes);
-  if (FAILED(hr)) {
-    (void)restore_streams();
-    return hr;
-  }
+  if (index_modified) {
+    // Upload expanded index buffer and bind it.
+    hr = ensure_up_index_buffer_locked(dev, expanded_index_bytes);
+    if (FAILED(hr)) {
+      (void)restore_streams();
+      return hr;
+    }
+    hr = emit_upload_buffer_locked(dev, dev->up_index_buffer, expanded_indices.data(), expanded_index_bytes);
+    if (FAILED(hr)) {
+      (void)restore_streams();
+      return hr;
+    }
 
-  dev->index_buffer = dev->up_index_buffer;
-  dev->index_format = kD3dFmtIndex32;
-  dev->index_offset_bytes = 0;
-  auto* ib_cmd = append_fixed_locked<aerogpu_cmd_set_index_buffer>(dev, AEROGPU_CMD_SET_INDEX_BUFFER);
-  if (!ib_cmd) {
-    (void)restore_streams();
-    dev->index_buffer = saved_ib;
-    dev->index_format = saved_fmt;
-    dev->index_offset_bytes = saved_offset;
-    return device_lost_override(dev, E_OUTOFMEMORY);
+    dev->index_buffer = dev->up_index_buffer;
+    dev->index_format = kD3dFmtIndex32;
+    dev->index_offset_bytes = 0;
+    auto* ib_cmd = append_fixed_locked<aerogpu_cmd_set_index_buffer>(dev, AEROGPU_CMD_SET_INDEX_BUFFER);
+    if (!ib_cmd) {
+      (void)restore_streams();
+      dev->index_buffer = saved_ib;
+      dev->index_format = saved_fmt;
+      dev->index_offset_bytes = saved_offset;
+      return device_lost_override(dev, E_OUTOFMEMORY);
+    }
+    ib_cmd->buffer = dev->up_index_buffer ? dev->up_index_buffer->handle : 0;
+    ib_cmd->format = d3d9_index_format_to_aerogpu(kD3dFmtIndex32);
+    ib_cmd->offset_bytes = 0;
+    ib_cmd->reserved0 = 0;
   }
-  ib_cmd->buffer = dev->up_index_buffer ? dev->up_index_buffer->handle : 0;
-  ib_cmd->format = d3d9_index_format_to_aerogpu(kD3dFmtIndex32);
-  ib_cmd->offset_bytes = 0;
-  ib_cmd->reserved0 = 0;
 
   const uint32_t topology = d3d9_prim_to_topology(type);
   const size_t draw_pkt_bytes = align_up(sizeof(aerogpu_cmd_draw_indexed), 4);
   const size_t min_bytes = align_up(sizeof(aerogpu_cmd_set_primitive_topology), 4) + draw_pkt_bytes;
   if (!ensure_cmd_space(dev, min_bytes)) {
     (void)restore_streams();
-    (void)restore_index();
+    if (index_modified) {
+      (void)restore_index();
+    }
     return device_lost_override(dev, E_OUTOFMEMORY);
   }
   if (!emit_set_topology_locked(dev, topology)) {
     (void)restore_streams();
-    (void)restore_index();
+    if (index_modified) {
+      (void)restore_index();
+    }
     return device_lost_override(dev, E_OUTOFMEMORY);
   }
 
   if (single_draw_safe) {
     if (!ensure_cmd_space(dev, draw_pkt_bytes)) {
       (void)restore_streams();
-      (void)restore_index();
+      if (index_modified) {
+        (void)restore_index();
+      }
       return device_lost_override(dev, E_OUTOFMEMORY);
     }
     hr = track_draw_state_locked(dev);
     if (FAILED(hr)) {
       (void)restore_streams();
-      (void)restore_index();
+      if (index_modified) {
+        (void)restore_index();
+      }
       return hr;
     }
 
     auto* cmd = append_fixed_locked<aerogpu_cmd_draw_indexed>(dev, AEROGPU_CMD_DRAW_INDEXED);
     if (!cmd) {
       (void)restore_streams();
-      (void)restore_index();
+      if (index_modified) {
+        (void)restore_index();
+      }
       return device_lost_override(dev, E_OUTOFMEMORY);
     }
     cmd->index_count = expanded_index_count;
@@ -21974,26 +22017,38 @@ HRESULT try_draw_instanced_indexed_primitive_locked(
     for (uint32_t inst = 0; inst < cfg.instance_count; ++inst) {
       if (!ensure_cmd_space(dev, draw_pkt_bytes)) {
         (void)restore_streams();
-        (void)restore_index();
+        if (index_modified) {
+          (void)restore_index();
+        }
         return device_lost_override(dev, E_OUTOFMEMORY);
       }
       hr = track_draw_state_locked(dev);
       if (FAILED(hr)) {
         (void)restore_streams();
-        (void)restore_index();
+        if (index_modified) {
+          (void)restore_index();
+        }
         return hr;
       }
 
       auto* cmd = append_fixed_locked<aerogpu_cmd_draw_indexed>(dev, AEROGPU_CMD_DRAW_INDEXED);
       if (!cmd) {
         (void)restore_streams();
-        (void)restore_index();
+        if (index_modified) {
+          (void)restore_index();
+        }
         return device_lost_override(dev, E_OUTOFMEMORY);
       }
       cmd->index_count = index_count;
       cmd->instance_count = 1;
-      cmd->first_index = inst * index_count;
-      cmd->base_vertex = 0;
+      cmd->first_index = start_index;
+      const int64_t base_vertex_i64 =
+          static_cast<int64_t>(inst) * static_cast<int64_t>(num_vertices) - static_cast<int64_t>(min_index);
+      if (base_vertex_i64 < std::numeric_limits<int32_t>::min() || base_vertex_i64 > std::numeric_limits<int32_t>::max()) {
+        (void)restore_streams();
+        return E_INVALIDARG;
+      }
+      cmd->base_vertex = static_cast<int32_t>(base_vertex_i64);
       cmd->first_instance = 0;
     }
   }
@@ -22001,8 +22056,10 @@ HRESULT try_draw_instanced_indexed_primitive_locked(
   if (!restore_streams()) {
     return device_lost_override(dev, E_OUTOFMEMORY);
   }
-  if (!restore_index()) {
-    return device_lost_override(dev, E_OUTOFMEMORY);
+  if (index_modified) {
+    if (!restore_index()) {
+      return device_lost_override(dev, E_OUTOFMEMORY);
+    }
   }
 
   return S_OK;
