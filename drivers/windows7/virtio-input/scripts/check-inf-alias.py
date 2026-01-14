@@ -2,26 +2,19 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 """Verify that the virtio-input legacy INF filename alias stays in sync.
 
-The Windows 7 virtio-input driver package has a canonical keyboard/mouse INF:
+Canonical INF:
   - drivers/windows7/virtio-input/inf/aero_virtio_input.inf
 
-For compatibility with older tooling/workflows, the repo also keeps a legacy
-filename alias INF (checked in disabled-by-default):
+Legacy filename alias INF (checked in disabled-by-default):
   - drivers/windows7/virtio-input/inf/virtio-input.inf.disabled
 
 Developers may locally enable the alias by renaming it to `virtio-input.inf`.
 
 Policy:
-  - The canonical INF (`aero_virtio_input.inf`) is SUBSYS-only (no strict generic
-    fallback model entry).
-  - The legacy alias INF is a *filename alias only*. It is allowed to diverge
-    from the canonical INF only in the models sections (`[Aero.NTx86]` /
-    `[Aero.NTamd64]`) to add an opt-in strict, revision-gated generic fallback
-    HWID (no SUBSYS): `PCI\\VEN_1AF4&DEV_1052&REV_01`.
-  - Outside those models sections, from the first section header (typically
-    `[Version]`) onward, the alias must remain byte-for-byte identical to the
-    canonical INF.
-  - Only the leading banner/comment block may differ.
+  - The alias INF is a *filename alias only*.
+  - From the first section header line (typically `[Version]`) onward, the alias
+    must remain byte-for-byte identical to the canonical INF.
+  - Only the leading banner/comments before the first section header may differ.
 
 Run from the repo root:
   python3 drivers/windows7/virtio-input/scripts/check-inf-alias.py
@@ -33,120 +26,34 @@ import difflib
 import sys
 from pathlib import Path
 
-STRICT_FALLBACK_HWID = r"PCI\VEN_1AF4&DEV_1052&REV_01"
-MODELS_SECTIONS = {"aero.ntx86", "aero.ntamd64"}
 
-
-def read_text_best_effort(path: Path) -> str:
-    """Best-effort INF text decoding (UTF-8/ASCII, UTF-16LE/BE with or without BOM)."""
-
-    data = path.read_bytes()
-
-    # BOM handling.
-    if data.startswith(b"\xff\xfe") or data.startswith(b"\xfe\xff"):
-        return data.decode("utf-16", errors="replace").lstrip("\ufeff")
-    if data.startswith(b"\xef\xbb\xbf"):
-        return data.decode("utf-8-sig", errors="replace")
-
-    # Try UTF-8 first.
-    utf8_text: str | None
-    try:
-        utf8_text = data.decode("utf-8")
-    except UnicodeDecodeError:
-        utf8_text = None
-    else:
-        # Fast-path: no NULs means we decoded correctly.
-        if "\x00" not in utf8_text:
-            return utf8_text
-
-    # Heuristic detection for UTF-16 without BOM.
-    sample = data[:4096]
-    sample_len = len(sample)
-    even_zeros = sum(1 for i, b in enumerate(sample) if b == 0 and (i % 2) == 0)
-    odd_zeros = sum(1 for i, b in enumerate(sample) if b == 0 and (i % 2) == 1)
-
-    enc: str | None = None
-    if sample_len >= 2:
-        even_ratio = even_zeros / sample_len
-        odd_ratio = odd_zeros / sample_len
-        if (odd_zeros > (even_zeros * 4 + 10)) or (odd_ratio > 0.2 and even_ratio < 0.05):
-            enc = "utf-16-le"
-        elif (even_zeros > (odd_zeros * 4 + 10)) or (even_ratio > 0.2 and odd_ratio < 0.05):
-            enc = "utf-16-be"
-
-    if enc is not None:
-        return data.decode(enc, errors="replace").lstrip("\ufeff")
-
-    if utf8_text is not None:
-        # Likely UTF-16 without BOM decoded as UTF-8. Strip NUL padding.
-        return utf8_text.replace("\x00", "")
-
-    return data.decode("utf-8", errors="replace")
-
-
-def strip_inf_inline_comment(raw: str) -> str:
-    """Strip INF inline comments (semicolon outside quotes)."""
-
-    out: list[str] = []
-    in_quote: str | None = None
-    for ch in raw:
-        if ch in ("'", '"'):
-            if in_quote == ch:
-                in_quote = None
-            elif in_quote is None:
-                in_quote = ch
-        if ch == ";" and in_quote is None:
-            break
-        out.append(ch)
-    return "".join(out)
-
-
-def inf_section_text(*, text: str, section: str) -> list[str]:
-    """Return active (non-comment) lines within a section."""
-
-    out: list[str] = []
-    current: str | None = None
-    for raw in text.splitlines():
-        line = strip_inf_inline_comment(raw).strip()
-        if not line:
-            continue
-        if line.startswith("[") and line.endswith("]") and len(line) >= 2:
-            current = line[1:-1].strip().lower()
-            continue
-        if current == section.lower():
-            out.append(line)
-    return out
-
-
-def _first_nonblank_ascii_byte(*, line: bytes, first_line: bool) -> int | None:
-    """Return the first meaningful ASCII byte on a line, ignoring whitespace and NULs."""
-
-    if first_line:
-        # Strip BOMs for *detection only*. Returned content still includes them.
-        if line.startswith(b"\xef\xbb\xbf"):
-            line = line[3:]
-        elif line.startswith(b"\xff\xfe") or line.startswith(b"\xfe\xff"):
-            line = line[2:]
-
-    for b in line:
-        if b in (0x00, 0x09, 0x0A, 0x0D, 0x20):
-            continue
-        return b
-    return None
-
-
-def inf_functional_bytes(path: Path) -> bytes:
-    """Return the file content starting from the first section header line."""
+def _inf_functional_bytes(path: Path) -> bytes:
+    """Return the file bytes starting from the first section header line."""
 
     data = path.read_bytes()
     lines = data.splitlines(keepends=True)
 
+    def _first_nonblank_ascii_byte(line: bytes, *, first_line: bool) -> int | None:
+        # Return the first meaningful ASCII byte on a line, ignoring whitespace and NULs.
+        # This makes the scan robust to UTF-16LE/BE INFs (with or without a BOM).
+        if first_line:
+            if line.startswith(b"\xef\xbb\xbf"):
+                line = line[3:]
+            elif line.startswith(b"\xff\xfe") or line.startswith(b"\xfe\xff"):
+                line = line[2:]
+
+        for b in line:
+            if b in (0x00, 0x09, 0x0A, 0x0D, 0x20):  # NUL, tab, LF, CR, space
+                continue
+            return b
+        return None
+
     for i, line in enumerate(lines):
-        first = _first_nonblank_ascii_byte(line=line, first_line=(i == 0))
+        first = _first_nonblank_ascii_byte(line, first_line=(i == 0))
         if first is None:
             continue
 
-        # First section header (e.g. "[Version]") starts the functional region.
+        # First section header (e.g. "[Version]") starts the compared region.
         if first == ord("["):
             return b"".join(lines[i:])
 
@@ -154,36 +61,15 @@ def inf_functional_bytes(path: Path) -> bytes:
         if first == ord(";"):
             continue
 
-        # Unexpected preamble content (not comment, not blank, not section): treat it as functional.
+        # Unexpected preamble content (not comment, not blank, not section): treat it as
+        # functional to avoid masking drift.
         return b"".join(lines[i:])
 
     raise RuntimeError(f"{path}: could not find a section header (e.g. [Version])")
 
 
-def strip_inf_sections_bytes(data: bytes, *, sections: set[str]) -> bytes:
-    """Remove entire INF sections (including their headers) by name (case-insensitive)."""
-
-    drop = {s.lower() for s in sections}
-    out: list[bytes] = []
-    skipping = False
-
-    for line in data.splitlines(keepends=True):
-        # Support UTF-16LE/BE INFs by stripping NUL bytes for detection only.
-        line_ascii = line.replace(b"\x00", b"")
-        stripped = line_ascii.lstrip(b" \t")
-        if stripped.startswith(b"[") and b"]" in stripped:
-            end = stripped.find(b"]")
-            name = stripped[1:end].strip().decode("utf-8", errors="replace").lower()
-            skipping = name in drop
-        if skipping:
-            continue
-        out.append(line)
-
-    return b"".join(out)
-
-
-def decode_lines_for_diff(data: bytes) -> list[str]:
-    """Decode bytes for a readable unified diff."""
+def _decode_lines_for_diff(data: bytes) -> list[str]:
+    """Decode bytes for readable unified diff output."""
 
     if data.startswith(b"\xff\xfe") or data.startswith(b"\xfe\xff"):
         text = data.decode("utf-16", errors="replace").lstrip("\ufeff")
@@ -195,7 +81,16 @@ def decode_lines_for_diff(data: bytes) -> list[str]:
         if "\x00" in text:
             text = text.replace("\x00", "")
 
-    return text.splitlines(keepends=True)
+    out: list[str] = []
+    for line in text.splitlines(keepends=True):
+        # Make CRLF/CR visible without emitting literal '\r' characters.
+        if line.endswith("\r\n"):
+            out.append(line[:-2] + "\\r\n")
+        elif line.endswith("\r"):
+            out.append(line[:-1] + "\\r\n")
+        else:
+            out.append(line)
+    return out
 
 
 def main() -> int:
@@ -204,7 +99,16 @@ def main() -> int:
     inf_dir = virtio_input_root / "inf"
 
     canonical = inf_dir / "aero_virtio_input.inf"
+    if not canonical.exists():
+        sys.stderr.write(
+            "virtio-input INF alias drift check: canonical INF not found: {}\n".format(
+                canonical.relative_to(repo_root)
+            )
+        )
+        return 1
 
+    # The repo keeps the alias checked in disabled-by-default, but developers may locally enable
+    # it by renaming to `virtio-input.inf`. Support both so the check can be used in either state.
     alias_enabled = inf_dir / "virtio-input.inf"
     alias_disabled = inf_dir / "virtio-input.inf.disabled"
     if alias_enabled.exists():
@@ -218,60 +122,31 @@ def main() -> int:
         )
         return 0
 
-    canonical_text = read_text_best_effort(canonical)
-    alias_text = read_text_best_effort(alias)
-
-    errors: list[str] = []
-
-    # 1) Canonical must not include the strict fallback in models sections.
-    for section in ("Aero.NTx86", "Aero.NTamd64"):
-        lines = inf_section_text(text=canonical_text, section=section)
-        hits = [l for l in lines if STRICT_FALLBACK_HWID.lower() in l.lower()]
-        if hits:
-            errors.append(
-                f"{canonical.as_posix()}: canonical INF must not contain strict fallback model line in [{section}] "
-                f"(fallback is alias-only):\n  " + "\n  ".join(hits)
+    canonical_body = _inf_functional_bytes(canonical)
+    alias_body = _inf_functional_bytes(alias)
+    if canonical_body == alias_body:
+        print(
+            "virtio-input INF alias drift check: OK ({} stays in sync with {} outside banner/comments)".format(
+                alias.relative_to(repo_root), canonical.relative_to(repo_root)
             )
-
-    # 2) Alias must include exactly one strict fallback model line per models section.
-    for section in ("Aero.NTx86", "Aero.NTamd64"):
-        lines = inf_section_text(text=alias_text, section=section)
-        hits = [l for l in lines if STRICT_FALLBACK_HWID.lower() in l.lower()]
-        if len(hits) != 1:
-            errors.append(
-                f"{alias.as_posix()}: expected exactly one strict fallback model line in [{section}] "
-                f"(got {len(hits)}):\n  " + "\n  ".join(hits)
-            )
-
-    # 3) Drift check: from [Version] onward, alias must match canonical byte-for-byte outside models sections.
-    canonical_body = strip_inf_sections_bytes(inf_functional_bytes(canonical), sections=MODELS_SECTIONS)
-    alias_body = strip_inf_sections_bytes(inf_functional_bytes(alias), sections=MODELS_SECTIONS)
-    if canonical_body != alias_body:
-        canonical_label = str(canonical.relative_to(repo_root))
-        alias_label = str(alias.relative_to(repo_root))
-
-        diff = difflib.unified_diff(
-            decode_lines_for_diff(canonical_body),
-            decode_lines_for_diff(alias_body),
-            fromfile=canonical_label,
-            tofile=alias_label,
-            lineterm="",
         )
-        errors.append(
-            "virtio-input INF alias drift detected (expected byte-identical outside models sections):\n"
-            + "".join(diff)
-        )
+        return 0
 
-    if errors:
-        sys.stderr.write("\n\n".join(errors) + "\n")
-        return 1
-
-    print(
-        "virtio-input INF alias drift check: OK ({} stays in sync with {} outside models sections)".format(
-            alias.relative_to(repo_root), canonical.relative_to(repo_root)
-        )
+    sys.stderr.write("virtio-input INF alias drift detected.\n")
+    sys.stderr.write(
+        "The alias INF must match the canonical INF from the first section header ([Version]) onward "
+        "(byte-for-byte; only the leading banner/comments may differ).\n\n"
     )
-    return 0
+
+    diff = difflib.unified_diff(
+        _decode_lines_for_diff(canonical_body),
+        _decode_lines_for_diff(alias_body),
+        fromfile=str(canonical.relative_to(repo_root)),
+        tofile=str(alias.relative_to(repo_root)),
+        lineterm="\n",
+    )
+    sys.stderr.write("".join(diff))
+    return 1
 
 
 if __name__ == "__main__":
