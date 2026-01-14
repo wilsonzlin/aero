@@ -3454,6 +3454,254 @@ bool TestApplyStateBlockUpdatesFixedfuncPsWhenTextureBindingChanges() {
   return true;
 }
 
+bool TestApplyStateBlockUpdatesFixedfuncPsForStageStateInVsOnlyInterop() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnBeginStateBlock != nullptr, "pfnBeginStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnEndStateBlock != nullptr, "pfnEndStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnApplyStateBlock != nullptr, "pfnApplyStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDeleteStateBlock != nullptr, "pfnDeleteStateBlock is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzrhwDiffuseTex1);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE|TEX1)")) {
+    return false;
+  }
+
+  D3DDDI_HRESOURCE hTex0{};
+  D3DDDI_HRESOURCE hTex1{};
+  if (!CreateDummyTexture(&cleanup, &hTex0) || !CreateDummyTexture(&cleanup, &hTex1)) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, hTex0);
+  if (!Check(hr == S_OK, "SetTexture(stage0)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/1, hTex1);
+  if (!Check(hr == S_OK, "SetTexture(stage1)")) {
+    return false;
+  }
+
+  const auto SetTextureStageState = [&](uint32_t stage, uint32_t state, uint32_t value, const char* msg) -> bool {
+    HRESULT hr2 = S_OK;
+    if (cleanup.device_funcs.pfnSetTextureStageState) {
+      hr2 = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, stage, state, value);
+    } else {
+      hr2 = aerogpu::device_set_texture_stage_state(cleanup.hDevice, stage, state, value);
+    }
+    return Check(hr2 == S_OK, msg);
+  };
+
+  // Stage0: modulate tex0 * diffuse.
+  if (!SetTextureStageState(0, kD3dTssColorOp, kD3dTopModulate, "stage0 COLOROP=MODULATE")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssColorArg1, kD3dTaTexture, "stage0 COLORARG1=TEXTURE")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssColorArg2, kD3dTaDiffuse, "stage0 COLORARG2=DIFFUSE")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssAlphaOp, kD3dTopDisable, "stage0 ALPHAOP=DISABLE")) {
+    return false;
+  }
+
+  // Stage1: add current + tex1 (uses texture1). We'll toggle only COLOROP between
+  // ADD and DISABLE so the signature is stable and we avoid intermediate variants.
+  if (!SetTextureStageState(1, kD3dTssColorArg1, kD3dTaCurrent, "stage1 COLORARG1=CURRENT")) {
+    return false;
+  }
+  if (!SetTextureStageState(1, kD3dTssColorArg2, kD3dTaTexture, "stage1 COLORARG2=TEXTURE")) {
+    return false;
+  }
+  if (!SetTextureStageState(1, kD3dTssAlphaOp, kD3dTopDisable, "stage1 ALPHAOP=DISABLE")) {
+    return false;
+  }
+  if (!SetTextureStageState(1, kD3dTssColorOp, kD3dTopAdd, "stage1 COLOROP=ADD (enable)")) {
+    return false;
+  }
+  if (!SetTextureStageState(2, kD3dTssColorOp, kD3dTopDisable, "stage2 COLOROP=DISABLE")) {
+    return false;
+  }
+
+  // Bind only a user VS (PS stays NULL) to enter VS-only interop mode.
+  D3D9DDI_HSHADER hUserVs{};
+  hr = cleanup.device_funcs.pfnCreateShader(cleanup.hDevice,
+                                            kD3dShaderStageVs,
+                                            fixedfunc::kVsPassthroughPosColor,
+                                            static_cast<uint32_t>(sizeof(fixedfunc::kVsPassthroughPosColor)),
+                                            &hUserVs);
+  if (!Check(hr == S_OK, "CreateShader(user VS)")) {
+    return false;
+  }
+  cleanup.shaders.push_back(hUserVs);
+
+  hr = cleanup.device_funcs.pfnSetShader(cleanup.hDevice, kD3dShaderStageVs, hUserVs);
+  if (!Check(hr == S_OK, "SetShader(VS=user)")) {
+    return false;
+  }
+
+  Shader* user_vs = nullptr;
+  Shader* ps_enabled = nullptr;
+  Shader* ps_disabled = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    user_vs = dev->user_vs;
+    ps_enabled = dev->ps;
+    if (!Check(user_vs != nullptr, "user VS bound")) {
+      return false;
+    }
+    if (!Check(dev->vs == user_vs, "VS-only interop binds the user VS")) {
+      return false;
+    }
+  }
+  if (!Check(ps_enabled != nullptr, "PS bound (stage1 enabled; VS-only interop)")) {
+    return false;
+  }
+  if (!Check(ShaderCountToken(ps_enabled, kPsOpTexld) == 2, "stage1 enabled => exactly 2 texld (VS-only interop)")) {
+    return false;
+  }
+  if (!Check(ShaderTexldSamplerMask(ps_enabled) == 0x3u, "stage1 enabled => texld uses samplers s0 and s1 (VS-only interop)")) {
+    return false;
+  }
+
+  // Disable stage1 (COLOROP=DISABLE): should switch to a stage0-only PS.
+  if (!SetTextureStageState(1, kD3dTssColorOp, kD3dTopDisable, "stage1 COLOROP=DISABLE")) {
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    ps_disabled = dev->ps;
+  }
+  if (!Check(ps_disabled != nullptr, "PS bound (stage1 disabled; VS-only interop)")) {
+    return false;
+  }
+  if (!Check(ShaderCountToken(ps_disabled, kPsOpTexld) == 1, "stage1 disabled => exactly 1 texld (VS-only interop)")) {
+    return false;
+  }
+  if (!Check(ShaderTexldSamplerMask(ps_disabled) == 0x1u, "stage1 disabled => texld uses only sampler s0 (VS-only interop)")) {
+    return false;
+  }
+
+  // Re-enable stage1.
+  if (!SetTextureStageState(1, kD3dTssColorOp, kD3dTopAdd, "stage1 COLOROP=ADD (re-enable)")) {
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->ps == ps_enabled, "stage1 re-enable reuses cached PS variant (VS-only interop)")) {
+      return false;
+    }
+  }
+
+  // Record a state block that disables stage1.
+  D3D9DDI_HSTATEBLOCK hSb{};
+  auto DeleteSb = [&]() {
+    if (hSb.pDrvPrivate) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      hSb.pDrvPrivate = nullptr;
+    }
+  };
+
+  hr = cleanup.device_funcs.pfnBeginStateBlock(cleanup.hDevice);
+  if (!Check(hr == S_OK, "BeginStateBlock")) {
+    return false;
+  }
+  if (!SetTextureStageState(1, kD3dTssColorOp, kD3dTopDisable, "stage1 COLOROP=DISABLE recorded")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnEndStateBlock(cleanup.hDevice, &hSb);
+  if (!Check(hr == S_OK, "EndStateBlock")) {
+    return false;
+  }
+  if (!Check(hSb.pDrvPrivate != nullptr, "EndStateBlock returned handle")) {
+    return false;
+  }
+
+  // Restore stage1 enabled so ApplyStateBlock can toggle it back off.
+  if (!SetTextureStageState(1, kD3dTssColorOp, kD3dTopAdd, "stage1 COLOROP=ADD before ApplyStateBlock")) {
+    DeleteSb();
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->ps == ps_enabled, "PS enabled before ApplyStateBlock (VS-only interop)")) {
+      DeleteSb();
+      return false;
+    }
+    if (!Check(dev->vs == user_vs, "VS still bound before ApplyStateBlock (VS-only interop)")) {
+      DeleteSb();
+      return false;
+    }
+  }
+
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnApplyStateBlock(cleanup.hDevice, hSb);
+  if (!Check(hr == S_OK, "ApplyStateBlock(stage1 disable; VS-only interop)")) {
+    DeleteSb();
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->ps == ps_disabled, "ApplyStateBlock updates fixed-function PS (VS-only interop)")) {
+      DeleteSb();
+      return false;
+    }
+    if (!Check(dev->vs == user_vs, "ApplyStateBlock preserves VS binding (VS-only interop)")) {
+      DeleteSb();
+      return false;
+    }
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(ApplyStateBlock stage-state; VS-only interop)")) {
+    DeleteSb();
+    return false;
+  }
+
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_CREATE_SHADER_DXBC) == 0,
+             "ApplyStateBlock emits no CREATE_SHADER_DXBC (VS-only interop)")) {
+    DeleteSb();
+    return false;
+  }
+
+  const auto binds = CollectOpcodes(buf, len, AEROGPU_CMD_BIND_SHADERS);
+  if (!Check(!binds.empty(), "ApplyStateBlock emits BIND_SHADERS (VS-only interop)")) {
+    DeleteSb();
+    return false;
+  }
+  const auto* last_bind = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(binds.back());
+  if (!Check(last_bind->vs == user_vs->handle, "ApplyStateBlock binds user VS")) {
+    DeleteSb();
+    return false;
+  }
+  if (!Check(last_bind->ps == ps_disabled->handle, "ApplyStateBlock binds stage1-disabled PS")) {
+    DeleteSb();
+    return false;
+  }
+
+  DeleteSb();
+  return true;
+}
+
 bool TestFvfXyzDiffuseDrawPrimitiveVbUploadsWvpAndBindsVb() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -16406,6 +16654,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestApplyStateBlockUpdatesFixedfuncPsWhenTextureBindingChanges()) {
+    return 1;
+  }
+  if (!aerogpu::TestApplyStateBlockUpdatesFixedfuncPsForStageStateInVsOnlyInterop()) {
     return 1;
   }
   if (!aerogpu::TestFvfXyzDiffuseDrawPrimitiveVbUploadsWvpAndBindsVb()) {
