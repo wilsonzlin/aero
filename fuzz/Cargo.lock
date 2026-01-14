@@ -53,8 +53,14 @@ dependencies = [
  "aero-gpu",
  "aero-protocol",
  "anyhow",
+ "blake3",
  "futures-intrusive",
+ "js-sys",
  "pollster",
+ "serde",
+ "serde-wasm-bindgen",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
  "wgpu",
 ]
 
