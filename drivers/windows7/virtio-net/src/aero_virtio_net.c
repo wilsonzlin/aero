@@ -188,7 +188,15 @@ static __forceinline VOID AerovNetSgMappingsRefLocked(_Inout_ AEROVNET_ADAPTER* 
 
 static __forceinline VOID AerovNetSgMappingsDerefLocked(_Inout_ AEROVNET_ADAPTER* Adapter) {
   // Adapter->Lock must be held by the caller.
-  ASSERT(Adapter->OutstandingSgMappings > 0);
+  if (Adapter->OutstandingSgMappings <= 0) {
+#if DBG
+    DbgPrint("aero_virtio_net: BUG: OutstandingSgMappings underflow (%ld)\n", Adapter->OutstandingSgMappings);
+#endif
+    Adapter->OutstandingSgMappings = 0;
+    KeSetEvent(&Adapter->OutstandingSgEvent, IO_NO_INCREMENT, FALSE);
+    return;
+  }
+
   Adapter->OutstandingSgMappings--;
   if (Adapter->OutstandingSgMappings == 0) {
     KeSetEvent(&Adapter->OutstandingSgEvent, IO_NO_INCREMENT, FALSE);
@@ -1880,6 +1888,11 @@ static VOID AerovNetVirtioStop(_Inout_ AEROVNET_ADAPTER* Adapter) {
   // memory while an NDIS SG mapping callback might still reference it.
   if (KeGetCurrentIrql() == PASSIVE_LEVEL) {
     (VOID)KeWaitForSingleObject(&Adapter->OutstandingSgEvent, Executive, KernelMode, FALSE, NULL);
+#if DBG
+    NdisAcquireSpinLock(&Adapter->Lock);
+    ASSERT(Adapter->OutstandingSgMappings == 0);
+    NdisReleaseSpinLock(&Adapter->Lock);
+#endif
   }
 
   InitializeListHead(&AbortTxReqs);
@@ -3539,6 +3552,11 @@ static NDIS_STATUS AerovNetMiniportPause(_In_ NDIS_HANDLE MiniportAdapterContext
   // still tries to enqueue/complete a TX request.
   if (KeGetCurrentIrql() == PASSIVE_LEVEL) {
     (VOID)KeWaitForSingleObject(&Adapter->OutstandingSgEvent, Executive, KernelMode, FALSE, NULL);
+#if DBG
+    NdisAcquireSpinLock(&Adapter->Lock);
+    ASSERT(Adapter->OutstandingSgMappings == 0);
+    NdisReleaseSpinLock(&Adapter->Lock);
+#endif
   }
 
   return NDIS_STATUS_SUCCESS;
