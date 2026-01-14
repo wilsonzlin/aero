@@ -877,27 +877,31 @@ impl IoSnapshot for PlatformInterrupts {
             let mut d = Decoder::new(buf);
             let lapic_count = d.u32()? as usize;
             if lapic_count == 0 || lapic_count > MAX_SNAPSHOT_LAPICS {
-                return Err(aero_io_snapshot::io::state::SnapshotError::InvalidFieldEncoding(
-                    "lapic_count",
-                ));
+                return Err(
+                    aero_io_snapshot::io::state::SnapshotError::InvalidFieldEncoding("lapic_count"),
+                );
             }
             if lapic_count != self.lapics.len() {
-                return Err(aero_io_snapshot::io::state::SnapshotError::InvalidFieldEncoding(
-                    "lapic_count_mismatch",
-                ));
+                return Err(
+                    aero_io_snapshot::io::state::SnapshotError::InvalidFieldEncoding(
+                        "lapic_count_mismatch",
+                    ),
+                );
             }
 
             for idx in 0..lapic_count {
                 let entry_len_u64 = d.u64()?;
-                let entry_len: usize = entry_len_u64
-                    .try_into()
-                    .map_err(|_| aero_io_snapshot::io::state::SnapshotError::InvalidFieldEncoding(
+                let entry_len: usize = entry_len_u64.try_into().map_err(|_| {
+                    aero_io_snapshot::io::state::SnapshotError::InvalidFieldEncoding(
                         "lapic_entry_len",
-                    ))?;
+                    )
+                })?;
                 if entry_len == 0 || entry_len > MAX_SNAPSHOT_LAPIC_STATE_LEN {
-                    return Err(aero_io_snapshot::io::state::SnapshotError::InvalidFieldEncoding(
-                        "lapic_entry_len",
-                    ));
+                    return Err(
+                        aero_io_snapshot::io::state::SnapshotError::InvalidFieldEncoding(
+                            "lapic_entry_len",
+                        ),
+                    );
                 }
                 let entry = d.bytes(entry_len)?;
                 self.lapics[idx].restore_state(entry)?;
@@ -1323,9 +1327,12 @@ mod tests {
 
         let seen = Arc::new(Mutex::new(Vec::<aero_interrupts::apic::Icr>::new()));
         let seen_clone = seen.clone();
-        ints.register_icr_notifier(0, Arc::new(move |icr| {
-            seen_clone.lock().unwrap().push(icr);
-        }));
+        ints.register_icr_notifier(
+            0,
+            Arc::new(move |icr| {
+                seen_clone.lock().unwrap().push(icr);
+            }),
+        );
 
         // Program destination APIC ID = 1 in ICR_HIGH.
         ints.lapic_mmio_write_for_apic(0, 0x310, &((1u32 << 24).to_le_bytes()));

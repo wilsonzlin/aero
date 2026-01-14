@@ -1,4 +1,5 @@
 use aero_machine::{Machine, MachineConfig};
+use firmware::smbios::{find_eps, parse_eps_table_info, validate_eps_checksum};
 use pretty_assertions::assert_eq;
 
 fn boot_sector() -> [u8; 512] {
@@ -8,35 +9,30 @@ fn boot_sector() -> [u8; 512] {
     sector
 }
 
-fn checksum_ok(bytes: &[u8]) -> bool {
-    bytes.iter().fold(0u8, |acc, &b| acc.wrapping_add(b)) == 0
+struct MachineMemory<'a> {
+    m: &'a mut Machine,
 }
 
-fn scan_region_for_smbios(m: &mut Machine, base: u64, len: u64) -> Option<u64> {
-    for off in (0..len).step_by(16) {
-        let addr = base + off;
-        if m.read_physical_u8(addr) == b'_'
-            && m.read_physical_u8(addr + 1) == b'S'
-            && m.read_physical_u8(addr + 2) == b'M'
-            && m.read_physical_u8(addr + 3) == b'_'
-        {
-            return Some(addr);
-        }
+impl<'a> firmware::memory::MemoryBus for MachineMemory<'a> {
+    fn read_u8(&mut self, addr: u64) -> u8 {
+        self.m.read_physical_u8(addr)
     }
-    None
-}
 
-fn find_smbios_eps(m: &mut Machine) -> Option<u64> {
-    // SMBIOS spec: search the first KiB of EBDA first, then scan 0xF0000-0xFFFFF on 16-byte
-    // boundaries.
-    let ebda_seg = m.read_physical_u16(0x040E);
-    if ebda_seg != 0 {
-        let ebda_base = (ebda_seg as u64) << 4;
-        if let Some(addr) = scan_region_for_smbios(m, ebda_base, 1024) {
-            return Some(addr);
-        }
+    fn write_u8(&mut self, addr: u64, value: u8) {
+        self.m.write_physical_u8(addr, value);
     }
-    scan_region_for_smbios(m, 0xF0000, 0x10000)
+
+    fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
+        if buf.is_empty() {
+            return;
+        }
+        let bytes = self.m.read_physical_bytes(paddr, buf.len());
+        buf.copy_from_slice(&bytes);
+    }
+
+    fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
+        self.m.write_physical(paddr, buf);
+    }
 }
 
 fn find_type1_uuid(table: &[u8]) -> Option<[u8; 16]> {
@@ -119,16 +115,16 @@ fn smbios_system_uuid_uses_machine_config_seed() {
     m.set_disk_image(boot_sector().to_vec()).unwrap();
     m.reset();
 
-    let eps_addr = find_smbios_eps(&mut m).expect("SMBIOS EPS not found after BIOS POST");
+    let eps_addr = {
+        let mut bus = MachineMemory { m: &mut m };
+        find_eps(&mut bus).expect("SMBIOS EPS not found after BIOS POST")
+    };
     let eps = m.read_physical_bytes(eps_addr, 0x1F);
     assert_eq!(&eps[0..4], b"_SM_");
-    assert!(checksum_ok(&eps));
-    assert_eq!(&eps[0x10..0x15], b"_DMI_");
-    assert!(checksum_ok(&eps[0x10..]));
+    assert!(validate_eps_checksum(&eps));
 
-    let table_len = u16::from_le_bytes([eps[0x16], eps[0x17]]) as usize;
-    let table_addr = u32::from_le_bytes([eps[0x18], eps[0x19], eps[0x1A], eps[0x1B]]) as u64;
-    let table = m.read_physical_bytes(table_addr, table_len);
+    let table_info = parse_eps_table_info(&eps).expect("invalid SMBIOS EPS");
+    let table = m.read_physical_bytes(table_info.table_addr, table_info.table_len);
 
     let uuid = find_type1_uuid(&table).expect("Type 1 UUID missing from SMBIOS table");
     let expected = expected_smbios_uuid(ram_size_bytes, 1, seed);
