@@ -7166,6 +7166,34 @@ void AEROGPU_APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
   bs_cmd->state.blend_constant_rgba_f32[2] = f32_bits(1.0f);
   bs_cmd->state.blend_constant_rgba_f32[3] = f32_bits(1.0f);
   bs_cmd->state.sample_mask = 0xFFFFFFFFu;
+
+  // Depth-stencil state.
+  auto* dss_cmd = dev->cmd.append_fixed<aerogpu_cmd_set_depth_stencil_state>(AEROGPU_CMD_SET_DEPTH_STENCIL_STATE);
+  if (!dss_cmd) {
+    set_error(dev, E_OUTOFMEMORY);
+    return;
+  }
+  dss_cmd->state.depth_enable = 1u;
+  dss_cmd->state.depth_write_enable = 1u;
+  dss_cmd->state.depth_func = AEROGPU_COMPARE_LESS;
+  dss_cmd->state.stencil_enable = 0u;
+  dss_cmd->state.stencil_read_mask = 0xFF;
+  dss_cmd->state.stencil_write_mask = 0xFF;
+  dss_cmd->state.reserved0[0] = 0;
+  dss_cmd->state.reserved0[1] = 0;
+
+  // Rasterizer state.
+  auto* rs_cmd = dev->cmd.append_fixed<aerogpu_cmd_set_rasterizer_state>(AEROGPU_CMD_SET_RASTERIZER_STATE);
+  if (!rs_cmd) {
+    set_error(dev, E_OUTOFMEMORY);
+    return;
+  }
+  rs_cmd->state.fill_mode = AEROGPU_FILL_SOLID;
+  rs_cmd->state.cull_mode = AEROGPU_CULL_BACK;
+  rs_cmd->state.front_ccw = 0;
+  rs_cmd->state.scissor_enable = 0;
+  rs_cmd->state.depth_bias = 0;
+  rs_cmd->state.flags = AEROGPU_RASTERIZER_FLAG_NONE;
 }
 
 void AEROGPU_APIENTRY VsSetShaderResources(D3D10DDI_HDEVICE hDevice,
