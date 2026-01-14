@@ -196,6 +196,11 @@ contents (and `SOURCE_DATE_EPOCH`, if set) are identical.
 - Falls back to the legacy IMAPI2-based PowerShell implementation on Windows if `cargo` is missing.
 - Use `-LegacyIso` to force the IMAPI2 path (Windows only).
 
+Notes:
+
+- `ci/package-drivers.ps1 -DeterminismSelfTest` checks that repeated runs produce identical `*-bundle.zip` artifacts, and (when `cargo` is available) identical `*.iso` artifacts too.
+- The legacy helper `ci/lib/New-IsoFile.ps1` also prefers the deterministic Rust ISO builder when `cargo` is available (use `-LegacyIso` to force IMAPI2).
+
 ### Signing policy
 
 - `-SigningPolicy test` (default):
