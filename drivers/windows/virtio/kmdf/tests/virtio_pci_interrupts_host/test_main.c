@@ -471,6 +471,59 @@ static void TestIntxRealInterruptDispatch(void)
     Cleanup(&interrupts, dev);
 }
 
+static void TestIntxPendingStatusCoalesce(void)
+{
+    VIRTIO_PCI_INTERRUPTS interrupts;
+    WDFDEVICE dev;
+    TEST_CALLBACKS cb;
+    volatile UCHAR isrStatus;
+    BOOLEAN handled;
+
+    isrStatus = 0;
+    ResetRegisterReadInstrumentation();
+    PrepareIntx(&interrupts, &dev, &cb, 2, &isrStatus);
+
+    ResetCallbackCounters(&cb);
+    cb.ExpectedDevice = dev;
+
+    /* First interrupt: CONFIG only. */
+    isrStatus = VIRTIO_PCI_ISR_CONFIG_INTERRUPT;
+    handled = interrupts.u.Intx.Interrupt->Isr(interrupts.u.Intx.Interrupt, 0);
+    assert(handled == TRUE);
+    assert(interrupts.u.Intx.Interrupt->DpcQueued == TRUE);
+    assert(interrupts.u.Intx.PendingIsrStatus == VIRTIO_PCI_ISR_CONFIG_INTERRUPT);
+
+    /*
+     * Second interrupt arrives before the DPC runs: QUEUE only.
+     *
+     * PendingIsrStatus should accumulate via InterlockedOr so the single DPC run
+     * dispatches both config + queue processing.
+     */
+    isrStatus = VIRTIO_PCI_ISR_QUEUE_INTERRUPT;
+    handled = interrupts.u.Intx.Interrupt->Isr(interrupts.u.Intx.Interrupt, 0);
+    assert(handled == TRUE);
+    assert(interrupts.u.Intx.Interrupt->DpcQueued == TRUE);
+    assert(interrupts.u.Intx.Interrupt->DpcQueueCalls == 2);
+    assert(interrupts.u.Intx.PendingIsrStatus ==
+        (LONG)(VIRTIO_PCI_ISR_CONFIG_INTERRUPT | VIRTIO_PCI_ISR_QUEUE_INTERRUPT));
+
+    /* INTx ISR must read-to-ack for both interrupts. */
+    assert(WdfTestReadRegisterUcharCount == 2);
+    assert(WdfTestLastReadRegisterUcharAddress == &isrStatus);
+
+    WdfTestInterruptRunDpc(interrupts.u.Intx.Interrupt);
+    AssertInterruptLocksReleased(&interrupts);
+
+    assert(interrupts.u.Intx.Interrupt->DpcQueued == FALSE);
+    assert(interrupts.u.Intx.PendingIsrStatus == 0);
+    assert(cb.ConfigCalls == 1);
+    assert(cb.QueueCallsTotal == 2);
+    assert(cb.QueueCallsPerIndex[0] == 1);
+    assert(cb.QueueCallsPerIndex[1] == 1);
+
+    Cleanup(&interrupts, dev);
+}
+
 static void TestMsixDispatchAndRouting(void)
 {
     VIRTIO_PCI_INTERRUPTS interrupts;
@@ -1722,6 +1775,7 @@ int main(void)
 {
     TestIntxSpuriousInterrupt();
     TestIntxRealInterruptDispatch();
+    TestIntxPendingStatusCoalesce();
     TestMsixDispatchAndRouting();
     TestMsixLimitedVectorRouting();
     TestMsixLimitedVectorProgramming();
