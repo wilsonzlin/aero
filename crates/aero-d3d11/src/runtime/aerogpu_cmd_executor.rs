@@ -13300,33 +13300,15 @@ mod tests {
             exec.execute_cmd_stream(&stream, None, &mut guest_mem)
                 .expect("execute_cmd_stream should succeed");
 
-            let wgsl = r#"
-struct Data {
-    values: array<u32>,
-};
-
-@group(0) @binding(0) var<storage, read> data: Data;
-
-@compute @workgroup_size(1)
-fn main() {
-    let _x: u32 = data.values[0];
-}
-"#;
-
-            let shader = exec
-                .device
-                .create_shader_module(wgpu::ShaderModuleDescriptor {
-                    label: Some("aerogpu_cmd ia buffer storage bind test shader"),
-                    source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(wgsl)),
-                });
-
+            // Use VERTEX stage visibility so this test remains valid on backends without compute
+            // (e.g. WebGL2). Vertex pulling uses storage buffers in the vertex stage.
             let bgl = exec
                 .device
                 .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                     label: Some("aerogpu_cmd ia buffer storage bind test bgl"),
                     entries: &[wgpu::BindGroupLayoutEntry {
                         binding: 0,
-                        visibility: wgpu::ShaderStages::COMPUTE,
+                        visibility: wgpu::ShaderStages::VERTEX,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Storage { read_only: true },
                             has_dynamic_offset: false,
@@ -13334,23 +13316,6 @@ fn main() {
                         },
                         count: None,
                     }],
-                });
-
-            let pipeline_layout =
-                exec.device
-                    .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                        label: Some("aerogpu_cmd ia buffer storage bind test pipeline layout"),
-                        bind_group_layouts: &[&bgl],
-                        push_constant_ranges: &[],
-                    });
-
-            exec.device
-                .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                    label: Some("aerogpu_cmd ia buffer storage bind test pipeline"),
-                    layout: Some(&pipeline_layout),
-                    module: &shader,
-                    entry_point: "main",
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
                 });
 
             for (label, handle) in [("vertex", VB), ("index", IB)] {
