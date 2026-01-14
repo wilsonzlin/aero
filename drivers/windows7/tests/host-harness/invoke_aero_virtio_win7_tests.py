@@ -773,8 +773,10 @@ def _append_serial_tail(tail: bytes, chunk: bytes) -> bytes:
     """
     Append a newly read serial chunk to the rolling `tail` buffer.
 
-    Unlike naive `tail += chunk; tail = tail[-cap:]`, this ensures we never truncate away the newly
-    read chunk when the tail is near the cap (important for reliable marker detection).
+    This keeps the rolling tail size bounded to `_SERIAL_TAIL_CAP_BYTES` without constructing an
+    intermediate `tail + chunk` buffer larger than the cap (trim the existing tail *before*
+    appending).
+    If the newly read `chunk` itself exceeds the cap, only its last cap bytes are retained.
     """
     if not chunk:
         return tail

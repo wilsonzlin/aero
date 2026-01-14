@@ -311,7 +311,7 @@ param(
   # Note: this requires a guest image provisioned with `--test-net-link-flap` (or env var equivalent),
   # and a QEMU build that supports QMP `set_link`.
   [Parameter(Mandatory = $false)]
-  [Alias("WithVirtioNetLinkFlap", "EnableVirtioNetLinkFlap", "RequireVirtioNetLinkFlap")]
+  [Alias("WithVirtioNetLinkFlap", "EnableVirtioNetLinkFlap")]
   [switch]$WithNetLinkFlap,
 
   # If set, attach a virtio-snd device (virtio-sound-pci / virtio-snd-pci).
@@ -1094,9 +1094,10 @@ function Wait-AeroSelftestResult {
         [Console]::Out.Write($chunk)
       }
 
-      # Keep a rolling tail buffer for marker parsing without truncating away the newly read chunk.
-      # If we truncate *after* appending, we can drop the start of the new chunk when the tail is near
-      # the cap; instead, trim the existing tail first so the full new chunk is retained.
+      # Keep a rolling tail buffer for marker parsing.
+      # Trim the existing tail *before* appending the new chunk so we avoid allocating a temporary
+      # tail+chunk string larger than the cap. If the new chunk itself exceeds the cap, keep only
+      # its last N characters.
       $maxTailLen = 131072
       if ($chunk.Length -ge $maxTailLen) {
         $tail = $chunk.Substring($chunk.Length - $maxTailLen)
@@ -5361,11 +5362,24 @@ function Try-AeroQmpSetLink {
 
       foreach ($name in $Names) {
         if ([string]::IsNullOrEmpty($name)) { continue }
-        $cmd = @{
-          execute   = "set_link"
-          arguments = @{
-            name = $name
-            up   = [bool]$Up
+        $cmd = $null
+        if ($name -eq $script:VirtioNetQmpId) {
+          # Prefer the stable QOM id we assign (`$script:VirtioNetQmpId`) so QMP set_link targets the
+          # intended virtio-net device deterministically.
+          $cmd = @{
+            execute = "set_link"
+            arguments = @{
+              name = $script:VirtioNetQmpId
+              up   = [bool]$Up
+            }
+          }
+        } else {
+          $cmd = @{
+            execute = "set_link"
+            arguments = @{
+              name = $name
+              up   = [bool]$Up
+            }
           }
         }
         $writer.WriteLine(($cmd | ConvertTo-Json -Compress -Depth 10))
