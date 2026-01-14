@@ -32,8 +32,13 @@ pub fn load_windows_device_contract(path: &Path) -> Result<WindowsDeviceContract
 
 pub fn load_windows_device_contract_with_bytes(path: &Path) -> Result<(WindowsDeviceContract, Vec<u8>)> {
     let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
+    // Be tolerant of UTF-8 BOMs produced by some editors/tools.
+    let parse_bytes = bytes
+        .as_slice()
+        .strip_prefix(b"\xef\xbb\xbf")
+        .unwrap_or(bytes.as_slice());
     let contract: WindowsDeviceContract =
-        serde_json::from_slice(&bytes).with_context(|| format!("parse {}", path.display()))?;
+        serde_json::from_slice(parse_bytes).with_context(|| format!("parse {}", path.display()))?;
     validate_windows_device_contract(&contract)
         .with_context(|| format!("validate {}", path.display()))?;
     Ok((contract, bytes))

@@ -159,7 +159,12 @@ fn run(args: &Args) -> Result<()> {
 
 fn load_contract(path: &Path) -> Result<DeviceContract> {
     let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
-    serde_json::from_slice(&bytes).with_context(|| format!("parse {}", path.display()))
+    // Be tolerant of UTF-8 BOMs produced by some editors/tools.
+    let parse_bytes = bytes
+        .as_slice()
+        .strip_prefix(b"\xef\xbb\xbf")
+        .unwrap_or(bytes.as_slice());
+    serde_json::from_slice(parse_bytes).with_context(|| format!("parse {}", path.display()))
 }
 
 fn validate_contract_schema(contract: &DeviceContract) -> Result<()> {

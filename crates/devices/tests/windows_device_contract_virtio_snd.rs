@@ -50,7 +50,11 @@ fn virtio_snd_pci_ids_match_windows_device_contract() {
     let contract_path = repo_root().join("docs/windows-device-contract.json");
     let contract_text = fs::read_to_string(&contract_path)
         .unwrap_or_else(|err| panic!("failed to read {}: {err}", contract_path.display()));
-    let contract_json: serde_json::Value = serde_json::from_str(&contract_text)
+    // Be tolerant of UTF-8 BOMs produced by some editors/tools.
+    let contract_text_stripped = contract_text
+        .strip_prefix('\u{feff}')
+        .unwrap_or(contract_text.as_str());
+    let contract_json: serde_json::Value = serde_json::from_str(contract_text_stripped)
         .unwrap_or_else(|err| panic!("failed to parse {}: {err}", contract_path.display()));
 
     let devices = contract_json

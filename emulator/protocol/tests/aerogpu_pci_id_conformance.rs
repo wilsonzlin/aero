@@ -11,8 +11,10 @@ fn repo_root() -> PathBuf {
 }
 
 fn read_file(path: &Path) -> String {
-    fs::read_to_string(path)
-        .unwrap_or_else(|err| panic!("{}: failed to read file: {err}", path.display()))
+    let text = fs::read_to_string(path)
+        .unwrap_or_else(|err| panic!("{}: failed to read file: {err}", path.display()));
+    // Be tolerant of UTF-8 BOMs produced by some editors/tools.
+    text.strip_prefix('\u{feff}').unwrap_or(&text).to_string()
 }
 
 fn assert_file_contains_noncomment_line(path: &Path, needle: &str) {

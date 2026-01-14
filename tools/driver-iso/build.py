@@ -11,9 +11,17 @@ from pathlib import Path
 from typing import Optional
 
 
+def _read_text_strip_utf8_bom(path: Path) -> str:
+    data = path.read_bytes()
+    # Be tolerant of UTF-8 BOMs produced by some editors/tools.
+    if data.startswith(b"\xef\xbb\xbf"):
+        data = data[3:]
+    return data.decode("utf-8")
+
+
 def _load_manifest(path: Path) -> dict:
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        return json.loads(_read_text_strip_utf8_bom(path))
     except FileNotFoundError:
         raise SystemExit(f"manifest not found: {path}")
     except json.JSONDecodeError as e:

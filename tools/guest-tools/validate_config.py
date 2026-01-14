@@ -115,6 +115,14 @@ class WindowsDeviceContract:
     devices: Mapping[str, ContractDevice]
 
 
+def _read_text_strip_utf8_bom(path: Path) -> str:
+    data = path.read_bytes()
+    # Be tolerant of UTF-8 BOMs produced by some editors/tools.
+    if data.startswith(b"\xef\xbb\xbf"):
+        data = data[3:]
+    return data.decode("utf-8")
+
+
 def _parse_hex_u16(value: object, *, ctx: str) -> int:
     if not isinstance(value, str) or not value.strip():
         raise ValidationError(f"Windows device contract {ctx} must be a non-empty hex string (like 0x1AF4).")
