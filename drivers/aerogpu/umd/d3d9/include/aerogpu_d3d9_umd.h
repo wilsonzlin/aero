@@ -1411,7 +1411,12 @@ typedef struct _D3DDDIARG_DRAWINDEXEDPRIMITIVE2 {
 // - Some header vintages may not include `DestStride`. When `DestStride` is
 //   absent (or is present but set to 0), the AeroGPU UMD attempts to infer the
 //   effective destination stride from **stream 0** of `hVertexDecl` when
-//   possible, falling back to the currently-bound stream 0 stride.
+//   possible.
+//   - The fixed-function CPU transform subset requires that this inference
+//     succeeds (the driver must know where to write `POSITIONT`).
+//   - The memcpy fallback path may fall back to the currently-bound stream 0
+//     stride when the destination declaration is unavailable or does not allow
+//     stride inference.
 typedef struct _D3DDDIARG_PROCESSVERTICES {
   uint32_t SrcStartIndex;
   uint32_t DestIndex;
@@ -1420,7 +1425,7 @@ typedef struct _D3DDDIARG_PROCESSVERTICES {
   D3D9DDI_HVERTEXDECL hVertexDecl;
   uint32_t Flags;
   // Optional; some header vintages omit this field. When present, 0 means “infer
-  // stride (prefer dest vertex decl, else stream 0 stride)”.
+  // destination stride” (prefer stream 0 of the destination vertex decl).
   uint32_t DestStride;
 } D3DDDIARG_PROCESSVERTICES;
 

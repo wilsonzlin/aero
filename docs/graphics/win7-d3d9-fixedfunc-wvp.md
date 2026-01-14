@@ -74,9 +74,9 @@ Independently of draw-time WVP, `pfnProcessVertices` has a bring-up fixed-functi
   - `D3DFVF_XYZ` (+ optional `D3DFVF_DIFFUSE`, + optional `D3DFVF_TEX1`)
 - It writes screen-space `XYZRHW` into **stream 0** of the destination layout described by `hVertexDecl`. Declaration
   elements in other streams are ignored when inferring destination stride/offsets.
-  - Destination stride: when `DestStride` is present but 0 (or absent in older header vintages), the UMD infers the
-    effective stride from **stream 0** of `hVertexDecl` when possible, otherwise falling back to the currently-bound stream
-    0 stride.
+  - Destination stride: uses `DestStride` when present and non-zero; otherwise it infers the effective stride from
+    **stream 0** of `hVertexDecl`. If the stride cannot be inferred, the fixed-function subset fails with
+    `D3DERR_INVALIDCALL`.
   - In-place overlap safety: when the source and destination buffers alias the same resource and the strided ranges overlap
     (notably when `src_stride != dest_stride`), the implementation stages the source bytes before writing destinations to
     avoid self-overwrite.

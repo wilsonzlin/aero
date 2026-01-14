@@ -655,9 +655,9 @@ Current behavior is intentionally bring-up level, with two paths:
   - `D3DFVF_XYZ | D3DFVF_TEX1`
   the UMD reads vertices from **stream 0** and writes **screen-space `XYZRHW`** position into **stream 0** of the
   destination layout described by `hVertexDecl` (declaration elements in other streams are ignored):
-  - Destination stride: some runtimes/header vintages pass `DestStride == 0` (or omit the field entirely). In this case,
-    the UMD infers the effective destination vertex stride from **stream 0** of `hVertexDecl` when possible; if it cannot
-    be inferred, it falls back to the currently-bound stream 0 stride.
+  - Destination stride: uses `DestStride` when provided and non-zero; otherwise infers the effective destination stride
+    from **stream 0** of `hVertexDecl`. If it cannot be inferred, the fixed-function CPU transform path fails with
+    `D3DERR_INVALIDCALL`.
   - for `D3DFVF_XYZ*` / `D3DFVF_XYZW*` inputs: applies a CPU-side **World/View/Projection + viewport (x/y)** transform to
     produce `XYZRHW` (for `D3DFVF_XYZW*` the input `w` is respected; output `z` remains D3D9 NDC depth `0..1` and does not
     apply viewport `MinZ`/`MaxZ`), and
@@ -678,6 +678,8 @@ Current behavior is intentionally bring-up level, with two paths:
   the active stream 0 vertex buffer into the destination buffer. The copy is stride-aware (copies
   `min(stream0_stride, dest_stride)` bytes per vertex) and uses the same “upload/dirty-range” notifications used by
   `Unlock`.
+  - Destination stride: uses `DestStride` when provided and non-zero; otherwise it tries to infer it from **stream 0** of
+    `hVertexDecl` when possible, falling back to the currently-bound stream 0 stride.
   - When `D3DPV_DONOTCOPYDATA` is set and the source is a pre-transformed `XYZRHW*` FVF, the memcpy fallback copies only the
     first 16 bytes (the `POSITIONT` float4) and preserves the remaining destination bytes.
   - In-place overlap safety: when the source and destination buffers alias the same resource and the strided ranges overlap
