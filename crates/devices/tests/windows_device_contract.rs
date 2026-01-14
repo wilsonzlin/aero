@@ -730,6 +730,108 @@ fn windows_device_contract_virtio_input_alias_inf_stays_in_sync_with_canonical()
 }
 
 #[test]
+fn windows_device_contract_aero_virtio_input_tablet_contract_and_inf_are_consistent() {
+    let contract = parse_windows_device_contract_json();
+    let devices = contract
+        .get("devices")
+        .and_then(|v| v.as_array())
+        .expect("windows-device-contract.json missing devices array");
+    let tablet = find_contract_device(devices, "aero-virtio-input-tablet");
+
+    assert_eq!(
+        parse_hex_u16(
+            tablet
+                .get("pci_vendor_id")
+                .and_then(|v| v.as_str())
+                .expect("device entry missing pci_vendor_id"),
+        ),
+        PCI_VENDOR_ID_VIRTIO
+    );
+    assert_eq!(
+        parse_hex_u16(
+            tablet
+                .get("pci_device_id")
+                .and_then(|v| v.as_str())
+                .expect("device entry missing pci_device_id"),
+        ),
+        0x1052
+    );
+    assert_eq!(
+        tablet.get("driver_service_name").and_then(|v| v.as_str()),
+        Some("aero_virtio_input")
+    );
+    assert_eq!(
+        tablet.get("inf_name").and_then(|v| v.as_str()),
+        Some("aero_virtio_tablet.inf")
+    );
+
+    let patterns: Vec<String> = tablet
+        .get("hardware_id_patterns")
+        .and_then(|v| v.as_array())
+        .expect("device entry missing hardware_id_patterns")
+        .iter()
+        .map(|v| v.as_str().expect("hardware_id_patterns must be strings").to_string())
+        .collect();
+    assert_has_pattern(&patterns, "PCI\\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01");
+    assert_has_pattern(&patterns, "PCI\\VEN_1AF4&DEV_1052&SUBSYS_00121AF4");
+
+    let inf_path = repo_root()
+        .join("drivers/windows7/virtio-input/inf")
+        .join("aero_virtio_tablet.inf");
+    assert!(
+        inf_path.exists(),
+        "expected aero_virtio_tablet.inf to exist at {}",
+        inf_path.display()
+    );
+    let inf_contents =
+        std::fs::read_to_string(&inf_path).expect("read aero_virtio_tablet.inf from repository");
+
+    assert!(
+        inf_installs_service(&inf_contents, "aero_virtio_input"),
+        "expected {} to install service \"aero_virtio_input\" via an AddService directive",
+        inf_path.display()
+    );
+
+    // Tablet binding is intentionally SUBSYS-only: it must not overlap with the keyboard/mouse
+    // INF's generic fallback match (no SUBSYS), since the tablet HWID is more specific and should
+    // win when both packages are present.
+    let hwid_tablet = "PCI\\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01";
+    let hwid_kbd = "PCI\\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01";
+    let hwid_mouse = "PCI\\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01";
+    let hwid_fallback = "PCI\\VEN_1AF4&DEV_1052&REV_01";
+
+    for section in ["Aero.NTx86", "Aero.NTamd64"] {
+        let (tablet_desc, _tablet_install) =
+            inf_model_entry_for_hwid(&inf_contents, section, hwid_tablet)
+                .unwrap_or_else(|| panic!("missing {hwid_tablet} model entry in [{section}]"));
+        assert_eq!(
+            tablet_desc,
+            "%AeroVirtioTablet.DeviceDesc%",
+            "{section}: unexpected DeviceDesc token for tablet model entry"
+        );
+
+        assert!(
+            inf_model_entry_for_hwid(&inf_contents, section, hwid_kbd).is_none(),
+            "{section}: aero_virtio_tablet.inf must not include keyboard model entry {hwid_kbd}"
+        );
+        assert!(
+            inf_model_entry_for_hwid(&inf_contents, section, hwid_mouse).is_none(),
+            "{section}: aero_virtio_tablet.inf must not include mouse model entry {hwid_mouse}"
+        );
+        assert!(
+            inf_model_entry_for_hwid(&inf_contents, section, hwid_fallback).is_none(),
+            "{section}: aero_virtio_tablet.inf must not include generic fallback model entry {hwid_fallback}"
+        );
+    }
+
+    let strings = inf_strings(&inf_contents);
+    assert!(
+        strings.contains_key("aerovirtiotablet.devicedesc"),
+        "expected AeroVirtioTablet.DeviceDesc in [Strings]"
+    );
+}
+
+#[test]
 fn windows_device_contract_virtio_snd_matches_pci_profile() {
     let contract = parse_windows_device_contract_json();
 
