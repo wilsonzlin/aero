@@ -143,6 +143,7 @@ fn build_e2e_cmd(repo_root: &Path, pw_extra_args: &[String]) -> Command {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
 
     #[test]
     fn curated_e2e_specs_include_input_batch_malformed() {
@@ -170,5 +171,16 @@ mod tests {
         }
 
         assert_eq!(args[spec_start + INPUT_E2E_SPECS.len()], "--project=chromium");
+    }
+
+    #[test]
+    fn input_e2e_specs_are_deduped() {
+        let mut seen = HashSet::new();
+        for &spec in INPUT_E2E_SPECS {
+            assert!(
+                seen.insert(spec),
+                "duplicate Playwright spec path in INPUT_E2E_SPECS: {spec}"
+            );
+        }
     }
 }
