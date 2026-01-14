@@ -3,12 +3,12 @@ use std::boxed::Box;
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotWriter};
 use aero_usb::xhci::context::SlotContext;
 use aero_usb::xhci::trb::{Trb, TrbType, TRB_LEN};
-use aero_usb::xhci::{regs, XhciController};
+use aero_usb::xhci::XhciController;
 use aero_usb::{ControlResponse, MemoryBus, SetupPacket, UsbDeviceModel, UsbInResult};
 
 mod util;
 
-use util::{Alloc, TestMemory};
+use util::{xhci_set_run, Alloc, TestMemory};
 
 #[derive(Clone, Debug)]
 struct InterruptInDevice;
@@ -129,7 +129,7 @@ fn xhci_snapshot_does_not_process_halted_active_endpoints_without_device_context
     );
 
     // Execute transfers while the controller is running so restore-time execution is meaningful.
-    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
+    xhci_set_run(&mut ctrl);
 
     // Endpoint 1 IN => endpoint id 3.
     const EP_ID: u8 = 3;
@@ -169,7 +169,7 @@ fn xhci_snapshot_does_not_process_halted_active_endpoints_without_device_context
         .load_state(&patched_snapshot)
         .expect("load patched xHCI snapshot");
 
-    restored.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
+    xhci_set_run(&mut restored);
     restored.tick(&mut mem);
 
     let mut buf = [0u8; 8];
