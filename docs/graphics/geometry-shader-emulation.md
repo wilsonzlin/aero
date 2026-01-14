@@ -185,8 +185,9 @@ internal bind group:
 - `@group(3)` for GS/HS/DS resources (selected via the `stage_ex` ABI extension).
 - Expansion-internal buffers (vertex pulling inputs, scratch outputs, counters, indirect args) are
   also internal to the emulation path. The design places these in `@group(3)` using a reserved high
-  binding-number range (starting at `@binding(256)`) so they do not collide with D3D register
-  bindings (see [`docs/16-d3d10-11-translation.md`](../16-d3d10-11-translation.md)).
+  binding-number range (starting at `BINDING_BASE_INTERNAL = 256`, defined in
+  `crates/aero-d3d11/src/binding_model.rs`) so they do not collide with D3D register bindings (see
+  [`docs/16-d3d10-11-translation.md`](../16-d3d10-11-translation.md)).
   - Vertex pulling already uses this reserved range so it can coexist with `stage_ex` GS/HS/DS
     bindings.
 
@@ -217,8 +218,8 @@ When running VS/GS/HS/DS as compute, vertex attributes must be loaded from IA ve
 Vertex pulling uses a dedicated bind group (`VERTEX_PULLING_GROUP` in
 `crates/aero-d3d11/src/runtime/vertex_pulling.rs`):
 
-- `@group(3) @binding(256)`: a small uniform containing per-slot `base_offset` + `stride` (+ draw params)
-- `@group(3) @binding(257 + i)`: vertex buffer slot `i` as a storage buffer (read-only)
+- `@group(3) @binding(BINDING_BASE_INTERNAL)`: a small uniform containing per-slot `base_offset` + `stride` (+ draw params)
+- `@group(3) @binding(BINDING_BASE_INTERNAL + 1 + i)`: vertex buffer slot `i` as a storage buffer (read-only)
 
 These bindings are **internal** to the emulation path; they are not part of the D3D register binding model.
 The broader compute-expansion pipeline also defines additional internal scratch bindings; see

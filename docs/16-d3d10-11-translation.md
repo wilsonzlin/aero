@@ -351,6 +351,8 @@ The base offsets are defined in `crates/aero-d3d11/src/binding_model.rs`:
 - `BINDING_BASE_SAMPLER = 160` for samplers (`s#`)
 - `BINDING_BASE_UAV = 176` for UAV buffers/textures (`u#`, SM5), i.e.
   `BINDING_BASE_SAMPLER + MAX_SAMPLER_SLOTS`
+- `BINDING_BASE_INTERNAL = 256` for internal emulation bindings (vertex pulling, expansion scratch,
+  counters, indirect args)
 
 The chosen bases intentionally carve out disjoint ranges that align with D3D11 per-stage slot
 counts:
@@ -390,7 +392,8 @@ trample compute-shader state, Aero reserves a fourth bind group:
   “Internal bindings” below).
   - Note: the current executor’s placeholder compute-prepass still uses an ad-hoc bind group layout
     for its output buffers, but vertex pulling has adopted the reserved internal binding range
-    (starting at `@binding(256)`) so it can coexist with D3D register bindings.
+    (starting at `@binding(BINDING_BASE_INTERNAL)` where `BINDING_BASE_INTERNAL = 256`) so it can
+    coexist with D3D register bindings.
     See [`docs/graphics/geometry-shader-emulation.md`](./graphics/geometry-shader-emulation.md).
 
 #### Only resources used by the shader are emitted/bound
