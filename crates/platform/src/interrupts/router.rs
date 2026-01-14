@@ -452,6 +452,7 @@ impl PlatformInterrupts {
         for flag in self.pending_init.iter() {
             flag.store(false, Ordering::SeqCst);
         }
+        self.pending_sipi.lock().unwrap().fill(None);
 
         // Deterministic LAPIC time starts at 0 on reset.
         self.lapic_clock.set_now_ns(0);
