@@ -232,7 +232,7 @@ describe("runtime/machine_disk_attach (Machine attach method selection)", () => 
 
     await attachMachineBootDisk(machine, "hdd", meta);
 
-    expect(set_disk_opfs_existing).toHaveBeenCalledWith(plan.opfsPath);
+    expect(set_disk_opfs_existing).toHaveBeenCalledWith(plan.opfsPath, undefined, 1024n);
     expect(setAhciPort0DiskOverlayRef).toHaveBeenCalledWith(plan.opfsPath, "");
     expect(calls).toEqual(["attach", "set-ref"]);
   });
