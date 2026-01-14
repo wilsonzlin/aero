@@ -1524,8 +1524,13 @@ static VOID AeroGpuContigPoolPurge(_Inout_ AEROGPU_ADAPTER* Adapter)
  * Allocate a physically contiguous non-cached buffer without initializing it.
  *
  * This must only be used for buffers that are guaranteed to be fully overwritten
- * before the device can observe them (e.g. DMA copy buffers populated via a
- * single RtlCopyMemory of the full allocation size).
+ * (at least the requested [0, Size) range) before the device can observe them
+ * (for example DMA copy buffers populated via a single RtlCopyMemory of Size
+ * bytes).
+ *
+ * Note: when allocations are eligible for pooling, the underlying allocation is
+ * page-rounded. The allocator clears the page-tail slack bytes beyond Size so no
+ * stale kernel data is left in memory outside the requested range.
  */
 static PVOID AeroGpuAllocContiguousNoInit(_Inout_ AEROGPU_ADAPTER* Adapter, _In_ SIZE_T Size, _Out_ PHYSICAL_ADDRESS* Pa)
 {

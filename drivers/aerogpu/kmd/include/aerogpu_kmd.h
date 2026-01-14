@@ -56,8 +56,9 @@
  * cause contention and contiguous-memory fragmentation.
  *
  * We pool freed buffers in size classes of whole pages (1..256 pages == 4KiB..1MiB)
- * and cap the total number of bytes retained so we never pin too much contiguous
- * memory long-term.
+ * and cap both:
+ * - the total number of bytes retained (to avoid pinning too much contiguous memory), and
+ * - the number of entries retained per size class (to avoid long free lists of tiny buffers).
  */
 #define AEROGPU_CONTIG_POOL_MAX_PAGES 256u /* 1 MiB / 4 KiB pages */
 
