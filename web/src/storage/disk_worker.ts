@@ -956,6 +956,18 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
         }
       }
 
+      if (kind === "cd") {
+        if (format !== "iso") {
+          throw new Error("CD images must be imported as ISO format");
+        }
+      } else if (kind === "hdd") {
+        if (format === "iso") {
+          throw new Error("HDD images cannot be imported as ISO format");
+        }
+      } else {
+        throw new Error(`Unknown disk kind ${String(kind)}`);
+      }
+
       const id = newDiskId();
       const fileName = buildDiskFileName(id, format);
 
