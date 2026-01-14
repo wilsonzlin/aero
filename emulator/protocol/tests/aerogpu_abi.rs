@@ -3118,6 +3118,18 @@ fn rust_layout_matches_c_headers() {
     assert_eq!(abi.konst("AEROGPU_DBGCTL_QUERY_PERF_FLAG_RING_VALID"), 1);
     assert_eq!(abi.konst("AEROGPU_DBGCTL_QUERY_PERF_FLAG_VBLANK_VALID"), 2);
     assert_eq!(
+        abi.konst("AEROGPU_DBGCTL_QUERY_PERF_FLAG_GETSCANLINE_COUNTERS_VALID"),
+        4
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_DBGCTL_QUERY_SCANOUT_FLAGS_VALID"),
+        1u64 << 31
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_DBGCTL_QUERY_SCANOUT_FLAG_CACHED_FB_GPA_VALID"),
+        1
+    );
+    assert_eq!(
         abi.konst("AEROGPU_DBGCTL_QUERY_ERROR_FLAGS_VALID"),
         1u64 << 31
     );
