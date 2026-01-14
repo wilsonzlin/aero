@@ -184,6 +184,10 @@ export class DiskManager {
   ): Promise<T> {
     const requestId = this.nextRequestId++;
     const transfer = options?.transfer ?? [];
+    // Some ops (export_disk) require sending a MessagePort via the top-level `port` field. Treat
+    // payloads as untrusted: ignore inherited `port` (prototype pollution) so unrelated requests
+    // can't accidentally include a bogus port.
+    const port = isRecord(payload) && hasOwn(payload, "port") ? (payload as { port?: unknown }).port : undefined;
     return new Promise<T>((resolve, reject) => {
       this.pending.set(requestId, { resolve: resolve as PendingRequest["resolve"], reject, onProgress: options?.onProgress });
       this.worker.postMessage(
@@ -193,7 +197,7 @@ export class DiskManager {
           backend: this.backend,
           op,
           payload,
-          port: (payload as { port?: MessagePort } | undefined)?.port,
+          port,
         },
         transfer,
       );
