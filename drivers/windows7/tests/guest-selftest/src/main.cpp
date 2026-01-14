@@ -10846,6 +10846,7 @@ static void PrintUsage() {
       "Options:\n"
       "  --blk-root <path>         Directory to use for virtio-blk file I/O test\n"
       "  --expect-blk-msi          Fail virtio-blk test if still using INTx (expected MSI/MSI-X)\n"
+      "                           (or set env var AERO_VIRTIO_SELFTEST_EXPECT_BLK_MSI=1)\n"
       "  --test-blk-resize         Run virtio-blk runtime resize test (optional)\n"
       "                           (or set env var AERO_VIRTIO_SELFTEST_TEST_BLK_RESIZE=1)\n"
       "  --test-blk-reset          Run virtio-blk miniport reset/recovery test (optional)\n"
