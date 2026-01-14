@@ -679,7 +679,10 @@ mod tests {
     #[test]
     fn opcode_name_includes_resource_decls() {
         assert_eq!(opcode_name(OPCODE_DCL_RESOURCE), Some("dcl_resource"));
-        assert_eq!(opcode_name(OPCODE_DCL_RESOURCE_RAW), Some("dcl_resource_raw"));
+        assert_eq!(
+            opcode_name(OPCODE_DCL_RESOURCE_RAW),
+            Some("dcl_resource_raw")
+        );
         assert_eq!(
             opcode_name(OPCODE_DCL_RESOURCE_STRUCTURED),
             Some("dcl_resource_structured")

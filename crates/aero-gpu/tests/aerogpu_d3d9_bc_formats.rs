@@ -76,13 +76,15 @@ async fn create_executor_no_bc_features() -> Option<AerogpuD3d9Executor> {
         .await
     {
         Some(adapter) => adapter,
-        None => instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::LowPower,
-                compatible_surface: None,
-                force_fallback_adapter: true,
-            })
-            .await?,
+        None => {
+            instance
+                .request_adapter(&wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::LowPower,
+                    compatible_surface: None,
+                    force_fallback_adapter: true,
+                })
+                .await?
+        }
     };
 
     if cfg!(target_os = "linux") && adapter.get_info().device_type == wgpu::DeviceType::Cpu {

@@ -102,10 +102,7 @@ fn to_bytes(words: &[u32]) -> Vec<u8> {
 fn assemble_vs_passthrough_pos() -> Vec<u8> {
     // vs_2_0: mov oPos, v0; end
     let mut words = vec![0xFFFE_0200];
-    words.extend(enc_inst(
-        0x0001,
-        &[enc_dst(4, 0, 0xF), enc_src(1, 0, 0xE4)],
-    ));
+    words.extend(enc_inst(0x0001, &[enc_dst(4, 0, 0xF), enc_src(1, 0, 0xE4)]));
     words.push(0x0000_FFFF);
     to_bytes(&words)
 }
@@ -130,29 +127,19 @@ fn assemble_ps_rep_i0_add_blue() -> Vec<u8> {
     words.extend(enc_inst(0x0051, &[enc_dst(2, 1, 0xF), f0, f0, f1, f0]));
 
     // mov r0, c0
-    words.extend(enc_inst(
-        0x0001,
-        &[enc_dst(0, 0, 0xF), enc_src(2, 0, 0xE4)],
-    ));
+    words.extend(enc_inst(0x0001, &[enc_dst(0, 0, 0xF), enc_src(2, 0, 0xE4)]));
     // rep i0
     words.extend(enc_inst(0x0026, &[enc_src(7, 0, 0xE4)]));
     // add r0, r0, c1
     words.extend(enc_inst(
         0x0002,
-        &[
-            enc_dst(0, 0, 0xF),
-            enc_src(0, 0, 0xE4),
-            enc_src(2, 1, 0xE4),
-        ],
+        &[enc_dst(0, 0, 0xF), enc_src(0, 0, 0xE4), enc_src(2, 1, 0xE4)],
     ));
     // endrep
     words.extend(enc_inst(0x0027, &[]));
 
     // mov oC0, r0
-    words.extend(enc_inst(
-        0x0001,
-        &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)],
-    ));
+    words.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)]));
 
     words.push(0x0000_FFFF);
     to_bytes(&words)
@@ -416,4 +403,3 @@ fn d3d9_int_constants_updates_are_visible_between_draws() {
     // Right triangle (rep count 1 => cyan).
     assert_eq!(px(48, 22), [0, 255, 255, 255]);
 }
-

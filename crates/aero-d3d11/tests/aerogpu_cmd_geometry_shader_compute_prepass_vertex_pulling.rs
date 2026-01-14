@@ -141,10 +141,12 @@ fn aerogpu_cmd_geometry_shader_compute_prepass_vertex_pulling_smoke() {
             "this test does not use PRESENT and should not report any presents"
         );
 
-        let pixels = exec.read_texture_rgba8(RT).await.expect("readback should succeed");
+        let pixels = exec
+            .read_texture_rgba8(RT)
+            .await
+            .expect("readback should succeed");
         for px in pixels.chunks_exact(4) {
             assert_eq!(px, &[255, 0, 0, 255]);
         }
     });
 }
-
