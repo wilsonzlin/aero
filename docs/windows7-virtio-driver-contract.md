@@ -795,6 +795,10 @@ The device MUST use Linux input event types/codes (`EV_KEY`, `EV_REL`, `EV_SYN`,
   - `KEY_INSERT`, `KEY_DELETE`, `KEY_HOME`, `KEY_END`, `KEY_PAGEUP`, `KEY_PAGEDOWN`
 - Minimum required supported LED codes (keyboard, advertised via `EV_BITS` with `subsel = EV_LED`):
   - `LED_NUML`, `LED_CAPSL`, `LED_SCROLLL`
+- Optional supported LED codes (keyboard, advertised via `EV_BITS` with `subsel = EV_LED`):
+  - `LED_COMPOSE`, `LED_KANA`
+  - Note: the Aero Win7 virtio-input driver exposes these as part of the HID boot keyboard LED output report
+    (usages 1..5), and may send `EV_LED` updates for them if advertised by the device.
 
 ##### Mouse event requirements (relative)
 
