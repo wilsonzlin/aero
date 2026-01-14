@@ -55,7 +55,6 @@ fn hid_gamepad_report_vectors_match_fixture() {
                 "fixture vector {idx} ({name}) has out-of-range axis {axis_name}={axis} (expected -127..=127)"
             );
         }
-
         let report = GamepadReport {
             buttons: v.buttons,
             hat: v.hat,

@@ -380,6 +380,35 @@ export type XhciControllerBridgeHandle = {
     save_state?(): Uint8Array;
     load_state?(bytes: Uint8Array): void;
     /**
+     * Optional guest USB topology management helpers.
+     *
+     * These are used to hotplug hubs and passthrough HID devices into the guest USB tree.
+     *
+     * Optional for older WASM builds.
+     */
+    attach_hub?: (rootPort: number, portCount: number) => void;
+    detach_at_path?: (path: number[]) => void;
+    attach_webhid_device?: (path: number[], device: unknown) => void;
+    attach_usb_hid_passthrough_device?: (path: number[], device: unknown) => void;
+    /**
+     * Optional WebUSB passthrough helpers.
+     *
+     * The passthrough device emits `UsbHostAction`s that must be executed by the browser, and the
+     * results pushed back to the device via {@link push_completion}.
+     *
+     * Optional for older WASM builds.
+     */
+    set_connected?: (connected: boolean) => void;
+    drain_actions?: () => UsbHostAction[] | null;
+    push_completion?: (completion: UsbHostCompletion) => void;
+    reset?: () => void;
+    pending_summary?: () => {
+        queued_actions: number;
+        queued_completions: number;
+        inflight_control?: number | null;
+        inflight_endpoints: number;
+    } | null;
+    /**
      * Deterministic USB device/controller snapshot bytes.
      *
      * Optional for older WASM builds.

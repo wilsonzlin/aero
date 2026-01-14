@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import type { UsbHostCompletion } from "../usb/webusb_backend";
 import type { WasmApi } from "./wasm_loader";
 
 describe("runtime/wasm_loader (USB snapshot typings)", () => {
@@ -73,6 +74,51 @@ describe("runtime/wasm_loader (USB snapshot typings)", () => {
       const bytes = xhci.snapshot_state();
       xhci.restore_state(bytes);
     }
+
+    expect(true).toBe(true);
+  });
+
+  it("exposes xHCI topology + WebUSB helpers as optional (back-compat)", () => {
+    type XhciBridge = InstanceType<NonNullable<WasmApi["XhciControllerBridge"]>>;
+
+    // Note: Vitest runs these tests at runtime without TypeScript typechecking; keep runtime
+    // values concrete and use `@ts-expect-error` for compile-time assertions (validated by `tsc`).
+    const xhci = {} as unknown as XhciBridge;
+
+    function assertStrictNullChecksEnforced() {
+      // @ts-expect-error attach_hub may be undefined
+      xhci.attach_hub(0, 8);
+      // @ts-expect-error detach_at_path may be undefined
+      xhci.detach_at_path([0]);
+      // @ts-expect-error attach_webhid_device may be undefined
+      xhci.attach_webhid_device([0], {} as any);
+      // @ts-expect-error attach_usb_hid_passthrough_device may be undefined
+      xhci.attach_usb_hid_passthrough_device([0], {} as any);
+
+      // @ts-expect-error set_connected may be undefined
+      xhci.set_connected(true);
+      // @ts-expect-error drain_actions may be undefined
+      xhci.drain_actions();
+      // @ts-expect-error push_completion may be undefined
+      xhci.push_completion({ kind: "controlIn", id: 0, status: "stall" } satisfies UsbHostCompletion);
+      // @ts-expect-error reset may be undefined
+      xhci.reset();
+      // @ts-expect-error pending_summary may be undefined
+      xhci.pending_summary();
+    }
+    void assertStrictNullChecksEnforced;
+
+    // Optional chaining should compile (method exists in the type) and be safe at runtime when
+    // running against older WASM builds that do not export these helpers.
+    xhci.attach_hub?.(0, 8);
+    xhci.detach_at_path?.([0]);
+    xhci.attach_webhid_device?.([0], {} as any);
+    xhci.attach_usb_hid_passthrough_device?.([0], {} as any);
+    xhci.set_connected?.(true);
+    void xhci.drain_actions?.();
+    xhci.push_completion?.({ kind: "controlIn", id: 0, status: "stall" });
+    xhci.reset?.();
+    void xhci.pending_summary?.();
 
     expect(true).toBe(true);
   });
