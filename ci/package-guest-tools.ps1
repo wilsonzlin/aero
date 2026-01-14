@@ -1161,10 +1161,11 @@ function Assert-GuestToolsZipContainsAeroGpuDbgctl {
   }
 
   $expectedEntries = @(
-    # `ci/build-aerogpu-dbgctl.ps1` stages dbgctl into out/drivers/aerogpu/<arch>/tools/aerogpu_dbgctl.exe.
+    # `ci/build-aerogpu-dbgctl.ps1` stages dbgctl into:
+    #   out/drivers/aerogpu/<arch>/tools/win7_dbgctl/bin/aerogpu_dbgctl.exe
     # `ci/make-catalogs.ps1` then copies build outputs into out/packages/... preserving the `tools/` folder.
-    "drivers/amd64/aerogpu/tools/aerogpu_dbgctl.exe",
-    "drivers/x86/aerogpu/tools/aerogpu_dbgctl.exe"
+    "drivers/amd64/aerogpu/tools/win7_dbgctl/bin/aerogpu_dbgctl.exe",
+    "drivers/x86/aerogpu/tools/win7_dbgctl/bin/aerogpu_dbgctl.exe"
   )
 
   foreach ($entry in $expectedEntries) {

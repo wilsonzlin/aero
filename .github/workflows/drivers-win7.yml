@@ -639,8 +639,8 @@ jobs:
           }
 
           foreach ($p in @(
-            'out/packages/aerogpu/x86/tools/aerogpu_dbgctl.exe',
-            'out/packages/aerogpu/x64/tools/aerogpu_dbgctl.exe'
+            'out/packages/aerogpu/x86/tools/win7_dbgctl/bin/aerogpu_dbgctl.exe',
+            'out/packages/aerogpu/x64/tools/win7_dbgctl/bin/aerogpu_dbgctl.exe'
           )) {
             if (!(Test-Path -LiteralPath $p -PathType Leaf)) {
               throw "Expected AeroGPU dbgctl tool to be staged in signed package output: $p"
@@ -704,8 +704,8 @@ jobs:
           $paths = @()
           foreach ($f in $manifest.files) { $paths += ("" + $f.path) }
           foreach ($required in @(
-            'drivers/x86/aerogpu/tools/aerogpu_dbgctl.exe',
-            'drivers/amd64/aerogpu/tools/aerogpu_dbgctl.exe'
+            'drivers/x86/aerogpu/tools/win7_dbgctl/bin/aerogpu_dbgctl.exe',
+            'drivers/amd64/aerogpu/tools/win7_dbgctl/bin/aerogpu_dbgctl.exe'
           )) {
             if (-not ($paths -contains $required)) {
               throw "Guest Tools manifest is missing required dbgctl payload: $required"

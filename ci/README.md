@@ -42,10 +42,10 @@ Builds the standalone Win7 AeroGPU debug/control tool (`aerogpu_dbgctl.exe`) usi
 - Output (in-tree): `drivers/aerogpu/tools/win7_dbgctl/bin/aerogpu_dbgctl.exe`
 
 In CI, this script is run after `ci/build-drivers.ps1` so it can also copy the built tool into
-`out/drivers/aerogpu/<arch>/tools/aerogpu_dbgctl.exe`, allowing downstream catalog/sign/package steps to
+`out/drivers/aerogpu/<arch>/tools/win7_dbgctl/bin/aerogpu_dbgctl.exe`, allowing downstream catalog/sign/package steps to
 ship it inside driver packages and Guest Tools media.
 
-This is required when `drivers/aerogpu/ci-package.json` lists `tools/aerogpu_dbgctl.exe` under
+This is required when `drivers/aerogpu/ci-package.json` lists `tools/win7_dbgctl/bin/aerogpu_dbgctl.exe` under
 `requiredBuildOutputFiles` — `ci/make-catalogs.ps1` will fail packaging if the tool was not staged into
 the per-arch build output directories.
 

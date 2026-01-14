@@ -15,8 +15,8 @@
 
   For CI/local packaging runs, if `out/drivers/aerogpu/<arch>/` exists (i.e. after
   `ci/build-drivers.ps1`), the tool is copied into:
-    out/drivers/aerogpu/x86/tools/aerogpu_dbgctl.exe
-    out/drivers/aerogpu/x64/tools/aerogpu_dbgctl.exe
+    out/drivers/aerogpu/x86/tools/win7_dbgctl/bin/aerogpu_dbgctl.exe
+    out/drivers/aerogpu/x64/tools/win7_dbgctl/bin/aerogpu_dbgctl.exe
 
   so downstream `ci/make-catalogs.ps1` stages it into `out/packages/**` and Guest Tools / driver
   bundle packaging can ship it.
@@ -259,9 +259,10 @@ foreach ($arch in @('x86', 'x64')) {
   }
 
   $toolsDir = Join-Path $driverOutDir 'tools'
-  New-Item -ItemType Directory -Force -Path $toolsDir | Out-Null
+  $dbgctlBinDir = Join-Path $toolsDir (Join-Path 'win7_dbgctl' 'bin')
+  New-Item -ItemType Directory -Force -Path $dbgctlBinDir | Out-Null
 
-  $dest = Join-Path $toolsDir 'aerogpu_dbgctl.exe'
+  $dest = Join-Path $dbgctlBinDir 'aerogpu_dbgctl.exe'
   Copy-Item -LiteralPath $dbgctlExe -Destination $dest -Force
   $destFile = Get-Item -LiteralPath $dest
   Write-Host ("Staged dbgctl for packaging: {0} ({1} bytes)" -f $destFile.FullName, $destFile.Length)
