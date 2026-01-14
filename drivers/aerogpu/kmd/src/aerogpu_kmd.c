@@ -9405,7 +9405,17 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
          *   a level-triggered/sticky status bit. We must not repeatedly treat the sticky bit as a
          *   new error on every subsequent (enabled) vblank/fence interrupt.
          */
-        const ULONG enableMask = AeroGpuAtomicReadU32((volatile ULONG*)&adapter->IrqEnableMask);
+        ULONG enableMask = AeroGpuAtomicReadU32((volatile ULONG*)&adapter->IrqEnableMask);
+        if (adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ENABLE + sizeof(ULONG))) {
+            /*
+             * Prefer the device's IRQ_ENABLE register over the cached mask.
+             *
+             * IRQ line assertion is defined by the device contract as (STATUS & ENABLE) != 0, so
+             * using the live ENABLE value avoids corner cases where the cached mask and hardware
+             * state diverge (e.g. device reset).
+             */
+            enableMask = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE);
+        }
         const ULONG pending = status & enableMask;
         const ULONG handled = pending & known;
         const ULONG unknown = status & ~known;
@@ -9417,19 +9427,28 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
                  */
                 AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, status);
                 static LONG g_UnexpectedIrqWarned = 0;
-                if (unknown != 0) {
+                if (pending != 0 || unknown != 0) {
                     InterlockedIncrement64(&adapter->PerfIrqSpurious);
-                    InterlockedIncrement(&adapter->IrqIsrCount);
 
-                    if (InterlockedExchange(&g_UnexpectedIrqWarned, 1) == 0) {
-                        DbgPrintEx(DPFLTR_IHVVIDEO_ID,
-                                   DPFLTR_ERROR_LEVEL,
-                                   "aerogpu-kmd: unexpected IRQ_STATUS bits (status=0x%08lx pending=0x%08lx enable=0x%08lx)\n",
-                                   status,
-                                   pending,
-                                   enableMask);
+                    if (pending != 0) {
+                        /*
+                         * The device asserted the interrupt line due to an enabled bit that this
+                         * driver does not understand (pending & ~known != 0).
+                         *
+                         * Claim the interrupt to avoid starving other shared ISR handlers.
+                         */
+                        InterlockedIncrement(&adapter->IrqIsrCount);
+                        if (InterlockedExchange(&g_UnexpectedIrqWarned, 1) == 0) {
+                            DbgPrintEx(
+                                DPFLTR_IHVVIDEO_ID,
+                                DPFLTR_ERROR_LEVEL,
+                                "aerogpu-kmd: unexpected IRQ_STATUS bits (status=0x%08lx pending=0x%08lx enable=0x%08lx)\n",
+                                status,
+                                pending,
+                                enableMask);
+                        }
+                        return TRUE;
                     }
-                    return TRUE;
                 }
                 /*
                  * `status` has only known bits, but none of them are currently enabled.
