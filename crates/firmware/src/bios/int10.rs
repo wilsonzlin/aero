@@ -181,8 +181,9 @@ impl Bios {
                     if mode.bpp == 32 && mode.bytes_per_pixel() == 4 {
                         let width = mode.width.max(1);
                         let height = mode.height.max(1);
-                        let x = x.min(width.saturating_sub(1));
-                        let y = y.min(height.saturating_sub(1));
+                        if x >= width || y >= height {
+                            return;
+                        }
 
                         let base = u64::from(self.video.vbe.lfb_base);
                         let pitch = u64::from(self.video.vbe.bytes_per_scan_line.max(1));
@@ -225,8 +226,10 @@ impl Bios {
                     if mode.bpp == 32 && mode.bytes_per_pixel() == 4 {
                         let width = mode.width.max(1);
                         let height = mode.height.max(1);
-                        let x = x.min(width.saturating_sub(1));
-                        let y = y.min(height.saturating_sub(1));
+                        if x >= width || y >= height {
+                            cpu.rbx &= !0xFFFF_FFFF;
+                            return;
+                        }
 
                         let base = u64::from(self.video.vbe.lfb_base);
                         let pitch = u64::from(self.video.vbe.bytes_per_scan_line.max(1));
