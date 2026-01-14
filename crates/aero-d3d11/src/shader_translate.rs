@@ -1350,6 +1350,13 @@ fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
                 scan_src_regs(coord, &mut scan_reg);
                 scan_src_regs(lod, &mut scan_reg);
             }
+            Sm4Inst::ResInfo {
+                dst: _,
+                mip_level,
+                texture: _,
+            } => {
+                scan_src_regs(mip_level, &mut scan_reg);
+            }
             Sm4Inst::LdRaw { addr, .. } | Sm4Inst::LdUavRaw { addr, .. } => {
                 scan_src_regs(addr, &mut scan_reg)
             }
@@ -1557,6 +1564,7 @@ fn scan_used_compute_sivs(module: &Sm4Module, io: &IoMaps) -> BTreeSet<ComputeSy
                 scan_src(coord);
                 scan_src(lod);
             }
+            Sm4Inst::ResInfo { mip_level, .. } => scan_src(mip_level),
             Sm4Inst::LdRaw { addr, .. } => scan_src(addr),
             Sm4Inst::LdUavRaw { addr, .. } => scan_src(addr),
             Sm4Inst::StoreRaw { addr, value, .. } => {
@@ -2817,6 +2825,15 @@ fn scan_resources(
                 validate_slot("texture", texture.slot, MAX_TEXTURE_SLOTS)?;
                 textures.insert(texture.slot);
             }
+            Sm4Inst::ResInfo {
+                dst: _,
+                mip_level,
+                texture,
+            } => {
+                scan_src(mip_level)?;
+                validate_slot("texture", texture.slot, MAX_TEXTURE_SLOTS)?;
+                textures.insert(texture.slot);
+            }
             Sm4Inst::LdRaw {
                 dst: _,
                 addr,
@@ -3260,6 +3277,14 @@ fn emit_temp_and_output_decls(
                 scan_src_regs(coord, &mut scan_reg);
                 scan_src_regs(lod, &mut scan_reg);
             }
+            Sm4Inst::ResInfo {
+                dst,
+                mip_level,
+                ..
+            } => {
+                scan_reg(dst.reg);
+                scan_src_regs(mip_level, &mut scan_reg);
+            }
             Sm4Inst::LdRaw { dst, addr, .. } | Sm4Inst::LdUavRaw { dst, addr, .. } => {
                 scan_reg(dst.reg);
                 scan_src_regs(addr, &mut scan_reg);
@@ -3508,6 +3533,7 @@ fn emit_instructions(
     // we can lower address calculations when emitting WGSL.
     let mut srv_buffer_decls = BTreeMap::<u32, (BufferKind, u32)>::new();
     let mut uav_buffer_decls = BTreeMap::<u32, (BufferKind, u32)>::new();
+    let mut texture2d_decls = BTreeSet::<u32>::new();
     for decl in &module.decls {
         match decl {
             Sm4Decl::ResourceBuffer { slot, stride, kind } => {
@@ -3515,6 +3541,9 @@ fn emit_instructions(
             }
             Sm4Decl::UavBuffer { slot, stride, kind } => {
                 uav_buffer_decls.insert(*slot, (*kind, *stride));
+            }
+            Sm4Decl::ResourceTexture2D { slot } => {
+                texture2d_decls.insert(*slot);
             }
             _ => {}
         }
@@ -4273,6 +4302,46 @@ fn emit_instructions(
                 );
                 let expr = maybe_saturate(dst, expr);
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "ld", ctx)?;
+            }
+            Sm4Inst::ResInfo {
+                dst,
+                mip_level,
+                texture,
+            } => {
+                // `resinfo` is used by `Texture2D.GetDimensions` and produces integer values.
+                //
+                // Output packing for `Texture2D`:
+                // - x = width
+                // - y = height
+                // - z = 1
+                // - w = mip level count
+                //
+                // DXBC register files are untyped; store the raw integer bits into our `vec4<f32>`
+                // register model via a bitcast.
+                if !texture2d_decls.contains(&texture.slot) {
+                    return Err(ShaderTranslateError::UnsupportedInstruction {
+                        inst_index,
+                        opcode: "resinfo".to_owned(),
+                    });
+                }
+
+                let mip_u = emit_src_vec4_u32(mip_level, inst_index, "resinfo", ctx)?;
+                let level_i = format!("i32(({mip_u}).x)");
+                let dims_name = format!("resinfo_dims{inst_index}");
+                w.line(&format!(
+                    "let {dims_name}: vec2<u32> = textureDimensions(t{}, {level_i});",
+                    texture.slot
+                ));
+                let levels_name = format!("resinfo_levels{inst_index}");
+                w.line(&format!(
+                    "let {levels_name}: u32 = textureNumLevels(t{});",
+                    texture.slot
+                ));
+
+                let expr = format!(
+                    "bitcast<vec4<f32>>(vec4<u32>(({dims_name}).x, ({dims_name}).y, 1u, {levels_name}))"
+                );
+                emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "resinfo", ctx)?;
             }
             Sm4Inst::LdRaw { dst, addr, buffer } => {
                 // Raw buffer loads operate on byte offsets. Model buffers as a storage

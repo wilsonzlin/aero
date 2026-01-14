@@ -553,6 +553,20 @@ pub enum Sm4Inst {
         sampler: SamplerRef,
         lod: SrcOperand,
     },
+    /// `resinfo dst, mip_level, t#` (e.g. `Texture2D.GetDimensions`).
+    ///
+    /// Output packing (for `Texture2D`):
+    /// - `dst.x` = width in texels
+    /// - `dst.y` = height in texels
+    /// - `dst.z` = depth (always 1 for 2D textures)
+    /// - `dst.w` = total mip level count
+    ///
+    /// Note: `mip_level` is integer-typed in SM4/SM5.
+    ResInfo {
+        dst: DstOperand,
+        mip_level: SrcOperand,
+        texture: TextureRef,
+    },
     /// `ld dest, coord, t#` (e.g. `Texture2D.Load`).
     ///
     /// Note: `coord` and `lod` are integer-typed in SM4/SM5.

@@ -1154,6 +1154,7 @@ pub fn decode_instruction(
             Ok(Sm4Inst::Cut { stream })
         }
         OPCODE_SAMPLE | OPCODE_SAMPLE_L => decode_sample_like(opcode, saturate, &mut r),
+        OPCODE_RESINFO => decode_resinfo(saturate, &mut r),
         OPCODE_LD => decode_ld(saturate, &mut r),
         OPCODE_LD_RAW => decode_ld_raw(saturate, &mut r),
         OPCODE_LD_STRUCTURED => decode_ld_structured(saturate, &mut r),
@@ -1290,6 +1291,23 @@ fn decode_ld(saturate: bool, r: &mut InstrReader<'_>) -> Result<Sm4Inst, Sm4Deco
 
     // Unsupported `ld` variant (e.g. with offsets); preserve as unknown.
     Ok(Sm4Inst::Unknown { opcode: OPCODE_LD })
+}
+
+fn decode_resinfo(saturate: bool, r: &mut InstrReader<'_>) -> Result<Sm4Inst, Sm4DecodeError> {
+    let mut dst = decode_dst(r)?;
+    dst.saturate = saturate;
+    let mip_level = decode_src(r)?;
+    let texture = decode_texture_ref(r)?;
+    if !r.is_eof() {
+        return Ok(Sm4Inst::Unknown {
+            opcode: OPCODE_RESINFO,
+        });
+    }
+    Ok(Sm4Inst::ResInfo {
+        dst,
+        mip_level,
+        texture,
+    })
 }
 
 fn decode_ld_raw(saturate: bool, r: &mut InstrReader<'_>) -> Result<Sm4Inst, Sm4DecodeError> {

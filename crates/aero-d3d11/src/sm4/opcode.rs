@@ -158,6 +158,10 @@ pub const OPCODE_CUT_STREAM: u32 = 0x42;
 
 pub const OPCODE_SAMPLE: u32 = 0x45;
 pub const OPCODE_SAMPLE_L: u32 = 0x46;
+/// `resinfo` (resource query; e.g. `Texture2D.GetDimensions`).
+///
+/// Upstream: `D3D10_SB_OPCODE_RESINFO`.
+pub const OPCODE_RESINFO: u32 = 0x4b;
 /// `ld` (Resource load; used by `Texture2D.Load`).
 pub const OPCODE_LD: u32 = 0x4c;
 /// `ld_uav_raw` (SM5 UAV raw buffer load; used by `RWByteAddressBuffer.Load*`).
@@ -407,6 +411,7 @@ pub fn opcode_name(opcode: u32) -> Option<&'static str> {
         OPCODE_CUT_STREAM => Some("cut_stream"),
         OPCODE_SAMPLE => Some("sample"),
         OPCODE_SAMPLE_L => Some("sample_l"),
+        OPCODE_RESINFO => Some("resinfo"),
         OPCODE_LD => Some("ld"),
         OPCODE_LD_UAV_RAW => Some("ld_uav_raw"),
         OPCODE_LD_RAW => Some("ld_raw"),
@@ -430,8 +435,6 @@ pub fn opcode_name(opcode: u32) -> Option<&'static str> {
         OPCODE_DCL_UAV_STRUCTURED => Some("dcl_uav_structured"),
 
         // ---- Common SM4/SM5 opcodes we don't translate yet (diagnostics only) ----
-        // Resource query.
-        75 => Some("resinfo"),
 
         _ => None,
     }
