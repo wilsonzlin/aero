@@ -31,8 +31,9 @@ impl ShaderStage {
 
     /// Decode a stage value from the legacy `shader_stage` field plus the `stage_ex` ABI extension.
     ///
-    /// The original AeroGPU shader stage enum only supports VS/PS/CS. Newer protocol versions add
-    /// `Geometry = 3`, but the command stream can also encode additional D3D11 stages without
+    /// The AeroGPU shader stage enum historically only supported VS/PS/CS; newer protocol versions
+    /// also include `Geometry = 3`. The command stream can also encode additional D3D11 stages
+    /// without
     /// breaking older hosts via:
     /// - `shader_stage == COMPUTE` (2)
     /// - `stage_ex != 0` in a packet's reserved field (opcode-specific)
