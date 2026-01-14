@@ -6528,12 +6528,10 @@ impl Machine {
             .capacity_bytes()
             .is_multiple_of(aero_storage::SECTOR_SIZE as u64)
         {
-            return Err(MachineError::DiskBackend(
-                format!(
-                    "virtio-blk disk capacity must be a multiple of {} bytes",
-                    aero_storage::SECTOR_SIZE
-                ),
-            ));
+            return Err(MachineError::DiskBackend(format!(
+                "virtio-blk disk capacity must be a multiple of {} bytes",
+                aero_storage::SECTOR_SIZE
+            )));
         }
 
         let (command, bar0_base) = if let Some(pci_cfg) = &self.pci_cfg {

@@ -833,8 +833,9 @@ fn aero_vp_load_loc{loc}(vertex_id: i32, instance_id: u32) -> vec4<f32> {{
 mod tests {
     use super::*;
     use crate::input_layout::{
-        fnv1a_32, InputLayoutBinding, InputLayoutBlobHeader, InputLayoutDesc, InputLayoutElementDxgi,
-        VsInputSignatureElement, AEROGPU_INPUT_LAYOUT_BLOB_MAGIC, AEROGPU_INPUT_LAYOUT_BLOB_VERSION,
+        fnv1a_32, InputLayoutBinding, InputLayoutBlobHeader, InputLayoutDesc,
+        InputLayoutElementDxgi, VsInputSignatureElement, AEROGPU_INPUT_LAYOUT_BLOB_MAGIC,
+        AEROGPU_INPUT_LAYOUT_BLOB_VERSION,
     };
     use std::collections::BTreeMap;
 

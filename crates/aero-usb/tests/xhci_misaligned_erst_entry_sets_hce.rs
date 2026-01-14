@@ -41,9 +41,7 @@ fn xhci_event_ring_misaligned_erst_entry_base_sets_hce() {
     let mut bytes = [0u8; TRB_LEN];
     mem.read_physical(event_ring_base, &mut bytes);
     assert_eq!(
-        bytes,
-        [0u8; TRB_LEN],
+        bytes, [0u8; TRB_LEN],
         "event ring should remain untouched when ERST entry base is misaligned"
     );
 }
-

@@ -859,7 +859,10 @@ fn virtio_snd_pci_bridge_transitional_allows_legacy_reset_to_unlock_modern_trans
 
     // Legacy writes must be ignored while locked, but a legacy reset (STATUS=0) is always allowed.
     bridge.io_write(VIRTIO_PCI_LEGACY_STATUS as u32, 1, 0);
-    assert!(!bridge.driver_ok(), "expected legacy reset to clear DRIVER_OK");
+    assert!(
+        !bridge.driver_ok(),
+        "expected legacy reset to clear DRIVER_OK"
+    );
 
     // After reset, legacy transport should be able to take ownership again.
     bridge.io_write(
@@ -901,7 +904,10 @@ fn virtio_snd_pci_bridge_transitional_allows_modern_reset_to_unlock_legacy_trans
     // Modern writes must be ignored while locked, but a modern reset (device_status=0) is always
     // allowed.
     bridge.mmio_write(COMMON + 0x14, 1, 0);
-    assert!(!bridge.driver_ok(), "expected modern reset to clear DRIVER_OK");
+    assert!(
+        !bridge.driver_ok(),
+        "expected modern reset to clear DRIVER_OK"
+    );
 
     // After reset, modern transport should be able to take ownership again.
     bridge.mmio_write(

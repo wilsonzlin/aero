@@ -409,10 +409,7 @@ mod tests {
         // `stage_ex == 1` is the DXBC program type for Vertex, but `reserved0 == 1` is intentionally
         // invalid for the stage_ex encoding (0 is reserved for legacy/default Compute, and Vertex
         // must be encoded via the legacy stage field).
-        assert_eq!(
-            ShaderStage::from_aerogpu_u32_with_stage_ex(2, 1),
-            None
-        );
+        assert_eq!(ShaderStage::from_aerogpu_u32_with_stage_ex(2, 1), None);
         // Legacy compute encoding.
         assert_eq!(
             ShaderStage::from_aerogpu_u32_with_stage_ex(2, 0),

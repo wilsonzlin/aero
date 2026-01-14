@@ -8,9 +8,8 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdReleaseSharedSurface, AerogpuCmdSetConstantBuffers, AerogpuCmdSetSamplers,
     AerogpuCmdSetShaderConstantsB, AerogpuCmdSetShaderConstantsF, AerogpuCmdSetShaderConstantsI,
     AerogpuCmdSetShaderResourceBuffers, AerogpuCmdSetTexture, AerogpuCmdStreamHeader,
-    AerogpuCmdUploadResource, AerogpuCompareFunc,
-    AerogpuConstantBufferBinding, AerogpuCullMode, AerogpuFillMode,
-    AerogpuShaderResourceBufferBinding, AerogpuShaderStage, AerogpuShaderStageEx,
+    AerogpuCmdUploadResource, AerogpuCompareFunc, AerogpuConstantBufferBinding, AerogpuCullMode,
+    AerogpuFillMode, AerogpuShaderResourceBufferBinding, AerogpuShaderStage, AerogpuShaderStageEx,
     AerogpuVertexBufferBinding, BindShadersEx, AEROGPU_CMD_STREAM_MAGIC,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
