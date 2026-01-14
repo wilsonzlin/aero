@@ -98,8 +98,8 @@ func TestDefaultsDev(t *testing.T) {
 	if cfg.MaxUDPBindingsPerSession != DefaultMaxUDPBindingsPerSession {
 		t.Fatalf("MaxUDPBindingsPerSession=%d, want %d", cfg.MaxUDPBindingsPerSession, DefaultMaxUDPBindingsPerSession)
 	}
-	if cfg.MaxUDPDestBucketsPerSession != DefaultMaxUDPDestBucketsPerSession {
-		t.Fatalf("MaxUDPDestBucketsPerSession=%d, want %d", cfg.MaxUDPDestBucketsPerSession, DefaultMaxUDPDestBucketsPerSession)
+	if cfg.MaxUDPDestBucketsPerSession != defaultMaxUDPDestBucketsPerSession {
+		t.Fatalf("MaxUDPDestBucketsPerSession=%d, want %d", cfg.MaxUDPDestBucketsPerSession, defaultMaxUDPDestBucketsPerSession)
 	}
 	if cfg.SessionPreallocTTL != DefaultSessionPreallocTTL {
 		t.Fatalf("SessionPreallocTTL=%v, want %v", cfg.SessionPreallocTTL, DefaultSessionPreallocTTL)

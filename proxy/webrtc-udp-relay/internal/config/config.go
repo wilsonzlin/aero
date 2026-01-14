@@ -134,7 +134,7 @@ const (
 	DefaultTURNRESTUsernamePrefix string = "aero"
 )
 
-const DefaultMaxUDPDestBucketsPerSession = 1024
+const defaultMaxUDPDestBucketsPerSession = 1024
 
 const (
 	envVarWebRTCUDPPortMin = "WEBRTC_UDP_PORT_MIN"
@@ -174,11 +174,11 @@ const (
 	flagWebRTCSCTPMaxReceiveBufferBytes  = "webrtc-sctp-max-receive-buffer-bytes"
 )
 
-// RecommendedWebRTCUDPPortRangeSize is an intentionally conservative minimum.
+// recommendedWebRTCUDPPortRangeSize is an intentionally conservative minimum.
 // Each WebRTC session may consume multiple UDP ports (depending on ICE
 // settings), and running out of ports manifests as hard-to-debug connectivity
 // failures.
-const RecommendedWebRTCUDPPortRangeSize = 100
+const recommendedWebRTCUDPPortRangeSize = 100
 
 type Mode string
 
@@ -576,7 +576,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	}
 	envMaxUDPDestBuckets, envMaxUDPDestBucketsOK := lookup(envVarMaxUDPDestBucketsPerSession)
 	envMaxUDPDestBucketsSet := envMaxUDPDestBucketsOK && strings.TrimSpace(envMaxUDPDestBuckets) != ""
-	maxUDPDestBucketsPerSession, err := envIntOrDefault(lookup, envVarMaxUDPDestBucketsPerSession, DefaultMaxUDPDestBucketsPerSession)
+	maxUDPDestBucketsPerSession, err := envIntOrDefault(lookup, envVarMaxUDPDestBucketsPerSession, defaultMaxUDPDestBucketsPerSession)
 	if err != nil {
 		return Config{}, err
 	}
@@ -1011,8 +1011,8 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 			return Config{}, fmt.Errorf("WebRTC UDP port range min (%d) must be <= max (%d)", min, max)
 		}
 		size := int(max) - int(min) + 1
-		if size < RecommendedWebRTCUDPPortRangeSize {
-			return Config{}, fmt.Errorf("WebRTC UDP port range is too small: %d ports (min %d recommended)", size, RecommendedWebRTCUDPPortRangeSize)
+		if size < recommendedWebRTCUDPPortRangeSize {
+			return Config{}, fmt.Errorf("WebRTC UDP port range is too small: %d ports (min %d recommended)", size, recommendedWebRTCUDPPortRangeSize)
 		}
 		webrtcUDPPortRange = &UDPPortRange{Min: min, Max: max}
 	}
