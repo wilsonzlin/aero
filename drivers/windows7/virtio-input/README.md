@@ -398,7 +398,7 @@ pnputil -i -a C:\path\to\aero_virtio_tablet.inf
 If you are using the deterministic release ZIP produced by `scripts/package-release.ps1`, the extracted folder also includes:
 
 - `INSTALL_CERT.cmd` (optional; installs `aero-virtio-input-test.cer` into `Root` + `TrustedPublisher`; requires elevation)
-- `INSTALL_DRIVER.cmd` (runs `pnputil -i -a aero_virtio_input.inf` when present; otherwise uses the per-arch INF; for tablets, run `pnputil -i -a aero_virtio_tablet.inf` manually; requires elevation)
+- `INSTALL_DRIVER.cmd` (runs `pnputil -i -a` for `aero_virtio_input*.inf` and `aero_virtio_tablet*.inf` when present; prefers the unified INF, otherwise uses the per-arch INF; requires elevation)
 
 ## Verifying the driver loaded
 
