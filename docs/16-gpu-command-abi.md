@@ -63,7 +63,7 @@ Related repository docs:
 - [`docs/abi/aerogpu-pci-identity.md`](./abi/aerogpu-pci-identity.md) – mapping of PCI IDs ↔ ABI generations
 - [`docs/graphics/aerogpu-protocols.md`](./graphics/aerogpu-protocols.md) – overview of similarly named protocols
 
-Implementation references: shared device-side PCI wrapper + ring executor: `crates/aero-devices-gpu/src/pci.rs`; legacy sandbox integration: `crates/emulator/src/devices/pci/aerogpu.rs`.
+Implementation references: canonical machine MVP (`crates/aero-machine/src/aerogpu.rs`), shared device-side PCI wrapper + ring executor (`crates/aero-devices-gpu/src/pci.rs`), and legacy sandbox integration (`crates/emulator/src/devices/pci/aerogpu.rs`).
 
 If this document disagrees with the headers, **the headers win**.
 
