@@ -20222,6 +20222,56 @@ mod tests {
     }
 
     #[test]
+    fn geometry_prepass_wgsl_storage_buffer_count_matches_downlevel_budget() {
+        fn storage_buffer_decl_count(wgsl: &str) -> usize {
+            wgsl.match_indices("var<storage").count()
+        }
+
+        // The placeholder prepass should keep its *internal* storage buffers to:
+        // - out_vertices
+        // - out_state (packed indirect args + counters)
+        //
+        // This is important for downlevel WebGPU where `max_storage_buffers_per_shader_stage` is 4.
+        assert_eq!(
+            storage_buffer_decl_count(GEOMETRY_PREPASS_CS_WGSL),
+            2,
+            "expected the base geometry prepass WGSL to declare exactly 2 storage buffers:\n{GEOMETRY_PREPASS_CS_WGSL}"
+        );
+        assert_eq!(
+            storage_buffer_decl_count(GEOMETRY_PREPASS_CS_VERTEX_PULLING_WGSL),
+            2,
+            "expected the vertex-pulling prepass WGSL body to declare exactly 2 storage buffers:\n{GEOMETRY_PREPASS_CS_VERTEX_PULLING_WGSL}"
+        );
+
+        // When vertex pulling is enabled, the generated prelude adds one read-only storage buffer
+        // per pulled IA vertex buffer slot. Combined with the 2 internal prepass storage buffers,
+        // this must remain <= 4 on downlevel WebGPU.
+        for slot_count in [1u32, 2u32] {
+            let mut d3d_slot_to_pulling_slot = BTreeMap::new();
+            for i in 0..slot_count {
+                d3d_slot_to_pulling_slot.insert(i, i);
+            }
+            let pulling = VertexPullingLayout {
+                d3d_slot_to_pulling_slot,
+                pulling_slot_to_d3d_slot: (0..slot_count).collect(),
+                required_strides: vec![0; slot_count as usize],
+                attributes: Vec::new(),
+            };
+            let wgsl = format!(
+                "{}\n{}",
+                pulling.wgsl_prelude(),
+                GEOMETRY_PREPASS_CS_VERTEX_PULLING_WGSL
+            );
+            let expected = slot_count as usize + 2;
+            assert_eq!(
+                storage_buffer_decl_count(&wgsl),
+                expected,
+                "expected slot_count={slot_count} to yield {expected} storage buffer declarations, keeping within the downlevel budget (4)"
+            );
+        }
+    }
+
+    #[test]
     fn compute_prepass_vertex_pulling_binding_numbers_match_vertex_pulling_layout() {
         // Construct a minimal `VertexPullingLayout` with 3 pulling slots.
         let mut d3d_slot_to_pulling_slot = BTreeMap::new();
