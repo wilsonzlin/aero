@@ -4712,6 +4712,9 @@ struct FixedfuncPixelShaderKey {
   std::array<FixedfuncPixelStageKey, kFixedfuncMaxTextureStages> stages{};
   uint32_t stage_count = 0;
   bool uses_tfactor = false;
+  // True when fixed-function fog is enabled and implemented by the fixed-function
+  // fallback pixel shader variant.
+  bool fog_enabled = false;
   // False when the stage-state combination is not supported by the fixed-function
   // fallback path; callers must treat this as D3DERR_INVALIDCALL at draw time.
   bool supported = true;
@@ -4761,6 +4764,7 @@ uint64_t fixedfunc_ps_signature(const FixedfuncPixelShaderKey& key) {
 
   write_u32(key.stage_count);
   write_u8(key.uses_tfactor ? 1u : 0u);
+  write_u8(key.fog_enabled ? 1u : 0u);
   for (uint32_t i = 0; i < key.stage_count && i < kFixedfuncMaxTextureStages; ++i) {
     const auto& st = key.stages[i];
     write_u32(static_cast<uint32_t>(fixedfunc_state_signature(st.color)));
@@ -4941,6 +4945,68 @@ HRESULT ensure_fixedfunc_texture_factor_constant_locked(Device* dev) {
   return S_OK;
 }
 
+HRESULT ensure_fixedfunc_fog_constants_locked(Device* dev) {
+  if (!dev) {
+    return E_FAIL;
+  }
+
+  // Render-state numeric values from d3d9types.h.
+  constexpr uint32_t kD3dRsFogColor = 34u; // D3DRS_FOGCOLOR
+  constexpr uint32_t kD3dRsFogStart = 36u; // D3DRS_FOGSTART (float bits)
+  constexpr uint32_t kD3dRsFogEnd = 37u;   // D3DRS_FOGEND   (float bits)
+
+  // Fixed-function PS constant registers reserved for fog.
+  //
+  // Layout:
+  // - c1: fog color (RGBA normalized from D3DRS_FOGCOLOR ARGB)
+  // - c2: fog params (x=fog_start, y=inv_fog_range, z/w unused)
+  constexpr uint32_t kPsFogColorRegister = 1u;
+  constexpr uint32_t kPsFogParamsRegister = 2u;
+
+  const uint32_t fog_argb = (kD3dRsFogColor < 256) ? dev->render_states[kD3dRsFogColor] : 0u;
+  const float a = static_cast<float>((fog_argb >> 24) & 0xFFu) * (1.0f / 255.0f);
+  const float r = static_cast<float>((fog_argb >> 16) & 0xFFu) * (1.0f / 255.0f);
+  const float g = static_cast<float>((fog_argb >> 8) & 0xFFu) * (1.0f / 255.0f);
+  const float b = static_cast<float>((fog_argb >> 0) & 0xFFu) * (1.0f / 255.0f);
+  const float color[4] = {r, g, b, a};
+
+  const uint32_t fog_start_bits = (kD3dRsFogStart < 256) ? dev->render_states[kD3dRsFogStart] : 0u;
+  const uint32_t fog_end_bits = (kD3dRsFogEnd < 256) ? dev->render_states[kD3dRsFogEnd] : 0u;
+  float fog_start = 0.0f;
+  float fog_end = 0.0f;
+  std::memcpy(&fog_start, &fog_start_bits, sizeof(float));
+  std::memcpy(&fog_end, &fog_end_bits, sizeof(float));
+
+  const float range = fog_end - fog_start;
+  const float inv_range = (range != 0.0f) ? (1.0f / range) : 0.0f;
+  const float params[4] = {fog_start, inv_range, 0.0f, 0.0f};
+
+  const float* cached_color = dev->ps_consts_f + static_cast<size_t>(kPsFogColorRegister) * 4u;
+  const float* cached_params = dev->ps_consts_f + static_cast<size_t>(kPsFogParamsRegister) * 4u;
+  const bool color_ok = cached_color[0] == color[0] && cached_color[1] == color[1] && cached_color[2] == color[2] &&
+                        cached_color[3] == color[3];
+  const bool params_ok =
+      cached_params[0] == params[0] && cached_params[1] == params[1] && cached_params[2] == params[2] &&
+      cached_params[3] == params[3];
+  if (color_ok && params_ok) {
+    return S_OK;
+  }
+
+  float regs[8] = {};
+  std::memcpy(&regs[0], color, sizeof(color));
+  std::memcpy(&regs[4], params, sizeof(params));
+
+  if (!emit_set_shader_constants_f_locked(dev,
+                                          kD3d9ShaderStagePs,
+                                          kPsFogColorRegister,
+                                          regs,
+                                          /*vec4_count=*/2u)) {
+    return E_OUTOFMEMORY;
+  }
+
+  return S_OK;
+}
+
 FixedfuncPixelShaderKey fixedfunc_ps_key_locked(const Device* dev) {
   FixedfuncPixelShaderKey key{};
   if (!dev) {
@@ -4949,7 +5015,41 @@ FixedfuncPixelShaderKey fixedfunc_ps_key_locked(const Device* dev) {
 
   key.stage_count = 0;
   key.uses_tfactor = false;
+  key.fog_enabled = false;
   key.supported = true;
+
+  // ---------------------------------------------------------------------------
+  // Fixed-function fog (D3DRS_FOG*)
+  // ---------------------------------------------------------------------------
+  //
+  // The AeroGPU fixed-function fallback implements a minimal, deterministic fog
+  // subset in the fixed-function *pixel shader* variants. The fog coordinate is
+  // sourced from TEXCOORD0.z which is populated by dedicated fixed-function VS
+  // variants (see `aerogpu_d3d9_fixedfunc_shaders.h`).
+  //
+  // Supported bring-up subset:
+  // - D3DRS_FOGENABLE
+  // - D3DRS_FOGTABLEMODE or D3DRS_FOGVERTEXMODE: LINEAR only
+  // - D3DRS_FOGSTART / D3DRS_FOGEND
+  //
+  // Important: keep shader-stage interop stable. In the VS-only interop path
+  // (user VS, NULL PS), we must not change the fixed-function pixel shader input
+  // layout by injecting fog coordinates.
+  if (dev->user_vs == nullptr) {
+    constexpr uint32_t kD3dRsFogEnable = 28u;      // D3DRS_FOGENABLE
+    constexpr uint32_t kD3dRsFogTableMode = 35u;   // D3DRS_FOGTABLEMODE
+    constexpr uint32_t kD3dRsFogVertexMode = 140u; // D3DRS_FOGVERTEXMODE
+    constexpr uint32_t kD3dFogLinear = 3u;         // D3DFOG_LINEAR
+
+    const uint32_t fog_enable = (kD3dRsFogEnable < 256) ? dev->render_states[kD3dRsFogEnable] : 0u;
+    if (fog_enable != 0) {
+      const uint32_t table_mode = (kD3dRsFogTableMode < 256) ? dev->render_states[kD3dRsFogTableMode] : 0u;
+      const uint32_t vertex_mode = (kD3dRsFogVertexMode < 256) ? dev->render_states[kD3dRsFogVertexMode] : 0u;
+      // D3D9 semantics: table fog takes precedence when enabled (non-NONE).
+      const uint32_t mode = (table_mode != 0) ? table_mode : vertex_mode;
+      key.fog_enabled = (mode == kD3dFogLinear);
+    }
+  }
 
   for (uint32_t stage = 0; stage < kFixedfuncMaxTextureStages; ++stage) {
     FixedfuncPixelStageKey st{};
@@ -5038,6 +5138,9 @@ constexpr uint32_t kOpMov = 0x03000001u;   // mov (3 dwords: op + dst + src)
 constexpr uint32_t kOpAdd = 0x04000002u;   // add (4 dwords: op + dst + a + b)
 constexpr uint32_t kOpMul = 0x04000005u;   // mul (4 dwords: op + dst + a + b)
 constexpr uint32_t kOpTexld = 0x04000042u; // texld (4 dwords: op + dst + t0 + s0)
+constexpr uint32_t kOpMin = 0x0400000Au;   // min (4 dwords: op + dst + a + b)
+constexpr uint32_t kOpMax = 0x0400000Bu;   // max (4 dwords: op + dst + a + b)
+constexpr uint32_t kOpDef = 0x06000051u;   // def (6 dwords: op + dst + imm4)
 
 // `D3DSHADER_SRCMOD_*` (numeric values from d3d9types.h).
 enum class SrcMod : uint32_t {
@@ -5054,6 +5157,18 @@ constexpr uint32_t swizzle(uint8_t x, uint8_t y, uint8_t z, uint8_t w) {
 
 constexpr uint32_t swizzle_xyzw() {
   return swizzle(0, 1, 2, 3); // 0xE4
+}
+
+constexpr uint32_t swizzle_xxxx() {
+  return swizzle(0, 0, 0, 0); // 0x00
+}
+
+constexpr uint32_t swizzle_yyyy() {
+  return swizzle(1, 1, 1, 1); // 0x55
+}
+
+constexpr uint32_t swizzle_zzzz() {
+  return swizzle(2, 2, 2, 2); // 0xAA
 }
 
 constexpr uint32_t swizzle_wwww() {
@@ -5096,6 +5211,18 @@ constexpr uint32_t src_sampler(uint32_t reg) {
   return 0x20E40800u + reg;
 }
 
+constexpr uint32_t dst_const(uint32_t reg) {
+  // cN destination token used by the `def` instruction.
+  return 0x200F0000u | reg;
+}
+
+inline uint32_t f32_bits(float f) {
+  uint32_t u = 0;
+  static_assert(sizeof(u) == sizeof(f), "float and uint32_t must be the same size");
+  std::memcpy(&u, &f, sizeof(u));
+  return u;
+}
+
 struct Builder {
   std::vector<uint32_t> tokens;
 
@@ -5133,6 +5260,29 @@ struct Builder {
     tokens.push_back(dst);
     tokens.push_back(a);
     tokens.push_back(b);
+  }
+
+  void min(uint32_t dst, uint32_t a, uint32_t b) {
+    tokens.push_back(kOpMin);
+    tokens.push_back(dst);
+    tokens.push_back(a);
+    tokens.push_back(b);
+  }
+
+  void max(uint32_t dst, uint32_t a, uint32_t b) {
+    tokens.push_back(kOpMax);
+    tokens.push_back(dst);
+    tokens.push_back(a);
+    tokens.push_back(b);
+  }
+
+  void def_const(uint32_t reg, float x, float y, float z, float w) {
+    tokens.push_back(kOpDef);
+    tokens.push_back(dst_const(reg));
+    tokens.push_back(f32_bits(x));
+    tokens.push_back(f32_bits(y));
+    tokens.push_back(f32_bits(z));
+    tokens.push_back(f32_bits(w));
   }
 };
 
@@ -5277,6 +5427,63 @@ bool build_fixedfunc_ps(const FixedfuncPixelShaderKey& key, std::vector<uint32_t
     }
   }
 
+  if (key.fog_enabled) {
+    // Fixed-function fog is applied after the fixed-function texture stage chain
+    // (blend the final RGB toward FOGCOLOR). This is implemented as:
+    //
+    //   fog_amount = saturate((fog_coord - fog_start) * inv_fog_range)
+    //   rgb = lerp(rgb, fog_color, fog_amount)
+    //
+    // Where:
+    // - `fog_coord` is sourced from TEXCOORD0.z, populated by the fixed-function
+    //   fallback vertex shaders:
+    //   - for XYZRHW vertices: input POSITIONT.z
+    //   - for XYZ vertices: post-projection depth (clip_z / clip_w)
+    // - `fog_start` and `inv_fog_range` are provided in `c2.{x,y}`
+    // - `fog_color` is provided in `c1.rgb`
+    //
+    // Notes:
+    // - Only RGB is fogged; alpha is preserved (D3D9 fixed-function semantics).
+    // - We use a dedicated constant register `c3 = 0` (defined via `def`) so the
+    //   clamp is deterministic regardless of any app-written PS constant state.
+
+    constexpr uint32_t kFogColorReg = 1;  // c1
+    constexpr uint32_t kFogParamsReg = 2; // c2
+    constexpr uint32_t kZeroReg = 3;      // c3 (def 0)
+
+    constexpr uint32_t kFogAmountReg = 5; // r5
+    constexpr uint32_t kFogTmpReg = 6;    // r6
+
+    b.def_const(kZeroReg, 0.0f, 0.0f, 0.0f, 0.0f);
+
+    // r5 = fog_coord (replicate scalar)
+    b.mov(dst_temp(kFogAmountReg, /*mask=*/0xFu), src_texcoord(/*reg=*/0, swizzle_zzzz()));
+    // r5 = (fog_coord - fog_start) * inv_fog_range
+    b.add(dst_temp(kFogAmountReg, /*mask=*/0xFu),
+          src_temp(kFogAmountReg),
+          src_const(kFogParamsReg, swizzle_xxxx(), SrcMod::Neg));
+    b.mul(dst_temp(kFogAmountReg, /*mask=*/0xFu),
+          src_temp(kFogAmountReg),
+          src_const(kFogParamsReg, swizzle_yyyy()));
+
+    // Clamp to [0, 1].
+    b.max(dst_temp(kFogAmountReg, /*mask=*/0xFu), src_temp(kFogAmountReg), src_const(kZeroReg));
+    b.min(dst_temp(kFogAmountReg, /*mask=*/0xFu),
+          src_temp(kFogAmountReg),
+          src_const(kZeroReg, swizzle_xyzw(), SrcMod::Comp));
+
+    // r6.rgb = fog_color.rgb - cur.rgb
+    b.add(dst_temp(kFogTmpReg, /*mask=*/0x7u),
+          src_const(kFogColorReg),
+          src_temp(kCurReg, swizzle_xyzw(), SrcMod::Neg));
+    // r6.rgb *= fog_amount
+    b.mul(dst_temp(kFogTmpReg, /*mask=*/0x7u),
+          src_temp(kFogTmpReg),
+          src_temp(kFogAmountReg, swizzle_xxxx()));
+    // cur.rgb += r6.rgb
+    b.add(dst_temp(kCurReg, /*mask=*/0x7u), src_temp(kCurReg), src_temp(kFogTmpReg));
+  }
+
   b.mov(dst_oc0(/*mask=*/0xFu), src_temp(kCurReg));
   b.end();
 
@@ -5301,6 +5508,12 @@ HRESULT ensure_fixedfunc_pixel_shader_for_key_locked(Device* dev, const Fixedfun
 
   if (key.uses_tfactor) {
     const HRESULT hr = ensure_fixedfunc_texture_factor_constant_locked(dev);
+    if (FAILED(hr)) {
+      return hr;
+    }
+  }
+  if (key.fog_enabled) {
+    const HRESULT hr = ensure_fixedfunc_fog_constants_locked(dev);
     if (FAILED(hr)) {
       return hr;
     }
@@ -5767,18 +5980,28 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
     return D3DERR_INVALIDCALL;
   }
 
-  // Stage0 texture stage state is only relevant to the fixed-function *pixel*
-  // stage. When a user pixel shader is bound (PS-only interop path), stage state
-  // must not cause spurious INVALIDCALL failures.
+  // Texture stage state is only relevant to the fixed-function *pixel* stage.
+  // When a user pixel shader is bound (PS-only interop path), stage state must
+  // not cause spurious INVALIDCALL failures.
   const bool need_fixedfunc_ps = (dev->user_ps == nullptr);
+  FixedfuncPixelShaderKey ps_key{};
   if (need_fixedfunc_ps) {
     // Validate texture stage state before emitting any shader creation / bind
     // commands so unsupported fixed-function draws fail cleanly.
-    const FixedfuncPixelShaderKey ps_key = fixedfunc_ps_key_locked(dev);
+    ps_key = fixedfunc_ps_key_locked(dev);
     if (!ps_key.supported) {
       return D3DERR_INVALIDCALL;
     }
   }
+
+  // Fixed-function fog is implemented by a fixed-function PS variant that reads
+  // the fog coordinate from TEXCOORD0.z. When fog is enabled, some fixed-function
+  // VS variants switch to dedicated fog versions that pack the fog coordinate
+  // into TEXCOORD0.z.
+  //
+  // Important: keep PS-only interop stable. If a user PS is bound, we must not
+  // change the fixed-function VS output layout by injecting fog coordinates.
+  const bool use_fog_vs = need_fixedfunc_ps && ps_key.fog_enabled;
 
   auto& pipe = dev->fixedfunc_pipelines[static_cast<size_t>(variant)];
   const bool needs_matrix = fixedfunc_fvf_needs_matrix(dev->fvf);
@@ -5807,24 +6030,54 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
       break;
     case FixedFuncVariant::XYZ_COLOR:
       // Fixed-function non-pretransformed XYZ vertices use a WVP transform VS.
-      vs_bytes = fixedfunc::kVsWvpPosColor;
-      vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpPosColor));
+      if (use_fog_vs) {
+        vs_slot = &pipe.vs_fog;
+        vs_bytes = fixedfunc::kVsWvpPosColorFog;
+        vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpPosColorFog));
+      } else {
+        vs_bytes = fixedfunc::kVsWvpPosColor;
+        vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpPosColor));
+      }
       break;
     case FixedFuncVariant::RHW_COLOR_TEX1:
-      vs_bytes = fixedfunc::kVsPassthroughPosColorTex1;
-      vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsPassthroughPosColorTex1));
+      if (use_fog_vs) {
+        vs_slot = &pipe.vs_fog;
+        vs_bytes = fixedfunc::kVsPassthroughPosColorTex1Fog;
+        vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsPassthroughPosColorTex1Fog));
+      } else {
+        vs_bytes = fixedfunc::kVsPassthroughPosColorTex1;
+        vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsPassthroughPosColorTex1));
+      }
       break;
     case FixedFuncVariant::RHW_TEX1:
-      vs_bytes = fixedfunc::kVsPassthroughPosWhiteTex1;
-      vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsPassthroughPosWhiteTex1));
+      if (use_fog_vs) {
+        vs_slot = &pipe.vs_fog;
+        vs_bytes = fixedfunc::kVsPassthroughPosWhiteTex1Fog;
+        vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsPassthroughPosWhiteTex1Fog));
+      } else {
+        vs_bytes = fixedfunc::kVsPassthroughPosWhiteTex1;
+        vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsPassthroughPosWhiteTex1));
+      }
       break;
     case FixedFuncVariant::XYZ_COLOR_TEX1:
-      vs_bytes = fixedfunc::kVsWvpPosColorTex0;
-      vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpPosColorTex0));
+      if (use_fog_vs) {
+        vs_slot = &pipe.vs_fog;
+        vs_bytes = fixedfunc::kVsWvpPosColorTex0Fog;
+        vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpPosColorTex0Fog));
+      } else {
+        vs_bytes = fixedfunc::kVsWvpPosColorTex0;
+        vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpPosColorTex0));
+      }
       break;
     case FixedFuncVariant::XYZ_TEX1:
-      vs_bytes = fixedfunc::kVsTransformPosWhiteTex1;
-      vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsTransformPosWhiteTex1));
+      if (use_fog_vs) {
+        vs_slot = &pipe.vs_fog;
+        vs_bytes = fixedfunc::kVsTransformPosWhiteTex1Fog;
+        vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsTransformPosWhiteTex1Fog));
+      } else {
+        vs_bytes = fixedfunc::kVsTransformPosWhiteTex1;
+        vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsTransformPosWhiteTex1));
+      }
       break;
     case FixedFuncVariant::XYZ_NORMAL:
       if (fixedfunc_lighting_active) {
@@ -5848,22 +6101,46 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
       break;
     case FixedFuncVariant::XYZ_NORMAL_COLOR:
       if (fixedfunc_lighting_active) {
-        vs_slot = &pipe.vs_lit;
-        vs_bytes = fixedfunc::kVsWvpLitPosNormalDiffuse;
-        vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpLitPosNormalDiffuse));
+        if (use_fog_vs) {
+          vs_slot = &pipe.vs_lit_fog;
+          vs_bytes = fixedfunc::kVsWvpLitPosNormalDiffuseFog;
+          vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpLitPosNormalDiffuseFog));
+        } else {
+          vs_slot = &pipe.vs_lit;
+          vs_bytes = fixedfunc::kVsWvpLitPosNormalDiffuse;
+          vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpLitPosNormalDiffuse));
+        }
       } else {
-        vs_bytes = fixedfunc::kVsWvpPosNormalDiffuse;
-        vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpPosNormalDiffuse));
+        if (use_fog_vs) {
+          vs_slot = &pipe.vs_fog;
+          vs_bytes = fixedfunc::kVsWvpPosNormalDiffuseFog;
+          vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpPosNormalDiffuseFog));
+        } else {
+          vs_bytes = fixedfunc::kVsWvpPosNormalDiffuse;
+          vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpPosNormalDiffuse));
+        }
       }
       break;
     case FixedFuncVariant::XYZ_NORMAL_COLOR_TEX1:
       if (fixedfunc_lighting_active) {
-        vs_slot = &pipe.vs_lit;
-        vs_bytes = fixedfunc::kVsWvpLitPosNormalDiffuseTex1;
-        vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpLitPosNormalDiffuseTex1));
+        if (use_fog_vs) {
+          vs_slot = &pipe.vs_lit_fog;
+          vs_bytes = fixedfunc::kVsWvpLitPosNormalDiffuseTex1Fog;
+          vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpLitPosNormalDiffuseTex1Fog));
+        } else {
+          vs_slot = &pipe.vs_lit;
+          vs_bytes = fixedfunc::kVsWvpLitPosNormalDiffuseTex1;
+          vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpLitPosNormalDiffuseTex1));
+        }
       } else {
-        vs_bytes = fixedfunc::kVsWvpPosNormalDiffuseTex1;
-        vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpPosNormalDiffuseTex1));
+        if (use_fog_vs) {
+          vs_slot = &pipe.vs_fog;
+          vs_bytes = fixedfunc::kVsWvpPosNormalDiffuseTex1Fog;
+          vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpPosNormalDiffuseTex1Fog));
+        } else {
+          vs_bytes = fixedfunc::kVsWvpPosNormalDiffuseTex1;
+          vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpPosNormalDiffuseTex1));
+        }
       }
       break;
     default:
@@ -5882,7 +6159,7 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
   const Shader* const desired_vs = *vs_slot;
 
   if (need_fixedfunc_ps) {
-    const HRESULT ps_hr = ensure_fixedfunc_pixel_shader_locked(dev, &pipe.ps);
+    const HRESULT ps_hr = ensure_fixedfunc_pixel_shader_for_key_locked(dev, ps_key, &pipe.ps);
     if (FAILED(ps_hr)) {
       return ps_hr;
     }
@@ -9672,6 +9949,16 @@ HRESULT AEROGPU_D3D9_CALL device_destroy(D3DDDI_HDEVICE hDevice) {
         delete pipe.vs_lit;
         pipe.vs_lit = nullptr;
       }
+      if (pipe.vs_fog) {
+        (void)emit_destroy_shader_locked(dev, pipe.vs_fog->handle);
+        delete pipe.vs_fog;
+        pipe.vs_fog = nullptr;
+      }
+      if (pipe.vs_lit_fog) {
+        (void)emit_destroy_shader_locked(dev, pipe.vs_lit_fog->handle);
+        delete pipe.vs_lit_fog;
+        pipe.vs_lit_fog = nullptr;
+      }
       // Pixel shaders are cached in `fixedfunc_ps_variants` and may be
       // shared across multiple fixed-function variants. Individual pipeline
       // slots only store a pointer to the currently-selected variant and do not
@@ -9703,6 +9990,7 @@ HRESULT AEROGPU_D3D9_CALL device_destroy(D3DDDI_HDEVICE hDevice) {
       }
       ps = nullptr;
     }
+    dev->fixedfunc_ps_variant_cache.clear();
     dev->fixedfunc_ps_interop = nullptr;
     if (dev->up_vertex_buffer) {
       (void)emit_destroy_resource_locked(dev, dev->up_vertex_buffer->handle);

@@ -53,6 +53,29 @@ static constexpr uint32_t kVsPassthroughPosColorTex1[] = {
     0x0000FFFFu, // end
 };
 
+// vs_2_0 (fog variant):
+//   mov oPos, v0
+//   mov oD0, v1
+//   mov oT0, v2
+//   mov oT0.z, v0     ; Pack POSITIONT.z into TEXCOORD0.z for fixed-function fog
+//   end
+static constexpr uint32_t kVsPassthroughPosColorTex1Fog[] = {
+    0xFFFE0200u, // vs_2_0
+    0x03000001u, // mov (2 operands)
+    0x400F0000u, // oPos.xyzw
+    0x10E40000u, // v0.xyzw
+    0x03000001u, // mov (2 operands)
+    0x500F0000u, // oD0.xyzw
+    0x10E40001u, // v1.xyzw
+    0x03000001u, // mov (2 operands)
+    0x600F0000u, // oT0.xyzw
+    0x10E40002u, // v2.xyzw
+    0x03000001u, // mov (2 operands)
+    0x60040000u, // oT0.z
+    0x10E40000u, // v0.xyzw
+    0x0000FFFFu, // end
+};
+
 // vs_2_0:
 //   def c4, 1, 1, 1, 1
 //   mov oPos, v0
@@ -76,6 +99,36 @@ static constexpr uint32_t kVsPassthroughPosWhiteTex1[] = {
     0x03000001u, // mov (2 operands)
     0x600F0000u, // oT0.xyzw
     0x10E40001u, // v1.xyzw
+    0x0000FFFFu, // end
+};
+
+// vs_2_0 (fog variant):
+//   def c4, 1, 1, 1, 1
+//   mov oPos, v0
+//   mov oD0, c4
+//   mov oT0, v1
+//   mov oT0.z, v0     ; Pack POSITIONT.z into TEXCOORD0.z for fixed-function fog
+//   end
+static constexpr uint32_t kVsPassthroughPosWhiteTex1Fog[] = {
+    0xFFFE0200u, // vs_2_0
+    0x06000051u, // def (5 operands)
+    0x200F0004u, // c4.xyzw
+    0x3F800000u, // 1.0
+    0x3F800000u, // 1.0
+    0x3F800000u, // 1.0
+    0x3F800000u, // 1.0
+    0x03000001u, // mov (2 operands)
+    0x400F0000u, // oPos.xyzw
+    0x10E40000u, // v0.xyzw
+    0x03000001u, // mov (2 operands)
+    0x500F0000u, // oD0.xyzw
+    0x20E40004u, // c4.xyzw
+    0x03000001u, // mov (2 operands)
+    0x600F0000u, // oT0.xyzw
+    0x10E40001u, // v1.xyzw
+    0x03000001u, // mov (2 operands)
+    0x60040000u, // oT0.z
+    0x10E40000u, // v0.xyzw
     0x0000FFFFu, // end
 };
 
@@ -124,7 +177,65 @@ static constexpr uint32_t kVsWvpPosColorTex0[] = {
     0x03000001u, // mov (2 operands)
     0x600F0000u, // oT0.xyzw
     0x10E40002u, // v2.xyzw
- 
+    0x0000FFFFu, // end
+};
+
+// vs_2_0 (fog variant): identical to kVsWvpPosColorTex0 but also packs post-
+// projection depth (clip_z / clip_w) into TEXCOORD0.z.
+static constexpr uint32_t kVsWvpPosColorTex0Fog[] = {
+    0xFFFE0200u, // vs_2_0
+
+    0x04000009u, // dp4 (3 operands)
+    0x40010000u, // oPos.x
+    0x10E40000u, // v0.xyzw
+    0x20E400F0u, // c240.xyzw
+
+    0x04000009u, // dp4
+    0x40020000u, // oPos.y
+    0x10E40000u, // v0.xyzw
+    0x20E400F1u, // c241.xyzw
+
+    0x04000009u, // dp4
+    0x40040000u, // oPos.z
+    0x10E40000u, // v0.xyzw
+    0x20E400F2u, // c242.xyzw
+
+    0x04000009u, // dp4
+    0x40080000u, // oPos.w
+    0x10E40000u, // v0.xyzw
+    0x20E400F3u, // c243.xyzw
+
+    0x03000001u, // mov (2 operands)
+    0x500F0000u, // oD0.xyzw
+    0x10E40001u, // v1.xyzw
+
+    0x03000001u, // mov (2 operands)
+    0x600F0000u, // oT0.xyzw
+    0x10E40002u, // v2.xyzw
+
+    0x04000009u, // dp4 (3 operands)
+    0x000F0000u, // r0.xyzw
+    0x10E40000u, // v0.xyzw
+    0x20E400F2u, // c242.xyzw
+
+    0x04000009u, // dp4 (3 operands)
+    0x000F0001u, // r1.xyzw
+    0x10E40000u, // v0.xyzw
+    0x20E400F3u, // c243.xyzw
+
+    0x03000006u, // rcp (2 operands)
+    0x000F0001u, // r1.xyzw
+    0x00E40001u, // r1.xyzw
+
+    0x04000005u, // mul (3 operands)
+    0x000F0000u, // r0.xyzw
+    0x00E40000u, // r0.xyzw
+    0x00E40001u, // r1.xyzw
+
+    0x03000001u, // mov (2 operands)
+    0x60040000u, // oT0.z
+    0x00E40000u, // r0.xyzw
+
     0x0000FFFFu, // end
 };
 
@@ -181,6 +292,65 @@ static constexpr uint32_t kVsWvpPosColor[] = {
     0x0000FFFFu, // end
 };
 
+// vs_2_0 (fog variant): identical to kVsWvpPosColor but also packs post-projection
+// depth (clip_z / clip_w) into TEXCOORD0.z.
+static constexpr uint32_t kVsWvpPosColorFog[] = {
+    0xFFFE0200u, // vs_2_0
+
+    0x04000009u, // dp4 (3 operands)
+    0x40010000u, // oPos.x
+    0x10E40000u, // v0.xyzw
+    0x20E400F0u, // c240.xyzw
+
+    0x04000009u, // dp4
+    0x40020000u, // oPos.y
+    0x10E40000u, // v0.xyzw
+    0x20E400F1u, // c241.xyzw
+
+    0x04000009u, // dp4
+    0x40040000u, // oPos.z
+    0x10E40000u, // v0.xyzw
+    0x20E400F2u, // c242.xyzw
+
+    0x04000009u, // dp4
+    0x40080000u, // oPos.w
+    0x10E40000u, // v0.xyzw
+    0x20E400F3u, // c243.xyzw
+
+    0x03000001u, // mov (2 operands)
+    0x500F0000u, // oD0.xyzw
+    0x10E40001u, // v1.xyzw
+
+    0x03000001u, // mov (2 operands)
+    0x600F0000u, // oT0.xyzw
+    0x10E40000u, // v0.xyzw
+
+    0x04000009u, // dp4 (3 operands)
+    0x000F0000u, // r0.xyzw
+    0x10E40000u, // v0.xyzw
+    0x20E400F2u, // c242.xyzw
+
+    0x04000009u, // dp4 (3 operands)
+    0x000F0001u, // r1.xyzw
+    0x10E40000u, // v0.xyzw
+    0x20E400F3u, // c243.xyzw
+
+    0x03000006u, // rcp (2 operands)
+    0x000F0001u, // r1.xyzw
+    0x00E40001u, // r1.xyzw
+
+    0x04000005u, // mul (3 operands)
+    0x000F0000u, // r0.xyzw
+    0x00E40000u, // r0.xyzw
+    0x00E40001u, // r1.xyzw
+
+    0x03000001u, // mov (2 operands)
+    0x60040000u, // oT0.z
+    0x00E40000u, // r0.xyzw
+
+    0x0000FFFFu, // end
+};
+
 // vs_2_0:
 //   def c4, 1, 1, 1, 1
 //   dp4 oPos.x, v0, c240
@@ -227,6 +397,68 @@ static constexpr uint32_t kVsTransformPosWhiteTex1[] = {
     0x03000001u, // mov (2 operands)
     0x600F0000u, // oT0.xyzw
     0x10E40001u, // v1.xyzw
+    0x0000FFFFu, // end
+};
+
+// vs_2_0 (fog variant): identical to kVsTransformPosWhiteTex1 but also packs
+// post-projection depth (clip_z / clip_w) into TEXCOORD0.z.
+static constexpr uint32_t kVsTransformPosWhiteTex1Fog[] = {
+    0xFFFE0200u, // vs_2_0
+    0x06000051u, // def (5 operands)
+    0x200F0004u, // c4.xyzw
+    0x3F800000u, // 1.0
+    0x3F800000u, // 1.0
+    0x3F800000u, // 1.0
+    0x3F800000u, // 1.0
+
+    0x04000009u, // dp4 (3 operands)
+    0x40010000u, // oPos.x
+    0x10E40000u, // v0.xyzw
+    0x20E400F0u, // c240.xyzw
+    0x04000009u, // dp4 (3 operands)
+    0x40020000u, // oPos.y
+    0x10E40000u, // v0.xyzw
+    0x20E400F1u, // c241.xyzw
+    0x04000009u, // dp4 (3 operands)
+    0x40040000u, // oPos.z
+    0x10E40000u, // v0.xyzw
+    0x20E400F2u, // c242.xyzw
+    0x04000009u, // dp4 (3 operands)
+    0x40080000u, // oPos.w
+    0x10E40000u, // v0.xyzw
+    0x20E400F3u, // c243.xyzw
+
+    0x03000001u, // mov (2 operands)
+    0x500F0000u, // oD0.xyzw
+    0x20E40004u, // c4.xyzw
+
+    0x03000001u, // mov (2 operands)
+    0x600F0000u, // oT0.xyzw
+    0x10E40001u, // v1.xyzw
+
+    0x04000009u, // dp4 (3 operands)
+    0x000F0000u, // r0.xyzw
+    0x10E40000u, // v0.xyzw
+    0x20E400F2u, // c242.xyzw
+
+    0x04000009u, // dp4 (3 operands)
+    0x000F0001u, // r1.xyzw
+    0x10E40000u, // v0.xyzw
+    0x20E400F3u, // c243.xyzw
+
+    0x03000006u, // rcp (2 operands)
+    0x000F0001u, // r1.xyzw
+    0x00E40001u, // r1.xyzw
+
+    0x04000005u, // mul (3 operands)
+    0x000F0000u, // r0.xyzw
+    0x00E40000u, // r0.xyzw
+    0x00E40001u, // r1.xyzw
+
+    0x03000001u, // mov (2 operands)
+    0x60040000u, // oT0.z
+    0x00E40000u, // r0.xyzw
+
     0x0000FFFFu, // end
 };
 
@@ -1225,6 +1457,64 @@ static constexpr uint32_t kVsWvpPosNormalDiffuse[] = {
     0x03000001u, // mov (2 operands)
     0x600F0000u, // oT0.xyzw
     0x10E40000u, // v0.xyzw (stable t0)
+    0x0000FFFFu, // end
+};
+
+// vs_2_0 (fog variant): identical to kVsWvpPosNormalDiffuse but also packs
+// post-projection depth (clip_z / clip_w) into TEXCOORD0.z.
+static constexpr uint32_t kVsWvpPosNormalDiffuseFog[] = {
+    0xFFFE0200u, // vs_2_0
+
+    0x04000009u, // dp4 (3 operands)
+    0x40010000u, // oPos.x
+    0x10E40000u, // v0.xyzw
+    0x20E400F0u, // c240.xyzw
+
+    0x04000009u, // dp4
+    0x40020000u, // oPos.y
+    0x10E40000u, // v0.xyzw
+    0x20E400F1u, // c241.xyzw
+
+    0x04000009u, // dp4
+    0x40040000u, // oPos.z
+    0x10E40000u, // v0.xyzw
+    0x20E400F2u, // c242.xyzw
+
+    0x04000009u, // dp4
+    0x40080000u, // oPos.w
+    0x10E40000u, // v0.xyzw
+    0x20E400F3u, // c243.xyzw
+
+    0x03000001u, // mov (2 operands)
+    0x500F0000u, // oD0.xyzw
+    0x10E40002u, // v2.xyzw (diffuse)
+
+    0x03000001u, // mov (2 operands)
+    0x600F0000u, // oT0.xyzw
+    0x10E40000u, // v0.xyzw (stable t0)
+
+    0x04000009u, // dp4 (3 operands)
+    0x000F0000u, // r0.xyzw
+    0x10E40000u, // v0.xyzw
+    0x20E400F2u, // c242.xyzw
+
+    0x04000009u, // dp4 (3 operands)
+    0x000F0001u, // r1.xyzw
+    0x10E40000u, // v0.xyzw
+    0x20E400F3u, // c243.xyzw
+
+    0x03000006u, // rcp (2 operands)
+    0x000F0001u, // r1.xyzw
+    0x00E40001u, // r1.xyzw
+
+    0x04000005u, // mul (3 operands)
+    0x000F0000u, // r0.xyzw
+    0x00E40000u, // r0.xyzw
+    0x00E40001u, // r1.xyzw
+
+    0x03000001u, // mov (2 operands)
+    0x60040000u, // oT0.z
+    0x00E40000u, // r0.xyzw
 
     0x0000FFFFu, // end
 };
@@ -1267,6 +1557,64 @@ static constexpr uint32_t kVsWvpPosNormalDiffuseTex1[] = {
     0x03000001u, // mov (2 operands)
     0x600F0000u, // oT0.xyzw
     0x10E40003u, // v3.xyzw (texcoord0)
+    0x0000FFFFu, // end
+};
+
+// vs_2_0 (fog variant): identical to kVsWvpPosNormalDiffuseTex1 but also packs
+// post-projection depth (clip_z / clip_w) into TEXCOORD0.z.
+static constexpr uint32_t kVsWvpPosNormalDiffuseTex1Fog[] = {
+    0xFFFE0200u, // vs_2_0
+
+    0x04000009u, // dp4 (3 operands)
+    0x40010000u, // oPos.x
+    0x10E40000u, // v0.xyzw
+    0x20E400F0u, // c240.xyzw
+
+    0x04000009u, // dp4
+    0x40020000u, // oPos.y
+    0x10E40000u, // v0.xyzw
+    0x20E400F1u, // c241.xyzw
+
+    0x04000009u, // dp4
+    0x40040000u, // oPos.z
+    0x10E40000u, // v0.xyzw
+    0x20E400F2u, // c242.xyzw
+
+    0x04000009u, // dp4
+    0x40080000u, // oPos.w
+    0x10E40000u, // v0.xyzw
+    0x20E400F3u, // c243.xyzw
+
+    0x03000001u, // mov (2 operands)
+    0x500F0000u, // oD0.xyzw
+    0x10E40002u, // v2.xyzw (diffuse)
+
+    0x03000001u, // mov (2 operands)
+    0x600F0000u, // oT0.xyzw
+    0x10E40003u, // v3.xyzw (texcoord0)
+
+    0x04000009u, // dp4 (3 operands)
+    0x000F0000u, // r0.xyzw
+    0x10E40000u, // v0.xyzw
+    0x20E400F2u, // c242.xyzw
+
+    0x04000009u, // dp4 (3 operands)
+    0x000F0001u, // r1.xyzw
+    0x10E40000u, // v0.xyzw
+    0x20E400F3u, // c243.xyzw
+
+    0x03000006u, // rcp (2 operands)
+    0x000F0001u, // r1.xyzw
+    0x00E40001u, // r1.xyzw
+
+    0x04000005u, // mul (3 operands)
+    0x000F0000u, // r0.xyzw
+    0x00E40000u, // r0.xyzw
+    0x00E40001u, // r1.xyzw
+
+    0x03000001u, // mov (2 operands)
+    0x60040000u, // oT0.z
+    0x00E40000u, // r0.xyzw
 
     0x0000FFFFu, // end
 };
@@ -1711,6 +2059,460 @@ static constexpr uint32_t kVsWvpLitPosNormalDiffuse[] = {
     0x0000FFFFu, // end
 };
 
+// vs_2_0 (fog variant): identical to kVsWvpLitPosNormalDiffuse but also packs
+// post-projection depth (clip_z / clip_w) into TEXCOORD0.z.
+static constexpr uint32_t kVsWvpLitPosNormalDiffuseFog[] = {
+    0xFFFE0200u, // vs_2_0
+
+    0x06000051u, // def (5 operands)
+    0x200F00FDu, // c253.xyzw
+    0xBF800000u, // -1.0
+    0xBF800000u, // -1.0
+    0xBF800000u, // -1.0
+    0xBF800000u, // -1.0
+
+    0x06000051u, // def
+    0x200F00FEu, // c254.xyzw
+    0x00000000u, // 0.0
+    0x00000000u, // 0.0
+    0x00000000u, // 0.0
+    0x00000000u, // 0.0
+
+    0x06000051u, // def
+    0x200F00FFu, // c255.xyzw
+    0x3F800000u, // 1.0
+    0x3F800000u, // 1.0
+    0x3F800000u, // 1.0
+    0x3F800000u, // 1.0
+
+    0x04000009u, // dp4 (3 operands)
+    0x40010000u, // oPos.x
+    0x10E40000u, // v0.xyzw
+    0x20E400F0u, // c240.xyzw
+
+    0x04000009u, // dp4
+    0x40020000u, // oPos.y
+    0x10E40000u, // v0.xyzw
+    0x20E400F1u, // c241.xyzw
+
+    0x04000009u, // dp4
+    0x40040000u, // oPos.z
+    0x10E40000u, // v0.xyzw
+    0x20E400F2u, // c242.xyzw
+
+    0x04000009u, // dp4
+    0x40080000u, // oPos.w
+    0x10E40000u, // v0.xyzw
+    0x20E400F3u, // c243.xyzw
+
+    0x04000008u, // dp3
+    0x00010000u, // r0.x
+    0x10E40001u, // v1.xyz (normal)
+    0x20E400D0u, // c208.xyz
+
+    0x04000008u, // dp3
+    0x00020000u, // r0.y
+    0x10E40001u, // v1.xyz
+    0x20E400D1u, // c209.xyz
+
+    0x04000008u, // dp3
+    0x00040000u, // r0.z
+    0x10E40001u, // v1.xyz
+    0x20E400D2u, // c210.xyz
+
+    0x04000008u, // dp3
+    0x000F0001u, // r1.xyzw
+    0x00E40000u, // r0.xyzw
+    0x00E40000u, // r0.xyzw
+
+    0x03000007u, // rsq (2 operands)
+    0x000F0001u, // r1.xyzw
+    0x00E40001u, // r1.xyzw
+
+    0x04000005u, // mul (3 operands)
+    0x000F0000u, // r0.xyzw
+    0x00E40000u, // r0.xyzw
+    0x00E40001u, // r1.xyzw
+
+    // View-space position (r6.xyz): dp4(v0, world*view colN)
+    0x04000009u, // dp4
+    0x00010006u, // r6.x
+    0x10E40000u, // v0.xyzw
+    0x20E400D0u, // c208.xyzw
+
+    0x04000009u, // dp4
+    0x00020006u, // r6.y
+    0x10E40000u, // v0.xyzw
+    0x20E400D1u, // c209.xyzw
+
+    0x04000009u, // dp4
+    0x00040006u, // r6.z
+    0x10E40000u, // v0.xyzw
+    0x20E400D2u, // c210.xyzw
+
+    // Accumulators: r2 = diffuseSum, r3 = ambientSum
+    0x03000001u, // mov
+    0x000F0002u, // r2.xyzw
+    0x20E400FEu, // c254.xyzw (0)
+
+    0x03000001u, // mov
+    0x000F0003u, // r3.xyzw
+    0x20E400FEu, // c254.xyzw (0)
+
+    // -------------------------------------------------------------------------
+    // Directional lights (up to 4)
+    // -------------------------------------------------------------------------
+
+    // Light 0: c211=dir, c212=diffuse, c213=ambient
+    0x04000008u, // dp3
+    0x000F0005u, // r5.xyzw
+    0x00E40000u, // r0.xyzw
+    0x20E400D3u, // c211.xyz
+
+    0x0400000Bu, // max
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400FEu, // c254.xyzw
+
+    0x04000005u, // mul
+    0x000F0008u, // r8.xyzw
+    0x20E400D4u, // c212.xyzw
+    0x00E40005u, // r5.xyzw
+
+    0x04000002u, // add
+    0x000F0002u, // r2.xyzw
+    0x00E40002u, // r2.xyzw
+    0x00E40008u, // r8.xyzw
+
+    0x04000002u, // add
+    0x000F0003u, // r3.xyzw
+    0x00E40003u, // r3.xyzw
+    0x20E400D5u, // c213.xyzw
+
+    // Light 1: c214=dir, c215=diffuse, c216=ambient
+    0x04000008u, // dp3
+    0x000F0005u, // r5.xyzw
+    0x00E40000u, // r0.xyzw
+    0x20E400D6u, // c214.xyz
+
+    0x0400000Bu, // max
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400FEu, // c254.xyzw
+
+    0x04000005u, // mul
+    0x000F0008u, // r8.xyzw
+    0x20E400D7u, // c215.xyzw
+    0x00E40005u, // r5.xyzw
+
+    0x04000002u, // add
+    0x000F0002u, // r2.xyzw
+    0x00E40002u, // r2.xyzw
+    0x00E40008u, // r8.xyzw
+
+    0x04000002u, // add
+    0x000F0003u, // r3.xyzw
+    0x00E40003u, // r3.xyzw
+    0x20E400D8u, // c216.xyzw
+
+    // Light 2: c217=dir, c218=diffuse, c219=ambient
+    0x04000008u, // dp3
+    0x000F0005u, // r5.xyzw
+    0x00E40000u, // r0.xyzw
+    0x20E400D9u, // c217.xyz
+
+    0x0400000Bu, // max
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400FEu, // c254.xyzw
+
+    0x04000005u, // mul
+    0x000F0008u, // r8.xyzw
+    0x20E400DAu, // c218.xyzw
+    0x00E40005u, // r5.xyzw
+
+    0x04000002u, // add
+    0x000F0002u, // r2.xyzw
+    0x00E40002u, // r2.xyzw
+    0x00E40008u, // r8.xyzw
+
+    0x04000002u, // add
+    0x000F0003u, // r3.xyzw
+    0x00E40003u, // r3.xyzw
+    0x20E400DBu, // c219.xyzw
+
+    // Light 3: c220=dir, c221=diffuse, c222=ambient
+    0x04000008u, // dp3
+    0x000F0005u, // r5.xyzw
+    0x00E40000u, // r0.xyzw
+    0x20E400DCu, // c220.xyz
+
+    0x0400000Bu, // max
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400FEu, // c254.xyzw
+
+    0x04000005u, // mul
+    0x000F0008u, // r8.xyzw
+    0x20E400DDu, // c221.xyzw
+    0x00E40005u, // r5.xyzw
+
+    0x04000002u, // add
+    0x000F0002u, // r2.xyzw
+    0x00E40002u, // r2.xyzw
+    0x00E40008u, // r8.xyzw
+
+    0x04000002u, // add
+    0x000F0003u, // r3.xyzw
+    0x00E40003u, // r3.xyzw
+    0x20E400DEu, // c222.xyzw
+
+    // -------------------------------------------------------------------------
+    // Point lights (up to 2)
+    // -------------------------------------------------------------------------
+
+    // Point 0: c223=pos, c224=diffuse, c225=ambient, c226=inv_att0, c227=inv_range2
+    0x04000005u, // mul
+    0x000F0004u, // r4.xyzw
+    0x00E40006u, // r6.xyzw
+    0x20E400FDu, // c253.xyzw (-1)
+
+    0x04000002u, // add
+    0x000F0004u, // r4.xyzw
+    0x20E400DFu, // c223.xyzw
+    0x00E40004u, // r4.xyzw
+
+    0x04000008u, // dp3
+    0x000F0005u, // r5.xyzw
+    0x00E40004u, // r4.xyzw
+    0x00E40004u, // r4.xyzw
+
+    0x03000007u, // rsq
+    0x000F0007u, // r7.xyzw
+    0x00E40005u, // r5.xyzw
+
+    0x04000005u, // mul
+    0x000F0004u, // r4.xyzw
+    0x00E40004u, // r4.xyzw
+    0x00E40007u, // r7.xyzw
+
+    0x04000008u, // dp3
+    0x000F0007u, // r7.xyzw
+    0x00E40000u, // r0.xyzw
+    0x00E40004u, // r4.xyzw
+
+    0x0400000Bu, // max
+    0x000F0007u, // r7.xyzw
+    0x00E40007u, // r7.xyzw
+    0x20E400FEu, // c254.xyzw (0)
+
+    // attenuation = inv_att0 * max(1 - dist2*inv_range2, 0)
+    0x04000005u, // mul
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400E3u, // c227.xyzw
+
+    0x04000005u, // mul
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400FDu, // c253.xyzw (-1)
+
+    0x04000002u, // add
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400FFu, // c255.xyzw (1)
+
+    0x0400000Bu, // max
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400FEu, // c254.xyzw (0)
+
+    0x04000005u, // mul
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400E2u, // c226.xyzw
+
+    // diffuseSum += lightDiffuse * ndotl * attenuation
+    0x04000005u, // mul
+    0x000F0008u, // r8.xyzw
+    0x20E400E0u, // c224.xyzw
+    0x00E40007u, // r7.xyzw
+
+    0x04000005u, // mul
+    0x000F0008u, // r8.xyzw
+    0x00E40008u, // r8.xyzw
+    0x00E40005u, // r5.xyzw
+
+    0x04000002u, // add
+    0x000F0002u, // r2.xyzw
+    0x00E40002u, // r2.xyzw
+    0x00E40008u, // r8.xyzw
+
+    // ambientSum += lightAmbient * attenuation
+    0x04000005u, // mul
+    0x000F0008u, // r8.xyzw
+    0x20E400E1u, // c225.xyzw
+    0x00E40005u, // r5.xyzw
+
+    0x04000002u, // add
+    0x000F0003u, // r3.xyzw
+    0x00E40003u, // r3.xyzw
+    0x00E40008u, // r8.xyzw
+
+    // Point 1: c228=pos, c229=diffuse, c230=ambient, c231=inv_att0, c232=inv_range2
+    0x04000005u, // mul
+    0x000F0004u, // r4.xyzw
+    0x00E40006u, // r6.xyzw
+    0x20E400FDu, // c253.xyzw (-1)
+
+    0x04000002u, // add
+    0x000F0004u, // r4.xyzw
+    0x20E400E4u, // c228.xyzw
+    0x00E40004u, // r4.xyzw
+
+    0x04000008u, // dp3
+    0x000F0005u, // r5.xyzw
+    0x00E40004u, // r4.xyzw
+    0x00E40004u, // r4.xyzw
+
+    0x03000007u, // rsq
+    0x000F0007u, // r7.xyzw
+    0x00E40005u, // r5.xyzw
+
+    0x04000005u, // mul
+    0x000F0004u, // r4.xyzw
+    0x00E40004u, // r4.xyzw
+    0x00E40007u, // r7.xyzw
+
+    0x04000008u, // dp3
+    0x000F0007u, // r7.xyzw
+    0x00E40000u, // r0.xyzw
+    0x00E40004u, // r4.xyzw
+
+    0x0400000Bu, // max
+    0x000F0007u, // r7.xyzw
+    0x00E40007u, // r7.xyzw
+    0x20E400FEu, // c254.xyzw
+
+    0x04000005u, // mul
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400E8u, // c232.xyzw
+
+    0x04000005u, // mul
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400FDu, // c253.xyzw (-1)
+
+    0x04000002u, // add
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400FFu, // c255.xyzw
+
+    0x0400000Bu, // max
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400FEu, // c254.xyzw
+
+    0x04000005u, // mul
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400E7u, // c231.xyzw
+
+    0x04000005u, // mul
+    0x000F0008u, // r8.xyzw
+    0x20E400E5u, // c229.xyzw
+    0x00E40007u, // r7.xyzw
+
+    0x04000005u, // mul
+    0x000F0008u, // r8.xyzw
+    0x00E40008u, // r8.xyzw
+    0x00E40005u, // r5.xyzw
+
+    0x04000002u, // add
+    0x000F0002u, // r2.xyzw
+    0x00E40002u, // r2.xyzw
+    0x00E40008u, // r8.xyzw
+
+    0x04000005u, // mul
+    0x000F0008u, // r8.xyzw
+    0x20E400E6u, // c230.xyzw
+    0x00E40005u, // r5.xyzw
+
+    0x04000002u, // add
+    0x000F0003u, // r3.xyzw
+    0x00E40003u, // r3.xyzw
+    0x00E40008u, // r8.xyzw
+
+    // -------------------------------------------------------------------------
+    // Apply material + global ambient and output final lit color
+    // -------------------------------------------------------------------------
+
+    0x04000005u, // mul
+    0x000F0002u, // r2.xyzw
+    0x00E40002u, // r2.xyzw
+    0x20E400E9u, // c233.xyzw (mat diffuse)
+
+    0x04000002u, // add
+    0x000F0003u, // r3.xyzw
+    0x00E40003u, // r3.xyzw
+    0x20E400ECu, // c236.xyzw (global ambient)
+
+    0x04000005u, // mul
+    0x000F0003u, // r3.xyzw
+    0x00E40003u, // r3.xyzw
+    0x20E400EAu, // c234.xyzw (mat ambient)
+
+    0x04000002u, // add
+    0x000F0002u, // r2.xyzw
+    0x00E40002u, // r2.xyzw
+    0x00E40003u, // r3.xyzw
+
+    0x04000005u, // mul
+    0x000F0002u, // r2.xyzw
+    0x00E40002u, // r2.xyzw
+    0x10E40002u, // v2.xyzw (vertex diffuse)
+
+    0x04000002u, // add
+    0x000F0002u, // r2.xyzw
+    0x00E40002u, // r2.xyzw
+    0x20E400EBu, // c235.xyzw (emissive)
+
+    0x03000001u, // mov
+    0x500F0000u, // oD0.xyzw
+    0x00E40002u, // r2.xyzw
+
+    0x03000001u, // mov
+    0x600F0000u, // oT0.xyzw
+    0x10E40000u, // v0.xyzw
+
+
+    0x04000009u, // dp4 (3 operands)
+    0x000F0006u, // r6.xyzw
+    0x10E40000u, // v0.xyzw
+    0x20E400F2u, // c242.xyzw
+
+    0x04000009u, // dp4 (3 operands)
+    0x000F0007u, // r7.xyzw
+    0x10E40000u, // v0.xyzw
+    0x20E400F3u, // c243.xyzw
+
+    0x03000006u, // rcp (2 operands)
+    0x000F0007u, // r7.xyzw
+    0x00E40007u, // r7.xyzw
+
+    0x04000005u, // mul (3 operands)
+    0x000F0006u, // r6.xyzw
+    0x00E40006u, // r6.xyzw
+    0x00E40007u, // r7.xyzw
+
+    0x03000001u, // mov (2 operands)
+    0x60040000u, // oT0.z
+    0x00E40006u, // r6.xyzw
+
+    0x0000FFFFu, // end
+};
+
 // vs_2_0 (lit; XYZ|NORMAL|DIFFUSE|TEX1): identical to kVsWvpLitPosNormalDiffuse
 // but passes TEXCOORD0 through v3.
 static constexpr uint32_t kVsWvpLitPosNormalDiffuseTex1[] = {
@@ -2123,6 +2925,446 @@ static constexpr uint32_t kVsWvpLitPosNormalDiffuseTex1[] = {
     0x03000001u, // mov
     0x600F0000u, // oT0.xyzw
     0x10E40003u, // v3.xyzw
+
+    0x0000FFFFu, // end
+};
+
+// vs_2_0 (fog variant): identical to kVsWvpLitPosNormalDiffuseTex1 but also packs
+// post-projection depth (clip_z / clip_w) into TEXCOORD0.z.
+static constexpr uint32_t kVsWvpLitPosNormalDiffuseTex1Fog[] = {
+    0xFFFE0200u, // vs_2_0
+
+    0x06000051u, // def (5 operands)
+    0x200F00FDu, // c253.xyzw
+    0xBF800000u, // -1.0
+    0xBF800000u, // -1.0
+    0xBF800000u, // -1.0
+    0xBF800000u, // -1.0
+
+    0x06000051u, // def
+    0x200F00FEu, // c254.xyzw
+    0x00000000u, // 0.0
+    0x00000000u, // 0.0
+    0x00000000u, // 0.0
+    0x00000000u, // 0.0
+
+    0x06000051u, // def
+    0x200F00FFu, // c255.xyzw
+    0x3F800000u, // 1.0
+    0x3F800000u, // 1.0
+    0x3F800000u, // 1.0
+    0x3F800000u, // 1.0
+
+    0x04000009u, // dp4 (3 operands)
+    0x40010000u, // oPos.x
+    0x10E40000u, // v0.xyzw
+    0x20E400F0u, // c240.xyzw
+
+    0x04000009u, // dp4
+    0x40020000u, // oPos.y
+    0x10E40000u, // v0.xyzw
+    0x20E400F1u, // c241.xyzw
+
+    0x04000009u, // dp4
+    0x40040000u, // oPos.z
+    0x10E40000u, // v0.xyzw
+    0x20E400F2u, // c242.xyzw
+
+    0x04000009u, // dp4
+    0x40080000u, // oPos.w
+    0x10E40000u, // v0.xyzw
+    0x20E400F3u, // c243.xyzw
+
+    0x04000008u, // dp3
+    0x00010000u, // r0.x
+    0x10E40001u, // v1.xyz
+    0x20E400D0u, // c208.xyz
+
+    0x04000008u, // dp3
+    0x00020000u, // r0.y
+    0x10E40001u, // v1.xyz
+    0x20E400D1u, // c209.xyz
+
+    0x04000008u, // dp3
+    0x00040000u, // r0.z
+    0x10E40001u, // v1.xyz
+    0x20E400D2u, // c210.xyz
+
+    0x04000008u, // dp3
+    0x000F0001u, // r1.xyzw
+    0x00E40000u, // r0.xyzw
+    0x00E40000u, // r0.xyzw
+
+    0x03000007u, // rsq
+    0x000F0001u, // r1.xyzw
+    0x00E40001u, // r1.xyzw
+
+    0x04000005u, // mul
+    0x000F0000u, // r0.xyzw
+    0x00E40000u, // r0.xyzw
+    0x00E40001u, // r1.xyzw
+
+    // View-space position (r6.xyz): dp4(v0, world*view colN)
+    0x04000009u, // dp4
+    0x00010006u, // r6.x
+    0x10E40000u, // v0.xyzw
+    0x20E400D0u, // c208.xyzw
+
+    0x04000009u, // dp4
+    0x00020006u, // r6.y
+    0x10E40000u, // v0.xyzw
+    0x20E400D1u, // c209.xyzw
+
+    0x04000009u, // dp4
+    0x00040006u, // r6.z
+    0x10E40000u, // v0.xyzw
+    0x20E400D2u, // c210.xyzw
+
+    // Accumulators: r2 = diffuseSum, r3 = ambientSum
+    0x03000001u, // mov
+    0x000F0002u, // r2.xyzw
+    0x20E400FEu, // c254.xyzw
+
+    0x03000001u, // mov
+    0x000F0003u, // r3.xyzw
+    0x20E400FEu, // c254.xyzw
+
+    // Directional light 0
+    0x04000008u, // dp3
+    0x000F0005u, // r5.xyzw
+    0x00E40000u, // r0.xyzw
+    0x20E400D3u, // c211.xyz
+
+    0x0400000Bu, // max
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400FEu, // c254.xyzw
+
+    0x04000005u, // mul
+    0x000F0008u, // r8.xyzw
+    0x20E400D4u, // c212.xyzw
+    0x00E40005u, // r5.xyzw
+
+    0x04000002u, // add
+    0x000F0002u, // r2.xyzw
+    0x00E40002u, // r2.xyzw
+    0x00E40008u, // r8.xyzw
+
+    0x04000002u, // add
+    0x000F0003u, // r3.xyzw
+    0x00E40003u, // r3.xyzw
+    0x20E400D5u, // c213.xyzw
+
+    // Directional light 1
+    0x04000008u, // dp3
+    0x000F0005u, // r5.xyzw
+    0x00E40000u, // r0.xyzw
+    0x20E400D6u, // c214.xyz
+
+    0x0400000Bu, // max
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400FEu, // c254.xyzw
+
+    0x04000005u, // mul
+    0x000F0008u, // r8.xyzw
+    0x20E400D7u, // c215.xyzw
+    0x00E40005u, // r5.xyzw
+
+    0x04000002u, // add
+    0x000F0002u, // r2.xyzw
+    0x00E40002u, // r2.xyzw
+    0x00E40008u, // r8.xyzw
+
+    0x04000002u, // add
+    0x000F0003u, // r3.xyzw
+    0x00E40003u, // r3.xyzw
+    0x20E400D8u, // c216.xyzw
+
+    // Directional light 2
+    0x04000008u, // dp3
+    0x000F0005u, // r5.xyzw
+    0x00E40000u, // r0.xyzw
+    0x20E400D9u, // c217.xyz
+
+    0x0400000Bu, // max
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400FEu, // c254.xyzw
+
+    0x04000005u, // mul
+    0x000F0008u, // r8.xyzw
+    0x20E400DAu, // c218.xyzw
+    0x00E40005u, // r5.xyzw
+
+    0x04000002u, // add
+    0x000F0002u, // r2.xyzw
+    0x00E40002u, // r2.xyzw
+    0x00E40008u, // r8.xyzw
+
+    0x04000002u, // add
+    0x000F0003u, // r3.xyzw
+    0x00E40003u, // r3.xyzw
+    0x20E400DBu, // c219.xyzw
+
+    // Directional light 3
+    0x04000008u, // dp3
+    0x000F0005u, // r5.xyzw
+    0x00E40000u, // r0.xyzw
+    0x20E400DCu, // c220.xyz
+
+    0x0400000Bu, // max
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400FEu, // c254.xyzw
+
+    0x04000005u, // mul
+    0x000F0008u, // r8.xyzw
+    0x20E400DDu, // c221.xyzw
+    0x00E40005u, // r5.xyzw
+
+    0x04000002u, // add
+    0x000F0002u, // r2.xyzw
+    0x00E40002u, // r2.xyzw
+    0x00E40008u, // r8.xyzw
+
+    0x04000002u, // add
+    0x000F0003u, // r3.xyzw
+    0x00E40003u, // r3.xyzw
+    0x20E400DEu, // c222.xyzw
+
+    // Point light 0
+    0x04000005u, // mul
+    0x000F0004u, // r4.xyzw
+    0x00E40006u, // r6.xyzw
+    0x20E400FDu, // c253.xyzw
+
+    0x04000002u, // add
+    0x000F0004u, // r4.xyzw
+    0x20E400DFu, // c223.xyzw
+    0x00E40004u, // r4.xyzw
+
+    0x04000008u, // dp3
+    0x000F0005u, // r5.xyzw
+    0x00E40004u, // r4.xyzw
+    0x00E40004u, // r4.xyzw
+
+    0x03000007u, // rsq
+    0x000F0007u, // r7.xyzw
+    0x00E40005u, // r5.xyzw
+
+    0x04000005u, // mul
+    0x000F0004u, // r4.xyzw
+    0x00E40004u, // r4.xyzw
+    0x00E40007u, // r7.xyzw
+
+    0x04000008u, // dp3
+    0x000F0007u, // r7.xyzw
+    0x00E40000u, // r0.xyzw
+    0x00E40004u, // r4.xyzw
+
+    0x0400000Bu, // max
+    0x000F0007u, // r7.xyzw
+    0x00E40007u, // r7.xyzw
+    0x20E400FEu, // c254.xyzw
+
+    0x04000005u, // mul
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400E3u, // c227.xyzw
+
+    0x04000005u, // mul
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400FDu, // c253.xyzw
+
+    0x04000002u, // add
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400FFu, // c255.xyzw
+
+    0x0400000Bu, // max
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400FEu, // c254.xyzw
+
+    0x04000005u, // mul
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400E2u, // c226.xyzw
+
+    0x04000005u, // mul
+    0x000F0008u, // r8.xyzw
+    0x20E400E0u, // c224.xyzw
+    0x00E40007u, // r7.xyzw
+
+    0x04000005u, // mul
+    0x000F0008u, // r8.xyzw
+    0x00E40008u, // r8.xyzw
+    0x00E40005u, // r5.xyzw
+
+    0x04000002u, // add
+    0x000F0002u, // r2.xyzw
+    0x00E40002u, // r2.xyzw
+    0x00E40008u, // r8.xyzw
+
+    0x04000005u, // mul
+    0x000F0008u, // r8.xyzw
+    0x20E400E1u, // c225.xyzw
+    0x00E40005u, // r5.xyzw
+
+    0x04000002u, // add
+    0x000F0003u, // r3.xyzw
+    0x00E40003u, // r3.xyzw
+    0x00E40008u, // r8.xyzw
+
+    // Point light 1
+    0x04000005u, // mul
+    0x000F0004u, // r4.xyzw
+    0x00E40006u, // r6.xyzw
+    0x20E400FDu, // c253.xyzw
+
+    0x04000002u, // add
+    0x000F0004u, // r4.xyzw
+    0x20E400E4u, // c228.xyzw
+    0x00E40004u, // r4.xyzw
+
+    0x04000008u, // dp3
+    0x000F0005u, // r5.xyzw
+    0x00E40004u, // r4.xyzw
+    0x00E40004u, // r4.xyzw
+
+    0x03000007u, // rsq
+    0x000F0007u, // r7.xyzw
+    0x00E40005u, // r5.xyzw
+
+    0x04000005u, // mul
+    0x000F0004u, // r4.xyzw
+    0x00E40004u, // r4.xyzw
+    0x00E40007u, // r7.xyzw
+
+    0x04000008u, // dp3
+    0x000F0007u, // r7.xyzw
+    0x00E40000u, // r0.xyzw
+    0x00E40004u, // r4.xyzw
+
+    0x0400000Bu, // max
+    0x000F0007u, // r7.xyzw
+    0x00E40007u, // r7.xyzw
+    0x20E400FEu, // c254.xyzw
+
+    0x04000005u, // mul
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400E8u, // c232.xyzw
+
+    0x04000005u, // mul
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400FDu, // c253.xyzw
+
+    0x04000002u, // add
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400FFu, // c255.xyzw
+
+    0x0400000Bu, // max
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400FEu, // c254.xyzw
+
+    0x04000005u, // mul
+    0x000F0005u, // r5.xyzw
+    0x00E40005u, // r5.xyzw
+    0x20E400E7u, // c231.xyzw
+
+    0x04000005u, // mul
+    0x000F0008u, // r8.xyzw
+    0x20E400E5u, // c229.xyzw
+    0x00E40007u, // r7.xyzw
+
+    0x04000005u, // mul
+    0x000F0008u, // r8.xyzw
+    0x00E40008u, // r8.xyzw
+    0x00E40005u, // r5.xyzw
+
+    0x04000002u, // add
+    0x000F0002u, // r2.xyzw
+    0x00E40002u, // r2.xyzw
+    0x00E40008u, // r8.xyzw
+
+    0x04000005u, // mul
+    0x000F0008u, // r8.xyzw
+    0x20E400E6u, // c230.xyzw
+    0x00E40005u, // r5.xyzw
+
+    0x04000002u, // add
+    0x000F0003u, // r3.xyzw
+    0x00E40003u, // r3.xyzw
+    0x00E40008u, // r8.xyzw
+
+    // Apply material + global ambient
+    0x04000005u, // mul
+    0x000F0002u, // r2.xyzw
+    0x00E40002u, // r2.xyzw
+    0x20E400E9u, // c233.xyzw
+
+    0x04000002u, // add
+    0x000F0003u, // r3.xyzw
+    0x00E40003u, // r3.xyzw
+    0x20E400ECu, // c236.xyzw
+
+    0x04000005u, // mul
+    0x000F0003u, // r3.xyzw
+    0x00E40003u, // r3.xyzw
+    0x20E400EAu, // c234.xyzw
+
+    0x04000002u, // add
+    0x000F0002u, // r2.xyzw
+    0x00E40002u, // r2.xyzw
+    0x00E40003u, // r3.xyzw
+
+    0x04000005u, // mul
+    0x000F0002u, // r2.xyzw
+    0x00E40002u, // r2.xyzw
+    0x10E40002u, // v2.xyzw
+
+    0x04000002u, // add
+    0x000F0002u, // r2.xyzw
+    0x00E40002u, // r2.xyzw
+    0x20E400EBu, // c235.xyzw
+
+    0x03000001u, // mov
+    0x500F0000u, // oD0.xyzw
+    0x00E40002u, // r2.xyzw
+
+    0x03000001u, // mov
+    0x600F0000u, // oT0.xyzw
+    0x10E40003u, // v3.xyzw
+
+
+    0x04000009u, // dp4 (3 operands)
+    0x000F0006u, // r6.xyzw
+    0x10E40000u, // v0.xyzw
+    0x20E400F2u, // c242.xyzw
+
+    0x04000009u, // dp4 (3 operands)
+    0x000F0007u, // r7.xyzw
+    0x10E40000u, // v0.xyzw
+    0x20E400F3u, // c243.xyzw
+
+    0x03000006u, // rcp (2 operands)
+    0x000F0007u, // r7.xyzw
+    0x00E40007u, // r7.xyzw
+
+    0x04000005u, // mul (3 operands)
+    0x000F0006u, // r6.xyzw
+    0x00E40006u, // r6.xyzw
+    0x00E40007u, // r7.xyzw
+
+    0x03000001u, // mov (2 operands)
+    0x60040000u, // oT0.z
+    0x00E40006u, // r6.xyzw
 
     0x0000FFFFu, // end
 };

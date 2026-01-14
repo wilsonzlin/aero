@@ -206,6 +206,12 @@ struct caps_has_blend_op_caps<T, std::void_t<decltype(std::declval<T>().BlendOpC
   #define D3DCURSORCAPS_COLOR 0x00000001u
 #endif
 
+// Fog caps (from d3d9caps.h). Keep this conservative and only advertise the
+// subset that is implemented and covered by tests.
+#ifndef D3DPRASTERCAPS_FOGTABLE
+  #define D3DPRASTERCAPS_FOGTABLE 0x00000100u
+#endif
+
 #ifndef D3DTEXOPCAPS_DISABLE
   #define D3DTEXOPCAPS_DISABLE 0x00000001u
 #endif
@@ -325,6 +331,7 @@ void fill_d3d9_caps(D3DCAPS9* out) {
   // cull bits as they are commonly queried by apps and are expected for a HAL
   // device.
   out->RasterCaps = D3DPRASTERCAPS_SCISSORTEST |
+                    D3DPRASTERCAPS_FOGTABLE |
                     0u
 #ifdef D3DPRASTERCAPS_ZTEST
                     | D3DPRASTERCAPS_ZTEST

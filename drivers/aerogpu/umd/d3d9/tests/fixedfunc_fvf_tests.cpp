@@ -127,6 +127,12 @@ constexpr uint32_t kPsSrcInput0Comp = 0x16E40000u; // (1 - v0.xyzw)
 constexpr uint32_t kPsSrcInput0W = 0x10FF0000u;    // v0.wwww (alpha replicate)
 constexpr uint32_t kPsSrcInput0WComp = 0x16FF0000u; // (1 - v0.wwww) (complement + alpha replicate)
 
+uint32_t F32Bits(float f) {
+  uint32_t u = 0;
+  std::memcpy(&u, &f, sizeof(u));
+  return u;
+}
+
 bool Check(bool cond, const char* msg) {
   if (!cond) {
     std::fprintf(stderr, "FAIL: %s\n", msg);
@@ -9386,6 +9392,135 @@ bool TestFvfXyzNormalDiffusePacksMultipleLights() {
   return true;
 }
 
+bool TestFixedfuncFogTogglesShaderVariant() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetRenderState != nullptr, "pfnSetRenderState is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Portable D3DRS_* numeric values (from d3d9types.h).
+  constexpr uint32_t kD3dRsFogEnable = 28u;     // D3DRS_FOGENABLE
+  constexpr uint32_t kD3dRsFogColor = 34u;      // D3DRS_FOGCOLOR
+  constexpr uint32_t kD3dRsFogTableMode = 35u;  // D3DRS_FOGTABLEMODE
+  constexpr uint32_t kD3dRsFogStart = 36u;      // D3DRS_FOGSTART (float bits)
+  constexpr uint32_t kD3dRsFogEnd = 37u;        // D3DRS_FOGEND   (float bits)
+  constexpr uint32_t kD3dFogLinear = 3u;        // D3DFOG_LINEAR
+
+  dev->cmd.reset();
+
+  // Force a fixed-function draw that uses a fixed-function fallback VS+PS (no user shaders).
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzrhwDiffuseTex1);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE|TEX1)")) {
+    return false;
+  }
+
+  // Start with fog disabled.
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogEnable, 0u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGENABLE=0)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogTableMode, 0u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGTABLEMODE=0)")) {
+    return false;
+  }
+
+  const VertexXyzrhwDiffuseTex1 tri[3] = {
+      {0.0f, 0.0f, 0.25f, 1.0f, 0xFF00FF00u, 0.0f, 0.0f},
+      {1.0f, 0.0f, 0.25f, 1.0f, 0xFF00FF00u, 1.0f, 0.0f},
+      {0.0f, 1.0f, 0.25f, 1.0f, 0xFF00FF00u, 0.0f, 1.0f},
+  };
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwDiffuseTex1));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(fog off)")) {
+    return false;
+  }
+
+  Shader* vs_off = nullptr;
+  Shader* ps_off = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    vs_off = dev->vs;
+    ps_off = dev->ps;
+    if (!Check(vs_off != nullptr, "VS bound (fog off)")) {
+      return false;
+    }
+    if (!Check(ps_off != nullptr, "PS bound (fog off)")) {
+      return false;
+    }
+  }
+
+  // Enable linear fog and draw again; fixed-function fallback should select a new
+  // VS+PS variant.
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogEnable, 1u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGENABLE=1)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogTableMode, kD3dFogLinear);
+  if (!Check(hr == S_OK, "SetRenderState(FOGTABLEMODE=LINEAR)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogColor, 0xFFFF0000u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGCOLOR)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogStart, F32Bits(0.2f));
+  if (!Check(hr == S_OK, "SetRenderState(FOGSTART)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogEnd, F32Bits(0.8f));
+  if (!Check(hr == S_OK, "SetRenderState(FOGEND)")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwDiffuseTex1));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(fog on)")) {
+    return false;
+  }
+
+  Shader* vs_on = nullptr;
+  Shader* ps_on = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    vs_on = dev->vs;
+    ps_on = dev->ps;
+    if (!Check(vs_on != nullptr, "VS bound (fog on)")) {
+      return false;
+    }
+    if (!Check(ps_on != nullptr, "PS bound (fog on)")) {
+      return false;
+    }
+  }
+
+  if (!Check(vs_on != vs_off, "fog toggle changes fixed-function VS variant")) {
+    return false;
+  }
+  if (!Check(ps_on != ps_off, "fog toggle changes fixed-function PS variant")) {
+    return false;
+  }
+
+  if (!Check(ShaderContainsToken(ps_on, kPsOpAdd), "fog PS contains add opcode")) {
+    return false;
+  }
+  if (!Check(ShaderContainsToken(ps_on, kPsOpMul), "fog PS contains mul opcode")) {
+    return false;
+  }
+  if (!Check(ShaderContainsToken(ps_on, 0x20E40001u), "fog PS references c1 (fog color)")) {
+    return false;
+  }
+
+  return true;
+}
+
 } // namespace
 } // namespace aerogpu
 
@@ -9547,6 +9682,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestTextureFactorRenderStateUpdatesPsConstantWhenUsed()) {
+    return 1;
+  }
+  if (!aerogpu::TestFixedfuncFogTogglesShaderVariant()) {
     return 1;
   }
   return 0;

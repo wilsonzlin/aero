@@ -459,7 +459,7 @@ Not yet implemented for **fixed-function emulation** (examples; expected by some
 - Vertex blending / indexed vertex blending (`D3DFVF_XYZB*`, `D3DRS_VERTEXBLEND`, `D3DRS_INDEXEDVERTEXBLENDENABLE`, etc)
 - Multiple texture coordinate sets (`D3DFVF_TEX2+`)
 - Full fixed-function texture stage state coverage (many `D3DTSS_*` values are cached-only today, including `D3DTSS_TEXCOORDINDEX`).
-- Fog and other legacy fixed-function pixel pipeline features (beyond the combiner subset below).
+- Full fixed-function fog mode/semantics coverage (the bring-up path implements only linear fog via `D3DRS_FOG*`; EXP/EXP2, range fog, and exact D3D9 fog coordinate semantics are still TODO).
 
 Implementation notes (bring-up):
 
@@ -556,7 +556,8 @@ Limitations (bring-up):
 - **Fixed-function pipeline is still limited:** `ensure_fixedfunc_pipeline_locked()` synthesizes a small `ps_2_0` token stream for the supported subset of texture stage state (stages 0..3; see above).
   - The pixel shader bytecode is generated at runtime by a tiny “ps_2_0 token builder” in `src/aerogpu_d3d9_driver.cpp` (no offline shader generation step is required).
   - The current implementation supports up to 4 texture stages (`MaxTextureBlendStages = 4`) and uses `TEXCOORD0` for all stages (no `D3DTSS_TEXCOORDINDEX` support yet).
-  - Fog and more complete fixed-function lighting (specular, spot cones, more lights, etc) are still TODOs.
+  - Fixed-function fog is implemented for a minimal subset (linear fog via `D3DRS_FOG*`) in the fixed-function fallback pixel shaders; EXP/EXP2 and full fog semantics are still TODO.
+  - More complete fixed-function lighting (specular, spot cones, more lights, etc) is still TODO.
 - **Shader int/bool constants are supported:** `DeviceSetShaderConstI/B` (`device_set_shader_const_i_impl()` / `device_set_shader_const_b_impl()` in `src/aerogpu_d3d9_driver.cpp`) update the UMD-side caches + state blocks and emit constant updates into the AeroGPU command stream (`AEROGPU_CMD_SET_SHADER_CONSTANTS_I/B`).
 - **Bring-up no-ops:** `pfnSetConvolutionMonoKernel` and `pfnSetDialogBoxMode` are wired as `S_OK` no-ops via
   `AEROGPU_D3D9_DEFINE_DDI_NOOP(...)` in the “Stubbed entrypoints” section of `src/aerogpu_d3d9_driver.cpp`.
@@ -572,7 +573,7 @@ This subset is validated via:
   `d3d9ex_triangle`, `d3d9_mipmapped_texture_smoke`, `d3d9ex_fixedfunc_textured_triangle`,
   `d3d9ex_fixedfunc_texture_stage_state`, `d3d9_fixedfunc_xyz_diffuse`, `d3d9_fixedfunc_xyz_diffuse_tex1`,
   `d3d9_fixedfunc_multitexture`,
-  `d3d9_fixedfunc_textured_wvp`, `d3d9_fixedfunc_wvp_triangle`, `d3d9_fixedfunc_lighting_directional`,
+  `d3d9_fixedfunc_textured_wvp`, `d3d9_fixedfunc_wvp_triangle`, `d3d9_fixedfunc_fog_smoke`, `d3d9_fixedfunc_lighting_directional`,
   `d3d9_fixedfunc_lighting_multi_directional`, `d3d9_fixedfunc_lighting_point`,
   `d3d9_shader_stage_interop`, `d3d9ex_ps_only_triangle`,
   `d3d9ex_texture_16bit_formats`, `d3d9_texture_16bit_sampling`, `d3d9_patch_sanity`, `d3d9_patch_rendering_smoke`,

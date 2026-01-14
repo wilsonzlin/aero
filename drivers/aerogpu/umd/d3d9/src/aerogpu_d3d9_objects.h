@@ -1276,6 +1276,13 @@ struct Device {
     Shader* vs = nullptr;
     // Optional lit VS variant (used for NORMAL FVFs when lighting is enabled).
     Shader* vs_lit = nullptr;
+    // Optional fog VS variant (used when fixed-function fog is enabled). These
+    // variants pack a fog coordinate into TEXCOORD0.z so the fixed-function PS
+    // can apply a fog blend after texture stage combiners.
+    Shader* vs_fog = nullptr;
+    // Optional lit+fog VS variant (used for NORMAL FVFs when lighting and fog
+    // are enabled simultaneously).
+    Shader* vs_lit_fog = nullptr;
     // Cached stage0 fixed-function PS currently selected for this variant.
     Shader* ps = nullptr;
   };
@@ -1287,7 +1294,6 @@ struct Device {
   // Keyed by a canonicalized FVF "layout key" that clears TEXCOORDSIZE bits for
   // *unused* texcoord sets (some runtimes leave garbage size bits set).
   std::unordered_map<uint32_t, VertexDecl*> fvf_vertex_decl_cache;
-
   // Cached fixed-function pixel shader variants generated from texture stage
   // state (D3DTSS_*).
   //
