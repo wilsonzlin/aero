@@ -830,10 +830,10 @@ Expansion compute pipelines require additional buffers that are not part of the 
 (vertex pulling inputs, scratch outputs, counters, indirect args).
 
 Implementation note: the layout described below is the **target** binding scheme. The current
-executor’s placeholder compute-prepass uses a separate bind group layout for its outputs, and the
-vertex-pulling helper bind group currently occupies `@group(3)` with low-numbered bindings (including
-`@binding(32)`), which overlaps the D3D register binding ranges. This will need to be unified as
-GS/HS/DS bytecode execution lands.
+executor’s placeholder compute-prepass still uses a separate bind group layout for its outputs, but
+the vertex-pulling helper bind group now uses the reserved expansion-internal binding range
+(starting at `@binding(256)`), so it does not collide with the D3D register binding ranges. Future
+work is to unify all emulation kernels on the shared internal layout.
 
 These are not part of the D3D binding model, so they use a reserved binding-number range within the
 reserved internal group (`@group(3)`) to avoid colliding with D3D register mappings.

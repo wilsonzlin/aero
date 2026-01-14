@@ -187,9 +187,8 @@ internal bind group:
   also internal to the emulation path. The **target** design places these in `@group(3)` using a
   reserved high binding-number range (see
   [`docs/16-d3d10-11-translation.md`](../16-d3d10-11-translation.md)).
-  - Note: the current vertex-pulling helper bind group also occupies `@group(3)` but uses
-    low-numbered bindings (including `@binding(32)`), which overlaps the D3D register binding
-    ranges. This will need to be unified as GS execution lands.
+  - Note: the vertex-pulling helper bind group also occupies `@group(3)`, and uses the same
+    reserved high binding-number range so it can coexist with `stage_ex` GS/HS/DS bindings.
 
 ### Binding number ranges within a stage group
 
@@ -218,8 +217,8 @@ When running VS/GS/HS/DS as compute, vertex attributes must be loaded from IA ve
 Vertex pulling uses a dedicated bind group (`VERTEX_PULLING_GROUP` in
 `crates/aero-d3d11/src/runtime/vertex_pulling.rs`):
 
-- `@group(3) @binding(i)`: vertex buffer slot `i` as a storage buffer (read-only)
-- `@group(3) @binding(32)`: a small uniform containing per-slot `base_offset` + `stride`
+- `@group(3) @binding(256)`: a small uniform containing per-slot `base_offset` + `stride` (+ draw params)
+- `@group(3) @binding(257 + i)`: vertex buffer slot `i` as a storage buffer (read-only)
 
 These bindings are **internal** to the emulation path; they are not part of the D3D register binding model.
 The broader compute-expansion pipeline also defines additional internal scratch bindings; see
