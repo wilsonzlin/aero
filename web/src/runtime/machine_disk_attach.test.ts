@@ -109,6 +109,65 @@ describe("runtime/machine_disk_attach (Machine attach method selection)", () => 
     };
   }
 
+  function hddMetaRaw(): DiskImageMetadata {
+    return {
+      source: "local",
+      id: "d1",
+      name: "disk",
+      backend: "opfs",
+      kind: "hdd",
+      format: "raw",
+      fileName: "disk.img",
+      sizeBytes: 1024,
+      createdAtMs: 0,
+    };
+  }
+
+  it("prefers set_primary_hdd_opfs_existing when attaching a raw HDD", async () => {
+    const meta = hddMetaRaw();
+    const plan = planMachineBootDiskAttachment(meta, "hdd");
+
+    const set_primary_hdd_opfs_existing = vi.fn(async (_path: string) => {});
+    const set_disk_opfs_existing_and_set_overlay_ref = vi.fn(async (_path: string) => {});
+    const set_disk_opfs_existing = vi.fn(async (_path: string) => {});
+    const set_ahci_port0_disk_overlay_ref = vi.fn((_base: string, _overlay: string) => {});
+
+    const machine = {
+      set_primary_hdd_opfs_existing,
+      set_disk_opfs_existing_and_set_overlay_ref,
+      set_disk_opfs_existing,
+      set_ahci_port0_disk_overlay_ref,
+    } as unknown as MachineHandle;
+
+    await attachMachineBootDisk(machine, "hdd", meta);
+
+    expect(set_primary_hdd_opfs_existing).toHaveBeenCalledWith(plan.opfsPath);
+    expect(set_disk_opfs_existing_and_set_overlay_ref).not.toHaveBeenCalled();
+    expect(set_disk_opfs_existing).not.toHaveBeenCalled();
+    expect(set_ahci_port0_disk_overlay_ref).not.toHaveBeenCalled();
+  });
+
+  it("falls back to set_disk_opfs_existing_and_set_overlay_ref when set_primary_hdd_opfs_existing is unavailable", async () => {
+    const meta = hddMetaRaw();
+    const plan = planMachineBootDiskAttachment(meta, "hdd");
+
+    const set_disk_opfs_existing_and_set_overlay_ref = vi.fn(async (_path: string) => {});
+    const set_disk_opfs_existing = vi.fn(async (_path: string) => {});
+    const set_ahci_port0_disk_overlay_ref = vi.fn((_base: string, _overlay: string) => {});
+
+    const machine = {
+      set_disk_opfs_existing_and_set_overlay_ref,
+      set_disk_opfs_existing,
+      set_ahci_port0_disk_overlay_ref,
+    } as unknown as MachineHandle;
+
+    await attachMachineBootDisk(machine, "hdd", meta);
+
+    expect(set_disk_opfs_existing_and_set_overlay_ref).toHaveBeenCalledWith(plan.opfsPath);
+    expect(set_disk_opfs_existing).not.toHaveBeenCalled();
+    expect(set_ahci_port0_disk_overlay_ref).not.toHaveBeenCalled();
+  });
+
   it("prefers attach_install_media_iso_opfs_existing_and_set_overlay_ref when present (back-compat)", async () => {
     const meta = cdMeta();
     const plan = planMachineBootDiskAttachment(meta, "cd");
