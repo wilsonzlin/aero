@@ -45,10 +45,18 @@ fn assemble_vs_passthrough_pos() -> Vec<u8> {
 }
 
 fn assemble_ps3_dcl_cube_s0() -> Vec<u8> {
-    // ps_3_0 with a `dcl_cube s0` declaration. The executor/translator currently only supports 2D
-    // sampler textures, so translation should fail deterministically.
+    // ps_3_0 with a `dcl_cube s0` declaration.
     let mut words = vec![0xFFFF_0300];
     let decl_token = 3u32 << 27; // texture type = cube
+    words.extend(enc_inst(0x001F, &[decl_token, enc_dst(10, 0, 0xF)]));
+    words.push(0x0000_FFFF);
+    to_bytes(&words)
+}
+
+fn assemble_ps3_dcl_volume_s0() -> Vec<u8> {
+    // ps_3_0 with a `dcl_volume s0` (3D texture) declaration.
+    let mut words = vec![0xFFFF_0300];
+    let decl_token = 4u32 << 27; // texture type = volume (3D)
     words.extend(enc_inst(0x001F, &[decl_token, enc_dst(10, 0, 0xF)]));
     words.push(0x0000_FFFF);
     to_bytes(&words)
@@ -215,7 +223,7 @@ fn d3d9_create_shader_dxbc_rejects_stage_mismatch() {
 }
 
 #[test]
-fn d3d9_create_shader_dxbc_rejects_cube_sampler_declaration() {
+fn d3d9_create_shader_dxbc_accepts_cube_sampler_declaration() {
     let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
         Ok(exec) => exec,
         Err(AerogpuD3d9Error::AdapterNotFound) => {
@@ -231,13 +239,35 @@ fn d3d9_create_shader_dxbc_rejects_cube_sampler_declaration() {
     let stream = writer.finish();
 
     match exec.execute_cmd_stream(&stream) {
-        Ok(_) => panic!("expected CREATE_SHADER_DXBC with dcl_cube to be rejected"),
+        Ok(_) => {}
+        Err(other) => panic!("unexpected error: {other:?}"),
+    }
+}
+
+#[test]
+fn d3d9_create_shader_dxbc_rejects_volume_sampler_declaration() {
+    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
+        Ok(exec) => exec,
+        Err(AerogpuD3d9Error::AdapterNotFound) => {
+            common::skip_or_panic(module_path!(), "wgpu adapter not found");
+            return;
+        }
+        Err(err) => panic!("failed to create executor: {err}"),
+    };
+
+    let ps_bytes = assemble_ps3_dcl_volume_s0();
+    let mut writer = AerogpuCmdWriter::new();
+    writer.create_shader_dxbc(1, AerogpuShaderStage::Pixel, &ps_bytes);
+    let stream = writer.finish();
+
+    match exec.execute_cmd_stream(&stream) {
+        Ok(_) => panic!("expected CREATE_SHADER_DXBC with dcl_volume to be rejected"),
         Err(AerogpuD3d9Error::ShaderTranslation(msg)) => {
             assert!(
                 msg.contains("unsupported sampler texture type"),
                 "unexpected error message: {msg}"
             );
-            assert!(msg.contains("TextureCube"), "unexpected error message: {msg}");
+            assert!(msg.contains("Texture3D"), "unexpected error message: {msg}");
         }
         Err(other) => panic!("unexpected error: {other:?}"),
     }
