@@ -623,6 +623,60 @@ static void TestMsixDispatchAndRouting(void)
     Cleanup(&interrupts, dev);
 }
 
+static void TestMsixZeroQueuesConfigOnly(void)
+{
+    VIRTIO_PCI_INTERRUPTS interrupts;
+    WDFDEVICE dev;
+    TEST_CALLBACKS cb;
+    volatile VIRTIO_PCI_COMMON_CFG commonCfg;
+    WDFSPINLOCK commonCfgLock;
+    NTSTATUS st;
+    BOOLEAN handled;
+
+    memset((void*)&commonCfg, 0, sizeof(commonCfg));
+    InstallCommonCfgQueueVectorWindowHooks(&commonCfg, 0);
+
+    commonCfgLock = NULL;
+    PrepareMsix(&interrupts, &dev, &cb, 0 /* queues */, 1 /* message count */, &commonCfgLock);
+    assert(commonCfgLock != NULL);
+
+    assert(interrupts.QueueCount == 0);
+    assert(interrupts.u.Msix.UsedVectorCount == 1);
+    assert(interrupts.u.Msix.ConfigVector == 0);
+    assert(interrupts.u.Msix.QueueVectors == NULL);
+    assert(interrupts.QueueLocks == NULL);
+
+    st = VirtioPciInterruptsProgramMsixVectors(&interrupts, &commonCfg);
+    assert(st == STATUS_SUCCESS);
+    assert(commonCfg.msix_config == 0);
+
+    /* Config interrupt still dispatches config callback. */
+    ResetCallbackCounters(&cb);
+    cb.ExpectedDevice = dev;
+    handled = interrupts.u.Msix.Interrupts[0]->Isr(interrupts.u.Msix.Interrupts[0], 0);
+    assert(handled == TRUE);
+    WdfTestInterruptRunDpc(interrupts.u.Msix.Interrupts[0]);
+    AssertInterruptLocksReleased(&interrupts);
+    assert(cb.ConfigCalls == 1);
+    assert(cb.QueueCallsTotal == 0);
+
+    /* Quiesce/Resume should work with no queues. */
+    st = VirtioPciInterruptsQuiesce(&interrupts, &commonCfg);
+    assert(st == STATUS_SUCCESS);
+    assert(interrupts.ResetInProgress == 1);
+    assert(interrupts.u.Msix.Interrupts[0]->Enabled == FALSE);
+    assert(commonCfg.msix_config == VIRTIO_PCI_MSI_NO_VECTOR);
+
+    st = VirtioPciInterruptsResume(&interrupts, &commonCfg);
+    assert(st == STATUS_SUCCESS);
+    assert(interrupts.ResetInProgress == 0);
+    assert(interrupts.u.Msix.Interrupts[0]->Enabled == TRUE);
+    assert(commonCfg.msix_config == 0);
+
+    Cleanup(&interrupts, dev);
+    UninstallCommonCfgQueueVectorWindowHooks();
+}
+
 static void TestMsixLimitedVectorRouting(void)
 {
     VIRTIO_PCI_INTERRUPTS interrupts;
@@ -1777,6 +1831,7 @@ int main(void)
     TestIntxRealInterruptDispatch();
     TestIntxPendingStatusCoalesce();
     TestMsixDispatchAndRouting();
+    TestMsixZeroQueuesConfigOnly();
     TestMsixLimitedVectorRouting();
     TestMsixLimitedVectorProgramming();
     TestMsixLimitedVectorQuiesceResumeVectors();
