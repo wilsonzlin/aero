@@ -16,40 +16,46 @@ fn tier2_code_version_guard_ignores_trailing_invalid_page() {
     //
     // Tier-2 `Block::code_len` is expected to cover only executed bytes, so trace code-version
     // guards should not include the second page.
-    let entry = 0x0fff_u64;
-    let mut bus = SimpleBus::new(0x3000);
-    bus.load(entry, &[0x53]); // push rbx
-    let invalid = tier1_common::pick_invalid_opcode(64);
-    bus.load(0x1000, &[invalid]); // unsupported opcode (decoded as Invalid by Tier-1)
+    for bitness in [16u32, 32, 64] {
+        let entry = 0x0fff_u64;
+        let mut bus = SimpleBus::new(0x3000);
+        bus.load(entry, &[0x53]); // push rbx/bx/ebx
+        let invalid = tier1_common::pick_invalid_opcode(bitness);
+        bus.load(0x1000, &[invalid]); // unsupported opcode (decoded as Invalid by Tier-1)
 
-    let func = build_function_from_x86(&bus, entry, 64, CfgBuildConfig::default());
-    assert_eq!(func.block(func.entry).code_len, 1);
+        let func = build_function_from_x86(&bus, entry, bitness, CfgBuildConfig::default());
+        assert_eq!(func.block(func.entry).code_len, 1);
 
-    let mut profile = ProfileData::default();
-    profile.block_counts.insert(func.entry, 10_000);
+        let mut profile = ProfileData::default();
+        profile.block_counts.insert(func.entry, 10_000);
 
-    let page_versions = PageVersionTracker::default();
-    let builder = TraceBuilder::new(
-        &func,
-        &profile,
-        &page_versions,
-        TraceConfig {
-            hot_block_threshold: 1000,
-            max_blocks: 8,
-            max_instrs: 256,
-        },
-    );
-    let trace = builder.build_from(func.entry).expect("trace should be hot");
+        let page_versions = PageVersionTracker::default();
+        let builder = TraceBuilder::new(
+            &func,
+            &profile,
+            &page_versions,
+            TraceConfig {
+                hot_block_threshold: 1000,
+                max_blocks: 8,
+                max_instrs: 256,
+            },
+        );
+        let trace = builder.build_from(func.entry).expect("trace should be hot");
 
-    let entry_page = entry >> aero_jit_x86::PAGE_SHIFT;
-    let guarded_pages: Vec<u64> = trace
-        .ir
-        .prologue
-        .iter()
-        .filter_map(|inst| match inst {
-            Instr::GuardCodeVersion { page, .. } => Some(*page),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(guarded_pages, vec![entry_page]);
+        let entry_page = entry >> aero_jit_x86::PAGE_SHIFT;
+        let guarded_pages: Vec<u64> = trace
+            .ir
+            .prologue
+            .iter()
+            .filter_map(|inst| match inst {
+                Instr::GuardCodeVersion { page, .. } => Some(*page),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            guarded_pages,
+            vec![entry_page],
+            "unexpected guarded pages for bitness={bitness}"
+        );
+    }
 }
