@@ -441,18 +441,17 @@ export function resolveShaderStageWithEx(shaderStage: number, reserved0: number)
  *
  * Returns `null` if the pair violates the encoding rules.
  *
- * Note: `AerogpuShaderStageEx` is intentionally non-zero-only, so Pixel cannot be represented here
- * (DXBC program type 0 conflicts with the legacy compute encoding). Use `resolveShaderStageWithEx`
- * if you need a representation that includes Pixel.
+ * Note: `AerogpuShaderStageEx` cannot represent Pixel/Vertex; those must be represented via the
+ * legacy `AerogpuShaderStage` enum. Use `resolveShaderStageWithEx` if you need a representation
+ * that includes Pixel/Vertex.
  */
 export function decodeShaderStageEx(shaderStage: number, reserved0: number): AerogpuShaderStageEx | null {
-  if (shaderStage === AerogpuShaderStage.Vertex) return reserved0 === 0 ? AerogpuShaderStageEx.Vertex : null;
+  if (shaderStage === AerogpuShaderStage.Vertex) return null;
   if (shaderStage === AerogpuShaderStage.Pixel) return null;
   if (shaderStage === AerogpuShaderStage.Geometry) return reserved0 === 0 ? AerogpuShaderStageEx.Geometry : null;
   if (shaderStage === AerogpuShaderStage.Compute) {
     if (reserved0 === 0) return AerogpuShaderStageEx.Compute;
     switch (reserved0 >>> 0) {
-      case AerogpuShaderStageEx.Vertex:
       case AerogpuShaderStageEx.Geometry:
       case AerogpuShaderStageEx.Hull:
       case AerogpuShaderStageEx.Domain:
