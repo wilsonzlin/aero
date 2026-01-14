@@ -6707,7 +6707,11 @@ static int DoReadGpaJson(const D3DKMT_FUNCS *f,
     if (outFile && *outFile) {
       BestEffortDeleteOutputFile(outFile);
     }
-    JsonWriteTopLevelError(out, "read-gpa", f, "D3DKMTEscape(read-gpa) failed", st);
+    const char *msg = "D3DKMTEscape(read-gpa) failed";
+    if (st == STATUS_NOT_SUPPORTED) {
+      msg = "READ_GPA unavailable (disabled/gated or not supported)";
+    }
+    JsonWriteTopLevelError(out, "read-gpa", f, msg, st);
     return 2;
   }
 
@@ -9996,7 +10000,11 @@ static int DoMapSharedHandleJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, 
 
   const NTSTATUS st = SendAerogpuEscape(f, hAdapter, &q, sizeof(q));
   if (!NT_SUCCESS(st)) {
-    JsonWriteTopLevelError(out, "map-shared-handle", f, "D3DKMTEscape(map-shared-handle) failed", st);
+    const char *msg = "D3DKMTEscape(map-shared-handle) failed";
+    if (st == STATUS_NOT_SUPPORTED) {
+      msg = "MAP_SHARED_HANDLE unavailable (disabled/gated or not supported)";
+    }
+    JsonWriteTopLevelError(out, "map-shared-handle", f, msg, st);
     return 2;
   }
 
