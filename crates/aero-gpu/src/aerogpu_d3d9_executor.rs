@@ -10451,8 +10451,8 @@ mod d3d9 {
 #[cfg(test)]
 mod tests {
     use super::{
-        cmd, d3d9, guest_texture_linear_layout, AerogpuD3d9Error, AerogpuD3d9Executor,
-        AerogpuFormat, D3d9SamplerState,
+        build_alpha_test_wgsl_variant, cmd, d3d9, guest_texture_linear_layout, AerogpuD3d9Error,
+        AerogpuD3d9Executor, AerogpuFormat, D3d9SamplerState,
     };
     use std::sync::{Arc, Mutex, OnceLock};
 
@@ -10569,6 +10569,79 @@ mod tests {
             let expected = expected_block(format).map(|e| e.is_bc).unwrap_or(false);
             assert_eq!(got.is_some(), expected, "format={format:?}");
         }
+    }
+
+    fn assert_naga_valid_wgsl(wgsl: &str) {
+        let module = naga::front::wgsl::parse_str(wgsl).expect("injected WGSL should parse");
+        let mut validator = naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::all(),
+        );
+        validator
+            .validate(&module)
+            .expect("injected WGSL should validate");
+    }
+
+    #[test]
+    fn alpha_test_wgsl_injection_supports_sm3_fsin_fsout() {
+        let base = concat!(
+            "struct FsIn { @location(0) v0: vec4<f32>, };\n",
+            "struct FsOut { @location(0) oC0: vec4<f32>, };\n",
+            "\n",
+            "@fragment\n",
+            "fn fs_main(input: FsIn) -> FsOut {\n",
+            "  var out: FsOut;\n",
+            "  out.oC0 = vec4<f32>(1.0, 0.0, 0.0, 0.25);\n",
+            "  return out;\n",
+            "}\n",
+        );
+
+        let injected = build_alpha_test_wgsl_variant(base, 5, 128).expect("injection should work");
+        assert!(injected.contains("fn fs_main_inner(input: FsIn) -> FsOut {"));
+        assert!(injected.contains("@fragment\nfn fs_main(input: FsIn) -> FsOut {"));
+        assert!(injected.contains("discard;"));
+        assert_naga_valid_wgsl(&injected);
+    }
+
+    #[test]
+    fn alpha_test_wgsl_injection_supports_sm3_no_input() {
+        let base = concat!(
+            "struct FsOut { @location(0) oC0: vec4<f32>, };\n",
+            "\n",
+            "@fragment\n",
+            "fn fs_main() -> FsOut {\n",
+            "  var out: FsOut;\n",
+            "  out.oC0 = vec4<f32>(0.0, 1.0, 0.0, 0.75);\n",
+            "  return out;\n",
+            "}\n",
+        );
+
+        let injected = build_alpha_test_wgsl_variant(base, 5, 128).expect("injection should work");
+        assert!(injected.contains("fn fs_main_inner() -> FsOut {"));
+        assert!(injected.contains("@fragment\nfn fs_main() -> FsOut {"));
+        assert!(injected.contains("discard;"));
+        assert_naga_valid_wgsl(&injected);
+    }
+
+    #[test]
+    fn alpha_test_wgsl_injection_still_supports_legacy_psinput_psoutput() {
+        let base = concat!(
+            "struct PsInput { @location(0) v0: vec4<f32>, };\n",
+            "struct PsOutput { @location(0) oC0: vec4<f32>, };\n",
+            "\n",
+            "@fragment\n",
+            "fn fs_main(input: PsInput) -> PsOutput {\n",
+            "  var out: PsOutput;\n",
+            "  out.oC0 = vec4<f32>(0.0, 0.0, 1.0, 0.25);\n",
+            "  return out;\n",
+            "}\n",
+        );
+
+        let injected = build_alpha_test_wgsl_variant(base, 5, 128).expect("injection should work");
+        assert!(injected.contains("fn fs_main_inner(input: PsInput) -> PsOutput {"));
+        assert!(injected.contains("@fragment\nfn fs_main(input: PsInput) -> PsOutput {"));
+        assert!(injected.contains("discard;"));
+        assert_naga_valid_wgsl(&injected);
     }
 
     #[test]
