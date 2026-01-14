@@ -1194,7 +1194,14 @@ pub fn parse(bytes: &[u8]) -> Result<ShaderProgram, ShaderError> {
                 return Err(err);
             }
 
-            parse_token_stream(normalized.as_ref())
+            // Only accept the normalized parse result if it succeeds. Normalization is a best-effort
+            // compatibility path for historical operand-count length encodings; for malformed or
+            // ambiguous token streams it can produce less useful errors (e.g. consuming the final
+            // `end` token as an operand). In those cases, preserve the original parser error.
+            match parse_token_stream(normalized.as_ref()) {
+                Ok(program) => Ok(program),
+                Err(_) => Err(err),
+            }
         }
     }
 }
