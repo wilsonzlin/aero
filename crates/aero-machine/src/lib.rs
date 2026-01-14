@@ -266,6 +266,38 @@ fn sync_msix_capability_into_config(
     cfg.write(base + 0x02, 2, u32::from(new_ctrl));
 }
 
+fn sync_aerogpu_pci_state_into_mmio(
+    pci_cfg: &SharedPciConfigPorts,
+    dev: &mut AeroGpuMmioDevice,
+) -> u16 {
+    let bdf = aero_devices::pci::profile::AEROGPU.bdf;
+    let (command, bar0_base, bar1_base) = {
+        let mut pci_cfg = pci_cfg.borrow_mut();
+        let cfg = pci_cfg.bus_mut().device_config(bdf);
+        let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+        let bar0_base = cfg
+            .and_then(|cfg| cfg.bar_range(aero_devices::pci::profile::AEROGPU_BAR0_INDEX))
+            .map(|range| range.base)
+            .unwrap_or(0);
+        let bar1_base = cfg
+            .and_then(|cfg| cfg.bar_range(aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX))
+            .map(|range| range.base)
+            .unwrap_or(0);
+        (command, bar0_base, bar1_base)
+    };
+
+    // Keep the AeroGPU model's internal PCI config image coherent with the canonical PCI config
+    // space owned by the machine.
+    let cfg = dev.config_mut();
+    cfg.set_command(command);
+    cfg.set_bar_base(aero_devices::pci::profile::AEROGPU_BAR0_INDEX, bar0_base);
+    cfg.set_bar_base(
+        aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX,
+        bar1_base,
+    );
+    command
+}
+
 type NvmeDisk = Box<dyn aero_storage::VirtualDisk>;
 fn set_cpu_apic_base_bsp_bit(cpu: &mut CpuCore, is_bsp: bool) {
     if is_bsp {
@@ -8780,43 +8812,15 @@ impl Machine {
                 let bdf: PciBdf = aero_devices::pci::profile::AEROGPU.bdf;
                 let pin = PciInterruptPin::IntA;
 
-                // Keep the AeroGPU model's internal PCI command/BAR state coherent so `irq_level()`
-                // can apply COMMAND.INTX_DISABLE gating even though the machine owns the canonical
-                // PCI config space.
-                let (command, bar0_base, bar1_base) = self
-                    .pci_cfg
-                    .as_ref()
-                    .map(|pci_cfg| {
-                        let mut pci_cfg = pci_cfg.borrow_mut();
-                        let cfg = pci_cfg.bus_mut().device_config(bdf);
-                        let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
-                        let bar0_base = cfg
-                            .and_then(|cfg| {
-                                cfg.bar_range(aero_devices::pci::profile::AEROGPU_BAR0_INDEX)
-                            })
-                            .map(|range| range.base)
-                            .unwrap_or(0);
-                        let bar1_base = cfg
-                            .and_then(|cfg| {
-                                cfg.bar_range(aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX)
-                            })
-                            .map(|range| range.base)
-                            .unwrap_or(0);
-                        (command, bar0_base, bar1_base)
-                    })
-                    .unwrap_or((0, 0, 0));
-                let mut level = {
+                let (command, mut level) = {
                     let mut dev = aerogpu.borrow_mut();
-                    // Keep the AeroGPU model's internal PCI config image coherent with the
-                    // canonical PCI config space owned by the machine.
-                    dev.config_mut().set_command(command);
-                    dev.config_mut()
-                        .set_bar_base(aero_devices::pci::profile::AEROGPU_BAR0_INDEX, bar0_base);
-                    dev.config_mut().set_bar_base(
-                        aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX,
-                        bar1_base,
-                    );
-                    dev.irq_level()
+                    let command = self
+                        .pci_cfg
+                        .as_ref()
+                        .map(|pci_cfg| sync_aerogpu_pci_state_into_mmio(pci_cfg, &mut dev))
+                        .unwrap_or(0);
+                    let level = dev.irq_level();
+                    (command, level)
                 };
 
                 // Redundantly gate on the canonical PCI command register as well (defensive).
@@ -12217,32 +12221,8 @@ impl Machine {
         // fences can make forward progress.
         let platform_now_ns = self.platform_clock.as_ref().map(|clock| clock.now_ns());
 
-        let bdf = aero_devices::pci::profile::AEROGPU.bdf;
-        let (command, bar0_base, bar1_base) = {
-            let mut pci_cfg = pci_cfg.borrow_mut();
-            let cfg = pci_cfg.bus_mut().device_config(bdf);
-            let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
-            let bar0_base = cfg
-                .and_then(|cfg| cfg.bar_range(aero_devices::pci::profile::AEROGPU_BAR0_INDEX))
-                .map(|range| range.base)
-                .unwrap_or(0);
-            let bar1_base = cfg
-                .and_then(|cfg| cfg.bar_range(aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX))
-                .map(|range| range.base)
-                .unwrap_or(0);
-            (command, bar0_base, bar1_base)
-        };
-
         let mut dev = aerogpu.borrow_mut();
-        // Keep the AeroGPU model's internal PCI config image coherent with the canonical PCI config
-        // space owned by the machine.
-        dev.config_mut().set_command(command);
-        dev.config_mut()
-            .set_bar_base(aero_devices::pci::profile::AEROGPU_BAR0_INDEX, bar0_base);
-        dev.config_mut().set_bar_base(
-            aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX,
-            bar1_base,
-        );
+        let _command = sync_aerogpu_pci_state_into_mmio(pci_cfg, &mut dev);
 
         if let Some(now_ns) = platform_now_ns {
             dev.tick_vblank(now_ns);
@@ -12447,32 +12427,8 @@ impl Machine {
             return;
         };
 
-        // Keep the AeroGPU model's internal PCI config image coherent with the canonical PCI
-        // config space owned by the machine so the device can apply COMMAND.BME gating.
-        let bdf = aero_devices::pci::profile::AEROGPU.bdf;
-        let (command, bar0_base, bar1_base) = {
-            let mut pci_cfg = pci_cfg.borrow_mut();
-            let cfg = pci_cfg.bus_mut().device_config(bdf);
-            let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
-            let bar0_base = cfg
-                .and_then(|cfg| cfg.bar_range(aero_devices::pci::profile::AEROGPU_BAR0_INDEX))
-                .map(|range| range.base)
-                .unwrap_or(0);
-            let bar1_base = cfg
-                .and_then(|cfg| cfg.bar_range(aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX))
-                .map(|range| range.base)
-                .unwrap_or(0);
-            (command, bar0_base, bar1_base)
-        };
-
         let mut dev = aerogpu.borrow_mut();
-        dev.config_mut().set_command(command);
-        dev.config_mut()
-            .set_bar_base(aero_devices::pci::profile::AEROGPU_BAR0_INDEX, bar0_base);
-        dev.config_mut().set_bar_base(
-            aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX,
-            bar1_base,
-        );
+        let _command = sync_aerogpu_pci_state_into_mmio(pci_cfg, &mut dev);
         dev.complete_fence_from_backend(&mut self.mem, fence);
     }
 
@@ -15313,55 +15269,20 @@ impl snapshot::SnapshotTarget for Machine {
                 let bdf = aero_devices::pci::profile::AEROGPU.bdf;
                 let pin = PciInterruptPin::IntA;
 
-                let command = self
-                    .pci_cfg
-                    .as_ref()
-                    .and_then(|pci_cfg| {
-                        let mut pci_cfg = pci_cfg.borrow_mut();
-                        pci_cfg
-                            .bus_mut()
-                            .device_config(bdf)
-                            .map(|cfg| cfg.command())
-                    })
-                    .unwrap_or(0);
-
                 // Keep the AeroGPU model's internal PCI config image coherent with the canonical
                 // PCI config space owned by the machine (COMMAND + BAR bases). Snapshot restore can
                 // target a machine instance that has already executed or polled devices, so the
                 // internal config image may contain stale command bits. Synchronize it here so
                 // `irq_level()` applies COMMAND.INTX_DISABLE gating consistently.
-                let (bar0_base, bar1_base) = self
-                    .pci_cfg
-                    .as_ref()
-                    .map(|pci_cfg| {
-                        let mut pci_cfg = pci_cfg.borrow_mut();
-                        let cfg = pci_cfg.bus_mut().device_config(bdf);
-                        let bar0_base = cfg
-                            .and_then(|cfg| {
-                                cfg.bar_range(aero_devices::pci::profile::AEROGPU_BAR0_INDEX)
-                            })
-                            .map(|range| range.base)
-                            .unwrap_or(0);
-                        let bar1_base = cfg
-                            .and_then(|cfg| {
-                                cfg.bar_range(aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX)
-                            })
-                            .map(|range| range.base)
-                            .unwrap_or(0);
-                        (bar0_base, bar1_base)
-                    })
-                    .unwrap_or((0, 0));
-
-                let mut level = {
+                let (command, mut level) = {
                     let mut dev = aerogpu_mmio.borrow_mut();
-                    dev.config_mut().set_command(command);
-                    dev.config_mut()
-                        .set_bar_base(aero_devices::pci::profile::AEROGPU_BAR0_INDEX, bar0_base);
-                    dev.config_mut().set_bar_base(
-                        aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX,
-                        bar1_base,
-                    );
-                    dev.irq_level()
+                    let command = self
+                        .pci_cfg
+                        .as_ref()
+                        .map(|pci_cfg| sync_aerogpu_pci_state_into_mmio(pci_cfg, &mut dev))
+                        .unwrap_or(0);
+                    let level = dev.irq_level();
+                    (command, level)
                 };
                 if (command & (1 << 10)) != 0 {
                     level = false;
