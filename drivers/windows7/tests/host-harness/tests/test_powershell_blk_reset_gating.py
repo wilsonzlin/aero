@@ -17,6 +17,16 @@ class PowerShellBlkResetGatingTests(unittest.TestCase):
         # Ensure the host harness exposes an opt-in blk reset requirement flag.
         self.assertRegex(self.text, re.compile(r"\[switch\]\s*\$WithBlkReset\b", re.IGNORECASE))
 
+    def test_with_blk_reset_aliases_exist(self) -> None:
+        # Keep parity with the Python harness: accept WithVirtioBlkReset/EnableVirtioBlkReset/RequireVirtioBlkReset.
+        self.assertRegex(
+            self.text,
+            re.compile(
+                r'\[Alias\("WithVirtioBlkReset",\s*"EnableVirtioBlkReset",\s*"RequireVirtioBlkReset"\)\]\s*\r?\n\s*\[switch\]\s*\$WithBlkReset\b',
+                re.IGNORECASE,
+            ),
+        )
+
     def test_failure_tokens_exist(self) -> None:
         # The PowerShell harness should emit deterministic failure tokens when blk reset is required.
         self.assertIn("FAIL: MISSING_VIRTIO_BLK_RESET:", self.text)

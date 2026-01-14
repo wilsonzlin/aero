@@ -117,6 +117,7 @@ param(
   # Note: The guest image must be provisioned with `--test-blk-reset` (or env var equivalent) so the
   # guest selftest runs the miniport reset/recovery test.
   [Parameter(Mandatory = $false)]
+  [Alias("WithVirtioBlkReset", "EnableVirtioBlkReset", "RequireVirtioBlkReset")]
   [switch]$WithBlkReset,
 
   # If set, inject deterministic keyboard/mouse events via QMP (prefers `input-send-event`, with backcompat fallbacks) and require the guest
