@@ -251,6 +251,9 @@ fn cpu_by_index_out_of_range_panics_with_message() {
     })
     .unwrap();
 
+    // APs begin in a halted wait-for-SIPI state.
+    assert!(machine.cpu_by_index(1).halted);
+
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let _ = machine.cpu_by_index(2);
     }));

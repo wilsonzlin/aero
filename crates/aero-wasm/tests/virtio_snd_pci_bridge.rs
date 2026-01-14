@@ -2,10 +2,11 @@
 
 use aero_io_snapshot::io::audio::state::{AudioWorkletRingState, VirtioSndPciState};
 use aero_io_snapshot::io::state::IoSnapshot as _;
-use aero_platform::audio::worklet_bridge::WorkletBridge;
+use aero_platform::audio::{mic_bridge as mic_ring, worklet_bridge::WorkletBridge};
 use aero_virtio::devices::snd::{
-    JACK_ID_SPEAKER, VIRTIO_SND_EVT_JACK_CONNECTED, VIRTIO_SND_EVT_JACK_DISCONNECTED,
-    VIRTIO_SND_QUEUE_EVENT, VIRTIO_SND_R_PCM_INFO, VIRTIO_SND_S_OK,
+    JACK_ID_MICROPHONE, JACK_ID_SPEAKER, VIRTIO_SND_EVT_JACK_CONNECTED,
+    VIRTIO_SND_EVT_JACK_DISCONNECTED, VIRTIO_SND_QUEUE_EVENT, VIRTIO_SND_R_PCM_INFO,
+    VIRTIO_SND_S_OK,
 };
 use aero_virtio::pci::{
     VIRTIO_PCI_LEGACY_ISR_QUEUE, VIRTIO_STATUS_ACKNOWLEDGE, VIRTIO_STATUS_DRIVER,
@@ -13,6 +14,7 @@ use aero_virtio::pci::{
 };
 use aero_virtio::queue::{VIRTQ_DESC_F_NEXT, VIRTQ_DESC_F_WRITE};
 use aero_wasm::VirtioSndPciBridge;
+use js_sys::{SharedArrayBuffer, Uint32Array};
 use wasm_bindgen_test::wasm_bindgen_test;
 
 mod common;
@@ -418,6 +420,147 @@ fn virtio_snd_pci_bridge_emits_speaker_jack_events_on_audio_ring_attach_and_deta
         let mut evt = [0u8; 8];
         evt[0..4].copy_from_slice(&VIRTIO_SND_EVT_JACK_DISCONNECTED.to_le_bytes());
         evt[4..8].copy_from_slice(&JACK_ID_SPEAKER.to_le_bytes());
+        evt
+    };
+    assert_eq!(
+        &guest[buf as usize..buf as usize + 8],
+        &expected_disconnected
+    );
+}
+
+#[wasm_bindgen_test]
+fn virtio_snd_pci_bridge_emits_microphone_jack_events_on_mic_ring_attach_and_detach() {
+    // Synthetic guest RAM region outside the wasm heap.
+    let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x20000);
+    let guest =
+        unsafe { core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size as usize) };
+
+    let mut bridge =
+        VirtioSndPciBridge::new(guest_base, guest_size, None).expect("VirtioSndPciBridge::new");
+    // Enable MMIO decoding + bus mastering so the device can DMA.
+    bridge.set_pci_command(0x0006);
+
+    // BAR0 layout is fixed by `aero_virtio::pci::VirtioPciDevice`.
+    const COMMON: u32 = 0x0000;
+    const NOTIFY: u32 = 0x1000;
+
+    // Minimal virtio feature negotiation (accept everything offered).
+    bridge.mmio_write(COMMON + 0x14, 1, u32::from(VIRTIO_STATUS_ACKNOWLEDGE));
+    bridge.mmio_write(
+        COMMON + 0x14,
+        1,
+        u32::from(VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER),
+    );
+
+    bridge.mmio_write(COMMON + 0x00, 4, 0); // device_feature_select
+    let f0 = bridge.mmio_read(COMMON + 0x04, 4);
+    bridge.mmio_write(COMMON + 0x08, 4, 0); // driver_feature_select
+    bridge.mmio_write(COMMON + 0x0c, 4, f0); // driver_features
+
+    bridge.mmio_write(COMMON + 0x00, 4, 1);
+    let f1 = bridge.mmio_read(COMMON + 0x04, 4);
+    bridge.mmio_write(COMMON + 0x08, 4, 1);
+    bridge.mmio_write(COMMON + 0x0c, 4, f1);
+
+    bridge.mmio_write(
+        COMMON + 0x14,
+        1,
+        u32::from(VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK),
+    );
+    bridge.mmio_write(
+        COMMON + 0x14,
+        1,
+        u32::from(
+            VIRTIO_STATUS_ACKNOWLEDGE
+                | VIRTIO_STATUS_DRIVER
+                | VIRTIO_STATUS_FEATURES_OK
+                | VIRTIO_STATUS_DRIVER_OK,
+        ),
+    );
+
+    // Configure event queue 1 (virtio-snd).
+    bridge.mmio_write(COMMON + 0x16, 2, u32::from(VIRTIO_SND_QUEUE_EVENT)); // queue_select
+    let qsz = bridge.mmio_read(COMMON + 0x18, 2) as u16;
+    assert!(qsz >= 2, "expected event queue size >= 2");
+
+    let desc_table = 0x1000u32;
+    let avail = 0x2000u32;
+    let used = 0x3000u32;
+    let buf = 0x4000u32;
+
+    bridge.mmio_write(COMMON + 0x20, 4, desc_table);
+    bridge.mmio_write(COMMON + 0x24, 4, 0);
+    bridge.mmio_write(COMMON + 0x28, 4, avail);
+    bridge.mmio_write(COMMON + 0x2c, 4, 0);
+    bridge.mmio_write(COMMON + 0x30, 4, used);
+    bridge.mmio_write(COMMON + 0x34, 4, 0);
+    bridge.mmio_write(COMMON + 0x1c, 2, 1); // queue_enable
+
+    // Post a single 8-byte writable event buffer (virtio-snd events are 8 bytes).
+    guest[buf as usize..buf as usize + 8].fill(0xAA);
+    write_desc(
+        guest,
+        desc_table,
+        0,
+        buf as u64,
+        8,
+        VIRTQ_DESC_F_WRITE,
+        0,
+    );
+    write_u16(guest, avail, 0);
+    write_u16(guest, avail + 2, 1);
+    write_u16(guest, avail + 4, 0);
+    write_u16(guest, used, 0);
+    write_u16(guest, used + 2, 0);
+
+    // Attach the mic ring: should queue a microphone JACK_CONNECTED event.
+    let capacity_samples = 16u32;
+    let byte_len = (mic_ring::HEADER_BYTES
+        + capacity_samples as usize * core::mem::size_of::<f32>()) as u32;
+    let mic_sab = SharedArrayBuffer::new(byte_len);
+    let mic_header =
+        Uint32Array::new_with_byte_offset_and_length(&mic_sab, 0, mic_ring::HEADER_U32_LEN as u32);
+    mic_header.set_index(mic_ring::CAPACITY_SAMPLES_INDEX as u32, capacity_samples);
+
+    bridge
+        .set_mic_ring_buffer(Some(mic_sab.clone()))
+        .expect("set_mic_ring_buffer(Some)");
+
+    // Notify queue 1. notify_mult is 4 in `VirtioPciDevice`.
+    let notify_off = bridge.mmio_read(COMMON + 0x1e, 2) as u32;
+    bridge.mmio_write(NOTIFY + notify_off * 4, 2, u32::from(VIRTIO_SND_QUEUE_EVENT));
+
+    assert_eq!(read_u16(guest, used + 2), 1);
+    assert_eq!(read_u32(guest, used + 8), 8);
+    let expected_connected = {
+        let mut evt = [0u8; 8];
+        evt[0..4].copy_from_slice(&VIRTIO_SND_EVT_JACK_CONNECTED.to_le_bytes());
+        evt[4..8].copy_from_slice(&JACK_ID_MICROPHONE.to_le_bytes());
+        evt
+    };
+    assert_eq!(
+        &guest[buf as usize..buf as usize + 8],
+        &expected_connected
+    );
+
+    // Detach the mic ring: should queue a microphone JACK_DISCONNECTED event and deliver it into
+    // a subsequent event buffer.
+    bridge
+        .set_mic_ring_buffer(None)
+        .expect("set_mic_ring_buffer(None)");
+
+    guest[buf as usize..buf as usize + 8].fill(0xAA);
+    // Re-post the same descriptor (index 0).
+    write_u16(guest, avail + 6, 0); // avail.ring[1] = desc 0
+    write_u16(guest, avail + 2, 2); // avail.idx = 2
+    bridge.mmio_write(NOTIFY + notify_off * 4, 2, u32::from(VIRTIO_SND_QUEUE_EVENT));
+
+    assert_eq!(read_u16(guest, used + 2), 2);
+    assert_eq!(read_u32(guest, used + 16), 8);
+    let expected_disconnected = {
+        let mut evt = [0u8; 8];
+        evt[0..4].copy_from_slice(&VIRTIO_SND_EVT_JACK_DISCONNECTED.to_le_bytes());
+        evt[4..8].copy_from_slice(&JACK_ID_MICROPHONE.to_le_bytes());
         evt
     };
     assert_eq!(
