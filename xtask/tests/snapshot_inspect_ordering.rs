@@ -908,7 +908,7 @@ fn snapshot_inspect_decodes_aero_machine_usbc_wrapper_fields() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "remainder=500000ns nested=UHCP v1.0",
+            "uhci_ns_remainder=500000ns uhci_nested=UHCP v1.0",
         ));
 }
 
