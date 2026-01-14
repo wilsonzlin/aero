@@ -189,7 +189,7 @@ impl LinearMemory for WasmLinearMemory {
         #[cfg(target_feature = "atomics")]
         {
             use core::sync::atomic::{AtomicU8, Ordering};
-            let src = linear as *const AtomicU8;
+            let src: *const AtomicU8 = core::ptr::with_exposed_provenance(linear as usize);
             for (i, slot) in dst.iter_mut().enumerate() {
                 // Safety: callers validate the range is within linear memory and `AtomicU8` has
                 // alignment 1.
@@ -202,7 +202,8 @@ impl LinearMemory for WasmLinearMemory {
         unsafe {
             // Safety: Callers validate `linear` is within the module's linear memory and that the
             // requested range lies within the configured guest RAM size.
-            core::ptr::copy_nonoverlapping(linear as *const u8, dst.as_mut_ptr(), dst.len());
+            let src: *const u8 = core::ptr::with_exposed_provenance(linear as usize);
+            core::ptr::copy_nonoverlapping(src, dst.as_mut_ptr(), dst.len());
         }
     }
 
@@ -212,7 +213,7 @@ impl LinearMemory for WasmLinearMemory {
         #[cfg(target_feature = "atomics")]
         {
             use core::sync::atomic::{AtomicU8, Ordering};
-            let dst = linear as *const AtomicU8;
+            let dst: *const AtomicU8 = core::ptr::with_exposed_provenance(linear as usize);
             for (i, byte) in src.iter().copied().enumerate() {
                 // Safety: callers validate the range is within linear memory and `AtomicU8` has
                 // alignment 1.
@@ -225,7 +226,8 @@ impl LinearMemory for WasmLinearMemory {
         unsafe {
             // Safety: Callers validate `linear` is within the module's linear memory and that the
             // requested range lies within the configured guest RAM size.
-            core::ptr::copy_nonoverlapping(src.as_ptr(), linear as *mut u8, src.len());
+            let dst: *mut u8 = core::ptr::with_exposed_provenance_mut(linear as usize);
+            core::ptr::copy_nonoverlapping(src.as_ptr(), dst, src.len());
         }
     }
 }

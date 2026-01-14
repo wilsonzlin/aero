@@ -47,7 +47,8 @@ impl LinearGuestMemory {
             return None;
         }
         let linear = (self.guest_base as u64).checked_add(ram_offset)?;
-        u32::try_from(linear).ok().map(|v| v as *const u8)
+        let linear_u32 = u32::try_from(linear).ok()?;
+        Some(core::ptr::with_exposed_provenance(linear_u32 as usize))
     }
 
     #[inline]

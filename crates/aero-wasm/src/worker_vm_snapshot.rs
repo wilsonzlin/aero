@@ -314,7 +314,7 @@ impl SnapshotSource for WorkerVmSnapshot {
         #[cfg(target_feature = "atomics")]
         {
             use core::sync::atomic::{AtomicU8, Ordering};
-            let src = abs as *const AtomicU8;
+            let src: *const AtomicU8 = core::ptr::with_exposed_provenance(abs as usize);
             for (i, slot) in buf.iter_mut().enumerate() {
                 // Safety: `ram_range_checked` bounds-checks the access against both guest_size and
                 // the current wasm linear memory size, and `AtomicU8` has alignment 1.
@@ -327,7 +327,8 @@ impl SnapshotSource for WorkerVmSnapshot {
         unsafe {
             // Safety: `ram_range_checked` bounds-checks the access against both guest_size and the
             // current wasm linear memory size.
-            core::ptr::copy_nonoverlapping(abs as *const u8, buf.as_mut_ptr(), buf.len());
+            let src: *const u8 = core::ptr::with_exposed_provenance(abs as usize);
+            core::ptr::copy_nonoverlapping(src, buf.as_mut_ptr(), buf.len());
         }
         Ok(())
     }
@@ -366,7 +367,7 @@ impl SnapshotTarget for WorkerVmSnapshot {
         #[cfg(target_feature = "atomics")]
         {
             use core::sync::atomic::{AtomicU8, Ordering};
-            let dst = abs as *const AtomicU8;
+            let dst: *const AtomicU8 = core::ptr::with_exposed_provenance(abs as usize);
             for (i, byte) in data.iter().copied().enumerate() {
                 // Safety: `ram_range_checked` bounds-checks the access against both guest_size and
                 // the current wasm linear memory size, and `AtomicU8` has alignment 1.
@@ -379,7 +380,8 @@ impl SnapshotTarget for WorkerVmSnapshot {
         unsafe {
             // Safety: `ram_range_checked` bounds-checks the access against both guest_size and the
             // current wasm linear memory size.
-            core::ptr::copy_nonoverlapping(data.as_ptr(), abs as *mut u8, data.len());
+            let dst: *mut u8 = core::ptr::with_exposed_provenance_mut(abs as usize);
+            core::ptr::copy_nonoverlapping(data.as_ptr(), dst, data.len());
         }
         Ok(())
     }
@@ -467,7 +469,8 @@ mod tests {
         // `RUNTIME_RESERVED_BYTES` (128MiB). Allocating both the input and internal copy would be
         // near the heap limit and can OOM in wasm-bindgen tests.
         let base = alloc_outside_heap_bytes(max + 1);
-        let region = unsafe { core::slice::from_raw_parts(base as *const u8, max + 1) };
+        let ptr: *const u8 = core::ptr::with_exposed_provenance(base as usize);
+        let region = unsafe { core::slice::from_raw_parts(ptr, max + 1) };
 
         // Use the canonical shared guest RAM layout base. The guest region is unused by this test
         // but `WorkerVmSnapshot::new` validates the mapping.

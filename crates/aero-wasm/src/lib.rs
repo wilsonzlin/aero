@@ -2392,7 +2392,8 @@ impl MemoryAccess for HdaGuestMemory {
                     #[cfg(target_feature = "atomics")]
                     {
                         use core::sync::atomic::{AtomicU8, Ordering};
-                        let src = linear as *const AtomicU8;
+                        let src: *const AtomicU8 =
+                            core::ptr::with_exposed_provenance(linear as usize);
                         for (i, slot) in buf[off..off + len].iter_mut().enumerate() {
                             // Safety: `translate_guest_paddr_chunk` bounds-checks against the
                             // configured guest RAM size and `AtomicU8` has alignment 1.
@@ -2407,11 +2408,8 @@ impl MemoryAccess for HdaGuestMemory {
                         // Safety: `translate_guest_paddr_chunk` bounds-checks against the
                         // configured guest RAM size and `linear` is a wasm32-compatible linear
                         // address.
-                        core::ptr::copy_nonoverlapping(
-                            linear as *const u8,
-                            buf[off..].as_mut_ptr(),
-                            len,
-                        );
+                        let src: *const u8 = core::ptr::with_exposed_provenance(linear as usize);
+                        core::ptr::copy_nonoverlapping(src, buf[off..].as_mut_ptr(), len);
                     }
                     len
                 }
@@ -2465,7 +2463,8 @@ impl MemoryAccess for HdaGuestMemory {
                     #[cfg(target_feature = "atomics")]
                     {
                         use core::sync::atomic::{AtomicU8, Ordering};
-                        let dst = linear as *const AtomicU8;
+                        let dst: *const AtomicU8 =
+                            core::ptr::with_exposed_provenance(linear as usize);
                         for (i, byte) in buf[off..off + len].iter().copied().enumerate() {
                             // Safety: `translate_guest_paddr_chunk` bounds-checks against the
                             // configured guest RAM size and `AtomicU8` has alignment 1.
@@ -2480,7 +2479,8 @@ impl MemoryAccess for HdaGuestMemory {
                         // Safety: `translate_guest_paddr_chunk` bounds-checks against the
                         // configured guest RAM size and `linear` is a wasm32-compatible linear
                         // address.
-                        core::ptr::copy_nonoverlapping(buf[off..].as_ptr(), linear as *mut u8, len);
+                        let dst: *mut u8 = core::ptr::with_exposed_provenance_mut(linear as usize);
+                        core::ptr::copy_nonoverlapping(buf[off..].as_ptr(), dst, len);
                     }
                     len
                 }

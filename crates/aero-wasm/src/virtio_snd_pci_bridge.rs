@@ -105,7 +105,7 @@ impl WasmGuestMemory {
         }
 
         Ok(Self {
-            ram_ptr: guest_base as *mut u8,
+            ram_ptr: core::ptr::with_exposed_provenance_mut(guest_base as usize),
             ram_bytes: guest_size_u64,
         })
     }

@@ -311,7 +311,7 @@ impl aero_snapshot::SnapshotSource for WasmSnapshotSource {
         #[cfg(target_feature = "atomics")]
         {
             use core::sync::atomic::{AtomicU8, Ordering};
-            let src = ptr_u64 as *const AtomicU8;
+            let src: *const AtomicU8 = core::ptr::with_exposed_provenance(ptr_u64 as usize);
             for (i, slot) in buf.iter_mut().enumerate() {
                 // Safety: bounds-checked above and `AtomicU8` has alignment 1.
                 *slot = unsafe { (&*src.add(i)).load(Ordering::Relaxed) };
@@ -323,7 +323,8 @@ impl aero_snapshot::SnapshotSource for WasmSnapshotSource {
         unsafe {
             // Safety: we bounds-check against `guest_size` computed from the wasm linear memory
             // size.
-            core::ptr::copy_nonoverlapping(ptr_u64 as *const u8, buf.as_mut_ptr(), buf.len());
+            let src: *const u8 = core::ptr::with_exposed_provenance(ptr_u64 as usize);
+            core::ptr::copy_nonoverlapping(src, buf.as_mut_ptr(), buf.len());
         }
         Ok(())
     }
@@ -395,7 +396,7 @@ impl aero_snapshot::SnapshotTarget for WasmSnapshotTarget {
         #[cfg(target_feature = "atomics")]
         {
             use core::sync::atomic::{AtomicU8, Ordering};
-            let dst = ptr_u64 as *const AtomicU8;
+            let dst: *const AtomicU8 = core::ptr::with_exposed_provenance(ptr_u64 as usize);
             for (i, byte) in data.iter().copied().enumerate() {
                 // Safety: bounds-checked above and `AtomicU8` has alignment 1.
                 unsafe { (&*dst.add(i)).store(byte, Ordering::Relaxed) };
@@ -406,7 +407,8 @@ impl aero_snapshot::SnapshotTarget for WasmSnapshotTarget {
         #[cfg(not(target_feature = "atomics"))]
         unsafe {
             // Safety: bounds-checked above.
-            core::ptr::copy_nonoverlapping(data.as_ptr(), ptr_u64 as *mut u8, data.len());
+            let dst: *mut u8 = core::ptr::with_exposed_provenance_mut(ptr_u64 as usize);
+            core::ptr::copy_nonoverlapping(data.as_ptr(), dst, data.len());
         }
         Ok(())
     }

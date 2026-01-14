@@ -291,7 +291,7 @@ impl WasmBus {
             .checked_add(ram_offset)
             .ok_or(Exception::MemoryFault)?;
         let linear_u32 = u32::try_from(linear).map_err(|_| Exception::MemoryFault)?;
-        Ok(linear_u32 as *const u8)
+        Ok(core::ptr::with_exposed_provenance(linear_u32 as usize))
     }
 
     #[inline]

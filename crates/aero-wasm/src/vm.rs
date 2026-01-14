@@ -75,7 +75,7 @@ impl WasmPhysBus {
         let ram_offset = self.ram_offset(paddr, len)?;
         let linear = (self.guest_base as u64).checked_add(ram_offset)?;
         let linear_u32 = u32::try_from(linear).ok()?;
-        Some(linear_u32 as *const u8)
+        Some(core::ptr::with_exposed_provenance(linear_u32 as usize))
     }
 
     #[inline]

@@ -116,7 +116,7 @@ impl VecMemory {
         #[cfg(target_feature = "atomics")]
         {
             use core::sync::atomic::{AtomicU8, Ordering};
-            let dst = self.base as *const AtomicU8;
+            let dst: *const AtomicU8 = core::ptr::with_exposed_provenance(self.base as usize);
             for i in 0..(self.len as usize) {
                 // Safety: `base..base+len` is an allocated region in wasm linear memory and
                 // `AtomicU8` has alignment 1.
@@ -128,7 +128,8 @@ impl VecMemory {
         #[cfg(not(target_feature = "atomics"))]
         unsafe {
             // Safety: `base`/`len` describe an allocated region in wasm linear memory.
-            core::ptr::write_bytes(self.base as *mut u8, 0, self.len as usize);
+            let dst: *mut u8 = core::ptr::with_exposed_provenance_mut(self.base as usize);
+            core::ptr::write_bytes(dst, 0, self.len as usize);
         }
     }
 
@@ -157,7 +158,7 @@ impl VecMemory {
         #[cfg(target_feature = "atomics")]
         {
             use core::sync::atomic::{AtomicU8, Ordering};
-            let src = linear as *const AtomicU8;
+            let src: *const AtomicU8 = core::ptr::with_exposed_provenance(linear as usize);
             // Safety: `linear_addr` bounds checks and `AtomicU8` has alignment 1.
             let bytes = unsafe {
                 [
@@ -175,7 +176,8 @@ impl VecMemory {
         #[cfg(not(target_feature = "atomics"))]
         unsafe {
             // Safety: `linear_addr` bounds checks against the allocated linear-memory region.
-            core::ptr::read_unaligned(linear as *const u32)
+            let src: *const u32 = core::ptr::with_exposed_provenance(linear as usize);
+            core::ptr::read_unaligned(src)
         }
     }
 
@@ -186,7 +188,7 @@ impl VecMemory {
         #[cfg(target_feature = "atomics")]
         {
             use core::sync::atomic::{AtomicU8, Ordering};
-            let dst = linear as *const AtomicU8;
+            let dst: *const AtomicU8 = core::ptr::with_exposed_provenance(linear as usize);
             let bytes = value.to_le_bytes();
             for (i, byte) in bytes.into_iter().enumerate() {
                 // Safety: `linear_addr` bounds checks and `AtomicU8` has alignment 1.
@@ -199,7 +201,8 @@ impl VecMemory {
         #[cfg(not(target_feature = "atomics"))]
         unsafe {
             // Safety: `linear_addr` bounds checks against the allocated linear-memory region.
-            core::ptr::write_unaligned(linear as *mut u32, value)
+            let dst: *mut u32 = core::ptr::with_exposed_provenance_mut(linear as usize);
+            core::ptr::write_unaligned(dst, value)
         }
     }
 }
@@ -213,7 +216,7 @@ impl MemoryBus for VecMemory {
         #[cfg(target_feature = "atomics")]
         {
             use core::sync::atomic::{AtomicU8, Ordering};
-            let src = linear as *const AtomicU8;
+            let src: *const AtomicU8 = core::ptr::with_exposed_provenance(linear as usize);
             for (i, slot) in buf.iter_mut().enumerate() {
                 // Safety: `linear_addr` bounds checks and `AtomicU8` has alignment 1.
                 *slot = unsafe { (&*src.add(i)).load(Ordering::Relaxed) };
@@ -224,7 +227,8 @@ impl MemoryBus for VecMemory {
         #[cfg(not(target_feature = "atomics"))]
         unsafe {
             // Safety: `linear_addr` bounds checks; `buf` is a valid slice.
-            core::ptr::copy_nonoverlapping(linear as *const u8, buf.as_mut_ptr(), buf.len());
+            let src: *const u8 = core::ptr::with_exposed_provenance(linear as usize);
+            core::ptr::copy_nonoverlapping(src, buf.as_mut_ptr(), buf.len());
         }
     }
 
@@ -236,7 +240,7 @@ impl MemoryBus for VecMemory {
         #[cfg(target_feature = "atomics")]
         {
             use core::sync::atomic::{AtomicU8, Ordering};
-            let dst = linear as *const AtomicU8;
+            let dst: *const AtomicU8 = core::ptr::with_exposed_provenance(linear as usize);
             for (i, byte) in buf.iter().copied().enumerate() {
                 // Safety: `linear_addr` bounds checks and `AtomicU8` has alignment 1.
                 unsafe { (&*dst.add(i)).store(byte, Ordering::Relaxed) };
@@ -247,7 +251,8 @@ impl MemoryBus for VecMemory {
         #[cfg(not(target_feature = "atomics"))]
         unsafe {
             // Safety: `linear_addr` bounds checks; `buf` is a valid slice.
-            core::ptr::copy_nonoverlapping(buf.as_ptr(), linear as *mut u8, buf.len());
+            let dst: *mut u8 = core::ptr::with_exposed_provenance_mut(linear as usize);
+            core::ptr::copy_nonoverlapping(buf.as_ptr(), dst, buf.len());
         }
     }
 }

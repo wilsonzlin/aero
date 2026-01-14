@@ -398,7 +398,7 @@ mod wasm_guest_memory {
             }
 
             Ok(Self {
-                ram_ptr: guest_base as *mut u8,
+                ram_ptr: core::ptr::with_exposed_provenance_mut(guest_base as usize),
                 ram_offset_base: 0,
                 ram_window_len: guest_size_u64,
                 ram_bytes: guest_size_u64,

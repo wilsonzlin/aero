@@ -100,7 +100,7 @@ impl GuestMemory for WasmGuestMemory {
         match crate::guest_phys::translate_guest_paddr_range(self.ram_bytes, addr, len) {
             crate::guest_phys::GuestRamRange::Ram { ram_offset } => {
                 let linear = self.linear_offset(addr, ram_offset, len)?;
-                let ptr = linear as *const u8;
+                let ptr: *const u8 = core::ptr::with_exposed_provenance(linear as usize);
 
                 // Shared-memory (`+atomics`) build: atomic byte loads to avoid Rust data-race UB.
                 #[cfg(target_feature = "atomics")]
@@ -143,7 +143,7 @@ impl GuestMemory for WasmGuestMemory {
         match crate::guest_phys::translate_guest_paddr_range(self.ram_bytes, addr, len) {
             crate::guest_phys::GuestRamRange::Ram { ram_offset } => {
                 let linear = self.linear_offset(addr, ram_offset, len)?;
-                let ptr = linear as *mut u8;
+                let ptr: *mut u8 = core::ptr::with_exposed_provenance_mut(linear as usize);
 
                 #[cfg(target_feature = "atomics")]
                 {
