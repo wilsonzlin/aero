@@ -2255,6 +2255,16 @@ def _build_arg_parser() -> argparse.ArgumentParser:
             "Fails if the guest reports INTx via virtio-*-irq markers."
         ),
     )
+    parser.add_argument(
+        "--require-expect-blk-msi",
+        dest="require_expect_blk_msi",
+        action="store_true",
+        help=(
+            "Fail deterministically if the guest selftest was not provisioned with "
+            "--expect-blk-msi (i.e. CONFIG marker expect_blk_msi=1). "
+            "Useful for MSI/MSI-X-specific CI to catch mis-provisioned images."
+        ),
+    )
 
     return parser
 
@@ -2859,6 +2869,7 @@ def main() -> int:
             virtio_blk_marker_line: Optional[str] = None
             virtio_blk_marker_carry = b""
             virtio_input_msix_marker: Optional[_VirtioInputMsixMarker] = None
+            expect_blk_msi_config: Optional[str] = None
             saw_virtio_blk_pass = False
             saw_virtio_blk_fail = False
             virtio_blk_marker_time: Optional[float] = None
@@ -2929,7 +2940,7 @@ def main() -> int:
                 if chunk:
                     if args.follow_serial:
                         sys.stdout.write(chunk.decode("utf-8", errors="replace"))
-                        sys.stdout.flush()
+                    sys.stdout.flush()
 
                     # Capture standalone guest IRQ diagnostics markers (`virtio-<dev>-irq|INFO/WARN|...`)
                     # incrementally so they are not lost if the rolling tail buffer is truncated.
@@ -2943,6 +2954,17 @@ def main() -> int:
                         carry=virtio_blk_marker_carry,
                     )
                     tail += chunk
+                    if expect_blk_msi_config is None and b"AERO_VIRTIO_SELFTEST|CONFIG|" in tail:
+                        expect_blk_msi_config = _try_get_selftest_config_expect_blk_msi(tail)
+                        if args.require_expect_blk_msi and expect_blk_msi_config == "0":
+                            print(
+                                "FAIL: EXPECT_BLK_MSI_NOT_SET: guest selftest CONFIG expect_blk_msi=0 "
+                                "(re-provision the image with --expect-blk-msi / New-AeroWin7TestImage.ps1 -ExpectBlkMsi)",
+                                file=sys.stderr,
+                            )
+                            _print_tail(serial_log)
+                            result_code = 1
+                            break
                     if len(tail) > 131072:
                         tail = tail[-131072:]
                     if virtio_input_msix_marker is None or b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|" in tail:
@@ -3346,6 +3368,18 @@ def main() -> int:
                                 break
 
                     if b"AERO_VIRTIO_SELFTEST|RESULT|PASS" in tail:
+                        if args.require_expect_blk_msi:
+                            if expect_blk_msi_config is None:
+                                expect_blk_msi_config = _try_get_selftest_config_expect_blk_msi(tail)
+                            if expect_blk_msi_config != "1":
+                                print(
+                                    "FAIL: EXPECT_BLK_MSI_NOT_SET: guest selftest was not provisioned with --expect-blk-msi "
+                                    "(expect_blk_msi=1 in CONFIG marker). Re-provision the image or omit --require-expect-blk-msi.",
+                                    file=sys.stderr,
+                                )
+                                _print_tail(serial_log)
+                                result_code = 1
+                                break
                         if require_per_test_markers:
                             # Require per-test markers so older selftest binaries cannot
                             # accidentally pass the host harness.
@@ -4026,6 +4060,18 @@ def main() -> int:
                         result_code = 0
                         break
                     if b"AERO_VIRTIO_SELFTEST|RESULT|FAIL" in tail:
+                        if args.require_expect_blk_msi:
+                            if expect_blk_msi_config is None:
+                                expect_blk_msi_config = _try_get_selftest_config_expect_blk_msi(tail)
+                            if expect_blk_msi_config != "1":
+                                print(
+                                    "FAIL: EXPECT_BLK_MSI_NOT_SET: guest selftest was not provisioned with --expect-blk-msi "
+                                    "(expect_blk_msi=1 in CONFIG marker). Re-provision the image or omit --require-expect-blk-msi.",
+                                    file=sys.stderr,
+                                )
+                                _print_tail(serial_log)
+                                result_code = 1
+                                break
                         print("FAIL: SELFTEST_FAILED: AERO_VIRTIO_SELFTEST|RESULT|FAIL")
                         _print_tail(serial_log)
                         result_code = 1
@@ -4264,6 +4310,8 @@ def main() -> int:
                             carry=virtio_blk_marker_carry,
                         )
                         tail += chunk2
+                        if expect_blk_msi_config is None and b"AERO_VIRTIO_SELFTEST|CONFIG|" in tail:
+                            expect_blk_msi_config = _try_get_selftest_config_expect_blk_msi(tail)
                         if len(tail) > 131072:
                             tail = tail[-131072:]
                         if virtio_input_msix_marker is None or b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|" in tail:
@@ -4501,6 +4549,15 @@ def main() -> int:
                         ):
                             saw_virtio_net_udp_skip = True
                         if b"AERO_VIRTIO_SELFTEST|RESULT|PASS" in tail:
+                            if args.require_expect_blk_msi and expect_blk_msi_config != "1":
+                                print(
+                                    "FAIL: EXPECT_BLK_MSI_NOT_SET: guest selftest was not provisioned with --expect-blk-msi "
+                                    "(expect_blk_msi=1 in CONFIG marker). Re-provision the image or omit --require-expect-blk-msi.",
+                                    file=sys.stderr,
+                                )
+                                _print_tail(serial_log)
+                                result_code = 1
+                                break
                             if require_per_test_markers:
                                 if saw_virtio_blk_fail:
                                     print(
@@ -5014,6 +5071,15 @@ def main() -> int:
                             result_code = 0
                             break
                         if b"AERO_VIRTIO_SELFTEST|RESULT|FAIL" in tail:
+                            if args.require_expect_blk_msi and expect_blk_msi_config != "1":
+                                print(
+                                    "FAIL: EXPECT_BLK_MSI_NOT_SET: guest selftest was not provisioned with --expect-blk-msi "
+                                    "(expect_blk_msi=1 in CONFIG marker). Re-provision the image or omit --require-expect-blk-msi.",
+                                    file=sys.stderr,
+                                )
+                                _print_tail(serial_log)
+                                result_code = 1
+                                break
                             print("FAIL: SELFTEST_FAILED: AERO_VIRTIO_SELFTEST|RESULT|FAIL")
                             _print_tail(serial_log)
                             result_code = 1
@@ -5582,6 +5648,32 @@ def _parse_virtio_input_msix_marker(tail: bytes) -> Optional[_VirtioInputMsixMar
     status = parts[3] if len(parts) >= 4 else ""
     fields = _parse_marker_kv_fields(marker_line)
     return _VirtioInputMsixMarker(status=status, fields=fields, line=marker_line)
+
+def _try_parse_selftest_config_marker(tail: bytes) -> Optional[dict[str, str]]:
+    """
+    Parse the guest selftest CONFIG marker into a dict of key/value fields.
+
+    Example line emitted by the guest:
+      AERO_VIRTIO_SELFTEST|CONFIG|http_url=...|...|expect_blk_msi=1
+    """
+    line = _try_extract_last_marker_line(tail, b"AERO_VIRTIO_SELFTEST|CONFIG|")
+    if not line:
+        return None
+    return _parse_marker_kv_fields(line)
+
+
+def _try_get_selftest_config_expect_blk_msi(tail: bytes) -> Optional[str]:
+    """
+    Return the value of `expect_blk_msi` from the guest CONFIG marker if present.
+
+    Returns:
+      - "1" or "0" when present
+      - None when the CONFIG marker (or field) is not present
+    """
+    cfg = _try_parse_selftest_config_marker(tail)
+    if cfg is None:
+        return None
+    return cfg.get("expect_blk_msi")
 
 
 _VIRTIO_IRQ_MARKER_RE = re.compile(r"^virtio-(?P<dev>.+)-irq\|(?P<level>INFO|WARN)(?:\|(?P<rest>.*))?$")

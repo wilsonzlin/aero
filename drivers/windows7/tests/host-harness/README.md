@@ -1065,6 +1065,15 @@ pwsh ./drivers/windows7/tests/host-harness/New-AeroWin7TestImage.ps1 `
   -BlkRoot "D:\aero-virtio-selftest\"
 ```
 
+To assert that virtio-blk is operating in **MSI/MSI-X** mode (and fail if the driver reports INTx), generate the image
+with `-ExpectBlkMsi` (adds the guest selftest flag `--expect-blk-msi` / env var `AERO_VIRTIO_SELFTEST_EXPECT_BLK_MSI=1`).
+
+For MSI/MSI-X-specific CI, you can also ask the host harness to fail deterministically when the guest image was not
+provisioned with this expectation:
+
+- PowerShell: `Invoke-AeroVirtioWin7Tests.ps1 -RequireExpectBlkMsi`
+- Python: `invoke_aero_virtio_win7_tests.py --require-expect-blk-msi`
+
 To exercise virtio-snd, make sure you:
 - include the virtio-snd driver in the drivers directory you provision into the guest, and
 - attach a virtio-snd device when running the harness (`-WithVirtioSnd` / `--with-virtio-snd`).

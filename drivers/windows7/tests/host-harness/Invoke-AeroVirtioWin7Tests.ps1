@@ -83,6 +83,14 @@ param(
   # Fails if the guest reports INTx via virtio-*-irq markers.
   [Parameter(Mandatory = $false)]
   [switch]$RequireMsi,
+ 
+  # If set, require that the guest selftest was provisioned with `--expect-blk-msi`
+  # (i.e. the guest emits `AERO_VIRTIO_SELFTEST|CONFIG|...|expect_blk_msi=1`).
+  #
+  # This is useful in MSI/MSI-X-specific CI to fail deterministically when running against
+  # a mis-provisioned image (where the guest selftest would otherwise accept INTx fallback).
+  [Parameter(Mandatory = $false)]
+  [switch]$RequireExpectBlkMsi,
 
   # If set, inject deterministic keyboard/mouse events via QMP (`input-send-event`) and require the guest
   # virtio-input end-to-end event delivery marker (`virtio-input-events`) to PASS.
@@ -703,6 +711,10 @@ function Wait-AeroSelftestResult {
     # If true, require the virtio-input-msix marker to report mode=msix.
     [Parameter(Mandatory = $false)]
     [bool]$RequireVirtioInputMsixPass = $false,
+    # If true, require the guest selftest to be configured to fail virtio-blk on INTx (expect MSI/MSI-X),
+    # i.e. `AERO_VIRTIO_SELFTEST|CONFIG|...|expect_blk_msi=1`.
+    [Parameter(Mandatory = $false)]
+    [bool]$RequireExpectBlkMsi = $false,
     # Best-effort QMP channel for input injection.
     [Parameter(Mandatory = $false)] [string]$QmpHost = "127.0.0.1",
     [Parameter(Mandatory = $false)] [Nullable[int]]$QmpPort = $null
@@ -711,6 +723,8 @@ function Wait-AeroSelftestResult {
   $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
   $pos = 0L
   $tail = ""
+  $configExpectBlkMsi = $null
+  $sawConfigExpectBlkMsi = $false
   $sawVirtioBlkPass = $false
   $sawVirtioBlkFail = $false
   $sawVirtioInputPass = $false
@@ -807,6 +821,24 @@ function Wait-AeroSelftestResult {
 
       $tail += $chunk
       if ($tail.Length -gt 131072) { $tail = $tail.Substring($tail.Length - 131072) }
+
+      if ($RequireExpectBlkMsi -and (-not $sawConfigExpectBlkMsi)) {
+        # Parse the guest selftest CONFIG marker to ensure the image was provisioned
+        # with `--expect-blk-msi` (expect_blk_msi=1). This provides deterministic
+        # harness-side gating for MSI/MSI-X-specific CI.
+        $prefix = "AERO_VIRTIO_SELFTEST|CONFIG|"
+        $matches = [regex]::Matches($tail, [regex]::Escape($prefix) + "[^`r`n]*")
+        if ($matches.Count -gt 0) {
+          $line = $matches[$matches.Count - 1].Value
+          if ($line -match "(?:^|\\|)expect_blk_msi=(0|1)(?:\\||$)") {
+            $configExpectBlkMsi = $Matches[1]
+            $sawConfigExpectBlkMsi = $true
+            if ($configExpectBlkMsi -ne "1") {
+              return @{ Result = "EXPECT_BLK_MSI_NOT_SET"; Tail = $tail }
+            }
+          }
+        }
+      }
 
       if (-not $sawVirtioBlkPass -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-blk\|PASS") {
         $sawVirtioBlkPass = $true
@@ -983,6 +1015,9 @@ function Wait-AeroSelftestResult {
       }
 
       if ($tail -match "AERO_VIRTIO_SELFTEST\|RESULT\|PASS") {
+        if ($RequireExpectBlkMsi -and ((-not $sawConfigExpectBlkMsi) -or $configExpectBlkMsi -ne "1")) {
+          return @{ Result = "EXPECT_BLK_MSI_NOT_SET"; Tail = $tail }
+        }
         if ($RequirePerTestMarkers) {
           # Require per-test markers so older selftest binaries cannot accidentally pass the host harness.
           if ($sawVirtioBlkFail) {
@@ -1231,6 +1266,9 @@ function Wait-AeroSelftestResult {
         return @{ Result = "PASS"; Tail = $tail }
       }
       if ($tail -match "AERO_VIRTIO_SELFTEST\|RESULT\|FAIL") {
+        if ($RequireExpectBlkMsi -and ((-not $sawConfigExpectBlkMsi) -or $configExpectBlkMsi -ne "1")) {
+          return @{ Result = "EXPECT_BLK_MSI_NOT_SET"; Tail = $tail }
+        }
         return @{ Result = "FAIL"; Tail = $tail }
       }
     }
@@ -4002,6 +4040,7 @@ try {
         -RequireVirtioInputEventsExtendedPass ([bool]$needInputEventsExtended) `
         -RequireVirtioInputMsixPass ([bool]$RequireVirtioInputMsix) `
         -RequireVirtioInputTabletEventsPass ([bool]$needInputTabletEvents) `
+        -RequireExpectBlkMsi ([bool]$RequireExpectBlkMsi) `
         -QmpHost "127.0.0.1" `
         -QmpPort $qmpPort
     }
@@ -4132,6 +4171,14 @@ try {
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
       }
       $scriptExitCode = 2
+    }
+    "EXPECT_BLK_MSI_NOT_SET" {
+      Write-Host "FAIL: EXPECT_BLK_MSI_NOT_SET: guest selftest was not provisioned with --expect-blk-msi (expect_blk_msi=1 in CONFIG marker). Re-provision with New-AeroWin7TestImage.ps1 -ExpectBlkMsi or set AERO_VIRTIO_SELFTEST_EXPECT_BLK_MSI=1."
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
     }
     "MISSING_VIRTIO_BLK" {
       Write-Host "FAIL: MISSING_VIRTIO_BLK: selftest RESULT=PASS but did not emit virtio-blk test marker"

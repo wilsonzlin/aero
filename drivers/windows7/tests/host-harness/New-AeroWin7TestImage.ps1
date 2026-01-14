@@ -50,6 +50,14 @@ param(
   [Parameter(Mandatory = $false)]
   [string]$BlkRoot = "",
 
+  # If set, require virtio-blk to be operating with MSI/MSI-X (not INTx).
+  # This adds `--expect-blk-msi` to the scheduled task.
+  #
+  # The guest selftest will then fail the virtio-blk test if the driver reports it is still
+  # using INTx (e.g. due to MSI/MSI-X not being enabled/working).
+  [Parameter(Mandatory = $false)]
+  [switch]$ExpectBlkMsi,
+
   # For unsigned/test-signed drivers on Windows 7 x64, test-signing mode must be enabled.
   # If set, the provisioning script will run: bcdedit /set testsigning on
   [Parameter(Mandatory = $false)]
@@ -420,6 +428,11 @@ if (-not [string]::IsNullOrEmpty($BlkRoot)) {
   $blkArg = " --blk-root " + '\"' + $BlkRoot + '\"'
 }
 
+$expectBlkMsiArg = ""
+if ($ExpectBlkMsi) {
+  $expectBlkMsiArg = " --expect-blk-msi"
+}
+
 if ($RequireSnd -and $DisableSnd) {
   throw "RequireSnd and DisableSnd cannot both be set."
 }
@@ -555,7 +568,7 @@ $enableTestSigningCmd
 
 REM Configure auto-run on boot (runs as SYSTEM).
 schtasks /Create /F /TN "AeroVirtioSelftest" /SC ONSTART /RU SYSTEM ^
-  /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --http-url \"$HttpUrl\" --dns-host \"$DnsHost\"$blkArg$testInputEventsArg$testInputEventsExtendedArg$testInputMediaKeysArg$testInputTabletEventsArg$requireSndArg$disableSndArg$disableSndCaptureArg$testSndCaptureArg$requireSndCaptureArg$requireNonSilenceArg$testSndBufferLimitsArg$allowVirtioSndTransitionalArg" >> "%LOG%" 2>&1
+  /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --http-url \"$HttpUrl\" --dns-host \"$DnsHost\"$blkArg$expectBlkMsiArg$testInputEventsArg$testInputEventsExtendedArg$testInputMediaKeysArg$testInputTabletEventsArg$requireSndArg$disableSndArg$disableSndCaptureArg$testSndCaptureArg$requireSndCaptureArg$requireNonSilenceArg$testSndBufferLimitsArg$allowVirtioSndTransitionalArg" >> "%LOG%" 2>&1
 
 echo [AERO] provision done >> "%LOG%"
 $autoRebootCmd
@@ -606,6 +619,8 @@ After reboot, the host harness can boot the VM and parse PASS/FAIL from COM1 ser
   Notes:
   - The virtio-blk selftest requires a usable/mounted virtio volume. If your VM boots from a non-virtio disk,
     consider attaching a separate virtio data disk with a drive letter and using the selftest option `--blk-root`.
+  - To fail the virtio-blk selftest when the driver is still using INTx (expected MSI/MSI-X), generate this media with
+    `-ExpectBlkMsi` (adds `--expect-blk-msi` to the scheduled task).
   - The virtio-input end-to-end event delivery tests (HID input reports) are disabled by default.
     - To enable keyboard/mouse injection (required when running the host harness with `-WithInputEvents` / `--with-input-events`),
       generate this media with `-TestInputEvents` (adds `--test-input-events` to the scheduled task).
