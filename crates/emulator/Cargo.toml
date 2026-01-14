@@ -23,7 +23,7 @@ storage-device-crates = []
 legacy-audio = []
 aerogpu-trace = ["dep:aero-gpu-trace"]
 # Legacy AeroGPU PCI/MMIO bring-up device model + tests (legacy vendor 1AED).
-aerogpu-legacy = []
+aerogpu-legacy = ["dep:aero-aerogpu", "aero-aerogpu/legacy-abi"]
 
 [dependencies]
 aero-machine = { path = "../aero-machine", default-features = false }
@@ -32,6 +32,7 @@ aero-devices = { path = "../devices" }
 aero-devices-input = { path = "../aero-devices-input" }
 aero-devices-storage = { path = "../aero-devices-storage" }
 aero-devices-nvme = { path = "../aero-devices-nvme" }
+aero-aerogpu = { path = "../aero-aerogpu", optional = true }
 aero-edid = { path = "../aero-edid" }
 aero-gpu-vga = { path = "../aero-gpu-vga" }
 aero-io-snapshot = { path = "../aero-io-snapshot" }

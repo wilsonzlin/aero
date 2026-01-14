@@ -1,0 +1,15 @@
+[package]
+name = "aero-aerogpu"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[features]
+default = []
+# Legacy bring-up ABI ("ARGP"): `VID=0x1AED, DID=0x0001`.
+legacy-abi = ["dep:aero-protocol", "dep:memory"]
+
+[dependencies]
+aero-protocol = { path = "../../emulator/protocol", optional = true }
+memory = { path = "../memory", optional = true }
+

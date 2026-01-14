@@ -49,6 +49,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "aero-aerogpu"
+version = "0.1.0"
+dependencies = [
+ "aero-protocol",
+ "memory",
+]
+
+[[package]]
 name = "aero-audio"
 version = "0.1.0"
 dependencies = [
@@ -1836,6 +1844,7 @@ checksum = "edd0f118536f44f5ccd48bcb8b111bdc3de888b58c74639dfb034a357d0f206d"
 name = "emulator"
 version = "0.1.0"
 dependencies = [
+ "aero-aerogpu",
  "aero-d3d11",
  "aero-devices",
  "aero-devices-input",

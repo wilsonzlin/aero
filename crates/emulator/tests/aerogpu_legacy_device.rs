@@ -2,12 +2,10 @@
 
 use aero_protocol::aerogpu::aerogpu_pci as proto;
 use emulator::devices::pci::aerogpu_legacy::{AeroGpuLegacyDeviceConfig, AeroGpuLegacyPciDevice};
-use emulator::io::pci::MmioDevice;
-use emulator::io::pci::PciDevice;
 use memory::MemoryBus;
 use std::time::{Duration, Instant};
 
-fn read_u8(dev: &dyn PciDevice, offset: u16) -> u8 {
+fn read_u8(dev: &AeroGpuLegacyPciDevice, offset: u16) -> u8 {
     dev.config_read(offset, 1) as u8
 }
 
