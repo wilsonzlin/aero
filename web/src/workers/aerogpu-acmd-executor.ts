@@ -327,6 +327,23 @@ const resolveSharedHandle = (state: AerogpuCpuExecutorState, handle: number): nu
   return state.sharedSurfaces.handles.get(handle) ?? handle;
 };
 
+// Resolves a handle coming from an AeroGPU command stream.
+//
+// This differs from `resolveSharedHandle()` by treating "reserved underlying IDs" as invalid:
+// if an original handle has been destroyed while shared-surface aliases still exist, the
+// underlying numeric ID is kept alive in `refcounts` to prevent handle reuse/collision, but the
+// original handle value must not be used for subsequent commands.
+const resolveSharedCmdHandle = (state: AerogpuCpuExecutorState, handle: number, op: string): number => {
+  if (handle === 0) return 0;
+  if (state.sharedSurfaces.handles.has(handle)) return resolveSharedHandle(state, handle);
+  if (state.sharedSurfaces.refcounts.has(handle)) {
+    throw new Error(
+      `aerogpu: ${op} shared surface handle ${handle} was destroyed (underlying id kept alive by shared surface aliases)`,
+    );
+  }
+  return handle;
+};
+
 const registerSharedHandle = (state: AerogpuCpuExecutorState, handle: number): void => {
   if (handle === 0) return;
   const existing = state.sharedSurfaces.handles.get(handle);
@@ -401,6 +418,13 @@ const importSharedSurface = (state: AerogpuCpuExecutorState, outHandle: number, 
     return;
   }
 
+  // Underlying handles remain reserved as long as any aliases still reference them. If an original
+  // handle was destroyed, it must not be reused as a new alias handle until the underlying
+  // resource is fully released.
+  if (state.sharedSurfaces.refcounts.has(outHandle)) {
+    throw new Error(`aerogpu: IMPORT_SHARED_SURFACE out_resource_handle ${outHandle} is still in use`);
+  }
+
   // Do not allow aliasing a handle that is already bound to a real resource.
   if (state.textures.has(outHandle) || state.buffers.has(outHandle)) {
     throw new Error(`aerogpu: IMPORT_SHARED_SURFACE out_resource_handle ${outHandle} collides with an existing resource`);
@@ -428,7 +452,15 @@ const destroySharedHandle = (
 ): { underlying: number; lastRef: boolean } | null => {
   if (handle === 0) return null;
   const underlying = state.sharedSurfaces.handles.get(handle);
-  if (underlying == null) return null;
+  if (underlying == null) {
+    // If the original handle has already been destroyed (removed from `handles`) but the
+    // underlying resource is still alive due to aliases, treat duplicate destroys as an
+    // idempotent no-op.
+    if (state.sharedSurfaces.refcounts.has(handle)) {
+      return { underlying: handle, lastRef: false };
+    }
+    return null;
+  }
   state.sharedSurfaces.handles.delete(handle);
 
   const count = state.sharedSurfaces.refcounts.get(underlying);
@@ -723,6 +755,11 @@ export const executeAerogpuCmdStream = (
         if (shared != null && shared !== handle) {
           throw new Error(`aerogpu: CREATE_BUFFER handle ${handle} is already an alias (underlying=${shared})`);
         }
+        if (shared == null && state.sharedSurfaces.refcounts.has(handle)) {
+          throw new Error(
+            `aerogpu: CREATE_BUFFER handle ${handle} is still in use (underlying id kept alive by shared surface aliases)`,
+          );
+        }
 
         if (state.textures.has(handle)) {
           throw new Error(`aerogpu: CREATE_BUFFER handle ${handle} is already bound to a texture`);
@@ -857,6 +894,11 @@ export const executeAerogpuCmdStream = (
         const shared = state.sharedSurfaces.handles.get(handle);
         if (shared != null && shared !== handle) {
           throw new Error(`aerogpu: CREATE_TEXTURE2D handle ${handle} is already an alias (underlying=${shared})`);
+        }
+        if (shared == null && state.sharedSurfaces.refcounts.has(handle)) {
+          throw new Error(
+            `aerogpu: CREATE_TEXTURE2D handle ${handle} is still in use (underlying id kept alive by shared surface aliases)`,
+          );
         }
         if (state.buffers.has(handle)) {
           throw new Error(`aerogpu: CREATE_TEXTURE2D handle ${handle} is already bound to a buffer`);
@@ -1006,7 +1048,7 @@ export const executeAerogpuCmdStream = (
           throw new Error(`aerogpu: RESOURCE_DIRTY_RANGE packet too small (size_bytes=${cmdSizeBytes})`);
         }
         const handleRaw = readU32LeChecked(dv, offset + 8, end, "resource_handle");
-        const handle = resolveSharedHandle(state, handleRaw);
+        const handle = resolveSharedCmdHandle(state, handleRaw, "RESOURCE_DIRTY_RANGE");
         const dirtyOffsetBytes = checkedU64ToNumber(readU64LeChecked(dv, offset + 16, end, "offset_bytes"), "offset_bytes");
         const dirtySizeBytes = checkedU64ToNumber(readU64LeChecked(dv, offset + 24, end, "size_bytes"), "size_bytes");
         if (dirtySizeBytes === 0) break;
@@ -1083,7 +1125,7 @@ export const executeAerogpuCmdStream = (
           throw new Error(`aerogpu: UPLOAD_RESOURCE packet too small (size_bytes=${cmdSizeBytes})`);
         }
         const handleRaw = readU32LeChecked(dv, offset + 8, end, "resource_handle");
-        const handle = resolveSharedHandle(state, handleRaw);
+        const handle = resolveSharedCmdHandle(state, handleRaw, "UPLOAD_RESOURCE");
         const offsetBytes = checkedU64ToNumber(readU64LeChecked(dv, offset + 16, end, "offset_bytes"), "offset_bytes");
         const sizeBytesU64 = readU64LeChecked(dv, offset + 24, end, "size_bytes");
         const uploadBytes = checkedU64ToNumber(sizeBytesU64, "size_bytes");
@@ -1163,8 +1205,8 @@ export const executeAerogpuCmdStream = (
         }
         const dstBufferRaw = readU32LeChecked(dv, offset + 8, end, "dst_buffer");
         const srcBufferRaw = readU32LeChecked(dv, offset + 12, end, "src_buffer");
-        const dstBuffer = resolveSharedHandle(state, dstBufferRaw);
-        const srcBuffer = resolveSharedHandle(state, srcBufferRaw);
+        const dstBuffer = resolveSharedCmdHandle(state, dstBufferRaw, "COPY_BUFFER");
+        const srcBuffer = resolveSharedCmdHandle(state, srcBufferRaw, "COPY_BUFFER");
         const dstOffsetBytes = checkedU64ToNumber(readU64LeChecked(dv, offset + 16, end, "dst_offset_bytes"), "dst_offset_bytes");
         const srcOffsetBytes = checkedU64ToNumber(readU64LeChecked(dv, offset + 24, end, "src_offset_bytes"), "src_offset_bytes");
         const sizeBytes = checkedU64ToNumber(readU64LeChecked(dv, offset + 32, end, "size_bytes"), "size_bytes");
@@ -1228,8 +1270,8 @@ export const executeAerogpuCmdStream = (
         }
         const dstTextureRaw = readU32LeChecked(dv, offset + 8, end, "dst_texture");
         const srcTextureRaw = readU32LeChecked(dv, offset + 12, end, "src_texture");
-        const dstTexture = resolveSharedHandle(state, dstTextureRaw);
-        const srcTexture = resolveSharedHandle(state, srcTextureRaw);
+        const dstTexture = resolveSharedCmdHandle(state, dstTextureRaw, "COPY_TEXTURE2D");
+        const srcTexture = resolveSharedCmdHandle(state, srcTextureRaw, "COPY_TEXTURE2D");
         const dstMipLevel = readU32LeChecked(dv, offset + 16, end, "dst_mip_level");
         const dstArrayLayer = readU32LeChecked(dv, offset + 20, end, "dst_array_layer");
         const srcMipLevel = readU32LeChecked(dv, offset + 24, end, "src_mip_level");
@@ -1386,9 +1428,12 @@ export const executeAerogpuCmdStream = (
           throw new Error(`aerogpu: SET_RENDER_TARGETS packet too small (size_bytes=${cmdSizeBytes})`);
         }
         const colorCount = readU32LeChecked(dv, offset + 8, end, "color_count");
-        const rt0Raw = readU32LeChecked(dv, offset + 16, end, "colors[0]");
-        const rt0 = resolveSharedHandle(state, rt0Raw);
-        state.currentRenderTarget = colorCount > 0 ? rt0 : null;
+        let rt0: number | null = null;
+        if (colorCount > 0) {
+          const rt0Raw = readU32LeChecked(dv, offset + 16, end, "colors[0]");
+          rt0 = resolveSharedCmdHandle(state, rt0Raw, "SET_RENDER_TARGETS");
+        }
+        state.currentRenderTarget = rt0;
         break;
       }
 

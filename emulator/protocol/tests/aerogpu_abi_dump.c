@@ -639,6 +639,7 @@ int main(void) {
   PRINT_OFF("aerogpu_escape_query_cursor_out", aerogpu_escape_query_cursor_out, fb_gpa);
   PRINT_OFF("aerogpu_escape_query_cursor_out", aerogpu_escape_query_cursor_out, pitch_bytes);
   PRINT_OFF("aerogpu_escape_query_cursor_out", aerogpu_escape_query_cursor_out, reserved1);
+
   PRINT_OFF("aerogpu_escape_set_cursor_position_in", aerogpu_escape_set_cursor_position_in, x);
   PRINT_OFF("aerogpu_escape_set_cursor_position_in", aerogpu_escape_set_cursor_position_in, y);
   PRINT_OFF("aerogpu_escape_set_cursor_visibility_in", aerogpu_escape_set_cursor_visibility_in, visible);
