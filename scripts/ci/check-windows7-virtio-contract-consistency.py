@@ -24,7 +24,7 @@ import json
 import re
 import sys
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Iterable, Mapping
 
 
@@ -39,6 +39,7 @@ WINDOWS_DEVICE_CONTRACT_VIRTIO_WIN_JSON = REPO_ROOT / "docs/windows-device-contr
 # canonical INF basenames shipped by this repo. When we rename driver packages,
 # it's easy to update the INFs but forget to update these examples.
 WIN7_VIRTIO_TESTS_ROOT = REPO_ROOT / "drivers/windows7/tests"
+WIN7_TEST_IMAGE_PS1 = WIN7_VIRTIO_TESTS_ROOT / "host-harness/New-AeroWin7TestImage.ps1"
 INSTRUCTIONS_ROOT = REPO_ROOT / "instructions"
 DEPRECATED_WIN7_TEST_INF_BASENAMES: tuple[str, ...] = (
     # Pre-rename INF basenames.
@@ -182,6 +183,70 @@ def scan_text_tree_for_substrings(root: Path, needles: Iterable[str]) -> list[st
                 if needle in line:
                     hits.append(f"{path.as_posix()}:{line_no}: contains {needle!r}")
     return hits
+
+
+def parse_powershell_array_strings(*, text: str, var_name: str, file: Path) -> list[str]:
+    """
+    Parse a simple PowerShell array assignment like:
+
+        $VarName = @(
+          "foo",
+          "bar"
+        )
+
+    Returns the list of string literals (without quotes).
+
+    This intentionally only supports a constrained subset of PowerShell syntax
+    sufficient for CI guardrails (not a full PS parser).
+    """
+
+    start_re = re.compile(rf"^\s*\${re.escape(var_name)}\s*=\s*@\(\s*$", flags=re.I)
+    end_re = re.compile(r"^\s*\)\s*$")
+    simple_str_re = re.compile(r'^\s*(?P<q>["\'])(?P<val>[^"\']+)(?P=q)\s*,?\s*(?:#.*)?$')
+
+    values: list[str] = []
+    in_list = False
+    start_line: int | None = None
+
+    for line_no, raw in enumerate(text.splitlines(), start=1):
+        if not in_list:
+            if start_re.match(raw):
+                in_list = True
+                start_line = line_no
+            continue
+
+        if end_re.match(raw):
+            return values
+
+        stripped = raw.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+
+        m = simple_str_re.match(raw)
+        if m:
+            values.append(m.group("val"))
+            continue
+
+        # Support multiple string literals on one line (unusual but valid PowerShell).
+        code = raw.split("#", 1)[0]
+        found = [m.group("val") for m in re.finditer(r'(?P<q>["\'])(?P<val>[^"\']+)(?P=q)', code)]
+        if found:
+            values.extend(found)
+            continue
+
+        raise ValueError(
+            f"{file.as_posix()}:{line_no}: could not parse PowerShell array element for ${var_name}: {raw!r}"
+        )
+
+    if in_list:
+        raise ValueError(f"{file.as_posix()}:{start_line}: PowerShell array for ${var_name} is missing a closing ')'")
+    raise ValueError(f"{file.as_posix()}: missing required PowerShell array assignment for ${var_name}")
+
+
+def inf_allowlist_entry_basename(entry: str) -> str:
+    # Allowlist entries can be either INF basenames or paths under -DriversDir.
+    # Normalize into a Windows basename for comparisons.
+    return PureWindowsPath(entry.replace("/", "\\")).name
 
 
 def parse_c_define_hex(text: str, name: str, *, file: Path) -> int | None:
@@ -1303,6 +1368,54 @@ def main() -> None:
                 deprecated_hits,
             )
         )
+
+    # `New-AeroWin7TestImage.ps1` defaults to a conservative INF allowlist to avoid
+    # accidentally staging test INFs. This allowlist must always include the
+    # canonical in-tree Win7 virtio INFs; otherwise provisioning media can silently
+    # go stale after driver package renames.
+    required_allowlist_infs = {p.name.lower() for p in WIN7_VIRTIO_DRIVER_INFS.values()}
+    try:
+        ps1_allowlist_raw = parse_powershell_array_strings(
+            text=read_text(WIN7_TEST_IMAGE_PS1), var_name="defaultInfAllowList", file=WIN7_TEST_IMAGE_PS1
+        )
+    except ValueError as e:
+        errors.append(
+            format_error(
+                "Failed to parse the default INF allowlist from New-AeroWin7TestImage.ps1 (CI guardrail):",
+                [
+                    str(e),
+                    "hint: keep the allowlist in the form `$defaultInfAllowList = @(\"...\")`",
+                ],
+            )
+        )
+    else:
+        ps1_allowlist = {inf_allowlist_entry_basename(v).lower() for v in ps1_allowlist_raw}
+        missing = sorted(required_allowlist_infs - ps1_allowlist)
+        if missing:
+            errors.append(
+                format_error(
+                    f"{WIN7_TEST_IMAGE_PS1.as_posix()}: $defaultInfAllowList is missing canonical Win7 virtio driver INF basenames:",
+                    [
+                        "missing:",
+                        *[f"- {m}" for m in missing],
+                        "current $defaultInfAllowList basenames:",
+                        *[f"- {v}" for v in sorted(ps1_allowlist)],
+                        "hint: update $defaultInfAllowList in drivers/windows7/tests/host-harness/New-AeroWin7TestImage.ps1 whenever driver INF basenames change or new canonical Win7 virtio INFs are added",
+                    ],
+                )
+            )
+
+        deprecated_in_allowlist = sorted({d.lower() for d in DEPRECATED_WIN7_TEST_INF_BASENAMES} & ps1_allowlist)
+        if deprecated_in_allowlist:
+            errors.append(
+                format_error(
+                    f"{WIN7_TEST_IMAGE_PS1.as_posix()}: $defaultInfAllowList contains deprecated INF basenames:",
+                    [
+                        *[f"- {d}" for d in deprecated_in_allowlist],
+                        "hint: replace deprecated names with canonical aero_virtio_*.inf basenames",
+                    ],
+                )
+            )
 
     # Ensure the contract doesn't silently grow new virtio devices without also
     # extending this checker.
