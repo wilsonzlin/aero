@@ -1313,16 +1313,18 @@ pub fn decode_cmd_stream_listing(
                         let vs = cmd.vs;
                         let ps = cmd.ps;
                         let cs = cmd.cs;
-                        let reserved0 = cmd.reserved0;
                         let _ = write!(
                             line,
-                            " vs={vs} ps={ps} cs={cs} reserved0=0x{reserved0:08X}"
+                            " vs={vs} ps={ps} cs={cs}"
                         );
                         if let Some(ex) = ex {
                             let gs = ex.gs;
                             let hs = ex.hs;
                             let ds = ex.ds;
                             let _ = write!(line, " gs={gs} hs={hs} ds={ds}");
+                        } else {
+                            let gs = cmd.gs();
+                            let _ = write!(line, " gs={gs}");
                         }
                     }
 
