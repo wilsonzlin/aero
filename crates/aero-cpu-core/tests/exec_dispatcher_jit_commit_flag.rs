@@ -172,3 +172,93 @@ fn jit_commit_advances_tsc_and_ages_interrupt_shadow() {
         "committed blocks must advance internal time source by instruction count"
     );
 }
+
+#[test]
+fn jit_rollback_does_not_apply_inhibit_interrupts_after_block() {
+    let config = JitConfig {
+        enabled: true,
+        hot_threshold: 1,
+        cache_max_blocks: 4,
+        cache_max_bytes: 0,
+        code_version_max_pages: 64,
+    };
+
+    let mut jit = JitRuntime::new(config, RollbackBackend, NoCompileSink);
+    install_block(&mut jit, 5, true);
+    let mut dispatcher = ExecDispatcher::new(PanicInterpreter, jit);
+
+    let mut cpu = Vcpu::new_with_mode(CpuMode::Bit16, FlatTestBus::new(0x1000));
+    cpu.cpu.state.segments.cs.base = 0;
+    cpu.cpu.state.set_rip(0);
+
+    cpu.cpu.time.set_tsc(100);
+    cpu.cpu.state.msr.tsc = 100;
+
+    let outcome = dispatcher.step(&mut cpu);
+    match outcome {
+        aero_cpu_core::exec::StepOutcome::Block {
+            tier,
+            instructions_retired,
+            ..
+        } => {
+            assert_eq!(tier, ExecutedTier::Jit);
+            assert_eq!(instructions_retired, 0);
+        }
+        other => panic!("expected JIT block, got {other:?}"),
+    }
+
+    assert_eq!(
+        cpu.cpu.pending.interrupt_inhibit(),
+        0,
+        "rollback must not apply inhibit_interrupts_after_block"
+    );
+    assert_eq!(
+        cpu.cpu.state.msr.tsc, 100,
+        "rollback must not advance architectural TSC"
+    );
+}
+
+#[test]
+fn jit_commit_applies_inhibit_interrupts_after_block() {
+    let config = JitConfig {
+        enabled: true,
+        hot_threshold: 1,
+        cache_max_blocks: 4,
+        cache_max_bytes: 0,
+        code_version_max_pages: 64,
+    };
+
+    let mut jit = JitRuntime::new(config, CommitBackend, NoCompileSink);
+    install_block(&mut jit, 5, true);
+    let mut dispatcher = ExecDispatcher::new(PanicInterpreter, jit);
+
+    let mut cpu = Vcpu::new_with_mode(CpuMode::Bit16, FlatTestBus::new(0x1000));
+    cpu.cpu.state.segments.cs.base = 0;
+    cpu.cpu.state.set_rip(0);
+
+    cpu.cpu.time.set_tsc(100);
+    cpu.cpu.state.msr.tsc = 100;
+
+    let outcome = dispatcher.step(&mut cpu);
+    match outcome {
+        aero_cpu_core::exec::StepOutcome::Block {
+            tier,
+            instructions_retired,
+            ..
+        } => {
+            assert_eq!(tier, ExecutedTier::Jit);
+            assert_eq!(instructions_retired, 5);
+        }
+        other => panic!("expected JIT block, got {other:?}"),
+    }
+
+    assert_eq!(
+        cpu.cpu.pending.interrupt_inhibit(),
+        1,
+        "committed blocks must apply inhibit_interrupts_after_block"
+    );
+    assert_eq!(
+        cpu.cpu.state.msr.tsc, 105,
+        "committed blocks must advance architectural TSC by instruction count"
+    );
+}
