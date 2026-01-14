@@ -7,7 +7,7 @@
 //! - `@group(2)` = compute shader stage resources
 //!
 //! WebGPU guarantees `maxBindGroups >= 4`, so AeroGPU uses [`BIND_GROUP_INTERNAL_EMULATION`]
-//! (currently `@group(3)`) as a reserved internal / emulation group for both:
+//! (currently `@group(3)`) as a reserved internal/emulation group for both:
 //! - D3D11 extended stage resources (GS/HS/DS, bound via `stage_ex`), and
 //! - internal emulation helpers (vertex pulling, expanded draws, etc).
 //!
