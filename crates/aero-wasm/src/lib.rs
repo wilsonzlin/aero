@@ -2808,13 +2808,18 @@ fn opfs_disk_error_to_js(operation: &str, path: &str, err: aero_opfs::DiskError)
 
 #[cfg(target_arch = "wasm32")]
 fn opfs_io_error_to_js(operation: &str, path: &str, err: std::io::Error) -> JsValue {
+    let err_str = err.to_string();
     let kind = err.kind();
-    let mut msg = format!("{operation} failed for OPFS path \"{path}\": {err}");
+    let mut msg = format!("{operation} failed for OPFS path \"{path}\": {err_str}");
 
     match kind {
         std::io::ErrorKind::Unsupported | std::io::ErrorKind::NotConnected => {
+            let worker_hint = opfs_worker_hint();
+            let probe_tip = "Tip: Call storage_capabilities() to probe { opfsSupported, opfsSyncAccessSupported, isWorkerScope }.";
             msg.push('\n');
-            msg.push_str(&opfs_worker_hint());
+            msg.push_str(&worker_hint);
+            msg.push('\n');
+            msg.push_str(probe_tip);
         }
         std::io::ErrorKind::ResourceBusy => {
             msg.push_str("\nThe OPFS file is already in use (another context may have an open sync access handle). Close it and retry.");

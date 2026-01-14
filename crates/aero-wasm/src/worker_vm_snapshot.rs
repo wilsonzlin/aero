@@ -166,13 +166,16 @@ impl WorkerVmSnapshot {
 
         let mut file = OpfsSyncFile::create(&path)
             .await
-            .map_err(|e| crate::opfs_io_error_to_js("WorkerVmSnapshot.snapshot_full_to_opfs", &path, e))?;
+            .map_err(|e| {
+                crate::opfs_io_error_to_js("WorkerVmSnapshot.snapshot_full_to_opfs", &path, e)
+            })?;
 
         aero_snapshot::save_snapshot(&mut file, self, SaveOptions::default())
             .map_err(|e| js_error(format!("Failed to write aero-snapshot to OPFS: {e}")))?;
 
-        file.close()
-            .map_err(|e| crate::opfs_io_error_to_js("WorkerVmSnapshot.snapshot_full_to_opfs", &path, e))?;
+        file.close().map_err(|e| {
+            crate::opfs_io_error_to_js("WorkerVmSnapshot.snapshot_full_to_opfs", &path, e)
+        })?;
 
         Ok(())
     }
@@ -183,13 +186,17 @@ impl WorkerVmSnapshot {
 
         let mut file = OpfsSyncFile::open(&path, false)
             .await
-            .map_err(|e| crate::opfs_io_error_to_js("WorkerVmSnapshot.restore_snapshot_from_opfs", &path, e))?;
+            .map_err(|e| {
+                crate::opfs_io_error_to_js("WorkerVmSnapshot.restore_snapshot_from_opfs", &path, e)
+            })?;
 
         aero_snapshot::restore_snapshot_with_options(&mut file, self, RestoreOptions::default())
             .map_err(|e| js_error(format!("Failed to restore aero-snapshot from OPFS: {e}")))?;
 
         file.close()
-            .map_err(|e| crate::opfs_io_error_to_js("WorkerVmSnapshot.restore_snapshot_from_opfs", &path, e))?;
+            .map_err(|e| {
+                crate::opfs_io_error_to_js("WorkerVmSnapshot.restore_snapshot_from_opfs", &path, e)
+            })?;
 
         self.build_restore_result()
     }
