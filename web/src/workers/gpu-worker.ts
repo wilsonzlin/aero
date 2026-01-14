@@ -2540,8 +2540,12 @@ const tryReadScanoutFrame = (snap: ScanoutStateSnapshot): ScanoutFrameInfo | nul
   // falling back to the legacy shared framebuffer.
   let width = snap.width >>> 0;
   let height = snap.height >>> 0;
-  let outputBytes = tryComputeScanoutRgba8ByteLength(width, height, MAX_SCANOUT_RGBA8_BYTES);
-  if (width === 0 || height === 0 || outputBytes === null) {
+  const MAX_SCANOUT_DIM = 16384;
+  let outputBytes: number | null =
+    width > 0 && height > 0 && width <= MAX_SCANOUT_DIM && height <= MAX_SCANOUT_DIM
+      ? tryComputeScanoutRgba8ByteLength(width, height, MAX_SCANOUT_RGBA8_BYTES)
+      : null;
+  if (outputBytes === null) {
     width = 1;
     height = 1;
     outputBytes = BYTES_PER_PIXEL_RGBA8;
