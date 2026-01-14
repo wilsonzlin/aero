@@ -1748,7 +1748,7 @@ Canonical in-tree driver packages:
 
 - virtio-blk: `drivers/windows7/virtio-blk/inf/aero_virtio_blk.inf` (binds `DEV_1042&REV_01`)
 - virtio-net: `drivers/windows7/virtio-net/inf/aero_virtio_net.inf` (binds `DEV_1041&REV_01`)
-- virtio-input (keyboard + mouse): `drivers/windows7/virtio-input/inf/aero_virtio_input.inf` (binds `DEV_1052&REV_01`; uses `SUBSYS_0010/0011` for distinct naming)
+- virtio-input (keyboard + mouse): `drivers/windows7/virtio-input/inf/aero_virtio_input.inf` (SUBSYS-gated: binds `DEV_1052&SUBSYS_00101AF4&REV_01` (keyboard) and `DEV_1052&SUBSYS_00111AF4&REV_01` (mouse))
 - virtio-input (tablet): `drivers/windows7/virtio-input/inf/aero_virtio_tablet.inf` (binds `DEV_1052&SUBSYS_00121AF4&REV_01`)
 - virtio-snd: `drivers/windows7/virtio-snd/inf/aero_virtio_snd.inf` (binds `DEV_1059&REV_01`)
 
