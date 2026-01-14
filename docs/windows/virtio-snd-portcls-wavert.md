@@ -817,13 +817,19 @@ Windows 7 typically allocates MSI/MSI-X only when explicitly requested via INF:
 
 ```inf
 [AeroVirtioSnd_Install.NT.HW]
-AddReg = AeroVirtioSnd_InterruptManagement_AddReg
+AddReg = AeroVirtioSnd_InterruptManagement_AddReg, AeroVirtioSnd_Parameters_AddReg
 
 [AeroVirtioSnd_InterruptManagement_AddReg]
 HKR, "Interrupt Management",,0x00000010
 HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MSISupported,        0x00010001, 1
 ; virtio-snd uses 4 virtqueues + a config interrupt = 5 vectors; request a little extra:
 HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLimit,  0x00010001, 8
+
+; Per-device bring-up toggles (defaults):
+[AeroVirtioSnd_Parameters_AddReg]
+HKR,Parameters,,0x00000010
+HKR,Parameters,ForceNullBackend,0x00010001,0
+HKR,Parameters,AllowPollingOnly,0x00010001,0
 ```
 
 Notes:

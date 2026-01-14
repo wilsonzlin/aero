@@ -22,13 +22,19 @@ On Windows 7, message-signaled interrupts are typically enabled through INF regi
 
 ```inf
 [AeroVirtioSnd_Install.NT.HW]
-AddReg = AeroVirtioSnd_InterruptManagement_AddReg
+AddReg = AeroVirtioSnd_InterruptManagement_AddReg, AeroVirtioSnd_Parameters_AddReg
 
 [AeroVirtioSnd_InterruptManagement_AddReg]
 HKR, "Interrupt Management",,0x00000010
 HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MSISupported,        0x00010001, 1
 ; virtio-snd needs config + 4 queues = 5 vectors; request a little extra for future growth.
 HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLimit,  0x00010001, 8
+
+; Per-device bring-up toggles (defaults):
+[AeroVirtioSnd_Parameters_AddReg]
+HKR,Parameters,,0x00000010
+HKR,Parameters,ForceNullBackend,0x00010001,0
+HKR,Parameters,AllowPollingOnly,0x00010001,0
 ```
 
 Notes:
