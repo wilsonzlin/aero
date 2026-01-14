@@ -41,7 +41,7 @@ function initControlRings(control: SharedArrayBuffer): void {
  * Unlike the full runtime allocator (`allocateSharedMemorySegments`), this intentionally does **not**
  * reserve a large wasm32 runtime region. It exists for pages that only need:
  * - a SharedArrayBuffer-backed guest RAM region (via shared WebAssembly.Memory), and
- * - a shared `ScanoutState` descriptor for WDDM scanout presentation.
+ * - shared `ScanoutState` / `CursorState` descriptors for WDDM scanout + hardware cursor presentation.
  */
 export function allocateHarnessSharedMemorySegments(opts: {
   guestRamBytes: number;
