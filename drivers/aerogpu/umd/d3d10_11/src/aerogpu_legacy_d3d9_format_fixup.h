@@ -12,6 +12,7 @@
 
 #include <cstdint>
 
+#include "aerogpu_dxgi_format.h"
 #include "../../../protocol/aerogpu_wddm_alloc.h"
 
 namespace aerogpu::shared_surface {
@@ -27,11 +28,14 @@ constexpr uint32_t kD3d9FmtA8B8G8R8 = 32;   // D3DFMT_A8B8G8R8
 constexpr uint32_t kD3d9FmtX8B8G8R8 = 33;   // D3DFMT_X8B8G8R8
 
 // DXGI_FORMAT subset (numeric values from dxgiformat.h).
-constexpr uint32_t kDxgiFormatR8G8B8A8Unorm = 28;     // DXGI_FORMAT_R8G8B8A8_UNORM
-constexpr uint32_t kDxgiFormatB5G6R5Unorm = 85;       // DXGI_FORMAT_B5G6R5_UNORM
-constexpr uint32_t kDxgiFormatB5G5R5A1Unorm = 86;     // DXGI_FORMAT_B5G5R5A1_UNORM
-constexpr uint32_t kDxgiFormatB8G8R8A8Unorm = 87;     // DXGI_FORMAT_B8G8R8A8_UNORM
-constexpr uint32_t kDxgiFormatB8G8R8X8Unorm = 88;     // DXGI_FORMAT_B8G8R8X8_UNORM
+//
+// Reuse the shared DXGI format constants from the D3D10/11 stack so legacy D3D9
+// fixups stay in sync.
+using aerogpu::d3d10_11::kDxgiFormatR8G8B8A8Unorm;
+using aerogpu::d3d10_11::kDxgiFormatB5G6R5Unorm;
+using aerogpu::d3d10_11::kDxgiFormatB5G5R5A1Unorm;
+using aerogpu::d3d10_11::kDxgiFormatB8G8R8A8Unorm;
+using aerogpu::d3d10_11::kDxgiFormatB8G8R8X8Unorm;
 
 inline bool D3d9FormatToDxgi(uint32_t d3d9_format, uint32_t* dxgi_format_out, uint32_t* bpp_out) {
   if (dxgi_format_out) {
@@ -127,4 +131,3 @@ inline bool FixupLegacyPrivForOpenResource(aerogpu_wddm_alloc_priv_v2* priv) {
 }
 
 } // namespace aerogpu::shared_surface
-

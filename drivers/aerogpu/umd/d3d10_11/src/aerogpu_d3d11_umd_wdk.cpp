@@ -38,10 +38,6 @@
 #include "../../../protocol/aerogpu_wddm_alloc.h"
 #include "../../../protocol/aerogpu_win7_abi.h"
 
-#ifndef DXGI_ERROR_WAS_STILL_DRAWING
-  #define DXGI_ERROR_WAS_STILL_DRAWING ((HRESULT)0x887A000AL)
-#endif
-
 namespace {
 
 using namespace aerogpu::d3d10_11;
@@ -59,18 +55,6 @@ static_assert(std::is_member_object_pointer_v<decltype(&D3D11DDI_DEVICECONTEXTFU
 constexpr bool NtSuccess(NTSTATUS st) {
   return st >= 0;
 }
-
-#ifndef STATUS_TIMEOUT
-  #define STATUS_TIMEOUT ((NTSTATUS)0x00000102L)
-#endif
-
-#ifndef WAIT_TIMEOUT
-  #define WAIT_TIMEOUT 258L
-#endif
-
-#ifndef ERROR_TIMEOUT
-  #define ERROR_TIMEOUT 1460L
-#endif
 
 using aerogpu::d3d10_11::AlignUpU64;
 using aerogpu::d3d10_11::AlignUpU32;
