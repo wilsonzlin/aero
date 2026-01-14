@@ -146,8 +146,8 @@ fn snapshot_restore_clears_muxed_webusb_host_state() {
     vm.usb_attach_root(1, Box::new(webusb.clone()))
         .expect("attach WebUSB device behind UHCI root port 1");
 
-    // When both UHCI and EHCI are enabled, root port 0 is backed by a shared USB2 mux, so the same
-    // physical device should be visible from both controllers.
+    // When both UHCI and EHCI are enabled, the first two root ports are backed by a shared USB2
+    // mux, so the same physical device should be visible from both controllers.
     {
         let ehci = vm.ehci().expect("ehci enabled");
         assert!(
