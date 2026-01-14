@@ -34,13 +34,13 @@ wasm-bindgen = "0.2"
 serde_json = "1"
 wasm-bindgen-test = "0.3"
 aero-snapshot = { path = "../aero-snapshot" }
-aero-devices = { path = "../devices" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 js-sys = "0.3"
 aero-l2-protocol = { path = "../aero-l2-protocol" }
 aero-devices = { path = "../devices" }
 aero-devices-gpu = { path = "../aero-devices-gpu" }
+aero-devices = { path = "../devices" }
 aero-audio = { path = "../aero-audio", features = ["io-snapshot"] }
 aero-mmu = { path = "../aero-mmu" }
 aero-opfs = { path = "../aero-opfs" }
