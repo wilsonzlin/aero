@@ -246,7 +246,7 @@ See [`docs/18-chunked-disk-image-format.md`](../../docs/18-chunked-disk-image-fo
 Endpoints:
 
 - `GET/HEAD /v1/images/:imageId/chunked/manifest`
-- `GET/HEAD /v1/images/:imageId/chunked/chunks/:chunkIndex` (`:chunkIndex` can be `42` or `00000042.bin`)
+- `GET/HEAD /v1/images/:imageId/chunked/chunks/:chunkIndex` (`:chunkIndex` can be `42` or a `.bin` filename like `00000042.bin` / `00.bin`)
 
 If CloudFront is configured, these endpoints redirect to CloudFront (stable URLs for cookie mode; signed URLs for url mode).
 
