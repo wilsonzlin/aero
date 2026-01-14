@@ -97,7 +97,7 @@ proptest! {
     #![proptest_config(ProptestConfig {
         cases: 256,
         rng_algorithm: proptest::test_runner::RngAlgorithm::ChaCha,
-        rng_seed: proptest::test_runner::RngSeed::Fixed(0xA3A0_47),
+        rng_seed: proptest::test_runner::RngSeed::Fixed(0xA3_A0_47),
         .. ProptestConfig::default()
     })]
 
