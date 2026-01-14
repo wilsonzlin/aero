@@ -23,6 +23,26 @@ When the guest writes to the THR register (offset `+0`, DLAB=0), the UART invoke
 
 ---
 
+## DebugCon (I/O port `0xE9`)
+
+Many emulators (Bochs/QEMU) provide a "debug console" byte sink at I/O port `0xE9`. This is a
+convenient early-boot logging channel because it does not require UART initialization.
+
+Guest code can print a byte with a single `OUT`:
+
+```text
+mov al, 'A'
+out 0xE9, al
+```
+
+In `aero_machine::Machine`, port `0xE9` is always available and bytes written to it are captured in
+a host-visible buffer:
+
+- `Machine::take_debugcon_output() -> Vec<u8>`
+- `Machine::debugcon_output_len() -> u64`
+
+---
+
 ## Native CLI runner (`aero-machine`)
 
 For quick boot/integration debugging without the browser runtime, the repo includes a small native CLI tool that runs the canonical [`aero_machine::Machine`] directly.

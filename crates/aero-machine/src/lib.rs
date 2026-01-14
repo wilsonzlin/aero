@@ -43,6 +43,7 @@ use aero_devices::acpi_pm::{
 };
 use aero_devices::clock::ManualClock;
 use aero_devices::dma::{register_dma8237, Dma8237};
+use aero_devices::debugcon::{register_debugcon, SharedDebugConLog};
 use aero_devices::hpet;
 use aero_devices::i8042::{I8042Ports, SharedI8042Controller};
 use aero_devices::irq::{IrqLine, PlatformIrqLine};
@@ -2919,6 +2920,7 @@ pub struct Machine {
     serial: Option<SharedSerial16550>,
     i8042: Option<SharedI8042Controller>,
     serial_log: Vec<u8>,
+    debugcon_log: SharedDebugConLog,
     ps2_mouse_buttons: u8,
 
     next_snapshot_id: u64,
@@ -3049,6 +3051,7 @@ impl Machine {
             serial: None,
             i8042: None,
             serial_log: Vec::new(),
+            debugcon_log: Rc::new(RefCell::new(Vec::new())),
             ps2_mouse_buttons: 0,
             next_snapshot_id: 1,
             last_snapshot_id: None,
@@ -5097,6 +5100,18 @@ impl Machine {
         self.bios.clear_tty_output();
     }
 
+    /// Take (drain) all DebugCon output accumulated so far.
+    ///
+    /// This captures bytes written by the guest to I/O port `0xE9` (Bochs/QEMU "debugcon").
+    pub fn take_debugcon_output(&mut self) -> Vec<u8> {
+        std::mem::take(&mut *self.debugcon_log.borrow_mut())
+    }
+
+    /// Return the number of bytes currently buffered in the DebugCon output log.
+    pub fn debugcon_output_len(&mut self) -> u64 {
+        u64::try_from(self.debugcon_log.borrow().len()).unwrap_or(u64::MAX)
+    }
+
     /// Inject a browser-style keyboard code into the i8042 controller, if present.
     pub fn inject_browser_key(&mut self, code: &str, pressed: bool) {
         if let Some(ctrl) = &self.i8042 {
@@ -5412,6 +5427,7 @@ impl Machine {
             let _ = uart.borrow_mut().take_tx();
         }
         self.serial_log.clear();
+        self.debugcon_log.borrow_mut().clear();
         self.reset_latch.clear();
         // Clear restore-only state before applying new snapshot sections.
         self.restored_disk_overlays = None;
@@ -5448,6 +5464,7 @@ impl Machine {
     pub fn reset(&mut self) {
         self.reset_latch.clear();
         self.serial_log.clear();
+        self.debugcon_log.borrow_mut().clear();
         self.ps2_mouse_buttons = 0;
         self.guest_time.reset();
         self.uhci_ns_remainder = 0;
@@ -5463,6 +5480,8 @@ impl Machine {
 
         // Rebuild port I/O devices for deterministic power-on state.
         self.io = IoPortBus::new();
+        // Always expose the Bochs/QEMU-style debug console port for low-overhead early-boot output.
+        register_debugcon(&mut self.io, self.debugcon_log.clone());
 
         let use_legacy_vga = self.cfg.enable_vga && !self.cfg.enable_aerogpu;
 
