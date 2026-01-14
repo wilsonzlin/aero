@@ -87,7 +87,6 @@ test("IO worker increments input drop counter when snapshot-paused input queue i
       role: "io",
       controlSab: segments.control,
       guestMemory: segments.guestMemory,
-      vgaFramebuffer: segments.vgaFramebuffer,
       ioIpcSab: segments.ioIpc,
       sharedFramebuffer: segments.sharedFramebuffer,
       sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
@@ -132,4 +131,3 @@ test("IO worker increments input drop counter when snapshot-paused input queue i
   expect(result.after.batchesDropped).toBeGreaterThan(result.before.batchesDropped);
   expect(result.after.batchesReceived).toBeGreaterThanOrEqual(result.before.batchesReceived + result.batches);
 });
-

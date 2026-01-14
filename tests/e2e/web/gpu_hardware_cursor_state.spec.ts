@@ -124,7 +124,6 @@ test("GPU worker: CursorState uploads cursor image from guest memory and screens
             role: "gpu",
             controlSab: segments.control,
             guestMemory: segments.guestMemory,
-            vgaFramebuffer: segments.vgaFramebuffer,
             scanoutState: segments.scanoutState,
             scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
             cursorState: segments.cursorState,
@@ -233,4 +232,3 @@ test("GPU worker: CursorState uploads cursor image from guest memory and screens
   expect(result.noCursorPx).toEqual([0, 0, 0, 255]);
   expect(result.withCursorPx).toEqual([255, 0, 0, 255]);
 });
-

@@ -293,7 +293,6 @@ async function main(): Promise<void> {
       role: "gpu",
       controlSab: segments.control,
       guestMemory: segments.guestMemory,
-      vgaFramebuffer: segments.vgaFramebuffer,
       ioIpcSab: segments.ioIpc,
       sharedFramebuffer: segments.sharedFramebuffer,
       sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,

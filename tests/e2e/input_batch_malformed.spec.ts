@@ -150,7 +150,6 @@ test("IO worker survives malformed in:input-batch messages", async ({ page }) =>
         role: "io",
         controlSab: segments.control,
         guestMemory: segments.guestMemory,
-        vgaFramebuffer: segments.vgaFramebuffer,
         ioIpcSab: segments.ioIpc,
         sharedFramebuffer: segments.sharedFramebuffer,
         sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,

@@ -573,7 +573,6 @@ test("IO worker does not switch mouse backend while a button is held (prevents s
         role: "io",
         controlSab: segments.control,
         guestMemory: segments.guestMemory,
-        vgaFramebuffer: segments.vgaFramebuffer,
         ioIpcSab: segments.ioIpc,
         sharedFramebuffer: segments.sharedFramebuffer,
         sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
