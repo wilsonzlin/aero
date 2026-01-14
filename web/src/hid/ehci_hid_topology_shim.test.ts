@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createEhciTopologyBridgeShim } from "./ehci_hid_topology_shim";
 import { UhciHidTopologyManager, type UhciTopologyBridge } from "./uhci_hid_topology";
+import { EXTERNAL_HUB_ROOT_PORT, WEBUSB_GUEST_ROOT_PORT } from "../usb/uhci_external_hub";
 
 function createFakeBridge(): UhciTopologyBridge & {
   attach_hub: ReturnType<typeof vi.fn>;
@@ -23,23 +24,23 @@ describe("hid/createEhciTopologyBridgeShim", () => {
     const shim = createEhciTopologyBridgeShim(ehci);
     const dev = { kind: "device" };
 
-    shim.attach_hub(0, 16);
-    shim.attach_hub(1, 8);
-    shim.detach_at_path([0, 5]);
-    shim.attach_webhid_device([0, 6], dev);
-    shim.attach_usb_hid_passthrough_device([1, 7], dev);
+    shim.attach_hub(EXTERNAL_HUB_ROOT_PORT, 16);
+    shim.attach_hub(WEBUSB_GUEST_ROOT_PORT, 8);
+    shim.detach_at_path([EXTERNAL_HUB_ROOT_PORT, 5]);
+    shim.attach_webhid_device([EXTERNAL_HUB_ROOT_PORT, 6], dev);
+    shim.attach_usb_hid_passthrough_device([WEBUSB_GUEST_ROOT_PORT, 7], dev);
 
-    expect(ehci.attach_hub).toHaveBeenNthCalledWith(1, 0, 16);
-    expect(ehci.attach_hub).toHaveBeenNthCalledWith(2, 1, 8);
-    expect(ehci.detach_at_path).toHaveBeenCalledWith([0, 5]);
-    expect(ehci.attach_webhid_device).toHaveBeenCalledWith([0, 6], dev);
-    expect(ehci.attach_usb_hid_passthrough_device).toHaveBeenCalledWith([1, 7], dev);
+    expect(ehci.attach_hub).toHaveBeenNthCalledWith(1, EXTERNAL_HUB_ROOT_PORT, 16);
+    expect(ehci.attach_hub).toHaveBeenNthCalledWith(2, WEBUSB_GUEST_ROOT_PORT, 8);
+    expect(ehci.detach_at_path).toHaveBeenCalledWith([EXTERNAL_HUB_ROOT_PORT, 5]);
+    expect(ehci.attach_webhid_device).toHaveBeenCalledWith([EXTERNAL_HUB_ROOT_PORT, 6], dev);
+    expect(ehci.attach_usb_hid_passthrough_device).toHaveBeenCalledWith([WEBUSB_GUEST_ROOT_PORT, 7], dev);
   });
 
   it("allows UhciHidTopologyManager to attach its external hub on EHCI root port 0", () => {
     const ehci = createFakeBridge();
     const mgr = new UhciHidTopologyManager({ defaultHubPortCount: 16 });
     mgr.setUhciBridge(createEhciTopologyBridgeShim(ehci));
-    expect(ehci.attach_hub).toHaveBeenCalledWith(0, 16);
+    expect(ehci.attach_hub).toHaveBeenCalledWith(EXTERNAL_HUB_ROOT_PORT, 16);
   });
 });

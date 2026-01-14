@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { UhciHidTopologyManager, type UhciTopologyBridge } from "./uhci_hid_topology";
-import { UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT, remapLegacyRootPortToExternalHubPort } from "../usb/uhci_external_hub";
+import {
+  EXTERNAL_HUB_ROOT_PORT,
+  UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT,
+  WEBUSB_GUEST_ROOT_PORT,
+  remapLegacyRootPortToExternalHubPort,
+} from "../usb/uhci_external_hub";
 
 function createFakeUhci(): UhciTopologyBridge & {
   attach_hub: ReturnType<typeof vi.fn>;
@@ -19,8 +24,8 @@ function createFakeUhci(): UhciTopologyBridge & {
 
 describe("hid/UhciHidTopologyManager", () => {
   const firstDynamicPort = UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT;
-  const legacyRoot0Port = remapLegacyRootPortToExternalHubPort(0);
-  const legacyRoot1Port = remapLegacyRootPortToExternalHubPort(1);
+  const legacyRoot0Port = remapLegacyRootPortToExternalHubPort(EXTERNAL_HUB_ROOT_PORT);
+  const legacyRoot1Port = remapLegacyRootPortToExternalHubPort(WEBUSB_GUEST_ROOT_PORT);
 
   it("attaches the default external hub at root port 0 when the UHCI bridge is set", () => {
     const mgr = new UhciHidTopologyManager({ defaultHubPortCount: 16 });
@@ -29,7 +34,7 @@ describe("hid/UhciHidTopologyManager", () => {
     mgr.setUhciBridge(uhci);
 
     expect(uhci.attach_hub).toHaveBeenCalledTimes(1);
-    expect(uhci.attach_hub).toHaveBeenCalledWith(0, 16);
+    expect(uhci.attach_hub).toHaveBeenCalledWith(EXTERNAL_HUB_ROOT_PORT, 16);
   });
 
   it("remaps legacy root-port-only paths onto stable hub ports behind root port 0", () => {
@@ -38,19 +43,22 @@ describe("hid/UhciHidTopologyManager", () => {
     const dev = { kind: "device" };
 
     mgr.setUhciBridge(uhci);
-    mgr.attachDevice(1, [0], "webhid", dev);
+    mgr.attachDevice(1, [EXTERNAL_HUB_ROOT_PORT], "webhid", dev);
 
     // Hub should remain on root port 0.
-    expect(uhci.attach_hub).toHaveBeenCalledWith(0, 16);
+    expect(uhci.attach_hub).toHaveBeenCalledWith(EXTERNAL_HUB_ROOT_PORT, 16);
 
     expect(uhci.detach_at_path).toHaveBeenCalledTimes(1);
-    expect(uhci.detach_at_path).toHaveBeenCalledWith([0, legacyRoot0Port]);
-    expect(uhci.attach_webhid_device).toHaveBeenCalledWith([0, legacyRoot0Port], dev);
+    expect(uhci.detach_at_path).toHaveBeenCalledWith([EXTERNAL_HUB_ROOT_PORT, legacyRoot0Port]);
+    expect(uhci.attach_webhid_device).toHaveBeenCalledWith(
+      [EXTERNAL_HUB_ROOT_PORT, legacyRoot0Port],
+      dev,
+    );
 
     mgr.detachDevice(1);
     // Detach should use the normalized path as well.
     expect(uhci.detach_at_path).toHaveBeenCalledTimes(2);
-    expect(uhci.detach_at_path).toHaveBeenLastCalledWith([0, legacyRoot0Port]);
+    expect(uhci.detach_at_path).toHaveBeenLastCalledWith([EXTERNAL_HUB_ROOT_PORT, legacyRoot0Port]);
   });
 
   it("remaps legacy root-port-only path [1] onto a stable external hub port to avoid clobbering WebUSB", () => {
@@ -59,14 +67,17 @@ describe("hid/UhciHidTopologyManager", () => {
     const dev = { kind: "device" };
 
     mgr.setUhciBridge(uhci);
-    mgr.attachDevice(1, [1], "webhid", dev);
+    mgr.attachDevice(1, [WEBUSB_GUEST_ROOT_PORT], "webhid", dev);
 
-    expect(uhci.attach_hub).toHaveBeenCalledWith(0, 16);
-    expect(uhci.detach_at_path).toHaveBeenCalledWith([0, legacyRoot1Port]);
-    expect(uhci.attach_webhid_device).toHaveBeenCalledWith([0, legacyRoot1Port], dev);
+    expect(uhci.attach_hub).toHaveBeenCalledWith(EXTERNAL_HUB_ROOT_PORT, 16);
+    expect(uhci.detach_at_path).toHaveBeenCalledWith([EXTERNAL_HUB_ROOT_PORT, legacyRoot1Port]);
+    expect(uhci.attach_webhid_device).toHaveBeenCalledWith(
+      [EXTERNAL_HUB_ROOT_PORT, legacyRoot1Port],
+      dev,
+    );
 
     mgr.detachDevice(1);
-    expect(uhci.detach_at_path).toHaveBeenLastCalledWith([0, legacyRoot1Port]);
+    expect(uhci.detach_at_path).toHaveBeenLastCalledWith([EXTERNAL_HUB_ROOT_PORT, legacyRoot1Port]);
   });
 
   it("detaches the previous guest path when a deviceId is re-attached at a new path", () => {
@@ -77,14 +88,20 @@ describe("hid/UhciHidTopologyManager", () => {
 
     mgr.setUhciBridge(uhci);
 
-    mgr.attachDevice(1, [0, firstDynamicPort], "webhid", dev1);
-    expect(uhci.attach_webhid_device).toHaveBeenCalledWith([0, firstDynamicPort], dev1);
+    mgr.attachDevice(1, [EXTERNAL_HUB_ROOT_PORT, firstDynamicPort], "webhid", dev1);
+    expect(uhci.attach_webhid_device).toHaveBeenCalledWith(
+      [EXTERNAL_HUB_ROOT_PORT, firstDynamicPort],
+      dev1,
+    );
 
-    mgr.attachDevice(1, [0, firstDynamicPort + 1], "webhid", dev2);
+    mgr.attachDevice(1, [EXTERNAL_HUB_ROOT_PORT, firstDynamicPort + 1], "webhid", dev2);
 
     // Detach the old path first, then clear/attach the new path.
-    expect(uhci.detach_at_path).toHaveBeenCalledWith([0, firstDynamicPort]);
-    expect(uhci.attach_webhid_device).toHaveBeenCalledWith([0, firstDynamicPort + 1], dev2);
+    expect(uhci.detach_at_path).toHaveBeenCalledWith([EXTERNAL_HUB_ROOT_PORT, firstDynamicPort]);
+    expect(uhci.attach_webhid_device).toHaveBeenCalledWith(
+      [EXTERNAL_HUB_ROOT_PORT, firstDynamicPort + 1],
+      dev2,
+    );
   });
 
   it("defers device attachment until the UHCI bridge is available", () => {
@@ -92,15 +109,18 @@ describe("hid/UhciHidTopologyManager", () => {
     const uhci = createFakeUhci();
     const dev = { kind: "device" };
 
-    mgr.attachDevice(1, [0, firstDynamicPort + 2], "webhid", dev);
+    mgr.attachDevice(1, [EXTERNAL_HUB_ROOT_PORT, firstDynamicPort + 2], "webhid", dev);
     expect(uhci.attach_hub).not.toHaveBeenCalled();
 
     mgr.setUhciBridge(uhci);
 
     expect(uhci.attach_hub).toHaveBeenCalledTimes(1);
-    expect(uhci.attach_hub).toHaveBeenCalledWith(0, 16);
-    expect(uhci.detach_at_path).toHaveBeenCalledWith([0, firstDynamicPort + 2]);
-    expect(uhci.attach_webhid_device).toHaveBeenCalledWith([0, firstDynamicPort + 2], dev);
+    expect(uhci.attach_hub).toHaveBeenCalledWith(EXTERNAL_HUB_ROOT_PORT, 16);
+    expect(uhci.detach_at_path).toHaveBeenCalledWith([EXTERNAL_HUB_ROOT_PORT, firstDynamicPort + 2]);
+    expect(uhci.attach_webhid_device).toHaveBeenCalledWith(
+      [EXTERNAL_HUB_ROOT_PORT, firstDynamicPort + 2],
+      dev,
+    );
   });
 
   it("uses explicit hub config when provided", () => {
@@ -108,11 +128,11 @@ describe("hid/UhciHidTopologyManager", () => {
     const uhci = createFakeUhci();
     const dev = { kind: "device" };
 
-    mgr.setHubConfig([0], 8);
-    mgr.attachDevice(1, [0, firstDynamicPort + 1], "webhid", dev);
+    mgr.setHubConfig([EXTERNAL_HUB_ROOT_PORT], 8);
+    mgr.attachDevice(1, [EXTERNAL_HUB_ROOT_PORT, firstDynamicPort + 1], "webhid", dev);
     mgr.setUhciBridge(uhci);
 
-    expect(uhci.attach_hub).toHaveBeenCalledWith(0, 8);
+    expect(uhci.attach_hub).toHaveBeenCalledWith(EXTERNAL_HUB_ROOT_PORT, 8);
   });
 
   it("ensures hubs have enough ports for the requested guest path", () => {
@@ -120,10 +140,10 @@ describe("hid/UhciHidTopologyManager", () => {
     const uhci = createFakeUhci();
     const dev = { kind: "device" };
 
-    mgr.attachDevice(1, [0, 20], "webhid", dev);
+    mgr.attachDevice(1, [EXTERNAL_HUB_ROOT_PORT, 20], "webhid", dev);
     mgr.setUhciBridge(uhci);
 
-    expect(uhci.attach_hub).toHaveBeenCalledWith(0, 20);
+    expect(uhci.attach_hub).toHaveBeenCalledWith(EXTERNAL_HUB_ROOT_PORT, 20);
   });
 
   it("detaches guest paths when devices are removed", () => {
@@ -132,12 +152,15 @@ describe("hid/UhciHidTopologyManager", () => {
     const dev = { kind: "device" };
 
     mgr.setUhciBridge(uhci);
-    mgr.attachDevice(1, [1], "usb-hid-passthrough", dev);
+    mgr.attachDevice(1, [WEBUSB_GUEST_ROOT_PORT], "usb-hid-passthrough", dev);
     mgr.detachDevice(1);
 
     // One detach for clearing on attach, one for explicit detach.
-    expect(uhci.detach_at_path).toHaveBeenCalledWith([0, legacyRoot1Port]);
-    expect(uhci.attach_usb_hid_passthrough_device).toHaveBeenCalledWith([0, legacyRoot1Port], dev);
+    expect(uhci.detach_at_path).toHaveBeenCalledWith([EXTERNAL_HUB_ROOT_PORT, legacyRoot1Port]);
+    expect(uhci.attach_usb_hid_passthrough_device).toHaveBeenCalledWith(
+      [EXTERNAL_HUB_ROOT_PORT, legacyRoot1Port],
+      dev,
+    );
     expect(uhci.detach_at_path).toHaveBeenCalledTimes(2);
   });
 
@@ -147,11 +170,11 @@ describe("hid/UhciHidTopologyManager", () => {
     const dev = { kind: "device" };
 
     mgr.setUhciBridge(uhci);
-    mgr.attachDevice(1, [0, firstDynamicPort], "webhid", dev);
+    mgr.attachDevice(1, [EXTERNAL_HUB_ROOT_PORT, firstDynamicPort], "webhid", dev);
     expect(uhci.attach_hub).toHaveBeenCalledTimes(1);
 
     // Updating the config after the hub has been attached should not replace it.
-    mgr.setHubConfig([0], 8);
+    mgr.setHubConfig([EXTERNAL_HUB_ROOT_PORT], 8);
     expect(uhci.attach_hub).toHaveBeenCalledTimes(1);
   });
 
@@ -161,7 +184,7 @@ describe("hid/UhciHidTopologyManager", () => {
     const uhci2 = createFakeUhci();
     const dev = { kind: "device" };
 
-    mgr.attachDevice(1, [0, firstDynamicPort], "webhid", dev);
+    mgr.attachDevice(1, [EXTERNAL_HUB_ROOT_PORT, firstDynamicPort], "webhid", dev);
     mgr.setUhciBridge(uhci1);
     expect(uhci1.attach_hub).toHaveBeenCalledTimes(1);
 
@@ -177,18 +200,18 @@ describe("hid/UhciHidTopologyManager", () => {
     const dev2 = { kind: "device-2" };
 
     mgr.setUhciBridge(uhci);
-    mgr.attachDevice(1, [0, firstDynamicPort], "webhid", dev1);
+    mgr.attachDevice(1, [EXTERNAL_HUB_ROOT_PORT, firstDynamicPort], "webhid", dev1);
     expect(uhci.attach_hub).toHaveBeenCalledTimes(1);
-    expect(uhci.attach_hub).toHaveBeenCalledWith(0, 16);
+    expect(uhci.attach_hub).toHaveBeenCalledWith(EXTERNAL_HUB_ROOT_PORT, 16);
 
-    mgr.attachDevice(2, [0, 20], "webhid", dev2);
+    mgr.attachDevice(2, [EXTERNAL_HUB_ROOT_PORT, 20], "webhid", dev2);
     expect(uhci.attach_hub).toHaveBeenCalledTimes(2);
-    expect(uhci.attach_hub).toHaveBeenNthCalledWith(2, 0, 20);
-    expect(uhci.detach_at_path).toHaveBeenCalledWith([0]);
+    expect(uhci.attach_hub).toHaveBeenNthCalledWith(2, EXTERNAL_HUB_ROOT_PORT, 20);
+    expect(uhci.detach_at_path).toHaveBeenCalledWith([EXTERNAL_HUB_ROOT_PORT]);
 
     const dev1Calls = uhci.attach_webhid_device.mock.calls.filter(([, dev]) => dev === dev1);
     expect(dev1Calls).toHaveLength(2);
-    expect(uhci.attach_webhid_device).toHaveBeenCalledWith([0, 20], dev2);
+    expect(uhci.attach_webhid_device).toHaveBeenCalledWith([EXTERNAL_HUB_ROOT_PORT, 20], dev2);
   });
 
   it("surfaces UHCI attach failures when attaching with an active bridge", () => {
@@ -199,6 +222,8 @@ describe("hid/UhciHidTopologyManager", () => {
     });
     mgr.setUhciBridge(uhci);
 
-    expect(() => mgr.attachDevice(1, [0, firstDynamicPort], "webhid", { kind: "device" })).toThrow(/UHCI attach device failed/i);
+    expect(() =>
+      mgr.attachDevice(1, [EXTERNAL_HUB_ROOT_PORT, firstDynamicPort], "webhid", { kind: "device" }),
+    ).toThrow(/UHCI attach device failed/i);
   });
 });

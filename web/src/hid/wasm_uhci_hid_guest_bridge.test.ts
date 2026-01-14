@@ -5,6 +5,7 @@ import type { HidAttachMessage } from "./hid_proxy_protocol";
 import {
   EXTERNAL_HUB_ROOT_PORT,
   UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT,
+  WEBUSB_GUEST_ROOT_PORT,
   remapLegacyRootPortToExternalHubPort,
 } from "../usb/uhci_external_hub";
 
@@ -87,13 +88,13 @@ describe("hid/WasmUhciHidGuestBridge", () => {
       vendorId: 0x1234,
       productId: 0xabcd,
       productName: "Legacy",
-      guestPath: [1],
+      guestPath: [WEBUSB_GUEST_ROOT_PORT],
       collections: [{ some: "collection" }] as any,
       hasInterruptOut: false,
     };
     guest.attach(attach);
 
-    const expectedPath = [EXTERNAL_HUB_ROOT_PORT, remapLegacyRootPortToExternalHubPort(1)] as const;
+    const expectedPath = [EXTERNAL_HUB_ROOT_PORT, remapLegacyRootPortToExternalHubPort(WEBUSB_GUEST_ROOT_PORT)] as const;
     expect(webhid_attach_at_path).toHaveBeenCalledWith(
       attach.deviceId,
       attach.vendorId,
@@ -135,13 +136,13 @@ describe("hid/WasmUhciHidGuestBridge", () => {
       vendorId: 0x1234,
       productId: 0xabcd,
       productName: "Legacy",
-      guestPort: 1,
+      guestPort: WEBUSB_GUEST_ROOT_PORT,
       collections: [{ some: "collection" }] as any,
       hasInterruptOut: false,
     };
     guest.attach(attach);
 
-    const expectedPath = [EXTERNAL_HUB_ROOT_PORT, remapLegacyRootPortToExternalHubPort(1)] as const;
+    const expectedPath = [EXTERNAL_HUB_ROOT_PORT, remapLegacyRootPortToExternalHubPort(WEBUSB_GUEST_ROOT_PORT)] as const;
     expect(webhid_attach_at_path).toHaveBeenCalledWith(
       attach.deviceId,
       attach.vendorId,
