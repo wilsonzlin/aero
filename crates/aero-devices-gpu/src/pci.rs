@@ -286,10 +286,14 @@ impl AeroGpuPciDevice {
             if dma_enabled {
                 self.executor.process_doorbell(&mut self.regs, mem);
                 self.update_irq_level();
+                // Doorbells are edge-triggered: once DMA is permitted and we've consumed the
+                // notification, clear the pending flag. If bus mastering is disabled, preserve the
+                // pending doorbell so it can be processed once the guest enables COMMAND.BME.
+                //
+                // This matches the canonical machine behavior and avoids requiring guests to
+                // re-ring the doorbell after enabling bus mastering.
+                self.doorbell_pending = false;
             }
-            // If bus mastering is disabled, drop the pending doorbell to mirror the legacy
-            // emulator behavior (guests are expected to re-ring the doorbell after enabling BME).
-            self.doorbell_pending = false;
         }
 
         // Only suppress vblank IRQ latching for a single `tick` call after the enable transition.

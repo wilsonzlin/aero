@@ -152,9 +152,8 @@ fn pci_wrapper_gates_aerogpu_dma_on_pci_command_bme_bit() {
     assert_eq!(mem.read_u32(ring_gpa + RING_HEAD_OFFSET), 0);
     assert_eq!(mem.read_u32(fence_gpa + FENCE_PAGE_MAGIC_OFFSET), 0);
 
-    // Once bus mastering is enabled, the same doorbell should process.
+    // Once bus mastering is enabled, the previously queued doorbell should process.
     dev.config_mut().set_command((1 << 1) | (1 << 2));
-    dev.write(mmio::DOORBELL, 4, 1);
     dev.tick(&mut mem, 0);
     assert_eq!(dev.regs.completed_fence, 42);
     assert_eq!(mem.read_u32(ring_gpa + RING_HEAD_OFFSET), 1);
