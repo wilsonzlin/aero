@@ -73,7 +73,7 @@ impl Telemetry {
         #[cfg(not(target_arch = "wasm32"))]
         {
             let now_ns = duration_as_u64_ns(self.start.elapsed());
-            return self.snapshot_at(now_ns);
+            self.snapshot_at(now_ns)
         }
 
         #[cfg(target_arch = "wasm32")]
@@ -105,7 +105,7 @@ impl Telemetry {
         let window_ns = now_ns.saturating_sub(prev.at_ns);
         *guard = Some(JitRollingState { at_ns: now_ns, totals });
 
-        let window_ms = (window_ns / 1_000_000).min(u64::MAX);
+        let window_ms = window_ns / 1_000_000;
         let window_s = (window_ns as f64) / 1_000_000_000.0;
         if window_s <= 0.0 {
             return JitRollingExport {
@@ -147,4 +147,3 @@ impl Telemetry {
         }
     }
 }
-

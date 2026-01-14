@@ -122,6 +122,7 @@ pub enum TemplateKind {
     MovRaxM64,
     AddM64Rax,
     SubM64Rax,
+    RepStosb,
     Ud2,
     MovRaxM64Abs0,
     GuardedOobLoad,
@@ -163,6 +164,11 @@ pub enum InitPreset {
     NonZeroRbx,
     /// Force `RBX` to 0 (useful for divide-by-zero fault templates).
     ZeroRbx,
+    /// Force `RDI = mem_base + data_off` and `RCX` into `1..=max`.
+    ///
+    /// This is intended for `REP STOS*`-style templates where both the destination pointer and
+    /// iteration count must be constrained to avoid hangs or memory faults.
+    MemAtRdiSmallRcx { data_off: u32, max: u32 },
 }
 
 impl InitPreset {
@@ -186,12 +192,18 @@ impl InitPreset {
             InitPreset::ZeroRbx => {
                 init.rbx = 0;
             }
+            InitPreset::MemAtRdiSmallRcx { data_off, max } => {
+                init.rdi = mem_base + data_off as u64;
+                let max = (max as u64).max(1);
+                init.rcx = (init.rcx % max) + 1;
+            }
         }
     }
 
     fn required_memory_len(self) -> Option<usize> {
         match self {
             InitPreset::MemAtRdi { data_off } => Some(data_off as usize + 64),
+            InitPreset::MemAtRdiSmallRcx { data_off, .. } => Some(data_off as usize + 64),
             _ => None,
         }
     }
@@ -983,6 +995,18 @@ pub fn templates() -> Vec<InstructionTemplate> {
             init: InitPreset::MemAtRdi { data_off: 0 },
         },
         InstructionTemplate {
+            name: "rep stosb",
+            coverage_key: "rep_stos",
+            bytes: &[0xF3, 0xAA],
+            kind: TemplateKind::RepStosb,
+            flags_mask: all_flags,
+            mem_compare_len: CODE_OFF,
+            init: InitPreset::MemAtRdiSmallRcx {
+                data_off: 0,
+                max: 16,
+            },
+        },
+        InstructionTemplate {
             name: "ud2",
             coverage_key: "fault_ud2",
             bytes: &[0x0F, 0x0B],
@@ -1108,10 +1132,6 @@ impl TestCase {
     }
 }
 
-fn is_fault_template(kind: TemplateKind) -> bool {
-    kind.is_fault_template()
-}
-
 fn apply_auto_fixups(
     case_idx: usize,
     template: &InstructionTemplate,
@@ -1121,7 +1141,7 @@ fn apply_auto_fixups(
     rng: &mut XorShift64,
 ) {
     // Fault templates intentionally crash in user-mode; don't "fix" them into non-faulting cases.
-    if is_fault_template(template.kind) {
+    if template.kind.is_fault_template() {
         return;
     }
 
@@ -1294,11 +1314,11 @@ fn fixup_div_idiv(
 
     // Pick small, positive operands and clear the high half of the dividend so we don't hit #DE
     // (div-by-zero or quotient overflow).
-    let dividend = (rng.next_u64() & 0xFFFF) as u64;
+    let dividend = rng.next_u64() & 0xFFFF;
     init.rax = dividend;
     init.rdx = 0;
 
-    let divisor = (rng.next_u64() & 0xFFFF) as u64 | 1;
+    let divisor = (rng.next_u64() & 0xFFFF) | 1;
 
     match instruction.op0_kind() {
         OpKind::Register => {
@@ -1310,8 +1330,7 @@ fn fixup_div_idiv(
                 Some(addr) => addr,
                 None => return,
             };
-            let size = instruction.memory_size().size() as usize;
-            let size = size.max(1).min(8);
+            let size = instruction.memory_size().size().clamp(1, 8);
             write_memory_le(memory, mem_base, addr, divisor, size);
         }
         _ => {}
@@ -1342,7 +1361,7 @@ fn fixup_memory_operands(
         return;
     }
 
-    let access_size = instruction.memory_size().size() as usize;
+    let access_size = instruction.memory_size().size();
     let access_size = access_size.max(1);
 
     // Keep all regular memory operands inside the data prefix, before the code bytes at CODE_OFF.
@@ -1638,7 +1657,7 @@ mod tests {
             let template = &templates[case_idx % templates.len()];
             let case = TestCase::generate(case_idx, template, &mut rng, mem_base);
 
-            if is_fault_template(template.kind) {
+            if template.kind.is_fault_template() {
                 continue;
             }
 
@@ -1770,6 +1789,34 @@ mod tests {
             let case = TestCase::generate(case_idx, &template, &mut rng, 0x1000);
             assert_ne!(case.init.rbx, 0, "RBX must be non-zero");
             assert_eq!(case.init.rbx & 1, 1, "RBX low bit should be set");
+        }
+    }
+
+    #[test]
+    fn init_preset_mem_at_rdi_small_rcx_sets_both() {
+        let mem_base = 0x2000u64;
+        let template = InstructionTemplate {
+            name: "test",
+            coverage_key: "test",
+            bytes: &[0x90],
+            kind: TemplateKind::MovRaxRbx,
+            flags_mask: 0,
+            mem_compare_len: 0,
+            init: InitPreset::MemAtRdiSmallRcx {
+                data_off: 12,
+                max: 9,
+            },
+        };
+
+        let mut rng = XorShift64::new(1);
+        for case_idx in 0..128 {
+            let case = TestCase::generate(case_idx, &template, &mut rng, mem_base);
+            assert_eq!(case.init.rdi, mem_base + 12);
+            assert!(
+                (1..=9).contains(&(case.init.rcx as u32)),
+                "RCX={} should be in 1..=9",
+                case.init.rcx
+            );
         }
     }
 

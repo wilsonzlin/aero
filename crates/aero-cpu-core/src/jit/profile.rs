@@ -61,6 +61,10 @@ impl HotnessProfile {
         self.counters.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.counters.is_empty()
+    }
+
     pub fn counter(&self, entry_rip: u64) -> u32 {
         self.counters.get(&entry_rip).map(|e| e.count).unwrap_or(0)
     }
@@ -168,7 +172,7 @@ impl HotnessProfile {
                 continue;
             }
             let key = (entry.count, entry.last_hit, rip);
-            if victim.map_or(true, |v| key < v) {
+            if victim.is_none_or(|v| key < v) {
                 victim = Some(key);
             }
         }
@@ -199,4 +203,3 @@ impl HotnessProfile {
         self.requested.clear();
     }
 }
-
