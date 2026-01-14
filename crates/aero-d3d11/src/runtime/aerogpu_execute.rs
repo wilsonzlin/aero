@@ -1694,13 +1694,14 @@ impl AerogpuCmdRuntime {
                         ib.offset
                     )
                 })?;
-                let first_index = args.first_index.checked_add(offset_indices).ok_or_else(
-                    || {
-                        anyhow!(
+                let first_index =
+                    args.first_index
+                        .checked_add(offset_indices)
+                        .ok_or_else(|| {
+                            anyhow!(
                             "DRAW_INDEXED first_index overflows after applying index buffer offset"
                         )
-                    },
-                )?;
+                        })?;
 
                 (
                     args.index_count,

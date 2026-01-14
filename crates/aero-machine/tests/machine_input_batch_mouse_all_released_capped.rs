@@ -49,7 +49,9 @@ fn inject_input_batch_mouse_all_released_sync_is_bounded_per_call() {
         "virtio-input mouse should start without DRIVER_OK"
     );
     let bdf = profile::VIRTIO_INPUT_MOUSE.bdf;
-    let pci_cfg = m.pci_config_ports().expect("PCI config ports should be present");
+    let pci_cfg = m
+        .pci_config_ports()
+        .expect("PCI config ports should be present");
     {
         let mut pci_cfg = pci_cfg.borrow_mut();
         let cfg = pci_cfg
@@ -59,7 +61,7 @@ fn inject_input_batch_mouse_all_released_sync_is_bounded_per_call() {
         let mut cmd = cfg.command();
         // Enable BAR MMIO decoding so the BAR0 write is accepted.
         cmd |= 0x0002; // COMMAND.MEM
-        // Keep bus mastering disabled so `process_virtio_input()` does not attempt DMA.
+                       // Keep bus mastering disabled so `process_virtio_input()` does not attempt DMA.
         cmd &= !0x0004; // COMMAND.BME
         cfg.set_command(cmd);
     }
@@ -89,4 +91,3 @@ fn inject_input_batch_mouse_all_released_sync_is_bounded_per_call() {
         "expected a single virtio all-release sync (8 buttons * (EV_KEY + SYN))"
     );
 }
-

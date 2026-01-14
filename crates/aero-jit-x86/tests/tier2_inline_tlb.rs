@@ -1261,7 +1261,7 @@ fn tier2_inline_tlb_code_version_bump_skips_out_of_bounds_physical_page() {
     // Initialize the in-bounds table entries with distinct values.
     write_u32_le(&mut ram, table_ptr, 5); // page 0
     write_u32_le(&mut ram, table_ptr + 4, 10); // page 1
-                                                // Sentinel for the would-be out-of-bounds page 2 entry.
+                                               // Sentinel for the would-be out-of-bounds page 2 entry.
     write_u32_le(&mut ram, table_ptr + 8, 0xDEAD_BEEF);
 
     let cpu_ptr = ram.len() as u64;
@@ -1437,8 +1437,8 @@ fn tier2_inline_tlb_permission_retranslate_updates_physical_base_for_load() {
     ram[0x2010..0x2010 + 4].copy_from_slice(&0x3333_4444u32.to_le_bytes());
     let cpu_ptr = ram.len() as u64;
 
-    let tlb_data = (0x2000u64 & PAGE_BASE_MASK)
-        | (TLB_FLAG_WRITE | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM); // Missing READ.
+    let tlb_data =
+        (0x2000u64 & PAGE_BASE_MASK) | (TLB_FLAG_WRITE | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM); // Missing READ.
     let (_ret, _got_ram, gpr, host) =
         run_trace_with_prefilled_tlbs(&trace, ram, cpu_ptr, 0x20_000, &[(0x1010, tlb_data)]);
 
@@ -1471,8 +1471,7 @@ fn tier2_inline_tlb_permission_retranslate_updates_physical_base_for_store() {
     ram[0x2010..0x2010 + 4].copy_from_slice(&0x3333_4444u32.to_le_bytes());
     let cpu_ptr = ram.len() as u64;
 
-    let tlb_data =
-        (0x2000u64 & PAGE_BASE_MASK) | (TLB_FLAG_READ | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM); // Missing WRITE.
+    let tlb_data = (0x2000u64 & PAGE_BASE_MASK) | (TLB_FLAG_READ | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM); // Missing WRITE.
     let (_ret, got_ram, _gpr, host) =
         run_trace_with_prefilled_tlbs(&trace, ram, cpu_ptr, 0x20_000, &[(0x1010, tlb_data)]);
 

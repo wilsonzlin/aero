@@ -1452,7 +1452,10 @@ mod virtio_input_device_desc_split_tests {
 "#;
         let err = validate(inf, true).unwrap_err();
         let msg = format!("{err:#}");
-        assert!(msg.contains("expected exactly one generic fallback model entry"), "{msg}");
+        assert!(
+            msg.contains("expected exactly one generic fallback model entry"),
+            "{msg}"
+        );
     }
 
     #[test]
@@ -1886,10 +1889,8 @@ fn validate_in_tree_infs(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
                         )
                     })?;
 
-                    let canonical_bytes = strip_inf_sections_bytes(
-                        &canonical_bytes,
-                        &["aero.ntx86", "aero.ntamd64"],
-                    );
+                    let canonical_bytes =
+                        strip_inf_sections_bytes(&canonical_bytes, &["aero.ntx86", "aero.ntamd64"]);
                     let alias_bytes =
                         strip_inf_sections_bytes(&alias_bytes, &["aero.ntx86", "aero.ntamd64"]);
 
