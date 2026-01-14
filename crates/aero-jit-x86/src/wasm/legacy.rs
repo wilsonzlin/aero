@@ -124,6 +124,7 @@ impl WasmCodegen {
         let mut uses_store_u64 = false;
         let mut needs_jit_exit = false;
         let mut has_mem_ops = false;
+        let mut needs_fast_path = false;
 
         let may_cross_page = |addr: Operand, size_bytes: u32| -> bool {
             if size_bytes <= 1 {
@@ -138,6 +139,18 @@ impl WasmCodegen {
             (addr & PAGE_OFFSET_MASK) > cross_limit
         };
 
+        let always_cross_page = |addr: Operand, size_bytes: u32| -> bool {
+            if size_bytes <= 1 {
+                return false;
+            }
+            let cross_limit =
+                PAGE_OFFSET_MASK.saturating_sub(u64::from(size_bytes).saturating_sub(1));
+            let Operand::Imm(v) = addr else {
+                return false;
+            };
+            (v as u64 & PAGE_OFFSET_MASK) > cross_limit
+        };
+
         let mut may_cross_page_load_u16 = false;
         let mut may_cross_page_load_u32 = false;
         let mut may_cross_page_load_u64 = false;
@@ -150,36 +163,42 @@ impl WasmCodegen {
                 IrOp::Load { size, addr, .. } => {
                     has_mem_ops = true;
                     match size {
-                        MemSize::U8 => {}
+                        MemSize::U8 => needs_fast_path = true,
                         MemSize::U16 => {
                             uses_load_u16 = true;
                             may_cross_page_load_u16 |= may_cross_page(addr, 2);
+                            needs_fast_path |= !always_cross_page(addr, 2);
                         }
                         MemSize::U32 => {
                             uses_load_u32 = true;
                             may_cross_page_load_u32 |= may_cross_page(addr, 4);
+                            needs_fast_path |= !always_cross_page(addr, 4);
                         }
                         MemSize::U64 => {
                             uses_load_u64 = true;
                             may_cross_page_load_u64 |= may_cross_page(addr, 8);
+                            needs_fast_path |= !always_cross_page(addr, 8);
                         }
                     }
                 }
                 IrOp::Store { size, addr, .. } => {
                     has_mem_ops = true;
                     match size {
-                        MemSize::U8 => {}
+                        MemSize::U8 => needs_fast_path = true,
                         MemSize::U16 => {
                             uses_store_u16 = true;
                             may_cross_page_store_u16 |= may_cross_page(addr, 2);
+                            needs_fast_path |= !always_cross_page(addr, 2);
                         }
                         MemSize::U32 => {
                             uses_store_u32 = true;
                             may_cross_page_store_u32 |= may_cross_page(addr, 4);
+                            needs_fast_path |= !always_cross_page(addr, 4);
                         }
                         MemSize::U64 => {
                             uses_store_u64 = true;
                             may_cross_page_store_u64 |= may_cross_page(addr, 8);
+                            needs_fast_path |= !always_cross_page(addr, 8);
                         }
                     }
                 }
@@ -199,8 +218,8 @@ impl WasmCodegen {
         let needs_mem_write_u16 = uses_store_u16 && may_cross_page_store_u16;
         let needs_mem_write_u32 = uses_store_u32 && may_cross_page_store_u32;
         let needs_mem_write_u64 = uses_store_u64 && may_cross_page_store_u64;
-        let needs_mmu_translate = has_mem_ops;
-        let needs_jit_exit_mmio = has_mem_ops;
+        let needs_mmu_translate = has_mem_ops && needs_fast_path;
+        let needs_jit_exit_mmio = has_mem_ops && needs_fast_path;
 
         let mut types = TypeSection::new();
         // Keep the type section minimal: only emit helper types that are actually required by this
@@ -398,14 +417,16 @@ impl WasmCodegen {
         f.instruction(&Instruction::I64Load(memarg(CpuState::RIP_OFFSET, 3)));
         f.instruction(&Instruction::LocalSet(layout.rip_local()));
 
-        // Load guest RAM base and TLB salt (JIT metadata).
-        f.instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
-        f.instruction(&Instruction::I64Load(memarg(CpuState::RAM_BASE_OFFSET, 3)));
-        f.instruction(&Instruction::LocalSet(layout.ram_base_local()));
+        // Load guest RAM base and TLB salt (JIT metadata) when the inline-TLB fast path is used.
+        if needs_mmu_translate {
+            f.instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
+            f.instruction(&Instruction::I64Load(memarg(CpuState::RAM_BASE_OFFSET, 3)));
+            f.instruction(&Instruction::LocalSet(layout.ram_base_local()));
 
-        f.instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
-        f.instruction(&Instruction::I64Load(memarg(CpuState::TLB_SALT_OFFSET, 3)));
-        f.instruction(&Instruction::LocalSet(layout.tlb_salt_local()));
+            f.instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
+            f.instruction(&Instruction::I64Load(memarg(CpuState::TLB_SALT_OFFSET, 3)));
+            f.instruction(&Instruction::LocalSet(layout.tlb_salt_local()));
+        }
 
         // Default next_rip = current rip.
         f.instruction(&Instruction::LocalGet(layout.rip_local()));
@@ -661,6 +682,22 @@ impl Emitter<'_> {
                     MemSize::U64 => (8u32, self.imported.mem_read_u64),
                 };
 
+                if self.imported.mmu_translate.is_none() {
+                    // The import selection logic has proven that this load always crosses a page
+                    // boundary, so the module doesn't need the inline-TLB fast-path imports.
+                    let slow_read = slow_read.expect("memory read helper import missing");
+                    self.f
+                        .instruction(&Instruction::LocalGet(self.layout.cpu_ptr_local()));
+                    self.f
+                        .instruction(&Instruction::LocalGet(self.layout.scratch_vaddr_local()));
+                    self.f.instruction(&Instruction::Call(slow_read));
+                    if !matches!(size, MemSize::U64) {
+                        self.f.instruction(&Instruction::I64ExtendI32U);
+                    }
+                    self.emit_set_place(dst);
+                    return;
+                }
+
                 let emit_fast_load = |this: &mut Self| {
                     // Fast path: inline JIT TLB lookup + direct RAM load.
                     this.emit_translate_and_cache(0, TLB_FLAG_READ);
@@ -734,6 +771,22 @@ impl Emitter<'_> {
                     MemSize::U32 => (4u32, self.imported.mem_write_u32),
                     MemSize::U64 => (8u32, self.imported.mem_write_u64),
                 };
+
+                if self.imported.mmu_translate.is_none() {
+                    // The import selection logic has proven that this store always crosses a page
+                    // boundary, so the module doesn't need the inline-TLB fast-path imports.
+                    let slow_write = slow_write.expect("memory write helper import missing");
+                    self.f
+                        .instruction(&Instruction::LocalGet(self.layout.cpu_ptr_local()));
+                    self.f
+                        .instruction(&Instruction::LocalGet(self.layout.scratch_vaddr_local()));
+                    self.emit_operand(value);
+                    if !matches!(size, MemSize::U64) {
+                        self.f.instruction(&Instruction::I32WrapI64);
+                    }
+                    self.f.instruction(&Instruction::Call(slow_write));
+                    return;
+                }
 
                 let emit_fast_store = |this: &mut Self| {
                     // Fast path: inline JIT TLB lookup + direct RAM store.

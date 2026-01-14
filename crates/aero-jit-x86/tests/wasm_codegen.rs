@@ -491,9 +491,48 @@ fn wasm_codegen_exit_only_imports_only_memory() {
 }
 
 #[test]
+fn wasm_codegen_cross_page_only_block_elides_tlb_imports() {
+    // A cross-page-only block can use the slow `mem_read_*` helpers without importing the
+    // inline-TLB fast-path helpers.
+    let block = IrBlock::new(vec![
+        IrOp::Load {
+            dst: Place::Reg(Reg::Rax),
+            addr: Operand::Imm(0xFF9), // U64 at 0xFF9 crosses the 4KiB boundary.
+            size: MemSize::U64,
+        },
+        IrOp::Exit {
+            next_rip: Operand::Imm(0x1000),
+        },
+    ]);
+
+    let wasm = WasmCodegen::new().compile_block(&block);
+    validate_wasm(&wasm);
+
+    let import_types = env_func_import_types(&wasm);
+    assert!(
+        import_types.contains_key(IMPORT_MEM_READ_U64),
+        "expected env.mem_read_u64 import for cross-page load"
+    );
+    assert!(
+        !import_types.contains_key(IMPORT_MMU_TRANSLATE),
+        "expected cross-page-only block to not import env.mmu_translate"
+    );
+    assert!(
+        !import_types.contains_key(IMPORT_JIT_EXIT_MMIO),
+        "expected cross-page-only block to not import env.jit_exit_mmio"
+    );
+}
+
+#[test]
 fn wasm_codegen_reuses_helper_types() {
     // Force all helper types to be present so we can validate signature re-use.
     let block = IrBlock::new(vec![
+        // A same-page access forces the inline-TLB fast-path imports.
+        IrOp::Load {
+            dst: Place::Reg(Reg::Rdx),
+            addr: Operand::Imm(0),
+            size: MemSize::U8,
+        },
         // Cross-page reads/writes so the slow helpers must be imported.
         IrOp::Load {
             dst: Place::Reg(Reg::Rax),
