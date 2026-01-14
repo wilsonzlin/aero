@@ -413,6 +413,10 @@ The preserved private-data layout is defined in:
 - `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h` (canonical definition)
 - `drivers/aerogpu/protocol/aerogpu_alloc.h` (stable wrapper include)
 
+For the end-to-end Win7 shared-surface `share_token` strategy (including the rationale for not using user-mode shared `HANDLE` numeric values as protocol keys) and guest validation tests, see:
+
+- `docs/graphics/win7-shared-surfaces-share-token.md`
+
 ### Submission-time `READONLY` (`aerogpu_alloc_entry.flags`)
 
 For versioned ABI submissions (`aerogpu_ring.h`), the KMD can attach a per-submit allocation table (`aerogpu_alloc_table`) so the host can resolve `alloc_id → (gpa, size, flags)` safely for the **current** submission.
