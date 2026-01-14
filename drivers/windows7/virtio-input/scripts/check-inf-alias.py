@@ -14,13 +14,12 @@ Developers may locally enable the alias by renaming it to `virtio-input.inf`.
 
 Policy:
   - The alias INF is a *filename alias only*.
-  - It is allowed to diverge from the canonical INF only in the models sections
-    (`[Aero.NTx86]` / `[Aero.NTamd64]`) to add the opt-in strict revision-gated
-    generic fallback HWID match (no SUBSYS).
-  - Outside those models sections, from the first section header (typically
-    `[Version]`) onward, it must remain byte-for-byte identical to the canonical
-    INF.
+  - From the first section header (`[Version]`) onward, the alias must remain
+    byte-for-byte identical to the canonical INF.
   - Only the leading banner/comment block may differ.
+  - The CI guardrail `scripts/ci/check-windows7-virtio-contract-consistency.py`
+    validates the virtio-input HWID/model-line policy (keyboard/mouse + strict
+    fallback + no tablet entry).
 Run from the repo root:
   python3 drivers/windows7/virtio-input/scripts/check-inf-alias.py
 """
@@ -105,29 +104,6 @@ def _decode_lines_for_diff(data: bytes) -> list[str]:
             text = text.replace("\x00", "")
     return text.splitlines(keepends=True)
 
-def strip_inf_sections(data: bytes, *, sections: set[str]) -> bytes:
-    """Remove entire INF sections (including their headers) by name (case-insensitive)."""
-
-    out: list[bytes] = []
-    skipping = False
-
-    for line in data.splitlines(keepends=True):
-        # Support both UTF-8/ASCII INFs and UTF-16LE/BE INFs by stripping NUL bytes for
-        # section header detection only.
-        line_ascii = line.replace(b"\x00", b"")
-        stripped = line_ascii.lstrip(b" \t")
-        if stripped.startswith(b"[") and b"]" in stripped:
-            end = stripped.find(b"]")
-            name = stripped[1:end].strip().decode("utf-8", errors="replace").lower()
-            skipping = name in sections
-
-        if skipping:
-            continue
-        out.append(line)
-
-    return b"".join(out)
-
-
 def main() -> int:
     virtio_input_root = Path(__file__).resolve().parents[1]
     repo_root = virtio_input_root.parents[2]
@@ -151,17 +127,15 @@ def main() -> int:
         )
         return 0
 
-    canonical_body = strip_inf_sections(
-        inf_functional_bytes(canonical), sections={"aero.ntx86", "aero.ntamd64"}
-    )
-    alias_body = strip_inf_sections(inf_functional_bytes(alias), sections={"aero.ntx86", "aero.ntamd64"})
+    canonical_body = inf_functional_bytes(canonical)
+    alias_body = inf_functional_bytes(alias)
     if canonical_body == alias_body:
         return 0
 
     sys.stderr.write("virtio-input INF alias drift detected.\n")
     sys.stderr.write(
-        "The alias INF must match the canonical INF from [Version] onward outside the models sections "
-        "([Aero.NTx86] / [Aero.NTamd64]).\n\n"
+        "The alias INF must match the canonical INF from [Version] onward "
+        "(byte-for-byte; only the leading banner/comments may differ).\n\n"
     )
 
     canonical_lines = _decode_lines_for_diff(canonical_body)
@@ -179,8 +153,7 @@ def main() -> int:
         tofile=alias_label,
         lineterm="",
     )
-    for line in diff:
-        sys.stderr.write(line + "\n")
+    sys.stderr.write("".join(diff))
 
     return 1
 

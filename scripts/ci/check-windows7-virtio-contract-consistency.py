@@ -4530,8 +4530,9 @@ def main() -> None:
         # The legacy alias INF is kept for compatibility with workflows/tools that reference the
         # legacy `virtio-input.inf` basename.
         #
-        # Policy: it must be a filename-only alias and remain in sync with the canonical INF
-        # from the first section header (`[Version]`) onward.
+        # Policy: it is a filename alias only and must be byte-for-byte identical to the
+        # canonical INF from the first section header (`[Version]`) onward (only the leading
+        # banner/comments may differ).
         validate_virtio_input_model_lines(
             inf_path=virtio_input_alias,
             strict_hwid=strict_hwid,
@@ -4539,12 +4540,11 @@ def main() -> None:
             require_fallback=True,
             errors=errors,
         )
-        drift = check_inf_alias_drift_excluding_sections(
+        drift = check_inf_alias_drift(
             canonical=virtio_input_canonical,
             alias=virtio_input_alias,
             repo_root=REPO_ROOT,
             label="virtio-input",
-            drop_sections=set(),
         )
         if drift:
             errors.append(drift)
