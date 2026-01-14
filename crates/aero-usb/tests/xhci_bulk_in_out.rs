@@ -15,8 +15,8 @@ const TRB_LEN: u64 = 0x10;
 
 fn make_normal_trb(buf_ptr: u64, len: u32, cycle: bool, chain: bool, ioc: bool) -> Trb {
     let mut trb = Trb::new(buf_ptr, len & Trb::STATUS_TRANSFER_LEN_MASK, 0);
-    trb.set_cycle(cycle);
     trb.set_trb_type(TrbType::Normal);
+    trb.set_cycle(cycle);
     if chain {
         trb.control |= Trb::CONTROL_CHAIN_BIT;
     }
@@ -27,9 +27,9 @@ fn make_normal_trb(buf_ptr: u64, len: u32, cycle: bool, chain: bool, ioc: bool) 
 }
 
 fn make_link_trb(target: u64, cycle: bool, toggle_cycle: bool) -> Trb {
-    let mut trb = Trb::new(target, 0, 0);
-    trb.set_cycle(cycle);
+    let mut trb = Trb::new(target & !0x0f, 0, 0);
     trb.set_trb_type(TrbType::Link);
+    trb.set_cycle(cycle);
     trb.set_link_toggle_cycle(toggle_cycle);
     trb
 }

@@ -2,7 +2,7 @@ use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 
-pub use super::trb::{Trb, TrbType};
+pub use super::trb::{CompletionCode, Trb, TrbType};
 use super::trb::TRB_LEN;
 
 use crate::device::{UsbInResult, UsbOutResult};
@@ -18,20 +18,6 @@ const MAX_LINK_SKIP: usize = 32;
 
 /// Maximum number of TRBs we'll consider part of a single TD (chain).
 const MAX_TD_TRBS: usize = 64;
-
-/// xHCI transfer completion codes (Completion Code field).
-///
-/// This is a minimal subset required for interrupt HID transfers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum CompletionCode {
-    Invalid = 0,
-    Success = 1,
-    UsbTransactionError = 4,
-    TrbError = 5,
-    StallError = 6,
-    ShortPacket = 13,
-}
 
 pub fn read_trb<M: MemoryBus + ?Sized>(mem: &mut M, paddr: u64) -> Trb {
     Trb::read_from(mem, paddr)

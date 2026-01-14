@@ -17,9 +17,17 @@ pub const TRB_LEN: usize = 16;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum CompletionCode {
+    /// Invalid completion code (0).
+    ///
+    /// This is not a valid completion outcome for architectural TRBs, but is the reserved "invalid"
+    /// value in the xHCI specification.
+    Invalid = 0,
     Success = 1,
+    UsbTransactionError = 4,
     TrbError = 5,
+    StallError = 6,
     SlotNotEnabledError = 11,
+    ShortPacket = 13,
     ParameterError = 17,
     ContextStateError = 19,
 }
