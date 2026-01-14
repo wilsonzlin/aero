@@ -23,6 +23,16 @@ on:
         required: false
         default: "18080"
         type: string
+      udp_port:
+        description: UDP port on the runner for the harness echo server (guest reaches it as 10.0.2.2:<port>)
+        required: false
+        default: "18081"
+        type: string
+      disable_udp:
+        description: Disable the host UDP echo server and do not require the guest virtio-net-udp marker (useful for older guest images)
+        required: false
+        default: false
+        type: boolean
       snapshot:
         description: Run QEMU in snapshot mode (discard disk writes)
         required: false
@@ -215,6 +225,8 @@ jobs:
             echo "  qemu_system: '${{ inputs.qemu_system }}'"
             echo "  timeout_seconds: '${{ inputs.timeout_seconds }}'"
             echo "  http_port: '${{ inputs.http_port }}'"
+            echo "  udp_port: '${{ inputs.udp_port }}'"
+            echo "  disable_udp: '${{ inputs.disable_udp }}'"
             echo "  snapshot: '${{ inputs.snapshot }}'"
             echo "  follow_serial: '${{ inputs.follow_serial }}'"
             echo "  qemu_preflight_pci: '${{ inputs.qemu_preflight_pci }}'"
@@ -249,6 +261,7 @@ jobs:
             qemu_system="${{ inputs.qemu_system }}"
             timeout_seconds="${{ inputs.timeout_seconds }}"
             http_port="${{ inputs.http_port }}"
+            udp_port="${{ inputs.udp_port }}"
 
             if [[ -z "${disk_image_path}" ]]; then
               echo "ERROR: workflow input 'disk_image_path' is empty."
@@ -281,6 +294,14 @@ jobs:
             fi
             if (( http_port < 1 || http_port > 65535 )); then
               echo "ERROR: workflow input 'http_port' must be in range 1..65535, got: '${http_port}'"
+              exit 1
+            fi
+            if [[ -z "${udp_port}" || ! "${udp_port}" =~ ^[0-9]+$ ]]; then
+              echo "ERROR: workflow input 'udp_port' must be an integer UDP port, got: '${udp_port}'"
+              exit 1
+            fi
+            if (( udp_port < 1 || udp_port > 65535 )); then
+              echo "ERROR: workflow input 'udp_port' must be in range 1..65535, got: '${udp_port}'"
               exit 1
             fi
 
@@ -337,6 +358,7 @@ jobs:
               --serial-log "${serial_log}"
               --http-log "${http_log}"
               --http-port "${http_port}"
+              --udp-port "${udp_port}"
               --timeout-seconds "${timeout_seconds}"
             )
             if [[ "${{ inputs.snapshot }}" == "true" ]]; then
@@ -347,6 +369,9 @@ jobs:
             fi
             if [[ "${{ inputs.qemu_preflight_pci }}" == "true" ]]; then
               args+=(--qemu-preflight-pci)
+            fi
+            if [[ "${{ inputs.disable_udp }}" == "true" ]]; then
+              args+=(--disable-udp)
             fi
             if [[ "${force_intx}" == "true" ]]; then
               args+=(--force-intx)

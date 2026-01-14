@@ -1156,9 +1156,12 @@ On the self-hosted runner you need:
 - Python 3 (`python3`)
 - a prepared Win7 disk image available at a stable path on the runner (pass via the workflow input `disk_image_path`)
 
-> Note: The harness uses a fixed localhost HTTP port (default `18080`). The workflow enforces
+> Note: The harness uses fixed localhost ports by default (HTTP `18080`, UDP `18081`). The workflow enforces
 > `concurrency.group: win7-virtio-harness` to prevent concurrent runs from fighting over ports/images.
-> If `18080` is already in use on your runner, override it via the workflow input `http_port`.
+> If either port is already in use on your runner, override them via the workflow inputs `http_port` / `udp_port`.
+> If you override `udp_port`, provision the guest scheduled task with the same `--udp-port` (for example via
+> `New-AeroWin7TestImage.ps1 -UdpPort <port>`).
+> To run against older guest selftest binaries that do not implement the UDP test marker, set `disable_udp=true`.
 
 To enable the optional host-side QEMU PCI ID preflight (`query-pci` via QMP), set the workflow input
 `qemu_preflight_pci=true`. This helps catch missing/ignored `x-pci-revision=0x01` (REV_01) configuration early.
