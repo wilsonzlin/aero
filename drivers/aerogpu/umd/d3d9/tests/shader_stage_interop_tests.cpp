@@ -1002,10 +1002,12 @@ bool TestPsOnlyXyzDiffuseBindsWvpVs() {
     return false;
   }
 
-  if (!Check(dev->fixedfunc_vs_xyz_diffuse != nullptr, "fixedfunc_vs_xyz_diffuse created")) {
+  // XYZ|DIFFUSE draws are CPU-transformed to clip-space in the draw path. The
+  // PS-only interop fallback therefore binds a passthrough internal VS.
+  if (!Check(dev->fixedfunc_vs != nullptr, "fixedfunc_vs created")) {
     return false;
   }
-  const aerogpu_handle_t wvp_vs_handle = dev->fixedfunc_vs_xyz_diffuse->handle;
+  const aerogpu_handle_t passthrough_vs_handle = dev->fixedfunc_vs->handle;
 
   dev->cmd.finalize();
   const uint8_t* buf = dev->cmd.data();
@@ -1014,7 +1016,7 @@ bool TestPsOnlyXyzDiffuseBindsWvpVs() {
     return false;
   }
 
-  bool saw_wvp_vs_bind = false;
+  bool saw_passthrough_vs_bind = false;
   size_t offset = sizeof(aerogpu_cmd_stream_header);
   const size_t stream_len = StreamBytesUsed(buf, len);
   while (offset + sizeof(aerogpu_cmd_hdr) <= stream_len) {
@@ -1024,8 +1026,8 @@ bool TestPsOnlyXyzDiffuseBindsWvpVs() {
       if (!Check(bind->vs != 0 && bind->ps != 0, "BIND_SHADERS must not bind null handles")) {
         return false;
       }
-      if (bind->ps == ps_handle && bind->vs == wvp_vs_handle) {
-        saw_wvp_vs_bind = true;
+      if (bind->ps == ps_handle && bind->vs == passthrough_vs_handle) {
+        saw_passthrough_vs_bind = true;
       }
     }
     if (hdr->size_bytes == 0 || hdr->size_bytes > stream_len - offset) {
@@ -1034,7 +1036,7 @@ bool TestPsOnlyXyzDiffuseBindsWvpVs() {
     offset += hdr->size_bytes;
   }
 
-  return Check(saw_wvp_vs_bind, "saw BIND_SHADERS with WVP VS handle + user PS handle");
+  return Check(saw_passthrough_vs_bind, "saw BIND_SHADERS with passthrough VS handle + user PS handle");
 }
 
 bool TestUnsupportedFvfPsOnlyFailsWithoutDraw() {
