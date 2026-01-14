@@ -10124,6 +10124,20 @@ int wmain(int argc, wchar_t **argv) {
     const wchar_t *a = argv[i];
     if (wcscmp(a, L"--help") == 0 || wcscmp(a, L"-h") == 0 || wcscmp(a, L"/?") == 0) {
       PrintUsage();
+      if (g_json_output) {
+        std::string json;
+        JsonWriter w(&json);
+        w.BeginObject();
+        w.Key("schema_version");
+        w.Uint32(1);
+        w.Key("command");
+        w.String("help");
+        w.Key("ok");
+        w.Bool(true);
+        w.EndObject();
+        json.push_back('\n');
+        WriteJsonToDestination(json);
+      }
       return 0;
     }
 
