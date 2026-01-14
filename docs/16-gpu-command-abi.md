@@ -484,3 +484,9 @@ may also mirror `gs` into the legacy `reserved0` field. If mirrored, it should m
 
 See the authoritative comment block above `struct aerogpu_cmd_bind_shaders` in
 `drivers/aerogpu/protocol/aerogpu_cmd.h`.
+
+Implementation note: the repository provides convenience helpers that emit the extended packet
+layout directly:
+
+- Rust: `aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter::bind_shaders_ex(vs, ps, cs, gs, hs, ds)`
+- TypeScript: `AerogpuCmdWriter.bindShadersEx(vs, ps, cs, gs, hs, ds)`
