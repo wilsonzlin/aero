@@ -5,6 +5,7 @@ import { startFrameScheduler, type FrameSchedulerHandle } from "./main/frameSche
 import { GpuRuntime } from "./gpu/gpuRuntime";
 import { fnv1a32Hex } from "./utils/fnv1a";
 import { createTarArchive } from "./utils/tar";
+import { encodeWavPcm16 } from "./utils/wav";
 import { perf } from "./perf/perf";
 import { createAdaptiveRingBufferTarget, createAudioOutput, startAudioPerfSampling } from "./platform/audio";
 import { MicCapture, micRingBufferReadInto, type MicRingBuffer } from "./audio/mic_capture";
@@ -4029,6 +4030,79 @@ function renderAudioPanel(): HTMLElement {
     };
   }
 
+  type AudioOutputWavSnapshotMeta = {
+    sampleRate: number;
+    channelCount: number;
+    capacityFrames: number;
+    readFrameIndex: number;
+    writeFrameIndex: number;
+    availableFrames: number;
+    framesCaptured: number;
+  };
+
+  type MicWavSnapshotMeta = {
+    sampleRate: number;
+    capacitySamples: number;
+    readPos: number;
+    writePos: number;
+    availableSamples: number;
+    samplesCaptured: number;
+    droppedSamples: number;
+  };
+
+  function snapshotAudioOutputWav(
+    out: unknown,
+    opts: { maxSeconds: number },
+  ): { ok: true; wav: Uint8Array; meta: AudioOutputWavSnapshotMeta } | { ok: false; error: string } {
+    if (!out || (typeof out !== "object" && typeof out !== "function")) return { ok: false, error: "Audio output missing." };
+    const o = out as any;
+    const ring = o.ringBuffer as any;
+    if (!ring) return { ok: false, error: "Audio output has no ringBuffer." };
+    if (!(ring.samples instanceof Float32Array)) return { ok: false, error: "Audio output ringBuffer.samples missing." };
+    if (!(ring.readIndex instanceof Uint32Array) || !(ring.writeIndex instanceof Uint32Array)) {
+      return { ok: false, error: "Audio output ringBuffer indices missing." };
+    }
+    const cc = typeof ring.channelCount === "number" ? ring.channelCount >>> 0 : 0;
+    const cap = typeof ring.capacityFrames === "number" ? ring.capacityFrames >>> 0 : 0;
+    if (cc === 0 || cap === 0) return { ok: false, error: "Audio output ringBuffer has invalid channelCount/capacityFrames." };
+
+    const metrics = typeof o.getMetrics === "function" ? o.getMetrics() : null;
+    const sampleRate = typeof metrics?.sampleRate === "number" ? metrics.sampleRate : 0;
+    if (!Number.isFinite(sampleRate) || sampleRate <= 0) return { ok: false, error: "Audio output sample rate unavailable." };
+
+    const readIndex = ring.readIndex as Uint32Array;
+    const writeIndex = ring.writeIndex as Uint32Array;
+    const read = Atomics.load(readIndex, 0) >>> 0;
+    const write = Atomics.load(writeIndex, 0) >>> 0;
+    let available = (write - read) >>> 0;
+    if (available > cap) available = cap;
+    if (available === 0) return { ok: false, error: "Audio output ringBuffer is empty." };
+
+    const maxFrames = Math.max(1, Math.floor(sampleRate * Math.max(0.1, opts.maxSeconds)));
+    const frames = Math.min(available, maxFrames);
+    const start = read % cap;
+    const firstFrames = Math.min(frames, cap - start);
+    const secondFrames = frames - firstFrames;
+
+    const interleaved = new Float32Array(frames * cc);
+    interleaved.set(ring.samples.subarray(start * cc, (start + firstFrames) * cc), 0);
+    if (secondFrames > 0) {
+      interleaved.set(ring.samples.subarray(0, secondFrames * cc), firstFrames * cc);
+    }
+
+    const wav = encodeWavPcm16(interleaved, sampleRate, cc);
+    const meta: AudioOutputWavSnapshotMeta = {
+      sampleRate,
+      channelCount: cc,
+      capacityFrames: cap,
+      readFrameIndex: read,
+      writeFrameIndex: write,
+      availableFrames: available,
+      framesCaptured: frames,
+    };
+    return { ok: true, wav, meta };
+  }
+
   function snapshotMicAttachment(): unknown {
     const att = micAttachment;
     if (!att) return null;
@@ -4045,6 +4119,53 @@ function renderAudioPanel(): HTMLElement {
       return { sampleRate: att.sampleRate, capacitySamples, readPos, writePos, bufferedSamples, droppedSamples };
     } catch {
       return { sampleRate: att.sampleRate, error: "Failed to snapshot microphone ring counters." };
+    }
+  }
+
+  function snapshotMicAttachmentWav(opts: {
+    maxSeconds: number;
+  }): { ok: true; wav: Uint8Array; meta: MicWavSnapshotMeta } | { ok: false; error: string } {
+    const att = micAttachment;
+    if (!att) return { ok: false, error: "Microphone capture is not active." };
+    const sab = att.ringBuffer;
+    if (!(sab instanceof SharedArrayBuffer)) return { ok: false, error: "Invalid mic ring buffer type." };
+    const sampleRate = att.sampleRate;
+    if (!Number.isFinite(sampleRate) || sampleRate <= 0) return { ok: false, error: "Microphone sample rate unavailable." };
+
+    try {
+      const header = new Uint32Array(sab, 0, MIC_HEADER_U32_LEN);
+      const capacitySamples = Atomics.load(header, MIC_CAPACITY_SAMPLES_INDEX) >>> 0;
+      const readPos = Atomics.load(header, MIC_READ_POS_INDEX) >>> 0;
+      const writePos = Atomics.load(header, MIC_WRITE_POS_INDEX) >>> 0;
+      const droppedSamples = Atomics.load(header, MIC_DROPPED_SAMPLES_INDEX) >>> 0;
+
+      let available = (writePos - readPos) >>> 0;
+      if (available > capacitySamples) available = capacitySamples;
+      if (available === 0) return { ok: false, error: "Microphone ring buffer is empty." };
+
+      const data = new Float32Array(sab, MIC_HEADER_BYTES, capacitySamples);
+      const maxSamples = Math.max(1, Math.floor(sampleRate * Math.max(0.1, opts.maxSeconds)));
+      const toRead = Math.min(available, maxSamples);
+      const start = readPos % capacitySamples;
+      const first = Math.min(toRead, capacitySamples - start);
+      const second = toRead - first;
+      const mono = new Float32Array(toRead);
+      mono.set(data.subarray(start, start + first), 0);
+      if (second > 0) mono.set(data.subarray(0, second), first);
+
+      const wav = encodeWavPcm16(mono, sampleRate, 1);
+      const meta: MicWavSnapshotMeta = {
+        sampleRate,
+        capacitySamples,
+        readPos,
+        writePos,
+        availableSamples: available,
+        samplesCaptured: toRead,
+        droppedSamples,
+      };
+      return { ok: true, wav, meta };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
   }
 
@@ -4295,6 +4416,59 @@ function renderAudioPanel(): HTMLElement {
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           entries.push({ path: `${dir}/serial-error.txt`, data: encoder.encode(message) });
+        }
+
+        // Buffered ring audio snapshots (best-effort). This is *not* a long recording: it captures
+        // the currently-buffered samples in the AudioWorklet ring(s) (usually a few hundred ms).
+        try {
+          const summaryLines: string[] = [];
+          const captureSeconds = 3;
+
+          const outputsToCapture: Array<{ name: string; out: unknown }> = [
+            { name: "main", out: g.__aeroAudioOutput },
+            { name: "worker", out: g.__aeroAudioOutputWorker },
+            { name: "hda-demo", out: g.__aeroAudioOutputHdaDemo },
+            { name: "loopback", out: g.__aeroAudioOutputLoopback },
+          ];
+
+          let capturedAny = false;
+          for (const item of outputsToCapture) {
+            const res = snapshotAudioOutputWav(item.out, { maxSeconds: captureSeconds });
+            if (!res.ok) {
+              summaryLines.push(`audio-output-${item.name}: ${res.error}`);
+              continue;
+            }
+            capturedAny = true;
+            entries.push({ path: `${dir}/audio-output-${item.name}.wav`, data: res.wav });
+            entries.push({
+              path: `${dir}/audio-output-${item.name}.json`,
+              data: encoder.encode(JSON.stringify({ timeIso, ...res.meta }, null, 2)),
+            });
+            summaryLines.push(
+              `audio-output-${item.name}.wav: frames=${res.meta.framesCaptured} sr=${res.meta.sampleRate} cc=${res.meta.channelCount}`,
+            );
+          }
+
+          const micRes = snapshotMicAttachmentWav({ maxSeconds: captureSeconds });
+          if (micRes.ok) {
+            entries.push({ path: `${dir}/microphone-buffered.wav`, data: micRes.wav });
+            entries.push({
+              path: `${dir}/microphone-buffered.json`,
+              data: encoder.encode(JSON.stringify({ timeIso, ...micRes.meta }, null, 2)),
+            });
+            summaryLines.push(
+              `microphone-buffered.wav: samples=${micRes.meta.samplesCaptured} sr=${micRes.meta.sampleRate}`,
+            );
+          } else {
+            summaryLines.push(`microphone-buffered: ${micRes.error}`);
+          }
+
+          if (capturedAny || micRes.ok) {
+            entries.push({ path: `${dir}/audio-samples.txt`, data: encoder.encode(summaryLines.join("\n") + "\n") });
+          }
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          entries.push({ path: `${dir}/audio-samples-error.txt`, data: encoder.encode(message) });
         }
 
         // HDA codec debug state (best-effort).
