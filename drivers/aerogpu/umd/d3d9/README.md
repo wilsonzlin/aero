@@ -404,6 +404,7 @@ Limitations (bring-up):
 - For `D3DFVF_XYZ | D3DFVF_DIFFUSE`, the fixed-function shader path is currently **passthrough** (no world/view/projection
   transforms are applied). In other words, `XYZ` positions are treated as already in clip-space; transform state is cached
   for `Get*`/state blocks but is not consumed by this fixed-function path yet.
+  (Task doc: [`docs/graphics/win7-d3d9-fixedfunc-wvp.md`](../../../../docs/graphics/win7-d3d9-fixedfunc-wvp.md).)
 - For `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1`, the fixed-function VS applies the combined world/view/projection matrix
   (built from cached `SetTransform` state and uploaded into a reserved VS constant range by the UMD). Fixed-function
   lighting/material is still not implemented.
