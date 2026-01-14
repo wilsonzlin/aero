@@ -2683,53 +2683,62 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     res->dxgi_format = static_cast<uint32_t>(pDesc->Format);
 
     if (res->width == 0 || res->height == 0) {
-      AEROGPU_D3D10_11_LOG("D3D10 CreateResource: rejecting Texture2D with invalid dimensions %ux%u",
+      AEROGPU_D3D10_11_LOG("D3D10 CreateResource: rejecting Texture2D with invalid dimensions %ux%u (handle=%u)",
                            static_cast<unsigned>(res->width),
-                           static_cast<unsigned>(res->height));
+                           static_cast<unsigned>(res->height),
+                           static_cast<unsigned>(res->handle));
       res->~AeroGpuResource();
       return E_INVALIDARG;
     }
 
     if (res->array_size == 0) {
-      AEROGPU_D3D10_11_LOG("D3D10 CreateResource: rejecting Texture2D with invalid ArraySize=0");
+      AEROGPU_D3D10_11_LOG("D3D10 CreateResource: rejecting Texture2D with invalid ArraySize=0 (handle=%u)",
+                           static_cast<unsigned>(res->handle));
       res->~AeroGpuResource();
       return E_INVALIDARG;
     }
 
     const uint32_t max_mips = aerogpu::d3d10_11::CalcFullMipLevels(res->width, res->height);
     if (res->mip_levels == 0 || res->mip_levels > max_mips) {
-      AEROGPU_D3D10_11_LOG("D3D10 CreateResource: rejecting Texture2D with invalid mip_levels=%u (max=%u)",
+      AEROGPU_D3D10_11_LOG("D3D10 CreateResource: rejecting Texture2D with invalid mip_levels=%u (max=%u handle=%u)",
                            static_cast<unsigned>(res->mip_levels),
-                           static_cast<unsigned>(max_mips));
+                           static_cast<unsigned>(max_mips),
+                           static_cast<unsigned>(res->handle));
       res->~AeroGpuResource();
       return E_INVALIDARG;
     }
 
     // Validate bind flags against format class.
     if (AerogpuFormatIsDepth(aer_fmt) && (res->bind_flags & kD3D10BindRenderTarget) != 0) {
-      AEROGPU_D3D10_11_LOG("D3D10 CreateResource: rejecting depth Texture2D with BIND_RENDER_TARGET (bind=0x%08X)",
-                           static_cast<unsigned>(res->bind_flags));
+      AEROGPU_D3D10_11_LOG(
+          "D3D10 CreateResource: rejecting depth Texture2D with BIND_RENDER_TARGET (bind=0x%08X handle=%u)",
+          static_cast<unsigned>(res->bind_flags),
+          static_cast<unsigned>(res->handle));
       res->~AeroGpuResource();
       return E_INVALIDARG;
     }
     if (!AerogpuFormatIsDepth(aer_fmt) && (res->bind_flags & kD3D10BindDepthStencil) != 0) {
-      AEROGPU_D3D10_11_LOG("D3D10 CreateResource: rejecting color Texture2D with BIND_DEPTH_STENCIL (bind=0x%08X)",
-                           static_cast<unsigned>(res->bind_flags));
+      AEROGPU_D3D10_11_LOG(
+          "D3D10 CreateResource: rejecting color Texture2D with BIND_DEPTH_STENCIL (bind=0x%08X handle=%u)",
+          static_cast<unsigned>(res->bind_flags),
+          static_cast<unsigned>(res->handle));
       res->~AeroGpuResource();
       return E_INVALIDARG;
     }
 
     if (res->sample_count == 0) {
-      AEROGPU_D3D10_11_LOG("D3D10 CreateResource: rejecting Texture2D with invalid SampleDesc.Count=0");
+      AEROGPU_D3D10_11_LOG("D3D10 CreateResource: rejecting Texture2D with invalid SampleDesc.Count=0 (handle=%u)",
+                           static_cast<unsigned>(res->handle));
       res->~AeroGpuResource();
       return E_INVALIDARG;
     }
     if (res->sample_count != 1 || res->sample_quality != 0) {
       // Multisample resources require MSAA view types and resolve operations
       // that are not yet supported by the AeroGPU D3D10 UMD.
-      AEROGPU_D3D10_11_LOG("D3D10 CreateResource: rejecting MSAA Texture2D SampleDesc=(%u,%u)",
+      AEROGPU_D3D10_11_LOG("D3D10 CreateResource: rejecting MSAA Texture2D SampleDesc=(%u,%u handle=%u)",
                            static_cast<unsigned>(res->sample_count),
-                           static_cast<unsigned>(res->sample_quality));
+                           static_cast<unsigned>(res->sample_quality),
+                           static_cast<unsigned>(res->handle));
       res->~AeroGpuResource();
       return E_NOTIMPL;
     }
@@ -2739,9 +2748,10 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     // HRESULT instead of later host-side validation errors.
     if ((res->bind_flags & (kD3D10BindRenderTarget | kD3D10BindDepthStencil)) != 0 &&
         res->mip_levels != 1) {
-      AEROGPU_D3D10_11_LOG("D3D10 CreateResource: rejecting RT/DS Texture2D with mip_levels=%u (bind=0x%08X)",
+      AEROGPU_D3D10_11_LOG("D3D10 CreateResource: rejecting RT/DS Texture2D with mip_levels=%u (bind=0x%08X handle=%u)",
                            static_cast<unsigned>(res->mip_levels),
-                           static_cast<unsigned>(res->bind_flags));
+                           static_cast<unsigned>(res->bind_flags),
+                           static_cast<unsigned>(res->handle));
       res->~AeroGpuResource();
       return E_NOTIMPL;
     }
