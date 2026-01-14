@@ -2205,16 +2205,18 @@ test("rejects concurrent /udp WebSocket sessions with the same JWT sid", async (
         await waitForOpen(ws2);
         const err2 = await err2Promise;
 
+        const ws1ClosedPromise = waitForClosed(ws1);
         ws1.close();
-        await waitForClosed(ws1);
+        await ws1ClosedPromise;
 
         // After the first session ends, the stable `sid` key should be reusable.
         const ws1b = new WebSocket(`ws://127.0.0.1:${relayPort}/udp?token=${encodeURIComponent(queryToken)}`);
         const ready1bPromise = waitForReady(ws1b);
         await waitForOpen(ws1b);
         await ready1bPromise;
+        const ws1bClosedPromise = waitForClosed(ws1b);
         ws1b.close();
-        await waitForClosed(ws1b);
+        await ws1bClosedPromise;
 
         // First-message auth path.
         const ws3 = new WebSocket(`ws://127.0.0.1:${relayPort}/udp`);
@@ -2229,16 +2231,18 @@ test("rejects concurrent /udp WebSocket sessions with the same JWT sid", async (
         ws4.send(JSON.stringify({ type: "auth", token: authMsgToken }));
         const err4 = await err4Promise;
 
+        const ws3ClosedPromise = waitForClosed(ws3);
         ws3.close();
-        await waitForClosed(ws3);
+        await ws3ClosedPromise;
 
         const ws3b = new WebSocket(`ws://127.0.0.1:${relayPort}/udp`);
         const ready3bPromise = waitForReady(ws3b);
         await waitForOpen(ws3b);
         ws3b.send(JSON.stringify({ type: "auth", token: authMsgToken }));
         await ready3bPromise;
+        const ws3bClosedPromise = waitForClosed(ws3b);
         ws3b.close();
-        await waitForClosed(ws3b);
+        await ws3bClosedPromise;
 
         return { err2, err4 };
       },
