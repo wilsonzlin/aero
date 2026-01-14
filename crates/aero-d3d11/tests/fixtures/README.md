@@ -83,6 +83,14 @@ The files are intentionally tiny and deterministic, so CI does **not** require
   * Shader model: `gs_5_0`
   * Chunks: `SHEX`
   * Behavior: `emit_stream(1)`, `ret` (minimal stream-index fixture; used to exercise SM5 stream policy)
+* `gs_cut_stream1.dxbc`
+  * Shader model: `gs_5_0`
+  * Chunks: `SHEX`
+  * Behavior: `cut_stream(1)`, `ret` (minimal stream-index fixture; used to exercise SM5 stream policy)
+* `gs_emitthen_cut_stream1.dxbc`
+  * Shader model: `gs_5_0`
+  * Chunks: `SHEX`
+  * Behavior: `emitthen_cut_stream(1)`, `ret` (minimal stream-index fixture; used to exercise SM5 stream policy)
 * `gs_cut.dxbc`
   * Shader model: `gs_4_0`
   * Chunks: `ISGN`, `OSGN`, `SHDR`
