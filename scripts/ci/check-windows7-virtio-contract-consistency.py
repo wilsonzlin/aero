@@ -4551,7 +4551,7 @@ def main() -> None:
         base_hwid = f"PCI\\VEN_{virtio_input_contract_any.vendor_id:04X}&DEV_{virtio_input_contract_any.device_id:04X}"
         strict_hwid = f"{base_hwid}&REV_{contract_rev:02X}"
 
-        # The legacy alias INF is kept for compatibility with workflows/tools that reference the
+        # The legacy alias INF is kept for compatibility with workflows that reference the
         # legacy `virtio-input.inf` name.
         #
         # Policy: it is a filename-only alias. From the first section header (`[Version]`) onward,
