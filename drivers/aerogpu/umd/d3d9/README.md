@@ -321,7 +321,7 @@ The current implementation targets:
 
 ### Core rendering / formats
 
-- **Render targets / swapchain backbuffers**: `D3DFMT_X8R8G8B8`, `D3DFMT_A8R8G8B8`, `D3DFMT_A8B8G8R8`,
+- **Render targets / swapchain backbuffers**: `D3DFMT_X8R8G8B8` (opaque alpha), `D3DFMT_A8R8G8B8`, `D3DFMT_A8B8G8R8`,
   `D3DFMT_R5G6B5`, `D3DFMT_X1R5G5B5`, `D3DFMT_A1R5G5B5`
 - **Depth/stencil**: `D3DFMT_D24S8`
 - **Mipmapped textures**: default-pool textures with `MipLevels > 1` (and array layers via `Depth > 1`) are supported for

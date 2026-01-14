@@ -4,7 +4,7 @@ This directory contains a **minimal** WDDM 1.1 display miniport driver for Windo
 
 ## Display modes (VidPN)
 
-The Win7 AeroGPU KMD exposes a small, deterministic set of common **60 Hz progressive** modes derived from the hard-coded EDID (preferred + standard timings) plus a curated fallback list (single source/target, `X8R8G8B8` / `B8G8R8X8` scanout):
+The Win7 AeroGPU KMD exposes a small, deterministic set of common **60 Hz progressive** modes derived from the hard-coded EDID (preferred + standard timings) plus a curated fallback list (single source/target, `X8R8G8B8` / `B8G8R8X8` scanout; `X8` treated as opaque alpha):
 
 - 640×480
 - 800×600
