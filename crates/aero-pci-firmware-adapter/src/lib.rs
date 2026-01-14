@@ -314,7 +314,7 @@ mod tests {
         );
         let mut bios = Bios::new(bios_cfg);
 
-        bios.post_with_pci(&mut cpu, &mut mem, &mut disk, Some(&mut adapter));
+        bios.post_with_pci(&mut cpu, &mut mem, &mut disk, None, Some(&mut adapter));
 
         let line = pci_ports
             .bus_mut()
@@ -352,7 +352,7 @@ mod tests {
         );
         let mut bios = Bios::new(bios_cfg);
 
-        bios.post_with_pci(&mut cpu, &mut mem, &mut disk, Some(&mut adapter));
+        bios.post_with_pci(&mut cpu, &mut mem, &mut disk, None, Some(&mut adapter));
 
         let line = pci_bus.device_config_mut(bdf).unwrap().interrupt_line();
         assert_eq!(line, expected);
@@ -384,7 +384,7 @@ mod tests {
         );
         let mut bios = Bios::new(bios_cfg);
 
-        bios.post_with_pci(&mut cpu, &mut mem, &mut disk, Some(&mut adapter));
+        bios.post_with_pci(&mut cpu, &mut mem, &mut disk, None, Some(&mut adapter));
 
         let line = pci_ports
             .borrow_mut()

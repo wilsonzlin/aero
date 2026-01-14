@@ -387,6 +387,7 @@ impl PcMachine {
             &mut self.cpu.state,
             bios_bus,
             &mut self.disk,
+            None,
             Some(&mut pci_adapter),
         );
 

@@ -328,7 +328,7 @@ fn bios_post_boots_from_cd_eltorito_no_emulation() {
     let mut cpu = CpuState::new(CpuMode::Real);
     let mut bus = TestBus::new(16 * 1024 * 1024);
 
-    bios.post(&mut cpu, &mut bus, &mut disk);
+    bios.post(&mut cpu, &mut bus, &mut disk, None);
 
     // Load segment 0 in the boot catalog is specified to map to 0x07C0.
     let load_addr = (0x07C0u64) << 4;
@@ -359,7 +359,7 @@ fn int13_ext_read_cd_via_dispatch_interrupt_reads_2048_sector() {
     let mut cpu = CpuState::new(CpuMode::Real);
     let mut bus = TestBus::new(16 * 1024 * 1024);
 
-    bios.post(&mut cpu, &mut bus, &mut disk);
+    bios.post(&mut cpu, &mut bus, &mut disk, None);
 
     // Build a 16-byte Disk Address Packet at DS:SI=0000:0500.
     let dap_addr = 0x0500u64;
@@ -407,7 +407,7 @@ fn int13_ext_get_drive_params_cd_reports_2048_bytes_per_sector_via_dispatch_inte
     let mut cpu = CpuState::new(CpuMode::Real);
     let mut bus = TestBus::new(16 * 1024 * 1024);
 
-    bios.post(&mut cpu, &mut bus, &mut disk);
+    bios.post(&mut cpu, &mut bus, &mut disk, None);
 
     // Caller-supplied EDD parameter table at DS:SI=0000:0600.
     let table = 0x0600u64;

@@ -199,7 +199,7 @@ mod tests {
         });
         let pirq_to_gsi = bios.config.pirq_to_gsi;
 
-        bios.post_with_pci(&mut cpu, &mut mem, &mut disk, Some(&mut pci));
+        bios.post_with_pci(&mut cpu, &mut mem, &mut disk, None, Some(&mut pci));
 
         let dev1 = pci.dev_mut(0, 1, 0).unwrap();
         assert_eq!(

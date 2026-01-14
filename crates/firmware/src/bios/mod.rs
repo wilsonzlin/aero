@@ -438,12 +438,14 @@ pub struct BiosConfig {
     ///
     /// The conventional range for El Torito CD-ROM boot devices is `0xE0..=0xEF`.
     ///
-    /// Currently unused: Aero BIOS boot selection uses [`BiosConfig::boot_drive`] directly, rather
-    /// than selecting a device class then mapping it to a drive number.
+    /// When [`BiosConfig::boot_from_cd_if_present`] is set and a CD-ROM backend is provided, POST
+    /// will attempt an El Torito boot using this drive number.
     pub cd_boot_drive: u8,
-    /// Host convenience policy flag for a future “CD-first when present” boot selection.
+    /// Host convenience policy flag for “CD-first when present” boot selection.
     ///
-    /// Currently unused: callers must select an explicit [`BiosConfig::boot_drive`].
+    /// When set and a CD-ROM backend is provided to [`Bios::post`], POST will attempt to boot from
+    /// CD-ROM first (using [`BiosConfig::cd_boot_drive`]) and fall back to the configured
+    /// [`BiosConfig::boot_drive`] on failure.
     pub boot_from_cd_if_present: bool,
 }
 
@@ -659,8 +661,14 @@ impl Bios {
         interrupts::sync_keyboard_bda(self, bus);
     }
 
-    pub fn post(&mut self, cpu: &mut CpuState, bus: &mut dyn BiosBus, disk: &mut dyn BlockDevice) {
-        self.post_with_pci_and_cdrom(cpu, bus, disk, None, None);
+    pub fn post(
+        &mut self,
+        cpu: &mut CpuState,
+        bus: &mut dyn BiosBus,
+        disk: &mut dyn BlockDevice,
+        cdrom: Option<&mut dyn CdromDevice>,
+    ) {
+        self.post_impl(cpu, bus, disk, cdrom, None);
     }
 
     pub fn post_with_pci(
@@ -668,9 +676,10 @@ impl Bios {
         cpu: &mut CpuState,
         bus: &mut dyn BiosBus,
         disk: &mut dyn BlockDevice,
+        cdrom: Option<&mut dyn CdromDevice>,
         pci: Option<&mut dyn PciConfigSpace>,
     ) {
-        self.post_with_pci_and_cdrom(cpu, bus, disk, None, pci);
+        self.post_impl(cpu, bus, disk, cdrom, pci);
     }
 
     pub fn post_with_cdrom(
@@ -680,18 +689,7 @@ impl Bios {
         disk: &mut dyn BlockDevice,
         cdrom: &mut dyn CdromDevice,
     ) {
-        self.post_with_pci_and_cdrom(cpu, bus, disk, Some(cdrom), None);
-    }
-
-    pub fn post_with_pci_and_cdrom(
-        &mut self,
-        cpu: &mut CpuState,
-        bus: &mut dyn BiosBus,
-        disk: &mut dyn BlockDevice,
-        cdrom: Option<&mut dyn CdromDevice>,
-        pci: Option<&mut dyn PciConfigSpace>,
-    ) {
-        self.post_impl(cpu, bus, disk, cdrom, pci);
+        self.post(cpu, bus, disk, Some(cdrom));
     }
 
     pub fn dispatch_interrupt(
@@ -981,7 +979,7 @@ mod tests {
         let mut mem = TestMemory::new(16 * 1024 * 1024);
         let mut disk = InMemoryDisk::from_boot_sector(boot_sector(0));
 
-        bios.post(&mut cpu, &mut mem, &mut disk);
+        bios.post(&mut cpu, &mut mem, &mut disk, None);
 
         let read_vec = |mem: &mut TestMemory, v: u8| -> (u16, u16) {
             let addr = (v as u64) * 4;
@@ -1022,7 +1020,7 @@ mod tests {
         let mut mem = TestMemory::new(16 * 1024 * 1024);
         let mut disk = InMemoryDisk::from_boot_sector(boot_sector(0));
 
-        bios.post(&mut cpu, &mut mem, &mut disk);
+        bios.post(&mut cpu, &mut mem, &mut disk, None);
 
         let ebda_segment = mem.read_u16(BDA_BASE + 0x0E);
         assert_eq!(ebda_segment, (EBDA_BASE / 16) as u16);
@@ -1045,7 +1043,7 @@ mod tests {
         let mut mem = TestMemory::new(16 * 1024 * 1024);
         let mut disk = InMemoryDisk::from_boot_sector(boot_sector(0xAA));
 
-        bios.post(&mut cpu, &mut mem, &mut disk);
+        bios.post(&mut cpu, &mut mem, &mut disk, None);
 
         let loaded = mem.read_bytes(0x7C00, 512);
         assert_eq!(loaded[..510], vec![0xAA; 510]);
@@ -1066,7 +1064,7 @@ mod tests {
         let mut mem = TestMemory::new(16 * 1024 * 1024);
         let mut disk = InMemoryDisk::from_boot_sector(boot_sector(0));
 
-        bios.post(&mut cpu, &mut mem, &mut disk);
+        bios.post(&mut cpu, &mut mem, &mut disk, None);
 
         // BIOS POST enables A20 before handing control to the boot sector.
         assert!(mem.a20_enabled());
@@ -1103,7 +1101,7 @@ mod tests {
         let mut mem = TestMemory::new(16 * 1024 * 1024);
         let mut disk = InMemoryDisk::from_boot_sector(boot_sector(0));
 
-        bios.post(&mut cpu, &mut mem, &mut disk);
+        bios.post(&mut cpu, &mut mem, &mut disk, None);
 
         let rsdp_addr = bios.rsdp_addr().expect("RSDP should be built");
         assert_eq!(rsdp_addr, EBDA_BASE + 0x100);
@@ -1180,7 +1178,7 @@ mod tests {
         let mut mem = TestMemory::new(config.memory_size_bytes);
         let mut disk = InMemoryDisk::from_boot_sector(boot_sector(0));
 
-        bios.post(&mut cpu, &mut mem, &mut disk);
+        bios.post(&mut cpu, &mut mem, &mut disk, None);
 
         let eps_addr = bios
             .smbios_eps_addr()
@@ -1229,7 +1227,7 @@ mod tests {
         let mut mem = TestMemory::new(0x0010_0000);
         let mut disk = InMemoryDisk::from_boot_sector(boot_sector(0));
 
-        bios.post(&mut cpu, &mut mem, &mut disk);
+        bios.post(&mut cpu, &mut mem, &mut disk, None);
 
         assert!(bios.rsdp_addr().is_none(), "ACPI should not be built");
         let tty = String::from_utf8_lossy(bios.tty_output());

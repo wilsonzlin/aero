@@ -489,7 +489,7 @@ mod tests {
         let mut mem = TestMemory::new(16 * 1024 * 1024);
         let mut disk = InMemoryDisk::new(img);
 
-        bios.post(&mut cpu, &mut mem, &mut disk);
+        bios.post(&mut cpu, &mut mem, &mut disk, None);
 
         let load_addr = (0x07C0u64) << 4;
         let loaded = mem.read_bytes(load_addr, ISO_BLOCK_BYTES);
@@ -542,7 +542,7 @@ mod tests {
         let mut mem = TestMemory::new(16 * 1024 * 1024);
         let mut disk = InMemoryDisk::new(img);
 
-        bios.post(&mut cpu, &mut mem, &mut disk);
+        bios.post(&mut cpu, &mut mem, &mut disk, None);
 
         let load_addr = (0x2000u64) << 4;
         let loaded = mem.read_bytes(load_addr, ISO_BLOCK_BYTES);
@@ -569,7 +569,7 @@ mod tests {
             let mut mem = TestMemory::new(16 * 1024 * 1024);
             let mut disk = InMemoryDisk::new(img);
 
-            bios.post(&mut cpu, &mut mem, &mut disk);
+            bios.post(&mut cpu, &mut mem, &mut disk, None);
             assert!(cpu.halted, "boot should fail");
             String::from_utf8_lossy(bios.tty_output())
                 .trim()

@@ -2178,7 +2178,8 @@ fn build_e820_map(
 mod tests {
     use super::super::{
         ivt, A20Gate, BiosConfig, BlockDevice, CdromDevice, DiskError, ElToritoBootInfo,
-        ElToritoBootMediaType, InMemoryDisk, TestMemory, BDA_BASE, EBDA_BASE, EBDA_SIZE,
+        ElToritoBootMediaType, InMemoryCdrom, InMemoryDisk, TestMemory, BDA_BASE, EBDA_BASE,
+        EBDA_SIZE,
         MAX_TTY_OUTPUT_BYTES, PCIE_ECAM_BASE, PCIE_ECAM_SIZE,
     };
     use super::*;
@@ -3051,9 +3052,12 @@ mod tests {
         });
         let mut cpu = CpuState::new(CpuMode::Real);
         let mut mem = TestMemory::new(16 * 1024 * 1024);
-        let mut disk = InMemoryDisk::new(img);
+        // Provide a dummy HDD for the BIOS BlockDevice slot and the ISO as a separate 2048-byte
+        // sector CD-ROM backend.
+        let mut hdd = InMemoryDisk::new(vec![0u8; 512]);
+        let mut cdrom = InMemoryCdrom::new(img);
 
-        bios.post(&mut cpu, &mut mem, &mut disk);
+        bios.post(&mut cpu, &mut mem, &mut hdd, Some(&mut cdrom));
 
         assert_eq!(
             bios.el_torito_boot_info,
@@ -3075,7 +3079,7 @@ mod tests {
         cpu.gpr[gpr::RAX] = 0x4B01;
         mem.write_u8(0x0500, 0x13);
 
-        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk, None);
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut hdd, Some(&mut cdrom));
 
         assert_eq!(cpu.rflags & FLAG_CF, 0);
         assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0);
@@ -3091,6 +3095,27 @@ mod tests {
         assert_eq!(mem.read_u8(0x0510), 0);
         assert_eq!(mem.read_u8(0x0511), 0);
         assert_eq!(mem.read_u8(0x0512), 0);
+
+        // Ensure EDD extended reads (AH=42h) can read ISO9660 logical blocks (2048 bytes) from the
+        // CD boot drive after POST.
+        set_real_mode_seg(&mut cpu.segments.ds, 0);
+        cpu.gpr[gpr::RSI] = 0x0520;
+        cpu.gpr[gpr::RDX] = 0xE0;
+        cpu.gpr[gpr::RAX] = 0x4200;
+
+        // Disk Address Packet (16 bytes) at 0000:0520.
+        mem.write_u8(0x0520, 0x10); // size
+        mem.write_u8(0x0521, 0);
+        mem.write_u16(0x0522, 1); // count (2048-byte sectors)
+        mem.write_u16(0x0524, 0x2000); // buffer offset
+        mem.write_u16(0x0526, 0x0000); // buffer segment
+        mem.write_u64(0x0528, 16); // ISO LBA 16 (primary volume descriptor)
+
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut hdd, Some(&mut cdrom));
+
+        assert_eq!(cpu.rflags & FLAG_CF, 0);
+        let sector = mem.read_bytes(0x2000, 2048);
+        assert_eq!(&sector[1..6], b"CD001");
     }
 
     #[test]

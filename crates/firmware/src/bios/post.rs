@@ -174,23 +174,46 @@ impl Bios {
         cpu: &mut CpuState,
         bus: &mut dyn BiosBus,
         disk: &mut dyn BlockDevice,
-        cdrom: Option<&mut dyn CdromDevice>,
+        mut cdrom: Option<&mut dyn CdromDevice>,
     ) -> Result<(), &'static str> {
-        let boot_drive = self.config.boot_drive;
-        let (entry_cs, entry_ip) = if (0xE0..=0xEF).contains(&boot_drive) {
-            if let Some(cdrom) = cdrom {
-                let mut cd_disk = CdromAsBlockDevice::new(cdrom);
-                self.boot_from_configured_device(cpu, bus, &mut cd_disk)
+        fn boot_current(
+            bios: &mut Bios,
+            cpu: &mut CpuState,
+            bus: &mut dyn BiosBus,
+            disk: &mut dyn BlockDevice,
+            cdrom: &mut Option<&mut dyn CdromDevice>,
+        ) -> Result<(), &'static str> {
+            let boot_drive = bios.config.boot_drive;
+            let (entry_cs, entry_ip) = if (0xE0..=0xEF).contains(&boot_drive) {
+                if let Some(cdrom) = cdrom.as_deref_mut() {
+                    let mut cd_disk = CdromAsBlockDevice::new(cdrom);
+                    bios.boot_from_configured_device(cpu, bus, &mut cd_disk)
+                } else {
+                    bios.boot_from_configured_device(cpu, bus, disk)
+                }
             } else {
-                self.boot_from_configured_device(cpu, bus, disk)
-            }
-        } else {
-            self.boot_from_configured_device(cpu, bus, disk)
-        }?;
+                bios.boot_from_configured_device(cpu, bus, disk)
+            }?;
 
-        // Transfer control to the loaded boot image.
-        set_real_mode_seg(&mut cpu.segments.cs, entry_cs);
-        cpu.set_rip(entry_ip as u64);
+            // Transfer control to the loaded boot image.
+            set_real_mode_seg(&mut cpu.segments.cs, entry_cs);
+            cpu.set_rip(entry_ip as u64);
+            Ok(())
+        }
+
+        // Optional host boot-order policy: attempt to boot from CD if present, otherwise (or on
+        // failure) fall back to the configured `boot_drive` (typically HDD0, 0x80).
+        let fallback_drive = self.config.boot_drive;
+        if self.config.boot_from_cd_if_present && cdrom.is_some() {
+            self.config.boot_drive = self.config.cd_boot_drive;
+            if boot_current(self, cpu, bus, disk, &mut cdrom).is_ok() {
+                return Ok(());
+            }
+            // Restore the configured fallback boot drive (HDD) before retrying.
+            self.config.boot_drive = fallback_drive;
+        }
+
+        boot_current(self, cpu, bus, disk, &mut cdrom)?;
 
         Ok(())
     }
@@ -421,7 +444,7 @@ mod tests {
         let bad_sector = [0u8; 512];
         let mut disk = InMemoryDisk::from_boot_sector(bad_sector);
 
-        bios.post(&mut cpu, &mut mem, &mut disk);
+        bios.post(&mut cpu, &mut mem, &mut disk, None);
 
         assert!(cpu.halted);
 

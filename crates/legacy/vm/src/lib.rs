@@ -477,7 +477,7 @@ impl<D: BlockDevice> Vm<D> {
         self.serial.clear();
 
         let bus: &mut dyn BiosBus = &mut self.mem;
-        self.bios.post(&mut self.cpu, bus, &mut self.disk);
+        self.bios.post(&mut self.cpu, bus, &mut self.disk, None);
 
         self.cpu.a20_enabled = self.mem.a20_enabled();
         self.mem.clear_dirty();

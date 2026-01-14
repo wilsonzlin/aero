@@ -313,7 +313,7 @@ fn run(data: &[u8]) -> Outcome {
 
     // Run POST once to install ROM stubs / initialize IVT+BDA.
     let mut cpu = CpuState::new(CpuMode::Real);
-    bios.post(&mut cpu, &mut bus, &mut disk);
+    bios.post(&mut cpu, &mut bus, &mut disk, None);
 
     // Snapshot invariants after POST, before the fuzzed interrupt dispatch.
     let pre_rom: Vec<(u64, usize)> = bus

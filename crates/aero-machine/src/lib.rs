@@ -7947,33 +7947,26 @@ impl Machine {
             self.bios.video.vbe.total_memory_64kb_blocks = blocks.min(u64::from(u16::MAX)) as u16;
         }
 
-        // Firmware INT 13h fixed-disk services are backed by exactly one `BlockDevice` (`self.disk`).
-        //
-        // When install media is attached, also provide it as a 2048-byte-sector CD-ROM device so
-        // BIOS El Torito boot + INT 13h CD services can share the same underlying ISO handle as the
-        // IDE/ATAPI CD-ROM device model (important for OPFS `SyncAccessHandle` exclusivity).
-        let mut cdrom = self.install_media.as_ref().map(Clone::clone);
-        let cdrom = cdrom
-            .as_mut()
-            .map(|iso| iso as &mut dyn firmware::bios::CdromDevice);
         let bus: &mut dyn BiosBus = &mut self.mem;
+        // Optional ISO install media: expose it to the BIOS as a CD-ROM backend (2048-byte
+        // sectors), alongside the primary HDD BlockDevice.
+        let mut cdrom = self.install_media.as_ref().map(|iso| iso.clone());
+        let cdrom_ref = cdrom
+            .as_mut()
+            .map(|cdrom| cdrom as &mut dyn firmware::bios::CdromDevice);
+
         if let Some(pci_cfg) = &self.pci_cfg {
             let mut pci = SharedPciConfigPortsBiosAdapter::new(pci_cfg.clone());
-            self.bios.post_with_pci_and_cdrom(
+            self.bios.post_with_pci(
                 &mut self.cpu.state,
                 bus,
                 &mut self.disk,
-                cdrom,
+                cdrom_ref,
                 Some(&mut pci),
             );
         } else {
-            self.bios.post_with_pci_and_cdrom(
-                &mut self.cpu.state,
-                bus,
-                &mut self.disk,
-                cdrom,
-                None,
-            );
+            self.bios
+                .post(&mut self.cpu.state, bus, &mut self.disk, cdrom_ref);
         }
 
         // The firmware's BDA initialization derives the "fixed disk count" (0x40:0x75) from the

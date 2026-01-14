@@ -117,7 +117,7 @@ fn bios_post_loads_boot_sector_and_publishes_acpi_and_smbios() {
         ..BiosConfig::default()
     });
 
-    bios.post(&mut cpu, &mut mem, &mut disk);
+    bios.post(&mut cpu, &mut mem, &mut disk, None);
 
     // BIOS must have loaded the boot sector.
     let loaded = read_bytes(&mut mem, 0x7C00, 512);
