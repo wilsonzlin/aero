@@ -2986,6 +2986,14 @@ static int DoStatusJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, std::stri
     } else {
       w.Null();
     }
+    const bool haveGetScanlineCounters =
+        (qp.hdr.size >= offsetof(aerogpu_escape_query_perf_out, get_scanline_mmio_polls) + sizeof(qp.get_scanline_mmio_polls));
+    w.Key("getscanline_counters_valid");
+    if (flagsValid && haveGetScanlineCounters) {
+      w.Bool((qp.flags & AEROGPU_DBGCTL_QUERY_PERF_FLAG_GETSCANLINE_COUNTERS_VALID) != 0);
+    } else {
+      w.Null();
+    }
     w.EndObject();
 
     const uint64_t submitted = (uint64_t)qp.last_submitted_fence;
@@ -3059,6 +3067,25 @@ static int DoStatusJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, std::stri
         w.Key("bytes");
         w.Null();
       }
+    }
+    w.EndObject();
+
+    w.Key("get_scanline");
+    w.BeginObject();
+    w.Key("available");
+    w.Bool(haveGetScanlineCounters);
+    if (haveGetScanlineCounters) {
+      w.Key("valid");
+      w.Bool(flagsValid && (qp.flags & AEROGPU_DBGCTL_QUERY_PERF_FLAG_GETSCANLINE_COUNTERS_VALID) != 0);
+      JsonWriteU64HexDec(w, "cache_hits", qp.get_scanline_cache_hits);
+      JsonWriteU64HexDec(w, "mmio_polls", qp.get_scanline_mmio_polls);
+    } else {
+      w.Key("valid");
+      w.Null();
+      w.Key("cache_hits");
+      w.Null();
+      w.Key("mmio_polls");
+      w.Null();
     }
     w.EndObject();
 
@@ -8004,6 +8031,14 @@ static int DoQueryPerfJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, std::s
   } else {
     w.Null();
   }
+  const bool haveGetScanlineCounters =
+      (q.hdr.size >= offsetof(aerogpu_escape_query_perf_out, get_scanline_mmio_polls) + sizeof(q.get_scanline_mmio_polls));
+  w.Key("getscanline_counters_valid");
+  if (flagsValid && haveGetScanlineCounters) {
+    w.Bool((q.flags & AEROGPU_DBGCTL_QUERY_PERF_FLAG_GETSCANLINE_COUNTERS_VALID) != 0);
+  } else {
+    w.Null();
+  }
   w.EndObject();
 
   w.Key("fences");
@@ -8072,6 +8107,25 @@ static int DoQueryPerfJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, std::s
     w.Key("count");
     w.Null();
     w.Key("bytes");
+    w.Null();
+  }
+  w.EndObject();
+
+  w.Key("get_scanline");
+  w.BeginObject();
+  w.Key("available");
+  w.Bool(haveGetScanlineCounters);
+  if (haveGetScanlineCounters) {
+    w.Key("valid");
+    w.Bool(flagsValid && (q.flags & AEROGPU_DBGCTL_QUERY_PERF_FLAG_GETSCANLINE_COUNTERS_VALID) != 0);
+    JsonWriteU64HexDec(w, "cache_hits", q.get_scanline_cache_hits);
+    JsonWriteU64HexDec(w, "mmio_polls", q.get_scanline_mmio_polls);
+  } else {
+    w.Key("valid");
+    w.Null();
+    w.Key("cache_hits");
+    w.Null();
+    w.Key("mmio_polls");
     w.Null();
   }
   w.EndObject();
