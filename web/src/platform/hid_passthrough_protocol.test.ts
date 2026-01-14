@@ -170,9 +170,9 @@ describe("platform/hid_passthrough_protocol", () => {
     expect(isHidFeatureReportResultMessage(ok)).toBe(true);
     expect(isHidPassthroughMessage(ok)).toBe(true);
 
-    expect(isHidFeatureReportResultMessage({ ...ok, reportId: -1 } as any)).toBe(false);
-    expect(isHidFeatureReportResultMessage({ ...ok, reportId: 1.5 } as any)).toBe(false);
-    expect(isHidFeatureReportResultMessage({ ...ok, reportId: 256 } as any)).toBe(false);
+    expect(isHidFeatureReportResultMessage({ ...ok, reportId: -1 })).toBe(false);
+    expect(isHidFeatureReportResultMessage({ ...ok, reportId: 1.5 })).toBe(false);
+    expect(isHidFeatureReportResultMessage({ ...ok, reportId: 256 })).toBe(false);
 
     const err: HidFeatureReportResultMessage = {
       type: "hid:featureReportResult",

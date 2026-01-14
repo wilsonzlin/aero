@@ -72,13 +72,11 @@ let originalShowSaveFilePicker: any = undefined;
 let hadShowSaveFilePicker = false;
 
 afterEach(() => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const g = globalThis as any;
+  const g = globalThis as unknown as { showSaveFilePicker?: unknown };
   if (hadShowSaveFilePicker) {
     g.showSaveFilePicker = originalShowSaveFilePicker;
   } else {
-    // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
-    delete g.showSaveFilePicker;
+    Reflect.deleteProperty(g, "showSaveFilePicker");
   }
   originalShowSaveFilePicker = undefined;
   hadShowSaveFilePicker = false;
@@ -86,8 +84,7 @@ afterEach(() => {
 
 describe("DiskManager.exportDiskToFile", () => {
   it("truncates when createWritable options are unsupported (prevents trailing bytes)", async () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const g = globalThis as any;
+    const g = globalThis as unknown as { showSaveFilePicker?: unknown };
     originalShowSaveFilePicker = g.showSaveFilePicker;
     hadShowSaveFilePicker = Object.prototype.hasOwnProperty.call(g, "showSaveFilePicker");
 
@@ -113,8 +110,7 @@ describe("DiskManager.exportDiskToFile", () => {
         meta: { id: "d", name: "disk", format: "raw" },
       };
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (manager as any).exportDiskStream = async () => exportHandle;
+      (manager as unknown as { exportDiskStream: () => Promise<FakeExportHandle> }).exportDiskStream = async () => exportHandle;
 
       const res = await manager.exportDiskToFile("d", { suggestedName: "out.bin" });
       expect(res.fileName).toBe("out.bin");

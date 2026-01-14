@@ -20,7 +20,7 @@ describe("opfsReadState", () => {
     const disksDir = await aeroDir.getDirectoryHandle("disks", { create: true });
     const handle = await disksDir.getFileHandle("metadata.json", { create: true });
 
-    (handle as any).getFile = async () => ({
+    (handle as unknown as { getFile: () => Promise<unknown> }).getFile = async () => ({
       size: 64 * 1024 * 1024 + 1,
       async text() {
         throw new Error("should not read oversized metadata.json");
@@ -73,7 +73,7 @@ describe("opfsReadState", () => {
       const prevBytes = new Uint8Array(await prev.arrayBuffer());
 
       // Truncate immediately.
-      (this as any).data = new Uint8Array();
+      (this as unknown as { data: Uint8Array }).data = new Uint8Array();
 
       return {
         write: async () => {
@@ -83,7 +83,7 @@ describe("opfsReadState", () => {
           throw new Error("close should not be called");
         },
         abort: async () => {
-          (this as any).data = prevBytes;
+          (this as unknown as { data: Uint8Array }).data = prevBytes;
         },
       };
     };

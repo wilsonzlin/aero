@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { installMemoryOpfs, MemoryDirectoryHandle } from "../test_utils/memory_opfs";
+import type { DiskImageMetadata } from "./metadata";
 
 let restoreOpfs: (() => void) | null = null;
 let hadOriginalSelf = false;
@@ -253,7 +254,7 @@ describe("disk_worker remote validation", () => {
     const { createMetadataStore } = await import("./metadata");
     const store = createMetadataStore("opfs");
 
-    const meta = {
+    const meta: DiskImageMetadata = {
       source: "remote",
       id: "remote-validation-test",
       name: "Remote Validation Test",
@@ -275,9 +276,9 @@ describe("disk_worker remote validation", () => {
         overlayFileName: "remote-validation-test.overlay.aerospar",
         overlayBlockSizeBytes: 1024 * 1024,
       },
-    } as const;
+    };
 
-    await store.putDisk(meta as any);
+    await store.putDisk(meta);
 
     workerScope.onmessage?.({
       data: {
@@ -326,7 +327,7 @@ describe("disk_worker remote validation", () => {
     const { createMetadataStore } = await import("./metadata");
     const store = createMetadataStore("opfs");
 
-    const meta = {
+    const meta: DiskImageMetadata = {
       source: "remote",
       id: "remote-validation-empty-name",
       name: "Remote Validation Test",
@@ -348,9 +349,9 @@ describe("disk_worker remote validation", () => {
         overlayFileName: "remote-validation-empty-name.overlay.aerospar",
         overlayBlockSizeBytes: 1024 * 1024,
       },
-    } as const;
+    };
 
-    await store.putDisk(meta as any);
+    await store.putDisk(meta);
 
     workerScope.onmessage?.({
       data: {
@@ -399,7 +400,7 @@ describe("disk_worker remote validation", () => {
     const { createMetadataStore } = await import("./metadata");
     const store = createMetadataStore("opfs");
 
-    const meta = {
+    const meta: DiskImageMetadata = {
       source: "remote",
       id: "remote-validation-format-update",
       name: "Remote Validation Test",
@@ -421,9 +422,9 @@ describe("disk_worker remote validation", () => {
         overlayFileName: "remote-validation-format-update.overlay.aerospar",
         overlayBlockSizeBytes: 1024 * 1024,
       },
-    } as const;
+    };
 
-    await store.putDisk(meta as any);
+    await store.putDisk(meta);
 
     workerScope.onmessage?.({
       data: {
