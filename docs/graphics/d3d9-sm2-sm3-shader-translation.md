@@ -69,6 +69,21 @@ Supported texture types in the SM3 WGSL backend: 1D/2D/3D/cube, with coordinate 
   - `wgsl_texkill_is_conditional`
   - `wgsl_predicated_texkill_is_nested_under_if`
 
+### Task 124 — D3D9 half-pixel center convention (`half_pixel_center`)
+
+**Status:** ✅ Done
+
+**What:** Optional emulation of D3D9’s “half-pixel offset” by nudging the final clip-space vertex
+position by `(-1/viewport_width, +1/viewport_height) * w` in translated vertex shaders.
+
+**Where:**
+- SM3-first translation path: `crates/aero-d3d9/src/shader_translate.rs` (`inject_half_pixel_center_sm3_vertex_wgsl`)
+- Legacy fallback translator: `crates/aero-d3d9/src/shader.rs` (`WgslOptions::half_pixel_center`)
+- Executor plumbing: `crates/aero-gpu/src/aerogpu_d3d9_executor.rs` (bind group(3) uniform updated on `SetViewport`)
+
+**Test:**
+- `crates/aero-gpu/tests/aerogpu_d3d9_half_pixel_center.rs`
+
 ## Remaining / known limitations (true delta)
 
 - Sampler state mapping (filtering, address modes, LOD bias, etc.) is handled in the runtime pipeline setup,
