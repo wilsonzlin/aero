@@ -6446,33 +6446,6 @@ impl Machine {
                 pci_intx.set_intx_level(bdf, pin, level, &mut *interrupts);
             }
 
-            // AeroGPU legacy INTx (level-triggered).
-            if let Some(aerogpu_mmio) = &self.aerogpu_mmio {
-                let bdf: PciBdf = aero_devices::pci::profile::AEROGPU.bdf;
-                let pin = PciInterruptPin::IntA;
-
-                let command = self
-                    .pci_cfg
-                    .as_ref()
-                    .and_then(|pci_cfg| {
-                        let mut pci_cfg = pci_cfg.borrow_mut();
-                        pci_cfg
-                            .bus_mut()
-                            .device_config(bdf)
-                            .map(|cfg| cfg.command())
-                    })
-                    .unwrap_or(0);
-
-                let mut level = aerogpu_mmio.borrow().irq_level();
-
-                // Redundantly gate on the canonical PCI command register as well (defensive).
-                if (command & (1 << 10)) != 0 {
-                    level = false;
-                }
-
-                pci_intx.set_intx_level(bdf, pin, level, &mut *interrupts);
-            }
-
             // Virtio-net legacy INTx (level-triggered).
             if let Some(virtio) = &self.virtio_net {
                 let bdf: PciBdf = aero_devices::pci::profile::VIRTIO_NET.bdf;
@@ -6650,68 +6623,6 @@ impl Machine {
                         bar1_base,
                     );
                     dev.tick_vblank(clock_ns);
-                    dev.irq_level()
-                };
-
-                // Redundantly gate on the canonical PCI command register as well (defensive).
-                if (command & (1 << 10)) != 0 {
-                    level = false;
-                }
-
-                pci_intx.set_intx_level(bdf, pin, level, &mut *interrupts);
-            }
-
-            // virtio-input keyboard legacy INTx (level-triggered).
-            if let Some(virtio_input_keyboard) = &self.virtio_input_keyboard {
-                let bdf: PciBdf = aero_devices::pci::profile::VIRTIO_INPUT_KEYBOARD.bdf;
-                let pin = PciInterruptPin::IntA;
-
-                let command = self
-                    .pci_cfg
-                    .as_ref()
-                    .and_then(|pci_cfg| {
-                        let mut pci_cfg = pci_cfg.borrow_mut();
-                        pci_cfg
-                            .bus_mut()
-                            .device_config(bdf)
-                            .map(|cfg| cfg.command())
-                    })
-                    .unwrap_or(0);
-
-                let mut level = {
-                    let mut dev = virtio_input_keyboard.borrow_mut();
-                    dev.set_pci_command(command);
-                    dev.irq_level()
-                };
-
-                // Redundantly gate on the canonical PCI command register as well (defensive).
-                if (command & (1 << 10)) != 0 {
-                    level = false;
-                }
-
-                pci_intx.set_intx_level(bdf, pin, level, &mut *interrupts);
-            }
-
-            // virtio-input mouse legacy INTx (level-triggered).
-            if let Some(virtio_input_mouse) = &self.virtio_input_mouse {
-                let bdf: PciBdf = aero_devices::pci::profile::VIRTIO_INPUT_MOUSE.bdf;
-                let pin = PciInterruptPin::IntA;
-
-                let command = self
-                    .pci_cfg
-                    .as_ref()
-                    .and_then(|pci_cfg| {
-                        let mut pci_cfg = pci_cfg.borrow_mut();
-                        pci_cfg
-                            .bus_mut()
-                            .device_config(bdf)
-                            .map(|cfg| cfg.command())
-                    })
-                    .unwrap_or(0);
-
-                let mut level = {
-                    let mut dev = virtio_input_mouse.borrow_mut();
-                    dev.set_pci_command(command);
                     dev.irq_level()
                 };
 
