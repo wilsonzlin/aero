@@ -2743,6 +2743,51 @@ TransDesc = "Transitional Device"
         assert!(msg.contains("transitional virtio-pci"), "{msg}");
     }
 
+    #[test]
+    fn inf_functional_bytes_skips_utf16le_banner_and_finds_version_section() -> Result<()> {
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let path = tmp.path().join("test.inf");
+
+        let inf = "; banner\r\n; more\r\n\r\n[Version]\r\nSignature=\"$Windows NT$\"\r\n";
+
+        // Write UTF-16LE with BOM.
+        let mut bytes = vec![0xFFu8, 0xFEu8];
+        for u in inf.encode_utf16() {
+            bytes.extend_from_slice(&u.to_le_bytes());
+        }
+        fs::write(&path, &bytes).expect("write utf16 inf");
+
+        let out = inf_functional_bytes(&path)?;
+
+        // For assertions: strip NUL padding and ensure we start at `[Version]`.
+        let ascii = out.into_iter().filter(|b| *b != 0).collect::<Vec<_>>();
+        assert!(
+            ascii.starts_with(b"[Version]"),
+            "unexpected functional bytes prefix: {}",
+            String::from_utf8_lossy(&ascii[..ascii.len().min(64)])
+        );
+        assert!(
+            !String::from_utf8_lossy(&ascii).contains("banner"),
+            "functional bytes must not include banner/comments"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn inf_functional_bytes_skips_utf8_bom_and_banner_and_finds_version_section() -> Result<()> {
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let path = tmp.path().join("test.inf");
+
+        // UTF-8 BOM + comment banner, then `[Version]`.
+        let bytes = b"\xef\xbb\xbf; banner\n[Version]\nSignature=\"$Windows NT$\"\n";
+        fs::write(&path, bytes).expect("write utf8 inf");
+
+        let out = inf_functional_bytes(&path)?;
+        assert!(out.starts_with(b"[Version]\n"));
+        assert!(!String::from_utf8_lossy(&out).contains("banner"));
+        Ok(())
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     #[cfg(not(target_arch = "wasm32"))]
