@@ -14,9 +14,11 @@ Developers may locally enable the alias by renaming it to `virtio-input.inf`.
 
 Policy:
   - The alias INF is a *filename alias only*.
-  - The alias is allowed to diverge from the canonical INF only in the models
-    sections (`[Aero.NTx86]` / `[Aero.NTamd64]`) to add an opt-in strict
-    REV-qualified generic fallback HWID match (no SUBSYS).
+  - The canonical INF (`aero_virtio_input.inf`) is SUBSYS-only (no strict generic
+    fallback HWID).
+  - The alias INF is allowed to diverge from the canonical INF only in the models
+    sections (`[Aero.NTx86]` / `[Aero.NTamd64]`) to add the opt-in strict,
+    revision-gated generic fallback HWID (`PCI\\VEN_1AF4&DEV_1052&REV_01`).
   - Outside those models sections, from the first section header (typically
     `[Version]`) onward, the alias must remain byte-for-byte identical to the
     canonical INF.
@@ -30,6 +32,10 @@ from __future__ import annotations
 import difflib
 import sys
 from pathlib import Path
+
+
+MODELS_SECTIONS = {"aero.ntx86", "aero.ntamd64"}
+STRICT_FALLBACK_HWID = r"PCI\VEN_1AF4&DEV_1052&REV_01"
 
 
 def _first_nonblank_ascii_byte(*, line: bytes, first_line: bool) -> int | None:
@@ -105,6 +111,49 @@ def _decode_lines_for_diff(data: bytes) -> list[str]:
             text = text.replace("\x00", "")
     return text.splitlines(keepends=True)
 
+def _strip_inf_inline_comment(line: str) -> str:
+    """Strip INF comments (starting with ';') outside quoted strings."""
+
+    out: list[str] = []
+    in_quote = False
+    for ch in line:
+        if ch == '"':
+            in_quote = not in_quote
+        if (not in_quote) and ch == ";":
+            break
+        out.append(ch)
+    return "".join(out)
+
+
+def count_hwid_model_lines(*, path: Path, section: str, hwid: str) -> tuple[bool, int]:
+    """
+    Count model lines containing `hwid` within a specific models section.
+
+    Returns `(section_seen, count)`. Comments are ignored.
+    """
+
+    lines = _decode_lines_for_diff(path.read_bytes())
+    current: str | None = None
+    seen = False
+    count = 0
+    for raw in lines:
+        line = raw.rstrip("\r\n")
+        stripped = line.lstrip(" \t")
+        if stripped.startswith("[") and "]" in stripped:
+            current = stripped[1 : stripped.index("]")].strip().lower()
+            if current == section.lower():
+                seen = True
+            continue
+        if current != section.lower():
+            continue
+        no_comment = _strip_inf_inline_comment(line).strip()
+        if not no_comment:
+            continue
+        if hwid.lower() in no_comment.lower():
+            count += 1
+    return seen, count
+
+
 def strip_inf_sections(data: bytes, *, sections: set[str]) -> bytes:
     """Remove entire INF sections (including their headers) by name (case-insensitive)."""
 
@@ -151,21 +200,51 @@ def main() -> int:
         )
         return 0
 
-    # The alias is allowed to diverge in the models sections only; strip those
-    # sections before enforcing byte-for-byte identity.
-    canonical_body = strip_inf_sections(
-        inf_functional_bytes(canonical), sections={"aero.ntx86", "aero.ntamd64"}
-    )
-    alias_body = strip_inf_sections(
-        inf_functional_bytes(alias), sections={"aero.ntx86", "aero.ntamd64"}
-    )
+    canonical_body = strip_inf_sections(inf_functional_bytes(canonical), sections=MODELS_SECTIONS)
+    alias_body = strip_inf_sections(inf_functional_bytes(alias), sections=MODELS_SECTIONS)
     if canonical_body == alias_body:
+        # Functional regions match; still validate the models-section policy:
+        # - canonical INF must not contain the strict generic fallback HWID at all
+        #   (including comments).
+        # - alias INF must include exactly one strict fallback model line per models section.
+        strict_bytes = STRICT_FALLBACK_HWID.encode("ascii", errors="ignore").upper()
+        if strict_bytes and strict_bytes in canonical.read_bytes().upper():
+            sys.stderr.write(
+                "virtio-input INF policy violation: canonical INF must not contain the strict generic fallback HWID "
+                f"({STRICT_FALLBACK_HWID}); it is opt-in via the alias INF.\n"
+            )
+            return 1
+
+        for sect in ("Aero.NTx86", "Aero.NTamd64"):
+            canonical_seen, canonical_count = count_hwid_model_lines(
+                path=canonical, section=sect, hwid=STRICT_FALLBACK_HWID
+            )
+            alias_seen, alias_count = count_hwid_model_lines(path=alias, section=sect, hwid=STRICT_FALLBACK_HWID)
+            if not canonical_seen:
+                sys.stderr.write(f"{canonical}: missing required models section [{sect}].\n")
+                return 1
+            if not alias_seen:
+                sys.stderr.write(f"{alias}: missing required models section [{sect}].\n")
+                return 1
+            if canonical_count != 0:
+                sys.stderr.write(
+                    "virtio-input INF policy violation: canonical INF must be SUBSYS-only (no strict generic fallback "
+                    f"model line {STRICT_FALLBACK_HWID}).\n"
+                )
+                return 1
+            if alias_count != 1:
+                sys.stderr.write(
+                    "virtio-input INF policy violation: legacy alias INF must include exactly one strict generic fallback "
+                    f"model line {STRICT_FALLBACK_HWID} in [{sect}] (found {alias_count}).\n"
+                )
+                return 1
+
         return 0
 
     sys.stderr.write("virtio-input INF alias drift detected.\n")
     sys.stderr.write(
-        "The alias INF must match the canonical INF from [Version] onward outside models sections "
-        "([Aero.NTx86] / [Aero.NTamd64]).\n\n"
+        "The alias INF must match the canonical INF from [Version] onward, excluding the models sections "
+        "[Aero.NTx86]/[Aero.NTamd64] (and ignoring the leading banner).\n\n"
     )
 
     canonical_lines = _decode_lines_for_diff(canonical_body)
