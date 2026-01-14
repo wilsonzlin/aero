@@ -141,12 +141,13 @@ function Write-SyntheticInfUtf16LeNoBom {
   param(
     [Parameter(Mandatory = $true)][string]$Path,
     [Parameter(Mandatory = $true)][string]$BaseName,
-    [string]$HardwareId
+    [string]$HardwareId,
+    [switch]$AddServiceInlineComment
   )
 
   $tmp = [System.IO.Path]::GetTempFileName()
   try {
-    Write-SyntheticInf -Path $tmp -BaseName $BaseName -HardwareId $HardwareId
+    Write-SyntheticInf -Path $tmp -BaseName $BaseName -HardwareId $HardwareId -AddServiceInlineComment:$AddServiceInlineComment
     $content = Get-Content -LiteralPath $tmp -Raw
   } finally {
     Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
@@ -172,7 +173,9 @@ function New-SyntheticDriverFiles {
     [Parameter(Mandatory = $true)][string]$OsDirName,
     [Parameter(Mandatory = $true)][string]$ArchDirName,
     [string]$HardwareId,
-    [switch]$AddServiceInlineComment
+    [switch]$AddServiceInlineComment,
+    # When set, write the INF as UTF-16LE without a BOM (common in the wild).
+    [switch]$InfUtf16LeNoBom
   )
 
   $dir = Join-Path $VirtioRoot (Join-Path $UpstreamDirName (Join-Path $OsDirName $ArchDirName))
@@ -183,7 +186,11 @@ function New-SyntheticDriverFiles {
   $catName = "$InfBaseName.cat"
 
   $infPath = Join-Path $dir $infName
-  Write-SyntheticInf -Path $infPath -BaseName $InfBaseName -HardwareId $HardwareId -AddServiceInlineComment:$AddServiceInlineComment
+  if ($InfUtf16LeNoBom) {
+    Write-SyntheticInfUtf16LeNoBom -Path $infPath -BaseName $InfBaseName -HardwareId $HardwareId -AddServiceInlineComment:$AddServiceInlineComment
+  } else {
+    Write-SyntheticInf -Path $infPath -BaseName $InfBaseName -HardwareId $HardwareId -AddServiceInlineComment:$AddServiceInlineComment
+  }
 
   Write-PlaceholderBinary -Path (Join-Path $dir $sysName)
   Write-PlaceholderBinary -Path (Join-Path $dir $catName)
@@ -208,6 +215,69 @@ function Get-SpecDriverNames {
   )
 }
 
+function Convert-TextBytesWithEncodingDetection {
+  param([Parameter(Mandatory = $true)][byte[]]$Bytes)
+
+  if ($null -eq $Bytes -or $Bytes.Length -eq 0) {
+    return ""
+  }
+
+  $offset = 0
+  $encoding = $null
+
+  if ($Bytes.Length -ge 3 -and $Bytes[0] -eq 0xEF -and $Bytes[1] -eq 0xBB -and $Bytes[2] -eq 0xBF) {
+    $encoding = [System.Text.Encoding]::UTF8
+    $offset = 3
+  } elseif ($Bytes.Length -ge 2 -and $Bytes[0] -eq 0xFF -and $Bytes[1] -eq 0xFE) {
+    $encoding = [System.Text.Encoding]::Unicode # UTF-16LE
+    $offset = 2
+  } elseif ($Bytes.Length -ge 2 -and $Bytes[0] -eq 0xFE -and $Bytes[1] -eq 0xFF) {
+    $encoding = [System.Text.Encoding]::BigEndianUnicode # UTF-16BE
+    $offset = 2
+  } elseif (($Bytes.Length % 2) -eq 0 -and $Bytes.Length -ge 4) {
+    # Heuristic for BOM-less UTF-16. INF files are typically ASCII-ish, so UTF-16 text tends
+    # to have a high number of 0x00 bytes in either even or odd positions.
+    $pairs = [int]($Bytes.Length / 2)
+    $nulEven = 0
+    $nulOdd = 0
+    for ($i = 0; $i -lt $Bytes.Length; $i += 2) {
+      if ($Bytes[$i] -eq 0) { $nulEven += 1 }
+    }
+    for ($i = 1; $i -lt $Bytes.Length; $i += 2) {
+      if ($Bytes[$i] -eq 0) { $nulOdd += 1 }
+    }
+
+    $nulRatio = ($nulEven + $nulOdd) / [double]$Bytes.Length
+    $evenRatio = $nulEven / [double]$pairs
+    $oddRatio = $nulOdd / [double]$pairs
+
+    if ($nulRatio -ge 0.2 -and ([Math]::Max($evenRatio, $oddRatio) -ge 0.5)) {
+      # If odd bytes are mostly NULs, that's typical UTF-16LE. If even bytes are mostly NULs,
+      # that's typical UTF-16BE.
+      $encoding = if ($oddRatio -ge $evenRatio) { [System.Text.Encoding]::Unicode } else { [System.Text.Encoding]::BigEndianUnicode }
+      $offset = 0
+    }
+  }
+
+  if (-not $encoding) {
+    $encoding = [System.Text.Encoding]::UTF8
+    $offset = 0
+  }
+
+  $text = $encoding.GetString($Bytes, $offset, ($Bytes.Length - $offset))
+
+  # Strip a leading BOM codepoint (defensive), and strip NULs to handle BOM-less UTF-16 that
+  # was decoded using an ASCII-compatible fallback.
+  if ($text.Length -gt 0 -and $text[0] -eq [char]0xFEFF) {
+    $text = $text.Substring(1)
+  }
+  if ($text.IndexOf([char]0) -ge 0) {
+    $text = $text.Replace([char]0, "")
+  }
+
+  return $text
+}
+
 function Try-ReadZipEntryText {
   param(
     [Parameter(Mandatory = $true)][string]$ZipPath,
@@ -222,11 +292,17 @@ function Try-ReadZipEntryText {
     if (-not $entry) {
       return $null
     }
-    $sr = New-Object System.IO.StreamReader($entry.Open())
+    $es = $entry.Open()
     try {
-      return $sr.ReadToEnd()
+      $ms = New-Object System.IO.MemoryStream
+      try {
+        $es.CopyTo($ms)
+        return Convert-TextBytesWithEncodingDetection -Bytes $ms.ToArray()
+      } finally {
+        $ms.Dispose()
+      }
     } finally {
-      $sr.Dispose()
+      $es.Dispose()
     }
   } finally {
     $zip.Dispose()
@@ -548,11 +624,15 @@ $fakeIsoVolumeId = "SYNTH_VIRTIOWIN"
   }
 } | ConvertTo-Json -Depth 4 | Out-File -FilePath (Join-Path $syntheticRoot "virtio-win-provenance.json") -Encoding UTF8
 
+# viostor: include an inline comment immediately after the service token to ensure AddService parsing
+# strips INF comments (e.g. `AddService = viostor; comment, ...` should yield service name `viostor`).
 New-SyntheticDriverFiles -VirtioRoot $syntheticRoot -UpstreamDirName "viostor" -InfBaseName "viostor" -OsDirName $osDir -ArchDirName "x86" -HardwareId "PCI\VEN_1AF4&DEV_1042" -AddServiceInlineComment
 New-SyntheticDriverFiles -VirtioRoot $syntheticRoot -UpstreamDirName "viostor" -InfBaseName "viostor" -OsDirName $osDir -ArchDirName "amd64" -HardwareId "PCI\VEN_1AF4&DEV_1042" -AddServiceInlineComment
 
-New-SyntheticDriverFiles -VirtioRoot $syntheticRoot -UpstreamDirName "NetKVM" -InfBaseName "netkvm" -OsDirName $osDir -ArchDirName "x86" -HardwareId "PCI\VEN_1AF4&DEV_1041"
-New-SyntheticDriverFiles -VirtioRoot $syntheticRoot -UpstreamDirName "NetKVM" -InfBaseName "netkvm" -OsDirName $osDir -ArchDirName "amd64" -HardwareId "PCI\VEN_1AF4&DEV_1041"
+# netkvm: write UTF-16LE without BOM to ensure make-guest-tools-from-virtio-win.ps1 can derive
+# AddService names from BOM-less UTF-16 INFs.
+New-SyntheticDriverFiles -VirtioRoot $syntheticRoot -UpstreamDirName "NetKVM" -InfBaseName "netkvm" -OsDirName $osDir -ArchDirName "x86" -HardwareId "PCI\VEN_1AF4&DEV_1041" -InfUtf16LeNoBom
+New-SyntheticDriverFiles -VirtioRoot $syntheticRoot -UpstreamDirName "NetKVM" -InfBaseName "netkvm" -OsDirName $osDir -ArchDirName "amd64" -HardwareId "PCI\VEN_1AF4&DEV_1041" -InfUtf16LeNoBom
 
 if (-not $OmitOptionalDrivers) {
   New-SyntheticDriverFiles -VirtioRoot $syntheticRoot -UpstreamDirName "viosnd" -InfBaseName "viosnd" -OsDirName $osDir -ArchDirName "x86" -HardwareId "PCI\VEN_1AF4&DEV_1059"

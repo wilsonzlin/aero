@@ -366,18 +366,105 @@ Write-Host "  spec : $SpecPath"
 Write-Host "  out  : $OutDir"
 Write-Host "  contract (template) : $WindowsDeviceContractPath"
 
+function Read-TextFileWithEncodingDetection {
+  param([Parameter(Mandatory = $true)][string]$Path)
+
+  # PowerShell's Get-Content encoding detection relies primarily on BOMs. Some real-world
+  # driver INFs ship as UTF-16LE without a BOM, which results in NUL-padded text and breaks
+  # AddService scanning when generating the virtio-win device contract override.
+  #
+  # We only need best-effort text for pattern matching, so implement lightweight detection:
+  #   - UTF-8 BOM
+  #   - UTF-16LE/BE BOM
+  #   - BOM-less UTF-16 heuristic (even length + high NUL ratio; infer endianness by NUL distribution)
+  $bytes = [System.IO.File]::ReadAllBytes($Path)
+  if ($null -eq $bytes -or $bytes.Length -eq 0) {
+    return ""
+  }
+
+  $offset = 0
+  $encoding = $null
+
+  if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+    $encoding = [System.Text.Encoding]::UTF8
+    $offset = 3
+  } elseif ($bytes.Length -ge 2 -and $bytes[0] -eq 0xFF -and $bytes[1] -eq 0xFE) {
+    $encoding = [System.Text.Encoding]::Unicode # UTF-16LE
+    $offset = 2
+  } elseif ($bytes.Length -ge 2 -and $bytes[0] -eq 0xFE -and $bytes[1] -eq 0xFF) {
+    $encoding = [System.Text.Encoding]::BigEndianUnicode # UTF-16BE
+    $offset = 2
+  } elseif (($bytes.Length % 2) -eq 0 -and $bytes.Length -ge 4) {
+    # Heuristic for BOM-less UTF-16. INF files are typically ASCII-ish, so UTF-16 text tends
+    # to have a high number of 0x00 bytes in either even or odd positions.
+    $pairs = [int]($bytes.Length / 2)
+    $nulEven = 0
+    $nulOdd = 0
+    for ($i = 0; $i -lt $bytes.Length; $i += 2) {
+      if ($bytes[$i] -eq 0) { $nulEven += 1 }
+    }
+    for ($i = 1; $i -lt $bytes.Length; $i += 2) {
+      if ($bytes[$i] -eq 0) { $nulOdd += 1 }
+    }
+
+    $nulRatio = ($nulEven + $nulOdd) / [double]$bytes.Length
+    $evenRatio = $nulEven / [double]$pairs
+    $oddRatio = $nulOdd / [double]$pairs
+
+    if ($nulRatio -ge 0.2 -and ([Math]::Max($evenRatio, $oddRatio) -ge 0.5)) {
+      # If odd bytes are mostly NULs, that's typical UTF-16LE. If even bytes are mostly NULs,
+      # that's typical UTF-16BE.
+      $encoding = if ($oddRatio -ge $evenRatio) { [System.Text.Encoding]::Unicode } else { [System.Text.Encoding]::BigEndianUnicode }
+      $offset = 0
+    }
+  }
+
+  if (-not $encoding) {
+    # No BOM and doesn't look like UTF-16. Treat as UTF-8 (ASCII-compatible).
+    $encoding = [System.Text.Encoding]::UTF8
+    $offset = 0
+  }
+
+  $text = $encoding.GetString($bytes, $offset, ($bytes.Length - $offset))
+
+  # Remove any leading BOM codepoint (defensive), and strip NULs in case decoding fell back
+  # to the wrong encoding for an unexpected file.
+  if ($text.Length -gt 0 -and $text[0] -eq [char]0xFEFF) {
+    $text = $text.Substring(1)
+  }
+  if ($text.IndexOf([char]0) -ge 0) {
+    $text = $text.Replace([char]0, "")
+  }
+
+  return $text
+}
+
 function Get-InfAddServiceNames {
   param([Parameter(Mandatory = $true)][string]$InfPath)
 
   $content = $null
   try {
-    $content = Get-Content -LiteralPath $InfPath -Raw -ErrorAction Stop
+    $content = Read-TextFileWithEncodingDetection -Path $InfPath
   } catch {
     return @()
   }
 
   $names = @{}
-  foreach ($line in ($content -split "`r?`n")) {
+  foreach ($rawLine in ($content -split "`r?`n")) {
+    $line = $rawLine
+    if ($line.Length -gt 0 -and $line[0] -eq [char]0xFEFF) {
+      $line = $line.Substring(1)
+    }
+
+    # Strip inline INF comments before parsing AddService so the extracted service name doesn't
+    # include a trailing ';' (e.g. `AddService = viostor; comment, ...`).
+    $semi = $line.IndexOf(';')
+    if ($semi -ge 0) {
+      $line = $line.Substring(0, $semi)
+    }
+    $line = $line.Trim()
+    if (-not $line) { continue }
+
     $m = [regex]::Match($line, "(?i)^\\s*AddService\\s*=\\s*(.+)$")
     if (-not $m.Success) { continue }
 
@@ -388,7 +475,7 @@ function Get-InfAddServiceNames {
     $svc = $null
     $m2 = [regex]::Match($rest, "^([^,\\s]+)")
     if ($m2.Success) {
-      $svc = $m2.Groups[1].Value.Trim()
+      $svc = $m2.Groups[1].Value.Trim().TrimEnd(';').Trim()
     }
     if ([string]::IsNullOrWhiteSpace($svc)) { continue }
 
