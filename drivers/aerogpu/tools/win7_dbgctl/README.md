@@ -163,6 +163,7 @@ Minimum supported commands:
   - With `--out`, dbgctl writes the full requested range to a file.
   - On failure (including `STATUS_PARTIAL_COPY`), dbgctl best-effort deletes the `--out` path so callers do not see partial/truncated artifacts.
   - With `--json`, `data_hex` is capped to a bounded prefix; see `request.size_bytes_effective` and `response.truncated`.
+    If the KMD returns `STATUS_SUCCESS` but copies fewer bytes than requested, dbgctl treats it as an error (`ok:false`, `response.short_read:true`).
 
 - `aerogpu_dbgctl --dump-ring`  
   Dumps ring head/tail + recent submissions. Fields include:
