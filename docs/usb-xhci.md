@@ -531,6 +531,7 @@ Rust xHCI-focused tests commonly live under:
 - `crates/aero-usb/tests/xhci_mmio_smoke.rs`
 - `crates/aero-usb/tests/xhci_mmio_doorbell_command_ring.rs`
 - `crates/aero-usb/tests/xhci_doorbell_bme_gating.rs` (PCI BME gating + event ring delivery)
+- `crates/aero-usb/tests/xhci_hce_*.rs` (Host Controller Error paths: halt DMA, snapshot/restore)
 - `crates/aero-usb/tests/xhci_event_ring.rs`
 - `crates/aero-usb/tests/xhci_trb_ring.rs`
 - `crates/aero-usb/tests/xhci_command_ring.rs`
@@ -541,6 +542,7 @@ Rust xHCI-focused tests commonly live under:
 - `crates/aero-usb/tests/xhci_ports.rs`
 - `crates/aero-usb/tests/xhci_detach_pending_endpoints.rs` (detach clears pending doorbell work)
 - `crates/aero-usb/tests/xhci_configure_endpoint_clears_pending_doorbells.rs` (Configure Endpoint clears pending doorbells)
+- `crates/aero-usb/tests/xhci_configure_endpoint_slot_context.rs` (Configure Endpoint slot context parsing)
 - `crates/aero-usb/tests/xhci_stop_endpoint_unschedules.rs` (Stop Endpoint unschedules active endpoints)
 - `crates/aero-usb/tests/xhci_snapshot_*.rs` (snapshot/restore, legacy compatibility, determinism)
 - `crates/aero-usb/tests/xhci_interrupt_in.rs`
@@ -550,6 +552,7 @@ Rust xHCI-focused tests commonly live under:
 - `crates/aero-machine/tests/machine_xhci_usb_attach_at_path.rs` (machine-level host attach/detach integration)
 - `crates/aero-machine/tests/machine_xhci_snapshot.rs` (machine-level snapshot/restore integration)
 - `crates/aero-machine/tests/xhci_snapshot.rs` (machine-level snapshot/restore integration)
+- `crates/devices/tests/xhci_msix_integration.rs` (native PCI wrapper MSI-X + controller integration)
 - `crates/emulator/tests/xhci_mmio_gating.rs` (emulator-side PCI/MMIO/BME gating; requires `--features legacy-usb-xhci`)
 
 When adding or extending xHCI functionality, prefer adding focused Rust tests (for controller semantics) and/or web unit tests (for host integration and PCI wrapper behavior) alongside the implementation.
