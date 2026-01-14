@@ -39,8 +39,7 @@ Feature matrix for the Win7 WDK-backed UMDs:
   - 16-bit packed formats (`B5G6R5_UNORM`, `B5G5R5A1_UNORM`)
   - Block-compressed formats (BC1/BC2/BC3/BC7) and explicit sRGB variants are ABI-gated (ABI 1.2+; see `aerogpu_umd_private_v1.device_abi_version_u32`). On older ABIs, sRGB DXGI formats are mapped to UNORM for command-stream compatibility; BC formats are rejected.
 - Shaders (DXBC payload passthrough):
-  - D3D10: VS/PS/GS
-  - D3D10.1: VS/PS/GS
+  - D3D10/D3D10.1: VS/PS/GS (GS resource bindings are stubbed)
   - D3D11: VS/PS/GS/CS (GS is emulated on the host via a compute prepass; GS DXBC is translated/executed via `crates/aero-d3d11/src/runtime/gs_translate.rs`)
 - Input layout + vertex/index buffers, primitive topology
 - Shader binding tables:
@@ -84,19 +83,24 @@ Feature matrix for the Win7 WDK-backed UMDs:
   - D3D10 / D3D10.1: `CreateGeometryShader` + `GsSetShader` (and GS resource bindings: `GsSetConstantBuffers`, `GsSetShaderResources`, `GsSetSamplers`) are forwarded into the command stream (GS handle carried via `aerogpu_cmd_bind_shaders.reserved0` (legacy compat)).
   - D3D11:
     - `CreateGeometryShader` + `GsSetShader` are forwarded into the command stream (GS handle carried via `aerogpu_cmd_bind_shaders.reserved0` for legacy compat).
-    - GS stage resource binding DDIs (`GsSetConstantBuffers`, `GsSetShaderResources`, `GsSetSamplers`) emit binding packets; bindings are tracked by the host but not yet consumed by the placeholder prepass.
+    - GS stage resource binding DDIs (`GsSetConstantBuffers`, `GsSetShaderResources`, `GsSetSamplers`) emit binding packets; the host uses these bindings for the GS compute-emulation path (supported subset).
   - Host/WebGPU execution:
-    - WebGPU has no geometry stage; GS is emulated via a **compute prepass + indirect draw** pipeline when GS/HS/DS emulation is required.
-    - Current executor behavior is still bring-up oriented: the prepass emits placeholder geometry (synthetic triangle-list primitives) and does **not** execute the guest GS DXBC yet.
-    - A prototype SM4 GS → WGSL compute translator exists in `crates/aero-d3d11/src/runtime/gs_translate.rs` (with strip→list + `RestartStrip`/`cut` handling in `crates/aero-d3d11/src/runtime/strip_to_list.rs`), but it is not yet wired into the command executor.
+    - WebGPU has no geometry stage; GS is emulated via a **compute prepass + indirect draw** pipeline.
+    - The host decodes the GS DXBC/SM4 module and translates it to WGSL compute in `crates/aero-d3d11/src/runtime/gs_translate.rs`. The generated compute shader executes the GS instruction stream per input primitive and produces:
+      - an expanded vertex buffer
+      - an expanded **triangle-list** index buffer
+      - `DrawIndexedIndirectArgs` so the render pass can consume the expansion via `draw_indexed_indirect`
+    - Output topology: `TriangleStream` (`triangle_strip`). `RestartStrip()` / `cut` terminates the current strip; strip output is expanded into a triangle list with CUT semantics (see `crates/aero-d3d11/src/runtime/strip_to_list.rs`).
     - The command stream exposes an ABI extension for extended D3D11 stages (`stage_ex`; see `enum aerogpu_shader_stage_ex` in `drivers/aerogpu/protocol/aerogpu_cmd.h`). The host executor accepts both the direct `AEROGPU_SHADER_STAGE_GEOMETRY` (`stage = 3`) encoding and the `stage_ex` encoding.
     - Win7 GS tests (WIP):
       - `drivers/aerogpu/tests/win7/d3d11_geometry_shader_smoke`
       - `drivers/aerogpu/tests/win7/d3d11_geometry_shader_restart_strip`
-    - Bring-up subset (initial target for real GS execution):
+      - Host-side tests live under `crates/aero-d3d11/tests/` (run via `cargo test -p aero-d3d11`).
+    - Current tested GS subset:
       - Input primitives: `point` and `triangle` (non-adjacency)
       - Output: `TriangleStream` (`triangle_strip`) only (stream 0)
       - Shader instructions/operands: a small SM4 subset (enough for tests: `mov`/`add` + immediate constants + `v#[]` inputs + `emit`/`cut`)
+    - Design notes: [`docs/graphics/geometry-shader-emulation.md`](../../../../docs/graphics/geometry-shader-emulation.md)
   - Known unsupported / not yet implemented:
     - Stream-output (SO):
       - D3D11 accepts `CreateGeometryShaderWithStreamOutput`, but ignores the stream-output declaration; binding real SO targets (`SOSetTargets`) reports `E_NOTIMPL`.

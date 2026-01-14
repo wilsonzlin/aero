@@ -6,8 +6,8 @@ WebGPU render pipeline.
 
 This document describes:
 
-- what is **implemented today** (command-stream plumbing, binding model, current limitations), and
-- the **target** compute-emulation pipeline shape + GS feature subset (as GS bytecode execution lands).
+- what is **implemented today** (GS DXBC translation + compute execution path, binding model, current limitations), and
+- the **next steps** for broader GS feature coverage (more opcodes/topologies, more system values, etc).
 
 > Related: [`docs/16-d3d10-11-translation.md`](../16-d3d10-11-translation.md) (high-level D3D10/11→WebGPU mapping).
 
@@ -72,12 +72,15 @@ For simplicity and portability, Aero’s emulation expands strips into lists:
 This avoids needing to generate restart indices and keeps the draw stage in the most widely-supported
 primitive topologies.
 
+Note: today the GS translator focuses on `triangle_strip` output; `line_strip` output support is a
+planned follow-up.
+
 ---
 
 ## Current implementation status (AeroGPU command-stream executor)
 
-The AeroGPU D3D10/11 command executor currently has the *plumbing* needed to support GS/HS/DS-style
-compute expansion, but it is not yet a full “execute guest GS bytecode” implementation.
+The AeroGPU D3D10/11 command-stream executor implements geometry shaders by inserting a GPU-side
+compute expansion prepass before the render pass.
 
 Implemented today:
 
@@ -85,19 +88,26 @@ Implemented today:
   clobbering compute-stage bindings (see “Resource binding model” below).
 - **Extended `BIND_SHADERS`**: the `BIND_SHADERS` packet can carry `gs/hs/ds` handles, and draws route
   through a dedicated “compute prepass” path when any of these stages are bound.
-- **Compute→indirect→render pipeline plumbing**: the executor can run a compute pass that writes an
-  expanded vertex/index buffer + indirect args, then render via `draw_indirect` /
+- **GS DXBC execution via compute emulation (supported subset)**:
+  - GS DXBC is decoded to SM4 IR and translated to WGSL compute (see
+    `crates/aero-d3d11/src/runtime/gs_translate.rs`).
+  - The compute prepass executes the GS instruction stream per input primitive and expands
+    `EmitVertex` / `CutVertex` output into list geometry suitable for a normal WebGPU draw.
+    Strip-cut semantics are validated by reference implementations in
+    `crates/aero-d3d11/src/runtime/strip_to_list.rs`.
+- **Compute→indirect→render pipeline plumbing**: the executor runs the GS compute prepass to write an
+  expanded vertex/index buffer + indirect args, then renders via `draw_indirect` /
   `draw_indexed_indirect` (see `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`).
 
-Current limitation (important):
+Test pointers:
 
-- The compute prepass is currently a **placeholder** that emits a fixed triangle and does **not**
-  execute the guest’s GS/HS/DS DXBC yet. DXBC payloads that parse as GS/HS/DS are currently
-  accepted-but-ignored at `CREATE_SHADER_DXBC` time.
+- Translator validation: `crates/aero-d3d11/tests/gs_translate.rs`
+- End-to-end GS execution: `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_point_to_triangle.rs`
+- Strip cut/restart semantics: `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_restart_strip.rs`
 
 ---
 
-## Target GS feature subset (initial)
+## Supported GS feature subset (current)
 
 ### Input primitive types
 
@@ -119,27 +129,25 @@ D3D geometry shaders only declare one of:
 - `linestrip`
 - `trianglestrip`
 
-Aero supports all three declarations, but the emulation output is rendered as:
+The current implementation focuses on `trianglestrip` output, expanded into a **triangle list** for rendering.
 
-- `pointlist` → point list
-- `linestrip` → line list (expanded)
-- `trianglestrip` → triangle list (expanded)
+Planned follow-ups include:
+
+- `pointlist` output (rendered as a point list)
+- `linestrip` output (expanded into a line list)
 
 Only **stream 0** is supported.
 
 ### Opcodes / instruction subset
 
 The GS instruction set surface is large; initial emulation focuses on the opcodes required for
-“expand a primitive into N primitives” style shaders:
+“expand a primitive into N primitives” style shaders.
 
 - **Primitive emission**
   - `EmitVertex` (`emit`)
   - `CutVertex` (`cut`)
 - **Arithmetic subset**
-  - `mov`, `add`, `mul`, `mad`
-  - `min`, `max`
-  - `dp3`, `dp4`
-  - `rcp`, `rsq`
+  - `mov`, `add` (plus immediate constants and basic register operands)
 
 Anything outside this subset is expected to be rejected by translation (or will remain unsupported
 until implemented).
@@ -232,7 +240,7 @@ binding-number range).
 Note: the full GS/HS/DS emulation pipeline will need a unified bind-group layout that accommodates
  both “stage_ex” bindings (low `@binding` ranges) and vertex pulling/expansion internal bindings
  (`@binding >= BINDING_BASE_INTERNAL`) within `@group(3)` (keeping the bind group count within the
- WebGPU baseline of 4). The current executor prepass is still a placeholder.
+ WebGPU baseline of 4).
 
 ### AeroGPU command stream note: `stage_ex`
 

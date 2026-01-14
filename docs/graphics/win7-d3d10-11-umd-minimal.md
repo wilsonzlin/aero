@@ -7,7 +7,7 @@ This document is an implementation-oriented checklist/spec for bringing up **Dir
 * Windows 7 SP1, **WDDM 1.1**, **DXGI 1.1**
 * D3D10 runtime + D3D10 UMD DDI (`d3d10umddi.h`)
 * D3D11 runtime + D3D11 UMD DDI (`d3d11umddi.h`) with initial feature level **FL10_0**
-* Shader models **SM4.x** first (`vs_4_0`, `ps_4_0`, `gs_4_0`), roadmap to **SM5.0** (`*_5_0`)
+* Shader models **SM4.x** first (`vs_4_0`, `ps_4_0`, optional `gs_4_0`), roadmap to **SM5.0** (`*_5_0`)
 * **Windowed swapchain only** initially (DWM composition)
 
 **Non-goals (initial bring-up):**
@@ -183,13 +183,6 @@ Shaders
   * `D3D10DDIARG_CREATEVERTEXSHADER`
 * `pfnCalcPrivatePixelShaderSize` + `pfnCreatePixelShader` + `pfnDestroyPixelShader`
   * `D3D10DDIARG_CREATEPIXELSHADER`
-* Geometry shader (required for D3D10-class compatibility; do not stub if you advertise FL10_0+ for D3D11)
-  * `pfnCalcPrivateGeometryShaderSize` + `pfnCreateGeometryShader` + `pfnDestroyGeometryShader`
-  * `D3D10DDIARG_CREATEGEOMETRYSHADER`
-  * note: the GS stage can be left unbound, but real apps (and tests) may create/bind/execute GS at D3D10/FL10_0 class.
-  * AeroGPU note: WebGPU has no geometry shader stage; AeroGPU forwards GS DXBC and emulates it on the host by inserting a compute prepass when GS is bound.
-    Details: [`geometry-shader-emulation.md`](./geometry-shader-emulation.md) and [`docs/16-d3d10-11-translation.md`](../16-d3d10-11-translation.md).
-  * If the host backend cannot run compute pipelines, treat GS support as a capability gate: prefer advertising only `D3D_FEATURE_LEVEL_9_x` for D3D11 rather than claiming FL10_0+ with a non-functional GS path.
 
 Pipeline state
 * `pfnCalcPrivateElementLayoutSize` + `pfnCreateElementLayout` + `pfnDestroyElementLayout`
@@ -205,6 +198,12 @@ Pipeline state
 
 **Initially NOT_SUPPORTED (safe to stub):**
 
+* Geometry shader object creation:
+  * `pfnCalcPrivateGeometryShaderSize` + `pfnCreateGeometryShader` + `pfnDestroyGeometryShader`
+  * note: the **GS stage exists in D3D10**, but many “first triangle” tests never create/bind a GS (it is valid to have no GS bound).
+  * AeroGPU note: WebGPU has no geometry shader stage. The command stream can encode a GS handle (via `aerogpu_cmd_bind_shaders::reserved0`).
+    GS DXBC is forwarded to the host and emulated via a compute prepass (supported subset).
+    See [`geometry-shader-emulation.md`](./geometry-shader-emulation.md) and [`docs/16-d3d10-11-translation.md`](../16-d3d10-11-translation.md).
 * Stream-output state / SO buffers (`pfnSoSetTargets`, etc)
 * Queries/predication:
   * `pfnCreateQuery` / `pfnDestroyQuery`, `pfnBegin` / `pfnEnd`, `pfnSetPredication`
@@ -226,12 +225,6 @@ Shaders
 * `pfnPsSetConstantBuffers`
 * `pfnVsSetShaderResources` / `pfnPsSetShaderResources` (for texture test)
 * `pfnVsSetSamplers` / `pfnPsSetSamplers` (for texture test)
-
-Geometry shader stage (D3D10-class pipeline; required if you expect FL10_0+ GS workloads)
-* `pfnGsSetShader`
-* `pfnGsSetConstantBuffers`
-* `pfnGsSetShaderResources`
-* `pfnGsSetSamplers`
 
 Rasterizer / Output merger
 * `pfnSetViewports`
@@ -385,7 +378,7 @@ Geometry shader note:
 
 * Geometry shaders are part of the D3D10-class pipeline and are expected at `D3D_FEATURE_LEVEL_10_0` and above.
 * If you advertise **FL10_0** (or higher) from `pfnGetCaps`, implement `pfnCreateGeometryShader` / `D3D11DDIARG_CREATEGEOMETRYSHADER` (and the corresponding bind/state entrypoints) even if the first implementation is “limited but functional”.
-  * **Outdated MVP note:** older bring-up notes suggested “accept GS creation but ignore it”. This is no longer viable once you run real GS workloads and the Win7 regression tests below.
+  * **Outdated MVP note:** earlier bring-up guidance suggested “accept GS creation but ignore it”. This is no longer viable once you run real GS workloads and the Win7 regression tests below.
   * **AeroGPU approach (current): forward GS DXBC and emulate on the host (WebGPU).**
     * The guest UMD treats GS like VS/PS: it forwards the DXBC blob to the host and participates in normal shader lifetime + binding.
     * Since WebGPU has **no GS stage**, AeroGPU emulates GS by inserting a **compute prepass** when a GS is bound:
@@ -397,8 +390,8 @@ Geometry shader note:
 * Win7 regression tests that define the minimum semantics:
   * `drivers/aerogpu/tests/win7/d3d11_geometry_shader_smoke` — basic GS create/bind/execute path.
   * `drivers/aerogpu/tests/win7/d3d11_geometry_shader_restart_strip` — validates `TriangleStream::RestartStrip` / DXBC `cut` handling.
-    * This matters because AeroGPU commonly expands GS `line_strip`/`triangle_strip` outputs into lists; if you drop the cut/restart markers you can generate “bridging” segments/triangles between strips (visible corruption, and this test fails by detecting pixels filled in the gap between two emitted strips).
-* If you are not ready to support GS (e.g. a host backend without compute pipelines), treat this as a capability gate: prefer advertising only `D3D_FEATURE_LEVEL_9_x` for D3D11 (while still supporting D3D10 separately), rather than claiming FL10_0+ with a non-functional GS path.
+    * This matters because AeroGPU expands `triangle_strip` GS output into a list topology for rendering; if you drop the cut/restart markers you can generate “bridging” triangles between strips (visible corruption, and this test fails by detecting pixels filled in the gap between two emitted strips).
+* If you are not ready to support GS (e.g. host backend without compute), prefer advertising only `D3D_FEATURE_LEVEL_9_x` for D3D11 (while still supporting D3D10 separately), or be explicit that some FL10_0 apps will fail when they create/bind GS.
 
 #### 2.2.3 Mandatory context/state binding + draw path
 
@@ -644,9 +637,7 @@ No other reflection is required for “triangle/texture/depth” bring-up.
 * UAVs and compute
 * Deferred contexts / command lists (if the runtime exposes them through your chosen D3D11 DDI interface version)
 
-If you claim `D3D_FEATURE_LEVEL_10_0` but do **not** implement compute shaders, ensure the corresponding capability is reported as unsupported (for API-facing caps this is typically via `D3D11_FEATURE_DATA_D3D10_X_HARDWARE_OPTIONS::ComputeShaders_Plus_RawAndStructuredBuffers_Via_Shader_4_x = FALSE`).
-
-Once you *do* implement the D3D11 compute stage (CS) end-to-end (compute shader objects, buffer SRV/UAV binding, and `Dispatch`), flip this capability to `TRUE` so D3D11 apps can opt into SM4.0 compute work at FL10\_x.
+If you claim `D3D_FEATURE_LEVEL_10_0` but do not implement compute shaders, ensure the corresponding capability is reported as unsupported (for API-facing caps this is typically via `D3D11_FEATURE_DATA_D3D10_X_HARDWARE_OPTIONS::ComputeShaders_Plus_RawAndStructuredBuffers_Via_Shader_4_x = FALSE`).
 
 ### 6.2 Roadmap to FL11_0 (SM5.0)
 
