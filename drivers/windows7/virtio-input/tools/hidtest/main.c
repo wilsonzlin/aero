@@ -152,6 +152,11 @@
     CTL_CODE(FILE_DEVICE_UNKNOWN, 0x801, METHOD_BUFFERED, FILE_READ_ACCESS)
 #endif
 
+#ifndef IOCTL_VIOINPUT_QUERY_INTERRUPT_INFO
+#define IOCTL_VIOINPUT_QUERY_INTERRUPT_INFO \
+    CTL_CODE(FILE_DEVICE_UNKNOWN, 0x802, METHOD_BUFFERED, FILE_READ_ACCESS)
+#endif
+
 #ifndef IOCTL_VIOINPUT_GET_LOG_MASK
 #define IOCTL_VIOINPUT_GET_LOG_MASK \
     CTL_CODE(FILE_DEVICE_UNKNOWN, 0x803, METHOD_BUFFERED, FILE_READ_ACCESS)
@@ -163,6 +168,7 @@
 #endif
 #define VIOINPUT_COUNTERS_VERSION 3
 #define VIOINPUT_STATE_VERSION 2
+#define VIOINPUT_INTERRUPT_INFO_VERSION 1
 
 typedef struct VIOINPUT_COUNTERS_V1_MIN {
     ULONG Size;
@@ -173,6 +179,11 @@ typedef struct VIOINPUT_STATE_V1_MIN {
     ULONG Size;
     ULONG Version;
 } VIOINPUT_STATE_V1_MIN;
+
+typedef struct VIOINPUT_INTERRUPT_INFO_V1_MIN {
+    ULONG Size;
+    ULONG Version;
+} VIOINPUT_INTERRUPT_INFO_V1_MIN;
 
 typedef struct _VIOINPUT_COUNTERS {
     ULONG Size;
@@ -244,6 +255,42 @@ typedef struct VIOINPUT_STATE {
     ULONG StatusQDropOnFull;
 } VIOINPUT_STATE;
 
+typedef enum _VIOINPUT_INTERRUPT_MODE {
+    VioInputInterruptModeUnknown = 0,
+    VioInputInterruptModeIntx = 1,
+    VioInputInterruptModeMsix = 2,
+} VIOINPUT_INTERRUPT_MODE;
+
+typedef enum _VIOINPUT_INTERRUPT_MAPPING {
+    VioInputInterruptMappingUnknown = 0,
+    VioInputInterruptMappingAllOnVector0 = 1,
+    VioInputInterruptMappingPerQueue = 2,
+} VIOINPUT_INTERRUPT_MAPPING;
+
+#define VIOINPUT_INTERRUPT_VECTOR_NONE ((USHORT)0xFFFF)
+
+typedef struct _VIOINPUT_INTERRUPT_INFO {
+    ULONG Size;
+    ULONG Version;
+
+    VIOINPUT_INTERRUPT_MODE Mode;
+    ULONG MessageCount;
+    VIOINPUT_INTERRUPT_MAPPING Mapping;
+    USHORT UsedVectorCount;
+
+    USHORT ConfigVector;
+    USHORT Queue0Vector;
+    USHORT Queue1Vector;
+
+    LONG IntxSpuriousCount;
+
+    LONG TotalInterruptCount;
+    LONG TotalDpcCount;
+    LONG ConfigInterruptCount;
+    LONG Queue0InterruptCount;
+    LONG Queue1InterruptCount;
+} VIOINPUT_INTERRUPT_INFO;
+
 enum {
     VIOINPUT_DEVICE_KIND_UNKNOWN = 0,
     VIOINPUT_DEVICE_KIND_KEYBOARD = 1,
@@ -270,6 +317,7 @@ typedef struct OPTIONS {
     int selftest;
     int json;
     int query_state;
+    int query_interrupt_info;
     int query_counters;
     int reset_counters;
     int have_vid;
@@ -301,12 +349,14 @@ typedef struct OPTIONS {
     int ioctl_bad_get_input_report;
     int ioctl_query_counters_short;
     int ioctl_query_state_short;
+    int ioctl_query_interrupt_info_short;
     int ioctl_get_input_report;
     int hidd_get_input_report;
     int hidd_bad_set_output_report;
     int dump_desc;
     int dump_collection_desc;
     int query_counters_json;
+    int query_interrupt_info_json;
     int quiet;
     int want_keyboard;
     int want_mouse;
@@ -709,6 +759,30 @@ static const wchar_t *vioinput_device_kind_to_string(ULONG kind)
     }
 }
 
+static const wchar_t *vioinput_interrupt_mode_to_string(ULONG mode)
+{
+    switch (mode) {
+    case VioInputInterruptModeIntx:
+        return L"intx";
+    case VioInputInterruptModeMsix:
+        return L"msix";
+    default:
+        return L"unknown";
+    }
+}
+
+static const wchar_t *vioinput_interrupt_mapping_to_string(ULONG mapping)
+{
+    switch (mapping) {
+    case VioInputInterruptMappingAllOnVector0:
+        return L"all-on-vector0";
+    case VioInputInterruptMappingPerQueue:
+        return L"per-queue";
+    default:
+        return L"unknown";
+    }
+}
+
 static int query_vioinput_state_blob(HANDLE handle, BYTE **buf_out, DWORD *bytes_out)
 {
     BYTE *buf = NULL;
@@ -769,6 +843,85 @@ static int query_vioinput_state_blob(HANDLE handle, BYTE **buf_out, DWORD *bytes
             ZeroMemory(buf, expected_size);
             bytes = 0;
             ok = DeviceIoControl(handle, IOCTL_VIOINPUT_QUERY_STATE, NULL, 0, buf, expected_size, &bytes, NULL);
+            if (ok) {
+                if (buf_out != NULL) {
+                    *buf_out = buf;
+                }
+                if (bytes_out != NULL) {
+                    *bytes_out = bytes;
+                }
+                return 1;
+            }
+            err = GetLastError();
+        }
+    }
+
+    free(buf);
+    SetLastError(err);
+    return 0;
+}
+
+static int query_vioinput_interrupt_info_blob(HANDLE handle, BYTE **buf_out, DWORD *bytes_out)
+{
+    BYTE *buf = NULL;
+    DWORD cap;
+    DWORD bytes = 0;
+    BOOL ok;
+    DWORD err;
+    ULONG expected_size = 0;
+
+    if (buf_out != NULL) {
+        *buf_out = NULL;
+    }
+    if (bytes_out != NULL) {
+        *bytes_out = 0;
+    }
+
+    if (handle == INVALID_HANDLE_VALUE || handle == NULL) {
+        SetLastError(ERROR_INVALID_HANDLE);
+        return 0;
+    }
+
+    cap = (DWORD)sizeof(VIOINPUT_INTERRUPT_INFO);
+    if (cap < sizeof(VIOINPUT_INTERRUPT_INFO_V1_MIN)) {
+        cap = (DWORD)sizeof(VIOINPUT_INTERRUPT_INFO_V1_MIN);
+    }
+
+    buf = (BYTE *)calloc(cap, 1);
+    if (buf == NULL) {
+        SetLastError(ERROR_OUTOFMEMORY);
+        return 0;
+    }
+
+    ok = DeviceIoControl(handle, IOCTL_VIOINPUT_QUERY_INTERRUPT_INFO, NULL, 0, buf, cap, &bytes, NULL);
+    if (ok) {
+        if (buf_out != NULL) {
+            *buf_out = buf;
+        }
+        if (bytes_out != NULL) {
+            *bytes_out = bytes;
+        }
+        return 1;
+    }
+
+    err = GetLastError();
+
+    // If the buffer was too small, the driver should still return at least Size
+    // (and ideally Size+Version). Retry with the reported Size.
+    if ((err == ERROR_INSUFFICIENT_BUFFER || err == ERROR_MORE_DATA) && cap >= sizeof(expected_size)) {
+        memcpy(&expected_size, buf, sizeof(expected_size));
+        if (expected_size != 0 && expected_size > cap && expected_size <= 64u * 1024u) {
+            BYTE *b2 = (BYTE *)realloc(buf, expected_size);
+            if (b2 == NULL) {
+                free(buf);
+                SetLastError(ERROR_OUTOFMEMORY);
+                return 0;
+            }
+            buf = b2;
+            ZeroMemory(buf, expected_size);
+            bytes = 0;
+            ok = DeviceIoControl(handle, IOCTL_VIOINPUT_QUERY_INTERRUPT_INFO, NULL, 0, buf, expected_size, &bytes,
+                                 NULL);
             if (ok) {
                 if (buf_out != NULL) {
                     *buf_out = buf;
@@ -857,6 +1010,242 @@ static void print_vioinput_state(const VIOINPUT_STATE *st, DWORD bytes)
         wprintf(L"  StatusQDropOnFull: <missing>\n");
     }
 }
+
+static void print_vioinput_interrupt_info(const VIOINPUT_INTERRUPT_INFO *info, DWORD bytes)
+{
+    DWORD avail;
+
+    if (info == NULL) {
+        return;
+    }
+
+    avail = bytes;
+    if (avail >= sizeof(ULONG)) {
+        if (info->Size != 0 && info->Size < avail) {
+            avail = info->Size;
+        }
+    }
+
+    wprintf(L"\nvirtio-input interrupt info:\n");
+    if (avail >= offsetof(VIOINPUT_INTERRUPT_INFO, Size) + sizeof(ULONG)) {
+        wprintf(L"  Size:            %lu (returned %lu bytes)\n", info->Size, bytes);
+    } else {
+        wprintf(L"  Size:            <missing> (returned %lu bytes)\n", bytes);
+    }
+    if (avail >= offsetof(VIOINPUT_INTERRUPT_INFO, Version) + sizeof(ULONG)) {
+        wprintf(L"  Version:         %lu\n", info->Version);
+        if (info->Version != VIOINPUT_INTERRUPT_INFO_VERSION) {
+            wprintf(L"  [WARN] Version=%lu != expected %u; dumping what is present\n", info->Version,
+                    (unsigned)VIOINPUT_INTERRUPT_INFO_VERSION);
+        }
+    } else {
+        wprintf(L"  Version:         <missing>\n");
+    }
+
+    if (avail >= offsetof(VIOINPUT_INTERRUPT_INFO, Mode) + sizeof(info->Mode)) {
+        wprintf(L"  Mode:            %ls (%lu)\n", vioinput_interrupt_mode_to_string((ULONG)info->Mode),
+                (ULONG)info->Mode);
+    } else {
+        wprintf(L"  Mode:            <missing>\n");
+    }
+    if (avail >= offsetof(VIOINPUT_INTERRUPT_INFO, MessageCount) + sizeof(ULONG)) {
+        wprintf(L"  MessageCount:    %lu\n", info->MessageCount);
+    } else {
+        wprintf(L"  MessageCount:    <missing>\n");
+    }
+    if (avail >= offsetof(VIOINPUT_INTERRUPT_INFO, Mapping) + sizeof(info->Mapping)) {
+        wprintf(L"  Mapping:         %ls (%lu)\n", vioinput_interrupt_mapping_to_string((ULONG)info->Mapping),
+                (ULONG)info->Mapping);
+    } else {
+        wprintf(L"  Mapping:         <missing>\n");
+    }
+    if (avail >= offsetof(VIOINPUT_INTERRUPT_INFO, UsedVectorCount) + sizeof(USHORT)) {
+        wprintf(L"  UsedVectorCount: %u\n", (unsigned)info->UsedVectorCount);
+    } else {
+        wprintf(L"  UsedVectorCount: <missing>\n");
+    }
+
+    if (avail >= offsetof(VIOINPUT_INTERRUPT_INFO, ConfigVector) + sizeof(USHORT)) {
+        if (info->ConfigVector == VIOINPUT_INTERRUPT_VECTOR_NONE) {
+            wprintf(L"  ConfigVector:    none\n");
+        } else {
+            wprintf(L"  ConfigVector:    %u\n", (unsigned)info->ConfigVector);
+        }
+    } else {
+        wprintf(L"  ConfigVector:    <missing>\n");
+    }
+    if (avail >= offsetof(VIOINPUT_INTERRUPT_INFO, Queue0Vector) + sizeof(USHORT)) {
+        if (info->Queue0Vector == VIOINPUT_INTERRUPT_VECTOR_NONE) {
+            wprintf(L"  Queue0Vector:    none\n");
+        } else {
+            wprintf(L"  Queue0Vector:    %u\n", (unsigned)info->Queue0Vector);
+        }
+    } else {
+        wprintf(L"  Queue0Vector:    <missing>\n");
+    }
+    if (avail >= offsetof(VIOINPUT_INTERRUPT_INFO, Queue1Vector) + sizeof(USHORT)) {
+        if (info->Queue1Vector == VIOINPUT_INTERRUPT_VECTOR_NONE) {
+            wprintf(L"  Queue1Vector:    none\n");
+        } else {
+            wprintf(L"  Queue1Vector:    %u\n", (unsigned)info->Queue1Vector);
+        }
+    } else {
+        wprintf(L"  Queue1Vector:    <missing>\n");
+    }
+
+    if (avail >= offsetof(VIOINPUT_INTERRUPT_INFO, IntxSpuriousCount) + sizeof(LONG)) {
+        wprintf(L"  IntxSpurious:    %ld\n", info->IntxSpuriousCount);
+    } else {
+        wprintf(L"  IntxSpurious:    <missing>\n");
+    }
+    if (avail >= offsetof(VIOINPUT_INTERRUPT_INFO, TotalInterruptCount) + sizeof(LONG)) {
+        wprintf(L"  TotalInterrupts: %ld\n", info->TotalInterruptCount);
+    } else {
+        wprintf(L"  TotalInterrupts: <missing>\n");
+    }
+    if (avail >= offsetof(VIOINPUT_INTERRUPT_INFO, TotalDpcCount) + sizeof(LONG)) {
+        wprintf(L"  TotalDpcs:       %ld\n", info->TotalDpcCount);
+    } else {
+        wprintf(L"  TotalDpcs:       <missing>\n");
+    }
+    if (avail >= offsetof(VIOINPUT_INTERRUPT_INFO, ConfigInterruptCount) + sizeof(LONG)) {
+        wprintf(L"  ConfigIrqs:      %ld\n", info->ConfigInterruptCount);
+    } else {
+        wprintf(L"  ConfigIrqs:      <missing>\n");
+    }
+    if (avail >= offsetof(VIOINPUT_INTERRUPT_INFO, Queue0InterruptCount) + sizeof(LONG)) {
+        wprintf(L"  Queue0Irqs:      %ld\n", info->Queue0InterruptCount);
+    } else {
+        wprintf(L"  Queue0Irqs:      <missing>\n");
+    }
+    if (avail >= offsetof(VIOINPUT_INTERRUPT_INFO, Queue1InterruptCount) + sizeof(LONG)) {
+        wprintf(L"  Queue1Irqs:      %ld\n", info->Queue1InterruptCount);
+    } else {
+        wprintf(L"  Queue1Irqs:      <missing>\n");
+    }
+
+    if (avail >= sizeof(ULONG) && info->Size != 0 && info->Size < sizeof(VIOINPUT_INTERRUPT_INFO)) {
+        wprintf(L"  [WARN] driver returned interrupt info Size=%lu < expected %u; dumping what is present\n",
+                info->Size, (unsigned)sizeof(VIOINPUT_INTERRUPT_INFO));
+    }
+}
+
+static void print_vioinput_interrupt_info_json(const VIOINPUT_INTERRUPT_INFO *info, DWORD bytes)
+{
+    DWORD avail;
+    int have_size;
+    int have_version;
+
+    if (info == NULL) {
+        fwprintf(stderr, L"null interrupt info\n");
+        return;
+    }
+
+    avail = bytes;
+    have_size = (avail >= sizeof(ULONG));
+    if (have_size) {
+        if (info->Size != 0 && info->Size < avail) {
+            avail = info->Size;
+        }
+    }
+    have_version = (avail >= sizeof(ULONG) * 2);
+
+    wprintf(L"{\n");
+    wprintf(L"  \"BytesReturned\": %lu,\n", bytes);
+    if (have_size && info->Size != 0) {
+        wprintf(L"  \"Size\": %lu,\n", info->Size);
+    } else {
+        wprintf(L"  \"Size\": null,\n");
+    }
+    if (have_version) {
+        wprintf(L"  \"Version\": %lu,\n", info->Version);
+    } else {
+        wprintf(L"  \"Version\": null,\n");
+    }
+
+    if (avail >= offsetof(VIOINPUT_INTERRUPT_INFO, Mode) + sizeof(info->Mode)) {
+        wprintf(L"  \"Mode\": \"%ls\",\n", vioinput_interrupt_mode_to_string((ULONG)info->Mode));
+    } else {
+        wprintf(L"  \"Mode\": null,\n");
+    }
+    if (avail >= offsetof(VIOINPUT_INTERRUPT_INFO, MessageCount) + sizeof(ULONG)) {
+        wprintf(L"  \"MessageCount\": %lu,\n", info->MessageCount);
+    } else {
+        wprintf(L"  \"MessageCount\": null,\n");
+    }
+    if (avail >= offsetof(VIOINPUT_INTERRUPT_INFO, Mapping) + sizeof(info->Mapping)) {
+        wprintf(L"  \"Mapping\": \"%ls\",\n", vioinput_interrupt_mapping_to_string((ULONG)info->Mapping));
+    } else {
+        wprintf(L"  \"Mapping\": null,\n");
+    }
+    if (avail >= offsetof(VIOINPUT_INTERRUPT_INFO, UsedVectorCount) + sizeof(USHORT)) {
+        wprintf(L"  \"UsedVectorCount\": %u,\n", (unsigned)info->UsedVectorCount);
+    } else {
+        wprintf(L"  \"UsedVectorCount\": null,\n");
+    }
+
+    if (avail >= offsetof(VIOINPUT_INTERRUPT_INFO, ConfigVector) + sizeof(USHORT)) {
+        if (info->ConfigVector == VIOINPUT_INTERRUPT_VECTOR_NONE) {
+            wprintf(L"  \"ConfigVector\": null,\n");
+        } else {
+            wprintf(L"  \"ConfigVector\": %u,\n", (unsigned)info->ConfigVector);
+        }
+    } else {
+        wprintf(L"  \"ConfigVector\": null,\n");
+    }
+    if (avail >= offsetof(VIOINPUT_INTERRUPT_INFO, Queue0Vector) + sizeof(USHORT)) {
+        if (info->Queue0Vector == VIOINPUT_INTERRUPT_VECTOR_NONE) {
+            wprintf(L"  \"Queue0Vector\": null,\n");
+        } else {
+            wprintf(L"  \"Queue0Vector\": %u,\n", (unsigned)info->Queue0Vector);
+        }
+    } else {
+        wprintf(L"  \"Queue0Vector\": null,\n");
+    }
+    if (avail >= offsetof(VIOINPUT_INTERRUPT_INFO, Queue1Vector) + sizeof(USHORT)) {
+        if (info->Queue1Vector == VIOINPUT_INTERRUPT_VECTOR_NONE) {
+            wprintf(L"  \"Queue1Vector\": null,\n");
+        } else {
+            wprintf(L"  \"Queue1Vector\": %u,\n", (unsigned)info->Queue1Vector);
+        }
+    } else {
+        wprintf(L"  \"Queue1Vector\": null,\n");
+    }
+
+    if (avail >= offsetof(VIOINPUT_INTERRUPT_INFO, IntxSpuriousCount) + sizeof(LONG)) {
+        wprintf(L"  \"IntxSpuriousCount\": %ld,\n", info->IntxSpuriousCount);
+    } else {
+        wprintf(L"  \"IntxSpuriousCount\": null,\n");
+    }
+    if (avail >= offsetof(VIOINPUT_INTERRUPT_INFO, TotalInterruptCount) + sizeof(LONG)) {
+        wprintf(L"  \"TotalInterruptCount\": %ld,\n", info->TotalInterruptCount);
+    } else {
+        wprintf(L"  \"TotalInterruptCount\": null,\n");
+    }
+    if (avail >= offsetof(VIOINPUT_INTERRUPT_INFO, TotalDpcCount) + sizeof(LONG)) {
+        wprintf(L"  \"TotalDpcCount\": %ld,\n", info->TotalDpcCount);
+    } else {
+        wprintf(L"  \"TotalDpcCount\": null,\n");
+    }
+    if (avail >= offsetof(VIOINPUT_INTERRUPT_INFO, ConfigInterruptCount) + sizeof(LONG)) {
+        wprintf(L"  \"ConfigInterruptCount\": %ld,\n", info->ConfigInterruptCount);
+    } else {
+        wprintf(L"  \"ConfigInterruptCount\": null,\n");
+    }
+    if (avail >= offsetof(VIOINPUT_INTERRUPT_INFO, Queue0InterruptCount) + sizeof(LONG)) {
+        wprintf(L"  \"Queue0InterruptCount\": %ld,\n", info->Queue0InterruptCount);
+    } else {
+        wprintf(L"  \"Queue0InterruptCount\": null,\n");
+    }
+    if (avail >= offsetof(VIOINPUT_INTERRUPT_INFO, Queue1InterruptCount) + sizeof(LONG)) {
+        wprintf(L"  \"Queue1InterruptCount\": %ld\n", info->Queue1InterruptCount);
+    } else {
+        wprintf(L"  \"Queue1InterruptCount\": null\n");
+    }
+
+    wprintf(L"}\n");
+}
+
 static void dump_keyboard_report(const BYTE *buf, DWORD len)
 {
     DWORD off = 0;
@@ -1441,6 +1830,8 @@ static void print_usage(void)
     wprintf(L"             [--duration SECS] [--count N]\n");
     wprintf(L"             [--dump-collection-desc]\n");
     wprintf(L"             [--state]\n");
+    wprintf(L"             [--interrupt-info]\n");
+    wprintf(L"             [--interrupt-info-json]\n");
     wprintf(L"             [--counters]\n");
     wprintf(L"             [--counters-json]\n");
     wprintf(L"             [--reset-counters]\n");
@@ -1469,6 +1860,10 @@ static void print_usage(void)
     wprintf(L"  --duration SECS Exit report read loop after SECS seconds\n");
     wprintf(L"  --count N       Exit report read loop after reading N reports\n");
     wprintf(L"  --state         Query virtio-input driver state via IOCTL_VIOINPUT_QUERY_STATE and exit\n");
+    wprintf(L"  --interrupt-info\n");
+    wprintf(L"                 Query virtio-input interrupt diagnostics via IOCTL_VIOINPUT_QUERY_INTERRUPT_INFO and exit\n");
+    wprintf(L"  --interrupt-info-json\n");
+    wprintf(L"                 Query virtio-input interrupt diagnostics and print as JSON\n");
     wprintf(L"  --led 0xMASK    Send keyboard LED output report (ReportID=1)\n");
     wprintf(L"                 Bits: 0x01 NumLock, 0x02 CapsLock, 0x04 ScrollLock, 0x08 Compose, 0x10 Kana\n");
     wprintf(L"  --led-hidd 0xMASK\n");
@@ -1538,6 +1933,9 @@ static void print_usage(void)
     wprintf(L"                 the driver returns STATUS_BUFFER_TOO_SMALL while still returning Size/Version\n");
     wprintf(L"  --ioctl-query-state-short\n");
     wprintf(L"                 Call IOCTL_VIOINPUT_QUERY_STATE with a short output buffer and verify that\n");
+    wprintf(L"                 the driver returns STATUS_BUFFER_TOO_SMALL while still returning Size/Version\n");
+    wprintf(L"  --ioctl-query-interrupt-info-short\n");
+    wprintf(L"                 Call IOCTL_VIOINPUT_QUERY_INTERRUPT_INFO with a short output buffer and verify that\n");
     wprintf(L"                 the driver returns STATUS_BUFFER_TOO_SMALL while still returning Size/Version\n");
     wprintf(L"  --ioctl-get-input-report\n");
     wprintf(L"                 Call DeviceIoControl(IOCTL_HID_GET_INPUT_REPORT) and validate behavior\n");
@@ -3951,6 +4349,45 @@ static int ioctl_query_state_short(const SELECTED_DEVICE *dev)
     return 0;
 }
 
+static int ioctl_query_interrupt_info_short(const SELECTED_DEVICE *dev)
+{
+    VIOINPUT_INTERRUPT_INFO_V1_MIN out;
+    DWORD bytes = 0;
+    BOOL ok;
+    DWORD err;
+
+    if (dev == NULL || dev->handle == INVALID_HANDLE_VALUE) {
+        wprintf(L"Invalid device handle\n");
+        return 1;
+    }
+
+    ZeroMemory(&out, sizeof(out));
+
+    wprintf(L"\nIssuing IOCTL_VIOINPUT_QUERY_INTERRUPT_INFO with short output buffer (%u bytes)...\n",
+            (unsigned)sizeof(out));
+    ok = DeviceIoControl(dev->handle, IOCTL_VIOINPUT_QUERY_INTERRUPT_INFO, NULL, 0, &out, (DWORD)sizeof(out), &bytes, NULL);
+    if (ok) {
+        wprintf(L"Unexpected success (bytes=%lu)\n", bytes);
+        return 1;
+    }
+
+    err = GetLastError();
+    if (err != ERROR_INSUFFICIENT_BUFFER) {
+        print_win32_error_w(L"DeviceIoControl(IOCTL_VIOINPUT_QUERY_INTERRUPT_INFO short buffer)", err);
+        return 1;
+    }
+
+    if (out.Size < sizeof(out) || out.Version == 0) {
+        wprintf(L"Expected Size/Version to be returned even on ERROR_INSUFFICIENT_BUFFER; got Size=%lu Version=%lu\n",
+                out.Size, out.Version);
+        return 1;
+    }
+
+    wprintf(L"Got interrupt info header despite short buffer: Size=%lu Version=%lu (bytesReturned=%lu)\n", out.Size,
+            out.Version, bytes);
+    return 0;
+}
+
 static int ioctl_get_input_report(const SELECTED_DEVICE *dev)
 {
     typedef struct HID_XFER_PACKET_MIN {
@@ -4952,6 +5389,18 @@ int wmain(int argc, wchar_t **argv)
             continue;
         }
 
+        if (wcscmp(argv[i], L"--interrupt-info") == 0) {
+            opt.query_interrupt_info = 1;
+            continue;
+        }
+
+        if (wcscmp(argv[i], L"--interrupt-info-json") == 0) {
+            opt.query_interrupt_info = 1;
+            opt.query_interrupt_info_json = 1;
+            opt.quiet = 1;
+            continue;
+        }
+
         if (wcscmp(argv[i], L"--counters") == 0) {
             opt.query_counters = 1;
             continue;
@@ -5068,6 +5517,11 @@ int wmain(int argc, wchar_t **argv)
 
         if (wcscmp(argv[i], L"--ioctl-query-state-short") == 0) {
             opt.ioctl_query_state_short = 1;
+            continue;
+        }
+
+        if (wcscmp(argv[i], L"--ioctl-query-interrupt-info-short") == 0) {
+            opt.ioctl_query_interrupt_info_short = 1;
             continue;
         }
 
@@ -5211,8 +5665,11 @@ int wmain(int argc, wchar_t **argv)
         wprintf(L"--keyboard, --mouse, and --tablet are mutually exclusive.\n");
         return 2;
     }
-    if (opt.list_only && (opt.query_counters || opt.reset_counters)) {
-        wprintf(L"--list is mutually exclusive with --counters/--counters-json/--reset-counters.\n");
+    if (opt.list_only &&
+        (opt.query_state || opt.query_interrupt_info || opt.query_counters || opt.reset_counters || opt.ioctl_query_counters_short ||
+         opt.ioctl_query_state_short || opt.ioctl_query_interrupt_info_short)) {
+        wprintf(
+            L"--list is mutually exclusive with --state, --interrupt-info, --counters/--counters-json/--reset-counters, and --ioctl-query-*-short.\n");
         return 2;
     }
     if (opt.json && !(opt.list_only || opt.selftest)) {
@@ -5220,23 +5677,23 @@ int wmain(int argc, wchar_t **argv)
         return 2;
     }
     if (opt.selftest &&
-        (opt.query_state || opt.list_only || opt.dump_desc || opt.dump_collection_desc || opt.have_vid || opt.have_pid ||
+        (opt.query_state || opt.query_interrupt_info || opt.list_only || opt.dump_desc || opt.dump_collection_desc || opt.have_vid || opt.have_pid ||
          opt.have_index || opt.have_led_mask || opt.led_cycle || opt.led_spam || opt.ioctl_bad_xfer_packet || opt.ioctl_bad_write_report ||
-         opt.ioctl_bad_read_xfer_packet || opt.ioctl_bad_read_report || opt.ioctl_bad_get_input_xfer_packet ||
-         opt.ioctl_bad_get_input_report || opt.ioctl_bad_set_output_xfer_packet ||
-         opt.ioctl_bad_set_output_report || opt.ioctl_bad_get_report_descriptor || opt.ioctl_bad_get_collection_descriptor ||
-         opt.ioctl_bad_get_device_descriptor || opt.ioctl_bad_get_string || opt.ioctl_bad_get_indexed_string ||
-         opt.ioctl_bad_get_string_out || opt.ioctl_bad_get_indexed_string_out || opt.ioctl_query_counters_short ||
-         opt.ioctl_query_state_short ||
-         opt.ioctl_get_input_report || opt.hidd_get_input_report || opt.hidd_bad_set_output_report || opt.have_led_ioctl_set_output ||
-         opt.query_counters || opt.query_counters_json || opt.reset_counters)) {
+          opt.ioctl_bad_read_xfer_packet || opt.ioctl_bad_read_report || opt.ioctl_bad_get_input_xfer_packet ||
+          opt.ioctl_bad_get_input_report || opt.ioctl_bad_set_output_xfer_packet ||
+          opt.ioctl_bad_set_output_report || opt.ioctl_bad_get_report_descriptor || opt.ioctl_bad_get_collection_descriptor ||
+          opt.ioctl_bad_get_device_descriptor || opt.ioctl_bad_get_string || opt.ioctl_bad_get_indexed_string ||
+          opt.ioctl_bad_get_string_out || opt.ioctl_bad_get_indexed_string_out || opt.ioctl_query_counters_short ||
+          opt.ioctl_query_state_short || opt.ioctl_query_interrupt_info_short ||
+          opt.ioctl_get_input_report || opt.hidd_get_input_report || opt.hidd_bad_set_output_report || opt.have_led_ioctl_set_output ||
+          opt.query_counters || opt.query_counters_json || opt.reset_counters)) {
         wprintf(
-            L"--selftest cannot be combined with --state, --list, descriptor dump options, --vid/--pid/--index, counters, LED, or negative-test options.\n");
+            L"--selftest cannot be combined with --state/--interrupt-info, --list, descriptor dump options, --vid/--pid/--index, counters, LED, or negative-test options.\n");
         return 2;
     }
     if (opt.query_state &&
-        (opt.selftest || opt.query_counters || opt.query_counters_json || opt.reset_counters || opt.ioctl_query_counters_short ||
-         opt.ioctl_query_state_short ||
+        (opt.selftest || opt.query_interrupt_info || opt.query_counters || opt.query_counters_json || opt.reset_counters ||
+         opt.ioctl_query_counters_short || opt.ioctl_query_state_short || opt.ioctl_query_interrupt_info_short ||
          opt.ioctl_get_input_report || opt.hidd_get_input_report || opt.have_led_mask || opt.led_cycle || opt.led_spam || opt.dump_desc ||
          opt.dump_collection_desc || opt.ioctl_bad_xfer_packet || opt.ioctl_bad_write_report || opt.ioctl_bad_read_xfer_packet ||
          opt.ioctl_bad_read_report || opt.ioctl_bad_get_input_xfer_packet || opt.ioctl_bad_get_input_report ||
@@ -5244,18 +5701,35 @@ int wmain(int argc, wchar_t **argv)
          opt.ioctl_bad_get_collection_descriptor || opt.ioctl_bad_get_device_descriptor || opt.ioctl_bad_get_string ||
          opt.ioctl_bad_get_indexed_string || opt.ioctl_bad_get_string_out || opt.ioctl_bad_get_indexed_string_out ||
          opt.hidd_bad_set_output_report || opt.have_led_ioctl_set_output)) {
-        wprintf(L"--state is mutually exclusive with --selftest, --counters/--counters-json/--reset-counters, and other report/IOCTL tests.\n");
+        wprintf(
+            L"--state is mutually exclusive with --selftest, --interrupt-info, --counters/--counters-json/--reset-counters, and other report/IOCTL tests.\n");
+        return 2;
+    }
+    if (opt.query_interrupt_info &&
+        (opt.selftest || opt.list_only || opt.query_state || opt.query_counters || opt.query_counters_json || opt.reset_counters ||
+         opt.ioctl_query_counters_short || opt.ioctl_query_state_short || opt.ioctl_query_interrupt_info_short ||
+         opt.ioctl_get_input_report || opt.hidd_get_input_report || opt.have_led_mask || opt.led_cycle || opt.led_spam || opt.dump_desc ||
+         opt.dump_collection_desc || opt.ioctl_bad_xfer_packet || opt.ioctl_bad_write_report || opt.ioctl_bad_read_xfer_packet ||
+         opt.ioctl_bad_read_report || opt.ioctl_bad_get_input_xfer_packet || opt.ioctl_bad_get_input_report ||
+         opt.ioctl_bad_set_output_xfer_packet || opt.ioctl_bad_set_output_report || opt.ioctl_bad_get_report_descriptor ||
+         opt.ioctl_bad_get_collection_descriptor || opt.ioctl_bad_get_device_descriptor || opt.ioctl_bad_get_string ||
+         opt.ioctl_bad_get_indexed_string || opt.ioctl_bad_get_string_out || opt.ioctl_bad_get_indexed_string_out ||
+         opt.hidd_bad_set_output_report || opt.have_led_ioctl_set_output)) {
+        wprintf(
+            L"--interrupt-info is mutually exclusive with --list, --selftest, --state, --counters/--counters-json/--reset-counters, and other report/IOCTL tests.\n");
         return 2;
     }
     if ((opt.get_log_mask || opt.have_set_log_mask) &&
-        (opt.selftest || opt.list_only || opt.query_state || opt.query_counters || opt.query_counters_json || opt.reset_counters ||
+        (opt.selftest || opt.list_only || opt.query_state || opt.query_interrupt_info || opt.query_counters || opt.query_counters_json ||
+         opt.reset_counters ||
          opt.have_led_mask || opt.led_cycle || opt.led_spam || opt.dump_desc || opt.dump_collection_desc ||
          opt.have_duration || opt.have_count ||
          opt.ioctl_bad_xfer_packet || opt.ioctl_bad_write_report || opt.ioctl_bad_read_xfer_packet || opt.ioctl_bad_read_report ||
          opt.ioctl_bad_set_output_xfer_packet || opt.ioctl_bad_set_output_report || opt.ioctl_bad_get_report_descriptor ||
          opt.ioctl_bad_get_collection_descriptor || opt.ioctl_bad_get_device_descriptor || opt.ioctl_bad_get_string ||
          opt.ioctl_bad_get_indexed_string || opt.ioctl_bad_get_string_out || opt.ioctl_bad_get_indexed_string_out ||
-         opt.ioctl_query_counters_short || opt.ioctl_get_input_report || opt.hidd_get_input_report || opt.hidd_bad_set_output_report ||
+         opt.ioctl_query_counters_short || opt.ioctl_query_state_short || opt.ioctl_query_interrupt_info_short ||
+         opt.ioctl_get_input_report || opt.hidd_get_input_report || opt.hidd_bad_set_output_report ||
          opt.have_led_ioctl_set_output)) {
         wprintf(L"--get-log-mask/--set-log-mask are mutually exclusive with other action/negative-test modes.\n");
         return 2;
@@ -5443,8 +5917,8 @@ int wmain(int argc, wchar_t **argv)
     }
 
     if ((opt.query_counters || opt.reset_counters) &&
-        (opt.query_state || opt.ioctl_get_input_report || opt.hidd_get_input_report || opt.ioctl_query_counters_short ||
-         opt.ioctl_query_state_short ||
+        (opt.query_state || opt.query_interrupt_info || opt.ioctl_get_input_report || opt.hidd_get_input_report ||
+         opt.ioctl_query_counters_short || opt.ioctl_query_state_short || opt.ioctl_query_interrupt_info_short ||
          opt.have_led_mask || opt.led_cycle || opt.led_spam || opt.dump_desc || opt.dump_collection_desc ||
          opt.ioctl_bad_xfer_packet || opt.ioctl_bad_write_report || opt.ioctl_bad_read_xfer_packet || opt.ioctl_bad_read_report ||
          opt.ioctl_bad_get_input_xfer_packet || opt.ioctl_bad_get_input_report ||
@@ -5453,7 +5927,7 @@ int wmain(int argc, wchar_t **argv)
          opt.ioctl_bad_get_indexed_string || opt.ioctl_bad_get_string_out || opt.ioctl_bad_get_indexed_string_out ||
          opt.hidd_bad_set_output_report || opt.have_led_ioctl_set_output)) {
         wprintf(
-            L"--counters/--reset-counters are mutually exclusive with --state, GetInputReport tests, IOCTL counters selftests, LED actions, descriptor dumps, and negative tests.\n");
+            L"--counters/--reset-counters are mutually exclusive with --state/--interrupt-info, GetInputReport tests, IOCTL counters selftests, LED actions, descriptor dumps, and negative tests.\n");
         return 2;
     }
 
@@ -5489,7 +5963,7 @@ int wmain(int argc, wchar_t **argv)
     }
 
     if (!enumerate_hid_devices(&opt, &dev)) {
-        if (opt.query_counters_json) {
+        if (opt.query_counters_json || opt.query_interrupt_info_json) {
             fwprintf(stderr, L"No matching HID devices found.\n");
         } else {
             wprintf(L"No matching HID devices found.\n");
@@ -5541,6 +6015,33 @@ int wmain(int argc, wchar_t **argv)
 
         st = (const VIOINPUT_STATE*)buf;
         print_vioinput_state(st, bytes);
+        free(buf);
+        free_selected_device(&dev);
+        return 0;
+    }
+
+    if (opt.query_interrupt_info) {
+        BYTE* buf;
+        DWORD bytes = 0;
+        const VIOINPUT_INTERRUPT_INFO* info;
+
+        buf = NULL;
+        if (!query_vioinput_interrupt_info_blob(dev.handle, &buf, &bytes) || buf == NULL) {
+            if (opt.query_interrupt_info_json) {
+                print_last_error_file_w(stderr, L"DeviceIoControl(IOCTL_VIOINPUT_QUERY_INTERRUPT_INFO)");
+            } else {
+                print_last_error_w(L"DeviceIoControl(IOCTL_VIOINPUT_QUERY_INTERRUPT_INFO)");
+            }
+            free_selected_device(&dev);
+            return 1;
+        }
+
+        info = (const VIOINPUT_INTERRUPT_INFO*)buf;
+        if (opt.query_interrupt_info_json) {
+            print_vioinput_interrupt_info_json(info, bytes);
+        } else {
+            print_vioinput_interrupt_info(info, bytes);
+        }
         free(buf);
         free_selected_device(&dev);
         return 0;
@@ -5635,6 +6136,12 @@ int wmain(int argc, wchar_t **argv)
 
     if (opt.ioctl_query_state_short) {
         int rc = ioctl_query_state_short(&dev);
+        free_selected_device(&dev);
+        return rc;
+    }
+
+    if (opt.ioctl_query_interrupt_info_short) {
+        int rc = ioctl_query_interrupt_info_short(&dev);
         free_selected_device(&dev);
         return rc;
     }
