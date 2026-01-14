@@ -106,6 +106,7 @@ drivers/aerogpu/tests/win7/
   d3d9_fixedfunc_xyz_diffuse_tex1/
   d3d9_fixedfunc_textured_wvp/
   d3d9_fixedfunc_wvp_triangle/
+  d3d9_fixedfunc_lighting_directional/
   d3d9_shader_stage_interop/
   d3d9_patch_sanity/
   d3d9_patch_rendering_smoke/
