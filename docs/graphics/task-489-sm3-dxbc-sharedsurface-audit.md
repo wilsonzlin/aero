@@ -215,6 +215,7 @@ Ops/features referenced by the scratchpad tasks:
 - `b10bb36f3` — `docs(graphics): mark SM3 TexSample/texkill tasks 401/402 done`
 - `6617e2bc5` — `docs(graphics): cross-link SM3 shader translation task notes`
 - `5fb505938` — `docs(graphics): shorten SM3 shader translation status table`
+- `e8523a8f9` — `test(sm3): assert default sampler texture types in bind layout`
 
 **Tests:**
 - `crates/aero-d3d9/tests/sm3_wgsl.rs`
