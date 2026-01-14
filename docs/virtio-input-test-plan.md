@@ -582,9 +582,17 @@ Host harness flags:
 When enabled, the harness:
 
 1. Waits for the guest readiness marker: `AERO_VIRTIO_SELFTEST|TEST|virtio-input-media-keys|READY`
-2. Injects a deterministic media key sequence via QMP `input-send-event`:
+2. Injects a deterministic media key sequence via QMP (prefers `input-send-event`, with backcompat fallbacks when unavailable):
    - `qcode=volumeup` press + release
 3. Requires the guest marker `AERO_VIRTIO_SELFTEST|TEST|virtio-input-media-keys|PASS|...`
+
+Expected signal:
+
+- Guest serial contains `AERO_VIRTIO_SELFTEST|TEST|virtio-input-media-keys|PASS|...`
+- Host harness logs include a marker like:
+  `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MEDIA_KEYS_INJECT|PASS|attempt=<n>|backend=<qmp_input_send_event|hmp_fallback>|kbd_mode=device/broadcast`
+  - Note: The harness may retry injection a few times after `virtio-input-media-keys|READY` to reduce timing flakiness.
+    In that case you may see multiple `VIRTIO_INPUT_MEDIA_KEYS_INJECT|PASS` lines (the marker includes `attempt=<n>` and `backend=...`).
 
 If the guest was not provisioned with `--test-input-media-keys`, the guest will emit:
 `AERO_VIRTIO_SELFTEST|TEST|virtio-input-media-keys|SKIP|flag_not_set` and the harness will fail

@@ -355,6 +355,9 @@ The provisioning media generator (`host-harness/New-AeroWin7TestImage.ps1`) can 
       - `AERO_VIRTIO_SELFTEST|TEST|virtio-input-media-keys|PASS`
       This requires provisioning the guest with `--test-input-media-keys` (or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_MEDIA_KEYS=1`;
       if using `New-AeroWin7TestImage.ps1`, pass `-TestInputMediaKeys` (alias: `-TestMediaKeys`)).
+      - The harness also emits a host marker for the injection step itself:
+        - `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MEDIA_KEYS_INJECT|PASS|attempt=<n>|backend=<qmp_input_send_event|hmp_fallback>|kbd_mode=device/broadcast`
+        - `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MEDIA_KEYS_INJECT|FAIL|attempt=<n>|backend=<qmp_input_send_event|hmp_fallback|unknown>|reason=...`
     - When `-WithInputTabletEvents` (aliases: `-WithVirtioInputTabletEvents`, `-WithTabletEvents`) /
       `--with-input-tablet-events` (aliases: `--with-virtio-input-tablet-events`, `--with-tablet-events`) is enabled,
       the harness attaches `virtio-tablet-pci`, injects a
