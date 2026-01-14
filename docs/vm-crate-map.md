@@ -52,7 +52,9 @@ crates/aero-wasm      (wasm-bindgen JS API)
 
 **Who should depend on it**
 - `crates/aero-wasm` (browser/WASM exports)
-- Host integration tests that need "a VM to run" (BIOS POST, boot sector smoke tests, snapshot determinism)
+- Host integration tests that need an **in-process VM** (BIOS POST, device wiring, snapshot determinism; see `crates/aero-machine/tests/*`)
+- QEMU-based boot tests live under the workspace root `tests/` directory and are registered under
+  `crates/aero-boot-tests` (see [`docs/TESTING.md`](./TESTING.md))
 
 ### Supporting building blocks
 
@@ -98,6 +100,21 @@ and block devices.
 - This is a *platform builder* rather than the canonical VM object itself.
 - It is used by targeted platform/unit tests and is expected to be folded into `aero-machine` as
   the canonical machine grows to include more devices (PCI, timers, interrupts, etc.).
+
+#### `crates/aero-boot-tests` (`aero-boot-tests`)
+
+**What it does**
+
+- Registers the QEMU-based boot tests under the workspace root `tests/` directory (e.g.
+  `tests/boot_sector.rs`, `tests/freedos_boot.rs`, `tests/windows7_boot.rs`) as explicit `[[test]]`
+  targets (see `crates/aero-boot-tests/Cargo.toml`).
+
+**How it fits**
+
+- This crate is intentionally **test-only**: it keeps QEMU harness dev-dependencies (Tokio, image,
+  etc.) out of unrelated crates and avoids accidentally running QEMU tests via the workspace root
+  `aero` package.
+- Run via `cargo test -p aero-boot-tests --test ...` (see [`docs/TESTING.md`](./TESTING.md)).
 
 #### `crates/emulator` (`emulator`)
 

@@ -41,6 +41,9 @@ For VM/machine wiring specifically, there is exactly one canonical integration l
 - [`docs/vm-crate-map.md`](./vm-crate-map.md) (what is canonical vs legacy)
 - [`docs/21-emulator-crate-migration.md`](./21-emulator-crate-migration.md) (`crates/emulator` → canonical stack plan + deletion targets)
 
+QEMU-based reference boot tests live under the workspace root `tests/` directory and are registered
+under `crates/aero-boot-tests` (see [`docs/TESTING.md`](./TESTING.md)).
+
 #### Crate naming convention (important)
 
 Crates should use `aero-foo` **lowercase kebab-case** package names and matching `crates/aero-foo/`
