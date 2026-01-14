@@ -1,3 +1,5 @@
+#![allow(clippy::await_holding_lock)]
+
 mod common;
 
 use aero_gpu::aerogpu_executor::ExecutorEvent;

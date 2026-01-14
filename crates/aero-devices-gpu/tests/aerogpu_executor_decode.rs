@@ -1521,11 +1521,12 @@ fn vsync_fence_blocks_immediate_fences_behind_it_until_vblank_immediate_mode() {
     let ring_size = 0x1000u32;
     write_ring(&mut mem, ring_gpa, ring_size, 8, 0, 2, regs.abi_version);
     let stride = u64::from(AeroGpuSubmitDesc::SIZE_BYTES);
+    let desc_base_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
 
-    let desc0_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    let desc0_gpa = desc_base_gpa;
     write_submit_desc(&mut mem, desc0_gpa, cmd_gpa, stream_size, 0, 0, 1);
 
-    let desc1_gpa = desc0_gpa + stride;
+    let desc1_gpa = desc_base_gpa + stride;
     // Empty submission (no cmd stream) should be treated as immediate.
     write_submit_desc(&mut mem, desc1_gpa, 0, 0, 0, 0, 2);
 
@@ -1566,11 +1567,12 @@ fn completes_at_most_one_vsync_fence_per_vblank_tick_immediate_mode() {
     let ring_size = 0x1000u32;
     write_ring(&mut mem, ring_gpa, ring_size, 8, 0, 2, regs.abi_version);
     let stride = u64::from(AeroGpuSubmitDesc::SIZE_BYTES);
+    let desc_base_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
 
-    let desc0_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    let desc0_gpa = desc_base_gpa;
     write_submit_desc(&mut mem, desc0_gpa, cmd_gpa, stream_size, 0, 0, 1);
 
-    let desc1_gpa = desc0_gpa + stride;
+    let desc1_gpa = desc_base_gpa + stride;
     write_submit_desc(&mut mem, desc1_gpa, cmd_gpa, stream_size, 0, 0, 2);
 
     regs.ring_gpa = ring_gpa;
@@ -1730,11 +1732,12 @@ fn vsync_fence_blocks_immediate_fences_behind_it_until_vblank_deferred_mode() {
     let ring_size = 0x1000u32;
     write_ring(&mut mem, ring_gpa, ring_size, 8, 0, 2, regs.abi_version);
     let stride = u64::from(AeroGpuSubmitDesc::SIZE_BYTES);
+    let desc_base_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
 
-    let desc0_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    let desc0_gpa = desc_base_gpa;
     write_submit_desc(&mut mem, desc0_gpa, cmd_gpa, stream_size, 0, 0, 1);
 
-    let desc1_gpa = desc0_gpa + stride;
+    let desc1_gpa = desc_base_gpa + stride;
     write_submit_desc(&mut mem, desc1_gpa, 0, 0, 0, 0, 2);
 
     regs.ring_gpa = ring_gpa;
@@ -1772,11 +1775,12 @@ fn completes_at_most_one_vsync_fence_per_vblank_tick_deferred_mode() {
     let ring_size = 0x1000u32;
     write_ring(&mut mem, ring_gpa, ring_size, 8, 0, 2, regs.abi_version);
     let stride = u64::from(AeroGpuSubmitDesc::SIZE_BYTES);
+    let desc_base_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
 
-    let desc0_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    let desc0_gpa = desc_base_gpa;
     write_submit_desc(&mut mem, desc0_gpa, cmd_gpa, stream_size, 0, 0, 1);
 
-    let desc1_gpa = desc0_gpa + stride;
+    let desc1_gpa = desc_base_gpa + stride;
     write_submit_desc(&mut mem, desc1_gpa, cmd_gpa, stream_size, 0, 0, 2);
 
     regs.ring_gpa = ring_gpa;
@@ -1949,9 +1953,10 @@ fn deferred_mode_advances_completed_fence_in_order_even_with_out_of_order_comple
     write_ring(&mut mem, ring_gpa, ring_size, 8, 0, 3, regs.abi_version);
 
     let stride = u64::from(AeroGpuSubmitDesc::SIZE_BYTES);
-    let desc0_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
-    let desc1_gpa = desc0_gpa + stride;
-    let desc2_gpa = desc1_gpa + stride;
+    let desc_base_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    let desc0_gpa = desc_base_gpa;
+    let desc1_gpa = desc_base_gpa + stride;
+    let desc2_gpa = desc_base_gpa + 2 * stride;
     write_submit_desc(&mut mem, desc0_gpa, 0, 0, 0, 0, 1);
     write_submit_desc(&mut mem, desc1_gpa, 0, 0, 0, 0, 2);
     write_submit_desc(&mut mem, desc2_gpa, 0, 0, 0, 0, 3);
