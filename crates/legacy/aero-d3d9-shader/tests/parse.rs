@@ -643,6 +643,76 @@ fn malformed_truncated_unknown_opcode_errors() {
 }
 
 #[test]
+fn malformed_predicated_missing_predicate_token_errors() {
+    // Predicated instruction with no operands should be rejected (predicate token is missing).
+    let words = [0xFFFE_0200, 0x1000_0001, 0x0000_FFFF];
+    let err = D3d9Shader::parse(&words_to_bytes(&words)).unwrap_err();
+    assert_eq!(
+        err,
+        ShaderParseError::TruncatedInstruction {
+            opcode: 0x0001,
+            at_token: 1,
+            needed_tokens: 1,
+            remaining_tokens: 0,
+        }
+    );
+}
+
+#[test]
+fn malformed_mov_missing_dst_token_errors() {
+    // mov with an empty operand list should be rejected.
+    let words = [0xFFFE_0200, 0x0000_0001, 0x0000_FFFF];
+    let err = D3d9Shader::parse(&words_to_bytes(&words)).unwrap_err();
+    assert_eq!(
+        err,
+        ShaderParseError::TruncatedInstruction {
+            opcode: 0x0001,
+            at_token: 1,
+            needed_tokens: 1,
+            remaining_tokens: 0,
+        }
+    );
+}
+
+#[test]
+fn malformed_mov_missing_src_token_errors() {
+    // mov with only a dst token should be rejected (needs at least one src token).
+    let words = [0xFFFE_0200, 0x0100_0001, 0x800F_0000, 0x0000_FFFF];
+    let err = D3d9Shader::parse(&words_to_bytes(&words)).unwrap_err();
+    assert_eq!(
+        err,
+        ShaderParseError::TruncatedInstruction {
+            opcode: 0x0001,
+            at_token: 1,
+            needed_tokens: 2,
+            remaining_tokens: 1,
+        }
+    );
+}
+
+#[test]
+fn malformed_predicated_mov_missing_src_token_errors() {
+    // Predicated mov with a predicate + dst but missing a src token.
+    let words = [
+        0xFFFE_0200,
+        0x1200_0001, // mov len=2 + predicated
+        0xB000_1000, // p0.x
+        0x800F_0000, // r0
+        0x0000_FFFF,
+    ];
+    let err = D3d9Shader::parse(&words_to_bytes(&words)).unwrap_err();
+    assert_eq!(
+        err,
+        ShaderParseError::TruncatedInstruction {
+            opcode: 0x0001,
+            at_token: 1,
+            needed_tokens: 3,
+            remaining_tokens: 2,
+        }
+    );
+}
+
+#[test]
 fn malformed_invalid_register_encoding_errors() {
     // mov <dst>, <src> with an invalid/unknown register type encoding in the dst token.
     //

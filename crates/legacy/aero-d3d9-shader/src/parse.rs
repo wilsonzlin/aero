@@ -162,6 +162,14 @@ pub fn parse_shader(blob: &[u8]) -> Result<D3d9Shader, ShaderParseError> {
         if let Some(opcode) = decode_opcode(opcode_raw, specific) {
             let mut idx = 0usize;
             let predicate = if predicated {
+                if operands.is_empty() {
+                    return Err(ShaderParseError::TruncatedInstruction {
+                        opcode: opcode_raw,
+                        at_token,
+                        needed_tokens: 1,
+                        remaining_tokens: 0,
+                    });
+                }
                 let token_idx = idx;
                 let pred = decode_src(operands, &mut idx);
                 validate_src(&pred, operands, at_token + 1, token_idx)?;
@@ -200,7 +208,15 @@ pub fn parse_shader(blob: &[u8]) -> Result<D3d9Shader, ShaderParseError> {
                     | crate::Opcode::Setp
             );
 
-            let dst = if has_dst && idx < operands.len() {
+            let dst = if has_dst {
+                if idx >= operands.len() {
+                    return Err(ShaderParseError::TruncatedInstruction {
+                        opcode: opcode_raw,
+                        at_token,
+                        needed_tokens: idx + 1,
+                        remaining_tokens: operands.len(),
+                    });
+                }
                 let dst_token_idx = idx;
                 let dst_token = operands[dst_token_idx];
                 let dst = crate::reg::decode_dst(dst_token);
@@ -215,6 +231,16 @@ pub fn parse_shader(blob: &[u8]) -> Result<D3d9Shader, ShaderParseError> {
             } else {
                 None
             };
+
+            // All opcodes in `has_dst` require at least one source parameter.
+            if has_dst && idx >= operands.len() {
+                return Err(ShaderParseError::TruncatedInstruction {
+                    opcode: opcode_raw,
+                    at_token,
+                    needed_tokens: idx + 1,
+                    remaining_tokens: operands.len(),
+                });
+            }
 
             let mut src = Vec::new();
             while idx < operands.len() {
