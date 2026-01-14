@@ -75,6 +75,8 @@ fn translates_sync_uav_fence_only_to_wgsl() {
     let signatures = parse_signatures(&dxbc).expect("parse signatures");
 
     let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_eq!(translated.stage, ShaderStage::Compute);
+    assert!(translated.wgsl.contains("@compute"));
     assert!(translated.wgsl.contains("storageBarrier()"));
     assert!(
         !translated.wgsl.contains("workgroupBarrier()"),
