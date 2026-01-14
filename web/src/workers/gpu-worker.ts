@@ -2177,8 +2177,6 @@ const presentOnce = async (): Promise<boolean> => {
 
     // Headless: treat as successfully presented so the shared frame state can
     // transition back to PRESENTED and avoid DIRTY→tick spam.
-    const wddmOwnsScanout =
-      scanoutSnap?.source === SCANOUT_SOURCE_WDDM || (!scanoutSnap && wddmOwnsScanoutFallback);
     if (wddmOwnsScanout && aerogpuLastPresentedFrame) {
       aerogpuLastOutputSource = "aerogpu";
     } else {
