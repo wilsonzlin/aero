@@ -32,8 +32,10 @@ Note: the canonical `aero_machine::Machine` supports **two mutually-exclusive** 
     configured LFB base (historically defaulting to `0xE000_0000` / `aero_gpu_vga::SVGA_LFB_BASE`).
   - When `enable_pc_platform=true`, the machine exposes a minimal Bochs/QEMU-compatible “Standard
     VGA” PCI stub (`aero_devices::pci::profile::VGA_TRANSITIONAL_STUB`, `1234:1111` at `00:0c.0`)
-    and routes the VBE LFB through its BAR0 inside the PCI MMIO window (BAR base assigned by BIOS
-    POST / the PCI allocator).
+    and routes the VBE LFB through its BAR0 inside the PCI MMIO window. The BAR base is assigned by
+    BIOS POST / the PCI allocator (and may be relocated when other PCI devices are present), and is
+    mirrored into the BIOS VBE `PhysBasePtr` and the VGA device model so guests observe a coherent
+    LFB base.
   - This path is not part of the long-term Windows paravirtual device contract.
 
 ## Canonical PCI layout (bus/dev/fn)
@@ -73,7 +75,8 @@ We assume a single PCI bus (`bus 0`) with stable device numbers. Not all devices
   the standalone `aero_gpu_vga` VGA/VBE device model. Firmware reports the configured VBE LFB base
   address (historically defaulting to `0xE000_0000`).
   - When `enable_pc_platform=true`, this base is the BAR0 base of the “Standard VGA” PCI stub
-    (`00:0c.0`), assigned by BIOS POST / the PCI allocator.
+    (`00:0c.0`), assigned by BIOS POST / the PCI allocator (and may be relocated when other PCI
+    devices are present).
   - When `enable_pc_platform=false`, the machine maps the LFB MMIO aperture directly at the
     configured physical address.
 - This `enable_vga` VGA/VBE path is a stepping stone and does **not** implement the full AeroGPU

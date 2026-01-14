@@ -31,7 +31,9 @@ Canonical machine GPU device modes (today):
   - When `enable_pc_platform=false`, the VBE LFB is mapped directly at the configured LFB base.
   - When `enable_pc_platform=true`, the machine exposes a minimal Bochs/QEMU-compatible “Standard VGA”
     PCI function (currently `00:0c.0`) and routes the VBE LFB through PCI BAR0 inside the PCI MMIO
-    window / BAR router (BAR base assigned by BIOS POST / the PCI allocator).
+    window / BAR router. The BAR base is assigned by BIOS POST / the PCI allocator (and may be
+    relocated when other PCI devices are present), and the machine mirrors it into the BIOS VBE
+    `PhysBasePtr` and the VGA device model so guests observe a coherent LFB base.
 - AeroGPU device (MVP; `enable_aerogpu=true`, `enable_vga=false`): requires `enable_pc_platform=true`.
   - Exposes the canonical AeroGPU PCI identity at **`00:07.0`** (`VID:DID = A3A0:0001`).
   - Wires BAR1-backed VRAM (legacy VGA window aliasing / VBE compatibility mapping).
