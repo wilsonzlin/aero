@@ -5521,6 +5521,16 @@ static int DumpGpaRangeToFile(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uin
       rc = 2;
       goto cleanup;
     }
+    if (bytesRead != chunk) {
+      fwprintf(stderr,
+               L"read-gpa short read: gpa=0x%I64x requested=%lu got=%lu (status=0x%08lx)\n",
+               (unsigned long long)curGpa,
+               (unsigned long)chunk,
+               (unsigned long)bytesRead,
+               (unsigned long)op);
+      rc = 2;
+      goto cleanup;
+    }
 
     if (!gotFirst && outFirstDword && bytesRead >= 4) {
       memcpy(&firstDword, q.data, 4);
