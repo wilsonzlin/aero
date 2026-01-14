@@ -755,6 +755,44 @@ static int RunD3D9PatchRenderingSmoke(int argc, char** argv) {
     return stage_rc;
   }
 
+  // Delete the tri patch and re-draw with the same handle. This should still render.
+  hr = dev->DeletePatch(2);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("DeletePatch(tri)", hr);
+  }
+
+  // Stage 4: DrawTriPatch after DeletePatch.
+  hr = dev->Clear(0, NULL, D3DCLEAR_TARGET, kClearRed, 1.0f, 0);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("Clear(tri after delete)", hr);
+  }
+  hr = dev->BeginScene();
+  if (FAILED(hr)) {
+    return reporter.FailHresult("BeginScene(tri after delete)", hr);
+  }
+  hr = dev->DrawTriPatch(2, tri_segs, &tri_info);
+  if (FAILED(hr)) {
+    dev->EndScene();
+    return reporter.FailHresult("DrawTriPatch(after DeletePatch)", hr);
+  }
+  hr = dev->EndScene();
+  if (FAILED(hr)) {
+    return reporter.FailHresult("EndScene(tri after delete)", hr);
+  }
+  stage_rc = ValidateBackbufferStage(kTestName,
+                                     &reporter,
+                                     "tri_after_delete",
+                                     dev.get(),
+                                     backbuffer.get(),
+                                     sysmem.get(),
+                                     desc,
+                                     dump,
+                                     kClearRed,
+                                     kTriYellow);
+  if (stage_rc != 0) {
+    return stage_rc;
+  }
+
   // Optional present for manual observation when running interactively.
   hr = dev->PresentEx(NULL, NULL, NULL, NULL, 0);
   if (FAILED(hr)) {
