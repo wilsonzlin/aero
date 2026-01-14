@@ -2587,7 +2587,7 @@ impl PciDevice for XhciPciConfigDevice {
 // present), and is mirrored into the BIOS VBE state (`PhysBasePtr`) and the VGA model. When AeroGPU
 // is enabled, this transitional PCI stub is intentionally not installed to avoid exposing two
 // VGA-class PCI devices to the guest (which can confuse Windows driver binding).
-const VGA_PCI_BDF: PciBdf = PciBdf::new(0, 0x0c, 0);
+const VGA_PCI_BDF: PciBdf = aero_devices::pci::profile::VGA_TRANSITIONAL_STUB.bdf;
 const VGA_PCI_BAR_INDEX: u8 = 0;
 
 struct VgaPciConfigDevice {
