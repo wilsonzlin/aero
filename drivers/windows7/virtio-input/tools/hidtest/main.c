@@ -2563,6 +2563,204 @@ static int dump_vioinput_counters_json(const SELECTED_DEVICE *dev)
     return 0;
 }
 
+static void print_reset_counters_json(const SELECTED_DEVICE *dev, int reset_ok, DWORD win32_err, const WCHAR *err_msg)
+{
+    int is_virtio = 0;
+    const WCHAR *kind = NULL;
+    WCHAR manufacturer[256];
+    WCHAR product[256];
+    WCHAR serial[256];
+    int manufacturer_valid = 0;
+    int product_valid = 0;
+    int serial_valid = 0;
+
+    if (dev == NULL) {
+        wprintf(L"{\"resetCounters\":false,\"win32Err\":null,\"error\":\"no device\"}\n");
+        return;
+    }
+
+    if (dev->attr_valid) {
+        is_virtio = is_virtio_input_device(&dev->attr);
+    }
+    if (dev->caps_valid) {
+        const int is_keyboard = dev->caps.UsagePage == 0x01 && dev->caps.Usage == 0x06;
+        int is_mouse = dev->caps.UsagePage == 0x01 && dev->caps.Usage == 0x02;
+        const int is_consumer = dev->caps.UsagePage == 0x0C && dev->caps.Usage == 0x01;
+        int is_tablet = 0;
+
+        if (is_virtio && dev->attr_valid && dev->attr.ProductID == VIRTIO_INPUT_PID_TABLET) {
+            is_tablet = 1;
+        } else if (is_virtio) {
+            // Heuristic: tablet shares the mouse top-level usage, so distinguish by report descriptor length.
+            if (dev->report_desc_valid && dev->report_desc_len == VIRTIO_INPUT_EXPECTED_TABLET_REPORT_DESC_LEN) {
+                is_tablet = 1;
+            } else if (dev->hid_report_desc_valid &&
+                       dev->hid_report_desc_len == VIRTIO_INPUT_EXPECTED_TABLET_REPORT_DESC_LEN) {
+                is_tablet = 1;
+            }
+        }
+        if (is_tablet) {
+            is_mouse = 0;
+        }
+
+        if (is_tablet) {
+            kind = L"tablet";
+        } else if (is_keyboard) {
+            kind = L"keyboard";
+        } else if (is_mouse) {
+            kind = L"mouse";
+        } else if (is_consumer) {
+            kind = L"consumer";
+        } else {
+            kind = L"other";
+        }
+    }
+
+    if (dev->handle != INVALID_HANDLE_VALUE && dev->handle != NULL) {
+        if (HidD_GetManufacturerString(dev->handle, manufacturer, sizeof(manufacturer))) {
+            manufacturer[(sizeof(manufacturer) / sizeof(manufacturer[0])) - 1] = L'\0';
+            manufacturer_valid = 1;
+        }
+        if (HidD_GetProductString(dev->handle, product, sizeof(product))) {
+            product[(sizeof(product) / sizeof(product[0])) - 1] = L'\0';
+            product_valid = 1;
+        }
+        if (HidD_GetSerialNumberString(dev->handle, serial, sizeof(serial))) {
+            serial[(sizeof(serial) / sizeof(serial[0])) - 1] = L'\0';
+            serial_valid = 1;
+        }
+    }
+
+    wprintf(L"{\n");
+    wprintf(L"  \"index\": %lu,\n", (unsigned long)dev->index);
+    wprintf(L"  \"path\": ");
+    json_print_string_w(dev->path);
+    wprintf(L",\n");
+    wprintf(L"  \"vid\": ");
+    if (dev->attr_valid) {
+        wprintf(L"%u", (unsigned)dev->attr.VendorID);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"pid\": ");
+    if (dev->attr_valid) {
+        wprintf(L"%u", (unsigned)dev->attr.ProductID);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"isVirtio\": ");
+    if (dev->attr_valid) {
+        wprintf(is_virtio ? L"true" : L"false");
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"kind\": ");
+    if (kind != NULL) {
+        json_print_string_w(kind);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"ver\": ");
+    if (dev->attr_valid) {
+        wprintf(L"%u", (unsigned)dev->attr.VersionNumber);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"manufacturer\": ");
+    if (manufacturer_valid) {
+        json_print_string_w(manufacturer);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"product\": ");
+    if (product_valid) {
+        json_print_string_w(product);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"serial\": ");
+    if (serial_valid) {
+        json_print_string_w(serial);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"usagePage\": ");
+    if (dev->caps_valid) {
+        wprintf(L"%u", (unsigned)dev->caps.UsagePage);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"usage\": ");
+    if (dev->caps_valid) {
+        wprintf(L"%u", (unsigned)dev->caps.Usage);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"inputLen\": ");
+    if (dev->caps_valid) {
+        wprintf(L"%u", (unsigned)dev->caps.InputReportByteLength);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"outputLen\": ");
+    if (dev->caps_valid) {
+        wprintf(L"%u", (unsigned)dev->caps.OutputReportByteLength);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"featureLen\": ");
+    if (dev->caps_valid) {
+        wprintf(L"%u", (unsigned)dev->caps.FeatureReportByteLength);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"reportDescLen\": ");
+    if (dev->report_desc_valid) {
+        wprintf(L"%lu", dev->report_desc_len);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"hidReportDescLen\": ");
+    if (dev->hid_report_desc_valid) {
+        wprintf(L"%lu", dev->hid_report_desc_len);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"desiredAccess\": %lu,\n", (unsigned long)dev->desired_access);
+    wprintf(L"  \"writeAccess\": %ls,\n", ((dev->desired_access & GENERIC_WRITE) != 0) ? L"true" : L"false");
+    wprintf(L"  \"resetCounters\": %ls,\n", reset_ok ? L"true" : L"false");
+    wprintf(L"  \"win32Err\": ");
+    if (!reset_ok && win32_err != 0) {
+        wprintf(L"%lu", (unsigned long)win32_err);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"error\": ");
+    if (!reset_ok && err_msg != NULL) {
+        json_print_string_w(err_msg);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L"\n");
+    wprintf(L"}\n");
+}
+
 static void print_usage(void)
 {
     wprintf(L"hidtest: minimal HID report/IOCTL probe tool (Win7)\n");
@@ -2580,7 +2778,7 @@ static void print_usage(void)
     wprintf(L"             [--interrupt-info-json]\n");
     wprintf(L"             [--counters [--json]]\n");
     wprintf(L"             [--counters-json]\n");
-    wprintf(L"             [--reset-counters]\n");
+    wprintf(L"             [--reset-counters [--json]]\n");
     wprintf(L"             [--get-log-mask | --set-log-mask 0xMASK] [--json]\n");
     wprintf(L"             [--ioctl-bad-xfer-packet | --ioctl-bad-write-report |\n");
     wprintf(L"              --ioctl-bad-read-xfer-packet | --ioctl-bad-read-report |\n");
@@ -2595,7 +2793,7 @@ static void print_usage(void)
     wprintf(L"Options:\n");
     wprintf(L"  --list          List all present HID interfaces and exit\n");
     wprintf(L"  --selftest      Validate virtio-input HID descriptor contract and exit (0=pass, 1=fail)\n");
-    wprintf(L"  --json          With --list/--selftest/--state/--interrupt-info/--counters/--get-log-mask/--set-log-mask,\n");
+    wprintf(L"  --json          With --list/--selftest/--state/--interrupt-info/--counters/--reset-counters/--get-log-mask/--set-log-mask,\n");
     wprintf(L"                 emit machine-readable JSON on stdout\n");
     wprintf(L"  --quiet         Suppress enumeration / device summary output (keeps stdout clean for scraping)\n");
     wprintf(L"  --keyboard      Prefer/select the keyboard top-level collection (Usage=Keyboard)\n");
@@ -7009,6 +7207,9 @@ int wmain(int argc, wchar_t **argv)
             opt.query_counters_json = 1;
             opt.quiet = 1;
         }
+        if (opt.reset_counters) {
+            opt.quiet = 1;
+        }
         if (opt.get_log_mask || opt.have_set_log_mask) {
             opt.quiet = 1;
         }
@@ -7027,9 +7228,9 @@ int wmain(int argc, wchar_t **argv)
     }
     if (opt.json &&
         !(opt.list_only || opt.selftest || opt.query_state || opt.query_interrupt_info || opt.query_counters ||
-          opt.get_log_mask || opt.have_set_log_mask)) {
+          opt.reset_counters || opt.get_log_mask || opt.have_set_log_mask)) {
         wprintf(L"--json is only supported with --list, --selftest, --state, --interrupt-info, --counters,\n");
-        wprintf(L"or --get-log-mask/--set-log-mask.\n");
+        wprintf(L"--reset-counters, or --get-log-mask/--set-log-mask.\n");
         return 2;
     }
     if (opt.selftest &&
@@ -7484,14 +7685,38 @@ int wmain(int argc, wchar_t **argv)
     }
 
     if (opt.reset_counters) {
-        int rc = reset_vioinput_counters(&dev, opt.quiet);
-        if (rc != 0) {
+        if (opt.json && !opt.query_counters) {
+            int reset_ok = 1;
+            DWORD err = 0;
+            const WCHAR *msg = NULL;
+            DWORD bytes = 0;
+            BOOL ok;
+ 
+            if ((dev.desired_access & GENERIC_WRITE) == 0) {
+                reset_ok = 0;
+                msg = L"Device was not opened with GENERIC_WRITE; cannot reset counters";
+            } else {
+                ok = DeviceIoControl(dev.handle, IOCTL_VIOINPUT_RESET_COUNTERS, NULL, 0, NULL, 0, &bytes, NULL);
+                if (!ok) {
+                    reset_ok = 0;
+                    err = GetLastError();
+                    msg = L"DeviceIoControl(IOCTL_VIOINPUT_RESET_COUNTERS) failed";
+                }
+            }
+ 
+            print_reset_counters_json(&dev, reset_ok, err, msg);
             free_selected_device(&dev);
-            return rc;
-        }
-        if (!opt.query_counters) {
-            free_selected_device(&dev);
-            return 0;
+            return reset_ok ? 0 : 1;
+        } else {
+            int rc = reset_vioinput_counters(&dev, opt.quiet);
+            if (rc != 0) {
+                free_selected_device(&dev);
+                return rc;
+            }
+            if (!opt.query_counters) {
+                free_selected_device(&dev);
+                return 0;
+            }
         }
     }
     if (opt.query_counters) {

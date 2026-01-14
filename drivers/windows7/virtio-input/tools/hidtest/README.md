@@ -230,7 +230,13 @@ Reset virtio-input driver diagnostic counters:
 
 ```bat
 hidtest.exe --reset-counters
+hidtest.exe --reset-counters --json
 ```
+
+With `--json`, the tool prints a single JSON object including the selected HID interface metadata plus:
+
+- `resetCounters` (bool)
+- `win32Err` / `error` (null unless the reset fails)
 
 Note: `--reset-counters` requires opening the HID interface with write access (the tool prefers read/write but may fall back to read-only). If it fails with a “GENERIC_WRITE” message, rerun elevated and/or ensure no other process is holding the device exclusively.
 
@@ -486,6 +492,7 @@ Reset virtio-input driver diagnostic counters (IOCTL_VIOINPUT_RESET_COUNTERS):
 
 ```bat
 hidtest.exe --reset-counters
+hidtest.exe --reset-counters --json
 ```
 
 Note: `--reset-counters` clears monotonic counters and max-depths, but current-state depth gauges (e.g. `ReadReportQueueDepth`) may remain non-zero if the driver still has queued work.
