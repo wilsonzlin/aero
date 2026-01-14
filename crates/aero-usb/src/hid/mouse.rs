@@ -40,17 +40,22 @@ pub struct MouseReport {
 
 impl MouseReport {
     pub fn to_bytes(self, protocol: HidProtocol) -> Vec<u8> {
+        let clamp_axis = |v: i8| v.clamp(-127, 127) as u8;
         match protocol {
             // Boot mouse protocol is fixed-format and only defines 3 buttons.
-            HidProtocol::Boot => vec![self.buttons & 0x07, self.x as u8, self.y as u8],
+            HidProtocol::Boot => vec![
+                self.buttons & 0x07,
+                clamp_axis(self.x),
+                clamp_axis(self.y),
+            ],
             // Report protocol uses our full report descriptor, which supports 5 buttons + wheel +
             // horizontal wheel (AC Pan).
             HidProtocol::Report => vec![
                 self.buttons & 0x1f,
-                self.x as u8,
-                self.y as u8,
-                self.wheel as u8,
-                self.hwheel as u8,
+                clamp_axis(self.x),
+                clamp_axis(self.y),
+                clamp_axis(self.wheel),
+                clamp_axis(self.hwheel),
             ],
         }
     }
