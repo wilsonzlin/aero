@@ -388,8 +388,12 @@ fn translate_cs(
     let used_sivs = scan_used_compute_sivs(module, &io);
 
     let mut w = WgslWriter::new();
-    // The Aero D3D11 binding model uses stage-scoped bind groups, so compute-stage resources live
-    // in `@group(2)`.
+    // Bindings follow the shared AeroGPU D3D11 binding model (see `binding_model.rs`):
+    // compute-stage resources live in the stage-scoped bind group `@group(2)`.
+    //
+    // WGSL emission and reflection must agree on the group index; runtimes that consume reflection
+    // use it to build pipeline layouts and bind groups. The `protocol_d3d11` runtime supports this
+    // by inserting empty groups 0/1 and placing the real compute layout at group 2.
     resources.emit_decls(&mut w, ShaderStage::Compute)?;
 
     if !used_sivs.is_empty() {

@@ -25,6 +25,10 @@ use super::state::{
 };
 
 const DEFAULT_BIND_GROUP_CACHE_CAPACITY: usize = 4096;
+// The shared AeroGPU D3D11 binding model reserves `@group(2)` for compute-stage resources (see
+// `binding_model.rs`). The `protocol_d3d11` command stream only describes a single bind group, so
+// the runtime places that bind group at index 2 and fills groups 0/1 with empty layouts.
+const COMPUTE_BIND_GROUP_INDEX: u32 = 2;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct D3D11CacheStats {
@@ -1642,7 +1646,7 @@ impl D3D11Runtime {
                         let bg_ref = unsafe { &*bg_ptr };
                         compute_pass.set_bind_group(0, &empty_bind_group, &[]);
                         compute_pass.set_bind_group(1, &empty_bind_group, &[]);
-                        compute_pass.set_bind_group(2, bg_ref, &[]);
+                        compute_pass.set_bind_group(COMPUTE_BIND_GROUP_INDEX, bg_ref, &[]);
                         bound_bind_group = Some(bg_ptr);
                     }
                     compute_pass.dispatch_workgroups(x, y, z);

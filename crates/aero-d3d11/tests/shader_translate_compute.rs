@@ -1,8 +1,9 @@
 use aero_d3d11::{
     binding_model::{BINDING_BASE_TEXTURE, BINDING_BASE_UAV},
-    parse_signatures, translate_sm4_module_to_wgsl, BufferKind, BufferRef, DstOperand, DxbcFile,
-    FourCC, OperandModifier, RegFile, RegisterRef, ShaderModel, ShaderStage, ShaderTranslateError,
-    Sm4Decl, Sm4Inst, Sm4Module, SrcKind, SrcOperand, Swizzle, UavRef, WriteMask,
+    parse_signatures, translate_sm4_module_to_wgsl, BindingKind, BufferKind, BufferRef, DstOperand,
+    DxbcFile, FourCC, OperandModifier, RegFile, RegisterRef, ShaderModel, ShaderStage,
+    ShaderTranslateError, Sm4Decl, Sm4Inst, Sm4Module, SrcKind, SrcOperand, Swizzle, UavRef,
+    WriteMask,
 };
 use aero_dxbc::test_utils as dxbc_test_utils;
 
@@ -319,4 +320,45 @@ fn rdef_expands_uav_buffer_array_slots() {
         "@group(2) @binding({}) var<storage, read_write> u3: AeroStorageBufferU32;",
         BINDING_BASE_UAV + 3
     )));
+}
+
+#[test]
+fn compute_translation_wgsl_group_matches_reflection() {
+    let dxbc_bytes = build_dxbc(&[(FOURCC_SHEX, Vec::new())]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let module = Sm4Module {
+        stage: ShaderStage::Compute,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: vec![
+            Sm4Decl::ThreadGroupSize { x: 1, y: 1, z: 1 },
+            Sm4Decl::UavBuffer {
+                slot: 0,
+                stride: 0,
+                kind: BufferKind::Raw,
+            },
+        ],
+        instructions: vec![Sm4Inst::Ret],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+
+    let uav_binding = translated
+        .reflection
+        .bindings
+        .iter()
+        .find(|b| matches!(b.kind, BindingKind::UavBuffer { slot: 0 }))
+        .expect("missing u0 binding in reflection");
+
+    let needle = format!(
+        "@group({}) @binding({}) var<storage, read_write> u0",
+        uav_binding.group, uav_binding.binding
+    );
+    assert!(
+        translated.wgsl.contains(&needle),
+        "compute WGSL uses a different bind-group index than reflection\nneedle: {needle}\nwgsl:\n{}",
+        translated.wgsl
+    );
 }
