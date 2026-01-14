@@ -35,15 +35,12 @@ fn loads_code_version_table_locals(wasm: &[u8]) -> bool {
         if let Payload::CodeSectionEntry(body) = payload.expect("parse wasm") {
             let mut reader = body.get_operators_reader().expect("operators reader");
             while !reader.eof() {
-                match reader.read().expect("read operator") {
-                    Operator::I32Load { memarg } => {
-                        if memarg.offset == u64::from(jit_ctx::CODE_VERSION_TABLE_PTR_OFFSET)
-                            || memarg.offset == u64::from(jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET)
-                        {
-                            return true;
-                        }
+                if let Operator::I32Load { memarg } = reader.read().expect("read operator") {
+                    if memarg.offset == u64::from(jit_ctx::CODE_VERSION_TABLE_PTR_OFFSET)
+                        || memarg.offset == u64::from(jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET)
+                    {
+                        return true;
                     }
-                    _ => {}
                 }
             }
         }
