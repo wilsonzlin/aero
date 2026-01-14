@@ -13778,7 +13778,11 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                      * LastErrorFence even without ERROR_FENCE, and also updates LastErrorMmioCount.
                      * In that common case, cachedMmioCount already matches and we do not clear it here.
                      */
-                    AeroGpuAtomicWriteU64(&adapter->LastErrorFence, 0);
+                    /*
+                     * Avoid clobbering a concurrent ISR update: only clear the fence if it still
+                     * matches the value we observed at the start of QUERY_ERROR.
+                     */
+                    InterlockedCompareExchange64((volatile LONGLONG*)&adapter->LastErrorFence, 0, (LONGLONG)cachedFence);
                 }
             }
 
@@ -13810,7 +13814,8 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                      * New error payload without an associated fence: avoid reporting a stale cached
                      * fence from a prior error.
                      */
-                    out->error_fence = 0;
+                    const ULONGLONG currentFence = AeroGpuAtomicReadU64(&adapter->LastErrorFence);
+                    out->error_fence = (currentFence != cachedFence) ? (uint64_t)currentFence : 0;
                 }
                 out->error_count = mmioCount;
             }
