@@ -10,9 +10,11 @@
 ; Note: this file is checked in disabled-by-default (as `*.inf.disabled`) to
 ; avoid accidentally shipping/installing **two** INFs that match the same HWIDs.
 ;
-; Maintenance note: from the first section header (`[Version]`) onward, this
-; legacy alias must remain byte-for-byte identical to `aero_virtio_input.inf`
-; (only the leading banner/comments may differ).
+; Maintenance note: from the first section header (`[Version]`) onward, this legacy
+; alias must remain byte-for-byte identical to `aero_virtio_input.inf` outside the
+; models sections (`[Aero.NTx86]` / `[Aero.NTamd64]`).
+; (The models sections add the opt-in strict generic fallback HWID. Only the
+; leading banner/comments may otherwise differ.)
 ;
 ; Enforcement:
 ;   - CI: scripts/ci/check-windows7-virtio-contract-consistency.py
