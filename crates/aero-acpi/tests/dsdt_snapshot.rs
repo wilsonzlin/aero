@@ -1,6 +1,7 @@
 use std::{env, fs, path::PathBuf};
 
 use aero_acpi::{AcpiConfig, AcpiPlacement, AcpiTables};
+use aero_pc_constants::{PCIE_ECAM_BASE, PCIE_ECAM_END_BUS, PCIE_ECAM_SEGMENT, PCIE_ECAM_START_BUS};
 
 const UPDATE_ENV: &str = "AERO_UPDATE_ACPI_FIXTURES";
 
@@ -29,15 +30,15 @@ fn first_diff_index(a: &[u8], b: &[u8]) -> Option<usize> {
     None
 }
 
-#[test]
-fn dsdt_matches_firmware_fixture() {
-    let cfg = AcpiConfig::default();
+fn check_dsdt_fixture(cfg: AcpiConfig, fixture_name: &str) {
     let placement = AcpiPlacement::default();
     let tables = AcpiTables::build(&cfg, placement);
     let generated = tables.dsdt;
 
-    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../firmware/acpi/dsdt.aml");
-    let fixture = fs::read(&fixture_path).expect("read DSDT fixture (crates/firmware/acpi/dsdt.aml)");
+    let fixture_path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("../firmware/acpi/{fixture_name}"));
+    let fixture = fs::read(&fixture_path)
+        .unwrap_or_else(|e| panic!("read DSDT fixture ({}): {e}", fixture_path.display()));
 
     if generated == fixture {
         return;
@@ -73,5 +74,24 @@ fn dsdt_matches_firmware_fixture() {
         fixture.len(),
         fnv1a64(&fixture),
         diff.unwrap_or_else(|| "no byte-level difference found (unexpected)".to_string()),
+    );
+}
+
+#[test]
+fn dsdt_matches_firmware_fixture() {
+    check_dsdt_fixture(AcpiConfig::default(), "dsdt.aml");
+}
+
+#[test]
+fn dsdt_pcie_matches_firmware_fixture() {
+    check_dsdt_fixture(
+        AcpiConfig {
+            pcie_ecam_base: PCIE_ECAM_BASE,
+            pcie_segment: PCIE_ECAM_SEGMENT,
+            pcie_start_bus: PCIE_ECAM_START_BUS,
+            pcie_end_bus: PCIE_ECAM_END_BUS,
+            ..Default::default()
+        },
+        "dsdt_pcie.aml",
     );
 }
