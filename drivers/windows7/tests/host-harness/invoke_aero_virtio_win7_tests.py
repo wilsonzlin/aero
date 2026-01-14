@@ -74,6 +74,7 @@ do not affect PASS/FAIL):
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LARGE|PASS/FAIL/INFO|large_ok=...|large_bytes=...|large_fnv1a64=...|large_mbps=...|upload_ok=...|upload_bytes=...|upload_mbps=...|msi=...|msi_messages=...`
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_UDP|PASS/FAIL/SKIP|bytes=...|small_bytes=...|mtu_bytes=...|reason=...|wsa=...`
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_UDP_DNS|PASS/FAIL/SKIP|server=...|query=...|sent=...|recv=...|rcode=...`
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_OFFLOAD_CSUM|PASS/FAIL/INFO|tx_csum=...|rx_csum=...|fallback=...|...`
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_DIAG|INFO/WARN|reason=...|host_features=...|guest_features=...|...`
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_BIND|PASS/FAIL|devices=...|wrong_service=...|missing_service=...|problem=...`
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_BINDING|PASS/FAIL|service=...|pnp_id=...|reason=...|expected=...|actual=...|...`
@@ -87,6 +88,10 @@ do not affect PASS/FAIL):
 - It may also mirror the guest's UDP DNS smoke-test marker when present:
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_UDP_DNS|PASS/FAIL/SKIP|server=...|query=...|sent=...|recv=...|rcode=...|reason=...`
   - informational only; does not affect overall PASS/FAIL.
+
+It may also mirror the guest's checksum offload marker (`virtio-net-offload-csum`) when present:
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_OFFLOAD_CSUM|PASS/FAIL/INFO|tx_csum=...|rx_csum=...|fallback=...|...`
+  - informational only; does not affect overall PASS/FAIL unless `--require-net-csum-offload` is enabled.
 
 It may also optionally flap the virtio-net link state via QMP `set_link` when `--with-net-link-flap` is enabled,
 coordinated by a guest-side READY marker:
