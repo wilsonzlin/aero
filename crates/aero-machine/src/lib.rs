@@ -7626,6 +7626,9 @@ impl Machine {
             input.inject_key(linux_key, pressed);
         }
         self.process_virtio_input();
+        // Ensure legacy INTx routing reflects the device's updated IRQ latch immediately, without
+        // requiring a subsequent `run_slice` call.
+        self.sync_pci_intx_sources_to_interrupts();
     }
 
     /// Inject a Linux input relative motion event (`EV_REL` + `REL_X/REL_Y`) into the virtio-input
@@ -7644,6 +7647,7 @@ impl Machine {
             input.inject_rel_move(dx, dy);
         }
         self.process_virtio_input();
+        self.sync_pci_intx_sources_to_interrupts();
     }
 
     /// Inject a Linux input button event (`EV_KEY` + `BTN_*`) into the virtio-input mouse device.
@@ -7661,6 +7665,7 @@ impl Machine {
             input.inject_button(btn, pressed);
         }
         self.process_virtio_input();
+        self.sync_pci_intx_sources_to_interrupts();
     }
 
     /// Inject a Linux mouse wheel event (`EV_REL` + `REL_WHEEL`) into the virtio-input mouse device.
@@ -7678,6 +7683,7 @@ impl Machine {
             input.inject_wheel(delta);
         }
         self.process_virtio_input();
+        self.sync_pci_intx_sources_to_interrupts();
     }
 
     // Explicit aliases for parity with the wasm-facing API.
@@ -7711,6 +7717,7 @@ impl Machine {
             input.inject_hwheel(delta);
         }
         self.process_virtio_input();
+        self.sync_pci_intx_sources_to_interrupts();
     }
 
     /// Inject a Linux mouse vertical + horizontal wheel update into the virtio-input mouse device.
@@ -7731,6 +7738,7 @@ impl Machine {
             input.inject_wheel2(wheel, hwheel);
         }
         self.process_virtio_input();
+        self.sync_pci_intx_sources_to_interrupts();
     }
 
     // ---------------------------------------------------------------------
