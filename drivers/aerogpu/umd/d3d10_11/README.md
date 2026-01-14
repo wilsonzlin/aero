@@ -43,8 +43,9 @@ Feature matrix for the Win7 WDK-backed UMDs:
   - D3D10.1: VS/PS/GS (GS resource bindings are stubbed)
   - D3D11: VS/PS/GS/CS (GS execution on the host is still bring-up scaffolding; see below)
 - Input layout + vertex/index buffers, primitive topology
-- VS/PS binding tables:
-  - D3D10 + D3D10.1: constant buffers, shader-resource views, samplers (whole-buffer constant-buffer binding)
+- Shader binding tables:
+  - D3D10: VS/PS/GS constant buffers, shader-resource views, samplers (whole-buffer constant-buffer binding)
+  - D3D10.1: VS/PS constant buffers, shader-resource views, samplers (whole-buffer constant-buffer binding; GS bindings stubbed)
   - D3D11: VS/PS/GS/CS constant buffers (supports `{FirstConstant, NumConstants}` ranges), shader-resource views, samplers; CS UAV buffers
 - Render target + depth-stencil binding (MRT up to `AEROGPU_MAX_RENDER_TARGETS`), Clear, Draw/DrawIndexed
 - Viewport + scissor (protocol supports a **single** viewport/scissor; non-trivial arrays are surfaced via `E_NOTIMPL` and applied best-effort as slot 0)
