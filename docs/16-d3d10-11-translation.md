@@ -1116,13 +1116,25 @@ with an implementation-defined workgroup size chosen by the translator/runtime.
 
 2. **Tessellation (optional): HS/DS emulation**
     - Trigger: `hs != 0 || ds != 0 || topology is patchlist`.
-    - HS pass:
+    - HS patch-constant pass (per patch):
       - Reads control points from `vs_out`.
-      - Writes patch constants + optional HS control points to scratch.
-    - Tessellator/DS pass:
+      - Writes tess factors + patch constants to scratch (per patch).
+      - Dispatch mapping (recommended):
+        - `global_invocation_id.x` = `patch_id` (`0..patch_count`)
+        - `global_invocation_id.y` = `instance_id` (`0..instance_count`) (optional; may flatten instances)
+    - HS control-point pass (per patch control point):
+      - Reads control points from `vs_out`.
+      - Writes HS output control points to scratch (may be in-place in `vs_out` for bring-up).
+      - Dispatch mapping:
+        - `global_invocation_id.x` = `patch_id`
+        - `global_invocation_id.y` = `control_point_id` (`0..control_points`)
+        - `global_invocation_id.z` = `instance_id` (if using 3D dispatch)
+    - Tessellator + DS evaluation:
       - Generates tessellated domain points and evaluates DS.
-      - Writes `tess_out_vertices` (+ `tess_out_indices` if indexed rendering is chosen).
-      - Writes `indirect_args` + `counters`.
+      - For P2a tri-domain, the doc specifies a concrete uniform grid enumeration and triangle-list
+        index generation (see “Tri-domain grid enumeration” above).
+      - Writes `tess_out_vertices` + `tess_out_indices`, updates counters, then writes final
+        `indirect_args`.
 
 3. **GS (optional): geometry shader emulation**
     - Trigger: `gs != 0` or adjacency topology.
