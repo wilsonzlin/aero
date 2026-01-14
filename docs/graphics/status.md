@@ -43,9 +43,14 @@ Goal for Win7 UX: **the same virtual GPU** should provide *both* boot VGA/VBE ou
     Win7 KMD init + fence progress)
     - Code: `crates/aero-machine/src/aerogpu.rs`
     - Guard test: `crates/aero-machine/tests/aerogpu_ring_noop_fence.rs`
-  - Still missing: full BAR0 command execution + vblank model + WDDM scanout presentation, plus scanout handoff once the Win7 driver loads
+  - BAR0 also stores scanout regs and implements a vblank tick/IRQ model
+    - Guard test: `crates/aero-machine/tests/aerogpu_bar0_mmio_vblank.rs`
+  - Host-facing `Machine::display_present` supports boot → WDDM scanout handoff (once `SCANOUT0_ENABLE` is written)
+    - Code: `crates/aero-machine/src/lib.rs` (`display_present`, `display_present_aerogpu_scanout`)
+  - Still missing: **real BAR0 command execution** (AEROGPU_CMD streams) and end-to-end browser wiring/validation once the Win7 driver loads
   - Design doc: [`docs/16-aerogpu-vga-vesa-compat.md`](../16-aerogpu-vga-vesa-compat.md)
-- [ ] Seamless handoff: boot framebuffer → WDDM scanout without losing display or forcing mode resets
+- [~] Seamless handoff: boot framebuffer → WDDM scanout without losing display or forcing mode resets
+  - Implemented in `aero_machine::Machine::display_present`, but not yet validated end-to-end with a Win7 guest in the browser runtime.
 
 ---
 
@@ -67,7 +72,7 @@ Goal for Win7 UX: the Win7 driver package binds to one stable identity and the e
 ### Missing / still required for Win7
 
 - [ ] Wire the full AeroGPU BAR0 WDDM/MMIO/ring device model into the canonical `aero_machine::Machine` path
-  - Today `aero_machine::Machine` exposes the PCI identity plus BAR1-backed VRAM/legacy VGA decode and a minimal BAR0 ring/fence transport stub, but it does not yet execute commands or drive the WDDM scanout/vblank path.
+  - Today `aero_machine::Machine` exposes the PCI identity, BAR1-backed VRAM/legacy VGA decode, minimal BAR0 ring/fence transport, and BAR0 scanout/vblank register storage/pacing — but it does not yet execute real command streams (AEROGPU_CMD) or present them end-to-end in the browser runtime.
 
 ---
 
@@ -77,15 +82,16 @@ Goal for Win7 UX: DWM and apps must see a stable scanout + vsync model (no deadl
 
 ### Implemented today
 
-- [~] AeroGPU scanout registers (source 0) + cursor storage are implemented in the **`crates/emulator`** AeroGPU PCI device model
+- [x] `aero_machine` implements BAR0 scanout regs + a free-running vblank tick/IRQ model (minimal; no command execution yet)
+  - Code: `crates/aero-machine/src/aerogpu.rs`
+  - Guard test: `crates/aero-machine/tests/aerogpu_bar0_mmio_vblank.rs`
+- [x] Host-facing WDDM scanout presentation in `aero_machine::Machine::display_present` (boot→WDDM handoff)
+  - Code: `crates/aero-machine/src/lib.rs` (`display_present_aerogpu_scanout`)
+- [x] Browser GPU worker can present WDDM scanout state (`SCANOUT_SOURCE_WDDM`) from guest RAM
+  - E2E test: `tests/e2e/wddm_scanout_smoke.spec.ts`
+- [~] Reference/full AeroGPU scanout registers + vblank model exist in the **`crates/emulator`** AeroGPU PCI device model
   - Device: [`crates/emulator/src/devices/pci/aerogpu.rs`](../../crates/emulator/src/devices/pci/aerogpu.rs)
   - Registers: [`crates/emulator/src/devices/aerogpu_regs.rs`](../../crates/emulator/src/devices/aerogpu_regs.rs)
-- [~] Free-running vblank model (default 60 Hz) with:
-  - monotonically increasing `vblank_seq`
-  - `vblank_time_ns` timestamp
-  - `vblank_period_ns`
-  - vblank IRQ status that is only latched while enabled
-  - Code: [`crates/emulator/src/devices/pci/aerogpu.rs`](../../crates/emulator/src/devices/pci/aerogpu.rs)
 - [~] Present/fence completion pacing hooks exist in both:
   - Rust executor path: [`crates/emulator/src/gpu_worker/aerogpu_executor.rs`](../../crates/emulator/src/gpu_worker/aerogpu_executor.rs)
   - Web runtime path: [`web/src/workers/gpu-worker.ts`](../../web/src/workers/gpu-worker.ts) (vsync-delayed submit completion queue)

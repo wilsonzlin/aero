@@ -21,10 +21,11 @@ The canonical machine supports **two mutually-exclusive** display configurations
     (VGA port I/O + VRAM-backed `0xA0000..0xBFFFF` window; see
     `docs/16-aerogpu-vga-vesa-compat.md`).
   - **BAR0 regs:** a **minimal** implementation of the versioned MMIO + ring/fence transport (enough
-    for the in-tree Win7 KMD to initialize and advance fences), but **no** command execution or
-    WDDM scanout/vblank model yet in `aero_machine`.
+    for the in-tree Win7 KMD to initialize and advance fences), plus BAR0 scanout/vblank register
+    storage/pacing and host-facing scanout presentation. It still does **not** execute real command
+    streams (AEROGPU_CMD) in `aero_machine`.
 
-  The reference/full versioned-AeroGPU device model (command execution + scanout + vblank pacing)
+  The reference/full versioned-AeroGPU device model (command execution + full protocol surface)
   still lives in `crates/emulator` and is not yet wired into `aero_machine::Machine`.
 
   When the AeroGPU-owned VGA/VBE boot display path is active, firmware derives the VBE linear
