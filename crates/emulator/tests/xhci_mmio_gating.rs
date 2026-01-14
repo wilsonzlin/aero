@@ -1,5 +1,7 @@
 #![cfg(feature = "legacy-usb-xhci")]
 
+use aero_usb::xhci::interrupter::IMAN_IE;
+use aero_usb::xhci::trb::Trb;
 use emulator::io::pci::{MmioDevice, PciDevice};
 use emulator::io::usb::xhci::{regs, XhciController, XhciPciDevice};
 use memory::MemoryBus;
@@ -123,6 +125,70 @@ fn pci_command_bme_bit_gates_xhci_dma() {
         dev.mmio_write(&mut PanicMem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
     }));
     assert!(err.is_err());
+}
+
+#[test]
+fn tick_1ms_services_event_ring_only_when_bus_master_enabled() {
+    let mut dev = XhciPciDevice::new(XhciController::new(), 0xfebf_0000);
+    let mut mem = VecMemory::new(0x10_000);
+
+    // Enable MMIO decoding so we can program interrupter registers, but leave bus mastering off.
+    dev.config_write(0x04, 2, 1 << 1);
+
+    // Configure a minimal event ring segment table in guest memory.
+    let erstba: u64 = 0x1000; // 64-byte aligned.
+    let seg_base: u64 = 0x2000; // 16-byte aligned.
+    let seg_size_trbs: u32 = 4;
+
+    mem.write_physical(erstba, &seg_base.to_le_bytes());
+    mem.write_physical(erstba + 8, &seg_size_trbs.to_le_bytes());
+    mem.write_physical(erstba + 12, &0u32.to_le_bytes());
+
+    // Program interrupter 0 registers.
+    dev.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
+    dev.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 1);
+    dev.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, erstba as u32);
+    dev.mmio_write(
+        &mut mem,
+        regs::REG_INTR0_ERSTBA_HI,
+        4,
+        (erstba >> 32) as u32,
+    );
+    dev.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, seg_base as u32);
+    dev.mmio_write(
+        &mut mem,
+        regs::REG_INTR0_ERDP_HI,
+        4,
+        (seg_base >> 32) as u32,
+    );
+
+    // Queue a deterministic event TRB in host memory.
+    let trb = Trb::new(0x1122_3344_5566_7788, 0x99aa_bbcc, 0xddee_ff00);
+    dev.controller.post_event(trb);
+    assert!(dev.controller.irq_pending());
+
+    // With Bus Master Enable clear, the controller must not DMA into the event ring.
+    dev.tick_1ms(&mut mem);
+    assert!(
+        dev.controller.irq_pending(),
+        "event should remain pending while DMA is disabled"
+    );
+    let seg_base = usize::try_from(seg_base).unwrap();
+    assert_eq!(&mem.data[seg_base..seg_base + 16], &[0u8; 16]);
+
+    // Enable bus mastering and confirm the event ring gets populated.
+    dev.config_write(0x04, 2, (1 << 1) | (1 << 2));
+    dev.tick_1ms(&mut mem);
+
+    assert!(
+        !dev.controller.irq_pending(),
+        "event should be consumed once DMA is enabled"
+    );
+
+    let mut expected = trb;
+    expected.set_cycle(true);
+    assert_eq!(&mem.data[seg_base..seg_base + 16], &expected.to_bytes());
+    assert_ne!(dev.mmio_read(&mut mem, regs::REG_INTR0_IMAN, 4) & 0x1, 0);
 }
 
 #[test]
