@@ -5734,7 +5734,52 @@ def main() -> int:
         print("Launching QEMU:")
         print("  " + _format_commandline_for_host(qemu_args))
         stderr_f = qemu_stderr_log.open("wb")
-        proc = subprocess.Popen(qemu_args, stderr=stderr_f)
+        try:
+            proc = subprocess.Popen(qemu_args, stderr=stderr_f)
+        except FileNotFoundError:
+            msg = f"qemu-system binary not found: {args.qemu_system}"
+            print(f"ERROR: {msg}", file=sys.stderr)
+            try:
+                stderr_f.write((msg + "\n").encode("utf-8", errors="replace"))
+            except Exception:
+                pass
+            try:
+                stderr_f.close()
+            except Exception:
+                pass
+            if udp_server is not None:
+                udp_server.close()
+            httpd.shutdown()
+            if qmp_socket is not None:
+                try:
+                    qmp_socket.unlink()
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    pass
+            return 2
+        except OSError as e:
+            msg = f"failed to start qemu-system binary: {args.qemu_system}: {e}"
+            print(f"ERROR: {msg}", file=sys.stderr)
+            try:
+                stderr_f.write((msg + "\n").encode("utf-8", errors="replace"))
+            except Exception:
+                pass
+            try:
+                stderr_f.close()
+            except Exception:
+                pass
+            if udp_server is not None:
+                udp_server.close()
+            httpd.shutdown()
+            if qmp_socket is not None:
+                try:
+                    qmp_socket.unlink()
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    pass
+            return 2
         result_code: Optional[int] = None
         try:
             if args.qemu_preflight_pci:
