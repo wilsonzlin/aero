@@ -3307,6 +3307,8 @@ fn sm3_wgsl_is_compatible_with_aerogpu_d3d9_pipeline_layout() {
 
     // vs_3_0:
     //   texld r0, c0, s0
+    //   texld r1, c0, s1
+    //   add r0, r0, r1
     //   mov oPos, r0
     //   end
     let vs_tokens = vec![
@@ -3315,6 +3317,14 @@ fn sm3_wgsl_is_compatible_with_aerogpu_d3d9_pipeline_layout() {
         dst_token(0, 0, 0xF),
         src_token(2, 0, 0xE4, 0),
         src_token(10, 0, 0xE4, 0),
+        opcode_token(66, 3),
+        dst_token(0, 1, 0xF),
+        src_token(2, 0, 0xE4, 0),
+        src_token(10, 1, 0xE4, 0),
+        opcode_token(2, 3),
+        dst_token(0, 0, 0xF),
+        src_token(0, 0, 0xE4, 0),
+        src_token(0, 1, 0xE4, 0),
         opcode_token(1, 2),
         dst_token(4, 0, 0xF),
         src_token(0, 0, 0xE4, 0),
@@ -3323,6 +3333,8 @@ fn sm3_wgsl_is_compatible_with_aerogpu_d3d9_pipeline_layout() {
 
     // ps_2_0:
     //   texld r0, c0, s0
+    //   texld r1, c0, s1
+    //   add r0, r0, r1
     //   mov oC0, r0
     //   end
     let ps_tokens = vec![
@@ -3331,6 +3343,14 @@ fn sm3_wgsl_is_compatible_with_aerogpu_d3d9_pipeline_layout() {
         dst_token(0, 0, 0xF),
         src_token(2, 0, 0xE4, 0),
         src_token(10, 0, 0xE4, 0),
+        opcode_token(66, 3),
+        dst_token(0, 1, 0xF),
+        src_token(2, 0, 0xE4, 0),
+        src_token(10, 1, 0xE4, 0),
+        opcode_token(2, 3),
+        dst_token(0, 0, 0xF),
+        src_token(0, 0, 0xE4, 0),
+        src_token(0, 1, 0xE4, 0),
         opcode_token(1, 2),
         dst_token(8, 0, 0xF),
         src_token(0, 0, 0xE4, 0),
@@ -3380,6 +3400,22 @@ fn sm3_wgsl_is_compatible_with_aerogpu_d3d9_pipeline_layout() {
                 ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                 count: None,
             },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Texture {
+                    multisampled: false,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 3,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
         ],
     });
     let samplers_ps_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -3397,6 +3433,22 @@ fn sm3_wgsl_is_compatible_with_aerogpu_d3d9_pipeline_layout() {
             },
             wgpu::BindGroupLayoutEntry {
                 binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    multisampled: false,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 3,
                 visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                 count: None,
@@ -3533,6 +3585,14 @@ fn sm3_wgsl_is_compatible_with_aerogpu_d3d9_pipeline_layout() {
                 binding: 1,
                 resource: wgpu::BindingResource::Sampler(&sample_sampler),
             },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::TextureView(&sample_tex_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: wgpu::BindingResource::Sampler(&sample_sampler),
+            },
         ],
     });
     let samplers_ps_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -3545,6 +3605,14 @@ fn sm3_wgsl_is_compatible_with_aerogpu_d3d9_pipeline_layout() {
             },
             wgpu::BindGroupEntry {
                 binding: 1,
+                resource: wgpu::BindingResource::Sampler(&sample_sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::TextureView(&sample_tex_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
                 resource: wgpu::BindingResource::Sampler(&sample_sampler),
             },
         ],
