@@ -257,11 +257,21 @@ NTSTATUS VirtioInputHandleHidWriteReport(_In_ WDFQUEUE Queue, _In_ WDFREQUEST Re
              * Do not fail the write path if the status queue is not wired up yet
              * or if the device rejects the update.
              */
-            VIOINPUT_LOG(
-                VIOINPUT_LOG_ERROR | VIOINPUT_LOG_IOCTL,
-                "%s StatusQ write failed (ignored): %!STATUS!\n",
-                name,
-                status);
+            ULONG logMask;
+
+            /*
+             * STATUS_DEVICE_NOT_READY is expected when StatusQ is inactive
+             * (e.g. keyboard does not advertise EV_LED in compat mode or HID is
+             * not yet fully started). Avoid spamming error logs for that case.
+             */
+            logMask = VIOINPUT_LOG_IOCTL;
+            if (status == STATUS_DEVICE_NOT_READY) {
+                logMask |= VIOINPUT_LOG_VERBOSE;
+            } else {
+                logMask |= VIOINPUT_LOG_ERROR;
+            }
+
+            VIOINPUT_LOG(logMask, "%s StatusQ write failed (ignored): %!STATUS!\n", name, status);
         }
     } else {
         VioInputCounterInc(&ctx->Counters.LedWritesDropped);
