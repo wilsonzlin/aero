@@ -6,6 +6,14 @@ type ChunkRecord = { id: string; index: number; data: ArrayBuffer };
 
 type CacheEntry = { data: Uint8Array; dirty: boolean };
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasOwn(obj: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(obj, key);
+}
+
 /**
  * IndexedDB-backed sparse disk view over the DiskManager `chunks` store.
  *
@@ -115,9 +123,19 @@ export class IdbChunkDisk implements AsyncSectorDisk {
     }
 
     const rec = await this.getChunkRecord(index);
-    if (rec?.data) {
-      const existing = new Uint8Array(rec.data, 0, Math.min(expectedLen, rec.data.byteLength));
-      entry.data.set(existing);
+    if (isRecord(rec)) {
+      // Defensive: IndexedDB contents are untrusted/can be corrupt. Never observe inherited fields
+      // (prototype pollution) and only accept well-typed records.
+      const id = hasOwn(rec, "id") ? rec.id : undefined;
+      const recIndex = hasOwn(rec, "index") ? rec.index : undefined;
+      const dataRaw = hasOwn(rec, "data") ? rec.data : undefined;
+      if (id === this.diskId && recIndex === index) {
+        const dataAny = dataRaw as any;
+        const bytes = dataAny instanceof ArrayBuffer ? new Uint8Array(dataAny) : dataAny instanceof Uint8Array ? dataAny : null;
+        if (bytes) {
+          entry.data.set(bytes.subarray(0, Math.min(expectedLen, bytes.byteLength)));
+        }
+      }
     }
 
     this.cache.set(index, entry);
