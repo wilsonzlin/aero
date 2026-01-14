@@ -2299,7 +2299,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "When injecting virtio-input events, also inject vertical + horizontal scroll wheel events "
-            "(QMP rel axis: wheel + hscroll) and require the guest virtio-input-wheel marker to PASS. "
+            "(QMP rel axes: wheel/vscroll + hscroll/hwheel; the harness retries common axis name fallbacks) and "
+            "require the guest virtio-input-wheel marker to PASS. "
             "Implies --with-input-events."
         ),
     )

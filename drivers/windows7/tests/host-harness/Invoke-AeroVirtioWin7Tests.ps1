@@ -126,7 +126,8 @@ param(
   [Alias("WithVirtioInputMediaKeys", "EnableVirtioInputMediaKeys")]
   [switch]$WithInputMediaKeys,
 
-  # If set, also inject vertical + horizontal scroll wheel events (QMP rel axes: wheel + hscroll) and
+  # If set, also inject vertical + horizontal scroll wheel events (QMP rel axes: wheel/vscroll + hscroll/hwheel; with
+  # best-effort axis name fallbacks) and
   # require the guest virtio-input-wheel marker to PASS.
   # This implies -WithInputEvents.
   [Parameter(Mandatory = $false)]
