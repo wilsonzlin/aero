@@ -1454,8 +1454,34 @@ mod virtio_input_device_desc_split_tests {
  AeroVirtioKeyboard.DeviceDesc = "Aero VirtIO Keyboard"
  AeroVirtioMouse.DeviceDesc    = "Aero VirtIO Mouse"
  AeroVirtioInput.DeviceDesc    = "Aero VirtIO Input Device"
- "#;
+  "#;
         validate(inf).unwrap();
+    }
+
+    #[test]
+    fn virtio_input_device_desc_split_rejects_multiple_fallback_entries() {
+        let inf = r#"
+ [Aero.NTx86]
+ %AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
+ %AeroVirtioMouse.DeviceDesc%    = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
+ %AeroVirtioInput.DeviceDesc%    = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&REV_01
+ %AeroVirtioInput2.DeviceDesc%   = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&REV_01
+
+ [Aero.NTamd64]
+ %AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
+ %AeroVirtioMouse.DeviceDesc%    = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
+ %AeroVirtioInput.DeviceDesc%    = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&REV_01
+
+ [Strings]
+ AeroVirtioKeyboard.DeviceDesc = "Aero VirtIO Keyboard"
+ AeroVirtioMouse.DeviceDesc    = "Aero VirtIO Mouse"
+ AeroVirtioInput.DeviceDesc    = "Aero VirtIO Input Device"
+ AeroVirtioInput2.DeviceDesc   = "Aero VirtIO Input Device 2"
+  "#;
+        let err = validate(inf).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("expected exactly one generic fallback model entry"), "{msg}");
+        assert!(msg.contains("found 2"), "{msg}");
     }
 
     #[test]
