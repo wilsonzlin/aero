@@ -1023,6 +1023,7 @@ jobs:
           wav_marker=""
           failure_token=""
           failure_line=""
+          note_line=""
           warning_line=""
           error_line=""
           force_intx_host_marker=""
@@ -1191,6 +1192,8 @@ jobs:
             failure_token="$(grep -Eo 'FAIL: [A-Z0-9_]+:' "${harness_log}" | tail -n 1 | sed -e 's/^FAIL: //' -e 's/:$//' || true)"
             # The full last failure line (often includes useful context beyond the token, such as counter values).
             failure_line="$(grep -F 'FAIL:' "${harness_log}" | tail -n 1 | tr -d '\r' || true)"
+            # The full last NOTE line (if any).
+            note_line="$(grep -F 'NOTE:' "${harness_log}" | tail -n 1 | tr -d '\r' || true)"
             # The full last warning line (if any).
             warning_line="$(grep -F 'WARNING:' "${harness_log}" | tail -n 1 | tr -d '\r' || true)"
             # The last explicit "ERROR:" line (if any).
@@ -1226,6 +1229,9 @@ jobs:
             fi
             if [[ -n "${qemu_version_line}" ]]; then
               echo "- ${qemu_version_line}"
+            fi
+            if [[ -n "${note_line}" ]]; then
+              echo "- Harness note (last line): \`${note_line}\`"
             fi
             if [[ -n "${warning_line}" ]]; then
               echo "- Harness warning (last line): \`${warning_line}\`"
