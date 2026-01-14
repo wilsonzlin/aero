@@ -1,153 +1,9 @@
 mod common;
+mod wgpu_common;
 
 use std::borrow::Cow;
 
 use aero_d3d11::runtime::indirect_args::DrawIndexedIndirectArgs;
-use anyhow::{anyhow, Context, Result};
-
-async fn create_device_queue() -> Result<(wgpu::Device, wgpu::Queue)> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-
-        let needs_runtime_dir = std::env::var("XDG_RUNTIME_DIR")
-            .ok()
-            .map(|v| v.is_empty())
-            .unwrap_or(true);
-
-        if needs_runtime_dir {
-            let dir =
-                std::env::temp_dir().join(format!("aero-d3d11-xdg-runtime-{}", std::process::id()));
-            let _ = std::fs::create_dir_all(&dir);
-            let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
-            std::env::set_var("XDG_RUNTIME_DIR", &dir);
-        }
-    }
-
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        // Prefer GL on Linux CI to avoid crashes in some Vulkan software adapters.
-        backends: if cfg!(target_os = "linux") {
-            wgpu::Backends::GL
-        } else {
-            // Prefer "native" backends; this avoids noisy platform warnings from
-            // initializing GL/WAYLAND stacks in headless CI environments.
-            wgpu::Backends::PRIMARY
-        },
-        ..Default::default()
-    });
-
-    let adapter = match instance
-        .request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
-            compatible_surface: None,
-            force_fallback_adapter: true,
-        })
-        .await
-    {
-        Some(adapter) => Some(adapter),
-        None => {
-            instance
-                .request_adapter(&wgpu::RequestAdapterOptions {
-                    power_preference: wgpu::PowerPreference::LowPower,
-                    compatible_surface: None,
-                    force_fallback_adapter: false,
-                })
-                .await
-        }
-    }
-    .ok_or_else(|| anyhow!("wgpu: no suitable adapter found"))?;
-
-    let (device, queue) = adapter
-        .request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("aero-d3d11 draw_indexed_indirect test device"),
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::downlevel_defaults(),
-            },
-            None,
-        )
-        .await
-        .map_err(|e| anyhow!("wgpu: request_device failed: {e:?}"))?;
-
-    Ok((device, queue))
-}
-
-async fn read_texture_rgba8(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    texture: &wgpu::Texture,
-    width: u32,
-    height: u32,
-) -> Result<Vec<u8>> {
-    let bytes_per_pixel = 4u32;
-    let unpadded_bytes_per_row = width
-        .checked_mul(bytes_per_pixel)
-        .ok_or_else(|| anyhow!("bytes_per_row overflow"))?;
-    let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-    let padded_bytes_per_row = unpadded_bytes_per_row.div_ceil(align) * align;
-    let buffer_size = padded_bytes_per_row as u64 * height as u64;
-
-    let staging = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("aero-d3d11 draw_indexed_indirect readback staging"),
-        size: buffer_size,
-        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-
-    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-        label: Some("aero-d3d11 draw_indexed_indirect readback encoder"),
-    });
-
-    encoder.copy_texture_to_buffer(
-        wgpu::ImageCopyTexture {
-            texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::All,
-        },
-        wgpu::ImageCopyBuffer {
-            buffer: &staging,
-            layout: wgpu::ImageDataLayout {
-                offset: 0,
-                bytes_per_row: Some(padded_bytes_per_row),
-                rows_per_image: Some(height),
-            },
-        },
-        wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        },
-    );
-    queue.submit([encoder.finish()]);
-
-    let slice = staging.slice(..);
-    let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
-    slice.map_async(wgpu::MapMode::Read, move |v| {
-        sender.send(v).ok();
-    });
-
-    #[cfg(not(target_arch = "wasm32"))]
-    device.poll(wgpu::Maintain::Wait);
-    #[cfg(target_arch = "wasm32")]
-    device.poll(wgpu::Maintain::Poll);
-
-    receiver
-        .receive()
-        .await
-        .ok_or_else(|| anyhow!("wgpu: map_async dropped"))?
-        .context("wgpu: map_async failed")?;
-
-    let mapped = slice.get_mapped_range();
-    let mut out = Vec::with_capacity((unpadded_bytes_per_row * height) as usize);
-    for row in 0..height as usize {
-        let start = row * padded_bytes_per_row as usize;
-        out.extend_from_slice(&mapped[start..start + unpadded_bytes_per_row as usize]);
-    }
-    drop(mapped);
-    staging.unmap();
-    Ok(out)
-}
 
 #[test]
 fn wgpu_draw_indexed_indirect_uses_args_written_by_compute() {
@@ -157,13 +13,21 @@ fn wgpu_draw_indexed_indirect_uses_args_written_by_compute() {
             "::wgpu_draw_indexed_indirect_uses_args_written_by_compute"
         );
 
-        let (device, queue) = match create_device_queue().await {
+        let (device, queue, supports_compute) = match wgpu_common::create_device_queue(
+            "aero-d3d11 draw_indexed_indirect test device",
+        )
+        .await
+        {
             Ok(v) => v,
             Err(err) => {
                 common::skip_or_panic(test_name, &format!("wgpu unavailable ({err:#})"));
                 return;
             }
         };
+        if !supports_compute {
+            common::skip_or_panic(test_name, "compute unsupported");
+            return;
+        }
 
         let (args_size, args_align) = DrawIndexedIndirectArgs::layout();
         assert_eq!(args_size, 20);
@@ -398,7 +262,7 @@ fn wgpu_draw_indexed_indirect_uses_args_written_by_compute() {
 
         queue.submit([encoder.finish()]);
 
-        let pixels = read_texture_rgba8(&device, &queue, &rt, width, height)
+        let pixels = wgpu_common::read_texture_rgba8(&device, &queue, &rt, width, height)
             .await
             .expect("read back render target");
         assert_eq!(pixels.len(), 4);
@@ -417,4 +281,3 @@ fn wgpu_draw_indexed_indirect_uses_args_written_by_compute() {
         }
     });
 }
-
