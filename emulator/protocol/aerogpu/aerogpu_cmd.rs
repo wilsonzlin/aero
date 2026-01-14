@@ -265,6 +265,59 @@ pub fn encode_stage_ex(stage_ex: AerogpuShaderStageEx) -> (u32, u32) {
     (AerogpuShaderStage::Compute as u32, stage_ex as u32)
 }
 
+/// Effective shader stage resolved from a legacy `shader_stage` (VS/PS/CS) plus an optional
+/// `stage_ex` discriminator in a trailing `reserved0` u32.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AerogpuShaderStageResolved {
+    Vertex,
+    Pixel,
+    Compute,
+    Geometry,
+    Hull,
+    Domain,
+    /// Unknown/unsupported value (either an invalid legacy stage, or an unknown stage_ex).
+    Unknown { shader_stage: u32, stage_ex: u32 },
+}
+
+/// Resolve the effective stage from `(shader_stage, reserved0)` according to the stage_ex rules.
+///
+/// Forward-compat:
+/// - Unknown legacy stages are preserved as `Unknown { shader_stage, stage_ex: reserved0 }`.
+/// - Unknown `stage_ex` values are preserved as `Unknown { shader_stage, stage_ex }`.
+pub fn resolve_shader_stage_with_ex(
+    shader_stage: u32,
+    reserved0: u32,
+) -> AerogpuShaderStageResolved {
+    match AerogpuShaderStage::from_u32(shader_stage) {
+        Some(AerogpuShaderStage::Vertex) => AerogpuShaderStageResolved::Vertex,
+        Some(AerogpuShaderStage::Pixel) => AerogpuShaderStageResolved::Pixel,
+        Some(AerogpuShaderStage::Geometry) => AerogpuShaderStageResolved::Geometry,
+        Some(AerogpuShaderStage::Compute) => {
+            if reserved0 == 0 {
+                return AerogpuShaderStageResolved::Compute;
+            }
+            match AerogpuShaderStageEx::from_u32(reserved0) {
+                Some(AerogpuShaderStageEx::Vertex) => AerogpuShaderStageResolved::Vertex,
+                Some(AerogpuShaderStageEx::Geometry) => AerogpuShaderStageResolved::Geometry,
+                Some(AerogpuShaderStageEx::Hull) => AerogpuShaderStageResolved::Hull,
+                Some(AerogpuShaderStageEx::Domain) => AerogpuShaderStageResolved::Domain,
+                Some(AerogpuShaderStageEx::Compute) => AerogpuShaderStageResolved::Compute,
+                // `reserved0 == 0` is treated as legacy/default, so Pixel cannot be encoded here, but
+                // keep it for completeness if future ABI revisions relax this rule.
+                Some(AerogpuShaderStageEx::Pixel) => AerogpuShaderStageResolved::Pixel,
+                None => AerogpuShaderStageResolved::Unknown {
+                    shader_stage,
+                    stage_ex: reserved0,
+                },
+            }
+        }
+        None => AerogpuShaderStageResolved::Unknown {
+            shader_stage,
+            stage_ex: reserved0,
+        },
+    }
+}
+
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AerogpuIndexFormat {

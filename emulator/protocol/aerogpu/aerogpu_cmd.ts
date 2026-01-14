@@ -338,6 +338,53 @@ export function encodeStageEx(stageEx: AerogpuShaderStageEx): [shaderStage: numb
   }
   return [AerogpuShaderStage.Compute, stageEx];
 }
+
+export type AerogpuShaderStageResolved =
+  | { kind: "Vertex" }
+  | { kind: "Pixel" }
+  | { kind: "Compute" }
+  | { kind: "Geometry" }
+  | { kind: "Hull" }
+  | { kind: "Domain" }
+  | { kind: "Unknown"; shaderStage: number; stageEx: number };
+
+/**
+ * Resolve the effective shader stage from a legacy `(shaderStage, reserved0)` pair.
+ *
+ * Encoding rules:
+ * - If `shaderStage != Compute`, then `reserved0` is reserved/ignored.
+ * - If `shaderStage == Compute` and `reserved0 == 0`, then this is legacy Compute.
+ * - If `shaderStage == Compute` and `reserved0 != 0`, then `reserved0` is a `stage_ex` discriminator.
+ */
+export function resolveShaderStageWithEx(shaderStage: number, reserved0: number): AerogpuShaderStageResolved {
+  switch (shaderStage >>> 0) {
+    case AerogpuShaderStage.Vertex:
+      return { kind: "Vertex" };
+    case AerogpuShaderStage.Pixel:
+      return { kind: "Pixel" };
+    case AerogpuShaderStage.Geometry:
+      return { kind: "Geometry" };
+    case AerogpuShaderStage.Compute: {
+      if ((reserved0 >>> 0) === 0) return { kind: "Compute" };
+      switch (reserved0 >>> 0) {
+        case AerogpuShaderStageEx.Vertex:
+          return { kind: "Vertex" };
+        case AerogpuShaderStageEx.Geometry:
+          return { kind: "Geometry" };
+        case AerogpuShaderStageEx.Hull:
+          return { kind: "Hull" };
+        case AerogpuShaderStageEx.Domain:
+          return { kind: "Domain" };
+        case AerogpuShaderStageEx.Compute:
+          return { kind: "Compute" };
+        default:
+          return { kind: "Unknown", shaderStage: shaderStage >>> 0, stageEx: reserved0 >>> 0 };
+      }
+    }
+    default:
+      return { kind: "Unknown", shaderStage: shaderStage >>> 0, stageEx: reserved0 >>> 0 };
+  }
+}
 export const AerogpuIndexFormat = {
   Uint16: 0,
   Uint32: 1,
