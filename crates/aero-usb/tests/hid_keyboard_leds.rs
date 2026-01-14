@@ -1,6 +1,9 @@
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotWriter};
 use aero_usb::device::AttachedUsbDevice;
-use aero_usb::hid::{UsbCompositeHidInputHandle, UsbHidKeyboardHandle};
+use aero_usb::hid::{
+    UsbCompositeHidInputHandle, UsbHidKeyboardHandle, KEYBOARD_LED_CAPS_LOCK, KEYBOARD_LED_NUM_LOCK,
+    KEYBOARD_LED_SCROLL_LOCK,
+};
 use aero_usb::{SetupPacket, UsbInResult, UsbOutResult};
 
 fn control_no_data(dev: &mut AttachedUsbDevice, setup: SetupPacket) {
@@ -71,7 +74,7 @@ fn hid_keyboard_set_report_updates_handle_leds_and_snapshot_roundtrip_preserves_
     // Send high bits as well; devices should ignore the padding bits and only track the 5 LED
     // usages defined by the report descriptor.
     let leds = 0xe7;
-    let expected_leds = 0x07;
+    let expected_leds = KEYBOARD_LED_NUM_LOCK | KEYBOARD_LED_CAPS_LOCK | KEYBOARD_LED_SCROLL_LOCK;
     control_out_data(
         &mut dev,
         SetupPacket {
@@ -133,7 +136,7 @@ fn hid_composite_keyboard_set_report_updates_handle_leds_and_snapshot_roundtrip_
     // Send high bits as well; devices should ignore the padding bits and only track the 5 LED
     // usages defined by the report descriptor.
     let leds = 0xe3;
-    let expected_leds = 0x03;
+    let expected_leds = KEYBOARD_LED_NUM_LOCK | KEYBOARD_LED_CAPS_LOCK;
     control_out_data(
         &mut dev,
         SetupPacket {
@@ -175,7 +178,10 @@ fn hid_keyboard_snapshot_load_masks_led_padding_bits() {
 
     let mut kb = UsbHidKeyboardHandle::new();
     kb.load_state(&snap).unwrap();
-    assert_eq!(kb.leds(), 0x07);
+    assert_eq!(
+        kb.leds(),
+        KEYBOARD_LED_NUM_LOCK | KEYBOARD_LED_CAPS_LOCK | KEYBOARD_LED_SCROLL_LOCK
+    );
 }
 
 #[test]
@@ -191,5 +197,8 @@ fn hid_composite_snapshot_load_masks_led_padding_bits() {
 
     let mut hid = UsbCompositeHidInputHandle::new();
     hid.load_state(&snap).unwrap();
-    assert_eq!(hid.keyboard_leds(), 0x03);
+    assert_eq!(
+        hid.keyboard_leds(),
+        KEYBOARD_LED_NUM_LOCK | KEYBOARD_LED_CAPS_LOCK
+    );
 }
