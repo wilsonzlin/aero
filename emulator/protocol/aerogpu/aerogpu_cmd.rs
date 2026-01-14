@@ -586,14 +586,20 @@ impl AerogpuCmdBindShaders {
 
     /// Geometry shader handle (GS).
     ///
-    /// ABI note: `aerogpu_cmd_bind_shaders` stores the GS handle in `reserved0` when non-zero.
+    /// ABI note:
+    /// - Legacy encoding: `aerogpu_cmd_bind_shaders.reserved0` is treated as the GS handle when
+    ///   non-zero.
+    /// - Extended encoding (`hdr.size_bytes >= 36`): `{gs, hs, ds}` are appended after the base
+    ///   struct, and those appended fields are authoritative (this helper only exposes the legacy
+    ///   `reserved0` field).
     pub const fn gs(&self) -> AerogpuHandle {
         self.reserved0
     }
 
     /// Set the geometry shader handle (GS).
     ///
-    /// ABI note: `aerogpu_cmd_bind_shaders` stores the GS handle in `reserved0` when non-zero.
+    /// ABI note: this sets the legacy `reserved0` field. For the extended packet form, emitters
+    /// should also write the appended `{gs, hs, ds}` handles.
     pub fn set_gs(&mut self, gs: AerogpuHandle) {
         self.reserved0 = gs;
     }
