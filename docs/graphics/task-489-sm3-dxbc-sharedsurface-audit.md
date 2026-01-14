@@ -191,12 +191,16 @@ Ops/features referenced by the scratchpad tasks:
   - `micro_ps3_lrp_pixel_compare`
   - `sm3_exp_log_pow_pixel_compare`
 - `crates/aero-d3d9/tests/sm3_wgsl.rs` / `sm3_wgsl_math.rs` (naga-validated WGSL lowering)
+- `crates/aero-d3d9/tests/sm3_wgsl_mova.rs` (mova + relative constant addressing)
+- `crates/aero-d3d9/tests/sm3_wgsl_relative_const_defs.rs` (relative const indexing with many embedded `def` overrides)
 
 **How to run:**
 ```bash
 # CPU-only WGSL + naga validation coverage:
 bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test sm3_wgsl --locked
 bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test sm3_wgsl_math --locked
+bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test sm3_wgsl_mova --locked
+bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test sm3_wgsl_relative_const_defs --locked
 ```
 
 ---
