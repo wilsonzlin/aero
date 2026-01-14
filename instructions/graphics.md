@@ -181,10 +181,10 @@ Legend:
 
 | ID | Status | Task | Where | How to test |
 |----|--------|------|-------|-------------|
-| D11-001 | Implemented | SM4 decode + minimal SM4/SM5 → WGSL translation (FL10_0 bring-up) | `crates/aero-d3d11/src/sm4/`, `crates/aero-d3d11/src/shader_translate.rs` | `bash ./scripts/safe-run.sh cargo test -p aero-d3d11 --test shader_translate --locked` |
-| D11-002 | Implemented | WGPU-backed AeroGPU command executor (render/present path) | `crates/aero-d3d11/src/runtime/` | `bash ./scripts/safe-run.sh cargo test -p aero-d3d11 --test aerogpu_cmd_smoke --locked` |
+| D11-001 | Implemented | SM4/SM5 decode + translation to WGSL for VS/PS/**CS** (FL10_0 bring-up + basic compute) | `crates/aero-d3d11/src/sm4/`, `crates/aero-d3d11/src/shader_translate.rs` | `bash ./scripts/safe-run.sh cargo test -p aero-d3d11 --test shader_translate --locked` |
+| D11-002 | Implemented | WGPU-backed AeroGPU command executor (render/present **and compute pass/dispatch**) | `crates/aero-d3d11/src/runtime/` | `bash ./scripts/safe-run.sh cargo test -p aero-d3d11 --test aerogpu_cmd_smoke --locked` |
 | D11-003 | Partial | Geometry shaders are currently ignored for forward compatibility | `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_ignore.rs` | `bash ./scripts/safe-run.sh cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_ignore --locked` |
-| D11-004 | Remaining | Compute/UAV/tessellation (SM5 features) | Start at: `crates/aero-d3d11/src/shader_translate.rs` and `crates/aero-d3d11/src/runtime/execute.rs` | Add tests under `crates/aero-d3d11/tests/` and run `bash ./scripts/safe-run.sh cargo test -p aero-d3d11 --locked` |
+| D11-004 | Remaining | UAV/structured buffers + tessellation + broader SM5 coverage (compute exists, but not full SM5 feature parity) | Start at: `crates/aero-d3d11/src/shader_translate.rs` and `crates/aero-d3d11/src/runtime/execute.rs` | Add tests under `crates/aero-d3d11/tests/` and run `bash ./scripts/safe-run.sh cargo test -p aero-d3d11 --locked` |
 
 ### WebGPU/WebGL2 backend (`crates/aero-gpu`, `crates/aero-webgpu`, `crates/aero-gpu-wasm`)
 
