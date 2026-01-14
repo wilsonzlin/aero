@@ -17,10 +17,19 @@ It uses QEMU to provide virtio-input keyboard/mouse devices, then verifies:
 3. Windows built-in `kbdhid.sys` and `mouhid.sys` attach to the resulting HID keyboard/mouse collections
 4. Keyboard/mouse input reports are correct (validated with `hidtest`)
 
-> Note: The in-tree Win7 virtio-input driver is **contract-first** and requires the
-> Aero virtio-input `ID_NAME` strings (`"Aero Virtio Keyboard"` / `"Aero Virtio Mouse"` / `"Aero Virtio Tablet"`).
-> If your QEMU virtio-input devices report different `ID_NAME` strings (as stock QEMU
-> often does), the driver will refuse to start (typically Code 10 / `STATUS_NOT_SUPPORTED`).
+> Note: The in-tree Win7 virtio-input driver is **strict by default** (Aero contract v1) and
+> expects the Aero virtio-input `ID_NAME` strings (`"Aero Virtio Keyboard"` / `"Aero Virtio Mouse"` / `"Aero Virtio Tablet"`).
+>
+> If your QEMU virtio-input devices report different `ID_NAME` strings (as stock QEMU often
+> does: `"QEMU Virtio Keyboard"` / `"QEMU Virtio Mouse"` / `"QEMU Virtio Tablet"`), enable **compat mode** in the guest:
+>
+> ```bat
+> reg add HKLM\System\CurrentControlSet\Services\aero_virtio_input\Parameters ^
+>   /v CompatIdName /t REG_DWORD /d 1 /f
+> ```
+>
+> Then reboot (or disable/enable the device). In compat mode the driver accepts QEMU `ID_NAME`
+> strings, relaxes strict `ID_DEVIDS` validation, and can infer device kind from `EV_BITS`.
 
 Hardware ID (HWID) references are documented in:
 

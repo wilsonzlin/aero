@@ -81,6 +81,28 @@ The in-tree Windows 7 virtio-input driver is **strict by default** (Aero contrac
 This keeps the contract deterministic: device kind is derived from `ID_NAME` and is not guessed from
 other fields.
 
+### Optional compat mode (VIO-020)
+
+The driver also supports an **opt-in** compatibility mode for non-Aero virtio-input frontends (notably stock QEMU).
+
+Enable it by setting the following value (Admin CMD, then reboot or disable/enable the device):
+
+```bat
+reg add HKLM\System\CurrentControlSet\Services\aero_virtio_input\Parameters ^
+  /v CompatIdName /t REG_DWORD /d 1 /f
+```
+
+When enabled, the driver will:
+
+- Accept common QEMU `ID_NAME` strings (`QEMU Virtio Keyboard`, `QEMU Virtio Mouse`, `QEMU Virtio Tablet`).
+- If `ID_NAME` is missing/unrecognized, infer device kind from `EV_BITS`:
+  - Keyboard: `EV_KEY` + `EV_LED` and “many” keys (heuristic)
+  - Mouse: `EV_REL` with `REL_X`/`REL_Y`
+  - Tablet: `EV_ABS` with `ABS_X`/`ABS_Y`
+- Relax strict `ID_DEVIDS` validation.
+
+Strict Aero contract-v1 behavior is unchanged when compat mode is disabled.
+
 ## Specification pointers
 
 When implementing/debugging the driver logic, the primary references are:
