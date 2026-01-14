@@ -92,16 +92,22 @@ From a default Aero Guest Tools ISO/zip mount (often `X:`), run the command that
 - Win7 x64:
 
 ```bat
-X:\drivers\amd64\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe --dump-last-submit --cmd-out C:\cmd.bin
+X:\drivers\amd64\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe --dump-last-cmd --out C:\cmd.bin
 ```
 
 - Win7 x86:
 
 ```bat
-X:\drivers\x86\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe --dump-last-submit --cmd-out C:\cmd.bin
+X:\drivers\x86\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe --dump-last-cmd --out C:\cmd.bin
 ```
 
-Note: legacy forms are still accepted for compatibility:
+Equivalent newer spelling (same behavior; accepted by newer dbgctl builds; assumes you're running from the dbgctl directory or have it on `PATH`):
+
+```bat
+aerogpu_dbgctl.exe --dump-last-submit --cmd-out C:\cmd.bin
+```
+
+Notes on legacy spellings (kept for compatibility with older dbgctl builds):
 
 - `--dump-last-cmd` is an alias for `--dump-last-submit`
 - `--out` is an alias for `--cmd-out` for this command
