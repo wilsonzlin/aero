@@ -39,7 +39,7 @@ constexpr uint32_t kD3dTssColorOp = 1u;
 // D3DTEXTUREOP values (from d3d9types.h).
 constexpr uint32_t kD3dTopDisable = 1u;
 // Intentionally unsupported by the fixed-function stage0 subset.
-constexpr uint32_t kD3dTopAddSmooth = 11u; // D3DTOP_ADDSMOOTH
+constexpr uint32_t kD3dTopAddSigned2x = 9u; // D3DTOP_ADDSIGNED2X
 
 // Trivial vs_2_0 token stream (no declaration):
 //   mov oPos, v0
@@ -730,8 +730,8 @@ bool TestVsOnlyUnsupportedStage0DoesNotFailSetShader() {
 
   // Set an unsupported stage0 op. This should not make subsequent state-setting
   // (including shader-stage interop) fail; draws should fail cleanly with INVALIDCALL.
-  hr = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, /*stage=*/0, kD3dTssColorOp, kD3dTopAddSmooth);
-  if (!Check(hr == S_OK, "SetTextureStageState(COLOROP=ADDSMOOTH) succeeds")) {
+  hr = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, /*stage=*/0, kD3dTssColorOp, kD3dTopAddSigned2x);
+  if (!Check(hr == S_OK, "SetTextureStageState(COLOROP=ADDSIGNED2X) succeeds")) {
     return false;
   }
 
@@ -748,6 +748,9 @@ bool TestVsOnlyUnsupportedStage0DoesNotFailSetShader() {
     return false;
   }
   cleanup.shaders.push_back(hVs);
+
+  auto* vs = reinterpret_cast<Shader*>(hVs.pDrvPrivate);
+  const aerogpu_handle_t vs_handle = vs ? vs->handle : 0;
 
   hr = cleanup.device_funcs.pfnSetShader(cleanup.hDevice, kD3d9ShaderStageVs, hVs);
   if (!Check(hr == S_OK, "SetShader(VS) succeeds even when stage0 is unsupported")) {
@@ -775,7 +778,35 @@ bool TestVsOnlyUnsupportedStage0DoesNotFailSetShader() {
   if (!Check(ValidateStream(buf, len), "ValidateStream(VS-only, unsupported stage0)")) {
     return false;
   }
-  return CheckNoNullShaderBinds(buf, len);
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_DRAW) == 0, "no DRAW opcodes emitted")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_DRAW_INDEXED) == 0, "no DRAW_INDEXED opcodes emitted")) {
+    return false;
+  }
+  if (!Check(CheckNoNullShaderBinds(buf, len), "BIND_SHADERS must not bind null handles")) {
+    return false;
+  }
+
+  // Ensure we observed a bind that included the user VS handle (interop path binds
+  // user VS + internal PS).
+  bool saw_user_vs_bind = false;
+  size_t offset = sizeof(aerogpu_cmd_stream_header);
+  const size_t stream_len = StreamBytesUsed(buf, len);
+  while (offset + sizeof(aerogpu_cmd_hdr) <= stream_len) {
+    const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + offset);
+    if (hdr->opcode == AEROGPU_CMD_BIND_SHADERS && hdr->size_bytes >= sizeof(aerogpu_cmd_bind_shaders)) {
+      const auto* bind = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(hdr);
+      if (bind->vs == vs_handle) {
+        saw_user_vs_bind = true;
+      }
+    }
+    if (hdr->size_bytes == 0 || hdr->size_bytes > stream_len - offset) {
+      break;
+    }
+    offset += hdr->size_bytes;
+  }
+  return Check(saw_user_vs_bind, "saw BIND_SHADERS with user VS handle");
 }
 
 bool TestPsOnlyBindsFixedfuncVs() {
