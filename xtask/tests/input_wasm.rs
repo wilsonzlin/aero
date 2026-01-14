@@ -178,6 +178,10 @@ fn said_runs_wasm_pack_without_node_modules() -> Result<(), Box<dyn std::error::
         "expected wasm-pack to include machine_input_injection_wasm, argv={wasm_pack:?}"
     );
     assert!(
+        wasm_pack.iter().any(|arg| arg == "wasm_machine_ps2_mouse"),
+        "expected wasm-pack to include wasm_machine_ps2_mouse, argv={wasm_pack:?}"
+    );
+    assert!(
         wasm_pack
             .iter()
             .any(|arg| arg == "usb_hid_bridge_mouse_reports_wasm"),
