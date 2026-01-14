@@ -238,19 +238,16 @@ The in-tree Aero Win7 virtio-input INFs are intentionally **revision-gated** (Ae
 
 - Keyboard/mouse: `aero_virtio_input.inf`
   - matches `SUBSYS_00101AF4` / `SUBSYS_00111AF4` for distinct Device Manager names (**Aero VirtIO Keyboard** / **Aero VirtIO Mouse**).
-  - intentionally does **not** include a generic (no `SUBSYS`) fallback match.
+  - includes a strict generic fallback match `PCI\VEN_1AF4&DEV_1052&REV_01` (no `SUBSYS`; Device Manager name: **Aero VirtIO Input Device**).
 - Tablet: `aero_virtio_tablet.inf` matches `SUBSYS_00121AF4` (Aero contract tablet).
 - Legacy filename alias: `virtio-input.inf.disabled` (rename to `virtio-input.inf` to enable)
-  - This is a filename-only alias for workflows/tools that reference `virtio-input.inf`.
-  - adds an opt-in strict, revision-gated generic fallback match `PCI\VEN_1AF4&DEV_1052&REV_01` (no `SUBSYS`) for environments
-    that do not expose the Aero subsystem IDs.
-  - allowed to differ from `aero_virtio_input.inf` in the models sections (`[Aero.NTx86]` / `[Aero.NTamd64]`) to provide the
-    fallback entry; outside of those sections it is expected to stay in sync (see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
+  - filename-only alias for workflows/tools that reference `virtio-input.inf`.
+  - from the first section header (`[Version]`) onward, expected to be byte-for-byte identical to `aero_virtio_input.inf`
+    (see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
   - Do **not** ship/install both filenames at once (`aero_virtio_input.inf` and `virtio-input.inf`): they match the same HWIDs.
 
-If your device is `REV_01` but does not expose the Aero subsystem IDs, Windows will not bind the canonical `aero_virtio_input.inf`.
-Enable the legacy alias INF to opt into the revision-gated generic fallback entry; when binding via the fallback entry, Device
-Manager will show the generic **Aero VirtIO Input Device** name.
+If your device is `REV_01` but does not expose the Aero subsystem IDs, Windows will bind the canonical `aero_virtio_input.inf`
+via its strict generic fallback entry, and Device Manager will show the generic **Aero VirtIO Input Device** name.
 If you expect distinct keyboard/mouse names, ensure the subsystem IDs are present (`SUBSYS_0010` / `SUBSYS_0011`).
 
 Avoid shipping both `aero_virtio_input.inf` and `virtio-input.inf` at the same time: they match the same HWIDs, which can
