@@ -515,8 +515,9 @@ bash ./scripts/safe-run.sh cargo test -p aero-virtio --locked
 # Note: the first `cargo test` in a clean/contended agent sandbox can take >10 minutes.
 # If you hit safe-run timeouts during compilation, bump the timeout via AERO_TIMEOUT.
 bash ./scripts/prepare-freedos.sh
-# Ensure deterministic in-repo fixtures are present and up-to-date.
-# (CI enforces this via `cargo xtask fixtures --check`; no assembler toolchain required.)
+# Ensure deterministic in-repo fixtures are present and up-to-date (boot sectors,
+# BIOS ROM, ACPI DSDT, etc). CI enforces this via `cargo xtask fixtures --check`;
+# no assembler toolchain required.
 bash ./scripts/safe-run.sh cargo xtask fixtures --check
 AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo test -p emulator --test boot_sector --locked
 AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo test -p emulator --test freedos_boot --locked
