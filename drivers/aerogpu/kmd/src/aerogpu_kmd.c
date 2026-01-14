@@ -9860,6 +9860,7 @@ static NTSTATUS APIENTRY AeroGpuDdiControlInterrupt(_In_ const HANDLE hAdapter,
 
     const BOOLEAN poweredOn =
         ((DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange(&adapter->DevicePowerState, 0, 0) == DxgkDevicePowerStateD0);
+    const BOOLEAN accepting = (InterlockedCompareExchange(&adapter->AcceptingSubmissions, 0, 0) != 0) ? TRUE : FALSE;
     /*
      * Once the device has asserted IRQ_ERROR, never re-enable ERROR delivery.
      *
@@ -9889,7 +9890,7 @@ static NTSTATUS APIENTRY AeroGpuDdiControlInterrupt(_In_ const HANDLE hAdapter,
                 enable &= ~AEROGPU_IRQ_ERROR;
             }
             adapter->IrqEnableMask = enable;
-            if (poweredOn && haveIrqRegs) {
+            if (poweredOn && accepting && haveIrqRegs) {
                 /*
                  * Only unmask device IRQ generation when we have successfully registered an ISR
                  * with dxgkrnl. If RegisterInterrupt failed, leaving IRQ_ENABLE non-zero can
@@ -9950,7 +9951,7 @@ static NTSTATUS APIENTRY AeroGpuDdiControlInterrupt(_In_ const HANDLE hAdapter,
              * EnableInterrupt repeatedly.
              */
             if (EnableInterrupt && (enable & AEROGPU_IRQ_SCANOUT_VBLANK) == 0) {
-                if (poweredOn) {
+                if (poweredOn && accepting) {
                     AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, AEROGPU_IRQ_SCANOUT_VBLANK);
                 }
             }
@@ -9965,7 +9966,7 @@ static NTSTATUS APIENTRY AeroGpuDdiControlInterrupt(_In_ const HANDLE hAdapter,
                 enable &= ~AEROGPU_IRQ_ERROR;
             }
             adapter->IrqEnableMask = enable;
-            if (poweredOn) {
+            if (poweredOn && accepting) {
                 /*
                  * Only unmask device IRQ generation when we have successfully registered an ISR
                  * with dxgkrnl. This mirrors StartDevice and avoids unhandled interrupt storms.
@@ -9975,7 +9976,7 @@ static NTSTATUS APIENTRY AeroGpuDdiControlInterrupt(_In_ const HANDLE hAdapter,
 
             /* Be robust against stale pending bits when disabling. */
             if (!EnableInterrupt) {
-                if (poweredOn) {
+                if (poweredOn && accepting) {
                     AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, AEROGPU_IRQ_SCANOUT_VBLANK);
                 }
             }
@@ -10061,11 +10062,18 @@ static NTSTATUS APIENTRY AeroGpuDdiResetFromTimeout(_In_ const HANDLE hAdapter)
             KeAcquireSpinLock(&adapter->RingLock, &ringIrql);
 
             if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
-                if (adapter->RingHeader) {
+                if (adapter->RingSizeBytes >= sizeof(struct aerogpu_ring_header)) {
+                    /*
+                     * The ring header lives at the start of the ring mapping. Use RingVa directly
+                     * instead of trusting the cached RingHeader pointer during recovery paths.
+                     */
+                    adapter->RingHeader = (struct aerogpu_ring_header*)adapter->RingVa;
                     const ULONG tail = adapter->RingTail;
                     adapter->RingHeader->head = tail;
                     adapter->RingHeader->tail = tail;
                     KeMemoryBarrier();
+                } else {
+                    adapter->RingHeader = NULL;
                 }
 
                 if (poweredOn && adapter->Bar0Length >= (AEROGPU_MMIO_REG_RING_CONTROL + sizeof(ULONG))) {
