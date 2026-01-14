@@ -4,9 +4,9 @@ use aero_devices::pci::PciInterruptPin;
 use aero_machine::{Machine, MachineConfig};
 use aero_platform::interrupts::InterruptController;
 use aero_virtio::devices::input::{
-    VirtioInput, VirtioInputEvent, BTN_LEFT, EV_KEY, EV_LED, EV_REL, EV_SYN, KEY_A, KEY_B,
-    LED_CAPSL, REL_HWHEEL, REL_WHEEL, REL_X, REL_Y, SYN_REPORT, VIRTIO_INPUT_CFG_EV_BITS,
-    VIRTIO_INPUT_CFG_ID_DEVIDS, VIRTIO_INPUT_CFG_ID_NAME,
+    VirtioInput, VirtioInputEvent, BTN_BACK, BTN_FORWARD, BTN_LEFT, BTN_TASK, EV_KEY, EV_LED,
+    EV_REL, EV_SYN, KEY_A, KEY_B, LED_CAPSL, REL_HWHEEL, REL_WHEEL, REL_X, REL_Y, SYN_REPORT,
+    VIRTIO_INPUT_CFG_EV_BITS, VIRTIO_INPUT_CFG_ID_DEVIDS, VIRTIO_INPUT_CFG_ID_NAME,
 };
 use aero_virtio::pci::{
     VIRTIO_STATUS_ACKNOWLEDGE, VIRTIO_STATUS_DRIVER, VIRTIO_STATUS_DRIVER_OK,
@@ -272,6 +272,12 @@ fn virtio_input_device_cfg_mmio_exposes_expected_name_devids_and_ev_bits() {
         } else {
             let has_btn_left = (key_bits[(BTN_LEFT / 8) as usize] & (1u8 << (BTN_LEFT % 8))) != 0;
             assert!(has_btn_left, "{bdf:?} must advertise BTN_LEFT");
+            // Extra mouse buttons are advertised to match the web runtime's expanded
+            // `InputEventType.MouseButtons` bitmask support.
+            for &code in &[BTN_FORWARD, BTN_BACK, BTN_TASK] {
+                let present = (key_bits[(code / 8) as usize] & (1u8 << (code % 8))) != 0;
+                assert!(present, "{bdf:?} must advertise BTN code {code}");
+            }
         }
 
         // LED bitmap: keyboard must advertise LED_CAPSL; mouse should not.
@@ -921,6 +927,133 @@ fn virtio_input_input_batch_routes_mouse_events_via_virtio() {
         (EV_SYN, SYN_REPORT, 0),
         (EV_REL, REL_WHEEL, 1),
         (EV_REL, REL_HWHEEL, 2),
+        (EV_SYN, SYN_REPORT, 0),
+    ];
+
+    for (&buf, (ty, code, val)) in bufs.iter().zip(expected) {
+        let got = m.read_physical_bytes(buf, 8);
+        let type_ = u16::from_le_bytes([got[0], got[1]]);
+        let code_ = u16::from_le_bytes([got[2], got[3]]);
+        let value_ = i32::from_le_bytes([got[4], got[5], got[6], got[7]]);
+        assert_eq!((type_, code_, value_), (ty, code, val));
+    }
+}
+
+#[test]
+fn virtio_input_input_batch_routes_extra_mouse_buttons_via_virtio() {
+    let mut m = new_test_machine();
+    enable_a20(&mut m);
+
+    let bdf = profile::VIRTIO_INPUT_MOUSE.bdf;
+
+    // Enable PCI memory decoding + bus mastering (DMA).
+    let pci_cfg = m
+        .pci_config_ports()
+        .expect("pci config ports should exist when pc platform is enabled");
+    let cmd = {
+        let mut pci_cfg = pci_cfg.borrow_mut();
+        pci_cfg.bus_mut().read_config(bdf, 0x04, 2) as u16
+    };
+    set_pci_command(&m, bdf, cmd | (1 << 1) | (1 << 2));
+
+    let bar0_base = read_bar0_base(&m, bdf);
+    assert_ne!(bar0_base, 0);
+
+    // Canonical virtio capability layout for Aero profiles (BAR0 offsets).
+    const COMMON: u64 = profile::VIRTIO_COMMON_CFG_BAR0_OFFSET as u64;
+    const NOTIFY: u64 = profile::VIRTIO_NOTIFY_CFG_BAR0_OFFSET as u64;
+
+    // Minimal feature negotiation: accept all device features and reach DRIVER_OK.
+    m.write_physical_u8(bar0_base + COMMON + 0x14, VIRTIO_STATUS_ACKNOWLEDGE);
+    m.write_physical_u8(
+        bar0_base + COMMON + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
+    );
+    m.write_physical_u32(bar0_base + COMMON, 0);
+    let f0 = m.read_physical_u32(bar0_base + COMMON + 0x04);
+    m.write_physical_u32(bar0_base + COMMON + 0x08, 0);
+    m.write_physical_u32(bar0_base + COMMON + 0x0c, f0);
+    m.write_physical_u32(bar0_base + COMMON, 1);
+    let f1 = m.read_physical_u32(bar0_base + COMMON + 0x04);
+    m.write_physical_u32(bar0_base + COMMON + 0x08, 1);
+    m.write_physical_u32(bar0_base + COMMON + 0x0c, f1);
+    m.write_physical_u8(
+        bar0_base + COMMON + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK,
+    );
+    m.write_physical_u8(
+        bar0_base + COMMON + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE
+            | VIRTIO_STATUS_DRIVER
+            | VIRTIO_STATUS_FEATURES_OK
+            | VIRTIO_STATUS_DRIVER_OK,
+    );
+
+    // Configure event queue 0 with 4 writable event buffers:
+    // - BTN_FORWARD down + SYN
+    // - BTN_FORWARD up + SYN
+    let desc = 0x00f0_0000;
+    let avail = 0x00f1_0000;
+    let used = 0x00f2_0000;
+    let bufs = [0x00f3_0000, 0x00f3_0010, 0x00f3_0020, 0x00f3_0030];
+
+    let zero_page = vec![0u8; 0x1000];
+    m.write_physical(desc, &zero_page);
+    m.write_physical(avail, &zero_page);
+    m.write_physical(used, &zero_page);
+    for &buf in &bufs {
+        m.write_physical(buf, &[0u8; 8]);
+    }
+
+    // Select queue 0 and program ring addresses.
+    m.write_physical_u16(bar0_base + COMMON + 0x16, 0);
+    m.write_physical_u64(bar0_base + COMMON + 0x20, desc);
+    m.write_physical_u64(bar0_base + COMMON + 0x28, avail);
+    m.write_physical_u64(bar0_base + COMMON + 0x30, used);
+    m.write_physical_u16(bar0_base + COMMON + 0x1c, 1);
+
+    for (i, &buf) in bufs.iter().enumerate() {
+        write_desc(&mut m, desc, i as u16, buf, 8, VIRTQ_DESC_F_WRITE);
+    }
+
+    // Post all descriptor chains.
+    m.write_physical_u16(avail, 0);
+    m.write_physical_u16(avail + 2, bufs.len() as u16);
+    for (i, _) in bufs.iter().enumerate() {
+        m.write_physical_u16(avail + 4 + (i as u64) * 2, i as u16);
+    }
+    m.write_physical_u16(used, 0);
+    m.write_physical_u16(used + 2, 0);
+
+    // Notify queue 0 so the platform pops and caches the buffers.
+    m.write_physical_u16(bar0_base + NOTIFY, 0);
+    m.process_virtio_input();
+    assert_eq!(m.read_physical_u16(used + 2), 0);
+
+    // InputEventQueue batch:
+    // - MouseButtons: BTN_FORWARD down (bit 5), then up.
+    let words: [u32; 10] = [
+        2,
+        0,
+        // InputEventType.MouseButtons
+        3,
+        0,
+        0x20,
+        0,
+        // InputEventType.MouseButtons
+        3,
+        0,
+        0,
+        0,
+    ];
+    m.inject_input_batch(&words);
+
+    assert_eq!(m.read_physical_u16(used + 2), 4, "expected 4 used entries");
+
+    let expected: [(u16, u16, i32); 4] = [
+        (EV_KEY, BTN_FORWARD, 1),
+        (EV_SYN, SYN_REPORT, 0),
+        (EV_KEY, BTN_FORWARD, 0),
         (EV_SYN, SYN_REPORT, 0),
     ];
 

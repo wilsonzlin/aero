@@ -9663,14 +9663,19 @@ impl Machine {
                     }
                 }
                 TYPE_MOUSE_BUTTONS => {
-                    let next = (a as u8) & 0x1f;
+                    // Payload:
+                    //   a = buttons bitmask (low 8 bits represent up to 8 buttons).
+                    //
+                    // DOM `MouseEvent.buttons` typically only uses bits 0..4, but the
+                    // InputEventQueue wire format supports up to 8 buttons for completeness.
+                    let next = (a & 0xff) as u8;
                     self.input_batch_mouse_buttons_mask = next;
                     if use_ps2_mouse {
                         // Payload:
                         //   a = buttons bitmask (low 5 bits match DOM `MouseEvent.buttons`)
-                        self.inject_ps2_mouse_buttons(next);
+                        self.inject_ps2_mouse_buttons(next & 0x1f);
                     } else if use_virtio_mouse {
-                        let prev = self.ps2_mouse_buttons & 0x1f;
+                        let prev = self.ps2_mouse_buttons;
                         let changed = prev ^ next;
                         if changed == 0 {
                             // Clear any invalid marker (e.g. post snapshot restore).
@@ -9716,10 +9721,31 @@ impl Machine {
                                 next & 0x10 != 0,
                             );
                         }
+                        // Additional mouse buttons (6..8). These are not typically surfaced via
+                        // DOM `MouseEvent.buttons`, but are supported by the input batch wire
+                        // format and advertised by Aero's virtio-input mouse device model.
+                        if (changed & 0x20) != 0 {
+                            input.inject_button(
+                                aero_virtio::devices::input::BTN_FORWARD,
+                                next & 0x20 != 0,
+                            );
+                        }
+                        if (changed & 0x40) != 0 {
+                            input.inject_button(
+                                aero_virtio::devices::input::BTN_BACK,
+                                next & 0x40 != 0,
+                            );
+                        }
+                        if (changed & 0x80) != 0 {
+                            input.inject_button(
+                                aero_virtio::devices::input::BTN_TASK,
+                                next & 0x80 != 0,
+                            );
+                        }
                         self.ps2_mouse_buttons = next;
                         virtio_input_dirty = true;
                     } else if use_usb_mouse {
-                        self.inject_usb_hid_mouse_buttons(next);
+                        self.inject_usb_hid_mouse_buttons(next & 0x1f);
                         self.ps2_mouse_buttons = next;
                     }
                 }
