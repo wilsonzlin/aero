@@ -4212,6 +4212,16 @@ template <typename T>
 struct has_member_SrvDescBufferEx<T, std::void_t<decltype(std::declval<T>().BufferEx)>> : std::true_type {};
 
 template <typename T, typename = void>
+struct has_member_SrvDescTexture2D : std::false_type {};
+template <typename T>
+struct has_member_SrvDescTexture2D<T, std::void_t<decltype(std::declval<T>().Texture2D)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_SrvDescTexture2DArray : std::false_type {};
+template <typename T>
+struct has_member_SrvDescTexture2DArray<T, std::void_t<decltype(std::declval<T>().Texture2DArray)>> : std::true_type {};
+
+template <typename T, typename = void>
 struct has_member_BufferViewFirstElement : std::false_type {};
 template <typename T>
 struct has_member_BufferViewFirstElement<T, std::void_t<decltype(std::declval<T>().FirstElement)>> : std::true_type {};
@@ -4225,6 +4235,26 @@ template <typename T, typename = void>
 struct has_member_BufferViewFlags : std::false_type {};
 template <typename T>
 struct has_member_BufferViewFlags<T, std::void_t<decltype(std::declval<T>().Flags)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_ViewMostDetailedMip : std::false_type {};
+template <typename T>
+struct has_member_ViewMostDetailedMip<T, std::void_t<decltype(std::declval<T>().MostDetailedMip)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_ViewMipLevels : std::false_type {};
+template <typename T>
+struct has_member_ViewMipLevels<T, std::void_t<decltype(std::declval<T>().MipLevels)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_ViewFirstArraySlice : std::false_type {};
+template <typename T>
+struct has_member_ViewFirstArraySlice<T, std::void_t<decltype(std::declval<T>().FirstArraySlice)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_ViewArraySize : std::false_type {};
+template <typename T>
+struct has_member_ViewArraySize<T, std::void_t<decltype(std::declval<T>().ArraySize)>> : std::true_type {};
 
 HRESULT AEROGPU_APIENTRY CreateShaderResourceView11(D3D11DDI_HDEVICE hDevice,
                                                     const D3D11DDIARG_CREATESHADERRESOURCEVIEW* pDesc,
@@ -4270,20 +4300,65 @@ HRESULT AEROGPU_APIENTRY CreateShaderResourceView11(D3D11DDI_HDEVICE hDevice,
   }
   if (res->kind == ResourceKind::Texture2D) {
     // The current protocol has no explicit SRV objects. Until it does, accept only
-    // a full-resource Texture2D view (mip 0, all mips, non-array, compatible
-    // format).
-    if (res->array_size != 1) {
-        AEROGPU_D3D10_11_LOG(
-            "CreateShaderResourceView11: reject unsupported SRV texture array (array=%u handle=%u)",
-            static_cast<unsigned>(res->array_size),
-            static_cast<unsigned>(res->handle));
-        return E_NOTIMPL;
+    // "full resource" Texture2D views (no mip/array slicing) with a compatible
+    // view format.
+    uint32_t view_fmt = kDxgiFormatUnknown;
+
+    uint32_t most_detailed_mip = 0;
+    uint32_t mip_levels = 0;
+    bool have_mip_range = false;
+    uint32_t first_array_slice = 0;
+    uint32_t array_size = 0;
+    bool have_array_range = false;
+
+    bool used_desc = false;
+    __if_exists(D3D11DDIARG_CREATESHADERRESOURCEVIEW::Desc) {
+      used_desc = true;
+      using DescT = std::remove_reference_t<decltype(pDesc->Desc)>;
+      if constexpr (has_member_SrvDescFormat<DescT>::value) {
+        view_fmt = static_cast<uint32_t>(pDesc->Desc.Format);
+      }
+      if constexpr (has_member_SrvDescViewDimension<DescT>::value) {
+        const uint32_t dim = static_cast<uint32_t>(pDesc->Desc.ViewDimension);
+        if (dim == static_cast<uint32_t>(D3D11_SRV_DIMENSION_TEXTURE2D)) {
+          if constexpr (has_member_SrvDescTexture2D<DescT>::value) {
+            using TexT = std::remove_reference_t<decltype(pDesc->Desc.Texture2D)>;
+            if constexpr (has_member_ViewMostDetailedMip<TexT>::value && has_member_ViewMipLevels<TexT>::value) {
+              most_detailed_mip = static_cast<uint32_t>(pDesc->Desc.Texture2D.MostDetailedMip);
+              mip_levels = static_cast<uint32_t>(pDesc->Desc.Texture2D.MipLevels);
+              have_mip_range = true;
+            }
+          }
+        } else if (dim == static_cast<uint32_t>(D3D11_SRV_DIMENSION_TEXTURE2DARRAY)) {
+          if constexpr (has_member_SrvDescTexture2DArray<DescT>::value) {
+            using TexT = std::remove_reference_t<decltype(pDesc->Desc.Texture2DArray)>;
+            if constexpr (has_member_ViewMostDetailedMip<TexT>::value && has_member_ViewMipLevels<TexT>::value) {
+              most_detailed_mip = static_cast<uint32_t>(pDesc->Desc.Texture2DArray.MostDetailedMip);
+              mip_levels = static_cast<uint32_t>(pDesc->Desc.Texture2DArray.MipLevels);
+              have_mip_range = true;
+            }
+            if constexpr (has_member_ViewFirstArraySlice<TexT>::value && has_member_ViewArraySize<TexT>::value) {
+              first_array_slice = static_cast<uint32_t>(pDesc->Desc.Texture2DArray.FirstArraySlice);
+              array_size = static_cast<uint32_t>(pDesc->Desc.Texture2DArray.ArraySize);
+              have_array_range = true;
+            }
+          }
+        } else {
+          AEROGPU_D3D10_11_LOG(
+              "CreateShaderResourceView11: reject unsupported SRV view_dim=%u (handle=%u)",
+              static_cast<unsigned>(dim),
+              static_cast<unsigned>(res->handle));
+          return E_NOTIMPL;
+        }
+      }
     }
 
-    uint32_t view_fmt = kDxgiFormatUnknown;
-    __if_exists(D3D11DDIARG_CREATESHADERRESOURCEVIEW::Format) {
-      view_fmt = static_cast<uint32_t>(pDesc->Format);
+    if (!used_desc) {
+      __if_exists(D3D11DDIARG_CREATESHADERRESOURCEVIEW::Format) {
+        view_fmt = static_cast<uint32_t>(pDesc->Format);
+      }
     }
+
     if (!D3dViewFormatCompatible(dev, res, view_fmt)) {
       AEROGPU_D3D10_11_LOG(
           "CreateShaderResourceView11: reject unsupported SRV format (view_fmt=%u res_fmt=%u handle=%u)",
@@ -4295,43 +4370,108 @@ HRESULT AEROGPU_APIENTRY CreateShaderResourceView11(D3D11DDI_HDEVICE hDevice,
 
     uint32_t view_dim = 0;
     bool have_dim = false;
-    __if_exists(D3D11DDIARG_CREATESHADERRESOURCEVIEW::ResourceDimension) {
-      view_dim = static_cast<uint32_t>(pDesc->ResourceDimension);
-      have_dim = true;
-    }
-    __if_not_exists(D3D11DDIARG_CREATESHADERRESOURCEVIEW::ResourceDimension) {
-      __if_exists(D3D11DDIARG_CREATESHADERRESOURCEVIEW::ViewDimension) {
-        view_dim = static_cast<uint32_t>(pDesc->ViewDimension);
+
+    if (used_desc) {
+      __if_exists(D3D11DDIARG_CREATESHADERRESOURCEVIEW::Desc) {
+        using DescT = std::remove_reference_t<decltype(pDesc->Desc)>;
+        if constexpr (has_member_SrvDescViewDimension<DescT>::value) {
+          view_dim = static_cast<uint32_t>(pDesc->Desc.ViewDimension);
+          have_dim = true;
+        }
+      }
+      if (have_dim) {
+        const uint32_t dim = view_dim;
+        if (dim == static_cast<uint32_t>(D3D11_SRV_DIMENSION_TEXTURE2D)) {
+          if (res->array_size != 1) {
+            AEROGPU_D3D10_11_LOG(
+                "CreateShaderResourceView11: reject non-array SRV for array texture (array=%u handle=%u)",
+                static_cast<unsigned>(res->array_size),
+                static_cast<unsigned>(res->handle));
+            return E_NOTIMPL;
+          }
+        } else if (dim == static_cast<uint32_t>(D3D11_SRV_DIMENSION_TEXTURE2DARRAY)) {
+          // Full-array view only.
+          uint32_t effective_array_size = array_size;
+          if (effective_array_size == 0 || effective_array_size == 0xFFFFFFFFu) {
+            effective_array_size = res->array_size;
+          }
+          if (have_array_range) {
+            if (first_array_slice >= res->array_size) {
+              return E_INVALIDARG;
+            }
+            if (effective_array_size > res->array_size - first_array_slice) {
+              return E_INVALIDARG;
+            }
+            if (first_array_slice != 0 || effective_array_size != res->array_size) {
+              AEROGPU_D3D10_11_LOG(
+                  "CreateShaderResourceView11: reject unsupported SRV array range (first=%u size=%u res_array=%u handle=%u)",
+                  static_cast<unsigned>(first_array_slice),
+                  static_cast<unsigned>(effective_array_size),
+                  static_cast<unsigned>(res->array_size),
+                  static_cast<unsigned>(res->handle));
+              return E_NOTIMPL;
+            }
+          } else if (res->array_size != 1) {
+            // No array selector available: conservatively reject multi-slice resources.
+            AEROGPU_D3D10_11_LOG(
+                "CreateShaderResourceView11: reject array SRV without array selector (array=%u handle=%u)",
+                static_cast<unsigned>(res->array_size),
+                static_cast<unsigned>(res->handle));
+            return E_NOTIMPL;
+          }
+        } else {
+          AEROGPU_D3D10_11_LOG(
+              "CreateShaderResourceView11: reject unsupported SRV view_dim=%u (handle=%u)",
+              static_cast<unsigned>(dim),
+              static_cast<unsigned>(res->handle));
+          return E_NOTIMPL;
+        }
+      }
+    } else {
+      __if_exists(D3D11DDIARG_CREATESHADERRESOURCEVIEW::ResourceDimension) {
+        view_dim = static_cast<uint32_t>(pDesc->ResourceDimension);
         have_dim = true;
       }
-    }
-    if (have_dim && !D3dViewDimensionIsTexture2D(view_dim)) {
-      AEROGPU_D3D10_11_LOG(
-          "CreateShaderResourceView11: reject unsupported SRV view_dim=%u (handle=%u)",
-          static_cast<unsigned>(view_dim),
-          static_cast<unsigned>(res->handle));
-      return E_NOTIMPL;
+      __if_not_exists(D3D11DDIARG_CREATESHADERRESOURCEVIEW::ResourceDimension) {
+        __if_exists(D3D11DDIARG_CREATESHADERRESOURCEVIEW::ViewDimension) {
+          view_dim = static_cast<uint32_t>(pDesc->ViewDimension);
+          have_dim = true;
+        }
+      }
+      if (have_dim && !D3dViewDimensionIsTexture2D(view_dim)) {
+        AEROGPU_D3D10_11_LOG(
+            "CreateShaderResourceView11: reject unsupported SRV view_dim=%u (handle=%u)",
+            static_cast<unsigned>(view_dim),
+            static_cast<unsigned>(res->handle));
+        return E_NOTIMPL;
+      }
+      if (res->array_size != 1) {
+        AEROGPU_D3D10_11_LOG(
+            "CreateShaderResourceView11: reject unsupported SRV texture array (array=%u handle=%u)",
+            static_cast<unsigned>(res->array_size),
+            static_cast<unsigned>(res->handle));
+        return E_NOTIMPL;
+      }
     }
 
-    uint32_t most_detailed_mip = 0;
-    uint32_t mip_levels = 0;
-    bool have_mip_range = false;
-    __if_exists(D3D11DDIARG_CREATESHADERRESOURCEVIEW::MostDetailedMip) {
-      most_detailed_mip = static_cast<uint32_t>(pDesc->MostDetailedMip);
-      mip_levels = static_cast<uint32_t>(pDesc->MipLevels);
-      have_mip_range = true;
-    }
-    __if_not_exists(D3D11DDIARG_CREATESHADERRESOURCEVIEW::MostDetailedMip) {
-      __if_exists(D3D11DDIARG_CREATESHADERRESOURCEVIEW::Tex2D) {
-        most_detailed_mip = static_cast<uint32_t>(pDesc->Tex2D.MostDetailedMip);
-        mip_levels = static_cast<uint32_t>(pDesc->Tex2D.MipLevels);
+    if (!used_desc) {
+      __if_exists(D3D11DDIARG_CREATESHADERRESOURCEVIEW::MostDetailedMip) {
+        most_detailed_mip = static_cast<uint32_t>(pDesc->MostDetailedMip);
+        mip_levels = static_cast<uint32_t>(pDesc->MipLevels);
         have_mip_range = true;
       }
-      __if_not_exists(D3D11DDIARG_CREATESHADERRESOURCEVIEW::Tex2D) {
-        __if_exists(D3D11DDIARG_CREATESHADERRESOURCEVIEW::Texture2D) {
-          most_detailed_mip = static_cast<uint32_t>(pDesc->Texture2D.MostDetailedMip);
-          mip_levels = static_cast<uint32_t>(pDesc->Texture2D.MipLevels);
+      __if_not_exists(D3D11DDIARG_CREATESHADERRESOURCEVIEW::MostDetailedMip) {
+        __if_exists(D3D11DDIARG_CREATESHADERRESOURCEVIEW::Tex2D) {
+          most_detailed_mip = static_cast<uint32_t>(pDesc->Tex2D.MostDetailedMip);
+          mip_levels = static_cast<uint32_t>(pDesc->Tex2D.MipLevels);
           have_mip_range = true;
+        }
+        __if_not_exists(D3D11DDIARG_CREATESHADERRESOURCEVIEW::Tex2D) {
+          __if_exists(D3D11DDIARG_CREATESHADERRESOURCEVIEW::Texture2D) {
+            most_detailed_mip = static_cast<uint32_t>(pDesc->Texture2D.MostDetailedMip);
+            mip_levels = static_cast<uint32_t>(pDesc->Texture2D.MipLevels);
+            have_mip_range = true;
+          }
         }
       }
     }
