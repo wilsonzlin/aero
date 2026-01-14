@@ -291,13 +291,21 @@ fn validate_sampler_texture_types(
             .copied()
             .unwrap_or(TextureType::Texture2D);
         match ty {
-            TextureType::Texture1D
-            | TextureType::Texture2D
-            | TextureType::Texture3D
-            | TextureType::TextureCube => {}
-            TextureType::Unknown(_) => {
+            TextureType::Texture2D | TextureType::TextureCube => {}
+            // The runtime executor can tolerate unsupported sampler declarations as long as the
+            // sampler is never used. However, once a sampler is actually referenced by a texture
+            // instruction we must reject unsupported dimensions so callers don't assume the
+            // command stream can bind 1D/3D textures.
+            TextureType::Texture1D | TextureType::Texture3D => {
                 return Err(ShaderTranslateError::Translation(format!(
-                    "unsupported sampler texture type {ty:?} for s{sampler} (supported: 1D/2D/3D/Cube)"
+                    "unsupported sampler texture type {ty:?} for s{sampler} (supported: 2D/Cube)"
+                )));
+            }
+            // Unknown texture type encodings are treated as malformed input (not a fallbackable
+            // unsupported feature).
+            TextureType::Unknown(_) => {
+                return Err(ShaderTranslateError::Malformed(format!(
+                    "unsupported sampler texture type {ty:?} for s{sampler} (supported: 2D/Cube)"
                 )));
             }
         }
