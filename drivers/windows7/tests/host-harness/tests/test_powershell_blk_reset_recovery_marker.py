@@ -31,7 +31,17 @@ class PowerShellBlkResetRecoveryMarkerTests(unittest.TestCase):
             self.text,
         )
 
+    def test_falls_back_to_miniport_diagnostic_when_aero_marker_missing(self) -> None:
+        m = re.search(
+            re.compile(
+                r"(?ims)^function\s+Try-EmitAeroVirtioBlkResetRecoveryMarker\b.*?(?=^function\s+)"
+            ),
+            self.text,
+        )
+        self.assertIsNotNone(m)
+        assert m is not None
+        self.assertIn("virtio-blk-miniport-reset-recovery|", m.group(0))
+
 
 if __name__ == "__main__":
     unittest.main()
-

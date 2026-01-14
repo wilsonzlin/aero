@@ -3003,16 +3003,34 @@ function Try-EmitAeroVirtioBlkResetRecoveryMarker {
     [Parameter(Mandatory = $false)] [string]$SerialLogPath = ""
   )
 
-  $prefix = "AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset-recovery|"
-  $line = Try-ExtractLastAeroMarkerLine -Tail $Tail -Prefix $prefix -SerialLogPath $SerialLogPath
-  if ($null -eq $line) { return }
+  $aeroPrefix = "AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset-recovery|"
+  $line = Try-ExtractLastAeroMarkerLine -Tail $Tail -Prefix $aeroPrefix -SerialLogPath $SerialLogPath
+  $fromAeroMarker = $true
+  if ($null -eq $line) {
+    # Backward compatible fallback: older guest selftests did not emit the dedicated AERO marker, but
+    # did emit the miniport diagnostic line.
+    $fromAeroMarker = $false
+    $miniportPrefix = "virtio-blk-miniport-reset-recovery|"
+    $line = Try-ExtractLastAeroMarkerLine -Tail $Tail -Prefix $miniportPrefix -SerialLogPath $SerialLogPath
+    if ($null -eq $line) { return }
+  }
 
   $toks = $line.Split("|")
   $status = "INFO"
-  if ($toks.Count -ge 4) {
-    $s = $toks[3].Trim().ToUpperInvariant()
-    # Keep the host marker stable: treat any non-SKIP guest status as INFO.
-    if ($s -eq "SKIP") { $status = "SKIP" }
+  if ($fromAeroMarker) {
+    if ($toks.Count -ge 4) {
+      $s = $toks[3].Trim().ToUpperInvariant()
+      # Keep the host marker stable: treat any non-SKIP guest status as INFO.
+      if ($s -eq "SKIP") { $status = "SKIP" }
+    }
+  } else {
+    if ($toks.Count -ge 2) {
+      $s = $toks[1].Trim().ToUpperInvariant()
+      if ($s -eq "WARN") { $status = "SKIP" }
+      elseif ($s -ne "INFO") { return }
+    } else {
+      return
+    }
   }
 
   $fields = @{}
@@ -3026,7 +3044,7 @@ function Try-EmitAeroVirtioBlkResetRecoveryMarker {
     }
   }
 
-  $ordered = @("reset_detected", "hw_reset_bus", "reason", "returned_len")
+  $ordered = @("reset_detected", "hw_reset_bus", "reason", "returned_len", "expected_min")
   $orderedSet = @{}
   foreach ($k in $ordered) { $orderedSet[$k] = $true }
 

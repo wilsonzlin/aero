@@ -77,6 +77,22 @@ class VirtioBlkResetRecoveryMarkerTests(unittest.TestCase):
         out = self._emit(tail)
         self.assertEqual(out, "")
 
+    def test_falls_back_to_miniport_info_diagnostic(self) -> None:
+        tail = b"virtio-blk-miniport-reset-recovery|INFO|reset_detected=2|hw_reset_bus=3\n"
+        out = self._emit(tail)
+        self.assertEqual(
+            out,
+            "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESET_RECOVERY|INFO|reset_detected=2|hw_reset_bus=3",
+        )
+
+    def test_falls_back_to_miniport_warn_diagnostic_as_skip(self) -> None:
+        tail = b"virtio-blk-miniport-reset-recovery|WARN|reason=missing_counters|returned_len=20|expected_min=24\n"
+        out = self._emit(tail)
+        self.assertEqual(
+            out,
+            "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESET_RECOVERY|SKIP|reason=missing_counters|returned_len=20|expected_min=24",
+        )
+
     def test_uses_explicit_marker_line_override(self) -> None:
         line = (
             "AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset-recovery|INFO|reset_detected=7|hw_reset_bus=8"
@@ -90,4 +106,3 @@ class VirtioBlkResetRecoveryMarkerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

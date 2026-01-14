@@ -9366,7 +9366,11 @@ def main() -> int:
             tail, marker_line=virtio_blk_miniport_reset_recovery_marker_line
         )
         _emit_virtio_blk_reset_recovery_host_marker(
-            tail, blk_reset_recovery_line=virtio_blk_reset_recovery_marker_line
+            tail,
+            blk_reset_recovery_line=(
+                virtio_blk_reset_recovery_marker_line
+                or virtio_blk_miniport_reset_recovery_marker_line
+            ),
         )
         _emit_virtio_blk_resize_host_marker(tail, blk_resize_line=virtio_blk_resize_marker_line)
         _emit_virtio_blk_reset_host_marker(tail, blk_reset_line=virtio_blk_reset_marker_line)
@@ -12337,9 +12341,13 @@ def _emit_virtio_blk_reset_recovery_host_marker(
     """
     Best-effort: emit a host-side marker mirroring the guest's virtio-blk reset-recovery counters.
 
-    Guest marker:
+    Preferred guest marker (newer guest selftests):
       AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset-recovery|INFO|reset_detected=...|hw_reset_bus=...
       AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset-recovery|SKIP|reason=...|returned_len=...
+
+    Backward compatible guest diagnostic (older guest selftests):
+      virtio-blk-miniport-reset-recovery|INFO|reset_detected=...|hw_reset_bus=...
+      virtio-blk-miniport-reset-recovery|WARN|reason=...|returned_len=...|expected_min=...
 
     Host marker:
       AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESET_RECOVERY|INFO/SKIP|...
@@ -12351,13 +12359,29 @@ def _emit_virtio_blk_reset_recovery_host_marker(
         marker_line = _try_extract_last_marker_line(
             tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset-recovery|"
         )
+        if marker_line is None:
+            marker_line = _try_extract_last_marker_line(
+                tail, b"virtio-blk-miniport-reset-recovery|"
+            )
     if marker_line is None:
         return
 
-    toks = marker_line.split("|")
-    raw_status = toks[3] if len(toks) >= 4 else "INFO"
-    raw_status = raw_status.strip().upper()
-    status = "SKIP" if raw_status == "SKIP" else "INFO"
+    if marker_line.startswith("AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset-recovery|"):
+        toks = marker_line.split("|")
+        raw_status = toks[3] if len(toks) >= 4 else "INFO"
+        raw_status = raw_status.strip().upper()
+        status = "SKIP" if raw_status == "SKIP" else "INFO"
+    elif marker_line.startswith("virtio-blk-miniport-reset-recovery|"):
+        toks = marker_line.split("|")
+        level = toks[1].strip().upper() if len(toks) >= 2 else ""
+        if level == "INFO":
+            status = "INFO"
+        elif level == "WARN":
+            status = "SKIP"
+        else:
+            return
+    else:
+        return
 
     fields = _parse_marker_kv_fields(marker_line)
     parts = [f"AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESET_RECOVERY|{status}"]
@@ -12367,6 +12391,7 @@ def _emit_virtio_blk_reset_recovery_host_marker(
         "hw_reset_bus",
         "reason",
         "returned_len",
+        "expected_min",
     )
     for k in ordered:
         if k in fields:
