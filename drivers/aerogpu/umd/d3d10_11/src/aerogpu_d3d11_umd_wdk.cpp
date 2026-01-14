@@ -12807,7 +12807,13 @@ HRESULT OpenAdapter11Impl(D3D10DDIARG_OPENADAPTER* pOpenData) {
 extern "C" {
 
 HRESULT AEROGPU_APIENTRY OpenAdapter11(D3D10DDIARG_OPENADAPTER* pOpenData) {
-  return OpenAdapter11Impl(pOpenData);
+  try {
+    return OpenAdapter11Impl(pOpenData);
+  } catch (const std::bad_alloc&) {
+    return E_OUTOFMEMORY;
+  } catch (...) {
+    return E_FAIL;
+  }
 }
 
 } // extern "C"

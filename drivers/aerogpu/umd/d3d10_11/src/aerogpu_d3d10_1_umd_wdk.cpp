@@ -10388,30 +10388,42 @@ HRESULT AEROGPU_APIENTRY OpenAdapter10(D3D10DDIARG_OPENADAPTER* pOpenData) {
   LogModulePathOnce();
   AEROGPU_D3D10_11_LOG_CALL();
   AEROGPU_D3D10_TRACEF("OpenAdapter10");
-  if (!pOpenData) {
-    return E_INVALIDARG;
+  try {
+    if (!pOpenData) {
+      return E_INVALIDARG;
+    }
+    // `OpenAdapter10` is the D3D10 entrypoint. Some runtimes treat `Interface` as
+    // an in/out negotiation field; accept 0 and default to the D3D10 DDI.
+    if (pOpenData->Interface == 0) {
+      pOpenData->Interface = D3D10DDI_INTERFACE_VERSION;
+    }
+    return OpenAdapter_WDK(pOpenData);
+  } catch (const std::bad_alloc&) {
+    return E_OUTOFMEMORY;
+  } catch (...) {
+    return E_FAIL;
   }
-  // `OpenAdapter10` is the D3D10 entrypoint. Some runtimes treat `Interface` as
-  // an in/out negotiation field; accept 0 and default to the D3D10 DDI.
-  if (pOpenData->Interface == 0) {
-    pOpenData->Interface = D3D10DDI_INTERFACE_VERSION;
-  }
-  return OpenAdapter_WDK(pOpenData);
 }
 
 HRESULT AEROGPU_APIENTRY OpenAdapter10_2(D3D10DDIARG_OPENADAPTER* pOpenData) {
   LogModulePathOnce();
   AEROGPU_D3D10_11_LOG_CALL();
   AEROGPU_D3D10_TRACEF("OpenAdapter10_2");
-  if (!pOpenData) {
-    return E_INVALIDARG;
+  try {
+    if (!pOpenData) {
+      return E_INVALIDARG;
+    }
+    // `OpenAdapter10_2` is the D3D10.1 entrypoint. Accept 0 and default to the
+    // D3D10.1 DDI.
+    if (pOpenData->Interface == 0) {
+      pOpenData->Interface = D3D10_1DDI_INTERFACE_VERSION;
+    }
+    return OpenAdapter_WDK(pOpenData);
+  } catch (const std::bad_alloc&) {
+    return E_OUTOFMEMORY;
+  } catch (...) {
+    return E_FAIL;
   }
-  // `OpenAdapter10_2` is the D3D10.1 entrypoint. Accept 0 and default to the
-  // D3D10.1 DDI.
-  if (pOpenData->Interface == 0) {
-    pOpenData->Interface = D3D10_1DDI_INTERFACE_VERSION;
-  }
-  return OpenAdapter_WDK(pOpenData);
 }
 } // extern "C"
 
