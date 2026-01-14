@@ -701,6 +701,7 @@ This repository also contains a guest-side test harness you can use as a startin
 * `drivers/aerogpu/tests/win7/d3d11_triangle/` — swapchain triangle + present; validates pixels via staging readback.
 * `drivers/aerogpu/tests/win7/readback_sanity/` — offscreen render-to-texture + staging readback (no present).
 * `drivers/aerogpu/tests/win7/d3d11_map_do_not_wait/` — validates `Map(READ, DO_NOT_WAIT)` behaves like a non-blocking poll for staging readback.
+* `drivers/aerogpu/tests/win7/d3d11_compute_smoke/` — compute shader smoke test: binds `b0` constant buffer + SRV/UAV buffers (structured + raw), `Dispatch`, and validates output via staging readback.
 
 ### 7.2.1 D3D10.1 coverage (optional, still useful on Win7)
 
