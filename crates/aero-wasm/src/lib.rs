@@ -4761,11 +4761,17 @@ impl Machine {
     #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
     fn scanout_state_ref() -> &'static ScanoutState {
         Self::ensure_runtime_reserved_floor_for_scanout_state();
+        let offset = Self::scanout_state_offset_bytes();
+        debug_assert_eq!(
+            offset % (core::mem::align_of::<ScanoutState>() as u32),
+            0,
+            "scanout state offset must be aligned to ScanoutState"
+        );
         // Safety:
         // - The web runtime allocates at least `RUNTIME_RESERVED_BYTES` of linear memory.
         // - The wasm-side runtime allocator leaves a tail guard so this region does not overlap heap allocations.
         // - The region is treated as a plain `u32` array (Atomics-compatible) by both Rust and JS.
-        unsafe { &*(Self::scanout_state_offset_bytes() as *const ScanoutState) }
+        unsafe { &*(offset as *const ScanoutState) }
     }
 
     #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
