@@ -2103,6 +2103,151 @@ fn tier1_inline_tlb_cross_page_store_fastpath_handles_all_offsets_w16() {
 }
 
 #[test]
+fn tier1_inline_tlb_store_bumps_code_page_version() {
+    let addr = 0x1000u64;
+
+    let mut b = IrBuilder::new(0x1000);
+    let a0 = b.const_int(Width::W64, addr);
+    let v0 = b.const_int(Width::W64, 0x1122_3344_5566_7788);
+    b.store(Width::W64, a0, v0);
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+
+    let ram = vec![0u8; 0x2000];
+
+    let (next_rip, got_cpu, got_ram, host_state, table) = run_wasm_inner_with_code_version_table(
+        &block,
+        cpu,
+        ram,
+        0x2000,
+        Tier1WasmOptions {
+            inline_tlb: true,
+            ..Default::default()
+        },
+        2,
+    );
+
+    assert_eq!(next_rip, 0x3000);
+    assert_eq!(got_cpu.rip, 0x3000);
+    assert_eq!(
+        &got_ram[addr as usize..addr as usize + 8],
+        &0x1122_3344_5566_7788u64.to_le_bytes(),
+    );
+    assert_eq!(host_state.mmu_translate_calls, 1);
+    assert_eq!(host_state.slow_mem_writes, 0);
+    assert_eq!(host_state.mmio_exit_calls, 0);
+    assert_eq!(table, vec![0, 1]);
+}
+
+#[test]
+fn tier1_inline_tlb_store_code_version_bump_skips_out_of_bounds_page() {
+    let addr = 0x1000u64;
+
+    let mut b = IrBuilder::new(0x1000);
+    let a0 = b.const_int(Width::W64, addr);
+    let v0 = b.const_int(Width::W64, 0x1122_3344_5566_7788);
+    b.store(Width::W64, a0, v0);
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+
+    let mut ram = vec![0u8; 0x2000];
+    let sentinel = 0xdead_beefu32.to_le_bytes();
+    ram[0..4].copy_from_slice(&sentinel);
+
+    let (next_rip, got_cpu, got_ram, host_state, table) = run_wasm_inner_with_code_version_table(
+        &block,
+        cpu,
+        ram,
+        0x2000,
+        Tier1WasmOptions {
+            inline_tlb: true,
+            ..Default::default()
+        },
+        // Only one entry (page 0) in the version table; the store targets page 1.
+        1,
+    );
+
+    assert_eq!(next_rip, 0x3000);
+    assert_eq!(got_cpu.rip, 0x3000);
+    assert_eq!(
+        &got_ram[addr as usize..addr as usize + 8],
+        &0x1122_3344_5566_7788u64.to_le_bytes(),
+    );
+
+    // Bounds check should skip the bump instead of writing past the end of the table into RAM.
+    assert_eq!(&got_ram[0..4], &sentinel);
+    assert_eq!(table, vec![0]);
+
+    assert_eq!(host_state.mmu_translate_calls, 1);
+    assert_eq!(host_state.slow_mem_writes, 0);
+    assert_eq!(host_state.mmio_exit_calls, 0);
+}
+
+#[test]
+fn tier1_inline_tlb_cross_page_store_code_version_bump_skips_out_of_bounds_second_page() {
+    let addr = 0xFF9u64;
+
+    let mut b = IrBuilder::new(0x1000);
+    let a0 = b.const_int(Width::W64, addr);
+    let v0 = b.const_int(Width::W64, 0x1122_3344_5566_7788);
+    b.store(Width::W64, a0, v0);
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+
+    let mut ram = vec![0u8; 0x2000];
+    let sentinel = 0xdead_beefu32.to_le_bytes();
+    ram[0..4].copy_from_slice(&sentinel);
+
+    let (next_rip, got_cpu, got_ram, host_state, table) = run_wasm_inner_with_code_version_table(
+        &block,
+        cpu,
+        ram,
+        0x2000,
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_cross_page_fastpath: true,
+            ..Default::default()
+        },
+        // Only one entry (page 0) in the version table; the second page bump would be out of
+        // bounds.
+        1,
+    );
+
+    assert_eq!(next_rip, 0x3000);
+    assert_eq!(got_cpu.rip, 0x3000);
+    assert_eq!(
+        &got_ram[addr as usize..addr as usize + 8],
+        &0x1122_3344_5566_7788u64.to_le_bytes(),
+    );
+
+    // Bounds check should skip the out-of-bounds bump instead of writing past the end of the table
+    // into RAM.
+    assert_eq!(&got_ram[0..4], &sentinel);
+
+    // Only page 0 should be bumped.
+    assert_eq!(table, vec![1]);
+
+    assert_eq!(host_state.mmu_translate_calls, 2);
+    assert_eq!(host_state.slow_mem_writes, 0);
+    assert_eq!(host_state.mmio_exit_calls, 0);
+}
+
+#[test]
 fn tier1_inline_tlb_cross_page_store_bumps_both_code_pages() {
     let addr = 0xFF9u64;
 
