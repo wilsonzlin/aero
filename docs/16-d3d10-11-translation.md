@@ -690,8 +690,9 @@ maps to distinct bind groups:
 Compatibility note: the legacy 24-byte packet already has a trailing `reserved0` field. Some older
 streams/hosts repurpose this field as the **geometry shader (GS) handle**:
 
-- `reserved0 == 0` → GS unbound
-- `reserved0 != 0` → GS is bound to handle `reserved0`
+- Legacy 24-byte packet (`hdr.size_bytes == 24`):
+  - `reserved0 == 0` → GS unbound
+  - `reserved0 != 0` → GS is bound to handle `reserved0`
 
 The extended layout appends `{gs, hs, ds}` as explicit trailing fields.
 
@@ -709,7 +710,7 @@ struct aerogpu_cmd_bind_shaders {
    aerogpu_handle_t vs;              // 0 = unbound
    aerogpu_handle_t ps;              // 0 = unbound
    aerogpu_handle_t cs;              // 0 = unbound
-   uint32_t reserved0;               // legacy GS handle (0 = unbound; non-zero = GS)
+   uint32_t reserved0;               // legacy GS handle (only when hdr.size_bytes==24; may mirror gs)
 
    // Present when hdr.size_bytes >= 36:
    aerogpu_handle_t gs;              // 0 = unbound
