@@ -2,9 +2,11 @@
 
 use wasm_bindgen::JsCast;
 use wasm_bindgen::JsValue;
-use wasm_bindgen_test::wasm_bindgen_test;
+use wasm_bindgen_test::*;
 
 use aero_wasm::Machine;
+
+wasm_bindgen_test_configure!(run_in_browser);
 
 fn js_error_message(err: &JsValue) -> String {
     if let Some(s) = err.as_string() {
