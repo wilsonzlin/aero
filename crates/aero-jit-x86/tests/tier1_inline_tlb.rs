@@ -1142,6 +1142,96 @@ fn tier1_inline_tlb_permission_miss_write_calls_translate() {
 }
 
 #[test]
+fn tier1_inline_tlb_permission_miss_read_uses_updated_physical_base() {
+    // Similar to `tier1_inline_tlb_permission_miss_read_calls_translate`, but ensure the *updated*
+    // translation returned by `mmu_translate` is used to compute the RAM address (physical base).
+    //
+    // Prefill a matching entry that maps vaddr page 1 -> phys page 2, but omit READ permission. The
+    // permission check should call `mmu_translate`, and the subsequent RAM fast-path must use the
+    // new identity mapping rather than the stale prefilled mapping.
+    let addr = 0x1010u64;
+
+    let mut b = IrBuilder::new(0x1000);
+    let a0 = b.const_int(Width::W64, addr);
+    let v0 = b.load(Width::W32, a0);
+    b.write_reg(
+        GuestReg::Gpr {
+            reg: Gpr::Rbx,
+            width: Width::W32,
+            high8: false,
+        },
+        v0,
+    );
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+
+    let mut ram = vec![0u8; 0x3000];
+    ram[0x1010..0x1010 + 4].copy_from_slice(&0x1111_2222u32.to_le_bytes());
+    ram[0x2010..0x2010 + 4].copy_from_slice(&0x3333_4444u32.to_le_bytes());
+
+    let tlb_data =
+        (0x2000u64 & PAGE_BASE_MASK) | (TLB_FLAG_WRITE | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM); // Missing READ.
+
+    let (next_rip, got_cpu, _got_ram, host_state) =
+        run_wasm_with_prefilled_tlb(&block, cpu, ram, 0x3000, addr, tlb_data);
+
+    assert_eq!(next_rip, 0x3000);
+    assert_eq!(got_cpu.rip, 0x3000);
+    assert_eq!(got_cpu.gpr[Gpr::Rbx.as_u8() as usize] as u32, 0x1111_2222);
+
+    assert_eq!(host_state.mmu_translate_calls, 1);
+    assert_eq!(host_state.mmio_exit_calls, 0);
+    assert_eq!(host_state.slow_mem_reads, 0);
+    assert_eq!(host_state.slow_mem_writes, 0);
+}
+
+#[test]
+fn tier1_inline_tlb_permission_miss_write_uses_updated_physical_base() {
+    // Like `tier1_inline_tlb_permission_miss_read_uses_updated_physical_base`, but for stores.
+    let addr = 0x1010u64;
+
+    let mut b = IrBuilder::new(0x1000);
+    let a0 = b.const_int(Width::W64, addr);
+    let v0 = b.const_int(Width::W32, 0xDDCC_BBAA);
+    b.store(Width::W32, a0, v0);
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+
+    let mut ram = vec![0u8; 0x3000];
+    ram[0x1010..0x1010 + 4].copy_from_slice(&0x1111_2222u32.to_le_bytes());
+    ram[0x2010..0x2010 + 4].copy_from_slice(&0x3333_4444u32.to_le_bytes());
+
+    let tlb_data =
+        (0x2000u64 & PAGE_BASE_MASK) | (TLB_FLAG_READ | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM); // Missing WRITE.
+
+    let (next_rip, got_cpu, got_ram, host_state) =
+        run_wasm_with_prefilled_tlb(&block, cpu, ram, 0x3000, addr, tlb_data);
+
+    assert_eq!(next_rip, 0x3000);
+    assert_eq!(got_cpu.rip, 0x3000);
+    assert_eq!(
+        &got_ram[0x1010..0x1010 + 4],
+        &0xDDCC_BBAAu32.to_le_bytes()
+    );
+    assert_eq!(&got_ram[0x2010..0x2010 + 4], &0x3333_4444u32.to_le_bytes());
+
+    assert_eq!(host_state.mmu_translate_calls, 1);
+    assert_eq!(host_state.mmio_exit_calls, 0);
+    assert_eq!(host_state.slow_mem_reads, 0);
+    assert_eq!(host_state.slow_mem_writes, 0);
+}
+
+#[test]
 fn tier1_inline_tlb_cross_page_load_uses_slow_helper() {
     let addr = 0xFF9u64;
 
