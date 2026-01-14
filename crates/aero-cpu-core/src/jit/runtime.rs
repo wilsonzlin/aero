@@ -934,7 +934,7 @@ mod tests {
     }
 
     thread_local! {
-        static LAST_PANIC_LOC: RefCell<Option<(String, u32)>> = RefCell::new(None);
+        static LAST_PANIC_LOC: RefCell<Option<(String, u32)>> = const { RefCell::new(None) };
     }
 
     // `std::panic::set_hook` installs a process-wide hook. Even though our CI/safe-run environment
