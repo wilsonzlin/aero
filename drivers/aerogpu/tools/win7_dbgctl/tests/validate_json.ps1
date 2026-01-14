@@ -57,6 +57,7 @@ Assert-ValidJson -ExpectedCommand "dump-createalloc" -Args @("--dump-createalloc
 Assert-ValidJson -ExpectedCommand "dump-vblank" -Args @("--dump-vblank", "--vblank-samples", "1")
 Assert-ValidJson -ExpectedCommand "query-scanline" -Args @("--query-scanline", "--vblank-samples", "1", "--vblank-interval-ms", "0")
 Assert-ValidJson -ExpectedCommand "wait-vblank" -Args @("--wait-vblank", "--vblank-samples", "2", "--timeout-ms", "200")
+Assert-ValidJson -ExpectedCommand "selftest" -Args @("--selftest", "--timeout-ms", "2000")
 Assert-ValidJson -ExpectedCommand "read-gpa" -Args @("--read-gpa", "0x0", "--size", "4", "--out", "read_gpa_test.bin")
 Assert-ValidJson -ExpectedCommand "dump-scanout-bmp" -Args @("--dump-scanout-bmp", "scanout_test.bmp")
 Assert-ValidJson -ExpectedCommand "dump-scanout-png" -Args @("--dump-scanout-png", "scanout_test.png")
