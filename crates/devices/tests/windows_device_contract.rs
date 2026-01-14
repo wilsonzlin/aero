@@ -562,9 +562,14 @@ fn windows_device_contract_virtio_input_matches_pci_profile() {
         })
         .collect();
 
+    // virtio-input uses a single VEN/DEV pair for multiple functions (keyboard/mouse), so the
+    // contract includes both strict (REV-qualified) and convenience (REV-less) patterns.
     assert_has_pattern(&patterns, &hwid_ven_dev(VIRTIO_INPUT_KEYBOARD));
+    assert_has_pattern(&patterns, &hwid_ven_dev_rev(VIRTIO_INPUT_KEYBOARD));
     assert_has_pattern(&patterns, &hwid_ven_dev_subsys(VIRTIO_INPUT_KEYBOARD));
+    assert_has_pattern(&patterns, &hwid_ven_dev_subsys_rev(VIRTIO_INPUT_KEYBOARD));
     assert_has_pattern(&patterns, &hwid_ven_dev_subsys(VIRTIO_INPUT_MOUSE));
+    assert_has_pattern(&patterns, &hwid_ven_dev_subsys_rev(VIRTIO_INPUT_MOUSE));
 
     assert_eq!(VIRTIO_INPUT_KEYBOARD.vendor_id, PCI_VENDOR_ID_VIRTIO);
     assert_eq!(
