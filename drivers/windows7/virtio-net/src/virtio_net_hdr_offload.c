@@ -103,6 +103,9 @@ static VIRTIO_NET_HDR_OFFLOAD_STATUS VirtioNetHdrOffloadParseIpv4(const uint8_t*
   uint8_t IhlWords;
   size_t IpHdrLen;
   uint16_t TotalLen;
+  uint16_t FragOffFlags;
+  uint16_t FragOff;
+  uint16_t MoreFrags;
   size_t L4Offset;
 
   St = VirtioNetHdrOffloadBoundsCheck(L3Offset, 20, FrameLen);
@@ -143,13 +146,33 @@ static VIRTIO_NET_HDR_OFFLOAD_STATUS VirtioNetHdrOffloadParseIpv4(const uint8_t*
   L4Offset = L3Offset + IpHdrLen;
   Info->L4Offset = (uint16_t)L4Offset;
 
+  FragOffFlags = VirtioNetHdrOffloadReadBe16(Ip + 6);
+  FragOff = (uint16_t)(FragOffFlags & 0x1FFFu);
+  MoreFrags = (uint16_t)(FragOffFlags & 0x2000u);
+
+  if (FragOff != 0u || MoreFrags != 0u) {
+    Info->IsFragmented = 1u;
+  }
+
+  /*
+   * L4 header is only present in the first fragment. For non-first fragments,
+   * stop after the IPv4 header.
+   */
+  if (FragOff != 0u) {
+    Info->L4Len = 0;
+    Info->PayloadOffset = (uint16_t)L4Offset;
+    return VIRTIO_NET_HDR_OFFLOAD_STATUS_OK;
+  }
+
   switch (Info->L4Proto) {
     case 6: /* TCP */
       return VirtioNetHdrOffloadParseTcp(Frame, FrameLen, L4Offset, Info);
     case 17: /* UDP */
       return VirtioNetHdrOffloadParseUdp(Frame, FrameLen, L4Offset, Info);
     default:
-      return VIRTIO_NET_HDR_OFFLOAD_STATUS_UNSUPPORTED;
+      Info->L4Len = 0;
+      Info->PayloadOffset = (uint16_t)L4Offset;
+      return VIRTIO_NET_HDR_OFFLOAD_STATUS_OK;
   }
 }
 
@@ -199,7 +222,7 @@ static VIRTIO_NET_HDR_OFFLOAD_STATUS VirtioNetHdrOffloadParseIpv6(const uint8_t*
     }
 
     if (NextHdr == 59u) { /* No Next Header */
-      return VIRTIO_NET_HDR_OFFLOAD_STATUS_UNSUPPORTED;
+      break;
     }
 
     if (NextHdr == 0u || NextHdr == 43u || NextHdr == 60u) {
@@ -233,9 +256,12 @@ static VIRTIO_NET_HDR_OFFLOAD_STATUS VirtioNetHdrOffloadParseIpv6(const uint8_t*
       }
       Ext = Frame + Offset;
       FragOffFlags = VirtioNetHdrOffloadReadBe16(Ext + 2);
+      Info->IsFragmented = 1u;
       /* If this isn't the first fragment (offset != 0), L4 isn't present. */
       if ((FragOffFlags & 0xFFF8u) != 0) {
-        return VIRTIO_NET_HDR_OFFLOAD_STATUS_UNSUPPORTED;
+        NextHdr = Ext[0];
+        Offset += 8u;
+        break;
       }
       NextHdr = Ext[0];
       Offset += 8u;
@@ -266,10 +292,6 @@ static VIRTIO_NET_HDR_OFFLOAD_STATUS VirtioNetHdrOffloadParseIpv6(const uint8_t*
     return VIRTIO_NET_HDR_OFFLOAD_STATUS_UNSUPPORTED;
   }
 
-  if (NextHdr != 6u && NextHdr != 17u) {
-    return VIRTIO_NET_HDR_OFFLOAD_STATUS_UNSUPPORTED;
-  }
-
   Info->L3Proto = (uint8_t)VIRTIO_NET_HDR_OFFLOAD_L3_IPV6;
   Info->L3Offset = (uint16_t)L3Offset;
   Info->L3Len = (uint16_t)(Offset - L3Offset);
@@ -282,7 +304,9 @@ static VIRTIO_NET_HDR_OFFLOAD_STATUS VirtioNetHdrOffloadParseIpv6(const uint8_t*
     case 17:
       return VirtioNetHdrOffloadParseUdp(Frame, FrameLen, Offset, Info);
     default:
-      return VIRTIO_NET_HDR_OFFLOAD_STATUS_UNSUPPORTED;
+      Info->L4Len = 0;
+      Info->PayloadOffset = (uint16_t)Offset;
+      return VIRTIO_NET_HDR_OFFLOAD_STATUS_OK;
   }
 }
 
@@ -351,7 +375,14 @@ VIRTIO_NET_HDR_OFFLOAD_STATUS VirtioNetHdrOffloadBuildTxHdr(const VIRTIO_NET_HDR
   Hdr->HdrLen = Info->PayloadOffset;
 
   if (TxReq->NeedsCsum || TxReq->Tso) {
+    /* Do not attempt offloads on fragmented packets. */
+    if (Info->IsFragmented) {
+      return VIRTIO_NET_HDR_OFFLOAD_STATUS_UNSUPPORTED;
+    }
     if (Info->L4Proto != 6u && Info->L4Proto != 17u) {
+      return VIRTIO_NET_HDR_OFFLOAD_STATUS_UNSUPPORTED;
+    }
+    if (Info->L4Len == 0u) {
       return VIRTIO_NET_HDR_OFFLOAD_STATUS_UNSUPPORTED;
     }
     Hdr->Flags |= VIRTIO_NET_HDR_F_NEEDS_CSUM;

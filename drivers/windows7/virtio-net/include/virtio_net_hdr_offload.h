@@ -11,10 +11,13 @@
 
 /* MSVC before VS2010 lacks <stdint.h>. WDK 7.1 uses an older toolset. */
 #if defined(_MSC_VER) && _MSC_VER < 1600
+#ifndef AERO_PORTABLE_STDINT_UINT_TYPES_DEFINED
+#define AERO_PORTABLE_STDINT_UINT_TYPES_DEFINED 1
 typedef unsigned __int8 uint8_t;
 typedef unsigned __int16 uint16_t;
 typedef unsigned __int32 uint32_t;
 typedef unsigned __int64 uint64_t;
+#endif
 #else
 #include <stdint.h>
 #endif
@@ -106,6 +109,9 @@ typedef struct _VIRTIO_NET_HDR_OFFLOAD_FRAME_INFO {
   /* L4 checksum location (relative to start of Ethernet frame) */
   uint16_t CsumStart;
   uint16_t CsumOffset; /* relative to CsumStart */
+
+  /* True if the IP packet is fragmented (IPv4 MF/offset or IPv6 fragment header). */
+  uint8_t IsFragmented;
 } VIRTIO_NET_HDR_OFFLOAD_FRAME_INFO;
 
 typedef struct _VIRTIO_NET_HDR_OFFLOAD_TX_REQUEST {

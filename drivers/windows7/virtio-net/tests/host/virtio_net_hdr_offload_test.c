@@ -83,6 +83,7 @@ static int test_ipv4_tcp_no_vlan(void) {
   ASSERT_EQ_U16(Info.PayloadOffset, 54);
   ASSERT_EQ_U16(Info.CsumStart, 34);
   ASSERT_EQ_U16(Info.CsumOffset, 16);
+  ASSERT_EQ_U8(Info.IsFragmented, 0);
 
   memset(&TxReq, 0, sizeof(TxReq));
   TxReq.NeedsCsum = 1;
@@ -141,6 +142,7 @@ static int test_ipv4_udp_no_vlan(void) {
   ASSERT_EQ_U16(Info.PayloadOffset, 42);
   ASSERT_EQ_U16(Info.CsumStart, 34);
   ASSERT_EQ_U16(Info.CsumOffset, 6);
+  ASSERT_EQ_U8(Info.IsFragmented, 0);
 
   memset(&TxReq, 0, sizeof(TxReq));
   TxReq.NeedsCsum = 1;
@@ -198,6 +200,7 @@ static int test_ipv6_tcp_no_vlan(void) {
   ASSERT_EQ_U16(Info.PayloadOffset, 74);
   ASSERT_EQ_U16(Info.CsumStart, 54);
   ASSERT_EQ_U16(Info.CsumOffset, 16);
+  ASSERT_EQ_U8(Info.IsFragmented, 0);
 
   memset(&TxReq, 0, sizeof(TxReq));
   TxReq.Tso = 1;
@@ -247,6 +250,7 @@ static int test_vlan_tagged_ipv4_tcp(void) {
   ASSERT_EQ_U16(Info.PayloadOffset, 58);
   ASSERT_EQ_U16(Info.CsumStart, 38);
   ASSERT_EQ_U16(Info.CsumOffset, 16);
+  ASSERT_EQ_U8(Info.IsFragmented, 0);
 
   memset(&TxReq, 0, sizeof(TxReq));
   TxReq.Tso = 1;
@@ -348,6 +352,7 @@ static int test_ipv4_tcp_options_boundary(void) {
   ASSERT_EQ_U16(Info.PayloadOffset, 66);
   ASSERT_EQ_U16(Info.CsumStart, 38);
   ASSERT_EQ_U16(Info.CsumOffset, 16);
+  ASSERT_EQ_U8(Info.IsFragmented, 0);
 
   memset(&TxReq, 0, sizeof(TxReq));
   TxReq.Tso = 1;
@@ -358,6 +363,132 @@ static int test_ipv4_tcp_options_boundary(void) {
   ASSERT_EQ_U16(Hdr.HdrLen, 66);
   ASSERT_EQ_U16(Hdr.CsumStart, 38);
   ASSERT_EQ_U16(Hdr.CsumOffset, 16);
+
+  return 0;
+}
+
+static int test_ipv4_icmp_parse(void) {
+  static const uint8_t Frame[] = {
+      /* dst/src */
+      0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb,
+      /* ethertype IPv4 */
+      0x08, 0x00,
+      /* IPv4 header (proto=ICMP) */
+      0x45, 0x00, 0x00, 0x1c, /* total_len=28 */
+      0x00, 0x00, 0x00, 0x00, 0x40, 0x01, 0x00, 0x00, /* proto=1 */
+      0xc0, 0x00, 0x02, 0x01, 0xc6, 0x33, 0x64, 0x02,
+      /* ICMP header (8 bytes) */
+      0x08, 0x00, 0x00, 0x00, 0x12, 0x34, 0x00, 0x01,
+  };
+
+  VIRTIO_NET_HDR_OFFLOAD_FRAME_INFO Info;
+  VIRTIO_NET_HDR_OFFLOAD_TX_REQUEST TxReq;
+  VIRTIO_NET_HDR Hdr;
+  VIRTIO_NET_HDR_OFFLOAD_STATUS St;
+
+  St = VirtioNetHdrOffloadParseFrame(Frame, sizeof(Frame), &Info);
+  ASSERT_EQ_INT(St, VIRTIO_NET_HDR_OFFLOAD_STATUS_OK);
+
+  ASSERT_EQ_U8(Info.L3Proto, VIRTIO_NET_HDR_OFFLOAD_L3_IPV4);
+  ASSERT_EQ_U8(Info.L4Proto, 1);
+  ASSERT_EQ_U16(Info.L4Offset, 34);
+  ASSERT_EQ_U16(Info.L4Len, 0);
+  ASSERT_EQ_U16(Info.PayloadOffset, 34);
+  ASSERT_EQ_U8(Info.IsFragmented, 0);
+
+  /* Checksum offload requires TCP/UDP. */
+  memset(&TxReq, 0, sizeof(TxReq));
+  TxReq.NeedsCsum = 1;
+  St = VirtioNetHdrOffloadBuildTxHdr(&Info, &TxReq, &Hdr);
+  ASSERT_EQ_INT(St, VIRTIO_NET_HDR_OFFLOAD_STATUS_UNSUPPORTED);
+
+  return 0;
+}
+
+static int test_ipv4_fragmented_tcp_rejected(void) {
+  /* Ethernet + IPv4 + TCP */
+  static const uint8_t Frame[] = {
+      /* dst/src */
+      0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb,
+      /* ethertype IPv4 */
+      0x08, 0x00,
+      /* IPv4 header */
+      0x45, 0x00, 0x00, 0x2c, /* v4 ihl=5, total_len=44 */
+      0x00, 0x00, 0x20, 0x00, /* flags: MF set */
+      0x40, 0x06, 0x00, 0x00, /* ttl=64, proto=TCP */
+      0xc0, 0x00, 0x02, 0x01, /* src */
+      0xc6, 0x33, 0x64, 0x02, /* dst */
+      /* TCP header */
+      0x1f, 0x90, 0x00, 0x50, /* ports */
+      0x00, 0x00, 0x00, 0x00, /* seq */
+      0x00, 0x00, 0x00, 0x00, /* ack */
+      0x50, 0x02, 0x00, 0x00, /* doff=5 */
+      0x00, 0x00, 0x00, 0x00, /* csum, urg */
+      /* payload */
+      't',  'e',  's',  't',
+  };
+
+  VIRTIO_NET_HDR_OFFLOAD_FRAME_INFO Info;
+  VIRTIO_NET_HDR_OFFLOAD_TX_REQUEST TxReq;
+  VIRTIO_NET_HDR Hdr;
+  VIRTIO_NET_HDR_OFFLOAD_STATUS St;
+
+  St = VirtioNetHdrOffloadParseFrame(Frame, sizeof(Frame), &Info);
+  ASSERT_EQ_INT(St, VIRTIO_NET_HDR_OFFLOAD_STATUS_OK);
+  ASSERT_EQ_U8(Info.IsFragmented, 1);
+  ASSERT_EQ_U8(Info.L4Proto, 6);
+
+  memset(&TxReq, 0, sizeof(TxReq));
+  TxReq.NeedsCsum = 1;
+  St = VirtioNetHdrOffloadBuildTxHdr(&Info, &TxReq, &Hdr);
+  ASSERT_EQ_INT(St, VIRTIO_NET_HDR_OFFLOAD_STATUS_UNSUPPORTED);
+
+  memset(&TxReq, 0, sizeof(TxReq));
+  TxReq.Tso = 1;
+  TxReq.TsoMss = 1460;
+  St = VirtioNetHdrOffloadBuildTxHdrFromFrame(Frame, sizeof(Frame), &TxReq, &Hdr);
+  ASSERT_EQ_INT(St, VIRTIO_NET_HDR_OFFLOAD_STATUS_UNSUPPORTED);
+
+  return 0;
+}
+
+static int test_ipv6_fragmented_tcp_rejected(void) {
+  /* Ethernet + IPv6 + Fragment + TCP */
+  static const uint8_t Frame[] = {
+      /* dst/src */
+      0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb,
+      /* ethertype IPv6 */
+      0x86, 0xdd,
+      /* IPv6 header: version=6, payload_len=32, next=Fragment(44), hop=64 */
+      0x60, 0x00, 0x00, 0x00, 0x00, 0x20, 0x2c, 0x40,
+      /* src addr */
+      0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    1,
+      /* dst addr */
+      0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    2,
+      /* Fragment header: next=TCP, reserved=0, off=0, M=1 */
+      0x06, 0x00, 0x00, 0x01, 0x12, 0x34, 0x56, 0x78,
+      /* TCP header */
+      0x1f, 0x90, 0x00, 0x50, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x50, 0x10, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00,
+      /* payload */
+      0x01, 0x02, 0x03, 0x04,
+  };
+
+  VIRTIO_NET_HDR_OFFLOAD_FRAME_INFO Info;
+  VIRTIO_NET_HDR_OFFLOAD_TX_REQUEST TxReq;
+  VIRTIO_NET_HDR Hdr;
+  VIRTIO_NET_HDR_OFFLOAD_STATUS St;
+
+  St = VirtioNetHdrOffloadParseFrame(Frame, sizeof(Frame), &Info);
+  ASSERT_EQ_INT(St, VIRTIO_NET_HDR_OFFLOAD_STATUS_OK);
+  ASSERT_EQ_U8(Info.L3Proto, VIRTIO_NET_HDR_OFFLOAD_L3_IPV6);
+  ASSERT_EQ_U8(Info.IsFragmented, 1);
+  ASSERT_EQ_U8(Info.L4Proto, 6);
+
+  memset(&TxReq, 0, sizeof(TxReq));
+  TxReq.NeedsCsum = 1;
+  St = VirtioNetHdrOffloadBuildTxHdr(&Info, &TxReq, &Hdr);
+  ASSERT_EQ_INT(St, VIRTIO_NET_HDR_OFFLOAD_STATUS_UNSUPPORTED);
 
   return 0;
 }
@@ -404,6 +535,9 @@ int main(void) {
   rc |= test_vlan_tagged_ipv4_tcp();
   rc |= test_malformed_and_truncated();
   rc |= test_ipv4_tcp_options_boundary();
+  rc |= test_ipv4_icmp_parse();
+  rc |= test_ipv4_fragmented_tcp_rejected();
+  rc |= test_ipv6_fragmented_tcp_rejected();
   rc |= test_rx_hdr_parse();
 
   if (rc == 0) {

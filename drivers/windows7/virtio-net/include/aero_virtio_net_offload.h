@@ -9,11 +9,20 @@
 
 #include <stddef.h>
 
-/* MSVC before VS2010 lacks <stdint.h>. WDK 7.1 uses an older toolset. */
+/*
+ * MSVC before VS2010 lacks <stdint.h>. WDK 7.1 uses an older toolset.
+ *
+ * Multiple portable modules may be included into the same translation unit; use
+ * a shared macro to avoid conflicting typedef redefinitions.
+ */
 #if defined(_MSC_VER) && _MSC_VER < 1600
+#ifndef AERO_PORTABLE_STDINT_UINT_TYPES_DEFINED
+#define AERO_PORTABLE_STDINT_UINT_TYPES_DEFINED 1
 typedef unsigned __int8 uint8_t;
 typedef unsigned __int16 uint16_t;
 typedef unsigned __int32 uint32_t;
+typedef unsigned __int64 uint64_t;
+#endif
 #else
 #include <stdint.h>
 #endif
