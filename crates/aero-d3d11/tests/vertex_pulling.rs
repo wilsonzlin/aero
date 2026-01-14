@@ -362,6 +362,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{
             label: Some("vertex pulling empty bgl"),
             entries: &[],
         });
+        let empty_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("vertex pulling empty bg"),
+            layout: &empty_bgl,
+            entries: &[],
+        });
 
         let ia_bgl = pulling.create_bind_group_layout(&device);
         let ia_bg = pulling.create_bind_group(
@@ -400,6 +405,12 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{
             });
             pass.set_pipeline(&pipeline);
             pass.set_bind_group(0, &out_bg, &[]);
+            // wgpu 0.20 validates bind group compatibility for all group indices <= the highest
+            // used index, even when intermediate groups are empty. Bind explicit empty groups so
+            // we can still bind vertex pulling at group 3.
+            for group in 1..VERTEX_PULLING_GROUP {
+                pass.set_bind_group(group, &empty_bg, &[]);
+            }
             pass.set_bind_group(VERTEX_PULLING_GROUP, &ia_bg, &[]);
             pass.dispatch_workgroups(1, 1, 1);
         }
@@ -572,6 +583,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{
             label: Some("vertex pulling unorm empty bgl"),
             entries: &[],
         });
+        let empty_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("vertex pulling unorm empty bg"),
+            layout: &empty_bgl,
+            entries: &[],
+        });
 
         let ia_bgl = pulling.create_bind_group_layout(&device);
         let ia_bg = pulling.create_bind_group(
@@ -610,6 +626,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{
             });
             pass.set_pipeline(&pipeline);
             pass.set_bind_group(0, &out_bg, &[]);
+            for group in 1..VERTEX_PULLING_GROUP {
+                pass.set_bind_group(group, &empty_bg, &[]);
+            }
             pass.set_bind_group(VERTEX_PULLING_GROUP, &ia_bg, &[]);
             pass.dispatch_workgroups(1, 1, 1);
         }
@@ -780,6 +799,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{
             label: Some("vertex pulling unorm8x2 empty bgl"),
             entries: &[],
         });
+        let empty_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("vertex pulling unorm8x2 empty bg"),
+            layout: &empty_bgl,
+            entries: &[],
+        });
 
         let ia_bgl = pulling.create_bind_group_layout(&device);
         let ia_bg = pulling.create_bind_group(
@@ -818,6 +842,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{
             });
             pass.set_pipeline(&pipeline);
             pass.set_bind_group(0, &out_bg, &[]);
+            for group in 1..VERTEX_PULLING_GROUP {
+                pass.set_bind_group(group, &empty_bg, &[]);
+            }
             pass.set_bind_group(VERTEX_PULLING_GROUP, &ia_bg, &[]);
             pass.dispatch_workgroups(2, 1, 1);
         }
@@ -992,6 +1019,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{
             label: Some("vertex pulling unorm10 empty bgl"),
             entries: &[],
         });
+        let empty_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("vertex pulling unorm10 empty bg"),
+            layout: &empty_bgl,
+            entries: &[],
+        });
 
         let ia_bgl = pulling.create_bind_group_layout(&device);
         let ia_bg = pulling.create_bind_group(
@@ -1030,6 +1062,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{
             });
             pass.set_pipeline(&pipeline);
             pass.set_bind_group(0, &out_bg, &[]);
+            for group in 1..VERTEX_PULLING_GROUP {
+                pass.set_bind_group(group, &empty_bg, &[]);
+            }
             pass.set_bind_group(VERTEX_PULLING_GROUP, &ia_bg, &[]);
             pass.dispatch_workgroups(1, 1, 1);
         }
@@ -1194,6 +1229,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{
             label: Some("vertex pulling f16 empty bgl"),
             entries: &[],
         });
+        let empty_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("vertex pulling f16 empty bg"),
+            layout: &empty_bgl,
+            entries: &[],
+        });
 
         let ia_bgl = pulling.create_bind_group_layout(&device);
         let ia_bg = pulling.create_bind_group(
@@ -1232,6 +1272,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{
             });
             pass.set_pipeline(&pipeline);
             pass.set_bind_group(0, &out_bg, &[]);
+            for group in 1..VERTEX_PULLING_GROUP {
+                pass.set_bind_group(group, &empty_bg, &[]);
+            }
             pass.set_bind_group(VERTEX_PULLING_GROUP, &ia_bg, &[]);
             pass.dispatch_workgroups(1, 1, 1);
         }
@@ -1391,6 +1434,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{
             label: Some("vertex pulling u16 empty bgl"),
             entries: &[],
         });
+        let empty_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("vertex pulling u16 empty bg"),
+            layout: &empty_bgl,
+            entries: &[],
+        });
 
         let ia_bgl = pulling.create_bind_group_layout(&device);
         let ia_bg = pulling.create_bind_group(
@@ -1429,6 +1477,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{
             });
             pass.set_pipeline(&pipeline);
             pass.set_bind_group(0, &out_bg, &[]);
+            for group in 1..VERTEX_PULLING_GROUP {
+                pass.set_bind_group(group, &empty_bg, &[]);
+            }
             pass.set_bind_group(VERTEX_PULLING_GROUP, &ia_bg, &[]);
             pass.dispatch_workgroups(1, 1, 1);
         }
@@ -1582,6 +1633,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{
             label: Some("vertex pulling u32 empty bgl"),
             entries: &[],
         });
+        let empty_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("vertex pulling u32 empty bg"),
+            layout: &empty_bgl,
+            entries: &[],
+        });
 
         let ia_bgl = pulling.create_bind_group_layout(&device);
         let ia_bg = pulling.create_bind_group(
@@ -1620,6 +1676,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{
             });
             pass.set_pipeline(&pipeline);
             pass.set_bind_group(0, &out_bg, &[]);
+            for group in 1..VERTEX_PULLING_GROUP {
+                pass.set_bind_group(group, &empty_bg, &[]);
+            }
             pass.set_bind_group(VERTEX_PULLING_GROUP, &ia_bg, &[]);
             pass.dispatch_workgroups(1, 1, 1);
         }
@@ -1776,6 +1835,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{
             label: Some("vertex pulling unaligned empty bgl"),
             entries: &[],
         });
+        let empty_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("vertex pulling unaligned empty bg"),
+            layout: &empty_bgl,
+            entries: &[],
+        });
         let ia_bgl = pulling.create_bind_group_layout(&device);
         let ia_bg = pulling.create_bind_group(
             &device,
@@ -1814,6 +1878,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{
             });
             pass.set_pipeline(&pipeline);
             pass.set_bind_group(0, &out_bg, &[]);
+            for group in 1..VERTEX_PULLING_GROUP {
+                pass.set_bind_group(group, &empty_bg, &[]);
+            }
             pass.set_bind_group(VERTEX_PULLING_GROUP, &ia_bg, &[]);
             pass.dispatch_workgroups(1, 1, 1);
         }
@@ -1966,6 +2033,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{
             label: Some("vertex pulling oob empty bgl"),
             entries: &[],
         });
+        let empty_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("vertex pulling oob empty bg"),
+            layout: &empty_bgl,
+            entries: &[],
+        });
         let ia_bgl = pulling.create_bind_group_layout(&device);
         let ia_bg = pulling.create_bind_group(
             &device,
@@ -2004,6 +2076,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{
             });
             pass.set_pipeline(&pipeline);
             pass.set_bind_group(0, &out_bg, &[]);
+            for group in 1..VERTEX_PULLING_GROUP {
+                pass.set_bind_group(group, &empty_bg, &[]);
+            }
             pass.set_bind_group(VERTEX_PULLING_GROUP, &ia_bg, &[]);
             pass.dispatch_workgroups(1, 1, 1);
         }
