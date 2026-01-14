@@ -1,35 +1,29 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { PointerLock } from "./pointer_lock";
+import { withStubbedDocument } from "./test_utils";
 
 type ListenerMap = Map<string, EventListenerOrEventListenerObject>;
 
-function withStubbedDocument<T>(run: (doc: any) => T): T {
-  const original = (globalThis as any).document;
+function withListenerTrackingDocument<T>(run: (doc: any) => T): T {
   const listeners: ListenerMap = new Map();
-  const doc = {
-    pointerLockElement: null as unknown,
-    addEventListener: (type: string, listener: EventListenerOrEventListenerObject) => {
+  return withStubbedDocument((doc) => {
+    doc.addEventListener = (type: string, listener: EventListenerOrEventListenerObject) => {
       listeners.set(type, listener);
-    },
-    removeEventListener: vi.fn((type: string, listener: EventListenerOrEventListenerObject) => {
+    };
+    doc.removeEventListener = vi.fn((type: string, listener: EventListenerOrEventListenerObject) => {
       const existing = listeners.get(type);
       if (existing === listener) listeners.delete(type);
-    }),
-    exitPointerLock: vi.fn(),
-    __listeners: listeners,
-  };
-  (globalThis as any).document = doc;
-  try {
+    });
+    doc.exitPointerLock = vi.fn();
+    doc.__listeners = listeners;
     return run(doc);
-  } finally {
-    (globalThis as any).document = original;
-  }
+  });
 }
 
 describe("PointerLock", () => {
   it("initial isLocked reflects document.pointerLockElement", () => {
-    withStubbedDocument((doc) => {
+    withListenerTrackingDocument((doc) => {
       const element = { requestPointerLock: vi.fn() } as unknown as HTMLElement;
 
       doc.pointerLockElement = element;
@@ -45,7 +39,7 @@ describe("PointerLock", () => {
   });
 
   it("invokes onChange exactly once per lock/unlock transition", () => {
-    withStubbedDocument((doc) => {
+    withListenerTrackingDocument((doc) => {
       const element = { requestPointerLock: vi.fn() } as unknown as HTMLElement;
       doc.pointerLockElement = null;
 
@@ -87,7 +81,7 @@ describe("PointerLock", () => {
   });
 
   it("request() no-ops if already locked", () => {
-    withStubbedDocument((doc) => {
+    withListenerTrackingDocument((doc) => {
       const element = { requestPointerLock: vi.fn() } as unknown as HTMLElement;
       doc.pointerLockElement = element;
 
@@ -99,7 +93,7 @@ describe("PointerLock", () => {
   });
 
   it("request() no-ops if requestPointerLock is missing", () => {
-    withStubbedDocument((doc) => {
+    withListenerTrackingDocument((doc) => {
       doc.pointerLockElement = null;
       const element = {} as unknown as HTMLElement;
       const pl = new PointerLock(element);
@@ -110,7 +104,7 @@ describe("PointerLock", () => {
   });
 
   it("exit() no-ops if not locked; calls document.exitPointerLock if locked", () => {
-    withStubbedDocument((doc) => {
+    withListenerTrackingDocument((doc) => {
       const element = { requestPointerLock: vi.fn() } as unknown as HTMLElement;
 
       doc.pointerLockElement = null;
@@ -128,7 +122,7 @@ describe("PointerLock", () => {
   });
 
   it("dispose() unregisters listeners", () => {
-    withStubbedDocument((doc) => {
+    withListenerTrackingDocument((doc) => {
       const element = { requestPointerLock: vi.fn() } as unknown as HTMLElement;
       const pl = new PointerLock(element);
 
@@ -148,4 +142,3 @@ describe("PointerLock", () => {
     });
   });
 });
-
