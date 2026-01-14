@@ -97,6 +97,11 @@ constexpr uint32_t kD3D10BindDepthStencil = kD3D11BindDepthStencil;
 
 // D3D10-class IA supports 16 vertex buffer slots (D3D10_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT).
 constexpr uint32_t kD3D10IaVertexInputResourceSlotCount = 16;
+// D3D11-class IA supports 32 vertex buffer slots (D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT).
+//
+// This constant is stable across Windows versions and is used in the Win7 WDK
+// D3D11 UMD without relying on WDK headers here.
+constexpr uint32_t kD3D11IaVertexInputResourceSlotCount = 32;
 
 // D3D11_CPU_ACCESS_* subset (numeric values from d3d11.h).
 constexpr uint32_t kD3D11CpuAccessWrite = 0x10000;
@@ -1005,6 +1010,14 @@ struct Device {
   // Minimal software-state tracking for the Win7 guest tests. This allows the
   // UMD to produce correct staging readback results even when the submission
   // backend is still a stub.
+  //
+  // Track all IA vertex buffer slots so WDDM submission + resource-destruction
+  // cleanup can conservatively include/unbind any buffers referenced by draw
+  // calls. Slot 0 is additionally mirrored into the `current_vb*` fields below
+  // for the bring-up software rasterizer.
+  std::array<Resource*, kD3D11IaVertexInputResourceSlotCount> current_vb_resources{};
+  std::array<uint32_t, kD3D11IaVertexInputResourceSlotCount> current_vb_strides_bytes{};
+  std::array<uint32_t, kD3D11IaVertexInputResourceSlotCount> current_vb_offsets_bytes{};
   Resource* current_vb = nullptr;
   uint32_t current_vb_stride_bytes = 0;
   uint32_t current_vb_offset_bytes = 0;

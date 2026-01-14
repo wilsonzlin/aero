@@ -778,7 +778,9 @@ static void TrackDrawStateLocked(Device* dev) {
   }
 
   TrackBoundTargetsForSubmitLocked(dev);
-  TrackWddmAllocForSubmitLocked(dev, dev->current_vb, /*write=*/false);
+  for (Resource* vb : dev->current_vb_resources) {
+    TrackWddmAllocForSubmitLocked(dev, vb, /*write=*/false);
+  }
   TrackWddmAllocForSubmitLocked(dev, dev->current_ib, /*write=*/false);
 
   for (Resource* res : dev->current_vs_cbs) {
@@ -1531,10 +1533,18 @@ static void UnbindResourceFromInputAssemblerLocked(Device* dev, const Resource* 
     return;
   }
 
-  if (ResourcesAlias(dev->current_vb, res)) {
-    dev->current_vb = nullptr;
-    dev->current_vb_stride_bytes = 0;
-    dev->current_vb_offset_bytes = 0;
+  for (uint32_t slot = 0; slot < dev->current_vb_resources.size(); ++slot) {
+    if (!ResourcesAlias(dev->current_vb_resources[slot], res)) {
+      continue;
+    }
+    dev->current_vb_resources[slot] = nullptr;
+    dev->current_vb_strides_bytes[slot] = 0;
+    dev->current_vb_offsets_bytes[slot] = 0;
+    if (slot == 0) {
+      dev->current_vb = nullptr;
+      dev->current_vb_stride_bytes = 0;
+      dev->current_vb_offset_bytes = 0;
+    }
 
     aerogpu_vertex_buffer_binding vb{};
     vb.buffer = 0;
@@ -1546,7 +1556,7 @@ static void UnbindResourceFromInputAssemblerLocked(Device* dev, const Resource* 
     if (!cmd) {
       SetError(dev, E_OUTOFMEMORY);
     } else {
-      cmd->start_slot = 0;
+      cmd->start_slot = slot;
       cmd->buffer_count = 1;
     }
   }
@@ -5709,26 +5719,26 @@ void AEROGPU_APIENTRY IaSetVertexBuffers11(D3D11DDI_HDEVICECONTEXT hCtx,
       SetError(dev, E_INVALIDARG);
       return;
     }
-    if (StartSlot >= D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT) {
+    if (StartSlot >= kD3D11IaVertexInputResourceSlotCount) {
       SetError(dev, E_INVALIDARG);
       return;
     }
-    if (bind_count > (D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT - StartSlot)) {
+    if (bind_count > (kD3D11IaVertexInputResourceSlotCount - StartSlot)) {
       SetError(dev, E_INVALIDARG);
       return;
     }
   } else {
-    if (StartSlot > D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT) {
+    if (StartSlot > kD3D11IaVertexInputResourceSlotCount) {
       SetError(dev, E_INVALIDARG);
       return;
     }
-    if (StartSlot == D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT) {
+    if (StartSlot == kD3D11IaVertexInputResourceSlotCount) {
       return;
     }
-    bind_count = D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT - StartSlot;
+    bind_count = kD3D11IaVertexInputResourceSlotCount - StartSlot;
   }
 
-  std::array<aerogpu_vertex_buffer_binding, D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT> bindings{};
+  std::array<aerogpu_vertex_buffer_binding, kD3D11IaVertexInputResourceSlotCount> bindings{};
   for (UINT i = 0; i < bind_count; ++i) {
     const uint32_t slot = static_cast<uint32_t>(StartSlot + i);
 
@@ -5747,6 +5757,11 @@ void AEROGPU_APIENTRY IaSetVertexBuffers11(D3D11DDI_HDEVICECONTEXT hCtx,
     b.reserved0 = 0;
     bindings[i] = b;
 
+    if (slot < dev->current_vb_resources.size()) {
+      dev->current_vb_resources[slot] = vb_res;
+      dev->current_vb_strides_bytes[slot] = b.stride_bytes;
+      dev->current_vb_offsets_bytes[slot] = b.offset_bytes;
+    }
     if (slot == 0) {
       dev->current_vb = vb_res;
       dev->current_vb_stride_bytes = b.stride_bytes;
@@ -6929,6 +6944,9 @@ void AEROGPU_APIENTRY ClearState11(D3D11DDI_HDEVICECONTEXT hCtx) {
   dev->current_gs = 0;
   dev->current_input_layout = 0;
   dev->current_input_layout_obj = nullptr;
+  dev->current_vb_resources.fill(nullptr);
+  dev->current_vb_strides_bytes.fill(0);
+  dev->current_vb_offsets_bytes.fill(0);
   dev->current_vb = nullptr;
   dev->current_vb_stride_bytes = 0;
   dev->current_vb_offset_bytes = 0;
@@ -6995,7 +7013,7 @@ void AEROGPU_APIENTRY ClearState11(D3D11DDI_HDEVICECONTEXT hCtx) {
   topo_cmd->reserved0 = 0;
   dev->current_topology = default_topology;
 
-  std::array<aerogpu_vertex_buffer_binding, D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT> vb_zeros{};
+  std::array<aerogpu_vertex_buffer_binding, kD3D11IaVertexInputResourceSlotCount> vb_zeros{};
   auto* vb_cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_vertex_buffers>(
       AEROGPU_CMD_SET_VERTEX_BUFFERS, vb_zeros.data(), vb_zeros.size() * sizeof(vb_zeros[0]));
   if (!vb_cmd) {
