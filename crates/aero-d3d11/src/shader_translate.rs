@@ -5363,8 +5363,9 @@ fn emit_sub_with_carry(
     b: &crate::sm4_ir::SrcOperand,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), ShaderTranslateError> {
-    let a_expr = emit_src_vec4_u32_int(a, inst_index, opcode, ctx)?;
-    let b_expr = emit_src_vec4_u32_int(b, inst_index, opcode, ctx)?;
+    // Treat sources as raw 32-bit integer lanes in the untyped register file.
+    let a_expr = emit_src_vec4_u32(a, inst_index, opcode, ctx)?;
+    let b_expr = emit_src_vec4_u32(b, inst_index, opcode, ctx)?;
 
     let a_var = format!("{opcode}_a_{inst_index}");
     let b_var = format!("{opcode}_b_{inst_index}");

@@ -1166,6 +1166,71 @@ fn translates_isubc_emits_carry_and_writes_both_destinations() {
 }
 
 #[test]
+fn translates_isubc_uses_raw_bits_without_float_int_heuristics() {
+    let osgn_params = vec![sig_param("SV_Target", 0, 0, 0b1111)];
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (FOURCC_OSGN, build_signature_chunk(&osgn_params)),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    // Populate source registers with float values first to ensure the `isubc` lowering doesn't try
+    // to "helpfully" numeric-cast f32->u32 based on `floor()` heuristics. DXBC registers are
+    // untyped; integer ops must treat these as raw 32-bit lane bits.
+    let module = Sm4Module {
+        stage: ShaderStage::Pixel,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: Vec::new(),
+        instructions: vec![
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Temp, 0, WriteMask::XYZW),
+                src: src_imm([1.0, 1.0, 1.0, 1.0]),
+            },
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Temp, 1, WriteMask::XYZW),
+                src: src_imm([2.0, 2.0, 2.0, 2.0]),
+            },
+            Sm4Inst::ISubC {
+                dst_diff: dst(RegFile::Temp, 2, WriteMask::XYZW),
+                dst_carry: dst(RegFile::Temp, 3, WriteMask::XYZW),
+                a: src_reg(RegFile::Temp, 0),
+                b: src_reg(RegFile::Temp, 1),
+            },
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Output, 0, WriteMask::XYZW),
+                src: src_reg(RegFile::Temp, 2),
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+
+    assert!(
+        translated
+            .wgsl
+            .contains("let isubc_a_2 = bitcast<vec4<u32>>(r0);"),
+        "expected isubc to consume raw u32 bits via bitcast for src0:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated
+            .wgsl
+            .contains("let isubc_b_2 = bitcast<vec4<u32>>(r1);"),
+        "expected isubc to consume raw u32 bits via bitcast for src1:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        !translated.wgsl.contains("floor(") && !translated.wgsl.contains("u32("),
+        "isubc lowering should not use float→int heuristics (floor/u32 casts):\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
 fn rdef_cbuffer_size_overrides_used_registers() {
     // Shader reads only cb0[0], but RDEF declares the cbuffer to be 128 bytes (8 registers).
     let osgn_params = vec![sig_param("SV_Target", 0, 0, 0b1111)];
