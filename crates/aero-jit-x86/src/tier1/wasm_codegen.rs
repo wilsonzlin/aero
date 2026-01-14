@@ -1070,10 +1070,10 @@ impl Emitter<'_> {
                                 .instruction(&Instruction::LocalSet(this.layout.value_local(*dst)));
                         };
 
-                        // Page 0: translate.
-                        self.emit_translate_and_cache(MMU_ACCESS_READ, crate::TLB_FLAG_READ);
+                         // Page 0: translate.
+                         self.emit_translate_and_cache(MMU_ACCESS_READ, crate::TLB_FLAG_READ);
 
-                        if self.options.inline_tlb_mmio_exit {
+                         if self.options.inline_tlb_mmio_exit {
                             self.emit_mmio_exit(size_bytes, 0, None);
 
                             // Page 1: translate and ensure RAM. Use the original vaddr for the MMIO

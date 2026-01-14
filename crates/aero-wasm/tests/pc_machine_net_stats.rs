@@ -4,7 +4,7 @@ use aero_ipc::layout::{
     IPC_MAGIC, IPC_VERSION, io_ipc_queue_kind, ipc_header, queue_desc, ring_ctrl,
 };
 use aero_wasm::{PcMachine, SharedRingBuffer};
-use js_sys::{BigInt, Int32Array, Reflect, SharedArrayBuffer, Uint32Array};
+use js_sys::{BigInt, Int32Array, Reflect, SharedArrayBuffer, Uint32Array, Uint8Array};
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::JsValue;
 use wasm_bindgen_test::wasm_bindgen_test;
@@ -17,6 +17,19 @@ fn make_shared_ring(capacity_bytes: u32) -> SharedRingBuffer {
     // Initialize the header: capacity + zeroed indices.
     ctrl.set_index(ring_ctrl::CAPACITY as u32, capacity_bytes as i32);
     SharedRingBuffer::new(sab, 0).expect("SharedRingBuffer::new")
+}
+
+fn make_shared_ring_pair(capacity_bytes: u32) -> (SharedArrayBuffer, SharedRingBuffer, SharedRingBuffer) {
+    assert_eq!(capacity_bytes as usize % aero_ipc::layout::RECORD_ALIGN, 0);
+    let total_bytes = ring_ctrl::BYTES as u32 + capacity_bytes;
+    let sab = SharedArrayBuffer::new(total_bytes);
+    let ctrl = Int32Array::new_with_byte_offset_and_length(&sab, 0, ring_ctrl::WORDS as u32);
+    // Initialize the header: capacity + zeroed indices.
+    ctrl.set_index(ring_ctrl::CAPACITY as u32, capacity_bytes as i32);
+
+    let a = SharedRingBuffer::new(sab.clone(), 0).expect("SharedRingBuffer::new (a)");
+    let b = SharedRingBuffer::new(sab.clone(), 0).expect("SharedRingBuffer::new (b)");
+    (sab, a, b)
 }
 
 fn make_io_ipc_sab(net_capacity_bytes: u32) -> SharedArrayBuffer {
@@ -150,4 +163,53 @@ fn pc_machine_attach_l2_tunnel_from_io_ipc_sab_smoke() {
     m.attach_l2_tunnel_from_io_ipc_sab(io_ipc)
         .expect("attach_l2_tunnel_from_io_ipc_sab");
     assert!(!m.net_stats().is_null());
+}
+
+#[wasm_bindgen_test]
+fn pc_machine_net_stats_marks_rx_broken_after_corrupt_record() {
+    let mut m = PcMachine::new(2 * 1024 * 1024).expect("PcMachine::new");
+
+    let net_tx = make_shared_ring(64);
+    let (net_rx_sab, net_rx, net_rx_test) = make_shared_ring_pair(64);
+    m.attach_net_rings(net_tx, net_rx);
+
+    // Seed the ring with a valid record so HEAD!=TAIL.
+    let frame = vec![0u8; aero_net_e1000::MIN_L2_FRAME_LEN];
+    assert!(
+        net_rx_test.try_push(&frame),
+        "NET_RX try_push should succeed"
+    );
+
+    // Corrupt the record length at the current head so the next pop yields PopError::Corrupt,
+    // which should permanently flip `rx_broken`.
+    let ctrl =
+        Int32Array::new_with_byte_offset_and_length(&net_rx_sab, 0, ring_ctrl::WORDS as u32);
+    let cap = ctrl.get_index(ring_ctrl::CAPACITY as u32) as u32;
+    let head = ctrl.get_index(ring_ctrl::HEAD as u32) as u32;
+    let head_index = head % cap;
+
+    let data = Uint8Array::new_with_byte_offset_and_length(&net_rx_sab, ring_ctrl::BYTES as u32, cap);
+    let bogus_len = 100u32.to_le_bytes();
+    data.subarray(head_index, head_index + 4).copy_from(&bogus_len);
+
+    m.poll_network();
+
+    let stats = m.net_stats();
+    assert!(!stats.is_null());
+
+    let rx_broken = Reflect::get(&stats, &JsValue::from_str("rx_broken"))
+        .expect("Reflect::get(rx_broken)");
+    assert_eq!(
+        rx_broken.as_bool(),
+        Some(true),
+        "rx_broken should become true after ring corruption"
+    );
+
+    let got = get_bigint(&stats, "rx_corrupt");
+    let s = got
+        .to_string(10)
+        .expect("BigInt::to_string")
+        .as_string()
+        .expect("BigInt::to_string returned non-string");
+    assert_eq!(s, "1", "rx_corrupt should increment after corruption");
 }
