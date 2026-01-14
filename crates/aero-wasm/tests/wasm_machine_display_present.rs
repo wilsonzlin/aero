@@ -6,6 +6,23 @@ use wasm_bindgen_test::wasm_bindgen_test;
 #[wasm_bindgen_test]
 fn wasm_machine_display_present_exposes_framebuffer_cache() {
     let mut machine = Machine::new(16 * 1024 * 1024).expect("Machine::new");
+
+    // Threaded/shared-memory builds must expose embedded scanout + cursor state headers so the JS
+    // runtime can coordinate presentation across workers.
+    #[cfg(feature = "wasm-threaded")]
+    {
+        assert_ne!(
+            machine.scanout_state_ptr(),
+            0,
+            "scanout_state_ptr must be non-zero in wasm-threaded builds"
+        );
+        assert_ne!(
+            machine.cursor_state_ptr(),
+            0,
+            "cursor_state_ptr must be non-zero in wasm-threaded builds"
+        );
+    }
+
     machine.reset();
 
     machine.display_present();
