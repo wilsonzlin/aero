@@ -1982,10 +1982,7 @@ impl AerogpuD3d11Executor {
                             bytes: stream_bytes,
                             size: stream_size,
                         };
-                        if self.state.gs.is_some()
-                            || self.state.hs.is_some()
-                            || self.state.ds.is_some()
-                        {
+                        if self.gs_hs_ds_emulation_required() {
                             self.exec_draw_with_compute_prepass(
                                 &mut encoder,
                                 &mut stream,
@@ -3995,7 +3992,7 @@ impl AerogpuD3d11Executor {
             // Geometry/tessellation emulation requires a compute prepass, which cannot run inside
             // an active render pass. End the current pass and leave the draw for the outer loop.
             if (opcode == OPCODE_DRAW || opcode == OPCODE_DRAW_INDEXED)
-                && (self.state.gs.is_some() || self.state.hs.is_some() || self.state.ds.is_some())
+                && self.gs_hs_ds_emulation_required()
             {
                 break;
             }
@@ -10831,7 +10828,28 @@ fn get_or_create_render_pipeline_for_state<'a>(
     };
     let depth_stencil_key = depth_stencil_state.as_ref().map(|ds| ds.clone().into());
 
-    let topology = state.primitive_topology.validate_direct_draw()?;
+    // The compute-prepass path expands input primitives into a "normal" vertex/index stream.
+    // Adjacency and patch-list topologies are not directly representable in WebGPU render
+    // pipelines, so we map them onto the closest non-emulated topology for the expanded draw.
+    //
+    // Note: The placeholder compute shader always outputs a triangle; full GS/HS/DS correctness
+    // will replace this mapping as the emulation pipeline matures.
+    let topology = match state.primitive_topology {
+        CmdPrimitiveTopology::PointList => wgpu::PrimitiveTopology::PointList,
+        CmdPrimitiveTopology::LineList | CmdPrimitiveTopology::LineListAdj => {
+            wgpu::PrimitiveTopology::LineList
+        }
+        CmdPrimitiveTopology::LineStrip | CmdPrimitiveTopology::LineStripAdj => {
+            wgpu::PrimitiveTopology::LineStrip
+        }
+        CmdPrimitiveTopology::TriangleList
+        | CmdPrimitiveTopology::TriangleFan
+        | CmdPrimitiveTopology::TriangleListAdj
+        | CmdPrimitiveTopology::PatchList { .. } => wgpu::PrimitiveTopology::TriangleList,
+        CmdPrimitiveTopology::TriangleStrip | CmdPrimitiveTopology::TriangleStripAdj => {
+            wgpu::PrimitiveTopology::TriangleStrip
+        }
+    };
     let key = RenderPipelineKey {
         vertex_shader,
         fragment_shader: ps_wgsl_hash,
