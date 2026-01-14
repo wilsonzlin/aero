@@ -1601,6 +1601,59 @@ fn translate_entrypoint_falls_back_on_unsupported_opcode() {
 }
 
 #[test]
+fn translate_entrypoint_rejects_nested_relative_addressing() {
+    // Craft a minimal ps_3_0 shader with nested relative addressing in a source operand.
+    // Nested relative addressing is malformed SM2/SM3 bytecode and should be rejected as
+    // `Malformed` (not treated as an "unsupported feature" that triggers legacy fallback).
+    const RELATIVE: u32 = 0x0000_2000;
+    let src = enc_src(2, 0, 0xE4) | RELATIVE; // c0[...]
+    let rel = enc_src(3, 0, 0xE4) | RELATIVE; // a0.x with RELATIVE bit set -> nested relative
+    let mut words = vec![0xFFFF_0300];
+    words.extend(enc_inst(
+        0x0001, // mov
+        &[enc_dst(0, 0, 0xF), src, rel],
+    ));
+    words.push(0x0000_FFFF);
+
+    let err = shader_translate::translate_d3d9_shader_to_wgsl(
+        &to_bytes(&words),
+        shader::WgslOptions::default(),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, shader_translate::ShaderTranslateError::Malformed(_)),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn translate_entrypoint_rejects_invalid_predicate_modifier() {
+    // Predicated instructions append a predicate register token. Predicate register source
+    // modifiers other than None/Negate are malformed and should not trigger fallback.
+    let mut words = vec![0xFFFF_0300];
+    words.extend(enc_inst_with_extra(
+        0x0001,       // mov
+        0x1000_0000,  // predicated flag
+        &[
+            enc_dst(8, 0, 0xF),             // oC0
+            enc_src(2, 0, 0xE4),            // c0
+            enc_src_mod(19, 0, 0xE4, 2), // p0 with invalid modifier (bias)
+        ],
+    ));
+    words.push(0x0000_FFFF);
+
+    let err = shader_translate::translate_d3d9_shader_to_wgsl(
+        &to_bytes(&words),
+        shader::WgslOptions::default(),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, shader_translate::ShaderTranslateError::Malformed(_)),
+        "{err:?}"
+    );
+}
+
+#[test]
 fn translate_entrypoint_rejects_truncated_token_stream() {
     let mut bytes = to_bytes(&assemble_vs_passthrough_sm3_decoder());
     // Drop the END token and one operand token from the last instruction, leaving a truncated

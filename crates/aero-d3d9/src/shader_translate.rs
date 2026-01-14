@@ -289,11 +289,40 @@ enum Sm3TranslateFailure {
 
 impl Sm3TranslateFailure {
     fn is_fallbackable(&self) -> bool {
-        let msg = self.to_string().to_ascii_lowercase();
-        // These errors are typically due to incomplete SM3 opcode/register/modifier coverage or
-        // WGSL lowering limitations. In these cases, falling back to the legacy translator is
-        // preferable to hard-failing the entire draw stream.
-        msg.contains("unsupported") || msg.contains("not supported")
+        // Fallback is intended for *valid* shaders that use features not yet supported by the
+        // strict SM3 pipeline (missing opcode/register/modifier coverage, WGSL lowering gaps).
+        //
+        // Do **not** use broad substring matching on the formatted error string: decode errors in
+        // particular can contain phrases like "not supported" for *malformed* bytecode (e.g. nested
+        // relative addressing), and falling back would allow hostile inputs to bypass the stricter
+        // decoder/validator.
+        match self {
+            // Most decode errors indicate malformed/untrusted bytecode. The one exception we
+            // intentionally fall back on is an unknown opcode: the legacy translator skips unknown
+            // opcodes so we can keep games running while the strict pipeline gains coverage.
+            Sm3TranslateFailure::Decode(e) => e.message.to_ascii_lowercase().contains("unsupported opcode"),
+
+            // IR build errors are generally higher-level semantic issues. We treat explicit
+            // "unsupported"/"not supported" messages as fallbackable feature gaps.
+            Sm3TranslateFailure::Build(e) => {
+                let msg = e.message.to_ascii_lowercase();
+                msg.contains("unsupported") || msg.contains("not supported")
+            }
+
+            // Verify errors represent malformed IR and should not fall back.
+            Sm3TranslateFailure::Verify(_) => false,
+
+            // WGSL lowering errors can be either feature gaps or malformed IR. Treat explicit
+            // "unsupported"/"not supported" messages as fallbackable, except for relative-addressing
+            // failures (these are treated as malformed to avoid using fallback as an escape hatch).
+            Sm3TranslateFailure::Wgsl(e) => {
+                let msg = e.message.to_ascii_lowercase();
+                if msg.contains("relative addressing") {
+                    return false;
+                }
+                msg.contains("unsupported") || msg.contains("not supported")
+            }
+        }
     }
 }
 
