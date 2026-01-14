@@ -112,14 +112,60 @@ impl FixedFunctionShaderDesc {
 
         fn write_stage(hash: &mut u64, stage: &TextureStageState) {
             write_u8(hash, stage.color_op as u8);
-            write_tex_arg(hash, stage.color_arg0);
-            write_tex_arg(hash, stage.color_arg1);
-            write_tex_arg(hash, stage.color_arg2);
+            // Hash only args that can affect shader generation. For unused args, write a fixed
+            // placeholder so irrelevant state changes do not cause cache misses.
+            let color_mask = op_arg_mask(stage.color_op, Component::Rgb);
+            write_tex_arg(
+                hash,
+                if (color_mask & ARG0_MASK) != 0 {
+                    stage.color_arg0
+                } else {
+                    TextureArg::Current
+                },
+            );
+            write_tex_arg(
+                hash,
+                if (color_mask & ARG1_MASK) != 0 {
+                    stage.color_arg1
+                } else {
+                    TextureArg::Current
+                },
+            );
+            write_tex_arg(
+                hash,
+                if (color_mask & ARG2_MASK) != 0 {
+                    stage.color_arg2
+                } else {
+                    TextureArg::Current
+                },
+            );
 
             write_u8(hash, stage.alpha_op as u8);
-            write_tex_arg(hash, stage.alpha_arg0);
-            write_tex_arg(hash, stage.alpha_arg1);
-            write_tex_arg(hash, stage.alpha_arg2);
+            let alpha_mask = op_arg_mask(stage.alpha_op, Component::Alpha);
+            write_tex_arg(
+                hash,
+                if (alpha_mask & ARG0_MASK) != 0 {
+                    stage.alpha_arg0
+                } else {
+                    TextureArg::Current
+                },
+            );
+            write_tex_arg(
+                hash,
+                if (alpha_mask & ARG1_MASK) != 0 {
+                    stage.alpha_arg1
+                } else {
+                    TextureArg::Current
+                },
+            );
+            write_tex_arg(
+                hash,
+                if (alpha_mask & ARG2_MASK) != 0 {
+                    stage.alpha_arg2
+                } else {
+                    TextureArg::Current
+                },
+            );
 
             // Only hash texture coordinate state when it can affect shader generation (i.e. when
             // this stage actually samples from `D3DTA_TEXTURE`, either explicitly via an arg or
@@ -533,40 +579,65 @@ fn emit_tss_stage(
 fn stage_uses_texture(stage: &TextureStageState) -> bool {
     // Some ops implicitly consume the current stage texture even if none of the args explicitly
     // reference `D3DTA_TEXTURE` (e.g. `BLENDTEXTUREALPHA` uses texture alpha as its interpolant).
-    let implicit_texture = matches!(
-        stage.color_op,
-        TextureOp::BlendTextureAlpha | TextureOp::BlendTextureAlphaPm
-    ) || matches!(
-        stage.alpha_op,
-        TextureOp::BlendTextureAlpha | TextureOp::BlendTextureAlphaPm
-    );
-    [
-        stage.color_arg0,
-        stage.color_arg1,
-        stage.color_arg2,
-        stage.alpha_arg0,
-        stage.alpha_arg1,
-        stage.alpha_arg2,
-    ]
-    .into_iter()
-    .any(|arg| matches!(arg.source, TextureArgSource::Texture))
-        || implicit_texture
+    let implicit_texture =
+        op_implicitly_uses_texture(stage.color_op) || op_implicitly_uses_texture(stage.alpha_op);
+    if implicit_texture {
+        return true;
+    }
+
+    let color_mask = op_arg_mask(stage.color_op, Component::Rgb);
+    if (color_mask & ARG0_MASK) != 0 && stage.color_arg0.source == TextureArgSource::Texture {
+        return true;
+    }
+    if (color_mask & ARG1_MASK) != 0 && stage.color_arg1.source == TextureArgSource::Texture {
+        return true;
+    }
+    if (color_mask & ARG2_MASK) != 0 && stage.color_arg2.source == TextureArgSource::Texture {
+        return true;
+    }
+
+    let alpha_mask = op_arg_mask(stage.alpha_op, Component::Alpha);
+    if (alpha_mask & ARG0_MASK) != 0 && stage.alpha_arg0.source == TextureArgSource::Texture {
+        return true;
+    }
+    if (alpha_mask & ARG1_MASK) != 0 && stage.alpha_arg1.source == TextureArgSource::Texture {
+        return true;
+    }
+    if (alpha_mask & ARG2_MASK) != 0 && stage.alpha_arg2.source == TextureArgSource::Texture {
+        return true;
+    }
+
+    false
 }
 
 fn stage_uses_temp(stage: &TextureStageState) -> bool {
     if stage.result_target == TextureResultTarget::Temp {
         return true;
     }
-    [
-        stage.color_arg0,
-        stage.color_arg1,
-        stage.color_arg2,
-        stage.alpha_arg0,
-        stage.alpha_arg1,
-        stage.alpha_arg2,
-    ]
-    .into_iter()
-    .any(|arg| matches!(arg.source, TextureArgSource::Temp))
+
+    let color_mask = op_arg_mask(stage.color_op, Component::Rgb);
+    if (color_mask & ARG0_MASK) != 0 && stage.color_arg0.source == TextureArgSource::Temp {
+        return true;
+    }
+    if (color_mask & ARG1_MASK) != 0 && stage.color_arg1.source == TextureArgSource::Temp {
+        return true;
+    }
+    if (color_mask & ARG2_MASK) != 0 && stage.color_arg2.source == TextureArgSource::Temp {
+        return true;
+    }
+
+    let alpha_mask = op_arg_mask(stage.alpha_op, Component::Alpha);
+    if (alpha_mask & ARG0_MASK) != 0 && stage.alpha_arg0.source == TextureArgSource::Temp {
+        return true;
+    }
+    if (alpha_mask & ARG1_MASK) != 0 && stage.alpha_arg1.source == TextureArgSource::Temp {
+        return true;
+    }
+    if (alpha_mask & ARG2_MASK) != 0 && stage.alpha_arg2.source == TextureArgSource::Temp {
+        return true;
+    }
+
+    false
 }
 
 fn shader_uses_temp(desc: &FixedFunctionShaderDesc) -> bool {
@@ -586,6 +657,30 @@ fn shader_uses_temp(desc: &FixedFunctionShaderDesc) -> bool {
 enum Component {
     Rgb,
     Alpha,
+}
+
+const ARG0_MASK: u8 = 1 << 0;
+const ARG1_MASK: u8 = 1 << 1;
+const ARG2_MASK: u8 = 1 << 2;
+
+fn op_arg_mask(op: TextureOp, component: Component) -> u8 {
+    match op {
+        TextureOp::Disable => 0,
+        TextureOp::SelectArg1 => ARG1_MASK,
+        TextureOp::SelectArg2 => ARG2_MASK,
+        TextureOp::MultiplyAdd | TextureOp::Lerp => ARG0_MASK | ARG1_MASK | ARG2_MASK,
+        TextureOp::DotProduct3 => match component {
+            Component::Rgb => ARG1_MASK | ARG2_MASK,
+            // DOTPRODUCT3 does not define alpha; the shader preserves current alpha and does not
+            // consume any args.
+            Component::Alpha => 0,
+        },
+        _ => ARG1_MASK | ARG2_MASK,
+    }
+}
+
+fn op_implicitly_uses_texture(op: TextureOp) -> bool {
+    matches!(op, TextureOp::BlendTextureAlpha | TextureOp::BlendTextureAlphaPm)
 }
 
 fn wgsl_arg_component(arg: TextureArg, stage_index: usize, component: Component) -> String {

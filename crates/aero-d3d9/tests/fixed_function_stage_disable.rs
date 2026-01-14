@@ -478,3 +478,77 @@ fn blendtexturealphapm_op_implicitly_samples_texture() {
         "expected BLENDTEXTUREALPHAPM to use (1 - tex_a) weight:\n{wgsl}"
     );
 }
+
+#[test]
+fn unused_texture_args_do_not_trigger_sampling_or_hash_changes() {
+    // If a stage's operation does not consume ARG2, setting ARG2 to `D3DTA_TEXTURE` should not
+    // affect shader generation or caching.
+    let mut stages_a = [TextureStageState::default(); 8];
+    stages_a[0] = TextureStageState {
+        color_op: TextureOp::SelectArg1,
+        color_arg0: TextureArg::Current,
+        color_arg1: TextureArg::Diffuse,
+        color_arg2: TextureArg::Texture, // unused by SelectArg1
+        alpha_op: TextureOp::SelectArg1,
+        alpha_arg0: TextureArg::Current,
+        alpha_arg1: TextureArg::Diffuse,
+        alpha_arg2: TextureArg::Texture, // unused by SelectArg1
+        ..Default::default()
+    };
+
+    let mut stages_b = stages_a;
+    stages_b[0].color_arg2 = TextureArg::Current;
+    stages_b[0].alpha_arg2 = TextureArg::Current;
+
+    let desc_a = FixedFunctionShaderDesc {
+        fvf: Fvf(Fvf::XYZ | Fvf::DIFFUSE | (1 << Fvf::TEXCOUNT_SHIFT)),
+        stages: stages_a,
+        alpha_test: AlphaTestState::default(),
+        fog: FogState::default(),
+        lighting: LightingState::default(),
+    };
+    let desc_b = FixedFunctionShaderDesc {
+        stages: stages_b,
+        ..desc_a.clone()
+    };
+
+    assert_eq!(desc_a.state_hash(), desc_b.state_hash());
+
+    let shaders = generate_fixed_function_shaders(&desc_a);
+    assert!(
+        !shaders.fragment_wgsl.contains("textureSample("),
+        "unexpected texture sampling in fragment shader:\n{}",
+        shaders.fragment_wgsl
+    );
+}
+
+#[test]
+fn unused_temp_args_do_not_trigger_temp_register() {
+    let mut stages = [TextureStageState::default(); 8];
+    stages[0] = TextureStageState {
+        color_op: TextureOp::SelectArg1,
+        color_arg0: TextureArg::Temp, // unused
+        color_arg1: TextureArg::Diffuse,
+        color_arg2: TextureArg::Temp, // unused
+        alpha_op: TextureOp::SelectArg1,
+        alpha_arg0: TextureArg::Temp, // unused
+        alpha_arg1: TextureArg::Diffuse,
+        alpha_arg2: TextureArg::Temp, // unused
+        ..Default::default()
+    };
+
+    let desc = FixedFunctionShaderDesc {
+        fvf: Fvf(Fvf::XYZ | Fvf::DIFFUSE),
+        stages,
+        alpha_test: AlphaTestState::default(),
+        fog: FogState::default(),
+        lighting: LightingState::default(),
+    };
+
+    let shaders = generate_fixed_function_shaders(&desc);
+    assert!(
+        !shaders.fragment_wgsl.contains("var temp = current"),
+        "unexpected temp register in fragment shader:\n{}",
+        shaders.fragment_wgsl
+    );
+}
