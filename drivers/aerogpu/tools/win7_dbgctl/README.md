@@ -95,6 +95,9 @@ Minimum supported commands:
   - an error code (when available; ABI 1.3+ devices expose `ERROR_CODE`)
   - the associated fence (when available; ABI 1.3+ devices expose `ERROR_FENCE`)
   - an error count (when available; ABI 1.3+ devices expose `ERROR_COUNT` and the KMD also tracks `error_irq_count`)
+  
+  Note: on newer KMDs, this query is designed to be safe during power transitions. If the adapter is powered down
+  (or the driver is in a resume/teardown window), the KMD may return cached telemetry without reading MMIO.
 
 - `aerogpu_dbgctl --watch-fence --samples N --interval-ms M [--timeout-ms T]`  
   Polls `--query-fence` in a loop and prints **one line per sample** with:
