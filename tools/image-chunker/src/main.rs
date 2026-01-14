@@ -1739,11 +1739,8 @@ async fn verify_chunk_once(
         }
     }
 
-    // If we don't have a checksum to verify, `Content-Length` already validated the size. Avoid
-    // streaming the entire object body unnecessarily.
-    if expected_sha256.is_none() && content_length.is_some() {
-        return Ok(());
-    }
+    // Always stream the body to validate that the object can be downloaded and the actual byte
+    // length matches the manifest (even when no sha256 is present).
 
     let mut reader = resp.body.into_async_read();
     let mut hasher = expected_sha256.map(|_| Sha256::new());
