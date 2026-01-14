@@ -163,6 +163,8 @@ Notes:
 - This checks whether MSI-X is enabled on the **QEMU device**, not whether Windows actually granted multiple message
   interrupts. For guest-observed mode/message counts, use the guest `virtio-<dev>-irq|INFO|...` lines and the mirrored
   host markers (`AERO_VIRTIO_WIN7_HOST|VIRTIO_*_IRQ|...` / `...|VIRTIO_*_IRQ_DIAG|...`).
+  - Exception: for virtio-blk, `-RequireVirtioBlkMsix` / `--require-virtio-blk-msix` also requires the guest marker
+    `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-msix|PASS|mode=msix|...` so the harness validates the **effective** interrupt mode.
 
 Example (PowerShell):
 
@@ -182,6 +184,7 @@ Newer `aero-virtio-selftest.exe` binaries emit a dedicated marker describing the
 `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-msix|PASS|mode=intx/msix|messages=<n>|config_vector=<v>|queue_vector=<v>`.
 
 When `--require-virtio-blk-msix` is used, the **Python** harness additionally requires `mode=msix` from this marker.
+The **PowerShell** harness does the same when `-RequireVirtioBlkMsix` is set.
 
 Example (Python):
 
@@ -192,6 +195,16 @@ python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
   --require-virtio-blk-msix \
   --timeout-seconds 600 \
   --snapshot
+```
+
+Example (PowerShell):
+
+```powershell
+pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
+  -QemuSystem qemu-system-x86_64 `
+  -DiskImagePath ./win7-aero-tests.qcow2 `
+  -RequireVirtioBlkMsix `
+  -TimeoutSeconds 600
 ```
 ### virtio-input event delivery (QMP input injection)
 

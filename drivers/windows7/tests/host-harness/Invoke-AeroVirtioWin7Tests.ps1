@@ -1283,6 +1283,85 @@ function Try-EmitAeroVirtioBlkIrqMarker {
   Write-Host $out
 }
 
+function Test-AeroVirtioBlkMsixMarker {
+  param(
+    [Parameter(Mandatory = $true)] [string]$Tail,
+    # Optional: if provided, fall back to parsing the full serial log when the rolling tail buffer does not
+    # contain the virtio-blk-msix marker (e.g. because the tail was truncated).
+    [Parameter(Mandatory = $false)] [string]$SerialLogPath = ""
+  )
+
+  $prefix = "AERO_VIRTIO_SELFTEST|TEST|virtio-blk-msix|"
+  $matches = [regex]::Matches($Tail, [regex]::Escape($prefix) + "[^`r`n]*")
+  $line = $null
+  if ($matches.Count -gt 0) {
+    $line = $matches[$matches.Count - 1].Value
+  }
+
+  if (($null -eq $line) -and (-not [string]::IsNullOrEmpty($SerialLogPath)) -and (Test-Path -LiteralPath $SerialLogPath)) {
+    # Tail truncation fallback: scan the full serial log line-by-line.
+    $last = $null
+    try {
+      $fs = [System.IO.File]::Open($SerialLogPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+      try {
+        $sr = [System.IO.StreamReader]::new($fs, [System.Text.Encoding]::UTF8, $true, 4096, $true)
+        try {
+          while ($true) {
+            $l = $sr.ReadLine()
+            if ($null -eq $l) { break }
+            $t = $l.Trim()
+            if ($t.StartsWith($prefix)) {
+              $last = $t
+            }
+          }
+        } finally {
+          $sr.Dispose()
+        }
+      } finally {
+        $fs.Dispose()
+      }
+    } catch { }
+    if ($null -ne $last) {
+      $line = $last
+    }
+  }
+
+  if ($null -eq $line) {
+    return @{ Ok = $false; Reason = "missing virtio-blk-msix marker (guest selftest too old?)" }
+  }
+
+  if ($line -match "\|FAIL(\||$)") {
+    return @{ Ok = $false; Reason = "virtio-blk-msix marker reported FAIL" }
+  }
+  if ($line -match "\|SKIP(\||$)") {
+    return @{ Ok = $false; Reason = "virtio-blk-msix marker reported SKIP" }
+  }
+
+  $fields = @{}
+  foreach ($tok in $line.Split("|")) {
+    $idx = $tok.IndexOf("=")
+    if ($idx -le 0) { continue }
+    $k = $tok.Substring(0, $idx)
+    $v = $tok.Substring($idx + 1)
+    if (-not [string]::IsNullOrEmpty($k)) {
+      $fields[$k] = $v
+    }
+  }
+
+  if (-not $fields.ContainsKey("mode")) {
+    return @{ Ok = $false; Reason = "virtio-blk-msix marker missing mode=... field" }
+  }
+
+  $mode = [string]$fields["mode"]
+  if ($mode -ne "msix") {
+    $msgs = "?"
+    if ($fields.ContainsKey("messages")) { $msgs = [string]$fields["messages"] }
+    return @{ Ok = $false; Reason = "mode=$mode (expected msix) messages=$msgs" }
+  }
+
+  return @{ Ok = $true; Reason = "ok" }
+}
+
 function Try-EmitAeroVirtioNetLargeMarker {
   param(
     [Parameter(Mandatory = $true)] [string]$Tail
@@ -2672,6 +2751,19 @@ try {
       -RequireVirtioInputTabletEventsPass ([bool]$needInputTabletEvents) `
       -QmpHost "127.0.0.1" `
       -QmpPort $qmpPort
+    if ($RequireVirtioBlkMsix -and $result.Result -eq "PASS") {
+      # In addition to the host-side PCI MSI-X enable check (QMP), require the guest to report
+      # virtio-blk running in MSI-X mode via the dedicated marker:
+      #   AERO_VIRTIO_SELFTEST|TEST|virtio-blk-msix|PASS|mode=msix|...
+      $chk = Test-AeroVirtioBlkMsixMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
+      if (-not $chk.Ok) {
+        $result = @{
+          Result     = "VIRTIO_BLK_MSIX_REQUIRED"
+          Tail       = $result.Tail
+          MsixReason = $chk.Reason
+        }
+      }
+    }
     if ($needMsixCheck -and $result.Result -eq "PASS") {
       if (($null -eq $qmpPort) -or ($qmpPort -le 0)) {
         $result = @{
@@ -2988,6 +3080,17 @@ try {
       try { $reason = [string]$result.MsixReason } catch { }
       if ([string]::IsNullOrEmpty($reason)) { $reason = "virtio-blk MSI-X was not enabled" }
       Write-Host "FAIL: VIRTIO_BLK_MSIX_NOT_ENABLED: $reason"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "VIRTIO_BLK_MSIX_REQUIRED" {
+      $reason = ""
+      try { $reason = [string]$result.MsixReason } catch { }
+      if ([string]::IsNullOrEmpty($reason)) { $reason = "guest did not report virtio-blk running in MSI-X mode" }
+      Write-Host "FAIL: VIRTIO_BLK_MSIX_REQUIRED: $reason"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
