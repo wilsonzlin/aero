@@ -1107,6 +1107,10 @@ To also exercise the optional virtio-input Consumer Control / media keys marker 
 `with_virtio_input_media_keys=true`. This requires a guest image provisioned with `--test-input-media-keys` (for example via
 `New-AeroWin7TestImage.ps1 -TestInputMediaKeys` (alias: `-TestMediaKeys`)).
 
+To also require the optional virtio-input LED/statusq marker (`virtio-input-led`), set the workflow input
+`with_virtio_input_led=true`. This requires a guest image provisioned with `--test-input-led` (for example via
+`New-AeroWin7TestImage.ps1 -TestInputLed`).
+
 To exercise the extended virtio-input markers (`virtio-input-events-modifiers/buttons/wheel`), set the workflow input
 `with_virtio_input_events_extended=true`. This requires a guest image provisioned with `--test-input-events` and
 `--test-input-events-extended` (or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS_EXTENDED=1`; for example via
@@ -1136,6 +1140,10 @@ marker (`...|virtio-net-link-flap|READY|...`) and requires the guest marker
 
 - The guest image must be provisioned with `--test-net-link-flap` (or env var `AERO_VIRTIO_SELFTEST_TEST_NET_LINK_FLAP=1`),
   for example via `New-AeroWin7TestImage.ps1 -TestNetLinkFlap`.
+
+To attach virtio-snd and require the guest virtio-snd playback/capture/duplex tests to PASS, set the workflow input
+`with_virtio_snd=true`. By default the workflow uses the `wav` backend (`virtio_snd_audio_backend=wav`), uploads
+`virtio-snd.wav`, and (by default) verifies the captured audio is non-silent (`virtio_snd_verify_wav=true`).
 
 To require the virtio-snd buffer limits stress test (`virtio-snd-buffer-limits`), set the workflow input
 `with_snd_buffer_limits=true` (requires `with_virtio_snd=true` and a guest image provisioned with `--test-snd-buffer-limits`,
@@ -1184,6 +1192,7 @@ only if you explicitly want the base image to be mutated.
     - (only when blk resize is enabled via `-WithBlkResize` / `--with-blk-resize`) `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|PASS`
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS`
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-input-bind|PASS`
+    - (only when LED/statusq testing is enabled via `-WithInputLed` / `--with-input-led`) `AERO_VIRTIO_SELFTEST|TEST|virtio-input-led|PASS`
     - (only when virtio-input event injection is enabled via `-WithInputEvents`/`--with-input-events` or implied by wheel/extended flags)
       `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS`
     - (only when wheel injection is enabled via `-WithInputWheel` / `--with-input-wheel`) `AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|PASS`
