@@ -65,7 +65,10 @@ Feature matrix for the Win7 WDK-backed UMDs:
 - **Multiple viewports/scissor rects**: the protocol encodes only one viewport and one scissor rect. The UMD validates that any additional entries are identical/disabled; otherwise it reports `E_NOTIMPL`.
 - **DXGI format expansion** beyond the protocol’s current `enum aerogpu_format` list: only formats representable in the protocol can be encoded. The supported DXGI subset (including ABI-gated sRGB/BC policies) is centralized in `src/aerogpu_dxgi_format.h`. Adding more DXGI formats still requires extending `drivers/aerogpu/protocol/aerogpu_pci.h` + host support.
 - Stencil ops are protocol-limited: the current `aerogpu_depth_stencil_state` only carries **stencil enable + masks**; it does **not** encode stencil funcs/ops (or separate front/back face state).
-- Blend factors are protocol-limited: only `{Zero, One, SrcAlpha, InvSrcAlpha, DestAlpha, InvDestAlpha, Constant, InvConstant}` are representable. Other D3D10/11 blend factors (and unsupported blend ops) are rejected at `CreateBlendState` time (`E_NOTIMPL`) to avoid silent misrendering.
+- Blend state is protocol-limited:
+  - The protocol encodes only a single global blend state. D3D10/10.1/11 blend state objects may describe **per-render-target** blend state; the UMD rejects non-uniform per-RT blend state (`E_NOTIMPL`) rather than silently misrendering.
+  - Alpha-to-coverage is not representable and is rejected (`E_NOTIMPL`).
+  - Only `{Zero, One, SrcAlpha, InvSrcAlpha, DestAlpha, InvDestAlpha, Constant, InvConstant}` blend factors (and a limited set of blend ops) are representable; others are rejected at `CreateBlendState` time (`E_NOTIMPL`).
 
 ### Still stubbed / known gaps
 
@@ -95,6 +98,7 @@ Host-side unit tests that exercise Map/Unmap and the newer resource/layout behav
   - Quick run (from repo root):
     - `cmake -S drivers/aerogpu/umd/d3d10_11/tests -B out/umd_d3d10_11_tests && cmake --build out/umd_d3d10_11_tests && ctest --test-dir out/umd_d3d10_11_tests -V`
 - `drivers/aerogpu/umd/d3d10_11/tests/dxgi_format_tests.cpp` (CMake target: `aerogpu_d3d10_11_dxgi_format_tests`) covers DXGI→AeroGPU format mapping and ABI-gated sRGB/BC policies in `src/aerogpu_dxgi_format.h`.
+- `drivers/aerogpu/umd/d3d10_11/tests/state_packets_tests.cpp` (CMake target: `aerogpu_d3d10_11_state_packets_tests`) covers fixed-function state packet encoding (`SET_BLEND_STATE`, `SET_RASTERIZER_STATE`, `SET_DEPTH_STENCIL_STATE`) and protocol invariants (size/alignment, default-state behavior).
 - Host-side command-stream execution tests for the WebGPU-backed executor live under `crates/aero-d3d11/tests/` (run via `cargo test -p aero-d3d11`), including smoke coverage for `AEROGPU_CMD_*` packets and GS/HS/DS compute-prepass scaffolding.
 - Command-stream/host validation for B5 formats, MRT, and state packets lives under `crates/aero-gpu/tests/` (run via `cargo test -p aero-gpu`)
   (for example: `aerogpu_d3d9_16bit_formats.rs`, `aerogpu_d3d9_clear_scissor.rs`, `aerogpu_d3d9_cmd_stream_state.rs`).
