@@ -31,7 +31,14 @@ For the consolidated virtio-input end-to-end validation plan (device model + dri
 - **virtio-net**
   - Detect a virtio network adapter (SetupAPI hardware IDs).
   - Wait for link + DHCP IPv4 address (non-APIPA).
+  - Deterministic UDP echo roundtrip to the host harness (exercises UDP TX/RX):
+    - Sends two UDP datagrams to `10.0.2.2:<udp_port>` and expects the payload to be echoed back.
+    - Default `udp_port` is `18081` (configurable via `--udp-port`).
+    - This is intended to exercise UDP checksum offload paths end-to-end.
   - DNS resolution (`getaddrinfo`)
+  - Best-effort UDP DNS query smoke test (informational; does not affect overall PASS/FAIL):
+    - Sends a minimal UDP DNS query to the adapter's configured DNS server(s) (as reported by `GetAdaptersInfo`).
+    - Emits the marker `virtio-net-udp-dns` (PASS/FAIL/SKIP) but the overall virtio-net test does not depend on it.
   - HTTP GET to a configurable URL (WinHTTP) to validate basic connectivity.
   - Deterministic large HTTP download (`<http_url>-large`) to stress sustained RX throughput and verify data integrity:
     - downloads **1 MiB** of bytes `0..255` repeating
@@ -349,6 +356,12 @@ Notes:
   - `irq_mode`: `msi` / `intx` / `none`
   - `irq_message_count`: number of message interrupts (`0` for INTx)
   - `irq_reason`: optional (present when `irq_mode=none`)
+- The virtio-net section also emits a standalone UDP echo test marker (used by the host harness):
+  - `AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp|PASS|bytes=<n>|small_bytes=<n>|mtu_bytes=<n>|reason=<...>|wsa=<err>`
+  - The overall virtio-net test fails if this UDP echo test fails.
+- The virtio-net section also emits an additional (informational) UDP DNS query marker:
+  - `AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp-dns|PASS/FAIL/SKIP|server=<ip>|query=<host>|sent=<n>|recv=<n>|rcode=<n>`
+  - This marker is best-effort and does not affect overall PASS/FAIL.
 - The virtio-net section also emits an optional ctrl virtqueue diagnostic line (not parsed by the harness):
   - `virtio-net-ctrl-vq|INFO|...`
   - This is best-effort and may emit `...|diag_unavailable` if the in-guest driver did not expose the registry-backed diagnostics.

@@ -940,6 +940,14 @@ AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_EVENTQ|INFO/SKIP|completions=...|pcm_period=...
 
 These do not affect overall PASS/FAIL.
 
+The harness may also mirror the guest's UDP DNS smoke-test marker (when present) into a stable host marker:
+
+```
+AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_UDP_DNS|PASS/FAIL/SKIP|server=...|query=...|sent=...|recv=...|rcode=...|reason=...
+```
+
+This is informational only and does not affect overall PASS/FAIL.
+
 ## Optional/Compatibility Features
 
 ### IRQ diagnostics (INTx vs MSI/MSI-X)
