@@ -180,7 +180,7 @@ fn ring_buffer_try_pop_capped_drops_oversize_without_allocating_payload_len() {
     // the oversize record without wedging the queue.
     let rb = RingBuffer::new(64);
 
-    rb.try_push(&vec![0xaa; 10]).unwrap();
+    rb.try_push(&[0xaa; 10]).unwrap();
     rb.try_push(&[0x42]).unwrap();
 
     assert_eq!(
