@@ -20435,6 +20435,7 @@ fn anyhow_guest_mem(err: GuestMemoryError) -> anyhow::Error {
 mod tests {
     use super::*;
     use crate::runtime::bindings::BoundBuffer;
+    use crate::runtime::bindings::BoundConstantBuffer;
     use crate::runtime::bindings::BoundTexture;
     use aero_dxbc::{test_utils as dxbc_test_utils, FourCC};
     use aero_gpu::guest_memory::VecGuestMemory;
@@ -26405,6 +26406,173 @@ fn cs_main() {
             assert_eq!(bound.id, scratch.id);
             assert_eq!(bound.offset, 0);
             assert_eq!(bound.size, Some(scratch.bind_size));
+        });
+    }
+
+    #[test]
+    fn constant_buffer_scratch_respects_stage_ex_bucket_for_domain_stage() {
+        pollster::block_on(async {
+            use reflection_bindings::BindGroupResourceProvider;
+
+            let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+                Ok(exec) => exec,
+                Err(e) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                    return;
+                }
+            };
+
+            let uniform_align = exec.device.limits().min_uniform_buffer_offset_alignment as u64;
+            if uniform_align <= wgpu::COPY_BUFFER_ALIGNMENT {
+                skip_or_panic(
+                    module_path!(),
+                    &format!("uniform alignment too small for scratch test ({uniform_align})"),
+                );
+                return;
+            }
+
+            const BUF: u32 = 1;
+            let buf_size = uniform_align
+                .checked_mul(2)
+                .and_then(|v| v.checked_add(64))
+                .expect("buf_size overflow");
+            let src = exec.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("constant buffer scratch domain test src"),
+                size: buf_size,
+                usage: wgpu::BufferUsages::UNIFORM
+                    | wgpu::BufferUsages::COPY_SRC
+                    | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+
+            // Seed the buffer with deterministic data so the scratch copy reads initialized bytes.
+            let mut data = Vec::with_capacity(buf_size as usize);
+            for i in 0..(buf_size / 4) {
+                data.extend_from_slice(&(i as u32).to_le_bytes());
+            }
+            exec.queue.write_buffer(&src, 0, &data);
+
+            let id = BufferId(exec.next_buffer_id);
+            exec.next_buffer_id = exec.next_buffer_id.wrapping_add(1);
+            exec.resources.buffers.insert(
+                BUF,
+                BufferResource {
+                    id,
+                    buffer: src,
+                    size: buf_size,
+                    gpu_size: buf_size,
+                    aerogpu_usage_flags: 0,
+                    #[cfg(test)]
+                    usage: wgpu::BufferUsages::UNIFORM
+                        | wgpu::BufferUsages::COPY_SRC
+                        | wgpu::BufferUsages::COPY_DST,
+                    backing: None,
+                    dirty: None,
+                    host_shadow: None,
+                },
+            );
+
+            let offset = uniform_align - wgpu::COPY_BUFFER_ALIGNMENT;
+            let bind_size = 16u64;
+            exec.bindings
+                .stage_mut(ShaderStage::Domain)
+                .set_constant_buffer(
+                    0,
+                    Some(BoundConstantBuffer {
+                        buffer: BUF,
+                        offset,
+                        size: Some(bind_size),
+                    }),
+                );
+
+            let binding = crate::Binding {
+                group: ShaderStage::Domain.as_bind_group_index(),
+                binding: 0,
+                // HS/DS are emulated via compute; bind groups for these stages should use compute
+                // visibility.
+                visibility: wgpu::ShaderStages::COMPUTE,
+                kind: crate::BindingKind::ConstantBuffer {
+                    slot: 0,
+                    reg_count: 1,
+                },
+            };
+            let pipeline_bindings = reflection_bindings::build_pipeline_bindings_info(
+                &exec.device,
+                &mut exec.bind_group_layout_cache,
+                [reflection_bindings::ShaderBindingSet::Guest(
+                    std::slice::from_ref(&binding),
+                )],
+                reflection_bindings::BindGroupIndexValidation::GuestShaders,
+            )
+            .expect("build pipeline bindings");
+
+            let allocs = AllocTable::new(None).expect("alloc table");
+            let mut guest_mem = VecGuestMemory::new(0);
+            let mut encoder = exec
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("constant buffer scratch domain test encoder"),
+                });
+            exec.ensure_bound_resources_uploaded(
+                ShaderStage::Domain,
+                &mut encoder,
+                &pipeline_bindings,
+                &allocs,
+                &mut guest_mem,
+            )
+            .expect("ensure bound resources uploaded");
+
+            let scratch = exec.cbuffer_scratch.get(&(ShaderStage::Domain, 0)).expect(
+                "scratch buffer should be allocated for unaligned DS constant buffer offset",
+            );
+
+            // Verify that bind-group providers surface the scratch buffer (and that bind-group
+            // creation avoids validation errors from the unaligned original offset).
+            exec.device.push_error_scope(wgpu::ErrorFilter::Validation);
+            let provider = CmdExecutorBindGroupProvider {
+                resources: &exec.resources,
+                legacy_constants: &exec.legacy_constants,
+                cbuffer_scratch: &exec.cbuffer_scratch,
+                srv_buffer_scratch: &exec.srv_buffer_scratch,
+                storage_align: (exec.device.limits().min_storage_buffer_offset_alignment as u64)
+                    .max(1),
+                max_storage_binding_size: exec.device.limits().max_storage_buffer_binding_size
+                    as u64,
+                dummy_uniform: &exec.dummy_uniform,
+                dummy_storage: &exec.dummy_storage,
+                dummy_texture_view_2d: &exec.dummy_texture_view_2d,
+                dummy_texture_view_2d_array: &exec.dummy_texture_view_2d_array,
+                default_sampler: &exec.default_sampler,
+                stage: ShaderStage::Domain,
+                stage_state: exec.bindings.stage(ShaderStage::Domain),
+                internal_buffers: &[],
+            };
+
+            let group_index = ShaderStage::Domain.as_bind_group_index() as usize;
+            assert!(
+                pipeline_bindings.group_layouts.len() > group_index,
+                "expected DS bindings to allocate group({group_index}) layout"
+            );
+            reflection_bindings::build_bind_group(
+                &exec.device,
+                &mut exec.bind_group_cache,
+                &pipeline_bindings.group_layouts[group_index],
+                pipeline_bindings.group_bindings[group_index].as_slice(),
+                &provider,
+            )
+            .expect("build bind group");
+
+            exec.poll_wait();
+            let err = exec.device.pop_error_scope().await;
+            assert!(
+                err.is_none(),
+                "bind group creation should not produce a validation error (got {err:?})"
+            );
+
+            let (scratch_id, _scratch_buf) = provider
+                .constant_buffer_scratch(0)
+                .expect("provider should surface scratch binding");
+            assert_eq!(scratch_id, scratch.id);
         });
     }
 
