@@ -5180,6 +5180,7 @@ function renderAudioPanel(): HTMLElement {
               ``,
               `Key files:`,
               `- audio-metrics.json: consolidated host-side audio counters + worker snapshot + config snapshot`,
+              `- manifest.json: list of all files in this tar (paths + byte sizes)`,
               `- host-media-devices.json: browser media device inventory + mic permission state (device/group IDs hashed)`,
               `- audio-output-*.wav: buffered output ring snapshots (PCM16 WAV)`,
               `- audio-output-*.json: metadata for each output WAV (sample rate, ring indices/counters, signal stats)`,
@@ -5735,6 +5736,19 @@ function renderAudioPanel(): HTMLElement {
               JSON.stringify({ timeIso, build: getBuildInfoForExport(), ok: false, file: "perf-hud.json", error: message }, null, 2),
             ),
           });
+        }
+
+        // Bundle manifest (best-effort). This helps tooling quickly identify which files were
+        // emitted by this export run without unpacking the tar manually.
+        try {
+          const files = entries.map((e) => ({ path: e.path, bytes: e.data.byteLength }));
+          entries.push({
+            path: `${dir}/manifest.json`,
+            data: encoder.encode(JSON.stringify({ timeIso, build: getBuildInfoForExport(), files }, null, 2)),
+          });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          entries.push({ path: `${dir}/manifest-error.txt`, data: encoder.encode(message) });
         }
 
         const tarBytes = createTarArchive(entries, { mtimeSec });
