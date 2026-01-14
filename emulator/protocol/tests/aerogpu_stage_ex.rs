@@ -3,13 +3,14 @@ use core::mem::{offset_of, size_of};
 use aero_protocol::aerogpu::aerogpu_cmd::{
     decode_cmd_create_shader_dxbc_payload_le, decode_cmd_hdr_le,
     decode_cmd_set_shader_resource_buffers_bindings_le,
-    decode_cmd_set_unordered_access_buffers_bindings_le, decode_stage_ex, encode_stage_ex,
-    resolve_shader_stage_with_ex, resolve_stage, AerogpuCmdOpcode, AerogpuCmdSetConstantBuffers,
+    decode_cmd_set_unordered_access_buffers_bindings_le, decode_stage_ex, decode_stage_ex_gated,
+    encode_stage_ex, resolve_shader_stage_with_ex, resolve_shader_stage_with_ex_gated,
+    resolve_stage, AerogpuCmdOpcode, AerogpuCmdSetConstantBuffers,
     AerogpuCmdSetSamplers, AerogpuCmdSetShaderConstantsF, AerogpuCmdSetShaderResourceBuffers,
     AerogpuCmdSetTexture, AerogpuCmdSetUnorderedAccessBuffers, AerogpuCmdStreamHeader,
     AerogpuConstantBufferBinding, AerogpuD3dShaderStage, AerogpuShaderResourceBufferBinding,
     AerogpuShaderStage, AerogpuShaderStageEx, AerogpuShaderStageResolved, AerogpuStageResolveError,
-    AerogpuUnorderedAccessBufferBinding,
+    AerogpuUnorderedAccessBufferBinding, AEROGPU_STAGE_EX_MIN_ABI_MINOR,
 };
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 
@@ -118,6 +119,34 @@ fn resolve_stage_rejects_vertex_program_type_in_stage_ex() {
     assert_eq!(
         resolve_stage(AerogpuShaderStage::Compute as u32, 1),
         Err(AerogpuStageResolveError::InvalidStageEx { stage_ex: 1 })
+    );
+}
+
+#[test]
+fn stage_ex_helpers_are_gated_by_cmd_stream_abi_minor() {
+    use AerogpuShaderStageResolved as Res;
+
+    let compute = AerogpuShaderStage::Compute as u32;
+    let stage_ex_geom = AerogpuShaderStageEx::Geometry as u32;
+
+    // Pre-stage_ex streams: ignore reserved0 and treat as legacy compute.
+    assert_eq!(
+        decode_stage_ex_gated(AEROGPU_STAGE_EX_MIN_ABI_MINOR - 1, compute, stage_ex_geom),
+        Some(AerogpuShaderStageEx::None)
+    );
+    assert_eq!(
+        resolve_shader_stage_with_ex_gated(AEROGPU_STAGE_EX_MIN_ABI_MINOR - 1, compute, stage_ex_geom),
+        Res::Compute
+    );
+
+    // ABI 1.3+ streams: honor stage_ex discriminator.
+    assert_eq!(
+        decode_stage_ex_gated(AEROGPU_STAGE_EX_MIN_ABI_MINOR, compute, stage_ex_geom),
+        Some(AerogpuShaderStageEx::Geometry)
+    );
+    assert_eq!(
+        resolve_shader_stage_with_ex_gated(AEROGPU_STAGE_EX_MIN_ABI_MINOR, compute, stage_ex_geom),
+        Res::Geometry
     );
 }
 

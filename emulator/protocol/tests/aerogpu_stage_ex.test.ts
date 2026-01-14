@@ -3,11 +3,14 @@ import test from "node:test";
 
 import {
   AEROGPU_CMD_STREAM_HEADER_SIZE,
+  AEROGPU_STAGE_EX_MIN_ABI_MINOR,
   AerogpuCmdWriter,
   AerogpuShaderStage,
   AerogpuShaderStageEx,
   decodeCmdCreateShaderDxbcPayload,
+  decodeStageExGated,
   resolveStageEx,
+  resolveShaderStageWithExGated,
 } from "../aerogpu/aerogpu_cmd.ts";
 
 test("legacy compute packets (shader_stage=COMPUTE, reserved0=0) resolve to Compute", () => {
@@ -45,4 +48,26 @@ test("AerogpuShaderStageEx intentionally omits Vertex=1 (DXBC program type) and 
   // legacy `shader_stage` field for clarity.
   assert.ok(!("Vertex" in AerogpuShaderStageEx));
   assert.equal((AerogpuShaderStageEx as unknown as Record<string, unknown>).Vertex, undefined);
+});
+
+test("stage_ex helpers are gated by command stream ABI minor", () => {
+  // Pre-stage_ex streams (ABI minor < 3) must ignore reserved0 when shader_stage==Compute.
+  assert.equal(
+    decodeStageExGated(AEROGPU_STAGE_EX_MIN_ABI_MINOR - 1, AerogpuShaderStage.Compute, AerogpuShaderStageEx.Geometry),
+    AerogpuShaderStageEx.None,
+  );
+  assert.deepEqual(
+    resolveShaderStageWithExGated(AEROGPU_STAGE_EX_MIN_ABI_MINOR - 1, AerogpuShaderStage.Compute, AerogpuShaderStageEx.Geometry),
+    { kind: "Compute" },
+  );
+
+  // ABI 1.3+ streams must honor stage_ex.
+  assert.equal(
+    decodeStageExGated(AEROGPU_STAGE_EX_MIN_ABI_MINOR, AerogpuShaderStage.Compute, AerogpuShaderStageEx.Geometry),
+    AerogpuShaderStageEx.Geometry,
+  );
+  assert.deepEqual(
+    resolveShaderStageWithExGated(AEROGPU_STAGE_EX_MIN_ABI_MINOR, AerogpuShaderStage.Compute, AerogpuShaderStageEx.Geometry),
+    { kind: "Geometry" },
+  );
 });
