@@ -42,6 +42,25 @@ class PowerShellBlkResetRecoveryMarkerTests(unittest.TestCase):
         assert m is not None
         self.assertIn("virtio-blk-miniport-reset-recovery|", m.group(0))
 
+    def test_warn_miniport_diag_maps_to_skip_host_marker(self) -> None:
+        # Backward compatibility: the legacy miniport diagnostic uses INFO/WARN levels.
+        # The host marker should remain stable as INFO/SKIP, mapping WARN -> SKIP.
+        m = re.search(
+            re.compile(
+                r"(?ims)^function\s+Try-EmitAeroVirtioBlkResetRecoveryMarker\b.*?(?=^function\s+)"
+            ),
+            self.text,
+        )
+        self.assertIsNotNone(m)
+        assert m is not None
+        body = m.group(0)
+        self.assertRegex(
+            body,
+            re.compile(
+                r"(?i)if\s*\(\s*\$s\s*-eq\s*\"WARN\"\s*\)\s*\{\s*\$status\s*=\s*\"SKIP\"\s*\}"
+            ),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
