@@ -510,7 +510,7 @@ fn wgsl_load_attr_expanded_fn(attr: &VertexPullingAttribute) -> String {
     // Returns a `vec4<f32>` where missing components are filled with D3D IA defaults.
     //
     // For scalar/vector float formats, D3D fills missing lanes with (0,0,0,1).
-    // For UNORM8x4, we already return vec4<f32>.
+    // For UNORM8 formats, we convert to float and fill missing lanes as needed.
     let load_expr = match attr.format.component_type {
         DxgiFormatComponentType::F32 => match attr.format.component_count {
             1 => "load_attr_f32".to_owned(),
@@ -519,7 +519,11 @@ fn wgsl_load_attr_expanded_fn(attr: &VertexPullingAttribute) -> String {
             4 => "load_attr_f32x4".to_owned(),
             _ => "load_attr_f32x4".to_owned(),
         },
-        DxgiFormatComponentType::Unorm8 => "load_attr_unorm8x4".to_owned(),
+        DxgiFormatComponentType::Unorm8 => match attr.format.component_count {
+            2 => "load_attr_unorm8x2".to_owned(),
+            4 => "load_attr_unorm8x4".to_owned(),
+            _ => "load_attr_unorm8x4".to_owned(),
+        },
         // TODO: extend vertex pulling prelude for additional DXGI types (F16, U32, U16).
         _ => "load_attr_f32x4".to_owned(),
     };
@@ -560,6 +564,13 @@ fn wgsl_load_attr_expanded_fn(attr: &VertexPullingAttribute) -> String {
                 slot = attr.pulling_slot
             ),
             "return v;".to_owned(),
+        ),
+        (DxgiFormatComponentType::Unorm8, 2) => (
+            format!(
+                "let v: vec2<f32> = {load_expr}({slot}u, addr);",
+                slot = attr.pulling_slot
+            ),
+            "return vec4<f32>(v.x, v.y, 0.0, 1.0);".to_owned(),
         ),
         (DxgiFormatComponentType::Unorm8, 4) => (
             format!(
