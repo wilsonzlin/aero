@@ -299,16 +299,19 @@ fn wasm_tier1_call_helper_bails_out_to_interpreter_without_trapping() {
         next_rip: entry + 4,
     });
 
-    let cpu = CpuState {
+    let mut cpu = CpuState {
         rip: entry,
         ..Default::default()
     };
+    // Regression: runtime bailouts must not clobber unrelated GPRs.
+    write_gpr(&mut cpu, Gpr::Rbx, 0x1122_3344_5566_7788);
     let bus = SimpleBus::new(0x10000);
 
     let (next_rip, out_cpu, _) = run_wasm(&ir, &cpu, &bus);
     assert_eq!(next_rip, entry + 0x10);
     assert_eq!(out_cpu.rip, entry + 0x10);
     assert_eq!(out_cpu.gpr[Gpr::Rax.as_u8() as usize], 0x1234);
+    assert_eq!(out_cpu.gpr[Gpr::Rbx.as_u8() as usize], 0x1122_3344_5566_7788);
 }
 
 #[cfg(feature = "tier1-inline-tlb")]
