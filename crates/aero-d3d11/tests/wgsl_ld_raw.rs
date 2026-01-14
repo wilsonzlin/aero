@@ -268,7 +268,7 @@ fn compute_shader_ld_raw_reads_from_storage_buffer() {
 
         let slice = staging.slice(..);
         let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
-        slice.map_async(wgpu::MapMode::Read, move |v| {
+        slice.map_async(wgpu::MapMode::Read, move |v: Result<(), wgpu::BufferAsyncError>| {
             sender.send(v).ok();
         });
         #[cfg(not(target_arch = "wasm32"))]
