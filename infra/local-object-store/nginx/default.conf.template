@@ -46,6 +46,7 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
 
         # Emulate a CDN "edge override" by stripping upstream CORS headers and injecting ours.
+        proxy_hide_header Cross-Origin-Resource-Policy;
         proxy_hide_header Access-Control-Allow-Origin;
         proxy_hide_header Access-Control-Allow-Credentials;
         proxy_hide_header Access-Control-Allow-Headers;
