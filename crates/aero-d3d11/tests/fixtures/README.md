@@ -42,6 +42,10 @@ The files are intentionally tiny and deterministic, so CI does **not** require
   * Shader model: `ps_4_0`
   * Chunks: `ISGN`, `OSGN`, `SHDR`
   * Behavior: `ld o0, l(0,0,0,0), t0`, `ret`
+* `gs_passthrough.dxbc`
+  * Shader model: `gs_4_0`
+  * Chunks: `ISGN`, `OSGN`, `SHDR`
+  * Behavior: triangle input → triangle strip output, `maxvertexcount=3`, `emit`×3 (passthrough)
 * `gs_emit_triangle.dxbc`
   * Shader model: `gs_4_0`
   * Chunks: `ISGN`, `OSGN`, `SHDR`
@@ -103,8 +107,9 @@ signature chunk layout. The SM4 token streams are intentionally tiny:
   exception: it includes an `add` to ensure tests cover the signature-driven
   translation path.
 
-Expected entry points (if compiled from HLSL) would be `vs_main` / `ps_main`,
-but note that the DXBC blobs here are not produced by `fxc` directly.
+Expected entry points (if compiled from HLSL) would be `vs_main` / `ps_main` /
+`gs_main` / `cs_main`, but note that the DXBC blobs here are not produced by `fxc`
+directly.
 
 Equivalent HLSL (illustrative):
 
@@ -125,15 +130,52 @@ float4 ps_main(float4 pos : SV_Position, float4 color : COLOR0) : SV_Target0 { r
 Texture2D t0 : register(t0);
 SamplerState s0 : register(s0);
 float4 ps_main(float2 uv : TEXCOORD0) : SV_Target0 { return t0.Sample(s0, uv); }
+
+// gs_passthrough.hlsl
+struct GsIn { float4 pos : SV_Position; };
+struct GsOut { float4 pos : SV_Position; };
+[maxvertexcount(3)]
+void gs_main(triangle GsIn input[3], inout TriangleStream<GsOut> stream) {
+  GsOut o;
+  o.pos = input[0].pos; stream.Append(o);
+  o.pos = input[1].pos; stream.Append(o);
+  o.pos = input[2].pos; stream.Append(o);
+}
+
+// gs_emit_cut.hlsl
+[maxvertexcount(1)]
+void gs_main(point GsIn input[1], inout TriangleStream<GsOut> stream) {
+  GsOut o;
+  o.pos = input[0].pos; stream.Append(o);
+  stream.RestartStrip();
+}
+
+// gs_point_to_triangle.hlsl
+[maxvertexcount(3)]
+void gs_main(point GsIn input[1], inout TriangleStream<GsOut> stream) {
+  GsOut o;
+  o.pos = input[0].pos + float4(-0.5, -0.5, 0, 0); stream.Append(o);
+  o.pos = input[0].pos + float4( 0.5, -0.5, 0, 0); stream.Append(o);
+  o.pos = input[0].pos + float4( 0.0,  0.5, 0, 0); stream.Append(o);
+}
+
+// cs_store_uav_raw.hlsl
+RWByteAddressBuffer u0 : register(u0);
+[numthreads(1,1,1)]
+void cs_main() { u0.Store(0, 0x12345678); }
 ```
 
-Example compilation commands:
+Example compilation commands (for reference; the checked-in blobs are hand-authored to keep CI deterministic and do not require `fxc.exe` at test time). These commands assume `fxc.exe` from a Windows 10+ SDK (d3dcompiler_47):
 
 ```bat
 fxc /nologo /T vs_4_0 /E vs_main /Fo vs_passthrough.dxbc vs_passthrough.hlsl
 fxc /nologo /T vs_4_0 /E vs_main /Fo vs_matrix.dxbc vs_matrix.hlsl
 fxc /nologo /T ps_4_0 /E ps_main /Fo ps_passthrough.dxbc ps_passthrough.hlsl
 fxc /nologo /T ps_4_0 /E ps_main /Fo ps_sample.dxbc ps_sample.hlsl
+fxc /nologo /T gs_4_0 /E gs_main /Fo gs_passthrough.dxbc gs_passthrough.hlsl
+fxc /nologo /T gs_4_0 /E gs_main /Fo gs_point_to_triangle.dxbc gs_point_to_triangle.hlsl
+fxc /nologo /T gs_4_0 /E gs_main /Fo gs_emit_cut.dxbc gs_emit_cut.hlsl
+fxc /nologo /T cs_5_0 /E cs_main /Fo cs_store_uav_raw.dxbc cs_store_uav_raw.hlsl
 ```
 
 ## ILAY input-layout blobs

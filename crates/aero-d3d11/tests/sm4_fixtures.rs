@@ -306,3 +306,73 @@ fn parses_and_decodes_sm4_gs_emit_triangle_fixture() {
         "expected cut instruction"
     );
 }
+
+#[test]
+fn parses_and_decodes_sm4_gs_passthrough_fixture() {
+    let bytes = load_fixture("gs_passthrough.dxbc");
+    let dxbc = DxbcFile::parse(&bytes).expect("fixture should parse as DXBC");
+
+    assert!(dxbc.get_chunk(FOURCC_ISGN).is_some(), "missing ISGN chunk");
+    assert!(dxbc.get_chunk(FOURCC_OSGN).is_some(), "missing OSGN chunk");
+    assert!(dxbc.get_chunk(FOURCC_SHDR).is_some(), "missing SHDR chunk");
+
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse failed");
+    assert_eq!(program.stage, ShaderStage::Geometry);
+    assert_eq!(program.model.major, 4);
+
+    let module = decode_program(&program).expect("SM4 decode failed");
+    assert!(
+        module
+            .decls
+            .iter()
+            .any(|d| matches!(d, Sm4Decl::GsInputPrimitive { primitive: 3 })),
+        "expected triangle input primitive decl"
+    );
+    assert!(
+        module
+            .decls
+            .iter()
+            .any(|d| matches!(d, Sm4Decl::GsOutputTopology { topology: 5 })),
+        "expected triangle strip output topology decl"
+    );
+    assert!(
+        module
+            .decls
+            .iter()
+            .any(|d| matches!(d, Sm4Decl::GsMaxOutputVertexCount { max: 3 })),
+        "expected max_output_vertex_count=3 decl"
+    );
+
+    assert_eq!(module.instructions.len(), 7);
+    assert!(matches!(
+        &module.instructions[0],
+        Sm4Inst::Mov { dst, src }
+            if dst.reg.file == RegFile::Output && dst.reg.index == 0
+                && matches!(src.kind, SrcKind::GsInput { reg: 0, vertex: 0 })
+    ));
+    assert!(matches!(&module.instructions[1], Sm4Inst::Emit { stream: 0 }));
+    assert!(matches!(module.instructions.last(), Some(Sm4Inst::Ret)));
+}
+
+#[test]
+fn parses_and_decodes_sm4_gs_point_to_triangle_fixture() {
+    let bytes = load_fixture("gs_point_to_triangle.dxbc");
+    let dxbc = DxbcFile::parse(&bytes).expect("fixture should parse as DXBC");
+
+    assert!(dxbc.get_chunk(FOURCC_ISGN).is_some(), "missing ISGN chunk");
+    assert!(dxbc.get_chunk(FOURCC_OSGN).is_some(), "missing OSGN chunk");
+    assert!(dxbc.get_chunk(FOURCC_SHDR).is_some(), "missing SHDR chunk");
+
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse failed");
+    assert_eq!(program.stage, ShaderStage::Geometry);
+    assert_eq!(program.model.major, 4);
+
+    let module = decode_program(&program).expect("SM4 decode failed");
+    let emit_count = module
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Sm4Inst::Emit { stream: 0 }))
+        .count();
+    assert_eq!(emit_count, 3, "expected three emitted vertices");
+    assert!(matches!(module.instructions.last(), Some(Sm4Inst::Ret)));
+}
