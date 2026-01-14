@@ -99,7 +99,14 @@ export async function importFileToOpfs(
   onProgress?: OpfsImportProgressCallback,
 ): Promise<FileSystemFileHandle> {
   const handle = await openFileHandle(destPath, { create: true });
-  const writable = await handle.createWritable();
+  let writable: FileSystemWritableFileStream;
+  try {
+    // Truncate by default so rewriting an existing destination does not append/corrupt.
+    writable = await handle.createWritable({ keepExistingData: false });
+  } catch {
+    // Some implementations may not accept options; fall back to default.
+    writable = await handle.createWritable();
+  }
 
   const reader = file.stream().getReader();
   let writtenBytes = 0;
