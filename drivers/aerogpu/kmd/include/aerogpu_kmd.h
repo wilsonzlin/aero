@@ -394,7 +394,8 @@ typedef struct _AEROGPU_ADAPTER {
      * Pending meta handles are produced by DxgkDdiRender/DxgkDdiPresent and
      * consumed by DxgkDdiSubmitCommand. Under pathological call patterns (or if
      * submits fail to arrive), this list can otherwise grow without bound and
-     * exhaust nonpaged resources.
+     * exhaust nonpaged resources. The KMD enforces hard caps (count + bytes) to
+     * keep this bounded.
      *
      * Protected by MetaHandleLock.
      */
