@@ -51,6 +51,36 @@ fn create_shader_dxbc_accepts_legacy_geometry_stage_value() {
 
         let mut guest_mem = VecGuestMemory::new(0);
         exec.execute_cmd_stream(&stream, None, &mut guest_mem)
-            .expect("CREATE_SHADER_DXBC (legacy geometry stage=3) should succeed");
+             .expect("CREATE_SHADER_DXBC (legacy geometry stage=3) should succeed");
+    });
+}
+
+#[test]
+fn create_shader_dxbc_rejects_geometry_stage_mismatch() {
+    pollster::block_on(async {
+        let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+            Ok(exec) => exec,
+            Err(e) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                return;
+            }
+        };
+
+        // DXBC container that parses as a vertex shader (program type 1), but tagged as geometry.
+        // The executor should still validate the DXBC stage.
+        let vs_dxbc = build_dxbc(&[(FOURCC_SHEX, build_minimal_sm4_program_chunk(1))]);
+
+        let mut writer = AerogpuCmdWriter::new();
+        writer.create_shader_dxbc(1, AerogpuShaderStage::Geometry, &vs_dxbc);
+        let stream = writer.finish();
+
+        let mut guest_mem = VecGuestMemory::new(0);
+        let err = exec
+            .execute_cmd_stream(&stream, None, &mut guest_mem)
+            .expect_err("geometry stage mismatch should be rejected");
+        assert!(
+            err.to_string().contains("stage mismatch"),
+            "unexpected error: {err:#}"
+        );
     });
 }
