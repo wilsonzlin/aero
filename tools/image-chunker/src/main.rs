@@ -3367,6 +3367,82 @@ mod tests {
     }
 
     #[test]
+    fn resolve_image_root_and_version_prefix_accepts_versioned_prefix() -> Result<()> {
+        let normalized_prefix = normalize_prefix("images/win7/sha256-abc/");
+        let (version_prefix, image_root_prefix, image_id) =
+            resolve_image_root_and_version_prefix(&normalized_prefix, None, "sha256-abc")?;
+        assert_eq!(image_id, "win7");
+        assert_eq!(image_root_prefix, "images/win7/");
+        assert_eq!(version_prefix, "images/win7/sha256-abc/");
+        Ok(())
+    }
+
+    #[test]
+    fn resolve_image_root_and_version_prefix_appends_to_image_root_prefix() -> Result<()> {
+        let normalized_prefix = normalize_prefix("images/win7/");
+        let (version_prefix, image_root_prefix, image_id) =
+            resolve_image_root_and_version_prefix(&normalized_prefix, None, "sha256-abc")?;
+        assert_eq!(image_id, "win7");
+        assert_eq!(image_root_prefix, "images/win7/");
+        assert_eq!(version_prefix, "images/win7/sha256-abc/");
+        Ok(())
+    }
+
+    #[test]
+    fn resolve_image_root_and_version_prefix_adds_image_id_when_prefix_is_parent() -> Result<()> {
+        let normalized_prefix = normalize_prefix("images/");
+        let (version_prefix, image_root_prefix, image_id) =
+            resolve_image_root_and_version_prefix(&normalized_prefix, Some("win7"), "sha256-abc")?;
+        assert_eq!(image_id, "win7");
+        assert_eq!(image_root_prefix, "images/win7/");
+        assert_eq!(version_prefix, "images/win7/sha256-abc/");
+        Ok(())
+    }
+
+    #[test]
+    fn resolve_image_root_and_version_prefix_rejects_sha256_version_mismatch() {
+        let inferred_version = sha256_version_from_digest([0u8; 32]);
+        let resolved_version = sha256_version_from_digest([1u8; 32]);
+
+        let normalized_prefix = normalize_prefix(&format!("images/win7/{inferred_version}/"));
+        let err =
+            resolve_image_root_and_version_prefix(&normalized_prefix, None, &resolved_version)
+                .expect_err("expected version mismatch error");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("prefix appears to end with sha256 version")
+                && msg.contains(&inferred_version)
+                && msg.contains(&resolved_version),
+            "unexpected error: {msg}"
+        );
+    }
+
+    #[test]
+    fn resolve_image_root_and_version_prefix_rejects_versioned_prefix_mismatch_with_explicit_image_id(
+    ) {
+        let normalized_prefix = normalize_prefix("images/win7/v1/");
+        let err = resolve_image_root_and_version_prefix(&normalized_prefix, Some("win7"), "v2")
+            .expect_err("expected version mismatch error");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("appears to include version") && msg.contains("v1") && msg.contains("v2"),
+            "unexpected error: {msg}"
+        );
+    }
+
+    #[test]
+    fn resolve_image_root_and_version_prefix_rejects_implied_image_id_mismatch() {
+        let normalized_prefix = normalize_prefix("images/win7/v1/");
+        let err = resolve_image_root_and_version_prefix(&normalized_prefix, Some("other"), "v1")
+            .expect_err("expected imageId mismatch error");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("prefix implies imageId") && msg.contains("win7") && msg.contains("other"),
+            "unexpected error: {msg}"
+        );
+    }
+
+    #[test]
     fn resolve_publish_destination_infers_from_versioned_prefix() -> Result<()> {
         let args = PublishArgs {
             file: PathBuf::from("disk.img"),
