@@ -154,9 +154,10 @@ You can also use `aero-virtio-selftest.exe`:
 - Newer guest selftests also emit a dedicated MSI-X diagnostics marker (derived from `\\.\AeroVirtioNetDiag`):
   - Guest marker: `AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|PASS/FAIL/SKIP|mode=<intx|msi|msix>|messages=<n>|config_vector=...|rx_vector=...|tx_vector=...`
   - Host marker (mirrored by the QEMU harness): `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_MSIX|PASS/FAIL/SKIP|...`
-- To force MSI-X in the in-tree QEMU harness (and optionally fail if MSI-X is not enabled):
-  - Host (best-effort, global): `-VirtioMsixVectors N` / `--virtio-msix-vectors N`
-  - Host (best-effort, virtio-net only): `-VirtioNetVectors N` / `--virtio-net-vectors N`
+- To increase the chance of MSI-X in the in-tree QEMU harness (and optionally fail if MSI-X is not enabled):
+  - Host (MSI-X table sizing; requires QEMU virtio `vectors` property):
+    - global: `-VirtioMsixVectors N` / `--virtio-msix-vectors N`
+    - virtio-net only: `-VirtioNetVectors N` / `--virtio-net-vectors N`
   - Host (hard requirement): `-RequireVirtioNetMsix` / `--require-virtio-net-msix`
   - See `../tests/guest-selftest/README.md` for how to build/run the tool.
 

@@ -88,8 +88,9 @@ You can also use `aero-virtio-selftest.exe`:
   - `virtio-blk-miniport-irq|INFO|mode=<intx|msi|unknown>|messages=<n>|message_count=<n>|msix_config_vector=0x....|msix_queue0_vector=0x....`
 - To make MSI/MSI-X a hard requirement in the in-tree QEMU harness:
   - Host:
-    - request a larger MSI-X table size (best-effort): `-VirtioMsixVectors N` / `--virtio-msix-vectors N` (global) or
-      `-VirtioBlkVectors N` / `--virtio-blk-vectors N` (virtio-blk only)
+    - request a larger MSI-X table size (requires QEMU virtio `vectors` property):
+      - global: `-VirtioMsixVectors N` / `--virtio-msix-vectors N`
+      - virtio-blk only: `-VirtioBlkVectors N` / `--virtio-blk-vectors N`
     - require MSI-X enabled (host-side check): `-RequireVirtioBlkMsix` / `--require-virtio-blk-msix`
   - Guest selftest: `--expect-blk-msi` (or `AERO_VIRTIO_SELFTEST_EXPECT_BLK_MSI=1`)
     - If provisioning via `drivers/windows7/tests/host-harness/New-AeroWin7TestImage.ps1`, bake this into the scheduled task with `-ExpectBlkMsi`.

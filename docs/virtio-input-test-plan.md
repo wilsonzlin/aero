@@ -402,7 +402,7 @@ To make MSI-X a **hard harness requirement** (end-to-end, guest-reported effecti
 - Python: `--require-virtio-input-msix`
 
 To increase the chance that Windows grants enough MSI-X messages, request a larger MSI-X table size from QEMU
-(best-effort; requires QEMU support for the `vectors=` device property):
+(requires QEMU virtio `vectors` property; the host harness fails fast if unsupported):
 
 - PowerShell: `-VirtioInputVectors N` (or global `-VirtioMsixVectors N`)
 - Python: `--virtio-input-vectors N` (or global `--virtio-msix-vectors N`)

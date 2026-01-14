@@ -124,7 +124,7 @@ Contract v1 requires INTx, but MSI/MSI-X is supported as an optional enhancement
 
 How to validate (in-tree harness):
 
-- Request a larger MSI-X table size from QEMU (best-effort):
+- Request a larger MSI-X table size from QEMU (requires QEMU virtio `vectors` property):
   - global: `-VirtioMsixVectors N` / `--virtio-msix-vectors N`
   - virtio-snd only: `-VirtioSndVectors N` / `--virtio-snd-vectors N`
 - Optionally fail the harness if MSI-X is not enabled on the device: `-RequireVirtioSndMsix` / `--require-virtio-snd-msix`.

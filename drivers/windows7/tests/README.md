@@ -211,7 +211,7 @@ configuration.
 
 To intentionally exercise MSI-X paths (and optionally **require** MSI-X):
 
-- Request a larger MSI-X table size from QEMU (best-effort):
+- Request a larger MSI-X table size from QEMU (requires QEMU virtio `vectors` property):
   - PowerShell (global): `-VirtioMsixVectors N`
   - PowerShell (per device): `-VirtioNetVectors N`, `-VirtioBlkVectors N`, `-VirtioInputVectors N`, `-VirtioSndVectors N`
   - Python (global): `--virtio-msix-vectors N`

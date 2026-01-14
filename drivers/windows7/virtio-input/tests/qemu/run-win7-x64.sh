@@ -29,8 +29,8 @@ Options:
   --i8042-off      Disable the emulated PS/2 controller (i8042=off). Only use after
                    the virtio-input driver is installed, otherwise you may lose input.
   --vectors N      Request an MSI-X table size from QEMU (`-device virtio-*-pci,...,vectors=N`).
-                  Best-effort: requires QEMU support for the `vectors` property. Windows may still
-                  grant fewer messages; drivers fall back.
+                  Requires QEMU support for the `vectors` property (QEMU will fail to start if
+                  unsupported). Windows may still grant fewer messages; drivers fall back.
   -h, --help       Show this help.
 
 Environment overrides:

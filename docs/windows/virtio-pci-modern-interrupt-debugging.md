@@ -67,9 +67,9 @@ Notes:
 - The tool logs to `C:\aero-virtio-selftest.log` and emits markers on stdout/COM1 for host-side parsing.
 
 If you are using the in-tree Win7 QEMU harness (`drivers/windows7/tests/`), you can also ask QEMU to expose a larger MSI-X
-table (best-effort) and/or fail the harness when MSI-X is not enabled:
+table (requires QEMU virtio `vectors` property) and/or fail the harness when MSI-X is not enabled:
 
-- Request a larger MSI-X table (best-effort):
+- Request a larger MSI-X table (requires QEMU virtio `vectors` property):
   - global: `-VirtioMsixVectors N` / `--virtio-msix-vectors N`
   - per device: `-Virtio{Net,Blk,Input,Snd}Vectors N` / `--virtio-{net,blk,input,snd}-vectors N`
 - Require MSI-X (harness checks):
