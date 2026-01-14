@@ -5265,7 +5265,7 @@ fn emit_src_vec4_u32(
 /// To cover both representations, this helper selects between:
 /// - `bitcast<u32>(f32)` (raw bits), and
 /// - `u32(f32)` (numeric conversion),
-/// based on whether the float value looks like a non-negative integer (per lane).
+///   based on whether the float value looks like a non-negative integer (per lane).
 fn emit_src_vec4_u32_int(
     src: &crate::sm4_ir::SrcOperand,
     inst_index: usize,
