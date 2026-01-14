@@ -17,6 +17,8 @@ export const SCANOUT_SOURCE_WDDM = 2 as const;
 // Scanout format values use the AeroGPU `AerogpuFormat` numeric (`u32`) discriminants.
 export const SCANOUT_FORMAT_B8G8R8X8 = AerogpuFormat.B8G8R8X8Unorm;
 export const SCANOUT_FORMAT_B8G8R8A8 = AerogpuFormat.B8G8R8A8Unorm;
+export const SCANOUT_FORMAT_B8G8R8X8_SRGB = AerogpuFormat.B8G8R8X8UnormSrgb;
+export const SCANOUT_FORMAT_B8G8R8A8_SRGB = AerogpuFormat.B8G8R8A8UnormSrgb;
 
 export const SCANOUT_STATE_U32_LEN = 8 as const;
 export const SCANOUT_STATE_BYTE_LEN = SCANOUT_STATE_U32_LEN * 4;

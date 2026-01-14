@@ -61,6 +61,8 @@ import {
 import {
   SCANOUT_FORMAT_B8G8R8A8,
   SCANOUT_FORMAT_B8G8R8X8,
+  SCANOUT_FORMAT_B8G8R8A8_SRGB,
+  SCANOUT_FORMAT_B8G8R8X8_SRGB,
   SCANOUT_SOURCE_WDDM,
   ScanoutStateIndex,
   snapshotScanoutState,
@@ -1876,9 +1878,9 @@ const tryReadWddmScanoutFrame = (snap: ScanoutStateSnapshot): WddmScanoutFrameIn
   if ((snap.basePaddrLo | snap.basePaddrHi) === 0) return null;
   let kind: ScanoutSwizzleKind;
   const fmt = snap.format >>> 0;
-  if (fmt === SCANOUT_FORMAT_B8G8R8X8) {
+  if (fmt === SCANOUT_FORMAT_B8G8R8X8 || fmt === SCANOUT_FORMAT_B8G8R8X8_SRGB) {
     kind = "bgrx";
-  } else if (fmt === SCANOUT_FORMAT_B8G8R8A8) {
+  } else if (fmt === SCANOUT_FORMAT_B8G8R8A8 || fmt === SCANOUT_FORMAT_B8G8R8A8_SRGB) {
     kind = "bgra";
   } else {
     return null;
@@ -3518,7 +3520,12 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                 return true;
               }
               // Supported WDDM scanout formats (AeroGPU formats).
-              if (format !== SCANOUT_FORMAT_B8G8R8X8 && format !== SCANOUT_FORMAT_B8G8R8A8) {
+              if (
+                format !== SCANOUT_FORMAT_B8G8R8X8 &&
+                format !== SCANOUT_FORMAT_B8G8R8A8 &&
+                format !== SCANOUT_FORMAT_B8G8R8X8_SRGB &&
+                format !== SCANOUT_FORMAT_B8G8R8A8_SRGB
+              ) {
                 postStub(typeof seq === "number" ? seq : undefined);
                 return true;
               }

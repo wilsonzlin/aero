@@ -1,4 +1,9 @@
-import { SCANOUT_FORMAT_B8G8R8A8, SCANOUT_FORMAT_B8G8R8X8 } from "../ipc/scanout_state";
+import {
+  SCANOUT_FORMAT_B8G8R8A8,
+  SCANOUT_FORMAT_B8G8R8A8_SRGB,
+  SCANOUT_FORMAT_B8G8R8X8,
+  SCANOUT_FORMAT_B8G8R8X8_SRGB,
+} from "../ipc/scanout_state";
 import { guestPaddrToRamOffset, guestRangeInBounds } from "../arch/guest_ram_translate.ts";
 import { convertScanoutToRgba8, type ScanoutSwizzleKind } from "../workers/scanout_swizzle.ts";
 
@@ -86,13 +91,17 @@ export function readScanoutRgba8FromGuestRam(guestRam: Uint8Array, desc: Scanout
   const format = toU32(desc.format, "format");
 
   let kind: ScanoutSwizzleKind;
-  if (format === SCANOUT_FORMAT_B8G8R8X8) {
+  if (format === SCANOUT_FORMAT_B8G8R8X8 || format === SCANOUT_FORMAT_B8G8R8X8_SRGB) {
     kind = "bgrx";
-  } else if (format === SCANOUT_FORMAT_B8G8R8A8) {
+  } else if (format === SCANOUT_FORMAT_B8G8R8A8 || format === SCANOUT_FORMAT_B8G8R8A8_SRGB) {
     kind = "bgra";
   } else {
     throw new Error(
-      `Unsupported scanout format ${format} (expected B8G8R8X8=${SCANOUT_FORMAT_B8G8R8X8} or B8G8R8A8=${SCANOUT_FORMAT_B8G8R8A8})`,
+      `Unsupported scanout format ${format} (expected ` +
+        `B8G8R8X8=${SCANOUT_FORMAT_B8G8R8X8}, ` +
+        `B8G8R8A8=${SCANOUT_FORMAT_B8G8R8A8}, ` +
+        `B8G8R8X8_SRGB=${SCANOUT_FORMAT_B8G8R8X8_SRGB}, ` +
+        `or B8G8R8A8_SRGB=${SCANOUT_FORMAT_B8G8R8A8_SRGB})`,
     );
   }
 
