@@ -13,6 +13,9 @@ use aero_net_stack::{
 
 pub mod pcapng;
 
+// Convenience re-exports so downstream users don't have to reach into `pcapng::`.
+pub use pcapng::{LinkType, PcapngWriter};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameDirection {
     GuestTx,
@@ -225,7 +228,7 @@ fn ipv4_l3_l4_header_len(frame: &[u8], ip_off: usize) -> Option<usize> {
     }
     let ihl = (ver_ihl & 0x0f) as usize;
     let ip_header_len = ihl.checked_mul(4)?;
-    if ip_header_len < 20 || ip_header_len > 60 {
+    if !(20..=60).contains(&ip_header_len) {
         return None;
     }
     if frame.len() < ip_off + ip_header_len {
@@ -355,7 +358,7 @@ fn tcp_header_len(frame: &[u8], tcp_off: usize) -> Option<usize> {
     }
     let data_offset_words = frame[tcp_off + 12] >> 4;
     let tcp_header_len = (data_offset_words as usize).checked_mul(4)?;
-    if tcp_header_len < 20 || tcp_header_len > 60 {
+    if !(20..=60).contains(&tcp_header_len) {
         return None;
     }
     if frame.len() < tcp_off + tcp_header_len {
@@ -1148,8 +1151,8 @@ mod tests {
         ip_options_len: usize,
         tcp_options_len: usize,
     ) -> Vec<u8> {
-        debug_assert!(ip_options_len % 4 == 0);
-        debug_assert!(tcp_options_len % 4 == 0);
+        debug_assert!(ip_options_len.is_multiple_of(4));
+        debug_assert!(tcp_options_len.is_multiple_of(4));
 
         let ip_header_len = 20usize;
         let tcp_header_len = 20usize;
@@ -1822,6 +1825,3 @@ mod tests {
         );
     }
 }
-
-// Convenience re-exports so downstream users don't have to reach into `pcapng::`.
-pub use pcapng::{LinkType, PcapngWriter};
