@@ -1517,12 +1517,14 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
         return STATUS_NOT_SUPPORTED;
     }
 
-        /*
-         * Device config discovery (contract v1 required selectors).
-         *
-         * Contract v1 uses ID_NAME as the authoritative device-kind classification
-         * (keyboard vs mouse vs tablet; see docs/windows7-virtio-driver-contract.md §3.3.4).
-         */
+    /*
+     * Device config discovery (contract v1 required selectors).
+     *
+     * Contract v1 uses ID_NAME as the authoritative device-kind classification.
+     * For absolute-pointer devices (virtio-tablet), allow falling back to EV_BITS
+     * detection so stock QEMU virtio-tablet devices can be supported even if
+     * their ID_NAME strings are not contract-v1 values.
+     */
     {
         CHAR name[129];
         UCHAR size;
@@ -1545,6 +1547,7 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
         }
 
         kind = VioInputDeviceKindUnknown;
+        strictIdName = TRUE;
 
         if (VioInputAsciiEqualsInsensitiveZ(name, "Aero Virtio Keyboard")) {
             kind = VioInputDeviceKindKeyboard;
@@ -1553,6 +1556,42 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
         } else if (VioInputAsciiEqualsInsensitiveZ(name, "Aero Virtio Tablet")) {
             kind = VioInputDeviceKindTablet;
         } else {
+            /*
+             * Optional: accept absolute-pointer devices (virtio-tablet) even when
+             * the device does not advertise contract-v1 ID_NAME strings, by
+             * classifying based on EV_BITS instead of ID_NAME.
+             *
+             * Restrict this fallback to tablets only; keep keyboard/mouse strict.
+             */
+            UCHAR typeBits[128];
+            UCHAR typeSize;
+
+            RtlZeroMemory(typeBits, sizeof(typeBits));
+            typeSize = 0;
+            status =
+                VioInputQueryInputConfig(deviceContext, VIRTIO_INPUT_CFG_EV_BITS, 0, typeBits, sizeof(typeBits), &typeSize);
+            if (NT_SUCCESS(status) && typeSize != 0 && VioInputBitmapTestBit(typeBits, VIRTIO_INPUT_EV_ABS)) {
+                UCHAR absBits[128];
+                UCHAR absSize;
+
+                RtlZeroMemory(absBits, sizeof(absBits));
+                absSize = 0;
+                status = VioInputQueryInputConfig(deviceContext,
+                                                  VIRTIO_INPUT_CFG_EV_BITS,
+                                                  VIRTIO_INPUT_EV_ABS,
+                                                  absBits,
+                                                  sizeof(absBits),
+                                                  &absSize);
+                if (NT_SUCCESS(status) && absSize != 0 && VioInputBitmapTestBit(absBits, VIRTIO_INPUT_ABS_X) &&
+                    VioInputBitmapTestBit(absBits, VIRTIO_INPUT_ABS_Y)) {
+                    kind = VioInputDeviceKindTablet;
+                    strictIdName = FALSE;
+                    VIOINPUT_LOG(VIOINPUT_LOG_VIRTQ, "virtio-input: inferred tablet via EV_BITS (EV_ABS: ABS_X/ABS_Y)\n");
+                }
+            }
+        }
+
+        if (kind == VioInputDeviceKindUnknown) {
             VIOINPUT_LOG(
                 VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
                 "virtio-input unsupported ID_NAME: '%s' (expected 'Aero Virtio Keyboard', 'Aero Virtio Mouse', or 'Aero Virtio Tablet')\n",
@@ -1577,7 +1616,7 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
          *
          * If the subsystem ID is unknown (0 or other), allow ID_NAME to decide.
          */
-        if (subsysKind != VioInputDeviceKindUnknown && subsysKind != kind) {
+        if (strictIdName && subsysKind != VioInputDeviceKindUnknown && subsysKind != kind) {
             VIOINPUT_LOG(
                 VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
                 "virtio-input kind mismatch: ID_NAME='%s' implies %s but PCI subsystem device ID is 0x%04X (%s)\n",
@@ -1620,6 +1659,7 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
         UCHAR size;
         USHORT expectedProduct;
         BOOLEAN enforce;
+        BOOLEAN productMismatchOk;
 
         RtlZeroMemory(&ids, sizeof(ids));
         size = 0;
@@ -1646,6 +1686,7 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
         }
 
         expectedProduct = 0;
+        productMismatchOk = FALSE;
         switch (deviceContext->DeviceKind) {
         case VioInputDeviceKindKeyboard:
             expectedProduct = VIRTIO_INPUT_DEVIDS_PRODUCT_KEYBOARD;
@@ -1655,6 +1696,8 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
             break;
         case VioInputDeviceKindTablet:
             expectedProduct = VIRTIO_INPUT_DEVIDS_PRODUCT_TABLET;
+            // If the kind was inferred (not a strict contract ID_NAME match), allow a Product mismatch.
+            productMismatchOk = (!strictIdName) ? TRUE : FALSE;
             break;
         default:
             VIOINPUT_LOG(VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ, "virtio-input ID_DEVIDS: unexpected device kind %u\n", (ULONG)deviceContext->DeviceKind);
@@ -1672,7 +1715,7 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
         }
 
         if (ids.Bustype != VIRTIO_INPUT_DEVIDS_BUSTYPE_VIRTUAL || ids.Vendor != VIRTIO_INPUT_DEVIDS_VENDOR_VIRTIO ||
-            ids.Product != expectedProduct || ids.Version != VIRTIO_INPUT_DEVIDS_VERSION) {
+            ids.Version != VIRTIO_INPUT_DEVIDS_VERSION) {
             VIOINPUT_LOG(
                 (enforce ? VIOINPUT_LOG_ERROR : 0) | VIOINPUT_LOG_VIRTQ,
                 "virtio-input ID_DEVIDS mismatch: bustype=0x%04X vendor=0x%04X product=0x%04X version=0x%04X (expected bustype=0x%04X vendor=0x%04X product=0x%04X version=0x%04X)\n",
@@ -1686,6 +1729,30 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
                 (ULONG)VIRTIO_INPUT_DEVIDS_VERSION);
 
             if (enforce) {
+                VirtioPciResetDevice(&deviceContext->PciDevice);
+                return STATUS_NOT_SUPPORTED;
+            }
+        }
+
+        if (ids.Product != expectedProduct) {
+            if (productMismatchOk || !enforce) {
+                VIOINPUT_LOG(
+                    VIOINPUT_LOG_VIRTQ,
+                    "virtio-input ID_DEVIDS product mismatch (continuing): product=0x%04X expected=0x%04X\n",
+                    (ULONG)ids.Product,
+                    (ULONG)expectedProduct);
+            } else {
+                VIOINPUT_LOG(
+                    VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+                    "virtio-input ID_DEVIDS mismatch: bustype=0x%04X vendor=0x%04X product=0x%04X version=0x%04X (expected bustype=0x%04X vendor=0x%04X product=0x%04X version=0x%04X)\n",
+                    (ULONG)ids.Bustype,
+                    (ULONG)ids.Vendor,
+                    (ULONG)ids.Product,
+                    (ULONG)ids.Version,
+                    (ULONG)VIRTIO_INPUT_DEVIDS_BUSTYPE_VIRTUAL,
+                    (ULONG)VIRTIO_INPUT_DEVIDS_VENDOR_VIRTIO,
+                    (ULONG)expectedProduct,
+                    (ULONG)VIRTIO_INPUT_DEVIDS_VERSION);
                 VirtioPciResetDevice(&deviceContext->PciDevice);
                 return STATUS_NOT_SUPPORTED;
             }

@@ -8125,6 +8125,15 @@ int wmain(int argc, wchar_t** argv) {
            input.ambiguous_devices, input.unknown_devices, input.keyboard_collections, input.mouse_collections,
            input.tablet_devices, input.tablet_collections,
            input.reason.empty() ? "-" : input.reason.c_str());
+  // Optional: tablet enumeration marker. Do not fail the overall selftest if absent; tablet devices
+  // are not always attached by the host harness.
+  if (input.tablet_devices > 0 && input.tablet_collections > 0) {
+    log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet|PASS|tablet_devices=%d|tablet_collections=%d",
+             input.tablet_devices, input.tablet_collections);
+  } else {
+    log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet|SKIP|not_present|tablet_devices=%d|tablet_collections=%d",
+             input.tablet_devices, input.tablet_collections);
+  }
   if (input.devinst != 0) {
     EmitVirtioIrqMarkerForDevInst(log, "virtio-input", input.devinst);
   } else {
