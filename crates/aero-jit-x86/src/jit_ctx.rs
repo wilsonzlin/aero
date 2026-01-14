@@ -38,13 +38,14 @@ impl JitContext {
     /// The TLB array is left untouched (typically zeroed on allocation).
     #[track_caller]
     pub fn write_header_to_mem(&self, mem: &mut [u8], base: usize) {
-        let end = base.checked_add(Self::BYTE_SIZE).unwrap_or_else(|| {
-            panic!(
+        let end = match base.checked_add(Self::BYTE_SIZE) {
+            Some(end) => end,
+            None => panic!(
                 "JitContext write out of bounds: base={base} size={} mem_len={} (overflow)",
                 Self::BYTE_SIZE,
                 mem.len()
-            )
-        });
+            ),
+        };
         assert!(
             end <= mem.len(),
             "JitContext write out of bounds: base={base} size={} mem_len={}",
@@ -52,26 +53,24 @@ impl JitContext {
             mem.len()
         );
 
-        let ram_base_off = base
-            .checked_add(Self::RAM_BASE_OFFSET as usize)
-            .unwrap_or_else(|| {
-                panic!(
-                    "JitContext ram_base offset overflow: base={base} off={} mem_len={}",
-                    Self::RAM_BASE_OFFSET,
-                    mem.len()
-                )
-            });
+        let ram_base_off = match base.checked_add(Self::RAM_BASE_OFFSET as usize) {
+            Some(off) => off,
+            None => panic!(
+                "JitContext ram_base offset overflow: base={base} off={} mem_len={}",
+                Self::RAM_BASE_OFFSET,
+                mem.len()
+            ),
+        };
         mem[ram_base_off..ram_base_off + 8].copy_from_slice(&self.ram_base.to_le_bytes());
 
-        let tlb_salt_off = base
-            .checked_add(Self::TLB_SALT_OFFSET as usize)
-            .unwrap_or_else(|| {
-                panic!(
-                    "JitContext tlb_salt offset overflow: base={base} off={} mem_len={}",
-                    Self::TLB_SALT_OFFSET,
-                    mem.len()
-                )
-            });
+        let tlb_salt_off = match base.checked_add(Self::TLB_SALT_OFFSET as usize) {
+            Some(off) => off,
+            None => panic!(
+                "JitContext tlb_salt offset overflow: base={base} off={} mem_len={}",
+                Self::TLB_SALT_OFFSET,
+                mem.len()
+            ),
+        };
         mem[tlb_salt_off..tlb_salt_off + 8].copy_from_slice(&self.tlb_salt.to_le_bytes());
     }
 }
@@ -192,6 +191,20 @@ mod tests {
         let expected_line = line!() + 2;
         let (file, line) = capture_panic_location(|| {
             ctx.write_header_to_mem(&mut mem, 0);
+        });
+        assert_eq!(file, expected_file);
+        assert_eq!(line, expected_line);
+    }
+
+    #[test]
+    fn jit_context_write_header_panics_at_call_site_on_overflow() {
+        let ctx = JitContext::default();
+        let mut mem = [0u8; 0];
+
+        let expected_file = file!();
+        let expected_line = line!() + 2;
+        let (file, line) = capture_panic_location(|| {
+            ctx.write_header_to_mem(&mut mem, usize::MAX);
         });
         assert_eq!(file, expected_file);
         assert_eq!(line, expected_line);
