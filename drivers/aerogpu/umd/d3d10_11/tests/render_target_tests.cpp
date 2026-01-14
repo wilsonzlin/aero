@@ -285,6 +285,55 @@ bool TestDestroyAfterNotImplCreateResourceIsSafe() {
   return true;
 }
 
+bool TestDestroyAfterFailedCreateDeviceIsSafe() {
+  D3D10DDI_HADAPTER hAdapter{};
+  D3D10DDI_ADAPTERFUNCS adapter_funcs{};
+
+  D3D10DDIARG_OPENADAPTER open{};
+  open.pAdapterFuncs = &adapter_funcs;
+  HRESULT hr = OpenAdapter10(&open);
+  if (!Check(hr == S_OK, "OpenAdapter10(CreateDevice failure)")) {
+    return false;
+  }
+  if (!Check(open.hAdapter.pDrvPrivate != nullptr, "OpenAdapter10 returned adapter handle")) {
+    return false;
+  }
+  hAdapter = open.hAdapter;
+
+  D3D10DDIARG_CREATEDEVICE create{};
+  create.hDevice.pDrvPrivate = nullptr;
+  const SIZE_T dev_size = adapter_funcs.pfnCalcPrivateDeviceSize(hAdapter, &create);
+  if (!Check(dev_size >= sizeof(void*), "CalcPrivateDeviceSize returned a non-trivial size")) {
+    adapter_funcs.pfnCloseAdapter(hAdapter);
+    return false;
+  }
+
+  std::vector<uint8_t> device_mem(static_cast<size_t>(dev_size), 0xCC);
+  create.hDevice.pDrvPrivate = device_mem.data();
+
+  AEROGPU_D3D10_11_DEVICEFUNCS device_funcs{};
+  create.pDeviceFuncs = &device_funcs;
+  create.pDeviceCallbacks = nullptr;
+
+  // Force CreateDevice failure with an invalid adapter handle. Some runtimes may
+  // still call DestroyDevice on failure; this must not crash.
+  D3D10DDI_HADAPTER invalid_adapter{};
+  invalid_adapter.pDrvPrivate = nullptr;
+  hr = adapter_funcs.pfnCreateDevice(invalid_adapter, &create);
+  if (!Check(hr == E_FAIL, "CreateDevice rejects invalid adapter handle")) {
+    adapter_funcs.pfnCloseAdapter(hAdapter);
+    return false;
+  }
+  if (!Check(device_funcs.pfnDestroyDevice != nullptr, "CreateDevice filled device function table on failure")) {
+    adapter_funcs.pfnCloseAdapter(hAdapter);
+    return false;
+  }
+
+  device_funcs.pfnDestroyDevice(create.hDevice);
+  adapter_funcs.pfnCloseAdapter(hAdapter);
+  return true;
+}
+
 bool CreateRenderTargetTexture2D(TestDevice* dev, TestResource* out) {
   if (!dev || !out) {
     return false;
@@ -525,6 +574,7 @@ int main() {
   bool ok = true;
   ok &= TestDestroyAfterFailedCreateResourceIsSafe();
   ok &= TestDestroyAfterNotImplCreateResourceIsSafe();
+  ok &= TestDestroyAfterFailedCreateDeviceIsSafe();
   ok &= TestTwoRtvs();
   ok &= TestClampAndNullEntries();
   ok &= TestUnbindAllRtvs();

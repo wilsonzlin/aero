@@ -742,10 +742,6 @@ struct AeroGpuDevice {
   aerogpu_handle_t ps_srvs[kMaxShaderResourceSlots] = {};
   aerogpu_handle_t vs_samplers[kMaxSamplerSlots] = {};
   aerogpu_handle_t ps_samplers[kMaxSamplerSlots] = {};
-
-  AeroGpuDevice() {
-    cmd.reset();
-  }
 };
 
 void TrackStagingWriteLocked(AeroGpuDevice* dev, AeroGpuResource* dst) {
@@ -5973,18 +5969,12 @@ HRESULT AEROGPU_APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, const D3D10DDI
 
   auto* out_funcs = reinterpret_cast<AEROGPU_D3D10_11_DEVICEFUNCS*>(pCreateDevice->pDeviceFuncs);
   if (!out_funcs) {
-    return E_INVALIDARG;
+    AEROGPU_D3D10_RET_HR(E_INVALIDARG);
   }
 
-  auto* adapter = FromHandle<D3D10DDI_HADAPTER, AeroGpuAdapter>(hAdapter);
-  if (!adapter) {
-    AEROGPU_D3D10_RET_HR(E_FAIL);
-  }
-
-  auto* device = new (pCreateDevice->hDevice.pDrvPrivate) AeroGpuDevice();
-  device->adapter = adapter;
-  device->device_callbacks = pCreateDevice->pDeviceCallbacks;
-
+  // Populate the device function table up-front so callers can still invoke
+  // DestroyDevice even if CreateDevice fails (some runtimes call Destroy on
+  // failure).
   AEROGPU_D3D10_11_DEVICEFUNCS funcs = {};
   funcs.pfnDestroyDevice = &DestroyDevice;
 
@@ -6081,6 +6071,20 @@ HRESULT AEROGPU_APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, const D3D10DDI
   // then copy the implemented prefix.
   std::memset(pCreateDevice->pDeviceFuncs, 0, sizeof(*pCreateDevice->pDeviceFuncs));
   std::memcpy(out_funcs, &funcs, sizeof(funcs));
+
+  // Always construct the private device object so DestroyDevice is safe even if
+  // we later reject the adapter handle.
+  auto* device = new (pCreateDevice->hDevice.pDrvPrivate) AeroGpuDevice();
+  device->adapter = nullptr;
+  device->device_callbacks = pCreateDevice->pDeviceCallbacks;
+
+  auto* adapter = FromHandle<D3D10DDI_HADAPTER, AeroGpuAdapter>(hAdapter);
+  if (!adapter) {
+    AEROGPU_D3D10_RET_HR(E_FAIL);
+  }
+  device->adapter = adapter;
+  // Initialize the command stream header now that device creation is confirmed.
+  device->cmd.reset();
   AEROGPU_D3D10_RET_HR(S_OK);
 }
 
