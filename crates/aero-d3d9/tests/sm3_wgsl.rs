@@ -265,6 +265,84 @@ fn wgsl_vs_texld_emits_texture_sample_level() {
 }
 
 #[test]
+fn wgsl_texldl_emits_texture_sample_level_explicit_lod() {
+    // ps_3_0:
+    //   texldl r0, c0, s1
+    //   mov oC0, r0
+    //   end
+    let tokens = vec![
+        version_token(ShaderStage::Pixel, 3, 0),
+        // texldl r0, c0, s1
+        opcode_token(79, 3),
+        dst_token(0, 0, 0xF),
+        src_token(2, 0, 0xE4, 0),
+        src_token(10, 1, 0xE4, 0),
+        // mov oC0, r0
+        opcode_token(1, 2),
+        dst_token(8, 0, 0xF),
+        src_token(0, 0, 0xE4, 0),
+        // end
+        0x0000_FFFF,
+    ];
+
+    let decoded = decode_u32_tokens(&tokens).unwrap();
+    assert!(decoded.instructions.iter().any(|i| i.opcode == Opcode::TexLdl));
+    let ir = build_ir(&decoded).unwrap();
+    verify_ir(&ir).unwrap();
+
+    let wgsl = generate_wgsl(&ir).unwrap();
+    assert!(wgsl.wgsl.contains("textureSampleLevel("), "{}", wgsl.wgsl);
+    assert!(wgsl.wgsl.contains("(c0).w"), "{}", wgsl.wgsl);
+    assert_eq!(
+        wgsl.bind_group_layout.sampler_bindings.get(&1),
+        Some(&(3, 4))
+    );
+
+    let module = naga::front::wgsl::parse_str(&wgsl.wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+}
+
+#[test]
+fn wgsl_vs_texldd_is_rejected() {
+    // vs_3_0:
+    //   texldd r0, c0, c1, c2, s0
+    //   mov oPos, r0
+    //   end
+    let tokens = vec![
+        version_token(ShaderStage::Vertex, 3, 0),
+        // texldd r0, c0, c1, c2, s0
+        opcode_token(77, 5),
+        dst_token(0, 0, 0xF),
+        src_token(2, 0, 0xE4, 0),
+        src_token(2, 1, 0xE4, 0),
+        src_token(2, 2, 0xE4, 0),
+        src_token(10, 0, 0xE4, 0),
+        // mov oPos, r0
+        opcode_token(1, 2),
+        dst_token(4, 0, 0xF),
+        src_token(0, 0, 0xE4, 0),
+        // end
+        0x0000_FFFF,
+    ];
+
+    let decoded = decode_u32_tokens(&tokens).unwrap();
+    assert!(decoded.instructions.iter().any(|i| i.opcode == Opcode::TexLdd));
+    let ir = build_ir(&decoded).unwrap();
+    verify_ir(&ir).unwrap();
+
+    let err = generate_wgsl(&ir).unwrap_err();
+    assert!(
+        err.message.contains("only supported in pixel shaders"),
+        "{err}"
+    );
+}
+
+#[test]
 fn wgsl_defb_if_compiles() {
     // ps_3_0:
     //   def c0, 1,0,0,1
