@@ -150,7 +150,11 @@ For the consolidated virtio-input end-to-end validation plan (device model + dri
     - Contract v1 (`aero_virtio_snd.inf`): expects service `aero_virtio_snd`
     - QEMU compatibility package (`aero-virtio-snd-legacy.inf`): expects service `aeroviosnd_legacy`
   - Enumerate audio render endpoints via MMDevice API and start a shared-mode WASAPI render stream.
-  - Render a short deterministic tone (440Hz) at 48kHz/16-bit/stereo.
+  - Query the endpoint **shared-mode mix format** via `IAudioClient::GetMixFormat()` and initialize the stream using that
+    format (with a 48kHz/16-bit/stereo fallback if `GetMixFormat` fails).
+    - This keeps the selftest compatible with virtio-snd devices that negotiate a non-contract format/rate (for example
+      44.1kHz or 24-bit) via `PCM_INFO`.
+  - Render a short deterministic tone (440Hz) in the initialized stream format.
   - Best-effort: unmute the selected render endpoint, set its master volume to a non-trivial level, and
     set the per-session volume to 100% (so host-side wav capture is not accidentally silent due to a
     muted/zero-volume image or a muted per-application volume mixer entry).
@@ -177,14 +181,14 @@ For the consolidated virtio-input end-to-end validation plan (device model + dri
     - Use `--test-snd-capture` (or env var `AERO_VIRTIO_SELFTEST_TEST_SND_CAPTURE=1`) to force the capture smoke test
       even when virtio-snd playback would otherwise be skipped (for example when running an older selftest binary or
       when debugging outside the strict host harness setup).
-      - The smoke test attempts to initialize a capture stream at the contract fixed format:
-        **48kHz / 16-bit / mono PCM** (with a `WAVE_FORMAT_EXTENSIBLE` fallback if required by the endpoint).
+      - The smoke test initializes a capture stream using the endpoint shared-mode mix format (`GetMixFormat`), with a
+        fallback to the legacy contract format (**48kHz / 16-bit / mono PCM**) if `GetMixFormat` fails.
       - By default, the smoke test **PASS**es even if the captured audio is only silence.
       - Use `--require-non-silence` to fail the capture smoke test if no non-silent buffers are observed.
     - When a capture smoke test runs (default when virtio-snd is present), the selftest also runs a **full-duplex**
       regression check (`virtio-snd-duplex`):
-      - Opens a matching **render** endpoint (48kHz/16-bit/stereo PCM) and a matching **capture** endpoint
-        (48kHz/16-bit/mono PCM) in shared-mode WASAPI.
+      - Opens a matching **render** endpoint and **capture** endpoint in shared-mode WASAPI and initializes both using
+        their shared-mode mix formats (`GetMixFormat`, with fallbacks if needed).
       - Starts both streams and runs them concurrently for a short fixed duration while:
         - continuously submitting a deterministic tone on the render path, and
         - continuously draining capture buffers and counting frames.
@@ -206,6 +210,11 @@ For the consolidated virtio-input end-to-end validation plan (device model + dri
       - the Initialize attempt hangs (the selftest times it out), or
       - Initialize succeeds but returns an obviously inconsistent buffer size (for example `GetBufferSize` fails or
         reports 0 frames).
+  - The selftest also emits an informational marker surfacing the negotiated mix formats as visible through the Windows
+    audio stack:
+    - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-format|INFO|render=<...>|capture=<...>`
+    - The host harness mirrors this as:
+      - `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_FORMAT|INFO|render=<...>|capture=<...>`
 
 Note: For deterministic DNS testing under QEMU slirp, the default `--dns-host` is `host.lan`
 (with fallbacks like `gateway.lan` / `dns.lan`).
