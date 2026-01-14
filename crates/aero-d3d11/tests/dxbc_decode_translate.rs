@@ -987,3 +987,144 @@ fn compute_ret_inside_if_validates() {
     assert!(translated.wgsl.contains("return;"));
     assert_wgsl_validates(&translated.wgsl);
 }
+
+#[test]
+fn decodes_and_translates_if_z_else_endif_vertex_shader() {
+    let mut body = Vec::<u32>::new();
+
+    // if_z l(0.0)
+    let cond = imm32_scalar(0.0f32.to_bits());
+    body.push(OPCODE_IF | ((1 + cond.len() as u32) << OPCODE_LEN_SHIFT));
+    body.extend_from_slice(&cond);
+
+    // mov o0, l(0,0,0,1)
+    let pos_a = imm32_vec4([
+        0.0f32.to_bits(),
+        0.0f32.to_bits(),
+        0.0f32.to_bits(),
+        1.0f32.to_bits(),
+    ]);
+    body.push(opcode_token(OPCODE_MOV, (1 + 2 + pos_a.len()) as u32));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&pos_a);
+
+    // else
+    body.push(opcode_token(OPCODE_ELSE, 1));
+
+    // mov o0, l(1,0,0,1)
+    let pos_b = imm32_vec4([
+        1.0f32.to_bits(),
+        0.0f32.to_bits(),
+        0.0f32.to_bits(),
+        1.0f32.to_bits(),
+    ]);
+    body.push(opcode_token(OPCODE_MOV, (1 + 2 + pos_b.len()) as u32));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&pos_b);
+
+    // endif + ret
+    body.push(opcode_token(OPCODE_ENDIF, 1));
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 1 = vertex shader.
+    let tokens = make_sm5_program_tokens(1, &body);
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Position", 0, 0, 0b1111)]),
+        ),
+    ]);
+
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    assert_eq!(program.stage, aero_d3d11::ShaderStage::Vertex);
+    let module = decode_program(&program).expect("SM4 decode");
+
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+    assert!(translated.wgsl.contains("@vertex"));
+    assert!(translated.wgsl.contains("if ("));
+    assert!(translated.wgsl.contains("} else {"));
+    assert!(
+        translated.wgsl.contains("== 0.0"),
+        "expected if_z lowering to use == 0.0:\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
+fn vertex_ret_inside_if_does_not_break_brace_balancing() {
+    let mut body = Vec::<u32>::new();
+
+    // if_nz l(0.0) (false at runtime, but exercises codegen)
+    let cond = imm32_scalar(0.0f32.to_bits());
+    body.push(
+        OPCODE_IF
+            | ((1 + cond.len() as u32) << OPCODE_LEN_SHIFT)
+            | (1 << OPCODE_TEST_BOOLEAN_SHIFT),
+    );
+    body.extend_from_slice(&cond);
+
+    // mov o0, l(0,0,0,1)
+    let pos_a = imm32_vec4([
+        0.0f32.to_bits(),
+        0.0f32.to_bits(),
+        0.0f32.to_bits(),
+        1.0f32.to_bits(),
+    ]);
+    body.push(opcode_token(OPCODE_MOV, (1 + 2 + pos_a.len()) as u32));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&pos_a);
+
+    // ret (inside if)
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // endif
+    body.push(opcode_token(OPCODE_ENDIF, 1));
+
+    // mov o0, l(1,0,0,1)
+    let pos_b = imm32_vec4([
+        1.0f32.to_bits(),
+        0.0f32.to_bits(),
+        0.0f32.to_bits(),
+        1.0f32.to_bits(),
+    ]);
+    body.push(opcode_token(OPCODE_MOV, (1 + 2 + pos_b.len()) as u32));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&pos_b);
+
+    // ret (top-level)
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 1 = vertex shader.
+    let tokens = make_sm5_program_tokens(1, &body);
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Position", 0, 0, 0b1111)]),
+        ),
+    ]);
+
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    let module = decode_program(&program).expect("SM4 decode");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+    assert!(
+        translated.wgsl.matches('{').count() == translated.wgsl.matches('}').count(),
+        "expected balanced braces in WGSL:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.matches("return out;").count() >= 2,
+        "expected both early and epilogue returns:\n{}",
+        translated.wgsl
+    );
+}
