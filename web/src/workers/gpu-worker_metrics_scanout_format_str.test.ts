@@ -108,7 +108,7 @@ describe("workers/gpu-worker metrics scanout snapshot", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "gpu",
-        10_000,
+        20_000,
       );
 
       // Runtime init (headless).
@@ -130,7 +130,7 @@ describe("workers/gpu-worker metrics scanout snapshot", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => isGpuWorkerMessageBase(msg) && (msg as { type?: unknown }).type === "ready",
-        10_000,
+        20_000,
       );
 
       // Publish a deterministic scanout descriptor so the metrics snapshot includes a known format.

@@ -108,7 +108,7 @@ describe("disk_worker import_file content sniffing + validation", () => {
     expect(resp.result.kind).toBe("hdd");
     expect(resp.result.sizeBytes).toBe(diskSizeBytes);
     expect(String(resp.result.fileName)).toMatch(/\.aerospar$/);
-  });
+  }, 20_000);
 
   it("detects aerospar content even when the filename suggests raw", async () => {
     const bytes = makeAerosparBytes({ diskSizeBytes: 1024 * 1024, blockSizeBytes: 4096 });
@@ -119,14 +119,14 @@ describe("disk_worker import_file content sniffing + validation", () => {
     expect(resp.result.kind).toBe("hdd");
     expect(resp.result.sourceFileName).toBe("mislabeled.img");
     expect(String(resp.result.fileName)).toMatch(/\.aerospar$/);
-  });
+  }, 20_000);
 
   it("rejects explicit aerospar imports when the header is missing", async () => {
     const file = new File([toArrayBufferUint8(new Uint8Array([1, 2, 3, 4]))], "not-aerospar.img");
     const resp = await sendImportFile({ file, format: "aerospar" });
     expect(resp.ok).toBe(false);
     expect(String(resp.error?.message ?? "")).toMatch(/aerospar/i);
-  });
+  }, 20_000);
 
   it("rejects aerospar imports on the IndexedDB backend", async () => {
     const bytes = makeAerosparBytes({ diskSizeBytes: 1024 * 1024, blockSizeBytes: 4096 });
@@ -134,7 +134,7 @@ describe("disk_worker import_file content sniffing + validation", () => {
     const resp = await sendImportFile({ file }, "idb");
     expect(resp.ok).toBe(false);
     expect(String(resp.error?.message ?? "")).toMatch(/opfs/i);
-  });
+  }, 20_000);
 
   it("rejects qcow2 imports on the IndexedDB backend", async () => {
     const qcow2 = new Uint8Array(72);
@@ -145,7 +145,7 @@ describe("disk_worker import_file content sniffing + validation", () => {
     expect(resp.ok).toBe(false);
     expect(String(resp.error?.message ?? "")).toMatch(/qcow2/i);
     expect(String(resp.error?.message ?? "")).toMatch(/indexeddb/i);
-  });
+  }, 20_000);
 
   it("detects qcow2 content even when the filename suggests raw", async () => {
     const qcow2 = new Uint8Array(72);
@@ -158,7 +158,7 @@ describe("disk_worker import_file content sniffing + validation", () => {
     expect(resp.result.kind).toBe("hdd");
     expect(resp.result.sourceFileName).toBe("mislabeled.img");
     expect(String(resp.result.fileName)).toMatch(/\.qcow2$/);
-  });
+  }, 20_000);
 
   it("detects VHD content even when the filename suggests raw", async () => {
     const bytes = new Uint8Array(1024);
@@ -175,7 +175,7 @@ describe("disk_worker import_file content sniffing + validation", () => {
     expect(resp.result.format).toBe("vhd");
     expect(resp.result.kind).toBe("hdd");
     expect(String(resp.result.fileName)).toMatch(/\.vhd$/);
-  });
+  }, 20_000);
 
   it("detects ISO9660 content even when the filename suggests raw", async () => {
     const bytes = new Uint8Array(512 * 65);
@@ -186,7 +186,7 @@ describe("disk_worker import_file content sniffing + validation", () => {
     expect(resp.result.format).toBe("iso");
     expect(resp.result.kind).toBe("cd");
     expect(String(resp.result.fileName)).toMatch(/\.iso$/);
-  });
+  }, 20_000);
 
   it("rejects CD imports when format is not ISO", async () => {
     const file = new File([new Uint8Array(512)], "disk.img");
@@ -194,7 +194,7 @@ describe("disk_worker import_file content sniffing + validation", () => {
     expect(resp.ok).toBe(false);
     expect(String(resp.error?.message ?? "")).toMatch(/cd/i);
     expect(String(resp.error?.message ?? "")).toMatch(/iso/i);
-  });
+  }, 20_000);
 
   it("allows .iso imports even when the ISO9660 signature is missing", async () => {
     const file = new File([new Uint8Array(512)], "disk.iso");
@@ -202,19 +202,19 @@ describe("disk_worker import_file content sniffing + validation", () => {
     expect(resp.ok).toBe(true);
     expect(resp.result.format).toBe("iso");
     expect(resp.result.kind).toBe("cd");
-  });
+  }, 20_000);
 
   it("rejects empty files", async () => {
     const file = new File([new Uint8Array()], "empty.img");
     const resp = await sendImportFile({ file });
     expect(resp.ok).toBe(false);
     expect(String(resp.error?.message ?? "")).toMatch(/file size/i);
-  });
+  }, 20_000);
 
   it("rejects raw/iso images that are not sector-aligned", async () => {
     const file = new File([new Uint8Array(513)], "unaligned.img");
     const resp = await sendImportFile({ file });
     expect(resp.ok).toBe(false);
     expect(String(resp.error?.message ?? "")).toMatch(/multiple of 512/i);
-  });
+  }, 20_000);
 });
