@@ -284,6 +284,68 @@ fn virtio_config_space_exposes_vendor_specific_capabilities() {
 }
 
 #[test]
+fn virtio_msix_capability_table_size_and_offsets_are_stable() {
+    // Each virtio-pci device uses MSI-X with one vector per virtqueue + one config vector.
+    //
+    // Keep these values stable so:
+    // - profiles remain accurate, and
+    // - platform/device integrations can rely on a fixed BAR0 layout for MSI-X table/PBA.
+    //
+    // Table starts at BAR0+0x3100 (after the 0x3000..=0x30ff device-specific window).
+    // PBA immediately follows the table and is 8-byte aligned (BAR0-backed, bir=0).
+    let cases = [
+        // virtio-net: 2 queues (rx/tx) + config vector = 3.
+        (VIRTIO_NET, 3u16, 0x3130u32),
+        // virtio-blk: 1 queue + config vector = 2.
+        (VIRTIO_BLK, 2u16, 0x3120u32),
+        // virtio-input: 2 queues (event/status) + config vector = 3.
+        (VIRTIO_INPUT_KEYBOARD, 3u16, 0x3130u32),
+        (VIRTIO_INPUT_MOUSE, 3u16, 0x3130u32),
+        // virtio-snd: 4 queues + config vector = 5.
+        (VIRTIO_SND, 5u16, 0x3150u32),
+    ];
+
+    for (profile, table_size, pba_offset) in cases {
+        let mut cfg = profile.build_config_space();
+        let msix_off = cfg
+            .find_capability(PCI_CAP_ID_MSIX)
+            .expect("virtio profile should expose MSI-X capability") as u16;
+
+        // The virtio profiles install 4 vendor-specific caps before MSI-X; keep the MSI-X cap
+        // offset stable so capability ordering/packing doesn't drift.
+        assert_eq!(
+            msix_off, 0x84,
+            "unexpected MSI-X capability offset for {}",
+            profile.name
+        );
+
+        let msix_ctrl = cfg.read(msix_off + 0x02, 2) as u16;
+        // Table size is encoded as N-1 in bits 0..=10.
+        assert_eq!(
+            msix_ctrl & 0x07ff,
+            table_size - 1,
+            "unexpected MSI-X table_size for {}",
+            profile.name
+        );
+
+        let table = cfg.read(msix_off + 0x04, 4);
+        assert_eq!(
+            table,
+            VIRTIO_MSIX_TABLE_BAR0_OFFSET,
+            "unexpected MSI-X table offset for {}",
+            profile.name
+        );
+
+        let pba = cfg.read(msix_off + 0x08, 4);
+        assert_eq!(
+            pba, pba_offset,
+            "unexpected MSI-X PBA offset for {}",
+            profile.name
+        );
+    }
+}
+
+#[test]
 fn ahci_config_space_exposes_msi_capability() {
     let mut cfg = SATA_AHCI_ICH9.build_config_space();
     let cap_ptr = cfg.read(0x34, 1) as u8;
