@@ -1064,6 +1064,7 @@ impl SystemMemory {
     /// mappings are treated as idempotent, while unexpected overlaps still panic to avoid silently
     /// corrupting the address space.
     #[allow(dead_code)]
+    #[track_caller]
     fn map_mmio_once<F>(&mut self, start: u64, len: u64, build: F)
     where
         F: FnOnce() -> Box<dyn memory::MmioHandler>,
@@ -1072,9 +1073,10 @@ impl SystemMemory {
             return;
         }
 
-        let end = start
-            .checked_add(len)
-            .unwrap_or_else(|| panic!("MMIO mapping overflow at 0x{start:016x} (len=0x{len:x})"));
+        let end = match start.checked_add(len) {
+            Some(end) => end,
+            None => panic!("MMIO mapping overflow at 0x{start:016x} (len=0x{len:x})"),
+        };
 
         // Fast path: mapping already exists (and was recorded by this helper).
         if self
@@ -5101,7 +5103,7 @@ impl Machine {
                 return ScanoutSource::LegacyVga;
             }
 
-            return ScanoutSource::LegacyText;
+            ScanoutSource::LegacyText
         } else if self.cfg.enable_aerogpu {
             // When AeroGPU is enabled (and standalone VGA is disabled), legacy VBE state is tracked
             // in the BIOS HLE layer.
@@ -6197,7 +6199,7 @@ impl Machine {
     pub fn usb_hid_keyboard_configured(&self) -> bool {
         self.usb_hid_keyboard
             .as_ref()
-            .map_or(false, |kbd| kbd.configured())
+            .is_some_and(|kbd| kbd.configured())
     }
 
     /// Returns the synthetic USB HID mouse handle, if present.
@@ -6209,7 +6211,7 @@ impl Machine {
     pub fn usb_hid_mouse_configured(&self) -> bool {
         self.usb_hid_mouse
             .as_ref()
-            .map_or(false, |mouse| mouse.configured())
+            .is_some_and(|mouse| mouse.configured())
     }
 
     /// Returns the synthetic USB HID gamepad handle, if present.
@@ -6221,7 +6223,7 @@ impl Machine {
     pub fn usb_hid_gamepad_configured(&self) -> bool {
         self.usb_hid_gamepad
             .as_ref()
-            .map_or(false, |gamepad| gamepad.configured())
+            .is_some_and(|gamepad| gamepad.configured())
     }
 
     /// Returns the synthetic USB HID consumer-control handle, if present.
@@ -6236,7 +6238,7 @@ impl Machine {
     pub fn usb_hid_consumer_control_configured(&self) -> bool {
         self.usb_hid_consumer_control
             .as_ref()
-            .map_or(false, |consumer| consumer.configured())
+            .is_some_and(|consumer| consumer.configured())
     }
 
     /// Attach a USB device model to an EHCI root hub port.
@@ -13094,11 +13096,15 @@ impl memory::MemoryBus for Machine {
 }
 
 #[cfg(test)]
+mod test_util;
+
+#[cfg(test)]
 mod virtio_intx_tests;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_util::capture_panic_location;
     use aero_cpu_core::state::{gpr, CR0_PE, CR0_PG};
     use aero_devices::pci::PciInterruptPin;
     use pretty_assertions::assert_eq;
@@ -13131,6 +13137,30 @@ mod tests {
         sector[510] = 0x55;
         sector[511] = 0xAA;
         sector
+    }
+
+    #[test]
+    fn map_mmio_once_panics_at_call_site_on_overflow() {
+        struct DummyMmio;
+        impl memory::MmioHandler for DummyMmio {
+            fn read(&mut self, _offset: u64, _size: usize) -> u64 {
+                0
+            }
+
+            fn write(&mut self, _offset: u64, _size: usize, _value: u64) {}
+        }
+
+        let chipset = ChipsetState::new(true);
+        let a20 = chipset.a20();
+        let mut mem = SystemMemory::new(0, a20).expect("construct SystemMemory");
+
+        let expected_file = file!();
+        let expected_line = line!() + 2;
+        let (file, line) = capture_panic_location(|| {
+            mem.map_mmio_once(u64::MAX, 2, || Box::new(DummyMmio));
+        });
+        assert_eq!(file, expected_file);
+        assert_eq!(line, expected_line);
     }
 
     #[test]
