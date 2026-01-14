@@ -1850,6 +1850,7 @@ void AEROGPU_APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOUR
   if (!IsDeviceLive(hDevice)) {
     res->handle = kInvalidHandle;
     res->~AeroGpuResource();
+    new (res) AeroGpuResource();
     return;
   }
 
@@ -1857,6 +1858,7 @@ void AEROGPU_APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOUR
   if (!dev) {
     res->handle = kInvalidHandle;
     res->~AeroGpuResource();
+    new (res) AeroGpuResource();
     return;
   }
 
@@ -1913,6 +1915,7 @@ void AEROGPU_APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOUR
   RemoveLiveResourceLocked(dev, res);
   res->handle = kInvalidHandle;
   res->~AeroGpuResource();
+  new (res) AeroGpuResource();
 }
 
 uint64_t resource_total_bytes(const AeroGpuResource* res) {
@@ -3792,12 +3795,14 @@ void AEROGPU_APIENTRY DestroyShader(D3D10DDI_HDEVICE hDevice, D3D10DDI_HSHADER h
   // append commands. Still destruct the shader object to free its DXBC blob.
   if (!IsDeviceLive(hDevice)) {
     sh->~AeroGpuShader();
+    new (sh) AeroGpuShader();
     return;
   }
 
   auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
   if (!dev) {
     sh->~AeroGpuShader();
+    new (sh) AeroGpuShader();
     return;
   }
 
@@ -3813,6 +3818,7 @@ void AEROGPU_APIENTRY DestroyShader(D3D10DDI_HDEVICE hDevice, D3D10DDI_HSHADER h
     }
   }
   sh->~AeroGpuShader();
+  new (sh) AeroGpuShader();
 }
 
 SIZE_T AEROGPU_APIENTRY CalcPrivateInputLayoutSize(D3D10DDI_HDEVICE, const AEROGPU_DDIARG_CREATEINPUTLAYOUT*) {
@@ -3910,12 +3916,14 @@ void AEROGPU_APIENTRY DestroyInputLayout(D3D10DDI_HDEVICE hDevice, D3D10DDI_HELE
   // append commands. Still destruct the input layout object to free its blob.
   if (!IsDeviceLive(hDevice)) {
     layout->~AeroGpuInputLayout();
+    new (layout) AeroGpuInputLayout();
     return;
   }
 
   auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
   if (!dev) {
     layout->~AeroGpuInputLayout();
+    new (layout) AeroGpuInputLayout();
     return;
   }
 
@@ -3931,6 +3939,7 @@ void AEROGPU_APIENTRY DestroyInputLayout(D3D10DDI_HDEVICE hDevice, D3D10DDI_HELE
     }
   }
   layout->~AeroGpuInputLayout();
+  new (layout) AeroGpuInputLayout();
 }
 
 SIZE_T AEROGPU_APIENTRY CalcPrivateRTVSize(D3D10DDI_HDEVICE, const AEROGPU_DDIARG_CREATERENDERTARGETVIEW*) {
@@ -4121,12 +4130,14 @@ void AEROGPU_APIENTRY DestroySampler(D3D10DDI_HDEVICE hDevice, D3D10DDI_HSAMPLER
   // append commands. Still destruct the sampler object.
   if (!IsDeviceLive(hDevice)) {
     s->~AeroGpuSampler();
+    new (s) AeroGpuSampler();
     return;
   }
 
   auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
   if (!dev) {
     s->~AeroGpuSampler();
+    new (s) AeroGpuSampler();
     return;
   }
 
@@ -4142,6 +4153,7 @@ void AEROGPU_APIENTRY DestroySampler(D3D10DDI_HDEVICE hDevice, D3D10DDI_HSAMPLER
     }
   }
   s->~AeroGpuSampler();
+  new (s) AeroGpuSampler();
 }
 
 SIZE_T AEROGPU_APIENTRY CalcPrivateBlendStateSize(D3D10DDI_HDEVICE, const AEROGPU_DDIARG_CREATEBLENDSTATE*) {

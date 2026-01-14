@@ -877,6 +877,12 @@ bool TestDestroyChildObjectsAfterDestroyDeviceIsSafe() {
   dev.device_funcs.pfnDestroySampler(dev.hDevice, hSampler);
   dev.device_funcs.pfnDestroyResource(dev.hDevice, hRes);
 
+  // Double-destroy should also be safe after the device is gone.
+  dev.device_funcs.pfnDestroyInputLayout(dev.hDevice, hLayout);
+  dev.device_funcs.pfnDestroyShader(dev.hDevice, hShader);
+  dev.device_funcs.pfnDestroySampler(dev.hDevice, hSampler);
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, hRes);
+
   dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
   return true;
 }
