@@ -85,6 +85,7 @@ const AERO_MACHINE_FOCUSED_TESTS: &[&str] = &[
 const WASM_PACK_TESTS: &[&str] = &[
     "webusb_uhci_bridge",
     "xhci_webusb_bridge",
+    "xhci_webusb_snapshot",
     "machine_input_injection_wasm",
     "usb_hid_bridge_mouse_reports_wasm",
 ];

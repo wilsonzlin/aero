@@ -255,6 +255,7 @@ cargo xtask input --rust-only --with-wasm
 # Targeted WASM USB/input regression tests (run in Node).
 wasm-pack test --node crates/aero-wasm --test webusb_uhci_bridge --locked
 wasm-pack test --node crates/aero-wasm --test xhci_webusb_bridge --locked
+wasm-pack test --node crates/aero-wasm --test xhci_webusb_snapshot --locked
 wasm-pack test --node crates/aero-wasm --test machine_input_injection_wasm --locked
 wasm-pack test --node crates/aero-wasm --test usb_hid_bridge_mouse_reports_wasm --locked
 
@@ -279,12 +280,12 @@ cargo xtask input --e2e
 # If you're running in a constrained sandbox, consider using safe-run:
 bash ./scripts/safe-run.sh cargo xtask input
 bash ./scripts/safe-run.sh cargo xtask input --rust-only
-bash ./scripts/safe-run.sh wasm-pack test --node crates/aero-wasm --test webusb_uhci_bridge --test xhci_webusb_bridge --test machine_input_injection_wasm --test usb_hid_bridge_mouse_reports_wasm --locked
+bash ./scripts/safe-run.sh wasm-pack test --node crates/aero-wasm --test webusb_uhci_bridge --test xhci_webusb_bridge --test xhci_webusb_snapshot --test machine_input_injection_wasm --test usb_hid_bridge_mouse_reports_wasm --locked
 
 # Note: `safe-run.sh` defaults to a 10-minute timeout (`AERO_TIMEOUT=600`). On a cold build,
 # `cargo xtask input` / `wasm-pack test` can exceed this. Bump the timeout if you see a timeout kill:
 AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo xtask input --rust-only
-AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh wasm-pack test --node crates/aero-wasm --test webusb_uhci_bridge --test xhci_webusb_bridge --test machine_input_injection_wasm --test usb_hid_bridge_mouse_reports_wasm --locked
+AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh wasm-pack test --node crates/aero-wasm --test webusb_uhci_bridge --test xhci_webusb_bridge --test xhci_webusb_snapshot --test machine_input_injection_wasm --test usb_hid_bridge_mouse_reports_wasm --locked
 
 # You can also limit web wasm-pack builds to the core runtime package (useful for Playwright E2E):
 AERO_WASM_PACKAGES=core npm -w web run wasm:build
