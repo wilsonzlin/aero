@@ -634,20 +634,54 @@ export class UsbBroker {
     let remainingBytes = MAX_USB_ACTION_RING_BYTES_PER_DRAIN_TICK;
 
     while (remainingRecords > 0 && remainingBytes > 0) {
-      // If a real device is selected and the execute queue is already full, stop
-      // draining here to apply backpressure to the ring producer instead of
-      // pulling unbounded work onto the main thread.
-      if (this.device && !this.disconnectError) {
-        let nextPayloadBytes: number | null = null;
+      // When no WebUSB device is selected (or we've already transitioned into a disconnect error state),
+      // we still want to drain queued actions so the worker can deliver error completions and unblock the
+      // guest. However, in that state we should avoid copying large `bulkOut`/`controlOut` payloads out of
+      // the SharedArrayBuffer ring (there is no device to send them to).
+      if (!this.device || this.disconnectError) {
+        let info: { kind: UsbHostAction["kind"]; id: number; options?: UsbProxyActionOptions; payloadBytes: number } | null = null;
         try {
-          nextPayloadBytes = actionRing.peekNextActionPayloadBytes();
+          info = actionRing.popActionInfo();
         } catch (err) {
           this.disableRingsForPort(port, err);
           break;
         }
-        if (nextPayloadBytes === null) break;
-        if (!this.hasQueueCapacity(nextPayloadBytes)) break;
+        if (!info) break;
+
+        remainingRecords -= 1;
+        remainingBytes -= info.payloadBytes;
+
+        const message = this.disconnectError ?? "WebUSB device not selected.";
+        const completion = usbErrorCompletion(info.kind, info.id, message);
+
+        const activeCompletionRing = this.completionRings.get(port) ?? null;
+        if (activeCompletionRing) {
+          try {
+            if (activeCompletionRing.pushCompletion(completion)) {
+              continue;
+            }
+          } catch (err) {
+            this.disableRingsForPort(port, err);
+          }
+        }
+
+        const msg: UsbCompletionMessage = { type: "usb.completion", completion };
+        this.postToPort(port, msg);
+        continue;
       }
+
+      // If a real device is selected and the execute queue is already full, stop
+      // draining here to apply backpressure to the ring producer instead of
+      // pulling unbounded work onto the main thread.
+      let nextPayloadBytes: number | null = null;
+      try {
+        nextPayloadBytes = actionRing.peekNextActionPayloadBytes();
+      } catch (err) {
+        this.disableRingsForPort(port, err);
+        break;
+      }
+      if (nextPayloadBytes === null) break;
+      if (!this.hasQueueCapacity(nextPayloadBytes)) break;
 
       let record: { action: UsbHostAction; options?: UsbProxyActionOptions } | null = null;
       try {

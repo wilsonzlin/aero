@@ -1001,4 +1001,65 @@ describe("usb/UsbBroker", () => {
       }
     }
   }, 15000);
+
+  it("drains the action ring via popActionInfo when no device is selected (avoids payload copies)", async () => {
+    vi.useFakeTimers();
+    const originalCoiDescriptor = Object.getOwnPropertyDescriptor(globalThis, "crossOriginIsolated");
+    Object.defineProperty(globalThis, "crossOriginIsolated", {
+      value: true,
+      configurable: true,
+      enumerable: true,
+      writable: true,
+    });
+
+    try {
+      stubNavigatorUsb(new EventTarget());
+
+      const { UsbBroker } = await import("./usb_broker");
+      const { UsbProxyRing } = await import("./usb_proxy_ring");
+
+      const popActionRecordSpy = vi.spyOn(UsbProxyRing.prototype, "popActionRecord");
+      const popActionInfoSpy = vi.spyOn(UsbProxyRing.prototype, "popActionInfo");
+
+      const broker = new UsbBroker({ ringActionCapacityBytes: 2048, ringDrainIntervalMs: 8 });
+      const port = new FakePort();
+      broker.attachWorkerPort(port as unknown as MessagePort);
+
+      const ringAttach = port.posted.find((m) => (m as { type?: unknown }).type === "usb.ringAttach") as
+        | { type: "usb.ringAttach"; actionRing: SharedArrayBuffer; completionRing: SharedArrayBuffer }
+        | undefined;
+      expect(ringAttach).toBeTruthy();
+
+      // Push a payload-bearing action; without popActionInfo the broker would copy it out of the ring.
+      const payload = new Uint8Array(512);
+      const ringProducer = new UsbProxyRing(ringAttach!.actionRing);
+      expect(ringProducer.pushAction({ kind: "bulkOut", id: 42, endpoint: 0x01, data: payload })).toBe(true);
+
+      // Clear any messages produced during attachment.
+      port.posted.length = 0;
+
+      vi.advanceTimersByTime(8);
+
+      expect(popActionRecordSpy).toHaveBeenCalledTimes(0);
+      expect(popActionInfoSpy).toHaveBeenCalled();
+      const completionRing = new UsbProxyRing(ringAttach!.completionRing);
+      expect(completionRing.popCompletion()).toEqual({
+        kind: "bulkOut",
+        id: 42,
+        status: "error",
+        message: "WebUSB device not selected.",
+      });
+
+      popActionRecordSpy.mockRestore();
+      popActionInfoSpy.mockRestore();
+      broker.detachWorkerPort(port as unknown as MessagePort);
+    } finally {
+      vi.useRealTimers();
+      if (originalCoiDescriptor) {
+        Object.defineProperty(globalThis, "crossOriginIsolated", originalCoiDescriptor);
+      } else {
+        Reflect.deleteProperty(globalThis as unknown as { crossOriginIsolated?: unknown }, "crossOriginIsolated");
+      }
+    }
+  }, 15000);
 });

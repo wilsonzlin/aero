@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createUsbProxyRingBuffer, UsbProxyRing } from "./usb_proxy_ring";
+import { createUsbProxyRingBuffer, USB_PROXY_RING_CTRL_BYTES, UsbProxyRing } from "./usb_proxy_ring";
 import type { UsbHostAction, UsbHostCompletion } from "./usb_proxy_protocol";
 
 describe("usb/UsbProxyRing", () => {
@@ -71,6 +71,17 @@ describe("usb/UsbProxyRing", () => {
     expect(record).toBeTruthy();
     expect(record?.action).toEqual(action);
     expect(record?.options).toEqual({ translateOtherSpeedConfigurationDescriptor: false });
+    expect(ring.popAction()).toBeNull();
+  });
+
+  it("popActionInfo drains actions without copying payload buffers", () => {
+    const sab = createUsbProxyRingBuffer(256);
+    const ring = new UsbProxyRing(sab);
+
+    const payload = Uint8Array.of(1, 2, 3);
+    expect(ring.pushAction({ kind: "bulkOut", id: 1, endpoint: 0x01, data: payload })).toBe(true);
+
+    expect(ring.popActionInfo()).toEqual({ kind: "bulkOut", id: 1, options: undefined, payloadBytes: payload.byteLength });
     expect(ring.popAction()).toBeNull();
   });
 
@@ -181,6 +192,37 @@ describe("usb/UsbProxyRing", () => {
     expect(ring.pushAction(valid)).toBe(true);
     expect(ring.popAction()).toEqual(valid);
     expect(ring.popAction()).toBeNull();
+  });
+
+  it("throws when an action record claims more bytes than are available (tail/head inconsistent)", () => {
+    const sab = createUsbProxyRingBuffer(256);
+    const ring = new UsbProxyRing(sab);
+
+    const setup = { bmRequestType: 0, bRequest: 9, wValue: 1, wIndex: 0, wLength: 3 };
+    expect(ring.pushAction({ kind: "controlOut", id: 1, setup, data: Uint8Array.of(1, 2, 3) })).toBe(true);
+
+    // Corrupt the record header to claim a larger payload without advancing the tail.
+    const view = new DataView(sab, USB_PROXY_RING_CTRL_BYTES);
+    // setup.wLength lives at offset 8 (action header) + 6 (setup.wLength field).
+    view.setUint16(8 + 6, 100, true);
+    // dataLen lives at offset 8 (action header) + 8 (setup) = 16.
+    view.setUint32(8 + 8, 100, true);
+
+    expect(() => ring.popActionRecord()).toThrow(/exceeds available bytes/);
+  });
+
+  it("throws when a completion record claims more bytes than are available (tail/head inconsistent)", () => {
+    const sab = createUsbProxyRingBuffer(256);
+    const ring = new UsbProxyRing(sab);
+
+    expect(ring.pushCompletion({ kind: "bulkIn", id: 1, status: "success", data: Uint8Array.of(1) })).toBe(true);
+
+    // Corrupt the completion data length without advancing the tail.
+    const view = new DataView(sab, USB_PROXY_RING_CTRL_BYTES);
+    // completion dataLen lives at offset 8 (completion header).
+    view.setUint32(8, 200, true);
+
+    expect(() => ring.popCompletion()).toThrow(/exceeds available bytes/);
   });
 
   it("rejects invalid bulkIn endpoint addresses (OUT endpoints)", () => {
