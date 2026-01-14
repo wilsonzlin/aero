@@ -4794,41 +4794,62 @@ static NTSTATUS APIENTRY AeroGpuDdiStopDeviceAndReleasePostDisplayOwnership(
      * framebuffer.
      */
     if (pStopDeviceAndReleasePostDisplayOwnership) {
+        ULONG outWidth = adapter->CurrentWidth;
+        ULONG outHeight = adapter->CurrentHeight;
+        ULONG outPitch = adapter->CurrentPitch;
+        ULONG outFormat = adapter->CurrentFormat;
+        PHYSICAL_ADDRESS outFbPa = adapter->CurrentScanoutFbPa;
+
         if (poweredOn) {
             AEROGPU_SCANOUT_MMIO_SNAPSHOT mmio;
             if (AeroGpuGetScanoutMmioSnapshot(adapter, &mmio) && AeroGpuIsPlausibleScanoutSnapshot(&mmio)) {
+                outWidth = mmio.Width;
+                outHeight = mmio.Height;
+                outPitch = mmio.PitchBytes;
+                outFormat = mmio.Format;
+                outFbPa = mmio.FbPa;
+
                 adapter->CurrentWidth = mmio.Width;
                 adapter->CurrentHeight = mmio.Height;
                 adapter->CurrentPitch = mmio.PitchBytes;
                 adapter->CurrentFormat = mmio.Format;
-                adapter->CurrentScanoutFbPa = mmio.FbPa;
+                /*
+                 * If we are already in a released post-display-ownership state, avoid clobbering the
+                 * cached scanout FB address with a zero value: StopDevice/SetPowerState clear the
+                 * MMIO FB GPA registers to stop DMA, but we may still need the cached value to
+                 * restore scanout when ownership is reacquired.
+                 */
+                if (!adapter->PostDisplayOwnershipReleased || mmio.FbPa.QuadPart != 0) {
+                    adapter->CurrentScanoutFbPa = mmio.FbPa;
+                }
             }
         } else if (!adapter->Bar0) {
             PHYSICAL_ADDRESS zero;
             zero.QuadPart = 0;
             adapter->CurrentScanoutFbPa = zero;
+            outFbPa = zero;
         }
 
         DXGK_DISPLAY_INFORMATION* displayInfo = pStopDeviceAndReleasePostDisplayOwnership->pDisplayInfo;
         if (displayInfo) {
             RtlZeroMemory(displayInfo, sizeof(*displayInfo));
-            displayInfo->Width = adapter->CurrentWidth;
-            displayInfo->Height = adapter->CurrentHeight;
-            displayInfo->Pitch = adapter->CurrentPitch;
-            displayInfo->ColorFormat = AeroGpuDdiColorFormatFromScanoutFormat(adapter->CurrentFormat);
-            displayInfo->PhysicalAddress = adapter->CurrentScanoutFbPa;
+            displayInfo->Width = outWidth;
+            displayInfo->Height = outHeight;
+            displayInfo->Pitch = outPitch;
+            displayInfo->ColorFormat = AeroGpuDdiColorFormatFromScanoutFormat(outFormat);
+            displayInfo->PhysicalAddress = outFbPa;
             displayInfo->TargetId = AEROGPU_VIDPN_TARGET_ID;
         }
 
         DXGK_FRAMEBUFFER_INFORMATION* fbInfo = pStopDeviceAndReleasePostDisplayOwnership->pFrameBufferInfo;
         if (fbInfo) {
             RtlZeroMemory(fbInfo, sizeof(*fbInfo));
-            if (adapter->CurrentScanoutFbPa.QuadPart != 0) {
-                fbInfo->FrameBufferBase = adapter->CurrentScanoutFbPa;
+            if (outFbPa.QuadPart != 0) {
+                fbInfo->FrameBufferBase = outFbPa;
 
                 ULONGLONG len = 0;
-                if (adapter->CurrentPitch != 0 && adapter->CurrentHeight != 0) {
-                    len = (ULONGLONG)adapter->CurrentPitch * (ULONGLONG)adapter->CurrentHeight;
+                if (outPitch != 0 && outHeight != 0) {
+                    len = (ULONGLONG)outPitch * (ULONGLONG)outHeight;
                 }
                 if (len > 0xFFFFFFFFull) {
                     len = 0xFFFFFFFFull;
