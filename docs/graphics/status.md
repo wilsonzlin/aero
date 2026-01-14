@@ -508,15 +508,18 @@ Known gaps / limitations (enforced by code/tests):
     - Test: [`crates/aero-d3d11/tests/aerogpu_cmd_gs_instance_count.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_gs_instance_count.rs)
   - No stream-out (SO / transform feedback)
 - Tessellation (Hull/Domain) emulation is bring-up only:
-  - Patchlist topologies and/or HS/DS bindings route draws through the compute-prepass expansion path
+  - Patchlist topology routes draws through the compute-prepass expansion path
     (see `gs_hs_ds_emulation_required`, `exec_draw_with_compute_prepass`).
-  - Current executor behavior is still **placeholder**: PatchList/HS/DS draws run a synthetic
-    triangle compute prepass (used to validate render-pass splitting + indirect draw plumbing), not
-    real tessellation semantics.
-  - The repo contains real tessellation building blocks under
-    `crates/aero-d3d11/src/runtime/tessellation/` (layout pass, index gen, DS-eval templates, sizing
-    guardrails), but they are not yet fully wired into the command-stream draw path.
-  - Guest HS/DS DXBC is not executed yet; HS/DS handles are accepted for state/binding only.
+  - Patchlist topology **without GS/HS/DS bound** uses the synthetic expansion prepass (emits a
+    deterministic triangle) so apps that select patchlists speculatively can still render *something*
+    during bring-up.
+  - Patchlist topology **with HS+DS bound** routes through an initial tessellation compute prepass
+    pipeline (currently PatchList3 only) that expands the patch list into an indexed triangle list
+    for rendering. Guest HS/DS DXBC is not executed yet; the pipeline uses placeholder/passthrough
+    stages.
+  - Tessellation building blocks live under `crates/aero-d3d11/src/runtime/tessellation/` (VS-as-compute
+    stub, HS passthrough, layout pass, DS passthrough, index gen, sizing/guardrails).
+  - Guest HS/DS handles/resources are tracked for state/binding, but not executed yet.
   - Design doc: [`docs/graphics/tessellation-emulation.md`](./tessellation-emulation.md)
   - Code: [`crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`](../../crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs) (`CmdPrimitiveTopology::PatchList`, `gs_hs_ds_emulation_required`, `exec_draw_with_compute_prepass`)
   - Tests:
