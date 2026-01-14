@@ -122,7 +122,7 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
         version: 1,
         config: makeConfig(),
       });
-      worker.postMessage(emptySetBootDisksMessage() satisfies SetBootDisksMessage);
+      worker.postMessage(emptySetBootDisksMessage());
       worker.postMessage(makeInit(segments));
 
       await workerReady;
