@@ -72,10 +72,16 @@ fn input_e2e_appends_extra_playwright_args_after_spec_list() {
         .find(|argv| argv.first().map(|s| s.as_str()) == Some("npm") && argv.contains(&"test:e2e".to_string()))
         .expect("expected an npm test:e2e invocation");
 
+    // Identify the final spec path without hardcoding which spec happens to be last.
     let idx_last_spec = npm_e2e
         .iter()
-        .position(|arg| arg == "tests/e2e/workers_panel_input_capture.spec.ts")
-        .expect("expected last curated spec in npm argv");
+        .enumerate()
+        .filter(|(_, arg)| {
+            arg.starts_with("tests/e2e/") && (arg.ends_with(".spec.ts") || arg.ends_with(".spec.mjs"))
+        })
+        .map(|(idx, _)| idx)
+        .max()
+        .expect("expected at least one curated spec path in npm argv");
     let idx_malformed = npm_e2e
         .iter()
         .position(|arg| arg == "tests/e2e/input_batch_malformed.spec.ts")
@@ -136,4 +142,3 @@ fn parse_invocations(log: &str) -> Vec<Vec<String>> {
 
     invocations
 }
-

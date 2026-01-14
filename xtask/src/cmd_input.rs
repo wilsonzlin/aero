@@ -198,7 +198,7 @@ mod tests {
         }
 
         let capture_io_worker = idx("tests/e2e/input_capture_io_worker.spec.ts");
-        let malformed_batch = idx("tests/e2e/input_batch_malformed.spec.ts");
+        let malformed_batch = idx(INPUT_BATCH_MALFORMED_SPEC);
         let i8042 = idx("tests/e2e/io_worker_i8042.spec.ts");
 
         assert!(
