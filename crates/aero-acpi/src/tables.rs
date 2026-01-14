@@ -1259,6 +1259,25 @@ fn eisa_id_to_u32(id: &str) -> Option<u32> {
 fn pci0_crs(cfg: &AcpiConfig) -> Vec<u8> {
     let mut out = Vec::new();
 
+    // Address Space Descriptor flags (ACPI):
+    // - GeneralFlags:
+    //     bit0: ResourceUsage (0=ResourceProducer, 1=ResourceConsumer)
+    //     bit1: DecodeType    (0=PosDecode,       1=SubDecode)
+    //     bit2: MinFixed
+    //     bit3: MaxFixed
+    //
+    // A PCI root bridge should advertise its bus/I/O/MMIO windows as produced resources.
+    // Windows 7's PCI resource allocation depends on this (it can mis-handle
+    // ResourceConsumer/ReadOnly windows).
+    //
+    // Keep the exact byte values consistent with what ACPICA iasl emits so `iasl -d` round-trips
+    // cleanly.
+    const PCI0_CRS_GENERAL_FLAGS: u8 = 0x0C; // ResourceProducer, PosDecode, MinFixed, MaxFixed
+    // - Memory TypeSpecificFlags:
+    //     bit0: ReadWrite (1=ReadWrite, 0=ReadOnly)
+    //     bits1-2: Cacheability (00=NonCacheable, 01=Cacheable, 10=WriteCombining, 11=Prefetchable)
+    const PCI0_CRS_MMIO_TYPE_SPECIFIC_FLAGS: u8 = 0x03; // Cacheable, ReadWrite
+
     // Word Address Space Descriptor (Bus Number).
     let start_bus = u16::from(cfg.pcie_start_bus);
     let end_bus_raw = u16::from(cfg.pcie_end_bus);
@@ -1267,9 +1286,7 @@ fn pci0_crs(cfg: &AcpiConfig) -> Vec<u8> {
     out.extend_from_slice(&word_addr_space_descriptor(
         AddrSpaceDescriptorHeader {
             resource_type: 0x02,
-            // Match the flags emitted by ACPICA iasl for `WordBusNumber (...)`.
-            // We intentionally keep this compatible with `iasl -d` round-trips.
-            general_flags: 0x0C, // min/max fixed
+            general_flags: PCI0_CRS_GENERAL_FLAGS,
             type_specific_flags: 0x00,
         },
         AddrSpaceDescriptorRange {
@@ -1288,8 +1305,8 @@ fn pci0_crs(cfg: &AcpiConfig) -> Vec<u8> {
     out.extend_from_slice(&word_addr_space_descriptor(
         AddrSpaceDescriptorHeader {
             resource_type: 0x01,
-            // Match the flags emitted by ACPICA iasl for `WordIO (...)`.
-            general_flags: 0x0C, // min/max fixed
+            general_flags: PCI0_CRS_GENERAL_FLAGS,
+            // "EntireRange" (ACPICA disassembler token) so the emitted descriptor round-trips.
             type_specific_flags: 0x03,
         },
         AddrSpaceDescriptorRange {
@@ -1305,8 +1322,8 @@ fn pci0_crs(cfg: &AcpiConfig) -> Vec<u8> {
     out.extend_from_slice(&word_addr_space_descriptor(
         AddrSpaceDescriptorHeader {
             resource_type: 0x01,
-            // Match the flags emitted by ACPICA iasl for `WordIO (...)`.
-            general_flags: 0x0C, // min/max fixed
+            general_flags: PCI0_CRS_GENERAL_FLAGS,
+            // "EntireRange" (ACPICA disassembler token) so the emitted descriptor round-trips.
             type_specific_flags: 0x03,
         },
         AddrSpaceDescriptorRange {
@@ -1348,9 +1365,8 @@ fn pci0_crs(cfg: &AcpiConfig) -> Vec<u8> {
             out.extend_from_slice(&dword_addr_space_descriptor(
                 AddrSpaceDescriptorHeader {
                     resource_type: 0x00,
-                    // Match the flags emitted by ACPICA iasl for `DWordMemory (...)`.
-                    general_flags: 0x0C, // min/max fixed
-                    type_specific_flags: 0x03,
+                    general_flags: PCI0_CRS_GENERAL_FLAGS,
+                    type_specific_flags: PCI0_CRS_MMIO_TYPE_SPECIFIC_FLAGS,
                 },
                 AddrSpaceDescriptorRange {
                     granularity: 0x0000_0000,
@@ -1868,6 +1884,110 @@ mod tests {
             i += total;
         }
         out
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    struct AddrSpaceDescHeader {
+        tag: u8,
+        resource_type: u8,
+        general_flags: u8,
+        type_specific_flags: u8,
+    }
+
+    fn collect_addr_space_descriptor_headers(crs: &[u8]) -> Vec<AddrSpaceDescHeader> {
+        let mut out = Vec::new();
+        let mut i = 0usize;
+        while i < crs.len() {
+            let tag = crs[i];
+            if tag == 0x79 {
+                break;
+            }
+
+            // Small vs large item format.
+            if (tag & 0x80) == 0 {
+                let len = (tag & 0x07) as usize;
+                i = i.saturating_add(1 + len);
+                continue;
+            }
+
+            if i + 3 > crs.len() {
+                break;
+            }
+            let len = u16::from_le_bytes([crs[i + 1], crs[i + 2]]) as usize;
+            let total = 3 + len;
+            if i + total > crs.len() {
+                break;
+            }
+
+            // Word/DWord Address Space Descriptors share their header layout:
+            //   payload[0] = ResourceType
+            //   payload[1] = GeneralFlags
+            //   payload[2] = TypeSpecificFlags
+            if (tag == 0x87 && len >= 0x17) || (tag == 0x88 && len >= 0x0D) {
+                out.push(AddrSpaceDescHeader {
+                    tag,
+                    resource_type: crs[i + 3],
+                    general_flags: crs[i + 4],
+                    type_specific_flags: crs[i + 5],
+                });
+            }
+
+            i += total;
+        }
+
+        out
+    }
+
+    #[test]
+    fn pci0_crs_emits_resource_producer_windows_and_cacheable_rw_mmio() {
+        let cfg = AcpiConfig::default();
+        let crs = pci0_crs(&cfg);
+
+        let headers = collect_addr_space_descriptor_headers(&crs);
+
+        // Bus window.
+        let bus: Vec<_> = headers
+            .iter()
+            .filter(|d| d.tag == 0x88 && d.resource_type == 0x02)
+            .collect();
+        assert_eq!(bus.len(), 1, "expected exactly one BusNumber descriptor");
+        assert_eq!(
+            bus[0].general_flags, 0x0C,
+            "unexpected BusNumber descriptor general flags"
+        );
+
+        // I/O windows (excluding the separate Small IO descriptor for 0xCF8..0xCFF).
+        let io: Vec<_> = headers
+            .iter()
+            .filter(|d| d.tag == 0x88 && d.resource_type == 0x01)
+            .collect();
+        assert_eq!(io.len(), 2, "expected exactly two WordIO descriptors");
+        for d in io {
+            assert_eq!(
+                d.general_flags, 0x0C,
+                "unexpected WordIO descriptor general flags"
+            );
+        }
+
+        // PCI MMIO window(s).
+        let mmio: Vec<_> = headers
+            .iter()
+            .filter(|d| d.tag == 0x87 && d.resource_type == 0x00)
+            .collect();
+        assert!(
+            !mmio.is_empty(),
+            "expected PCI0._CRS to contain at least one DWord memory descriptor"
+        );
+        for d in mmio {
+            assert_eq!(
+                d.general_flags, 0x0C,
+                "unexpected DWord memory descriptor general flags"
+            );
+            assert_eq!(
+                d.type_specific_flags, 0x03,
+                "unexpected DWord memory descriptor type-specific flags"
+            );
+        }
     }
 
     #[test]
