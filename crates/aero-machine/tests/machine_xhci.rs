@@ -682,6 +682,105 @@ fn xhci_msix_triggers_lapic_vector_and_suppresses_intx() {
 }
 
 #[test]
+fn xhci_msix_unprogrammed_address_sets_pending_and_delivers_after_programming() {
+    let mut m = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_xhci: true,
+        // Keep the test focused on PCI + xHCI.
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    // Ensure high MMIO addresses decode correctly (avoid A20 aliasing).
+    m.io_write(A20_GATE_PORT, 1, 0x02);
+
+    let interrupts = m.platform_interrupts().expect("pc platform enabled");
+    interrupts
+        .borrow_mut()
+        .set_mode(PlatformInterruptMode::Apic);
+    assert_eq!(interrupts.borrow().mode(), PlatformInterruptMode::Apic);
+
+    let bdf = USB_XHCI_QEMU.bdf;
+
+    // Enable BAR0 MMIO decode + bus mastering.
+    let cmd = cfg_read(&mut m, bdf, 0x04, 2) as u16;
+    cfg_write(&mut m, bdf, 0x04, 2, u32::from(cmd | (1 << 1) | (1 << 2)));
+
+    let bar0_base = m.pci_bar_base(bdf, 0).expect("xHCI BAR0 should exist");
+    assert_ne!(bar0_base, 0);
+
+    // Locate MSI-X capability + table/PBA offsets.
+    let msix_cap = find_capability(&mut m, bdf, PCI_CAP_ID_MSIX)
+        .expect("xHCI should expose an MSI-X capability in PCI config space");
+    let table = cfg_read(&mut m, bdf, msix_cap + 0x04, 4);
+    let pba = cfg_read(&mut m, bdf, msix_cap + 0x08, 4);
+    assert_eq!((table & 0x7) as u8, 0, "xHCI MSI-X table should be in BAR0");
+    assert_eq!((pba & 0x7) as u8, 0, "xHCI MSI-X PBA should be in BAR0");
+    let table_offset = u64::from(table & !0x7);
+    let pba_offset = u64::from(pba & !0x7);
+
+    // Program MSI-X table entry 0 with an invalid address but a valid vector.
+    let vector: u8 = 0x6b;
+    let entry0 = bar0_base + table_offset;
+    m.write_physical_u32(entry0, 0);
+    m.write_physical_u32(entry0 + 0x04, 0);
+    m.write_physical_u32(entry0 + 0x08, u32::from(vector));
+    m.write_physical_u32(entry0 + 0x0c, 0); // unmasked
+
+    // Enable MSI-X (control bit 15) and tick once so the runtime xHCI device mirrors it.
+    let ctrl = cfg_read(&mut m, bdf, msix_cap + 0x02, 2) as u16;
+    cfg_write(&mut m, bdf, msix_cap + 0x02, 2, u32::from(ctrl | (1 << 15)));
+    m.tick_platform(1);
+
+    let xhci = m.xhci().expect("xHCI should be enabled");
+    xhci.borrow_mut().raise_event_interrupt();
+
+    // Delivery is blocked by the invalid table entry address; the device must set the PBA pending
+    // bit instead.
+    assert_eq!(
+        PlatformInterruptController::get_pending(&*interrupts.borrow()),
+        None
+    );
+    assert!(
+        !xhci.borrow().irq_level(),
+        "xHCI INTx should be suppressed while MSI-X is active"
+    );
+    assert_ne!(
+        m.read_physical_u64(bar0_base + pba_offset) & 1,
+        0,
+        "expected MSI-X pending bit 0 to be set when the table entry address is invalid"
+    );
+
+    // Clear the interrupt condition so delivery relies solely on the pending bit.
+    xhci.borrow_mut().clear_event_interrupt();
+    assert_ne!(
+        m.read_physical_u64(bar0_base + pba_offset) & 1,
+        0,
+        "expected MSI-X pending bit 0 to remain set after clearing the interrupt condition"
+    );
+
+    // Program a valid MSI-X message address; the xHCI MMIO handler services pending MSI-X vectors
+    // on table writes, so delivery should occur without reasserting the interrupt condition.
+    m.write_physical_u32(entry0, 0xfee0_0000);
+
+    assert_eq!(
+        PlatformInterruptController::get_pending(&*interrupts.borrow()),
+        Some(vector)
+    );
+    assert_eq!(
+        m.read_physical_u64(bar0_base + pba_offset) & 1,
+        0,
+        "expected MSI-X pending bit 0 to be cleared after delivery"
+    );
+}
+
+#[test]
 fn xhci_tick_platform_zero_syncs_msix_enable_state_into_device_model() {
     let mut m = Machine::new(MachineConfig {
         ram_size_bytes: 2 * 1024 * 1024,

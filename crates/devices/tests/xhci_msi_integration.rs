@@ -284,6 +284,91 @@ fn xhci_msix_interrupt_reaches_guest_idt_vector() {
 }
 
 #[test]
+fn xhci_msix_unprogrammed_address_sets_pending_and_delivers_after_programming() {
+    let mut dev = XhciPciDevice::default();
+
+    // Platform interrupt controller used as an MSI sink.
+    let interrupts = Rc::new(RefCell::new(PlatformInterrupts::new()));
+    interrupts
+        .borrow_mut()
+        .set_mode(PlatformInterruptMode::Apic);
+    dev.set_msi_target(Some(Box::new(interrupts.clone())));
+
+    let mut cpu = GuestCpu::new();
+    cpu.install_isr(0x46);
+
+    // Program BAR0 base and enable MEM decoding so the MSI-X table/PBA region is accessible.
+    dev.config_mut()
+        .set_bar_base(XhciPciDevice::MMIO_BAR_INDEX, 0x1000_0000);
+    dev.config_mut().set_command(0x2);
+
+    // Enable MSI-X in config space.
+    let cap_offset = dev.config_mut().find_capability(PCI_CAP_ID_MSIX).unwrap() as u16;
+    let ctrl = dev.config_mut().read(cap_offset + 0x02, 2) as u16;
+    dev.config_mut()
+        .write(cap_offset + 0x02, 2, u32::from(ctrl | (1 << 15)));
+
+    let (table_base, pba_base) = {
+        let msix = dev
+            .config_mut()
+            .capability::<MsixCapability>()
+            .expect("xHCI should expose MSI-X capability");
+        (u64::from(msix.table_offset()), u64::from(msix.pba_offset()))
+    };
+
+    // Program MSI-X table entry 0 with an invalid address (unprogrammed), but with a valid vector.
+    MmioHandler::write(&mut dev, table_base, 4, 0);
+    MmioHandler::write(&mut dev, table_base + 0x04, 4, 0);
+    MmioHandler::write(&mut dev, table_base + 0x08, 4, 0x0046);
+    MmioHandler::write(&mut dev, table_base + 0x0c, 4, 0); // unmasked
+
+    dev.raise_event_interrupt();
+
+    assert!(
+        !dev.irq_level(),
+        "legacy INTx must be suppressed while MSI-X is active"
+    );
+
+    assert_eq!(
+        interrupts.borrow_mut().get_pending(),
+        None,
+        "unprogrammed MSI-X address must not inject an interrupt"
+    );
+
+    let msix = dev.config().capability::<MsixCapability>().unwrap();
+    assert_eq!(
+        msix.snapshot_pba().first().copied().unwrap_or(0) & 1,
+        1,
+        "device should latch MSI-X PBA bit 0 when the table entry address is invalid"
+    );
+
+    // Clear the interrupt condition so delivery relies solely on the pending bit.
+    dev.clear_event_interrupt();
+
+    // Program a valid MSI-X address. The xHCI wrapper services pending MSI-X vectors when the
+    // guest writes the table, so delivery should occur without reasserting the interrupt
+    // condition.
+    MmioHandler::write(&mut dev, table_base, 4, 0xfee0_0000);
+
+    cpu.service_next_interrupt(&mut interrupts.borrow_mut());
+    assert_eq!(cpu.handled_vectors, vec![0x46]);
+
+    let msix = dev.config().capability::<MsixCapability>().unwrap();
+    assert_eq!(
+        msix.snapshot_pba().first().copied().unwrap_or(0) & 1,
+        0,
+        "PBA bit should clear after pending MSI-X delivery"
+    );
+
+    // Also assert the guest can observe the pending bit via BAR0 PBA MMIO reads.
+    assert_eq!(
+        MmioHandler::read(&mut dev, pba_base, 8) & 1,
+        0,
+        "PBA MMIO should reflect the cleared pending bit"
+    );
+}
+
+#[test]
 fn xhci_intx_fallback_routes_through_pci_intx_router() {
     let mut dev = XhciPciDevice::default();
     let bdf = PciBdf::new(0, 0, 0);
