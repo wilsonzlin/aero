@@ -408,11 +408,59 @@ impl PlatformInterrupts {
     pub fn reset(&mut self) {
         // Preserve the shared IRQ line generation counter so existing `PlatformIrqLine` handles
         // observe the reset and invalidate their cached level.
-        let gen = self.irq_line_generation.clone();
-        gen.fetch_add(1, Ordering::SeqCst);
-        let cpu_count = u8::try_from(self.lapics.len()).unwrap_or(u8::MAX).max(1);
-        *self = Self::new_with_cpu_count(cpu_count);
-        self.irq_line_generation = gen;
+        self.irq_line_generation.fetch_add(1, Ordering::SeqCst);
+
+        // Reset the PC wiring assumptions (ISA IRQ -> GSI mapping) to the defaults published by
+        // firmware tables.
+        for (idx, slot) in self.isa_irq_to_gsi.iter_mut().enumerate() {
+            *slot = idx as u32;
+        }
+        // Match the MADT Interrupt Source Override (ISO) entries published by firmware:
+        // ISA IRQ0 -> GSI2.
+        self.isa_irq_to_gsi[0] = 2;
+
+        for flag in self.pending_init.iter() {
+            flag.store(false, Ordering::SeqCst);
+        }
+
+        // Deterministic LAPIC time starts at 0 on reset.
+        self.lapic_clock.set_now_ns(0);
+
+        // Reset LAPIC state in-place so any machine-level wiring (EOI/ICR notifiers, held `Arc`s)
+        // survives across resets.
+        for (idx, lapic) in self.lapics.iter().enumerate() {
+            let apic_id = u8::try_from(idx).unwrap_or(u8::MAX);
+            lapic.reset_state(apic_id);
+            // Keep LAPICs enabled for platform-level interrupt injection (tests and early bring-up).
+            lapic.mmio_write(0xF0, &(0x1FFu32).to_le_bytes());
+        }
+
+        // Reset the IOAPIC in-place while preserving the shared `Arc<Mutex<IoApic>>` identity so
+        // existing LAPIC EOI notifier closures remain valid.
+        self.apic_enabled.store(false, Ordering::SeqCst);
+        let mut sinks: Vec<Arc<dyn LapicInterruptSink>> = Vec::with_capacity(self.lapics.len());
+        for lapic in &self.lapics {
+            sinks.push(Arc::new(RoutedLapicSink {
+                lapic: lapic.clone(),
+                apic_enabled: self.apic_enabled.clone(),
+            }));
+        }
+        *self.ioapic.lock().unwrap() = IoApic::with_lapics(IoApicId(0), sinks);
+
+        let num_gsis = self.ioapic.lock().unwrap().num_redirection_entries();
+        self.gsi_level = vec![false; num_gsis];
+        self.gsi_restore_baseline = vec![false; num_gsis];
+        self.gsi_assert_count = vec![0; num_gsis];
+
+        // Reset the legacy PIC and mask all IRQ lines by default.
+        let mut pic = Pic8259::new(0x08, 0x70);
+        pic.port_write_u8(MASTER_DATA, 0xFF);
+        pic.port_write_u8(SLAVE_DATA, 0xFF);
+        self.pic = pic;
+
+        self.mode = PlatformInterruptMode::LegacyPic;
+        self.imcr_select = 0;
+        self.imcr = 0;
     }
 
     pub fn mode(&self) -> PlatformInterruptMode {
@@ -1631,5 +1679,28 @@ mod tests {
         );
         assert!(!lapic1.is_pending(0x80));
         assert_eq!(lapic_read_u32(lapic1, 0x80), 0);
+    }
+
+    #[test]
+    fn lapic_icr_notifier_survives_platform_reset() {
+        let mut ints = PlatformInterrupts::new_with_cpu_count(2);
+
+        let seen = Arc::new(Mutex::new(Vec::<aero_interrupts::apic::Icr>::new()));
+        let seen_clone = seen.clone();
+        ints.register_icr_notifier(0, Arc::new(move |icr| {
+            seen_clone.lock().unwrap().push(icr);
+        }));
+
+        ints.reset();
+
+        // Program destination APIC ID = 1 in ICR_HIGH.
+        ints.lapic_mmio_write_for_apic(0, 0x310, &((1u32 << 24).to_le_bytes()));
+        // Send fixed IPI vector 0x46.
+        ints.lapic_mmio_write_for_apic(0, 0x300, &(0x46u32.to_le_bytes()));
+
+        let events = seen.lock().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].destination, 1);
+        assert_eq!(events[0].vector, 0x46);
     }
 }
