@@ -2031,7 +2031,8 @@ def validate_virtio_input_model_lines(
     - The INF must include the SUBSYS-qualified Aero contract v1 keyboard/mouse HWIDs
       (distinct naming).
     - If `require_fallback=True`, it must include the strict REV-qualified generic
-      fallback HWID (no SUBSYS). If `require_fallback=False`, it must not include that
+      fallback HWID (no SUBSYS) so binding remains revision-gated even when subsystem
+      IDs are absent/ignored. If `require_fallback=False`, it must not include that
       fallback HWID.
     - It must not include the tablet subsystem ID (`SUBSYS_00121AF4`); tablet devices
       bind via `aero_virtio_tablet.inf` (which is more specific and wins over the
@@ -2040,6 +2041,10 @@ def validate_virtio_input_model_lines(
     The `require_fallback` flag controls which policy is enforced:
       - `require_fallback=False`: forbid the strict fallback HWID.
       - `require_fallback=True`: require the strict fallback HWID.
+
+    The legacy filename alias is expected to stay in sync with the canonical INF
+    outside the models sections (CI enforces this via an alias drift check) so it
+    cannot silently drift in behavior.
     """
 
     model_entries = parse_inf_model_entries(inf_path)

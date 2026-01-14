@@ -1214,6 +1214,8 @@ fn validate_virtio_input_device_desc_split(
     //
     // Tablet devices bind via `aero_virtio_tablet.inf` (more specific SUBSYS match) and will win
     // over the generic fallback when that INF is installed.
+    //
+    // `require_fallback` selects which policy to enforce for the given INF.
     let strings = parse_inf_strings(inf_text);
     let rev = format!("{expected_rev:02X}");
     let kb_hwid = format!("{base_hwid}&SUBSYS_00101AF4&REV_{rev}");

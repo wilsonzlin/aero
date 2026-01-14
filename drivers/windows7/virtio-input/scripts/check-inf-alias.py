@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT OR Apache-2.0
-"""
+"""\
 Verify that the legacy virtio-input INF alias stays in sync.
 
 The Windows 7 virtio-input driver package has a canonical INF:
@@ -10,11 +10,17 @@ For compatibility with older tooling/workflows, the repo also keeps a legacy
 filename alias INF (checked in disabled-by-default):
   - drivers/windows7/virtio-input/inf/virtio-input.inf.disabled
 
+Developers may locally enable the alias by renaming it to `virtio-input.inf`.
+
 Policy:
   - The alias INF is allowed to differ in the models sections (`Aero.NTx86` /
     `Aero.NTamd64`), but should otherwise remain identical to the canonical INF.
   - Outside the models sections, the alias must stay in sync with the canonical
     INF (from the first section header onward).
+  - The canonical INF is intentionally strict and SUBSYS-gated only (no generic
+    fallback HWID).
+  - The legacy alias INF must include the strict, revision-gated generic fallback
+    HWID (`PCI\\VEN_1AF4&DEV_1052&REV_01`) in its models sections.
 
 Comparison notes:
   - Comments and empty lines are ignored.
@@ -98,6 +104,7 @@ def inf_functional_lines(path: Path) -> list[str]:
         if no_comment == "":
             continue
         out.append(no_comment)
+
     return out
 
 
@@ -143,6 +150,7 @@ def main() -> int:
     inf_dir = virtio_input_root / "inf"
 
     canonical = inf_dir / "aero_virtio_input.inf"
+
     # The repo keeps the alias checked in disabled-by-default, but developers may
     # locally enable it by renaming to `virtio-input.inf`. Support both so the
     # check can be used in either state.
@@ -161,69 +169,70 @@ def main() -> int:
 
     canonical_body = inf_functional_lines(canonical)
     alias_body = inf_functional_lines(alias)
-    if canonical_body == alias_body:
-        # Functional regions match outside the models sections. Enforce the alias
-        # policy for the generic fallback HWID:
-        #   - canonical (aero_virtio_input.inf): SUBSYS-only (no generic fallback)
-        #   - alias (virtio-input.inf.disabled): adds opt-in strict fallback
-        for sect in ("Aero.NTx86", "Aero.NTamd64"):
-            canonical_seen, canonical_matches = find_hwid_model_lines(path=canonical, section=sect, hwid=FALLBACK_HWID)
-            alias_seen, alias_matches = find_hwid_model_lines(path=alias, section=sect, hwid=FALLBACK_HWID)
 
-            if not canonical_seen:
-                sys.stderr.write(f"{canonical}: missing required models section [{sect}].\n")
-                return 1
-            if not alias_seen:
-                sys.stderr.write(f"{alias}: missing required models section [{sect}].\n")
-                return 1
+    if canonical_body != alias_body:
+        sys.stderr.write("virtio-input INF alias drift detected.\n")
+        sys.stderr.write(
+            "The alias INF must match the canonical INF from [Version] onward "
+            "(excluding models sections Aero.NTx86/Aero.NTamd64).\n\n"
+        )
 
-            if canonical_matches:
-                sys.stderr.write(
-                    "virtio-input INF policy violation: the canonical INF must not include the strict "
-                    f"generic fallback model line {FALLBACK_HWID}.\n"
-                )
-                sys.stderr.write(f"Unexpected fallback model line(s) in {canonical} [{sect}]:\n")
-                for m in canonical_matches:
-                    sys.stderr.write(f"  {m}\n")
-                return 1
+        # Use repo-relative paths in the diff output to keep it readable and stable
+        # across machines/CI environments.
+        canonical_label = str(canonical.relative_to(repo_root))
+        alias_label = str(alias.relative_to(repo_root))
 
-            if len(alias_matches) != 1:
-                sys.stderr.write(
-                    "virtio-input INF policy violation: the legacy alias INF must include exactly one strict "
-                    f"generic fallback model line {FALLBACK_HWID}.\n"
-                )
-                if not alias_matches:
-                    sys.stderr.write(f"Missing fallback model line in {alias} [{sect}].\n")
-                else:
-                    sys.stderr.write(f"Found {len(alias_matches)} fallback model lines in {alias} [{sect}]:\n")
-                    for m in alias_matches:
-                        sys.stderr.write(f"  {m}\n")
-                return 1
+        diff = difflib.unified_diff(
+            [l + "\n" for l in canonical_body],
+            [l + "\n" for l in alias_body],
+            fromfile=canonical_label,
+            tofile=alias_label,
+            lineterm="\n",
+        )
+        for line in diff:
+            sys.stderr.write(line)
 
-        return 0
+        return 1
 
-    sys.stderr.write("virtio-input INF alias drift detected.\n")
-    sys.stderr.write(
-        "The alias INF must match the canonical INF from [Version] onward "
-        "(excluding models sections Aero.NTx86/Aero.NTamd64).\n\n"
-    )
+    # Even if the functional regions match, enforce the models section policy:
+    # - Canonical INF is SUBSYS-gated only (no generic fallback match).
+    # - Alias INF adds an opt-in strict generic fallback HWID for environments that
+    #   do not expose Aero subsystem IDs.
+    for sect in ("Aero.NTx86", "Aero.NTamd64"):
+        canonical_seen, canonical_matches = find_hwid_model_lines(path=canonical, section=sect, hwid=FALLBACK_HWID)
+        alias_seen, alias_matches = find_hwid_model_lines(path=alias, section=sect, hwid=FALLBACK_HWID)
 
-    # Use repo-relative paths in the diff output to keep it readable and stable
-    # across machines/CI environments.
-    canonical_label = str(canonical.relative_to(repo_root))
-    alias_label = str(alias.relative_to(repo_root))
+        if not canonical_seen:
+            sys.stderr.write(f"{canonical}: missing required models section [{sect}].\n")
+            return 1
+        if not alias_seen:
+            sys.stderr.write(f"{alias}: missing required models section [{sect}].\n")
+            return 1
 
-    diff = difflib.unified_diff(
-        [l + "\n" for l in canonical_body],
-        [l + "\n" for l in alias_body],
-        fromfile=canonical_label,
-        tofile=alias_label,
-        lineterm="\n",
-    )
-    for line in diff:
-        sys.stderr.write(line)
+        if canonical_matches:
+            sys.stderr.write(
+                "virtio-input INF policy violation: the canonical INF must not include the "
+                f"generic fallback model line {FALLBACK_HWID} (it should be SUBSYS-gated only).\n"
+            )
+            sys.stderr.write(f"Unexpected fallback model line(s) in {canonical} [{sect}]:\n")
+            for line in canonical_matches:
+                sys.stderr.write(f"  {line}\n")
+            return 1
 
-    return 1
+        if len(alias_matches) != 1:
+            sys.stderr.write(
+                "virtio-input INF policy violation: the legacy alias INF must include exactly one "
+                f"strict fallback model line {FALLBACK_HWID}.\n"
+            )
+            if not alias_matches:
+                sys.stderr.write(f"Missing fallback model line in {alias} [{sect}].\n")
+            else:
+                sys.stderr.write(f"Found {len(alias_matches)} fallback model line(s) in {alias} [{sect}]:\n")
+                for line in alias_matches:
+                    sys.stderr.write(f"  {line}\n")
+            return 1
+
+    return 0
 
 
 if __name__ == "__main__":
