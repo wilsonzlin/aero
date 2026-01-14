@@ -5,74 +5,11 @@ use aero_d3d11::runtime::tessellation::layout_pass::wgsl_tessellation_layout_pas
 use aero_d3d11::runtime::tessellation::{TessellationLayoutParams, TessellationLayoutPatchMeta};
 use anyhow::{anyhow, Context, Result};
 
-async fn create_device_queue() -> Result<(wgpu::Device, wgpu::Queue, bool)> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-
-        let needs_runtime_dir = std::env::var("XDG_RUNTIME_DIR")
-            .ok()
-            .map(|v| v.is_empty())
-            .unwrap_or(true);
-
-        if needs_runtime_dir {
-            let dir =
-                std::env::temp_dir().join(format!("aero-d3d11-xdg-runtime-{}", std::process::id()));
-            let _ = std::fs::create_dir_all(&dir);
-            let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
-            std::env::set_var("XDG_RUNTIME_DIR", &dir);
-        }
-    }
-
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        // Prefer GL on Linux CI to avoid crashes in some Vulkan software adapters.
-        backends: if cfg!(target_os = "linux") {
-            wgpu::Backends::GL
-        } else {
-            wgpu::Backends::PRIMARY
-        },
-        ..Default::default()
-    });
-
-    let adapter = match instance
-        .request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
-            compatible_surface: None,
-            force_fallback_adapter: true,
-        })
-        .await
-    {
-        Some(adapter) => Some(adapter),
-        None => {
-            instance
-                .request_adapter(&wgpu::RequestAdapterOptions {
-                    power_preference: wgpu::PowerPreference::LowPower,
-                    compatible_surface: None,
-                    force_fallback_adapter: false,
-                })
-                .await
-        }
-    }
-    .ok_or_else(|| anyhow!("wgpu: no suitable adapter found"))?;
-
-    let supports_compute = adapter
-        .get_downlevel_capabilities()
-        .flags
-        .contains(wgpu::DownlevelFlags::COMPUTE_SHADERS);
-
-    let (device, queue) = adapter
-        .request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("aero-d3d11 tessellation_layout_pass test device"),
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::downlevel_defaults(),
-            },
-            None,
-        )
-        .await
-        .map_err(|e| anyhow!("wgpu: request_device failed: {e:?}"))?;
-
-    Ok((device, queue, supports_compute))
+async fn create_device_queue() -> Result<(wgpu::Device, wgpu::Queue, wgpu::DownlevelCapabilities)> {
+    common::wgpu::create_device_queue_with_downlevel(
+        "aero-d3d11 tessellation_layout_pass test device",
+    )
+    .await
 }
 
 async fn map_read_buffer(device: &wgpu::Device, buf: &wgpu::Buffer) -> Result<Vec<u8>> {
@@ -456,15 +393,23 @@ fn tessellation_layout_pass_prefix_sums_and_indirect_args_match_expected() {
             "::tessellation_layout_pass_prefix_sums_and_indirect_args_match_expected"
         );
 
-        let (device, queue, supports_compute) = match create_device_queue().await {
+        let (device, queue, downlevel) = match create_device_queue().await {
             Ok(v) => v,
             Err(err) => {
                 common::skip_or_panic(test_name, &format!("wgpu unavailable ({err:#})"));
                 return;
             }
         };
+        let supports_compute = downlevel.flags.contains(wgpu::DownlevelFlags::COMPUTE_SHADERS);
         if !supports_compute {
             common::skip_or_panic(test_name, "compute unsupported");
+            return;
+        }
+        if !downlevel
+            .flags
+            .contains(wgpu::DownlevelFlags::INDIRECT_EXECUTION)
+        {
+            common::skip_or_panic(test_name, "indirect execution unsupported");
             return;
         }
 
@@ -553,15 +498,23 @@ fn tessellation_layout_pass_clamps_to_capacity_and_sets_debug_flag() {
             "::tessellation_layout_pass_clamps_to_capacity_and_sets_debug_flag"
         );
 
-        let (device, queue, supports_compute) = match create_device_queue().await {
+        let (device, queue, downlevel) = match create_device_queue().await {
             Ok(v) => v,
             Err(err) => {
                 common::skip_or_panic(test_name, &format!("wgpu unavailable ({err:#})"));
                 return;
             }
         };
+        let supports_compute = downlevel.flags.contains(wgpu::DownlevelFlags::COMPUTE_SHADERS);
         if !supports_compute {
             common::skip_or_panic(test_name, "compute unsupported");
+            return;
+        }
+        if !downlevel
+            .flags
+            .contains(wgpu::DownlevelFlags::INDIRECT_EXECUTION)
+        {
+            common::skip_or_panic(test_name, "indirect execution unsupported");
             return;
         }
 
