@@ -2518,6 +2518,58 @@ fn translates_f16tof32_applies_operand_modifier_after_unpacking_half_bits() {
 }
 
 #[test]
+fn translates_f16tof32_sat_clamps_converted_values() {
+    let osgn_params = vec![sig_param("SV_Target", 0, 0, 0b1111)];
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (FOURCC_OSGN, build_signature_chunk(&osgn_params)),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let mut dst_sat = dst(RegFile::Temp, 0, WriteMask::XYZW);
+    dst_sat.saturate = true;
+
+    // Use raw half-float bit patterns (in low 16 bits of each lane):
+    // - 2.0  -> 0x4000
+    // - -1.0 -> 0xbc00
+    // - 0.5  -> 0x3800
+    // - 0.0  -> 0x0000
+    let half_bits = src_imm_bits([0x0000_4000, 0x0000_bc00, 0x0000_3800, 0x0000_0000]);
+
+    let module = Sm4Module {
+        stage: ShaderStage::Pixel,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: Vec::new(),
+        instructions: vec![
+            Sm4Inst::F16ToF32 {
+                dst: dst_sat,
+                src: half_bits,
+            },
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Output, 0, WriteMask::XYZW),
+                src: src_reg(RegFile::Temp, 0),
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+    assert!(
+        translated.wgsl.contains("unpack2x16float"),
+        "expected f16tof32 lowering to use unpack2x16float:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("clamp(("),
+        "expected f16tof32_sat to clamp the converted float values:\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
 fn translates_vs_system_value_builtins_from_siv_decls() {
     const D3D_NAME_POSITION: u32 = 1;
     const D3D_NAME_VERTEX_ID: u32 = 6;
