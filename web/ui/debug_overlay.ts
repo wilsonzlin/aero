@@ -248,9 +248,11 @@ export class DebugOverlay {
       const w = typeof scanout.width === "number" ? scanout.width : null;
       const h = typeof scanout.height === "number" ? scanout.height : null;
       const pitch = typeof scanout.pitchBytes === "number" ? scanout.pitchBytes : null;
+      const fmtStr = typeof scanout.format_str === "string" ? scanout.format_str : null;
       const fmt = typeof scanout.format === "number" ? scanout.format : null;
+      const fmtDesc = fmtStr ?? aerogpuFormatToString(fmt ?? Number.NaN);
       lines.push(
-        `Scanout: ${fmtScanoutSource(src)} gen=${gen ?? "n/a"} base=${base} ${w ?? "?"}x${h ?? "?"} pitch=${pitch ?? "?"} fmt=${aerogpuFormatToString(fmt ?? Number.NaN)}`,
+        `Scanout: ${fmtScanoutSource(src)} gen=${gen ?? "n/a"} base=${base} ${w ?? "?"}x${h ?? "?"} pitch=${pitch ?? "?"} fmt=${fmtDesc}`,
       );
     }
 

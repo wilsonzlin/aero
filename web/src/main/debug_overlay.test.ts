@@ -148,6 +148,9 @@ describe("DebugOverlay hotkey handling", () => {
         height: 600,
         pitchBytes: 3200,
         format: SCANOUT_FORMAT_B8G8R8X8,
+        // Prefer the provided string when present (so consumers don't need to reimplement
+        // AerogpuFormat name mapping).
+        format_str: "CustomFmt (2)",
       },
       gpuEvents: [{ severity: "warn", category: "CursorReadback", backend_kind: "webgpu", message: "vram missing" }],
       gpuStats: {
@@ -172,7 +175,7 @@ describe("DebugOverlay hotkey handling", () => {
     expect(root.textContent).toContain("Presents: 1/2  Recoveries: 1/3  Surface reconfigures: 4");
     expect(root.textContent).toContain("Recoveries (WDDM): 1/1");
     expect(root.textContent).toContain("Scanout:");
-    expect(root.textContent).toContain("fmt=B8G8R8X8Unorm (2)");
+    expect(root.textContent).toContain("fmt=CustomFmt (2)");
     expect(root.textContent).toContain("Last event: warn/CursorReadback (webgpu): vram missing");
 
     overlay.detach();
