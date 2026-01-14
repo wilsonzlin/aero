@@ -2050,6 +2050,110 @@ mod tests {
         assert_ne!(bm_st & (1 << 5), 0, "DMA capability bit should be set");
     }
 
+    #[test]
+    fn atapi_dma_prd_missing_eot_aborts_command_and_sets_bm_error() {
+        const BM_BASE: u16 = 0xC000;
+        const PRD_BASE: u64 = 0x1000;
+        const BUF_BASE: u64 = 0x2000;
+
+        let mut expected = vec![0u8; AtapiCdrom::SECTOR_SIZE];
+        for (i, b) in expected.iter_mut().enumerate() {
+            *b = (i & 0xFF) as u8;
+        }
+
+        let mut cd = AtapiCdrom::new(Some(Box::new(TestIsoBackend {
+            image: expected.clone(),
+        })));
+        // Clear Unit Attention.
+        let tur = [0u8; 12];
+        let _ = cd.handle_packet(&tur, false);
+
+        let mut ctl = IdeController::new(BM_BASE);
+        ctl.attach_primary_master_atapi(cd);
+
+        let mut mem = Bus::new(0x10_000);
+
+        // Malformed PRD: one entry long enough to cover the transfer but missing the EOT bit.
+        mem.write_u32(PRD_BASE, BUF_BASE as u32);
+        mem.write_u16(PRD_BASE + 4, AtapiCdrom::SECTOR_SIZE as u16);
+        mem.write_u16(PRD_BASE + 6, 0x0000);
+
+        // Seed the destination buffer so we can verify whether DMA wrote anything.
+        mem.write_physical(BUF_BASE, &vec![0xFFu8; AtapiCdrom::SECTOR_SIZE]);
+
+        // Program bus master registers: PRD pointer + direction=ToMemory + start.
+        ctl.io_write(BM_BASE + 4, 4, PRD_BASE as u32);
+        ctl.io_write(BM_BASE + 0, 1, 0x09);
+
+        // Issue ATAPI PACKET command with DMA enabled in Features.
+        let cmd_base = PRIMARY_PORTS.cmd_base;
+        let ctrl_base = PRIMARY_PORTS.ctrl_base;
+
+        let data_port = cmd_base + ATA_REG_DATA;
+        let features_port = cmd_base + ATA_REG_ERROR_FEATURES;
+        let lba1_port = cmd_base + ATA_REG_LBA1;
+        let lba2_port = cmd_base + ATA_REG_LBA2;
+        let device_port = cmd_base + ATA_REG_DEVICE;
+        let command_port = cmd_base + ATA_REG_STATUS_COMMAND;
+        let alt_status_port = ctrl_base + ATA_CTRL_ALT_STATUS_DEVICE_CTRL;
+
+        ctl.io_write(device_port, 1, 0xA0);
+        ctl.io_write(features_port, 1, 0x01); // DMA
+        ctl.io_write(lba1_port, 1, 0x00);
+        ctl.io_write(lba2_port, 1, 0x08); // 2048-byte packet byte count
+        ctl.io_write(command_port, 1, 0xA0); // PACKET
+
+        // PACKET phase asserts DRQ and raises an IRQ.
+        let st = ctl.io_read(alt_status_port, 1) as u8;
+        assert_ne!(st & IDE_STATUS_DRQ, 0);
+        assert_ne!(st & IDE_STATUS_DRDY, 0);
+        assert_eq!(st & IDE_STATUS_BSY, 0);
+        assert!(ctl.primary_irq_pending());
+
+        // Acknowledge the PACKET IRQ.
+        let _ = ctl.io_read(command_port, 1);
+        assert!(!ctl.primary_irq_pending());
+
+        // READ(10) packet (LBA=0, blocks=1).
+        let mut pkt = [0u8; 12];
+        pkt[0] = 0x28;
+        pkt[7..9].copy_from_slice(&1u16.to_be_bytes());
+        for chunk in pkt.chunks_exact(2) {
+            let w = u16::from_le_bytes([chunk[0], chunk[1]]);
+            ctl.io_write(data_port, 2, w as u32);
+        }
+
+        assert!(ctl.primary.pending_dma.is_some());
+
+        // Run DMA; it should error due to malformed PRD table.
+        ctl.tick(&mut mem);
+
+        assert!(ctl.primary_irq_pending(), "IRQ should be pending after DMA error");
+        let bm_st = ctl.io_read(BM_BASE + 2, 1) as u8;
+        assert_eq!(bm_st & 0x07, 0x06, "BMIDE status should have IRQ+ERR set");
+
+        let err = ctl.io_read(cmd_base + ATA_REG_ERROR_FEATURES, 1) as u8;
+        assert_eq!(err, 0x04, "expected ABRT after DMA failure");
+
+        // ATAPI uses Sector Count as interrupt reason; errors should still transition to status
+        // phase (IO=1, CoD=1).
+        let irq_reason = ctl.io_read(cmd_base + ATA_REG_SECTOR_COUNT, 1) as u8;
+        assert_eq!(irq_reason, 0x03, "expected ATAPI status phase after DMA failure");
+
+        // Use ALT_STATUS so we don't accidentally clear the interrupt.
+        let st = ctl.io_read(alt_status_port, 1) as u8;
+        assert_ne!(st & IDE_STATUS_ERR, 0, "ERR bit should be set after DMA failure");
+        assert_eq!(st & IDE_STATUS_BSY, 0, "BSY should be clear after DMA failure");
+        assert_eq!(st & IDE_STATUS_DRQ, 0, "DRQ should be clear after DMA failure");
+        assert_ne!(st & IDE_STATUS_DRDY, 0, "DRDY should be set after DMA failure");
+
+        // Even though the PRD table is malformed, the DMA engine should still have written the
+        // data before detecting the missing EOT bit.
+        let mut actual = vec![0u8; AtapiCdrom::SECTOR_SIZE];
+        mem.read_physical(BUF_BASE, &mut actual);
+        assert_eq!(actual, expected);
+    }
+
     fn setup_primary_ata_controller() -> IdeController {
         let capacity = SECTOR_SIZE as u64;
         let disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
