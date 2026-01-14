@@ -122,20 +122,47 @@ impl Port {
 
         if self.connected {
             v |= PORTSC_CCS;
-            if !self.reset {
-                // EHCI line-status bits (10:11) reflect the D+/D- level when not in reset. Model J
-                // state when active and K state while resuming (mirrors the muxed port view in
-                // `Usb2PortMux`).
-                let ls = if self.resuming { 0b10 } else { 0b01 };
-                v |= (ls as u32) << 10;
+        }
 
-                if let Some(dev) = self.device.as_ref() {
-                    if dev.speed() == UsbSpeed::High {
-                        v |= PORTSC_HSP;
-                    }
+        // Speed reporting:
+        //
+        // - High-speed devices are indicated via PORTSC.HSP (when EHCI-owned).
+        // - Full/low-speed devices are distinguished via PORTSC.LS (line status).
+        //
+        // This is required so guest EHCI drivers can correctly program QH/qTD endpoint speed
+        // fields (and decide whether to hand off a port to a companion controller).
+        if self.connected {
+            if let Some(dev) = self.device.as_ref() {
+                let speed = dev.speed();
+
+                // PORTSC.HSP is only meaningful when EHCI owns the port.
+                if !self.port_owner && speed == UsbSpeed::High {
+                    v |= PORTSC_HSP;
+                }
+
+                // PORTSC.LS encodes D+/D- line state. Provide a deterministic steady-state mapping
+                // to allow guests to distinguish full-speed vs low-speed.
+                //
+                // EHCI 1.0 spec 2.3.9:
+                // - 0b10 = J-state (D+ high)  -> full-speed device idle
+                // - 0b01 = K-state (D- high)  -> low-speed device idle (pull-up on D-)
+                // - 0b00 = SE0/undefined      -> treat as high-speed / no device
+                if !self.reset {
+                    let ls = if self.resuming && speed != UsbSpeed::High {
+                        // While resuming at low/full speed, the host drives a K-state (D- high).
+                        0b01u32
+                    } else {
+                        match speed {
+                            UsbSpeed::High => 0b00u32,
+                            UsbSpeed::Full => 0b10u32,
+                            UsbSpeed::Low => 0b01u32,
+                        }
+                    };
+                    v |= ls << 10;
                 }
             }
         }
+
         if self.connect_change {
             v |= PORTSC_CSC;
         }
