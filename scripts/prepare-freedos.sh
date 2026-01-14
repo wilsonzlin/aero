@@ -17,10 +17,6 @@ STAMP_PATH="${OUT_DIR}/fd14-boot-aero.stamp"
 
 mkdir -p "${OUT_DIR}" "${CACHE_DIR}"
 
-if ! command -v curl >/dev/null 2>&1; then
-  echo "error: curl not found" >&2
-  exit 1
-fi
 if ! command -v unzip >/dev/null 2>&1; then
   echo "error: unzip not found" >&2
   exit 1
@@ -31,8 +27,19 @@ if ! command -v mcopy >/dev/null 2>&1 || ! command -v mtype >/dev/null 2>&1; the
 fi
 
 if [[ ! -f "${ZIP_PATH}" ]]; then
+  if ! command -v curl >/dev/null 2>&1; then
+    echo "error: curl not found" >&2
+    exit 1
+  fi
+
   echo "downloading FreeDOS floppy edition..."
-  curl -L --fail --retry 5 --retry-delay 2 --retry-all-errors -o "${ZIP_PATH}" "${ZIP_URL}"
+  TMP_ZIP="${ZIP_PATH}.tmp"
+  rm -f "${TMP_ZIP}"
+  trap 'rm -f "${TMP_ZIP}"' EXIT
+  curl -L --fail --retry 5 --retry-delay 2 -o "${TMP_ZIP}" "${ZIP_URL}"
+  echo "${ZIP_SHA256}  ${TMP_ZIP}" | sha256sum -c -
+  mv "${TMP_ZIP}" "${ZIP_PATH}"
+  trap - EXIT
 fi
 
 echo "${ZIP_SHA256}  ${ZIP_PATH}" | sha256sum -c -
