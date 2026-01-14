@@ -278,12 +278,11 @@ Current reserved web-only ids:
 
 `aero-snapshot` rejects duplicate `(DeviceId, version, flags)` tuples inside `DEVICES` (see `Validation / corruption handling` above), and by convention `DeviceState.version/flags` mirror the *inner* `aero-io-snapshot` device `SnapshotVersion (major, minor)` (see `Recommended device payload convention (DEVICES)` above).
 
-This means multiple storage controllers **cannot** be stored as multiple outer `DeviceId::DISK_CONTROLLER` entries if they share the same inner `SnapshotVersion`:
+This means multiple storage controllers **cannot** be stored as multiple outer `DeviceId::DISK_CONTROLLER` entries if they share the same inner `SnapshotVersion` (`major`, `minor`).
 
-- AHCI PCI device (`AhciPciDevice`) snapshots as inner `DEVICE_ID = AHCP`, `SnapshotVersion (1.0)`
-- virtio-pci transport (`VirtioPciDevice`) snapshots as inner `DEVICE_ID = VPCI`, `SnapshotVersion (1.0)`
+Historically, several controller snapshots started at `SnapshotVersion (1.0)` (for example, AHCI `AHCP` and early virtio-pci `VPCI`), which would collide as `(DeviceId::DISK_CONTROLLER = 6, version = 1, flags = 0)` and be treated as corrupt.
 
-If both are stored using `aero_snapshot::io_snapshot_bridge::device_state_from_io_snapshot(DeviceId::DISK_CONTROLLER, ...)`, they would both map to the same outer `(DeviceId::DISK_CONTROLLER = 6, version = 1, flags = 0)` key, which is treated as corrupt.
+Note: `VPCI` is currently `SnapshotVersion (1.2)`, but the `DSKC` wrapper remains the canonical encoding because it allows an arbitrary set of controllers (including future ones that may share snapshot versions) to coexist under a single outer `DeviceId::DISK_CONTROLLER` entry.
 
 **Canonical encoding:** store **exactly one** outer `DeviceId::DISK_CONTROLLER` entry whose payload is an `aero-io-snapshot` TLV blob with inner `DEVICE_ID = DSKC` and `SnapshotVersion (1.0)`.
 
