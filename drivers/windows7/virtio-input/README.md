@@ -218,6 +218,7 @@ End-to-end input report delivery is validated by the Win7 harness when enabled:
 - Run the host harness with `-WithInputEvents` / `--with-input-events`.
 - Expected guest markers:
   - `AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS|...`
+  - `AERO_VIRTIO_SELFTEST|TEST|virtio-input-bind|PASS|devices=<n>` (validates the underlying PCI function(s) are bound to `aero_virtio_input` and have no PnP/ConfigManager errors)
   - `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS|...`
 
 Optional: also validate scroll wheel + horizontal wheel end-to-end:

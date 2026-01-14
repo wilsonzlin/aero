@@ -387,6 +387,7 @@ Success looks like:
 
 - Harness exit code `0`
 - Serial log contains `AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS`
+- Serial log contains `AERO_VIRTIO_SELFTEST|TEST|virtio-input-bind|PASS` (verifies the underlying virtio-input PCI function(s) are bound to the expected driver service and have no PnP errors)
 
 ### 4.3 Optional: MSI-X interrupt mode diagnostics / enforcement (`virtio-input-msix`)
 
