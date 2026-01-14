@@ -425,8 +425,9 @@ impl MachineConfig {
     /// - disables the transitional standalone VGA/VBE path (`enable_vga=false`).
     ///
     /// Note: `enable_aerogpu` currently wires BAR1-backed VRAM plus legacy VGA aliasing and an MVP
-    /// BAR0 register block (ring/fence transport + scanout/cursor + vblank pacing). The full
-    /// AeroGPU command/ring execution model is not implemented yet.
+    /// BAR0 register block (ring/fence transport + scanout/cursor + vblank pacing). Submission
+    /// processing is currently a no-op that only completes fences (so the in-tree Win7 KMD can
+    /// initialize); command execution and scanout rendering are not implemented yet.
     #[must_use]
     pub fn win7_graphics(ram_size_bytes: u64) -> Self {
         let mut cfg = Self::win7_storage(ram_size_bytes);
