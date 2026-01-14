@@ -279,6 +279,30 @@ fn virtio_config_space_exposes_vendor_specific_capabilities() {
 }
 
 #[test]
+fn ahci_config_space_exposes_msi_capability() {
+    let mut cfg = SATA_AHCI_ICH9.build_config_space();
+    let cap_ptr = cfg.read(0x34, 1) as u8;
+    assert_eq!(cap_ptr, 0x40);
+
+    let caps = cfg.capability_list();
+    assert_eq!(caps.len(), 1);
+    assert_eq!(caps[0].id, PCI_CAP_ID_MSI);
+    assert_eq!(caps[0].offset, 0x40);
+
+    let msi_off = cfg.find_capability(PCI_CAP_ID_MSI).unwrap() as u16;
+    assert_eq!(cfg.read(msi_off + 1, 1) as u8, 0);
+
+    let msi_ctrl = cfg.read(msi_off + 0x02, 2) as u16;
+    assert_eq!(msi_ctrl & 0x0001, 0, "MSI should start disabled");
+    assert_ne!(msi_ctrl & (1 << 7), 0, "AHCI MSI should be 64-bit");
+    assert_ne!(
+        msi_ctrl & (1 << 8),
+        0,
+        "AHCI MSI should advertise per-vector mask/pending registers"
+    );
+}
+
+#[test]
 fn nvme_config_space_exposes_msi_and_msix_capabilities() {
     let mut cfg = NVME_CONTROLLER.build_config_space();
     let cap_ptr = cfg.read(0x34, 1) as u8;
@@ -313,6 +337,30 @@ fn nvme_config_space_exposes_msi_and_msix_capabilities() {
     assert_eq!(table, 0x3000);
     let pba = cfg.read(msix_off + 0x08, 4);
     assert_eq!(pba, 0x3010);
+}
+
+#[test]
+fn xhci_config_space_exposes_msi_capability() {
+    let mut cfg = USB_XHCI_QEMU.build_config_space();
+    let cap_ptr = cfg.read(0x34, 1) as u8;
+    assert_eq!(cap_ptr, 0x40);
+
+    let caps = cfg.capability_list();
+    assert_eq!(caps.len(), 1);
+    assert_eq!(caps[0].id, PCI_CAP_ID_MSI);
+    assert_eq!(caps[0].offset, 0x40);
+
+    let msi_off = cfg.find_capability(PCI_CAP_ID_MSI).unwrap() as u16;
+    assert_eq!(cfg.read(msi_off + 1, 1) as u8, 0);
+
+    let msi_ctrl = cfg.read(msi_off + 0x02, 2) as u16;
+    assert_eq!(msi_ctrl & 0x0001, 0, "MSI should start disabled");
+    assert_ne!(msi_ctrl & (1 << 7), 0, "xHCI MSI should be 64-bit");
+    assert_ne!(
+        msi_ctrl & (1 << 8),
+        0,
+        "xHCI MSI should advertise per-vector mask/pending registers"
+    );
 }
 
 #[test]
