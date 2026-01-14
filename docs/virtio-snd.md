@@ -285,7 +285,7 @@ This is the most controlled path and avoids licensing ambiguity.
 
 In this repo, the in-tree implementation of this approach is:
 
-- `drivers/windows7/virtio-snd/` (WDM PortCls + WaveRT driver skeleton)
+- `drivers/windows7/virtio-snd/` (WDM PortCls + WaveRT audio driver)
 
 See also:
 
