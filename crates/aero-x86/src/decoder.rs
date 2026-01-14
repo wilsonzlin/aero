@@ -193,6 +193,17 @@ pub fn decode(bytes: &[u8], mode: DecodeMode, ip: u64) -> Result<DecodedInst, De
             // iced-powered decoder for these opcodes to keep validity in sync.
             decode_with_aero_cpu_decoder(bytes, mode, ip, prefixes, address_size)?
         }
+        Err(DecodeError::Invalid) if opcode.map == OpcodeMap::Map0F && opcode.opcode == 0x01 => {
+            // `0F 01 /r` is overloaded: it decodes to Group 7 system instructions (SGDT/LGDT/etc)
+            // with memory operands when ModRM.mod != 0b11, and to other system opcodes (eg.
+            // WRMSRNS) when ModRM.mod == 0b11.
+            //
+            // yaxpeax-x86 does not currently recognize all of these encodings, which can cause our
+            // structured decoder to reject instructions that are accepted by iced-x86 / real
+            // hardware. Route to the iced-powered decoder for this opcode to keep validity in
+            // sync.
+            decode_with_aero_cpu_decoder(bytes, mode, ip, prefixes, address_size)?
+        }
         Err(DecodeError::Invalid) if mode == DecodeMode::Bits64 => {
             let prefix_bytes = bytes.get(..prefix_len).unwrap_or(&[]);
             let rex_count = prefix_bytes
@@ -2687,17 +2698,30 @@ mod tests {
     fn decodes_control_and_debug_register_operands() {
         // mov rax, cr0
         let inst = decode(&[0x48, 0x0F, 0x20, 0xC0], DecodeMode::Bits64, 0).unwrap();
-        assert!(inst.operands.iter().any(|op| matches!(
-            op,
-            Operand::Control { index: 0 }
-        )));
+        assert!(inst
+            .operands
+            .iter()
+            .any(|op| matches!(op, Operand::Control { index: 0 })));
 
         // mov rax, dr0
         let inst = decode(&[0x48, 0x0F, 0x21, 0xC0], DecodeMode::Bits64, 0).unwrap();
-        assert!(inst.operands.iter().any(|op| matches!(
-            op,
-            Operand::Debug { index: 0 }
-        )));
+        assert!(inst
+            .operands
+            .iter()
+            .any(|op| matches!(op, Operand::Debug { index: 0 })));
+    }
+
+    #[test]
+    fn decodes_wrmsrns_in_all_modes() {
+        // 0F 01 C6 = WRMSRNS (implicit operands, op_count=0 in iced-x86).
+        //
+        // This is a regression test for an iced-vs-yaxpeax validity mismatch where the structured
+        // decoder would reject the instruction if it relied solely on yaxpeax-x86.
+        let bytes = [0x0F, 0x01, 0xC6];
+        for mode in [DecodeMode::Bits16, DecodeMode::Bits32, DecodeMode::Bits64] {
+            let inst = decode(&bytes, mode, 0).expect("decode");
+            assert_eq!(inst.length, 3);
+        }
     }
 
     #[test]
@@ -2799,7 +2823,10 @@ mod tests {
 
         // XLAT, INT3, IRET, and ICEBP have implicit operands that must be normalised.
         let inst = decode(&[0xD7], DecodeMode::Bits16, 0).unwrap();
-        assert!(inst.operands.iter().any(|op| matches!(op, Operand::Memory(_))));
+        assert!(inst
+            .operands
+            .iter()
+            .any(|op| matches!(op, Operand::Memory(_))));
 
         let inst = decode(&[0xCC], DecodeMode::Bits16, 0).unwrap();
         assert!(inst.operands.is_empty());
@@ -2863,7 +2890,9 @@ mod tests {
         assert!(inst.prefixes.rex.is_some());
         assert!(inst.operands.iter().any(|op| matches!(
             op,
-            Operand::Segment { reg: SegmentReg::ES }
+            Operand::Segment {
+                reg: SegmentReg::ES
+            }
         )));
         assert!(inst.operands.iter().any(|op| matches!(
             op,
@@ -2881,10 +2910,15 @@ mod tests {
         //   mov word ptr [rsi], ss
         let inst = decode(&[0x44, 0x8C, 0x16], DecodeMode::Bits64, 0).unwrap();
         assert_eq!(inst.length, 3);
-        assert!(inst.operands.iter().any(|op| matches!(op, Operand::Memory(_))));
+        assert!(inst
+            .operands
+            .iter()
+            .any(|op| matches!(op, Operand::Memory(_))));
         assert!(inst.operands.iter().any(|op| matches!(
             op,
-            Operand::Segment { reg: SegmentReg::SS }
+            Operand::Segment {
+                reg: SegmentReg::SS
+            }
         )));
     }
 
@@ -2894,8 +2928,14 @@ mod tests {
         for bytes in [[0x0F, 0x18, 0x60, 0x00], [0x0F, 0x19, 0x07, 0x00]] {
             let inst = decode(&bytes, DecodeMode::Bits16, 0).unwrap();
             assert_eq!(inst.operands.len(), 2);
-            assert!(inst.operands.iter().any(|op| matches!(op, Operand::Memory(_))));
-            assert!(inst.operands.iter().any(|op| matches!(op, Operand::Gpr { .. })));
+            assert!(inst
+                .operands
+                .iter()
+                .any(|op| matches!(op, Operand::Memory(_))));
+            assert!(inst
+                .operands
+                .iter()
+                .any(|op| matches!(op, Operand::Gpr { .. })));
         }
     }
 
@@ -2907,7 +2947,10 @@ mod tests {
         let bytes = [0xC4, 0xE3, 0xE9, 0x5C, 0x06, 0x00];
         let inst = decode(&bytes, DecodeMode::Bits32, 0).unwrap();
         assert_eq!(inst.length, 6);
-        assert!(inst.operands.iter().any(|op| matches!(op, Operand::Memory(_))));
+        assert!(inst
+            .operands
+            .iter()
+            .any(|op| matches!(op, Operand::Memory(_))));
         assert!(inst
             .operands
             .iter()
@@ -2922,7 +2965,10 @@ mod tests {
         let bytes = [0x8F, 0xA9, 0xA8, 0x90, 0xC0];
         let inst = decode(&bytes, DecodeMode::Bits16, 0).unwrap();
         assert_eq!(inst.length, 5);
-        assert!(inst.operands.iter().any(|op| matches!(op, Operand::Xmm { .. })));
+        assert!(inst
+            .operands
+            .iter()
+            .any(|op| matches!(op, Operand::Xmm { .. })));
     }
 
     #[test]
