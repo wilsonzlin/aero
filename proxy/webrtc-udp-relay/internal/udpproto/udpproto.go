@@ -11,6 +11,14 @@ const (
 	// v1HeaderLen is the number of bytes in a v1 datagram frame header.
 	v1HeaderLen = 8
 
+	// MaxFrameOverheadBytes is the maximum number of bytes a UDP relay frame adds
+	// on top of the datagram payload in any supported encoding (v1 or v2).
+	//
+	// This is currently the v2 header carrying an IPv6 address:
+	//
+	//	magic+version+af+type (4) + guest_port (2) + ipv6 (16) + remote_port (2) = 24
+	MaxFrameOverheadBytes = 24
+
 	// DefaultMaxPayload is a conservative default payload limit to reduce the chance
 	// of fragmentation on the public Internet when running on top of WebRTC
 	// (DTLS/SCTP/UDP).

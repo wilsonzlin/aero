@@ -3,6 +3,7 @@ package udpproto
 import (
 	"bytes"
 	"errors"
+	"net/netip"
 	"testing"
 )
 
@@ -80,5 +81,22 @@ func TestMaxPayloadEnforced(t *testing.T) {
 	_, err = c.DecodeDatagram(frame)
 	if !errors.Is(err, ErrPayloadTooLarge) {
 		t.Fatalf("decode: got err=%v, want ErrPayloadTooLarge", err)
+	}
+}
+
+func TestMaxFrameOverheadBytes_MatchesV2IPv6Encoding(t *testing.T) {
+	// Ensure MaxFrameOverheadBytes stays in sync with the actual v2 header length
+	// (IPv6 is the worst case).
+	b, err := DefaultCodec.EncodeFrameV2(Frame{
+		GuestPort:  1,
+		RemoteIP:   netip.MustParseAddr("2001:db8::1"),
+		RemotePort: 2,
+		Payload:    nil,
+	})
+	if err != nil {
+		t.Fatalf("EncodeFrameV2: %v", err)
+	}
+	if len(b) != MaxFrameOverheadBytes {
+		t.Fatalf("len(encoded)=%d, want %d", len(b), MaxFrameOverheadBytes)
 	}
 }

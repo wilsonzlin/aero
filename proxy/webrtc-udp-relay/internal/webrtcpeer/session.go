@@ -10,6 +10,7 @@ import (
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/metrics"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/policy"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/relay"
+	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/udpproto"
 )
 
 // webrtcDataChannelUDPFrameOverheadBytes is the worst-case overhead (in bytes)
@@ -18,7 +19,7 @@ import (
 // This matches the v2 header carrying an IPv6 address (see udpproto.Codec.EncodeFrameV2):
 //
 //	magic+version+af+type (4) + guest_port (2) + ipv6 (16) + remote_port (2) = 24
-const webrtcDataChannelUDPFrameOverheadBytes = 24
+const webrtcDataChannelUDPFrameOverheadBytes = udpproto.MaxFrameOverheadBytes
 
 type SessionOptions struct {
 	// ConnectTimeout bounds how long the session is allowed to remain in a

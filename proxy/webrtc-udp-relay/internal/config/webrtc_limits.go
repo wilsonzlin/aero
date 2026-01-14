@@ -1,12 +1,12 @@
 package config
 
+import "github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/udpproto"
+
 // webrtcDataChannelUDPFrameOverheadBytes is the worst-case overhead (in bytes)
 // for a single UDP relay DataChannel message on top of MAX_DATAGRAM_PAYLOAD_BYTES.
 //
-// This accounts for the v2 header carrying an IPv6 address (see udpproto.Codec.EncodeFrameV2):
-//
-//	magic+version+af+type (4) + guest_port (2) + ipv6 (16) + remote_port (2) = 24
-const webrtcDataChannelUDPFrameOverheadBytes = 24
+// This accounts for the v2 header carrying an IPv6 address (see udpproto.Codec.EncodeFrameV2).
+const webrtcDataChannelUDPFrameOverheadBytes = udpproto.MaxFrameOverheadBytes
 
 // minWebRTCSCTPReceiveBufferBytes is the minimum SCTP receive buffer size that
 // pion/sctp will accept during association setup. Values below this break SCTP

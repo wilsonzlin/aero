@@ -374,8 +374,9 @@ func (s *udpWebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	writeMu.Unlock()
 
 	// Enforce binary datagram frame size limits at the WebSocket layer to avoid
-	// large allocations. v2's max header length is 24 bytes (IPv6).
-	maxFrameBytes := int64(s.relayCfg.MaxDatagramPayloadBytes) + 24
+	// large allocations. v2's max header length is udpproto.MaxFrameOverheadBytes
+	// (IPv6).
+	maxFrameBytes := int64(s.relayCfg.MaxDatagramPayloadBytes) + int64(udpproto.MaxFrameOverheadBytes)
 	if maxFrameBytes < 0 {
 		maxFrameBytes = 0
 	}
