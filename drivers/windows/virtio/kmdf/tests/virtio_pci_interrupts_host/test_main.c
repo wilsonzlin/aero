@@ -1107,6 +1107,53 @@ static void TestMsixResumeVectorReadbackFailure(void)
     Cleanup(&interrupts, dev);
 }
 
+static void TestMsixResumeQueueVectorReadbackFailure(void)
+{
+    VIRTIO_PCI_INTERRUPTS interrupts;
+    WDFDEVICE dev;
+    TEST_CALLBACKS cb;
+    WDFSPINLOCK commonCfgLock;
+    volatile VIRTIO_PCI_COMMON_CFG commonCfg;
+    NTSTATUS st;
+    ULONG i;
+
+    commonCfgLock = NULL;
+    memset((void*)&commonCfg, 0, sizeof(commonCfg));
+    InstallCommonCfgQueueVectorWindowHooks(&commonCfg, 2);
+
+    PrepareMsix(&interrupts, &dev, &cb, 2, 3 /* config + 2 queues */, &commonCfgLock);
+    assert(commonCfgLock != NULL);
+
+    /* Quiesce puts us in the normal "reset in progress" state. */
+    st = VirtioPciInterruptsQuiesce(&interrupts, &commonCfg);
+    assert(st == STATUS_SUCCESS);
+    assert(interrupts.ResetInProgress == 1);
+
+    /* Simulate a device that rejects MSI-X queue vector programming via readback. */
+    InstallReadRegisterUshortOverride((volatile const USHORT*)&commonCfg.queue_msix_vector, VIRTIO_PCI_MSI_NO_VECTOR);
+    st = VirtioPciInterruptsResume(&interrupts, &commonCfg);
+    assert(st == STATUS_DEVICE_HARDWARE_ERROR);
+
+    /* Resume failure must not re-enable interrupts or clear ResetInProgress. */
+    assert(interrupts.ResetInProgress == 1);
+    for (i = 0; i < interrupts.u.Msix.UsedVectorCount; i++) {
+        assert(interrupts.u.Msix.Interrupts[i]->Enabled == FALSE);
+        assert(interrupts.u.Msix.Interrupts[i]->EnableCalls == 0);
+    }
+
+    /*
+     * Resume should have successfully programmed msix_config before failing on
+     * the first queue vector.
+     */
+    ClearReadRegisterUshortOverride();
+    assert(commonCfg.msix_config == interrupts.u.Msix.ConfigVector);
+    assert(ReadCommonCfgQueueVector(&commonCfg, 0) == interrupts.u.Msix.QueueVectors[0]);
+    assert(ReadCommonCfgQueueVector(&commonCfg, 1) == VIRTIO_PCI_MSI_NO_VECTOR);
+
+    Cleanup(&interrupts, dev);
+    UninstallCommonCfgQueueVectorWindowHooks();
+}
+
 static void TestMsixQuiesceQueueVectorReadbackFailure(void)
 {
     VIRTIO_PCI_INTERRUPTS interrupts;
@@ -1203,6 +1250,7 @@ int main(void)
     TestMsixQuiesceResumeVectors();
     TestIntxQuiesceResume();
     TestMsixResumeVectorReadbackFailure();
+    TestMsixResumeQueueVectorReadbackFailure();
     TestMsixQuiesceQueueVectorReadbackFailure();
     TestMsixQuiesceConfigVectorReadbackFailure();
     printf("virtio_pci_interrupts_host_tests: PASS\n");
