@@ -1394,6 +1394,57 @@ describe("hid/WebHidBroker", () => {
     }
   });
 
+  it("bounds pending per-device output sends by bytes when sendReport stalls", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const maxPendingSendBytesPerDevice = 4;
+      const manager = new WebHidPassthroughManager({ hid: null });
+      const broker = new WebHidBroker({ manager, maxPendingDeviceSends: 100, maxPendingSendBytesPerDevice });
+      const port = new FakePort();
+      broker.attachWorkerPort(port as unknown as MessagePort);
+
+      const device = new FakeHidDevice();
+      const first = deferred<void>();
+      device.sendReport.mockImplementationOnce(() => first.promise);
+      const id = await broker.attachDevice(device as unknown as HIDDevice);
+
+      // First report begins executing and stalls; subsequent reports are queued and capped by bytes.
+      port.emit({ type: "hid.sendReport", deviceId: id, reportType: "output", reportId: 1, data: Uint8Array.of(1) });
+      // Each of these reports retains 3 bytes.
+      port.emit({ type: "hid.sendReport", deviceId: id, reportType: "output", reportId: 2, data: Uint8Array.of(1, 2, 3) });
+      port.emit({ type: "hid.sendReport", deviceId: id, reportType: "output", reportId: 3, data: Uint8Array.of(4, 5, 6) });
+
+      await new Promise((r) => setTimeout(r, 0));
+      expect(device.sendReport).toHaveBeenCalledTimes(1);
+
+      const stats = broker.getOutputSendStats();
+      const perDevice = stats.devices.find((d) => d.deviceId === id);
+      expect(perDevice).toBeTruthy();
+      // Only one 3-byte report should be queued; the next would exceed the 4-byte budget.
+      expect(perDevice!.pending).toBe(1);
+      expect(perDevice!.pendingBytes).toBe(3);
+      expect(stats.pendingBytesTotal).toBe(3);
+      expect(stats.droppedTotal).toBeGreaterThan(0);
+
+      const warnMsg = warn.mock.calls
+        .map((call) => String(call[0]))
+        .find((msg) => msg.includes(`[webhid] Dropping queued HID report tasks for deviceId=${id}`));
+      expect(warnMsg).toBeTruthy();
+      expect(warnMsg).toContain("pendingBytes=3");
+      expect(warnMsg).toContain(`maxPendingSendBytesPerDevice=${maxPendingSendBytesPerDevice}`);
+
+      first.resolve(undefined);
+      await new Promise((r) => setTimeout(r, 0));
+
+      // Only the first + second report should run; the third is dropped.
+      expect(device.sendReport.mock.calls.map((call) => call[0])).toEqual([1, 2]);
+
+      broker.destroy();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("bounds pending per-device feature sends when sendFeatureReport stalls", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {

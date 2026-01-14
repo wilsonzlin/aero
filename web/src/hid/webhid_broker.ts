@@ -129,15 +129,24 @@ export type WebHidOutputSendStats = Readonly<{
    */
   maxPendingSendsPerDevice: number;
   /**
+   * Maximum total bytes of queued (not yet running) report payloads per device.
+   *
+   * Tasks retain their report payload buffers until they begin executing, so this
+   * bounds memory growth when `sendReport`/`sendFeatureReport` is stalled.
+   */
+  maxPendingSendBytesPerDevice: number;
+  /**
    * Optional global cap across all devices. When unset, this is `null`.
    */
   maxPendingSendsTotal: number | null;
   pendingTotal: number;
+  pendingBytesTotal: number;
   droppedTotal: number;
   devices: ReadonlyArray<
     Readonly<{
       deviceId: number;
       pending: number;
+      pendingBytes: number;
       dropped: number;
     }>
   >;
@@ -145,6 +154,10 @@ export type WebHidOutputSendStats = Readonly<{
 
 type HidDeviceSendTask = () => Promise<void>;
 type HidDeviceSendTaskFactory = () => HidDeviceSendTask;
+type HidQueuedDeviceSendTask = {
+  bytes: number;
+  run: HidDeviceSendTask;
+};
 
 function computeHasInterruptOut(collections: NormalizedHidCollectionInfo[]): boolean {
   // Full-speed USB interrupt endpoints cannot transfer more than 64 bytes in a single packet.
@@ -190,6 +203,7 @@ function assertPositiveSafeInteger(name: string, value: number): number {
 // Keep this large enough to absorb bursts, but bounded so a stalled WebHID send
 // can't cause unbounded memory growth if the guest spams reports.
 const DEFAULT_MAX_PENDING_SENDS_PER_DEVICE = 1024;
+const DEFAULT_MAX_PENDING_SEND_BYTES_PER_DEVICE = 4 * 1024 * 1024;
 const OUTPUT_SEND_DROP_WARN_INTERVAL_MS = 5000;
 // Bound background output ring draining so a busy or malicious guest can't keep
 // the main thread spinning in the drain loop (starving UI/rendering). When the
@@ -223,9 +237,12 @@ export class WebHidBroker {
   // and the SharedArrayBuffer output ring. Chromium's WebHID implementation expects report sends to
   // be serialized per device, so maintain an explicit FIFO per `deviceId` so reports are executed
   // in guest order without stalling other devices.
-  readonly #pendingDeviceSends = new Map<number, HidDeviceSendTask[]>();
+  readonly #pendingDeviceSends = new Map<number, HidQueuedDeviceSendTask[]>();
   #pendingDeviceSendTotal = 0;
+  #pendingDeviceSendBytesTotal = 0;
+  readonly #pendingDeviceSendBytesByDevice = new Map<number, number>();
   readonly #maxPendingSendsPerDevice: number;
+  readonly #maxPendingSendBytesPerDevice: number;
   readonly #maxPendingSendsTotal: number;
   #outputSendDropped = 0;
   readonly #outputSendDroppedByDevice = new Map<number, number>();
@@ -292,6 +309,15 @@ export class WebHidBroker {
        */
       maxPendingDeviceSends?: number;
       /**
+       * Maximum total byte size of queued (not yet running) report payloads per
+       * device.
+       *
+       * WebHID output/feature reports can be up to 64KiB each (USB control
+       * transfers). If a send stalls and the guest keeps producing reports, we
+       * must bound retained memory even if the queue length limit is high.
+       */
+      maxPendingSendBytesPerDevice?: number;
+      /**
        * Legacy name for {@link maxPendingDeviceSends}.
        */
       maxPendingSendsPerDevice?: number;
@@ -330,6 +356,14 @@ export class WebHidBroker {
     const maxPending = maxPendingDeviceSends ?? maxPendingSendsPerDevice;
     this.#maxPendingSendsPerDevice =
       maxPending === undefined ? DEFAULT_MAX_PENDING_SENDS_PER_DEVICE : assertPositiveSafeInteger("maxPendingDeviceSends", maxPending);
+    this.#maxPendingSendBytesPerDevice = (() => {
+      const requested = options.maxPendingSendBytesPerDevice;
+      if (requested === undefined) return DEFAULT_MAX_PENDING_SEND_BYTES_PER_DEVICE;
+      if (!Number.isSafeInteger(requested) || requested <= 0) {
+        throw new Error(`invalid maxPendingSendBytesPerDevice: ${requested}`);
+      }
+      return requested;
+    })();
     this.#maxPendingSendsTotal =
       options.maxPendingSendsTotal === undefined
         ? Number.POSITIVE_INFINITY
@@ -415,14 +449,17 @@ export class WebHidBroker {
       .map((deviceId) => ({
         deviceId,
         pending: this.#pendingDeviceSends.get(deviceId)?.length ?? 0,
+        pendingBytes: this.#pendingDeviceSendBytesByDevice.get(deviceId) ?? 0,
         dropped: this.#outputSendDroppedByDevice.get(deviceId) ?? 0,
       }));
 
     return {
       maxPendingDeviceSends: this.#maxPendingSendsPerDevice,
       maxPendingSendsPerDevice: this.#maxPendingSendsPerDevice,
+      maxPendingSendBytesPerDevice: this.#maxPendingSendBytesPerDevice,
       maxPendingSendsTotal: Number.isFinite(this.#maxPendingSendsTotal) ? this.#maxPendingSendsTotal : null,
       pendingTotal: this.#pendingDeviceSendTotal,
+      pendingBytesTotal: this.#pendingDeviceSendBytesTotal,
       droppedTotal: this.#outputSendDropped,
       devices,
     };
@@ -589,8 +626,9 @@ export class WebHidBroker {
 
     const dropped = this.#outputSendDroppedByDevice.get(deviceId) ?? 0;
     const pending = this.#pendingDeviceSends.get(deviceId)?.length ?? 0;
+    const pendingBytes = this.#pendingDeviceSendBytesByDevice.get(deviceId) ?? 0;
     console.warn(
-      `[webhid] Dropping queued HID report tasks for deviceId=${deviceId} (pending=${pending} maxPendingDeviceSends=${this.#maxPendingSendsPerDevice} dropped=${dropped})`,
+      `[webhid] Dropping queued HID report tasks for deviceId=${deviceId} (pending=${pending} pendingBytes=${pendingBytes} maxPendingDeviceSends=${this.#maxPendingSendsPerDevice} maxPendingSendBytesPerDevice=${this.#maxPendingSendBytesPerDevice} dropped=${dropped})`,
     );
   }
 
@@ -608,11 +646,23 @@ export class WebHidBroker {
     this.#warnOutputSendDrop(deviceId);
   }
 
-  #enqueueDeviceSend(deviceId: number, createTask: HidDeviceSendTaskFactory): boolean {
+  #enqueueDeviceSend(deviceId: number, taskBytes: number, createTask: HidDeviceSendTaskFactory): boolean {
+    // Normalise and sanity-check byte accounting; callers should pass the amount of memory the
+    // queued task will retain (e.g. the report payload length).
+    const bytes = (() => {
+      if (!Number.isFinite(taskBytes) || taskBytes < 0) return 0;
+      return Math.floor(taskBytes) >>> 0;
+    })();
     const queueLen = this.#pendingDeviceSends.get(deviceId)?.length ?? 0;
+    const queueBytes = this.#pendingDeviceSendBytesByDevice.get(deviceId) ?? 0;
     // Drop policy: drop newest when at/over the cap. This preserves FIFO ordering for already-queued
     // reports and keeps memory bounded when the guest spams reports or `sendReport()` hangs.
-    if (queueLen >= this.#maxPendingSendsPerDevice || this.#pendingDeviceSendTotal >= this.#maxPendingSendsTotal) {
+    if (
+      queueLen >= this.#maxPendingSendsPerDevice ||
+      this.#pendingDeviceSendTotal >= this.#maxPendingSendsTotal ||
+      bytes > this.#maxPendingSendBytesPerDevice ||
+      queueBytes + bytes > this.#maxPendingSendBytesPerDevice
+    ) {
       this.#recordOutputSendDrop(deviceId);
       return false;
     }
@@ -624,8 +674,10 @@ export class WebHidBroker {
     }
     // Create the task only after we know it will be queued so we don't eagerly copy payload
     // buffers (e.g. SharedArrayBuffer-backed ring payloads) just to immediately drop them.
-    queue.push(createTask());
+    queue.push({ bytes, run: createTask() });
     this.#pendingDeviceSendTotal += 1;
+    this.#pendingDeviceSendBytesTotal += bytes;
+    this.#pendingDeviceSendBytesByDevice.set(deviceId, queueBytes + bytes);
     if (this.#deviceSendTokenById.has(deviceId)) return true;
     const token = this.#nextDeviceSendToken++;
     this.#deviceSendTokenById.set(deviceId, token);
@@ -638,11 +690,19 @@ export class WebHidBroker {
     if (!queue || queue.length === 0) return null;
     const task = queue.shift()!;
     this.#pendingDeviceSendTotal -= 1;
+    this.#pendingDeviceSendBytesTotal -= task.bytes;
+    const nextBytes = (this.#pendingDeviceSendBytesByDevice.get(deviceId) ?? 0) - task.bytes;
+    if (nextBytes > 0) {
+      this.#pendingDeviceSendBytesByDevice.set(deviceId, nextBytes);
+    } else {
+      this.#pendingDeviceSendBytesByDevice.delete(deviceId);
+    }
     if (queue.length === 0) {
       // Avoid leaking per-device arrays once all work is drained.
       this.#pendingDeviceSends.delete(deviceId);
+      this.#pendingDeviceSendBytesByDevice.delete(deviceId);
     }
-    return task;
+    return task.run;
   }
 
   async #runDeviceSendQueue(deviceId: number, token: number): Promise<void> {
@@ -724,46 +784,37 @@ export class WebHidBroker {
           const payload = rec.payload;
           const reportType = rec.reportType === HidRingReportType.Feature ? "feature" : "output";
           const reportId = rec.reportId >>> 0;
-          this.#enqueueDeviceSend(deviceId, () => {
-            const srcLen = payload.byteLength;
-            const expected = (reportType === "feature"
-              ? this.#featureReportExpectedPayloadBytes.get(deviceId)?.get(reportId)
-              : this.#outputReportExpectedPayloadBytes.get(deviceId)?.get(reportId)) as number | undefined;
+          const srcLen = payload.byteLength;
+          const expected = (reportType === "feature"
+            ? this.#featureReportExpectedPayloadBytes.get(deviceId)?.get(reportId)
+            : this.#outputReportExpectedPayloadBytes.get(deviceId)?.get(reportId)) as number | undefined;
 
-            let destLen: number;
-            if (expected !== undefined) {
-              destLen = expected;
-              if (srcLen > expected) {
-                this.#warnSendReportSizeOnce(
-                  deviceId,
-                  reportType,
-                  reportId,
-                  "truncated",
-                  `[webhid] ${reportType === "feature" ? "sendFeatureReport" : "sendReport"} length mismatch (deviceId=${deviceId} reportId=${reportId} expected=${expected} got=${srcLen}); truncating`,
-                );
-              } else if (srcLen < expected) {
-                this.#warnSendReportSizeOnce(
-                  deviceId,
-                  reportType,
-                  reportId,
-                  "padded",
-                  `[webhid] ${reportType === "feature" ? "sendFeatureReport" : "sendReport"} length mismatch (deviceId=${deviceId} reportId=${reportId} expected=${expected} got=${srcLen}); zero-padding`,
-                );
-              }
+          let destLen: number;
+          let warnKind: "truncated" | "padded" | "hardCap" | null = null;
+          let warnMessage = "";
+          if (expected !== undefined) {
+            destLen = expected;
+            if (srcLen > expected) {
+              warnKind = "truncated";
+              warnMessage = `[webhid] ${reportType === "feature" ? "sendFeatureReport" : "sendReport"} length mismatch (deviceId=${deviceId} reportId=${reportId} expected=${expected} got=${srcLen}); truncating`;
+            } else if (srcLen < expected) {
+              warnKind = "padded";
+              warnMessage = `[webhid] ${reportType === "feature" ? "sendFeatureReport" : "sendReport"} length mismatch (deviceId=${deviceId} reportId=${reportId} expected=${expected} got=${srcLen}); zero-padding`;
+            }
+          } else {
+            const hardCap = maxHidControlPayloadBytes(reportId);
+            if (srcLen > hardCap) {
+              destLen = hardCap;
+              warnKind = "hardCap";
+              warnMessage = `[webhid] ${reportType === "feature" ? "sendFeatureReport" : "sendReport"} reportId=${reportId} for deviceId=${deviceId} has unknown expected size; capping ${srcLen} bytes to ${hardCap}`;
             } else {
-              const hardCap = maxHidControlPayloadBytes(reportId);
-              if (srcLen > hardCap) {
-                destLen = hardCap;
-                this.#warnSendReportSizeOnce(
-                  deviceId,
-                  reportType,
-                  reportId,
-                  "hardCap",
-                  `[webhid] ${reportType === "feature" ? "sendFeatureReport" : "sendReport"} reportId=${reportId} for deviceId=${deviceId} has unknown expected size; capping ${srcLen} bytes to ${hardCap}`,
-                );
-              } else {
-                destLen = srcLen;
-              }
+              destLen = srcLen;
+            }
+          }
+
+          const queued = this.#enqueueDeviceSend(deviceId, destLen, () => {
+            if (warnKind) {
+              this.#warnSendReportSizeOnce(deviceId, reportType, reportId, warnKind, warnMessage);
             }
 
             // Copy the report payload out of the ring immediately so it can't be overwritten by
@@ -794,6 +845,11 @@ export class WebHidBroker {
               }
             };
           });
+
+          if (queued) {
+            // Approximate transient allocation cost (we allocate `destLen` bytes when queueing).
+            payloadLen = destLen;
+          }
         });
         if (!ok) break;
         remainingRecords -= 1;
@@ -1176,7 +1232,10 @@ export class WebHidBroker {
     const pending = this.#pendingDeviceSends.get(deviceId);
     if (pending) {
       this.#pendingDeviceSendTotal -= pending.length;
+      const pendingBytes = this.#pendingDeviceSendBytesByDevice.get(deviceId) ?? 0;
+      this.#pendingDeviceSendBytesTotal -= pendingBytes;
       this.#pendingDeviceSends.delete(deviceId);
+      this.#pendingDeviceSendBytesByDevice.delete(deviceId);
     }
     this.#deviceSendTokenById.delete(deviceId);
     this.#outputSendDroppedByDevice.delete(deviceId);
@@ -1257,12 +1316,14 @@ export class WebHidBroker {
     const reportType = msg.reportType;
     const reportId = msg.reportId >>> 0;
     const payload = msg.data;
-    this.#enqueueDeviceSend(deviceId, () => {
-      const srcLen = payload.byteLength;
-      const expected = (reportType === "feature"
-        ? this.#featureReportExpectedPayloadBytes.get(deviceId)?.get(reportId)
-        : this.#outputReportExpectedPayloadBytes.get(deviceId)?.get(reportId)) as number | undefined;
+    const srcLen = payload.byteLength;
+    const expected = (reportType === "feature"
+      ? this.#featureReportExpectedPayloadBytes.get(deviceId)?.get(reportId)
+      : this.#outputReportExpectedPayloadBytes.get(deviceId)?.get(reportId)) as number | undefined;
+    const hardCap = expected === undefined ? maxHidControlPayloadBytes(reportId) : 0;
+    const destLen = expected === undefined ? Math.min(srcLen, hardCap) : expected;
 
+    this.#enqueueDeviceSend(deviceId, destLen, () => {
       let data: Uint8Array<ArrayBuffer>;
       if (expected !== undefined) {
         if (srcLen === expected) {
@@ -1291,24 +1352,22 @@ export class WebHidBroker {
           out.set(src);
           data = out as Uint8Array<ArrayBuffer>;
         }
+      } else if (srcLen > hardCap) {
+        this.#warnSendReportSizeOnce(
+          deviceId,
+          reportType,
+          reportId,
+          "hardCap",
+          `[webhid] ${reportType === "feature" ? "sendFeatureReport" : "sendReport"} reportId=${reportId} for deviceId=${deviceId} has unknown expected size; capping ${srcLen} bytes to ${hardCap}`,
+        );
+        const src = payload.subarray(0, hardCap);
+        const out = new Uint8Array(hardCap);
+        out.set(src);
+        data = out as Uint8Array<ArrayBuffer>;
       } else {
-        const hardCap = maxHidControlPayloadBytes(reportId);
-        if (srcLen > hardCap) {
-          this.#warnSendReportSizeOnce(
-            deviceId,
-            reportType,
-            reportId,
-            "hardCap",
-            `[webhid] ${reportType === "feature" ? "sendFeatureReport" : "sendReport"} reportId=${reportId} for deviceId=${deviceId} has unknown expected size; capping ${srcLen} bytes to ${hardCap}`,
-          );
-          const src = payload.subarray(0, hardCap);
-          const out = new Uint8Array(hardCap);
-          out.set(src);
-          data = out as Uint8Array<ArrayBuffer>;
-        } else {
-          data = ensureArrayBufferBacked(payload);
-        }
+        data = ensureArrayBufferBacked(payload);
       }
+
       return async () => {
         if (attachPromise) {
           try {
@@ -1374,7 +1433,7 @@ export class WebHidBroker {
     const attachPromise = pendingAttach?.promise;
     // Use the same per-device FIFO as output/feature report sends so receiveFeatureReport
     // requests are serialized relative to any queued report I/O for that device.
-    const ok = this.#enqueueDeviceSend(deviceId, () => async () => {
+    const ok = this.#enqueueDeviceSend(deviceId, 0, () => async () => {
       if (attachPromise) {
         try {
           await attachPromise;
