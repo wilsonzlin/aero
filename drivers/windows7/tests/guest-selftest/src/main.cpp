@@ -3567,9 +3567,11 @@ static VirtioBlkResetTestResult VirtioBlkResetTest(Logger& log, const VirtioBlkS
       continue;
     }
     const auto q = QueryAerovblkMiniportInfo(log, pd2);
+    // Preserve the query error code before calling CloseHandle(), which may clobber LastError even on success.
+    const DWORD q_err = q.has_value() ? ERROR_SUCCESS : GetLastError();
     CloseHandle(pd2);
     if (!q.has_value()) {
-      last_err = GetLastError();
+      last_err = q_err;
       Sleep(200);
       continue;
     }
