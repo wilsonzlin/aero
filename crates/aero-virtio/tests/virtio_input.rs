@@ -3,7 +3,7 @@ use aero_virtio::devices::input::{
     VirtioInput, VirtioInputDeviceKind, VirtioInputEvent, BTN_BACK, BTN_EXTRA, BTN_FORWARD,
     BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, BTN_SIDE, BTN_TASK, EV_KEY, EV_LED, EV_REL, EV_SYN, KEY_A,
     KEY_F1, KEY_F12, KEY_NUMLOCK, KEY_SCROLLLOCK, LED_CAPSL, LED_NUML, LED_SCROLLL, REL_WHEEL,
-    REL_X, REL_Y, SYN_REPORT,
+    REL_HWHEEL, REL_X, REL_Y, SYN_REPORT,
     VIRTIO_INPUT_CFG_EV_BITS, VIRTIO_INPUT_CFG_ID_DEVIDS, VIRTIO_INPUT_CFG_ID_NAME,
 };
 use aero_virtio::memory::{
@@ -561,13 +561,17 @@ fn virtio_input_config_exposes_name_devids_and_ev_bits() {
         0
     );
 
-    // Mouse rel bitmap includes REL_X/REL_Y/REL_WHEEL.
+    // Mouse rel bitmap includes REL_X/REL_Y/REL_WHEEL/REL_HWHEEL.
     bar_write_u8(&mut dev, &mut mem, caps.device, VIRTIO_INPUT_CFG_EV_BITS);
     bar_write_u8(&mut dev, &mut mem, caps.device + 1, EV_REL as u8);
     let size = bar_read_u8(&mut dev, caps.device + 2) as usize;
     let rel_bits = bar_read(&mut dev, caps.device + 8, size);
     assert_ne!(rel_bits[(REL_X / 8) as usize] & (1u8 << (REL_X % 8)), 0);
     assert_ne!(rel_bits[(REL_Y / 8) as usize] & (1u8 << (REL_Y % 8)), 0);
+    assert_ne!(
+        rel_bits[(REL_HWHEEL / 8) as usize] & (1u8 << (REL_HWHEEL % 8)),
+        0
+    );
     assert_ne!(
         rel_bits[(REL_WHEEL / 8) as usize] & (1u8 << (REL_WHEEL % 8)),
         0

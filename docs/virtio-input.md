@@ -77,7 +77,7 @@ The implementation supports at least:
 - `VIRTIO_INPUT_CFG_EV_BITS`:
   - `subsel = 0` → event type bitmap (`EV_SYN`, `EV_KEY`, `EV_REL`, `EV_LED`)
   - `subsel = EV_KEY` → supported key/button bitmap
-  - `subsel = EV_REL` → supported rel bitmap (`REL_X`, `REL_Y`, `REL_WHEEL`)
+  - `subsel = EV_REL` → supported rel bitmap (`REL_X`, `REL_Y`, `REL_WHEEL`, `REL_HWHEEL`)
   - `subsel = EV_LED` → supported LED bitmap (`LED_*`, keyboard only)
 
 ---

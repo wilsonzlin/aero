@@ -23,6 +23,7 @@ pub const SYN_REPORT: u16 = 0x00;
 
 pub const REL_X: u16 = 0x00;
 pub const REL_Y: u16 = 0x01;
+pub const REL_HWHEEL: u16 = 0x06;
 pub const REL_WHEEL: u16 = 0x08;
 
 pub const LED_NUML: u16 = 0x00;
@@ -319,7 +320,7 @@ impl VirtioInputBitmaps {
             BTN_BACK,
             BTN_TASK,
         ]);
-        bitmaps.rel = Self::with_bits(&[REL_X, REL_Y, REL_WHEEL]);
+        bitmaps.rel = Self::with_bits(&[REL_X, REL_Y, REL_WHEEL, REL_HWHEEL]);
         bitmaps
     }
 }
@@ -466,6 +467,27 @@ impl VirtioInputDevice {
         self.pending_events.push_back(VirtioInputEvent {
             typ: EV_REL,
             code: REL_WHEEL,
+            value: delta,
+        });
+        self.pending_events.push_back(VirtioInputEvent {
+            typ: EV_SYN,
+            code: SYN_REPORT,
+            value: 0,
+        });
+        self.process_pending_events(mem)
+    }
+
+    pub fn inject_hwheel(
+        &mut self,
+        mem: &mut impl GuestMemory,
+        delta: i32,
+    ) -> Result<bool, VirtQueueError> {
+        if delta == 0 {
+            return Ok(false);
+        }
+        self.pending_events.push_back(VirtioInputEvent {
+            typ: EV_REL,
+            code: REL_HWHEEL,
             value: delta,
         });
         self.pending_events.push_back(VirtioInputEvent {

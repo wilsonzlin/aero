@@ -26,6 +26,8 @@ pub const SYN_REPORT: u16 = 0x00;
 
 pub const REL_X: u16 = 0x00;
 pub const REL_Y: u16 = 0x01;
+// Linux input ABI: horizontal wheel (tilt wheel). Often surfaced to HID as "AC Pan".
+pub const REL_HWHEEL: u16 = 0x06;
 pub const REL_WHEEL: u16 = 0x08;
 
 pub const LED_NUML: u16 = 0x00;
@@ -368,7 +370,7 @@ impl VirtioInputBitmaps {
             BTN_BACK,
             BTN_TASK,
         ]);
-        bitmaps.rel = Self::with_bits(&[REL_X, REL_Y, REL_WHEEL]);
+        bitmaps.rel = Self::with_bits(&[REL_X, REL_Y, REL_WHEEL, REL_HWHEEL]);
         bitmaps
     }
 }
@@ -479,6 +481,22 @@ impl VirtioInput {
         self.push_event(VirtioInputEvent {
             type_: EV_REL,
             code: REL_WHEEL,
+            value: delta,
+        });
+        self.push_event(VirtioInputEvent {
+            type_: EV_SYN,
+            code: SYN_REPORT,
+            value: 0,
+        });
+    }
+
+    pub fn inject_hwheel(&mut self, delta: i32) {
+        if delta == 0 {
+            return;
+        }
+        self.push_event(VirtioInputEvent {
+            type_: EV_REL,
+            code: REL_HWHEEL,
             value: delta,
         });
         self.push_event(VirtioInputEvent {

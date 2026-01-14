@@ -793,10 +793,15 @@ The device MUST use Linux input event types/codes (`EV_KEY`, `EV_REL`, `EV_SYN`,
   - `type = EV_KEY`, `code = BTN_LEFT / BTN_RIGHT / BTN_MIDDLE / BTN_SIDE / BTN_EXTRA`
   - `value = 1` press, `0` release
   - `BTN_SIDE` and `BTN_EXTRA` correspond to the common "back/forward" mouse buttons (aka mouse buttons 4/5).
+- Additional mouse buttons (optional):
+  - `type = EV_KEY`, `code = BTN_FORWARD / BTN_BACK / BTN_TASK`
+  - `value = 1` press, `0` release
 - Minimum required advertised event types (device MUST advertise them via `EV_BITS` with `subsel = 0`):
   - `EV_SYN`, `EV_KEY`, `EV_REL`
 - Minimum required supported button codes (mouse, advertised via `EV_BITS` with `subsel = EV_KEY`):
   - `BTN_LEFT`, `BTN_RIGHT`, `BTN_MIDDLE`, `BTN_SIDE`, `BTN_EXTRA`
+- Optional supported button codes (mouse, advertised via `EV_BITS` with `subsel = EV_KEY`):
+  - `BTN_FORWARD`, `BTN_BACK`, `BTN_TASK`
 
 ##### Status queue (`statusq`) behavior
 
