@@ -538,3 +538,357 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{
     })
     .unwrap();
 }
+
+#[test]
+fn compute_vertex_pulling_handles_unaligned_base_offset() {
+    fn push_u32(buf: &mut Vec<u8>, v: u32) {
+        buf.extend_from_slice(&v.to_le_bytes());
+    }
+
+    pollster::block_on(async {
+        let (device, queue, supports_compute) = match create_device_queue().await {
+            Ok(v) => v,
+            Err(e) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                return Ok(());
+            }
+        };
+        if !supports_compute {
+            common::skip_or_panic(module_path!(), "compute unsupported");
+            return Ok(());
+        }
+
+        // ILAY: VALUE0 as R32_FLOAT at offset 0 in slot 0.
+        let value_hash = aero_d3d11::input_layout::fnv1a_32(b"VALUE");
+        let mut blob = Vec::new();
+        push_u32(&mut blob, aero_d3d11::input_layout::AEROGPU_INPUT_LAYOUT_BLOB_MAGIC);
+        push_u32(&mut blob, aero_d3d11::input_layout::AEROGPU_INPUT_LAYOUT_BLOB_VERSION);
+        push_u32(&mut blob, 1); // element_count
+        push_u32(&mut blob, 0); // reserved0
+
+        push_u32(&mut blob, value_hash);
+        push_u32(&mut blob, 0); // semantic index
+        push_u32(&mut blob, 41); // DXGI_FORMAT_R32_FLOAT
+        push_u32(&mut blob, 0); // input_slot
+        push_u32(&mut blob, 0); // offset
+        push_u32(&mut blob, 0); // per-vertex
+        push_u32(&mut blob, 0); // step rate
+
+        let layout = InputLayoutDesc::parse(&blob).context("parse ILAY")?;
+        let signature = [VsInputSignatureElement {
+            semantic_name_hash: value_hash,
+            semantic_index: 0,
+            input_register: 0,
+            mask: 0xF,
+            shader_location: 0,
+        }];
+
+        let stride = 4u32;
+        let slot_strides = [stride];
+        let binding = InputLayoutBinding::new(&layout, &slot_strides);
+        let pulling = VertexPullingLayout::new(&binding, &signature).context("build pulling")?;
+
+        // Vertex buffer bytes:
+        // - First byte is padding (0xAA).
+        // - Next 4 bytes encode f32=1.0 in little endian.
+        // - Remaining bytes are unused.
+        let mut vb_bytes = vec![0u8; 8];
+        vb_bytes[0] = 0xAA;
+        vb_bytes[1..5].copy_from_slice(&1.0f32.to_le_bytes());
+
+        let vb = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("vertex pulling unaligned vb"),
+            size: vb_bytes.len() as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&vb, 0, &vb_bytes);
+
+        let uniform_bytes = pulling.pack_uniform_bytes(
+            &[VertexPullingSlot {
+                base_offset_bytes: 1,
+                stride_bytes: stride,
+            }],
+            VertexPullingDrawParams::default(),
+        );
+        let ia_uniform = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("vertex pulling unaligned uniform"),
+            size: uniform_bytes.len() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&ia_uniform, 0, &uniform_bytes);
+
+        let out_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("vertex pulling unaligned out"),
+            size: 4,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
+        let prelude = pulling.wgsl_prelude();
+        let wgsl = format!(
+            r#"
+{prelude}
+
+@group(0) @binding(0) var<storage, read_write> out: array<u32>;
+
+@compute @workgroup_size(1)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{
+  let vertex: u32 = aero_vp_ia.first_vertex + gid.x;
+  let base: u32 = aero_vp_ia.slots[0].base_offset_bytes + vertex * aero_vp_ia.slots[0].stride_bytes;
+  let v: f32 = load_attr_f32(0u, base);
+  out[0] = bitcast<u32>(v);
+}}
+"#
+        );
+
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("vertex pulling unaligned shader"),
+            source: wgpu::ShaderSource::Wgsl(wgsl.into()),
+        });
+
+        let out_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("vertex pulling unaligned out bgl"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+        let out_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("vertex pulling unaligned out bg"),
+            layout: &out_bgl,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: out_buf.as_entire_binding(),
+            }],
+        });
+
+        let empty_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("vertex pulling unaligned empty bgl"),
+            entries: &[],
+        });
+        let ia_bgl = pulling.create_bind_group_layout(&device);
+        let ia_bg = pulling.create_bind_group(&device, &ia_bgl, &[&vb], &ia_uniform);
+
+        let layouts: [&wgpu::BindGroupLayout; 4] = [&out_bgl, &empty_bgl, &empty_bgl, &ia_bgl];
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("vertex pulling unaligned pipeline layout"),
+            bind_group_layouts: &layouts,
+            push_constant_ranges: &[],
+        });
+
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("vertex pulling unaligned pipeline"),
+            layout: Some(&pipeline_layout),
+            module: &shader,
+            entry_point: "main",
+            compilation_options: Default::default(),
+        });
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("vertex pulling unaligned encoder"),
+        });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("vertex pulling unaligned pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&pipeline);
+            pass.set_bind_group(0, &out_bg, &[]);
+            pass.set_bind_group(VERTEX_PULLING_GROUP, &ia_bg, &[]);
+            pass.dispatch_workgroups(1, 1, 1);
+        }
+        queue.submit([encoder.finish()]);
+
+        let bytes = read_buffer(&device, &queue, &out_buf, 4).await?;
+        assert_eq!(bytes.len(), 4);
+        let got = f32::from_le_bytes(bytes.try_into().unwrap());
+        assert_eq!(got, 1.0);
+
+        Ok::<_, anyhow::Error>(())
+    })
+    .unwrap();
+}
+
+#[test]
+fn compute_vertex_pulling_oob_reads_return_zero() {
+    fn push_u32(buf: &mut Vec<u8>, v: u32) {
+        buf.extend_from_slice(&v.to_le_bytes());
+    }
+
+    pollster::block_on(async {
+        let (device, queue, supports_compute) = match create_device_queue().await {
+            Ok(v) => v,
+            Err(e) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                return Ok(());
+            }
+        };
+        if !supports_compute {
+            common::skip_or_panic(module_path!(), "compute unsupported");
+            return Ok(());
+        }
+
+        // ILAY: VALUE0 as R32G32_FLOAT at offset 0 in slot 0.
+        let value_hash = aero_d3d11::input_layout::fnv1a_32(b"VALUE");
+        let mut blob = Vec::new();
+        push_u32(&mut blob, aero_d3d11::input_layout::AEROGPU_INPUT_LAYOUT_BLOB_MAGIC);
+        push_u32(&mut blob, aero_d3d11::input_layout::AEROGPU_INPUT_LAYOUT_BLOB_VERSION);
+        push_u32(&mut blob, 1); // element_count
+        push_u32(&mut blob, 0); // reserved0
+
+        push_u32(&mut blob, value_hash);
+        push_u32(&mut blob, 0); // semantic index
+        push_u32(&mut blob, 16); // DXGI_FORMAT_R32G32_FLOAT
+        push_u32(&mut blob, 0); // input_slot
+        push_u32(&mut blob, 0); // offset
+        push_u32(&mut blob, 0); // per-vertex
+        push_u32(&mut blob, 0); // step rate
+
+        let layout = InputLayoutDesc::parse(&blob).context("parse ILAY")?;
+        let signature = [VsInputSignatureElement {
+            semantic_name_hash: value_hash,
+            semantic_index: 0,
+            input_register: 0,
+            mask: 0xF,
+            shader_location: 0,
+        }];
+
+        let stride = 8u32;
+        let slot_strides = [stride];
+        let binding = InputLayoutBinding::new(&layout, &slot_strides);
+        let pulling = VertexPullingLayout::new(&binding, &signature).context("build pulling")?;
+
+        // Only provide one f32 (4 bytes). The second f32 read should be out-of-bounds and return 0.
+        let vb_bytes = 123.0f32.to_le_bytes();
+        let vb = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("vertex pulling oob vb"),
+            size: vb_bytes.len() as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&vb, 0, &vb_bytes);
+
+        let uniform_bytes = pulling.pack_uniform_bytes(
+            &[VertexPullingSlot {
+                base_offset_bytes: 0,
+                stride_bytes: stride,
+            }],
+            VertexPullingDrawParams::default(),
+        );
+        let ia_uniform = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("vertex pulling oob uniform"),
+            size: uniform_bytes.len() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&ia_uniform, 0, &uniform_bytes);
+
+        let out_size = 8u64;
+        let out_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("vertex pulling oob out"),
+            size: out_size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
+        let prelude = pulling.wgsl_prelude();
+        let wgsl = format!(
+            r#"
+{prelude}
+
+@group(0) @binding(0) var<storage, read_write> out: array<f32>;
+
+@compute @workgroup_size(1)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{
+  let vertex: u32 = aero_vp_ia.first_vertex + gid.x;
+  let base: u32 = aero_vp_ia.slots[0].base_offset_bytes + vertex * aero_vp_ia.slots[0].stride_bytes;
+  let v: vec2<f32> = load_attr_f32x2(0u, base);
+  out[0] = v.x;
+  out[1] = v.y;
+}}
+"#
+        );
+
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("vertex pulling oob shader"),
+            source: wgpu::ShaderSource::Wgsl(wgsl.into()),
+        });
+
+        let out_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("vertex pulling oob out bgl"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+        let out_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("vertex pulling oob out bg"),
+            layout: &out_bgl,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: out_buf.as_entire_binding(),
+            }],
+        });
+
+        let empty_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("vertex pulling oob empty bgl"),
+            entries: &[],
+        });
+        let ia_bgl = pulling.create_bind_group_layout(&device);
+        let ia_bg = pulling.create_bind_group(&device, &ia_bgl, &[&vb], &ia_uniform);
+
+        let layouts: [&wgpu::BindGroupLayout; 4] = [&out_bgl, &empty_bgl, &empty_bgl, &ia_bgl];
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("vertex pulling oob pipeline layout"),
+            bind_group_layouts: &layouts,
+            push_constant_ranges: &[],
+        });
+
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("vertex pulling oob pipeline"),
+            layout: Some(&pipeline_layout),
+            module: &shader,
+            entry_point: "main",
+            compilation_options: Default::default(),
+        });
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("vertex pulling oob encoder"),
+        });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("vertex pulling oob pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&pipeline);
+            pass.set_bind_group(0, &out_bg, &[]);
+            pass.set_bind_group(VERTEX_PULLING_GROUP, &ia_bg, &[]);
+            pass.dispatch_workgroups(1, 1, 1);
+        }
+        queue.submit([encoder.finish()]);
+
+        let bytes = read_buffer(&device, &queue, &out_buf, out_size).await?;
+        let got: Vec<f32> = bytes
+            .chunks_exact(4)
+            .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
+            .collect();
+        assert_eq!(got, vec![123.0, 0.0]);
+
+        Ok::<_, anyhow::Error>(())
+    })
+    .unwrap();
+}

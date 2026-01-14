@@ -367,11 +367,21 @@ impl VertexPullingLayout {
         // Raw u32 loads.
         s.push_str("fn aero_vp_load_u32(slot: u32, addr_bytes: u32) -> u32 {\n");
         s.push_str("  let word_index: u32 = addr_bytes >> 2u;\n");
+        s.push_str("  let shift: u32 = (addr_bytes & 3u) * 8u;\n");
         s.push_str("  switch slot {\n");
         for slot in 0..slot_count {
+            s.push_str(&format!("    case {slot}u: {{\n"));
             s.push_str(&format!(
-                "    case {slot}u: {{ return aero_vp_vb{slot}[word_index]; }}\n"
+                "      let word_count: u32 = arrayLength(&aero_vp_vb{slot});\n"
             ));
+            s.push_str("      if (word_index >= word_count) { return 0u; }\n");
+            s.push_str(&format!("      let lo: u32 = aero_vp_vb{slot}[word_index];\n"));
+            s.push_str("      if (shift == 0u) { return lo; }\n");
+            s.push_str(&format!(
+                "      let hi: u32 = select(0u, aero_vp_vb{slot}[word_index + 1u], (word_index + 1u) < word_count);\n"
+            ));
+            s.push_str("      return (lo >> shift) | (hi << (32u - shift));\n");
+            s.push_str("    }\n");
         }
         s.push_str("    default: { return 0u; }\n");
         s.push_str("  }\n");
