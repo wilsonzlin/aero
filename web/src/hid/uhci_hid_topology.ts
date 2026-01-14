@@ -1,7 +1,9 @@
 import type { GuestUsbPath } from "../platform/hid_passthrough_protocol";
 import {
   DEFAULT_EXTERNAL_HUB_PORT_COUNT,
+  EXTERNAL_HUB_ROOT_PORT,
   UHCI_SYNTHETIC_HID_HUB_PORT_COUNT,
+  WEBUSB_GUEST_ROOT_PORT,
   remapLegacyRootPortToExternalHubPort,
 } from "../usb/uhci_external_hub";
 
@@ -66,7 +68,11 @@ export class UhciHidTopologyManager {
     // guest-visible WebUSB passthrough device. For backwards compatibility, callers may still
     // provide a single-element root-port path (`[0]` or `[1]`). Remap these to stable hub-backed
     // paths so we never clobber the hub or the WebUSB device.
-    if (path.length === 1 && (path[0] === 0 || path[0] === 1)) return [0, remapLegacyRootPortToExternalHubPort(path[0])];
+    if (
+      path.length === 1 &&
+      (path[0] === EXTERNAL_HUB_ROOT_PORT || path[0] === WEBUSB_GUEST_ROOT_PORT)
+    )
+      return [EXTERNAL_HUB_ROOT_PORT, remapLegacyRootPortToExternalHubPort(path[0])];
     return path;
   }
 
@@ -82,12 +88,12 @@ export class UhciHidTopologyManager {
     // Root port 0 is reserved for an emulated external hub used for WebHID passthrough.
     // Attach it eagerly so the guest OS can enumerate the hub even before any devices are
     // attached behind it.
-    this.#maybeAttachHub(0);
+    this.#maybeAttachHub(EXTERNAL_HUB_ROOT_PORT);
 
     // Other hubs are still generally attached lazily as devices demand them, but if the host
     // configured a hub explicitly (via `setHubConfig`) before UHCI was initialized, attach it now.
     for (const rootPort of this.#hubPortCountByRoot.keys()) {
-      if (rootPort === 0) continue;
+      if (rootPort === EXTERNAL_HUB_ROOT_PORT) continue;
       this.#maybeAttachHub(rootPort);
     }
 
@@ -95,7 +101,7 @@ export class UhciHidTopologyManager {
   }
 
   setHubConfig(path: GuestUsbPath, portCount?: number): void {
-    const rootPort = path[0] ?? 0;
+    const rootPort = path[0] ?? EXTERNAL_HUB_ROOT_PORT;
     const count = clampHubPortCount(portCount ?? this.#defaultHubPortCount);
     this.#hubPortCountByRoot.set(rootPort, count);
     const resized = this.#maybeAttachHub(rootPort);
@@ -178,7 +184,7 @@ export class UhciHidTopologyManager {
     const uhci = this.#uhci;
     if (!rec || !uhci) return;
 
-    const rootPort = rec.path[0] ?? 0;
+    const rootPort = rec.path[0] ?? EXTERNAL_HUB_ROOT_PORT;
     if (rec.path.length > 1) {
       const resized = this.#maybeAttachHub(rootPort, { throwOnFailure: options.throwOnFailure });
       if (resized) {
@@ -213,11 +219,11 @@ export class UhciHidTopologyManager {
     // Root port 0 hosts the external hub that also carries synthetic HID devices on fixed ports.
     // Ensure the hub descriptor always has enough downstream ports to accommodate that reserved range,
     // even before any synthetic device is attached.
-    if (rootPort === 0) {
+    if (rootPort === EXTERNAL_HUB_ROOT_PORT) {
       required = Math.max(required, UHCI_SYNTHETIC_HID_HUB_PORT_COUNT);
     }
     for (const rec of this.#devices.values()) {
-      const root = rec.path[0] ?? 0;
+      const root = rec.path[0] ?? EXTERNAL_HUB_ROOT_PORT;
       if (root !== rootPort) continue;
       if (rec.path.length <= 1) continue;
       const port = rec.path[1] ?? 0;
@@ -230,7 +236,7 @@ export class UhciHidTopologyManager {
 
   #reattachDevicesBehindRoot(rootPort: number): void {
     for (const [deviceId, rec] of this.#devices) {
-      const root = rec.path[0] ?? 0;
+      const root = rec.path[0] ?? EXTERNAL_HUB_ROOT_PORT;
       if (root !== rootPort) continue;
       if (rec.path.length <= 1) continue;
       this.#maybeAttachDevice(deviceId);

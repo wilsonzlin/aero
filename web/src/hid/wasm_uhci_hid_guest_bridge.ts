@@ -1,5 +1,9 @@
 import type { GuestUsbPath, GuestUsbPort } from "../platform/hid_passthrough_protocol";
-import { EXTERNAL_HUB_ROOT_PORT, remapLegacyRootPortToExternalHubPort } from "../usb/uhci_external_hub";
+import {
+  EXTERNAL_HUB_ROOT_PORT,
+  WEBUSB_GUEST_ROOT_PORT,
+  remapLegacyRootPortToExternalHubPort,
+} from "../usb/uhci_external_hub";
 
 import type { HidAttachMessage, HidDetachMessage, HidFeatureReportResultMessage, HidInputReportMessage } from "./hid_proxy_protocol";
 import type { HidGuestBridge, HidHostSink } from "./wasm_hid_guest_bridge";
@@ -75,7 +79,7 @@ function normalizeExternalHubGuestPath(
   if (path && path.length >= 2) return path;
 
   const rootPort = path?.[0] ?? guestPort;
-  if (rootPort !== 0 && rootPort !== 1) return null;
+  if (rootPort !== EXTERNAL_HUB_ROOT_PORT && rootPort !== WEBUSB_GUEST_ROOT_PORT) return null;
   // Backwards-compatible mapping for root-port-only hints: translate `[0]` / `[1]` onto stable
   // hub-backed paths behind root port 0. Offset by the reserved synthetic ports so legacy callers
   // don't clobber the built-in synthetic HID devices.
