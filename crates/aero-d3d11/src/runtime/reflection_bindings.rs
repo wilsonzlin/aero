@@ -675,6 +675,10 @@ pub(super) trait BindGroupResourceProvider {
 
     fn dummy_uniform(&self) -> &wgpu::Buffer;
     fn dummy_storage(&self) -> &wgpu::Buffer;
+    fn dummy_storage_texture_view(
+        &self,
+        format: crate::StorageTextureFormat,
+    ) -> &wgpu::TextureView;
     fn dummy_texture_view_2d(&self) -> &wgpu::TextureView;
     fn dummy_texture_view_2d_array(&self) -> &wgpu::TextureView;
     fn default_sampler(&self) -> &CachedSampler;
@@ -859,7 +863,7 @@ pub(super) fn build_bind_group(
                     resource: BindGroupCacheResource::TextureView { id, view },
                 });
             }
-            crate::BindingKind::UavTexture2DWriteOnly { slot, .. } => {
+            crate::BindingKind::UavTexture2DWriteOnly { slot, format } => {
                 // Prefer a dedicated UAV texture binding if the runtime provides one; otherwise
                 // fall back to the regular `t#` texture binding as a best-effort mapping.
                 //
@@ -868,12 +872,7 @@ pub(super) fn build_bind_group(
                 let (id, view) = provider
                     .uav_texture2d(*slot)
                     .or_else(|| provider.texture2d(*slot))
-                    .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "missing UAV texture binding for u{} (storage textures must be explicitly bound)",
-                            slot
-                        )
-                    })?;
+                    .unwrap_or((TextureViewId(0), provider.dummy_storage_texture_view(*format)));
 
                 entries.push(BindGroupCacheEntry {
                     binding: binding.binding,
@@ -2113,6 +2112,13 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                     self.dummy_storage
                 }
 
+                fn dummy_storage_texture_view(
+                    &self,
+                    _format: crate::StorageTextureFormat,
+                ) -> &wgpu::TextureView {
+                    self.dummy_texture_view_2d
+                }
+
                 fn dummy_texture_view_2d(&self) -> &wgpu::TextureView {
                     self.dummy_texture_view_2d
                 }
@@ -2490,6 +2496,13 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                     self.dummy_storage
                 }
 
+                fn dummy_storage_texture_view(
+                    &self,
+                    _format: crate::StorageTextureFormat,
+                ) -> &wgpu::TextureView {
+                    self.dummy_texture_view_2d
+                }
+
                 fn dummy_texture_view_2d(&self) -> &wgpu::TextureView {
                     self.dummy_texture_view_2d
                 }
@@ -2663,6 +2676,13 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
 
                 fn dummy_storage(&self) -> &wgpu::Buffer {
                     self.dummy_storage
+                }
+
+                fn dummy_storage_texture_view(
+                    &self,
+                    _format: crate::StorageTextureFormat,
+                ) -> &wgpu::TextureView {
+                    self.dummy_texture_view_2d
                 }
 
                 fn dummy_texture_view_2d(&self) -> &wgpu::TextureView {
@@ -2844,6 +2864,13 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
 
                 fn dummy_storage(&self) -> &wgpu::Buffer {
                     self.dummy_storage
+                }
+
+                fn dummy_storage_texture_view(
+                    &self,
+                    _format: crate::StorageTextureFormat,
+                ) -> &wgpu::TextureView {
+                    self.dummy_texture_view_2d
                 }
 
                 fn dummy_texture_view_2d(&self) -> &wgpu::TextureView {
@@ -3048,6 +3075,13 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
 
                 fn dummy_storage(&self) -> &wgpu::Buffer {
                     self.dummy_storage
+                }
+
+                fn dummy_storage_texture_view(
+                    &self,
+                    _format: crate::StorageTextureFormat,
+                ) -> &wgpu::TextureView {
+                    self.dummy_texture_view_2d
                 }
 
                 fn dummy_texture_view_2d(&self) -> &wgpu::TextureView {
@@ -3518,6 +3552,13 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                     self.dummy_storage
                 }
 
+                fn dummy_storage_texture_view(
+                    &self,
+                    _format: crate::StorageTextureFormat,
+                ) -> &wgpu::TextureView {
+                    self.dummy_texture_view_2d
+                }
+
                 fn dummy_texture_view_2d(&self) -> &wgpu::TextureView {
                     self.dummy_texture_view_2d
                 }
@@ -3558,6 +3599,184 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
             .expect("uav buffer fallback bind group should be cached");
 
             assert!(Arc::ptr_eq(&bg1, &bg2));
+        });
+    }
+
+    #[test]
+    fn build_bind_group_uses_dummy_storage_texture_for_unbound_uav_texture() {
+        pollster::block_on(async {
+            let (_adapter, device, _queue) = match new_device_queue_for_tests().await {
+                Ok(v) => v,
+                Err(err) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({err:#})"));
+                    return;
+                }
+            };
+            if device.limits().max_storage_textures_per_shader_stage == 0 {
+                skip_or_panic(
+                    module_path!(),
+                    "storage textures are not supported by this adapter",
+                );
+                return;
+            }
+
+            let dummy_uniform = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("reflection_bindings test dummy uniform"),
+                size: 256,
+                usage: wgpu::BufferUsages::UNIFORM,
+                mapped_at_creation: false,
+            });
+            // The dummy storage buffer isn't used by this test, but the provider trait requires it.
+            let dummy_storage = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("reflection_bindings test dummy storage"),
+                size: 256,
+                usage: wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+
+            // Sampled-texture dummy (TEXTURE_BINDING only).
+            let sampled_tex = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("reflection_bindings test dummy sampled texture"),
+                size: wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            });
+            let dummy_texture_view =
+                sampled_tex.create_view(&wgpu::TextureViewDescriptor::default());
+
+            // Storage-texture dummy (STORAGE_BINDING only).
+            let storage_tex = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("reflection_bindings test dummy storage texture"),
+                size: wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::STORAGE_BINDING,
+                view_formats: &[],
+            });
+            let dummy_storage_view =
+                storage_tex.create_view(&wgpu::TextureViewDescriptor::default());
+
+            let mut sampler_cache = SamplerCache::new();
+            let default_sampler =
+                sampler_cache.get_or_create(&device, &wgpu::SamplerDescriptor::default());
+
+            struct Provider<'a> {
+                dummy_uniform: &'a wgpu::Buffer,
+                dummy_storage: &'a wgpu::Buffer,
+                dummy_texture_view_2d: &'a wgpu::TextureView,
+                dummy_storage_view: &'a wgpu::TextureView,
+                default_sampler: &'a CachedSampler,
+            }
+
+            impl BindGroupResourceProvider for Provider<'_> {
+                fn constant_buffer(&self, _slot: u32) -> Option<BufferBinding<'_>> {
+                    None
+                }
+
+                fn constant_buffer_scratch(&self, _slot: u32) -> Option<(BufferId, &wgpu::Buffer)> {
+                    None
+                }
+
+                fn texture2d(&self, _slot: u32) -> Option<(TextureViewId, &wgpu::TextureView)> {
+                    None
+                }
+
+                fn texture2d_array(
+                    &self,
+                    _slot: u32,
+                ) -> Option<(TextureViewId, &wgpu::TextureView)> {
+                    None
+                }
+
+                fn sampler(&self, _slot: u32) -> Option<&CachedSampler> {
+                    None
+                }
+
+                fn dummy_uniform(&self) -> &wgpu::Buffer {
+                    self.dummy_uniform
+                }
+
+                fn dummy_storage(&self) -> &wgpu::Buffer {
+                    self.dummy_storage
+                }
+
+                fn dummy_storage_texture_view(
+                    &self,
+                    format: crate::StorageTextureFormat,
+                ) -> &wgpu::TextureView {
+                    assert_eq!(
+                        format,
+                        crate::StorageTextureFormat::Rgba8Unorm,
+                        "unexpected format for test"
+                    );
+                    self.dummy_storage_view
+                }
+
+                fn dummy_texture_view_2d(&self) -> &wgpu::TextureView {
+                    self.dummy_texture_view_2d
+                }
+
+                fn dummy_texture_view_2d_array(&self) -> &wgpu::TextureView {
+                    self.dummy_texture_view_2d
+                }
+
+                fn default_sampler(&self) -> &CachedSampler {
+                    self.default_sampler
+                }
+            }
+
+            let provider = Provider {
+                dummy_uniform: &dummy_uniform,
+                dummy_storage: &dummy_storage,
+                dummy_texture_view_2d: &dummy_texture_view,
+                dummy_storage_view: &dummy_storage_view,
+                default_sampler: &default_sampler,
+            };
+
+            let binding = crate::Binding {
+                group: 0,
+                binding: BINDING_BASE_UAV,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                kind: crate::BindingKind::UavTexture2DWriteOnly {
+                    slot: 0,
+                    format: crate::StorageTextureFormat::Rgba8Unorm,
+                },
+            };
+            let layout_entry = binding_to_layout_entry(&binding).expect("layout entry");
+            let mut layout_cache = BindGroupLayoutCache::new();
+            let layout = layout_cache.get_or_create(&device, &[layout_entry]);
+
+            let mut bind_group_cache = BindGroupCache::new(8);
+            device.push_error_scope(wgpu::ErrorFilter::Validation);
+            build_bind_group(
+                &device,
+                &mut bind_group_cache,
+                &layout,
+                std::slice::from_ref(&binding),
+                &provider,
+            )
+            .expect("bind group should build");
+            #[cfg(not(target_arch = "wasm32"))]
+            device.poll(wgpu::Maintain::Wait);
+            #[cfg(target_arch = "wasm32")]
+            device.poll(wgpu::Maintain::Poll);
+
+            let err = device.pop_error_scope().await;
+            assert!(err.is_none(), "unexpected wgpu validation error: {err:?}");
         });
     }
 
@@ -3708,6 +3927,13 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
 
                 fn dummy_storage(&self) -> &wgpu::Buffer {
                     self.dummy_storage
+                }
+
+                fn dummy_storage_texture_view(
+                    &self,
+                    _format: crate::StorageTextureFormat,
+                ) -> &wgpu::TextureView {
+                    self.dummy_texture_view_2d
                 }
 
                 fn dummy_texture_view_2d(&self) -> &wgpu::TextureView {

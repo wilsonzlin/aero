@@ -1561,6 +1561,7 @@ pub struct AerogpuD3d11Executor {
     dummy_vertex: wgpu::Buffer,
     dummy_texture_view_2d: wgpu::TextureView,
     dummy_texture_view_2d_array: wgpu::TextureView,
+    dummy_storage_texture_views: HashMap<crate::StorageTextureFormat, wgpu::TextureView>,
 
     /// Cache of internal dummy color targets for depth-only render passes.
     ///
@@ -1740,6 +1741,50 @@ impl AerogpuD3d11Executor {
                 depth_or_array_layers: 1,
             },
         );
+
+        let mut dummy_storage_texture_views = HashMap::new();
+        // Only create dummy storage textures when the device reports storage-texture support.
+        // Downlevel backends like WebGL2 report `max_storage_textures_per_shader_stage=0` and will
+        // reject `STORAGE_BINDING` usage.
+        if device.limits().max_storage_textures_per_shader_stage > 0 {
+            for format in [
+                crate::StorageTextureFormat::Rgba8Unorm,
+                crate::StorageTextureFormat::Rgba8Snorm,
+                crate::StorageTextureFormat::Rgba8Uint,
+                crate::StorageTextureFormat::Rgba8Sint,
+                crate::StorageTextureFormat::Rgba16Float,
+                crate::StorageTextureFormat::Rgba16Uint,
+                crate::StorageTextureFormat::Rgba16Sint,
+                crate::StorageTextureFormat::Rg32Float,
+                crate::StorageTextureFormat::Rg32Uint,
+                crate::StorageTextureFormat::Rg32Sint,
+                crate::StorageTextureFormat::Rgba32Float,
+                crate::StorageTextureFormat::Rgba32Uint,
+                crate::StorageTextureFormat::Rgba32Sint,
+                crate::StorageTextureFormat::R32Float,
+                crate::StorageTextureFormat::R32Uint,
+                crate::StorageTextureFormat::R32Sint,
+            ] {
+                let tex = device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("aerogpu_cmd dummy storage texture"),
+                    size: wgpu::Extent3d {
+                        width: 1,
+                        height: 1,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: format.wgpu_format(),
+                    usage: wgpu::TextureUsages::STORAGE_BINDING,
+                    view_formats: &[],
+                });
+                dummy_storage_texture_views.insert(
+                    format,
+                    tex.create_view(&wgpu::TextureViewDescriptor::default()),
+                );
+            }
+        }
 
         // Keep this buffer usable on downlevel backends without storage buffers (e.g. WebGL2).
         let dummy_uniform = device.create_buffer(&wgpu::BufferDescriptor {
@@ -1946,6 +1991,7 @@ impl AerogpuD3d11Executor {
             dummy_vertex,
             dummy_texture_view_2d,
             dummy_texture_view_2d_array,
+            dummy_storage_texture_views,
             depth_only_dummy_color_targets: HashMap::new(),
             sampler_cache,
             default_sampler,
@@ -5056,6 +5102,7 @@ impl AerogpuD3d11Executor {
                 dummy_storage: &self.dummy_storage,
                 dummy_texture_view_2d: &self.dummy_texture_view_2d,
                 dummy_texture_view_2d_array: &self.dummy_texture_view_2d_array,
+                dummy_storage_texture_views: &self.dummy_storage_texture_views,
                 default_sampler: &self.default_sampler,
                 stage: ShaderStage::Geometry,
                 stage_state: stage_bindings,
@@ -6456,6 +6503,7 @@ impl AerogpuD3d11Executor {
                 dummy_storage: &self.dummy_storage,
                 dummy_texture_view_2d: &self.dummy_texture_view_2d,
                 dummy_texture_view_2d_array: &self.dummy_texture_view_2d_array,
+                dummy_storage_texture_views: &self.dummy_storage_texture_views,
                 default_sampler: &self.default_sampler,
                 stage: ShaderStage::Geometry,
                 stage_state: stage_bindings,
@@ -8584,6 +8632,7 @@ fn ds_eval(patch_id: u32, domain: vec3<f32>, _local_vertex: u32) -> AeroDsOut {
                 dummy_storage: &self.dummy_storage,
                 dummy_texture_view_2d: &self.dummy_texture_view_2d,
                 dummy_texture_view_2d_array: &self.dummy_texture_view_2d_array,
+                dummy_storage_texture_views: &self.dummy_storage_texture_views,
                 default_sampler: &self.default_sampler,
                 stage: group_stage,
                 stage_state: stage_bindings,
@@ -10991,6 +11040,8 @@ fn ds_eval(patch_id: u32, domain: vec3<f32>, _local_vertex: u32) -> AeroDsOut {
                                         dummy_texture_view_2d: &self.dummy_texture_view_2d,
                                         dummy_texture_view_2d_array: &self
                                             .dummy_texture_view_2d_array,
+                                        dummy_storage_texture_views: &self
+                                            .dummy_storage_texture_views,
                                         default_sampler: &self.default_sampler,
                                         stage,
                                         stage_state: stage_bindings,
@@ -11329,6 +11380,8 @@ fn ds_eval(patch_id: u32, domain: vec3<f32>, _local_vertex: u32) -> AeroDsOut {
                                         dummy_texture_view_2d: &self.dummy_texture_view_2d,
                                         dummy_texture_view_2d_array: &self
                                             .dummy_texture_view_2d_array,
+                                        dummy_storage_texture_views: &self
+                                            .dummy_storage_texture_views,
                                         default_sampler: &self.default_sampler,
                                         stage,
                                         stage_state: stage_bindings,
@@ -16789,6 +16842,7 @@ fn ds_eval(patch_id: u32, domain: vec3<f32>, _local_vertex: u32) -> AeroDsOut {
                 dummy_storage: &self.dummy_storage,
                 dummy_texture_view_2d: &self.dummy_texture_view_2d,
                 dummy_texture_view_2d_array: &self.dummy_texture_view_2d_array,
+                dummy_storage_texture_views: &self.dummy_storage_texture_views,
                 default_sampler: &self.default_sampler,
                 stage: group_stage,
                 stage_state: stage_bindings,
@@ -17357,6 +17411,7 @@ fn ds_eval(patch_id: u32, domain: vec3<f32>, _local_vertex: u32) -> AeroDsOut {
             dummy_storage: &self.dummy_storage,
             dummy_texture_view_2d: &self.dummy_texture_view_2d,
             dummy_texture_view_2d_array: &self.dummy_texture_view_2d_array,
+            dummy_storage_texture_views: &self.dummy_storage_texture_views,
             default_sampler: &self.default_sampler,
             stage: ShaderStage::Hull,
             stage_state: self.bindings.stage(ShaderStage::Hull),
@@ -18812,6 +18867,7 @@ struct CmdExecutorBindGroupProvider<'a> {
     dummy_storage: &'a wgpu::Buffer,
     dummy_texture_view_2d: &'a wgpu::TextureView,
     dummy_texture_view_2d_array: &'a wgpu::TextureView,
+    dummy_storage_texture_views: &'a HashMap<crate::StorageTextureFormat, wgpu::TextureView>,
     default_sampler: &'a aero_gpu::bindings::samplers::CachedSampler,
     stage: ShaderStage,
     stage_state: &'a super::bindings::StageBindings,
@@ -18960,6 +19016,15 @@ impl reflection_bindings::BindGroupResourceProvider for CmdExecutorBindGroupProv
 
     fn dummy_storage(&self) -> &wgpu::Buffer {
         self.dummy_storage
+    }
+
+    fn dummy_storage_texture_view(
+        &self,
+        format: crate::StorageTextureFormat,
+    ) -> &wgpu::TextureView {
+        self.dummy_storage_texture_views
+            .get(&format)
+            .unwrap_or(self.dummy_texture_view_2d)
     }
 
     fn dummy_texture_view_2d(&self) -> &wgpu::TextureView {
@@ -25943,6 +26008,7 @@ fn cs_main() {
                 dummy_storage: &exec.dummy_storage,
                 dummy_texture_view_2d: &exec.dummy_texture_view_2d,
                 dummy_texture_view_2d_array: &exec.dummy_texture_view_2d_array,
+                dummy_storage_texture_views: &exec.dummy_storage_texture_views,
                 default_sampler: &exec.default_sampler,
                 stage: ShaderStage::Vertex,
                 stage_state: exec.bindings.stage(ShaderStage::Vertex),
@@ -25978,6 +26044,7 @@ fn cs_main() {
                 dummy_storage: &exec.dummy_storage,
                 dummy_texture_view_2d: &exec.dummy_texture_view_2d,
                 dummy_texture_view_2d_array: &exec.dummy_texture_view_2d_array,
+                dummy_storage_texture_views: &exec.dummy_storage_texture_views,
                 default_sampler: &exec.default_sampler,
                 stage: ShaderStage::Geometry,
                 stage_state: exec.bindings.stage(ShaderStage::Geometry),
@@ -26649,6 +26716,7 @@ fn cs_main() {
                 dummy_storage: &exec.dummy_storage,
                 dummy_texture_view_2d: &exec.dummy_texture_view_2d,
                 dummy_texture_view_2d_array: &exec.dummy_texture_view_2d_array,
+                dummy_storage_texture_views: &exec.dummy_storage_texture_views,
                 default_sampler: &exec.default_sampler,
                 stage: ShaderStage::Compute,
                 stage_state: exec.bindings.stage(ShaderStage::Compute),
@@ -26821,10 +26889,11 @@ fn cs_main() {
                 dummy_storage: &exec.dummy_storage,
                 dummy_texture_view_2d: &exec.dummy_texture_view_2d,
                 dummy_texture_view_2d_array: &exec.dummy_texture_view_2d_array,
+                dummy_storage_texture_views: &exec.dummy_storage_texture_views,
                 default_sampler: &exec.default_sampler,
-                internal_buffers: &[],
                 stage: ShaderStage::Hull,
                 stage_state: exec.bindings.stage(ShaderStage::Hull),
+                internal_buffers: &[],
             };
             let bound = provider
                 .srv_buffer(0)
@@ -26993,6 +27062,7 @@ fn cs_main() {
                 dummy_storage: &exec.dummy_storage,
                 dummy_texture_view_2d: &exec.dummy_texture_view_2d,
                 dummy_texture_view_2d_array: &exec.dummy_texture_view_2d_array,
+                dummy_storage_texture_views: &exec.dummy_storage_texture_views,
                 default_sampler: &exec.default_sampler,
                 stage: ShaderStage::Domain,
                 stage_state: exec.bindings.stage(ShaderStage::Domain),

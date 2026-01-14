@@ -150,6 +150,7 @@ pub struct AerogpuCmdRuntime {
     dummy_storage: wgpu::Buffer,
     dummy_texture_view_2d: wgpu::TextureView,
     dummy_texture_view_2d_array: wgpu::TextureView,
+    dummy_storage_texture_views: HashMap<crate::StorageTextureFormat, wgpu::TextureView>,
     sampler_cache: SamplerCache,
     default_sampler: aero_gpu::bindings::samplers::CachedSampler,
     bind_group_layout_cache: BindGroupLayoutCache,
@@ -302,6 +303,47 @@ impl AerogpuCmdRuntime {
             },
         );
 
+        let mut dummy_storage_texture_views = HashMap::new();
+        if device.limits().max_storage_textures_per_shader_stage > 0 {
+            for format in [
+                crate::StorageTextureFormat::Rgba8Unorm,
+                crate::StorageTextureFormat::Rgba8Snorm,
+                crate::StorageTextureFormat::Rgba8Uint,
+                crate::StorageTextureFormat::Rgba8Sint,
+                crate::StorageTextureFormat::Rgba16Float,
+                crate::StorageTextureFormat::Rgba16Uint,
+                crate::StorageTextureFormat::Rgba16Sint,
+                crate::StorageTextureFormat::Rg32Float,
+                crate::StorageTextureFormat::Rg32Uint,
+                crate::StorageTextureFormat::Rg32Sint,
+                crate::StorageTextureFormat::Rgba32Float,
+                crate::StorageTextureFormat::Rgba32Uint,
+                crate::StorageTextureFormat::Rgba32Sint,
+                crate::StorageTextureFormat::R32Float,
+                crate::StorageTextureFormat::R32Uint,
+                crate::StorageTextureFormat::R32Sint,
+            ] {
+                let tex = device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("aero-d3d11 aerogpu dummy storage texture"),
+                    size: wgpu::Extent3d {
+                        width: 1,
+                        height: 1,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: format.wgpu_format(),
+                    usage: wgpu::TextureUsages::STORAGE_BINDING,
+                    view_formats: &[],
+                });
+                dummy_storage_texture_views.insert(
+                    format,
+                    tex.create_view(&wgpu::TextureViewDescriptor::default()),
+                );
+            }
+        }
+
         let mut sampler_cache = SamplerCache::new();
         let default_sampler = sampler_cache.get_or_create(
             &device,
@@ -334,6 +376,7 @@ impl AerogpuCmdRuntime {
             dummy_storage,
             dummy_texture_view_2d,
             dummy_texture_view_2d_array,
+            dummy_storage_texture_views,
             sampler_cache,
             default_sampler,
             bind_group_layout_cache: BindGroupLayoutCache::new(),
@@ -1288,6 +1331,7 @@ impl AerogpuCmdRuntime {
                 dummy_storage: &self.dummy_storage,
                 dummy_texture_view_2d: &self.dummy_texture_view_2d,
                 dummy_texture_view_2d_array: &self.dummy_texture_view_2d_array,
+                dummy_storage_texture_views: &self.dummy_storage_texture_views,
                 default_sampler: &self.default_sampler,
             };
             bind_groups.push(reflection_bindings::build_bind_group(
@@ -2108,6 +2152,7 @@ impl AerogpuCmdRuntime {
                 dummy_storage: &self.dummy_storage,
                 dummy_texture_view_2d: &self.dummy_texture_view_2d,
                 dummy_texture_view_2d_array: &self.dummy_texture_view_2d_array,
+                dummy_storage_texture_views: &self.dummy_storage_texture_views,
                 default_sampler: &self.default_sampler,
             };
             Some(reflection_bindings::build_bind_group(
@@ -2582,6 +2627,7 @@ impl AerogpuCmdRuntime {
                 dummy_storage: &self.dummy_storage,
                 dummy_texture_view_2d: &self.dummy_texture_view_2d,
                 dummy_texture_view_2d_array: &self.dummy_texture_view_2d_array,
+                dummy_storage_texture_views: &self.dummy_storage_texture_views,
                 default_sampler: &self.default_sampler,
             };
             bind_groups.push(reflection_bindings::build_bind_group(
@@ -2909,6 +2955,7 @@ impl AerogpuCmdRuntime {
                 dummy_storage: &self.dummy_storage,
                 dummy_texture_view_2d: &self.dummy_texture_view_2d,
                 dummy_texture_view_2d_array: &self.dummy_texture_view_2d_array,
+                dummy_storage_texture_views: &self.dummy_storage_texture_views,
                 default_sampler: &self.default_sampler,
             };
             bind_groups.push(reflection_bindings::build_bind_group(
@@ -3142,6 +3189,7 @@ struct RuntimeBindGroupProvider<'a> {
     dummy_storage: &'a wgpu::Buffer,
     dummy_texture_view_2d: &'a wgpu::TextureView,
     dummy_texture_view_2d_array: &'a wgpu::TextureView,
+    dummy_storage_texture_views: &'a HashMap<crate::StorageTextureFormat, wgpu::TextureView>,
     default_sampler: &'a aero_gpu::bindings::samplers::CachedSampler,
 }
 
@@ -3211,6 +3259,15 @@ impl reflection_bindings::BindGroupResourceProvider for RuntimeBindGroupProvider
 
     fn dummy_storage(&self) -> &wgpu::Buffer {
         self.dummy_storage
+    }
+
+    fn dummy_storage_texture_view(
+        &self,
+        format: crate::StorageTextureFormat,
+    ) -> &wgpu::TextureView {
+        self.dummy_storage_texture_views
+            .get(&format)
+            .unwrap_or(self.dummy_texture_view_2d)
     }
 
     fn dummy_texture_view_2d(&self) -> &wgpu::TextureView {
