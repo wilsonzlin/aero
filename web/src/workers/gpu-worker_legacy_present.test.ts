@@ -125,7 +125,7 @@ function createMinimalSharedFramebuffer(): SharedArrayBuffer {
 function allocateTestSegments() {
   const sharedFramebuffer = createMinimalSharedFramebuffer();
   return allocateHarnessSharedMemorySegments({
-    guestRamBytes: 1 * 1024 * 1024,
+    guestRamBytes: 64 * 1024,
     sharedFramebuffer,
     sharedFramebufferOffsetBytes: 0,
     ioIpcBytes: 0,

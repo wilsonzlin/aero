@@ -73,7 +73,7 @@ async function waitForWorkerMessage(
 describe("workers/gpu-worker WDDM scanout recovery", () => {
   it("keeps presenting after device recovery when scanout is WDDM-owned and the legacy framebuffer is idle", async () => {
     const segments = allocateHarnessSharedMemorySegments({
-      guestRamBytes: 1 * 1024 * 1024,
+      guestRamBytes: 64 * 1024,
       sharedFramebuffer: new SharedArrayBuffer(8),
       sharedFramebufferOffsetBytes: 0,
       ioIpcBytes: 0,

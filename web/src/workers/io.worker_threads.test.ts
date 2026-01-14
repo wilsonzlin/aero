@@ -104,7 +104,7 @@ function makeInit(segments: SharedMemorySegments): WorkerInitMessage {
 describe("workers/io.worker (worker_threads)", () => {
   it("boots via config.update(vmRuntime=machine) + init and reaches READY without setBootDisks", async () => {
     const segments = allocateHarnessSharedMemorySegments({
-      guestRamBytes: 1 * 1024 * 1024,
+      guestRamBytes: 64 * 1024,
       sharedFramebuffer: new SharedArrayBuffer(8),
       sharedFramebufferOffsetBytes: 0,
       ioIpcBytes: 0,
@@ -140,7 +140,7 @@ describe("workers/io.worker (worker_threads)", () => {
 
   it("ACKs vm.snapshot.pause/vm.snapshot.resume quickly in machine host-only mode", async () => {
     const segments = allocateHarnessSharedMemorySegments({
-      guestRamBytes: 1 * 1024 * 1024,
+      guestRamBytes: 64 * 1024,
       sharedFramebuffer: new SharedArrayBuffer(8),
       sharedFramebufferOffsetBytes: 0,
       ioIpcBytes: 0,

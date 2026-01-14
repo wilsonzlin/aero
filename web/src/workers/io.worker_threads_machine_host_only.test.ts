@@ -100,7 +100,7 @@ function makeInit(segments: SharedMemorySegments): WorkerInitMessage {
 describe("workers/io.worker (worker_threads)", () => {
   it("runs as a host-only stub in vmRuntime=machine mode (READY without setBootDisks; ignores boot disk opens)", async () => {
     const segments = allocateHarnessSharedMemorySegments({
-      guestRamBytes: 1 * 1024 * 1024,
+      guestRamBytes: 64 * 1024,
       sharedFramebuffer: new SharedArrayBuffer(8),
       sharedFramebufferOffsetBytes: 0,
       ioIpcBytes: 0,

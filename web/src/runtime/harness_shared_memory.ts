@@ -17,6 +17,7 @@ import {
 } from "./shared_layout";
 
 const WASM_PAGE_BYTES = 64 * 1024;
+let cachedEmptySab: SharedArrayBuffer | null = null;
 
 function bytesToPages(bytes: number): number {
   return Math.ceil(bytes / WASM_PAGE_BYTES);
@@ -117,6 +118,10 @@ export function allocateHarnessSharedMemorySegments(opts: {
     opts.ioIpc ??
     (() => {
       const ioIpcBytes = Math.max(0, Math.trunc(opts.ioIpcBytes ?? 0));
+      if (ioIpcBytes === 0) {
+        if (!cachedEmptySab) cachedEmptySab = new SharedArrayBuffer(0);
+        return cachedEmptySab;
+      }
       return new SharedArrayBuffer(ioIpcBytes);
     })();
 

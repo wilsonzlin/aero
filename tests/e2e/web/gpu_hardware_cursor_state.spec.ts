@@ -55,7 +55,7 @@ test("GPU worker: CursorState uploads cursor image from guest memory and screens
       (async () => {
         try {
            const segments = allocateHarnessSharedMemorySegments({
-             guestRamBytes: 8 * 1024 * 1024,
+             guestRamBytes: 64 * 1024,
              sharedFramebuffer: new SharedArrayBuffer(8),
              sharedFramebufferOffsetBytes: 0,
              ioIpcBytes: 0,

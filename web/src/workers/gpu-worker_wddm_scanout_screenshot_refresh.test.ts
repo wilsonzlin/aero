@@ -75,7 +75,7 @@ function firstPixelU32(rgba8: ArrayBuffer): number {
 describe("workers/gpu-worker WDDM scanout screenshot refresh", () => {
   it("captures updated VRAM-backed scanout bytes even when requested between ticks", async () => {
     const segments = allocateHarnessSharedMemorySegments({
-      guestRamBytes: 1 * 1024 * 1024,
+      guestRamBytes: 64 * 1024,
       sharedFramebuffer: new SharedArrayBuffer(8),
       sharedFramebufferOffsetBytes: 0,
       ioIpcBytes: 0,
@@ -240,7 +240,7 @@ describe("workers/gpu-worker WDDM scanout screenshot refresh", () => {
 
   it("captures updated guest-RAM-backed scanout bytes even when requested between ticks", async () => {
     const segments = allocateHarnessSharedMemorySegments({
-      guestRamBytes: 1 * 1024 * 1024,
+      guestRamBytes: 64 * 1024,
       sharedFramebuffer: new SharedArrayBuffer(8),
       sharedFramebufferOffsetBytes: 0,
       ioIpcBytes: 0,

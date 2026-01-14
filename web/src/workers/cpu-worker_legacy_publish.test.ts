@@ -99,7 +99,7 @@ describe("workers/cpu.worker legacy framebuffer publishing", () => {
     // Use a tiny guest RAM size; this forces the shared framebuffer to be a standalone
     // SharedArrayBuffer, which exercises the CPU worker's JS publish path (no in-wasm demo).
     const segments = allocateHarnessSharedMemorySegments({
-      guestRamBytes: 1 * 1024 * 1024,
+      guestRamBytes: 64 * 1024,
       sharedFramebuffer: createMinimalSharedFramebuffer(),
       sharedFramebufferOffsetBytes: 0,
       ioIpc: createIoIpcSab({ includeNet: false, includeHidIn: false }),

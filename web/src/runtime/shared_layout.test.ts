@@ -141,7 +141,7 @@ describe("runtime/shared_layout", () => {
       // allocator (which reserves a large wasm32 runtime region). Use the harness allocator to
       // keep memory usage low.
       const segments = allocateHarnessSharedMemorySegments({
-        guestRamBytes: 1 * 1024 * 1024,
+        guestRamBytes: 64 * 1024,
         sharedFramebuffer: new SharedArrayBuffer(8),
         sharedFramebufferOffsetBytes: 0,
         ioIpcBytes: 0,

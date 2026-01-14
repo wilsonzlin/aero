@@ -72,7 +72,7 @@ async function waitForWorkerMessage(
 describe("workers/gpu-worker webgpu_uncaptured_error handling", () => {
   it("emits a structured Validation event but does not send a fatal worker ERROR (no restart)", async () => {
     const segments = allocateHarnessSharedMemorySegments({
-      guestRamBytes: 1 * 1024 * 1024,
+      guestRamBytes: 64 * 1024,
       sharedFramebuffer: new SharedArrayBuffer(8),
       sharedFramebufferOffsetBytes: 0,
       ioIpcBytes: 0,

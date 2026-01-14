@@ -153,7 +153,7 @@ async function requestScreenshot(worker: Worker, requestId: number, includeCurso
 describe("workers/gpu-worker cursor screenshot overlay", () => {
   it("composites X8 cursor formats as opaque (alpha forced to 0xff)", async () => {
     const segments = allocateHarnessSharedMemorySegments({
-      guestRamBytes: 1 * 1024 * 1024,
+      guestRamBytes: 64 * 1024,
       sharedFramebuffer: new SharedArrayBuffer(8),
       sharedFramebufferOffsetBytes: 0,
       ioIpcBytes: 0,
@@ -230,7 +230,7 @@ describe("workers/gpu-worker cursor screenshot overlay", () => {
 
   it("respects alpha for A8 cursor formats (transparent cursor does not overwrite)", async () => {
     const segments = allocateHarnessSharedMemorySegments({
-      guestRamBytes: 1 * 1024 * 1024,
+      guestRamBytes: 64 * 1024,
       sharedFramebuffer: new SharedArrayBuffer(8),
       sharedFramebufferOffsetBytes: 0,
       ioIpcBytes: 0,
@@ -302,7 +302,7 @@ describe("workers/gpu-worker cursor screenshot overlay", () => {
 
   it("reads VRAM-backed cursor surfaces when compositing screenshots", async () => {
     const segments = allocateHarnessSharedMemorySegments({
-      guestRamBytes: 1 * 1024 * 1024,
+      guestRamBytes: 64 * 1024,
       sharedFramebuffer: new SharedArrayBuffer(8),
       sharedFramebufferOffsetBytes: 0,
       ioIpcBytes: 0,
@@ -387,7 +387,7 @@ describe("workers/gpu-worker cursor screenshot overlay", () => {
 
   it("syncs hardware cursor state for screenshots even when no tick is forced", async () => {
     const segments = allocateHarnessSharedMemorySegments({
-      guestRamBytes: 1 * 1024 * 1024,
+      guestRamBytes: 64 * 1024,
       sharedFramebuffer: new SharedArrayBuffer(8),
       sharedFramebufferOffsetBytes: 0,
       ioIpcBytes: 0,
@@ -472,7 +472,7 @@ describe("workers/gpu-worker cursor screenshot overlay", () => {
 
   it("alpha-blends partially transparent cursor pixels", async () => {
     const segments = allocateHarnessSharedMemorySegments({
-      guestRamBytes: 1 * 1024 * 1024,
+      guestRamBytes: 64 * 1024,
       sharedFramebuffer: new SharedArrayBuffer(8),
       sharedFramebufferOffsetBytes: 0,
       ioIpcBytes: 0,
@@ -545,7 +545,7 @@ describe("workers/gpu-worker cursor screenshot overlay", () => {
 
   it("decodes sRGB cursor formats before compositing screenshots", async () => {
     const segments = allocateHarnessSharedMemorySegments({
-      guestRamBytes: 1 * 1024 * 1024,
+      guestRamBytes: 64 * 1024,
       sharedFramebuffer: new SharedArrayBuffer(8),
       sharedFramebufferOffsetBytes: 0,
       ioIpcBytes: 0,
@@ -619,7 +619,7 @@ describe("workers/gpu-worker cursor screenshot overlay", () => {
 
   it("decodes sRGB scanout formats before returning screenshots", async () => {
     const segments = allocateHarnessSharedMemorySegments({
-      guestRamBytes: 1 * 1024 * 1024,
+      guestRamBytes: 64 * 1024,
       sharedFramebuffer: new SharedArrayBuffer(8),
       sharedFramebufferOffsetBytes: 0,
       ioIpcBytes: 0,
@@ -684,7 +684,7 @@ describe("workers/gpu-worker cursor screenshot overlay", () => {
 
   it("decodes sRGB scanout formats from guest RAM before returning screenshots", async () => {
     const segments = allocateHarnessSharedMemorySegments({
-      guestRamBytes: 1 * 1024 * 1024,
+      guestRamBytes: 64 * 1024,
       sharedFramebuffer: new SharedArrayBuffer(8),
       sharedFramebufferOffsetBytes: 0,
       ioIpcBytes: 0,
@@ -739,7 +739,7 @@ describe("workers/gpu-worker cursor screenshot overlay", () => {
 
   it("propagates cursor alpha when the scanout pixel is transparent", async () => {
     const segments = allocateHarnessSharedMemorySegments({
-      guestRamBytes: 1 * 1024 * 1024,
+      guestRamBytes: 64 * 1024,
       sharedFramebuffer: new SharedArrayBuffer(8),
       sharedFramebufferOffsetBytes: 0,
       ioIpcBytes: 0,
@@ -811,7 +811,7 @@ describe("workers/gpu-worker cursor screenshot overlay", () => {
 
   it("applies cursor hotX offsets when compositing screenshots", async () => {
     const segments = allocateHarnessSharedMemorySegments({
-      guestRamBytes: 1 * 1024 * 1024,
+      guestRamBytes: 64 * 1024,
       sharedFramebuffer: new SharedArrayBuffer(8),
       sharedFramebufferOffsetBytes: 0,
       ioIpcBytes: 0,
@@ -888,7 +888,7 @@ describe("workers/gpu-worker cursor screenshot overlay", () => {
 
   it("clips cursors that extend beyond the screenshot bounds", async () => {
     const segments = allocateHarnessSharedMemorySegments({
-      guestRamBytes: 1 * 1024 * 1024,
+      guestRamBytes: 64 * 1024,
       sharedFramebuffer: new SharedArrayBuffer(8),
       sharedFramebufferOffsetBytes: 0,
       ioIpcBytes: 0,
@@ -967,7 +967,7 @@ describe("workers/gpu-worker cursor screenshot overlay", () => {
 
   it("clips cursors when hotX causes a negative origin", async () => {
     const segments = allocateHarnessSharedMemorySegments({
-      guestRamBytes: 1 * 1024 * 1024,
+      guestRamBytes: 64 * 1024,
       sharedFramebuffer: new SharedArrayBuffer(8),
       sharedFramebufferOffsetBytes: 0,
       ioIpcBytes: 0,

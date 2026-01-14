@@ -109,7 +109,7 @@ function buildEmptyAerogpuCmdStream(): ArrayBuffer {
 describe("workers/gpu-worker snapshot pause", () => {
   it("does not execute submit_aerogpu while snapshot-paused (submit_complete gated until resume)", async () => {
     const segments = allocateHarnessSharedMemorySegments({
-      guestRamBytes: 1 * 1024 * 1024,
+      guestRamBytes: 64 * 1024,
       sharedFramebuffer: createMinimalSharedFramebuffer(),
       sharedFramebufferOffsetBytes: 0,
       ioIpcBytes: 0,

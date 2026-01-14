@@ -133,7 +133,7 @@ function writeRgba2x2(dst: Uint8Array, pitchBytes: number): void {
 describe("workers/gpu-worker WDDM scanout readback", () => {
   it("reads BGRX scanout from guest RAM (honors pitch, forces alpha=255)", async () => {
     const segments = allocateHarnessSharedMemorySegments({
-      guestRamBytes: 1 * 1024 * 1024,
+      guestRamBytes: 64 * 1024,
       sharedFramebuffer: new SharedArrayBuffer(8),
       sharedFramebufferOffsetBytes: 0,
       ioIpcBytes: 0,
@@ -236,7 +236,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
 
   it("reads RGBX scanout from guest RAM (honors pitch, forces alpha=255)", async () => {
     const segments = allocateHarnessSharedMemorySegments({
-      guestRamBytes: 1 * 1024 * 1024,
+      guestRamBytes: 64 * 1024,
       sharedFramebuffer: new SharedArrayBuffer(8),
       sharedFramebufferOffsetBytes: 0,
       ioIpcBytes: 0,
@@ -339,7 +339,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
 
   it("reads BGRA scanout from guest RAM (honors pitch, preserves alpha)", async () => {
     const segments = allocateHarnessSharedMemorySegments({
-      guestRamBytes: 1 * 1024 * 1024,
+      guestRamBytes: 64 * 1024,
       sharedFramebuffer: new SharedArrayBuffer(8),
       sharedFramebufferOffsetBytes: 0,
       ioIpcBytes: 0,
@@ -443,7 +443,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
 
   it("reads BGRX scanout from the shared VRAM aperture when base_paddr points into BAR1", async () => {
     const segments = allocateHarnessSharedMemorySegments({
-      guestRamBytes: 1 * 1024 * 1024,
+      guestRamBytes: 64 * 1024,
       sharedFramebuffer: new SharedArrayBuffer(8),
       sharedFramebufferOffsetBytes: 0,
       ioIpcBytes: 0,
@@ -651,7 +651,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
 
   it("reads BGRX scanout from the shared VRAM aperture even when last-row pitch padding is out of bounds", async () => {
     const segments = allocateHarnessSharedMemorySegments({
-      guestRamBytes: 1 * 1024 * 1024,
+      guestRamBytes: 64 * 1024,
       sharedFramebuffer: new SharedArrayBuffer(8),
       sharedFramebufferOffsetBytes: 0,
       ioIpcBytes: 0,
@@ -756,7 +756,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
 
   it("reads RGBX scanout from the shared VRAM aperture when base_paddr points into BAR1", async () => {
     const segments = allocateHarnessSharedMemorySegments({
-      guestRamBytes: 1 * 1024 * 1024,
+      guestRamBytes: 64 * 1024,
       sharedFramebuffer: new SharedArrayBuffer(8),
       sharedFramebufferOffsetBytes: 0,
       ioIpcBytes: 0,
@@ -862,7 +862,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
 
   it("reads RGBA scanout from the shared VRAM aperture when base_paddr points into BAR1 (preserves alpha)", async () => {
     const segments = allocateHarnessSharedMemorySegments({
-      guestRamBytes: 1 * 1024 * 1024,
+      guestRamBytes: 64 * 1024,
       sharedFramebuffer: new SharedArrayBuffer(8),
       sharedFramebufferOffsetBytes: 0,
       ioIpcBytes: 0,
@@ -968,7 +968,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
 
   it("reads BGRA scanout from the shared VRAM aperture when base_paddr points into BAR1 (preserves alpha)", async () => {
     const segments = allocateHarnessSharedMemorySegments({
-      guestRamBytes: 1 * 1024 * 1024,
+      guestRamBytes: 64 * 1024,
       sharedFramebuffer: new SharedArrayBuffer(8),
       sharedFramebufferOffsetBytes: 0,
       ioIpcBytes: 0,
@@ -1070,7 +1070,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
 
   it("returns a stub screenshot for legacy VBE LFB scanout when base_paddr is 0", async () => {
     const segments = allocateHarnessSharedMemorySegments({
-      guestRamBytes: 1 * 1024 * 1024,
+      guestRamBytes: 64 * 1024,
       sharedFramebuffer: new SharedArrayBuffer(8),
       sharedFramebufferOffsetBytes: 0,
       ioIpcBytes: 0,
@@ -1158,7 +1158,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
 
   it("reads legacy VBE LFB scanout from guest RAM (honors pitch, forces alpha=255)", async () => {
     const segments = allocateHarnessSharedMemorySegments({
-      guestRamBytes: 1 * 1024 * 1024,
+      guestRamBytes: 64 * 1024,
       sharedFramebuffer: new SharedArrayBuffer(8),
       sharedFramebufferOffsetBytes: 0,
       ioIpcBytes: 0,
@@ -1262,7 +1262,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
 
   it("reads legacy VBE LFB scanout from the shared VRAM aperture when base_paddr points into BAR1", async () => {
     const segments = allocateHarnessSharedMemorySegments({
-      guestRamBytes: 1 * 1024 * 1024,
+      guestRamBytes: 64 * 1024,
       sharedFramebuffer: new SharedArrayBuffer(8),
       sharedFramebufferOffsetBytes: 0,
       ioIpcBytes: 0,

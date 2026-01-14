@@ -46,7 +46,7 @@ describe("runtime/coordinator", () => {
   const TEST_VRAM_MIB = 1;
   const allocateTestSegments = () =>
     allocateHarnessSharedMemorySegments({
-      guestRamBytes: 1 * 1024 * 1024,
+      guestRamBytes: 64 * 1024,
       sharedFramebuffer: new SharedArrayBuffer(8),
       sharedFramebufferOffsetBytes: 0,
       ioIpcBytes: 0,

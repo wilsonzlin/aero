@@ -67,7 +67,7 @@ async function waitForWorkerMessage(
 describe("workers/gpu-worker cursor VRAM missing diagnostics", () => {
   it("emits a structured CursorReadback event when the hardware cursor points into VRAM but no VRAM SAB is attached", async () => {
     const segments = allocateHarnessSharedMemorySegments({
-      guestRamBytes: 1 * 1024 * 1024,
+      guestRamBytes: 64 * 1024,
       sharedFramebuffer: new SharedArrayBuffer(8),
       sharedFramebufferOffsetBytes: 0,
       ioIpcBytes: 0,

@@ -110,7 +110,7 @@ function makeInit(segments: SharedMemorySegments): WorkerInitMessage {
 describe("workers/io.worker (machine runtime host-only mode)", () => {
   it("reaches READY without initializing device models and does not write guest RAM", async () => {
     const segments = allocateHarnessSharedMemorySegments({
-      guestRamBytes: 1 * 1024 * 1024,
+      guestRamBytes: 64 * 1024,
       sharedFramebuffer: new SharedArrayBuffer(8),
       sharedFramebufferOffsetBytes: 0,
       ioIpc: createIoIpcSab({ includeNet: false, includeHidIn: false }),
