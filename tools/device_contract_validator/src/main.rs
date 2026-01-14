@@ -2640,8 +2640,8 @@ Signature="$Windows NT$"
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn virtio_inf_family_gating_accepts_subsys_rev_only() -> Result<()> {
-        // Regression: virtio-input's canonical INF binds via SUBSYS+REV-only entries, and the
-        // validator should accept that policy (do not require a literal `{base}&REV_01` HWID).
+        // Regression: allow an INF to bind a virtio VEN/DEV family using only SUBSYS-qualified +
+        // revision-gated entries (i.e. do not require a literal `{base}&REV_01` HWID).
         //
         // Use a non-input virtio device here to keep this test narrowly focused on the HWID gating
         // logic (virtio-input has additional DeviceDesc split checks).

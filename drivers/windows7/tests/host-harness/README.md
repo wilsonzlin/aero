@@ -791,12 +791,12 @@ To enable end-to-end testing:
           an explicit `-InfAllowList`, ensure it includes `aero_virtio_input.inf` (and `aero_virtio_tablet.inf` if you want
           to exercise the contract tablet binding specifically).
 2. Run the host harness with `-WithInputTabletEvents` (aliases: `-WithVirtioInputTabletEvents`, `-EnableVirtioInputTabletEvents`,
-   `-WithTabletEvents`, `-EnableTabletEvents`) /
-   `--with-input-tablet-events` (aliases: `--with-virtio-input-tablet-events`, `--with-tablet-events`,
-   `--enable-virtio-input-tablet-events`, `--require-virtio-input-tablet-events`) so it:
-   - attaches `virtio-tablet-pci`
-   - injects a deterministic absolute-pointer sequence via QMP `input-send-event`
-   - requires the guest marker to PASS
+    `-WithTabletEvents`, `-EnableTabletEvents`) /
+    `--with-input-tablet-events` (aliases: `--with-virtio-input-tablet-events`, `--with-tablet-events`,
+    `--enable-virtio-input-tablet-events`, `--require-virtio-input-tablet-events`) so it:
+    - attaches `virtio-tablet-pci`
+    - injects a deterministic absolute-pointer sequence via QMP `input-send-event`
+    - requires the guest marker to PASS
  
 To attach `virtio-tablet-pci` **without** QMP injection / marker enforcement (for example to just validate device
 enumeration), use:

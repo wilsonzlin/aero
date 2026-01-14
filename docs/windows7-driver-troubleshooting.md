@@ -476,21 +476,21 @@ If these entries are missing, re-run `setup.cmd` as Administrator and reboot onc
 4. Re-run `setup.cmd` as Administrator (so the virtio-input driver package is staged).
 5. Verify the virtio-input PCI device matches the Aero Win7 virtio contract v1 identity:
    - In Device Manager → the virtio-input PCI device → Properties → Details → **Hardware Ids**
-   - The list should include a contract v1 **revision-gated** ID, such as:
-     - `PCI\VEN_1AF4&DEV_1052&REV_01`
-   - If the device exposes Aero subsystem IDs, the list will also include more specific variants, for example:
-     - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01` *(keyboard)*, or
-     - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01` *(mouse)*
-   - Note: the canonical in-tree keyboard/mouse INF (`aero_virtio_input.inf`) is intentionally **SUBSYS-only**
-     (`SUBSYS_0010`/`SUBSYS_0011`) to keep keyboard/mouse vs tablet bindings disjoint.
-   - If your environment does not expose/recognize the Aero subsystem IDs, enable the optional legacy filename alias INF
-     (`virtio-input.inf.disabled` → rename to `virtio-input.inf`) to opt into a strict revision-gated generic fallback match
-     (`PCI\VEN_1AF4&DEV_1052&REV_01`). When binding via the fallback entry, Device Manager will show
-     **Aero VirtIO Input Device**.
-     Outside the models sections (`[Aero.NTx86]` / `[Aero.NTamd64]`), the alias INF is expected to stay in sync with
-     `aero_virtio_input.inf` (see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
-   - Do not install both `aero_virtio_input.inf` and `virtio-input.inf` at the same time.
-   - If the device reports `REV_00`, the in-tree Aero `aero_virtio_input.inf` will not bind; ensure your emulator/QEMU config sets `x-pci-revision=0x01` (and preferably `disable-legacy=on`).
+    - The list should include a contract v1 **revision-gated** ID, such as:
+      - `PCI\VEN_1AF4&DEV_1052&REV_01`
+    - If the device exposes Aero subsystem IDs, the list will also include more specific variants, for example:
+      - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01` *(keyboard)*, or
+      - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01` *(mouse)*
+    - Windows will also show less-specific variants such as `PCI\VEN_1AF4&DEV_1052&REV_01`.
+      - Note: the canonical in-tree keyboard/mouse INF (`aero_virtio_input.inf`) includes a strict revision-gated generic
+        fallback match (`PCI\VEN_1AF4&DEV_1052&REV_01`) in addition to the subsystem-qualified keyboard/mouse IDs, so binding
+        remains stable even if subsystem IDs are not exposed/recognized. When binding via the fallback entry, Device Manager
+        will show **Aero VirtIO Input Device**.
+      - If your tooling expects the legacy INF filename, you can enable the legacy filename alias
+        (`virtio-input.inf.disabled` → `virtio-input.inf`). From `[Version]` onward it must match
+        `aero_virtio_input.inf` byte-for-byte and does not change HWID matching behavior.
+      - Do not install both `aero_virtio_input.inf` and `virtio-input.inf` at the same time.
+    - If the device reports `REV_00`, the in-tree Aero `aero_virtio_input.inf` will not bind; ensure your emulator/QEMU config sets `x-pci-revision=0x01` (and preferably `disable-legacy=on`).
 6. If Device Manager shows signing or driver errors for the input device, resolve them first (Code 52 / Code 28 / Code 10), then switch back to virtio-input.
 
 For the consolidated end-to-end virtio-input validation plan (Rust device model + Win7 driver + web runtime routing), see:
