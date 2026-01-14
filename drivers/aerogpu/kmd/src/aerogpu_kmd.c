@@ -861,17 +861,48 @@ static ULONGLONG AeroGpuReadVolatileU64HiLoHi(_In_ const volatile ULONG* LoAddr)
 
 static ULONGLONG AeroGpuReadCompletedFence(_In_ const AEROGPU_ADAPTER* Adapter)
 {
-    if (!Adapter || !Adapter->Bar0) {
+    if (!Adapter) {
         return 0;
+    }
+
+    const ULONGLONG cachedLastCompleted =
+        (ULONGLONG)InterlockedCompareExchange64((volatile LONGLONG*)&Adapter->LastCompletedFence, 0, 0);
+
+    /*
+     * If a shared fence page is configured, prefer reading it. This is always a
+     * normal system-memory read (no MMIO) and is safe even during power
+     * transitions.
+     *
+     * Clamp to the KMD's cached LastCompletedFence to avoid returning a value
+     * that appears to go backwards (for example, if the device resets the fence
+     * page while powered down/resuming).
+     */
+    if (Adapter->AbiKind == AEROGPU_ABI_KIND_V1 && Adapter->FencePageVa) {
+        const volatile ULONG* parts = (const volatile ULONG*)&Adapter->FencePageVa->completed_fence;
+        ULONGLONG fence = AeroGpuReadVolatileU64HiLoHi(parts);
+        if (fence < cachedLastCompleted) {
+            fence = cachedLastCompleted;
+        }
+        return fence;
+    }
+
+    if (!Adapter->Bar0) {
+        return cachedLastCompleted;
+    }
+
+    /*
+     * Avoid MMIO reads while the adapter is not in D0 or submissions are
+     * blocked (resume/teardown windows). In these states the device may have
+     * lost MMIO state or be inaccessible; use cached state instead.
+     */
+    if ((DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange((volatile LONG*)&Adapter->DevicePowerState, 0, 0) !=
+            DxgkDevicePowerStateD0 ||
+        InterlockedCompareExchange((volatile LONG*)&Adapter->AcceptingSubmissions, 0, 0) == 0) {
+        return cachedLastCompleted;
     }
 
     if (Adapter->AbiKind != AEROGPU_ABI_KIND_V1) {
         return (ULONGLONG)AeroGpuReadRegU32(Adapter, AEROGPU_LEGACY_REG_FENCE_COMPLETED);
-    }
-
-    if (Adapter->FencePageVa) {
-        const volatile ULONG* parts = (const volatile ULONG*)&Adapter->FencePageVa->completed_fence;
-        return AeroGpuReadVolatileU64HiLoHi(parts);
     }
 
     return AeroGpuReadRegU64HiLoHi(Adapter, AEROGPU_MMIO_REG_COMPLETED_FENCE_LO, AEROGPU_MMIO_REG_COMPLETED_FENCE_HI);
