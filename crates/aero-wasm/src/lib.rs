@@ -2892,6 +2892,69 @@ pub enum MouseButtons {
     Forward = 0x10,
 }
 
+#[cfg(any(target_arch = "wasm32", test))]
+const AEROSPARSE_HEADER_SIZE_BYTES: usize = 64;
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn open_or_create_cow_disk<Base, OverlayBackend>(
+    base: Base,
+    mut overlay_backend: OverlayBackend,
+    overlay_block_size_bytes: u32,
+) -> aero_storage::Result<aero_storage::AeroCowDisk<Base, OverlayBackend>>
+where
+    Base: aero_storage::VirtualDisk,
+    OverlayBackend: aero_storage::StorageBackend,
+{
+    if overlay_block_size_bytes == 0 {
+        return Err(aero_storage::DiskError::Io(
+            "overlay_block_size_bytes must be non-zero".to_string(),
+        ));
+    }
+
+    let base_size = base.capacity_bytes();
+    if base_size == 0 {
+        return Err(aero_storage::DiskError::Io(
+            "base disk capacity is 0 bytes".to_string(),
+        ));
+    }
+    if !base_size.is_multiple_of(aero_storage::SECTOR_SIZE as u64) {
+        return Err(aero_storage::DiskError::Io(format!(
+            "base disk size {base_size} is not a multiple of {} bytes",
+            aero_storage::SECTOR_SIZE
+        )));
+    }
+
+    let overlay_len = overlay_backend.len()?;
+    if overlay_len == 0 {
+        return aero_storage::AeroCowDisk::create(base, overlay_backend, overlay_block_size_bytes);
+    }
+
+    if overlay_len < AEROSPARSE_HEADER_SIZE_BYTES as u64 {
+        return Err(aero_storage::DiskError::Io(format!(
+            "overlay image is too small ({overlay_len} bytes) to contain an aerosparse header ({AEROSPARSE_HEADER_SIZE_BYTES} bytes)"
+        )));
+    }
+
+    let mut header_bytes = [0u8; AEROSPARSE_HEADER_SIZE_BYTES];
+    overlay_backend.read_at(0, &mut header_bytes)?;
+    let header = aero_storage::AeroSparseHeader::decode(&header_bytes)?;
+
+    if header.disk_size_bytes != base_size {
+        return Err(aero_storage::DiskError::Io(format!(
+            "overlay disk_size_bytes ({}) does not match base disk size ({base_size})",
+            header.disk_size_bytes
+        )));
+    }
+    if header.block_size_bytes != overlay_block_size_bytes {
+        return Err(aero_storage::DiskError::Io(format!(
+            "overlay block_size_bytes ({}) does not match expected block size ({overlay_block_size_bytes})",
+            header.block_size_bytes
+        )));
+    }
+
+    aero_storage::AeroCowDisk::open(base, overlay_backend)
+}
+
 /// Canonical full-system Aero VM exported to JS via wasm-bindgen.
 ///
 /// This wrapper is backed by `aero_machine::Machine` and is the intended target for new browser
@@ -3936,6 +3999,63 @@ impl Machine {
         let overlay_path = path.clone();
         self.attach_install_media_iso_opfs_for_restore(path).await?;
         self.set_ide_secondary_master_atapi_overlay_ref(&overlay_path, "");
+        Ok(())
+    }
+
+    /// Attach the canonical primary HDD (`disk_id=0`, AHCI port 0) as a copy-on-write disk built
+    /// from:
+    /// - a raw base image (OPFS), plus
+    /// - an `aerosparse` overlay (OPFS) that stores all guest writes.
+    ///
+    /// This allows the VM to boot from a persistent base disk image without mutating it, while
+    /// still supporting writable disks and snapshot/restore flows.
+    ///
+    /// The overlay file is created if it does not exist. If it already exists, its aerosparse
+    /// header must match both the base disk size and `overlay_block_size_bytes`.
+    ///
+    /// Note: OPFS sync access handles are worker-only, so this requires running the WASM module in
+    /// a dedicated worker (not the main thread).
+    #[cfg(target_arch = "wasm32")]
+    pub async fn set_primary_hdd_opfs_cow(
+        &mut self,
+        base_path: String,
+        overlay_path: String,
+        overlay_block_size_bytes: u32,
+    ) -> Result<(), JsValue> {
+        let base_storage = aero_opfs::OpfsByteStorage::open(&base_path, false)
+            .await
+            .map_err(|e| {
+                JsValue::from_str(&format!("Failed to open base OPFS disk '{base_path}': {e}"))
+            })?;
+
+        let base_disk = aero_storage::RawDisk::open(base_storage).map_err(|e| {
+            JsValue::from_str(&format!("Failed to open base raw disk '{base_path}': {e}"))
+        })?;
+
+        let overlay_storage = aero_opfs::OpfsByteStorage::open(&overlay_path, true)
+            .await
+            .map_err(|e| {
+                JsValue::from_str(&format!(
+                    "Failed to open/create overlay OPFS disk '{overlay_path}': {e}"
+                ))
+            })?;
+
+        let cow_disk = open_or_create_cow_disk(base_disk, overlay_storage, overlay_block_size_bytes)
+            .map_err(|e| {
+                JsValue::from_str(&format!(
+                    "Failed to prepare COW disk (base='{base_path}', overlay='{overlay_path}'): {e}"
+                ))
+            })?;
+
+        self.inner
+            .set_disk_backend(Box::new(cow_disk))
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        // Record stable `{base_image, overlay_image}` strings into the DISKS snapshot overlay refs
+        // so the JS coordinator can reopen these images after snapshot restore.
+        self.inner
+            .set_ahci_port0_disk_overlay_ref(&base_path, &overlay_path);
+
         Ok(())
     }
 
@@ -5283,6 +5403,76 @@ mod machine_opfs_disk_tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod machine_primary_hdd_cow_disk_tests {
+    use super::*;
+
+    use aero_storage::{MemBackend, RawDisk, VirtualDisk, SECTOR_SIZE};
+
+    #[test]
+    fn creates_overlay_then_reopens_without_mutating_base() {
+        let base_size = 1024 * 1024u64;
+
+        let mut base_bytes = vec![0u8; base_size as usize];
+        base_bytes[..SECTOR_SIZE].fill(0xAA);
+
+        let base_disk = RawDisk::open(MemBackend::from_vec(base_bytes)).expect("RawDisk::open base");
+        let overlay_backend = MemBackend::new();
+
+        let mut cow =
+            open_or_create_cow_disk(base_disk, overlay_backend, 4096).expect("create cow disk");
+
+        // Reads should come from the base until a block is allocated in the overlay.
+        let mut sector = [0u8; SECTOR_SIZE];
+        cow.read_sectors(0, &mut sector).unwrap();
+        assert_eq!(sector, [0xAA; SECTOR_SIZE]);
+
+        // Writes should land in the overlay (and preserve the base bytes).
+        sector.fill(0x55);
+        cow.write_sectors(0, &sector).unwrap();
+        cow.flush().unwrap();
+
+        let (base, overlay) = cow.into_parts();
+        let base_bytes_after = base.into_backend().into_vec();
+        assert_eq!(&base_bytes_after[..SECTOR_SIZE], &[0xAA; SECTOR_SIZE]);
+
+        // Reopen from the persisted overlay bytes and verify the overlay contents are visible.
+        let overlay_bytes = overlay.into_backend().into_vec();
+        let base_disk2 =
+            RawDisk::open(MemBackend::from_vec(base_bytes_after)).expect("RawDisk::open base2");
+        let overlay_backend2 = MemBackend::from_vec(overlay_bytes);
+        let mut cow2 =
+            open_or_create_cow_disk(base_disk2, overlay_backend2, 4096).expect("open cow disk");
+        let mut read = [0u8; SECTOR_SIZE];
+        cow2.read_sectors(0, &mut read).unwrap();
+        assert_eq!(read, [0x55; SECTOR_SIZE]);
+    }
+
+    #[test]
+    fn open_rejects_block_size_mismatch() {
+        let base_size = 2 * 1024 * 1024u64;
+
+        let base_disk =
+            RawDisk::open(MemBackend::with_len(base_size).unwrap()).expect("RawDisk::open base");
+        let overlay_backend = MemBackend::new();
+        let cow = open_or_create_cow_disk(base_disk, overlay_backend, 4096).unwrap();
+
+        let (_base, overlay) = cow.into_parts();
+        let overlay_bytes = overlay.into_backend().into_vec();
+
+        let base_disk2 =
+            RawDisk::open(MemBackend::with_len(base_size).unwrap()).expect("RawDisk::open base2");
+        let overlay_backend2 = MemBackend::from_vec(overlay_bytes);
+        let err = open_or_create_cow_disk(base_disk2, overlay_backend2, 8192)
+            .err()
+            .expect("expected block size mismatch error");
+        assert!(
+            err.to_string().contains("block_size_bytes"),
+            "unexpected error: {err}"
+        );
     }
 }
 

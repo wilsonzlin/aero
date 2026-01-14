@@ -52,6 +52,20 @@ export type MachineHandle = {
      */
     set_disk_opfs_existing?(path: string): Promise<void>;
     /**
+     * Attach the canonical primary HDD (`disk_id=0`, AHCI port 0) as an OPFS base disk plus an
+     * aerosparse copy-on-write overlay (both in OPFS).
+     *
+     * The overlay image is created if missing and must match the base disk size (and
+     * `overlayBlockSizeBytes`) when it already exists.
+     *
+     * Optional for older WASM builds.
+     */
+    set_primary_hdd_opfs_cow?(
+        basePath: string,
+        overlayPath: string,
+        overlayBlockSizeBytes: number,
+    ): Promise<void>;
+    /**
      * Open (or create) an OPFS-backed disk image and attach it as the canonical Windows 7 IDE
      * primary channel master ATA disk (`disk_id=2`).
      *
