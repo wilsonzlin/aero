@@ -76,6 +76,160 @@ impl CpuBus for ScalarOnlyBus {
     }
 }
 
+#[derive(Debug)]
+struct PreflightCountingBus {
+    inner: FlatTestBus,
+    preflight_calls: usize,
+    last_preflight_len: usize,
+}
+
+impl PreflightCountingBus {
+    fn new(size: usize) -> Self {
+        Self {
+            inner: FlatTestBus::new(size),
+            preflight_calls: 0,
+            last_preflight_len: 0,
+        }
+    }
+}
+
+impl CpuBus for PreflightCountingBus {
+    fn read_u8(&mut self, vaddr: u64) -> Result<u8, Exception> {
+        self.inner.read_u8(vaddr)
+    }
+
+    fn read_u16(&mut self, vaddr: u64) -> Result<u16, Exception> {
+        self.inner.read_u16(vaddr)
+    }
+
+    fn read_u32(&mut self, vaddr: u64) -> Result<u32, Exception> {
+        self.inner.read_u32(vaddr)
+    }
+
+    fn read_u64(&mut self, vaddr: u64) -> Result<u64, Exception> {
+        self.inner.read_u64(vaddr)
+    }
+
+    fn read_u128(&mut self, vaddr: u64) -> Result<u128, Exception> {
+        self.inner.read_u128(vaddr)
+    }
+
+    fn write_u8(&mut self, vaddr: u64, val: u8) -> Result<(), Exception> {
+        self.inner.write_u8(vaddr, val)
+    }
+
+    fn write_u16(&mut self, vaddr: u64, val: u16) -> Result<(), Exception> {
+        self.inner.write_u16(vaddr, val)
+    }
+
+    fn write_u32(&mut self, vaddr: u64, val: u32) -> Result<(), Exception> {
+        self.inner.write_u32(vaddr, val)
+    }
+
+    fn write_u64(&mut self, vaddr: u64, val: u64) -> Result<(), Exception> {
+        self.inner.write_u64(vaddr, val)
+    }
+
+    fn write_u128(&mut self, vaddr: u64, val: u128) -> Result<(), Exception> {
+        self.inner.write_u128(vaddr, val)
+    }
+
+    fn preflight_write_bytes(&mut self, vaddr: u64, len: usize) -> Result<(), Exception> {
+        self.preflight_calls += 1;
+        self.last_preflight_len = len;
+        self.inner.preflight_write_bytes(vaddr, len)
+    }
+
+    fn fetch(&mut self, vaddr: u64, max_len: usize) -> Result<[u8; 15], Exception> {
+        self.inner.fetch(vaddr, max_len)
+    }
+
+    fn io_read(&mut self, port: u16, size: u32) -> Result<u64, Exception> {
+        self.inner.io_read(port, size)
+    }
+
+    fn io_write(&mut self, port: u16, size: u32, val: u64) -> Result<(), Exception> {
+        self.inner.io_write(port, size, val)
+    }
+}
+
+#[derive(Debug)]
+struct PreflightFailBus {
+    inner: FlatTestBus,
+    preflight_calls: usize,
+    read_u8_calls: usize,
+}
+
+impl PreflightFailBus {
+    fn new(size: usize) -> Self {
+        Self {
+            inner: FlatTestBus::new(size),
+            preflight_calls: 0,
+            read_u8_calls: 0,
+        }
+    }
+}
+
+impl CpuBus for PreflightFailBus {
+    fn read_u8(&mut self, vaddr: u64) -> Result<u8, Exception> {
+        self.read_u8_calls += 1;
+        self.inner.read_u8(vaddr)
+    }
+
+    fn read_u16(&mut self, vaddr: u64) -> Result<u16, Exception> {
+        self.inner.read_u16(vaddr)
+    }
+
+    fn read_u32(&mut self, vaddr: u64) -> Result<u32, Exception> {
+        self.inner.read_u32(vaddr)
+    }
+
+    fn read_u64(&mut self, vaddr: u64) -> Result<u64, Exception> {
+        self.inner.read_u64(vaddr)
+    }
+
+    fn read_u128(&mut self, vaddr: u64) -> Result<u128, Exception> {
+        self.inner.read_u128(vaddr)
+    }
+
+    fn write_u8(&mut self, vaddr: u64, val: u8) -> Result<(), Exception> {
+        self.inner.write_u8(vaddr, val)
+    }
+
+    fn write_u16(&mut self, vaddr: u64, val: u16) -> Result<(), Exception> {
+        self.inner.write_u16(vaddr, val)
+    }
+
+    fn write_u32(&mut self, vaddr: u64, val: u32) -> Result<(), Exception> {
+        self.inner.write_u32(vaddr, val)
+    }
+
+    fn write_u64(&mut self, vaddr: u64, val: u64) -> Result<(), Exception> {
+        self.inner.write_u64(vaddr, val)
+    }
+
+    fn write_u128(&mut self, vaddr: u64, val: u128) -> Result<(), Exception> {
+        self.inner.write_u128(vaddr, val)
+    }
+
+    fn preflight_write_bytes(&mut self, _vaddr: u64, _len: usize) -> Result<(), Exception> {
+        self.preflight_calls += 1;
+        Err(Exception::MemoryFault)
+    }
+
+    fn fetch(&mut self, vaddr: u64, max_len: usize) -> Result<[u8; 15], Exception> {
+        self.inner.fetch(vaddr, max_len)
+    }
+
+    fn io_read(&mut self, port: u16, size: u32) -> Result<u64, Exception> {
+        self.inner.io_read(port, size)
+    }
+
+    fn io_write(&mut self, port: u16, size: u32, val: u64) -> Result<(), Exception> {
+        self.inner.io_write(port, size, val)
+    }
+}
+
 #[test]
 fn atomic_rmw_updates_value_and_returns_result() {
     let mut bus = FlatTestBus::new(0x1000);
@@ -137,6 +291,32 @@ fn atomic_rmw_updates_value_and_returns_result() {
         assert_eq!(old, init);
         assert_eq!(bus.read_u128(addr).unwrap(), init + 1);
     }
+}
+
+#[test]
+fn atomic_rmw_preflights_write_intent_even_when_no_store() {
+    let mut bus = PreflightCountingBus::new(0x100);
+    bus.write_u8(0x10, 0x7F).unwrap();
+
+    let old = bus.atomic_rmw::<u8, _>(0x10, |old| (old, old)).unwrap();
+
+    assert_eq!(old, 0x7F);
+    assert_eq!(bus.inner.read_u8(0x10).unwrap(), 0x7F);
+    assert_eq!(bus.preflight_calls, 1);
+    assert_eq!(bus.last_preflight_len, 1);
+}
+
+#[test]
+fn atomic_rmw_preflight_failure_short_circuits_before_read() {
+    let mut bus = PreflightFailBus::new(0x100);
+    bus.inner.write_u8(0x10, 0xAA).unwrap();
+
+    assert_eq!(
+        bus.atomic_rmw::<u8, _>(0x10, |old| (old, old)),
+        Err(Exception::MemoryFault)
+    );
+    assert_eq!(bus.preflight_calls, 1);
+    assert_eq!(bus.read_u8_calls, 0);
 }
 
 #[test]

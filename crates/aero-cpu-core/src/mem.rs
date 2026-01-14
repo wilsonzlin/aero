@@ -107,6 +107,12 @@ pub trait CpuBus {
         T: CpuBusValue,
         Self: Sized,
     {
+        // Write-intent semantics: even if the update becomes a no-op (`new == old`),
+        // x86 RMW operations still require write permission and may update paging
+        // dirty bits. `preflight_write_bytes` allows paging/MMIO-aware busses to
+        // perform those checks/side effects without touching the destination
+        // bytes.
+        self.preflight_write_bytes(addr, core::mem::size_of::<T>())?;
         let old = T::read_from(self, addr)?;
         let (new, ret) = f(old);
         if new != old {
