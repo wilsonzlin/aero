@@ -142,7 +142,8 @@ Notes:
   - Web runtime: INTx only.
   - Native integrations may choose INTx, MSI, or MSI-X. The canonical PCI profile exposes both MSI
     and a minimal single-vector MSI-X capability (table/PBA in BAR0), and the native PCI wrapper can
-    deliver interrupts via MSI/MSI-X when enabled.
+    deliver interrupts via MSI/MSI-X when enabled (falling back to INTx if no `MsiTrigger` target is
+    configured).
 - Web runtime wiring:
   - Guest-visible PCI wrapper: `web/src/io/devices/xhci.ts` (`XhciPciDevice`).
   - Worker wiring: `web/src/workers/io_xhci_init.ts` (`tryInitXhciDevice`). Prefers registering at
@@ -376,7 +377,8 @@ xHCI is a large spec. The MVP intentionally leaves out many features that guests
 - **USB 3.x SuperSpeed** (5/10/20Gbps link speeds) and related link state machinery.
 - **Isochronous transfers** (audio/video devices).
 - **MSI/MSI-X in the web runtime**: the TS PCI wrapper currently uses INTx only (no MSI/MSI-X
-  capabilities exposed to the guest). Native wrappers can deliver MSI/MSI-X when configured.
+  capabilities exposed to the guest). Native wrappers can deliver MSI/MSI-X (single-vector MSI-X)
+  when configured.
 - **Bandwidth scheduling** / periodic scheduling details beyond “enough to exercise basic interrupt polling”.
 - **Streams** (bulk streams), TRB chaining corner cases, and advanced endpoint state transitions.
 - **Multiple interrupters**, interrupt moderation, and more complex event-ring configurations.
@@ -408,9 +410,10 @@ Snapshotting follows the repo’s general device snapshot conventions (see [`doc
   - the underlying `aero_usb::xhci::XhciController` snapshot bytes,
   - a tick counter, and
   - (when connected) the `UsbWebUsbPassthroughDevice` snapshot bytes.
-- The native PCI wrapper (`crates/devices/src/usb/xhci.rs`) snapshots as `XHCP` (version `1.1`) and stores:
-  - PCI config space (including MSI capability state),
-  - internal IRQ bookkeeping, and
+- The native PCI wrapper (`crates/devices/src/usb/xhci.rs`) snapshots as `XHCP` (version `1.2`) and stores:
+  - PCI config space (including MSI/MSI-X capability state and BAR bookkeeping),
+  - internal IRQ bookkeeping,
+  - MSI-X table + PBA state (when present), and
   - the underlying `aero_usb::xhci::XhciController` snapshot bytes.
 - **Host resources are not snapshotted.** Any host-side asynchronous USB work (e.g. in-flight WebUSB/WebHID requests) must be treated as **reset** across restore; the host integration is responsible for resuming forwarding after restore.
 
