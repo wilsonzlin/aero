@@ -2,7 +2,7 @@
 
 use aero_storage::{
     AeroCowDisk, AeroSparseConfig, AeroSparseDisk, BlockCachedDisk, MemBackend, RawDisk,
-    VirtualDisk,
+    VirtualDisk, SECTOR_SIZE,
 };
 use proptest::prelude::*;
 use proptest::test_runner::TestCaseResult;
@@ -124,9 +124,10 @@ proptest! {
     #[test]
     fn sparse_disk_matches_reference_and_persists(
         (capacity, ops, reads) in disk_case_with_reads_strategy(
-            // `AeroSparseDisk` represents a sector-backed disk image; require a 512-byte
+            // `AeroSparseDisk` represents a sector-backed disk image; require a sector-size
             // aligned capacity so the created image can always be reopened.
-            (1u64..=(MAX_CAPACITY_BYTES / 512)).prop_map(|sectors| sectors * 512),
+            (1u64..=(MAX_CAPACITY_BYTES / (SECTOR_SIZE as u64)))
+                .prop_map(|sectors| sectors * (SECTOR_SIZE as u64)),
         )
     ) {
         let capacity_usize: usize = capacity.try_into().unwrap();
@@ -163,8 +164,8 @@ proptest! {
     }
 
     #[test]
-    fn cow_disk_matches_reference_base_plus_overlay((capacity, base_data, ops) in (1u64..=(MAX_CAPACITY_BYTES / 512))
-        .prop_map(|sectors| sectors * 512)
+    fn cow_disk_matches_reference_base_plus_overlay((capacity, base_data, ops) in (1u64..=(MAX_CAPACITY_BYTES / (SECTOR_SIZE as u64)))
+        .prop_map(|sectors| sectors * (SECTOR_SIZE as u64))
         .prop_flat_map(|capacity| {
         let cap_usize: usize = capacity.try_into().unwrap();
         (
