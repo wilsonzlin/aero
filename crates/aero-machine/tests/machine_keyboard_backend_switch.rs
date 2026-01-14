@@ -1,7 +1,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 
-use aero_devices::pci::{profile, PciBdf};
 use aero_devices::i8042::{I8042_DATA_PORT, I8042_STATUS_PORT};
+use aero_devices::pci::{profile, PciBdf};
 use aero_machine::{Machine, MachineConfig};
 use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel, UsbInResult};
 use aero_virtio::pci::VIRTIO_STATUS_DRIVER_OK;
