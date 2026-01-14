@@ -24,6 +24,7 @@ See also:
 * `docs/graphics/win7-d3d10-11-umd-callbacks-and-fences.md` — submission callback contracts (DMA buffer acquisition, render/present, fence waits).
 * `docs/graphics/win7-aerogpu-validation.md` — Win7 bring-up checklist; includes the `NonLocalMemorySizeMB` segment budget override for “early” allocation failures.
 * `docs/graphics/win7-dxgi-swapchain-backbuffer.md` — trace guide + invariants for Win7 DXGI swapchain backbuffer `CreateResource` parameters and required allocation flags.
+* `docs/graphics/win7-shared-surfaces-share-token.md` — Win7 shared-surface strategy (`share_token` vs user-mode shared `HANDLE` numeric values).
 * `docs/windows/win7-wddm11-d3d10-11-umd-alloc-map.md` — deprecated redirect (kept for link compatibility; points at the focused docs above).
 
 ## Related AeroGPU code/docs (cross-links)
@@ -288,6 +289,8 @@ On Win7/WDDM 1.1 it is used in two distinct places:
   * Size of `pPrivateDriverData` (bytes).
 * `HANDLE hSection`
   * **Out (shared resources):** section handle for cross-process sharing (`IDXGIResource::GetSharedHandle`).
+    * This is a user-mode NT handle and its numeric value is process-local. When transferring it to another process, it must be duplicated/inherited (`DuplicateHandle`/inheritance) before calling `OpenSharedResource(...)`.
+    * AeroGPU does not use the numeric `HANDLE` value as a stable host-facing identifier; shared surfaces are keyed by a stable `share_token` persisted in WDDM allocation private driver data (see `docs/graphics/win7-shared-surfaces-share-token.md`).
 * `D3DDDICB_ALLOCATEFLAGS Flags`
   * Resource-level allocation flags (header-dependent bitfield).
   * For Win7 `CreateResource` allocation calls you will commonly set:
