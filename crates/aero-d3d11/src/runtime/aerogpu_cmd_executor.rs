@@ -4910,6 +4910,12 @@ impl AerogpuD3d11Executor {
         );
 
         // Build GS prepass pipeline + bind group.
+        // Bind group(0) layout for the translated GS compute prepass.
+        //
+        // Keep binding numbers in sync with `runtime::gs_translate`:
+        // - @binding(0..=2): outputs + state
+        // - @binding(4):     uniform params
+        // - @binding(5):     flattened GS input payload
         let gs_bgl_entries = [
             wgpu::BindGroupLayoutEntry {
                 binding: 0,
