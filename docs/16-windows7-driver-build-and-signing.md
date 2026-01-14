@@ -157,18 +157,21 @@ See also the examples under `drivers/_template/`:
 > - Canonical INF: `inf/aero_virtio_input.inf`
 >   - Binds the subsystem-qualified keyboard/mouse contract v1 HWIDs (`SUBSYS_0010` / `SUBSYS_0011`, both `&REV_01`) for distinct
 >     Device Manager names.
->   - Also includes the strict revision-gated generic fallback HWID (no `SUBSYS`) for environments where subsystem IDs are not
->     exposed/recognized: `PCI\VEN_1AF4&DEV_1052&REV_01` (Device Manager name: **Aero VirtIO Input Device**).
+>   - Note: canonical INF is intentionally **SUBSYS-only** (no strict generic fallback).
 > - Optional legacy alias INF (disabled by default): `inf/virtio-input.inf.disabled` → rename to `inf/virtio-input.inf`
->   - Exists for compatibility with workflows/tools that still reference `virtio-input.inf`.
->   - Filename-only alias: from `[Version]` onward, it must remain byte-for-byte identical to the canonical INF (banner/comments above
->     `[Version]` may differ). See `drivers/windows7/virtio-input/scripts/check-inf-alias.py`.
->   - Enabling the alias does **not** change HWID matching behavior (it is a pure basename compatibility shim).
+>   - Exists for compatibility with workflows/tools that still reference `virtio-input.inf`, and as an opt-in strict fallback binder.
+>   - Adds opt-in strict generic fallback binding (no `SUBSYS`): `PCI\VEN_1AF4&DEV_1052&REV_01`
+>     (Device Manager name: **Aero VirtIO Input Device**).
+>   - Alias drift policy: allowed to diverge from `aero_virtio_input.inf` only in the models sections (`[Aero.NTx86]` /
+>     `[Aero.NTamd64]`) where it adds the fallback entry. Outside those sections, from the first section header (`[Version]`)
+>     onward, it is expected to remain byte-for-byte identical (banner/comments above `[Version]` may differ). See
+>     `drivers/windows7/virtio-input/scripts/check-inf-alias.py`.
+>   - Enabling the alias does **change** HWID matching behavior (it enables strict generic fallback binding).
 >
 > Tablet devices bind via the separate `inf/aero_virtio_tablet.inf` (`SUBSYS_00121AF4`); that INF is more specific and wins
-> over the generic fallback match when both packages are present and the tablet subsystem ID matches. If the tablet INF is not
-> installed (or the device does not expose the tablet subsystem ID), the strict generic fallback entry (when enabled via the
-> alias INF) can also bind to tablet devices (but will use the generic device name).
+> over the strict generic fallback match when both packages are present and the tablet subsystem ID matches. If the tablet
+> INF is not installed (or the device does not expose the tablet subsystem ID), the strict generic fallback entry (when
+> enabled via the alias INF) can also bind to tablet devices (but will use the generic device name).
 >
 > Avoid shipping/installing both basenames at once (they overlap and can cause confusing driver selection). Prefer explicit
 > `ci-package.json` `infFiles` allowlists so only one of the two INF basenames is packaged.
