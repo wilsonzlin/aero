@@ -21,7 +21,7 @@ This repo supports input in two different (but related) integration styles:
     - `vmRuntime=legacy`: I/O worker (`web/src/workers/io.worker.ts`)
     - `vmRuntime=machine`: machine CPU worker (`web/src/workers/machine_cpu.worker.ts`)
   - In `vmRuntime=legacy` the I/O worker routes each event to one of: **PS/2** (fallback), **virtio-input** (fast path), or **synthetic USB HID devices behind the guest-visible USB controller** (when enabled).
-  - In `vmRuntime=machine` the CPU worker injects input directly into the canonical `api.Machine` instance (currently PS/2 injection only; the legacy I/O-worker backend routing policy does not apply).
+  - In `vmRuntime=machine` the CPU worker injects input directly into the canonical `api.Machine` instance and performs backend selection/routing (virtio-input → synthetic USB HID → PS/2) based on guest readiness + configuration.
 
 When editing the browser runtime input pipeline, treat `web/src/input/*` as canonical capture/batching. Injection/routing is handled by:
 
@@ -38,9 +38,9 @@ The WASM-facing `Machine` wrapper exposes **explicit** input injection methods f
 
 - **PS/2 via i8042** (legacy; always works)
 - **virtio-input** (paravirtualized; requires the Aero Win7 virtio-input driver; opt-in at construction time)
-- **synthetic USB HID devices behind the guest-visible USB controller** (keyboard + mouse + gamepad + consumer-control; opt-in at construction time; UHCI by default)
+- **synthetic USB HID devices behind the guest-visible USB controller** (keyboard + mouse + gamepad + consumer-control; enabled by default for `new Machine(ramSizeBytes)`; UHCI by default)
 
-To opt into the additional backends from JS, construct the machine via:
+To explicitly configure these backends from JS, construct the machine via:
 
 - `Machine.new_with_input_backends(ramSizeBytes, enableVirtioInput, enableSyntheticUsbHid)`
 
@@ -841,7 +841,7 @@ See `web/src/input/input_capture.ts` for the exact event listeners and gating co
   - USB HID keyboard usages (`InputEventType.KeyHidUsage`), and
   - additional HID usages on other pages (`InputEventType.HidUsage16`, e.g. Consumer Control / media keys),
   then enqueued into `InputEventQueue`.
-  - In `vmRuntime=legacy`, the I/O worker decides which events to consume based on the active backend (PS/2 vs USB vs virtio), to avoid duplicates.
+  - The worker that injects input (`vmRuntime=legacy`: I/O worker; `vmRuntime=machine`: machine CPU worker) decides which events to consume based on the active backend (PS/2 vs USB vs virtio), to avoid duplicates.
 - `mousemove` events are listened on `document` (capture phase) while pointer lock is active and forwarded as relative deltas (`MouseMove`).
   - Y is inverted once in `InputCapture` so `MouseMove` is already in PS/2 coordinate space (positive is up).
 - `wheel` events are forwarded as `MouseWheel` with both vertical (`dz`) and horizontal (`dx`) scroll components.
@@ -863,7 +863,7 @@ The worker decodes the `InputEventType` stream and routes each event into the cu
 
 In machine runtime, input batches are consumed by the machine CPU worker (`web/src/workers/machine_cpu.worker.ts`) and injected into the canonical `api.Machine` instance.
 
-> Note: the legacy I/O-worker backend selection and routing policy described above does not currently apply to machine runtime.
+> Note: machine runtime reuses the same high-level backend selection policy (virtio-input → USB HID → PS/2), but the routing is implemented in `machine_cpu.worker.ts` (not the legacy I/O worker).
 
 #### Scancode Translation
 
