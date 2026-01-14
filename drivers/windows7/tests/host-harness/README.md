@@ -1337,7 +1337,9 @@ To also exercise the virtio-input tablet (absolute pointer) end-to-end path, set
 To attach a virtio-tablet device without enabling the tablet events selftest/injection path, set the workflow input
 `with_virtio_tablet=true`. This passes `--with-virtio-tablet` to the Python harness and attaches `virtio-tablet-pci`
 in addition to the virtio keyboard/mouse devices. Ensure the guest tablet driver is installed (for the in-tree stack:
-`aero_virtio_tablet.inf`) if you expect virtio-input binding checks to pass.
+`aero_virtio_tablet.inf` for `...&SUBSYS_00121AF4&REV_01`). If the device does not expose the Aero contract subsystem IDs,
+either emulate the subsystem IDs to the contract values or opt into the legacy alias INF
+(`drivers/windows7/virtio-input/inf/virtio-input.inf.disabled` → `virtio-input.inf`) for generic fallback binding.
 
 To exercise the optional virtio-blk runtime resize test (`virtio-blk-resize`), set the workflow input
 `with_blk_resize=true`. This triggers a host-side QMP resize (`blockdev-resize` with a fallback to legacy `block_resize`)
