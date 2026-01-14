@@ -138,9 +138,12 @@ impl DeviceId {
     pub const VIRTIO_NET: DeviceId = DeviceId(23);
     /// Guest-visible virtio-input (virtio-pci) multi-function device state (keyboard + mouse).
     ///
-    /// Canonical snapshots historically stored both PCI functions under this single outer ID as a
-    /// wrapper blob. Newer snapshots may store the functions separately under
-    /// [`DeviceId::VIRTIO_INPUT_KEYBOARD`] and [`DeviceId::VIRTIO_INPUT_MOUSE`].
+    /// Canonical snapshots historically stored both PCI functions under this single outer ID as an
+    /// `aero-io-snapshot` TLV wrapper (`VINP`) containing two nested virtio-pci (`VPCI`) snapshots:
+    /// one for the keyboard function (`00:0A.0`) and one for the mouse function (`00:0A.1`).
+    ///
+    /// Newer snapshots may store the functions separately under [`DeviceId::VIRTIO_INPUT_KEYBOARD`]
+    /// and [`DeviceId::VIRTIO_INPUT_MOUSE`].
     pub const VIRTIO_INPUT: DeviceId = DeviceId(24);
     /// AeroGPU PCI device state (BAR0 regs + VRAM + scanout handoff latch).
     ///
