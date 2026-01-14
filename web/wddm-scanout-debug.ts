@@ -246,7 +246,7 @@ async function main() {
     sharedFramebuffer,
     sharedFramebufferOffsetBytes,
   };
-  const views = createSharedMemoryViews(segments as any);
+  const views = createSharedMemoryViews(segments);
   const scanoutWords = views.scanoutStateI32;
   if (!scanoutWords) {
     log("scanoutState view missing (unexpected; shared_layout.allocateSharedMemorySegments should provide it)");
@@ -421,12 +421,13 @@ async function main() {
     log(`worker error: ${err instanceof Error ? err.message : String(err)}`);
   });
 
-  // NOTE: Message ordering matters.
+  // NOTE: This page uses both init protocols:
+  // - GPU-protocol init (`type: "init"`) wires up the canvas/presenter.
+  // - Runtime-worker init (`kind: "init"`) provides guestMemory + scanoutState.
   //
-  // The GPU-protocol init path resets some runtime-worker pointers (including scanoutState)
-  // for compatibility with harnesses that do not send the runtime-worker init message. Send
-  // the GPU-protocol init first, then the runtime-worker init (which plumbs scanoutState +
-  // guest RAM) so WDDM scanout presentation is active for this page.
+  // `gpu-worker` preserves scanout wiring across GPU-protocol init, so ordering is not
+  // critical. We still send the GPU-protocol init first to match the main runtime frame
+  // scheduler behavior.
   worker.postMessage(
     {
       ...GPU_MESSAGE_BASE,
