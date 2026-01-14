@@ -476,6 +476,7 @@ typedef struct aerogpu_escape_read_gpa_inout {
 AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_read_gpa_inout) == (40 + AEROGPU_DBGCTL_READ_GPA_MAX_BYTES));
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_read_gpa_inout, gpa) == 16);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_read_gpa_inout, size_bytes) == 24);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_read_gpa_inout, reserved0) == 28);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_read_gpa_inout, status) == 32);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_read_gpa_inout, bytes_copied) == 36);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_read_gpa_inout, data) == 40);
