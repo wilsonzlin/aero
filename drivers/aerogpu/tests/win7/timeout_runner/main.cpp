@@ -90,6 +90,77 @@ static std::string TrimAsciiWhitespace(const std::string& s) {
   return s.substr(start, end - start);
 }
 
+static bool IsJsonWhitespaceChar(char c) {
+  return c == ' ' || c == '\t' || c == '\r' || c == '\n';
+}
+
+static size_t SkipJsonWhitespace(const std::string& s, size_t i) {
+  while (i < s.size() && IsJsonWhitespaceChar(s[i])) {
+    ++i;
+  }
+  return i;
+}
+
+// Find a JSON string token that matches `key` outside quoted strings and return the index of the
+// opening '"' in the document.
+//
+// This is a lightweight helper used by the timeout runner when it needs to sanity-check per-test
+// JSON output. It intentionally does not implement full JSON parsing; it is just robust enough to
+// ignore escaped quotes inside string values.
+static size_t FindJsonKeyTokenOutsideStrings(const std::string& s, const char* key, size_t start) {
+  if (!key || !*key) {
+    return std::string::npos;
+  }
+  const size_t key_len = strlen(key);
+  bool in_string = false;
+  bool escape = false;
+  for (size_t i = start; i < s.size(); ++i) {
+    const char c = s[i];
+    if (in_string) {
+      if (escape) {
+        escape = false;
+        continue;
+      }
+      if (c == '\\') {
+        escape = true;
+        continue;
+      }
+      if (c == '"') {
+        in_string = false;
+        continue;
+      }
+      continue;
+    }
+
+    if (c == '"') {
+      if (i + 1 + key_len < s.size() && s.compare(i + 1, key_len, key) == 0 && s[i + 1 + key_len] == '"') {
+        return i;
+      }
+      in_string = true;
+      escape = false;
+      continue;
+    }
+  }
+  return std::string::npos;
+}
+
+static bool ContainsJsonKeyWithColon(const std::string& obj, const char* key) {
+  if (!key || !*key) {
+    return false;
+  }
+  const size_t key_len = strlen(key);
+  size_t pos = FindJsonKeyTokenOutsideStrings(obj, key, 0);
+  while (pos != std::string::npos) {
+    size_t i = pos + 1 + key_len + 1;
+    i = SkipJsonWhitespace(obj, i);
+    if (i < obj.size() && obj[i] == ':') {
+      return true;
+    }
+    pos = FindJsonKeyTokenOutsideStrings(obj, key, pos + 1);
+  }
+  return false;
+}
+
 static bool LooksLikeTestReportJsonObject(const std::string& obj) {
   if (obj.size() < 2) {
     return false;
@@ -99,16 +170,16 @@ static bool LooksLikeTestReportJsonObject(const std::string& obj) {
   }
   // Very small sanity checks to avoid treating truncated/corrupted output as a valid report.
   // We intentionally do not attempt to fully parse JSON here (no dependency and no STL iostreams).
-  if (obj.find("\"schema_version\":") == std::string::npos) {
+  if (!ContainsJsonKeyWithColon(obj, "schema_version")) {
     return false;
   }
-  if (obj.find("\"test_name\":") == std::string::npos) {
+  if (!ContainsJsonKeyWithColon(obj, "test_name")) {
     return false;
   }
-  if (obj.find("\"status\":") == std::string::npos) {
+  if (!ContainsJsonKeyWithColon(obj, "status")) {
     return false;
   }
-  if (obj.find("\"exit_code\":") == std::string::npos) {
+  if (!ContainsJsonKeyWithColon(obj, "exit_code")) {
     return false;
   }
   return true;
