@@ -98,3 +98,13 @@ Independently of draw-time WVP, `pfnProcessVertices` has a bring-up fixed-functi
   - `device_process_vertices()` (DDI entrypoint; falls back to a stride-aware memcpy and clamps pre-transformed `XYZRHW*` copies to 16 bytes when `D3DPV_DONOTCOPYDATA` is set)
 - Transform state cache:
   - `Device::transform_matrices[...]` (populated by `Device::SetTransform` / state blocks)
+
+## Validation (Win7 guest tests)
+
+The Win7 guest validation suite includes targeted coverage for these paths:
+
+- `drivers/aerogpu/tests/win7/d3d9_fixedfunc_wvp_triangle` validates the fixed-function WVP transform path for
+  `D3DFVF_XYZ | D3DFVF_DIFFUSE` (center pixel vs right-shifted pixel after a `StateBlock`-applied transform).
+- `drivers/aerogpu/tests/win7/d3d9_fixedfunc_textured_wvp` validates the fixed-function WVP transform path for
+  `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1` (order-sensitive WVP, stage0 texture sampling + MODULATE, and both
+  `SetVertexDeclaration`-inferred FVF and explicit `SetFVF` paths).
