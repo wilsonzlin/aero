@@ -76,6 +76,8 @@ drivers/windows7/tests/
       HID interface.
     - For an **Aero contract tablet** (HWID `...&SUBSYS_00121AF4&REV_01`), the intended INF is
       `drivers/windows7/virtio-input/inf/aero_virtio_tablet.inf`.
+    - `aero_virtio_tablet.inf` is the preferred binding for the contract tablet HWID and wins when it matches (it is a
+      more specific match than the generic fallback in `aero_virtio_input.inf`).
     - If your QEMU/device does **not** expose the Aero contract subsystem IDs:
       - `aero_virtio_tablet.inf` will not match (it is tablet-SUBSYS-only). In that case you must either:
         - Adjust/emulate the subsystem IDs to the contract values (so the tablet enumerates as
@@ -85,6 +87,8 @@ drivers/windows7/tests/
           - When binding via the generic fallback entry, Device Manager will show the generic **Aero VirtIO Input Device**
             name.
           - Caveat: do not ship/install overlapping virtio-input INFs.
+      - The `*.inf.disabled` file under `drivers/windows7/virtio-input/inf/` is a filename alias only (optional
+        compatibility). Enabling it is **not** required for fallback binding.
     - Once bound, the driver classifies the device as a tablet via `EV_BITS` (`EV_ABS` + `ABS_X`/`ABS_Y`).
 - Optionally runs a virtio-snd test (PCI detection + endpoint enumeration + short playback) when a supported virtio-snd
   device is detected (or when `--require-snd` / `--test-snd` is set).
