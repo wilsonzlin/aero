@@ -654,6 +654,13 @@ static int RunD3D9PatchSanity(int argc, char** argv) {
         } else {
           aerogpu_test::PrintfStdout("INFO: %s: rect BMP dump failed: %s", kTestName, err.c_str());
         }
+        DumpTightBgra32(kTestName,
+                        &reporter,
+                        L"d3d9_patch_sanity_rect.bin",
+                        lr.pBits,
+                        (int)lr.Pitch,
+                        (int)desc.Width,
+                        (int)desc.Height);
       }
       sysmem->UnlockRect();
       return reporter.Fail(
