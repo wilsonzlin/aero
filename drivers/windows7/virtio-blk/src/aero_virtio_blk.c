@@ -92,6 +92,10 @@ static BOOLEAN AerovblkProgramMsixVectors(_Inout_ PAEROVBLK_DEVICE_EXTENSION dev
   if (NT_SUCCESS(st)) {
     devExt->MsixConfigVector = configVec;
     devExt->MsixQueue0Vector = queueVec;
+#if DBG
+    AEROVBLK_LOG("msix routing ok: messages=%hu config=%hu queue0=%hu", (USHORT)devExt->MsiMessageCount, (USHORT)devExt->MsixConfigVector,
+                 (USHORT)devExt->MsixQueue0Vector);
+#endif
     return TRUE;
   }
 
@@ -104,6 +108,9 @@ static BOOLEAN AerovblkProgramMsixVectors(_Inout_ PAEROVBLK_DEVICE_EXTENSION dev
   devExt->MsiMessageCount = 0;
   devExt->MsixConfigVector = VIRTIO_PCI_MSI_NO_VECTOR;
   devExt->MsixQueue0Vector = VIRTIO_PCI_MSI_NO_VECTOR;
+#if DBG
+  AEROVBLK_LOG("msix routing failed st=0x%08lx; falling back to INTx", (unsigned long)st);
+#endif
   (void)VirtioPciDisableMsixVectors(&devExt->Vdev, /*QueueCount=*/1);
   return TRUE;
 }
