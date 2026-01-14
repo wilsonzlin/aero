@@ -5359,18 +5359,17 @@ impl Machine {
 
         // Avoid bumping generation if the underlying machine/device model already published the
         // same update (e.g. BIOS INT10 mode set updates).
-        if let Some(snap) = self.scanout_state.try_snapshot() {
-            if snap.source == update.source
-                && snap.base_paddr_lo == update.base_paddr_lo
-                && snap.base_paddr_hi == update.base_paddr_hi
-                && snap.width == update.width
-                && snap.height == update.height
-                && snap.pitch_bytes == update.pitch_bytes
-                && snap.format == update.format
-            {
-                self.last_published_scanout = Some(update);
-                return;
-            }
+        if let Some(snap) = self.scanout_state.try_snapshot()
+            && snap.source == update.source
+            && snap.base_paddr_lo == update.base_paddr_lo
+            && snap.base_paddr_hi == update.base_paddr_hi
+            && snap.width == update.width
+            && snap.height == update.height
+            && snap.pitch_bytes == update.pitch_bytes
+            && snap.format == update.format
+        {
+            self.last_published_scanout = Some(update);
+            return;
         }
 
         if self.scanout_state.try_publish(update).is_some() {
