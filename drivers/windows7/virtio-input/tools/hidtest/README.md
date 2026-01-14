@@ -352,6 +352,10 @@ hidtest.exe --keyboard --counters
 
 Watch:
 
+- `LedWritesRequested` to see how many keyboard LED output reports HIDCLASS requested.
+- `LedWritesSubmitted` / `StatusQSubmits` to see how many LED updates were actually submitted to the device.
+  - Due to coalescing, this can be **much lower** than `LedWritesRequested` under heavy write load.
+- `StatusQCompletions` to see how many submitted statusq buffers have completed. (`StatusQSubmits - StatusQCompletions` is the rough outstanding count.)
 - `StatusQFull` to see how often the statusq hit backpressure.
 - With `StatusQDropOnFull=1`, `VirtioStatusDrops` (and `LedWritesDropped`) should increase when the queue is full.
 

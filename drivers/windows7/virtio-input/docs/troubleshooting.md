@@ -220,7 +220,13 @@ hidtest.exe --keyboard --counters
 If `--reset-counters` fails, rerun elevated; it requires opening the HID interface with write access.
 Note: `--reset-counters` clears monotonic counters and max-depths, but current-state depth gauges may remain non-zero if the driver still has queued work.
 
-Watch `StatusQFull` and (when enabled) `VirtioStatusDrops` / `LedWritesDropped`.
+Watch:
+
+- `LedWritesRequested` — how many keyboard LED output reports HIDCLASS requested.
+- `LedWritesSubmitted` / `StatusQSubmits` — how many LED updates were actually submitted to the device. Under heavy write load, this can be much lower than `LedWritesRequested` due to coalescing.
+- `StatusQCompletions` — how many submitted statusq buffers have completed. (`StatusQSubmits - StatusQCompletions` is the rough outstanding count.)
+- `StatusQFull` — how often the statusq hit backpressure.
+- With `StatusQDropOnFull=1`, `VirtioStatusDrops` / `LedWritesDropped` should increase when the queue is full.
 
 ## No input events (likely still using PS/2)
 
