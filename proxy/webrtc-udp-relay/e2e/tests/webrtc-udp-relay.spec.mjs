@@ -146,8 +146,12 @@ async function stopChildProcess(child, { timeoutMs = 5_000 } = {}) {
 
 async function startUdpEchoServer(socketType, host) {
   const socket = dgram.createSocket(socketType);
+  socket.on("error", () => {
+    // Ignore asynchronous socket errors. Test failures should be surfaced via
+    // missing responses/timeouts, not by crashing the Node process.
+  });
   socket.on("message", (msg, rinfo) => {
-    socket.send(msg, rinfo.port, rinfo.address);
+    socket.send(msg, rinfo.port, rinfo.address, () => {});
   });
 
   const bound = await new Promise((resolve) => {
@@ -167,6 +171,9 @@ async function startUdpEchoServer(socketType, host) {
 
 async function startUdpEchoServerDifferentSourcePort(socketType, host) {
   const listener = dgram.createSocket(socketType);
+  listener.on("error", () => {
+    // ignore
+  });
   const boundListener = await new Promise((resolve) => {
     listener.once("error", () => resolve(false));
     listener.bind(0, host, () => resolve(true));
@@ -177,6 +184,9 @@ async function startUdpEchoServerDifferentSourcePort(socketType, host) {
   }
 
   const responder = dgram.createSocket(socketType);
+  responder.on("error", () => {
+    // ignore
+  });
   const boundResponder = await new Promise((resolve) => {
     responder.once("error", () => resolve(false));
     responder.bind(0, host, () => resolve(true));
@@ -190,7 +200,7 @@ async function startUdpEchoServerDifferentSourcePort(socketType, host) {
   }
 
   listener.on("message", (msg, rinfo) => {
-    responder.send(msg, rinfo.port, rinfo.address);
+    responder.send(msg, rinfo.port, rinfo.address, () => {});
   });
 
   const { port } = listener.address();
