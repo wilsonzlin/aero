@@ -10,7 +10,6 @@ use aero_snapshot::{
 use js_sys::{Array, Object, Reflect, Uint8Array};
 use wasm_bindgen::prelude::*;
 
-const WASM_PAGE_BYTES: u64 = 64 * 1024;
 // Keep this in sync with `aero_snapshot::limits::MAX_DEVICE_ENTRY_LEN`.
 const MAX_DEVICE_BLOB_BYTES: usize = aero_snapshot::limits::MAX_DEVICE_ENTRY_LEN as usize;
 const MAX_DEVICE_COUNT: usize = 4096;
@@ -21,7 +20,7 @@ fn js_error(message: impl core::fmt::Display) -> JsValue {
 
 fn wasm_memory_len_bytes() -> u64 {
     let pages = core::arch::wasm32::memory_size(0) as u64;
-    pages.saturating_mul(WASM_PAGE_BYTES)
+    pages.saturating_mul(crate::guest_layout::WASM_PAGE_BYTES)
 }
 
 #[wasm_bindgen]
@@ -39,25 +38,14 @@ pub struct WorkerVmSnapshot {
 impl WorkerVmSnapshot {
     #[wasm_bindgen(constructor)]
     pub fn new(guest_base: u32, guest_size: u32) -> Result<Self, JsValue> {
-        if guest_size == 0 {
-            return Err(js_error("guest_size must be non-zero"));
+        let guest_size_u64 =
+            crate::validate_shared_guest_ram_layout("WorkerVmSnapshot.new", guest_base, guest_size)?;
+        if guest_size_u64 == 0 {
+            return Err(js_error("WorkerVmSnapshot.new: guest_size must be non-zero"));
         }
-
-        // Keep guest RAM below the PCI MMIO BAR window (see `guest_ram_layout` contract).
-        let guest_size_u64 = u64::from(guest_size).min(crate::guest_layout::PCI_MMIO_BASE);
         let guest_size: u32 = guest_size_u64
             .try_into()
-            .map_err(|_| js_error("guest_size does not fit in u32"))?;
-
-        let end = u64::from(guest_base)
-            .checked_add(u64::from(guest_size))
-            .ok_or_else(|| js_error("guest_base + guest_size overflow"))?;
-        let mem_bytes = wasm_memory_len_bytes();
-        if end > mem_bytes {
-            return Err(js_error(format!(
-                "guest RAM region out of bounds: guest_base=0x{guest_base:x} guest_size=0x{guest_size:x} end=0x{end:x} wasm_memory=0x{mem_bytes:x}"
-            )));
-        }
+            .map_err(|_| js_error("WorkerVmSnapshot.new: guest_size does not fit in u32"))?;
 
         Ok(Self {
             guest_base,
