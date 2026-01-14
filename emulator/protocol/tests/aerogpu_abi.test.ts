@@ -612,6 +612,8 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(size("aerogpu_escape_query_device_v2_out"), 48);
   assert.equal(size("aerogpu_escape_query_fence_out"), 48);
   assert.equal(size("aerogpu_escape_query_perf_out"), 160);
+  assert.equal(size("aerogpu_dbgctl_ring_desc"), 24);
+  assert.equal(size("aerogpu_dbgctl_ring_desc_v2"), 40);
   assert.equal(size("aerogpu_escape_dump_ring_inout"), 40 + 32 * 24);
   assert.equal(size("aerogpu_escape_dump_ring_v2_inout"), 52 + 32 * 40);
   assert.equal(size("aerogpu_escape_selftest_inout"), 32);
@@ -916,11 +918,51 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(off("aerogpu_escape_header", "size"), 8);
   assert.equal(off("aerogpu_escape_header", "reserved0"), 12);
 
+  assert.equal(off("aerogpu_escape_query_device_out", "mmio_version"), 16);
+  assert.equal(off("aerogpu_escape_query_device_out", "reserved0"), 20);
+
   assert.equal(off("aerogpu_escape_query_device_v2_out", "detected_mmio_magic"), 16);
   assert.equal(off("aerogpu_escape_query_device_v2_out", "abi_version_u32"), 20);
   assert.equal(off("aerogpu_escape_query_device_v2_out", "features_lo"), 24);
   assert.equal(off("aerogpu_escape_query_device_v2_out", "features_hi"), 32);
   assert.equal(off("aerogpu_escape_query_device_v2_out", "reserved0"), 40);
+
+  assert.equal(off("aerogpu_dbgctl_ring_desc", "signal_fence"), 0);
+  assert.equal(off("aerogpu_dbgctl_ring_desc", "cmd_gpa"), 8);
+  assert.equal(off("aerogpu_dbgctl_ring_desc", "cmd_size_bytes"), 16);
+  assert.equal(off("aerogpu_dbgctl_ring_desc", "flags"), 20);
+
+  assert.equal(off("aerogpu_escape_dump_ring_inout", "ring_id"), 16);
+  assert.equal(off("aerogpu_escape_dump_ring_inout", "ring_size_bytes"), 20);
+  assert.equal(off("aerogpu_escape_dump_ring_inout", "head"), 24);
+  assert.equal(off("aerogpu_escape_dump_ring_inout", "tail"), 28);
+  assert.equal(off("aerogpu_escape_dump_ring_inout", "desc_count"), 32);
+  assert.equal(off("aerogpu_escape_dump_ring_inout", "desc_capacity"), 36);
+  assert.equal(off("aerogpu_escape_dump_ring_inout", "desc"), 40);
+
+  assert.equal(off("aerogpu_dbgctl_ring_desc_v2", "fence"), 0);
+  assert.equal(off("aerogpu_dbgctl_ring_desc_v2", "cmd_gpa"), 8);
+  assert.equal(off("aerogpu_dbgctl_ring_desc_v2", "cmd_size_bytes"), 16);
+  assert.equal(off("aerogpu_dbgctl_ring_desc_v2", "flags"), 20);
+  assert.equal(off("aerogpu_dbgctl_ring_desc_v2", "alloc_table_gpa"), 24);
+  assert.equal(off("aerogpu_dbgctl_ring_desc_v2", "alloc_table_size_bytes"), 32);
+  assert.equal(off("aerogpu_dbgctl_ring_desc_v2", "reserved0"), 36);
+
+  assert.equal(off("aerogpu_escape_dump_ring_v2_inout", "ring_id"), 16);
+  assert.equal(off("aerogpu_escape_dump_ring_v2_inout", "ring_format"), 20);
+  assert.equal(off("aerogpu_escape_dump_ring_v2_inout", "ring_size_bytes"), 24);
+  assert.equal(off("aerogpu_escape_dump_ring_v2_inout", "head"), 28);
+  assert.equal(off("aerogpu_escape_dump_ring_v2_inout", "tail"), 32);
+  assert.equal(off("aerogpu_escape_dump_ring_v2_inout", "desc_count"), 36);
+  assert.equal(off("aerogpu_escape_dump_ring_v2_inout", "desc_capacity"), 40);
+  assert.equal(off("aerogpu_escape_dump_ring_v2_inout", "reserved0"), 44);
+  assert.equal(off("aerogpu_escape_dump_ring_v2_inout", "reserved1"), 48);
+  assert.equal(off("aerogpu_escape_dump_ring_v2_inout", "desc"), 52);
+
+  assert.equal(off("aerogpu_escape_selftest_inout", "timeout_ms"), 16);
+  assert.equal(off("aerogpu_escape_selftest_inout", "passed"), 20);
+  assert.equal(off("aerogpu_escape_selftest_inout", "error_code"), 24);
+  assert.equal(off("aerogpu_escape_selftest_inout", "reserved0"), 28);
 
   assert.equal(off("aerogpu_escape_query_vblank_out", "vidpn_source_id"), 16);
   assert.equal(off("aerogpu_escape_query_vblank_out", "irq_enable"), 20);
@@ -1262,11 +1304,29 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(konst("AEROGPU_ESCAPE_OP_QUERY_CURSOR"), 11n);
   assert.equal(konst("AEROGPU_ESCAPE_OP_READ_GPA"), 13n);
   assert.equal(konst("AEROGPU_ESCAPE_OP_QUERY_ERROR"), 14n);
+  assert.equal(konst("AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS"), 32n);
+  assert.equal(konst("AEROGPU_DBGCTL_MAX_RECENT_ALLOCATIONS"), 32n);
   assert.equal(konst("AEROGPU_DBGCTL_READ_GPA_MAX_BYTES"), 4096n);
 
   assert.equal(konst("AEROGPU_DBGCTL_RING_FORMAT_UNKNOWN"), 0n);
   assert.equal(konst("AEROGPU_DBGCTL_RING_FORMAT_LEGACY"), 1n);
   assert.equal(konst("AEROGPU_DBGCTL_RING_FORMAT_AGPU"), 2n);
+
+  assert.equal(konst("AEROGPU_DBGCTL_SELFTEST_OK"), 0n);
+  assert.equal(konst("AEROGPU_DBGCTL_SELFTEST_ERR_INVALID_STATE"), 1n);
+  assert.equal(konst("AEROGPU_DBGCTL_SELFTEST_ERR_RING_NOT_READY"), 2n);
+  assert.equal(konst("AEROGPU_DBGCTL_SELFTEST_ERR_GPU_BUSY"), 3n);
+  assert.equal(konst("AEROGPU_DBGCTL_SELFTEST_ERR_NO_RESOURCES"), 4n);
+  assert.equal(konst("AEROGPU_DBGCTL_SELFTEST_ERR_TIMEOUT"), 5n);
+  assert.equal(konst("AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_REGS_OUT_OF_RANGE"), 6n);
+  assert.equal(konst("AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_SEQ_STUCK"), 7n);
+  assert.equal(konst("AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_IRQ_REGS_OUT_OF_RANGE"), 8n);
+  assert.equal(konst("AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_IRQ_NOT_LATCHED"), 9n);
+  assert.equal(konst("AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_IRQ_NOT_CLEARED"), 10n);
+  assert.equal(konst("AEROGPU_DBGCTL_SELFTEST_ERR_CURSOR_REGS_OUT_OF_RANGE"), 11n);
+  assert.equal(konst("AEROGPU_DBGCTL_SELFTEST_ERR_CURSOR_RW_MISMATCH"), 12n);
+  assert.equal(konst("AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_IRQ_NOT_DELIVERED"), 13n);
+  assert.equal(konst("AEROGPU_DBGCTL_SELFTEST_ERR_TIME_BUDGET_EXHAUSTED"), 14n);
 
   assert.equal(konst("AEROGPU_DBGCTL_QUERY_VBLANK_FLAGS_VALID"), 1n << 31n);
   assert.equal(konst("AEROGPU_DBGCTL_QUERY_VBLANK_FLAG_VBLANK_SUPPORTED"), 1n);

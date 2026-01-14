@@ -85,6 +85,8 @@ int main(void) {
   PRINT_SIZE("aerogpu_escape_query_device_v2_out", aerogpu_escape_query_device_v2_out);
   PRINT_SIZE("aerogpu_escape_query_fence_out", aerogpu_escape_query_fence_out);
   PRINT_SIZE("aerogpu_escape_query_perf_out", aerogpu_escape_query_perf_out);
+  PRINT_SIZE("aerogpu_dbgctl_ring_desc", aerogpu_dbgctl_ring_desc);
+  PRINT_SIZE("aerogpu_dbgctl_ring_desc_v2", aerogpu_dbgctl_ring_desc_v2);
   PRINT_SIZE("aerogpu_escape_dump_ring_inout", aerogpu_escape_dump_ring_inout);
   PRINT_SIZE("aerogpu_escape_dump_ring_v2_inout", aerogpu_escape_dump_ring_v2_inout);
   PRINT_SIZE("aerogpu_escape_selftest_inout", aerogpu_escape_selftest_inout);
@@ -493,6 +495,9 @@ int main(void) {
   PRINT_OFF("aerogpu_escape_header", aerogpu_escape_header, size);
   PRINT_OFF("aerogpu_escape_header", aerogpu_escape_header, reserved0);
 
+  PRINT_OFF("aerogpu_escape_query_device_out", aerogpu_escape_query_device_out, mmio_version);
+  PRINT_OFF("aerogpu_escape_query_device_out", aerogpu_escape_query_device_out, reserved0);
+
   PRINT_OFF("aerogpu_escape_query_device_v2_out", aerogpu_escape_query_device_v2_out, detected_mmio_magic);
   PRINT_OFF("aerogpu_escape_query_device_v2_out", aerogpu_escape_query_device_v2_out, abi_version_u32);
   PRINT_OFF("aerogpu_escape_query_device_v2_out", aerogpu_escape_query_device_v2_out, features_lo);
@@ -518,6 +523,43 @@ int main(void) {
   PRINT_OFF("aerogpu_escape_query_perf_out", aerogpu_escape_query_perf_out, reserved0);
   PRINT_OFF("aerogpu_escape_query_perf_out", aerogpu_escape_query_perf_out, error_irq_count);
   PRINT_OFF("aerogpu_escape_query_perf_out", aerogpu_escape_query_perf_out, last_error_fence);
+
+  PRINT_OFF("aerogpu_dbgctl_ring_desc", aerogpu_dbgctl_ring_desc, signal_fence);
+  PRINT_OFF("aerogpu_dbgctl_ring_desc", aerogpu_dbgctl_ring_desc, cmd_gpa);
+  PRINT_OFF("aerogpu_dbgctl_ring_desc", aerogpu_dbgctl_ring_desc, cmd_size_bytes);
+  PRINT_OFF("aerogpu_dbgctl_ring_desc", aerogpu_dbgctl_ring_desc, flags);
+
+  PRINT_OFF("aerogpu_escape_dump_ring_inout", aerogpu_escape_dump_ring_inout, ring_id);
+  PRINT_OFF("aerogpu_escape_dump_ring_inout", aerogpu_escape_dump_ring_inout, ring_size_bytes);
+  PRINT_OFF("aerogpu_escape_dump_ring_inout", aerogpu_escape_dump_ring_inout, head);
+  PRINT_OFF("aerogpu_escape_dump_ring_inout", aerogpu_escape_dump_ring_inout, tail);
+  PRINT_OFF("aerogpu_escape_dump_ring_inout", aerogpu_escape_dump_ring_inout, desc_count);
+  PRINT_OFF("aerogpu_escape_dump_ring_inout", aerogpu_escape_dump_ring_inout, desc_capacity);
+  PRINT_OFF("aerogpu_escape_dump_ring_inout", aerogpu_escape_dump_ring_inout, desc);
+
+  PRINT_OFF("aerogpu_dbgctl_ring_desc_v2", aerogpu_dbgctl_ring_desc_v2, fence);
+  PRINT_OFF("aerogpu_dbgctl_ring_desc_v2", aerogpu_dbgctl_ring_desc_v2, cmd_gpa);
+  PRINT_OFF("aerogpu_dbgctl_ring_desc_v2", aerogpu_dbgctl_ring_desc_v2, cmd_size_bytes);
+  PRINT_OFF("aerogpu_dbgctl_ring_desc_v2", aerogpu_dbgctl_ring_desc_v2, flags);
+  PRINT_OFF("aerogpu_dbgctl_ring_desc_v2", aerogpu_dbgctl_ring_desc_v2, alloc_table_gpa);
+  PRINT_OFF("aerogpu_dbgctl_ring_desc_v2", aerogpu_dbgctl_ring_desc_v2, alloc_table_size_bytes);
+  PRINT_OFF("aerogpu_dbgctl_ring_desc_v2", aerogpu_dbgctl_ring_desc_v2, reserved0);
+
+  PRINT_OFF("aerogpu_escape_dump_ring_v2_inout", aerogpu_escape_dump_ring_v2_inout, ring_id);
+  PRINT_OFF("aerogpu_escape_dump_ring_v2_inout", aerogpu_escape_dump_ring_v2_inout, ring_format);
+  PRINT_OFF("aerogpu_escape_dump_ring_v2_inout", aerogpu_escape_dump_ring_v2_inout, ring_size_bytes);
+  PRINT_OFF("aerogpu_escape_dump_ring_v2_inout", aerogpu_escape_dump_ring_v2_inout, head);
+  PRINT_OFF("aerogpu_escape_dump_ring_v2_inout", aerogpu_escape_dump_ring_v2_inout, tail);
+  PRINT_OFF("aerogpu_escape_dump_ring_v2_inout", aerogpu_escape_dump_ring_v2_inout, desc_count);
+  PRINT_OFF("aerogpu_escape_dump_ring_v2_inout", aerogpu_escape_dump_ring_v2_inout, desc_capacity);
+  PRINT_OFF("aerogpu_escape_dump_ring_v2_inout", aerogpu_escape_dump_ring_v2_inout, reserved0);
+  PRINT_OFF("aerogpu_escape_dump_ring_v2_inout", aerogpu_escape_dump_ring_v2_inout, reserved1);
+  PRINT_OFF("aerogpu_escape_dump_ring_v2_inout", aerogpu_escape_dump_ring_v2_inout, desc);
+
+  PRINT_OFF("aerogpu_escape_selftest_inout", aerogpu_escape_selftest_inout, timeout_ms);
+  PRINT_OFF("aerogpu_escape_selftest_inout", aerogpu_escape_selftest_inout, passed);
+  PRINT_OFF("aerogpu_escape_selftest_inout", aerogpu_escape_selftest_inout, error_code);
+  PRINT_OFF("aerogpu_escape_selftest_inout", aerogpu_escape_selftest_inout, reserved0);
 
   PRINT_OFF("aerogpu_escape_query_vblank_out", aerogpu_escape_query_vblank_out, vidpn_source_id);
   PRINT_OFF("aerogpu_escape_query_vblank_out", aerogpu_escape_query_vblank_out, irq_enable);
@@ -914,11 +956,29 @@ int main(void) {
   PRINT_CONST(AEROGPU_ESCAPE_OP_QUERY_PERF);
   PRINT_CONST(AEROGPU_ESCAPE_OP_READ_GPA);
   PRINT_CONST(AEROGPU_ESCAPE_OP_QUERY_ERROR);
+  PRINT_CONST(AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS);
+  PRINT_CONST(AEROGPU_DBGCTL_MAX_RECENT_ALLOCATIONS);
   PRINT_CONST(AEROGPU_DBGCTL_READ_GPA_MAX_BYTES);
 
   PRINT_CONST(AEROGPU_DBGCTL_RING_FORMAT_UNKNOWN);
   PRINT_CONST(AEROGPU_DBGCTL_RING_FORMAT_LEGACY);
   PRINT_CONST(AEROGPU_DBGCTL_RING_FORMAT_AGPU);
+
+  PRINT_CONST(AEROGPU_DBGCTL_SELFTEST_OK);
+  PRINT_CONST(AEROGPU_DBGCTL_SELFTEST_ERR_INVALID_STATE);
+  PRINT_CONST(AEROGPU_DBGCTL_SELFTEST_ERR_RING_NOT_READY);
+  PRINT_CONST(AEROGPU_DBGCTL_SELFTEST_ERR_GPU_BUSY);
+  PRINT_CONST(AEROGPU_DBGCTL_SELFTEST_ERR_NO_RESOURCES);
+  PRINT_CONST(AEROGPU_DBGCTL_SELFTEST_ERR_TIMEOUT);
+  PRINT_CONST(AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_REGS_OUT_OF_RANGE);
+  PRINT_CONST(AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_SEQ_STUCK);
+  PRINT_CONST(AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_IRQ_REGS_OUT_OF_RANGE);
+  PRINT_CONST(AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_IRQ_NOT_LATCHED);
+  PRINT_CONST(AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_IRQ_NOT_CLEARED);
+  PRINT_CONST(AEROGPU_DBGCTL_SELFTEST_ERR_CURSOR_REGS_OUT_OF_RANGE);
+  PRINT_CONST(AEROGPU_DBGCTL_SELFTEST_ERR_CURSOR_RW_MISMATCH);
+  PRINT_CONST(AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_IRQ_NOT_DELIVERED);
+  PRINT_CONST(AEROGPU_DBGCTL_SELFTEST_ERR_TIME_BUDGET_EXHAUSTED);
 
   PRINT_CONST(AEROGPU_DBGCTL_QUERY_VBLANK_FLAGS_VALID);
   PRINT_CONST(AEROGPU_DBGCTL_QUERY_VBLANK_FLAG_VBLANK_SUPPORTED);

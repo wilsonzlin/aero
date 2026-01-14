@@ -2554,6 +2554,8 @@ fn rust_layout_matches_c_headers() {
     assert_eq!(abi.size("aerogpu_escape_query_device_v2_out"), 48);
     assert_eq!(abi.size("aerogpu_escape_query_fence_out"), 48);
     assert_eq!(abi.size("aerogpu_escape_query_perf_out"), 160);
+    assert_eq!(abi.size("aerogpu_dbgctl_ring_desc"), 24);
+    assert_eq!(abi.size("aerogpu_dbgctl_ring_desc_v2"), 40);
     assert_eq!(abi.size("aerogpu_escape_query_error_out"), 40);
     assert_eq!(abi.size("aerogpu_escape_read_gpa_inout"), 40 + 4096);
     assert_eq!(
@@ -2588,6 +2590,15 @@ fn rust_layout_matches_c_headers() {
     assert_eq!(abi.offset("aerogpu_escape_header", "op"), 4);
     assert_eq!(abi.offset("aerogpu_escape_header", "size"), 8);
     assert_eq!(abi.offset("aerogpu_escape_header", "reserved0"), 12);
+
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_device_out", "mmio_version"),
+        16
+    );
+    assert_eq!(
+        abi.offset("aerogpu_escape_query_device_out", "reserved0"),
+        20
+    );
 
     assert_eq!(
         abi.offset("aerogpu_escape_query_device_v2_out", "detected_mmio_magic"),
@@ -2674,6 +2685,82 @@ fn rust_layout_matches_c_headers() {
         abi.offset("aerogpu_escape_query_perf_out", "last_error_fence"),
         152
     );
+
+    assert_eq!(abi.offset("aerogpu_dbgctl_ring_desc", "signal_fence"), 0);
+    assert_eq!(abi.offset("aerogpu_dbgctl_ring_desc", "cmd_gpa"), 8);
+    assert_eq!(abi.offset("aerogpu_dbgctl_ring_desc", "cmd_size_bytes"), 16);
+    assert_eq!(abi.offset("aerogpu_dbgctl_ring_desc", "flags"), 20);
+
+    assert_eq!(abi.offset("aerogpu_escape_dump_ring_inout", "ring_id"), 16);
+    assert_eq!(
+        abi.offset("aerogpu_escape_dump_ring_inout", "ring_size_bytes"),
+        20
+    );
+    assert_eq!(abi.offset("aerogpu_escape_dump_ring_inout", "head"), 24);
+    assert_eq!(abi.offset("aerogpu_escape_dump_ring_inout", "tail"), 28);
+    assert_eq!(
+        abi.offset("aerogpu_escape_dump_ring_inout", "desc_count"),
+        32
+    );
+    assert_eq!(
+        abi.offset("aerogpu_escape_dump_ring_inout", "desc_capacity"),
+        36
+    );
+    assert_eq!(abi.offset("aerogpu_escape_dump_ring_inout", "desc"), 40);
+
+    assert_eq!(abi.offset("aerogpu_dbgctl_ring_desc_v2", "fence"), 0);
+    assert_eq!(abi.offset("aerogpu_dbgctl_ring_desc_v2", "cmd_gpa"), 8);
+    assert_eq!(
+        abi.offset("aerogpu_dbgctl_ring_desc_v2", "cmd_size_bytes"),
+        16
+    );
+    assert_eq!(abi.offset("aerogpu_dbgctl_ring_desc_v2", "flags"), 20);
+    assert_eq!(
+        abi.offset("aerogpu_dbgctl_ring_desc_v2", "alloc_table_gpa"),
+        24
+    );
+    assert_eq!(
+        abi.offset("aerogpu_dbgctl_ring_desc_v2", "alloc_table_size_bytes"),
+        32
+    );
+    assert_eq!(
+        abi.offset("aerogpu_dbgctl_ring_desc_v2", "reserved0"),
+        36
+    );
+
+    assert_eq!(abi.offset("aerogpu_escape_dump_ring_v2_inout", "ring_id"), 16);
+    assert_eq!(
+        abi.offset("aerogpu_escape_dump_ring_v2_inout", "ring_format"),
+        20
+    );
+    assert_eq!(
+        abi.offset("aerogpu_escape_dump_ring_v2_inout", "ring_size_bytes"),
+        24
+    );
+    assert_eq!(abi.offset("aerogpu_escape_dump_ring_v2_inout", "head"), 28);
+    assert_eq!(abi.offset("aerogpu_escape_dump_ring_v2_inout", "tail"), 32);
+    assert_eq!(
+        abi.offset("aerogpu_escape_dump_ring_v2_inout", "desc_count"),
+        36
+    );
+    assert_eq!(
+        abi.offset("aerogpu_escape_dump_ring_v2_inout", "desc_capacity"),
+        40
+    );
+    assert_eq!(
+        abi.offset("aerogpu_escape_dump_ring_v2_inout", "reserved0"),
+        44
+    );
+    assert_eq!(
+        abi.offset("aerogpu_escape_dump_ring_v2_inout", "reserved1"),
+        48
+    );
+    assert_eq!(abi.offset("aerogpu_escape_dump_ring_v2_inout", "desc"), 52);
+
+    assert_eq!(abi.offset("aerogpu_escape_selftest_inout", "timeout_ms"), 16);
+    assert_eq!(abi.offset("aerogpu_escape_selftest_inout", "passed"), 20);
+    assert_eq!(abi.offset("aerogpu_escape_selftest_inout", "error_code"), 24);
+    assert_eq!(abi.offset("aerogpu_escape_selftest_inout", "reserved0"), 28);
 
     assert_eq!(
         abi.offset("aerogpu_escape_query_vblank_out", "vidpn_source_id"),
@@ -2884,12 +2971,51 @@ fn rust_layout_matches_c_headers() {
     assert_eq!(abi.konst("AEROGPU_ESCAPE_OP_QUERY_PERF"), 12);
     assert_eq!(abi.konst("AEROGPU_ESCAPE_OP_READ_GPA"), 13);
     assert_eq!(abi.konst("AEROGPU_ESCAPE_OP_QUERY_ERROR"), 14);
+    assert_eq!(abi.konst("AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS"), 32);
+    assert_eq!(abi.konst("AEROGPU_DBGCTL_MAX_RECENT_ALLOCATIONS"), 32);
     assert_eq!(abi.konst("AEROGPU_DBGCTL_READ_GPA_MAX_BYTES"), 4096);
     assert_eq!(
         abi.konst("AEROGPU_DBGCTL_QUERY_ERROR_FLAGS_VALID"),
         1u64 << 31
     );
     assert_eq!(abi.konst("AEROGPU_DBGCTL_QUERY_ERROR_FLAG_ERROR_SUPPORTED"), 1);
+
+    assert_eq!(abi.konst("AEROGPU_DBGCTL_SELFTEST_OK"), 0);
+    assert_eq!(abi.konst("AEROGPU_DBGCTL_SELFTEST_ERR_INVALID_STATE"), 1);
+    assert_eq!(abi.konst("AEROGPU_DBGCTL_SELFTEST_ERR_RING_NOT_READY"), 2);
+    assert_eq!(abi.konst("AEROGPU_DBGCTL_SELFTEST_ERR_GPU_BUSY"), 3);
+    assert_eq!(abi.konst("AEROGPU_DBGCTL_SELFTEST_ERR_NO_RESOURCES"), 4);
+    assert_eq!(abi.konst("AEROGPU_DBGCTL_SELFTEST_ERR_TIMEOUT"), 5);
+    assert_eq!(
+        abi.konst("AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_REGS_OUT_OF_RANGE"),
+        6
+    );
+    assert_eq!(abi.konst("AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_SEQ_STUCK"), 7);
+    assert_eq!(
+        abi.konst("AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_IRQ_REGS_OUT_OF_RANGE"),
+        8
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_IRQ_NOT_LATCHED"),
+        9
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_IRQ_NOT_CLEARED"),
+        10
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_DBGCTL_SELFTEST_ERR_CURSOR_REGS_OUT_OF_RANGE"),
+        11
+    );
+    assert_eq!(abi.konst("AEROGPU_DBGCTL_SELFTEST_ERR_CURSOR_RW_MISMATCH"), 12);
+    assert_eq!(
+        abi.konst("AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_IRQ_NOT_DELIVERED"),
+        13
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_DBGCTL_SELFTEST_ERR_TIME_BUDGET_EXHAUSTED"),
+        14
+    );
 
     // UMD-private discovery blob (UMDRIVERPRIVATE).
     assert_off!(
@@ -4160,11 +4286,50 @@ fn rust_layout_matches_c_headers() {
     assert_eq!(abi.konst("AEROGPU_ESCAPE_OP_QUERY_PERF"), 12);
     assert_eq!(abi.konst("AEROGPU_ESCAPE_OP_READ_GPA"), 13);
     assert_eq!(abi.konst("AEROGPU_ESCAPE_OP_QUERY_ERROR"), 14);
+    assert_eq!(abi.konst("AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS"), 32);
+    assert_eq!(abi.konst("AEROGPU_DBGCTL_MAX_RECENT_ALLOCATIONS"), 32);
     assert_eq!(abi.konst("AEROGPU_DBGCTL_READ_GPA_MAX_BYTES"), 4096);
 
     assert_eq!(abi.konst("AEROGPU_DBGCTL_RING_FORMAT_UNKNOWN"), 0);
     assert_eq!(abi.konst("AEROGPU_DBGCTL_RING_FORMAT_LEGACY"), 1);
     assert_eq!(abi.konst("AEROGPU_DBGCTL_RING_FORMAT_AGPU"), 2);
+
+    assert_eq!(abi.konst("AEROGPU_DBGCTL_SELFTEST_OK"), 0);
+    assert_eq!(abi.konst("AEROGPU_DBGCTL_SELFTEST_ERR_INVALID_STATE"), 1);
+    assert_eq!(abi.konst("AEROGPU_DBGCTL_SELFTEST_ERR_RING_NOT_READY"), 2);
+    assert_eq!(abi.konst("AEROGPU_DBGCTL_SELFTEST_ERR_GPU_BUSY"), 3);
+    assert_eq!(abi.konst("AEROGPU_DBGCTL_SELFTEST_ERR_NO_RESOURCES"), 4);
+    assert_eq!(abi.konst("AEROGPU_DBGCTL_SELFTEST_ERR_TIMEOUT"), 5);
+    assert_eq!(
+        abi.konst("AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_REGS_OUT_OF_RANGE"),
+        6
+    );
+    assert_eq!(abi.konst("AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_SEQ_STUCK"), 7);
+    assert_eq!(
+        abi.konst("AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_IRQ_REGS_OUT_OF_RANGE"),
+        8
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_IRQ_NOT_LATCHED"),
+        9
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_IRQ_NOT_CLEARED"),
+        10
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_DBGCTL_SELFTEST_ERR_CURSOR_REGS_OUT_OF_RANGE"),
+        11
+    );
+    assert_eq!(abi.konst("AEROGPU_DBGCTL_SELFTEST_ERR_CURSOR_RW_MISMATCH"), 12);
+    assert_eq!(
+        abi.konst("AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_IRQ_NOT_DELIVERED"),
+        13
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_DBGCTL_SELFTEST_ERR_TIME_BUDGET_EXHAUSTED"),
+        14
+    );
 
     assert_eq!(
         abi.konst("AEROGPU_DBGCTL_QUERY_VBLANK_FLAGS_VALID"),
