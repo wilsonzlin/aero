@@ -2736,15 +2736,16 @@ static BOOLEAN AerovNetCtrlVqRegistryReadMultiSz(_In_ HANDLE Key, _In_ PCWSTR Na
   }
 
   // Copy out the MULTI_SZ payload and ensure it is double-NUL terminated so the
-  // parser cannot read past the allocation if the registry data is malformed.
-  Copy = (PWCHAR)ExAllocatePoolWithTag(NonPagedPool, DataBytes + sizeof(WCHAR), AEROVNET_TAG);
+  // parser cannot read past the allocation if the registry data is malformed
+  // (e.g. missing a trailing empty string terminator).
+  Copy = (PWCHAR)ExAllocatePoolWithTag(NonPagedPool, DataBytes + (2 * sizeof(WCHAR)), AEROVNET_TAG);
   if (!Copy) {
     if (NeedFree) {
       ExFreePoolWithTag(Info, AEROVNET_TAG);
     }
     return FALSE;
   }
-  RtlZeroMemory(Copy, DataBytes + sizeof(WCHAR));
+  RtlZeroMemory(Copy, DataBytes + (2 * sizeof(WCHAR)));
   RtlCopyMemory(Copy, Info->Data, DataBytes);
 
   if (NeedFree) {
