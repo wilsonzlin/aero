@@ -826,6 +826,38 @@ mod tests {
     }
 
     #[test]
+    fn page_versions_table_ptr_len_is_null_when_len_zero() {
+        let mut tracker = PageVersionTracker::new(0);
+        let (ptr, len) = tracker.table_ptr_len();
+        assert!(ptr.is_null());
+        assert_eq!(len, 0);
+    }
+
+    #[test]
+    #[should_panic]
+    fn page_versions_ensure_tracked_pages_panics_when_exceeds_configured_len() {
+        let mut tracker = PageVersionTracker::new(4);
+        tracker.ensure_tracked_pages(5);
+    }
+
+    #[test]
+    fn jit_runtime_clamps_code_version_max_pages_to_hard_cap() {
+        let config = JitConfig {
+            code_version_max_pages: PageVersionTracker::MAX_TRACKED_PAGES.saturating_add(123),
+            ..Default::default()
+        };
+        let rt = make_runtime(config);
+        assert_eq!(
+            rt.config().code_version_max_pages,
+            PageVersionTracker::MAX_TRACKED_PAGES
+        );
+        assert_eq!(
+            rt.page_versions().versions_len(),
+            PageVersionTracker::MAX_TRACKED_PAGES
+        );
+    }
+
+    #[test]
     fn page_versions_snapshot_validation_invalidates_on_write() {
         let entry_rip = 0x1000u64;
         let code_paddr = 0x2000u64;
