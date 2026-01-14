@@ -53,8 +53,7 @@ impl<T: PciDevice> PciConfigSyncedMmioBar<T> {
             let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
             let bar_base = cfg
                 .and_then(|cfg| cfg.bar_range(self.bar))
-                .map(|range| range.base)
-                .unwrap_or(0);
+                .map(|range| range.base);
             let msi_state = cfg.and_then(|cfg| cfg.capability::<MsiCapability>()).map(|msi| {
                 (
                     msi.enabled(),
@@ -73,7 +72,7 @@ impl<T: PciDevice> PciConfigSyncedMmioBar<T> {
         let mut dev = self.dev.borrow_mut();
         let cfg = dev.config_mut();
         cfg.set_command(command);
-        if bar_base != 0 {
+        if let Some(bar_base) = bar_base {
             cfg.set_bar_base(self.bar, bar_base);
         }
 
@@ -329,6 +328,23 @@ mod tests {
             assert_eq!(dev.config.bar_range(bar).unwrap().base, 0x5678_0000);
             assert_eq!(dev.last_command, 0);
             assert_eq!(dev.last_bar_base, 0x5678_0000);
+        }
+
+        // BAR bases can be programmed back to zero by guests (e.g. device disable / teardown).
+        // Ensure the wrapper mirrors a zero base too (not just "non-zero means programmed").
+        {
+            let mut pci_cfg = pci_cfg.borrow_mut();
+            let cfg = pci_cfg
+                .bus_mut()
+                .device_config_mut(bdf)
+                .expect("missing config device");
+            cfg.set_bar_base(bar, 0);
+        }
+        mmio.read(0, 4);
+        {
+            let dev = dev.borrow();
+            assert_eq!(dev.config.bar_range(bar).unwrap().base, 0);
+            assert_eq!(dev.last_bar_base, 0);
         }
     }
 
