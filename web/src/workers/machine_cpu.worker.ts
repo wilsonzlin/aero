@@ -11,6 +11,11 @@ import {
   type WorkerInitMessage,
 } from "../runtime/protocol";
 import { RingBuffer } from "../ipc/ring_buffer";
+import type { WasmApi } from "../runtime/wasm_loader";
+import {
+  restoreMachineSnapshotAndReattachDisks,
+  restoreMachineSnapshotFromOpfsAndReattachDisks,
+} from "../runtime/machine_snapshot_disks";
 
 /**
  * Minimal "machine CPU" worker entrypoint.
@@ -33,7 +38,35 @@ let eventRing: RingBuffer | null = null;
 let currentConfig: AeroConfig | null = null;
 let currentConfigVersion = 0;
 
+type MachineSnapshotSerializedError = { name: string; message: string; stack?: string };
+type MachineSnapshotResultOk = { ok: true };
+type MachineSnapshotResultErr = { ok: false; error: MachineSnapshotSerializedError };
+
+type MachineSnapshotRestoreFromOpfsMessage = {
+  kind: "machine.snapshot.restoreFromOpfs";
+  requestId: number;
+  path: string;
+};
+
+type MachineSnapshotRestoreMessage = {
+  kind: "machine.snapshot.restore";
+  requestId: number;
+  bytes: ArrayBuffer;
+};
+
+type MachineSnapshotRestoredMessage =
+  | ({ kind: "machine.snapshot.restored"; requestId: number } & MachineSnapshotResultOk)
+  | ({ kind: "machine.snapshot.restored"; requestId: number } & MachineSnapshotResultErr);
+
+let wasmApi: WasmApi | null = null;
+let wasmMachine: InstanceType<WasmApi["Machine"]> | null = null;
+let snapshotOpChain: Promise<void> = Promise.resolve();
+
 function post(msg: ProtocolMessage | ConfigAckMessage): void {
+  ctx.postMessage(msg);
+}
+
+function postSnapshot(msg: MachineSnapshotRestoredMessage): void {
   ctx.postMessage(msg);
 }
 
@@ -47,8 +80,97 @@ function pushEvent(evt: Event): void {
   }
 }
 
+function serializeError(err: unknown): MachineSnapshotSerializedError {
+  if (err instanceof Error) return { name: err.name || "Error", message: err.message, stack: err.stack };
+  return { name: "Error", message: String(err) };
+}
+
+function getMachineRamSizeBytes(): number {
+  const mib = currentConfig?.guestMemoryMiB;
+  if (typeof mib === "number" && Number.isFinite(mib) && mib > 0) {
+    const bytes = mib * 1024 * 1024;
+    if (Number.isFinite(bytes) && bytes > 0) return bytes >>> 0;
+  }
+  // Fallback for tests/harnesses that have not yet wired `config.update` -> `Machine` sizing.
+  return 1 * 1024 * 1024;
+}
+
+function ensureWasmMachine(): { api: WasmApi; machine: InstanceType<WasmApi["Machine"]> } {
+  const api = wasmApi;
+  if (!api) throw new Error("WASM is not initialized; cannot restore machine snapshot.");
+  if (!api.Machine) throw new Error("Machine export unavailable in this WASM build.");
+  if (!wasmMachine) {
+    wasmMachine = new api.Machine(getMachineRamSizeBytes());
+  }
+  return { api, machine: wasmMachine };
+}
+
+function enqueueSnapshotOp(op: () => Promise<void>): void {
+  snapshotOpChain = snapshotOpChain.then(op).catch(() => undefined);
+}
+
 ctx.onmessage = (ev) => {
   const msg = ev.data as unknown;
+
+  const snapshot = msg as Partial<MachineSnapshotRestoreFromOpfsMessage | MachineSnapshotRestoreMessage>;
+  if (snapshot?.kind === "machine.snapshot.restoreFromOpfs") {
+    const requestId = typeof snapshot.requestId === "number" ? snapshot.requestId : -1;
+    const path = typeof snapshot.path === "string" ? snapshot.path : "";
+    if (requestId < 0 || !path) {
+      postSnapshot({
+        kind: "machine.snapshot.restored",
+        requestId: requestId < 0 ? 0 : requestId,
+        ok: false,
+        error: serializeError(new Error("Invalid machine.snapshot.restoreFromOpfs message.")),
+      });
+      return;
+    }
+
+    enqueueSnapshotOp(async () => {
+      try {
+        const { api, machine } = ensureWasmMachine();
+        // Snapshot restore intentionally drops host-side disk backends (OPFS handles) and only
+        // preserves overlay refs as *OPFS path strings* (relative to `navigator.storage.getDirectory()`).
+        //
+        // After restoring, re-open those OPFS images and reattach them to the canonical machine.
+        await restoreMachineSnapshotFromOpfsAndReattachDisks({ api, machine, path, logPrefix: "machine_cpu.worker" });
+        postSnapshot({ kind: "machine.snapshot.restored", requestId, ok: true });
+      } catch (err) {
+        postSnapshot({ kind: "machine.snapshot.restored", requestId, ok: false, error: serializeError(err) });
+      }
+    });
+    return;
+  }
+
+  if (snapshot?.kind === "machine.snapshot.restore") {
+    const requestId = typeof snapshot.requestId === "number" ? snapshot.requestId : -1;
+    const bytes = snapshot.bytes;
+    if (requestId < 0 || !(bytes instanceof ArrayBuffer)) {
+      postSnapshot({
+        kind: "machine.snapshot.restored",
+        requestId: requestId < 0 ? 0 : requestId,
+        ok: false,
+        error: serializeError(new Error("Invalid machine.snapshot.restore message.")),
+      });
+      return;
+    }
+
+    enqueueSnapshotOp(async () => {
+      try {
+        const { api, machine } = ensureWasmMachine();
+        await restoreMachineSnapshotAndReattachDisks({
+          api,
+          machine,
+          bytes: new Uint8Array(bytes),
+          logPrefix: "machine_cpu.worker",
+        });
+        postSnapshot({ kind: "machine.snapshot.restored", requestId, ok: true });
+      } catch (err) {
+        postSnapshot({ kind: "machine.snapshot.restored", requestId, ok: false, error: serializeError(err) });
+      }
+    });
+    return;
+  }
 
   if ((msg as { kind?: unknown }).kind === "config.update") {
     const update = msg as ConfigUpdateMessage;
@@ -149,6 +271,14 @@ async function runLoop(): Promise<void> {
     ctx.close();
   } finally {
     setReadyFlag(st, role, false);
+    if (wasmMachine) {
+      try {
+        (wasmMachine as unknown as { free?: () => void }).free?.();
+      } catch {
+        // ignore
+      }
+      wasmMachine = null;
+    }
   }
 }
 
@@ -165,6 +295,7 @@ async function initWasmInBackground(init: WorkerInitMessage, guestMemory: WebAss
       module: init.wasmModule,
       memory: guestMemory,
     });
+    wasmApi = api;
     const value = typeof api.add === "function" ? api.add(20, 22) : 0;
     const st = status;
     if (st && Atomics.load(st, StatusIndex.StopRequested) === 1) return;
