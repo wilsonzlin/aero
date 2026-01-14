@@ -2160,7 +2160,10 @@ mod tests {
             w_index: 1,
             w_length: 0,
         };
-        assert_eq!(hub.handle_control_request(suspend, None), ControlResponse::Ack);
+        assert_eq!(
+            hub.handle_control_request(suspend, None),
+            ControlResponse::Ack
+        );
         assert!(hub.ports[0].suspended);
         assert!(wake.0.borrow().suspended);
 
@@ -2177,7 +2180,10 @@ mod tests {
             ControlResponse::Ack
         );
         assert!(!hub.ports[0].suspend_change);
-        assert_eq!(hub.handle_interrupt_in(HUB_INTERRUPT_IN_EP), UsbInResult::Nak);
+        assert_eq!(
+            hub.handle_interrupt_in(HUB_INTERRUPT_IN_EP),
+            UsbInResult::Nak
+        );
 
         wake.request_wake();
         UsbHub::tick_1ms(&mut hub);

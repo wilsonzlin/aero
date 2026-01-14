@@ -833,7 +833,7 @@ fn compute_can_vertex_pull_unorm16_and_snorm16_formats() {
         push_u16(&mut vb, 0xFFFF); // r16g16_unorm.y = 1.0
         push_u16(&mut vb, 0x8000); // r16g16_snorm.x = -1.0
         push_u16(&mut vb, 0x7FFF); // r16g16_snorm.y = 1.0
-        // r16g16b16a16_unorm = (1,0,1,0)
+                                   // r16g16b16a16_unorm = (1,0,1,0)
         push_u16(&mut vb, 0xFFFF);
         push_u16(&mut vb, 0);
         push_u16(&mut vb, 0xFFFF);
@@ -853,7 +853,7 @@ fn compute_can_vertex_pull_unorm16_and_snorm16_formats() {
         push_u16(&mut vb, 0); // r16g16_unorm.y = 0.0
         push_u16(&mut vb, 0x7FFF); // r16g16_snorm.x = 1.0
         push_u16(&mut vb, 0x8000); // r16g16_snorm.y = -1.0
-        // r16g16b16a16_unorm = (0,1,0,1)
+                                   // r16g16b16a16_unorm = (0,1,0,1)
         push_u16(&mut vb, 0);
         push_u16(&mut vb, 0xFFFF);
         push_u16(&mut vb, 0);
@@ -989,19 +989,18 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
 
         let expected = [
             // v0
-            [0.0, 0.0, 0.0, 1.0],  // r16_unorm
-            [-1.0, 0.0, 0.0, 1.0], // r16_snorm
-            [0.0, 1.0, 0.0, 1.0],  // r16g16_unorm
-            [-1.0, 1.0, 0.0, 1.0], // r16g16_snorm
-            [1.0, 0.0, 1.0, 0.0],  // r16g16b16a16_unorm
+            [0.0, 0.0, 0.0, 1.0],   // r16_unorm
+            [-1.0, 0.0, 0.0, 1.0],  // r16_snorm
+            [0.0, 1.0, 0.0, 1.0],   // r16g16_unorm
+            [-1.0, 1.0, 0.0, 1.0],  // r16g16_snorm
+            [1.0, 0.0, 1.0, 0.0],   // r16g16b16a16_unorm
             [-1.0, 0.0, 1.0, -1.0], // r16g16b16a16_snorm
-
             // v1
-            [1.0, 0.0, 0.0, 1.0], // r16_unorm
-            [1.0, 0.0, 0.0, 1.0], // r16_snorm
-            [1.0, 0.0, 0.0, 1.0], // r16g16_unorm
+            [1.0, 0.0, 0.0, 1.0],  // r16_unorm
+            [1.0, 0.0, 0.0, 1.0],  // r16_snorm
+            [1.0, 0.0, 0.0, 1.0],  // r16g16_unorm
             [1.0, -1.0, 0.0, 1.0], // r16g16_snorm
-            [0.0, 1.0, 0.0, 1.0], // r16g16b16a16_unorm
+            [0.0, 1.0, 0.0, 1.0],  // r16g16b16a16_unorm
             [0.0, -1.0, 0.0, 1.0], // r16g16b16a16_snorm
         ];
 

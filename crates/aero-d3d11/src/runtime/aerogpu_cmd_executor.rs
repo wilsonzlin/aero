@@ -7187,7 +7187,10 @@ impl AerogpuD3d11Executor {
                 label: &'static str,
                 bytes: &[u8],
             ) -> (wgpu::Buffer, u64) {
-                assert!(!bytes.is_empty(), "uniform buffer payload must be non-empty");
+                assert!(
+                    !bytes.is_empty(),
+                    "uniform buffer payload must be non-empty"
+                );
                 let size = bytes.len() as u64;
                 // Ensure the backing buffer is large enough for the declared binding size and keeps a
                 // 16-byte granularity (uniform struct alignment).

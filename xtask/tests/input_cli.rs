@@ -128,12 +128,8 @@ fn input_help_mentions_flags_and_steps() {
         .stdout(predicate::str::contains(
             "src/usb/usb_proxy_protocol.test.ts",
         ))
-        .stdout(predicate::str::contains(
-            "src/usb/webusb_backend.test.ts",
-        ))
-        .stdout(predicate::str::contains(
-            "src/usb/webusb_executor.test.ts",
-        ))
+        .stdout(predicate::str::contains("src/usb/webusb_backend.test.ts"))
+        .stdout(predicate::str::contains("src/usb/webusb_executor.test.ts"))
         .stdout(predicate::str::contains("src/usb/usb_proxy_ring.test.ts"))
         .stdout(predicate::str::contains(
             "src/usb/usb_proxy_ring_dispatcher.test.ts",
