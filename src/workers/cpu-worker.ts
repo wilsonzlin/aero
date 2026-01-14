@@ -736,11 +736,25 @@ async function runTieredVm(iterations: number, threshold: number) {
   // This worker caches the ptr/len + a `Uint32Array` view when possible. If the table is
   // unavailable (ptr/len == 0), we fall back to the legacy `vm.on_guest_write` callback when
   // available.
+  //
+  // Note: The Tiered VM sizes the table to cover the full *guest physical* span, which may include
+  // the Q35 hole below 4GiB when `guest_size > LOW_RAM_END`. Validate the reported `(ptr,len)`
+  // defensively to avoid accidentally treating uninitialized scratch `cpuPtr` buffers (used by
+  // some ABI smoke tests) as a valid table header.
   let cachedCodeVersionCpuPtr: number | null = null;
   let codeVersionTablePtr = 0;
   let codeVersionTableLen = 0;
   let codeVersionTableU32: Uint32Array | null = null;
   let codeVersionTableU32Buffer: ArrayBufferLike | null = null;
+  const expectedCodeVersionTableLen = (() => {
+    const guestPhysEndExclusive =
+      guest_size_u64 > LOW_RAM_END ? HIGH_RAM_START + (guest_size_u64 - LOW_RAM_END) : guest_size_u64;
+    const pagesBig = (guestPhysEndExclusive + pageSizeBig - 1n) >> pageShiftBig;
+    const pagesNum = Number(pagesBig);
+    if (!Number.isFinite(pagesNum) || pagesNum <= 0) return 0;
+    // The wasm ABI stores lengths as `u32`.
+    return pagesNum > 0xffff_ffff ? 0xffff_ffff : (pagesNum >>> 0);
+  })();
 
   const codeVersionTableUseAtomics = (): boolean => {
     // `Atomics` is required for SharedArrayBuffer; check defensively for older browsers/tests.
@@ -808,6 +822,12 @@ async function runTieredVm(iterations: number, threshold: number) {
       if (!ptr || !len) return false;
       if ((ptr & 3) !== 0) return false;
       const endByte = BigInt(ptr) + BigInt(len) * 4n;
+      // The code-version table is allocated on the Rust heap which is bounded to the runtime
+      // reserved region `[0, guest_base)`. Reject any pointers that overlap guest RAM.
+      if (endByte > BigInt(guest_base)) return false;
+      // Require the table to be at least large enough to cover the guest physical span; older
+      // builds may choose a larger fixed size (e.g. 4GiB worth of pages).
+      if (expectedCodeVersionTableLen && (len >>> 0) < expectedCodeVersionTableLen) return false;
       return endByte <= BigInt(memory.buffer.byteLength);
     })();
 
