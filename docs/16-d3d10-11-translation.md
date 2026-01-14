@@ -732,8 +732,8 @@ Notes:
   - Until the relevant emulation kernels exist, the runtime MUST NOT silently reinterpret the
     topology as a non-adjacency/list/strip topology (that would silently misrender).
   - Acceptable behaviors are:
-    - route the draw through the emulation path (which may currently be bring-up scaffolding / synthetic expansion for
-      plumbing tests), or
+    - route the draw through the emulation path (executing a supported GS when present; otherwise
+      using bring-up scaffolding / synthetic expansion for plumbing tests), or
     - reject the draw with a clear error.
   - Implementation note: the in-tree D3D11 executor currently routes adjacency/patchlist topologies
     through the emulation path to exercise render-pass splitting + indirect draw plumbing even when
@@ -753,8 +753,8 @@ if GS/HS/DS are unbound (so the runtime can surface deterministic validation/err
 fixed-function tessellation semantics). Today, adjacency and patchlist topologies are accepted by
 `SET_PRIMITIVE_TOPOLOGY`. Until the adjacency/patch emulation kernels land, the runtime MUST NOT
 silently reinterpret them as non-adjacency/list/strip topologies; acceptable behaviors are to route
-through the (bring-up) emulation path or to reject with a clear error (see topology
-extension notes above).
+through the emulation path (which may still be bring-up scaffolding / synthetic expansion when no
+real kernel exists) or to reject with a clear error (see topology extension notes above).
 
 Otherwise, the existing “direct render pipeline” path is used (VS+PS render pipeline).
 
@@ -1538,9 +1538,10 @@ To match the packed `ExpandedVertex` layout above:
 This keeps the final draw in the “normal” vertex-input path (no storage-buffer reads in the vertex
 stage), while still being bit-preserving via `bitcast`.
 
-Implementation note: the current in-tree expansion path uses a simpler vertex format
-(`vec4<f32>` position + one `vec4<f32>` varying) and binds it via `VertexFormat::Float32x4` at fixed
-locations 0/1 (see `GEOMETRY_PREPASS_CS_WGSL` and `EXPANDED_DRAW_PASSTHROUGH_VS_WGSL` in
+Implementation note: the current in-tree expansion path (including the placeholder prepass and the
+initial GS translator) uses a simpler vertex format (`vec4<f32>` position + one `vec4<f32>` varying)
+and binds it via `VertexFormat::Float32x4` at fixed locations 0/1 (see
+`GEOMETRY_PREPASS_CS_WGSL` and `EXPANDED_DRAW_PASSTHROUGH_VS_WGSL` in
 `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`).
 
 #### 2.3) Indirect draw argument formats
