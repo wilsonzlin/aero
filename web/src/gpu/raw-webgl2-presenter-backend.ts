@@ -61,6 +61,7 @@ export class RawWebGl2Presenter implements Presenter {
   private uCursorPosLoc: WebGLUniformLocation | null = null;
   private uCursorHotLoc: WebGLUniformLocation | null = null;
   private uCursorSizeLoc: WebGLUniformLocation | null = null;
+  private uForceOpaqueAlphaLoc: WebGLUniformLocation | null = null;
 
   private isContextLost = false;
   private onContextLost: ((ev: Event) => void) | null = null;
@@ -384,6 +385,7 @@ export class RawWebGl2Presenter implements Presenter {
     this.uCursorPosLoc = null;
     this.uCursorHotLoc = null;
     this.uCursorSizeLoc = null;
+    this.uForceOpaqueAlphaLoc = null;
     this.gl = null;
     this.canvas = null;
   }
@@ -483,6 +485,15 @@ export class RawWebGl2Presenter implements Presenter {
     if (!this.uCursorHotLoc) throw new PresenterError('webgl_resource_failed', 'Failed to locate u_cursor_hot uniform');
     this.uCursorSizeLoc = gl.getUniformLocation(this.program, 'u_cursor_size');
     if (!this.uCursorSizeLoc) throw new PresenterError('webgl_resource_failed', 'Failed to locate u_cursor_size uniform');
+    this.uForceOpaqueAlphaLoc = gl.getUniformLocation(this.program, 'u_force_opaque_alpha');
+    if (!this.uForceOpaqueAlphaLoc) {
+      throw new PresenterError('webgl_resource_failed', 'Failed to locate u_force_opaque_alpha uniform');
+    }
+
+    // When canvas alpha is enabled, preserve the source alpha channel so diagnostics can
+    // visualize transparency semantics. Otherwise, force opaque alpha to match the default
+    // presentation policy.
+    gl.uniform1i(this.uForceOpaqueAlphaLoc, this.opts.canvasAlpha === true ? 0 : 1);
 
     gl.disable(gl.DEPTH_TEST);
     gl.disable(gl.BLEND);
@@ -577,10 +588,10 @@ export class RawWebGl2Presenter implements Presenter {
     if (scaleMode !== 'stretch') {
       const [r, g, b] = this.opts.clearColor ?? DEFAULT_CLEAR_COLOR;
       gl.viewport(0, 0, canvasW, canvasH);
-      // Presentation alpha policy: output is opaque.
       // The blit shader performs manual sRGB encoding (and fixed-function framebuffer sRGB is
       // disabled), so encode the letterbox clear color too so it appears consistent.
-      gl.clearColor(srgbEncodeChannel(r), srgbEncodeChannel(g), srgbEncodeChannel(b), 1);
+      const alpha = this.opts.canvasAlpha === true ? (this.opts.clearColor?.[3] ?? DEFAULT_CLEAR_COLOR[3]) : 1;
+      gl.clearColor(srgbEncodeChannel(r), srgbEncodeChannel(g), srgbEncodeChannel(b), alpha);
       gl.clear(gl.COLOR_BUFFER_BIT);
     }
 

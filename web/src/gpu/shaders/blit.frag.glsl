@@ -12,6 +12,7 @@ uniform int u_cursor_enable;
 uniform ivec2 u_cursor_pos;
 uniform ivec2 u_cursor_hot;
 uniform ivec2 u_cursor_size;
+uniform int u_force_opaque_alpha;
 
 out vec4 outColor;
 
@@ -50,8 +51,14 @@ void main() {
     }
   }
 
-  // Presentation policy: output is sRGB with opaque alpha.
+  // Presentation policy: output is sRGB.
+  //
+  // Most callers want opaque alpha (the default); diagnostics may request that we preserve
+  // the source alpha channel so incorrect XRGB/BGRX handling is visible against the page
+  // background.
   color.rgb = srgbEncode(color.rgb);
-  color.a = 1.0;
+  if (u_force_opaque_alpha != 0) {
+    color.a = 1.0;
+  }
   outColor = color;
 }

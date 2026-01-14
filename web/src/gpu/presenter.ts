@@ -67,6 +67,9 @@ export interface PresenterInitOptions {
    *
    * This is primarily a diagnostic aid for pages that want to visualize alpha semantics
    * (e.g. XRGB vs ARGB scanout formats) by letting the page background show through.
+   *
+   * Note: when enabled, the raw WebGL2 presenter preserves the source alpha channel in the
+   * presented output instead of forcing opaque alpha.
    */
   canvasAlpha?: boolean;
   /**
