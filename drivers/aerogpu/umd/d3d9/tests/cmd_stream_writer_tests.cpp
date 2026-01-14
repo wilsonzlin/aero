@@ -6319,6 +6319,174 @@ bool TestGenerateMipSubLevelsBoxFilter2dA8R8G8B8PreservesAlpha() {
   return Check(std::memcmp(payload, expected_mip1, sizeof(expected_mip1)) == 0, "UPLOAD_RESOURCE payload matches mip bytes");
 }
 
+bool TestGenerateMipSubLevelsBoxFilter1x1ClampsSourceCoords() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3DDDI_HRESOURCE hResource{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_resource = false;
+
+    ~Cleanup() {
+      if (has_resource && device_funcs.pfnDestroyResource) {
+        device_funcs.pfnDestroyResource(hDevice, hResource);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  if (!Check(open.hAdapter.pDrvPrivate != nullptr, "OpenAdapter2 returned adapter handle")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnCreateResource != nullptr, "CreateResource must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnGenerateMipSubLevels != nullptr, "GenerateMipSubLevels must be available")) {
+    return false;
+  }
+
+  // 1x1 texture with 2 mip levels (1x1, 1x1). This forces sx1/sy1 clamping in the
+  // 2x2 box filter sampling (sx1/sy1 would otherwise read out-of-bounds).
+  D3D9DDIARG_CREATERESOURCE create_res{};
+  create_res.type = kD3dRTypeTexture;
+  create_res.format = 22u; // D3DFMT_X8R8G8B8
+  create_res.width = 1;
+  create_res.height = 1;
+  create_res.depth = 1;
+  create_res.mip_levels = 2;
+  create_res.usage = 0;
+  create_res.pool = 0;
+  create_res.size = 0;
+  create_res.hResource.pDrvPrivate = nullptr;
+  create_res.pSharedHandle = nullptr;
+  create_res.pPrivateDriverData = nullptr;
+  create_res.PrivateDriverDataSize = 0;
+  create_res.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_res);
+  if (!Check(hr == S_OK, "CreateResource(1x1 X8R8G8B8 texture mips)")) {
+    return false;
+  }
+  cleanup.hResource = create_res.hResource;
+  cleanup.has_resource = true;
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  auto* res = reinterpret_cast<Resource*>(create_res.hResource.pDrvPrivate);
+  if (!Check(dev != nullptr && res != nullptr, "device/resource pointers")) {
+    return false;
+  }
+  if (!Check(res->mip_levels == 2u, "resource mip_levels==2")) {
+    return false;
+  }
+  if (!Check(res->backing_alloc_id == 0, "resource is host-allocated (alloc_id==0)")) {
+    return false;
+  }
+  if (!Check(res->storage.size() >= res->size_bytes, "resource storage sized")) {
+    return false;
+  }
+
+  // Fill mip0 with BGRA=(0,0,7,0). X is ignored; mipgen must clamp reads to mip0
+  // so the generated mip is based only on this texel.
+  if (!Check(res->row_pitch == 4u, "mip0 row_pitch==4")) {
+    return false;
+  }
+  res->storage[0] = 0;
+  res->storage[1] = 0;
+  res->storage[2] = 7;
+  res->storage[3] = 0; // X (ignored)
+
+  dev->cmd.reset();
+
+  hr = cleanup.device_funcs.pfnGenerateMipSubLevels(create_dev.hDevice, create_res.hResource);
+  if (!Check(hr == S_OK, "GenerateMipSubLevels")) {
+    return false;
+  }
+
+  Texture2dMipLevelLayout mip1{};
+  if (!Check(calc_texture2d_mip_level_layout(res->format, res->width, res->height, res->mip_levels, res->depth, 1, &mip1),
+             "mip1 layout")) {
+    return false;
+  }
+  if (!Check(mip1.width == 1 && mip1.height == 1, "mip1 dims 1x1")) {
+    return false;
+  }
+
+  // X8 formats force alpha to 1.0 (0xFF).
+  const uint8_t expected_mip1[4] = {0, 0, 7, 0xFF};
+  if (!Check(mip1.slice_pitch_bytes == sizeof(expected_mip1), "mip1 slice_pitch==4")) {
+    return false;
+  }
+  if (!Check(std::memcmp(res->storage.data() + static_cast<size_t>(mip1.offset_bytes), expected_mip1, sizeof(expected_mip1)) == 0,
+             "mip1 bytes match")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "stream validates")) {
+    return false;
+  }
+
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_UPLOAD_RESOURCE) == 1, "GenerateMipSubLevels emits exactly one UPLOAD_RESOURCE")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_RESOURCE_DIRTY_RANGE) == 0, "GenerateMipSubLevels does not emit DIRTY_RANGE for host alloc")) {
+    return false;
+  }
+
+  const CmdLoc upload = FindLastOpcode(buf, len, AEROGPU_CMD_UPLOAD_RESOURCE);
+  if (!Check(upload.hdr != nullptr, "UPLOAD_RESOURCE packet present")) {
+    return false;
+  }
+  const auto* upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(upload.hdr);
+  if (!Check(upload_cmd->resource_handle == res->handle, "UPLOAD_RESOURCE resource_handle matches")) {
+    return false;
+  }
+  if (!Check(upload_cmd->offset_bytes == mip1.offset_bytes, "UPLOAD_RESOURCE offset starts at mip1")) {
+    return false;
+  }
+  if (!Check(upload_cmd->size_bytes == static_cast<uint64_t>(res->size_bytes) - mip1.offset_bytes, "UPLOAD_RESOURCE size covers mips")) {
+    return false;
+  }
+  const auto* payload = reinterpret_cast<const uint8_t*>(upload_cmd) + sizeof(*upload_cmd);
+  return Check(std::memcmp(payload, expected_mip1, sizeof(expected_mip1)) == 0, "UPLOAD_RESOURCE payload matches mip bytes");
+}
+
 bool TestGenerateMipSubLevelsBoxFilter2dArrayTexture() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
@@ -32165,6 +32333,7 @@ int main() {
   RUN_TEST(TestX1R5G5B5UnlockForcesOpaqueAlphaForMisalignedWrites);
   RUN_TEST(TestGenerateMipSubLevelsBoxFilter2d);
   RUN_TEST(TestGenerateMipSubLevelsBoxFilter2dA8R8G8B8PreservesAlpha);
+  RUN_TEST(TestGenerateMipSubLevelsBoxFilter1x1ClampsSourceCoords);
   RUN_TEST(TestGenerateMipSubLevelsBoxFilter2dArrayTexture);
   RUN_TEST(TestGenerateMipSubLevelsBoxFilter2dX1R5G5B5);
   RUN_TEST(TestGenerateMipSubLevelsBoxFilter2dR5G6B5);
