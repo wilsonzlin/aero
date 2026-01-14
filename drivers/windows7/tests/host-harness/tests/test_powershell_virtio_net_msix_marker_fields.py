@@ -36,7 +36,7 @@ class PowerShellVirtioNetMsixMarkerFieldsTests(unittest.TestCase):
         # Base ordering list.
         self.assertRegex(
             fn,
-            r'\$ordered\s*=\s*@\(\s*"mode"\s*,\s*"messages"\s*,\s*"config_vector"\s*,\s*"rx_vector"\s*,\s*"tx_vector"',
+            r"\$ordered\s*=\s*@\(\s*['\"]mode['\"]\s*,\s*['\"]messages['\"]\s*,\s*['\"]config_vector['\"]\s*,\s*['\"]rx_vector['\"]\s*,\s*['\"]tx_vector['\"]",
         )
 
         # Extra fields are emitted sorted.

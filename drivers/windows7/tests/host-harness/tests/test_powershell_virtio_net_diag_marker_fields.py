@@ -29,7 +29,7 @@ class PowerShellVirtioNetDiagMarkerFieldsTests(unittest.TestCase):
 
         self.assertRegex(
             fn,
-            r'\$ordered\s*=\s*@\(\s*"reason"\s*,\s*"host_features"\s*,\s*"guest_features"\s*,\s*"irq_mode"\s*,\s*"irq_message_count"',
+            r"\$ordered\s*=\s*@\(\s*['\"]reason['\"]\s*,\s*['\"]host_features['\"]\s*,\s*['\"]guest_features['\"]\s*,\s*['\"]irq_mode['\"]\s*,\s*['\"]irq_message_count['\"]",
         )
 
         self.assertRegex(

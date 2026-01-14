@@ -29,7 +29,7 @@ class PowerShellVirtioBlkMsixMarkerFieldsTests(unittest.TestCase):
 
         self.assertRegex(
             fn,
-            r'\$ordered\s*=\s*@\(\s*"mode"\s*,\s*"messages"\s*,\s*"config_vector"\s*,\s*"queue_vector"',
+            r"\$ordered\s*=\s*@\(\s*['\"]mode['\"]\s*,\s*['\"]messages['\"]\s*,\s*['\"]config_vector['\"]\s*,\s*['\"]queue_vector['\"]",
         )
 
         self.assertRegex(

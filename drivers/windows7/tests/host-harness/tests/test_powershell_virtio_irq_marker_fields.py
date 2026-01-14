@@ -30,7 +30,7 @@ class PowerShellVirtioIrqMarkerFieldsTests(unittest.TestCase):
         # Base ordering: irq_mode + irq_message_count first.
         self.assertRegex(
             fn,
-            r'foreach\s*\(\s*\$k\s+in\s*@\(\s*"irq_mode"\s*,\s*"irq_message_count"\s*\)\s*\)',
+            r"foreach\s*\(\s*\$k\s+in\s*@\(\s*['\"]irq_mode['\"]\s*,\s*['\"]irq_message_count['\"]\s*\)\s*\)",
         )
 
         # Other irq_* fields sorted.
