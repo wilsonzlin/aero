@@ -125,6 +125,159 @@ bool TestInternalDxgiFormatCompatHelpers() {
   return true;
 }
 
+bool TestViewportHelperCachesDimsOnlyWhenEnabledForD3D10StyleDevice() {
+  struct D3D10StyleDevice {
+    aerogpu::CmdWriter cmd;
+    uint32_t viewport_width = 111;
+    uint32_t viewport_height = 222;
+
+    D3D10StyleDevice() {
+      cmd.reset();
+    }
+  };
+
+  using aerogpu::d3d10_11::f32_bits;
+  using aerogpu::d3d10_11::validate_and_emit_viewports_locked;
+
+  D3D10StyleDevice dev{};
+  std::vector<HRESULT> errors;
+
+  // Disabled viewport should not clobber cached dimensions.
+  dev.cmd.reset();
+  errors.clear();
+  AEROGPU_DDI_VIEWPORT vp_disabled{};
+  vp_disabled.TopLeftX = 0.0f;
+  vp_disabled.TopLeftY = 0.0f;
+  vp_disabled.Width = 0.0f;
+  vp_disabled.Height = 0.0f;
+  vp_disabled.MinDepth = 0.0f;
+  vp_disabled.MaxDepth = 1.0f;
+  validate_and_emit_viewports_locked(&dev, /*num_viewports=*/1, &vp_disabled, [&](HRESULT hr) { errors.push_back(hr); });
+  dev.cmd.finalize();
+
+  if (!Check(errors.empty(), "disabled viewport should not report an error")) {
+    return false;
+  }
+  if (!Check(dev.viewport_width == 111 && dev.viewport_height == 222,
+             "disabled viewport should not update cached viewport_width/height")) {
+    return false;
+  }
+  if (!Check(dev.cmd.size() >= sizeof(aerogpu_cmd_stream_header) + sizeof(aerogpu_cmd_set_viewport),
+             "disabled viewport emits SET_VIEWPORT packet")) {
+    return false;
+  }
+  const auto* disabled_pkt = reinterpret_cast<const aerogpu_cmd_set_viewport*>(
+      dev.cmd.data() + sizeof(aerogpu_cmd_stream_header));
+  if (!Check(disabled_pkt->hdr.opcode == AEROGPU_CMD_SET_VIEWPORT, "disabled viewport packet opcode")) {
+    return false;
+  }
+  if (!Check(disabled_pkt->width_f32 == f32_bits(0.0f) && disabled_pkt->height_f32 == f32_bits(0.0f),
+             "disabled viewport encodes 0 width/height")) {
+    return false;
+  }
+
+  // Enabled viewport should update cached dimensions.
+  dev.cmd.reset();
+  errors.clear();
+  AEROGPU_DDI_VIEWPORT vp_enabled = vp_disabled;
+  vp_enabled.Width = 640.0f;
+  vp_enabled.Height = 480.0f;
+  validate_and_emit_viewports_locked(&dev, /*num_viewports=*/1, &vp_enabled, [&](HRESULT hr) { errors.push_back(hr); });
+  dev.cmd.finalize();
+
+  if (!Check(errors.empty(), "enabled viewport should not report an error")) {
+    return false;
+  }
+  if (!Check(dev.viewport_width == 640 && dev.viewport_height == 480,
+             "enabled viewport should update cached viewport_width/height")) {
+    return false;
+  }
+  const auto* enabled_pkt = reinterpret_cast<const aerogpu_cmd_set_viewport*>(
+      dev.cmd.data() + sizeof(aerogpu_cmd_stream_header));
+  if (!Check(enabled_pkt->hdr.opcode == AEROGPU_CMD_SET_VIEWPORT, "enabled viewport packet opcode")) {
+    return false;
+  }
+  if (!Check(enabled_pkt->width_f32 == f32_bits(640.0f) && enabled_pkt->height_f32 == f32_bits(480.0f),
+             "enabled viewport encodes width/height")) {
+    return false;
+  }
+
+  // Reset should clear cached dimensions.
+  dev.cmd.reset();
+  errors.clear();
+  validate_and_emit_viewports_locked(&dev,
+                                     /*num_viewports=*/0,
+                                     static_cast<const AEROGPU_DDI_VIEWPORT*>(nullptr),
+                                     [&](HRESULT hr) { errors.push_back(hr); });
+  dev.cmd.finalize();
+  if (!Check(errors.empty(), "viewport reset should not report an error")) {
+    return false;
+  }
+  if (!Check(dev.viewport_width == 0 && dev.viewport_height == 0, "viewport reset clears cached viewport_width/height")) {
+    return false;
+  }
+
+  return true;
+}
+
+bool TestViewportScissorHelpersDontReportNotImplWhenCmdAppendFails() {
+  using aerogpu::d3d10_11::validate_and_emit_scissor_rects_locked;
+  using aerogpu::d3d10_11::validate_and_emit_viewports_locked;
+
+  struct TinyCmdDevice {
+    aerogpu::CmdWriter cmd;
+
+    explicit TinyCmdDevice(uint8_t* buf, size_t cap) {
+      cmd.set_span(buf, cap);
+    }
+  };
+
+  std::vector<HRESULT> errors;
+
+  // Provide enough space for the stream header but not enough space for any
+  // subsequent packets, so append_fixed will fail.
+  alignas(4) uint8_t tiny_buf[sizeof(aerogpu_cmd_stream_header)] = {};
+
+  // Viewports: unsupported multi-viewport usage should *not* report E_NOTIMPL if
+  // the packet cannot be encoded due to insufficient space.
+  {
+    TinyCmdDevice dev(tiny_buf, sizeof(tiny_buf));
+    errors.clear();
+    const AEROGPU_DDI_VIEWPORT vps[2] = {
+        AEROGPU_DDI_VIEWPORT{/*TopLeftX=*/0.0f, /*TopLeftY=*/0.0f, /*Width=*/1.0f, /*Height=*/1.0f, /*MinDepth=*/0.0f, /*MaxDepth=*/1.0f},
+        AEROGPU_DDI_VIEWPORT{/*TopLeftX=*/1.0f, /*TopLeftY=*/2.0f, /*Width=*/3.0f, /*Height=*/4.0f, /*MinDepth=*/0.0f, /*MaxDepth=*/1.0f},
+    };
+    validate_and_emit_viewports_locked(&dev, /*num_viewports=*/2, vps, [&](HRESULT hr) { errors.push_back(hr); });
+    if (!Check(errors.size() == 1 && errors[0] == E_OUTOFMEMORY,
+               "multi-viewport OOM reports only E_OUTOFMEMORY (no E_NOTIMPL)")) {
+      return false;
+    }
+    if (!Check(dev.cmd.size() == sizeof(aerogpu_cmd_stream_header), "OOM prevents viewport packet emission")) {
+      return false;
+    }
+  }
+
+  // Scissor rects: same behavior.
+  {
+    TinyCmdDevice dev(tiny_buf, sizeof(tiny_buf));
+    errors.clear();
+    const AEROGPU_DDI_RECT rects[2] = {
+        AEROGPU_DDI_RECT{/*left=*/0, /*top=*/0, /*right=*/1, /*bottom=*/1},
+        AEROGPU_DDI_RECT{/*left=*/10, /*top=*/20, /*right=*/30, /*bottom=*/40},
+    };
+    validate_and_emit_scissor_rects_locked(&dev, /*num_rects=*/2, rects, [&](HRESULT hr) { errors.push_back(hr); });
+    if (!Check(errors.size() == 1 && errors[0] == E_OUTOFMEMORY,
+               "multi-scissor OOM reports only E_OUTOFMEMORY (no E_NOTIMPL)")) {
+      return false;
+    }
+    if (!Check(dev.cmd.size() == sizeof(aerogpu_cmd_stream_header), "OOM prevents scissor packet emission")) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 bool TestTrackWddmAllocForSubmitLockedHelper() {
   using aerogpu::d3d10_11::WddmSubmitAllocation;
 
@@ -9372,6 +9525,8 @@ bool TestDrawAutoEncodesNoopDraw() {
 int main() {
   bool ok = true;
   ok &= TestInternalDxgiFormatCompatHelpers();
+  ok &= TestViewportHelperCachesDimsOnlyWhenEnabledForD3D10StyleDevice();
+  ok &= TestViewportScissorHelpersDontReportNotImplWhenCmdAppendFails();
   ok &= TestTrackWddmAllocForSubmitLockedHelper();
   ok &= TestDeviceFuncsTableNoNullEntriesHostOwned();
   ok &= TestDeviceFuncsTableNoNullEntriesGuestBacked();
