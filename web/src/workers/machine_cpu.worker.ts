@@ -761,7 +761,8 @@ function serializeError(err: unknown): MachineSnapshotSerializedError {
 function trySetMachineBootDrive(m: unknown, drive: number): boolean {
   // Prefer the explicit `set_boot_drive(DL)` API when available.
   try {
-    const setBootDrive = (m as unknown as { set_boot_drive?: unknown }).set_boot_drive;
+    const setBootDrive =
+      (m as unknown as { set_boot_drive?: unknown }).set_boot_drive ?? (m as unknown as { setBootDrive?: unknown }).setBootDrive;
     if (typeof setBootDrive === "function") {
       (setBootDrive as (drive: number) => void).call(m, drive);
       return true;
@@ -772,7 +773,8 @@ function trySetMachineBootDrive(m: unknown, drive: number): boolean {
 
   // Back-compat: some builds expose `set_boot_device(MachineBootDevice::<...>)` instead.
   try {
-    const setBootDevice = (m as unknown as { set_boot_device?: unknown }).set_boot_device;
+    const setBootDevice =
+      (m as unknown as { set_boot_device?: unknown }).set_boot_device ?? (m as unknown as { setBootDevice?: unknown }).setBootDevice;
     if (typeof setBootDevice !== "function") return false;
 
     const enumObj = wasmApi?.MachineBootDevice as unknown;
@@ -789,7 +791,9 @@ function trySetMachineBootDrive(m: unknown, drive: number): boolean {
 
 function trySetMachineBootFromCdIfPresent(m: unknown, enabled: boolean): boolean {
   try {
-    const fn = (m as unknown as { set_boot_from_cd_if_present?: unknown }).set_boot_from_cd_if_present;
+    const fn =
+      (m as unknown as { set_boot_from_cd_if_present?: unknown }).set_boot_from_cd_if_present ??
+      (m as unknown as { setBootFromCdIfPresent?: unknown }).setBootFromCdIfPresent;
     if (typeof fn !== "function") return false;
     (fn as (enabled: boolean) => void).call(m, enabled);
     return true;
@@ -800,7 +804,8 @@ function trySetMachineBootFromCdIfPresent(m: unknown, enabled: boolean): boolean
 
 function trySetMachineCdBootDrive(m: unknown, drive: number): boolean {
   try {
-    const fn = (m as unknown as { set_cd_boot_drive?: unknown }).set_cd_boot_drive;
+    const fn =
+      (m as unknown as { set_cd_boot_drive?: unknown }).set_cd_boot_drive ?? (m as unknown as { setCdBootDrive?: unknown }).setCdBootDrive;
     if (typeof fn !== "function") return false;
     (fn as (drive: number) => void).call(m, drive);
     return true;
@@ -1396,7 +1401,8 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
   // from the ISO once while leaving the configured boot drive as HDD0 (useful for later ISO eject /
   // post-install reboots without host-side `DL` toggling).
   const canCdFirstPolicy =
-    typeof (m as unknown as { set_boot_from_cd_if_present?: unknown }).set_boot_from_cd_if_present === "function";
+    typeof (m as unknown as { set_boot_from_cd_if_present?: unknown }).set_boot_from_cd_if_present === "function" ||
+    typeof (m as unknown as { setBootFromCdIfPresent?: unknown }).setBootFromCdIfPresent === "function";
   const useCdFirstPolicy = desiredBootDrive === BIOS_DRIVE_CD0 && !!msg.cd && !!msg.hdd && canCdFirstPolicy;
   const configuredBootDrive = useCdFirstPolicy ? BIOS_DRIVE_HDD0 : desiredBootDrive;
 
@@ -2433,10 +2439,12 @@ ctx.onmessage = (ev) => {
   // Test-only hook (Node worker_threads): allow unit tests to enable a dummy machine instance so
   // input-batch parsing + telemetry can be exercised without loading WASM.
   if (isNodeWorkerThreads() && (msg as { kind?: unknown }).kind === "__test.machine_cpu.enableDummyMachine") {
-    const payload = msg as Partial<{ virtioKeyboardOk: unknown; virtioMouseOk: unknown }>;
+    const payload = msg as Partial<{ virtioKeyboardOk: unknown; virtioMouseOk: unknown; enableBootDriveSpy?: unknown }>;
     const virtioKeyboardOk = payload.virtioKeyboardOk === true;
     const virtioMouseOk = payload.virtioMouseOk === true;
-    machine = {
+    const enableBootDriveSpy = payload.enableBootDriveSpy === true;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const dummy: any = {
       virtio_input_keyboard_driver_ok: () => virtioKeyboardOk,
       virtio_input_mouse_driver_ok: () => virtioMouseOk,
       run_slice: () => {
@@ -2447,7 +2455,32 @@ ctx.onmessage = (ev) => {
         }
         return { kind: runExitKindMap.Halted };
       },
-    } as unknown as InstanceType<WasmApi["Machine"]>;
+      reset: () => void 0,
+    };
+    if (enableBootDriveSpy) {
+      dummy.setBootDrive = (drive: number) => {
+        try {
+          ctx.postMessage({ kind: "__test.machine_cpu.setBootDrive", drive: drive >>> 0 });
+        } catch {
+          void 0;
+        }
+      };
+      dummy.attach_install_media_opfs_iso = async (path: string) => {
+        try {
+          ctx.postMessage({ kind: "__test.machine_cpu.attachInstallMediaOpfsIso", path });
+        } catch {
+          void 0;
+        }
+      };
+      dummy.reset = () => {
+        try {
+          ctx.postMessage({ kind: "__test.machine_cpu.reset" });
+        } catch {
+          void 0;
+        }
+      };
+    }
+    machine = dummy as unknown as InstanceType<WasmApi["Machine"]>;
     try {
       ctx.postMessage({ kind: "__test.machine_cpu.dummyMachineEnabled" });
     } catch {
