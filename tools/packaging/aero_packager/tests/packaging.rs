@@ -2012,6 +2012,97 @@ fn os_metadata_files_are_excluded_from_config_and_licenses_dirs() -> anyhow::Res
 }
 
 #[test]
+fn os_metadata_files_are_excluded_from_tools_dir() -> anyhow::Result<()> {
+    let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let testdata = repo_root.join("testdata");
+    let spec_path = testdata.join("spec.json");
+    let drivers_dir = testdata.join("drivers");
+    let guest_tools_src = testdata.join("guest-tools");
+
+    let guest_tools_tmp = tempfile::tempdir()?;
+    copy_dir_all(&guest_tools_src, guest_tools_tmp.path())?;
+
+    // Add a real tool payload.
+    fs::create_dir_all(guest_tools_tmp.path().join("tools"))?;
+    fs::write(
+        guest_tools_tmp.path().join("tools").join("foo.exe"),
+        b"dummy tool\n",
+    )?;
+
+    // Baseline package (with tools/ but no host metadata files).
+    let out_base = tempfile::tempdir()?;
+    let config_base = aero_packager::PackageConfig {
+        drivers_dir: drivers_dir.clone(),
+        guest_tools_dir: guest_tools_tmp.path().to_path_buf(),
+        windows_device_contract_path: device_contract_path(),
+        out_dir: out_base.path().to_path_buf(),
+        spec_path: spec_path.clone(),
+        version: "1.2.3".to_string(),
+        build_id: "test".to_string(),
+        volume_id: "AERO_GUEST_TOOLS".to_string(),
+        signing_policy: aero_packager::SigningPolicy::Test,
+        source_date_epoch: 0,
+    };
+    let outputs_base = aero_packager::package_guest_tools(&config_base)?;
+    let iso_base = fs::read(&outputs_base.iso_path)?;
+    let zip_base = fs::read(&outputs_base.zip_path)?;
+    let manifest_base = fs::read(&outputs_base.manifest_path)?;
+
+    // Now inject common host metadata artifacts under tools/ and ensure they are excluded.
+    fs::write(guest_tools_tmp.path().join("tools/.DS_Store"), b"junk")?;
+    fs::create_dir_all(guest_tools_tmp.path().join("tools/__MACOSX"))?;
+    fs::write(
+        guest_tools_tmp.path().join("tools/__MACOSX/junk.txt"),
+        b"junk",
+    )?;
+    fs::write(guest_tools_tmp.path().join("tools/Thumbs.db"), b"junk")?;
+    fs::write(guest_tools_tmp.path().join("tools/desktop.ini"), b"junk")?;
+
+    let out = tempfile::tempdir()?;
+    let config = aero_packager::PackageConfig {
+        out_dir: out.path().to_path_buf(),
+        ..config_base
+    };
+    let outputs = aero_packager::package_guest_tools(&config)?;
+    let iso_bytes = fs::read(&outputs.iso_path)?;
+    let tree = aero_packager::read_joliet_tree(&iso_bytes)?;
+
+    let zip_file = fs::File::open(&outputs.zip_path)?;
+    let mut zip = zip::ZipArchive::new(zip_file)?;
+    let mut zip_paths = BTreeSet::new();
+    for i in 0..zip.len() {
+        let entry = zip.by_index(i)?;
+        if entry.is_dir() {
+            continue;
+        }
+        zip_paths.insert(entry.name().to_string());
+    }
+
+    for unexpected in [
+        "tools/.DS_Store",
+        "tools/__MACOSX/junk.txt",
+        "tools/Thumbs.db",
+        "tools/desktop.ini",
+    ] {
+        assert!(
+            !tree.contains(unexpected),
+            "unexpected file packaged in ISO: {unexpected}"
+        );
+        assert!(
+            !zip_paths.contains(unexpected),
+            "unexpected file packaged in zip: {unexpected}"
+        );
+    }
+
+    // Excluding metadata files should keep outputs stable.
+    assert_eq!(iso_base, iso_bytes);
+    assert_eq!(zip_base, fs::read(&outputs.zip_path)?);
+    assert_eq!(manifest_base, fs::read(&outputs.manifest_path)?);
+
+    Ok(())
+}
+
+#[test]
 fn guest_tools_tools_dir_is_packaged_filtered_and_reproducible() -> anyhow::Result<()> {
     let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let testdata = repo_root.join("testdata");
