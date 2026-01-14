@@ -26833,6 +26833,80 @@ HRESULT AEROGPU_D3D9_CALL device_set_texture_stage_state(
 #endif
 }
 
+HRESULT AEROGPU_D3D9_CALL device_set_material(D3DDDI_HDEVICE hDevice, const D3DMATERIAL9* pMaterial) {
+  if (!hDevice.pDrvPrivate || !pMaterial) {
+    return E_INVALIDARG;
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  dev->material = *pMaterial;
+  dev->material_valid = true;
+  dev->fixedfunc_lighting_dirty = true;
+  stateblock_record_material_locked(dev, dev->material, dev->material_valid);
+  return S_OK;
+}
+
+HRESULT AEROGPU_D3D9_CALL device_set_light(D3DDDI_HDEVICE hDevice, uint32_t index, const D3DLIGHT9* pLight) {
+  if (!hDevice.pDrvPrivate || !pLight) {
+    return E_INVALIDARG;
+  }
+  if (index >= Device::kMaxLights) {
+    return kD3DErrInvalidCall;
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  dev->lights[index] = *pLight;
+  dev->light_valid[index] = true;
+  if (index == 0) {
+    dev->fixedfunc_lighting_dirty = true;
+  }
+  stateblock_record_light_locked(dev, index, dev->lights[index], dev->light_valid[index]);
+  return S_OK;
+}
+
+HRESULT AEROGPU_D3D9_CALL device_light_enable(D3DDDI_HDEVICE hDevice, uint32_t index, BOOL enabled) {
+  if (!hDevice.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+  if (index >= Device::kMaxLights) {
+    return kD3DErrInvalidCall;
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  dev->light_enabled[index] = enabled ? TRUE : FALSE;
+  if (index == 0) {
+    dev->fixedfunc_lighting_dirty = true;
+  }
+  stateblock_record_light_enable_locked(dev, index, dev->light_enabled[index]);
+  return S_OK;
+}
+
+HRESULT AEROGPU_D3D9_CALL device_test_set_cursor_hw_active(D3DDDI_HDEVICE hDevice, BOOL active) {
+  if (!hDevice.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  dev->cursor_hw_active = active ? true : false;
+  return S_OK;
+}
+
+HRESULT AEROGPU_D3D9_CALL device_test_set_unmaterialized_user_shaders(
+    D3DDDI_HDEVICE hDevice,
+    D3D9DDI_HSHADER user_vs,
+    D3D9DDI_HSHADER user_ps) {
+  if (!hDevice.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  dev->user_vs = as_shader(user_vs);
+  dev->user_ps = as_shader(user_ps);
+  dev->vs = nullptr;
+  dev->ps = nullptr;
+  return S_OK;
+}
+
 HRESULT AEROGPU_D3D9_CALL device_draw_primitive(
     D3DDDI_HDEVICE hDevice,
     D3DDDIPRIMITIVETYPE type,

@@ -9,6 +9,10 @@
 #include "aerogpu_d3d9_objects.h"
 #include "aerogpu_d3d9_umd.h"
 
+namespace aerogpu {
+HRESULT AEROGPU_D3D9_CALL device_test_set_cursor_hw_active(D3DDDI_HDEVICE hDevice, BOOL active);
+}
+
 namespace {
 
 bool Check(bool cond, const char* msg) {
@@ -453,7 +457,10 @@ bool TestCursorOverlayPresentEx() {
   // If the cursor path is handled via the KMD hardware cursor registers, the UMD
   // should not also draw a software cursor overlay during PresentEx. (Double
   // cursor bugs are extremely user-visible; keep this behavior locked in.)
-  dev->cursor_hw_active = true;
+  hr = aerogpu::device_test_set_cursor_hw_active(cleanup.hDevice, TRUE);
+  if (!Check(hr == S_OK, "device_test_set_cursor_hw_active(TRUE)")) {
+    return false;
+  }
   Debug("before PresentEx (cursor_hw_active=true)");
   hr = cleanup.device_funcs.pfnPresentEx(cleanup.hDevice, &present);
   if (!Check(hr == S_OK, "PresentEx with cursor_hw_active=true")) {

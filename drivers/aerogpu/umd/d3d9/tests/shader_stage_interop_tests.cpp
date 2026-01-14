@@ -14,6 +14,14 @@ namespace aerogpu {
 constexpr uint32_t kD3d9ShaderStageVs = 0u;
 constexpr uint32_t kD3d9ShaderStagePs = 1u;
 
+// Host-test helper (defined in `src/aerogpu_d3d9_driver.cpp` under "Host-side test
+// entrypoints") used to simulate a user-visible shader state without requiring
+// a DDI call sequence.
+HRESULT AEROGPU_D3D9_CALL device_test_set_unmaterialized_user_shaders(
+    D3DDDI_HDEVICE hDevice,
+    D3D9DDI_HSHADER user_vs,
+    D3D9DDI_HSHADER user_ps);
+
 // Portable D3D9 FVF bits (from d3d9types.h).
 constexpr uint32_t kD3dFvfXyz = 0x00000002u;
 constexpr uint32_t kD3dFvfXyzRhw = 0x00000004u;
@@ -1233,21 +1241,13 @@ bool TestDrawShaderRestoreSkipsNullSavedShaders() {
   }
   cleanup.shaders.push_back(hVs);
 
-  auto* user_vs = reinterpret_cast<Shader*>(hVs.pDrvPrivate);
-  if (!Check(user_vs != nullptr, "user VS pointer")) {
-    return false;
-  }
-
   // Repro: simulate a caller-visible VS-only state where the internal bound
   // pipeline hasn't been materialized yet (dev->vs/dev->ps are null). The draw
   // path injects an internal fixed-function PS for the draw; restoring the
   // pre-draw state must not emit a BIND_SHADERS packet with null handles.
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    dev->user_vs = user_vs;
-    dev->user_ps = nullptr;
-    dev->vs = nullptr;
-    dev->ps = nullptr;
+  hr = device_test_set_unmaterialized_user_shaders(cleanup.hDevice, hVs, D3D9DDI_HSHADER{});
+  if (!Check(hr == S_OK, "device_test_set_unmaterialized_user_shaders(VS-only)")) {
+    return false;
   }
 
   const VertexXyzrhwDiffuse tri[3] = {
