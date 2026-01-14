@@ -90,7 +90,8 @@ This is the **coordination hub**. You wire together the work from all other work
   the selected LAPIC(s) (destination ID `0xFF` broadcasts to all LAPICs; see
   `crates/platform/src/interrupts/msi.rs`,
   `crates/platform/src/interrupts/router.rs::{inject_fixed_for_apic,inject_fixed_broadcast}`, and
-  `crates/platform-compat/tests/smp_msi_routing.rs`).
+  `crates/platform-compat/tests/smp_msi_routing.rs`, and
+  `crates/devices/tests/msix_cpu_core_integration.rs`).
   Note: MSI injection intentionally bypasses `PlatformInterruptMode`, but while the platform is in
   **Legacy PIC mode** the vCPU interrupt polling path (`InterruptController::get_pending` /
   `PlatformInterrupts::{get_pending_for_cpu,get_pending_for_apic}`) consults the 8259 PIC instead of
