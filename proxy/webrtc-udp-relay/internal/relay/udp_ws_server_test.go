@@ -714,6 +714,81 @@ func TestUDPWebSocketServer_QuotaExceededIncrementsMetric(t *testing.T) {
 	t.Fatalf("expected %s metric increment", metrics.UDPWSDroppedQuotaExceeded)
 }
 
+func TestUDPWebSocketServer_DroppedOversizedIncrementsMetric(t *testing.T) {
+	echo, echoPort := startUDPEchoServer(t, "udp4", net.IPv4(127, 0, 0, 1))
+	defer echo.Close()
+
+	cfg := config.Config{
+		AuthMode:                 config.AuthModeNone,
+		SignalingAuthTimeout:     50 * time.Millisecond,
+		MaxSignalingMessageBytes: 64 * 1024,
+	}
+	m := metrics.New()
+	sm := NewSessionManager(cfg, m, nil)
+	relayCfg := DefaultConfig()
+	relayCfg.MaxDatagramPayloadBytes = 5
+
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	if err != nil {
+		t.Fatalf("NewUDPWebSocketServer: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("GET /udp", srv)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	c := dialWS(t, ts.URL, "/udp")
+	_ = readWSJSON(t, c, 2*time.Second) // ready
+
+	in := udpproto.Frame{
+		GuestPort:  1234,
+		RemoteIP:   netip.MustParseAddr("127.0.0.1"),
+		RemotePort: echoPort,
+		Payload:    []byte("0123456789"), // 10 bytes, exceeds MaxDatagramPayloadBytes=5
+	}
+	pkt, err := udpproto.DefaultCodec.EncodeFrameV1(in)
+	if err != nil {
+		t.Fatalf("EncodeV1 oversize: %v", err)
+	}
+
+	if err := c.WriteMessage(websocket.BinaryMessage, pkt); err != nil {
+		t.Fatalf("WriteMessage oversize: %v", err)
+	}
+
+	// A valid frame should still be processed after the oversized drop.
+	in.Payload = []byte("hello") // exactly 5 bytes
+	pkt2, err := udpproto.DefaultCodec.EncodeFrameV1(in)
+	if err != nil {
+		t.Fatalf("EncodeV1 valid: %v", err)
+	}
+	if err := c.WriteMessage(websocket.BinaryMessage, pkt2); err != nil {
+		t.Fatalf("WriteMessage valid: %v", err)
+	}
+	outPkt := readWSBinary(t, c, 2*time.Second)
+	outFrame, err := udpproto.DefaultCodec.DecodeFrame(outPkt)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if string(outFrame.Payload) != "hello" {
+		t.Fatalf("payload=%q, want %q", outFrame.Payload, "hello")
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if m.Get(metrics.UDPWSDroppedOversized) > 0 && m.Get(metrics.UDPWSDropped) > 0 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("expected %s/%s metric increment; got dropped=%d oversized=%d",
+		metrics.UDPWSDropped,
+		metrics.UDPWSDroppedOversized,
+		m.Get(metrics.UDPWSDropped),
+		m.Get(metrics.UDPWSDroppedOversized),
+	)
+}
+
 func TestUDPWebSocketServer_FramesInOutMetrics(t *testing.T) {
 	echo, echoPort := startUDPEchoServer(t, "udp4", net.IPv4(127, 0, 0, 1))
 	defer echo.Close()
