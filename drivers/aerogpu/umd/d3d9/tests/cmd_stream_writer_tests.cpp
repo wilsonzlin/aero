@@ -1850,11 +1850,13 @@ bool TestCreateResourceRejectsNon2dDepth() {
   } cmd_restore{dev};
 
   D3D9DDIARG_CREATERESOURCE create_res{};
-  create_res.type = 0;
+  // D3DRESOURCETYPE::D3DRTYPE_VOLUME == 2.
+  constexpr uint32_t kD3dRTypeVolume = 2u;
+  create_res.type = kD3dRTypeVolume;
   create_res.format = 22u; // D3DFMT_X8R8G8B8
   create_res.width = 4;
   create_res.height = 4;
-  create_res.depth = 2; // volume/3D implied, not supported by AeroGPU protocol
+  create_res.depth = 2;
   create_res.mip_levels = 1;
   create_res.usage = 0;
   create_res.pool = 0;
@@ -1866,7 +1868,7 @@ bool TestCreateResourceRejectsNon2dDepth() {
   create_res.wddm_hAllocation = 0;
 
   hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_res);
-  if (!Check(hr == D3DERR_INVALIDCALL, "CreateResource rejects depth>1 (non-2D) resources")) {
+  if (!Check(hr == D3DERR_INVALIDCALL, "CreateResource rejects unsupported non-2D resource types")) {
     return false;
   }
   if (!Check(create_res.hResource.pDrvPrivate == nullptr, "CreateResource failure does not return a handle")) {
