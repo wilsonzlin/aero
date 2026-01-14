@@ -96,8 +96,16 @@ fn enc_inst(opcode: u16, params: &[u32]) -> Vec<u32> {
     v
 }
 
-fn enc_decl_token(usage_raw: u8, usage_index: u8) -> u32 {
-    (usage_raw as u32) | ((usage_index as u32) << 16)
+fn enc_dcl(usage_raw: u8, usage_index: u8, dst: u32) -> Vec<u32> {
+    // DCL token: usage + usage_index are encoded in the opcode token itself (bits 16..23),
+    // followed by a single destination operand token.
+    // Total instruction length is 2 DWORDs (opcode token + dst operand).
+    let opcode = 0x001Fu32;
+    let token = opcode
+        | (2u32 << 24)
+        | ((usage_raw as u32) << 16)
+        | ((usage_index as u32) << 20);
+    vec![token, dst]
 }
 
 fn to_bytes(words: &[u32]) -> Vec<u8> {
@@ -116,15 +124,8 @@ fn assemble_vs_dcl_positiont_v0_color_v7() -> Vec<u8> {
     //   mov oD0, v7
     //   end
     let mut words = vec![0xFFFE_0200];
-    // DCL opcode is 0x001F.
-    words.extend(enc_inst(
-        0x001F,
-        &[enc_decl_token(9, 0), enc_dst(1, 0, 0xF)],
-    ));
-    words.extend(enc_inst(
-        0x001F,
-        &[enc_decl_token(10, 0), enc_dst(1, 7, 0xF)],
-    ));
+    words.extend(enc_dcl(9, 0, enc_dst(1, 0, 0xF)));
+    words.extend(enc_dcl(10, 0, enc_dst(1, 7, 0xF)));
     words.extend(enc_inst(0x0001, &[enc_dst(4, 0, 0xF), enc_src(1, 0, 0xE4)]));
     words.extend(enc_inst(0x0001, &[enc_dst(5, 0, 0xF), enc_src(1, 7, 0xE4)]));
     words.push(0x0000_FFFF);

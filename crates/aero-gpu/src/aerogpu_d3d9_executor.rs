@@ -2565,6 +2565,17 @@ impl AerogpuD3d9Executor {
             });
         }
 
+        for (&sampler, &ty) in &cached.sampler_texture_types {
+            match ty {
+                TextureType::Texture2D | TextureType::TextureCube => {}
+                other => {
+                    return Err(AerogpuD3d9Error::ShaderTranslation(format!(
+                        "unsupported sampler texture type {other:?} (s{sampler})"
+                    )));
+                }
+            }
+        }
+
         let wgsl = cached.wgsl.clone();
         let module = self
             .device
@@ -2643,6 +2654,17 @@ impl AerogpuD3d9Executor {
                     )
                     .map_err(|e| e.to_string())?;
 
+                    for (&sampler, &ty) in &translated.sampler_texture_types {
+                        match ty {
+                            TextureType::Texture2D | TextureType::TextureCube => {}
+                            other => {
+                                return Err(format!(
+                                    "unsupported sampler texture type {other:?} (s{sampler})"
+                                ));
+                            }
+                        }
+                    }
+
                     if translated.backend == ShaderTranslateBackend::LegacyFallback {
                         stats.inc_d3d9_shader_sm3_fallbacks();
                         debug!(
@@ -2677,7 +2699,7 @@ impl AerogpuD3d9Executor {
                             );
                         }
                     }
-
+ 
                     let reflection = PersistentShaderReflection {
                         schema_version: PERSISTENT_SHADER_REFLECTION_SCHEMA_VERSION,
                         stage: PersistentShaderStage::from_stage(translated.version.stage),

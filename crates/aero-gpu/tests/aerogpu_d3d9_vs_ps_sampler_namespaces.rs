@@ -36,6 +36,18 @@ fn enc_inst(opcode: u16, params: &[u32]) -> Vec<u32> {
     v
 }
 
+fn enc_dcl(usage_raw: u8, usage_index: u8, dst: u32) -> Vec<u32> {
+    // DCL token: usage + usage_index are encoded in the opcode token itself (bits 16..23),
+    // followed by a single destination operand token.
+    // Total instruction length is 2 DWORDs (opcode token + dst operand).
+    let opcode = 0x001Fu32;
+    let token = opcode
+        | (2u32 << 24)
+        | ((usage_raw as u32) << 16)
+        | ((usage_index as u32) << 20);
+    vec![token, dst]
+}
+
 fn to_bytes(words: &[u32]) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(words.len() * 4);
     for w in words {
@@ -46,12 +58,15 @@ fn to_bytes(words: &[u32]) -> Vec<u8> {
 
 fn assemble_vs_sample_s0_to_od0_with_t0() -> Vec<u8> {
     // vs_3_0:
+    //   dcl_texcoord0 o0
     //   mov oPos, v0
-    //   mov oT0, c0
+    //   mov o0, c0
     //   texld r0, c0, s0
     //   mov oD0, r0
     //   end
     let mut words = vec![0xFFFE_0300];
+    // dcl_texcoord0 o0 (TEXCOORD0 = usage 5)
+    words.extend(enc_dcl(5, 0, enc_dst(6, 0, 0xF)));
     // mov oPos, v0
     words.extend(enc_inst(0x0001, &[enc_dst(4, 0, 0xF), enc_src(1, 0, 0xE4)]));
     // mov oT0, c0

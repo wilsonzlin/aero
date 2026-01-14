@@ -72,7 +72,8 @@ fn d3d9_runtime_constants_support_ranges_and_vertex_stage() {
         // The built-in vertex shader uses vertex constants c0.xy + c1.xy as the offset, so we can
         // validate both ranged updates and vertex-stage constant visibility.
         //
-        // Use clockwise winding so the default D3D9 cull mode (cull CCW) doesn't discard it.
+        // Keep the triangle winding clockwise so it is not culled by the default D3D9 rasterizer
+        // state (CW front faces + CCW cull).
         let verts: [Vertex; 3] = [
             Vertex {
                 pos: [-3.0, -3.0],
