@@ -1562,6 +1562,34 @@ fn protocol_accepts_trailing_bytes_after_stream_size_bytes() {
 }
 
 #[test]
+fn protocol_preserves_legacy_bind_shaders_reserved0_as_gs() {
+    let stream = build_stream(|out| {
+        emit_packet(out, AeroGpuOpcode::BindShaders as u32, |out| {
+            push_u32(out, 1); // vs
+            push_u32(out, 2); // ps
+            push_u32(out, 3); // cs
+            push_u32(out, 4); // reserved0 (legacy gs)
+        });
+    });
+
+    let parsed = parse_cmd_stream(&stream).expect("parse should succeed");
+    assert_eq!(parsed.cmds.len(), 1);
+    match &parsed.cmds[0] {
+        AeroGpuCmd::BindShaders {
+            vs,
+            ps,
+            cs,
+            gs,
+            hs,
+            ds,
+        } => {
+            assert_eq!((*vs, *ps, *cs, *gs, *hs, *ds), (1, 2, 3, 4, 0, 0));
+        }
+        other => panic!("expected BindShaders cmd, got {other:?}"),
+    }
+}
+
+#[test]
 fn protocol_accepts_extended_bind_shaders_packet() {
     let stream = build_stream(|out| {
         // BIND_SHADERS with append-only extension and trailing bytes.
