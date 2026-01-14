@@ -350,7 +350,7 @@ describe("workers/gpu-worker legacy VBE scanout (16bpp)", () => {
     }
   }, TEST_TIMEOUT_MS);
 
-  it("reads B5G5R5A1 legacy VBE scanout from the VRAM aperture and expands alpha bit", async () => {
+  it("reads B5G5R5A1 legacy VBE scanout from the VRAM aperture even when last-row pitch padding is out of bounds", async () => {
     const segments = allocateHarnessSharedMemorySegments({
       guestRamBytes: 64 * 1024,
       sharedFramebuffer: new SharedArrayBuffer(8),
@@ -361,14 +361,22 @@ describe("workers/gpu-worker legacy VBE scanout (16bpp)", () => {
     const views = createSharedMemoryViews(segments);
 
     const width = 2;
-    const height = 1;
-    const pitchBytes = 4;
-    const vramOffset = 0x2000;
+    const height = 2;
+    const pitchBytes = 8; // padded (rowBytes=4)
+    const rowBytes = width * 2;
+    const requiredBytes = pitchBytes * (height - 1) + rowBytes;
+    if (requiredBytes > views.vramU8.byteLength) {
+      throw new Error("vram buffer too small for B5G5R5A1 surface");
+    }
+    const vramOffset = views.vramU8.byteLength - requiredBytes;
     const basePaddr = (VRAM_BASE_PADDR + vramOffset) >>> 0;
 
     views.vramU8.fill(0);
-    // Two pixels: red with alpha=1 (0xFC00), red with alpha=0 (0x7C00).
+    // Two rows of pixels:
+    // Row 0: red with alpha=1 (0xFC00), red with alpha=0 (0x7C00).
     views.vramU8.set([0x00, 0xfc, 0x00, 0x7c], vramOffset);
+    // Row 1: green with alpha=1 (0x83E0), blue with alpha=0 (0x001F).
+    views.vramU8.set([0xe0, 0x83, 0x1f, 0x00], vramOffset + pitchBytes);
 
     publishScanoutState(views.scanoutStateI32!, {
       source: SCANOUT_SOURCE_LEGACY_VBE_LFB,
@@ -445,10 +453,10 @@ describe("workers/gpu-worker legacy VBE scanout (16bpp)", () => {
 
       const px = new Uint8Array(shot.rgba8);
       expect(Array.from(px)).toEqual([
-        // Pixel 0: A=1
-        0xff, 0x00, 0x00, 0xff,
-        // Pixel 1: A=0
-        0xff, 0x00, 0x00, 0x00,
+        // Row 0: red A=1, red A=0.
+        0xff, 0x00, 0x00, 0xff, 0xff, 0x00, 0x00, 0x00,
+        // Row 1: green A=1, blue A=0.
+        0x00, 0xff, 0x00, 0xff, 0x00, 0x00, 0xff, 0x00,
       ]);
     } finally {
       await worker.terminate();
