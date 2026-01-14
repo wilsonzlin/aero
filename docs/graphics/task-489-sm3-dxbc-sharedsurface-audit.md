@@ -353,6 +353,12 @@ bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test sm3_decode --locked
   - `wgsl_predicated_texldb_1d_avoids_non_uniform_control_flow`
   - `wgsl_predicated_texldp_avoids_non_uniform_control_flow`
   - `wgsl_predicated_texldd_is_valid_with_non_uniform_predicate`
+  - `wgsl_nonuniform_if_texld_avoids_invalid_control_flow`
+  - `wgsl_nonuniform_if_else_texld_avoids_invalid_control_flow`
+  - `wgsl_nonuniform_if_texldb_avoids_invalid_control_flow`
+  - `wgsl_nonuniform_if_texldb_1d_avoids_invalid_control_flow`
+  - `wgsl_nonuniform_if_predicated_texld_avoids_invalid_control_flow`
+  - `wgsl_nonuniform_if_else_predicated_texld_avoids_invalid_control_flow`
   - `wgsl_dcl_1d_sampler_emits_texture_1d_and_x_coord`
   - `wgsl_dcl_1d_sampler_texldp_emits_projective_divide_x`
   - `wgsl_dcl_1d_sampler_texldb_emits_texture_sample_grad_x_with_bias`

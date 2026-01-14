@@ -2383,6 +2383,122 @@ fn wgsl_nonuniform_if_else_texld_avoids_invalid_control_flow() {
 }
 
 #[test]
+fn wgsl_nonuniform_if_texldb_1d_avoids_invalid_control_flow() {
+    // ps_3_0:
+    //   dcl_texcoord0 v0
+    //   dcl_1d s0
+    //   if v0.x
+    //     texldb r0, v0, s0
+    //   endif
+    //   mov oC0, r0
+    //   end
+    //
+    // For 1D textures, texldb uses our dpdx/dpdy+exp2(bias)+textureSampleGrad lowering, which also
+    // must appear in uniform control flow. This test ensures we still avoid emitting an `if`.
+    let tokens = vec![
+        version_token(ShaderStage::Pixel, 3, 0),
+        // dcl_texcoord0 v0  (usage 5 = texcoord)
+        opcode_token(31, 1) | (5u32 << 16),
+        dst_token(1, 0, 0xF),
+        // dcl_1d s0
+        opcode_token(31, 1) | (1u32 << 16),
+        dst_token(10, 0, 0xF),
+        // if v0
+        opcode_token(40, 1),
+        src_token(1, 0, 0xE4, 0),
+        // texldb r0, v0, s0 (specific field is opcode_token[16..19], where 2 = texldb)
+        opcode_token(66, 3) | (2u32 << 16),
+        dst_token(0, 0, 0xF),
+        src_token(1, 0, 0xE4, 0),
+        src_token(10, 0, 0xE4, 0),
+        // endif
+        opcode_token(43, 0),
+        // mov oC0, r0
+        opcode_token(1, 2),
+        dst_token(8, 0, 0xF),
+        src_token(0, 0, 0xE4, 0),
+        // end
+        0x0000_FFFF,
+    ];
+
+    let decoded = decode_u32_tokens(&tokens).unwrap();
+    let ir = build_ir(&decoded).unwrap();
+    verify_ir(&ir).unwrap();
+
+    let wgsl = generate_wgsl(&ir).unwrap().wgsl;
+    assert!(wgsl.contains("textureSampleGrad("), "{wgsl}");
+    assert!(wgsl.contains("select("), "{wgsl}");
+    assert!(
+        !wgsl.contains("if ("),
+        "non-uniform if guarding a single texldb(1D) should lower to select; got:\n{wgsl}"
+    );
+
+    let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+}
+
+#[test]
+fn wgsl_nonuniform_if_texldb_avoids_invalid_control_flow() {
+    // ps_3_0:
+    //   dcl_texcoord0 v0
+    //   if v0.x
+    //     texldb r0, v0, s0
+    //   endif
+    //   mov oC0, r0
+    //   end
+    //
+    // Like `texld`, `texldb` uses implicit derivatives and must appear in uniform control flow in
+    // WGSL. This test ensures we lower `if (cond) { texldb }` to a branchless `select(...)`.
+    let tokens = vec![
+        version_token(ShaderStage::Pixel, 3, 0),
+        // dcl_texcoord0 v0  (usage 5 = texcoord)
+        opcode_token(31, 1) | (5u32 << 16),
+        dst_token(1, 0, 0xF),
+        // if v0
+        opcode_token(40, 1),
+        src_token(1, 0, 0xE4, 0),
+        // texldb r0, v0, s0 (specific field is opcode_token[16..19], where 2 = texldb)
+        opcode_token(66, 3) | (2u32 << 16),
+        dst_token(0, 0, 0xF),
+        src_token(1, 0, 0xE4, 0),
+        src_token(10, 0, 0xE4, 0),
+        // endif
+        opcode_token(43, 0),
+        // mov oC0, r0
+        opcode_token(1, 2),
+        dst_token(8, 0, 0xF),
+        src_token(0, 0, 0xE4, 0),
+        // end
+        0x0000_FFFF,
+    ];
+
+    let decoded = decode_u32_tokens(&tokens).unwrap();
+    let ir = build_ir(&decoded).unwrap();
+    verify_ir(&ir).unwrap();
+
+    let wgsl = generate_wgsl(&ir).unwrap().wgsl;
+    assert!(wgsl.contains("textureSampleBias("), "{wgsl}");
+    assert!(wgsl.contains("select("), "{wgsl}");
+    assert!(
+        !wgsl.contains("if ("),
+        "non-uniform if guarding a single texldb should lower to select; got:\n{wgsl}"
+    );
+
+    let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+}
+
+#[test]
 fn wgsl_nonuniform_if_predicated_texld_avoids_invalid_control_flow() {
     // ps_3_0:
     //   dcl_texcoord0 v0
