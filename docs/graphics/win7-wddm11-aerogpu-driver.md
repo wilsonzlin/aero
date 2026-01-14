@@ -386,8 +386,10 @@ For each entrypoint:
 
 - **Purpose:** Hand off display ownership during boot/bugcheck/transition scenarios.
 - **AeroGPU MVP behavior:**
-  - Implement conservative handoff: blank display or keep last scanout, depending on what dxgkrnl expects.
-  - Prefer a full virtual reset on reacquire to avoid stale scanout pointers.
+  - Preserve existing boot/VBE scanout state during `StartDevice` so dxgkrnl can map the existing framebuffer without an immediate modeset.
+  - **Release:** fill `DXGK_DISPLAY_INFORMATION` / `DXGK_FRAMEBUFFER_INFORMATION`, then disable scanout + vblank IRQ delivery + cursor DMA before running the normal `StopDevice` teardown.
+  - **Acquire:** snapshot scanout state (best-effort), fill the output structs, then re-program scanout using cached mode + framebuffer address and restore vblank IRQ state if it was enabled prior to release.
+  - Defensive: avoid MMIO access while not in D0 (can hang) and never enable scanout with a zero framebuffer address.
 - **Can be deferred:** Seamless transitions.
 
 #### `DxgkDdiGetScanLine` + `DxgkDdiControlInterrupt`
