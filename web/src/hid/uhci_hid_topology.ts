@@ -94,6 +94,8 @@ export class UhciHidTopologyManager {
     // configured a hub explicitly (via `setHubConfig`) before UHCI was initialized, attach it now.
     for (const rootPort of this.#hubPortCountByRoot.keys()) {
       if (rootPort === EXTERNAL_HUB_ROOT_PORT) continue;
+      // Root port 1 is reserved for the guest-visible WebUSB passthrough device.
+      if (rootPort === WEBUSB_GUEST_ROOT_PORT) continue;
       this.#maybeAttachHub(rootPort);
     }
 
@@ -102,6 +104,10 @@ export class UhciHidTopologyManager {
 
   setHubConfig(path: GuestUsbPath, portCount?: number): void {
     const rootPort = path[0] ?? EXTERNAL_HUB_ROOT_PORT;
+    // Root port 1 is reserved for WebUSB passthrough. Do not attach hubs there: WebUSB uses a
+    // guest-visible device directly on that root port, and the WASM bridge rejects non-WebUSB
+    // attachments at that port.
+    if (rootPort === WEBUSB_GUEST_ROOT_PORT) return;
     const count = clampHubPortCount(portCount ?? this.#defaultHubPortCount);
     this.#hubPortCountByRoot.set(rootPort, count);
     const resized = this.#maybeAttachHub(rootPort);
@@ -115,6 +121,12 @@ export class UhciHidTopologyManager {
     if (prev) {
       this.#maybeDetachPath(prev.path);
     }
+    this.#devices.delete(deviceId);
+    // Root port 1 is reserved for WebUSB passthrough. Root-port-only paths are remapped by
+    // `#normalizeDevicePath`, but reject deeper paths behind that reserved root port to avoid
+    // clobbering WebUSB state and avoid surfacing WASM attach errors as runtime exceptions.
+    const rootPort = normalizedPath[0] ?? EXTERNAL_HUB_ROOT_PORT;
+    if (rootPort === WEBUSB_GUEST_ROOT_PORT) return;
     this.#devices.set(deviceId, { path: normalizedPath, kind, device });
     this.#maybeAttachDevice(deviceId, { throwOnFailure: true });
   }
@@ -135,6 +147,7 @@ export class UhciHidTopologyManager {
   }
 
   #maybeAttachHub(rootPort: number, options: { minPortCount?: number; throwOnFailure?: boolean } = {}): boolean {
+    if (rootPort === WEBUSB_GUEST_ROOT_PORT) return false;
     const uhci = this.#uhci;
     if (!uhci) return false;
 

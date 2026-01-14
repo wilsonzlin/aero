@@ -34,6 +34,16 @@ describe("hid/xhci_hid_topology", () => {
     expect(xhci.attach_hub).toHaveBeenCalledWith(EXTERNAL_HUB_ROOT_PORT, 8);
   });
 
+  it("ignores hub config for reserved WebUSB root port 1", () => {
+    const mgr = new XhciHidTopologyManager({ defaultHubPortCount: 15 });
+    const xhci = createFakeXhci();
+
+    mgr.setHubConfig([WEBUSB_GUEST_ROOT_PORT], 8);
+    mgr.setXhciBridge(xhci);
+
+    expect(xhci.attach_hub).not.toHaveBeenCalled();
+  });
+
   it("attaches hubs lazily as devices demand them", () => {
     const mgr = new XhciHidTopologyManager({ defaultHubPortCount: 8 });
     const xhci = createFakeXhci();

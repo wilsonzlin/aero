@@ -37,6 +37,18 @@ describe("hid/UhciHidTopologyManager", () => {
     expect(uhci.attach_hub).toHaveBeenCalledWith(EXTERNAL_HUB_ROOT_PORT, 16);
   });
 
+  it("ignores hub config for reserved WebUSB root port 1", () => {
+    const mgr = new UhciHidTopologyManager({ defaultHubPortCount: 16 });
+    const uhci = createFakeUhci();
+
+    mgr.setHubConfig([WEBUSB_GUEST_ROOT_PORT], 8);
+    mgr.setUhciBridge(uhci);
+
+    // Root port 0's external hub is still attached eagerly; reserved root port 1 must not be used.
+    expect(uhci.attach_hub).toHaveBeenCalledTimes(1);
+    expect(uhci.attach_hub).toHaveBeenCalledWith(EXTERNAL_HUB_ROOT_PORT, 16);
+  });
+
   it("remaps legacy root-port-only paths onto stable hub ports behind root port 0", () => {
     const mgr = new UhciHidTopologyManager({ defaultHubPortCount: 16 });
     const uhci = createFakeUhci();
@@ -78,6 +90,22 @@ describe("hid/UhciHidTopologyManager", () => {
 
     mgr.detachDevice(1);
     expect(uhci.detach_at_path).toHaveBeenLastCalledWith([EXTERNAL_HUB_ROOT_PORT, legacyRoot1Port]);
+  });
+
+  it("rejects attaching devices behind reserved WebUSB root port 1", () => {
+    const mgr = new UhciHidTopologyManager({ defaultHubPortCount: 16 });
+    const uhci = createFakeUhci();
+    const dev = { kind: "device" };
+
+    mgr.setUhciBridge(uhci);
+    mgr.attachDevice(1, [WEBUSB_GUEST_ROOT_PORT, 2], "webhid", dev);
+
+    // Only the default external hub should have been attached.
+    expect(uhci.attach_hub).toHaveBeenCalledTimes(1);
+    expect(uhci.attach_hub).toHaveBeenCalledWith(EXTERNAL_HUB_ROOT_PORT, 16);
+    expect(uhci.detach_at_path).not.toHaveBeenCalled();
+    expect(uhci.attach_webhid_device).not.toHaveBeenCalled();
+    expect(uhci.attach_usb_hid_passthrough_device).not.toHaveBeenCalled();
   });
 
   it("detaches the previous guest path when a deviceId is re-attached at a new path", () => {

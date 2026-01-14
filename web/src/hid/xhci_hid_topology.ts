@@ -144,6 +144,9 @@ export class XhciHidTopologyManager {
     // explicitly (via `setHubConfig`) before xHCI was initialized, attach it now so the
     // guest OS can enumerate it.
     for (const rootPort of this.#hubPortCountByRoot.keys()) {
+      // Root port 1 is reserved for WebUSB passthrough (see `isValidDevicePath`), so this manager
+      // must never attach a hub there.
+      if (rootPort === WEBUSB_GUEST_ROOT_PORT) continue;
       this.#maybeAttachHub(rootPort);
     }
 
@@ -152,6 +155,9 @@ export class XhciHidTopologyManager {
 
   setHubConfig(path: GuestUsbPath, portCount?: number): void {
     const rootPort = path[0] ?? EXTERNAL_HUB_ROOT_PORT;
+    // xHCI root port 1 is reserved for WebUSB passthrough; do not allow this topology manager to
+    // attach hubs there (it would conflict with WebUSB and is rejected by the WASM bridge anyway).
+    if (rootPort === WEBUSB_GUEST_ROOT_PORT) return;
     const count = clampHubPortCount(portCount ?? this.#defaultHubPortCount);
     this.#hubPortCountByRoot.set(rootPort, count);
     const resized = this.#maybeAttachHub(rootPort);
@@ -184,6 +190,7 @@ export class XhciHidTopologyManager {
   }
 
   #maybeAttachHub(rootPort: number, options: { minPortCount?: number } = {}): boolean {
+    if (rootPort === WEBUSB_GUEST_ROOT_PORT) return false;
     const xhci = this.#xhci;
     if (!xhci) return false;
     const attachHub = xhci.attach_hub;
