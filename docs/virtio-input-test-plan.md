@@ -411,6 +411,11 @@ To make MSI-X a **hard harness requirement** (end-to-end, guest-reported effecti
 - PowerShell: `-RequireVirtioInputMsix`
 - Python: `--require-virtio-input-msix`
 
+Optional guest-side hard requirement (fail-fast; makes the guest selftest RESULT fail when `virtio-input-msix` reports `mode!=msix`):
+
+- Guest selftest: `--require-input-msix` (or env var `AERO_VIRTIO_SELFTEST_REQUIRE_INPUT_MSIX=1`)
+  - When provisioning via `New-AeroWin7TestImage.ps1`, use `-RequireInputMsix`.
+
 To increase the chance that Windows grants enough MSI-X messages, request a larger MSI-X table size from QEMU
 (requires QEMU virtio `vectors` property; the host harness fails fast if unsupported):
 

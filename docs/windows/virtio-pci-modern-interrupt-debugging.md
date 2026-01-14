@@ -74,11 +74,12 @@ table (requires QEMU virtio `vectors` property) and/or fail the harness when MSI
 - Request a larger MSI-X table (requires QEMU virtio `vectors` property):
   - global: `-VirtioMsixVectors N` / `--virtio-msix-vectors N`
   - per device: `-Virtio{Net,Blk,Input,Snd}Vectors N` / `--virtio-{net,blk,input,snd}-vectors N`
-- Require MSI-X (harness checks):
-  - QMP MSI-X-enabled check (virtio-blk/net/snd): `-RequireVirtio{Net,Blk,Snd}Msix` / `--require-virtio-{net,blk,snd}-msix`
-    - For virtio-net, virtio-blk, and virtio-snd, the harness also requires the guest `virtio-*-msix` marker to report `mode=msix`
-      (end-to-end validation: Windows actually assigned message interrupts and the driver programmed virtio MSI-X routing).
+  - Require MSI-X (harness checks):
+    - QMP MSI-X-enabled check (virtio-blk/net/snd): `-RequireVirtio{Net,Blk,Snd}Msix` / `--require-virtio-{net,blk,snd}-msix`
+      - For virtio-net, virtio-blk, and virtio-snd, the harness also requires the guest `virtio-*-msix` marker to report `mode=msix`
+        (end-to-end validation: Windows actually assigned message interrupts and the driver programmed virtio MSI-X routing).
   - Guest marker check (virtio-input): `-RequireVirtioInputMsix` / `--require-virtio-input-msix`
+    - Optional guest-side fail-fast: `aero-virtio-selftest.exe --require-input-msix` (or env var `AERO_VIRTIO_SELFTEST_REQUIRE_INPUT_MSIX=1`)
 
 See: [`drivers/windows7/tests/guest-selftest/README.md`](../../drivers/windows7/tests/guest-selftest/README.md).
 
