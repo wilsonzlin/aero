@@ -410,14 +410,14 @@ def parse_guest_selftest_expected_service_names_text(*, text: str, file: Path) -
         # virtio-net binding check inside VirtioNetTest().
         "virtio-net": re.compile(r'\bkExpectedService\s*\[\s*\]\s*=\s*L"(?P<svc>[^"]+)"'),
         # virtio-input expected service name (PCI binding validation).
-        "virtio-input": re.compile(r'\bkVirtioInputExpectedService\b\s*=\s*L"(?P<svc>[^"]+)"'),
+        # Accept either `kVirtioInputExpectedService = L"..."` or
+        # `kVirtioInputExpectedService[] = L"..."` (older style).
+        "virtio-input": re.compile(r'\bkVirtioInputExpectedService\b\s*(?:\[\s*\])?\s*=\s*L"(?P<svc>[^"]+)"'),
         # virtio-snd modern / transitional service name expectations.
         "virtio-snd": re.compile(r'\bkVirtioSndExpectedServiceModern\b\s*=\s*L"(?P<svc>[^"]+)"'),
         "virtio-snd-transitional": re.compile(
             r'\bkVirtioSndExpectedServiceTransitional\b\s*=\s*L"(?P<svc>[^"]+)"'
         ),
-        # virtio-input PCI binding check service name expectation.
-        "virtio-input": re.compile(r'\bkVirtioInputExpectedService\s*\[\s*\]\s*=\s*L"(?P<svc>[^"]+)"'),
     }
 
     out: dict[str, LocatedString] = {}
@@ -441,7 +441,7 @@ def _self_test_parse_guest_selftest_expected_service_names() -> None:
 static const wchar_t kExpectedService[] = L"aero_virtio_net";
 static constexpr const wchar_t* kVirtioSndExpectedServiceModern = L"aero_virtio_snd";
 static constexpr const wchar_t* kVirtioSndExpectedServiceTransitional = L"aeroviosnd_legacy";
-static constexpr const wchar_t kVirtioInputExpectedService[] = L"aero_virtio_input";
+static constexpr const wchar_t* kVirtioInputExpectedService = L"aero_virtio_input";
 """
     parsed = parse_guest_selftest_expected_service_names_text(text=sample, file=Path("<unit-test>"))
     expected = {
