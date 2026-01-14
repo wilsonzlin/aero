@@ -30,7 +30,7 @@ see the reference implementation at [`services/image-gateway/`](../../services/i
     - Origin request policy forwards headers needed for **CORS preflight** (unless edge-handled preflight is enabled).
     - `Range`/`If-Range` are forwarded to S3 so byte-range reads work, but **are not included in the CloudFront cache key** (avoids cache fragmentation for random-access workloads).
     - Two cache policies: `immutable` (long TTL) vs `mutable` (short TTL), selectable via variable.
-    - Optional CloudFront **response headers policy** for injecting CORS headers at the edge.
+    - Optional CloudFront **response headers policy** for injecting CORS headers and optional security headers (e.g. `Cross-Origin-Resource-Policy`) at the edge.
     - Optional CloudFront **Function** to answer CORS preflight (`OPTIONS`) at the edge for `/images/*`, avoiding OPTIONS to S3.
 
 ## CloudFront object size limits (important for very large disks)

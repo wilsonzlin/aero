@@ -28,6 +28,10 @@ enable_edge_cors_preflight = true
 # headers across objects without relying on per-object metadata.
 enable_edge_cors = true
 
+# Optional: set Cross-Origin-Resource-Policy for COEP: require-corp defence-in-depth.
+# Values: "same-origin", "same-site", "cross-origin".
+# cross_origin_resource_policy = "same-site"
+
 # Optional: if CORS is handled fully at CloudFront (enable_edge_cors + enable_edge_cors_preflight),
 # you can disable S3 CORS configuration.
 # enable_s3_cors = false

@@ -13,6 +13,11 @@ locals {
   cache_policy_id = var.cache_policy_mode == "immutable" ? aws_cloudfront_cache_policy.immutable.id : aws_cloudfront_cache_policy.mutable.id
   primary_domain  = length(var.custom_domain_names) > 0 ? var.custom_domain_names[0] : aws_cloudfront_distribution.images.domain_name
 
+  # Attach an edge response headers policy when we need to inject/override headers.
+  # This is used for both CORS headers (enable_edge_cors) and optional security headers
+  # like Cross-Origin-Resource-Policy (cross_origin_resource_policy).
+  enable_edge_response_headers_policy = var.enable_edge_cors || var.cross_origin_resource_policy != null
+
   # Origin request headers:
   # - CORS preflight (OPTIONS) needs these forwarded to S3 unless you enable the optional
   #   edge-handled preflight function (enable_edge_cors_preflight).
@@ -193,30 +198,44 @@ resource "aws_cloudfront_origin_request_policy" "images" {
 }
 
 resource "aws_cloudfront_response_headers_policy" "cors" {
-  count = var.enable_edge_cors ? 1 : 0
+  count = local.enable_edge_response_headers_policy ? 1 : 0
 
   name    = "${local.name_prefix}-images-cors"
-  comment = "Optional: add/override CORS headers at CloudFront edge"
+  comment = "Optional: add/override CORS and security headers at CloudFront edge"
 
-  cors_config {
-    access_control_allow_credentials = var.cors_allow_credentials
-    access_control_max_age_sec       = var.cors_max_age_seconds
-    origin_override                  = true
+  dynamic "cors_config" {
+    for_each = var.enable_edge_cors ? [1] : []
+    content {
+      access_control_allow_credentials = var.cors_allow_credentials
+      access_control_max_age_sec       = var.cors_max_age_seconds
+      origin_override                  = true
 
-    access_control_allow_headers {
-      items = var.cors_allowed_headers
+      access_control_allow_headers {
+        items = var.cors_allowed_headers
+      }
+
+      access_control_allow_methods {
+        items = var.cors_allowed_methods
+      }
+
+      access_control_allow_origins {
+        items = var.cors_allowed_origins
+      }
+
+      access_control_expose_headers {
+        items = var.cors_expose_headers
+      }
     }
+  }
 
-    access_control_allow_methods {
-      items = var.cors_allowed_methods
-    }
-
-    access_control_allow_origins {
-      items = var.cors_allowed_origins
-    }
-
-    access_control_expose_headers {
-      items = var.cors_expose_headers
+  dynamic "custom_headers_config" {
+    for_each = var.cross_origin_resource_policy == null ? [] : [1]
+    content {
+      items {
+        header   = "Cross-Origin-Resource-Policy"
+        value    = var.cross_origin_resource_policy
+        override = false
+      }
     }
   }
 }
@@ -270,7 +289,7 @@ resource "aws_cloudfront_distribution" "images" {
 
     cache_policy_id            = local.cache_policy_id
     origin_request_policy_id   = aws_cloudfront_origin_request_policy.images.id
-    response_headers_policy_id = var.enable_edge_cors ? aws_cloudfront_response_headers_policy.cors[0].id : null
+    response_headers_policy_id = local.enable_edge_response_headers_policy ? aws_cloudfront_response_headers_policy.cors[0].id : null
 
     dynamic "function_association" {
       for_each = var.enable_edge_cors_preflight ? [1] : []
@@ -293,7 +312,7 @@ resource "aws_cloudfront_distribution" "images" {
 
     cache_policy_id            = local.cache_policy_id
     origin_request_policy_id   = aws_cloudfront_origin_request_policy.images.id
-    response_headers_policy_id = var.enable_edge_cors ? aws_cloudfront_response_headers_policy.cors[0].id : null
+    response_headers_policy_id = local.enable_edge_response_headers_policy ? aws_cloudfront_response_headers_policy.cors[0].id : null
 
     dynamic "function_association" {
       for_each = var.enable_edge_cors_preflight ? [1] : []

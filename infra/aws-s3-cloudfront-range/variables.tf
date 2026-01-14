@@ -157,6 +157,20 @@ variable "enable_edge_cors" {
   default     = false
 }
 
+variable "cross_origin_resource_policy" {
+  description = "Optional: set Cross-Origin-Resource-Policy (CORP) on responses for COEP: require-corp defence-in-depth. Valid values: same-origin, same-site, cross-origin."
+  type        = string
+  default     = null
+
+  validation {
+    condition = (
+      var.cross_origin_resource_policy == null
+      || contains(["same-origin", "same-site", "cross-origin"], lower(var.cross_origin_resource_policy))
+    )
+    error_message = "cross_origin_resource_policy must be null or one of: same-origin, same-site, cross-origin."
+  }
+}
+
 variable "cache_policy_mode" {
   description = "Select which CloudFront cache policy to use: immutable (long TTL) or mutable (short TTL)."
   type        = string
