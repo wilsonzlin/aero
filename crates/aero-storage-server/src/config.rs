@@ -151,13 +151,9 @@ impl Config {
 
         let images_root = args
             .images_root
-            .or_else(|| env::var("AERO_IMAGE_ROOT").ok().map(PathBuf::from))
-            .or_else(|| env::var("AERO_IMAGE_DIR").ok().map(PathBuf::from))
-            .or_else(|| {
-                env::var("AERO_STORAGE_SERVER_IMAGES_ROOT")
-                    .ok()
-                    .map(PathBuf::from)
-            })
+            .or_else(|| parse_env_path("AERO_IMAGE_ROOT"))
+            .or_else(|| parse_env_path("AERO_IMAGE_DIR"))
+            .or_else(|| parse_env_path("AERO_STORAGE_SERVER_IMAGES_ROOT"))
             .unwrap_or_else(|| PathBuf::from("./images"));
 
         let cors_origin = args.cors_origin;
@@ -240,6 +236,15 @@ fn parse_env(var: &str) -> Option<SocketAddr> {
     }
 }
 
+fn parse_env_path(var: &str) -> Option<PathBuf> {
+    let value = env::var_os(var)?;
+    if value.is_empty() {
+        eprintln!("warning: {var} is set but empty; ignoring");
+        return None;
+    }
+    Some(PathBuf::from(value))
+}
+
 fn parse_origin_list(value: &str) -> Vec<String> {
     value
         .split(',')
@@ -273,9 +278,68 @@ fn parse_env_bool(var: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_env, parse_env_bool};
+    use super::{parse_env, parse_env_bool, parse_env_path};
+    use std::path::PathBuf;
 
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn parse_env_path_missing_is_none() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        const VAR: &str = "AERO_STORAGE_SERVER_TEST_PATH_MISSING";
+        std::env::remove_var(VAR);
+        assert!(parse_env_path(VAR).is_none());
+    }
+
+    #[test]
+    fn parse_env_path_empty_is_none() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        const VAR: &str = "AERO_STORAGE_SERVER_TEST_PATH_EMPTY";
+        let prev = std::env::var_os(VAR);
+
+        std::env::set_var(VAR, "");
+        assert!(parse_env_path(VAR).is_none());
+
+        match prev {
+            Some(v) => std::env::set_var(VAR, v),
+            None => std::env::remove_var(VAR),
+        }
+    }
+
+    #[test]
+    fn parse_env_path_valid_is_some() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        const VAR: &str = "AERO_STORAGE_SERVER_TEST_PATH_VALID";
+        let prev = std::env::var_os(VAR);
+
+        std::env::set_var(VAR, "./images");
+        assert_eq!(parse_env_path(VAR), Some(PathBuf::from("./images")));
+
+        match prev {
+            Some(v) => std::env::set_var(VAR, v),
+            None => std::env::remove_var(VAR),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn parse_env_path_accepts_non_utf8_values() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let _guard = ENV_LOCK.lock().unwrap();
+        const VAR: &str = "AERO_STORAGE_SERVER_TEST_PATH_INVALID_UTF8";
+        let prev = std::env::var_os(VAR);
+
+        let raw = OsString::from_vec(vec![b'i', b'm', b'g', 0xFF]);
+        std::env::set_var(VAR, raw.clone());
+        assert_eq!(parse_env_path(VAR), Some(PathBuf::from(raw)));
+
+        match prev {
+            Some(v) => std::env::set_var(VAR, v),
+            None => std::env::remove_var(VAR),
+        }
+    }
 
     #[test]
     fn parse_env_missing_is_none() {
