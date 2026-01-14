@@ -963,11 +963,19 @@ impl CommandRingProcessor {
         };
 
         // Update internal slot state.
+        let prev_ep0_state =
+            EndpointContext::read_from(mem, dev_ctx_ptr + DEVICE_EP0_CTX_OFFSET).endpoint_state()
+                as u32;
+        let effective_ep0_state = if prev_ep0_state == 0 {
+            EP_STATE_RUNNING
+        } else {
+            prev_ep0_state
+        };
         let ep0_state = EndpointState {
             dequeue_ptr: in_ep0.tr_dequeue_pointer(),
             cycle: in_ep0.dcs(),
-            stopped: false,
-            halted: false,
+            stopped: effective_ep0_state == EP_STATE_STOPPED,
+            halted: effective_ep0_state == EP_STATE_HALTED,
         };
         if let Some(slot) = self.internal_slot_mut(slot_id) {
             slot.root_port = Some(root_port);
@@ -1199,13 +1207,20 @@ impl CommandRingProcessor {
             if in_ep0.endpoint_type() != EndpointType::Control {
                 return CompletionCode::ParameterError;
             }
+            let prev_state = EndpointContext::read_from(mem, dev_ctx_ptr + DEVICE_EP0_CTX_OFFSET)
+                .endpoint_state() as u32;
+            let effective_state = if prev_state == 0 {
+                EP_STATE_RUNNING
+            } else {
+                prev_state
+            };
             updates.push((
                 1,
                 Some(EndpointState {
                     dequeue_ptr: in_ep0.tr_dequeue_pointer(),
                     cycle: in_ep0.dcs(),
-                    stopped: false,
-                    halted: false,
+                    stopped: effective_state == EP_STATE_STOPPED,
+                    halted: effective_state == EP_STATE_HALTED,
                 }),
             ));
         }
@@ -1218,13 +1233,20 @@ impl CommandRingProcessor {
             if in_ep.endpoint_type() != EndpointType::InterruptIn {
                 return CompletionCode::ParameterError;
             }
+            let prev_state = EndpointContext::read_from(mem, dev_ctx_ptr + 3u64 * CONTEXT_SIZE)
+                .endpoint_state() as u32;
+            let effective_state = if prev_state == 0 {
+                EP_STATE_RUNNING
+            } else {
+                prev_state
+            };
             updates.push((
                 3,
                 Some(EndpointState {
                     dequeue_ptr: in_ep.tr_dequeue_pointer(),
                     cycle: in_ep.dcs(),
-                    stopped: false,
-                    halted: false,
+                    stopped: effective_state == EP_STATE_STOPPED,
+                    halted: effective_state == EP_STATE_HALTED,
                 }),
             ));
         }
@@ -1244,13 +1266,27 @@ impl CommandRingProcessor {
             if in_in.endpoint_type() != EndpointType::BulkIn {
                 return CompletionCode::ParameterError;
             }
+            let prev_out_state = EndpointContext::read_from(mem, dev_ctx_ptr + 4u64 * CONTEXT_SIZE)
+                .endpoint_state() as u32;
+            let effective_out_state = if prev_out_state == 0 {
+                EP_STATE_RUNNING
+            } else {
+                prev_out_state
+            };
+            let prev_in_state = EndpointContext::read_from(mem, dev_ctx_ptr + 5u64 * CONTEXT_SIZE)
+                .endpoint_state() as u32;
+            let effective_in_state = if prev_in_state == 0 {
+                EP_STATE_RUNNING
+            } else {
+                prev_in_state
+            };
             updates.push((
                 4,
                 Some(EndpointState {
                     dequeue_ptr: in_out.tr_dequeue_pointer(),
                     cycle: in_out.dcs(),
-                    stopped: false,
-                    halted: false,
+                    stopped: effective_out_state == EP_STATE_STOPPED,
+                    halted: effective_out_state == EP_STATE_HALTED,
                 }),
             ));
             updates.push((
@@ -1258,8 +1294,8 @@ impl CommandRingProcessor {
                 Some(EndpointState {
                     dequeue_ptr: in_in.tr_dequeue_pointer(),
                     cycle: in_in.dcs(),
-                    stopped: false,
-                    halted: false,
+                    stopped: effective_in_state == EP_STATE_STOPPED,
+                    halted: effective_in_state == EP_STATE_HALTED,
                 }),
             ));
         }
@@ -1398,7 +1434,14 @@ impl CommandRingProcessor {
                 let out_dw = self
                     .read_u32(mem, out_addr)
                     .map_err(|_| CompletionCode::ParameterError)?;
-                (in_dw & !EP_STATE_MASK_DWORD0) | (out_dw & EP_STATE_MASK_DWORD0)
+                let mut ep_state = out_dw & EP_STATE_MASK_DWORD0;
+                if ep_state == 0 {
+                    // Endpoint State is controller-owned. When an endpoint is first configured the
+                    // previous output context may have state=Disabled (0); in that case the
+                    // controller must transition the endpoint to Running (1).
+                    ep_state = EP_STATE_RUNNING;
+                }
+                (in_dw & !EP_STATE_MASK_DWORD0) | ep_state
             } else {
                 in_dw
             };
@@ -1929,5 +1972,77 @@ mod tests {
             3,
             "expected speed to match the attached UsbSpeed::High device"
         );
+    }
+
+    #[test]
+    fn configure_endpoint_sets_endpoint_state_running_when_previously_disabled() {
+        let mut mem = TestMem::new(0x40_000);
+        let mem_size = mem.data.len() as u64;
+
+        let dcbaa = 0x1000u64;
+        let dev_ctx = 0x2000u64;
+        let input_ctx = 0x3000u64;
+
+        let max_slots = 8;
+        let slot_id = 1u8;
+        let endpoint_id = 3u8; // EP1 IN (DCI=3)
+
+        let mut processor = CommandRingProcessor::new(
+            mem_size,
+            max_slots,
+            dcbaa,
+            CommandRing::new(0),
+            EventRing::new(0, 0),
+        );
+        processor.attach_root_port(1, Box::new(DummyDevice));
+
+        // Enable the slot and install DCBAA[slot_id] -> device context pointer.
+        let (code, enabled_slot_id) = processor.handle_enable_slot(&mut mem);
+        assert_eq!(code, CompletionCode::Success);
+        assert_eq!(enabled_slot_id, slot_id);
+        mem.write_u64(dcbaa + 8, dev_ctx);
+
+        // Mark the slot as bound to a reachable device so Configure Endpoint passes topology checks.
+        {
+            let slot = processor.slots[usize::from(slot_id)]
+                .as_mut()
+                .expect("slot state should exist");
+            slot.root_port = Some(1);
+            slot.route = Vec::new();
+            slot.address = 1;
+        }
+
+        // Input context: Add EP1 IN only.
+        mem.write_u32(input_ctx + ICC_DROP_FLAGS_OFFSET, 0);
+        mem.write_u32(input_ctx + ICC_ADD_FLAGS_OFFSET, 1u32 << endpoint_id);
+
+        // Endpoint context index in Input Context is DCI + 1.
+        let in_ep_addr = input_ctx + (4u64 * CONTEXT_SIZE); // input index 4 = dci 3 + 1
+        let mut in_ep = EndpointContext::default();
+        // Endpoint Type field is DW1 bits 3..=5. 7 => Interrupt IN.
+        in_ep.set_dword(1, 7u32 << 3);
+        in_ep.set_tr_dequeue_pointer(0x4000, true);
+        in_ep.write_to(&mut mem, in_ep_addr);
+
+        let mut trb = Trb::new(input_ctx, 0, 0);
+        trb.set_trb_type(TrbType::ConfigureEndpointCommand);
+        trb.set_slot_id(slot_id);
+
+        assert_eq!(
+            processor.handle_configure_endpoint(&mut mem, trb),
+            CompletionCode::Success
+        );
+
+        // Output endpoint context must be transitioned from Disabled (0) -> Running (1).
+        let out_ep_addr = dev_ctx + u64::from(endpoint_id) * CONTEXT_SIZE;
+        let out_ep = EndpointContext::read_from(&mut mem, out_ep_addr);
+        assert_eq!(out_ep.endpoint_state() as u32, EP_STATE_RUNNING);
+
+        let slot = processor.slots[usize::from(slot_id)].as_ref().unwrap();
+        let ep_state = slot.endpoints[usize::from(endpoint_id)]
+            .as_ref()
+            .expect("internal endpoint state should exist");
+        assert!(!ep_state.halted);
+        assert!(!ep_state.stopped);
     }
 }
