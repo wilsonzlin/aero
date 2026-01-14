@@ -32,7 +32,7 @@ impl AeroBackend {
             return self.execute_real_mode(case);
         }
 
-        let mut bus = ConformanceBus::new(case.template.bytes, case.mem_base, case.memory.clone());
+        let mut bus = ConformanceBus::new(case.template.bytes, 0, case.mem_base, case.memory.clone());
 
         let mut cpu = CoreState::new(CpuMode::Long);
         import_state(&case.init, &mut cpu);
@@ -69,7 +69,8 @@ impl AeroBackend {
         const RETURN_IP: u16 = 0x0000;
         const STACK_SP: u16 = 0x8FFE;
 
-        let mut bus = ConformanceBus::new(case.template.bytes, case.mem_base, case.memory.clone());
+        let mut bus =
+            ConformanceBus::new(case.template.bytes, case.init.rip, case.mem_base, case.memory.clone());
 
         // Seed a synthetic return address on the stack so the snippet's `ret` has somewhere to go.
         let ret_addr = (STACK_SP as u64)
@@ -212,32 +213,48 @@ fn fnv1a_hash_256(bytes: &[u8]) -> u32 {
 
 #[derive(Debug)]
 struct ConformanceBus {
-    /// Tier-0 instruction fetch buffer, mapped at vaddr 0.
+    /// Base virtual address for instruction fetches (Tier-0's RIP).
+    code_base: u64,
+    /// Tier-0 instruction fetch buffer, mapped at `code_base`.
     code: Vec<u8>,
-    /// Base virtual address for the `mem` slice; `mem[0]` corresponds to `base`.
-    base: u64,
+    /// Base virtual address for the data memory buffer; `mem[0]` corresponds to `mem_base`.
+    mem_base: u64,
     /// Backing data memory image.
     mem: Vec<u8>,
 }
 
 impl ConformanceBus {
-    fn new(code: &[u8], base: u64, mem: Vec<u8>) -> Self {
+    fn new(code: &[u8], code_base: u64, mem_base: u64, mem: Vec<u8>) -> Self {
         // Tier-0 may fetch up to 15 bytes at RIP for decoding, even when the instruction itself
         // is shorter. Pad out-of-range bytes with zero.
-        let mut padded = vec![0u8; code.len().max(15)];
+        // Pad by an extra 15 bytes so fetches that start *inside* the template (e.g. after a
+        // branch within a multi-instruction snippet) can still read up to 15 bytes without
+        // tripping bounds checks.
+        let mut padded = vec![0u8; code.len().saturating_add(15).max(15)];
         padded[..code.len()].copy_from_slice(code);
         Self {
+            code_base,
             code: padded,
-            base,
+            mem_base,
             mem,
         }
     }
 
     fn range(&self, vaddr: u64, len: usize) -> Result<Range<usize>, Exception> {
-        let start = vaddr.checked_sub(self.base).ok_or(Exception::MemoryFault)?;
+        let start = vaddr.checked_sub(self.mem_base).ok_or(Exception::MemoryFault)?;
         let start = usize::try_from(start).map_err(|_| Exception::MemoryFault)?;
         let end = start.checked_add(len).ok_or(Exception::MemoryFault)?;
         if end > self.mem.len() {
+            return Err(Exception::MemoryFault);
+        }
+        Ok(start..end)
+    }
+
+    fn code_range(&self, vaddr: u64, len: usize) -> Result<Range<usize>, Exception> {
+        let start = vaddr.checked_sub(self.code_base).ok_or(Exception::MemoryFault)?;
+        let start = usize::try_from(start).map_err(|_| Exception::MemoryFault)?;
+        let end = start.checked_add(len).ok_or(Exception::MemoryFault)?;
+        if end > self.code.len() {
             return Err(Exception::MemoryFault);
         }
         Ok(start..end)
@@ -365,17 +382,8 @@ impl CpuBus for ConformanceBus {
             return Ok(buf);
         }
 
-        // Conformance executes with RIP=0 and maps the template bytes at vaddr 0.
-        // Allow the qemu-reference path to fetch from the backing memory (real-mode snippet at
-        // 0x0700) by falling back to data memory when vaddr is outside the code buffer.
-        if let Ok(start) = usize::try_from(vaddr) {
-            if start.checked_add(len).is_some_and(|end| end <= self.code.len()) {
-                buf[..len].copy_from_slice(&self.code[start..start + len]);
-                return Ok(buf);
-            }
-        }
-
-        self.read_bytes(vaddr, &mut buf[..len])?;
+        let range = self.code_range(vaddr, len)?;
+        buf[..len].copy_from_slice(&self.code[range]);
         Ok(buf)
     }
 
@@ -396,7 +404,7 @@ mod tests {
 
     #[test]
     fn conformance_bus_rejects_port_io() {
-        let mut bus = ConformanceBus::new(&[], 0x1000, vec![0u8; 64]);
+        let mut bus = ConformanceBus::new(&[], 0, 0x1000, vec![0u8; 64]);
 
         assert_eq!(
             bus.io_read(0x3f8, 1).unwrap_err(),
@@ -410,7 +418,7 @@ mod tests {
 
     #[test]
     fn conformance_bus_oob_is_memoryfault() {
-        let mut bus = ConformanceBus::new(&[], 0x1000, vec![0u8; 16]);
+        let mut bus = ConformanceBus::new(&[], 0, 0x1000, vec![0u8; 16]);
 
         assert_eq!(bus.read_u8(0x0fff).unwrap_err(), Exception::MemoryFault);
         assert_eq!(bus.read_u8(0x1000 + 16).unwrap_err(), Exception::MemoryFault);
