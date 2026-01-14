@@ -126,7 +126,11 @@ When adding support for a new key code:
 1. Add it to `docs/fixtures/hid_usage_keyboard.json` (as `code` + expected usage).
 2. Update **both** mapping functions.
 3. Run `cargo xtask input` (recommended) or run the equivalent commands manually:
-   - `cargo test -p aero-usb --locked`
+   - `cargo xtask input` runs the HID usage fixture tests as part of its focused `aero-usb` subset.
+     Use `cargo xtask input --usb-all` if you want the full USB integration suite.
+   - Manual Rust equivalent (focused):
+     - `cargo test -p aero-usb --locked --test hid_usage_keyboard_fixture --test hid_usage_consumer_fixture`
+     - (or, to run everything: `cargo test -p aero-usb --locked`)
    - `npm -w web run test:unit -- src/input`
 
    If you don't have Node deps available (e.g. a constrained sandbox), you can still validate the
