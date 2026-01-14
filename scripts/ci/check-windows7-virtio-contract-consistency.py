@@ -4256,7 +4256,10 @@ def main() -> None:
         derived_min_limit: int | None = None
         contract_q = contract_queues.get(device_name)
         if contract_q:
-            derived_min_limit = max(contract_q.keys()) + 2
+            # Queue indices are expected to start at 0. Derive the minimum based on
+            # the number of queues present in the contract table rather than the
+            # max index to remain correct even if indices ever become non-contiguous.
+            derived_min_limit = len(contract_q) + 1
         errors.extend(
             validate_win7_virtio_inf_msi_settings(
                 device_name,
