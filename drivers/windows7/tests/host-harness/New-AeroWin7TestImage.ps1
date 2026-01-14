@@ -68,14 +68,18 @@ param(
   # using INTx (e.g. due to MSI/MSI-X not being enabled/working).
   [Parameter(Mandatory = $false)]
   [switch]$ExpectBlkMsi,
-
+  
   # If set, require virtio-net to be operating with MSI-X (not INTx).
   # This adds `--require-net-msix` to the scheduled task.
+  #
+  # The guest selftest will then fail the overall selftest if virtio-net is not using MSI-X
+  # (mode != msix) in its `virtio-net-msix` diagnostic marker.
   #
   # This is the guest-side complement to the host harness requirement flag:
   # - PowerShell: `Invoke-AeroVirtioWin7Tests.ps1 -RequireVirtioNetMsix`
   # - Python: `invoke_aero_virtio_win7_tests.py --require-virtio-net-msix`
   [Parameter(Mandatory = $false)]
+  [Alias("RequireVirtioNetMsix")]
   [switch]$RequireNetMsix,
 
   # If set, enable the guest selftest's end-to-end virtio-blk runtime resize test
@@ -671,7 +675,7 @@ $enableTestSigningCmd
 
 REM Configure auto-run on boot (runs as SYSTEM).
 schtasks /Create /F /TN "AeroVirtioSelftest" /SC ONSTART /RU SYSTEM ^
-  /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --http-url \"$HttpUrl\" --dns-host \"$DnsHost\"$udpArg$blkArg$expectBlkMsiArg$testBlkResizeArg$testBlkResetArg$testInputEventsArg$testInputEventsExtendedArg$testInputMediaKeysArg$testInputLedArg$testInputTabletEventsArg$testNetLinkFlapArg$requireNetMsixArg$requireSndArg$disableSndArg$disableSndCaptureArg$testSndCaptureArg$requireSndCaptureArg$requireNonSilenceArg$testSndBufferLimitsArg$allowVirtioSndTransitionalArg" >> "%LOG%" 2>&1
+  /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --http-url \"$HttpUrl\" --dns-host \"$DnsHost\"$udpArg$requireNetMsixArg$blkArg$expectBlkMsiArg$testBlkResizeArg$testBlkResetArg$testInputEventsArg$testInputEventsExtendedArg$testInputMediaKeysArg$testInputLedArg$testInputTabletEventsArg$testNetLinkFlapArg$requireSndArg$disableSndArg$disableSndCaptureArg$testSndCaptureArg$requireSndCaptureArg$requireNonSilenceArg$testSndBufferLimitsArg$allowVirtioSndTransitionalArg" >> "%LOG%" 2>&1
 
 echo [AERO] provision done >> "%LOG%"
 $autoRebootCmd
@@ -725,6 +729,9 @@ After reboot, the host harness can boot the VM and parse PASS/FAIL from COM1 ser
   - To fail the virtio-blk selftest when the driver is still using INTx (expected MSI/MSI-X), generate this media with
     `-ExpectBlkMsi` (adds `--expect-blk-msi` to the scheduled task). This is the guest-side complement to the host harness flags
     `-RequireMsi` / `--require-msi` (which enforce MSI/MSI-X based on virtio-*-irq markers).
+  - To fail the virtio-net selftest when the driver is not using MSI-X (expected MSI-X), generate this media with
+    `-RequireNetMsix` (adds `--require-net-msix` to the scheduled task). This is the guest-side complement to the host harness flag
+    `-RequireVirtioNetMsix` / `--require-virtio-net-msix` (which also performs a host-side MSI-X enable check via QMP).
   - The virtio-blk runtime resize test (`virtio-blk-resize`) is disabled by default (requires host-side QMP resize).
     - To enable it (required when running the host harness with `-WithBlkResize` / `--with-blk-resize`),
       generate this media with `-TestBlkResize` (adds `--test-blk-resize` to the scheduled task).
@@ -734,9 +741,6 @@ After reboot, the host harness can boot the VM and parse PASS/FAIL from COM1 ser
     - Default UDP port: 18081 (must match the host harness UDP echo server port).
     - If you need to override the port, regenerate this media with `-UdpPort <port>` (adds `--udp-port` to the scheduled task)
       and run the host harness with the same port.
-  - To fail the virtio-net selftest when the driver is still using INTx (expected MSI-X), generate this media with
-    `-RequireNetMsix` (adds `--require-net-msix` to the scheduled task). This is the guest-side complement to the host harness
-    flags `-RequireVirtioNetMsix` / `--require-virtio-net-msix`.
   - The virtio-input end-to-end event delivery tests (HID input reports) are disabled by default.
     - To enable keyboard/mouse injection (required when running the host harness with `-WithInputEvents` / `--with-input-events`),
       generate this media with `-TestInputEvents` (adds `--test-input-events` to the scheduled task).
