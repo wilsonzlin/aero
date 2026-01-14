@@ -42,6 +42,18 @@ fn parse_minimal_dxbc_and_iterate_chunks() {
 }
 
 #[test]
+fn parse_empty_dxbc_is_ok() {
+    let bytes = build_dxbc(&[]);
+    let file = DxbcFile::parse(&bytes).expect("empty DXBC should parse");
+    assert_eq!(file.header().magic, FourCC(*b"DXBC"));
+    assert_eq!(file.header().chunk_count, 0);
+    assert_eq!(file.chunks().count(), 0);
+    assert!(file.get_chunk(FourCC(*b"SHDR")).is_none());
+    assert!(file.find_first_shader_chunk().is_none());
+    assert!(file.debug_summary().contains("chunk_count=0"));
+}
+
+#[test]
 fn parse_allows_misaligned_chunk_offsets() {
     // Some real-world DXBC containers (and fuzzed inputs) may not maintain strict
     // 4-byte alignment for chunk starts. The parser should handle this safely.
