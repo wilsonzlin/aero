@@ -255,10 +255,12 @@ cargo xtask input --e2e
 # If you're running in a constrained sandbox, consider using safe-run:
 bash ./scripts/safe-run.sh cargo xtask input
 bash ./scripts/safe-run.sh cargo xtask input --rust-only
+bash ./scripts/safe-run.sh wasm-pack test --node crates/aero-wasm --test webusb_uhci_bridge
 
 # Note: `safe-run.sh` defaults to a 10-minute timeout (`AERO_TIMEOUT=600`). On a cold build,
-# `cargo xtask input` can exceed this. Bump the timeout if you see a timeout kill:
+# `cargo xtask input` / `wasm-pack test` can exceed this. Bump the timeout if you see a timeout kill:
 AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo xtask input --rust-only
+AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh wasm-pack test --node crates/aero-wasm --test webusb_uhci_bridge
 
 # You can also limit web wasm-pack builds to the core runtime package (useful for Playwright E2E):
 AERO_WASM_PACKAGES=core npm -w web run wasm:build
