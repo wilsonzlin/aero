@@ -321,10 +321,7 @@ impl UsbHidPassthroughHandle {
     ///
     /// This intentionally preserves guest-visible state like cached feature reports and report images.
     pub fn reset_host_state_for_restore(&self) {
-        let mut inner = self.inner.borrow_mut();
-        inner.feature_report_request_queue.clear();
-        inner.feature_report_requests_pending.clear();
-        inner.feature_report_requests_failed.clear();
+        self.inner.borrow_mut().reset_host_state_for_restore();
     }
 
     /// Drain the next pending host-side `GET_REPORT (Feature)` request issued by the guest.
@@ -716,14 +713,18 @@ impl UsbHidPassthrough {
         true
     }
 
+    pub(crate) fn reset_host_state_for_restore(&mut self) {
+        self.feature_report_request_queue.clear();
+        self.feature_report_requests_pending.clear();
+        self.feature_report_requests_failed.clear();
+    }
+
     fn cancel_control_transfer(&mut self) {
         // Feature report reads are serviced asynchronously by the host runtime (e.g. WebHID). When
         // the guest aborts a control transfer (by issuing a new SETUP) we should drop any queued or
         // in-flight requests so stale host completions cannot leak and unblock a future unrelated
         // transfer.
-        self.feature_report_request_queue.clear();
-        self.feature_report_requests_pending.clear();
-        self.feature_report_requests_failed.clear();
+        self.reset_host_state_for_restore();
     }
 
     fn set_max_pending_input_reports(&mut self, max: usize) {
@@ -2394,6 +2395,7 @@ impl IoSnapshot for UsbHidPassthroughHandle {
 mod tests {
     use super::*;
     use crate::device::AttachedUsbDevice;
+    use core::any::Any;
 
     fn w_le(bytes: &[u8], offset: usize) -> u16 {
         u16::from_le_bytes([bytes[offset], bytes[offset + 1]])
@@ -4407,5 +4409,96 @@ mod tests {
             .expect("expected new feature report request after reset");
         assert_eq!(second.request_id, 2);
         assert_eq!(second.report_id, 3);
+    }
+
+    #[test]
+    fn attached_device_reset_host_state_for_restore_clears_concrete_feature_report_state() {
+        let mut model = UsbHidPassthrough::new(
+            0x1234,
+            0x5678,
+            "Vendor".into(),
+            "Product".into(),
+            None,
+            sample_report_descriptor_feature_with_id(),
+            false,
+            DEFAULT_MAX_PACKET_SIZE,
+            0,
+            0,
+        );
+
+        assert_eq!(
+            model.handle_control_request(
+                SetupPacket {
+                    bm_request_type: 0x00,
+                    b_request: USB_REQUEST_SET_CONFIGURATION,
+                    w_value: 1,
+                    w_index: 0,
+                    w_length: 0,
+                },
+                None,
+            ),
+            ControlResponse::Ack
+        );
+
+        let setup = SetupPacket {
+            bm_request_type: 0xA1, // DeviceToHost | Class | Interface
+            b_request: HID_REQUEST_GET_REPORT,
+            w_value: (3u16 << 8) | 5u16,
+            w_index: 0,
+            w_length: 64,
+        };
+
+        assert_eq!(
+            model.handle_control_request(setup, None),
+            ControlResponse::Nak
+        );
+
+        // Simulate the host draining the request queue without completing the request (leaving the
+        // request marked as pending).
+        let req = model
+            .feature_report_request_queue
+            .pop_front()
+            .expect("expected queued feature report request");
+        assert_eq!(req.request_id, 1);
+        assert_eq!(req.report_id, 5);
+        assert!(
+            model.feature_report_requests_pending.contains_key(&req.report_id),
+            "expected request to remain pending after host drain"
+        );
+
+        // Seed a cached report for a different report ID to ensure host-state reset preserves
+        // guest-visible report images.
+        model.cached_feature_reports.insert(9, vec![9, 0xAA]);
+
+        let mut attached = AttachedUsbDevice::new(Box::new(model));
+        attached.reset_host_state_for_restore();
+
+        let any = attached.model_mut() as &mut dyn Any;
+        let webhid = any
+            .downcast_mut::<UsbHidPassthrough>()
+            .expect("expected concrete UsbHidPassthrough model");
+
+        assert!(webhid.feature_report_request_queue.is_empty());
+        assert!(webhid.feature_report_requests_pending.is_empty());
+        assert!(webhid.feature_report_requests_failed.is_empty());
+        assert_eq!(
+            webhid
+                .cached_feature_reports
+                .get(&9)
+                .map(|v| v.as_slice()),
+            Some(&[9, 0xAA][..])
+        );
+
+        // Re-issuing the request should allocate a fresh request ID.
+        assert_eq!(
+            webhid.handle_control_request(setup, None),
+            ControlResponse::Nak
+        );
+        let req2 = webhid
+            .feature_report_request_queue
+            .pop_front()
+            .expect("expected new feature report request after reset");
+        assert_eq!(req2.request_id, 2);
+        assert_eq!(req2.report_id, 5);
     }
 }
