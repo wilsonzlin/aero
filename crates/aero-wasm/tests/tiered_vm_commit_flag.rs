@@ -1,6 +1,6 @@
 #![cfg(target_arch = "wasm32")]
 
-use aero_cpu_core::state::{CpuState, MsrState};
+use aero_cpu_core::exec::{ExecutedTier, StepOutcome};
 use aero_wasm::{WasmTieredVm, jit_abi_constants};
 use js_sys::{Object, Reflect};
 use wasm_bindgen::closure::Closure;
@@ -55,39 +55,6 @@ fn jit_commit_flag_offset() -> u32 {
         .round() as u32
 }
 
-fn read_tsc(vm: &WasmTieredVm) -> u64 {
-    let a20_ptr = vm.a20_enabled_ptr();
-    assert_ne!(a20_ptr, 0, "a20_enabled_ptr must be non-zero");
-
-    let cpu_state_base = a20_ptr
-        .checked_sub(core::mem::offset_of!(CpuState, a20_enabled) as u32)
-        .expect("cpu_state_base underflow");
-    let tsc_off = core::mem::offset_of!(CpuState, msr) + core::mem::offset_of!(MsrState, tsc);
-    let tsc_ptr = cpu_state_base + (tsc_off as u32);
-
-    // Safety: `a20_enabled_ptr` points into the live `CpuState` within `WasmTieredVm`.
-    unsafe { core::ptr::read_unaligned(tsc_ptr as *const u64) }
-}
-
-fn run_one_jit_block(vm: &mut WasmTieredVm) {
-    let res = vm.run_blocks(1).expect("run_blocks");
-    let jit_blocks = Reflect::get(&res, &JsValue::from_str("jit_blocks"))
-        .expect("jit_blocks")
-        .as_f64()
-        .expect("jit_blocks is number")
-        .round() as u32;
-    let interp_blocks = Reflect::get(&res, &JsValue::from_str("interp_blocks"))
-        .expect("interp_blocks")
-        .as_f64()
-        .expect("interp_blocks is number")
-        .round() as u32;
-    assert_eq!(jit_blocks, 1, "expected one Tier-1 block execution");
-    assert_eq!(
-        interp_blocks, 0,
-        "expected no Tier-0 execution in this slice"
-    );
-}
-
 #[wasm_bindgen_test]
 fn tiered_vm_commit_flag_cleared_means_no_retirement_node() {
     let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x2000);
@@ -104,7 +71,7 @@ fn tiered_vm_commit_flag_cleared_means_no_retirement_node() {
 
     let commit_off = jit_commit_flag_offset();
 
-    let tsc_before = read_tsc(&vm);
+    let tsc_before = vm.cpu_tsc();
     {
         let closure = Closure::wrap(Box::new(
             move |table_index: u32, cpu_ptr: u32, _jit_ctx_ptr: u32| -> i64 {
@@ -120,9 +87,17 @@ fn tiered_vm_commit_flag_cleared_means_no_retirement_node() {
             },
         ) as Box<dyn FnMut(u32, u32, u32) -> i64>);
         let _guard = GlobalThisValueGuard::set("__aero_jit_call", closure.as_ref());
-        run_one_jit_block(&mut vm);
+        let outcome = vm.step_raw();
+        match outcome {
+            StepOutcome::Block {
+                tier: ExecutedTier::Jit,
+                instructions_retired,
+                ..
+            } => assert_eq!(instructions_retired, 0),
+            other => panic!("expected JIT block outcome, got {other:?}"),
+        }
     }
-    let tsc_after = read_tsc(&vm);
+    let tsc_after = vm.cpu_tsc();
 
     assert_eq!(
         tsc_after, tsc_before,
@@ -146,7 +121,7 @@ fn tiered_vm_commit_flag_default_means_retirement_node() {
 
     let commit_off = jit_commit_flag_offset();
 
-    let tsc_before = read_tsc(&vm);
+    let tsc_before = vm.cpu_tsc();
     {
         let closure = Closure::wrap(Box::new(
             move |table_index: u32, cpu_ptr: u32, _jit_ctx_ptr: u32| -> i64 {
@@ -161,9 +136,17 @@ fn tiered_vm_commit_flag_default_means_retirement_node() {
             },
         ) as Box<dyn FnMut(u32, u32, u32) -> i64>);
         let _guard = GlobalThisValueGuard::set("__aero_jit_call", closure.as_ref());
-        run_one_jit_block(&mut vm);
+        let outcome = vm.step_raw();
+        match outcome {
+            StepOutcome::Block {
+                tier: ExecutedTier::Jit,
+                instructions_retired,
+                ..
+            } => assert_eq!(instructions_retired, 2),
+            other => panic!("expected JIT block outcome, got {other:?}"),
+        }
     }
-    let tsc_after = read_tsc(&vm);
+    let tsc_after = vm.cpu_tsc();
 
     assert_eq!(
         tsc_after.wrapping_sub(tsc_before),
