@@ -1,4 +1,4 @@
-#![cfg(not(target_arch = "wasm32"))]
+#![cfg(all(not(target_arch = "wasm32"), feature = "shader-opcode-report"))]
 
 use assert_cmd::Command;
 use predicates::prelude::*;
