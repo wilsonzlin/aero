@@ -5092,20 +5092,47 @@ impl AerogpuD3d11Executor {
                 layout: gs_layout_key.clone(),
                 entry_point,
             };
-            let pipeline_layout = gs_pipeline_layout.clone();
-            let pipeline = self
-                .pipeline_cache
-                .get_or_create_compute_pipeline(&self.device, key, move |device, cs| {
-                    device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                        label: Some("aerogpu_cmd gs prepass compute pipeline"),
-                        layout: Some(pipeline_layout.as_ref()),
-                        module: cs,
-                        entry_point,
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+            // With bounded LRU shader caches, the GS module may be evicted between creation and
+            // first use. Recover by re-registering its WGSL and retrying.
+            let mut recovery_attempts_remaining = 2u8;
+            loop {
+                let pipeline_layout = gs_pipeline_layout.clone();
+                let result = self
+                    .pipeline_cache
+                    .get_or_create_compute_pipeline(&self.device, key.clone(), move |device, cs| {
+                        device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                            label: Some("aerogpu_cmd gs prepass compute pipeline"),
+                            layout: Some(pipeline_layout.as_ref()),
+                            module: cs,
+                            entry_point,
+                            compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        })
                     })
-                })
-                .map_err(|e| anyhow!("wgpu pipeline cache: {e:?}"))?;
-            pipeline as *const wgpu::ComputePipeline
+                    .map(|pipeline| pipeline as *const wgpu::ComputePipeline);
+
+                match result {
+                    Ok(pipeline) => break pipeline,
+                    Err(GpuError::MissingShaderModule { stage, hash })
+                        if recovery_attempts_remaining > 0
+                            && stage == aero_gpu::pipeline_key::ShaderStage::Compute
+                            && hash == gs_shader.wgsl_hash =>
+                    {
+                        recovery_attempts_remaining -= 1;
+                        let (rehash, _module) = self.pipeline_cache.get_or_create_shader_module(
+                            &self.device,
+                            stage,
+                            gs_shader.wgsl_source.as_str(),
+                            Some("aerogpu_cmd recovered shader module"),
+                        );
+                        if rehash != hash {
+                            bail!(
+                                "pipeline cache recovery produced unexpected shader hash (expected=0x{hash:032x}, got=0x{rehash:032x})"
+                            );
+                        }
+                    }
+                    Err(e) => return Err(anyhow!("wgpu pipeline cache: {e:?}")),
+                }
+            }
         };
         let gs_pipeline = unsafe { &*gs_pipeline_ptr };
 
@@ -5115,20 +5142,45 @@ impl AerogpuD3d11Executor {
                 layout: gs_layout_key.clone(),
                 entry_point: "cs_finalize",
             };
-            let pipeline_layout = gs_pipeline_layout.clone();
-            let pipeline = self
-                .pipeline_cache
-                .get_or_create_compute_pipeline(&self.device, key, move |device, cs| {
-                    device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                        label: Some("aerogpu_cmd gs prepass finalize compute pipeline"),
-                        layout: Some(pipeline_layout.as_ref()),
-                        module: cs,
-                        entry_point: "cs_finalize",
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+            let mut recovery_attempts_remaining = 2u8;
+            loop {
+                let pipeline_layout = gs_pipeline_layout.clone();
+                let result = self
+                    .pipeline_cache
+                    .get_or_create_compute_pipeline(&self.device, key.clone(), move |device, cs| {
+                        device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                            label: Some("aerogpu_cmd gs prepass finalize compute pipeline"),
+                            layout: Some(pipeline_layout.as_ref()),
+                            module: cs,
+                            entry_point: "cs_finalize",
+                            compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        })
                     })
-                })
-                .map_err(|e| anyhow!("wgpu pipeline cache: {e:?}"))?;
-            pipeline as *const wgpu::ComputePipeline
+                    .map(|pipeline| pipeline as *const wgpu::ComputePipeline);
+
+                match result {
+                    Ok(pipeline) => break pipeline,
+                    Err(GpuError::MissingShaderModule { stage, hash })
+                        if recovery_attempts_remaining > 0
+                            && stage == aero_gpu::pipeline_key::ShaderStage::Compute
+                            && hash == gs_shader.wgsl_hash =>
+                    {
+                        recovery_attempts_remaining -= 1;
+                        let (rehash, _module) = self.pipeline_cache.get_or_create_shader_module(
+                            &self.device,
+                            stage,
+                            gs_shader.wgsl_source.as_str(),
+                            Some("aerogpu_cmd recovered shader module"),
+                        );
+                        if rehash != hash {
+                            bail!(
+                                "pipeline cache recovery produced unexpected shader hash (expected=0x{hash:032x}, got=0x{rehash:032x})"
+                            );
+                        }
+                    }
+                    Err(e) => return Err(anyhow!("wgpu pipeline cache: {e:?}")),
+                }
+            }
         };
         let gs_finalize_pipeline = unsafe { &*gs_finalize_pipeline_ptr };
 
@@ -6440,20 +6492,45 @@ impl AerogpuD3d11Executor {
                 layout: gs_layout_key.clone(),
                 entry_point,
             };
-            let pipeline_layout = gs_pipeline_layout.clone();
-            let pipeline = self
-                .pipeline_cache
-                .get_or_create_compute_pipeline(&self.device, key, move |device, cs| {
-                    device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                        label: Some("aerogpu_cmd gs prepass compute pipeline"),
-                        layout: Some(pipeline_layout.as_ref()),
-                        module: cs,
-                        entry_point,
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+            let mut recovery_attempts_remaining = 2u8;
+            loop {
+                let pipeline_layout = gs_pipeline_layout.clone();
+                let result = self
+                    .pipeline_cache
+                    .get_or_create_compute_pipeline(&self.device, key.clone(), move |device, cs| {
+                        device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                            label: Some("aerogpu_cmd gs prepass compute pipeline"),
+                            layout: Some(pipeline_layout.as_ref()),
+                            module: cs,
+                            entry_point,
+                            compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        })
                     })
-                })
-                .map_err(|e| anyhow!("wgpu pipeline cache: {e:?}"))?;
-            pipeline as *const wgpu::ComputePipeline
+                    .map(|pipeline| pipeline as *const wgpu::ComputePipeline);
+
+                match result {
+                    Ok(pipeline) => break pipeline,
+                    Err(GpuError::MissingShaderModule { stage, hash })
+                        if recovery_attempts_remaining > 0
+                            && stage == aero_gpu::pipeline_key::ShaderStage::Compute
+                            && hash == gs_shader.wgsl_hash =>
+                    {
+                        recovery_attempts_remaining -= 1;
+                        let (rehash, _module) = self.pipeline_cache.get_or_create_shader_module(
+                            &self.device,
+                            stage,
+                            gs_shader.wgsl_source.as_str(),
+                            Some("aerogpu_cmd recovered shader module"),
+                        );
+                        if rehash != hash {
+                            bail!(
+                                "pipeline cache recovery produced unexpected shader hash (expected=0x{hash:032x}, got=0x{rehash:032x})"
+                            );
+                        }
+                    }
+                    Err(e) => return Err(anyhow!("wgpu pipeline cache: {e:?}")),
+                }
+            }
         };
         let gs_pipeline = unsafe { &*gs_pipeline_ptr };
 
@@ -6463,20 +6540,45 @@ impl AerogpuD3d11Executor {
                 layout: gs_layout_key.clone(),
                 entry_point: "cs_finalize",
             };
-            let pipeline_layout = gs_pipeline_layout.clone();
-            let pipeline = self
-                .pipeline_cache
-                .get_or_create_compute_pipeline(&self.device, key, move |device, cs| {
-                    device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                        label: Some("aerogpu_cmd gs prepass finalize compute pipeline"),
-                        layout: Some(pipeline_layout.as_ref()),
-                        module: cs,
-                        entry_point: "cs_finalize",
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+            let mut recovery_attempts_remaining = 2u8;
+            loop {
+                let pipeline_layout = gs_pipeline_layout.clone();
+                let result = self
+                    .pipeline_cache
+                    .get_or_create_compute_pipeline(&self.device, key.clone(), move |device, cs| {
+                        device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                            label: Some("aerogpu_cmd gs prepass finalize compute pipeline"),
+                            layout: Some(pipeline_layout.as_ref()),
+                            module: cs,
+                            entry_point: "cs_finalize",
+                            compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        })
                     })
-                })
-                .map_err(|e| anyhow!("wgpu pipeline cache: {e:?}"))?;
-            pipeline as *const wgpu::ComputePipeline
+                    .map(|pipeline| pipeline as *const wgpu::ComputePipeline);
+
+                match result {
+                    Ok(pipeline) => break pipeline,
+                    Err(GpuError::MissingShaderModule { stage, hash })
+                        if recovery_attempts_remaining > 0
+                            && stage == aero_gpu::pipeline_key::ShaderStage::Compute
+                            && hash == gs_shader.wgsl_hash =>
+                    {
+                        recovery_attempts_remaining -= 1;
+                        let (rehash, _module) = self.pipeline_cache.get_or_create_shader_module(
+                            &self.device,
+                            stage,
+                            gs_shader.wgsl_source.as_str(),
+                            Some("aerogpu_cmd recovered shader module"),
+                        );
+                        if rehash != hash {
+                            bail!(
+                                "pipeline cache recovery produced unexpected shader hash (expected=0x{hash:032x}, got=0x{rehash:032x})"
+                            );
+                        }
+                    }
+                    Err(e) => return Err(anyhow!("wgpu pipeline cache: {e:?}")),
+                }
+            }
         };
         let gs_finalize_pipeline = unsafe { &*gs_finalize_pipeline_ptr };
 
@@ -16242,25 +16344,53 @@ impl AerogpuD3d11Executor {
         // alive.
         let compute_pipeline_ptr = {
             let entry_point = shader.entry_point;
-            let pipeline_layout = pipeline_layout.clone();
             let key = ComputePipelineKey {
                 shader: shader.wgsl_hash,
                 layout: layout_key.clone(),
                 entry_point,
             };
-            let pipeline = self
-                .pipeline_cache
-                .get_or_create_compute_pipeline(&self.device, key, move |device, cs| {
-                    device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                        label: Some("aerogpu_cmd dispatch compute pipeline"),
-                        layout: Some(pipeline_layout.as_ref()),
-                        module: cs,
-                        entry_point,
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+            // With bounded LRU shader caches, shader modules referenced by hash may be evicted
+            // between `CREATE_SHADER_*` and first use. Recover by re-registering the WGSL and
+            // retrying pipeline creation.
+            let mut recovery_attempts_remaining = 2u8;
+            loop {
+                let pipeline_layout = pipeline_layout.clone();
+                let result = self
+                    .pipeline_cache
+                    .get_or_create_compute_pipeline(&self.device, key.clone(), move |device, cs| {
+                        device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                            label: Some("aerogpu_cmd dispatch compute pipeline"),
+                            layout: Some(pipeline_layout.as_ref()),
+                            module: cs,
+                            entry_point,
+                            compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        })
                     })
-                })
-                .map_err(|e| anyhow!("wgpu pipeline cache: {e:?}"))?;
-            pipeline as *const wgpu::ComputePipeline
+                    .map(|pipeline| pipeline as *const wgpu::ComputePipeline);
+
+                match result {
+                    Ok(pipeline) => break pipeline,
+                    Err(GpuError::MissingShaderModule { stage, hash })
+                        if recovery_attempts_remaining > 0
+                            && stage == aero_gpu::pipeline_key::ShaderStage::Compute
+                            && hash == shader.wgsl_hash =>
+                    {
+                        recovery_attempts_remaining -= 1;
+                        let (rehash, _module) = self.pipeline_cache.get_or_create_shader_module(
+                            &self.device,
+                            stage,
+                            shader.wgsl_source.as_str(),
+                            Some("aerogpu_cmd recovered shader module"),
+                        );
+                        if rehash != hash {
+                            bail!(
+                                "pipeline cache recovery produced unexpected shader hash (expected=0x{hash:032x}, got=0x{rehash:032x})"
+                            );
+                        }
+                    }
+                    Err(e) => return Err(anyhow!("wgpu pipeline cache: {e:?}")),
+                }
+            }
         };
         let compute_pipeline = unsafe { &*compute_pipeline_ptr };
 
