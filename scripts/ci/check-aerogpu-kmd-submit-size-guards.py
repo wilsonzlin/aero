@@ -127,6 +127,19 @@ def _require(body: str, what: str, pattern: str) -> str | None:
     return None
 
 
+def _forbid(body: str, what: str, pattern: str) -> str | None:
+    if re.search(pattern, body, re.S):
+        return f"{what}: forbidden pattern found: {pattern}"
+    return None
+
+
+def _strip_c_comments(text: str) -> str:
+    # Best-effort stripping for guardrail regexes.
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+    text = re.sub(r"//.*", "", text)
+    return text
+
+
 def main() -> int:
     if not SRC.is_file():
         print(f"skip: {SRC.relative_to(ROOT)} not found", file=sys.stderr)
@@ -143,6 +156,7 @@ def main() -> int:
     # --- AeroGpuSubmissionMetaTotalBytes (meta byte accounting) ---
     try:
         body = _extract_function(text, "AeroGpuSubmissionMetaTotalBytes")
+        body_nocomments = _strip_c_comments(body)
         errors.extend(
             e
             for e in [
@@ -157,6 +171,11 @@ def main() -> int:
                     "AeroGpuSubmissionMetaTotalBytes overflow sentinel",
                     r"0xFFFFFFFFFFFFFFFFull",
                 ),
+                _forbid(
+                    body_nocomments,
+                    "AeroGpuSubmissionMetaTotalBytes unsafe multiplication",
+                    r"Meta->AllocationCount\b\s*\)*\s*\*\s*\(?\s*sizeof\b",
+                ),
             ]
             if e
         )
@@ -166,6 +185,7 @@ def main() -> int:
     # --- AeroGpuBuildAndAttachMeta ---
     try:
         body = _extract_function(text, "AeroGpuBuildAndAttachMeta")
+        body_nocomments = _strip_c_comments(body)
         errors.extend(
             e
             for e in [
@@ -180,6 +200,11 @@ def main() -> int:
                     r"RtlSizeTMult\s*\(\s*\(?\s*(?:\(\s*SIZE_T\s*\)\s*)?AllocationCount\s*\)?\s*,\s*sizeof\s*\(\s*[^)]+\s*\)\s*,\s*&(?P<alloc_var>[A-Za-z0-9_]+)\s*\)\s*;.*?"
                     r"RtlSizeTAdd\s*\(\s*(?:FIELD_OFFSET|offsetof)\s*\(\s*AEROGPU_SUBMISSION_META\s*,\s*Allocations\s*\)\s*,\s*(?P=alloc_var)\s*,\s*&(?P<meta_var>[A-Za-z0-9_]+)\s*\)",
                 ),
+                _forbid(
+                    body_nocomments,
+                    "AeroGpuBuildAndAttachMeta unsafe multiplication",
+                    r"AllocationCount\b\s*\)*\s*\*\s*\(?\s*sizeof\b",
+                ),
             ]
             if e
         )
@@ -189,6 +214,7 @@ def main() -> int:
     # --- AeroGpuDdiSubmitCommand (legacy descriptor sizing) ---
     try:
         body = _extract_function(text, "AeroGpuDdiSubmitCommand")
+        body_nocomments = _strip_c_comments(body)
         errors.extend(
             e
             for e in [
@@ -203,6 +229,11 @@ def main() -> int:
                     r"RtlSizeTMult\s*\(\s*\(?\s*(?:\(\s*SIZE_T\s*\)\s*)?allocCount\s*\)?\s*,\s*sizeof\s*\(\s*[^)]+\s*\)\s*,\s*&(?P<alloc_var>[A-Za-z0-9_]+)\s*\)\s*;.*?"
                     r"RtlSizeTAdd\s*\(\s*[^,]*\b(?:aerogpu_legacy_submission_desc_header|struct\s+aerogpu_legacy_submission_desc_header)\b[^,]*,\s*(?P=alloc_var)\s*,\s*&descSize\s*\)",
                 ),
+                _forbid(
+                    body_nocomments,
+                    "AeroGpuDdiSubmitCommand unsafe multiplication",
+                    r"allocCount\b\s*\)*\s*\*\s*\(?\s*sizeof\b",
+                ),
             ]
             if e
         )
@@ -212,6 +243,7 @@ def main() -> int:
     # --- AeroGpuBuildAllocTable (cap + table size math) ---
     try:
         body = _extract_function(text, "AeroGpuBuildAllocTable")
+        body_nocomments = _strip_c_comments(body)
         errors.extend(
             e
             for e in [
@@ -226,6 +258,11 @@ def main() -> int:
                     r"RtlSizeTMult\s*\(\s*\(?\s*(?:\(\s*SIZE_T\s*\)\s*)?entryCount\s*\)?\s*,\s*sizeof\s*\(\s*[^)]+\s*\)\s*,\s*&(?P<entries_var>[A-Za-z0-9_]+)\s*\)\s*;.*?"
                     r"RtlSizeTAdd\s*\(\s*[^,]*\b(?:struct\s+)?aerogpu_alloc_table_header\b[^,]*,\s*(?P=entries_var)\s*,\s*&(?P<table_var>[A-Za-z0-9_]+)\s*\)",
                 ),
+                _forbid(
+                    body_nocomments,
+                    "AeroGpuBuildAllocTable unsafe multiplication",
+                    r"entryCount\b\s*\)*\s*\*\s*\(?\s*sizeof\b",
+                ),
             ]
             if e
         )
@@ -235,6 +272,7 @@ def main() -> int:
     # --- Scratch allocation sizing (tmp/hash structures) ---
     try:
         body = _extract_function(text, "AeroGpuAllocTableScratchAllocBlock")
+        body_nocomments = _strip_c_comments(body)
         errors.extend(
             e
             for e in [
@@ -248,6 +286,11 @@ def main() -> int:
                     body,
                     "AeroGpuAllocTableScratchAllocBlock hash/meta sizing",
                     r"RtlSizeTMult\s*\(\s*[^,]*\bHashCap\b[^,]*,\s*sizeof\s*\(\s*[^)]+\s*\)\s*,\s*&[A-Za-z0-9_]*Bytes\s*\)",
+                ),
+                _forbid(
+                    body_nocomments,
+                    "AeroGpuAllocTableScratchAllocBlock unsafe multiplication",
+                    r"(?:TmpEntriesCap|HashCap)\b\s*\)*\s*\*\s*\(?\s*sizeof\b",
                 ),
             ]
             if e
