@@ -1680,7 +1680,7 @@ fn tier1_inline_tlb_cross_page_store_fastpath_handles_noncontiguous_physical_pag
 
     // Pre-fill both virtual pages into the TLB, but map the second page (vpn 1) to physical page 2.
     let flags = TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM;
-    let page0_data = 0x0000 | flags;
+    let page0_data = flags;
     let page1_vaddr = 0x1000u64;
     let page1_data = 0x2000 | flags;
 
