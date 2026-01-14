@@ -541,6 +541,89 @@ fn wasmtime_backend_mmio_exit_rolls_back_code_version_bumps() {
 
 #[test]
 #[cfg(feature = "tier1-inline-tlb")]
+fn wasmtime_backend_mmio_exit_rolls_back_slow_path_code_version_bumps() {
+    fn read_u32_le(backend: &WasmtimeBackend<CpuState>, addr: u64) -> u32 {
+        let bytes = [
+            backend.read_u8(addr),
+            backend.read_u8(addr + 1),
+            backend.read_u8(addr + 2),
+            backend.read_u8(addr + 3),
+        ];
+        u32::from_le_bytes(bytes)
+    }
+
+    let entry = 0x1000u64;
+    let mmio_addr = (WasmtimeBackend::<CpuState>::DEFAULT_CPU_PTR as u64).saturating_add(0x1000);
+
+    // Store to RAM (slow-path `env.mem_write_u8`, which bumps versions), then trigger an MMIO load
+    // to force a rollback.
+    let mut builder = IrBuilder::new(entry);
+    let ram_addr = builder.const_int(Width::W64, 0x10);
+    let store_value = builder.const_int(Width::W8, 0xaa);
+    builder.store(Width::W8, ram_addr, store_value);
+    let mmio_addr = builder.const_int(Width::W64, mmio_addr);
+    let loaded = builder.load(Width::W8, mmio_addr);
+    builder.write_reg(
+        GuestReg::Gpr {
+            reg: Gpr::Rax,
+            width: Width::W8,
+            high8: false,
+        },
+        loaded,
+    );
+    let block = builder.finish(IrTerminator::Jump { target: 0x2000 });
+
+    let wasm = Tier1WasmCodegen::new().compile_block_with_options(
+        &block,
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_stores: false,
+            ..Default::default()
+        },
+    );
+
+    let mut backend: WasmtimeBackend<CpuState> = WasmtimeBackend::new();
+    let idx = backend.add_compiled_block(&wasm);
+
+    // Inspect table ptr/len.
+    let cpu_ptr = WasmtimeBackend::<CpuState>::DEFAULT_CPU_PTR as u64;
+    let table_ptr = read_u32_le(
+        &backend,
+        cpu_ptr + jit_ctx::CODE_VERSION_TABLE_PTR_OFFSET as u64,
+    ) as u64;
+    let table_len = read_u32_le(
+        &backend,
+        cpu_ptr + jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET as u64,
+    ) as u64;
+    assert_ne!(table_len, 0);
+    assert_ne!(table_ptr, 0);
+    let entry_off = table_ptr; // page 0
+    assert_eq!(read_u32_le(&backend, entry_off), 0);
+
+    // Memory starts zeroed.
+    assert_eq!(backend.read_u8(0x10), 0);
+
+    let mut cpu = CpuState {
+        rip: entry,
+        ..Default::default()
+    };
+    let exit = backend.execute(idx, &mut cpu);
+
+    assert!(exit.exit_to_interpreter);
+    assert_eq!(exit.next_rip, entry);
+    assert!(!exit.committed);
+
+    // The slow-path store should have been rolled back, and so should the version bump.
+    assert_eq!(backend.read_u8(0x10), 0);
+    assert_eq!(
+        read_u32_le(&backend, entry_off),
+        0,
+        "code-version bump must be rolled back when the block does not commit"
+    );
+}
+
+#[test]
+#[cfg(feature = "tier1-inline-tlb")]
 fn wasmtime_backend_cross_page_inline_store_bumps_both_pages() {
     fn read_u32_le(backend: &WasmtimeBackend<CpuState>, addr: u64) -> u32 {
         let bytes = [
