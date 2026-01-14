@@ -4280,7 +4280,8 @@ def main() -> int:
                             )
                             if bind_fail == "VIRTIO_INPUT_BIND_FAILED":
                                 print(
-                                    "FAIL: VIRTIO_INPUT_BIND_FAILED: selftest RESULT=PASS but virtio-input-bind test reported FAIL",
+                                    "FAIL: VIRTIO_INPUT_BIND_FAILED: selftest RESULT=PASS but virtio-input-bind test reported FAIL "
+                                    "(see serial log for bound service name / ConfigManager error details)",
                                     file=sys.stderr,
                                 )
                                 _print_tail(serial_log)
@@ -4288,7 +4289,8 @@ def main() -> int:
                                 break
                             if bind_fail == "MISSING_VIRTIO_INPUT_BIND":
                                 print(
-                                    "FAIL: MISSING_VIRTIO_INPUT_BIND: selftest RESULT=PASS but did not emit virtio-input-bind test marker",
+                                    "FAIL: MISSING_VIRTIO_INPUT_BIND: selftest RESULT=PASS but did not emit virtio-input-bind test marker "
+                                    "(guest selftest too old; update the image/selftest binary)",
                                     file=sys.stderr,
                                 )
                                 _print_tail(serial_log)
@@ -5574,7 +5576,8 @@ def main() -> int:
                                 )
                                 if bind_fail == "VIRTIO_INPUT_BIND_FAILED":
                                     print(
-                                        "FAIL: VIRTIO_INPUT_BIND_FAILED: selftest RESULT=PASS but virtio-input-bind test reported FAIL",
+                                        "FAIL: VIRTIO_INPUT_BIND_FAILED: selftest RESULT=PASS but virtio-input-bind test reported FAIL "
+                                        "(see serial log for bound service name / ConfigManager error details)",
                                         file=sys.stderr,
                                     )
                                     _print_tail(serial_log)
@@ -5582,7 +5585,8 @@ def main() -> int:
                                     break
                                 if bind_fail == "MISSING_VIRTIO_INPUT_BIND":
                                     print(
-                                        "FAIL: MISSING_VIRTIO_INPUT_BIND: selftest RESULT=PASS but did not emit virtio-input-bind test marker",
+                                        "FAIL: MISSING_VIRTIO_INPUT_BIND: selftest RESULT=PASS but did not emit virtio-input-bind test marker "
+                                        "(guest selftest too old; update the image/selftest binary)",
                                         file=sys.stderr,
                                     )
                                     _print_tail(serial_log)

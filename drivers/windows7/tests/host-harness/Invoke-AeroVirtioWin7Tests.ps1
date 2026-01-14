@@ -5936,7 +5936,7 @@ try {
       $scriptExitCode = 1
     }
     "MISSING_VIRTIO_INPUT_BIND" {
-      Write-Host "FAIL: MISSING_VIRTIO_INPUT_BIND: selftest RESULT=PASS but did not emit virtio-input-bind test marker"
+      Write-Host "FAIL: MISSING_VIRTIO_INPUT_BIND: selftest RESULT=PASS but did not emit virtio-input-bind test marker (guest selftest too old; update the image/selftest binary)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -5952,7 +5952,7 @@ try {
       $scriptExitCode = 1
     }
     "VIRTIO_INPUT_BIND_FAILED" {
-      Write-Host "FAIL: VIRTIO_INPUT_BIND_FAILED: selftest RESULT=PASS but virtio-input-bind test reported FAIL"
+      Write-Host "FAIL: VIRTIO_INPUT_BIND_FAILED: selftest RESULT=PASS but virtio-input-bind test reported FAIL (see serial log for bound service name / ConfigManager error details)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
