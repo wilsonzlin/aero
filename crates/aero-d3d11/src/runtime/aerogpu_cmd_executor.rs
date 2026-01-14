@@ -7406,6 +7406,8 @@ impl AerogpuD3d11Executor {
 
             out.push_str("@compute @workgroup_size(1)\n");
             out.push_str("fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {\n");
+            // Dispatch is per-vertex invocation (`primitive_count * VERTS_PER_PRIM`), so treat
+            // `global_invocation_id.x` as the vertex slot in the flattened triangle list.
             out.push_str("  let invocation_id: u32 = id.x;\n");
             if indexed_draw {
                 out.push_str(
