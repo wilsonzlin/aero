@@ -1042,19 +1042,50 @@ bool set_texture_locked(AeroGpuDevice* dev,
   return true;
 }
 
-bool unbind_resource_from_srvs_locked(AeroGpuDevice* dev, D3D10DDI_HDEVICE hDevice, aerogpu_handle_t resource) {
-  if (!dev || !resource) {
+static bool ResourcesAlias(const AeroGpuResource* a, const AeroGpuResource* b) {
+  if (!a || !b) {
+    return false;
+  }
+  if (a == b) {
+    return true;
+  }
+  // Shared resources can be opened multiple times (distinct Resource objects) yet
+  // refer to the same underlying allocation. Treat those as aliasing for D3D11
+  // SRV/RTV hazard mitigation.
+  if (a->share_token != 0 && a->share_token == b->share_token) {
+    return true;
+  }
+  if (a->backing_alloc_id != 0 &&
+      a->backing_alloc_id == b->backing_alloc_id &&
+      a->alloc_offset_bytes == b->alloc_offset_bytes) {
+    return true;
+  }
+  return false;
+}
+
+static bool ResourceHasAliasIdentity(const AeroGpuResource* res) {
+  return res && (res->share_token != 0 || res->backing_alloc_id != 0);
+}
+
+bool unbind_resource_from_srvs_locked(AeroGpuDevice* dev,
+                                      D3D10DDI_HDEVICE hDevice,
+                                      aerogpu_handle_t resource,
+                                      const AeroGpuResource* res) {
+  if (!dev || (resource == 0 && !res)) {
     return true;
   }
 
+  const bool check_alias = ResourceHasAliasIdentity(res);
   for (uint32_t slot = 0; slot < kMaxShaderResourceSlots; ++slot) {
-    if (dev->vs_srvs[slot] == resource) {
+    if ((resource != 0 && dev->vs_srvs[slot] == resource) ||
+        (check_alias && ResourcesAlias(FindLiveResourceByHandleLocked(dev, dev->vs_srvs[slot]), res))) {
       if (!set_texture_locked(dev, hDevice, AEROGPU_SHADER_STAGE_VERTEX, slot, 0)) {
         return false;
       }
       dev->vs_srvs[slot] = 0;
     }
-    if (dev->ps_srvs[slot] == resource) {
+    if ((resource != 0 && dev->ps_srvs[slot] == resource) ||
+        (check_alias && ResourcesAlias(FindLiveResourceByHandleLocked(dev, dev->ps_srvs[slot]), res))) {
       if (!set_texture_locked(dev, hDevice, AEROGPU_SHADER_STAGE_PIXEL, slot, 0)) {
         return false;
       }
@@ -1066,20 +1097,26 @@ bool unbind_resource_from_srvs_locked(AeroGpuDevice* dev, D3D10DDI_HDEVICE hDevi
 
 bool emit_set_render_targets_locked(AeroGpuDevice* dev);
 
-bool unbind_resource_from_outputs_locked(AeroGpuDevice* dev, D3D10DDI_HDEVICE hDevice, aerogpu_handle_t resource) {
-  if (!dev || resource == 0) {
+bool unbind_resource_from_outputs_locked(AeroGpuDevice* dev,
+                                         D3D10DDI_HDEVICE hDevice,
+                                         aerogpu_handle_t resource,
+                                         const AeroGpuResource* res) {
+  if (!dev || (resource == 0 && !res)) {
     return true;
   }
 
+  const bool check_alias = ResourceHasAliasIdentity(res);
   bool changed = false;
   for (uint32_t i = 0; i < dev->current_rtv_count && i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
-    if (dev->current_rtvs[i] == resource) {
+    if ((resource != 0 && dev->current_rtvs[i] == resource) ||
+        (check_alias && ResourcesAlias(dev->current_rtv_resources[i], res))) {
       dev->current_rtvs[i] = 0;
       dev->current_rtv_resources[i] = nullptr;
       changed = true;
     }
   }
-  if (dev->current_dsv == resource) {
+  if ((resource != 0 && dev->current_dsv == resource) ||
+      (check_alias && ResourcesAlias(dev->current_dsv_res, res))) {
     dev->current_dsv = 0;
     dev->current_dsv_res = nullptr;
     changed = true;
@@ -1133,7 +1170,7 @@ bool set_render_targets_locked(AeroGpuDevice* dev,
     if (seen) {
       continue;
     }
-    if (!unbind_resource_from_srvs_locked(dev, hDevice, handle)) {
+    if (!unbind_resource_from_srvs_locked(dev, hDevice, handle, new_rtv_resources[i])) {
       return false;
     }
   }
@@ -1145,7 +1182,7 @@ bool set_render_targets_locked(AeroGpuDevice* dev,
         break;
       }
     }
-    if (!dsv_seen && !unbind_resource_from_srvs_locked(dev, hDevice, dsv_handle)) {
+    if (!dsv_seen && !unbind_resource_from_srvs_locked(dev, hDevice, dsv_handle, dsv_res)) {
       return false;
     }
   }
@@ -1890,7 +1927,7 @@ void AEROGPU_APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOUR
   if (rt_changed && !emit_set_render_targets_locked(dev)) {
     ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
   }
-  if (handle && !unbind_resource_from_srvs_locked(dev, hDevice, handle)) {
+  if (handle && !unbind_resource_from_srvs_locked(dev, hDevice, handle, nullptr)) {
     // Best-effort: keep going with destroy, but surface the error.
     ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
   }
@@ -5280,13 +5317,15 @@ void AEROGPU_APIENTRY VsSetShaderResources(D3D10DDI_HDEVICE hDevice,
   // installing the SRVs.
   for (uint32_t i = 0; i < count; i++) {
     aerogpu_handle_t tex = 0;
+    AeroGpuResource* res = nullptr;
     if (pViews && pViews[i].pDrvPrivate) {
       auto* view = FromHandle<D3D10DDI_HSHADERRESOURCEVIEW, AeroGpuShaderResourceView>(pViews[i]);
       if (view) {
-        tex = view->resource ? view->resource->handle : view->texture;
+        res = view->resource;
+        tex = res ? res->handle : view->texture;
       }
     }
-    if (tex && !unbind_resource_from_outputs_locked(dev, hDevice, tex)) {
+    if ((tex || res) && !unbind_resource_from_outputs_locked(dev, hDevice, tex, res)) {
       return;
     }
   }
@@ -5340,13 +5379,15 @@ void AEROGPU_APIENTRY PsSetShaderResources(D3D10DDI_HDEVICE hDevice,
   // installing the SRVs.
   for (uint32_t i = 0; i < count; i++) {
     aerogpu_handle_t tex = 0;
+    AeroGpuResource* res = nullptr;
     if (pViews && pViews[i].pDrvPrivate) {
       auto* view = FromHandle<D3D10DDI_HSHADERRESOURCEVIEW, AeroGpuShaderResourceView>(pViews[i]);
       if (view) {
-        tex = view->resource ? view->resource->handle : view->texture;
+        res = view->resource;
+        tex = res ? res->handle : view->texture;
       }
     }
-    if (tex && !unbind_resource_from_outputs_locked(dev, hDevice, tex)) {
+    if ((tex || res) && !unbind_resource_from_outputs_locked(dev, hDevice, tex, res)) {
       return;
     }
   }

@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <utility>
 #include <vector>
 
 #include "aerogpu_d3d10_11_umd.h"
@@ -156,6 +157,137 @@ std::vector<aerogpu_handle_t> CollectCreateTexture2DHandles(const uint8_t* buf, 
 struct Harness {
   std::vector<uint8_t> last_stream;
   std::vector<HRESULT> errors;
+
+  struct Allocation {
+    AEROGPU_WDDM_ALLOCATION_HANDLE handle = 0;
+    std::vector<uint8_t> storage;
+  };
+
+  std::vector<AEROGPU_WDDM_ALLOCATION_HANDLE> alloc_sequence;
+  size_t alloc_index = 0;
+  std::vector<Allocation> allocations;
+
+  static uint64_t EstimateAllocSizeBytes(const AEROGPU_DDIARG_CREATERESOURCE* pDesc) {
+    if (!pDesc) {
+      return 0;
+    }
+    if (pDesc->Dimension == AEROGPU_DDI_RESOURCE_DIMENSION_BUFFER) {
+      return pDesc->ByteWidth;
+    }
+    if (pDesc->Dimension == AEROGPU_DDI_RESOURCE_DIMENSION_TEX2D) {
+      const uint64_t width = pDesc->Width ? static_cast<uint64_t>(pDesc->Width) : 1ull;
+      const uint64_t height = pDesc->Height ? static_cast<uint64_t>(pDesc->Height) : 1ull;
+      const uint32_t mip_levels = pDesc->MipLevels ? pDesc->MipLevels : 1u;
+      const uint32_t array_layers = pDesc->ArraySize ? pDesc->ArraySize : 1u;
+
+      // Test harness sizing heuristic:
+      // - Only used by unit tests in this directory.
+      // - Current tests allocate B8G8R8A8 and D24S8 resources which are 4 bytes/texel.
+      constexpr uint64_t bytes_per_texel = 4ull;
+
+      uint64_t total = 0;
+      uint64_t mip_w = width;
+      uint64_t mip_h = height;
+      for (uint32_t mip = 0; mip < mip_levels; ++mip) {
+        if (mip_w > UINT64_MAX / bytes_per_texel) {
+          return 0;
+        }
+        const uint64_t row_bytes = mip_w * bytes_per_texel;
+        if (mip_h != 0 && row_bytes > UINT64_MAX / mip_h) {
+          return 0;
+        }
+        const uint64_t mip_bytes = row_bytes * mip_h;
+        if (mip_bytes > UINT64_MAX - total) {
+          return 0;
+        }
+        total += mip_bytes;
+        mip_w = std::max<uint64_t>(1ull, mip_w / 2ull);
+        mip_h = std::max<uint64_t>(1ull, mip_h / 2ull);
+      }
+      if (array_layers != 0 && total > UINT64_MAX / static_cast<uint64_t>(array_layers)) {
+        return 0;
+      }
+      return total * static_cast<uint64_t>(array_layers);
+    }
+    return 0;
+  }
+
+  static Allocation* FindAlloc(Harness* h, AEROGPU_WDDM_ALLOCATION_HANDLE handle) {
+    if (!h || handle == 0) {
+      return nullptr;
+    }
+    for (auto& alloc : h->allocations) {
+      if (alloc.handle == handle) {
+        return &alloc;
+      }
+    }
+    return nullptr;
+  }
+
+  static HRESULT AEROGPU_APIENTRY AllocateBacking(void* user,
+                                                  const AEROGPU_DDIARG_CREATERESOURCE* pDesc,
+                                                  AEROGPU_WDDM_ALLOCATION_HANDLE* out_alloc_handle,
+                                                  uint64_t* out_alloc_size_bytes,
+                                                  uint32_t* out_row_pitch_bytes) {
+    if (!user || !pDesc || !out_alloc_handle || !out_alloc_size_bytes || !out_row_pitch_bytes) {
+      return E_INVALIDARG;
+    }
+    auto* h = reinterpret_cast<Harness*>(user);
+    if (h->alloc_index >= h->alloc_sequence.size()) {
+      return E_FAIL;
+    }
+    const AEROGPU_WDDM_ALLOCATION_HANDLE handle = h->alloc_sequence[h->alloc_index++];
+    if (handle == 0) {
+      return E_FAIL;
+    }
+
+    uint64_t size_bytes = EstimateAllocSizeBytes(pDesc);
+    if (size_bytes == 0) {
+      // Fallback: keep tests robust if new formats are added.
+      size_bytes = 4096;
+    }
+    if (size_bytes > static_cast<uint64_t>(SIZE_MAX)) {
+      return E_OUTOFMEMORY;
+    }
+
+    *out_alloc_handle = handle;
+    *out_alloc_size_bytes = size_bytes;
+    *out_row_pitch_bytes = 0; // use the default row pitch computed by the UMD
+
+    Allocation* alloc = FindAlloc(h, handle);
+    if (!alloc) {
+      Allocation a{};
+      a.handle = handle;
+      a.storage.assign(static_cast<size_t>(size_bytes), 0);
+      h->allocations.push_back(std::move(a));
+    } else if (alloc->storage.size() < static_cast<size_t>(size_bytes)) {
+      alloc->storage.resize(static_cast<size_t>(size_bytes), 0);
+    }
+    return S_OK;
+  }
+
+  static HRESULT AEROGPU_APIENTRY MapAllocation(void* user,
+                                                AEROGPU_WDDM_ALLOCATION_HANDLE alloc_handle,
+                                                void** out_cpu_ptr) {
+    if (!user || !out_cpu_ptr || alloc_handle == 0) {
+      return E_INVALIDARG;
+    }
+    auto* h = reinterpret_cast<Harness*>(user);
+    Allocation* alloc = FindAlloc(h, alloc_handle);
+    if (!alloc) {
+      return E_FAIL;
+    }
+    if (alloc->storage.empty()) {
+      alloc->storage.resize(4096, 0);
+    }
+    *out_cpu_ptr = alloc->storage.data();
+    return S_OK;
+  }
+
+  static void AEROGPU_APIENTRY UnmapAllocation(void* user, AEROGPU_WDDM_ALLOCATION_HANDLE alloc_handle) {
+    (void)user;
+    (void)alloc_handle;
+  }
 
   static HRESULT AEROGPU_APIENTRY SubmitCmdStream(void* user,
                                                   const void* cmd_stream,
@@ -662,6 +794,102 @@ bool TestSrvBindingUnbindsOnlyAliasedRtv() {
   return true;
 }
 
+bool TestSrvBindingUnbindsOnlyAllocAliasedRtv() {
+  TestDevice dev{};
+  if (!CreateDevice(&dev)) {
+    return false;
+  }
+
+  dev.callbacks.pfnAllocateBacking = &Harness::AllocateBacking;
+  dev.callbacks.pfnMapAllocation = &Harness::MapAllocation;
+  dev.callbacks.pfnUnmapAllocation = &Harness::UnmapAllocation;
+  dev.harness.alloc_sequence = {100, 101, 100}; // tex0 and tex_alias share allocation
+
+  TestResource tex0{};
+  TestResource tex1{};
+  TestResource tex_alias{};
+  TestRtv rtv0{};
+  TestRtv rtv1{};
+  TestSrv srv_alias{};
+
+  if (!CreateRenderTargetTexture2D(&dev, /*width=*/4, /*height=*/4, &tex0) ||
+      !CreateRenderTargetTexture2D(&dev, /*width=*/4, /*height=*/4, &tex1) ||
+      !CreateTexture2D(&dev, kD3D11BindShaderResource, kDxgiFormatB8G8R8A8Unorm, /*width=*/4, /*height=*/4, &tex_alias)) {
+    return false;
+  }
+  if (!CreateRTV(&dev, &tex0, &rtv0) || !CreateRTV(&dev, &tex1, &rtv1)) {
+    return false;
+  }
+  if (!CreateSRV(&dev, &tex_alias, &srv_alias)) {
+    return false;
+  }
+
+  // Bind MRTs first.
+  D3D10DDI_HRENDERTARGETVIEW rtvs[2] = {rtv0.hRtv, rtv1.hRtv};
+  D3D10DDI_HDEPTHSTENCILVIEW null_dsv{};
+  dev.device_funcs.pfnSetRenderTargets(dev.hDevice, /*num_views=*/2, rtvs, null_dsv);
+  if (!Check(dev.device_funcs.pfnFlush(dev.hDevice) == S_OK, "Flush (after SetRenderTargets alloc-aliased)")) {
+    return false;
+  }
+
+  std::vector<uint8_t> first_stream = dev.harness.last_stream;
+  if (!Check(!first_stream.empty(), "submission captured (after SetRenderTargets alloc-aliased)")) {
+    return false;
+  }
+  if (!ValidateStream(first_stream.data(), first_stream.size())) {
+    return false;
+  }
+  const std::vector<aerogpu_handle_t> created = CollectCreateTexture2DHandles(first_stream.data(), first_stream.size());
+  if (!Check(created.size() >= 3, "captured CREATE_TEXTURE2D handles (3 alloc-aliased)")) {
+    return false;
+  }
+
+  // Binding an SRV whose underlying allocation aliases RTV[0] must unbind RTV[0],
+  // but should preserve RTV[1].
+  D3D10DDI_HSHADERRESOURCEVIEW srvs[1] = {srv_alias.hSrv};
+  dev.device_funcs.pfnPsSetShaderResources(dev.hDevice, /*start_slot=*/0, /*num_views=*/1, srvs);
+  if (!Check(dev.device_funcs.pfnFlush(dev.hDevice) == S_OK, "Flush (after PSSetShaderResources alloc-aliased)")) {
+    return false;
+  }
+
+  if (!Check(!dev.harness.last_stream.empty(), "submission captured (after PSSetShaderResources alloc-aliased)")) {
+    return false;
+  }
+  if (!ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size())) {
+    return false;
+  }
+
+  const CmdLoc loc = FindLastOpcode(dev.harness.last_stream.data(), dev.harness.last_stream.size(), AEROGPU_CMD_SET_RENDER_TARGETS);
+  if (!Check(loc.hdr != nullptr, "SET_RENDER_TARGETS present (after PSSetShaderResources alloc-aliased)")) {
+    return false;
+  }
+  const auto* set_rt = reinterpret_cast<const aerogpu_cmd_set_render_targets*>(loc.hdr);
+  if (!Check(set_rt->color_count == 2, "SET_RENDER_TARGETS color_count==2 (alloc-aliased unbind)")) {
+    return false;
+  }
+  if (!Check(set_rt->colors[0] == 0, "SET_RENDER_TARGETS colors[0]==0 (alloc-aliased RTV[0] unbound)")) {
+    return false;
+  }
+  if (!Check(set_rt->colors[1] == created[1], "SET_RENDER_TARGETS colors[1]==RTV[1] (alloc-aliased preserved)")) {
+    return false;
+  }
+  for (uint32_t i = 2; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
+    if (!Check(set_rt->colors[i] == 0, "SET_RENDER_TARGETS colors[i]==0 (alloc-aliased trailing)")) {
+      return false;
+    }
+  }
+
+  dev.device_funcs.pfnDestroyShaderResourceView(dev.hDevice, srv_alias.hSrv);
+  dev.device_funcs.pfnDestroyRTV(dev.hDevice, rtv0.hRtv);
+  dev.device_funcs.pfnDestroyRTV(dev.hDevice, rtv1.hRtv);
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, tex_alias.hResource);
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, tex0.hResource);
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, tex1.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
 bool TestSetRenderTargetsUnbindsAliasedSrvsForMrt() {
   TestDevice dev{};
   if (!CreateDevice(&dev)) {
@@ -1083,6 +1311,101 @@ bool TestSrvBindingUnbindsOnlyAliasedRtvVs() {
   return true;
 }
 
+bool TestSrvBindingUnbindsOnlyAllocAliasedRtvVs() {
+  TestDevice dev{};
+  if (!CreateDevice(&dev)) {
+    return false;
+  }
+
+  dev.callbacks.pfnAllocateBacking = &Harness::AllocateBacking;
+  dev.callbacks.pfnMapAllocation = &Harness::MapAllocation;
+  dev.callbacks.pfnUnmapAllocation = &Harness::UnmapAllocation;
+  dev.harness.alloc_sequence = {100, 101, 100}; // tex0 and tex_alias share allocation
+
+  TestResource tex0{};
+  TestResource tex1{};
+  TestResource tex_alias{};
+  TestRtv rtv0{};
+  TestRtv rtv1{};
+  TestSrv srv_alias{};
+
+  if (!CreateRenderTargetTexture2D(&dev, /*width=*/4, /*height=*/4, &tex0) ||
+      !CreateRenderTargetTexture2D(&dev, /*width=*/4, /*height=*/4, &tex1) ||
+      !CreateTexture2D(&dev, kD3D11BindShaderResource, kDxgiFormatB8G8R8A8Unorm, /*width=*/4, /*height=*/4, &tex_alias)) {
+    return false;
+  }
+  if (!CreateRTV(&dev, &tex0, &rtv0) || !CreateRTV(&dev, &tex1, &rtv1)) {
+    return false;
+  }
+  if (!CreateSRV(&dev, &tex_alias, &srv_alias)) {
+    return false;
+  }
+
+  D3D10DDI_HRENDERTARGETVIEW rtvs[2] = {rtv0.hRtv, rtv1.hRtv};
+  D3D10DDI_HDEPTHSTENCILVIEW null_dsv{};
+  dev.device_funcs.pfnSetRenderTargets(dev.hDevice, /*num_views=*/2, rtvs, null_dsv);
+  if (!Check(dev.device_funcs.pfnFlush(dev.hDevice) == S_OK, "Flush (after SetRenderTargets alloc-aliased VS)")) {
+    return false;
+  }
+
+  std::vector<uint8_t> first_stream = dev.harness.last_stream;
+  if (!Check(!first_stream.empty(), "submission captured (after SetRenderTargets alloc-aliased VS)")) {
+    return false;
+  }
+  if (!ValidateStream(first_stream.data(), first_stream.size())) {
+    return false;
+  }
+  const std::vector<aerogpu_handle_t> created = CollectCreateTexture2DHandles(first_stream.data(), first_stream.size());
+  if (!Check(created.size() >= 3, "captured CREATE_TEXTURE2D handles (3 alloc-aliased VS)")) {
+    return false;
+  }
+
+  // Binding a VS SRV whose allocation aliases RTV[0] must unbind RTV[0], but
+  // should preserve RTV[1].
+  D3D10DDI_HSHADERRESOURCEVIEW srvs[1] = {srv_alias.hSrv};
+  dev.device_funcs.pfnVsSetShaderResources(dev.hDevice, /*start_slot=*/0, /*num_views=*/1, srvs);
+  if (!Check(dev.device_funcs.pfnFlush(dev.hDevice) == S_OK, "Flush (after VSSetShaderResources alloc-aliased)")) {
+    return false;
+  }
+
+  if (!Check(!dev.harness.last_stream.empty(), "submission captured (after VSSetShaderResources alloc-aliased)")) {
+    return false;
+  }
+  if (!ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size())) {
+    return false;
+  }
+
+  const CmdLoc loc = FindLastOpcode(dev.harness.last_stream.data(), dev.harness.last_stream.size(), AEROGPU_CMD_SET_RENDER_TARGETS);
+  if (!Check(loc.hdr != nullptr, "SET_RENDER_TARGETS present (after VSSetShaderResources alloc-aliased)")) {
+    return false;
+  }
+  const auto* set_rt = reinterpret_cast<const aerogpu_cmd_set_render_targets*>(loc.hdr);
+  if (!Check(set_rt->color_count == 2, "SET_RENDER_TARGETS color_count==2 (alloc-aliased VS unbind)")) {
+    return false;
+  }
+  if (!Check(set_rt->colors[0] == 0, "SET_RENDER_TARGETS colors[0]==0 (alloc-aliased VS RTV[0] unbound)")) {
+    return false;
+  }
+  if (!Check(set_rt->colors[1] == created[1], "SET_RENDER_TARGETS colors[1]==RTV[1] (alloc-aliased VS preserved)")) {
+    return false;
+  }
+  for (uint32_t i = 2; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
+    if (!Check(set_rt->colors[i] == 0, "SET_RENDER_TARGETS colors[i]==0 (alloc-aliased VS trailing)")) {
+      return false;
+    }
+  }
+
+  dev.device_funcs.pfnDestroyShaderResourceView(dev.hDevice, srv_alias.hSrv);
+  dev.device_funcs.pfnDestroyRTV(dev.hDevice, rtv0.hRtv);
+  dev.device_funcs.pfnDestroyRTV(dev.hDevice, rtv1.hRtv);
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, tex_alias.hResource);
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, tex0.hResource);
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, tex1.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
 bool TestSrvBindingUnbindsAllAliasedRtvSlots() {
   TestDevice dev{};
   if (!CreateDevice(&dev)) {
@@ -1487,6 +1810,119 @@ bool TestSrvBindingUnbindsAliasedDsvVs() {
   return true;
 }
 
+bool TestSetRenderTargetsUnbindsAllocAliasedSrvsForMrt() {
+  TestDevice dev{};
+  if (!CreateDevice(&dev)) {
+    return false;
+  }
+
+  dev.callbacks.pfnAllocateBacking = &Harness::AllocateBacking;
+  dev.callbacks.pfnMapAllocation = &Harness::MapAllocation;
+  dev.callbacks.pfnUnmapAllocation = &Harness::UnmapAllocation;
+  dev.harness.alloc_sequence = {100, 101, 100}; // tex0 and tex_alias share allocation
+
+  TestResource tex0{};
+  TestResource tex1{};
+  TestResource tex_alias{};
+  TestRtv rtv0{};
+  TestRtv rtv1{};
+  TestSrv srv_alias{};
+
+  if (!CreateRenderTargetTexture2D(&dev, /*width=*/4, /*height=*/4, &tex0) ||
+      !CreateRenderTargetTexture2D(&dev, /*width=*/4, /*height=*/4, &tex1) ||
+      !CreateTexture2D(&dev, kD3D11BindShaderResource, kDxgiFormatB8G8R8A8Unorm, /*width=*/4, /*height=*/4, &tex_alias)) {
+    return false;
+  }
+  if (!CreateRTV(&dev, &tex0, &rtv0) || !CreateRTV(&dev, &tex1, &rtv1)) {
+    return false;
+  }
+  if (!CreateSRV(&dev, &tex_alias, &srv_alias)) {
+    return false;
+  }
+
+  // Bind the aliased SRV first (both VS and PS). Binding tex0 as RTV later must
+  // evict the SRV from both stages even though it is a distinct handle.
+  D3D10DDI_HSHADERRESOURCEVIEW srvs[1] = {srv_alias.hSrv};
+  dev.device_funcs.pfnVsSetShaderResources(dev.hDevice, /*start_slot=*/0, /*num_views=*/1, srvs);
+  dev.device_funcs.pfnPsSetShaderResources(dev.hDevice, /*start_slot=*/0, /*num_views=*/1, srvs);
+  if (!Check(dev.device_funcs.pfnFlush(dev.hDevice) == S_OK, "Flush (after bind alloc-aliased SRV)")) {
+    return false;
+  }
+
+  std::vector<uint8_t> first_stream = dev.harness.last_stream;
+  if (!Check(!first_stream.empty(), "submission captured (after bind alloc-aliased SRV)")) {
+    return false;
+  }
+  if (!ValidateStream(first_stream.data(), first_stream.size())) {
+    return false;
+  }
+  const std::vector<aerogpu_handle_t> created = CollectCreateTexture2DHandles(first_stream.data(), first_stream.size());
+  if (!Check(created.size() >= 3, "captured CREATE_TEXTURE2D handles (3 alloc-aliased)")) {
+    return false;
+  }
+
+  // Bind MRTs; this must unbind SRVs that alias tex0's allocation.
+  D3D10DDI_HRENDERTARGETVIEW rtvs[2] = {rtv0.hRtv, rtv1.hRtv};
+  D3D10DDI_HDEPTHSTENCILVIEW null_dsv{};
+  dev.device_funcs.pfnSetRenderTargets(dev.hDevice, /*num_views=*/2, rtvs, null_dsv);
+  if (!Check(dev.device_funcs.pfnFlush(dev.hDevice) == S_OK, "Flush (after SetRenderTargets alloc-aliased MRT)")) {
+    return false;
+  }
+
+  if (!Check(!dev.harness.last_stream.empty(), "submission captured (after SetRenderTargets alloc-aliased MRT)")) {
+    return false;
+  }
+  if (!ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size())) {
+    return false;
+  }
+
+  const CmdLoc vs_loc =
+      FindLastSetTexture(dev.harness.last_stream.data(), dev.harness.last_stream.size(), AEROGPU_SHADER_STAGE_VERTEX, /*slot=*/0);
+  if (!Check(vs_loc.hdr != nullptr, "SET_TEXTURE present (VS slot 0) after alloc-aliased SetRenderTargets")) {
+    return false;
+  }
+  const auto* set_vs = reinterpret_cast<const aerogpu_cmd_set_texture*>(vs_loc.hdr);
+  if (!Check(set_vs->texture == 0, "VS SRV slot 0 unbound before alloc-aliased MRT bind")) {
+    return false;
+  }
+
+  const CmdLoc ps_loc =
+      FindLastSetTexture(dev.harness.last_stream.data(), dev.harness.last_stream.size(), AEROGPU_SHADER_STAGE_PIXEL, /*slot=*/0);
+  if (!Check(ps_loc.hdr != nullptr, "SET_TEXTURE present (PS slot 0) after alloc-aliased SetRenderTargets")) {
+    return false;
+  }
+  const auto* set_ps = reinterpret_cast<const aerogpu_cmd_set_texture*>(ps_loc.hdr);
+  if (!Check(set_ps->texture == 0, "PS SRV slot 0 unbound before alloc-aliased MRT bind")) {
+    return false;
+  }
+
+  const CmdLoc rt_loc =
+      FindLastOpcode(dev.harness.last_stream.data(), dev.harness.last_stream.size(), AEROGPU_CMD_SET_RENDER_TARGETS);
+  if (!Check(rt_loc.hdr != nullptr, "SET_RENDER_TARGETS present (after alloc-aliased MRT bind)")) {
+    return false;
+  }
+  const auto* set_rt = reinterpret_cast<const aerogpu_cmd_set_render_targets*>(rt_loc.hdr);
+  if (!Check(set_rt->color_count == 2, "SET_RENDER_TARGETS color_count==2 (after alloc-aliased MRT bind)")) {
+    return false;
+  }
+  if (!Check(set_rt->colors[0] == created[0], "SET_RENDER_TARGETS colors[0] (after alloc-aliased MRT bind)")) {
+    return false;
+  }
+  if (!Check(set_rt->colors[1] == created[1], "SET_RENDER_TARGETS colors[1] (after alloc-aliased MRT bind)")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyShaderResourceView(dev.hDevice, srv_alias.hSrv);
+  dev.device_funcs.pfnDestroyRTV(dev.hDevice, rtv0.hRtv);
+  dev.device_funcs.pfnDestroyRTV(dev.hDevice, rtv1.hRtv);
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, tex_alias.hResource);
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, tex0.hResource);
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, tex1.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
 } // namespace
 
 int main() {
@@ -1495,10 +1931,13 @@ int main() {
   ok &= TestSetRenderTargetsEncodesMrtAndClamps();
   ok &= TestSetRenderTargetsPreservesNullEntries();
   ok &= TestSetRenderTargetsUnbindsAliasedSrvsForMrt();
+  ok &= TestSetRenderTargetsUnbindsAllocAliasedSrvsForMrt();
   ok &= TestSetRenderTargetsUnbindsAliasedSrvsForDsv();
   ok &= TestSetRenderTargetsUnbindsOnlyAliasedSrvs();
   ok &= TestSrvBindingUnbindsOnlyAliasedRtv();
+  ok &= TestSrvBindingUnbindsOnlyAllocAliasedRtv();
   ok &= TestSrvBindingUnbindsOnlyAliasedRtvVs();
+  ok &= TestSrvBindingUnbindsOnlyAllocAliasedRtvVs();
   ok &= TestSrvBindingUnbindsAllAliasedRtvSlots();
   ok &= TestRotateResourceIdentitiesRemapsSrvsAndViews();
   ok &= TestSrvBindingUnbindsAliasedDsv();
