@@ -123,7 +123,7 @@ Windows 7 has no in-box virtio-input driver. A minimal approach is to ship a cus
 Contract note:
 
 - `AERO-W7-VIRTIO` v1 encodes the contract major version in the PCI Revision ID (`REV_01`).
-- The in-tree Win7 virtio-input INF is intentionally **revision-gated** (matches only `...&REV_01` HWIDs, including the keyboard/mouse `...&SUBSYS_...&REV_01` variants), so QEMU-style `REV_00` virtio-input devices will not bind unless you override the revision (for example `x-pci-revision=0x01`).
+- The in-tree Win7 virtio-input INF is intentionally **revision-gated** (matches only `...&REV_01` HWIDs, including the keyboard/mouse `...&SUBSYS_...&REV_01` variants and a strict fallback `PCI\VEN_1AF4&DEV_1052&REV_01`), so QEMU-style `REV_00` virtio-input devices will not bind unless you override the revision (for example `x-pci-revision=0x01`).
 - The driver also validates the Revision ID at runtime.
 
 ### Installation flow (test signing)

@@ -106,7 +106,7 @@ The in-tree INFs intentionally match only **Aero contract v1** hardware IDs (rev
 - `inf/aero_virtio_input.inf` (keyboard/mouse + generic fallback):
   - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01` (keyboard)
   - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01` (mouse)
-  - `PCI\VEN_1AF4&DEV_1052&REV_01` (generic fallback when subsystem IDs are not exposed; contract v1)
+  - `PCI\VEN_1AF4&DEV_1052&REV_01` (strict generic fallback for contract v1; shown as **Aero VirtIO Input Device**)
 - `inf/aero_virtio_tablet.inf` (tablet / absolute pointer):
   - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01` (tablet / absolute pointer)
 
@@ -115,8 +115,8 @@ Device Manager (**Aero VirtIO Keyboard** / **Aero VirtIO Mouse** / **Aero VirtIO
 only the generic fallback entry appear as **Aero VirtIO Input Device**.
 
 `inf/virtio-input.inf.disabled` is a legacy filename alias for workflows that still reference `virtio-input.inf`.
-Rename it to `virtio-input.inf` to enable it, but do **not** ship/install it alongside `aero_virtio_input.inf` —
-they are expected to match the same HWIDs, and overlapping INFs can lead to confusing binding/upgrade behavior.
+Rename it to `virtio-input.inf` to enable it, but do **not** ship/install it alongside `aero_virtio_input.inf` — both
+filenames match the same HWIDs, and overlapping INFs can lead to confusing binding/upgrade behavior.
 
 The INFs do **not** match:
 
@@ -642,8 +642,9 @@ Under QEMU, you typically also need `disable-legacy=on,x-pci-revision=0x01` for 
 the Aero contract major version via `REV_01`).
 
 Also note that stock QEMU virtio-input devices typically expose different (non-Aero) PCI subsystem IDs.
-`inf/aero_virtio_input.inf` includes a revision-gated generic fallback match (`PCI\VEN_1AF4&DEV_1052&REV_01`), so Windows can
-still bind the driver when the Aero subsystem IDs are unavailable or do not match.
+`inf/aero_virtio_input.inf` includes a strict, revision-gated generic fallback match (`PCI\VEN_1AF4&DEV_1052&REV_01`), so
+Windows can still bind the driver when the Aero subsystem IDs are unavailable or do not match (as long as the device reports
+`REV_01`, e.g. `x-pci-revision=0x01`).
 
 When the Aero subsystem IDs are present, Windows will show distinct device names (**Aero VirtIO Keyboard** / **Aero VirtIO Mouse**);
 otherwise it will bind via the generic fallback entry and show **Aero VirtIO Input Device**. Unknown subsystem IDs are allowed

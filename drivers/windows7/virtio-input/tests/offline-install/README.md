@@ -10,7 +10,7 @@ test images where you want input working immediately).
 >
 > - Keyboard/mouse (`aero_virtio_input.inf`):
 >   - contract IDs: `SUBSYS_00101AF4` / `SUBSYS_00111AF4`
->   - fallback (when subsystem IDs are not exposed): `PCI\VEN_1AF4&DEV_1052&REV_01`
+>   - strict fallback (when subsystem IDs are not exposed/expected): `PCI\VEN_1AF4&DEV_1052&REV_01`
 > - Tablet/absolute pointer (`aero_virtio_tablet.inf`): `SUBSYS_00121AF4`
 > - Optional legacy filename alias (`virtio-input.inf.disabled` → rename to `virtio-input.inf`):
 >   - byte-for-byte alias of `aero_virtio_input.inf` (from `[Version]` onward)

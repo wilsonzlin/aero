@@ -41,7 +41,14 @@ and expects the following contract-v1 HWIDs to be present in both `[Aero.NTx86]`
 
 - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01` (keyboard)
 - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01` (mouse)
-- `PCI\VEN_1AF4&DEV_1052&REV_01` (generic fallback when subsystem IDs are not exposed)
+- `PCI\VEN_1AF4&DEV_1052&REV_01` (strict fallback when subsystem IDs are not exposed/expected)
+
+This strict, revision-gated fallback keeps the INF contract-major safe (`REV_01`) while ensuring driver binding remains
+stable even if a contract-v1 virtio-input device ships with an unexpected subsystem ID.
+
+`virtio-input.inf.disabled` is only a **legacy filename alias** for `aero_virtio_input.inf` (from `[Version]` onward, it is
+intended to stay byte-for-byte identical; CI enforces this). Rename it to `virtio-input.inf` only if you need the legacy
+filename, and do not ship/install both filenames at the same time.
 
 It also enforces that `aero_virtio_input.inf` does not include the tablet subsystem ID (`SUBSYS_00121AF4`), so tablet
 devices bind via `aero_virtio_tablet.inf` when that INF is installed.
