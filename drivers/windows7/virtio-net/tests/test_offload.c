@@ -1070,6 +1070,41 @@ static void test_short_udp_header_rejected(void)
     assert(res == AEROVNET_OFFLOAD_ERR_FRAME_TOO_SHORT);
 }
 
+static void test_too_many_vlan_tags_rejected(void)
+{
+    /* Ethernet header + 3 VLAN tags + IPv4 + TCP. */
+    uint8_t pkt[26 + 20 + 20];
+    AEROVNET_TX_OFFLOAD_INTENT intent;
+    AEROVNET_VIRTIO_NET_HDR hdr;
+    AEROVNET_OFFLOAD_RESULT res;
+
+    build_eth(pkt, 0x8100);
+    /* VLAN tag 1: inner = VLAN */
+    pkt[14] = 0;
+    pkt[15] = 0;
+    pkt[16] = 0x81;
+    pkt[17] = 0x00;
+    /* VLAN tag 2: inner = VLAN */
+    pkt[18] = 0;
+    pkt[19] = 0;
+    pkt[20] = 0x81;
+    pkt[21] = 0x00;
+    /* VLAN tag 3: inner = IPv4 */
+    pkt[22] = 0;
+    pkt[23] = 0;
+    pkt[24] = 0x08;
+    pkt[25] = 0x00;
+
+    build_ipv4_tcp(pkt + 26, 0);
+    build_tcp_header(pkt + 26 + 20);
+
+    memset(&intent, 0, sizeof(intent));
+    intent.WantTcpChecksum = 1;
+
+    res = AerovNetBuildTxVirtioNetHdr(pkt, sizeof(pkt), &intent, &hdr, NULL);
+    assert(res == AEROVNET_OFFLOAD_ERR_UNSUPPORTED_ETHERTYPE);
+}
+
 int main(void)
 {
     test_ipv4_tcp_checksum_only();
@@ -1108,5 +1143,6 @@ int main(void)
     test_unsupported_ethertype();
     test_short_frame_rejected();
     test_short_udp_header_rejected();
+    test_too_many_vlan_tags_rejected();
     return 0;
 }
