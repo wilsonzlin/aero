@@ -54,7 +54,7 @@ Determinism note:
 
 - Win7 driver subtrees used by Aero:
   - required: `viostor`, `NetKVM`
-  - optional (best-effort): `viosnd`, `vioinput`
+  - optional (best-effort): `viosnd`, `vioinput` (some virtio-win releases may provide these for only one arch; Aero's driver-pack packaging omits one-arch-only optional drivers by default to avoid partial optional driver trees)
   - both arches: `x86` + `amd64`
 - Common root-level upstream notice files (best-effort): `LICENSE*`, `NOTICE*`, `README*`, etc.
 - Small metadata/version marker files (best-effort): `VERSION`, `virtio-win-version.txt`, etc.

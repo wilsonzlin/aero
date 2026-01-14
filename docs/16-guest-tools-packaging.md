@@ -361,7 +361,7 @@ Profiles (defaults):
 
 - `full` (default):
   - `-Drivers @('viostor','netkvm','viosnd','vioinput')`
-  - `-SpecPath tools/packaging/specs/win7-virtio-full.json` (optional `viosnd`/`vioinput` are best-effort)
+  - `-SpecPath tools/packaging/specs/win7-virtio-full.json` (optional `viosnd`/`vioinput` are best-effort and included only when present for **both** x86 and amd64)
 - `minimal`:
   - `-Drivers @('viostor','netkvm')`
   - `-SpecPath tools/packaging/specs/win7-virtio-win.json`

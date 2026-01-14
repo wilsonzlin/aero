@@ -106,7 +106,7 @@ powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-guest-tools-from
   -BuildId local
 ```
 
-By default this wrapper uses `-Profile full` (includes optional Win7 audio/input drivers when present; best-effort).
+By default this wrapper uses `-Profile full` (includes optional Win7 audio/input drivers when present for **both** x86 and amd64; best-effort).
 To build storage+network-only Guest Tools media, use `-Profile minimal`.
 
 This wrapper uses `docs/windows-device-contract-virtio-win.json` by default so the packaged
@@ -128,7 +128,7 @@ Convenience wrapper (Linux/macOS): `bash ./drivers/scripts/make-guest-tools-from
 
 Profiles (defaults):
 
-- `-Profile full` (default): uses `tools/packaging/specs/win7-virtio-full.json` (optional `viosnd`/`vioinput` are best-effort)
+- `-Profile full` (default): uses `tools/packaging/specs/win7-virtio-full.json` (optional `viosnd`/`vioinput` are best-effort and included only when present for **both** x86 and amd64)
 - `-Profile minimal`: uses `tools/packaging/specs/win7-virtio-win.json`
 
 For advanced/custom validation, you can override the profile’s spec selection via `-SpecPath`.
