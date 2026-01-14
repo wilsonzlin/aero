@@ -224,7 +224,10 @@ This trace is meant to be lightweight, so most values are logged as raw integers
   - `a0 = hDevice.pDrvPrivate`
   - `a1 = out pass count pointer` (either `pNumPasses` or the ValidateDevice args struct pointer)
 
-- Legacy fixed-function state (cached-only for Get*/StateBlock compatibility):
+- Legacy fixed-function state (cached for Get*/StateBlock compatibility; subsets are consumed by fixed-function emulation):
+  - `Device::SetTextureStageState`: the stage 0 `D3DTSS_*` subset can affect fixed-function pixel shader selection.
+  - `Device::SetTransform` / `Device::MultiplyTransform`: transforms can be consumed by fixed-function WVP paths (for some
+    fixed-function `D3DFVF_XYZ*` draws and the fixed-function `ProcessVertices` subset).
   - `Device::SetTextureStageState` / `Device::GetTextureStageState`
     - `a0 = hDevice.pDrvPrivate`
     - `a1 = pack_u32_u32(stage, state)`
