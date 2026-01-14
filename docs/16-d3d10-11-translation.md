@@ -465,8 +465,10 @@ bring up correctness incrementally:
   - Initial P1b limitations (explicit):
     - no stream-out / transform feedback (`CreateGeometryShaderWithStreamOutput`),
     - only stream 0 (no `EmitStream` / `CutStream` / `SV_StreamID`),
-    - adjacency input primitives (`*_ADJ` topologies / `lineadj`/`triadj`) are initially unsupported;
-      the runtime must reject them deterministically until the adjacency path is implemented,
+    - adjacency input primitives (`*_ADJ` topologies / `lineadj`/`triadj`) are initially unsupported
+      for real GS bytecode execution; the runtime MUST NOT silently treat them as non-adjacency
+      primitives. Until adjacency emulation is implemented, route through scaffolding emulation
+      (if present) or reject with a clear error,
     - **primitive restart** for indexed strip topologies is initially unsupported:
       - D3D11 encodes strip restart in the index buffer as `0xFFFF` (u16) / `0xFFFFFFFF` (u32).
       - Until we implement restart-aware strip assembly in compute, the runtime must reject draws
@@ -717,9 +719,17 @@ struct aerogpu_cmd_bind_shaders {
 Notes:
 
 - `AEROGPU_TOPOLOGY_TRIANGLEFAN` remains for the D3D9 path; D3D11 does not emit triangle fans.
-- Adjacency/patch topologies require the compute-expansion pipeline (GS/HS/DS emulation). Until
-  that is implemented, the runtime MUST reject draws using these topologies deterministically
-  (rendering “something” with the wrong topology is not acceptable because it silently misrenders).
+- Adjacency/patch topologies are not directly expressible in WebGPU render pipelines and therefore
+  require the compute-expansion pipeline (GS/HS/DS emulation).
+  - Until the relevant emulation kernels exist, the runtime MUST NOT silently reinterpret the
+    topology as a non-adjacency/list/strip topology (that would silently misrender).
+  - Acceptable behaviors are:
+    - route the draw through the emulation path (which may currently be placeholder/scaffolding for
+      plumbing tests), or
+    - reject the draw with a clear error.
+  - Implementation note: the in-tree D3D11 executor currently routes adjacency/patchlist topologies
+    through the emulation path to exercise render-pass splitting + indirect draw plumbing even when
+    GS/HS/DS are unbound.
 
 ### 2) Compute-expansion runtime pipeline
 
@@ -733,8 +743,10 @@ A draw uses compute expansion when **any** of the following are true:
 In the fully-general design, adjacency and patchlist topologies also route through this path even
 if GS/HS/DS are unbound (so the runtime can surface deterministic validation/errors and implement
 fixed-function tessellation semantics). Today, adjacency and patchlist topologies are accepted by
-`SET_PRIMITIVE_TOPOLOGY` but SHOULD be rejected at draw time until the adjacency/patch emulation
-kernels land.
+`SET_PRIMITIVE_TOPOLOGY`. Until the adjacency/patch emulation kernels land, the runtime MUST NOT
+silently reinterpret them as non-adjacency/list/strip topologies; acceptable behaviors are to route
+through the (possibly placeholder) emulation path or to reject with a clear error (see topology
+extension notes above).
 
 Otherwise, the existing “direct render pipeline” path is used (VS+PS render pipeline).
 
@@ -843,12 +855,13 @@ the runtime must define a sizing policy that is both safe (no OOB) and practical
 For initial bring-up (P2a), we use a conservative per-patch tess level `T` and generate a simple
 uniform tessellation pattern:
 
-- Clamp tess factors to the D3D11 max range:
-  - `tf = clamp(tf, 1.0, 64.0)`
+- Clamp tess factors to the D3D11 max range (robustness):
+  - If the factor is `NaN`/`Inf`, treat it as `0.0`.
+  - `tf = clamp(tf, 0.0, 64.0)`
 - Convert to integer segment counts:
-  - `seg = ceil(tf)` (as `u32`)
+  - `seg = round(tf)` (as `u32`)
 - Choose a single tessellation level for the patch:
-  - `T = max(edge_seg[0..2], inside_seg[0])`
+  - `T = max(edge_seg[0..2], inside_seg[0])` then `T = clamp(T, 1, 64)`
 
 This deliberately ignores per-edge variation and crack-free edge rules (P2d work). It is
 deterministic and implementable with minimal fixed-function emulation.
@@ -856,7 +869,8 @@ deterministic and implementable with minimal fixed-function emulation.
 Implementation note: in the compute-emulation pipeline, the HS patch-constant pass writes the raw
 tess factors into `tess_patch_constants[patch_instance_id]` (where
 `patch_instance_id = instance_id * patch_count + patch_id`). The tessellator/DS pass then derives
-`T` from those stored factors.
+`T` from those stored factors (either in a dedicated layout pass or as part of the tessellator/DS
+kernel).
 
 For a tri-domain patch tessellated at level `T`:
 
@@ -968,12 +982,13 @@ For `domain("quad")` we need two tessellation levels: one along U and one along 
 As with P2a, we use a conservative, uniform policy based on the HS patch-constant tess factors:
 
 - Clamp tess factors:
-  - `tf = clamp(tf, 1.0, 64.0)`
+  - If the factor is `NaN`/`Inf`, treat it as `0.0`.
+  - `tf = clamp(tf, 0.0, 64.0)`
 - Convert to integer segment counts:
-  - `seg = ceil(tf)` (as `u32`)
+  - `seg = round(tf)` (as `u32`)
 - Choose conservative U/V tessellation levels:
-  - `T_u = max(edge_seg[0], edge_seg[2], inside_seg[0])`
-  - `T_v = max(edge_seg[1], edge_seg[3], inside_seg[1])`
+  - `T_u = max(edge_seg[0], edge_seg[2], inside_seg[0])` then `T_u = clamp(T_u, 1, 64)`
+  - `T_v = max(edge_seg[1], edge_seg[3], inside_seg[1])` then `T_v = clamp(T_v, 1, 64)`
 
 Store:
 
@@ -1039,6 +1054,43 @@ Total sizes for a draw (pre-GS) are:
 
 Final output topology (when no GS is bound) is triangle list, and the render pass uses
 `drawIndexedIndirect`.
+
+#### 2.1.2c) Tessellation layout pass (deterministic prefix-sum; recommended)
+
+In D3D11, tess factors are produced by the HS patch-constant function, so the output vertex/index
+counts are not known until after HS has executed.
+
+A practical bring-up strategy is to insert a dedicated **layout pass** between HS patch-constant and
+DS evaluation that:
+
+1. derives a per-patch tessellation level from the stored tess factors,
+2. computes per-patch vertex/index counts,
+3. computes prefix-sum base offsets (`base_vertex`/`base_index`) so patches write into disjoint
+   ranges, and
+4. writes the final indirect-draw args for the post-tessellation draw.
+
+This avoids atomics and makes output ordering deterministic (useful for debugging and for strict
+system-value expectations). One simple, deterministic implementation is:
+
+- dispatch a single thread (`@workgroup_size(1)` and `global_invocation_id.x == 0`),
+- loop over `patch_id_total` in ascending order,
+- maintain running totals `{total_vertices, total_indices}`,
+- write `tess_patch_state[patch_id_total] = {tess_level_u/v, base_*, *_count}` and increment totals.
+
+**Capacity/overflow policy (required)**
+
+Because the scratch buffers have finite capacity (`params.out_max_vertices`, `params.out_max_indices`),
+the layout pass MUST enforce a deterministic “fit” policy when a patch would exceed remaining
+capacity. Two acceptable policies are:
+
+- **Whole-draw overflow:** set `counters.overflow = 1` (or a layout-pass-local overflow flag) and
+  force the indirect draw counts to 0 (draw nothing).
+- **Per-patch clamping (recommended):** clamp `tess_level` down until the patch fits in the remaining
+  space, and if it cannot fit even at `tess_level = 1`, drop the patch by writing
+  `{tess_level=0, vertex_count=0, index_count=0}`.
+
+The in-tree tessellation scaffolding uses a serial layout pass with per-patch clamping and writes
+the indirect args directly; see `crates/aero-d3d11/src/runtime/tessellation/layout_pass.rs`.
 
 #### 2.1.3) Geometry shader instancing (`SV_GSInstanceID`)
 
@@ -1392,22 +1444,30 @@ with an implementation-defined workgroup size chosen by the translator/runtime.
         indexing rule).
       - Writes tess factors to `tess_patch_constants[patch_instance_id]` (`SV_TessFactor` /
         `SV_InsideTessFactor`).
-      - Computes tessellation level(s) and stores them in `tess_patch_state[patch_instance_id]`:
-        - P2a tri-domain: `tess_level_u = T`, `tess_level_v = 0`
-        - P2b quad-domain: `tess_level_u = T_u`, `tess_level_v = T_v`
-      - Computes per-patch output sizes and allocates output ranges (recommended; uses atomics):
-        - Per-patch counts (triangle list output):
-          - tri domain: `vertex_count = (T + 1)(T + 2)/2`, `index_count = 3*T*T`
-          - quad domain: `vertex_count = (T_u + 1)(T_v + 1)`, `index_count = 6*T_u*T_v`
-        - `base_vertex = atomicAdd(&counters.out_vertex_count, vertex_count)`
-        - `base_index  = atomicAdd(&counters.out_index_count, index_count)`
-        - Store `{base_vertex, vertex_count, base_index, index_count}` into
-          `tess_patch_state[patch_instance_id]`
-        - If the ranges exceed `params.out_max_*`, set `counters.overflow = 1` and do not write.
+      - Note: HS patch-constant produces the tess factors but does not inherently know output buffer
+        capacities. Allocation of per-patch output ranges can be done either:
+        - in a separate deterministic tessellation **layout pass** (recommended; see “Tessellation
+          layout pass”), or
+        - via atomics directly in the HS patch-constant pass (more parallel, but output ordering is
+          implementation-defined).
       - Writes any additional patch constants needed by DS to scratch (per patch; P2 follow-up).
       - Dispatch mapping (recommended):
         - `global_invocation_id.x` = `patch_id` (`0..patch_count`)
         - `global_invocation_id.y` = `instance_id` (`0..instance_count`) (optional; may flatten instances)
+    - Tessellation layout pass (recommended; deterministic):
+      - Reads tess factors from `tess_patch_constants`.
+      - Derives tessellation level(s) and stores them in `tess_patch_state[patch_instance_id]`:
+        - P2a tri-domain: `tess_level_u = T`, `tess_level_v = 0`
+        - P2b quad-domain: `tess_level_u = T_u`, `tess_level_v = T_v`
+      - Computes per-patch counts (triangle list output) and base offsets:
+        - tri domain: `vertex_count = (T + 1)(T + 2)/2`, `index_count = 3*T*T`
+        - quad domain: `vertex_count = (T_u + 1)(T_v + 1)`, `index_count = 6*T_u*T_v`
+        - Writes `{base_vertex, vertex_count, base_index, index_count}` into
+          `tess_patch_state[patch_instance_id]` (prefix-sum base offsets).
+      - Enforces capacity (`params.out_max_*`) deterministically (see “Tessellation layout pass”).
+      - Writes the indirect args for the tess output stream when no GS is bound.
+      - Dispatch mapping:
+        - one workgroup, one active lane (`@workgroup_size(1)`; `global_invocation_id.x == 0`).
     - HS control-point pass (per patch control point):
       - Reads control points from `vs_out`.
       - Writes HS output control points to scratch (may be in-place in `vs_out` for bring-up).
@@ -1428,9 +1488,14 @@ with an implementation-defined workgroup size chosen by the translator/runtime.
         - `global_invocation_id.x` = `patch_id`
         - `global_invocation_id.y` = `instance_id`
         - `global_invocation_id.z` = `domain_vertex_id` (`0..V_patch_max`)
-        - Early-return if `domain_vertex_id >= tess_patch_state[patch_instance_id].vertex_count`.
+        - Early-return if `domain_vertex_id >= tess_patch_state[patch_instance_id].vertex_count` (or
+          if `tess_level_u == 0`).
       - Writes `tess_out_vertices` + `tess_out_indices` (index generation may be a separate pass).
-      - If **no GS** is bound, write final `indirect_args` via the standard finalize step.
+      - Indirect args (when no GS is bound):
+        - if using the deterministic tessellation layout pass, it typically writes `indirect_args`
+          directly and no additional finalize step is required, or
+        - if using atomic/counter-based allocation, write final `indirect_args` via the standard
+          finalize step.
       - If a **GS** is bound, treat `tess_out_*` as an intermediate stream and proceed to the GS
         phase; the final `indirect_args` must be written for the GS output stream instead.
 
@@ -1737,6 +1802,9 @@ struct TessPatchState {
   //
   // For P2a tri-domain integer tessellation, `tess_level_u` stores `T` and `tess_level_v` is 0.
   // For future quad-domain tessellation, `tess_level_u/v` can store independent U/V levels.
+  //
+  // `tess_level_u == 0` indicates the patch was dropped (e.g. due to scratch capacity limits) and
+  // subsequent passes must treat `vertex_count/index_count` as 0.
   tess_level_u: u32;
   tess_level_v: u32;
 
