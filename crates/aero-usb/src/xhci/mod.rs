@@ -429,6 +429,14 @@ pub struct XhciController {
     ///
     /// This is primarily used by wrapper tests to validate PCI Bus Master Enable (BME) gating.
     last_tick_dma_dword: u32,
+    /// Pending "DMA-on-RUN" probe.
+    ///
+    /// The xHCI model performs a small DMA read from `CRCR` on the rising edge of `USBCMD.RUN` and
+    /// uses it to raise a synthetic interrupt. Some integrations (notably the PC platform) route
+    /// MMIO via a bus that cannot provide a re-entrant DMA view during the MMIO write itself. To
+    /// support those integrations, the controller latches the rising edge and will perform the DMA
+    /// read + interrupt on the next tick once DMA is available.
+    pending_dma_on_run: bool,
 
     // --- Endpoint transfer execution (subset) ---
     active_endpoints: Vec<ActiveEndpoint>,
@@ -465,6 +473,7 @@ impl fmt::Debug for XhciController {
             .field("dropped_event_trbs", &self.dropped_event_trbs)
             .field("time_ms", &self.time_ms)
             .field("last_tick_dma_dword", &self.last_tick_dma_dword)
+            .field("pending_dma_on_run", &self.pending_dma_on_run)
             .field("interrupter0", &self.interrupter0)
             .field("active_endpoints", &self.active_endpoints.len())
             .field("transfer_executors", &active_execs)
@@ -523,6 +532,7 @@ impl XhciController {
             dropped_event_trbs: 0,
             time_ms: 0,
             last_tick_dma_dword: 0,
+            pending_dma_on_run: false,
             active_endpoints: Vec::new(),
             ep0_control_td: vec![ControlTdState::default(); slot_count],
             transfer_executors,
@@ -678,6 +688,10 @@ impl XhciController {
     /// implementation that provides open-bus reads and ignores writes.
     pub fn tick_1ms_with_dma(&mut self, mem: &mut dyn MemoryBus) {
         self.tick_ports_1ms();
+
+        if self.pending_dma_on_run {
+            self.dma_on_run(mem);
+        }
 
         // Minimal DMA touch-point used by wrapper tests: read a dword from CRCR while the
         // controller is running.
@@ -2441,7 +2455,15 @@ impl XhciController {
                 // Master Enable (BME) gating in the emulator wrapper.
                 let was_running = (prev & regs::USBCMD_RUN) != 0;
                 let now_running = (self.usbcmd & regs::USBCMD_RUN) != 0;
-                if !was_running && now_running {
+                if was_running && !now_running {
+                    // Dropping RUN cancels any deferred DMA-on-RUN probe.
+                    self.pending_dma_on_run = false;
+                } else if !was_running && now_running {
+                    // Latch the rising edge and attempt to execute the DMA-on-RUN probe immediately.
+                    // If DMA is not available for this MMIO access (e.g. Bus Mastering disabled or
+                    // the integration doesn't provide a DMA memory view for MMIO), the probe will
+                    // be performed later from `tick_1ms_with_dma`.
+                    self.pending_dma_on_run = true;
                     self.dma_on_run(mem);
                 }
             }
@@ -2538,6 +2560,7 @@ impl XhciController {
         self.command_ring = None;
         self.cmd_kick = false;
         self.mfindex = 0;
+        self.pending_dma_on_run = false;
 
         for slot in self.slots.iter_mut() {
             *slot = SlotState::default();
@@ -3299,16 +3322,20 @@ impl XhciController {
     }
 
     fn dma_on_run(&mut self, mem: &mut dyn MemoryBus) {
+        if !self.pending_dma_on_run {
+            return;
+        }
         if !mem.dma_enabled() {
             return;
         }
+
         // Read a dword from CRCR and surface an interrupt. The data itself is ignored; the goal is
-        // to touch the memory bus when bus mastering is enabled so the emulator wrapper can gate
-        // the access.
+        // to touch the memory bus when bus mastering is enabled so wrappers can gate the access.
         let paddr = self.crcr & !0x3f;
         let mut buf = [0u8; 4];
         mem.read_bytes(paddr, &mut buf);
         self.interrupter0.set_interrupt_pending(true);
+        self.pending_dma_on_run = false;
     }
 
     /// Traverse the attached USB topology and reset any host-side asynchronous state that cannot

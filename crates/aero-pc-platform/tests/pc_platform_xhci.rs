@@ -575,6 +575,11 @@ fn pc_platform_routes_xhci_intx_via_ioapic_in_apic_mode() {
     let usbcmd_addr = bar0_base + caplength;
     let usbsts_addr = usbcmd_addr + 4;
 
+    // Enable Bus Mastering so the xHCI model can run its DMA-on-RUN probe and raise the synthetic
+    // event interrupt used by these integration tests.
+    let command = read_cfg_u16(&mut pc, bdf, 0x04);
+    write_cfg_u16(&mut pc, bdf, 0x04, command | 0x0004);
+
     // Start the controller. The PC platform tick loop runs xHCI at a 1ms cadence.
     pc.memory.write_u32(usbcmd_addr, 1);
     pc.tick(1_000_000);
@@ -643,6 +648,11 @@ fn pc_platform_xhci_msi_triggers_lapic_vector_and_suppresses_intx() {
 
     let usbcmd_addr = bar0_base + caplength;
     let usbsts_addr = usbcmd_addr + 4;
+
+    // Enable Bus Mastering so the xHCI model can run its DMA-on-RUN probe and raise the synthetic
+    // event interrupt used by these integration tests.
+    let command = read_cfg_u16(&mut pc, bdf, 0x04);
+    write_cfg_u16(&mut pc, bdf, 0x04, command | 0x0004);
 
     // Start the controller; the device will assert an interrupt on the first RUN edge.
     pc.memory.write_u32(usbcmd_addr, 1);
