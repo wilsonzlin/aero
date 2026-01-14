@@ -19,9 +19,10 @@ use aero_usb::MemoryBus;
 /// In wasm32 builds this is implemented by copying from/to the module's linear memory via raw
 /// pointers.
 ///
-/// In shared-memory (`+atomics`) builds, the backing [`WebAssembly.Memory`] is shared across wasm
-/// threads. Unsynchronized non-atomic reads/writes would be Rust UB (data race), so the wasm32
-/// implementation uses byte-granular atomic loads/stores.
+/// In shared-memory (threaded WASM) builds (`feature="wasm-threaded"`), the backing
+/// [`WebAssembly.Memory`] is shared across wasm threads (requires `+atomics`). Unsynchronized
+/// non-atomic reads/writes would be Rust UB (data race), so the wasm32 implementation uses
+/// byte-granular atomic loads/stores.
 ///
 /// In unit tests we can provide an in-memory implementation.
 pub(crate) trait LinearMemory {

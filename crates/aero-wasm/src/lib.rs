@@ -3168,7 +3168,7 @@ impl CpuWorkerDemo {
         {
             let _ = ram_size_bytes;
             Err(JsValue::from_str(
-                "CpuWorkerDemo requires the threaded WASM build (+atomics + shared memory).",
+                "CpuWorkerDemo requires the threaded WASM build (enable the `wasm-threaded` feature; requires shared memory + atomics).",
             ))
         }
     }

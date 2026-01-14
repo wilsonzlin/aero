@@ -73,14 +73,16 @@ Build orchestration lives in `web/scripts/build_wasm.mjs`.
 - **Release** (`npm run wasm:build:release`): tuned for runtime performance. In addition to
   `wasm-pack --release`, the build injects explicit Rust codegen flags:
   - `-C opt-level=3`
-  - `-C lto=thin` (chosen as a strong perf/compile-time tradeoff for large WASM builds)
   - `-C codegen-units=1`
-  - `-C embed-bitcode=yes` (required for LTO; Cargo defaults to `embed-bitcode=no`)
 
 WASM target features are injected via `RUSTFLAGS` (scoped to the build command only):
 
 - Always: `+simd128,+bulk-memory`
 - Threaded: `+atomics,+mutable-globals` plus shared-memory link args.
+
+Threaded/shared-memory packages also enable the `wasm-threaded` Cargo feature to ensure the Rust
+codebase takes the shared-memory-safe paths (byte-granular atomic loads/stores, shared scanout
+state, etc).
 
 ## Optional `wasm-opt`
 
