@@ -27,7 +27,15 @@ class GuestSelftestVirtioBlkResetErrCodesTests(unittest.TestCase):
             self.text,
         )
 
+    def test_open_physical_drive_preserves_last_error_for_callers(self) -> None:
+        # Some callers (e.g. virtio-blk-resize) use GetLastError() after OpenPhysicalDriveForIoctl fails.
+        # Ensure the helper restores the CreateFile() error code after logging so the marker err=... is not
+        # clobbered to 0 by unrelated Win32/CRT calls inside the logger.
+        self.assertRegex(
+            self.text,
+            r"(?s)virtio-blk: CreateFile\(PhysicalDrive%lu\) failed err=%lu.{0,200}SetLastError\(err\);",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
-

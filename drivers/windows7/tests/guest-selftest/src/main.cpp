@@ -744,6 +744,8 @@ static HANDLE OpenPhysicalDriveForIoctl(Logger& log, DWORD disk_number) {
 
   log.Logf("virtio-blk: CreateFile(PhysicalDrive%lu) failed err=%lu", static_cast<unsigned long>(disk_number),
            static_cast<unsigned long>(err));
+  // Preserve the CreateFile() failure code for callers (log.Logf() may clobber LastError).
+  SetLastError(err);
   return INVALID_HANDLE_VALUE;
 }
 
