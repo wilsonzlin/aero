@@ -136,6 +136,10 @@ Note: the `@group(N)` index is **stage-scoped** in Aero. The stable stage→grou
 - `@group(1)`: pixel/fragment shader (PS)
 - `@group(2)`: compute shader (CS)
 - `@group(3)`: reserved internal / emulation group (GS/HS/DS resources + compute-expansion scratch)
+- `@group(4)`: optional internal-only group used by some helper pipelines (e.g. vertex pulling)
+  - This requires a device limit `maxBindGroups >= 5`. The baseline design aims to fit into the
+    WebGPU minimum (`maxBindGroups == 4`) by merging internal-only bindings into `@group(3)` using the
+    reserved `@binding >= 256` range.
 
 The example above shows the vertex shader group; a pixel shader cbuffer declaration would use
 `@group(1)` instead (see “Resource binding mapping”).
