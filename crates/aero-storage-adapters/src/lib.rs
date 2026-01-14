@@ -32,7 +32,8 @@
 //! `aero-virtio` provides a blanket impl so a boxed `VirtualDisk` can be used directly as a virtio
 //! backend:
 //!
-//! - `impl<T: aero_storage::VirtualDisk + ?Sized> aero_virtio::devices::blk::BlockBackend for Box<T>`
+//! - `impl<T: aero_storage::VirtualDisk> aero_virtio::devices::blk::BlockBackend for Box<T>` (plus
+//!   impls for `Box<dyn VirtualDisk>` / `Box<dyn VirtualDisk + Send>`)
 //!
 //! If you need the reverse direction (reusing `aero-storage` disk wrappers on top of an existing
 //! device/backend trait object), use the reverse adapters provided by the corresponding device

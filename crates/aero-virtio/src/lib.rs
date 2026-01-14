@@ -11,7 +11,8 @@
 //! and use:
 //!
 //! - [`devices::blk::VirtioBlkDisk`] (a `VirtioBlk<Box<dyn VirtualDisk>>` type alias)
-//! - `impl<T: VirtualDisk + ?Sized> BlockBackend for Box<T>` (so `Box<dyn VirtualDisk>` is a valid backend)
+//! - `impl<T: VirtualDisk> BlockBackend for Box<T>` (plus impls for `Box<dyn VirtualDisk>` /
+//!   `Box<dyn VirtualDisk + Send>`, so `Box<dyn VirtualDisk>` is a valid backend)
 //!
 //! If you need the reverse direction (wrapping an existing `BlockBackend` so you can layer
 //! `aero-storage` disk wrappers such as caches/overlays on top), use
