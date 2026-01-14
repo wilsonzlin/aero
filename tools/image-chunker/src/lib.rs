@@ -1,10 +1,9 @@
-use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use aero_storage::{DiskError, DiskFormat, DiskImage, StorageBackend, VirtualDisk, SECTOR_SIZE};
+use aero_storage::{DiskFormat, DiskImage, FileBackend, VirtualDisk, SECTOR_SIZE};
 use anyhow::{anyhow, bail, Context, Result};
 use aws_config::meta::region::RegionProviderChain;
 use aws_config::BehaviorVersion;
@@ -248,84 +247,6 @@ pub struct LatestV1 {
     pub manifest_key: String,
 }
 
-/// A native (non-wasm32) file-backed [`aero_storage::StorageBackend`].
-///
-/// `aero-storage` intentionally keeps `StorageBackend` synchronous so it can be implemented by
-/// browser APIs like OPFS `FileSystemSyncAccessHandle`. This tool needs a host/native backend for
-/// opening disk image container formats.
-#[derive(Debug)]
-struct FileBackend {
-    file: std::fs::File,
-    len: u64,
-}
-
-impl FileBackend {
-    fn open(path: &Path) -> Result<Self> {
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .open(path)
-            .with_context(|| format!("open {}", path.display()))?;
-        let len = file
-            .metadata()
-            .with_context(|| format!("stat {}", path.display()))?
-            .len();
-        Ok(Self { file, len })
-    }
-
-    fn io_err(err: std::io::Error) -> DiskError {
-        DiskError::Io(err.to_string())
-    }
-}
-
-impl StorageBackend for FileBackend {
-    fn len(&mut self) -> aero_storage::Result<u64> {
-        Ok(self.len)
-    }
-
-    fn set_len(&mut self, len: u64) -> aero_storage::Result<()> {
-        self.file.set_len(len).map_err(Self::io_err)?;
-        self.len = len;
-        Ok(())
-    }
-
-    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> aero_storage::Result<()> {
-        let end = offset
-            .checked_add(buf.len() as u64)
-            .ok_or(DiskError::OffsetOverflow)?;
-        if end > self.len {
-            return Err(DiskError::OutOfBounds {
-                offset,
-                len: buf.len(),
-                capacity: self.len,
-            });
-        }
-        self.file
-            .seek(SeekFrom::Start(offset))
-            .map_err(Self::io_err)?;
-        self.file.read_exact(buf).map_err(Self::io_err)?;
-        Ok(())
-    }
-
-    fn write_at(&mut self, offset: u64, buf: &[u8]) -> aero_storage::Result<()> {
-        let end = offset
-            .checked_add(buf.len() as u64)
-            .ok_or(DiskError::OffsetOverflow)?;
-        if end > self.len {
-            self.set_len(end)?;
-        }
-        self.file
-            .seek(SeekFrom::Start(offset))
-            .map_err(Self::io_err)?;
-        self.file.write_all(buf).map_err(Self::io_err)?;
-        Ok(())
-    }
-
-    fn flush(&mut self) -> aero_storage::Result<()> {
-        self.file.sync_all().map_err(Self::io_err)?;
-        Ok(())
-    }
-}
-
 pub fn tokio_worker_threads_from_env() -> Option<usize> {
     let raw = match std::env::var("AERO_TOKIO_WORKER_THREADS") {
         Ok(v) => v,
@@ -351,7 +272,7 @@ pub fn build_tokio_runtime() -> std::io::Result<tokio::runtime::Runtime> {
 }
 
 fn open_disk_image(path: &Path, format: ImageFormat) -> Result<DiskImage<FileBackend>> {
-    let backend = FileBackend::open(path)?;
+    let backend = FileBackend::open_read_only(path)?;
     let disk = match format.to_disk_format() {
         Some(format) => DiskImage::open_with_format(format, backend).map_err(|e| anyhow!(e))?,
         None => DiskImage::open_auto(backend).map_err(|e| anyhow!(e))?,
