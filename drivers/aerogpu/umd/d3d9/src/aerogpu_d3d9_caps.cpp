@@ -13,10 +13,6 @@
 
 #include "aerogpu_pci.h"
 
-#if defined(_WIN32)
-  #include <d3d9.h>
-#endif
-
 namespace aerogpu {
 namespace {
 
@@ -255,7 +251,10 @@ void fill_d3d9_caps(D3DCAPS9* out) {
                  // (DrawRectPatch/DrawTriPatch/DeletePatch).
                  D3DDEVCAPS_RTPATCHES;
 
-  out->Caps2 = D3DCAPS2_CANRENDERWINDOWED | D3DCAPS2_CANSHARERESOURCE;
+  out->Caps2 = D3DCAPS2_CANRENDERWINDOWED;
+#ifdef D3DCAPS2_CANSHARERESOURCE
+  out->Caps2 |= D3DCAPS2_CANSHARERESOURCE;
+#endif
 
   out->PresentationIntervals = D3DPRESENT_INTERVAL_ONE | D3DPRESENT_INTERVAL_IMMEDIATE;
 
@@ -263,20 +262,33 @@ void fill_d3d9_caps(D3DCAPS9* out) {
   out->PixelShaderVersion = D3DPS_VERSION(2, 0);
   out->MaxVertexShaderConst = 256;
 
-  out->PrimitiveMiscCaps = D3DPMISCCAPS_CLIPTLVERTS |
-                           // Blend ops (D3DRS_BLENDOP/BLENDOPALPHA) and separate
-                           // alpha blending are exercised by DWM-style workloads
-                           // and are implemented by the AeroGPU shader pipeline.
-                           D3DPMISCCAPS_BLENDOP |
-                           D3DPMISCCAPS_SEPARATEALPHABLEND;
+  out->PrimitiveMiscCaps = D3DPMISCCAPS_CLIPTLVERTS;
+
+  // Blend ops (D3DRS_BLENDOP/BLENDOPALPHA) and separate alpha blending are
+  // exercised by DWM-style workloads and are implemented by the AeroGPU shader
+  // pipeline.
+#ifdef D3DPMISCCAPS_BLENDOP
+  out->PrimitiveMiscCaps |= D3DPMISCCAPS_BLENDOP;
+#endif
+#ifdef D3DPMISCCAPS_SEPARATEALPHABLEND
+  out->PrimitiveMiscCaps |= D3DPMISCCAPS_SEPARATEALPHABLEND;
+#endif
 
   // DWM relies heavily on scissoring for window clipping. Include depth-test and
   // cull bits as they are commonly queried by apps and are expected for a HAL
   // device.
   out->RasterCaps = D3DPRASTERCAPS_SCISSORTEST |
-                    D3DPRASTERCAPS_ZTEST |
-                    D3DPRASTERCAPS_CULLCCW |
-                    D3DPRASTERCAPS_CULLCW;
+                    0u
+#ifdef D3DPRASTERCAPS_ZTEST
+                    | D3DPRASTERCAPS_ZTEST
+#endif
+#ifdef D3DPRASTERCAPS_CULLCCW
+                    | D3DPRASTERCAPS_CULLCCW
+#endif
+#ifdef D3DPRASTERCAPS_CULLCW
+                    | D3DPRASTERCAPS_CULLCW
+#endif
+      ;
 
   // Common compare funcs (alpha test + depth test). Keep stencil ops
   // conservative until exercised more thoroughly.
@@ -284,9 +296,23 @@ void fill_d3d9_caps(D3DCAPS9* out) {
                   D3DPCMPCAPS_GREATER | D3DPCMPCAPS_NOTEQUAL | D3DPCMPCAPS_GREATEREQUAL | D3DPCMPCAPS_ALWAYS;
   out->AlphaCmpCaps = out->ZCmpCaps;
 
-  out->SrcBlendCaps = D3DPBLENDCAPS_ZERO | D3DPBLENDCAPS_ONE | D3DPBLENDCAPS_SRCALPHA | D3DPBLENDCAPS_INVSRCALPHA |
-                      D3DPBLENDCAPS_DESTALPHA | D3DPBLENDCAPS_INVDESTALPHA |
-                      D3DPBLENDCAPS_BLENDFACTOR | D3DPBLENDCAPS_INVBLENDFACTOR;
+  out->SrcBlendCaps = D3DPBLENDCAPS_ZERO |
+                      D3DPBLENDCAPS_ONE |
+                      D3DPBLENDCAPS_SRCALPHA |
+                      D3DPBLENDCAPS_INVSRCALPHA
+#ifdef D3DPBLENDCAPS_DESTALPHA
+                      | D3DPBLENDCAPS_DESTALPHA
+#endif
+#ifdef D3DPBLENDCAPS_INVDESTALPHA
+                      | D3DPBLENDCAPS_INVDESTALPHA
+#endif
+#ifdef D3DPBLENDCAPS_BLENDFACTOR
+                      | D3DPBLENDCAPS_BLENDFACTOR
+#endif
+#ifdef D3DPBLENDCAPS_INVBLENDFACTOR
+                      | D3DPBLENDCAPS_INVBLENDFACTOR
+#endif
+      ;
   out->DestBlendCaps = out->SrcBlendCaps;
   maybe_set_blend_op_caps(out);
 
@@ -317,8 +343,10 @@ void fill_d3d9_caps(D3DCAPS9* out) {
   // conservative: clamp/wrap/mirror cover common D3D9-era workloads without
   // advertising clamp-to-border semantics (which are not supported on all
   // backends).
-  out->TextureAddressCaps = D3DPTADDRESSCAPS_CLAMP | D3DPTADDRESSCAPS_WRAP |
-                            D3DPTADDRESSCAPS_MIRROR;
+  out->TextureAddressCaps = D3DPTADDRESSCAPS_CLAMP | D3DPTADDRESSCAPS_WRAP;
+#ifdef D3DPTADDRESSCAPS_MIRROR
+  out->TextureAddressCaps |= D3DPTADDRESSCAPS_MIRROR;
+#endif
 
   // NPOT textures are required for DWM (arbitrary window sizes). Do NOT set
   // D3DPTEXTURECAPS_POW2. Also avoid cubemap/volume caps until implemented.
@@ -428,11 +456,10 @@ void log_caps_once(const D3DCAPS9& caps) {
          (unsigned long)caps.DestBlendCaps,
          (unsigned long)caps.BlendOpCaps);
   } else {
-    // Some header vintages may not expose BlendOpCaps on D3DCAPS9; keep the log stable.
-    logf("aerogpu-d3d9: caps blend: SrcBlendCaps=0x%08lX DestBlendCaps=0x%08lX StretchRectFilterCaps=0x%08lX\n",
+    // Some header vintages may not expose BlendOpCaps on D3DCAPS9; avoid referencing it.
+    logf("aerogpu-d3d9: caps blend: SrcBlendCaps=0x%08lX DestBlendCaps=0x%08lX (BlendOpCaps unavailable)\n",
          (unsigned long)caps.SrcBlendCaps,
-         (unsigned long)caps.DestBlendCaps,
-         (unsigned long)caps.StretchRectFilterCaps);
+         (unsigned long)caps.DestBlendCaps);
   }
 }
 
