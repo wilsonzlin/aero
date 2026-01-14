@@ -112,6 +112,9 @@ and block devices.
 - Migration affordance: `emulator::machine` re-exports the canonical `aero-machine` types (so
   `emulator::machine::Machine` == `aero_machine::Machine`) for callers that already depend on
   `crates/emulator` and want the canonical VM without guessing which crate to import.
+- Guardrail: workspace crates must not add new `emulator` dependency edges into the canonical stack
+  (except as a *dev-dependency* for transitional harnesses). CI enforces this via
+  `scripts/ci/check-no-emulator-deps.py` (invoked by `scripts/ci/check-repo-layout.sh`).
 - Some low-level, cross-runtime primitives are intentionally factored out of `emulator` into small shared crates.
   For networking, the minimal `NetworkBackend` trait plus the L2 tunnel backends (`L2TunnelBackend`,
   `L2TunnelRingBackend`) live in `crates/aero-net-backend` and are re-exported by `emulator::io::net`
