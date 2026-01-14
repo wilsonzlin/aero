@@ -513,9 +513,7 @@ fn windows_device_contract_virtio_input_alias_inf_includes_generic_fallback_mode
     fn inf_from_version_onward(contents: &str) -> &str {
         let mut offset = 0usize;
         for line in contents.split_inclusive('\n') {
-            let trimmed = line
-                .trim_end_matches(|c: char| c == '\r' || c == '\n')
-                .trim();
+            let trimmed = line.trim_end_matches(['\r', '\n']).trim();
             if trimmed.eq_ignore_ascii_case("[Version]") {
                 return &contents[offset..];
             }
