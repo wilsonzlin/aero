@@ -134,6 +134,9 @@ Guest-visible topology (UHCI-style external hub):
 - External hub ports:
   - ports 1..4 reserved for synthetic keyboard/mouse/gamepad/consumer-control
   - dynamic passthrough ports start at 5 (`UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT`)
+- Note: when the external hub is hosted behind xHCI, hub port numbers must be <= **15** (xHCI Slot
+  Context Route String encodes downstream hub ports as 4-bit values). The web runtime clamps hub port
+  counts accordingly so the topology remains representable under xHCI.
 
 Note: the canonical `aero_machine::Machine` only auto-attaches the external hub + synthetic HID
 devices when `MachineConfig.enable_synthetic_usb_hid = true` (or via the WASM wrapper helper
