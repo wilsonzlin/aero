@@ -2,7 +2,7 @@
 ;
 ; This INF is kept for compatibility with workflows/tools that still reference
 ; the legacy filename (`virtio-snd.inf`) instead of `aero_virtio_snd.inf`.
-; Keep this file in sync with `aero_virtio_snd.inf` — only this comment header
+; Keep this file in sync with `aero_virtio_snd.inf` - only this comment header
 ; should differ.
 ;
 ; It intentionally matches only the Aero virtio contract v1 HWID

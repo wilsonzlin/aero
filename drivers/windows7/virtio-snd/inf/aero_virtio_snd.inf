@@ -10,7 +10,7 @@
 ; This INF is intentionally strict and matches only:
 ;   - PCI\VEN_1AF4&DEV_1059&REV_01
 ;
-; Optional (commented out): further restrict binding to Aero’s subsystem ID:
+; Optional (commented out): further restrict binding to Aero's subsystem ID:
 ;   - PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01
 
 [Version]
