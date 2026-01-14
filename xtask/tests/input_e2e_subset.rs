@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
+#[cfg(unix)]
+use std::os::unix::io::AsRawFd;
 
 /// Verify `cargo xtask input --e2e -- <extra playwright args>` appends extra args after the curated
 /// input spec list (so `--project=...` applies to the subset run).
@@ -19,6 +21,8 @@ fn input_e2e_appends_extra_playwright_args_after_spec_list() {
         .parent()
         .expect("xtask/CARGO_MANIFEST_DIR should have a parent")
         .to_path_buf();
+
+    let _node_modules_lock = acquire_node_modules_lock(&repo_root).expect("acquire node_modules lock");
 
     // `cargo xtask input` refuses to run if node_modules is missing; create a temporary empty one
     // so we can execute the command path without needing actual Node deps.
@@ -103,6 +107,27 @@ fn input_e2e_appends_extra_playwright_args_after_spec_list() {
         idx_malformed < idx_project,
         "expected curated spec list (including malformed spec) to come before extra args; argv={npm_e2e:?}"
     );
+}
+
+#[cfg(unix)]
+fn acquire_node_modules_lock(repo_root: &Path) -> std::io::Result<std::fs::File> {
+    fs::create_dir_all(repo_root.join("target"))?;
+    let lock_path = repo_root.join("target/xtask-test-node-modules.lock");
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(false)
+        .open(lock_path)?;
+
+    // Serialize tests that create/remove `node_modules` so parallel `cargo test` runs remain
+    // deterministic.
+    let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) };
+    if rc == 0 {
+        Ok(file)
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
 }
 
 #[cfg(unix)]

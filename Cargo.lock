@@ -6135,6 +6135,7 @@ dependencies = [
  "aero-snapshot",
  "assert_cmd",
  "firmware",
+ "libc",
  "lz4_flex",
  "predicates",
  "tempfile",
