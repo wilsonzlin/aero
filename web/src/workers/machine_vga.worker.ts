@@ -60,8 +60,8 @@ type MachineVgaWorkerStartMessage = {
    * When omitted (or when the active WASM build does not support `new_with_cpu_count`), the machine
    * defaults to 1 vCPU.
    *
-   * Note: AeroGPU configuration currently uses `Machine.new_with_config`, which does not accept a
-   * CPU count parameter; requesting `enableAerogpu=true` with `cpuCount != 1` will throw.
+   * Note: When `enableAerogpu=true`, the worker constructs the machine via `Machine.new_with_config`;
+   * newer WASM builds accept an optional `cpuCount` parameter there as well.
    */
   cpuCount?: number;
 };
@@ -669,15 +669,12 @@ async function start(msg: MachineVgaWorkerStartMessage): Promise<void> {
     if (!Number.isFinite(n) || n < 1 || n > 255) return 1;
     return n;
   })();
-  if (canEnableAerogpu && cpuCount !== 1) {
-    throw new Error("cpuCount != 1 is currently unsupported when enableAerogpu=true.");
-  }
   machine =
     canEnableAerogpu
-      ? newWithConfig(ramSizeBytes >>> 0, true, enableVga)
+      ? newWithConfig(ramSizeBytes >>> 0, true, enableVga, cpuCount !== 1 ? cpuCount : undefined)
       : cpuCount !== 1 && typeof newWithCpuCount === "function"
         ? newWithCpuCount(ramSizeBytes >>> 0, cpuCount)
-      : new api.Machine(ramSizeBytes >>> 0);
+        : new api.Machine(ramSizeBytes >>> 0);
   const bootMessage = msg.message ?? "Hello from machine_vga.worker\\n";
   // Bochs VBE programming requires the legacy VGA/VBE device model. When running with AeroGPU
   // enabled (and VGA disabled), ignore any requested VBE mode so we keep text-mode scanout via

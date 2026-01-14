@@ -320,7 +320,7 @@ fn wasm_machine_vbe_present_reports_expected_pixel() {
 fn wasm_machine_aerogpu_config_disables_vga_by_default_and_displays_text_mode() {
     let boot = boot_sector_write_a_to_b8000();
     // Enable AeroGPU via the wasm wrapper and rely on its default to disable VGA.
-    let mut machine = Machine::new_with_config(16 * 1024 * 1024, true, None)
+    let mut machine = Machine::new_with_config(16 * 1024 * 1024, true, None, None)
         .expect("Machine::new_with_config(enable_aerogpu=true)");
     machine
         .set_disk_image(&boot)

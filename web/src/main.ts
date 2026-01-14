@@ -848,7 +848,7 @@ function renderMachinePanel(): HTMLElement {
       const canEnableAerogpu = enableAerogpu && typeof newWithConfig === "function";
       const machine =
         canEnableAerogpu
-          ? newWithConfig(ramSizeBytes, true, enableVgaOverride)
+          ? newWithConfig(ramSizeBytes, true, enableVgaOverride, cpuCount !== 1 ? cpuCount : undefined)
           : cpuCount !== 1 && typeof newWithCpuCount === "function"
             ? newWithCpuCount(ramSizeBytes, cpuCount)
             : new api.Machine(ramSizeBytes);

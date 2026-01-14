@@ -1251,7 +1251,12 @@ export interface WasmApi {
          *
          * Optional for older WASM builds.
          */
-        new_with_config?: (ramSizeBytes: number, enableAerogpu: boolean, enableVga?: boolean) => MachineHandle;
+        new_with_config?: (
+            ramSizeBytes: number,
+            enableAerogpu: boolean,
+            enableVga?: boolean,
+            cpuCount?: number,
+        ) => MachineHandle;
         /**
          * Construct a canonical machine with an explicit vCPU count (SMP).
          *

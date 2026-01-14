@@ -2883,8 +2883,12 @@ impl Machine {
         ram_size_bytes: u32,
         enable_aerogpu: bool,
         enable_vga: Option<bool>,
+        cpu_count: Option<u8>,
     ) -> Result<Self, JsValue> {
         let mut cfg = aero_machine::MachineConfig::browser_defaults(ram_size_bytes as u64);
+        if let Some(cpu_count) = cpu_count {
+            cfg.cpu_count = cpu_count;
+        }
         cfg.enable_aerogpu = enable_aerogpu;
         cfg.enable_vga = enable_vga.unwrap_or(!enable_aerogpu);
         Self::new_with_native_config(cfg)
