@@ -498,6 +498,30 @@ fn tier2_masks_8bit_shift_count_for_flag_updates() {
 }
 
 #[test]
+fn tier2_masks_8bit_shift_count_to_zero_for_flag_updates() {
+    // mov al, 1
+    // shl al, 32        ; x86 masks to 5 bits => count==0 => flags unchanged and ZF stays 0
+    // jz +3             ; must NOT take
+    // mov al, 1
+    // int3
+    // mov al, 2
+    // int3
+    const CODE: &[u8] = &[
+        0xB0, 0x01, // mov al, 1
+        0xC0, 0xE0, 0x20, // shl al, 32
+        0x74, 0x03, // jz +3
+        0xB0, 0x01, // mov al, 1
+        0xCC, // int3
+        0xB0, 0x02, // mov al, 2
+        0xCC, // int3
+    ];
+
+    let (_func, exit, state) = run_x86(CODE);
+    assert_eq!(exit, RunExit::SideExit { next_rip: 9 });
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 1);
+}
+
+#[test]
 fn tier2_masks_64bit_shift_count_for_flag_updates() {
     // mov rax, 0x8000_0000 (sign-extended to 0xFFFF_FFFF_8000_0000 => MSB=1)
     // shl rax, 65        ; x86 masks to 6 bits => count==1
