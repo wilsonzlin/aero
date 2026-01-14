@@ -6074,7 +6074,7 @@ static bool FillToneInterleaved(BYTE* dst, UINT32 frames, const WAVEFORMATEX* fm
   const bool is_pcm = WaveFormatIsPcm(fmt);
   if (!is_float && !is_pcm) return false;
 
-  if (is_float && bytes_per_sample != 4) return false;
+  if (is_float && bytes_per_sample != 4 && bytes_per_sample != 8) return false;
   if (is_pcm && bytes_per_sample != 1 && bytes_per_sample != 2 && bytes_per_sample != 3 &&
       bytes_per_sample != 4) {
     return false;
@@ -6105,8 +6105,13 @@ static bool FillToneInterleaved(BYTE* dst, UINT32 frames, const WAVEFORMATEX* fm
     for (WORD ch = 0; ch < channels; ch++) {
       BYTE* out = frame + (static_cast<size_t>(ch) * bytes_per_sample);
       if (is_float) {
-        const float v = static_cast<float>(sample);
-        memcpy(out, &v, sizeof(v));
+        if (bytes_per_sample == 4) {
+          const float v = static_cast<float>(sample);
+          memcpy(out, &v, sizeof(v));
+        } else {
+          const double v = sample;
+          memcpy(out, &v, sizeof(v));
+        }
         continue;
       }
 
