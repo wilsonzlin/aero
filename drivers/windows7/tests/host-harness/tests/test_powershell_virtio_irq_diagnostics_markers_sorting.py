@@ -38,7 +38,12 @@ class PowerShellVirtioIrqDiagnosticsMarkersSortingTests(unittest.TestCase):
             r"foreach\s*\(\s*\$k\s+in\s*\(\s*\$fields\.Keys\s*\|\s*Sort-Object\s*\)\s*\)\s*\{",
         )
 
+        # Forward compatibility: preserve non-k=v tokens by folding them into msg=...
+        self.assertRegex(
+            fn,
+            r"\$fields\[\s*['\"]msg['\"]\s*\]\s*=\s*\(\s*\$extras\s*-join\s*['\"]\|['\"]\s*\)",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
-
