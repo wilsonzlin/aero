@@ -50,6 +50,7 @@ static volatile LONG g_AerovNetDbgTxUdpCsumOffload = 0;
 static volatile LONG g_AerovNetDbgTxUdpCsumFallback = 0;
 #endif
 static VOID AerovNetFreeCtrlPendingRequests(_Inout_ AEROVNET_ADAPTER* Adapter);
+static NDIS_STATUS AerovNetCtrlVlanUpdate(_Inout_ AEROVNET_ADAPTER* Adapter, _In_ BOOLEAN Add, _In_ USHORT VlanId);
 
 static const NDIS_OID g_SupportedOids[] = {
     OID_GEN_SUPPORTED_LIST,
@@ -1764,6 +1765,37 @@ static VOID AerovNetCtrlVqRegistryWriteQword(_In_ HANDLE Key, _In_ PCWSTR Name, 
   (VOID)ZwSetValueKey(Key, &ValueName, 0, REG_QWORD, &Value, sizeof(Value));
 }
 
+static BOOLEAN AerovNetCtrlVqRegistryReadDword(_In_ HANDLE Key, _In_ PCWSTR Name, _Out_ ULONG* ValueOut) {
+  UNICODE_STRING ValueName;
+  UCHAR Buf[sizeof(KEY_VALUE_PARTIAL_INFORMATION) + sizeof(ULONG)];
+  PKEY_VALUE_PARTIAL_INFORMATION Info;
+  ULONG ResultLen;
+  NTSTATUS Status;
+
+  if (ValueOut) {
+    *ValueOut = 0;
+  }
+
+  if (Key == NULL || Name == NULL || ValueOut == NULL) {
+    return FALSE;
+  }
+
+  Info = (PKEY_VALUE_PARTIAL_INFORMATION)Buf;
+  RtlZeroMemory(Info, sizeof(Buf));
+  ResultLen = 0;
+
+  RtlInitUnicodeString(&ValueName, Name);
+  Status = ZwQueryValueKey(Key, &ValueName, KeyValuePartialInformation, Info, sizeof(Buf), &ResultLen);
+  if (!NT_SUCCESS(Status)) {
+    return FALSE;
+  }
+  if (Info->Type != REG_DWORD || Info->DataLength != sizeof(ULONG)) {
+    return FALSE;
+  }
+  RtlCopyMemory(ValueOut, Info->Data, sizeof(ULONG));
+  return TRUE;
+}
+
 static VOID AerovNetCtrlVqRegistryUpdate(_Inout_ AEROVNET_ADAPTER* Adapter) {
   HANDLE Key;
   ULONGLONG HostFeatures;
@@ -1861,7 +1893,7 @@ static VOID AerovNetCtrlVqRegistryInit(_Inout_ AEROVNET_ADAPTER* Adapter) {
   RtlInitUnicodeString(&SubkeyName, L"Device Parameters\\AeroVirtioNet");
   InitializeObjectAttributes(&Oa, &SubkeyName, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, DevKey, NULL);
 
-  Status = ZwCreateKey(&Key, KEY_SET_VALUE, &Oa, 0, NULL, REG_OPTION_NON_VOLATILE, NULL);
+  Status = ZwCreateKey(&Key, KEY_SET_VALUE | KEY_QUERY_VALUE, &Oa, 0, NULL, REG_OPTION_NON_VOLATILE, NULL);
   ZwClose(DevKey);
   DevKey = NULL;
 
@@ -1871,6 +1903,48 @@ static VOID AerovNetCtrlVqRegistryInit(_Inout_ AEROVNET_ADAPTER* Adapter) {
 
   Adapter->CtrlVqRegKey = Key;
   AerovNetCtrlVqRegistryUpdate(Adapter);
+}
+
+static VOID AerovNetCtrlVlanConfigureFromRegistry(_Inout_ AEROVNET_ADAPTER* Adapter) {
+  ULONG VlanId;
+  NDIS_STATUS Status;
+
+  if (!Adapter) {
+    return;
+  }
+
+  if ((Adapter->GuestFeatures & VIRTIO_NET_F_CTRL_VLAN) == 0) {
+    return;
+  }
+
+  if ((Adapter->GuestFeatures & VIRTIO_NET_F_CTRL_VQ) == 0 || Adapter->CtrlVq.QueueSize == 0) {
+    return;
+  }
+
+  if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
+    return;
+  }
+
+  // Optional configuration knob: if the per-device registry key contains a
+  // `VlanId` DWORD, add it to the device VLAN filter table via ctrl_vq.
+  //
+  // This is best-effort and is only intended for device models that expose
+  // virtio-net VLAN filtering (VIRTIO_NET_F_CTRL_VLAN). If unset, the driver
+  // does not configure VLAN filtering and continues to accept VLAN-tagged frames
+  // via software.
+  VlanId = 0;
+  if (!AerovNetCtrlVqRegistryReadDword(Adapter->CtrlVqRegKey, L"VlanId", &VlanId)) {
+    return;
+  }
+
+  if (VlanId == 0 || VlanId >= 4095u) {
+    return;
+  }
+
+  Status = AerovNetCtrlVlanUpdate(Adapter, TRUE, (USHORT)VlanId);
+#if DBG
+  DbgPrint("virtio-net-ctrl-vq|INFO|vlan_add|vid=%lu|status=0x%08x\n", VlanId, Status);
+#endif
 }
 
 typedef struct _AEROVNET_CTRL_REQUEST {
@@ -2589,6 +2663,7 @@ static NDIS_STATUS AerovNetVirtioStart(_Inout_ AEROVNET_ADAPTER* Adapter) {
     DbgPrint("virtio-net-ctrl-vq|INFO|mac_addr_set|status=0x%08x|ack=%u\n", Status, Ack);
   }
 
+  AerovNetCtrlVlanConfigureFromRegistry(Adapter);
   AerovNetCtrlUpdateRxMode(Adapter);
 
   return NDIS_STATUS_SUCCESS;
