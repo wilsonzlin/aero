@@ -76,4 +76,15 @@ describe("io/bus/mmio_ram", () => {
     // Unmapped addresses return defaultReadValue.
     expect(bus.read(0x2000n, 1)).toBe(defaultReadValue(1));
   });
+
+  it("works with SharedArrayBuffer-backed Uint8Array views (VRAM-style)", () => {
+    const sab = new SharedArrayBuffer(16);
+    const vram = new Uint8Array(sab);
+    const bus = new MmioBus();
+    bus.mapRange(0xe000_0000n, 16n, new MmioRamHandler(vram));
+
+    bus.write(0xe000_0004n, 4, 0x1122_3344);
+    expect(Array.from(vram.subarray(4, 8))).toEqual([0x44, 0x33, 0x22, 0x11]);
+    expect(bus.read(0xe000_0004n, 4)).toBe(0x1122_3344);
+  });
 });
