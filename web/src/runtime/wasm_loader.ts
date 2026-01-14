@@ -35,6 +35,19 @@ export type MachineHandle = {
      */
     cpu_count?(): number;
     reset(): void;
+    /**
+     * Set the BIOS boot drive number (`DL`) used for the next boot attempt.
+     *
+     * Recommended values:
+     * - `0x80`: primary HDD (normal boot)
+     * - `0xE0`: ATAPI CD-ROM (El Torito install media)
+     *
+     * Note: this selection is consumed during BIOS POST/boot. Call {@link reset} after changing it
+     * to re-run POST with the new value.
+     *
+     * Optional for older WASM builds.
+     */
+    set_boot_drive?(drive: number): void;
     set_disk_image(bytes: Uint8Array): void;
     /**
      * Open (or create) an OPFS-backed disk image and attach it as the machine's canonical disk.
@@ -341,6 +354,15 @@ export type MachineHandle = {
      * Optional for older WASM builds.
      */
     set_primary_hdd_opfs_cow?(base_image: string, overlay_image: string): Promise<void>;
+    /**
+     * Attach an ISO image (raw bytes) as the canonical install media / ATAPI CD-ROM (`disk_id=1`).
+     *
+     * This copies the ISO into WASM memory; for large ISOs, prefer OPFS-backed attachment via
+     * {@link attach_install_media_iso_opfs}.
+     *
+     * Optional for older WASM builds.
+     */
+    attach_install_media_iso_bytes?(bytes: Uint8Array): void;
     /**
      * Attach an existing OPFS-backed ISO image as the canonical install media CD-ROM (`disk_id=1`).
      *
