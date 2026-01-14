@@ -114,7 +114,10 @@ requires a unix x86_64 host."
     // prohibitively long to build from scratch. Nudge the default up slightly unless the caller
     // has explicitly chosen their own parallelism.
     if env::var_os("AERO_CARGO_BUILD_JOBS").is_none() && env::var_os("CARGO_BUILD_JOBS").is_none() {
-        cmd.env("AERO_CARGO_BUILD_JOBS", DEFAULT_CARGO_BUILD_JOBS.to_string());
+        cmd.env(
+            "AERO_CARGO_BUILD_JOBS",
+            DEFAULT_CARGO_BUILD_JOBS.to_string(),
+        );
     }
 
     // Ensure the child process gets a fully-specified set of conformance knobs.

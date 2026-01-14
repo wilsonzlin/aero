@@ -264,15 +264,7 @@ fn virtio_snd_pci_bridge_eventq_retains_event_when_first_chain_has_nested_indire
         0,
     );
     // Indirect table entry itself is an indirect descriptor (nested indirect), which is forbidden.
-    write_desc(
-        &guest,
-        indirect_table,
-        0,
-        0,
-        16,
-        VIRTQ_DESC_F_INDIRECT,
-        0,
-    );
+    write_desc(&guest, indirect_table, 0, 0, 16, VIRTQ_DESC_F_INDIRECT, 0);
 
     guest.fill(buf, 8, 0xAA);
     write_desc(&guest, desc_table, 1, buf as u64, 8, VIRTQ_DESC_F_WRITE, 0);
@@ -307,4 +299,3 @@ fn virtio_snd_pci_bridge_eventq_retains_event_when_first_chain_has_nested_indire
     guest.read_into(buf, &mut got_evt);
     assert_eq!(&got_evt, &expected_speaker_connected());
 }
-
