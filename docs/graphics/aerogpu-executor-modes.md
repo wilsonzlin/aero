@@ -45,6 +45,11 @@ This mode is useful when you only need:
 - scanout/vblank register behavior,
 - driver enumeration and initialization without a real renderer.
 
+You can still call `Machine::aerogpu_drain_submissions()` in this mode to inspect/log decoded
+submissions; it does **not** change fence completion behavior on native hosts. (In the browser,
+`crates/aero-wasm` intentionally enables the submission bridge when draining so fence semantics are
+explicit.)
+
 ### 2) Submission bridge: out-of-process executor mode
 
 For browser/WASM integrations (or any host that executes command streams out-of-process), enable the
