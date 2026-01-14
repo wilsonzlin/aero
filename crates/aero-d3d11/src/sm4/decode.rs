@@ -1,5 +1,5 @@
 use core::fmt;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::sm4_ir::{
     BufferKind, BufferRef, CmpOp, CmpType, ComputeBuiltin, DstOperand, GsInputPrimitive,
@@ -227,6 +227,7 @@ pub fn decode_program(program: &Sm4Program) -> Result<Sm4Module, Sm4DecodeError>
     // `StructuredBuffer.GetDimensions`.
     let mut srv_buffer_decls: BTreeMap<u32, (BufferKind, u32)> = BTreeMap::new();
     let mut uav_buffer_decls: BTreeMap<u32, (BufferKind, u32)> = BTreeMap::new();
+    let mut uav_typed_decls: BTreeSet<u32> = BTreeSet::new();
     for decl in &decls {
         match decl {
             Sm4Decl::ResourceBuffer { slot, stride, kind } => {
@@ -235,10 +236,13 @@ pub fn decode_program(program: &Sm4Program) -> Result<Sm4Module, Sm4DecodeError>
             Sm4Decl::UavBuffer { slot, stride, kind } => {
                 uav_buffer_decls.insert(*slot, (*kind, *stride));
             }
+            Sm4Decl::UavTyped2D { slot, .. } => {
+                uav_typed_decls.insert(*slot);
+            }
             _ => {}
         }
     }
-    if !srv_buffer_decls.is_empty() || !uav_buffer_decls.is_empty() {
+    if !srv_buffer_decls.is_empty() || !uav_buffer_decls.is_empty() || !uav_typed_decls.is_empty() {
         for inst in &mut instructions {
             match inst {
                 Sm4Inst::BufInfoRaw { dst, buffer } => {
@@ -265,6 +269,43 @@ pub fn decode_program(program: &Sm4Program) -> Result<Sm4Module, Sm4DecodeError>
                                 stride_bytes: stride,
                             };
                         }
+                    }
+                }
+                // DXBC encodes both typed UAV stores (`store_uav_typed`) and raw UAV buffer stores
+                // (`store_raw`) using the same operand shapes: `u#, coord/addr, value`.
+                //
+                // Some toolchains appear to use different opcode IDs, so the decoder may initially
+                // classify an unknown store as one of the IR variants based purely on operand
+                // structure. Refine the final variant using the corresponding UAV declaration.
+                Sm4Inst::StoreRaw {
+                    uav,
+                    addr,
+                    value,
+                    mask,
+                } => {
+                    if uav_typed_decls.contains(&uav.slot) {
+                        *inst = Sm4Inst::StoreUavTyped {
+                            uav: *uav,
+                            coord: addr.clone(),
+                            value: value.clone(),
+                            mask: *mask,
+                        };
+                    }
+                }
+                Sm4Inst::StoreUavTyped {
+                    uav,
+                    coord,
+                    value,
+                    mask,
+                } => {
+                    if !uav_typed_decls.contains(&uav.slot) && uav_buffer_decls.contains_key(&uav.slot)
+                    {
+                        *inst = Sm4Inst::StoreRaw {
+                            uav: *uav,
+                            addr: coord.clone(),
+                            value: value.clone(),
+                            mask: *mask,
+                        };
                     }
                 }
                 _ => {}
@@ -1395,6 +1436,11 @@ pub fn decode_instruction(
             // Structural fallback for atomic add on UAV buffers (`InterlockedAdd`).
             } else if let Some(atomic) = try_decode_atomic_add_like(saturate, inst_toks, at)? {
                 Ok(atomic)
+            // Structural fallback for buffer UAV stores when opcode IDs differ.
+            } else if let Some(store_struct) = try_decode_store_structured_like(inst_toks, at)? {
+                Ok(store_struct)
+            } else if let Some(store_raw) = try_decode_store_raw_like(inst_toks, at)? {
+                Ok(store_raw)
             // Structural fallback for typed UAV stores.
             //
             // Note: some SM5 UAV store opcodes (e.g. `store_raw` / `store_structured`) have a
@@ -2426,6 +2472,81 @@ fn try_decode_atomic_add_like(
             uav,
             addr,
             value,
+        }));
+    }
+
+    Ok(None)
+}
+
+fn try_decode_store_raw_like(inst_toks: &[u32], at: usize) -> Result<Option<Sm4Inst>, Sm4DecodeError> {
+    let mut r = InstrReader::new(inst_toks, at);
+    let opcode_token = r.read_u32()?;
+    let _ = decode_extended_opcode_modifiers(&mut r, opcode_token)?;
+
+    let (uav, mask) = match decode_uav_ref(&mut r) {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
+    };
+    let addr = match decode_src(&mut r) {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
+    };
+    // Raw UAV stores take a scalar byte address; typed UAV stores use vector coords.
+    //
+    // Note: typed stores can still legally supply replicated coordinates, so this is a heuristic
+    // that trades off coverage for avoiding misclassification in the absence of declarations.
+    if !addr.swizzle.0.iter().all(|&c| c == addr.swizzle.0[0]) {
+        return Ok(None);
+    }
+    let value = match decode_src(&mut r) {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
+    };
+
+    if r.is_eof() {
+        return Ok(Some(Sm4Inst::StoreRaw {
+            uav,
+            addr,
+            value,
+            mask,
+        }));
+    }
+
+    Ok(None)
+}
+
+fn try_decode_store_structured_like(
+    inst_toks: &[u32],
+    at: usize,
+) -> Result<Option<Sm4Inst>, Sm4DecodeError> {
+    let mut r = InstrReader::new(inst_toks, at);
+    let opcode_token = r.read_u32()?;
+    let _ = decode_extended_opcode_modifiers(&mut r, opcode_token)?;
+
+    let (uav, mask) = match decode_uav_ref(&mut r) {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
+    };
+    let index = match decode_src(&mut r) {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
+    };
+    let offset = match decode_src(&mut r) {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
+    };
+    let value = match decode_src(&mut r) {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
+    };
+
+    if r.is_eof() {
+        return Ok(Some(Sm4Inst::StoreStructured {
+            uav,
+            index,
+            offset,
+            value,
+            mask,
         }));
     }
 

@@ -2886,6 +2886,182 @@ fn decodes_store_raw_with_mask() {
 }
 
 #[test]
+fn decodes_store_raw_via_structural_fallback() {
+    let mut body = Vec::<u32>::new();
+
+    // Some SM5 producers appear to use different opcode IDs for buffer UAV stores. The decoder
+    // includes a structural fallback path so we can still recognize `store_raw` forms.
+    //
+    // Encode: store_raw u0.xy, r0.x, r1
+    let addr = reg_src(
+        OPERAND_TYPE_TEMP,
+        &[0],
+        Swizzle::XXXX,
+        OperandModifier::None,
+    );
+    let value = reg_src(
+        OPERAND_TYPE_TEMP,
+        &[1],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    );
+    let uav = uav_operand(0, WriteMask(0b0011));
+
+    let unknown_opcode = 0x7b;
+    let mut store_raw = vec![opcode_token(
+        unknown_opcode,
+        (1 + uav.len() + addr.len() + value.len()) as u32,
+    )];
+    store_raw.extend_from_slice(&uav);
+    store_raw.extend_from_slice(&addr);
+    store_raw.extend_from_slice(&value);
+    body.extend_from_slice(&store_raw);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    let tokens = make_sm5_program_tokens(0, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+    let module = decode_program(&program).expect("decode");
+
+    assert!(
+        matches!(module.instructions[0], Sm4Inst::StoreRaw { .. }),
+        "expected structural fallback to decode StoreRaw, got {:?}",
+        module.instructions[0]
+    );
+}
+
+#[test]
+fn refines_unknown_uav_store_to_raw_when_decl_is_buffer() {
+    let mut body = Vec::<u32>::new();
+
+    // dcl_uav_raw u0
+    let u0_decl = reg_src(
+        OPERAND_TYPE_UNORDERED_ACCESS_VIEW,
+        &[0],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    );
+    body.extend_from_slice(&[opcode_token(
+        OPCODE_DCL_UAV_RAW,
+        (1 + u0_decl.len()) as u32,
+    )]);
+    body.extend_from_slice(&u0_decl);
+
+    // Encode an unknown store opcode that matches the typed-store structural decoder
+    // (`u#, coord, value`) but uses a buffer UAV slot. Post-processing should refine it into
+    // `StoreRaw`.
+    let addr = reg_src(
+        OPERAND_TYPE_TEMP,
+        &[0],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    );
+    let value = reg_src(
+        OPERAND_TYPE_TEMP,
+        &[1],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    );
+    let uav = uav_operand(0, WriteMask::XYZW);
+
+    let unknown_opcode = 0x7c;
+    let mut store = vec![opcode_token(
+        unknown_opcode,
+        (1 + uav.len() + addr.len() + value.len()) as u32,
+    )];
+    store.extend_from_slice(&uav);
+    store.extend_from_slice(&addr);
+    store.extend_from_slice(&value);
+    body.extend_from_slice(&store);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    let tokens = make_sm5_program_tokens(0, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+    let module = decode_program(&program).expect("decode");
+
+    assert!(
+        matches!(module.instructions[0], Sm4Inst::StoreRaw { .. }),
+        "expected decl-based refinement to yield StoreRaw, got {:?}",
+        module.instructions[0]
+    );
+}
+
+#[test]
+fn refines_unknown_uav_store_to_typed_when_decl_is_typed() {
+    let mut body = Vec::<u32>::new();
+
+    // Typed UAV declaration: use an opcode ID that the decoder does not have a constant for and
+    // rely on the declaration decoder's typed UAV path.
+    //
+    // dcl_uav_typed u0, dim=2, format=28 (DXGI_FORMAT_R8G8B8A8_UNORM)
+    let u0_decl = reg_src(
+        OPERAND_TYPE_UNORDERED_ACCESS_VIEW,
+        &[0],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    );
+    let unknown_decl_opcode = 0x209;
+    let mut dcl_uav_typed = vec![opcode_token(
+        unknown_decl_opcode,
+        (1 + u0_decl.len() + 2) as u32,
+    )];
+    dcl_uav_typed.extend_from_slice(&u0_decl);
+    dcl_uav_typed.push(2); // dim = 2D
+    dcl_uav_typed.push(28); // DXGI_FORMAT_R8G8B8A8_UNORM
+    body.extend_from_slice(&dcl_uav_typed);
+
+    // Unknown store opcode with scalar coord; structural decoding will initially treat it like a
+    // raw buffer store, but post-processing should refine it into a typed UAV store because `u0`
+    // is declared as typed.
+    let coord = reg_src(
+        OPERAND_TYPE_TEMP,
+        &[0],
+        Swizzle::XXXX,
+        OperandModifier::None,
+    );
+    let value = reg_src(
+        OPERAND_TYPE_TEMP,
+        &[1],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    );
+    let uav = uav_operand(0, WriteMask::XYZW);
+
+    let unknown_store_opcode = 0x7d;
+    let mut store = vec![opcode_token(
+        unknown_store_opcode,
+        (1 + uav.len() + coord.len() + value.len()) as u32,
+    )];
+    store.extend_from_slice(&uav);
+    store.extend_from_slice(&coord);
+    store.extend_from_slice(&value);
+    body.extend_from_slice(&store);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    let tokens = make_sm5_program_tokens(0, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+    let module = decode_program(&program).expect("decode");
+
+    assert!(
+        module
+            .decls
+            .iter()
+            .any(|d| matches!(d, Sm4Decl::UavTyped2D { slot: 0, format: 28 })),
+        "expected typed UAV declaration to be decoded"
+    );
+    assert!(
+        matches!(module.instructions[0], Sm4Inst::StoreUavTyped { .. }),
+        "expected decl-based refinement to yield StoreUavTyped, got {:?}",
+        module.instructions[0]
+    );
+}
+
+#[test]
 fn decodes_buffer_srv_and_uav_declarations() {
     let mut body = Vec::<u32>::new();
 
@@ -3269,6 +3445,59 @@ fn decodes_store_structured_with_mask() {
             },
             mask: WriteMask(0b0011),
         }
+    );
+}
+
+#[test]
+fn decodes_store_structured_via_structural_fallback() {
+    let mut body = Vec::<u32>::new();
+
+    // Some SM5 producers appear to use different opcode IDs for `store_structured`. The decoder
+    // includes a structural fallback path so we can still recognize the instruction shape.
+    //
+    // Encode: store_structured u0.xy, r0.x, r1.x, r2
+    let uav = uav_operand(0, WriteMask(0b0011));
+    let index = reg_src(
+        OPERAND_TYPE_TEMP,
+        &[0],
+        Swizzle::XXXX,
+        OperandModifier::None,
+    );
+    let offset = reg_src(
+        OPERAND_TYPE_TEMP,
+        &[1],
+        Swizzle::XXXX,
+        OperandModifier::None,
+    );
+    let value = reg_src(
+        OPERAND_TYPE_TEMP,
+        &[2],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    );
+
+    let unknown_opcode = 0x7e;
+    let mut store_structured = vec![opcode_token(
+        unknown_opcode,
+        (1 + uav.len() + index.len() + offset.len() + value.len()) as u32,
+    )];
+    store_structured.extend_from_slice(&uav);
+    store_structured.extend_from_slice(&index);
+    store_structured.extend_from_slice(&offset);
+    store_structured.extend_from_slice(&value);
+    body.extend_from_slice(&store_structured);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    let tokens = make_sm5_program_tokens(0, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+    let module = decode_program(&program).expect("decode");
+
+    assert!(
+        matches!(module.instructions[0], Sm4Inst::StoreStructured { .. }),
+        "expected structural fallback to decode StoreStructured, got {:?}",
+        module.instructions[0]
     );
 }
 
