@@ -56,9 +56,9 @@ Artifacts collected:
 - report.json (path):
 - per-test JSON outputs (dir):
  - per-test stdout/stderr logs (dir):
-  - dbgctl `--status` snapshots (dbgctl_<test>_status.txt) (dir):
+  - dbgctl (`aerogpu_dbgctl --status`) snapshots (dbgctl_<test>_status.txt) (dir):
    - failing test --dump outputs (BMP/bin/dxbc) (dir):
-  - dbgctl last-submission cmd dump (`--dump-last-submit` / `--dump-last-cmd`) outputs (for example: `cmd.bin` + `cmd.bin.alloc_table.bin` + `cmd.bin.txt`; or for multi-dump: `cmd_*.bin` + siblings) (when available):
+  - dbgctl last-submission cmd dump (`aerogpu_dbgctl --dump-last-submit` / `--dump-last-cmd`) outputs (for example: `cmd.bin` + `cmd.bin.alloc_table.bin` + `cmd.bin.txt`; or for multi-dump: `cmd_*.bin` + siblings) (when available):
   - Event Viewer: dxgkrnl/display events around failures (exported EVTX):
   - KMD snapshots: aerogpu_dbgctl.exe --query-fence/--dump-ring/--dump-vblank/--dump-createalloc (outputs saved):
    Notes:

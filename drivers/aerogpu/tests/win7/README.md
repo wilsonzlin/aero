@@ -247,8 +247,8 @@ captured stdout/stderr.
 
 If you have `aerogpu_dbgctl.exe` available in the guest, the runner can automatically capture:
 
-- a `--status` snapshot, and
-- a recent cmd-stream dump (`--dump-last-submit --count 4`)
+- an `aerogpu_dbgctl --status` snapshot, and
+- a recent cmd-stream dump (`aerogpu_dbgctl --dump-last-submit --count 4`)
 
 after test failures/timeouts. These artifacts are best-effort and intended to make “what did the guest last submit?”
 debugging possible without attaching WinDbg.

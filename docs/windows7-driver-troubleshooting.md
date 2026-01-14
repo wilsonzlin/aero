@@ -109,8 +109,8 @@ aerogpu_dbgctl.exe --dump-last-submit --cmd-out C:\cmd.bin
 
 Notes on legacy spellings (kept for compatibility with older dbgctl builds):
 
-- `--dump-last-cmd` is an alias for `--dump-last-submit`
-- `--out` is an alias for `--cmd-out` for this command
+- For `aerogpu_dbgctl.exe`, `--dump-last-cmd` is an alias for `--dump-last-submit`.
+- For `aerogpu_dbgctl.exe --dump-last-submit`, `--out` is an alias for `--cmd-out`.
 
 If you want a stable alloc-table output filename (`C:\alloc.bin`) instead of the default `C:\cmd.bin.alloc_table.bin` (AGPU only), set `--alloc-out` (only supported when dumping a single submission, i.e. `--count 1`):
 
