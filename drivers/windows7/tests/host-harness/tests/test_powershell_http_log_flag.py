@@ -25,6 +25,21 @@ class PowerShellHarnessHttpLogFlagTests(unittest.TestCase):
             "HttpLogPath default must be empty so existing behavior stays unchanged",
         )
 
+        # Guardrail: the harness should append exactly one log line per request.
+        # (Avoid regressions where request logging is duplicated.)
+        self.assertEqual(
+            len(re.findall(r"AppendAllText\(\$HttpLogPath\b", text)),
+            1,
+            "expected exactly one AppendAllText($HttpLogPath, ...) call (one log line per request)",
+        )
+
+        # Ensure the log line field order is stable: method path status_code bytes.
+        self.assertRegex(
+            text,
+            r'\$line\s*=\s*"\$logMethod \$logPath \$statusCode \$bytesSent',
+            "expected HTTP log line to contain: $logMethod $logPath $statusCode $bytesSent",
+        )
+
         # Safety: never delete directories when the user passes a path intended to be a file.
         # The harness should explicitly detect and reject a directory HttpLogPath.
         self.assertRegex(
