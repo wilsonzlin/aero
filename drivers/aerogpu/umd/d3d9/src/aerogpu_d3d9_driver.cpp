@@ -5243,12 +5243,43 @@ struct ProcessVerticesDeclInfo {
 
 uint32_t d3d9_decl_type_size_bytes(uint8_t type) {
   switch (type) {
+    // D3DDECLTYPE_* values (d3d9types.h). Keep local sizes so we can infer
+    // strides on non-Windows hosts and for header vintages that don't provide
+    // complete declarations.
+    case 0: // FLOAT1
+      return 4u;
     case kD3dDeclTypeFloat4:
       return 16u;
     case kD3dDeclTypeFloat2:
       return 8u;
+    case kD3dDeclTypeFloat3:
+      return 12u;
     case kD3dDeclTypeD3dColor:
       return 4u;
+    case 5: // UBYTE4
+      return 4u;
+    case 6: // SHORT2
+      return 4u;
+    case 7: // SHORT4
+      return 8u;
+    case 8: // UBYTE4N
+      return 4u;
+    case 9: // SHORT2N
+      return 4u;
+    case 10: // SHORT4N
+      return 8u;
+    case 11: // USHORT2N
+      return 4u;
+    case 12: // USHORT4N
+      return 8u;
+    case 13: // UDEC3
+      return 4u;
+    case 14: // DEC3N
+      return 4u;
+    case 15: // FLOAT16_2
+      return 4u;
+    case 16: // FLOAT16_4
+      return 8u;
     default:
       return 0u;
   }
@@ -10830,7 +10861,16 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices(
     dst_stride = pProcessVertices->DestStride;
   }
   if (dst_stride == 0) {
-    dst_stride = src_stride;
+    // Some runtimes may pass DestStride=0 and expect the driver to infer it from
+    // the destination vertex declaration (matching the fixed-function bring-up
+    // path and the D3D9 API behavior).
+    VertexDecl* dst_decl = as_vertex_decl(pProcessVertices->hVertexDecl);
+    ProcessVerticesDeclInfo layout{};
+    if (dst_decl && parse_process_vertices_dest_decl(dst_decl, &layout)) {
+      dst_stride = layout.stride_bytes;
+    } else {
+      dst_stride = src_stride;
+    }
   }
   if (dst_stride == 0) {
     return trace.ret(kD3DErrInvalidCall);

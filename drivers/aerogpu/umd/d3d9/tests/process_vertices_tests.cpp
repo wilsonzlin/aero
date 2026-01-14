@@ -930,6 +930,87 @@ void test_copy_xyzrhw_diffuse_offsets() {
                      static_cast<size_t>(pv.VertexCount) * dst_stride) == 0);
 }
 
+void test_copy_xyzrhw_diffuse_infer_dest_stride_from_decl() {
+  Adapter adapter;
+  Device dev(&adapter);
+
+  // Force memcpy-style fallback path (pre-transformed vertices, no fixed-function
+  // transform needed).
+  dev.fvf = kFvfXyzrhw | kFvfDiffuse;
+
+  // Source VB: 2 vertices of XYZRHW|DIFFUSE = 20 bytes each.
+  Resource src;
+  src.kind = ResourceKind::Buffer;
+  src.size_bytes = 2 * 20;
+  src.storage.resize(src.size_bytes);
+  std::memset(src.storage.data(), 0, src.storage.size());
+
+  // Vertex 0.
+  write_f32(src.storage, 0, 10.0f);
+  write_f32(src.storage, 4, 20.0f);
+  write_f32(src.storage, 8, 0.5f);
+  write_f32(src.storage, 12, 1.0f);
+  write_u32(src.storage, 16, 0xAABBCCDDu);
+
+  // Vertex 1.
+  write_f32(src.storage, 20 + 0, 30.0f);
+  write_f32(src.storage, 20 + 4, 40.0f);
+  write_f32(src.storage, 20 + 8, 0.25f);
+  write_f32(src.storage, 20 + 12, 2.0f);
+  write_u32(src.storage, 20 + 16, 0x11223344u);
+
+  // Destination decl includes an extra TEX0 float2 field, making the implied
+  // stride 28 bytes (20 bytes of XYZRHW|DIFFUSE + 8 bytes TEX0).
+  const D3DVERTEXELEMENT9_COMPAT elems[] = {
+      {0, 0, kDeclTypeFloat4, kDeclMethodDefault, kDeclUsagePositionT, 0},
+      {0, 16, kDeclTypeD3dColor, kDeclMethodDefault, kDeclUsageColor, 0},
+      {0, 20, kDeclTypeFloat2, kDeclMethodDefault, kDeclUsageTexCoord, 0},
+      {0xFF, 0, kDeclTypeUnused, 0, 0, 0},
+  };
+  VertexDecl decl;
+  decl.blob.resize(sizeof(elems));
+  std::memcpy(decl.blob.data(), elems, sizeof(elems));
+
+  // Destination VB: 3 vertices worth of 28-byte stride so we can write starting
+  // at DestIndex=1 and ensure the inferred stride is actually used.
+  constexpr uint32_t kDstStride = 28;
+  Resource dst;
+  dst.kind = ResourceKind::Buffer;
+  dst.size_bytes = 3 * kDstStride;
+  dst.storage.resize(dst.size_bytes);
+  std::memset(dst.storage.data(), 0xCD, dst.storage.size());
+
+  dev.streams[0].vb = &src;
+  dev.streams[0].offset_bytes = 0;
+  dev.streams[0].stride_bytes = 20;
+
+  D3DDDIARG_PROCESSVERTICES pv{};
+  pv.SrcStartIndex = 0;
+  pv.DestIndex = 1;
+  pv.VertexCount = 2;
+  pv.hDestBuffer.pDrvPrivate = &dst;
+  pv.hVertexDecl.pDrvPrivate = &decl;
+  pv.Flags = 0;
+  // Exercise DestStride inference in the memcpy fallback path.
+  pv.DestStride = 0;
+
+  // Expected result: copy the first 20 bytes of each source vertex into the
+  // destination stride, leaving the extra TEX0 bytes as-is (0xCD).
+  std::vector<uint8_t> expected = dst.storage;
+  for (uint32_t i = 0; i < pv.VertexCount; ++i) {
+    std::memcpy(expected.data() + static_cast<size_t>(pv.DestIndex + i) * kDstStride,
+                src.storage.data() + static_cast<size_t>(pv.SrcStartIndex + i) * 20,
+                20);
+  }
+
+  D3DDDI_HDEVICE hDevice{};
+  hDevice.pDrvPrivate = &dev;
+
+  const HRESULT hr = device_process_vertices(hDevice, &pv);
+  assert(SUCCEEDED(hr));
+  assert(dst.storage == expected);
+}
+
 void test_process_vertices_fallback_inplace_overlap_dst_inside_src() {
   Adapter adapter;
   Device dev(&adapter);
@@ -1059,6 +1140,7 @@ int main() {
   aerogpu::test_xyz_diffuse_offsets();
   aerogpu::test_xyz_diffuse_tex1_offsets();
   aerogpu::test_copy_xyzrhw_diffuse_offsets();
+  aerogpu::test_copy_xyzrhw_diffuse_infer_dest_stride_from_decl();
   aerogpu::test_process_vertices_fallback_inplace_overlap_dst_inside_src();
   aerogpu::test_process_vertices_fallback_inplace_overlap_src_inside_dst();
   return 0;
