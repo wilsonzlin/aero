@@ -397,13 +397,20 @@ def main() -> int:
             device_help_text=device_help_text,
         )
 
-        proc = subprocess.Popen(
-            qemu_args,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
+        try:
+            proc = subprocess.Popen(
+                qemu_args,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+        except FileNotFoundError:
+            print(f"ERROR: qemu-system binary not found: {args.qemu_system}", file=sys.stderr)
+            return 2
+        except OSError as e:
+            print(f"ERROR: failed to start qemu-system binary: {args.qemu_system}: {e}", file=sys.stderr)
+            return 2
         try:
             greeting = _read_qmp_obj(proc.stdout)
             if "QMP" not in greeting:
