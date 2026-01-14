@@ -1549,11 +1549,6 @@ impl D3D11Runtime {
             }
         }
 
-        let max_uniform_buffers_per_shader_stage = u32::from(max_uniform_buffers_per_shader_stage);
-        let max_sampled_textures_per_shader_stage =
-            u32::from(max_sampled_textures_per_shader_stage);
-        let max_samplers_per_shader_stage = u32::from(max_samplers_per_shader_stage);
-
         if uniform_buffers_vertex > max_uniform_buffers_per_shader_stage {
             bail!(
                 "pipeline uses {uniform_buffers_vertex} uniform buffers in vertex stage, but device limit max_uniform_buffers_per_shader_stage={max_uniform_buffers_per_shader_stage}"
