@@ -11,12 +11,21 @@ export interface InputQueue<T extends HostInputEvent = HostInputEvent> {
   snapshot(): InputQueueSnapshot;
 }
 
+const DEFAULT_IN_MEMORY_QUEUE_CAPACITY = 4096;
+
 export class InMemoryInputQueue<T extends HostInputEvent = HostInputEvent> implements InputQueue<T> {
   private readonly events: T[] = [];
   readonly capacity: number;
 
-  constructor({ capacity = 4096 }: { capacity?: number } = {}) {
-    this.capacity = capacity;
+  constructor({ capacity = DEFAULT_IN_MEMORY_QUEUE_CAPACITY }: { capacity?: number } = {}) {
+    // Be defensive: capacity may come from user config. `NaN` in particular would make
+    // `events.length >= capacity` always false, resulting in unbounded growth.
+    if (Number.isFinite(capacity)) {
+      const c = Math.floor(capacity);
+      this.capacity = c >= 0 ? c : DEFAULT_IN_MEMORY_QUEUE_CAPACITY;
+    } else {
+      this.capacity = DEFAULT_IN_MEMORY_QUEUE_CAPACITY;
+    }
   }
 
   push(event: T): boolean {

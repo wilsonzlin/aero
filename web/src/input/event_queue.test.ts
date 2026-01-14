@@ -89,4 +89,30 @@ describe("InputEventQueue", () => {
     expect(words[base + 2]).toBe(4); // dz
     expect(words[base + 3]).toBe(1); // dx
   });
+
+  it("sanitizes invalid capacityEvents values so pushed events are not dropped", () => {
+    for (const cap of [0, Number.NaN, Number.POSITIVE_INFINITY, -1]) {
+      const queue = new InputEventQueue(cap as any);
+      queue.pushMouseButtons(10, 5);
+
+      const state: { posted: InputBatchMessage | null } = { posted: null };
+      const target: InputBatchTarget = {
+        postMessage: (msg, _transfer) => {
+          state.posted = msg;
+        },
+      };
+
+      queue.flush(target);
+      if (!state.posted) throw new Error("expected flush to post a batch");
+
+      const words = new Int32Array(state.posted.buffer);
+      expect(words[0]).toBe(1);
+
+      const base = 2;
+      expect(words[base + 0]).toBe(InputEventType.MouseButtons);
+      expect(words[base + 1]).toBe(10);
+      expect(words[base + 2]).toBe(5);
+      expect(words[base + 3]).toBe(0);
+    }
+  });
 });

@@ -129,9 +129,16 @@ export class InputEventQueue {
   private readonly bufferFactory: BufferFactory;
 
   constructor(capacityEvents = 128, bufferFactory: BufferFactory = (byteLength) => new ArrayBuffer(byteLength)) {
-    this.capacityEvents = capacityEvents;
+    // Be defensive: capacity may come from user config. A `NaN` capacity can produce a zero-length
+    // buffer (via `new ArrayBuffer(NaN)` -> 0), leaving the queue in a corrupted state where pushes
+    // "succeed" but do not actually write event data.
+    if (Number.isFinite(capacityEvents)) {
+      this.capacityEvents = Math.max(1, Math.floor(capacityEvents));
+    } else {
+      this.capacityEvents = 128;
+    }
     this.bufferFactory = bufferFactory;
-    this.buf = this.allocateBuffer((HEADER_WORDS + capacityEvents * WORDS_PER_EVENT) * 4);
+    this.buf = this.allocateBuffer((HEADER_WORDS + this.capacityEvents * WORDS_PER_EVENT) * 4);
     this.words = new Int32Array(this.buf);
   }
 
