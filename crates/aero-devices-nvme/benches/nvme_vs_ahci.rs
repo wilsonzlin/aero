@@ -129,7 +129,7 @@ fn bench_device_read_4k(c: &mut Criterion) {
         }
         let disk = RawDisk::open(MemBackend::from_vec(disk_bytes)).unwrap();
 
-        let mut ctrl = NvmeController::new(Box::new(disk));
+        let mut ctrl = NvmeController::try_new_from_aero_storage(disk).unwrap();
 
         // Admin SQ/CQ setup and enable.
         ctrl.mmio_write(0x0024, 4, 0x000f_000f);

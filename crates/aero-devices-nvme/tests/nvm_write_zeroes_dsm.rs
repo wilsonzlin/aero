@@ -229,7 +229,7 @@ fn setup_admin_and_io_queue_pair(
 #[test]
 fn identify_controller_advertises_write_zeroes_and_dsm() {
     let disk = MemDisk::new(1024);
-    let mut ctrl = NvmeController::new(Box::new(disk));
+    let mut ctrl = NvmeController::try_new_from_aero_storage(disk).unwrap();
     let mut mem = TestMem::new(2 * 1024 * 1024);
 
     let asq = 0x10000;
@@ -271,7 +271,7 @@ fn identify_controller_advertises_write_zeroes_and_dsm() {
 #[test]
 fn identify_namespace_advertises_thin_provisioning_for_dsm() {
     let disk = MemDisk::new(1024);
-    let mut ctrl = NvmeController::new(Box::new(disk));
+    let mut ctrl = NvmeController::try_new_from_aero_storage(disk).unwrap();
     let mut mem = TestMem::new(2 * 1024 * 1024);
 
     let asq = 0x10000;
@@ -312,7 +312,7 @@ fn dsm_without_deallocate_is_noop_success() {
     let disk_state = disk.clone();
     disk_state.fill(0x77);
 
-    let mut ctrl = NvmeController::new(Box::new(disk));
+    let mut ctrl = NvmeController::try_new_from_aero_storage(disk).unwrap();
     let mut mem = TestMem::new(2 * 1024 * 1024);
 
     let asq = 0x10000;
@@ -347,7 +347,7 @@ fn dsm_without_deallocate_is_noop_success() {
 #[test]
 fn dsm_rejects_unknown_attributes() {
     let disk = MemDisk::new(1024);
-    let mut ctrl = NvmeController::new(Box::new(disk));
+    let mut ctrl = NvmeController::try_new_from_aero_storage(disk).unwrap();
     let mut mem = TestMem::new(2 * 1024 * 1024);
 
     let asq = 0x10000;
@@ -374,7 +374,7 @@ fn dsm_rejects_unknown_attributes() {
 #[test]
 fn dsm_rejects_reserved_cdw10_bits_even_without_deallocate() {
     let disk = MemDisk::new(1024);
-    let mut ctrl = NvmeController::new(Box::new(disk));
+    let mut ctrl = NvmeController::try_new_from_aero_storage(disk).unwrap();
     let mut mem = TestMem::new(2 * 1024 * 1024);
 
     let asq = 0x10000;
@@ -403,7 +403,7 @@ fn dsm_rejects_reserved_cdw10_bits_even_without_deallocate() {
 #[test]
 fn write_zeroes_invalid_nsid_is_rejected() {
     let disk = MemDisk::new(1024);
-    let mut ctrl = NvmeController::new(Box::new(disk));
+    let mut ctrl = NvmeController::try_new_from_aero_storage(disk).unwrap();
     let mut mem = TestMem::new(2 * 1024 * 1024);
 
     let asq = 0x10000;
@@ -432,7 +432,7 @@ fn write_zeroes_invalid_nsid_is_rejected() {
 fn write_zeroes_zero_fills_disk() {
     let disk = MemDisk::new(1024);
     let disk_state = disk.clone();
-    let mut ctrl = NvmeController::new(Box::new(disk));
+    let mut ctrl = NvmeController::try_new_from_aero_storage(disk).unwrap();
     let mut mem = TestMem::new(2 * 1024 * 1024);
 
     let asq = 0x10000;
@@ -473,7 +473,7 @@ fn dsm_deallocate_zero_fills_disk() {
     let disk_state = disk.clone();
     disk_state.fill(0xCC);
 
-    let mut ctrl = NvmeController::new(Box::new(disk));
+    let mut ctrl = NvmeController::try_new_from_aero_storage(disk).unwrap();
     let mut mem = TestMem::new(2 * 1024 * 1024);
 
     let asq = 0x10000;
@@ -527,7 +527,7 @@ fn write_zeroes_rejects_oversized_request() {
     let disk_state = disk.clone();
     disk_state.fill(0x11);
 
-    let mut ctrl = NvmeController::new(Box::new(disk));
+    let mut ctrl = NvmeController::try_new_from_aero_storage(disk).unwrap();
     let mut mem = TestMem::new(2 * 1024 * 1024);
 
     let asq = 0x10000;
@@ -568,7 +568,7 @@ fn write_zeroes_out_of_range_is_rejected() {
     let disk_state = disk.clone();
     disk_state.fill(0x55);
 
-    let mut ctrl = NvmeController::new(Box::new(disk));
+    let mut ctrl = NvmeController::try_new_from_aero_storage(disk).unwrap();
     let mut mem = TestMem::new(2 * 1024 * 1024);
 
     let asq = 0x10000;
@@ -607,7 +607,7 @@ fn dsm_deallocate_rejects_oversized_request() {
     let disk_state = disk.clone();
     disk_state.fill(0x22);
 
-    let mut ctrl = NvmeController::new(Box::new(disk));
+    let mut ctrl = NvmeController::try_new_from_aero_storage(disk).unwrap();
     let mut mem = TestMem::new(2 * 1024 * 1024);
 
     let asq = 0x10000;
@@ -654,7 +654,7 @@ fn dsm_deallocate_out_of_range_is_rejected() {
     let disk_state = disk.clone();
     disk_state.fill(0x66);
 
-    let mut ctrl = NvmeController::new(Box::new(disk));
+    let mut ctrl = NvmeController::try_new_from_aero_storage(disk).unwrap();
     let mut mem = TestMem::new(2 * 1024 * 1024);
 
     let asq = 0x10000;

@@ -678,7 +678,7 @@ fn snapshot_restore_preserves_msi_capability_programming() {
 fn snapshot_restore_preserves_msix_table_and_pba_state() {
     let disk = SharedDisk::new(1024);
 
-    let mut dev = NvmePciDevice::new(Box::new(disk.clone()));
+    let mut dev = NvmePciDevice::try_new_from_aero_storage(disk.clone()).unwrap();
 
     // NVMe always exposes an MSI-X capability with a single table entry backed by BAR0.
     let msix_cap_off = dev
@@ -722,7 +722,7 @@ fn snapshot_restore_preserves_msix_table_and_pba_state() {
 
     let snap = dev.save_state();
 
-    let mut restored = NvmePciDevice::new(Box::new(disk.clone()));
+    let mut restored = NvmePciDevice::try_new_from_aero_storage(disk.clone()).unwrap();
     restored.load_state(&snap).unwrap();
     let msix_cap_off2 = restored
         .config_mut()
