@@ -11,19 +11,20 @@ Why:
       - VIOINPUT_COUNTERS
       - VIOINPUT_STATE
       - VIOINPUT_INTERRUPT_INFO
-  - `drivers/windows7/virtio-input/tools/hidtest/main.c` intentionally duplicates
-    these struct layouts so it can be built with non-WDK toolchains (SDK or
-    MinGW-w64) without including the driver's WDK-only headers.
+  - Several user-mode programs intentionally duplicate these struct layouts so they
+    can be built without including the driver's WDK-only headers:
+      - `drivers/windows7/virtio-input/tools/hidtest/main.c`
+      - `drivers/windows7/tests/guest-selftest/src/main.cpp`
 
 This script prevents accidental drift between:
   - the driver source of truth:
       - `drivers/windows7/virtio-input/src/log.h` (diagnostics IOCTL ABI)
       - `drivers/windows7/virtio-input/src/virtio_input.h` (VIOINPUT_DEVICE_KIND ABI)
-  - the user-mode tooling copies: `drivers/windows7/virtio-input/tools/hidtest/main.c`
+  - the user-mode copies listed above.
 
 It checks:
   - VIOINPUT_COUNTERS_VERSION / VIOINPUT_STATE_VERSION / VIOINPUT_INTERRUPT_INFO_VERSION match
-  - IOCTL_VIOINPUT_* CTL_CODE() definitions match (so tools don't drift to the wrong function codes)
+  - IOCTL_VIOINPUT_* CTL_CODE() definitions match (so tools/selftest don't drift to the wrong function codes)
   - field order/name lists for VIOINPUT_COUNTERS / VIOINPUT_STATE / VIOINPUT_INTERRUPT_INFO match
   - interrupt-info enum values / sentinel constants match (prevents user-mode tools from misinterpreting fields)
   - VIOINPUT_DEVICE_KIND values stay aligned with the driver enum in virtio_input.h
