@@ -269,34 +269,15 @@ struct AerogpuTextureFormatLayout {
 };
 
 static AerogpuTextureFormatLayout aerogpu_texture_format_layout(uint32_t aerogpu_format) {
-  switch (aerogpu_format) {
-    case AEROGPU_FORMAT_B8G8R8A8_UNORM:
-    case AEROGPU_FORMAT_B8G8R8A8_UNORM_SRGB:
-    case AEROGPU_FORMAT_B8G8R8X8_UNORM:
-    case AEROGPU_FORMAT_B8G8R8X8_UNORM_SRGB:
-    case AEROGPU_FORMAT_R8G8B8A8_UNORM:
-    case AEROGPU_FORMAT_R8G8B8A8_UNORM_SRGB:
-    case AEROGPU_FORMAT_R8G8B8X8_UNORM:
-    case AEROGPU_FORMAT_R8G8B8X8_UNORM_SRGB:
-    case AEROGPU_FORMAT_D24_UNORM_S8_UINT:
-    case AEROGPU_FORMAT_D32_FLOAT:
-      return AerogpuTextureFormatLayout{1, 1, 4, true};
-    case AEROGPU_FORMAT_B5G6R5_UNORM:
-    case AEROGPU_FORMAT_B5G5R5A1_UNORM:
-      return AerogpuTextureFormatLayout{1, 1, 2, true};
-    case AEROGPU_FORMAT_BC1_RGBA_UNORM:
-    case AEROGPU_FORMAT_BC1_RGBA_UNORM_SRGB:
-      return AerogpuTextureFormatLayout{4, 4, 8, true};
-    case AEROGPU_FORMAT_BC2_RGBA_UNORM:
-    case AEROGPU_FORMAT_BC2_RGBA_UNORM_SRGB:
-    case AEROGPU_FORMAT_BC3_RGBA_UNORM:
-    case AEROGPU_FORMAT_BC3_RGBA_UNORM_SRGB:
-    case AEROGPU_FORMAT_BC7_RGBA_UNORM:
-    case AEROGPU_FORMAT_BC7_RGBA_UNORM_SRGB:
-      return AerogpuTextureFormatLayout{4, 4, 16, true};
-    default:
-      return AerogpuTextureFormatLayout{};
-  }
+  // Keep the format layout mapping in sync with the shared internal header to
+  // avoid format list drift when new formats are added.
+  const auto layout = aerogpu::d3d10_11::aerogpu_texture_format_layout(aerogpu_format);
+  return AerogpuTextureFormatLayout{
+      layout.block_width,
+      layout.block_height,
+      layout.bytes_per_block,
+      layout.valid,
+  };
 }
 
 static bool aerogpu_format_is_block_compressed(uint32_t aerogpu_format) {
