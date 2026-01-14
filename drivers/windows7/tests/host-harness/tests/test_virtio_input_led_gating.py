@@ -57,5 +57,38 @@ class VirtioInputLedGatingSawFlagsTests(unittest.TestCase):
         )
 
 
+class VirtioInputLedsGatingSawFlagsTests(unittest.TestCase):
+    """
+    Coverage for the legacy/backcompat virtio-input-leds marker gating helper.
+
+    (Tail-scanning behavior is covered in test_failure_tokens.py.)
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.harness = _load_harness()
+
+    def test_saw_fail_flag_fails_even_if_tail_lacks_marker(self) -> None:
+        h = self.harness
+        tail = b"AERO_VIRTIO_SELFTEST|RESULT|PASS\n"
+        msg = h._virtio_input_leds_required_failure_message(tail, saw_fail=True)
+        self.assertIsNotNone(msg)
+        self.assertTrue(str(msg).startswith("FAIL: VIRTIO_INPUT_LEDS_FAILED:"))
+
+    def test_saw_skip_flag_fails_even_if_tail_lacks_marker(self) -> None:
+        h = self.harness
+        tail = b"AERO_VIRTIO_SELFTEST|RESULT|PASS\n"
+        msg = h._virtio_input_leds_required_failure_message(tail, saw_skip=True)
+        self.assertIsNotNone(msg)
+        self.assertTrue(str(msg).startswith("FAIL: VIRTIO_INPUT_LEDS_SKIPPED:"))
+
+    def test_saw_pass_takes_precedence_over_saw_fail(self) -> None:
+        h = self.harness
+        tail = b"AERO_VIRTIO_SELFTEST|RESULT|PASS\n"
+        self.assertIsNone(
+            h._virtio_input_leds_required_failure_message(tail, saw_pass=True, saw_fail=True)
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
