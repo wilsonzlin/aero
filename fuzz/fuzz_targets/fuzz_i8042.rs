@@ -3,7 +3,9 @@
 use arbitrary::Unstructured;
 use libfuzzer_sys::fuzz_target;
 
+use aero_devices_input::i8042::MAX_PENDING_OUTPUT;
 use aero_devices_input::I8042Controller;
+use aero_devices_input::Ps2MouseButton;
 use aero_io_snapshot::io::state::IoSnapshot;
 
 const MAX_OPS: usize = 1024;
@@ -16,7 +18,7 @@ fuzz_target!(|data: &[u8]| {
     let ops: usize = u.int_in_range(0usize..=MAX_OPS).unwrap_or(0);
     for _ in 0..ops {
         let tag: u8 = u.arbitrary().unwrap_or(0);
-        match tag % 6 {
+        match tag % 8 {
             0 => {
                 let _ = ctl.read_port(0x60);
             }
@@ -41,6 +43,27 @@ fuzz_target!(|data: &[u8]| {
                 }
                 ctl.inject_key_scancode_bytes(&buf[..len]);
             }
+            5 => {
+                // Host injection: mouse motion. Keep deltas bounded so each injection doesn't
+                // dominate runtime (PS/2 splits large motion into multiple packets).
+                let dx: i32 = i32::from(u.arbitrary::<i16>().unwrap_or(0)).clamp(-1024, 1024);
+                let dy: i32 = i32::from(u.arbitrary::<i16>().unwrap_or(0)).clamp(-1024, 1024);
+                let wheel: i32 = i32::from(u.arbitrary::<i16>().unwrap_or(0)).clamp(-256, 256);
+                ctl.inject_mouse_motion(dx, dy, wheel);
+            }
+            6 => {
+                // Host injection: mouse button state.
+                let which: u8 = u.arbitrary().unwrap_or(0);
+                let pressed: bool = u.arbitrary().unwrap_or(false);
+                let button = match which % 5 {
+                    0 => Ps2MouseButton::Left,
+                    1 => Ps2MouseButton::Right,
+                    2 => Ps2MouseButton::Middle,
+                    3 => Ps2MouseButton::Side,
+                    _ => Ps2MouseButton::Extra,
+                };
+                ctl.inject_mouse_button(button, pressed);
+            }
             _ => {
                 // Snapshot roundtrip: save_state -> load_state into a fresh controller, then keep
                 // going from the restored state.
@@ -50,6 +73,13 @@ fuzz_target!(|data: &[u8]| {
                 ctl = fresh;
             }
         }
+
+        // Invariant: controller buffering must never grow without bound.
+        assert!(
+            ctl.pending_output_len() <= MAX_PENDING_OUTPUT,
+            "pending_output_len={} exceeded MAX_PENDING_OUTPUT={}",
+            ctl.pending_output_len(),
+            MAX_PENDING_OUTPUT
+        );
     }
 });
-
