@@ -131,7 +131,7 @@ The in-tree INFs intentionally match only **Aero contract v1** hardware IDs (rev
   - Enabling the alias **does** change HWID matching behavior, and because it overlaps the SUBSYS keyboard/mouse HWIDs **and**
     adds the fallback, do **not** ship/install it alongside `aero_virtio_input.inf` (ship/install only one INF basename at a time).
 
-The subsystem-qualified IDs use distinct `DeviceDesc` strings, so the PCI functions appear as separate named devices in
+The subsystem-qualified IDs use distinct `DeviceDesc` strings, so when the device exposes the Aero subsystem IDs the PCI functions appear as separate named devices in
 Device Manager (**Aero VirtIO Keyboard** / **Aero VirtIO Mouse** / **Aero VirtIO Tablet Device**).
 
 When binding via the legacy alias INF's generic fallback model line (`PCI\VEN_1AF4&DEV_1052&REV_01`), Device Manager will show

@@ -76,7 +76,7 @@ Keyboard: PCI device 1af4:1052
   * The “Hardware Ids” list in Device Manager includes more-specific forms (with
   `SUBSYS_...` and `REV_...`). The in-tree Aero INFs intentionally match only
   **Aero contract v1** hardware IDs (revision-gated `REV_01`):
-  - `inf/aero_virtio_input.inf` (keyboard/mouse; canonical):
+  - `inf/aero_virtio_input.inf` (keyboard/mouse; canonical; SUBSYS-only):
     - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01` (keyboard; **Aero VirtIO Keyboard**)
     - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01` (mouse; **Aero VirtIO Mouse**)
     - Note: canonical keyboard/mouse INF is intentionally **SUBSYS-only** (no strict generic fallback).
@@ -93,7 +93,7 @@ Keyboard: PCI device 1af4:1052
     - Do **not** ship/install it alongside `aero_virtio_input.inf` (install only one INF basename at a time).
   This avoids binding to non-contract virtio-input devices (no `REV_01`, wrong DEV, etc) and keeps
   keyboard/mouse vs tablet selection deterministic by default. The tablet INF is more specific (`SUBSYS_0012...`), so it
-  wins over the generic fallback when both driver packages are installed (i.e. when the alias is enabled).
+  wins over the optional generic fallback when both driver packages are installed (i.e. when the alias is enabled).
 * Aero’s Win7 virtio contract encodes the contract major version in the PCI Revision
   ID (contract v1 = `REV_01`). Some QEMU virtio devices report `REV_00` by default;
   for contract testing, use `x-pci-revision=0x01` on the QEMU `-device ...` args.
