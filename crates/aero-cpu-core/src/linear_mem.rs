@@ -256,11 +256,19 @@ pub fn fetch_wrapped<B: CpuBus>(
     }
 
     let mut buf = [0u8; 15];
-    for (i, byte) in buf.iter_mut().enumerate().take(len) {
-        let byte_addr = state.apply_a20(addr.wrapping_add(i as u64));
+    // Slow path: split into contiguous runs in masked linear address space. This
+    // keeps instruction fetch efficient in the rare case where the architectural
+    // address space wraps (32-bit wrap in non-long modes, A20 alias wrap).
+    let mut offset = 0usize;
+    while offset < len {
+        let raw = addr.wrapping_add(offset as u64);
+        let start = state.apply_a20(raw);
+        let seg_len = wrapped_segment_len(state, raw, len - offset);
         // Use `CpuBus::fetch` (execute access) even on the slow path so paging-aware
         // busses (NX bit, supervisor execute restrictions) observe the correct access type.
-        *byte = bus.fetch(byte_addr, 1)?[0];
+        let chunk = bus.fetch(start, seg_len)?;
+        buf[offset..offset + seg_len].copy_from_slice(&chunk[..seg_len]);
+        offset += seg_len;
     }
     Ok(buf)
 }
