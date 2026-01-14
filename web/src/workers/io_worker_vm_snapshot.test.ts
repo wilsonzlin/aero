@@ -6,11 +6,16 @@ import { restoreIoWorkerVmSnapshotFromOpfs, saveIoWorkerVmSnapshotToOpfs, snapsh
 import { decodeUsbSnapshotContainer, encodeUsbSnapshotContainer, USB_SNAPSHOT_TAG_UHCI, USB_SNAPSHOT_TAG_XHCI } from "./usb_snapshot_container";
 import {
   VM_SNAPSHOT_DEVICE_ID_AUDIO_HDA,
+  VM_SNAPSHOT_DEVICE_ID_AUDIO_VIRTIO_SND,
   VM_SNAPSHOT_DEVICE_ID_E1000,
   VM_SNAPSHOT_DEVICE_ID_I8042,
   VM_SNAPSHOT_DEVICE_ID_NET_STACK,
   VM_SNAPSHOT_DEVICE_ID_USB,
+  VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID,
 } from "./vm_snapshot_wasm";
+
+const VM_SNAPSHOT_DEVICE_PCI_CFG_KIND = `${VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID}14`;
+const VM_SNAPSHOT_DEVICE_PCI_LEGACY_KIND = `${VM_SNAPSHOT_DEVICE_KIND_PREFIX_ID}5`;
 
 describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
   it("forwards device blobs to vm_snapshot_save_to_opfs when save_state hooks exist", async () => {
@@ -24,12 +29,16 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
     const usbState = new Uint8Array([0x01, 0x02]);
     const i8042State = new Uint8Array([0x02]);
     const hdaState = new Uint8Array([0x02, 0x03]);
+    const virtioSndState = new Uint8Array([0x03, 0x03, 0x03]);
+    const pciState = new Uint8Array([0x80, 0x81]);
     const e1000State = new Uint8Array([0x03, 0x04, 0x05]);
     const stackState = new Uint8Array([0x06]);
 
     const usbUhciRuntime = { save_state: () => usbState };
     const i8042 = { save_state: () => i8042State };
     const audioHda = { save_state: () => hdaState };
+    const audioVirtioSnd = { saveState: () => virtioSndState };
+    const pciBus = { saveState: () => pciState };
     const netE1000 = { save_state: () => e1000State };
     // Exercise the alternate `snapshot_state` spelling.
     const netStack = { snapshot_state: () => stackState };
@@ -51,6 +60,8 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
         usbEhciControllerBridge: null,
         i8042,
         audioHda,
+        audioVirtioSnd,
+        pciBus,
         netE1000,
         netStack,
       },
@@ -68,6 +79,8 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
       { kind: `device.${VM_SNAPSHOT_DEVICE_ID_USB}`, bytes: usbState },
       { kind: `device.${VM_SNAPSHOT_DEVICE_ID_I8042}`, bytes: i8042State },
       { kind: `device.${VM_SNAPSHOT_DEVICE_ID_AUDIO_HDA}`, bytes: hdaState },
+      { kind: `device.${VM_SNAPSHOT_DEVICE_ID_AUDIO_VIRTIO_SND}`, bytes: virtioSndState },
+      { kind: VM_SNAPSHOT_DEVICE_PCI_CFG_KIND, bytes: pciState },
       { kind: `device.${VM_SNAPSHOT_DEVICE_ID_E1000}`, bytes: e1000State },
       { kind: `device.${VM_SNAPSHOT_DEVICE_ID_NET_STACK}`, bytes: stackState },
     ]);
@@ -118,6 +131,8 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
     const usbState = new Uint8Array([0x01, 0x02]);
     const i8042State = new Uint8Array([0x02]);
     const hdaState = new Uint8Array([0x02, 0x03]);
+    const virtioSndState = new Uint8Array([0x03, 0x03, 0x03]);
+    const pciState = new Uint8Array([0x80, 0x81]);
     const e1000State = new Uint8Array([0x03, 0x04, 0x05]);
     const stackState = new Uint8Array([0x06]);
 
@@ -128,6 +143,8 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
         { kind: `device.${VM_SNAPSHOT_DEVICE_ID_USB}`, bytes: usbState },
         { kind: `device.${VM_SNAPSHOT_DEVICE_ID_I8042}`, bytes: i8042State },
         { kind: `device.${VM_SNAPSHOT_DEVICE_ID_AUDIO_HDA}`, bytes: hdaState },
+        { kind: `device.${VM_SNAPSHOT_DEVICE_ID_AUDIO_VIRTIO_SND}`, bytes: virtioSndState },
+        { kind: VM_SNAPSHOT_DEVICE_PCI_CFG_KIND, bytes: pciState },
         { kind: `device.${VM_SNAPSHOT_DEVICE_ID_E1000}`, bytes: e1000State },
         { kind: `device.${VM_SNAPSHOT_DEVICE_ID_NET_STACK}`, bytes: stackState },
       ],
@@ -138,6 +155,8 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
     const usbLoad = vi.fn();
     const i8042Load = vi.fn();
     const hdaLoad = vi.fn();
+    const virtioSndLoad = vi.fn();
+    const pciLoad = vi.fn();
     const e1000Load = vi.fn();
     const stackLoad = vi.fn();
     const stackPolicy = vi.fn();
@@ -154,6 +173,8 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
         usbEhciControllerBridge: null,
         i8042: { load_state: i8042Load },
         audioHda: { load_state: hdaLoad },
+        audioVirtioSnd: { loadState: virtioSndLoad },
+        pciBus: { loadState: pciLoad },
         netE1000: { load_state: e1000Load },
         netStack: { load_state: stackLoad, apply_tcp_restore_policy: stackPolicy },
       },
@@ -163,12 +184,22 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
     expect(usbLoad).toHaveBeenCalledWith(usbState);
     expect(i8042Load).toHaveBeenCalledWith(i8042State);
     expect(hdaLoad).toHaveBeenCalledWith(hdaState);
+    expect(virtioSndLoad).toHaveBeenCalledWith(virtioSndState);
+    expect(pciLoad).toHaveBeenCalledWith(pciState);
     expect(e1000Load).toHaveBeenCalledWith(e1000State);
     expect(stackLoad).toHaveBeenCalledWith(stackState);
     expect(stackPolicy).toHaveBeenCalledWith("drop");
 
     // Returned blob kinds should be canonical (not device.<id>).
-    expect(res.devices?.map((d) => d.kind)).toEqual(["usb", "input.i8042", "audio.hda", "net.e1000", "net.stack"]);
+    expect(res.devices?.map((d) => d.kind)).toEqual([
+      "usb",
+      "input.i8042",
+      "audio.hda",
+      "audio.virtio_snd",
+      VM_SNAPSHOT_DEVICE_PCI_CFG_KIND,
+      "net.e1000",
+      "net.stack",
+    ]);
   });
 
   it("restores USB state from legacy usb.uhci kinds", async () => {
@@ -298,6 +329,8 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
     const usbState = new Uint8Array([0x01, 0x02]);
     const i8042State = new Uint8Array([0x02]);
     const hdaState = new Uint8Array([0x02, 0x03]);
+    const virtioSndState = new Uint8Array([0x03, 0x03, 0x03]);
+    const pciState = new Uint8Array([0x80, 0x81]);
     const e1000State = new Uint8Array([0x03, 0x04, 0x05]);
     const stackState = new Uint8Array([0x06]);
 
@@ -318,6 +351,8 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
         usbEhciControllerBridge: null,
         i8042: { save_state: () => i8042State },
         audioHda: { save_state: () => hdaState },
+        audioVirtioSnd: { saveState: () => virtioSndState },
+        pciBus: { saveState: () => pciState },
         netE1000: { save_state: () => e1000State },
         netStack: { save_state: () => stackState },
       },
@@ -329,6 +364,8 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
       VM_SNAPSHOT_DEVICE_ID_USB,
       VM_SNAPSHOT_DEVICE_ID_I8042,
       VM_SNAPSHOT_DEVICE_ID_AUDIO_HDA,
+      VM_SNAPSHOT_DEVICE_ID_AUDIO_VIRTIO_SND,
+      14,
       VM_SNAPSHOT_DEVICE_ID_E1000,
       VM_SNAPSHOT_DEVICE_ID_NET_STACK,
     ]);
@@ -338,12 +375,16 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
     const usbState = new Uint8Array([0x01, 0x02]);
     const i8042State = new Uint8Array([0x02]);
     const hdaState = new Uint8Array([0x02, 0x03]);
+    const virtioSndState = new Uint8Array([0x03, 0x03, 0x03]);
+    const pciState = new Uint8Array([0x80, 0x81]);
     const e1000State = new Uint8Array([0x03, 0x04, 0x05]);
     const stackState = new Uint8Array([0x06]);
 
     const usbLoad = vi.fn();
     const i8042Load = vi.fn();
     const hdaLoad = vi.fn();
+    const virtioSndLoad = vi.fn();
+    const pciLoad = vi.fn();
     const e1000Load = vi.fn();
     const stackLoad = vi.fn();
     const stackPolicy = vi.fn();
@@ -357,6 +398,8 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
             { id: VM_SNAPSHOT_DEVICE_ID_USB, version: 1, flags: 0, data: usbState },
             { id: VM_SNAPSHOT_DEVICE_ID_I8042, version: 1, flags: 0, data: i8042State },
             { id: VM_SNAPSHOT_DEVICE_ID_AUDIO_HDA, version: 1, flags: 0, data: hdaState },
+            { id: VM_SNAPSHOT_DEVICE_ID_AUDIO_VIRTIO_SND, version: 1, flags: 0, data: virtioSndState },
+            { id: 14, version: 1, flags: 0, data: pciState },
             { id: VM_SNAPSHOT_DEVICE_ID_E1000, version: 1, flags: 0, data: e1000State },
             { id: VM_SNAPSHOT_DEVICE_ID_NET_STACK, version: 1, flags: 0, data: stackState },
           ],
@@ -382,6 +425,8 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
         usbEhciControllerBridge: null,
         i8042: { load_state: i8042Load },
         audioHda: { load_state: hdaLoad },
+        audioVirtioSnd: { loadState: virtioSndLoad },
+        pciBus: { loadState: pciLoad },
         netE1000: { load_state: e1000Load },
         netStack: { load_state: stackLoad, apply_tcp_restore_policy: stackPolicy },
       },
@@ -390,11 +435,154 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
     expect(usbLoad).toHaveBeenCalledWith(usbState);
     expect(i8042Load).toHaveBeenCalledWith(i8042State);
     expect(hdaLoad).toHaveBeenCalledWith(hdaState);
+    expect(virtioSndLoad).toHaveBeenCalledWith(virtioSndState);
+    expect(pciLoad).toHaveBeenCalledWith(pciState);
     expect(e1000Load).toHaveBeenCalledWith(e1000State);
     expect(stackLoad).toHaveBeenCalledWith(stackState);
     expect(stackPolicy).toHaveBeenCalledWith("drop");
 
-    expect(res.devices?.map((d) => d.kind)).toEqual(["usb", "input.i8042", "audio.hda", "net.e1000", "net.stack"]);
+    expect(res.devices?.map((d) => d.kind)).toEqual([
+      "usb",
+      "input.i8042",
+      "audio.hda",
+      "audio.virtio_snd",
+      VM_SNAPSHOT_DEVICE_PCI_CFG_KIND,
+      "net.e1000",
+      "net.stack",
+    ]);
+  });
+
+  it("merges coordinator + restored device blobs when saving (fresh overrides restored)", async () => {
+    const calls: Array<{ devices: unknown }> = [];
+    const api = {
+      vm_snapshot_save_to_opfs: (_path: string, _cpu: Uint8Array, _mmu: Uint8Array, devices: unknown) => {
+        calls.push({ devices });
+      },
+    } as unknown as WasmApi;
+
+    const cachedUnknown777 = new Uint8Array([0x77]);
+    const cachedOldI8042 = new Uint8Array([0x00]);
+    const cachedUnknown999 = new Uint8Array([0x99]);
+
+    const freshI8042 = new Uint8Array([0x02]);
+
+    const coord999Buf = new Uint8Array([0x88]).buffer;
+    const cpuInternalBuf = new Uint8Array([0x42]).buffer;
+
+    await saveIoWorkerVmSnapshotToOpfs({
+      api,
+      path: "state/test.snap",
+      cpu: new ArrayBuffer(4),
+      mmu: new ArrayBuffer(8),
+      guestBase: 0,
+      guestSize: 0x1000,
+      runtimes: {
+        usbXhciControllerBridge: null,
+        usbUhciRuntime: null,
+        usbUhciControllerBridge: null,
+        usbEhciControllerBridge: null,
+        i8042: { save_state: () => freshI8042 },
+        audioHda: null,
+        audioVirtioSnd: null,
+        pciBus: null,
+        netE1000: null,
+        netStack: null,
+      },
+      restoredDevices: [
+        { kind: "device.777", bytes: cachedUnknown777 },
+        { kind: "input.i8042", bytes: cachedOldI8042 },
+        { kind: "device.999", bytes: cachedUnknown999 },
+      ],
+      coordinatorDevices: [
+        { kind: "device.999", bytes: coord999Buf },
+        { kind: "device.9", bytes: cpuInternalBuf },
+      ],
+    });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.devices).toEqual([
+      { kind: "device.777", bytes: cachedUnknown777 },
+      { kind: `device.${VM_SNAPSHOT_DEVICE_ID_I8042}`, bytes: freshI8042 },
+      { kind: "device.999", bytes: new Uint8Array(coord999Buf) },
+      { kind: "device.9", bytes: new Uint8Array(cpuInternalBuf) },
+    ]);
+  });
+
+  it("uses CPU_INTERNAL v2 header overrides when saving coordinator blobs via WorkerVmSnapshot builder", async () => {
+    const addCalls: Array<{ id: number; version: number; flags: number }> = [];
+
+    class FakeBuilder {
+      set_cpu_state_v2(_cpu: Uint8Array, _mmu: Uint8Array): void {
+        // ignore
+      }
+
+      add_device_state(id: number, version: number, flags: number, _data: Uint8Array): void {
+        addCalls.push({ id, version, flags });
+      }
+
+      async snapshot_full_to_opfs(_path: string): Promise<void> {
+        // ignore
+      }
+
+      free(): void {
+        // ignore
+      }
+    }
+
+    const api = { WorkerVmSnapshot: FakeBuilder } as unknown as WasmApi;
+
+    await saveIoWorkerVmSnapshotToOpfs({
+      api,
+      path: "state/test.snap",
+      cpu: new ArrayBuffer(4),
+      mmu: new ArrayBuffer(8),
+      guestBase: 0,
+      guestSize: 0x1000,
+      runtimes: {
+        usbXhciControllerBridge: null,
+        usbUhciRuntime: null,
+        usbUhciControllerBridge: null,
+        usbEhciControllerBridge: null,
+        netE1000: null,
+        netStack: null,
+      },
+      coordinatorDevices: [{ kind: "device.9", bytes: new Uint8Array([0x01, 0x02]).buffer }],
+    });
+
+    expect(addCalls).toEqual([{ id: 9, version: 2, flags: 0 }]);
+  });
+
+  it("normalizes legacy PCI device.5 blobs to pci.cfg kind when payload matches PCIB header", async () => {
+    const pciBytes = new Uint8Array([0x41, 0x45, 0x52, 0x4f, 0, 0, 0, 0, 0x50, 0x43, 0x49, 0x42]);
+
+    const restore = vi.fn(() => ({
+      cpu: new Uint8Array([0xaa]),
+      mmu: new Uint8Array([0xbb]),
+      devices: [{ kind: VM_SNAPSHOT_DEVICE_PCI_LEGACY_KIND, bytes: pciBytes }],
+    }));
+
+    const api = { vm_snapshot_restore_from_opfs: restore } as unknown as WasmApi;
+
+    const pciLoad = vi.fn();
+
+    const res = await restoreIoWorkerVmSnapshotFromOpfs({
+      api,
+      path: "state/test.snap",
+      guestBase: 0,
+      guestSize: 0x1000,
+      runtimes: {
+        usbXhciControllerBridge: null,
+        usbUhciRuntime: null,
+        usbUhciControllerBridge: null,
+        usbEhciControllerBridge: null,
+        pciBus: { loadState: pciLoad },
+        netE1000: null,
+        netStack: null,
+      },
+    });
+
+    expect(pciLoad).toHaveBeenCalledWith(pciBytes);
+    expect(res.devices?.map((d) => d.kind)).toEqual([VM_SNAPSHOT_DEVICE_PCI_CFG_KIND]);
   });
 
   it("warns + ignores net.stack restore blobs when net.stack runtime is unavailable", async () => {
