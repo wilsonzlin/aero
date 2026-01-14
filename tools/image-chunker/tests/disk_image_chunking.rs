@@ -72,4 +72,3 @@ fn manifest_sha256_matches_chunk_bytes_for_aerosparse() {
         assert_eq!(actual, expected, "chunk {i} sha256 mismatch");
     }
 }
-

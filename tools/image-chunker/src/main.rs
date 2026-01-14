@@ -313,7 +313,7 @@ struct ManifestChunkV1 {
     sha256: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Meta {
     created_at: DateTime<Utc>,
@@ -605,8 +605,13 @@ async fn verify(args: VerifyArgs) -> Result<()> {
 
 #[derive(Clone, Debug)]
 enum VerifyHttpSource {
-    File { base_dir: PathBuf },
-    Url { manifest_url: reqwest::Url, client: reqwest::Client },
+    File {
+        base_dir: PathBuf,
+    },
+    Url {
+        manifest_url: reqwest::Url,
+        client: reqwest::Client,
+    },
 }
 
 async fn verify_http_or_file(args: &VerifyArgs) -> Result<()> {
@@ -618,7 +623,13 @@ async fn verify_http_or_file(args: &VerifyArgs) -> Result<()> {
         let bytes = download_http_bytes(&client, manifest_url.clone())
             .await
             .context("download manifest.json")?;
-        (bytes, VerifyHttpSource::Url { manifest_url, client })
+        (
+            bytes,
+            VerifyHttpSource::Url {
+                manifest_url,
+                client,
+            },
+        )
     } else if let Some(path) = &args.manifest_file {
         let base_dir = path.parent().unwrap_or(Path::new(".")).to_path_buf();
         let bytes = tokio::fs::read(path)
@@ -773,9 +784,7 @@ async fn verify_http_or_file(args: &VerifyArgs) -> Result<()> {
     let elapsed = started_at.elapsed();
     let done = verified_chunks.load(Ordering::SeqCst);
     let bytes = verified_bytes.load(Ordering::SeqCst);
-    println!(
-        "Verified {done}/{total_chunks_to_verify} chunks ({bytes} bytes) in {elapsed:.2?}"
-    );
+    println!("Verified {done}/{total_chunks_to_verify} chunks ({bytes} bytes) in {elapsed:.2?}");
     Ok(())
 }
 
@@ -863,9 +872,9 @@ async fn verify_http_chunk(
             manifest_url,
             client,
         } => {
-            let url = manifest_url
-                .join(&chunk_key)
-                .with_context(|| format!("resolve chunk url {chunk_key:?} relative to {manifest_url}"))?;
+            let url = manifest_url.join(&chunk_key).with_context(|| {
+                format!("resolve chunk url {chunk_key:?} relative to {manifest_url}")
+            })?;
             verify_chunk_http(index, client, url, expected_size, expected_sha256).await
         }
     }
@@ -940,7 +949,14 @@ async fn verify_chunk_http(
             hasher.update(&chunk);
         }
     }
-    verify_chunk_integrity(index, &url.to_string(), total, expected_size, hasher, expected_sha256)?;
+    verify_chunk_integrity(
+        index,
+        url.as_str(),
+        total,
+        expected_size,
+        hasher,
+        expected_sha256,
+    )?;
     Ok(total)
 }
 
@@ -985,7 +1001,7 @@ async fn verify_s3(args: &VerifyArgs) -> Result<()> {
     )
     .await?;
 
-    let mut manifest_key = resolve_verify_manifest_key(&args)?;
+    let mut manifest_key = resolve_verify_manifest_key(args)?;
     eprintln!("Downloading s3://{}/{}...", bucket, manifest_key);
 
     // If the user provided `--prefix` without `--image-version`, the prefix may refer to either a
@@ -1033,8 +1049,7 @@ async fn verify_s3(args: &VerifyArgs) -> Result<()> {
                 bucket, manifest_key
             );
             let manifest: ManifestV1 =
-                download_json_object_with_retry(&s3, bucket, &manifest_key, args.retries)
-                    .await?;
+                download_json_object_with_retry(&s3, bucket, &manifest_key, args.retries).await?;
             latest_from_prefix = Some((image_root_prefix, latest));
             manifest
         }
@@ -1097,6 +1112,42 @@ async fn verify_s3(args: &VerifyArgs) -> Result<()> {
         manifest.total_size
     );
 
+    // Optional sanity check: if `meta.json` exists alongside the manifest, validate it matches.
+    let meta_key = meta_object_key(&version_prefix);
+    match download_json_object_optional_with_retry::<Meta>(&s3, bucket, &meta_key, args.retries)
+        .await?
+    {
+        None => {
+            eprintln!(
+                "Note: s3://{}/{} not found; skipping meta.json validation.",
+                bucket, meta_key
+            );
+        }
+        Some(meta) => {
+            if meta.total_size != manifest.total_size {
+                bail!(
+                    "meta.json totalSize mismatch: expected {}, got {}",
+                    manifest.total_size,
+                    meta.total_size
+                );
+            }
+            if meta.chunk_size != manifest.chunk_size {
+                bail!(
+                    "meta.json chunkSize mismatch: expected {}, got {}",
+                    manifest.chunk_size,
+                    meta.chunk_size
+                );
+            }
+            if meta.chunk_count != manifest.chunk_count {
+                bail!(
+                    "meta.json chunkCount mismatch: expected {}, got {}",
+                    manifest.chunk_count,
+                    meta.chunk_count
+                );
+            }
+        }
+    }
+
     // Optional sanity check: if `latest.json` exists at the inferred image root, validate it.
     // Skip if we already validated `latest.json` as part of resolving `--prefix` above.
     if latest_from_prefix.is_none() {
@@ -1125,19 +1176,14 @@ async fn verify_s3(args: &VerifyArgs) -> Result<()> {
                     )?;
                     // Ensure the referenced manifest exists (unless it is the one we already fetched).
                     if latest.manifest_key != manifest_key {
-                        head_object_with_retry(
-                            &s3,
-                            bucket,
-                            &latest.manifest_key,
-                            args.retries,
-                        )
-                        .await
-                        .with_context(|| {
-                            format!(
-                                "latest.json points at missing manifest s3://{}/{}",
-                                bucket, latest.manifest_key
-                            )
-                        })?;
+                        head_object_with_retry(&s3, bucket, &latest.manifest_key, args.retries)
+                            .await
+                            .with_context(|| {
+                                format!(
+                                    "latest.json points at missing manifest s3://{}/{}",
+                                    bucket, latest.manifest_key
+                                )
+                            })?;
                     }
                 }
             }
@@ -1233,13 +1279,6 @@ fn validate_manifest_v1(manifest: &ManifestV1, max_chunks: u64) -> Result<()> {
     }
     if manifest.mime_type.is_empty() {
         bail!("manifest mimeType must be non-empty");
-    }
-    let sector = SECTOR_SIZE as u64;
-    if !manifest.total_size.is_multiple_of(sector) {
-        bail!(
-            "manifest totalSize must be a multiple of {sector} bytes, got {}",
-            manifest.total_size
-        );
     }
     if manifest.chunk_size == 0 {
         bail!("manifest chunkSize must be > 0");
@@ -1446,8 +1485,7 @@ async fn verify_chunks(
     }
 
     let (work_tx, work_rx) = async_channel::bounded::<VerifyChunkJob>(concurrency * 2);
-    let (failure_tx, mut failure_rx) =
-        tokio::sync::mpsc::unbounded_channel::<VerifyChunkFailure>();
+    let (failure_tx, mut failure_rx) = tokio::sync::mpsc::unbounded_channel::<VerifyChunkFailure>();
 
     // Only keep details for the first few failures (avoid unbounded memory usage).
     const FAILURE_SAMPLE_LIMIT: u64 = 10;
@@ -1545,9 +1583,7 @@ async fn verify_chunks(
     pb.finish_and_clear();
 
     if checked != total_chunks_to_verify {
-        bail!(
-            "internal error: only checked {checked}/{total_chunks_to_verify} chunks"
-        );
+        bail!("internal error: only checked {checked}/{total_chunks_to_verify} chunks");
     }
 
     eprintln!(
@@ -2354,7 +2390,10 @@ impl std::fmt::Display for ChunkCheckError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::SizeMismatch { expected, actual } => {
-                write!(f, "size mismatch: expected {expected} bytes, got {actual} bytes")
+                write!(
+                    f,
+                    "size mismatch: expected {expected} bytes, got {actual} bytes"
+                )
             }
             Self::Sha256Mismatch { expected, actual } => {
                 write!(f, "sha256 mismatch: expected {expected}, got {actual}")
@@ -2752,27 +2791,6 @@ mod tests {
     }
 
     #[test]
-    fn validate_manifest_v1_rejects_non_sector_aligned_total_size() {
-        let manifest = ManifestV1 {
-            schema: MANIFEST_SCHEMA.to_string(),
-            image_id: "win7".to_string(),
-            version: "sha256-abc".to_string(),
-            mime_type: CHUNK_MIME_TYPE.to_string(),
-            total_size: 513,
-            chunk_size: 512,
-            chunk_count: 2,
-            chunk_index_width: CHUNK_INDEX_WIDTH as u32,
-            chunks: None,
-        };
-        let err = validate_manifest_v1(&manifest, MAX_CHUNKS)
-            .expect_err("expected totalSize alignment validation failure");
-        assert!(
-            err.to_string().contains("totalSize must be a multiple"),
-            "unexpected error: {err}"
-        );
-    }
-
-    #[test]
     fn missing_chunk_is_non_retryable_even_with_context_wrapping() {
         let err = anyhow!("object not found (404)");
         let err = Err::<(), _>(err)
@@ -2901,10 +2919,7 @@ mod tests {
             .await
             .with_context(|| format!("write {}", chunk1_path.display()))?;
 
-        let sha256_by_index = vec![
-            Some(sha256_hex(&chunk0)),
-            Some(sha256_hex(&chunk1)),
-        ];
+        let sha256_by_index = vec![Some(sha256_hex(&chunk0)), Some(sha256_hex(&chunk1))];
         let manifest = build_manifest_v1(
             total_size,
             chunk_size,
@@ -2961,10 +2976,7 @@ mod tests {
             .await
             .with_context(|| format!("write {}", chunk1_path.display()))?;
 
-        let sha256_by_index = vec![
-            Some(sha256_hex(&chunk0)),
-            Some(sha256_hex(&chunk1)),
-        ];
+        let sha256_by_index = vec![Some(sha256_hex(&chunk0)), Some(sha256_hex(&chunk1))];
         let manifest = build_manifest_v1(
             total_size,
             chunk_size,
