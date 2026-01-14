@@ -1477,6 +1477,8 @@ impl AerogpuD3d11Executor {
             ShaderStage::Domain,
             ShaderStage::Compute,
         ] {
+            // Legacy shader constants are bound as uniform buffers; avoid requesting storage buffer
+            // support so downlevel backends can still construct the executor.
             let buf = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("aerogpu_cmd legacy constants buffer"),
                 size: LEGACY_CONSTANTS_SIZE_BYTES,
@@ -1716,6 +1718,35 @@ impl AerogpuD3d11Executor {
                 "GS/HS/DS emulation requires compute shaders and indirect execution; backend {:?} missing {}",
                 self.backend,
                 missing.join(", ")
+            );
+        }
+
+        Ok(())
+    }
+
+    fn validate_shader_storage_capabilities(
+        &self,
+        op: &str,
+        shader_handle: u32,
+        shader_stage: ShaderStage,
+        bindings: &[crate::Binding],
+    ) -> Result<()> {
+        if self.caps.supports_compute {
+            return Ok(());
+        }
+
+        let uses_storage_bindings = bindings.iter().any(|binding| {
+            matches!(
+                binding.kind,
+                crate::BindingKind::SrvBuffer { .. }
+                    | crate::BindingKind::UavBuffer { .. }
+                    | crate::BindingKind::UavTexture2DWriteOnly { .. }
+            )
+        });
+        if uses_storage_bindings {
+            bail!(
+                "{op}: shader {shader_handle} ({shader_stage:?}) uses SRV/UAV storage bindings, but backend {:?} does not support wgpu::DownlevelFlags::COMPUTE_SHADERS",
+                self.backend,
             );
         }
 
@@ -4494,6 +4525,21 @@ impl AerogpuD3d11Executor {
         }
 
         let emulation_active = self.state.emulated_expanded_vertex_buffer.is_some();
+
+        self.validate_shader_storage_capabilities(
+            "DRAW",
+            ps_handle,
+            ShaderStage::Pixel,
+            ps.reflection.bindings.as_slice(),
+        )?;
+        if !emulation_active {
+            self.validate_shader_storage_capabilities(
+                "DRAW",
+                vs_handle,
+                ShaderStage::Vertex,
+                vs.reflection.bindings.as_slice(),
+            )?;
+        }
 
         let mut pipeline_bindings = if emulation_active {
             // The emulated rasterization pass uses a generated passthrough VS that only consumes
