@@ -87,6 +87,20 @@ fn reg_src(ty: u32, indices: &[u32], swizzle: Swizzle) -> Vec<u32> {
     out
 }
 
+fn imm32_scalar(value: u32) -> Vec<u32> {
+    vec![
+        operand_token(
+            OPERAND_TYPE_IMMEDIATE32,
+            1,
+            OPERAND_SEL_SELECT1,
+            0,
+            0,
+            false,
+        ),
+        value,
+    ]
+}
+
 #[test]
 fn decodes_geometry_shader_decls_and_emit_cut() {
     // These enum values are not interpreted by the decoder today; they are carried through so
@@ -239,5 +253,44 @@ fn decodes_geometry_shader_decls_and_emit_cut() {
                 Sm4Inst::Ret,
             ],
         }
+    );
+}
+
+#[test]
+fn decodes_geometry_shader_emit_cut_stream_variants() {
+    // emit_stream l(2)
+    let mut body = Vec::<u32>::new();
+
+    let stream = 2u32;
+    let stream_op = imm32_scalar(stream);
+
+    body.push(opcode_token(
+        OPCODE_EMIT_STREAM,
+        (1 + stream_op.len()) as u32,
+    ));
+    body.extend_from_slice(&stream_op);
+
+    // cut_stream l(2)
+    body.push(opcode_token(
+        OPCODE_CUT_STREAM,
+        (1 + stream_op.len()) as u32,
+    ));
+    body.extend_from_slice(&stream_op);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    let tokens = make_sm4_program_tokens(2, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+    let module = aero_d3d11::sm4::decode_program(&program).expect("decode");
+
+    assert_eq!(module.stage, ShaderStage::Geometry);
+    assert_eq!(
+        module.instructions,
+        vec![
+            Sm4Inst::Emit { stream },
+            Sm4Inst::Cut { stream },
+            Sm4Inst::Ret
+        ]
     );
 }
