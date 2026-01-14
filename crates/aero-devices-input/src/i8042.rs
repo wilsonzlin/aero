@@ -668,6 +668,13 @@ impl I8042Controller {
         // responses), output them first.
         if let Some(out) = self.pending_output.pop_front() {
             self.load_output(out);
+            // Keep the interleaving preference in sync with what the guest just observed.
+            //
+            // `pending_output` can contain a mix of keyboard+mouse bytes when we pull from both
+            // devices in a single `service_output` call. If we don't update `prefer_mouse` here,
+            // draining a queued byte can leave `prefer_mouse` stale, causing unfair scheduling
+            // where one device's output is repeated even when both still have pending bytes.
+            self.prefer_mouse = matches!(out.source, OutputSource::Keyboard);
             return;
         }
 
