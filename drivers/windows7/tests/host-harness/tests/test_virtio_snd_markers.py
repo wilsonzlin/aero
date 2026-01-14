@@ -75,6 +75,23 @@ class VirtioSndMarkerTests(unittest.TestCase):
             "buffer_bytes=262144|init_hr=0x0|hr=0x0|reason=ok",
         )
 
+    def test_emits_eventq_marker_info(self) -> None:
+        tail = (
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-eventq|INFO|completions=10|parsed=9|short=1|unknown=0|"
+            b"jack_connected=0|jack_disconnected=0|pcm_period=8|xrun=0|ctl_notify=0\n"
+        )
+        out = self._emit("_emit_virtio_snd_eventq_host_marker", tail)
+        self.assertEqual(
+            out,
+            "AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_EVENTQ|INFO|completions=10|parsed=9|short=1|unknown=0|"
+            "jack_connected=0|jack_disconnected=0|pcm_period=8|xrun=0|ctl_notify=0",
+        )
+
+    def test_emits_eventq_marker_skip_reason(self) -> None:
+        tail = b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-eventq|SKIP|device_missing\n"
+        out = self._emit("_emit_virtio_snd_eventq_host_marker", tail)
+        self.assertEqual(out, "AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_EVENTQ|SKIP|reason=device_missing")
+
     def test_no_output_when_missing(self) -> None:
         tail = b"AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS|large_ok=1|large_bytes=1\n"
         for fn in (
@@ -82,6 +99,7 @@ class VirtioSndMarkerTests(unittest.TestCase):
             "_emit_virtio_snd_capture_host_marker",
             "_emit_virtio_snd_duplex_host_marker",
             "_emit_virtio_snd_buffer_limits_host_marker",
+            "_emit_virtio_snd_eventq_host_marker",
         ):
             with self.subTest(fn=fn):
                 out = self._emit(fn, tail)
@@ -90,4 +108,3 @@ class VirtioSndMarkerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

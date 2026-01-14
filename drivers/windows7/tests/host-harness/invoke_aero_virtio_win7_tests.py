@@ -58,6 +58,7 @@ It may also mirror guest-side IRQ diagnostics (when present) into per-device hos
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_IRQ|PASS/FAIL/INFO|irq_mode=...|irq_message_count=...`
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_IRQ|PASS/FAIL/INFO|irq_mode=...|irq_message_count=...`
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_IRQ|PASS/FAIL/INFO|irq_mode=...|irq_message_count=...`
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_EVENTQ|INFO/SKIP|completions=...|pcm_period=...|xrun=...|...`
 
 It also mirrors the standalone guest IRQ diagnostic lines (when present):
 
@@ -3849,6 +3850,7 @@ def main() -> int:
         _emit_virtio_snd_capture_host_marker(tail)
         _emit_virtio_snd_duplex_host_marker(tail)
         _emit_virtio_snd_buffer_limits_host_marker(tail)
+        _emit_virtio_snd_eventq_host_marker(tail)
 
         return result_code if result_code is not None else 2
 
@@ -4848,6 +4850,66 @@ def _emit_virtio_snd_buffer_limits_host_marker(tail: bytes) -> None:
     for k in ("mode", "expected_failure", "buffer_bytes", "init_hr", "hr", "reason"):
         if k in fields:
             parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
+    print("|".join(parts))
+
+
+def _emit_virtio_snd_eventq_host_marker(tail: bytes) -> None:
+    """
+    Best-effort: emit a host-side marker summarizing the guest's virtio-snd eventq counters.
+
+    This does not affect harness PASS/FAIL; it's only for log scraping/diagnostics.
+    """
+    marker_line = _try_extract_last_marker_line(tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-eventq|")
+    if marker_line is None:
+        return
+
+    toks = marker_line.split("|")
+
+    status = "INFO"
+    if "FAIL" in toks:
+        status = "FAIL"
+    elif "PASS" in toks:
+        status = "PASS"
+    elif "SKIP" in toks:
+        status = "SKIP"
+    elif "INFO" in toks:
+        status = "INFO"
+
+    fields = _parse_marker_kv_fields(marker_line)
+    parts = [f"AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_EVENTQ|{status}"]
+
+    # The guest SKIP marker uses a plain token (e.g. `...|SKIP|device_missing`) rather than
+    # a `reason=...` field. Mirror it as `reason=` so log scraping can treat it uniformly.
+    if status == "SKIP" and "reason" not in fields:
+        try:
+            idx = toks.index("SKIP")
+            if idx + 1 < len(toks):
+                reason_tok = toks[idx + 1].strip()
+                if reason_tok and "=" not in reason_tok:
+                    parts.append(f"reason={_sanitize_marker_value(reason_tok)}")
+        except Exception:
+            pass
+
+    # Keep ordering stable for log scraping.
+    ordered = [
+        "completions",
+        "parsed",
+        "short",
+        "unknown",
+        "jack_connected",
+        "jack_disconnected",
+        "pcm_period",
+        "xrun",
+        "ctl_notify",
+    ]
+    for k in ordered:
+        if k in fields:
+            parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
+
+    extra = sorted(k for k in fields if k not in ordered and k != "reason")
+    for k in extra:
+        parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
+
     print("|".join(parts))
 
 
