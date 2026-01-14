@@ -71,11 +71,14 @@ SCAN_MD_DIRS = [
     ROOT / "ci",
 ]
 
-# Guest-side scripts (shipped in Guest Tools) that embed dbgctl CLI flags in non-markdown files.
-# These scripts are used directly by end users, so keep their dbgctl invocations accurate.
+# Scripts (some shipped in Guest Tools, some repo-local tooling) that embed dbgctl CLI flags in
+# non-markdown files. These scripts are user-facing or are used by CI/local validation, so keep
+# their dbgctl invocations accurate.
 SCAN_DBGCTL_SCRIPT_FILES = [
     ROOT / "guest-tools" / "verify.ps1",
     ROOT / "guest-tools" / "verify.cmd",
+    # Win7 dbgctl JSON schema smoke tests (PowerShell script; kept in-tree for local/CI use).
+    ROOT / "drivers" / "aerogpu" / "tools" / "win7_dbgctl" / "tests" / "validate_json.ps1",
 ]
 
 # Additional repo-local helper scripts (non-markdown) that mention dbgctl flags in user-facing
