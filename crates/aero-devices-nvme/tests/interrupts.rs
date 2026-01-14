@@ -1,9 +1,12 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use aero_devices::pci::{msi::PCI_CAP_ID_MSI, msix::PCI_CAP_ID_MSIX, PciDevice as _};
+use aero_devices::pci::{
+    msi::PCI_CAP_ID_MSI, msix::PCI_CAP_ID_MSIX, MsiCapability, PciDevice as _,
+};
 use aero_devices_nvme::NvmePciDevice;
 use aero_platform::interrupts::msi::{MsiMessage, MsiTrigger};
+use aero_platform::interrupts::{InterruptController, PlatformInterruptMode, PlatformInterrupts};
 use memory::{MemoryBus as _, MmioHandler as _};
 
 #[derive(Clone, Default)]
@@ -174,5 +177,85 @@ fn nvme_delivers_msix_when_enabled() {
     assert!(
         !dev.irq_level(),
         "legacy INTx must be suppressed while MSI-X is active"
+    );
+}
+
+#[test]
+fn nvme_msi_unprogrammed_address_latches_pending_and_delivers_after_programming() {
+    let mut dev = NvmePciDevice::default();
+    let mut mem = TestMem::new(2 * 1024 * 1024);
+
+    // Enable MMIO decoding and bus mastering so controller programming takes effect and `process()`
+    // is allowed to DMA.
+    dev.config_mut().set_command(0x0006); // MEM + BME
+
+    // Route MSIs into the platform interrupt controller so invalid message addresses are dropped
+    // (matching real platform behaviour).
+    let interrupts = Rc::new(RefCell::new(PlatformInterrupts::new()));
+    interrupts
+        .borrow_mut()
+        .set_mode(PlatformInterruptMode::Apic);
+    dev.set_msi_target(Some(Box::new(interrupts.clone())));
+
+    // Enable MSI and program the vector, but leave the message address unprogrammed/invalid.
+    enable_msi(&mut dev, 0, 0x0045);
+
+    trigger_completion(&mut dev, &mut mem);
+
+    assert!(
+        !dev.irq_level(),
+        "legacy INTx must be suppressed while MSI is enabled"
+    );
+    assert_eq!(
+        interrupts.borrow().get_pending(),
+        None,
+        "unprogrammed MSI address must not inject an interrupt"
+    );
+    assert_eq!(
+        dev.config()
+            .capability::<MsiCapability>()
+            .unwrap()
+            .pending_bits()
+            & 1,
+        1,
+        "device should latch MSI pending when message address is invalid"
+    );
+
+    // Consume the completion and advance CQ0 head so the controller's interrupt condition is
+    // cleared before we finish MSI programming. Pending delivery should still occur once the
+    // message address becomes valid.
+    dev.write(0x1004, 4, 1); // CQ0 head doorbell
+    assert!(
+        !dev.irq_pending(),
+        "clearing CQ head should deassert the controller interrupt condition"
+    );
+
+    // Program a valid MSI address and run `process` again without generating a new completion.
+    let cap_offset = dev
+        .config_mut()
+        .find_capability(PCI_CAP_ID_MSI)
+        .expect("MSI capability") as u16;
+    dev.config_mut().write(cap_offset + 0x04, 4, 0xfee0_0000);
+    dev.config_mut().write(cap_offset + 0x08, 4, 0);
+
+    dev.process(&mut mem);
+
+    let mut ints = interrupts.borrow_mut();
+    assert_eq!(
+        ints.get_pending(),
+        Some(0x45),
+        "pending MSI should deliver once the address is programmed even if the interrupt condition is low"
+    );
+    ints.acknowledge(0x45);
+    ints.eoi(0x45);
+    assert_eq!(ints.get_pending(), None);
+    assert_eq!(
+        dev.config()
+            .capability::<MsiCapability>()
+            .unwrap()
+            .pending_bits()
+            & 1,
+        0,
+        "pending bit should clear after delivery"
     );
 }
