@@ -3,8 +3,8 @@ use aero_d3d9::fixed_function::shader_gen::{
     generate_fixed_function_shaders, FixedFunctionShaderDesc,
 };
 use aero_d3d9::fixed_function::tss::{
-    AlphaTestState, FogState, LightingState, TextureArg, TextureOp, TextureResultTarget,
-    TextureStageState, TextureTransform,
+    AlphaTestState, CompareFunc, FogState, LightingState, TextureArg, TextureOp,
+    TextureResultTarget, TextureStageState, TextureTransform,
 };
 
 #[test]
@@ -552,5 +552,35 @@ fn unused_temp_args_do_not_trigger_temp_register() {
         !shaders.fragment_wgsl.contains("var temp = current"),
         "unexpected temp register in fragment shader:\n{}",
         shaders.fragment_wgsl
+    );
+}
+
+#[test]
+fn state_hash_ignores_alpha_test_func_when_disabled() {
+    let stages = [TextureStageState::default(); 8];
+
+    let desc_a = FixedFunctionShaderDesc {
+        fvf: Fvf(Fvf::XYZ),
+        stages,
+        alpha_test: AlphaTestState {
+            enabled: false,
+            func: CompareFunc::Always,
+        },
+        fog: FogState::default(),
+        lighting: LightingState::default(),
+    };
+
+    let desc_b = FixedFunctionShaderDesc {
+        alpha_test: AlphaTestState {
+            enabled: false,
+            func: CompareFunc::Less,
+        },
+        ..desc_a.clone()
+    };
+
+    assert_eq!(
+        desc_a.state_hash(),
+        desc_b.state_hash(),
+        "alpha-test func must not affect the hash when alpha testing is disabled"
     );
 }

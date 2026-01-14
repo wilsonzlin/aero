@@ -191,7 +191,16 @@ impl FixedFunctionShaderDesc {
         }
 
         write_u8(&mut hash, self.alpha_test.enabled as u8);
-        write_u8(&mut hash, self.alpha_test.func as u8);
+        // Only hash the alpha-test compare function when alpha testing is actually enabled.
+        // When disabled, the shader does not emit the discard path and the function is irrelevant.
+        write_u8(
+            &mut hash,
+            if self.alpha_test.enabled {
+                self.alpha_test.func as u8
+            } else {
+                CompareFunc::Always as u8
+            },
+        );
 
         write_u8(&mut hash, self.fog.enabled as u8);
         write_u8(&mut hash, self.lighting.enabled as u8);
