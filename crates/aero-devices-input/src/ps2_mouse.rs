@@ -492,8 +492,15 @@ impl IoSnapshot for Ps2Mouse {
             self.resolution = d.u8()?;
             self.sample_rate = d.u8()?;
             self.reporting_enabled = d.bool()?;
-            self.device_id = d.u8()?;
-            self.buttons = d.u8()?;
+            let device_id = d.u8()?;
+            // Host snapshots may be untrusted/corrupt. Keep the device ID to the subset of values
+            // we actually implement so guests don't see an unexpected packet format on restore.
+            self.device_id = match device_id {
+                0x00 | 0x03 | 0x04 => device_id,
+                _ => 0x00,
+            };
+            // Preserve only the low 5 buttons (L/R/M/side/extra).
+            self.buttons = d.u8()? & 0x1F;
             d.finish()?;
         }
 
@@ -586,6 +593,32 @@ mod tests {
         let drained: Vec<u8> = std::iter::from_fn(|| m.pop_output()).collect();
         let drop = bytes.len() - MAX_OUTPUT_BYTES;
         assert_eq!(drained, bytes[drop..]);
+    }
+
+    #[test]
+    fn snapshot_restore_sanitizes_corrupt_config_fields() {
+        const TAG_CONFIG: u16 = 1;
+
+        // Use an unknown device ID + garbage button bits; the restored device should clamp these
+        // to safe/implemented values.
+        let config = Encoder::new()
+            .u8(1) // mode=stream
+            .u8(1) // scaling=1:1
+            .u8(4) // resolution
+            .u8(100) // sample rate
+            .bool(true) // reporting enabled
+            .u8(0xFF) // invalid device id
+            .u8(0xFF) // invalid buttons
+            .finish();
+
+        let mut w = SnapshotWriter::new(Ps2Mouse::DEVICE_ID, Ps2Mouse::DEVICE_VERSION);
+        w.field_bytes(TAG_CONFIG, config);
+
+        let mut m = Ps2Mouse::new();
+        m.load_state(&w.finish())
+            .expect("snapshot restore should succeed");
+        assert_eq!(m.device_id(), 0x00, "unexpected device id after restore");
+        assert_eq!(m.buttons_mask(), 0x1F, "expected button bits to be masked");
     }
 
     #[test]

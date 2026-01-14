@@ -27,6 +27,7 @@ import { initAeroStatusApi } from "./api/status";
 import { AeroConfigManager } from "./config/manager";
 import { InputCapture } from "./input/input_capture";
 import { InputEventType, type InputBatchTarget } from "./input/event_queue";
+import { negateI32Saturating } from "./input/int32";
 import { inputRecordReplay, installInputRecordReplayGlobalApi } from "./input/record_replay";
 import { decodeGamepadReport, formatGamepadHat } from "./input/gamepad";
 import { installPerfHud } from "./perf/hud_entry";
@@ -1116,7 +1117,8 @@ function renderMachinePanel(): HTMLElement {
                   machine.inject_ps2_mouse_motion(dx, dyPs2, 0);
                 } else if (typeof machine.inject_mouse_motion === "function") {
                   // Machine expects browser-style coordinates (+Y down).
-                  machine.inject_mouse_motion(dx, -dyPs2, 0);
+                  const dyDown = negateI32Saturating(dyPs2);
+                  machine.inject_mouse_motion(dx, dyDown, 0);
                 }
               } else if (type === InputEventType.MouseWheel) {
                 const dz = words[off + 2] | 0;
