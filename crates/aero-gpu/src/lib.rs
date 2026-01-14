@@ -40,7 +40,7 @@ mod upload;
 mod wgpu_integration;
 
 mod acmd_executor;
-mod bc_decompress;
+pub mod bc_decompress;
 mod packed_16bit;
 mod readback;
 mod texture_format;

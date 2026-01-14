@@ -106,28 +106,28 @@ fuzz_target!(|data: &[u8]| {
 
     check_decompress_deterministic_and_len(
         "decompress_bc1_rgba8",
-        aero_gpu::decompress_bc1_rgba8,
+        aero_gpu::bc_decompress::decompress_bc1_rgba8,
         width,
         height,
         bc1,
     );
     check_decompress_deterministic_and_len(
         "decompress_bc2_rgba8",
-        aero_gpu::decompress_bc2_rgba8,
+        aero_gpu::bc_decompress::decompress_bc2_rgba8,
         width,
         height,
         bc2,
     );
     check_decompress_deterministic_and_len(
         "decompress_bc3_rgba8",
-        aero_gpu::decompress_bc3_rgba8,
+        aero_gpu::bc_decompress::decompress_bc3_rgba8,
         width,
         height,
         bc3,
     );
     check_decompress_deterministic_and_len(
         "decompress_bc7_rgba8",
-        aero_gpu::decompress_bc7_rgba8,
+        aero_gpu::bc_decompress::decompress_bc7_rgba8,
         width,
         height,
         bc7,
