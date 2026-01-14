@@ -5443,23 +5443,27 @@ HRESULT APIENTRY CreateRenderTargetView(D3D10DDI_HDEVICE hDevice,
   }
 
   if (res->kind != ResourceKind::Texture2D) {
-    AEROGPU_D3D10_11_LOG("D3D10 CreateRenderTargetView: rejecting non-texture2d resource kind=%u",
-                         static_cast<unsigned>(res->kind));
+    AEROGPU_D3D10_11_LOG("D3D10 CreateRenderTargetView: rejecting non-texture2d resource kind=%u (handle=%u)",
+                         static_cast<unsigned>(res->kind),
+                         static_cast<unsigned>(res->handle));
     return E_NOTIMPL;
   }
   if ((res->bind_flags & kD3D10BindRenderTarget) == 0) {
     // D3D requires the resource to be created with the appropriate bind flag
     // for the view type. Failing here avoids later host-side validation errors.
-    AEROGPU_D3D10_11_LOG("D3D10 CreateRenderTargetView: rejecting RTV for resource missing BIND_RENDER_TARGET (bind=0x%08X)",
-                         static_cast<unsigned>(res->bind_flags));
+    AEROGPU_D3D10_11_LOG(
+        "D3D10 CreateRenderTargetView: rejecting RTV for resource missing BIND_RENDER_TARGET (bind=0x%08X handle=%u)",
+        static_cast<unsigned>(res->bind_flags),
+        static_cast<unsigned>(res->handle));
     return E_INVALIDARG;
   }
 
   // Reject array resources / array-slice RTVs for now; the command stream does
   // not encode subresource view selection.
   if (res->array_size != 1) {
-    AEROGPU_D3D10_11_LOG("D3D10 CreateRenderTargetView: rejecting array RTV resource array_size=%u",
-                         static_cast<unsigned>(res->array_size));
+    AEROGPU_D3D10_11_LOG("D3D10 CreateRenderTargetView: rejecting array RTV resource array_size=%u (handle=%u)",
+                         static_cast<unsigned>(res->array_size),
+                         static_cast<unsigned>(res->handle));
     return E_NOTIMPL;
   }
 
@@ -5469,9 +5473,10 @@ HRESULT APIENTRY CreateRenderTargetView(D3D10DDI_HDEVICE hDevice,
     view_format = static_cast<uint32_t>(pDesc->Format);
   }
   if (!DxgiViewFormatTriviallyCompatible(dev, res->dxgi_format, view_format)) {
-    AEROGPU_D3D10_11_LOG("D3D10 CreateRenderTargetView: rejecting format reinterpretation res_fmt=%u view_fmt=%u",
+    AEROGPU_D3D10_11_LOG("D3D10 CreateRenderTargetView: rejecting format reinterpretation res_fmt=%u view_fmt=%u (handle=%u)",
                          static_cast<unsigned>(res->dxgi_format),
-                         static_cast<unsigned>(view_format));
+                         static_cast<unsigned>(view_format),
+                         static_cast<unsigned>(res->handle));
     return E_NOTIMPL;
   }
 
@@ -5490,8 +5495,9 @@ HRESULT APIENTRY CreateRenderTargetView(D3D10DDI_HDEVICE hDevice,
   }
 
   if (have_view_dim && !D3dViewDimensionIsTexture2D(view_dim)) {
-    AEROGPU_D3D10_11_LOG("D3D10 CreateRenderTargetView: rejecting RTV dimension=%u (only Texture2D supported)",
-                         static_cast<unsigned>(view_dim));
+    AEROGPU_D3D10_11_LOG("D3D10 CreateRenderTargetView: rejecting RTV dimension=%u (only Texture2D supported handle=%u)",
+                         static_cast<unsigned>(view_dim),
+                         static_cast<unsigned>(res->handle));
     return E_NOTIMPL;
   }
   // If the header exposes MSAA RTV union variants but does not expose a view
@@ -5505,7 +5511,8 @@ HRESULT APIENTRY CreateRenderTargetView(D3D10DDI_HDEVICE hDevice,
     __if_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::Texture2DMS) { has_msaa_union = true; }
     __if_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::Texture2DMSArray) { has_msaa_union = true; }
     if (has_msaa_union) {
-      AEROGPU_D3D10_11_LOG("D3D10 CreateRenderTargetView: rejecting RTV (missing view dimension discriminator)");
+      AEROGPU_D3D10_11_LOG("D3D10 CreateRenderTargetView: rejecting RTV (missing view dimension discriminator handle=%u)",
+                           static_cast<unsigned>(res->handle));
       return E_NOTIMPL;
     }
   }
@@ -5532,20 +5539,23 @@ HRESULT APIENTRY CreateRenderTargetView(D3D10DDI_HDEVICE hDevice,
 
   if (have_mip_slice) {
     if (mip_slice >= res->mip_levels) {
-      AEROGPU_D3D10_11_LOG("D3D10 CreateRenderTargetView: rejecting invalid mip_slice=%u (res mips=%u)",
+      AEROGPU_D3D10_11_LOG("D3D10 CreateRenderTargetView: rejecting invalid mip_slice=%u (res mips=%u handle=%u)",
                            static_cast<unsigned>(mip_slice),
-                           static_cast<unsigned>(res->mip_levels));
+                           static_cast<unsigned>(res->mip_levels),
+                           static_cast<unsigned>(res->handle));
       return E_INVALIDARG;
     }
     if (mip_slice != 0) {
-      AEROGPU_D3D10_11_LOG("D3D10 CreateRenderTargetView: rejecting unsupported mip_slice=%u (only 0 supported)",
-                           static_cast<unsigned>(mip_slice));
+      AEROGPU_D3D10_11_LOG("D3D10 CreateRenderTargetView: rejecting unsupported mip_slice=%u (only 0 supported handle=%u)",
+                           static_cast<unsigned>(mip_slice),
+                           static_cast<unsigned>(res->handle));
       return E_NOTIMPL;
     }
   } else {
     // WDK struct layout drift: if we cannot determine the mip slice, we cannot
     // safely assume this is a subresource-0 view.
-    AEROGPU_D3D10_11_LOG("D3D10 CreateRenderTargetView: rejecting RTV (missing mip slice fields)");
+    AEROGPU_D3D10_11_LOG("D3D10 CreateRenderTargetView: rejecting RTV (missing mip slice fields handle=%u)",
+                         static_cast<unsigned>(res->handle));
     return E_NOTIMPL;
   }
 
@@ -5599,18 +5609,22 @@ HRESULT APIENTRY CreateDepthStencilView(D3D10DDI_HDEVICE hDevice,
   }
 
   if (res->kind != ResourceKind::Texture2D) {
-    AEROGPU_D3D10_11_LOG("D3D10 CreateDepthStencilView: rejecting non-texture2d resource kind=%u",
-                         static_cast<unsigned>(res->kind));
+    AEROGPU_D3D10_11_LOG("D3D10 CreateDepthStencilView: rejecting non-texture2d resource kind=%u (handle=%u)",
+                         static_cast<unsigned>(res->kind),
+                         static_cast<unsigned>(res->handle));
     return E_NOTIMPL;
   }
   if ((res->bind_flags & kD3D10BindDepthStencil) == 0) {
-    AEROGPU_D3D10_11_LOG("D3D10 CreateDepthStencilView: rejecting DSV for resource missing BIND_DEPTH_STENCIL (bind=0x%08X)",
-                         static_cast<unsigned>(res->bind_flags));
+    AEROGPU_D3D10_11_LOG(
+        "D3D10 CreateDepthStencilView: rejecting DSV for resource missing BIND_DEPTH_STENCIL (bind=0x%08X handle=%u)",
+        static_cast<unsigned>(res->bind_flags),
+        static_cast<unsigned>(res->handle));
     return E_INVALIDARG;
   }
   if (res->array_size != 1) {
-    AEROGPU_D3D10_11_LOG("D3D10 CreateDepthStencilView: rejecting array DSV resource array_size=%u",
-                         static_cast<unsigned>(res->array_size));
+    AEROGPU_D3D10_11_LOG("D3D10 CreateDepthStencilView: rejecting array DSV resource array_size=%u (handle=%u)",
+                         static_cast<unsigned>(res->array_size),
+                         static_cast<unsigned>(res->handle));
     return E_NOTIMPL;
   }
 
@@ -5620,9 +5634,10 @@ HRESULT APIENTRY CreateDepthStencilView(D3D10DDI_HDEVICE hDevice,
     view_format = static_cast<uint32_t>(pDesc->Format);
   }
   if (!DxgiViewFormatTriviallyCompatible(dev, res->dxgi_format, view_format)) {
-    AEROGPU_D3D10_11_LOG("D3D10 CreateDepthStencilView: rejecting format reinterpretation res_fmt=%u view_fmt=%u",
+    AEROGPU_D3D10_11_LOG("D3D10 CreateDepthStencilView: rejecting format reinterpretation res_fmt=%u view_fmt=%u (handle=%u)",
                          static_cast<unsigned>(res->dxgi_format),
-                         static_cast<unsigned>(view_format));
+                         static_cast<unsigned>(view_format),
+                         static_cast<unsigned>(res->handle));
     return E_NOTIMPL;
   }
 
@@ -5640,8 +5655,9 @@ HRESULT APIENTRY CreateDepthStencilView(D3D10DDI_HDEVICE hDevice,
     }
   }
   if (have_view_dim && !D3dViewDimensionIsTexture2D(view_dim)) {
-    AEROGPU_D3D10_11_LOG("D3D10 CreateDepthStencilView: rejecting DSV dimension=%u (only Texture2D supported)",
-                         static_cast<unsigned>(view_dim));
+    AEROGPU_D3D10_11_LOG("D3D10 CreateDepthStencilView: rejecting DSV dimension=%u (only Texture2D supported handle=%u)",
+                         static_cast<unsigned>(view_dim),
+                         static_cast<unsigned>(res->handle));
     return E_NOTIMPL;
   }
   if (!have_view_dim) {
@@ -5651,7 +5667,8 @@ HRESULT APIENTRY CreateDepthStencilView(D3D10DDI_HDEVICE hDevice,
     __if_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::Texture2DMS) { has_msaa_union = true; }
     __if_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::Texture2DMSArray) { has_msaa_union = true; }
     if (has_msaa_union) {
-      AEROGPU_D3D10_11_LOG("D3D10 CreateDepthStencilView: rejecting DSV (missing view dimension discriminator)");
+      AEROGPU_D3D10_11_LOG("D3D10 CreateDepthStencilView: rejecting DSV (missing view dimension discriminator handle=%u)",
+                           static_cast<unsigned>(res->handle));
       return E_NOTIMPL;
     }
   }
@@ -5671,8 +5688,9 @@ HRESULT APIENTRY CreateDepthStencilView(D3D10DDI_HDEVICE hDevice,
       have_flags = true;
     }
     if (have_flags && flags != 0) {
-      AEROGPU_D3D10_11_LOG("D3D10 CreateDepthStencilView: rejecting DSV flags=0x%08X (unsupported)",
-                           static_cast<unsigned>(flags));
+      AEROGPU_D3D10_11_LOG("D3D10 CreateDepthStencilView: rejecting DSV flags=0x%08X (unsupported handle=%u)",
+                           static_cast<unsigned>(flags),
+                           static_cast<unsigned>(res->handle));
       return E_NOTIMPL;
     }
   }
@@ -5697,18 +5715,21 @@ HRESULT APIENTRY CreateDepthStencilView(D3D10DDI_HDEVICE hDevice,
   }
   if (have_mip_slice) {
     if (mip_slice >= res->mip_levels) {
-      AEROGPU_D3D10_11_LOG("D3D10 CreateDepthStencilView: rejecting invalid mip_slice=%u (res mips=%u)",
+      AEROGPU_D3D10_11_LOG("D3D10 CreateDepthStencilView: rejecting invalid mip_slice=%u (res mips=%u handle=%u)",
                            static_cast<unsigned>(mip_slice),
-                           static_cast<unsigned>(res->mip_levels));
+                           static_cast<unsigned>(res->mip_levels),
+                           static_cast<unsigned>(res->handle));
       return E_INVALIDARG;
     }
     if (mip_slice != 0) {
-      AEROGPU_D3D10_11_LOG("D3D10 CreateDepthStencilView: rejecting unsupported mip_slice=%u (only 0 supported)",
-                           static_cast<unsigned>(mip_slice));
+      AEROGPU_D3D10_11_LOG("D3D10 CreateDepthStencilView: rejecting unsupported mip_slice=%u (only 0 supported handle=%u)",
+                           static_cast<unsigned>(mip_slice),
+                           static_cast<unsigned>(res->handle));
       return E_NOTIMPL;
     }
   } else {
-    AEROGPU_D3D10_11_LOG("D3D10 CreateDepthStencilView: rejecting DSV (missing mip slice fields)");
+    AEROGPU_D3D10_11_LOG("D3D10 CreateDepthStencilView: rejecting DSV (missing mip slice fields handle=%u)",
+                         static_cast<unsigned>(res->handle));
     return E_NOTIMPL;
   }
 
@@ -5765,18 +5786,22 @@ HRESULT APIENTRY CreateShaderResourceView(D3D10DDI_HDEVICE hDevice,
   // mip range, no subresource/array slicing. Anything else must fail cleanly
   // so apps don't silently misbind.
   if (res->kind != ResourceKind::Texture2D) {
-    AEROGPU_D3D10_11_LOG("D3D10 CreateShaderResourceView: rejecting non-texture2d SRV resource kind=%u",
-                         static_cast<unsigned>(res->kind));
+    AEROGPU_D3D10_11_LOG("D3D10 CreateShaderResourceView: rejecting non-texture2d SRV resource kind=%u (handle=%u)",
+                         static_cast<unsigned>(res->kind),
+                         static_cast<unsigned>(res->handle));
     return E_NOTIMPL;
   }
   if ((res->bind_flags & kD3D10BindShaderResource) == 0) {
-    AEROGPU_D3D10_11_LOG("D3D10 CreateShaderResourceView: rejecting SRV for resource missing BIND_SHADER_RESOURCE (bind=0x%08X)",
-                         static_cast<unsigned>(res->bind_flags));
+    AEROGPU_D3D10_11_LOG(
+        "D3D10 CreateShaderResourceView: rejecting SRV for resource missing BIND_SHADER_RESOURCE (bind=0x%08X handle=%u)",
+        static_cast<unsigned>(res->bind_flags),
+        static_cast<unsigned>(res->handle));
     return E_INVALIDARG;
   }
   if (res->array_size != 1) {
-    AEROGPU_D3D10_11_LOG("D3D10 CreateShaderResourceView: rejecting array SRV resource array_size=%u",
-                         static_cast<unsigned>(res->array_size));
+    AEROGPU_D3D10_11_LOG("D3D10 CreateShaderResourceView: rejecting array SRV resource array_size=%u (handle=%u)",
+                         static_cast<unsigned>(res->array_size),
+                         static_cast<unsigned>(res->handle));
     return E_NOTIMPL;
   }
 
@@ -5785,9 +5810,10 @@ HRESULT APIENTRY CreateShaderResourceView(D3D10DDI_HDEVICE hDevice,
     view_format = static_cast<uint32_t>(pDesc->Format);
   }
   if (!DxgiViewFormatTriviallyCompatible(dev, res->dxgi_format, view_format)) {
-    AEROGPU_D3D10_11_LOG("D3D10 CreateShaderResourceView: rejecting format reinterpretation res_fmt=%u view_fmt=%u",
+    AEROGPU_D3D10_11_LOG("D3D10 CreateShaderResourceView: rejecting format reinterpretation res_fmt=%u view_fmt=%u (handle=%u)",
                          static_cast<unsigned>(res->dxgi_format),
-                         static_cast<unsigned>(view_format));
+                         static_cast<unsigned>(view_format),
+                         static_cast<unsigned>(res->handle));
     return E_NOTIMPL;
   }
 
@@ -5805,8 +5831,9 @@ HRESULT APIENTRY CreateShaderResourceView(D3D10DDI_HDEVICE hDevice,
   }
 
   if (have_view_dim && !D3dViewDimensionIsTexture2D(view_dim)) {
-    AEROGPU_D3D10_11_LOG("D3D10 CreateShaderResourceView: rejecting SRV dimension=%u (only Texture2D supported)",
-                         static_cast<unsigned>(view_dim));
+    AEROGPU_D3D10_11_LOG("D3D10 CreateShaderResourceView: rejecting SRV dimension=%u (only Texture2D supported handle=%u)",
+                         static_cast<unsigned>(view_dim),
+                         static_cast<unsigned>(res->handle));
     return E_NOTIMPL;
   }
   if (!have_view_dim) {
@@ -5816,7 +5843,8 @@ HRESULT APIENTRY CreateShaderResourceView(D3D10DDI_HDEVICE hDevice,
     __if_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::Texture2DMS) { has_msaa_union = true; }
     __if_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::Texture2DMSArray) { has_msaa_union = true; }
     if (has_msaa_union) {
-      AEROGPU_D3D10_11_LOG("D3D10 CreateShaderResourceView: rejecting SRV (missing view dimension discriminator)");
+      AEROGPU_D3D10_11_LOG("D3D10 CreateShaderResourceView: rejecting SRV (missing view dimension discriminator handle=%u)",
+                           static_cast<unsigned>(res->handle));
       return E_NOTIMPL;
     }
   }
@@ -5837,8 +5865,9 @@ HRESULT APIENTRY CreateShaderResourceView(D3D10DDI_HDEVICE hDevice,
       have_flags = true;
     }
     if (have_flags && flags != 0) {
-      AEROGPU_D3D10_11_LOG("D3D10 CreateShaderResourceView: rejecting SRV flags=0x%08X (unsupported)",
-                           static_cast<unsigned>(flags));
+      AEROGPU_D3D10_11_LOG("D3D10 CreateShaderResourceView: rejecting SRV flags=0x%08X (unsupported handle=%u)",
+                           static_cast<unsigned>(flags),
+                           static_cast<unsigned>(res->handle));
       return E_NOTIMPL;
     }
   }
@@ -5876,14 +5905,16 @@ HRESULT APIENTRY CreateShaderResourceView(D3D10DDI_HDEVICE hDevice,
 
   if (have_most_detailed_mip && have_mip_levels) {
     if (most_detailed_mip >= res->mip_levels) {
-      AEROGPU_D3D10_11_LOG("D3D10 CreateShaderResourceView: rejecting invalid MostDetailedMip=%u (res mips=%u)",
+      AEROGPU_D3D10_11_LOG("D3D10 CreateShaderResourceView: rejecting invalid MostDetailedMip=%u (res mips=%u handle=%u)",
                            static_cast<unsigned>(most_detailed_mip),
-                           static_cast<unsigned>(res->mip_levels));
+                           static_cast<unsigned>(res->mip_levels),
+                           static_cast<unsigned>(res->handle));
       return E_INVALIDARG;
     }
     if (most_detailed_mip != 0) {
-      AEROGPU_D3D10_11_LOG("D3D10 CreateShaderResourceView: rejecting unsupported MostDetailedMip=%u (only 0 supported)",
-                           static_cast<unsigned>(most_detailed_mip));
+      AEROGPU_D3D10_11_LOG("D3D10 CreateShaderResourceView: rejecting unsupported MostDetailedMip=%u (only 0 supported handle=%u)",
+                           static_cast<unsigned>(most_detailed_mip),
+                           static_cast<unsigned>(res->handle));
       return E_NOTIMPL;
     }
 
@@ -5891,20 +5922,24 @@ HRESULT APIENTRY CreateShaderResourceView(D3D10DDI_HDEVICE hDevice,
     const uint32_t effective_levels =
         (mip_levels == 0 || mip_levels == 0xFFFFFFFFu) ? res->mip_levels : mip_levels;
     if (effective_levels > res->mip_levels) {
-      AEROGPU_D3D10_11_LOG("D3D10 CreateShaderResourceView: rejecting invalid MipLevels=%u (res mips=%u)",
+      AEROGPU_D3D10_11_LOG("D3D10 CreateShaderResourceView: rejecting invalid MipLevels=%u (res mips=%u handle=%u)",
                            static_cast<unsigned>(mip_levels),
-                           static_cast<unsigned>(res->mip_levels));
+                           static_cast<unsigned>(res->mip_levels),
+                           static_cast<unsigned>(res->handle));
       return E_INVALIDARG;
     }
     if (effective_levels != res->mip_levels) {
-      AEROGPU_D3D10_11_LOG("D3D10 CreateShaderResourceView: rejecting unsupported mip range (MostDetailedMip=%u MipLevels=%u, res mips=%u)",
+      AEROGPU_D3D10_11_LOG(
+          "D3D10 CreateShaderResourceView: rejecting unsupported mip range (MostDetailedMip=%u MipLevels=%u, res mips=%u handle=%u)",
                            static_cast<unsigned>(most_detailed_mip),
                            static_cast<unsigned>(mip_levels),
-                           static_cast<unsigned>(res->mip_levels));
+                           static_cast<unsigned>(res->mip_levels),
+                           static_cast<unsigned>(res->handle));
       return E_NOTIMPL;
     }
   } else {
-    AEROGPU_D3D10_11_LOG("D3D10 CreateShaderResourceView: rejecting SRV (missing mip range fields)");
+    AEROGPU_D3D10_11_LOG("D3D10 CreateShaderResourceView: rejecting SRV (missing mip range fields handle=%u)",
+                         static_cast<unsigned>(res->handle));
     return E_NOTIMPL;
   }
 
