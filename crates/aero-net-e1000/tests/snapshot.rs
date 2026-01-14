@@ -898,8 +898,13 @@ fn snapshot_reader_rejects_duplicate_tlv_tags() {
         <E1000Device as IoSnapshot>::DEVICE_VERSION,
     );
     w.field_u32(10, 0x1111_1111);
-    w.field_u32(10, 0x2222_2222);
-    let bytes = w.finish();
+    let mut bytes = w.finish();
+    // SnapshotWriter enforces unique tags in debug/test builds. Manually append a second TLV with
+    // the same tag to construct a malformed snapshot.
+    let v2 = 0x2222_2222u32.to_le_bytes();
+    bytes.extend_from_slice(&10u16.to_le_bytes());
+    bytes.extend_from_slice(&(v2.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(&v2);
 
     let mut dev = E1000Device::new([0; 6]);
     let err = dev.load_state(&bytes).unwrap_err();
