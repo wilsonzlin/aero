@@ -3735,8 +3735,18 @@ static VOID AeroGpuEmitReleaseSharedSurface(_Inout_ AEROGPU_ADAPTER* Adapter, _I
         return;
     }
 
-    if (!AeroGpuV1SubmitPathUsable(Adapter)) {
-        return;
+    {
+        /*
+         * AeroGpuV1SubmitPathUsable reads ring header fields; take RingLock so we don't race
+         * AeroGpuRingCleanup during teardown.
+         */
+        KIRQL ringIrql;
+        KeAcquireSpinLock(&Adapter->RingLock, &ringIrql);
+        const BOOLEAN ringOk = AeroGpuV1SubmitPathUsable(Adapter);
+        KeReleaseSpinLock(&Adapter->RingLock, ringIrql);
+        if (!ringOk) {
+            return;
+        }
     }
 
     AEROGPU_PENDING_INTERNAL_SUBMISSION* internal = AeroGpuAllocPendingInternalSubmission(Adapter);
@@ -4664,10 +4674,19 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
      * but not the DMA submission path.
      */
     BOOLEAN canSubmit = FALSE;
-    if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
-        canSubmit = AeroGpuV1SubmitPathUsable(adapter);
-    } else {
-        canSubmit = AeroGpuLegacySubmitPathUsable(adapter);
+    {
+        /*
+         * AeroGpu*SubmitPathUsable reads ring header fields; take RingLock so we don't race
+         * AeroGpuRingCleanup during teardown.
+         */
+        KIRQL ringIrql;
+        KeAcquireSpinLock(&adapter->RingLock, &ringIrql);
+        if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
+            canSubmit = AeroGpuV1SubmitPathUsable(adapter);
+        } else {
+            canSubmit = AeroGpuLegacySubmitPathUsable(adapter);
+        }
+        KeReleaseSpinLock(&adapter->RingLock, ringIrql);
     }
     InterlockedExchange(&adapter->AcceptingSubmissions, canSubmit ? 1 : 0);
     return STATUS_SUCCESS;
@@ -5055,9 +5074,21 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPowerState(_In_ const HANDLE hAdapter,
          * explicitly writing ENABLE once the virtual reset bookkeeping is complete.
          */
         if (oldState != DxgkDevicePowerStateD0 && adapter->AbiKind == AEROGPU_ABI_KIND_V1 &&
-            adapter->Bar0Length >= (AEROGPU_MMIO_REG_RING_CONTROL + sizeof(ULONG)) &&
-            AeroGpuV1SubmitPathUsable(adapter)) {
-            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_RING_CONTROL, AEROGPU_RING_CONTROL_ENABLE);
+            adapter->Bar0Length >= (AEROGPU_MMIO_REG_RING_CONTROL + sizeof(ULONG))) {
+            BOOLEAN ringOk = FALSE;
+            {
+                /*
+                 * AeroGpuV1SubmitPathUsable reads ring header fields; take RingLock so we don't race
+                 * AeroGpuRingCleanup during teardown.
+                 */
+                KIRQL ringIrql;
+                KeAcquireSpinLock(&adapter->RingLock, &ringIrql);
+                ringOk = AeroGpuV1SubmitPathUsable(adapter);
+                KeReleaseSpinLock(&adapter->RingLock, ringIrql);
+            }
+            if (ringOk) {
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_RING_CONTROL, AEROGPU_RING_CONTROL_ENABLE);
+            }
         }
 
         /* Reset vblank tracking so GetScanLine doesn't consume stale timestamps across resume. */
@@ -5198,10 +5229,19 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPowerState(_In_ const HANDLE hAdapter,
         }
 
         BOOLEAN canSubmit = FALSE;
-        if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
-            canSubmit = AeroGpuV1SubmitPathUsable(adapter);
-        } else {
-            canSubmit = AeroGpuLegacySubmitPathUsable(adapter);
+        {
+            /*
+             * AeroGpu*SubmitPathUsable reads ring header fields; take RingLock so we don't race
+             * AeroGpuRingCleanup during teardown.
+             */
+            KIRQL ringIrql;
+            KeAcquireSpinLock(&adapter->RingLock, &ringIrql);
+            if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
+                canSubmit = AeroGpuV1SubmitPathUsable(adapter);
+            } else {
+                canSubmit = AeroGpuLegacySubmitPathUsable(adapter);
+            }
+            KeReleaseSpinLock(&adapter->RingLock, ringIrql);
         }
         if (canSubmit) {
             InterlockedExchange(&adapter->AcceptingSubmissions, 1);
@@ -10864,10 +10904,19 @@ static NTSTATUS APIENTRY AeroGpuDdiRestartFromTimeout(_In_ const HANDLE hAdapter
     }
 
     BOOLEAN ringReady = FALSE;
-    if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
-        ringReady = AeroGpuV1SubmitPathUsable(adapter);
-    } else {
-        ringReady = AeroGpuLegacySubmitPathUsable(adapter);
+    {
+        /*
+         * AeroGpu*SubmitPathUsable reads ring header fields; take RingLock so we don't race
+         * AeroGpuRingCleanup during teardown.
+         */
+        KIRQL ringIrql;
+        KeAcquireSpinLock(&adapter->RingLock, &ringIrql);
+        if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
+            ringReady = AeroGpuV1SubmitPathUsable(adapter);
+        } else {
+            ringReady = AeroGpuLegacySubmitPathUsable(adapter);
+        }
+        KeReleaseSpinLock(&adapter->RingLock, ringIrql);
     }
     if (ringReady) {
         /* Ensure the submission paths are unblocked once the restart has restored ring/MMIO state. */
