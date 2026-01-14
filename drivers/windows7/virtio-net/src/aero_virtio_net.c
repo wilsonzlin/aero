@@ -2294,9 +2294,12 @@ static NDIS_STATUS AerovNetAllocateRxResources(_Inout_ AEROVNET_ADAPTER* Adapter
     Adapter->RxChecksumScratch =
         (PUCHAR)ExAllocatePoolWithTag(NonPagedPool, Adapter->RxChecksumScratchBytes, AEROVNET_TAG);
     if (!Adapter->RxChecksumScratch) {
-      return NDIS_STATUS_RESOURCES;
+      // Best-effort: checksum indication is optional. If allocation fails, we
+      // will simply skip checksum parsing for multi-buffer frames.
+      Adapter->RxChecksumScratchBytes = 0;
+    } else {
+      RtlZeroMemory(Adapter->RxChecksumScratch, Adapter->RxChecksumScratchBytes);
     }
-    RtlZeroMemory(Adapter->RxChecksumScratch, Adapter->RxChecksumScratchBytes);
   }
 
   return NDIS_STATUS_SUCCESS;

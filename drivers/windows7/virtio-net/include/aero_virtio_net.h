@@ -293,6 +293,8 @@ typedef struct _AEROVNET_ADAPTER {
   // Scratch buffer used for reassembling multi-buffer RX frames into a single
   // contiguous byte range for checksum header parsing (NdisGetDataBuffer fallback).
   // Allocated from nonpaged pool so it is usable at DISPATCH_LEVEL.
+  // Best-effort: if allocation fails, checksum indication for multi-buffer
+  // receives is skipped.
   PUCHAR RxChecksumScratch;
   ULONG RxChecksumScratchBytes;
 
