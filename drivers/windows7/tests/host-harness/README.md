@@ -1038,6 +1038,8 @@ Notes:
   verification will observe silence. Clear it under the virtio-snd device instance registry key:
   - `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Parameters\Parameters\ForceNullBackend` = `0` (`REG_DWORD`)
   - Find `<DeviceInstancePath>` via Device Manager → Details → “Device instance path”.
+  - When `ForceNullBackend=1` is set, the host harness emits a deterministic failure token:
+    `FAIL: VIRTIO_SND_FORCE_NULL_BACKEND: ...`
 - The harness attempts to shut QEMU down **gracefully** (via QMP) so the `wav` audio backend can flush/finalize the RIFF
   header before verification. If QEMU is killed hard, the `data` chunk size may be left as a placeholder (often `0`), and
   verification may fail or need to fall back to best-effort recovery.
