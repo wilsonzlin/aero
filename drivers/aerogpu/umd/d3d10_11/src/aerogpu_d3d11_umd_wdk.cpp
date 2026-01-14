@@ -7640,15 +7640,11 @@ void AEROGPU_APIENTRY ClearState11(D3D11DDI_HDEVICECONTEXT hCtx) {
   dev->current_input_layout_obj = nullptr;
 
   const uint32_t default_topology = AEROGPU_TOPOLOGY_TRIANGLELIST;
-  auto* topo_cmd =
-      dev->cmd.append_fixed<aerogpu_cmd_set_primitive_topology>(AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY);
-  if (!topo_cmd) {
-    SetError(dev, E_OUTOFMEMORY);
+  if (!aerogpu::d3d10_11::SetPrimitiveTopologyLocked(dev,
+                                                     default_topology,
+                                                     [&](HRESULT hr) { SetError(dev, hr); })) {
     return;
   }
-  topo_cmd->topology = default_topology;
-  topo_cmd->reserved0 = 0;
-  dev->current_topology = default_topology;
 
   std::array<aerogpu_vertex_buffer_binding, kD3D11IaVertexInputResourceSlotCount> vb_zeros{};
   if (!aerogpu::d3d10_11::EmitSetVertexBuffersCmdLocked(dev,
