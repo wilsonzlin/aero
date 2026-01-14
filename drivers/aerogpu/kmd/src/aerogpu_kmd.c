@@ -1141,6 +1141,15 @@ static BOOLEAN AeroGpuGetScanoutMmioSnapshot(_In_ const AEROGPU_ADAPTER* Adapter
         Out->Width = AeroGpuReadRegU32(Adapter, AEROGPU_MMIO_REG_SCANOUT0_WIDTH);
         Out->Height = AeroGpuReadRegU32(Adapter, AEROGPU_MMIO_REG_SCANOUT0_HEIGHT);
         Out->Format = AeroGpuReadRegU32(Adapter, AEROGPU_MMIO_REG_SCANOUT0_FORMAT);
+        if (Out->Format == AEROGPU_FORMAT_INVALID) {
+            /*
+             * Some boot/VBE paths may not initialize the scanout format register
+             * even though the mode is a standard 32bpp X8R8G8B8-compatible
+             * framebuffer. Default it so post-display-ownership handoff can still
+             * infer a plausible mode/stride.
+             */
+            Out->Format = AEROGPU_FORMAT_B8G8R8X8_UNORM;
+        }
         Out->PitchBytes = AeroGpuReadRegU32(Adapter, AEROGPU_MMIO_REG_SCANOUT0_PITCH_BYTES);
         Out->FbPa.QuadPart =
             (LONGLONG)AeroGpuReadRegU64HiLoHi(Adapter, AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_LO, AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_HI);
