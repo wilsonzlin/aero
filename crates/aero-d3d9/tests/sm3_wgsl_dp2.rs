@@ -9,6 +9,8 @@ fn version_token(stage: ShaderStage, major: u8, minor: u8) -> u32 {
     prefix | ((major as u32) << 8) | (minor as u32)
 }
 
+// SM2/3 token streams encode the *total* instruction length in tokens (including the opcode
+// token) in bits 24..27, not the operand count.
 fn opcode_token(op: u16, operand_tokens: u8) -> u32 {
     // SM2/3 encodes the *total* instruction length (in DWORD tokens), including the opcode token,
     // in bits 24..27. For test readability we accept the operand token count (excluding the opcode
