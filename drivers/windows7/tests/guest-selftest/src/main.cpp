@@ -1647,6 +1647,7 @@ struct VirtioSndPciDevice {
   bool has_rev_01 = false;
   bool is_transitional = false;
   std::optional<DWORD> force_null_backend;
+  std::optional<DWORD> allow_polling_only;
 };
 
 // KSCATEGORY_TOPOLOGY {DDA54A40-1E4C-11D1-A050-405705C10000}
@@ -1769,6 +1770,9 @@ static std::vector<VirtioSndPciDevice> DetectVirtioSndPciDevices(Logger& log, bo
     if (auto force = QueryDeviceDevRegDword(devinfo, &dev, L"ForceNullBackend")) {
       snd.force_null_backend = *force;
     }
+    if (auto allow = QueryDeviceDevRegDword(devinfo, &dev, L"AllowPollingOnly")) {
+      snd.allow_polling_only = *allow;
+    }
 
     ULONG status = 0;
     ULONG problem = 0;
@@ -1796,6 +1800,10 @@ static std::vector<VirtioSndPciDevice> DetectVirtioSndPciDevices(Logger& log, bo
       if (snd.force_null_backend.has_value()) {
         log.Logf("virtio-snd: detected PCI device ForceNullBackend=%lu",
                  static_cast<unsigned long>(*snd.force_null_backend));
+      }
+      if (snd.allow_polling_only.has_value()) {
+        log.Logf("virtio-snd: detected PCI device AllowPollingOnly=%lu",
+                 static_cast<unsigned long>(*snd.allow_polling_only));
       }
     }
     const std::wstring expected_service = snd.is_transitional && !snd.is_modern
