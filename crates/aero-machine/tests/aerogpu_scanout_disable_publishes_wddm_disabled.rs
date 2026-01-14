@@ -72,7 +72,7 @@ fn build_vbe_mode_118_with_stride_and_display_start_boot_sector(
 }
 
 #[test]
-fn aerogpu_scanout_disable_reverts_to_legacy_vbe_even_with_panning_and_stride() {
+fn aerogpu_scanout_disable_publishes_wddm_disabled_even_with_legacy_vbe_panning_and_stride() {
     // Use an odd stride so it is not representable via Bochs VBE_DISPI `virt_width`.
     let bytes_per_scan_line = 4101u16;
     let x_off = 1u16;
