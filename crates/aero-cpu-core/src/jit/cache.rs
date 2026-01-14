@@ -77,13 +77,13 @@ impl CodeCache {
     pub fn get_cloned(&mut self, entry_rip: u64) -> Option<CompiledBlockHandle> {
         let idx = *self.map.get(&entry_rip)?;
         self.touch_idx(idx);
-        Some(
-            self.nodes[idx]
-                .as_ref()
-                .expect("LRU node must exist for map entry")
-                .handle
-                .clone(),
-        )
+        let out = self.nodes[idx]
+            .as_ref()
+            .expect("LRU node must exist for map entry")
+            .handle
+            .clone();
+        self.debug_assert_invariants();
+        Some(out)
     }
 
     pub fn insert(&mut self, handle: CompiledBlockHandle) -> Vec<u64> {
@@ -120,13 +120,16 @@ impl CodeCache {
             }
         };
 
-        self.evict_if_needed()
+        let evicted = self.evict_if_needed();
+        self.debug_assert_invariants();
+        evicted
     }
 
     pub fn remove(&mut self, entry_rip: u64) -> Option<CompiledBlockHandle> {
         let idx = self.map.remove(&entry_rip)?;
         let node = self.remove_idx(idx);
         debug_assert_eq!(node.entry_rip, entry_rip);
+        self.debug_assert_invariants();
         Some(node.handle)
     }
 
@@ -137,6 +140,7 @@ impl CodeCache {
         self.head = None;
         self.tail = None;
         self.current_bytes = 0;
+        self.debug_assert_invariants();
     }
 
     fn evict_if_needed(&mut self) -> Vec<u64> {
@@ -252,6 +256,67 @@ impl CodeCache {
 
         self.head = Some(idx);
     }
+
+    #[cfg(debug_assertions)]
+    #[inline]
+    fn debug_assert_invariants(&self) {
+        // Empty cache must have no LRU pointers and no accounting.
+        if self.map.is_empty() {
+            debug_assert_eq!(self.head, None);
+            debug_assert_eq!(self.tail, None);
+            debug_assert_eq!(self.current_bytes, 0);
+            return;
+        }
+
+        let head = self.head.expect("non-empty cache must have head");
+        let tail = self.tail.expect("non-empty cache must have tail");
+
+        // Traverse the LRU list and validate prev/next links.
+        let mut visited = Vec::with_capacity(self.map.len());
+        let mut cur = Some(head);
+        let mut prev = None;
+        while let Some(idx) = cur {
+            visited.push(idx);
+            debug_assert!(
+                visited.len() <= self.map.len(),
+                "LRU list cycle or extra nodes detected"
+            );
+
+            let node = self.nodes[idx].as_ref().expect("LRU node must exist");
+            debug_assert_eq!(node.prev, prev, "broken LRU prev link at idx={idx}");
+            prev = Some(idx);
+            cur = node.next;
+        }
+
+        debug_assert_eq!(
+            visited.len(),
+            self.map.len(),
+            "LRU list length mismatch with map"
+        );
+        debug_assert_eq!(
+            prev,
+            Some(tail),
+            "LRU traversal did not end at tail"
+        );
+
+        // Ensure all map entries refer to valid, linked nodes with consistent keys.
+        for (&rip, &idx) in &self.map {
+            debug_assert!(
+                visited.contains(&idx),
+                "map contains idx {idx} that is not linked in LRU list"
+            );
+            let node = self.nodes[idx].as_ref().expect("LRU node must exist");
+            debug_assert_eq!(
+                node.entry_rip, rip,
+                "map key {rip} points to node with mismatched entry_rip {}",
+                node.entry_rip
+            );
+        }
+    }
+
+    #[cfg(not(debug_assertions))]
+    #[inline]
+    fn debug_assert_invariants(&self) {}
 }
 
 #[derive(Debug)]
