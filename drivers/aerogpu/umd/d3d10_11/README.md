@@ -217,6 +217,19 @@ source (`/p:AeroGpuUseWdkHeaders=1` vs `0`).
 See `docs/graphics/win7-dxgi-swapchain-backbuffer.md` for the recommended probe
 app and log interpretation workflow.
 
+### Optional tracing (instanced draws)
+
+When validating instancing support (for example `DrawInstanced` /
+`DrawIndexedInstanced`), it can be useful to log the instanced draw parameters
+directly from the UMD so you can confirm `instanceCount > 1` in DebugView/WinDbg
+without needing to dump and decode the full cmd buffer.
+
+* `AEROGPU_UMD_TRACE_DRAWS`
+
+When enabled, the WDK-backed D3D10 UMD logs `DrawInstanced` /
+`DrawIndexedInstanced` calls via `AEROGPU_D3D10_11_LOG`, tagged with
+`trace_draws:`.
+
 Build files provided:
 
 - `aerogpu_d3d10_11.sln`
