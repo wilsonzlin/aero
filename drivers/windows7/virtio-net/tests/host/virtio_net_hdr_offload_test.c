@@ -217,6 +217,48 @@ static int test_ipv6_tcp_no_vlan(void) {
   return 0;
 }
 
+static int test_ipv6_hopbyhop_tcp(void) {
+  /* Ethernet + IPv6 + hop-by-hop + TCP + 4-byte payload */
+  static const uint8_t Frame[] = {
+      /* dst/src */
+      0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb,
+      /* ethertype IPv6 */
+      0x86, 0xdd,
+      /* IPv6 header: version=6, payload_len=32, next=Hop-by-Hop(0), hop=64 */
+      0x60, 0x00, 0x00, 0x00, 0x00, 0x20, 0x00, 0x40,
+      /* src addr */
+      0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    1,
+      /* dst addr */
+      0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    2,
+      /* Hop-by-Hop ext header: next=TCP, hdr_ext_len=0 (8 bytes total) */
+      0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      /* TCP header */
+      0x1f, 0x90, 0x00, 0x50, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x50, 0x10, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00,
+      /* payload */
+      0x01, 0x02, 0x03, 0x04,
+  };
+
+  VIRTIO_NET_HDR_OFFLOAD_FRAME_INFO Info;
+  VIRTIO_NET_HDR_OFFLOAD_STATUS St;
+
+  St = VirtioNetHdrOffloadParseFrame(Frame, sizeof(Frame), &Info);
+  ASSERT_EQ_INT(St, VIRTIO_NET_HDR_OFFLOAD_STATUS_OK);
+
+  ASSERT_EQ_U8(Info.L3Proto, VIRTIO_NET_HDR_OFFLOAD_L3_IPV6);
+  ASSERT_EQ_U16(Info.L3Offset, 14);
+  ASSERT_EQ_U16(Info.L3Len, 48);
+  ASSERT_EQ_U8(Info.L4Proto, 6);
+  ASSERT_EQ_U16(Info.L4Offset, 62);
+  ASSERT_EQ_U16(Info.L4Len, 20);
+  ASSERT_EQ_U16(Info.PayloadOffset, 82);
+  ASSERT_EQ_U16(Info.CsumStart, 62);
+  ASSERT_EQ_U16(Info.CsumOffset, 16);
+  ASSERT_EQ_U8(Info.IsFragmented, 0);
+
+  return 0;
+}
+
 static int test_vlan_tagged_ipv4_tcp(void) {
   /* Single 802.1Q VLAN tag */
   static const uint8_t Frame[] = {
@@ -261,6 +303,43 @@ static int test_vlan_tagged_ipv4_tcp(void) {
   ASSERT_EQ_U16(Hdr.HdrLen, 58);
   ASSERT_EQ_U16(Hdr.CsumStart, 38);
   ASSERT_EQ_U16(Hdr.CsumOffset, 16);
+
+  return 0;
+}
+
+static int test_qinq_tagged_ipv4_tcp(void) {
+  /* QinQ: outer 0x88A8 + inner 0x8100 */
+  static const uint8_t Frame[] = {
+      /* dst/src */
+      0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb,
+      /* ethertype QinQ */
+      0x88, 0xa8,
+      /* outer tag */
+      0x00, 0x01, 0x81, 0x00,
+      /* inner tag */
+      0x00, 0x02, 0x08, 0x00,
+      /* IPv4 header (same as test_ipv4_tcp_no_vlan) */
+      0x45, 0x00, 0x00, 0x2c, 0x00, 0x00, 0x40, 0x00, 0x40, 0x06, 0x00, 0x00, 0xc0, 0x00, 0x02, 0x01,
+      0xc6, 0x33, 0x64, 0x02,
+      /* TCP header */
+      0x1f, 0x90, 0x00, 0x50, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x50, 0x02, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00,
+      /* payload */
+      't',  'e',  's',  't',
+  };
+
+  VIRTIO_NET_HDR_OFFLOAD_FRAME_INFO Info;
+  VIRTIO_NET_HDR_OFFLOAD_STATUS St;
+
+  St = VirtioNetHdrOffloadParseFrame(Frame, sizeof(Frame), &Info);
+  ASSERT_EQ_INT(St, VIRTIO_NET_HDR_OFFLOAD_STATUS_OK);
+
+  ASSERT_EQ_U16(Info.L2Len, 22);
+  ASSERT_EQ_U16(Info.L3Offset, 22);
+  ASSERT_EQ_U16(Info.L4Offset, 42);
+  ASSERT_EQ_U16(Info.PayloadOffset, 62);
+  ASSERT_EQ_U16(Info.CsumStart, 42);
+  ASSERT_EQ_U16(Info.CsumOffset, 16);
 
   return 0;
 }
@@ -493,6 +572,40 @@ static int test_ipv6_fragmented_tcp_rejected(void) {
   return 0;
 }
 
+static int test_ipv6_nonfirst_fragment_parse_ok(void) {
+  /* Ethernet + IPv6 + Fragment(offset!=0) + 4 bytes payload; no TCP header present. */
+  static const uint8_t Frame[] = {
+      /* dst/src */
+      0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb,
+      /* ethertype IPv6 */
+      0x86, 0xdd,
+      /* IPv6 header: version=6, payload_len=12, next=Fragment(44), hop=64 */
+      0x60, 0x00, 0x00, 0x00, 0x00, 0x0c, 0x2c, 0x40,
+      /* src addr */
+      0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    1,
+      /* dst addr */
+      0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    2,
+      /* Fragment header: next=TCP, offset=1 (8 bytes), M=0 */
+      0x06, 0x00, 0x00, 0x08, 0x12, 0x34, 0x56, 0x78,
+      /* fragment payload */
+      0xde, 0xad, 0xbe, 0xef,
+  };
+
+  VIRTIO_NET_HDR_OFFLOAD_FRAME_INFO Info;
+  VIRTIO_NET_HDR_OFFLOAD_STATUS St;
+
+  St = VirtioNetHdrOffloadParseFrame(Frame, sizeof(Frame), &Info);
+  ASSERT_EQ_INT(St, VIRTIO_NET_HDR_OFFLOAD_STATUS_OK);
+  ASSERT_EQ_U8(Info.L3Proto, VIRTIO_NET_HDR_OFFLOAD_L3_IPV6);
+  ASSERT_EQ_U8(Info.IsFragmented, 1);
+  ASSERT_EQ_U8(Info.L4Proto, 6);
+  ASSERT_EQ_U16(Info.L3Len, 48);
+  ASSERT_EQ_U16(Info.L4Len, 0);
+  ASSERT_EQ_U16(Info.PayloadOffset, 62);
+
+  return 0;
+}
+
 static int test_rx_hdr_parse(void) {
   VIRTIO_NET_HDR Hdr;
   VIRTIO_NET_HDR_OFFLOAD_RX_INFO Info;
@@ -532,12 +645,15 @@ int main(void) {
   rc |= test_ipv4_tcp_no_vlan();
   rc |= test_ipv4_udp_no_vlan();
   rc |= test_ipv6_tcp_no_vlan();
+  rc |= test_ipv6_hopbyhop_tcp();
   rc |= test_vlan_tagged_ipv4_tcp();
+  rc |= test_qinq_tagged_ipv4_tcp();
   rc |= test_malformed_and_truncated();
   rc |= test_ipv4_tcp_options_boundary();
   rc |= test_ipv4_icmp_parse();
   rc |= test_ipv4_fragmented_tcp_rejected();
   rc |= test_ipv6_fragmented_tcp_rejected();
+  rc |= test_ipv6_nonfirst_fragment_parse_ok();
   rc |= test_rx_hdr_parse();
 
   if (rc == 0) {

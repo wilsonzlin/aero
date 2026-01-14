@@ -186,6 +186,7 @@ static VIRTIO_NET_HDR_OFFLOAD_STATUS VirtioNetHdrOffloadParseIpv6(const uint8_t*
   size_t Offset;
   size_t MaxEnd;
   unsigned Iter;
+  uint8_t NoL4;
 
   St = VirtioNetHdrOffloadBoundsCheck(L3Offset, 40, FrameLen);
   if (St != VIRTIO_NET_HDR_OFFLOAD_STATUS_OK) {
@@ -210,6 +211,7 @@ static VIRTIO_NET_HDR_OFFLOAD_STATUS VirtioNetHdrOffloadParseIpv6(const uint8_t*
 
   NextHdr = Ip[6];
   Offset = L3Offset + 40u;
+  NoL4 = 0;
 
   /*
    * Skip a bounded set of IPv6 extension headers to locate the L4 header.
@@ -261,6 +263,7 @@ static VIRTIO_NET_HDR_OFFLOAD_STATUS VirtioNetHdrOffloadParseIpv6(const uint8_t*
       if ((FragOffFlags & 0xFFF8u) != 0) {
         NextHdr = Ext[0];
         Offset += 8u;
+        NoL4 = 1u;
         break;
       }
       NextHdr = Ext[0];
@@ -297,6 +300,12 @@ static VIRTIO_NET_HDR_OFFLOAD_STATUS VirtioNetHdrOffloadParseIpv6(const uint8_t*
   Info->L3Len = (uint16_t)(Offset - L3Offset);
   Info->L4Proto = NextHdr;
   Info->L4Offset = (uint16_t)Offset;
+
+  if (NoL4) {
+    Info->L4Len = 0;
+    Info->PayloadOffset = (uint16_t)Offset;
+    return VIRTIO_NET_HDR_OFFLOAD_STATUS_OK;
+  }
 
   switch (NextHdr) {
     case 6:
