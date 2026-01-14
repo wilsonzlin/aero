@@ -60,6 +60,7 @@ implementations (notably QEMU) may.
 When the host offers them and Windows enables NDIS offloads, this driver can negotiate and use:
 
 - `VIRTIO_NET_F_CSUM`
+- `VIRTIO_NET_F_GUEST_CSUM` (RX checksum status reporting via `virtio_net_hdr.flags`)
 - `VIRTIO_NET_F_HOST_TSO4`
 - `VIRTIO_NET_F_HOST_TSO6`
 
