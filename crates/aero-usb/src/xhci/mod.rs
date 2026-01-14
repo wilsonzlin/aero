@@ -366,7 +366,8 @@ impl XhciController {
             regs::REG_HCCPARAMS1 => {
                 // HCCPARAMS1.xECP: offset (in DWORDs) to the xHCI Extended Capabilities list.
                 let xecp_dwords = (regs::EXT_CAPS_OFFSET_BYTES / 4) & 0xffff;
-                xecp_dwords << 16
+                // CSZ=0 => 32-byte contexts (MVP).
+                (xecp_dwords << 16) & !regs::HCCPARAMS1_CSZ_64B
             }
             regs::REG_DBOFF => regs::DBOFF_VALUE,
             regs::REG_RTSOFF => regs::RTSOFF_VALUE,

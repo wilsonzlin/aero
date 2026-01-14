@@ -31,6 +31,13 @@ pub const USBCMD_RUN: u32 = 1 << 0;
 /// level-triggered IRQ pending flag.
 pub const USBSTS_EINT: u32 = 1 << 3;
 
+/// HCCPARAMS1 Context Size (CSZ) bit.
+///
+/// When set (`1`), contexts are 64 bytes. When clear (`0`), contexts are 32 bytes.
+///
+/// MVP assumption for Aero: **CSZ=0** (32-byte contexts).
+pub const HCCPARAMS1_CSZ_64B: u32 = 1 << 2;
+
 /// Capability registers (base of MMIO region).
 pub mod cap {
     /// CAPLENGTH (u8): Capability register length (offset to operational registers).

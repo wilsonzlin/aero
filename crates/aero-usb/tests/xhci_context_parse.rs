@@ -43,7 +43,7 @@ fn parse_input_context_slot_and_endpoint_context() {
     mem.write_u32(input_ctx_base + 4, (1 << 0) | (1 << 3));
 
     // Slot Context at index 1.
-    // Root Hub Port Number lives in DWORD1 bits 7:0.
+    // Root Hub Port Number lives in DWORD1 bits 23:16.
     let slot_ctx = input_ctx_base + 0x20;
     let speed_id = 3u32; // High speed (value doesn't matter for this test).
     let context_entries = 3u32;
