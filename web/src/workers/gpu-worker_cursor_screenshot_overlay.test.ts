@@ -568,4 +568,77 @@ describe("workers/gpu-worker cursor screenshot overlay", () => {
       await worker.terminate();
     }
   }, 25_000);
+
+  it("clips cursors that extend beyond the screenshot bounds", async () => {
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 0 });
+    const views = createSharedMemoryViews(segments);
+
+    const scanoutPaddr = 0x1000;
+    const cursorPaddr = 0x2000;
+
+    // Scanout: 2x1 BGRX pixels.
+    views.guestU8.set([0x10, 0x20, 0x30, 0x00, 0x01, 0x02, 0x03, 0x00], scanoutPaddr);
+    publishScanoutState(views.scanoutStateI32!, {
+      source: SCANOUT_SOURCE_WDDM,
+      basePaddrLo: scanoutPaddr,
+      basePaddrHi: 0,
+      width: 2,
+      height: 1,
+      pitchBytes: 8,
+      format: SCANOUT_FORMAT_B8G8R8X8,
+    });
+
+    // Cursor: 2x1 BGRX pixels, but positioned so the second pixel is off-screen.
+    // cursor pixel0 @x=1 (drawn), pixel1 @x=2 (clipped).
+    // pixel0: [0a 0b 0c 00] -> RGBA [0c 0b 0a ff] => 0xff0a0b0c
+    // pixel1: [0d 0e 0f 00] -> RGBA [0f 0e 0d ff] => 0xff0d0e0f
+    views.guestU8.set([0x0a, 0x0b, 0x0c, 0x00, 0x0d, 0x0e, 0x0f, 0x00], cursorPaddr);
+    publishCursorState(views.cursorStateI32!, {
+      enable: 1,
+      x: 1,
+      y: 0,
+      hotX: 0,
+      hotY: 0,
+      width: 2,
+      height: 1,
+      pitchBytes: 8,
+      format: CURSOR_FORMAT_B8G8R8X8,
+      basePaddrLo: cursorPaddr,
+      basePaddrHi: 0,
+    });
+
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./gpu-worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      await initHeadlessGpuWorker(worker, {
+        kind: "init",
+        role: "gpu",
+        controlSab: segments.control,
+        guestMemory: segments.guestMemory,
+        ioIpcSab: segments.ioIpc,
+        sharedFramebuffer: segments.sharedFramebuffer,
+        sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
+        scanoutState: segments.scanoutState,
+        scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
+        cursorState: segments.cursorState,
+        cursorStateOffsetBytes: segments.cursorStateOffsetBytes,
+      });
+
+      const shot = await requestScreenshot(worker, 1, true);
+      expect(shot.width).toBe(2);
+      expect(shot.height).toBe(1);
+
+      // pixel0 stays scanout ([10 20 30] -> 0xff102030).
+      expect(pixelU32At(shot.rgba8, shot.width, 0, 0)).toBe(0xff102030);
+      // pixel1 becomes cursor pixel0; cursor pixel1 is clipped.
+      expect(pixelU32At(shot.rgba8, shot.width, 1, 0)).toBe(0xff0a0b0c);
+    } finally {
+      await worker.terminate();
+    }
+  }, 25_000);
 });
