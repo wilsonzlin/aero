@@ -463,13 +463,23 @@ Dump the raw HID report descriptor bytes:
 
 ```bat
 hidtest.exe --dump-desc
+hidtest.exe --dump-desc --json
 ```
 
 Dump the raw bytes returned by `IOCTL_HID_GET_COLLECTION_DESCRIPTOR`:
 
 ```bat
 hidtest.exe --dump-collection-desc
+hidtest.exe --dump-collection-desc --json
 ```
+
+With `--json`, the tool prints a single JSON object including the selected HID interface metadata plus:
+
+- `reportDescriptor` / `collectionDescriptor` (object or null)
+  - `ioctl` (number) — IOCTL used (or last attempted)
+  - `len` (number or null)
+  - `data` (string or null) — hex string of descriptor bytes (no separators)
+  - `win32Err` / `error` (null unless the query fails)
 
 Poll virtio-input diagnostics counters (IOCTL_VIOINPUT_QUERY_COUNTERS; does **not** issue `ReadFile` / `IOCTL_HID_READ_REPORT`):
 

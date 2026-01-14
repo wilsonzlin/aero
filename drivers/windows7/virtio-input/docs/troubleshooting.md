@@ -195,6 +195,13 @@ Try the following in the Windows 7 guest:
 
 Also confirm you are opening the intended collection (keyboard vs mouse) if multiple HID devices are present.
 
+Tip: `hidtest.exe --list` now prints the SetupDi **Device Instance ID** (`InstanceId`). You can select a specific device
+instance with:
+
+```bat
+hidtest.exe --instance-id "HID\VID_1AF4&PID_0001&MI_00\..." --keyboard --state
+```
+
 ## Debugging keyboard LEDs / statusq backpressure
 
 Keyboard LED updates (HID boot keyboard LED bits: NumLock/CapsLock/ScrollLock plus optional Compose/Kana) flow through the virtio **statusq** (driver → device). Under heavy write load, the statusq can become full; the driver provides a debug knob to control what happens then:

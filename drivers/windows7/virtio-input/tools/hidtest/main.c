@@ -593,6 +593,20 @@ static void dump_hex(const BYTE *buf, DWORD len)
     }
 }
 
+static void json_print_hex_bytes(const BYTE *buf, DWORD len)
+{
+    DWORD i;
+    if (buf == NULL) {
+        wprintf(L"null");
+        return;
+    }
+    wprintf(L"\"");
+    for (i = 0; i < len; i++) {
+        wprintf(L"%02X", (unsigned)buf[i]);
+    }
+    wprintf(L"\"");
+}
+
 static int reset_vioinput_counters(const SELECTED_DEVICE *dev, int quiet)
 {
     DWORD bytes = 0;
@@ -2837,7 +2851,8 @@ static void print_usage(void)
     wprintf(L"Options:\n");
     wprintf(L"  --list          List all present HID interfaces and exit\n");
     wprintf(L"  --selftest      Validate virtio-input HID descriptor contract and exit (0=pass, 1=fail)\n");
-    wprintf(L"  --json          With --list/--selftest/--state/--interrupt-info/--counters/--reset-counters/--get-log-mask/--set-log-mask,\n");
+    wprintf(L"  --json          With --list/--selftest/--dump-desc/--dump-collection-desc/--state/--interrupt-info/--counters/\n");
+    wprintf(L"                 --reset-counters/--get-log-mask/--set-log-mask,\n");
     wprintf(L"                 emit machine-readable JSON on stdout\n");
     wprintf(L"  --quiet         Suppress enumeration / device summary output (keeps stdout clean for scraping)\n");
     wprintf(L"  --keyboard      Prefer/select the keyboard top-level collection (Usage=Keyboard)\n");
@@ -2867,9 +2882,9 @@ static void print_usage(void)
     wprintf(L"                 (cycles the 5 HID boot keyboard LED bits: Num/Caps/Scroll/Compose/Kana)\n");
     wprintf(L"  --led-spam N    Rapidly send N keyboard LED output reports (alternating 0 and 0x1F by default) to stress the write path\n");
     wprintf(L"                 The \"on\" value can be overridden by combining with --led/--led-hidd/--led-ioctl-set-output.\n");
-    wprintf(L"  --dump-desc     Print the raw HID report descriptor bytes\n");
+    wprintf(L"  --dump-desc     Print the raw HID report descriptor bytes (add --json for machine-readable output)\n");
     wprintf(L"  --dump-collection-desc\n");
-    wprintf(L"                 Print the raw bytes returned by IOCTL_HID_GET_COLLECTION_DESCRIPTOR\n");
+    wprintf(L"                 Print the raw bytes returned by IOCTL_HID_GET_COLLECTION_DESCRIPTOR (add --json for machine-readable output)\n");
     wprintf(L"  --counters      Query and print virtio-input driver diagnostic counters (IOCTL_VIOINPUT_QUERY_COUNTERS)\n");
     wprintf(L"  --counters-json Query and print virtio-input driver diagnostic counters as JSON (alias: --counters --json)\n");
     wprintf(L"  --reset-counters\n");
@@ -3312,6 +3327,58 @@ static int query_report_descriptor_length(HANDLE handle, DWORD *len_out)
     return 1;
 }
 
+static int query_report_descriptor_blob(HANDLE handle, BYTE buf[4096], DWORD *len_out, DWORD *err_out, DWORD *ioctl_out)
+{
+    DWORD bytes = 0;
+    BOOL ok;
+
+    if (len_out != NULL) {
+        *len_out = 0;
+    }
+    if (err_out != NULL) {
+        *err_out = 0;
+    }
+    if (ioctl_out != NULL) {
+        *ioctl_out = 0;
+    }
+
+    ZeroMemory(buf, 4096);
+
+    SetLastError(ERROR_SUCCESS);
+    ok = DeviceIoControl(handle, IOCTL_HID_GET_REPORT_DESCRIPTOR, NULL, 0, buf, 4096, &bytes, NULL);
+    if (ok && bytes != 0) {
+        if (len_out != NULL) {
+            *len_out = bytes;
+        }
+        if (ioctl_out != NULL) {
+            *ioctl_out = IOCTL_HID_GET_REPORT_DESCRIPTOR;
+        }
+        return 1;
+    }
+
+    bytes = 0;
+    ZeroMemory(buf, 4096);
+    SetLastError(ERROR_SUCCESS);
+    ok = DeviceIoControl(handle, IOCTL_HID_GET_REPORT_DESCRIPTOR_ALT, NULL, 0, buf, 4096, &bytes, NULL);
+    if (ok && bytes != 0) {
+        if (len_out != NULL) {
+            *len_out = bytes;
+        }
+        if (ioctl_out != NULL) {
+            *ioctl_out = IOCTL_HID_GET_REPORT_DESCRIPTOR_ALT;
+        }
+        return 1;
+    }
+
+    if (err_out != NULL) {
+        *err_out = ok ? ERROR_NO_DATA : GetLastError();
+    }
+    if (ioctl_out != NULL) {
+        *ioctl_out = IOCTL_HID_GET_REPORT_DESCRIPTOR_ALT;
+    }
+    return 0;
+}
+
 static int query_collection_descriptor_length(HANDLE handle, DWORD *len_out, DWORD *err_out, DWORD *ioctl_out)
 {
     BYTE buf[4096];
@@ -3346,6 +3413,63 @@ static int query_collection_descriptor_length(HANDLE handle, DWORD *len_out, DWO
     ok = DeviceIoControl(handle, IOCTL_HID_GET_COLLECTION_DESCRIPTOR_ALT, NULL, 0, buf, (DWORD)sizeof(buf), &bytes, NULL);
     if (ok && bytes != 0) {
         *len_out = bytes;
+        if (ioctl_out != NULL) {
+            *ioctl_out = IOCTL_HID_GET_COLLECTION_DESCRIPTOR_ALT;
+        }
+        return 1;
+    }
+
+    if (err_out != NULL) {
+        *err_out = ok ? ERROR_NO_DATA : GetLastError();
+    }
+    if (ioctl_out != NULL) {
+        *ioctl_out = IOCTL_HID_GET_COLLECTION_DESCRIPTOR_ALT;
+    }
+    return 0;
+}
+
+static int query_collection_descriptor_blob(
+    HANDLE handle,
+    BYTE buf[4096],
+    DWORD *len_out,
+    DWORD *err_out,
+    DWORD *ioctl_out)
+{
+    DWORD bytes = 0;
+    BOOL ok;
+
+    if (len_out != NULL) {
+        *len_out = 0;
+    }
+    if (err_out != NULL) {
+        *err_out = 0;
+    }
+    if (ioctl_out != NULL) {
+        *ioctl_out = 0;
+    }
+
+    ZeroMemory(buf, 4096);
+
+    SetLastError(ERROR_SUCCESS);
+    ok = DeviceIoControl(handle, IOCTL_HID_GET_COLLECTION_DESCRIPTOR, NULL, 0, buf, 4096, &bytes, NULL);
+    if (ok && bytes != 0) {
+        if (len_out != NULL) {
+            *len_out = bytes;
+        }
+        if (ioctl_out != NULL) {
+            *ioctl_out = IOCTL_HID_GET_COLLECTION_DESCRIPTOR;
+        }
+        return 1;
+    }
+
+    bytes = 0;
+    ZeroMemory(buf, 4096);
+    SetLastError(ERROR_SUCCESS);
+    ok = DeviceIoControl(handle, IOCTL_HID_GET_COLLECTION_DESCRIPTOR_ALT, NULL, 0, buf, 4096, &bytes, NULL);
+    if (ok && bytes != 0) {
+        if (len_out != NULL) {
+            *len_out = bytes;
+        }
         if (ioctl_out != NULL) {
             *ioctl_out = IOCTL_HID_GET_COLLECTION_DESCRIPTOR_ALT;
         }
@@ -6330,6 +6454,301 @@ static void print_vioinput_log_mask_json(const SELECTED_DEVICE *dev, DWORD actua
     wprintf(L"}\n");
 }
 
+static int dump_descriptors_json(const SELECTED_DEVICE *dev, int dump_report, int dump_collection)
+{
+    int is_virtio = 0;
+    const WCHAR *kind = NULL;
+    WCHAR manufacturer[256];
+    WCHAR product[256];
+    WCHAR serial[256];
+    int manufacturer_valid = 0;
+    int product_valid = 0;
+    int serial_valid = 0;
+
+    BYTE report_desc[4096];
+    DWORD report_desc_len = 0;
+    DWORD report_desc_err = 0;
+    DWORD report_desc_ioctl = 0;
+    int report_desc_ok = 0;
+
+    BYTE collection_desc[4096];
+    DWORD collection_desc_len = 0;
+    DWORD collection_desc_err = 0;
+    DWORD collection_desc_ioctl = 0;
+    int collection_desc_ok = 0;
+
+    if (dev == NULL) {
+        wprintf(L"{\"error\":\"no device\"}\n");
+        return 0;
+    }
+
+    if (dev->attr_valid) {
+        is_virtio = is_virtio_input_device(&dev->attr);
+    }
+    if (dev->caps_valid) {
+        const int is_keyboard = dev->caps.UsagePage == 0x01 && dev->caps.Usage == 0x06;
+        int is_mouse = dev->caps.UsagePage == 0x01 && dev->caps.Usage == 0x02;
+        const int is_consumer = dev->caps.UsagePage == 0x0C && dev->caps.Usage == 0x01;
+        int is_tablet = 0;
+
+        if (is_virtio && dev->attr_valid && dev->attr.ProductID == VIRTIO_INPUT_PID_TABLET) {
+            is_tablet = 1;
+        } else if (is_virtio) {
+            // Heuristic: tablet shares the mouse top-level usage, so distinguish by report descriptor length.
+            if (dev->report_desc_valid && dev->report_desc_len == VIRTIO_INPUT_EXPECTED_TABLET_REPORT_DESC_LEN) {
+                is_tablet = 1;
+            } else if (dev->hid_report_desc_valid &&
+                       dev->hid_report_desc_len == VIRTIO_INPUT_EXPECTED_TABLET_REPORT_DESC_LEN) {
+                is_tablet = 1;
+            }
+        }
+        if (is_tablet) {
+            is_mouse = 0;
+        }
+
+        if (is_tablet) {
+            kind = L"tablet";
+        } else if (is_keyboard) {
+            kind = L"keyboard";
+        } else if (is_mouse) {
+            kind = L"mouse";
+        } else if (is_consumer) {
+            kind = L"consumer";
+        } else {
+            kind = L"other";
+        }
+    }
+
+    ZeroMemory(manufacturer, sizeof(manufacturer));
+    ZeroMemory(product, sizeof(product));
+    ZeroMemory(serial, sizeof(serial));
+    if (dev->handle != INVALID_HANDLE_VALUE && dev->handle != NULL) {
+        if (HidD_GetManufacturerString(dev->handle, manufacturer, sizeof(manufacturer))) {
+            manufacturer[(sizeof(manufacturer) / sizeof(manufacturer[0])) - 1] = L'\0';
+            manufacturer_valid = 1;
+        }
+        if (HidD_GetProductString(dev->handle, product, sizeof(product))) {
+            product[(sizeof(product) / sizeof(product[0])) - 1] = L'\0';
+            product_valid = 1;
+        }
+        if (HidD_GetSerialNumberString(dev->handle, serial, sizeof(serial))) {
+            serial[(sizeof(serial) / sizeof(serial[0])) - 1] = L'\0';
+            serial_valid = 1;
+        }
+    }
+
+    if (dump_report) {
+        report_desc_ok = query_report_descriptor_blob(dev->handle, report_desc, &report_desc_len, &report_desc_err,
+                                                      &report_desc_ioctl);
+    }
+    if (dump_collection) {
+        collection_desc_ok =
+            query_collection_descriptor_blob(dev->handle, collection_desc, &collection_desc_len, &collection_desc_err,
+                                             &collection_desc_ioctl);
+    }
+
+    wprintf(L"{\n");
+    wprintf(L"  \"index\": %lu,\n", (unsigned long)dev->index);
+    wprintf(L"  \"path\": ");
+    json_print_string_w(dev->path);
+    wprintf(L",\n");
+    wprintf(L"  \"instanceId\": ");
+    json_print_string_w(dev->instance_id_valid ? dev->instance_id : NULL);
+    wprintf(L",\n");
+    wprintf(L"  \"deviceDesc\": ");
+    json_print_string_w(dev->device_desc_valid ? dev->device_desc : NULL);
+    wprintf(L",\n");
+    wprintf(L"  \"service\": ");
+    json_print_string_w(dev->service_valid ? dev->service : NULL);
+    wprintf(L",\n");
+    wprintf(L"  \"vid\": ");
+    if (dev->attr_valid) {
+        wprintf(L"%u", (unsigned)dev->attr.VendorID);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"pid\": ");
+    if (dev->attr_valid) {
+        wprintf(L"%u", (unsigned)dev->attr.ProductID);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"isVirtio\": ");
+    if (dev->attr_valid) {
+        wprintf(is_virtio ? L"true" : L"false");
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"kind\": ");
+    if (kind != NULL) {
+        json_print_string_w(kind);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"ver\": ");
+    if (dev->attr_valid) {
+        wprintf(L"%u", (unsigned)dev->attr.VersionNumber);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"manufacturer\": ");
+    if (manufacturer_valid) {
+        json_print_string_w(manufacturer);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"product\": ");
+    if (product_valid) {
+        json_print_string_w(product);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"serial\": ");
+    if (serial_valid) {
+        json_print_string_w(serial);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"usagePage\": ");
+    if (dev->caps_valid) {
+        wprintf(L"%u", (unsigned)dev->caps.UsagePage);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"usage\": ");
+    if (dev->caps_valid) {
+        wprintf(L"%u", (unsigned)dev->caps.Usage);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"inputLen\": ");
+    if (dev->caps_valid) {
+        wprintf(L"%u", (unsigned)dev->caps.InputReportByteLength);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"outputLen\": ");
+    if (dev->caps_valid) {
+        wprintf(L"%u", (unsigned)dev->caps.OutputReportByteLength);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"featureLen\": ");
+    if (dev->caps_valid) {
+        wprintf(L"%u", (unsigned)dev->caps.FeatureReportByteLength);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"reportDescLen\": ");
+    if (dev->report_desc_valid) {
+        wprintf(L"%lu", dev->report_desc_len);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"hidReportDescLen\": ");
+    if (dev->hid_report_desc_valid) {
+        wprintf(L"%lu", dev->hid_report_desc_len);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"desiredAccess\": %lu,\n", (unsigned long)dev->desired_access);
+    wprintf(L"  \"writeAccess\": %ls,\n", ((dev->desired_access & GENERIC_WRITE) != 0) ? L"true" : L"false");
+
+    wprintf(L"  \"reportDescriptor\": ");
+    if (!dump_report) {
+        wprintf(L"null");
+    } else {
+        wprintf(L"{\n");
+        wprintf(L"    \"ioctl\": %lu,\n", (unsigned long)report_desc_ioctl);
+        wprintf(L"    \"len\": ");
+        if (report_desc_ok) {
+            wprintf(L"%lu", (unsigned long)report_desc_len);
+        } else {
+            wprintf(L"null");
+        }
+        wprintf(L",\n");
+        wprintf(L"    \"data\": ");
+        if (report_desc_ok) {
+            json_print_hex_bytes(report_desc, report_desc_len);
+        } else {
+            wprintf(L"null");
+        }
+        wprintf(L",\n");
+        wprintf(L"    \"win32Err\": ");
+        if (!report_desc_ok && report_desc_err != 0) {
+            wprintf(L"%lu", (unsigned long)report_desc_err);
+        } else {
+            wprintf(L"null");
+        }
+        wprintf(L",\n");
+        wprintf(L"    \"error\": ");
+        if (!report_desc_ok) {
+            json_print_string_w(L"DeviceIoControl(IOCTL_HID_GET_REPORT_DESCRIPTOR) failed");
+        } else {
+            wprintf(L"null");
+        }
+        wprintf(L"\n");
+        wprintf(L"  }");
+    }
+    wprintf(L",\n");
+
+    wprintf(L"  \"collectionDescriptor\": ");
+    if (!dump_collection) {
+        wprintf(L"null");
+    } else {
+        wprintf(L"{\n");
+        wprintf(L"    \"ioctl\": %lu,\n", (unsigned long)collection_desc_ioctl);
+        wprintf(L"    \"len\": ");
+        if (collection_desc_ok) {
+            wprintf(L"%lu", (unsigned long)collection_desc_len);
+        } else {
+            wprintf(L"null");
+        }
+        wprintf(L",\n");
+        wprintf(L"    \"data\": ");
+        if (collection_desc_ok) {
+            json_print_hex_bytes(collection_desc, collection_desc_len);
+        } else {
+            wprintf(L"null");
+        }
+        wprintf(L",\n");
+        wprintf(L"    \"win32Err\": ");
+        if (!collection_desc_ok && collection_desc_err != 0) {
+            wprintf(L"%lu", (unsigned long)collection_desc_err);
+        } else {
+            wprintf(L"null");
+        }
+        wprintf(L",\n");
+        wprintf(L"    \"error\": ");
+        if (!collection_desc_ok) {
+            json_print_string_w(L"DeviceIoControl(IOCTL_HID_GET_COLLECTION_DESCRIPTOR) failed");
+        } else {
+            wprintf(L"null");
+        }
+        wprintf(L"\n");
+        wprintf(L"  }");
+    }
+    wprintf(L"\n");
+
+    wprintf(L"}\n");
+    return (!dump_report || report_desc_ok) && (!dump_collection || collection_desc_ok);
+}
+
 static int hidd_get_input_report(const SELECTED_DEVICE *dev)
 {
     BYTE report_id = 0;
@@ -7460,6 +7879,9 @@ int wmain(int argc, wchar_t **argv)
         if (opt.reset_counters) {
             opt.quiet = 1;
         }
+        if (opt.dump_desc || opt.dump_collection_desc) {
+            opt.quiet = 1;
+        }
         if (opt.get_log_mask || opt.have_set_log_mask) {
             opt.quiet = 1;
         }
@@ -7478,9 +7900,24 @@ int wmain(int argc, wchar_t **argv)
     }
     if (opt.json &&
         !(opt.list_only || opt.selftest || opt.query_state || opt.query_interrupt_info || opt.query_counters ||
-          opt.reset_counters || opt.get_log_mask || opt.have_set_log_mask)) {
-        wprintf(L"--json is only supported with --list, --selftest, --state, --interrupt-info, --counters,\n");
-        wprintf(L"--reset-counters, or --get-log-mask/--set-log-mask.\n");
+          opt.reset_counters || opt.dump_desc || opt.dump_collection_desc || opt.get_log_mask || opt.have_set_log_mask)) {
+        wprintf(L"--json is only supported with --list, --selftest, --dump-desc, --dump-collection-desc,\n");
+        wprintf(L"--state, --interrupt-info, --counters, --reset-counters, or --get-log-mask/--set-log-mask.\n");
+        return 2;
+    }
+    if (opt.json && (opt.dump_desc || opt.dump_collection_desc) &&
+        (opt.list_only || opt.selftest || opt.query_state || opt.query_interrupt_info || opt.query_counters || opt.reset_counters ||
+         opt.get_log_mask || opt.have_set_log_mask ||
+         opt.have_duration || opt.have_count ||
+         opt.have_led_mask || opt.have_led_ioctl_set_output || opt.led_cycle || opt.led_spam ||
+         opt.ioctl_bad_xfer_packet || opt.ioctl_bad_write_report || opt.ioctl_bad_read_xfer_packet || opt.ioctl_bad_read_report ||
+         opt.ioctl_bad_set_output_xfer_packet || opt.ioctl_bad_set_output_report || opt.ioctl_bad_get_report_descriptor ||
+         opt.ioctl_bad_get_collection_descriptor || opt.ioctl_bad_get_device_descriptor || opt.ioctl_bad_get_string ||
+         opt.ioctl_bad_get_indexed_string || opt.ioctl_bad_get_string_out || opt.ioctl_bad_get_indexed_string_out ||
+         opt.ioctl_bad_get_input_xfer_packet || opt.ioctl_bad_get_input_report ||
+         opt.ioctl_query_counters_short || opt.ioctl_query_state_short || opt.ioctl_query_interrupt_info_short ||
+         opt.ioctl_get_input_report || opt.hidd_get_input_report || opt.hidd_bad_set_output_report)) {
+        wprintf(L"--dump-desc/--dump-collection-desc with --json are standalone and cannot be combined with other action/negative-test modes.\n");
         return 2;
     }
     if (opt.selftest &&
@@ -7816,6 +8253,12 @@ int wmain(int argc, wchar_t **argv)
             wprintf(L"  [WARN] report descriptor length mismatch (IOCTL=%lu, HID=%lu)\n", dev.report_desc_len,
                     dev.hid_report_desc_len);
         }
+    }
+
+    if (opt.json && (opt.dump_desc || opt.dump_collection_desc)) {
+        int ok = dump_descriptors_json(&dev, opt.dump_desc, opt.dump_collection_desc);
+        free_selected_device(&dev);
+        return ok ? 0 : 1;
     }
 
     if (opt.query_state) {
