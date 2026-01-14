@@ -196,6 +196,8 @@ Verify 8 random chunks plus the final chunk:
   --chunk-sample 8
 ```
 
+To only verify the final chunk (fastest possible smoke check), use `--chunk-sample 0`.
+
 For deterministic sampling (useful in CI), provide a seed:
 
 ```bash

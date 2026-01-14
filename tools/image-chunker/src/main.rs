@@ -226,7 +226,7 @@ struct VerifyArgs {
     max_chunks: u64,
 
     /// Only verify N random chunks plus the final chunk (useful for quick smoke tests).
-    #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
+    #[arg(long)]
     chunk_sample: Option<u64>,
 
     /// Seed for `--chunk-sample` randomization (enables deterministic sampling for CI).
