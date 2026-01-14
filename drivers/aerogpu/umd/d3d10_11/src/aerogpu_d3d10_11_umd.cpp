@@ -136,6 +136,7 @@ using aerogpu::d3d10_11::kInvalidHandle;
 using aerogpu::d3d10_11::kDeviceDestroyLiveCookie;
 using aerogpu::d3d10_11::HasLiveCookie;
 using aerogpu::d3d10_11::atomic_max_u64;
+using aerogpu::d3d10_11::TrackStagingWriteLocked;
 using aerogpu::d3d10_11::kDxgiErrorWasStillDrawing;
 using aerogpu::d3d10_11::kHrPending;
 using aerogpu::d3d10_11::kHrWaitTimeout;
@@ -657,34 +658,6 @@ struct AeroGpuDevice {
 };
 
 inline void ReportDeviceErrorLocked(AeroGpuDevice* dev, D3D10DDI_HDEVICE hDevice, HRESULT hr);
-
-void TrackStagingWriteLocked(AeroGpuDevice* dev, AeroGpuResource* dst) {
-  if (!dev || !dst) {
-    return;
-  }
-
-  // Track staging readback resources so Map(READ)/Map(DO_NOT_WAIT) can wait on
-  // the fence that actually produces the bytes, instead of waiting on the
-  // device's latest fence (which may include unrelated work).
-  if (dst->usage != kD3D11UsageStaging) {
-    return;
-  }
-  if ((dst->cpu_access_flags & kD3D11CpuAccessRead) == 0) {
-    return;
-  }
-
-  if (std::find(dev->pending_staging_writes.begin(), dev->pending_staging_writes.end(), dst) !=
-      dev->pending_staging_writes.end()) {
-    return;
-  }
-  try {
-    dev->pending_staging_writes.push_back(dst);
-  } catch (...) {
-    D3D10DDI_HDEVICE hDevice{};
-    hDevice.pDrvPrivate = dev;
-    ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
-  }
-}
 
 bool AddLiveResourceLocked(AeroGpuDevice* dev, AeroGpuResource* res) {
   if (!dev || !res) {
@@ -3404,7 +3377,7 @@ void AEROGPU_APIENTRY CopyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE 
       ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
       return;
     }
-    TrackStagingWriteLocked(dev, dst);
+    TrackStagingWriteLocked(dev, dst, [&](HRESULT hr) { ReportDeviceErrorLocked(dev, hDevice, hr); });
     cmd->dst_buffer = dst->handle;
     cmd->src_buffer = src->handle;
     cmd->dst_offset_bytes = 0;
@@ -3474,7 +3447,7 @@ void AEROGPU_APIENTRY CopyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE 
           return;
         }
         if (!tracked_dst_write) {
-          TrackStagingWriteLocked(dev, dst);
+          TrackStagingWriteLocked(dev, dst, [&](HRESULT hr) { ReportDeviceErrorLocked(dev, hDevice, hr); });
           tracked_dst_write = true;
         }
         cmd->dst_texture = dst->handle;
@@ -3654,7 +3627,7 @@ HRESULT AEROGPU_APIENTRY CopySubresourceRegion(D3D10DDI_HDEVICE hDevice,
     if (!cmd) {
       return E_OUTOFMEMORY;
     }
-    TrackStagingWriteLocked(dev, dst);
+    TrackStagingWriteLocked(dev, dst, [&](HRESULT hr) { ReportDeviceErrorLocked(dev, hDevice, hr); });
     cmd->dst_buffer = dst->handle;
     cmd->src_buffer = src->handle;
     cmd->dst_offset_bytes = 0;
@@ -3777,7 +3750,7 @@ HRESULT AEROGPU_APIENTRY CopySubresourceRegion(D3D10DDI_HDEVICE hDevice,
     if (!cmd) {
       return E_OUTOFMEMORY;
     }
-    TrackStagingWriteLocked(dev, dst);
+    TrackStagingWriteLocked(dev, dst, [&](HRESULT hr) { ReportDeviceErrorLocked(dev, hDevice, hr); });
     cmd->dst_texture = dst->handle;
     cmd->src_texture = src->handle;
     cmd->dst_mip_level = dst_layout.mip_level;

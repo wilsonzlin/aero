@@ -79,7 +79,9 @@ using aerogpu::d3d10_11::D3dViewDimensionIsTexture2DArray;
 using aerogpu::d3d10_11::D3dViewCountToRemaining;
 using aerogpu::d3d10_11::ClampU64ToU32;
 using aerogpu::d3d10_11::InitSamplerFromCreateSamplerArg;
+using aerogpu::d3d10_11::InitLockForWrite;
 using aerogpu::d3d10_11::UintPtrToD3dHandle;
+using aerogpu::d3d10_11::TrackStagingWriteLocked;
 
 static bool IsDeviceLive(D3D10DDI_HDEVICE hDevice) {
   return HasLiveCookie(hDevice.pDrvPrivate, kD3D10DeviceLiveCookie);
@@ -1058,58 +1060,6 @@ void SetError(D3D10DDI_HDEVICE hDevice, HRESULT hr) {
       return;
     }
     CallCbMaybeHandle(dev->callbacks.pfnSetErrorCb, dev->hrt_device, hr);
-  }
-}
-
-static void TrackStagingWriteLocked(AeroGpuDevice* dev, AeroGpuResource* dst) {
-  if (!dev || !dst) {
-    return;
-  }
-
-  // Track writes into staging readback resources so Map(READ)/Map(DO_NOT_WAIT)
-  // can wait on the fence that actually produces the bytes, instead of waiting
-  // on the device's latest fence (which can include unrelated work).
-  //
-  // Prefer using the captured Usage field when available, but keep the legacy
-  // bind-flags heuristic as a fallback in case older WDK structs omit it.
-  if (dst->usage != 0) {
-    if (dst->usage != kD3D10UsageStaging) {
-      return;
-    }
-  } else {
-    if (dst->bind_flags != 0) {
-      return;
-    }
-  }
-
-  // Prefer to only track CPU-readable staging resources, but fall back to
-  // tracking all bindless resources if CPU access flags were not captured (WDK
-  // struct layout differences).
-  if (dst->cpu_access_flags != 0 && (dst->cpu_access_flags & kD3D10CpuAccessRead) == 0) {
-    return;
-  }
-
-  try {
-    dev->pending_staging_writes.push_back(dst);
-  } catch (...) {
-    D3D10DDI_HDEVICE hDevice{};
-    hDevice.pDrvPrivate = dev;
-    SetError(hDevice, E_OUTOFMEMORY);
-  }
-}
-
-static void InitLockForWrite(D3DDDICB_LOCK* lock) {
-  if (!lock) {
-    return;
-  }
-  // `D3DDDICB_LOCKFLAGS` bit names vary slightly across WDK releases.
-  __if_exists(D3DDDICB_LOCK::Flags) {
-    __if_exists(D3DDDICB_LOCKFLAGS::WriteOnly) {
-      lock->Flags.WriteOnly = 1;
-    }
-    __if_exists(D3DDDICB_LOCKFLAGS::Write) {
-      lock->Flags.Write = 1;
-    }
   }
 }
 
@@ -5255,7 +5205,7 @@ void APIENTRY CopySubresourceRegion(D3D10DDI_HDEVICE hDevice,
     }
     cmd->flags = copy_flags;
     cmd->reserved0 = 0;
-    TrackStagingWriteLocked(dev, dst);
+    TrackStagingWriteLocked(dev, dst, [&](HRESULT hr) { SetError(hDevice, hr); });
     return;
   }
 
@@ -5503,7 +5453,7 @@ void APIENTRY CopySubresourceRegion(D3D10DDI_HDEVICE hDevice,
     }
     cmd->flags = copy_flags;
     cmd->reserved0 = 0;
-    TrackStagingWriteLocked(dev, dst);
+    TrackStagingWriteLocked(dev, dst, [&](HRESULT hr) { SetError(hDevice, hr); });
     return;
   }
 

@@ -505,20 +505,6 @@ static D3D11DDI_HDEVICE MakeDeviceHandle(Device* dev) {
 
 template <typename Fn, typename HandleA, typename HandleB, typename... Args>
 decltype(auto) CallCbMaybeHandle(Fn fn, HandleA handle_a, HandleB handle_b, Args&&... args);
-static void InitLockForWrite(D3DDDICB_LOCK* lock) {
-  if (!lock) {
-    return;
-  }
-  // `D3DDDICB_LOCKFLAGS` bit names vary slightly across WDK releases.
-  __if_exists(D3DDDICB_LOCK::Flags) {
-    __if_exists(D3DDDICB_LOCKFLAGS::WriteOnly) {
-      lock->Flags.WriteOnly = 1;
-    }
-    __if_exists(D3DDDICB_LOCKFLAGS::Write) {
-      lock->Flags.Write = 1;
-    }
-  }
-}
 
 static void SetError(Device* dev, HRESULT hr) {
   if (!HasLiveCookie(dev, kDeviceDestroyLiveCookie)) {
@@ -631,23 +617,6 @@ static HRESULT WaitForFence(Device* dev, uint64_t fence_value, UINT64 timeout) {
   }
   atomic_max_u64(&dev->last_completed_fence, dev->wddm_submit.QueryCompletedFence());
   return hr;
-}
-
-static void TrackStagingWriteLocked(Device* dev, Resource* dst) {
-  if (!dev || !dst) {
-    return;
-  }
-  if (dst->usage != kD3D11UsageStaging) {
-    return;
-  }
-  if ((dst->cpu_access_flags & kD3D11CpuAccessRead) == 0) {
-    return;
-  }
-  try {
-    dev->pending_staging_writes.push_back(dst);
-  } catch (...) {
-    SetError(dev, E_OUTOFMEMORY);
-  }
 }
 
 template <typename T, typename = void>
@@ -9969,7 +9938,7 @@ void AEROGPU_APIENTRY CopySubresourceRegion11(D3D11DDI_HDEVICECONTEXT hCtx,
     }
     cmd->flags = copy_flags;
     cmd->reserved0 = 0;
-    TrackStagingWriteLocked(dev, dst);
+    TrackStagingWriteLocked(dev, dst, [&](HRESULT hr) { SetError(dev, hr); });
     return;
   }
 
@@ -10138,7 +10107,7 @@ void AEROGPU_APIENTRY CopySubresourceRegion11(D3D11DDI_HDEVICECONTEXT hCtx,
       }
       cmd->flags = copy_flags;
       cmd->reserved0 = 0;
-      TrackStagingWriteLocked(dev, dst);
+      TrackStagingWriteLocked(dev, dst, [&](HRESULT hr) { SetError(dev, hr); });
 
       if (can_cpu_copy) {
         for (uint32_t y = 0; y < copy_height_blocks; y++) {

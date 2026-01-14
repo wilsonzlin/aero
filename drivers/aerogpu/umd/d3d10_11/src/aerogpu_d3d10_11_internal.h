@@ -240,6 +240,21 @@ struct has_member_AddressW : std::false_type {};
 template <typename T>
 struct has_member_AddressW<T, std::void_t<decltype(((T*)nullptr)->AddressW)>> : std::true_type {};
 
+template <typename T, typename = void>
+struct has_member_Flags : std::false_type {};
+template <typename T>
+struct has_member_Flags<T, std::void_t<decltype(((T*)nullptr)->Flags)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_WriteOnly : std::false_type {};
+template <typename T>
+struct has_member_WriteOnly<T, std::void_t<decltype(((T*)nullptr)->WriteOnly)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_Write : std::false_type {};
+template <typename T>
+struct has_member_Write<T, std::void_t<decltype(((T*)nullptr)->Write)>> : std::true_type {};
+
 template <typename THandle>
 inline bool AnyNonNullHandles(const THandle* handles, size_t count) {
   if (!handles || count == 0) {
@@ -950,6 +965,25 @@ inline void InitSamplerFromCreateSamplerArg(SamplerT* sampler, const CreateSampl
   } else {
     // Portable ABI: the create arg itself is the descriptor.
     InitSamplerFromDesc(sampler, *pDesc);
+  }
+}
+
+template <typename LockT>
+inline void InitLockForWrite(LockT* lock) {
+  if (!lock) {
+    return;
+  }
+  // `D3DDDICB_LOCKFLAGS` bit names vary slightly across WDK releases. Keep this
+  // logic templated so the shared internal header stays WDK-free.
+  if constexpr (has_member_Flags<LockT>::value) {
+    std::memset(&lock->Flags, 0, sizeof(lock->Flags));
+    using FlagsT = std::remove_reference_t<decltype(lock->Flags)>;
+    if constexpr (has_member_WriteOnly<FlagsT>::value) {
+      lock->Flags.WriteOnly = 1;
+    }
+    if constexpr (has_member_Write<FlagsT>::value) {
+      lock->Flags.Write = 1;
+    }
   }
 }
 
@@ -2037,6 +2071,55 @@ inline bool EmitDepthStencilStateCmdLocked(Device* dev, const DepthStencilState*
   cmd->state.reserved0[0] = 0;
   cmd->state.reserved0[1] = 0;
   return true;
+}
+
+struct TrackStagingWriteNoopSetError {
+  void operator()(HRESULT) const noexcept {}
+};
+
+template <typename DeviceT, typename ResourceT, typename SetErrorFn>
+inline void TrackStagingWriteLocked(DeviceT* dev, ResourceT* dst, SetErrorFn&& set_error) {
+  if (!dev || !dst) {
+    return;
+  }
+
+  // Track writes into staging readback resources so Map(READ)/Map(DO_NOT_WAIT)
+  // can wait on the fence that actually produces the bytes, instead of waiting
+  // on the device's latest fence (which can include unrelated work).
+  //
+  // Prefer the captured Usage field when available, but keep the legacy
+  // bind-flags heuristic as a fallback in case an older ABI doesn't expose it.
+  if (dst->usage != 0) {
+    if (dst->usage != kD3D11UsageStaging) {
+      return;
+    }
+  } else {
+    if (dst->bind_flags != 0) {
+      return;
+    }
+  }
+
+  // Prefer to only track CPU-readable staging resources, but fall back to
+  // tracking all bindless resources if CPU access flags were not captured.
+  if (dst->cpu_access_flags != 0 && (dst->cpu_access_flags & kD3D11CpuAccessRead) == 0) {
+    return;
+  }
+
+  auto& tracked = dev->pending_staging_writes;
+  if (std::find(tracked.begin(), tracked.end(), dst) != tracked.end()) {
+    return;
+  }
+
+  try {
+    tracked.push_back(dst);
+  } catch (...) {
+    set_error(E_OUTOFMEMORY);
+  }
+}
+
+template <typename DeviceT, typename ResourceT>
+inline void TrackStagingWriteLocked(DeviceT* dev, ResourceT* dst) {
+  TrackStagingWriteLocked(dev, dst, TrackStagingWriteNoopSetError{});
 }
 
 inline void atomic_max_u64(std::atomic<uint64_t>* target, uint64_t value) {

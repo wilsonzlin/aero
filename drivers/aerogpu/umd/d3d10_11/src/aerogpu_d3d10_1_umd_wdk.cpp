@@ -166,7 +166,9 @@ using aerogpu::d3d10_11::D3dViewCountToRemaining;
 using aerogpu::d3d10_11::ClampU64ToU32;
 using aerogpu::d3d10_11::kD3DUintAll;
 using aerogpu::d3d10_11::InitSamplerFromCreateSamplerArg;
+using aerogpu::d3d10_11::InitLockForWrite;
 using aerogpu::d3d10_11::UintPtrToD3dHandle;
+using aerogpu::d3d10_11::TrackStagingWriteLocked;
 
 using AerogpuTextureFormatLayout = aerogpu::d3d10_11::AerogpuTextureFormatLayout;
 using aerogpu::d3d10_11::aerogpu_texture_format_layout;
@@ -408,42 +410,6 @@ struct AeroGpuDevice {
   }
 };
 
-void set_error(AeroGpuDevice* dev, HRESULT hr);
-
-static void TrackStagingWriteLocked(AeroGpuDevice* dev, AeroGpuResource* dst) {
-  if (!dev || !dst) {
-    return;
-  }
-
-  // Track writes into staging readback resources so Map(READ)/Map(DO_NOT_WAIT)
-  // can wait on the fence that actually produces the bytes, instead of waiting
-  // on the device's latest fence (which can include unrelated work).
-  //
-  // Prefer using the captured Usage field when available, but keep the legacy
-  // bind-flags heuristic as a fallback in case older WDK structs omit it.
-  if (dst->usage != 0) {
-    if (dst->usage != kD3D10UsageStaging) {
-      return;
-    }
-  } else {
-    if (dst->bind_flags != 0) {
-      return;
-    }
-  }
-
-  // Prefer to only track CPU-readable staging resources, but fall back to
-  // tracking all bindless resources if CPU access flags were not captured (WDK
-  // struct layout differences).
-  if (dst->cpu_access_flags != 0 && (dst->cpu_access_flags & kD3D10CpuAccessRead) == 0) {
-    return;
-  }
-
-  try {
-    dev->pending_staging_writes.push_back(dst);
-  } catch (...) {
-    set_error(dev, E_OUTOFMEMORY);
-  }
-}
 template <typename Fn, typename Handle, typename... Args>
 decltype(auto) CallCbMaybeHandle(Fn fn, Handle handle, Args&&... args) {
   // Some WDK revisions disagree on whether the first parameter is a D3D10 or
@@ -1046,21 +1012,6 @@ void set_error(AeroGpuDevice* dev, HRESULT hr) {
       return;
     }
     CallCbMaybeHandle(dev->pfn_set_error, dev->hrt_device, hr);
-  }
-}
-
-static void InitLockForWrite(D3DDDICB_LOCK* lock) {
-  if (!lock) {
-    return;
-  }
-  __if_exists(D3DDDICB_LOCK::SubresourceIndex) { lock->SubresourceIndex = 0; }
-  __if_exists(D3DDDICB_LOCK::SubResourceIndex) { lock->SubResourceIndex = 0; }
-
-  // `D3DDDICB_LOCKFLAGS` bit names vary slightly across WDK releases.
-  __if_exists(D3DDDICB_LOCK::Flags) {
-    std::memset(&lock->Flags, 0, sizeof(lock->Flags));
-    __if_exists(D3DDDICB_LOCKFLAGS::WriteOnly) { lock->Flags.WriteOnly = 1; }
-    __if_exists(D3DDDICB_LOCKFLAGS::Write) { lock->Flags.Write = 1; }
   }
 }
 
@@ -1763,7 +1714,7 @@ struct CopyResourceImpl<Ret(AEROGPU_APIENTRY*)(Args...)> {
           }
           cmd->flags = copy_flags;
           cmd->reserved0 = 0;
-          TrackStagingWriteLocked(dev, dst);
+          TrackStagingWriteLocked(dev, dst, [&](HRESULT hr) { set_error(dev, hr); });
         } else if (copy_bytes) {
           TrackWddmAllocForSubmitLocked(dev, dst, /*write=*/false);
           emit_upload_resource_locked(dev, dst, 0, copy_bytes);
@@ -1908,7 +1859,7 @@ struct CopyResourceImpl<Ret(AEROGPU_APIENTRY*)(Args...)> {
             cmd->flags = copy_flags;
             cmd->reserved0 = 0;
           }
-          TrackStagingWriteLocked(dev, dst);
+          TrackStagingWriteLocked(dev, dst, [&](HRESULT hr) { set_error(dev, hr); });
         } else if (dst_total != 0) {
           TrackWddmAllocForSubmitLocked(dev, dst, /*write=*/false);
           emit_upload_resource_locked(dev, dst, 0, dst_total);
@@ -2076,7 +2027,7 @@ struct CopySubresourceRegionImpl<Ret(AEROGPU_APIENTRY*)(Args...)> {
           }
           cmd->flags = copy_flags;
           cmd->reserved0 = 0;
-          TrackStagingWriteLocked(dev, dst);
+          TrackStagingWriteLocked(dev, dst, [&](HRESULT hr) { set_error(dev, hr); });
         } else if (bytes) {
           TrackWddmAllocForSubmitLocked(dev, dst, /*write=*/false);
           emit_upload_resource_locked(dev, dst, dst_off, bytes);
@@ -2272,7 +2223,7 @@ struct CopySubresourceRegionImpl<Ret(AEROGPU_APIENTRY*)(Args...)> {
           }
           cmd->flags = copy_flags;
           cmd->reserved0 = 0;
-          TrackStagingWriteLocked(dev, dst);
+          TrackStagingWriteLocked(dev, dst, [&](HRESULT hr) { set_error(dev, hr); });
         } else {
           TrackWddmAllocForSubmitLocked(dev, dst, /*write=*/false);
           emit_upload_resource_locked(dev, dst, dst_sub.offset_bytes, dst_sub.size_bytes);
