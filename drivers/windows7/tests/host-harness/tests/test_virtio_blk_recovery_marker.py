@@ -55,7 +55,7 @@ class VirtioBlkRecoveryMarkerTests(unittest.TestCase):
         # fall back to the dedicated virtio-blk-counters marker.
         tail = (
             b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS|irq_mode=msix\n"
-            b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|INFO|abort=0|reset_device=1|reset_bus=2|pnp=3|ioctl_reset=4|capacity_change_events=not_supported\n"
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|INFO|abort=0|reset_device=1|reset_bus=2|pnp=3|ioctl_reset=4|capacity_change_events=5\n"
         )
         out = self._emit(tail)
         self.assertEqual(

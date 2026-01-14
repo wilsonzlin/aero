@@ -82,13 +82,13 @@ class VirtioBlkCountersMarkerTests(unittest.TestCase):
     def test_uses_explicit_marker_line_override(self) -> None:
         line = (
             "AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|INFO|abort=0|reset_device=0|reset_bus=0|"
-            "pnp=0|ioctl_reset=0|capacity_change_events=not_supported"
+            "pnp=0|ioctl_reset=0|capacity_change_events=0"
         )
         out = self._emit(b"", line=line)
         self.assertEqual(
             out,
             "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_COUNTERS|INFO|abort=0|reset_device=0|reset_bus=0|pnp=0|"
-            "ioctl_reset=0|capacity_change_events=not_supported",
+            "ioctl_reset=0|capacity_change_events=0",
         )
 
     def test_fail_on_blk_recovery_gate_passes_on_zero(self) -> None:

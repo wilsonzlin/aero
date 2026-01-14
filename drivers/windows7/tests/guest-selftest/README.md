@@ -12,12 +12,12 @@ For the consolidated virtio-input end-to-end validation plan (device model + dri
 - **virtio-blk**
   - Detect a virtio disk device (SetupAPI hardware IDs).
   - Query the `aero_virtio_blk` miniport (via `IOCTL_SCSI_MINIPORT`) and validate basic configuration/feature bits.
-    - When the miniport reports the v2+ IOCTL payload, the virtio-blk per-test marker also includes StorPort recovery
-      counters for log scraping: `abort_srb`, `reset_device_srb`, `reset_bus_srb`, `pnp_srb`, `ioctl_reset`.
-    - Newer selftest builds also emit a dedicated machine-readable marker for these counters (and
+    - The selftest emits a dedicated machine-readable marker for StorPort recovery counters (and
       `capacity_change_events`):
       - `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|INFO|abort=...|reset_device=...|reset_bus=...|pnp=...|ioctl_reset=...|capacity_change_events=...`
       - `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|SKIP|reason=ioctl_payload_truncated|returned_len=...`
+    - Backward compatibility: older selftest builds may also append these counters to the main `virtio-blk` test marker
+      using keys like `abort_srb`/`reset_device_srb`/`reset_bus_srb`/`pnp_srb`/`ioctl_reset`.
   - Optional interrupt-mode expectation:
     - Enable with `--expect-blk-msi` (or env var `AERO_VIRTIO_SELFTEST_EXPECT_BLK_MSI=1`).
     - When enabled, the virtio-blk test **FAIL**s if the miniport reports it is still operating in **INTx**

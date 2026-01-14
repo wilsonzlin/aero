@@ -397,8 +397,7 @@ On failure it emits:
 
 `FAIL: VIRTIO_BLK_RECOVERY_DETECTED: ...`
 
-Legacy guest selftests may append these counters to the main virtio-blk marker (best-effort; kept for backwards
-compatibility with older images/tools):
+Backward compatibility: legacy guest selftests may append these counters to the main virtio-blk marker (best-effort):
 - `abort_srb`
 - `reset_device_srb`
 - `reset_bus_srb`
