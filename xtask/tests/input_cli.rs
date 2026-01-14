@@ -138,6 +138,9 @@ fn input_help_mentions_flags_and_steps() {
         .stdout(predicate::str::contains(
             "src/io/devices/virtio_input_mouse_buttons.test.ts",
         ))
+        .stdout(predicate::str::contains(
+            "src/ui/input_diagnostics_panel.test.ts",
+        ))
         .stdout(predicate::str::contains("src/platform/features.test.ts"))
         .stdout(predicate::str::contains(
             "src/platform/hid_passthrough_protocol.test.ts",

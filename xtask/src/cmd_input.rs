@@ -139,6 +139,7 @@ const WEB_UNIT_TEST_PATHS: &[&str] = &[
     "src/hid/wasm_hid_guest_bridge.test.ts",
     "src/hid/wasm_uhci_hid_guest_bridge.test.ts",
     "src/io/devices/virtio_input_mouse_buttons.test.ts",
+    "src/ui/input_diagnostics_panel.test.ts",
     "src/platform/features.test.ts",
     "src/platform/hid_passthrough_protocol.test.ts",
     "src/platform/webhid_passthrough.test.ts",
