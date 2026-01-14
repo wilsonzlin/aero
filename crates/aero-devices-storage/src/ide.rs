@@ -909,6 +909,27 @@ mod tests {
     }
 
     #[test]
+    fn drive_address_bit_layout_matches_ata_spec() {
+        let (mut ctl, _irq14, _irq15) = setup_controller_two_drives();
+
+        // Master with head=7.
+        let head = 7u8;
+        ctl.write_u8(PRIMARY_BASE + 6, 0xE0 | head);
+        let val = ctl.read_u8(PRIMARY_CTRL + 1);
+        assert_eq!(val & 0xC0, 0xC0);
+        assert_eq!(val & 0x30, 0x20, "master selected => nDS1=1, nDS0=0");
+        assert_eq!(val & 0x0F, (!head) & 0x0F);
+
+        // Slave with head=5.
+        let head = 5u8;
+        ctl.write_u8(PRIMARY_BASE + 6, 0xF0 | head);
+        let val = ctl.read_u8(PRIMARY_CTRL + 1);
+        assert_eq!(val & 0xC0, 0xC0);
+        assert_eq!(val & 0x30, 0x10, "slave selected => nDS1=0, nDS0=1");
+        assert_eq!(val & 0x0F, (!head) & 0x0F);
+    }
+
+    #[test]
     fn identify_works() {
         let (mut ctl, irq14, _irq15) = setup_controller();
 
