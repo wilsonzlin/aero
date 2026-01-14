@@ -1,5 +1,6 @@
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    AerogpuCmdOpcode, AEROGPU_CLEAR_COLOR, AEROGPU_CMD_STREAM_MAGIC, AEROGPU_PRESENT_FLAG_VSYNC,
+    AerogpuCmdOpcode, AerogpuPrimitiveTopology, AEROGPU_CLEAR_COLOR, AEROGPU_CMD_STREAM_MAGIC,
+    AEROGPU_PRESENT_FLAG_VSYNC,
 };
 use aero_protocol::aerogpu::aerogpu_pci::{AerogpuFormat, AEROGPU_ABI_VERSION_U32};
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
@@ -418,4 +419,32 @@ fn json_listing_decodes_new_opcodes() {
 
     let destroy_view = find_packet("DestroyTextureView");
     assert_eq!(destroy_view["decoded"]["view_handle"], 0x1000);
+}
+
+#[test]
+fn json_listing_decodes_topology_names_for_adjacency_and_patchlists() {
+    let mut w = AerogpuCmdWriter::new();
+    w.set_primitive_topology(AerogpuPrimitiveTopology::TriangleStripAdj);
+    w.set_primitive_topology(AerogpuPrimitiveTopology::PatchList32);
+    let bytes = w.finish();
+
+    let listing = aero_gpu_trace_replay::cmd_stream_decode::render_cmd_stream_listing(
+        &bytes,
+        aero_gpu_trace_replay::cmd_stream_decode::CmdStreamListingFormat::Json,
+    )
+    .expect("render json listing");
+    let v: serde_json::Value = serde_json::from_str(&listing).expect("parse json listing");
+
+    let records = v["records"].as_array().expect("records array");
+    let topo_packets: Vec<&serde_json::Value> = records
+        .iter()
+        .filter(|r| r["type"] == "packet" && r["opcode"] == "SetPrimitiveTopology")
+        .collect();
+    assert_eq!(topo_packets.len(), 2);
+
+    assert_eq!(topo_packets[0]["decoded"]["topology"], 13);
+    assert_eq!(topo_packets[0]["decoded"]["topology_name"], "TriangleStripAdj");
+
+    assert_eq!(topo_packets[1]["decoded"]["topology"], 64);
+    assert_eq!(topo_packets[1]["decoded"]["topology_name"], "PatchList32");
 }
