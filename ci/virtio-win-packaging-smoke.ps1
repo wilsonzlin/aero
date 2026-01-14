@@ -1186,9 +1186,13 @@ if ($resolvedGuestToolsProfile -eq "full") {
   New-SyntheticDriverFiles -VirtioRoot $syntheticPartialRoot -UpstreamDirName "NetKVM" -InfBaseName "netkvm" -OsDirName $osDir -ArchDirName "x86" -HardwareId "PCI\VEN_1AF4&DEV_1041"
   New-SyntheticDriverFiles -VirtioRoot $syntheticPartialRoot -UpstreamDirName "NetKVM" -InfBaseName "netkvm" -OsDirName $osDir -ArchDirName "amd64" -HardwareId "PCI\VEN_1AF4&DEV_1041"
 
-  # Optional drivers: x86-only (partial) -> should be omitted entirely by make-driver-pack.ps1.
+  # Optional drivers: partial (one-arch-only) -> should be omitted entirely by make-driver-pack.ps1.
+  #
+  # Cover both directions:
+  # - viosnd present only for x86
+  # - vioinput present only for amd64
   New-SyntheticDriverFiles -VirtioRoot $syntheticPartialRoot -UpstreamDirName "viosnd" -InfBaseName "viosnd" -OsDirName $osDir -ArchDirName "x86" -HardwareId "PCI\VEN_1AF4&DEV_1059"
-  New-SyntheticDriverFiles -VirtioRoot $syntheticPartialRoot -UpstreamDirName "vioinput" -InfBaseName "vioinput" -OsDirName $osDir -ArchDirName "x86" -HardwareId "PCI\VEN_1AF4&DEV_1052"
+  New-SyntheticDriverFiles -VirtioRoot $syntheticPartialRoot -UpstreamDirName "vioinput" -InfBaseName "vioinput" -OsDirName $osDir -ArchDirName "amd64" -HardwareId "PCI\VEN_1AF4&DEV_1052"
 
   $guestToolsPartialOutDir = Join-Path $OutRoot "guest-tools-partial-optional"
   Ensure-EmptyDirectory -Path $guestToolsPartialOutDir
