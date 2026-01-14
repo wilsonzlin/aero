@@ -113,6 +113,17 @@ class FailureTokenTests(unittest.TestCase):
         self.assertRegex(msg, _TOKEN_RE)
         self.assertTrue(msg.startswith("FAIL: VIRTIO_BLK_RECOVERY_NONZERO:"))
 
+    def test_virtio_blk_counters_recovery_detected_token(self) -> None:
+        h = self.harness
+
+        msg = h._check_fail_on_blk_recovery_requirement(
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|INFO|abort=0|reset_device=1|reset_bus=0|pnp=0|ioctl_reset=0|capacity_change_events=0\n"
+        )
+        self.assertIsNotNone(msg)
+        assert msg is not None
+        self.assertRegex(msg, _TOKEN_RE)
+        self.assertTrue(msg.startswith("FAIL: VIRTIO_BLK_RECOVERY_DETECTED:"))
+
     def test_virtio_blk_reset_skip_tokens(self) -> None:
         h = self.harness
 
