@@ -51,7 +51,6 @@ fn enc_inst_with_extra(opcode: u16, extra: u32, params: &[u32]) -> Vec<u32> {
 fn enc_inst_with_extra_sm3(opcode: u16, extra: u32, params: &[u32]) -> Vec<u32> {
     enc_inst_with_extra(opcode, extra, params)
 }
-
 fn assemble_vs_passthrough() -> Vec<u32> {
     // vs_2_0
     let mut out = vec![0xFFFE0200];
