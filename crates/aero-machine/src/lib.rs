@@ -3928,20 +3928,20 @@ fn decode_aerogpu_snapshot_v1(bytes: &[u8]) -> Option<AeroGpuSnapshotV1> {
             {
                 // No pending pairs.
             } else {
-            if bytes.len() >= off.saturating_add(8)
-                && !known_tag(bytes, off)
-                && peek_flag(bytes, off.saturating_add(4)).is_some_and(|flag| flag <= 1)
-            {
-                scanout0_fb_gpa_pending_lo = read_u32(bytes, &mut off).unwrap_or(0);
-                scanout0_fb_gpa_lo_pending = read_u32(bytes, &mut off).unwrap_or(0) != 0;
-            }
-            if bytes.len() >= off.saturating_add(8)
-                && !known_tag(bytes, off)
-                && peek_flag(bytes, off.saturating_add(4)).is_some_and(|flag| flag <= 1)
-            {
-                cursor_fb_gpa_pending_lo = read_u32(bytes, &mut off).unwrap_or(0);
-                cursor_fb_gpa_lo_pending = read_u32(bytes, &mut off).unwrap_or(0) != 0;
-            }
+                if bytes.len() >= off.saturating_add(8)
+                    && !known_tag(bytes, off)
+                    && peek_flag(bytes, off.saturating_add(4)).is_some_and(|flag| flag <= 1)
+                {
+                    scanout0_fb_gpa_pending_lo = read_u32(bytes, &mut off).unwrap_or(0);
+                    scanout0_fb_gpa_lo_pending = read_u32(bytes, &mut off).unwrap_or(0) != 0;
+                }
+                if bytes.len() >= off.saturating_add(8)
+                    && !known_tag(bytes, off)
+                    && peek_flag(bytes, off.saturating_add(4)).is_some_and(|flag| flag <= 1)
+                {
+                    cursor_fb_gpa_pending_lo = read_u32(bytes, &mut off).unwrap_or(0);
+                    cursor_fb_gpa_lo_pending = read_u32(bytes, &mut off).unwrap_or(0) != 0;
+                }
             }
         }
     }
@@ -4242,20 +4242,20 @@ fn apply_aerogpu_snapshot_v2(
             {
                 // No pending pairs.
             } else {
-            if bytes.len() >= off.saturating_add(8)
-                && !known_tag(bytes, off)
-                && peek_flag(bytes, off.saturating_add(4)).is_some_and(|flag| flag <= 1)
-            {
-                scanout0_fb_gpa_pending_lo = read_u32(bytes, &mut off).unwrap_or(0);
-                scanout0_fb_gpa_lo_pending = read_u32(bytes, &mut off).unwrap_or(0) != 0;
-            }
-            if bytes.len() >= off.saturating_add(8)
-                && !known_tag(bytes, off)
-                && peek_flag(bytes, off.saturating_add(4)).is_some_and(|flag| flag <= 1)
-            {
-                cursor_fb_gpa_pending_lo = read_u32(bytes, &mut off).unwrap_or(0);
-                cursor_fb_gpa_lo_pending = read_u32(bytes, &mut off).unwrap_or(0) != 0;
-            }
+                if bytes.len() >= off.saturating_add(8)
+                    && !known_tag(bytes, off)
+                    && peek_flag(bytes, off.saturating_add(4)).is_some_and(|flag| flag <= 1)
+                {
+                    scanout0_fb_gpa_pending_lo = read_u32(bytes, &mut off).unwrap_or(0);
+                    scanout0_fb_gpa_lo_pending = read_u32(bytes, &mut off).unwrap_or(0) != 0;
+                }
+                if bytes.len() >= off.saturating_add(8)
+                    && !known_tag(bytes, off)
+                    && peek_flag(bytes, off.saturating_add(4)).is_some_and(|flag| flag <= 1)
+                {
+                    cursor_fb_gpa_pending_lo = read_u32(bytes, &mut off).unwrap_or(0);
+                    cursor_fb_gpa_lo_pending = read_u32(bytes, &mut off).unwrap_or(0) != 0;
+                }
             }
         }
     }

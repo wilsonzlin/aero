@@ -1112,7 +1112,11 @@ impl AeroGpuMmioDevice {
             // Mirror device DMA gating: without BME, the device must not perform DMA (fence page
             // updates). Queue the completion and apply it once DMA is permitted again.
             // `push_back` may allocate; reserve fallibly to avoid aborting on OOM.
-            if self.pending_backend_fence_completions.try_reserve(1).is_ok() {
+            if self
+                .pending_backend_fence_completions
+                .try_reserve(1)
+                .is_ok()
+            {
                 self.pending_backend_fence_completions.push_back(fence);
             } else {
                 // If we cannot queue completions, fall back to tracking the completion directly.

@@ -231,7 +231,11 @@ impl ExpansionScratchAllocator {
         self.storage_state
             .as_ref()
             .map(|s| s.arenas.per_frame_capacity)
-            .or_else(|| self.metadata_state.as_ref().map(|s| s.arenas.per_frame_capacity))
+            .or_else(|| {
+                self.metadata_state
+                    .as_ref()
+                    .map(|s| s.arenas.per_frame_capacity)
+            })
     }
 
     /// Ensure the scratch allocator is initialized.
@@ -492,8 +496,14 @@ impl ExpansionScratchAllocator {
 
         // Retry the allocation in the fresh segment.
         let state = match arena {
-            ScratchArenaKind::Storage => self.storage_state.as_mut().expect("realloc keeps state present"),
-            ScratchArenaKind::Metadata => self.metadata_state.as_mut().expect("realloc keeps state present"),
+            ScratchArenaKind::Storage => self
+                .storage_state
+                .as_mut()
+                .expect("realloc keeps state present"),
+            ScratchArenaKind::Metadata => self
+                .metadata_state
+                .as_mut()
+                .expect("realloc keeps state present"),
         };
         let remaining = state.arenas.remaining();
         let per_frame_capacity = state.arenas.per_frame_capacity;

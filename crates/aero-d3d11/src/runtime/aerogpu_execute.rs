@@ -4462,7 +4462,8 @@ mod tests {
             // (1) Only RT0 bound: validate trimming logic directly (wgpu does not consistently
             // surface MRT output/target mismatches as pipeline-creation validation errors across all
             // backends).
-            let declared = crate::runtime::wgsl_link::declared_ps_output_locations(fs_wgsl).unwrap();
+            let declared =
+                crate::runtime::wgsl_link::declared_ps_output_locations(fs_wgsl).unwrap();
             assert_eq!(declared, BTreeSet::from([0u32, 2u32]));
             let keep = BTreeSet::from([0u32]);
             let trimmed = crate::runtime::wgsl_link::trim_ps_outputs_to_locations(fs_wgsl, &keep);

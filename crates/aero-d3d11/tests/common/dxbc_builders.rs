@@ -86,4 +86,3 @@ pub fn build_gs_linelist_to_triangle_dxbc() -> Vec<u8> {
 
     build_dxbc(&[(FourCC(*b"SHDR"), tokens_to_bytes(&tokens))])
 }
-
