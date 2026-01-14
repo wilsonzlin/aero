@@ -49,6 +49,8 @@ MD_FLAG_RE = re.compile(r"--[A-Za-z0-9][A-Za-z0-9-]*")
 # We only scan markdown files in these dirs for dbgctl invocations.
 SCAN_MD_DIRS = [
     ROOT / "docs",
+    # Project-wide playbooks live under instructions/ and may embed dbgctl invocations.
+    ROOT / "instructions",
     ROOT / "drivers" / "aerogpu",
     # Guest Tools docs embed dbgctl invocations (e.g. `--status --timeout-ms 2000`) and
     # should also be kept in sync with the actual dbgctl flag surface.
