@@ -1,7 +1,7 @@
 use aero_d3d11::sm4::opcode::*;
 use aero_d3d11::{
-    parse_signatures, translate_sm4_module_to_wgsl, DxbcSignatureParameter, FourCC, Sm4Inst,
-    Sm4Program, WriteMask,
+    parse_signatures, translate_sm4_module_to_wgsl, DxbcSignatureParameter, FourCC, Sm4CmpOp,
+    Sm4Inst, Sm4Program, WriteMask,
 };
 use aero_dxbc::test_utils as dxbc_test_utils;
 
@@ -151,8 +151,40 @@ fn imm32_scalar(value: u32) -> Vec<u32> {
     ]
 }
 
-fn assert_wgsl_parses(wgsl: &str) {
-    naga::front::wgsl::parse_str(wgsl).expect("generated WGSL failed to parse");
+fn assert_wgsl_validates(wgsl: &str) {
+    let module = naga::front::wgsl::parse_str(wgsl).expect("generated WGSL failed to parse");
+    let mut validator = naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    );
+    validator
+        .validate(&module)
+        .expect("generated WGSL failed to validate");
+}
+
+fn pred_operand_mask(idx: u32, mask: u32) -> Vec<u32> {
+    vec![
+        operand_token(OPERAND_TYPE_PREDICATE, 1, OPERAND_SEL_MASK, mask, 1),
+        idx,
+    ]
+}
+
+fn pred_operand_swizzle_neg(idx: u32, swizzle: [u8; 4]) -> Vec<u32> {
+    // Encode a predicate operand using SWIZZLE selection and the extended operand modifier token.
+    //
+    // This exercises the decoder paths for:
+    // - `OPERAND_SEL_SWIZZLE` scalar predicates (replicated swizzle), and
+    // - `OperandModifier::Neg` inversion (e.g. `(-p0.x)`).
+    let mut tok = operand_token(
+        OPERAND_TYPE_PREDICATE,
+        1,
+        OPERAND_SEL_SWIZZLE,
+        swizzle_bits(swizzle),
+        1,
+    );
+    tok |= OPERAND_EXTENDED_BIT;
+    let ext = 1u32 << 6; // modifier = Neg
+    vec![tok, ext, idx]
 }
 
 #[test]
@@ -243,7 +275,7 @@ fn decodes_and_translates_setp_and_predicated_mov() {
 
     let signatures = parse_signatures(&dxbc).expect("parse signatures");
     let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
-    assert_wgsl_parses(&translated.wgsl);
+    assert_wgsl_validates(&translated.wgsl);
 
     assert!(
         translated.wgsl.contains("var p0: vec4<bool>"),
@@ -333,7 +365,7 @@ fn decodes_and_translates_trailing_predicated_mov() {
 
     let signatures = parse_signatures(&dxbc).expect("parse signatures");
     let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
-    assert_wgsl_parses(&translated.wgsl);
+    assert_wgsl_validates(&translated.wgsl);
 
     assert!(
         translated.wgsl.contains("var p0: vec4<bool>"),
@@ -405,12 +437,13 @@ fn decodes_and_translates_inverted_predicated_mov() {
         Sm4Inst::Predicated {
             pred,
             inner,
+            ..
         } if pred.invert && matches!(inner.as_ref(), Sm4Inst::Mov { .. })
     ));
 
     let signatures = parse_signatures(&dxbc).expect("parse signatures");
     let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
-    assert_wgsl_parses(&translated.wgsl);
+    assert_wgsl_validates(&translated.wgsl);
 
     assert!(
         translated.wgsl.contains("var p0: vec4<bool>"),
@@ -485,13 +518,19 @@ fn decodes_and_translates_trailing_inverted_predicated_mov() {
         Sm4Inst::Predicated {
             pred,
             inner,
+            ..
         } if pred.invert && matches!(inner.as_ref(), Sm4Inst::Mov { .. })
     ));
 
     let signatures = parse_signatures(&dxbc).expect("parse signatures");
     let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
-    assert_wgsl_parses(&translated.wgsl);
+    assert_wgsl_validates(&translated.wgsl);
 
+    assert!(
+        translated.wgsl.contains("var p0: vec4<bool>"),
+        "expected predicate register decl in WGSL:\n{}",
+        translated.wgsl
+    );
     assert!(
         translated.wgsl.contains("if (!(p0.x)) {"),
         "expected inverted predicated mov to translate to if(!(p0.x)):\n{}",
@@ -520,11 +559,8 @@ fn decodes_and_translates_trailing_predicated_setp() {
     let dst_p1x = reg_dst(OPERAND_TYPE_PREDICATE, 1, WriteMask::X);
     let src_v0y = reg_src(OPERAND_TYPE_INPUT, 0, [1, 1, 1, 1]);
     let pred_p0x = pred_operand(0, 0);
-    let setp2_len = 1
-        + dst_p1x.len() as u32
-        + src_v0y.len() as u32
-        + src_zero.len() as u32
-        + pred_p0x.len() as u32;
+    let setp2_len =
+        1 + dst_p1x.len() as u32 + src_v0y.len() as u32 + src_zero.len() as u32 + pred_p0x.len() as u32;
     body.push(opcode_token_setp(setp2_len, 5));
     body.extend_from_slice(&dst_p1x);
     body.extend_from_slice(&src_v0y);
@@ -569,7 +605,7 @@ fn decodes_and_translates_trailing_predicated_setp() {
 
     let signatures = parse_signatures(&dxbc).expect("parse signatures");
     let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
-    assert_wgsl_parses(&translated.wgsl);
+    assert_wgsl_validates(&translated.wgsl);
 
     assert!(
         translated.wgsl.contains("var p1: vec4<bool>"),
@@ -646,7 +682,7 @@ fn decodes_and_translates_predicated_ret() {
 
     let signatures = parse_signatures(&dxbc).expect("parse signatures");
     let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
-    assert_wgsl_parses(&translated.wgsl);
+    assert_wgsl_validates(&translated.wgsl);
 
     assert!(
         translated.wgsl.contains("if (p0.x) {"),
@@ -657,6 +693,136 @@ fn decodes_and_translates_predicated_ret() {
     assert!(
         return_count >= 2,
         "expected predicated ret to emit an additional return out (count={return_count}):\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
+fn decodes_and_translates_predicate_operand_swizzle_mask_and_negation() {
+    let mut body = Vec::<u32>::new();
+
+    // setp p0.xy, v0.x, l(0.0), gt
+    let dst_p0xy = reg_dst(OPERAND_TYPE_PREDICATE, 0, WriteMask(0b0011));
+    let src_v0x = reg_src(OPERAND_TYPE_INPUT, 0, [0, 0, 0, 0]);
+    let src_zero = imm32_scalar(0.0f32.to_bits());
+    let setp_len = 1 + dst_p0xy.len() as u32 + src_v0x.len() as u32 + src_zero.len() as u32;
+    body.push(opcode_token_setp(setp_len, 5));
+    body.extend_from_slice(&dst_p0xy);
+    body.extend_from_slice(&src_v0x);
+    body.extend_from_slice(&src_zero);
+
+    // setp p1.x, l(1u), l(2u), lt_u
+    let dst_p1x = reg_dst(OPERAND_TYPE_PREDICATE, 1, WriteMask::X);
+    let imm_u32 = |v: u32| imm32_scalar(v);
+    let a_u = imm_u32(1);
+    let b_u = imm_u32(2);
+    let setp_u_len = 1 + dst_p1x.len() as u32 + a_u.len() as u32 + b_u.len() as u32;
+    body.push(opcode_token_setp(setp_u_len, 10));
+    body.extend_from_slice(&dst_p1x);
+    body.extend_from_slice(&a_u);
+    body.extend_from_slice(&b_u);
+
+    // (p0.y via MASK selection) mov o0, l(0.25, 0.25, 0.25, 0.25)
+    let pred_p0y_mask = pred_operand_mask(0, 0b0010);
+    let imm_quarter = imm32_vec4([0.25f32.to_bits(); 4]);
+    body.push(opcode_token(
+        OPCODE_MOV,
+        1 + pred_p0y_mask.len() as u32 + 2 + imm_quarter.len() as u32,
+    ));
+    body.extend_from_slice(&pred_p0y_mask);
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&imm_quarter);
+
+    // (-p0.xxxx via SWIZZLE selection + extended modifier) mov o0, l(0.5, 0.5, 0.5, 0.5)
+    let pred_p0x_neg = pred_operand_swizzle_neg(0, [0, 0, 0, 0]);
+    let imm_half = imm32_vec4([0.5f32.to_bits(); 4]);
+    body.push(opcode_token(
+        OPCODE_MOV,
+        1 + pred_p0x_neg.len() as u32 + 2 + imm_half.len() as u32,
+    ));
+    body.extend_from_slice(&pred_p0x_neg);
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&imm_half);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    let tokens = make_sm5_program_tokens(0, &body);
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (
+            FOURCC_ISGN,
+            build_signature_chunk(&[sig_param("TEXCOORD", 0, 0, 0b1111)]),
+        ),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Target", 0, 0, 0b1111)]),
+        ),
+    ]);
+
+    let dxbc = aero_d3d11::DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    let module = aero_d3d11::sm4::decode_program(&program).expect("SM4 decode");
+
+    let Sm4Inst::Setp { dst, op, .. } = &module.instructions[0] else {
+        panic!("expected first instruction to be setp");
+    };
+    assert_eq!(dst.reg.index, 0);
+    assert_eq!(dst.mask.0, 0b0011);
+    assert_eq!(*op, Sm4CmpOp::Gt);
+
+    let Sm4Inst::Setp { dst, op, .. } = &module.instructions[1] else {
+        panic!("expected second instruction to be setp");
+    };
+    assert_eq!(dst.reg.index, 1);
+    assert_eq!(dst.mask.0, WriteMask::X.0);
+    assert_eq!(*op, Sm4CmpOp::LtU);
+
+    let Sm4Inst::Predicated { pred, .. } = &module.instructions[2] else {
+        panic!("expected third instruction to be predicated mov");
+    };
+    assert_eq!(pred.reg.index, 0);
+    assert_eq!(pred.component, 1); // y
+    assert!(!pred.invert);
+
+    let Sm4Inst::Predicated { pred, .. } = &module.instructions[3] else {
+        panic!("expected fourth instruction to be predicated mov");
+    };
+    assert_eq!(pred.reg.index, 0);
+    assert_eq!(pred.component, 0); // x
+    assert!(pred.invert);
+
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+
+    assert!(
+        translated.wgsl.contains("var p0: vec4<bool>"),
+        "expected predicate register decl in WGSL:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("var p1: vec4<bool>"),
+        "expected predicate register decl in WGSL:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("p0.x =") && translated.wgsl.contains("p0.y ="),
+        "expected setp write mask to update p0.x and p0.y:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("if (p0.y) {"),
+        "expected mask-selected predicate to gate on p0.y:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("if (!(p0.x)) {"),
+        "expected negated predicate to emit if (!(p0.x)):\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("vec4<u32>(0x00000001u") && translated.wgsl.contains("<"),
+        "expected unsigned setp to operate on u32 vectors:\n{}",
         translated.wgsl
     );
 }
