@@ -226,7 +226,10 @@ Code pointers:
 
 - **Main thread scheduling:** `web/src/main/frameScheduler.ts` uses `ScanoutState` to decide whether to keep ticking the GPU worker even when the shared framebuffer is in the `PRESENTED` state.
 - **GPU worker output selection:** `web/src/workers/gpu-worker.ts` snapshots `ScanoutState` during `presentOnce()` and uses it to avoid “flashing back” to the legacy framebuffer after WDDM scanout is considered active.
-- **GPU worker WDDM scanout readback (when `base_paddr != 0`):** `web/src/workers/gpu-worker.ts` treats `base_paddr` as a guest physical address and can present WDDM scanout by reading from either the shared VRAM aperture (BAR1 backing) or guest RAM, normalizing to a tightly-packed RGBA8 buffer (`tryReadWddmScanoutFrame()` / `tryReadWddmScanoutRgba8()`). The RAM-vs-VRAM resolution and the VRAM base-paddr contract are documented in [`docs/16-aerogpu-vga-vesa-compat.md`](./16-aerogpu-vga-vesa-compat.md#vram-bar1-backing-as-a-sharedarraybuffer).
+- **GPU worker scanout readback (guest-memory scanout):** when `ScanoutState.source` is `WDDM` or `LEGACY_VBE_LFB` and `base_paddr` points at a real guest framebuffer, `web/src/workers/gpu-worker.ts` reads pixels from either the shared VRAM aperture (BAR1 backing) or guest RAM and normalizes to a tightly-packed RGBA8 buffer (`tryReadScanoutFrame()` / `tryReadScanoutRgba8()`).
+  - Supported formats today (AeroGPU `AerogpuFormat` discriminants): `B8G8R8X8` / `B8G8R8A8` / `R8G8B8X8` / `R8G8B8A8` (plus `_SRGB` variants). X8 formats force `A=255`; A8 formats preserve alpha. `_SRGB` variants are layout-identical (swizzle only; no gamma conversion during readback).
+  - Note: `base_paddr == 0` is treated as a placeholder scanout descriptor for the host-side AeroGPU path when `source=WDDM` (no guest-memory readback). Legacy VBE scanout expects a real framebuffer.
+  - The RAM-vs-VRAM resolution and the VRAM base-paddr contract are documented in [`docs/16-aerogpu-vga-vesa-compat.md`](./16-aerogpu-vga-vesa-compat.md#vram-bar1-backing-as-a-sharedarraybuffer).
   - Unit tests: `web/src/workers/gpu-worker_wddm_scanout_readback.test.ts`, `web/src/workers/gpu-worker_scanout_vram_missing.test.ts`.
 - **Canonical Rust machine (optional):** `crates/aero-machine/src/lib.rs` can publish scanout-source updates into an `aero_shared::scanout_state::ScanoutState` provided by the host:
   - `Machine::set_scanout_state()` installs the shared descriptor.
@@ -304,7 +307,7 @@ Worker presented-output validation (post sRGB/alpha policy; canvas pixels):
 - Test card generator: `web/src/gpu/test-card.ts`
 - Playwright E2E:
   - Color policy (gamma/alpha/origin): `tests/e2e/web/gpu_worker_presented_color_policy.spec.ts`
-  - Cursor blending (linear blend + sRGB encode): `tests/e2e/gpu_worker_presented_cursor_overlay.spec.ts`
+  - Cursor overlay (CursorState + screenshot include/exclude): `tests/e2e/web/gpu_hardware_cursor_state.spec.ts`
 
 ## AeroGPU status (high level; protocol references)
 
