@@ -92,16 +92,21 @@ From a default Aero Guest Tools ISO/zip mount (often `X:`), run the command that
 - Win7 x64:
 
 ```bat
-X:\drivers\amd64\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe --dump-last-cmd --out C:\cmd.bin
+X:\drivers\amd64\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe --dump-last-submit --cmd-out C:\cmd.bin
 ```
 
 - Win7 x86:
 
 ```bat
-X:\drivers\x86\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe --dump-last-cmd --out C:\cmd.bin
+X:\drivers\x86\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe --dump-last-submit --cmd-out C:\cmd.bin
 ```
 
-If you want a stable alloc-table output filename (`C:\alloc.bin`), you can use the newer `--dump-last-submit` spelling and explicitly set `--alloc-out`:
+Note: legacy forms are still accepted for compatibility:
+
+- `--dump-last-cmd` is an alias for `--dump-last-submit`
+- `--out` is an alias for `--cmd-out` for this command
+
+If you want a stable alloc-table output filename (`C:\alloc.bin`) instead of the default `C:\cmd.bin.alloc_table.bin` (AGPU only), set `--alloc-out` (only supported when dumping a single submission, i.e. `--count 1`):
 
 ```bat
 :: Replace <GuestToolsDrive> with the drive letter of the mounted Guest Tools ISO/zip (e.g. D).

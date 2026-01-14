@@ -8361,7 +8361,11 @@ static int DoDumpLastCmdJson(const D3DKMT_FUNCS *f,
     return 1;
   }
   if (!outPath || !outPath[0]) {
-    JsonWriteTopLevelError(out, "dump-last-cmd", f, "--dump-last-cmd requires --out <path>", STATUS_INVALID_PARAMETER);
+    JsonWriteTopLevelError(out,
+                           "dump-last-cmd",
+                           f,
+                           "--dump-last-submit/--dump-last-cmd requires --cmd-out <path> (or --out <path>)",
+                           STATUS_INVALID_PARAMETER);
     return 1;
   }
   if (count == 0) {
