@@ -2690,7 +2690,16 @@ function renderJitSmokePanel(report: PlatformFeatureReport): HTMLElement {
     button.disabled = true;
     output.textContent = `Skipped (${!report.wasmThreads ? 'wasmThreads=false' : 'jit_dynamic_wasm=false'}).`;
   } else {
-    run();
+    // Avoid running the JIT smoke test automatically: it spawns CPU+JIT workers and allocates a
+    // large shared WebAssembly.Memory (128MiB runtime-reserved + guest RAM). This can significantly
+    // increase baseline memory usage in Playwright where many pages load in parallel.
+    //
+    // Opt into auto-run via `?jitSmoke=1` (used by the dedicated jit-pipeline E2E test).
+    if (harnessSearchParams.has('jitSmoke')) {
+      run();
+    } else {
+      output.textContent = 'Idle (click "Run JIT smoke test" to start).';
+    }
   }
 
   return el(

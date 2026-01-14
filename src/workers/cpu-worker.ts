@@ -104,7 +104,11 @@ const pendingCompiles = new Map<number, PendingCompile>();
 
 const WASM_PAGE_BYTES = 64 * 1024;
 const RUNTIME_RESERVED_BYTES = 128 * 1024 * 1024;
-const DEFAULT_GUEST_RAM_BYTES = 16 * 1024 * 1024;
+// Keep the guest RAM small: this worker is a Tier-1 JIT smoke harness and only needs enough
+// space for a handful of tiny code/data buffers. The wasm runtime still reserves a fixed
+// 128MiB region for its heap, so lowering guest RAM meaningfully reduces total
+// SharedArrayBuffer/WebAssembly.Memory pressure in CI.
+const DEFAULT_GUEST_RAM_BYTES = 1 * 1024 * 1024;
 const X86_PAGE_BYTES = 4096;
 
 // PC/Q35 guest physical layout constants.

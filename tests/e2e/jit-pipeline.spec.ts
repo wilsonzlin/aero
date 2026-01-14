@@ -253,7 +253,9 @@ test('Tier-1 JIT pipeline compiles, installs, and executes a block', async ({ pa
 
   page.setDefaultTimeout(60_000);
 
-  await page.goto(`${PREVIEW_ORIGIN}/`, { waitUntil: 'load' });
+  // Opt into the JIT smoke panel auto-run. The harness defaults to idle so loading the page
+  // for unrelated tests doesn't allocate the Tier-1 shared WebAssembly.Memory unless needed.
+  await page.goto(`${PREVIEW_ORIGIN}/?jitSmoke=1`, { waitUntil: 'load' });
 
   const support = await page.evaluate(() => {
     let wasmThreads = false;
