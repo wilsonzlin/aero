@@ -5247,10 +5247,11 @@ bool TestGenerateMipSubLevelsAllocBackedEmitsDirtyRange() {
   if (!Check(dirty_cmd->resource_handle == res->handle, "RESOURCE_DIRTY_RANGE resource_handle matches")) {
     return false;
   }
-  if (!Check(dirty_cmd->offset_bytes == 0, "RESOURCE_DIRTY_RANGE offset==0")) {
+  if (!Check(dirty_cmd->offset_bytes == mip1.offset_bytes, "RESOURCE_DIRTY_RANGE offset starts at mip1")) {
     return false;
   }
-  if (!Check(dirty_cmd->size_bytes == static_cast<uint64_t>(res->size_bytes), "RESOURCE_DIRTY_RANGE size==resource size")) {
+  if (!Check(dirty_cmd->size_bytes == static_cast<uint64_t>(res->size_bytes) - mip1.offset_bytes,
+             "RESOURCE_DIRTY_RANGE size covers mips")) {
     return false;
   }
 
