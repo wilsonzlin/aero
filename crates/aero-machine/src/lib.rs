@@ -4766,8 +4766,11 @@ impl Machine {
             return false;
         }
 
-        // Once WDDM scanout has been claimed, do not fall back to the BIOS VBE/text paths while the
-        // claim is held.
+        // Once WDDM scanout has been claimed, do not fall back to the BIOS VBE/text paths while
+        // the claim is held.
+        //
+        // Note: `SCANOUT0_ENABLE=0` releases scanout ownership (the BAR0 model clears
+        // `wddm_scanout_active`), so this branch is mainly defensive against inconsistent state.
         if !state.enable {
             self.display_fb.clear();
             self.display_width = 0;
