@@ -6,6 +6,7 @@ import { openRingByKind } from "../ipc/ipc";
 import { decodeCommand, encodeEvent, type Command, type Event } from "../ipc/protocol";
 import { RingBuffer } from "../ipc/ring_buffer";
 import { InputEventType } from "../input/event_queue";
+import { negateI32Saturating } from "../input/int32";
 import { chooseKeyboardInputBackend, chooseMouseInputBackend, type InputBackend } from "../input/input_backend_selection";
 import { encodeInputBackendStatus } from "../input/input_backend_status";
 import { u32Delta } from "../utils/u32";
@@ -6664,10 +6665,11 @@ function handleInputBatch(buffer: ArrayBuffer): void {
       case InputEventType.MouseMove: {
         const dx = words[off + 2] | 0;
         const dyPs2 = words[off + 3] | 0;
+        // Input batches use PS/2 convention: positive Y is up. virtio-input and HID use +Y down.
+        const dyDown = negateI32Saturating(dyPs2);
         if (mouseInputBackend === "virtio") {
           if (virtioMouseOk && virtioMouse) {
-            // Input batches use PS/2 convention: positive = up. virtio-input uses Linux REL_Y where positive = down.
-            virtioMouse.injectRelMove(dx, -dyPs2);
+            virtioMouse.injectRelMove(dx, dyDown);
           }
         } else if (mouseInputBackend === "ps2") {
           if (i8042Wasm) {
@@ -6676,8 +6678,7 @@ function handleInputBatch(buffer: ArrayBuffer): void {
             i8042Ts.injectMouseMove(dx, dyPs2);
           }
         } else {
-          // PS/2 convention: positive is up. HID convention: positive is down.
-          usbHid?.mouse_move(dx, -dyPs2);
+          usbHid?.mouse_move(dx, dyDown);
         }
         break;
       }

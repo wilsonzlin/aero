@@ -5,6 +5,7 @@ import { decodeCommand, encodeEvent, type Command, type Event } from "../ipc/pro
 import { RingBuffer } from "../ipc/ring_buffer";
 import { UART_COM1 } from "../io/devices/uart16550";
 import { InputEventType } from "../input/event_queue";
+import { negateI32Saturating } from "../input/int32";
 import { chooseKeyboardInputBackend, chooseMouseInputBackend, type InputBackend } from "../input/input_backend_selection";
 import { encodeInputBackendStatus } from "../input/input_backend_status";
 import { hidConsumerUsageToLinuxKeyCode, hidUsageToLinuxKeyCode } from "../io/devices/virtio_input";
@@ -1267,15 +1268,16 @@ function handleInputBatch(buffer: ArrayBuffer): void {
     } else if (type === InputEventType.MouseMove) {
       const dx = words[off + 2] | 0;
       const dyPs2 = words[off + 3] | 0;
+      // Input batches use PS/2 convention: positive Y is up. virtio-input and USB HID use +Y down.
+      const dyDown = negateI32Saturating(dyPs2);
       if (mouseInputBackend === "virtio") {
         if (virtioMouseOk) {
-          // Input batches use PS/2 convention: positive = up. virtio-input uses Linux REL_Y where positive = down.
           const injectRel =
             (m as unknown as { inject_virtio_mouse_rel?: unknown }).inject_virtio_mouse_rel ??
             (m as unknown as { inject_virtio_rel?: unknown }).inject_virtio_rel;
           if (typeof injectRel === "function") {
             try {
-              (injectRel as (dx: number, dy: number) => void).call(m, dx | 0, (-dyPs2) | 0);
+              (injectRel as (dx: number, dy: number) => void).call(m, dx | 0, dyDown | 0);
             } catch {
               // ignore
             }
@@ -1286,8 +1288,7 @@ function handleInputBatch(buffer: ArrayBuffer): void {
           if (typeof m.inject_ps2_mouse_motion === "function") {
             m.inject_ps2_mouse_motion(dx, dyPs2, 0);
           } else if (typeof m.inject_mouse_motion === "function") {
-            // PS/2 convention: positive is up. HID convention: positive is down.
-            m.inject_mouse_motion(dx, -dyPs2, 0);
+            m.inject_mouse_motion(dx, dyDown, 0);
           }
         } catch {
           // ignore
@@ -1297,7 +1298,7 @@ function handleInputBatch(buffer: ArrayBuffer): void {
         const inject = (m as unknown as { inject_usb_hid_mouse_move?: unknown }).inject_usb_hid_mouse_move;
         if (typeof inject === "function") {
           try {
-            (inject as (dx: number, dy: number) => void).call(m, dx | 0, (-dyPs2) | 0);
+            (inject as (dx: number, dy: number) => void).call(m, dx | 0, dyDown | 0);
           } catch {
             // ignore
           }

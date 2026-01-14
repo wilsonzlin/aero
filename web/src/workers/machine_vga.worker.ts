@@ -2,6 +2,7 @@
 
 import { initWasmForContext, type WasmApi } from "../runtime/wasm_context";
 import { assertWasmMemoryWiring } from "../runtime/wasm_memory_probe";
+import { negateI32Saturating } from "../input/int32";
 import {
   FRAMEBUFFER_COPY_MESSAGE_TYPE,
   FRAMEBUFFER_FORMAT_RGBA8888,
@@ -803,7 +804,8 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
         (motion as (dx: number, dy: number, wheel: number) => void).call(m, dx | 0, dy | 0, wheel | 0);
       } else if (typeof ps2Motion === "function") {
         // `inject_ps2_mouse_motion` expects +Y up; browser deltas are +Y down.
-        (ps2Motion as (dx: number, dy: number, wheel: number) => void).call(m, dx | 0, (-dy) | 0, wheel | 0);
+        const dyPs2 = negateI32Saturating(dy | 0);
+        (ps2Motion as (dx: number, dy: number, wheel: number) => void).call(m, dx | 0, dyPs2, wheel | 0);
       }
     } catch {
       // ignore

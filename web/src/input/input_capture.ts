@@ -2,6 +2,7 @@ import { InputEventQueue, type InputBatchFlushHook, type InputBatchRecycleMessag
 import { GamepadCapture } from "./gamepad";
 import { PointerLock } from "./pointer_lock";
 import { keyboardCodeToConsumerUsage, keyboardCodeToHidUsage } from "./hid_usage";
+import { negateI32Saturating } from "./int32";
 import {
   ps2Set2ScancodeForCode,
   shouldPreventDefaultForKeyboardEvent,
@@ -472,7 +473,8 @@ export class InputCapture {
 
     // PS/2 convention: positive Y is up (DOM is typically positive down).
     const tsUs = toTimestampUs(event.timeStamp);
-    this.queue.pushMouseMove(tsUs, dx, -dy);
+    const dyPs2 = negateI32Saturating(dy | 0);
+    this.queue.pushMouseMove(tsUs, dx, dyPs2);
   };
 
   private readonly handleMouseDown = (event: MouseEvent): void => {
@@ -688,7 +690,8 @@ export class InputCapture {
 
     const tsUs = toTimestampUs(event.timeStamp);
     // PS/2 convention: positive Y is up (DOM is typically positive down).
-    this.queue.pushMouseMove(tsUs, dx, -dy);
+    const dyPs2 = negateI32Saturating(dy | 0);
+    this.queue.pushMouseMove(tsUs, dx, dyPs2);
   };
 
   private handleTouchEndInternal(event: TouchEvent, { allowTap }: { allowTap: boolean }): void {
@@ -869,7 +872,8 @@ export class InputCapture {
 
       const tsUs = toTimestampUs(event.timeStamp);
       // PS/2 convention: positive Y is up (DOM is typically positive down).
-      this.queue.pushMouseMove(tsUs, dx, -dy);
+      const dyPs2 = negateI32Saturating(dy | 0);
+      this.queue.pushMouseMove(tsUs, dx, dyPs2);
       return;
     }
 
