@@ -638,7 +638,7 @@ fn ring_reset_clears_latched_error_payload() {
 
     let cmd_gpa = 0x4000u64;
     // Wrong magic -> CmdDecode error.
-    mem.write_u32(cmd_gpa + 0, 0);
+    mem.write_u32(cmd_gpa, 0);
     mem.write_u32(cmd_gpa + 4, AEROGPU_ABI_VERSION_U32);
     mem.write_u32(cmd_gpa + 8, 16);
     mem.write_u32(cmd_gpa + 12, 0);

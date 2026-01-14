@@ -59,7 +59,7 @@ fn deferred_mode_drains_submissions_and_completes_fences_via_api() {
     let entry_count = 8u32;
     let entry_stride_bytes = aerogpu_ring::AerogpuSubmitDesc::SIZE_BYTES as u32;
 
-    mem.write_u32(ring_gpa + 0, aerogpu_ring::AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa, aerogpu_ring::AEROGPU_RING_MAGIC);
     mem.write_u32(ring_gpa + 4, aerogpu_pci::AEROGPU_ABI_VERSION_U32);
     mem.write_u32(ring_gpa + 8, ring_size_bytes);
     mem.write_u32(ring_gpa + 12, entry_count);
@@ -71,7 +71,7 @@ fn deferred_mode_drains_submissions_and_completes_fences_via_api() {
     // Command stream (header only).
     let cmd_gpa = 0x4000u64;
     let cmd_size_bytes = aerogpu_cmd::AerogpuCmdStreamHeader::SIZE_BYTES as u32;
-    mem.write_u32(cmd_gpa + 0, aerogpu_cmd::AEROGPU_CMD_STREAM_MAGIC);
+    mem.write_u32(cmd_gpa, aerogpu_cmd::AEROGPU_CMD_STREAM_MAGIC);
     mem.write_u32(cmd_gpa + 4, aerogpu_pci::AEROGPU_ABI_VERSION_U32);
     mem.write_u32(cmd_gpa + 8, cmd_size_bytes);
     mem.write_u32(cmd_gpa + 12, 0);
@@ -81,7 +81,7 @@ fn deferred_mode_drains_submissions_and_completes_fences_via_api() {
     // Alloc table (header only, 0 entries).
     let alloc_gpa = 0x5000u64;
     let alloc_size_bytes = aerogpu_ring::AerogpuAllocTableHeader::SIZE_BYTES as u32;
-    mem.write_u32(alloc_gpa + 0, aerogpu_ring::AEROGPU_ALLOC_TABLE_MAGIC);
+    mem.write_u32(alloc_gpa, aerogpu_ring::AEROGPU_ALLOC_TABLE_MAGIC);
     mem.write_u32(alloc_gpa + 4, aerogpu_pci::AEROGPU_ABI_VERSION_U32);
     mem.write_u32(alloc_gpa + 8, alloc_size_bytes);
     mem.write_u32(alloc_gpa + 12, 0); // entry_count
@@ -96,7 +96,7 @@ fn deferred_mode_drains_submissions_and_completes_fences_via_api() {
     // Submit desc at slot 0.
     let desc_gpa = ring_gpa + aerogpu_ring::AerogpuRingHeader::SIZE_BYTES as u64;
     mem.write_u32(
-        desc_gpa + 0,
+        desc_gpa,
         aerogpu_ring::AerogpuSubmitDesc::SIZE_BYTES as u32,
     );
     mem.write_u32(desc_gpa + 4, 0); // flags
@@ -142,7 +142,7 @@ fn deferred_mode_drains_submissions_and_completes_fences_via_api() {
     assert!(dev.irq_level());
 
     assert_eq!(
-        mem.read_u32(fence_gpa + 0),
+        mem.read_u32(fence_gpa),
         aerogpu_ring::AEROGPU_FENCE_PAGE_MAGIC
     );
     assert_eq!(mem.read_u64(fence_gpa + 8), signal_fence);
