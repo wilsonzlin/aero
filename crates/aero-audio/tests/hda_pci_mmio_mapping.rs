@@ -1,4 +1,5 @@
 use aero_audio::hda_pci::HdaPciDevice;
+use memory::MmioHandler;
 use memory::{DenseMemory, PhysicalMemoryBus};
 
 const HDA_BASE: u64 = 0x1000_0000;
@@ -30,5 +31,24 @@ fn hda_pci_mmio_routes_through_physical_memory_bus() {
     assert_eq!(
         bus.read_physical_u64(HDA_BASE + REG_GCTL),
         0x0001_0000_0000_0001
+    );
+}
+
+#[test]
+fn hda_pci_mmio_does_not_panic_on_offset_add_overflow() {
+    let mut dev = HdaPciDevice::new();
+
+    // The MMIO handler should be defensive even if a caller passes a pathological offset that would
+    // overflow when splitting an 8-byte access into 32-bit pieces.
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = dev.read(u64::MAX - 2, 8);
+        dev.write(u64::MAX - 2, 8, 0xdead_beef_dead_beef);
+        let _ = dev.read(u64::MAX - 2, 16);
+        dev.write(u64::MAX - 2, 16, 0x0123_4567_89ab_cdef);
+    }));
+
+    assert!(
+        result.is_ok(),
+        "HDA PCI MMIO handler panicked on offset arithmetic overflow"
     );
 }

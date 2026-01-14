@@ -70,13 +70,19 @@ impl MmioHandler for HdaPciDevice {
             1 | 2 | 4 => self.controller.mmio_read(offset, size),
             8 => {
                 let lo = self.controller.mmio_read(offset, 4);
-                let hi = self.controller.mmio_read(offset + 4, 4);
+                let hi = offset
+                    .checked_add(4)
+                    .map(|off| self.controller.mmio_read(off, 4))
+                    .unwrap_or(0);
                 lo | (hi << 32)
             }
             _ => {
                 let mut out = 0u64;
                 for i in 0..size.min(8) {
-                    let byte = self.controller.mmio_read(offset + i as u64, 1) & 0xff;
+                    let Some(off) = offset.checked_add(i as u64) else {
+                        break;
+                    };
+                    let byte = self.controller.mmio_read(off, 1) & 0xff;
                     out |= byte << (i * 8);
                 }
                 out
@@ -89,14 +95,18 @@ impl MmioHandler for HdaPciDevice {
             1 | 2 | 4 => self.controller.mmio_write(offset, size, value),
             8 => {
                 self.controller.mmio_write(offset, 4, value as u32 as u64);
-                self.controller
-                    .mmio_write(offset + 4, 4, ((value >> 32) as u32) as u64);
+                if let Some(off) = offset.checked_add(4) {
+                    self.controller
+                        .mmio_write(off, 4, ((value >> 32) as u32) as u64);
+                }
             }
             _ => {
                 let bytes = value.to_le_bytes();
                 for (i, &byte) in bytes.iter().take(size.min(8)).enumerate() {
-                    self.controller
-                        .mmio_write(offset + i as u64, 1, u64::from(byte));
+                    let Some(off) = offset.checked_add(i as u64) else {
+                        break;
+                    };
+                    self.controller.mmio_write(off, 1, u64::from(byte));
                 }
             }
         }
