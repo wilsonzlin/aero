@@ -2296,9 +2296,8 @@ inline void validate_and_emit_viewports_locked(DeviceT* dev,
     }
   }
 
-  if (unsupported) {
-    set_error(E_NOTIMPL);
-  }
+  // Protocol supports only one viewport. We'll still apply slot 0 as a
+  // best-effort fallback and report E_NOTIMPL after successfully encoding it.
 
   auto* cmd = dev->cmd.template append_fixed<aerogpu_cmd_set_viewport>(AEROGPU_CMD_SET_VIEWPORT);
   if (!cmd) {
@@ -2343,6 +2342,10 @@ inline void validate_and_emit_viewports_locked(DeviceT* dev,
         dev->viewport_height = static_cast<HeightT>(vp0.Height);
       }
     }
+  }
+
+  if (unsupported) {
+    set_error(E_NOTIMPL);
   }
 }
 
@@ -2404,9 +2407,8 @@ inline void validate_and_emit_scissor_rects_locked(DeviceT* dev,
     }
   }
 
-  if (unsupported) {
-    set_error(E_NOTIMPL);
-  }
+  // Protocol supports only one scissor rect. We'll still apply slot 0 as a
+  // best-effort fallback and report E_NOTIMPL after successfully encoding it.
 
   const int32_t w = clamp_i64_to_i32(static_cast<int64_t>(r0.right) - static_cast<int64_t>(r0.left));
   const int32_t h = clamp_i64_to_i32(static_cast<int64_t>(r0.bottom) - static_cast<int64_t>(r0.top));
@@ -2434,6 +2436,10 @@ inline void validate_and_emit_scissor_rects_locked(DeviceT* dev,
   }
   if constexpr (has_member_scissor_bottom<DeviceT>::value) {
     dev->scissor_bottom = r0.bottom;
+  }
+
+  if (unsupported) {
+    set_error(E_NOTIMPL);
   }
 }
 
