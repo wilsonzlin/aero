@@ -12911,6 +12911,9 @@ bool TestFvfXyzDiffuseDrawPrimitiveUpEmitsFixedfuncCommands() {
   if (!Check(cleanup.device_funcs.pfnSetFVF != nullptr, "SetFVF must be available")) {
     return false;
   }
+  if (!Check(cleanup.device_funcs.pfnSetTextureStageState != nullptr, "SetTextureStageState must be available")) {
+    return false;
+  }
   if (!Check(cleanup.device_funcs.pfnDrawPrimitiveUP != nullptr, "DrawPrimitiveUP must be available")) {
     return false;
   }
@@ -13389,6 +13392,9 @@ bool TestFvfXyzDiffuseTex1SetTransformDrawPrimitiveUpEmitsWvpConstants() {
     return false;
   }
   if (!Check(cleanup.device_funcs.pfnSetTexture != nullptr, "SetTexture must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetTextureStageState != nullptr, "SetTextureStageState must be available")) {
     return false;
   }
   if (!Check(cleanup.device_funcs.pfnDrawPrimitiveUP != nullptr, "DrawPrimitiveUP must be available")) {
@@ -14634,12 +14640,11 @@ bool TestFixedFuncPsSelectionNoTextureColorOpDisableUsesColorOnly() {
   }
 
   // Stage-state override: COLOROP=DISABLE. No texture bound -> should pick ColorOnly.
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    constexpr uint32_t kD3dTssColorOp = 1u;
-    constexpr uint32_t kD3dTopDisable = 1u;
-    dev->texture_stage_states[0][kD3dTssColorOp] = kD3dTopDisable;
-    dev->textures[0] = nullptr;
+  constexpr uint32_t kD3dTssColorOp = 1u;
+  constexpr uint32_t kD3dTopDisable = 1u;
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssColorOp, kD3dTopDisable);
+  if (!Check(hr == S_OK, "SetTextureStageState(stage0, COLOROP=DISABLE)")) {
+    return false;
   }
 
   struct Vertex {
@@ -14737,6 +14742,9 @@ bool TestFixedFuncPsSelectionTextureBoundColorOpDisableIgnoresAlphaTextureUsesCo
   if (!Check(cleanup.device_funcs.pfnSetTexture != nullptr, "SetTexture must be available")) {
     return false;
   }
+  if (!Check(cleanup.device_funcs.pfnSetTextureStageState != nullptr, "SetTextureStageState must be available")) {
+    return false;
+  }
   if (!Check(cleanup.device_funcs.pfnDrawPrimitiveUP != nullptr, "DrawPrimitiveUP must be available")) {
     return false;
   }
@@ -14800,17 +14808,23 @@ bool TestFixedFuncPsSelectionTextureBoundColorOpDisableIgnoresAlphaTextureUsesCo
   // Stage-state override:
   // - COLOROP=DISABLE (stage disabled)
   // - ALPHAOP=SELECTARG1(TEXTURE) (must be ignored because stage is disabled)
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    constexpr uint32_t kD3dTssColorOp = 1u;
-    constexpr uint32_t kD3dTssAlphaOp = 4u;
-    constexpr uint32_t kD3dTssAlphaArg1 = 5u;
-    constexpr uint32_t kD3dTopDisable = 1u;
-    constexpr uint32_t kD3dTopSelectArg1 = 2u;
-    constexpr uint32_t kD3dTaTexture = 2u;
-    dev->texture_stage_states[0][kD3dTssColorOp] = kD3dTopDisable;
-    dev->texture_stage_states[0][kD3dTssAlphaOp] = kD3dTopSelectArg1;
-    dev->texture_stage_states[0][kD3dTssAlphaArg1] = kD3dTaTexture;
+  constexpr uint32_t kD3dTssColorOp = 1u;
+  constexpr uint32_t kD3dTssAlphaOp = 4u;
+  constexpr uint32_t kD3dTssAlphaArg1 = 5u;
+  constexpr uint32_t kD3dTopDisable = 1u;
+  constexpr uint32_t kD3dTopSelectArg1 = 2u;
+  constexpr uint32_t kD3dTaTexture = 2u;
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssColorOp, kD3dTopDisable);
+  if (!Check(hr == S_OK, "SetTextureStageState(stage0, COLOROP=DISABLE)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssAlphaOp, kD3dTopSelectArg1);
+  if (!Check(hr == S_OK, "SetTextureStageState(stage0, ALPHAOP=SELECTARG1)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssAlphaArg1, kD3dTaTexture);
+  if (!Check(hr == S_OK, "SetTextureStageState(stage0, ALPHAARG1=TEXTURE)")) {
+    return false;
   }
 
   struct Vertex {
@@ -14908,6 +14922,9 @@ bool TestFixedFuncPsSelectionSetTextureUpdatesBoundPsToModulateWithoutDraw() {
     return false;
   }
   if (!Check(cleanup.device_funcs.pfnSetTexture != nullptr, "SetTexture must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetTextureStageState != nullptr, "SetTextureStageState must be available")) {
     return false;
   }
   if (!Check(cleanup.device_funcs.pfnDrawPrimitiveUP != nullptr, "DrawPrimitiveUP must be available")) {
@@ -15073,6 +15090,9 @@ bool TestFixedFuncPsSelectionUnsetTextureUpdatesBoundPsToColorOnlyWithoutDraw() 
     return false;
   }
   if (!Check(cleanup.device_funcs.pfnSetTexture != nullptr, "SetTexture must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetTextureStageState != nullptr, "SetTextureStageState must be available")) {
     return false;
   }
   if (!Check(cleanup.device_funcs.pfnDrawPrimitiveUP != nullptr, "DrawPrimitiveUP must be available")) {
@@ -15245,6 +15265,9 @@ bool TestFixedFuncPsSelectionTex1OnlyFvfSetTextureUpdatesBoundPsToModulateWithou
   if (!Check(cleanup.device_funcs.pfnSetTexture != nullptr, "SetTexture must be available")) {
     return false;
   }
+  if (!Check(cleanup.device_funcs.pfnSetTextureStageState != nullptr, "SetTextureStageState must be available")) {
+    return false;
+  }
   if (!Check(cleanup.device_funcs.pfnDrawPrimitiveUP != nullptr, "DrawPrimitiveUP must be available")) {
     return false;
   }
@@ -15274,23 +15297,34 @@ bool TestFixedFuncPsSelectionTex1OnlyFvfSetTextureUpdatesBoundPsToModulateWithou
 
   // Force the default stage0 state (MODULATE + alpha from texture) so the PS
   // variant selection after SetTexture is deterministic.
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    constexpr uint32_t kD3dTssColorOp = 1u;
-    constexpr uint32_t kD3dTssColorArg1 = 2u;
-    constexpr uint32_t kD3dTssColorArg2 = 3u;
-    constexpr uint32_t kD3dTssAlphaOp = 4u;
-    constexpr uint32_t kD3dTssAlphaArg1 = 5u;
-    constexpr uint32_t kD3dTopModulate = 4u;
-    constexpr uint32_t kD3dTopSelectArg1 = 2u;
-    constexpr uint32_t kD3dTaDiffuse = 0u;
-    constexpr uint32_t kD3dTaTexture = 2u;
-    dev->texture_stage_states[0][kD3dTssColorOp] = kD3dTopModulate;
-    dev->texture_stage_states[0][kD3dTssColorArg1] = kD3dTaTexture;
-    dev->texture_stage_states[0][kD3dTssColorArg2] = kD3dTaDiffuse;
-    dev->texture_stage_states[0][kD3dTssAlphaOp] = kD3dTopSelectArg1;
-    dev->texture_stage_states[0][kD3dTssAlphaArg1] = kD3dTaTexture;
-    dev->textures[0] = nullptr;
+  constexpr uint32_t kD3dTssColorOp = 1u;
+  constexpr uint32_t kD3dTssColorArg1 = 2u;
+  constexpr uint32_t kD3dTssColorArg2 = 3u;
+  constexpr uint32_t kD3dTssAlphaOp = 4u;
+  constexpr uint32_t kD3dTssAlphaArg1 = 5u;
+  constexpr uint32_t kD3dTopModulate = 4u;
+  constexpr uint32_t kD3dTopSelectArg1 = 2u;
+  constexpr uint32_t kD3dTaDiffuse = 0u;
+  constexpr uint32_t kD3dTaTexture = 2u;
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssColorOp, kD3dTopModulate);
+  if (!Check(hr == S_OK, "SetTextureStageState(stage0, COLOROP=MODULATE)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssColorArg1, kD3dTaTexture);
+  if (!Check(hr == S_OK, "SetTextureStageState(stage0, COLORARG1=TEXTURE)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssColorArg2, kD3dTaDiffuse);
+  if (!Check(hr == S_OK, "SetTextureStageState(stage0, COLORARG2=DIFFUSE)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssAlphaOp, kD3dTopSelectArg1);
+  if (!Check(hr == S_OK, "SetTextureStageState(stage0, ALPHAOP=SELECTARG1)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssAlphaArg1, kD3dTaTexture);
+  if (!Check(hr == S_OK, "SetTextureStageState(stage0, ALPHAARG1=TEXTURE)")) {
+    return false;
   }
 
   struct Vertex {
@@ -15426,6 +15460,9 @@ bool TestFixedFuncPsSelectionTex1OnlyFvfSelectArg1TextureUsesTextureOnly() {
   if (!Check(cleanup.device_funcs.pfnSetTexture != nullptr, "SetTexture must be available")) {
     return false;
   }
+  if (!Check(cleanup.device_funcs.pfnSetTextureStageState != nullptr, "SetTextureStageState must be available")) {
+    return false;
+  }
   if (!Check(cleanup.device_funcs.pfnDrawPrimitiveUP != nullptr, "DrawPrimitiveUP must be available")) {
     return false;
   }
@@ -15486,18 +15523,27 @@ bool TestFixedFuncPsSelectionTex1OnlyFvfSelectArg1TextureUsesTextureOnly() {
   }
 
   // Stage-state override: select texture for both color and alpha.
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    constexpr uint32_t kD3dTssColorOp = 1u;
-    constexpr uint32_t kD3dTssColorArg1 = 2u;
-    constexpr uint32_t kD3dTssAlphaOp = 4u;
-    constexpr uint32_t kD3dTssAlphaArg1 = 5u;
-    constexpr uint32_t kD3dTopSelectArg1 = 2u;
-    constexpr uint32_t kD3dTaTexture = 2u;
-    dev->texture_stage_states[0][kD3dTssColorOp] = kD3dTopSelectArg1;
-    dev->texture_stage_states[0][kD3dTssColorArg1] = kD3dTaTexture;
-    dev->texture_stage_states[0][kD3dTssAlphaOp] = kD3dTopSelectArg1;
-    dev->texture_stage_states[0][kD3dTssAlphaArg1] = kD3dTaTexture;
+  constexpr uint32_t kD3dTssColorOp = 1u;
+  constexpr uint32_t kD3dTssColorArg1 = 2u;
+  constexpr uint32_t kD3dTssAlphaOp = 4u;
+  constexpr uint32_t kD3dTssAlphaArg1 = 5u;
+  constexpr uint32_t kD3dTopSelectArg1 = 2u;
+  constexpr uint32_t kD3dTaTexture = 2u;
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssColorOp, kD3dTopSelectArg1);
+  if (!Check(hr == S_OK, "SetTextureStageState(stage0, COLOROP=SELECTARG1)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssColorArg1, kD3dTaTexture);
+  if (!Check(hr == S_OK, "SetTextureStageState(stage0, COLORARG1=TEXTURE)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssAlphaOp, kD3dTopSelectArg1);
+  if (!Check(hr == S_OK, "SetTextureStageState(stage0, ALPHAOP=SELECTARG1)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssAlphaArg1, kD3dTaTexture);
+  if (!Check(hr == S_OK, "SetTextureStageState(stage0, ALPHAARG1=TEXTURE)")) {
+    return false;
   }
 
   struct Vertex {
@@ -15595,6 +15641,9 @@ bool TestFixedFuncPsSelectionTextureBoundDefaultModulateUsesModulate() {
   if (!Check(cleanup.device_funcs.pfnSetTexture != nullptr, "SetTexture must be available")) {
     return false;
   }
+  if (!Check(cleanup.device_funcs.pfnSetTextureStageState != nullptr, "SetTextureStageState must be available")) {
+    return false;
+  }
   if (!Check(cleanup.device_funcs.pfnDrawPrimitiveUP != nullptr, "DrawPrimitiveUP must be available")) {
     return false;
   }
@@ -15655,17 +15704,23 @@ bool TestFixedFuncPsSelectionTextureBoundDefaultModulateUsesModulate() {
   }
 
   // Explicitly set the default stage0 modulation state.
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    constexpr uint32_t kD3dTssColorOp = 1u;
-    constexpr uint32_t kD3dTssColorArg1 = 2u;
-    constexpr uint32_t kD3dTssColorArg2 = 3u;
-    constexpr uint32_t kD3dTopModulate = 4u;
-    constexpr uint32_t kD3dTaDiffuse = 0u;
-    constexpr uint32_t kD3dTaTexture = 2u;
-    dev->texture_stage_states[0][kD3dTssColorOp] = kD3dTopModulate;
-    dev->texture_stage_states[0][kD3dTssColorArg1] = kD3dTaTexture;
-    dev->texture_stage_states[0][kD3dTssColorArg2] = kD3dTaDiffuse;
+  constexpr uint32_t kD3dTssColorOp = 1u;
+  constexpr uint32_t kD3dTssColorArg1 = 2u;
+  constexpr uint32_t kD3dTssColorArg2 = 3u;
+  constexpr uint32_t kD3dTopModulate = 4u;
+  constexpr uint32_t kD3dTaDiffuse = 0u;
+  constexpr uint32_t kD3dTaTexture = 2u;
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssColorOp, kD3dTopModulate);
+  if (!Check(hr == S_OK, "SetTextureStageState(stage0, COLOROP=MODULATE)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssColorArg1, kD3dTaTexture);
+  if (!Check(hr == S_OK, "SetTextureStageState(stage0, COLORARG1=TEXTURE)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssColorArg2, kD3dTaDiffuse);
+  if (!Check(hr == S_OK, "SetTextureStageState(stage0, COLORARG2=DIFFUSE)")) {
+    return false;
   }
 
   struct Vertex {
@@ -15765,6 +15820,9 @@ bool TestFixedFuncPsSelectionTextureBoundSelectArg1TextureUsesTextureOnly() {
   if (!Check(cleanup.device_funcs.pfnSetTexture != nullptr, "SetTexture must be available")) {
     return false;
   }
+  if (!Check(cleanup.device_funcs.pfnSetTextureStageState != nullptr, "SetTextureStageState must be available")) {
+    return false;
+  }
   if (!Check(cleanup.device_funcs.pfnDrawPrimitiveUP != nullptr, "DrawPrimitiveUP must be available")) {
     return false;
   }
@@ -15825,14 +15883,17 @@ bool TestFixedFuncPsSelectionTextureBoundSelectArg1TextureUsesTextureOnly() {
   }
 
   // Stage-state override: COLOROP=SELECTARG1, COLORARG1=TEXTURE.
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    constexpr uint32_t kD3dTssColorOp = 1u;
-    constexpr uint32_t kD3dTssColorArg1 = 2u;
-    constexpr uint32_t kD3dTopSelectArg1 = 2u;
-    constexpr uint32_t kD3dTaTexture = 2u;
-    dev->texture_stage_states[0][kD3dTssColorOp] = kD3dTopSelectArg1;
-    dev->texture_stage_states[0][kD3dTssColorArg1] = kD3dTaTexture;
+  constexpr uint32_t kD3dTssColorOp = 1u;
+  constexpr uint32_t kD3dTssColorArg1 = 2u;
+  constexpr uint32_t kD3dTopSelectArg1 = 2u;
+  constexpr uint32_t kD3dTaTexture = 2u;
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssColorOp, kD3dTopSelectArg1);
+  if (!Check(hr == S_OK, "SetTextureStageState(stage0, COLOROP=SELECTARG1)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssColorArg1, kD3dTaTexture);
+  if (!Check(hr == S_OK, "SetTextureStageState(stage0, COLORARG1=TEXTURE)")) {
+    return false;
   }
 
   struct Vertex {
@@ -15932,6 +15993,9 @@ bool TestFixedFuncPsSelectionTextureBoundSelectArg2TextureUsesTextureOnly() {
   if (!Check(cleanup.device_funcs.pfnSetTexture != nullptr, "SetTexture must be available")) {
     return false;
   }
+  if (!Check(cleanup.device_funcs.pfnSetTextureStageState != nullptr, "SetTextureStageState must be available")) {
+    return false;
+  }
   if (!Check(cleanup.device_funcs.pfnDrawPrimitiveUP != nullptr, "DrawPrimitiveUP must be available")) {
     return false;
   }
@@ -15992,14 +16056,17 @@ bool TestFixedFuncPsSelectionTextureBoundSelectArg2TextureUsesTextureOnly() {
   }
 
   // Stage-state override: COLOROP=SELECTARG2, COLORARG2=TEXTURE.
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    constexpr uint32_t kD3dTssColorOp = 1u;
-    constexpr uint32_t kD3dTssColorArg2 = 3u;
-    constexpr uint32_t kD3dTopSelectArg2 = 3u;
-    constexpr uint32_t kD3dTaTexture = 2u;
-    dev->texture_stage_states[0][kD3dTssColorOp] = kD3dTopSelectArg2;
-    dev->texture_stage_states[0][kD3dTssColorArg2] = kD3dTaTexture;
+  constexpr uint32_t kD3dTssColorOp = 1u;
+  constexpr uint32_t kD3dTssColorArg2 = 3u;
+  constexpr uint32_t kD3dTopSelectArg2 = 3u;
+  constexpr uint32_t kD3dTaTexture = 2u;
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssColorOp, kD3dTopSelectArg2);
+  if (!Check(hr == S_OK, "SetTextureStageState(stage0, COLOROP=SELECTARG2)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssColorArg2, kD3dTaTexture);
+  if (!Check(hr == S_OK, "SetTextureStageState(stage0, COLORARG2=TEXTURE)")) {
+    return false;
   }
 
   struct Vertex {
@@ -16099,6 +16166,9 @@ bool TestFixedFuncPsSelectionTextureBoundSelectArg2DiffuseColorSelectArg2Texture
   if (!Check(cleanup.device_funcs.pfnSetTexture != nullptr, "SetTexture must be available")) {
     return false;
   }
+  if (!Check(cleanup.device_funcs.pfnSetTextureStageState != nullptr, "SetTextureStageState must be available")) {
+    return false;
+  }
   if (!Check(cleanup.device_funcs.pfnDrawPrimitiveUP != nullptr, "DrawPrimitiveUP must be available")) {
     return false;
   }
@@ -16162,19 +16232,28 @@ bool TestFixedFuncPsSelectionTextureBoundSelectArg2DiffuseColorSelectArg2Texture
   // - COLOROP=SELECTARG2, COLORARG2=DIFFUSE
   // - ALPHAOP=SELECTARG2, ALPHAARG2=TEXTURE
   // This must sample the texture solely to source alpha; RGB comes from diffuse.
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    constexpr uint32_t kD3dTssColorOp = 1u;
-    constexpr uint32_t kD3dTssColorArg2 = 3u;
-    constexpr uint32_t kD3dTssAlphaOp = 4u;
-    constexpr uint32_t kD3dTssAlphaArg2 = 6u;
-    constexpr uint32_t kD3dTopSelectArg2 = 3u;
-    constexpr uint32_t kD3dTaDiffuse = 0u;
-    constexpr uint32_t kD3dTaTexture = 2u;
-    dev->texture_stage_states[0][kD3dTssColorOp] = kD3dTopSelectArg2;
-    dev->texture_stage_states[0][kD3dTssColorArg2] = kD3dTaDiffuse;
-    dev->texture_stage_states[0][kD3dTssAlphaOp] = kD3dTopSelectArg2;
-    dev->texture_stage_states[0][kD3dTssAlphaArg2] = kD3dTaTexture;
+  constexpr uint32_t kD3dTssColorOp = 1u;
+  constexpr uint32_t kD3dTssColorArg2 = 3u;
+  constexpr uint32_t kD3dTssAlphaOp = 4u;
+  constexpr uint32_t kD3dTssAlphaArg2 = 6u;
+  constexpr uint32_t kD3dTopSelectArg2 = 3u;
+  constexpr uint32_t kD3dTaDiffuse = 0u;
+  constexpr uint32_t kD3dTaTexture = 2u;
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssColorOp, kD3dTopSelectArg2);
+  if (!Check(hr == S_OK, "SetTextureStageState(stage0, COLOROP=SELECTARG2)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssColorArg2, kD3dTaDiffuse);
+  if (!Check(hr == S_OK, "SetTextureStageState(stage0, COLORARG2=DIFFUSE)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssAlphaOp, kD3dTopSelectArg2);
+  if (!Check(hr == S_OK, "SetTextureStageState(stage0, ALPHAOP=SELECTARG2)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssAlphaArg2, kD3dTaTexture);
+  if (!Check(hr == S_OK, "SetTextureStageState(stage0, ALPHAARG2=TEXTURE)")) {
+    return false;
   }
 
   struct Vertex {
@@ -16274,6 +16353,9 @@ bool TestFixedFuncPsSelectionTextureBoundModulateDiffuseDiffuseUsesColorOnly() {
   if (!Check(cleanup.device_funcs.pfnSetTexture != nullptr, "SetTexture must be available")) {
     return false;
   }
+  if (!Check(cleanup.device_funcs.pfnSetTextureStageState != nullptr, "SetTextureStageState must be available")) {
+    return false;
+  }
   if (!Check(cleanup.device_funcs.pfnDrawPrimitiveUP != nullptr, "DrawPrimitiveUP must be available")) {
     return false;
   }
@@ -16339,21 +16421,33 @@ bool TestFixedFuncPsSelectionTextureBoundModulateDiffuseDiffuseUsesColorOnly() {
   //
   // This should not sample the texture at all: MODULATE(DIFFUSE,DIFFUSE) is
   // diffuse-only, so the fixed-function PS variant should be ColorOnly.
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    constexpr uint32_t kD3dTssColorOp = 1u;
-    constexpr uint32_t kD3dTssColorArg1 = 2u;
-    constexpr uint32_t kD3dTssColorArg2 = 3u;
-    constexpr uint32_t kD3dTssAlphaOp = 4u;
-    constexpr uint32_t kD3dTssAlphaArg1 = 5u;
-    constexpr uint32_t kD3dTopModulate = 4u;
-    constexpr uint32_t kD3dTopSelectArg1 = 2u;
-    constexpr uint32_t kD3dTaDiffuse = 0u;
-    dev->texture_stage_states[0][kD3dTssColorOp] = kD3dTopModulate;
-    dev->texture_stage_states[0][kD3dTssColorArg1] = kD3dTaDiffuse;
-    dev->texture_stage_states[0][kD3dTssColorArg2] = kD3dTaDiffuse;
-    dev->texture_stage_states[0][kD3dTssAlphaOp] = kD3dTopSelectArg1;
-    dev->texture_stage_states[0][kD3dTssAlphaArg1] = kD3dTaDiffuse;
+  constexpr uint32_t kD3dTssColorOp = 1u;
+  constexpr uint32_t kD3dTssColorArg1 = 2u;
+  constexpr uint32_t kD3dTssColorArg2 = 3u;
+  constexpr uint32_t kD3dTssAlphaOp = 4u;
+  constexpr uint32_t kD3dTssAlphaArg1 = 5u;
+  constexpr uint32_t kD3dTopModulate = 4u;
+  constexpr uint32_t kD3dTopSelectArg1 = 2u;
+  constexpr uint32_t kD3dTaDiffuse = 0u;
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssColorOp, kD3dTopModulate);
+  if (!Check(hr == S_OK, "SetTextureStageState(stage0, COLOROP=MODULATE)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssColorArg1, kD3dTaDiffuse);
+  if (!Check(hr == S_OK, "SetTextureStageState(stage0, COLORARG1=DIFFUSE)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssColorArg2, kD3dTaDiffuse);
+  if (!Check(hr == S_OK, "SetTextureStageState(stage0, COLORARG2=DIFFUSE)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssAlphaOp, kD3dTopSelectArg1);
+  if (!Check(hr == S_OK, "SetTextureStageState(stage0, ALPHAOP=SELECTARG1)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssAlphaArg1, kD3dTaDiffuse);
+  if (!Check(hr == S_OK, "SetTextureStageState(stage0, ALPHAARG1=DIFFUSE)")) {
+    return false;
   }
 
   struct Vertex {
@@ -16453,6 +16547,9 @@ bool TestFixedFuncPsSelectionTextureBoundUnknownColorOpDiffuseArgsUsesColorOnly(
   if (!Check(cleanup.device_funcs.pfnSetTexture != nullptr, "SetTexture must be available")) {
     return false;
   }
+  if (!Check(cleanup.device_funcs.pfnSetTextureStageState != nullptr, "SetTextureStageState must be available")) {
+    return false;
+  }
   if (!Check(cleanup.device_funcs.pfnDrawPrimitiveUP != nullptr, "DrawPrimitiveUP must be available")) {
     return false;
   }
@@ -16512,27 +16609,38 @@ bool TestFixedFuncPsSelectionTextureBoundUnknownColorOpDiffuseArgsUsesColorOnly(
     return false;
   }
 
-   // Stage-state override:
-   // Use a stage0 COLOROP that this UMD does not implement for DIFFUSE-only args.
-   // The PS selection should remain diffuse-only and avoid sampling the bound
-   // texture.
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    constexpr uint32_t kD3dTssColorOp = 1u;
-    constexpr uint32_t kD3dTssColorArg1 = 2u;
-    constexpr uint32_t kD3dTssColorArg2 = 3u;
-    constexpr uint32_t kD3dTssAlphaOp = 4u;
-    constexpr uint32_t kD3dTssAlphaArg1 = 5u;
+  // Stage-state override:
+  // Use D3DTOP_ADD with DIFFUSE-only args. The PS selection should remain diffuse-only
+  // and avoid sampling the bound texture.
+  constexpr uint32_t kD3dTssColorOp = 1u;
+  constexpr uint32_t kD3dTssColorArg1 = 2u;
+  constexpr uint32_t kD3dTssColorArg2 = 3u;
+  constexpr uint32_t kD3dTssAlphaOp = 4u;
+  constexpr uint32_t kD3dTssAlphaArg1 = 5u;
 
-     constexpr uint32_t kD3dTopAdd = 7u; // D3DTOP_ADD (unsupported with DIFFUSE/DIFFUSE in this subset)
-    constexpr uint32_t kD3dTopSelectArg1 = 2u;
-    constexpr uint32_t kD3dTaDiffuse = 0u;
+  constexpr uint32_t kD3dTopAdd = 7u; // D3DTOP_ADD
+  constexpr uint32_t kD3dTopSelectArg1 = 2u;
+  constexpr uint32_t kD3dTaDiffuse = 0u;
 
-    dev->texture_stage_states[0][kD3dTssColorOp] = kD3dTopAdd;
-    dev->texture_stage_states[0][kD3dTssColorArg1] = kD3dTaDiffuse;
-    dev->texture_stage_states[0][kD3dTssColorArg2] = kD3dTaDiffuse;
-    dev->texture_stage_states[0][kD3dTssAlphaOp] = kD3dTopSelectArg1;
-    dev->texture_stage_states[0][kD3dTssAlphaArg1] = kD3dTaDiffuse;
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssColorOp, kD3dTopAdd);
+  if (!Check(hr == S_OK, "SetTextureStageState(stage0, COLOROP=ADD)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssColorArg1, kD3dTaDiffuse);
+  if (!Check(hr == S_OK, "SetTextureStageState(stage0, COLORARG1=DIFFUSE)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssColorArg2, kD3dTaDiffuse);
+  if (!Check(hr == S_OK, "SetTextureStageState(stage0, COLORARG2=DIFFUSE)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssAlphaOp, kD3dTopSelectArg1);
+  if (!Check(hr == S_OK, "SetTextureStageState(stage0, ALPHAOP=SELECTARG1)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssAlphaArg1, kD3dTaDiffuse);
+  if (!Check(hr == S_OK, "SetTextureStageState(stage0, ALPHAARG1=DIFFUSE)")) {
+    return false;
   }
 
   struct Vertex {
@@ -16691,31 +16799,46 @@ bool TestFixedFuncPsSelectionTextureBoundUnknownColorOpFallsBackToModulate() {
     return false;
   }
 
-   // Stage-state override: use an unsupported COLOROP to validate the fixed-function
-   // fallback behavior (should still render textured content rather than falling
-   // back to diffuse-only).
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    constexpr uint32_t kD3dTssColorOp = 1u;
-    constexpr uint32_t kD3dTssColorArg1 = 2u;
-    constexpr uint32_t kD3dTssColorArg2 = 3u;
-    constexpr uint32_t kD3dTssAlphaOp = 4u;
-    constexpr uint32_t kD3dTssAlphaArg1 = 5u;
-    constexpr uint32_t kD3dTssAlphaArg2 = 6u;
+  // Stage-state override: use an unsupported COLOROP to validate the fixed-function
+  // fallback behavior (should still render textured content rather than falling
+  // back to diffuse-only).
+  constexpr uint32_t kD3dTssColorOp = 1u;
+  constexpr uint32_t kD3dTssColorArg1 = 2u;
+  constexpr uint32_t kD3dTssColorArg2 = 3u;
+  constexpr uint32_t kD3dTssAlphaOp = 4u;
+  constexpr uint32_t kD3dTssAlphaArg1 = 5u;
+  constexpr uint32_t kD3dTssAlphaArg2 = 6u;
 
-     constexpr uint32_t kD3dTopUnsupported = 0xDEADBEEFu;
-    constexpr uint32_t kD3dTopSelectArg1 = 2u;
-    constexpr uint32_t kD3dTaDiffuse = 0u;
-    constexpr uint32_t kD3dTaTexture = 2u;
+  constexpr uint32_t kD3dTopUnsupported = 0xDEADBEEFu;
+  constexpr uint32_t kD3dTopSelectArg1 = 2u;
+  constexpr uint32_t kD3dTaDiffuse = 0u;
+  constexpr uint32_t kD3dTaTexture = 2u;
 
-     dev->texture_stage_states[0][kD3dTssColorOp] = kD3dTopUnsupported;
-    dev->texture_stage_states[0][kD3dTssColorArg1] = kD3dTaTexture;
-    dev->texture_stage_states[0][kD3dTssColorArg2] = kD3dTaDiffuse;
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssColorOp, kD3dTopUnsupported);
+  if (!Check(hr == S_OK, "SetTextureStageState(stage0, COLOROP=0xDEADBEEF)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssColorArg1, kD3dTaTexture);
+  if (!Check(hr == S_OK, "SetTextureStageState(stage0, COLORARG1=TEXTURE)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssColorArg2, kD3dTaDiffuse);
+  if (!Check(hr == S_OK, "SetTextureStageState(stage0, COLORARG2=DIFFUSE)")) {
+    return false;
+  }
 
-    // Alpha: keep default "take alpha from texture" semantics.
-    dev->texture_stage_states[0][kD3dTssAlphaOp] = kD3dTopSelectArg1;
-    dev->texture_stage_states[0][kD3dTssAlphaArg1] = kD3dTaTexture;
-    dev->texture_stage_states[0][kD3dTssAlphaArg2] = kD3dTaDiffuse;
+  // Alpha: keep default "take alpha from texture" semantics.
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssAlphaOp, kD3dTopSelectArg1);
+  if (!Check(hr == S_OK, "SetTextureStageState(stage0, ALPHAOP=SELECTARG1)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssAlphaArg1, kD3dTaTexture);
+  if (!Check(hr == S_OK, "SetTextureStageState(stage0, ALPHAARG1=TEXTURE)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTextureStageState(create_dev.hDevice, 0, kD3dTssAlphaArg2, kD3dTaDiffuse);
+  if (!Check(hr == S_OK, "SetTextureStageState(stage0, ALPHAARG2=DIFFUSE)")) {
+    return false;
   }
 
   struct Vertex {
