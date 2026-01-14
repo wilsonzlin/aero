@@ -25,6 +25,12 @@ declare global {
       metrics?: any;
       samplePixels?: () => Promise<{
         backend: string;
+        cursor?: {
+          x: number;
+          y: number;
+          pixel: number[];
+          nearby: number[];
+        };
         source: {
           width: number;
           height: number;
@@ -348,9 +354,9 @@ async function main(): Promise<void> {
       });
     };
 
-    const requestPresentedScreenshot = (): Promise<any> => {
+    const requestPresentedScreenshot = (includeCursor = false): Promise<any> => {
       const requestId = nextRequestId++;
-      worker.postMessage({ ...GPU_MESSAGE_BASE, type: "screenshot_presented", requestId });
+      worker.postMessage({ ...GPU_MESSAGE_BASE, type: "screenshot_presented", requestId, includeCursor });
       return new Promise((resolve, reject) => {
         pendingPresentedScreenshot.set(requestId, { resolve, reject });
         setTimeout(() => {
@@ -362,8 +368,30 @@ async function main(): Promise<void> {
       });
     };
 
+    // Move the cursor once WDDM scanout is active. This exercises the cursor-forwarding and
+    // redraw paths and ensures they do not "flash back" to legacy framebuffer output.
+    const cursorX = 2;
+    const cursorY = 2;
+    {
+      const cursorRgba8 = new Uint8Array([0, 0, 0, 255]).buffer;
+      worker.postMessage({ ...GPU_MESSAGE_BASE, type: "cursor_set_image", width: 1, height: 1, rgba8: cursorRgba8 });
+      worker.postMessage({
+        ...GPU_MESSAGE_BASE,
+        type: "cursor_set_state",
+        enabled: true,
+        x: cursorX,
+        y: cursorY,
+        hotX: 0,
+        hotY: 0,
+      });
+      await sleep(25);
+    }
+
+    const presentedWithCursorShot = await requestPresentedScreenshot(true);
+    // Now capture again with cursor explicitly disabled so we can validate the underlying scanout
+    // pixels remain correct.
     const sourceShot = await requestScreenshot();
-    const presentedShot = await requestPresentedScreenshot();
+    const presentedShot = await requestPresentedScreenshot(false);
 
     const sourceWidth = Number(sourceShot.width) | 0;
     const sourceHeight = Number(sourceShot.height) | 0;
@@ -379,7 +407,19 @@ async function main(): Promise<void> {
     const hash = fnv1a32Hex(presentedRgba8);
     const expectedHash = fnv1a32Hex(presentedExpected);
 
-    const pass = hash === expectedHash && sourceHash === expectedSourceHash;
+    const presentedWithCursorWidth = Number(presentedWithCursorShot.width) | 0;
+    const presentedWithCursorHeight = Number(presentedWithCursorShot.height) | 0;
+    const presentedWithCursorRgba8 = new Uint8Array(presentedWithCursorShot.rgba8);
+    const cursorPixel = sample(presentedWithCursorRgba8, presentedWithCursorWidth, cursorX, cursorY);
+    const cursorNearby = sample(presentedWithCursorRgba8, presentedWithCursorWidth, 8, 8);
+
+    const pass =
+      hash === expectedHash &&
+      sourceHash === expectedSourceHash &&
+      cursorPixel[0] === 0 &&
+      cursorPixel[1] === 0 &&
+      cursorPixel[2] === 0 &&
+      cursorPixel[3] === 255;
 
     const sample = (rgba: Uint8Array, width_: number, x: number, y: number): number[] => {
       const i = (y * width_ + x) * 4;
@@ -401,6 +441,7 @@ async function main(): Promise<void> {
       metrics: lastMetrics,
       samplePixels: async () => ({
         backend,
+        cursor: { x: cursorX, y: cursorY, pixel: cursorPixel, nearby: cursorNearby },
         source: {
           width: sourceWidth,
           height: sourceHeight,

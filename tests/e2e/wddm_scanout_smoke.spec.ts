@@ -56,6 +56,13 @@ test("wddm scanout smoke: presents from guest RAM base_paddr (BGRX->RGBA, alpha=
   expect(result.samples.presented.bottomLeft).toEqual([0, 0, 255, 255]);
   expect(result.samples.presented.bottomRight).toEqual([255, 255, 255, 255]);
 
+  // Cursor redraw sanity: enabling the cursor must not clobber the active scanout output.
+  expect(result.samples.cursor).toBeTruthy();
+  expect(result.samples.cursor.x).toBe(2);
+  expect(result.samples.cursor.y).toBe(2);
+  expect(result.samples.cursor.pixel).toEqual([0, 0, 0, 255]);
+  expect(result.samples.cursor.nearby).toEqual([255, 0, 0, 255]);
+
   // Validate the "X" byte in BGRX is ignored and alpha is forced to 255.
   for (const sample of [
     result.samples.source.topLeft,
