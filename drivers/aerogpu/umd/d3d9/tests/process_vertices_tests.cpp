@@ -1604,7 +1604,7 @@ void test_copy_xyzrhw_diffuse_infer_dest_stride_from_decl() {
   pv.hDestBuffer.pDrvPrivate = &dst;
   pv.hVertexDecl.pDrvPrivate = &decl;
   pv.Flags = 0;
-  // Exercise DestStride inference in the memcpy fallback path.
+  // Exercise DestStride inference from the destination declaration.
   pv.DestStride = 0;
 
   // Expected result: copy the first 20 bytes of each source vertex into the
@@ -1695,9 +1695,9 @@ void test_process_vertices_fallback_infer_dest_stride_from_decl() {
   // destination stride, leaving the extra TEX0 bytes untouched (0xCD).
   std::vector<uint8_t> expected = dst.storage;
   for (uint32_t i = 0; i < pv.VertexCount; ++i) {
-    std::memcpy(expected.data() + static_cast<size_t>(pv.DestIndex + i) * kDstStride,
-                src.storage.data() + static_cast<size_t>(pv.SrcStartIndex + i) * 20,
-                20);
+    const size_t dst_off = static_cast<size_t>(pv.DestIndex + i) * kDstStride;
+    const size_t src_off = static_cast<size_t>(pv.SrcStartIndex + i) * 20;
+    std::memcpy(expected.data() + dst_off, src.storage.data() + src_off, 20);
   }
 
   D3DDDI_HDEVICE hDevice{};

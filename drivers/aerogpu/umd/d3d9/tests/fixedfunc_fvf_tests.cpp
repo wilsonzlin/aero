@@ -405,6 +405,7 @@ static_assert(sizeof(D3DVERTEXELEMENT9_COMPAT) == 8, "D3DVERTEXELEMENT9_COMPAT m
 constexpr uint8_t kD3dDeclTypeFloat2 = 1;
 constexpr uint8_t kD3dDeclTypeFloat3 = 2;
 constexpr uint8_t kD3dDeclTypeFloat4 = 3;
+constexpr uint8_t kD3dDeclTypeD3dColor = 4;
 constexpr uint8_t kD3dDeclTypeUnused = 17;
 
 constexpr uint8_t kD3dDeclMethodDefault = 0;
@@ -412,6 +413,7 @@ constexpr uint8_t kD3dDeclMethodDefault = 0;
 constexpr uint8_t kD3dDeclUsagePosition = 0;
 constexpr uint8_t kD3dDeclUsageTexcoord = 5;
 constexpr uint8_t kD3dDeclUsagePositionT = 9;
+constexpr uint8_t kD3dDeclUsageColor = 10;
 
 bool TestFvfXyzrhwDiffuseEmitsSaneCommands() {
   CleanupDevice cleanup;
@@ -648,6 +650,144 @@ bool TestFvfXyzDiffuseEmitsInputLayoutAndShaders() {
   }
   const auto* last_bind = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(binds.back());
   if (!Check(last_bind->vs != 0 && last_bind->ps != 0, "BIND_SHADERS binds non-zero VS/PS")) {
+    return false;
+  }
+
+  return true;
+}
+
+bool TestFvfXyzDiffuseEmitsTransformConstantsAndDecl() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|DIFFUSE)")) {
+    return false;
+  }
+
+  const D3DVERTEXELEMENT9_COMPAT expected_decl[] = {
+      // stream, offset, type, method, usage, usage_index
+      {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsagePosition, 0},
+      {0, 12, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
+      {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
+  };
+
+  constexpr float tx = 2.0f;
+  constexpr float ty = 3.0f;
+  constexpr float tz = 0.0f;
+  const float expected_wvp_cols[16] = {
+      1.0f, 0.0f, 0.0f, tx,
+      0.0f, 1.0f, 0.0f, ty,
+      0.0f, 0.0f, 1.0f, tz,
+      0.0f, 0.0f, 0.0f, 1.0f,
+  };
+
+  aerogpu_handle_t expected_input_layout = 0;
+  bool decl_ok = false;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (dev->fvf_vertex_decl_xyz_diffuse) {
+      expected_input_layout = dev->fvf_vertex_decl_xyz_diffuse->handle;
+      const auto& blob = dev->fvf_vertex_decl_xyz_diffuse->blob;
+      decl_ok = (blob.size() == sizeof(expected_decl)) &&
+                (std::memcmp(blob.data(), expected_decl, sizeof(expected_decl)) == 0);
+    }
+
+    // Set a simple world translation; view/projection defaults are identity.
+    constexpr uint32_t kD3dTransformWorld0 = 256u;
+    float* m = dev->transform_matrices[kD3dTransformWorld0];
+    std::memset(m, 0, 16 * sizeof(float));
+    m[0] = 1.0f;
+    m[5] = 1.0f;
+    m[10] = 1.0f;
+    m[15] = 1.0f;
+    m[12] = tx;
+    m[13] = ty;
+    m[14] = tz;
+    dev->fixedfunc_matrix_dirty = true;
+  }
+  if (!Check(expected_input_layout != 0, "SetFVF XYZ|DIFFUSE created internal input layout")) {
+    return false;
+  }
+  if (!Check(decl_ok, "XYZ|DIFFUSE internal vertex decl matches expected layout")) {
+    return false;
+  }
+
+  const VertexXyzDiffuse tri[3] = {
+      {-1.0f, -1.0f, 0.0f, 0xFFFF0000u},
+      {1.0f, -1.0f, 0.0f, 0xFF00FF00u},
+      {-1.0f, 1.0f, 0.0f, 0xFF0000FFu},
+  };
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(triangle xyz diffuse)")) {
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->fixedfunc_vs_xyz_diffuse != nullptr, "fixedfunc_vs_xyz_diffuse created")) {
+      return false;
+    }
+    if (!Check(dev->vs == dev->fixedfunc_vs_xyz_diffuse, "XYZ|DIFFUSE binds WVP VS")) {
+      return false;
+    }
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(XYZ|DIFFUSE WVP constants)")) {
+    return false;
+  }
+
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F) >= 1, "SET_SHADER_CONSTANTS_F emitted")) {
+    return false;
+  }
+
+  bool saw_expected_layout = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_INPUT_LAYOUT)) {
+    const auto* il = reinterpret_cast<const aerogpu_cmd_set_input_layout*>(hdr);
+    if (il->input_layout_handle == expected_input_layout) {
+      saw_expected_layout = true;
+      break;
+    }
+  }
+  if (!Check(saw_expected_layout, "SET_INPUT_LAYOUT uses internal XYZ|DIFFUSE layout handle")) {
+    return false;
+  }
+
+  bool saw_wvp_constants = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
+    const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
+    if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX) {
+      continue;
+    }
+    if (sc->start_register != 0 || sc->vec4_count != 4) {
+      continue;
+    }
+    const size_t need = sizeof(aerogpu_cmd_set_shader_constants_f) + sizeof(expected_wvp_cols);
+    if (hdr->size_bytes < need) {
+      continue;
+    }
+    const float* payload = reinterpret_cast<const float*>(
+        reinterpret_cast<const uint8_t*>(sc) + sizeof(aerogpu_cmd_set_shader_constants_f));
+    if (std::memcmp(payload, expected_wvp_cols, sizeof(expected_wvp_cols)) == 0) {
+      saw_wvp_constants = true;
+      break;
+    }
+  }
+  if (!Check(saw_wvp_constants, "SET_SHADER_CONSTANTS_F uploads expected WVP columns (XYZ|DIFFUSE)")) {
     return false;
   }
 
@@ -920,6 +1060,158 @@ bool TestFvfXyzDiffuseTex1EmitsTextureAndShaders() {
     return false;
   }
   if (!Check(st->texture != 0, "SET_TEXTURE texture handle non-zero")) {
+    return false;
+  }
+
+  return true;
+}
+
+bool TestFvfXyzDiffuseTex1EmitsTransformConstantsAndDecl() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzDiffuseTex1);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|DIFFUSE|TEX1)")) {
+    return false;
+  }
+
+  const D3DVERTEXELEMENT9_COMPAT expected_decl[] = {
+      // stream, offset, type, method, usage, usage_index
+      {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsagePosition, 0},
+      {0, 12, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
+      {0, 16, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
+      {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
+  };
+
+  constexpr float tx = 2.0f;
+  constexpr float ty = 3.0f;
+  constexpr float tz = 0.0f;
+  const float expected_wvp_cols[16] = {
+      1.0f, 0.0f, 0.0f, tx,
+      0.0f, 1.0f, 0.0f, ty,
+      0.0f, 0.0f, 1.0f, tz,
+      0.0f, 0.0f, 0.0f, 1.0f,
+  };
+
+  aerogpu_handle_t expected_input_layout = 0;
+  bool decl_ok = false;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (dev->fvf_vertex_decl_xyz_diffuse_tex1) {
+      expected_input_layout = dev->fvf_vertex_decl_xyz_diffuse_tex1->handle;
+      const auto& blob = dev->fvf_vertex_decl_xyz_diffuse_tex1->blob;
+      decl_ok = (blob.size() == sizeof(expected_decl)) &&
+                (std::memcmp(blob.data(), expected_decl, sizeof(expected_decl)) == 0);
+    }
+
+    // Set a simple world translation; view/projection defaults are identity.
+    constexpr uint32_t kD3dTransformWorld0 = 256u;
+    float* m = dev->transform_matrices[kD3dTransformWorld0];
+    std::memset(m, 0, 16 * sizeof(float));
+    m[0] = 1.0f;
+    m[5] = 1.0f;
+    m[10] = 1.0f;
+    m[15] = 1.0f;
+    m[12] = tx;
+    m[13] = ty;
+    m[14] = tz;
+    dev->fixedfunc_matrix_dirty = true;
+  }
+  if (!Check(expected_input_layout != 0, "SetFVF XYZ|DIFFUSE|TEX1 created internal input layout")) {
+    return false;
+  }
+  if (!Check(decl_ok, "XYZ|DIFFUSE|TEX1 internal vertex decl matches expected layout")) {
+    return false;
+  }
+
+  D3DDDI_HRESOURCE hTex{};
+  if (!CreateDummyTexture(&cleanup, &hTex)) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, hTex);
+  if (!Check(hr == S_OK, "SetTexture(stage0)")) {
+    return false;
+  }
+
+  const VertexXyzDiffuseTex1 tri[3] = {
+      {-1.0f, -1.0f, 0.0f, 0xFFFFFFFFu, 0.0f, 0.0f},
+      {1.0f, -1.0f, 0.0f, 0xFFFFFFFFu, 1.0f, 0.0f},
+      {-1.0f, 1.0f, 0.0f, 0xFFFFFFFFu, 0.0f, 1.0f},
+  };
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzDiffuseTex1));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(triangle xyz diffuse tex1)")) {
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->fixedfunc_vs_xyz_diffuse_tex1 != nullptr, "fixedfunc_vs_xyz_diffuse_tex1 created")) {
+      return false;
+    }
+    if (!Check(dev->vs == dev->fixedfunc_vs_xyz_diffuse_tex1, "XYZ|DIFFUSE|TEX1 binds WVP VS")) {
+      return false;
+    }
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(XYZ|DIFFUSE|TEX1 WVP constants)")) {
+    return false;
+  }
+
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_SET_TEXTURE) >= 1, "SET_TEXTURE emitted")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F) >= 1, "SET_SHADER_CONSTANTS_F emitted")) {
+    return false;
+  }
+
+  bool saw_expected_layout = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_INPUT_LAYOUT)) {
+    const auto* il = reinterpret_cast<const aerogpu_cmd_set_input_layout*>(hdr);
+    if (il->input_layout_handle == expected_input_layout) {
+      saw_expected_layout = true;
+      break;
+    }
+  }
+  if (!Check(saw_expected_layout, "SET_INPUT_LAYOUT uses internal XYZ|DIFFUSE|TEX1 layout handle")) {
+    return false;
+  }
+
+  bool saw_wvp_constants = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
+    const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
+    if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX) {
+      continue;
+    }
+    if (sc->start_register != 0 || sc->vec4_count != 4) {
+      continue;
+    }
+    const size_t need = sizeof(aerogpu_cmd_set_shader_constants_f) + sizeof(expected_wvp_cols);
+    if (hdr->size_bytes < need) {
+      continue;
+    }
+    const float* payload = reinterpret_cast<const float*>(
+        reinterpret_cast<const uint8_t*>(sc) + sizeof(aerogpu_cmd_set_shader_constants_f));
+    if (std::memcmp(payload, expected_wvp_cols, sizeof(expected_wvp_cols)) == 0) {
+      saw_wvp_constants = true;
+      break;
+    }
+  }
+  if (!Check(saw_wvp_constants, "SET_SHADER_CONSTANTS_F uploads expected WVP columns (XYZ|DIFFUSE|TEX1)")) {
     return false;
   }
 
@@ -2431,10 +2723,16 @@ int main() {
   if (!aerogpu::TestFvfXyzDiffuseEmitsInputLayoutAndShaders()) {
     return 1;
   }
+  if (!aerogpu::TestFvfXyzDiffuseEmitsTransformConstantsAndDecl()) {
+    return 1;
+  }
   if (!aerogpu::TestFvfXyzrhwDiffuseTex1EmitsTextureAndShaders()) {
     return 1;
   }
   if (!aerogpu::TestFvfXyzDiffuseTex1EmitsTextureAndShaders()) {
+    return 1;
+  }
+  if (!aerogpu::TestFvfXyzDiffuseTex1EmitsTransformConstantsAndDecl()) {
     return 1;
   }
   if (!aerogpu::TestFvfXyzrhwTex1EmitsTextureAndShaders()) {

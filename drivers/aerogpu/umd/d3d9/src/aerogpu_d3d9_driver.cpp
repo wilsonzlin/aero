@@ -6469,10 +6469,7 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices_internal(
       // by the source FVF/decl mapping (e.g. dst has TEX0 but src does not).
       // Honor D3DPV_DONOTCOPYDATA by preserving the existing destination vertex
       // data where we are not explicitly writing.
-      //
-      // For XYZRHW pass-through, do not clear the full destination stride (this
-      // keeps non-written fields untouched).
-      if (!do_not_copy_data && !src_is_xyzrhw) {
+      if (!do_not_copy_data) {
         std::memset(dst, 0, dst_stride);
       }
 
