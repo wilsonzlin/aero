@@ -4469,6 +4469,8 @@ def main() -> int:
             virtio_blk_msix_marker_carry = b""
             virtio_net_msix_marker_line: Optional[str] = None
             virtio_net_msix_marker_carry = b""
+            virtio_net_offload_csum_marker_line: Optional[str] = None
+            virtio_net_offload_csum_marker_carry = b""
             virtio_snd_msix_marker_line: Optional[str] = None
             virtio_snd_msix_marker_carry = b""
             virtio_input_msix_marker: Optional[_VirtioInputMsixMarker] = None
@@ -4608,6 +4610,12 @@ def main() -> int:
                         chunk,
                         prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|",
                         carry=virtio_net_msix_marker_carry,
+                    )
+                    virtio_net_offload_csum_marker_line, virtio_net_offload_csum_marker_carry = _update_last_marker_line_from_chunk(
+                        virtio_net_offload_csum_marker_line,
+                        chunk,
+                        prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-offload-csum|",
+                        carry=virtio_net_offload_csum_marker_carry,
                     )
                     virtio_snd_msix_marker_line, virtio_snd_msix_marker_carry = _update_last_marker_line_from_chunk(
                         virtio_snd_msix_marker_line,
@@ -6207,7 +6215,12 @@ def main() -> int:
                                 break
 
                         if args.require_net_csum_offload:
-                            stats = _extract_virtio_net_offload_csum_stats(tail)
+                            csum_tail = (
+                                virtio_net_offload_csum_marker_line.encode("utf-8")
+                                if virtio_net_offload_csum_marker_line is not None
+                                else tail
+                            )
+                            stats = _extract_virtio_net_offload_csum_stats(csum_tail)
                             if stats is None:
                                 print(
                                     "FAIL: MISSING_VIRTIO_NET_CSUM_OFFLOAD: missing virtio-net-offload-csum marker while "
@@ -6646,6 +6659,12 @@ def main() -> int:
                             chunk2,
                             prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|",
                             carry=virtio_net_msix_marker_carry,
+                        )
+                        virtio_net_offload_csum_marker_line, virtio_net_offload_csum_marker_carry = _update_last_marker_line_from_chunk(
+                            virtio_net_offload_csum_marker_line,
+                            chunk2,
+                            prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-offload-csum|",
+                            carry=virtio_net_offload_csum_marker_carry,
                         )
                         virtio_snd_msix_marker_line, virtio_snd_msix_marker_carry = _update_last_marker_line_from_chunk(
                             virtio_snd_msix_marker_line,
@@ -7785,7 +7804,12 @@ def main() -> int:
                                     break
 
                             if args.require_net_csum_offload:
-                                stats = _extract_virtio_net_offload_csum_stats(tail)
+                                csum_tail = (
+                                    virtio_net_offload_csum_marker_line.encode("utf-8")
+                                    if virtio_net_offload_csum_marker_line is not None
+                                    else tail
+                                )
+                                stats = _extract_virtio_net_offload_csum_stats(csum_tail)
                                 if stats is None:
                                     print(
                                         "FAIL: MISSING_VIRTIO_NET_CSUM_OFFLOAD: missing virtio-net-offload-csum marker while "
@@ -7987,7 +8011,12 @@ def main() -> int:
         _emit_virtio_net_large_host_marker(tail)
         _emit_virtio_net_udp_host_marker(tail)
         _emit_virtio_net_udp_dns_host_marker(tail)
-        _emit_virtio_net_offload_csum_host_marker(tail)
+        net_csum_tail = (
+            virtio_net_offload_csum_marker_line.encode("utf-8")
+            if virtio_net_offload_csum_marker_line is not None
+            else tail
+        )
+        _emit_virtio_net_offload_csum_host_marker(net_csum_tail)
         _emit_virtio_net_diag_host_marker(tail)
         net_msix_tail = (
             virtio_net_msix_marker_line.encode("utf-8") if virtio_net_msix_marker_line is not None else tail
