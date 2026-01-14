@@ -224,6 +224,15 @@ type Setup = (
     Rc<Cell<u32>>,
 );
 
+type SetupTrackingDiscardDisk = (
+    VirtioPciDevice,
+    Caps,
+    GuestRam,
+    Rc<RefCell<Vec<u8>>>,
+    Rc<Cell<u32>>,
+    Rc<Cell<u32>>,
+);
+
 #[derive(Clone, Default)]
 struct TestIrq {
     legacy_count: Rc<Cell<u64>>,
@@ -386,14 +395,7 @@ fn setup_with_sizes(disk_len: usize, mem_len: usize) -> Setup {
 
 fn setup_tracking_discard_disk(
     disk_len: usize,
-) -> (
-    VirtioPciDevice,
-    Caps,
-    GuestRam,
-    Rc<RefCell<Vec<u8>>>,
-    Rc<Cell<u32>>,
-    Rc<Cell<u32>>,
-) {
+) -> SetupTrackingDiscardDisk {
     let backing = Rc::new(RefCell::new(vec![0u8; disk_len]));
     let discards = Rc::new(Cell::new(0u32));
     let writes = Rc::new(Cell::new(0u32));
