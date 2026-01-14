@@ -40,7 +40,7 @@ pub struct PcMachineConfig {
     /// processors are not scheduled yet; setting `cpu_count > 1` is intended for SMP firmware/OS
     /// bring-up experimentation and topology validation.
     ///
-    /// See `docs/09-bios-firmware.md#smp-boot-bsp--aps`.
+    /// See `docs/21-smp.md` for the SMP bring-up plan and progress tracker.
     pub cpu_count: u8,
     /// Deterministic seed used to generate the SMBIOS Type 1 "System UUID".
     ///

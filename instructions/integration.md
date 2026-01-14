@@ -19,8 +19,6 @@ This workstream owns **system integration**: BIOS, ACPI tables, device model wir
 
 This is the **coordination hub**. You wire together the work from all other workstreams and make the system boot.
 
----
-
 ## Current status (implementation reality)
 
 ### Implemented (already in-tree)
@@ -62,7 +60,9 @@ This is the **coordination hub**. You wire together the work from all other work
   `cpu_count` is **not** forced to 1 anymore: the BIOS will publish CPU topology via **ACPI MADT +
   SMBIOS** for `cpu_count >= 1`, which is useful for SMP bring-up contract testing and topology
   validation even before AP bring-up (INIT/SIPI/IPIs) + multi-vCPU execution land.
-  See [`docs/09-bios-firmware.md#smp-boot-bsp--aps`](../docs/09-bios-firmware.md#smp-boot-bsp--aps).
+  - **Workaround (for real guest boots today):** keep `cpu_count = 1` and use snapshots for fast
+    boot/dev workflows (see [`docs/16-snapshots.md`](../docs/16-snapshots.md)).
+  - **Progress tracker / plan:** [`docs/21-smp.md`](../docs/21-smp.md)
 - **Virtio MSI-X is implemented in the transport and wired in `aero-pc-platform`, but still incomplete in `aero-machine`**:
   - Transport MSI-X support (table/PBA + vector programming): `crates/aero-virtio/src/pci.rs`.
   - `aero_pc_platform` wires MSI-X delivery via `PcPlatformConfig::enable_virtio_msix`,
@@ -76,7 +76,6 @@ This is the **coordination hub**. You wire together the work from all other work
   `aero-devices-nvme` exposes MSI + MSI-X capabilities and delivers message-signaled interrupts when
   enabled (see `crates/aero-devices-nvme/README.md`, plus `pc_platform_nvme` tests). Note: Windows 7
   has no in-box NVMe driver.
-
 ---
 
 ## Key Crates & Directories

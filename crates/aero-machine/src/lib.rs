@@ -8,6 +8,15 @@
 //!
 //! The intention is to make "which machine runs in the browser?" an explicit, stable answer:
 //! **`aero_machine::Machine`**.
+//!
+//! ## Current limitation: single-vCPU execution (no SMP scheduling yet)
+//!
+//! `aero_machine::Machine` currently executes only the bootstrap processor (vCPU0). Higher vCPU
+//! counts can be configured to expose topology via firmware tables (SMBIOS + ACPI) for bring-up
+//! testing, but end-to-end SMP (AP startup, LAPIC IPIs, multi-vCPU scheduling, etc.) is not yet
+//! implemented in the canonical machine/platform.
+//!
+//! See `docs/21-smp.md` for the current SMP bring-up plan and progress tracker.
 #![forbid(unsafe_code)]
 
 mod aerogpu;
@@ -169,7 +178,7 @@ pub struct MachineConfig {
     /// topology contract testing (for example, validating MADT contents) but does not create
     /// additional executing cores.
     ///
-    /// See `docs/09-bios-firmware.md#smp-boot-bsp--aps`.
+    /// See `docs/21-smp.md` for the SMP bring-up plan and progress tracker.
     pub cpu_count: u8,
     /// Deterministic seed used to generate the SMBIOS Type 1 "System UUID".
     ///
@@ -3335,8 +3344,16 @@ impl Machine {
         }
         if idx != 0 {
             panic!(
-                "cpu index {idx} is configured (cpu_count={}), but Machine currently only models vCPU0 CPU state",
-                self.cfg.cpu_count
+                "cpu index {idx} is configured (cpu_count={}), but the canonical Machine currently only executes vCPU0\n\
+\n\
+SMP (multi-vCPU) is not supported yet because the full-system stack is still missing key pieces:\n\
+  - AP startup (INIT/SIPI + low-memory trampoline + wait-for-SIPI state)\n\
+  - LAPIC/IPI delivery (ICR) and per-vCPU scheduling\n\
+  - end-to-end multi-CPU firmware/platform validation (ACPI MADT/_PR_, SMBIOS)\n\
+\n\
+Track progress: docs/21-smp.md\n\
+",
+                self.cfg.cpu_count,
             );
         }
         &self.cpu.state
@@ -3358,8 +3375,16 @@ impl Machine {
         }
         if idx != 0 {
             panic!(
-                "cpu index {idx} is configured (cpu_count={}), but Machine currently only models vCPU0 CPU state",
-                self.cfg.cpu_count
+                "cpu index {idx} is configured (cpu_count={}), but the canonical Machine currently only executes vCPU0\n\
+\n\
+SMP (multi-vCPU) is not supported yet because the full-system stack is still missing key pieces:\n\
+  - AP startup (INIT/SIPI + low-memory trampoline + wait-for-SIPI state)\n\
+  - LAPIC/IPI delivery (ICR) and per-vCPU scheduling\n\
+  - end-to-end multi-CPU firmware/platform validation (ACPI MADT/_PR_, SMBIOS)\n\
+\n\
+Track progress: docs/21-smp.md\n\
+",
+                self.cfg.cpu_count,
             );
         }
         &mut self.cpu

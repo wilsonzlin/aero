@@ -196,7 +196,7 @@ cargo run -p firmware --bin gen_dsdt --locked
   `cpu_count > 1`, firmware will publish the configured CPU topology for **guest enumeration** via
   **ACPI MADT + SMBIOS**. However, the canonical `aero_machine::Machine` execution loop is still
   BSP-only today: AP bring-up (INIT/SIPI/IPIs), APIC IPI delivery, and the scheduler/vCPU threading
-  needed for true SMP are not wired end-to-end yet.
+  needed for true SMP are not wired end-to-end yet. See [`docs/21-smp.md`](./21-smp.md).
 
 ---
 

@@ -212,3 +212,42 @@ fn browser_defaults_preset_is_valid_and_stable() {
 
     Machine::new(cfg).expect("MachineConfig::browser_defaults should pass Machine::new validation");
 }
+
+#[test]
+fn cpu_by_index_nonzero_panics_with_smp_guidance() {
+    // `cpu_count > 1` is allowed so firmware can advertise a multi-CPU topology, but the canonical
+    // `Machine` still only executes vCPU0 today. Accessing other vCPU `CpuState`s should fail with
+    // an actionable message.
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let machine = Machine::new(MachineConfig {
+            cpu_count: 2,
+            ..Default::default()
+        })
+        .unwrap();
+
+        let _ = machine.cpu_by_index(1);
+    }));
+
+    let err = result.expect_err("expected cpu_by_index(1) to panic");
+    let msg = if let Some(s) = err.downcast_ref::<&str>() {
+        (*s).to_string()
+    } else if let Some(s) = err.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "<non-string panic payload>".to_string()
+    };
+
+    assert!(msg.contains("SMP"), "message should mention SMP: {msg}");
+    assert!(
+        msg.contains("AP startup"),
+        "message should mention AP startup is missing: {msg}"
+    );
+    assert!(
+        msg.contains("LAPIC/IPI"),
+        "message should mention LAPIC/IPI is missing: {msg}"
+    );
+    assert!(
+        msg.contains("docs/21-smp.md"),
+        "message should point to SMP progress doc: {msg}"
+    );
+}

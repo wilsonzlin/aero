@@ -1034,6 +1034,15 @@ struct PciIntxSource {
     query_level: Box<dyn Fn(&PcPlatform) -> bool>,
 }
 
+/// Canonical PC/Q35 platform wiring: chipset + MMIO + port I/O + PCI + interrupt controllers + timers.
+///
+/// ## Current limitation: BSP-only execution (no SMP scheduling yet)
+///
+/// `PcPlatform` can be configured with `cpu_count > 1` to size per-vCPU platform state (for example,
+/// LAPIC instances so firmware can publish SMP-capable ACPI/SMBIOS tables), but the canonical
+/// integrations are still single-threaded and do not yet execute/schedule APs end-to-end.
+///
+/// See `docs/21-smp.md` for the SMP bring-up plan/progress tracker.
 pub struct PcPlatform {
     pub chipset: ChipsetState,
     pub io: IoPortBus,

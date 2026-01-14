@@ -135,8 +135,8 @@
 > **Current status:** the canonical in-tree machine/platform integrations are still **BSP-only
 > execution** (no SMP scheduler / AP bring-up yet). `cpu_count` may be configured `>= 1` so firmware
 > can publish SMP topology (ACPI/SMBIOS) for contract testing, but only vCPU0 executes today. The
-> multi-vCPU notes below are forward-looking; for the up-to-date gap list see
-> [`instructions/integration.md`](../instructions/integration.md).
+> multi-vCPU notes below are forward-looking; for the up-to-date bring-up plan and gap list see
+> [`docs/21-smp.md`](./21-smp.md) (and [`instructions/integration.md`](../instructions/integration.md)).
 
 To support SMP guests, the CPU emulation worker hosts **2+ vCPUs**:
 
