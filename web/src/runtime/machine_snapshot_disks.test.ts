@@ -315,6 +315,35 @@ describe("runtime/machine_snapshot_disks", () => {
     expect(events).toEqual(["restore", "take", "primary", "iso"]);
   });
 
+  it("supports camelCase Machine.diskId* helpers for resolving snapshot disk_id mapping", async () => {
+    const restore_snapshot_from_opfs = vi.fn(async (_path: string) => {});
+    const take_restored_disk_overlays = vi.fn(() => [
+      { disk_id: 5, base_image: "aero/disks/win7.base", overlay_image: "" },
+      { disk_id: 6, base_image: "aero/isos/win7.iso", overlay_image: "" },
+    ]);
+    const set_primary_hdd_opfs_existing = vi.fn(async (_path: string) => {});
+    const attach_install_media_opfs_iso = vi.fn(async (_path: string) => {});
+
+    const machine = {
+      restore_snapshot_from_opfs,
+      take_restored_disk_overlays,
+      set_primary_hdd_opfs_existing,
+      attach_install_media_opfs_iso,
+    } as unknown as InstanceType<WasmApi["Machine"]>;
+
+    const api = {
+      Machine: {
+        diskIdPrimaryHdd: () => 5,
+        diskIdInstallMedia: () => 6,
+      },
+    } as unknown as WasmApi;
+
+    await restoreMachineSnapshotFromOpfsAndReattachDisks({ api, machine, path: "state/test.snap", logPrefix: "test" });
+
+    expect(set_primary_hdd_opfs_existing).toHaveBeenCalledWith("aero/disks/win7.base");
+    expect(attach_install_media_opfs_iso).toHaveBeenCalledWith("aero/isos/win7.iso");
+  });
+
   it("uses attach_install_media_iso_opfs_existing when available (back-compat)", async () => {
     const events: string[] = [];
     const restore_snapshot_from_opfs = vi.fn(async (_path: string) => {

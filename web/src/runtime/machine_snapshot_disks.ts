@@ -138,14 +138,20 @@ export async function reattachMachineSnapshotDisks(opts: {
   if (raw == null) return;
   if (!Array.isArray(raw) || raw.length === 0) return;
 
-  const diskIdPrimaryRaw = opts.api.Machine.disk_id_primary_hdd?.();
-  const diskIdInstallRaw = opts.api.Machine.disk_id_install_media?.();
+  const machineCtorCompat = opts.api.Machine as unknown as {
+    diskIdPrimaryHdd?: () => number;
+    diskIdInstallMedia?: () => number;
+    diskIdIdePrimaryMaster?: () => number;
+  };
+
+  const diskIdPrimaryRaw = opts.api.Machine.disk_id_primary_hdd?.() ?? machineCtorCompat.diskIdPrimaryHdd?.();
+  const diskIdInstallRaw = opts.api.Machine.disk_id_install_media?.() ?? machineCtorCompat.diskIdInstallMedia?.();
   // Older WASM builds may not expose `Machine.disk_id_*` helpers yet. The snapshot format's disk_id
   // mapping for the canonical Win7 storage topology is stable (0=primary HDD, 1=install media,
   // 2=IDE primary master), so fall back to those values when needed.
   const diskIdPrimary = typeof diskIdPrimaryRaw === "number" ? diskIdPrimaryRaw : 0;
   const diskIdInstall = typeof diskIdInstallRaw === "number" ? diskIdInstallRaw : 1;
-  const diskIdIdeRaw = opts.api.Machine.disk_id_ide_primary_master?.();
+  const diskIdIdeRaw = opts.api.Machine.disk_id_ide_primary_master?.() ?? machineCtorCompat.diskIdIdePrimaryMaster?.();
   // `disk_id_ide_primary_master` was added later than the other helpers. If it is unavailable,
   // fall back to the stable contract value (2) when it does not conflict with the other IDs.
   const diskIdIde =
