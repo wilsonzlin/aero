@@ -184,6 +184,15 @@ dxgkrnl/runtime passes into the miniport via `DxgkDdiCreateAllocation`.
    aerogpu_dbgctl.exe --dump-createalloc
    ```
 
+   If your Guest Tools ISO is mounted as `X:` (common), these are copy/pastable:
+
+   ```cmd
+   :: Win7 x64:
+   X:\drivers\amd64\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe --dump-createalloc
+   :: Win7 x86:
+   X:\drivers\x86\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe --dump-createalloc
+   ```
+
    The dump includes:
    * the **incoming** `DXGK_ALLOCATIONINFO::Flags.Value` from dxgkrnl/runtime (`flags_in`)
    * the **final** flags after AeroGPU applies its required bits (`flags_out`, currently adds `CpuVisible` + `Aperture`)

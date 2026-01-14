@@ -48,6 +48,15 @@ Note: the AeroGPU debug/control utility (`aerogpu_dbgctl.exe`) is shipped alongs
 
 - `drivers\<arch>\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe`
 
+Example (run directly from a mounted Guest Tools ISO/zip; if your mount letter differs from `X:`, replace it):
+
+```bat
+:: Win7 x64:
+X:\drivers\amd64\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe --status
+:: Win7 x86:
+X:\drivers\x86\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe --status
+```
+
 If the input Guest Tools tree contains a `tools\` directory, `tools/packaging/aero_packager` will package it recursively into the ISO/zip under `tools\...`.
 
 Recommended layout:

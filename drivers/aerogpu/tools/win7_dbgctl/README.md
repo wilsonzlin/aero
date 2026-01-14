@@ -26,6 +26,15 @@ cd /d <GuestToolsDrive>:\drivers\amd64\aerogpu\tools\win7_dbgctl\bin
 aerogpu_dbgctl.exe --status
 ```
 
+If your Guest Tools ISO is mounted as `X:` (common), these are copy/pastable:
+
+```bat
+:: Win7 x64:
+X:\drivers\amd64\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe --status
+:: Win7 x86:
+X:\drivers\x86\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe --status
+```
+
 In this README, examples use `aerogpu_dbgctl ...` for brevity; if the tool is not on `PATH`, run it as `aerogpu_dbgctl.exe ...` from one of the directories above.
 
 ## Supported device models / ABIs
