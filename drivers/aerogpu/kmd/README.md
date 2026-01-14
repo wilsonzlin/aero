@@ -399,7 +399,7 @@ For robustness against Win7's varying `CloseAllocation` / `DestroyAllocation` ca
 
 Implementation notes:
 
-- The share-token refcount table is protected by `Adapter->AllocationsLock`. To keep spin lock hold time low (especially when many processes are opening shared surfaces), the KMD allocates share-token tracking nodes **outside** the lock: it drops the spin lock, allocates, then re-acquires and re-checks before inserting.
+- The share-token refcount table is protected by `Adapter->AllocationsLock`. To keep spin lock hold time low (especially when many processes are opening shared surfaces), the KMD allocates share-token tracking nodes from an adapter-scoped **NPaged lookaside list** **outside** the lock: it drops the spin lock, allocates, then re-acquires and re-checks before inserting.
 - If the KMD cannot allocate/track a share token for a shared allocation (out of memory), it fails `DxgkDdiCreateAllocation` / `DxgkDdiOpenAllocation` with `STATUS_INSUFFICIENT_RESOURCES` to avoid leaking host-side `share_token → resource` mappings (because the final-close `RELEASE_SHARED_SURFACE` would never be emitted).
 - The internal `RELEASE_SHARED_SURFACE` submission is emitted with `AEROGPU_SUBMIT_FLAG_NO_IRQ` and reuses the most recently submitted fence value as its `signal_fence` (it must not advance the OS-visible fence domain). Host-side executors must tolerate **duplicate fence values** in the ring stream and must not drop submissions whose `signal_fence` is already `<= completed_fence` (this can happen when the GPU is idle and the “most recently submitted fence” has already completed).
 
