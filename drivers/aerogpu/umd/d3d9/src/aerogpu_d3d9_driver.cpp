@@ -4710,6 +4710,7 @@ HRESULT ensure_draw_pipeline_locked(Device* dev) {
       case kSupportedFvfXyzDiffuse:
         // Bring-up: treat XYZ vertices as already in clip space (no WVP transform).
         vs_slot = &dev->fixedfunc_vs;
+        fvf_decl = dev->fvf_vertex_decl_xyz_diffuse;
         vs_bytes = fixedfunc::kVsPassthroughPosColor;
         vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsPassthroughPosColor));
         break;
