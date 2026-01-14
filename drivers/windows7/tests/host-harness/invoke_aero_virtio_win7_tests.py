@@ -8188,13 +8188,13 @@ def main() -> int:
                                 if args.require_net_csum_offload:
                                     print(
                                         "FAIL: MISSING_VIRTIO_NET_CSUM_OFFLOAD: missing virtio-net-offload-csum marker while "
-                                        "--require-net-csum-offload was enabled",
+                                        "--require-net-csum-offload/--require-virtio-net-csum-offload was enabled",
                                         file=sys.stderr,
                                     )
                                 else:
                                     print(
                                         "FAIL: MISSING_VIRTIO_NET_UDP_CSUM_OFFLOAD: missing virtio-net-offload-csum marker while "
-                                        "--require-net-udp-csum-offload was enabled",
+                                        "--require-net-udp-csum-offload/--require-virtio-net-udp-csum-offload was enabled",
                                         file=sys.stderr,
                                     )
                                 _print_tail(serial_log)
@@ -10312,13 +10312,13 @@ def main() -> int:
                                     if args.require_net_csum_offload:
                                         print(
                                             "FAIL: MISSING_VIRTIO_NET_CSUM_OFFLOAD: missing virtio-net-offload-csum marker while "
-                                            "--require-net-csum-offload was enabled",
+                                            "--require-net-csum-offload/--require-virtio-net-csum-offload was enabled",
                                             file=sys.stderr,
                                         )
                                     else:
                                         print(
                                             "FAIL: MISSING_VIRTIO_NET_UDP_CSUM_OFFLOAD: missing virtio-net-offload-csum marker while "
-                                            "--require-net-udp-csum-offload was enabled",
+                                            "--require-net-udp-csum-offload/--require-virtio-net-udp-csum-offload was enabled",
                                             file=sys.stderr,
                                         )
                                     _print_tail(serial_log)

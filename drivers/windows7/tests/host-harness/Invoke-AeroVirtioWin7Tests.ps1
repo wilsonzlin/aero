@@ -9101,7 +9101,7 @@ try {
       $scriptExitCode = 1
     }
     "MISSING_VIRTIO_NET_CSUM_OFFLOAD" {
-      Write-Host "FAIL: MISSING_VIRTIO_NET_CSUM_OFFLOAD: missing virtio-net-offload-csum marker while -RequireNetCsumOffload was enabled"
+      Write-Host "FAIL: MISSING_VIRTIO_NET_CSUM_OFFLOAD: missing virtio-net-offload-csum marker while -RequireNetCsumOffload/-RequireVirtioNetCsumOffload was enabled"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -9119,7 +9119,7 @@ try {
       }
       $details = ""
       if ($detailsParts.Count -gt 0) { $details = " (" + ($detailsParts -join " ") + ")" }
-      Write-Host "FAIL: VIRTIO_NET_CSUM_OFFLOAD_FAILED: virtio-net-offload-csum marker did not PASS while -RequireNetCsumOffload was enabled$details"
+      Write-Host "FAIL: VIRTIO_NET_CSUM_OFFLOAD_FAILED: virtio-net-offload-csum marker did not PASS while -RequireNetCsumOffload/-RequireVirtioNetCsumOffload was enabled$details"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -9152,7 +9152,7 @@ try {
       $scriptExitCode = 1
     }
     "MISSING_VIRTIO_NET_UDP_CSUM_OFFLOAD" {
-      Write-Host "FAIL: MISSING_VIRTIO_NET_UDP_CSUM_OFFLOAD: missing virtio-net-offload-csum marker while -RequireNetUdpCsumOffload was enabled"
+      Write-Host "FAIL: MISSING_VIRTIO_NET_UDP_CSUM_OFFLOAD: missing virtio-net-offload-csum marker while -RequireNetUdpCsumOffload/-RequireVirtioNetUdpCsumOffload was enabled"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -9177,7 +9177,7 @@ try {
       }
       $details = ""
       if ($detailsParts.Count -gt 0) { $details = " (" + ($detailsParts -join " ") + ")" }
-      Write-Host "FAIL: VIRTIO_NET_UDP_CSUM_OFFLOAD_FAILED: virtio-net-offload-csum marker did not PASS while -RequireNetUdpCsumOffload was enabled$details"
+      Write-Host "FAIL: VIRTIO_NET_UDP_CSUM_OFFLOAD_FAILED: virtio-net-offload-csum marker did not PASS while -RequireNetUdpCsumOffload/-RequireVirtioNetUdpCsumOffload was enabled$details"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
