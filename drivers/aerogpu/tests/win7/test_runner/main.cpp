@@ -1473,7 +1473,17 @@ int main(int argc, char** argv) {
                                (unsigned)tests.size());
   }
 
-  const std::wstring report_dir = emit_json ? DirName(json_path) : std::wstring();
+  // `report_dir` is used to locate per-test JSON reports and dbgctl artifacts relative to the suite report.
+  //
+  // Note: if the user passes a bare filename like `--json=report.json`, treat it as being in the
+  // current working directory (".\\") so artifacts land next to report.json as expected.
+  std::wstring report_dir;
+  if (emit_json) {
+    report_dir = DirName(json_path);
+    if (report_dir.empty()) {
+      report_dir = L".\\";
+    }
+  }
   std::vector<std::string> test_json_objects;
   test_json_objects.reserve(tests.size());
 
