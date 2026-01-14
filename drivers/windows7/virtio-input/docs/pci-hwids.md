@@ -76,21 +76,19 @@ Keyboard: PCI device 1af4:1052
 * The “Hardware Ids” list in Device Manager includes more-specific forms (with
   `SUBSYS_...` and `REV_...`). The in-tree Aero INFs intentionally match only
   **Aero contract v1** hardware IDs (revision-gated `REV_01`):
-  - `inf/aero_virtio_input.inf` (keyboard/mouse; SUBSYS-only):
-    - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01` (keyboard)
-    - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01` (mouse)
-  - `inf/aero_virtio_tablet.inf` (tablet / absolute pointer):
+  - `inf/aero_virtio_input.inf` (keyboard/mouse + strict fallback):
+    - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01` (keyboard; **Aero VirtIO Keyboard**)
+    - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01` (mouse; **Aero VirtIO Mouse**)
+    - `PCI\VEN_1AF4&DEV_1052&REV_01` (strict generic fallback; no SUBSYS; **Aero VirtIO Input Device**)
+  - `inf/aero_virtio_tablet.inf` (tablet / absolute pointer; **Aero VirtIO Tablet Device**):
     - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01`
   - Legacy filename alias `inf/virtio-input.inf.disabled` (disabled by default; rename to `virtio-input.inf` to enable):
     - Compatibility filename for workflows/tools that still reference `virtio-input.inf`.
-    - Adds an opt-in strict revision-gated generic fallback HWID match (no SUBSYS): `PCI\VEN_1AF4&DEV_1052&REV_01`.
-    - Allowed to differ from `inf/aero_virtio_input.inf` in the models sections (`[Aero.NTx86]` / `[Aero.NTamd64]`); outside of
-      the models sections it is expected to stay in sync (see `../scripts/check-inf-alias.py`).
-    - Do **not** ship/install it alongside `aero_virtio_input.inf` (overlapping INFs can be confusing). Install only one of
-      the two filenames at a time (`aero_virtio_input.inf` *or* `virtio-input.inf`).
-  This avoids binding to non-contract virtio-input devices (no `REV_01`, wrong DEV, etc) and keeps
-  keyboard/mouse vs tablet selection deterministic by default. The tablet INF is more specific (`SUBSYS_0012...`), so it
-  wins over the generic fallback when both driver packages are present.
+    - From the first section header (`[Version]`) onward, expected to be byte-for-byte identical to `inf/aero_virtio_input.inf`
+      (only the leading banner/comments may differ; see `../scripts/check-inf-alias.py`).
+    - Do **not** ship/install it alongside `aero_virtio_input.inf` (install only one of the two filenames at a time).
+  Tablet devices bind via `inf/aero_virtio_tablet.inf` when that INF matches: its HWID is more specific (`SUBSYS_0012...`),
+  so it wins over the generic fallback when both driver packages are installed.
 * Aero’s Win7 virtio contract encodes the contract major version in the PCI Revision
   ID (contract v1 = `REV_01`). Some QEMU virtio devices report `REV_00` by default;
   for contract testing, use `x-pci-revision=0x01` on the QEMU `-device ...` args.
@@ -115,17 +113,16 @@ The in-tree Win7 virtio-input INFs use these subsystem-qualified HWIDs to assign
 - `SUBSYS_00111AF4` → **Aero VirtIO Mouse** (`inf/aero_virtio_input.inf`)
 - `SUBSYS_00121AF4` → **Aero VirtIO Tablet Device** (`inf/aero_virtio_tablet.inf`)
 
-The canonical keyboard/mouse INF (`inf/aero_virtio_input.inf`) is SUBSYS-gated and does **not** include a strict (no SUBSYS)
-fallback HWID. If you need an opt-in strict generic fallback (`PCI\VEN_1AF4&DEV_1052&REV_01`) for environments where subsystem IDs are
-not exposed/recognized, enable the legacy filename alias (`inf/virtio-input.inf.disabled`, rename to `virtio-input.inf` to enable).
+`inf/aero_virtio_input.inf` also includes a strict, REV-qualified generic fallback HWID (no SUBSYS): `PCI\VEN_1AF4&DEV_1052&REV_01`.
+When binding via the fallback entry, Device Manager will show the generic **Aero VirtIO Input Device** name.
 
-Tablet devices bind via `inf/aero_virtio_tablet.inf` when that INF is installed. The tablet HWID is more specific
-(`SUBSYS_0012...`), so it wins over the generic fallback.
+Tablet devices bind via `inf/aero_virtio_tablet.inf` when that INF matches. The tablet HWID is more specific (`SUBSYS_0012...`),
+so it wins over the generic fallback when both driver packages are installed.
 
 For compatibility with tooling that still expects `virtio-input.inf`, the repo also carries a legacy filename alias INF
-(`inf/virtio-input.inf.disabled`, rename to `virtio-input.inf` to enable). It adds the strict generic fallback model line and is
-allowed to differ from `inf/aero_virtio_input.inf` in the models sections; outside the models sections it is expected to stay in sync
-(see `../scripts/check-inf-alias.py`).
+(`inf/virtio-input.inf.disabled`, rename to `virtio-input.inf` to enable). Policy: it must remain byte-for-byte identical to
+`inf/aero_virtio_input.inf` from the first section header (`[Version]`) onward (only the leading banner/comments may differ; see
+`../scripts/check-inf-alias.py`).
 
 Topology notes:
 

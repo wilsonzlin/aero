@@ -298,45 +298,22 @@ def inf_functional_bytes(path: Path) -> bytes:
     raise RuntimeError(f"{path}: could not find a section header (e.g. [Version])")
 
 
-def strip_inf_sections_bytes(data: bytes, *, sections: set[str]) -> bytes:
-    """Remove entire INF sections (including their headers) by name (case-insensitive)."""
-
-    out: list[bytes] = []
-    skipping = False
-
-    for line in data.splitlines(keepends=True):
-        stripped = line.lstrip(b" \t")
-        if stripped.startswith(b"[") and b"]" in stripped:
-            end = stripped.find(b"]")
-            name = stripped[1:end].strip().decode("utf-8", errors="replace").lower()
-            skipping = name in sections
-        if skipping:
-            continue
-        out.append(line)
-
-    return b"".join(out)
-
-
 def check_inf_alias_drift(*, canonical: Path, alias: Path, repo_root: Path, label: str) -> str | None:
     """
     Compare the canonical INF against its legacy filename alias.
 
-    Policy: the alias INF must be byte-for-byte identical to the canonical INF
-    outside the models sections (`[Aero.NTx86]` / `[Aero.NTamd64]`). Only the
-    leading banner/comment block and the models sections may differ.
+    Policy: the alias INF is a *filename alias only*. From the first section
+    header (typically `[Version]`) onward it must remain byte-for-byte identical
+    to the canonical INF. Only the leading banner/comment block may differ.
     """
 
     try:
-        canonical_body = strip_inf_sections_bytes(
-            inf_functional_bytes(canonical), sections={"aero.ntx86", "aero.ntamd64"}
-        )
+        canonical_body = inf_functional_bytes(canonical)
     except Exception as e:
         return f"{label}: failed to read canonical INF functional bytes: {e}"
 
     try:
-        alias_body = strip_inf_sections_bytes(
-            inf_functional_bytes(alias), sections={"aero.ntx86", "aero.ntamd64"}
-        )
+        alias_body = inf_functional_bytes(alias)
     except Exception as e:
         return f"{label}: failed to read alias INF functional bytes: {e}"
 
@@ -369,10 +346,7 @@ def check_inf_alias_drift(*, canonical: Path, alias: Path, repo_root: Path, labe
         lineterm="",
     )
 
-    return (
-        f"{label}: INF alias drift detected (expected byte-identical outside models sections):\n"
-        + "".join(diff)
-    )
+    return f"{label}: INF alias drift detected (expected byte-identical from [Version] onward):\n" + "".join(diff)
 
 
 def parse_contract_major_version(md: str) -> int:
@@ -2165,10 +2139,10 @@ def validate_virtio_input_model_lines(
       - `require_fallback=False`: forbid the strict fallback HWID.
       - `require_fallback=True`: require the strict fallback HWID.
 
-    The legacy filename alias is allowed to diverge in the models sections
-    (`[Aero.NTx86]` / `[Aero.NTamd64]`) to add the opt-in strict fallback entry,
-    but should otherwise stay in sync with the canonical INF outside those models
-    sections.
+    The legacy filename alias is a *filename alias only*: from the first section
+    header (typically `[Version]`) onward, it is expected to remain byte-for-byte
+    identical to the canonical INF (only the leading banner/comment block may
+    differ).
     """
 
     model_entries = parse_inf_model_entries(inf_path)

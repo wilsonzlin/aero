@@ -11,10 +11,10 @@
 ; - This INF intentionally matches ONLY the tablet subsystem ID (`SUBSYS_00121AF4`) so
 ;   it does not overlap with the keyboard/mouse subsystem-qualified HWIDs in
 ;   `aero_virtio_input.inf`.
-;   - The canonical keyboard/mouse INF is SUBSYS-only.
-;   - The optional legacy filename alias (`virtio-input.inf.disabled`, rename to `virtio-input.inf`
-;     to enable) adds an opt-in strict generic fallback HWID (no SUBSYS). The tablet match is more
-;     specific, so it wins over that fallback when both INFs are installed.
+;   - The keyboard/mouse INF also includes a strict generic fallback HWID (no SUBSYS) so
+;     binding remains revision-gated even when subsystem IDs are not exposed/recognized.
+;   - The tablet match is more specific, so it wins over the generic fallback when the
+;     tablet subsystem ID is present and both INFs are installed.
 ; - Aero contract v1 gates the contract major version via PCI Revision ID (`REV_01`).
 ;
 ; Interrupts (MSI/MSI-X):
