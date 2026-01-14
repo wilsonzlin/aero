@@ -13,8 +13,9 @@ const CTRL_ID: [u8; 4] = *b"XHCI";
 const TAG_BRIDGE_CONTROLLER: u16 = 1;
 const TAG_BRIDGE_TICK_COUNT: u16 = 2;
 
-const TAG_CTRL_TIME_MS: u16 = 26;
-const TAG_CTRL_LAST_TICK_DMA_DWORD: u16 = 27;
+// Keep in sync with `crates/aero-usb/src/xhci/snapshot.rs`.
+const TAG_CTRL_TIME_MS: u16 = 27;
+const TAG_CTRL_LAST_TICK_DMA_DWORD: u16 = 28;
 
 const PCI_COMMAND_BME: u32 = 1 << 2;
 

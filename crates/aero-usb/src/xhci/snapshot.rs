@@ -47,6 +47,9 @@ const TAG_DNCTRL: u16 = 25;
 const TAG_EP0_CONTROL_TD_FULL: u16 = 26;
 
 // New in snapshot v0.7.
+// Note: tag 26 is already used by `TAG_EP0_CONTROL_TD_FULL` (added in v0.5). v0.7 added new
+// controller-local timekeeping fields; they must use fresh tags to avoid SnapshotWriter panicking
+// on duplicate tags.
 const TAG_TIME_MS: u16 = 27;
 const TAG_LAST_TICK_DMA_DWORD: u16 = 28;
 
