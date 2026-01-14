@@ -12,7 +12,8 @@ fn iso_from_dir_fails_on_symlink() -> anyhow::Result<()> {
     let real = root.join("real.txt");
     fs::write(&real, b"real\n")?;
 
-    let link = root.join("link.txt");
+    // Hidden symlink should still fail fast (must not be silently skipped by host-metadata filters).
+    let link = root.join(".link.txt");
     symlink(&real, &link)?;
 
     let out = tempfile::tempdir()?;
@@ -30,4 +31,3 @@ fn iso_from_dir_fails_on_symlink() -> anyhow::Result<()> {
 
     Ok(())
 }
-
