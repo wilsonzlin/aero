@@ -186,7 +186,8 @@ Notes:
   (`web/src/hid/xhci_hid_topology.ts`) and the optional topology APIs exported by
   `XhciControllerBridge` (`attach_hub`, `detach_at_path`, `attach_webhid_device`,
   `attach_usb_hid_passthrough_device`). The I/O worker routes WebHID passthrough devices to xHCI
-  when these exports are present (falling back to UHCI otherwise).
+  when these exports are present. Otherwise it falls back to the UHCI topology path (typically UHCI;
+  in WASM builds that omit UHCI, the same topology manager can be backed by `EhciControllerBridge`).
 - WebUSB passthrough supports both legacy UHCI (full-speed view) and high-speed controllers. When
   the WASM build exports the WebUSB passthrough hooks on xHCI/EHCI bridges (`set_connected`,
   `drain_actions`, `push_completion`, `reset`, `pending_summary`), the I/O worker deterministically prefers xHCI (then
