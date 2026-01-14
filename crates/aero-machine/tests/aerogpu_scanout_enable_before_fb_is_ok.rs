@@ -39,6 +39,7 @@ fn aerogpu_scanout_enable_before_fb_is_ok() {
     assert_eq!(legacy_res, (720, 400));
     assert_eq!(scanout_state.snapshot().source, SCANOUT_SOURCE_LEGACY_TEXT);
 
+    // Locate BAR0 and enable bus mastering (DMA) so scanout reads behave like a real PCI device.
     let bar0_base = {
         let pci_cfg = m.pci_config_ports().expect("pc platform enabled");
         let mut pci_cfg = pci_cfg.borrow_mut();

@@ -2795,20 +2795,29 @@ struct AeroGpuSnapshotV1 {
     vram: Vec<u8>,
 }
 
-fn encode_aerogpu_snapshot_v1(vram: &AeroGpuDevice, bar0: &AeroGpuMmioDevice) -> Vec<u8> {
-    // NOTE: The canonical AeroGPU profile exposes 64MiB of BAR1 VRAM, but `aero_snapshot` caps each
-    // outer `DEVICES` entry at 64MiB. To keep snapshots bounded while still preserving the legacy
-    // VGA window + VBE LFB region, we snapshot only the first 16MiB (matches `aero_gpu_vga`'s
-    // default VRAM size).
-    let save_len = vram.vram.len().min(aero_gpu_vga::DEFAULT_VRAM_SIZE);
-    let vram_len_u32: u32 = save_len.try_into().unwrap_or(u32::MAX);
+// AeroGPU snapshots can be surprisingly large (VRAM can be tens of MiB), and wasm builds in
+// particular have limited headroom when taking an in-memory `Vec<u8>` snapshot.
+//
+// V1 snapshots stored a contiguous VRAM prefix. V2 switches to a sparse page list so that the
+// common case (mostly-zero VRAM, e.g. headless tests) produces a small snapshot while preserving
+// exact VRAM contents when pages are non-zero.
+const AEROGPU_SNAPSHOT_VERSION_V2: u16 = 2;
+
+fn encode_aerogpu_snapshot_v2(vram: &AeroGpuDevice, bar0: &AeroGpuMmioDevice) -> Vec<u8> {
+    // Preserve at most the default legacy VGA/VBE VRAM backing size (matches the V1 policy).
+    let vram_len = vram.vram.len().min(aero_gpu_vga::DEFAULT_VRAM_SIZE);
+    let vram_len_u32: u32 = vram_len.try_into().unwrap_or(u32::MAX);
+
+    // Sparse encoding: store non-zero pages.
+    const PAGE_SIZE: usize = 4096;
+    let page_size_u32: u32 = PAGE_SIZE as u32;
 
     let regs = bar0.snapshot_v1();
 
-    // Pre-size to avoid reallocating the large VRAM copy.
-    let mut out = Vec::with_capacity(256 + save_len);
+    // Conservative header reservation; payload grows with the number of non-zero pages.
+    let mut out = Vec::with_capacity(256);
 
-    // BAR0 register file is encoded as a fixed little-endian struct (field order below).
+    // BAR0 register file (same field order as V1).
     out.extend_from_slice(&regs.abi_version.to_le_bytes());
     out.extend_from_slice(&regs.features.to_le_bytes());
 
@@ -2847,9 +2856,29 @@ fn encode_aerogpu_snapshot_v1(vram: &AeroGpuDevice, bar0: &AeroGpuMmioDevice) ->
     // Host-only WDDM scanout ownership latch.
     out.push(regs.wddm_scanout_active as u8);
 
-    // VRAM length + bytes.
+    // VRAM sparse page list:
+    // - total length (bytes)
+    // - page_size (bytes)
+    // - page_count
     out.extend_from_slice(&vram_len_u32.to_le_bytes());
-    out.extend_from_slice(&vram.vram[..save_len]);
+    out.extend_from_slice(&page_size_u32.to_le_bytes());
+    let page_count_off = out.len();
+    out.extend_from_slice(&0u32.to_le_bytes()); // patched after scanning
+
+    let mut page_count: u32 = 0;
+    for (idx, chunk) in vram.vram[..vram_len].chunks(PAGE_SIZE).enumerate() {
+        if chunk.iter().all(|&b| b == 0) {
+            continue;
+        }
+        page_count = page_count.saturating_add(1);
+        let idx_u32: u32 = idx.try_into().unwrap_or(u32::MAX);
+        let len_u32: u32 = chunk.len().try_into().unwrap_or(u32::MAX);
+        out.extend_from_slice(&idx_u32.to_le_bytes());
+        out.extend_from_slice(&len_u32.to_le_bytes());
+        out.extend_from_slice(chunk);
+    }
+
+    out[page_count_off..page_count_off + 4].copy_from_slice(&page_count.to_le_bytes());
 
     // Optional trailing BAR0 error payload (ABI 1.3+).
     //
@@ -2858,7 +2887,6 @@ fn encode_aerogpu_snapshot_v1(vram: &AeroGpuDevice, bar0: &AeroGpuMmioDevice) ->
     out.extend_from_slice(&regs.error_code.to_le_bytes());
     out.extend_from_slice(&regs.error_fence.to_le_bytes());
     out.extend_from_slice(&regs.error_count.to_le_bytes());
-
     out
 }
 
@@ -2978,6 +3006,155 @@ fn decode_aerogpu_snapshot_v1(bytes: &[u8]) -> Option<AeroGpuSnapshotV1> {
         },
         vram,
     })
+}
+
+fn apply_aerogpu_snapshot_v2(
+    bytes: &[u8],
+    vram: &mut AeroGpuDevice,
+    bar0: &mut AeroGpuMmioDevice,
+) -> Option<()> {
+    fn read_u8(bytes: &[u8], off: &mut usize) -> Option<u8> {
+        let b = *bytes.get(*off)?;
+        *off += 1;
+        Some(b)
+    }
+
+    fn read_u32(bytes: &[u8], off: &mut usize) -> Option<u32> {
+        let end = off.checked_add(4)?;
+        let slice = bytes.get(*off..end)?;
+        *off = end;
+        Some(u32::from_le_bytes([slice[0], slice[1], slice[2], slice[3]]))
+    }
+
+    fn read_u64(bytes: &[u8], off: &mut usize) -> Option<u64> {
+        let end = off.checked_add(8)?;
+        let slice = bytes.get(*off..end)?;
+        *off = end;
+        Some(u64::from_le_bytes([
+            slice[0], slice[1], slice[2], slice[3], slice[4], slice[5], slice[6], slice[7],
+        ]))
+    }
+
+    let mut off = 0usize;
+
+    let abi_version = read_u32(bytes, &mut off)?;
+    let features = read_u64(bytes, &mut off)?;
+
+    let ring_gpa = read_u64(bytes, &mut off)?;
+    let ring_size_bytes = read_u32(bytes, &mut off)?;
+    let ring_control = read_u32(bytes, &mut off)?;
+
+    let fence_gpa = read_u64(bytes, &mut off)?;
+    let completed_fence = read_u64(bytes, &mut off)?;
+
+    let irq_status = read_u32(bytes, &mut off)?;
+    let irq_enable = read_u32(bytes, &mut off)?;
+
+    let scanout0_enable = read_u32(bytes, &mut off)?;
+    let scanout0_width = read_u32(bytes, &mut off)?;
+    let scanout0_height = read_u32(bytes, &mut off)?;
+    let scanout0_format = read_u32(bytes, &mut off)?;
+    let scanout0_pitch_bytes = read_u32(bytes, &mut off)?;
+    let scanout0_fb_gpa = read_u64(bytes, &mut off)?;
+
+    let scanout0_vblank_seq = read_u64(bytes, &mut off)?;
+    let scanout0_vblank_time_ns = read_u64(bytes, &mut off)?;
+    let scanout0_vblank_period_ns = read_u32(bytes, &mut off)?;
+
+    let cursor_enable = read_u32(bytes, &mut off)?;
+    let cursor_x = read_u32(bytes, &mut off)?;
+    let cursor_y = read_u32(bytes, &mut off)?;
+    let cursor_hot_x = read_u32(bytes, &mut off)?;
+    let cursor_hot_y = read_u32(bytes, &mut off)?;
+    let cursor_width = read_u32(bytes, &mut off)?;
+    let cursor_height = read_u32(bytes, &mut off)?;
+    let cursor_format = read_u32(bytes, &mut off)?;
+    let cursor_fb_gpa = read_u64(bytes, &mut off)?;
+    let cursor_pitch_bytes = read_u32(bytes, &mut off)?;
+
+    let wddm_scanout_active = read_u8(bytes, &mut off)? != 0;
+
+    let vram_len = read_u32(bytes, &mut off)? as usize;
+    let page_size = read_u32(bytes, &mut off)? as usize;
+    if page_size == 0 {
+        return None;
+    }
+    let page_count = read_u32(bytes, &mut off)? as usize;
+
+    // Reset unsnapshotted state to a deterministic baseline before applying sparse pages.
+    vram.reset();
+
+    for _ in 0..page_count {
+        let page_idx = read_u32(bytes, &mut off)? as usize;
+        let page_len = read_u32(bytes, &mut off)? as usize;
+        if page_len == 0 || page_len > page_size {
+            return None;
+        }
+        let page_offset = page_idx.checked_mul(page_size)?;
+        let end = page_offset.checked_add(page_len)?;
+        if end > vram_len {
+            return None;
+        }
+        let src_end = off.checked_add(page_len)?;
+        let payload = bytes.get(off..src_end)?;
+        off = src_end;
+
+        let dst_end = page_offset.checked_add(page_len)?;
+        if dst_end > vram.vram.len() {
+            return None;
+        }
+        vram.vram[page_offset..dst_end].copy_from_slice(payload);
+    }
+
+    // Trailing BAR0 error payload (ABI 1.3+). This was added after the initial v2 encoding,
+    // so treat it as optional and default to zero when absent.
+    let (error_code, error_fence, error_count) = if bytes.len() >= off.saturating_add(16) {
+        let error_code = read_u32(bytes, &mut off).unwrap_or(0);
+        let error_fence = read_u64(bytes, &mut off).unwrap_or(0);
+        let error_count = read_u32(bytes, &mut off).unwrap_or(0);
+        (error_code, error_fence, error_count)
+    } else {
+        (0, 0, 0)
+    };
+    // Forward-compatible: ignore trailing bytes from future versions.
+
+    bar0.reset();
+    bar0.restore_snapshot_v1(&crate::aerogpu::AeroGpuMmioSnapshotV1 {
+        abi_version,
+        features,
+        ring_gpa,
+        ring_size_bytes,
+        ring_control,
+        fence_gpa,
+        completed_fence,
+        irq_status,
+        irq_enable,
+        error_code,
+        error_fence,
+        error_count,
+        scanout0_enable,
+        scanout0_width,
+        scanout0_height,
+        scanout0_format,
+        scanout0_pitch_bytes,
+        scanout0_fb_gpa,
+        scanout0_vblank_seq,
+        scanout0_vblank_time_ns,
+        scanout0_vblank_period_ns,
+        cursor_enable,
+        cursor_x,
+        cursor_y,
+        cursor_hot_x,
+        cursor_hot_y,
+        cursor_width,
+        cursor_height,
+        cursor_format,
+        cursor_fb_gpa,
+        cursor_pitch_bytes,
+        wddm_scanout_active,
+    });
+
+    Some(())
 }
 
 // -----------------------------------------------------------------------------
@@ -9241,9 +9418,9 @@ impl snapshot::SnapshotSource for Machine {
         if let (Some(aerogpu), Some(aerogpu_mmio)) = (&self.aerogpu, &self.aerogpu_mmio) {
             devices.push(snapshot::DeviceState {
                 id: snapshot::DeviceId::AEROGPU,
-                version: V1,
+                version: AEROGPU_SNAPSHOT_VERSION_V2,
                 flags: 0,
-                data: encode_aerogpu_snapshot_v1(&aerogpu.borrow(), &aerogpu_mmio.borrow()),
+                data: encode_aerogpu_snapshot_v2(&aerogpu.borrow(), &aerogpu_mmio.borrow()),
             });
         }
 
@@ -10037,6 +10214,12 @@ impl snapshot::SnapshotTarget for Machine {
                             bar0.restore_snapshot_v1(&decoded.bar0);
                         }
                     }
+                }
+            } else if state.version == AEROGPU_SNAPSHOT_VERSION_V2 {
+                if let (Some(vram_dev), Some(bar0_dev)) = (&self.aerogpu, &self.aerogpu_mmio) {
+                    let mut vram = vram_dev.borrow_mut();
+                    let mut bar0 = bar0_dev.borrow_mut();
+                    let _ = apply_aerogpu_snapshot_v2(&state.data, &mut vram, &mut bar0);
                 }
             }
         }

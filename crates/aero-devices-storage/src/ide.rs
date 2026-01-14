@@ -137,7 +137,6 @@ impl IdeChannel {
             irq_asserted: false,
         }
     }
-
     fn interrupts_enabled(&self) -> bool {
         // Device control bit 1: nIEN (0 = enabled).
         self.dev_ctl & 0x02 == 0
