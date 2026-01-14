@@ -227,6 +227,16 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
                         let _ = cmd::resolve_stage(cmd_sc.stage, cmd_sc.reserved0);
                     }
                 }
+                Some(cmd::AerogpuCmdOpcode::SetShaderConstantsI) => {
+                    if let Some(packet_bytes) = packet_bytes(cmd_bytes, &pkt) {
+                        let _ = cmd::decode_cmd_set_shader_constants_i_payload_le(packet_bytes);
+                    }
+                }
+                Some(cmd::AerogpuCmdOpcode::SetShaderConstantsB) => {
+                    if let Some(packet_bytes) = packet_bytes(cmd_bytes, &pkt) {
+                        let _ = cmd::decode_cmd_set_shader_constants_b_payload_le(packet_bytes);
+                    }
+                }
                 Some(cmd::AerogpuCmdOpcode::CopyBuffer) => {
                     let _ = pkt.decode_copy_buffer_payload_le();
                     let Some(packet_bytes) = packet_bytes(cmd_bytes, &pkt) else {
