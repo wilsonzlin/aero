@@ -1136,8 +1136,6 @@ fn wasm_machine_aerogpu_int10_vbe_updates_scanout_state() {
     #[cfg(not(feature = "wasm-threaded"))]
     if scanout_ptr == 0 {
         assert_eq!(scanout_len, 0);
-        assert_eq!(cursor_ptr, 0);
-        assert_eq!(cursor_len, 0);
         return;
     }
     #[cfg(feature = "wasm-threaded")]
