@@ -274,7 +274,8 @@ fn build_patched_rdef_chunk(seed: &[u8]) -> Vec<u8> {
     out[entry + 16..entry + 20].copy_from_slice(&u.arbitrary::<u32>().unwrap_or(0).to_le_bytes()); // sample_count
     out[entry + 20..entry + 24].copy_from_slice(&u.arbitrary::<u32>().unwrap_or(0).to_le_bytes()); // bind_point
     // bind_count: keep non-zero and small
-    out[entry + 24..entry + 28].copy_from_slice(&u32::from(u.arbitrary::<u8>().unwrap_or(1)).to_le_bytes());
+    let bind_count: u32 = u32::from(u.arbitrary::<u8>().unwrap_or(0) % 8) + 1;
+    out[entry + 24..entry + 28].copy_from_slice(&bind_count.to_le_bytes());
     out[entry + 28..entry + 32].copy_from_slice(&u.arbitrary::<u32>().unwrap_or(0).to_le_bytes()); // flags
 
     // Name string (must be valid UTF-8).
