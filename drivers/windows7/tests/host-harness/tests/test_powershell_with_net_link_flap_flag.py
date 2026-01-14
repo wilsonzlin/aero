@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import re
 import unittest
 from pathlib import Path
 
@@ -16,10 +15,10 @@ class PowerShellHarnessNetLinkFlapFlagTests(unittest.TestCase):
     def test_with_net_link_flap_param_exists(self) -> None:
         # Ensure the public harness switch exists (so users can enable the QMP flap + require markers).
         self.assertIn("[switch]$WithNetLinkFlap", self.text)
-        # Alias list may grow; keep the test tolerant to additional aliases.
+        # Alias list may grow; keep the test tolerant to additional aliases and formatting changes.
         self.assertRegex(
             self.text,
-            r'Alias\([^)]*"WithVirtioNetLinkFlap"[^)]*"EnableVirtioNetLinkFlap"[^)]*\)',
+            r'\[Alias\s*\((?=[^)]*"WithVirtioNetLinkFlap")(?=[^)]*"EnableVirtioNetLinkFlap")[^)]*\)\]',
         )
 
     def test_wait_result_enforces_link_flap_marker_when_required(self) -> None:

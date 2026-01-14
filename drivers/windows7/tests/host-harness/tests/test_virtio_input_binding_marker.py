@@ -46,6 +46,20 @@ class VirtioInputBindingMarkerTests(unittest.TestCase):
             "pnp_id=PCI\\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01",
         )
 
+    def test_emits_pass_marker_with_extra_fields(self) -> None:
+        tail = (
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-binding|PASS|service=aero_virtio_input|"
+            b"pnp_id=PCI\\VEN_1AF4&DEV_1052&REV_01|hwid0=PCI\\VEN_1AF4&DEV_1052&REV_01|"
+            b"cm_problem=0|cm_status=0x00000000\n"
+        )
+        out = self._emit(tail)
+        self.assertEqual(
+            out,
+            "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_BINDING|PASS|service=aero_virtio_input|"
+            "pnp_id=PCI\\VEN_1AF4&DEV_1052&REV_01|hwid0=PCI\\VEN_1AF4&DEV_1052&REV_01|"
+            "cm_problem=0|cm_status=0x00000000",
+        )
+
     def test_emits_fail_marker_wrong_service(self) -> None:
         tail = (
             b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-binding|FAIL|reason=wrong_service|"
@@ -57,6 +71,20 @@ class VirtioInputBindingMarkerTests(unittest.TestCase):
             out,
             "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_BINDING|FAIL|reason=wrong_service|"
             "expected=aero_virtio_input|actual=vioinput|pnp_id=PCI\\VEN_1AF4&DEV_1052&REV_01",
+        )
+
+    def test_emits_fail_marker_device_error_fields(self) -> None:
+        tail = (
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-binding|FAIL|reason=device_error|"
+            b"service=aero_virtio_input|pnp_id=PCI\\VEN_1AF4&DEV_1052&REV_01|"
+            b"cm_problem=10|cm_status=0x0000000A\n"
+        )
+        out = self._emit(tail)
+        self.assertEqual(
+            out,
+            "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_BINDING|FAIL|reason=device_error|"
+            "service=aero_virtio_input|pnp_id=PCI\\VEN_1AF4&DEV_1052&REV_01|"
+            "cm_problem=10|cm_status=0x0000000A",
         )
 
 
@@ -87,4 +115,3 @@ class VirtioInputBindingGatingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
