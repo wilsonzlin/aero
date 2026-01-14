@@ -1056,6 +1056,29 @@ impl ControlEndpoint {
                         let direction = xhci_trb_data_status_direction(&trb);
                         let len = xhci_trb_transfer_len(&trb).min(MAX_CONTROL_DATA_LEN);
                         let idt = xhci_trb_idt(&trb);
+                        // Immediate-data (IDT=1) payload lives in the 64-bit parameter field and is
+                        // therefore limited to 8 bytes. Reject oversized lengths up-front so we
+                        // don't invoke the device state machine with an impossible max packet size
+                        // and then retroactively abort the transfer.
+                        if idt && len > 8 {
+                            Self::push_event(
+                                events,
+                                mem,
+                                trb_addr,
+                                CompletionCode::TrbError,
+                                len,
+                                endpoint_id,
+                                slot_id,
+                            );
+                            if self.ring.consume(&trb).is_err() {
+                                self.fault_ring(mem, events, trb_addr, endpoint_id, slot_id);
+                                break;
+                            }
+                            self.skip_until_status_or_empty(mem);
+                            self.reset_to_setup();
+                            processed_any = true;
+                            continue;
+                        }
                         let mut immediate = trb.parameter.to_le_bytes();
                         // For IN immediate-data transfers, we will write the response bytes back
                         // into the TRB parameter field. Start from zeroed bytes so we do not

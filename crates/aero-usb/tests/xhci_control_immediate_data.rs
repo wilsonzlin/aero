@@ -61,6 +61,24 @@ impl UsbDeviceModel for ImmediateControlInDevice {
     }
 }
 
+#[derive(Default)]
+struct NakImmediateControlInDevice;
+
+impl UsbDeviceModel for NakImmediateControlInDevice {
+    fn handle_control_request(
+        &mut self,
+        setup: SetupPacket,
+        _data_stage: Option<&[u8]>,
+    ) -> ControlResponse {
+        assert_eq!(setup.bm_request_type, 0xC0);
+        assert_eq!(setup.b_request, 0x77);
+        assert_eq!(setup.w_value, 0);
+        assert_eq!(setup.w_index, 0);
+        assert_eq!(setup.w_length, 9);
+        ControlResponse::Nak
+    }
+}
+
 #[test]
 fn xhci_control_out_immediate_data_stage_delivers_payload() {
     let mut mem = TestMemory::new(0x40000);
@@ -215,4 +233,71 @@ fn xhci_control_in_immediate_data_stage_writes_trb_parameter() {
         assert_eq!(evt.status & 0x00ff_ffff, 0);
         assert_eq!(evt.parameter, ptr as u64);
     }
+}
+
+#[test]
+fn xhci_control_in_immediate_data_stage_rejects_oversized_length() {
+    let mut mem = TestMemory::new(0x40000);
+    let mut alloc = Alloc::new(0x1000);
+
+    let event_ring_base = alloc.alloc(16 * 16, 16);
+
+    // Transfer ring: Setup/Data/Status/Link.
+    let tr_ring_base = alloc.alloc(4 * 16, 16);
+    let setup_trb_addr = tr_ring_base;
+    let data_trb_addr = tr_ring_base + 16;
+    let status_trb_addr = tr_ring_base + 32;
+    let link_trb_addr = tr_ring_base + 48;
+
+    // Control IN request with a 9-byte DATA stage (invalid for IDT=1 which is limited to 8 bytes).
+    let setup_bytes = [0xC0u8, 0x77, 0x00, 0x00, 0x00, 0x00, 0x09, 0x00];
+    let setup_control = TRB_CYCLE
+        | TRB_IOC
+        | ((u32::from(TrbType::SetupStage.raw())) << TRB_TRB_TYPE_SHIFT)
+        | SETUP_TRT_IN;
+    Trb::new(u64::from_le_bytes(setup_bytes), 8, setup_control)
+        .write_to(&mut mem, setup_trb_addr as u64);
+
+    let data_control = TRB_CYCLE
+        | TRB_IOC
+        | TRB_IDT
+        | TRB_DIR_IN
+        | ((u32::from(TrbType::DataStage.raw())) << TRB_TRB_TYPE_SHIFT);
+    Trb::new(0, 9, data_control).write_to(&mut mem, data_trb_addr as u64);
+
+    let status_control =
+        TRB_CYCLE | TRB_IOC | ((u32::from(TrbType::StatusStage.raw())) << TRB_TRB_TYPE_SHIFT);
+    Trb::new(0, 0, status_control).write_to(&mut mem, status_trb_addr as u64);
+
+    let mut link = Trb::new(tr_ring_base as u64, 0, 0);
+    link.set_cycle(true);
+    link.set_trb_type(TrbType::Link);
+    link.set_link_toggle_cycle(true);
+    link.write_to(&mut mem, link_trb_addr as u64);
+
+    let mut xhci = Ep0TransferEngine::new_with_ports(1);
+    xhci.set_event_ring(event_ring_base as u64, 16);
+    xhci.hub_mut().attach(0, Box::new(NakImmediateControlInDevice::default()));
+
+    let slot_id = xhci.enable_slot(0).expect("slot must be allocated");
+    assert!(xhci.configure_ep0(slot_id, tr_ring_base as u64, true, 64));
+
+    xhci.ring_doorbell(&mut mem, slot_id, 1);
+
+    // IOC on SETUP should still produce a success event.
+    let evt0 = Trb::read_from(&mut mem, event_ring_base as u64);
+    assert_eq!(evt0.trb_type(), TrbType::TransferEvent);
+    assert_eq!(evt0.completion_code_raw(), CompletionCode::Success.as_u8());
+    assert_eq!(evt0.parameter, setup_trb_addr as u64);
+
+    // Oversized IDT length must be rejected up-front with TRB Error.
+    let evt1 = Trb::read_from(&mut mem, event_ring_base as u64 + 16);
+    assert_eq!(evt1.trb_type(), TrbType::TransferEvent);
+    assert_eq!(evt1.completion_code_raw(), CompletionCode::TrbError.as_u8());
+    assert_eq!(evt1.parameter, data_trb_addr as u64);
+    assert_eq!(evt1.status & 0x00ff_ffff, 9);
+
+    // No status-stage event should be generated in this error path.
+    let evt2 = Trb::read_from(&mut mem, event_ring_base as u64 + 32);
+    assert!(!evt2.cycle(), "third event ring entry should be empty");
 }
