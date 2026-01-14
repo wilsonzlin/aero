@@ -1420,6 +1420,40 @@ fn assemble_ps3_rep_operand_count_len() -> Vec<u32> {
     out
 }
 
+fn assemble_ps2_unknown_opcode_operand_count_len() -> Vec<u32> {
+    // ps_2_0:
+    //   def c0, 1,0,0,1
+    //   <unknown opcode>
+    //   mov oC0, c0
+    //   end
+    //
+    // Encoded using operand-count length fields (excluding the opcode token). This shader is
+    // intended to force SM3 translation to fall back to the legacy translator (because of the
+    // unknown opcode) while still requiring operand-count length normalization for `shader::parse`
+    // to succeed (because of the `def`).
+    let mut out = vec![0xFFFF0200];
+    // def c0, 1.0, 0.0, 0.0, 1.0
+    out.extend(enc_inst_operand_count_len(
+        0x0051,
+        &[
+            enc_dst(2, 0, 0xF),
+            0x3F80_0000,
+            0x0000_0000,
+            0x0000_0000,
+            0x3F80_0000,
+        ],
+    ));
+    // Unknown opcode 0x1234 (no operands).
+    out.extend(enc_inst_operand_count_len(0x1234, &[]));
+    // mov oC0, c0
+    out.extend(enc_inst_operand_count_len(
+        0x0001,
+        &[enc_dst(8, 0, 0xF), enc_src(2, 0, 0xE4)],
+    ));
+    out.push(0x0000FFFF);
+    out
+}
+
 fn assemble_vs2_passthrough_operand_count_len() -> Vec<u32> {
     // vs_2_0: mov oPos, v0; end (operand-count length encoding).
     let mut out = vec![0xFFFE0200];
@@ -3165,6 +3199,33 @@ fn translate_entrypoint_accepts_operand_count_length_encoding_with_rep() {
 }
 
 #[test]
+fn translate_entrypoint_fallback_accepts_operand_count_length_encoding() {
+    // The high-level translator should normalize operand-count length encoding before invoking the
+    // legacy fallback translator (which expects total-length instruction encoding).
+    //
+    // This shader forces fallback by including an unknown opcode, but still contains a `def`
+    // instruction which will be mis-parsed (truncated) unless length normalization happens.
+    let ps_bytes = to_bytes(&assemble_ps2_unknown_opcode_operand_count_len());
+    let translated =
+        shader_translate::translate_d3d9_shader_to_wgsl(&ps_bytes, shader::WgslOptions::default())
+            .unwrap();
+    assert_eq!(
+        translated.backend,
+        shader_translate::ShaderTranslateBackend::LegacyFallback
+    );
+
+    let module = naga::front::wgsl::parse_str(&translated.wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+    assert!(translated.wgsl.contains("@fragment"));
+    assert_eq!(translated.entry_point, "fs_main");
+}
+
+#[test]
 fn translate_entrypoint_accepts_operand_count_length_encoding_in_dxbc_container() {
     // Ensure operand-count-encoded raw token streams remain supported when wrapped in a DXBC
     // container (the runtime commonly receives DXBC blobs from D3DCompile).
@@ -3206,6 +3267,18 @@ fn sm3_translate_to_wgsl_accepts_operand_count_length_encoding() {
     )
     .validate(&module)
     .expect("wgsl validate");
+}
+
+#[test]
+fn normalize_sm2_sm3_instruction_lengths_patches_rep() {
+    let ps_bytes = to_bytes(&assemble_ps3_rep_operand_count_len());
+    let normalized = crate::token_stream::normalize_sm2_sm3_instruction_lengths(&ps_bytes).unwrap();
+
+    // rep opcode token is the first instruction token after the version DWORD.
+    let bytes = &normalized.as_ref()[4..8];
+    let token = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+    let len_field = (token >> 24) & 0x0F;
+    assert_eq!(len_field, 2, "expected rep to be patched to total length 2");
 }
 
 #[test]

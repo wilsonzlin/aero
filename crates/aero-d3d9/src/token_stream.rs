@@ -18,6 +18,7 @@ fn expected_operand_count_range(opcode: u16) -> Option<(usize, usize)> {
     // - Operand-less instructions are omitted since they do not distinguish encodings.
     Some(match opcode {
         0x0001 => (2, 2), // mov dst, src
+        0x002E => (2, 2), // mova dst, src
         0x0002 => (3, 3), // add dst, src0, src1
         0x0003 => (3, 3), // sub
         0x0004 => (4, 4), // mad dst, src0, src1, src2
@@ -34,17 +35,27 @@ fn expected_operand_count_range(opcode: u16) -> Option<(usize, usize)> {
         0x000F => (2, 2), // log
         0x0012 => (4, 4), // lrp
         0x0013 => (2, 2), // frc
+        0x001B => (2, 2), // loop aL, i#
         0x0020 => (3, 3), // pow
+        0x0026 => (1, 1), // rep i#
         0x0028 => (1, 1), // if
         0x0029 => (2, 2), // ifc
+        0x002D => (2, 2), // breakc src0, src1 (compare op encoded in opcode token)
+        0x0041 => (1, 1), // texkill src
         0x0042 => (3, 3), // texld dst, coord, sampler
         0x0051 => (5, 5), // def
+        0x0052 => (5, 5), // defi
         0x0053 => (2, 2), // defb
         0x0054 => (3, 3), // seq
         0x0055 => (3, 3), // sne
+        0x0056 => (2, 2), // dsx/ddx
+        0x0057 => (2, 2), // dsy/ddy
         0x0058 => (4, 4), // cmp
         0x0059 => (4, 4), // dp2add
         0x005A => (3, 3), // dp2
+        0x005D => (5, 5), // texldd dst, coord, ddx, ddy, sampler
+        0x005E => (3, 3), // setp dst, src0, src1
+        0x005F => (3, 3), // texldl dst, coord, sampler
         _ => return None,
     })
 }
