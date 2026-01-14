@@ -786,7 +786,7 @@ fn ehci_remote_wakeup_enters_resume_state_through_nested_hubs() {
             w_length: 0,
         },
     );
-    // Enable hub remote wake so it can propagate downstream events.
+    // Enable hub remote wake on the outer hub (exercises hub feature plumbing).
     control_no_data(
         &mut ehci,
         1,
@@ -854,7 +854,7 @@ fn ehci_remote_wakeup_enters_resume_state_through_nested_hubs() {
             w_length: 0,
         },
     );
-    // Enable hub remote wake on the inner hub too.
+    // Enable hub remote wake on the inner hub (exercises hub feature plumbing).
     control_no_data(
         &mut ehci,
         2,
@@ -1014,7 +1014,7 @@ fn ehci_remote_wakeup_does_not_propagate_through_nested_hubs_without_inner_hub_r
             w_length: 0,
         },
     );
-    // Enable hub remote wake on the outer hub only.
+    // Enable hub remote wake on the outer hub only (inner hub remains disabled).
     control_no_data(
         &mut ehci,
         1,
