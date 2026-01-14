@@ -559,8 +559,29 @@ async fn verify(args: VerifyArgs) -> Result<()> {
         .to_string();
 
     eprintln!("Downloading s3://{}/{}...", args.bucket, manifest_key);
-    let manifest: ManifestV1 =
-        download_json_object_with_retry(&s3, &args.bucket, &manifest_key, args.retries).await?;
+    let manifest: ManifestV1 = match download_json_object_with_retry(
+        &s3,
+        &args.bucket,
+        &manifest_key,
+        args.retries,
+    )
+    .await
+    {
+        Ok(manifest) => manifest,
+        Err(err)
+            if is_object_not_found_error(&err)
+                && args.prefix.is_some()
+                && args.image_version.is_none() =>
+        {
+            return Err(err).with_context(|| {
+                    format!(
+                        "manifest.json was not found at s3://{}/{manifest_key}. If --prefix is an image root prefix, pass --image-version (or use --manifest-key).",
+                        args.bucket
+                    )
+                });
+        }
+        Err(err) => return Err(err),
+    };
     validate_manifest_v1(&manifest, args.max_chunks)?;
     let manifest = Arc::new(manifest);
 
@@ -1125,6 +1146,11 @@ fn error_chain_summary(err: &anyhow::Error) -> String {
         .map(|cause| cause.to_string())
         .collect::<Vec<_>>()
         .join(": ")
+}
+
+fn is_object_not_found_error(err: &anyhow::Error) -> bool {
+    err.chain()
+        .any(|cause| cause.to_string().contains("object not found (404)"))
 }
 
 async fn verify_chunk_once(
