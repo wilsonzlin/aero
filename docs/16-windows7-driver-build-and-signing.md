@@ -159,7 +159,8 @@ See also the examples under `drivers/_template/`:
 >   (for environments where subsystem IDs are not exposed/recognized; shown as **Aero VirtIO Input Device**).
 >
 > Tablet devices bind via the separate `inf/aero_virtio_tablet.inf` (`SUBSYS_00121AF4`); that INF is more specific and wins
-> over the generic fallback match when both packages are present.
+> over the generic fallback match when both packages are present. If the tablet INF is not installed, the generic fallback entry
+> can also bind to tablet devices (but will use the generic device name).
 >
 > The repo also carries an optional legacy filename alias checked in disabled-by-default
 > (`inf/virtio-input.inf.disabled` → rename to `inf/virtio-input.inf`) for compatibility with workflows/tools that still

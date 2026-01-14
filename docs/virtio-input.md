@@ -132,7 +132,7 @@ Contract note:
   - The canonical keyboard/mouse INF (`drivers/windows7/virtio-input/inf/aero_virtio_input.inf`) matches:
     - subsystem-qualified keyboard/mouse HWIDs (`SUBSYS_0010` / `SUBSYS_0011`) for distinct Device Manager names, and
     - a strict revision-gated generic fallback HWID (no `SUBSYS`): `PCI\VEN_1AF4&DEV_1052&REV_01`
-      (Device Manager name: **Aero VirtIO Input Device**).
+      (for environments where subsystem IDs are not exposed/recognized; shown as **Aero VirtIO Input Device**).
       - When subsystem IDs are present, the more specific `SUBSYS_...&REV_01` matches win and the devices show up as
         **Aero VirtIO Keyboard** / **Aero VirtIO Mouse**.
   - The legacy alias INF (`drivers/windows7/virtio-input/inf/virtio-input.inf.disabled`; rename to `virtio-input.inf` to enable)
@@ -144,7 +144,9 @@ Contract note:
     - It is a filename-only alias and does **not** change HWID matching behavior.
     - It is checked in disabled-by-default (`*.inf.disabled`) to avoid accidentally shipping/installing two overlapping INFs.
   - Tablet devices bind via the separate tablet INF (`drivers/windows7/virtio-input/inf/aero_virtio_tablet.inf`,
-    `SUBSYS_00121AF4`). That HWID is more specific, so it wins over the generic fallback when both driver packages are installed.
+    `SUBSYS_00121AF4`). That HWID is more specific, so it wins over the generic fallback when both driver packages are
+    installed. If the tablet INF is not installed, the generic fallback entry can also bind to tablet devices (but will use the
+    generic device name).
   - Do not ship/install both `aero_virtio_input.inf` and `virtio-input.inf` at the same time (duplicate overlapping INFs can
     lead to confusing PnP driver selection). Ship/install **only one** of the two filenames at a time.
 - The driver also validates the Revision ID at runtime.
