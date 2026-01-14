@@ -73,3 +73,23 @@ fn std_file_backend_does_not_disturb_file_cursor() {
     let after = file.stream_position().unwrap();
     assert_eq!(before, after);
 }
+
+#[test]
+fn std_file_backend_offset_overflow_is_reported() {
+    let file = tempfile::tempfile().unwrap();
+    let mut backend = StdFileBackend::from_file(file);
+
+    let mut buf = [0u8; 2];
+
+    let err = backend.read_at(u64::MAX, &mut buf).unwrap_err();
+    assert!(matches!(err, DiskError::OffsetOverflow));
+
+    let err = backend.read_at(u64::MAX - 1, &mut buf).unwrap_err();
+    assert!(matches!(err, DiskError::OffsetOverflow));
+
+    let err = backend.write_at(u64::MAX, &buf).unwrap_err();
+    assert!(matches!(err, DiskError::OffsetOverflow));
+
+    let err = backend.write_at(u64::MAX - 1, &buf).unwrap_err();
+    assert!(matches!(err, DiskError::OffsetOverflow));
+}
