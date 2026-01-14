@@ -626,7 +626,9 @@ fn validate_wgsl_binding_contract(
                 .parse()
                 .map_err(|_| "failed to parse sampler index for tex binding".to_string())?;
             if idx >= MAX_SAMPLERS as u32 {
-                continue;
+                return Err(format!(
+                    "WGSL declares out-of-range texture binding tex{idx} (MAX_SAMPLERS={MAX_SAMPLERS})"
+                ));
             }
             let group = parse_wgsl_attr_u32(line, "group")
                 .ok_or_else(|| format!("tex{idx} binding is missing @group()"))?;
@@ -641,6 +643,15 @@ fn validate_wgsl_binding_contract(
             if binding != expected_binding {
                 return Err(format!(
                     "tex{idx} has unexpected @binding({binding}); expected @binding({expected_binding})"
+                ));
+            }
+            let has_known_type = line.contains("texture_2d<f32>")
+                || line.contains("texture_cube<f32>")
+                || line.contains("texture_3d<f32>")
+                || line.contains("texture_1d<f32>");
+            if !has_known_type {
+                return Err(format!(
+                    "tex{idx} has unexpected type; expected texture_{{2d,cube,3d,1d}}<f32>"
                 ));
             }
             if !tex_slots.insert(idx) {
@@ -665,7 +676,9 @@ fn validate_wgsl_binding_contract(
                 .parse()
                 .map_err(|_| "failed to parse sampler index for samp binding".to_string())?;
             if idx >= MAX_SAMPLERS as u32 {
-                continue;
+                return Err(format!(
+                    "WGSL declares out-of-range sampler binding samp{idx} (MAX_SAMPLERS={MAX_SAMPLERS})"
+                ));
             }
             let group = parse_wgsl_attr_u32(line, "group")
                 .ok_or_else(|| format!("samp{idx} binding is missing @group()"))?;
@@ -681,6 +694,9 @@ fn validate_wgsl_binding_contract(
                 return Err(format!(
                     "samp{idx} has unexpected @binding({binding}); expected @binding({expected_binding})"
                 ));
+            }
+            if !line.contains(": sampler;") {
+                return Err(format!("samp{idx} has unexpected type; expected sampler"));
             }
             if !samp_slots.insert(idx) {
                 return Err(format!("WGSL declares samp{idx} more than once"));
@@ -699,6 +715,9 @@ fn validate_wgsl_binding_contract(
     }
     if stage == shader::ShaderStage::Vertex && !half_pixel_center && has_half_pixel {
         return Err("WGSL declares half_pixel uniform but half_pixel_center is disabled".into());
+    }
+    if stage != shader::ShaderStage::Vertex && has_half_pixel {
+        return Err("WGSL declares half_pixel uniform in a non-vertex shader".into());
     }
     if tex_slots != samp_slots {
         return Err(format!(
