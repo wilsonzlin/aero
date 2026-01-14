@@ -140,7 +140,7 @@ fn vs_as_compute_writes_vs_out_regs_non_indexed() {
             ([4.0f32, 5.0, 6.0], [1.0f32, 0.0, 0.0, 1.0]),
         ];
         let mut vb_bytes = Vec::new();
-        for (pos, col) in vertices {
+        for (pos, col) in vertices.iter() {
             for f in pos {
                 vb_bytes.extend_from_slice(&f.to_le_bytes());
             }
@@ -230,21 +230,20 @@ fn vs_as_compute_writes_vs_out_regs_non_indexed() {
         let vecs = unpack_vec4_u32_as_f32(&words);
 
         // Layout: [patch_id_total][control_point_id=0][out_reg], flattened as:
-        // patch0: o0,o1; patch1:o0,o1; ...
-        let expected: Vec<[f32; 4]> = vec![
-            // instance0, vertex0
-            [1.0, 2.0, 3.0, 1.0],
-            [0.25, 0.5, 0.75, 1.0],
-            // instance0, vertex1
-            [4.0, 5.0, 6.0, 1.0],
-            [1.0, 0.0, 0.0, 1.0],
-            // instance1, vertex0
-            [1.0, 2.0, 3.0, 1.0],
-            [0.25, 0.5, 0.75, 1.0],
-            // instance1, vertex1
-            [4.0, 5.0, 6.0, 1.0],
-            [1.0, 0.0, 0.0, 1.0],
-        ];
+        // patch0: o0,o1,(zeros...); patch1:o0,o1,(zeros...); ...
+        //
+        // `vs_passthrough.dxbc` currently exports 2 registers, but keep this robust if it ever
+        // grows additional outputs: the placeholder VS-as-compute shader zeros regs >= 2.
+        let mut expected: Vec<[f32; 4]> = Vec::new();
+        for _inst in 0..instance_count {
+            for (pos, col) in vertices.iter() {
+                expected.push([pos[0], pos[1], pos[2], 1.0]);
+                expected.push([col[0], col[1], col[2], col[3]]);
+                for _ in 2..out_reg_count {
+                    expected.push([0.0, 0.0, 0.0, 0.0]);
+                }
+            }
+        }
         assert_eq!(vecs, expected);
     });
 }
@@ -293,7 +292,7 @@ fn vs_as_compute_supports_index_pulling() {
             ([0.0f32, 0.0, 10.0], [0.0f32, 0.0, 1.0, 1.0]),
         ];
         let mut vb_bytes = Vec::new();
-        for (pos, col) in vertices {
+        for (pos, col) in vertices.iter() {
             for f in pos {
                 vb_bytes.extend_from_slice(&f.to_le_bytes());
             }
@@ -415,17 +414,15 @@ fn vs_as_compute_supports_index_pulling() {
         let words: Vec<u32> = bytemuck::cast_slice::<u8, u32>(&bytes).to_vec();
         let vecs = unpack_vec4_u32_as_f32(&words);
 
-        let expected: Vec<[f32; 4]> = vec![
-            // idx0 = 2
-            [0.0, 0.0, 10.0, 1.0],
-            [0.0, 0.0, 1.0, 1.0],
-            // idx1 = 0
-            [10.0, 0.0, 0.0, 1.0],
-            [1.0, 0.0, 0.0, 1.0],
-            // idx2 = 1
-            [0.0, 10.0, 0.0, 1.0],
-            [0.0, 1.0, 0.0, 1.0],
-        ];
+        let mut expected: Vec<[f32; 4]> = Vec::new();
+        for &idx in indices.iter() {
+            let (pos, col) = vertices[idx as usize];
+            expected.push([pos[0], pos[1], pos[2], 1.0]);
+            expected.push([col[0], col[1], col[2], col[3]]);
+            for _ in 2..out_reg_count {
+                expected.push([0.0, 0.0, 0.0, 0.0]);
+            }
+        }
         assert_eq!(vecs, expected);
     });
 }
