@@ -4355,6 +4355,7 @@ function renderAudioPanel(): HTMLElement {
     }
     return {
       enabled: typeof o.enabled === "boolean" ? o.enabled : null,
+      message: typeof o.message === "string" ? o.message : null,
       metrics,
       ring: ring
         ? {
