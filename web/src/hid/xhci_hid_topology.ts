@@ -1,4 +1,9 @@
 import type { GuestUsbPath } from "../platform/hid_passthrough_protocol";
+import {
+  EXTERNAL_HUB_ROOT_PORT,
+  WEBUSB_GUEST_ROOT_PORT,
+  remapLegacyRootPortToExternalHubPort,
+} from "../usb/uhci_external_hub";
 
 export type XhciHidPassthroughDeviceKind = "webhid" | "usb-hid-passthrough";
 
@@ -39,6 +44,9 @@ function isValidDevicePath(path: GuestUsbPath): boolean {
   if (path.length > XHCI_MAX_ROUTE_TIER_COUNT + 1) return false;
   const root = path[0];
   if (typeof root !== "number" || !Number.isFinite(root) || !Number.isInteger(root) || root < 0) return false;
+  // xHCI root port 1 is reserved for WebUSB passthrough (see `crates/aero-wasm::XhciControllerBridge`).
+  // Avoid attaching HID passthrough devices there; callers should prefer root port 0 (external hub).
+  if (root === WEBUSB_GUEST_ROOT_PORT) return false;
   for (let i = 1; i < path.length; i += 1) {
     if (!isValidDownstreamPortNumber(path[i]!)) return false;
   }
@@ -84,9 +92,9 @@ type DeviceRecord = {
  *   deferring all host-controller calls until {@link setXhciBridge} is invoked.
  *
  * Notes:
- * - Unlike {@link UhciHidTopologyManager}, this manager does not reserve any
- *   particular root port numbers (e.g. for an external hub or WebUSB). Callers
- *   must provide the full guest path they intend to use.
+ * - xHCI shares the guest-visible "root port 0 external hub / root port 1 WebUSB" convention with
+ *   UHCI. For backwards compatibility, root-port-only paths (`[0]` / `[1]`) are remapped onto
+ *   stable hub-backed paths behind root port 0.
  */
 export class XhciHidTopologyManager {
   readonly #defaultHubPortCount: number;
@@ -107,8 +115,19 @@ export class XhciHidTopologyManager {
   }
 
   #normalizeDevicePath(path: GuestUsbPath): GuestUsbPath {
-    // xHCI topology does not have any hard-coded reserved root ports in this layer.
-    // Caller-supplied paths are used as-is.
+    // Backwards-compatible mapping for older callers that only specify a root-port-only path
+    // (`[0]` or `[1]`):
+    //
+    // - root port 0 is expected to host an external hub for WebHID passthrough
+    // - root port 1 is reserved for WebUSB passthrough
+    //
+    // Remap `[0]` -> `[0, 5]` and `[1]` -> `[0, 6]` (matching UHCI's external hub convention) so:
+    // - legacy root-port-only callers can still attach devices when xHCI is selected, and
+    // - we avoid silently attaching a device directly on the root port and then replacing it with
+    //   a hub when other passthrough devices are attached.
+    if (path.length === 1 && (path[0] === EXTERNAL_HUB_ROOT_PORT || path[0] === WEBUSB_GUEST_ROOT_PORT)) {
+      return [EXTERNAL_HUB_ROOT_PORT, remapLegacyRootPortToExternalHubPort(path[0])];
+    }
     return path;
   }
 

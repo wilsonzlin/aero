@@ -121,4 +121,35 @@ describe("hid/xhci_hid_topology", () => {
     expect(xhci.attach_webhid_device).toHaveBeenCalledTimes(1);
     expect(xhci.attach_webhid_device).toHaveBeenCalledWith([0, 1], dev1);
   });
+
+  it("remaps legacy root-port-only paths ([0] and [1]) onto the external hub behind root port 0", () => {
+    const mgr = new XhciHidTopologyManager({ defaultHubPortCount: 8 });
+    const xhci = createFakeXhci();
+    const dev0 = { kind: "device-root-0" };
+    const dev1 = { kind: "device-root-1" };
+
+    mgr.setXhciBridge(xhci);
+    mgr.attachDevice(1, [0], "webhid", dev0);
+    mgr.attachDevice(2, [1], "webhid", dev1);
+
+    expect(xhci.attach_hub).toHaveBeenCalledTimes(1);
+    expect(xhci.attach_hub).toHaveBeenCalledWith(0, 8);
+
+    expect(xhci.attach_webhid_device).toHaveBeenCalledWith([0, 5], dev0);
+    expect(xhci.attach_webhid_device).toHaveBeenCalledWith([0, 6], dev1);
+  });
+
+  it("rejects attaching devices behind reserved WebUSB root port 1", () => {
+    const mgr = new XhciHidTopologyManager({ defaultHubPortCount: 8 });
+    const xhci = createFakeXhci();
+    const dev = { kind: "device" };
+
+    mgr.setXhciBridge(xhci);
+    mgr.attachDevice(1, [1, 2], "webhid", dev);
+
+    expect(xhci.attach_hub).not.toHaveBeenCalled();
+    expect(xhci.detach_at_path).not.toHaveBeenCalled();
+    expect(xhci.attach_webhid_device).not.toHaveBeenCalled();
+    expect(xhci.attach_usb_hid_passthrough_device).not.toHaveBeenCalled();
+  });
 });
