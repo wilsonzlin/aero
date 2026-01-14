@@ -22,14 +22,16 @@ export function tryInitVirtioNetDevice(opts: {
 
   const mode: VirtioNetPciMode = opts.mode ?? "modern";
 
-  let bridge: InstanceType<NonNullable<WasmApi["VirtioNetPciBridge"]>>;
+  type BridgeHandle = InstanceType<NonNullable<WasmApi["VirtioNetPciBridge"]>>;
+  type AnyBridgeCtor = { new (...args: unknown[]): BridgeHandle };
+
+  let bridge: BridgeHandle;
   try {
     // Some wasm-bindgen builds enforce constructor arity. Prefer the 4-arg
     // signature (transport selector) when available, but gracefully fall back to
     // the legacy 3-arg constructor.
     //
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const AnyCtor = Bridge as any;
+    const AnyCtor = Bridge as unknown as AnyBridgeCtor;
     const base = opts.guestBase >>> 0;
     const size = opts.guestSize >>> 0;
     if (mode === "modern") {
@@ -59,18 +61,17 @@ export function tryInitVirtioNetDevice(opts: {
   }
 
   if (mode !== "modern") {
-    const bridgeAny = bridge as any;
     const read =
-      typeof bridgeAny.legacy_io_read === "function"
-        ? bridgeAny.legacy_io_read
-        : typeof bridgeAny.io_read === "function"
-          ? bridgeAny.io_read
+      typeof bridge.legacy_io_read === "function"
+        ? bridge.legacy_io_read
+        : typeof bridge.io_read === "function"
+          ? bridge.io_read
           : null;
     const write =
-      typeof bridgeAny.legacy_io_write === "function"
-        ? bridgeAny.legacy_io_write
-        : typeof bridgeAny.io_write === "function"
-          ? bridgeAny.io_write
+      typeof bridge.legacy_io_write === "function"
+        ? bridge.legacy_io_write
+        : typeof bridge.io_write === "function"
+          ? bridge.io_write
           : null;
     if (!read || !write) {
       try {
@@ -86,7 +87,7 @@ export function tryInitVirtioNetDevice(opts: {
     //
     // Note: virtio-pci legacy IO reads are gated by PCI command bit0 (I/O enable). For the probe
     // we temporarily enable I/O decoding inside the bridge so the read is meaningful.
-    const setCmd = typeof bridgeAny.set_pci_command === "function" ? bridgeAny.set_pci_command : null;
+    const setCmd = typeof bridge.set_pci_command === "function" ? bridge.set_pci_command : null;
     let ok = false;
     try {
       if (setCmd) {
@@ -96,7 +97,7 @@ export function tryInitVirtioNetDevice(opts: {
           // ignore
         }
       }
-      const probe = (read.call(bridge, 0, 4) as number) >>> 0;
+      const probe = read.call(bridge, 0, 4) >>> 0;
       ok = probe !== 0xffff_ffff;
     } catch {
       ok = false;
