@@ -43,6 +43,18 @@ class VirtioNetMsixRequireTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("SKIP", reason)
 
+    def test_fails_on_fail(self) -> None:
+        tail = b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|FAIL|reason=whatever\n"
+        ok, reason = self.harness._require_virtio_net_msix_marker(tail)
+        self.assertFalse(ok)
+        self.assertIn("FAIL", reason)
+
+    def test_fails_when_mode_missing(self) -> None:
+        tail = b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|PASS|messages=3|config_vector=0|rx_vector=1|tx_vector=2\n"
+        ok, reason = self.harness._require_virtio_net_msix_marker(tail)
+        self.assertFalse(ok)
+        self.assertIn("missing mode", reason.lower())
+
     def test_fails_when_missing(self) -> None:
         tail = b"AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS\n"
         ok, reason = self.harness._require_virtio_net_msix_marker(tail)
@@ -52,4 +64,3 @@ class VirtioNetMsixRequireTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
