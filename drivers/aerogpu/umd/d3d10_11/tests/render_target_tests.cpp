@@ -391,11 +391,62 @@ bool TestClampAndNullEntries() {
   return true;
 }
 
+bool TestUnbindAllRtvs() {
+  TestDevice dev{};
+  if (!Check(CreateDevice(&dev), "CreateDevice(TestUnbindAllRtvs)")) {
+    return false;
+  }
+
+  TestResource tex0{};
+  TestRtv rtv0{};
+  if (!CreateRenderTargetTexture2D(&dev, &tex0) || !CreateRTV(&dev, &tex0, &rtv0)) {
+    return false;
+  }
+
+  // Bind then unbind to ensure the "clear all RTVs" path is encoded.
+  D3D10DDI_HRENDERTARGETVIEW bind_views[1] = {rtv0.hRtv};
+  dev.device_funcs.pfnSetRenderTargets(dev.hDevice, /*num_views=*/1, bind_views, D3D10DDI_HDEPTHSTENCILVIEW{});
+  dev.device_funcs.pfnSetRenderTargets(dev.hDevice, /*num_views=*/0, /*views=*/nullptr, D3D10DDI_HDEPTHSTENCILVIEW{});
+  if (!Check(dev.device_funcs.pfnFlush(dev.hDevice) == S_OK, "Flush(unbind)")) {
+    return false;
+  }
+
+  if (!ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size())) {
+    return false;
+  }
+
+  const uint8_t* buf = dev.harness.last_stream.data();
+  const size_t len = dev.harness.last_stream.size();
+  const CmdLoc loc = FindLastOpcode(buf, len, AEROGPU_CMD_SET_RENDER_TARGETS);
+  if (!Check(loc.hdr != nullptr, "SET_RENDER_TARGETS present (unbind)")) {
+    return false;
+  }
+  const auto* set_rt = reinterpret_cast<const aerogpu_cmd_set_render_targets*>(loc.hdr);
+  if (!Check(set_rt->color_count == 0, "color_count==0 (unbind)")) {
+    return false;
+  }
+  if (!Check(set_rt->depth_stencil == 0, "depth_stencil==0 (unbind)")) {
+    return false;
+  }
+  for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
+    if (!Check(set_rt->colors[i] == 0, "colors[i]==0 (unbind)")) {
+      return false;
+    }
+  }
+
+  dev.device_funcs.pfnDestroyRTV(dev.hDevice, rtv0.hRtv);
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, tex0.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
 } // namespace
 
 int main() {
   bool ok = true;
   ok &= TestTwoRtvs();
   ok &= TestClampAndNullEntries();
+  ok &= TestUnbindAllRtvs();
   return ok ? 0 : 1;
 }
