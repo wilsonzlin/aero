@@ -821,8 +821,6 @@ fn opcode_name(op: AerogpuCmdOpcode) -> &'static str {
         AerogpuCmdOpcode::UploadResource => "UploadResource",
         AerogpuCmdOpcode::CopyBuffer => "CopyBuffer",
         AerogpuCmdOpcode::CopyTexture2d => "CopyTexture2d",
-        AerogpuCmdOpcode::CreateTextureView => "CreateTextureView",
-        AerogpuCmdOpcode::DestroyTextureView => "DestroyTextureView",
         AerogpuCmdOpcode::CreateShaderDxbc => "CreateShaderDxbc",
         AerogpuCmdOpcode::DestroyShader => "DestroyShader",
         AerogpuCmdOpcode::BindShaders => "BindShaders",
@@ -1011,37 +1009,6 @@ pub fn decode_cmd_stream_listing(
                             line,
                             " width={width} height={height} mip_levels={mip_levels} array_layers={array_layers} row_pitch_bytes={row_pitch_bytes} backing_alloc_id={backing_alloc_id} backing_offset_bytes={backing_offset_bytes}"
                         );
-                    }
-                    AerogpuCmdOpcode::CreateTextureView => {
-                        if pkt.payload.len() < 36 {
-                            return Err(CmdStreamDecodeError::MalformedPayload {
-                                offset,
-                                opcode,
-                                msg: "expected at least 36 bytes",
-                            });
-                        }
-                        let view_handle = u32_le_at(pkt.payload, 0).unwrap();
-                        let texture_handle = u32_le_at(pkt.payload, 4).unwrap();
-                        let format = u32_le_at(pkt.payload, 8).unwrap();
-                        let base_mip_level = u32_le_at(pkt.payload, 12).unwrap();
-                        let mip_level_count = u32_le_at(pkt.payload, 16).unwrap();
-                        let base_array_layer = u32_le_at(pkt.payload, 20).unwrap();
-                        let array_layer_count = u32_le_at(pkt.payload, 24).unwrap();
-                        let _ = write!(
-                            line,
-                            " view_handle={view_handle} texture_handle={texture_handle} format=0x{format:08X} base_mip_level={base_mip_level} mip_level_count={mip_level_count} base_array_layer={base_array_layer} array_layer_count={array_layer_count}"
-                        );
-                    }
-                    AerogpuCmdOpcode::DestroyTextureView => {
-                        if pkt.payload.len() < 8 {
-                            return Err(CmdStreamDecodeError::MalformedPayload {
-                                offset,
-                                opcode,
-                                msg: "expected at least 8 bytes",
-                            });
-                        }
-                        let view_handle = u32_le_at(pkt.payload, 0).unwrap();
-                        let _ = write!(line, " view_handle={view_handle}");
                     }
                     AerogpuCmdOpcode::DestroyResource => {
                         if pkt.payload.len() < 8 {
