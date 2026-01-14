@@ -1,4 +1,4 @@
-use aero_io_snapshot::io::state::IoSnapshot;
+use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader};
 use aero_usb::xhci::interrupter::IMAN_IE;
 use aero_usb::xhci::trb::{Trb, TrbType};
 use aero_usb::xhci::{regs, XhciController};
@@ -89,4 +89,66 @@ fn xhci_snapshot_roundtrip_preserves_dropped_event_counter() {
 
     assert_eq!(restored.dropped_event_trbs(), dropped);
     assert_eq!(restored.pending_event_count(), pending);
+}
+
+#[test]
+fn xhci_snapshot_roundtrip_preserves_tick_time_and_dma_state() {
+    // Snapshot tags for the tick-derived bookkeeping fields introduced in xHCI snapshot v0.7.
+    const TAG_TIME_MS: u16 = 27;
+    const TAG_LAST_TICK_DMA_DWORD: u16 = 28;
+
+    let mut mem = TestMemory::new(0x20_000);
+    let mut xhci = XhciController::new();
+
+    // Program CRCR to point at a location in guest memory and seed a known dword so the controller
+    // records it via the tick-driven DMA path.
+    let crcr_addr = 0x1000u64;
+    let dma_value = 0x1122_3344u32;
+    MemoryBus::write_u32(&mut mem, crcr_addr, dma_value);
+
+    xhci.mmio_write(&mut mem, regs::REG_CRCR_LO, 4, crcr_addr as u32);
+    xhci.mmio_write(
+        &mut mem,
+        regs::REG_CRCR_HI,
+        4,
+        (crcr_addr >> 32) as u32,
+    );
+    // Enable RUN so `tick_1ms_with_dma` performs the CRCR dword read.
+    xhci.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
+
+    // Advance a few ticks so `time_ms` and `last_tick_dma_dword` become non-zero.
+    for _ in 0..3 {
+        xhci.tick_1ms_with_dma(&mut mem);
+    }
+
+    let bytes = xhci.save_state();
+    let r = SnapshotReader::parse(&bytes, *b"XHCI").expect("parse xHCI snapshot");
+    assert_eq!(
+        r.u64(TAG_TIME_MS).expect("read time_ms").unwrap_or(0),
+        3
+    );
+    assert_eq!(
+        r.u32(TAG_LAST_TICK_DMA_DWORD)
+            .expect("read last_tick_dma_dword")
+            .unwrap_or(0),
+        dma_value
+    );
+
+    // Restore and ensure the same fields persist (and continue advancing) across snapshot.
+    let mut restored = XhciController::new();
+    restored.load_state(&bytes).expect("load snapshot");
+    restored.tick_1ms_no_dma();
+
+    let bytes2 = restored.save_state();
+    let r2 = SnapshotReader::parse(&bytes2, *b"XHCI").expect("parse restored snapshot");
+    assert_eq!(
+        r2.u64(TAG_TIME_MS).expect("read time_ms").unwrap_or(0),
+        4
+    );
+    assert_eq!(
+        r2.u32(TAG_LAST_TICK_DMA_DWORD)
+            .expect("read last_tick_dma_dword")
+            .unwrap_or(0),
+        dma_value
+    );
 }
