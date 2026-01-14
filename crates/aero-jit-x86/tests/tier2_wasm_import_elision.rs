@@ -608,6 +608,76 @@ fn tier2_inline_tlb_constant_same_page_store_value_address_elides_cross_page_che
 }
 
 #[test]
+fn tier2_inline_tlb_value_address_load_emits_cross_page_check() {
+    // For multi-byte accesses with non-constant addresses, we must emit a runtime cross-page check.
+    let trace = TraceIr {
+        prologue: Vec::new(),
+        body: vec![
+            Instr::LoadReg {
+                dst: ValueId(0),
+                reg: aero_types::Gpr::Rax,
+            },
+            Instr::LoadMem {
+                dst: ValueId(1),
+                addr: Operand::Value(ValueId(0)),
+                width: Width::W32,
+            },
+        ],
+        kind: TraceKind::Linear,
+    };
+    let plan = RegAllocPlan::default();
+    let wasm = Tier2WasmCodegen::new().compile_trace_with_options(
+        &trace,
+        &plan,
+        Tier2WasmOptions {
+            inline_tlb: true,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(
+        count_i64_gt_u(&wasm),
+        1,
+        "expected non-constant multi-byte load to emit exactly one cross-page check"
+    );
+}
+
+#[test]
+fn tier2_inline_tlb_value_address_store_emits_cross_page_check() {
+    // For multi-byte accesses with non-constant addresses, we must emit a runtime cross-page check.
+    let trace = TraceIr {
+        prologue: Vec::new(),
+        body: vec![
+            Instr::LoadReg {
+                dst: ValueId(0),
+                reg: aero_types::Gpr::Rax,
+            },
+            Instr::StoreMem {
+                addr: Operand::Value(ValueId(0)),
+                src: Operand::Const(0x1122_3344),
+                width: Width::W32,
+            },
+        ],
+        kind: TraceKind::Linear,
+    };
+    let plan = RegAllocPlan::default();
+    let wasm = Tier2WasmCodegen::new().compile_trace_with_options(
+        &trace,
+        &plan,
+        Tier2WasmOptions {
+            inline_tlb: true,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(
+        count_i64_gt_u(&wasm),
+        1,
+        "expected non-constant multi-byte store to emit exactly one cross-page check"
+    );
+}
+
+#[test]
 fn tier2_inline_tlb_constant_same_page_access_elides_cross_page_check() {
     let trace = TraceIr {
         prologue: Vec::new(),
