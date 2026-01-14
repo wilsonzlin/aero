@@ -559,6 +559,19 @@ if ($HttpPath -match "\s") {
 if ($QemuSystem -match "[\\/\\\\]" -and (Test-Path -LiteralPath $QemuSystem -PathType Container)) {
   throw "-QemuSystem must be a QEMU system binary path (got a directory): $QemuSystem"
 }
+if (-not $DryRun) {
+  if ($QemuSystem -match "[\\/\\\\]") {
+    if (-not (Test-Path -LiteralPath $QemuSystem -PathType Leaf)) {
+      throw "-QemuSystem must be a QEMU system binary path (file not found): $QemuSystem"
+    }
+  } else {
+    try {
+      $null = Get-Command -Name $QemuSystem -CommandType Application -ErrorAction Stop
+    } catch {
+      throw "-QemuSystem must be on PATH (qemu-system binary not found): $QemuSystem"
+    }
+  }
+}
 
 if ($MemoryMB -le 0) {
   throw "-MemoryMB must be a positive integer."
@@ -7288,12 +7301,13 @@ try {
 
   Write-Host "Launching QEMU:"
   Write-Host "  $QemuSystem $($qemuArgs -join ' ')"
-
-  $proc = Start-Process -FilePath $QemuSystem -ArgumentList $qemuArgs -PassThru -RedirectStandardError $qemuStderrPath
+ 
+  $proc = $null
   $scriptExitCode = 0
-
+  
   $result = $null
   try {
+    $proc = Start-Process -FilePath $QemuSystem -ArgumentList $qemuArgs -PassThru -RedirectStandardError $qemuStderrPath
     if ([bool]$QemuPreflightPci) {
       if (($null -eq $qmpPort) -or ($qmpPort -le 0)) {
         $result = @{
