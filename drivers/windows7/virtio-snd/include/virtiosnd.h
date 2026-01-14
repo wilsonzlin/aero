@@ -81,7 +81,7 @@
 /*
  * Minimal virtio-snd eventq buffer pool.
  *
- * Contract v1 defines no event messages (see docs/windows7-virtio-driver-contract.md
+ * Contract v1 defines no *required* event messages (see docs/windows7-virtio-driver-contract.md
  * §3.4.2.1), so the audio data path must not depend on eventq.
  *
  * However, the virtio-snd specification reserves eventq for asynchronous device
@@ -128,7 +128,7 @@ typedef struct _VIRTIOSND_EVENTQ_STATS {
  *
  * The callback is invoked from the interrupt/DPC path after parsing a virtio-snd
  * event (type/data). Higher layers must treat it as best-effort: contract v1
- * devices emit no events and drivers must not depend on them.
+ * devices may emit no events and drivers must not depend on them.
  */
 typedef VOID EVT_VIRTIOSND_EVENTQ_EVENT(_In_opt_ void* Context, _In_ ULONG Type, _In_ ULONG Data);
 

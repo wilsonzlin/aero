@@ -848,7 +848,7 @@ VirtIoSndHwPollAllUsed(PVIRTIOSND_DEVICE_EXTENSION Dx)
     /*
      * When INTx is not connected, no virtio ISR/DPC runs to drain used rings.
      * Poll the queues that can accumulate completions/cookies:
-     *  - eventq: best-effort recycle (contract v1 defines no events)
+     *  - eventq: best-effort recycle (contract v1 defines no *required* events)
      *  - controlq: late completions (including timeouts)
      *  - txq: recycle TX contexts (in addition to submit-time draining)
      *  - rxq: deliver capture completions via the registered callback
