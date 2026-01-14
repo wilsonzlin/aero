@@ -4492,6 +4492,8 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
         AEROGPU_BAR0_PROBE_BYTES = (AEROGPU_MMIO_REG_FEATURES_HI + sizeof(ULONG)),
     };
 
+    ULONG memResourceCount = 0;
+
     BOOLEAN haveFirstCandidate = FALSE;
     PHYSICAL_ADDRESS firstStart;
     ULONG firstLength = 0;
@@ -4505,7 +4507,6 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
     ULONG agpuLength = 0;
 
 #if DBG
-    ULONG memResourceCount = 0;
     ULONG probedCount = 0;
 
     ULONG firstMagic = 0;
@@ -4541,8 +4542,24 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
 
 #if DBG
             const ULONG memOrdinal = memResourceCount;
-            memResourceCount++;
 #endif
+            memResourceCount++;
+
+#if DBG
+            BOOLEAN isFirstCandidate = FALSE;
+#endif
+
+            if (!haveFirstCandidate) {
+                haveFirstCandidate = TRUE;
+                firstStart = start;
+                firstLength = length;
+#if DBG
+                isFirstCandidate = TRUE;
+                firstFullIndex = fi;
+                firstPartialIndex = pi;
+                firstMemOrdinal = memOrdinal;
+#endif
+            }
 
             if (length < sizeof(ULONG)) {
 #if DBG
@@ -4574,22 +4591,13 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
             const ULONG magic = READ_REGISTER_ULONG((volatile ULONG*)(probeVa + AEROGPU_MMIO_REG_MAGIC));
 #if DBG
             probedCount++;
+            if (isFirstCandidate) {
+                firstMagic = magic;
+            }
 #endif
 
             MmUnmapIoSpace(probeVa, probeBytes);
             probeVa = NULL;
-
-            if (!haveFirstCandidate) {
-                haveFirstCandidate = TRUE;
-                firstStart = start;
-                firstLength = length;
-#if DBG
-                firstMagic = magic;
-                firstFullIndex = fi;
-                firstPartialIndex = pi;
-                firstMemOrdinal = memOrdinal;
-#endif
-            }
 
             if (magic == AEROGPU_MMIO_MAGIC) {
                 haveAgpuCandidate = TRUE;
@@ -4623,7 +4631,8 @@ Bar0ProbeDone:
      * Selection order:
      *   1) New ABI ("AGPU") magic if found.
      *   2) Legacy ("ARGP") magic if found (helps older device models with BAR1).
-     *   3) Fall back to the first memory resource (preserves historical behavior).
+     *   3) Fall back to the first memory resource only when it is unambiguous (single
+     *      translated memory resource); otherwise fail.
      */
     PHYSICAL_ADDRESS selectedStart;
     ULONG selectedLength = 0;
@@ -4636,51 +4645,57 @@ Bar0ProbeDone:
     } else if (haveLegacyCandidate) {
         selectedStart = legacyStart;
         selectedLength = legacyLength;
-    } else if (haveFirstCandidate) {
+    } else if (haveFirstCandidate && memResourceCount == 1) {
+        AEROGPU_LOG0("StartDevice: BAR0 magic not found; falling back to first memory resource");
         selectedStart = firstStart;
         selectedLength = firstLength;
     }
 
-    if (selectedLength != 0) {
-#if DBG
-        ULONG selectedMagic = 0;
-        ULONG selectedFullIndex = 0;
-        ULONG selectedPartialIndex = 0;
-        ULONG selectedMemOrdinal = 0;
-
-        if (haveAgpuCandidate) {
-            selectedMagic = agpuMagic;
-            selectedFullIndex = agpuFullIndex;
-            selectedPartialIndex = agpuPartialIndex;
-            selectedMemOrdinal = agpuMemOrdinal;
-        } else if (haveLegacyCandidate) {
-            selectedMagic = legacyMagic;
-            selectedFullIndex = legacyFullIndex;
-            selectedPartialIndex = legacyPartialIndex;
-            selectedMemOrdinal = legacyMemOrdinal;
-        } else if (haveFirstCandidate) {
-            selectedMagic = firstMagic;
-            selectedFullIndex = firstFullIndex;
-            selectedPartialIndex = firstPartialIndex;
-            selectedMemOrdinal = firstMemOrdinal;
-        }
-
-        AEROGPU_LOG("StartDevice: BAR0 probe inspected %lu memory resources (probed %lu); selected mem[%lu] full=%lu partial=%lu start=0x%I64x len=%lu magic=0x%08lx",
-                    memResourceCount,
-                    probedCount,
-                    selectedMemOrdinal,
-                    selectedFullIndex,
-                    selectedPartialIndex,
-                    (unsigned long long)selectedStart.QuadPart,
-                    selectedLength,
-                    selectedMagic);
-#endif
-        adapter->Bar0Length = selectedLength;
-        adapter->Bar0 = (PUCHAR)MmMapIoSpace(selectedStart, adapter->Bar0Length, MmNonCached);
+    if (selectedLength == 0) {
+        AEROGPU_LOG("StartDevice: BAR0 could not be identified (no MMIO magic match across %lu memory resources)",
+                    memResourceCount);
+        return STATUS_DEVICE_CONFIGURATION_ERROR;
     }
 
+#if DBG
+    ULONG selectedMagic = 0;
+    ULONG selectedFullIndex = 0;
+    ULONG selectedPartialIndex = 0;
+    ULONG selectedMemOrdinal = 0;
+
+    if (haveAgpuCandidate) {
+        selectedMagic = agpuMagic;
+        selectedFullIndex = agpuFullIndex;
+        selectedPartialIndex = agpuPartialIndex;
+        selectedMemOrdinal = agpuMemOrdinal;
+    } else if (haveLegacyCandidate) {
+        selectedMagic = legacyMagic;
+        selectedFullIndex = legacyFullIndex;
+        selectedPartialIndex = legacyPartialIndex;
+        selectedMemOrdinal = legacyMemOrdinal;
+    } else if (haveFirstCandidate) {
+        selectedMagic = firstMagic;
+        selectedFullIndex = firstFullIndex;
+        selectedPartialIndex = firstPartialIndex;
+        selectedMemOrdinal = firstMemOrdinal;
+    }
+
+    AEROGPU_LOG("StartDevice: BAR0 probe inspected %lu memory resources (probed %lu); selected mem[%lu] full=%lu partial=%lu start=0x%I64x len=%lu magic=0x%08lx",
+                memResourceCount,
+                probedCount,
+                selectedMemOrdinal,
+                selectedFullIndex,
+                selectedPartialIndex,
+                (unsigned long long)selectedStart.QuadPart,
+                selectedLength,
+                selectedMagic);
+#endif
+    adapter->Bar0Length = selectedLength;
+    adapter->Bar0 = (PUCHAR)MmMapIoSpace(selectedStart, adapter->Bar0Length, MmNonCached);
+
     if (!adapter->Bar0) {
-        AEROGPU_LOG0("StartDevice: BAR0 not found");
+        AEROGPU_LOG("StartDevice: MmMapIoSpace failed for BAR0 (len=%lu)", adapter->Bar0Length);
+        adapter->Bar0Length = 0;
         return STATUS_DEVICE_CONFIGURATION_ERROR;
     }
 
