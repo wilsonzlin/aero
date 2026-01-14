@@ -1619,14 +1619,14 @@ static constexpr ULONG kKsPropAeroVirtioSndEventqStats = 0x00000001u;
 #define KSPROPERTY_TYPE_GET 0x00000001u
 #endif
 
-#ifndef _KSPROPERTY_DEFINED
-#define _KSPROPERTY_DEFINED
-struct KSPROPERTY {
+// Local KSPROPERTY-compatible header (avoid relying on ks.h being present).
+// Note: we intentionally do NOT use the type name `KSPROPERTY` to avoid conflicts
+// when building with SDKs that do provide `KSPROPERTY`.
+struct KsPropertyHeader {
   GUID Set;
   ULONG Id;
   ULONG Flags;
 };
-#endif
 
 #pragma pack(push, 1)
 struct AEROVIRTIO_SND_EVENTQ_STATS {
@@ -1897,7 +1897,7 @@ static std::optional<AEROVIRTIO_SND_EVENTQ_STATS> QueryVirtioSndEventqStats(Logg
     return std::nullopt;
   }
 
-  KSPROPERTY prop{};
+  KsPropertyHeader prop{};
   prop.Set = kKsPropSetAeroVirtioSnd;
   prop.Id = kKsPropAeroVirtioSndEventqStats;
   prop.Flags = KSPROPERTY_TYPE_GET;
