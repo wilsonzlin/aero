@@ -1845,4 +1845,65 @@ mod tests {
         assert_eq!(ints.take_pending_sipi(1), Some(0x08));
         assert_eq!(ints.take_pending_sipi(1), None);
     }
+
+    fn enable_lapic_svr(ints: &PlatformInterrupts, cpu_count: usize) {
+        // The LAPIC model drops injected interrupts while the software enable bit is cleared.
+        // Keep this explicit in tests so behaviour doesn't depend on constructor defaults.
+        for cpu in 0..cpu_count {
+            lapic_write_u32_for_cpu(ints, cpu, 0xF0, 0x1FF);
+        }
+    }
+
+    fn send_fixed_ipi_shorthand(ints: &PlatformInterrupts, vector: u8, shorthand: u32) {
+        // Destination field is ignored for shorthand delivery modes, but real guests still
+        // program ICR_HIGH as part of the send sequence.
+        lapic_write_u32_for_cpu(ints, 0, 0x310, 0);
+
+        let icr_low = u32::from(vector) | (shorthand << 18);
+        lapic_write_u32_for_cpu(ints, 0, 0x300, icr_low);
+    }
+
+    #[test]
+    fn lapic_ipi_destination_shorthand_self_only() {
+        let mut ints = PlatformInterrupts::new_with_cpu_count(4);
+        ints.set_mode(PlatformInterruptMode::Apic);
+        enable_lapic_svr(&ints, 4);
+
+        // Destination shorthand: SelfOnly = 0b01.
+        send_fixed_ipi_shorthand(&ints, 0x40, 0b01);
+
+        assert_eq!(ints.get_pending_for_cpu(0), Some(0x40));
+        for cpu in 1..4 {
+            assert_eq!(ints.get_pending_for_cpu(cpu), None);
+        }
+    }
+
+    #[test]
+    fn lapic_ipi_destination_shorthand_all_including_self() {
+        let mut ints = PlatformInterrupts::new_with_cpu_count(4);
+        ints.set_mode(PlatformInterruptMode::Apic);
+        enable_lapic_svr(&ints, 4);
+
+        // Destination shorthand: AllIncludingSelf = 0b10.
+        send_fixed_ipi_shorthand(&ints, 0x41, 0b10);
+
+        for cpu in 0..4 {
+            assert_eq!(ints.get_pending_for_cpu(cpu), Some(0x41));
+        }
+    }
+
+    #[test]
+    fn lapic_ipi_destination_shorthand_all_excluding_self() {
+        let mut ints = PlatformInterrupts::new_with_cpu_count(4);
+        ints.set_mode(PlatformInterruptMode::Apic);
+        enable_lapic_svr(&ints, 4);
+
+        // Destination shorthand: AllExcludingSelf = 0b11.
+        send_fixed_ipi_shorthand(&ints, 0x42, 0b11);
+
+        assert_eq!(ints.get_pending_for_cpu(0), None);
+        for cpu in 1..4 {
+            assert_eq!(ints.get_pending_for_cpu(cpu), Some(0x42));
+        }
+    }
 }
