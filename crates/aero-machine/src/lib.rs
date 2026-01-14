@@ -4112,7 +4112,6 @@ impl Machine {
     pub fn vbe_lfb_base(&self) -> u64 {
         u64::from(self.bios.video.vbe.lfb_base)
     }
-
     /// Install an external scanout descriptor that should receive legacy VGA/VBE mode updates.
     ///
     /// When present, BIOS INT 10h mode transitions publish updates to this descriptor so an
