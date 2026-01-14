@@ -115,7 +115,8 @@ pub fn generate_edid(preferred: Timing) -> [u8; EDID_BLOCK_SIZE] {
     ]);
 
     // Detailed timing descriptor #1: preferred timing.
-    edid[54..72].copy_from_slice(&dtd_bytes_for_timing(preferred));
+    let preferred_dtd = dtd_bytes_for_timing(preferred);
+    edid[54..72].copy_from_slice(&preferred_dtd);
 
     // Detailed descriptor #2: monitor name.
     edid[72..90].copy_from_slice(&[
@@ -124,10 +125,7 @@ pub fn generate_edid(preferred: Timing) -> [u8; EDID_BLOCK_SIZE] {
     ]);
 
     // Detailed descriptor #3: range limits.
-    edid[90..108].copy_from_slice(&[
-        0x00, 0x00, 0x00, 0xFD, 0x00, 50, 75, 30, 80, 8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00,
-    ]);
+    edid[90..108].copy_from_slice(&range_limits_descriptor(preferred, &preferred_dtd));
 
     // Detailed descriptor #4: unused.
     edid[108..126].copy_from_slice(&[
@@ -147,6 +145,61 @@ fn align_up_u32(v: u32, align: u32) -> u32 {
         return v;
     }
     (v + (align - 1)) / align * align
+}
+
+fn range_limits_descriptor(preferred: Timing, preferred_dtd: &[u8; 18]) -> [u8; 18] {
+    // Range limits are used by OSes to sanity-check which modes are legal. In
+    // particular, the max pixel clock should be >= the preferred mode's pixel
+    // clock, otherwise the preferred mode may be discarded.
+    //
+    // This crate always advertises the legacy 640×480/800×600/1024×768@60 modes
+    // as established/standard timings, so we keep those baseline ranges and
+    // widen them as needed to cover the preferred mode.
+    let pixel_clock_10khz = u16::from_le_bytes([preferred_dtd[0], preferred_dtd[1]]);
+    let pixel_clock_hz = pixel_clock_10khz as u64 * 10_000;
+
+    let h_active = preferred_dtd[2] as u32 | (((preferred_dtd[4] & 0xF0) as u32) << 4);
+    let h_blank = preferred_dtd[3] as u32 | (((preferred_dtd[4] & 0x0F) as u32) << 8);
+    let h_total = h_active + h_blank;
+    let h_freq_khz = if h_total == 0 {
+        0u32
+    } else {
+        let denom = h_total as u64 * 1000;
+        ((pixel_clock_hz + denom / 2) / denom) as u32
+    };
+
+    // Baseline modes: 50-75Hz vertical, 30-80kHz horizontal, 80MHz max pixel clock.
+    let min_v_rate_hz = preferred.refresh_hz.min(50).max(1) as u8;
+    let max_v_rate_hz = preferred
+        .refresh_hz
+        .saturating_add(15)
+        .max(75)
+        .min(255) as u8;
+
+    let min_h_rate_khz = h_freq_khz.min(30).max(1).min(255) as u8;
+    let max_h_rate_khz = h_freq_khz
+        .saturating_add(10)
+        .max(80)
+        .min(255) as u8;
+
+    let required_pclk_10mhz = (pixel_clock_hz + 9_999_999) / 10_000_000;
+    let max_pixel_clock_10mhz = required_pclk_10mhz
+        .saturating_add(1)
+        .max(8)
+        .min(255) as u8;
+
+    let mut desc = [0u8; 18];
+    desc[0] = 0;
+    desc[1] = 0;
+    desc[2] = 0;
+    desc[3] = 0xFD;
+    desc[4] = 0x00;
+    desc[5] = min_v_rate_hz;
+    desc[6] = max_v_rate_hz;
+    desc[7] = min_h_rate_khz;
+    desc[8] = max_h_rate_khz;
+    desc[9] = max_pixel_clock_10mhz;
+    desc
 }
 
 fn dtd_bytes_for_timing(timing: Timing) -> [u8; 18] {
@@ -416,6 +469,15 @@ mod tests {
         }
     }
 
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    struct RangeLimitsDescriptor {
+        min_v_rate_hz: u8,
+        max_v_rate_hz: u8,
+        min_h_rate_khz: u8,
+        max_h_rate_khz: u8,
+        max_pixel_clock_10mhz: u8,
+    }
+
     fn parse_dtd(bytes: &[u8]) -> Option<DetailedTimingDescriptor> {
         assert_eq!(bytes.len(), 18);
         let pixel_clock_10khz = u16::from_le_bytes([bytes[0], bytes[1]]);
@@ -446,6 +508,21 @@ mod tests {
             v_sync_offset,
             v_sync_pulse,
             flags: bytes[17],
+        })
+    }
+
+    fn parse_range_limits_descriptor(bytes: &[u8]) -> Option<RangeLimitsDescriptor> {
+        assert_eq!(bytes.len(), 18);
+        if bytes[0..5] != [0, 0, 0, 0xFD, 0x00] {
+            return None;
+        }
+
+        Some(RangeLimitsDescriptor {
+            min_v_rate_hz: bytes[5],
+            max_v_rate_hz: bytes[6],
+            min_h_rate_khz: bytes[7],
+            max_h_rate_khz: bytes[8],
+            max_pixel_clock_10mhz: bytes[9],
         })
     }
 
@@ -533,6 +610,33 @@ mod tests {
         let dtd = parse_dtd(&edid[54..72]).expect("preferred DTD missing");
         assert_eq!(dtd.h_active, preferred.width);
         assert_eq!(dtd.v_active, preferred.height);
+
+        // Range limits should include the preferred mode's pixel clock and scan rates.
+        let range = parse_range_limits_descriptor(&edid[90..108]).expect("range limits missing");
+        let required_pclk_10mhz = ((dtd.pixel_clock_hz + 9_999_999) / 10_000_000) as u8;
+        assert!(
+            range.max_pixel_clock_10mhz >= required_pclk_10mhz,
+            "max_pixel_clock_10mhz={} required={required_pclk_10mhz}",
+            range.max_pixel_clock_10mhz
+        );
+
+        let h_total = dtd.h_total() as u64;
+        let h_khz = if h_total == 0 {
+            0
+        } else {
+            ((dtd.pixel_clock_hz + (h_total * 1000) / 2) / (h_total * 1000)) as u64
+        };
+        assert!(
+            (range.min_h_rate_khz as u64) <= h_khz && h_khz <= (range.max_h_rate_khz as u64),
+            "h_khz={h_khz} range={}..={}",
+            range.min_h_rate_khz,
+            range.max_h_rate_khz
+        );
+
+        assert!(
+            range.min_v_rate_hz <= preferred.refresh_hz as u8
+                && preferred.refresh_hz as u8 <= range.max_v_rate_hz
+        );
 
         // Refresh rate should be close to the requested one. We allow some
         // tolerance due to EDID pixel clock quantization (10kHz steps) and the
