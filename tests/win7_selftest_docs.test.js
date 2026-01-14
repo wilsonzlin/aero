@@ -76,11 +76,11 @@ const forbiddenPatterns = [
     re: /AERO_VIRTIO_SELFTEST\|TEST\|virtio-snd\|FAIL\|topology_interface_missing/g,
     why: "topology_interface_missing is reported on the virtio-snd-capture marker; the virtio-snd marker uses plain FAIL.",
   },
-  {
-    re: /AERO_VIRTIO_SELFTEST\|TEST\|virtio-(?:blk|net)\|(PASS|FAIL)\|/g,
-    why: "virtio-blk and virtio-net markers are PASS/FAIL without extra fields (other tests may include extra details).",
-  },
 ];
+
+// Note: virtio-blk and virtio-net markers include key/value fields (IRQ diagnostics, perf stats, etc). Those fields are
+// expected to appear in documentation, so we intentionally do not forbid `...|virtio-blk|PASS|...` / `...|virtio-net|PASS|...`
+// formats here.
 
 test("Windows 7 virtio selftest docs avoid stale marker formats", () => {
   for (const relPath of discoverDocsContainingMarkers()) {
