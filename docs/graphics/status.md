@@ -303,6 +303,10 @@ The D3D9 implementation is split into:
   - Translation: [`crates/aero-d3d9/src/sm3/`](../../crates/aero-d3d9/src/sm3/) lowers derivatives to WGSL `dpdx`/`dpdy`.
   - Legacy-fallback translation: [`crates/aero-d3d9/src/shader.rs`](../../crates/aero-d3d9/src/shader.rs) also supports `dsx`/`dsy` for best-effort compatibility.
   - Tests: `crates/aero-d3d9/tests/sm3_wgsl.rs` (derivatives + `texldd`), `crates/aero-d3d9/src/tests.rs` (fallback path).
+- [x] SM3 texture sampling + `texkill` semantics (✅ Tasks 401/402 closed)
+  - `texld`/`texldp`/`texldb`/`texldd`/`texldl` lower to WGSL `textureSample*` variants, with texture/sampler binding emission and bind-layout mapping.
+  - `texkill` lowers to `discard` when any component of the operand is `< 0`, preserving predication nesting.
+  - Details + tests: [`docs/graphics/d3d9-sm2-sm3-shader-translation.md`](./d3d9-sm2-sm3-shader-translation.md)
 
 Code pointers:
 
