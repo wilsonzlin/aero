@@ -207,6 +207,34 @@ async function startUdpEchoServerDifferentSourcePort(socketType, host) {
   };
 }
 
+async function startUdpServerWithDelayedRepeat(socketType, host, { delayMs, latePayload }) {
+  const socket = dgram.createSocket(socketType);
+  const bound = await new Promise((resolve) => {
+    socket.once("error", () => resolve(false));
+    socket.bind(0, host, () => resolve(true));
+  });
+  if (!bound) {
+    await new Promise((resolve) => socket.close(resolve));
+    return null;
+  }
+
+  let scheduled = false;
+  socket.on("message", (msg, rinfo) => {
+    socket.send(msg, rinfo.port, rinfo.address);
+    if (scheduled) return;
+    scheduled = true;
+    setTimeout(() => {
+      socket.send(latePayload ?? msg, rinfo.port, rinfo.address);
+    }, delayMs);
+  });
+
+  const { port } = socket.address();
+  return {
+    port,
+    close: () => new Promise((resolve) => socket.close(resolve)),
+  };
+}
+
 async function startWebServer() {
   const server = http.createServer((req, res) => {
     res.statusCode = 200;
@@ -2418,6 +2446,126 @@ test("accepts UDP replies from unexpected source ports when UDP_INBOUND_FILTER_M
 
     const counters = await getRelayEventCounters(relay.port);
     expect(getCounter(counters, allowlistDropMetric)).toBe(0);
+  } finally {
+    await Promise.all([web.close(), relay.kill(), echo?.close()]);
+  }
+});
+
+test("expires UDP remote allowlist entries after UDP_REMOTE_ALLOWLIST_IDLE_TIMEOUT", async ({ page }) => {
+  const ttlMs = 250;
+  const lateSendDelayMs = 900;
+  const echo = await startUdpServerWithDelayedRepeat("udp4", "127.0.0.1", {
+    delayMs: lateSendDelayMs,
+    latePayload: Buffer.from("late datagram"),
+  });
+  test.skip(!echo, "udp4 not supported in test environment");
+  const relay = await spawnRelayServer({ UDP_REMOTE_ALLOWLIST_IDLE_TIMEOUT: `${ttlMs}ms` });
+  const web = await startWebServer();
+  const allowlistDropMetric = "udp_remote_allowlist_overflow_drops_total";
+
+  try {
+    await page.goto(web.url);
+
+    const before = await getRelayEventCounters(relay.port);
+
+    const res = await page.evaluate(
+      async ({ relayPort, echoPort }) => {
+        const ws = new WebSocket(`ws://127.0.0.1:${relayPort}/udp`);
+        ws.binaryType = "arraybuffer";
+        await new Promise((resolve, reject) => {
+          ws.addEventListener("open", () => resolve(), { once: true });
+          ws.addEventListener("error", () => reject(new Error("ws error")), { once: true });
+        });
+
+        const waitForDatagram = async ({ timeoutMs }) =>
+          await new Promise((resolve, reject) => {
+            let timeout;
+            let done = false;
+            const onMessage = (event) => {
+              (async () => {
+                let data = event.data;
+                if (typeof data === "string") {
+                  let msg;
+                  try {
+                    msg = JSON.parse(data);
+                  } catch {
+                    return;
+                  }
+                  if (msg?.type === "ready") {
+                    return;
+                  }
+                  if (msg?.type === "error") {
+                    throw new Error(`udp websocket error: ${msg.code ?? "unknown"}: ${msg.message ?? ""}`);
+                  }
+                  return;
+                }
+                if (data instanceof Blob) {
+                  data = await data.arrayBuffer();
+                }
+                if (!(data instanceof ArrayBuffer)) {
+                  throw new Error(`unexpected websocket message type: ${typeof data}`);
+                }
+                if (done) return;
+                done = true;
+                cleanup();
+                resolve(new Uint8Array(data));
+              })().catch((err) => {
+                if (done) return;
+                done = true;
+                cleanup();
+                reject(err);
+              });
+            };
+            const cleanup = () => {
+              ws.removeEventListener("message", onMessage);
+              clearTimeout(timeout);
+            };
+            timeout = setTimeout(() => {
+              if (done) return;
+              done = true;
+              cleanup();
+              resolve(null);
+            }, timeoutMs);
+            ws.addEventListener("message", onMessage);
+          });
+
+        const payload = new TextEncoder().encode("first datagram");
+        const guestPort = 10_000;
+        const frame = new Uint8Array(8 + payload.length);
+        frame[0] = (guestPort >> 8) & 0xff;
+        frame[1] = guestPort & 0xff;
+        frame.set([127, 0, 0, 1], 2);
+        frame[6] = (echoPort >> 8) & 0xff;
+        frame[7] = echoPort & 0xff;
+        frame.set(payload, 8);
+
+        const firstPromise = waitForDatagram({ timeoutMs: 10_000 });
+        ws.send(frame);
+        const first = await firstPromise;
+        if (!first) throw new Error("timed out waiting for first echoed datagram");
+        if (first.length < 8) throw new Error("echoed frame too short");
+        const firstText = new TextDecoder().decode(first.slice(8));
+
+        // If the allowlist entry expires, this should be dropped and we should not
+        // observe a second datagram.
+        const second = await waitForDatagram({ timeoutMs: 2_000 });
+        const secondText = second ? new TextDecoder().decode(second.slice(8)) : null;
+
+        ws.close();
+        return { firstText, gotSecond: second !== null, secondText };
+      },
+      { relayPort: relay.port, echoPort: echo.port },
+    );
+
+    expect(res.firstText).toBe("first datagram");
+    if (res.gotSecond) {
+      throw new Error(`expected allowlist entry to expire; received second datagram: ${res.secondText ?? "<unknown>"}`);
+    }
+
+    const beforeDrops = getCounter(before, allowlistDropMetric);
+    const expectedMinDrops = beforeDrops + 1;
+    const after = await waitForRelayEventCounterAtLeast(relay.port, allowlistDropMetric, expectedMinDrops, { timeoutMs: 8_000 });
+    expect(getCounter(after, allowlistDropMetric)).toBeGreaterThanOrEqual(expectedMinDrops);
   } finally {
     await Promise.all([web.close(), relay.kill(), echo?.close()]);
   }
