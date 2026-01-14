@@ -841,6 +841,8 @@ function renderMachinePanel(): HTMLElement {
         if (normalized === "0" || normalized === "false") return false;
         return true;
       })();
+      // `Machine.new_with_config` is optional across wasm builds. Stash the property in a local so
+      // TypeScript can safely narrow before invoking it (property reads are not stable).
       const newWithConfig = api.Machine.new_with_config;
       const newWithCpuCount = api.Machine.new_with_cpu_count;
       const canEnableAerogpu = enableAerogpu && typeof newWithConfig === "function";

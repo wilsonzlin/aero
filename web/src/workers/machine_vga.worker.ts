@@ -657,6 +657,8 @@ async function start(msg: MachineVgaWorkerStartMessage): Promise<void> {
   const ramSizeBytes = typeof msg.ramSizeBytes === "number" ? msg.ramSizeBytes : 2 * 1024 * 1024;
   const enableAerogpu = !!msg.enableAerogpu;
   const enableVga = typeof msg.enableVga === "boolean" ? msg.enableVga : undefined;
+  // `Machine.new_with_config` is optional across wasm builds. Stash the property in a local so
+  // TypeScript can safely narrow before invoking it (property reads are not stable).
   const newWithConfig = api.Machine.new_with_config;
   const newWithCpuCount = api.Machine.new_with_cpu_count;
   const canEnableAerogpu = enableAerogpu && typeof newWithConfig === "function";
