@@ -1,5 +1,6 @@
 use std::env;
 use std::fs;
+use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process;
 
@@ -32,12 +33,24 @@ FLAGS:
 
 fn main() {
     if let Err(err) = real_main() {
+        // This tool often produces large output and is frequently piped to `head` / `less`.
+        // Treat broken pipes as a successful early-exit rather than as a hard error.
+        if err
+            .root_cause()
+            .downcast_ref::<io::Error>()
+            .is_some_and(|e| e.kind() == io::ErrorKind::BrokenPipe)
+        {
+            return;
+        }
         eprintln!("error: {err:#}");
         process::exit(1);
     }
 }
 
 fn real_main() -> anyhow::Result<()> {
+    let stdout = io::stdout();
+    let mut out = io::BufWriter::new(stdout.lock());
+
     let mut path: Option<PathBuf> = None;
     let mut head_dwords = DEFAULT_HEAD_DWORDS;
     let mut full_tokens = false;
@@ -46,7 +59,8 @@ fn real_main() -> anyhow::Result<()> {
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "-h" | "--help" => {
-                print!("{}", usage());
+                write!(out, "{}", usage())?;
+                out.flush()?;
                 return Ok(());
             }
             "--head" => {
@@ -85,13 +99,19 @@ fn real_main() -> anyhow::Result<()> {
         .with_context(|| format!("failed to parse {} as DXBC", path.display()))?;
 
     let header = dxbc.header();
-    println!(
+    writeln!(
+        out,
         "DXBC total_size={} chunk_count={} checksum={:02x?}",
         header.total_size, header.chunk_count, header.checksum
-    );
-    println!("chunks:");
+    )?;
+    writeln!(out, "chunks:")?;
     for (idx, chunk) in dxbc.chunks().enumerate() {
-        println!("  [{idx:02}] {} {} bytes", chunk.fourcc, chunk.data.len());
+        writeln!(
+            out,
+            "  [{idx:02}] {} {} bytes",
+            chunk.fourcc,
+            chunk.data.len()
+        )?;
     }
 
     let shader_chunk = dxbc
@@ -100,14 +120,15 @@ fn real_main() -> anyhow::Result<()> {
         .or_else(|| dxbc.find_first_shader_chunk())
         .context("DXBC is missing SHDR/SHEX shader chunk")?;
 
-    println!();
-    println!(
+    writeln!(out)?;
+    writeln!(
+        out,
         "shader chunk: {} ({} bytes)",
         shader_chunk.fourcc,
         shader_chunk.data.len()
-    );
+    )?;
     let mut shader_bytes = shader_chunk.data;
-    println!("first {head_dwords} dwords:");
+    writeln!(out, "first {head_dwords} dwords:")?;
     for (idx, dword_bytes) in shader_chunk
         .data
         .chunks_exact(4)
@@ -120,38 +141,44 @@ fn real_main() -> anyhow::Result<()> {
             dword_bytes[2],
             dword_bytes[3],
         ]);
-        println!("  [{idx:04}] 0x{v:08x}");
+        writeln!(out, "  [{idx:04}] 0x{v:08x}")?;
     }
     if !shader_bytes.len().is_multiple_of(4) {
         let truncated_len = shader_bytes.len() & !3;
-        println!(
+        writeln!(
+            out,
             "  (warning: shader chunk length {} is not a multiple of 4; truncating to {} bytes)",
             shader_chunk.data.len(),
             truncated_len
-        );
+        )?;
         shader_bytes = &shader_bytes[..truncated_len];
     }
 
-    println!();
+    writeln!(out)?;
     let program = Sm4Program::parse_program_tokens(shader_bytes).with_context(|| {
         format!(
             "failed to parse SM4/SM5 token stream from {}",
             shader_chunk.fourcc
         )
     })?;
-    println!(
+    writeln!(
+        out,
         "version: stage={:?} model={}.{} (token=0x{:08x})",
         program.stage, program.model.major, program.model.minor, program.tokens[0]
-    );
-    println!(
+    )?;
+    writeln!(
+        out,
         "declared length: {} dwords (available {})",
         program.tokens.len(),
         shader_bytes.len() / 4
-    );
+    )?;
 
-    println!();
-    println!("opcode stream:");
-    println!("  format: <dword_index>: opcode=<id> len=<dwords> token=<opcode_token> <decoded?>");
+    writeln!(out)?;
+    writeln!(out, "opcode stream:")?;
+    writeln!(
+        out,
+        "  format: <dword_index>: opcode=<id> len=<dwords> token=<opcode_token> <decoded?>"
+    )?;
 
     let toks = &program.tokens;
     let mut i = 2usize;
@@ -161,28 +188,32 @@ fn real_main() -> anyhow::Result<()> {
         let opcode = opcode_token & OPCODE_MASK;
         let len = ((opcode_token >> OPCODE_LEN_SHIFT) & OPCODE_LEN_MASK) as usize;
 
-        print!("  {i:04}: opcode={opcode:04x} len={len:04} token=0x{opcode_token:08x}",);
+        write!(
+            out,
+            "  {i:04}: opcode={opcode:04x} len={len:04} token=0x{opcode_token:08x}",
+        )?;
         if let Some(name) = opcode_name(opcode) {
-            print!(" ({name})");
+            write!(out, " ({name})")?;
         }
 
         if len == 0 {
-            println!("  !! invalid length 0");
+            writeln!(out, "  !! invalid length 0")?;
             break;
         }
 
         let end = match i.checked_add(len) {
             Some(v) => v,
             None => {
-                println!("  !! length overflow");
+                writeln!(out, "  !! length overflow")?;
                 break;
             }
         };
         if end > toks.len() {
-            println!(
+            writeln!(
+                out,
                 "  !! instruction overruns token stream (end={end}, available={})",
                 toks.len()
-            );
+            )?;
             break;
         }
 
@@ -213,43 +244,49 @@ fn real_main() -> anyhow::Result<()> {
             };
             if class == CUSTOMDATA_CLASS_IMMEDIATE_CONSTANT_BUFFER {
                 let payload_dwords = inst_toks.len().saturating_sub(class_pos.saturating_add(1));
-                println!(
+                writeln!(
+                    out,
                     "  => decl customdata class={class} ({class_name}) payload_dwords={payload_dwords}"
-                );
+                )?;
             } else {
-                println!("  => decl customdata class={class} ({class_name})");
+                writeln!(out, "  => decl customdata class={class} ({class_name})")?;
             }
         } else if opcode == OPCODE_NOP {
-            println!("  ; nop");
+            writeln!(out, "  ; nop")?;
         } else if in_decls && opcode >= DECLARATION_OPCODE_MIN {
             match decode_decl(opcode, inst_toks, i) {
-                Ok(decl) => println!("  => decl {decl:?}"),
-                Err(err) => println!("  !! decl decode error: {err}"),
+                Ok(decl) => writeln!(out, "  => decl {decl:?}")?,
+                Err(err) => writeln!(out, "  !! decl decode error: {err}")?,
             }
         } else {
             in_decls = false;
             match decode_instruction(opcode, inst_toks, i) {
-                Ok(inst) => println!("  => inst {inst:?}"),
-                Err(err) => println!("  !! inst decode error: {err}"),
+                Ok(inst) => writeln!(out, "  => inst {inst:?}")?,
+                Err(err) => writeln!(out, "  !! inst decode error: {err}")?,
             }
         }
 
         if full_tokens || len <= DEFAULT_MAX_TOKEN_DWORDS_PER_OP {
-            print!("       toks:");
+            write!(out, "       toks:")?;
             for &t in inst_toks {
-                print!(" 0x{t:08x}");
+                write!(out, " 0x{t:08x}")?;
             }
-            println!();
+            writeln!(out)?;
         } else {
-            print!("       toks:");
+            write!(out, "       toks:")?;
             for &t in &inst_toks[..DEFAULT_MAX_TOKEN_DWORDS_PER_OP] {
-                print!(" 0x{t:08x}");
+                write!(out, " 0x{t:08x}")?;
             }
-            println!(" ... (+{} dwords)", len - DEFAULT_MAX_TOKEN_DWORDS_PER_OP);
+            writeln!(
+                out,
+                " ... (+{} dwords)",
+                len - DEFAULT_MAX_TOKEN_DWORDS_PER_OP
+            )?;
         }
 
         i = end;
     }
 
+    out.flush()?;
     Ok(())
 }
