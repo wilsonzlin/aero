@@ -104,6 +104,45 @@ fn xhci_msix_interrupt_reaches_guest_and_suppresses_intx_and_msi() {
 }
 
 #[test]
+fn xhci_msix_unprogrammed_entry_sets_pba_and_suppresses_msi() {
+    let mut dev = XhciPciDevice::default();
+    dev.config_mut().set_command(1 << 1);
+
+    let interrupts = Rc::new(RefCell::new(PlatformInterrupts::new()));
+    interrupts
+        .borrow_mut()
+        .set_mode(PlatformInterruptMode::Apic);
+    dev.set_msi_target(Some(Box::new(interrupts.clone())));
+
+    // Enable MSI with a distinct vector. If the MSI path fires we'll observe it here.
+    program_msi(&mut dev, 0x46);
+
+    // Enable MSI-X but leave table entry 0 unprogrammed (address/data are zero).
+    enable_msix(&mut dev);
+
+    dev.raise_event_interrupt();
+
+    // MSI-X being enabled should suppress both legacy INTx and MSI delivery.
+    assert!(!dev.irq_level());
+    assert_eq!(
+        interrupts.borrow_mut().get_pending(),
+        None,
+        "unprogrammed MSI-X entry must suppress MSI delivery"
+    );
+
+    // Because the vector is unprogrammed, the device should set the MSI-X PBA pending bit instead
+    // of delivering an interrupt.
+    let pba_base = u64::from(
+        dev.config()
+            .capability::<MsixCapability>()
+            .expect("MSI-X capability")
+            .pba_offset(),
+    );
+    let pba = MmioHandler::read(&mut dev, pba_base, 8);
+    assert_eq!(pba & 1, 1, "unprogrammed MSI-X entry should set PBA pending bit");
+}
+
+#[test]
 fn xhci_msix_masked_vector_sets_pba_and_delivers_on_unmask() {
     let mut dev = XhciPciDevice::default();
     dev.config_mut().set_command(1 << 1);
