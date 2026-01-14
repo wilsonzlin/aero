@@ -135,6 +135,7 @@ class HarnessArgAliasTests(unittest.TestCase):
             "--with-blk-reset",
             "--with-virtio-blk-reset",
             "--require-virtio-blk-reset",
+            "--enable-virtio-blk-reset",
         ):
             with self.subTest(flag=flag):
                 args = self._parse(
@@ -147,6 +148,44 @@ class HarnessArgAliasTests(unittest.TestCase):
                     ]
                 )
                 self.assertTrue(args.with_blk_reset)
+
+    def test_virtio_blk_resize_aliases_set_flag(self) -> None:
+        for flag in (
+            "--with-blk-resize",
+            "--with-virtio-blk-resize",
+            "--require-virtio-blk-resize",
+            "--enable-virtio-blk-resize",
+        ):
+            with self.subTest(flag=flag):
+                args = self._parse(
+                    [
+                        "--qemu-system",
+                        "qemu-system-x86_64",
+                        "--disk-image",
+                        "disk.img",
+                        flag,
+                    ]
+                )
+                self.assertTrue(args.with_blk_resize)
+
+    def test_virtio_net_link_flap_aliases_set_flag(self) -> None:
+        for flag in (
+            "--with-net-link-flap",
+            "--with-virtio-net-link-flap",
+            "--require-virtio-net-link-flap",
+            "--enable-virtio-net-link-flap",
+        ):
+            with self.subTest(flag=flag):
+                args = self._parse(
+                    [
+                        "--qemu-system",
+                        "qemu-system-x86_64",
+                        "--disk-image",
+                        "disk.img",
+                        flag,
+                    ]
+                )
+                self.assertTrue(args.with_net_link_flap)
 
     def test_virtio_input_media_keys_aliases_set_flag(self) -> None:
         for flag in (

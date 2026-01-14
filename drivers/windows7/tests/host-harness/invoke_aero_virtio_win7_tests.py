@@ -3238,6 +3238,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--with-blk-reset",
         "--with-virtio-blk-reset",
         "--require-virtio-blk-reset",
+        "--enable-virtio-blk-reset",
         dest="with_blk_reset",
         action="store_true",
         help=(
@@ -3353,6 +3354,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--with-net-link-flap",
         "--with-virtio-net-link-flap",
         "--require-virtio-net-link-flap",
+        "--enable-virtio-net-link-flap",
         dest="with_net_link_flap",
         action="store_true",
         help=(
@@ -3366,6 +3368,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--with-blk-resize",
         "--with-virtio-blk-resize",
         "--require-virtio-blk-resize",
+        "--enable-virtio-blk-resize",
         dest="with_blk_resize",
         action="store_true",
         help=(
