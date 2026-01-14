@@ -459,10 +459,22 @@ fn parse_args(args: Vec<String>) -> Result<Option<InputOpts>> {
                 opts.node_dir = Some(next_value(&mut iter, &arg)?);
             }
             val if val.starts_with("--node-dir=") => {
-                opts.node_dir = Some(val["--node-dir=".len()..].to_string());
+                let value = val["--node-dir=".len()..].to_string();
+                if value.trim().is_empty() {
+                    return Err(XtaskError::Message(
+                        "--node-dir requires a value".to_string(),
+                    ));
+                }
+                opts.node_dir = Some(value);
             }
             val if val.starts_with("--web-dir=") => {
-                opts.node_dir = Some(val["--web-dir=".len()..].to_string());
+                let value = val["--web-dir=".len()..].to_string();
+                if value.trim().is_empty() {
+                    return Err(XtaskError::Message(
+                        "--web-dir requires a value".to_string(),
+                    ));
+                }
+                opts.node_dir = Some(value);
             }
             "--" => {
                 opts.pw_extra_args = iter.collect();
@@ -495,7 +507,12 @@ fn next_value(
     flag: &str,
 ) -> Result<String> {
     match iter.next() {
-        Some(v) => Ok(v),
+        Some(v) => {
+            if v.trim().is_empty() {
+                return Err(XtaskError::Message(format!("{flag} requires a value")));
+            }
+            Ok(v)
+        }
         None => Err(XtaskError::Message(format!("{flag} requires a value"))),
     }
 }
@@ -734,6 +751,36 @@ mod tests {
             .expect("parse_args should accept --web-dir=web")
             .expect("expected Some(opts)");
         assert_eq!(opts.node_dir.as_deref(), Some("web"));
+    }
+
+    #[test]
+    fn parse_args_rejects_empty_node_dir_equals() {
+        let err = parse_args(vec!["--node-dir=".into()])
+            .expect_err("expected parse_args to reject empty --node-dir value");
+        assert!(
+            err.to_string().contains("--node-dir requires a value"),
+            "unexpected error message: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_args_rejects_empty_web_dir_equals() {
+        let err = parse_args(vec!["--web-dir=".into()])
+            .expect_err("expected parse_args to reject empty --web-dir value");
+        assert!(
+            err.to_string().contains("--web-dir requires a value"),
+            "unexpected error message: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_args_rejects_blank_node_dir_value() {
+        let err = parse_args(vec!["--node-dir".into(), " ".into()])
+            .expect_err("expected parse_args to reject blank --node-dir value");
+        assert!(
+            err.to_string().contains("--node-dir requires a value"),
+            "unexpected error message: {err}"
+        );
     }
 
     #[test]

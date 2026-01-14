@@ -78,10 +78,22 @@ fn parse_args(args: Vec<String>) -> Result<Option<WebOpts>> {
                 node_dir = Some(next_value(&mut iter, &arg)?);
             }
             val if val.starts_with("--node-dir=") => {
-                node_dir = Some(val["--node-dir=".len()..].to_string());
+                let value = val["--node-dir=".len()..].to_string();
+                if value.trim().is_empty() {
+                    return Err(XtaskError::Message(
+                        "--node-dir requires a value".to_string(),
+                    ));
+                }
+                node_dir = Some(value);
             }
             val if val.starts_with("--web-dir=") => {
-                node_dir = Some(val["--web-dir=".len()..].to_string());
+                let value = val["--web-dir=".len()..].to_string();
+                if value.trim().is_empty() {
+                    return Err(XtaskError::Message(
+                        "--web-dir requires a value".to_string(),
+                    ));
+                }
+                node_dir = Some(value);
             }
             "--" => {
                 extra_args = iter.collect();
@@ -116,7 +128,12 @@ fn next_value(
     flag: &str,
 ) -> Result<String> {
     match iter.next() {
-        Some(v) => Ok(v),
+        Some(v) => {
+            if v.trim().is_empty() {
+                return Err(XtaskError::Message(format!("{flag} requires a value")));
+            }
+            Ok(v)
+        }
         None => Err(XtaskError::Message(format!("{flag} requires a value"))),
     }
 }
