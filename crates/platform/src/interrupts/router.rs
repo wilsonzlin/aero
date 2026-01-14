@@ -182,10 +182,6 @@ impl PortIoDevice for ImcrPort {
 }
 
 impl PlatformInterrupts {
-    fn lapics_iter(&self) -> impl Iterator<Item = &LocalApic> {
-        self.lapics.iter().map(|lapic| lapic.as_ref())
-    }
-
     pub fn new() -> Self {
         Self::new_with_cpu_count(1)
     }
