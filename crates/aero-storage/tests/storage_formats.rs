@@ -2,11 +2,11 @@
 
 use aero_storage::{
     detect_format, AeroSparseConfig, AeroSparseDisk, AeroSparseHeader, DiskError, DiskFormat,
-    DiskImage, MemBackend, Qcow2Disk, StorageBackend, VhdDisk, VirtualDisk,
+    DiskImage, MemBackend, Qcow2Disk, StorageBackend, VhdDisk, VirtualDisk, SECTOR_SIZE,
 };
 use proptest::prelude::*;
 
-const SECTOR: usize = 512;
+const SECTOR: usize = SECTOR_SIZE;
 const AEROSPAR_HEADER_SIZE: u64 = 64;
 const QCOW2_OFLAG_COPIED: u64 = 1 << 63;
 
@@ -18,7 +18,7 @@ fn write_be_u64(buf: &mut [u8], offset: usize, val: u64) {
     buf[offset..offset + 8].copy_from_slice(&val.to_be_bytes());
 }
 
-fn vhd_footer_checksum(raw: &[u8; 512]) -> u32 {
+fn vhd_footer_checksum(raw: &[u8; SECTOR]) -> u32 {
     let mut sum: u32 = 0;
     for (i, b) in raw.iter().enumerate() {
         if (64..68).contains(&i) {
@@ -113,8 +113,8 @@ fn make_qcow2_with_pattern() -> MemBackend {
     storage
 }
 
-fn make_vhd_footer(virtual_size: u64, disk_type: u32, data_offset: u64) -> [u8; 512] {
-    let mut footer = [0u8; 512];
+fn make_vhd_footer(virtual_size: u64, disk_type: u32, data_offset: u64) -> [u8; SECTOR] {
+    let mut footer = [0u8; SECTOR];
     footer[0..8].copy_from_slice(b"conectix");
     write_be_u32(&mut footer, 8, 2); // features
     write_be_u32(&mut footer, 12, 0x0001_0000); // file_format_version
@@ -150,14 +150,16 @@ fn make_vhd_fixed_with_footer_copy() -> MemBackend {
     // Some implementations write a footer copy at offset 0 but do not keep all fields perfectly
     // in sync with the EOF footer. Mutate an unused field (original_size) so the copy is valid
     // but not byte-for-byte identical.
-    write_be_u64(&mut footer_copy, 40, virtual_size + 512);
+    write_be_u64(&mut footer_copy, 40, virtual_size + (SECTOR as u64));
     let checksum = vhd_footer_checksum(&footer_copy);
     write_be_u32(&mut footer_copy, 64, checksum);
 
     let mut storage = MemBackend::default();
     storage.write_at(0, &footer_copy).unwrap(); // footer copy at start
-    storage.write_at(512, &data).unwrap();
-    storage.write_at(512 + virtual_size, &footer).unwrap();
+    storage.write_at(SECTOR as u64, &data).unwrap();
+    storage
+        .write_at((SECTOR as u64) + virtual_size, &footer)
+        .unwrap();
     storage
 }
 
@@ -170,10 +172,10 @@ fn make_vhd_fixed_without_footer_copy_but_sector0_looks_like_footer() -> MemBack
 
     // Sector 0: bytes that form a valid fixed-disk footer.
     let fake_footer = make_vhd_footer(virtual_size, 2, u64::MAX);
-    data[..512].copy_from_slice(&fake_footer);
+    data[..SECTOR].copy_from_slice(&fake_footer);
 
     // Sector 1: distinctive pattern so we can detect if the open path incorrectly skips sector 0.
-    data[512..520].copy_from_slice(b"PAYLOAD!");
+    data[SECTOR..SECTOR + 8].copy_from_slice(b"PAYLOAD!");
 
     let eof_footer = make_vhd_footer(virtual_size, 2, u64::MAX);
 
@@ -187,19 +189,19 @@ fn make_vhd_dynamic_empty(virtual_size: u64, block_size: u32) -> MemBackend {
     assert_eq!(virtual_size % SECTOR as u64, 0);
     assert_eq!(block_size as usize % SECTOR, 0);
 
-    let dyn_header_offset = 512u64;
-    let table_offset = 512u64 + 1024u64;
+    let dyn_header_offset = SECTOR as u64;
+    let table_offset = dyn_header_offset + 1024;
     let blocks = virtual_size.div_ceil(block_size as u64);
     let max_table_entries = blocks as u32;
     let bat_bytes = max_table_entries as u64 * 4;
-    let bat_size = bat_bytes.div_ceil(512) * 512;
+    let bat_size = bat_bytes.div_ceil(SECTOR as u64) * (SECTOR as u64);
 
     let footer = make_vhd_footer(virtual_size, 3, dyn_header_offset);
-    let file_len = 512 + 1024 + bat_size + 512;
+    let file_len = (SECTOR as u64) + 1024 + bat_size + (SECTOR as u64);
     let mut storage = MemBackend::with_len(file_len).unwrap();
 
     storage.write_at(0, &footer).unwrap();
-    storage.write_at(file_len - 512, &footer).unwrap();
+    storage.write_at(file_len - (SECTOR as u64), &footer).unwrap();
 
     let mut dyn_header = [0u8; 1024];
     dyn_header[0..8].copy_from_slice(b"cxsparse");
@@ -223,22 +225,22 @@ fn make_vhd_dynamic_with_pattern() -> MemBackend {
     let block_size = 64 * 1024;
     let mut storage = make_vhd_dynamic_empty(virtual_size, block_size);
 
-    let dyn_header_offset = 512u64;
-    let table_offset = 512u64 + 1024u64;
-    let bat_size = 512u64;
-    let old_footer_offset = 512 + 1024 + bat_size;
-    let bitmap_size = 512u64;
+    let dyn_header_offset = SECTOR as u64;
+    let table_offset = dyn_header_offset + 1024;
+    let bat_size = SECTOR as u64;
+    let old_footer_offset = (SECTOR as u64) + 1024 + bat_size;
+    let bitmap_size = SECTOR as u64;
     let block_total_size = bitmap_size + block_size as u64;
     let new_footer_offset = old_footer_offset + block_total_size;
 
-    storage.set_len(new_footer_offset + 512).unwrap();
+    storage.set_len(new_footer_offset + (SECTOR as u64)).unwrap();
 
-    let bat_entry = (old_footer_offset / 512) as u32;
+    let bat_entry = (old_footer_offset / (SECTOR as u64)) as u32;
     storage
         .write_at(table_offset, &bat_entry.to_be_bytes())
         .unwrap();
 
-    let mut bitmap = [0u8; 512];
+    let mut bitmap = [0u8; SECTOR];
     bitmap[0] = 0x80;
     storage.write_at(old_footer_offset, &bitmap).unwrap();
 
@@ -298,11 +300,11 @@ fn detect_fixed_vhd_footer_at_offset0_without_eof_footer_is_raw() {
     // A file that begins with bytes resembling a fixed VHD footer should not be treated as VHD
     // unless it is large enough to plausibly contain both the optional footer copy and the
     // required EOF footer.
-    let current_size = 512u64;
+    let current_size = SECTOR as u64;
     let footer = make_vhd_footer(current_size, 2, u64::MAX);
 
     // footer at offset 0 + 512 bytes of data, but no EOF footer.
-    let mut backend = MemBackend::with_len(current_size + 512).unwrap();
+    let mut backend = MemBackend::with_len(current_size + (SECTOR as u64)).unwrap();
     backend.write_at(0, &footer).unwrap();
     assert_eq!(detect_format(&mut backend).unwrap(), DiskFormat::Raw);
 }
@@ -311,7 +313,7 @@ fn detect_fixed_vhd_footer_at_offset0_without_eof_footer_is_raw() {
 fn detect_format_does_not_misclassify_vhd_cookie_without_valid_footer_fields() {
     // A random file that happens to contain "conectix" should not be treated as a VHD unless
     // the surrounding footer fields are also plausible.
-    let mut backend = MemBackend::with_len(512).unwrap();
+    let mut backend = MemBackend::with_len(SECTOR as u64).unwrap();
     backend.write_at(0, b"conectix").unwrap();
     assert_eq!(detect_format(&mut backend).unwrap(), DiskFormat::Raw);
 }
@@ -509,7 +511,7 @@ fn aerosparse_rejects_misaligned_table_entry() {
     backend
         .write_at(
             AEROSPAR_HEADER_SIZE,
-            &(header.data_offset + 512).to_le_bytes(),
+            &(header.data_offset + (SECTOR as u64)).to_le_bytes(),
         )
         .unwrap();
 
@@ -560,7 +562,7 @@ fn aerosparse_rejects_table_entry_pointing_past_allocated_region() {
 fn aerosparse_rejects_absurd_allocation_table_sizes() {
     // Trigger the hard cap in `AeroSparseDisk::open` without allocating huge memory.
     let table_entries: u64 = (128 * 1024 * 1024 / 8) + 1;
-    let block_size_bytes: u32 = 512;
+    let block_size_bytes: u32 = SECTOR as u32;
     let disk_size_bytes = table_entries * block_size_bytes as u64;
 
     let header = AeroSparseHeader {
@@ -642,7 +644,7 @@ fn aerosparse_rejects_allocated_blocks_exceeding_table_entries() {
 #[test]
 fn aerosparse_create_rejects_absurd_allocation_table_sizes() {
     let table_entries: u64 = (128 * 1024 * 1024 / 8) + 1;
-    let block_size_bytes: u32 = 512;
+    let block_size_bytes: u32 = SECTOR as u32;
     let disk_size_bytes = table_entries * block_size_bytes as u64;
 
     match AeroSparseDisk::create(
@@ -756,7 +758,7 @@ fn vhd_rejects_bat_entries_pointing_past_eof() {
     let mut storage = make_vhd_dynamic_empty(virtual_size, block_size);
 
     // The fixture writes the BAT at this fixed offset.
-    let table_offset = 512u64 + 1024u64;
+    let table_offset = (SECTOR as u64) + 1024;
     let bad_sector = 0x10_0000u32; // points far past EOF
     storage
         .write_at(table_offset, &bad_sector.to_be_bytes())
@@ -775,7 +777,7 @@ fn vhd_rejects_bad_footer_checksum() {
 
     // Corrupt a byte in the footer (but keep the cookie intact) so the checksum no longer matches.
     let footer_offset = 1024 * 1024;
-    let mut footer = [0u8; 512];
+    let mut footer = [0u8; SECTOR];
     storage.read_at(footer_offset, &mut footer).unwrap();
     footer[8] ^= 0x01;
     storage.write_at(footer_offset, &footer).unwrap();
