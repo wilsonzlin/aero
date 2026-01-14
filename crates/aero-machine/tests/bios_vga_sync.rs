@@ -410,7 +410,7 @@ fn bios_vbe_sync_mode_and_lfb_base() {
             }
 
             m.display_present();
-            assert_eq!(m.display_resolution(), (w as u32, h as u32));
+            assert_eq!(m.display_resolution(), (w, h));
 
             // Write a single red pixel at (0,0) in packed 32bpp BGRX.
             m.write_physical_u32(m.vbe_lfb_base(), 0x00FF_0000);
