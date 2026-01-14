@@ -403,6 +403,7 @@ Copy `hidtest.exe` into the guest and run it from an elevated Command Prompt.
 8. (Optional) query driver state / interrupt mode diagnostics:
    ```bat
    hidtest.exe --keyboard --state
+   hidtest.exe --keyboard --state-json
    hidtest.exe --keyboard --interrupt-info
    hidtest.exe --keyboard --interrupt-info-json
 

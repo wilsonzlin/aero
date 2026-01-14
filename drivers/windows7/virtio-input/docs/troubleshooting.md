@@ -219,6 +219,8 @@ hidtest.exe --keyboard --led-spam 10000
 hidtest.exe --keyboard --counters
 ```
 
+Tip: use `hidtest.exe --keyboard --state-json` for machine-readable state output (useful when scraping logs).
+
 `--state` prints `KeyboardLedSupportedMask` and `StatusQActive`. If the mask is `0` (device does not advertise `EV_LED`), the driver will keep statusq inactive and will not send LED events.
 
 By default, `--led-spam` alternates the LED output report between `0` and `0x1F` (all 5 defined HID boot keyboard LED bits).
