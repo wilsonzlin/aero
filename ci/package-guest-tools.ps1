@@ -155,12 +155,47 @@ function Copy-TreeWithSafetyFilters {
   $srcRoot = (Resolve-Path -LiteralPath $SourceDir).Path
   $srcPrefix = $srcRoot.TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
 
+  $dstRoot = (Resolve-Path -LiteralPath $DestDir).Path
+  $dstPrefix = $dstRoot.TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
+
+  function Normalize-RelPathKey {
+    param([Parameter(Mandatory = $true)][string] $RelPath)
+
+    # Normalize for case-insensitive comparisons, and normalize separators so we catch collisions
+    # across platforms (Windows vs Linux/macOS checkouts).
+    $p = $RelPath.Replace("\", "/")
+    $p = ($p -replace "/+", "/").Trim("/")
+    return $p.ToLowerInvariant()
+  }
+
+  # Fail fast on collisions between existing staged content and extra tools.
+  # Collisions must be treated case-insensitively so we don't silently clobber files on Windows.
+  $existing = @{} # key -> { Path, IsFile }
+  $existingEntries = @(Get-ChildItem -LiteralPath $DestDir -Recurse -Force -ErrorAction SilentlyContinue)
+  foreach ($e in $existingEntries) {
+    if (-not $e.FullName.StartsWith($dstPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+      continue
+    }
+    $relExisting = $e.FullName.Substring($dstPrefix.Length)
+    if ([string]::IsNullOrEmpty($relExisting)) { continue }
+    $keyExisting = Normalize-RelPathKey -RelPath $relExisting
+    if (-not $existing.ContainsKey($keyExisting)) {
+      $existing[$keyExisting] = [pscustomobject]@{
+        Path = $e.FullName
+        IsFile = -not $e.PSIsContainer
+      }
+    }
+  }
+
   $copied = New-Object System.Collections.Generic.List[string]
 
   $files = @(
     Get-ChildItem -LiteralPath $SourceDir -Recurse -Force -File -ErrorAction Stop |
       Sort-Object -Property FullName
   )
+
+  $planned = New-Object System.Collections.Generic.List[object]
+  $plannedKeys = @{} # key -> rel
   foreach ($f in $files) {
     $ext = $f.Extension
     $extNoDot = $ext
@@ -195,12 +230,40 @@ function Copy-TreeWithSafetyFilters {
     }
 
     $dst = Join-Path $DestDir $rel
-    $dstParent = Split-Path -Parent $dst
+    $key = Normalize-RelPathKey -RelPath $rel
+
+    # Detect directory/file collisions (e.g. existing `tools/bin` file vs new `tools/bin/foo.exe`).
+    $parts = @($key -split "/")
+    for ($i = 0; $i -lt ($parts.Count - 1); $i++) {
+      $parentKey = ($parts[0..$i] -join "/")
+      if ($plannedKeys.ContainsKey($parentKey)) {
+        throw "ExtraToolsDir contains a directory/file collision: '$rel' requires directory '$parentKey' but a file is already staged from ExtraToolsDir at '$($plannedKeys[$parentKey])'."
+      }
+      if ($existing.ContainsKey($parentKey) -and $existing[$parentKey].IsFile) {
+        throw "ExtraToolsDir staging would collide with an existing staged file: '$rel' requires directory '$parentKey' but '$($existing[$parentKey].Path)' exists as a file."
+      }
+    }
+
+    if ($plannedKeys.ContainsKey($key)) {
+      throw "ExtraToolsDir contains a case-insensitive path collision: '$rel' collides with '$($plannedKeys[$key])'."
+    }
+    if ($existing.ContainsKey($key)) {
+      throw "ExtraToolsDir staging would overwrite an existing staged path (case-insensitive): '$rel' collides with '$($existing[$key].Path)'."
+    }
+
+    $plannedKeys[$key] = $rel
+    [void]$planned.Add([pscustomobject]@{ Source = $f.FullName; Rel = $rel; Key = $key; Dest = $dst })
+  }
+
+  foreach ($p in ($planned | Sort-Object -Property Key)) {
+    $dstParent = Split-Path -Parent $p.Dest
     if (-not (Test-Path -LiteralPath $dstParent -PathType Container)) {
       New-Item -ItemType Directory -Force -Path $dstParent | Out-Null
     }
-    Copy-Item -LiteralPath $f.FullName -Destination $dst -Force
-    [void]$copied.Add(("tools/" + ($rel.Replace("\", "/"))))
+
+    # Use .NET file copy with overwrite=false as a final guard against accidental overwrite.
+    [System.IO.File]::Copy($p.Source, $p.Dest, $false)
+    [void]$copied.Add(("tools/" + ($p.Rel.Replace("\", "/"))))
   }
 
   return ,$copied.ToArray()
