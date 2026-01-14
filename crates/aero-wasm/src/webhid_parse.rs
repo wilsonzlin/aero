@@ -1,5 +1,3 @@
-#![cfg(target_arch = "wasm32")]
-
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 
@@ -25,42 +23,42 @@ fn prefix_error(err: JsValue, prefix: &str) -> JsValue {
 
 fn expect_object(value: &JsValue, ctx: &str) -> Result<(), JsValue> {
     if value.is_null() || value.is_undefined() {
-        return Err(js_error(&format!("{ctx}: expected an object")));
+        return Err(js_error(format!("{ctx}: expected an object")));
     }
     if !value.is_object() || Array::is_array(value) {
-        return Err(js_error(&format!("{ctx}: expected an object")));
+        return Err(js_error(format!("{ctx}: expected an object")));
     }
     Ok(())
 }
 
 fn expect_array(value: &JsValue, ctx: &str) -> Result<Array, JsValue> {
     if !Array::is_array(value) {
-        return Err(js_error(&format!("{ctx}: expected an array")));
+        return Err(js_error(format!("{ctx}: expected an array")));
     }
     Ok(value.clone().unchecked_into::<Array>())
 }
 
 fn get_prop(obj: &JsValue, key: &str) -> Result<JsValue, JsValue> {
     Reflect::get(obj, &JsValue::from_str(key))
-        .map_err(|err| js_error(&format!("Failed to read property '{key}': {err:?}")))
+        .map_err(|err| js_error(format!("Failed to read property '{key}': {err:?}")))
 }
 
 fn parse_u32(value: &JsValue, ctx: &str) -> Result<u32, JsValue> {
     let Some(v) = value.as_f64() else {
-        return Err(js_error(&format!("{ctx}: expected a number")));
+        return Err(js_error(format!("{ctx}: expected a number")));
     };
     if !v.is_finite() || v.fract() != 0.0 || v < 0.0 || v > u32::MAX as f64 {
-        return Err(js_error(&format!("{ctx}: expected a u32 number")));
+        return Err(js_error(format!("{ctx}: expected a u32 number")));
     }
     Ok(v as u32)
 }
 
 fn parse_i32(value: &JsValue, ctx: &str) -> Result<i32, JsValue> {
     let Some(v) = value.as_f64() else {
-        return Err(js_error(&format!("{ctx}: expected a number")));
+        return Err(js_error(format!("{ctx}: expected a number")));
     };
     if !v.is_finite() || v.fract() != 0.0 || v < i32::MIN as f64 || v > i32::MAX as f64 {
-        return Err(js_error(&format!("{ctx}: expected an i32 number")));
+        return Err(js_error(format!("{ctx}: expected an i32 number")));
     }
     Ok(v as i32)
 }
@@ -68,7 +66,7 @@ fn parse_i32(value: &JsValue, ctx: &str) -> Result<i32, JsValue> {
 fn parse_bool(value: &JsValue, ctx: &str) -> Result<bool, JsValue> {
     value
         .as_bool()
-        .ok_or_else(|| js_error(&format!("{ctx}: expected a boolean")))
+        .ok_or_else(|| js_error(format!("{ctx}: expected a boolean")))
 }
 
 fn parse_bool_with_default(value: &JsValue, default: bool, ctx: &str) -> Result<bool, JsValue> {
