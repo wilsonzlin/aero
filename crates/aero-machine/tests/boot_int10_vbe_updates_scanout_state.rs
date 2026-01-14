@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use aero_gpu_vga::VBE_FRAMEBUFFER_OFFSET;
 use aero_machine::{Machine, MachineConfig, RunExit};
 use aero_shared::scanout_state::{
     ScanoutState, ScanoutStateUpdate, SCANOUT_FORMAT_B8G8R8X8, SCANOUT_SOURCE_LEGACY_TEXT,
@@ -222,6 +223,60 @@ fn boot_sector_int10_vbe_sets_scanout_state_to_legacy_vbe_lfb() {
     run_until_halt(&mut m);
 
     assert_eq!(m.vbe_lfb_base(), u64::from(lfb_base));
+
+    let snap = scanout_state.snapshot();
+    assert_eq!(snap.source, SCANOUT_SOURCE_LEGACY_VBE_LFB);
+    assert_eq!(snap.base_paddr(), m.vbe_lfb_base());
+    assert_eq!(snap.width, 1024);
+    assert_eq!(snap.height, 768);
+    assert_eq!(snap.pitch_bytes, 1024 * 4);
+    assert_eq!(snap.format, SCANOUT_FORMAT_B8G8R8X8);
+}
+
+#[test]
+fn boot_sector_int10_vbe_sets_scanout_state_to_legacy_vbe_lfb_with_derived_base() {
+    // Like `boot_sector_int10_vbe_sets_scanout_state_to_legacy_vbe_lfb`, but configure the legacy
+    // LFB base via the derived VRAM layout knobs:
+    //   lfb_base = vga_vram_bar_base + vga_lfb_offset
+    //
+    // Use an *unaligned* derived base so the machine must mask it down to the PCI BAR-sized
+    // alignment (and the scanout state must reflect the aligned base).
+    let lfb_offset: u32 = VBE_FRAMEBUFFER_OFFSET as u32; // 256KiB
+    let requested_vram_bar_base: u32 = 0xCFFC_1000;
+    let derived_lfb_base = requested_vram_bar_base.wrapping_add(lfb_offset);
+    assert_eq!(derived_lfb_base, 0xD000_1000);
+
+    let boot = build_int10_vbe_set_mode_boot_sector();
+    let scanout_state = Arc::new(ScanoutState::new());
+
+    let mut m = Machine::new(MachineConfig {
+        enable_pc_platform: true,
+        enable_vga: true,
+        enable_aerogpu: false,
+        vga_vram_bar_base: Some(requested_vram_bar_base),
+        vga_lfb_offset: Some(lfb_offset),
+        // Keep the test output deterministic.
+        enable_serial: false,
+        enable_i8042: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    m.set_scanout_state(Some(scanout_state.clone()));
+    m.set_disk_image(boot.to_vec()).unwrap();
+    m.reset();
+    run_until_halt(&mut m);
+
+    let vga = m.vga().expect("machine should have a VGA device");
+    let bar_size_bytes: u32 = vga
+        .borrow()
+        .vram_size()
+        .try_into()
+        .expect("VRAM size fits in u32");
+    assert!(bar_size_bytes.is_power_of_two());
+    let expected_aligned_base = derived_lfb_base & !(bar_size_bytes - 1);
+
+    assert_eq!(m.vbe_lfb_base(), u64::from(expected_aligned_base));
 
     let snap = scanout_state.snapshot();
     assert_eq!(snap.source, SCANOUT_SOURCE_LEGACY_VBE_LFB);
