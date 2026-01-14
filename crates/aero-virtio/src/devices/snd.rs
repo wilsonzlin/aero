@@ -167,7 +167,7 @@ pub struct VirtioSnd<O: AudioSink, I: AudioCaptureSource = NullCaptureSource> {
     capture_interleaved_scratch: Vec<f32>,
     capture_samples_scratch: Vec<f32>,
     event_buffers: VecDeque<DescriptorChain>,
-    pending_events: VecDeque<Vec<u8>>,
+    pending_events: VecDeque<[u8; 8]>,
 }
 
 impl<O: AudioSink> VirtioSnd<O, NullCaptureSource> {
@@ -301,7 +301,7 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
         let mut evt = [0u8; 8];
         evt[0..4].copy_from_slice(&event_type.to_le_bytes());
         evt[4..8].copy_from_slice(&data.to_le_bytes());
-        self.pending_events.push_back(evt.to_vec());
+        self.pending_events.push_back(evt);
     }
 
     /// Convenience helper: queue a JACK connected/disconnected event.
