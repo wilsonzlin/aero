@@ -824,11 +824,17 @@ fn sar(val: u64, count: u32, bits: u32, old_flags: u64) -> (u64, Option<u64>) {
 
 fn rol(val: u64, count: u32, bits: u32, old_flags: u64) -> (u64, Option<u64>) {
     let mask = mask_bits(bits);
+    let val = val & mask;
     let mut c = count & if bits == 64 { 0x3F } else { 0x1F };
     if c == 0 {
-        return (val & mask, None);
+        return (val, None);
     }
     c %= bits;
+    if c == 0 {
+        // ROL/ROR counts are reduced modulo the operand width. If the effective count is 0, the
+        // operation is a no-op and flags are unchanged.
+        return (val, None);
+    }
     let res = ((val << c) | (val >> (bits - c))) & mask;
     let cf = (res & 1) != 0;
     let mut flags = old_flags & !(FLAG_CF | FLAG_OF);
@@ -846,11 +852,17 @@ fn rol(val: u64, count: u32, bits: u32, old_flags: u64) -> (u64, Option<u64>) {
 
 fn ror(val: u64, count: u32, bits: u32, old_flags: u64) -> (u64, Option<u64>) {
     let mask = mask_bits(bits);
+    let val = val & mask;
     let mut c = count & if bits == 64 { 0x3F } else { 0x1F };
     if c == 0 {
-        return (val & mask, None);
+        return (val, None);
     }
     c %= bits;
+    if c == 0 {
+        // ROL/ROR counts are reduced modulo the operand width. If the effective count is 0, the
+        // operation is a no-op and flags are unchanged.
+        return (val, None);
+    }
     let res = ((val >> c) | (val << (bits - c))) & mask;
     let cf = ((res >> (bits - 1)) & 1) != 0;
     let mut flags = old_flags & !(FLAG_CF | FLAG_OF);
@@ -875,6 +887,11 @@ fn rcl(val: u64, count: u32, bits: u32, old_flags: u64) -> (u64, Option<u64>) {
         return (val & mask_bits(bits), None);
     }
     c %= width;
+    if c == 0 {
+        // RCL/RCR counts are reduced modulo (operand width + CF). If the effective count is 0,
+        // the operation is a no-op and flags are unchanged.
+        return (val & mask_bits(bits), None);
+    }
     let mask_ext = (1u128 << width) - 1;
     let mut ext = ((val & mask_bits(bits)) as u128) | ((cf_in as u128) << bits);
     ext = ((ext << c) | (ext >> (width - c))) & mask_ext;
@@ -901,6 +918,11 @@ fn rcr(val: u64, count: u32, bits: u32, old_flags: u64) -> (u64, Option<u64>) {
         return (val & mask_bits(bits), None);
     }
     c %= width;
+    if c == 0 {
+        // RCL/RCR counts are reduced modulo (operand width + CF). If the effective count is 0,
+        // the operation is a no-op and flags are unchanged.
+        return (val & mask_bits(bits), None);
+    }
     let mask_ext = (1u128 << width) - 1;
     let mut ext = ((val & mask_bits(bits)) as u128) | ((cf_in as u128) << bits);
     ext = ((ext >> c) | (ext << (width - c))) & mask_ext;
@@ -1152,5 +1174,32 @@ mod tests {
         assert_eq!(res, 0);
         assert!(flags.is_some());
         assert_ne!(flags.unwrap() & FLAG_ZF, 0);
+    }
+
+    #[test]
+    fn rotate_effective_count_zero_does_not_change_flags() {
+        // Rotate counts are masked and then reduced modulo the operand width. When the effective
+        // count is 0, the operation is a no-op and flags are unchanged.
+        let old_flags = FLAG_CF | FLAG_OF;
+
+        // ROL: 8-bit operand, count=8 => effective=0
+        let (res, flags) = rol(0x12, 8, 8, old_flags);
+        assert_eq!(res, 0x12);
+        assert!(flags.is_none());
+
+        // ROR: 16-bit operand, count=16 => effective=0
+        let (res, flags) = ror(0x1234, 16, 16, old_flags);
+        assert_eq!(res, 0x1234);
+        assert!(flags.is_none());
+
+        // RCL: 8-bit operand, count=9 => effective=0 (width=9)
+        let (res, flags) = rcl(0x7a, 9, 8, old_flags);
+        assert_eq!(res, 0x7a);
+        assert!(flags.is_none());
+
+        // RCR: 16-bit operand, count=17 => effective=0 (width=17)
+        let (res, flags) = rcr(0x8001, 17, 16, old_flags);
+        assert_eq!(res, 0x8001);
+        assert!(flags.is_none());
     }
 }
