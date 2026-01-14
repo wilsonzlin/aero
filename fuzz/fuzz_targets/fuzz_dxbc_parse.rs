@@ -184,6 +184,17 @@ fn should_parse_ctab_chunk(bytes: &[u8]) -> bool {
 }
 
 fn fuzz_dxbc_container(bytes: &[u8]) {
+    // `DxbcFile::parse` validates the chunk offset table in an O(chunk_count) loop.
+    // Skip absurd `chunk_count` values up-front so a valid DXBC header cannot force
+    // pathological parse time. Keep this check inside the helper so the fuzz target
+    // can still exercise the patched/synthesized container path for such inputs.
+    if bytes.len() >= 32 && &bytes[..4] == b"DXBC" {
+        let chunk_count = u32::from_le_bytes([bytes[28], bytes[29], bytes[30], bytes[31]]) as usize;
+        if chunk_count > MAX_FULL_SCAN_CHUNK_COUNT {
+            return;
+        }
+    }
+
     let dxbc = match DxbcFile::parse(bytes) {
         Ok(dxbc) => dxbc,
         Err(_) => return,
@@ -700,16 +711,6 @@ fn build_patched_dxbc(input: &[u8]) -> Vec<u8> {
 fuzz_target!(|data: &[u8]| {
     if data.len() > MAX_INPUT_SIZE_BYTES {
         return;
-    }
-
-    // `DxbcFile::parse` validates the chunk offset table in an O(chunk_count) loop.
-    // Skip absurd `chunk_count` values up-front so a valid DXBC header cannot force
-    // pathological parse time.
-    if data.len() >= 32 && &data[..4] == b"DXBC" {
-        let chunk_count = u32::from_le_bytes([data[28], data[29], data[30], data[31]]) as usize;
-        if chunk_count > MAX_FULL_SCAN_CHUNK_COUNT {
-            return;
-        }
     }
 
     // Fuzz the raw bytes directly.
