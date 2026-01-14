@@ -5,9 +5,14 @@
 // state (no per-render-target blend configuration).
 //
 // The Windows D3D10/D3D10.1 runtimes allow blend descriptors that cannot be
-// represented. Accepting those descriptors would cause silent fallback to an
-// incorrect blend factor/op at draw time. To avoid that, UMD CreateBlendState
-// must reject unsupported configurations with E_NOTIMPL.
+// represented. This helper returns `E_NOTIMPL` for those configurations.
+//
+// Policy note:
+// - Callers that want strict correctness should propagate `E_NOTIMPL` out of
+//   CreateBlendState so apps can detect missing support.
+// - Some bring-up / MVP paths may choose to treat `E_NOTIMPL` as "use a
+//   conservative default" (blend disabled) so apps can continue running, at the
+//   cost of rendering differences.
 //
 // This header is shared by the WDK (real Win7) and portable (non-WDK) UMD builds
 // so that unit tests can validate the mapping in a host environment.
