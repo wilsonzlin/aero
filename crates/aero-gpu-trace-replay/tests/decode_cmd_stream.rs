@@ -554,6 +554,7 @@ fn decodes_cmd_stream_dump_to_stable_listing() {
     assert!(listing.contains("view_handle=4096"), "{listing}");
     assert!(listing.contains("texture_handle=8192"), "{listing}");
     assert!(listing.contains(&format_hex), "{listing}");
+    assert!(listing.contains("format_name=R8G8B8A8Unorm"), "{listing}");
     assert!(listing.contains("DestroyTextureView"), "{listing}");
 
     // Pipeline/state opcodes should decode their fields (not just payload_len).
@@ -894,6 +895,7 @@ fn json_listing_decodes_new_opcodes() {
         create_view["decoded"]["format"],
         AerogpuFormat::R8G8B8A8Unorm as u32
     );
+    assert_eq!(create_view["decoded"]["format_name"], "R8G8B8A8Unorm");
     assert_eq!(create_view["decoded"]["base_mip_level"], 0);
     assert_eq!(create_view["decoded"]["mip_level_count"], 1);
     assert_eq!(create_view["decoded"]["base_array_layer"], 0);

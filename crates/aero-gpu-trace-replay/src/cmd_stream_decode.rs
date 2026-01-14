@@ -2,6 +2,7 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdDecodeError, AerogpuCmdOpcode, AerogpuCmdStreamHeader, AerogpuCmdStreamIter,
     AerogpuIndexFormat, AerogpuPrimitiveTopology, AEROGPU_STAGE_EX_MIN_ABI_MINOR,
 };
+use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -297,6 +298,9 @@ fn decode_known_fields(
             }
             if let Some(v) = read_u32_le(pkt.payload, 8) {
                 out.insert("format".into(), json!(v));
+                if let Some(name) = decode_format_name(v) {
+                    out.insert("format_name".into(), Value::String(name.to_string()));
+                }
             }
             if let Some(v) = read_u32_le(pkt.payload, 12) {
                 out.insert("width".into(), json!(v));
@@ -331,6 +335,9 @@ fn decode_known_fields(
             }
             if let Some(v) = read_u32_le(pkt.payload, 8) {
                 out.insert("format".into(), json!(v));
+                if let Some(name) = decode_format_name(v) {
+                    out.insert("format_name".into(), Value::String(name.to_string()));
+                }
             }
             if let Some(v) = read_u32_le(pkt.payload, 12) {
                 out.insert("base_mip_level".into(), json!(v));
@@ -1164,6 +1171,35 @@ fn decode_topology_name(topology: u32) -> Option<String> {
 
 fn decode_index_format_name(format: u32) -> Option<String> {
     AerogpuIndexFormat::from_u32(format).map(|f| format!("{f:?}"))
+}
+
+fn decode_format_name(format: u32) -> Option<&'static str> {
+    // Mirror the format names used by `aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat` and the
+    // text listing (`aero_gpu_trace_replay::decode_cmd_stream_listing`).
+    Some(match format {
+        v if v == AerogpuFormat::Invalid as u32 => "Invalid",
+        v if v == AerogpuFormat::B8G8R8A8Unorm as u32 => "B8G8R8A8Unorm",
+        v if v == AerogpuFormat::B8G8R8X8Unorm as u32 => "B8G8R8X8Unorm",
+        v if v == AerogpuFormat::R8G8B8A8Unorm as u32 => "R8G8B8A8Unorm",
+        v if v == AerogpuFormat::R8G8B8X8Unorm as u32 => "R8G8B8X8Unorm",
+        v if v == AerogpuFormat::B5G6R5Unorm as u32 => "B5G6R5Unorm",
+        v if v == AerogpuFormat::B5G5R5A1Unorm as u32 => "B5G5R5A1Unorm",
+        v if v == AerogpuFormat::B8G8R8A8UnormSrgb as u32 => "B8G8R8A8UnormSrgb",
+        v if v == AerogpuFormat::B8G8R8X8UnormSrgb as u32 => "B8G8R8X8UnormSrgb",
+        v if v == AerogpuFormat::R8G8B8A8UnormSrgb as u32 => "R8G8B8A8UnormSrgb",
+        v if v == AerogpuFormat::R8G8B8X8UnormSrgb as u32 => "R8G8B8X8UnormSrgb",
+        v if v == AerogpuFormat::D24UnormS8Uint as u32 => "D24UnormS8Uint",
+        v if v == AerogpuFormat::D32Float as u32 => "D32Float",
+        v if v == AerogpuFormat::BC1RgbaUnorm as u32 => "BC1RgbaUnorm",
+        v if v == AerogpuFormat::BC1RgbaUnormSrgb as u32 => "BC1RgbaUnormSrgb",
+        v if v == AerogpuFormat::BC2RgbaUnorm as u32 => "BC2RgbaUnorm",
+        v if v == AerogpuFormat::BC2RgbaUnormSrgb as u32 => "BC2RgbaUnormSrgb",
+        v if v == AerogpuFormat::BC3RgbaUnorm as u32 => "BC3RgbaUnorm",
+        v if v == AerogpuFormat::BC3RgbaUnormSrgb as u32 => "BC3RgbaUnormSrgb",
+        v if v == AerogpuFormat::BC7RgbaUnorm as u32 => "BC7RgbaUnorm",
+        v if v == AerogpuFormat::BC7RgbaUnormSrgb as u32 => "BC7RgbaUnormSrgb",
+        _ => return None,
+    })
 }
 
 fn read_u32_le(buf: &[u8], off: usize) -> Option<u32> {
