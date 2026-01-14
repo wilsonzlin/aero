@@ -1322,6 +1322,74 @@ fn ata_dma_succeeds_when_bus_master_is_started_before_command_is_issued() {
 }
 
 #[test]
+fn ata_dma_does_not_run_until_bus_master_is_started() {
+    // Guests may issue an ATA DMA command before starting the BMIDE engine. The controller should
+    // not move any data or raise an interrupt until the BMIDE start bit is set.
+    let capacity = 4 * SECTOR_SIZE as u64;
+    let mut disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+    let mut sector0 = vec![0u8; SECTOR_SIZE];
+    for (i, b) in sector0.iter_mut().enumerate() {
+        *b = (i as u8).wrapping_mul(7).wrapping_add(0x21);
+    }
+    disk.write_sectors(0, &sector0).unwrap();
+
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut()
+        .controller
+        .attach_primary_master_ata(AtaDrive::new(Box::new(disk)).unwrap());
+    ide.borrow_mut().config_mut().set_command(0x0005); // IO decode + Bus Master
+
+    let mut ioports = IoPortBus::new();
+    register_piix3_ide_ports(&mut ioports, ide.clone());
+
+    let mut mem = Bus::new(0x20_000);
+    let bm_base = ide.borrow().bus_master_base();
+
+    let prd_addr = 0x1000u64;
+    let dma_buf = 0x3000u64;
+
+    // PRD entry: one 512-byte segment, end-of-table.
+    mem.write_u32(prd_addr, dma_buf as u32);
+    mem.write_u16(prd_addr + 4, SECTOR_SIZE as u16);
+    mem.write_u16(prd_addr + 6, 0x8000);
+    ioports.write(bm_base + 4, 4, prd_addr as u32);
+
+    // Seed destination buffer to prove that no DMA happens before the BMIDE start bit.
+    mem.write_physical(dma_buf, &vec![0xFFu8; SECTOR_SIZE]);
+
+    // READ DMA for LBA 0, 1 sector. Do NOT start BMIDE yet.
+    ioports.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 2, 1, 1);
+    ioports.write(PRIMARY_PORTS.cmd_base + 3, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 4, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 5, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 7, 1, 0xC8);
+
+    ide.borrow_mut().tick(&mut mem);
+    assert!(!ide.borrow().controller.primary_irq_pending());
+    let bm_st = ioports.read(bm_base + 2, 1) as u8;
+    assert_eq!(bm_st & 0x07, 0x00);
+
+    let mut out = vec![0u8; SECTOR_SIZE];
+    mem.read_physical(dma_buf, &mut out);
+    assert!(out.iter().all(|&b| b == 0xFF));
+
+    // Start the BMIDE engine and tick again; DMA should now complete.
+    ioports.write(bm_base, 1, 0x09);
+    ide.borrow_mut().tick(&mut mem);
+
+    let bm_st = ioports.read(bm_base + 2, 1) as u8;
+    assert_eq!(bm_st & 0x07, 0x04);
+    assert!(ide.borrow().controller.primary_irq_pending());
+
+    mem.read_physical(dma_buf, &mut out);
+    assert_eq!(out, sector0);
+
+    let _ = ioports.read(PRIMARY_PORTS.cmd_base + 7, 1);
+    assert!(!ide.borrow().controller.primary_irq_pending());
+}
+
+#[test]
 fn ata_bus_master_dma_scatter_gather_with_odd_prd_lengths() {
     // Exercise a PRD scatter/gather list where the first segment length is odd. Real guests should
     // normally use word-aligned lengths, but the controller should still behave sensibly for
@@ -1751,6 +1819,74 @@ fn ata_dma_success_irq_is_latched_while_nien_is_set_and_surfaces_after_reenable(
 
     let _ = ioports.read(PRIMARY_PORTS.cmd_base + 7, 1);
     assert!(!ide.borrow().controller.primary_irq_pending());
+}
+
+#[test]
+fn ata_dma_success_irq_can_be_acknowledged_while_nien_is_set() {
+    // If the guest services the interrupt status while nIEN=1, it should not see a spurious IRQ
+    // once interrupts are re-enabled.
+    let capacity = 4 * SECTOR_SIZE as u64;
+    let mut disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+    let mut sector0 = vec![0u8; SECTOR_SIZE];
+    for (i, b) in sector0.iter_mut().enumerate() {
+        *b = (i as u8).wrapping_mul(5).wrapping_add(0x33);
+    }
+    disk.write_sectors(0, &sector0).unwrap();
+
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut()
+        .controller
+        .attach_primary_master_ata(AtaDrive::new(Box::new(disk)).unwrap());
+    ide.borrow_mut().config_mut().set_command(0x0005); // IO decode + Bus Master
+
+    let mut ioports = IoPortBus::new();
+    register_piix3_ide_ports(&mut ioports, ide.clone());
+
+    let mut mem = Bus::new(0x20_000);
+    let bm_base = ide.borrow().bus_master_base();
+
+    let prd_addr = 0x1000u64;
+    let dma_buf = 0x3000u64;
+
+    mem.write_u32(prd_addr, dma_buf as u32);
+    mem.write_u16(prd_addr + 4, SECTOR_SIZE as u16);
+    mem.write_u16(prd_addr + 6, 0x8000);
+    ioports.write(bm_base + 4, 4, prd_addr as u32);
+
+    // Mask interrupts (nIEN=1).
+    ioports.write(PRIMARY_PORTS.ctrl_base, 1, 0x02);
+
+    // READ DMA for LBA 0, 1 sector.
+    ioports.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 2, 1, 1);
+    ioports.write(PRIMARY_PORTS.cmd_base + 3, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 4, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 5, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 7, 1, 0xC8);
+
+    ioports.write(bm_base, 1, 0x09);
+    ide.borrow_mut().tick(&mut mem);
+
+    let bm_st = ioports.read(bm_base + 2, 1) as u8;
+    assert_eq!(bm_st & 0x07, 0x04);
+    assert!(!ide.borrow().controller.primary_irq_pending());
+
+    let mut out = vec![0u8; SECTOR_SIZE];
+    mem.read_physical(dma_buf, &mut out);
+    assert_eq!(out, sector0);
+
+    // Acknowledge the completion while interrupts are still masked.
+    let _ = ioports.read(PRIMARY_PORTS.cmd_base + 7, 1);
+    assert!(!ide.borrow().controller.primary_irq_pending());
+
+    // Re-enable interrupts; because the completion was already acknowledged, it should not
+    // surface.
+    ioports.write(PRIMARY_PORTS.ctrl_base, 1, 0x00);
+    assert!(!ide.borrow().controller.primary_irq_pending());
+
+    // BMIDE status remains set until explicitly cleared.
+    let bm_st = ioports.read(bm_base + 2, 1) as u8;
+    assert_eq!(bm_st & 0x07, 0x04);
 }
 
 #[test]
@@ -2224,6 +2360,92 @@ fn atapi_dma_succeeds_when_bus_master_is_started_before_command_is_issued() {
 }
 
 #[test]
+fn atapi_dma_does_not_run_until_bus_master_is_started() {
+    // The ATAPI DMA request should remain pending until the BMIDE start bit is set.
+    let mut iso = MemIso::new(1);
+    let expected: Vec<u8> = (0..2048u32)
+        .map(|i| (i as u8).wrapping_mul(7).wrapping_add(9))
+        .collect();
+    iso.data[..2048].copy_from_slice(&expected);
+
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut().controller.attach_secondary_master_atapi(
+        aero_devices_storage::atapi::AtapiCdrom::new(Some(Box::new(iso))),
+    );
+    ide.borrow_mut().config_mut().set_command(0x0005); // IO decode + Bus Master
+
+    let mut ioports = IoPortBus::new();
+    register_piix3_ide_ports(&mut ioports, ide.clone());
+
+    // Select master on secondary channel.
+    ioports.write(SECONDARY_PORTS.cmd_base + 6, 1, 0xA0);
+
+    // Clear initial UNIT ATTENTION: TEST UNIT READY then REQUEST SENSE.
+    let tur = [0u8; 12];
+    send_atapi_packet(&mut ioports, SECONDARY_PORTS.cmd_base, 0, &tur, 0);
+    let _ = ioports.read(SECONDARY_PORTS.cmd_base + 7, 1);
+
+    let mut req_sense = [0u8; 12];
+    req_sense[0] = 0x03;
+    req_sense[4] = 18;
+    send_atapi_packet(&mut ioports, SECONDARY_PORTS.cmd_base, 0, &req_sense, 18);
+    for _ in 0..(18 / 2) {
+        let _ = ioports.read(SECONDARY_PORTS.cmd_base, 2);
+    }
+
+    let mut mem = Bus::new(0x20_000);
+    let bm_base = ide.borrow().bus_master_base();
+
+    let prd_addr = 0x1000u64;
+    let dma_buf = 0x3000u64;
+
+    // PRD entry: one 2048-byte segment, end-of-table.
+    mem.write_u32(prd_addr, dma_buf as u32);
+    mem.write_u16(prd_addr + 4, 2048);
+    mem.write_u16(prd_addr + 6, 0x8000);
+    ioports.write(bm_base + 8 + 4, 4, prd_addr as u32);
+
+    // Seed destination buffer.
+    mem.write_physical(dma_buf, &vec![0xFFu8; 2048]);
+
+    // READ(10) for LBA=0, blocks=1 with DMA enabled (FEATURES bit0).
+    let mut read10 = [0u8; 12];
+    read10[0] = 0x28;
+    read10[2..6].copy_from_slice(&0u32.to_be_bytes());
+    read10[7..9].copy_from_slice(&1u16.to_be_bytes());
+    send_atapi_packet(&mut ioports, SECONDARY_PORTS.cmd_base, 0x01, &read10, 2048);
+
+    // ACK packet-phase IRQ.
+    assert!(ide.borrow().controller.secondary_irq_pending());
+    let _ = ioports.read(SECONDARY_PORTS.cmd_base + 7, 1);
+    assert!(!ide.borrow().controller.secondary_irq_pending());
+
+    // Without BMIDE start, tick should not perform any DMA.
+    ide.borrow_mut().tick(&mut mem);
+    assert!(!ide.borrow().controller.secondary_irq_pending());
+    let bm_st = ioports.read(bm_base + 8 + 2, 1) as u8;
+    assert_eq!(bm_st & 0x07, 0x00);
+
+    let mut out = vec![0u8; 2048];
+    mem.read_physical(dma_buf, &mut out);
+    assert!(out.iter().all(|&b| b == 0xFF));
+
+    // Start BMIDE and tick; DMA should now complete.
+    ioports.write(bm_base + 8, 1, 0x09);
+    ide.borrow_mut().tick(&mut mem);
+
+    let bm_st = ioports.read(bm_base + 8 + 2, 1) as u8;
+    assert_eq!(bm_st & 0x07, 0x04);
+    assert!(ide.borrow().controller.secondary_irq_pending());
+
+    mem.read_physical(dma_buf, &mut out);
+    assert_eq!(out, expected);
+
+    let _ = ioports.read(SECONDARY_PORTS.cmd_base + 7, 1);
+    assert!(!ide.borrow().controller.secondary_irq_pending());
+}
+
+#[test]
 fn atapi_dma_read_out_of_bounds_aborts_without_setting_bus_master_error() {
     // Attempt to read beyond the end of the ISO image with DMA enabled. This should fail during
     // packet processing (before a DMA request is queued), so BMIDE status should remain clear and
@@ -2388,6 +2610,90 @@ fn atapi_dma_success_irq_is_latched_while_nien_is_set_and_surfaces_after_reenabl
 
     let _ = ioports.read(SECONDARY_PORTS.cmd_base + 7, 1);
     assert!(!ide.borrow().controller.secondary_irq_pending());
+}
+
+#[test]
+fn atapi_dma_success_irq_can_be_acknowledged_while_nien_is_set() {
+    let mut iso = MemIso::new(1);
+    let expected: Vec<u8> = (0..2048u32)
+        .map(|i| (i as u8).wrapping_mul(11).wrapping_add(3))
+        .collect();
+    iso.data[..2048].copy_from_slice(&expected);
+
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut().controller.attach_secondary_master_atapi(
+        aero_devices_storage::atapi::AtapiCdrom::new(Some(Box::new(iso))),
+    );
+    ide.borrow_mut().config_mut().set_command(0x0005); // IO decode + Bus Master
+
+    let mut ioports = IoPortBus::new();
+    register_piix3_ide_ports(&mut ioports, ide.clone());
+
+    // Select master on secondary channel.
+    ioports.write(SECONDARY_PORTS.cmd_base + 6, 1, 0xA0);
+
+    // Clear initial UNIT ATTENTION: TEST UNIT READY then REQUEST SENSE.
+    let tur = [0u8; 12];
+    send_atapi_packet(&mut ioports, SECONDARY_PORTS.cmd_base, 0, &tur, 0);
+    let _ = ioports.read(SECONDARY_PORTS.cmd_base + 7, 1);
+
+    let mut req_sense = [0u8; 12];
+    req_sense[0] = 0x03;
+    req_sense[4] = 18;
+    send_atapi_packet(&mut ioports, SECONDARY_PORTS.cmd_base, 0, &req_sense, 18);
+    for _ in 0..(18 / 2) {
+        let _ = ioports.read(SECONDARY_PORTS.cmd_base, 2);
+    }
+
+    let mut mem = Bus::new(0x20_000);
+    let bm_base = ide.borrow().bus_master_base();
+
+    let prd_addr = 0x1000u64;
+    let dma_buf = 0x3000u64;
+
+    // PRD entry: one 2048-byte segment, end-of-table.
+    mem.write_u32(prd_addr, dma_buf as u32);
+    mem.write_u16(prd_addr + 4, 2048);
+    mem.write_u16(prd_addr + 6, 0x8000);
+    ioports.write(bm_base + 8 + 4, 4, prd_addr as u32);
+
+    // READ(10) for LBA=0, blocks=1 with DMA enabled (FEATURES bit0).
+    let mut read10 = [0u8; 12];
+    read10[0] = 0x28;
+    read10[2..6].copy_from_slice(&0u32.to_be_bytes());
+    read10[7..9].copy_from_slice(&1u16.to_be_bytes());
+    send_atapi_packet(&mut ioports, SECONDARY_PORTS.cmd_base, 0x01, &read10, 2048);
+
+    // ACK the packet-phase interrupt so the only remaining IRQ is the DMA completion.
+    assert!(ide.borrow().controller.secondary_irq_pending());
+    let _ = ioports.read(SECONDARY_PORTS.cmd_base + 7, 1);
+    assert!(!ide.borrow().controller.secondary_irq_pending());
+
+    // Mask interrupts before running DMA.
+    ioports.write(SECONDARY_PORTS.ctrl_base, 1, 0x02);
+
+    ioports.write(bm_base + 8, 1, 0x09);
+    ide.borrow_mut().tick(&mut mem);
+
+    let bm_st = ioports.read(bm_base + 8 + 2, 1) as u8;
+    assert_eq!(bm_st & 0x07, 0x04);
+    assert!(!ide.borrow().controller.secondary_irq_pending());
+
+    let mut out = vec![0u8; 2048];
+    mem.read_physical(dma_buf, &mut out);
+    assert_eq!(out, expected);
+
+    // Acknowledge completion while interrupts are masked.
+    let _ = ioports.read(SECONDARY_PORTS.cmd_base + 7, 1);
+    assert!(!ide.borrow().controller.secondary_irq_pending());
+
+    // Re-enable interrupts; completion should not surface now that it was acked.
+    ioports.write(SECONDARY_PORTS.ctrl_base, 1, 0x00);
+    assert!(!ide.borrow().controller.secondary_irq_pending());
+
+    // BMIDE status remains set until explicitly cleared.
+    let bm_st = ioports.read(bm_base + 8 + 2, 1) as u8;
+    assert_eq!(bm_st & 0x07, 0x04);
 }
 
 #[test]
