@@ -4,7 +4,6 @@ use std::fs;
 use std::io::{Seek, SeekFrom, Write};
 
 use aero_storage::{AeroSparseDisk, DiskImage, MemBackend, StorageBackend, VirtualDisk, SECTOR_SIZE};
-use assert_cmd::Command;
 use tempfile::tempdir;
 
 const QCOW2_OFLAG_COPIED: u64 = 1 << 63;
@@ -97,8 +96,7 @@ fn qcow2_to_aerospar_roundtrip() {
     let input = make_qcow2_with_pattern().into_vec();
     fs::write(&in_path, &input).unwrap();
 
-    Command::cargo_bin("aero-disk-convert")
-        .unwrap()
+    assert_cmd::cargo::cargo_bin_cmd!("aero-disk-convert")
         .args([
             "convert",
             "--input",
@@ -148,8 +146,7 @@ fn raw_to_aerospar_is_smaller_when_sparse() {
     f.write_all(b"hello raw!").unwrap();
     f.sync_all().unwrap();
 
-    Command::cargo_bin("aero-disk-convert")
-        .unwrap()
+    assert_cmd::cargo::cargo_bin_cmd!("aero-disk-convert")
         .args([
             "convert",
             "--input",
