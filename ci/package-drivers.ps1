@@ -1230,14 +1230,21 @@ function Invoke-DeterminismSelfTest {
     $out1 = Join-Path $tempBase "run1"
     $out2 = Join-Path $tempBase "run2"
 
+    # Only test ISO determinism when we can use the deterministic Rust ISO builder (requires cargo).
+    # If cargo is unavailable, `Invoke-PackageDrivers` would fall back to IMAPI2 on Windows (which is
+    # intentionally *not* deterministic), or fail on non-Windows hosts.
+    $cargoExe = (Get-Command cargo -ErrorAction SilentlyContinue).Source
+    $canTestIso = -not [string]::IsNullOrWhiteSpace($cargoExe)
+    $noIso = -not $canTestIso
+
     $oldFatEnv = $env:AERO_MAKE_FAT_IMAGE
     try {
         # Ensure the env-var toggle doesn't accidentally make the self-test depend on
         # external FAT image tooling.
         $env:AERO_MAKE_FAT_IMAGE = "0"
 
-        $r1 = Invoke-PackageDrivers -InputRoot $inputCandidate -SigningPolicy $SigningPolicy -CertPath $certCandidate -OutDir $out1 -RepoRoot $repoRootResolved -Version $Version -NoIso -MakeFatImage:$false -NoManifest -AllowUnsafeOutDir
-        $r2 = Invoke-PackageDrivers -InputRoot $inputCandidate -SigningPolicy $SigningPolicy -CertPath $certCandidate -OutDir $out2 -RepoRoot $repoRootResolved -Version $Version -NoIso -MakeFatImage:$false -NoManifest -AllowUnsafeOutDir
+        $r1 = Invoke-PackageDrivers -InputRoot $inputCandidate -SigningPolicy $SigningPolicy -CertPath $certCandidate -OutDir $out1 -RepoRoot $repoRootResolved -Version $Version -NoIso:$noIso -MakeFatImage:$false -NoManifest -AllowUnsafeOutDir
+        $r2 = Invoke-PackageDrivers -InputRoot $inputCandidate -SigningPolicy $SigningPolicy -CertPath $certCandidate -OutDir $out2 -RepoRoot $repoRootResolved -Version $Version -NoIso:$noIso -MakeFatImage:$false -NoManifest -AllowUnsafeOutDir
 
         $h1 = (Get-FileHash -Algorithm SHA256 -LiteralPath $r1.ZipBundle).Hash
         $h2 = (Get-FileHash -Algorithm SHA256 -LiteralPath $r2.ZipBundle).Hash
@@ -1246,7 +1253,25 @@ function Invoke-DeterminismSelfTest {
             throw "Determinism self-test failed: bundle ZIP SHA-256 mismatch.`r`n  Run1: $($r1.ZipBundle) -> $h1`r`n  Run2: $($r2.ZipBundle) -> $h2`r`nTemp dir preserved for inspection: $tempBase"
         }
 
-        Write-Host "Determinism self-test passed (bundle ZIP SHA-256: $h1)."
+        if ($canTestIso) {
+            $iso1 = $r1.IsoBundle
+            $iso2 = $r2.IsoBundle
+            if (-not (Test-Path -LiteralPath $iso1 -PathType Leaf)) {
+                throw "Determinism self-test internal error: expected ISO output missing: $iso1"
+            }
+            if (-not (Test-Path -LiteralPath $iso2 -PathType Leaf)) {
+                throw "Determinism self-test internal error: expected ISO output missing: $iso2"
+            }
+            $ih1 = (Get-FileHash -Algorithm SHA256 -LiteralPath $iso1).Hash
+            $ih2 = (Get-FileHash -Algorithm SHA256 -LiteralPath $iso2).Hash
+            if ($ih1 -ne $ih2) {
+                throw "Determinism self-test failed: bundle ISO SHA-256 mismatch.`r`n  Run1: $iso1 -> $ih1`r`n  Run2: $iso2 -> $ih2`r`nTemp dir preserved for inspection: $tempBase"
+            }
+            Write-Host "Determinism self-test passed (bundle ZIP SHA-256: $h1; bundle ISO SHA-256: $ih1)."
+        } else {
+            Write-Host "Determinism self-test passed (bundle ZIP SHA-256: $h1)."
+            Write-Host "  (ISO determinism check skipped because cargo is not available.)"
+        }
         Remove-Item -Recurse -Force $tempBase -ErrorAction SilentlyContinue
     } finally {
         if ($null -eq $oldFatEnv) {
