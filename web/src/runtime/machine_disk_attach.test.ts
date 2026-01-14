@@ -355,6 +355,37 @@ describe("runtime/machine_disk_attach (Machine attach method selection)", () => 
     );
   });
 
+  it("prefers set_primary_hdd_opfs_cow for aerosparse HDDs when present", async () => {
+    const meta: DiskImageMetadata = {
+      source: "local",
+      id: "hdd-aerospar",
+      name: "Disk aerospar",
+      backend: "opfs",
+      kind: "hdd",
+      format: "aerospar",
+      fileName: "disk.aerospar",
+      sizeBytes: 1024,
+      createdAtMs: 0,
+    };
+    const plan = planMachineBootDiskAttachment(meta, "hdd");
+
+    const attach = vi.fn(async (_basePath: string, _overlayPath: string, _blockSizeBytes: number) => {});
+    const set_disk_aerospar_opfs_open = vi.fn(async (_path: string) => {});
+    const machine = {
+      set_primary_hdd_opfs_cow: attach,
+      set_disk_aerospar_opfs_open,
+    } as unknown as MachineHandle;
+
+    await attachMachineBootDisk(machine, "hdd", meta);
+
+    expect(attach).toHaveBeenCalledWith(
+      plan.opfsPath,
+      `${OPFS_DISKS_PATH}/${meta.id}.overlay.aerospar`,
+      DEFAULT_PRIMARY_HDD_OVERLAY_BLOCK_SIZE_BYTES,
+    );
+    expect(set_disk_aerospar_opfs_open).not.toHaveBeenCalled();
+  });
+
   it("sets the AHCI port0 overlay ref after attaching via set_primary_hdd_opfs_cow", async () => {
     const meta = hddMetaRaw();
     const plan = planMachineBootDiskAttachment(meta, "hdd");

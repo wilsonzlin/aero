@@ -183,11 +183,27 @@ export function planMachineBootDiskAttachment(meta: DiskImageMetadata, role: Mac
 }
 
 async function attachHdd(machine: MachineHandle, plan: MachineBootDiskPlan, meta: DiskImageMetadata): Promise<void> {
+  const expectedSizeBytes =
+    typeof meta.sizeBytes === "number" && Number.isSafeInteger(meta.sizeBytes) && meta.sizeBytes > 0 ? BigInt(meta.sizeBytes) : undefined;
+
+  // Prefer copy-on-write overlays whenever possible, regardless of whether the base disk bytes are
+  // raw or aerosparse. This mirrors the legacy runtime disk worker behaviour: base images remain
+  // immutable; guest writes persist in a derived `*.overlay.aerospar` file.
+  const setPrimaryCow =
+    machine.set_primary_hdd_opfs_cow ??
+    (machine as unknown as { setPrimaryHddOpfsCow?: unknown }).setPrimaryHddOpfsCow;
+  if (typeof setPrimaryCow === "function") {
+    const overlayPath = opfsOverlayPathForCow(meta);
+    const blockSizeBytes =
+      (await tryReadAerosparseBlockSizeBytesFromOpfs(overlayPath)) ?? DEFAULT_PRIMARY_HDD_OVERLAY_BLOCK_SIZE_BYTES;
+    await callMaybeAsync(setPrimaryCow as (...args: unknown[]) => unknown, machine, [plan.opfsPath, overlayPath, blockSizeBytes]);
+    // Best-effort overlay ref: ensure snapshots record the base/overlay paths even if
+    // `set_primary_hdd_opfs_cow` does not populate `DISKS` overlay refs in this WASM build.
+    setAhciPort0DiskOverlayRef(machine, plan.opfsPath, overlayPath);
+    return;
+  }
+
   if (plan.format === "aerospar") {
-    const expectedSizeBytes =
-      typeof meta.sizeBytes === "number" && Number.isSafeInteger(meta.sizeBytes) && meta.sizeBytes > 0
-        ? BigInt(meta.sizeBytes)
-        : undefined;
     const aerosparOpenAndSetRef =
       machine.set_disk_aerospar_opfs_open_and_set_overlay_ref ??
       (machine as unknown as { setDiskAerosparOpfsOpenAndSetOverlayRef?: unknown }).setDiskAerosparOpfsOpenAndSetOverlayRef;
@@ -230,22 +246,6 @@ async function attachHdd(machine: MachineHandle, plan: MachineBootDiskPlan, meta
     throw new Error(
       "WASM build missing Machine.set_disk_aerospar_opfs_open* exports (and does not support Machine.set_disk_opfs_existing(path, \"aerospar\")).",
     );
-  }
-
-  const expectedSizeBytes =
-    typeof meta.sizeBytes === "number" && Number.isSafeInteger(meta.sizeBytes) && meta.sizeBytes > 0 ? BigInt(meta.sizeBytes) : undefined;
-  const setPrimaryCow =
-    machine.set_primary_hdd_opfs_cow ??
-    (machine as unknown as { setPrimaryHddOpfsCow?: unknown }).setPrimaryHddOpfsCow;
-  if (typeof setPrimaryCow === "function") {
-    const overlayPath = opfsOverlayPathForCow(meta);
-    const blockSizeBytes =
-      (await tryReadAerosparseBlockSizeBytesFromOpfs(overlayPath)) ?? DEFAULT_PRIMARY_HDD_OVERLAY_BLOCK_SIZE_BYTES;
-    await callMaybeAsync(setPrimaryCow as (...args: unknown[]) => unknown, machine, [plan.opfsPath, overlayPath, blockSizeBytes]);
-    // Best-effort overlay ref: ensure snapshots record the base/overlay paths even if
-    // `set_primary_hdd_opfs_cow` does not populate `DISKS` overlay refs in this WASM build.
-    setAhciPort0DiskOverlayRef(machine, plan.opfsPath, overlayPath);
-    return;
   }
 
   // Prefer the explicit canonical primary HDD helper when available.
