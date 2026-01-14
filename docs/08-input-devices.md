@@ -43,6 +43,8 @@ The WASM-facing `Machine` wrapper exposes **explicit** input injection methods f
 To explicitly configure these backends from JS, construct the machine via:
 
 - `Machine.new_with_input_backends(ramSizeBytes, enableVirtioInput, enableSyntheticUsbHid)`
+- `Machine.new_with_options(ramSizeBytes, { enable_virtio_input: true, enable_synthetic_usb_hid: true })`
+  - `new_with_options` uses wasm-bindgen/Rust **snake_case** option keys and can configure additional device flags beyond input.
 
 #### Coordinate conventions (important)
 
