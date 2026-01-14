@@ -779,6 +779,8 @@ struct AeroGpuResource {
   uint32_t height = 0;
   uint32_t mip_levels = 1;
   uint32_t array_size = 1;
+  uint32_t sample_count = 1;
+  uint32_t sample_quality = 0;
   uint32_t dxgi_format = 0;
   uint32_t row_pitch_bytes = 0;
   std::vector<Texture2DSubresourceLayout> tex2d_subresources;
@@ -2743,7 +2745,22 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     res->height = pDesc->Height;
     res->mip_levels = pDesc->MipLevels ? pDesc->MipLevels : aerogpu::d3d10_11::CalcFullMipLevels(res->width, res->height);
     res->array_size = pDesc->ArraySize ? pDesc->ArraySize : 1;
+    __if_exists(D3D10DDIARG_CREATERESOURCE::SampleDesc) {
+      res->sample_count = static_cast<uint32_t>(pDesc->SampleDesc.Count);
+      res->sample_quality = static_cast<uint32_t>(pDesc->SampleDesc.Quality);
+    }
     res->dxgi_format = static_cast<uint32_t>(pDesc->Format);
+
+    if (res->sample_count == 0) {
+      res->~AeroGpuResource();
+      return E_INVALIDARG;
+    }
+    if (res->sample_count != 1 || res->sample_quality != 0) {
+      // Multisample resources require MSAA view types and resolve operations
+      // that are not yet supported by the AeroGPU D3D10 UMD.
+      res->~AeroGpuResource();
+      return E_NOTIMPL;
+    }
 
     const uint32_t row_bytes = aerogpu_texture_min_row_pitch_bytes(aer_fmt, res->width);
     if (row_bytes == 0) {
