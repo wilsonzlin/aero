@@ -7681,6 +7681,7 @@ static int DoReadGpaJson(const D3DKMT_FUNCS *f,
       BestEffortDeleteOutputFile(outFile);
     } else {
       if (!WriteBinaryFile(outFile, io.data, copied)) {
+        BestEffortDeleteOutputFile(outFile);
         JsonWriteTopLevelError(out, "read-gpa", f, "Failed to write --out file", STATUS_UNSUCCESSFUL);
         return 2;
       }
