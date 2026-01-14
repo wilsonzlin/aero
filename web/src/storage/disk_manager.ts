@@ -477,8 +477,36 @@ export class DiskManager {
     try {
       if (typeof showSaveFilePicker === "function") {
         const pickerHandle = await showSaveFilePicker({ suggestedName: fileName });
-        const writable = await pickerHandle.createWritable();
-        await handle.stream.pipeTo(writable);
+        let writable: FileSystemWritableFileStream;
+        let truncateFallback = false;
+        try {
+          // Truncate by default so overwriting an existing output file cannot leave trailing bytes.
+          writable = await pickerHandle.createWritable({ keepExistingData: false });
+        } catch {
+          // Some implementations may not accept options; fall back to default.
+          writable = await pickerHandle.createWritable();
+          truncateFallback = true;
+        }
+        if (truncateFallback) {
+          // Defensive: some implementations behave like `keepExistingData=true` when the options bag is
+          // unsupported. Truncate explicitly so overwriting a shorter file doesn't leave trailing bytes.
+          try {
+            await writable.truncate(0);
+          } catch {
+            // ignore
+          }
+        }
+        try {
+          await handle.stream.pipeTo(writable);
+        } catch (err) {
+          // `pipeTo()` should abort the destination on failure, but best-effort abort defensively.
+          try {
+            await writable.abort(err);
+          } catch {
+            // ignore
+          }
+          throw err;
+        }
       } else {
         const blob = await new Response(handle.stream).blob();
         const url = URL.createObjectURL(blob);
