@@ -13,9 +13,9 @@ use aero_gpu::pipeline_cache::{PipelineCache, PipelineCacheConfig};
 use aero_gpu::pipeline_key::{
     ColorTargetKey, ComputePipelineKey, PipelineLayoutKey, RenderPipelineKey, ShaderHash,
 };
-use aero_gpu::shared_surface::{SharedSurfaceError, SharedSurfaceTable as GpuSharedSurfaceTable};
 use aero_gpu::wgpu_bc_texture_dimensions_compatible;
 use aero_gpu::GpuCapabilities;
+use aero_gpu::{SharedSurfaceError, SharedSurfaceTable as GpuSharedSurfaceTable};
 use aero_gpu::{
     expand_b5g5r5a1_unorm_to_rgba8, expand_b5g6r5_unorm_to_rgba8, pack_rgba8_to_b5g5r5a1_unorm,
     pack_rgba8_to_b5g6r5_unorm,
