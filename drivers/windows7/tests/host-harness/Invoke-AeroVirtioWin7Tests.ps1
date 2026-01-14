@@ -5154,7 +5154,7 @@ try {
       if ($result.ContainsKey("BlkRecoveryCounters")) {
         $counters = $result["BlkRecoveryCounters"]
       } else {
-        $counters = Get-AeroVirtioBlkRecoveryCounters -Tail $result.Tail
+        $counters = Get-AeroVirtioBlkRecoveryCounters -Tail $result.Tail -SerialLogPath $SerialLogPath
       }
 
       $msg = "FAIL: VIRTIO_BLK_RECOVERY_NONZERO:"
