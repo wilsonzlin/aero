@@ -923,7 +923,24 @@ def _parse_inf_line_sections(text: str) -> dict[int, str]:
     return out
 
 
-def _parse_inf_referenced_addreg_sections(text: str) -> set[str]:
+def _parse_inf_section_names(text: str) -> list[str]:
+    """Return the list of section names (as written, not lowercased) in `text`."""
+
+    out: list[str] = []
+    for raw in text.splitlines():
+        if raw.lstrip().startswith(";"):
+            continue
+        active = _strip_inf_inline_comment(raw).strip()
+        if not active:
+            continue
+        m = re.match(r"^\[(?P<section>[^\]]+)\]\s*$", active)
+        if not m:
+            continue
+        out.append(m.group("section").strip())
+    return out
+
+
+def _parse_inf_referenced_addreg_sections(text: str, *, from_sections: set[str] | None = None) -> set[str]:
     """
     Return the set of AddReg section names referenced by `AddReg = ...` directives.
 
@@ -943,6 +960,8 @@ def _parse_inf_referenced_addreg_sections(text: str) -> set[str]:
             current_section = m.group("section").strip()
             continue
         if current_section is None:
+            continue
+        if from_sections is not None and current_section.lower() not in from_sections:
             continue
         m = re.match(r"^\s*AddReg\s*=\s*(?P<rhs>.+)$", active, flags=re.I)
         if not m:
@@ -993,8 +1012,8 @@ def validate_win7_virtio_inf_msi_settings(device_name: str, inf_path: Path) -> l
     # Guard against "dead" MSI registry settings: the HKR lines must live in a
     # section referenced by an AddReg directive, otherwise they will never be
     # applied during installation.
-    referenced_addreg_sections = _parse_inf_referenced_addreg_sections(text)
-    if not referenced_addreg_sections:
+    any_referenced_addreg_sections = _parse_inf_referenced_addreg_sections(text)
+    if not any_referenced_addreg_sections:
         errors.append(
             format_error(
                 f"{inf_path.as_posix()}: INF contains no AddReg directives (MSI settings would be inert):",
@@ -1003,6 +1022,26 @@ def validate_win7_virtio_inf_msi_settings(device_name: str, inf_path: Path) -> l
                 ],
             )
         )
+
+    # Further narrow to AddReg sections referenced from an install-section variant
+    # selected by a [Models] entry. This avoids false negatives where the MSI
+    # registry keys exist in a reg-add section but the driver install path no
+    # longer references that section.
+    install_prefixes = {
+        _unquote_inf_token(e.install_section).strip().lower() for e in parse_inf_model_entries(inf_path)
+    }
+    defined_sections = _parse_inf_section_names(text)
+    active_install_sections: set[str] = set()
+    for s in defined_sections:
+        s_lower = s.lower()
+        if any(s_lower == p or s_lower.startswith(p + ".") for p in install_prefixes):
+            active_install_sections.add(s_lower)
+
+    referenced_addreg_sections = (
+        _parse_inf_referenced_addreg_sections(text, from_sections=active_install_sections)
+        if active_install_sections
+        else any_referenced_addreg_sections
+    )
 
     line_sections = _parse_inf_line_sections(text)
 
