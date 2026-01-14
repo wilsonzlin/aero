@@ -51,8 +51,8 @@ fn tier0_only_step_updates_perf_worker() {
     };
     let jit = JitRuntime::new(
         config,
-        UnusedJitBackend::default(),
-        NoCompileSink::default(),
+        UnusedJitBackend,
+        NoCompileSink,
     );
     let mut dispatcher = ExecDispatcher::new(interp, jit);
 
@@ -132,8 +132,8 @@ fn jit_rollback_does_not_advance_perf_counters() {
 
     let mut jit = JitRuntime::new(
         config,
-        RollbackJitBackend::default(),
-        NoCompileSink::default(),
+        RollbackJitBackend,
+        NoCompileSink,
     );
     jit.install_handle(CompiledBlockHandle {
         entry_rip: 0,
@@ -149,7 +149,7 @@ fn jit_rollback_does_not_advance_perf_counters() {
         },
     });
 
-    let mut dispatcher = ExecDispatcher::new(PanicInterpreter::default(), jit);
+    let mut dispatcher = ExecDispatcher::new(PanicInterpreter, jit);
     let mut cpu = TestCpu { rip: 0 };
 
     let shared = Arc::new(PerfCounters::new());
@@ -225,8 +225,8 @@ fn interrupt_delivery_does_not_advance_perf_counters() {
         cache_max_bytes: 0,
         code_version_max_pages: 64,
     };
-    let jit = JitRuntime::new(config, PanicBackend::default(), NoCompileSink::default());
-    let mut dispatcher = ExecDispatcher::new(PanicInterp::default(), jit);
+    let jit = JitRuntime::new(config, PanicBackend, NoCompileSink);
+    let mut dispatcher = ExecDispatcher::new(PanicInterp, jit);
 
     let shared = Arc::new(PerfCounters::new());
     let mut perf = PerfWorker::new(shared);
@@ -264,8 +264,8 @@ fn run_blocks_with_perf_counts_across_multiple_blocks() {
     };
     let jit = JitRuntime::new(
         config,
-        UnusedJitBackend::default(),
-        NoCompileSink::default(),
+        UnusedJitBackend,
+        NoCompileSink,
     );
     let mut dispatcher = ExecDispatcher::new(interp, jit);
 

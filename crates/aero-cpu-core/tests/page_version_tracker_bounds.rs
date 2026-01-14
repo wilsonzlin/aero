@@ -31,7 +31,7 @@ fn huge_guest_write_does_not_grow_page_versions_table_unbounded() {
         cache_max_bytes: 0,
         code_version_max_pages: max_pages,
     };
-    let mut jit = JitRuntime::new(config, NullBackend::default(), NullCompileSink::default());
+    let mut jit = JitRuntime::new(config, NullBackend, NullCompileSink);
 
     // Regression target: this must not attempt to resize the dense version table to a gigantic
     // length or OOM.
@@ -62,7 +62,7 @@ fn snapshot_meta_is_bounded_for_absurd_byte_len() {
         cache_max_bytes: 0,
         code_version_max_pages: max_pages,
     };
-    let jit = JitRuntime::new(config, NullBackend::default(), NullCompileSink::default());
+    let jit = JitRuntime::new(config, NullBackend, NullCompileSink);
 
     // `byte_len` is a u32, but u32::MAX still spans ~1M pages. Ensure snapshot sizing is clamped.
     let meta = jit.snapshot_meta(0, u32::MAX);

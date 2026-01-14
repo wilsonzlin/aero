@@ -580,8 +580,8 @@ fn fetch_wrapped_large_32bit_wrap_uses_segment_fetches() {
     let buf = fetch_wrapped(&state, &mut bus, 0xFFFF_FFF2, 15).unwrap();
 
     let mut expected = [0u8; 15];
-    for i in 0..14 {
-        expected[i] = 0xD0 | ((i + 2) as u8);
+    for (i, b) in expected.iter_mut().take(14).enumerate() {
+        *b = 0xD0 | ((i + 2) as u8);
     }
     expected[14] = 0xAA;
 
@@ -608,8 +608,8 @@ fn fetch_wrapped_long_u64_wrap_uses_segment_fetches() {
 
     let mut expected = [0u8; 15];
     // First segment: high[8..16]
-    for i in 0..8 {
-        expected[i] = 0xD0 | ((i + 8) as u8);
+    for (i, b) in expected.iter_mut().take(8).enumerate() {
+        *b = 0xD0 | ((i + 8) as u8);
     }
     // Second segment: low[0..7]
     for i in 0..7 {
@@ -636,8 +636,8 @@ fn fetch_wrapped_a20_wrap_uses_segment_fetches() {
     let buf = fetch_wrapped(&state, &mut bus, 0x0FFFF2, 15).unwrap();
 
     let mut expected = [0u8; 15];
-    for i in 0..14 {
-        expected[i] = 0xC0 | (i as u8);
+    for (i, b) in expected.iter_mut().take(14).enumerate() {
+        *b = 0xC0 | (i as u8);
     }
     expected[14] = 0xAA;
 

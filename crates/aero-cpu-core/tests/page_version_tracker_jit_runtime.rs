@@ -41,7 +41,7 @@ fn raw_table_mutation_is_observed_by_version_and_snapshot_meta() {
         cache_max_bytes: 0,
         code_version_max_pages: 8,
     };
-    let mut jit = JitRuntime::new(config, NullBackend::default(), RecordingCompileSink::default());
+    let mut jit = JitRuntime::new(config, NullBackend, RecordingCompileSink::default());
 
     let (ptr, len) = jit.code_version_table_ptr_len();
     assert_eq!(len, 8);
@@ -69,7 +69,7 @@ fn code_version_table_pointer_is_stable_across_guest_writes_and_reset() {
         cache_max_bytes: 0,
         code_version_max_pages: 8,
     };
-    let mut jit = JitRuntime::new(config, NullBackend::default(), RecordingCompileSink::default());
+    let mut jit = JitRuntime::new(config, NullBackend, RecordingCompileSink::default());
 
     let (ptr0, len0) = jit.code_version_table_ptr_len();
     assert_eq!(len0, 8);
@@ -97,7 +97,7 @@ fn reset_keeps_table_pointer_stable_and_rejects_old_snapshots() {
     };
     let compile = RecordingCompileSink::default();
     let compile_log = compile.clone();
-    let mut jit = JitRuntime::new(config, NullBackend::default(), compile);
+    let mut jit = JitRuntime::new(config, NullBackend, compile);
 
     let code_paddr = 0x4000u64;
     let old_meta = jit.snapshot_meta(code_paddr, 1);
