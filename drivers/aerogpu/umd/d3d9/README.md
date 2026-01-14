@@ -321,9 +321,10 @@ The current implementation targets:
   - Shared resources still require `MipLevels == 1` and `Depth == 1` (single-allocation MVP shared-surface policy).
   - `pfnGenerateMipSubLevels` is implemented as a CPU downsample for `A8R8G8B8` / `X8R8G8B8` / `A8B8G8R8` and the packed
     16-bit RGB formats `R5G6B5` / `X1R5G5B5` / `A1R5G5B5` (see `device_generate_mip_sub_levels()` in `src/aerogpu_d3d9_driver.cpp`).
-- **Packed 16-bit RGB formats** (textures and swapchain backbuffers): `D3DFMT_R5G6B5`, `D3DFMT_X1R5G5B5`, `D3DFMT_A1R5G5B5`
-  (validated by `d3d9ex_texture_16bit_formats`; `d3d9_texture_16bit_sampling` additionally exercises `R5G6B5` and optionally `A1R5G5B5`).
-  `X1R5G5B5` is treated as alpha=1 when sampling.
+- **Packed 16-bit RGB formats**: `D3DFMT_R5G6B5`, `D3DFMT_X1R5G5B5`, `D3DFMT_A1R5G5B5` are supported for
+  render targets (including swapchain backbuffers) and texture sampling (validated by `d3d9ex_texture_16bit_formats`;
+  `d3d9_texture_16bit_sampling` additionally exercises `R5G6B5` and optionally `A1R5G5B5`). `X1R5G5B5` is treated as
+  alpha=1 when sampling.
 - **BC/DXT textures**: `D3DFMT_DXT1..DXT5` are only exposed when the active device reports
   ABI minor `>= 2` via `KMTQAITYPE_UMDRIVERPRIVATE` (`aerogpu_umd_private_v1.device_abi_version_u32`).
   - When unsupported, `GetCaps(GETFORMAT*)` omits them and `CreateResource` rejects them to avoid emitting

@@ -22,15 +22,16 @@ int main() {
 
   aerogpu::d3d9_trace_init_from_env();
 
-  // `Device::SetCursorProperties` is a bring-up no-op DDI. It should NOT be
-  // tagged as "(stub)" in trace output, so it should not trigger
+  // `Device::SetCursorProperties` is a real D3D9 UMD entrypoint. It should NOT
+  // be tagged as "(stub)" in trace output, so it should not trigger
   // AEROGPU_D3D9_TRACE_DUMP_ON_STUB.
   {
     aerogpu::D3d9TraceCall trace(aerogpu::D3d9TraceFunc::DeviceSetCursorProperties, 0xabc, 0, 0, 0);
     trace.ret(S_OK);
   }
 
-  // Exercise other bring-up no-op DDIs as well; none should be stub-tagged.
+  // Exercise other non-stub DDIs as well (some are bring-up no-ops, others are
+  // real implementations); none should be stub-tagged.
   {
     aerogpu::D3d9TraceCall trace(aerogpu::D3d9TraceFunc::DeviceSetCursorPosition, 0xdef, 0, 0, 0);
     trace.ret(S_OK);
