@@ -4,6 +4,10 @@
  * This is a human-readable reference intended to stay in sync with the
  * generated AML fixture at `crates/firmware/acpi/dsdt.aml`.
  *
+ * The PCIe ECAM/MMCONFIG-enabled DSDT variant lives at:
+ * - `crates/firmware/acpi/dsdt_pcie.asl`
+ * - `crates/firmware/acpi/dsdt_pcie.aml`
+ *
  * NOTE: The shipped `dsdt.aml` is generated from Rust code in
  * `crates/firmware/src/bin/gen_dsdt.rs` (which uses `aero-acpi`).
  *

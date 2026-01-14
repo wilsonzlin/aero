@@ -4,6 +4,10 @@
  * This is a human-readable reference intended to stay in sync with the
  * generated AML fixture at `crates/firmware/acpi/dsdt_pcie.aml`.
  *
+ * The legacy PCI-only DSDT variant lives at:
+ * - `crates/firmware/acpi/dsdt.asl`
+ * - `crates/firmware/acpi/dsdt.aml`
+ *
  * NOTE: The shipped AML fixtures are generated from Rust code in
  * `crates/firmware/src/bin/gen_dsdt.rs` / `xtask` (which uses `aero-acpi`).
  *
