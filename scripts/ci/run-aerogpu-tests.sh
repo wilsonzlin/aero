@@ -41,4 +41,4 @@ run cargo test -p aero-devices-gpu --locked
 run cargo test -p aero-machine --locked --test aerogpu_submission_bridge
 run cargo test -p aero-machine --locked --test aerogpu_vsync_fence_pacing
 run cargo test -p aero-machine --locked --test aerogpu_ring_noop_fence
-
+run cargo test -p aero-machine --locked --test aerogpu_mmio_gpa_overflow
