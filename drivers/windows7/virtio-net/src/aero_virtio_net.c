@@ -1328,6 +1328,18 @@ static VOID AerovNetCtrlVqRegistryWriteQword(_In_ HANDLE Key, _In_ PCWSTR Name, 
 
 static VOID AerovNetCtrlVqRegistryUpdate(_Inout_ AEROVNET_ADAPTER* Adapter) {
   HANDLE Key;
+  ULONGLONG HostFeatures;
+  ULONGLONG GuestFeatures;
+  ULONG CtrlVqNegotiated;
+  ULONG CtrlRxNegotiated;
+  ULONG CtrlVlanNegotiated;
+  ULONG CtrlMacAddrNegotiated;
+  ULONG CtrlVqQueueIndex;
+  ULONG CtrlVqQueueSize;
+  ULONGLONG CmdSent;
+  ULONGLONG CmdOk;
+  ULONGLONG CmdErr;
+  ULONGLONG CmdTimeout;
 
   if (!Adapter) {
     return;
@@ -1338,21 +1350,45 @@ static VOID AerovNetCtrlVqRegistryUpdate(_Inout_ AEROVNET_ADAPTER* Adapter) {
     return;
   }
 
-  AerovNetCtrlVqRegistryWriteQword(Key, L"HostFeatures", (ULONGLONG)Adapter->HostFeatures);
-  AerovNetCtrlVqRegistryWriteQword(Key, L"GuestFeatures", (ULONGLONG)Adapter->GuestFeatures);
+  /*
+   * Snapshot diagnostics under the adapter lock so:
+   * - 64-bit fields don't tear on x86
+   * - the registry values are mutually consistent
+   *
+   * Do not write to the registry while holding the spin lock.
+   */
+  NdisAcquireSpinLock(&Adapter->Lock);
+  HostFeatures = (ULONGLONG)Adapter->HostFeatures;
+  GuestFeatures = (ULONGLONG)Adapter->GuestFeatures;
+  CtrlVqNegotiated = (GuestFeatures & VIRTIO_NET_F_CTRL_VQ) ? 1u : 0u;
+  CtrlRxNegotiated = (GuestFeatures & VIRTIO_NET_F_CTRL_RX) ? 1u : 0u;
+  CtrlVlanNegotiated = (GuestFeatures & VIRTIO_NET_F_CTRL_VLAN) ? 1u : 0u;
+  CtrlMacAddrNegotiated = (GuestFeatures & VIRTIO_NET_F_CTRL_MAC_ADDR) ? 1u : 0u;
 
-  AerovNetCtrlVqRegistryWriteDword(Key, L"CtrlVqNegotiated", (Adapter->GuestFeatures & VIRTIO_NET_F_CTRL_VQ) ? 1u : 0u);
-  AerovNetCtrlVqRegistryWriteDword(Key, L"CtrlRxNegotiated", (Adapter->GuestFeatures & VIRTIO_NET_F_CTRL_RX) ? 1u : 0u);
-  AerovNetCtrlVqRegistryWriteDword(Key, L"CtrlVlanNegotiated", (Adapter->GuestFeatures & VIRTIO_NET_F_CTRL_VLAN) ? 1u : 0u);
-  AerovNetCtrlVqRegistryWriteDword(Key, L"CtrlMacAddrNegotiated", (Adapter->GuestFeatures & VIRTIO_NET_F_CTRL_MAC_ADDR) ? 1u : 0u);
+  CtrlVqQueueIndex = (ULONG)Adapter->CtrlVq.QueueIndex;
+  CtrlVqQueueSize = (ULONG)Adapter->CtrlVq.QueueSize;
 
-  AerovNetCtrlVqRegistryWriteDword(Key, L"CtrlVqQueueIndex", (ULONG)Adapter->CtrlVq.QueueIndex);
-  AerovNetCtrlVqRegistryWriteDword(Key, L"CtrlVqQueueSize", (ULONG)Adapter->CtrlVq.QueueSize);
+  CmdSent = Adapter->StatCtrlVqCmdSent;
+  CmdOk = Adapter->StatCtrlVqCmdOk;
+  CmdErr = Adapter->StatCtrlVqCmdErr;
+  CmdTimeout = Adapter->StatCtrlVqCmdTimeout;
+  NdisReleaseSpinLock(&Adapter->Lock);
 
-  AerovNetCtrlVqRegistryWriteQword(Key, L"CtrlVqCmdSent", Adapter->StatCtrlVqCmdSent);
-  AerovNetCtrlVqRegistryWriteQword(Key, L"CtrlVqCmdOk", Adapter->StatCtrlVqCmdOk);
-  AerovNetCtrlVqRegistryWriteQword(Key, L"CtrlVqCmdErr", Adapter->StatCtrlVqCmdErr);
-  AerovNetCtrlVqRegistryWriteQword(Key, L"CtrlVqCmdTimeout", Adapter->StatCtrlVqCmdTimeout);
+  AerovNetCtrlVqRegistryWriteQword(Key, L"HostFeatures", HostFeatures);
+  AerovNetCtrlVqRegistryWriteQword(Key, L"GuestFeatures", GuestFeatures);
+
+  AerovNetCtrlVqRegistryWriteDword(Key, L"CtrlVqNegotiated", CtrlVqNegotiated);
+  AerovNetCtrlVqRegistryWriteDword(Key, L"CtrlRxNegotiated", CtrlRxNegotiated);
+  AerovNetCtrlVqRegistryWriteDword(Key, L"CtrlVlanNegotiated", CtrlVlanNegotiated);
+  AerovNetCtrlVqRegistryWriteDword(Key, L"CtrlMacAddrNegotiated", CtrlMacAddrNegotiated);
+
+  AerovNetCtrlVqRegistryWriteDword(Key, L"CtrlVqQueueIndex", CtrlVqQueueIndex);
+  AerovNetCtrlVqRegistryWriteDword(Key, L"CtrlVqQueueSize", CtrlVqQueueSize);
+
+  AerovNetCtrlVqRegistryWriteQword(Key, L"CtrlVqCmdSent", CmdSent);
+  AerovNetCtrlVqRegistryWriteQword(Key, L"CtrlVqCmdOk", CmdOk);
+  AerovNetCtrlVqRegistryWriteQword(Key, L"CtrlVqCmdErr", CmdErr);
+  AerovNetCtrlVqRegistryWriteQword(Key, L"CtrlVqCmdTimeout", CmdTimeout);
 }
 
 static VOID AerovNetCtrlVqRegistryInit(_Inout_ AEROVNET_ADAPTER* Adapter) {
