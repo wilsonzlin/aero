@@ -13177,7 +13177,15 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
     }
   }
   if (sb->fvf_set) {
+    const uint32_t old_fvf = dev->fvf;
     dev->fvf = sb->fvf;
+    // Switching to the XYZ|DIFFUSE|TEX1 fixed-function fallback must refresh
+    // the reserved matrix constant range, even if transforms did not change.
+    // State-block apply bypasses SetFVF/SetVertexDecl, so handle the transition
+    // here as well.
+    if (old_fvf != dev->fvf && dev->fvf == kSupportedFvfXyzDiffuseTex1) {
+      dev->fixedfunc_matrix_dirty = true;
+    }
   }
   if (sb->vertex_decl_set || sb->fvf_set) {
     stateblock_record_vertex_decl_locked(dev, dev->vertex_decl, dev->fvf);
@@ -13226,6 +13234,12 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
   if (sb->user_vs_set && dev->user_vs != sb->user_vs) {
     dev->user_vs = sb->user_vs;
     shaders_dirty = true;
+    // If the app binds a user VS while the XYZ|DIFFUSE|TEX1 fixed-function path
+    // is active, treat the reserved WVP constant range as clobbered; the app
+    // may have written overlapping constants before returning to fixed-function.
+    if (dev->user_vs && dev->fvf == kSupportedFvfXyzDiffuseTex1) {
+      dev->fixedfunc_matrix_dirty = true;
+    }
   }
   if (sb->user_ps_set && dev->user_ps != sb->user_ps) {
     dev->user_ps = sb->user_ps;
@@ -13267,6 +13281,18 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
         ++end;
       }
       const uint32_t count = (end - start + 1);
+
+      // If the state block writes to the reserved WVP constant range, mark it
+      // dirty so the next fixed-function draw re-uploads the correct matrix.
+      if (stage == kD3d9ShaderStageVs && dev->fvf == kSupportedFvfXyzDiffuseTex1) {
+        const uint32_t write_end = start + count;
+        const uint32_t ff_start = kFixedfuncMatrixStartRegister;
+        const uint32_t ff_end = kFixedfuncMatrixStartRegister + kFixedfuncMatrixVec4Count;
+        if (start < ff_end && write_end > ff_start) {
+          dev->fixedfunc_matrix_dirty = true;
+        }
+      }
+
       std::memcpy(dst + static_cast<size_t>(start) * 4,
                   src + static_cast<size_t>(start) * 4,
                   static_cast<size_t>(count) * 4 * sizeof(float));
