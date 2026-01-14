@@ -302,6 +302,10 @@ fn wgsl_texld_emits_texture_sample() {
         wgsl.bind_group_layout.sampler_bindings.get(&0),
         Some(&(0, 1))
     );
+    assert_eq!(
+        wgsl.bind_group_layout.sampler_texture_types.get(&0),
+        Some(&TextureType::Texture2D)
+    );
     assert!(
         wgsl.wgsl
             .contains("@group(2) @binding(0) var tex0: texture_2d<f32>;"),
@@ -852,6 +856,10 @@ fn wgsl_texldl_emits_texture_sample_level_explicit_lod() {
     assert_eq!(
         wgsl.bind_group_layout.sampler_bindings.get(&1),
         Some(&(2, 3))
+    );
+    assert_eq!(
+        wgsl.bind_group_layout.sampler_texture_types.get(&1),
+        Some(&TextureType::Texture2D)
     );
 
     let module = naga::front::wgsl::parse_str(&wgsl.wgsl).expect("wgsl parse");
