@@ -972,6 +972,7 @@ static BOOLEAN AerovblkQueueRequest(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, _
     AEROVBLK_LOG("virtqueue_split_add_sg failed vqRes=%d; requesting ResetDetected", vqRes);
 #endif
     if (InterlockedCompareExchange(&devExt->ResetPending, 1, 0) == 0) {
+      InterlockedIncrement(&devExt->ResetDetectedCount);
       StorPortNotification(ResetDetected, devExt, 0);
     }
     return FALSE;
@@ -1350,6 +1351,8 @@ static VOID AerovblkHandleIoControl(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, _
     outInfo.PnpSrbCount = (ULONG)devExt->PnpSrbCount;
     outInfo.IoctlResetCount = (ULONG)devExt->IoctlResetCount;
     outInfo.CapacityChangeEvents = (ULONG)AerovblkReadCapacityChangeEvents(devExt);
+    outInfo.ResetDetectedCount = (ULONG)devExt->ResetDetectedCount;
+    outInfo.HwResetBusCount = (ULONG)devExt->HwResetBusCount;
 
     copyLen = payloadLen;
     if (copyLen > sizeof(outInfo)) {
@@ -1659,6 +1662,7 @@ BOOLEAN AerovblkHwResetBus(_In_ PVOID deviceExtension, _In_ ULONG pathId) {
   UNREFERENCED_PARAMETER(pathId);
 
   devExt = (PAEROVBLK_DEVICE_EXTENSION)deviceExtension;
+  InterlockedIncrement(&devExt->HwResetBusCount);
   if (devExt->Removed || devExt->SurpriseRemoved || devExt->Vdev.CommonCfg == NULL || devExt->Vdev.DeviceCfg == NULL) {
     return TRUE;
   }
@@ -1904,6 +1908,7 @@ static __forceinline BOOLEAN AerovblkServiceInterrupt(_Inout_ PAEROVBLK_DEVICE_E
   StorPortReleaseSpinLock(devExt, &lock);
 
   if (needReset) {
+    InterlockedIncrement(&devExt->ResetDetectedCount);
     StorPortNotification(ResetDetected, devExt, 0);
     return TRUE;
   }

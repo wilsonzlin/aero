@@ -614,7 +614,9 @@ static_assert(offsetof(AEROVBLK_QUERY_INFO, ResetBusSrbCount) == 0x28, "AEROVBLK
 static_assert(offsetof(AEROVBLK_QUERY_INFO, PnpSrbCount) == 0x2C, "AEROVBLK_QUERY_INFO layout");
 static_assert(offsetof(AEROVBLK_QUERY_INFO, IoctlResetCount) == 0x30, "AEROVBLK_QUERY_INFO layout");
 static_assert(offsetof(AEROVBLK_QUERY_INFO, CapacityChangeEvents) == 0x34, "AEROVBLK_QUERY_INFO layout");
-static_assert(sizeof(AEROVBLK_QUERY_INFO) == 0x38, "AEROVBLK_QUERY_INFO size mismatch");
+static_assert(offsetof(AEROVBLK_QUERY_INFO, ResetDetectedCount) == 0x38, "AEROVBLK_QUERY_INFO layout");
+static_assert(offsetof(AEROVBLK_QUERY_INFO, HwResetBusCount) == 0x3C, "AEROVBLK_QUERY_INFO layout");
+static_assert(sizeof(AEROVBLK_QUERY_INFO) == 0x40, "AEROVBLK_QUERY_INFO size mismatch");
 
 struct AerovblkQueryInfoResult {
   AEROVBLK_QUERY_INFO info{};
@@ -852,6 +854,17 @@ static bool ValidateAerovblkMiniportInfo(Logger& log, const AerovblkQueryInfoRes
   } else {
     log.Logf("virtio-blk-miniport-flags|WARN|reason=missing_flags|returned_len=%zu|expected_min=%zu",
              res.returned_len, kFlagsEnd);
+  }
+
+  // Optional reset/recovery counters (variable-length contract).
+  constexpr size_t kResetRecoveryEnd = offsetof(AEROVBLK_QUERY_INFO, HwResetBusCount) + sizeof(ULONG);
+  if (res.returned_len >= kResetRecoveryEnd) {
+    log.Logf("virtio-blk-miniport-reset-recovery|INFO|reset_detected=%lu|hw_reset_bus=%lu",
+             static_cast<unsigned long>(info.ResetDetectedCount),
+             static_cast<unsigned long>(info.HwResetBusCount));
+  } else {
+    log.Logf("virtio-blk-miniport-reset-recovery|WARN|reason=missing_counters|returned_len=%zu|expected_min=%zu",
+             res.returned_len, kResetRecoveryEnd);
   }
 
   if (!have_counters) {

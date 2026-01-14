@@ -173,6 +173,8 @@ typedef struct _AEROVBLK_DEVICE_EXTENSION {
     volatile LONG ResetBusSrbCount;
     volatile LONG PnpSrbCount;
     volatile LONG IoctlResetCount;
+    volatile LONG ResetDetectedCount;
+    volatile LONG HwResetBusCount;
 
     volatile BOOLEAN Removed;
     /*
@@ -202,7 +204,9 @@ C_ASSERT(FIELD_OFFSET(AEROVBLK_QUERY_INFO, ResetBusSrbCount) == 0x28);
 C_ASSERT(FIELD_OFFSET(AEROVBLK_QUERY_INFO, PnpSrbCount) == 0x2C);
 C_ASSERT(FIELD_OFFSET(AEROVBLK_QUERY_INFO, IoctlResetCount) == 0x30);
 C_ASSERT(FIELD_OFFSET(AEROVBLK_QUERY_INFO, CapacityChangeEvents) == 0x34);
-C_ASSERT(sizeof(AEROVBLK_QUERY_INFO) == 0x38);
+C_ASSERT(FIELD_OFFSET(AEROVBLK_QUERY_INFO, ResetDetectedCount) == 0x38);
+C_ASSERT(FIELD_OFFSET(AEROVBLK_QUERY_INFO, HwResetBusCount) == 0x3C);
+C_ASSERT(sizeof(AEROVBLK_QUERY_INFO) == 0x40);
 
 /* Minimum payload size for legacy callers (v1) that only expect the queue/feature fields. */
 #define AEROVBLK_QUERY_INFO_V1_SIZE FIELD_OFFSET(AEROVBLK_QUERY_INFO, InterruptMode)

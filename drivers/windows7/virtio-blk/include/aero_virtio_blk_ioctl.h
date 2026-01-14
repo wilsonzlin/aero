@@ -69,6 +69,17 @@ typedef struct _AEROVBLK_QUERY_INFO {
 
     /* Optional (appended): number of capacity change events handled at runtime. */
     uint32_t CapacityChangeEvents;
+
+    /*
+     * Optional (appended): reset/recovery counters.
+     *
+     * - ResetDetectedCount: number of times the miniport requested StorPort
+     *   recovery via `StorPortNotification(ResetDetected, ...)`.
+     * - HwResetBusCount: number of times StorPort invoked HwResetBus (includes
+     *   timeout recovery and ResetDetected handling).
+     */
+    uint32_t ResetDetectedCount;
+    uint32_t HwResetBusCount;
 } AEROVBLK_QUERY_INFO, *PAEROVBLK_QUERY_INFO;
 #pragma pack(pop)
 
