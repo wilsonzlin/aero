@@ -1274,6 +1274,15 @@ pub struct AerogpuD3d11Executor {
     encoder_used_buffers: HashSet<u32>,
     encoder_used_textures: HashSet<u32>,
 
+    /// Resources that were destroyed by the guest while still referenced by in-flight commands.
+    ///
+    /// wgpu requires resources referenced by an encoder to remain alive until that encoder is
+    /// finished/submitted. When the guest destroys a resource we remove it from the public handle
+    /// tables immediately (so subsequent uses error), but if it was referenced by the current
+    /// encoder we keep the underlying wgpu handles alive here until the next `submit_encoder`.
+    destroyed_buffers: Vec<BufferResource>,
+    destroyed_textures: Vec<Texture2dResource>,
+
     /// Tracks whether the in-flight command encoder has recorded any GPU work.
     ///
     /// This is used to avoid submitting empty command buffers when we need to
@@ -1512,6 +1521,8 @@ impl AerogpuD3d11Executor {
             persistent_shader_cache_flags,
             encoder_used_buffers: HashSet::new(),
             encoder_used_textures: HashSet::new(),
+            destroyed_buffers: Vec::new(),
+            destroyed_textures: Vec::new(),
             encoder_has_commands: false,
         }
     }
@@ -2889,6 +2900,8 @@ impl AerogpuD3d11Executor {
         self.encoder_has_commands = false;
         self.encoder_used_buffers.clear();
         self.encoder_used_textures.clear();
+        self.destroyed_buffers.clear();
+        self.destroyed_textures.clear();
     }
 
     fn submit_encoder_if_has_commands(
@@ -2918,7 +2931,7 @@ impl AerogpuD3d11Executor {
             OPCODE_DEBUG_MARKER => Ok(()),
             OPCODE_CREATE_BUFFER => self.exec_create_buffer(cmd_bytes, allocs),
             OPCODE_CREATE_TEXTURE2D => self.exec_create_texture2d(cmd_bytes, allocs),
-            OPCODE_DESTROY_RESOURCE => self.exec_destroy_resource(encoder, cmd_bytes),
+            OPCODE_DESTROY_RESOURCE => self.exec_destroy_resource(cmd_bytes),
             OPCODE_RESOURCE_DIRTY_RANGE => self.exec_resource_dirty_range(cmd_bytes),
             OPCODE_UPLOAD_RESOURCE => self.exec_upload_resource(encoder, cmd_bytes),
             OPCODE_COPY_BUFFER => {
@@ -4865,6 +4878,7 @@ impl AerogpuD3d11Executor {
                 | OPCODE_DRAW_INDEXED
                 | OPCODE_CREATE_BUFFER
                 | OPCODE_CREATE_TEXTURE2D
+                | OPCODE_DESTROY_RESOURCE
                 | OPCODE_RESOURCE_DIRTY_RANGE
                 | OPCODE_UPLOAD_RESOURCE
                 | OPCODE_COPY_BUFFER
@@ -6635,11 +6649,7 @@ impl AerogpuD3d11Executor {
                 OPCODE_BIND_SHADERS => self.exec_bind_shaders(cmd_bytes)?,
                 OPCODE_CREATE_BUFFER => self.exec_create_buffer(cmd_bytes, allocs)?,
                 OPCODE_CREATE_TEXTURE2D => self.exec_create_texture2d(cmd_bytes, allocs)?,
-                OPCODE_DESTROY_RESOURCE => {
-                    unreachable!(
-                        "DESTROY_RESOURCE cannot be processed inside an active render pass"
-                    )
-                }
+                OPCODE_DESTROY_RESOURCE => self.exec_destroy_resource(cmd_bytes)?,
                 OPCODE_CREATE_SHADER_DXBC => self.exec_create_shader_dxbc(cmd_bytes)?,
                 OPCODE_DESTROY_SHADER => self.exec_destroy_shader(cmd_bytes)?,
                 OPCODE_CREATE_INPUT_LAYOUT => self.exec_create_input_layout(cmd_bytes)?,
@@ -7263,11 +7273,7 @@ impl AerogpuD3d11Executor {
         Ok(())
     }
 
-    fn exec_destroy_resource(
-        &mut self,
-        encoder: &mut wgpu::CommandEncoder,
-        cmd_bytes: &[u8],
-    ) -> Result<()> {
+    fn exec_destroy_resource(&mut self, cmd_bytes: &[u8]) -> Result<()> {
         // struct aerogpu_cmd_destroy_resource (16 bytes)
         if cmd_bytes.len() < 16 {
             bail!(
@@ -7279,22 +7285,28 @@ impl AerogpuD3d11Executor {
 
         // wgpu requires resources referenced by an encoder to remain alive until the encoder is
         // finished/submitted. If the guest destroys a resource that was used earlier in the same
-        // command stream submission, force a submission boundary so we don't drop wgpu handles
-        // while they are still referenced by in-flight commands.
-        let underlying = self.shared_surfaces.resolve_handle(handle);
-        if self.encoder_has_commands
-            && (self.encoder_used_textures.contains(&underlying)
-                || self.encoder_used_buffers.contains(&underlying)
+        // command stream submission, keep the wgpu handles alive until the next `submit_encoder`
+        // rather than dropping them immediately.
+        let resolved = self.shared_surfaces.resolve_handle(handle);
+        let keep_alive = self.encoder_has_commands
+            && (self.encoder_used_textures.contains(&resolved)
+                || self.encoder_used_buffers.contains(&resolved)
                 || self.encoder_used_textures.contains(&handle)
-                || self.encoder_used_buffers.contains(&handle))
-        {
-            self.submit_encoder(encoder, "aerogpu_cmd encoder before destroy_resource");
-        }
+                || self.encoder_used_buffers.contains(&handle));
 
         if let Some((underlying, last_ref)) = self.shared_surfaces.destroy_handle(handle) {
             if last_ref {
-                self.resources.buffers.remove(&underlying);
-                self.resources.textures.remove(&underlying);
+                if keep_alive {
+                    if let Some(buf) = self.resources.buffers.remove(&underlying) {
+                        self.destroyed_buffers.push(buf);
+                    }
+                    if let Some(tex) = self.resources.textures.remove(&underlying) {
+                        self.destroyed_textures.push(tex);
+                    }
+                } else {
+                    self.resources.buffers.remove(&underlying);
+                    self.resources.textures.remove(&underlying);
+                }
                 self.encoder_used_buffers.remove(&underlying);
                 self.encoder_used_textures.remove(&underlying);
 
@@ -7350,8 +7362,17 @@ impl AerogpuD3d11Executor {
             }
 
             // Untracked handle; treat as a best-effort destroy (robustness).
-            self.resources.buffers.remove(&handle);
-            self.resources.textures.remove(&handle);
+            if keep_alive {
+                if let Some(buf) = self.resources.buffers.remove(&handle) {
+                    self.destroyed_buffers.push(buf);
+                }
+                if let Some(tex) = self.resources.textures.remove(&handle) {
+                    self.destroyed_textures.push(tex);
+                }
+            } else {
+                self.resources.buffers.remove(&handle);
+                self.resources.textures.remove(&handle);
+            }
             self.encoder_used_buffers.remove(&handle);
             self.encoder_used_textures.remove(&handle);
 
