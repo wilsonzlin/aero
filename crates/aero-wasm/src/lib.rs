@@ -1030,7 +1030,7 @@ pub fn demo_render_rgba8888(
 
         let slice_len = stride * draw_height;
         unsafe {
-            let dst_ptr = dst_offset as *mut u8;
+            let dst_ptr = core::ptr::with_exposed_provenance_mut(dst_offset as usize);
             demo_renderer::render_rgba8888_raw(dst_ptr, slice_len, width, height, stride_bytes, now_ms)
         }
     }
