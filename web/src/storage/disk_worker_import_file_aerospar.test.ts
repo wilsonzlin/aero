@@ -33,7 +33,6 @@ function toArrayBufferUint8(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
   // (and spec compliance) are happy.
   return bytes.buffer instanceof ArrayBuffer ? (bytes as unknown as Uint8Array<ArrayBuffer>) : new Uint8Array(bytes);
 }
-
 function makeAerosparBytes(options: { diskSizeBytes: number; blockSizeBytes: number }): Uint8Array<ArrayBuffer> {
   const { diskSizeBytes, blockSizeBytes } = options;
   const blockSizeBig = BigInt(blockSizeBytes);

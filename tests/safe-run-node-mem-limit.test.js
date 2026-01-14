@@ -54,7 +54,7 @@ test("safe-run: bumps RLIMIT_AS for node --test when AERO_MEM_LIMIT is unset (WA
     });
 
     assert.equal(res.status, 0, `expected exit 0, got ${res.status}: ${res.stderr}`);
-    assert.match(res.stderr, /Memory: 128G\b/, `expected Memory: 128G in stderr, got:\n${res.stderr}`);
+  assert.match(res.stderr, /Memory: 256G\b/, `expected Memory: 256G in stderr, got:\n${res.stderr}`);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -78,7 +78,7 @@ test("safe-run: bumps RLIMIT_AS for npm test when AERO_MEM_LIMIT is unset (WASM 
     });
 
     assert.equal(res.status, 0, `expected exit 0, got ${res.status}: ${res.stderr}`);
-    assert.match(res.stderr, /Memory: 128G\b/, `expected Memory: 128G in stderr, got:\n${res.stderr}`);
+  assert.match(res.stderr, /Memory: 256G\b/, `expected Memory: 256G in stderr, got:\n${res.stderr}`);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -178,7 +178,7 @@ test("safe-run: bumps RLIMIT_AS for wasm-pack test when AERO_MEM_LIMIT is unset"
     });
 
     assert.equal(res.status, 0, `expected exit 0, got ${res.status}: ${res.stderr}`);
-    assert.match(res.stderr, /Memory: 128G\b/, `expected Memory: 128G in stderr, got:\n${res.stderr}`);
+  assert.match(res.stderr, /Memory: 256G\b/, `expected Memory: 256G in stderr, got:\n${res.stderr}`);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
