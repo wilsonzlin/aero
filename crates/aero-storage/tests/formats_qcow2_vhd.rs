@@ -665,6 +665,25 @@ fn disk_image_open_with_parent_supports_qcow2_backing() {
 }
 
 #[test]
+fn disk_image_open_auto_with_parent_supports_qcow2_backing() {
+    let virtual_size = 64 * 1024u64;
+
+    let mut backing_backend = MemBackend::with_len(virtual_size).unwrap();
+    let mut backing_sector0 = [0u8; SECTOR_SIZE];
+    backing_sector0[..15].copy_from_slice(b"backing sector0");
+    backing_backend.write_at(0, &backing_sector0).unwrap();
+
+    let backing_disk = RawDisk::open(backing_backend).unwrap();
+    let qcow2_backend = make_qcow2_empty_with_backing(virtual_size);
+    let mut disk = DiskImage::open_auto_with_parent(qcow2_backend, Box::new(backing_disk)).unwrap();
+    assert_eq!(disk.format(), DiskFormat::Qcow2);
+
+    let mut buf0 = [0u8; SECTOR_SIZE];
+    disk.read_sectors(0, &mut buf0).unwrap();
+    assert_eq!(buf0, backing_sector0);
+}
+
+#[test]
 fn qcow2_with_backing_reads_fall_back_and_writes_are_copy_on_write() {
     let virtual_size = 64 * 1024u64;
 

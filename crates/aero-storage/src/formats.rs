@@ -274,6 +274,56 @@ impl<B: StorageBackend> DiskImage<B> {
         Self::open_with_format(format, backend)
     }
 
+    /// Like [`DiskImage::open_auto`], but allows callers to provide a parent/base disk up-front for
+    /// formats that may require it (QCOW2 backing files, VHD differencing disks).
+    ///
+    /// If the detected image format does not require a parent, the parent is ignored.
+    pub fn open_auto_with_parent(
+        mut backend: B,
+        parent: Box<dyn crate::VirtualDisk + Send>,
+    ) -> Result<Self> {
+        let format = detect_format(&mut backend)?;
+
+        match format {
+            DiskFormat::Qcow2 => {
+                // Peek at the backing file fields (8..20) to decide whether to use the parent.
+                // If the header is truncated, `open_with_format` will report a structured error.
+                let len = backend.len()?;
+                if len >= 20 {
+                    let mut header = [0u8; 20];
+                    backend.read_at(0, &mut header)?;
+                    let backing_file_offset = be_u64(&header[8..16]);
+                    let backing_file_size = be_u32(&header[16..20]);
+                    if backing_file_offset != 0 || backing_file_size != 0 {
+                        return Self::open_with_parent(format, backend, parent);
+                    }
+                }
+                let _ = parent;
+                Self::open_with_format(format, backend)
+            }
+            DiskFormat::Vhd => {
+                // VHD footer is always 512 bytes and the disk type is stored at 60..64.
+                // If the image is truncated, `open_with_format` will report the appropriate error.
+                let len = backend.len()?;
+                if len >= VHD_FOOTER_SIZE as u64 {
+                    let footer_offset = len - VHD_FOOTER_SIZE as u64;
+                    let mut footer = [0u8; VHD_FOOTER_SIZE];
+                    backend.read_at(footer_offset, &mut footer)?;
+                    let disk_type = be_u32(&footer[60..64]);
+                    if disk_type == 4 {
+                        return Self::open_with_parent(format, backend, parent);
+                    }
+                }
+                let _ = parent;
+                Self::open_with_format(format, backend)
+            }
+            _ => {
+                let _ = parent;
+                Self::open_with_format(format, backend)
+            }
+        }
+    }
+
     pub fn into_backend(self) -> B {
         match self {
             Self::Raw(d) => d.into_backend(),

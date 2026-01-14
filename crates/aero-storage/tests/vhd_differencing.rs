@@ -222,3 +222,22 @@ fn disk_image_open_with_parent_supports_vhd_differencing() {
     disk.read_at(start as u64, &mut buf).unwrap();
     assert_eq!(&buf, &pattern[start..start + buf.len()]);
 }
+
+#[test]
+fn disk_image_open_auto_with_parent_supports_vhd_differencing() {
+    let virtual_size = 16 * 1024u64;
+    let block_size = 4 * 1024u32;
+
+    let mut base = RawDisk::create(MemBackend::new(), virtual_size).unwrap();
+    let pattern: Vec<u8> = (0..virtual_size as usize).map(|i| (i & 0xFF) as u8).collect();
+    base.write_at(0, &pattern).unwrap();
+
+    let backend = make_vhd_differencing_empty(virtual_size, block_size);
+    let mut disk = DiskImage::open_auto_with_parent(backend, Box::new(base)).unwrap();
+    assert_eq!(disk.format(), DiskFormat::Vhd);
+
+    let start = (block_size as usize) - 100;
+    let mut buf = vec![0u8; 300];
+    disk.read_at(start as u64, &mut buf).unwrap();
+    assert_eq!(&buf, &pattern[start..start + buf.len()]);
+}
