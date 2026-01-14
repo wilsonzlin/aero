@@ -155,6 +155,9 @@ automation-friendly introspection, the runtime also exposes:
 - `window.aero.debug.getMachineCpuActiveBootDevice()` – active boot source (CD vs HDD), or `null` if unknown.
 - `window.aero.debug.getMachineCpuBootConfig()` – `{ bootDrive, cdBootDrive, bootFromCdIfPresent }`, or `null` if unknown.
 
+Note: both can return `null` during transitions (e.g. right after a reset, snapshot restore, or boot
+disk change) before the CPU worker re-reports the updated state.
+
 ### 2) Normal boot (after installation)
 
 1. Select HDD0 as the BIOS boot drive (**`DL=0x80`**) before reset. BIOS enters the boot sector with

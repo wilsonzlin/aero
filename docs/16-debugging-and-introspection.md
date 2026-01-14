@@ -226,13 +226,15 @@ The relevant helpers are:
 - `window.aero.debug.getMachineCpuActiveBootDevice() -> "hdd" | "cdrom" | null`
   - Returns the active boot device reported by the machine CPU worker (requires
     `vmRuntime="machine"`).
-  - `null` means unknown/unavailable (e.g. workers not running, or older builds without reporting).
+  - `null` means unknown/unavailable (e.g. workers not running, older builds without reporting, or
+    a reboot/disk-reattach transition where the next boot session has not reported yet).
 - `window.aero.debug.getMachineCpuBootConfig() -> { bootDrive: number, cdBootDrive: number, bootFromCdIfPresent: boolean } | null`
   - Returns the machine CPU worker's firmware boot configuration snapshot:
     - `bootDrive` – BIOS boot drive number (`DL`), typically `0x80` (HDD0) or `0xE0` (CD0).
     - `cdBootDrive` – BIOS CD-ROM drive number used by the "CD-first when present" policy (`0xE0..=0xEF`).
     - `bootFromCdIfPresent` – whether the firmware CD-first fallback policy is enabled.
-  - `null` means unknown/unavailable (e.g. older WASM builds without boot-config exports).
+  - `null` means unknown/unavailable (e.g. older WASM builds without boot-config exports, or a
+    reboot/disk-reattach transition where the CPU worker has not re-reported yet).
 
 ---
 
