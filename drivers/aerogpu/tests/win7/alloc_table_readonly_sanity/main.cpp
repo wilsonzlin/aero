@@ -51,12 +51,16 @@ static bool CmdStreamHasWritebackCopy(const unsigned char* data, uint32_t bytes)
   if (sh.magic != AEROGPU_CMD_STREAM_MAGIC) {
     return false;
   }
-  if (sh.size_bytes < sizeof(struct aerogpu_cmd_stream_header) || sh.size_bytes > bytes) {
+  if (sh.size_bytes < sizeof(struct aerogpu_cmd_stream_header)) {
     return false;
   }
 
   uint32_t offset = sizeof(struct aerogpu_cmd_stream_header);
-  const uint32_t stream_size = sh.size_bytes;
+  uint32_t stream_size = sh.size_bytes;
+  // READ_GPA is bounded; tolerate truncated streams when scanning for COPY_* WRITEBACK_DST.
+  if (stream_size > bytes) {
+    stream_size = bytes;
+  }
   while (offset + sizeof(struct aerogpu_cmd_hdr) <= stream_size) {
     aerogpu_cmd_hdr hdr;
     ZeroMemory(&hdr, sizeof(hdr));
@@ -66,7 +70,8 @@ static bool CmdStreamHasWritebackCopy(const unsigned char* data, uint32_t bytes)
     }
     const uint32_t end = offset + hdr.size_bytes;
     if (end > stream_size) {
-      return false;
+      // Truncated packet; stop scanning.
+      break;
     }
 
     if (hdr.opcode == AEROGPU_CMD_COPY_BUFFER) {
@@ -330,10 +335,12 @@ static int RunAllocTableReadonlySanity(int argc, char** argv) {
 
     // Ensure this is a writeback submission by scanning the command stream for COPY_* WRITEBACK_DST.
     // This should correspond to GetRenderTargetData's copy path when transfer is supported.
-    if (cur.cmd_gpa != 0 && cur.cmd_size_bytes != 0 && cur.cmd_size_bytes <= AEROGPU_DBGCTL_READ_GPA_MAX_BYTES) {
+    if (cur.cmd_gpa != 0 && cur.cmd_size_bytes != 0) {
       aerogpu_escape_read_gpa_inout cmd_read;
       NTSTATUS st2 = 0;
-      if (aerogpu_test::kmt::AerogpuReadGpa(&kmt, adapter, cur.cmd_gpa, cur.cmd_size_bytes, &cmd_read, &st2)) {
+      const uint32_t cmd_read_bytes =
+          (cur.cmd_size_bytes < AEROGPU_DBGCTL_READ_GPA_MAX_BYTES) ? cur.cmd_size_bytes : AEROGPU_DBGCTL_READ_GPA_MAX_BYTES;
+      if (aerogpu_test::kmt::AerogpuReadGpa(&kmt, adapter, cur.cmd_gpa, cmd_read_bytes, &cmd_read, &st2)) {
         if (cmd_read.bytes_copied >= sizeof(struct aerogpu_cmd_stream_header) &&
             CmdStreamHasWritebackCopy((const unsigned char*)cmd_read.data, (uint32_t)cmd_read.bytes_copied)) {
           d = cur;
@@ -355,10 +362,12 @@ static int RunAllocTableReadonlySanity(int argc, char** argv) {
   }
 
   aerogpu_test::PrintfStdout(
-      "INFO: %s: selected desc: ring_index=%lu fence=%I64u alloc_table_gpa=0x%I64X alloc_table_size_bytes=%lu",
+      "INFO: %s: selected desc: ring_index=%lu fence=%I64u cmd_gpa=0x%I64X cmd_size_bytes=%lu alloc_table_gpa=0x%I64X alloc_table_size_bytes=%lu",
       kTestName,
       (unsigned long)ring_index,
       (unsigned long long)d.fence,
+      (unsigned long long)d.cmd_gpa,
+      (unsigned long)d.cmd_size_bytes,
       (unsigned long long)d.alloc_table_gpa,
       (unsigned long)d.alloc_table_size_bytes);
 
