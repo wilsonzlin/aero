@@ -4086,7 +4086,13 @@ def _emit_virtio_blk_irq_host_marker(
 
     if irq_diag_markers is None:
         irq_diag_markers = _parse_virtio_irq_markers(tail)
+    # The guest virtio-blk selftest historically used `virtio-blk-irq|...` for miniport
+    # diagnostics (IOCTL-derived IRQ mode + MSI/MSI-X vectors). It was later renamed to
+    # `virtio-blk-miniport-irq|...` so `virtio-blk-irq|...` can be reserved for
+    # cfgmgr32/Windows-assigned IRQ resource enumeration. Accept both to keep the stable
+    # `AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_IRQ|...` marker robust across guest versions.
     irq_diag = irq_diag_markers.get("virtio-blk")
+    irq_diag_miniport = irq_diag_markers.get("virtio-blk-miniport")
 
     out_fields: dict[str, str] = {}
 
@@ -4110,32 +4116,40 @@ def _emit_virtio_blk_irq_host_marker(
             blk_test_fields.get("messages") or blk_test_fields.get("irq_messages") or blk_test_fields.get("msi_messages"),
         )
 
-    # From the standalone `virtio-blk-irq|...` diagnostics.
-    if irq_diag is not None:
-        _set_if_missing("irq_mode", irq_diag.get("irq_mode") or irq_diag.get("mode") or irq_diag.get("interrupt_mode"))
+    def _apply_irq_diag(diag: dict[str, str]) -> None:
+        _set_if_missing("irq_mode", diag.get("irq_mode") or diag.get("mode") or diag.get("interrupt_mode"))
         if "irq_message_count" not in out_fields:
             _set_if_missing(
                 "irq_message_count",
-                irq_diag.get("irq_message_count")
-                or irq_diag.get("messages")
-                or irq_diag.get("message_count")
-                or irq_diag.get("irq_messages")
-                or irq_diag.get("msi_messages"),
+                diag.get("irq_message_count")
+                or diag.get("messages")
+                or diag.get("message_count")
+                or diag.get("irq_messages")
+                or diag.get("msi_messages"),
             )
-        _set_if_missing("irq_vectors", irq_diag.get("irq_vectors") or irq_diag.get("vectors"))
-        _set_if_missing("msi_vector", irq_diag.get("msi_vector") or irq_diag.get("vector"))
-        _set_if_missing("msix_config_vector", irq_diag.get("msix_config_vector"))
+        _set_if_missing("irq_vectors", diag.get("irq_vectors") or diag.get("vectors"))
+        _set_if_missing("msi_vector", diag.get("msi_vector") or diag.get("vector"))
+        _set_if_missing("msix_config_vector", diag.get("msix_config_vector"))
         _set_if_missing(
             "msix_queue_vector",
-            irq_diag.get("msix_queue_vector") or irq_diag.get("msix_queue0_vector"),
+            diag.get("msix_queue_vector") or diag.get("msix_queue0_vector"),
         )
 
         # Preserve any additional interrupt-related fields so the marker stays useful for debugging.
-        for k, v in irq_diag.items():
+        for k, v in diag.items():
             if k in ("level", "mode", "messages", "message_count", "vectors", "vector", "msix_queue0_vector"):
                 continue
             if k.startswith(("irq_", "msi_", "msix_")):
                 _set_if_missing(k, v)
+
+    # From standalone IRQ diagnostics.
+    #
+    # Prefer the renamed miniport prefix (`virtio-blk-miniport-irq|...`) when present since
+    # `virtio-blk-irq|...` may refer to cfgmgr32 resource enumeration on newer guests.
+    if irq_diag_miniport is not None:
+        _apply_irq_diag(irq_diag_miniport)
+    if irq_diag is not None:
+        _apply_irq_diag(irq_diag)
 
     # Backward compatible: emit nothing unless we saw at least one interrupt-related key.
     ordered_keys = (

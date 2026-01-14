@@ -79,6 +79,21 @@ class VirtioBlkIrqMarkerTests(unittest.TestCase):
         out = self._emit(tail)
         self.assertEqual(out, "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_IRQ|INFO|irq_mode=intx")
 
+    def test_emits_info_when_only_miniport_irq_diag_marker_present(self) -> None:
+        # Newer guest selftests renamed miniport IOCTL-derived diagnostics from `virtio-blk-irq|...`
+        # to `virtio-blk-miniport-irq|...` so `virtio-blk-irq|...` can be reserved for
+        # cfgmgr32/Windows-assigned IRQ resource enumeration.
+        tail = (
+            b"virtio-blk-miniport-irq|INFO|mode=msix|message_count=2|msix_config_vector=0x0000|"
+            b"msix_queue0_vector=0x0001\n"
+        )
+        out = self._emit(tail)
+        self.assertEqual(
+            out,
+            "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_IRQ|INFO|irq_mode=msix|irq_message_count=2|"
+            "msix_config_vector=0x0000|msix_queue_vector=0x0001",
+        )
+
     def test_uses_last_marker(self) -> None:
         tail = (
             b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS|irq_mode=intx\n"
