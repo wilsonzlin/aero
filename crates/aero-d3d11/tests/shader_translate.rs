@@ -1405,9 +1405,9 @@ fn translates_texture_load_ld() {
         load_line
     );
     assert!(
-        !load_line.contains("select(") && !load_line.contains("floor("),
+        !translated.wgsl.contains("select(") && !translated.wgsl.contains("floor("),
         "textureLoad lowering should not use float-vs-bitcast heuristics:\n{}",
-        load_line
+        translated.wgsl
     );
     assert!(translated.wgsl.contains("bitcast<i32>(0x00000001u)"));
 
@@ -1480,11 +1480,11 @@ fn translates_texture_load_ld_uses_raw_integer_bits_not_float_heuristics() {
         load_line
     );
     assert!(
-        !load_line.contains("select(")
-            && !load_line.contains("floor(")
-            && !load_line.contains("i32("),
+        !translated.wgsl.contains("select(")
+            && !translated.wgsl.contains("floor(")
+            && !translated.wgsl.contains("i32("),
         "textureLoad lowering should not use float-vs-bitcast heuristics or numeric f32->i32 conversions:\n{}",
-        load_line
+        translated.wgsl
     );
 }
 
