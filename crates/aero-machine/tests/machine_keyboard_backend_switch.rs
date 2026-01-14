@@ -65,7 +65,10 @@ fn inject_input_batch_keyboard_release_stays_on_usb_when_virtio_becomes_ready() 
         w_index: 0,
         w_length: 0,
     };
-    assert_eq!(kbd.handle_control_request(set_cfg, None), ControlResponse::Ack);
+    assert_eq!(
+        kbd.handle_control_request(set_cfg, None),
+        ControlResponse::Ack
+    );
 
     // Enable periodic reports so we can observe the keyboard's *current* pressed state even if no
     // new reports are queued (useful for detecting stuck keys).
@@ -118,4 +121,3 @@ fn inject_input_batch_keyboard_release_stays_on_usb_when_virtio_becomes_ready() 
         "expected key release to clear USB state even if virtio becomes ready mid-hold"
     );
 }
-
