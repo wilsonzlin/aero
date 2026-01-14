@@ -1872,3 +1872,317 @@ fn render_two_stage_texture_ops_modulate_add_subtract() {
         assert_rgba_approx(pixel_at_rgba(&pixels, width, 1, 1), expected, 3);
     }
 }
+
+#[test]
+fn render_two_stage_dotproduct3() {
+    let Some((device, queue)) = request_device() else {
+        return;
+    };
+
+    #[repr(C)]
+    #[derive(Clone, Copy, Pod, Zeroable)]
+    struct Vertex {
+        pos: [f32; 3],
+        tex0: [f32; 2],
+        tex1: [f32; 2],
+    }
+
+    let width = 4;
+    let height = 4;
+
+    let target = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("target"),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let target_view = target.create_view(&Default::default());
+
+    let make_tex = |label: &str, rgba: [u8; 4]| {
+        let tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(label),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &tex,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &rgba,
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(4),
+                rows_per_image: Some(1),
+            },
+            wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
+        let view = tex.create_view(&Default::default());
+        (tex, view)
+    };
+
+    // Chosen so DOTPRODUCT3 result stays in-range and distinguishes the +0.5 bias:
+    // arg=(0.75-ish, 0.5-ish, 0.5-ish) produces ~0.75 output after the DP3 scale+bias.
+    let (_tex0, tex0_view) = make_tex("tex0", [192, 128, 128, 255]);
+    let (_tex1, tex1_view) = make_tex("tex1", [192, 128, 128, 255]);
+
+    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("nearest"),
+        mag_filter: wgpu::FilterMode::Nearest,
+        min_filter: wgpu::FilterMode::Nearest,
+        ..Default::default()
+    });
+
+    let globals = FixedFunctionGlobals {
+        world_view_proj: FixedFunctionGlobals::identity().world_view_proj,
+        viewport: [0.0, 0.0, width as f32, height as f32],
+        ..FixedFunctionGlobals::identity()
+    };
+    let globals_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("globals"),
+        contents: globals.as_bytes(),
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
+
+    let globals_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("globals-bgl"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }],
+    });
+    let globals_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("globals-bg"),
+        layout: &globals_bgl,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: globals_buf.as_entire_binding(),
+        }],
+    });
+
+    let tex_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("tex-bgl"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 3,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+        ],
+    });
+    let tex_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("tex-bg"),
+        layout: &tex_bgl,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&tex0_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(&sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::TextureView(&tex1_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: wgpu::BindingResource::Sampler(&sampler),
+            },
+        ],
+    });
+
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("pipeline-layout"),
+        bind_group_layouts: &[&globals_bgl, &tex_bgl],
+        push_constant_ranges: &[],
+    });
+
+    let verts = [
+        Vertex {
+            pos: [-1.0, -1.0, 0.0],
+            tex0: [0.0, 1.0],
+            tex1: [0.0, 1.0],
+        },
+        Vertex {
+            pos: [-1.0, 1.0, 0.0],
+            tex0: [0.0, 0.0],
+            tex1: [0.0, 0.0],
+        },
+        Vertex {
+            pos: [1.0, 1.0, 0.0],
+            tex0: [1.0, 0.0],
+            tex1: [1.0, 0.0],
+        },
+        Vertex {
+            pos: [-1.0, -1.0, 0.0],
+            tex0: [0.0, 1.0],
+            tex1: [0.0, 1.0],
+        },
+        Vertex {
+            pos: [1.0, 1.0, 0.0],
+            tex0: [1.0, 0.0],
+            tex1: [1.0, 0.0],
+        },
+        Vertex {
+            pos: [1.0, -1.0, 0.0],
+            tex0: [1.0, 1.0],
+            tex1: [1.0, 1.0],
+        },
+    ];
+
+    let vb = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("vb"),
+        contents: bytemuck::cast_slice(&verts),
+        usage: wgpu::BufferUsages::VERTEX,
+    });
+
+    let desc = FixedFunctionShaderDesc {
+        fvf: Fvf(Fvf::XYZ | (2 << 8)),
+        stage0: TextureStageState {
+            color_op: TextureOp::SelectArg1,
+            color_arg0: TextureArg::Current,
+            color_arg1: TextureArg::Texture,
+            color_arg2: TextureArg::Current,
+            alpha_op: TextureOp::SelectArg1,
+            alpha_arg0: TextureArg::Current,
+            alpha_arg1: TextureArg::Texture,
+            alpha_arg2: TextureArg::Current,
+        },
+        stage1: TextureStageState {
+            color_op: TextureOp::DotProduct3,
+            color_arg0: TextureArg::Current,
+            color_arg1: TextureArg::Current,
+            color_arg2: TextureArg::Texture,
+            alpha_op: TextureOp::SelectArg1,
+            alpha_arg0: TextureArg::Current,
+            alpha_arg1: TextureArg::Current,
+            alpha_arg2: TextureArg::Current,
+        },
+        alpha_test: AlphaTestState::default(),
+        fog: FogState::default(),
+        lighting: LightingState::default(),
+    };
+
+    let shaders = aero_d3d9::fixed_function::shader_gen::generate_fixed_function_shaders(&desc);
+    let vs = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("vs"),
+        source: wgpu::ShaderSource::Wgsl(shaders.vertex_wgsl.clone().into()),
+    });
+    let fs = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("fs"),
+        source: wgpu::ShaderSource::Wgsl(shaders.fragment_wgsl.clone().into()),
+    });
+
+    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("pipeline"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &vs,
+            entry_point: "vs_main",
+            buffers: &[shaders.vertex_buffer_layout()],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &fs,
+            entry_point: "fs_main",
+            targets: &[Some(wgpu::ColorTargetState {
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+    });
+
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("render-encoder"),
+    });
+    {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("render-pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &target_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            occlusion_query_set: None,
+            timestamp_writes: None,
+        });
+
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &globals_bg, &[]);
+        pass.set_bind_group(1, &tex_bg, &[]);
+        pass.set_vertex_buffer(0, vb.slice(..));
+        pass.draw(0..6, 0..1);
+    }
+    queue.submit([encoder.finish()]);
+
+    let pixels = readback_rgba8(&device, &queue, &target, width, height);
+    assert_rgba_approx(pixel_at_rgba(&pixels, width, 1, 1), [193, 193, 193, 255], 4);
+}

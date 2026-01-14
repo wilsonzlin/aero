@@ -352,12 +352,12 @@ fn generate_fragment_wgsl(desc: &FixedFunctionShaderDesc, layout: &FvfLayout) ->
 
     wgsl.push_str("  var current = input.diffuse;\n");
     // D3D9 stage disabling: `D3DTOP_DISABLE` on stage N disables stage N and all subsequent
-    // stages. Only process stage1 if stage0 is active.
-    if desc.stage0.color_op != TextureOp::Disable || desc.stage0.alpha_op != TextureOp::Disable {
+    // stages. D3D9 stage disabling is keyed off COLOROP: if `D3DTOP_DISABLE` is set on stage N,
+    // that stage and all subsequent stages are disabled.
+    if desc.stage0.color_op != TextureOp::Disable {
         emit_tss_stage(&mut wgsl, desc, layout, 0, &desc.stage0);
 
-        if desc.stage1.color_op != TextureOp::Disable || desc.stage1.alpha_op != TextureOp::Disable
-        {
+        if desc.stage1.color_op != TextureOp::Disable {
             emit_tss_stage(&mut wgsl, desc, layout, 1, &desc.stage1);
         }
     }
@@ -515,9 +515,10 @@ fn wgsl_op_expr(
         TextureOp::Lerp => format!("mix(({}), ({}), ({}))", arg2, arg1, arg0),
         TextureOp::DotProduct3 => match component {
             Component::Rgb => {
-                // Treat inputs as signed vectors in [-0.5, 0.5] and scale back into [0, 1].
+                // D3D9 fixed-function DOTPRODUCT3:
+                //   out = dot((arg1.rgb - 0.5), (arg2.rgb - 0.5)) * 4 + 0.5
                 format!(
-                    "vec3<f32>(dot((({}) - vec3<f32>(0.5)), (({}) - vec3<f32>(0.5))) * 4.0)",
+                    "vec3<f32>(dot((({}) - vec3<f32>(0.5)), (({}) - vec3<f32>(0.5))) * 4.0 + 0.5)",
                     arg1, arg2
                 )
             }
