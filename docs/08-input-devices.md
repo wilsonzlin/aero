@@ -908,9 +908,11 @@ passthrough devices can coexist without fighting over port numbers:
     browser/WASM integration treats ports 0–1 as reserved for these roles so WebUSB passthrough can
     coexist with the external hub / WebHID / synthetic HID devices (including in WASM builds that
     omit UHCI).
-  - Note: for xHCI, only the WebUSB root port is enforced/reserved in the WASM bridge (typically root
-    port 1). The xHCI WebHID topology manager does not reserve any root port numbers; callers provide
-    full paths and must avoid the reserved WebUSB root port.
+  - Note: for xHCI, the WASM bridge enforces the WebUSB reserved root port (typically root port 1).
+    The xHCI WebHID topology manager also follows the same `root port 0 external hub / root port 1
+    WebUSB` convention: it rejects device attachments behind the reserved WebUSB root port and
+    remaps legacy root-port-only paths (`[0]` / `[1]`) onto stable hub-backed paths behind root port
+    0.
 - **External hub on root port 0**:
   - default downstream port count: **16** (UHCI). For xHCI-backed topologies, keep hub port counts
     <= **15** (xHCI Route String encodes hub ports as 4-bit values).

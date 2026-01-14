@@ -23,7 +23,11 @@ export type GuestUsbPath = number[];
 export type HidAttachHubMessage = {
   type: "hid:attachHub";
   /**
-   * Path to attach the hub at. For the current guest USB topology this is `[0]` or `[1]`.
+   * Path to attach the hub at.
+   *
+   * For the current guest USB topology, root port 0 hosts the external hub used for WebHID
+   * passthrough + synthetic HID devices. Root port 1 is reserved for WebUSB passthrough and should
+   * not be used for hub attachments.
    */
   guestPath: GuestUsbPath;
   /**
