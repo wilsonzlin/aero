@@ -16,7 +16,7 @@ use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand, ValueEnum};
 use indicatif::{ProgressBar, ProgressStyle};
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue, ACCEPT_ENCODING, CONTENT_ENCODING};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -880,6 +880,8 @@ fn build_reqwest_client(headers: &[String]) -> Result<reqwest::Client> {
         let (name, value) = parse_header(raw)?;
         header_map.insert(name, value);
     }
+    // Defensive request: disk bytes should not be compressed/transformed.
+    header_map.insert(ACCEPT_ENCODING, HeaderValue::from_static("identity"));
     reqwest::Client::builder()
         .default_headers(header_map)
         .build()
@@ -908,6 +910,9 @@ fn is_retryable_http_error(err: &anyhow::Error) -> bool {
     for cause in err.chain() {
         let msg = cause.to_string();
         if msg.contains("size mismatch") || msg.contains("sha256 mismatch") {
+            return false;
+        }
+        if msg.contains("unexpected Content-Encoding") {
             return false;
         }
 
@@ -943,6 +948,17 @@ async fn download_http_bytes_with_retry(
             Ok(resp) => {
                 let status = resp.status();
                 if status.is_success() {
+                    if let Some(encoding) = resp
+                        .headers()
+                        .get(CONTENT_ENCODING)
+                        .and_then(|v| v.to_str().ok())
+                    {
+                        let encoding = encoding.trim();
+                        if !encoding.eq_ignore_ascii_case("identity") {
+                            return Err(anyhow!("unexpected Content-Encoding: {encoding}"))
+                                .with_context(|| format!("GET {url}"));
+                        }
+                    }
                     return resp
                         .bytes()
                         .await
@@ -1094,6 +1110,17 @@ async fn verify_chunk_http(
             status
         }))
         .with_context(|| format!("GET {url} (chunk {index})"));
+    }
+
+    if let Some(encoding) = resp
+        .headers()
+        .get(CONTENT_ENCODING)
+        .and_then(|v| v.to_str().ok())
+    {
+        let encoding = encoding.trim();
+        if !encoding.eq_ignore_ascii_case("identity") {
+            bail!("unexpected Content-Encoding for chunk {index} ({url}): {encoding}");
+        }
     }
 
     let content_length = resp.content_length();
