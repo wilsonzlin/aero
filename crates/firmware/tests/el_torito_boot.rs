@@ -348,6 +348,39 @@ fn bios_post_boots_from_cd_eltorito_no_emulation() {
 }
 
 #[test]
+fn bios_post_cd_boot_with_cdrom_backend_still_advertises_hdd0_in_bda() {
+    let iso = TestIso::build();
+    let mut cdrom = InMemoryCdrom::new(iso.bytes.clone());
+
+    // Provide an HDD alongside the CD-ROM, but boot explicitly from CD (`DL=0xE0`).
+    let mut hdd_sector = [0u8; 512];
+    hdd_sector[510] = 0x55;
+    hdd_sector[511] = 0xAA;
+    let mut hdd = InMemoryDisk::from_boot_sector(hdd_sector);
+
+    let mut bios = Bios::new(BiosConfig {
+        memory_size_bytes: 16 * 1024 * 1024,
+        boot_drive: 0xE0,
+        enable_acpi: false,
+        ..BiosConfig::default()
+    });
+    let mut cpu = CpuState::new(CpuMode::Real);
+    let mut bus = TestBus::new(16 * 1024 * 1024);
+
+    bios.post_with_cdrom(&mut cpu, &mut bus, &mut hdd, &mut cdrom);
+
+    // Booted from CD.
+    assert_eq!(cpu.gpr[gpr::RDX] as u8, 0xE0);
+    assert_eq!(cpu.segments.cs.selector, 0x07C0);
+    assert_eq!(cpu.rip(), 0);
+    assert!(bios.booted_from_cdrom());
+    assert_eq!(bios.config().boot_drive, 0xE0);
+
+    // But still advertise HDD0 presence (fixed-disk count) so guests can access the HDD during install.
+    assert_eq!(bus.read_u8(BDA_BASE + 0x75), 1);
+}
+
+#[test]
 fn bios_post_cd_first_policy_boots_cd_but_restores_hdd_boot_drive() {
     let iso = TestIso::build();
     let mut cdrom = InMemoryCdrom::new(iso.bytes.clone());
