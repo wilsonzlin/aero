@@ -3832,8 +3832,12 @@ static BOOLEAN AeroGpuIsSupportedVidPnPixelFormat(_In_ D3DDDIFORMAT Format)
 static BOOLEAN AeroGpuIsSupportedVidPnVSyncFrequency(_In_ ULONG Numerator, _In_ ULONG Denominator)
 {
     /*
-     * AeroGPU MVP exposes only a 60 Hz vblank cadence; keep VidPN validation
-     * conservative and reject other refresh rates.
+     * AeroGPU's virtual scanout uses a fixed vblank cadence today, but Win7's
+     * VidPN construction may describe modes with slightly different refresh
+     * rates (e.g. 59.94 Hz encoded as 59940/1000 or rounded to 59 Hz).
+     *
+     * Be permissive: accept any "reasonable" refresh rate so the OS can keep
+     * stable mode selections without us rejecting the VidPN.
      *
      * Treat 0/0 as uninitialized (allow) since some dxgkrnl helper paths may
      * leave frequency fields unset during intermediate VidPN construction.
@@ -3846,7 +3850,15 @@ static BOOLEAN AeroGpuIsSupportedVidPnVSyncFrequency(_In_ ULONG Numerator, _In_ 
         return FALSE;
     }
 
-    return ((ULONGLONG)Numerator == (ULONGLONG)60ull * (ULONGLONG)Denominator) ? TRUE : FALSE;
+    /* Accept common desktop refresh rates (30-240 Hz). */
+    const ULONGLONG num = (ULONGLONG)Numerator * 1000ull;
+    const ULONGLONG den = (ULONGLONG)Denominator;
+    const ULONGLONG mhz = num / den;
+
+    if (mhz < 30000ull || mhz > 240000ull) {
+        return FALSE;
+    }
+    return TRUE;
 }
 
 static NTSTATUS APIENTRY AeroGpuDdiIsSupportedVidPn(_In_ const HANDLE hAdapter, _Inout_ DXGKARG_ISSUPPORTEDVIDPN* pIsSupportedVidPn)
