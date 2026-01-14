@@ -2146,9 +2146,34 @@ impl IoSnapshot for UsbHidPassthrough {
                     "feature report request queue",
                 ));
             }
+            let mut seen_report_ids = [false; 256];
+            let mut seen_request_ids: Vec<u32> = Vec::new();
+            seen_request_ids
+                .try_reserve_exact(count)
+                .map_err(|_| SnapshotError::OutOfMemory)?;
+            self.feature_report_request_queue
+                .try_reserve_exact(count)
+                .map_err(|_| SnapshotError::OutOfMemory)?;
             for _ in 0..count {
                 let request_id = d.u32()?;
+                if request_id == 0 {
+                    return Err(SnapshotError::InvalidFieldEncoding(
+                        "feature report request queue",
+                    ));
+                }
                 let report_id = d.u8()?;
+                if seen_report_ids[report_id as usize] {
+                    return Err(SnapshotError::InvalidFieldEncoding(
+                        "feature report request queue",
+                    ));
+                }
+                seen_report_ids[report_id as usize] = true;
+                if seen_request_ids.contains(&request_id) {
+                    return Err(SnapshotError::InvalidFieldEncoding(
+                        "feature report request queue",
+                    ));
+                }
+                seen_request_ids.push(request_id);
                 self.feature_report_request_queue.push_back(
                     UsbHidPassthroughFeatureReportRequest {
                         request_id,
@@ -2172,8 +2197,20 @@ impl IoSnapshot for UsbHidPassthrough {
             for _ in 0..count {
                 let report_id = d.u8()?;
                 let request_id = d.u32()?;
-                self.feature_report_requests_pending
-                    .insert(report_id, request_id);
+                if request_id == 0 {
+                    return Err(SnapshotError::InvalidFieldEncoding(
+                        "feature report requests pending",
+                    ));
+                }
+                if self
+                    .feature_report_requests_pending
+                    .insert(report_id, request_id)
+                    .is_some()
+                {
+                    return Err(SnapshotError::InvalidFieldEncoding(
+                        "feature report requests pending",
+                    ));
+                }
             }
             d.finish()?;
         } else {
@@ -2198,8 +2235,20 @@ impl IoSnapshot for UsbHidPassthrough {
             for _ in 0..count {
                 let report_id = d.u8()?;
                 let request_id = d.u32()?;
-                self.feature_report_requests_failed
-                    .insert(report_id, request_id);
+                if request_id == 0 {
+                    return Err(SnapshotError::InvalidFieldEncoding(
+                        "feature report requests failed",
+                    ));
+                }
+                if self
+                    .feature_report_requests_failed
+                    .insert(report_id, request_id)
+                    .is_some()
+                {
+                    return Err(SnapshotError::InvalidFieldEncoding(
+                        "feature report requests failed",
+                    ));
+                }
             }
             d.finish()?;
         }
@@ -3926,6 +3975,120 @@ mod tests {
 
         match dev.load_state(&snapshot) {
             Err(SnapshotError::InvalidFieldEncoding("last input reports")) => {}
+            other => panic!("expected InvalidFieldEncoding, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn snapshot_restore_rejects_duplicate_feature_report_queue_report_ids() {
+        const TAG_FEATURE_REPORT_REQUEST_QUEUE: u16 = 27;
+
+        let queue = Encoder::new()
+            .u32(2)
+            .u32(1)
+            .u8(3)
+            .u32(2)
+            .u8(3) // duplicate report_id
+            .finish();
+
+        let snapshot = {
+            let mut w = SnapshotWriter::new(
+                UsbHidPassthrough::DEVICE_ID,
+                UsbHidPassthrough::DEVICE_VERSION,
+            );
+            w.field_bytes(TAG_FEATURE_REPORT_REQUEST_QUEUE, queue);
+            w.finish()
+        };
+
+        let mut dev = UsbHidPassthroughHandle::new(
+            0x1234,
+            0x5678,
+            "Vendor".into(),
+            "Product".into(),
+            None,
+            sample_report_descriptor_with_ids(),
+            false,
+            None,
+            None,
+            None,
+        );
+
+        match dev.load_state(&snapshot) {
+            Err(SnapshotError::InvalidFieldEncoding("feature report request queue")) => {}
+            other => panic!("expected InvalidFieldEncoding, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn snapshot_restore_rejects_feature_report_queue_with_zero_request_id() {
+        const TAG_FEATURE_REPORT_REQUEST_QUEUE: u16 = 27;
+
+        let queue = Encoder::new().u32(1).u32(0).u8(3).finish();
+
+        let snapshot = {
+            let mut w = SnapshotWriter::new(
+                UsbHidPassthrough::DEVICE_ID,
+                UsbHidPassthrough::DEVICE_VERSION,
+            );
+            w.field_bytes(TAG_FEATURE_REPORT_REQUEST_QUEUE, queue);
+            w.finish()
+        };
+
+        let mut dev = UsbHidPassthroughHandle::new(
+            0x1234,
+            0x5678,
+            "Vendor".into(),
+            "Product".into(),
+            None,
+            sample_report_descriptor_with_ids(),
+            false,
+            None,
+            None,
+            None,
+        );
+
+        match dev.load_state(&snapshot) {
+            Err(SnapshotError::InvalidFieldEncoding("feature report request queue")) => {}
+            other => panic!("expected InvalidFieldEncoding, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn snapshot_restore_rejects_duplicate_feature_report_requests_pending_report_ids() {
+        const TAG_FEATURE_REPORT_REQUESTS_PENDING: u16 = 28;
+
+        let pending = Encoder::new()
+            .u32(2)
+            .u8(3)
+            .u32(1)
+            .u8(3) // duplicate report_id
+            .u32(2)
+            .finish();
+
+        let snapshot = {
+            let mut w = SnapshotWriter::new(
+                UsbHidPassthrough::DEVICE_ID,
+                UsbHidPassthrough::DEVICE_VERSION,
+            );
+            w.field_bytes(TAG_FEATURE_REPORT_REQUESTS_PENDING, pending);
+            w.finish()
+        };
+
+        let mut dev = UsbHidPassthroughHandle::new(
+            0x1234,
+            0x5678,
+            "Vendor".into(),
+            "Product".into(),
+            None,
+            sample_report_descriptor_with_ids(),
+            false,
+            None,
+            None,
+            None,
+        );
+
+        match dev.load_state(&snapshot) {
+            Err(SnapshotError::InvalidFieldEncoding("feature report requests pending")) => {}
             other => panic!("expected InvalidFieldEncoding, got {other:?}"),
         }
     }
