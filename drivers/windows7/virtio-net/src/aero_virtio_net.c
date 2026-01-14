@@ -2244,35 +2244,42 @@ static VOID AerovNetInterruptDpcWork(_Inout_ AEROVNET_ADAPTER* Adapter, _In_ BOO
       }
 
       if (DoTx) {
-        // TX completions.
-        for (;;) {
-          PVOID Cookie;
-          AEROVNET_TX_REQUEST* TxReq;
+  // TX completions.
+  for (;;) {
+    PVOID Cookie;
+    AEROVNET_TX_REQUEST* TxReq;
+    NDIS_STATUS TxStatus;
 
-          Cookie = NULL;
+    Cookie = NULL;
 
-          if (Adapter->TxVq.QueueSize == 0) {
-            break;
+    if (Adapter->TxVq.QueueSize == 0) {
+      break;
           }
 
           if (virtqueue_split_pop_used(&Adapter->TxVq.Vq, &Cookie, NULL) == VIRTIO_FALSE) {
             break;
           }
 
-          TxReq = (AEROVNET_TX_REQUEST*)Cookie;
+    TxReq = (AEROVNET_TX_REQUEST*)Cookie;
 
-          if (TxReq) {
-            Adapter->StatTxPackets++;
-            Adapter->StatTxBytes += NET_BUFFER_DATA_LENGTH(TxReq->Nb);
+    if (TxReq) {
+      TxStatus = TxReq->Cancelled ? NDIS_STATUS_REQUEST_ABORTED : NDIS_STATUS_SUCCESS;
 
-            if (TxReq->State == AerovNetTxSubmitted) {
-              RemoveEntryList(&TxReq->Link);
-            }
-            InsertTailList(&CompleteTxReqs, &TxReq->Link);
+      if (TxStatus == NDIS_STATUS_SUCCESS) {
+        Adapter->StatTxPackets++;
+        Adapter->StatTxBytes += NET_BUFFER_DATA_LENGTH(TxReq->Nb);
+      } else {
+        Adapter->StatTxErrors++;
+      }
 
-            AerovNetCompleteTxRequest(Adapter, TxReq, NDIS_STATUS_SUCCESS, &CompleteNblHead, &CompleteNblTail);
-          }
-        }
+      if (TxReq->State == AerovNetTxSubmitted) {
+        RemoveEntryList(&TxReq->Link);
+      }
+      InsertTailList(&CompleteTxReqs, &TxReq->Link);
+
+      AerovNetCompleteTxRequest(Adapter, TxReq, TxStatus, &CompleteNblHead, &CompleteNblTail);
+    }
+  }
 
         // Submit any TX requests that were waiting on descriptors.
         if (Adapter->State == AerovNetAdapterRunning) {
@@ -3743,16 +3750,20 @@ static VOID AerovNetMiniportCancelSend(_In_ NDIS_HANDLE MiniportAdapterContext, 
     }
   }
 
-#if DBG
   // Requests already submitted to the device cannot be cancelled deterministically,
-  // but track them for debugging/diagnostics.
+  // but we still mark them as cancelled so completion is reported with
+  // NDIS_STATUS_REQUEST_ABORTED.
   for (Entry = Adapter->TxSubmittedList.Flink; Entry != &Adapter->TxSubmittedList; Entry = Entry->Flink) {
     AEROVNET_TX_REQUEST* TxReq = CONTAINING_RECORD(Entry, AEROVNET_TX_REQUEST, Link);
     if (TxReq->Nbl != NULL && NET_BUFFER_LIST_CANCEL_ID(TxReq->Nbl) == CancelId) {
-      InterlockedIncrement(&g_AerovNetDbgTxCancelAfterSubmit);
+      if (!TxReq->Cancelled) {
+        TxReq->Cancelled = TRUE;
+#if DBG
+        InterlockedIncrement(&g_AerovNetDbgTxCancelAfterSubmit);
+#endif
+      }
     }
   }
-#endif
 
   NdisReleaseSpinLock(&Adapter->Lock);
 
