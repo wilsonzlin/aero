@@ -38,6 +38,8 @@ constexpr uint32_t kFvfUnsupportedXyz = kD3dFvfXyz;
 constexpr uint32_t kD3dTssColorOp = 1u;
 // D3DTEXTUREOP values (from d3d9types.h).
 constexpr uint32_t kD3dTopDisable = 1u;
+// Intentionally unsupported by the fixed-function stage0 subset.
+constexpr uint32_t kD3dTopAddSmooth = 11u; // D3DTOP_ADDSMOOTH
 
 // Trivial vs_2_0 token stream (no declaration):
 //   mov oPos, v0
@@ -710,6 +712,72 @@ bool TestVsOnlyStage0StateUpdatesFixedfuncPs() {
   return true;
 }
 
+bool TestVsOnlyUnsupportedStage0DoesNotFailSetShader() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+  dev->cmd.reset();
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzrhwDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE)")) {
+    return false;
+  }
+
+  // Set an unsupported stage0 op. This should not make subsequent state-setting
+  // (including shader-stage interop) fail; draws should fail cleanly with INVALIDCALL.
+  hr = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, /*stage=*/0, kD3dTssColorOp, kD3dTopAddSmooth);
+  if (!Check(hr == S_OK, "SetTextureStageState(COLOROP=ADDSMOOTH) succeeds")) {
+    return false;
+  }
+
+  D3D9DDI_HSHADER hVs{};
+  hr = cleanup.device_funcs.pfnCreateShader(cleanup.hDevice,
+                                            kD3d9ShaderStageVs,
+                                            kUserVsPassthroughPosColor,
+                                            static_cast<uint32_t>(sizeof(kUserVsPassthroughPosColor)),
+                                            &hVs);
+  if (!Check(hr == S_OK, "CreateShader(VS)")) {
+    return false;
+  }
+  if (!Check(hVs.pDrvPrivate != nullptr, "CreateShader(VS) returned handle")) {
+    return false;
+  }
+  cleanup.shaders.push_back(hVs);
+
+  hr = cleanup.device_funcs.pfnSetShader(cleanup.hDevice, kD3d9ShaderStageVs, hVs);
+  if (!Check(hr == S_OK, "SetShader(VS) succeeds even when stage0 is unsupported")) {
+    return false;
+  }
+
+  const size_t baseline = dev->cmd.bytes_used();
+
+  const VertexXyzrhwDiffuse tri[3] = {
+      {0.0f, 0.0f, 0.0f, 1.0f, 0xFFFF0000u},
+      {1.0f, 0.0f, 0.0f, 1.0f, 0xFF00FF00u},
+      {0.0f, 1.0f, 0.0f, 1.0f, 0xFF0000FFu},
+  };
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(cleanup.hDevice, D3DDDIPT_TRIANGLELIST, 1, tri, sizeof(VertexXyzrhwDiffuse));
+  if (!Check(hr == D3DERR_INVALIDCALL, "DrawPrimitiveUP(VS-only, unsupported stage0) returns INVALIDCALL")) {
+    return false;
+  }
+  if (!Check(dev->cmd.bytes_used() == baseline, "unsupported draw emits no new commands")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(VS-only, unsupported stage0)")) {
+    return false;
+  }
+  return CheckNoNullShaderBinds(buf, len);
+}
+
 bool TestPsOnlyBindsFixedfuncVs() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -1284,6 +1352,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestVsOnlyStage0StateUpdatesFixedfuncPs()) {
+    return 1;
+  }
+  if (!aerogpu::TestVsOnlyUnsupportedStage0DoesNotFailSetShader()) {
     return 1;
   }
   if (!aerogpu::TestPsOnlyBindsFixedfuncVs()) {
