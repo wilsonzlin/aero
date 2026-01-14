@@ -120,6 +120,15 @@ class VirtioIrqMarkerTests(unittest.TestCase):
         self.assertEqual(carry, b"")
         self.assertEqual(markers["virtio-net"]["mode"], "msix")
 
+    def test_incremental_parser_handles_cr_only(self) -> None:
+        markers: dict[str, dict[str, str]] = {}
+        carry = b""
+        carry = self.harness._update_virtio_irq_markers_from_chunk(
+            markers, b"virtio-net-irq|INFO|mode=msix|vectors=4\r", carry=carry
+        )
+        self.assertEqual(carry, b"")
+        self.assertEqual(markers["virtio-net"]["mode"], "msix")
+
     def test_incremental_parser_allows_leading_whitespace(self) -> None:
         markers: dict[str, dict[str, str]] = {}
         carry = b""
@@ -128,6 +137,14 @@ class VirtioIrqMarkerTests(unittest.TestCase):
         )
         self.assertEqual(carry, b"")
         self.assertEqual(markers["virtio-net"]["mode"], "msix")
+
+    def test_incremental_parser_bounds_carry(self) -> None:
+        markers: dict[str, dict[str, str]] = {}
+        # 10 bytes of 'x' followed by a 131072-byte run of 'y', no newline terminator.
+        chunk = b"x" * 10 + b"y" * 131072
+        carry = self.harness._update_virtio_irq_markers_from_chunk(markers, chunk, carry=b"")
+        self.assertEqual(len(carry), 131072)
+        self.assertEqual(carry, b"y" * 131072)
 
     def test_emits_msg_field_for_non_kv_tokens(self) -> None:
         tail = b"virtio-net-irq|WARN|msix disabled by policy\n"
