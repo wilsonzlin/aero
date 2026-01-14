@@ -2,6 +2,7 @@
 
 use aero_storage::{AeroSparseConfig, AeroSparseDisk, DiskImage, MemBackend, VirtualDisk};
 use proptest::prelude::*;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 
 const MAX_INPUT_BYTES: usize = 256 * 1024;
 const MAX_READ_LEN: usize = 4096;
@@ -227,15 +228,24 @@ proptest! {
         read_seeds in prop::collection::vec(any::<u64>(), READS_PER_CASE),
     ) {
         let backend = MemBackend::from_vec(data);
-        let Ok(mut disk) = DiskImage::open_auto(backend) else {
-            // Structured errors are fine; we only care about panics.
-            return Ok(());
+        let open_res = catch_unwind(AssertUnwindSafe(|| DiskImage::open_auto(backend)));
+        let mut disk = match open_res {
+            Ok(Ok(disk)) => disk,
+            Ok(Err(_)) => {
+                // Structured errors are fine; we only care about panics.
+                return Ok(());
+            }
+            Err(_) => {
+                prop_assert!(false, "DiskImage::open_auto panicked");
+                unreachable!();
+            }
         };
 
         let capacity = disk.capacity_bytes();
         if capacity == 0 {
             // Still exercise the "empty read" path, which should be a no-op.
-            let _ = disk.read_at(0, &mut []);
+            let _ = catch_unwind(AssertUnwindSafe(|| disk.read_at(0, &mut [])))
+                .map_err(|_| TestCaseError::fail("DiskImage::read_at panicked"))?;
             return Ok(());
         }
 
@@ -255,7 +265,15 @@ proptest! {
             let offset = seed % (max_offset + 1);
 
             let mut buf = vec![0u8; len];
-            let _ = disk.read_at(offset, &mut buf);
+            let read_res = catch_unwind(AssertUnwindSafe(|| disk.read_at(offset, &mut buf)));
+            prop_assert!(
+                read_res.is_ok(),
+                "DiskImage::read_at panicked (cap={capacity}, offset={offset}, len={len})"
+            );
+            let _ = read_res.unwrap();
         }
+
+        let flush_res = catch_unwind(AssertUnwindSafe(|| disk.flush()));
+        prop_assert!(flush_res.is_ok(), "DiskImage::flush panicked");
     }
 }
