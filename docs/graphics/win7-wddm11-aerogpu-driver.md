@@ -792,10 +792,10 @@ The register names below are the canonical ones from `drivers/aerogpu/protocol/a
   - `AEROGPU_MMIO_REG_SCANOUT0_FORMAT` (`enum aerogpu_format`)
   - `AEROGPU_MMIO_REG_SCANOUT0_PITCH_BYTES`
   - `AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_LO/HI`
-  - If `AEROGPU_FEATURE_VBLANK` is set (RO):
-    - `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO/HI`
-    - `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO/HI`
-    - `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS`
+   - If `AEROGPU_FEATURE_VBLANK` is set (RO):
+     - `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO/HI`
+     - `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO/HI` (monotonic ns since boot; see `drivers/aerogpu/protocol/vblank.md`)
+     - `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS`
   
 - **Cursor (optional)**
   - If `AEROGPU_FEATURE_CURSOR` is set:
