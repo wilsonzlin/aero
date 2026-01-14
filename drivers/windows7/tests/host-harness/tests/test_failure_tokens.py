@@ -339,6 +339,28 @@ class FailureTokenTests(unittest.TestCase):
         self.assertIn("err=5", msg)
         self.assertIn("reports=1", msg)
 
+    def test_virtio_input_led_fail_tokens_include_reason_and_err(self) -> None:
+        h = self.harness
+        msg = h._virtio_input_led_fail_failure_message(
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-led|FAIL|reason=timeout|err=1460|sent=0|format=out_report|led=num_lock\n"
+        )
+        self.assertRegex(msg, _TOKEN_RE)
+        self.assertTrue(msg.startswith("FAIL: VIRTIO_INPUT_LED_FAILED:"))
+        self.assertIn("reason=timeout", msg)
+        self.assertIn("err=1460", msg)
+        self.assertIn("sent=0", msg)
+
+    def test_virtio_input_leds_fail_tokens_include_reason_and_err(self) -> None:
+        h = self.harness
+        msg = h._virtio_input_leds_fail_failure_message(
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|FAIL|reason=timeout|err=1460|writes=1\n"
+        )
+        self.assertRegex(msg, _TOKEN_RE)
+        self.assertTrue(msg.startswith("FAIL: VIRTIO_INPUT_LEDS_FAILED:"))
+        self.assertIn("reason=timeout", msg)
+        self.assertIn("err=1460", msg)
+        self.assertIn("writes=1", msg)
+
     def test_virtio_input_tablet_events_skip_tokens(self) -> None:
         h = self.harness
 

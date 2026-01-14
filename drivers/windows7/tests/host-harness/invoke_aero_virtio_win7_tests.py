@@ -2589,11 +2589,25 @@ def _virtio_net_udp_fail_failure_message(tail: bytes, *, marker_line: Optional[s
     return "FAIL: VIRTIO_NET_UDP_FAILED: virtio-net-udp test reported FAIL"
 
 
-def _virtio_input_led_skip_failure_message(tail: bytes) -> str:
+def _virtio_input_led_skip_failure_message(tail: bytes, *, marker_line: Optional[str] = None) -> str:
     # Guest marker:
     #   AERO_VIRTIO_SELFTEST|TEST|virtio-input-led|PASS/FAIL/SKIP|...
     #
     # The guest skip token is expected to be `flag_not_set` when the test was not enabled.
+    prefix_str = "AERO_VIRTIO_SELFTEST|TEST|virtio-input-led|SKIP|"
+    if marker_line is not None and marker_line.startswith(prefix_str):
+        reason = marker_line[len(prefix_str) :].strip()
+        if reason:
+            if reason == "flag_not_set":
+                return (
+                    "FAIL: VIRTIO_INPUT_LED_SKIPPED: virtio-input-led test was skipped (flag_not_set) but --with-input-led was enabled "
+                    "(provision the guest with --test-input-led)"
+                )
+            return (
+                f"FAIL: VIRTIO_INPUT_LED_SKIPPED: virtio-input-led test was skipped ({reason}) but --with-input-led was enabled "
+                "(provision the guest with --test-input-led)"
+            )
+
     if b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-led|SKIP|flag_not_set" in tail:
         return (
             "FAIL: VIRTIO_INPUT_LED_SKIPPED: virtio-input-led test was skipped (flag_not_set) but --with-input-led was enabled "
@@ -2605,12 +2619,57 @@ def _virtio_input_led_skip_failure_message(tail: bytes) -> str:
     )
 
 
+def _virtio_input_led_fail_failure_message(tail: bytes, *, marker_line: Optional[str] = None) -> str:
+    # Guest marker:
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-input-led|FAIL|reason=<...>|err=<win32>|sent=<n>|format=<...>|led=<...>
+    prefix = b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-led|FAIL|"
+    prefix_str = "AERO_VIRTIO_SELFTEST|TEST|virtio-input-led|FAIL|"
+    marker = marker_line
+    if marker is not None and not marker.startswith(prefix_str):
+        marker = None
+    if marker is None:
+        marker = _try_extract_last_marker_line(tail, prefix)
+    if marker is not None:
+        fields = _parse_marker_kv_fields(marker)
+        reason = (fields.get("reason") or "").strip()
+        if not reason:
+            # Backcompat: allow token-only FAIL markers (no `reason=` field).
+            try:
+                toks = marker.split("|")
+                if toks and "FAIL" in toks:
+                    idx = toks.index("FAIL")
+                    if idx + 1 < len(toks):
+                        tok = toks[idx + 1].strip()
+                        if tok and "=" not in tok:
+                            reason = tok
+            except Exception:
+                reason = reason
+        parts: list[str] = []
+        if reason:
+            parts.append(f"reason={_sanitize_marker_value(reason)}")
+        for k in ("err", "sent", "format", "led"):
+            v = (fields.get(k) or "").strip()
+            if v:
+                parts.append(f"{k}={_sanitize_marker_value(v)}")
+        details = ""
+        if parts:
+            details = " (" + " ".join(parts) + ")"
+        return (
+            "FAIL: VIRTIO_INPUT_LED_FAILED: virtio-input-led test reported FAIL while --with-input-led was enabled"
+            + details
+        )
+    return (
+        "FAIL: VIRTIO_INPUT_LED_FAILED: virtio-input-led test reported FAIL while --with-input-led was enabled"
+    )
+
+
 def _virtio_input_led_required_failure_message(
     tail: bytes,
     *,
     saw_pass: bool = False,
     saw_fail: bool = False,
     saw_skip: bool = False,
+    marker_line: Optional[str] = None,
 ) -> Optional[str]:
     """
     Enforce that virtio-input-led ran and PASSed.
@@ -2621,14 +2680,22 @@ def _virtio_input_led_required_failure_message(
     # Prefer explicit "saw_*" flags tracked by the main harness loop (these survive tail truncation),
     # but keep a tail scan fallback to support direct unit tests.
     prefix = b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-led|"
+    # Prefer an explicit marker line when available (survives tail truncation).
+    if marker_line is not None:
+        st = _try_extract_marker_status(marker_line)
+        if st == "PASS":
+            return None
+        if st == "FAIL":
+            return _virtio_input_led_fail_failure_message(tail, marker_line=marker_line)
+        if st == "SKIP":
+            return _virtio_input_led_skip_failure_message(tail, marker_line=marker_line)
+
     if saw_pass or prefix + b"PASS" in tail:
         return None
     if saw_fail or prefix + b"FAIL" in tail:
-        return (
-            "FAIL: VIRTIO_INPUT_LED_FAILED: virtio-input-led test reported FAIL while --with-input-led was enabled"
-        )
+        return _virtio_input_led_fail_failure_message(tail, marker_line=marker_line)
     if saw_skip or prefix + b"SKIP" in tail:
-        return _virtio_input_led_skip_failure_message(tail)
+        return _virtio_input_led_skip_failure_message(tail, marker_line=marker_line)
     return (
         "FAIL: MISSING_VIRTIO_INPUT_LED: did not observe virtio-input-led PASS marker while --with-input-led was enabled "
         "(provision the guest with --test-input-led)"
@@ -3173,12 +3240,57 @@ def _virtio_input_binding_required_failure_message(
     )
 
 
+def _virtio_input_leds_fail_failure_message(tail: bytes, *, marker_line: Optional[str] = None) -> str:
+    # Guest marker:
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|FAIL|reason=<...>|err=<win32>|writes=<n>
+    prefix = b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|FAIL|"
+    prefix_str = "AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|FAIL|"
+    marker = marker_line
+    if marker is not None and not marker.startswith(prefix_str):
+        marker = None
+    if marker is None:
+        marker = _try_extract_last_marker_line(tail, prefix)
+    if marker is not None:
+        fields = _parse_marker_kv_fields(marker)
+        reason = (fields.get("reason") or "").strip()
+        if not reason:
+            # Backcompat: allow token-only FAIL markers (no `reason=` field).
+            try:
+                toks = marker.split("|")
+                if toks and "FAIL" in toks:
+                    idx = toks.index("FAIL")
+                    if idx + 1 < len(toks):
+                        tok = toks[idx + 1].strip()
+                        if tok and "=" not in tok:
+                            reason = tok
+            except Exception:
+                reason = reason
+        parts: list[str] = []
+        if reason:
+            parts.append(f"reason={_sanitize_marker_value(reason)}")
+        for k in ("err", "writes"):
+            v = (fields.get(k) or "").strip()
+            if v:
+                parts.append(f"{k}={_sanitize_marker_value(v)}")
+        details = ""
+        if parts:
+            details = " (" + " ".join(parts) + ")"
+        return (
+            "FAIL: VIRTIO_INPUT_LEDS_FAILED: virtio-input-leds test reported FAIL while --with-input-leds was enabled"
+            + details
+        )
+    return (
+        "FAIL: VIRTIO_INPUT_LEDS_FAILED: virtio-input-leds test reported FAIL while --with-input-leds was enabled"
+    )
+
+
 def _virtio_input_leds_required_failure_message(
     tail: bytes,
     *,
     saw_pass: bool = False,
     saw_fail: bool = False,
     saw_skip: bool = False,
+    marker_line: Optional[str] = None,
 ) -> Optional[str]:
     """
     Enforce that virtio-input-leds ran and PASSed.
@@ -3186,14 +3298,31 @@ def _virtio_input_leds_required_failure_message(
     Returns:
         A "FAIL: ..." message on failure, or None when the marker requirements are satisfied.
     """
+    # Prefer an explicit marker line when available (survives tail truncation).
+    if marker_line is not None:
+        st = _try_extract_marker_status(marker_line)
+        if st == "PASS":
+            return None
+        if st == "FAIL":
+            return _virtio_input_leds_fail_failure_message(tail, marker_line=marker_line)
+        if st == "SKIP":
+            marker = marker_line
+            prefix2 = "AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|SKIP|"
+            if marker.startswith(prefix2):
+                reason = marker[len(prefix2) :].strip()
+                if reason:
+                    return (
+                        f"FAIL: VIRTIO_INPUT_LEDS_SKIPPED: virtio-input-leds test was skipped ({reason}) "
+                        "but --with-input-leds was enabled (provision the guest with --test-input-leds; "
+                        "newer guest selftests also accept --test-input-led)"
+                    )
+
     # Prefer explicit "saw_*" flags tracked by the main harness loop (these survive tail truncation),
     # but keep a tail scan fallback to support direct unit tests (and any legacy call sites).
     if saw_pass or b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|PASS" in tail:
         return None
     if saw_fail or b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|FAIL" in tail:
-        return (
-            "FAIL: VIRTIO_INPUT_LEDS_FAILED: virtio-input-leds test reported FAIL while --with-input-leds was enabled"
-        )
+        return _virtio_input_leds_fail_failure_message(tail, marker_line=marker_line)
     if saw_skip or b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|SKIP" in tail:
         marker = _try_extract_last_marker_line(
             tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|SKIP|"
@@ -5979,6 +6108,7 @@ def main() -> int:
                             saw_pass=saw_virtio_input_leds_pass,
                             saw_fail=saw_virtio_input_leds_fail,
                             saw_skip=saw_virtio_input_leds_skip,
+                            marker_line=virtio_input_leds_marker_line,
                         )
                         if msg is None:
                             raise AssertionError(
@@ -6039,13 +6169,22 @@ def main() -> int:
 
                     if need_input_led:
                         if saw_virtio_input_led_skip:
-                            print(_virtio_input_led_skip_failure_message(tail), file=sys.stderr)
+                            print(
+                                _virtio_input_led_skip_failure_message(
+                                    tail,
+                                    marker_line=virtio_input_led_marker_line,
+                                ),
+                                file=sys.stderr,
+                            )
                             _print_tail(serial_log)
                             result_code = 1
                             break
                         if saw_virtio_input_led_fail:
                             print(
-                                "FAIL: VIRTIO_INPUT_LED_FAILED: virtio-input-led test reported FAIL while --with-input-led was enabled",
+                                _virtio_input_led_fail_failure_message(
+                                    tail,
+                                    marker_line=virtio_input_led_marker_line,
+                                ),
                                 file=sys.stderr,
                             )
                             _print_tail(serial_log)
@@ -6529,6 +6668,7 @@ def main() -> int:
                                     saw_pass=saw_virtio_input_leds_pass,
                                     saw_fail=saw_virtio_input_leds_fail,
                                     saw_skip=saw_virtio_input_leds_skip,
+                                    marker_line=virtio_input_leds_marker_line,
                                 )
                                 if msg is not None:
                                     print(msg, file=sys.stderr)
@@ -6977,6 +7117,7 @@ def main() -> int:
                                 saw_pass=saw_virtio_input_leds_pass,
                                 saw_fail=saw_virtio_input_leds_fail,
                                 saw_skip=saw_virtio_input_leds_skip,
+                                marker_line=virtio_input_leds_marker_line,
                             )
                             if msg is not None:
                                 print(msg, file=sys.stderr)
@@ -7293,6 +7434,7 @@ def main() -> int:
                                 saw_pass=saw_virtio_input_led_pass,
                                 saw_fail=saw_virtio_input_led_fail,
                                 saw_skip=saw_virtio_input_led_skip,
+                                marker_line=virtio_input_led_marker_line,
                             )
                             if msg is not None:
                                 print(msg, file=sys.stderr)
@@ -7623,6 +7765,7 @@ def main() -> int:
                         saw_pass=saw_virtio_input_leds_pass,
                         saw_fail=saw_virtio_input_leds_fail,
                         saw_skip=saw_virtio_input_leds_skip,
+                        marker_line=virtio_input_leds_marker_line,
                     )
                     if msg is None:
                         raise AssertionError(
@@ -9044,6 +9187,7 @@ def main() -> int:
                                     saw_pass=saw_virtio_input_leds_pass,
                                     saw_fail=saw_virtio_input_leds_fail,
                                     saw_skip=saw_virtio_input_leds_skip,
+                                    marker_line=virtio_input_leds_marker_line,
                                 )
                                 if msg is not None:
                                     print(msg, file=sys.stderr)
@@ -9345,6 +9489,7 @@ def main() -> int:
                                     saw_pass=saw_virtio_input_led_pass,
                                     saw_fail=saw_virtio_input_led_fail,
                                     saw_skip=saw_virtio_input_led_skip,
+                                    marker_line=virtio_input_led_marker_line,
                                 )
                                 if msg is not None:
                                     print(msg, file=sys.stderr)

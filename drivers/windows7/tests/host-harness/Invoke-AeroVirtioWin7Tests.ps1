@@ -8067,7 +8067,23 @@ try {
       $scriptExitCode = 1
     }
     "VIRTIO_INPUT_LEDS_FAILED" {
-      Write-Host "FAIL: VIRTIO_INPUT_LEDS_FAILED: virtio-input-leds test reported FAIL while -WithInputLeds was enabled"
+      $reason = "unknown"
+      $err = "unknown"
+      $writes = ""
+      $line = Try-ExtractLastAeroMarkerLine `
+        -Tail $result.Tail `
+        -Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|FAIL|" `
+        -SerialLogPath $SerialLogPath
+      if ($null -ne $line) {
+        if ($line -match "reason=([^|\r\n]+)") { $reason = $Matches[1] }
+        elseif ($line -match "\|FAIL\|([^|\r\n=]+)(?:\||$)") { $reason = $Matches[1] }
+        if ($line -match "(?:^|\|)err=([^|\r\n]+)") { $err = $Matches[1] }
+        if ($line -match "(?:^|\|)writes=([^|\r\n]+)") { $writes = $Matches[1] }
+      }
+      $details = "(reason=$reason err=$err"
+      if (-not [string]::IsNullOrEmpty($writes)) { $details += " writes=$writes" }
+      $details += ")"
+      Write-Host "FAIL: VIRTIO_INPUT_LEDS_FAILED: virtio-input-leds test reported FAIL while -WithInputLeds was enabled $details"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -8211,7 +8227,29 @@ try {
       $scriptExitCode = 1
     }
     "VIRTIO_INPUT_LED_FAILED" {
-      Write-Host "FAIL: VIRTIO_INPUT_LED_FAILED: virtio-input-led test reported FAIL while -WithInputLed was enabled"
+      $reason = "unknown"
+      $err = "unknown"
+      $sent = ""
+      $format = ""
+      $led = ""
+      $line = Try-ExtractLastAeroMarkerLine `
+        -Tail $result.Tail `
+        -Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-input-led|FAIL|" `
+        -SerialLogPath $SerialLogPath
+      if ($null -ne $line) {
+        if ($line -match "reason=([^|\r\n]+)") { $reason = $Matches[1] }
+        elseif ($line -match "\|FAIL\|([^|\r\n=]+)(?:\||$)") { $reason = $Matches[1] }
+        if ($line -match "(?:^|\|)err=([^|\r\n]+)") { $err = $Matches[1] }
+        if ($line -match "(?:^|\|)sent=([^|\r\n]+)") { $sent = $Matches[1] }
+        if ($line -match "(?:^|\|)format=([^|\r\n]+)") { $format = $Matches[1] }
+        if ($line -match "(?:^|\|)led=([^|\r\n]+)") { $led = $Matches[1] }
+      }
+      $details = "(reason=$reason err=$err"
+      if (-not [string]::IsNullOrEmpty($sent)) { $details += " sent=$sent" }
+      if (-not [string]::IsNullOrEmpty($format)) { $details += " format=$format" }
+      if (-not [string]::IsNullOrEmpty($led)) { $details += " led=$led" }
+      $details += ")"
+      Write-Host "FAIL: VIRTIO_INPUT_LED_FAILED: virtio-input-led test reported FAIL while -WithInputLed was enabled $details"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
