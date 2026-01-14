@@ -35,9 +35,10 @@ function isObjectLikeRecord(value: unknown): value is Record<string, unknown> {
  * - Accepts missing/invalid fields (normalizes to `{ mounts: {}, hdd: null, cd: null }`).
  * - Sanitizes mount IDs to strings and copies them into a fresh `{}` object to avoid prototype
  *   pollution / unexpected value types.
- * - Does not deeply validate DiskImageMetadata (the schema is large); it only ensures objects are
- *   object-like so downstream code doesn't accidentally treat e.g. a string as metadata.
- */
+ * - Does not deeply validate DiskImageMetadata (the schema is large); it only applies minimal
+ *   shape checks (`source`, `id`, and `kind`) so downstream code doesn't accidentally treat
+ *   unrelated objects as metadata.
+  */
 export function normalizeSetBootDisksMessage(msg: unknown): SetBootDisksMessage | null {
   if (!isObjectLikeRecord(msg)) return null;
   const rec = msg as Partial<SetBootDisksMessage> & { type?: unknown };
@@ -60,10 +61,17 @@ export function normalizeSetBootDisksMessage(msg: unknown): SetBootDisksMessage 
     if (cdId) mounts.cdId = cdId;
   }
 
-  const hddRaw = (rec as { hdd?: unknown }).hdd;
-  const cdRaw = (rec as { cd?: unknown }).cd;
-  const hdd = (isObjectLikeRecord(hddRaw) ? (hddRaw as DiskImageMetadata) : null) as DiskImageMetadata | null;
-  const cd = (isObjectLikeRecord(cdRaw) ? (cdRaw as DiskImageMetadata) : null) as DiskImageMetadata | null;
+  const normalizeDiskMeta = (raw: unknown, expectedKind: "hdd" | "cd"): DiskImageMetadata | null => {
+    if (!isObjectLikeRecord(raw)) return null;
+    const meta = raw as { source?: unknown; id?: unknown; kind?: unknown };
+    if (meta.source !== "local" && meta.source !== "remote") return null;
+    if (typeof meta.id !== "string" || !meta.id.trim()) return null;
+    if (meta.kind !== expectedKind) return null;
+    return raw as DiskImageMetadata;
+  };
+
+  const hdd = normalizeDiskMeta((rec as { hdd?: unknown }).hdd, "hdd");
+  const cd = normalizeDiskMeta((rec as { cd?: unknown }).cd, "cd");
 
   const bootDeviceRaw = (rec as { bootDevice?: unknown }).bootDevice;
   const bootDevice = bootDeviceRaw === "hdd" || bootDeviceRaw === "cdrom" ? bootDeviceRaw : undefined;

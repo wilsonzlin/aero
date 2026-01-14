@@ -148,7 +148,17 @@ describe("workers/io.worker (worker_threads)", () => {
         ...emptySetBootDisksMessage(),
         mounts: {},
         // Provide a non-null stub object so legacy code paths would attempt to open.
-        hdd: { source: "local", id: "dummy", name: "dummy" } as any,
+        hdd: {
+          source: "local",
+          id: "dummy",
+          name: "dummy",
+          backend: "opfs",
+          kind: "hdd",
+          format: "raw",
+          fileName: "dummy.img",
+          sizeBytes: 0,
+          createdAtMs: 0,
+        } as any,
         cd: null,
       } as unknown as SetBootDisksMessage);
 

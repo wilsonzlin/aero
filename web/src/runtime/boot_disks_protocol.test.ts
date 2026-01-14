@@ -69,8 +69,8 @@ describe("runtime/boot_disks_protocol", () => {
     });
 
     it("passes through object-like disk metadata without deep validation", () => {
-      const hdd = { some: "meta" };
-      const cd = { other: "meta" };
+      const hdd = { source: "local", id: "hdd0", kind: "hdd", some: "meta" };
+      const cd = { source: "local", id: "cd0", kind: "cd", other: "meta" };
       const msg = normalizeSetBootDisksMessage({
         type: "setBootDisks",
         mounts: { hddId: "hdd0", cdId: "cd0" },
