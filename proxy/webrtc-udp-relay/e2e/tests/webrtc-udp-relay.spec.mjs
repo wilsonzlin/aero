@@ -235,7 +235,11 @@ async function startUdpServerWithDelayedRepeat(socketType, host, { delayMs, late
   let scheduled = false;
   let timer;
   socket.on("message", (msg, rinfo) => {
-    socket.send(msg, rinfo.port, rinfo.address);
+    try {
+      socket.send(msg, rinfo.port, rinfo.address, () => {});
+    } catch {
+      // ignore
+    }
     if (scheduled) return;
     scheduled = true;
     timer = setTimeout(() => {
