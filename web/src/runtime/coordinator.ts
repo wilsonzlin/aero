@@ -304,6 +304,7 @@ export class WorkerCoordinator {
   private nextSnapshotRequestId = 1;
   private nextAerogpuRequestId = 1;
   private pendingAerogpuSubmissions: AerogpuSubmitMessage[] = [];
+  private aerogpuInFlightFencesByRequestId = new Map<number, bigint>();
   private snapshotInFlight = false;
 
   private lastHeartbeatFromRing = 0;
@@ -475,6 +476,7 @@ export class WorkerCoordinator {
       this.nextCmdSeq = 1;
       this.nextAerogpuRequestId = 1;
       this.pendingAerogpuSubmissions = [];
+      this.aerogpuInFlightFencesByRequestId.clear();
       this.workerConfigAckVersions = {};
       this.serialOutputText = "";
       this.serialOutputBytes = 0;
@@ -677,6 +679,7 @@ export class WorkerCoordinator {
     this.nextCmdSeq = 1;
     this.nextAerogpuRequestId = 1;
     this.pendingAerogpuSubmissions = [];
+    this.aerogpuInFlightFencesByRequestId.clear();
     this.workerConfigAckVersions = {};
     this.wasmStatus = {};
     this.lastHeartbeatFromRing = 0;
@@ -1990,6 +1993,7 @@ export class WorkerCoordinator {
     this.wasmStatus = {};
     this.workerConfigAckVersions = {};
     this.pendingAerogpuSubmissions = [];
+    this.aerogpuInFlightFencesByRequestId.clear();
 
     if (options.clearShared) {
       this.shared = undefined;
@@ -2081,6 +2085,9 @@ export class WorkerCoordinator {
       const err = new Error("Net worker restarted while a trace request was pending.");
       this.rejectAllPendingNetTraceRequests(err);
       this.rejectAllPendingNetTraceStatusRequests(err);
+    }
+    if (role === "gpu") {
+      this.completeInFlightAerogpuFences();
     }
 
     setReadyFlag(shared.status, role, false);
@@ -2393,6 +2400,7 @@ export class WorkerCoordinator {
           typeof maybeComplete.requestId === "number" &&
           typeof maybeComplete.completedFence === "bigint"
         ) {
+          this.aerogpuInFlightFencesByRequestId.delete(maybeComplete.requestId);
           this.forwardAerogpuFenceComplete(maybeComplete.completedFence);
           return;
         }
@@ -2773,6 +2781,9 @@ export class WorkerCoordinator {
     const allocTable = sub.allocTable;
 
     const requestId = this.nextAerogpuRequestId++;
+    if (typeof sub.signalFence === "bigint" && sub.signalFence !== 0n) {
+      this.aerogpuInFlightFencesByRequestId.set(requestId, sub.signalFence);
+    }
     const msg: GpuRuntimeSubmitAerogpuMessage = {
       ...GPU_MESSAGE_BASE,
       type: "submit_aerogpu",
@@ -2799,6 +2810,16 @@ export class WorkerCoordinator {
     } catch {
       // ignore (best-effort)
     }
+  }
+
+  private completeInFlightAerogpuFences(): void {
+    if (this.aerogpuInFlightFencesByRequestId.size === 0) return;
+    for (const fence of this.aerogpuInFlightFencesByRequestId.values()) {
+      if (typeof fence === "bigint" && fence !== 0n) {
+        this.forwardAerogpuFenceComplete(fence);
+      }
+    }
+    this.aerogpuInFlightFencesByRequestId.clear();
   }
 }
 
