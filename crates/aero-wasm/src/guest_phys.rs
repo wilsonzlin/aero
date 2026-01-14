@@ -11,6 +11,7 @@
 //! - Hole:     `[PCIE_ECAM_BASE .. 0x1_0000_0000)` (ECAM + PCI/MMIO hole)
 //! - High RAM: `[0x1_0000_0000 .. 0x1_0000_0000 + (ram_bytes - PCIE_ECAM_BASE))`
 
+#[allow(unused_imports)]
 pub(crate) use aero_guest_phys::{
     GuestRamChunk, GuestRamRange, guest_ram_phys_end_exclusive, translate_guest_paddr_chunk,
     translate_guest_paddr_range,
