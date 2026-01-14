@@ -301,6 +301,55 @@ size_t CountOpcode(const uint8_t* buf, size_t capacity, uint32_t opcode) {
   return count;
 }
 
+bool CheckUploadResourceWithinSingleTextureSubresource(const Resource* res, uint64_t start, uint64_t end) {
+  if (!Check(res != nullptr, "UPLOAD_RESOURCE: resource pointer valid")) {
+    return false;
+  }
+  if (!Check(end >= start, "UPLOAD_RESOURCE: range must not overflow")) {
+    return false;
+  }
+  if (!Check(end <= static_cast<uint64_t>(res->size_bytes), "UPLOAD_RESOURCE: range within resource")) {
+    return false;
+  }
+  if (res->kind == ResourceKind::Buffer) {
+    return true;
+  }
+
+  Texture2dSubresourceLayout sub{};
+  const uint32_t layers = std::max(1u, res->depth);
+  if (!Check(calc_texture2d_subresource_layout_for_offset(
+                 res->format,
+                 res->width,
+                 res->height,
+                 res->mip_levels,
+                 layers,
+                 start,
+                 &sub),
+             "UPLOAD_RESOURCE: offset maps to texture subresource")) {
+    return false;
+  }
+
+  // The host executor rejects uploads that span multiple mip levels within a
+  // single command.
+  if (!Check(end <= sub.subresource_end_bytes, "UPLOAD_RESOURCE: does not cross mip boundary")) {
+    return false;
+  }
+
+  // The host executor requires texture uploads to start/end on row boundaries.
+  if (!Check(sub.row_pitch_bytes != 0, "UPLOAD_RESOURCE: subresource row_pitch non-zero")) {
+    return false;
+  }
+  const uint64_t rel_start = start - sub.subresource_start_bytes;
+  const uint64_t rel_end = end - sub.subresource_start_bytes;
+  if (!Check((rel_start % sub.row_pitch_bytes) == 0, "UPLOAD_RESOURCE: start is row-aligned")) {
+    return false;
+  }
+  if (!Check((rel_end % sub.row_pitch_bytes) == 0, "UPLOAD_RESOURCE: end is row-aligned")) {
+    return false;
+  }
+  return true;
+}
+
 CmdLoc FindLastShaderConstsFBefore(const uint8_t* buf,
                                   size_t capacity,
                                   size_t end_offset,
@@ -6319,6 +6368,10 @@ bool TestGenerateMipSubLevelsBoxFilter2d() {
           return false;
         }
 
+        if (!CheckUploadResourceWithinSingleTextureSubresource(res, start, end)) {
+          return false;
+        }
+
         const uint8_t* payload = reinterpret_cast<const uint8_t*>(cmd) + sizeof(*cmd);
         if (!Check(std::memcmp(payload, res->storage.data() + start, static_cast<size_t>(cmd->size_bytes)) == 0,
                    "UPLOAD_RESOURCE payload matches storage bytes")) {
@@ -7433,6 +7486,10 @@ bool TestGenerateMipSubLevelsBoxFilterCubeTexture() {
           }
         }
 
+        if (!CheckUploadResourceWithinSingleTextureSubresource(res, start, end)) {
+          return false;
+        }
+
         // Payload must match storage bytes.
         const uint8_t* payload = reinterpret_cast<const uint8_t*>(cmd) + sizeof(*cmd);
         if (!Check(std::memcmp(payload, res->storage.data() + start, static_cast<size_t>(cmd->size_bytes)) == 0,
@@ -7689,6 +7746,10 @@ bool TestGenerateMipSubLevelsBoxFilter2dArrayTexture() {
           return false;
         }
 
+        if (!CheckUploadResourceWithinSingleTextureSubresource(res, start, end)) {
+          return false;
+        }
+
         // Payload must match storage bytes.
         const uint8_t* payload = reinterpret_cast<const uint8_t*>(cmd) + sizeof(*cmd);
         if (!Check(std::memcmp(payload, res->storage.data() + start, static_cast<size_t>(cmd->size_bytes)) == 0,
@@ -7921,6 +7982,10 @@ bool TestGenerateMipSubLevelsBoxFilter2dX1R5G5B5() {
           return false;
         }
 
+        if (!CheckUploadResourceWithinSingleTextureSubresource(res, start, end)) {
+          return false;
+        }
+
         const uint8_t* payload = reinterpret_cast<const uint8_t*>(cmd) + sizeof(*cmd);
         if (!Check(std::memcmp(payload, res->storage.data() + start, static_cast<size_t>(cmd->size_bytes)) == 0,
                    "UPLOAD_RESOURCE payload matches storage bytes")) {
@@ -8144,6 +8209,10 @@ bool TestGenerateMipSubLevelsBoxFilter2dR5G6B5() {
           return false;
         }
         if (!Check(start >= expected_start, "UPLOAD_RESOURCE does not touch mip0")) {
+          return false;
+        }
+
+        if (!CheckUploadResourceWithinSingleTextureSubresource(res, start, end)) {
           return false;
         }
 
@@ -8376,6 +8445,10 @@ bool TestGenerateMipSubLevelsBoxFilter2dA1R5G5B5() {
           return false;
         }
 
+        if (!CheckUploadResourceWithinSingleTextureSubresource(res, start, end)) {
+          return false;
+        }
+
         const uint8_t* payload = reinterpret_cast<const uint8_t*>(cmd) + sizeof(*cmd);
         if (!Check(std::memcmp(payload, res->storage.data() + start, static_cast<size_t>(cmd->size_bytes)) == 0,
                    "UPLOAD_RESOURCE payload matches storage bytes")) {
@@ -8601,6 +8674,10 @@ bool TestGenerateMipSubLevelsBoxFilter2dBcUniform() {
             return false;
           }
           if (!Check(start >= expected_start, "UPLOAD_RESOURCE does not touch mip0")) {
+            return false;
+          }
+
+          if (!CheckUploadResourceWithinSingleTextureSubresource(res, start, end)) {
             return false;
           }
 

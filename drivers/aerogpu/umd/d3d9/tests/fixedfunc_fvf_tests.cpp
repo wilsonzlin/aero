@@ -3100,8 +3100,8 @@ bool TestVertexDeclXyzDiffuseDrawPrimitiveVbUploadsWvpAndRestoresDecl() {
   dev->cmd.reset();
 
   // Create and bind a vertex decl matching XYZ|DIFFUSE (no SetFVF call). The
-  // driver should infer the implied FVF and use the fixed-function WVP VS path
-  // for DrawPrimitive.
+  // driver should infer the implied FVF and bind the fixed-function WVP shader
+  // while preserving the application's explicit declaration.
   const D3DVERTEXELEMENT9_COMPAT decl_blob[] = {
       {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsagePosition, 0},
       {0, 12, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
@@ -3393,8 +3393,8 @@ bool TestVertexDeclXyzDiffuseTex1DrawPrimitiveVbUploadsWvpAndRestoresDecl() {
   dev->cmd.reset();
 
   // Create and bind a vertex decl matching XYZ|DIFFUSE|TEX1 (no SetFVF call). The
-  // driver should infer the implied FVF and use the fixed-function WVP VS path
-  // for DrawPrimitive.
+  // driver should infer the implied FVF and bind the fixed-function WVP shader
+  // while preserving the application's explicit declaration.
   const D3DVERTEXELEMENT9_COMPAT decl_blob[] = {
       {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsagePosition, 0},
       {0, 12, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
