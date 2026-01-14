@@ -158,8 +158,8 @@ fn aerogpu_scanout0_display_present_prefers_backend_scanout_when_available() {
     // reading the guest scanout surface directly.
     let backend_rgba = [0xDEu8, 0xAD, 0xBE, 0xEF];
     let backend = StaticScanoutBackend::new(width, height, backend_rgba);
-    let aerogpu_mmio = m.aerogpu_mmio().expect("AeroGPU MMIO device missing");
-    aerogpu_mmio.borrow_mut().set_backend(Box::new(backend));
+    let aerogpu = m.aerogpu().expect("AeroGPU MMIO device missing");
+    aerogpu.borrow_mut().set_backend(Box::new(backend));
 
     // Resolve AeroGPU BAR0 base assigned by BIOS POST and enable PCI COMMAND.MEM+BME.
     let aerogpu_bdf = profile::AEROGPU.bdf;
