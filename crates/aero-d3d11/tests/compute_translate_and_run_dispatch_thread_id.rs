@@ -10,11 +10,8 @@ use aero_d3d11::{
 };
 
 // The Aero D3D11 translator emits compute-stage bindings in `@group(2)` (stage-scoped binding
-// model). The `protocol_d3d11` command-stream runtime binds only group 0 for compute pipelines, so
-// translated compute WGSL cannot be executed through that path.
-//
-// Test strategy: use a small wgpu harness with an explicit pipeline layout containing empty bind
-// groups 0/1 and the translated compute resources bound at group 2.
+// model). Validate that the generated WGSL can be executed on wgpu with a pipeline layout that
+// includes empty bind groups 0/1 and the translated resources bound at group 2.
 async fn read_mapped_buffer(device: &wgpu::Device, buffer: &wgpu::Buffer, size: u64) -> Vec<u8> {
     let slice = buffer.slice(0..size);
     let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
