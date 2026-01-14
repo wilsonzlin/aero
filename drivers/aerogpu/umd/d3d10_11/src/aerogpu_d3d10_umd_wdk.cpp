@@ -2682,6 +2682,12 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
                          static_cast<unsigned long long>(res->size_bytes));
 #endif
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_buffer>(AEROGPU_CMD_CREATE_BUFFER);
+    if (!cmd) {
+      SetError(hDevice, E_OUTOFMEMORY);
+      deallocate_if_needed();
+      res->~AeroGpuResource();
+      return E_OUTOFMEMORY;
+    }
     cmd->buffer_handle = res->handle;
     cmd->usage_flags = bind_flags_to_buffer_usage_flags(res->bind_flags);
     cmd->size_bytes = padded_size_bytes;
@@ -3175,6 +3181,12 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
 #endif
 
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_texture2d>(AEROGPU_CMD_CREATE_TEXTURE2D);
+    if (!cmd) {
+      SetError(hDevice, E_OUTOFMEMORY);
+      deallocate_if_needed();
+      res->~AeroGpuResource();
+      return E_OUTOFMEMORY;
+    }
     cmd->texture_handle = res->handle;
     cmd->usage_flags = bind_flags_to_usage_flags(res->bind_flags) | AEROGPU_RESOURCE_USAGE_TEXTURE;
     cmd->format = aer_fmt;
@@ -5167,6 +5179,10 @@ void APIENTRY CopySubresourceRegion(D3D10DDI_HDEVICE hDevice,
     TrackWddmAllocForSubmitLocked(dev, src, /*write=*/false);
     TrackWddmAllocForSubmitLocked(dev, dst, /*write=*/true);
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_copy_buffer>(AEROGPU_CMD_COPY_BUFFER);
+    if (!cmd) {
+      // COPY_BUFFER is an optimization; the CPU copy + upload has already run.
+      return;
+    }
     cmd->dst_buffer = dst->handle;
     cmd->src_buffer = src->handle;
     cmd->dst_offset_bytes = dst_off;
@@ -5404,6 +5420,10 @@ void APIENTRY CopySubresourceRegion(D3D10DDI_HDEVICE hDevice,
     TrackWddmAllocForSubmitLocked(dev, src, /*write=*/false);
     TrackWddmAllocForSubmitLocked(dev, dst, /*write=*/true);
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_copy_texture2d>(AEROGPU_CMD_COPY_TEXTURE2D);
+    if (!cmd) {
+      // COPY_TEXTURE2D is an optimization; the CPU copy + upload has already run.
+      return;
+    }
     cmd->dst_texture = dst->handle;
     cmd->src_texture = src->handle;
     cmd->dst_mip_level = dst_sub.mip_level;
@@ -8035,6 +8055,10 @@ void APIENTRY ClearRenderTargetView(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRENDERTA
 
   TrackBoundTargetsForSubmitLocked(dev);
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_clear>(AEROGPU_CMD_CLEAR);
+  if (!cmd) {
+    SetError(hDevice, E_OUTOFMEMORY);
+    return;
+  }
   cmd->flags = AEROGPU_CLEAR_COLOR;
   cmd->color_rgba_f32[0] = f32_bits(color[0]);
   cmd->color_rgba_f32[1] = f32_bits(color[1]);
@@ -8071,6 +8095,10 @@ void APIENTRY ClearDepthStencilView(D3D10DDI_HDEVICE hDevice,
 
   TrackBoundTargetsForSubmitLocked(dev);
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_clear>(AEROGPU_CMD_CLEAR);
+  if (!cmd) {
+    SetError(hDevice, E_OUTOFMEMORY);
+    return;
+  }
   cmd->flags = flags;
   cmd->color_rgba_f32[0] = 0;
   cmd->color_rgba_f32[1] = 0;
@@ -8443,9 +8471,10 @@ void APIENTRY Flush(D3D10DDI_HDEVICE hDevice) {
   }
   std::lock_guard<std::mutex> lock(dev->mutex);
 
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_flush>(AEROGPU_CMD_FLUSH);
-  cmd->reserved0 = 0;
-  cmd->reserved1 = 0;
+  if (auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_flush>(AEROGPU_CMD_FLUSH)) {
+    cmd->reserved0 = 0;
+    cmd->reserved1 = 0;
+  }
   HRESULT hr = S_OK;
   submit_locked(dev, /*want_present=*/false, &hr);
   if (FAILED(hr)) {
@@ -8490,6 +8519,12 @@ HRESULT APIENTRY Present(D3D10DDI_HDEVICE hDevice, const D3D10DDIARG_PRESENT* pP
 #endif
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_present>(AEROGPU_CMD_PRESENT);
+  if (!cmd) {
+    dev->cmd.reset();
+    dev->wddm_submit_allocation_handles.clear();
+    dev->pending_staging_writes.clear();
+    return E_OUTOFMEMORY;
+  }
   cmd->scanout_id = 0;
   bool vsync = (pPresent->SyncInterval != 0);
   if (vsync && dev->adapter && dev->adapter->umd_private_valid) {

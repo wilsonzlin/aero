@@ -918,9 +918,10 @@ void unmap_resource_locked(AeroGpuDevice* dev, AeroGpuResource* res, uint32_t su
 
 void flush_locked(AeroGpuDevice* dev) {
   if (dev) {
-    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_flush>(AEROGPU_CMD_FLUSH);
-    cmd->reserved0 = 0;
-    cmd->reserved1 = 0;
+    if (auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_flush>(AEROGPU_CMD_FLUSH)) {
+      cmd->reserved0 = 0;
+      cmd->reserved1 = 0;
+    }
   }
   HRESULT hr = S_OK;
   submit_locked(dev, false, &hr);
@@ -2950,6 +2951,12 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     TrackWddmAllocForSubmitLocked(dev, res, /*write=*/false);
 
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_buffer>(AEROGPU_CMD_CREATE_BUFFER);
+    if (!cmd) {
+      set_error(dev, E_OUTOFMEMORY);
+      deallocate_if_needed();
+      res->~AeroGpuResource();
+      AEROGPU_D3D10_RET_HR(E_OUTOFMEMORY);
+    }
     cmd->buffer_handle = res->handle;
     cmd->usage_flags = bind_flags_to_buffer_usage_flags(res->bind_flags);
     cmd->size_bytes = padded_size_bytes;
@@ -3391,6 +3398,12 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     TrackWddmAllocForSubmitLocked(dev, res, /*write=*/false);
 
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_texture2d>(AEROGPU_CMD_CREATE_TEXTURE2D);
+    if (!cmd) {
+      set_error(dev, E_OUTOFMEMORY);
+      deallocate_if_needed();
+      res->~AeroGpuResource();
+      AEROGPU_D3D10_RET_HR(E_OUTOFMEMORY);
+    }
     cmd->texture_handle = res->handle;
     cmd->usage_flags = bind_flags_to_usage_flags(res->bind_flags) | AEROGPU_RESOURCE_USAGE_TEXTURE;
     cmd->format = aer_fmt;
@@ -6056,6 +6069,10 @@ void AEROGPU_APIENTRY ClearDepthStencilView(D3D10DDI_HDEVICE hDevice,
   }
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_clear>(AEROGPU_CMD_CLEAR);
+  if (!cmd) {
+    set_error(dev, E_OUTOFMEMORY);
+    return;
+  }
   cmd->flags = flags;
   cmd->color_rgba_f32[0] = 0;
   cmd->color_rgba_f32[1] = 0;
@@ -6871,6 +6888,10 @@ void AEROGPU_APIENTRY ClearRenderTargetView(D3D10DDI_HDEVICE hDevice,
 
 EmitClearCmd:
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_clear>(AEROGPU_CMD_CLEAR);
+  if (!cmd) {
+    set_error(dev, E_OUTOFMEMORY);
+    return;
+  }
   cmd->flags = AEROGPU_CLEAR_COLOR;
   cmd->color_rgba_f32[0] = f32_bits(rgba[0]);
   cmd->color_rgba_f32[1] = f32_bits(rgba[1]);
@@ -6899,6 +6920,10 @@ void AEROGPU_APIENTRY IaSetInputLayout(D3D10DDI_HDEVICE hDevice, D3D10DDI_HELEME
   dev->current_input_layout = handle;
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_input_layout>(AEROGPU_CMD_SET_INPUT_LAYOUT);
+  if (!cmd) {
+    set_error(dev, E_OUTOFMEMORY);
+    return;
+  }
   cmd->input_layout_handle = handle;
   cmd->reserved0 = 0;
 }
@@ -7019,6 +7044,10 @@ void AEROGPU_APIENTRY IaSetIndexBuffer(D3D10DDI_HDEVICE hDevice,
   dev->current_ib_res = ib_res;
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_index_buffer>(AEROGPU_CMD_SET_INDEX_BUFFER);
+  if (!cmd) {
+    set_error(dev, E_OUTOFMEMORY);
+    return;
+  }
   cmd->buffer = ib_res ? ib_res->handle : 0;
   cmd->format = dxgi_index_format_to_aerogpu(static_cast<uint32_t>(format));
   cmd->offset_bytes = offset;
@@ -7041,9 +7070,12 @@ void AEROGPU_APIENTRY IaSetTopology(D3D10DDI_HDEVICE hDevice, D3D10_DDI_PRIMITIV
   if (dev->current_topology == topo) {
     return;
   }
-  dev->current_topology = topo;
-
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_primitive_topology>(AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY);
+  if (!cmd) {
+    set_error(dev, E_OUTOFMEMORY);
+    return;
+  }
+  dev->current_topology = topo;
   cmd->topology = topo;
   cmd->reserved0 = 0;
 }
@@ -7619,12 +7651,12 @@ void AEROGPU_APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
   il_cmd->input_layout_handle = 0;
   il_cmd->reserved0 = 0;
 
-  dev->current_topology = AEROGPU_TOPOLOGY_TRIANGLELIST;
   auto* topo_cmd = dev->cmd.append_fixed<aerogpu_cmd_set_primitive_topology>(AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY);
   if (!topo_cmd) {
     set_error(dev, E_OUTOFMEMORY);
     return;
   }
+  dev->current_topology = AEROGPU_TOPOLOGY_TRIANGLELIST;
   topo_cmd->topology = AEROGPU_TOPOLOGY_TRIANGLELIST;
   topo_cmd->reserved0 = 0;
 
@@ -8405,6 +8437,12 @@ HRESULT AEROGPU_APIENTRY Present(D3D10DDI_HDEVICE hDevice, const D3D10DDIARG_PRE
 #endif
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_present>(AEROGPU_CMD_PRESENT);
+  if (!cmd) {
+    dev->cmd.reset();
+    dev->wddm_submit_allocation_handles.clear();
+    dev->pending_staging_writes.clear();
+    AEROGPU_D3D10_RET_HR(E_OUTOFMEMORY);
+  }
   cmd->scanout_id = 0;
   bool vsync = (pPresent->SyncInterval != 0);
   if (vsync && dev->adapter && dev->adapter->umd_private_valid) {
