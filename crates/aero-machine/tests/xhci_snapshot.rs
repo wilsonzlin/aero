@@ -2,9 +2,14 @@
 
 use std::rc::Rc;
 
+use aero_devices::a20_gate::A20_GATE_PORT;
+use aero_devices::pci::msix::PCI_CAP_ID_MSIX;
 use aero_devices::pci::{profile, PciInterruptPin};
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_machine::{Machine, MachineConfig};
+use aero_platform::interrupts::{
+    InterruptController as PlatformInterruptController, PlatformInterruptMode,
+};
 use aero_usb::hid::UsbHidKeyboardHandle;
 use aero_usb::hub::UsbHubDevice;
 use aero_usb::{
@@ -281,5 +286,136 @@ fn snapshot_restore_clears_xhci_webusb_host_state_behind_hub() {
     assert_eq!(
         summary.inflight_control, None,
         "expected inflight control transfer to be cleared after snapshot restore"
+    );
+}
+
+#[test]
+fn snapshot_restore_preserves_xhci_msix_table_and_delivery() {
+    let mut vm = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_xhci: true,
+        // Keep this test focused on xHCI + snapshot + MSI-X.
+        enable_ahci: false,
+        enable_ide: false,
+        enable_vga: false,
+        enable_serial: false,
+        enable_debugcon: false,
+        enable_i8042: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        // Keep the A20 gate so we can explicitly enable A20 before touching high MMIO addresses.
+        enable_a20_gate: true,
+        ..Default::default()
+    })
+    .unwrap();
+
+    // Ensure high MMIO addresses decode correctly (avoid A20 aliasing).
+    vm.io_write(A20_GATE_PORT, 1, 0x02);
+
+    let interrupts = vm.platform_interrupts().expect("pc platform enabled");
+    interrupts
+        .borrow_mut()
+        .set_mode(PlatformInterruptMode::Apic);
+    assert_eq!(interrupts.borrow().mode(), PlatformInterruptMode::Apic);
+
+    let bdf = profile::USB_XHCI_QEMU.bdf;
+    let bar0_base = vm
+        .pci_bar_base(bdf, 0)
+        .expect("xHCI BAR0 should exist");
+    assert_ne!(bar0_base, 0);
+
+    // Enable MSI-X in the canonical PCI config space and program table entry 0 via BAR0 MMIO.
+    let table_offset = {
+        let pci_cfg = vm
+            .pci_config_ports()
+            .expect("pc platform should expose pci_cfg");
+        let mut pci_cfg = pci_cfg.borrow_mut();
+        let cfg = pci_cfg
+            .bus_mut()
+            .device_config_mut(bdf)
+            .expect("xHCI should exist on PCI bus");
+
+        // Ensure MMIO decode + bus mastering are enabled, and disable INTx so the test only
+        // succeeds via MSI-X.
+        let command = cfg.command();
+        cfg.write(
+            0x04,
+            2,
+            u32::from(command | (1 << 1) | (1 << 2) | (1 << 10)),
+        );
+
+        let msix_off = cfg
+            .find_capability(PCI_CAP_ID_MSIX)
+            .expect("xHCI should expose MSI-X capability in PCI config space");
+        let msix_base = u16::from(msix_off);
+
+        let table = cfg.read(msix_base + 0x04, 4);
+        assert_eq!(table & 0x7, 0, "xHCI MSI-X table should live in BAR0 (BIR=0)");
+
+        // Enable MSI-X (control bit 15).
+        let ctrl = cfg.read(msix_base + 0x02, 2) as u16;
+        cfg.write(msix_base + 0x02, 2, u32::from(ctrl | (1 << 15)));
+
+        u64::from(table & !0x7)
+    };
+
+    let vector1: u8 = 0x66;
+    let entry0 = bar0_base + table_offset;
+    vm.write_physical_u32(entry0 + 0x00, 0xfee0_0000);
+    vm.write_physical_u32(entry0 + 0x04, 0);
+    vm.write_physical_u32(entry0 + 0x08, u32::from(vector1));
+    vm.write_physical_u32(entry0 + 0x0c, 0); // unmasked
+
+    // Mirror MSI-X enable state into the runtime xHCI model before taking a snapshot.
+    vm.tick_platform(1);
+
+    let snapshot = vm.take_snapshot_full().unwrap();
+
+    // Mutate the MSI-X table so restore is an observable rewind.
+    let vector2: u8 = 0x67;
+    vm.write_physical_u32(entry0 + 0x08, u32::from(vector2));
+    assert_eq!(vm.read_physical_u32(entry0 + 0x08) as u8, vector2);
+
+    let xhci = vm.xhci().expect("xhci enabled");
+    assert_eq!(
+        PlatformInterruptController::get_pending(&*interrupts.borrow()),
+        None
+    );
+    xhci.borrow_mut().raise_event_interrupt();
+    assert_eq!(
+        PlatformInterruptController::get_pending(&*interrupts.borrow()),
+        Some(vector2)
+    );
+    interrupts.borrow_mut().acknowledge(vector2);
+    interrupts.borrow_mut().eoi(vector2);
+    xhci.borrow_mut().clear_event_interrupt();
+
+    vm.restore_snapshot_bytes(&snapshot).unwrap();
+
+    // The xHCI instance should not be replaced by restore (host wiring/backends live outside
+    // snapshots).
+    let xhci_after = vm.xhci().expect("xhci still enabled");
+    assert!(Rc::ptr_eq(&xhci, &xhci_after));
+
+    // Ensure the restored MSI-X table entry is rewound back to vector1.
+    assert_eq!(vm.read_physical_u32(entry0 + 0x08) as u8, vector1);
+
+    // Mirror restored MSI-X enable state into the runtime xHCI model before triggering delivery.
+    vm.tick_platform(1);
+
+    assert_eq!(
+        PlatformInterruptController::get_pending(&*interrupts.borrow()),
+        None
+    );
+    xhci_after.borrow_mut().raise_event_interrupt();
+    assert_eq!(
+        PlatformInterruptController::get_pending(&*interrupts.borrow()),
+        Some(vector1)
+    );
+    assert_eq!(
+        xhci_after.borrow().irq_level(),
+        false,
+        "xHCI INTx should be suppressed while MSI-X is active"
     );
 }
