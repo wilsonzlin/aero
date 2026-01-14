@@ -871,7 +871,10 @@ export class WorkerCoordinator {
   /**
    * Override which worker receives the microphone ring buffer attachment (SPSC consumer).
    *
-   * Pass `null` to clear any prior override and return to the default policy.
+   * Pass `null` to clear any prior override and return to the default policy:
+   * - machine runtime: IO worker
+   * - legacy demo mode (no disk): CPU worker
+   * - legacy VM mode (disk present): IO worker
    */
   setMicrophoneRingBufferOwner(owner: RingBufferOwner | null): void {
     if (owner === null) {
