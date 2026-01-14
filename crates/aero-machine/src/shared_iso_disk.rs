@@ -16,10 +16,10 @@ type SharedIsoDiskBackend = Box<dyn VirtualDisk>;
 
 /// Cloneable handle to a read-only ISO (2048-byte sector) disk backend.
 ///
-/// This adapter is intentionally defined in `aero-machine` so both:
-/// - the IDE/ATAPI CD-ROM device model (`aero_devices_storage::atapi::AtapiCdrom`), and
+/// This adapter is intentionally defined in `aero-machine` so both of the following can share the
+/// same underlying ISO image:
+/// - the IDE/ATAPI CD-ROM device model (`aero_devices_storage::atapi::AtapiCdrom`)
 /// - firmware BIOS boot code (El Torito) / INT dispatch
-///   can share the same underlying ISO image.
 #[derive(Clone)]
 pub struct SharedIsoDisk {
     #[cfg(target_arch = "wasm32")]
