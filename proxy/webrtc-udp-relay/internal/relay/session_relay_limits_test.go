@@ -93,8 +93,9 @@ func TestSessionRelay_EnforcesInboundDataChannelRateLimit(t *testing.T) {
 	clk := &ratelimitTestClock{now: time.Unix(0, 0)}
 
 	// For an IPv4 v1 frame, length is 8 (header) + payload length.
+	const v1HeaderLen = 8
 	const payloadLen = 1
-	const frameLen = udpproto.HeaderLen + payloadLen
+	const frameLen = v1HeaderLen + payloadLen
 
 	cfg := config.Config{
 		MaxDataChannelBpsPerSession: frameLen,

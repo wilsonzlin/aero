@@ -50,13 +50,14 @@ func TestSessionRelay_WebRTCUDPMetrics_OversizedPayload(t *testing.T) {
 	t.Cleanup(r.Close)
 
 	// Construct a v1 frame whose payload is larger than MaxDatagramPayloadBytes.
-	oversized := make([]byte, udpproto.HeaderLen+2)
+	const v1HeaderLen = 8
+	oversized := make([]byte, v1HeaderLen+2)
 	binary.BigEndian.PutUint16(oversized[0:2], 1234)
 	copy(oversized[2:6], []byte{127, 0, 0, 1})
 	binary.BigEndian.PutUint16(oversized[6:8], 53)
-	copy(oversized[udpproto.HeaderLen:], []byte{0x01, 0x02})
+	copy(oversized[v1HeaderLen:], []byte{0x01, 0x02})
 
-	r.HandleDataChannelMessage(oversized[:udpproto.HeaderLen+2])
+	r.HandleDataChannelMessage(oversized[:v1HeaderLen+2])
 
 	if got := m.Get(metrics.WebRTCUDPDroppedOversized); got == 0 {
 		t.Fatalf("expected %s metric increment", metrics.WebRTCUDPDroppedOversized)

@@ -8,8 +8,8 @@ import (
 )
 
 const (
-	// HeaderLen is the number of bytes in a v1 datagram frame header.
-	HeaderLen = 8
+	// v1HeaderLen is the number of bytes in a v1 datagram frame header.
+	v1HeaderLen = 8
 
 	// DefaultMaxPayload is a conservative default payload limit to reduce the chance
 	// of fragmentation on the public Internet when running on top of WebRTC
@@ -20,14 +20,14 @@ const (
 	DefaultMaxPayload = 1200
 
 	// v2 frame prefix.
-	V2Magic   = 0xA2
-	V2Version = 0x02
+	v2Magic   = 0xA2
+	v2Version = 0x02
 
-	AFIPv4 = 0x04
-	AFIPv6 = 0x06
+	afIPv4 = 0x04
+	afIPv6 = 0x06
 
 	// v2 message types.
-	V2TypeDatagram = 0x00
+	v2TypeDatagram = 0x00
 )
 
 var (
@@ -84,7 +84,7 @@ func (c Codec) EncodeDatagram(d Datagram, dst []byte) ([]byte, error) {
 		return nil, fmt.Errorf("%w: %d > %d", ErrPayloadTooLarge, len(d.Payload), c.MaxPayload)
 	}
 
-	n := HeaderLen + len(d.Payload)
+	n := v1HeaderLen + len(d.Payload)
 	start := len(dst)
 
 	if cap(dst) < start+n {
@@ -106,10 +106,10 @@ func (c Codec) DecodeDatagram(b []byte) (Datagram, error) {
 	if c.MaxPayload < 0 {
 		return Datagram{}, fmt.Errorf("udpproto: invalid codec max payload %d", c.MaxPayload)
 	}
-	if len(b) < HeaderLen {
+	if len(b) < v1HeaderLen {
 		return Datagram{}, ErrTooShort
 	}
-	payload := b[HeaderLen:]
+	payload := b[v1HeaderLen:]
 	if len(payload) > c.MaxPayload {
 		return Datagram{}, fmt.Errorf("%w: %d > %d", ErrPayloadTooLarge, len(payload), c.MaxPayload)
 	}
@@ -126,7 +126,7 @@ func (c Codec) DecodeFrame(b []byte) (Frame, error) {
 	if c.MaxPayload < 0 {
 		return Frame{}, fmt.Errorf("udpproto: invalid codec max payload %d", c.MaxPayload)
 	}
-	if len(b) >= 2 && b[0] == V2Magic && b[1] == V2Version {
+	if len(b) >= 2 && b[0] == v2Magic && b[1] == v2Version {
 		return c.decodeV2(b)
 	}
 
@@ -173,10 +173,10 @@ func (c Codec) EncodeFrameV2(f Frame) ([]byte, error) {
 	)
 	switch {
 	case f.RemoteIP.Is4():
-		af = AFIPv4
+		af = afIPv4
 		ipLen = 4
 	case f.RemoteIP.Is6():
-		af = AFIPv6
+		af = afIPv6
 		ipLen = 16
 	default:
 		return nil, fmt.Errorf("udpproto: invalid remote ip")
@@ -184,18 +184,18 @@ func (c Codec) EncodeFrameV2(f Frame) ([]byte, error) {
 
 	headerLen := 4 + 2 + ipLen + 2
 	out := make([]byte, headerLen+len(f.Payload))
-	out[0] = V2Magic
-	out[1] = V2Version
+	out[0] = v2Magic
+	out[1] = v2Version
 	out[2] = af
-	out[3] = V2TypeDatagram
+	out[3] = v2TypeDatagram
 	binary.BigEndian.PutUint16(out[4:6], f.GuestPort)
 
 	ipOff := 6
 	switch af {
-	case AFIPv4:
+	case afIPv4:
 		ip4 := f.RemoteIP.As4()
 		copy(out[ipOff:ipOff+4], ip4[:])
-	case AFIPv6:
+	case afIPv6:
 		ip16 := f.RemoteIP.As16()
 		copy(out[ipOff:ipOff+16], ip16[:])
 	}
@@ -210,7 +210,7 @@ func (c Codec) decodeV2(b []byte) (Frame, error) {
 	if len(b) < 12 {
 		return Frame{}, ErrTooShort
 	}
-	if b[3] != V2TypeDatagram {
+	if b[3] != v2TypeDatagram {
 		return Frame{}, fmt.Errorf("udpproto: v2 unsupported message type: 0x%02x", b[3])
 	}
 
@@ -223,7 +223,7 @@ func (c Codec) decodeV2(b []byte) (Frame, error) {
 		ipLen    int
 	)
 	switch af {
-	case AFIPv4:
+	case afIPv4:
 		ipLen = 4
 		if len(b) < offset+ipLen+2 {
 			return Frame{}, ErrTooShort
@@ -231,7 +231,7 @@ func (c Codec) decodeV2(b []byte) (Frame, error) {
 		var ip4 [4]byte
 		copy(ip4[:], b[offset:offset+4])
 		remoteIP = netip.AddrFrom4(ip4)
-	case AFIPv6:
+	case afIPv6:
 		ipLen = 16
 		if len(b) < offset+ipLen+2 {
 			return Frame{}, ErrTooShort
