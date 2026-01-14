@@ -5523,7 +5523,7 @@ fn emit_src_scalar_u32_addr(
         // Use a strict `< 2^32` check to avoid the `4294967296.0` edge case where clamping +
         // float-roundtrip would otherwise "validate" an out-of-range value.
         const U32_LIMIT_F32: f32 = 4294967296.0;
-        if f.is_finite() && f >= 0.0 && f < U32_LIMIT_F32 {
+        if f.is_finite() && (0.0..U32_LIMIT_F32).contains(&f) {
             let as_u = f as u32;
             if (as_u as f32) == f {
                 return Ok(format!("{as_u}u"));
