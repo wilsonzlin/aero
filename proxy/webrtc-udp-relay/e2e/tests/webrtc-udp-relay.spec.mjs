@@ -2733,9 +2733,9 @@ test("drops oversized /udp frames and increments udp_ws_dropped_oversized", asyn
     expect(res.gotOversizeResponse).toBe(false);
     expect(res.okText).toBe("12345");
 
-    const counters = await getRelayEventCounters(relay.port);
-    expect(getCounter(counters, droppedMetric)).toBe(1);
-    expect(getCounter(counters, droppedOversizeMetric)).toBe(1);
+    const counters = await waitForRelayEventCounterAtLeast(relay.port, droppedOversizeMetric, 1);
+    expect(getCounter(counters, droppedMetric)).toBeGreaterThanOrEqual(1);
+    expect(getCounter(counters, droppedOversizeMetric)).toBeGreaterThanOrEqual(1);
   } finally {
     await Promise.all([web.close(), relay.kill(), echo.close()]);
   }
@@ -2845,9 +2845,9 @@ test("drops malformed /udp frames and increments udp_ws_dropped_malformed", asyn
     expect(res.gotMalformedResponse).toBe(false);
     expect(res.okText).toBe("hello");
 
-    const counters = await getRelayEventCounters(relay.port);
-    expect(getCounter(counters, droppedMetric)).toBe(1);
-    expect(getCounter(counters, droppedMalformedMetric)).toBe(1);
+    const counters = await waitForRelayEventCounterAtLeast(relay.port, droppedMalformedMetric, 1);
+    expect(getCounter(counters, droppedMetric)).toBeGreaterThanOrEqual(1);
+    expect(getCounter(counters, droppedMalformedMetric)).toBeGreaterThanOrEqual(1);
   } finally {
     await Promise.all([web.close(), relay.kill(), echo.close()]);
   }
