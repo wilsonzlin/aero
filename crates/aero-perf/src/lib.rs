@@ -229,9 +229,23 @@ pub trait InstructionRetirement {
 /// When driving `aero_cpu_core::exec::ExecDispatcher`, call this once per
 /// `step()` result:
 ///
-/// ```ignore
-/// let outcome = dispatcher.step(&mut vcpu);
-/// aero_perf::retire_from_step_outcome(&mut perf, &outcome);
+/// ```rust
+/// use aero_cpu_core::exec::{ExecutedTier, StepOutcome};
+/// use aero_perf::{retire_from_step_outcome, PerfCounters, PerfWorker};
+/// use std::sync::Arc;
+///
+/// let shared = Arc::new(PerfCounters::new());
+/// let mut perf = PerfWorker::new(shared);
+///
+/// // Dispatcher outcomes report the number of retired guest instructions.
+/// let outcome = StepOutcome::Block {
+///     tier: ExecutedTier::Interpreter,
+///     entry_rip: 0,
+///     next_rip: 1,
+///     instructions_retired: 3,
+/// };
+/// retire_from_step_outcome(&mut perf, &outcome);
+/// assert_eq!(perf.lifetime_snapshot().instructions_executed, 3);
 /// ```
 ///
 /// The dispatcher already accounts for interpreter vs JIT execution, and for

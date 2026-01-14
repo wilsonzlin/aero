@@ -224,8 +224,9 @@ The CPU’s timestamp counter is modeled by [`time::TimeSource`](../crates/aero-
 
 Instruction retirement is also the unit used by `aero-perf` counters (`PerfWorker::retire_instructions`).
 When driving the CPU through `ExecDispatcher`, embedders should use the dispatcher-provided retirement count.
-The canonical integration is [`aero_perf::retire_from_step_outcome`], which already accounts for interpreter vs
-JIT execution and committed vs rollback exits (rollback retires 0 instructions):
+The canonical integration is
+[`aero_perf::retire_from_step_outcome`](../crates/aero-perf/src/lib.rs), which already accounts for interpreter
+vs JIT execution and committed vs rollback exits (rollback retires 0 instructions):
 
 ```rust
 use aero_cpu_core::exec::StepOutcome;
