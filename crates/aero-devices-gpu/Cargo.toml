@@ -34,3 +34,8 @@ pretty_assertions = "1"
 name = "aerogpu_end_to_end"
 path = "tests/aerogpu_end_to_end.rs"
 required-features = ["wgpu-backend"]
+
+[[test]]
+name = "aerogpu_native_smoke"
+path = "tests/aerogpu_native_smoke.rs"
+required-features = ["aerogpu-native"]
