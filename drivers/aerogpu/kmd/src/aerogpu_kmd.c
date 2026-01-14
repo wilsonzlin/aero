@@ -1053,6 +1053,9 @@ static BOOLEAN AeroGpuTryReadErrorFence32(_In_ const AEROGPU_ADAPTER* Adapter, _
     if (Adapter->AbiKind != AEROGPU_ABI_KIND_V1) {
         return FALSE;
     }
+    if ((Adapter->DeviceFeatures & AEROGPU_FEATURE_ERROR_INFO) == 0) {
+        return FALSE;
+    }
     const ULONG abiMinor = (ULONG)(Adapter->DeviceAbiVersion & 0xFFFFu);
     if (abiMinor < 3) {
         return FALSE;
@@ -8585,7 +8588,9 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
              */
             const ULONG abiMinor = (ULONG)(adapter->DeviceAbiVersion & 0xFFFFu);
             const BOOLEAN haveErrorRegs =
-                (abiMinor >= 3) && (adapter->Bar0Length >= (AEROGPU_MMIO_REG_ERROR_COUNT + sizeof(ULONG)));
+                ((adapter->DeviceFeatures & AEROGPU_FEATURE_ERROR_INFO) != 0) &&
+                (abiMinor >= 3) &&
+                (adapter->Bar0Length >= (AEROGPU_MMIO_REG_ERROR_COUNT + sizeof(ULONG)));
             if (haveErrorRegs) {
                 ULONG code = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_ERROR_CODE);
                 if (code == 0) {
@@ -8676,7 +8681,9 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
             /* Keep a breadcrumb trail without spamming the kernel debugger. */
             if (n <= 4 || ((n & (n - 1)) == 0)) {
                 const ULONG abiMinor = (ULONG)(adapter->DeviceAbiVersion & 0xFFFFu);
-                if (abiMinor >= 3 && adapter->Bar0Length >= (AEROGPU_MMIO_REG_ERROR_COUNT + sizeof(ULONG))) {
+                if ((adapter->DeviceFeatures & AEROGPU_FEATURE_ERROR_INFO) != 0 &&
+                    abiMinor >= 3 &&
+                    adapter->Bar0Length >= (AEROGPU_MMIO_REG_ERROR_COUNT + sizeof(ULONG))) {
                     const ULONG code = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_ERROR_CODE);
                     const ULONGLONG mmioFence = AeroGpuReadRegU64HiLoHi(adapter,
                                                                        AEROGPU_MMIO_REG_ERROR_FENCE_LO,
