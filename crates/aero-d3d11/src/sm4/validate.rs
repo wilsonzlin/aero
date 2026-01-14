@@ -74,8 +74,7 @@ pub(crate) fn scan_sm5_nonzero_gs_stream(program: &Sm4Program) -> Option<Sm5GsSt
                 };
                 operand_pos += 1;
 
-                let ty = (operand_token >> sm4_opcode::OPERAND_TYPE_SHIFT)
-                    & sm4_opcode::OPERAND_TYPE_MASK;
+                let ty = (operand_token >> sm4_opcode::OPERAND_TYPE_SHIFT) & sm4_opcode::OPERAND_TYPE_MASK;
                 if ty != sm4_opcode::OPERAND_TYPE_IMMEDIATE32 {
                     i += len;
                     continue;
@@ -156,8 +155,7 @@ mod tests {
             << sm4_opcode::OPERAND_SELECTION_MODE_SHIFT;
         token |= (sm4_opcode::OPERAND_TYPE_IMMEDIATE32 & sm4_opcode::OPERAND_TYPE_MASK)
             << sm4_opcode::OPERAND_TYPE_SHIFT;
-        token |= (sm4_opcode::OPERAND_INDEX_DIMENSION_0D
-            & sm4_opcode::OPERAND_INDEX_DIMENSION_MASK)
+        token |= (sm4_opcode::OPERAND_INDEX_DIMENSION_0D & sm4_opcode::OPERAND_INDEX_DIMENSION_MASK)
             << sm4_opcode::OPERAND_INDEX_DIMENSION_SHIFT;
         token
     }
@@ -214,7 +212,10 @@ mod tests {
 
     #[test]
     fn detects_nonzero_emitthen_cut_stream_scalar_immediate() {
-        assert_detects_nonzero_stream(sm4_opcode::OPCODE_EMITTHENCUT_STREAM, "emitthen_cut_stream");
+        assert_detects_nonzero_stream(
+            sm4_opcode::OPCODE_EMITTHENCUT_STREAM,
+            "emitthen_cut_stream",
+        );
     }
 
     #[test]
@@ -271,6 +272,29 @@ mod tests {
             0,
             0,
             0,
+        ]);
+        assert_eq!(
+            scan_sm5_nonzero_gs_stream(&program),
+            Some(Sm5GsStreamViolation {
+                op_name: "emit_stream",
+                stream: 1,
+                at_dword: 2,
+            })
+        );
+    }
+
+    #[test]
+    fn detects_nonzero_stream_with_extended_opcode_and_operand_tokens() {
+        let mut operand = operand_token_immediate32(1);
+        operand |= sm4_opcode::OPERAND_EXTENDED_BIT;
+        let program = make_program(vec![
+            0,
+            0,
+            opcode_token_extended(sm4_opcode::OPCODE_EMIT_STREAM, 5),
+            0, // extended opcode token
+            operand,
+            0, // extended operand token
+            1,
         ]);
         assert_eq!(
             scan_sm5_nonzero_gs_stream(&program),
