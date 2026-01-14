@@ -1026,7 +1026,12 @@ impl XhciController {
             }
             regs::REG_DBOFF => regs::DBOFF_VALUE,
             regs::REG_RTSOFF => regs::RTSOFF_VALUE,
-            off if off >= regs::EXT_CAPS_OFFSET_BYTES as u64 && off < regs::CAPLENGTH_BYTES as u64 => {
+            off
+                if off >= regs::EXT_CAPS_OFFSET_BYTES as u64
+                    && off
+                        < regs::EXT_CAPS_OFFSET_BYTES as u64
+                            + (self.ext_caps.len().saturating_mul(4) as u64) =>
+            {
                 let idx = (off - regs::EXT_CAPS_OFFSET_BYTES as u64) / 4;
                 self.ext_caps.get(idx as usize).copied().unwrap_or(0)
             }

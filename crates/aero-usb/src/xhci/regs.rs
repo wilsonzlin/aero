@@ -103,9 +103,11 @@ pub mod doorbell {
 
 // ---- Capability register values ----
 
-/// We expose a 0x50-byte capability register block, which leaves room for xECP structures before
-/// the operational registers region (which begins at offset `CAPLENGTH_BYTES` in this model).
-pub const CAPLENGTH_BYTES: u8 = 0x50;
+/// xHCI CAPLENGTH (bytes): length of the capability register block / offset to operational regs.
+///
+/// Real xHCI controllers typically expose a 0x40-byte capability register block (spec 5.3.1). Keep
+/// the canonical size and place Extended Capabilities elsewhere in the MMIO window (via xECP).
+pub const CAPLENGTH_BYTES: u8 = 0x40;
 
 /// xHCI interface version (HCIVERSION).
 ///
@@ -136,7 +138,9 @@ pub const RTSOFF_VALUE: u32 = 0x3000;
 ///
 /// This must be 4-byte aligned and is referenced by `HCCPARAMS1.xECP` (which stores the offset in
 /// DWORDs).
-pub const EXT_CAPS_OFFSET_BYTES: u32 = 0x20;
+///
+/// Keep this outside the capability register block so CAPLENGTH remains stable.
+pub const EXT_CAPS_OFFSET_BYTES: u32 = 0x100;
 
 /// xHCI Extended Capability ID: USB Legacy Support.
 pub const EXT_CAP_ID_USB_LEGACY_SUPPORT: u8 = 1;
