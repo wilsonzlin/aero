@@ -160,7 +160,7 @@ mod tests {
         ensure_file(&nested, &expected, true).unwrap();
 
         // Out-of-date should fail in check mode.
-        std::fs::write(&nested, &[0x00]).unwrap();
+        std::fs::write(&nested, [0x00]).unwrap();
         let err = ensure_file(&nested, &expected, true).unwrap_err();
         assert!(err.to_string().contains("out of date"));
 

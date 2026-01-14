@@ -2005,7 +2005,7 @@ fn print_ram_section_samples(file: &mut fs::File, section: &SnapshotSectionInfo)
                     println!("    <truncated chunk payload>");
                     break;
                 }
-                let offset_bytes = u64::from(chunk_idx).saturating_mul(u64::from(chunk_size));
+                let offset_bytes = chunk_idx.saturating_mul(u64::from(chunk_size));
                 println!(
                     "    - chunk[{chunk_idx}] offset=0x{offset_bytes:x} uncompressed_len={uncompressed_len} compressed_len={compressed_len}"
                 );
@@ -2941,88 +2941,87 @@ fn diff_disks_section(
     let sec_b = sections_b.iter().find(|s| s.id == SectionId::DISKS);
 
     match (sec_a, sec_b) {
-        (None, None) => return Ok(()),
+        (None, None) => Ok(()),
         (Some(_), None) => {
             out.diff_msg("DISKS", "A=present B=<missing>");
-            return Ok(());
+            Ok(())
         }
         (None, Some(_)) => {
             out.diff_msg("DISKS", "A=<missing> B=present");
-            return Ok(());
+            Ok(())
         }
         (Some(sec_a), Some(sec_b)) => {
             if sec_a.version != sec_b.version {
                 out.diff("DISKS.version", sec_a.version, sec_b.version);
-                return Ok(());
-            }
-            if sec_a.version != 1 {
+                Ok(())
+            } else if sec_a.version != 1 {
                 out.diff_msg(
                     "DISKS",
                     format!("unsupported DISKS section version {}", sec_a.version),
                 );
-                return Ok(());
-            }
+                Ok(())
+            } else {
+                let disks_a = read_disks_refs(file_a, sec_a, "A")?;
+                let disks_b = read_disks_refs(file_b, sec_b, "B")?;
 
-            let disks_a = read_disks_refs(file_a, sec_a, "A")?;
-            let disks_b = read_disks_refs(file_b, sec_b, "B")?;
-
-            if disks_a.disks.len() != disks_b.disks.len() {
-                out.diff("DISKS.count", disks_a.disks.len(), disks_b.disks.len());
-            }
-
-            let order_a: Vec<u32> = disks_a.disks.iter().map(|d| d.disk_id).collect();
-            let order_b: Vec<u32> = disks_b.disks.iter().map(|d| d.disk_id).collect();
-
-            let mut map_a: BTreeMap<u32, &aero_snapshot::DiskOverlayRef> = BTreeMap::new();
-            let mut map_b: BTreeMap<u32, &aero_snapshot::DiskOverlayRef> = BTreeMap::new();
-            for d in &disks_a.disks {
-                map_a.insert(d.disk_id, d);
-            }
-            for d in &disks_b.disks {
-                map_b.insert(d.disk_id, d);
-            }
-
-            if order_a != order_b
-                && map_a.keys().copied().collect::<Vec<_>>()
-                    == map_b.keys().copied().collect::<Vec<_>>()
-            {
-                out.diff_msg("DISKS.order", "same entries, different on-disk ordering");
-            }
-
-            let all_keys: BTreeMap<u32, ()> =
-                map_a.keys().chain(map_b.keys()).map(|&k| (k, ())).collect();
-
-            for (disk_id, ()) in all_keys {
-                match (map_a.get(&disk_id), map_b.get(&disk_id)) {
-                    (Some(a), Some(b)) => {
-                        if a.base_image != b.base_image {
-                            out.diff(
-                                &format!("DISKS[disk_id={disk_id}].base_image"),
-                                fmt_disk_ref(&a.base_image),
-                                fmt_disk_ref(&b.base_image),
-                            );
-                        }
-                        if a.overlay_image != b.overlay_image {
-                            out.diff(
-                                &format!("DISKS[disk_id={disk_id}].overlay_image"),
-                                fmt_disk_ref(&a.overlay_image),
-                                fmt_disk_ref(&b.overlay_image),
-                            );
-                        }
-                    }
-                    (Some(_), None) => out.diff_msg(
-                        &format!("DISKS[disk_id={disk_id}]"),
-                        "present in A, missing in B",
-                    ),
-                    (None, Some(_)) => out.diff_msg(
-                        &format!("DISKS[disk_id={disk_id}]"),
-                        "missing in A, present in B",
-                    ),
-                    (None, None) => {}
+                if disks_a.disks.len() != disks_b.disks.len() {
+                    out.diff("DISKS.count", disks_a.disks.len(), disks_b.disks.len());
                 }
-            }
 
-            Ok(())
+                let order_a: Vec<u32> = disks_a.disks.iter().map(|d| d.disk_id).collect();
+                let order_b: Vec<u32> = disks_b.disks.iter().map(|d| d.disk_id).collect();
+
+                let mut map_a: BTreeMap<u32, &aero_snapshot::DiskOverlayRef> = BTreeMap::new();
+                let mut map_b: BTreeMap<u32, &aero_snapshot::DiskOverlayRef> = BTreeMap::new();
+                for d in &disks_a.disks {
+                    map_a.insert(d.disk_id, d);
+                }
+                for d in &disks_b.disks {
+                    map_b.insert(d.disk_id, d);
+                }
+
+                if order_a != order_b
+                    && map_a.keys().copied().collect::<Vec<_>>()
+                        == map_b.keys().copied().collect::<Vec<_>>()
+                {
+                    out.diff_msg("DISKS.order", "same entries, different on-disk ordering");
+                }
+
+                let all_keys: BTreeMap<u32, ()> =
+                    map_a.keys().chain(map_b.keys()).map(|&k| (k, ())).collect();
+
+                for (disk_id, ()) in all_keys {
+                    match (map_a.get(&disk_id), map_b.get(&disk_id)) {
+                        (Some(a), Some(b)) => {
+                            if a.base_image != b.base_image {
+                                out.diff(
+                                    &format!("DISKS[disk_id={disk_id}].base_image"),
+                                    fmt_disk_ref(&a.base_image),
+                                    fmt_disk_ref(&b.base_image),
+                                );
+                            }
+                            if a.overlay_image != b.overlay_image {
+                                out.diff(
+                                    &format!("DISKS[disk_id={disk_id}].overlay_image"),
+                                    fmt_disk_ref(&a.overlay_image),
+                                    fmt_disk_ref(&b.overlay_image),
+                                );
+                            }
+                        }
+                        (Some(_), None) => out.diff_msg(
+                            &format!("DISKS[disk_id={disk_id}]"),
+                            "present in A, missing in B",
+                        ),
+                        (None, Some(_)) => out.diff_msg(
+                            &format!("DISKS[disk_id={disk_id}]"),
+                            "missing in A, present in B",
+                        ),
+                        (None, None) => {}
+                    }
+                }
+
+                Ok(())
+            }
         }
     }
 }
@@ -3079,100 +3078,109 @@ fn diff_devices_section(
     let sec_b = sections_b.iter().find(|s| s.id == SectionId::DEVICES);
 
     match (sec_a, sec_b) {
-        (None, None) => return Ok(()),
+        (None, None) => Ok(()),
         (Some(_), None) => {
             out.diff_msg("DEVICES", "A=present B=<missing>");
-            return Ok(());
+            Ok(())
         }
         (None, Some(_)) => {
             out.diff_msg("DEVICES", "A=<missing> B=present");
-            return Ok(());
+            Ok(())
         }
         (Some(sec_a), Some(sec_b)) => {
             if sec_a.version != sec_b.version {
                 out.diff("DEVICES.version", sec_a.version, sec_b.version);
                 // If versions differ, the payload format might differ; don't attempt to decode.
-                return Ok(());
-            }
-            if sec_a.version != 1 {
+                Ok(())
+            } else if sec_a.version != 1 {
                 out.diff_msg(
                     "DEVICES",
                     format!("unsupported DEVICES section version {}", sec_a.version),
                 );
-                return Ok(());
-            }
+                Ok(())
+            } else {
+                let devs_a = read_devices_digests(file_a, sec_a, "A")?;
+                let devs_b = read_devices_digests(file_b, sec_b, "B")?;
 
-            let devs_a = read_devices_digests(file_a, sec_a, "A")?;
-            let devs_b = read_devices_digests(file_b, sec_b, "B")?;
-
-            // Compare by key in sorted order so output is stable and doesn't cascade on missing
-            // entries.
-            let mut map_a: BTreeMap<(u32, u16, u16), DeviceDigest> = BTreeMap::new();
-            let mut map_b: BTreeMap<(u32, u16, u16), DeviceDigest> = BTreeMap::new();
-            for d in devs_a.iter().copied() {
-                map_a.insert(d.key(), d);
-            }
-            for d in devs_b.iter().copied() {
-                map_b.insert(d.key(), d);
-            }
-
-            // Detect ordering differences separately (the file-order list is often important when
-            // debugging determinism).
-            let order_a: Vec<(u32, u16, u16)> = devs_a.iter().map(|d| d.key()).collect();
-            let order_b: Vec<(u32, u16, u16)> = devs_b.iter().map(|d| d.key()).collect();
-            if order_a != order_b && map_a == map_b {
-                out.diff_msg("DEVICES.order", "same entries, different on-disk ordering");
-            }
-
-            // Compare entries.
-            let all_keys: BTreeMap<(u32, u16, u16), ()> =
-                map_a.keys().chain(map_b.keys()).map(|&k| (k, ())).collect();
-
-            for (key, ()) in all_keys {
-                match (map_a.get(&key), map_b.get(&key)) {
-                    (Some(a), Some(b)) => {
-                        if a.len != b.len {
-                            out.diff(
-                                &format!(
-                                    "DEVICES[{} v{} flags={}].len",
-                                    DeviceId(key.0),
-                                    key.1,
-                                    key.2
-                                ),
-                                a.len,
-                                b.len,
-                            );
-                        }
-                        if a.hash != b.hash {
-                            out.diff(
-                                &format!(
-                                    "DEVICES[{} v{} flags={}].hash",
-                                    DeviceId(key.0),
-                                    key.1,
-                                    key.2
-                                ),
-                                format!("0x{:016x}", a.hash),
-                                format!("0x{:016x}", b.hash),
-                            );
-                        }
-                    }
-                    (Some(_), None) => {
-                        out.diff_msg(
-                            &format!("DEVICES[{} v{} flags={}]", DeviceId(key.0), key.1, key.2),
-                            "present in A, missing in B",
-                        );
-                    }
-                    (None, Some(_)) => {
-                        out.diff_msg(
-                            &format!("DEVICES[{} v{} flags={}]", DeviceId(key.0), key.1, key.2),
-                            "missing in A, present in B",
-                        );
-                    }
-                    (None, None) => {}
+                // Compare by key in sorted order so output is stable and doesn't cascade on missing
+                // entries.
+                let mut map_a: BTreeMap<(u32, u16, u16), DeviceDigest> = BTreeMap::new();
+                let mut map_b: BTreeMap<(u32, u16, u16), DeviceDigest> = BTreeMap::new();
+                for d in devs_a.iter().copied() {
+                    map_a.insert(d.key(), d);
                 }
-            }
+                for d in devs_b.iter().copied() {
+                    map_b.insert(d.key(), d);
+                }
 
-            Ok(())
+                // Detect ordering differences separately (the file-order list is often important when
+                // debugging determinism).
+                let order_a: Vec<(u32, u16, u16)> = devs_a.iter().map(|d| d.key()).collect();
+                let order_b: Vec<(u32, u16, u16)> = devs_b.iter().map(|d| d.key()).collect();
+                if order_a != order_b && map_a == map_b {
+                    out.diff_msg("DEVICES.order", "same entries, different on-disk ordering");
+                }
+
+                // Compare entries.
+                let all_keys: BTreeMap<(u32, u16, u16), ()> =
+                    map_a.keys().chain(map_b.keys()).map(|&k| (k, ())).collect();
+
+                for (key, ()) in all_keys {
+                    match (map_a.get(&key), map_b.get(&key)) {
+                        (Some(a), Some(b)) => {
+                            if a.len != b.len {
+                                out.diff(
+                                    &format!(
+                                        "DEVICES[{} v{} flags={}].len",
+                                        DeviceId(key.0),
+                                        key.1,
+                                        key.2
+                                    ),
+                                    a.len,
+                                    b.len,
+                                );
+                            }
+                            if a.hash != b.hash {
+                                out.diff(
+                                    &format!(
+                                        "DEVICES[{} v{} flags={}].hash",
+                                        DeviceId(key.0),
+                                        key.1,
+                                        key.2
+                                    ),
+                                    format!("0x{:016x}", a.hash),
+                                    format!("0x{:016x}", b.hash),
+                                );
+                            }
+                        }
+                        (Some(_), None) => {
+                            out.diff_msg(
+                                &format!(
+                                    "DEVICES[{} v{} flags={}]",
+                                    DeviceId(key.0),
+                                    key.1,
+                                    key.2
+                                ),
+                                "present in A, missing in B",
+                            );
+                        }
+                        (None, Some(_)) => {
+                            out.diff_msg(
+                                &format!(
+                                    "DEVICES[{} v{} flags={}]",
+                                    DeviceId(key.0),
+                                    key.1,
+                                    key.2
+                                ),
+                                "missing in A, present in B",
+                            );
+                        }
+                        (None, None) => {}
+                    }
+                }
+
+                Ok(())
+            }
         }
     }
 }
