@@ -587,12 +587,35 @@ fn wgsl_has_expected_entry_point(wgsl: &str, stage: shader::ShaderStage) -> bool
 
     let lines: Vec<&str> = wgsl.lines().collect();
     for (idx, line) in lines.iter().enumerate() {
-        if line.trim() != attr {
+        let trimmed = line.trim();
+        if !trimmed.starts_with(attr) {
             continue;
         }
+        // Support one-line formatting: `@vertex fn vs_main(...)`.
+        //
+        // Avoid false positives from comments like `@vertex // fn vs_main(` by requiring the
+        // function signature to appear before any `//` comment marker.
+        if let Some(fn_pos) = trimmed.find(fn_prefix) {
+            let comment_pos = trimmed.find("//").unwrap_or(trimmed.len());
+            if fn_pos < comment_pos {
+                return true;
+            }
+        }
         let mut next = idx + 1;
-        while next < lines.len() && lines[next].trim().is_empty() {
-            next += 1;
+        while next < lines.len() {
+            let next_trimmed = lines[next].trim();
+            if next_trimmed.is_empty() {
+                next += 1;
+                continue;
+            }
+            // Allow additional attribute lines between the stage attribute and entry point.
+            // Attributes in WGSL apply to the immediately following item, regardless of newline
+            // placement.
+            if next_trimmed.starts_with('@') {
+                next += 1;
+                continue;
+            }
+            break;
         }
         if next < lines.len() && lines[next].trim_start().starts_with(fn_prefix) {
             return true;
