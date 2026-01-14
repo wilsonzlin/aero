@@ -431,6 +431,21 @@ mod tests {
     ];
 
     #[test]
+    fn format_test_tables_have_no_duplicates() {
+        for (i, &a) in ALL_FORMATS.iter().enumerate() {
+            for &b in &ALL_FORMATS[i + 1..] {
+                assert_ne!(a, b, "ALL_FORMATS contains duplicate entry {a:?}");
+            }
+        }
+
+        for (i, &a) in ALL_USAGES.iter().enumerate() {
+            for &b in &ALL_USAGES[i + 1..] {
+                assert_ne!(a, b, "ALL_USAGES contains duplicate entry {a:?}");
+            }
+        }
+    }
+
+    #[test]
     fn format_info_is_exhaustively_tested_and_validates_usage_pairs() {
         // `ALL_FORMATS`/`ALL_USAGES` are used by the tests below and should be updated whenever new
         // variants are introduced. The `expected_ok` match further below is intentionally
