@@ -1,22 +1,24 @@
 #!/usr/bin/env python3
 """
-CI guardrail: AeroGPU Win7 KMD fence state must be accessed atomically.
+CI guardrail: AeroGPU Win7 KMD shared 64-bit state must be accessed atomically.
 
 Why:
   - The AeroGPU Win7 kernel-mode driver is built for both x86 and x64.
   - On x86, plain 64-bit loads/stores are not atomic and can tear.
-  - Fence bookkeeping fields (LastSubmittedFence/LastCompletedFence/etc) are
-    accessed across multiple contexts (submit thread, ISR/DPC, dbgctl escapes).
+  - Several 64-bit fields in `AEROGPU_ADAPTER` are read/written across multiple
+    contexts (submit thread, ISR/DPC, dbgctl escapes). Torn reads/writes can
+    lead to bogus fence comparisons, flaky dbgctl output, and incorrect
+    bookkeeping.
 
 This script:
-  - validates fence-field alignment invariants in
+  - validates 8-byte alignment invariants for selected shared 64-bit fields in
     `drivers/aerogpu/kmd/include/aerogpu_kmd.h`, and
-  - scans AeroGPU Win7 KMD source files under `drivers/aerogpu/kmd/src/`
-    and enforces that
-member accesses to the fence fields are never performed as plain loads/stores.
-In practice this means every occurrence must take the address of the field
-(`&Adapter->LastCompletedFence`, etc), so the value is read/written via an
-Interlocked-based helper.
+  - scans AeroGPU Win7 KMD source files under `drivers/aerogpu/kmd/src/` and
+    enforces that these fields are never accessed as plain loads/stores.
+
+In practice, this means every occurrence must take the address of the field
+(`&Adapter->LastCompletedFence`, etc) and pass it directly into an
+Interlocked-based helper (e.g. `AeroGpuAtomic*U64`).
 
 It is intentionally lightweight and Linux-friendly; it does not require a WDK.
 """
@@ -442,7 +444,7 @@ def _nearest_enclosing_call(paren_stack: list[str | None]) -> str | None:
 
 def _is_allowed_call(name: str | None) -> bool:
     """
-    Fence fields must only be touched through atomic helpers. We accept:
+    Shared 64-bit fields must only be touched through atomic helpers. We accept:
       - `AeroGpuAtomic*U64` (driver abstraction)
       - `Interlocked*64` (direct atomic operations; alignment is ensured by C_ASSERT + DBG ASSERTs elsewhere)
     """
@@ -498,7 +500,7 @@ def main() -> int:
 
     header_errors = _check_header_invariants()
     if header_errors:
-        print("ERROR: AeroGPU KMD header fence atomicity invariants failed:\n")
+        print("ERROR: AeroGPU KMD header atomicity invariants failed:\n")
         for err in header_errors:
             print(f"- {err}")
         return 1
@@ -556,10 +558,10 @@ def main() -> int:
             prev = tok
 
     if not all_violations:
-        print("OK: AeroGPU KMD fence atomic access checks passed.")
+        print("OK: AeroGPU KMD atomic 64-bit access checks passed.")
         return 0
 
-    print("ERROR: Found non-atomic fence field access in AeroGPU KMD sources:\n")
+    print("ERROR: Found non-atomic 64-bit field access in AeroGPU KMD sources:\n")
     for src, field, line, col, src_text in all_violations:
         lines = src_text.splitlines()
         context = lines[line - 1] if 1 <= line <= len(lines) else ""
@@ -569,9 +571,7 @@ def main() -> int:
             print(f"    {' ' * (col - 1)}^")
         print("")
 
-    print(
-        "Fence state must only be accessed via AeroGpuAtomic*U64 (or Interlocked*64) helpers to avoid torn 64-bit reads/writes on x86."
-    )
+    print("Shared 64-bit state must only be accessed via AeroGpuAtomic*U64 (or Interlocked*64) helpers to avoid torn reads/writes on x86.")
     return 1
 
 
