@@ -1695,6 +1695,14 @@ function Wait-AeroSelftestResult {
         if ($RequireExpectBlkMsi -and ((-not $sawConfigExpectBlkMsi) -or $configExpectBlkMsi -ne "1")) {
           return @{ Result = "EXPECT_BLK_MSI_NOT_SET"; Tail = $tail }
         }
+        # Surface virtio-snd bring-up toggle failures as a dedicated failure token so CI logs
+        # remain actionable (ForceNullBackend disables the virtio transport and makes host wav
+        # verification silent).
+        if (($tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-snd\|FAIL\|force_null_backend") -or
+            ($tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-snd-capture\|FAIL\|force_null_backend") -or
+            ($tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-snd-duplex\|FAIL\|force_null_backend")) {
+          return @{ Result = "VIRTIO_SND_FORCE_NULL_BACKEND"; Tail = $tail }
+        }
         return @{ Result = "FAIL"; Tail = $tail }
       }
     }
@@ -6386,6 +6394,39 @@ try {
     }
     "FAIL" {
       Write-Host "FAIL: SELFTEST_FAILED: AERO_VIRTIO_SELFTEST|RESULT|FAIL"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "VIRTIO_SND_FORCE_NULL_BACKEND" {
+      $regPath = "HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Parameters\Parameters\ForceNullBackend"
+      $pnpId = $null
+      $source = $null
+      try {
+        if ($result.Tail -match "ForceNullBackend=1 set \(pnp_id=([^\s]+) source=([^\)]+)\)") {
+          $pnpId = $Matches[1]
+          $source = $Matches[2]
+        } elseif ($result.Tail -match "ForceNullBackend=1 set \(source=([^\)]+)\)") {
+          $source = $Matches[1]
+        }
+      } catch { }
+
+      $extra = ""
+      if ((-not [string]::IsNullOrEmpty($pnpId)) -or (-not [string]::IsNullOrEmpty($source))) {
+        $extra = " ("
+        if (-not [string]::IsNullOrEmpty($pnpId)) {
+          $extra += "pnp_id=$pnpId"
+        }
+        if (-not [string]::IsNullOrEmpty($source)) {
+          if ($extra -ne " (") { $extra += " " }
+          $extra += "source=$source"
+        }
+        $extra += ")"
+      }
+
+      Write-Host "FAIL: VIRTIO_SND_FORCE_NULL_BACKEND: virtio-snd selftest reported force_null_backend$extra; ForceNullBackend=1 disables the virtio-snd transport (host wav capture will be silent). Clear the registry toggle to enable virtio-snd: $regPath (DWORD 0)."
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
