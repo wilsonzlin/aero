@@ -114,7 +114,10 @@ pub fn package_guest_tools(config: &PackageConfig) -> Result<PackageOutputs> {
 
     let (spec, spec_bytes) =
         PackagingSpec::load_with_bytes(&config.spec_path).with_context(|| "load packaging spec")?;
-    let spec_sha256 = sha256_hex(&spec_bytes);
+    let spec_sha256 = sha256_hex(
+        &canonicalize_json_bytes(&spec_bytes)
+            .with_context(|| format!("canonicalize JSON {}", config.spec_path.display()))?,
+    );
 
     let (contract, contract_bytes) = windows_device_contract::load_windows_device_contract_with_bytes(
         &config.windows_device_contract_path,
@@ -125,7 +128,14 @@ pub fn package_guest_tools(config: &PackageConfig) -> Result<PackageOutputs> {
             config.windows_device_contract_path.display()
         )
     })?;
-    let contract_sha256 = sha256_hex(&contract_bytes);
+    let contract_sha256 = sha256_hex(
+        &canonicalize_json_bytes(&contract_bytes).with_context(|| {
+            format!(
+                "canonicalize JSON {}",
+                config.windows_device_contract_path.display()
+            )
+        })?,
+    );
 
     let service_overrides = guest_tools_devices_cmd_service_overrides_for_spec(&contract, &spec);
     let devices_cmd_bytes = generate_guest_tools_devices_cmd_bytes_with_overrides(
@@ -1879,6 +1889,18 @@ fn sha256_hex(bytes: &[u8]) -> String {
     let mut h = Sha256::new();
     h.update(bytes);
     hex::encode(h.finalize())
+}
+
+fn canonicalize_json_bytes(bytes: &[u8]) -> Result<Vec<u8>> {
+    // Canonicalize JSON inputs before hashing so provenance hashes are stable across harmless
+    // formatting differences (whitespace, indentation, key ordering) introduced by tooling (for
+    // example different PowerShell/`ConvertTo-Json` versions).
+    //
+    // Note: `serde_json::Value` uses a deterministically-ordered map type by default (BTreeMap)
+    // unless the `preserve_order` feature is enabled.
+    let value = serde_json::from_slice::<serde_json::Value>(bytes)
+        .context("parse JSON for canonicalization")?;
+    serde_json::to_vec(&value).context("serialize canonical JSON")
 }
 
 fn manifest_input_path(path: &Path) -> Result<String> {

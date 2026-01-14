@@ -246,6 +246,18 @@ SOURCE_DATE_EPOCH=0 cargo run --release --locked \
   --volume-id AEROVIRTIO_WIN7_0_0_0
 ```
 
+### `manifest.json` input hashes (provenance)
+
+`manifest.json` includes an `inputs` section recording hashes for the **packaging spec** and the
+**Windows device contract** used to generate `config/devices.cmd`.
+
+These inputs are JSON, and their `sha256` values are computed over a **canonicalized JSON
+representation** (parsed with `serde_json` and re-serialized in compact form with deterministic key
+ordering), rather than hashing the raw on-disk bytes.
+
+This makes the hashes stable across harmless formatting differences (indentation, whitespace, key
+ordering) introduced by different tools / PowerShell versions.
+
 ## Spec format
 
 The packager uses a small JSON spec to validate and sanity-check the driver artifacts before packaging.

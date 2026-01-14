@@ -211,16 +211,10 @@ fn package_outputs_are_reproducible_and_contain_expected_files() -> anyhow::Resu
     );
 
     // Verify input hashes are correct.
-    let spec_bytes = fs::read(&spec_path)?;
-    let mut h = sha2::Sha256::new();
-    h.update(&spec_bytes);
-    let spec_sha256 = hex::encode(h.finalize());
+    let spec_sha256 = canonical_json_sha256_hex(&fs::read(&spec_path)?)?;
     assert_eq!(spec_input.sha256, spec_sha256);
 
-    let contract_bytes = fs::read(&windows_device_contract_path)?;
-    let mut h = sha2::Sha256::new();
-    h.update(&contract_bytes);
-    let contract_sha256 = hex::encode(h.finalize());
+    let contract_sha256 = canonical_json_sha256_hex(&fs::read(&windows_device_contract_path)?)?;
     assert_eq!(contract_input.sha256, contract_sha256);
 
     // Legacy spec schema should still produce the exact same packaged file list/hashes, even
@@ -235,9 +229,7 @@ fn package_outputs_are_reproducible_and_contain_expected_files() -> anyhow::Resu
     assert_eq!(legacy_spec_input.path, "spec.json");
     assert_ne!(legacy_spec_input.sha256, spec_sha256);
     let legacy_spec_bytes = fs::read(&config4.spec_path)?;
-    let mut h = sha2::Sha256::new();
-    h.update(&legacy_spec_bytes);
-    let legacy_spec_sha256 = hex::encode(h.finalize());
+    let legacy_spec_sha256 = canonical_json_sha256_hex(&legacy_spec_bytes)?;
     assert_eq!(legacy_spec_input.sha256, legacy_spec_sha256);
 
     let legacy_contract_input = legacy_inputs
@@ -2250,6 +2242,232 @@ fn empty_driver_list_is_rejected() -> anyhow::Result<()> {
     );
 
     Ok(())
+}
+
+#[test]
+fn manifest_input_hashes_are_formatting_insensitive() -> anyhow::Result<()> {
+    let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let testdata = repo_root.join("testdata");
+
+    // Match the main packaging test: inject a dummy DLL so we can ensure non-empty user-mode
+    // payloads are preserved.
+    let drivers_src = testdata.join("drivers");
+    let drivers_tmp = tempfile::tempdir()?;
+    copy_dir_all(&drivers_src, drivers_tmp.path())?;
+    fs::write(
+        drivers_tmp.path().join("x86/testdrv/test.dll"),
+        b"dummy dll (x86)\n",
+    )?;
+    fs::write(
+        drivers_tmp.path().join("amd64/testdrv/test.dll"),
+        b"dummy dll (amd64)\n",
+    )?;
+
+    let guest_tools_dir = testdata.join("guest-tools");
+
+    // Two semantically-identical specs with different formatting/key ordering.
+    let spec_a = r#"{
+  "drivers": [
+    {
+      "name": "testdrv",
+      "required": true,
+      "expected_hardware_ids_from_devices_cmd_var": "AERO_TESTDRV_HWIDS"
+    }
+  ]
+}"#;
+    let spec_b = r#"{"drivers":[{"expected_hardware_ids_from_devices_cmd_var":"AERO_TESTDRV_HWIDS","required":true,"name":"testdrv"}]}"#;
+
+    // Two semantically-identical contracts with different formatting/key ordering.
+    let contract_a = r#"{
+  "schema_version": 1,
+  "contract_name": "aero-windows-pci-device-contract",
+  "contract_version": "0.0.0",
+  "devices": [
+    {
+      "device": "virtio-blk",
+      "pci_vendor_id": "0x1AF4",
+      "pci_device_id": "0x1042",
+      "hardware_id_patterns": ["PCI\\VEN_1AF4&DEV_1042&REV_01"],
+      "driver_service_name": "aero_virtio_blk",
+      "inf_name": "aero_virtio_blk.inf",
+      "virtio_device_type": 2
+    },
+    {
+      "device": "virtio-net",
+      "pci_vendor_id": "0x1AF4",
+      "pci_device_id": "0x1041",
+      "hardware_id_patterns": ["PCI\\VEN_1AF4&DEV_1041&REV_01"],
+      "driver_service_name": "aero_virtio_net",
+      "inf_name": "aero_virtio_net.inf",
+      "virtio_device_type": 1
+    },
+    {
+      "device": "virtio-input",
+      "pci_vendor_id": "0x1AF4",
+      "pci_device_id": "0x1052",
+      "hardware_id_patterns": ["PCI\\VEN_1AF4&DEV_1052&REV_01"],
+      "driver_service_name": "aero_virtio_input",
+      "inf_name": "aero_virtio_input.inf",
+      "virtio_device_type": 18
+    },
+    {
+      "device": "virtio-snd",
+      "pci_vendor_id": "0x1AF4",
+      "pci_device_id": "0x1059",
+      "hardware_id_patterns": ["PCI\\VEN_1AF4&DEV_1059&REV_01"],
+      "driver_service_name": "aero_virtio_snd",
+      "inf_name": "aero_virtio_snd.inf",
+      "virtio_device_type": 25
+    },
+    {
+      "device": "aero-gpu",
+      "pci_vendor_id": "0xA3A0",
+      "pci_device_id": "0x0001",
+      "hardware_id_patterns": ["PCI\\VEN_A3A0&DEV_0001"],
+      "driver_service_name": "aerogpu",
+      "inf_name": "aerogpu.inf"
+    }
+  ]
+}"#;
+    let contract_b = r#"{
+  "devices": [
+    {
+      "inf_name": "aero_virtio_blk.inf",
+      "virtio_device_type": 2,
+      "pci_device_id": "0x1042",
+      "pci_vendor_id": "0x1AF4",
+      "device": "virtio-blk",
+      "driver_service_name": "aero_virtio_blk",
+      "hardware_id_patterns": [
+        "PCI\\VEN_1AF4&DEV_1042&REV_01"
+      ]
+    },
+    {
+      "hardware_id_patterns": ["PCI\\VEN_1AF4&DEV_1041&REV_01"],
+      "driver_service_name": "aero_virtio_net",
+      "device": "virtio-net",
+      "pci_vendor_id": "0x1AF4",
+      "pci_device_id": "0x1041",
+      "inf_name": "aero_virtio_net.inf",
+      "virtio_device_type": 1
+    },
+    {
+      "device": "virtio-input",
+      "driver_service_name": "aero_virtio_input",
+      "pci_vendor_id": "0x1AF4",
+      "pci_device_id": "0x1052",
+      "hardware_id_patterns": ["PCI\\VEN_1AF4&DEV_1052&REV_01"],
+      "inf_name": "aero_virtio_input.inf",
+      "virtio_device_type": 18
+    },
+    {
+      "pci_device_id": "0x1059",
+      "pci_vendor_id": "0x1AF4",
+      "driver_service_name": "aero_virtio_snd",
+      "hardware_id_patterns": ["PCI\\VEN_1AF4&DEV_1059&REV_01"],
+      "inf_name": "aero_virtio_snd.inf",
+      "device": "virtio-snd",
+      "virtio_device_type": 25
+    },
+    {
+      "pci_vendor_id": "0xA3A0",
+      "pci_device_id": "0x0001",
+      "driver_service_name": "aerogpu",
+      "inf_name": "aerogpu.inf",
+      "hardware_id_patterns": ["PCI\\VEN_A3A0&DEV_0001"],
+      "device": "aero-gpu"
+    }
+  ],
+  "contract_version": "0.0.0",
+  "schema_version": 1,
+  "contract_name": "aero-windows-pci-device-contract"
+}"#;
+
+    let spec_dir_a = tempfile::tempdir()?;
+    let spec_dir_b = tempfile::tempdir()?;
+    let spec_path_a = spec_dir_a.path().join("spec.json");
+    let spec_path_b = spec_dir_b.path().join("spec.json");
+    fs::write(&spec_path_a, spec_a)?;
+    fs::write(&spec_path_b, spec_b)?;
+
+    let contract_dir_a = tempfile::tempdir()?;
+    let contract_dir_b = tempfile::tempdir()?;
+    let contract_path_a = contract_dir_a.path().join("windows-device-contract.json");
+    let contract_path_b = contract_dir_b.path().join("windows-device-contract.json");
+    fs::write(&contract_path_a, contract_a)?;
+    fs::write(&contract_path_b, contract_b)?;
+
+    let out1 = tempfile::tempdir()?;
+    let out2 = tempfile::tempdir()?;
+
+    let config1 = aero_packager::PackageConfig {
+        drivers_dir: drivers_tmp.path().to_path_buf(),
+        guest_tools_dir: guest_tools_dir.clone(),
+        windows_device_contract_path: contract_path_a,
+        out_dir: out1.path().to_path_buf(),
+        spec_path: spec_path_a,
+        version: "1.2.3".to_string(),
+        build_id: "test".to_string(),
+        volume_id: "AERO_GUEST_TOOLS".to_string(),
+        signing_policy: aero_packager::SigningPolicy::Test,
+        source_date_epoch: 0,
+    };
+    let config2 = aero_packager::PackageConfig {
+        out_dir: out2.path().to_path_buf(),
+        windows_device_contract_path: contract_path_b,
+        spec_path: spec_path_b,
+        ..config1.clone()
+    };
+
+    let outputs1 = aero_packager::package_guest_tools(&config1)?;
+    let outputs2 = aero_packager::package_guest_tools(&config2)?;
+
+    // If JSON canonicalization is working, the input hashes (and thus the entire package outputs)
+    // should be byte-identical even though the input JSON formatting differs.
+    let manifest1: aero_packager::Manifest =
+        serde_json::from_slice(&fs::read(&outputs1.manifest_path)?)?;
+    let manifest2: aero_packager::Manifest =
+        serde_json::from_slice(&fs::read(&outputs2.manifest_path)?)?;
+    let inputs1 = manifest1.inputs.as_ref().expect("manifest1.inputs");
+    let inputs2 = manifest2.inputs.as_ref().expect("manifest2.inputs");
+    assert_eq!(
+        inputs1
+            .packaging_spec
+            .as_ref()
+            .expect("manifest1.inputs.packaging_spec")
+            .sha256,
+        inputs2
+            .packaging_spec
+            .as_ref()
+            .expect("manifest2.inputs.packaging_spec")
+            .sha256
+    );
+    assert_eq!(
+        inputs1
+            .windows_device_contract
+            .as_ref()
+            .expect("manifest1.inputs.windows_device_contract")
+            .sha256,
+        inputs2
+            .windows_device_contract
+            .as_ref()
+            .expect("manifest2.inputs.windows_device_contract")
+            .sha256
+    );
+
+    assert_eq!(fs::read(&outputs1.manifest_path)?, fs::read(&outputs2.manifest_path)?);
+    assert_eq!(fs::read(&outputs1.iso_path)?, fs::read(&outputs2.iso_path)?);
+    assert_eq!(fs::read(&outputs1.zip_path)?, fs::read(&outputs2.zip_path)?);
+
+    Ok(())
+}
+
+fn canonical_json_sha256_hex(bytes: &[u8]) -> anyhow::Result<String> {
+    let value: serde_json::Value = serde_json::from_slice(bytes)?;
+    let canonical = serde_json::to_vec(&value)?;
+    let mut h = sha2::Sha256::new();
+    h.update(&canonical);
+    Ok(hex::encode(h.finalize()))
 }
 
 fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) -> anyhow::Result<()> {
