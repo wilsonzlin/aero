@@ -221,7 +221,7 @@ export function trySnapshotScanoutState(words: Int32Array, options?: TrySnapshot
     const width = Atomics.load(words, ScanoutStateIndex.WIDTH) >>> 0;
     const height = Atomics.load(words, ScanoutStateIndex.HEIGHT) >>> 0;
     const pitchBytes = Atomics.load(words, ScanoutStateIndex.PITCH_BYTES) >>> 0;
-    const format = Atomics.load(words, ScanoutStateIndex.FORMAT) >>> 0;
+    const format = (Atomics.load(words, ScanoutStateIndex.FORMAT) >>> 0) as AerogpuFormat;
 
     const gen1 = Atomics.load(words, ScanoutStateIndex.GENERATION) >>> 0;
     if (gen0 !== gen1) {
