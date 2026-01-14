@@ -599,6 +599,65 @@ fn stage_ex_is_gated_by_cmd_stream_abi_minor_in_listings() {
 }
 
 #[test]
+fn stage_ex_vertex_program_type_is_reported_as_invalid() {
+    // `stage_ex=1` matches the DXBC Vertex program type, but it is intentionally invalid in AeroGPU:
+    // Vertex shaders must be encoded via the legacy `shader_stage = VERTEX` encoding.
+    //
+    // Ensure the trace tooling does not mislabel this as a valid stage selector.
+    let mut bytes = Vec::new();
+    push_u32_le(&mut bytes, AEROGPU_CMD_STREAM_MAGIC);
+    push_u32_le(&mut bytes, AEROGPU_ABI_VERSION_U32);
+    push_u32_le(&mut bytes, 0); // patched later
+    push_u32_le(&mut bytes, 0); // flags
+    push_u32_le(&mut bytes, 0); // reserved0
+    push_u32_le(&mut bytes, 0); // reserved1
+    assert_eq!(bytes.len(), 24);
+
+    // CREATE_SHADER_DXBC(shader_handle=1, stage=Compute, dxbc_size=4, stage_ex=1, dxbc="DXBC").
+    let mut payload = Vec::new();
+    push_u32_le(&mut payload, 1); // shader_handle
+    push_u32_le(&mut payload, 2); // stage=Compute
+    push_u32_le(&mut payload, 4); // dxbc_size_bytes
+    push_u32_le(&mut payload, 1); // reserved0 / stage_ex = 1 (invalid Vertex program type)
+    payload.extend_from_slice(b"DXBC");
+    while payload.len() % 4 != 0 {
+        payload.push(0);
+    }
+    push_packet(
+        &mut bytes,
+        AerogpuCmdOpcode::CreateShaderDxbc as u32,
+        &payload,
+    );
+
+    // Patch header.size_bytes.
+    let size_bytes = bytes.len() as u32;
+    bytes[8..12].copy_from_slice(&size_bytes.to_le_bytes());
+
+    let listing = aero_gpu_trace_replay::decode_cmd_stream_listing(&bytes, false)
+        .expect("decode should succeed");
+    assert!(listing.contains("stage_ex=1"), "{listing}");
+    assert!(
+        listing.contains("stage_ex_name=InvalidVertex"),
+        "listing should label stage_ex=1 as invalid: {listing}"
+    );
+
+    let json_listing = aero_gpu_trace_replay::cmd_stream_decode::render_cmd_stream_listing(
+        &bytes,
+        aero_gpu_trace_replay::cmd_stream_decode::CmdStreamListingFormat::Json,
+    )
+    .expect("render json listing");
+    let v: serde_json::Value = serde_json::from_str(&json_listing).expect("parse json listing");
+
+    let records = v["records"].as_array().expect("records array");
+    let create_shader = records
+        .iter()
+        .find(|r| r["type"] == "packet" && r["opcode"] == "CreateShaderDxbc")
+        .expect("missing CreateShaderDxbc packet");
+    assert_eq!(create_shader["decoded"]["stage_ex"], 1);
+    assert_eq!(create_shader["decoded"]["stage_ex_name"], "InvalidVertex");
+}
+
+#[test]
 fn strict_mode_fails_on_unknown_opcode() {
     let bytes = build_fixture_cmd_stream();
     let err = aero_gpu_trace_replay::decode_cmd_stream_listing(&bytes, true)
