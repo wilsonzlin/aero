@@ -184,6 +184,20 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
                         let _ = cmd::decode_stage_ex(cmd_cb.shader_stage, cmd_cb.reserved0);
                     }
                 }
+                Some(cmd::AerogpuCmdOpcode::SetShaderResourceBuffers) => {
+                    if let Ok((cmd_srb, _bindings)) =
+                        pkt.decode_set_shader_resource_buffers_payload_le()
+                    {
+                        let _ = cmd::decode_stage_ex(cmd_srb.shader_stage, cmd_srb.reserved0);
+                    }
+                }
+                Some(cmd::AerogpuCmdOpcode::SetUnorderedAccessBuffers) => {
+                    if let Ok((cmd_uav, _bindings)) =
+                        pkt.decode_set_unordered_access_buffers_payload_le()
+                    {
+                        let _ = cmd::decode_stage_ex(cmd_uav.shader_stage, cmd_uav.reserved0);
+                    }
+                }
                 _ => {}
             }
         }
@@ -802,6 +816,8 @@ fuzz_target!(|data: &[u8]| {
     const SYNTH_VERTEX_BUFFER_COUNT: usize = 1;
     const SYNTH_SAMPLER_COUNT: usize = 1;
     const SYNTH_CONSTANT_BUFFER_COUNT: usize = 1;
+    const SYNTH_SHADER_RESOURCE_BUFFER_COUNT: usize = 1;
+    const SYNTH_UNORDERED_ACCESS_BUFFER_COUNT: usize = 1;
 
     const CREATE_SHADER_DXBC_SYNTH_SIZE_BYTES: usize =
         cmd::AerogpuCmdCreateShaderDxbc::SIZE_BYTES + SYNTH_DXBC_BYTES;
@@ -818,6 +834,13 @@ fuzz_target!(|data: &[u8]| {
     const SET_CONSTANT_BUFFERS_SYNTH_SIZE_BYTES: usize =
         cmd::AerogpuCmdSetConstantBuffers::SIZE_BYTES
             + SYNTH_CONSTANT_BUFFER_COUNT * cmd::AerogpuConstantBufferBinding::SIZE_BYTES;
+    const SET_SHADER_RESOURCE_BUFFERS_SYNTH_SIZE_BYTES: usize =
+        cmd::AerogpuCmdSetShaderResourceBuffers::SIZE_BYTES
+            + SYNTH_SHADER_RESOURCE_BUFFER_COUNT * cmd::AerogpuShaderResourceBufferBinding::SIZE_BYTES;
+    const SET_UNORDERED_ACCESS_BUFFERS_SYNTH_SIZE_BYTES: usize =
+        cmd::AerogpuCmdSetUnorderedAccessBuffers::SIZE_BYTES
+            + SYNTH_UNORDERED_ACCESS_BUFFER_COUNT
+                * cmd::AerogpuUnorderedAccessBufferBinding::SIZE_BYTES;
 
     let cmd_synth_len = cmd::AerogpuCmdStreamHeader::SIZE_BYTES
         + cmd::AerogpuCmdHdr::SIZE_BYTES // NOP
@@ -854,6 +877,8 @@ fuzz_target!(|data: &[u8]| {
         + cmd::AerogpuCmdDestroySampler::SIZE_BYTES
         + SET_SAMPLERS_SYNTH_SIZE_BYTES
         + SET_CONSTANT_BUFFERS_SYNTH_SIZE_BYTES
+        + SET_SHADER_RESOURCE_BUFFERS_SYNTH_SIZE_BYTES
+        + SET_UNORDERED_ACCESS_BUFFERS_SYNTH_SIZE_BYTES
         + cmd::AerogpuCmdClear::SIZE_BYTES
         + cmd::AerogpuCmdDraw::SIZE_BYTES
         + cmd::AerogpuCmdDrawIndexed::SIZE_BYTES
@@ -877,6 +902,8 @@ fuzz_target!(|data: &[u8]| {
     let stage_ex_seed1 = data.get(1).copied().unwrap_or(0) & 7;
     let stage_ex_seed2 = data.get(2).copied().unwrap_or(0) & 7;
     let stage_ex_seed3 = data.get(3).copied().unwrap_or(0) & 7;
+    let stage_ex_seed4 = data.get(4).copied().unwrap_or(0) & 7;
+    let stage_ex_seed5 = data.get(5).copied().unwrap_or(0) & 7;
 
     // NOP
     let _ = write_pkt_hdr(
@@ -1200,6 +1227,42 @@ fuzz_target!(|data: &[u8]| {
         }
         if let Some(reserved0) = cmd_synth.get_mut(pkt + 20..pkt + 24) {
             reserved0.copy_from_slice(&(stage_ex_seed2 as u32).to_le_bytes());
+        }
+    }
+
+    // SET_SHADER_RESOURCE_BUFFERS (buffer_count=1)
+    if let Some(pkt) = write_pkt_hdr(
+        cmd_synth.as_mut_slice(),
+        &mut off,
+        cmd::AerogpuCmdOpcode::SetShaderResourceBuffers as u32,
+        SET_SHADER_RESOURCE_BUFFERS_SYNTH_SIZE_BYTES,
+    ) {
+        if let Some(shader_stage) = cmd_synth.get_mut(pkt + 8..pkt + 12) {
+            shader_stage.copy_from_slice(&(cmd::AerogpuShaderStage::Compute as u32).to_le_bytes());
+        }
+        if let Some(buffer_count) = cmd_synth.get_mut(pkt + 16..pkt + 20) {
+            buffer_count.copy_from_slice(&(SYNTH_SHADER_RESOURCE_BUFFER_COUNT as u32).to_le_bytes());
+        }
+        if let Some(reserved0) = cmd_synth.get_mut(pkt + 20..pkt + 24) {
+            reserved0.copy_from_slice(&(stage_ex_seed4 as u32).to_le_bytes());
+        }
+    }
+
+    // SET_UNORDERED_ACCESS_BUFFERS (uav_count=1)
+    if let Some(pkt) = write_pkt_hdr(
+        cmd_synth.as_mut_slice(),
+        &mut off,
+        cmd::AerogpuCmdOpcode::SetUnorderedAccessBuffers as u32,
+        SET_UNORDERED_ACCESS_BUFFERS_SYNTH_SIZE_BYTES,
+    ) {
+        if let Some(shader_stage) = cmd_synth.get_mut(pkt + 8..pkt + 12) {
+            shader_stage.copy_from_slice(&(cmd::AerogpuShaderStage::Compute as u32).to_le_bytes());
+        }
+        if let Some(uav_count) = cmd_synth.get_mut(pkt + 16..pkt + 20) {
+            uav_count.copy_from_slice(&(SYNTH_UNORDERED_ACCESS_BUFFER_COUNT as u32).to_le_bytes());
+        }
+        if let Some(reserved0) = cmd_synth.get_mut(pkt + 20..pkt + 24) {
+            reserved0.copy_from_slice(&(stage_ex_seed5 as u32).to_le_bytes());
         }
     }
 
