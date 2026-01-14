@@ -6394,6 +6394,14 @@ impl Machine {
                         )));
                     }
 
+                    // Only reopen install media when the restored guest state still reports a disc
+                    // inserted. Guests can eject media (ATAPI START STOP UNIT), and keeping an
+                    // OPFS sync access handle open for an already-ejected ISO can block later
+                    // re-attach attempts because handles are exclusive per file.
+                    if !self.inner.install_media_is_inserted() {
+                        continue;
+                    }
+
                     let disk = aero_opfs::OpfsBackend::open_existing(&base_image)
                         .await
                         .map_err(|e| opfs_error(disk_id, "base_image", &base_image, e))?;
@@ -7274,6 +7282,33 @@ mod reattach_restored_disks_from_opfs_tests {
         disk.read_at(0, &mut buf)
             .expect("read from reattached shared disk should succeed");
         assert_eq!(buf, [0xA5, 0x5A, 0x01, 0x02]);
+    }
+
+    #[wasm_bindgen_test(async)]
+    async fn reattach_restored_install_media_is_skipped_when_media_not_present() {
+        let mut m = Machine::new(16 * 1024 * 1024).expect("Machine::new should succeed");
+
+        // Ensure the guest-visible ATAPI state reports no media present. This simulates a guest-
+        // initiated eject (START STOP UNIT) without clearing host overlay refs.
+        m.inner.detach_ide_secondary_master_iso();
+        assert!(
+            !m.inner.install_media_is_inserted(),
+            "expected install media to report not inserted"
+        );
+
+        // Simulate snapshot restore populating `restored_disk_overlays` with a stale base_image ref.
+        // If `reattach_restored_disks_from_opfs` tried to open this path, it would fail.
+        m.inner.restore_disk_overlays(DiskOverlayRefs {
+            disks: vec![DiskOverlayRef {
+                disk_id: aero_machine::Machine::DISK_ID_INSTALL_MEDIA,
+                base_image: "tests/nonexistent-install-media.iso".to_string(),
+                overlay_image: String::new(),
+            }],
+        });
+
+        m.reattach_restored_disks_from_opfs()
+            .await
+            .expect("reattach should be a no-op when install media is not present");
     }
 
     #[wasm_bindgen_test(async)]

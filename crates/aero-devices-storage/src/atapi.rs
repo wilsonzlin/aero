@@ -195,6 +195,11 @@ impl AtapiCdrom {
         self.supports_dma
     }
 
+    /// Guest-visible media presence (independent of whether the host ISO backend is attached).
+    pub fn media_present(&self) -> bool {
+        self.media_present
+    }
+
     pub fn insert_media(&mut self, backend: Box<dyn IsoBackend>) {
         self.backend = Some(backend);
         self.tray_open = false;

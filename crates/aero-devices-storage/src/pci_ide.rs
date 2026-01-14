@@ -690,6 +690,18 @@ impl IdeController {
         }
     }
 
+    /// Returns whether the secondary master ATAPI device (install media slot) reports media present
+    /// from the guest's perspective.
+    ///
+    /// This is independent of whether a host ISO backend is currently attached: snapshot restore
+    /// drops the backend but preserves `media_present`.
+    pub fn secondary_master_atapi_media_present(&self) -> bool {
+        match self.secondary.devices[0].as_ref() {
+            Some(IdeDevice::Atapi(dev)) => dev.media_present(),
+            _ => false,
+        }
+    }
+
     /// Re-attaches a host ISO backend to an existing ATAPI device without changing guest-visible
     /// media state.
     ///

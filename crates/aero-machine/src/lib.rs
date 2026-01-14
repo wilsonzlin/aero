@@ -4286,6 +4286,18 @@ impl Machine {
         }
     }
 
+    /// Returns whether the guest currently reports install media inserted in the canonical ATAPI
+    /// CD-ROM slot (IDE secondary master).
+    ///
+    /// This reflects guest-visible tray/media state (`media_present`) rather than whether a host ISO
+    /// backend is currently attached: snapshot restore intentionally drops host backends.
+    pub fn install_media_is_inserted(&self) -> bool {
+        self.ide
+            .as_ref()
+            .map(|ide| ide.borrow().controller.secondary_master_atapi_media_present())
+            .unwrap_or(false)
+    }
+
     /// Enable/disable the firmware "CD-first when present" boot policy.
     ///
     /// When enabled, firmware POST will attempt to boot from the first CD-ROM drive when install
