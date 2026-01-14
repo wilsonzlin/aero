@@ -595,15 +595,22 @@ export class InputCapture {
       return;
     }
 
+    const startX = touch.clientX;
+    const startY = touch.clientY;
+    if (!Number.isFinite(startX) || !Number.isFinite(startY)) {
+      // Defensive: ignore malformed touches so they can't poison gesture state or synthesize a tap.
+      return;
+    }
+
     // Touch boundaries are a natural "capture session" boundary: drop any fractional remainder so
     // it cannot leak into a later session and cause a spurious pixel or wheel tick.
     this.resetAccumulatedMotion();
 
     this.touchActiveId = touch.identifier;
-    this.touchLastX = touch.clientX;
-    this.touchLastY = touch.clientY;
-    this.touchStartX = touch.clientX;
-    this.touchStartY = touch.clientY;
+    this.touchLastX = startX;
+    this.touchLastY = startY;
+    this.touchStartX = startX;
+    this.touchStartY = startY;
     this.touchStartTimeStamp = event.timeStamp;
     this.touchMaxDistSq = 0;
     this.touchHadMultiTouch = event.touches.length > 1;
@@ -639,6 +646,12 @@ export class InputCapture {
 
     const x = touch.clientX;
     const y = touch.clientY;
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      // Malformed coordinate stream: cancel the session so it cannot synthesize a tap/click later.
+      this.clearTouchState();
+      this.resetAccumulatedMotion();
+      return;
+    }
 
     const dx0 = x - this.touchStartX;
     const dy0 = y - this.touchStartY;
@@ -698,9 +711,10 @@ export class InputCapture {
 
     if (this.touchTapToClick && allowTap && !this.touchHadMultiTouch) {
       // 6px movement, 250ms duration. (Small enough to allow a little finger jitter.)
-      const moved = this.touchMaxDistSq > 6 * 6;
       const durationMs = event.timeStamp - this.touchStartTimeStamp;
-      const longPress = durationMs > 250;
+      const distSq = this.touchMaxDistSq;
+      const moved = Number.isFinite(distSq) ? distSq > 6 * 6 : true;
+      const longPress = !Number.isFinite(durationMs) || durationMs < 0 || durationMs > 250;
       if (!moved && !longPress) {
         // Emit click as down at touch-start timestamp + up at touch-end timestamp.
         //
@@ -751,6 +765,10 @@ export class InputCapture {
     const id = event.pointerId;
     const x = event.clientX;
     const y = event.clientY;
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      // Defensive: ignore malformed pointer coordinates so they can't synthesize a tap/click.
+      return;
+    }
 
     if (this.touchPointers.size === 0) {
       this.touchPrimaryPointerId = id;
@@ -796,6 +814,13 @@ export class InputCapture {
 
     const x = event.clientX;
     const y = event.clientY;
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      // Malformed coordinate stream: cancel so it cannot synthesize a tap/click.
+      this.cancelTouchCapture();
+      this.clearTouchState();
+      this.resetAccumulatedMotion();
+      return;
+    }
 
     // Track max distance for tap detection (primary pointer only).
     if (event.pointerId === this.touchPrimaryPointerId) {
@@ -1295,9 +1320,10 @@ export class InputCapture {
       event.pointerId === this.touchPrimaryPointerId
     ) {
       // 6px movement, 250ms duration. (Small enough to allow a little finger jitter.)
-      const moved = this.touchMaxDistSq > 6 * 6;
       const durationMs = event.timeStamp - this.touchStartTimeStamp;
-      const longPress = durationMs > 250;
+      const distSq = this.touchMaxDistSq;
+      const moved = Number.isFinite(distSq) ? distSq > 6 * 6 : true;
+      const longPress = !Number.isFinite(durationMs) || durationMs < 0 || durationMs > 250;
       if (!moved && !longPress) {
         // Emit click as down at touch-start timestamp + up at touch-end timestamp.
         //

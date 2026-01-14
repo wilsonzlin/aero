@@ -163,4 +163,49 @@ describe("InputCapture touch fallback", () => {
       expect(posted).toHaveLength(0);
     });
   });
+
+  it("does not emulate a tap when touch coordinates are non-finite", () => {
+    withStubbedDocument(() => {
+      const canvas = {
+        tabIndex: 0,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        focus: vi.fn(),
+      } as unknown as HTMLCanvasElement;
+
+      const posted: any[] = [];
+      const ioWorker = {
+        postMessage: (msg: unknown) => posted.push(msg),
+      };
+
+      const capture = new InputCapture(canvas, ioWorker, {
+        enableGamepad: false,
+        recycleBuffers: false,
+        enableTouchFallback: true,
+        touchTapToClick: true,
+      });
+
+      // Malformed start coordinates: ignore rather than tracking a "tap" session.
+      (capture as any).handleTouchStart({
+        timeStamp: 0,
+        touches: [touch(1, Number.NaN, 0)],
+        changedTouches: [touch(1, Number.NaN, 0)],
+        preventDefault: vi.fn(),
+        stopPropagation: vi.fn(),
+      } as unknown as TouchEvent);
+
+      (capture as any).handleTouchEnd({
+        timeStamp: 1,
+        touches: [],
+        changedTouches: [touch(1, Number.NaN, 0)],
+        preventDefault: vi.fn(),
+        stopPropagation: vi.fn(),
+      } as unknown as TouchEvent);
+
+      capture.flushNow();
+
+      expect((capture as any).mouseButtons).toBe(0);
+      expect(posted).toHaveLength(0);
+    });
+  });
 });
