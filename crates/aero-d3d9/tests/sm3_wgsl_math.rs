@@ -95,6 +95,12 @@ fn translates_exp_to_wgsl_exp2_with_predication_and_saturate() {
     assert!(wgsl.wgsl.contains("exp2("), "wgsl:\n{}", wgsl.wgsl);
     assert!(wgsl.wgsl.contains("clamp("), "wgsl:\n{}", wgsl.wgsl);
     assert!(wgsl.wgsl.contains("* 2.0"), "wgsl:\n{}", wgsl.wgsl);
+    // D3D9 result modifiers apply the shift first, then saturate (clamp).
+    assert!(
+        wgsl.wgsl.contains("clamp((exp2(c0)) * 2.0, vec4<f32>(0.0), vec4<f32>(1.0))"),
+        "wgsl:\n{}",
+        wgsl.wgsl
+    );
     assert!(wgsl.wgsl.contains("if (p0.x)"), "wgsl:\n{}", wgsl.wgsl);
 }
 
@@ -133,6 +139,12 @@ fn translates_log_to_wgsl_log2_with_saturate_and_shift() {
     assert!(wgsl.wgsl.contains("log2("), "wgsl:\n{}", wgsl.wgsl);
     assert!(wgsl.wgsl.contains("clamp("), "wgsl:\n{}", wgsl.wgsl);
     assert!(wgsl.wgsl.contains("* 2.0"), "wgsl:\n{}", wgsl.wgsl);
+    // D3D9 result modifiers apply the shift first, then saturate (clamp).
+    assert!(
+        wgsl.wgsl.contains("clamp((log2(c0)) * 2.0, vec4<f32>(0.0), vec4<f32>(1.0))"),
+        "wgsl:\n{}",
+        wgsl.wgsl
+    );
 }
 
 #[test]
@@ -185,6 +197,12 @@ fn translates_pow_to_wgsl_pow_with_predication_and_modifiers() {
     assert!(wgsl.wgsl.contains("pow("), "wgsl:\n{}", wgsl.wgsl);
     assert!(wgsl.wgsl.contains("clamp("), "wgsl:\n{}", wgsl.wgsl);
     assert!(wgsl.wgsl.contains("* 2.0"), "wgsl:\n{}", wgsl.wgsl);
+    // D3D9 result modifiers apply the shift first, then saturate (clamp).
+    assert!(
+        wgsl.wgsl.contains("clamp((pow((c0), (c1))) * 2.0, vec4<f32>(0.0), vec4<f32>(1.0))"),
+        "wgsl:\n{}",
+        wgsl.wgsl
+    );
     assert!(wgsl.wgsl.contains("if (p0.x)"), "wgsl:\n{}", wgsl.wgsl);
 }
 #[test]
