@@ -8,7 +8,7 @@ use aero_devices_gpu::ring::{
     SUBMIT_DESC_SIZE_BYTES_OFFSET,
 };
 use aero_devices_gpu::{
-    irq_bits, mmio, ring_control, AeroGpuDeviceConfig, AeroGpuExecutorConfig,
+    irq_bits, mmio, ring_control, AeroGpuDeviceConfig, AeroGpuExecutorConfig, AeroGpuFormat,
     AeroGpuFenceCompletionMode, AeroGpuPciDevice, ImmediateAeroGpuBackend,
 };
 use aero_protocol::aerogpu::aerogpu_pci::{AEROGPU_ABI_VERSION_U32, AEROGPU_MMIO_MAGIC};
@@ -288,4 +288,73 @@ fn ring_control_reset_clears_completed_fence_and_syncs_head_and_fence_page() {
     assert_eq!(mem.read_u32(ring_gpa + RING_HEAD_OFFSET), 3);
     assert_eq!(mem.read_u32(fence_gpa + FENCE_PAGE_MAGIC_OFFSET), AEROGPU_FENCE_PAGE_MAGIC);
     assert_eq!(mem.read_u64(fence_gpa + FENCE_PAGE_COMPLETED_FENCE_OFFSET), 0);
+}
+
+#[test]
+fn mmio_sub_dword_reads_and_writes_are_little_endian_and_merge_correctly() {
+    let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default());
+    dev.config_mut().set_command(1 << 1);
+
+    dev.write(mmio::SCANOUT0_WIDTH, 4, 0x1122_3344);
+
+    assert_eq!(dev.read(mmio::SCANOUT0_WIDTH, 1) as u32, 0x44);
+    assert_eq!(dev.read(mmio::SCANOUT0_WIDTH + 1, 1) as u32, 0x33);
+    assert_eq!(dev.read(mmio::SCANOUT0_WIDTH + 2, 1) as u32, 0x22);
+    assert_eq!(dev.read(mmio::SCANOUT0_WIDTH + 3, 1) as u32, 0x11);
+    assert_eq!(dev.read(mmio::SCANOUT0_WIDTH + 1, 2) as u32, 0x2233);
+
+    // Overwrite a single byte in the middle.
+    dev.write(mmio::SCANOUT0_WIDTH + 2, 1, 0xAA);
+    assert_eq!(dev.read(mmio::SCANOUT0_WIDTH, 4) as u32, 0x11AA_3344);
+
+    // Overwrite low and high halves.
+    dev.write(mmio::SCANOUT0_WIDTH, 2, 0xBEEF);
+    assert_eq!(dev.read(mmio::SCANOUT0_WIDTH, 4) as u32, 0x11AA_BEEF);
+
+    dev.write(mmio::SCANOUT0_WIDTH + 2, 2, 0xCAFE);
+    assert_eq!(dev.read(mmio::SCANOUT0_WIDTH, 4) as u32, 0xCAFE_BEEF);
+}
+
+#[test]
+fn scanout_and_cursor_mmio_writes_sanitize_format_values_and_normalize_enable() {
+    let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default());
+    dev.config_mut().set_command(1 << 1);
+
+    // Boolean registers should treat any non-zero write as enabled.
+    dev.write(mmio::SCANOUT0_ENABLE, 4, 2);
+    assert_eq!(dev.read(mmio::SCANOUT0_ENABLE, 4) as u32, 1);
+
+    dev.write(mmio::CURSOR_ENABLE, 4, 123);
+    assert_eq!(dev.read(mmio::CURSOR_ENABLE, 4) as u32, 1);
+
+    // Format registers should sanitize unknown values.
+    dev.write(mmio::SCANOUT0_FORMAT, 4, 0xDEAD_BEEF);
+    assert_eq!(
+        dev.read(mmio::SCANOUT0_FORMAT, 4) as u32,
+        AeroGpuFormat::Invalid as u32
+    );
+    assert_eq!(dev.regs.scanout0.format, AeroGpuFormat::Invalid);
+
+    dev.write(
+        mmio::SCANOUT0_FORMAT,
+        4,
+        AeroGpuFormat::B8G8R8X8Unorm as u64,
+    );
+    assert_eq!(
+        dev.read(mmio::SCANOUT0_FORMAT, 4) as u32,
+        AeroGpuFormat::B8G8R8X8Unorm as u32
+    );
+
+    dev.write(mmio::CURSOR_FORMAT, 4, 0xDEAD_BEEF);
+    assert_eq!(
+        dev.read(mmio::CURSOR_FORMAT, 4) as u32,
+        AeroGpuFormat::Invalid as u32
+    );
+
+    dev.write(mmio::CURSOR_FORMAT, 4, AeroGpuFormat::R8G8B8A8Unorm as u64);
+    assert_eq!(
+        dev.read(mmio::CURSOR_FORMAT, 4) as u32,
+        AeroGpuFormat::R8G8B8A8Unorm as u32
+    );
+    assert_eq!(dev.regs.cursor.format, AeroGpuFormat::R8G8B8A8Unorm);
 }

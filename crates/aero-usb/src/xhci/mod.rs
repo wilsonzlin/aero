@@ -2987,8 +2987,7 @@ impl XhciController {
             let exec_halted = exec.endpoint_state(ep_addr).is_some_and(|st| st.halted);
             if exec_halted {
                 // Avoid clobbering Stopped/other states; only transition Running->Halted.
-                if let Some(state) =
-                    self.read_endpoint_state_from_context(mem, slot_id, endpoint_id)
+                if let Some(state) = self.read_endpoint_state_from_context(mem, slot_id, endpoint_id)
                 {
                     if matches!(state, context::EndpointState::Running) {
                         self.write_endpoint_state_to_context(
@@ -3669,14 +3668,11 @@ impl XhciController {
         // Keep controller-local shadow context in sync so snapshot/restore preserves the halted
         // state even if the guest doesn't re-run Configure Endpoint.
         let slot_idx = usize::from(slot_id);
-        if slot_id != 0 {
-            if let Some(slot) = self.slots.get_mut(slot_idx) {
-                slot.endpoint_contexts[usize::from(endpoint_id - 1)] = ep_ctx;
-                slot.device_context_ptr = dev_ctx_ptr;
-            } else {
-                return false;
-            }
-        }
+        let Some(slot) = self.slots.get_mut(slot_idx) else {
+            return false;
+        };
+        slot.endpoint_contexts[usize::from(endpoint_id - 1)] = ep_ctx;
+        slot.device_context_ptr = dev_ctx_ptr;
         true
     }
 
