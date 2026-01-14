@@ -1822,6 +1822,17 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
         output_semantics.insert((decl.reg.file, decl.reg.index), decl.semantic.clone());
     }
 
+    let depth_out_regs: BTreeSet<u32> = usage
+        .outputs_used
+        .iter()
+        .filter_map(|(file, idx)| (*file == RegFile::DepthOut).then_some(*idx))
+        .chain(
+            ir.outputs
+                .iter()
+                .filter_map(|decl| (decl.reg.file == RegFile::DepthOut).then_some(decl.reg.index)),
+        )
+        .collect();
+
     let mut wgsl = String::new();
 
     // Float constants: pack per-stage `c#` register files into a single uniform buffer to keep
@@ -1925,6 +1936,11 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
                 return Err(err(
                     "MiscType (vPos/vFace) inputs are only supported in pixel shaders",
                 ));
+            }
+            if !depth_out_regs.is_empty() {
+                return Err(err(format!(
+                    "DepthOut (oDepth) is only valid in pixel shaders, but appears in a vertex shader (indices: {depth_out_regs:?})"
+                )));
             }
 
             // Vertex attributes (`v#`).
@@ -2099,6 +2115,13 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
             }
             let has_inputs = !ps_inputs.is_empty() || !usage.misc_inputs.is_empty();
 
+            if depth_out_regs.len() > 1 || depth_out_regs.iter().any(|&idx| idx != 0) {
+                return Err(err(format!(
+                    "pixel shader uses DepthOut registers {depth_out_regs:?}; only oDepth (index 0) is supported"
+                )));
+            }
+            let has_depth_out = !depth_out_regs.is_empty();
+
             let mut ps_input_locations: BTreeMap<(RegFile, u32), u32> = BTreeMap::new();
             let mut loc_to_reg: BTreeMap<u32, (RegFile, u32)> = BTreeMap::new();
             for (file, index) in &ps_inputs {
@@ -2122,25 +2145,12 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
             }
             color_outputs.insert(0);
 
-            // Pixel depth output (oDepth).
-            let mut writes_depth = false;
-            for (file, index) in &usage.outputs_written {
-                if *file == RegFile::DepthOut {
-                    if *index != 0 {
-                        return Err(err(format!(
-                            "unsupported depth output register oDepth{index} (only oDepth is supported)"
-                        )));
-                    }
-                    writes_depth = true;
-                }
-            }
-
             wgsl.push_str("struct FsOut {\n");
             for idx in &color_outputs {
                 let _ = writeln!(wgsl, "  @location({idx}) oC{idx}: vec4<f32>,");
             }
-            if writes_depth {
-                wgsl.push_str("  @builtin(frag_depth) frag_depth: f32,\n");
+            if has_depth_out {
+                wgsl.push_str("  @builtin(frag_depth) depth: f32,\n");
             }
             wgsl.push_str("};\n\n");
 
@@ -2241,6 +2251,9 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
             // value at the end.
             let mut required_outputs = usage.outputs_used.clone();
             required_outputs.extend(color_outputs.iter().map(|&idx| (RegFile::ColorOut, idx)));
+            if has_depth_out {
+                required_outputs.insert((RegFile::DepthOut, 0));
+            }
 
             for (file, index) in &required_outputs {
                 let reg = RegRef {
@@ -2267,8 +2280,8 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
             for idx in &color_outputs {
                 let _ = writeln!(wgsl, "  out.oC{idx} = oC{idx};");
             }
-            if writes_depth {
-                wgsl.push_str("  out.frag_depth = oDepth.x;\n");
+            if has_depth_out {
+                wgsl.push_str("  out.depth = oDepth.x;\n");
             }
             wgsl.push_str("  return out;\n}\n");
         }

@@ -208,7 +208,7 @@ fn wgsl_ps30_writes_odepth_compiles() {
     .expect("wgsl validate");
 
     assert!(wgsl.contains("@builtin(frag_depth)"), "{wgsl}");
-    assert!(wgsl.contains("out.frag_depth"), "{wgsl}");
+    assert!(wgsl.contains("out.depth = oDepth.x;"), "{wgsl}");
 }
 
 #[test]

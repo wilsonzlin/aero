@@ -64,8 +64,8 @@ fn wgsl_ps3_texldp_is_valid() {
 
     let wgsl = generate_wgsl(&ir).unwrap().wgsl;
     assert!(wgsl.contains("textureSample("), "{wgsl}");
-    assert!(wgsl.contains("@group(0) @binding(1) var tex0"), "{wgsl}");
-    assert!(wgsl.contains("@group(0) @binding(2) var samp0"), "{wgsl}");
+    assert!(wgsl.contains("@group(2) @binding(0) var tex0"), "{wgsl}");
+    assert!(wgsl.contains("@group(2) @binding(1) var samp0"), "{wgsl}");
 
     let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
     naga::valid::Validator::new(
@@ -110,4 +110,3 @@ fn wgsl_ps3_texkill_discard_is_valid() {
     .validate(&module)
     .expect("wgsl validate");
 }
-
