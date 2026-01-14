@@ -12,6 +12,28 @@ import {
   loadHeaderI32,
 } from "./framebuffer_protocol.js";
 
+// Canvas2D expects sRGB-encoded bytes for `ImageData`. The VGA/shared-framebuffer pipeline
+// treats RGBA8 bytes as *linear*, so we encode linear->sRGB before `putImageData`.
+//
+// Keep this in sync with `web/src/utils/srgb.ts` + `web/src/display/vga_presenter.ts`.
+const LINEAR_TO_SRGB_U8 = (() => {
+  const lut = new Uint8Array(256);
+  for (let i = 0; i < 256; i += 1) {
+    const l = i / 255;
+    const s = l <= 0.0031308 ? l * 12.92 : 1.055 * Math.pow(l, 1 / 2.4) - 0.055;
+    lut[i] = Math.min(255, Math.max(0, Math.round(s * 255)));
+  }
+  return lut;
+})();
+
+function encodeLinearRgba8ToSrgbInPlace(rgba) {
+  for (let i = 0; i + 3 < rgba.byteLength; i += 4) {
+    rgba[i + 0] = LINEAR_TO_SRGB_U8[rgba[i + 0]];
+    rgba[i + 1] = LINEAR_TO_SRGB_U8[rgba[i + 1]];
+    rgba[i + 2] = LINEAR_TO_SRGB_U8[rgba[i + 2]];
+  }
+}
+
 function hasRaf() {
   return typeof requestAnimationFrame === "function";
 }
@@ -184,7 +206,7 @@ export class VgaPresenter {
       const width = loadHeaderI32(header, HEADER_INDEX_WIDTH);
       const height = loadHeaderI32(header, HEADER_INDEX_HEIGHT);
       const strideBytes = loadHeaderI32(header, HEADER_INDEX_STRIDE_BYTES);
-      this.reconfigureSource(width, height, strideBytes, format, shared.pixelsU8Clamped);
+      this.reconfigureSource(width, height, strideBytes, format);
       this.lastConfigCounter = configCounter;
     }
 
@@ -208,7 +230,7 @@ export class VgaPresenter {
     }
 
     if (frame.width !== this.srcWidth || frame.height !== this.srcHeight || frame.strideBytes !== this.srcStrideBytes) {
-      this.reconfigureSource(frame.width, frame.height, frame.strideBytes, frame.format, null);
+      this.reconfigureSource(frame.width, frame.height, frame.strideBytes, frame.format);
     }
 
     const u8c =
@@ -234,7 +256,7 @@ export class VgaPresenter {
     if (this.canvas.height !== height) this.canvas.height = height;
   }
 
-  reconfigureSource(width, height, strideBytes, format, sharedPixelsOrNull) {
+  reconfigureSource(width, height, strideBytes, format) {
     width = clampPositiveInt("width", width);
     height = clampPositiveInt("height", height);
     strideBytes = clampPositiveInt("strideBytes", strideBytes);
@@ -251,12 +273,9 @@ export class VgaPresenter {
     this.srcCanvas = createScratchCanvas(width, height);
     this.srcCtx = get2dContext(this.srcCanvas);
 
-    const tightlyPacked = strideBytes === width * 4;
-    if (tightlyPacked && sharedPixelsOrNull) {
-      this.srcImageBytes = sharedPixelsOrNull.subarray(0, width * height * 4);
-    } else {
-      this.srcImageBytes = new Uint8ClampedArray(width * height * 4);
-    }
+    // `ImageData` does not accept SharedArrayBuffer-backed views, so always keep
+    // a private, tightly-packed ArrayBuffer-backed copy here.
+    this.srcImageBytes = new Uint8ClampedArray(width * height * 4);
 
     this.srcImageData = new ImageData(this.srcImageBytes, width, height);
   }
@@ -279,10 +298,11 @@ export class VgaPresenter {
         const dstStart = y * rowBytes;
         this.srcImageBytes.set(pixels.subarray(srcStart, srcStart + rowBytes), dstStart);
       }
-    } else if (this.srcImageBytes.buffer !== pixels.buffer || this.srcImageBytes.byteOffset !== pixels.byteOffset) {
+    } else {
       this.srcImageBytes.set(pixels.subarray(0, width * height * 4));
     }
 
+    encodeLinearRgba8ToSrgbInPlace(this.srcImageBytes);
     this.srcCtx.putImageData(this.srcImageData, 0, 0);
   }
 
@@ -326,4 +346,3 @@ export class VgaPresenter {
     }
   }
 }
-
