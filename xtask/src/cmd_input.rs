@@ -48,8 +48,8 @@ Steps:
   2. cargo test -p aero-usb --locked --test uhci --test uhci_external_hub --test ehci --test hid_builtin_snapshot
      --test hid_usage_keyboard_fixture --test hid_usage_consumer_fixture --test xhci_enum_smoke
      (or: --usb-all to run the full aero-usb test suite)
-  3. (optional: --machine) cargo test -p aero-machine --lib --locked --test machine_uhci --test machine_uhci_synthetic_usb_hid
-     --test machine_uhci_synthetic_usb_hid_mouse_buttons --test machine_uhci_synthetic_usb_hid_gamepad
+  3. (optional: --machine) cargo test -p aero-machine --lib --locked --test machine_uhci --test machine_ehci --test machine_usb2_companion_routing
+     --test machine_uhci_synthetic_usb_hid --test machine_uhci_synthetic_usb_hid_mouse_buttons --test machine_uhci_synthetic_usb_hid_gamepad
      --test machine_uhci_synthetic_usb_hid_reports --test machine_xhci --test xhci_snapshot --test machine_xhci_usb_attach_at_path
   4. (optional: --wasm) wasm-pack test --node crates/aero-wasm --test webusb_uhci_bridge --test xhci_webusb_bridge --locked
   5. (optional: --with-wasm) cargo test -p aero-wasm --locked --test machine_input_injection --test machine_input_backends
@@ -59,7 +59,7 @@ Steps:
 
 Options:
   --e2e                 Also run a small subset of Playwright E2E tests relevant to input.
-  --machine             Also run targeted `aero-machine` tests (UHCI/xHCI wiring + snapshot/restore).
+  --machine             Also run targeted `aero-machine` tests (UHCI/EHCI/xHCI wiring + USB2 companion routing + snapshot/restore).
   --wasm                Also run wasm-pack tests for the WASM USB bridge (does not require `node_modules`).
   --rust-only            Skip npm unit + Playwright steps (does not require `node_modules`).
   --usb-all             Run the full `aero-usb` test suite (all integration tests).
@@ -123,8 +123,8 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
 
     if opts.machine {
         // Keep this targeted: `aero-machine` has a large integration test suite (GPU/BIOS/etc).
-        // For input/USB changes we only need the unit tests plus the UHCI/xHCI integration tests
-        // that validate device wiring and snapshot/restore behaviour.
+        // For input/USB changes we only need the unit tests plus the UHCI/EHCI/xHCI integration
+        // tests that validate device wiring and snapshot/restore behaviour.
         let mut cmd = Command::new("cargo");
         cmd.current_dir(&repo_root).args([
             "test",
@@ -134,6 +134,10 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
             "--locked",
             "--test",
             "machine_uhci",
+            "--test",
+            "machine_ehci",
+            "--test",
+            "machine_usb2_companion_routing",
             "--test",
             "machine_uhci_synthetic_usb_hid",
             "--test",
@@ -150,7 +154,7 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
             "machine_xhci_usb_attach_at_path",
         ]);
         runner.run_step(
-            "Rust: cargo test -p aero-machine --lib --locked --test machine_uhci --test machine_uhci_synthetic_usb_hid --test machine_uhci_synthetic_usb_hid_mouse_buttons --test machine_uhci_synthetic_usb_hid_gamepad --test machine_uhci_synthetic_usb_hid_reports --test machine_xhci --test xhci_snapshot --test machine_xhci_usb_attach_at_path",
+            "Rust: cargo test -p aero-machine --lib --locked --test machine_uhci --test machine_ehci --test machine_usb2_companion_routing --test machine_uhci_synthetic_usb_hid --test machine_uhci_synthetic_usb_hid_mouse_buttons --test machine_uhci_synthetic_usb_hid_gamepad --test machine_uhci_synthetic_usb_hid_reports --test machine_xhci --test xhci_snapshot --test machine_xhci_usb_attach_at_path",
             &mut cmd,
         )?;
     }

@@ -23,6 +23,8 @@ fn input_help_mentions_flags_and_steps() {
         .stdout(predicate::str::contains("aero-machine"))
         .stdout(predicate::str::contains("aero-wasm"))
         .stdout(predicate::str::contains("machine_uhci"))
+        .stdout(predicate::str::contains("machine_ehci"))
+        .stdout(predicate::str::contains("machine_usb2_companion_routing"))
         .stdout(predicate::str::contains("machine_uhci_synthetic_usb_hid"))
         .stdout(predicate::str::contains(
             "machine_uhci_synthetic_usb_hid_mouse_buttons",
