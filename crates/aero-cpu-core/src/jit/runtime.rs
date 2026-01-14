@@ -277,7 +277,7 @@ impl PageVersionTracker {
     ///
     /// This method therefore acts as a *check*: it ensures `len <= table_len`, panicking if the
     /// configured table is too small.
-    pub fn ensure_table_len(&mut self, len: usize) {
+    pub fn ensure_table_len(&self, len: usize) {
         assert!(
             len <= self.versions.len(),
             "requested code-version table length ({len}) exceeds configured max_pages ({})",
@@ -286,12 +286,12 @@ impl PageVersionTracker {
     }
 
     /// Backwards-compatible alias for [`Self::ensure_table_len`].
-    pub fn ensure_tracked_pages(&mut self, pages: usize) {
+    pub fn ensure_tracked_pages(&self, pages: usize) {
         self.ensure_table_len(pages);
     }
 
     /// Backwards-compatible alias for [`Self::ensure_table_len`].
-    pub fn ensure_len(&mut self, len: usize) {
+    pub fn ensure_len(&self, len: usize) {
         self.ensure_table_len(len);
     }
 
@@ -300,7 +300,7 @@ impl PageVersionTracker {
     /// The table is a contiguous `u32` array with one entry per 4KiB page (`paddr >> 12`).
     ///
     /// Pointer stability: `ptr` remains valid for the lifetime of the tracker (no reallocations).
-    pub fn table_ptr_len(&mut self) -> (*mut u32, usize) {
+    pub fn table_ptr_len(&self) -> (*mut u32, usize) {
         let len = self.versions.len();
         if len == 0 {
             // `Box<[T]>::as_ptr()` returns a non-null dangling pointer for empty slices, but JIT
@@ -328,7 +328,7 @@ impl PageVersionTracker {
     ///
     /// `ptr` is a wasm linear-memory byte offset.
     #[cfg(target_arch = "wasm32")]
-    pub fn table_ptr_len_u32(&mut self) -> (u32, u32) {
+    pub fn table_ptr_len_u32(&self) -> (u32, u32) {
         let (ptr, len) = self.table_ptr_len();
         (ptr as u32, len as u32)
     }
@@ -537,7 +537,7 @@ where
     /// This is a *check* (not a resize): the table length is fixed at construction time via
     /// [`JitConfig::code_version_max_pages`]. If `len` exceeds the configured length, this method
     /// panics.
-    pub fn ensure_page_version_table_len(&mut self, len: usize) {
+    pub fn ensure_page_version_table_len(&self, len: usize) {
         self.page_versions.ensure_len(len);
     }
 
@@ -568,7 +568,7 @@ where
     /// guards), callers should size the table up-front (via
     /// [`JitConfig::code_version_max_pages`]) so it covers all guest-physical pages that need
     /// tracking. Pages outside the table behave as version 0.
-    pub fn ensure_code_version_table_len(&mut self, len: usize) {
+    pub fn ensure_code_version_table_len(&self, len: usize) {
         self.page_versions.ensure_table_len(len);
     }
 
@@ -576,7 +576,7 @@ where
     ///
     /// The pointer/length are stable for the lifetime of the runtime (no reallocations), including
     /// across [`Self::reset`] which clears the table in place.
-    pub fn code_version_table_ptr_len(&mut self) -> (*mut u32, usize) {
+    pub fn code_version_table_ptr_len(&self) -> (*mut u32, usize) {
         self.page_versions.table_ptr_len()
     }
 
@@ -936,7 +936,7 @@ mod tests {
 
     #[test]
     fn page_versions_table_ptr_len_is_null_when_len_zero() {
-        let mut tracker = PageVersionTracker::new(0);
+        let tracker = PageVersionTracker::new(0);
         let (ptr, len) = tracker.table_ptr_len();
         assert!(ptr.is_null());
         assert_eq!(len, 0);
@@ -945,7 +945,7 @@ mod tests {
     #[test]
     #[should_panic]
     fn page_versions_ensure_tracked_pages_panics_when_exceeds_configured_len() {
-        let mut tracker = PageVersionTracker::new(4);
+        let tracker = PageVersionTracker::new(4);
         tracker.ensure_tracked_pages(5);
     }
 
