@@ -368,6 +368,50 @@ else
   echo "warning: python3 not found; skipping driver template manifest check" >&2
 fi
 
+# virtio-snd CI package completeness guardrail:
+# `drivers/windows7/virtio-snd/ci-package.json` is expected to keep the driver package self-contained
+# with its helper docs/scripts (used for troubleshooting + host integration bring-up). Ensure that
+# any tracked helper file added under the driver directory is also listed in `additionalFiles`.
+if command -v python3 >/dev/null 2>&1; then
+  python3 - <<'PY'
+import json
+from pathlib import Path
+
+driver_root = Path("drivers/windows7/virtio-snd")
+manifest_path = driver_root / "ci-package.json"
+
+with manifest_path.open("r", encoding="utf-8") as f:
+    manifest = json.load(f)
+
+additional = manifest.get("additionalFiles", [])
+if not isinstance(additional, list):
+    raise SystemExit(f"{manifest_path}: expected additionalFiles to be an array")
+
+additional_set = {str(x).strip().replace("\\\\", "/") for x in additional if isinstance(x, str) and str(x).strip()}
+
+helper_exts = {".md", ".sh", ".ps1", ".cmd", ".py"}
+helper_files = set()
+for p in driver_root.rglob("*"):
+    if not p.is_file():
+        continue
+    if p.suffix.lower() not in helper_exts:
+        continue
+    helper_files.add(p.relative_to(driver_root).as_posix())
+
+missing = sorted(helper_files - additional_set)
+if missing:
+    formatted = "\n".join(f"  - {p}" for p in missing)
+    raise SystemExit(
+        f"{manifest_path}: additionalFiles is missing helper file(s) (docs/scripts) present under the driver directory:\n{formatted}\n"
+        "Remediation: add the missing paths to `additionalFiles` so CI/Guest Tools packaging stays self-contained."
+    )
+
+print("virtio-snd helper files manifest check: OK")
+PY
+else
+  echo "warning: python3 not found; skipping virtio-snd helper files manifest check" >&2
+fi
+
 # Canonical shared protocol vectors (used by cross-language conformance tests).
 need_file "protocol-vectors/README.md"
 need_file "protocol-vectors/udp-relay.json"
