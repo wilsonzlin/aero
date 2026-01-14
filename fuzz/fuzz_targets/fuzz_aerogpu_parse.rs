@@ -504,6 +504,14 @@ fn fuzz_frame_source(bytes: &[u8]) {
 
     let base_ptr = backing_words.as_mut_ptr() as *mut u8;
 
+    // Exercise basic pointer validation paths: `FrameSource::from_shared_memory` must gracefully
+    // reject null and unaligned base pointers/offsets without panicking or performing UB.
+    let _ = unsafe { FrameSource::from_shared_memory(std::ptr::null_mut(), 0) };
+    // Unaligned base pointer (still within our allocation).
+    let _ = unsafe { FrameSource::from_shared_memory(base_ptr.add(1), 0) };
+    // Unaligned offset (still within our allocation).
+    let _ = unsafe { FrameSource::from_shared_memory(base_ptr, 1) };
+
     let mut drive = |mut source: FrameSource| {
         let mut rest_u = Unstructured::new(rest);
         let shared = source.shared();
