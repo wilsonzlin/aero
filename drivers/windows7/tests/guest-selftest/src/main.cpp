@@ -592,6 +592,15 @@ static std::optional<AerovblkQueryInfoResult> QueryAerovblkMiniportInfo(Logger& 
   // Variable-length contract: copy only the bytes the driver reports as valid.
   memset(&out.info, 0, sizeof(out.info));
   memcpy(&out.info, buf.data() + sizeof(SRB_IO_CONTROL), std::min(returned_len, sizeof(out.info)));
+
+  // Defensive: if the driver returns a short/odd-length payload that cuts through the middle of a field,
+  // ensure we don't treat partially-copied bytes as meaningful values. In particular, 0 is a valid MSI-X
+  // vector index but is a bad "unknown" default. Use the virtio sentinel (0xFFFF) when the full field
+  // was not returned.
+  constexpr size_t kMsixCfgEnd = offsetof(AEROVBLK_QUERY_INFO, MsixConfigVector) + sizeof(USHORT);
+  constexpr size_t kMsixQ0End = offsetof(AEROVBLK_QUERY_INFO, MsixQueue0Vector) + sizeof(USHORT);
+  if (returned_len < kMsixCfgEnd) out.info.MsixConfigVector = kVirtioPciMsiNoVector;
+  if (returned_len < kMsixQ0End) out.info.MsixQueue0Vector = kVirtioPciMsiNoVector;
   return out;
 }
 
@@ -7375,17 +7384,25 @@ int wmain(int argc, wchar_t** argv) {
     constexpr size_t kMsixQ0End = offsetof(AEROVBLK_QUERY_INFO, MsixQueue0Vector) + sizeof(USHORT);
 
     if (blk_miniport_info->returned_len >= kIrqModeEnd) {
-      const USHORT msix_cfg =
-          (blk_miniport_info->returned_len >= kMsixCfgEnd) ? blk_miniport_info->info.MsixConfigVector
-                                                          : kVirtioPciMsiNoVector;
-      const USHORT msix_q0 =
-          (blk_miniport_info->returned_len >= kMsixQ0End) ? blk_miniport_info->info.MsixQueue0Vector
-                                                         : kVirtioPciMsiNoVector;
-      log.Logf(
-          "AERO_VIRTIO_SELFTEST|TEST|virtio-blk|%s|irq_mode=%s|msix_config_vector=0x%04x|"
-          "msix_queue_vector=0x%04x",
-          blk_ok ? "PASS" : "FAIL", AerovblkIrqModeForMarker(blk_miniport_info->info),
-          static_cast<unsigned>(msix_cfg), static_cast<unsigned>(msix_q0));
+      std::string marker = std::string("AERO_VIRTIO_SELFTEST|TEST|virtio-blk|") + (blk_ok ? "PASS" : "FAIL");
+      marker += "|irq_mode=";
+      marker += AerovblkIrqModeForMarker(blk_miniport_info->info);
+
+      if (blk_miniport_info->returned_len >= kMsixCfgEnd) {
+        char vec[16];
+        snprintf(vec, sizeof(vec), "0x%04x", static_cast<unsigned>(blk_miniport_info->info.MsixConfigVector));
+        marker += "|msix_config_vector=";
+        marker += vec;
+      }
+
+      if (blk_miniport_info->returned_len >= kMsixQ0End) {
+        char vec[16];
+        snprintf(vec, sizeof(vec), "0x%04x", static_cast<unsigned>(blk_miniport_info->info.MsixQueue0Vector));
+        marker += "|msix_queue_vector=";
+        marker += vec;
+      }
+
+      log.LogLine(marker);
     } else {
       log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-blk|%s", blk_ok ? "PASS" : "FAIL");
     }
