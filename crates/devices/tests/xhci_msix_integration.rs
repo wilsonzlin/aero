@@ -201,6 +201,61 @@ fn xhci_msix_masked_vector_sets_pba_and_delivers_on_unmask() {
 }
 
 #[test]
+fn xhci_msix_pending_delivers_on_unmask_even_after_interrupt_cleared() {
+    let mut dev = XhciPciDevice::default();
+    dev.config_mut().set_command(1 << 1);
+
+    let interrupts = Rc::new(RefCell::new(PlatformInterrupts::new()));
+    interrupts
+        .borrow_mut()
+        .set_mode(PlatformInterruptMode::Apic);
+    dev.set_msi_target(Some(Box::new(interrupts.clone())));
+
+    // Program a masked MSI-X table entry and enable MSI-X.
+    program_msix_table_entry0(&mut dev, 0xfee0_0000, 0x45, true);
+    enable_msix(&mut dev);
+
+    let (table_base, pba_base) = {
+        let msix = dev
+            .config()
+            .capability::<MsixCapability>()
+            .expect("MSI-X capability");
+        (u64::from(msix.table_offset()), u64::from(msix.pba_offset()))
+    };
+
+    // Trigger: masked entry should set PBA[0] instead of delivering.
+    dev.raise_event_interrupt();
+    assert_eq!(interrupts.borrow_mut().get_pending(), None);
+    assert_eq!(
+        MmioHandler::read(&mut dev, pba_base, 8) & 1,
+        1,
+        "masked trigger should set PBA pending bit"
+    );
+
+    // Clear the interrupt condition before unmasking. Pending delivery should still occur once the
+    // vector becomes unmasked, even though the "interrupt requested" level has deasserted.
+    dev.clear_event_interrupt();
+
+    MmioHandler::write(&mut dev, table_base + 0x0c, 4, 0); // unmask
+
+    let mut ints = interrupts.borrow_mut();
+    assert_eq!(
+        ints.get_pending(),
+        Some(0x45),
+        "pending MSI-X should deliver after unmask even when interrupt condition is low"
+    );
+    ints.acknowledge(0x45);
+    ints.eoi(0x45);
+    assert_eq!(ints.get_pending(), None);
+
+    assert_eq!(
+        MmioHandler::read(&mut dev, pba_base, 8) & 1,
+        0,
+        "PBA pending bit should clear after delivery"
+    );
+}
+
+#[test]
 fn xhci_port_status_change_event_delivers_controller_interrupt_via_msix() {
     const ERST_PADDR: u64 = 0x1000;
     const SEG_PADDR: u64 = 0x2000;

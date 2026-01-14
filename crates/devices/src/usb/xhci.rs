@@ -182,26 +182,32 @@ impl XhciPciDevice {
         // For masked MSI/MSI-X vectors, the PCI capability logic latches a pending bit but does not
         // automatically re-deliver on unmask; re-trigger while the interrupt condition persists so
         // guests can observe delivery after unmask.
-        if level {
-            if let Some(target) = self.msi_target.as_mut() {
-                // Prefer MSI-X over MSI when enabled to avoid double delivery.
-                if let Some(msix) = self.config.capability_mut::<MsixCapability>() {
-                    if msix.enabled() {
-                        // Single-vector MSI-X: table entry 0, pending bit 0.
-                        let pending = msix
-                            .snapshot_pba()
-                            .first()
-                            .is_some_and(|word| (word & 1) != 0);
-                        if !self.last_irq_level || pending {
-                            if let Some(msg) = msix.trigger(0) {
-                                target.as_mut().trigger_msi(msg);
-                            }
-                        }
-                        self.last_irq_level = level;
-                        return;
-                    }
-                }
+        if let Some(target) = self.msi_target.as_mut() {
+            // Prefer MSI-X over MSI when enabled to avoid double delivery.
+            if let Some(msix) = self.config.capability_mut::<MsixCapability>() {
+                if msix.enabled() {
+                    // MSI-X has an architectural pending-bit array (PBA). If an interrupt is raised
+                    // while masked/unprogrammed, the PBA bit is set, and the message is expected to
+                    // be delivered once the entry becomes deliverable.
+                    //
+                    // Deliver pending MSI-X messages whenever `service_interrupts` is called,
+                    // regardless of the current interrupt condition.
+                    msix.drain_pending(|msg| target.as_mut().trigger_msi(msg));
 
+                    // Deliver a new interrupt on a rising edge of the interrupt condition. If the
+                    // vector is masked/unprogrammed, `trigger` will set the PBA bit instead.
+                    if level && !self.last_irq_level {
+                        if let Some(msg) = msix.trigger(0) {
+                            target.as_mut().trigger_msi(msg);
+                        }
+                    }
+
+                    self.last_irq_level = level;
+                    return;
+                }
+            }
+
+            if level {
                 if let Some(msi) = self.config.capability_mut::<MsiCapability>() {
                     if msi.enabled() {
                         let pending = msi.pending_bits() != 0;
