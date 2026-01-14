@@ -1231,38 +1231,6 @@ bool unbind_resource_from_srvs_locked(AeroGpuDevice* dev, D3D10DDI_HDEVICE hDevi
 
 bool emit_set_render_targets_locked(AeroGpuDevice* dev);
 
-void normalize_render_targets_no_gaps_locked(AeroGpuDevice* dev) {
-  if (!dev) {
-    return;
-  }
-
-  // The current AeroGPU host executors only support render target bindings that
-  // are a contiguous prefix starting at slot 0. Any "gap" (a non-zero RTV handle
-  // after a zero) is normalized away by truncating the RTV list at the first
-  // null slot.
-  const uint32_t count = std::min<uint32_t>(dev->current_rtv_count, AEROGPU_MAX_RENDER_TARGETS);
-  uint32_t new_count = 0;
-  bool seen_gap = false;
-  for (uint32_t i = 0; i < count; ++i) {
-    const aerogpu_handle_t h = dev->current_rtvs[i];
-    if (h == 0) {
-      seen_gap = true;
-      continue;
-    }
-    if (seen_gap) {
-      dev->current_rtvs[i] = 0;
-      dev->current_rtv_resources[i] = nullptr;
-    } else {
-      new_count = i + 1;
-    }
-  }
-  for (uint32_t i = new_count; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
-    dev->current_rtvs[i] = 0;
-    dev->current_rtv_resources[i] = nullptr;
-  }
-  dev->current_rtv_count = new_count;
-}
-
 bool unbind_resource_from_outputs_locked(AeroGpuDevice* dev, D3D10DDI_HDEVICE hDevice, aerogpu_handle_t resource) {
   if (!dev || resource == 0) {
     return true;
