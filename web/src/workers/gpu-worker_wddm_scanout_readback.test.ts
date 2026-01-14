@@ -548,7 +548,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
 
   it("reads BGRX scanout from VRAM when the WorkerInitMessage vramBasePaddr is overridden", async () => {
     const segments = allocateHarnessSharedMemorySegments({
-      guestRamBytes: 1 * 1024 * 1024,
+      guestRamBytes: 64 * 1024,
       sharedFramebuffer: new SharedArrayBuffer(8),
       sharedFramebufferOffsetBytes: 0,
       ioIpcBytes: 0,
@@ -1476,7 +1476,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
 
   it("returns a stub screenshot quickly when scanout/cursor seqlock busy bits are stuck", async () => {
     const segments = allocateHarnessSharedMemorySegments({
-      guestRamBytes: 1 * 1024 * 1024,
+      guestRamBytes: 64 * 1024,
       sharedFramebuffer: new SharedArrayBuffer(8),
       sharedFramebufferOffsetBytes: 0,
       ioIpcBytes: 0,

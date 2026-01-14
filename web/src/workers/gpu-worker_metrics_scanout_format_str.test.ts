@@ -74,7 +74,7 @@ async function waitForWorkerMessage(
 describe("workers/gpu-worker metrics scanout snapshot", () => {
   it("includes scanout.format_str in metrics messages", async () => {
     const segments = allocateHarnessSharedMemorySegments({
-      guestRamBytes: 1 * 1024 * 1024,
+      guestRamBytes: 64 * 1024,
       sharedFramebuffer: new SharedArrayBuffer(8),
       sharedFramebufferOffsetBytes: 0,
       ioIpcBytes: 0,
@@ -164,4 +164,3 @@ describe("workers/gpu-worker metrics scanout snapshot", () => {
     }
   }, 20_000);
 });
-
