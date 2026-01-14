@@ -9,6 +9,7 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_TEXTURE,
     AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
+use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 use aero_protocol::aerogpu::aerogpu_pci::{AerogpuFormat, AEROGPU_ABI_VERSION_U32};
 use aero_protocol::aerogpu::aerogpu_ring::AerogpuAllocEntry;
 
@@ -618,21 +619,20 @@ fn aerogpu_cmd_sampler_and_texture_bindings_accept_trailing_bytes() {
             end_cmd(&mut stream, start);
 
             // BIND_SHADERS
-            let start = begin_cmd(&mut stream, AerogpuCmdOpcode::BindShaders as u32);
-            stream.extend_from_slice(&VS.to_le_bytes());
-            stream.extend_from_slice(&PS.to_le_bytes());
-            stream.extend_from_slice(&0u32.to_le_bytes()); // cs
-            stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+            //
+            // Use AerogpuCmdWriter helpers so packet sizing/padding matches the canonical ABI.
+            let mut w = AerogpuCmdWriter::new();
             if with_trailing {
                 // Forward-compatible extension: GS/HS/DS handles (append-only).
                 //
                 // Set to 0 so the test doesn't require executing geometry/hull/domain shaders; we
                 // only want to validate that the executor accepts larger `size_bytes` packets.
-                stream.extend_from_slice(&0u32.to_le_bytes()); // gs
-                stream.extend_from_slice(&0u32.to_le_bytes()); // hs
-                stream.extend_from_slice(&0u32.to_le_bytes()); // ds
+                w.bind_shaders_ex(VS, PS, /*cs=*/ 0, /*gs=*/ 0, /*hs=*/ 0, /*ds=*/ 0);
+            } else {
+                w.bind_shaders(VS, PS, /*cs=*/ 0);
             }
-            end_cmd(&mut stream, start);
+            let bind_shaders_pkt_stream = w.finish();
+            stream.extend_from_slice(&bind_shaders_pkt_stream[ProtocolCmdStreamHeader::SIZE_BYTES..]);
 
             // CREATE_INPUT_LAYOUT
             let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CreateInputLayout as u32);
