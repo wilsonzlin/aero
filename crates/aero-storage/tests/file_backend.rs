@@ -129,3 +129,18 @@ fn file_backend_read_only_rejects_writes() {
         DiskError::NotSupported(msg) if msg == "read-only backend"
     ));
 }
+
+#[test]
+fn file_backend_reports_offset_overflow() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("disk.img");
+
+    let mut backend = FileBackend::create(&path, 4).unwrap();
+
+    let mut buf = [0u8; 1];
+    let err = backend.read_at(u64::MAX, &mut buf).unwrap_err();
+    assert!(matches!(err, DiskError::OffsetOverflow));
+
+    let err = backend.write_at(u64::MAX, &buf).unwrap_err();
+    assert!(matches!(err, DiskError::OffsetOverflow));
+}
