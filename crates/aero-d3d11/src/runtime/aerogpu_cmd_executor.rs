@@ -6419,10 +6419,9 @@ impl AerogpuD3d11Executor {
                     meta.instance_count.max(1)
                 }
                 None => {
-                    // Some bring-up tests bind a dummy non-zero GS handle (e.g. 0xCAFE_BABE) purely
-                    // to force the compute-prepass pipeline, without actually creating/translating
-                    // a GS shader. Treat an unknown handle as "no GS instancing" so the placeholder
-                    // prepass can still run.
+                    // Defensive fallback: if a GS handle is bound but we have no associated
+                    // metadata (e.g. stale handle / out-of-order command streams), treat it as "no
+                    // GS instancing" so the placeholder prepass can still run.
                     1
                 }
             }
