@@ -16,6 +16,7 @@ import {
 } from "./vm_snapshot_wasm";
 import {
   decodeUsbSnapshotContainer,
+  encodeUsbSnapshotContainer,
   isUsbSnapshotContainer,
   USB_SNAPSHOT_TAG_EHCI,
   USB_SNAPSHOT_TAG_UHCI,
@@ -28,13 +29,12 @@ export type IoWorkerSnapshotRuntimes = Readonly<{
   // Optional USB controller snapshot bridges/runtimes.
   //
   // The snapshot file format has a single outer `DeviceId::USB` entry (kind `usb`; legacy kind
-  // `usb.uhci` is accepted for backwards compatibility). If multiple controllers exist, the web
-  // runtime must emit at most one USB device blob to avoid `aero_snapshot` duplicate
-  // `(DeviceId, version, flags)` collisions.
+  // `usb.uhci` is accepted for backwards compatibility).
   //
-  // Policy:
-  // - Prefer xHCI when present; otherwise snapshot the legacy controller(s).
-  // - If a secondary controller exists but is not snapshotted, log a warning.
+  // When multiple controllers exist (UHCI + optional EHCI/xHCI), their per-controller snapshots are
+  // multiplexed into a single blob using the `"AUSB"` container format
+  // (`web/src/workers/usb_snapshot_container.ts`), ensuring we always emit at most one USB device
+  // state entry.
   usbXhciControllerBridge: unknown | null;
   usbUhciRuntime: unknown | null;
   usbUhciControllerBridge: unknown | null;
@@ -164,33 +164,80 @@ function classifyUsbSnapshot(bytes: Uint8Array): UsbSnapshotKind {
   return "unknown";
 }
 
+function isUsbSnapshotTagPrintable(tag: string): boolean {
+  if (tag.length !== 4) return false;
+  for (let i = 0; i < 4; i++) {
+    const code = tag.charCodeAt(i);
+    if (code < 0x20 || code > 0x7e) return false;
+  }
+  return true;
+}
+
+function mergeUsbSnapshotBytes(cached: Uint8Array, fresh: Uint8Array): Uint8Array {
+  const cachedDecoded = decodeUsbSnapshotContainer(cached);
+  const freshDecoded = decodeUsbSnapshotContainer(fresh);
+
+  // If the "fresh" USB bytes look like an AUSB container but fail to decode, treat them as
+  // corrupted and avoid attempting to merge.
+  if (!freshDecoded && isUsbSnapshotContainer(fresh)) {
+    return fresh;
+  }
+
+  // Interpret legacy bytes as a UHCI-only snapshot for backward compatibility.
+  // If the bytes *look* like a container but fail to decode, treat them as corrupt and drop them.
+  const cachedEntries = cachedDecoded
+    ? cachedDecoded.entries
+    : isUsbSnapshotContainer(cached)
+      ? []
+      : [{ tag: USB_SNAPSHOT_TAG_UHCI, bytes: cached }];
+  const freshEntries = freshDecoded ? freshDecoded.entries : [{ tag: USB_SNAPSHOT_TAG_UHCI, bytes: fresh }];
+
+  // Start with cached entries so unknown tags are preserved, then override with fresh entries so
+  // newly snapshotted controllers take precedence.
+  const merged = new Map<string, Uint8Array>();
+  for (const e of cachedEntries) {
+    if (!isUsbSnapshotTagPrintable(e.tag)) continue;
+    if (!merged.has(e.tag)) merged.set(e.tag, e.bytes);
+  }
+  for (const e of freshEntries) {
+    if (!isUsbSnapshotTagPrintable(e.tag)) continue;
+    merged.set(e.tag, e.bytes);
+  }
+
+  if (merged.size === 0) {
+    // Corrupt container (invalid/non-printable tags); fall back to the fresh snapshot bytes to
+    // avoid hard-failing the overall save operation.
+    return fresh;
+  }
+
+  const onlyUhci = merged.size === 1 && merged.has(USB_SNAPSHOT_TAG_UHCI);
+  if (onlyUhci) {
+    return merged.get(USB_SNAPSHOT_TAG_UHCI)!;
+  }
+
+  // Preserve container header metadata if present (forward compatibility).
+  const version = freshDecoded?.version ?? cachedDecoded?.version;
+  const flags = freshDecoded?.flags ?? cachedDecoded?.flags;
+  const entries = Array.from(merged, ([tag, bytes]) => ({ tag, bytes }));
+
+  return encodeUsbSnapshotContainer(entries, { version, flags });
+}
+
 export function snapshotUsbDeviceState(
   runtimes: Pick<
     IoWorkerSnapshotRuntimes,
     "usbXhciControllerBridge" | "usbUhciRuntime" | "usbUhciControllerBridge" | "usbEhciControllerBridge"
   >,
 ): IoWorkerSnapshotDeviceState | null {
-  const hasLegacyController = !!(runtimes.usbUhciRuntime || runtimes.usbUhciControllerBridge || runtimes.usbEhciControllerBridge);
-  const hasXhciController = !!runtimes.usbXhciControllerBridge;
-
   let xhciBytes: Uint8Array | null = null;
-  const xhciBridge = runtimes.usbXhciControllerBridge;
-  if (xhciBridge) {
+  const xhci = runtimes.usbXhciControllerBridge;
+  if (xhci) {
     try {
-      const bytes = trySaveState(xhciBridge);
+      const bytes = trySaveState(xhci);
       if (bytes) xhciBytes = bytes;
     } catch (err) {
       console.warn("[io.worker] XhciControllerBridge save_state failed:", err);
     }
-  }
-
-  // Prefer xHCI when available, but store at most one USB blob. If legacy controllers also exist,
-  // warn that their state is not being saved (to avoid `DeviceId::USB` collisions).
-  if (xhciBytes) {
-    if (hasLegacyController) {
-      console.warn("[io.worker] Multiple USB controllers detected (xHCI + legacy); snapshotting xHCI only (legacy USB state will not be saved).");
-    }
-    return { kind: VM_SNAPSHOT_DEVICE_USB_KIND, bytes: xhciBytes };
   }
 
   let uhciBytes: Uint8Array | null = null;
@@ -225,24 +272,16 @@ export function snapshotUsbDeviceState(
     }
   }
 
-  if (hasXhciController && (uhciBytes || ehciBytes)) {
-    console.warn("[io.worker] xHCI USB controller is present but was not snapshotted; falling back to legacy USB snapshot.");
-  }
+  if (!xhciBytes && !uhciBytes && !ehciBytes) return null;
 
-  // Prefer UHCI when xHCI is absent; if multiple legacy controllers exist, snapshot only one and
-  // warn that secondary controller state is not being saved.
-  if (uhciBytes) {
-    if (ehciBytes) {
-      console.warn("[io.worker] Multiple legacy USB controllers detected (UHCI + EHCI); snapshotting UHCI only (EHCI state will not be saved).");
-    }
-    return { kind: VM_SNAPSHOT_DEVICE_USB_KIND, bytes: uhciBytes };
-  }
+  // Backwards compatibility: older snapshots contain a single UHCI blob.
+  if (uhciBytes && !xhciBytes && !ehciBytes) return { kind: VM_SNAPSHOT_DEVICE_USB_KIND, bytes: uhciBytes };
 
-  if (ehciBytes) {
-    return { kind: VM_SNAPSHOT_DEVICE_USB_KIND, bytes: ehciBytes };
-  }
-
-  return null;
+  const entries: Array<{ tag: string; bytes: Uint8Array }> = [];
+  if (xhciBytes) entries.push({ tag: USB_SNAPSHOT_TAG_XHCI, bytes: xhciBytes });
+  if (uhciBytes) entries.push({ tag: USB_SNAPSHOT_TAG_UHCI, bytes: uhciBytes });
+  if (ehciBytes) entries.push({ tag: USB_SNAPSHOT_TAG_EHCI, bytes: ehciBytes });
+  return { kind: VM_SNAPSHOT_DEVICE_USB_KIND, bytes: encodeUsbSnapshotContainer(entries) };
 }
 
 export function snapshotI8042DeviceState(i8042: unknown | null): IoWorkerSnapshotDeviceState | null {
@@ -363,29 +402,51 @@ export function restoreUsbDeviceState(
   const restoreUhci = (uhciBytes: Uint8Array): void => {
     // Backwards compatibility: the entire blob is a UHCI snapshot.
     const runtime = runtimes.usbUhciRuntime;
+    const bridge = runtimes.usbUhciControllerBridge;
+
+    if (!runtime && !bridge) {
+      console.warn("[io.worker] Snapshot contains UHCI USB state but UHCI runtime/bridge is unavailable; ignoring blob.");
+      return;
+    }
+
     if (runtime) {
       try {
-        if (tryLoadState(runtime, uhciBytes)) return;
+        const ok = tryLoadState(runtime, uhciBytes);
+        if (ok) return;
       } catch (err) {
         console.warn("[io.worker] UhciRuntime load_state failed:", err);
+        if (!bridge) return;
       }
     }
 
-    const bridge = runtimes.usbUhciControllerBridge;
     if (bridge) {
       try {
-        tryLoadState(bridge, uhciBytes);
+        if (tryLoadState(bridge, uhciBytes)) return;
+        console.warn(
+          "[io.worker] Snapshot contains UHCI USB state but UhciControllerBridge has no load_state/restore_state hook; ignoring blob.",
+        );
+        return;
       } catch (err) {
         console.warn("[io.worker] UhciControllerBridge load_state failed:", err);
+        return;
       }
     }
+
+    // Runtime exists but did not accept restore (no hook).
+    console.warn("[io.worker] Snapshot contains UHCI USB state but UhciRuntime has no load_state/restore_state hook; ignoring blob.");
   };
 
   const decoded = decodeUsbSnapshotContainer(bytes);
   if (decoded) {
-    const xhci = decoded.entries.find((e) => e.tag === USB_SNAPSHOT_TAG_XHCI)?.bytes ?? null;
-    const uhci = decoded.entries.find((e) => e.tag === USB_SNAPSHOT_TAG_UHCI)?.bytes ?? null;
-    const ehci = decoded.entries.find((e) => e.tag === USB_SNAPSHOT_TAG_EHCI)?.bytes ?? null;
+    // If a container has duplicate controller tags, apply a deterministic last-wins policy.
+    // (The encoder always emits unique tags, but be defensive when restoring snapshots produced
+    // by other builds.)
+    const byTag = new Map<string, Uint8Array>();
+    for (const e of decoded.entries) byTag.set(e.tag, e.bytes);
+
+    const xhci = byTag.get(USB_SNAPSHOT_TAG_XHCI) ?? null;
+    const uhci = byTag.get(USB_SNAPSHOT_TAG_UHCI) ?? null;
+    const ehci = byTag.get(USB_SNAPSHOT_TAG_EHCI) ?? null;
     if (xhci) restoreXhci(xhci);
     if (uhci) restoreUhci(uhci);
     if (ehci) {
@@ -404,12 +465,19 @@ export function restoreUsbDeviceState(
         }
       }
     }
+
+    // Forward compatibility: warn on unknown controller tags so debugging missing controller
+    // support is straightforward.
+    const warnedUnknown = new Set<string>();
+    for (const tag of byTag.keys()) {
+      if (tag === USB_SNAPSHOT_TAG_XHCI || tag === USB_SNAPSHOT_TAG_UHCI || tag === USB_SNAPSHOT_TAG_EHCI) continue;
+      if (warnedUnknown.has(tag)) continue;
+      warnedUnknown.add(tag);
+      console.warn(`[io.worker] Snapshot contains unknown USB controller tag ${JSON.stringify(tag)}; ignoring blob.`);
+    }
     return;
   }
 
-  // If the blob begins with the AUSB magic but fails to decode as a container, treat it as corrupt
-  // and do not attempt the legacy raw restore path. Feeding corrupt container bytes into
-  // controller restore hooks can lead to confusing failures.
   if (isUsbSnapshotContainer(bytes)) {
     console.warn("[io.worker] Snapshot USB blob has AUSB container magic but is corrupt; ignoring blob.");
     return;
@@ -615,6 +683,23 @@ export async function saveIoWorkerVmSnapshotToOpfs(opts: {
       if (!((dev as { bytes?: unknown }).bytes instanceof ArrayBuffer)) continue;
       const kind = normalizeRestoredDeviceKind((dev as { kind: string }).kind);
       freshDevices.push({ kind, bytes: new Uint8Array((dev as { bytes: ArrayBuffer }).bytes) });
+    }
+  }
+
+  // USB snapshots are a special case: multiple controller snapshots (UHCI/EHCI/xHCI/...) are
+  // multiplexed into a single `DeviceId::USB` (`usb`) device blob via `usb_snapshot_container.ts`.
+  //
+  // If we previously restored a USB container that includes controllers not present in the current
+  // build (e.g. snapshot taken on a newer build with EHCI/xHCI), preserve those controller blobs
+  // across a restore → save cycle by merging container entries.
+  const cachedUsb = restoredDevices.find((d) => d.kind === VM_SNAPSHOT_DEVICE_USB_KIND) ?? null;
+  const freshUsbIndex = freshDevices.findIndex((d) => d.kind === VM_SNAPSHOT_DEVICE_USB_KIND);
+  if (cachedUsb && freshUsbIndex >= 0) {
+    const freshUsb = freshDevices[freshUsbIndex]!;
+    try {
+      freshDevices[freshUsbIndex] = { kind: VM_SNAPSHOT_DEVICE_USB_KIND, bytes: mergeUsbSnapshotBytes(cachedUsb.bytes, freshUsb.bytes) };
+    } catch (err) {
+      console.warn("[io.worker] Failed to merge cached USB snapshot container entries; using fresh USB snapshot only.", err);
     }
   }
 

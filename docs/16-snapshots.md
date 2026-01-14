@@ -288,14 +288,31 @@ For the browser USB stack (guest-visible USB controller(s) + runtime/bridge stat
 
 Snapshot policy (multiple controllers):
 
-- The `DEVICES` list rejects duplicate `(DeviceId, version, flags)` keys, and the web runtime maps all guest USB controllers to the single outer `DeviceId::USB` slot.
-- Therefore, the snapshot producer must emit **at most one** `DeviceId::USB` entry.
-- If multiple controllers are present, snapshot **only one** controller:
-  - Prefer **xHCI** if present; otherwise snapshot **UHCI**.
-  - Log a warning if a secondary controller exists but is not snapshotted.
+- The `DEVICES` list rejects duplicate `(DeviceId, version, flags)` keys, and the web runtime maps all
+  guest USB controllers to the single outer `DeviceId::USB` slot.
+- Therefore, the snapshot producer must emit **at most one** `DeviceId::USB` entry (or none if no
+  USB state exists).
+- When multiple controllers are present (UHCI + optional EHCI/xHCI), encode their per-controller
+  snapshots under that single outer entry using an `"AUSB"` container
+  (`web/src/workers/usb_snapshot_container.ts`):
+  - Container entry tags (FourCC): `USB_SNAPSHOT_TAG_UHCI`, `USB_SNAPSHOT_TAG_EHCI`,
+    `USB_SNAPSHOT_TAG_XHCI`
+  - **Determinism:** entries are encoded in a deterministic order (sorted by tag).
+  - **Backward-compat save policy:** if **only UHCI** state exists, emit a **plain UHCI blob** (no
+    container) so older builds can still restore it.
+  - **Restore policy:**
+    - If the blob is an `"AUSB"` container, restore each contained controller blob into its matching
+      runtime/bridge if present.
+    - If a controller blob is present but the runtime lacks that controller, it is ignored with a
+      warning (forward compatibility).
+    - If the blob begins with `"AUSB"` magic but fails to decode as a container, it is treated as
+      corrupt and ignored.
 
 - Outer `DeviceState.id = DeviceId::USB`
-  - `DeviceState.data = aero-io-snapshot` TLV blob produced by the USB stack.
+- `DeviceState.data`:
+  - Legacy: raw `aero-io-snapshot` TLV blob produced by the single UHCI controller/runtime.
+  - Multi-controller: `"AUSB"` container holding per-controller blobs (each typically an
+    `aero-io-snapshot` TLV).
     - Inner `DEVICE_ID` examples:
       - UHCI: `UHRT` for `UhciRuntime`, `UHCB` for `UhciControllerBridge`, `WUHB` for `WebUsbUhciBridge`.
       - xHCI: `XHCI` for the core controller (`aero_usb::xhci::XhciController`), `XHCB` for the WASM
@@ -308,9 +325,9 @@ Note (current browser runtime wiring):
 
 - The outer web snapshot `kind` for `DeviceId::USB` is `usb` (legacy kind `usb.uhci` accepted; see
   `web/src/workers/vm_snapshot_wasm.ts`).
-- Some older/experimental snapshots may encode multiple controller blobs inside a single `"AUSB"` container:
-  - `web/src/workers/usb_snapshot_container.ts` (`USB_SNAPSHOT_TAG_UHCI`, `USB_SNAPSHOT_TAG_EHCI`, `USB_SNAPSHOT_TAG_XHCI`)
-  - The current web runtime snapshot policy (documented above) snapshots only **one** controller (xHCI preferred) and does not emit new `"AUSB"` containers.
+- The browser runtime stores **exactly one** outer `DeviceId::USB` device blob. When multiple USB
+  controllers exist, per-controller snapshots are multiplexed under that single blob using an
+  `"AUSB"` container (see policy above).
 
 Restore note: USB snapshots capture guest-visible controller/runtime state only. Any host-side "action" state (e.g. in-flight WebUSB/WebHID requests) should be treated as reset on restore; the host integration is responsible for resuming action execution post-restore.
 
