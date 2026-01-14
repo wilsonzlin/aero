@@ -441,7 +441,9 @@ Remaining gaps (planned follow-ups) include:
 
 - **Explicit ordering/barriers**: partially supported via SM5 `sync` (`GroupMemoryBarrier*` /
   `DeviceMemoryBarrier*`).
-  - Full barriers (`*WithGroupSync`) map naturally onto WGSL `workgroupBarrier()` + `storageBarrier()`.
+  - Full barriers (`*WithGroupSync`) map onto WGSL `workgroupBarrier()` + `storageBarrier()`. For
+    safety, the translator currently requires these to appear in straight-line code (it rejects
+    `*WithGroupSync` barriers inside structured control flow or after conditional returns).
   - Fence-only variants (no thread-group sync) do **not** have a perfect WGSL/WebGPU mapping today:
     WGSL `storageBarrier()` is validated/implemented as a workgroup-level barrier in WebGPU/Naga and
     therefore comes with uniform-control-flow requirements that are not necessarily present in the

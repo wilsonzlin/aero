@@ -6055,6 +6055,26 @@ fn emit_instructions(
 
                 let group_sync = (flags & crate::sm4::opcode::SYNC_FLAG_THREAD_GROUP_SYNC) != 0;
                 if group_sync {
+                    // Barriers that include `THREAD_GROUP_SYNC` are true workgroup execution
+                    // barriers: all invocations must reach them. DXBC allows these operations in
+                    // structured control flow as long as the control flow is uniform, but we
+                    // conservatively reject any appearance inside structured control flow or after
+                    // conditional returns. This avoids generating WGSL that can deadlock when
+                    // executed on WebGPU backends that do not fully validate barrier uniformity.
+                    let in_structured_cf = !blocks.is_empty() || !cf_stack.is_empty();
+                    if in_structured_cf {
+                        return Err(ShaderTranslateError::UnsupportedInstruction {
+                            inst_index,
+                            opcode: "sync_group_sync_in_control_flow".to_owned(),
+                        });
+                    }
+                    if has_conditional_return {
+                        return Err(ShaderTranslateError::UnsupportedInstruction {
+                            inst_index,
+                            opcode: "sync_group_sync_after_conditional_return".to_owned(),
+                        });
+                    }
+
                     // SM5 `sync_*_t` instructions are workgroup barriers that optionally include
                     // storage/UAV memory ordering semantics.
                     //

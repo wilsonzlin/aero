@@ -145,6 +145,85 @@ fn translates_sync_uav_fence_only_to_wgsl() {
 }
 
 #[test]
+fn rejects_sync_with_group_sync_inside_control_flow() {
+    // Barriers that include THREAD_GROUP_SYNC must be executed uniformly; we conservatively reject
+    // any appearance inside structured control flow to avoid generating WGSL that can deadlock.
+    let module = Sm4Module {
+        stage: ShaderStage::Compute,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: vec![Sm4Decl::ThreadGroupSize { x: 1, y: 1, z: 1 }],
+        instructions: vec![
+            Sm4Inst::If {
+                cond: SrcOperand {
+                    kind: SrcKind::ImmediateF32([1.0f32.to_bits(); 4]),
+                    swizzle: Swizzle::XXXX,
+                    modifier: OperandModifier::None,
+                },
+                test: Sm4TestBool::NonZero,
+            },
+            Sm4Inst::Sync {
+                flags: SYNC_FLAG_THREAD_GROUP_SYNC | SYNC_FLAG_THREAD_GROUP_SHARED_MEMORY,
+            },
+            Sm4Inst::EndIf,
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let dxbc_bytes = build_dxbc(&[(FOURCC_SHEX, Vec::new())]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let err = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).unwrap_err();
+    match err {
+        ShaderTranslateError::UnsupportedInstruction { inst_index, opcode } => {
+            assert_eq!(inst_index, 1);
+            assert_eq!(opcode, "sync_group_sync_in_control_flow");
+        }
+        other => panic!("expected UnsupportedInstruction for sync, got {other:?}"),
+    }
+}
+
+#[test]
+fn rejects_sync_with_group_sync_after_conditional_return() {
+    // Even at top-level, a barrier after a conditional return may not be executed by all
+    // invocations. We reject to avoid generating WGSL that can deadlock.
+    let module = Sm4Module {
+        stage: ShaderStage::Compute,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: vec![Sm4Decl::ThreadGroupSize { x: 1, y: 1, z: 1 }],
+        instructions: vec![
+            Sm4Inst::If {
+                cond: SrcOperand {
+                    kind: SrcKind::ImmediateF32([1.0f32.to_bits(); 4]),
+                    swizzle: Swizzle::XXXX,
+                    modifier: OperandModifier::None,
+                },
+                test: Sm4TestBool::NonZero,
+            },
+            Sm4Inst::Ret,
+            Sm4Inst::EndIf,
+            Sm4Inst::Sync {
+                flags: SYNC_FLAG_THREAD_GROUP_SYNC | SYNC_FLAG_THREAD_GROUP_SHARED_MEMORY,
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let dxbc_bytes = build_dxbc(&[(FOURCC_SHEX, Vec::new())]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let err = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).unwrap_err();
+    match err {
+        ShaderTranslateError::UnsupportedInstruction { inst_index, opcode } => {
+            assert_eq!(inst_index, 3);
+            assert_eq!(opcode, "sync_group_sync_after_conditional_return");
+        }
+        other => panic!("expected UnsupportedInstruction for sync, got {other:?}"),
+    }
+}
+
+#[test]
 fn rejects_sync_uav_fence_only_inside_control_flow() {
     // Fence-only `sync` instructions are allowed in divergent control flow in DXBC, but WGSL's
     // `storageBarrier()` is lowered by WebGPU/Naga as a workgroup-level barrier, which can
