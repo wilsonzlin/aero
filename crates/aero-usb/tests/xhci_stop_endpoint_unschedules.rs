@@ -65,6 +65,9 @@ fn stop_endpoint_command_unschedules_active_endpoint() {
     let completion = xhci.address_device(slot_id, slot_ctx);
     assert_eq!(completion.completion_code, CommandCompletionCode::Success);
 
+    // xHCI only services transfers while the controller is running (USBCMD.RUN=1).
+    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
+
     // Endpoint 1 IN (DCI=3).
     let endpoint_id = 3u8;
     let ep_ctx_paddr = dev_ctx + u64::from(endpoint_id) * (CONTEXT_SIZE as u64);
