@@ -161,8 +161,9 @@ pub fn aerogpu_executor_or_skip(
 
 #[allow(dead_code)]
 #[cfg(target_arch = "wasm32")]
-pub fn aerogpu_executor_bc(
-) -> Option<std::sync::MutexGuard<'static, aero_gpu::aerogpu_executor::AeroGpuExecutor>> {
+pub async fn aerogpu_executor_bc() -> Option<
+    futures_intrusive::sync::MutexGuard<'static, aero_gpu::aerogpu_executor::AeroGpuExecutor>,
+> {
     // `AeroGpuExecutor` stores WebGPU handles that are not `Send`/`Sync` on wasm32, so we cannot
     // safely cache a shared executor behind a `static` mutex.
     None
@@ -170,15 +171,19 @@ pub fn aerogpu_executor_bc(
 
 #[allow(dead_code)]
 #[cfg(not(target_arch = "wasm32"))]
-pub fn aerogpu_executor_bc(
-) -> Option<std::sync::MutexGuard<'static, aero_gpu::aerogpu_executor::AeroGpuExecutor>> {
-    use std::sync::{Mutex, OnceLock};
+pub async fn aerogpu_executor_bc(
+) -> Option<
+    futures_intrusive::sync::MutexGuard<'static, aero_gpu::aerogpu_executor::AeroGpuExecutor>,
+> {
+    use futures_intrusive::sync::Mutex;
+    use std::sync::OnceLock;
 
-    static EXECUTOR: OnceLock<Option<Mutex<aero_gpu::aerogpu_executor::AeroGpuExecutor>>> =
-        OnceLock::new();
+    static EXECUTOR: OnceLock<
+        Option<&'static Mutex<aero_gpu::aerogpu_executor::AeroGpuExecutor>>,
+    > = OnceLock::new();
 
     let exec = EXECUTOR.get_or_init(|| {
-        pollster::block_on(async {
+        let exec = pollster::block_on(async {
             ensure_xdg_runtime_dir();
 
             // Avoid wgpu's GL backend on Linux: wgpu-hal's GLES pipeline reflection can panic for
@@ -246,36 +251,43 @@ pub fn aerogpu_executor_bc(
                     continue;
                 };
 
-                return aero_gpu::aerogpu_executor::AeroGpuExecutor::new(device, queue)
-                    .map(Mutex::new)
-                    .ok();
+                let Ok(exec) = aero_gpu::aerogpu_executor::AeroGpuExecutor::new(device, queue)
+                else {
+                    continue;
+                };
+                return Some(Box::leak(Box::new(Mutex::new(exec, true))));
             }
 
             None
-        })
+        });
+        exec.map(|mutex| &*mutex)
     });
 
     let mutex = exec.as_ref()?;
-    let mut guard = mutex.lock().unwrap_or_else(|err| err.into_inner());
+    let mut guard = mutex.lock().await;
     guard.reset();
     Some(guard)
 }
 
 #[allow(dead_code)]
 #[cfg(target_arch = "wasm32")]
-pub fn aerogpu_executor_bc_or_skip(
+pub async fn aerogpu_executor_bc_or_skip(
     test_name: &str,
-) -> Option<std::sync::MutexGuard<'static, aero_gpu::aerogpu_executor::AeroGpuExecutor>> {
+) -> Option<
+    futures_intrusive::sync::MutexGuard<'static, aero_gpu::aerogpu_executor::AeroGpuExecutor>,
+> {
     skip_or_panic(test_name, "BC-only executor is host-only");
     None
 }
 
 #[allow(dead_code)]
 #[cfg(not(target_arch = "wasm32"))]
-pub fn aerogpu_executor_bc_or_skip(
+pub async fn aerogpu_executor_bc_or_skip(
     test_name: &str,
-) -> Option<std::sync::MutexGuard<'static, aero_gpu::aerogpu_executor::AeroGpuExecutor>> {
-    match aerogpu_executor_bc() {
+) -> Option<
+    futures_intrusive::sync::MutexGuard<'static, aero_gpu::aerogpu_executor::AeroGpuExecutor>,
+> {
+    match aerogpu_executor_bc().await {
         Some(exec) => Some(exec),
         None => {
             skip_or_panic(test_name, "no wgpu adapter supports TEXTURE_COMPRESSION_BC");

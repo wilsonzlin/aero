@@ -301,7 +301,7 @@ async fn run_bc_direct_sample_test(
         return;
     }
 
-    let mut exec = match common::aerogpu_executor_bc_or_skip(test_name) {
+    let mut exec = match common::aerogpu_executor_bc_or_skip(test_name).await {
         Some(exec) => exec,
         None => return,
     };
@@ -1196,7 +1196,7 @@ fn executor_bc_non_multiple_dimensions_use_physical_copy_extents() {
             return;
         }
 
-        let mut exec = match common::aerogpu_executor_bc_or_skip(TEST_NAME) {
+        let mut exec = match common::aerogpu_executor_bc_or_skip(TEST_NAME).await {
             Some(exec) => exec,
             None => return,
         };
@@ -1291,7 +1291,7 @@ fn executor_bc_writeback_uses_physical_copy_extents() {
             return;
         }
 
-        let mut exec = match common::aerogpu_executor_bc_or_skip(TEST_NAME) {
+        let mut exec = match common::aerogpu_executor_bc_or_skip(TEST_NAME).await {
             Some(exec) => exec,
             None => return,
         };
@@ -1447,7 +1447,7 @@ fn executor_bc_dirty_range_upload_pads_small_mips() {
             return;
         }
 
-        let mut exec = match common::aerogpu_executor_bc_or_skip(TEST_NAME) {
+        let mut exec = match common::aerogpu_executor_bc_or_skip(TEST_NAME).await {
             Some(exec) => exec,
             None => return,
         };
@@ -1688,7 +1688,7 @@ fn executor_falls_back_for_unaligned_bc_texture_dimensions_even_when_bc_is_enabl
             return;
         }
 
-        let mut exec = match common::aerogpu_executor_bc_or_skip(TEST_NAME) {
+        let mut exec = match common::aerogpu_executor_bc_or_skip(TEST_NAME).await {
             Some(exec) => exec,
             None => return,
         };
