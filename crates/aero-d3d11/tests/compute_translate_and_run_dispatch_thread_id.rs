@@ -8,27 +8,13 @@ use aero_d3d11::{
     SrcOperand, Swizzle, UavRef, WriteMask,
 };
 use aero_dxbc::test_utils as dxbc_test_utils;
+use aero_gpu::protocol_d3d11::{
+    BindingDesc, BindingType, BufferUsage, CmdWriter, PipelineKind, ShaderStageFlags,
+};
 
-// The Aero D3D11 translator emits compute-stage bindings in `@group(2)` (stage-scoped binding
-// model). Validate that the generated WGSL can be executed on wgpu with a pipeline layout that
-// includes empty bind groups 0/1 and the translated resources bound at group 2.
-async fn read_mapped_buffer(device: &wgpu::Device, buffer: &wgpu::Buffer, size: u64) -> Vec<u8> {
-    let slice = buffer.slice(0..size);
-    let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
-    slice.map_async(wgpu::MapMode::Read, move |v| {
-        sender.send(v).ok();
-    });
-    device.poll(wgpu::Maintain::Wait);
-
-    receiver
-        .receive()
-        .await
-        .expect("map_async dropped")
-        .expect("map_async failed");
-    let data = slice.get_mapped_range().to_vec();
-    buffer.unmap();
-    data
-}
+// Note: translated compute shaders use `@group(2)` (stage-scoped binding model). The
+// `protocol_d3d11` runtime (`D3D11Runtime`) binds compute resources at group 2 so translated WGSL
+// can execute through the CmdWriter path.
 
 fn dummy_dxbc_bytes() -> Vec<u8> {
     // Minimal DXBC container with no chunks. The signature-driven SM4→WGSL translator only uses the
@@ -79,7 +65,7 @@ fn compute_translate_and_run_dispatch_thread_id_writes_indexed_uav_buffer() {
             "::compute_translate_and_run_dispatch_thread_id_writes_indexed_uav_buffer"
         );
 
-        let rt = match D3D11Runtime::new_for_tests().await {
+        let mut rt = match D3D11Runtime::new_for_tests().await {
             Ok(rt) => rt,
             Err(err) => {
                 common::skip_or_panic(TEST_NAME, &format!("wgpu unavailable ({err:#})"));
@@ -179,96 +165,56 @@ fn compute_translate_and_run_dispatch_thread_id_writes_indexed_uav_buffer() {
         );
         let binding_u0 = BINDING_BASE_UAV + 0;
         assert!(
-            translated.wgsl.contains("@group(2)"),
-            "translated compute WGSL must use @group(2):\n{}",
+            translated
+                .wgsl
+                .contains(&format!("@group(2) @binding({binding_u0})")),
+            "expected u0 storage buffer binding to use @group(2); wgsl={}",
             translated.wgsl
         );
 
-        let device = rt.device();
-        let queue = rt.queue();
+        const OUT: u32 = 1;
+        const READBACK: u32 = 2;
+        const SHADER: u32 = 3;
+        const PIPELINE: u32 = 4;
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("compute_translate_and_run_dispatch_thread_id cs shader"),
-            source: wgpu::ShaderSource::Wgsl(translated.wgsl.into()),
-        });
+        let mut w = CmdWriter::new();
+        w.create_buffer(
+            OUT,
+            size_bytes,
+            BufferUsage::STORAGE | BufferUsage::COPY_SRC | BufferUsage::COPY_DST,
+        );
+        w.create_buffer(
+            READBACK,
+            size_bytes,
+            BufferUsage::MAP_READ | BufferUsage::COPY_DST,
+        );
+        w.update_buffer(OUT, 0, &vec![0u8; size_bytes as usize]);
 
-        let empty_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("compute_translate_and_run_dispatch_thread_id empty bgl"),
-            entries: &[],
-        });
-        let group2_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("compute_translate_and_run_dispatch_thread_id group2 bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
+        w.create_shader_module_wgsl(SHADER, &translated.wgsl);
+        w.create_compute_pipeline(
+            PIPELINE,
+            SHADER,
+            &[BindingDesc {
                 binding: binding_u0,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: false },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
+                ty: BindingType::StorageBufferReadWrite,
+                visibility: ShaderStageFlags::COMPUTE,
+                storage_texture_format: None,
             }],
-        });
+        );
 
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("compute_translate_and_run_dispatch_thread_id pipeline layout"),
-            bind_group_layouts: &[&empty_layout, &empty_layout, &group2_layout],
-            push_constant_ranges: &[],
-        });
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("compute_translate_and_run_dispatch_thread_id compute pipeline"),
-            layout: Some(&pipeline_layout),
-            module: &shader,
-            entry_point: "cs_main",
-            compilation_options: Default::default(),
-        });
+        w.set_pipeline(PipelineKind::Compute, PIPELINE);
+        w.set_bind_buffer(binding_u0, OUT, 0, 0);
+        w.begin_compute_pass();
+        w.dispatch(WORKGROUPS_X, WORKGROUPS_Y, 1);
+        w.end_compute_pass();
+        w.copy_buffer_to_buffer(OUT, 0, READBACK, 0, size_bytes);
 
-        let out = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("compute_translate_and_run_dispatch_thread_id out buffer"),
-            size: size_bytes,
-            usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::COPY_SRC
-                | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        queue.write_buffer(&out, 0, vec![0u8; size_bytes as usize].as_slice());
-
-        let readback = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("compute_translate_and_run_dispatch_thread_id readback buffer"),
-            size: size_bytes,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("compute_translate_and_run_dispatch_thread_id bind group 2"),
-            layout: &group2_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: binding_u0,
-                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: &out,
-                    offset: 0,
-                    size: None,
-                }),
-            }],
-        });
-
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("compute_translate_and_run_dispatch_thread_id encoder"),
-        });
-        {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("compute_translate_and_run_dispatch_thread_id compute pass"),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(&pipeline);
-            pass.set_bind_group(2, &bind_group, &[]);
-            pass.dispatch_workgroups(WORKGROUPS_X, WORKGROUPS_Y, 1);
-        }
-        encoder.copy_buffer_to_buffer(&out, 0, &readback, 0, size_bytes);
-        queue.submit([encoder.finish()]);
-
-        let data = read_mapped_buffer(device, &readback, size_bytes).await;
+        rt.execute(&w.finish()).expect("execute command stream");
+        rt.poll_wait();
+        let data = rt
+            .read_buffer(READBACK, 0, size_bytes)
+            .await
+            .expect("read buffer");
         let mut got = Vec::<u32>::with_capacity(ELEMENTS as usize);
         for i in 0..ELEMENTS as usize {
             let at = i * 4;
@@ -289,7 +235,7 @@ fn compute_translate_and_run_group_id_and_group_index_write_linear_id() {
             "::compute_translate_and_run_group_id_and_group_index_write_linear_id"
         );
 
-        let rt = match D3D11Runtime::new_for_tests().await {
+        let mut rt = match D3D11Runtime::new_for_tests().await {
             Ok(rt) => rt,
             Err(err) => {
                 common::skip_or_panic(TEST_NAME, &format!("wgpu unavailable ({err:#})"));
@@ -378,97 +324,57 @@ fn compute_translate_and_run_group_id_and_group_index_write_linear_id() {
         );
         let binding_u0 = BINDING_BASE_UAV + 0;
         assert!(
-            translated.wgsl.contains("@group(2)"),
-            "translated compute WGSL must use @group(2):\n{}",
+            translated
+                .wgsl
+                .contains(&format!("@group(2) @binding({binding_u0})")),
+            "expected u0 storage buffer binding to use @group(2); wgsl={}",
             translated.wgsl
         );
 
-        let device = rt.device();
-        let queue = rt.queue();
+        const OUT: u32 = 1;
+        const READBACK: u32 = 2;
+        const SHADER: u32 = 3;
+        const PIPELINE: u32 = 4;
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("compute_translate_and_run_group_id_group_index cs shader"),
-            source: wgpu::ShaderSource::Wgsl(translated.wgsl.into()),
-        });
+        let mut w = CmdWriter::new();
+        w.create_buffer(
+            OUT,
+            size_bytes,
+            BufferUsage::STORAGE | BufferUsage::COPY_SRC | BufferUsage::COPY_DST,
+        );
+        w.create_buffer(
+            READBACK,
+            size_bytes,
+            BufferUsage::MAP_READ | BufferUsage::COPY_DST,
+        );
+        w.update_buffer(OUT, 0, &vec![0u8; size_bytes as usize]);
 
-        let empty_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("compute_translate_and_run_group_id_group_index empty bgl"),
-            entries: &[],
-        });
-        let group2_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("compute_translate_and_run_group_id_group_index group2 bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
+        w.create_shader_module_wgsl(SHADER, &translated.wgsl);
+        w.create_compute_pipeline(
+            PIPELINE,
+            SHADER,
+            &[BindingDesc {
                 binding: binding_u0,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: false },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
+                ty: BindingType::StorageBufferReadWrite,
+                visibility: ShaderStageFlags::COMPUTE,
+                storage_texture_format: None,
             }],
-        });
+        );
 
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("compute_translate_and_run_group_id_group_index pipeline layout"),
-            bind_group_layouts: &[&empty_layout, &empty_layout, &group2_layout],
-            push_constant_ranges: &[],
-        });
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("compute_translate_and_run_group_id_group_index compute pipeline"),
-            layout: Some(&pipeline_layout),
-            module: &shader,
-            entry_point: "cs_main",
-            compilation_options: Default::default(),
-        });
+        w.set_pipeline(PipelineKind::Compute, PIPELINE);
+        w.set_bind_buffer(binding_u0, OUT, 0, 0);
+        w.begin_compute_pass();
+        // 4 workgroups, each of size 4 => 16 invocations total.
+        w.dispatch(4, 1, 1);
+        w.end_compute_pass();
+        w.copy_buffer_to_buffer(OUT, 0, READBACK, 0, size_bytes);
 
-        let out = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("compute_translate_and_run_group_id_group_index out buffer"),
-            size: size_bytes,
-            usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::COPY_SRC
-                | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        queue.write_buffer(&out, 0, vec![0u8; size_bytes as usize].as_slice());
-
-        let readback = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("compute_translate_and_run_group_id_group_index readback buffer"),
-            size: size_bytes,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("compute_translate_and_run_group_id_group_index bind group 2"),
-            layout: &group2_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: binding_u0,
-                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: &out,
-                    offset: 0,
-                    size: None,
-                }),
-            }],
-        });
-
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("compute_translate_and_run_group_id_group_index encoder"),
-        });
-        {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("compute_translate_and_run_group_id_group_index compute pass"),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(&pipeline);
-            pass.set_bind_group(2, &bind_group, &[]);
-            // 4 workgroups, each of size 4 => 16 invocations total.
-            pass.dispatch_workgroups(4, 1, 1);
-        }
-        encoder.copy_buffer_to_buffer(&out, 0, &readback, 0, size_bytes);
-        queue.submit([encoder.finish()]);
-
-        let data = read_mapped_buffer(device, &readback, size_bytes).await;
+        rt.execute(&w.finish()).expect("execute command stream");
+        rt.poll_wait();
+        let data = rt
+            .read_buffer(READBACK, 0, size_bytes)
+            .await
+            .expect("read buffer");
 
         let mut got = Vec::<u32>::with_capacity(ELEMENTS as usize);
         for i in 0..ELEMENTS as usize {
@@ -490,7 +396,7 @@ fn compute_translate_and_run_group_thread_id_writes_linear_local_index() {
             "::compute_translate_and_run_group_thread_id_writes_linear_local_index"
         );
 
-        let rt = match D3D11Runtime::new_for_tests().await {
+        let mut rt = match D3D11Runtime::new_for_tests().await {
             Ok(rt) => rt,
             Err(err) => {
                 common::skip_or_panic(TEST_NAME, &format!("wgpu unavailable ({err:#})"));
@@ -603,96 +509,56 @@ fn compute_translate_and_run_group_thread_id_writes_linear_local_index() {
         );
         let binding_u0 = BINDING_BASE_UAV + 0;
         assert!(
-            translated.wgsl.contains("@group(2)"),
-            "translated compute WGSL must use @group(2):\n{}",
+            translated
+                .wgsl
+                .contains(&format!("@group(2) @binding({binding_u0})")),
+            "expected u0 storage buffer binding to use @group(2); wgsl={}",
             translated.wgsl
         );
 
-        let device = rt.device();
-        let queue = rt.queue();
+        const OUT: u32 = 1;
+        const READBACK: u32 = 2;
+        const SHADER: u32 = 3;
+        const PIPELINE: u32 = 4;
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("compute_translate_and_run_group_thread_id cs shader"),
-            source: wgpu::ShaderSource::Wgsl(translated.wgsl.into()),
-        });
+        let mut w = CmdWriter::new();
+        w.create_buffer(
+            OUT,
+            size_bytes,
+            BufferUsage::STORAGE | BufferUsage::COPY_SRC | BufferUsage::COPY_DST,
+        );
+        w.create_buffer(
+            READBACK,
+            size_bytes,
+            BufferUsage::MAP_READ | BufferUsage::COPY_DST,
+        );
+        w.update_buffer(OUT, 0, &vec![0u8; size_bytes as usize]);
 
-        let empty_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("compute_translate_and_run_group_thread_id empty bgl"),
-            entries: &[],
-        });
-        let group2_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("compute_translate_and_run_group_thread_id group2 bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
+        w.create_shader_module_wgsl(SHADER, &translated.wgsl);
+        w.create_compute_pipeline(
+            PIPELINE,
+            SHADER,
+            &[BindingDesc {
                 binding: binding_u0,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: false },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
+                ty: BindingType::StorageBufferReadWrite,
+                visibility: ShaderStageFlags::COMPUTE,
+                storage_texture_format: None,
             }],
-        });
+        );
 
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("compute_translate_and_run_group_thread_id pipeline layout"),
-            bind_group_layouts: &[&empty_layout, &empty_layout, &group2_layout],
-            push_constant_ranges: &[],
-        });
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("compute_translate_and_run_group_thread_id compute pipeline"),
-            layout: Some(&pipeline_layout),
-            module: &shader,
-            entry_point: "cs_main",
-            compilation_options: Default::default(),
-        });
+        w.set_pipeline(PipelineKind::Compute, PIPELINE);
+        w.set_bind_buffer(binding_u0, OUT, 0, 0);
+        w.begin_compute_pass();
+        w.dispatch(WORKGROUPS_X, 1, 1);
+        w.end_compute_pass();
+        w.copy_buffer_to_buffer(OUT, 0, READBACK, 0, size_bytes);
 
-        let out = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("compute_translate_and_run_group_thread_id out buffer"),
-            size: size_bytes,
-            usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::COPY_SRC
-                | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        queue.write_buffer(&out, 0, vec![0u8; size_bytes as usize].as_slice());
-
-        let readback = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("compute_translate_and_run_group_thread_id readback buffer"),
-            size: size_bytes,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("compute_translate_and_run_group_thread_id bind group 2"),
-            layout: &group2_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: binding_u0,
-                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: &out,
-                    offset: 0,
-                    size: None,
-                }),
-            }],
-        });
-
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("compute_translate_and_run_group_thread_id encoder"),
-        });
-        {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("compute_translate_and_run_group_thread_id compute pass"),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(&pipeline);
-            pass.set_bind_group(2, &bind_group, &[]);
-            pass.dispatch_workgroups(WORKGROUPS_X, 1, 1);
-        }
-        encoder.copy_buffer_to_buffer(&out, 0, &readback, 0, size_bytes);
-        queue.submit([encoder.finish()]);
-
-        let data = read_mapped_buffer(device, &readback, size_bytes).await;
+        rt.execute(&w.finish()).expect("execute command stream");
+        rt.poll_wait();
+        let data = rt
+            .read_buffer(READBACK, 0, size_bytes)
+            .await
+            .expect("read buffer");
 
         let mut got = Vec::<u32>::with_capacity(ELEMENTS as usize);
         for i in 0..ELEMENTS as usize {
