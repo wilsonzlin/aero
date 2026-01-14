@@ -754,6 +754,13 @@ async fn verify_http_or_file(args: &VerifyArgs) -> Result<()> {
     validate_manifest_v1(&manifest, args.max_chunks)?;
     validate_manifest_identity(&manifest, args)?;
 
+    if manifest.mime_type != CHUNK_MIME_TYPE {
+        eprintln!(
+            "Warning: manifest mimeType is '{}', expected '{}' (this does not affect integrity verification but may indicate incorrect publishing metadata).",
+            manifest.mime_type, CHUNK_MIME_TYPE
+        );
+    }
+
     eprintln!(
         "Verifying imageId={} version={} chunkSize={} chunkCount={} totalSize={}",
         manifest.image_id,
@@ -1558,6 +1565,13 @@ async fn verify_s3(args: &VerifyArgs) -> Result<()> {
     };
     validate_manifest_v1(&manifest, args.max_chunks)?;
     let manifest = Arc::new(manifest);
+
+    if manifest.mime_type != CHUNK_MIME_TYPE {
+        eprintln!(
+            "Warning: manifest mimeType is '{}', expected '{}' (this does not affect integrity verification but may indicate incorrect publishing metadata).",
+            manifest.mime_type, CHUNK_MIME_TYPE
+        );
+    }
 
     if let Some((image_root_prefix, latest)) = &latest_from_prefix {
         validate_latest_v1(latest, image_root_prefix, &manifest_key, manifest.as_ref())?;
@@ -3444,7 +3458,10 @@ mod tests {
     async fn download_http_bytes_with_retry_does_not_retry_on_oversized_response() -> Result<()> {
         let requests = Arc::new(AtomicU64::new(0));
         let responder: Arc<
-            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>) + Send + Sync + 'static,
+            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>)
+                + Send
+                + Sync
+                + 'static,
         > = {
             let requests = Arc::clone(&requests);
             Arc::new(move |_req: TestHttpRequest| {
@@ -3460,7 +3477,9 @@ mod tests {
             .await
             .expect_err("expected oversized download to be rejected");
         assert!(
-            error_chain_summary(&err).to_ascii_lowercase().contains("too large"),
+            error_chain_summary(&err)
+                .to_ascii_lowercase()
+                .contains("too large"),
             "unexpected error chain: {}",
             error_chain_summary(&err)
         );
@@ -3479,7 +3498,10 @@ mod tests {
     async fn download_http_bytes_with_retry_retries_on_429() -> Result<()> {
         let requests = Arc::new(AtomicU64::new(0));
         let responder: Arc<
-            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>) + Send + Sync + 'static,
+            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>)
+                + Send
+                + Sync
+                + 'static,
         > = {
             let requests = Arc::clone(&requests);
             Arc::new(move |_req: TestHttpRequest| {
@@ -3796,7 +3818,10 @@ mod tests {
     ) -> Result<()> {
         let requests = Arc::new(AtomicU64::new(0));
         let responder: Arc<
-            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>) + Send + Sync + 'static,
+            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>)
+                + Send
+                + Sync
+                + 'static,
         > = {
             let requests = Arc::clone(&requests);
             Arc::new(move |_req: TestHttpRequest| {
@@ -3813,7 +3838,9 @@ mod tests {
             .await
             .expect_err("expected oversized download to be rejected");
         assert!(
-            error_chain_summary(&err).to_ascii_lowercase().contains("too large"),
+            error_chain_summary(&err)
+                .to_ascii_lowercase()
+                .contains("too large"),
             "unexpected error chain: {}",
             error_chain_summary(&err)
         );
@@ -3870,7 +3897,10 @@ mod tests {
     async fn download_http_bytes_optional_with_retry_retries_on_429() -> Result<()> {
         let requests = Arc::new(AtomicU64::new(0));
         let responder: Arc<
-            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>) + Send + Sync + 'static,
+            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>)
+                + Send
+                + Sync
+                + 'static,
         > = {
             let requests = Arc::clone(&requests);
             Arc::new(move |_req: TestHttpRequest| {
