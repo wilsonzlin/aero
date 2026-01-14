@@ -125,12 +125,12 @@ fn assemble_vs_dcl_positiont_v0_color_v7() -> Vec<u8> {
     // Usage + usage_index are encoded in opcode_token[16..24] for SM2/3.
     words.extend(enc_inst_with_extra(
         0x001F,
-        (9u32 << 16) | (0u32 << 20),
+        9u32 << 16,
         &[enc_dst(1, 0, 0xF)],
     ));
     words.extend(enc_inst_with_extra(
         0x001F,
-        (10u32 << 16) | (0u32 << 20),
+        10u32 << 16,
         &[enc_dst(1, 7, 0xF)],
     ));
     words.extend(enc_inst(0x0001, &[enc_dst(4, 0, 0xF), enc_src(1, 0, 0xE4)]));
