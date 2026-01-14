@@ -41,8 +41,9 @@ The virtio-win contract file is intended to be passed to the Guest Tools package
 
 `windows-device-contract-virtio-win.json` is **generated** from the canonical contract:
 
-- Generator: `python3 scripts/generate-windows-device-contract-virtio-win.py`
-- CI drift check: `python3 scripts/generate-windows-device-contract-virtio-win.py --check`
+- Preferred one-shot regen/check (covers all derived artifacts): `python3 scripts/regen-windows-device-contract-artifacts.py [--check]`
+- Generator (standalone): `python3 scripts/generate-windows-device-contract-virtio-win.py`
+- CI drift check (standalone): `python3 scripts/generate-windows-device-contract-virtio-win.py --check`
 
 Only `driver_service_name` and `inf_name` should differ for virtio devices; PCI IDs and `hardware_id_patterns`
 must remain identical to `windows-device-contract.json`.
@@ -56,10 +57,11 @@ must remain identical to `windows-device-contract.json`.
    - `docs/windows-device-contract.md`
    - `docs/windows-device-contract.json`
 4. The Guest Tools installer must consume `windows-device-contract.json` rather than hardcoding IDs in scripts.
-   - In this repo, `guest-tools/config/devices.cmd` is generated from the manifest (see `scripts/generate-guest-tools-devices-cmd.py`).
-   - Drift check (no rewrite): `python3 scripts/ci/gen-guest-tools-devices-cmd.py --check`
-   - Full contract drift check (contract + Guest Tools + packaging specs + INFs + emulator IDs):
-     `cargo run -p device-contract-validator --locked`
+    - In this repo, `guest-tools/config/devices.cmd` is generated from the manifest (see `scripts/generate-guest-tools-devices-cmd.py`).
+    - Preferred one-shot regen/check (covers all derived artifacts): `python3 scripts/regen-windows-device-contract-artifacts.py [--check]`
+    - Drift check (no rewrite): `python3 scripts/ci/gen-guest-tools-devices-cmd.py --check`
+    - Full contract drift check (contract + Guest Tools + packaging specs + INFs + emulator IDs):
+      `cargo run -p device-contract-validator --locked`
 5. Emulator device models must emit the IDs exactly as specified by the relevant contract, or Windows driver binding may fail.
 
 ## PCI ID allocations

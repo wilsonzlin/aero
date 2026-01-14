@@ -140,7 +140,12 @@ Local equivalents for fast iteration:
 python3 scripts/ci/check-windows7-virtio-contract-consistency.py
 python3 scripts/ci/check-windows-virtio-contract.py --check
 
-# Optional: regenerate derived artifacts (currently only guest-tools/config/devices.cmd), then re-check
+# Regenerate/check artifacts derived from docs/windows-device-contract.json
+# (guest-tools/config/devices.cmd + docs/windows-device-contract-virtio-win.json)
+python3 scripts/regen-windows-device-contract-artifacts.py
+python3 scripts/regen-windows-device-contract-artifacts.py --check
+
+# Optional: regenerate derived artifacts (only guest-tools/config/devices.cmd), then re-check
 python3 scripts/ci/check-windows-virtio-contract.py --fix
 
 # Ensure `guest-tools/config/devices.cmd` matches the contract JSON + generator
