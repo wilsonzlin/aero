@@ -285,7 +285,7 @@ fn compute_translate_and_run_compute_builtin_operand_types_from_dxbc() {
             );
         }
 
-        let binding_u0 = BINDING_BASE_UAV + 0;
+        let binding_u0 = BINDING_BASE_UAV;
         assert!(
             translated
                 .wgsl
@@ -377,4 +377,3 @@ fn compute_translate_and_run_compute_builtin_operand_types_from_dxbc() {
         }
     });
 }
-
