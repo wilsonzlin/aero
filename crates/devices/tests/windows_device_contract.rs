@@ -210,6 +210,80 @@ fn inf_strings(contents: &str) -> BTreeMap<String, String> {
     out
 }
 
+fn inf_section_has_token(contents: &str, section_name: &str, key: &str, expected_token: &str) -> bool {
+    let mut current_section = String::new();
+    for raw in contents.lines() {
+        let line = raw.split(';').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') && line.len() >= 2 {
+            current_section = line[1..line.len() - 1].trim().to_string();
+            continue;
+        }
+        if !current_section.eq_ignore_ascii_case(section_name) {
+            continue;
+        }
+        let Some((lhs, rhs)) = line.split_once('=') else {
+            continue;
+        };
+        if !lhs.trim().eq_ignore_ascii_case(key) {
+            continue;
+        }
+        for token in rhs.split(',').map(|t| t.trim()).filter(|t| !t.is_empty()) {
+            if token.eq_ignore_ascii_case(expected_token) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn parse_inf_addreg_dword(contents: &str, section_name: &str, value_name: &str) -> Option<u32> {
+    let mut current_section = String::new();
+    for raw in contents.lines() {
+        let line = raw.split(';').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') && line.len() >= 2 {
+            current_section = line[1..line.len() - 1].trim().to_string();
+            continue;
+        }
+        if !current_section.eq_ignore_ascii_case(section_name) {
+            continue;
+        }
+
+        let parts: Vec<&str> = line.split(',').map(|p| p.trim()).collect();
+        if parts.len() < 5 {
+            continue;
+        }
+
+        // Typical AddReg entry:
+        //   HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MSISupported, 0x00010001, 1
+        let name = parts[2];
+        if !name.eq_ignore_ascii_case(value_name) {
+            continue;
+        }
+
+        let mut value = parts[4].trim();
+        value = value
+            .strip_prefix("0x")
+            .or_else(|| value.strip_prefix("0X"))
+            .unwrap_or(value);
+
+        let parsed = if parts[4].trim().starts_with("0x") || parts[4].trim().starts_with("0X") {
+            u32::from_str_radix(value, 16).ok()?
+        } else {
+            value.parse::<u32>().ok()?
+        };
+
+        return Some(parsed);
+    }
+
+    None
+}
+
 #[test]
 fn windows_device_contract_virtio_input_matches_pci_profile() {
     let contract: serde_json::Value =
@@ -414,6 +488,54 @@ fn windows_device_contract_virtio_snd_matches_pci_profile() {
     assert_eq!(
         snd.get("virtio_device_type").and_then(|v| v.as_u64()),
         Some(25)
+    );
+}
+
+#[test]
+fn windows_device_contract_virtio_snd_inf_opts_into_msi() {
+    // The Aero virtio-snd driver supports INTx as a contract-v1 baseline, and opts into
+    // message-signaled interrupts (MSI/MSI-X) via INF registry keys on Windows 7.
+    let inf_path = repo_root()
+        .join("drivers/windows7/virtio-snd/inf")
+        .join("aero_virtio_snd.inf");
+    assert!(
+        inf_path.exists(),
+        "expected virtio-snd INF to exist at {}",
+        inf_path.display()
+    );
+
+    let inf_contents = std::fs::read_to_string(&inf_path).expect("read virtio-snd INF from repository");
+
+    assert!(
+        inf_section_has_token(
+            &inf_contents,
+            "AeroVirtioSnd_Install.NT.HW",
+            "AddReg",
+            "AeroVirtioSnd_InterruptManagement_AddReg"
+        ),
+        "expected {} to reference AeroVirtioSnd_InterruptManagement_AddReg from [AeroVirtioSnd_Install.NT.HW]",
+        inf_path.display()
+    );
+
+    let msi_supported = parse_inf_addreg_dword(
+        &inf_contents,
+        "AeroVirtioSnd_InterruptManagement_AddReg",
+        "MSISupported",
+    )
+    .expect("expected MSI opt-in (MSISupported) to be present in AeroVirtioSnd_InterruptManagement_AddReg");
+    assert_eq!(msi_supported, 1, "MSISupported must be set to 1");
+
+    let msg_limit = parse_inf_addreg_dword(
+        &inf_contents,
+        "AeroVirtioSnd_InterruptManagement_AddReg",
+        "MessageNumberLimit",
+    )
+    .expect(
+        "expected MSI opt-in (MessageNumberLimit) to be present in AeroVirtioSnd_InterruptManagement_AddReg",
+    );
+    assert!(
+        msg_limit >= 5,
+        "MessageNumberLimit must be >= 5 (config + 4 queues); got {msg_limit}"
     );
 }
 
