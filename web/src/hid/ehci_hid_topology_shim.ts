@@ -1,4 +1,5 @@
 import type { UhciTopologyBridge } from "./uhci_hid_topology";
+import { EXTERNAL_HUB_ROOT_PORT, WEBUSB_GUEST_ROOT_PORT } from "../usb/uhci_external_hub";
 
 function mapEhciRootPortFromUhci(rootPort: number): number {
   // EHCI reserves root port 1 for WebUSB passthrough (see `EhciControllerBridge`).
@@ -15,7 +16,7 @@ function mapEhciRootPortFromUhci(rootPort: number): number {
 function mapEhciPathFromUhci(path: number[]): number[] {
   if (!Array.isArray(path) || path.length === 0) return path;
   const root = path[0];
-  if (root !== 0 && root !== 1) return path;
+  if (root !== EXTERNAL_HUB_ROOT_PORT && root !== WEBUSB_GUEST_ROOT_PORT) return path;
   const mapped = mapEhciRootPortFromUhci(root);
   if (mapped === root) return path;
   const out = path.slice();
