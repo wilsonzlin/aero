@@ -307,9 +307,12 @@ async function runLoop(): Promise<void> {
 }
 
 async function initWasmInBackground(init: WorkerInitMessage, guestMemory: WebAssembly.Memory): Promise<void> {
-  // `initWasmForContext` (via `wasm_loader.ts`) relies on Vite transforms (`import.meta.glob`).
-  // When this worker is executed directly under Node (e.g. in worker_threads tests),
-  // those transforms are not applied, so importing the WASM loader would throw.
+  // This worker is used primarily for worker_threads lifecycle tests. Those tests execute the
+  // TypeScript sources directly under Node (no Vite transforms, and usually without the
+  // wasm-pack output present). Even though `wasm_loader.ts` has a Node-safe fallback for
+  // `import.meta.glob`, initializing WASM here would still either:
+  // - fail with a "Missing WASM package" error (no generated output), or
+  // - introduce unnecessary work/noise into otherwise lightweight tests.
   //
   // In real browser/Vite builds, `process` is typically undefined (or lacks `versions.node`),
   // so WASM init proceeds.
