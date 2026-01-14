@@ -241,8 +241,8 @@ cargo xtask input --machine
 # Also run the targeted WASM USB bridge regression tests (runs in Node; does not require `node_modules`).
 cargo xtask input --wasm --rust-only
 
-# Also run the aero-wasm input backend integration smoke test (virtio-input + synthetic USB HID injection).
-# This is a host-side Rust test (does not use wasm-pack) and can be run without `node_modules`.
+# Also run the aero-wasm input integration smoke tests (public Machine API surface + backend wiring).
+# This is a host-side Rust test suite (does not use wasm-pack) and can be run without `node_modules`.
 cargo xtask input --rust-only --with-wasm
 
 # Targeted WASM USB bridge regression tests (run in Node).
@@ -286,7 +286,7 @@ bash ./scripts/safe-run.sh cargo test -p aero-usb --locked --test uhci --test uh
 bash ./scripts/safe-run.sh cargo test -p aero-usb --locked
 
 # WASM integration sanity (routes input through the same public WASM APIs used by the web runtime).
-bash ./scripts/safe-run.sh cargo test -p aero-wasm --test machine_input_backends --locked
+bash ./scripts/safe-run.sh cargo test -p aero-wasm --locked --test machine_input_injection --test machine_input_backends
 
 # Web unit tests (full suite)
 npm -w web run test:unit
