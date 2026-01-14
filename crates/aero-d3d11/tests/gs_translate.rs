@@ -521,6 +521,14 @@ fn sm4_gs_emit_cut_translates_to_wgsl_compute_prepass() {
         wgsl.contains("gs_cut(&strip_len)"),
         "expected generated WGSL to call gs_cut"
     );
+    assert!(
+        wgsl.contains("varyings: array<vec4<f32>, 32>"),
+        "expected ExpandedVertex layout to include 32 varying slots:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("varyings[1u] = o1;"),
+        "expected o1 to map to varyings[1] in expanded vertex output:\n{wgsl}"
+    );
 
     assert_wgsl_validates(&wgsl);
 }
