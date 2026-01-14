@@ -401,6 +401,9 @@ typedef struct _DEVICE_CONTEXT {
      * The Aero contract v1 requires at least the first 3 bits to be supported;
      * some device models may reject events for non-advertised codes, so the
      * status queue filters updates using this mask.
+     *
+     * If this mask is 0 (EV_LED not advertised / unknown), the driver keeps
+     * StatusQ inactive and will not emit EV_LED events.
      */
     UCHAR KeyboardLedSupportedBitmask;
     USHORT PciSubsystemDeviceId;
