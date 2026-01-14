@@ -440,7 +440,9 @@ impl PciConfigSpace {
     }
 
     pub fn set_interrupt_pin(&mut self, pin: u8) {
-        self.write(Self::INTERRUPT_PIN_OFFSET, 1, u32::from(pin));
+        // Interrupt Pin (0x3D) is read-only from the guest's perspective. Allow device/platform
+        // code to set it directly.
+        self.bytes[usize::from(Self::INTERRUPT_PIN_OFFSET)] = pin;
     }
 
     pub fn capability_list(&mut self) -> Vec<PciCapabilityInfo> {
@@ -686,6 +688,12 @@ impl PciConfigSpace {
         // upper 16 bits; those writes must not clobber device-managed status bits such as the
         // Capabilities List flag.
         if (PCI_STATUS_OFFSET..PCI_STATUS_OFFSET + 2).contains(&addr) {
+            return true;
+        }
+        // Interrupt Pin (0x3D) is read-only. Guests may perform 32-bit writes to Interrupt Line
+        // (0x3C) with zeros in the upper bytes; those writes must not clobber the device-reported
+        // pin.
+        if addr == usize::from(Self::INTERRUPT_PIN_OFFSET) {
             return true;
         }
         if addr == PCI_CAP_PTR_OFFSET {
@@ -996,6 +1004,23 @@ mod tests {
 
         let command_after = config.read(0x04, 2) as u16;
         assert_eq!(command_after, 0x0006);
+    }
+
+    #[test]
+    fn dword_write_to_interrupt_line_does_not_clobber_interrupt_pin() {
+        let mut config = PciConfigSpace::new(0x1234, 0x5678);
+        config.set_interrupt_pin(1);
+
+        let pin_before = config.read(PciConfigSpace::INTERRUPT_PIN_OFFSET, 1) as u8;
+        assert_eq!(pin_before, 1);
+
+        // Guests may write Interrupt Line using a 32-bit access; upper bytes include Interrupt Pin
+        // and should not be clobbered.
+        config.write(0x3C, 4, 0x0000_000A);
+
+        let pin_after = config.read(PciConfigSpace::INTERRUPT_PIN_OFFSET, 1) as u8;
+        assert_eq!(pin_after, pin_before);
+        assert_eq!(config.read(PciConfigSpace::INTERRUPT_LINE_OFFSET, 1) as u8, 0x0A);
     }
 
     #[test]
