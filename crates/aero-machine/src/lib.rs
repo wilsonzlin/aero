@@ -534,6 +534,7 @@ pub enum MachineError {
     InvalidDiskSize(usize),
     DiskBackend(String),
     GuestMemoryTooLarge(u64),
+    AeroGpuRequiresPcPlatform,
     AhciRequiresPcPlatform,
     NvmeRequiresPcPlatform,
     IdeRequiresPcPlatform,
@@ -3999,8 +4000,8 @@ Track progress: docs/21-smp.md\n\
     ///
     /// Note: When VGA is disabled, the firmware keeps the LFB inside conventional RAM so BIOS-only
     /// helpers do not scribble over the canonical PCI MMIO window.
-    pub fn vbe_lfb_base(&self) -> u64 {
-        u64::from(self.bios.video.vbe.lfb_base)
+    pub fn vbe_lfb_base(&self) -> u32 {
+        self.bios.video.vbe.lfb_base
     }
     /// Install an external scanout descriptor that should receive legacy VGA/VBE mode updates.
     ///
@@ -6084,13 +6085,6 @@ Track progress: docs/21-smp.md\n\
                 }
             };
 
-            if self.cfg.enable_aerogpu {
-                pci_cfg.borrow_mut().bus_mut().add_device(
-                    aero_devices::pci::profile::AEROGPU.bdf,
-                    Box::new(AeroGpuPciConfigDevice::new()),
-                );
-            }
-
             let ahci = if self.cfg.enable_ahci {
                 pci_cfg.borrow_mut().bus_mut().add_device(
                     aero_devices::pci::profile::SATA_AHCI_ICH9.bdf,
@@ -6331,6 +6325,13 @@ Track progress: docs/21-smp.md\n\
             } else {
                 None
             };
+
+            if self.cfg.enable_aerogpu {
+                pci_cfg.borrow_mut().bus_mut().add_device(
+                    aero_devices::pci::profile::AEROGPU.bdf,
+                    Box::new(AeroGpuPciConfigDevice::new()),
+                );
+            }
 
             // Allocate PCI BAR resources and enable decoding so devices are reachable via MMIO/PIO
             // immediately after reset (without requiring the guest OS to assign BARs first).
@@ -12173,7 +12174,7 @@ mod tests {
         );
         assert_eq!(
             dst.vbe_lfb_base(),
-            u64::from(firmware::video::vbe::VbeDevice::LFB_BASE_DEFAULT)
+            firmware::video::vbe::VbeDevice::LFB_BASE_DEFAULT
         );
     }
 
