@@ -6,6 +6,9 @@ use aero_io_snapshot::io::state::{
 };
 
 const MAX_OUTPUT_BYTES: usize = 4096;
+// Hard cap on per-injection work. Host input deltas are untrusted and can be arbitrarily large;
+// splitting them into many 8-bit packets must not turn into an unbounded loop.
+const MAX_PACKETS_PER_INJECT: usize = 128;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Ps2MouseButton {
@@ -147,7 +150,19 @@ impl Ps2Mouse {
                 rem_wheel = 0;
             }
 
+            let bytes_per_packet = if self.device_id >= 0x03 { 4 } else { 3 };
+            let mut packets = 0usize;
             while rem_x != 0 || rem_y != 0 || rem_wheel != 0 {
+                if packets >= MAX_PACKETS_PER_INJECT {
+                    break;
+                }
+                if self.out.len() + bytes_per_packet > MAX_OUTPUT_BYTES {
+                    // Output queue is full (or too close to full for another complete packet). Drop
+                    // remaining motion to avoid evicting previously queued bytes and to keep this
+                    // call bounded.
+                    break;
+                }
+
                 let step_x = rem_x.clamp(-128, 127);
                 let step_y = rem_y.clamp(-128, 127);
                 let step_wheel = rem_wheel.clamp(-8, 7);
@@ -158,6 +173,7 @@ impl Ps2Mouse {
                 self.wheel = step_wheel;
 
                 self.send_packet();
+                packets += 1;
 
                 rem_x -= step_x;
                 rem_y -= step_y;

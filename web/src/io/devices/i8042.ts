@@ -28,6 +28,10 @@ const IO_SNAPSHOT_DEVICE_VERSION_MINOR = 0;
 const MAX_CONTROLLER_OUTPUT_QUEUE = 1024;
 const MAX_KEYBOARD_OUTPUT_QUEUE = 1024;
 const MAX_MOUSE_OUTPUT_QUEUE = 1024;
+// Hard cap on per-injection work. Mouse deltas can be arbitrarily large (or even hostile) and we
+// must not allow `injectMouseMotion` to loop for millions of iterations trying to split them into
+// 8-bit packets.
+const MAX_MOUSE_PACKETS_PER_INJECT = 128;
 
 // Output source encoding used both on the wire (snapshots) and internally.
 //
@@ -1161,7 +1165,14 @@ export class I8042Controller implements PortIoHandler {
 
     // Split into multiple packets so each axis fits in a signed 8-bit delta and wheel fits
     // in the IntelliMouse 4-bit signed nibble.
+    //
+    // Note: bound work per injection so hostile input (e.g. dx=1e9) can't stall the worker.
+    let packets = 0;
     while (remX !== 0 || remY !== 0 || remWheel !== 0) {
+      if (packets >= MAX_MOUSE_PACKETS_PER_INJECT) {
+        break;
+      }
+      packets += 1;
       const stepX = Math.max(-128, Math.min(127, remX));
       const stepY = Math.max(-128, Math.min(127, remY));
       const stepWheel = Math.max(-8, Math.min(7, remWheel));

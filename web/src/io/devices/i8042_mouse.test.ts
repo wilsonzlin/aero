@@ -92,6 +92,25 @@ describe("io/devices/I8042Controller (PS/2 mouse)", () => {
     expect(i8042.portRead(0x60, 1)).toBe(0x00);
   });
 
+  it("bounds work for extreme injected deltas (does not fill the output queue)", () => {
+    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+    const i8042 = new I8042Controller(irqSink);
+
+    // Enable data reporting.
+    sendMouseCommand(i8042, 0xf4);
+    expect(i8042.portRead(0x60, 1)).toBe(0xfa);
+
+    // A hostile sender could inject absurd deltas; ensure we cap packet generation so we don't
+    // loop for a long time and saturate internal queues.
+    i8042.injectMouseMotion(1_000_000_000, 0, 0);
+    const out = drainOutput(i8042);
+
+    // Without a cap this will typically fill the bounded output queue. Expect the implementation
+    // to keep headroom by limiting packets per injection.
+    expect(out.length).toBeGreaterThan(0);
+    expect(out.length).toBeLessThan(I8042Controller.MAX_MOUSE_OUTPUT_QUEUE);
+  });
+
   it("tracks button state while the mouse port is disabled and reflects it in the next packet", () => {
     const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
     const i8042 = new I8042Controller(irqSink);
