@@ -259,22 +259,24 @@ Indicators of drops/overruns:
 - `ReportRingDrops` or `VirtioEventDrops` increasing indicates the translation layer report ring filled up (the driver could not drain/process translated reports fast enough).
 - `ReportRingOverruns` or `VirtioEventOverruns` should remain **0**; any non-zero value indicates reports/events exceeded the expected maximum size.
 
-Write keyboard LEDs (NumLock|CapsLock|ScrollLock):
+Write keyboard LEDs (HID boot keyboard LED bits: NumLock|CapsLock|ScrollLock|Compose|Kana):
 
 ```bat
-hidtest.exe --led 0x07
+# 0x07 toggles the three common lock LEDs (Num/Caps/Scroll).
+# 0x1F sets all 5 defined LED bits (adds Compose + Kana).
+hidtest.exe --led 0x1F
 ```
 
 Write keyboard LEDs using `HidD_SetOutputReport` (exercises `IOCTL_HID_SET_OUTPUT_REPORT`):
 
 ```bat
-hidtest.exe --led-hidd 0x07
+hidtest.exe --led-hidd 0x1F
 ```
 
 Write keyboard LEDs using an explicit `DeviceIoControl(IOCTL_HID_SET_OUTPUT_REPORT)` call:
 
 ```bat
-hidtest.exe --led-ioctl-set-output 0x07
+hidtest.exe --led-ioctl-set-output 0x1F
 ```
 
 Negative test (invalid METHOD_NEITHER pointer; should fail cleanly without crashing the guest):

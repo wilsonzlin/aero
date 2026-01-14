@@ -1437,7 +1437,7 @@ static void print_usage(void)
     wprintf(L"  hidtest.exe [--list [--json]]\n");
     wprintf(L"  hidtest.exe --selftest [--keyboard|--mouse|--tablet] [--json]\n");
     wprintf(L"  hidtest.exe [--keyboard|--mouse|--tablet] [--index N] [--vid 0x1234] [--pid 0x5678]\n");
-    wprintf(L"             [--led 0x07 | --led-hidd 0x07 | --led-ioctl-set-output 0x07 | --led-cycle | --led-spam N] [--dump-desc]\n");
+    wprintf(L"             [--led 0x1F | --led-hidd 0x1F | --led-ioctl-set-output 0x1F | --led-cycle | --led-spam N] [--dump-desc]\n");
     wprintf(L"             [--duration SECS] [--count N]\n");
     wprintf(L"             [--dump-collection-desc]\n");
     wprintf(L"             [--state]\n");
@@ -1470,7 +1470,7 @@ static void print_usage(void)
     wprintf(L"  --count N       Exit report read loop after reading N reports\n");
     wprintf(L"  --state         Query virtio-input driver state via IOCTL_VIOINPUT_QUERY_STATE and exit\n");
     wprintf(L"  --led 0xMASK    Send keyboard LED output report (ReportID=1)\n");
-    wprintf(L"                 Bits: 0x01 NumLock, 0x02 CapsLock, 0x04 ScrollLock\n");
+    wprintf(L"                 Bits: 0x01 NumLock, 0x02 CapsLock, 0x04 ScrollLock, 0x08 Compose, 0x10 Kana\n");
     wprintf(L"  --led-hidd 0xMASK\n");
     wprintf(L"                 Send keyboard LEDs using HidD_SetOutputReport (exercises IOCTL_HID_SET_OUTPUT_REPORT)\n");
     wprintf(L"  --led-ioctl-set-output 0xMASK\n");
