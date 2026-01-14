@@ -64,7 +64,7 @@ Status checklist:
 
 Code pointers:
 
-- [`crates/aero-gpu-vga/src/lib.rs`](../../crates/aero-gpu-vga/src/lib.rs) (`VgaDevice`, VBE LFB at `SVGA_LFB_BASE`)
+- [`crates/aero-gpu-vga/src/lib.rs`](../../crates/aero-gpu-vga/src/lib.rs) (`VgaDevice`, VBE LFB at configurable base; legacy default `SVGA_LFB_BASE`)
 
 Test pointers:
 
