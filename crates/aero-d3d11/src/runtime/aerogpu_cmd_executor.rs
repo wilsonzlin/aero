@@ -9151,6 +9151,7 @@ impl AerogpuD3d11Executor {
         let shader_handle = cmd.shader_handle;
         let stage_raw = cmd.stage;
         let stage_ex = cmd.reserved0;
+
         // Geometry/tessellation shaders are carried through the `stage_ex` ABI extension (or the
         // legacy `stage=Geometry` encoding) on the WebGPU-backed executor. Keep the persistent cache
         // focused on VS/PS/CS translation; GS/HS/DS are accepted-but-not-translated and compile as
