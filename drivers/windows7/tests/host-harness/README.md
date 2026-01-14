@@ -820,7 +820,7 @@ To enable end-to-end testing:
       - For an **Aero contract tablet** (HWID `...&SUBSYS_00121AF4&REV_01`), the intended INF is
         `drivers/windows7/virtio-input/inf/aero_virtio_tablet.inf`.
       - `aero_virtio_tablet.inf` is the preferred binding for the contract tablet HWID and wins when it matches (it is a
-        more specific match than the opt-in strict generic fallback HWID (`PCI\VEN_1AF4&DEV_1052&REV_01`).
+        more specific match than the opt-in strict generic fallback HWID (`PCI\VEN_1AF4&DEV_1052&REV_01`)).
       - If your QEMU/device does **not** expose the Aero contract tablet subsystem ID (`SUBSYS_0012`), `aero_virtio_tablet.inf`
         will not match (tablet-SUBSYS-only).
         - In that case, the device can still bind via the opt-in strict revision-gated generic fallback HWID
