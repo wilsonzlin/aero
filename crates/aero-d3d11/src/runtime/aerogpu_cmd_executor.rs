@@ -4415,14 +4415,20 @@ impl AerogpuD3d11Executor {
             1
         };
 
-        // Patchlist topology / HS+DS bindings require tessellation emulation. Until real
-        // tessellation is implemented, route these through the same placeholder compute prepass but
-        // avoid touching guest IA buffers (the placeholder shader ignores them).
-        let tessellation_placeholder = matches!(
+        // Patchlist topology without HS/DS cannot be expressed in WebGPU render pipelines. When a
+        // guest selects a patchlist topology but does not bind HS/DS, route the draw through the
+        // placeholder compute-prepass path so we can still rasterize *something* (helpful for bring-up
+        // and for apps that set patchlist topology speculatively).
+        //
+        // The placeholder shader ignores IA inputs, so avoid uploading/binding guest IA buffers in
+        // this mode.
+        let patchlist_only_emulation = matches!(
             self.state.primitive_topology,
             CmdPrimitiveTopology::PatchList { .. }
-        ) || self.state.hs.is_some()
-            || self.state.ds.is_some();
+        ) && self.state.gs.is_none()
+            && self.state.hs.is_none()
+            && self.state.ds.is_none();
+
         // Upload any dirty render targets/depth-stencil attachments before starting the passes.
         let render_targets = self.state.render_targets.clone();
         let depth_stencil = self.state.depth_stencil;
@@ -4435,9 +4441,9 @@ impl AerogpuD3d11Executor {
 
         // Upload any dirty resources used by the current input assembler bindings. The
         // vertex-pulling prepass reads at least one dword (and the eventual GS/HS/DS emulation path
-        // will use the full vertex pulling layout). The tessellation placeholder path intentionally
+        // will use the full vertex pulling layout). The patchlist-only placeholder path intentionally
         // ignores guest IA buffers, so avoid uploading them there.
-        if !tessellation_placeholder {
+        if !patchlist_only_emulation {
             let mut ia_buffers: Vec<u32> = self
                 .state
                 .vertex_buffers
@@ -4614,7 +4620,7 @@ impl AerogpuD3d11Executor {
         }
 
         // Prepare compute prepass output buffers.
-        let centered_placeholder_triangle = tessellation_placeholder
+        let centered_placeholder_triangle = patchlist_only_emulation
             || matches!(
                 self.state.primitive_topology,
                 CmdPrimitiveTopology::PointList
@@ -5212,7 +5218,7 @@ impl AerogpuD3d11Executor {
             let mut vp_index_params_buffer: Option<wgpu::Buffer> = None;
             let mut index_pulling_params_buffer: Option<wgpu::Buffer> = None;
 
-            if !tessellation_placeholder {
+            if !patchlist_only_emulation {
                 if let Some(layout_handle) = self.state.input_layout {
                     let vs = self
                         .resources
