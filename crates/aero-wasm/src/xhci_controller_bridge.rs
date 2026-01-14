@@ -388,18 +388,30 @@ impl XhciControllerBridge {
 
     /// Advance the controller by `frames` 1ms frames.
     ///
-    /// The current xHCI model in `aero-usb` does not yet have a time-based scheduler; this exists
-    /// primarily so the JS-side PCI wrapper can share a common device-stepping contract across
-    /// controllers.
+    /// This advances controller internal time (e.g. port reset timers). When PCI Bus Master Enable
+    /// (BME) is set, it also executes any pending transfer-ring work and drains queued events into
+    /// the guest event ring.
     pub fn step_frames(&mut self, frames: u32) {
         if frames == 0 {
             return;
         }
         self.tick_count = self.tick_count.wrapping_add(u64::from(frames));
-        // Advance controller/port timers. Without this, operations like PORTSC port reset will never
-        // complete (the xHCI model clears PR/PED after a timeout in `tick_1ms`).
-        for _ in 0..frames {
-            self.ctrl.tick_1ms();
+
+        let dma_enabled = (self.pci_command & (1 << 2)) != 0;
+        if dma_enabled {
+            let mut mem = WasmGuestMemory {
+                guest_base: self.guest_base,
+                ram_bytes: self.guest_size,
+            };
+            for _ in 0..frames {
+                self.ctrl.tick_1ms_and_service_event_ring(&mut mem);
+            }
+        } else {
+            // Advance controller/port timers. Without this, operations like PORTSC port reset will never
+            // complete (the xHCI model clears PR/PED after a timeout in `tick_1ms`).
+            for _ in 0..frames {
+                self.ctrl.tick_1ms();
+            }
         }
     }
 

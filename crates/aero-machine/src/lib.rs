@@ -1972,7 +1972,6 @@ impl PciDevice for VgaPciConfigDevice {
         &mut self.cfg
     }
 }
-
 struct VgaLfbMmio {
     dev: Rc<RefCell<VgaDevice>>,
 }

@@ -24,9 +24,9 @@ Status:
 - The web runtime exposes an xHCI PCI function backed by `aero_wasm::XhciControllerBridge` (wrapping
   `aero_usb::xhci::XhciController`). It implements a limited subset of xHCI (MMIO registers, USB2
   root ports + PORTSC, interrupter 0 + ERST-backed event ring delivery, deterministic snapshot/restore,
-  and some host-side topology/WebUSB hooks), but it does not yet implement full driver-facing command
-  ring execution (doorbell 0) or transfer scheduling (non-control transfers are still missing), so
-  treat it as bring-up quality and incomplete.
+  and some host-side topology/WebUSB hooks). Endpoint-0 doorbell-driven control transfers can execute,
+  but full driver-facing command ring execution (doorbell 0) and non-control transfers are still
+  missing, so treat it as bring-up quality and incomplete.
 
 > Canonical USB stack selection: see [ADR 0015](./adr/0015-canonical-usb-stack.md) (`crates/aero-usb` + `crates/aero-wasm` + `web/`).
 
@@ -189,7 +189,7 @@ treat the implementation as “bring-up” quality rather than a complete xHCI.
       executor (Setup/Data/Status TRBs) when the controller is ticked
     - command ring doorbell (doorbell 0) is not modeled yet.
     - runtime interrupter 0 registers + ERST-backed guest event ring producer are modeled (used by
-      Rust tests and by the web/WASM bridge via `poll()`).
+      Rust tests and by the web/WASM bridge via `step_frames()`/`poll()`).
   - A DMA read on the first transition of `USBCMD.RUN` (primarily to validate **PCI Bus Master Enable gating** in wrappers).
   - A level-triggered interrupt condition surfaced as `irq_level()` (USBSTS.EINT + interrupter
     pending), used to validate **INTx disable gating**.
@@ -204,8 +204,9 @@ treat the implementation as “bring-up” quality rather than a complete xHCI.
   - Wraps `XhciController` (shared Rust model) and forwards MMIO reads/writes from the TS PCI device.
   - Enforces **PCI BME DMA gating** by swapping the memory bus implementation when bus mastering is
     disabled (the controller still updates register state, but must not touch guest RAM).
-  - `step_frames()` advances controller/port timers (`XhciController::tick_1ms`) and increments a tick
-    counter. (It does not yet run a full xHCI transfer scheduler.)
+  - `step_frames()` advances controller time; when BME is enabled it also executes pending transfer
+    ring work (currently endpoint 0 only) and drains queued events
+    (`XhciController::tick_1ms_and_service_event_ring`).
   - `poll()` drains any queued event TRBs into the guest event ring (`XhciController::service_event_ring`);
     DMA is gated on BME.
   - WebUSB passthrough hooks (`set_connected`, `drain_actions`, `push_completion`, `reset`) used by the
@@ -243,7 +244,7 @@ command/event behavior:
   - `Address Device`, and
   - `No-Op`.
   These events are delivered to the guest only once the event ring is configured and
-  `service_event_ring` is called (e.g. via the WASM bridge `poll()` hook).
+  `service_event_ring` is called (e.g. via the WASM bridge `step_frames()`/`poll()` hook).
 - `command_ring::CommandRingProcessor`: parses a guest command ring and writes completion events into
   a guest event ring (single-segment).
   - Implemented commands (subset): `Enable Slot`, `Disable Slot`, `No-Op`, `Address Device`,
