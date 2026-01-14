@@ -12809,12 +12809,26 @@ bool TestPartialShaderStageBindingPsOnlyXyzDiffuseUploadsWvpConstants() {
   world[13] = 6.0f;
   world[14] = 7.0f;
 
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    std::memcpy(dev->transform_matrices[256], world, sizeof(world)); // WORLD0
-    std::memcpy(dev->transform_matrices[2], view, sizeof(view));     // VIEW
-    std::memcpy(dev->transform_matrices[3], proj, sizeof(proj));     // PROJECTION
-    dev->fixedfunc_matrix_dirty = true;
+  if (!Check(cleanup.device_funcs.pfnSetTransform != nullptr, "SetTransform must be available")) {
+    return false;
+  }
+  D3DMATRIX world_m{};
+  D3DMATRIX view_m{};
+  D3DMATRIX proj_m{};
+  std::memcpy(world_m.m, world, sizeof(world));
+  std::memcpy(view_m.m, view, sizeof(view));
+  std::memcpy(proj_m.m, proj, sizeof(proj));
+  hr = cleanup.device_funcs.pfnSetTransform(create_dev.hDevice, D3DTS_WORLD, &world_m);
+  if (!Check(hr == S_OK, "SetTransform(WORLD)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(create_dev.hDevice, D3DTS_VIEW, &view_m);
+  if (!Check(hr == S_OK, "SetTransform(VIEW)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(create_dev.hDevice, D3DTS_PROJECTION, &proj_m);
+  if (!Check(hr == S_OK, "SetTransform(PROJECTION)")) {
+    return false;
   }
 
   // D3DFVF_XYZ (0x2) | D3DFVF_DIFFUSE (0x40).
@@ -13877,12 +13891,26 @@ bool TestFvfXyzDiffuseDrawPrimitiveUpEmitsFixedfuncCommands() {
   proj[10] = 1.0f;
   proj[11] = 1.0f; // w = z
 
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    std::memcpy(dev->transform_matrices[256], world, sizeof(world)); // WORLD0
-    std::memcpy(dev->transform_matrices[2], view, sizeof(view));     // VIEW
-    std::memcpy(dev->transform_matrices[3], proj, sizeof(proj));     // PROJECTION
-    dev->fixedfunc_matrix_dirty = true;
+  if (!Check(cleanup.device_funcs.pfnSetTransform != nullptr, "SetTransform must be available")) {
+    return false;
+  }
+  D3DMATRIX world_m{};
+  D3DMATRIX view_m{};
+  D3DMATRIX proj_m{};
+  std::memcpy(world_m.m, world, sizeof(world));
+  std::memcpy(view_m.m, view, sizeof(view));
+  std::memcpy(proj_m.m, proj, sizeof(proj));
+  hr = cleanup.device_funcs.pfnSetTransform(create_dev.hDevice, D3DTS_WORLD, &world_m);
+  if (!Check(hr == S_OK, "SetTransform(WORLD)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(create_dev.hDevice, D3DTS_VIEW, &view_m);
+  if (!Check(hr == S_OK, "SetTransform(VIEW)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(create_dev.hDevice, D3DTS_PROJECTION, &proj_m);
+  if (!Check(hr == S_OK, "SetTransform(PROJECTION)")) {
+    return false;
   }
 
   struct Vertex {
@@ -14696,12 +14724,26 @@ bool TestFvfXyzDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands() {
   proj[10] = 1.0f;
   proj[11] = 1.0f; // w = z
 
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    std::memcpy(dev->transform_matrices[256], world, sizeof(world)); // WORLD0
-    std::memcpy(dev->transform_matrices[2], view, sizeof(view));     // VIEW
-    std::memcpy(dev->transform_matrices[3], proj, sizeof(proj));     // PROJECTION
-    dev->fixedfunc_matrix_dirty = true;
+  if (!Check(cleanup.device_funcs.pfnSetTransform != nullptr, "SetTransform must be available")) {
+    return false;
+  }
+  D3DMATRIX world_m{};
+  D3DMATRIX view_m{};
+  D3DMATRIX proj_m{};
+  std::memcpy(world_m.m, world, sizeof(world));
+  std::memcpy(view_m.m, view, sizeof(view));
+  std::memcpy(proj_m.m, proj, sizeof(proj));
+  hr = cleanup.device_funcs.pfnSetTransform(create_dev.hDevice, D3DTS_WORLD, &world_m);
+  if (!Check(hr == S_OK, "SetTransform(WORLD)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(create_dev.hDevice, D3DTS_VIEW, &view_m);
+  if (!Check(hr == S_OK, "SetTransform(VIEW)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(create_dev.hDevice, D3DTS_PROJECTION, &proj_m);
+  if (!Check(hr == S_OK, "SetTransform(PROJECTION)")) {
+    return false;
   }
 
   struct Vertex {
@@ -15154,12 +15196,26 @@ bool TestFvfXyzDiffuseTex1ReuploadsWvpAfterUserVsClobbersConstants() {
   world[13] = 6.0f;
   world[14] = 7.0f;
 
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    std::memcpy(dev->transform_matrices[256], world, sizeof(world)); // WORLD0
-    std::memcpy(dev->transform_matrices[2], view, sizeof(view));     // VIEW
-    std::memcpy(dev->transform_matrices[3], proj, sizeof(proj));     // PROJECTION
-    dev->fixedfunc_matrix_dirty = true;
+  if (!Check(cleanup.device_funcs.pfnSetTransform != nullptr, "SetTransform must be available")) {
+    return false;
+  }
+  D3DMATRIX world_m{};
+  D3DMATRIX view_m{};
+  D3DMATRIX proj_m{};
+  std::memcpy(world_m.m, world, sizeof(world));
+  std::memcpy(view_m.m, view, sizeof(view));
+  std::memcpy(proj_m.m, proj, sizeof(proj));
+  hr = cleanup.device_funcs.pfnSetTransform(create_dev.hDevice, D3DTS_WORLD, &world_m);
+  if (!Check(hr == S_OK, "SetTransform(WORLD)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(create_dev.hDevice, D3DTS_VIEW, &view_m);
+  if (!Check(hr == S_OK, "SetTransform(VIEW)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(create_dev.hDevice, D3DTS_PROJECTION, &proj_m);
+  if (!Check(hr == S_OK, "SetTransform(PROJECTION)")) {
+    return false;
   }
 
   struct Vertex {
@@ -15389,12 +15445,26 @@ bool TestFvfXyzDiffuseTex1DrawIndexedPrimitiveUpAppliesWvpTransform() {
   proj[10] = 1.0f;
   proj[11] = 1.0f; // w = z
 
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    std::memcpy(dev->transform_matrices[256], world, sizeof(world)); // WORLD0
-    std::memcpy(dev->transform_matrices[2], view, sizeof(view));     // VIEW
-    std::memcpy(dev->transform_matrices[3], proj, sizeof(proj));     // PROJECTION
-    dev->fixedfunc_matrix_dirty = true;
+  if (!Check(cleanup.device_funcs.pfnSetTransform != nullptr, "SetTransform must be available")) {
+    return false;
+  }
+  D3DMATRIX world_m{};
+  D3DMATRIX view_m{};
+  D3DMATRIX proj_m{};
+  std::memcpy(world_m.m, world, sizeof(world));
+  std::memcpy(view_m.m, view, sizeof(view));
+  std::memcpy(proj_m.m, proj, sizeof(proj));
+  hr = cleanup.device_funcs.pfnSetTransform(create_dev.hDevice, D3DTS_WORLD, &world_m);
+  if (!Check(hr == S_OK, "SetTransform(WORLD)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(create_dev.hDevice, D3DTS_VIEW, &view_m);
+  if (!Check(hr == S_OK, "SetTransform(VIEW)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(create_dev.hDevice, D3DTS_PROJECTION, &proj_m);
+  if (!Check(hr == S_OK, "SetTransform(PROJECTION)")) {
+    return false;
   }
 
   struct Vertex {
@@ -20881,12 +20951,26 @@ bool TestFvfXyzDiffuseDrawPrimitiveUpDoesNotConvertVertices() {
   proj[10] = 1.0f;
   proj[11] = 1.0f; // w = z
 
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    std::memcpy(dev->transform_matrices[256], world, sizeof(world)); // WORLD0
-    std::memcpy(dev->transform_matrices[2], view, sizeof(view));     // VIEW
-    std::memcpy(dev->transform_matrices[3], proj, sizeof(proj));     // PROJECTION
-    dev->fixedfunc_matrix_dirty = true;
+  if (!Check(cleanup.device_funcs.pfnSetTransform != nullptr, "SetTransform must be available")) {
+    return false;
+  }
+  D3DMATRIX world_m{};
+  D3DMATRIX view_m{};
+  D3DMATRIX proj_m{};
+  std::memcpy(world_m.m, world, sizeof(world));
+  std::memcpy(view_m.m, view, sizeof(view));
+  std::memcpy(proj_m.m, proj, sizeof(proj));
+  hr = cleanup.device_funcs.pfnSetTransform(create_dev.hDevice, D3DTS_WORLD, &world_m);
+  if (!Check(hr == S_OK, "SetTransform(WORLD)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(create_dev.hDevice, D3DTS_VIEW, &view_m);
+  if (!Check(hr == S_OK, "SetTransform(VIEW)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(create_dev.hDevice, D3DTS_PROJECTION, &proj_m);
+  if (!Check(hr == S_OK, "SetTransform(PROJECTION)")) {
+    return false;
   }
 
   struct Vertex {
@@ -21104,12 +21188,26 @@ bool TestFvfXyzDiffuseDrawPrimitiveNoScratchVbConversion() {
   proj[10] = 1.0f;
   proj[11] = 1.0f; // w = z
 
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    std::memcpy(dev->transform_matrices[256], world, sizeof(world)); // WORLD0
-    std::memcpy(dev->transform_matrices[2], view, sizeof(view));     // VIEW
-    std::memcpy(dev->transform_matrices[3], proj, sizeof(proj));     // PROJECTION
-    dev->fixedfunc_matrix_dirty = true;
+  if (!Check(cleanup.device_funcs.pfnSetTransform != nullptr, "SetTransform must be available")) {
+    return false;
+  }
+  D3DMATRIX world_m{};
+  D3DMATRIX view_m{};
+  D3DMATRIX proj_m{};
+  std::memcpy(world_m.m, world, sizeof(world));
+  std::memcpy(view_m.m, view, sizeof(view));
+  std::memcpy(proj_m.m, proj, sizeof(proj));
+  hr = cleanup.device_funcs.pfnSetTransform(create_dev.hDevice, D3DTS_WORLD, &world_m);
+  if (!Check(hr == S_OK, "SetTransform(WORLD)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(create_dev.hDevice, D3DTS_VIEW, &view_m);
+  if (!Check(hr == S_OK, "SetTransform(VIEW)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(create_dev.hDevice, D3DTS_PROJECTION, &proj_m);
+  if (!Check(hr == S_OK, "SetTransform(PROJECTION)")) {
+    return false;
   }
 
   struct Vertex {
@@ -24453,12 +24551,26 @@ bool TestFvfXyzDiffuseTex1DrawIndexedPrimitiveNoScratchVbConversion() {
   proj[10] = 1.0f;
   proj[11] = 1.0f; // w = z
 
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    std::memcpy(dev->transform_matrices[256], world, sizeof(world)); // WORLD0
-    std::memcpy(dev->transform_matrices[2], view, sizeof(view));     // VIEW
-    std::memcpy(dev->transform_matrices[3], proj, sizeof(proj));     // PROJECTION
-    dev->fixedfunc_matrix_dirty = true;
+  if (!Check(cleanup.device_funcs.pfnSetTransform != nullptr, "SetTransform must be available")) {
+    return false;
+  }
+  D3DMATRIX world_m{};
+  D3DMATRIX view_m{};
+  D3DMATRIX proj_m{};
+  std::memcpy(world_m.m, world, sizeof(world));
+  std::memcpy(view_m.m, view, sizeof(view));
+  std::memcpy(proj_m.m, proj, sizeof(proj));
+  hr = cleanup.device_funcs.pfnSetTransform(create_dev.hDevice, D3DTS_WORLD, &world_m);
+  if (!Check(hr == S_OK, "SetTransform(WORLD)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(create_dev.hDevice, D3DTS_VIEW, &view_m);
+  if (!Check(hr == S_OK, "SetTransform(VIEW)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(create_dev.hDevice, D3DTS_PROJECTION, &proj_m);
+  if (!Check(hr == S_OK, "SetTransform(PROJECTION)")) {
+    return false;
   }
 
   struct Vertex {
