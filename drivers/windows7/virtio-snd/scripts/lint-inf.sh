@@ -17,6 +17,20 @@ note() {
   echo "lint-inf: $*" >&2
 }
 
+require_cmd() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    fail "required tool not found in PATH: $1"
+  fi
+}
+
+for cmd in awk diff grep mktemp sed tr; do
+  require_cmd "$cmd"
+done
+
+if ! diff -u /dev/null /dev/null >/dev/null 2>&1; then
+  fail "diff does not support unified output (-u); please use a POSIX diff implementation"
+fi
+
 SCRIPT_DIR=$(CDPATH= cd "$(dirname "$0")" && pwd)
 BASE_DIR=$(CDPATH= cd "$SCRIPT_DIR/.." && pwd)
 
