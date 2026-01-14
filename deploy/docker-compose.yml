@@ -320,6 +320,13 @@ services:
       # Default STUN server (override via env or set AERO_ICE_SERVERS_JSON).
       - AERO_STUN_URLS=${AERO_STUN_URLS:-stun:stun.l.google.com:19302}
 
+      # WebRTC session hardening (optional; defaults apply when unset).
+      - WEBRTC_SESSION_CONNECT_TIMEOUT
+
+      # WebRTC DataChannel hardening (optional; defaults apply when unset).
+      - WEBRTC_DATACHANNEL_MAX_MESSAGE_BYTES
+      - WEBRTC_SCTP_MAX_RECEIVE_BUFFER_BYTES
+
       # Optional auth / policy configuration (passed through when set in deploy/.env).
       - AUTH_MODE=${AUTH_MODE:-none}
       - API_KEY=${API_KEY:-}
