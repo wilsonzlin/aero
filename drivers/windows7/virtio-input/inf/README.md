@@ -22,7 +22,7 @@ aero_virtio_tablet.cat
 
 - `virtio-input.inf.disabled` is a legacy filename alias for workflows/tools that still reference `virtio-input.inf`
   instead of `aero_virtio_input.inf`.
-  - Rename it to `virtio-input.inf` to enable it.
+  - Rename it to `virtio-input.inf` to enable it (disabled by default).
 - Policy: the alias INF is a *filename alias only*:
   - From the first section header (`[Version]`) onward, it is expected to remain byte-for-byte identical to
     `aero_virtio_input.inf` (only the leading banner/comments may differ; see `..\scripts\check-inf-alias.py`).

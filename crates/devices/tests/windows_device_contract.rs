@@ -504,7 +504,7 @@ fn windows_device_contract_virtio_input_inf_uses_distinct_keyboard_mouse_device_
 }
 
 #[test]
-fn windows_device_contract_virtio_input_alias_inf_includes_generic_fallback_model_line() {
+fn windows_device_contract_virtio_input_alias_inf_stays_in_sync_with_canonical() {
     // `virtio-input.inf.disabled` is a legacy filename alias for the canonical
     // `aero_virtio_input.inf`, kept for compatibility with older tooling/workflows that still
     // reference `virtio-input.inf`.
@@ -544,7 +544,7 @@ fn windows_device_contract_virtio_input_alias_inf_includes_generic_fallback_mode
         inf_body_from_first_section(&canonical_contents),
         "alias INF {} must match canonical INF {} from the first section header onward",
         alias_path.display(),
-        canonical_path.display()
+        canonical_path.display(),
     );
 
     let hwid_kbd = "PCI\\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01";

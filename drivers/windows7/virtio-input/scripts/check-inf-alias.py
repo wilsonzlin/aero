@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT OR Apache-2.0
-"""\
-Verify that the legacy virtio-input INF filename alias stays in sync.
+"""Verify that the virtio-input legacy INF filename alias stays in sync.
 
 The Windows 7 virtio-input driver package has a canonical INF:
   - drivers/windows7/virtio-input/inf/aero_virtio_input.inf
@@ -32,46 +31,39 @@ import sys
 from pathlib import Path
 
 
-def _first_nonblank_ascii_byte(*, line: bytes, first_line: bool) -> int | None:
+def _inf_functional_bytes(path: Path) -> bytes:
     """
-    Return the first meaningful ASCII byte on a line, ignoring whitespace and NULs.
+    Return the INF content starting from the first section header (typically `[Version]`).
 
-    This is robust to UTF-16LE/BE encoded INFs where each ASCII character is
-    separated by a NUL byte.
-    """
-
-    if first_line:
-        # Strip BOMs for *detection only*. Returned content still includes them.
-        if line.startswith(b"\xef\xbb\xbf"):
-            line = line[3:]
-        elif line.startswith(b"\xff\xfe") or line.startswith(b"\xfe\xff"):
-            line = line[2:]
-
-    for b in line:
-        if b in (0x00, 0x09, 0x0A, 0x0D, 0x20):  # NUL, tab, LF, CR, space
-            continue
-        return b
-    return None
-
-
-def inf_functional_bytes(path: Path) -> bytes:
-    """
-    Return the file content starting from the first section header line.
-
-    We intentionally ignore the leading comment/header block so the alias INF can
-    have a different filename banner, while still enforcing byte-for-byte
-    equality for all sections/keys.
+    This ignores the leading banner/comment block so the legacy filename alias can
+    use a different filename header while still enforcing byte-for-byte equality of
+    all functional sections/keys.
     """
 
     data = path.read_bytes()
     lines = data.splitlines(keepends=True)
+
+    def _first_nonblank_ascii_byte(*, line: bytes, first_line: bool) -> int | None:
+        # Return the first meaningful ASCII byte on a line, ignoring whitespace and NULs.
+        # This makes the scan robust to UTF-16LE/BE INFs (with or without a BOM).
+        if first_line:
+            if line.startswith(b"\xef\xbb\xbf"):
+                line = line[3:]
+            elif line.startswith(b"\xff\xfe") or line.startswith(b"\xfe\xff"):
+                line = line[2:]
+
+        for b in line:
+            if b in (0x00, 0x09, 0x0A, 0x0D, 0x20):  # NUL, tab, LF, CR, space
+                continue
+            return b
+        return None
 
     for i, line in enumerate(lines):
         first = _first_nonblank_ascii_byte(line=line, first_line=(i == 0))
         if first is None:
             continue
 
-        # First section header (e.g. "[Version]") starts the functional region.
+        # First section header starts the functional region.
         if first == ord("["):
             return b"".join(lines[i:])
 
@@ -79,21 +71,13 @@ def inf_functional_bytes(path: Path) -> bytes:
         if first == ord(";"):
             continue
 
-        # Unexpected preamble content (not comment, not blank, not section):
-        # treat it as functional to avoid masking drift.
+        # Unexpected preamble content: treat it as functional to avoid masking drift.
         return b"".join(lines[i:])
 
     raise RuntimeError(f"{path}: could not find a section header (e.g. [Version])")
 
 
 def _decode_lines_for_diff(data: bytes) -> list[str]:
-    """
-    Decode bytes for a readable unified diff.
-
-    The comparison is byte-for-byte, but when files drift we want the diff output
-    to be readable even if the INF is UTF-16 encoded (with or without a BOM).
-    """
-
     if data.startswith(b"\xff\xfe") or data.startswith(b"\xfe\xff"):
         text = data.decode("utf-16", errors="replace").lstrip("\ufeff")
     elif data.startswith(b"\xef\xbb\xbf"):
@@ -140,9 +124,14 @@ def main() -> int:
         )
         return 0
 
-    canonical_body = inf_functional_bytes(canonical)
-    alias_body = inf_functional_bytes(alias)
+    canonical_body = _inf_functional_bytes(canonical)
+    alias_body = _inf_functional_bytes(alias)
     if canonical_body == alias_body:
+        print(
+            "virtio-input INF alias drift check: OK ({} stays in sync with {} outside banner/comments)".format(
+                alias.relative_to(repo_root), canonical.relative_to(repo_root)
+            )
+        )
         return 0
 
     sys.stderr.write("virtio-input INF alias drift detected.\n")
@@ -151,17 +140,14 @@ def main() -> int:
         "(byte-for-byte; only the leading banner/comments may differ).\n\n"
     )
 
-    canonical_lines = _decode_lines_for_diff(canonical_body)
-    alias_lines = _decode_lines_for_diff(alias_body)
-
     # Use repo-relative paths in the diff output to keep it readable and stable
     # across machines/CI environments.
     canonical_label = str(canonical.relative_to(repo_root))
     alias_label = str(alias.relative_to(repo_root))
 
     diff = difflib.unified_diff(
-        canonical_lines,
-        alias_lines,
+        _decode_lines_for_diff(canonical_body),
+        _decode_lines_for_diff(alias_body),
         fromfile=canonical_label,
         tofile=alias_label,
         lineterm="\n",

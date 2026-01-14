@@ -86,6 +86,7 @@ Keyboard: PCI device 1af4:1052
     - Compatibility filename for workflows/tools that still reference `virtio-input.inf`.
     - Filename-only alias: from the first section header (`[Version]`) onward, expected to be byte-for-byte identical to `inf/aero_virtio_input.inf`
       (only the leading banner/comments may differ; see `../scripts/check-inf-alias.py`).
+    - Does not change HWID matching behavior.
     - Do **not** ship/install it alongside `aero_virtio_input.inf` (install only one of the two filenames at a time).
   Tablet devices bind via `inf/aero_virtio_tablet.inf` when that INF matches: its HWID is more specific (`SUBSYS_0012...`),
   so it wins over the generic fallback when both driver packages are installed.
@@ -123,6 +124,9 @@ For compatibility with tooling that still expects `virtio-input.inf`, the repo a
 (`inf/virtio-input.inf.disabled`, rename to `virtio-input.inf` to enable). It is a filename-only alias and must remain byte-for-byte identical to
 `inf/aero_virtio_input.inf` from the first section header (`[Version]`) onward (only the leading banner/comments may differ; see
 `../scripts/check-inf-alias.py`).
+(`inf/virtio-input.inf.disabled`, rename to `virtio-input.inf` to enable). Policy: it must remain byte-for-byte identical to
+`inf/aero_virtio_input.inf` from the first section header (`[Version]`) onward (only the leading banner/comments may differ; see
+`../scripts/check-inf-alias.py`). It does **not** change HWID matching behavior.
 
 Topology notes:
 

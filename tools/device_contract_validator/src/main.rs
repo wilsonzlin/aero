@@ -1234,15 +1234,14 @@ fn validate_virtio_input_device_desc_split(
     // INFs should bind both functions to the same install sections, but use distinct
     // DeviceDesc strings so they appear with different names in Device Manager.
     //
-    // Policy (AERO-W7-VIRTIO v1):
-    // - The canonical INF referenced by the device contract (`aero_virtio_input.inf`) must bind
-    //   keyboard/mouse via SUBSYS-qualified HWIDs so they appear distinctly in Device Manager.
-    // - The canonical INF must also include a strict, revision-gated generic fallback HWID
-    //   (no SUBSYS): `{base_hwid}&REV_{expected_rev:02X}`.
-    // - Legacy alias INFs (`virtio-input.inf` / `virtio-input.inf.disabled`, if present) are a
-    //   compatibility shim for workflows that still reference the legacy filename. They must be
-    //   byte-identical to the canonical INF from the first section header (`[Version]`) onward
-    //   (enforced elsewhere); they are also expected to include the strict fallback model entry.
+    // Policy:
+    // - The canonical INF referenced by the device contract (`aero_virtio_input.inf`) is expected
+    //   to bind keyboard/mouse via SUBSYS-qualified HWIDs (distinct naming) *and* include a strict,
+    //   revision-gated generic fallback HWID (no SUBSYS): `{base_hwid}&REV_{expected_rev:02X}`.
+    // - Legacy filename aliases (`virtio-input.inf` / `virtio-input.inf.disabled`, if present) are
+    //   compatibility shims for tooling that references the legacy basename. They must remain in
+    //   sync with the canonical INF from the first section header (`[Version]`) onward (only the
+    //   leading banner/comments may differ).
     // - Tablet devices bind via `aero_virtio_tablet.inf` (more specific SUBSYS match) and win over
     //   the generic fallback when that INF is installed.
     //
@@ -1835,6 +1834,9 @@ fn validate_in_tree_infs(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
                 }
 
                 if dev.device == "virtio-input" {
+                    // virtio-input uses one driver/service for both keyboard and mouse functions. For
+                    // compatibility with environments that do not expose/recognize subsystem IDs, the
+                    // canonical INF also includes a strict, REV-qualified generic fallback HWID (no SUBSYS).
                     validate_virtio_input_device_desc_split(
                         inf_path,
                         &inf_text,
@@ -1847,7 +1849,7 @@ fn validate_in_tree_infs(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
                     })?;
 
                     // Optional: validate the legacy filename alias INF (if present). This alias is kept for
-                    // compatibility with workflows that still reference `virtio-input.inf`.
+                    // compatibility with workflows/tools that still reference `virtio-input.inf`.
                     //
                     // Policy: if present, the alias INF must be byte-for-byte identical to the canonical
                     // INF from the first section header (`[Version]`) onward (leading banner/comments are

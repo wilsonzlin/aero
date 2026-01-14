@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 <#
 .SYNOPSIS
-  Statically validates aero_virtio_input.inf against Aero contract expectations.
+  Statically validates the virtio-input keyboard/mouse INF against Aero contract expectations.
 
 .DESCRIPTION
   This is a lightweight (regex/string based) validator intended to catch accidental INF
@@ -10,11 +10,10 @@
   - Must bind as HIDClass
   - Must reference the expected catalog filename
   - Must target KMDF 1.9 (in-box on Win7 SP1)
-  - Must include the contract v1 keyboard/mouse HWID set (revision gated, REV_01), plus the strict REV-qualified generic fallback HWID (no SUBSYS):
-    `PCI\VEN_1AF4&DEV_1052&REV_01`
-  - If a legacy filename alias INF exists (`virtio-input.inf{,.disabled}`), it must be a filename alias only and remain
-    byte-for-byte identical to the canonical INF from the first section header (`[Version]`) onward
-    (only the leading banner/comments may differ; see `scripts/check-inf-alias.py`).
+  - Must include the contract v1 keyboard/mouse HWID set (revision gated, REV_01)
+  - Must include the strict, REV-qualified generic fallback HWID (no SUBSYS): `PCI\VEN_1AF4&DEV_1052&REV_01`
+  - Legacy filename aliases (`virtio-input.inf` / `virtio-input.inf.disabled`) are expected to remain in sync with the canonical INF
+    (filename alias only; see `check-inf-alias.py`).
   - Must not include a revision-less base HWID (`PCI\VEN_1AF4&DEV_1052`) (revision gating is required)
   - Must use distinct DeviceDesc strings for keyboard vs mouse (so they appear separately in Device Manager)
   - Must enable MSI/MSI-X and request enough message interrupts for virtio-input
@@ -248,8 +247,6 @@ function Add-Failure([System.Collections.Generic.List[string]]$Failures, [string
 $exitCode = 0
 try {
   $infPathResolved = Resolve-ExistingFile -Path $InfPath -ArgName '-InfPath'
-  $infBaseName = [System.IO.Path]::GetFileName($infPathResolved)
-  $isLegacyAlias = ($infBaseName -ieq 'virtio-input.inf' -or $infBaseName -ieq 'virtio-input.inf.disabled')
 
   $rawLines = Read-InfLines -Path $infPathResolved
   $lines = New-Object System.Collections.Generic.List[string]
@@ -427,7 +424,7 @@ $requiredHwids = @(
   # Aero contract v1 mouse (SUBSYS_0011)
   'PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01',
   # Strict generic fallback (no SUBSYS)
-  $fallbackHwid,
+  $fallbackHwid
 )
 
 $modelSections = @('Aero.NTx86', 'Aero.NTamd64')
@@ -479,12 +476,12 @@ $requiredModelMappings = @(
   @{
     Name = 'NTx86 fallback mapping'
     Regex = ('(?i)^' + [regex]::Escape('%AeroVirtioInput.DeviceDesc%') + '\s*=\s*' + [regex]::Escape('AeroVirtioInput_Install.NTx86') + '\s*,\s*' + [regex]::Escape($fallbackHwid) + '$')
-    Message = 'Missing x86 fallback model line (expected %AeroVirtioInput.DeviceDesc% = AeroVirtioInput_Install.NTx86, ...&REV_01 ).'
+    Message = 'Missing x86 fallback model line (expected %AeroVirtioInput.DeviceDesc% = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&REV_01).'
   },
   @{
     Name = 'NTamd64 fallback mapping'
     Regex = ('(?i)^' + [regex]::Escape('%AeroVirtioInput.DeviceDesc%') + '\s*=\s*' + [regex]::Escape('AeroVirtioInput_Install.NTamd64') + '\s*,\s*' + [regex]::Escape($fallbackHwid) + '$')
-    Message = 'Missing x64 fallback model line (expected %AeroVirtioInput.DeviceDesc% = AeroVirtioInput_Install.NTamd64, ...&REV_01 ).'
+    Message = 'Missing x64 fallback model line (expected %AeroVirtioInput.DeviceDesc% = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&REV_01).'
   }
 )
 
