@@ -3075,13 +3075,18 @@ bool TestCreateResourceMipLevelsZeroAllocatesFullMipChain() {
     D3DDDI_HRESOURCE hResA{};
     D3DDDI_HRESOURCE hResB{};
     D3DDDI_HRESOURCE hResC{};
+    D3DDDI_HRESOURCE hResD{};
     bool has_adapter = false;
     bool has_device = false;
     bool has_res_a = false;
     bool has_res_b = false;
     bool has_res_c = false;
+    bool has_res_d = false;
 
     ~Cleanup() {
+      if (has_res_d && device_funcs.pfnDestroyResource) {
+        device_funcs.pfnDestroyResource(hDevice, hResD);
+      }
       if (has_res_c && device_funcs.pfnDestroyResource) {
         device_funcs.pfnDestroyResource(hDevice, hResC);
       }
@@ -3236,6 +3241,76 @@ bool TestCreateResourceMipLevelsZeroAllocatesFullMipChain() {
       return false;
     }
     if (!Check(res->size_bytes == expected.total_size_bytes, "size_bytes matches layout (8x4 full chain)")) {
+      return false;
+    }
+  }
+
+  // Non-shared BC1 texture with MipLevels == 0 should allocate the full chain.
+  {
+    constexpr uint32_t kWidth = 16;
+    constexpr uint32_t kHeight = 8;
+    constexpr uint32_t kExpectedMipLevels = 5; // 16x8, 8x4, 4x2, 2x1, 1x1
+    constexpr uint32_t kBc1BlockBytes = 8;
+
+    D3D9DDIARG_CREATERESOURCE create_res{};
+    create_res.type = kD3dRTypeTexture;
+    create_res.format = static_cast<uint32_t>(kD3dFmtDxt1); // D3DFMT_DXT1 (BC1)
+    create_res.width = kWidth;
+    create_res.height = kHeight;
+    create_res.depth = 1;
+    create_res.mip_levels = 0;
+    create_res.usage = 0;
+    create_res.pool = 0;
+    create_res.size = 0;
+    create_res.hResource.pDrvPrivate = nullptr;
+    create_res.pSharedHandle = nullptr;
+    create_res.pPrivateDriverData = nullptr;
+    create_res.PrivateDriverDataSize = 0;
+    create_res.wddm_hAllocation = 0;
+
+    hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_res);
+    if (!Check(hr == S_OK, "CreateResource(BC1, MipLevels==0, 16x8)")) {
+      return false;
+    }
+    cleanup.hResD = create_res.hResource;
+    cleanup.has_res_d = true;
+
+    auto* res = reinterpret_cast<Resource*>(create_res.hResource.pDrvPrivate);
+    if (!Check(res != nullptr, "resource pointer")) {
+      return false;
+    }
+    if (!Check(res->mip_levels == kExpectedMipLevels, "MipLevels==0 expands to full chain (BC1 16x8 => 5)")) {
+      return false;
+    }
+
+    // Validate computed size using the BC1 block layout rules (independent of
+    // calc_texture2d_layout).
+    uint32_t w = kWidth;
+    uint32_t h = kHeight;
+    uint32_t expected_row_pitch = 0;
+    uint32_t expected_slice_pitch = 0;
+    uint64_t expected_size = 0;
+    for (uint32_t level = 0; level < kExpectedMipLevels; ++level) {
+      const uint32_t blocks_w = std::max(1u, (w + 3u) / 4u);
+      const uint32_t blocks_h = std::max(1u, (h + 3u) / 4u);
+      const uint32_t row_pitch = blocks_w * kBc1BlockBytes;
+      const uint32_t slice_pitch = row_pitch * blocks_h;
+      if (level == 0) {
+        expected_row_pitch = row_pitch;
+        expected_slice_pitch = slice_pitch;
+      }
+      expected_size += slice_pitch;
+      w = std::max(1u, w / 2);
+      h = std::max(1u, h / 2);
+    }
+
+    if (!Check(res->row_pitch == expected_row_pitch, "row_pitch matches BC1 layout (16x8)")) {
+      return false;
+    }
+    if (!Check(res->slice_pitch == expected_slice_pitch, "slice_pitch matches BC1 layout (16x8)")) {
+      return false;
+    }
+    if (!Check(res->size_bytes == expected_size, "size_bytes matches BC1 full chain (16x8)")) {
       return false;
     }
   }
