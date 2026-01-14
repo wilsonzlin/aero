@@ -5,7 +5,7 @@ use crate::device::{AttachedUsbDevice, UsbInResult, UsbOutResult};
 use crate::{MemoryBus, SetupPacket, UsbDeviceModel};
 
 use super::context::{
-    EndpointContext, EndpointType, InputContext32, XHCI_ROUTE_STRING_MAX_DEPTH,
+    EndpointContext, EndpointType, InputContext32, SlotContext, XHCI_ROUTE_STRING_MAX_DEPTH,
     XHCI_ROUTE_STRING_MAX_PORT,
 };
 use super::trb::{CompletionCode, Trb, TrbType, TRB_LEN};
@@ -1080,6 +1080,11 @@ impl CommandRingProcessor {
                 }
             }
 
+            // Update the Slot Context Context Entries field to reflect an EP0-only configuration.
+            let mut slot_ctx = SlotContext::read_from(mem, dev_ctx_ptr + DEVICE_SLOT_CTX_OFFSET);
+            slot_ctx.set_context_entries(1);
+            slot_ctx.write_to(mem, dev_ctx_ptr + DEVICE_SLOT_CTX_OFFSET);
+
             return CompletionCode::Success;
         }
 
@@ -1740,6 +1745,13 @@ mod tests {
                 );
             }
         }
+
+        let slot_ctx = SlotContext::read_from(&mut mem, dev_ctx + DEVICE_SLOT_CTX_OFFSET);
+        assert_eq!(
+            slot_ctx.context_entries(),
+            1,
+            "deconfigure should leave the slot configured with only EP0"
+        );
 
         // Internal endpoint state should be dropped as well.
         let slot = processor.slots[usize::from(slot_id)]
