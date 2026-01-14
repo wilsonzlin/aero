@@ -267,12 +267,10 @@ fn virtio_input_device_cfg_mmio_exposes_expected_name_devids_and_ev_bits() {
         assert_eq!(size, 128, "{bdf:?} expected key bitmap size=128");
         let key_bits = m.read_physical_bytes(dev_cfg + 8, 128);
         if bdf == profile::VIRTIO_INPUT_KEYBOARD.bdf {
-            let has_key_a =
-                (key_bits[(KEY_A / 8) as usize] & (1u8 << (KEY_A % 8))) != 0;
+            let has_key_a = (key_bits[(KEY_A / 8) as usize] & (1u8 << (KEY_A % 8))) != 0;
             assert!(has_key_a, "{bdf:?} must advertise KEY_A");
         } else {
-            let has_btn_left =
-                (key_bits[(BTN_LEFT / 8) as usize] & (1u8 << (BTN_LEFT % 8))) != 0;
+            let has_btn_left = (key_bits[(BTN_LEFT / 8) as usize] & (1u8 << (BTN_LEFT % 8))) != 0;
             assert!(has_btn_left, "{bdf:?} must advertise BTN_LEFT");
         }
 
@@ -282,8 +280,7 @@ fn virtio_input_device_cfg_mmio_exposes_expected_name_devids_and_ev_bits() {
         let size = m.read_physical_u8(dev_cfg + 2);
         assert_eq!(size, 128, "{bdf:?} expected led bitmap size=128");
         let led_bits = m.read_physical_bytes(dev_cfg + 8, 1);
-        let has_capsl_led =
-            (led_bits[(LED_CAPSL / 8) as usize] & (1u8 << (LED_CAPSL % 8))) != 0;
+        let has_capsl_led = (led_bits[(LED_CAPSL / 8) as usize] & (1u8 << (LED_CAPSL % 8))) != 0;
         assert_eq!(
             has_capsl_led,
             bdf == profile::VIRTIO_INPUT_KEYBOARD.bdf,
