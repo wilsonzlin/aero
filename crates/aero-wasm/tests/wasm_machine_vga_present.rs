@@ -759,6 +759,13 @@ fn wasm_machine_vbe_present_reports_expected_pixel() {
 
     let scanout_ptr = machine.scanout_state_ptr();
     let scanout_len = machine.scanout_state_len_bytes();
+
+    #[cfg(feature = "wasm-threaded")]
+    assert_ne!(
+        scanout_ptr, 0,
+        "scanout_state_ptr must be non-zero in wasm-threaded builds"
+    );
+
     machine.reset();
 
     if scanout_ptr == 0 {
@@ -845,6 +852,13 @@ fn wasm_machine_vbe_present_accounts_for_stride_and_panning_in_scanout_state() {
         .expect("set_disk_image should accept a 512-byte boot sector");
 
     let scanout_ptr = machine.scanout_state_ptr();
+
+    #[cfg(feature = "wasm-threaded")]
+    assert_ne!(
+        scanout_ptr, 0,
+        "scanout_state_ptr must be non-zero in wasm-threaded builds"
+    );
+
     machine.reset();
 
     let mut halted = false;
@@ -901,6 +915,13 @@ fn wasm_machine_vbe_8bpp_mode_falls_back_to_legacy_text_scanout_state() {
         .expect("set_disk_image should accept a 512-byte boot sector");
 
     let scanout_ptr = machine.scanout_state_ptr();
+
+    #[cfg(feature = "wasm-threaded")]
+    assert_ne!(
+        scanout_ptr, 0,
+        "scanout_state_ptr must be non-zero in wasm-threaded builds"
+    );
+
     machine.reset();
 
     let mut halted = false;
@@ -955,6 +976,13 @@ fn wasm_machine_vbe_scanline_override_is_reflected_in_scanout_state_pitch() {
         .expect("set_disk_image should accept a 512-byte boot sector");
 
     let scanout_ptr = machine.scanout_state_ptr();
+
+    #[cfg(feature = "wasm-threaded")]
+    assert_ne!(
+        scanout_ptr, 0,
+        "scanout_state_ptr must be non-zero in wasm-threaded builds"
+    );
+
     machine.reset();
 
     let mut halted = false;
