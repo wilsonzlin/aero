@@ -225,7 +225,7 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
       ioIpc: init.ioIpcSab,
       sharedFramebuffer: init.sharedFramebuffer,
       sharedFramebufferOffsetBytes: init.sharedFramebufferOffsetBytes,
-    };
+    } satisfies SharedMemorySegments;
 
     const views = createSharedMemoryViews(segments);
     status = views.status;
