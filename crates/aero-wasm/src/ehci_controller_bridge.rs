@@ -31,10 +31,13 @@ use crate::guest_memory_bus::{GuestMemoryBus, NoDmaMemory, wasm_memory_byte_len}
 const EHCI_BRIDGE_DEVICE_ID: [u8; 4] = *b"EHCB";
 const EHCI_BRIDGE_DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
 
-/// Reserve EHCI root port 0 for the WebUSB passthrough device.
+/// Reserve EHCI root port 1 for the WebUSB passthrough device.
 ///
 /// Keep this stable so host-side code can treat the port index as part of the public ABI.
-const WEBUSB_ROOT_PORT: u8 = 0;
+///
+/// Note: root port 0 is used by the browser runtime as an "external hub" attachment point for
+/// WebHID + synthetic HID devices in EHCI-only WASM builds, so avoid clobbering it.
+const WEBUSB_ROOT_PORT: u8 = 1;
 
 fn js_error(message: impl core::fmt::Display) -> JsValue {
     js_sys::Error::new(&message.to_string()).into()
