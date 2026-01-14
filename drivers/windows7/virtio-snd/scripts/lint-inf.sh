@@ -532,6 +532,31 @@ if [ -f "$INF_IOPORT" ]; then
     fail "inf/aero-virtio-snd-ioport.inf must not contain unqualified PCI\\VEN_1AF4&DEV_1018 matches (missing &REV_00)"
   fi
 
+  note "checking ioport legacy INF WDMAudio/PortCls wiring..."
+  section_contains_norm \
+    "$INF_IOPORT" \
+    'AeroVirtioSndIoPort_Install.NT' \
+    'include=ks.inf,wdmaudio.inf' \
+    "inf/aero-virtio-snd-ioport.inf must declare: Include = ks.inf, wdmaudio.inf"
+
+  section_contains_norm \
+    "$INF_IOPORT" \
+    'AeroVirtioSndIoPort_Install.NT' \
+    'needs=ks.registration,wdmaudio.registration' \
+    "inf/aero-virtio-snd-ioport.inf must declare: Needs = KS.Registration, WDMAUDIO.Registration"
+
+  section_contains_norm \
+    "$INF_IOPORT" \
+    'AeroVirtioSndIoPort_Install.NT' \
+    'copyfiles=aerovirtiosndioport.copyfiles' \
+    "inf/aero-virtio-snd-ioport.inf must stage files via: CopyFiles = AeroVirtioSndIoPort.CopyFiles"
+
+  section_contains_norm \
+    "$INF_IOPORT" \
+    'AeroVirtioSndIoPort_Install.NT' \
+    'addreg=aerovirtiosndioport.addreg' \
+    "inf/aero-virtio-snd-ioport.inf must apply registry settings via: AddReg = AeroVirtioSndIoPort.AddReg"
+
   note "checking ioport legacy INF bring-up toggle defaults..."
   section_contains_norm \
     "$INF_IOPORT" \
@@ -575,6 +600,19 @@ if [ -f "$INF_IOPORT" ]; then
     'AeroVirtioSndIoPort.CopyFiles' \
     'virtiosnd_ioport.sys' \
     "inf/aero-virtio-snd-ioport.inf must copy virtiosnd_ioport.sys (AeroVirtioSndIoPort.CopyFiles)"
+
+  note "checking ioport legacy INF catalog + installation directory..."
+  section_contains_norm \
+    "$INF_IOPORT" \
+    'Version' \
+    'catalogfile=aero-virtio-snd-ioport.cat' \
+    "inf/aero-virtio-snd-ioport.inf must declare: CatalogFile = aero-virtio-snd-ioport.cat"
+
+  section_contains_norm \
+    "$INF_IOPORT" \
+    'DestinationDirs' \
+    'aerovirtiosndioport.copyfiles=12' \
+    "inf/aero-virtio-snd-ioport.inf must install SYS to %12% via: [DestinationDirs] AeroVirtioSndIoPort.CopyFiles = 12"
 
   note "checking ioport legacy INF does not opt into MSI/MSI-X..."
   # The I/O-port legacy driver uses only line-based INTx (IoConnectInterrupt) and
