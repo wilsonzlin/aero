@@ -3214,11 +3214,16 @@ async function runLoopInner(): Promise<void> {
             // VM requested but not ready yet: keep the demo render loop alive so
             // the UI stays responsive while we wait for a disk to be opened.
             if (cpuDemo) {
-              const seq = cpuDemo.render_frame(0, now);
-              if (perfActive) perfInstructions += instructionsPerSharedFrame;
-              if (frameState) {
-                Atomics.store(frameState, FRAME_SEQ_INDEX, seq);
-                Atomics.store(frameState, FRAME_STATUS_INDEX, FRAME_DIRTY);
+              // `CpuWorkerDemo` already throttles publishing based on `frame_dirty`, but avoid
+              // re-marking `frameState` DIRTY when we didn't actually publish a new shared
+              // framebuffer frame (prevents tick/present storms).
+              if (!sharedHeader || Atomics.load(sharedHeader, SharedFramebufferHeaderIndex.FRAME_DIRTY) === 0) {
+                const seq = cpuDemo.render_frame(0, now);
+                if (perfActive) perfInstructions += instructionsPerSharedFrame;
+                if (frameState) {
+                  Atomics.store(frameState, FRAME_SEQ_INDEX, seq);
+                  Atomics.store(frameState, FRAME_STATUS_INDEX, FRAME_DIRTY);
+                }
               }
             } else {
               publishSharedFramebufferFrame();
@@ -3227,11 +3232,13 @@ async function runLoopInner(): Promise<void> {
         } else {
           // Legacy demo loop: publish a shared-framebuffer animation.
           if (cpuDemo) {
-            const seq = cpuDemo.render_frame(0, now);
-            if (perfActive) perfInstructions += instructionsPerSharedFrame;
-            if (frameState) {
-              Atomics.store(frameState, FRAME_SEQ_INDEX, seq);
-              Atomics.store(frameState, FRAME_STATUS_INDEX, FRAME_DIRTY);
+            if (!sharedHeader || Atomics.load(sharedHeader, SharedFramebufferHeaderIndex.FRAME_DIRTY) === 0) {
+              const seq = cpuDemo.render_frame(0, now);
+              if (perfActive) perfInstructions += instructionsPerSharedFrame;
+              if (frameState) {
+                Atomics.store(frameState, FRAME_SEQ_INDEX, seq);
+                Atomics.store(frameState, FRAME_STATUS_INDEX, FRAME_DIRTY);
+              }
             }
           } else {
             publishSharedFramebufferFrame();
