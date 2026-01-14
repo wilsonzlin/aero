@@ -7,7 +7,7 @@ import { fnv1a32Hex } from "./utils/fnv1a";
 import { createTarArchive } from "./utils/tar";
 import { encodeWavPcm16 } from "./utils/wav";
 import { perf } from "./perf/perf";
-import { createAdaptiveRingBufferTarget, createAudioOutput, startAudioPerfSampling } from "./platform/audio";
+import { createAdaptiveRingBufferTarget, createAudioOutput, startAudioPerfSampling, type AudioOutputMetrics } from "./platform/audio";
 import { MicCapture, micRingBufferReadInto, type MicRingBuffer } from "./audio/mic_capture";
 import {
   CAPACITY_SAMPLES_INDEX as MIC_CAPACITY_SAMPLES_INDEX,
@@ -4067,6 +4067,9 @@ function renderAudioPanel(): HTMLElement {
 
   type AudioOutputWavSnapshotMeta = {
     sampleRate: number;
+    audioContextState: string | null;
+    baseLatencySeconds: number | null;
+    outputLatencySeconds: number | null;
     channelCount: number;
     capacityFrames: number;
     readFrameIndex: number;
@@ -4212,14 +4215,19 @@ function renderAudioPanel(): HTMLElement {
     const cap = typeof ring.capacityFrames === "number" ? ring.capacityFrames >>> 0 : 0;
     if (cc === 0 || cap === 0) return { ok: false, error: "Audio output ringBuffer has invalid channelCount/capacityFrames." };
 
-    const metrics = typeof o.getMetrics === "function" ? o.getMetrics() : null;
-    const sampleRate =
-      typeof metrics?.sampleRate === "number"
-        ? metrics.sampleRate
-        : typeof o.context?.sampleRate === "number"
-          ? o.context.sampleRate
-          : 0;
+    const metrics = (typeof o.getMetrics === "function" ? o.getMetrics() : null) as AudioOutputMetrics | null;
+    const sampleRate = typeof metrics?.sampleRate === "number" ? metrics.sampleRate : typeof o.context?.sampleRate === "number" ? o.context.sampleRate : 0;
     if (!Number.isFinite(sampleRate) || sampleRate <= 0) return { ok: false, error: "Audio output sample rate unavailable." };
+
+    const audioContextState =
+      typeof metrics?.state === "string"
+        ? metrics.state
+        : typeof o.context?.state === "string"
+          ? o.context.state
+          : null;
+    const baseLatencySeconds = typeof metrics?.baseLatencySeconds === "number" && Number.isFinite(metrics.baseLatencySeconds) ? metrics.baseLatencySeconds : null;
+    const outputLatencySeconds =
+      typeof metrics?.outputLatencySeconds === "number" && Number.isFinite(metrics.outputLatencySeconds) ? metrics.outputLatencySeconds : null;
 
     const readIndex = ring.readIndex as Uint32Array;
     const writeIndex = ring.writeIndex as Uint32Array;
@@ -4267,6 +4275,9 @@ function renderAudioPanel(): HTMLElement {
     const signal = computeAudioSignalStats(interleaved, cc);
     const meta: AudioOutputWavSnapshotMeta = {
       sampleRate,
+      audioContextState,
+      baseLatencySeconds,
+      outputLatencySeconds,
       channelCount: cc,
       capacityFrames: cap,
       readFrameIndex: read,
@@ -4624,6 +4635,36 @@ function renderAudioPanel(): HTMLElement {
             data: encoder.encode(JSON.stringify(metricsReport, null, 2)),
           },
         ];
+
+        entries.push({
+          path: `${dir}/README.txt`,
+          data: encoder.encode(
+            [
+              `Aero audio QA bundle (${timeIso})`,
+              ``,
+              `This archive is best-effort: some files may be missing and corresponding *-error.txt or *.json { ok:false } files may be present.`,
+              ``,
+              `Key files:`,
+              `- audio-metrics.json: consolidated host-side audio counters + worker snapshot + config snapshot`,
+              `- host-media-devices.json: browser media device inventory + mic permission state (device/group IDs hashed)`,
+              `- audio-output-*.wav: buffered output ring snapshots (PCM16 WAV)`,
+              `- audio-output-*.json: metadata for each output WAV (sample rate, ring indices/counters, signal stats)`,
+              `- microphone-buffered.wav / microphone-buffered.json: buffered mic ring snapshot + metadata`,
+              `- audio-samples.txt: one-line summary of captured WAVs (includes RMS/peak dBFS estimates)`,
+              `- hda-codec-state.json: HDA codec gating debug state (requires IO worker + codec_debug_state export)`,
+              `- hda-controller-state.bin: HDA controller snapshot bytes (deterministic, no guest RAM)`,
+              `- hda-tick-stats.json: IO worker HDA tick clamp counters (stall observability)`,
+              `- virtio-snd-state.bin: virtio-snd PCI function snapshot bytes (when present)`,
+              `- screenshot-*.png: guest framebuffer screenshot (requires GPU worker)`,
+              `- serial.txt: guest serial output tail (best-effort)`,
+              `- trace.json: Chrome trace export (best-effort)`,
+              `- perf-hud.json: on-page perf HUD export (best-effort)`,
+              ``,
+              `See docs/testing/audio-windows7.md for the Win7 audio smoke test + interpretation tips.`,
+              ``,
+            ].join("\n"),
+          ),
+        });
 
         // Include the currently effective runtime config (redacting sensitive fields). This is
         // useful when QA runs are executed with URL overrides / deployment configs and we need to
