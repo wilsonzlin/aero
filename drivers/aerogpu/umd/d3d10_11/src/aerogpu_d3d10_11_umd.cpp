@@ -1517,6 +1517,19 @@ SIZE_T AEROGPU_APIENTRY CalcPrivateResourceSize(D3D10DDI_HDEVICE, const AEROGPU_
   return sizeof(AeroGpuResource);
 }
 
+HRESULT FailCreateResource(AeroGpuResource* res, HRESULT hr) {
+  if (!res) {
+    return hr;
+  }
+  // CreateResource can fail after constructing the private object (e.g. invalid
+  // initial-data pointers). Some runtimes may still call DestroyResource on
+  // failure, so ensure the private memory always ends in a constructed, default
+  // state (with handle == 0) to avoid double-destroy of std::vector fields.
+  res->~AeroGpuResource();
+  new (res) AeroGpuResource();
+  return hr;
+}
+
 HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
                                           const AEROGPU_DDIARG_CREATERESOURCE* pDesc,
                                           D3D10DDI_HRESOURCE hResource) {
@@ -1558,8 +1571,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     res->size_bytes = pDesc->ByteWidth;
 
     if (res->size_bytes > static_cast<uint64_t>(SIZE_MAX)) {
-      res->~AeroGpuResource();
-      return E_OUTOFMEMORY;
+      return FailCreateResource(res, E_OUTOFMEMORY);
     }
 
     // Prefer allocation-backed resources when the harness provides callbacks.
@@ -1576,8 +1588,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
                                                 &unused_row_pitch);
       (void)unused_row_pitch;
       if (FAILED(hr) || alloc_handle == 0) {
-        res->~AeroGpuResource();
-        return FAILED(hr) ? hr : E_FAIL;
+        return FailCreateResource(res, FAILED(hr) ? hr : E_FAIL);
       }
 
       res->alloc_handle = alloc_handle;
@@ -1591,8 +1602,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       try {
         res->storage.resize(static_cast<size_t>(res->size_bytes));
       } catch (...) {
-        res->~AeroGpuResource();
-        return E_OUTOFMEMORY;
+        return FailCreateResource(res, E_OUTOFMEMORY);
       }
     }
 
@@ -1602,8 +1612,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     if (has_initial_data) {
       const auto& init = pDesc->pInitialData[0];
       if (!init.pSysMem || res->size_bytes == 0) {
-        res->~AeroGpuResource();
-        return E_INVALIDARG;
+        return FailCreateResource(res, E_INVALIDARG);
       }
 
 
@@ -1615,8 +1624,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
         void* cpu_ptr = nullptr;
         HRESULT hr = cb->pfnMapAllocation(cb->pUserContext, res->alloc_handle, &cpu_ptr);
         if (FAILED(hr) || !cpu_ptr) {
-          res->~AeroGpuResource();
-          return FAILED(hr) ? hr : E_FAIL;
+          return FailCreateResource(res, FAILED(hr) ? hr : E_FAIL);
         }
         std::memcpy(static_cast<uint8_t*>(cpu_ptr) + res->alloc_offset_bytes,
                     init.pSysMem,
@@ -1631,9 +1639,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_buffer>(AEROGPU_CMD_CREATE_BUFFER);
     if (!cmd) {
       RemoveLiveResourceLocked(dev, res);
-      res->handle = kInvalidHandle;
-      res->~AeroGpuResource();
-      return E_OUTOFMEMORY;
+      return FailCreateResource(res, E_OUTOFMEMORY);
     }
     cmd->buffer_handle = res->handle;
     cmd->usage_flags = bind_flags_to_usage_flags(res->bind_flags);
@@ -1715,13 +1721,11 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     res->array_size = array_size;
     res->dxgi_format = pDesc->Format;
     if (!res->width || !res->height || !res->mip_levels || !res->array_size) {
-      res->~AeroGpuResource();
-      return E_INVALIDARG;
+      return FailCreateResource(res, E_INVALIDARG);
     }
     const uint32_t min_row_bytes = aerogpu_texture_min_row_pitch_bytes(aer_fmt, res->width);
     if (!min_row_bytes) {
-      res->~AeroGpuResource();
-      return E_OUTOFMEMORY;
+      return FailCreateResource(res, E_OUTOFMEMORY);
     }
     res->row_pitch_bytes = min_row_bytes;
 
@@ -1737,16 +1741,14 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
                                                 &alloc_size_bytes,
                                                 &row_pitch_bytes);
       if (FAILED(hr) || alloc_handle == 0) {
-        res->~AeroGpuResource();
-        return FAILED(hr) ? hr : E_FAIL;
+        return FailCreateResource(res, FAILED(hr) ? hr : E_FAIL);
       }
 
       if (row_pitch_bytes) {
         res->row_pitch_bytes = row_pitch_bytes;
       }
       if (res->row_pitch_bytes < min_row_bytes) {
-        res->~AeroGpuResource();
-        return E_INVALIDARG;
+        return FailCreateResource(res, E_INVALIDARG);
       }
 
       res->alloc_handle = alloc_handle;
@@ -1766,27 +1768,23 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
                                        res->array_size,
                                        res->row_pitch_bytes,
                                        &total_bytes)) {
-      res->~AeroGpuResource();
-      return E_OUTOFMEMORY;
+      return FailCreateResource(res, E_OUTOFMEMORY);
     }
 
     if (res->alloc_handle != 0) {
       if (res->alloc_size_bytes == 0) {
         res->alloc_size_bytes = total_bytes;
       } else if (total_bytes > res->alloc_size_bytes) {
-        res->~AeroGpuResource();
-        return E_OUTOFMEMORY;
+        return FailCreateResource(res, E_OUTOFMEMORY);
       }
     } else {
       if (total_bytes > static_cast<uint64_t>(SIZE_MAX)) {
-        res->~AeroGpuResource();
-        return E_OUTOFMEMORY;
+        return FailCreateResource(res, E_OUTOFMEMORY);
       }
       try {
         res->storage.resize(static_cast<size_t>(total_bytes));
       } catch (...) {
-        res->~AeroGpuResource();
-        return E_OUTOFMEMORY;
+        return FailCreateResource(res, E_OUTOFMEMORY);
       }
     }
 
@@ -1799,14 +1797,12 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       if (!wddm_initial_upload && res->alloc_handle != 0) {
         HRESULT hr = cb->pfnMapAllocation(cb->pUserContext, res->alloc_handle, &mapped);
         if (FAILED(hr) || !mapped) {
-          res->~AeroGpuResource();
-          AEROGPU_D3D10_RET_HR(FAILED(hr) ? hr : E_FAIL);
+          return FailCreateResource(res, FAILED(hr) ? hr : E_FAIL);
         }
         dst = static_cast<uint8_t*>(mapped) + res->alloc_offset_bytes;
       }
       if (!dst) {
-        res->~AeroGpuResource();
-        return E_FAIL;
+        return FailCreateResource(res, E_FAIL);
       }
 
       const uint64_t subresource_count_u64 =
@@ -1816,8 +1812,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
         if (mapped) {
           cb->pfnUnmapAllocation(cb->pUserContext, res->alloc_handle);
         }
-        res->~AeroGpuResource();
-        return E_INVALIDARG;
+        return FailCreateResource(res, E_INVALIDARG);
       }
 
       for (uint32_t subresource = 0; subresource < static_cast<uint32_t>(subresource_count_u64); subresource++) {
@@ -1826,8 +1821,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
           if (mapped) {
             cb->pfnUnmapAllocation(cb->pUserContext, res->alloc_handle);
           }
-          res->~AeroGpuResource();
-          return E_INVALIDARG;
+          return FailCreateResource(res, E_INVALIDARG);
         }
 
         Texture2DSubresourceLayout layout{};
@@ -1843,8 +1837,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
           if (mapped) {
             cb->pfnUnmapAllocation(cb->pUserContext, res->alloc_handle);
           }
-          res->~AeroGpuResource();
-          return E_INVALIDARG;
+          return FailCreateResource(res, E_INVALIDARG);
         }
 
         const uint32_t row_bytes = aerogpu_texture_min_row_pitch_bytes(aer_fmt, layout.width);
@@ -1852,8 +1845,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
           if (mapped) {
             cb->pfnUnmapAllocation(cb->pUserContext, res->alloc_handle);
           }
-          res->~AeroGpuResource();
-          return E_INVALIDARG;
+          return FailCreateResource(res, E_INVALIDARG);
         }
 
         const size_t src_pitch = init.SysMemPitch ? static_cast<size_t>(init.SysMemPitch) : static_cast<size_t>(row_bytes);
@@ -1861,8 +1853,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
           if (mapped) {
             cb->pfnUnmapAllocation(cb->pUserContext, res->alloc_handle);
           }
-          res->~AeroGpuResource();
-          return E_INVALIDARG;
+          return FailCreateResource(res, E_INVALIDARG);
         }
 
         const uint8_t* src = static_cast<const uint8_t*>(init.pSysMem);
@@ -1886,9 +1877,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_texture2d>(AEROGPU_CMD_CREATE_TEXTURE2D);
     if (!cmd) {
       RemoveLiveResourceLocked(dev, res);
-      res->handle = kInvalidHandle;
-      res->~AeroGpuResource();
-      return E_OUTOFMEMORY;
+      return FailCreateResource(res, E_OUTOFMEMORY);
     }
     cmd->texture_handle = res->handle;
     cmd->usage_flags = bind_flags_to_usage_flags(res->bind_flags) | AEROGPU_RESOURCE_USAGE_TEXTURE;

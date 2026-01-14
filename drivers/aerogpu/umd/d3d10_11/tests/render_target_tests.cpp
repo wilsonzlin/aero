@@ -208,6 +208,50 @@ struct TestRtv {
   std::vector<uint8_t> storage;
 };
 
+bool TestDestroyAfterFailedCreateResourceIsSafe() {
+  TestDevice dev{};
+  if (!Check(CreateDevice(&dev), "CreateDevice(failed CreateResource)")) {
+    return false;
+  }
+
+  // Create a small buffer with invalid initial data (null pSysMem). Some
+  // runtimes may still call DestroyResource on CreateResource failure; this must
+  // not crash or double-destroy the private object.
+  AEROGPU_DDI_SUBRESOURCE_DATA init{};
+  init.pSysMem = nullptr;
+  init.SysMemPitch = 0;
+  init.SysMemSlicePitch = 0;
+
+  AEROGPU_DDIARG_CREATERESOURCE desc{};
+  desc.Dimension = AEROGPU_DDI_RESOURCE_DIMENSION_BUFFER;
+  desc.BindFlags = 0;
+  desc.MiscFlags = 0;
+  desc.Usage = AEROGPU_D3D11_USAGE_DEFAULT;
+  desc.CPUAccessFlags = 0;
+  desc.ByteWidth = 16;
+  desc.StructureByteStride = 0;
+  desc.pInitialData = &init;
+  desc.InitialDataCount = 1;
+
+  TestResource buf{};
+  const SIZE_T size = dev.device_funcs.pfnCalcPrivateResourceSize(dev.hDevice, &desc);
+  if (!Check(size >= sizeof(void*), "CalcPrivateResourceSize(buffer) returned non-trivial size")) {
+    return false;
+  }
+  buf.storage.assign(static_cast<size_t>(size), 0);
+  buf.hResource.pDrvPrivate = buf.storage.data();
+
+  const HRESULT hr = dev.device_funcs.pfnCreateResource(dev.hDevice, &desc, buf.hResource);
+  if (!Check(hr == E_INVALIDARG, "CreateResource(buffer) rejects null pSysMem in initial data")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, buf.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
 bool CreateRenderTargetTexture2D(TestDevice* dev, TestResource* out) {
   if (!dev || !out) {
     return false;
@@ -446,6 +490,7 @@ bool TestUnbindAllRtvs() {
 
 int main() {
   bool ok = true;
+  ok &= TestDestroyAfterFailedCreateResourceIsSafe();
   ok &= TestTwoRtvs();
   ok &= TestClampAndNullEntries();
   ok &= TestUnbindAllRtvs();
