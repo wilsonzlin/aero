@@ -955,7 +955,7 @@ Current implementation details:
   available) and then attaches four
   fixed "synthetic" USB HID devices behind it:
   - hub port 1: USB keyboard (boot protocol)
-  - hub port 2: USB mouse (boot protocol + wheel)
+  - hub port 2: USB mouse (boot protocol + wheel + horizontal wheel / AC Pan)
   - hub port 3: USB gamepad (Aero's fixed 8-byte report)
   - hub port 4: USB consumer-control (media keys)
   - See: `web/src/usb/uhci_external_hub.ts`, `web/src/workers/io.worker.ts`

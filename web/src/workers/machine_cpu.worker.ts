@@ -827,6 +827,33 @@ function handleInputBatch(buffer: ArrayBuffer): void {
       } catch {
         // ignore
       }
+    } else if (type === InputEventType.HidUsage16) {
+      const a = words[off + 2] >>> 0;
+      const usagePage = a & 0xffff;
+      const pressed = ((a >>> 16) & 1) !== 0;
+      const usageId = words[off + 3] & 0xffff;
+      // Consumer Control (0x0C) is only modeled via a dedicated synthetic USB HID device.
+      if (usagePage !== 0x0c) continue;
+      try {
+        const inject = (m as unknown as { inject_usb_hid_consumer_usage?: unknown }).inject_usb_hid_consumer_usage;
+        if (typeof inject === "function") {
+          (inject as (usage: number, pressed: boolean) => void).call(m, usageId >>> 0, pressed);
+        }
+      } catch {
+        // ignore
+      }
+    } else if (type === InputEventType.GamepadReport) {
+      // USB HID gamepad report: a/b are packed 8 bytes (little-endian).
+      const packedLo = words[off + 2] >>> 0;
+      const packedHi = words[off + 3] >>> 0;
+      try {
+        const inject = (m as unknown as { inject_usb_hid_gamepad_report?: unknown }).inject_usb_hid_gamepad_report;
+        if (typeof inject === "function") {
+          (inject as (a: number, b: number) => void).call(m, packedLo, packedHi);
+        }
+      } catch {
+        // ignore
+      }
     }
   }
 
