@@ -535,10 +535,16 @@ Current behavior is intentionally bring-up level, with two paths:
   When the destination declaration includes `DIFFUSE`, the UMD copies it from the source when present, otherwise fills it
   with opaque white (matching fixed-function “no diffuse means white” behavior). `TEXCOORD0` is copied only when present
   in both the source and destination layouts.
+
+  Note: when `D3DPV_DONOTCOPYDATA` is set in `ProcessVertices.Flags`, the UMD writes only the destination `POSITIONT`
+  (`XYZRHW`) and preserves any non-position destination bytes (it does not clear the destination vertex and does not copy
+  `DIFFUSE` / `TEXCOORD0` outputs).
 - **Fallback memcpy-style path:** for all other cases, `ProcessVertices` performs a conservative buffer-to-buffer copy from
   the active stream 0 vertex buffer into the destination buffer. The copy is stride-aware (copies
   `min(stream0_stride, dest_stride)` bytes per vertex) and uses the same “upload/dirty-range” notifications used by
   `Unlock`.
+  - When `D3DPV_DONOTCOPYDATA` is set and the source is a pre-transformed `XYZRHW*` FVF, the memcpy fallback copies only the
+    first 16 bytes (the `POSITIONT` float4) and preserves the remaining destination bytes.
 
 Code anchors (all in `src/aerogpu_d3d9_driver.cpp`):
 
