@@ -1818,9 +1818,31 @@ struct ParamInfo {
     param: DxbcSignatureParameter,
     sys_value: Option<u32>,
     builtin: Option<Builtin>,
+    scalar_ty: WgslScalarTy,
     wgsl_ty: &'static str,
     component_count: usize,
     components: [u8; 4],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WgslScalarTy {
+    F32,
+    U32,
+    I32,
+}
+
+impl WgslScalarTy {
+    fn from_d3d_component_type(component_type: u32) -> Option<Self> {
+        // `D3D_REGISTER_COMPONENT_TYPE` values as stored in DXBC signature tables.
+        //
+        // https://learn.microsoft.com/en-us/windows/win32/api/d3dcommon/ne-d3dcommon-d3d_register_component_type
+        match component_type {
+            1 => Some(Self::U32),
+            2 => Some(Self::I32),
+            3 => Some(Self::F32),
+            _ => None,
+        }
+    }
 }
 
 impl ParamInfo {
@@ -1849,32 +1871,44 @@ impl ParamInfo {
             });
         }
 
-        let wgsl_ty = match count {
-            1 => "f32",
-            2 => "vec2<f32>",
-            3 => "vec3<f32>",
-            4 => "vec4<f32>",
-            _ => unreachable!(),
+        // Default to float for legacy signatures that omit `component_type` (0).
+        let base_ty = WgslScalarTy::from_d3d_component_type(param.component_type)
+            .unwrap_or(WgslScalarTy::F32);
+        let wgsl_ty = match (base_ty, count) {
+            (WgslScalarTy::F32, 1) => "f32",
+            (WgslScalarTy::F32, 2) => "vec2<f32>",
+            (WgslScalarTy::F32, 3) => "vec3<f32>",
+            (WgslScalarTy::F32, 4) => "vec4<f32>",
+            (WgslScalarTy::U32, 1) => "u32",
+            (WgslScalarTy::U32, 2) => "vec2<u32>",
+            (WgslScalarTy::U32, 3) => "vec3<u32>",
+            (WgslScalarTy::U32, 4) => "vec4<u32>",
+            (WgslScalarTy::I32, 1) => "i32",
+            (WgslScalarTy::I32, 2) => "vec2<i32>",
+            (WgslScalarTy::I32, 3) => "vec3<i32>",
+            (WgslScalarTy::I32, 4) => "vec4<i32>",
+            _ => "vec4<f32>",
         };
 
         // WGSL builtin inputs have fixed types that do not match the signature component count.
         // We still keep the vec4<f32> internal register model and expand scalar builtins into x
         // with D3D default fill (0,0,0,1).
-        let (wgsl_ty, component_count, components) = match builtin {
+        let (scalar_ty, wgsl_ty, component_count, components) = match builtin {
             Some(Builtin::VertexIndex)
             | Some(Builtin::InstanceIndex)
             | Some(Builtin::PrimitiveIndex)
             | Some(Builtin::GsInstanceIndex)
-            | Some(Builtin::LocalInvocationIndex) => ("u32", 1, [0, 0, 0, 0]),
-            Some(Builtin::FrontFacing) => ("bool", 1, [0, 0, 0, 0]),
+            | Some(Builtin::LocalInvocationIndex) => (WgslScalarTy::U32, "u32", 1, [0, 0, 0, 0]),
+            Some(Builtin::FrontFacing) => (WgslScalarTy::U32, "bool", 1, [0, 0, 0, 0]),
             Some(Builtin::GlobalInvocationId)
             | Some(Builtin::LocalInvocationId)
-            | Some(Builtin::WorkgroupId) => ("vec3<u32>", 3, [0, 1, 2, 0]),
-            _ => (wgsl_ty, count, comps),
+            | Some(Builtin::WorkgroupId) => (WgslScalarTy::U32, "vec3<u32>", 3, [0, 1, 2, 0]),
+            _ => (base_ty, wgsl_ty, count, comps),
         };
 
         Ok(Self {
             param: param.clone(),
+            scalar_ty,
             wgsl_ty,
             component_count,
             components,
@@ -2256,11 +2290,14 @@ impl IoMaps {
                             .position(|&c| c as usize == dst_comp)
                             .expect("signature component should exist");
                         let lane_char = ['x', 'y', 'z', 'w'][lane];
-                        let expr = if f.info.component_count == 1 {
+                        let mut expr = if f.info.component_count == 1 {
                             base.clone()
                         } else {
                             format!("({base}).{lane_char}")
                         };
+                        if f.info.scalar_ty != WgslScalarTy::F32 {
+                            expr = format!("bitcast<f32>({expr})");
+                        }
 
                         if let Some((_, prev_semantic)) = &comps[dst_comp] {
                             return Err(ShaderTranslateError::ConflictingVertexInputPacking {
@@ -2562,19 +2599,29 @@ fn expand_to_vec4(expr: &str, p: &ParamInfo) -> String {
     // same rule when expanding signature-typed values into internal vec4
     // registers.
     let mut src = Vec::<String>::with_capacity(p.component_count);
+    let wrap_scalar = |scalar_expr: String| -> String {
+        match p.scalar_ty {
+            WgslScalarTy::F32 => scalar_expr,
+            WgslScalarTy::U32 | WgslScalarTy::I32 => format!("bitcast<f32>({scalar_expr})"),
+        }
+    };
     match p.component_count {
-        1 => src.push(expr.to_owned()),
+        1 => src.push(wrap_scalar(expr.to_owned())),
         2 => {
-            src.push(format!("{expr}.x"));
-            src.push(format!("{expr}.y"));
+            src.push(wrap_scalar(format!("{expr}.x")));
+            src.push(wrap_scalar(format!("{expr}.y")));
         }
         3 => {
-            src.push(format!("{expr}.x"));
-            src.push(format!("{expr}.y"));
-            src.push(format!("{expr}.z"));
+            src.push(wrap_scalar(format!("{expr}.x")));
+            src.push(wrap_scalar(format!("{expr}.y")));
+            src.push(wrap_scalar(format!("{expr}.z")));
         }
         4 => {
-            return expr.to_owned();
+            // Most signature parameters are float vectors, so keep the common case cheap.
+            if p.scalar_ty == WgslScalarTy::F32 {
+                return expr.to_owned();
+            }
+            return format!("bitcast<vec4<f32>>({expr})");
         }
         _ => {}
     }
@@ -7023,6 +7070,91 @@ mod tests {
             .find(|o| o.semantic_index == 1)
             .expect("reflected output");
         assert_eq!(reflected.location, Some(1));
+    }
+
+    #[test]
+    fn vertex_shader_uint_inputs_use_u32_wgsl_types_and_bitcast_to_internal_register_bits() {
+        // `D3D_REGISTER_COMPONENT_UINT32` in signature tables.
+        const D3D_REGISTER_COMPONENT_UINT32: u32 = 1;
+        const D3D_REGISTER_COMPONENT_FLOAT32: u32 = 3;
+
+        // Minimal VS: `mov o0, v0; ret`.
+        let module = Sm4Module {
+            stage: ShaderStage::Vertex,
+            model: crate::sm4::ShaderModel { major: 4, minor: 0 },
+            decls: Vec::new(),
+            instructions: vec![
+                Sm4Inst::Mov {
+                    dst: crate::sm4_ir::DstOperand {
+                        reg: RegisterRef {
+                            file: RegFile::Output,
+                            index: 0,
+                        },
+                        mask: WriteMask::XYZW,
+                        saturate: false,
+                    },
+                    src: crate::sm4_ir::SrcOperand {
+                        kind: SrcKind::Register(RegisterRef {
+                            file: RegFile::Input,
+                            index: 0,
+                        }),
+                        swizzle: Swizzle::XYZW,
+                        modifier: OperandModifier::None,
+                    },
+                },
+                Sm4Inst::Ret,
+            ],
+        };
+
+        let isgn = DxbcSignature {
+            parameters: vec![DxbcSignatureParameter {
+                semantic_name: "TEXCOORD".to_owned(),
+                semantic_index: 0,
+                system_value_type: 0,
+                component_type: D3D_REGISTER_COMPONENT_UINT32,
+                register: 0,
+                mask: 0b0011, // xy
+                read_write_mask: 0b1111,
+                stream: 0,
+                min_precision: 0,
+            }],
+        };
+
+        let osgn = DxbcSignature {
+            parameters: vec![DxbcSignatureParameter {
+                semantic_name: "SV_Position".to_owned(),
+                semantic_index: 0,
+                system_value_type: 0,
+                component_type: D3D_REGISTER_COMPONENT_FLOAT32,
+                register: 0,
+                mask: 0b1111,
+                read_write_mask: 0b1111,
+                stream: 0,
+                min_precision: 0,
+            }],
+        };
+
+        let translated = translate_vs(&module, &isgn, &osgn, None).expect("translate");
+        assert_wgsl_validates(&translated.wgsl);
+
+        // The vertex input struct should use integer types for UINT32 signature parameters.
+        assert!(
+            translated.wgsl.contains("a0: vec2<u32>"),
+            "{}",
+            translated.wgsl
+        );
+
+        // Reading the input register should preserve raw bits by bitcasting to f32.
+        assert!(
+            translated.wgsl.contains("bitcast<f32>(input.a0.x)"),
+            "{}",
+            translated.wgsl
+        );
+        assert!(
+            translated.wgsl.contains("bitcast<f32>(input.a0.y)"),
+            "{}",
+            translated.wgsl
+        );
     }
 
     #[test]
