@@ -1443,9 +1443,11 @@ impl D3D11Runtime {
             // exposes optional native-only features to enable writable storage in vertex/fragment
             // stages. If those features are absent, fail fast with a clear diagnostic rather than
             // triggering a wgpu validation panic during pipeline creation.
-            let writable_storage = matches!(kind, BindingKind::StorageBuffer { read_only: false })
-                || matches!(kind, BindingKind::StorageTexture2DWriteOnly { .. });
-            if writable_storage {
+            let writable_storage_buffer =
+                matches!(kind, BindingKind::StorageBuffer { read_only: false });
+            let writable_storage_texture =
+                matches!(kind, BindingKind::StorageTexture2DWriteOnly { .. });
+            if writable_storage_buffer || writable_storage_texture {
                 if visibility.contains(wgpu::ShaderStages::VERTEX)
                     && !features.contains(wgpu::Features::VERTEX_WRITABLE_STORAGE)
                 {
@@ -1453,11 +1455,12 @@ impl D3D11Runtime {
                         "binding @binding({binding}) uses writable storage in vertex stage, but device does not support wgpu::Features::VERTEX_WRITABLE_STORAGE"
                     );
                 }
-                if visibility.contains(wgpu::ShaderStages::FRAGMENT) {
-                    bail!(
-                        "binding @binding({binding}) uses writable storage in fragment stage, which is not supported by this wgpu/WebGPU build"
-                    );
-                }
+            }
+            // WebGPU does not support writable storage buffers in fragment shaders.
+            if writable_storage_buffer && visibility.contains(wgpu::ShaderStages::FRAGMENT) {
+                bail!(
+                    "binding @binding({binding}) uses writable storage buffers in fragment stage, which is not supported by WebGPU"
+                );
             }
 
             match bindings.entry(binding) {

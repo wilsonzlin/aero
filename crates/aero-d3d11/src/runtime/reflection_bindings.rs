@@ -181,13 +181,16 @@ where
             // exposes optional native-only features to enable writable storage in vertex/fragment
             // stages. If those features are absent, fail fast with a clear diagnostic rather than
             // triggering a wgpu validation panic during pipeline creation.
-            let writable_storage = matches!(
+            let writable_storage_buffer = matches!(
                 binding.kind,
                 crate::BindingKind::UavBuffer { .. }
-                    | crate::BindingKind::UavTexture2DWriteOnly { .. }
                     | crate::BindingKind::ExpansionStorageBuffer { read_only: false }
             );
-            if writable_storage {
+            let writable_storage_texture = matches!(
+                binding.kind,
+                crate::BindingKind::UavTexture2DWriteOnly { .. }
+            );
+            if writable_storage_buffer || writable_storage_texture {
                 if binding.visibility.contains(wgpu::ShaderStages::VERTEX)
                     && !features.contains(wgpu::Features::VERTEX_WRITABLE_STORAGE)
                 {
@@ -197,13 +200,15 @@ where
                         binding.binding
                     );
                 }
-                if binding.visibility.contains(wgpu::ShaderStages::FRAGMENT) {
-                    bail!(
-                        "{shader_kind} binding @group({}) @binding({}) uses writable storage in fragment stage, which is not supported by this wgpu/WebGPU build",
-                        binding.group,
-                        binding.binding
-                    );
-                }
+            }
+            // WebGPU does not support writable storage buffers in fragment shaders.
+            if writable_storage_buffer && binding.visibility.contains(wgpu::ShaderStages::FRAGMENT)
+            {
+                bail!(
+                    "{shader_kind} binding @group({}) @binding({}) uses writable storage buffers in fragment stage, which is not supported by WebGPU",
+                    binding.group,
+                    binding.binding
+                );
             }
 
             if let crate::BindingKind::ConstantBuffer { slot, reg_count } = binding.kind {
