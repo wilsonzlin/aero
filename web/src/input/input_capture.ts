@@ -1080,7 +1080,13 @@ export class InputCapture {
     try {
       latencyUs = this.queue.flush(this.ioWorker, this.flushOpts);
     } catch {
-      // Best-effort only; the worker may have been terminated during teardown.
+      // The target worker may have been terminated. Stop capture so we don't keep
+      // swallowing host input while being unable to deliver it to the guest.
+      try {
+        this.stop();
+      } catch {
+        // ignore
+      }
       return;
     }
     if (latencyUs === null || !this.logCaptureLatency) {
