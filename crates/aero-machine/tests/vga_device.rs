@@ -2,6 +2,8 @@ use aero_devices::a20_gate::A20_GATE_PORT;
 use aero_machine::{Machine, MachineConfig};
 use pretty_assertions::assert_eq;
 
+const NON_DEFAULT_LFB_BASE: u32 = 0xE100_0000;
+
 fn enable_a20(m: &mut Machine) {
     // Fast A20 gate at port 0x92: bit1 enables A20.
     m.io_write(A20_GATE_PORT, 1, 0x02);
@@ -25,12 +27,7 @@ fn program_vbe_linear_64x64x32(m: &mut Machine) {
 
 fn write_pixel_bgrx(m: &mut Machine, width: u32, x: u32, y: u32, b: u8, g: u8, r: u8) {
     let off = (y * width + x) * 4;
-    let lfb_base = {
-        let vga = m.vga().expect("VGA enabled");
-        let base = u64::from(vga.borrow().lfb_base());
-        base
-    };
-    let base = lfb_base + u64::from(off);
+    let base = m.vbe_lfb_base() + u64::from(off);
     m.write_physical_u8(base, b);
     m.write_physical_u8(base + 1, g);
     m.write_physical_u8(base + 2, r);
@@ -43,11 +40,13 @@ fn vga_vbe_linear_framebuffer_scanout_matches_expected_pixels() {
         ram_size_bytes: 2 * 1024 * 1024,
         enable_vga: true,
         enable_aerogpu: false,
+        vga_lfb_base: Some(NON_DEFAULT_LFB_BASE),
         enable_serial: false,
         enable_i8042: false,
         ..Default::default()
     })
     .unwrap();
+    assert_eq!(m.vbe_lfb_base(), u64::from(NON_DEFAULT_LFB_BASE));
 
     enable_a20(&mut m);
     program_vbe_linear_64x64x32(&mut m);
@@ -72,12 +71,14 @@ fn vga_snapshot_roundtrip_preserves_scanout() {
         ram_size_bytes: 2 * 1024 * 1024,
         enable_vga: true,
         enable_aerogpu: false,
+        vga_lfb_base: Some(NON_DEFAULT_LFB_BASE),
         enable_serial: false,
         enable_i8042: false,
         ..Default::default()
     };
 
     let mut m = Machine::new(cfg.clone()).unwrap();
+    assert_eq!(m.vbe_lfb_base(), u64::from(NON_DEFAULT_LFB_BASE));
     enable_a20(&mut m);
     program_vbe_linear_64x64x32(&mut m);
     write_pixel_bgrx(&mut m, 64, 0, 0, 0x00, 0x00, 0xFF);
@@ -92,6 +93,7 @@ fn vga_snapshot_roundtrip_preserves_scanout() {
     let mut restored = Machine::new(cfg).unwrap();
     restored.restore_snapshot_bytes(&snap).unwrap();
     restored.display_present();
+    assert_eq!(restored.vbe_lfb_base(), u64::from(NON_DEFAULT_LFB_BASE));
 
     assert_eq!(restored.display_resolution(), expected_res);
     assert_eq!(restored.display_framebuffer(), expected_fb.as_slice());
