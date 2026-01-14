@@ -7133,6 +7133,13 @@ static NTSTATUS APIENTRY AeroGpuDdiGetScanLine(_In_ const HANDLE hAdapter, _Inou
 
     const ULONGLONG now100ns = KeQueryInterruptTime();
 
+    const BOOLEAN poweredOn =
+        (adapter->Bar0 != NULL) &&
+        ((DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange(&adapter->DevicePowerState, 0, 0) == DxgkDevicePowerStateD0);
+    const BOOLEAN acceptingSubmissions =
+        (InterlockedCompareExchange((volatile LONG*)&adapter->AcceptingSubmissions, 0, 0) != 0) ? TRUE : FALSE;
+    const BOOLEAN mmioSafe = poweredOn && acceptingSubmissions;
+
     ULONGLONG periodNs =
         adapter->VblankPeriodNs ? (ULONGLONG)adapter->VblankPeriodNs : (ULONGLONG)AEROGPU_VBLANK_PERIOD_NS_DEFAULT;
     if (periodNs == 0) {
@@ -7149,10 +7156,6 @@ static NTSTATUS APIENTRY AeroGpuDdiGetScanLine(_In_ const HANDLE hAdapter, _Inou
      * GetRasterStatus at very high frequency.
      */
     {
-        const BOOLEAN poweredOn =
-            (adapter->Bar0 != NULL) &&
-            ((DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange(&adapter->DevicePowerState, 0, 0) == DxgkDevicePowerStateD0);
-
         const ULONG irqEnableMask = AeroGpuAtomicReadU32((volatile ULONG*)&adapter->IrqEnableMask);
         const BOOLEAN vblankIrqEnabled = (irqEnableMask & AEROGPU_IRQ_SCANOUT_VBLANK) != 0;
 
@@ -7187,8 +7190,7 @@ static NTSTATUS APIENTRY AeroGpuDdiGetScanLine(_In_ const HANDLE hAdapter, _Inou
 
     BOOLEAN haveVblankRegs = FALSE;
     if (!usedCache) {
-        if (adapter->Bar0 && adapter->SupportsVblank &&
-            (DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange(&adapter->DevicePowerState, 0, 0) == DxgkDevicePowerStateD0 &&
+        if (mmioSafe && adapter->SupportsVblank &&
             adapter->Bar0Length >= (AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS + sizeof(ULONG))) {
             const ULONG mmioPeriod = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS);
             if (mmioPeriod != 0) {
