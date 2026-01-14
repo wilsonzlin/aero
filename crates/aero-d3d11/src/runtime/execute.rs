@@ -44,6 +44,12 @@ pub struct D3D11Runtime {
     device: wgpu::Device,
     queue: wgpu::Queue,
     supports_compute: bool,
+    /// Whether the wgpu backend requires emulation for indexed strip primitive restart.
+    ///
+    /// wgpu's GL backend has historically had correctness issues with native primitive restart for
+    /// indexed strip topologies. When this is true, the runtime falls back to CPU-side strip
+    /// expansion for restart indices.
+    emulate_strip_restart: bool,
     pipelines: PipelineCache,
     pub resources: D3D11Resources,
     pub state: D3D11State,
@@ -116,6 +122,7 @@ impl D3D11Runtime {
         let downlevel = adapter.get_downlevel_capabilities();
         let supports_compute =
             GpuCapabilities::supports_compute_from_downlevel_flags(downlevel.flags);
+        let emulate_strip_restart = adapter.get_info().backend == wgpu::Backend::Gl;
 
         let requested_features = super::negotiated_features(&adapter);
         let (device, queue) = adapter
@@ -137,6 +144,7 @@ impl D3D11Runtime {
             device,
             queue,
             supports_compute,
+            emulate_strip_restart,
             pipelines,
             resources: D3D11Resources::default(),
             state: D3D11State::new(),
@@ -1578,6 +1586,7 @@ impl D3D11Runtime {
         self.encoder_has_commands = true;
         let device = &self.device;
         let resources = &self.resources;
+        let emulate_strip_restart = self.emulate_strip_restart;
         let (state, bind_group_cache) = (&mut self.state, &mut self.bind_group_cache);
 
         let color_view_id = payload[0];
@@ -1812,10 +1821,12 @@ impl D3D11Runtime {
                     // WebGPU restart semantics, so we expand strips into list primitives on the CPU
                     // (using a shadow copy of the index buffer contents) and use a list-topology
                     // pipeline variant.
-                    let expanded_strip_indices = if matches!(
-                        pipeline.topology,
-                        wgpu::PrimitiveTopology::LineStrip | wgpu::PrimitiveTopology::TriangleStrip
-                    ) {
+                    let expanded_strip_indices = if emulate_strip_restart
+                        && matches!(
+                            pipeline.topology,
+                            wgpu::PrimitiveTopology::LineStrip
+                                | wgpu::PrimitiveTopology::TriangleStrip
+                        ) {
                         let index_buf = resources
                             .buffers
                             .get(&index.buffer)
@@ -1899,7 +1910,8 @@ impl D3D11Runtime {
                         {
                             let mut mapped = tmp.slice(..).get_mapped_range_mut();
                             for (dst, idx) in mapped.chunks_exact_mut(4).zip(expanded.iter()) {
-                                dst.copy_from_slice(&idx.to_ne_bytes());
+                                // WebGPU uses little-endian index buffers.
+                                dst.copy_from_slice(&idx.to_le_bytes());
                             }
                         }
                         tmp.unmap();
@@ -2434,7 +2446,7 @@ fn expand_indexed_strip_to_list(
 ) -> Result<Option<Vec<u32>>> {
     let shadow = index_buf.shadow.as_slice();
     if index_count == 0 {
-        return Ok(Some(Vec::new()));
+        return Ok(None);
     }
 
     let index_size_bytes: u64 = match index_binding.format {
@@ -2472,6 +2484,19 @@ fn expand_indexed_strip_to_list(
     }
 
     let bytes = &shadow[start..end];
+
+    let has_restart = match index_binding.format {
+        wgpu::IndexFormat::Uint16 => bytes
+            .chunks_exact(2)
+            .any(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]) == 0xFFFF),
+        wgpu::IndexFormat::Uint32 => bytes.chunks_exact(4).any(|chunk| {
+            u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]) == 0xFFFF_FFFF
+        }),
+    };
+    if !has_restart {
+        return Ok(None);
+    }
+
     let mut indices_with_cuts: Vec<u32> = Vec::with_capacity(index_count as usize);
 
     match index_binding.format {
