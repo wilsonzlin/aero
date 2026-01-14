@@ -16429,6 +16429,90 @@ bool TestFixedfuncFogRhwColorSelectsFogVsAndUsesWDivision() {
   return true;
 }
 
+bool TestXyzrhwConversionRespectsViewportMinMaxZ() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetViewport != nullptr, "pfnSetViewport is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Set a non-default depth range so XYZRHW conversion must undo the viewport
+  // MinZ/MaxZ mapping.
+  D3DDDIVIEWPORTINFO vp{};
+  vp.X = 0.0f;
+  vp.Y = 0.0f;
+  vp.Width = 1.0f;
+  vp.Height = 1.0f;
+  vp.MinZ = 0.25f;
+  vp.MaxZ = 0.75f;
+  HRESULT hr = cleanup.device_funcs.pfnSetViewport(cleanup.hDevice, &vp);
+  if (!Check(hr == S_OK, "SetViewport(MinZ=0.25, MaxZ=0.75)")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzrhwDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE)")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+
+  // RHW != 1 (w=2) and z values spanning [MinZ, MaxZ]:
+  // - z==MinZ => ndc_z=0 => clip_z=0
+  // - z==MaxZ => ndc_z=1 => clip_z=w
+  // - z==mid  => ndc_z=0.5 => clip_z=w*0.5
+  const VertexXyzrhwDiffuse tri[3] = {
+      {0.0f, 0.0f, 0.25f, 0.5f, 0xFF00FF00u}, // MinZ
+      {0.0f, 0.0f, 0.75f, 0.5f, 0xFF00FF00u}, // MaxZ
+      {0.0f, 0.0f, 0.50f, 0.5f, 0xFF00FF00u}, // mid
+  };
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(XYZRHW|DIFFUSE; viewport min/max Z)")) {
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->up_vertex_buffer != nullptr, "XYZRHW conversion: scratch VB exists")) {
+      return false;
+    }
+    if (!Check(dev->up_vertex_buffer->storage.size() >= sizeof(tri),
+               "XYZRHW conversion: scratch VB storage contains uploaded vertices")) {
+      return false;
+    }
+
+    auto ReadClip = [&](uint32_t idx, float* out_z, float* out_w) {
+      const size_t base = static_cast<size_t>(idx) * sizeof(VertexXyzrhwDiffuse);
+      std::memcpy(out_z, dev->up_vertex_buffer->storage.data() + base + 8, sizeof(float));
+      std::memcpy(out_w, dev->up_vertex_buffer->storage.data() + base + 12, sizeof(float));
+    };
+
+    float z0 = 0.0f, w0 = 0.0f;
+    float z1 = 0.0f, w1 = 0.0f;
+    float z2 = 0.0f, w2 = 0.0f;
+    ReadClip(0, &z0, &w0);
+    ReadClip(1, &z1, &w1);
+    ReadClip(2, &z2, &w2);
+
+    if (!Check(w0 == 2.0f && w1 == 2.0f && w2 == 2.0f, "XYZRHW conversion: clip_w == 2")) {
+      return false;
+    }
+    if (!Check(z0 == 0.0f && z1 == 2.0f && z2 == 1.0f, "XYZRHW conversion: clip_z remaps MinZ/MaxZ")) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 bool TestFixedfuncFogTableModeTakesPrecedenceOverVertexMode() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -17284,6 +17368,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestFixedfuncFogRhwColorSelectsFogVsAndUsesWDivision()) {
+    return 1;
+  }
+  if (!aerogpu::TestXyzrhwConversionRespectsViewportMinMaxZ()) {
     return 1;
   }
   if (!aerogpu::TestFixedfuncFogTableModeTakesPrecedenceOverVertexMode()) {
