@@ -58,17 +58,19 @@ impl QemuReferenceBackend {
             }
         };
 
-        let mut state = CpuState::default();
-        state.rax = outcome.ax as u64;
-        state.rbx = outcome.bx as u64;
-        state.rcx = outcome.cx as u64;
-        state.rdx = outcome.dx as u64;
-        state.rsi = outcome.si as u64;
-        state.rdi = outcome.di as u64;
-        state.rflags = (outcome.flags as u64) | FLAG_FIXED_1;
-        // We cannot observe IP/CS from the harness; use the same "fallthrough" convention as the
-        // host backend so the conformance harness has a stable comparison value.
-        state.rip = case.init.rip.wrapping_add(case.template.bytes.len() as u64);
+        let state = CpuState {
+            rax: outcome.ax as u64,
+            rbx: outcome.bx as u64,
+            rcx: outcome.cx as u64,
+            rdx: outcome.dx as u64,
+            rsi: outcome.si as u64,
+            rdi: outcome.di as u64,
+            rflags: (outcome.flags as u64) | FLAG_FIXED_1,
+            // We cannot observe IP/CS from the harness; use the same "fallthrough" convention as
+            // the host backend so the conformance harness has a stable comparison value.
+            rip: case.init.rip.wrapping_add(case.template.bytes.len() as u64),
+            ..Default::default()
+        };
 
         ExecOutcome {
             state,
@@ -77,4 +79,3 @@ impl QemuReferenceBackend {
         }
     }
 }
-
