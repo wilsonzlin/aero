@@ -297,3 +297,35 @@ fn uhci_qh_element_budget_sets_hse_and_errint() {
     assert_ne!(sts & regs::USBSTS_HSE, 0);
     assert!(ctrl.irq_level());
 }
+
+#[test]
+fn uhci_schedule_link_budget_exceeded_sets_hse_and_errint() {
+    let mut ctrl = UhciController::new();
+    let mut mem = TestMem::new(0x20000);
+
+    ctrl.io_write(regs::REG_FLBASEADD, 4, FRAME_LIST_BASE);
+    mem.write_u32(FRAME_LIST_BASE, QH_ADDR | LINK_PTR_Q);
+
+    // Build a long, acyclic horizontal QH chain with terminated element pointers.
+    let chain_len = 5000u32;
+    for i in 0..chain_len {
+        let qh = QH_ADDR + i * 0x10;
+        let horiz = if i + 1 < chain_len {
+            (QH_ADDR + (i + 1) * 0x10) | LINK_PTR_Q
+        } else {
+            LINK_PTR_T
+        };
+        mem.write_u32(qh, horiz);
+        mem.write_u32(qh + 4, LINK_PTR_T);
+    }
+
+    ctrl.io_write(regs::REG_USBINTR, 2, regs::USBINTR_TIMEOUT_CRC as u32);
+    ctrl.io_write(regs::REG_USBCMD, 2, regs::USBCMD_RS as u32);
+
+    ctrl.tick_1ms(&mut mem);
+
+    let sts = ctrl.io_read(regs::REG_USBSTS, 2) as u16;
+    assert_ne!(sts & regs::USBSTS_USBERRINT, 0);
+    assert_ne!(sts & regs::USBSTS_HSE, 0);
+    assert!(ctrl.irq_level());
+}
