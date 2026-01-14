@@ -92,6 +92,11 @@ The fastest way to make progress is to **never skip steps**. Each step has a “
 - `dxdiag` → Display tab → **Driver Model: WDDM 1.1** (or at least WDDM).
 - Event Viewer → **Windows Logs → System**:
   - No repeated **Display / dxgkrnl** errors during boot.
+- Kernel debug log (WinDbg / serial / DebugView “Capture Kernel”):
+  - Confirm BAR0 selection is not dependent on PCI resource ordering:
+    - `aerogpu-kmd: StartDevice: BAR0 probe inspected ... selected mem[...] ... len=... magic=...`
+      - Expect the selected BAR0 `len` to be the small MMIO window (typically **64 KiB**), not the large BAR1 VRAM aperture (typically **64 MiB**).
+    - `aerogpu-kmd: StartDevice: ABI=v1 magic=...` should still appear for AGPU devices.
 
 **Pass criteria**
 

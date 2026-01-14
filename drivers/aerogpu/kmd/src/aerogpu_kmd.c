@@ -4472,19 +4472,211 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
     adapter->Bar0 = NULL;
     adapter->Bar0Length = 0;
 
-    PCM_FULL_RESOURCE_DESCRIPTOR full = &resList->List[0];
-    PCM_PARTIAL_RESOURCE_LIST partial = &full->PartialResourceList;
-    for (ULONG i = 0; i < partial->Count; ++i) {
-        PCM_PARTIAL_RESOURCE_DESCRIPTOR desc = &partial->PartialDescriptors[i];
-        PHYSICAL_ADDRESS start;
-        ULONG length;
-        if (!AeroGpuExtractMemoryResource(desc, &start, &length)) {
-            continue;
+    /*
+     * BAR0 discovery:
+     *
+     * Canonical AeroGPU exposes both:
+     *   - BAR0: small MMIO register block ("AGPU" magic)
+     *   - BAR1: large prefetchable VRAM aperture
+     *
+     * Windows does not guarantee resource ordering, so do not assume the first
+     * translated memory resource is BAR0. Instead, probe each translated memory
+     * resource for the expected MMIO magic at offset AEROGPU_MMIO_REG_MAGIC.
+     *
+     * We intentionally map only a tiny probe window for each candidate (enough
+     * to read the ABI discovery registers) so we don't temporarily map a large
+     * BAR1/VRAM aperture just to reject it.
+     */
+    enum {
+        /* Includes MAGIC/ABI_VERSION/FEATURES_LO/FEATURES_HI. */
+        AEROGPU_BAR0_PROBE_BYTES = (AEROGPU_MMIO_REG_FEATURES_HI + sizeof(ULONG)),
+    };
+
+    BOOLEAN haveFirstCandidate = FALSE;
+    PHYSICAL_ADDRESS firstStart;
+    ULONG firstLength = 0;
+
+    BOOLEAN haveLegacyCandidate = FALSE;
+    PHYSICAL_ADDRESS legacyStart;
+    ULONG legacyLength = 0;
+
+    BOOLEAN haveAgpuCandidate = FALSE;
+    PHYSICAL_ADDRESS agpuStart;
+    ULONG agpuLength = 0;
+
+#if DBG
+    ULONG memResourceCount = 0;
+    ULONG probedCount = 0;
+
+    ULONG firstMagic = 0;
+    ULONG firstFullIndex = 0;
+    ULONG firstPartialIndex = 0;
+    ULONG firstMemOrdinal = 0;
+
+    ULONG legacyMagic = 0;
+    ULONG legacyFullIndex = 0;
+    ULONG legacyPartialIndex = 0;
+    ULONG legacyMemOrdinal = 0;
+
+    ULONG agpuMagic = 0;
+    ULONG agpuFullIndex = 0;
+    ULONG agpuPartialIndex = 0;
+    ULONG agpuMemOrdinal = 0;
+#endif
+
+    firstStart.QuadPart = 0;
+    legacyStart.QuadPart = 0;
+    agpuStart.QuadPart = 0;
+
+    for (ULONG fi = 0; fi < resList->Count; ++fi) {
+        PCM_FULL_RESOURCE_DESCRIPTOR full = &resList->List[fi];
+        PCM_PARTIAL_RESOURCE_LIST partial = &full->PartialResourceList;
+        for (ULONG pi = 0; pi < partial->Count; ++pi) {
+            PCM_PARTIAL_RESOURCE_DESCRIPTOR desc = &partial->PartialDescriptors[pi];
+            PHYSICAL_ADDRESS start;
+            ULONG length;
+            if (!AeroGpuExtractMemoryResource(desc, &start, &length)) {
+                continue;
+            }
+
+#if DBG
+            const ULONG memOrdinal = memResourceCount;
+            memResourceCount++;
+#endif
+
+            if (length < sizeof(ULONG)) {
+#if DBG
+                AEROGPU_LOG("StartDevice: BAR0 probe skip mem[%lu] full=%lu partial=%lu start=0x%I64x len=%lu (too small)",
+                            memOrdinal,
+                            fi,
+                            pi,
+                            (unsigned long long)start.QuadPart,
+                            length);
+#endif
+                continue;
+            }
+
+            const SIZE_T probeBytes = (length < (ULONG)AEROGPU_BAR0_PROBE_BYTES) ? (SIZE_T)length : (SIZE_T)AEROGPU_BAR0_PROBE_BYTES;
+            PUCHAR probeVa = (PUCHAR)MmMapIoSpace(start, probeBytes, MmNonCached);
+            if (!probeVa) {
+#if DBG
+                AEROGPU_LOG("StartDevice: BAR0 probe map failed mem[%lu] full=%lu partial=%lu start=0x%I64x len=%lu probe=%Iu",
+                            memOrdinal,
+                            fi,
+                            pi,
+                            (unsigned long long)start.QuadPart,
+                            length,
+                            probeBytes);
+#endif
+                continue;
+            }
+
+            const ULONG magic = READ_REGISTER_ULONG((volatile ULONG*)(probeVa + AEROGPU_MMIO_REG_MAGIC));
+#if DBG
+            probedCount++;
+#endif
+
+            MmUnmapIoSpace(probeVa, probeBytes);
+            probeVa = NULL;
+
+            if (!haveFirstCandidate) {
+                haveFirstCandidate = TRUE;
+                firstStart = start;
+                firstLength = length;
+#if DBG
+                firstMagic = magic;
+                firstFullIndex = fi;
+                firstPartialIndex = pi;
+                firstMemOrdinal = memOrdinal;
+#endif
+            }
+
+            if (magic == AEROGPU_MMIO_MAGIC) {
+                haveAgpuCandidate = TRUE;
+                agpuStart = start;
+                agpuLength = length;
+#if DBG
+                agpuMagic = magic;
+                agpuFullIndex = fi;
+                agpuPartialIndex = pi;
+                agpuMemOrdinal = memOrdinal;
+#endif
+                goto Bar0ProbeDone;
+            }
+
+            if (!haveLegacyCandidate && magic == AEROGPU_LEGACY_MMIO_MAGIC) {
+                haveLegacyCandidate = TRUE;
+                legacyStart = start;
+                legacyLength = length;
+#if DBG
+                legacyMagic = magic;
+                legacyFullIndex = fi;
+                legacyPartialIndex = pi;
+                legacyMemOrdinal = memOrdinal;
+#endif
+            }
+        }
+    }
+
+Bar0ProbeDone:
+    /*
+     * Selection order:
+     *   1) New ABI ("AGPU") magic if found.
+     *   2) Legacy ("ARGP") magic if found (helps older device models with BAR1).
+     *   3) Fall back to the first memory resource (preserves historical behavior).
+     */
+    PHYSICAL_ADDRESS selectedStart;
+    ULONG selectedLength = 0;
+
+    selectedStart.QuadPart = 0;
+
+    if (haveAgpuCandidate) {
+        selectedStart = agpuStart;
+        selectedLength = agpuLength;
+    } else if (haveLegacyCandidate) {
+        selectedStart = legacyStart;
+        selectedLength = legacyLength;
+    } else if (haveFirstCandidate) {
+        selectedStart = firstStart;
+        selectedLength = firstLength;
+    }
+
+    if (selectedLength != 0) {
+#if DBG
+        ULONG selectedMagic = 0;
+        ULONG selectedFullIndex = 0;
+        ULONG selectedPartialIndex = 0;
+        ULONG selectedMemOrdinal = 0;
+
+        if (haveAgpuCandidate) {
+            selectedMagic = agpuMagic;
+            selectedFullIndex = agpuFullIndex;
+            selectedPartialIndex = agpuPartialIndex;
+            selectedMemOrdinal = agpuMemOrdinal;
+        } else if (haveLegacyCandidate) {
+            selectedMagic = legacyMagic;
+            selectedFullIndex = legacyFullIndex;
+            selectedPartialIndex = legacyPartialIndex;
+            selectedMemOrdinal = legacyMemOrdinal;
+        } else if (haveFirstCandidate) {
+            selectedMagic = firstMagic;
+            selectedFullIndex = firstFullIndex;
+            selectedPartialIndex = firstPartialIndex;
+            selectedMemOrdinal = firstMemOrdinal;
         }
 
-        adapter->Bar0Length = length;
-        adapter->Bar0 = (PUCHAR)MmMapIoSpace(start, adapter->Bar0Length, MmNonCached);
-        break;
+        AEROGPU_LOG("StartDevice: BAR0 probe inspected %lu memory resources (probed %lu); selected mem[%lu] full=%lu partial=%lu start=0x%I64x len=%lu magic=0x%08lx",
+                    memResourceCount,
+                    probedCount,
+                    selectedMemOrdinal,
+                    selectedFullIndex,
+                    selectedPartialIndex,
+                    (unsigned long long)selectedStart.QuadPart,
+                    selectedLength,
+                    selectedMagic);
+#endif
+        adapter->Bar0Length = selectedLength;
+        adapter->Bar0 = (PUCHAR)MmMapIoSpace(selectedStart, adapter->Bar0Length, MmNonCached);
     }
 
     if (!adapter->Bar0) {
