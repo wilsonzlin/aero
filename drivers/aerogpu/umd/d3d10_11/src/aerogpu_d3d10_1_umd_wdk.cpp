@@ -286,47 +286,23 @@ static AerogpuTextureFormatLayout aerogpu_texture_format_layout(uint32_t aerogpu
 }
 
 static bool aerogpu_format_is_block_compressed(uint32_t aerogpu_format) {
-  const AerogpuTextureFormatLayout layout = aerogpu_texture_format_layout(aerogpu_format);
-  return layout.valid && (layout.block_width != 1 || layout.block_height != 1);
+  return aerogpu::d3d10_11::aerogpu_format_is_block_compressed(aerogpu_format);
 }
 
 static uint32_t aerogpu_div_round_up_u32(uint32_t value, uint32_t divisor) {
-  return (value + divisor - 1) / divisor;
+  return aerogpu::d3d10_11::aerogpu_div_round_up_u32(value, divisor);
 }
 
 static uint32_t aerogpu_texture_min_row_pitch_bytes(uint32_t aerogpu_format, uint32_t width) {
-  if (width == 0) {
-    return 0;
-  }
-  const AerogpuTextureFormatLayout layout = aerogpu_texture_format_layout(aerogpu_format);
-  if (!layout.valid || layout.block_width == 0 || layout.bytes_per_block == 0) {
-    return 0;
-  }
-  const uint64_t blocks_w = static_cast<uint64_t>(aerogpu_div_round_up_u32(width, layout.block_width));
-  const uint64_t row_bytes = blocks_w * static_cast<uint64_t>(layout.bytes_per_block);
-  if (row_bytes == 0 || row_bytes > UINT32_MAX) {
-    return 0;
-  }
-  return static_cast<uint32_t>(row_bytes);
+  return aerogpu::d3d10_11::aerogpu_texture_min_row_pitch_bytes(aerogpu_format, width);
 }
 
 static uint32_t aerogpu_texture_num_rows(uint32_t aerogpu_format, uint32_t height) {
-  if (height == 0) {
-    return 0;
-  }
-  const AerogpuTextureFormatLayout layout = aerogpu_texture_format_layout(aerogpu_format);
-  if (!layout.valid || layout.block_height == 0) {
-    return 0;
-  }
-  return aerogpu_div_round_up_u32(height, layout.block_height);
+  return aerogpu::d3d10_11::aerogpu_texture_num_rows(aerogpu_format, height);
 }
 
 static uint64_t aerogpu_texture_required_size_bytes(uint32_t aerogpu_format, uint32_t row_pitch_bytes, uint32_t height) {
-  if (row_pitch_bytes == 0) {
-    return 0;
-  }
-  const uint32_t rows = aerogpu_texture_num_rows(aerogpu_format, height);
-  return static_cast<uint64_t>(row_pitch_bytes) * static_cast<uint64_t>(rows);
+  return aerogpu::d3d10_11::aerogpu_texture_required_size_bytes(aerogpu_format, row_pitch_bytes, height);
 }
 
 uint32_t bytes_per_pixel_aerogpu(uint32_t aerogpu_format) {
@@ -362,11 +338,7 @@ struct Texture2DSubresourceLayout {
 };
 
 static uint32_t aerogpu_mip_dim(uint32_t base, uint32_t mip_level) {
-  if (base == 0) {
-    return 0;
-  }
-  const uint32_t shifted = (mip_level >= 32) ? 0u : (base >> mip_level);
-  return std::max(1u, shifted);
+  return aerogpu::d3d10_11::aerogpu_mip_dim(base, mip_level);
 }
 
 static bool build_texture2d_subresource_layouts(uint32_t aerogpu_format,
