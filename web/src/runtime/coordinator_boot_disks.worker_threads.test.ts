@@ -295,6 +295,54 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
     expect(newBootDisksMsgs).toHaveLength(0);
   });
 
+  it("updates cached disk metadata without rebroadcasting when mounts are unchanged (machine runtime)", () => {
+    const coordinator = new WorkerCoordinator();
+
+    const segments = allocateTestSegments();
+    const shared = createSharedMemoryViews(segments);
+    (coordinator as any).shared = shared;
+    (coordinator as any).activeConfig = { vmRuntime: "machine" };
+
+    const hdd = makeLocalDisk({
+      id: "hdd1",
+      name: "disk.img",
+      backend: "opfs",
+      kind: "hdd",
+      format: "raw",
+      fileName: "disk.img",
+      sizeBytes: 1024,
+      createdAtMs: 0,
+    });
+    const cd = makeLocalDisk({
+      id: "cd1",
+      name: "install.iso",
+      backend: "opfs",
+      kind: "cd",
+      format: "iso",
+      fileName: "install.iso",
+      sizeBytes: 2048,
+      createdAtMs: 0,
+    });
+
+    coordinator.setBootDisks({ hddId: hdd.id, cdId: cd.id }, hdd, cd);
+    (coordinator as any).spawnWorker("cpu", segments);
+    const cpuWorker = (coordinator as any).workers.cpu.worker as MockWorker;
+    const postedBefore = cpuWorker.posted.length;
+
+    // Rename the disk (metadata changes, selection does not).
+    const renamedHdd = { ...hdd, name: "renamed.img" } satisfies DiskImageMetadata;
+    coordinator.setBootDisks({ hddId: hdd.id, cdId: cd.id }, renamedHdd, cd);
+
+    // The coordinator should store the updated metadata in its cached boot-disks selection so UI/debug
+    // panels reflect it, but it must not rebroadcast to workers (which would cause reattachment/reset).
+    expect(coordinator.getBootDisks()?.hdd?.name).toBe("renamed.img");
+
+    const newBootDisksMsgs = cpuWorker.posted
+      .slice(postedBefore)
+      .filter((p) => (p.message as { type?: unknown }).type === "setBootDisks");
+    expect(newBootDisksMsgs).toHaveLength(0);
+  });
+
   it("resends boot disk selection to the IO worker when vmRuntime=legacy and the worker restarts", () => {
     const coordinator = new WorkerCoordinator();
 
