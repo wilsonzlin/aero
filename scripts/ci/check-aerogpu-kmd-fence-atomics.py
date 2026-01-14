@@ -40,6 +40,18 @@ FENCE_FIELDS = {
     "LastNotifiedErrorFence",
 }
 
+ALLOWED_CALLS = {
+    # Preferred abstraction.
+    "AeroGpuAtomicReadU64",
+    "AeroGpuAtomicWriteU64",
+    "AeroGpuAtomicExchangeU64",
+    "AeroGpuAtomicCompareExchangeU64",
+    # Direct interlocked operations (still atomic on x86 if alignment is correct).
+    "InterlockedCompareExchange64",
+    "InterlockedExchange64",
+    "InterlockedExchangeAdd64",
+}
+
 TYPE_KEYWORDS = {
     # C type/qualifier keywords commonly used in casts.
     "const",
@@ -265,6 +277,80 @@ def _match_open_paren(tokens: list[Token], close_idx: int) -> int | None:
     return None
 
 
+def _match_open_bracket(tokens: list[Token], close_idx: int) -> int | None:
+    """
+    Given an index to a ']' token, return the matching '[' index (or None).
+    """
+
+    if close_idx < 0 or close_idx >= len(tokens) or tokens[close_idx].value != "]":
+        return None
+    depth = 0
+    for i in range(close_idx, -1, -1):
+        v = tokens[i].value
+        if v == "]":
+            depth += 1
+        elif v == "[":
+            depth -= 1
+            if depth == 0:
+                return i
+    return None
+
+
+def _primary_expr_start(tokens: list[Token], end_idx: int) -> int | None:
+    """
+    Return the start index of a primary-ish expression ending at `end_idx`.
+
+    This is a minimal heuristic used only for enforcing that fence fields are
+    accessed via atomic helpers; it is not a full C parser.
+    """
+
+    if end_idx < 0 or end_idx >= len(tokens):
+        return None
+
+    end_tok = tokens[end_idx].value
+
+    if end_tok == ")":
+        match = _match_open_paren(tokens, end_idx)
+        if match is not None:
+            return match
+
+    if end_tok == "]":
+        match = _match_open_bracket(tokens, end_idx)
+        if match is None:
+            return end_idx
+        # `arr[expr]` ends with ']' but the base expression ends before '['.
+        base_end = match - 1
+        if base_end < 0:
+            return match
+        return _member_expr_start(tokens, base_end)
+
+    return end_idx
+
+
+def _member_expr_start(tokens: list[Token], end_idx: int) -> int | None:
+    """
+    Return the start index of an expression that may include chained member
+    accesses (e.g. `ctx->Adapter->LastSubmittedFence`).
+    """
+
+    start = _primary_expr_start(tokens, end_idx)
+    if start is None:
+        return None
+
+    while True:
+        # Handle chains like: <left> -> <ident>   or   <left> . <ident>
+        if start >= 2 and tokens[start - 1].value in ("->", "."):
+            left_end = start - 2
+            left_start = _member_expr_start(tokens, left_end)
+            if left_start is None:
+                break
+            start = left_start
+            continue
+        break
+
+    return start
+
+
 def _is_probably_type_cast(tokens: list[Token], close_idx: int) -> bool:
     """
     Heuristic: determine whether the parentheses ending at `close_idx` look like a
@@ -345,6 +431,13 @@ def _is_unary_address_of(tokens: list[Token], amp_idx: int) -> bool:
     return True
 
 
+def _nearest_enclosing_call(paren_stack: list[str | None]) -> str | None:
+    for name in reversed(paren_stack):
+        if name is not None:
+            return name
+    return None
+
+
 def main() -> int:
     if not SRC.exists():
         print(f"OK: {SRC} not present; skipping.")
@@ -356,35 +449,45 @@ def main() -> int:
 
     violations: list[tuple[str, int, int]] = []
 
-    for i in range(2, len(tokens)):
-        tok = tokens[i]
-        if tok.kind != "ident" or tok.value not in FENCE_FIELDS:
-            continue
-        access_op = tokens[i - 1].value
-        if access_op not in ("->", "."):
-            continue
+    paren_stack: list[str | None] = []
+    prev: Token | None = None
 
-        # Find the start of the object expression in `<obj>-><field>`.
-        obj_end_idx = i - 2
-        if obj_end_idx < 0:
-            violations.append((tok.value, tok.line, tok.col))
-            continue
+    for i, tok in enumerate(tokens):
+        if tok.value == "(":
+            call_name: str | None = None
+            if prev is not None and prev.kind == "ident":
+                call_name = prev.value
+            paren_stack.append(call_name)
+        elif tok.value == ")":
+            if paren_stack:
+                paren_stack.pop()
 
-        obj_start_idx = obj_end_idx
-        if tokens[obj_end_idx].value == ")":
-            match = _match_open_paren(tokens, obj_end_idx)
-            if match is not None:
-                obj_start_idx = match
+        if tok.kind == "ident" and tok.value in FENCE_FIELDS and i >= 2 and tokens[i - 1].value in ("->", "."):
+            # Find the start of the object expression in `<obj>-><field>`.
+            obj_end_idx = i - 2
+            obj_start_idx = _member_expr_start(tokens, obj_end_idx)
+            if obj_start_idx is None:
+                violations.append((tok.value, tok.line, tok.col))
+                prev = tok
+                continue
 
-        # Include any extra wrapping parens, so `&(Adapter->Field)` is treated
-        # the same as `&Adapter->Field`.
-        expr_start_idx = obj_start_idx
-        while expr_start_idx > 0 and tokens[expr_start_idx - 1].value == "(":
-            expr_start_idx -= 1
+            # Include any extra wrapping parens, so `&(Adapter->Field)` is treated
+            # the same as `&Adapter->Field`.
+            expr_start_idx = obj_start_idx
+            while expr_start_idx > 0 and tokens[expr_start_idx - 1].value == "(":
+                expr_start_idx -= 1
 
-        amp_idx = expr_start_idx - 1
-        if amp_idx < 0 or tokens[amp_idx].value != "&" or not _is_unary_address_of(tokens, amp_idx):
-            violations.append((tok.value, tok.line, tok.col))
+            amp_idx = expr_start_idx - 1
+            if amp_idx < 0 or tokens[amp_idx].value != "&" or not _is_unary_address_of(tokens, amp_idx):
+                violations.append((tok.value, tok.line, tok.col))
+                prev = tok
+                continue
+
+            enclosing = _nearest_enclosing_call(paren_stack)
+            if enclosing not in ALLOWED_CALLS:
+                violations.append((tok.value, tok.line, tok.col))
+
+        prev = tok
 
     if not violations:
         print("OK: AeroGPU KMD fence atomic access checks passed.")
@@ -400,7 +503,9 @@ def main() -> int:
             print(f"    {' ' * (col - 1)}^")
         print("")
 
-    print("Fence state must only be accessed via Interlocked-based helpers to avoid torn 64-bit reads/writes on x86.")
+    print(
+        "Fence state must only be accessed via AeroGpuAtomic*U64 (or Interlocked*64) helpers to avoid torn 64-bit reads/writes on x86."
+    )
     return 1
 
 
