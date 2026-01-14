@@ -125,6 +125,8 @@ Rule of thumb:
 - `AEROSPAR` (“AeroSparse”, magic `AEROSPAR`) is the **current** sparse disk format implemented in
   `crates/aero-storage` as `aero_storage::AeroSparseDisk` in
   [`crates/aero-storage/src/sparse.rs`](../crates/aero-storage/src/sparse.rs).
+  `crates/emulator` uses it via a thin wrapper (`AerosparDisk`) in
+  [`crates/emulator/src/io/storage/formats/aerospar.rs`](../crates/emulator/src/io/storage/formats/aerospar.rs).
 - `AEROSPRS` (magic `AEROSPRS`) is a **legacy** sparse format still implemented in the emulator:
   [`crates/emulator/src/io/storage/formats/aerosprs.rs`](../crates/emulator/src/io/storage/formats/aerosprs.rs)
   (selected via [`crates/emulator/src/io/storage/formats/sparse.rs`](../crates/emulator/src/io/storage/formats/sparse.rs)).
