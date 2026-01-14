@@ -196,6 +196,30 @@ class HarnessArgAliasTests(unittest.TestCase):
         self.assertEqual(args.virtio_input_vectors, 5)
         self.assertEqual(args.virtio_snd_vectors, 6)
 
+    def test_vectors_override_alias_flags_parse(self) -> None:
+        args = self._parse(
+            [
+                "--qemu-system",
+                "qemu-system-x86_64",
+                "--disk-image",
+                "disk.img",
+                "--with-virtio-snd",
+                "--virtio-net-msix-vectors",
+                "2",
+                "--virtio-blk-msix-vectors",
+                "3",
+                "--virtio-input-msix-vectors",
+                "5",
+                "--virtio-snd-msix-vectors",
+                "6",
+            ]
+        )
+        self.assertTrue(args.enable_virtio_snd)
+        self.assertEqual(args.virtio_net_vectors, 2)
+        self.assertEqual(args.virtio_blk_vectors, 3)
+        self.assertEqual(args.virtio_input_vectors, 5)
+        self.assertEqual(args.virtio_snd_vectors, 6)
+
 
 if __name__ == "__main__":
     unittest.main()

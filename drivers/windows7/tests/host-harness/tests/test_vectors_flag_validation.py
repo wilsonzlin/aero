@@ -51,6 +51,29 @@ class HarnessVectorsFlagValidationTests(unittest.TestCase):
         finally:
             sys.argv = old_argv
 
+    def test_virtio_snd_msix_vectors_alias_requires_with_virtio_snd(self) -> None:
+        h = self.harness
+
+        old_argv = sys.argv
+        try:
+            sys.argv = [
+                "invoke_aero_virtio_win7_tests.py",
+                "--qemu-system",
+                "qemu-system-x86_64",
+                "--disk-image",
+                "disk.img",
+                "--virtio-snd-msix-vectors",
+                "2",
+            ]
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as cm:
+                h.main()
+            # argparse uses exit code 2 for CLI usage errors.
+            self.assertEqual(cm.exception.code, 2)
+            self.assertIn("--virtio-snd-vectors requires --with-virtio-snd", stderr.getvalue())
+        finally:
+            sys.argv = old_argv
+
     def test_snd_buffer_limits_requires_with_virtio_snd(self) -> None:
         h = self.harness
 
@@ -79,9 +102,13 @@ class HarnessVectorsFlagValidationTests(unittest.TestCase):
             (["--virtio-msix-vectors", "0"], "--virtio-msix-vectors must be a positive integer"),
             (["--virtio-msix-vectors", "-1"], "--virtio-msix-vectors must be a positive integer"),
             (["--virtio-net-vectors", "0"], "--virtio-net-vectors must be a positive integer"),
+            (["--virtio-net-msix-vectors", "0"], "--virtio-net-vectors must be a positive integer"),
             (["--virtio-blk-vectors", "0"], "--virtio-blk-vectors must be a positive integer"),
+            (["--virtio-blk-msix-vectors", "0"], "--virtio-blk-vectors must be a positive integer"),
             (["--virtio-input-vectors", "0"], "--virtio-input-vectors must be a positive integer"),
+            (["--virtio-input-msix-vectors", "0"], "--virtio-input-vectors must be a positive integer"),
             (["--virtio-snd-vectors", "0"], "--virtio-snd-vectors must be a positive integer"),
+            (["--virtio-snd-msix-vectors", "0"], "--virtio-snd-vectors must be a positive integer"),
         ]
 
         for extra_argv, expected in cases:
