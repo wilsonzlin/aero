@@ -753,6 +753,298 @@ static BOOLEAN AerovNetWriteNetBufferBe16(_In_ PNET_BUFFER Nb, _In_ ULONG Offset
   return AerovNetNetBufferWriteBytes(Nb, Offset, Tmp, sizeof(Tmp));
 }
 
+// Complete a virtio-net "partial checksum" (VIRTIO_NET_HDR_F_NEEDS_CSUM) on a
+// received NET_BUFFER without requiring a contiguous copy of the whole frame.
+//
+// For fragmented IP packets, the transport checksum covers the *reassembled*
+// payload and cannot be computed at this layer; in that case we return FALSE.
+static BOOLEAN AerovNetCompleteVirtioPartialRxChecksumNetBuffer(_In_ PNET_BUFFER Nb, _In_ ULONG FrameLen, _In_ const VIRTIO_NET_HDR* Vhdr) {
+  USHORT EtherType;
+  ULONG L2Len;
+  ULONG Tags;
+  UCHAR EthHdr[14];
+  ULONG L3Off;
+  ULONG CsumStart;
+  ULONG CsumField;
+  ULONG L4End;
+  ULONG L4Len;
+  UCHAR Proto;
+  AEROVNET_PACKET_INFO Pkt;
+  AEROVNET_CSUM_STATE St;
+  USHORT Csum;
+
+  if (!Nb || !Vhdr) {
+    return FALSE;
+  }
+
+  if (FrameLen == 0) {
+    FrameLen = NET_BUFFER_DATA_LENGTH(Nb);
+  }
+
+  if (FrameLen < 14) {
+    return FALSE;
+  }
+
+  CsumStart = (ULONG)Vhdr->CsumStart;
+  CsumField = CsumStart + (ULONG)Vhdr->CsumOffset;
+
+  if (CsumStart >= FrameLen) {
+    return FALSE;
+  }
+  if (CsumField + 2 > FrameLen) {
+    return FALSE;
+  }
+
+  // Parse L2 (up to 2 VLAN tags) to locate the IP header.
+  RtlZeroMemory(EthHdr, sizeof(EthHdr));
+  if (!AerovNetNetBufferCopyBytes(Nb, 0, EthHdr, sizeof(EthHdr))) {
+    return FALSE;
+  }
+  EtherType = AerovNetReadBe16(EthHdr + 12);
+  L2Len = 14;
+  Tags = 0;
+
+  while ((EtherType == AEROVNET_ETHERTYPE_VLAN || EtherType == AEROVNET_ETHERTYPE_QINQ || EtherType == AEROVNET_ETHERTYPE_VLAN_9100) && Tags < 2) {
+    UCHAR TagHdr[4];
+    if (FrameLen < L2Len + 4) {
+      return FALSE;
+    }
+    if (!AerovNetNetBufferCopyBytes(Nb, L2Len, TagHdr, sizeof(TagHdr))) {
+      return FALSE;
+    }
+    EtherType = AerovNetReadBe16(TagHdr + 2);
+    L2Len += 4;
+    Tags++;
+  }
+
+  L3Off = L2Len;
+
+  // The virtio checksum start must not point into the L2 header.
+  if (CsumStart < L3Off) {
+    return FALSE;
+  }
+
+  RtlZeroMemory(&Pkt, sizeof(Pkt));
+
+  if (EtherType == AEROVNET_ETHERTYPE_IPV4) {
+    UCHAR IpHdr20[20];
+    UCHAR Vhl;
+    ULONG Ihl;
+    ULONG IpHdrLen;
+    ULONG TotalLen;
+    USHORT Frag;
+
+    if (FrameLen < L3Off + sizeof(IpHdr20)) {
+      return FALSE;
+    }
+    if (!AerovNetNetBufferCopyBytes(Nb, L3Off, IpHdr20, sizeof(IpHdr20))) {
+      return FALSE;
+    }
+
+    Vhl = IpHdr20[0];
+    if ((Vhl >> 4) != 4) {
+      return FALSE;
+    }
+
+    Ihl = (ULONG)(Vhl & 0x0F);
+    IpHdrLen = Ihl * 4u;
+    if (IpHdrLen < 20u || (IpHdrLen & 3u) != 0u) {
+      return FALSE;
+    }
+
+    TotalLen = (ULONG)AerovNetReadBe16(IpHdr20 + 2);
+    if (TotalLen < IpHdrLen) {
+      return FALSE;
+    }
+    if (TotalLen > FrameLen - L3Off) {
+      // Clamp malformed length to the actual buffer.
+      TotalLen = FrameLen - L3Off;
+    }
+
+    // Reject fragmented packets: transport checksum applies to the reassembled payload.
+    Frag = AerovNetReadBe16(IpHdr20 + 6);
+    if ((Frag & 0x1FFFu) != 0u || (Frag & 0x2000u) != 0u) {
+      return FALSE;
+    }
+
+    // Ensure checksum start points within the IPv4 payload region.
+    if (CsumStart < L3Off + IpHdrLen || CsumStart > L3Off + TotalLen) {
+      return FALSE;
+    }
+
+    Proto = IpHdr20[9];
+    if (Proto != 6u && Proto != 17u) {
+      return FALSE;
+    }
+
+    L4Len = TotalLen - (CsumStart - L3Off);
+    if (L4Len > 0xFFFFu) {
+      return FALSE;
+    }
+
+    Pkt.L3 = AerovNetL3Ipv4;
+    Pkt.L4Len = (USHORT)L4Len;
+    Pkt.IpProtocol = Proto;
+    RtlCopyMemory(Pkt.SrcAddr, IpHdr20 + 12, 4);
+    RtlCopyMemory(Pkt.DstAddr, IpHdr20 + 16, 4);
+  } else if (EtherType == AEROVNET_ETHERTYPE_IPV6) {
+    UCHAR Ip6Hdr40[40];
+    UCHAR Ver;
+    ULONG PayloadLen;
+    ULONG MaxPayload;
+    UCHAR Next;
+    ULONG Off;
+    ULONG Iter;
+
+    if (FrameLen < L3Off + sizeof(Ip6Hdr40)) {
+      return FALSE;
+    }
+    if (!AerovNetNetBufferCopyBytes(Nb, L3Off, Ip6Hdr40, sizeof(Ip6Hdr40))) {
+      return FALSE;
+    }
+
+    Ver = (UCHAR)(Ip6Hdr40[0] >> 4);
+    if (Ver != 6u) {
+      return FALSE;
+    }
+
+    PayloadLen = (ULONG)AerovNetReadBe16(Ip6Hdr40 + 4);
+    MaxPayload = (FrameLen >= L3Off + 40u) ? (FrameLen - L3Off - 40u) : 0u;
+    if (PayloadLen > MaxPayload) {
+      PayloadLen = MaxPayload;
+    }
+
+    // Ensure checksum start points within the IPv6 payload region.
+    if (CsumStart < L3Off + 40u) {
+      return FALSE;
+    }
+    if (CsumStart - (L3Off + 40u) > PayloadLen) {
+      return FALSE;
+    }
+
+    L4Len = PayloadLen - (CsumStart - (L3Off + 40u));
+    if (L4Len > 0xFFFFu) {
+      return FALSE;
+    }
+
+    // Walk extension headers until we reach checksum_start, tracking the final
+    // Next Header value for the pseudo header.
+    Next = Ip6Hdr40[6];
+    Off = L3Off + 40u;
+    for (Iter = 0; Iter < 8u && Off < CsumStart; Iter++) {
+      if (Next == 6u || Next == 17u) {
+        // L4 header should start immediately; mismatch with checksum_start.
+        return FALSE;
+      }
+
+      if (Next == 0u || Next == 43u || Next == 60u) {
+        UCHAR Ext2[2];
+        ULONG HdrBytes;
+        if (FrameLen < Off + 2u) {
+          return FALSE;
+        }
+        if (!AerovNetNetBufferCopyBytes(Nb, Off, Ext2, sizeof(Ext2))) {
+          return FALSE;
+        }
+        HdrBytes = ((ULONG)Ext2[1] + 1u) * 8u;
+        if (FrameLen < Off + HdrBytes) {
+          return FALSE;
+        }
+        Next = Ext2[0];
+        Off += HdrBytes;
+        continue;
+      }
+
+      if (Next == 44u) {
+        UCHAR Ext8[8];
+        USHORT Frag;
+        if (FrameLen < Off + 8u) {
+          return FALSE;
+        }
+        if (!AerovNetNetBufferCopyBytes(Nb, Off, Ext8, sizeof(Ext8))) {
+          return FALSE;
+        }
+        Next = Ext8[0];
+        Frag = AerovNetReadBe16(Ext8 + 2);
+        // Non-atomic fragments: do not attempt L4 checksum completion.
+        if ((Frag & 0xFFF8u) != 0u || (Frag & 0x0001u) != 0u) {
+          return FALSE;
+        }
+        Off += 8u;
+        continue;
+      }
+
+      if (Next == 51u) {
+        UCHAR Ext2[2];
+        ULONG HdrBytes;
+        if (FrameLen < Off + 2u) {
+          return FALSE;
+        }
+        if (!AerovNetNetBufferCopyBytes(Nb, Off, Ext2, sizeof(Ext2))) {
+          return FALSE;
+        }
+        HdrBytes = ((ULONG)Ext2[1] + 2u) * 4u;
+        if (FrameLen < Off + HdrBytes) {
+          return FALSE;
+        }
+        Next = Ext2[0];
+        Off += HdrBytes;
+        continue;
+      }
+
+      // Unsupported extension header.
+      return FALSE;
+    }
+
+    if (Off != CsumStart) {
+      return FALSE;
+    }
+
+    Proto = Next;
+    if (Proto != 6u && Proto != 17u) {
+      return FALSE;
+    }
+
+    Pkt.L3 = AerovNetL3Ipv6;
+    Pkt.L4Len = (USHORT)L4Len;
+    Pkt.IpProtocol = Proto;
+    RtlCopyMemory(Pkt.SrcAddr, Ip6Hdr40 + 8, 16);
+    RtlCopyMemory(Pkt.DstAddr, Ip6Hdr40 + 24, 16);
+  } else {
+    return FALSE;
+  }
+
+  // The checksum field must be contained within the computed L4 region.
+  if ((ULONG)Vhdr->CsumOffset + 2u > L4Len) {
+    return FALSE;
+  }
+
+  L4End = CsumStart + L4Len;
+  if (L4End > FrameLen) {
+    // Should not happen after length clamping, but be defensive.
+    L4End = FrameLen;
+  }
+
+  if (CsumField + 2u > L4End) {
+    return FALSE;
+  }
+
+  RtlZeroMemory(&St, sizeof(St));
+  AerovNetCsumAccumulatePseudoHeader(&St, &Pkt);
+
+  // L4 header+payload, with checksum field treated as zero.
+  AerovNetCsumAccumulateNetBuffer(&St, Nb, CsumStart, (ULONG)Vhdr->CsumOffset);
+  AerovNetCsumAccumulateNetBuffer(&St, Nb, CsumField + 2u, L4End - (CsumField + 2u));
+
+  Csum = AerovNetCsumFinalize(&St);
+  if (Pkt.IpProtocol == 17u && Csum == 0u) {
+    // UDP: checksum result of 0 must be transmitted as 0xFFFF.
+    Csum = 0xFFFFu;
+  }
+
+  return AerovNetWriteNetBufferBe16(Nb, CsumField, Csum);
+}
+
 static BOOLEAN AerovNetComputeAndWriteL4ChecksumNetBuffer(_In_ PNET_BUFFER Nb, _In_ const AEROVNET_PACKET_INFO* Info) {
   AEROVNET_CSUM_STATE St;
   ULONG L4Off;
@@ -1008,11 +1300,10 @@ static VOID AerovNetIndicateRxChecksum(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout
   // stack. (Virtio's NEEDS_CSUM scheme is a "partial checksum" completion.)
   if (RxInfo.NeedsCsum) {
     PNET_BUFFER Nb;
-    AEROVNET_PACKET_INFO Pkt;
 
     Nb = NET_BUFFER_LIST_FIRST_NB(Nbl);
-    if (Nb && AerovNetParsePacketInfo(Frame, FrameLen, FrameLen, &Pkt)) {
-      (VOID)AerovNetComputeAndWriteL4ChecksumNetBuffer(Nb, &Pkt);
+    if (Nb && Vhdr) {
+      (VOID)AerovNetCompleteVirtioPartialRxChecksumNetBuffer(Nb, FrameLen, Vhdr);
     }
     return;
   }
@@ -4265,7 +4556,7 @@ static VOID AerovNetInterruptDpcWork(_Inout_ AEROVNET_ADAPTER* Adapter, _In_ BOO
             if (NeedCsumWork && RxHead->Nb && Adapter->RxChecksumScratch && TotalPayloadLen <= Adapter->RxChecksumScratchBytes) {
               FramePtr = NdisGetDataBuffer(RxHead->Nb, TotalPayloadLen, Adapter->RxChecksumScratch, 1, 0);
             }
-            if (FramePtr) {
+            if (NeedCsumWork) {
               AerovNetIndicateRxChecksum(Adapter, RxHead->Nbl, (const UCHAR*)FramePtr, TotalPayloadLen,
                                          (const VIRTIO_NET_HDR*)RxHead->BufferVa);
             }
