@@ -1,7 +1,8 @@
 use aero_dxbc::test_utils as dxbc_test_utils;
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    AerogpuCmdOpcode, AerogpuIndexFormat, AerogpuPrimitiveTopology, AerogpuVertexBufferBinding,
-    AEROGPU_CLEAR_COLOR, AEROGPU_CMD_STREAM_MAGIC, AEROGPU_PRESENT_FLAG_VSYNC,
+    AerogpuCmdOpcode, AerogpuCmdStreamHeader, AerogpuIndexFormat, AerogpuPrimitiveTopology,
+    AerogpuVertexBufferBinding, AEROGPU_CLEAR_COLOR, AEROGPU_CMD_STREAM_MAGIC,
+    AEROGPU_PRESENT_FLAG_VSYNC,
 };
 use aero_protocol::aerogpu::aerogpu_pci::{AerogpuFormat, AEROGPU_ABI_VERSION_U32};
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
@@ -707,10 +708,10 @@ fn dispatch_stage_ex_is_decoded_in_listings() {
     push_u32_le(&mut bytes, 0); // flags
     push_u32_le(&mut bytes, 0); // reserved0
     push_u32_le(&mut bytes, 0); // reserved1
-    assert_eq!(bytes.len(), 24);
+    assert_eq!(bytes.len(), AerogpuCmdStreamHeader::SIZE_BYTES);
 
-    // DISPATCH(1,2,3) with stage_ex=Hull (3) encoded in reserved0.
     let mut payload = Vec::new();
+    // DISPATCH(1,2,3) with stage_ex=Hull (3) encoded in reserved0.
     push_u32_le(&mut payload, 1);
     push_u32_le(&mut payload, 2);
     push_u32_le(&mut payload, 3);
@@ -722,7 +723,6 @@ fn dispatch_stage_ex_is_decoded_in_listings() {
     let size_bytes = bytes.len() as u32;
     bytes[8..12].copy_from_slice(&size_bytes.to_le_bytes());
 
-    // Current ABI: stage_ex should be decoded.
     let listing = aero_gpu_trace_replay::decode_cmd_stream_listing(&bytes, false)
         .expect("decode should succeed");
     assert!(listing.contains("Dispatch"), "{listing}");
@@ -743,7 +743,7 @@ fn dispatch_stage_ex_is_decoded_in_listings() {
     assert_eq!(dispatch["decoded"]["stage_ex"], 3);
     assert_eq!(dispatch["decoded"]["stage_ex_name"], "Hull");
 
-    // ABI 1.2: stage_ex must be ignored.
+    // ABI 1.2: stage_ex must be ignored and instead exposed as a non-zero reserved0 field.
     let mut legacy = bytes.clone();
     legacy[4..8].copy_from_slice(&0x0001_0002u32.to_le_bytes()); // ABI 1.2
     let listing = aero_gpu_trace_replay::decode_cmd_stream_listing(&legacy, false)
@@ -765,10 +765,8 @@ fn dispatch_stage_ex_is_decoded_in_listings() {
         .iter()
         .find(|r| r["type"] == "packet" && r["opcode"] == "Dispatch")
         .expect("missing Dispatch packet");
-    assert!(
-        dispatch["decoded"].get("stage_ex").is_none(),
-        "stage_ex should be omitted from JSON decode for ABI minor<3"
-    );
+    assert!(dispatch["decoded"].get("stage_ex").is_none());
+    assert!(dispatch["decoded"].get("stage_ex_name").is_none());
     assert_eq!(dispatch["decoded"]["reserved0"], 3);
 }
 
