@@ -1065,8 +1065,13 @@ mod tests {
         let mut ints = PlatformInterrupts::new_with_cpu_count(2);
         ints.set_mode(PlatformInterruptMode::Apic);
 
-        // GSI1 -> vector 0x40, level-triggered, unmasked, destination=APIC1.
-        let vector = 0x40u8;
+        // Ensure LAPIC SVR[8] is set for both CPUs so they accept injected interrupts.
+        for apic_id in [0u8, 1] {
+            ints.lapic_mmio_write_for_apic(apic_id, 0xF0, &0x1FFu32.to_le_bytes());
+        }
+
+        // GSI1 -> vector 0x55, level-triggered, unmasked, destination=APIC1.
+        let vector = 0x55u8;
         program_ioapic_entry(&mut ints, 1, u32::from(vector) | (1 << 15), 1 << 24);
 
         ints.raise_irq(InterruptInput::Gsi(1));
@@ -1076,6 +1081,7 @@ mod tests {
         // ACK moves the vector into ISR; the IOAPIC must not redeliver while Remote-IRR is set.
         ints.acknowledge_for_apic(1, vector);
         assert_eq!(ints.get_pending_for_apic(1), None);
+        assert_eq!(ints.get_pending_for_apic(0), None);
 
         // EOI on the non-BSP LAPIC must clear Remote-IRR and trigger redelivery when the line is
         // still asserted.
