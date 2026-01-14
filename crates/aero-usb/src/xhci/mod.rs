@@ -1590,6 +1590,16 @@ impl XhciController {
             // Remove any non-EP0 endpoints from the active list so we stop polling immediately.
             self.active_endpoints
                 .retain(|ep| ep.slot_id != slot_id || ep.endpoint_id == 1);
+            // Keep the coalescing bitmap consistent with the queue. If we drop endpoints from the
+            // queue without clearing their pending bits, future doorbells would be ignored.
+            if slot_idx < self.active_endpoint_pending.len() {
+                for endpoint_id in 2u8..=31 {
+                    let ep_idx = endpoint_id as usize;
+                    if ep_idx < 32 {
+                        self.active_endpoint_pending[slot_idx][ep_idx] = false;
+                    }
+                }
+            }
 
             self.queue_command_completion_event(cmd_paddr, CompletionCode::Success, slot_id);
             return;
@@ -1638,11 +1648,11 @@ impl XhciController {
         }
 
         // Clear any dropped endpoint contexts first.
-        if drop_flags != 0 {
-            for endpoint_id in 2u8..=31 {
-                if !icc.drop_context(endpoint_id) {
-                    continue;
-                }
+            if drop_flags != 0 {
+                for endpoint_id in 2u8..=31 {
+                    if !icc.drop_context(endpoint_id) {
+                        continue;
+                    }
                 let out_addr = dev_ctx_ptr + (endpoint_id as u64 * CONTEXT_SIZE as u64);
                 EndpointContext::default().write_to(mem, out_addr);
                 let idx = usize::from(endpoint_id - 1);
@@ -1652,14 +1662,27 @@ impl XhciController {
                 slot_state.device_context_ptr = dev_ctx_ptr;
             }
 
-            // Drop any cached endpoint execution state since the executor cannot remove endpoints
-            // individually.
-            if let Some(exec) = self.transfer_executors.get_mut(slot_idx) {
-                *exec = None;
+                // Drop any cached endpoint execution state since the executor cannot remove endpoints
+                // individually.
+                if let Some(exec) = self.transfer_executors.get_mut(slot_idx) {
+                    *exec = None;
+                }
+                self.active_endpoints
+                    .retain(|ep| ep.slot_id != slot_id || !icc.drop_context(ep.endpoint_id));
+                // Keep the coalescing bitmap consistent with the queue so dropped endpoints can be
+                // re-doorbelled later.
+                if slot_idx < self.active_endpoint_pending.len() {
+                    for endpoint_id in 2u8..=31 {
+                        if !icc.drop_context(endpoint_id) {
+                            continue;
+                        }
+                        let ep_idx = endpoint_id as usize;
+                        if ep_idx < 32 {
+                            self.active_endpoint_pending[slot_idx][ep_idx] = false;
+                        }
+                    }
+                }
             }
-            self.active_endpoints
-                .retain(|ep| ep.slot_id != slot_id || !icc.drop_context(ep.endpoint_id));
-        }
 
         // Configure all added endpoint contexts.
         for endpoint_id in 1u8..=31 {
