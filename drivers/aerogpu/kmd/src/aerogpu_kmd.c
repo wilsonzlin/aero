@@ -3726,13 +3726,19 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPowerState(_In_ const HANDLE hAdapter,
             }
         }
 
-        const BOOLEAN errorLatched = AeroGpuIsDeviceErrorLatched(adapter);
-
         /* Restore IRQ enable mask (if supported). */
         if (adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ENABLE + sizeof(ULONG))) {
             KIRQL irqIrql;
             KeAcquireSpinLock(&adapter->IrqEnableLock, &irqIrql);
-            const ULONG enable = (adapter->InterruptRegistered && !errorLatched) ? adapter->IrqEnableMask : 0;
+            ULONG enable = adapter->InterruptRegistered ? adapter->IrqEnableMask : 0;
+            if (AeroGpuIsDeviceErrorLatched(adapter)) {
+                /*
+                 * If the device has asserted IRQ_ERROR, do not re-enable ERROR delivery across
+                 * resume. Keeping vsync interrupts enabled (when requested by dxgkrnl) avoids
+                 * hanging vblank wait paths.
+                 */
+                enable &= ~AEROGPU_IRQ_ERROR;
+            }
             AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, enable);
             KeReleaseSpinLock(&adapter->IrqEnableLock, irqIrql);
         }
@@ -3749,7 +3755,7 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPowerState(_In_ const HANDLE hAdapter,
                             ? TRUE
                             : FALSE;
         }
-        if (!errorLatched && canSubmit) {
+        if (canSubmit && !AeroGpuIsDeviceErrorLatched(adapter)) {
             InterlockedExchange(&adapter->AcceptingSubmissions, 1);
         }
 
@@ -8345,14 +8351,11 @@ static NTSTATUS APIENTRY AeroGpuDdiControlInterrupt(_In_ const HANDLE hAdapter,
     const BOOLEAN poweredOn =
         ((DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange(&adapter->DevicePowerState, 0, 0) == DxgkDevicePowerStateD0);
     /*
-     * Once the device has asserted IRQ_ERROR, keep device IRQ generation masked
-     * off to avoid storms and force the runtime down a deterministic device-lost
-     * path.
+     * Once the device has asserted IRQ_ERROR, never re-enable ERROR delivery.
      *
      * Do not fail the ControlInterrupt callback itself: dxgkrnl may call it as
-     * part of teardown/recovery paths, and returning failure here is not
-     * necessary for surfacing device-lost semantics (submission paths already
-     * fail fast with STATUS_GRAPHICS_DEVICE_REMOVED).
+     * part of teardown/recovery paths. Submission paths already fail fast with
+     * STATUS_GRAPHICS_DEVICE_REMOVED to surface device-lost semantics.
      */
 
     /* Fence/DMA completion interrupt gating. */
@@ -8372,7 +8375,8 @@ static NTSTATUS APIENTRY AeroGpuDdiControlInterrupt(_In_ const HANDLE hAdapter,
                 enable &= ~AEROGPU_IRQ_FENCE;
             }
             if (AeroGpuIsDeviceErrorLatched(adapter)) {
-                enable = 0;
+                /* Never re-enable ERROR delivery once an IRQ_ERROR has been observed. */
+                enable &= ~AEROGPU_IRQ_ERROR;
             }
             adapter->IrqEnableMask = enable;
             if (poweredOn && haveIrqRegs) {
@@ -8447,7 +8451,8 @@ static NTSTATUS APIENTRY AeroGpuDdiControlInterrupt(_In_ const HANDLE hAdapter,
                 enable &= ~AEROGPU_IRQ_SCANOUT_VBLANK;
             }
             if (AeroGpuIsDeviceErrorLatched(adapter)) {
-                enable = 0;
+                /* Never re-enable ERROR delivery once an IRQ_ERROR has been observed. */
+                enable &= ~AEROGPU_IRQ_ERROR;
             }
             adapter->IrqEnableMask = enable;
             if (poweredOn) {
