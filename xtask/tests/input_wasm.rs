@@ -196,6 +196,12 @@ fn said_runs_wasm_pack_without_node_modules() -> Result<(), Box<dyn std::error::
     assert!(
         wasm_pack
             .iter()
+            .any(|arg| arg == "usb_hid_bridge_keyboard_reports_wasm"),
+        "expected wasm-pack to include usb_hid_bridge_keyboard_reports_wasm, argv={wasm_pack:?}"
+    );
+    assert!(
+        wasm_pack
+            .iter()
             .any(|arg| arg == "usb_hid_bridge_mouse_reports_wasm"),
         "expected wasm-pack to include usb_hid_bridge_mouse_reports_wasm, argv={wasm_pack:?}"
     );

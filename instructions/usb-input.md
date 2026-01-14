@@ -276,6 +276,7 @@ wasm-pack test --node crates/aero-wasm --test usb_bridge_snapshot_roundtrip --lo
 wasm-pack test --node crates/aero-wasm --test usb_snapshot --locked
 wasm-pack test --node crates/aero-wasm --test machine_input_injection_wasm --locked
 wasm-pack test --node crates/aero-wasm --test wasm_machine_ps2_mouse --locked
+wasm-pack test --node crates/aero-wasm --test usb_hid_bridge_keyboard_reports_wasm --locked
 wasm-pack test --node crates/aero-wasm --test usb_hid_bridge_mouse_reports_wasm --locked
 wasm-pack test --node crates/aero-wasm --test usb_hid_bridge_consumer_reports_wasm --locked
 wasm-pack test --node crates/aero-wasm --test webhid_interrupt_out_policy_wasm --locked
@@ -323,6 +324,7 @@ bash ./scripts/safe-run.sh wasm-pack test --node crates/aero-wasm \
   --test usb_snapshot \
   --test machine_input_injection_wasm \
   --test wasm_machine_ps2_mouse \
+  --test usb_hid_bridge_keyboard_reports_wasm \
   --test usb_hid_bridge_mouse_reports_wasm \
   --test usb_hid_bridge_consumer_reports_wasm \
   --test webhid_interrupt_out_policy_wasm \
@@ -355,6 +357,7 @@ AERO_TIMEOUT=2400 bash ./scripts/safe-run.sh wasm-pack test --node crates/aero-w
   --test usb_snapshot \
   --test machine_input_injection_wasm \
   --test wasm_machine_ps2_mouse \
+  --test usb_hid_bridge_keyboard_reports_wasm \
   --test usb_hid_bridge_mouse_reports_wasm \
   --test usb_hid_bridge_consumer_reports_wasm \
   --test webhid_interrupt_out_policy_wasm \

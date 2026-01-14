@@ -104,6 +104,9 @@ fn input_help_mentions_flags_and_steps() {
         .stdout(predicate::str::contains("machine_input_injection_wasm"))
         .stdout(predicate::str::contains("wasm_machine_ps2_mouse"))
         .stdout(predicate::str::contains(
+            "usb_hid_bridge_keyboard_reports_wasm",
+        ))
+        .stdout(predicate::str::contains(
             "usb_hid_bridge_mouse_reports_wasm",
         ))
         .stdout(predicate::str::contains(

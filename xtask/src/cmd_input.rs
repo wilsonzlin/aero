@@ -109,6 +109,7 @@ const WASM_PACK_TESTS: &[&str] = &[
     "usb_snapshot",
     "machine_input_injection_wasm",
     "wasm_machine_ps2_mouse",
+    "usb_hid_bridge_keyboard_reports_wasm",
     "usb_hid_bridge_mouse_reports_wasm",
     "usb_hid_bridge_consumer_reports_wasm",
     "webhid_interrupt_out_policy_wasm",
