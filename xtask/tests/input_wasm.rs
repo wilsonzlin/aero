@@ -125,6 +125,7 @@ fn said_runs_wasm_pack_without_node_modules() -> Result<(), Box<dyn std::error::
     );
     for expected in [
         "uhci_controller_topology",
+        "uhci_runtime_webusb",
         "uhci_runtime_webusb_drain_actions",
         "uhci_runtime_topology",
         "uhci_runtime_external_hub",

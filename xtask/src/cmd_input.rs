@@ -91,6 +91,7 @@ const AERO_MACHINE_FOCUSED_TESTS: &[&str] = &[
 const WASM_PACK_TESTS: &[&str] = &[
     "webusb_uhci_bridge",
     "uhci_controller_topology",
+    "uhci_runtime_webusb",
     "uhci_runtime_webusb_drain_actions",
     "uhci_runtime_topology",
     "uhci_runtime_external_hub",

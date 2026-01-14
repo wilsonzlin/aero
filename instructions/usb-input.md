@@ -268,6 +268,7 @@ cargo xtask input --rust-only --with-wasm
 # Targeted WASM USB/input regression tests (run in Node).
 wasm-pack test --node crates/aero-wasm --test webusb_uhci_bridge --locked
 wasm-pack test --node crates/aero-wasm --test uhci_controller_topology --locked
+wasm-pack test --node crates/aero-wasm --test uhci_runtime_webusb --locked
 wasm-pack test --node crates/aero-wasm --test uhci_runtime_webusb_drain_actions --locked
 wasm-pack test --node crates/aero-wasm --test uhci_runtime_topology --locked
 wasm-pack test --node crates/aero-wasm --test uhci_runtime_external_hub --locked
@@ -318,6 +319,7 @@ bash ./scripts/safe-run.sh cargo xtask input --rust-only
 bash ./scripts/safe-run.sh wasm-pack test --node crates/aero-wasm \
   --test webusb_uhci_bridge \
   --test uhci_controller_topology \
+  --test uhci_runtime_webusb \
   --test uhci_runtime_webusb_drain_actions \
   --test uhci_runtime_topology \
   --test uhci_runtime_external_hub \
@@ -351,6 +353,7 @@ AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo xtask input --rust-only
 AERO_TIMEOUT=2400 bash ./scripts/safe-run.sh wasm-pack test --node crates/aero-wasm \
   --test webusb_uhci_bridge \
   --test uhci_controller_topology \
+  --test uhci_runtime_webusb \
   --test uhci_runtime_webusb_drain_actions \
   --test uhci_runtime_topology \
   --test uhci_runtime_external_hub \

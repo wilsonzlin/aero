@@ -81,6 +81,7 @@ fn input_help_mentions_flags_and_steps() {
         .stdout(predicate::str::contains("usb_snapshot_host_state"))
         .stdout(predicate::str::contains("--test webusb_uhci_bridge"))
         .stdout(predicate::str::contains("uhci_controller_topology"))
+        .stdout(predicate::str::contains("--test uhci_runtime_webusb "))
         .stdout(predicate::str::contains(
             "uhci_runtime_webusb_drain_actions",
         ))
