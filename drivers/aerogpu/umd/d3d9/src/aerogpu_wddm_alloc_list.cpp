@@ -136,6 +136,10 @@ AllocationListTracker::AllocationListTracker(D3DDDI_ALLOCATIONLIST* list_base,
       max_allocation_list_slot_id_(max_allocation_list_slot_id) {
   handle_to_entry_.reserve(list_capacity_);
   alloc_id_to_handle_.reserve(list_capacity_);
+  slot_alloc_handle_.resize(list_capacity_);
+  slot_alloc_id_.resize(list_capacity_);
+  slot_share_token_.resize(list_capacity_);
+  slot_write_.resize(list_capacity_);
 }
 
 void AllocationListTracker::rebind(D3DDDI_ALLOCATIONLIST* list_base,
@@ -149,6 +153,10 @@ void AllocationListTracker::rebind(D3DDDI_ALLOCATIONLIST* list_base,
 
   handle_to_entry_.reserve(list_capacity_);
   alloc_id_to_handle_.reserve(list_capacity_);
+  slot_alloc_handle_.resize(list_capacity_);
+  slot_alloc_id_.resize(list_capacity_);
+  slot_share_token_.resize(list_capacity_);
+  slot_write_.resize(list_capacity_);
 }
 
 void AllocationListTracker::reset() {
@@ -165,6 +173,10 @@ void AllocationListTracker::rebind(D3DDDI_ALLOCATIONLIST* list_base, UINT list_c
   // they need different semantics.
   handle_to_entry_.reserve(list_capacity_);
   alloc_id_to_handle_.reserve(list_capacity_);
+  slot_alloc_handle_.resize(list_capacity_);
+  slot_alloc_id_.resize(list_capacity_);
+  slot_share_token_.resize(list_capacity_);
+  slot_write_.resize(list_capacity_);
 
   reset();
 }
@@ -226,6 +238,9 @@ AllocRef AllocationListTracker::track_common(WddmAllocationHandle hAllocation,
     if (write) {
       // Upgrade read->write if needed; never downgrade.
       set_write_operation(list_base_[e.list_index], true);
+      if (e.list_index < slot_write_.size()) {
+        slot_write_[e.list_index] = 1;
+      }
     }
     return out;
   }
@@ -264,6 +279,9 @@ AllocRef AllocationListTracker::track_common(WddmAllocationHandle hAllocation,
 
     if (write) {
       set_write_operation(list_base_[existing.list_index], true);
+      if (existing.list_index < slot_write_.size()) {
+        slot_write_[existing.list_index] = 1;
+      }
     }
     return out;
   }
@@ -295,6 +313,12 @@ AllocRef AllocationListTracker::track_common(WddmAllocationHandle hAllocation,
 
   handle_to_entry_.emplace(key, Entry{idx, alloc_id, share_token});
   alloc_id_to_handle_.emplace(alloc_id, key);
+  if (idx < slot_alloc_handle_.size()) {
+    slot_alloc_handle_[idx] = hAllocation;
+    slot_alloc_id_[idx] = alloc_id;
+    slot_share_token_[idx] = share_token;
+    slot_write_[idx] = write ? 1u : 0u;
+  }
 
   out.alloc_id = alloc_id;
   out.list_index = idx;
@@ -304,43 +328,21 @@ AllocRef AllocationListTracker::track_common(WddmAllocationHandle hAllocation,
 
 std::vector<AllocationListTracker::TrackedAllocation> AllocationListTracker::snapshot_tracked_allocations() const {
   std::vector<TrackedAllocation> out;
-  if (!list_base_ || list_len_ == 0) {
+  if (list_len_ == 0) {
     return out;
   }
 
-  out.resize(list_len_);
-  std::vector<uint8_t> seen(list_len_, 0);
-  for (const auto& it : handle_to_entry_) {
-    const Entry& e = it.second;
-    if (e.list_index >= list_len_) {
-      continue;
+  out.reserve(list_len_);
+  for (UINT i = 0; i < list_len_; ++i) {
+    TrackedAllocation a{};
+    if (i < slot_alloc_handle_.size()) {
+      a.hAllocation = slot_alloc_handle_[i];
+      a.alloc_id = slot_alloc_id_[i];
+      a.share_token = slot_share_token_[i];
+      a.write = (slot_write_[i] != 0);
     }
-    if (seen[e.list_index]) {
-      continue;
-    }
-    seen[e.list_index] = 1;
-    const D3DDDI_ALLOCATIONLIST& list_entry = list_base_[e.list_index];
-    out[e.list_index] = TrackedAllocation{
-        list_entry.hAllocation,
-        e.alloc_id,
-        e.share_token,
-        get_write_operation(list_entry),
-    };
+    out.push_back(a);
   }
-
-  // If something went wrong and we didn't see all indices, compact the output so
-  // callers don't observe uninitialized entries.
-  if (std::find(seen.begin(), seen.end(), 0) != seen.end()) {
-    std::vector<TrackedAllocation> compact;
-    compact.reserve(list_len_);
-    for (UINT i = 0; i < list_len_; ++i) {
-      if (seen[i]) {
-        compact.push_back(out[i]);
-      }
-    }
-    return compact;
-  }
-
   return out;
 }
 

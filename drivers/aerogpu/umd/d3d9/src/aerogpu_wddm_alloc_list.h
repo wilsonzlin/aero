@@ -126,10 +126,10 @@ struct AllocRef {
 
   private:
    struct Entry {
-     UINT list_index = 0;
-     UINT alloc_id = 0;
-     uint64_t share_token = 0;
-  };
+      UINT list_index = 0;
+      UINT alloc_id = 0;
+      uint64_t share_token = 0;
+   };
 
   AllocRef track_common(WddmAllocationHandle hAllocation, UINT alloc_id, uint64_t share_token, bool write);
 
@@ -138,8 +138,16 @@ struct AllocRef {
   UINT list_len_ = 0;
   UINT max_allocation_list_slot_id_ = 0xFFFFu;
 
+  // Snapshot/replay support:
+  // Store per-slot state in UMD memory so snapshots do not depend on reading from
+  // the runtime-owned allocation list buffer (which may be rotated).
+  std::vector<WddmAllocationHandle> slot_alloc_handle_{};
+  std::vector<UINT> slot_alloc_id_{};
+  std::vector<uint64_t> slot_share_token_{};
+  std::vector<uint8_t> slot_write_{};
+
   std::unordered_map<uint64_t, Entry> handle_to_entry_;
   std::unordered_map<UINT, uint64_t> alloc_id_to_handle_;
-};
+ };
 
 } // namespace aerogpu
