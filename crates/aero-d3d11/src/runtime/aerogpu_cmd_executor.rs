@@ -3518,8 +3518,6 @@ impl AerogpuD3d11Executor {
             bail!("aerogpu_cmd: draw without bound render target or depth-stencil");
         }
         let depth_only_pass = !has_color_targets && self.state.depth_stencil.is_some();
-        let uniform_align =
-            (self.device.limits().min_uniform_buffer_offset_alignment as u64).max(1);
 
         self.validate_gs_hs_ds_emulation_capabilities()?;
 
@@ -3842,6 +3840,7 @@ impl AerogpuD3d11Executor {
         }
 
         // Prepare compute prepass output buffers.
+        let uniform_align = (self.device.limits().min_uniform_buffer_offset_alignment as u64).max(1);
         let patchlist_only_emulation = matches!(
             self.state.primitive_topology,
             CmdPrimitiveTopology::PatchList { .. }
