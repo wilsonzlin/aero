@@ -562,6 +562,25 @@ fn tcp_checksum_ipv6(src: &[u8; 16], dst: &[u8; 16], tcp_segment: &[u8], tcp_len
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::mem::{offset_of, size_of};
+
+    #[test]
+    fn virtio_net_hdr_layout() {
+        // Keep the virtio-net header layout stable: guests/devices split virtqueue
+        // descriptor chains using the negotiated header length (10 bytes base
+        // header, 12 bytes when `VIRTIO_NET_F_MRG_RXBUF` is negotiated).
+        assert_eq!(VirtioNetHdr::BASE_LEN, 10);
+        assert_eq!(VirtioNetHdr::LEN, 12);
+        assert_eq!(size_of::<VirtioNetHdr>(), VirtioNetHdr::LEN);
+
+        assert_eq!(offset_of!(VirtioNetHdr, flags), 0);
+        assert_eq!(offset_of!(VirtioNetHdr, gso_type), 1);
+        assert_eq!(offset_of!(VirtioNetHdr, hdr_len), 2);
+        assert_eq!(offset_of!(VirtioNetHdr, gso_size), 4);
+        assert_eq!(offset_of!(VirtioNetHdr, csum_start), 6);
+        assert_eq!(offset_of!(VirtioNetHdr, csum_offset), 8);
+        assert_eq!(offset_of!(VirtioNetHdr, num_buffers), 10);
+    }
 
     fn udp_pseudo_header_sum_ipv4(src: [u8; 4], dst: [u8; 4], udp_len: u16) -> u16 {
         let mut sum: u32 = 0;
