@@ -482,6 +482,8 @@ If these entries are missing, re-run `setup.cmd` as Administrator and reboot onc
     - If the device exposes Aero subsystem IDs, the list will also include more specific variants, for example:
       - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01` *(keyboard)*, or
       - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01` *(mouse)*
+      - When those subsystem IDs are present, Windows will prefer the more specific match so the devices show up as
+        **Aero VirtIO Keyboard** / **Aero VirtIO Mouse**.
     - Note: the canonical in-tree virtio-input INF (`aero_virtio_input.inf`) includes:
       - subsystem-qualified keyboard/mouse model lines (`SUBSYS_0010` / `SUBSYS_0011`) for distinct Device Manager names, and
       - the strict revision-gated generic fallback model line (no `SUBSYS`): `PCI\VEN_1AF4&DEV_1052&REV_01`.
