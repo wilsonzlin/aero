@@ -608,6 +608,7 @@ impl MachineConfig {
         cfg.enable_e1000 = true;
         cfg.enable_virtio_net = false;
         cfg.enable_uhci = true;
+        cfg.enable_xhci = false;
 
         // Keep Win7 storage topology explicit even if `win7_storage_defaults` evolves.
         cfg.enable_ahci = true;
@@ -5592,10 +5593,10 @@ impl Machine {
             });
 
             // Keep the xHCI model's view of PCI config state in sync (including MSI capability
-            // state) so it can deliver MSI through `tick_1ms`.
+            // state) so it can apply bus mastering and deliver MSI through `tick_1ms`.
             let mut xhci = xhci.borrow_mut();
-            if let Some(state) = pci_state {
-                xhci.config_mut().restore_state(&state);
+            if let Some(ref state) = pci_state {
+                xhci.config_mut().restore_state(state);
             }
 
             self.xhci_ns_remainder = self.xhci_ns_remainder.saturating_add(delta_ns);
@@ -11149,6 +11150,28 @@ mod tests {
             ehci_ns_remainder: 250_456,
             xhci: Some(vec![0xaa, 0xbb]),
             xhci_ns_remainder: 750_789,
+        };
+
+        let bytes = snapshot.save_state();
+
+        let mut decoded = MachineUsbSnapshot::default();
+        decoded.load_state(&bytes).expect("load USBC v1.2");
+
+        assert_eq!(decoded, snapshot);
+
+        // Ensure we can re-encode deterministically after restore.
+        assert_eq!(decoded.save_state(), bytes);
+    }
+
+    #[test]
+    fn usb_snapshot_container_roundtrips_uhci_and_ehci_state_without_xhci() {
+        let snapshot = MachineUsbSnapshot {
+            uhci: Some(vec![1, 2, 3]),
+            uhci_ns_remainder: 500_123,
+            ehci: Some(vec![4, 5, 6, 7]),
+            ehci_ns_remainder: 250_456,
+            xhci: None,
+            xhci_ns_remainder: 0,
         };
 
         let bytes = snapshot.save_state();
