@@ -217,7 +217,7 @@ pub fn translate_d3d9_shader_to_wgsl(
 
     match try_translate_sm3(token_stream.as_ref(), options) {
         Ok(ok) => {
-            validate_sampler_texture_types(&ok.used_samplers, &ok.sampler_texture_types)?;
+            validate_sampler_texture_types(&ok.sampler_texture_types)?;
             Ok(ok)
         }
         Err(err) => {
@@ -270,44 +270,27 @@ pub fn translate_d3d9_shader_to_wgsl(
                 sampler_texture_types,
                 fallback_reason: Some(err.to_string()),
             };
-            validate_sampler_texture_types(&out.used_samplers, &out.sampler_texture_types)?;
+            validate_sampler_texture_types(&out.sampler_texture_types)?;
             Ok(out)
         }
     }
 }
 
 fn validate_sampler_texture_types(
-    used_samplers: &BTreeSet<u16>,
     sampler_texture_types: &HashMap<u16, TextureType>,
 ) -> Result<(), ShaderTranslateError> {
     // D3D9 supports 1D/2D/3D/Cube sampler declarations.
     //
-    // Note: The D3D9 executor may fall back to dummy texture views for resource types that are
-    // not currently supported by the command stream (e.g. 3D textures), but unknown sampler
-    // texture type encodings are treated as malformed bytecode and must still be rejected.
-    for &sampler in used_samplers {
-        let ty = sampler_texture_types
-            .get(&sampler)
-            .copied()
-            .unwrap_or(TextureType::Texture2D);
-        match ty {
-            TextureType::Texture2D | TextureType::TextureCube => {}
-            // The runtime executor can tolerate unsupported sampler declarations as long as the
-            // sampler is never used. However, once a sampler is actually referenced by a texture
-            // instruction we must reject unsupported dimensions so callers don't assume the
-            // command stream can bind 1D/3D textures.
-            TextureType::Texture1D | TextureType::Texture3D => {
-                return Err(ShaderTranslateError::Translation(format!(
-                    "unsupported sampler texture type {ty:?} for s{sampler} (supported: 2D/Cube)"
-                )));
-            }
-            // Unknown texture type encodings are treated as malformed input (not a fallbackable
-            // unsupported feature).
-            TextureType::Unknown(_) => {
-                return Err(ShaderTranslateError::Malformed(format!(
-                    "unsupported sampler texture type {ty:?} for s{sampler} (supported: 2D/Cube)"
-                )));
-            }
+    // Note: The D3D9 executor can satisfy non-2D sampler bindings with dummy texture views for
+    // resource types that are not yet backed by real D3D9 resources (e.g. 1D/3D textures).
+    //
+    // Still reject unknown sampler texture type encodings deterministically.
+    let supported = "1D/2D/3D/Cube";
+    for (&sampler, &ty) in sampler_texture_types {
+        if matches!(ty, TextureType::Unknown(_)) {
+            return Err(ShaderTranslateError::Malformed(format!(
+                "unsupported sampler texture type {ty:?} for s{sampler} (supported: {supported})"
+            )));
         }
     }
     Ok(())
