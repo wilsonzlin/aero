@@ -134,6 +134,8 @@ Contract note:
       names, and
     - it includes a strict revision-gated generic fallback match `PCI\VEN_1AF4&DEV_1052&REV_01` (no `SUBSYS`; Device Manager
       name: **Aero VirtIO Input Device**).
+  - Tablet devices bind via the separate tablet INF (`aero_virtio_tablet.inf`, `SUBSYS_00121AF4`), which is more specific
+    and will win over the generic fallback when both are installed.
   - The repo also carries `drivers/windows7/virtio-input/inf/virtio-input.inf.disabled`, which is a **legacy filename
     alias** (`virtio-input.inf`) for workflows/tools that still reference the old INF filename.
     - From the first section header (`[Version]`) onward, it must remain byte-for-byte identical to `aero_virtio_input.inf`

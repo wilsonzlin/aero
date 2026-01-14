@@ -485,6 +485,8 @@ If these entries are missing, re-run `setup.cmd` as Administrator and reboot onc
       IDs (`SUBSYS_0010`/`SUBSYS_0011`) for distinct Device Manager names, and also includes a strict revision-gated generic
       fallback match (`PCI\VEN_1AF4&DEV_1052&REV_01`). When binding via the fallback entry, Device Manager will show
       **Aero VirtIO Input Device**.
+    - Tablet devices bind via the separate tablet INF (`aero_virtio_tablet.inf`, `SUBSYS_00121AF4`), which is more specific
+      and will win over the generic fallback when both are installed.
     - If your tooling expects the legacy INF filename, you can enable the optional legacy filename alias INF
       (`virtio-input.inf.disabled` → rename to `virtio-input.inf`). From the first section header (`[Version]`) onward, it
       must remain byte-for-byte identical to `aero_virtio_input.inf` (only the leading banner/comments may differ; see
