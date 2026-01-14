@@ -523,12 +523,18 @@ impl CpuBus for PcCpuBus {
             _ => return Err(Exception::InvalidOpcode),
         };
 
+        let mask = match size_usize {
+            1 => 0xFF,
+            2 => 0xFFFF,
+            4 => 0xFFFF_FFFF,
+            _ => 0xFFFF_FFFF,
+        };
         if let Some(v) = self
             .pci_io_router
             .borrow_mut()
             .dispatch_read(port, size_usize)
         {
-            return Ok(u64::from(v));
+            return Ok(u64::from(v & mask));
         }
 
         Ok(self.platform.io.read(port, size as u8) as u64)

@@ -68,6 +68,17 @@ impl PciIoBarHandler for TestIoBar {
     fn io_write(&mut self, _offset: u64, _size: usize, _value: u32) {}
 }
 
+#[derive(Default)]
+struct TestMaskingIoBar;
+
+impl PciIoBarHandler for TestMaskingIoBar {
+    fn io_read(&mut self, _offset: u64, _size: usize) -> u32 {
+        0x1234_5678
+    }
+
+    fn io_write(&mut self, _offset: u64, _size: usize, _value: u32) {}
+}
+
 #[test]
 fn pci_io_bar4_probe_returns_size_mask_and_relocation_updates_io_decode() {
     let mut pc = PcPlatform::new(2 * 1024 * 1024);
@@ -126,4 +137,29 @@ fn pci_io_bar4_probe_returns_size_mask_and_relocation_updates_io_decode() {
     // The BAR decode should now only respond to the relocated base.
     assert_eq!(pc.io.read(old_base, 1), 0xFF);
     assert_eq!(pc.io.read(new_base, 1), 0);
+}
+
+#[test]
+fn pci_io_bar_reads_are_masked_to_access_size() {
+    let mut pc = PcPlatform::new(2 * 1024 * 1024);
+    let bdf = find_free_bdf(&mut pc);
+
+    let mut cfg = PciConfigSpace::new(0x1234, 0x0002);
+    cfg.set_bar_definition(4, PciBarDefinition::Io { size: 0x10 });
+    pc.pci_cfg
+        .borrow_mut()
+        .bus_mut()
+        .add_device(bdf, Box::new(TestPciConfigDevice { cfg }));
+
+    pc.register_pci_io_bar(bdf, 4, TestMaskingIoBar);
+    pc.reset_pci();
+
+    let bar4 = read_cfg_u32(&mut pc, bdf, 0x20);
+    assert_ne!(bar4, 0);
+    let base = (bar4 & 0xFFFF_FFFC) as u16;
+
+    // The platform's I/O bus returns values already masked to the access width.
+    assert_eq!(pc.io.read(base, 1), 0x78);
+    assert_eq!(pc.io.read(base, 2), 0x5678);
+    assert_eq!(pc.io.read(base, 4), 0x1234_5678);
 }
