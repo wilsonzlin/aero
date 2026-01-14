@@ -727,7 +727,10 @@ fn pc_platform_virtio_blk_msix_snapshot_restore_preserves_function_mask_pending_
     );
     restored.process_virtio_blk();
 
-    assert_eq!(restored.interrupts.borrow().get_pending(), Some(vector as u8));
+    assert_eq!(
+        restored.interrupts.borrow().get_pending(),
+        Some(vector as u8)
+    );
     restored.interrupts.borrow_mut().acknowledge(vector as u8);
     restored.interrupts.borrow_mut().eoi(vector as u8);
     assert_eq!(restored.interrupts.borrow().get_pending(), None);
