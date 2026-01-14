@@ -32,6 +32,28 @@ Status:
 
 The xHCI controller is exposed as a **PCI function** with a single MMIO BAR for the xHCI register space and a single interrupt.
 
+### Where the code lives (at a glance)
+
+Rust controller/model building blocks:
+
+- xHCI core module: `crates/aero-usb/src/xhci/*`
+  - `XhciController` (minimal MMIO surface): `crates/aero-usb/src/xhci/mod.rs`
+  - TRB helpers: `crates/aero-usb/src/xhci/trb.rs`
+  - Ring helpers: `crates/aero-usb/src/xhci/ring.rs`
+  - Transfer executor (Normal TRBs): `crates/aero-usb/src/xhci/transfer.rs`
+
+Web runtime integration:
+
+- Guest-visible PCI wrapper: `web/src/io/devices/xhci.ts` (`XhciPciDevice`)
+- Worker wiring: `web/src/workers/io_xhci_init.ts` (`tryInitXhciDevice`)
+- WASM bridge export: `crates/aero-wasm/src/xhci_controller_bridge.rs` (`XhciControllerBridge`)
+
+Native integration (not yet wired into the canonical `Machine` by default):
+
+- Canonical PCI profile (QEMU xHCI identity): `crates/devices/src/pci/profile.rs` (`USB_XHCI_QEMU`)
+- Native PCI wrapper (IRQ/MSI plumbing): `crates/devices/src/usb/xhci.rs` (`XhciPciDevice`)
+- Emulator crate glue (module path): `emulator::io::usb::xhci` (thin wrapper around `aero_usb::xhci`)
+
 ### PCI identity (native runtime)
 
 The repo defines a stable PCI identity for xHCI in `crates/devices` so native integrations can bind
