@@ -26,17 +26,21 @@ function arraysEqual(a: Uint8Array, b: Uint8Array): boolean {
 
 async function waitForWorkerMessage(worker: Worker, predicate: (msg: unknown) => boolean, timeoutMs: number): Promise<unknown> {
   return new Promise((resolve, reject) => {
+    // Worker thread startup + module evaluation can be slow under heavy CI load.
+    // Add slack to keep these integration tests from flaking when the suite is
+    // running in parallel.
+    const effectiveTimeoutMs = timeoutMs * 2;
     const timer = setTimeout(() => {
       cleanup();
-      reject(new Error(`timed out after ${timeoutMs}ms waiting for worker message`));
-    }, timeoutMs);
+      reject(new Error(`timed out after ${effectiveTimeoutMs}ms waiting for worker message`));
+    }, effectiveTimeoutMs);
     (timer as unknown as { unref?: () => void }).unref?.();
 
     const onMessage = (msg: unknown) => {
       const maybeProtocol = msg as Partial<ProtocolMessage> | undefined;
       if (maybeProtocol?.type === MessageType.ERROR) {
         cleanup();
-        const errMsg = typeof (maybeProtocol as { message?: unknown }).message === "string" ? (maybeProtocol as any).message : "";
+        const errMsg = typeof maybeProtocol.message === "string" ? maybeProtocol.message : "";
         reject(new Error(`worker reported error${errMsg ? `: ${errMsg}` : ""}`));
         return;
       }

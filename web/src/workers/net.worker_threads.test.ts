@@ -127,7 +127,7 @@ async function waitForWorkerMessage(worker: Worker, predicate: (msg: unknown) =>
       const maybeProtocol = msg as Partial<ProtocolMessage> | undefined;
       if (maybeProtocol?.type === MessageType.ERROR) {
         cleanup();
-        const errMsg = typeof (maybeProtocol as { message?: unknown }).message === "string" ? (maybeProtocol as any).message : "";
+        const errMsg = typeof maybeProtocol.message === "string" ? maybeProtocol.message : "";
         reject(new Error(`worker reported error${errMsg ? `: ${errMsg}` : ""}`));
         return;
       }
@@ -1149,7 +1149,7 @@ describe("workers/net.worker (worker_threads)", () => {
 
     // Ensure the worker takes the `Atomics.waitAsync` scheduling path (otherwise it
     // already polls in short slices and this test is less meaningful).
-    if (typeof (Atomics as any).waitAsync !== "function") return;
+    if (typeof (Atomics as unknown as { waitAsync?: unknown }).waitAsync !== "function") return;
 
     const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
     const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
