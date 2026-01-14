@@ -257,6 +257,28 @@ fn rejects_geometry_shader_input_with_non_immediate_vertex_index_representation(
 }
 
 #[test]
+fn decodes_gs_instance_count_decl() {
+    let mut body = Vec::<u32>::new();
+
+    // dcl_gsinstancecount 4
+    body.push(opcode_token(OPCODE_DCL_GS_INSTANCE_COUNT, 2));
+    body.push(4);
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 2 is geometry shader.
+    let tokens = make_sm5_program_tokens(2, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+    assert_eq!(program.stage, aero_d3d11::ShaderStage::Geometry);
+
+    let module = decode_program(&program).expect("decode");
+    assert!(module.decls.iter().any(|d| matches!(
+        d,
+        Sm4Decl::GsInstanceCount { count: 4 }
+    )));
+}
+
+#[test]
 fn decodes_arithmetic_and_skips_decls() {
     const DCL_DUMMY: u32 = 0x100;
 
