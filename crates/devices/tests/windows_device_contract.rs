@@ -567,6 +567,7 @@ fn windows_device_contract_virtio_input_inf_uses_distinct_keyboard_mouse_device_
         // The canonical INF is expected to use these tokens (kept in sync with docs/tests).
         assert_eq!(kbd_desc, "%AeroVirtioKeyboard.DeviceDesc%");
         assert_eq!(mouse_desc, "%AeroVirtioMouse.DeviceDesc%");
+        assert_eq!(fallback_desc, "%AeroVirtioInput.DeviceDesc%");
     }
     let kbd_name = strings
         .get("aerovirtiokeyboard.devicedesc")
