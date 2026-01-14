@@ -56,7 +56,56 @@ class HarnessArgAliasTests(unittest.TestCase):
         )
         self.assertTrue(args.with_input_tablet_events)
 
+    def test_virtio_input_tablet_events_aliases_set_flag(self) -> None:
+        for flag in (
+            "--with-virtio-input-tablet-events",
+            "--enable-virtio-input-tablet-events",
+            "--require-virtio-input-tablet-events",
+        ):
+            with self.subTest(flag=flag):
+                args = self._parse(
+                    [
+                        "--qemu-system",
+                        "qemu-system-x86_64",
+                        "--disk-image",
+                        "disk.img",
+                        flag,
+                    ]
+                )
+                self.assertTrue(args.with_input_tablet_events)
+
+    def test_virtio_input_events_aliases_set_flag(self) -> None:
+        for flag in (
+            "--with-virtio-input-events",
+            "--enable-virtio-input-events",
+            "--require-virtio-input-events",
+        ):
+            with self.subTest(flag=flag):
+                args = self._parse(
+                    [
+                        "--qemu-system",
+                        "qemu-system-x86_64",
+                        "--disk-image",
+                        "disk.img",
+                        flag,
+                    ]
+                )
+                self.assertTrue(args.with_input_events)
+
+    def test_virtio_input_wheel_aliases_set_flag(self) -> None:
+        for flag in ("--with-virtio-input-wheel", "--enable-virtio-input-wheel"):
+            with self.subTest(flag=flag):
+                args = self._parse(
+                    [
+                        "--qemu-system",
+                        "qemu-system-x86_64",
+                        "--disk-image",
+                        "disk.img",
+                        flag,
+                    ]
+                )
+                self.assertTrue(args.with_input_wheel)
+
 
 if __name__ == "__main__":
     unittest.main()
-
