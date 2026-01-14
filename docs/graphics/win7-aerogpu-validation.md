@@ -601,7 +601,9 @@ Once this recipe is stable, expand: more modes, more features, better pacing acc
 
 ## Appendix: WDDM segment budget override (`NonLocalMemorySizeMB`)
 
-AeroGPU is a **system-memory-only** WDDM adapter: allocations are backed by **guest RAM**, not dedicated VRAM. However, Win7’s
+AeroGPU is a **system-memory-only** WDDM adapter: allocations are backed by **guest RAM**, not
+dedicated VRAM. (The device may still expose BAR1 as a legacy VGA/VBE compatibility aperture.)
+However, Win7’s
 dxgkrnl still relies on the KMD-reported “non-local” segment size as an **allocation budget**. If the reported budget is too small,
 D3D9/D3D11 can fail resource creation with `E_OUTOFMEMORY` / `D3DERR_OUTOFVIDEOMEMORY` even when the guest still has free RAM.
 

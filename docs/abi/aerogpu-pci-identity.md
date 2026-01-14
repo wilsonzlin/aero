@@ -17,9 +17,12 @@ The canonical machine supports **two mutually-exclusive** display configurations
 
   In `aero_machine` today this provides:
 
-  - **BAR1 VRAM aperture:** backed by a dedicated VRAM buffer, with permissive legacy VGA decode
-    (VGA port I/O + VRAM-backed `0xA0000..0xBFFFF` window; see
-    `docs/16-aerogpu-vga-vesa-compat.md`).
+  - **BAR1 VRAM aperture:** backed by a dedicated VRAM buffer for legacy VGA/VBE boot display
+    compatibility, with permissive legacy VGA decode (VGA port I/O + VRAM-backed
+    `0xA0000..0xBFFFF` window; see `docs/16-aerogpu-vga-vesa-compat.md`).
+  - **WDDM memory model:** the in-tree Win7 AeroGPU driver treats the adapter as
+    system-memory-backed (no dedicated VRAM segment). BAR1 exists for VGA/VBE compatibility and is
+    outside the WDDM ABI (see `docs/graphics/win7-wddm11-aerogpu-driver.md`).
   - **BAR0 regs:** a **minimal** implementation of the versioned MMIO + ring/fence transport (enough
     for the in-tree Win7 KMD to initialize and advance fences), plus BAR0 scanout/vblank register
     storage/pacing and host-facing scanout presentation. It still does **not** execute real command

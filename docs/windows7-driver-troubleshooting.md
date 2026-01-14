@@ -728,7 +728,8 @@ If the WOW64 UMD is missing or not registered, **32-bit D3D10/D3D11 apps will no
 
 **Why it happens**
 
-AeroGPU is a **system-memory-backed** WDDM adapter (no dedicated VRAM). Even so, the Windows 7 graphics kernel (`dxgkrnl`) enforces
+AeroGPU is a **system-memory-backed** WDDM adapter (no dedicated VRAM). (The device may still expose
+BAR1 as a legacy VGA/VBE compatibility aperture.) Even so, the Windows 7 graphics kernel (`dxgkrnl`) enforces
 a per-adapter **segment budget** based on what the KMD reports as “non-local” memory.
 
 The AeroGPU Win7 KMD defaults this budget to **512 MB** for bring-up. Some workloads legitimately need a larger budget, otherwise

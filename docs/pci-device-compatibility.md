@@ -12,8 +12,12 @@ Note: the canonical `aero_machine::Machine` supports **two mutually-exclusive** 
   (`A3A0:0001`) with the canonical BAR layout (BAR0 regs + BAR1 VRAM aperture). This is the
   canonical Windows driver binding target (`PCI\VEN_A3A0&DEV_0001`). In `aero_machine` today:
 
-  - BAR1 is backed by a dedicated VRAM buffer and implements permissive legacy VGA decode (VGA port
-    I/O + VRAM-backed `0xA0000..0xBFFFF` window; see `docs/16-aerogpu-vga-vesa-compat.md`).
+  - BAR1 is backed by a dedicated VRAM buffer for legacy VGA/VBE boot display compatibility and
+    implements permissive legacy VGA decode (VGA port I/O + VRAM-backed `0xA0000..0xBFFFF` window;
+    see `docs/16-aerogpu-vga-vesa-compat.md`).
+  - Note: the in-tree Win7 AeroGPU driver treats the adapter as system-memory-backed (no dedicated
+    WDDM VRAM segment). BAR1 is outside the WDDM memory model (see
+    `docs/graphics/win7-wddm11-aerogpu-driver.md`).
   - BAR0 implements a minimal MMIO + ring/fence transport stub (enough for the Win7 KMD to
     initialize and advance fences), but does **not** yet execute commands or drive WDDM scanout/vblank.
 - `MachineConfig::enable_vga=true`: expose the standalone legacy VGA/VBE implementation

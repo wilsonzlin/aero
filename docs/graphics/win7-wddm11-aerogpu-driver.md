@@ -591,6 +591,10 @@ See:
   - **Segment 1:** System memory (`D3DKMDT_MEMORY_SEGMENT_TYPE_SYSTEM`)
   - CPU-visible, GPU-visible (for our virtual GPU “GPU-visible” just means “emulator can read guest physical memory”)
   - No dedicated VRAM, no aperture, no tiling/swizzling
+
+Note: this refers to the **WDDM-visible** memory segment model. AeroGPU may still expose BAR1 as a
+legacy VGA/VBE VRAM aperture for boot display compatibility; that BAR is outside the WDDM segment
+model.
   
 This keeps the KMD simple and allows the emulator to access all resources directly from guest RAM.
 

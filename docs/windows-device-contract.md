@@ -107,6 +107,8 @@ Current canonical machine note:
   (`0xA0000..0xBFFFF`) is VRAM-backed with permissive legacy VGA port decode (see
   `docs/16-aerogpu-vga-vesa-compat.md`). BAR0 implements only a minimal MMIO + ring/fence transport
   stub (no-op command execution; enough for the Win7 KMD to initialize and advance fences).
+  Note: the in-tree Win7 AeroGPU driver treats the adapter as system-memory-backed (no dedicated
+  WDDM VRAM segment); BAR1 exists for VGA/VBE compatibility and is outside the WDDM memory model.
 
   The full versioned-AeroGPU device model (command execution + scanout + vblank pacing) lives in
   `crates/emulator` and is not yet wired into `aero_machine::Machine`.

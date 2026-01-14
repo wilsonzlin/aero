@@ -171,7 +171,12 @@ The recommended rule is:
 - **Legacy VGA uses a fixed reserved subregion of VRAM** (`0x00000..0x1FFFF`).
 - **The VBE packed-pixel linear framebuffer starts at `0x20000`** and consumes
   `width * height * bytes_per_pixel` bytes (depending on the active VBE mode).
-- **WDDM allocations may use the remaining VRAM space** (not overlapping the active legacy/VBE region), or may live in pinned guest RAM (system memory), depending on the design of AeroGPU-EMU-DEV-001.
+- **WDDM allocations (today)** in the in-tree Win7 AeroGPU driver are system-memory-backed (guest
+  RAM), i.e. the driver reports no dedicated VRAM segment (see
+  `docs/graphics/win7-wddm11-aerogpu-driver.md`). BAR1 exists primarily for legacy VGA/VBE
+  compatibility.
+- **Optional future:** WDDM allocations may use the remaining BAR1 VRAM space (not overlapping the
+  active legacy/VBE region) if/when the device model + driver contract are extended to support it.
 
 To keep the handoff simple, the scanout logic treats the WDDM-programmed scanout base as a *guest physical address* that can point to either:
 
