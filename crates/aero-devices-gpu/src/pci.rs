@@ -95,7 +95,22 @@ impl AeroGpuPciDevice {
             .bar_range(AEROGPU_PCI_BAR1_INDEX)
             .map(|r| r.size)
             .unwrap_or(0);
-        let vram = Rc::new(RefCell::new(vec![0u8; bar1_size as usize]));
+        let bar1_size_usize = bar1_size as usize;
+
+        // The canonical AeroGPU PCI profile advertises a 64MiB BAR1 VRAM aperture. In wasm32 builds
+        // (browser runtime), eagerly allocating the full 64MiB backing store can exceed the
+        // sandbox's heap limits in constrained environments and tests.
+        //
+        // Keep the PCI BAR size (device contract) unchanged, but allocate a smaller backing store
+        // on wasm32. Out-of-range VRAM accesses will read as 0 and writes will be ignored.
+        #[cfg(target_arch = "wasm32")]
+        const VRAM_ALLOC_BYTES: usize = 32 * 1024 * 1024;
+        #[cfg(target_arch = "wasm32")]
+        let vram_len = bar1_size_usize.min(VRAM_ALLOC_BYTES);
+        #[cfg(not(target_arch = "wasm32"))]
+        let vram_len = bar1_size_usize;
+
+        let vram = Rc::new(RefCell::new(vec![0u8; vram_len]));
 
         let vblank_period_ns = cfg.vblank_hz.and_then(|hz| {
             if hz == 0 {
@@ -673,7 +688,7 @@ impl MmioHandler for AeroGpuBar1VramMmio {
             let b = usize::try_from(addr)
                 .ok()
                 .and_then(|idx| vram.get(idx).copied())
-                .unwrap_or(0xFF);
+                .unwrap_or(0);
             out |= (b as u64) << (i * 8);
         }
         out
