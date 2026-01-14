@@ -518,6 +518,17 @@ impl XhciPciConfigDevice {
         if config.capability::<MsiCapability>().is_none() {
             config.add_capability(Box::new(MsiCapability::new()));
         }
+        // Backward compatibility: older profiles may omit MSI-X. Ensure we expose the canonical
+        // BAR0-backed MSI-X table/PBA so modern guests can prefer MSI-X over MSI/INTx.
+        if config.capability::<MsixCapability>().is_none() {
+            config.add_capability(Box::new(MsixCapability::new(
+                aero_devices::pci::profile::XHCI_MSIX_TABLE_SIZE,
+                aero_devices::pci::profile::XHCI_MSIX_TABLE_BAR,
+                aero_devices::pci::profile::XHCI_MSIX_TABLE_OFFSET,
+                aero_devices::pci::profile::XHCI_MSIX_PBA_BAR,
+                aero_devices::pci::profile::XHCI_MSIX_PBA_OFFSET,
+            )));
+        }
         config.set_bar_definition(
             XhciPciDevice::MMIO_BAR_INDEX,
             PciBarDefinition::Mmio32 {
@@ -3096,6 +3107,14 @@ mod tests {
             .filter(|cap| cap.id == aero_devices::pci::msi::PCI_CAP_ID_MSI)
             .count();
         assert_eq!(msi_count, 1);
+    }
+
+    #[test]
+    fn xhci_pci_config_space_exposes_single_msix_capability() {
+        let mut dev = XhciPciConfigDevice::new();
+        let caps = dev.config_mut().capability_list();
+        let msix_count = caps.iter().filter(|cap| cap.id == PCI_CAP_ID_MSIX).count();
+        assert_eq!(msix_count, 1);
     }
 
     #[test]
