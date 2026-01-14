@@ -10618,7 +10618,7 @@ impl AerogpuD3d11Executor {
 
         // Maintain CPU shadows for index buffers on the wgpu GL backend so strip primitive-restart
         // emulation can read indices without mapping GPU buffers.
-        if self.backend == wgpu::Backend::Gl {
+        if self.backend == wgpu::Backend::Gl && !dst_has_shadow {
             let dst_is_index = self.resources.buffers.get(&dst_buffer).is_some_and(|dst| {
                 (dst.aerogpu_usage_flags & AEROGPU_RESOURCE_USAGE_INDEX_BUFFER) != 0
             });
@@ -18836,6 +18836,84 @@ mod tests {
             assert!(
                 exec.destroyed_buffers.is_empty() && exec.destroyed_textures.is_empty(),
                 "deferred destroy keep-alive lists must be cleared when stream execution fails"
+            );
+        });
+    }
+
+    #[test]
+    fn copy_buffer_preserves_gl_index_buffer_host_shadow_when_src_is_guest_backed() {
+        pollster::block_on(async {
+            let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+                Ok(exec) => exec,
+                Err(e) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                    return;
+                }
+            };
+
+            if exec.backend() != wgpu::Backend::Gl {
+                skip_or_panic(module_path!(), "test requires wgpu GL backend (host_shadow only exists there)");
+                return;
+            }
+
+            const ALLOC_ID: u32 = 1;
+            const SRC: u32 = 1;
+            const DST: u32 = 2;
+            const SIZE: u64 = 16;
+
+            let mut writer = AerogpuCmdWriter::new();
+            // Source is guest-backed but not an index buffer, so it has no host shadow.
+            writer.create_buffer(
+                SRC,
+                AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
+                SIZE,
+                ALLOC_ID,
+                0,
+            );
+            // Destination is an index buffer (host shadow allocated via UPLOAD_RESOURCE on GL).
+            writer.create_buffer(DST, AEROGPU_RESOURCE_USAGE_INDEX_BUFFER, SIZE, 0, 0);
+
+            // Seed the destination with non-zero bytes so we can detect whether COPY_BUFFER updated
+            // its shadow rather than leaving the original contents.
+            let dst_init = [0xAAu8; SIZE as usize];
+            writer.upload_resource(DST, 0, &dst_init);
+
+            // Copy SRC -> DST; COPY_BUFFER should update the index-buffer shadow even though SRC
+            // itself has no shadow (it is guest-backed).
+            writer.copy_buffer(DST, SRC, 0, 0, SIZE, 0);
+
+            let stream = writer.finish();
+
+            let allocs = [AerogpuAllocEntry {
+                alloc_id: ALLOC_ID,
+                flags: 0,
+                gpa: 0,
+                size_bytes: SIZE,
+                reserved0: 0,
+            }];
+
+            let src_bytes = [0x11u8, 0x22, 0x33, 0x44, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+            let mut guest_mem = VecGuestMemory::new(SIZE as usize);
+            guest_mem
+                .write(0, &src_bytes)
+                .expect("guest memory write should succeed");
+
+            exec.execute_cmd_stream(&stream, Some(&allocs), &mut guest_mem)
+                .expect("execute_cmd_stream should succeed");
+
+            let dst = exec
+                .resources
+                .buffers
+                .get(&DST)
+                .expect("DST buffer should exist");
+            let shadow = dst
+                .host_shadow
+                .as_deref()
+                .expect("GL index buffer should retain a host shadow after COPY_BUFFER");
+            assert_eq!(
+                &shadow[..SIZE as usize],
+                src_bytes.as_slice(),
+                "index-buffer shadow must reflect COPY_BUFFER contents"
             );
         });
     }
