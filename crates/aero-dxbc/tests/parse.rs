@@ -413,6 +413,25 @@ fn malformed_chunk_size_extends_past_file_is_error() {
 }
 
 #[test]
+fn malformed_chunk_size_nonzero_with_no_payload_is_error() {
+    // Container where the chunk header is at the end of the file (size=0, no payload),
+    // then we lie and declare size=1.
+    let mut bytes = build_dxbc(&[(FourCC(*b"SHDR"), &[])]);
+
+    let offset_table_pos = 4 + 16 + 4 + 4 + 4;
+    let chunk_offset =
+        u32::from_le_bytes(bytes[offset_table_pos..offset_table_pos + 4].try_into().unwrap())
+            as usize;
+    bytes[chunk_offset + 4..chunk_offset + 8].copy_from_slice(&1u32.to_le_bytes());
+
+    let err = DxbcFile::parse(&bytes).unwrap_err();
+    assert!(matches!(err, DxbcError::OutOfBounds { .. }));
+    assert!(err.context().contains("chunk 0"));
+    assert!(err.context().contains("data"));
+    assert!(err.context().contains("outside total_size"));
+}
+
+#[test]
 fn malformed_chunk_offset_integer_wrap_is_error() {
     let mut bytes = build_dxbc(&[(FourCC(*b"SHDR"), &[1, 2, 3])]);
     // Set the chunk offset to a value that will overflow `offset + 8` on 32-bit
