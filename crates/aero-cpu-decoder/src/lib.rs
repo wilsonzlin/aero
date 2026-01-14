@@ -60,19 +60,36 @@ impl DecodeMode {
 ///
 /// Only the *architecturally relevant* "last prefix wins" behavior is
 /// reflected in this struct.
+///
+/// Note: group 1 prefixes (LOCK/REP/REPNE) are represented as a single effective
+/// prefix ("last one wins"). This intentionally does **not** model Intel TSX HLE
+/// (`XACQUIRE`/`XRELEASE`), where some decoders report both `LOCK` and
+/// `REP`/`REPNE` semantics for the same instruction stream.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub struct Prefixes {
     /// `LOCK` prefix (`F0`)
     pub lock: bool,
-    /// `REP`/`REPE`/`REPZ` prefix (`F3`)
+    /// `REP`/`REPE`/`REPZ` prefix byte (`F3`)
+    ///
+    /// This is byte-based metadata: it reflects whether an `F3` byte was present
+    /// in the legacy prefix region (including cases where `F3` is a *mandatory*
+    /// prefix for the opcode, e.g. `PAUSE`).
     pub rep: bool,
-    /// `REPNE`/`REPNZ` prefix (`F2`)
+    /// `REPNE`/`REPNZ` prefix byte (`F2`)
+    ///
+    /// Like [`Prefixes::rep`], this reflects the presence of a legacy `F2` byte,
+    /// not the `pp` field of VEX/EVEX encodings.
     pub repne: bool,
 
     /// Segment override prefix, if present.
     pub segment: Option<Segment>,
 
-    /// Operand-size override prefix (`66`)
+    /// Operand-size override prefix byte (`66`).
+    ///
+    /// This reflects whether a legacy `66` byte was present in the prefix
+    /// region. For VEX/EVEX/XOP encodings, the `pp` field may indicate a `66`
+    /// mandatory prefix without an actual `66` byte; that is intentionally not
+    /// represented here.
     pub operand_size_override: bool,
     /// Address-size override prefix (`67`)
     pub address_size_override: bool,
