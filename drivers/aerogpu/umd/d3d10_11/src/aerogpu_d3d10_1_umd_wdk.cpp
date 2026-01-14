@@ -742,6 +742,54 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
   return fence;
 }
 
+template <typename SetErrorFn>
+static void TrackStagingWriteLocked(AeroGpuDevice* dev, AeroGpuResource* dst, SetErrorFn&& set_error) {
+  if (!dev || !dst) {
+    return;
+  }
+
+  // Track writes into staging readback resources so Map(READ)/DO_NOT_WAIT can
+  // wait on the fence that actually produces the bytes.
+  if (dst->usage != 0) {
+    if (dst->usage != kD3D10UsageStaging) {
+      return;
+    }
+  } else {
+    // Older paths may not capture Usage; fall back to the bind-flags heuristic.
+    if (dst->bind_flags != 0) {
+      return;
+    }
+  }
+
+  // Prefer to only track CPU-readable staging resources, but fall back to
+  // tracking all bindless resources if CPU access flags were not captured.
+  if (dst->cpu_access_flags != 0 && (dst->cpu_access_flags & kD3D10CpuAccessRead) == 0) {
+    return;
+  }
+
+  auto& tracked = dev->pending_staging_writes;
+  if (std::find(tracked.begin(), tracked.end(), dst) != tracked.end()) {
+    return;
+  }
+
+  try {
+    tracked.push_back(dst);
+  } catch (...) {
+    // If we cannot record the staging write due to OOM, fall back to an
+    // immediate submission so we can still stamp the staging fence without
+    // needing to grow `pending_staging_writes`.
+    HRESULT submit_hr = S_OK;
+    const uint64_t fence = submit_locked(dev, /*want_present=*/false, &submit_hr);
+    if (FAILED(submit_hr)) {
+      set_error(submit_hr);
+      return;
+    }
+    if (fence != 0) {
+      dst->last_gpu_write_fence = fence;
+    }
+  }
+}
+
 void set_error(AeroGpuDevice* dev, HRESULT hr);
 void unmap_resource_locked(AeroGpuDevice* dev, AeroGpuResource* res, uint32_t subresource);
 
