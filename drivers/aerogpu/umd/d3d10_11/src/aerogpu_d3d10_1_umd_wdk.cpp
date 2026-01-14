@@ -167,6 +167,8 @@ using aerogpu::d3d10_11::ClampU64ToU32;
 using aerogpu::d3d10_11::kD3DUintAll;
 using aerogpu::d3d10_11::InitSamplerFromCreateSamplerArg;
 using aerogpu::d3d10_11::InitLockForWrite;
+using aerogpu::d3d10_11::InitLockArgsForMap;
+using aerogpu::d3d10_11::InitUnlockArgsForMap;
 using aerogpu::d3d10_11::UintPtrToD3dHandle;
 using aerogpu::d3d10_11::TrackStagingWriteLocked;
 
@@ -3864,72 +3866,6 @@ using aerogpu::d3d10_11::kD3DMapReadWrite;
 using aerogpu::d3d10_11::kD3DMapWriteDiscard;
 using aerogpu::d3d10_11::kD3DMapWriteNoOverwrite;
 // D3D10_MAP_FLAG_DO_NOT_WAIT (numeric value from d3d10.h / d3d10_1.h).
-
-static void InitLockArgsForMap(D3DDDICB_LOCK* lock, uint32_t subresource, uint32_t map_type, uint32_t map_flags) {
-  if (!lock) {
-    return;
-  }
-  __if_exists(D3DDDICB_LOCK::SubresourceIndex) {
-    lock->SubresourceIndex = subresource;
-  }
-  __if_exists(D3DDDICB_LOCK::SubResourceIndex) {
-    lock->SubResourceIndex = subresource;
-  }
-  __if_exists(D3DDDICB_LOCK::Offset) {
-    lock->Offset = 0;
-  }
-  __if_exists(D3DDDICB_LOCK::Size) {
-    lock->Size = 0;
-  }
-
-  const bool do_not_wait = (map_flags & kD3DMapFlagDoNotWait) != 0;
-  const bool is_read_only = (map_type == kD3DMapRead);
-  const bool is_write_only = (map_type == kD3DMapWrite || map_type == kD3DMapWriteDiscard || map_type == kD3DMapWriteNoOverwrite);
-  const bool discard = (map_type == kD3DMapWriteDiscard);
-  const bool no_overwrite = (map_type == kD3DMapWriteNoOverwrite);
-
-  __if_exists(D3DDDICB_LOCK::Flags) {
-    std::memset(&lock->Flags, 0, sizeof(lock->Flags));
-
-    __if_exists(D3DDDICB_LOCKFLAGS::ReadOnly) {
-      lock->Flags.ReadOnly = is_read_only ? 1u : 0u;
-    }
-    __if_exists(D3DDDICB_LOCKFLAGS::WriteOnly) {
-      lock->Flags.WriteOnly = is_write_only ? 1u : 0u;
-    }
-    __if_exists(D3DDDICB_LOCKFLAGS::Write) {
-      // For READ_WRITE the Win7 contract treats the lock as read+write (no explicit "write" bit).
-      lock->Flags.Write = is_write_only ? 1u : 0u;
-    }
-    __if_exists(D3DDDICB_LOCKFLAGS::Discard) {
-      lock->Flags.Discard = discard ? 1u : 0u;
-    }
-    __if_exists(D3DDDICB_LOCKFLAGS::NoOverwrite) {
-      lock->Flags.NoOverwrite = no_overwrite ? 1u : 0u;
-    }
-    __if_exists(D3DDDICB_LOCKFLAGS::NoOverWrite) {
-      lock->Flags.NoOverWrite = no_overwrite ? 1u : 0u;
-    }
-    __if_exists(D3DDDICB_LOCKFLAGS::DoNotWait) {
-      lock->Flags.DoNotWait = do_not_wait ? 1u : 0u;
-    }
-    __if_exists(D3DDDICB_LOCKFLAGS::DonotWait) {
-      lock->Flags.DonotWait = do_not_wait ? 1u : 0u;
-    }
-  }
-}
-
-static void InitUnlockArgsForMap(D3DDDICB_UNLOCK* unlock, uint32_t subresource) {
-  if (!unlock) {
-    return;
-  }
-  __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
-    unlock->SubresourceIndex = subresource;
-  }
-  __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
-    unlock->SubResourceIndex = subresource;
-  }
-}
 
 static bool ValidateWddmTexturePitch(const AeroGpuDevice* dev, const AeroGpuResource* res, uint32_t wddm_pitch) {
   if (!res || res->kind != ResourceKind::Texture2D) {

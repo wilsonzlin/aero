@@ -255,6 +255,56 @@ struct has_member_Write : std::false_type {};
 template <typename T>
 struct has_member_Write<T, std::void_t<decltype(((T*)nullptr)->Write)>> : std::true_type {};
 
+template <typename T, typename = void>
+struct has_member_ReadOnly : std::false_type {};
+template <typename T>
+struct has_member_ReadOnly<T, std::void_t<decltype(((T*)nullptr)->ReadOnly)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_Discard : std::false_type {};
+template <typename T>
+struct has_member_Discard<T, std::void_t<decltype(((T*)nullptr)->Discard)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_NoOverwrite : std::false_type {};
+template <typename T>
+struct has_member_NoOverwrite<T, std::void_t<decltype(((T*)nullptr)->NoOverwrite)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_NoOverWrite : std::false_type {};
+template <typename T>
+struct has_member_NoOverWrite<T, std::void_t<decltype(((T*)nullptr)->NoOverWrite)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_DoNotWait : std::false_type {};
+template <typename T>
+struct has_member_DoNotWait<T, std::void_t<decltype(((T*)nullptr)->DoNotWait)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_DonotWait : std::false_type {};
+template <typename T>
+struct has_member_DonotWait<T, std::void_t<decltype(((T*)nullptr)->DonotWait)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_SubresourceIndex : std::false_type {};
+template <typename T>
+struct has_member_SubresourceIndex<T, std::void_t<decltype(((T*)nullptr)->SubresourceIndex)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_SubResourceIndex : std::false_type {};
+template <typename T>
+struct has_member_SubResourceIndex<T, std::void_t<decltype(((T*)nullptr)->SubResourceIndex)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_Offset : std::false_type {};
+template <typename T>
+struct has_member_Offset<T, std::void_t<decltype(((T*)nullptr)->Offset)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_Size : std::false_type {};
+template <typename T>
+struct has_member_Size<T, std::void_t<decltype(((T*)nullptr)->Size)>> : std::true_type {};
+
 template <typename THandle>
 inline bool AnyNonNullHandles(const THandle* handles, size_t count) {
   if (!handles || count == 0) {
@@ -984,6 +1034,82 @@ inline void InitLockForWrite(LockT* lock) {
     if constexpr (has_member_Write<FlagsT>::value) {
       lock->Flags.Write = 1;
     }
+  }
+}
+
+template <typename LockT>
+inline void InitLockArgsForMap(LockT* lock, uint32_t subresource, uint32_t map_type, uint32_t map_flags) {
+  if (!lock) {
+    return;
+  }
+
+  if constexpr (has_member_SubresourceIndex<LockT>::value) {
+    lock->SubresourceIndex = subresource;
+  }
+  if constexpr (has_member_SubResourceIndex<LockT>::value) {
+    lock->SubResourceIndex = subresource;
+  }
+  if constexpr (has_member_Offset<LockT>::value) {
+    lock->Offset = 0;
+  }
+  if constexpr (has_member_Size<LockT>::value) {
+    lock->Size = 0;
+  }
+
+  // D3D10/D3D11 share the same WDDM lock callback structure and flag bit
+  // semantics. Keep this logic templated so the shared internal header stays
+  // WDK-free.
+  if constexpr (has_member_Flags<LockT>::value) {
+    std::memset(&lock->Flags, 0, sizeof(lock->Flags));
+    using FlagsT = std::remove_reference_t<decltype(lock->Flags)>;
+
+    const bool do_not_wait = (map_flags & kD3DMapFlagDoNotWait) != 0;
+    const bool is_read_only = (map_type == kD3DMapRead);
+    const bool is_write_only =
+        (map_type == kD3DMapWrite || map_type == kD3DMapWriteDiscard || map_type == kD3DMapWriteNoOverwrite);
+    const bool discard = (map_type == kD3DMapWriteDiscard);
+    const bool no_overwrite = (map_type == kD3DMapWriteNoOverwrite);
+
+    if constexpr (has_member_DoNotWait<FlagsT>::value) {
+      lock->Flags.DoNotWait = do_not_wait ? 1u : 0u;
+    }
+    if constexpr (has_member_DonotWait<FlagsT>::value) {
+      lock->Flags.DonotWait = do_not_wait ? 1u : 0u;
+    }
+
+    if constexpr (has_member_ReadOnly<FlagsT>::value) {
+      lock->Flags.ReadOnly = is_read_only ? 1u : 0u;
+    }
+    if constexpr (has_member_WriteOnly<FlagsT>::value) {
+      lock->Flags.WriteOnly = is_write_only ? 1u : 0u;
+    }
+    if constexpr (has_member_Write<FlagsT>::value) {
+      // For READ_WRITE the Win7 contract treats the lock as read+write (no
+      // explicit "write" bit).
+      lock->Flags.Write = is_write_only ? 1u : 0u;
+    }
+    if constexpr (has_member_Discard<FlagsT>::value) {
+      lock->Flags.Discard = discard ? 1u : 0u;
+    }
+    if constexpr (has_member_NoOverwrite<FlagsT>::value) {
+      lock->Flags.NoOverwrite = no_overwrite ? 1u : 0u;
+    }
+    if constexpr (has_member_NoOverWrite<FlagsT>::value) {
+      lock->Flags.NoOverWrite = no_overwrite ? 1u : 0u;
+    }
+  }
+}
+
+template <typename UnlockT>
+inline void InitUnlockArgsForMap(UnlockT* unlock, uint32_t subresource) {
+  if (!unlock) {
+    return;
+  }
+  if constexpr (has_member_SubresourceIndex<UnlockT>::value) {
+    unlock->SubresourceIndex = subresource;
+  }
+  if constexpr (has_member_SubResourceIndex<UnlockT>::value) {
+    unlock->SubResourceIndex = subresource;
   }
 }
 

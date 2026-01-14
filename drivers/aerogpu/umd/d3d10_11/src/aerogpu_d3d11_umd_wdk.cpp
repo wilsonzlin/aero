@@ -10537,50 +10537,7 @@ static HRESULT MapLocked11(Device* dev,
   D3DDDICB_LOCK lock = {};
   lock.hAllocation = static_cast<D3DKMT_HANDLE>(alloc_handle);
   const UINT lock_subresource = (res->kind == ResourceKind::Texture2D) ? 0u : subresource;
-  __if_exists(D3DDDICB_LOCK::SubresourceIndex) {
-    lock.SubresourceIndex = lock_subresource;
-  }
-  __if_exists(D3DDDICB_LOCK::SubResourceIndex) {
-    lock.SubResourceIndex = lock_subresource;
-  }
-  __if_exists(D3DDDICB_LOCK::Flags) {
-    std::memset(&lock.Flags, 0, sizeof(lock.Flags));
-
-    const bool do_not_wait = (map_flags & kD3D11MapFlagDoNotWait) != 0;
-    __if_exists(D3DDDICB_LOCKFLAGS::DoNotWait) {
-      lock.Flags.DoNotWait = do_not_wait ? 1u : 0u;
-    }
-    __if_exists(D3DDDICB_LOCKFLAGS::DonotWait) {
-      lock.Flags.DonotWait = do_not_wait ? 1u : 0u;
-    }
-
-    const bool is_read_only = (map_u32 == kD3D11MapRead);
-    const bool is_write_only =
-        (map_u32 == kD3D11MapWrite || map_u32 == kD3D11MapWriteDiscard || map_u32 == kD3D11MapWriteNoOverwrite);
-    const bool discard = (map_u32 == kD3D11MapWriteDiscard);
-    const bool no_overwrite = (map_u32 == kD3D11MapWriteNoOverwrite);
-
-    __if_exists(D3DDDICB_LOCKFLAGS::ReadOnly) {
-      lock.Flags.ReadOnly = is_read_only ? 1u : 0u;
-    }
-    __if_exists(D3DDDICB_LOCKFLAGS::WriteOnly) {
-      lock.Flags.WriteOnly = is_write_only ? 1u : 0u;
-    }
-    __if_exists(D3DDDICB_LOCKFLAGS::Write) {
-      // READ_WRITE is encoded as ReadOnly=0 and WriteOnly/Write=0 (see
-      // docs/graphics/win7-d3d11-map-unmap.md §3).
-      lock.Flags.Write = is_write_only ? 1u : 0u;
-    }
-    __if_exists(D3DDDICB_LOCKFLAGS::Discard) {
-      lock.Flags.Discard = discard ? 1u : 0u;
-    }
-    __if_exists(D3DDDICB_LOCKFLAGS::NoOverwrite) {
-      lock.Flags.NoOverwrite = no_overwrite ? 1u : 0u;
-    }
-    __if_exists(D3DDDICB_LOCKFLAGS::NoOverWrite) {
-      lock.Flags.NoOverWrite = no_overwrite ? 1u : 0u;
-    }
-  }
+  InitLockArgsForMap(&lock, lock_subresource, map_u32, map_flags);
 
   HRESULT lock_hr = E_FAIL;
   if (lock_path == LockCbPath::Wddm) {
@@ -10608,12 +10565,7 @@ static HRESULT MapLocked11(Device* dev,
   if (!lock.pData) {
     D3DDDICB_UNLOCK unlock = {};
     unlock.hAllocation = static_cast<D3DKMT_HANDLE>(alloc_handle);
-    __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
-      unlock.SubresourceIndex = lock_subresource;
-    }
-    __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
-      unlock.SubResourceIndex = lock_subresource;
-    }
+    InitUnlockArgsForMap(&unlock, lock_subresource);
     if (lock_path == LockCbPath::Wddm) {
       (void)CallCbMaybeHandle(cb->pfnUnlockCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), &unlock);
     } else {
@@ -10629,12 +10581,7 @@ static HRESULT MapLocked11(Device* dev,
   const auto unlock_locked_allocation = [&]() {
     D3DDDICB_UNLOCK unlock = {};
     unlock.hAllocation = static_cast<D3DKMT_HANDLE>(alloc_handle);
-    __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
-      unlock.SubresourceIndex = lock_subresource;
-    }
-    __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
-      unlock.SubResourceIndex = lock_subresource;
-    }
+    InitUnlockArgsForMap(&unlock, lock_subresource);
     if (lock_path == LockCbPath::Wddm) {
       (void)CallCbMaybeHandle(cb->pfnUnlockCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), &unlock);
     } else {
