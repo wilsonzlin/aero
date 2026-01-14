@@ -348,7 +348,7 @@ The canonical Rust disk image formats live in `crates/aero-storage/` and current
   Implementation: [`crates/aero-storage/src/sparse.rs`](../crates/aero-storage/src/sparse.rs). See also:
   [`20-storage-trait-consolidation.md`](./20-storage-trait-consolidation.md).
 - **QCOW2 v2/v3** (common unencrypted, uncompressed images; no backing files).
-- **VHD fixed and dynamic** (unallocated blocks read as zeros; writes allocate blocks and update BAT/bitmap).
+- **VHD fixed, dynamic, and differencing** (unallocated blocks read as zeros; writes allocate blocks and update BAT/bitmap; differencing disks require an explicit parent when opened).
 - **Copy-on-write overlays** (`aero_storage::AeroCowDisk`) - writable overlay on top of a base disk.
 - **Write-back block caching** (`aero_storage::BlockCachedDisk`) - performance wrapper for small random I/O.
 
@@ -837,9 +837,8 @@ Useful tooling in this repo:
 - Correctness + CORS conformance checks: [`tools/disk-streaming-conformance/`](../tools/disk-streaming-conformance/README.md)
 - Range throughput + CDN cache probing (`X-Cache`): [`tools/range-harness/`](../tools/range-harness/README.md)
 - Chunked disk publisher (no-`Range` delivery): [`tools/image-chunker/`](../tools/image-chunker/README.md)
-  - Can chunk raw images, and (when enabled) chunk from qcow2/vhd-style container formats by reading the **logical**
-    disk bytes.
-  - Includes (when available) a `verify` flow to validate uploaded manifests/chunks.
+  - `publish --format <raw|qcow2|vhd|aerospar|auto>`: publish the **logical disk byte stream** for common container formats, not just raw `.img` files.
+  - `verify`: validate uploaded `manifest.json` + `chunks/*.bin` end-to-end (schema, existence, sizes, optional per-chunk sha256).
 
 ```rust
 pub struct DiskAccessLease {
