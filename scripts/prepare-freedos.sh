@@ -13,6 +13,7 @@ ZIP_PATH="${CACHE_DIR}/FD14-FloppyEdition.zip"
 # The patched image includes a small addition to FDAUTO.BAT that writes a
 # known sentinel string to COM1 so CI can validate boot progress via serial.
 OUT_IMG="${OUT_DIR}/fd14-boot-aero.img"
+STAMP_PATH="${OUT_DIR}/fd14-boot-aero.stamp"
 
 mkdir -p "${OUT_DIR}" "${CACHE_DIR}"
 
@@ -31,10 +32,24 @@ fi
 
 if [[ ! -f "${ZIP_PATH}" ]]; then
   echo "downloading FreeDOS floppy edition..."
-  curl -L -o "${ZIP_PATH}" "${ZIP_URL}"
+  curl -L --fail --retry 5 --retry-delay 2 --retry-all-errors -o "${ZIP_PATH}" "${ZIP_URL}"
 fi
 
 echo "${ZIP_SHA256}  ${ZIP_PATH}" | sha256sum -c -
+
+SCRIPT_SHA256="$(sha256sum "${ROOT_DIR}/scripts/prepare-freedos.sh" | awk '{ print $1 }')"
+if [[ -f "${OUT_IMG}" && -f "${STAMP_PATH}" ]]; then
+  stamped_zip_url="$(grep -E '^zip_url=' "${STAMP_PATH}" | cut -d= -f2- || true)"
+  stamped_zip_sha256="$(grep -E '^zip_sha256=' "${STAMP_PATH}" | cut -d= -f2- || true)"
+  stamped_script_sha256="$(grep -E '^script_sha256=' "${STAMP_PATH}" | cut -d= -f2- || true)"
+
+  if [[ "${stamped_zip_url}" == "${ZIP_URL}" && "${stamped_zip_sha256}" == "${ZIP_SHA256}" && "${stamped_script_sha256}" == "${SCRIPT_SHA256}" ]]; then
+    if mtype -i "${OUT_IMG}" ::fdauto.bat | grep -q "AERO_FREEDOS_OK"; then
+      echo "using cached ${OUT_IMG}"
+      exit 0
+    fi
+  fi
+fi
 
 TMP_IMG="${OUT_IMG}.tmp"
 unzip -p "${ZIP_PATH}" 144m/x86BOOT.img > "${TMP_IMG}"
@@ -50,8 +65,12 @@ awk 'NR==1 { print; print "echo AERO_FREEDOS_OK > COM1"; next } { print }' \
 mcopy -o -i "${TMP_IMG}" "${TMP_DIR}/fdauto_patched.bat" ::fdauto.bat
 
 mv "${TMP_IMG}" "${OUT_IMG}"
+cat > "${STAMP_PATH}" <<EOF
+zip_url=${ZIP_URL}
+zip_sha256=${ZIP_SHA256}
+script_sha256=${SCRIPT_SHA256}
+EOF
 trap - EXIT
 rm -rf "${TMP_DIR}"
 
 echo "wrote ${OUT_IMG}"
-

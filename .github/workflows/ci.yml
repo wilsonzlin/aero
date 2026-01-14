@@ -421,14 +421,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Cache FreeDOS download
-        uses: actions/cache@v4
-        with:
-          path: test-images/cache/
-          key: freedos-cache-${{ hashFiles('scripts/prepare-freedos.sh') }}
-          restore-keys: |
-            freedos-cache-
-
       - name: Setup Rust
         id: setup-rust
         uses: ./.github/actions/setup-rust
@@ -445,7 +437,7 @@ jobs:
           sudo apt-get install -y qemu-system-x86 mtools unzip
 
       - name: Prepare FreeDOS cache directories
-        run: mkdir -p test-images/cache
+        run: mkdir -p test-images/cache test-images/freedos
 
       - name: Read FreeDOS download metadata (for cache key)
         id: freedos-cache-key
@@ -468,9 +460,13 @@ jobs:
           zip_url = m_url.group(1)
           zip_sha256 = m_sha.group(1)
 
-          # The cache key cannot safely include raw URLs (contains ':' and '/'), so hash the URL.
+          # Cache keys only allow `[A-Za-z0-9_.-]`, so sanitize the URL to keep it human-auditable.
+          zip_url_sanitized = re.sub(r"[^A-Za-z0-9_.-]+", "-", zip_url).strip("-")
+
+          # Also emit a hash if we ever want a shorter key component.
           zip_url_hash = hashlib.sha256(zip_url.encode("utf-8")).hexdigest()
 
+          print(f"zip_url_sanitized={zip_url_sanitized}")
           print(f"zip_url_hash={zip_url_hash}")
           print(f"zip_sha256={zip_sha256}")
           PY
@@ -479,7 +475,15 @@ jobs:
         uses: actions/cache@v4
         with:
           path: test-images/cache/FD14-FloppyEdition.zip
-          key: freedos-zip-${{ runner.os }}-${{ env.FREEDOS_CACHE_VERSION }}-${{ steps.freedos-cache-key.outputs.zip_url_hash }}-${{ steps.freedos-cache-key.outputs.zip_sha256 }}
+          key: freedos-zip-${{ runner.os }}-${{ env.FREEDOS_CACHE_VERSION }}-${{ steps.freedos-cache-key.outputs.zip_url_sanitized }}-${{ steps.freedos-cache-key.outputs.zip_sha256 }}
+
+      - name: Cache patched FreeDOS boot image (fd14-boot-aero.img)
+        uses: actions/cache@v4
+        with:
+          path: |
+            test-images/freedos/fd14-boot-aero.img
+            test-images/freedos/fd14-boot-aero.stamp
+          key: freedos-img-${{ runner.os }}-${{ env.FREEDOS_CACHE_VERSION }}-${{ steps.freedos-cache-key.outputs.zip_url_sanitized }}-${{ steps.freedos-cache-key.outputs.zip_sha256 }}-${{ hashFiles('scripts/prepare-freedos.sh') }}
 
       - name: Prepare open-source test images
         run: bash scripts/prepare-freedos.sh
