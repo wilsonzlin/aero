@@ -159,6 +159,8 @@ export async function startDiskImageServer(opts: {
 
     res.setHeader("Accept-Ranges", "bytes");
     res.setHeader("Content-Type", "application/octet-stream");
+    res.setHeader("Cache-Control", "no-transform");
+    res.setHeader("Content-Encoding", "identity");
 
     const rangeHeader = req.headers.range;
     if (typeof rangeHeader === "string") {
