@@ -13338,6 +13338,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
 
         /* Avoid MMIO reads while powered down; return best-effort cached state. */
         out->error_fence = AeroGpuAtomicReadU64(&adapter->LastErrorFence);
+        const ULONGLONG cachedFence = (ULONGLONG)out->error_fence;
 
         const ULONG cachedCode = AeroGpuAtomicReadU32((volatile ULONG*)&adapter->LastErrorCode);
         if (cachedCode != 0) {
@@ -13381,7 +13382,11 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
              * payload). Otherwise, keep the cached MMIO payload in sync with what we observe here
              * so powered-down QUERY_ERROR calls can still report the most recently observed error.
              */
-            if (mmioCount != 0 && mmioCount != cachedMmioCount) {
+            const BOOLEAN shouldRefreshCache =
+                (mmioCount != 0) &&
+                ((mmioCount != cachedMmioCount) || (mmioFence != 0 && mmioFence != cachedFence) ||
+                 (mmioCode != 0 && mmioCode != cachedCode));
+            if (shouldRefreshCache) {
                 AeroGpuAtomicWriteU64(&adapter->LastErrorTime100ns, KeQueryInterruptTime());
                 InterlockedExchange((volatile LONG*)&adapter->LastErrorMmioCount, (LONG)mmioCount);
 
