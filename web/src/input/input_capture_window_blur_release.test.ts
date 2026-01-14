@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { InputEventType } from "./event_queue";
 import { InputCapture } from "./input_capture";
-import { decodeInputBatchEvents, decodePackedBytes, withStubbedDocument } from "./test_utils";
+import { decodeInputBatchEvents, decodePackedBytes, makeCanvasStub, withStubbedDocument } from "./test_utils";
 
 function expectAllReleasedBatch(posted: any[]): void {
   expect(posted).toHaveLength(1);
@@ -32,12 +32,7 @@ function expectAllReleasedBatch(posted: any[]): void {
 describe("InputCapture focus loss", () => {
   it("flushes an all-released snapshot on window blur", () => {
     withStubbedDocument(() => {
-      const canvas = {
-        tabIndex: 0,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        focus: () => {},
-      } as unknown as HTMLCanvasElement;
+      const canvas = makeCanvasStub();
 
       const posted: any[] = [];
       const ioWorker = { postMessage: (msg: unknown) => posted.push(msg) };
@@ -81,12 +76,7 @@ describe("InputCapture focus loss", () => {
 
   it("flushes an all-released snapshot when the page becomes hidden", () => {
     withStubbedDocument((doc) => {
-      const canvas = {
-        tabIndex: 0,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        focus: () => {},
-      } as unknown as HTMLCanvasElement;
+      const canvas = makeCanvasStub();
 
       const posted: any[] = [];
       const ioWorker = { postMessage: (msg: unknown) => posted.push(msg) };

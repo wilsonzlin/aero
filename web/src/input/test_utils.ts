@@ -57,6 +57,16 @@ export function withStubbedDom<T>(run: (ctx: { window: any; document: any }) => 
   return withStubbedWindow((win) => withStubbedDocument((doc) => run({ window: win, document: doc })));
 }
 
+export function makeCanvasStub(overrides: any = {}): HTMLCanvasElement {
+  return {
+    tabIndex: 0,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    focus: () => {},
+    ...overrides,
+  } as unknown as HTMLCanvasElement;
+}
+
 export function decodePackedBytes(packed: number, len: number): number[] {
   const out: number[] = [];
   const p = packed >>> 0;

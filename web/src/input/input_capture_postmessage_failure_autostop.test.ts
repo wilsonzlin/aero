@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { InputCapture } from "./input_capture";
-import { withStubbedDom } from "./test_utils";
+import { makeCanvasStub, withStubbedDom } from "./test_utils";
 
 describe("InputCapture postMessage failures", () => {
   it("auto-stops capture when an input batch cannot be delivered", () => {
@@ -16,12 +16,11 @@ describe("InputCapture postMessage failures", () => {
       doc.removeEventListener = vi.fn();
       doc.exitPointerLock = vi.fn(() => {});
 
-      const canvas = {
-        tabIndex: 0,
+      const canvas = makeCanvasStub({
         addEventListener: vi.fn(),
         removeEventListener: vi.fn(),
         focus: vi.fn(),
-      } as unknown as HTMLCanvasElement;
+      });
       doc.activeElement = canvas;
 
       const ioWorker = {

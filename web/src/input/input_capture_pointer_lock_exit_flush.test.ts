@@ -2,17 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 
 import { InputEventType } from "./event_queue";
 import { InputCapture } from "./input_capture";
-import { decodeInputBatchEvents, withStubbedDocument } from "./test_utils";
+import { decodeInputBatchEvents, makeCanvasStub, withStubbedDocument } from "./test_utils";
 
 describe("InputCapture pointer-lock exit safety flush", () => {
   it("flushes an immediate all-released snapshot when pointer lock exits while the canvas is not focused", () => {
     withStubbedDocument((doc) => {
-      const canvas = {
-        tabIndex: 0,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        focus: () => {},
-      } as unknown as HTMLCanvasElement;
+      const canvas = makeCanvasStub();
 
       const posted: any[] = [];
       const ioWorker = {

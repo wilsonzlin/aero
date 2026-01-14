@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { InputCapture } from "./input_capture";
-import { withStubbedDocument } from "./test_utils";
+import { makeCanvasStub, withStubbedDocument } from "./test_utils";
 
 async function withFakeNavigatorKeyboard<T>(keyboard: unknown, run: () => Promise<T> | T): Promise<T> {
   const nav = globalThis.navigator as unknown as Record<string, unknown>;
@@ -25,13 +25,7 @@ describe("InputCapture Keyboard Lock integration", () => {
       const unlock = vi.fn();
 
       await withFakeNavigatorKeyboard({ lock, unlock }, async () => {
-        const canvas = {
-          tabIndex: 0,
-          addEventListener: () => {},
-          removeEventListener: () => {},
-          focus: () => {},
-          requestPointerLock: () => {},
-        } as unknown as HTMLCanvasElement;
+        const canvas = makeCanvasStub({ requestPointerLock: () => {} });
 
         const ioWorker = { postMessage: () => {} };
         const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, enableKeyboardLock: true });
@@ -59,13 +53,7 @@ describe("InputCapture Keyboard Lock integration", () => {
 
   it("does not attempt navigator.keyboard.lock() when the API is unavailable", async () => {
     await withStubbedDocument(() => {
-      const canvas = {
-        tabIndex: 0,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        focus: () => {},
-        requestPointerLock: () => {},
-      } as unknown as HTMLCanvasElement;
+      const canvas = makeCanvasStub({ requestPointerLock: () => {} });
 
       const ioWorker = { postMessage: () => {} };
       const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, enableKeyboardLock: true });
@@ -85,13 +73,7 @@ describe("InputCapture Keyboard Lock integration", () => {
       const unlock = vi.fn();
 
       await withFakeNavigatorKeyboard({ lock, unlock }, async () => {
-        const canvas = {
-          tabIndex: 0,
-          addEventListener: () => {},
-          removeEventListener: () => {},
-          focus: () => {},
-          requestPointerLock: () => {},
-        } as unknown as HTMLCanvasElement;
+        const canvas = makeCanvasStub({ requestPointerLock: () => {} });
 
         const ioWorker = { postMessage: () => {} };
         const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, enableKeyboardLock: true, recycleBuffers: false });
@@ -130,13 +112,7 @@ describe("InputCapture Keyboard Lock integration", () => {
       const unlock = vi.fn();
 
       await withFakeNavigatorKeyboard({ lock, unlock }, async () => {
-        const canvas = {
-          tabIndex: 0,
-          addEventListener: () => {},
-          removeEventListener: () => {},
-          focus: () => {},
-          requestPointerLock: () => {},
-        } as unknown as HTMLCanvasElement;
+        const canvas = makeCanvasStub({ requestPointerLock: () => {} });
 
         const ioWorker = { postMessage: () => {} };
         const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, enableKeyboardLock: true });
@@ -162,13 +138,7 @@ describe("InputCapture Keyboard Lock integration", () => {
       const debug = vi.spyOn(console, "debug").mockImplementation(() => {});
       try {
         await withFakeNavigatorKeyboard({ lock, unlock }, async () => {
-          const canvas = {
-            tabIndex: 0,
-            addEventListener: () => {},
-            removeEventListener: () => {},
-            focus: () => {},
-            requestPointerLock: () => {},
-          } as unknown as HTMLCanvasElement;
+          const canvas = makeCanvasStub({ requestPointerLock: () => {} });
 
           const ioWorker = { postMessage: () => {} };
           const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, enableKeyboardLock: true });
@@ -197,13 +167,7 @@ describe("InputCapture Keyboard Lock integration", () => {
       const unlock = vi.fn();
 
       await withFakeNavigatorKeyboard({ lock, unlock }, async () => {
-        const canvas = {
-          tabIndex: 0,
-          addEventListener: () => {},
-          removeEventListener: () => {},
-          focus: () => {},
-          requestPointerLock: () => {},
-        } as unknown as HTMLCanvasElement;
+        const canvas = makeCanvasStub({ requestPointerLock: () => {} });
 
         const ioWorker = { postMessage: () => {} };
         const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, enableKeyboardLock: true });

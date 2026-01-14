@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { InputCapture } from "./input_capture";
-import { withStubbedDom } from "./test_utils";
+import { makeCanvasStub, withStubbedDom } from "./test_utils";
 
 describe("InputCapture option sanitization", () => {
   it("sanitizes non-finite flushHz so setInterval is never called with NaN/Infinity", () => {
@@ -15,12 +15,7 @@ describe("InputCapture option sanitization", () => {
       win.setInterval = vi.fn(() => 1);
       win.clearInterval = vi.fn(() => {});
 
-      const canvas = {
-        tabIndex: 0,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        focus: () => {},
-      } as unknown as HTMLCanvasElement;
+      const canvas = makeCanvasStub();
 
       const ioWorker = { postMessage: vi.fn() };
       const capture = new InputCapture(canvas, ioWorker, {
@@ -51,12 +46,7 @@ describe("InputCapture option sanitization", () => {
       win.setInterval = vi.fn(() => 1);
       win.clearInterval = vi.fn(() => {});
 
-      const canvas = {
-        tabIndex: 0,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        focus: () => {},
-      } as unknown as HTMLCanvasElement;
+      const canvas = makeCanvasStub();
 
       const ioWorker = { postMessage: vi.fn() };
       const capture = new InputCapture(canvas, ioWorker, {

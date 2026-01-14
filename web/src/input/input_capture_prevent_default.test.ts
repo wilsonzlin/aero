@@ -1,17 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { InputCapture } from "./input_capture";
-import { withStubbedDocument } from "./test_utils";
+import { makeCanvasStub, withStubbedDocument } from "./test_utils";
 
 describe("InputCapture preventDefault policy", () => {
   it("prevents default for browser navigation keys even though they are not mapped to guest input", () => {
     withStubbedDocument(() => {
-      const canvas = {
-        tabIndex: 0,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        focus: () => {},
-      } as unknown as HTMLCanvasElement;
+      const canvas = makeCanvasStub();
       const ioWorker = { postMessage: () => {} };
       const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false });
 
@@ -46,12 +41,7 @@ describe("InputCapture preventDefault policy", () => {
 
   it("does not swallow Ctrl-only shortcuts by default (still forwards to guest)", () => {
     withStubbedDocument(() => {
-      const canvas = {
-        tabIndex: 0,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        focus: () => {},
-      } as unknown as HTMLCanvasElement;
+      const canvas = makeCanvasStub();
       const ioWorker = { postMessage: () => {} };
       const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false });
 
@@ -86,12 +76,7 @@ describe("InputCapture preventDefault policy", () => {
 
   it("swallows AltGr-style Ctrl+Alt shortcuts by default (still forwards to guest)", () => {
     withStubbedDocument(() => {
-      const canvas = {
-        tabIndex: 0,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        focus: () => {},
-      } as unknown as HTMLCanvasElement;
+      const canvas = makeCanvasStub();
       const ioWorker = { postMessage: () => {} };
       const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false });
 
@@ -126,12 +111,7 @@ describe("InputCapture preventDefault policy", () => {
 
   it("does not swallow Meta shortcuts by default (still forwards to guest)", () => {
     withStubbedDocument(() => {
-      const canvas = {
-        tabIndex: 0,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        focus: () => {},
-      } as unknown as HTMLCanvasElement;
+      const canvas = makeCanvasStub();
       const ioWorker = { postMessage: () => {} };
       const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false });
 
@@ -166,12 +146,7 @@ describe("InputCapture preventDefault policy", () => {
 
   it("prevents default for extra mouse buttons while capture is active (e.g. browser back/forward buttons)", () => {
     withStubbedDocument(() => {
-      const canvas = {
-        tabIndex: 0,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        focus: () => {},
-      } as unknown as HTMLCanvasElement;
+      const canvas = makeCanvasStub();
       const ioWorker = { postMessage: () => {} };
       const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false });
 
@@ -193,12 +168,7 @@ describe("InputCapture preventDefault policy", () => {
 
   it("stops propagation for mousemove events while pointer lock is active", () => {
     withStubbedDocument(() => {
-      const canvas = {
-        tabIndex: 0,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        focus: () => {},
-      } as unknown as HTMLCanvasElement;
+      const canvas = makeCanvasStub();
       const ioWorker = { postMessage: () => {} };
       const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false });
 
@@ -222,12 +192,7 @@ describe("InputCapture preventDefault policy", () => {
 
   it("releases captured mouse buttons even if mouseup occurs outside the canvas (drag-out)", () => {
     withStubbedDocument(() => {
-      const canvas = {
-        tabIndex: 0,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        focus: () => {},
-      } as unknown as HTMLCanvasElement;
+      const canvas = makeCanvasStub();
       const ioWorker = { postMessage: () => {} };
       const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: false });
 
@@ -269,12 +234,7 @@ describe("InputCapture preventDefault policy", () => {
 
   it("does not swallow mouseup events outside the canvas when the VM was not tracking that button", () => {
     withStubbedDocument(() => {
-      const canvas = {
-        tabIndex: 0,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        focus: () => {},
-      } as unknown as HTMLCanvasElement;
+      const canvas = makeCanvasStub();
       const ioWorker = { postMessage: () => {} };
       const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: false });
 
@@ -298,12 +258,7 @@ describe("InputCapture preventDefault policy", () => {
 
   it("prevents default for unmapped mouse buttons on the canvas to avoid host side effects", () => {
     withStubbedDocument(() => {
-      const canvas = {
-        tabIndex: 0,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        focus: () => {},
-      } as unknown as HTMLCanvasElement;
+      const canvas = makeCanvasStub();
       const ioWorker = { postMessage: () => {} };
       const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: false });
 
@@ -344,12 +299,7 @@ describe("InputCapture preventDefault policy", () => {
 
   it("maps additional mouse buttons (5/6/7) into the MouseButtons bitmask", () => {
     withStubbedDocument(() => {
-      const canvas = {
-        tabIndex: 0,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        focus: () => {},
-      } as unknown as HTMLCanvasElement;
+      const canvas = makeCanvasStub();
       const ioWorker = { postMessage: () => {} };
       const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: false });
 

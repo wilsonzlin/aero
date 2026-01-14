@@ -1,18 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import { InputCapture } from "./input_capture";
-import { withStubbedDom } from "./test_utils";
+import { makeCanvasStub, withStubbedDom } from "./test_utils";
 
 describe("InputCapture touch-action policy", () => {
   it("sets canvas.style.touchAction='none' while touch fallback capture is active and restores on stop()", () => {
     withStubbedDom(() => {
-      const canvas = {
-        tabIndex: 0,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        focus: () => {},
-        style: { touchAction: "pan-x" },
-      } as unknown as HTMLCanvasElement;
+      const canvas = makeCanvasStub({ style: { touchAction: "pan-x" } });
 
       const ioWorker = { postMessage: () => {} };
       const capture = new InputCapture(canvas, ioWorker as any, {

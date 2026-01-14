@@ -1,17 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import { InputCapture } from "./input_capture";
-import { withStubbedDocument } from "./test_utils";
+import { makeCanvasStub, withStubbedDocument } from "./test_utils";
 
 describe("InputCapture buffer recycling", () => {
   it("reuses ArrayBuffer instances when the worker recycles input batches", () => {
     withStubbedDocument(() => {
-      const canvas = {
-        tabIndex: 0,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        focus: () => {},
-      } as unknown as HTMLCanvasElement;
+      const canvas = makeCanvasStub();
 
       const posted: Array<{ msg: any; transfer: Transferable[] }> = [];
       const ioWorker = {
@@ -57,12 +52,7 @@ describe("InputCapture buffer recycling", () => {
 
   it("does not request recycling or reuse buffers when recycleBuffers is disabled", () => {
     withStubbedDocument(() => {
-      const canvas = {
-        tabIndex: 0,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        focus: () => {},
-      } as unknown as HTMLCanvasElement;
+      const canvas = makeCanvasStub();
 
       const posted: Array<{ msg: any; transfer: Transferable[] }> = [];
       const ioWorker = {

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { InputEventType } from "./event_queue";
 import { InputCapture } from "./input_capture";
-import { decodeInputBatchEvents, withStubbedDocument } from "./test_utils";
+import { decodeInputBatchEvents, makeCanvasStub, withStubbedDocument } from "./test_utils";
 
 function decodeFirstEventWords(buffer: ArrayBuffer): Int32Array {
   return new Int32Array(buffer);
@@ -11,12 +11,7 @@ function decodeFirstEventWords(buffer: ArrayBuffer): Int32Array {
 describe("InputCapture wheel handling", () => {
   it("scales wheel delta based on WheelEvent.deltaMode (pixel/line/page)", () => {
     withStubbedDocument(() => {
-      const canvas = {
-        tabIndex: 0,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        focus: () => {},
-      } as unknown as HTMLCanvasElement;
+      const canvas = makeCanvasStub();
 
       const posted: any[] = [];
       const ioWorker = {
@@ -101,12 +96,7 @@ describe("InputCapture wheel handling", () => {
 
   it("accumulates small DOM_DELTA_PIXEL wheel deltas into discrete steps", () => {
     withStubbedDocument(() => {
-      const canvas = {
-        tabIndex: 0,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        focus: () => {},
-      } as unknown as HTMLCanvasElement;
+      const canvas = makeCanvasStub();
 
       const posted: any[] = [];
       const ioWorker = {
@@ -150,12 +140,7 @@ describe("InputCapture wheel handling", () => {
 
   it("accumulates small DOM_DELTA_PIXEL horizontal wheel deltas into discrete steps", () => {
     withStubbedDocument(() => {
-      const canvas = {
-        tabIndex: 0,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        focus: () => {},
-      } as unknown as HTMLCanvasElement;
+      const canvas = makeCanvasStub();
 
       const posted: any[] = [];
       const ioWorker = {
@@ -212,12 +197,7 @@ describe("InputCapture wheel handling", () => {
 
   it("ignores non-finite wheel deltas (NaN/Infinity) without emitting guest events", () => {
     withStubbedDocument(() => {
-      const canvas = {
-        tabIndex: 0,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        focus: () => {},
-      } as unknown as HTMLCanvasElement;
+      const canvas = makeCanvasStub();
 
       const posted: any[] = [];
       const ioWorker = {
@@ -254,12 +234,7 @@ describe("InputCapture wheel handling", () => {
 
   it("preserves fractional wheel deltas across events (no per-event truncation)", () => {
     withStubbedDocument(() => {
-      const canvas = {
-        tabIndex: 0,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        focus: () => {},
-      } as unknown as HTMLCanvasElement;
+      const canvas = makeCanvasStub();
 
       const posted: any[] = [];
       const ioWorker = {
@@ -306,12 +281,7 @@ describe("InputCapture wheel handling", () => {
 
   it("emits horizontal wheel deltas (deltaX) as the MouseWheel b-field", () => {
     withStubbedDocument(() => {
-      const canvas = {
-        tabIndex: 0,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        focus: () => {},
-      } as unknown as HTMLCanvasElement;
+      const canvas = makeCanvasStub();
 
       const posted: any[] = [];
       const ioWorker = {
@@ -351,12 +321,7 @@ describe("InputCapture wheel handling", () => {
 
   it("emits vertical + horizontal wheel deltas (deltaY + deltaX) in the same MouseWheel event", () => {
     withStubbedDocument(() => {
-      const canvas = {
-        tabIndex: 0,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        focus: () => {},
-      } as unknown as HTMLCanvasElement;
+      const canvas = makeCanvasStub();
 
       const posted: any[] = [];
       const ioWorker = {
@@ -394,12 +359,7 @@ describe("InputCapture wheel handling", () => {
 
   it("drops fractional wheel remainder when capture is blurred so it cannot cause a later spurious tick", () => {
     withStubbedDocument(() => {
-      const canvas = {
-        tabIndex: 0,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        focus: () => {},
-      } as unknown as HTMLCanvasElement;
+      const canvas = makeCanvasStub();
 
       const posted: any[] = [];
       const ioWorker = {
@@ -433,12 +393,7 @@ describe("InputCapture wheel handling", () => {
 
   it("drops fractional mouse movement remainder when pointer lock exits so it cannot cause a later spurious pixel", () => {
     withStubbedDocument(() => {
-      const canvas = {
-        tabIndex: 0,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        focus: () => {},
-      } as unknown as HTMLCanvasElement;
+      const canvas = makeCanvasStub();
 
       const ioWorker = { postMessage: () => {} };
       const capture = new InputCapture(canvas, ioWorker, {
@@ -483,12 +438,7 @@ describe("InputCapture wheel handling", () => {
 
   it("does not let non-finite mouse movement deltas poison fractional accumulators", () => {
     withStubbedDocument(() => {
-      const canvas = {
-        tabIndex: 0,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        focus: () => {},
-      } as unknown as HTMLCanvasElement;
+      const canvas = makeCanvasStub();
 
       const ioWorker = { postMessage: () => {} };
       const capture = new InputCapture(canvas, ioWorker, {

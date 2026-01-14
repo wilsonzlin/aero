@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { InputEventType } from "./event_queue";
 import { InputCapture } from "./input_capture";
-import { decodeInputBatchEvents, withStubbedDocument } from "./test_utils";
+import { decodeInputBatchEvents, makeCanvasStub, withStubbedDocument } from "./test_utils";
 
 function touch(identifier: number, clientX: number, clientY: number): Touch {
   return { identifier, clientX, clientY } as unknown as Touch;
@@ -11,12 +11,7 @@ function touch(identifier: number, clientX: number, clientY: number): Touch {
 describe("InputCapture touch fallback", () => {
   it("converts touchmove delta into relative MouseMove events using fractional accumulation", () => {
     withStubbedDocument(() => {
-      const canvas = {
-        tabIndex: 0,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        focus: vi.fn(),
-      } as unknown as HTMLCanvasElement;
+      const canvas = makeCanvasStub({ focus: vi.fn() });
 
       const posted: any[] = [];
       const ioWorker = {
@@ -76,12 +71,7 @@ describe("InputCapture touch fallback", () => {
 
   it("emulates left click via touchTapToClick (touchstart→down, touchend→up)", () => {
     withStubbedDocument(() => {
-      const canvas = {
-        tabIndex: 0,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        focus: vi.fn(),
-      } as unknown as HTMLCanvasElement;
+      const canvas = makeCanvasStub({ focus: vi.fn() });
 
       const posted: any[] = [];
       const ioWorker = {
@@ -132,12 +122,7 @@ describe("InputCapture touch fallback", () => {
 
   it("cancels pending tap-to-click on blur so a later touchend cannot click", () => {
     withStubbedDocument(() => {
-      const canvas = {
-        tabIndex: 0,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        focus: vi.fn(),
-      } as unknown as HTMLCanvasElement;
+      const canvas = makeCanvasStub({ focus: vi.fn() });
 
       const posted: any[] = [];
       const ioWorker = {

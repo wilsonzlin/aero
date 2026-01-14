@@ -1,17 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import { InputCapture } from "./input_capture";
-import { withStubbedDocument } from "./test_utils";
+import { makeCanvasStub, withStubbedDocument } from "./test_utils";
 
 describe("InputCapture recycled buffer pool", () => {
   it("caps the number of retained recycled buffers per size bucket", () => {
     withStubbedDocument(() => {
-      const canvas = {
-        tabIndex: 0,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        focus: () => {},
-      } as unknown as HTMLCanvasElement;
+      const canvas = makeCanvasStub();
       const ioWorker = { postMessage: () => {} };
       const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: true });
 

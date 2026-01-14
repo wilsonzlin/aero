@@ -1,18 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { InputCapture } from "./input_capture";
-import { withStubbedDocument } from "./test_utils";
+import { makeCanvasStub, withStubbedDocument } from "./test_utils";
 
 describe("InputCapture releasePointerLockChord", () => {
   it("swallows both keydown and keyup for the release chord so the guest does not see a stray break", () => {
     withStubbedDocument((doc) => {
       doc.exitPointerLock = vi.fn();
-      const canvas = {
-        tabIndex: 0,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        focus: () => {},
-      } as unknown as HTMLCanvasElement;
+      const canvas = makeCanvasStub();
 
       // Simulate that pointer lock is active for the canvas so PointerLock.exit() will invoke document.exitPointerLock().
       doc.pointerLockElement = canvas;
@@ -73,12 +68,7 @@ describe("InputCapture releasePointerLockChord", () => {
 
   it("does not let a missing chord keyup cause a later key press to become stuck", () => {
     withStubbedDocument((doc) => {
-      const canvas = {
-        tabIndex: 0,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        focus: () => {},
-      } as unknown as HTMLCanvasElement;
+      const canvas = makeCanvasStub();
 
       doc.pointerLockElement = canvas;
 
@@ -150,12 +140,7 @@ describe("InputCapture releasePointerLockChord", () => {
 
   it("swallows repeated keydown events for a chord key while waiting for the corresponding keyup", () => {
     withStubbedDocument((doc) => {
-      const canvas = {
-        tabIndex: 0,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        focus: () => {},
-      } as unknown as HTMLCanvasElement;
+      const canvas = makeCanvasStub();
 
       doc.pointerLockElement = canvas;
 

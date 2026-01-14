@@ -2,17 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 
 import { InputEventType } from "./event_queue";
 import { InputCapture } from "./input_capture";
-import { decodeInputBatchEvents, withStubbedDocument } from "./test_utils";
+import { decodeInputBatchEvents, makeCanvasStub, withStubbedDocument } from "./test_utils";
 
 describe("InputCapture mouseup outside canvas handling", () => {
   it("releases tracked mouse buttons even if mouseup target is not the canvas (prevents stuck buttons)", () => {
     withStubbedDocument(() => {
-      const canvas = {
-        tabIndex: 0,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        focus: () => {},
-      } as unknown as HTMLCanvasElement;
+      const canvas = makeCanvasStub();
 
       const posted: any[] = [];
       const ioWorker = {
@@ -65,12 +60,7 @@ describe("InputCapture mouseup outside canvas handling", () => {
 
   it("ignores mouseup events outside the canvas when that button is not tracked as pressed", () => {
     withStubbedDocument(() => {
-      const canvas = {
-        tabIndex: 0,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        focus: () => {},
-      } as unknown as HTMLCanvasElement;
+      const canvas = makeCanvasStub();
 
       const posted: any[] = [];
       const ioWorker = {

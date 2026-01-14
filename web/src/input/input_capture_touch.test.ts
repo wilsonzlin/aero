@@ -2,17 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 
 import { InputEventType } from "./event_queue";
 import { InputCapture } from "./input_capture";
-import { decodeInputBatchEvents, withStubbedDocument } from "./test_utils";
+import { decodeInputBatchEvents, makeCanvasStub, withStubbedDocument } from "./test_utils";
 
 describe("InputCapture touch (PointerEvent) fallback", () => {
   it("translates touch drag into relative MouseMove with correct sign conventions", () => {
     withStubbedDocument(() => {
-      const canvas = {
-        tabIndex: 0,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        focus: () => {},
-      } as unknown as HTMLCanvasElement;
+      const canvas = makeCanvasStub();
 
       const posted: any[] = [];
       const ioWorker = {
@@ -74,12 +69,7 @@ describe("InputCapture touch (PointerEvent) fallback", () => {
 
   it("translates a tap into a left click (MouseButtons down+up)", () => {
     withStubbedDocument(() => {
-      const canvas = {
-        tabIndex: 0,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        focus: () => {},
-      } as unknown as HTMLCanvasElement;
+      const canvas = makeCanvasStub();
 
       const posted: any[] = [];
       const ioWorker = {

@@ -1,16 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { InputCapture } from "./input_capture";
-import { withStubbedDocument, withStubbedDom } from "./test_utils";
-
-function makeCanvasStub(): HTMLCanvasElement {
-  return {
-    tabIndex: 0,
-    addEventListener: () => {},
-    removeEventListener: () => {},
-    focus: () => {},
-  } as unknown as HTMLCanvasElement;
-}
+import { makeCanvasStub, withStubbedDocument, withStubbedDom } from "./test_utils";
 
 function transferToWorker(buffer: ArrayBuffer): ArrayBuffer {
   return structuredClone(buffer, { transfer: [buffer] });
