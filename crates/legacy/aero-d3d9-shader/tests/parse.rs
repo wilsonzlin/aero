@@ -713,6 +713,38 @@ fn malformed_predicated_mov_missing_src_token_errors() {
 }
 
 #[test]
+fn malformed_if_missing_src_token_errors() {
+    // `if` requires a condition source operand.
+    let words = [0xFFFE_0300, 0x0000_0028, 0x0000_FFFF];
+    let err = D3d9Shader::parse(&words_to_bytes(&words)).unwrap_err();
+    assert_eq!(
+        err,
+        ShaderParseError::TruncatedInstruction {
+            opcode: 0x0028,
+            at_token: 1,
+            needed_tokens: 1,
+            remaining_tokens: 0,
+        }
+    );
+}
+
+#[test]
+fn malformed_texkill_missing_src_token_errors() {
+    // `texkill` requires a source operand.
+    let words = [0xFFFF_0200, 0x0000_0041, 0x0000_FFFF];
+    let err = D3d9Shader::parse(&words_to_bytes(&words)).unwrap_err();
+    assert_eq!(
+        err,
+        ShaderParseError::TruncatedInstruction {
+            opcode: 0x0041,
+            at_token: 1,
+            needed_tokens: 1,
+            remaining_tokens: 0,
+        }
+    );
+}
+
+#[test]
 fn malformed_invalid_register_encoding_errors() {
     // mov <dst>, <src> with an invalid/unknown register type encoding in the dst token.
     //

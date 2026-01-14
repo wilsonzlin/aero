@@ -232,8 +232,12 @@ pub fn parse_shader(blob: &[u8]) -> Result<D3d9Shader, ShaderParseError> {
                 None
             };
 
-            // All opcodes in `has_dst` require at least one source parameter.
-            if has_dst && idx >= operands.len() {
+            let requires_src = has_dst || matches!(opcode, crate::Opcode::Texkill | crate::Opcode::If);
+
+            // Some opcodes have mandatory operands even when the instruction length nibble is
+            // malformed (too small). Treat these as truncated encodings rather than silently
+            // producing an under-specified instruction.
+            if requires_src && idx >= operands.len() {
                 return Err(ShaderParseError::TruncatedInstruction {
                     opcode: opcode_raw,
                     at_token,
