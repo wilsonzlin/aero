@@ -1,7 +1,8 @@
 use aero_jit_x86::tier1::ir::{IrBuilder, IrTerminator};
 use aero_jit_x86::tier1::Tier1WasmCodegen;
 use aero_jit_x86::wasm::{
-    IMPORT_JIT_EXIT, IMPORT_MEM_READ_U8, IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32,
+    IMPORT_JIT_EXIT, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U8, IMPORT_MEM_WRITE_U16,
+    IMPORT_MEM_WRITE_U32,
     IMPORT_MEM_WRITE_U64, IMPORT_MEM_WRITE_U8, IMPORT_MEMORY, IMPORT_MODULE,
 };
 use aero_types::Width;
@@ -98,6 +99,44 @@ fn tier1_block_with_load_imports_mem_read_helpers() {
         type_count(&wasm),
         2,
         "expected Tier-1 block with a single load to define only the mem_read_u8 and block function types"
+    );
+}
+
+#[test]
+fn tier1_block_with_multiple_load_widths_reuses_mem_read_type() {
+    let mut b = IrBuilder::new(0x1000);
+    let addr = b.const_int(Width::W64, 0);
+    let _v0 = b.load(Width::W8, addr);
+    let _v1 = b.load(Width::W16, addr);
+    let ir = b.finish(IrTerminator::Jump { target: 0x2000 });
+    ir.validate().unwrap();
+
+    let wasm = Tier1WasmCodegen::new().compile_block(&ir);
+    let imports = import_entries(&wasm);
+
+    let mut found_u8 = false;
+    let mut found_u16 = false;
+    for (module, name, _ty) in imports {
+        if module == IMPORT_MODULE && name == IMPORT_MEM_READ_U8 {
+            found_u8 = true;
+        }
+        if module == IMPORT_MODULE && name == IMPORT_MEM_READ_U16 {
+            found_u16 = true;
+        }
+        // Sanity: a pure load block shouldn't need any write helpers.
+        assert_ne!(name, IMPORT_MEM_WRITE_U8);
+        assert_ne!(name, IMPORT_MEM_WRITE_U16);
+        assert_ne!(name, IMPORT_MEM_WRITE_U32);
+        assert_ne!(name, IMPORT_MEM_WRITE_U64);
+    }
+
+    assert!(found_u8, "expected env.mem_read_u8 import");
+    assert!(found_u16, "expected env.mem_read_u16 import");
+
+    assert_eq!(
+        type_count(&wasm),
+        2,
+        "expected mem_read_u8/u16 to reuse a single (i32,i64)->i32 type plus the block signature"
     );
 }
 
