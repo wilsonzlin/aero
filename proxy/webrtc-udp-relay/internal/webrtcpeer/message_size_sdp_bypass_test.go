@@ -109,6 +109,99 @@ func TestWebRTCDataChannel_OversizeMessage_IgnoresSDP_ClosesSession(t *testing.T
 	}
 }
 
+func TestWebRTCDataChannel_OversizeL2Message_IgnoresSDP_ClosesSession(t *testing.T) {
+	cfg := config.Config{
+		WebRTCDataChannelMaxMessageBytes: 256,
+		WebRTCSCTPMaxReceiveBufferBytes:  1 << 20,
+	}
+
+	api, err := NewAPI(cfg)
+	if err != nil {
+		t.Fatalf("NewAPI: %v", err)
+	}
+
+	wsURL, backendConnected := newHoldingL2Backend(t)
+
+	m := metrics.New()
+	sm := relay.NewSessionManager(config.Config{}, m, nil)
+	quota, err := sm.CreateSession()
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	t.Cleanup(quota.Close)
+
+	var closeOnce sync.Once
+	sessClosed := make(chan struct{})
+	sess, err := NewSession(
+		api,
+		nil,
+		relay.Config{
+			L2BackendWSURL:           wsURL,
+			L2BackendAuthForwardMode: config.L2BackendAuthForwardModeNone,
+		},
+		nil,
+		quota,
+		"",
+		"",
+		nil,
+		cfg.WebRTCDataChannelMaxMessageBytes,
+		SessionOptions{},
+		func() { closeOnce.Do(func() { close(sessClosed) }) },
+	)
+	if err != nil {
+		t.Fatalf("NewSession(server): %v", err)
+	}
+	t.Cleanup(func() { _ = sess.Close() })
+
+	serverPC := sess.PeerConnection()
+
+	clientPC, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+	if err != nil {
+		t.Fatalf("NewPeerConnection(client): %v", err)
+	}
+	t.Cleanup(func() { _ = clientPC.Close() })
+
+	l2Ordered := true
+	clientDC, err := clientPC.CreateDataChannel(dataChannelLabelL2, &webrtc.DataChannelInit{
+		Ordered: &l2Ordered,
+	})
+	if err != nil {
+		t.Fatalf("CreateDataChannel(%q): %v", dataChannelLabelL2, err)
+	}
+
+	connectPeerConnectionsWithAnswerSDPTransform(t, clientPC, serverPC, func(sdp string) string {
+		want := "a=max-message-size:" + strconv.Itoa(cfg.WebRTCDataChannelMaxMessageBytes)
+		if !strings.Contains(sdp, want) {
+			t.Fatalf("expected answer SDP to contain %q; got:\n%s", want, sdp)
+		}
+		return forceSDPMaxMessageSize(sdp, 1<<30)
+	})
+
+	waitForDataChannelState(t, clientDC, webrtc.DataChannelStateOpen, 5*time.Second)
+
+	select {
+	case <-backendConnected:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for l2 backend connection")
+	}
+
+	payload := make([]byte, cfg.WebRTCDataChannelMaxMessageBytes*2)
+	if err := clientDC.Send(payload); err != nil {
+		t.Fatalf("Send(oversize): %v", err)
+	}
+
+	select {
+	case <-sessClosed:
+		// ok
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for session close after oversized message")
+	}
+
+	if got := m.Get(metrics.WebRTCDataChannelMessageTooLargeL2); got != 1 {
+		t.Fatalf("%s=%d, want 1", metrics.WebRTCDataChannelMessageTooLargeL2, got)
+	}
+}
+
 func connectPeerConnectionsWithAnswerSDPTransform(t *testing.T, offerer, answerer *webrtc.PeerConnection, transform func(string) string) {
 	t.Helper()
 

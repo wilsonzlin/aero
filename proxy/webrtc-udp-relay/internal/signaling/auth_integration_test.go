@@ -883,7 +883,7 @@ func TestAuth_JWT_AllowsConcurrentSessionsWithDifferentSID_HTTPOfferEndpoints(t 
 		ts, _ := startSignalingServer(t, cfg)
 		prealloc(t, ts, tokenA)
 
-		body, err := json.Marshal(legacyOfferRequest{Version: 1, Offer: legacySessionDescription{Type: offerSDP.Type, SDP: offerSDP.SDP}})
+		body, err := json.Marshal(legacyOfferRequest{Version: 1, Offer: legacySessionDescription(offerSDP)})
 		if err != nil {
 			t.Fatalf("marshal offer: %v", err)
 		}
