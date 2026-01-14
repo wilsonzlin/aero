@@ -154,6 +154,43 @@ describe("InputCapture buffer recycling", () => {
     );
   });
 
+  it("does not request buffer recycling on stop() flush (even when recycleBuffers=true)", () => {
+    withStubbedDocument((doc) =>
+      withStubbedWindow(() => {
+        const canvas = {
+          tabIndex: 0,
+          addEventListener: () => {},
+          removeEventListener: () => {},
+          focus: () => {},
+        } as unknown as HTMLCanvasElement;
+
+        doc.activeElement = canvas;
+
+        const posted: any[] = [];
+        const ioWorker = {
+          addEventListener: () => {},
+          removeEventListener: () => {},
+          postMessage: (msg: any, transfer?: any[]) => {
+            posted.push({ msg, transfer });
+          },
+        };
+
+        const capture = new InputCapture(canvas, ioWorker as any, { enableGamepad: false, recycleBuffers: true });
+        capture.start();
+
+        (capture as any).handleKeyDown(keyDownEvent("KeyA", 0));
+
+        capture.stop();
+
+        expect(posted).toHaveLength(1);
+        const { msg, transfer } = posted[0]!;
+        expect(msg.type).toBe("in:input-batch");
+        expect(msg.recycle).toBeUndefined();
+        expect(transfer).toContain(msg.buffer);
+      }),
+    );
+  });
+
   it("reuses recycled buffers even when the recycle response arrives after flush (one-flush delay)", () => {
     withStubbedDocument(() => {
       const canvas = {
