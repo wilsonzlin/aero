@@ -136,10 +136,12 @@ typedef struct _VIRTIOSND_WAVERT_STREAM {
      *  - WaveRT maintains a periodic timer for contract-v1 compatibility.
      *  - eventq PCM notifications can also queue this DPC as an additional wakeup.
      *
-     * Keep a timestamp of the last processed tick so back-to-back DPCs don't
-     * advance PacketCount/registers twice for the same period.
+     * Use a per-stream base time + last processed period index to ensure the
+     * DPC body runs at most once per period window, even if both the periodic
+     * timer and eventq wake it near the same boundary.
      */
-    ULONGLONG LastTickTime100ns;
+    ULONGLONG TickBaseTime100ns;
+    ULONGLONG LastTickPeriodIndex;
 #endif
 
     ULONG PeriodBytes;
@@ -593,7 +595,8 @@ VirtIoSndWaveRtResetStopState(_Inout_ PVIRTIOSND_WAVERT_STREAM Stream)
     Stream->SubmittedRingPositionBytes = 0;
     Stream->PacketCount = 0;
 #if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
-    Stream->LastTickTime100ns = 0;
+    Stream->TickBaseTime100ns = 0;
+    Stream->LastTickPeriodIndex = ~0ull;
 #endif
     oldEvent = Stream->NotificationEvent;
     Stream->NotificationEvent = NULL;
@@ -670,7 +673,8 @@ VirtIoSndWaveRtStartTimer(_Inout_ PVIRTIOSND_WAVERT_STREAM Stream)
      * doesn't accidentally suppress the first DPC tick due to a stale timestamp
      * from the previous RUN segment.
      */
-    Stream->LastTickTime100ns = 0;
+    Stream->TickBaseTime100ns = KeQueryInterruptTime();
+    Stream->LastTickPeriodIndex = ~0ull;
 #endif
     KeReleaseSpinLock(&Stream->Lock, oldIrql);
 
@@ -1122,19 +1126,32 @@ VirtIoSndWaveRtDpcRoutine(
      */
     if (!stream->Capture) {
         const ULONGLONG nowTick100ns = KeQueryInterruptTime();
-        ULONGLONG threshold100ns = stream->Period100ns;
+        ULONGLONG period100ns;
+        ULONGLONG base100ns;
+        ULONGLONG delta100ns;
+        ULONGLONG periodIndex;
 
-        if (threshold100ns != 0) {
-            threshold100ns = (threshold100ns * 3u) / 4u;
+        period100ns = stream->Period100ns;
+        if (period100ns == 0) {
+            period100ns = 10u * 1000u * 10u; /* 10ms */
         }
 
-        if (stream->LastTickTime100ns != 0 && threshold100ns != 0 && nowTick100ns >= stream->LastTickTime100ns &&
-            (nowTick100ns - stream->LastTickTime100ns) < threshold100ns) {
+        base100ns = stream->TickBaseTime100ns;
+        if (base100ns == 0 || nowTick100ns < base100ns) {
+            stream->TickBaseTime100ns = nowTick100ns;
+            stream->LastTickPeriodIndex = ~0ull;
+            base100ns = nowTick100ns;
+        }
+
+        delta100ns = nowTick100ns - base100ns;
+        periodIndex = (period100ns != 0) ? (delta100ns / period100ns) : 0;
+
+        if (periodIndex == stream->LastTickPeriodIndex) {
             KeReleaseSpinLock(&stream->Lock, oldIrql);
             goto Exit;
         }
 
-        stream->LastTickTime100ns = nowTick100ns;
+        stream->LastTickPeriodIndex = periodIndex;
     }
 #endif
 
