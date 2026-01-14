@@ -407,6 +407,50 @@ class LintGuestToolsScriptsTests(unittest.TestCase):
                 msg="expected missing cert-install skip-policy error. Errors:\n" + "\n".join(errs),
             )
 
+    def test_linter_fails_when_setup_missing_signature_state_markers(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="aero-guest-tools-lint-") as tmp:
+            tmp_path = Path(tmp)
+            setup_cmd = tmp_path / "setup.cmd"
+            uninstall_cmd = tmp_path / "uninstall.cmd"
+            verify_ps1 = tmp_path / "verify.ps1"
+
+            setup_cmd.write_text(_synthetic_setup_text(include_signature_marker_files=False), encoding="utf-8")
+            uninstall_cmd.write_text(_synthetic_uninstall_text(), encoding="utf-8")
+            verify_ps1.write_text(_synthetic_verify_text(), encoding="utf-8")
+
+            errs = lint_guest_tools_scripts.lint_files(
+                setup_cmd=setup_cmd, uninstall_cmd=uninstall_cmd, verify_ps1=verify_ps1
+            )
+            self.assertTrue(errs, msg="expected lint errors, got none")
+            self.assertTrue(
+                any("marker file when enabling Test Signing" in e for e in errs),
+                msg="expected missing testsigning marker file error. Errors:\n" + "\n".join(errs),
+            )
+            self.assertTrue(
+                any("marker file when enabling nointegritychecks" in e for e in errs),
+                msg="expected missing nointegritychecks marker file error. Errors:\n" + "\n".join(errs),
+            )
+
+    def test_linter_fails_when_setup_missing_testsigning_policy_gate(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="aero-guest-tools-lint-") as tmp:
+            tmp_path = Path(tmp)
+            setup_cmd = tmp_path / "setup.cmd"
+            uninstall_cmd = tmp_path / "uninstall.cmd"
+            verify_ps1 = tmp_path / "verify.ps1"
+
+            setup_cmd.write_text(_synthetic_setup_text(include_testsigning_policy_gate=False), encoding="utf-8")
+            uninstall_cmd.write_text(_synthetic_uninstall_text(), encoding="utf-8")
+            verify_ps1.write_text(_synthetic_verify_text(), encoding="utf-8")
+
+            errs = lint_guest_tools_scripts.lint_files(
+                setup_cmd=setup_cmd, uninstall_cmd=uninstall_cmd, verify_ps1=verify_ps1
+            )
+            self.assertTrue(errs, msg="expected lint errors, got none")
+            self.assertTrue(
+                any("Test Signing changes are gated" in e for e in errs),
+                msg="expected missing testsigning policy gate error. Errors:\n" + "\n".join(errs),
+            )
+
     def test_linter_fails_when_verify_missing_storage_skip_marker_awareness(self) -> None:
         with tempfile.TemporaryDirectory(prefix="aero-guest-tools-lint-") as tmp:
             tmp_path = Path(tmp)
@@ -435,6 +479,38 @@ class LintGuestToolsScriptsTests(unittest.TestCase):
             self.assertTrue(
                 any("storage pre-seeding was skipped" in e for e in errs),
                 msg="expected missing verify skipstorage marker awareness error. Errors:\n" + "\n".join(errs),
+            )
+
+    def test_linter_fails_when_verify_missing_signature_marker_awareness(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="aero-guest-tools-lint-") as tmp:
+            tmp_path = Path(tmp)
+            setup_cmd = tmp_path / "setup.cmd"
+            uninstall_cmd = tmp_path / "uninstall.cmd"
+            verify_ps1 = tmp_path / "verify.ps1"
+
+            setup_cmd.write_text(_synthetic_setup_text(), encoding="utf-8")
+            uninstall_cmd.write_text(_synthetic_uninstall_text(), encoding="utf-8")
+            verify_ps1.write_text(
+                "\n".join(
+                    [
+                        "CriticalDeviceDatabase",
+                        "storage-preseed.skipped.txt",
+                        "/skipstorage",
+                        "virtio_blk_boot_critical",
+                        "manifest.json",
+                        "signing_policy",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            errs = lint_guest_tools_scripts.lint_files(
+                setup_cmd=setup_cmd, uninstall_cmd=uninstall_cmd, verify_ps1=verify_ps1
+            )
+            self.assertTrue(errs, msg="expected lint errors, got none")
+            self.assertTrue(
+                any("signature-mode marker files" in e for e in errs),
+                msg="expected missing verify signature marker awareness error. Errors:\n" + "\n".join(errs),
             )
 
     def test_linter_fails_when_uninstall_missing_storage_skip_marker_reference(self) -> None:
