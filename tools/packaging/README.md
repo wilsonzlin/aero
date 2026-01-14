@@ -234,6 +234,7 @@ packager workspace also provides a small standalone ISO builder:
 - Uses the same deterministic ISO9660 + Joliet writer as the main packager.
 - Filters common host metadata files/dirs (e.g. hidden `.*`, `__MACOSX`, `Thumbs.db`, `desktop.ini`)
   to keep outputs stable.
+- Refuses to package symlinks and non-UTF8 paths (fails fast with an error).
 
 Example:
 
