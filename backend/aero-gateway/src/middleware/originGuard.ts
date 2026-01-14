@@ -113,7 +113,8 @@ export async function originGuard(
 
   reply.header('access-control-allow-origin', normalizedOrigin);
   reply.header('access-control-allow-credentials', 'true');
-  reply.header('access-control-expose-headers', 'x-request-id');
+  // Expose Content-Length so cross-origin clients can enforce size limits (e.g. DoH responses) before reading.
+  reply.header('access-control-expose-headers', 'x-request-id, content-length');
   reply.header('vary', 'Origin');
 
   // Basic CORS preflight support for browser clients.
