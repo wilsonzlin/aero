@@ -24,7 +24,7 @@ The matrix is computed from cached `Device::transform_matrices[...]` (`WORLD0`, 
 `ensure_fixedfunc_wvp_constants_locked()` into a reserved constant range:
 
 - Constant range: `c240..c243` (`kFixedfuncMatrixStartRegister = 240`)
-- Uploads are lazy and gated by `Device::fixedfunc_matrix_dirty`.
+- Uploads are gated by `Device::fixedfunc_matrix_dirty` and occur at draw time and/or eagerly when `SetTransform` updates relevant matrices while fixed-function WVP rendering is active.
 - The cached matrices are row-major (`D3DMATRIX`); the upload transposes to column vectors so `dp4(v, cN)` computes row-vector multiplication.
 - The constants live in a high register range so they are unlikely to collide with app/user shader constants when switching between fixed-function and programmable paths.
   - Even so, the UMD will proactively mark `fixedfunc_matrix_dirty` when switching back to fixed-function WVP vertex shaders so the constants are re-uploaded (user shaders may have written overlapping VS constant registers).
