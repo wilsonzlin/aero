@@ -162,6 +162,35 @@ fn sgl_descriptor_count_is_capped() {
 }
 
 #[test]
+fn sgl_descriptor_count_cap_applies_to_nested_segments() {
+    let (mut ctrl, mut mem, io_cq, io_sq) = setup_ctrl_with_io_queues();
+
+    // Root Segment list containing a single Segment descriptor which itself would exceed the
+    // descriptor cap if expanded.
+    let list1 = 0x70000u64;
+    let list2 = 0x71000u64;
+    // Expand count such that `descriptors_seen + count > NVME_MAX_SGL_DESCRIPTORS`.
+    let too_many_desc_bytes = 16u32 * (16 * 1024 - 1);
+    write_sgl_desc(&mut mem, list1, list2, too_many_desc_bytes, 0x02);
+
+    let mut cmd = build_command(0x01, 1); // WRITE, PSDT=SGL
+    set_cid(&mut cmd, 0x11);
+    set_nsid(&mut cmd, 1);
+    set_prp1(&mut cmd, list1);
+    set_prp2(&mut cmd, 16u64 | ((0x02u64) << 56)); // Root Segment (1 descriptor)
+    set_cdw10(&mut cmd, 0);
+    set_cdw11(&mut cmd, 0);
+    set_cdw12(&mut cmd, 0);
+    mem.write_physical(io_sq, &cmd);
+    ctrl.mmio_write(0x1008, 4, 1);
+    ctrl.process(&mut mem);
+
+    let cqe = read_cqe(&mut mem, io_cq);
+    assert_eq!(cqe.cid, 0x11);
+    assert_eq!(cqe.status & !0x1, 0x4004);
+}
+
+#[test]
 fn sgl_rejects_non_address_subtype() {
     let (mut ctrl, mut mem, io_cq, io_sq) = setup_ctrl_with_io_queues();
 
