@@ -1650,6 +1650,13 @@ fn emit_src_vec4_i32(
 fn expand_u32_to_vec4(expr_u32: &str, mask: WriteMask) -> String {
     // For system values, follow the same missing-component defaults as regular vertex inputs:
     // (0, 0, 0, 1).
+    //
+    // Note: system values like `SV_PrimitiveID` are integer-typed in D3D. We preserve raw integer
+    // bits in our untyped `vec4<f32>` register model by bitcasting the u32 value into f32.
+    //
+    // For default fill, use the integer bit-patterns for 0/1. This ensures that applying `utof` to
+    // the full vec4 (e.g. with identity swizzle) yields numeric 0/1 rather than large float values
+    // caused by reinterpreting the float-typed `1.0` bit-pattern as an integer.
     let bits = mask.0 & 0xF;
     let lane = |bit: u8, default: &str| -> String {
         if (bits & bit) != 0 {
@@ -1663,7 +1670,7 @@ fn expand_u32_to_vec4(expr_u32: &str, mask: WriteMask) -> String {
         lane(1, "0.0"),
         lane(2, "0.0"),
         lane(4, "0.0"),
-        lane(8, "1.0"),
+        lane(8, "bitcast<f32>(1u)"),
     )
 }
 
@@ -1837,6 +1844,10 @@ mod tests {
         assert!(
             wgsl.contains("bitcast<f32>(gs_instance_id)"),
             "expected gs_instance_id bitcast in WGSL:\n{wgsl}"
+        );
+        assert!(
+            wgsl.contains("bitcast<f32>(1u)"),
+            "expected integer default-fill (w=1) to preserve raw bits in WGSL:\n{wgsl}"
         );
     }
 

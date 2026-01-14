@@ -1540,12 +1540,12 @@ impl ComputeSysValue {
             | ComputeSysValue::GroupId => {
                 let field = format!("input.{}", self.wgsl_field_name());
                 format!(
-                    "vec4<f32>(bitcast<f32>({field}.x), bitcast<f32>({field}.y), bitcast<f32>({field}.z), 1.0)"
+                    "vec4<f32>(bitcast<f32>({field}.x), bitcast<f32>({field}.y), bitcast<f32>({field}.z), bitcast<f32>(1u))"
                 )
             }
             ComputeSysValue::GroupIndex => {
                 let field = format!("input.{}", self.wgsl_field_name());
-                format!("vec4<f32>(bitcast<f32>({field}), 0.0, 0.0, 1.0)")
+                format!("vec4<f32>(bitcast<f32>({field}), 0.0, 0.0, bitcast<f32>(1u))")
             }
         }
     }
@@ -2452,7 +2452,10 @@ impl IoMaps {
                     // Converting via `f32(input.vertex_id)` would lose the original bits (e.g.
                     // breaking `and`/`xor`/shifts once those ops are implemented). Preserve the bits
                     // with a bitcast instead.
-                    return Ok(expand_to_vec4("bitcast<f32>(input.vertex_id)", p));
+                    return Ok(expand_to_vec4_bitpattern(
+                        "bitcast<f32>(input.vertex_id)",
+                        p,
+                    ));
                 }
                 if Some(reg) == self.vs_instance_id_register {
                     let p = self.inputs.get(&reg).ok_or(
@@ -2463,7 +2466,10 @@ impl IoMaps {
                     )?;
                     // See `vs_vertex_id_register` above for why this is a `bitcast<f32>` rather
                     // than a numeric `f32(...)` conversion.
-                    return Ok(expand_to_vec4("bitcast<f32>(input.instance_id)", p));
+                    return Ok(expand_to_vec4_bitpattern(
+                        "bitcast<f32>(input.instance_id)",
+                        p,
+                    ));
                 }
                 let p = self.inputs.get(&reg).ok_or(
                     ShaderTranslateError::SignatureMissingRegister {
@@ -2580,7 +2586,10 @@ impl IoMaps {
                     // internal untyped `vec4<f32>` register model so integer/bitwise ops can be
                     // translated correctly. Numeric conversion (e.g. to write it to a float render
                     // target) should be expressed via an explicit `utof` instruction.
-                    return Ok(expand_to_vec4("bitcast<f32>(input.primitive_id)", p));
+                    return Ok(expand_to_vec4_bitpattern(
+                        "bitcast<f32>(input.primitive_id)",
+                        p,
+                    ));
                 }
                 if Some(reg) == self.ps_front_facing_register {
                     let _p = self.inputs.get(&reg).ok_or(
@@ -2637,7 +2646,9 @@ impl IoMaps {
                         HullSysValue::PrimitiveId => "hs_primitive_id",
                         HullSysValue::OutputControlPointId => "hs_output_control_point_id",
                     };
-                    return Ok(format!("vec4<f32>(bitcast<f32>({expr}), 0.0, 0.0, 1.0)"));
+                    return Ok(format!(
+                        "vec4<f32>(bitcast<f32>({expr}), 0.0, 0.0, bitcast<f32>(1u))"
+                    ));
                 }
 
                 let p = self.inputs.get(&reg).ok_or(
@@ -2900,6 +2911,54 @@ fn expand_to_vec4(expr: &str, p: &ParamInfo) -> String {
         } else if dst_comp == 3 {
             *out_comp = "1.0".to_owned();
         } else {
+            *out_comp = "0.0".to_owned();
+        }
+    }
+
+    format!("vec4<f32>({}, {}, {}, {})", out[0], out[1], out[2], out[3])
+}
+
+fn expand_to_vec4_bitpattern(expr: &str, p: &ParamInfo) -> String {
+    // Variant of `expand_to_vec4` used for values that are stored in the internal register model as
+    // raw 32-bit *bit patterns* (e.g. integer system values bitcast into `f32` lanes).
+    //
+    // For these values, the default-fill lanes should use the integer bit patterns for 0/1, not
+    // the float-typed `0.0`/`1.0` constants. Otherwise, interpreting the default W lane as an
+    // integer (e.g. via `utof`) would treat the float `1.0` bit pattern (`0x3f800000`) as the
+    // integer value `1065353216`.
+    let mut src = Vec::<String>::with_capacity(p.component_count);
+    match p.component_count {
+        1 => src.push(expr.to_owned()),
+        2 => {
+            src.push(format!("{expr}.x"));
+            src.push(format!("{expr}.y"));
+        }
+        3 => {
+            src.push(format!("{expr}.x"));
+            src.push(format!("{expr}.y"));
+            src.push(format!("{expr}.z"));
+        }
+        4 => {
+            return expr.to_owned();
+        }
+        _ => {}
+    }
+
+    let mut out = [String::new(), String::new(), String::new(), String::new()];
+    let mut next = 0usize;
+    for (dst_comp, out_comp) in out.iter_mut().enumerate() {
+        let want = p
+            .components
+            .iter()
+            .take(p.component_count)
+            .any(|&c| c as usize == dst_comp);
+        if want {
+            *out_comp = src[next].clone();
+            next += 1;
+        } else if dst_comp == 3 {
+            *out_comp = "bitcast<f32>(1u)".to_owned();
+        } else {
+            // `bitcast<f32>(0u)` is equivalent to `0.0` but makes the intent explicit.
             *out_comp = "0.0".to_owned();
         }
     }

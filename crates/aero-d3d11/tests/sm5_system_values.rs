@@ -262,6 +262,18 @@ fn translates_vertex_id_and_instance_id_builtins_from_semantics() {
         .contains("@builtin(instance_index) instance_id: u32"));
     assert!(translated.wgsl.contains("bitcast<f32>(input.vertex_id)"));
     assert!(translated.wgsl.contains("bitcast<f32>(input.instance_id)"));
+    assert!(
+        translated
+            .wgsl
+            .contains("vec4<f32>(bitcast<f32>(input.vertex_id), 0.0, 0.0, bitcast<f32>(1u))"),
+        "expected integer system value default-fill to preserve 0/1 bit patterns"
+    );
+    assert!(
+        translated
+            .wgsl
+            .contains("vec4<f32>(bitcast<f32>(input.instance_id), 0.0, 0.0, bitcast<f32>(1u))"),
+        "expected integer system value default-fill to preserve 0/1 bit patterns"
+    );
 
     assert!(translated.reflection.inputs.iter().any(|p| {
         p.semantic_name.eq_ignore_ascii_case("SV_VertexID")

@@ -164,29 +164,29 @@ fn translates_compute_system_value_builtins_to_wgsl_builtins() {
 
     assert!(
         translated.wgsl.contains(
-            "vec4<f32>(bitcast<f32>(input.global_invocation_id.x), bitcast<f32>(input.global_invocation_id.y), bitcast<f32>(input.global_invocation_id.z), 1.0)"
+            "vec4<f32>(bitcast<f32>(input.global_invocation_id.x), bitcast<f32>(input.global_invocation_id.y), bitcast<f32>(input.global_invocation_id.z), bitcast<f32>(1u))"
         ),
         "expected dispatch thread ID lanes to be expanded as raw bits:\n{}",
         translated.wgsl
     );
     assert!(
         translated.wgsl.contains(
-            "vec4<f32>(bitcast<f32>(input.local_invocation_id.x), bitcast<f32>(input.local_invocation_id.y), bitcast<f32>(input.local_invocation_id.z), 1.0)"
+            "vec4<f32>(bitcast<f32>(input.local_invocation_id.x), bitcast<f32>(input.local_invocation_id.y), bitcast<f32>(input.local_invocation_id.z), bitcast<f32>(1u))"
         ),
         "expected group thread ID lanes to be expanded as raw bits:\n{}",
         translated.wgsl
     );
     assert!(
         translated.wgsl.contains(
-            "vec4<f32>(bitcast<f32>(input.workgroup_id.x), bitcast<f32>(input.workgroup_id.y), bitcast<f32>(input.workgroup_id.z), 1.0)"
+            "vec4<f32>(bitcast<f32>(input.workgroup_id.x), bitcast<f32>(input.workgroup_id.y), bitcast<f32>(input.workgroup_id.z), bitcast<f32>(1u))"
         ),
         "expected group ID lanes to be expanded as raw bits:\n{}",
         translated.wgsl
     );
     assert!(
-        translated
-            .wgsl
-            .contains("vec4<f32>(bitcast<f32>(input.local_invocation_index), 0.0, 0.0, 1.0)"),
+        translated.wgsl.contains(
+            "vec4<f32>(bitcast<f32>(input.local_invocation_index), 0.0, 0.0, bitcast<f32>(1u))"
+        ),
         "expected group index to be expanded as scalar raw bits:\n{}",
         translated.wgsl
     );
