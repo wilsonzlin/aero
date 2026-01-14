@@ -1471,20 +1471,20 @@ test("TypeScript layout matches C headers", () => {
       assert.equal(valueToBigInt(direct, name), expected, `constant value for ${name}`);
       continue;
     }
-    if (name.startsWith("AEROGPU_FORMAT_")) {
-      const key = formatCNameToTsKey(name);
-      const actual = (aerogpuPci.AerogpuFormat as unknown as Record<string, number>)[key];
-      assert.ok(actual !== undefined, `missing TS AerogpuFormat binding for ${name} (${key})`);
-      pciSeen.push(name);
-      assert.equal(BigInt(actual), expected, `format value for ${name}`);
-      continue;
-    }
     if (name.startsWith("AEROGPU_ERROR_")) {
       const key = upperSnakeToPascalCase(name.replace(/^AEROGPU_ERROR_/, ""));
       const actual = (aerogpuPci.AerogpuErrorCode as unknown as Record<string, number>)[key];
       assert.ok(actual !== undefined, `missing TS AerogpuErrorCode binding for ${name} (${key})`);
       pciSeen.push(name);
       assert.equal(BigInt(actual), expected, `error code value for ${name}`);
+      continue;
+    }
+    if (name.startsWith("AEROGPU_FORMAT_")) {
+      const key = formatCNameToTsKey(name);
+      const actual = (aerogpuPci.AerogpuFormat as unknown as Record<string, number>)[key];
+      assert.ok(actual !== undefined, `missing TS AerogpuFormat binding for ${name} (${key})`);
+      pciSeen.push(name);
+      assert.equal(BigInt(actual), expected, `format value for ${name}`);
       continue;
     }
     throw new Error(`unhandled aerogpu_pci.h constant: ${name}`);
