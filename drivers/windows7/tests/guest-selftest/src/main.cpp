@@ -4072,11 +4072,15 @@ static std::optional<std::vector<uint8_t>> ReadHidReportDescriptor(Logger& log, 
   DWORD bytes = 0;
   if (!DeviceIoControl(h, IOCTL_HID_GET_REPORT_DESCRIPTOR, nullptr, 0, buf.data(),
                        static_cast<DWORD>(buf.size()), &bytes, nullptr)) {
-    log.Logf("virtio-input: IOCTL_HID_GET_REPORT_DESCRIPTOR failed err=%lu", GetLastError());
+    const DWORD err = GetLastError();
+    log.Logf("virtio-input: IOCTL_HID_GET_REPORT_DESCRIPTOR failed err=%lu", err);
+    // Preserve the error code for callers (log.Logf() may clobber LastError).
+    SetLastError(err);
     return std::nullopt;
   }
   if (bytes == 0 || bytes > buf.size()) {
     log.Logf("virtio-input: IOCTL_HID_GET_REPORT_DESCRIPTOR returned unexpected size=%lu", bytes);
+    SetLastError(ERROR_BAD_LENGTH);
     return std::nullopt;
   }
 
@@ -5710,10 +5714,11 @@ static VirtioInputTabletEventsTestResult VirtioInputTabletEventsTest(Logger& log
     return out;
   }
   const auto report_desc = ReadHidReportDescriptor(log, h_ioctl);
+  const DWORD report_desc_err = report_desc.has_value() ? ERROR_SUCCESS : GetLastError();
   CloseHandle(h_ioctl);
   if (!report_desc.has_value()) {
     out.reason = "get_report_descriptor_failed";
-    out.win32_error = GetLastError();
+    out.win32_error = report_desc_err;
     return out;
   }
 
