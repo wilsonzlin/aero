@@ -160,6 +160,15 @@ impl InterrupterRegs {
         // Pointer is 16-byte aligned; low 4 bits are flags.
         self.erdp = (value & !0x0f) | (value & 0x0f);
         self.erdp_gen = self.erdp_gen.wrapping_add(1);
+
+        // Minimal interrupt-ack handshake:
+        //
+        // Many xHCI drivers acknowledge event interrupts by writing ERDP with the Event Handler Busy
+        // (EHB) bit set, rather than explicitly clearing IMAN.IP. Treat this as an interrupt
+        // acknowledgement and clear IP when EHB is written as 1.
+        if (value & ERDP_EHB) != 0 {
+            self.iman &= !IMAN_IP;
+        }
     }
 
     /// Restore helpers used by snapshot loading.

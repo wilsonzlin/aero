@@ -1,4 +1,4 @@
-use aero_usb::xhci::interrupter::{IMAN_IE, IMAN_IP};
+use aero_usb::xhci::interrupter::{ERDP_EHB, IMAN_IE, IMAN_IP};
 use aero_usb::xhci::trb::{Trb, TrbType, TRB_LEN};
 use aero_usb::xhci::{regs, XhciController, EVENT_ENQUEUE_BUDGET_PER_TICK};
 use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel};
@@ -79,6 +79,43 @@ fn event_ring_enqueue_writes_trb_and_sets_interrupt_pending() {
 
     // Verify IMAN.IP is W1C.
     xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IP | IMAN_IE);
+    assert!(!xhci.interrupter0().interrupt_pending());
+    assert!(!xhci.irq_level());
+}
+
+#[test]
+fn event_ring_erdp_ehb_write_clears_interrupt_pending() {
+    let mut mem = TestMemory::new(0x20_000);
+
+    let erstba = 0x1000;
+    let ring_base = 0x2000;
+    write_erst_entry(&mut mem, erstba, ring_base, 4);
+
+    let mut xhci = XhciController::new();
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 1);
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, erstba as u32);
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_HI, 4, (erstba >> 32) as u32);
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, ring_base as u32);
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_HI, 4, (ring_base >> 32) as u32);
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
+
+    let mut evt = Trb::default();
+    evt.parameter = 0x1234_5678;
+    evt.set_trb_type(TrbType::PortStatusChangeEvent);
+
+    xhci.post_event(evt);
+    xhci.service_event_ring(&mut mem);
+
+    assert!(xhci.interrupter0().interrupt_pending());
+    assert!(xhci.irq_level());
+
+    // Many xHCI drivers acknowledge interrupts by writing ERDP with EHB set.
+    xhci.mmio_write(
+        &mut mem,
+        regs::REG_INTR0_ERDP_LO,
+        4,
+        (ring_base as u32) | (ERDP_EHB as u32),
+    );
     assert!(!xhci.interrupter0().interrupt_pending());
     assert!(!xhci.irq_level());
 }
