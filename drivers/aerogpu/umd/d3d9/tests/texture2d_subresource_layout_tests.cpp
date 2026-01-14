@@ -93,21 +93,31 @@ bool RunCase(const char* name,
         std::fprintf(stderr, "FAIL: %s: expected pitch calc failed layer=%u mip=%u\n", name, layer, mip);
         return false;
       }
- 
+
+      const uint64_t start = offset;
+      const uint64_t end = start + static_cast<uint64_t>(exp_slice);
+  
       {
         aerogpu::Texture2dSubresourceLayout got{};
-        const uint64_t start = offset;
         char msg[256] = {};
         std::snprintf(msg, sizeof(msg), "%s: calc_texture2d_subresource_layout_for_offset(layer=%u,mip=%u,start)",
                       name, layer, mip);
         ok &= Check(aerogpu::calc_texture2d_subresource_layout_for_offset(
                         format, width, height, mip_levels, array_layers, start, &got),
                     msg);
- 
+  
+        char what_start[256] = {};
+        std::snprintf(what_start, sizeof(what_start), "%s: subresource_start(layer=%u,mip=%u,start)", name, layer, mip);
+        ok &= CheckEqU64(got.subresource_start_bytes, start, what_start);
+  
+        char what_end[256] = {};
+        std::snprintf(what_end, sizeof(what_end), "%s: subresource_end(layer=%u,mip=%u,start)", name, layer, mip);
+        ok &= CheckEqU64(got.subresource_end_bytes, end, what_end);
+  
         char what_row[256] = {};
         std::snprintf(what_row, sizeof(what_row), "%s: row_pitch(layer=%u,mip=%u,start)", name, layer, mip);
         ok &= CheckEqU32(got.row_pitch_bytes, exp_row, what_row);
- 
+  
         char what_slice[256] = {};
         std::snprintf(what_slice, sizeof(what_slice), "%s: slice_pitch(layer=%u,mip=%u,start)", name, layer, mip);
         ok &= CheckEqU32(got.slice_pitch_bytes, exp_slice, what_slice);
@@ -118,14 +128,22 @@ bool RunCase(const char* name,
       // pitches in that case.
       {
         aerogpu::Texture2dSubresourceLayout got{};
-        const uint64_t within = offset + static_cast<uint64_t>(exp_slice) / 2u;
+        const uint64_t within = start + static_cast<uint64_t>(exp_slice) / 2u;
         char msg[256] = {};
         std::snprintf(msg, sizeof(msg), "%s: calc_texture2d_subresource_layout_for_offset(layer=%u,mip=%u,within)",
                       name, layer, mip);
         ok &= Check(aerogpu::calc_texture2d_subresource_layout_for_offset(
                         format, width, height, mip_levels, array_layers, within, &got),
                     msg);
- 
+  
+        char what_start[256] = {};
+        std::snprintf(what_start, sizeof(what_start), "%s: subresource_start(layer=%u,mip=%u,within)", name, layer, mip);
+        ok &= CheckEqU64(got.subresource_start_bytes, start, what_start);
+  
+        char what_end[256] = {};
+        std::snprintf(what_end, sizeof(what_end), "%s: subresource_end(layer=%u,mip=%u,within)", name, layer, mip);
+        ok &= CheckEqU64(got.subresource_end_bytes, end, what_end);
+  
         char what_row[256] = {};
         std::snprintf(what_row, sizeof(what_row), "%s: row_pitch(layer=%u,mip=%u,within)", name, layer, mip);
         ok &= CheckEqU32(got.row_pitch_bytes, exp_row, what_row);
@@ -134,7 +152,53 @@ bool RunCase(const char* name,
         std::snprintf(what_slice, sizeof(what_slice), "%s: slice_pitch(layer=%u,mip=%u,within)", name, layer, mip);
         ok &= CheckEqU32(got.slice_pitch_bytes, exp_slice, what_slice);
       }
- 
+  
+      // Validate boundary behavior: offset at the end of a subresource should
+      // map to the *next* subresource (except for the final subresource, where
+      // offset==total_size is out-of-bounds).
+      const bool last_subresource = (layer + 1 == array_layers) && (mip + 1 == mip_levels);
+      if (!last_subresource) {
+        uint32_t next_w = 0;
+        uint32_t next_h = 0;
+        if (mip + 1 < mip_levels) {
+          next_w = std::max(1u, w / 2);
+          next_h = std::max(1u, h / 2);
+        } else {
+          next_w = width;
+          next_h = height;
+        }
+  
+        uint32_t exp_next_row = 0;
+        uint32_t exp_next_slice = 0;
+        if (!CalcExpectedPitch(format, next_w, next_h, &exp_next_row, &exp_next_slice)) {
+          std::fprintf(stderr, "FAIL: %s: expected pitch calc failed at boundary layer=%u mip=%u\n", name, layer, mip);
+          return false;
+        }
+  
+        aerogpu::Texture2dSubresourceLayout got_next{};
+        char msg[256] = {};
+        std::snprintf(msg, sizeof(msg), "%s: boundary(end) maps to next subresource (layer=%u,mip=%u)", name, layer, mip);
+        ok &= Check(aerogpu::calc_texture2d_subresource_layout_for_offset(
+                        format, width, height, mip_levels, array_layers, end, &got_next),
+                    msg);
+  
+        char what_start[256] = {};
+        std::snprintf(what_start, sizeof(what_start), "%s: boundary subresource_start(layer=%u,mip=%u)", name, layer, mip);
+        ok &= CheckEqU64(got_next.subresource_start_bytes, end, what_start);
+  
+        char what_end[256] = {};
+        std::snprintf(what_end, sizeof(what_end), "%s: boundary subresource_end(layer=%u,mip=%u)", name, layer, mip);
+        ok &= CheckEqU64(got_next.subresource_end_bytes, end + static_cast<uint64_t>(exp_next_slice), what_end);
+  
+        char what_row[256] = {};
+        std::snprintf(what_row, sizeof(what_row), "%s: boundary row_pitch(layer=%u,mip=%u)", name, layer, mip);
+        ok &= CheckEqU32(got_next.row_pitch_bytes, exp_next_row, what_row);
+  
+        char what_slice[256] = {};
+        std::snprintf(what_slice, sizeof(what_slice), "%s: boundary slice_pitch(layer=%u,mip=%u)", name, layer, mip);
+        ok &= CheckEqU32(got_next.slice_pitch_bytes, exp_next_slice, what_slice);
+      }
+  
       offset += exp_slice;
       w = std::max(1u, w / 2);
       h = std::max(1u, h / 2);
@@ -150,7 +214,12 @@ bool RunCase(const char* name,
   ok &= Check(!aerogpu::calc_texture2d_subresource_layout_for_offset(
                   format, width, height, mip_levels, array_layers, offset, &out_of_bounds),
               "offset==total_size_bytes returns false");
- 
+  if (offset != UINT64_MAX) {
+    ok &= Check(!aerogpu::calc_texture2d_subresource_layout_for_offset(
+                    format, width, height, mip_levels, array_layers, offset + 1, &out_of_bounds),
+                "offset>total_size_bytes returns false");
+  }
+  
   return ok;
 }
  
