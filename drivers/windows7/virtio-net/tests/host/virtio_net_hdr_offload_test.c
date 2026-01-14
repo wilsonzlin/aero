@@ -198,6 +198,170 @@ static int test_ipv4_udp_no_vlan(void) {
   return 0;
 }
 
+static int test_ipv4_vlan_udp(void) {
+  /* Single 802.1Q VLAN tag with UDP payload. */
+  static const uint8_t Frame[] = {
+      /* dst/src */
+      0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb,
+      /* ethertype VLAN */
+      0x81, 0x00,
+      /* VLAN tag: TCI + inner ethertype IPv4 */
+      0x00, 0x01, 0x08, 0x00,
+      /* IPv4 header */
+      0x45, 0x00, 0x00, 0x20, /* total_len=32 */
+      0x00, 0x00, 0x00, 0x00, 0x40, 0x11, 0x00, 0x00, /* proto=UDP */
+      0xc0, 0x00, 0x02, 0x01, 0xc6, 0x33, 0x64, 0x02,
+      /* UDP header */
+      0x04, 0xd2, 0x16, 0x2e, /* ports 1234->5678 */
+      0x00, 0x0c, 0x00, 0x00, /* len=12, csum=0 */
+      /* payload */
+      'd',  'a',  't',  'a',
+  };
+
+  VIRTIO_NET_HDR_OFFLOAD_FRAME_INFO Info;
+  VIRTIO_NET_HDR_OFFLOAD_TX_REQUEST TxReq;
+  VIRTIO_NET_HDR Hdr;
+  VIRTIO_NET_HDR_OFFLOAD_STATUS St;
+
+  St = VirtioNetHdrOffloadParseFrame(Frame, sizeof(Frame), &Info);
+  ASSERT_EQ_INT(St, VIRTIO_NET_HDR_OFFLOAD_STATUS_OK);
+
+  ASSERT_EQ_U16(Info.L2Len, 18);
+  ASSERT_EQ_U16(Info.L3Offset, 18);
+  ASSERT_EQ_U8(Info.L3Proto, VIRTIO_NET_HDR_OFFLOAD_L3_IPV4);
+  ASSERT_EQ_U8(Info.L4Proto, 17);
+  ASSERT_EQ_U16(Info.L4Offset, 38);
+  ASSERT_EQ_U16(Info.L4Len, 8);
+  ASSERT_EQ_U16(Info.PayloadOffset, 46);
+  ASSERT_EQ_U16(Info.CsumStart, 38);
+  ASSERT_EQ_U16(Info.CsumOffset, 6);
+  ASSERT_EQ_U8(Info.IsFragmented, 0);
+
+  memset(&TxReq, 0, sizeof(TxReq));
+  TxReq.NeedsCsum = 1;
+  St = VirtioNetHdrOffloadBuildTxHdr(&Info, &TxReq, &Hdr);
+  ASSERT_EQ_INT(St, VIRTIO_NET_HDR_OFFLOAD_STATUS_OK);
+  ASSERT_EQ_U8(Hdr.Flags, VIRTIO_NET_HDR_F_NEEDS_CSUM);
+  ASSERT_EQ_U8(Hdr.GsoType, VIRTIO_NET_HDR_GSO_NONE);
+  ASSERT_EQ_U16(Hdr.HdrLen, 0);
+  ASSERT_EQ_U16(Hdr.CsumStart, 38);
+  ASSERT_EQ_U16(Hdr.CsumOffset, 6);
+
+  return 0;
+}
+
+static int test_ipv6_udp_no_vlan(void) {
+  static const uint8_t Frame[] = {
+      /* dst/src */
+      0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb,
+      /* ethertype IPv6 */
+      0x86, 0xdd,
+      /* IPv6 header: version=6, payload_len=12, next=UDP, hop=64 */
+      0x60, 0x00, 0x00, 0x00, 0x00, 0x0c, 0x11, 0x40,
+      /* src addr */
+      0x20, 0x01, 0x0d, 0xb8, 0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    1,
+      /* dst addr */
+      0x20, 0x01, 0x0d, 0xb8, 0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    2,
+      /* UDP header */
+      0x04, 0xd2, 0x16, 0x2e, /* ports 1234->5678 */
+      0x00, 0x0c, 0x00, 0x00, /* len=12, csum=0 */
+      /* payload */
+      'd',  'a',  't',  'a',
+  };
+
+  VIRTIO_NET_HDR_OFFLOAD_FRAME_INFO Info;
+  VIRTIO_NET_HDR_OFFLOAD_TX_REQUEST TxReq;
+  VIRTIO_NET_HDR Hdr;
+  VIRTIO_NET_HDR_OFFLOAD_STATUS St;
+
+  St = VirtioNetHdrOffloadParseFrame(Frame, sizeof(Frame), &Info);
+  ASSERT_EQ_INT(St, VIRTIO_NET_HDR_OFFLOAD_STATUS_OK);
+
+  ASSERT_EQ_U8(Info.L3Proto, VIRTIO_NET_HDR_OFFLOAD_L3_IPV6);
+  ASSERT_EQ_U16(Info.L3Offset, 14);
+  ASSERT_EQ_U16(Info.L3Len, 40);
+  ASSERT_EQ_U8(Info.L4Proto, 17);
+  ASSERT_EQ_U16(Info.L4Offset, 54);
+  ASSERT_EQ_U16(Info.L4Len, 8);
+  ASSERT_EQ_U16(Info.PayloadOffset, 62);
+  ASSERT_EQ_U16(Info.CsumStart, 54);
+  ASSERT_EQ_U16(Info.CsumOffset, 6);
+  ASSERT_EQ_U8(Info.IsFragmented, 0);
+
+  memset(&TxReq, 0, sizeof(TxReq));
+  TxReq.NeedsCsum = 1;
+  St = VirtioNetHdrOffloadBuildTxHdr(&Info, &TxReq, &Hdr);
+  ASSERT_EQ_INT(St, VIRTIO_NET_HDR_OFFLOAD_STATUS_OK);
+  ASSERT_EQ_U8(Hdr.Flags, VIRTIO_NET_HDR_F_NEEDS_CSUM);
+  ASSERT_EQ_U8(Hdr.GsoType, VIRTIO_NET_HDR_GSO_NONE);
+  ASSERT_EQ_U16(Hdr.HdrLen, 0);
+  ASSERT_EQ_U16(Hdr.CsumStart, 54);
+  ASSERT_EQ_U16(Hdr.CsumOffset, 6);
+
+  /* TSO over UDP is unsupported */
+  memset(&TxReq, 0, sizeof(TxReq));
+  TxReq.Tso = 1;
+  TxReq.TsoMss = 1200;
+  St = VirtioNetHdrOffloadBuildTxHdrFromFrame(Frame, sizeof(Frame), &TxReq, &Hdr);
+  ASSERT_EQ_INT(St, VIRTIO_NET_HDR_OFFLOAD_STATUS_UNSUPPORTED);
+
+  return 0;
+}
+
+static int test_ipv6_hopbyhop_udp(void) {
+  /* Ethernet + IPv6 + hop-by-hop + UDP + 4-byte payload */
+  static const uint8_t Frame[] = {
+      /* dst/src */
+      0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb,
+      /* ethertype IPv6 */
+      0x86, 0xdd,
+      /* IPv6 header: version=6, payload_len=20, next=Hop-by-Hop(0), hop=64 */
+      0x60, 0x00, 0x00, 0x00, 0x00, 0x14, 0x00, 0x40,
+      /* src addr */
+      0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    1,
+      /* dst addr */
+      0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    2,
+      /* Hop-by-Hop ext header: next=UDP, hdr_ext_len=0 (8 bytes total) */
+      0x11, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      /* UDP header */
+      0x04, 0xd2, 0x16, 0x2e, /* ports 1234->5678 */
+      0x00, 0x0c, 0x00, 0x00, /* len=12, csum=0 */
+      /* payload */
+      'd',  'a',  't',  'a',
+  };
+
+  VIRTIO_NET_HDR_OFFLOAD_FRAME_INFO Info;
+  VIRTIO_NET_HDR_OFFLOAD_TX_REQUEST TxReq;
+  VIRTIO_NET_HDR Hdr;
+  VIRTIO_NET_HDR_OFFLOAD_STATUS St;
+
+  St = VirtioNetHdrOffloadParseFrame(Frame, sizeof(Frame), &Info);
+  ASSERT_EQ_INT(St, VIRTIO_NET_HDR_OFFLOAD_STATUS_OK);
+
+  ASSERT_EQ_U8(Info.L3Proto, VIRTIO_NET_HDR_OFFLOAD_L3_IPV6);
+  ASSERT_EQ_U16(Info.L3Offset, 14);
+  ASSERT_EQ_U16(Info.L3Len, 48);
+  ASSERT_EQ_U8(Info.L4Proto, 17);
+  ASSERT_EQ_U16(Info.L4Offset, 62);
+  ASSERT_EQ_U16(Info.L4Len, 8);
+  ASSERT_EQ_U16(Info.PayloadOffset, 70);
+  ASSERT_EQ_U16(Info.CsumStart, 62);
+  ASSERT_EQ_U16(Info.CsumOffset, 6);
+  ASSERT_EQ_U8(Info.IsFragmented, 0);
+
+  memset(&TxReq, 0, sizeof(TxReq));
+  TxReq.NeedsCsum = 1;
+  St = VirtioNetHdrOffloadBuildTxHdr(&Info, &TxReq, &Hdr);
+  ASSERT_EQ_INT(St, VIRTIO_NET_HDR_OFFLOAD_STATUS_OK);
+  ASSERT_EQ_U8(Hdr.Flags, VIRTIO_NET_HDR_F_NEEDS_CSUM);
+  ASSERT_EQ_U8(Hdr.GsoType, VIRTIO_NET_HDR_GSO_NONE);
+  ASSERT_EQ_U16(Hdr.HdrLen, 0);
+  ASSERT_EQ_U16(Hdr.CsumStart, 62);
+  ASSERT_EQ_U16(Hdr.CsumOffset, 6);
+
+  return 0;
+}
+
 static int test_ipv6_tcp_no_vlan(void) {
   static const uint8_t Frame[] = {
       /* dst/src */
@@ -725,8 +889,11 @@ int main(void) {
   rc |= test_ipv4_tcp_no_vlan();
   rc |= test_no_offload_builds_zero();
   rc |= test_ipv4_udp_no_vlan();
+  rc |= test_ipv4_vlan_udp();
+  rc |= test_ipv6_udp_no_vlan();
   rc |= test_ipv6_tcp_no_vlan();
   rc |= test_ipv6_hopbyhop_tcp();
+  rc |= test_ipv6_hopbyhop_udp();
   rc |= test_vlan_tagged_ipv4_tcp();
   rc |= test_qinq_tagged_ipv4_tcp();
   rc |= test_malformed_and_truncated();
