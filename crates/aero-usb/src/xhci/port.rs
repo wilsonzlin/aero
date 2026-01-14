@@ -74,6 +74,29 @@ impl XhciPort {
         }
     }
 
+    pub(crate) fn host_controller_reset(&mut self) {
+        if let Some(dev) = self.device.as_mut() {
+            dev.reset();
+        }
+
+        // Keep the physical connection state but reset software-visible port state. This mirrors
+        // the "fresh boot" state (a connected port starts disabled until the host issues a port
+        // reset).
+        self.enabled = false;
+        self.reset = false;
+        self.reset_timer_ms = 0;
+
+        self.connect_status_change = false;
+        self.port_enabled_change = false;
+        self.port_reset_change = false;
+
+        self.link_state = if self.connected {
+            XhciUsb2LinkState::U0
+        } else {
+            XhciUsb2LinkState::U3
+        };
+    }
+
     pub(crate) fn has_device(&self) -> bool {
         self.device.is_some()
     }

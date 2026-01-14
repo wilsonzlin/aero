@@ -14,6 +14,7 @@ pub const REG_DBOFF: u64 = 0x14;
 pub const REG_RTSOFF: u64 = 0x18;
 pub const REG_USBCMD: u64 = (CAPLENGTH_BYTES as u64) + (op::USBCMD as u64);
 pub const REG_USBSTS: u64 = (CAPLENGTH_BYTES as u64) + (op::USBSTS as u64);
+pub const REG_PAGESIZE: u64 = (CAPLENGTH_BYTES as u64) + (op::PAGESIZE as u64);
 /// Command Ring Control Register (CRCR), 64-bit (low/high dwords).
 pub const REG_CRCR_LO: u64 = (CAPLENGTH_BYTES as u64) + (op::CRCR as u64);
 pub const REG_CRCR_HI: u64 = REG_CRCR_LO + 4;
@@ -33,6 +34,12 @@ pub const REG_INTR0_ERDP_HI: u64 = REG_INTR0_BASE + 0x1c;
 
 /// USBCMD bit 0 (Run/Stop).
 pub const USBCMD_RUN: u32 = 1 << 0;
+/// USBCMD bit 1 (Host Controller Reset).
+pub const USBCMD_HCRST: u32 = 1 << 1;
+/// PAGESIZE register value: 4KiB page size supported.
+pub const PAGESIZE_4K: u32 = 1 << 0;
+/// USBSTS bit 0 (Host Controller Halted).
+pub const USBSTS_HCHALTED: u32 = 1 << 0;
 /// USBSTS bit 3 (Event Interrupt).
 ///
 /// The full xHCI interrupt model is not implemented yet; the skeleton uses this bit as a generic

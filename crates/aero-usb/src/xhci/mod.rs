@@ -1129,12 +1129,14 @@ impl XhciController {
             port_regs_base + u64::from(self.port_count) * regs::port::PORTREGS_STRIDE;
 
         // Reflect interrupter pending in USBSTS.EINT for drivers.
+        let running = (self.usbcmd & regs::USBCMD_RUN) != 0;
         let usbsts = self.usbsts
             | if self.interrupter0.interrupt_pending() {
                 regs::USBSTS_EINT
             } else {
                 0
-            };
+            }
+            | if running { 0 } else { regs::USBSTS_HCHALTED };
 
         let value32 = match aligned {
             off if off >= port_regs_base && off < port_regs_end => {
@@ -1174,6 +1176,7 @@ impl XhciController {
 
             regs::REG_USBCMD => self.usbcmd,
             regs::REG_USBSTS => usbsts,
+            regs::REG_PAGESIZE => regs::PAGESIZE_4K,
             regs::REG_CRCR_LO => (self.crcr & 0xffff_ffff) as u32,
             regs::REG_CRCR_HI => (self.crcr >> 32) as u32,
             regs::REG_DCBAAP_LO => (self.dcbaap & 0xffff_ffff) as u32,
@@ -1282,7 +1285,17 @@ impl XhciController {
         match aligned {
             regs::REG_USBCMD => {
                 let prev = self.usbcmd;
-                self.usbcmd = merge(self.usbcmd);
+                let next = merge(self.usbcmd);
+
+                if (next & regs::USBCMD_HCRST) != 0 {
+                    // Host Controller Reset (HCRST) is self-clearing. We model it as an immediate
+                    // reset of operational registers and controller-local bookkeeping so real
+                    // xHCI drivers waiting for the bit to clear can make progress.
+                    self.reset_controller();
+                    return;
+                }
+
+                self.usbcmd = next;
 
                 // On the rising edge of RUN, perform a small DMA read from CRCR to validate PCI Bus
                 // Master Enable (BME) gating in the emulator wrapper.
@@ -1356,6 +1369,26 @@ impl XhciController {
 
             _ => {}
         }
+    }
+
+    fn reset_controller(&mut self) {
+        self.usbcmd = 0;
+        self.usbsts = 0;
+        self.crcr = 0;
+        self.dcbaap = 0;
+
+        for slot in self.slots.iter_mut() {
+            *slot = SlotState::default();
+        }
+
+        for port in self.ports.iter_mut() {
+            port.host_controller_reset();
+        }
+
+        self.interrupter0 = InterrupterRegs::default();
+        self.event_ring = EventRingProducer::default();
+        self.pending_events.clear();
+        self.dropped_event_trbs = 0;
     }
 
     fn queue_port_status_change_event(&mut self, port: usize) {

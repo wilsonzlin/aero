@@ -118,6 +118,17 @@ fn xhci_controller_dboff_rtsoff_are_plausible() {
 }
 
 #[test]
+fn xhci_controller_pagesize_supports_4k_pages() {
+    let mut ctrl = XhciController::new();
+    let mut mem = PanicMem;
+
+    assert_eq!(
+        ctrl.mmio_read(&mut mem, regs::REG_PAGESIZE, 4),
+        regs::PAGESIZE_4K
+    );
+}
+
+#[test]
 fn xhci_controller_run_triggers_dma_and_w1c_clears_irq() {
     let mut ctrl = XhciController::new();
     let mut mem = CountingMem::new(0x4000);
@@ -153,6 +164,44 @@ fn xhci_controller_run_triggers_dma_and_w1c_clears_irq() {
     assert_eq!(
         ctrl.mmio_read(&mut mem, regs::REG_USBSTS, 4) & regs::USBSTS_EINT,
         0
+    );
+}
+
+#[test]
+fn xhci_controller_hchalted_tracks_run_stop_and_reset() {
+    let mut ctrl = XhciController::new();
+    let mut mem = CountingMem::new(0x100);
+
+    assert_ne!(
+        ctrl.mmio_read(&mut mem, regs::REG_USBSTS, 4) & regs::USBSTS_HCHALTED,
+        0,
+        "controller should begin halted"
+    );
+
+    ctrl.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
+    assert_eq!(
+        ctrl.mmio_read(&mut mem, regs::REG_USBSTS, 4) & regs::USBSTS_HCHALTED,
+        0,
+        "setting RUN should clear HCHalted"
+    );
+
+    ctrl.mmio_write(&mut mem, regs::REG_USBCMD, 4, 0);
+    assert_ne!(
+        ctrl.mmio_read(&mut mem, regs::REG_USBSTS, 4) & regs::USBSTS_HCHALTED,
+        0,
+        "clearing RUN should set HCHalted"
+    );
+
+    ctrl.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_HCRST);
+    assert_eq!(
+        ctrl.mmio_read(&mut mem, regs::REG_USBCMD, 4) & regs::USBCMD_HCRST,
+        0,
+        "HCRST should be self-clearing"
+    );
+    assert_ne!(
+        ctrl.mmio_read(&mut mem, regs::REG_USBSTS, 4) & regs::USBSTS_HCHALTED,
+        0,
+        "controller should be halted after reset"
     );
 }
 
