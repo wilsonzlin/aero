@@ -1,7 +1,10 @@
 use aero_d3d11::runtime::gs_translate::{translate_gs_module_to_wgsl_compute_prepass, GsTranslateError};
 use aero_d3d11::sm4::decode_program;
 use aero_d3d11::sm4::opcode::*;
-use aero_d3d11::{ShaderModel, ShaderStage, Sm4Program, Swizzle, WriteMask};
+use aero_d3d11::{
+    DstOperand, OperandModifier, RegFile, RegisterRef, ShaderModel, ShaderStage, Sm4Decl, Sm4Inst,
+    Sm4Module, Sm4Program, SrcKind, SrcOperand, Swizzle, WriteMask,
+};
 
 fn opcode_token(opcode: u32, len_dwords: u32) -> u32 {
     opcode | (len_dwords << OPCODE_LEN_SHIFT)
@@ -374,4 +377,136 @@ fn sm5_gs_instance_id_translates_to_wgsl_compute_prepass() {
     );
 
     assert_wgsl_validates(&wgsl);
+}
+
+#[test]
+fn gs_translate_rejects_regfile_output_depth_source() {
+    let module = Sm4Module {
+        stage: ShaderStage::Geometry,
+        model: ShaderModel { major: 4, minor: 0 },
+        decls: vec![
+            Sm4Decl::GsInputPrimitive { primitive: 3 },
+            Sm4Decl::GsOutputTopology { topology: 3 },
+            Sm4Decl::GsMaxOutputVertexCount { max: 3 },
+        ],
+        instructions: vec![
+            Sm4Inst::Mov {
+                dst: DstOperand {
+                    reg: RegisterRef {
+                        file: RegFile::Output,
+                        index: 0,
+                    },
+                    mask: WriteMask::XYZW,
+                    saturate: false,
+                },
+                src: SrcOperand {
+                    kind: SrcKind::Register(RegisterRef {
+                        file: RegFile::OutputDepth,
+                        index: 0,
+                    }),
+                    swizzle: Swizzle::XYZW,
+                    modifier: OperandModifier::None,
+                },
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let err = translate_gs_module_to_wgsl_compute_prepass(&module)
+        .expect_err("expected GS translator to reject RegFile::OutputDepth sources");
+    assert_eq!(
+        err,
+        GsTranslateError::UnsupportedOperand {
+            inst_index: 0,
+            opcode: "mov",
+            msg: "RegFile::OutputDepth is not supported in GS prepass".to_owned()
+        }
+    );
+}
+
+#[test]
+fn gs_translate_rejects_regfile_input_without_siv_decl() {
+    let module = Sm4Module {
+        stage: ShaderStage::Geometry,
+        model: ShaderModel { major: 4, minor: 0 },
+        decls: vec![
+            Sm4Decl::GsInputPrimitive { primitive: 3 },
+            Sm4Decl::GsOutputTopology { topology: 3 },
+            Sm4Decl::GsMaxOutputVertexCount { max: 3 },
+        ],
+        instructions: vec![
+            Sm4Inst::Mov {
+                dst: DstOperand {
+                    reg: RegisterRef {
+                        file: RegFile::Output,
+                        index: 0,
+                    },
+                    mask: WriteMask::XYZW,
+                    saturate: false,
+                },
+                src: SrcOperand {
+                    kind: SrcKind::Register(RegisterRef {
+                        file: RegFile::Input,
+                        index: 0,
+                    }),
+                    swizzle: Swizzle::XYZW,
+                    modifier: OperandModifier::None,
+                },
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let err = translate_gs_module_to_wgsl_compute_prepass(&module)
+        .expect_err("expected GS translator to reject RegFile::Input without dcl_input_siv");
+    assert_eq!(
+        err,
+        GsTranslateError::UnsupportedOperand {
+            inst_index: 0,
+            opcode: "mov",
+            msg: "unsupported input register v0 (expected v#[]/SrcKind::GsInput or a supported system value via dcl_input_siv)".to_owned()
+        }
+    );
+}
+
+#[test]
+fn gs_translate_rejects_regfile_output_depth_destination() {
+    let module = Sm4Module {
+        stage: ShaderStage::Geometry,
+        model: ShaderModel { major: 4, minor: 0 },
+        decls: vec![
+            Sm4Decl::GsInputPrimitive { primitive: 3 },
+            Sm4Decl::GsOutputTopology { topology: 3 },
+            Sm4Decl::GsMaxOutputVertexCount { max: 3 },
+        ],
+        instructions: vec![
+            Sm4Inst::Mov {
+                dst: DstOperand {
+                    reg: RegisterRef {
+                        file: RegFile::OutputDepth,
+                        index: 0,
+                    },
+                    mask: WriteMask::XYZW,
+                    saturate: false,
+                },
+                src: SrcOperand {
+                    kind: SrcKind::ImmediateF32([0; 4]),
+                    swizzle: Swizzle::XYZW,
+                    modifier: OperandModifier::None,
+                },
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let err = translate_gs_module_to_wgsl_compute_prepass(&module)
+        .expect_err("expected GS translator to reject RegFile::OutputDepth destinations");
+    assert_eq!(
+        err,
+        GsTranslateError::UnsupportedOperand {
+            inst_index: 0,
+            opcode: "mov",
+            msg: "unsupported destination register file RegFile::OutputDepth".to_owned()
+        }
+    );
 }
