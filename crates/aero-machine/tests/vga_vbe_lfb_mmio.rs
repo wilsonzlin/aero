@@ -5,12 +5,17 @@ use aero_machine::{Machine, MachineConfig};
 
 #[test]
 fn vga_vbe_lfb_is_reachable_via_direct_mmio_without_pc_platform() {
+    // Use a non-default base to ensure there are no hidden dependencies on
+    // `aero_gpu_vga::SVGA_LFB_BASE` in the non-PC-platform MMIO wiring path.
+    let lfb_base: u32 = 0xE100_0000;
+
     // Keep the test output deterministic (not required for correctness, but avoids noise if the
     // test ever gets extended).
     let cfg = MachineConfig {
         enable_pc_platform: false,
         enable_vga: true,
         enable_aerogpu: false,
+        vga_lfb_base: lfb_base,
         enable_serial: false,
         enable_i8042: false,
         ..Default::default()
@@ -27,6 +32,7 @@ fn vga_vbe_lfb_is_reachable_via_direct_mmio_without_pc_platform() {
         Rc::as_ptr(&vga),
         "VGA Rc identity changed across reset"
     );
+    assert_eq!(m.vbe_lfb_base(), u64::from(lfb_base));
 
     // Match the programming sequence used by `aero-gpu-vga`'s
     // `vbe_linear_framebuffer_write_shows_up_in_output` test.
@@ -39,7 +45,8 @@ fn vga_vbe_lfb_is_reachable_via_direct_mmio_without_pc_platform() {
     m.io_write(0x01CE, 2, 0x0004);
     m.io_write(0x01CF, 2, 0x0041);
 
-    let base = u64::from(vga.borrow().lfb_base());
+    let base = u64::from(lfb_base);
+    assert_eq!(u64::from(vga.borrow().lfb_base()), base);
     // Write a red pixel at (0,0) in BGRX format via *machine memory*.
     m.write_physical_u8(base, 0x00); // B
     m.write_physical_u8(base + 1, 0x00); // G
