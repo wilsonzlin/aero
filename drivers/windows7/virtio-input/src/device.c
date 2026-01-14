@@ -210,6 +210,38 @@ static BOOLEAN VioInputAsciiEqualsInsensitiveZ(_In_z_ const CHAR* A, _In_z_ cons
     return (*A == '\0') && (*B == '\0');
 }
 
+static BOOLEAN VioInputAsciiStartsWithInsensitiveZ(_In_z_ const CHAR* Haystack, _In_z_ const CHAR* Prefix)
+{
+    CHAR ca;
+    CHAR cb;
+
+    if (Haystack == NULL || Prefix == NULL) {
+        return FALSE;
+    }
+
+    while (*Prefix != '\0') {
+        if (*Haystack == '\0') {
+            return FALSE;
+        }
+
+        ca = *Haystack++;
+        cb = *Prefix++;
+
+        if (ca >= 'A' && ca <= 'Z') {
+            ca = (CHAR)(ca - 'A' + 'a');
+        }
+        if (cb >= 'A' && cb <= 'Z') {
+            cb = (CHAR)(cb - 'A' + 'a');
+        }
+
+        if (ca != cb) {
+            return FALSE;
+        }
+    }
+
+    return TRUE;
+}
+
 static NTSTATUS VioInputQueryInputConfig(
     _Inout_ PDEVICE_CONTEXT Ctx,
     _In_ UCHAR Select,
@@ -1553,13 +1585,13 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
         strictIdName = TRUE;
 
         if (VioInputAsciiEqualsInsensitiveZ(name, "Aero Virtio Keyboard") ||
-            (compatDeviceKind && VioInputAsciiEqualsInsensitiveZ(name, "QEMU Virtio Keyboard"))) {
+            (compatDeviceKind && VioInputAsciiStartsWithInsensitiveZ(name, "QEMU Virtio Keyboard"))) {
             kind = VioInputDeviceKindKeyboard;
         } else if (VioInputAsciiEqualsInsensitiveZ(name, "Aero Virtio Mouse") ||
-                   (compatDeviceKind && VioInputAsciiEqualsInsensitiveZ(name, "QEMU Virtio Mouse"))) {
+                   (compatDeviceKind && VioInputAsciiStartsWithInsensitiveZ(name, "QEMU Virtio Mouse"))) {
             kind = VioInputDeviceKindMouse;
         } else if (VioInputAsciiEqualsInsensitiveZ(name, "Aero Virtio Tablet") ||
-                   (compatDeviceKind && VioInputAsciiEqualsInsensitiveZ(name, "QEMU Virtio Tablet"))) {
+                   (compatDeviceKind && VioInputAsciiStartsWithInsensitiveZ(name, "QEMU Virtio Tablet"))) {
             kind = VioInputDeviceKindTablet;
         } else if (compatDeviceKind) {
             /*
@@ -1668,7 +1700,7 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
 
         /*
          * Contract v1 cross-check: if the PCI subsystem device ID indicates a
-         * specific kind (keyboard/mouse), it must agree with the kind inferred
+         * specific kind (keyboard/mouse/tablet), it must agree with the kind inferred
          * from ID_NAME.
          *
          * If the subsystem ID is unknown (0 or other), allow ID_NAME to decide.
