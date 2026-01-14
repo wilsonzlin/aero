@@ -14,23 +14,30 @@ This driver targets the **Aero Windows 7 virtio device contract v1** (`AERO-W7-V
 The authoritative interoperability contract is `docs/windows7-virtio-driver-contract.md`; if this
 design note ever disagrees with the contract, the contract wins.
 
-There are currently two **build/packaging variants** supported:
+There are currently three **build/packaging variants** in-tree:
 
 1. **Aero contract v1 (default CI artifact):** strict PCI identity enforcement (`PCI\VEN_1AF4&DEV_1059&REV_01`)
-   as encoded by `inf/aero_virtio_snd.inf`.
+    as encoded by `inf/aero_virtio_snd.inf`.
 2. **QEMU compatibility (optional):** opt-in package for stock QEMU defaults as encoded by
-    `inf/aero-virtio-snd-legacy.inf`.
+     `inf/aero-virtio-snd-legacy.inf`.
+3. **Legacy I/O-port bring-up (optional):** a separate legacy/transitional virtio-pci **I/O-port** driver package
+   (INTx-only) as encoded by `inf/aero-virtio-snd-ioport.inf` and built by `virtio-snd-ioport-legacy.vcxproj`.
 
-The two INFs intentionally have **no overlapping hardware IDs** so they do not compete for the same PCI function.
+The **contract v1** and **QEMU compatibility** INFs intentionally have **no overlapping hardware IDs** so they do not
+compete for the same PCI function.
+
+The legacy I/O-port bring-up package is intentionally not staged by CI/Guest Tools and is intended for debugging only.
+Do not install it alongside the QEMU compatibility package unless you explicitly want Windows to bind the I/O-port
+driver for `REV_00` devices.
 
 Both variants use the same **virtio-pci modern** transport path (PCI vendor-specific capabilities + BAR0 MMIO) with
 split-ring virtqueues. The optional QEMU package exists so QEMU bring-up can be done without weakening the default
 contract-v1 INF; it binds to the transitional virtio-snd PCI HWID (`PCI\VEN_1AF4&DEV_1018`).
 
 Note: the repository also contains older legacy/transitional virtio-pci **I/O-port** bring-up code (for example
-`src/backend_virtio_legacy.c`) for historical bring-up and ad-hoc compatibility testing only. It is not
-built/shipped and is not part of the `AERO-W7-VIRTIO` contract. This path only negotiates the low 32 bits of virtio
-feature flags and is not suitable for contract v1 devices (`VIRTIO_F_VERSION_1` is bit 32).
+`src/backend_virtio_legacy.c`) for historical bring-up and ad-hoc compatibility testing only. It is not part of the
+`AERO-W7-VIRTIO` contract. This path only negotiates the low 32 bits of virtio feature flags and is not suitable for
+contract v1 devices (`VIRTIO_F_VERSION_1` is bit 32).
 
 ## Code organization
 
