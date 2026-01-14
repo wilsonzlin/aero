@@ -451,6 +451,7 @@ fn aerogpu_submission_bridge_drains_cmd_streams_with_zero_fence() {
     assert_eq!(sub.signal_fence, 0);
     assert_eq!(sub.context_id, 0);
     assert_eq!(sub.engine_id, ring::AEROGPU_ENGINE_0);
+    assert_eq!(sub.flags, 0);
     assert_eq!(sub.cmd_stream, vec![0xAA, 0xBB, 0xCC, 0xDD]);
     assert_eq!(sub.alloc_table, None);
 }
