@@ -2593,17 +2593,37 @@ static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
 
     const int32_t x = (int32_t)qc.x;
     const int32_t y = (int32_t)qc.y;
-    wprintf(L"Cursor: enable=%lu pos=(%ld,%ld) hot=(%lu,%lu) size=%lux%lu format=%S pitch=%lu fb_gpa=0x%I64x\n",
-            (unsigned long)qc.enable,
-            (long)x,
-            (long)y,
-            (unsigned long)qc.hot_x,
-            (unsigned long)qc.hot_y,
-            (unsigned long)qc.width,
-            (unsigned long)qc.height,
-            AerogpuFormatName(qc.format),
-            (unsigned long)qc.pitch_bytes,
-            (unsigned long long)qc.fb_gpa);
+    const bool flagsValid = (qc.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAGS_VALID) != 0;
+    const bool postDisplayReleased =
+        flagsValid && ((qc.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAG_POST_DISPLAY_OWNERSHIP_RELEASED) != 0);
+
+    if (flagsValid) {
+      wprintf(L"Cursor: enable=%lu pos=(%ld,%ld) hot=(%lu,%lu) size=%lux%lu format=%S pitch=%lu fb_gpa=0x%I64x flags=0x%08lx%s\n",
+              (unsigned long)qc.enable,
+              (long)x,
+              (long)y,
+              (unsigned long)qc.hot_x,
+              (unsigned long)qc.hot_y,
+              (unsigned long)qc.width,
+              (unsigned long)qc.height,
+              AerogpuFormatName(qc.format),
+              (unsigned long)qc.pitch_bytes,
+              (unsigned long long)qc.fb_gpa,
+              (unsigned long)qc.flags,
+              postDisplayReleased ? L" (post_display_ownership_released)" : L"");
+    } else {
+      wprintf(L"Cursor: enable=%lu pos=(%ld,%ld) hot=(%lu,%lu) size=%lux%lu format=%S pitch=%lu fb_gpa=0x%I64x\n",
+              (unsigned long)qc.enable,
+              (long)x,
+              (long)y,
+              (unsigned long)qc.hot_x,
+              (unsigned long)qc.hot_y,
+              (unsigned long)qc.width,
+              (unsigned long)qc.height,
+              AerogpuFormatName(qc.format),
+              (unsigned long)qc.pitch_bytes,
+              (unsigned long long)qc.fb_gpa);
+    }
   };
 
   const auto DumpVblankSnapshot = [&]() {
@@ -5339,6 +5359,8 @@ static int DoDumpScanoutBmp(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint3
   const uint32_t flags = q.base.reserved0;
   const bool flagsValid = (flags & AEROGPU_DBGCTL_QUERY_SCANOUT_FLAGS_VALID) != 0;
   const bool cachedFbGpaValid = (flags & AEROGPU_DBGCTL_QUERY_SCANOUT_FLAG_CACHED_FB_GPA_VALID) != 0;
+  const bool postDisplayReleased =
+      flagsValid && ((flags & AEROGPU_DBGCTL_QUERY_SCANOUT_FLAG_POST_DISPLAY_OWNERSHIP_RELEASED) != 0);
   const bool canUseCachedFbGpa =
       flagsValid ? cachedFbGpaValid : (q.base.hdr.size >= sizeof(aerogpu_escape_query_scanout_out_v2));
   if (mmioFbGpa == 0 && canUseCachedFbGpa && q.cached_fb_gpa != 0) {
@@ -5354,6 +5376,9 @@ static int DoDumpScanoutBmp(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint3
              (unsigned long)width,
              (unsigned long)height,
              (unsigned long)pitchBytes);
+    if (postDisplayReleased) {
+      fwprintf(stderr, L"Note: post_display_ownership_released=1 (scanout gated off); scanout regs may be cleared during transitions.\n");
+    }
     fwprintf(stderr, L"Hint: run --query-scanout to inspect cached vs MMIO values.\n");
     return 2;
   }
@@ -5361,6 +5386,9 @@ static int DoDumpScanoutBmp(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint3
   if (fbGpa == 0) {
     fwprintf(stderr, L"Scanout%lu: framebuffer GPA is 0 (both mmio_fb_gpa and cached_fb_gpa are 0); cannot dump.\n",
              (unsigned long)q.base.vidpn_source_id);
+    if (postDisplayReleased) {
+      fwprintf(stderr, L"Note: post_display_ownership_released=1 (scanout gated off); the KMD may clear MMIO FB GPA to stop DMA.\n");
+    }
     fwprintf(stderr, L"Hint: ensure the installed KMD supports scanout registers (and AEROGPU_ESCAPE_OP_QUERY_SCANOUT).\n");
     return 2;
   }
@@ -5416,6 +5444,8 @@ static int DoDumpScanoutPng(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint3
   const uint32_t flags = q.base.reserved0;
   const bool flagsValid = (flags & AEROGPU_DBGCTL_QUERY_SCANOUT_FLAGS_VALID) != 0;
   const bool cachedFbGpaValid = (flags & AEROGPU_DBGCTL_QUERY_SCANOUT_FLAG_CACHED_FB_GPA_VALID) != 0;
+  const bool postDisplayReleased =
+      flagsValid && ((flags & AEROGPU_DBGCTL_QUERY_SCANOUT_FLAG_POST_DISPLAY_OWNERSHIP_RELEASED) != 0);
   const bool canUseCachedFbGpa =
       flagsValid ? cachedFbGpaValid : (q.base.hdr.size >= sizeof(aerogpu_escape_query_scanout_out_v2));
   if (mmioFbGpa == 0 && canUseCachedFbGpa && q.cached_fb_gpa != 0) {
@@ -5431,6 +5461,9 @@ static int DoDumpScanoutPng(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint3
              (unsigned long)width,
              (unsigned long)height,
              (unsigned long)pitchBytes);
+    if (postDisplayReleased) {
+      fwprintf(stderr, L"Note: post_display_ownership_released=1 (scanout gated off); scanout regs may be cleared during transitions.\n");
+    }
     fwprintf(stderr, L"Hint: run --query-scanout to inspect cached vs MMIO values.\n");
     return 2;
   }
@@ -5438,6 +5471,9 @@ static int DoDumpScanoutPng(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint3
   if (fbGpa == 0) {
     fwprintf(stderr, L"Scanout%lu: framebuffer GPA is 0 (both mmio_fb_gpa and cached_fb_gpa are 0); cannot dump.\n",
              (unsigned long)q.base.vidpn_source_id);
+    if (postDisplayReleased) {
+      fwprintf(stderr, L"Note: post_display_ownership_released=1 (scanout gated off); the KMD may clear MMIO FB GPA to stop DMA.\n");
+    }
     fwprintf(stderr, L"Hint: ensure the installed KMD supports scanout registers (and AEROGPU_ESCAPE_OP_QUERY_SCANOUT).\n");
     return 2;
   }
@@ -5473,14 +5509,18 @@ static int DoDumpCursorBmp(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, const 
     return 2;
   }
 
+  const bool flagsValid = (q.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAGS_VALID) != 0;
   bool supported = true;
-  if ((q.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAGS_VALID) != 0) {
+  if (flagsValid) {
     supported = (q.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAG_CURSOR_SUPPORTED) != 0;
   }
   if (!supported) {
     wprintf(L"Cursor: (not supported)\n");
     return 2;
   }
+
+  const bool postDisplayReleased =
+      flagsValid && ((q.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAG_POST_DISPLAY_OWNERSHIP_RELEASED) != 0);
 
   const uint32_t width = (uint32_t)q.width;
   const uint32_t height = (uint32_t)q.height;
@@ -5493,12 +5533,18 @@ static int DoDumpCursorBmp(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, const 
              (unsigned long)width,
              (unsigned long)height,
              (unsigned long)pitchBytes);
+    if (postDisplayReleased) {
+      fwprintf(stderr, L"Note: post_display_ownership_released=1 (cursor gated off); cursor regs may be cleared during transitions.\n");
+    }
     fwprintf(stderr, L"Hint: run --query-cursor to inspect cursor MMIO state.\n");
     return 2;
   }
 
   if (fbGpa == 0) {
     fwprintf(stderr, L"Cursor: framebuffer GPA is 0; cannot dump cursor.\n");
+    if (postDisplayReleased) {
+      fwprintf(stderr, L"Note: post_display_ownership_released=1 (cursor gated off); the KMD may clear cursor FB GPA to stop DMA.\n");
+    }
     fwprintf(stderr, L"Hint: run --query-cursor to inspect cursor MMIO state.\n");
     return 2;
   }
@@ -5529,14 +5575,18 @@ static int DoDumpCursorPng(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, const 
     return 2;
   }
 
+  const bool flagsValid = (q.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAGS_VALID) != 0;
   bool supported = true;
-  if ((q.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAGS_VALID) != 0) {
+  if (flagsValid) {
     supported = (q.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAG_CURSOR_SUPPORTED) != 0;
   }
   if (!supported) {
     wprintf(L"Cursor: (not supported)\n");
     return 2;
   }
+
+  const bool postDisplayReleased =
+      flagsValid && ((q.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAG_POST_DISPLAY_OWNERSHIP_RELEASED) != 0);
 
   const uint32_t width = (uint32_t)q.width;
   const uint32_t height = (uint32_t)q.height;
@@ -5549,12 +5599,18 @@ static int DoDumpCursorPng(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, const 
              (unsigned long)width,
              (unsigned long)height,
              (unsigned long)pitchBytes);
+    if (postDisplayReleased) {
+      fwprintf(stderr, L"Note: post_display_ownership_released=1 (cursor gated off); cursor regs may be cleared during transitions.\n");
+    }
     fwprintf(stderr, L"Hint: run --query-cursor to inspect cursor MMIO state.\n");
     return 2;
   }
 
   if (fbGpa == 0) {
     fwprintf(stderr, L"Cursor: framebuffer GPA is 0; cannot dump cursor.\n");
+    if (postDisplayReleased) {
+      fwprintf(stderr, L"Note: post_display_ownership_released=1 (cursor gated off); the KMD may clear cursor FB GPA to stop DMA.\n");
+    }
     fwprintf(stderr, L"Hint: run --query-cursor to inspect cursor MMIO state.\n");
     return 2;
   }
