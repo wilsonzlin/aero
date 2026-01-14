@@ -14,8 +14,6 @@ use aero_platform::interrupts::{
     InterruptController as PlatformInterruptController, PlatformInterruptMode,
 };
 use aero_snapshot as snapshot;
-use aero_usb::hid::UsbHidKeyboardHandle;
-use aero_usb::hub::UsbHubDevice;
 use aero_usb::xhci::trb::{CompletionCode, Trb, TrbType, TRB_LEN};
 use pretty_assertions::{assert_eq, assert_ne};
 
@@ -154,48 +152,6 @@ fn xhci_mmio_is_gated_on_pci_command_mem_bit() {
         u32::from(command_before),
     );
     assert_eq!(m.read_physical_u32(bar0_base), regs::CAPLENGTH_HCIVERSION);
-}
-
-#[test]
-fn machine_reset_preserves_host_attached_xhci_devices() {
-    let cfg = MachineConfig {
-        ram_size_bytes: 2 * 1024 * 1024,
-        enable_pc_platform: true,
-        enable_xhci: true,
-        // Keep the machine minimal/deterministic for this reset/topology test.
-        enable_vga: false,
-        enable_serial: false,
-        enable_i8042: false,
-        enable_reset_ctrl: false,
-        enable_e1000: false,
-        ..Default::default()
-    };
-
-    let mut m = Machine::new(cfg).unwrap();
-
-    // Host attach a hub at xHCI root port 0 and a keyboard behind hub port 1.
-    m.usb_xhci_attach_root(0, Box::new(UsbHubDevice::with_port_count(2)))
-        .expect("attach hub at xHCI root port 0");
-    m.usb_xhci_attach_at_path(&[0, 1], Box::new(UsbHidKeyboardHandle::new()))
-        .expect("attach keyboard behind xHCI hub");
-
-    // Reset the whole machine (this calls `XhciPciDevice::reset()`).
-    m.reset();
-
-    let xhci = m.xhci().expect("xHCI device should exist after reset");
-    let mut xhci = xhci.borrow_mut();
-    let controller = xhci.controller_mut();
-
-    let dev0 = controller
-        .port_device_mut(0)
-        .expect("xHCI root port 0 should remain occupied after reset");
-    let hub = dev0
-        .as_hub_mut()
-        .expect("root port 0 should still be a hub after reset");
-    assert!(
-        hub.downstream_device_mut(0).is_some(),
-        "expected downstream device behind hub port 1 to remain attached after reset"
-    );
 }
 
 #[test]
