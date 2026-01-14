@@ -376,7 +376,6 @@ static bool ValidateTexture2DRowSpan(uint32_t aerogpu_format,
 }
 
 struct AeroGpuDevice;
-static bool ValidateWddmTexturePitch(const AeroGpuDevice* dev, const struct AeroGpuResource* res, uint32_t wddm_pitch);
 
 struct AeroGpuAdapter {
   const D3D10DDI_ADAPTERCALLBACKS* callbacks = nullptr;
@@ -659,33 +658,6 @@ struct AeroGpuResource {
   uint32_t mapped_wddm_pitch = 0;
   uint32_t mapped_wddm_slice_pitch = 0;
 };
-
-// Some WDK/runtime combinations omit `D3DDDICB_LOCK::Pitch` or report it as 0 for
-// non-surface allocations. When a non-zero pitch is reported, validate only that
-// it is large enough to contain a texel row for the resource's mip0.
-[[maybe_unused]] static bool ValidateWddmTexturePitch(const AeroGpuDevice* dev, const AeroGpuResource* res, uint32_t wddm_pitch) {
-  if (!res || res->kind != ResourceKind::Texture2D) {
-    return true;
-  }
-  // Some WDK/runtime combinations omit Pitch or return 0 for non-surface allocations.
-  // Only validate when the runtime provides a non-zero pitch.
-  if (wddm_pitch == 0) {
-    return true;
-  }
-  if (!dev || res->width == 0) {
-    return false;
-  }
-
-  const uint32_t aer_fmt = aerogpu::d3d10_11::dxgi_format_to_aerogpu_compat(dev, res->dxgi_format);
-  if (aer_fmt == AEROGPU_FORMAT_INVALID) {
-    return false;
-  }
-  const uint32_t min_row_bytes = aerogpu_texture_min_row_pitch_bytes(aer_fmt, res->width);
-  if (min_row_bytes == 0) {
-    return false;
-  }
-  return wddm_pitch >= min_row_bytes;
-}
 
 struct AeroGpuShader {
   aerogpu_handle_t handle = 0;

@@ -1119,6 +1119,36 @@ enum class ResourceKind : uint32_t {
   Texture2D = 2,
 };
 
+// Some WDK/runtime combinations omit `D3DDDICB_LOCK::Pitch` or report it as 0 for
+// non-surface allocations. When a non-zero pitch is reported, validate only that
+// it is large enough to contain a texel row for the resource's mip0.
+template <typename DeviceT, typename ResourceT>
+inline bool ValidateWddmTexturePitch(const DeviceT* dev, const ResourceT* res, uint32_t wddm_pitch) {
+  if (!res) {
+    return true;
+  }
+  if (static_cast<uint32_t>(res->kind) != static_cast<uint32_t>(ResourceKind::Texture2D)) {
+    return true;
+  }
+  // Only validate when the runtime provides a non-zero pitch.
+  if (wddm_pitch == 0) {
+    return true;
+  }
+  if (!dev || res->width == 0) {
+    return false;
+  }
+
+  const uint32_t aer_fmt = dxgi_format_to_aerogpu_compat(dev, res->dxgi_format);
+  if (aer_fmt == AEROGPU_FORMAT_INVALID) {
+    return false;
+  }
+  const uint32_t min_row_bytes = aerogpu_texture_min_row_pitch_bytes(aer_fmt, res->width);
+  if (min_row_bytes == 0) {
+    return false;
+  }
+  return wddm_pitch >= min_row_bytes;
+}
+
 struct Texture2DSubresourceLayout {
   uint32_t mip_level = 0;
   uint32_t array_layer = 0;

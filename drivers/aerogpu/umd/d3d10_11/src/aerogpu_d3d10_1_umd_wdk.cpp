@@ -171,6 +171,7 @@ using aerogpu::d3d10_11::InitLockArgsForMap;
 using aerogpu::d3d10_11::InitUnlockArgsForMap;
 using aerogpu::d3d10_11::UintPtrToD3dHandle;
 using aerogpu::d3d10_11::TrackStagingWriteLocked;
+using aerogpu::d3d10_11::ValidateWddmTexturePitch;
 
 using AerogpuTextureFormatLayout = aerogpu::d3d10_11::AerogpuTextureFormatLayout;
 using aerogpu::d3d10_11::aerogpu_texture_format_layout;
@@ -1024,10 +1025,6 @@ static void InitUnlockForWrite(D3DDDICB_UNLOCK* unlock) {
   __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) { unlock->SubresourceIndex = 0; }
   __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) { unlock->SubResourceIndex = 0; }
 }
-
-// Declared later alongside Map/Unmap helpers, but also needed for LockCb-backed
-// texture upload paths.
-static bool ValidateWddmTexturePitch(const AeroGpuDevice* dev, const AeroGpuResource* res, uint32_t wddm_pitch);
 
 void emit_upload_resource_locked(AeroGpuDevice* dev,
                                  const AeroGpuResource* res,
@@ -3866,30 +3863,6 @@ using aerogpu::d3d10_11::kD3DMapReadWrite;
 using aerogpu::d3d10_11::kD3DMapWriteDiscard;
 using aerogpu::d3d10_11::kD3DMapWriteNoOverwrite;
 // D3D10_MAP_FLAG_DO_NOT_WAIT (numeric value from d3d10.h / d3d10_1.h).
-
-static bool ValidateWddmTexturePitch(const AeroGpuDevice* dev, const AeroGpuResource* res, uint32_t wddm_pitch) {
-  if (!res || res->kind != ResourceKind::Texture2D) {
-    return true;
-  }
-  // Some WDK/runtime combinations omit Pitch or report 0 for non-surface allocations.
-  // Only validate when the runtime provides a non-zero pitch.
-  if (wddm_pitch == 0) {
-    return true;
-  }
-  if (!dev || res->width == 0) {
-    return false;
-  }
-
-  const uint32_t aer_fmt = aerogpu::d3d10_11::dxgi_format_to_aerogpu_compat(dev, res->dxgi_format);
-  if (aer_fmt == AEROGPU_FORMAT_INVALID) {
-    return false;
-  }
-  const uint32_t min_row_bytes = aerogpu_texture_min_row_pitch_bytes(aer_fmt, res->width);
-  if (min_row_bytes == 0) {
-    return false;
-  }
-  return wddm_pitch >= min_row_bytes;
-}
 
 HRESULT sync_read_map_locked(AeroGpuDevice* dev, const AeroGpuResource* res, uint32_t map_type, uint32_t map_flags) {
   if (!dev || !res) {
