@@ -147,6 +147,29 @@ static std::string DecI64(int64_t v) {
   return std::string(buf);
 }
 
+static uint32_t ComputeRingPending(uint32_t head, uint32_t tail, uint32_t entryCount) {
+  if (entryCount == 0) {
+    return 0;
+  }
+
+  // Prefer wrap-safe u32 subtraction for v1 AGPU rings (monotonic head/tail).
+  // Fall back to legacy entry_count wrapping when head/tail look like masked indices.
+  uint32_t pending = tail - head;
+  if (pending > entryCount) {
+    if (head < entryCount && tail < entryCount && tail < head) {
+      const uint32_t wrapped = (uint32_t)((uint64_t)tail + (uint64_t)entryCount - (uint64_t)head);
+      if (wrapped <= entryCount) {
+        pending = wrapped;
+      }
+    }
+    if (pending > entryCount) {
+      pending = entryCount;
+    }
+  }
+
+  return pending;
+}
+
 static std::string BytesToHex(const void *data, size_t len, bool withPrefix = true) {
   const uint8_t *p = (const uint8_t *)data;
   std::string out;
@@ -2152,19 +2175,7 @@ static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
     const uint64_t completed = (uint64_t)qp.last_completed_fence;
     const uint64_t pendingFences = (submitted >= completed) ? (submitted - completed) : 0;
 
-    uint32_t ringPending = 0;
-    if (qp.ring0_entry_count != 0) {
-      const uint32_t head = qp.ring0_head;
-      const uint32_t tail = qp.ring0_tail;
-      if (tail >= head) {
-        ringPending = tail - head;
-      } else {
-        ringPending = tail + qp.ring0_entry_count - head;
-      }
-      if (ringPending > qp.ring0_entry_count) {
-        ringPending = qp.ring0_entry_count;
-      }
-    }
+    const uint32_t ringPending = ComputeRingPending(qp.ring0_head, qp.ring0_tail, qp.ring0_entry_count);
 
     wprintf(L"Perf counters (snapshot):\n");
     wprintf(L"  fences: submitted=0x%I64x completed=0x%I64x pending=%I64u\n",
@@ -2978,19 +2989,7 @@ static int DoStatusJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, std::stri
     const uint64_t completed = (uint64_t)qp.last_completed_fence;
     const uint64_t pendingFences = (submitted >= completed) ? (submitted - completed) : 0;
 
-    uint32_t ringPending = 0;
-    if (qp.ring0_entry_count != 0) {
-      const uint32_t head = qp.ring0_head;
-      const uint32_t tail = qp.ring0_tail;
-      if (tail >= head) {
-        ringPending = tail - head;
-      } else {
-        ringPending = tail + qp.ring0_entry_count - head;
-      }
-      if (ringPending > qp.ring0_entry_count) {
-        ringPending = qp.ring0_entry_count;
-      }
-    }
+    const uint32_t ringPending = ComputeRingPending(qp.ring0_head, qp.ring0_tail, qp.ring0_entry_count);
 
     w.Key("fences");
     w.BeginObject();
@@ -3909,19 +3908,7 @@ static int DoQueryPerf(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
   const uint64_t completed = (uint64_t)q.last_completed_fence;
   const uint64_t pendingFences = (submitted >= completed) ? (submitted - completed) : 0;
 
-  uint32_t ringPending = 0;
-  if (q.ring0_entry_count != 0) {
-    const uint32_t head = q.ring0_head;
-    const uint32_t tail = q.ring0_tail;
-    if (tail >= head) {
-      ringPending = tail - head;
-    } else {
-      ringPending = tail + q.ring0_entry_count - head;
-    }
-    if (ringPending > q.ring0_entry_count) {
-      ringPending = q.ring0_entry_count;
-    }
-  }
+  const uint32_t ringPending = ComputeRingPending(q.ring0_head, q.ring0_tail, q.ring0_entry_count);
 
   bool haveError = false;
   aerogpu_escape_query_error_out qe;
@@ -8160,19 +8147,7 @@ static int DoQueryPerfJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, std::s
   const uint64_t completed = (uint64_t)q.last_completed_fence;
   const uint64_t pendingFences = (submitted >= completed) ? (submitted - completed) : 0;
 
-  uint32_t ringPending = 0;
-  if (q.ring0_entry_count != 0) {
-    const uint32_t head = q.ring0_head;
-    const uint32_t tail = q.ring0_tail;
-    if (tail >= head) {
-      ringPending = tail - head;
-    } else {
-      ringPending = tail + q.ring0_entry_count - head;
-    }
-    if (ringPending > q.ring0_entry_count) {
-      ringPending = q.ring0_entry_count;
-    }
-  }
+  const uint32_t ringPending = ComputeRingPending(q.ring0_head, q.ring0_tail, q.ring0_entry_count);
 
   JsonWriter w(out);
   w.BeginObject();
