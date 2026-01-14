@@ -1131,7 +1131,7 @@ impl AeroGpuMmioDevice {
 
         // Claim the WDDM scanout once we observe `SCANOUT0_ENABLE=1` with a valid configuration,
         // even if `SCANOUT0_ENABLE` was already 1 (Win7 KMD init sequence). Ownership is held until
-        // the VM resets.
+        // reset (i.e. legacy VGA/VBE cannot steal scanout back even if WDDM disables scanout).
         self.wddm_scanout_active = true;
 
         // Mark dirty so scanout consumers see the transition immediately.
@@ -1327,6 +1327,9 @@ impl AeroGpuMmioDevice {
         self.next_vblank_ns = snap.next_vblank_ns;
 
         self.wddm_scanout_active = snap.wddm_scanout_active;
+        // Note: `wddm_scanout_active` is a sticky latch. It may remain set even when
+        // `SCANOUT0_ENABLE=0` (visibility toggle), so snapshot restore must not clear it based on
+        // the enable bit.
 
         self.cursor_enable = snap.cursor_enable != 0;
         self.cursor_x = snap.cursor_x as i32;
@@ -2166,8 +2169,8 @@ impl AeroGpuMmioDevice {
                 // scanout.
                 //
                 // The Win7 AeroGPU KMD uses `SCANOUT0_ENABLE` as a visibility toggle. Clearing it
-                // disables scanout (stopping vblank pacing), but does not release WDDM ownership
-                // back to legacy VGA/VBE until VM reset.
+                // disables scanout (blanking presentation + stopping vblank pacing), but does not
+                // release WDDM ownership back to legacy VGA/VBE until reset.
                 if self.scanout0_enable && !new_enable {
                     // Disabling scanout stops vblank scheduling, drops any pending vblank IRQ, and
                     // flushes any vsync-paced fences.
@@ -3772,6 +3775,9 @@ impl IoSnapshot for AeroGpuMmioDevice {
         self.vblank_interval_ns = vblank_interval_ns;
         self.next_vblank_ns = next_vblank_ns;
         self.wddm_scanout_active = wddm_scanout_active;
+        // Note: `wddm_scanout_active` is a sticky latch. It may remain set even when
+        // `SCANOUT0_ENABLE=0` (visibility toggle), so snapshot restore must not clear it based on
+        // the enable bit.
         #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
         {
             self.scanout0_dirty = scanout0_dirty;

@@ -5687,11 +5687,13 @@ impl Machine {
     ///
     /// Policy summary:
     /// - Before the guest claims the AeroGPU WDDM scanout, legacy VGA/VBE output is presented.
-    /// - Once the guest claims AeroGPU WDDM scanout (writes a valid `SCANOUT0_*` config and
-    ///   enables it), WDDM owns scanout and legacy VGA/VBE is ignored by presentation even if
-    ///   legacy MMIO/PIO continues to accept writes for compatibility.
-    /// - Clearing `SCANOUT0_ENABLE` explicitly disables scanout (blanking), but WDDM ownership
-    ///   remains sticky (legacy output remains suppressed until reset).
+    /// - Once the guest claims WDDM scanout (writes a valid `SCANOUT0_*` config and enables it),
+    ///   WDDM owns scanout until reset.
+    ///   While WDDM owns scanout, legacy VGA/VBE is ignored by presentation even if legacy MMIO/PIO
+    ///   continues to accept writes for compatibility.
+    /// - Clearing `SCANOUT0_ENABLE` disables scanout (blanking), but does not release WDDM
+    ///   ownership; the host presents a blank frame (0x0 resolution) rather than falling back to
+    ///   legacy.
     /// - Device/VM reset reverts scanout ownership back to legacy.
     pub fn active_scanout_source(&self) -> ScanoutSource {
         if let Some(aerogpu_mmio) = &self.aerogpu_mmio {
@@ -6104,14 +6106,17 @@ impl Machine {
             (dev.scanout0_state(), dev.cursor_snapshot())
         };
 
-        // WDDM scanout is active once the device has claimed WDDM ownership. After claim, legacy
-        // VGA/VBE sources must not steal scanout back until VM reset.
         if !state.wddm_scanout_active {
             return false;
         }
+
+        // Once WDDM scanout has been claimed, do not fall back to the BIOS VBE/text paths until
+        // reset.
+        //
+        // The Win7 AeroGPU driver uses `SCANOUT0_ENABLE` as a visibility toggle
+        // (`DxgkDdiSetVidPnSourceVisibility`). When disabled, render a blank frame but keep the
+        // WDDM ownership latch held so legacy VGA/VBE cannot steal scanout back.
         if !state.enable {
-            // `SCANOUT0_ENABLE=0` is treated as a visibility toggle: blank output but do not fall
-            // back to legacy presentation paths.
             self.display_fb.clear();
             self.display_width = 0;
             self.display_height = 0;

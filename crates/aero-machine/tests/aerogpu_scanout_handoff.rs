@@ -260,8 +260,9 @@ fn aerogpu_scanout_handoff_to_wddm_blocks_legacy_int10_steal() {
     assert_eq!(m.display_resolution(), (width, height));
     assert_eq!(m.display_framebuffer()[0], 0xFFAA_BBCC);
 
-    // Once WDDM has claimed scanout, legacy VGA/VBE sources are ignored until VM reset. Disabling
-    // scanout (`SCANOUT0_ENABLE=0`) blanks output but does not release WDDM ownership.
+    // Once WDDM has claimed scanout, legacy VGA/VBE sources are ignored until reset. Disabling
+    // scanout (`SCANOUT0_ENABLE=0`) acts as a visibility toggle: the machine presents a blank frame
+    // while WDDM ownership remains sticky.
     m.write_physical_u32(
         bar0_base + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE),
         0,
@@ -272,8 +273,7 @@ fn aerogpu_scanout_handoff_to_wddm_blocks_legacy_int10_steal() {
     assert_eq!(m.display_resolution(), (0, 0));
     assert!(m.display_framebuffer().is_empty());
 
-    // Legacy text memory changes must remain suppressed while WDDM owns scanout, even when scanout
-    // is explicitly disabled (visibility toggle).
+    // Legacy text memory changes must remain hidden while WDDM owns scanout.
     m.write_physical(0xB8000, &vec![0u8; 0x8000]);
     m.write_physical_u16(BDA_VIDEO_PAGE_OFFSET_ADDR, 0);
     m.write_physical_u16(BDA_CURSOR_SHAPE_ADDR, 0x2000);
@@ -284,7 +284,7 @@ fn aerogpu_scanout_handoff_to_wddm_blocks_legacy_int10_steal() {
     assert_eq!(m.display_resolution(), (0, 0));
     assert!(m.display_framebuffer().is_empty());
 
-    // Reset releases WDDM scanout ownership and reverts to legacy.
+    // Reset returns scanout ownership to legacy.
     m.reset();
     m.write_physical(0xB8000, &vec![0u8; 0x8000]);
     m.write_physical_u16(BDA_VIDEO_PAGE_OFFSET_ADDR, 0);
