@@ -50,7 +50,6 @@ export interface AeroConfig {
    */
   l2TunnelTokenTransport?: L2TunnelTokenTransport;
   activeDiskImage: string | null;
-  vmRuntime?: "legacy" | "machine";
   logLevel: AeroLogLevel;
   uiScale?: number;
   /**
