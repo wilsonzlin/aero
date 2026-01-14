@@ -8,12 +8,11 @@ use aero_devices_storage::ahci::AhciController;
 #[cfg(not(target_arch = "wasm32"))]
 use aero_devices_storage::ata::AtaDrive;
 #[cfg(not(target_arch = "wasm32"))]
-use aero_storage::{DiskError as StorageDiskError, Result as StorageResult, VirtualDisk};
-#[cfg(not(target_arch = "wasm32"))]
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-#[cfg(not(target_arch = "wasm32"))]
 use aero_devices::irq::NoIrq;
 #[cfg(not(target_arch = "wasm32"))]
+use aero_storage::{MemBackend, RawDisk};
+#[cfg(not(target_arch = "wasm32"))]
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use memory::MemoryBus;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -166,49 +165,6 @@ impl DiskBackend for VecDisk {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-impl VirtualDisk for VecDisk {
-    fn capacity_bytes(&self) -> u64 {
-        self.data.len() as u64
-    }
-
-    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> StorageResult<()> {
-        let offset_usize: usize = offset.try_into().map_err(|_| StorageDiskError::OffsetOverflow)?;
-        let end = offset_usize
-            .checked_add(buf.len())
-            .ok_or(StorageDiskError::OffsetOverflow)?;
-        if end > self.data.len() {
-            return Err(StorageDiskError::OutOfBounds {
-                offset,
-                len: buf.len(),
-                capacity: self.data.len() as u64,
-            });
-        }
-        buf.copy_from_slice(&self.data[offset_usize..end]);
-        Ok(())
-    }
-
-    fn write_at(&mut self, offset: u64, buf: &[u8]) -> StorageResult<()> {
-        let offset_usize: usize = offset.try_into().map_err(|_| StorageDiskError::OffsetOverflow)?;
-        let end = offset_usize
-            .checked_add(buf.len())
-            .ok_or(StorageDiskError::OffsetOverflow)?;
-        if end > self.data.len() {
-            return Err(StorageDiskError::OutOfBounds {
-                offset,
-                len: buf.len(),
-                capacity: self.data.len() as u64,
-            });
-        }
-        self.data[offset_usize..end].copy_from_slice(buf);
-        Ok(())
-    }
-
-    fn flush(&mut self) -> StorageResult<()> {
-        Ok(())
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
 fn write_nvme_cmd(mem: &mut dyn MemoryBus, addr: u64, cmd: &[u8; 64]) {
     mem.write_physical(addr, cmd);
 }
@@ -304,52 +260,56 @@ fn bench_device_read_4k(c: &mut Criterion) {
     });
 
     group.bench_function("ahci_read_4k", |b| {
-        // Register offsets / bitfields match AHCI 1.3 (same values used by the device model).
-        const HBA_REG_GHC: u64 = 0x04;
-        const HBA_REG_IS: u64 = 0x08;
+        // Minimal AHCI register definitions (byte offsets) to avoid pulling in emulator constants.
+        const HBA_GHC: u64 = 0x04;
+        const HBA_IS: u64 = 0x08;
+        const HBA_PORTS_BASE: u64 = 0x100;
+        const HBA_PORT_STRIDE: u64 = 0x80;
 
-        const PORT_BASE: u64 = 0x100;
-        const PORT_REG_CLB: u64 = 0x00;
-        const PORT_REG_CLBU: u64 = 0x04;
-        const PORT_REG_FB: u64 = 0x08;
-        const PORT_REG_FBU: u64 = 0x0C;
-        const PORT_REG_IS: u64 = 0x10;
-        const PORT_REG_IE: u64 = 0x14;
-        const PORT_REG_CMD: u64 = 0x18;
-        const PORT_REG_CI: u64 = 0x38;
+        const PX_CLB: u64 = 0x00;
+        const PX_CLBU: u64 = 0x04;
+        const PX_FB: u64 = 0x08;
+        const PX_FBU: u64 = 0x0c;
+        const PX_IS: u64 = 0x10;
+        const PX_IE: u64 = 0x14;
+        const PX_CMD: u64 = 0x18;
+        const PX_CI: u64 = 0x38;
 
         const GHC_IE: u32 = 1 << 1;
         const GHC_AE: u32 = 1 << 31;
 
-        const PORT_IE_DHRE: u32 = 1 << 0;
-        const PORT_IS_DHRS: u32 = 1 << 0;
-        const PORT_CMD_ST: u32 = 1 << 0;
-        const PORT_CMD_SUD: u32 = 1 << 1;
-        const PORT_CMD_FRE: u32 = 1 << 4;
+        // PxIE/PxIS bits.
+        const PXIS_DHRS: u32 = 1 << 0;
+
+        // PxCMD bits.
+        const PXCMD_ST: u32 = 1 << 0;
+        const PXCMD_SUD: u32 = 1 << 1;
+        const PXCMD_FRE: u32 = 1 << 4;
 
         let mut mem = BenchMem::new(2 * 1024 * 1024);
-        let mut disk = VecDisk::new(16 * 1024);
-        for (i, byte) in disk.data_mut().iter_mut().enumerate() {
+        let sectors = 16u64 * 1024;
+        let mut disk_bytes = vec![0u8; (sectors as usize) * aero_storage::SECTOR_SIZE];
+        for (i, byte) in disk_bytes.iter_mut().enumerate() {
             *byte = (i as u8).wrapping_mul(31);
         }
+        let disk = RawDisk::open(MemBackend::from_vec(disk_bytes)).unwrap();
 
-        let drive = AtaDrive::new(Box::new(disk)).expect("AtaDrive::new");
         let mut ahci = AhciController::new(Box::new(NoIrq), 1);
-        ahci.attach_drive(0, drive);
+        ahci.attach_drive(0, AtaDrive::new(Box::new(disk)).unwrap());
 
         let clb = 0x10_000u64;
         let fb = 0x11_000u64;
         let ctba = 0x12_000u64;
         let dst = 0x13_000u64;
 
-        let p0 = PORT_BASE;
-        ahci.write_u32(HBA_REG_GHC, GHC_AE | GHC_IE);
-        ahci.write_u32(p0 + PORT_REG_CLB, clb as u32);
-        ahci.write_u32(p0 + PORT_REG_CLBU, (clb >> 32) as u32);
-        ahci.write_u32(p0 + PORT_REG_FB, fb as u32);
-        ahci.write_u32(p0 + PORT_REG_FBU, (fb >> 32) as u32);
-        ahci.write_u32(p0 + PORT_REG_IE, PORT_IE_DHRE);
-        ahci.write_u32(p0 + PORT_REG_CMD, PORT_CMD_FRE | PORT_CMD_ST | PORT_CMD_SUD);
+        let port0 = HBA_PORTS_BASE + (0 * HBA_PORT_STRIDE);
+        ahci.write_u32(HBA_GHC, GHC_AE | GHC_IE);
+        ahci.write_u32(port0 + PX_CLB, clb as u32);
+        ahci.write_u32(port0 + PX_CLBU, (clb >> 32) as u32);
+        ahci.write_u32(port0 + PX_FB, fb as u32);
+        ahci.write_u32(port0 + PX_FBU, (fb >> 32) as u32);
+        ahci.write_u32(port0 + PX_IE, PXIS_DHRS);
+        ahci.write_u32(port0 + PX_CMD, PXCMD_FRE | PXCMD_ST | PXCMD_SUD);
 
         // Command header for slot 0 (CFIS len = 20 bytes = 5 dwords, PRDT len = 1).
         let dw0 = 5u32 | (1u32 << 16);
@@ -374,11 +334,10 @@ fn bench_device_read_4k(c: &mut Criterion) {
         mem.write_u32(ctba + 0x8c, dbc);
 
         b.iter(|| {
-            ahci.write_u32(p0 + PORT_REG_CI, 1);
+            ahci.write_u32(port0 + PX_CI, 1);
             ahci.process(&mut mem);
-            // Clear D2H Register FIS (DHRS) interrupt status for port 0 and the global IS bit.
-            ahci.write_u32(p0 + PORT_REG_IS, PORT_IS_DHRS);
-            ahci.write_u32(HBA_REG_IS, 1);
+            ahci.write_u32(port0 + PX_IS, PXIS_DHRS);
+            ahci.write_u32(HBA_IS, 1);
         });
     });
 
