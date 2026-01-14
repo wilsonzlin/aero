@@ -5,7 +5,7 @@ use aero_devices::pci::msi::PCI_CAP_ID_MSI;
 use aero_devices::pci::msix::PCI_CAP_ID_MSIX;
 use aero_devices::pci::profile::*;
 use aero_devices::usb::xhci::XhciPciDevice;
-use aero_devices::pci::{PciBarDefinition, PciBdf, PciInterruptPin};
+use aero_devices::pci::{MsiCapability, PciBarDefinition, PciBdf, PciInterruptPin};
 use aero_protocol::aerogpu::aerogpu_pci as protocol_pci;
 
 #[test]
@@ -305,6 +305,25 @@ fn ahci_config_space_exposes_msi_capability() {
         0,
         "AHCI MSI should advertise per-vector mask/pending registers"
     );
+}
+
+#[test]
+fn ahci_msi_registers_are_read_write_and_update_capability_state() {
+    let mut cfg = SATA_AHCI_ICH9.build_config_space();
+
+    let msi_off = cfg.find_capability(PCI_CAP_ID_MSI).unwrap() as u16;
+
+    // Program message address/data and enable bit.
+    cfg.write(msi_off + 0x04, 4, 0xfee0_0000);
+    cfg.write(msi_off + 0x08, 4, 0);
+    cfg.write(msi_off + 0x0c, 2, 0x0045);
+    let ctrl = cfg.read(msi_off + 0x02, 2) as u16;
+    cfg.write(msi_off + 0x02, 2, u32::from(ctrl | 0x0001));
+
+    let msi = cfg.capability::<MsiCapability>().expect("missing MSI capability");
+    assert!(msi.enabled());
+    assert_eq!(msi.message_address(), 0xfee0_0000);
+    assert_eq!(msi.message_data(), 0x0045);
 }
 
 #[test]
