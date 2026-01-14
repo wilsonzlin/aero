@@ -7687,6 +7687,10 @@ void APIENTRY Draw(D3D10DDI_HDEVICE hDevice, UINT vertexCount, UINT startVertex)
   }
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_draw>(AEROGPU_CMD_DRAW);
+  if (!cmd) {
+    SetError(hDevice, E_OUTOFMEMORY);
+    return;
+  }
   cmd->vertex_count = vertexCount;
   cmd->instance_count = 1;
   cmd->first_vertex = startVertex;
@@ -7728,6 +7732,10 @@ void APIENTRY DrawInstanced(D3D10DDI_HDEVICE hDevice,
   }
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_draw>(AEROGPU_CMD_DRAW);
+  if (!cmd) {
+    SetError(hDevice, E_OUTOFMEMORY);
+    return;
+  }
   cmd->vertex_count = vertexCountPerInstance;
   cmd->instance_count = instanceCount;
   cmd->first_vertex = startVertexLocation;
@@ -7748,6 +7756,10 @@ void APIENTRY DrawIndexed(D3D10DDI_HDEVICE hDevice, UINT indexCount, UINT startI
 
   TrackDrawStateLocked(dev);
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_draw_indexed>(AEROGPU_CMD_DRAW_INDEXED);
+  if (!cmd) {
+    SetError(hDevice, E_OUTOFMEMORY);
+    return;
+  }
   cmd->index_count = indexCount;
   cmd->instance_count = 1;
   cmd->first_index = startIndex;
@@ -7786,6 +7798,10 @@ void APIENTRY DrawIndexedInstanced(D3D10DDI_HDEVICE hDevice,
   std::lock_guard<std::mutex> lock(dev->mutex);
   TrackDrawStateLocked(dev);
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_draw_indexed>(AEROGPU_CMD_DRAW_INDEXED);
+  if (!cmd) {
+    SetError(hDevice, E_OUTOFMEMORY);
+    return;
+  }
   cmd->index_count = indexCountPerInstance;
   cmd->instance_count = instanceCount;
   cmd->first_index = startIndexLocation;
@@ -7810,6 +7826,10 @@ void APIENTRY DrawAuto(D3D10DDI_HDEVICE hDevice) {
   std::lock_guard<std::mutex> lock(dev->mutex);
   TrackDrawStateLocked(dev);
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_draw>(AEROGPU_CMD_DRAW);
+  if (!cmd) {
+    SetError(hDevice, E_OUTOFMEMORY);
+    return;
+  }
   cmd->vertex_count = 0;
   cmd->instance_count = 1;
   cmd->first_vertex = 0;
