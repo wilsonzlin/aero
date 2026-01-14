@@ -92,6 +92,9 @@ fn input_help_mentions_flags_and_steps() {
         .stdout(predicate::str::contains("usb_guest_controller"))
         .stdout(predicate::str::contains("webusb_passthrough_runtime"))
         .stdout(predicate::str::contains(
+            "src/usb/webhid_passthrough_runtime.test.ts",
+        ))
+        .stdout(predicate::str::contains(
             "src/usb/xhci_webusb_bridge.test.ts",
         ))
         .stdout(predicate::str::contains("xhci_webusb_passthrough_runtime"))
