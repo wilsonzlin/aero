@@ -397,7 +397,7 @@ Implementation notes (bring-up):
 - Shader-stage interop is supported: when exactly one stage is bound (VS-only or PS-only), the draw paths bind a
   fixed-function fallback shader for the missing stage at draw time (see `bind_draw_shaders_locked()`).
   - VS-only interop (PS is NULL) uses a stage0 fixed-function PS variant (validated by `d3d9_shader_stage_interop`).
-  - PS-only interop (VS is NULL) uses a fixed-function VS derived from the active FVF (limited to the bring-up subset).
+  - PS-only interop (VS is NULL) uses a fixed-function VS derived from the active FVF (validated by `d3d9ex_ps_only_triangle`).
 - For indexed draws in this mode, indices may be expanded into a temporary vertex stream (conservative but sufficient
   for bring-up).
 - Patch rendering (`DrawRectPatch` / `DrawTriPatch`) is supported for the bring-up subset of **cubic Bezier patches**:
@@ -411,7 +411,7 @@ Limitations (bring-up):
 - For `D3DFVF_XYZ*` fixed-function FVFs, the fixed-function VS applies the combined world/view/projection matrix (built
   from cached `SetTransform` state and uploaded into a reserved VS constant range by the UMD via
   `ensure_fixedfunc_wvp_constants_locked()`). Fixed-function lighting/material is still not implemented.
-  (Task doc: [`docs/graphics/win7-d3d9-fixedfunc-wvp.md`](../../../../docs/graphics/win7-d3d9-fixedfunc-wvp.md).)
+  (Implementation notes: [`docs/graphics/win7-d3d9-fixedfunc-wvp.md`](../../../../docs/graphics/win7-d3d9-fixedfunc-wvp.md).)
 - `TEX1` assumes a single set of 2D texture coordinates (`TEXCOORD0` as `float2`). Other `D3DFVF_TEXCOORDSIZE*` encodings and multiple texture coordinate sets are not implemented.
 - Stage0 texture stage state is **partially interpreted** to select among a small set of pixel shader variants (validated by
   `d3d9ex_fixedfunc_texture_stage_state`):
@@ -438,7 +438,7 @@ This subset is validated via:
   `d3d9ex_triangle`, `d3d9_mipmapped_texture_smoke`, `d3d9ex_fixedfunc_textured_triangle`,
   `d3d9ex_fixedfunc_texture_stage_state`, `d3d9_fixedfunc_xyz_diffuse`, `d3d9_fixedfunc_xyz_diffuse_tex1`,
   `d3d9_fixedfunc_textured_wvp`,
-  `d3d9_shader_stage_interop`,
+  `d3d9_shader_stage_interop`, `d3d9ex_ps_only_triangle`,
   `d3d9ex_texture_16bit_formats`, `d3d9_texture_16bit_sampling`, `d3d9_patch_sanity`, `d3d9_patch_rendering_smoke`,
   `d3d9_process_vertices_sanity`, `d3d9_process_vertices_smoke`,
   `d3d9ex_draw_indexed_primitive_up`, `d3d9ex_scissor_sanity`, `d3d9ex_query_latency`, `d3d9ex_event_query`,
