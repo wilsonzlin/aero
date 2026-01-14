@@ -105,10 +105,6 @@ pub struct AerogpuD3d9Executor {
 
     dummy_texture_view: wgpu::TextureView,
     dummy_cube_texture_view: wgpu::TextureView,
-    #[allow(dead_code)]
-    dummy_1d_texture_view: wgpu::TextureView,
-    #[allow(dead_code)]
-    dummy_3d_texture_view: wgpu::TextureView,
     downlevel_flags: wgpu::DownlevelFlags,
     bc_copy_to_buffer_supported: bool,
 
@@ -1385,82 +1381,6 @@ impl AerogpuD3d9Executor {
                 ..Default::default()
             });
 
-        let dummy_1d_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("aerogpu-d3d9.dummy_1d_texture"),
-            size: wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D1,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        queue.write_texture(
-            wgpu::ImageCopyTexture {
-                texture: &dummy_1d_texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            &[0xFF, 0xFF, 0xFF, 0xFF],
-            wgpu::ImageDataLayout {
-                offset: 0,
-                bytes_per_row: Some(4),
-                rows_per_image: Some(1),
-            },
-            wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-        );
-        let dummy_1d_texture_view = dummy_1d_texture.create_view(&wgpu::TextureViewDescriptor {
-            dimension: Some(wgpu::TextureViewDimension::D1),
-            ..Default::default()
-        });
-
-        let dummy_3d_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("aerogpu-d3d9.dummy_3d_texture"),
-            size: wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D3,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        queue.write_texture(
-            wgpu::ImageCopyTexture {
-                texture: &dummy_3d_texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            &[0xFF, 0xFF, 0xFF, 0xFF],
-            wgpu::ImageDataLayout {
-                offset: 0,
-                bytes_per_row: Some(4),
-                rows_per_image: Some(1),
-            },
-            wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-        );
-        let dummy_3d_texture_view = dummy_3d_texture.create_view(&wgpu::TextureViewDescriptor {
-            dimension: Some(wgpu::TextureViewDimension::D3),
-            ..Default::default()
-        });
-
         let bc_copy_to_buffer_supported = bc_copy_to_buffer_supported(&device, &queue);
 
         let constants_bind_group_layout = create_constants_bind_group_layout(&device);
@@ -1588,8 +1508,6 @@ impl AerogpuD3d9Executor {
             half_pixel_last_viewport_dims: None,
             dummy_texture_view,
             dummy_cube_texture_view,
-            dummy_1d_texture_view,
-            dummy_3d_texture_view,
             downlevel_flags,
             bc_copy_to_buffer_supported,
             constants_bind_group_layout,
@@ -2630,15 +2548,15 @@ impl AerogpuD3d9Executor {
 
         // Shader translation can surface sampler texture types via SM3 `dcl_*` declarations.
         //
-        // The executor currently only supports binding 2D/cube textures from the command stream,
-        // but it can still compile shaders that declare 1D/3D samplers by providing dummy textures
-        // of the correct view dimension.
-        for (&sampler, &ty) in &cached.sampler_texture_types {
+        // The executor currently only supports binding 2D/cube textures from the command stream.
+        for &sampler in &cached.used_samplers {
+            let ty = cached
+                .sampler_texture_types
+                .get(&sampler)
+                .copied()
+                .unwrap_or(TextureType::Texture2D);
             match ty {
-                TextureType::Texture1D
-                | TextureType::Texture2D
-                | TextureType::Texture3D
-                | TextureType::TextureCube => {}
+                TextureType::Texture2D | TextureType::TextureCube => {}
                 other => {
                     return Err(AerogpuD3d9Error::ShaderTranslation(format!(
                         "unsupported sampler texture type {other:?} (s{sampler})"
@@ -2667,8 +2585,6 @@ impl AerogpuD3d9Executor {
                     .unwrap_or(TextureType::Texture2D)
                 {
                     TextureType::TextureCube => 1,
-                    TextureType::Texture3D => 2,
-                    TextureType::Texture1D => 3,
                     _ => 0,
                 };
                 sampler_dim_key |= dim_code << (u32::from(s) * 2);
@@ -2723,12 +2639,14 @@ impl AerogpuD3d9Executor {
                     )
                     .map_err(|e| e.to_string())?;
 
-                    for (&sampler, &ty) in &translated.sampler_texture_types {
+                    for &sampler in &translated.used_samplers {
+                        let ty = translated
+                            .sampler_texture_types
+                            .get(&sampler)
+                            .copied()
+                            .unwrap_or(TextureType::Texture2D);
                         match ty {
-                            TextureType::Texture1D
-                            | TextureType::Texture2D
-                            | TextureType::Texture3D
-                            | TextureType::TextureCube => {}
+                            TextureType::Texture2D | TextureType::TextureCube => {}
                             other => {
                                 return Err(format!(
                                     "unsupported sampler texture type {other:?} (s{sampler})"
@@ -2758,8 +2676,6 @@ impl AerogpuD3d9Executor {
                                 .unwrap_or(TextureType::Texture2D)
                             {
                                 TextureType::TextureCube => 1,
-                                TextureType::Texture3D => 2,
-                                TextureType::Texture1D => 3,
                                 _ => 0,
                             };
                             sampler_dim_key |= dim_code << (u32::from(s) * 2);
