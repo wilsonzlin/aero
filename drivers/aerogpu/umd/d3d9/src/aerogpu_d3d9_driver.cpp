@@ -1479,12 +1479,30 @@ struct aerogpu_d3d9_ddi_thunk<Ret(__stdcall*)(Args...), Impl> {
   static_assert(std::is_same_v<impl_return_t, Ret>,
                 "D3D9 DDI entrypoint return type mismatch (write an explicit adapter instead of casting)");
 
-  static Ret __stdcall thunk(Args... args) {
-    if constexpr (std::is_same_v<Ret, void>) {
-      Impl(args...);
-      return;
-    } else {
-      return Impl(args...);
+  static Ret __stdcall thunk(Args... args) noexcept {
+    try {
+      if constexpr (std::is_same_v<Ret, void>) {
+        Impl(args...);
+        return;
+      } else {
+        return Impl(args...);
+      }
+    } catch (const std::bad_alloc&) {
+      if constexpr (std::is_same_v<Ret, HRESULT>) {
+        return E_OUTOFMEMORY;
+      } else if constexpr (std::is_same_v<Ret, void>) {
+        return;
+      } else {
+        return Ret{};
+      }
+    } catch (...) {
+      if constexpr (std::is_same_v<Ret, HRESULT>) {
+        return E_FAIL;
+      } else if constexpr (std::is_same_v<Ret, void>) {
+        return;
+      } else {
+        return Ret{};
+      }
     }
   }
 };
@@ -1495,12 +1513,30 @@ struct aerogpu_d3d9_ddi_thunk<Ret(*)(Args...), Impl> {
   static_assert(std::is_same_v<impl_return_t, Ret>,
                 "D3D9 DDI entrypoint return type mismatch (write an explicit adapter instead of casting)");
 
-  static Ret thunk(Args... args) {
-    if constexpr (std::is_same_v<Ret, void>) {
-      Impl(args...);
-      return;
-    } else {
-      return Impl(args...);
+  static Ret thunk(Args... args) noexcept {
+    try {
+      if constexpr (std::is_same_v<Ret, void>) {
+        Impl(args...);
+        return;
+      } else {
+        return Impl(args...);
+      }
+    } catch (const std::bad_alloc&) {
+      if constexpr (std::is_same_v<Ret, HRESULT>) {
+        return E_OUTOFMEMORY;
+      } else if constexpr (std::is_same_v<Ret, void>) {
+        return;
+      } else {
+        return Ret{};
+      }
+    } catch (...) {
+      if constexpr (std::is_same_v<Ret, HRESULT>) {
+        return E_FAIL;
+      } else if constexpr (std::is_same_v<Ret, void>) {
+        return;
+      } else {
+        return Ret{};
+      }
     }
   }
 };
@@ -26148,21 +26184,29 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   dev->alloc_list_tracker.rebind(reinterpret_cast<D3DDDI_ALLOCATIONLIST*>(dev->wddm_context.pAllocationList),
                                  dev->wddm_context.AllocationListSize,
                                  adapter->max_allocation_list_slot_id);
-
+ 
   std::memset(pDeviceFuncs, 0, sizeof(*pDeviceFuncs));
-
-  pDeviceFuncs->pfnDestroyDevice = device_destroy;
-  pDeviceFuncs->pfnCreateResource = device_create_resource;
+ 
+  // Assign entrypoints through compiler-checked thunks so signature mismatches
+  // are diagnosed at build time, and so C++ exceptions never escape into the
+  // runtime.
+  pDeviceFuncs->pfnDestroyDevice =
+      aerogpu_d3d9_ddi_thunk<decltype(pDeviceFuncs->pfnDestroyDevice), device_destroy>::thunk;
+  pDeviceFuncs->pfnCreateResource =
+      aerogpu_d3d9_ddi_thunk<decltype(pDeviceFuncs->pfnCreateResource), device_create_resource>::thunk;
   if constexpr (aerogpu_has_member_pfnOpenResource<D3D9DDI_DEVICEFUNCS>::value) {
-    pDeviceFuncs->pfnOpenResource = device_open_resource;
+    pDeviceFuncs->pfnOpenResource =
+        aerogpu_d3d9_ddi_thunk<decltype(pDeviceFuncs->pfnOpenResource), device_open_resource>::thunk;
   }
   if constexpr (aerogpu_has_member_pfnOpenResource2<D3D9DDI_DEVICEFUNCS>::value) {
-    pDeviceFuncs->pfnOpenResource2 = device_open_resource2;
+    pDeviceFuncs->pfnOpenResource2 =
+        aerogpu_d3d9_ddi_thunk<decltype(pDeviceFuncs->pfnOpenResource2), device_open_resource2>::thunk;
   }
-  pDeviceFuncs->pfnDestroyResource = device_destroy_resource;
-  pDeviceFuncs->pfnLock = device_lock;
-  pDeviceFuncs->pfnUnlock = device_unlock;
-
+  pDeviceFuncs->pfnDestroyResource =
+      aerogpu_d3d9_ddi_thunk<decltype(pDeviceFuncs->pfnDestroyResource), device_destroy_resource>::thunk;
+  pDeviceFuncs->pfnLock = aerogpu_d3d9_ddi_thunk<decltype(pDeviceFuncs->pfnLock), device_lock>::thunk;
+  pDeviceFuncs->pfnUnlock = aerogpu_d3d9_ddi_thunk<decltype(pDeviceFuncs->pfnUnlock), device_unlock>::thunk;
+ 
   // Assign the remaining entrypoints through type-safe thunks so the compiler
   // enforces the WDK function pointer signatures.
 #define AEROGPU_SET_D3D9DDI_FN(member, fn)                                                               \
