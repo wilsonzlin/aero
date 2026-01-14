@@ -851,6 +851,30 @@ if not exist "%SYS32%\wmic.exe" (
 
 set "KB_MISSING=0"
 
+rem Wrong system time can also break signature validation (cert validity windows, timestamping).
+rem Do a quick sanity check for obviously-wrong clocks without requiring locale-specific parsing.
+setlocal EnableDelayedExpansion
+set "LOCALDT="
+for /f "tokens=2 delims==" %%D in ('"%SYS32%\wmic.exe" os get LocalDateTime /value 2^>nul ^| find "="') do (
+  if not defined LOCALDT set "LOCALDT=%%D"
+)
+if defined LOCALDT (
+  set "YEAR=!LOCALDT:~0,4!"
+  set /a YEAR_NUM=!YEAR! >nul 2>&1
+  if not "!YEAR_NUM!"=="" (
+    if !YEAR_NUM! LSS 2010 (
+      endlocal & call :log "WARNING: System clock appears to be very old (year < 2010). Incorrect time can break signature validation (Code 52)."
+      goto :check_kb3033929_clock_done
+    )
+    if !YEAR_NUM! GTR 2050 (
+      endlocal & call :log "WARNING: System clock appears to be far in the future (year > 2050). Incorrect time can break signature validation (Code 52)."
+      goto :check_kb3033929_clock_done
+    )
+  )
+)
+endlocal
+:check_kb3033929_clock_done
+
 "%SYS32%\wmic.exe" qfe get HotFixID 2>nul | findstr /i "KB3033929" >nul 2>&1
 if errorlevel 1 (
   set "KB_MISSING=1"
