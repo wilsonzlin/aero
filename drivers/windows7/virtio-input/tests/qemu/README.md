@@ -78,6 +78,8 @@ Options:
   Aero contract topology.
 - `--i8042-off` — disable the emulated PS/2 controller (`-machine ...,i8042=off`). Only use this after the
   virtio-input driver is installed and confirmed working, otherwise you may lose input.
+- `--vectors N` (alias: `--msix-vectors N`) — request an MSI-X table size from QEMU
+  (`-device virtio-*-pci,...,vectors=N`). Best-effort: requires QEMU support for the `vectors` property.
 
 Passing extra QEMU args:
 

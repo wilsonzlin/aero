@@ -12,14 +12,14 @@
 # - Optional `--multifunction` mirrors the Aero contract topology (00:0a.0 + 00:0a.1).
 #
 # Usage:
-#   ./run-win7-x64.sh [--multifunction] [--i8042-off] <disk-image> [--] [<extra-qemu-args...>]
+#   ./run-win7-x64.sh [--multifunction] [--i8042-off] [--vectors N] <disk-image> [--] [<extra-qemu-args...>]
 #
 set -eu
 
 usage() {
   cat >&2 <<'EOF'
 Usage:
-  run-win7-x64.sh [--multifunction] [--i8042-off] <disk-image> [--] [<extra-qemu-args...>]
+  run-win7-x64.sh [--multifunction] [--i8042-off] [--vectors N] <disk-image> [--] [<extra-qemu-args...>]
 
 Args:
   <disk-image>     VM disk path (qcow2/vhd/raw/etc). Passed to QEMU as an IDE disk.
@@ -28,6 +28,9 @@ Options:
   --multifunction  Put keyboard + mouse on the same PCI slot (00:0a.0 + 00:0a.1).
   --i8042-off      Disable the emulated PS/2 controller (i8042=off). Only use after
                    the virtio-input driver is installed, otherwise you may lose input.
+  --vectors N      Request an MSI-X table size from QEMU (`-device virtio-*-pci,...,vectors=N`).
+                  Best-effort: requires QEMU support for the `vectors` property. Windows may still
+                  grant fewer messages; drivers fall back.
   -h, --help       Show this help.
 
 Environment overrides:
@@ -76,6 +79,7 @@ print_cmd() {
 
 multifunction=0
 i8042_off=0
+vectors=
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -86,6 +90,15 @@ while [ $# -gt 0 ]; do
     --i8042-off)
       i8042_off=1
       shift
+      ;;
+    --vectors|--msix-vectors)
+      if [ $# -lt 2 ]; then
+        echo "error: --vectors requires an integer argument" >&2
+        usage
+        exit 2
+      fi
+      vectors=$2
+      shift 2
       ;;
     -h|--help)
       usage
@@ -110,6 +123,19 @@ if [ $# -lt 1 ]; then
   echo "error: missing <disk-image> argument" >&2
   usage
   exit 2
+fi
+
+if [ -n "$vectors" ]; then
+  case "$vectors" in
+    ''|*[!0-9]*)
+      echo "error: --vectors must be a positive integer" >&2
+      exit 2
+      ;;
+    0)
+      echo "error: --vectors must be a positive integer (got 0)" >&2
+      exit 2
+      ;;
+  esac
 fi
 
 disk=$1
@@ -147,6 +173,9 @@ if [ "$i8042_off" -eq 1 ]; then
 fi
 
 virtio_common="disable-legacy=on,x-pci-revision=0x01"
+if [ -n "$vectors" ]; then
+  virtio_common="${virtio_common},vectors=${vectors}"
+fi
 if [ "$multifunction" -eq 1 ]; then
   virtio_kbd="virtio-keyboard-pci,addr=0x0a,multifunction=on,${virtio_common}"
   virtio_mouse="virtio-mouse-pci,addr=0x0a.1,${virtio_common}"
