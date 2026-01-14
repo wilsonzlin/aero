@@ -648,7 +648,8 @@ function renderMachinePanel(): HTMLElement {
     text:
       "Tip: click the canvas to focus + request pointer lock (keyboard/mouse will be forwarded to the guest). " +
       "VBE mode test: add ?machineVbe=1280x720 to the URL to boot straight into a Bochs VBE 32bpp mode. " +
-      "AeroGPU config test: add ?machineAerogpu=1 to request the AeroGPU device model (VGA disabled by default).",
+      "AeroGPU config test: add ?machineAerogpu=1 to request the AeroGPU device model (VGA disabled by default). " +
+      "SMP test: add ?machineCpuCount=2 to request a 2-vCPU machine (requires native SMP support).",
   });
   const canvas = el("canvas", { id: "canonical-machine-vga-canvas" }) as HTMLCanvasElement;
   canvas.tabIndex = 0;
@@ -1837,7 +1838,8 @@ function renderMachineWorkerPanel(): HTMLElement {
         "Runs the canonical aero-machine VM inside a Dedicated Worker and publishes display scanout via the framebuffer protocol. " +
         "(Prefers unified display_* exports when present; falls back to legacy vga_*.) " +
         "VBE mode test: add ?machineWorkerVbe=1280x720 to the URL to boot the worker into a Bochs VBE 32bpp mode. " +
-        "AeroGPU config test: add ?machineWorkerAerogpu=1 to request AeroGPU (VGA disabled by default).",
+        "AeroGPU config test: add ?machineWorkerAerogpu=1 to request AeroGPU (VGA disabled by default). " +
+        "SMP test: add ?machineWorkerCpuCount=2 to request a 2-vCPU machine (requires native SMP support).",
     }),
     el("div", { class: "row" }, startButton, stopButton),
     status,
