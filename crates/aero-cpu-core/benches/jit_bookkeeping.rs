@@ -1,10 +1,21 @@
+#[cfg(target_arch = "wasm32")]
+fn main() {}
+
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
 
+#[cfg(not(target_arch = "wasm32"))]
 use aero_cpu_core::jit::cache::{CodeCache, CompiledBlockHandle, CompiledBlockMeta};
+#[cfg(not(target_arch = "wasm32"))]
 use aero_cpu_core::jit::profile::HotnessProfile;
-use aero_cpu_core::jit::runtime::{CompileRequestSink, JitBackend, JitBlockExit, JitConfig, JitRuntime};
+#[cfg(not(target_arch = "wasm32"))]
+use aero_cpu_core::jit::runtime::{
+    CompileRequestSink, JitBackend, JitBlockExit, JitConfig, JitRuntime,
+};
+#[cfg(not(target_arch = "wasm32"))]
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
+#[cfg(not(target_arch = "wasm32"))]
 fn criterion_config() -> Criterion {
     match std::env::var("AERO_BENCH_PROFILE").as_deref() {
         Ok("ci") => Criterion::default()
@@ -21,6 +32,7 @@ fn criterion_config() -> Criterion {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn dummy_handle(entry_rip: u64, table_index: u32, byte_len: u32) -> CompiledBlockHandle {
     CompiledBlockHandle {
         entry_rip,
@@ -35,9 +47,8 @@ fn dummy_handle(entry_rip: u64, table_index: u32, byte_len: u32) -> CompiledBloc
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn bench_code_cache(c: &mut Criterion) {
-    // Keep these small-ish: `CodeCache`'s current LRU maintenance is an O(n) linear scan and we
-    // want these benches to remain cheap enough for CI/PR runs.
     const SIZES: &[usize] = &[8, 64, 256, 1024];
     // Reuse a fixed work factor inside each criterion iteration so the harness overhead is
     // negligible vs the bookkeeping we're measuring.
@@ -46,8 +57,8 @@ fn bench_code_cache(c: &mut Criterion) {
     let mut group = c.benchmark_group("jit/code_cache");
 
     for &size in SIZES {
-        // Cache hit case: exercise `touch()` + LRU linear scan by walking the whole keyspace in a
-        // deterministic order.
+        // Cache hit case: exercise LRU promotion by walking the whole keyspace in a deterministic
+        // order.
         group.throughput(Throughput::Elements(OPS_PER_ITER as u64));
         group.bench_with_input(BenchmarkId::new("get_cloned_hit", size), &size, |b, &size| {
             let mut cache = CodeCache::new(size, 0);
@@ -94,7 +105,7 @@ fn bench_code_cache(c: &mut Criterion) {
         });
 
         // Insert (no eviction): replace an existing key, which exercises HashMap replacement plus
-        // `remove_from_lru()` linear scan.
+        // LRU relinking.
         group.throughput(Throughput::Elements(OPS_PER_ITER as u64));
         group.bench_with_input(BenchmarkId::new("insert_replace", size), &size, |b, &size| {
             let mut cache = CodeCache::new(size, 0);
@@ -118,8 +129,8 @@ fn bench_code_cache(c: &mut Criterion) {
                     // Observe both the eviction result and the resulting cache state to prevent
                     // dead-code elimination.
                     checksum ^= evicted.len() as u64;
-                    checksum ^= cache.current_bytes() as u64;
                 }
+                checksum ^= cache.current_bytes() as u64;
                 black_box(checksum);
             });
         });
@@ -147,17 +158,54 @@ fn bench_code_cache(c: &mut Criterion) {
                     gen = gen.wrapping_add(1);
                     let handle = dummy_handle(rip, gen, 16);
                     let evicted = cache.insert(black_box(handle));
-                    checksum ^= evicted.len() as u64;
-                    checksum ^= cache.len() as u64;
+                    checksum ^= evicted.first().copied().unwrap_or(0);
                 }
+                checksum ^= cache.len() as u64;
                 black_box(checksum);
             });
         });
+
+        // Insert w/ eviction due to max-bytes: keep `max_blocks` high enough that eviction is
+        // driven by `max_bytes` accounting rather than the entry count.
+        group.throughput(Throughput::Elements(OPS_PER_ITER as u64));
+        group.bench_with_input(
+            BenchmarkId::new("insert_evict_max_bytes", size),
+            &size,
+            |b, &size| {
+                let byte_len = 16u32;
+                let max_bytes = size.saturating_mul(byte_len as usize);
+                let max_blocks = size.saturating_mul(8).max(1);
+                let mut cache = CodeCache::new(max_blocks, max_bytes);
+                for i in 0..size {
+                    cache.insert(dummy_handle(i as u64, i as u32, byte_len));
+                }
+
+                let insert_rips: Vec<u64> = (size as u64..(size as u64 * 3)).collect();
+                let mut pos = 0usize;
+                let mut gen = 0u32;
+
+                b.iter(|| {
+                    let mut checksum = 0u64;
+                    for _ in 0..OPS_PER_ITER {
+                        let rip = insert_rips[pos];
+                        pos = (pos + 1) % insert_rips.len();
+
+                        gen = gen.wrapping_add(1);
+                        let handle = dummy_handle(rip, gen, byte_len);
+                        let evicted = cache.insert(black_box(handle));
+                        checksum ^= evicted.first().copied().unwrap_or(0);
+                    }
+                    checksum ^= cache.current_bytes() as u64;
+                    black_box(checksum);
+                });
+            },
+        );
     }
 
     group.finish();
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn bench_hotness_profile(c: &mut Criterion) {
     const OPS_PER_ITER: usize = 4096;
 
@@ -222,9 +270,11 @@ fn bench_hotness_profile(c: &mut Criterion) {
     group.finish();
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Default, Clone)]
 struct NullBackend;
 
+#[cfg(not(target_arch = "wasm32"))]
 impl JitBackend for NullBackend {
     type Cpu = ();
 
@@ -233,13 +283,16 @@ impl JitBackend for NullBackend {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone)]
 struct NullCompileSink;
 
+#[cfg(not(target_arch = "wasm32"))]
 impl CompileRequestSink for NullCompileSink {
     fn request_compile(&mut self, _entry_rip: u64) {}
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn bench_jit_runtime_prepare_block(c: &mut Criterion) {
     const OPS_PER_ITER: usize = 2048;
     let mut group = c.benchmark_group("jit/runtime");
@@ -276,6 +329,8 @@ fn bench_jit_runtime_prepare_block(c: &mut Criterion) {
         };
         let mut jit = JitRuntime::new(config, NullBackend, NullCompileSink);
         let rip = 0x5000u64;
+        // Pre-seed the hotness table entry so we don't benchmark first-hit HashMap allocation.
+        black_box(jit.prepare_block(rip));
 
         b.iter(|| {
             for _ in 0..OPS_PER_ITER {
@@ -288,10 +343,11 @@ fn bench_jit_runtime_prepare_block(c: &mut Criterion) {
     group.finish();
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 criterion_group! {
     name = benches;
     config = criterion_config();
     targets = bench_code_cache, bench_hotness_profile, bench_jit_runtime_prepare_block
 }
+#[cfg(not(target_arch = "wasm32"))]
 criterion_main!(benches);
-
