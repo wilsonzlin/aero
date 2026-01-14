@@ -521,6 +521,7 @@ const flushAerogpuSubmitCompleteOnTick = (): void => {
   // vsync-delayed completions are flushed rather than waiting for future ticks that may never
   // arrive.
   const scanoutDisabled = (() => {
+    if (snapshotPaused) return false;
     const words = scanoutState;
     if (!words) return false;
     try {
@@ -2545,6 +2546,7 @@ function handleDeviceLost(message: string, details?: unknown, startRecovery?: bo
     scanoutSnap?.source === SCANOUT_SOURCE_WDDM ||
     (!scanoutSnap &&
       (() => {
+        if (snapshotPaused) return wddmOwnsScanoutFallback;
         const words = scanoutState;
         if (!words) return wddmOwnsScanoutFallback;
         try {
@@ -2681,6 +2683,7 @@ async function attemptRecovery(reason: string): Promise<void> {
       scanoutAtEnd?.source === SCANOUT_SOURCE_WDDM ||
       (!scanoutAtEnd &&
         (() => {
+          if (snapshotPaused) return wddmOwnsScanoutFallback;
           const words = scanoutState;
           if (!words) return wddmOwnsScanoutFallback;
           try {
