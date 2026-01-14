@@ -133,7 +133,6 @@ fn tier1_masks_16bit_stack_pointer_for_push() {
     assert_eq!(out.gpr[Gpr::Rsp.as_u8() as usize], 0);
     assert_eq!(&bus.mem()[0..2], &0x3344u16.to_le_bytes());
 }
-
 #[test]
 fn tier1_masks_16bit_stack_pointer_wraps_on_push() {
     // push ax
