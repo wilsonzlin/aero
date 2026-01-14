@@ -155,6 +155,40 @@ fn build_minimal_rdef_texture_and_sampler_arrays(bind_point: u32, bind_count: u3
     bytes
 }
 
+fn build_minimal_rdef_texture2d_array(bind_point: u32, bind_count: u32) -> Vec<u8> {
+    // Header (8 DWORDs / 32 bytes) + resource binding desc (32 bytes) + string table.
+    let header_len = 32u32;
+    let rb_offset = header_len;
+    let string_offset = header_len + 32;
+    let tex_name = "tex2d_array";
+    let tex_name_offset = string_offset;
+
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // cb_count
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // cb_offset
+    bytes.extend_from_slice(&1u32.to_le_bytes()); // rb_count
+    bytes.extend_from_slice(&rb_offset.to_le_bytes());
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // target
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // flags
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // creator_offset
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // interface_slot_count
+
+    // Resource binding desc (Texture2DArray).
+    bytes.extend_from_slice(&tex_name_offset.to_le_bytes()); // name_offset
+    bytes.extend_from_slice(&2u32.to_le_bytes()); // input_type (D3D_SIT_TEXTURE)
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // return_type
+    bytes.extend_from_slice(&5u32.to_le_bytes()); // dimension (D3D_SRV_DIMENSION_TEXTURE2DARRAY)
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // sample_count
+    bytes.extend_from_slice(&bind_point.to_le_bytes());
+    bytes.extend_from_slice(&bind_count.to_le_bytes());
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // flags
+
+    // String table.
+    bytes.extend_from_slice(tex_name.as_bytes());
+    bytes.push(0);
+    bytes
+}
+
 fn build_dxbc(chunks: &[(FourCC, Vec<u8>)]) -> Vec<u8> {
     dxbc_test_utils::build_container_owned(chunks)
 }
@@ -1833,6 +1867,81 @@ fn translates_texture_load_ld_uses_raw_integer_bits_not_float_heuristics() {
             && !translated.wgsl.contains("floor(")
             && !translated.wgsl.contains("i32("),
         "textureLoad lowering should not use float-vs-bitcast heuristics or numeric f32->i32 conversions:\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
+fn translates_texture_load_ld_texture2darray_uses_raw_integer_bits_for_slice() {
+    let isgn_params = vec![
+        sig_param("SV_Position", 0, 0, 0b1111),
+        sig_param("TEXCOORD", 0, 1, 0b0011),
+    ];
+    let osgn_params = vec![sig_param("SV_Target", 0, 0, 0b1111)];
+    let rdef_bytes = build_minimal_rdef_texture2d_array(0, 1);
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_RDEF, rdef_bytes),
+        (FOURCC_ISGN, build_signature_chunk(&isgn_params)),
+        (FOURCC_OSGN, build_signature_chunk(&osgn_params)),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    // Use a float bit pattern (1.0) for the array slice lane. `ld` must treat it as raw i32 bits.
+    let coord = SrcOperand {
+        kind: SrcKind::ImmediateF32([0, 0, 1.0f32.to_bits(), 0]),
+        swizzle: Swizzle::XYZW,
+        modifier: OperandModifier::None,
+    };
+    let lod = SrcOperand {
+        kind: SrcKind::ImmediateF32([0.0f32.to_bits(); 4]),
+        swizzle: Swizzle::XXXX,
+        modifier: OperandModifier::None,
+    };
+    let module = Sm4Module {
+        stage: ShaderStage::Pixel,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: Vec::new(),
+        instructions: vec![
+            Sm4Inst::Ld {
+                dst: dst(RegFile::Output, 0, WriteMask::XYZW),
+                coord,
+                texture: TextureRef { slot: 0 },
+                lod,
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+    assert!(
+        translated.wgsl.contains("texture_2d_array<f32>"),
+        "expected Texture2DArray binding in WGSL:\n{}",
+        translated.wgsl
+    );
+    assert!(translated
+        .reflection
+        .bindings
+        .iter()
+        .any(|b| matches!(b.kind, BindingKind::Texture2DArray { slot: 0 })));
+
+    let load_line = translated
+        .wgsl
+        .lines()
+        .find(|l| l.contains("textureLoad("))
+        .expect("expected a textureLoad call");
+    assert!(
+        load_line.contains("bitcast<i32>(0x3f800000u)"),
+        "expected raw slice bit pattern 0x3f800000 (f32 1.0) to flow into textureLoad array-index:\n{}",
+        load_line
+    );
+    assert!(
+        !translated.wgsl.contains("select(")
+            && !translated.wgsl.contains("floor(")
+            && !translated.wgsl.contains("i32("),
+        "textureLoad array lowering should not use float-vs-bitcast heuristics or numeric f32->i32 conversions:\n{}",
         translated.wgsl
     );
 }

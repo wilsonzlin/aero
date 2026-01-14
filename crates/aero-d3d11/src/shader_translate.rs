@@ -6361,64 +6361,30 @@ fn emit_instructions(
                 lod,
             } => {
                 // SM4/SM5 `ld` (e.g. `Texture2D.Load`) consumes integer texel coordinates and an
-                // integer mip level. DXBC register files are untyped 32-bit lanes; in practice
-                // those lanes may contain either:
-                // - raw integer bit patterns (typical compiler output), or
-                // - numeric float values that are exact integers (common in hand-authored /
-                //   test-generated DXBC token streams).
+                // integer mip level.
                 //
-                // Recover coordinates/LOD by preferring `i32(f32)` when the lane looks like an
-                // exact integer float (finite, in range, and zero fractional part), otherwise
-                // fall back to interpreting the lane as integer bits via `bitcast<i32>`.
-                let coord_f = emit_src_vec4(coord, inst_index, "ld", ctx)?;
-                let coord_name = format!("ld_coord{inst_index}");
-                w.line(&format!("let {coord_name}: vec4<f32> = {coord_f};"));
+                // DXBC register files are untyped; integer-typed values are stored as raw 32-bit
+                // patterns in the same lanes that the rest of the translator models as `vec4<f32>`.
+                //
+                // Recover coordinates/LOD by interpreting the source lanes strictly as integer bits
+                // (i.e. `bitcast<i32>(f32)`) with no float-to-int heuristics.
+                let coord_i = emit_src_vec4_i32(coord, inst_index, "ld", ctx)?;
+                let x = format!("({coord_i}).x");
+                let y = format!("({coord_i}).y");
 
-                let lod_f = emit_src_vec4(lod, inst_index, "ld", ctx)?;
-                let lod_name = format!("ld_lod{inst_index}");
-                w.line(&format!("let {lod_name}: vec4<f32> = {lod_f};"));
-
-                let emit_lane_i32 = |lane_expr: String,
-                                     name: &str,
-                                     w: &mut WgslWriter|
-                 -> Result<(), ShaderTranslateError> {
-                    let f_name = format!("{name}_f");
-                    w.line(&format!("let {f_name}: f32 = {lane_expr};"));
-                    w.line(&format!("var {name}: i32;"));
-                    w.line(&format!(
-                        "if ({f_name} >= -2147483648.0 && {f_name} <= 2147483647.0 && fract({f_name}) == 0.0) {{"
-                    ));
-                    w.indent();
-                    w.line(&format!("{name} = i32({f_name});"));
-                    w.dedent();
-                    w.line("} else {");
-                    w.indent();
-                    w.line(&format!("{name} = bitcast<i32>({f_name});"));
-                    w.dedent();
-                    w.line("}");
-                    Ok(())
-                };
-
-                let x_name = format!("ld_x{inst_index}");
-                emit_lane_i32(format!("({coord_name}).x"), &x_name, w)?;
-
-                let y_name = format!("ld_y{inst_index}");
-                emit_lane_i32(format!("({coord_name}).y"), &y_name, w)?;
-
-                let lod_scalar_name = format!("ld_lod_scalar{inst_index}");
-                emit_lane_i32(format!("({lod_name}).x"), &lod_scalar_name, w)?;
+                let lod_i = emit_src_vec4_i32(lod, inst_index, "ld", ctx)?;
+                let lod_scalar = format!("({lod_i}).x");
 
                 let expr = if ctx.resources.texture_is_array(texture.slot) {
-                    let slice_name = format!("ld_slice{inst_index}");
-                    emit_lane_i32(format!("({coord_name}).z"), &slice_name, w)?;
+                    let slice = format!("({coord_i}).z");
                     format!(
-                        "textureLoad(t{}, vec2<i32>({x_name}, {y_name}), {slice_name}, {lod_scalar_name})",
-                        texture.slot,
+                        "textureLoad(t{}, vec2<i32>({x}, {y}), {slice}, {lod_scalar})",
+                        texture.slot
                     )
                 } else {
                     format!(
-                        "textureLoad(t{}, vec2<i32>({x_name}, {y_name}), {lod_scalar_name})",
-                        texture.slot,
+                        "textureLoad(t{}, vec2<i32>({x}, {y}), {lod_scalar})",
+                        texture.slot
                     )
                 };
                 let expr = maybe_saturate(dst, expr);
