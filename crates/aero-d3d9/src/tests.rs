@@ -518,7 +518,7 @@ fn assemble_ps3_dp2_constant() -> Vec<u32> {
     // ps_3_0
     let mut out = vec![0xFFFF0300];
     // def c0, 0.0, 0.0, 0.25, 0.5
-    out.extend(enc_inst_sm3(
+    out.extend(enc_inst(
         0x0051,
         &[
             enc_dst(2, 0, 0xF),
@@ -529,7 +529,7 @@ fn assemble_ps3_dp2_constant() -> Vec<u32> {
         ],
     ));
     // def c1, 0.5, 1.0, 0.0, 0.0
-    out.extend(enc_inst_sm3(
+    out.extend(enc_inst(
         0x0051,
         &[
             enc_dst(2, 1, 0xF),
@@ -540,7 +540,7 @@ fn assemble_ps3_dp2_constant() -> Vec<u32> {
         ],
     ));
     // def c2, 1.0, 0.0, 0.0, 0.0 (alpha)
-    out.extend(enc_inst_sm3(
+    out.extend(enc_inst(
         0x0051,
         &[
             enc_dst(2, 2, 0xF),
@@ -552,7 +552,7 @@ fn assemble_ps3_dp2_constant() -> Vec<u32> {
     ));
 
     // dp2 r0.xyz, c0.zwxy, c1.yxwz
-    out.extend(enc_inst_sm3(
+    out.extend(enc_inst(
         0x005A,
         &[
             enc_dst(0, 0, 0x7),
@@ -561,12 +561,12 @@ fn assemble_ps3_dp2_constant() -> Vec<u32> {
         ],
     ));
     // mov r0.w, c2.x
-    out.extend(enc_inst_sm3(
+    out.extend(enc_inst(
         0x0001,
         &[enc_dst(0, 0, 0x8), enc_src(2, 2, 0x00)],
     ));
     // mov oC0, r0
-    out.extend(enc_inst_sm3(
+    out.extend(enc_inst(
         0x0001,
         &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)],
     ));
@@ -1407,7 +1407,7 @@ fn sm3_exp_log_pow_pixel_compare() {
 
 #[test]
 fn sm3_dp2_constant_pixel_compare() {
-    let vs = build_sm3_ir(&assemble_vs_passthrough_sm3_decoder());
+    let vs = build_sm3_ir(&assemble_vs_passthrough());
     let ps = build_sm3_ir(&assemble_ps3_dp2_constant());
 
     let decl = build_vertex_decl_pos_tex_color();
