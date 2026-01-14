@@ -12,6 +12,15 @@ import {
   snapshotScanoutState,
   wrapScanoutState,
 } from "../ipc/scanout_state";
+import {
+  CURSOR_FORMAT_B8G8R8A8,
+  CURSOR_STATE_GENERATION_BUSY_BIT,
+  CURSOR_STATE_U32_LEN,
+  CursorStateIndex,
+  publishCursorState,
+  snapshotCursorState,
+  wrapCursorState,
+} from "../ipc/cursor_state";
 import { WorkerCoordinator } from "./coordinator";
 import { createIoIpcSab, IO_IPC_NET_RX_QUEUE_KIND, IO_IPC_NET_TX_QUEUE_KIND } from "./shared_layout";
 
@@ -277,6 +286,28 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
     expect(scanoutBefore.source).toBe(SCANOUT_SOURCE_WDDM);
     expect(scanoutBefore.basePaddrLo).toBe(0x1234);
 
+    const cursorOffsetBytes = 64;
+    const cursorSab = new SharedArrayBuffer(cursorOffsetBytes + CURSOR_STATE_U32_LEN * Int32Array.BYTES_PER_ELEMENT);
+    shared.cursorState = cursorSab;
+    shared.cursorStateOffsetBytes = cursorOffsetBytes;
+    const cursorWords = wrapCursorState(cursorSab, cursorOffsetBytes);
+    publishCursorState(cursorWords, {
+      enable: 1,
+      x: 12,
+      y: 34,
+      hotX: 1,
+      hotY: 2,
+      width: 64,
+      height: 64,
+      pitchBytes: 64 * 4,
+      format: CURSOR_FORMAT_B8G8R8A8,
+      basePaddrLo: 0x4321,
+      basePaddrHi: 0,
+    });
+    const cursorBefore = snapshotCursorState(cursorWords);
+    expect(cursorBefore.enable).toBe(1);
+    expect(cursorBefore.basePaddrLo).toBe(0x4321);
+
     const txRing = openRingByKind(shared.segments.ioIpc, IO_IPC_NET_TX_QUEUE_KIND);
     const rxRing = openRingByKind(shared.segments.ioIpc, IO_IPC_NET_RX_QUEUE_KIND);
     txRing.tryPush(new Uint8Array([0xaa]));
@@ -347,6 +378,23 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
     expect(scanoutAfter.height).toBe(0);
     expect(scanoutAfter.pitchBytes).toBe(0);
     expect(scanoutAfter.format).toBe(SCANOUT_FORMAT_B8G8R8X8);
+
+    const cursorGenAfter = Atomics.load(cursorWords, CursorStateIndex.GENERATION) >>> 0;
+    expect(cursorGenAfter & CURSOR_STATE_GENERATION_BUSY_BIT).toBe(0);
+
+    const cursorAfter = snapshotCursorState(cursorWords);
+    expect(cursorAfter.generation).toBe(0);
+    expect(cursorAfter.enable).toBe(0);
+    expect(cursorAfter.x).toBe(0);
+    expect(cursorAfter.y).toBe(0);
+    expect(cursorAfter.hotX).toBe(0);
+    expect(cursorAfter.hotY).toBe(0);
+    expect(cursorAfter.width).toBe(0);
+    expect(cursorAfter.height).toBe(0);
+    expect(cursorAfter.pitchBytes).toBe(0);
+    expect(cursorAfter.format).toBe(CURSOR_FORMAT_B8G8R8A8);
+    expect(cursorAfter.basePaddrLo).toBe(0);
+    expect(cursorAfter.basePaddrHi).toBe(0);
   });
 
   it("pauses/resumes the net worker even when it is not marked ready yet (avoids NET ring reset races)", async () => {
@@ -608,6 +656,28 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
     expect(scanoutBefore.source).toBe(SCANOUT_SOURCE_WDDM);
     expect(scanoutBefore.basePaddrLo).toBe(0x1234);
 
+    const cursorOffsetBytes = 64;
+    const cursorSab = new SharedArrayBuffer(cursorOffsetBytes + CURSOR_STATE_U32_LEN * Int32Array.BYTES_PER_ELEMENT);
+    shared.cursorState = cursorSab;
+    shared.cursorStateOffsetBytes = cursorOffsetBytes;
+    const cursorWords = wrapCursorState(cursorSab, cursorOffsetBytes);
+    publishCursorState(cursorWords, {
+      enable: 1,
+      x: 12,
+      y: 34,
+      hotX: 1,
+      hotY: 2,
+      width: 64,
+      height: 64,
+      pitchBytes: 64 * 4,
+      format: CURSOR_FORMAT_B8G8R8A8,
+      basePaddrLo: 0x4321,
+      basePaddrHi: 0,
+    });
+    const cursorBefore = snapshotCursorState(cursorWords);
+    expect(cursorBefore.enable).toBe(1);
+    expect(cursorBefore.basePaddrLo).toBe(0x4321);
+
     const txRing = openRingByKind(shared.segments.ioIpc, IO_IPC_NET_TX_QUEUE_KIND);
     const rxRing = openRingByKind(shared.segments.ioIpc, IO_IPC_NET_RX_QUEUE_KIND);
     txRing.tryPush(new Uint8Array([0xaa]));
@@ -665,6 +735,23 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
     expect(scanoutAfter.height).toBe(0);
     expect(scanoutAfter.pitchBytes).toBe(0);
     expect(scanoutAfter.format).toBe(SCANOUT_FORMAT_B8G8R8X8);
+
+    const cursorGenAfter = Atomics.load(cursorWords, CursorStateIndex.GENERATION) >>> 0;
+    expect(cursorGenAfter & CURSOR_STATE_GENERATION_BUSY_BIT).toBe(0);
+
+    const cursorAfter = snapshotCursorState(cursorWords);
+    expect(cursorAfter.generation).toBe(0);
+    expect(cursorAfter.enable).toBe(0);
+    expect(cursorAfter.x).toBe(0);
+    expect(cursorAfter.y).toBe(0);
+    expect(cursorAfter.hotX).toBe(0);
+    expect(cursorAfter.hotY).toBe(0);
+    expect(cursorAfter.width).toBe(0);
+    expect(cursorAfter.height).toBe(0);
+    expect(cursorAfter.pitchBytes).toBe(0);
+    expect(cursorAfter.format).toBe(CURSOR_FORMAT_B8G8R8A8);
+    expect(cursorAfter.basePaddrLo).toBe(0);
+    expect(cursorAfter.basePaddrHi).toBe(0);
   });
 
   it("orchestrates machine snapshots without an IO worker", async () => {

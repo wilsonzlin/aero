@@ -1514,7 +1514,10 @@ export class WorkerCoordinator {
         // descriptor so stale WDDM/BAR1 scanout from a later timeline cannot remain visible after
         // restoring an older snapshot.
         const shared = this.shared;
-        if (shared) this.resetScanoutState(shared);
+        if (shared) {
+          this.resetScanoutState(shared);
+          this.resetCursorState(shared);
+        }
       } finally {
         try {
           await this.resumeWorkersAfterSnapshot();
@@ -1570,7 +1573,10 @@ export class WorkerCoordinator {
       // written after the snapshot was taken (e.g. WDDM/BAR1 scanout) can otherwise remain
       // visible after restoring an older snapshot. Reset to a safe default before resuming.
       const shared = this.shared;
-      if (shared) this.resetScanoutState(shared);
+      if (shared) {
+        this.resetScanoutState(shared);
+        this.resetCursorState(shared);
+      }
     } finally {
       try {
         await this.resumeWorkersAfterSnapshot();
