@@ -312,7 +312,9 @@ For a **table-by-table** checklist of which `d3d11umddi.h` function pointers mus
 * Export: `OpenAdapter11` (from `d3d11umddi.h`)
 * Adapter function table (`D3D11DDI_ADAPTERFUNCS`) must minimally provide:
   * `pfnGetCaps` → handles `D3D11DDIARG_GETCAPS`
-    * must report supported `D3D_FEATURE_LEVEL` list (initial: **`D3D_FEATURE_LEVEL_10_0` only**)
+    * must report supported `D3D_FEATURE_LEVEL` list.
+      * Minimal target: **`D3D_FEATURE_LEVEL_10_0` only**.
+      * If you are intentionally gating out geometry shaders (e.g. host backend without compute pipelines), advertise only `D3D_FEATURE_LEVEL_9_x` until GS emulation is supported.
   * `pfnCalcPrivateDeviceSize`
   * `pfnCreateDevice` → uses `D3D11DDIARG_CREATEDEVICE`
     * `D3D11DDIARG_CREATEDEVICE` is where the driver returns both:
