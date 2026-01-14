@@ -4491,7 +4491,6 @@ def main() -> None:
             require_fallback=True,
             errors=errors,
         )
-
         drift = check_inf_alias_drift(
             canonical=virtio_input_canonical,
             alias=virtio_input_alias,

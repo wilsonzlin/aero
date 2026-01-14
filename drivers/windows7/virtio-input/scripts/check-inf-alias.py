@@ -132,7 +132,10 @@ def main() -> int:
         return 0
 
     sys.stderr.write("virtio-input INF alias drift detected.\n")
-    sys.stderr.write("The alias INF must match the canonical INF from [Version] onward.\n\n")
+    sys.stderr.write(
+        "The alias INF must match the canonical INF from [Version] onward "
+        "(byte-for-byte; only the leading banner/comments may differ).\n\n"
+    )
 
     canonical_lines = _decode_lines_for_diff(canonical_body)
     alias_lines = _decode_lines_for_diff(alias_body)
@@ -147,7 +150,7 @@ def main() -> int:
         alias_lines,
         fromfile=canonical_label,
         tofile=alias_label,
-        lineterm="\n",
+        lineterm="",
     )
     for line in diff:
         sys.stderr.write(line)
