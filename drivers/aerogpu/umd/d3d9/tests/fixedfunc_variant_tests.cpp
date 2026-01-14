@@ -45,6 +45,7 @@ int main() {
   using aerogpu::fixedfunc_variant_from_decl_blob;
   using aerogpu::fixedfunc_variant_from_fvf;
   using aerogpu::fixedfunc_implied_fvf_from_decl_blob;
+  using aerogpu::fixedfunc_variant_uses_rhw;
 
   // FVF mapping.
   if (!CheckEq(fixedfunc_variant_from_fvf(aerogpu::kD3dFvfXyzRhw | aerogpu::kD3dFvfDiffuse),
@@ -106,6 +107,24 @@ int main() {
     return 1;
   }
   if (!CheckEq(fixedfunc_variant_from_fvf(0xFFFFFFFFu), FixedFuncVariant::NONE, "FVF -> NONE (unknown)")) {
+    return 1;
+  }
+
+  // Variant helpers.
+  if (!Check(fixedfunc_variant_uses_rhw(FixedFuncVariant::RHW_COLOR), "uses_rhw(RHW_COLOR)")) {
+    return 1;
+  }
+  if (!Check(fixedfunc_variant_uses_rhw(FixedFuncVariant::RHW_COLOR_TEX1), "uses_rhw(RHW_COLOR_TEX1)")) {
+    return 1;
+  }
+  if (!Check(fixedfunc_variant_uses_rhw(FixedFuncVariant::RHW_TEX1), "uses_rhw(RHW_TEX1)")) {
+    return 1;
+  }
+  if (!Check(!fixedfunc_variant_uses_rhw(FixedFuncVariant::XYZ_COLOR), "uses_rhw(XYZ_COLOR) == false")) {
+    return 1;
+  }
+  if (!Check(!fixedfunc_variant_uses_rhw(FixedFuncVariant::XYZ_NORMAL_COLOR_TEX1),
+             "uses_rhw(XYZ_NORMAL_COLOR_TEX1) == false")) {
     return 1;
   }
 
