@@ -72,12 +72,16 @@ Regression tests:
 - `crates/aero-usb/tests/xhci_detach_pending_endpoints.rs` asserts that detaching a device clears
   any pending endpoint activations/doorbells so re-attaching at the same topology path does not
   spuriously consume TRBs without a new doorbell.
+- `crates/aero-usb/tests/xhci_doorbell0.rs` asserts doorbell 0 behavior for the command ring,
+  including that doorbells rung while `USBCMD.RUN=0` are deferred until the controller is started.
 - `crates/aero-usb/tests/xhci_configure_endpoint_clears_pending_doorbells.rs` asserts that
   `Configure Endpoint` drop/deconfigure clears any pending endpoint doorbells so endpoints can be
   re-doorbelled after reconfiguration.
 - `crates/aero-usb/tests/xhci_stop_endpoint_unschedules.rs` asserts that `Stop Endpoint` unschedules
   an active endpoint immediately (so it does not continue consuming per-tick budgets without a new
   doorbell).
+- `crates/aero-usb/tests/xhci_usbcmd_run_gates_transfers.rs` asserts that transfer execution is
+  gated on `USBCMD.RUN` (transfers do not progress while halted and resume after RUN is set).
 - `crates/aero-usb/tests/xhci_snapshot_halted_active_endpoint_no_dcbaap.rs` asserts that a restored
   controller does not execute a queued endpoint when the guest Device Context is unavailable
   (DCBAAP=0) and the controller-local shadow Endpoint Context marks it Halted. This prevents a
