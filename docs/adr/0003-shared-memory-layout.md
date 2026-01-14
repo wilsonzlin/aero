@@ -22,12 +22,31 @@ Use **multiple shared buffers** with a clear separation between guest RAM and ho
    - Total size must remain **≤ 4 GiB**.
 
 2. **Separate `SharedArrayBuffer` instances** for:
-   - Inter-worker command/event rings.
-   - Status flags / atomics-based signaling.
-   - Audio ring buffers (including AudioWorklet integration).
-   - Optional CPU↔GPU staging buffers or debug/profiling buffers.
+    - Inter-worker command/event rings.
+    - Status flags / atomics-based signaling.
+    - Audio ring buffers (including AudioWorklet integration).
+    - PCI BAR apertures that should not live in wasm32 linear memory (notably BAR1/VRAM).
+    - Optional CPU↔GPU staging buffers or debug/profiling buffers.
 
 The guiding rule: **preserve WASM address space for guest RAM**, and keep large or host-only buffers outside the WASM linear memory unless there is a measured performance need to place them inside.
+
+### Addendum: VRAM (BAR1 backing) as a separate shared buffer
+
+The web runtime represents the AeroGPU BAR1/VRAM aperture as its own `SharedArrayBuffer` (separate
+from `WebAssembly.Memory`) so VRAM:
+
+- does not consume wasm32 linear memory address space, and
+- can be shared directly between the I/O worker (MMIO writes) and GPU worker (scanout/cursor readback).
+
+Contract:
+
+- VRAM base paddr: `VRAM_BASE_PADDR = PCI_MMIO_BASE = 0xE000_0000` (see
+  [`web/src/arch/guest_phys.ts`](../../web/src/arch/guest_phys.ts)).
+- When the segment is present, it backs guest physical
+  `[VRAM_BASE_PADDR, VRAM_BASE_PADDR + vram.byteLength)`.
+- Allocation happens in the coordinator in
+  [`web/src/runtime/shared_layout.ts`](../../web/src/runtime/shared_layout.ts)
+  (`allocateSharedMemorySegments(...)`).
 
 ## Addendum: wasm32 linear memory contract (runtime vs guest RAM)
 

@@ -385,7 +385,7 @@ The emulator must render:
 Presentation pipeline requirements:
 
 - Source selection is based solely on `ScanoutState`.
-- Pixel conversion handles B8G8R8X8 → canvas RGBA.
+- Pixel conversion handles `B8G8R8X8` / `B8G8R8A8` → canvas RGBA (scanout is treated as opaque for presentation).
 - Switching sources is atomic and does not free/relocate the backing memory, preventing stale pointers.
 
 ---
@@ -418,6 +418,9 @@ Allocation and wiring:
 - Shared memory contract: when present, `segments.vram` backs the guest physical address range:
   `[VRAM_BASE_PADDR, VRAM_BASE_PADDR + vram.byteLength)`.
   (See `SharedMemorySegments.vram` in the same file.)
+- The I/O worker maps this buffer as an MMIO region at `vramBasePaddr` so guest CPU reads/writes to
+  BAR1 land in the VRAM SAB (see [`web/src/workers/io.worker.ts`](../web/src/workers/io.worker.ts),
+  `DeviceManager.registerMmio(...)`).
 
 ### VRAM base paddr contract and why `base_paddr` can live in the PCI/MMIO hole
 
