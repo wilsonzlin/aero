@@ -68,10 +68,12 @@ use aero_protocol::aerogpu::aerogpu_umd_private::{
 use aero_protocol::aerogpu::aerogpu_wddm_alloc::{
     AerogpuWddmAllocKind, AerogpuWddmAllocPriv, AerogpuWddmAllocPrivV2,
     AEROGPU_WDDM_ALLOC_ID_KMD_MIN, AEROGPU_WDDM_ALLOC_ID_UMD_MAX,
+    AEROGPU_WDDM_ALLOC_PRIVATE_DATA_MAGIC, AEROGPU_WDDM_ALLOC_PRIVATE_DATA_VERSION,
     AEROGPU_WDDM_ALLOC_PRIV_DESC_MARKER, AEROGPU_WDDM_ALLOC_PRIV_DESC_MAX_HEIGHT,
     AEROGPU_WDDM_ALLOC_PRIV_DESC_MAX_WIDTH, AEROGPU_WDDM_ALLOC_PRIV_FLAG_CPU_VISIBLE,
     AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED, AEROGPU_WDDM_ALLOC_PRIV_FLAG_NONE,
-    AEROGPU_WDDM_ALLOC_PRIV_FLAG_STAGING, AEROGPU_WDDM_ALLOC_PRIV_MAGIC,
+    AEROGPU_WDDM_ALLOC_PRIV_FLAG_SHARED, AEROGPU_WDDM_ALLOC_PRIV_FLAG_STAGING,
+    AEROGPU_WDDM_ALLOC_PRIV_MAGIC,
     AEROGPU_WDDM_ALLOC_PRIV_VERSION, AEROGPU_WDDM_ALLOC_PRIV_VERSION_2,
 };
 use aero_protocol::aerogpu::{aerogpu_pci as pci, aerogpu_ring as ring};
@@ -3557,6 +3559,10 @@ fn rust_layout_matches_c_headers() {
     let pci_header_path = repo_root().join("drivers/aerogpu/protocol/aerogpu_pci.h");
     let ring_header_path = repo_root().join("drivers/aerogpu/protocol/aerogpu_ring.h");
     let cmd_header_path = repo_root().join("drivers/aerogpu/protocol/aerogpu_cmd.h");
+    let umd_private_header_path =
+        repo_root().join("drivers/aerogpu/protocol/aerogpu_umd_private.h");
+    let wddm_alloc_header_path =
+        repo_root().join("drivers/aerogpu/protocol/aerogpu_wddm_alloc.h");
 
     let expected_pci_consts = {
         let mut names = parse_c_define_const_names(&pci_header_path);
@@ -3676,6 +3682,24 @@ fn rust_layout_matches_c_headers() {
     let mut pci_consts_seen: Vec<String> = Vec::new();
     let mut ring_consts_seen: Vec<String> = Vec::new();
     let mut cmd_consts_seen: Vec<String> = Vec::new();
+    let mut umd_private_consts_seen: Vec<String> = Vec::new();
+    let mut wddm_alloc_consts_seen: Vec<String> = Vec::new();
+
+    let expected_umd_private_consts = parse_c_define_const_names(&umd_private_header_path);
+    let expected_wddm_alloc_consts = {
+        let mut names = parse_c_define_const_names(&wddm_alloc_header_path);
+        names.extend(parse_c_enum_const_names(
+            &wddm_alloc_header_path,
+            "enum aerogpu_wddm_alloc_private_flags",
+            "AEROGPU_WDDM_ALLOC_PRIV_FLAG_",
+        ));
+        names.extend(parse_c_enum_const_names(
+            &wddm_alloc_header_path,
+            "enum aerogpu_wddm_alloc_kind",
+            "AEROGPU_WDDM_ALLOC_KIND_",
+        ));
+        names
+    };
 
     let check_const = |seen: &mut Vec<String>, name: &str, value: u64| {
         seen.push(name.to_string());
@@ -4713,130 +4737,188 @@ fn rust_layout_matches_c_headers() {
         "aerogpu_cmd.h constants",
     );
 
-    assert_eq!(
-        abi.konst("AEROGPU_UMDPRIV_STRUCT_VERSION_V1"),
-        AEROGPU_UMDPRIV_STRUCT_VERSION_V1 as u64
+    // aerogpu_umd_private.h
+    check_const(
+        &mut umd_private_consts_seen,
+        "AEROGPU_UMDPRIV_STRUCT_VERSION_V1",
+        AEROGPU_UMDPRIV_STRUCT_VERSION_V1 as u64,
     );
-    assert_eq!(
-        abi.konst("AEROGPU_UMDPRIV_MMIO_MAGIC_LEGACY_ARGP"),
-        AEROGPU_UMDPRIV_MMIO_MAGIC_LEGACY_ARGP as u64
+    check_const(
+        &mut umd_private_consts_seen,
+        "AEROGPU_UMDPRIV_MMIO_MAGIC_LEGACY_ARGP",
+        AEROGPU_UMDPRIV_MMIO_MAGIC_LEGACY_ARGP as u64,
     );
-    assert_eq!(
-        abi.konst("AEROGPU_UMDPRIV_MMIO_MAGIC_NEW_AGPU"),
-        AEROGPU_UMDPRIV_MMIO_MAGIC_NEW_AGPU as u64
+    check_const(
+        &mut umd_private_consts_seen,
+        "AEROGPU_UMDPRIV_MMIO_MAGIC_NEW_AGPU",
+        AEROGPU_UMDPRIV_MMIO_MAGIC_NEW_AGPU as u64,
     );
-    assert_eq!(
-        abi.konst("AEROGPU_UMDPRIV_MMIO_REG_MAGIC"),
-        AEROGPU_UMDPRIV_MMIO_REG_MAGIC as u64
+    check_const(
+        &mut umd_private_consts_seen,
+        "AEROGPU_UMDPRIV_MMIO_REG_MAGIC",
+        AEROGPU_UMDPRIV_MMIO_REG_MAGIC as u64,
     );
-    assert_eq!(
-        abi.konst("AEROGPU_UMDPRIV_MMIO_REG_ABI_VERSION"),
-        AEROGPU_UMDPRIV_MMIO_REG_ABI_VERSION as u64
+    check_const(
+        &mut umd_private_consts_seen,
+        "AEROGPU_UMDPRIV_MMIO_REG_ABI_VERSION",
+        AEROGPU_UMDPRIV_MMIO_REG_ABI_VERSION as u64,
     );
-    assert_eq!(
-        abi.konst("AEROGPU_UMDPRIV_MMIO_REG_FEATURES_LO"),
-        AEROGPU_UMDPRIV_MMIO_REG_FEATURES_LO as u64
+    check_const(
+        &mut umd_private_consts_seen,
+        "AEROGPU_UMDPRIV_MMIO_REG_FEATURES_LO",
+        AEROGPU_UMDPRIV_MMIO_REG_FEATURES_LO as u64,
     );
-    assert_eq!(
-        abi.konst("AEROGPU_UMDPRIV_MMIO_REG_FEATURES_HI"),
-        AEROGPU_UMDPRIV_MMIO_REG_FEATURES_HI as u64
+    check_const(
+        &mut umd_private_consts_seen,
+        "AEROGPU_UMDPRIV_MMIO_REG_FEATURES_HI",
+        AEROGPU_UMDPRIV_MMIO_REG_FEATURES_HI as u64,
     );
-    assert_eq!(
-        abi.konst("AEROGPU_UMDPRIV_FEATURE_FENCE_PAGE"),
-        AEROGPU_UMDPRIV_FEATURE_FENCE_PAGE
+    check_const(
+        &mut umd_private_consts_seen,
+        "AEROGPU_UMDPRIV_FEATURE_FENCE_PAGE",
+        AEROGPU_UMDPRIV_FEATURE_FENCE_PAGE,
     );
-    assert_eq!(
-        abi.konst("AEROGPU_UMDPRIV_FEATURE_CURSOR"),
-        AEROGPU_UMDPRIV_FEATURE_CURSOR
+    check_const(
+        &mut umd_private_consts_seen,
+        "AEROGPU_UMDPRIV_FEATURE_CURSOR",
+        AEROGPU_UMDPRIV_FEATURE_CURSOR,
     );
-    assert_eq!(
-        abi.konst("AEROGPU_UMDPRIV_FEATURE_SCANOUT"),
-        AEROGPU_UMDPRIV_FEATURE_SCANOUT
+    check_const(
+        &mut umd_private_consts_seen,
+        "AEROGPU_UMDPRIV_FEATURE_SCANOUT",
+        AEROGPU_UMDPRIV_FEATURE_SCANOUT,
     );
-    assert_eq!(
-        abi.konst("AEROGPU_UMDPRIV_FEATURE_VBLANK"),
-        AEROGPU_UMDPRIV_FEATURE_VBLANK
+    check_const(
+        &mut umd_private_consts_seen,
+        "AEROGPU_UMDPRIV_FEATURE_VBLANK",
+        AEROGPU_UMDPRIV_FEATURE_VBLANK,
     );
-    assert_eq!(
-        abi.konst("AEROGPU_UMDPRIV_FEATURE_TRANSFER"),
-        AEROGPU_UMDPRIV_FEATURE_TRANSFER
+    check_const(
+        &mut umd_private_consts_seen,
+        "AEROGPU_UMDPRIV_FEATURE_TRANSFER",
+        AEROGPU_UMDPRIV_FEATURE_TRANSFER,
     );
-    assert_eq!(
-        abi.konst("AEROGPU_UMDPRIV_FEATURE_ERROR_INFO"),
-        AEROGPU_UMDPRIV_FEATURE_ERROR_INFO
+    check_const(
+        &mut umd_private_consts_seen,
+        "AEROGPU_UMDPRIV_FEATURE_ERROR_INFO",
+        AEROGPU_UMDPRIV_FEATURE_ERROR_INFO,
     );
-    assert_eq!(
-        abi.konst("AEROGPU_UMDPRIV_FLAG_IS_LEGACY"),
-        AEROGPU_UMDPRIV_FLAG_IS_LEGACY as u64
+    check_const(
+        &mut umd_private_consts_seen,
+        "AEROGPU_UMDPRIV_FLAG_IS_LEGACY",
+        AEROGPU_UMDPRIV_FLAG_IS_LEGACY as u64,
     );
-    assert_eq!(
-        abi.konst("AEROGPU_UMDPRIV_FLAG_HAS_VBLANK"),
-        AEROGPU_UMDPRIV_FLAG_HAS_VBLANK as u64
+    check_const(
+        &mut umd_private_consts_seen,
+        "AEROGPU_UMDPRIV_FLAG_HAS_VBLANK",
+        AEROGPU_UMDPRIV_FLAG_HAS_VBLANK as u64,
     );
-    assert_eq!(
-        abi.konst("AEROGPU_UMDPRIV_FLAG_HAS_FENCE_PAGE"),
-        AEROGPU_UMDPRIV_FLAG_HAS_FENCE_PAGE as u64
+    check_const(
+        &mut umd_private_consts_seen,
+        "AEROGPU_UMDPRIV_FLAG_HAS_FENCE_PAGE",
+        AEROGPU_UMDPRIV_FLAG_HAS_FENCE_PAGE as u64,
+    );
+    assert_name_set_eq(
+        umd_private_consts_seen,
+        expected_umd_private_consts,
+        "aerogpu_umd_private.h constants",
     );
 
-    assert_eq!(
-        abi.konst("AEROGPU_WDDM_ALLOC_PRIV_MAGIC"),
-        AEROGPU_WDDM_ALLOC_PRIV_MAGIC as u64
+    // aerogpu_wddm_alloc.h
+    check_const(
+        &mut wddm_alloc_consts_seen,
+        "AEROGPU_WDDM_ALLOC_PRIV_MAGIC",
+        AEROGPU_WDDM_ALLOC_PRIV_MAGIC as u64,
     );
-    assert_eq!(
-        abi.konst("AEROGPU_WDDM_ALLOC_PRIV_VERSION"),
-        AEROGPU_WDDM_ALLOC_PRIV_VERSION as u64
+    check_const(
+        &mut wddm_alloc_consts_seen,
+        "AEROGPU_WDDM_ALLOC_PRIV_VERSION",
+        AEROGPU_WDDM_ALLOC_PRIV_VERSION as u64,
     );
-    assert_eq!(
-        abi.konst("AEROGPU_WDDM_ALLOC_PRIV_VERSION_2"),
-        AEROGPU_WDDM_ALLOC_PRIV_VERSION_2 as u64
+    check_const(
+        &mut wddm_alloc_consts_seen,
+        "AEROGPU_WDDM_ALLOC_PRIV_VERSION_2",
+        AEROGPU_WDDM_ALLOC_PRIV_VERSION_2 as u64,
     );
-    assert_eq!(
-        abi.konst("AEROGPU_WDDM_ALLOC_ID_UMD_MAX"),
-        AEROGPU_WDDM_ALLOC_ID_UMD_MAX as u64
+    check_const(
+        &mut wddm_alloc_consts_seen,
+        "AEROGPU_WDDM_ALLOC_PRIVATE_DATA_MAGIC",
+        AEROGPU_WDDM_ALLOC_PRIVATE_DATA_MAGIC as u64,
     );
-    assert_eq!(
-        abi.konst("AEROGPU_WDDM_ALLOC_ID_KMD_MIN"),
-        AEROGPU_WDDM_ALLOC_ID_KMD_MIN as u64
+    check_const(
+        &mut wddm_alloc_consts_seen,
+        "AEROGPU_WDDM_ALLOC_PRIVATE_DATA_VERSION",
+        AEROGPU_WDDM_ALLOC_PRIVATE_DATA_VERSION as u64,
     );
-    assert_eq!(
-        abi.konst("AEROGPU_WDDM_ALLOC_PRIV_FLAG_NONE"),
-        AEROGPU_WDDM_ALLOC_PRIV_FLAG_NONE as u64
+    check_const(
+        &mut wddm_alloc_consts_seen,
+        "AEROGPU_WDDM_ALLOC_ID_UMD_MAX",
+        AEROGPU_WDDM_ALLOC_ID_UMD_MAX as u64,
     );
-    assert_eq!(
-        abi.konst("AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED"),
-        AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED as u64
+    check_const(
+        &mut wddm_alloc_consts_seen,
+        "AEROGPU_WDDM_ALLOC_ID_KMD_MIN",
+        AEROGPU_WDDM_ALLOC_ID_KMD_MIN as u64,
     );
-    assert_eq!(
-        abi.konst("AEROGPU_WDDM_ALLOC_PRIV_FLAG_CPU_VISIBLE"),
-        AEROGPU_WDDM_ALLOC_PRIV_FLAG_CPU_VISIBLE as u64
+    check_const(
+        &mut wddm_alloc_consts_seen,
+        "AEROGPU_WDDM_ALLOC_PRIV_FLAG_NONE",
+        AEROGPU_WDDM_ALLOC_PRIV_FLAG_NONE as u64,
     );
-    assert_eq!(
-        abi.konst("AEROGPU_WDDM_ALLOC_PRIV_FLAG_STAGING"),
-        AEROGPU_WDDM_ALLOC_PRIV_FLAG_STAGING as u64
+    check_const(
+        &mut wddm_alloc_consts_seen,
+        "AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED",
+        AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED as u64,
     );
-    assert_eq!(
-        abi.konst("AEROGPU_WDDM_ALLOC_PRIV_DESC_MARKER"),
-        AEROGPU_WDDM_ALLOC_PRIV_DESC_MARKER
+    check_const(
+        &mut wddm_alloc_consts_seen,
+        "AEROGPU_WDDM_ALLOC_PRIV_FLAG_CPU_VISIBLE",
+        AEROGPU_WDDM_ALLOC_PRIV_FLAG_CPU_VISIBLE as u64,
     );
-    assert_eq!(
-        abi.konst("AEROGPU_WDDM_ALLOC_PRIV_DESC_MAX_WIDTH"),
-        AEROGPU_WDDM_ALLOC_PRIV_DESC_MAX_WIDTH as u64
+    check_const(
+        &mut wddm_alloc_consts_seen,
+        "AEROGPU_WDDM_ALLOC_PRIV_FLAG_STAGING",
+        AEROGPU_WDDM_ALLOC_PRIV_FLAG_STAGING as u64,
     );
-    assert_eq!(
-        abi.konst("AEROGPU_WDDM_ALLOC_PRIV_DESC_MAX_HEIGHT"),
-        AEROGPU_WDDM_ALLOC_PRIV_DESC_MAX_HEIGHT as u64
+    check_const(
+        &mut wddm_alloc_consts_seen,
+        "AEROGPU_WDDM_ALLOC_PRIV_FLAG_SHARED",
+        AEROGPU_WDDM_ALLOC_PRIV_FLAG_SHARED as u64,
     );
-    assert_eq!(
-        abi.konst("AEROGPU_WDDM_ALLOC_KIND_UNKNOWN"),
-        AerogpuWddmAllocKind::Unknown as u64
+    check_const(
+        &mut wddm_alloc_consts_seen,
+        "AEROGPU_WDDM_ALLOC_PRIV_DESC_MARKER",
+        AEROGPU_WDDM_ALLOC_PRIV_DESC_MARKER,
     );
-    assert_eq!(
-        abi.konst("AEROGPU_WDDM_ALLOC_KIND_BUFFER"),
-        AerogpuWddmAllocKind::Buffer as u64
+    check_const(
+        &mut wddm_alloc_consts_seen,
+        "AEROGPU_WDDM_ALLOC_PRIV_DESC_MAX_WIDTH",
+        AEROGPU_WDDM_ALLOC_PRIV_DESC_MAX_WIDTH as u64,
     );
-    assert_eq!(
-        abi.konst("AEROGPU_WDDM_ALLOC_KIND_TEXTURE2D"),
-        AerogpuWddmAllocKind::Texture2d as u64
+    check_const(
+        &mut wddm_alloc_consts_seen,
+        "AEROGPU_WDDM_ALLOC_PRIV_DESC_MAX_HEIGHT",
+        AEROGPU_WDDM_ALLOC_PRIV_DESC_MAX_HEIGHT as u64,
+    );
+    check_const(
+        &mut wddm_alloc_consts_seen,
+        "AEROGPU_WDDM_ALLOC_KIND_UNKNOWN",
+        AerogpuWddmAllocKind::Unknown as u64,
+    );
+    check_const(
+        &mut wddm_alloc_consts_seen,
+        "AEROGPU_WDDM_ALLOC_KIND_BUFFER",
+        AerogpuWddmAllocKind::Buffer as u64,
+    );
+    check_const(
+        &mut wddm_alloc_consts_seen,
+        "AEROGPU_WDDM_ALLOC_KIND_TEXTURE2D",
+        AerogpuWddmAllocKind::Texture2d as u64,
+    );
+    assert_name_set_eq(
+        wddm_alloc_consts_seen,
+        expected_wddm_alloc_consts,
+        "aerogpu_wddm_alloc.h constants",
     );
 
     assert_eq!(abi.konst("AEROGPU_ESCAPE_VERSION"), 1);

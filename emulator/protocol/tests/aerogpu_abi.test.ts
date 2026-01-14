@@ -213,6 +213,7 @@ import {
   AEROGPU_UMD_PRIVATE_V1_OFF_STRUCT_VERSION,
   AEROGPU_UMD_PRIVATE_V1_SIZE,
 } from "../aerogpu/aerogpu_umd_private.ts";
+import * as aerogpuUmdPrivate from "../aerogpu/aerogpu_umd_private.ts";
 import {
   AerogpuWddmAllocKind,
   AEROGPU_WDDM_ALLOC_ID_KMD_MIN,
@@ -250,6 +251,7 @@ import {
   AEROGPU_WDDM_ALLOC_PRIV_VERSION,
   AEROGPU_WDDM_ALLOC_PRIV_VERSION_2,
 } from "../aerogpu/aerogpu_wddm_alloc.ts";
+import * as aerogpuWddmAlloc from "../aerogpu/aerogpu_wddm_alloc.ts";
 
 // These constants are part of the stable Windows device contract; we intentionally lock their
 // numeric values so they cannot drift due to coordinated edits across the C/Rust/TS mirrors.
@@ -608,6 +610,8 @@ test("TypeScript layout matches C headers", () => {
   const pciHeader = path.join(repoRoot, "drivers/aerogpu/protocol/aerogpu_pci.h");
   const ringHeader = path.join(repoRoot, "drivers/aerogpu/protocol/aerogpu_ring.h");
   const cmdHeader = path.join(repoRoot, "drivers/aerogpu/protocol/aerogpu_cmd.h");
+  const umdPrivateHeader = path.join(repoRoot, "drivers/aerogpu/protocol/aerogpu_umd_private.h");
+  const wddmAllocHeader = path.join(repoRoot, "drivers/aerogpu/protocol/aerogpu_wddm_alloc.h");
 
   const size = (name: string) => {
     const v = abi.sizes.get(name);
@@ -1576,6 +1580,16 @@ test("TypeScript layout matches C headers", () => {
     ...parseCEnumConstNames(cmdHeader, "enum aerogpu_clear_flags", "AEROGPU_CLEAR_"),
     ...parseCEnumConstNames(cmdHeader, "enum aerogpu_present_flags", "AEROGPU_PRESENT_FLAG_"),
   ].sort();
+  const expectedUmdPrivateConsts = [...parseCDefineConstNames(umdPrivateHeader)].sort();
+  const expectedWddmAllocConsts = [
+    ...parseCDefineConstNames(wddmAllocHeader),
+    ...parseCEnumConstNames(
+      wddmAllocHeader,
+      "enum aerogpu_wddm_alloc_private_flags",
+      "AEROGPU_WDDM_ALLOC_PRIV_FLAG_",
+    ),
+    ...parseCEnumConstNames(wddmAllocHeader, "enum aerogpu_wddm_alloc_kind", "AEROGPU_WDDM_ALLOC_KIND_"),
+  ].sort();
 
   // aerogpu_pci.h constants
   const pciSeen: string[] = [];
@@ -1702,6 +1716,44 @@ test("TypeScript layout matches C headers", () => {
     throw new Error(`unhandled aerogpu_cmd.h constant: ${name}`);
   }
   assertNameSetEq(cmdSeen, expectedCmdConsts, "aerogpu_cmd.h constants");
+
+  // aerogpu_umd_private.h constants
+  const umdPrivateExports = aerogpuUmdPrivate as unknown as Record<string, unknown>;
+  const umdPrivateSeen: string[] = [];
+  for (const name of expectedUmdPrivateConsts) {
+    const expected = konst(name);
+    const actual = umdPrivateExports[name];
+    assert.notEqual(actual, undefined, `missing TS export for ${name}`);
+    umdPrivateSeen.push(name);
+    assert.equal(valueToBigInt(actual, name), expected, `constant value for ${name}`);
+  }
+  assertNameSetEq(umdPrivateSeen, expectedUmdPrivateConsts, "aerogpu_umd_private.h constants");
+
+  // aerogpu_wddm_alloc.h constants
+  const wddmAllocExports = aerogpuWddmAlloc as unknown as Record<string, unknown>;
+  const wddmAllocSeen: string[] = [];
+  for (const name of expectedWddmAllocConsts) {
+    const expected = konst(name);
+
+    const direct = wddmAllocExports[name];
+    if (direct !== undefined) {
+      wddmAllocSeen.push(name);
+      assert.equal(valueToBigInt(direct, name), expected, `constant value for ${name}`);
+      continue;
+    }
+
+    if (name.startsWith("AEROGPU_WDDM_ALLOC_KIND_")) {
+      const key = upperSnakeToPascalCase(name.replace(/^AEROGPU_WDDM_ALLOC_KIND_/, ""));
+      const actual = (AerogpuWddmAllocKind as unknown as Record<string, number>)[key];
+      assert.ok(actual !== undefined, `missing TS AerogpuWddmAllocKind binding for ${name} (${key})`);
+      wddmAllocSeen.push(name);
+      assert.equal(BigInt(actual), expected, `wddm alloc kind value for ${name}`);
+      continue;
+    }
+
+    throw new Error(`unhandled aerogpu_wddm_alloc.h constant: ${name}`);
+  }
+  assertNameSetEq(wddmAllocSeen, expectedWddmAllocConsts, "aerogpu_wddm_alloc.h constants");
 });
 
 test("decodeAllocTableHeader accepts unknown minor versions and extended strides", () => {
