@@ -1201,16 +1201,17 @@ impl D3D11Runtime {
             .bind_group_layout_cache
             .get_or_create(&self.device, &bind_group_layout_entries);
 
-        // D3D11 compute shaders are placed in bind group 2 by the shared binding model. WebGPU
-        // requires the pipeline layout to include all bind groups up to the maximum group index,
-        // so we insert empty layouts for groups 0 and 1.
+        // Compute shaders produced by the signature-driven SM4/5 translator use the stage-scoped
+        // AeroGPU binding model (`@group(2)` for CS). Some older protocol WGSL expected `@group(0)`.
+        // Build a pipeline layout that exposes the same layout at both group 0 and group 2 (with
+        // an empty group 1 in between) so both conventions can execute.
         let empty_bind_group_layout = self
             .bind_group_layout_cache
             .get_or_create(&self.device, &[]);
 
         let layout_key = PipelineLayoutKey {
             bind_group_layout_hashes: vec![
-                empty_bind_group_layout.hash,
+                bind_group_layout.hash,
                 empty_bind_group_layout.hash,
                 bind_group_layout.hash,
             ],
@@ -1219,11 +1220,11 @@ impl D3D11Runtime {
             &self.device,
             &layout_key,
             &[
-                empty_bind_group_layout.layout.as_ref(),
+                bind_group_layout.layout.as_ref(),
                 empty_bind_group_layout.layout.as_ref(),
                 bind_group_layout.layout.as_ref(),
             ],
-            Some("aero-d3d11 compute pipeline layout"),
+            Some("aero-d3d11 compute pipeline layout (groups 0..2)"),
         );
 
         let pipeline = self
@@ -1664,9 +1665,9 @@ impl D3D11Runtime {
         let device = &self.device;
         let resources = &self.resources;
 
-        // Compute-stage resources live in `@group(2)` in the AeroGPU D3D11 binding model, but WebGPU
-        // requires empty bind groups to exist for indices below the maximum used group. Prepare a
-        // shared empty bind group for groups 0 and 1.
+        // Compute-stage resources live in `@group(2)` in the AeroGPU D3D11 binding model. WebGPU
+        // requires that bind groups below the highest used group index are bound too, so keep an
+        // empty bind group ready for group(1).
         let empty_bind_group_layout = self.bind_group_layout_cache.get_or_create(device, &[]);
         let empty_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("aero-d3d11 empty bind group (compute)"),
@@ -1687,6 +1688,9 @@ impl D3D11Runtime {
             label: Some("aero-d3d11 compute pass"),
             timestamp_writes: None,
         });
+        // The compute pipeline layout reserves group(1). Bind an empty group once for the duration
+        // of the pass.
+        compute_pass.set_bind_group(1, &empty_bind_group, &[]);
 
         let mut bound_pipeline: Option<u32> = None;
         let mut bound_bind_group: Option<*const wgpu::BindGroup> = None;
@@ -1773,8 +1777,10 @@ impl D3D11Runtime {
                     let bg_ptr = current_bind_group.expect("bind group must be built above");
                     if bound_bind_group != Some(bg_ptr) {
                         let bg_ref = unsafe { &*bg_ptr };
-                        compute_pass.set_bind_group(0, &empty_bind_group, &[]);
-                        compute_pass.set_bind_group(1, &empty_bind_group, &[]);
+                        // Bind at both group 0 and group 2 so the protocol runtime can execute
+                        // compute shaders using either the legacy `@group(0)` convention or the
+                        // stage-scoped AeroGPU model (`@group(2)`).
+                        compute_pass.set_bind_group(0, bg_ref, &[]);
                         compute_pass.set_bind_group(COMPUTE_BIND_GROUP_INDEX, bg_ref, &[]);
                         bound_bind_group = Some(bg_ptr);
                     }

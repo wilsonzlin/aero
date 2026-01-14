@@ -3159,6 +3159,13 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                 .find(|b| matches!(b.kind, crate::BindingKind::UavBuffer { slot: 0 }))
                 .expect("expected reflected u0 binding");
             assert_eq!(u0_binding.group, 2);
+            assert!(
+                translation
+                    .wgsl
+                    .contains(&format!("@group(2) @binding({})", u0_binding.binding)),
+                "expected translated compute WGSL to declare u0 in @group(2); WGSL was:\n{}",
+                translation.wgsl
+            );
 
             let bgl_refs: Vec<&wgpu::BindGroupLayout> = pipeline_bindings
                 .group_layouts
