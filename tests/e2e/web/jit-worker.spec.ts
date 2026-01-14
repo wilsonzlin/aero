@@ -63,7 +63,10 @@ test("jit worker returns csp_blocked when platformFeatures.jit_dynamic_wasm=fals
       kind: "config.update",
       version: 1,
       config: {
-        guestMemoryMiB: 512,
+        // JIT worker only uses config.update as a control channel for platform feature flags;
+        // keep the payload small to avoid implying large guest allocations in tests.
+        guestMemoryMiB: 16,
+        vramMiB: 0,
         enableWorkers: true,
         enableWebGPU: false,
         proxyUrl: null,
