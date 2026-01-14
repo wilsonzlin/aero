@@ -5,7 +5,7 @@ use aero_d3d11::{parse_signatures, translate_sm4_module_to_wgsl, DxbcFile, FourC
 
 const FOURCC_ISGN: FourCC = FourCC(*b"ISGN");
 const FOURCC_OSGN: FourCC = FourCC(*b"OSGN");
-const FOURCC_PSGN: FourCC = FourCC(*b"PSGN");
+const FOURCC_PCSG: FourCC = FourCC(*b"PCSG");
 const FOURCC_SHEX: FourCC = FourCC(*b"SHEX");
 
 fn load_fixture(name: &str) -> Vec<u8> {
@@ -31,13 +31,16 @@ fn parses_and_translates_sm5_hs_fixture() {
 
     assert!(dxbc.get_chunk(FOURCC_ISGN).is_some(), "missing ISGN chunk");
     assert!(dxbc.get_chunk(FOURCC_OSGN).is_some(), "missing OSGN chunk");
-    assert!(dxbc.get_chunk(FOURCC_PSGN).is_some(), "missing PSGN chunk");
+    assert!(dxbc.get_chunk(FOURCC_PCSG).is_some(), "missing PCSG chunk");
     assert!(dxbc.get_chunk(FOURCC_SHEX).is_some(), "missing SHEX chunk");
 
     let signatures = parse_signatures(&dxbc).expect("signature parsing failed");
     assert!(signatures.isgn.is_some(), "missing parsed ISGN");
     assert!(signatures.osgn.is_some(), "missing parsed OSGN");
-    assert!(signatures.psgn.is_some(), "missing parsed PSGN");
+    assert!(
+        signatures.pcsg.is_some() || signatures.psgn.is_some(),
+        "missing parsed PCSG/PSGN"
+    );
 
     let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM5 parse failed");
     assert_eq!(program.stage, ShaderStage::Hull);
@@ -73,4 +76,3 @@ fn parses_and_translates_sm5_hs_fixture() {
         translated.reflection.outputs
     );
 }
-

@@ -70,7 +70,7 @@ The files are intentionally tiny and deterministic, so CI does **not** require
     triangle covering the center of the render target.
 * `hs_minimal.dxbc`
   * Shader model: `hs_5_0`
-  * Chunks: `ISGN`, `OSGN`, `PSGN`, `SHEX`
+  * Chunks: `ISGN`, `OSGN`, `PCSG`, `SHEX`
   * Behavior:
     * Control-point phase: writes `SV_OutputControlPointID` + `SV_PrimitiveID` into `o0.xy`, `ret`
     * Patch-constant phase: writes `SV_TessFactor` + `SV_InsideTessFactor`, `ret`

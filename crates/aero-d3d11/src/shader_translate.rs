@@ -312,11 +312,17 @@ pub fn translate_sm4_module_to_wgsl(
                 .osgn
                 .as_ref()
                 .ok_or(ShaderTranslateError::MissingSignature("OSGN"))?;
-            let psgn = signatures
-                .psgn
+            // Hull shaders have two output signatures:
+            // - Control point outputs (`OSGN` / `OSG1`)
+            // - Patch constant outputs (`PCSG` / `PCG1`, sometimes emitted as `PSGN` / `PSG1`)
+            //
+            // Prefer `PCSG` but fall back to `PSGN` for toolchains that still use it.
+            let pcsg = signatures
+                .pcsg
                 .as_ref()
-                .ok_or(ShaderTranslateError::MissingSignature("PSGN"))?;
-            translate_hs(module, isgn, osgn, psgn, rdef)
+                .or(signatures.psgn.as_ref())
+                .ok_or(ShaderTranslateError::MissingSignature("PCSG/PSGN"))?;
+            translate_hs(module, isgn, osgn, pcsg, rdef)
         }
         (ShaderStage::Compute, rdef) => translate_cs(module, rdef),
         (other, _rdef) => Err(ShaderTranslateError::UnsupportedStage(other)),
@@ -465,7 +471,7 @@ fn translate_hs(
     module: &Sm4Module,
     isgn: &DxbcSignature,
     osgn: &DxbcSignature,
-    psgn: &DxbcSignature,
+    pcsg: &DxbcSignature,
     rdef: Option<RdefChunk>,
 ) -> Result<ShaderTranslation, ShaderTranslateError> {
     // HS is executed via compute emulation. We currently support a minimal subset:
@@ -524,9 +530,9 @@ fn translate_hs(
 
     // Build IO maps for:
     // - Control point phase: ISGN -> OSGN
-    // - Patch constant phase: ISGN -> PSGN
+    // - Patch constant phase: ISGN -> PCSG/PSGN
     let mut io_cp = build_io_maps(module, isgn, osgn)?;
-    let mut io_pc = build_io_maps(module, isgn, psgn)?;
+    let mut io_pc = build_io_maps(module, isgn, pcsg)?;
 
     // Map HS system values (`SV_PrimitiveID`, `SV_OutputControlPointID`) onto synthetic variables
     // derived from the compute invocation IDs.
