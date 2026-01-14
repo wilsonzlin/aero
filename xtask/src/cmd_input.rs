@@ -696,7 +696,11 @@ mod tests {
         }
 
         assert_integration_tests_exist(repo_root, "crates/aero-usb", AERO_USB_FOCUSED_TESTS);
-        assert_integration_tests_exist(repo_root, "crates/aero-machine", AERO_MACHINE_FOCUSED_TESTS);
+        assert_integration_tests_exist(
+            repo_root,
+            "crates/aero-machine",
+            AERO_MACHINE_FOCUSED_TESTS,
+        );
         assert_integration_tests_exist(repo_root, "crates/aero-wasm", AERO_WASM_INPUT_TESTS);
         assert_integration_tests_exist(repo_root, "crates/aero-wasm", WASM_PACK_TESTS);
 
