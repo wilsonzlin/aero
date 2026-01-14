@@ -54,8 +54,8 @@ Steps:
      --test hid_usage_keyboard_fixture --test hid_usage_consumer_fixture --test xhci_enum_smoke
      --test xhci_controller_webusb_ep0 --test xhci_doorbell0 --test xhci_usbcmd_run_gates_transfers
      (or: --usb-all to run the full aero-usb test suite)
-  3. (optional: --machine) cargo test -p aero-machine --lib --locked --test machine_uhci --test uhci_snapshot
-     --test machine_uhci_snapshot_roundtrip --test uhci_usb_topology_api --test machine_usb_attach_at_path
+  3. (optional: --machine) cargo test -p aero-machine --lib --locked --test machine_i8042_snapshot_pending_bytes --test machine_virtio_input
+     --test machine_uhci --test uhci_snapshot --test machine_uhci_snapshot_roundtrip --test uhci_usb_topology_api --test machine_usb_attach_at_path
      --test machine_ehci --test machine_usb2_companion_routing --test machine_uhci_synthetic_usb_hid
      --test machine_uhci_synthetic_hid --test machine_uhci_synthetic_usb_hid_mouse_buttons --test machine_uhci_synthetic_usb_hid_gamepad
      --test machine_uhci_synthetic_usb_hid_reports --test machine_xhci --test machine_xhci_snapshot --test xhci_snapshot --test machine_xhci_usb_attach_at_path
@@ -67,7 +67,7 @@ Steps:
 
 Options:
   --e2e                 Also run a small subset of Playwright E2E tests relevant to input.
-  --machine             Also run targeted `aero-machine` tests (UHCI/EHCI/xHCI wiring + USB2 companion routing + snapshot/restore).
+  --machine             Also run targeted `aero-machine` tests (USB: UHCI/EHCI/xHCI + USB2 routing; input: i8042 + virtio-input; plus snapshot/restore).
   --wasm                Also run wasm-pack tests for the WASM USB bridge (does not require `node_modules`).
   --rust-only            Skip npm unit + Playwright steps (does not require `node_modules`).
   --usb-all             Run the full `aero-usb` test suite (all integration tests).
@@ -167,6 +167,10 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
             "--lib",
             "--locked",
             "--test",
+            "machine_i8042_snapshot_pending_bytes",
+            "--test",
+            "machine_virtio_input",
+            "--test",
             "machine_uhci",
             "--test",
             "uhci_snapshot",
@@ -200,7 +204,7 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
             "machine_xhci_usb_attach_at_path",
         ]);
         runner.run_step(
-            "Rust: cargo test -p aero-machine --lib --locked --test machine_uhci --test uhci_snapshot --test machine_uhci_snapshot_roundtrip --test uhci_usb_topology_api --test machine_usb_attach_at_path --test machine_ehci --test machine_usb2_companion_routing --test machine_uhci_synthetic_usb_hid --test machine_uhci_synthetic_hid --test machine_uhci_synthetic_usb_hid_mouse_buttons --test machine_uhci_synthetic_usb_hid_gamepad --test machine_uhci_synthetic_usb_hid_reports --test machine_xhci --test machine_xhci_snapshot --test xhci_snapshot --test machine_xhci_usb_attach_at_path",
+            "Rust: cargo test -p aero-machine --lib --locked --test machine_i8042_snapshot_pending_bytes --test machine_virtio_input --test machine_uhci --test uhci_snapshot --test machine_uhci_snapshot_roundtrip --test uhci_usb_topology_api --test machine_usb_attach_at_path --test machine_ehci --test machine_usb2_companion_routing --test machine_uhci_synthetic_usb_hid --test machine_uhci_synthetic_hid --test machine_uhci_synthetic_usb_hid_mouse_buttons --test machine_uhci_synthetic_usb_hid_gamepad --test machine_uhci_synthetic_usb_hid_reports --test machine_xhci --test machine_xhci_snapshot --test xhci_snapshot --test machine_xhci_usb_attach_at_path",
             &mut cmd,
         )?;
     }
