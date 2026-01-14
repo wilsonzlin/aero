@@ -958,6 +958,104 @@ fn tier1_inline_tlb_cross_page_store_can_use_fastpath_when_enabled() {
 }
 
 #[test]
+fn tier1_inline_tlb_cross_page_load_fastpath_handles_all_offsets() {
+    // For a W64 load, any address in the last 7 bytes of a 4KiB page crosses into the next page.
+    // Exercise all offsets to ensure the split load + recombine logic is correct.
+    for addr in 0xFF9u64..=0xFFFu64 {
+        let mut b = IrBuilder::new(0x1000);
+        let a0 = b.const_int(Width::W64, addr);
+        let v0 = b.load(Width::W64, a0);
+        b.write_reg(
+            GuestReg::Gpr {
+                reg: Gpr::Rax,
+                width: Width::W64,
+                high8: false,
+            },
+            v0,
+        );
+        let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+        block.validate().unwrap();
+
+        let cpu = CpuState {
+            rip: 0x1000,
+            ..Default::default()
+        };
+
+        let mut ram = vec![0u8; 0x2000];
+        for (i, b) in ram.iter_mut().enumerate() {
+            *b = i as u8;
+        }
+        let expected = u64::from_le_bytes(ram[addr as usize..addr as usize + 8].try_into().unwrap());
+
+        let (next_rip, got_cpu, _got_ram, host_state) = run_wasm_inner(
+            &block,
+            cpu,
+            ram,
+            0x2000,
+            None,
+            Tier1WasmOptions {
+                inline_tlb: true,
+                inline_tlb_cross_page_fastpath: true,
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(next_rip, 0x3000, "addr={addr:#x}");
+        assert_eq!(got_cpu.rip, 0x3000, "addr={addr:#x}");
+        assert_eq!(got_cpu.gpr[Gpr::Rax.as_u8() as usize], expected, "addr={addr:#x}");
+        assert!(host_state.mmu_translate_calls <= 2, "addr={addr:#x}");
+        assert_eq!(host_state.slow_mem_reads, 0, "addr={addr:#x}");
+        assert_eq!(host_state.mmio_exit_calls, 0, "addr={addr:#x}");
+    }
+}
+
+#[test]
+fn tier1_inline_tlb_cross_page_store_fastpath_handles_all_offsets() {
+    for addr in 0xFF9u64..=0xFFFu64 {
+        let mut b = IrBuilder::new(0x1000);
+        let a0 = b.const_int(Width::W64, addr);
+        let v0 = b.const_int(Width::W64, 0x1122_3344_5566_7788);
+        b.store(Width::W64, a0, v0);
+        let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+        block.validate().unwrap();
+
+        let cpu = CpuState {
+            rip: 0x1000,
+            ..Default::default()
+        };
+
+        // Keep the code-version table disabled in this test. In the simple `run_wasm_inner` memory
+        // layout, the Tier-2 context region overlaps the start of guest RAM, so the inline store
+        // bump logic would interpret non-zero RAM bytes as a configured table and may trap.
+        let mut ram = vec![0xccu8; 0x2000];
+        ram[8..12].fill(0);
+        let mut expected_ram = ram.clone();
+        expected_ram[addr as usize..addr as usize + 8]
+            .copy_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
+
+        let (next_rip, got_cpu, got_ram, host_state) = run_wasm_inner(
+            &block,
+            cpu,
+            ram,
+            0x2000,
+            None,
+            Tier1WasmOptions {
+                inline_tlb: true,
+                inline_tlb_cross_page_fastpath: true,
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(next_rip, 0x3000, "addr={addr:#x}");
+        assert_eq!(got_cpu.rip, 0x3000, "addr={addr:#x}");
+        assert_eq!(got_ram, expected_ram, "addr={addr:#x}");
+        assert!(host_state.mmu_translate_calls <= 2, "addr={addr:#x}");
+        assert_eq!(host_state.slow_mem_writes, 0, "addr={addr:#x}");
+        assert_eq!(host_state.mmio_exit_calls, 0, "addr={addr:#x}");
+    }
+}
+
+#[test]
 fn tier1_inline_tlb_cross_page_store_bumps_both_code_pages() {
     let addr = 0xFF9u64;
 
