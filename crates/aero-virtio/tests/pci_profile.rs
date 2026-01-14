@@ -1,14 +1,19 @@
 use aero_devices::pci::profile::{
     PciDeviceProfile, PCI_DEVICE_ID_VIRTIO_NET_TRANSITIONAL, VIRTIO_BLK, VIRTIO_CAP_COMMON,
     VIRTIO_CAP_DEVICE, VIRTIO_CAP_ISR, VIRTIO_CAP_NOTIFY, VIRTIO_INPUT_KEYBOARD,
-    VIRTIO_INPUT_MOUSE, VIRTIO_NET, VIRTIO_SND,
+    VIRTIO_INPUT_MOUSE, VIRTIO_NET,
 };
 
 use aero_virtio::devices::blk::{MemDisk, VirtioBlk};
 use aero_virtio::devices::input::{VirtioInput, VirtioInputDeviceKind};
 use aero_virtio::devices::net::{LoopbackNet, VirtioNet};
-use aero_virtio::devices::snd::VirtioSnd;
 use aero_virtio::pci::{InterruptLog, VirtioPciDevice};
+
+#[cfg(feature = "snd")]
+use aero_devices::pci::profile::VIRTIO_SND;
+
+#[cfg(feature = "snd")]
+use aero_virtio::devices::snd::VirtioSnd;
 
 fn read_config(dev: &mut VirtioPciDevice, offset: u16, len: usize) -> Vec<u8> {
     let mut buf = vec![0u8; len];
@@ -140,13 +145,16 @@ fn virtio_pci_device_ids_match_canonical_profile() {
     );
     assert_virtio_identity_matches_profile(&mut mouse, VIRTIO_INPUT_MOUSE);
 
-    let mut snd = VirtioPciDevice::new(
-        Box::new(VirtioSnd::new(
-            aero_audio::ring::AudioRingBuffer::new_stereo(8),
-        )),
-        Box::new(InterruptLog::default()),
-    );
-    assert_virtio_identity_matches_profile(&mut snd, VIRTIO_SND);
+    #[cfg(feature = "snd")]
+    {
+        let mut snd = VirtioPciDevice::new(
+            Box::new(VirtioSnd::new(
+                aero_audio::ring::AudioRingBuffer::new_stereo(8),
+            )),
+            Box::new(InterruptLog::default()),
+        );
+        assert_virtio_identity_matches_profile(&mut snd, VIRTIO_SND);
+    }
 }
 
 #[test]

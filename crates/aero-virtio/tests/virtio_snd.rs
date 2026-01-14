@@ -1,3 +1,5 @@
+#![cfg(feature = "snd")]
+
 use aero_audio::sink::AudioSink;
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_platform::interrupts::msi::MsiMessage;

@@ -1,3 +1,5 @@
+#![cfg(feature = "snd")]
+
 use aero_virtio::devices::snd::{
     VirtioSnd, CAPTURE_STREAM_ID, PLAYBACK_STREAM_ID, VIRTIO_SND_QUEUE_RX, VIRTIO_SND_QUEUE_TX,
     VIRTIO_SND_S_BAD_MSG,

@@ -3,15 +3,19 @@ use std::collections::BTreeMap;
 use aero_devices::pci::capabilities::PCI_CAP_ID_VENDOR_SPECIFIC;
 use aero_devices::pci::profile::{
     PciDeviceProfile, VIRTIO_BLK, VIRTIO_INPUT_KEYBOARD, VIRTIO_INPUT_MOUSE, VIRTIO_NET,
-    VIRTIO_SND,
 };
 use aero_devices::pci::{PciBarDefinition, PciConfigSpace, PciDevice as _};
 
 use aero_virtio::devices::blk::{MemDisk, VirtioBlk};
 use aero_virtio::devices::input::{VirtioInput, VirtioInputDeviceKind};
 use aero_virtio::devices::net::{LoopbackNet, VirtioNet};
-use aero_virtio::devices::snd::VirtioSnd;
 use aero_virtio::pci::{InterruptLog, VirtioPciDevice};
+
+#[cfg(feature = "snd")]
+use aero_devices::pci::profile::VIRTIO_SND;
+
+#[cfg(feature = "snd")]
+use aero_virtio::devices::snd::VirtioSnd;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct VirtioVendorSpecificCap {
@@ -230,6 +234,7 @@ fn virtio_pci_config_space_matches_canonical_profiles() {
     }
 
     // virtio-snd
+    #[cfg(feature = "snd")]
     {
         let mut dev = VirtioPciDevice::new(
             Box::new(VirtioSnd::new(
@@ -241,4 +246,3 @@ fn virtio_pci_config_space_matches_canonical_profiles() {
         assert_config_space_matches_profile(dev.config_mut(), &mut profile_cfg, VIRTIO_SND);
     }
 }
-

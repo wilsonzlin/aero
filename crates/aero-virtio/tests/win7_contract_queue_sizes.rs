@@ -1,8 +1,10 @@
 use aero_virtio::devices::blk::{MemDisk, VirtioBlk};
 use aero_virtio::devices::input::{VirtioInput, VirtioInputDeviceKind};
 use aero_virtio::devices::net::{LoopbackNet, VirtioNet};
-use aero_virtio::devices::snd::VirtioSnd;
 use aero_virtio::pci::{InterruptLog, VirtioPciDevice, VIRTIO_PCI_CAP_COMMON_CFG};
+
+#[cfg(feature = "snd")]
+use aero_virtio::devices::snd::VirtioSnd;
 
 #[derive(Default)]
 struct Caps {
@@ -107,7 +109,10 @@ fn win7_contract_common_cfg_queue_sizes_match_spec() {
     let mut mouse_pci = VirtioPciDevice::new(Box::new(mouse), Box::new(InterruptLog::default()));
     assert_queue_layout(&mut mouse_pci, 2, &[64, 64]);
 
-    let snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
-    let mut snd_pci = VirtioPciDevice::new(Box::new(snd), Box::new(InterruptLog::default()));
-    assert_queue_layout(&mut snd_pci, 4, &[64, 64, 256, 64]);
+    #[cfg(feature = "snd")]
+    {
+        let snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
+        let mut snd_pci = VirtioPciDevice::new(Box::new(snd), Box::new(InterruptLog::default()));
+        assert_queue_layout(&mut snd_pci, 4, &[64, 64, 256, 64]);
+    }
 }

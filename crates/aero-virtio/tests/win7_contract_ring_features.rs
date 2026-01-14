@@ -5,9 +5,11 @@ use aero_virtio::devices::blk::{
 use aero_virtio::devices::gpu::{NullScanoutSink, VirtioGpu2d};
 use aero_virtio::devices::input::{VirtioInput, VirtioInputDeviceKind};
 use aero_virtio::devices::net::{LoopbackNet, VirtioNet, VIRTIO_NET_F_MAC, VIRTIO_NET_F_STATUS};
-use aero_virtio::devices::snd::VirtioSnd;
 use aero_virtio::devices::VirtioDevice;
 use aero_virtio::pci::{VIRTIO_F_RING_EVENT_IDX, VIRTIO_F_RING_INDIRECT_DESC, VIRTIO_F_VERSION_1};
+
+#[cfg(feature = "snd")]
+use aero_virtio::devices::snd::VirtioSnd;
 
 const VIRTIO_F_RING_PACKED: u64 = 1 << 34;
 
@@ -81,13 +83,16 @@ fn win7_contract_ring_features_are_consistent_across_devices() {
         VIRTIO_F_VERSION_1 | VIRTIO_F_RING_INDIRECT_DESC,
     );
 
-    let snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
-    assert_win7_contract_ring_features("virtio-snd", snd.device_features());
-    assert_win7_contract_features_exact(
-        "virtio-snd",
-        snd.device_features(),
-        VIRTIO_F_VERSION_1 | VIRTIO_F_RING_INDIRECT_DESC,
-    );
+    #[cfg(feature = "snd")]
+    {
+        let snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
+        assert_win7_contract_ring_features("virtio-snd", snd.device_features());
+        assert_win7_contract_features_exact(
+            "virtio-snd",
+            snd.device_features(),
+            VIRTIO_F_VERSION_1 | VIRTIO_F_RING_INDIRECT_DESC,
+        );
+    }
 
     let gpu = VirtioGpu2d::new(4, 4, NullScanoutSink);
     assert_win7_contract_ring_features("virtio-gpu", gpu.device_features());

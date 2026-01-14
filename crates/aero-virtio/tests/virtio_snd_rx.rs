@@ -1,3 +1,5 @@
+#![cfg(feature = "snd")]
+
 use aero_virtio::devices::snd::{
     AudioCaptureSource, VirtioSnd, CAPTURE_STREAM_ID, VIRTIO_SND_PCM_FMT_S16,
     VIRTIO_SND_PCM_RATE_48000, VIRTIO_SND_QUEUE_CONTROL, VIRTIO_SND_QUEUE_RX,
