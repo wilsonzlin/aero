@@ -1745,11 +1745,11 @@ def main() -> int:
                 if need_input_events or need_input_tablet_events or need_msix_check:
                     req_flags: list[str] = []
                     if bool(args.with_input_events):
-                        req_flags.append("--with-input-events")
+                        req_flags.append("--with-input-events/--with-virtio-input-events")
                     if need_input_wheel:
                         req_flags.append("--with-input-wheel")
                     if need_input_tablet_events:
-                        req_flags.append("--with-input-tablet-events")
+                        req_flags.append("--with-input-tablet-events/--with-tablet-events")
                     if need_msix_check:
                         req_flags.append("--require-virtio-*-msix")
                     print(
@@ -1766,11 +1766,11 @@ def main() -> int:
     if (need_input_events or need_input_tablet_events or need_msix_check) and qmp_endpoint is None:
         req_flags: list[str] = []
         if bool(args.with_input_events):
-            req_flags.append("--with-input-events")
+            req_flags.append("--with-input-events/--with-virtio-input-events")
         if need_input_wheel:
             req_flags.append("--with-input-wheel")
         if need_input_tablet_events:
-            req_flags.append("--with-input-tablet-events")
+            req_flags.append("--with-input-tablet-events/--with-tablet-events")
         if need_msix_check:
             req_flags.append("--require-virtio-*-msix")
         print(
