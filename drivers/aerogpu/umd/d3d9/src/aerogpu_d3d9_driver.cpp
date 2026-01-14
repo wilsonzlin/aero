@@ -1391,7 +1391,6 @@ std::array<uint64_t, 4> d3d9_stub_trace_args(const Args&... args) {
 // D3D9Ex image processing API. Treat as a no-op until the fixed-function path is
 // fully implemented (DWM should not rely on it).
 AEROGPU_D3D9_DEFINE_DDI_NOOP(pfnSetConvolutionMonoKernel, D3d9TraceFunc::DeviceSetConvolutionMonoKernel, S_OK);
-AEROGPU_D3D9_DEFINE_DDI_NOOP(pfnGenerateMipSubLevels, D3d9TraceFunc::DeviceGenerateMipSubLevels, S_OK);
 
 // Cursor management is implemented as a software overlay composited at Present
 // time (see device_set_cursor_* and the Present paths).
