@@ -45,6 +45,40 @@ def _fmt_hex(width: int, value: int | None) -> str:
     return f"0x{value:0{width}x}"
 
 
+def _qmp_maybe_int(v: object) -> int | None:
+    if isinstance(v, int):
+        return v
+    if isinstance(v, str):
+        s = v.strip()
+        if not s:
+            return None
+        try:
+            return int(s, 0)
+        except ValueError:
+            # `int(..., 0)` rejects bare hex without a 0x prefix (e.g. "1af4").
+            try:
+                return int(s, 16)
+            except ValueError:
+                return None
+    return None
+
+
+def _qmp_device_vendor_device_id(dev: dict[str, object]) -> tuple[int | None, int | None]:
+    vendor = _qmp_maybe_int(dev.get("vendor_id"))
+    device = _qmp_maybe_int(dev.get("device_id"))
+    if vendor is not None and device is not None:
+        return vendor, device
+
+    # Some QEMU builds may nest the IDs under an `id` object.
+    id_obj = dev.get("id")
+    if isinstance(id_obj, dict):
+        if vendor is None:
+            vendor = _qmp_maybe_int(id_obj.get("vendor_id") or id_obj.get("vendor"))
+        if device is None:
+            device = _qmp_maybe_int(id_obj.get("device_id") or id_obj.get("device"))
+    return vendor, device
+
+
 def _qemu_device_help_text(qemu_system: str) -> str | None:
     try:
         proc = subprocess.run(
@@ -209,24 +243,13 @@ def _iter_pci_devices(query_pci_result: object) -> list[_PciId]:
             if not isinstance(dev, dict):
                 continue
 
-            def _as_int(v: object) -> int | None:
-                if isinstance(v, int):
-                    return v
-                if isinstance(v, str):
-                    try:
-                        return int(v, 0)
-                    except ValueError:
-                        return None
-                return None
-
-            vendor = _as_int(dev.get("vendor_id"))
-            device = _as_int(dev.get("device_id"))
+            vendor, device = _qmp_device_vendor_device_id(dev)
             if vendor is None or device is None:
                 continue
 
-            subsys_vendor = _as_int(dev.get("subsystem_vendor_id"))
-            subsys = _as_int(dev.get("subsystem_id"))
-            rev = _as_int(dev.get("revision"))
+            subsys_vendor = _qmp_maybe_int(dev.get("subsystem_vendor_id"))
+            subsys = _qmp_maybe_int(dev.get("subsystem_id"))
+            rev = _qmp_maybe_int(dev.get("revision"))
             devices.append(_PciId(vendor, device, subsys_vendor, subsys, rev))
 
     return devices

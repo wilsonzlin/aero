@@ -4387,6 +4387,45 @@ function Convert-AeroPciInt {
   try { return [int]([Convert]::ToInt32($s, 16)) } catch { return $null }
 }
 
+function Get-AeroPciVendorDeviceFromQueryPciDevice {
+  param(
+    [Parameter(Mandatory = $true)] $Device
+  )
+
+  $vendor = Convert-AeroPciInt $Device.vendor_id
+  $device = Convert-AeroPciInt $Device.device_id
+  if (($null -ne $vendor) -and ($null -ne $device)) {
+    return [pscustomobject]@{ VendorId = $vendor; DeviceId = $device }
+  }
+
+  # Some QEMU builds may nest the IDs under an `id` object.
+  $idObj = $null
+  try { $idObj = $Device.id } catch { }
+  if ($null -ne $idObj) {
+    if ($idObj -is [System.Collections.IDictionary]) {
+      if ($null -eq $vendor) {
+        $vendor = Convert-AeroPciInt $idObj["vendor_id"]
+        if ($null -eq $vendor) { $vendor = Convert-AeroPciInt $idObj["vendor"] }
+      }
+      if ($null -eq $device) {
+        $device = Convert-AeroPciInt $idObj["device_id"]
+        if ($null -eq $device) { $device = Convert-AeroPciInt $idObj["device"] }
+      }
+    } else {
+      if ($null -eq $vendor) {
+        $vendor = Convert-AeroPciInt $idObj.vendor_id
+        if ($null -eq $vendor) { $vendor = Convert-AeroPciInt $idObj.vendor }
+      }
+      if ($null -eq $device) {
+        $device = Convert-AeroPciInt $idObj.device_id
+        if ($null -eq $device) { $device = Convert-AeroPciInt $idObj.device }
+      }
+    }
+  }
+
+  return [pscustomobject]@{ VendorId = $vendor; DeviceId = $device }
+}
+
 function Format-AeroPciBdf {
   param(
     [Parameter(Mandatory = $false)] [Nullable[int]]$Bus,
@@ -4410,8 +4449,9 @@ function Get-AeroPciIdsFromQueryPci {
     $devs = $bus.devices
     if ($null -eq $devs) { continue }
     foreach ($dev in $devs) {
-      $vendor = Convert-AeroPciInt $dev.vendor_id
-      $device = Convert-AeroPciInt $dev.device_id
+      $vd = Get-AeroPciVendorDeviceFromQueryPciDevice -Device $dev
+      $vendor = $vd.VendorId
+      $device = $vd.DeviceId
       if (($null -eq $vendor) -or ($null -eq $device)) { continue }
 
       $rev = Convert-AeroPciInt $dev.revision
@@ -4614,8 +4654,9 @@ function Get-AeroPciMsixInfoFromQueryPci {
     $devs = $bus.devices
     if ($null -eq $devs) { continue }
     foreach ($dev in $devs) {
-      $vendor = Convert-AeroPciInt $dev.vendor_id
-      $device = Convert-AeroPciInt $dev.device_id
+      $vd = Get-AeroPciVendorDeviceFromQueryPciDevice -Device $dev
+      $vendor = $vd.VendorId
+      $device = $vd.DeviceId
       if (($null -eq $vendor) -or ($null -eq $device)) { continue }
 
       $msixEnabled = $null
