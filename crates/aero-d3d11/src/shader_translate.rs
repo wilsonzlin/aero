@@ -6694,6 +6694,39 @@ mod tests {
     }
 
     #[test]
+    fn hs_resource_bindings_use_group_3_with_compute_visibility() {
+        // Hull/domain/geometry shaders are bound via the executor's `stage_ex` buckets and are
+        // executed through compute-based emulation. Their resources must live in @group(3) and be
+        // visible to the compute stage.
+        let module = Sm4Module {
+            stage: ShaderStage::Hull,
+            model: crate::sm4::ShaderModel { major: 5, minor: 0 },
+            decls: vec![Sm4Decl::ConstantBuffer { slot: 0, reg_count: 1 }],
+            instructions: vec![
+                Sm4Inst::Mov {
+                    dst: dummy_dst(),
+                    src: crate::sm4_ir::SrcOperand {
+                        kind: SrcKind::ConstantBuffer { slot: 0, reg: 0 },
+                        swizzle: Swizzle::XYZW,
+                        modifier: OperandModifier::None,
+                    },
+                },
+                Sm4Inst::Ret,
+            ],
+        };
+
+        let bindings = reflect_resource_bindings(&module).unwrap();
+        let cbuf = bindings
+            .into_iter()
+            .find(|b| matches!(b.kind, BindingKind::ConstantBuffer { slot: 0, reg_count: 1 }))
+            .expect("expected cbuffer binding");
+
+        assert_eq!(cbuf.group, 3);
+        assert_eq!(cbuf.binding, BINDING_BASE_CBUFFER);
+        assert_eq!(cbuf.visibility, wgpu::ShaderStages::COMPUTE);
+    }
+
+    #[test]
     fn uav_buffer_binding_numbers_use_uav_base_offset() {
         let max_slot = MAX_UAV_SLOTS - 1;
         let module = Sm4Module {
