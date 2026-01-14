@@ -685,6 +685,7 @@ enum VerifyHttpSource {
     Url {
         manifest_url: reqwest::Url,
         client: reqwest::Client,
+        head_supported: Arc<AtomicBool>,
     },
 }
 
@@ -721,6 +722,7 @@ async fn verify_http_or_file(args: &VerifyArgs) -> Result<()> {
             VerifyHttpSource::Url {
                 manifest_url,
                 client,
+                head_supported: Arc::new(AtomicBool::new(true)),
             },
         )
     } else if let Some(path) = &args.manifest_file {
@@ -978,6 +980,7 @@ async fn verify_optional_meta_http_or_file(
         VerifyHttpSource::Url {
             manifest_url,
             client,
+            ..
         } => {
             let mut meta_url = manifest_url
                 .join("meta.json")
@@ -1289,6 +1292,7 @@ async fn verify_http_chunk(
         VerifyHttpSource::Url {
             manifest_url,
             client,
+            head_supported,
         } => {
             let mut url = manifest_url.join(&chunk_key).with_context(|| {
                 format!("resolve chunk url {chunk_key:?} relative to {manifest_url}")
@@ -1303,6 +1307,7 @@ async fn verify_http_chunk(
                 expected_size,
                 expected_sha256,
                 retries,
+                Some(head_supported),
             )
             .await
         }
@@ -1369,7 +1374,64 @@ async fn verify_chunk_http(
     url: reqwest::Url,
     expected_size: u64,
     expected_sha256: Option<&str>,
+    head_supported: Option<&AtomicBool>,
 ) -> Result<u64> {
+    if expected_sha256.is_none() {
+        if let Some(head_supported) = head_supported {
+            if head_supported.load(Ordering::SeqCst) {
+                // Best-effort `HEAD` optimization: validate size via Content-Length without
+                // downloading the body.
+                match client.head(url.clone()).send().await {
+                    Ok(resp) => {
+                        let status = resp.status();
+                        // Some servers/CDNs do not support HEAD. Disable the optimization after
+                        // the first clear signal.
+                        if status == reqwest::StatusCode::METHOD_NOT_ALLOWED
+                            || status == reqwest::StatusCode::FORBIDDEN
+                        {
+                            head_supported.store(false, Ordering::SeqCst);
+                        }
+
+                        if status.is_success() {
+                            if let Some(encoding) = resp
+                                .headers()
+                                .get(CONTENT_ENCODING)
+                                .and_then(|v| v.to_str().ok())
+                            {
+                                let encoding = encoding.trim();
+                                if !encoding.eq_ignore_ascii_case("identity") {
+                                    bail!(
+                                        "unexpected Content-Encoding for chunk {index} ({url}): {encoding}"
+                                    );
+                                }
+                            }
+
+                            if let Some(len) = resp.content_length() {
+                                if len == expected_size {
+                                    return Ok(len);
+                                }
+                                // Some servers respond to HEAD with an incorrect Content-Length
+                                // (e.g., 0) even though GET returns the correct size. Treat HEAD as
+                                // a best-effort optimization only and fall back to GET on a
+                                // mismatch to preserve correctness.
+                                head_supported.store(false, Ordering::SeqCst);
+                            } else {
+                                // HEAD succeeded but didn't provide Content-Length. Avoid issuing
+                                // pointless HEAD requests for subsequent chunks.
+                                head_supported.store(false, Ordering::SeqCst);
+                            }
+                        }
+                        // Fall back to GET if the response is not successful or doesn't provide
+                        // Content-Length.
+                    }
+                    Err(_) => {
+                        // Fall back to GET on HEAD errors; GET verification will handle retries.
+                    }
+                }
+            }
+        }
+    }
+
     let mut resp = client
         .get(url.clone())
         .send()
@@ -1441,11 +1503,21 @@ async fn verify_chunk_http_with_retry(
     expected_size: u64,
     expected_sha256: Option<&str>,
     retries: usize,
+    head_supported: Option<&AtomicBool>,
 ) -> Result<u64> {
     let mut attempt = 0usize;
     loop {
         attempt += 1;
-        match verify_chunk_http(index, client, url.clone(), expected_size, expected_sha256).await {
+        match verify_chunk_http(
+            index,
+            client,
+            url.clone(),
+            expected_size,
+            expected_sha256,
+            head_supported,
+        )
+        .await
+        {
             Ok(bytes) => return Ok(bytes),
             Err(err) if attempt < retries && is_retryable_http_error(&err) => {
                 let sleep_for = retry_backoff(attempt);
@@ -3535,7 +3607,10 @@ mod tests {
     async fn download_http_bytes_with_retry_retries_on_408() -> Result<()> {
         let requests = Arc::new(AtomicU64::new(0));
         let responder: Arc<
-            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>) + Send + Sync + 'static,
+            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>)
+                + Send
+                + Sync
+                + 'static,
         > = {
             let requests = Arc::clone(&requests);
             Arc::new(move |_req: TestHttpRequest| {
@@ -3935,7 +4010,10 @@ mod tests {
     async fn download_http_bytes_optional_with_retry_retries_on_408() -> Result<()> {
         let requests = Arc::new(AtomicU64::new(0));
         let responder: Arc<
-            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>) + Send + Sync + 'static,
+            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>)
+                + Send
+                + Sync
+                + 'static,
         > = {
             let requests = Arc::clone(&requests);
             Arc::new(move |_req: TestHttpRequest| {
