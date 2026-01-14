@@ -68,7 +68,7 @@ describe("runtime/boot_disks_protocol", () => {
       });
     });
 
-    it("parses bootDevice when valid and drops it when invalid", () => {
+    it("accepts valid bootDevice values and drops invalid ones", () => {
       expect(
         normalizeSetBootDisksMessage({
           type: "setBootDisks",
@@ -85,14 +85,45 @@ describe("runtime/boot_disks_protocol", () => {
         bootDevice: "cdrom",
       });
 
-      // Invalid values are dropped rather than rejected outright.
       expect(
         normalizeSetBootDisksMessage({
           type: "setBootDisks",
           mounts: {},
           hdd: null,
           cd: null,
-          bootDevice: "nope",
+          bootDevice: "hdd",
+        }),
+      ).toEqual({
+        type: "setBootDisks",
+        mounts: {},
+        hdd: null,
+        cd: null,
+        bootDevice: "hdd",
+      });
+
+      // Invalid bootDevice values are dropped rather than rejected outright.
+      expect(
+        normalizeSetBootDisksMessage({
+          type: "setBootDisks",
+          mounts: {},
+          hdd: null,
+          cd: null,
+          bootDevice: "floppy",
+        }),
+      ).toEqual({
+        type: "setBootDisks",
+        mounts: {},
+        hdd: null,
+        cd: null,
+      });
+
+      expect(
+        normalizeSetBootDisksMessage({
+          type: "setBootDisks",
+          mounts: {},
+          hdd: null,
+          cd: null,
+          bootDevice: 123,
         }),
       ).toEqual({
         type: "setBootDisks",
@@ -161,38 +192,5 @@ describe("runtime/boot_disks_protocol", () => {
       expect(msg?.mounts).toEqual({ hddId: "hdd0", cdId: "cd0" });
     });
 
-    it("accepts a valid bootDevice and drops invalid values", () => {
-      expect(
-        normalizeSetBootDisksMessage({
-          type: "setBootDisks",
-          mounts: {},
-          hdd: null,
-          cd: null,
-          bootDevice: "hdd",
-        }),
-      ).toEqual({
-        type: "setBootDisks",
-        mounts: {},
-        hdd: null,
-        cd: null,
-        bootDevice: "hdd",
-      });
-
-      // Invalid bootDevice values are ignored.
-      expect(
-        normalizeSetBootDisksMessage({
-          type: "setBootDisks",
-          mounts: {},
-          hdd: null,
-          cd: null,
-          bootDevice: "floppy",
-        }),
-      ).toEqual({
-        type: "setBootDisks",
-        mounts: {},
-        hdd: null,
-        cd: null,
-      });
-    });
   });
 });
