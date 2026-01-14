@@ -4,7 +4,7 @@ use crate::io::storage::adapters::{
     aero_storage_disk_error_to_emulator, aero_storage_disk_error_to_emulator_with_sector_context,
     StorageBackendFromByteStorage,
 };
-use crate::io::storage::disk::{ByteStorage, DiskBackend};
+use crate::io::storage::disk::{ByteStorage, DiskBackend, MaybeSend};
 use crate::io::storage::error::{DiskError, DiskResult};
 
 const SECTOR_SIZE: u32 = 512;
@@ -29,7 +29,7 @@ impl<S: ByteStorage> VhdDisk<S> {
     }
 }
 
-impl<S: ByteStorage + Send> DiskBackend for VhdDisk<S> {
+impl<S: ByteStorage + MaybeSend> DiskBackend for VhdDisk<S> {
     fn sector_size(&self) -> u32 {
         SECTOR_SIZE
     }

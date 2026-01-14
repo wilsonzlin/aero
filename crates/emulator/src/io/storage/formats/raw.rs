@@ -4,7 +4,7 @@ use crate::io::storage::adapters::{
     aero_storage_disk_error_to_emulator, aero_storage_disk_error_to_emulator_with_sector_context,
     StorageBackendFromByteStorage,
 };
-use crate::io::storage::disk::{ByteStorage, DiskBackend};
+use crate::io::storage::disk::{ByteStorage, DiskBackend, MaybeSend};
 use crate::io::storage::error::{DiskError, DiskResult};
 
 /// Raw disk image backed by a byte-addressed storage primitive.
@@ -88,7 +88,7 @@ impl<S: ByteStorage> RawDisk<S> {
     }
 }
 
-impl<S: ByteStorage + Send> DiskBackend for RawDisk<S> {
+impl<S: ByteStorage + MaybeSend> DiskBackend for RawDisk<S> {
     fn sector_size(&self) -> u32 {
         self.sector_size
     }

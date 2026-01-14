@@ -7,7 +7,7 @@
 //! is **not** used by the new controller stack. New images should use `AEROSPAR` instead; see:
 //! `docs/20-storage-trait-consolidation.md`.
 
-use crate::io::storage::disk::{ByteStorage, DiskBackend};
+use crate::io::storage::disk::{ByteStorage, DiskBackend, MaybeSend};
 use crate::io::storage::error::{DiskError, DiskResult};
 
 const SPARSE_MAGIC: [u8; 8] = *b"AEROSPRS";
@@ -499,7 +499,7 @@ impl<S: ByteStorage> SparseDisk<S> {
     }
 }
 
-impl<S: ByteStorage + Send> DiskBackend for SparseDisk<S> {
+impl<S: ByteStorage + MaybeSend> DiskBackend for SparseDisk<S> {
     fn sector_size(&self) -> u32 {
         self.header.sector_size
     }

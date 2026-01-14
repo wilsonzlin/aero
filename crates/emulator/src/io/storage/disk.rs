@@ -241,6 +241,21 @@ pub trait DiskBackend {
     }
 }
 
+/// Internal helper trait: conditionally requires `Send` depending on the target.
+///
+/// Many emulator storage backends wrap browser/JS handles on wasm32 and are therefore `!Send`.
+/// On native targets, we still want backend types to be `Send` so they can be moved into worker
+/// threads.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) trait MaybeSend: Send {}
+#[cfg(target_arch = "wasm32")]
+pub(crate) trait MaybeSend {}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl<T: Send> MaybeSend for T {}
+#[cfg(target_arch = "wasm32")]
+impl<T> MaybeSend for T {}
+
 impl<T: DiskBackend + ?Sized> DiskBackend for &mut T {
     fn sector_size(&self) -> u32 {
         (**self).sector_size()
@@ -422,16 +437,16 @@ impl VirtualDrive {
         })
     }
 
-    pub fn open_auto<S: ByteStorage + Send + 'static>(
+    fn open_auto_inner<S: ByteStorage + MaybeSend + 'static>(
         mut storage: S,
         raw_sector_size: u32,
         write_cache: WriteCachePolicy,
     ) -> DiskResult<Self> {
         let format = crate::io::storage::formats::detect_format(&mut storage)?;
-        Self::open_with_format(format, storage, raw_sector_size, write_cache)
+        Self::open_with_format_inner(format, storage, raw_sector_size, write_cache)
     }
 
-    pub fn open_with_format<S: ByteStorage + Send + 'static>(
+    fn open_with_format_inner<S: ByteStorage + MaybeSend + 'static>(
         format: DiskFormat,
         storage: S,
         raw_sector_size: u32,
@@ -447,6 +462,44 @@ impl VirtualDrive {
             DiskFormat::Vhd => Box::new(crate::io::storage::formats::VhdDisk::open(storage)?),
         };
         Self::new(format, backend, write_cache)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn open_auto<S: ByteStorage + Send + 'static>(
+        storage: S,
+        raw_sector_size: u32,
+        write_cache: WriteCachePolicy,
+    ) -> DiskResult<Self> {
+        Self::open_auto_inner(storage, raw_sector_size, write_cache)
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn open_auto<S: ByteStorage + 'static>(
+        storage: S,
+        raw_sector_size: u32,
+        write_cache: WriteCachePolicy,
+    ) -> DiskResult<Self> {
+        Self::open_auto_inner(storage, raw_sector_size, write_cache)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn open_with_format<S: ByteStorage + Send + 'static>(
+        format: DiskFormat,
+        storage: S,
+        raw_sector_size: u32,
+        write_cache: WriteCachePolicy,
+    ) -> DiskResult<Self> {
+        Self::open_with_format_inner(format, storage, raw_sector_size, write_cache)
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn open_with_format<S: ByteStorage + 'static>(
+        format: DiskFormat,
+        storage: S,
+        raw_sector_size: u32,
+        write_cache: WriteCachePolicy,
+    ) -> DiskResult<Self> {
+        Self::open_with_format_inner(format, storage, raw_sector_size, write_cache)
     }
 
     pub fn format(&self) -> DiskFormat {
