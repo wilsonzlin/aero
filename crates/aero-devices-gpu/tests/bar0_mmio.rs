@@ -299,6 +299,36 @@ fn ring_control_reset_clears_completed_fence_and_syncs_head_and_fence_page() {
 }
 
 #[test]
+fn ring_reset_dma_does_not_panic_on_overflowing_ring_gpa() {
+    let mut mem = memory::Bus::new(0x1000);
+
+    let mut dev = new_test_device(AeroGpuExecutorConfig {
+        verbose: false,
+        keep_last_submissions: 0,
+        fence_completion: AeroGpuFenceCompletionMode::Deferred,
+    });
+
+    // Pick a ring GPA that would overflow when adding `RING_TAIL_OFFSET`/`RING_HEAD_OFFSET`.
+    let ring_gpa = u64::MAX - 16;
+    dev.write(mmio::RING_GPA_LO, 8, ring_gpa);
+
+    // Also program an overflowing fence GPA to ensure the fence-page write path is similarly
+    // resilient (it should no-op without panicking).
+    let fence_gpa = u64::MAX - 8;
+    dev.write(mmio::FENCE_GPA_LO, 8, fence_gpa);
+
+    dev.write(mmio::RING_CONTROL, 4, ring_control::ENABLE as u64);
+    dev.write(
+        mmio::RING_CONTROL,
+        4,
+        (ring_control::ENABLE | ring_control::RESET) as u64,
+    );
+
+    // Should not panic.
+    dev.tick(&mut mem, 0);
+}
+
+#[test]
 fn mmio_sub_dword_reads_and_writes_are_little_endian_and_merge_correctly() {
     let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default());
     dev.config_mut().set_command(1 << 1);

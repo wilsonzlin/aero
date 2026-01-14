@@ -12,7 +12,7 @@ use crate::executor::{AeroGpuExecutor, AeroGpuExecutorConfig};
 use crate::regs::{
     irq_bits, mmio, ring_control, AeroGpuRegs, AerogpuErrorCode, AEROGPU_MMIO_MAGIC, FEATURE_VBLANK,
 };
-use crate::ring::{write_fence_page, AeroGpuRingHeader, RING_TAIL_OFFSET};
+use crate::ring::{write_fence_page, AeroGpuRingHeader};
 use crate::scanout::AeroGpuFormat;
 
 const PCI_COMMAND_MEM_ENABLE: u16 = 1 << 1;
@@ -409,7 +409,8 @@ impl AeroGpuPciDevice {
 
     fn reset_ring_dma(&mut self, mem: &mut dyn MemoryBus) {
         if self.regs.ring_gpa != 0 {
-            let tail = mem.read_u32(self.regs.ring_gpa + RING_TAIL_OFFSET);
+            // Avoid wrapping physical address arithmetic on malformed GPAs.
+            let tail = AeroGpuRingHeader::read_tail(mem, self.regs.ring_gpa);
             AeroGpuRingHeader::write_head(mem, self.regs.ring_gpa, tail);
         }
 
