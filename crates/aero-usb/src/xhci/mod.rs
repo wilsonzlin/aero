@@ -1194,6 +1194,8 @@ impl XhciController {
 
     fn cmd_address_device<M: MemoryBus + ?Sized>(&mut self, mem: &mut M, cmd_paddr: u64, trb: Trb) {
         const CONTROL_BSR: u32 = 1 << 9;
+        // Slot Context Slot State field (DW3 bits 27..=31) is xHC-owned.
+        const SLOT_STATE_MASK_DWORD3: u32 = 0xf800_0000;
         let slot_id = trb.slot_id();
         let slot_idx = usize::from(slot_id);
 
@@ -1353,6 +1355,12 @@ impl XhciController {
         //
         // This model uses the slot ID as the assigned address.
         slot_ctx.set_usb_device_address(slot_id);
+        // Preserve the xHC-owned Slot State field from the existing output Slot Context so guests
+        // cannot write arbitrary slot state values via the Address Device input context.
+        let out_slot = SlotContext::read_from(mem, dev_ctx_ptr);
+        let merged_dw3 = (slot_ctx.dword(3) & !SLOT_STATE_MASK_DWORD3)
+            | (out_slot.dword(3) & SLOT_STATE_MASK_DWORD3);
+        slot_ctx.set_dword(3, merged_dw3);
 
         // Endpoint state is controller-owned. Preserve the existing state if the output context
         // already has one, otherwise set the endpoint to Running.

@@ -60,6 +60,10 @@ fn enable_slot_then_address_device_binds_port_and_writes_context() {
     slot_ctx.set_speed(regs::PSIV_FULL_SPEED);
     slot_ctx.set_context_entries(1);
     slot_ctx.set_root_hub_port_number(1);
+    // Slot State (DW3 bits 27..=31) is xHC-owned. Ensure the controller does not accept an
+    // arbitrary guest-provided Slot State value via the input context.
+    let guest_slot_state = 0x1f;
+    slot_ctx.set_dword(3, slot_ctx.dword(3) | (guest_slot_state << 27));
     slot_ctx.write_to(&mut mem, input_ctx + CONTEXT_SIZE as u64);
 
     let mut ep0_ctx = EndpointContext::default();
@@ -100,6 +104,11 @@ fn enable_slot_then_address_device_binds_port_and_writes_context() {
     assert_eq!(out_slot.speed(), regs::PSIV_FULL_SPEED);
     assert_eq!(out_slot.route_string(), 0);
     assert_eq!(out_slot.usb_device_address(), slot_id);
+    assert_ne!(
+        out_slot.dword(3) >> 27,
+        guest_slot_state,
+        "Address Device must not allow software to set Slot State"
+    );
 
     let out_ep0 = EndpointContext::read_from(&mut mem, dev_ctx + CONTEXT_SIZE as u64);
     assert_eq!(out_ep0.max_packet_size(), 64);
