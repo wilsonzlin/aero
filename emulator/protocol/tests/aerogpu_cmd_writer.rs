@@ -687,8 +687,7 @@ fn cmd_writer_emits_pipeline_and_binding_packets() {
         ),
         (
             AerogpuCmdOpcode::SetShaderConstantsB as u32,
-            // Bool constants are encoded as vec4<u32> per register.
-            size_of::<AerogpuCmdSetShaderConstantsB>() + 32,
+            size_of::<AerogpuCmdSetShaderConstantsB>() + 8,
         ),
         (
             AerogpuCmdOpcode::SetTexture as u32,
@@ -798,10 +797,10 @@ fn cmd_writer_emits_pipeline_and_binding_packets() {
         ),
         2
     );
-    // Payload must be expanded to vec4<u32> per bool register.
+    // Payload is scalar u32 values (0/1), one per bool register.
     let payload_base = pkt2_base + size_of::<AerogpuCmdSetShaderConstantsB>();
-    let expected_payload: [u32; 8] = [0, 0, 0, 0, 1, 1, 1, 1];
-    for (i, expected) in expected_payload.into_iter().enumerate() {
+    let expected_payload: [u32; 2] = [0, 1];
+    for (i, expected) in expected_payload.iter().copied().enumerate() {
         let off = payload_base + i * 4;
         assert_eq!(
             u32::from_le_bytes(buf[off..off + 4].try_into().unwrap()),
@@ -2090,8 +2089,8 @@ fn cmd_writer_emits_set_shader_constants_i_with_vec4_aligned_i32_payload() {
 }
 
 #[test]
-fn cmd_writer_emits_set_shader_constants_b_as_vec4_u32_per_register() {
-    let data: [u32; 2] = [0, 2];
+fn cmd_writer_emits_set_shader_constants_b_as_scalar_u32_values() {
+    let data: [u32; 2] = [0, 1];
 
     let mut w = AerogpuCmdWriter::new();
     w.set_shader_constants_b(AerogpuShaderStage::Vertex, 7, &data);
@@ -2104,7 +2103,7 @@ fn cmd_writer_emits_set_shader_constants_b_as_vec4_u32_per_register() {
     assert_eq!(opcode, AerogpuCmdOpcode::SetShaderConstantsB as u32);
     assert_eq!(
         size_bytes,
-        size_of::<AerogpuCmdSetShaderConstantsB>() + data.len() * 16
+        size_of::<AerogpuCmdSetShaderConstantsB>() + data.len() * 4
     );
 
     assert_eq!(
@@ -2144,26 +2143,10 @@ fn cmd_writer_emits_set_shader_constants_b_as_vec4_u32_per_register() {
         0
     );
 
-    // Payload is `bool_count` registers, each encoded as a vec4<u32> (16 bytes) with the scalar
-    // bool replicated across lanes.
+    // Payload is scalar u32 values (0/1), one per bool register.
     let payload_base = pkt_base + size_of::<AerogpuCmdSetShaderConstantsB>();
-    for (i, expected) in [0u32, 1u32].into_iter().enumerate() {
-        let off = payload_base + i * 16;
-        assert_eq!(
-            u32::from_le_bytes(buf[off..off + 4].try_into().unwrap()),
-            expected
-        );
-        assert_eq!(
-            u32::from_le_bytes(buf[off + 4..off + 8].try_into().unwrap()),
-            expected
-        );
-        assert_eq!(
-            u32::from_le_bytes(buf[off + 8..off + 12].try_into().unwrap()),
-            expected
-        );
-        assert_eq!(
-            u32::from_le_bytes(buf[off + 12..off + 16].try_into().unwrap()),
-            expected
-        );
+    for (i, expected) in data.into_iter().enumerate() {
+        let off = payload_base + i * 4;
+        assert_eq!(u32::from_le_bytes(buf[off..off + 4].try_into().unwrap()), expected);
     }
 }
