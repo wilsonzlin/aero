@@ -745,9 +745,25 @@ static __forceinline ULONGLONG AeroGpuSubmissionMetaTotalBytes(_In_opt_ const AE
      *
      * Track both the pool allocation and any associated allocation table memory.
      */
-    const SIZE_T metaBytes = FIELD_OFFSET(AEROGPU_SUBMISSION_META, Allocations) +
-                             ((SIZE_T)Meta->AllocationCount * sizeof(aerogpu_legacy_submission_desc_allocation));
-    return (ULONGLONG)metaBytes + (ULONGLONG)Meta->AllocTableSizeBytes;
+    SIZE_T allocBytes = 0;
+    NTSTATUS st = RtlSizeTMult((SIZE_T)Meta->AllocationCount, sizeof(aerogpu_legacy_submission_desc_allocation), &allocBytes);
+    if (!NT_SUCCESS(st)) {
+        return 0xFFFFFFFFFFFFFFFFull;
+    }
+
+    SIZE_T metaBytes = 0;
+    st = RtlSizeTAdd(FIELD_OFFSET(AEROGPU_SUBMISSION_META, Allocations), allocBytes, &metaBytes);
+    if (!NT_SUCCESS(st)) {
+        return 0xFFFFFFFFFFFFFFFFull;
+    }
+
+    ULONGLONG totalBytes = (ULONGLONG)metaBytes;
+    const ULONGLONG tableBytes = (ULONGLONG)Meta->AllocTableSizeBytes;
+    if (totalBytes > (0xFFFFFFFFFFFFFFFFull - tableBytes)) {
+        return 0xFFFFFFFFFFFFFFFFull;
+    }
+    totalBytes += tableBytes;
+    return totalBytes;
 }
 
 static __forceinline BOOLEAN AeroGpuMetaHandleAtCapacity(_Inout_ AEROGPU_ADAPTER* Adapter,
