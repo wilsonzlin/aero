@@ -391,6 +391,161 @@ fn vs_as_compute_respects_first_vertex() {
     });
 }
 
+#[test]
+fn vs_as_compute_uses_patch_control_point_layout() {
+    // Validate the output addressing scheme:
+    // `vs_out_regs[patch_id_total][control_point_id][out_reg]`.
+    pollster::block_on(async {
+        let (device, queue, supports_compute) =
+            match common::wgpu::create_device_queue("aero-d3d11 VS-as-compute patch layout test")
+                .await
+            {
+                Ok(v) => v,
+                Err(err) => {
+                    common::skip_or_panic(module_path!(), &format!("{err:#}"));
+                    return;
+                }
+            };
+        if !supports_compute {
+            common::skip_or_panic(module_path!(), "compute unsupported");
+            return;
+        }
+
+        let (vs_signature, out_reg_count) = load_vs_passthrough_signature().unwrap();
+        assert!(out_reg_count >= 2, "vs_passthrough should export >=2 regs");
+
+        // ILAY fixture: POSITION0 (float3) + COLOR0 (float4).
+        let layout = InputLayoutDesc::parse(include_bytes!("fixtures/ilay_pos3_color.bin"))
+            .context("parse ILAY")
+            .unwrap();
+        let stride = 28u32;
+        let slot_strides = [stride];
+        let binding = InputLayoutBinding::new(&layout, &slot_strides);
+        let pulling = VertexPullingLayout::new(&binding, &vs_signature)
+            .context("pulling layout")
+            .unwrap();
+
+        // Control point count = 3, so 6 vertices = 2 patches per instance.
+        let control_point_count = 3u32;
+        let vertex_count = 6u32;
+        let instance_count = 2u32;
+
+        let vertices: Vec<([f32; 3], [f32; 4])> = (0..vertex_count)
+            .map(|i| {
+                let base = i as f32;
+                (
+                    [base + 0.1, base + 0.2, base + 0.3],
+                    [base + 1.0, base + 2.0, base + 3.0, base + 4.0],
+                )
+            })
+            .collect();
+
+        let mut vb_bytes = Vec::new();
+        for (pos, col) in vertices.iter() {
+            for f in pos {
+                vb_bytes.extend_from_slice(&f.to_le_bytes());
+            }
+            for f in col {
+                vb_bytes.extend_from_slice(&f.to_le_bytes());
+            }
+        }
+
+        let vb = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("VS-as-compute patch layout vb"),
+            size: vb_bytes.len() as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&vb, 0, &vb_bytes);
+
+        let ia_uniform_bytes = pulling.pack_uniform_bytes(
+            &[VertexPullingSlot {
+                base_offset_bytes: 0,
+                stride_bytes: stride,
+            }],
+            VertexPullingDrawParams::default(),
+        );
+        let ia_uniform = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("VS-as-compute patch layout ia uniform"),
+            size: ia_uniform_bytes.len() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&ia_uniform, 0, &ia_uniform_bytes);
+
+        let cfg = VsAsComputeConfig {
+            control_point_count,
+            out_reg_count,
+            indexed: false,
+        };
+        let pipeline = VsAsComputePipeline::new(&device, &pulling, cfg).unwrap();
+
+        let mut scratch = ExpansionScratchAllocator::new(ExpansionScratchDescriptor::default());
+        let vs_out_regs = alloc_vs_out_regs(
+            &mut scratch,
+            &device,
+            vertex_count,
+            instance_count,
+            out_reg_count,
+        )
+        .unwrap();
+
+        let bg = pipeline
+            .create_bind_group_group3(
+                &device,
+                &pulling,
+                &[&vb],
+                wgpu::BufferBinding {
+                    buffer: &ia_uniform,
+                    offset: 0,
+                    size: None,
+                },
+                None,
+                None,
+                &vs_out_regs,
+            )
+            .unwrap();
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("VS-as-compute patch layout encoder"),
+        });
+        pipeline
+            .dispatch(&mut encoder, vertex_count, instance_count, &bg)
+            .unwrap();
+        queue.submit([encoder.finish()]);
+
+        let bytes = read_back_buffer(
+            &device,
+            &queue,
+            vs_out_regs.buffer.as_ref(),
+            vs_out_regs.offset,
+            vs_out_regs.size,
+        )
+        .await
+        .unwrap();
+        let words: Vec<u32> = bytemuck::cast_slice::<u8, u32>(&bytes).to_vec();
+        let vecs = unpack_vec4_u32_as_f32(&words);
+
+        let patch_count_per_instance = vertex_count / control_point_count;
+        let patch_count_total = patch_count_per_instance * instance_count;
+        let mut expected: Vec<[f32; 4]> = Vec::new();
+        for patch_id_total in 0..patch_count_total {
+            let patch_id_in_instance = patch_id_total % patch_count_per_instance;
+            for cp in 0..control_point_count {
+                let v_idx = (patch_id_in_instance * control_point_count + cp) as usize;
+                let (pos, col) = vertices[v_idx];
+                expected.push([pos[0], pos[1], pos[2], 1.0]);
+                expected.push([col[0], col[1], col[2], col[3]]);
+                for _ in 2..out_reg_count {
+                    expected.push([0.0, 0.0, 0.0, 0.0]);
+                }
+            }
+        }
+
+        assert_eq!(vecs, expected);
+    });
+}
+
 fn pack_u16_indices_to_words(indices: &[u16]) -> Vec<u32> {
     let mut words = vec![0u32; indices.len().div_ceil(2)];
     for (i, &idx) in indices.iter().enumerate() {
