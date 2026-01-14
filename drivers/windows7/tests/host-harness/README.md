@@ -771,23 +771,24 @@ To enable end-to-end testing:
         - For **stock QEMU** `virtio-tablet-pci` devices (which typically use non-Aero subsystem IDs), the device is expected
           to bind via the revision-gated fallback match (`PCI\VEN_1AF4&DEV_1052&REV_01`) provided by
           `drivers/windows7/virtio-input/inf/aero_virtio_input.inf`, and the driver classifies it as a tablet via `EV_BITS`
-          (`EV_ABS` + `ABS_X`/`ABS_Y`).
+          (`EV_ABS` + `ABS_X`/`ABS_Y`). When binding via the fallback entry, Device Manager will show the generic
+          **Aero VirtIO Input Device** name.
         - When provisioning via `New-AeroWin7TestImage.ps1`, the tablet INF is installed by default when present; if you pass
           an explicit `-InfAllowList`, ensure it includes `aero_virtio_input.inf` (and `aero_virtio_tablet.inf` if you want
           to exercise the contract tablet binding specifically).
- 2. Run the host harness with `-WithInputTabletEvents` (aliases: `-WithVirtioInputTabletEvents`, `-EnableVirtioInputTabletEvents`,
-     `-WithTabletEvents`, `-EnableTabletEvents`) /
-    `--with-input-tablet-events` (aliases: `--with-virtio-input-tablet-events`, `--with-tablet-events`,
-    `--enable-virtio-input-tablet-events`, `--require-virtio-input-tablet-events`) so it:
-       - attaches `virtio-tablet-pci`
-       - injects a deterministic absolute-pointer sequence via QMP `input-send-event`
-       - requires the guest marker to PASS
-
- To attach `virtio-tablet-pci` **without** QMP injection / marker enforcement (for example to just validate device
- enumeration), use:
-
- - PowerShell: `-WithVirtioTablet`
- - Python: `--with-virtio-tablet`
+2. Run the host harness with `-WithInputTabletEvents` (aliases: `-WithVirtioInputTabletEvents`, `-EnableVirtioInputTabletEvents`,
+   `-WithTabletEvents`, `-EnableTabletEvents`) /
+   `--with-input-tablet-events` (aliases: `--with-virtio-input-tablet-events`, `--with-tablet-events`,
+   `--enable-virtio-input-tablet-events`, `--require-virtio-input-tablet-events`) so it:
+   - attaches `virtio-tablet-pci`
+   - injects a deterministic absolute-pointer sequence via QMP `input-send-event`
+   - requires the guest marker to PASS
+ 
+To attach `virtio-tablet-pci` **without** QMP injection / marker enforcement (for example to just validate device
+enumeration), use:
+ 
+- PowerShell: `-WithVirtioTablet`
+- Python: `--with-virtio-tablet`
 
 The injected sequence is:
 
