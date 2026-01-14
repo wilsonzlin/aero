@@ -4167,17 +4167,6 @@ HRESULT map_resource_locked(AeroGpuDevice* dev,
     res->mapped_wddm_slice_pitch = lock_cb.SlicePitch;
   }
 
-  if (res->kind == ResourceKind::Texture2D && !ValidateWddmTexturePitch(res, res->mapped_wddm_pitch)) {
-    D3DDDICB_UNLOCK unlock_cb = {};
-    unlock_cb.hAllocation = static_cast<D3DKMT_HANDLE>(alloc_handle);
-    InitUnlockArgsForMap(&unlock_cb, lock_subresource);
-    (void)CallCbMaybeHandle(cb->pfnUnlockCb, dev->hrt_device, &unlock_cb);
-    if (allow_storage_map) {
-      return map_storage();
-    }
-    return E_FAIL;
-  }
-
   const bool is_guest_backed = (res->backing_alloc_id != 0);
   if (!res->storage.empty()) {
     if (map_type == kD3DMapWriteDiscard) {
