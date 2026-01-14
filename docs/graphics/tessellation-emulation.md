@@ -331,6 +331,10 @@ To support additional D3D programmable stages (HS/DS) without breaking the ABI, 
 resource-binding packets overload their trailing reserved field as a **`stage_ex` selector** when
 `shader_stage == COMPUTE` (see `drivers/aerogpu/protocol/aerogpu_cmd.h`).
 
+This extension was introduced in the command stream ABI **1.3** (minor = 3). When decoding command
+streams with ABI minor < 3, hosts must ignore `reserved0` even when `shader_stage == COMPUTE`, to
+avoid misinterpreting legacy reserved data.
+
 Packets that currently support the `stage_ex` encoding:
 
 - `CREATE_SHADER_DXBC`

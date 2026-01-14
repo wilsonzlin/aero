@@ -427,6 +427,10 @@ To support additional D3D programmable stages (HS/DS) without breaking ABI, some
 “stage_ex” extension that overloads the `reserved0` field when `shader_stage == COMPUTE` (see
 `emulator/protocol/aerogpu/aerogpu_cmd.rs`).
 
+This extension was introduced in the command stream ABI **1.3** (minor = 3). When decoding command
+streams with ABI minor < 3, hosts must ignore `reserved0` even when `shader_stage == COMPUTE`, to
+avoid misinterpreting legacy reserved data.
+
 - Preferred GS encoding:
   - set `shader_stage = GEOMETRY` and `reserved0 = 0`
   - this avoids accidentally clobbering CS bindings on hosts that do not implement `stage_ex`
