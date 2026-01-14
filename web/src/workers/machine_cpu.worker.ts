@@ -48,6 +48,12 @@ import type { WasmApi } from "../runtime/wasm_loader";
 import { diskMetaToOpfsCowPaths } from "../storage/opfs_paths";
 import { INPUT_BATCH_HEADER_WORDS, INPUT_BATCH_WORDS_PER_EVENT, validateInputBatchBuffer } from "./io_input_batch";
 
+function toArrayBufferUint8(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
+  // Newer TS libdefs model typed arrays as `Uint8Array<ArrayBufferLike>`, but OPFS write streams
+  // are typed to accept only ArrayBuffer-backed views.
+  return bytes.buffer instanceof ArrayBuffer ? (bytes as unknown as Uint8Array<ArrayBuffer>) : new Uint8Array(bytes);
+}
+
 /**
  * Canonical `api.Machine` CPU worker entrypoint.
  *
@@ -777,7 +783,7 @@ async function handleMachineOp(op: PendingMachineOp): Promise<void> {
         }
         const handle = await openFileHandle(op.path, { create: true });
         const writable = await handle.createWritable({ keepExistingData: false });
-        await writable.write(bytes);
+        await writable.write(toArrayBufferUint8(bytes));
         await writable.close();
       }
       postVmSnapshot({ kind: "vm.snapshot.machine.saved", requestId: op.requestId, ok: true } satisfies VmSnapshotMachineSavedMessage);
