@@ -88,6 +88,10 @@ fn enable_slot_then_address_device_binds_port_and_writes_context() {
         xhci.slot_state(slot_id).and_then(|s| s.port_id()),
         Some(1)
     );
+    {
+        let dev = xhci.slot_device_mut(slot_id).expect("slot must resolve to a device");
+        assert_eq!(dev.address(), slot_id);
+    }
 
     // Output contexts should mirror the input contexts.
     let out_slot = SlotContext::read_from(&mut mem, dev_ctx);

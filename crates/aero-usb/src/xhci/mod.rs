@@ -593,7 +593,7 @@ impl XhciController {
             return;
         }
 
-        let _bsr = (trb.control & CONTROL_BSR) != 0;
+        let bsr = (trb.control & CONTROL_BSR) != 0;
 
         let icc = InputControlContext::read_from(mem, input_ctx_ptr);
         if icc.drop_flags() != 0 {
@@ -628,7 +628,84 @@ impl XhciController {
         };
 
         let expected_speed = match self.find_device_by_topology(port_id, &route) {
-            Some(dev) => port::port_speed_id(dev.speed()),
+            Some(dev) => {
+                if !bsr {
+                    // xHCI Address Device performs a SET_ADDRESS request on the default control
+                    // endpoint. Aero's `AttachedUsbDevice` virtualizes this request internally.
+                    let set_address = SetupPacket {
+                        bm_request_type: 0x00, // HostToDevice | Standard | Device
+                        b_request: 0x05,       // SET_ADDRESS
+                        w_value: slot_id as u16,
+                        w_index: 0,
+                        w_length: 0,
+                    };
+                    match dev.handle_setup(set_address) {
+                        UsbOutResult::Ack => {}
+                        UsbOutResult::Nak => {
+                            self.queue_command_completion_event(
+                                cmd_paddr,
+                                CompletionCode::UsbTransactionError,
+                                slot_id,
+                            );
+                            return;
+                        }
+                        UsbOutResult::Stall => {
+                            self.queue_command_completion_event(
+                                cmd_paddr,
+                                CompletionCode::StallError,
+                                slot_id,
+                            );
+                            return;
+                        }
+                        UsbOutResult::Timeout => {
+                            self.queue_command_completion_event(
+                                cmd_paddr,
+                                CompletionCode::UsbTransactionError,
+                                slot_id,
+                            );
+                            return;
+                        }
+                    }
+
+                    match dev.handle_in(0, 0) {
+                        UsbInResult::Data(data) if data.is_empty() => {}
+                        UsbInResult::Nak => {
+                            self.queue_command_completion_event(
+                                cmd_paddr,
+                                CompletionCode::UsbTransactionError,
+                                slot_id,
+                            );
+                            return;
+                        }
+                        UsbInResult::Stall => {
+                            self.queue_command_completion_event(
+                                cmd_paddr,
+                                CompletionCode::StallError,
+                                slot_id,
+                            );
+                            return;
+                        }
+                        UsbInResult::Timeout => {
+                            self.queue_command_completion_event(
+                                cmd_paddr,
+                                CompletionCode::UsbTransactionError,
+                                slot_id,
+                            );
+                            return;
+                        }
+                        UsbInResult::Data(_) => {
+                            self.queue_command_completion_event(
+                                cmd_paddr,
+                                CompletionCode::TrbError,
+                                slot_id,
+                            );
+                            return;
+                        }
+                    }
+                }
+
+                port::port_speed_id(dev.speed())
+            }
             None => {
                 self.queue_command_completion_event(
                     cmd_paddr,
