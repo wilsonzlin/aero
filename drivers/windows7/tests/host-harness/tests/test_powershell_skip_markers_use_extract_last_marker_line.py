@@ -41,12 +41,21 @@ class PowerShellSkipMarkersUseExtractLastMarkerLineTests(unittest.TestCase):
     def test_virtio_snd_skipped_uses_try_extract_last_aero_marker_line(self) -> None:
         body = self._extract_case_body("VIRTIO_SND_SKIPPED", r'"VIRTIO_SND_CAPTURE_SKIPPED"\s*\{')
         self.assertIn("Try-ExtractLastAeroMarkerLine", body)
+        self.assertIn("Try-ExtractVirtioSndSkipReason", body)
         self.assertIn('-Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP"', body)
         for pat in (
             "irq_mode=([^|\\r\\n]+)",
             "irq_message_count=([^|\\r\\n]+)",
         ):
             self.assertIn(pat, body)
+
+    def test_try_extract_virtio_snd_skip_reason_scans_serial_log_path(self) -> None:
+        idx = self.text.find("function Try-ExtractVirtioSndSkipReason")
+        self.assertNotEqual(idx, -1, "missing Try-ExtractVirtioSndSkipReason helper")
+        window = self.text[idx : idx + 2500]
+        self.assertIn("SerialLogPath", window)
+        self.assertIn("StreamReader", window)
+        self.assertIn("virtio-snd: skipped \\(enable with --test-snd\\)", window)
 
     def test_virtio_snd_capture_skipped_uses_try_extract_last_aero_marker_line(self) -> None:
         body = self._extract_case_body("VIRTIO_SND_CAPTURE_SKIPPED", r'"VIRTIO_SND_DUPLEX_SKIPPED"\s*\{')

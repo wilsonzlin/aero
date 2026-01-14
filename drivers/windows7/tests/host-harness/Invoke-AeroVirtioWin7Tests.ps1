@@ -2298,6 +2298,49 @@ function Try-ExtractLastAeroMarkerLine {
   return $null
 }
 
+function Try-ExtractVirtioSndSkipReason {
+  param(
+    [Parameter(Mandatory = $true)] [string]$Tail,
+    # Optional: if provided, fall back to parsing the full serial log when the rolling tail buffer does not
+    # contain the virtio-snd SKIP diagnostic line (e.g. because the tail was truncated).
+    [Parameter(Mandatory = $false)] [string]$SerialLogPath = ""
+  )
+
+  if ($Tail -match "virtio-snd: skipped \(enable with --test-snd\)") { return "guest_not_configured_with_--test-snd" }
+  if ($Tail -match "virtio-snd: .*device not detected") { return "device_missing" }
+  if ($Tail -match "virtio-snd: disabled by --disable-snd") { return "--disable-snd" }
+
+  if ((-not [string]::IsNullOrEmpty($SerialLogPath)) -and (Test-Path -LiteralPath $SerialLogPath)) {
+    # Tail truncation fallback: scan the full serial log line-by-line and keep the last reason we recognize.
+    $last = $null
+    try {
+      $fs = [System.IO.File]::Open($SerialLogPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+      try {
+        $sr = [System.IO.StreamReader]::new($fs, [System.Text.Encoding]::UTF8, $true, 4096, $true)
+        try {
+          while ($true) {
+            $l = $sr.ReadLine()
+            if ($null -eq $l) { break }
+            $t = $l.Trim()
+            if ($t -match "virtio-snd: skipped \(enable with --test-snd\)") { $last = "guest_not_configured_with_--test-snd" }
+            elseif ($t -match "virtio-snd: .*device not detected") { $last = "device_missing" }
+            elseif ($t -match "virtio-snd: disabled by --disable-snd") { $last = "--disable-snd" }
+          }
+        } finally {
+          $sr.Dispose()
+        }
+      } finally {
+        $fs.Dispose()
+      }
+    } catch { }
+    if ($null -ne $last) {
+      return $last
+    }
+  }
+
+  return $null
+}
+
 function Try-EmitAeroVirtioBlkIrqMarker {
   param(
     [Parameter(Mandatory = $true)] [string]$Tail,
@@ -9375,12 +9418,9 @@ try {
     }
     "VIRTIO_SND_SKIPPED" {
       $reason = "unknown"
-      if ($result.Tail -match "virtio-snd: skipped \(enable with --test-snd\)") {
-        $reason = "guest_not_configured_with_--test-snd"
-      } elseif ($result.Tail -match "virtio-snd: .*device not detected") {
-        $reason = "device_missing"
-      } elseif ($result.Tail -match "virtio-snd: disabled by --disable-snd") {
-        $reason = "--disable-snd"
+      $detectedReason = Try-ExtractVirtioSndSkipReason -Tail $result.Tail -SerialLogPath $SerialLogPath
+      if ($null -ne $detectedReason) {
+        $reason = $detectedReason
       }
 
       $irqMode = ""

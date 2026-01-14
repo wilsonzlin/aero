@@ -2168,7 +2168,10 @@ def _qemu_device_arg_maybe_add_vectors(
 
 
 def _virtio_snd_skip_failure_message(
-    tail: bytes, *, marker_line: Optional[str] = None
+    tail: bytes,
+    *,
+    marker_line: Optional[str] = None,
+    skip_reason: Optional[str] = None,
 ) -> str:
     # The guest selftest's virtio-snd marker is intentionally strict and machine-friendly:
     #   AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS/FAIL/SKIP|irq_mode=...|irq_message_count=...
@@ -2199,6 +2202,24 @@ def _virtio_snd_skip_failure_message(
                 parts.append(f"{k}={_sanitize_marker_value(v)}")
         if parts:
             details = " (" + " ".join(parts) + ")"
+
+    reason = (skip_reason or "").strip()
+    if reason == "guest_not_configured_with_--test-snd":
+        return (
+            "FAIL: VIRTIO_SND_SKIPPED: virtio-snd test was skipped (guest not configured with --test-snd) "
+            "but --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd was enabled"
+            + details
+        )
+    if reason == "--disable-snd":
+        return (
+            "FAIL: VIRTIO_SND_SKIPPED: virtio-snd test was skipped (--disable-snd) but --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd was enabled"
+            + details
+        )
+    if reason == "device_missing":
+        return (
+            "FAIL: VIRTIO_SND_SKIPPED: virtio-snd test was skipped (device missing) but --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd was enabled"
+            + details
+        )
 
     if b"virtio-snd: skipped (enable with --test-snd)" in tail:
         return (
@@ -5917,6 +5938,8 @@ def main() -> int:
             virtio_net_diag_marker_carry = b""
             virtio_snd_marker_line: Optional[str] = None
             virtio_snd_marker_carry = b""
+            virtio_snd_skip_reason: Optional[str] = None
+            virtio_snd_skip_reason_carry = b""
             virtio_snd_capture_marker_line: Optional[str] = None
             virtio_snd_capture_marker_carry = b""
             virtio_snd_duplex_marker_line: Optional[str] = None
@@ -6150,6 +6173,11 @@ def main() -> int:
                         chunk,
                         prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|",
                         carry=virtio_snd_marker_carry,
+                    )
+                    virtio_snd_skip_reason, virtio_snd_skip_reason_carry = _update_virtio_snd_skip_reason_from_chunk(
+                        virtio_snd_skip_reason,
+                        chunk,
+                        carry=virtio_snd_skip_reason_carry,
                     )
                     virtio_snd_capture_marker_line, virtio_snd_capture_marker_carry = _update_last_marker_line_from_chunk(
                         virtio_snd_capture_marker_line,
@@ -7554,6 +7582,7 @@ def main() -> int:
                                         msg = _virtio_snd_skip_failure_message(
                                             tail,
                                             marker_line=virtio_snd_marker_line,
+                                            skip_reason=virtio_snd_skip_reason,
                                         )
                                     print(msg, file=sys.stderr)
                                     _print_tail(serial_log)
@@ -7751,6 +7780,7 @@ def main() -> int:
                                     msg = _virtio_snd_skip_failure_message(
                                         tail,
                                         marker_line=virtio_snd_marker_line,
+                                        skip_reason=virtio_snd_skip_reason,
                                     )
                                 print(msg, file=sys.stderr)
                                 _print_tail(serial_log)
@@ -8842,6 +8872,11 @@ def main() -> int:
                             prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|",
                             carry=virtio_snd_marker_carry,
                         )
+                        virtio_snd_skip_reason, virtio_snd_skip_reason_carry = _update_virtio_snd_skip_reason_from_chunk(
+                            virtio_snd_skip_reason,
+                            chunk2,
+                            carry=virtio_snd_skip_reason_carry,
+                        )
                         virtio_snd_capture_marker_line, virtio_snd_capture_marker_carry = _update_last_marker_line_from_chunk(
                             virtio_snd_capture_marker_line,
                             chunk2,
@@ -9704,6 +9739,7 @@ def main() -> int:
                                             msg = _virtio_snd_skip_failure_message(
                                                 tail,
                                                 marker_line=virtio_snd_marker_line,
+                                                skip_reason=virtio_snd_skip_reason,
                                             )
                                         print(msg, file=sys.stderr)
                                         _print_tail(serial_log)
@@ -9898,6 +9934,7 @@ def main() -> int:
                                         msg = _virtio_snd_skip_failure_message(
                                             tail,
                                             marker_line=virtio_snd_marker_line,
+                                            skip_reason=virtio_snd_skip_reason,
                                         )
                                     print(msg, file=sys.stderr)
                                     _print_tail(serial_log)
@@ -11851,6 +11888,59 @@ def _update_last_marker_line_from_chunk(
             continue
 
     return last, new_carry
+
+
+def _update_virtio_snd_skip_reason_from_chunk(
+    reason: Optional[str], chunk: bytes, *, carry: bytes = b""
+) -> tuple[Optional[str], bytes]:
+    """
+    Incrementally capture the virtio-snd SKIP reason from guest log text.
+
+    The virtio-snd selftest's SKIP marker is intentionally strict (machine-friendly), and does not
+    include a reason token. Instead, the guest logs a human-readable line, e.g.:
+
+      virtio-snd: skipped (enable with --test-snd)
+      virtio-snd: disabled by --disable-snd
+      virtio-snd: pci device not detected
+
+    Capture these lines incrementally so we can still produce a specific failure token even if the
+    rolling serial tail buffer is truncated.
+
+    Returns `(reason, carry)` where `carry` is any potentially incomplete last line (i.e. bytes
+    after the last newline).
+    """
+    if not chunk and not carry:
+        return reason, b""
+
+    # Bound the carry buffer to avoid unbounded growth if the guest prints extremely long lines
+    # without newlines.
+    if len(carry) > _SERIAL_TAIL_CAP_BYTES:
+        carry = carry[-_SERIAL_TAIL_CAP_BYTES:]
+
+    data = carry + chunk
+    parts = data.splitlines(keepends=True)
+    new_carry = b""
+    if parts and not parts[-1].endswith((b"\n", b"\r")):
+        new_carry = parts.pop()
+    if len(new_carry) > _SERIAL_TAIL_CAP_BYTES:
+        new_carry = new_carry[-_SERIAL_TAIL_CAP_BYTES:]
+
+    for raw in parts:
+        raw = raw.rstrip(b"\r\n")
+        raw2 = raw.lstrip()
+        if not raw2:
+            continue
+        if b"virtio-snd: skipped (enable with --test-snd)" in raw2:
+            reason = "guest_not_configured_with_--test-snd"
+            continue
+        if b"virtio-snd: disabled by --disable-snd" in raw2:
+            reason = "--disable-snd"
+            continue
+        if b"virtio-snd:" in raw2 and b"device not detected" in raw2:
+            reason = "device_missing"
+            continue
+
+    return reason, new_carry
 
 
 def _normalize_irq_mode(mode: str) -> str:

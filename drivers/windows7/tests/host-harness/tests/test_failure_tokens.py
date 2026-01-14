@@ -48,15 +48,18 @@ class FailureTokenTests(unittest.TestCase):
     def test_virtio_snd_skipped_token_includes_irq_fields_when_present(self) -> None:
         h = self.harness
 
-        tail = (
-            b"virtio-snd: skipped (enable with --test-snd)\n"
-            b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|irq_mode=msix|irq_message_count=3\n"
+        # Simulate tail truncation: the serial rolling tail no longer contains the marker line or
+        # the human reason string, but we did capture them incrementally during parsing.
+        msg = h._virtio_snd_skip_failure_message(
+            b"",
+            marker_line="AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|irq_mode=msix|irq_message_count=3",
+            skip_reason="guest_not_configured_with_--test-snd",
         )
-        msg = h._virtio_snd_skip_failure_message(tail)
         self.assertRegex(msg, _TOKEN_RE)
         self.assertTrue(msg.startswith("FAIL: VIRTIO_SND_SKIPPED:"))
         self.assertIn("irq_mode=msix", msg)
         self.assertIn("irq_message_count=3", msg)
+        self.assertIn("--test-snd", msg)
 
     def test_virtio_snd_failed_token_includes_reason_and_irq_fields_when_present(self) -> None:
         h = self.harness
