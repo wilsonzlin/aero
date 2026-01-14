@@ -45,16 +45,16 @@ Bitness policy (important):
 
 - `aerogpu_dbgctl.exe` is intentionally shipped as an **x86 (32-bit)** PE executable.
 - The same x86 binary is staged into both the x86 and x64 driver outputs under:
-  - `out/drivers/aerogpu/<arch>/tools/aerogpu_dbgctl.exe`
+  - `out/drivers/aerogpu/<arch>/tools/win7_dbgctl/bin/aerogpu_dbgctl.exe`
   - On Windows x64 it runs under **WOW64**.
 - `ci/build-aerogpu-dbgctl.ps1` imports an x86 Visual Studio developer environment (VsDevCmd/vcvarsall) and
   validates the produced binary is `IMAGE_FILE_MACHINE_I386 (0x014c)`, failing fast if it is x64 (0x8664) or unknown.
 
 In CI, this script is run after `ci/build-drivers.ps1` so it can also copy the built tool into
-`out/drivers/aerogpu/<arch>/tools/aerogpu_dbgctl.exe`, allowing downstream catalog/sign/package steps to
+`out/drivers/aerogpu/<arch>/tools/win7_dbgctl/bin/aerogpu_dbgctl.exe`, allowing downstream catalog/sign/package steps to
 ship it inside driver packages and Guest Tools media.
 
-This is required when `drivers/aerogpu/ci-package.json` lists `tools/aerogpu_dbgctl.exe` under
+This is required when `drivers/aerogpu/ci-package.json` lists `tools/win7_dbgctl/bin/aerogpu_dbgctl.exe` under
 `requiredBuildOutputFiles` — `ci/make-catalogs.ps1` will fail packaging if the tool was not staged into
 the per-arch build output directories.
 
@@ -176,7 +176,7 @@ CI’s Win7 toolchain smoke test (`ci/validate-toolchain.ps1`) includes a minima
 - `INF2CAT_UNREFERENCED_FILE_HASHED=0`: unreferenced extra files are not cataloged.
 - `INF2CAT_UNREFERENCED_FILE_HASHED=1`: unreferenced extra files are cataloged.
 
-Practical rule: treat staged package directories as immutable after `ci/make-catalogs.ps1` runs. For packaged helper tools (for example `aerogpu_dbgctl.exe` staged as `tools/aerogpu_dbgctl.exe`), build/copy them into the staging directory *before* catalog generation.
+Practical rule: treat staged package directories as immutable after `ci/make-catalogs.ps1` runs. For packaged helper tools (for example `aerogpu_dbgctl.exe` staged as `tools/win7_dbgctl/bin/aerogpu_dbgctl.exe`), build/copy them into the staging directory *before* catalog generation.
 
 And verifies:
 

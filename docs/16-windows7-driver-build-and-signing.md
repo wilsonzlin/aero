@@ -177,8 +177,8 @@ These tools should be treated as build outputs: build them, then copy them into 
 
 and (when `out/drivers/aerogpu/<arch>/` exists, i.e. after `ci/build-drivers.ps1`) copies it into:
 
-- `out/drivers/aerogpu/x86/tools/aerogpu_dbgctl.exe`
-- `out/drivers/aerogpu/x64/tools/aerogpu_dbgctl.exe`
+- `out/drivers/aerogpu/x86/tools/win7_dbgctl/bin/aerogpu_dbgctl.exe`
+- `out/drivers/aerogpu/x64/tools/win7_dbgctl/bin/aerogpu_dbgctl.exe`
 
 Bitness policy:
 
