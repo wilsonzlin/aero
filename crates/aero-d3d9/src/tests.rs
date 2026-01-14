@@ -6969,7 +6969,11 @@ fn translate_entrypoint_allows_unused_volume_sampler_declaration() {
         shader_translate::translate_d3d9_shader_to_wgsl(&bytes, shader::WgslOptions::default())
             .unwrap();
     assert!(!translated.used_samplers.contains(&0));
-    assert!(!translated.wgsl.contains("texture_3d"), "wgsl:\n{}", translated.wgsl);
+    assert!(
+        !translated.wgsl.contains("texture_3d"),
+        "wgsl:\n{}",
+        translated.wgsl
+    );
     assert!(
         !translated.wgsl.contains("textureSample"),
         "wgsl:\n{}",
