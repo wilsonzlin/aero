@@ -764,15 +764,6 @@ impl PlatformInterrupts {
             return;
         };
         lapic.reset_state(apic_id);
-
-        // `LocalApic::reset_state` models the power-on SVR value (0xFF with the software-enable
-        // bit cleared). At the platform level we keep LAPICs enabled by default so external
-        // interrupt injection (IOAPIC/MSI) continues to work after INIT/RESET modelling.
-        let mut buf = [0u8; 4];
-        lapic.mmio_read(0xF0, &mut buf);
-        let mut svr = u32::from_le_bytes(buf);
-        svr |= 1 << 8;
-        lapic.mmio_write(0xF0, &svr.to_le_bytes());
     }
     pub fn get_pending_for_apic(&self, apic_id: u8) -> Option<u8> {
         match self.mode {
@@ -1426,6 +1417,9 @@ mod tests {
 
         // Reset LAPIC1's internal state. This should *not* require rebuilding the IOAPIC sink graph.
         ints.reset_lapic(1);
+        // LAPIC reset clears SVR[8] (software enable); re-enable it so injected interrupts are
+        // accepted.
+        ints.lapic_mmio_write_for_apic(1, 0xF0, &(0x1FFu32).to_le_bytes());
 
         // Second delivery: should still route to LAPIC1 via the original `Arc<LocalApic>` held by
         // the IOAPIC sinks.
@@ -1434,14 +1428,24 @@ mod tests {
     }
 
     #[test]
-    fn reset_lapic_keeps_lapic_software_enabled_for_injected_interrupts() {
+    fn reset_lapic_disables_lapic_software_enable_bit() {
         let mut ints = PlatformInterrupts::new_with_cpu_count(2);
         ints.set_mode(PlatformInterruptMode::Apic);
 
         ints.reset_lapic(1);
 
-        // If SVR[8] is cleared by reset, injected interrupts are silently dropped.
+        // Reset should restore the power-on SVR value (0xFF with software enable bit clear).
+        let mut buf = [0u8; 4];
+        ints.lapics[1].mmio_read(0xF0, &mut buf);
+        assert_eq!(u32::from_le_bytes(buf), 0xFF);
+
+        // With SVR[8] cleared, injected interrupts are silently dropped.
         let vector = 0x44u8;
+        ints.lapics[1].inject_fixed_interrupt(vector);
+        assert_eq!(ints.get_pending_for_apic(1), None);
+
+        // Re-enable SVR[8] and ensure injection works again.
+        ints.lapics[1].mmio_write(0xF0, &(0x1FFu32).to_le_bytes());
         ints.lapics[1].inject_fixed_interrupt(vector);
         assert_eq!(ints.get_pending_for_apic(1), Some(vector));
     }

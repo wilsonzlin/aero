@@ -881,21 +881,27 @@ impl<'a> PerCpuSystemMemoryBus<'a> {
 
         let idx = (apic_id as usize).saturating_sub(1);
         let mut ap_cpus = self.ap_cpus.borrow_mut();
-        let Some(cpu) = ap_cpus.get_mut(idx) else {
-            return;
-        };
-        vcpu_init::reset_ap_vcpu_to_init_state(cpu);
-        set_cpu_apic_base_bsp_bit(cpu, false);
-        // After INIT, application processors wait for a SIPI before executing.
-        cpu.state.halted = true;
+        if let Some(cpu) = ap_cpus.get_mut(idx) {
+            vcpu_init::reset_ap_vcpu_to_init_state(cpu);
+            set_cpu_apic_base_bsp_bit(cpu, false);
+            // After INIT, application processors wait for a SIPI before executing.
+            cpu.state.halted = true;
+        }
+        if let Some(interrupts) = &self.interrupts {
+            interrupts.borrow().reset_lapic(apic_id);
+        }
     }
 
     fn reset_all_aps(&mut self) {
         let mut ap_cpus = self.ap_cpus.borrow_mut();
-        for cpu in ap_cpus.iter_mut() {
+        for (idx, cpu) in ap_cpus.iter_mut().enumerate() {
+            let apic_id = (idx + 1) as u8;
             vcpu_init::reset_ap_vcpu_to_init_state(cpu);
             set_cpu_apic_base_bsp_bit(cpu, false);
             cpu.state.halted = true;
+            if let Some(interrupts) = &self.interrupts {
+                interrupts.borrow().reset_lapic(apic_id);
+            }
         }
     }
 
@@ -906,9 +912,13 @@ impl<'a> PerCpuSystemMemoryBus<'a> {
             if Some(idx) == sender_idx {
                 continue;
             }
+            let apic_id = (idx + 1) as u8;
             vcpu_init::reset_ap_vcpu_to_init_state(cpu);
             set_cpu_apic_base_bsp_bit(cpu, false);
             cpu.state.halted = true;
+            if let Some(interrupts) = &self.interrupts {
+                interrupts.borrow().reset_lapic(apic_id);
+            }
         }
     }
 
