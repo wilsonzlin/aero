@@ -6171,8 +6171,8 @@ try {
     if ($needInputMediaKeys -and (-not $haveVirtioKbd)) {
       throw "QEMU does not advertise virtio-keyboard-pci but -WithInputMediaKeys was enabled. Upgrade QEMU or omit media key injection."
     }
-    if ($needInputLed -and (-not $haveVirtioKbd)) {
-      throw "QEMU does not advertise virtio-keyboard-pci but -WithInputLed was enabled. Upgrade QEMU or omit LED/statusq testing."
+    if ($needInputLed -and (-not ($haveVirtioKbd -and $haveVirtioMouse))) {
+      throw "QEMU does not advertise virtio-keyboard-pci/virtio-mouse-pci but -WithInputLed was enabled. Upgrade QEMU or omit LED/statusq testing."
     }
     if (-not ($haveVirtioKbd -and $haveVirtioMouse)) {
       Write-Warning "QEMU does not advertise virtio-keyboard-pci/virtio-mouse-pci. The guest virtio-input selftest will likely FAIL. Upgrade QEMU or adjust the guest image/selftest expectations."

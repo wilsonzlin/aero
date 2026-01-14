@@ -29,7 +29,15 @@ class PowerShellHarnessInputLedFlagTests(unittest.TestCase):
         ):
             self.assertIn(token, self.text)
 
+    def test_with_input_led_preflight_requires_keyboard_and_mouse(self) -> None:
+        # In transitional mode, -WithInputLed implies virtio-input coverage, which requires both
+        # virtio-keyboard-pci and virtio-mouse-pci to be present (guest selftest base virtio-input
+        # test fails when either is missing).
+        self.assertIn(
+            "QEMU does not advertise virtio-keyboard-pci/virtio-mouse-pci but -WithInputLed was enabled",
+            self.text,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
-
