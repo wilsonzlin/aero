@@ -485,7 +485,11 @@ impl PciConfig {
             1 | 2 => {
                 // BARs are conceptually 32-bit registers, but some guests may perform byte/word
                 // writes. Keep the decoded BAR fields coherent by reassembling a 32-bit value and
-                // delegating to the existing 32-bit BAR handlers.
+                // updating the decoded BAR fields + raw bytes.
+                //
+                // Note: BAR size probing is only triggered by a full 32-bit aligned write of
+                // `0xFFFF_FFFF`. Real hardware does *not* treat sub-dword writes that happen to
+                // synthesize `0xFFFF_FFFF` via byte-enables as a probe.
                 if offset >= 0x10 && offset + size <= 0x14 {
                     let shift = ((offset - 0x10) * 8) as u32;
                     let mask = match size {
@@ -499,8 +503,11 @@ impl PciConfig {
                         1 => (value & 0xff) << shift,
                         _ => 0,
                     };
-                    let new = (cur & !mask) | (val & mask);
-                    self.write(0x10, 4, new);
+                    let new_raw = (cur & !mask) | (val & mask);
+
+                    self.bar0_probe = false;
+                    self.bar0 = new_raw & E1000_BAR0_ADDR_MASK;
+                    self.write_u32_raw(0x10, self.bar0);
                     return;
                 }
                 if offset >= 0x14 && offset + size <= 0x18 {
@@ -516,8 +523,12 @@ impl PciConfig {
                         1 => (value & 0xff) << shift,
                         _ => 0,
                     };
-                    let new = (cur & !mask) | (val & mask);
-                    self.write(0x14, 4, new);
+                    let new_raw = (cur & !mask) | (val & mask);
+
+                    self.bar1_probe = false;
+                    // I/O BAR: bit0 must remain set.
+                    self.bar1 = (new_raw & E1000_BAR1_ADDR_MASK) | 0x1;
+                    self.write_u32_raw(0x14, self.bar1);
                     return;
                 }
 

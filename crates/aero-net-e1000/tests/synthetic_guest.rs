@@ -132,6 +132,31 @@ fn pci_bar_partial_writes_update_decoded_bar_fields() {
 }
 
 #[test]
+fn pci_bar_subword_write_that_would_form_all_ones_does_not_trigger_probe() {
+    // Regression test: Sub-dword config writes must never trigger BAR probing semantics, even if
+    // the resulting dword would become `0xFFFF_FFFF` via byte enables.
+    //
+    // Older versions of the device model reconstructed a full 32-bit dword and delegated to the
+    // 32-bit BAR handler, which treated `0xFFFF_FFFF` as a probe. For BAR1, it is possible to
+    // synthesize that value with a single byte write when the BAR is programmed near the top of
+    // the I/O address space.
+    let mut dev = E1000Device::new([0x52, 0x54, 0, 0x12, 0x34, 0x56]);
+
+    // Program BAR1 to a value whose raw bytes are `FF FF FF C1`, so writing 0xFF to the low byte
+    // would produce `0xFFFF_FFFF`.
+    dev.pci_write_u32(0x14, 0xFFFF_FFC1);
+    assert_eq!(dev.pci.bar1(), 0xFFFF_FFC1);
+
+    dev.pci_config_write(0x14, 1, 0xFF);
+    assert_eq!(
+        dev.pci.bar1(),
+        0xFFFF_FFC1,
+        "byte write should not enter probe mode"
+    );
+    assert_eq!(dev.pci_config_read(0x14, 1), 0xC1);
+}
+
+#[test]
 fn pci_bar_cross_boundary_accesses_are_coherent() {
     // Regression test: reads/writes that straddle the BAR0/BAR1 boundary (e.g. 16-bit at 0x13)
     // should still observe probe masks and keep decoded BAR fields coherent.
