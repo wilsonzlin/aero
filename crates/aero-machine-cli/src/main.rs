@@ -184,6 +184,7 @@ mod native {
 
         let start = Instant::now();
         let mut total_executed: u64 = 0;
+        let mut run_error: Option<anyhow::Error> = None;
 
         loop {
             let exit = if let Some(max_insts) = args.max_insts {
@@ -208,31 +209,64 @@ mod native {
                 stream_debugcon(&mut machine, out)?;
             }
 
-            match handle_exit(&mut machine, exit, total_executed)? {
-                LoopControl::Continue => continue,
-                LoopControl::Break => break,
+            match handle_exit(&mut machine, exit, total_executed) {
+                Ok(LoopControl::Continue) => continue,
+                Ok(LoopControl::Break) => break,
+                Err(e) => {
+                    run_error = Some(e);
+                    break;
+                }
             }
         }
 
         // Flush any remaining serial bytes.
         stream_serial(&mut machine, &mut serial_sink)?;
-        serial_sink.flush()?;
+        if let Err(e) = serial_sink.flush() {
+            if run_error.is_some() {
+                eprintln!("warning: failed to flush serial output: {e}");
+            } else {
+                return Err(e.into());
+            }
+        }
         if let Some(out) = debugcon_sink.as_mut() {
             stream_debugcon(&mut machine, out)?;
-            out.flush()?;
+            if let Err(e) = out.flush() {
+                if run_error.is_some() {
+                    eprintln!("warning: failed to flush debugcon output: {e}");
+                } else {
+                    return Err(e.into());
+                }
+            }
         }
 
         if let Some(path) = &args.snapshot_save {
             let mut f = File::create(path).with_context(|| {
                 format!("failed to create snapshot file for save: {}", path.display())
             })?;
-            machine
+            if let Err(e) = machine
                 .save_snapshot_full_to(&mut f)
-                .map_err(|e| anyhow!("{e}"))?;
+                .map_err(|e| anyhow!("{e}"))
+            {
+                if run_error.is_some() {
+                    eprintln!("warning: failed to save snapshot to {}: {e}", path.display());
+                } else {
+                    return Err(e);
+                }
+            }
         }
 
         if let Some(path) = &args.vga_png {
-            dump_vga_png(&mut machine, path)?;
+            if let Err(e) = dump_vga_png(&mut machine, path) {
+                if run_error.is_some() {
+                    eprintln!("warning: failed to dump VGA PNG to {}: {e}", path.display());
+                } else {
+                    return Err(e);
+                }
+            }
+        }
+
+        if let Some(e) = run_error {
+            return Err(e);
         }
 
         Ok(())
