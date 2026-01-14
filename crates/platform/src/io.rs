@@ -614,15 +614,17 @@ mod tests {
         }
 
         // Overlap should panic.
-        let overlap = std::panic::catch_unwind(|| {
+        let expected_file = file!();
+        let expected_overlap_line = line!() + 4;
+        let (file, line) = capture_panic_location(|| {
             let mut bus = IoPortBus::new();
             bus.register_range(0x1000, 4, Box::new(Noop));
             bus.register_range(0x1002, 4, Box::new(Noop));
         });
-        assert!(overlap.is_err());
+        assert_eq!(file, expected_file);
+        assert_eq!(line, expected_overlap_line);
 
         // Wrap past 0xFFFF should panic.
-        let expected_file = file!();
         let expected_line = line!() + 3;
         let (file, line) = capture_panic_location(|| {
             let mut bus = IoPortBus::new();
