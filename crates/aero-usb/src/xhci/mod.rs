@@ -1867,16 +1867,12 @@ impl XhciController {
                 // Treat USBSTS as RW1C. Writing 1 clears the bit.
                 let write_val = merge(0);
                 if (write_val & regs::USBSTS_EINT) != 0 {
-                    // Mirrors clearing IMAN.IP; do not drop queued events.
+                    // Allow acknowledging event interrupts via USBSTS.EINT by also clearing
+                    // Interrupter 0's pending bit (IMAN.IP). This is a minimal model of the xHCI
+                    // "summary" interrupt status bit.
                     self.interrupter0.set_interrupt_pending(false);
                 }
                 self.usbsts &= !write_val;
-                // Allow acknowledging event interrupts via USBSTS.EINT by also clearing
-                // Interrupter 0's pending bit (IMAN.IP). This is a minimal model of the xHCI
-                // "summary" interrupt status bit.
-                if (write_val & regs::USBSTS_EINT) != 0 {
-                    self.interrupter0.set_interrupt_pending(false);
-                }
             }
             regs::REG_CRCR_LO => {
                 let lo = merge(self.crcr as u32) as u64;
