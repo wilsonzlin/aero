@@ -1277,34 +1277,6 @@ async fn verify_chunk_once(
     expected_size: u64,
     expected_sha256: Option<&str>,
 ) -> Result<()> {
-    if expected_sha256.is_none() {
-        let head = s3
-            .head_object()
-            .bucket(bucket)
-            .key(key)
-            .send()
-            .await
-            .map_err(|err| {
-                if is_no_such_key_error(&err) {
-                    anyhow!("object not found (404)")
-                } else {
-                    anyhow!(err)
-                }
-            })
-            .with_context(|| format!("HEAD s3://{bucket}/{key}"))?;
-
-        let Some(content_length) = head.content_length() else {
-            bail!("missing Content-Length for s3://{bucket}/{key}");
-        };
-        let len_u64: u64 = content_length.try_into().map_err(|_| {
-            anyhow!("invalid Content-Length {content_length} for s3://{bucket}/{key}")
-        })?;
-        if len_u64 != expected_size {
-            bail!("size mismatch: expected {expected_size} bytes, got {len_u64} bytes (Content-Length)");
-        }
-        return Ok(());
-    }
-
     let resp = s3
         .get_object()
         .bucket(bucket)
@@ -1320,7 +1292,8 @@ async fn verify_chunk_once(
         })
         .with_context(|| format!("GET s3://{bucket}/{key}"))?;
 
-    if let Some(content_length) = resp.content_length() {
+    let content_length = resp.content_length();
+    if let Some(content_length) = content_length {
         let len_u64: u64 = content_length.try_into().map_err(|_| {
             anyhow!("invalid Content-Length {content_length} for s3://{bucket}/{key}")
         })?;
@@ -1329,6 +1302,12 @@ async fn verify_chunk_once(
                 "size mismatch: expected {expected_size} bytes, got {len_u64} bytes (Content-Length)"
             );
         }
+    }
+
+    // If we don't have a checksum to verify, `Content-Length` already validated the size. Avoid
+    // streaming the entire object body unnecessarily.
+    if expected_sha256.is_none() && content_length.is_some() {
+        return Ok(());
     }
 
     let mut reader = resp.body.into_async_read();
