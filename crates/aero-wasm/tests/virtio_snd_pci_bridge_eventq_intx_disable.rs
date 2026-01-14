@@ -151,3 +151,137 @@ fn virtio_snd_pci_bridge_eventq_intx_disable_suppresses_line_but_retains_pending
     assert!(!bridge.irq_asserted());
 }
 
+#[wasm_bindgen_test]
+fn virtio_snd_pci_bridge_snapshot_preserves_pending_eventq_intx_while_intx_disable_set() {
+    let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x20000);
+    let guest = common::GuestRegion {
+        base: guest_base,
+        size: guest_size,
+    };
+
+    let mut bridge1 =
+        VirtioSndPciBridge::new(guest_base, guest_size, None).expect("VirtioSndPciBridge::new");
+    // Enable MMIO decoding + bus mastering, but disable legacy INTx delivery (PCI COMMAND.INTX_DISABLE).
+    bridge1.set_pci_command(0x0406);
+
+    // BAR0 layout is fixed by `aero_virtio::pci::VirtioPciDevice`.
+    const COMMON: u32 = 0x0000;
+    const NOTIFY: u32 = 0x1000;
+    const ISR: u32 = 0x2000;
+
+    // Minimal virtio feature negotiation (accept everything offered).
+    bridge1.mmio_write(COMMON + 0x14, 1, u32::from(VIRTIO_STATUS_ACKNOWLEDGE));
+    bridge1.mmio_write(
+        COMMON + 0x14,
+        1,
+        u32::from(VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER),
+    );
+
+    bridge1.mmio_write(COMMON, 4, 0);
+    let f0 = bridge1.mmio_read(COMMON + 0x04, 4);
+    bridge1.mmio_write(COMMON + 0x08, 4, 0);
+    bridge1.mmio_write(COMMON + 0x0c, 4, f0);
+
+    bridge1.mmio_write(COMMON, 4, 1);
+    let f1 = bridge1.mmio_read(COMMON + 0x04, 4);
+    bridge1.mmio_write(COMMON + 0x08, 4, 1);
+    bridge1.mmio_write(COMMON + 0x0c, 4, f1);
+
+    bridge1.mmio_write(
+        COMMON + 0x14,
+        1,
+        u32::from(VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK),
+    );
+    bridge1.mmio_write(
+        COMMON + 0x14,
+        1,
+        u32::from(
+            VIRTIO_STATUS_ACKNOWLEDGE
+                | VIRTIO_STATUS_DRIVER
+                | VIRTIO_STATUS_FEATURES_OK
+                | VIRTIO_STATUS_DRIVER_OK,
+        ),
+    );
+
+    // Configure event queue 1.
+    bridge1.mmio_write(COMMON + 0x16, 2, u32::from(VIRTIO_SND_QUEUE_EVENT));
+    let qsz = bridge1.mmio_read(COMMON + 0x18, 2) as u16;
+    assert!(qsz >= 1);
+
+    let desc_table = 0x1000u32;
+    let avail = 0x2000u32;
+    let used = 0x3000u32;
+    let buf = 0x4000u32;
+
+    bridge1.mmio_write(COMMON + 0x20, 4, desc_table);
+    bridge1.mmio_write(COMMON + 0x24, 4, 0);
+    bridge1.mmio_write(COMMON + 0x28, 4, avail);
+    bridge1.mmio_write(COMMON + 0x2c, 4, 0);
+    bridge1.mmio_write(COMMON + 0x30, 4, used);
+    bridge1.mmio_write(COMMON + 0x34, 4, 0);
+    bridge1.mmio_write(COMMON + 0x1c, 2, 1);
+
+    guest.fill(buf, 8, 0xAA);
+    write_desc(&guest, desc_table, 0, buf as u64, 8, VIRTQ_DESC_F_WRITE, 0);
+    guest.write_u16(avail, 0);
+    guest.write_u16(avail + 2, 1);
+    guest.write_u16(avail + 4, 0);
+    guest.write_u16(used, 0);
+    guest.write_u16(used + 2, 0);
+
+    // Queue an event and kick eventq: should complete the buffer and latch an interrupt internally
+    // but not assert the external INTx line because INTX_DISABLE is set.
+    let ring = WorkletBridge::new(8, 2).unwrap();
+    let sab = ring.shared_buffer();
+    bridge1
+        .set_audio_ring_buffer(Some(sab), 8, 2)
+        .expect("set_audio_ring_buffer(Some)");
+
+    let notify_off = bridge1.mmio_read(COMMON + 0x1e, 2);
+    bridge1.mmio_write(
+        NOTIFY + notify_off * 4,
+        2,
+        u32::from(VIRTIO_SND_QUEUE_EVENT),
+    );
+
+    assert_eq!(guest.read_u16(used + 2), 1);
+    assert_eq!(guest.read_u32(used + 8), 8);
+    let expected_connected = {
+        let mut evt = [0u8; 8];
+        evt[0..4].copy_from_slice(&VIRTIO_SND_EVT_JACK_CONNECTED.to_le_bytes());
+        evt[4..8].copy_from_slice(&JACK_ID_SPEAKER.to_le_bytes());
+        evt
+    };
+    let mut got_evt = [0u8; 8];
+    guest.read_into(buf, &mut got_evt);
+    assert_eq!(&got_evt, &expected_connected);
+    assert!(
+        !bridge1.irq_asserted(),
+        "INTx line should remain deasserted while PCI COMMAND.INTX_DISABLE is set"
+    );
+
+    // Snapshot while INTX_DISABLE is still set and the interrupt is pending.
+    let snap = bridge1.save_state();
+
+    // Restore into a fresh bridge (which starts with `irq_asserted=false`). The restored state must
+    // preserve the pending interrupt latch even while INTX delivery is disabled.
+    let mut bridge2 =
+        VirtioSndPciBridge::new(guest_base, guest_size, None).expect("VirtioSndPciBridge::new");
+    bridge2.load_state(&snap).expect("load_state");
+
+    assert!(
+        !bridge2.irq_asserted(),
+        "INTx line should remain deasserted after restore while INTX_DISABLE is set"
+    );
+
+    // Clearing INTX_DISABLE should immediately assert the pending interrupt.
+    bridge2.set_pci_command(0x0006);
+    assert!(
+        bridge2.irq_asserted(),
+        "pending INTx interrupt should assert after restore once INTX_DISABLE is cleared"
+    );
+
+    let isr = bridge2.mmio_read(ISR, 1) as u8;
+    assert_ne!(isr & VIRTIO_PCI_LEGACY_ISR_QUEUE, 0);
+    assert!(!bridge2.irq_asserted());
+}
