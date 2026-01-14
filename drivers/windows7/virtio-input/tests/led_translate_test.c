@@ -20,7 +20,7 @@ static uint32_t to_le32(uint32_t v) {
 }
 
 static void assert_led_events_filtered(uint8_t bitfield, uint8_t supported_mask, size_t expect_led_count, const uint16_t *expect_codes,
-                                       const uint32_t *expect_values) {
+                                        const uint32_t *expect_values) {
   struct virtio_input_event_le events[LED_TRANSLATE_EVENT_COUNT];
 
   size_t n = led_translate_build_virtio_events(bitfield, supported_mask, events);
@@ -40,13 +40,28 @@ static void assert_led_events_filtered(uint8_t bitfield, uint8_t supported_mask,
   assert(events[expect_led_count].value == to_le32(0));
 }
 
+static void assert_full_mask(uint8_t bitfield, uint32_t expect_numl, uint32_t expect_capsl, uint32_t expect_scrolll, uint32_t expect_compose,
+                             uint32_t expect_kana) {
+  const uint16_t codes[] = {VIRTIO_INPUT_LED_NUML, VIRTIO_INPUT_LED_CAPSL, VIRTIO_INPUT_LED_SCROLLL, VIRTIO_INPUT_LED_COMPOSE,
+                            VIRTIO_INPUT_LED_KANA};
+  const uint32_t values[] = {expect_numl, expect_capsl, expect_scrolll, expect_compose, expect_kana};
+  assert_led_events_filtered(bitfield, 0x1Fu, 5, codes, values);
+}
+
 static void test_bit_mapping(void) {
-  /* Baseline: device advertises all 5 LED codes => 5x EV_LED + EV_SYN. */
-  {
-    const uint16_t codes[] = {VIRTIO_INPUT_LED_NUML, VIRTIO_INPUT_LED_CAPSL, VIRTIO_INPUT_LED_SCROLLL, VIRTIO_INPUT_LED_COMPOSE, VIRTIO_INPUT_LED_KANA};
-    const uint32_t values[] = {1, 1, 1, 1, 1};
-    assert_led_events_filtered(0x1Fu, 0x1Fu, 5, codes, values);
-  }
+  /*
+   * Bit mapping: HID LED output bitfield -> virtio EV_LED codes.
+   *
+   * When the device advertises all 5 LED codes (0..4), we must emit 5 EV_LED
+   * events (one per code) plus a final EV_SYN/SYN_REPORT (total: 6).
+   */
+  assert_full_mask(0x00u, 0, 0, 0, 0, 0);
+  assert_full_mask(0x01u, 1, 0, 0, 0, 0);
+  assert_full_mask(0x02u, 0, 1, 0, 0, 0);
+  assert_full_mask(0x04u, 0, 0, 1, 0, 0);
+  assert_full_mask(0x08u, 0, 0, 0, 1, 0);
+  assert_full_mask(0x10u, 0, 0, 0, 0, 1);
+  assert_full_mask(0x1Fu, 1, 1, 1, 1, 1);
 
   /*
    * Filtering: only required LEDs advertised (Num/Caps/Scroll) => only emit
