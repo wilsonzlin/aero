@@ -25,6 +25,9 @@ static ULONG g_io_disconnect_interrupt_count = 0;
 static ULONG g_io_connect_interrupt_ex_count = 0;
 static ULONG g_io_disconnect_interrupt_ex_count = 0;
 
+static WDK_TEST_IO_CONNECT_INTERRUPT_HOOK g_test_io_connect_interrupt_hook = NULL;
+static PVOID g_test_io_connect_interrupt_hook_ctx = NULL;
+
 /* Last IoConnectInterruptEx parameters (CONNECT_MESSAGE_BASED) for unit tests. */
 static PDEVICE_OBJECT g_last_io_connect_interrupt_ex_pdo = NULL;
 static ULONG g_last_io_connect_interrupt_ex_message_count = 0;
@@ -175,6 +178,10 @@ NTSTATUS IoConnectInterrupt(_Out_ PKINTERRUPT* InterruptObject,
     intr->ShareVector = ShareVector;
     intr->ProcessorEnableMask = ProcessorEnableMask;
     *InterruptObject = intr;
+
+    if (g_test_io_connect_interrupt_hook != NULL) {
+        g_test_io_connect_interrupt_hook(intr, g_test_io_connect_interrupt_hook_ctx);
+    }
 
     return STATUS_SUCCESS;
 }
@@ -420,6 +427,18 @@ VOID WdkTestClearIoConnectInterruptExHook(VOID)
 {
     g_test_io_connect_interrupt_ex_hook = NULL;
     g_test_io_connect_interrupt_ex_hook_ctx = NULL;
+}
+
+VOID WdkTestSetIoConnectInterruptHook(_In_opt_ WDK_TEST_IO_CONNECT_INTERRUPT_HOOK Hook, _In_opt_ PVOID Context)
+{
+    g_test_io_connect_interrupt_hook = Hook;
+    g_test_io_connect_interrupt_hook_ctx = Context;
+}
+
+VOID WdkTestClearIoConnectInterruptHook(VOID)
+{
+    g_test_io_connect_interrupt_hook = NULL;
+    g_test_io_connect_interrupt_hook_ctx = NULL;
 }
 
 VOID WdkTestSetKeInsertQueueDpcHook(_In_opt_ WDK_TEST_KE_INSERT_QUEUE_DPC_HOOK Hook, _In_opt_ PVOID Context)

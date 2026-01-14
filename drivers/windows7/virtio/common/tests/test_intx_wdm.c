@@ -119,6 +119,33 @@ static CM_PARTIAL_RESOURCE_DESCRIPTOR make_int_desc(void)
     return desc;
 }
 
+typedef struct io_connect_interrupt_hook_ctx {
+    int call_count;
+} io_connect_interrupt_hook_ctx_t;
+
+static VOID io_connect_interrupt_hook_trigger_interrupt_and_run_dpc(_Inout_ PKINTERRUPT InterruptObject, _In_opt_ PVOID Context)
+{
+    io_connect_interrupt_hook_ctx_t* ctx = (io_connect_interrupt_hook_ctx_t*)Context;
+    PVIRTIO_INTX intx;
+
+    assert(ctx != NULL);
+    assert(InterruptObject != NULL);
+    assert(InterruptObject->ServiceRoutine != NULL);
+    assert(InterruptObject->ServiceContext != NULL);
+    ctx->call_count++;
+
+    intx = (PVIRTIO_INTX)InterruptObject->ServiceContext;
+    assert(intx->Initialized != FALSE);
+    assert(intx->InterruptObject == InterruptObject);
+
+    /*
+     * Simulate an interrupt arriving and its DPC being dispatched before the
+     * connect helper returns.
+     */
+    assert(WdkTestTriggerInterrupt(InterruptObject) != FALSE);
+    assert(WdkTestRunQueuedDpc(&intx->Dpc) != FALSE);
+}
+
 static void test_connect_validation(void)
 {
     VIRTIO_INTX intx;
@@ -385,6 +412,47 @@ static void test_disconnect_is_idempotent(void)
     assert(intx.IsrStatusRegister == NULL);
     assert(intx.DpcInFlight == 0);
     assert(intx.PendingIsrStatus == 0);
+}
+
+static void test_dpc_can_run_during_connect(void)
+{
+    VIRTIO_INTX intx;
+    volatile UCHAR isr_reg = 0;
+    CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
+    intx_test_ctx_t ctx;
+    io_connect_interrupt_hook_ctx_t hook_ctx;
+    NTSTATUS status;
+
+    desc = make_int_desc();
+    RtlZeroMemory(&ctx, sizeof(ctx));
+    RtlZeroMemory(&hook_ctx, sizeof(hook_ctx));
+
+    /* Make callbacks usable even if the DPC runs before VirtioIntxConnect returns. */
+    ctx.expected_intx = &intx;
+
+    /* Pre-set ISR byte so the hooked interrupt sees queue work. */
+    isr_reg = VIRTIO_PCI_ISR_QUEUE_INTERRUPT;
+
+    WdkTestResetKeInsertQueueDpcCounts();
+    WdkTestSetIoConnectInterruptHook(io_connect_interrupt_hook_trigger_interrupt_and_run_dpc, &hook_ctx);
+
+    status = VirtioIntxConnect(NULL, &desc, &isr_reg, evt_config, evt_queue, NULL, &ctx, &intx);
+    assert(status == STATUS_SUCCESS);
+
+    assert(hook_ctx.call_count == 1);
+    assert(isr_reg == 0);
+    assert(intx.IsrCount == 1);
+    assert(intx.DpcCount == 1);
+    assert(intx.DpcInFlight == 0);
+    assert(intx.Dpc.Inserted == FALSE);
+    assert(WdkTestGetKeInsertQueueDpcCount() == 1);
+
+    assert(ctx.queue_calls == 1);
+    assert(ctx.config_calls == 0);
+
+    WdkTestClearIoConnectInterruptHook();
+
+    VirtioIntxDisconnect(&intx);
 }
 
 static void test_spurious_interrupt(void)
@@ -1156,6 +1224,7 @@ int main(void)
     test_reconnect_after_disconnect();
     test_disconnect_uninitialized_is_safe();
     test_disconnect_is_idempotent();
+    test_dpc_can_run_during_connect();
     test_spurious_interrupt();
     test_isr_defensive_null_service_context();
     test_isr_defensive_null_isr_register();

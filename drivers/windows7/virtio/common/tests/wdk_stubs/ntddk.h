@@ -569,6 +569,18 @@ VOID WdkTestResetIoConnectInterruptCount(VOID);
 ULONG WdkTestGetIoDisconnectInterruptCount(VOID);
 VOID WdkTestResetIoDisconnectInterruptCount(VOID);
 
+/*
+ * Test-only hook invoked from IoConnectInterrupt() (line-based INTx) after the
+ * stub has created the interrupt object and stored it in the caller's output
+ * parameter.
+ *
+ * This lets tests simulate an interrupt arriving before the driver's connect
+ * helper returns (a real-world race on SMP systems).
+ */
+typedef VOID (*WDK_TEST_IO_CONNECT_INTERRUPT_HOOK)(_Inout_ PKINTERRUPT InterruptObject, _In_opt_ PVOID Context);
+VOID WdkTestSetIoConnectInterruptHook(_In_opt_ WDK_TEST_IO_CONNECT_INTERRUPT_HOOK Hook, _In_opt_ PVOID Context);
+VOID WdkTestClearIoConnectInterruptHook(VOID);
+
 ULONG WdkTestGetIoConnectInterruptExCount(VOID);
 VOID WdkTestResetIoConnectInterruptExCount(VOID);
 ULONG WdkTestGetIoDisconnectInterruptExCount(VOID);
