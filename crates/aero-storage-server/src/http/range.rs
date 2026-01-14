@@ -65,3 +65,45 @@ pub fn resolve_range(
 
     Ok(range)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_range_header_ignores_unsupported_unit() {
+        // Per RFC 9110, unknown range units should be ignored rather than treated as an error.
+        assert_eq!(parse_range_header("items=0-1").unwrap(), None);
+        assert_eq!(parse_range_header("bytes=0-1").unwrap().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn resolve_range_rejects_multi_range_requests() {
+        let specs = [
+            ByteRangeSpec::FromTo { start: 0, end: 1 },
+            ByteRangeSpec::FromTo { start: 2, end: 3 },
+        ];
+        let err = resolve_range(&specs, 10, RangeOptions { max_total_bytes: 10 }).unwrap_err();
+        assert_eq!(err, RangeResolveError::MultiRangeNotSupported);
+    }
+
+    #[test]
+    fn resolve_range_enforces_max_total_bytes() {
+        let specs = [ByteRangeSpec::FromTo { start: 0, end: 9 }];
+        let err = resolve_range(&specs, 100, RangeOptions { max_total_bytes: 5 }).unwrap_err();
+        assert_eq!(err, RangeResolveError::TooManyBytes);
+    }
+
+    #[test]
+    fn resolve_range_reports_unsatisfiable_ranges() {
+        // Resource length 0 is always unsatisfiable.
+        let specs = [ByteRangeSpec::FromTo { start: 0, end: 0 }];
+        let err = resolve_range(&specs, 0, RangeOptions { max_total_bytes: 1 }).unwrap_err();
+        assert_eq!(err, RangeResolveError::Unsatisfiable);
+
+        // Start >= len drops the range and becomes unsatisfiable.
+        let specs = [ByteRangeSpec::From { start: 10 }];
+        let err = resolve_range(&specs, 10, RangeOptions { max_total_bytes: 1 }).unwrap_err();
+        assert_eq!(err, RangeResolveError::Unsatisfiable);
+    }
+}
