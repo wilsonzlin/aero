@@ -111,6 +111,45 @@ fn additional_secret_key_extensions_are_rejected() -> anyhow::Result<()> {
 }
 
 #[test]
+fn guest_tools_tools_must_be_directory_if_present() -> anyhow::Result<()> {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let testdata = repo_root.join("testdata");
+    let spec_path = testdata.join("spec.json");
+
+    let drivers_dir = testdata.join("drivers");
+
+    let guest_tools_tmp = tempfile::tempdir()?;
+    copy_dir_all(&testdata.join("guest-tools-no-certs"), guest_tools_tmp.path())?;
+
+    // `guest-tools/tools/` is optional. However, if present, it must be a real directory (not a
+    // file/symlink) so we have deterministic, safe packaging semantics.
+    fs::write(guest_tools_tmp.path().join("tools"), b"not a directory\n")?;
+
+    let out = tempfile::tempdir()?;
+    let config = aero_packager::PackageConfig {
+        drivers_dir,
+        guest_tools_dir: guest_tools_tmp.path().to_path_buf(),
+        windows_device_contract_path: device_contract_path(),
+        out_dir: out.path().to_path_buf(),
+        spec_path,
+        version: "0.0.0".to_string(),
+        build_id: "test".to_string(),
+        volume_id: "AERO_GUEST_TOOLS".to_string(),
+        signing_policy: aero_packager::SigningPolicy::None,
+        source_date_epoch: 0,
+    };
+
+    let err = aero_packager::package_guest_tools(&config).unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("tools") && msg.contains("not a directory"),
+        "unexpected error: {msg}"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn windows_shell_metadata_files_are_excluded_from_config_and_licenses() -> anyhow::Result<()> {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let testdata = repo_root.join("testdata");
