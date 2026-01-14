@@ -3569,6 +3569,9 @@ void APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hReso
     UnbindResourceFromOutputsLocked(dev, res);
     UnbindResourceFromSrvsLocked(dev, res);
   }
+
+  bool oom = false;
+
   // Unbind any IA vertex buffer slots that reference this resource.
   for (uint32_t slot = 0; slot < kMaxVertexBufferSlots; ++slot) {
     if (dev->current_vb_resources[slot] != res) {
@@ -3587,12 +3590,17 @@ void APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hReso
     binding.offset_bytes = 0;
     binding.reserved0 = 0;
 
-    auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_vertex_buffers>(AEROGPU_CMD_SET_VERTEX_BUFFERS,
-                                                                             &binding,
-                                                                             sizeof(binding));
-    if (cmd) {
-      cmd->start_slot = slot;
-      cmd->buffer_count = 1;
+    if (!oom) {
+      auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_vertex_buffers>(AEROGPU_CMD_SET_VERTEX_BUFFERS,
+                                                                               &binding,
+                                                                               sizeof(binding));
+      if (!cmd) {
+        SetError(hDevice, E_OUTOFMEMORY);
+        oom = true;
+      } else {
+        cmd->start_slot = slot;
+        cmd->buffer_count = 1;
+      }
     }
   }
   if (dev->current_ib_res == res) {
@@ -3614,7 +3622,6 @@ void APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hReso
   // allocations) before deallocating the WDDM handles. Ensure we also emit the
   // corresponding SET_CONSTANT_BUFFERS updates so the host does not observe stale
   // constant buffer bindings pointing at a destroyed resource.
-  bool oom = false;
   const aerogpu_constant_buffer_binding null_cb{};
   for (uint32_t slot = 0; slot < kMaxConstantBufferSlots; ++slot) {
     if (dev->current_vs_cb_resources[slot] == res) {
