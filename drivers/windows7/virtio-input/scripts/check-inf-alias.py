@@ -24,7 +24,6 @@ Comparison notes:
   - Comments and the allowed-to-diverge models sections are ignored.
   - Outside the ignored sections, the comparison is strict (all functional lines
     must match).
-
 Run from the repo root:
   python3 drivers/windows7/virtio-input/scripts/check-inf-alias.py
 """
@@ -111,6 +110,28 @@ def _normalized_inf_lines_without_sections(path: Path, *, drop_sections: set[str
         out.append(line)
 
     return out
+
+def strip_inf_sections(data: bytes, *, sections: set[str]) -> bytes:
+    """Remove entire INF sections (including their headers) by name (case-insensitive)."""
+
+    out: list[bytes] = []
+    skipping = False
+
+    for line in data.splitlines(keepends=True):
+        # Support both UTF-8/ASCII INFs and UTF-16LE/BE INFs by stripping NUL bytes for
+        # section header detection only.
+        line_ascii = line.replace(b"\x00", b"")
+        stripped = line_ascii.lstrip(b" \t")
+        if stripped.startswith(b"[") and b"]" in stripped:
+            end = stripped.find(b"]")
+            name = stripped[1:end].strip().decode("utf-8", errors="replace").lower()
+            skipping = name in sections
+
+        if skipping:
+            continue
+        out.append(line)
+
+    return b"".join(out)
 
 
 def main() -> int:

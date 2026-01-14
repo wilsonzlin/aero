@@ -273,22 +273,45 @@ def inf_functional_bytes(path: Path) -> bytes:
     raise RuntimeError(f"{path}: could not find a section header (e.g. [Version])")
 
 
+def strip_inf_sections_bytes(data: bytes, *, sections: set[str]) -> bytes:
+    """Remove entire INF sections (including their headers) by name (case-insensitive)."""
+
+    out: list[bytes] = []
+    skipping = False
+
+    for line in data.splitlines(keepends=True):
+        stripped = line.lstrip(b" \t")
+        if stripped.startswith(b"[") and b"]" in stripped:
+            end = stripped.find(b"]")
+            name = stripped[1:end].strip().decode("utf-8", errors="replace").lower()
+            skipping = name in sections
+        if skipping:
+            continue
+        out.append(line)
+
+    return b"".join(out)
+
+
 def check_inf_alias_drift(*, canonical: Path, alias: Path, repo_root: Path, label: str) -> str | None:
     """
     Compare the canonical INF against its legacy filename alias.
 
-    Policy: from the first section header (`[Version]`) onward, the alias must be
-    byte-for-byte identical to the canonical INF. Only the leading banner/comment
-    block may differ.
+    Policy: the alias INF must be byte-for-byte identical to the canonical INF
+    outside the models sections (`[Aero.NTx86]` / `[Aero.NTamd64]`). Only the
+    leading banner/comment block and the models sections may differ.
     """
 
     try:
-        canonical_body = inf_functional_bytes(canonical)
+        canonical_body = strip_inf_sections_bytes(
+            inf_functional_bytes(canonical), sections={"aero.ntx86", "aero.ntamd64"}
+        )
     except Exception as e:
         return f"{label}: failed to read canonical INF functional bytes: {e}"
 
     try:
-        alias_body = inf_functional_bytes(alias)
+        alias_body = strip_inf_sections_bytes(
+            inf_functional_bytes(alias), sections={"aero.ntx86", "aero.ntamd64"}
+        )
     except Exception as e:
         return f"{label}: failed to read alias INF functional bytes: {e}"
 
@@ -309,7 +332,10 @@ def check_inf_alias_drift(*, canonical: Path, alias: Path, repo_root: Path, labe
         lineterm="",
     )
 
-    return f"{label}: INF alias drift detected (expected byte-identical from [Version] onward):\n" + "".join(diff)
+    return (
+        f"{label}: INF alias drift detected (expected byte-identical outside models sections):\n"
+        + "".join(diff)
+    )
 
 
 def parse_contract_major_version(md: str) -> int:
@@ -2212,6 +2238,7 @@ def validate_virtio_input_model_lines(
                     [kb_entry.raw_line, ms_entry.raw_line, fb_entry.raw_line],
                 )
             )
+
 
 
 def _normalized_inf_lines_without_sections(path: Path, *, drop_sections: set[str]) -> list[str]:
