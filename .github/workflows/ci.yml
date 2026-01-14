@@ -602,6 +602,10 @@ jobs:
         working-directory: ${{ steps.node-workspace.outputs.dir }}
         run: npm run lint --if-present
 
+      - name: Protocol tests (AeroGPU TypeScript ABI)
+        working-directory: ${{ steps.node-workspace.outputs.dir }}
+        run: npm run test:protocol
+
       - name: Unit tests
         working-directory: ${{ steps.node-workspace.outputs.dir }}
         run: npm run test:unit
