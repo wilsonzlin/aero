@@ -140,19 +140,13 @@ impl AeroGpuExecutor {
             .collect()
     }
 
-    fn submission_payload_len_bytes(sub: &AeroGpuBackendSubmission) -> usize {
-        sub.cmd_stream
-            .len()
-            .saturating_add(sub.alloc_table.as_ref().map(|b| b.len()).unwrap_or(0))
-    }
-
     fn push_pending_submission(
         &mut self,
         regs: &mut AeroGpuRegs,
         mem: &mut dyn MemoryBus,
         submission: AeroGpuBackendSubmission,
     ) {
-        let sub_bytes = Self::submission_payload_len_bytes(&submission);
+        let sub_bytes = submission.payload_len_bytes();
         if sub_bytes > MAX_PENDING_SUBMISSIONS_TOTAL_BYTES {
             let fence = submission.signal_fence;
             if fence != 0 && fence > regs.completed_fence {
@@ -174,7 +168,7 @@ impl AeroGpuExecutor {
                 self.pending_submissions_bytes = 0;
                 break;
             };
-            let dropped_bytes = Self::submission_payload_len_bytes(&dropped);
+            let dropped_bytes = dropped.payload_len_bytes();
             self.pending_submissions_bytes =
                 self.pending_submissions_bytes.saturating_sub(dropped_bytes);
 

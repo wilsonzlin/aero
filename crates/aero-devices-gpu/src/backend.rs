@@ -21,6 +21,22 @@ pub struct AeroGpuBackendSubmission {
     pub alloc_table: Option<Vec<u8>>,
 }
 
+impl AeroGpuBackendSubmission {
+    /// Total payload size in bytes (command stream + optional allocation table).
+    ///
+    /// This is used by device models to enforce bounded queues when bridging submissions to an
+    /// external executor (e.g. a browser GPU worker).
+    #[inline]
+    pub fn payload_len_bytes(&self) -> usize {
+        self.cmd_stream.len().saturating_add(
+            self.alloc_table
+                .as_ref()
+                .map(|bytes| bytes.len())
+                .unwrap_or(0),
+        )
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct AeroGpuBackendCompletion {
     pub fence: u64,
