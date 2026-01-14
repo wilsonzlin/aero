@@ -55,6 +55,14 @@ impl MsiCapability {
         self.enabled
     }
 
+    pub fn is_64bit(&self) -> bool {
+        self.is_64bit
+    }
+
+    pub fn per_vector_masking(&self) -> bool {
+        self.per_vector_masking
+    }
+
     pub fn message_address(&self) -> u64 {
         self.message_address
     }
