@@ -57,6 +57,8 @@ static const NDIS_OID g_SupportedOids[] = {
     OID_802_3_MAXIMUM_LIST_SIZE,
 
     // TX offloads (Win7 NDIS 6.20)
+    OID_TCP_OFFLOAD_HARDWARE_CAPABILITIES,
+    OID_TCP_OFFLOAD_CURRENT_CONFIG,
     OID_TCP_OFFLOAD_PARAMETERS,
 };
 
@@ -3242,6 +3244,21 @@ static NDIS_STATUS AerovNetOidQuery(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ P
       }
       RtlCopyMemory(OutBuffer, &Info, sizeof(Info));
       BytesWritten = sizeof(Info);
+      break;
+    }
+
+    case OID_TCP_OFFLOAD_HARDWARE_CAPABILITIES:
+    case OID_TCP_OFFLOAD_CURRENT_CONFIG: {
+      NDIS_OFFLOAD Offload;
+      BOOLEAN UseCurrent = (Oid == OID_TCP_OFFLOAD_CURRENT_CONFIG) ? TRUE : FALSE;
+
+      AerovNetBuildNdisOffload(Adapter, UseCurrent, &Offload);
+      BytesNeeded = Offload.Header.Size;
+      if (OutLen < BytesNeeded) {
+        break;
+      }
+      RtlCopyMemory(OutBuffer, &Offload, BytesNeeded);
+      BytesWritten = BytesNeeded;
       break;
     }
 
