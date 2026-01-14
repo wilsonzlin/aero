@@ -6211,6 +6211,11 @@ impl Machine {
         self.inner.virtio_input_mouse_driver_ok()
     }
 
+    /// Whether the legacy PS/2 i8042 controller is present.
+    pub fn ps2_available(&self) -> bool {
+        self.inner.ps2_available()
+    }
+
     /// Returns the PS/2 (i8042) keyboard LED bitmask as last set by the guest OS, or 0 if the
     /// i8042 controller is disabled/unavailable.
     ///

@@ -567,11 +567,16 @@ function maybeUpdateKeyboardInputBackend(opts: { virtioKeyboardOk: boolean }): v
     inject_virtio_key?: unknown;
     inject_usb_hid_keyboard_usage?: unknown;
     usb_hid_keyboard_configured?: unknown;
+    ps2_available?: unknown;
   };
 
   keyboardUsbOk = safeCallBool(m, anyMachine.usb_hid_keyboard_configured);
+  // Prefer an explicit PS/2 presence probe when available. Older WASM builds did not expose a
+  // dedicated capability check; in those cases, default to assuming PS/2 is available so we don't
+  // start routing unconfigured USB keyboard events by mistake.
+  const ps2Available = typeof anyMachine.ps2_available === "function" ? safeCallBool(m, anyMachine.ps2_available) : true;
   const virtioOk = opts.virtioKeyboardOk && typeof anyMachine.inject_virtio_key === "function";
-  const usbOk = keyboardUsbOk && typeof anyMachine.inject_usb_hid_keyboard_usage === "function";
+  const usbOk = typeof anyMachine.inject_usb_hid_keyboard_usage === "function" && (!ps2Available || keyboardUsbOk);
 
   const force = currentConfig?.forceKeyboardBackend;
   if (force && force !== "auto") {
@@ -624,13 +629,16 @@ function maybeUpdateMouseInputBackend(opts: { virtioMouseOk: boolean }): void {
     inject_usb_hid_mouse_move?: unknown;
     inject_usb_hid_mouse_buttons?: unknown;
     usb_hid_mouse_configured?: unknown;
+    ps2_available?: unknown;
   };
 
   const ps2Available =
-    typeof anyMachine.inject_ps2_mouse_motion === "function" ||
-    typeof anyMachine.inject_mouse_motion === "function" ||
-    typeof anyMachine.inject_mouse_buttons_mask === "function" ||
-    typeof anyMachine.inject_ps2_mouse_buttons === "function";
+    typeof anyMachine.ps2_available === "function"
+      ? safeCallBool(m, anyMachine.ps2_available)
+      : typeof anyMachine.inject_ps2_mouse_motion === "function" ||
+        typeof anyMachine.inject_mouse_motion === "function" ||
+        typeof anyMachine.inject_mouse_buttons_mask === "function" ||
+        typeof anyMachine.inject_ps2_mouse_buttons === "function";
 
   const usbConfigured = safeCallBool(m, anyMachine.usb_hid_mouse_configured);
   // Expose "configured" (not merely selected) status for diagnostics/HUDs.
@@ -2948,7 +2956,10 @@ ctx.onmessage = (ev) => {
     const payload = msg as Partial<{
       virtioKeyboardOk: unknown;
       virtioMouseOk: unknown;
+      ps2Available?: unknown;
       usbKeyboardOk?: unknown;
+      usbKeyboardConfigured?: unknown;
+      usbMouseConfigured?: unknown;
       enableBootDriveSpy?: unknown;
       enableNetworkSpy?: unknown;
       enableAerogpuBridge?: unknown;
@@ -2956,7 +2967,9 @@ ctx.onmessage = (ev) => {
     }>;
     const virtioKeyboardOk = payload.virtioKeyboardOk === true;
     const virtioMouseOk = payload.virtioMouseOk === true;
-    const usbKeyboardOk = payload.usbKeyboardOk === true;
+    const ps2Available = payload.ps2Available !== false;
+    const usbKeyboardConfigured = payload.usbKeyboardConfigured === true || payload.usbKeyboardOk === true;
+    const usbMouseConfigured = payload.usbMouseConfigured === true;
     const enableBootDriveSpy = payload.enableBootDriveSpy === true;
     const enableNetworkSpy = payload.enableNetworkSpy === true;
     const enableAerogpuBridge = payload.enableAerogpuBridge !== false;
@@ -2987,14 +3000,31 @@ ctx.onmessage = (ev) => {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const dummy: any = {
+      ps2_available: () => ps2Available,
+      usb_hid_keyboard_configured: () => usbKeyboardConfigured,
+      usb_hid_mouse_configured: () => usbMouseConfigured,
       virtio_input_keyboard_driver_ok: () => virtioKeyboardOk,
       virtio_input_mouse_driver_ok: () => virtioMouseOk,
-      usb_hid_keyboard_configured: () => usbKeyboardOk,
       inject_usb_hid_keyboard_usage: (_usage: number, _pressed: boolean) => {
         // No-op: tests can still validate backend selection by toggling `usb_hid_keyboard_configured`.
       },
       inject_usb_hid_consumer_usage: (_usage: number, _pressed: boolean) => {
         // No-op: used by Consumer Control events.
+      },
+      inject_usb_hid_mouse_move: (_dx: number, _dy: number) => {
+        // No-op.
+      },
+      inject_usb_hid_mouse_buttons: (_mask: number) => {
+        // No-op.
+      },
+      inject_ps2_mouse_motion: (_dx: number, _dy: number, _wheel: number) => {
+        // No-op.
+      },
+      inject_mouse_buttons_mask: (_mask: number) => {
+        // No-op.
+      },
+      inject_ps2_mouse_buttons: (_buttons: number) => {
+        // No-op.
       },
       inject_key_scancode_bytes: (packed: number, len: number) => {
         if (!enableInputSpy) return;

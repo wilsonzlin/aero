@@ -650,6 +650,8 @@ export type MachineHandle = {
     usb_hid_keyboard_leds?(): number;
     virtio_input_keyboard_leds?(): number;
     ps2_keyboard_leds?(): number;
+    /** Whether the legacy PS/2 i8042 controller is present. */
+    ps2_available?(): boolean;
 
     inject_usb_hid_keyboard_usage?(usage: number, pressed: boolean): void;
     /**

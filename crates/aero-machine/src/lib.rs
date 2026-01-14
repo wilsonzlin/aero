@@ -9076,6 +9076,15 @@ impl Machine {
         u64::try_from(self.debugcon_log.borrow().len()).unwrap_or(u64::MAX)
     }
 
+    /// Whether the legacy PS/2 i8042 controller is present.
+    ///
+    /// This is a lightweight machine-wiring check intended for host/runtime input backend
+    /// selection. It does **not** imply that the guest has enabled the mouse or that any device is
+    /// actively consuming i8042 output bytes.
+    pub fn ps2_available(&self) -> bool {
+        self.i8042.is_some()
+    }
+
     /// Returns the current PS/2 (i8042) keyboard LED bitmask as last set by the guest OS, or 0 if
     /// the i8042 controller is not present.
     ///

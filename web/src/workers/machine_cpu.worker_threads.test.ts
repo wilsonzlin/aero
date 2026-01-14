@@ -1238,6 +1238,74 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
     }
   }, 20_000);
 
+  it("selects the USB backend when PS/2 i8042 is unavailable even before USB HID is configured (dummy machine)", async () => {
+    const segments = allocateTestSegments();
+    const status = new Int32Array(segments.control, STATUS_OFFSET_BYTES, STATUS_INTS);
+
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      const workerReady = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "cpu",
+        10_000,
+      );
+
+      worker.postMessage({
+        kind: "config.update",
+        version: 1,
+        config: makeConfig(),
+      });
+      worker.postMessage(makeInit(segments));
+      await workerReady;
+
+      const dummyReady = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { kind?: unknown }).kind === "__test.machine_cpu.dummyMachineEnabled",
+        10_000,
+      );
+      worker.postMessage({
+        kind: "__test.machine_cpu.enableDummyMachine",
+        ps2Available: false,
+        virtioKeyboardOk: false,
+        virtioMouseOk: false,
+      });
+      await dummyReady;
+
+      const nowUs = Math.round(performance.now() * 1000) >>> 0;
+      // Use any non-empty batch to trigger backend re-evaluation + status publishing.
+      const buf = new ArrayBuffer((2 + 4) * 4);
+      const words = new Int32Array(buf);
+      words[0] = 1;
+      words[1] = nowUs | 0;
+      words[2] = InputEventType.KeyHidUsage;
+      words[3] = nowUs | 0;
+      words[4] = 0x04 | (1 << 8); // usage=4 pressed
+      words[5] = 0;
+
+      const recycledPromise = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { type?: unknown }).type === "in:input-batch-recycle",
+        10_000,
+      );
+      worker.postMessage({ type: "in:input-batch", buffer: buf, recycle: true }, [buf]);
+      await recycledPromise;
+
+      expect(Atomics.load(status, StatusIndex.IoInputKeyboardBackend)).toBe(1); // usb
+      expect(Atomics.load(status, StatusIndex.IoInputMouseBackend)).toBe(1); // usb
+      // Device is routed over USB because PS/2 is absent, but it still isn't configured by the guest yet.
+      expect(Atomics.load(status, StatusIndex.IoInputUsbKeyboardOk)).toBe(0);
+      expect(Atomics.load(status, StatusIndex.IoInputUsbMouseOk)).toBe(0);
+    } finally {
+      await worker.terminate();
+    }
+  }, 20_000);
+
   it("counts clamped input batch claims as drops (dummy machine)", async () => {
     const segments = allocateTestSegments();
     const status = new Int32Array(segments.control, STATUS_OFFSET_BYTES, STATUS_INTS);
