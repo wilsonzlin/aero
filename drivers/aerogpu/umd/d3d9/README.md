@@ -396,6 +396,11 @@ Implementation notes (bring-up):
 - For `D3DFVF_XYZ | D3DFVF_TEX1` and `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1`, the fixed-function VS applies the
   combined world/view/projection matrix (uploaded into a reserved VS constant range by the UMD). When `DIFFUSE` is absent,
   the VS uses opaque white.
+- Shader-stage interop is supported: when exactly one stage is bound (VS-only or PS-only), `ensure_draw_pipeline_locked()`
+  binds a fixed-function fallback shader for the missing stage at draw time.
+  - VS-only interop (PS is NULL) uses a stage0 fixed-function PS variant (validated by `d3d9_shader_stage_interop`).
+  - PS-only interop (VS is NULL) synthesizes a minimal fixed-function VS based on the active FVF (limited to the `DIFFUSE`
+    and `DIFFUSE|TEX1` bring-up subset).
 - For indexed draws in this mode, indices may be expanded into a temporary vertex stream (conservative but sufficient
   for bring-up).
 - Patch rendering (`DrawRectPatch` / `DrawTriPatch`) is supported for the bring-up subset of **cubic Bezier patches**:
@@ -440,6 +445,7 @@ This subset is validated via:
   `d3d9ex_triangle`, `d3d9_mipmapped_texture_smoke`, `d3d9ex_fixedfunc_textured_triangle`,
   `d3d9ex_fixedfunc_texture_stage_state`, `d3d9_fixedfunc_xyz_diffuse`, `d3d9_fixedfunc_xyz_diffuse_tex1`,
   `d3d9_fixedfunc_textured_wvp`,
+  `d3d9_shader_stage_interop`,
   `d3d9ex_texture_16bit_formats`, `d3d9_texture_16bit_sampling`, `d3d9_patch_sanity`, `d3d9_patch_rendering_smoke`,
   `d3d9_process_vertices_sanity`, `d3d9_process_vertices_smoke`,
   `d3d9ex_draw_indexed_primitive_up`, `d3d9ex_scissor_sanity`, `d3d9ex_query_latency`, `d3d9ex_event_query`,
