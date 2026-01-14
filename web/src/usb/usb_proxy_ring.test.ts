@@ -268,6 +268,25 @@ describe("usb/UsbProxyRing", () => {
     expect(() => ring.popCompletion()).toThrow(/payload too large/i);
   });
 
+  it("throws when an error completion record claims a message larger than the hard cap", () => {
+    const sab = createUsbProxyRingBuffer(64 * 1024);
+    const ring = new UsbProxyRing(sab);
+
+    expect(ring.pushCompletion({ kind: "controlOut", id: 1, status: "error", message: "nope" })).toBe(true);
+
+    const ctrl = new Int32Array(sab, 0, 3);
+    const view = new DataView(sab, USB_PROXY_RING_CTRL_BYTES);
+    const msgLen = 16 * 1024 + 1;
+    // msgLen lives at offset 8 (completion header).
+    view.setUint32(8, msgLen, true);
+    // Pretend the producer advanced tail far enough for the record to be "fully written".
+    const fixed = 12;
+    const total = Math.ceil((fixed + msgLen) / 4) * 4;
+    Atomics.store(ctrl, 1, total);
+
+    expect(() => ring.popCompletion()).toThrow(/error message too large/i);
+  });
+
   it("rejects invalid bulkIn endpoint addresses (OUT endpoints)", () => {
     const sab = createUsbProxyRingBuffer(256);
     const ring = new UsbProxyRing(sab);

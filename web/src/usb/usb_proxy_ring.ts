@@ -781,6 +781,9 @@ export class UsbProxyRing {
 
       // status === "error"
       const msgLen = this.#view.getUint32(bodyIndex + 0, true) >>> 0;
+      if (msgLen > MAX_USB_PROXY_ERROR_MESSAGE_BYTES) {
+        throw new Error(`USB proxy ring corrupted (error message too large: ${msgLen} bytes).`);
+      }
       const end = fixed + msgLen;
       const total = alignUp(end, USB_PROXY_RING_ALIGN);
       if (total > remaining) throw new Error("USB proxy ring corrupted (error payload exceeds ring segment).");
