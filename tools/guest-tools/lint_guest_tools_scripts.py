@@ -66,6 +66,24 @@ def _any_regex(patterns: Sequence[str], *, flags: int = re.IGNORECASE | re.MULTI
     return lambda text: any(rx.search(text) is not None for rx in compiled)
 
 
+def _parsed_flag_sets_var(*, flag_variants: Sequence[str], var: str, value: str) -> Callable[[str], bool]:
+    """
+    Best-effort check that a batch arg parsing line maps a CLI flag to a variable assignment.
+
+    We intentionally match loosely to tolerate minor refactors:
+    - quoted or unquoted flag comparisons
+    - `%%A` vs `%%~A`
+    - `set VAR=...` vs `set "VAR=..."`
+
+    The invariant is still anchored to lines beginning with `if` to avoid being
+    satisfied by usage/help text.
+    """
+
+    alt = "|".join(re.escape(v) for v in flag_variants)
+    pattern = rf'(?im)^\s*if\b[^\r\n]*(?:{alt})[^\r\n]*\bset\b[^\r\n]*"?{re.escape(var)}\s*=\s*{re.escape(value)}"?'
+    return _regex(pattern)
+
+
 def _label_block(text: str, label: str) -> str | None:
     """
     Extract a best-effort "label block" from a Windows batch script.
@@ -331,54 +349,50 @@ def lint_files(*, setup_cmd: Path, uninstall_cmd: Path, verify_ps1: Path) -> Lis
         Invariant(
             description="Supports /testsigning flag (x64 test driver signing)",
             expected_hint='Parses "/testsigning" (or alias) into ARG_FORCE_TESTSIGN=1',
-            predicate=_any_regex(
-                [
-                    r'(?i)/testsigning"\s+set\s+"?ARG_FORCE_TESTSIGN=1"?',
-                    r'(?i)/forcetestsigning"\s+set\s+"?ARG_FORCE_TESTSIGN=1"?',
-                    r'(?i)/force-testsigning"\s+set\s+"?ARG_FORCE_TESTSIGN=1"?',
-                ]
+            predicate=_parsed_flag_sets_var(
+                flag_variants=["/testsigning", "/forcetestsigning", "/force-testsigning"],
+                var="ARG_FORCE_TESTSIGN",
+                value="1",
             ),
         ),
         Invariant(
             description="Supports /nointegritychecks flag (signature enforcement off; not recommended)",
             expected_hint='Parses "/nointegritychecks" (or alias) into ARG_FORCE_NOINTEGRITY=1',
-            predicate=_any_regex(
-                [
-                    r'(?i)/nointegritychecks"\s+set\s+"?ARG_FORCE_NOINTEGRITY=1"?',
-                    r'(?i)/forcenointegritychecks"\s+set\s+"?ARG_FORCE_NOINTEGRITY=1"?',
-                    r'(?i)/no-integrity-checks"\s+set\s+"?ARG_FORCE_NOINTEGRITY=1"?',
-                ]
+            predicate=_parsed_flag_sets_var(
+                flag_variants=["/nointegritychecks", "/forcenointegritychecks", "/no-integrity-checks"],
+                var="ARG_FORCE_NOINTEGRITY",
+                value="1",
             ),
         ),
         Invariant(
             description="Supports /forcesigningpolicy:none|test|production flag",
             expected_hint="/forcesigningpolicy:none, /forcesigningpolicy:test, /forcesigningpolicy:production",
-            predicate=_all_regex(
-                [
-                    r'(?i)/forcesigningpolicy:none"\s+set\s+"?ARG_FORCE_SIGNING_POLICY=none"?',
-                    r'(?i)/forcesigningpolicy:test"\s+set\s+"?ARG_FORCE_SIGNING_POLICY=test"?',
-                    r'(?i)/forcesigningpolicy:production"\s+set\s+"?ARG_FORCE_SIGNING_POLICY=production"?',
-                ]
+            predicate=lambda text: (
+                _parsed_flag_sets_var(
+                    flag_variants=["/forcesigningpolicy:none"], var="ARG_FORCE_SIGNING_POLICY", value="none"
+                )(text)
+                and _parsed_flag_sets_var(
+                    flag_variants=["/forcesigningpolicy:test"], var="ARG_FORCE_SIGNING_POLICY", value="test"
+                )(text)
+                and _parsed_flag_sets_var(
+                    flag_variants=["/forcesigningpolicy:production"],
+                    var="ARG_FORCE_SIGNING_POLICY",
+                    value="production",
+                )(text)
             ),
         ),
         Invariant(
             description="Supports /notestsigning flag (suppresses Test Signing changes)",
             expected_hint='Parses "/notestsigning" (or /no-testsigning) into ARG_SKIP_TESTSIGN=1',
-            predicate=_any_regex(
-                [
-                    r'(?i)/notestsigning"\s+set\s+"?ARG_SKIP_TESTSIGN=1"?',
-                    r'(?i)/no-testsigning"\s+set\s+"?ARG_SKIP_TESTSIGN=1"?',
-                ]
+            predicate=_parsed_flag_sets_var(
+                flag_variants=["/notestsigning", "/no-testsigning"], var="ARG_SKIP_TESTSIGN", value="1"
             ),
         ),
         Invariant(
             description="Supports /installcerts override flag (force cert install for production/none; advanced)",
             expected_hint='Parses "/installcerts" (or /install-certs) into ARG_INSTALL_CERTS=1',
-            predicate=_any_regex(
-                [
-                    r'(?i)/installcerts"\s+set\s+"?ARG_INSTALL_CERTS=1"?',
-                    r'(?i)/install-certs"\s+set\s+"?ARG_INSTALL_CERTS=1"?',
-                ]
+            predicate=_parsed_flag_sets_var(
+                flag_variants=["/installcerts", "/install-certs"], var="ARG_INSTALL_CERTS", value="1"
             ),
         ),
         Invariant(
@@ -389,11 +403,8 @@ def lint_files(*, setup_cmd: Path, uninstall_cmd: Path, verify_ps1: Path) -> Lis
         Invariant(
             description="Parses /verify-media flag into ARG_VERIFY_MEDIA",
             expected_hint='if /i "%%~A"=="/verify-media" set "ARG_VERIFY_MEDIA=1"',
-            predicate=_any_regex(
-                [
-                    r'(?i)/verify-media"\s+set\s+"?ARG_VERIFY_MEDIA=1"?',
-                    r'(?i)/verifymedia"\s+set\s+"?ARG_VERIFY_MEDIA=1"?',
-                ]
+            predicate=_parsed_flag_sets_var(
+                flag_variants=["/verify-media", "/verifymedia"], var="ARG_VERIFY_MEDIA", value="1"
             ),
         ),
         Invariant(
@@ -481,7 +492,9 @@ def lint_files(*, setup_cmd: Path, uninstall_cmd: Path, verify_ps1: Path) -> Lis
         Invariant(
             description="Parses /skipstorage flag into ARG_SKIP_STORAGE",
             expected_hint='if /i "%%~A"=="/skipstorage" set "ARG_SKIP_STORAGE=1"',
-            predicate=_regex(r'(?i)/skipstorage"\s+set\s+"?ARG_SKIP_STORAGE=1"?'),
+            predicate=_parsed_flag_sets_var(
+                flag_variants=["/skipstorage", "/skip-storage"], var="ARG_SKIP_STORAGE", value="1"
+            ),
         ),
         Invariant(
             description="/skipstorage gates virtio-blk storage INF validation (setup does not require packaged storage driver)",
@@ -630,17 +643,13 @@ def lint_files(*, setup_cmd: Path, uninstall_cmd: Path, verify_ps1: Path) -> Lis
             description="Uninstaller parses /cleanupstorage and /cleanupstorageforce flags",
             expected_hint='ARG_CLEANUP_STORAGE=1 and ARG_CLEANUP_STORAGE_FORCE=1 assignments in arg parsing',
             predicate=lambda text: (
-                _any_regex(
-                    [
-                        r'(?i)/cleanupstorage"\s+set\s+"?ARG_CLEANUP_STORAGE=1"?',
-                        r'(?i)/cleanup-storage"\s+set\s+"?ARG_CLEANUP_STORAGE=1"?',
-                    ]
+                _parsed_flag_sets_var(
+                    flag_variants=["/cleanupstorage", "/cleanup-storage"], var="ARG_CLEANUP_STORAGE", value="1"
                 )(text)
-                and _any_regex(
-                    [
-                        r'(?i)/cleanupstorageforce"\s+set\s+"?ARG_CLEANUP_STORAGE_FORCE=1"?',
-                        r'(?i)/cleanup-storage-force"\s+set\s+"?ARG_CLEANUP_STORAGE_FORCE=1"?',
-                    ]
+                and _parsed_flag_sets_var(
+                    flag_variants=["/cleanupstorageforce", "/cleanup-storage-force"],
+                    var="ARG_CLEANUP_STORAGE_FORCE",
+                    value="1",
                 )(text)
             ),
         ),
