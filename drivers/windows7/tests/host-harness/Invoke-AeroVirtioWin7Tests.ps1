@@ -3003,7 +3003,7 @@ try {
       $scriptExitCode = 1
     }
     "MISSING_VIRTIO_INPUT_EVENTS" {
-      Write-Host "FAIL: MISSING_VIRTIO_INPUT_EVENTS: did not observe virtio-input-events marker (READY/SKIP/PASS/FAIL) after virtio-input completed while -WithInputEvents/-WithVirtioInputEvents/-EnableVirtioInputEvents was enabled (guest selftest too old or missing --test-input-events)"
+      Write-Host "FAIL: MISSING_VIRTIO_INPUT_EVENTS: did not observe virtio-input-events marker (READY/SKIP/PASS/FAIL) after virtio-input completed while input injection flags were enabled (-WithInputEvents/-WithVirtioInputEvents/-EnableVirtioInputEvents, -WithInputWheel/-WithVirtioInputWheel/-EnableVirtioInputWheel, -WithInputEventsExtended/-WithInputEventsExtra) (guest selftest too old or missing --test-input-events)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -3019,7 +3019,7 @@ try {
       $scriptExitCode = 1
     }
     "VIRTIO_INPUT_EVENTS_SKIPPED" {
-      Write-Host "FAIL: VIRTIO_INPUT_EVENTS_SKIPPED: virtio-input-events test was skipped (flag_not_set) but -WithInputEvents/-WithVirtioInputEvents/-EnableVirtioInputEvents was enabled (provision the guest with --test-input-events)"
+      Write-Host "FAIL: VIRTIO_INPUT_EVENTS_SKIPPED: virtio-input-events test was skipped (flag_not_set) but input injection flags were enabled (-WithInputEvents/-WithVirtioInputEvents/-EnableVirtioInputEvents, -WithInputWheel/-WithVirtioInputWheel/-EnableVirtioInputWheel, -WithInputEventsExtended/-WithInputEventsExtra) (provision the guest with --test-input-events)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -3035,7 +3035,7 @@ try {
       $scriptExitCode = 1
     }
     "VIRTIO_INPUT_EVENTS_FAILED" {
-      Write-Host "FAIL: VIRTIO_INPUT_EVENTS_FAILED: virtio-input-events test reported FAIL while -WithInputEvents/-WithVirtioInputEvents/-EnableVirtioInputEvents was enabled"
+      Write-Host "FAIL: VIRTIO_INPUT_EVENTS_FAILED: virtio-input-events test reported FAIL while input injection flags were enabled (-WithInputEvents/-WithVirtioInputEvents/-EnableVirtioInputEvents, -WithInputWheel/-WithVirtioInputWheel/-EnableVirtioInputWheel, -WithInputEventsExtended/-WithInputEventsExtra)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
