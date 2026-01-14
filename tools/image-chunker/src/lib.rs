@@ -26,6 +26,10 @@ const DEFAULT_CACHE_CONTROL_MANIFEST: &str = "public, max-age=31536000, immutabl
 const DEFAULT_CACHE_CONTROL_LATEST: &str = "public, max-age=60";
 const CHUNK_CONTENT_ENCODING: &str = "identity";
 const DEFAULT_CHUNK_SIZE_BYTES: u64 = 4 * 1024 * 1024;
+// Defensive bounds to avoid producing manifests that the reference clients will reject. Keep
+// aligned with `docs/18-chunked-disk-image-format.md`.
+const MAX_CHUNK_SIZE_BYTES: u64 = 64 * 1024 * 1024; // 64 MiB
+const MAX_COMPAT_CHUNK_COUNT: u64 = 500_000;
 const DEFAULT_CONCURRENCY: usize = 8;
 const DEFAULT_RETRIES: usize = 5;
 const CHUNK_INDEX_WIDTH: usize = 8;
@@ -140,7 +144,7 @@ pub struct PublishArgs {
     #[arg(long, default_value = DEFAULT_CACHE_CONTROL_LATEST)]
     pub cache_control_latest: String,
 
-    /// Chunk size in bytes (must be a multiple of 512).
+    /// Chunk size in bytes (must be a multiple of 512; max 64 MiB).
     #[arg(long, default_value_t = DEFAULT_CHUNK_SIZE_BYTES)]
     pub chunk_size: u64,
 
@@ -304,6 +308,11 @@ pub async fn publish(args: PublishArgs) -> Result<()> {
     validate_virtual_disk_alignment(total_size)?;
 
     let chunk_count = chunk_count(total_size, args.chunk_size);
+    if chunk_count > MAX_COMPAT_CHUNK_COUNT {
+        bail!(
+            "image requires {chunk_count} chunks which exceeds the current compatibility limit of {MAX_COMPAT_CHUNK_COUNT}; increase --chunk-size to reduce chunkCount"
+        );
+    }
     if chunk_count > MAX_CHUNKS {
         bail!(
             "image requires {chunk_count} chunks which exceeds the current limit of {MAX_CHUNKS} (chunk size too small?)"
@@ -575,6 +584,11 @@ fn validate_args(args: &PublishArgs) -> Result<()> {
     }
     if !args.chunk_size.is_multiple_of(sector) {
         bail!("--chunk-size must be a multiple of {sector} bytes");
+    }
+    if args.chunk_size > MAX_CHUNK_SIZE_BYTES {
+        bail!(
+            "--chunk-size too large: max {MAX_CHUNK_SIZE_BYTES} bytes (64 MiB)"
+        );
     }
     if args.concurrency == 0 {
         bail!("--concurrency must be > 0");
