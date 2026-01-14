@@ -86,7 +86,7 @@ fn parse_signatures_prefers_v1_chunk_id_when_both_exist() {
 #[test]
 fn parse_signatures_parses_pcsg_patch_constant_signature_chunk() {
     // Minimal signature chunk: zero entries, param_offset points past header.
-    let pcsg = [0u8, 0, 0, 0, 8, 0, 0, 0];
+    let pcsg = dxbc_test_utils::build_signature_chunk_v0(&[]);
 
     let dxbc_bytes = build_dxbc(&[(FourCC(*b"PCSG"), &pcsg)]);
     let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse should succeed");
