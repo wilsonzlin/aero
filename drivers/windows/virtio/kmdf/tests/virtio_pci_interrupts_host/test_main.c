@@ -524,6 +524,73 @@ static void TestIntxPendingStatusCoalesce(void)
     Cleanup(&interrupts, dev);
 }
 
+static void TestDiagnosticCounters(void)
+{
+    VIRTIO_PCI_INTERRUPTS interrupts;
+    WDFDEVICE dev;
+    TEST_CALLBACKS cb;
+    volatile UCHAR isrStatus;
+    volatile LONG interruptCounter;
+    volatile LONG dpcCounter;
+    BOOLEAN handled;
+
+    /* INTx: spurious interrupt should not increment counters. */
+    interruptCounter = 0;
+    dpcCounter = 0;
+    isrStatus = 0;
+    PrepareIntx(&interrupts, &dev, &cb, 2, &isrStatus);
+    interrupts.InterruptCounter = &interruptCounter;
+    interrupts.DpcCounter = &dpcCounter;
+    handled = interrupts.u.Intx.Interrupt->Isr(interrupts.u.Intx.Interrupt, 0);
+    assert(handled == FALSE);
+    assert(interruptCounter == 0);
+    assert(dpcCounter == 0);
+    Cleanup(&interrupts, dev);
+
+    /* INTx: real interrupt should increment both counters when DPC runs. */
+    interruptCounter = 0;
+    dpcCounter = 0;
+    isrStatus = (UCHAR)(VIRTIO_PCI_ISR_QUEUE_INTERRUPT | VIRTIO_PCI_ISR_CONFIG_INTERRUPT);
+    PrepareIntx(&interrupts, &dev, &cb, 2, &isrStatus);
+    interrupts.InterruptCounter = &interruptCounter;
+    interrupts.DpcCounter = &dpcCounter;
+    handled = interrupts.u.Intx.Interrupt->Isr(interrupts.u.Intx.Interrupt, 0);
+    assert(handled == TRUE);
+    assert(interruptCounter == 1);
+    assert(dpcCounter == 0);
+    WdfTestInterruptRunDpc(interrupts.u.Intx.Interrupt);
+    assert(dpcCounter == 1);
+    Cleanup(&interrupts, dev);
+
+    /* MSI-X: interrupt should increment both counters when DPC runs. */
+    interruptCounter = 0;
+    dpcCounter = 0;
+    PrepareMsix(&interrupts, &dev, &cb, 2, 3 /* config + 2 queues */, NULL);
+    interrupts.InterruptCounter = &interruptCounter;
+    interrupts.DpcCounter = &dpcCounter;
+    handled = interrupts.u.Msix.Interrupts[1]->Isr(interrupts.u.Msix.Interrupts[1], 0);
+    assert(handled == TRUE);
+    assert(interruptCounter == 1);
+    assert(dpcCounter == 0);
+    WdfTestInterruptRunDpc(interrupts.u.Msix.Interrupts[1]);
+    assert(dpcCounter == 1);
+    Cleanup(&interrupts, dev);
+
+    /* MSI-X: while ResetInProgress is set, ISR should still increment interrupt counter but not queue a DPC. */
+    interruptCounter = 0;
+    dpcCounter = 0;
+    PrepareMsix(&interrupts, &dev, &cb, 2, 3 /* config + 2 queues */, NULL);
+    interrupts.InterruptCounter = &interruptCounter;
+    interrupts.DpcCounter = &dpcCounter;
+    InterlockedExchange(&interrupts.ResetInProgress, 1);
+    handled = interrupts.u.Msix.Interrupts[1]->Isr(interrupts.u.Msix.Interrupts[1], 0);
+    assert(handled == TRUE);
+    assert(interruptCounter == 1);
+    assert(dpcCounter == 0);
+    assert(interrupts.u.Msix.Interrupts[1]->DpcQueued == FALSE);
+    Cleanup(&interrupts, dev);
+}
+
 static void TestMsixDispatchAndRouting(void)
 {
     VIRTIO_PCI_INTERRUPTS interrupts;
@@ -1830,6 +1897,7 @@ int main(void)
     TestIntxSpuriousInterrupt();
     TestIntxRealInterruptDispatch();
     TestIntxPendingStatusCoalesce();
+    TestDiagnosticCounters();
     TestMsixDispatchAndRouting();
     TestMsixZeroQueuesConfigOnly();
     TestMsixLimitedVectorRouting();
