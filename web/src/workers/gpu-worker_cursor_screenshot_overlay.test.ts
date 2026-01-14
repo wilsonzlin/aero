@@ -12,7 +12,7 @@ import {
   SHARED_FRAMEBUFFER_VERSION,
 } from "../ipc/shared-layout";
 import { allocateHarnessSharedMemorySegments } from "../runtime/harness_shared_memory";
-import { createSharedMemoryViews } from "../runtime/shared_layout";
+import { allocateSharedMemorySegments, createSharedMemoryViews } from "../runtime/shared_layout";
 import { MessageType, type ProtocolMessage, type WorkerInitMessage } from "../runtime/protocol";
 import { FRAME_PRESENTED, FRAME_SEQ_INDEX, FRAME_STATUS_INDEX, GPU_PROTOCOL_NAME, GPU_PROTOCOL_VERSION } from "../ipc/gpu-protocol";
 import { publishScanoutState, SCANOUT_FORMAT_B8G8R8A8, SCANOUT_FORMAT_B8G8R8X8, SCANOUT_SOURCE_WDDM } from "../ipc/scanout_state";

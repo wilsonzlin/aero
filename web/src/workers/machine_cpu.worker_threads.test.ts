@@ -6,7 +6,14 @@ import type { AeroConfig } from "../config/aero_config";
 import { VRAM_BASE_PADDR } from "../arch/guest_phys.ts";
 import { InputEventType } from "../input/event_queue";
 import { allocateHarnessSharedMemorySegments } from "../runtime/harness_shared_memory";
-import { STATUS_INTS, STATUS_OFFSET_BYTES, StatusIndex, createIoIpcSab, type SharedMemorySegments } from "../runtime/shared_layout";
+import {
+  STATUS_INTS,
+  STATUS_OFFSET_BYTES,
+  StatusIndex,
+  allocateSharedMemorySegments,
+  createIoIpcSab,
+  type SharedMemorySegments,
+} from "../runtime/shared_layout";
 import { MessageType, type ProtocolMessage, type WorkerInitMessage } from "../runtime/protocol";
 import { emptySetBootDisksMessage, type SetBootDisksMessage } from "../runtime/boot_disks_protocol";
 

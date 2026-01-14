@@ -264,6 +264,35 @@ function serializeError(err: unknown): MachineSnapshotSerializedError {
   return serializeVmSnapshotError(err);
 }
 
+function trySetMachineBootDrive(m: unknown, drive: number): boolean {
+  // Prefer the explicit `set_boot_drive(DL)` API when available.
+  try {
+    const setBootDrive = (m as unknown as { set_boot_drive?: unknown }).set_boot_drive;
+    if (typeof setBootDrive === "function") {
+      (setBootDrive as (drive: number) => void).call(m, drive);
+      return true;
+    }
+  } catch {
+    // ignore
+  }
+
+  // Back-compat: some builds expose `set_boot_device(MachineBootDevice::<...>)` instead.
+  try {
+    const setBootDevice = (m as unknown as { set_boot_device?: unknown }).set_boot_device;
+    if (typeof setBootDevice !== "function") return false;
+
+    const enumObj = wasmApi?.MachineBootDevice as unknown;
+    const anyEnum = enumObj as { Hdd?: unknown; Cdrom?: unknown } | undefined;
+    const device = drive === BIOS_DRIVE_CD0 ? anyEnum?.Cdrom : anyEnum?.Hdd;
+    if (typeof device !== "number") return false;
+
+    (setBootDevice as (device: number) => void).call(m, device);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function isNodeWorkerThreads(): boolean {
   // Avoid referencing `process` directly so this file remains valid in browser builds without polyfills.
   const p = (globalThis as unknown as { process?: unknown }).process as { versions?: { node?: unknown } } | undefined;
@@ -599,10 +628,20 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
   // select the CD drive (`0xE0`) before resetting so BIOS can El Torito boot it.
   //
   // Policy:
-  // - When an ISO is present, boot from CD for the next reset.
-  // - After the guest requests a reset, automatically fall back to HDD0 (`0x80`) when present
-  //   (so installs don't loop back into the ISO).
-  const desiredBootDrive = msg.cd ? BIOS_DRIVE_CD0 : BIOS_DRIVE_HDD0;
+  // - When an ISO is attached, prefer a CD boot for the next host-triggered reset (install/recovery).
+  // - When the guest requests a reset, fall back to HDD0 after the first CD boot so installs do not
+  //   loop back into the ISO.
+  //
+  // Track boot-device preference separately from disk attachment so the ISO can remain mounted
+  // (for file access) while still booting from HDD after installation.
+  const desiredBootDrive =
+    pendingBootDevice === "cdrom" && msg.cd
+      ? BIOS_DRIVE_CD0
+      : pendingBootDevice === "hdd" && msg.hdd
+        ? BIOS_DRIVE_HDD0
+        : msg.cd
+          ? BIOS_DRIVE_CD0
+          : BIOS_DRIVE_HDD0;
 
   if (msg.hdd) {
     const plan = planMachineBootDiskAttachment(msg.hdd, "hdd");
@@ -771,22 +810,9 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
   }
 
   if (changed) {
-    const setBootDevice = (m as unknown as { set_boot_device?: unknown }).set_boot_device;
-    const enumObj = wasmApi?.MachineBootDevice;
-    if (typeof setBootDevice === "function" && enumObj) {
-      const value = msg.cd ? enumObj.Cdrom : enumObj.Hdd;
-      if (typeof value === "number") {
-        (setBootDevice as (device: number) => void).call(m, value);
-      }
-    } else {
-      const setBootDrive = (m as unknown as { set_boot_drive?: unknown }).set_boot_drive;
-      if (typeof setBootDrive !== "function") {
-        if (msg.cd) {
-          throw new Error("Machine.set_boot_drive is unavailable in this WASM build; cannot boot from install media.");
-        }
-      } else {
-        (setBootDrive as (drive: number) => void).call(m, desiredBootDrive);
-      }
+    const bootDriveOk = trySetMachineBootDrive(m, desiredBootDrive);
+    if (!bootDriveOk && msg.cd && desiredBootDrive === BIOS_DRIVE_CD0) {
+      throw new Error("Machine.set_boot_drive is unavailable in this WASM build; cannot boot from install media.");
     }
 
     try {
@@ -842,10 +868,7 @@ function handleRunExit(exit: unknown): void {
 
       try {
         const drive = pendingBootDevice === "cdrom" ? BIOS_DRIVE_CD0 : BIOS_DRIVE_HDD0;
-        const setBootDrive = (m as unknown as { set_boot_drive?: unknown }).set_boot_drive;
-        if (typeof setBootDrive === "function") {
-          (setBootDrive as (drive: number) => void).call(m, drive);
-        }
+        trySetMachineBootDrive(m, drive);
       } catch {
         // ignore
       }
@@ -1405,12 +1428,23 @@ ctx.onmessage = (ev) => {
       return;
     }
 
-    const bootDevice: MachineCpuBootDevice = bootDisks.cd ? "cdrom" : "hdd";
-    if (bootDevice !== pendingBootDevice) {
-      pendingBootDevice = bootDevice;
+    const prevHddId =
+      typeof (currentBootDisks?.hdd as { id?: unknown } | null | undefined)?.id === "string" ? currentBootDisks!.hdd!.id : "";
+    const prevCdId =
+      typeof (currentBootDisks?.cd as { id?: unknown } | null | undefined)?.id === "string" ? currentBootDisks!.cd!.id : "";
+    const nextHddId = typeof (bootDisks.hdd as { id?: unknown } | null | undefined)?.id === "string" ? bootDisks.hdd!.id : "";
+    const nextCdId = typeof (bootDisks.cd as { id?: unknown } | null | undefined)?.id === "string" ? bootDisks.cd!.id : "";
+    const disksChanged = prevHddId !== nextHddId || prevCdId !== nextCdId;
+
+    if (disksChanged) {
+      // Default boot-device policy for new disk selections:
+      // - if install media is mounted, start with a CD boot so BIOS can El Torito boot it.
+      // - otherwise boot HDD.
+      pendingBootDevice = bootDisks.cd ? "cdrom" : "hdd";
     }
+
     // Publish the selected policy for tests/debug tooling.
-    postBootDeviceSelected(bootDevice);
+    postBootDeviceSelected(pendingBootDevice);
 
     pendingBootDisks = bootDisks;
     wakeRunLoop();
