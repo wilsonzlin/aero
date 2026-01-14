@@ -226,6 +226,17 @@ export class WebHidBroker {
       manager?: WebHidPassthroughManager;
       inputReportRingCapacityBytes?: number;
       outputRingCapacityBytes?: number;
+      /**
+       * Maximum number of queued (not yet running) send/feature tasks per device.
+       *
+       * WebHID requires per-device serialization, so if an in-flight
+       * `sendReport`/`sendFeatureReport`/`receiveFeatureReport` stalls and the
+       * guest keeps sending, the queue can otherwise grow without bound.
+       */
+      maxPendingDeviceSends?: number;
+      /**
+       * Legacy name for {@link maxPendingDeviceSends}.
+       */
       maxPendingSendsPerDevice?: number;
       maxPendingSendsTotal?: number;
       attachResultTimeoutMs?: number;
@@ -247,10 +258,18 @@ export class WebHidBroker {
       // hang indefinitely.
       return Math.min(5 * 60_000, Math.floor(requested)) >>> 0;
     })();
+    const maxPendingDeviceSends = options.maxPendingDeviceSends;
+    const maxPendingSendsPerDevice = options.maxPendingSendsPerDevice;
+    if (
+      maxPendingDeviceSends !== undefined &&
+      maxPendingSendsPerDevice !== undefined &&
+      maxPendingDeviceSends !== maxPendingSendsPerDevice
+    ) {
+      throw new Error("maxPendingDeviceSends and maxPendingSendsPerDevice must match");
+    }
+    const maxPending = maxPendingDeviceSends ?? maxPendingSendsPerDevice;
     this.#maxPendingSendsPerDevice =
-      options.maxPendingSendsPerDevice === undefined
-        ? DEFAULT_MAX_PENDING_SENDS_PER_DEVICE
-        : assertPositiveSafeInteger("maxPendingSendsPerDevice", options.maxPendingSendsPerDevice);
+      maxPending === undefined ? DEFAULT_MAX_PENDING_SENDS_PER_DEVICE : assertPositiveSafeInteger("maxPendingDeviceSends", maxPending);
     this.#maxPendingSendsTotal =
       options.maxPendingSendsTotal === undefined
         ? Number.POSITIVE_INFINITY

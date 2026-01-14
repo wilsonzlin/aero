@@ -1108,7 +1108,7 @@ describe("hid/WebHidBroker", () => {
     try {
       const limit = 3;
       const manager = new WebHidPassthroughManager({ hid: null });
-      const broker = new WebHidBroker({ manager, maxPendingSendsPerDevice: limit });
+      const broker = new WebHidBroker({ manager, maxPendingDeviceSends: limit });
       const port = new FakePort();
       broker.attachWorkerPort(port as unknown as MessagePort);
 
@@ -1144,7 +1144,7 @@ describe("hid/WebHidBroker", () => {
     try {
       const limit = 3;
       const manager = new WebHidPassthroughManager({ hid: null });
-      const broker = new WebHidBroker({ manager, maxPendingSendsPerDevice: limit });
+      const broker = new WebHidBroker({ manager, maxPendingDeviceSends: limit });
       const port = new FakePort();
       broker.attachWorkerPort(port as unknown as MessagePort);
 
