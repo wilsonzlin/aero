@@ -1305,7 +1305,10 @@ fn snapshot_roundtrip_preserves_regs_ports_slots_and_device_tree() {
 
     let mut ctrl = XhciController::with_port_count(2);
     ctrl.usbcmd = regs::USBCMD_RUN;
-    ctrl.usbsts = 0x1122_3344 & !(regs::USBSTS_EINT | regs::USBSTS_HCH | regs::USBSTS_HCE);
+    // `usbsts` stores only the non-derived subset of USBSTS bits.
+    ctrl.usbsts = 0x1122_3344
+        & regs::USBSTS_SNAPSHOT_MASK
+        & !(regs::USBSTS_EINT | regs::USBSTS_HCH | regs::USBSTS_HCE);
     // CRCR pointers are 64-byte aligned in xHCI; the low bits are flags (cycle state, etc).
     ctrl.crcr = 0x1234_5678_9abc_de01;
     ctrl.sync_command_ring_from_crcr();
