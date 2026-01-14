@@ -23,6 +23,9 @@
 //! `aero-virtio` keeps its own `BlockBackend` trait for the virtio-blk device model, but most call
 //! sites should still treat [`aero_storage::VirtualDisk`] as the wiring boundary.
 //!
+//! For convenience, `aero-virtio` also provides `aero_virtio::devices::blk::VirtioBlkDisk` as the
+//! canonical “disk-backed virtio-blk device” type alias (`VirtioBlk<Box<dyn VirtualDisk>>`).
+//!
 //! `aero-virtio` provides a blanket impl so a boxed `VirtualDisk` can be used directly as a virtio
 //! backend:
 //!

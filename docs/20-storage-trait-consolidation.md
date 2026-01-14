@@ -190,6 +190,8 @@ This pattern is already used today:
  - `impl aero_devices::storage::DiskBackend for AeroVirtualDiskAsDeviceBackend` (re-exported as
    `aero_devices::storage::AeroStorageDiskAdapter`): in `crates/devices`
  - `impl aero_virtio::devices::blk::BlockBackend for Box<T: aero_storage::VirtualDisk>`: in `crates/aero-virtio`
+ - Canonical disk-backed virtio-blk device type: `aero_virtio::devices::blk::VirtioBlkDisk` (type
+   alias for `VirtioBlk<Box<dyn VirtualDisk>>`): in `crates/aero-virtio`
  - Reverse adapter: `crates/devices/src/storage/mod.rs` defines `DeviceBackendAsAeroVirtualDisk`, which
    allows reusing `aero-storage` disk wrappers (cache/sparse/COW) on top of an existing
    `aero_devices::storage::DiskBackend`.
