@@ -173,11 +173,34 @@ static void test_parse_rejects_invalid_parameters(void)
             0x00, 0x11, 0x00, 0x00, /* type */
             0x00, 0x00, 0x00, 0x00, /* data */
         };
+        memset(&out, 0xAB, sizeof(out));
         status = VirtioSndParseEvent(NULL, (ULONG)sizeof(buf), &out);
         TEST_ASSERT(status == STATUS_INVALID_PARAMETER);
+        TEST_ASSERT_EQ_U32(out.Type, 0u);
+        TEST_ASSERT_EQ_U32(out.Data, 0u);
+        TEST_ASSERT(out.Kind == VIRTIO_SND_EVENT_KIND_UNKNOWN);
+        TEST_ASSERT_EQ_U32(out.u.JackId, 0u);
 
         status = VirtioSndParseEvent(buf, (ULONG)sizeof(buf), NULL);
         TEST_ASSERT(status == STATUS_INVALID_PARAMETER);
+    }
+}
+
+static void test_parse_zeroes_output_on_error(void)
+{
+    VIRTIO_SND_EVENT_PARSED out;
+    NTSTATUS status;
+
+    /* Short buffer should fail, and should clear the output structure. */
+    {
+        const uint8_t buf[] = {0, 1, 2, 3, 4, 5, 6};
+        memset(&out, 0xAB, sizeof(out));
+        status = VirtioSndParseEvent(buf, (ULONG)sizeof(buf), &out);
+        TEST_ASSERT(status == STATUS_INVALID_BUFFER_SIZE);
+        TEST_ASSERT_EQ_U32(out.Type, 0u);
+        TEST_ASSERT_EQ_U32(out.Data, 0u);
+        TEST_ASSERT(out.Kind == VIRTIO_SND_EVENT_KIND_UNKNOWN);
+        TEST_ASSERT_EQ_U32(out.u.JackId, 0u);
     }
 }
 
@@ -215,6 +238,7 @@ int main(void)
     test_parse_short_buffers_are_rejected_safely();
     test_parse_unknown_event_is_tolerated();
     test_parse_rejects_invalid_parameters();
+    test_parse_zeroes_output_on_error();
     test_parse_unaligned_buffer();
 
     printf("virtiosnd_event_proto_tests: PASS\n");
