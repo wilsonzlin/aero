@@ -13,7 +13,7 @@ pub fn print_help() {
 Report D3D9 SM2/3 opcode usage (for coverage/telemetry).
 
 Usage:
-  cargo xtask shader-opcode-report [--deny-unsupported] <files...>
+  cargo run -p xtask --locked --features shader-opcode-report -- shader-opcode-report [--deny-unsupported] <files...>
 
 Input:
   Each file may be either:
@@ -55,7 +55,8 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
 
     if files.is_empty() {
         return Err(XtaskError::Message(
-            "usage: cargo xtask shader-opcode-report [--deny-unsupported] <files...>".to_string(),
+            "usage: cargo run -p xtask --locked --features shader-opcode-report -- shader-opcode-report [--deny-unsupported] <files...>"
+                .to_string(),
         ));
     }
 
