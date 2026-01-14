@@ -4338,6 +4338,7 @@ impl AerogpuD3d11Executor {
             pulling: &VertexPullingLayout,
             vs_location_to_input_reg: &HashMap<u32, u32>,
             gs_input_reg_count: u32,
+            verts_per_prim: u32,
             indexed_draw: bool,
         ) -> Result<String> {
             use crate::sm4_ir::{RegFile, Sm4Inst, SrcKind, Swizzle, WriteMask};
@@ -4348,6 +4349,9 @@ impl AerogpuD3d11Executor {
                     module.stage
                 );
             }
+            // Point-list GS input always uses a single vertex per primitive; keep the parameter to
+            // share the signature with the list-adjacent prepass path.
+            let _ = verts_per_prim;
 
             let mut max_temp: i32 = -1;
             let mut max_output: i32 = -1;
@@ -4547,6 +4551,10 @@ impl AerogpuD3d11Executor {
                 "struct GsPrepassParams {\n  primitive_count: u32,\n  instance_count: u32,\n  first_instance: u32,\n  _pad0: u32,\n};\n",
             );
             out.push_str("@group(0) @binding(1) var<uniform> params: GsPrepassParams;\n");
+            out.push_str(&format!(
+                "const GS_INPUT_VERTS_PER_PRIM: u32 = {}u;\n",
+                verts_per_prim
+            ));
             out.push_str(&format!(
                 "const GS_INPUT_REG_COUNT: u32 = {}u;\n",
                 gs_input_reg_count
@@ -4834,6 +4842,7 @@ impl AerogpuD3d11Executor {
                 &pulling,
                 &vs_location_to_input_reg,
                 gs_meta.input_reg_count,
+                gs_meta.verts_per_primitive,
                 indexed_draw,
             ) {
                 Ok(wgsl) => wgsl,
@@ -5462,10 +5471,11 @@ impl AerogpuD3d11Executor {
         ExpansionScratchAlloc,
     )> {
         const VERTS_PER_PRIM: u32 = 2;
-        if gs_meta.verts_per_primitive != VERTS_PER_PRIM {
+        let verts_per_prim = gs_meta.verts_per_primitive;
+        if verts_per_prim != VERTS_PER_PRIM {
             bail!(
                 "GS line-list prepass requires verts_per_primitive={VERTS_PER_PRIM}, got {}",
-                gs_meta.verts_per_primitive
+                verts_per_prim
             );
         }
 
@@ -5900,6 +5910,7 @@ impl AerogpuD3d11Executor {
             pulling: &VertexPullingLayout,
             vs_location_to_input_reg: &HashMap<u32, u32>,
             gs_input_reg_count: u32,
+            verts_per_prim: u32,
             indexed_draw: bool,
         ) -> Result<String> {
             use crate::sm4_ir::{RegFile, Sm4Inst, SrcKind, Swizzle, WriteMask};
@@ -6134,6 +6145,10 @@ impl AerogpuD3d11Executor {
             );
             out.push_str("@group(0) @binding(1) var<uniform> params: GsPrepassParams;\n");
             out.push_str(&format!(
+                "const GS_INPUT_VERTS_PER_PRIM: u32 = {}u;\n",
+                verts_per_prim
+            ));
+            out.push_str(&format!(
                 "const GS_INPUT_REG_COUNT: u32 = {}u;\n",
                 gs_input_reg_count
             ));
@@ -6297,6 +6312,7 @@ impl AerogpuD3d11Executor {
                 &pulling,
                 &vs_location_to_input_reg,
                 gs_meta.input_reg_count,
+                verts_per_prim,
                 indexed_draw,
             ) {
                 Ok(wgsl) => wgsl,
