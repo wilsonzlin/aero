@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { defaultReadValue } from "../ipc/io_protocol.ts";
+import { MmioBus } from "./mmio.ts";
 import { MmioRamHandler } from "./mmio_ram.ts";
 
 describe("io/bus/mmio_ram", () => {
@@ -61,5 +62,18 @@ describe("io/bus/mmio_ram", () => {
     expect(Array.from(backing.subarray(0, 8))).toEqual(new Array(8).fill(0));
     expect(Array.from(backing.subarray(8, 12))).toEqual([0x04, 0x03, 0x02, 0x01]);
     expect(h.mmioRead(0n, 4)).toBe(0x0102_0304);
+  });
+
+  it("integrates with MmioBus offset calculation", () => {
+    const bus = new MmioBus();
+    const backing = new Uint8Array(16);
+    bus.mapRange(0x1000n, 16n, new MmioRamHandler(backing));
+
+    bus.write(0x1000n, 1, 0xaa);
+    expect(backing[0]).toBe(0xaa);
+    expect(bus.read(0x1000n, 1)).toBe(0xaa);
+
+    // Unmapped addresses return defaultReadValue.
+    expect(bus.read(0x2000n, 1)).toBe(defaultReadValue(1));
   });
 });
