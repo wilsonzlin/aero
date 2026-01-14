@@ -3,12 +3,7 @@ mod common;
 use aero_d3d11::binding_model::{BINDING_BASE_TEXTURE, BINDING_BASE_UAV};
 use aero_d3d11::runtime::execute::D3D11Runtime;
 use aero_d3d11::sm4::decode_program;
-use aero_d3d11::{
-    translate_sm4_module_to_wgsl, BufferKind, BufferRef, DstOperand, DxbcFile, OperandModifier,
-    RegFile, RegisterRef, ShaderModel, ShaderSignatures, ShaderStage, Sm4Decl, Sm4Inst, Sm4Module,
-    Sm4Program, SrcKind, SrcOperand, Swizzle, UavRef, WriteMask,
-};
-use aero_dxbc::test_utils as dxbc_test_utils;
+use aero_d3d11::{translate_sm4_module_to_wgsl, DxbcFile, ShaderSignatures, Sm4Program};
 use aero_gpu::protocol_d3d11::{
     BindingDesc, BindingType, BufferUsage, CmdWriter, PipelineKind, ShaderStageFlags,
 };
@@ -19,12 +14,8 @@ use aero_gpu::protocol_d3d11::{
 
 const CS_STORE_UAV_RAW_DXBC: &[u8] = include_bytes!("fixtures/cs_store_uav_raw.dxbc");
 const CS_COPY_RAW_SRV_TO_UAV_DXBC: &[u8] = include_bytes!("fixtures/cs_copy_raw_srv_to_uav.dxbc");
-
-fn dummy_dxbc_bytes() -> Vec<u8> {
-    // Minimal DXBC container with no chunks. The signature-driven SM4→WGSL translator only uses the
-    // DXBC input for diagnostics, so this is sufficient for compute-stage tests.
-    dxbc_test_utils::build_container(&[])
-}
+const CS_COPY_STRUCTURED_SRV_TO_UAV_DXBC: &[u8] =
+    include_bytes!("fixtures/cs_copy_structured_srv_to_uav.dxbc");
 
 fn assert_wgsl_validates(wgsl: &str) {
     let module = naga::front::wgsl::parse_str(wgsl).expect("generated WGSL failed to parse");
@@ -246,72 +237,11 @@ fn compute_translate_and_run_copy_structured_srv_to_uav() {
         ];
         let expected: [u32; 4] = [0x3f80_0000, 0x4000_0000, 0x4040_0000, 0x4080_0000];
 
-        let module = Sm4Module {
-            stage: ShaderStage::Compute,
-            model: ShaderModel { major: 5, minor: 0 },
-            decls: vec![
-                Sm4Decl::ThreadGroupSize { x: 1, y: 1, z: 1 },
-                Sm4Decl::ResourceBuffer {
-                    slot: 0,
-                    stride: 16,
-                    kind: BufferKind::Structured,
-                },
-                Sm4Decl::UavBuffer {
-                    slot: 0,
-                    stride: 16,
-                    kind: BufferKind::Structured,
-                },
-            ],
-            instructions: vec![
-                Sm4Inst::LdStructured {
-                    dst: DstOperand {
-                        reg: RegisterRef {
-                            file: RegFile::Temp,
-                            index: 0,
-                        },
-                        mask: WriteMask::XYZW,
-                        saturate: false,
-                    },
-                    index: SrcOperand {
-                        kind: SrcKind::ImmediateF32([1, 1, 1, 1]),
-                        swizzle: Swizzle::XYZW,
-                        modifier: OperandModifier::None,
-                    },
-                    offset: SrcOperand {
-                        kind: SrcKind::ImmediateF32([0; 4]),
-                        swizzle: Swizzle::XYZW,
-                        modifier: OperandModifier::None,
-                    },
-                    buffer: BufferRef { slot: 0 },
-                },
-                Sm4Inst::StoreStructured {
-                    uav: UavRef { slot: 0 },
-                    index: SrcOperand {
-                        kind: SrcKind::ImmediateF32([0; 4]),
-                        swizzle: Swizzle::XYZW,
-                        modifier: OperandModifier::None,
-                    },
-                    offset: SrcOperand {
-                        kind: SrcKind::ImmediateF32([0; 4]),
-                        swizzle: Swizzle::XYZW,
-                        modifier: OperandModifier::None,
-                    },
-                    value: SrcOperand {
-                        kind: SrcKind::Register(RegisterRef {
-                            file: RegFile::Temp,
-                            index: 0,
-                        }),
-                        swizzle: Swizzle::XYZW,
-                        modifier: OperandModifier::None,
-                    },
-                    mask: WriteMask::XYZW,
-                },
-                Sm4Inst::Ret,
-            ],
-        };
-
-        let dxbc_bytes = dummy_dxbc_bytes();
-        let dxbc = DxbcFile::parse(&dxbc_bytes).expect("dummy DXBC should parse");
+        // Use a checked-in DXBC fixture to exercise the full DXBC → decode → WGSL path.
+        let dxbc = DxbcFile::parse(CS_COPY_STRUCTURED_SRV_TO_UAV_DXBC)
+            .expect("fixture DXBC should parse");
+        let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM5 parse should succeed");
+        let module = decode_program(&program).expect("SM5 decode should succeed");
 
         let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &ShaderSignatures::default())
             .expect("compute translation should succeed");

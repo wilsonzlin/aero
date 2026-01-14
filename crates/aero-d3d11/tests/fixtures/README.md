@@ -60,6 +60,11 @@ The files are intentionally tiny and deterministic, so CI does **not** require
   * Chunks: `SHEX`
   * Behavior: `[numthreads(1,1,1)]`, `dcl_resource_raw t0`, `dcl_uav_raw u0`, `ld_raw r0.xyzw, 0, t0`,
     `store_raw u0.xyzw, 0, r0`, `ret`
+* `cs_copy_structured_srv_to_uav.dxbc`
+  * Shader model: `cs_5_0`
+  * Chunks: `SHEX`
+  * Behavior: `[numthreads(1,1,1)]`, `dcl_resource_structured t0, stride=16`, `dcl_uav_structured u0, stride=16`,
+    `ld_structured r0.xyzw, index=1, offset=0, t0`, `store_structured u0.xyzw, index=0, offset=0, r0`, `ret`
 * `gs_emit_stream1.dxbc`
   * Shader model: `gs_5_0`
   * Chunks: `SHEX`
