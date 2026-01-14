@@ -66,7 +66,7 @@ This repo currently has **two AeroGPU ABI generations**:
 
 | ABI generation | PCI IDs | Header (source of truth) | Host device model |
 |---|---:|---|---|
-| New, versioned ABI | `VID=0xA3A0, DID=0x0001` (`PCI\VEN_A3A0&DEV_0001`) | `drivers/aerogpu/protocol/aerogpu_pci.h` (+ `aerogpu_ring.h`, `aerogpu_cmd.h`) | `crates/aero-devices-gpu/src/pci.rs` (shared) <br> `crates/emulator/src/devices/pci/aerogpu.rs` (legacy integration surface) |
+| New, versioned ABI | `VID=0xA3A0, DID=0x0001` (`PCI\VEN_A3A0&DEV_0001`) | `drivers/aerogpu/protocol/aerogpu_pci.h` (+ `aerogpu_ring.h`, `aerogpu_cmd.h`) | `crates/aero-devices-gpu/src/pci.rs` (shared); `crates/emulator/src/devices/pci/aerogpu.rs` (legacy integration surface) |
 | Legacy bring-up ABI (deprecated) | `VID=0x1AED, DID=0x0001` (`PCI\VEN_1AED&DEV_0001`) | `drivers/aerogpu/protocol/legacy/aerogpu_protocol_legacy.h` | `crates/emulator/src/devices/pci/aerogpu_legacy.rs` (feature `emulator/aerogpu-legacy`) |
 
 ## PCI class identity (base class / subclass / prog-if)

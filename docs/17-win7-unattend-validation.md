@@ -417,7 +417,7 @@ dir "%configsetroot%\AERO_CONFIG.MEDIA"
 ```
 * **If empty:**
   * Windows Setup may still be using `autounattend.xml`, but it may **not** consider the media a configuration set.
-  * In that case, `$OEM$` copy behavior may differ (see [Open questions](#5-explicit-notes-on-the-open-questions-config-set-config-iso-oem)).
+  * In that case, `$OEM$` copy behavior may differ (see [Open questions](#open-questions)).
 
 ### D. Check live setup logs before reboot
 
@@ -554,7 +554,7 @@ dir "%WINDIR%\Setup\Scripts\SetupComplete.cmd"
 
 Common root causes / fixes:
 
-* `$OEM$` wasn’t processed from CD1 (see [open questions](#5-explicit-notes-on-the-open-questions-config-set-config-iso-oem)).
+* `$OEM$` wasn’t processed from CD1 (see [open questions](#open-questions)).
 * The file path inside `$OEM$` is wrong (must be exactly `$$\Setup\Scripts\SetupComplete.cmd`).
 * Script ran but failed immediately; make the script write a first-line log entry before doing anything else.
 * If `$OEM$` processing is unreliable in your environment, don’t depend on it for `SetupComplete.cmd` delivery:
@@ -591,9 +591,11 @@ Fix patterns:
 
 ## 5) Explicit notes on the open questions (config-set, config ISO, $OEM$)
 
+### Open questions
+
 This section is intentionally a **test plan**: it tells you exactly how to determine what Windows Setup actually did in your environment.
 
-### Question A: Is `%configsetroot%` available when using a separate config ISO (CD1)?
+#### Question A: Is `%configsetroot%` available when using a separate config ISO (CD1)?
 
 **Expected (but not guaranteed):** if Windows Setup recognizes CD1 as a *configuration set*, it sets `%configsetroot%` during setup.
 
@@ -640,7 +642,7 @@ dir /s /b C:\AERO_CONFIG.MEDIA 2>nul
 
 ---
 
-### Question B: Does Windows Setup process/copy `$OEM$` when `$OEM$` lives on CD1?
+#### Question B: Does Windows Setup process/copy `$OEM$` when `$OEM$` lives on CD1?
 
 **Expected (but not guaranteed):** if CD1 is a recognized configuration set, `$OEM$` should be processed similarly to `$OEM$` on the main install media.
 
@@ -663,7 +665,7 @@ Interpretation:
 
 ---
 
-### Question C: Does Windows Setup use `autounattend.xml` from CD1 while *not* treating it as a config set?
+#### Question C: Does Windows Setup use `autounattend.xml` from CD1 while *not* treating it as a config set?
 
 This is a common “partial success” scenario: Setup finds `autounattend.xml` and applies many settings, but does not set `%configsetroot%` and does not copy `$OEM$`.
 
@@ -680,7 +682,7 @@ Corroborate in logs:
 
 ---
 
-### Question D: Does Windows Setup scan a secondary CD/DVD (CD1) for `autounattend.xml`?
+#### Question D: Does Windows Setup scan a secondary CD/DVD (CD1) for `autounattend.xml`?
 
 **Expected (but not guaranteed):** Windows Setup will pick up `\autounattend.xml` from some removable/optical media, but the exact search order (and whether it scans a “second CD”) can vary by environment.
 
@@ -704,7 +706,7 @@ Practical fixes if CD1 is not scanned:
   * [`docs/16-windows7-install-media-prep.md`](./16-windows7-install-media-prep.md)
   * [`tools/win7-slipstream/README.md`](../tools/win7-slipstream/README.md)
 
-### Fallback approach (if `%configsetroot%` / `$OEM$` are unreliable)
+#### Fallback approach (if `%configsetroot%` / `$OEM$` are unreliable)
 
 If you find that CD1 is not treated as a configuration set on your hypervisor/media, the robust approach is:
 
