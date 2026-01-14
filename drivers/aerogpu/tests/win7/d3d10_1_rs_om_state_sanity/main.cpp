@@ -1197,6 +1197,52 @@ static int RunD3D101RSOMStateSanity(int argc, char** argv) {
                            (unsigned)corner_a,
                            (unsigned)kExpectedAlphaHalf);
     }
+
+    // Default RS state is CullMode=BACK, FrontCCW=FALSE. The CCW triangle should
+    // be culled, leaving the clear color intact.
+    SetVb(vb_cull.get());
+    device->ClearRenderTargetView(rtv.get(), clear_red);
+    device->Draw(3, 0);
+
+    uint32_t cull_center = 0;
+    rb = Readback(NULL,
+                  L"d3d10_1_rs_om_state_sanity_clear_state_cull.bmp",
+                  L"d3d10_1_rs_om_state_sanity_clear_state_cull.bin",
+                  &cull_center,
+                  NULL);
+    if (rb != 0) {
+      return rb;
+    }
+    const uint32_t expected_red = 0xFFFF0000u;
+    if ((cull_center & 0x00FFFFFFu) != (expected_red & 0x00FFFFFFu) || ((cull_center >> 24) & 0xFFu) != 0xFFu) {
+      PrintDeviceRemovedReasonIfAny(kTestName, device.get());
+      return reporter.Fail("ClearState cull reset failed: center=0x%08lX expected ~0x%08lX",
+                           (unsigned long)cull_center,
+                           (unsigned long)expected_red);
+    }
+
+    // Default RS state has DepthClipEnable=TRUE. The fullscreen triangle with
+    // Z=-0.5 should be clipped, leaving the clear color intact.
+    SetVb(vb_depth_clip.get());
+    device->ClearRenderTargetView(rtv.get(), clear_red);
+    device->Draw(3, 0);
+
+    uint32_t depth_clip_center = 0;
+    rb = Readback(NULL,
+                  L"d3d10_1_rs_om_state_sanity_clear_state_depth_clip.bmp",
+                  L"d3d10_1_rs_om_state_sanity_clear_state_depth_clip.bin",
+                  &depth_clip_center,
+                  NULL);
+    if (rb != 0) {
+      return rb;
+    }
+    if ((depth_clip_center & 0x00FFFFFFu) != (expected_red & 0x00FFFFFFu) ||
+        ((depth_clip_center >> 24) & 0xFFu) != 0xFFu) {
+      PrintDeviceRemovedReasonIfAny(kTestName, device.get());
+      return reporter.Fail("ClearState depth-clip reset failed: center=0x%08lX expected ~0x%08lX",
+                           (unsigned long)depth_clip_center,
+                           (unsigned long)expected_red);
+    }
   }
 
   return reporter.Pass();
