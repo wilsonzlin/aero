@@ -1235,20 +1235,19 @@ fn validate_virtio_input_device_desc_split(
     // DeviceDesc strings so they appear with different names in Device Manager.
     //
     // Policy (AERO-W7-VIRTIO v1):
-    // - The canonical INF referenced by the device contract (`aero_virtio_input.inf`) must bind
-    //   keyboard/mouse via SUBSYS-qualified HWIDs so they appear distinctly in Device Manager.
-    // - The canonical INF must also include a strict, revision-gated generic fallback HWID
-    //   (no SUBSYS): `{base_hwid}&REV_{expected_rev:02X}`.
-    // - Legacy alias INFs (`virtio-input.inf` / `virtio-input.inf.disabled`, if present) are a
-    //   compatibility shim for workflows that still reference the legacy filename. They must be
-    //   byte-identical to the canonical INF from the first section header (`[Version]`) onward
-    //   (enforced elsewhere); they are also expected to include the strict fallback model entry.
+    // - The canonical INF referenced by the device contract (`aero_virtio_input.inf`) is
+    //   SUBSYS-only: it binds keyboard/mouse via SUBSYS-qualified HWIDs so they appear distinctly
+    //   in Device Manager, and it must *not* include a strict, revision-gated generic fallback
+    //   HWID (no SUBSYS): `{base_hwid}&REV_{expected_rev:02X}`.
+    // - A legacy filename alias INF (`virtio-input.inf` / `virtio-input.inf.disabled`, if
+    //   present) provides an opt-in strict, revision-gated generic fallback match (no SUBSYS) for
+    //   environments that do not expose the Aero subsystem IDs.
     // - Tablet devices bind via `aero_virtio_tablet.inf` (more specific SUBSYS match) and win over
     //   the generic fallback when that INF is installed.
     //
-    // `require_fallback` controls whether the strict generic fallback is required (`true`) or
-    // merely validated if present (`false`). The device-contract validator requires it for both
-    // the canonical and any alias INF.
+    // `require_fallback` selects which policy is enforced:
+    // - `require_fallback=false`: forbid the strict fallback model entry.
+    // - `require_fallback=true`: require exactly one strict fallback model entry.
     let strings = parse_inf_strings(inf_text);
     let rev = format!("{expected_rev:02X}");
     let kb_hwid = format!("{base_hwid}&SUBSYS_00101AF4&REV_{rev}");
@@ -1309,9 +1308,9 @@ fn validate_virtio_input_device_desc_split(
                         .collect::<Vec<_>>()
                 );
             }
-        } else if fb_rev.len() > 1 {
+        } else if !fb_rev.is_empty() {
             bail!(
-                "virtio-input INF {}: expected at most one generic fallback model entry in [{}] for HWID {} (found {}): {:?}",
+                "virtio-input INF {}: must not contain a generic fallback model entry in [{}] for HWID {} (fallback is opt-in via the legacy alias INF); found {}: {:?}",
                 inf_path.display(),
                 models_section,
                 fb_hwid,
@@ -1418,6 +1417,21 @@ fn validate_virtio_input_device_desc_split(
         }
     }
 
+    // When fallback is forbidden, ensure the strict fallback HWID literal does not appear
+    // anywhere in the INF (including comments). This prevents accidentally reintroducing the
+    // fallback into the canonical INF while still keeping documentation for the alias in sync.
+    if !require_fallback
+        && inf_text
+            .to_ascii_uppercase()
+            .contains(&fb_hwid.to_ascii_uppercase())
+    {
+        bail!(
+            "virtio-input INF {}: must not contain strict generic fallback HWID {} when fallback is forbidden (opt-in via the legacy alias INF)",
+            inf_path.display(),
+            fb_hwid
+        );
+    }
+
     Ok(())
 }
 
@@ -1428,7 +1442,17 @@ mod virtio_input_device_desc_split_tests {
     const BASE_HWID: &str = r"PCI\VEN_1AF4&DEV_1052";
     const EXPECTED_REV: u8 = 0x01;
 
-    fn validate(inf_text: &str) -> Result<()> {
+    fn validate_canonical(inf_text: &str) -> Result<()> {
+        validate_virtio_input_device_desc_split(
+            Path::new("aero_virtio_input.inf"),
+            inf_text,
+            BASE_HWID,
+            EXPECTED_REV,
+            /* require_fallback */ false,
+        )
+    }
+
+    fn validate_alias(inf_text: &str) -> Result<()> {
         validate_virtio_input_device_desc_split(
             Path::new("aero_virtio_input.inf"),
             inf_text,
@@ -1439,7 +1463,48 @@ mod virtio_input_device_desc_split_tests {
     }
 
     #[test]
-    fn virtio_input_device_desc_split_requires_kb_mouse_fallback_for_contract_inf() {
+    fn virtio_input_device_desc_split_accepts_canonical_without_fallback() {
+        let inf = r#"
+ [Aero.NTx86]
+ %AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
+ %AeroVirtioMouse.DeviceDesc%    = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
+
+[Aero.NTamd64]
+%AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
+%AeroVirtioMouse.DeviceDesc%    = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
+
+ [Strings]
+ AeroVirtioKeyboard.DeviceDesc = "Aero VirtIO Keyboard"
+ AeroVirtioMouse.DeviceDesc    = "Aero VirtIO Mouse"
+  "#;
+        validate_canonical(inf).unwrap();
+    }
+
+    #[test]
+    fn virtio_input_device_desc_split_rejects_fallback_for_canonical_inf() {
+        let inf = r#"
+ [Aero.NTx86]
+ %AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
+ %AeroVirtioMouse.DeviceDesc%    = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
+ %AeroVirtioInput.DeviceDesc%    = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&REV_01
+
+ [Aero.NTamd64]
+ %AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
+ %AeroVirtioMouse.DeviceDesc%    = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
+ %AeroVirtioInput.DeviceDesc%    = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&REV_01
+
+ [Strings]
+  AeroVirtioKeyboard.DeviceDesc = "Aero VirtIO Keyboard"
+  AeroVirtioMouse.DeviceDesc    = "Aero VirtIO Mouse"
+  AeroVirtioInput.DeviceDesc    = "Aero VirtIO Input Device"
+ "#;
+        let err = validate_canonical(inf).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("must not contain a generic fallback model entry"));
+    }
+
+    #[test]
+    fn virtio_input_device_desc_split_requires_kb_mouse_fallback_for_alias_inf() {
         let inf = r#"
  [Aero.NTx86]
  %AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
@@ -1453,13 +1518,13 @@ mod virtio_input_device_desc_split_tests {
  AeroVirtioKeyboard.DeviceDesc = "Aero VirtIO Keyboard"
  AeroVirtioMouse.DeviceDesc    = "Aero VirtIO Mouse"
  "#;
-        let err = validate(inf).unwrap_err();
+        let err = validate_alias(inf).unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("expected exactly one generic fallback model entry"));
     }
 
     #[test]
-    fn virtio_input_device_desc_split_accepts_kb_mouse_with_fallback() {
+    fn virtio_input_device_desc_split_accepts_alias_with_fallback() {
         let inf = r#"
  [Aero.NTx86]
  %AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
@@ -1475,8 +1540,8 @@ mod virtio_input_device_desc_split_tests {
  AeroVirtioKeyboard.DeviceDesc = "Aero VirtIO Keyboard"
  AeroVirtioMouse.DeviceDesc    = "Aero VirtIO Mouse"
  AeroVirtioInput.DeviceDesc    = "Aero VirtIO Input Device"
- "#;
-        validate(inf).unwrap();
+  "#;
+        validate_alias(inf).unwrap();
     }
 
     #[test]
@@ -1496,7 +1561,7 @@ mod virtio_input_device_desc_split_tests {
   AeroVirtioMouse.DeviceDesc    = "Aero VirtIO Mouse"
   AeroVirtioInput.DeviceDesc    = "Aero VirtIO Input Device"
   "#;
-        let err = validate(inf).unwrap_err();
+        let err = validate_alias(inf).unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("expected exactly one generic fallback model entry"));
         assert!(msg.contains("Aero.NTamd64"));
@@ -1522,7 +1587,7 @@ mod virtio_input_device_desc_split_tests {
   AeroVirtioMouse.DeviceDesc    = "Aero VirtIO Mouse"
   AeroVirtioInput.DeviceDesc    = "Aero VirtIO Input Device"
   "#;
-        let err = validate(inf).unwrap_err();
+        let err = validate_alias(inf).unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("revision-less generic fallback"));
     }
@@ -1544,7 +1609,7 @@ mod virtio_input_device_desc_split_tests {
   AeroVirtioKeyboard.DeviceDesc = "Aero VirtIO Keyboard"
   AeroVirtioMouse.DeviceDesc    = "Aero VirtIO Mouse"
   "#;
-        let err = validate(inf).unwrap_err();
+        let err = validate_alias(inf).unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("fallback model entry"));
         assert!(msg.contains("generic DeviceDesc"));
@@ -1570,8 +1635,8 @@ mod virtio_input_device_desc_split_tests {
  AeroVirtioMouse.DeviceDesc    = "Aero VirtIO Mouse"
  AeroVirtioInput.DeviceDesc    = "Aero VirtIO Input Device"
  AeroVirtioTablet.DeviceDesc   = "Aero VirtIO Tablet Device"
- "#;
-        let err = validate(inf).unwrap_err();
+  "#;
+        let err = validate_alias(inf).unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("extra SUBSYS-qualified model entry"));
     }
@@ -1593,7 +1658,7 @@ mod virtio_input_device_desc_split_tests {
   AeroVirtioKeyboard.DeviceDesc = "Aero VirtIO Input"
   AeroVirtioInput.DeviceDesc    = "Aero VirtIO Input Device"
   "#;
-        let err = validate(inf).unwrap_err();
+        let err = validate_alias(inf).unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("must have distinct DeviceDesc strings"));
     }
@@ -1840,7 +1905,7 @@ fn validate_in_tree_infs(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
                         &inf_text,
                         &base,
                         expected_rev,
-                        /* require_fallback */ true,
+                        /* require_fallback */ false,
                     )
                     .with_context(|| {
                         format!("{name}: validate virtio-input canonical DeviceDesc split")
@@ -1849,8 +1914,12 @@ fn validate_in_tree_infs(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
                     // Optional: validate the legacy filename alias INF (if present). This alias is kept for
                     // compatibility with workflows that still reference `virtio-input.inf`.
                     //
-                    // Policy: if present, the alias INF must be byte-for-byte identical to the canonical INF
-                    // from the first section header (`[Version]`) onward.
+                    // Policy: if present, the alias INF:
+                    //   - is allowed to diverge from the canonical INF only in the models sections
+                    //     (`[Aero.NTx86]` / `[Aero.NTamd64]`) in order to provide an opt-in strict,
+                    //     revision-gated generic fallback match (no SUBSYS), and
+                    //   - must otherwise remain byte-for-byte identical from the first section header
+                    //     (`[Version]`) onward (leading banner/comments are ignored).
                     let alias_candidates = [
                         inf_path.with_file_name("virtio-input.inf"),
                         inf_path.with_file_name("virtio-input.inf.disabled"),
@@ -1877,24 +1946,30 @@ fn validate_in_tree_infs(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
                             )
                         })?;
 
-                        // Ensure the alias stays in sync with the canonical INF (functional content).
+                        // Ensure the alias stays in sync with the canonical INF outside the models sections.
                         // This is intentionally byte-level so drift in comments/whitespace/ordering is
                         // detected.
                         if canonical_body.is_none() {
-                            canonical_body =
-                                Some(inf_functional_bytes(inf_path).with_context(|| {
+                            let canonical_bytes =
+                                inf_functional_bytes(inf_path).with_context(|| {
                                     format!(
                                         "{name}: read canonical virtio-input INF functional bytes"
                                     )
-                                })?);
+                                })?;
+                            canonical_body = Some(strip_inf_sections_bytes(
+                                &canonical_bytes,
+                                &["Aero.NTx86", "Aero.NTamd64"],
+                            ));
                         }
-                        let alias_body = inf_functional_bytes(&alias).with_context(|| {
+                        let alias_bytes = inf_functional_bytes(&alias).with_context(|| {
                             format!("{name}: read legacy virtio-input alias INF functional bytes")
                         })?;
+                        let alias_body =
+                            strip_inf_sections_bytes(&alias_bytes, &["Aero.NTx86", "Aero.NTamd64"]);
                         if canonical_body.as_ref().expect("set above") != &alias_body {
                             bail!(
                                 "{name}: virtio-input legacy alias INF drift detected: {} vs {}\n\
-The alias INF must be byte-for-byte identical to the canonical INF from the first section header (`[Version]`) onward.\n\
+The alias INF must be byte-for-byte identical to the canonical INF outside the models sections (`[Aero.NTx86]` / `[Aero.NTamd64]`), from the first section header (`[Version]`) onward.\n\
 Tip: run `python3 drivers/windows7/virtio-input/scripts/check-inf-alias.py` to diagnose drift.",
                                 inf_path.display(),
                                 alias.display(),
@@ -2186,6 +2261,27 @@ fn format_bullets(items: &BTreeSet<String>) -> String {
         .join("\n")
 }
 
+fn first_nonblank_ascii_byte(line: &[u8], first_line: bool) -> Option<u8> {
+    let mut line = line;
+    if first_line {
+        // Strip BOMs for detection only (returned bytes still include them).
+        if line.starts_with(b"\xef\xbb\xbf") {
+            line = &line[3..];
+        } else if line.starts_with(b"\xff\xfe") || line.starts_with(b"\xfe\xff") {
+            line = &line[2..];
+        }
+    }
+
+    for &b in line {
+        // NUL, tab, LF, CR, space
+        if b == 0 || b == b'\t' || b == b'\n' || b == b'\r' || b == b' ' {
+            continue;
+        }
+        return Some(b);
+    }
+    None
+}
+
 fn inf_functional_bytes(path: &Path) -> Result<Vec<u8>> {
     // Return the INF content starting from the first section header line (typically `[Version]`).
     //
@@ -2199,41 +2295,36 @@ fn inf_functional_bytes(path: &Path) -> Result<Vec<u8>> {
         bail!("INF {} is empty", path.display());
     }
 
-    let mut line_start = 0usize;
-    while line_start < data.len() {
-        // Find end-of-line (including the newline byte, if present).
-        let mut i = line_start;
+    let mut i = 0usize;
+    let mut first_line = true;
+    while i < data.len() {
+        let line_start = i;
         while i < data.len() && data[i] != b'\n' {
             i += 1;
         }
-        let next_start = if i < data.len() && data[i] == b'\n' {
-            i + 1
-        } else {
-            i
+        // Skip '\n'.
+        if i < data.len() && data[i] == b'\n' {
+            i += 1;
+        }
+        let line = &data[line_start..i];
+
+        let first = first_nonblank_ascii_byte(line, first_line);
+        first_line = false;
+        let Some(first) = first else {
+            continue;
         };
-        let line = &data[line_start..next_start];
 
-        let stripped = line
-            .iter()
-            .copied()
-            .skip_while(|b| *b == b' ' || *b == b'\t')
-            .collect::<Vec<u8>>();
-
-        if stripped.first() == Some(&b'[') {
+        // First section header (e.g. "[Version]") starts the functional region.
+        if first == b'[' {
             return Ok(data[line_start..].to_vec());
         }
 
-        // Ignore leading comments and blank lines.
-        if stripped.first() == Some(&b';')
-            || stripped == b"\n"
-            || stripped == b"\r\n"
-            || stripped == b"\r"
-        {
-            line_start = next_start;
+        // Ignore leading comments.
+        if first == b';' {
             continue;
         }
 
-        // Unexpected non-comment preamble content before the first section header:
+        // Unexpected preamble content (not comment, not blank, not section):
         // treat it as functional to avoid masking drift.
         return Ok(data[line_start..].to_vec());
     }
@@ -2243,6 +2334,74 @@ fn inf_functional_bytes(path: &Path) -> Result<Vec<u8>> {
         path.display()
     )
 }
+
+fn strip_inf_sections_bytes(data: &[u8], drop_sections: &[&str]) -> Vec<u8> {
+    let drop: BTreeSet<String> = drop_sections
+        .iter()
+        .map(|s| s.trim().to_ascii_lowercase())
+        .collect();
+    if drop.is_empty() {
+        return data.to_vec();
+    }
+
+    let mut out = Vec::with_capacity(data.len());
+    let mut i = 0usize;
+    let mut first_line = true;
+    let mut skipping = false;
+
+    while i < data.len() {
+        let line_start = i;
+        while i < data.len() && data[i] != b'\n' {
+            i += 1;
+        }
+        if i < data.len() && data[i] == b'\n' {
+            i += 1;
+        }
+        let line = &data[line_start..i];
+
+        // For section header detection: ignore NUL bytes (UTF-16) and BOMs on the first line.
+        let mut ascii: Vec<u8> = line.iter().copied().filter(|b| *b != 0).collect();
+        if first_line {
+            if ascii.starts_with(b"\xef\xbb\xbf") {
+                ascii.drain(0..3);
+            } else if ascii.starts_with(b"\xff\xfe") || ascii.starts_with(b"\xfe\xff") {
+                ascii.drain(0..2);
+            }
+        }
+        first_line = false;
+
+        // Trim leading whitespace for section-header detection.
+        let mut j = 0usize;
+        while j < ascii.len() && (ascii[j] == b' ' || ascii[j] == b'\t' || ascii[j] == b'\r') {
+            j += 1;
+        }
+        let stripped = &ascii[j..];
+
+        if stripped.starts_with(b"[") {
+            if let Some(end) = stripped.iter().position(|b| *b == b']') {
+                let name_bytes = &stripped[1..end];
+                let name = String::from_utf8_lossy(name_bytes)
+                    .trim()
+                    .to_ascii_lowercase();
+                skipping = drop.contains(&name);
+                if skipping {
+                    // Drop the section header line itself.
+                    continue;
+                }
+            } else {
+                skipping = false;
+            }
+        }
+
+        if skipping {
+            continue;
+        }
+        out.extend_from_slice(line);
+    }
+
+    out
+}
+
 fn read_inf_text(path: &Path) -> Result<String> {
     let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
     // INF files are often ASCII/UTF-8, but can be UTF-16LE/BE (with or without BOM).
