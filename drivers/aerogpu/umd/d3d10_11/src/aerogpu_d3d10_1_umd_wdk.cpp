@@ -8052,29 +8052,27 @@ void AEROGPU_APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
   // ClearState must also reset dynamic viewport/scissor state. Without emitting
   // these commands, the host-side command executor would continue using the
   // previous values until the app calls SetViewports/SetScissorRects again.
-  auto* vp_cmd = dev->cmd.append_fixed<aerogpu_cmd_set_viewport>(AEROGPU_CMD_SET_VIEWPORT);
-  if (!vp_cmd) {
-    set_error(dev, E_OUTOFMEMORY);
+  bool ok = true;
+  aerogpu::d3d10_11::validate_and_emit_viewports_locked(dev,
+                                                       /*num_viewports=*/0,
+                                                       static_cast<const D3D10_DDI_VIEWPORT*>(nullptr),
+                                                       [&](HRESULT hr) {
+                                                         set_error(dev, hr);
+                                                         ok = false;
+                                                       });
+  if (!ok) {
     return;
   }
-  vp_cmd->x_f32 = f32_bits(0.0f);
-  vp_cmd->y_f32 = f32_bits(0.0f);
-  vp_cmd->width_f32 = f32_bits(0.0f);
-  vp_cmd->height_f32 = f32_bits(0.0f);
-  vp_cmd->min_depth_f32 = f32_bits(0.0f);
-  vp_cmd->max_depth_f32 = f32_bits(1.0f);
-  dev->viewport_width = 0;
-  dev->viewport_height = 0;
-
-  auto* sc_cmd = dev->cmd.append_fixed<aerogpu_cmd_set_scissor>(AEROGPU_CMD_SET_SCISSOR);
-  if (!sc_cmd) {
-    set_error(dev, E_OUTOFMEMORY);
+  aerogpu::d3d10_11::validate_and_emit_scissor_rects_locked(dev,
+                                                           /*num_rects=*/0,
+                                                           static_cast<const D3D10_DDI_RECT*>(nullptr),
+                                                           [&](HRESULT hr) {
+                                                             set_error(dev, hr);
+                                                             ok = false;
+                                                           });
+  if (!ok) {
     return;
   }
-  sc_cmd->x = 0;
-  sc_cmd->y = 0;
-  sc_cmd->width = 0;
-  sc_cmd->height = 0;
 }
 
 void AEROGPU_APIENTRY VsSetShaderResources(D3D10DDI_HDEVICE hDevice,
