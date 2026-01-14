@@ -71,6 +71,23 @@ fn make_tick_time_snapshot() -> Vec<u8> {
     ctrl.save_state()
 }
 
+#[derive(Default)]
+struct NoDmaPanicMem;
+
+impl MemoryBus for NoDmaPanicMem {
+    fn dma_enabled(&self) -> bool {
+        false
+    }
+
+    fn read_physical(&mut self, _paddr: u64, _buf: &mut [u8]) {
+        panic!("unexpected DMA read");
+    }
+
+    fn write_physical(&mut self, _paddr: u64, _buf: &[u8]) {
+        panic!("unexpected DMA write");
+    }
+}
+
 fn control_no_data(dev: &mut AttachedUsbDevice, setup: SetupPacket) {
     assert_eq!(dev.handle_setup(setup), UsbOutResult::Ack);
     assert!(
@@ -297,6 +314,34 @@ fn xhci_snapshot_roundtrip_preserves_tick_time_and_dma_probe_state() {
     let r2 = SnapshotReader::parse(&bytes2, *b"XHCI").expect("parse restored snapshot");
     assert_eq!(r2.u64(27).unwrap().unwrap(), 3);
     assert_eq!(r2.u32(28).unwrap().unwrap(), 0xaabb_ccdd);
+}
+
+#[test]
+fn xhci_snapshot_roundtrip_preserves_pending_dma_on_run_probe() {
+    let mut ctrl = XhciController::new();
+    let mut nodma = NoDmaPanicMem::default();
+
+    // Program CRCR and set RUN via a dma-disabled bus so the DMA-on-RUN probe remains pending.
+    ctrl.mmio_write(&mut nodma, regs::REG_CRCR_LO, 4, 0x1000);
+    ctrl.mmio_write(&mut nodma, regs::REG_CRCR_HI, 4, 0);
+    ctrl.mmio_write(&mut nodma, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
+    assert!(
+        !ctrl.irq_level(),
+        "DMA-on-RUN probe should be deferred when DMA is disabled"
+    );
+
+    let bytes = ctrl.save_state();
+    let mut restored = XhciController::new();
+    restored.load_state(&bytes).expect("load snapshot");
+
+    // Once DMA becomes available, the next tick must execute the deferred probe and assert an IRQ.
+    let mut mem = TestMem::new(0x4000);
+    mem.write_u32(0x1000, 0x1122_3344);
+    restored.tick_1ms_with_dma(&mut mem);
+    assert!(
+        restored.irq_level(),
+        "expected deferred DMA-on-RUN probe to survive snapshot and execute once DMA is available"
+    );
 }
 
 #[test]

@@ -3597,41 +3597,6 @@ impl XhciController {
         Some(ep_ctx.endpoint_state_enum())
     }
 
-    fn write_endpoint_state_to_context(
-        &self,
-        mem: &mut dyn MemoryBus,
-        slot_id: u8,
-        endpoint_id: u8,
-        state: context::EndpointState,
-    ) -> bool {
-        if endpoint_id == 0 || endpoint_id > 31 {
-            return false;
-        }
-        if self.dcbaap == 0 {
-            return false;
-        }
-        let dcbaa = context::Dcbaa::new(self.dcbaap);
-        let Ok(dev_ctx_ptr) = dcbaa.read_device_context_ptr(mem, slot_id) else {
-            return false;
-        };
-        let dev_ctx_ptr = dev_ctx_ptr & !0x3f;
-        if dev_ctx_ptr == 0 {
-            return false;
-        }
-
-        let ctx_base = match dev_ctx_ptr
-            .checked_add(u64::from(endpoint_id).saturating_mul(context::CONTEXT_SIZE as u64))
-        {
-            Some(v) => v,
-            None => return false,
-        };
-
-        let dw0 = mem.read_u32(ctx_base);
-        let new_dw0 = (dw0 & !0x7) | (u32::from(state.raw()) & 0x7);
-        mem.write_u32(ctx_base, new_dw0);
-        true
-    }
-
     fn write_endpoint_dequeue_to_context(
         &self,
         mem: &mut dyn MemoryBus,
@@ -3681,28 +3646,28 @@ impl XhciController {
         slot_id: u8,
         endpoint_id: u8,
         state: context::EndpointState,
-    ) {
+    ) -> bool {
         if endpoint_id == 0 || endpoint_id > 31 {
-            return;
+            return false;
         }
         if self.dcbaap == 0 {
-            return;
+            return false;
         }
 
         let dcbaa = context::Dcbaa::new(self.dcbaap);
         let Ok(dev_ctx_ptr) = dcbaa.read_device_context_ptr(mem, slot_id) else {
-            return;
+            return false;
         };
         let dev_ctx_ptr = dev_ctx_ptr & !0x3f;
         if dev_ctx_ptr == 0 {
-            return;
+            return false;
         }
 
         let ctx_base = match dev_ctx_ptr
             .checked_add(u64::from(endpoint_id).saturating_mul(context::CONTEXT_SIZE as u64))
         {
             Some(v) => v,
-            None => return,
+            None => return false,
         };
 
         let mut ep_ctx = EndpointContext::read_from(mem, ctx_base);
@@ -3718,6 +3683,7 @@ impl XhciController {
                 slot.device_context_ptr = dev_ctx_ptr;
             }
         }
+        true
     }
 
     fn dma_on_run(&mut self, mem: &mut dyn MemoryBus) {
