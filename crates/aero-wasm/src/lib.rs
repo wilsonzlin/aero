@@ -3095,6 +3095,15 @@ fn opfs_io_error_to_js(operation: &str, path: &str, err: std::io::Error) -> JsVa
 }
 
 #[cfg(target_arch = "wasm32")]
+fn opfs_context_error_to_js(
+    operation: &str,
+    path: &str,
+    err: impl core::fmt::Display,
+) -> JsValue {
+    Error::new(&format!("{operation} failed for OPFS path \"{path}\": {err}")).into()
+}
+
+#[cfg(target_arch = "wasm32")]
 fn opfs_snapshot_error_to_js(
     operation: &str,
     path: &str,
@@ -3363,7 +3372,7 @@ impl Machine {
             })?;
         self.inner
             .attach_install_media_iso(Box::new(disk))
-            .map_err(js_error)
+            .map_err(|e| opfs_context_error_to_js("Machine.attach_install_media_iso_opfs_existing", &path, e))
     }
 
     /// Open (or create) an OPFS-backed disk image and attach it as the machine's canonical disk.
@@ -3384,7 +3393,7 @@ impl Machine {
             .map_err(|e| opfs_disk_error_to_js("Machine.set_disk_opfs", &path, e))?;
         self.inner
             .set_disk_backend(Box::new(backend))
-            .map_err(js_error)
+            .map_err(|e| opfs_context_error_to_js("Machine.set_disk_opfs", &path, e))
     }
 
     /// Open (or create) an OPFS-backed disk image, attach it as the machine's canonical disk, and
@@ -3434,7 +3443,7 @@ impl Machine {
                 })?;
         self.inner
             .set_disk_backend(Box::new(backend))
-            .map_err(js_error)
+            .map_err(|e| opfs_context_error_to_js("Machine.set_disk_opfs_with_progress", &path, e))
     }
 
     /// Open (or create) an OPFS-backed disk image, attach it as the machine's canonical disk,
@@ -3476,7 +3485,7 @@ impl Machine {
             .map_err(|e| opfs_disk_error_to_js("Machine.set_disk_opfs_existing", &path, e))?;
         self.inner
             .set_disk_backend(Box::new(backend))
-            .map_err(js_error)
+            .map_err(|e| opfs_context_error_to_js("Machine.set_disk_opfs_existing", &path, e))
     }
 
     /// Open an existing OPFS-backed ISO image and attach it as the IDE secondary channel master
@@ -3501,7 +3510,7 @@ impl Machine {
             })?;
         self.inner
             .attach_ide_secondary_master_iso(Box::new(disk))
-            .map_err(js_error)
+            .map_err(|e| opfs_context_error_to_js("Machine.attach_ide_secondary_master_iso_opfs_existing", &path, e))
     }
 
     /// Open an existing OPFS-backed ISO image, attach it as the IDE secondary channel master ATAPI
@@ -3549,7 +3558,7 @@ impl Machine {
             })?;
         self.inner
             .attach_ide_primary_master_disk(Box::new(backend))
-            .map_err(js_error)
+            .map_err(|e| opfs_context_error_to_js("Machine.attach_ide_primary_master_disk_opfs", &path, e))
     }
 
     /// Open (or create) an OPFS-backed disk image and attach it as the IDE primary channel master
@@ -3576,7 +3585,7 @@ impl Machine {
                 })?;
         self.inner
             .attach_ide_primary_master_disk(Box::new(backend))
-            .map_err(js_error)
+            .map_err(|e| opfs_context_error_to_js("Machine.attach_ide_primary_master_disk_opfs_with_progress", &path, e))
     }
 
     /// Open (or create) an OPFS-backed disk image, attach it as the IDE primary channel master ATA
@@ -3648,7 +3657,7 @@ impl Machine {
             })?;
         self.inner
             .attach_ide_primary_master_disk(Box::new(backend))
-            .map_err(js_error)
+            .map_err(|e| opfs_context_error_to_js("Machine.attach_ide_primary_master_disk_opfs_existing", &path, e))
     }
 
     /// Open an existing OPFS-backed disk image, attach it as the IDE primary channel master ATA
@@ -3728,7 +3737,7 @@ impl Machine {
         })?;
         self.inner
             .set_disk_backend(Box::new(disk))
-            .map_err(js_error)
+            .map_err(|e| opfs_context_error_to_js("Machine.set_disk_aerospar_opfs_create", &path, e))
     }
 
     /// Create a new OPFS-backed Aero sparse disk (`.aerospar`), attach it as the machine's
@@ -3768,7 +3777,7 @@ impl Machine {
         })?;
         self.inner
             .set_disk_backend(Box::new(disk))
-            .map_err(js_error)
+            .map_err(|e| opfs_context_error_to_js("Machine.set_disk_aerospar_opfs_open", &path, e))
     }
 
     /// Open an existing OPFS-backed Aero sparse disk (`.aerospar`), attach it as the machine's
@@ -3810,7 +3819,7 @@ impl Machine {
                 opfs_disk_error_to_js("Machine.set_disk_cow_opfs_create(base)", &paths, e)
             })?;
         let base_disk = aero_storage::DiskImage::open_auto(base_storage).map_err(|e| {
-            JsValue::from_str(&format!(
+            js_error(format!(
                 "Machine.set_disk_cow_opfs_create failed for base=\"{base_path}\" overlay=\"{overlay_path}\": {e}"
             ))
         })?;
@@ -3828,14 +3837,18 @@ impl Machine {
             overlay_block_size_bytes,
         )
         .map_err(|e| {
-            JsValue::from_str(&format!(
+            js_error(format!(
                 "Machine.set_disk_cow_opfs_create failed for base=\"{base_path}\" overlay=\"{overlay_path}\": {e}"
             ))
         })?;
 
         self.inner
             .set_disk_backend(Box::new(disk))
-            .map_err(js_error)
+            .map_err(|e| {
+                js_error(format!(
+                    "Machine.set_disk_cow_opfs_create failed for base=\"{base_path}\" overlay=\"{overlay_path}\": {e}"
+                ))
+            })
     }
 
     /// Create an OPFS-backed copy-on-write disk, attach it as the machine's canonical disk, and
@@ -3877,7 +3890,7 @@ impl Machine {
                 opfs_disk_error_to_js("Machine.set_disk_cow_opfs_open(base)", &paths, e)
             })?;
         let base_disk = aero_storage::DiskImage::open_auto(base_storage).map_err(|e| {
-            JsValue::from_str(&format!(
+            js_error(format!(
                 "Machine.set_disk_cow_opfs_open failed for base=\"{base_path}\" overlay=\"{overlay_path}\": {e}"
             ))
         })?;
@@ -3890,14 +3903,18 @@ impl Machine {
             })?;
 
         let disk = aero_storage::AeroCowDisk::open(base_disk, overlay_backend).map_err(|e| {
-            JsValue::from_str(&format!(
+            js_error(format!(
                 "Machine.set_disk_cow_opfs_open failed for base=\"{base_path}\" overlay=\"{overlay_path}\": {e}"
             ))
         })?;
 
         self.inner
             .set_disk_backend(Box::new(disk))
-            .map_err(js_error)
+            .map_err(|e| {
+                js_error(format!(
+                    "Machine.set_disk_cow_opfs_open failed for base=\"{base_path}\" overlay=\"{overlay_path}\": {e}"
+                ))
+            })
     }
 
     /// Open an OPFS-backed copy-on-write disk, attach it as the machine's canonical disk, and set
@@ -3936,7 +3953,7 @@ impl Machine {
 
         self.inner
             .attach_ide_secondary_master_iso(Box::new(disk))
-            .map_err(|e| js_error(&e.to_string()))
+            .map_err(|e| opfs_context_error_to_js("Machine.attach_install_media_iso_opfs", &path, e))
     }
 
     /// Attach an existing OPFS-backed ISO image as the canonical install media CD-ROM and set the
@@ -3977,7 +3994,9 @@ impl Machine {
 
         self.inner
             .attach_ide_secondary_master_iso_for_restore(Box::new(disk))
-            .map_err(|e| js_error(&e.to_string()))
+            .map_err(|e| {
+                opfs_context_error_to_js("Machine.attach_install_media_iso_opfs_for_restore", &path, e)
+            })
     }
 
     /// Attach an existing OPFS-backed ISO image as the canonical install media CD-ROM, preserving
@@ -4921,7 +4940,7 @@ impl Machine {
                 if overlay_image.is_empty() {
                     continue;
                 }
-                return Err(JsValue::from_str(&format!(
+                return Err(js_error(format!(
                     "reattach_restored_disks_from_opfs: disk_id={disk_id} has empty base_image but non-empty overlay_image={overlay_image:?}"
                 )));
             }
@@ -4933,7 +4952,7 @@ impl Machine {
                             .await
                             .map_err(|e| opfs_error(disk_id, "base_image", &base_image, e))?;
                     let base_disk = aero_storage::DiskImage::open_auto(base_backend).map_err(|e| {
-                        JsValue::from_str(&format!(
+                        js_error(format!(
                             "reattach_restored_disks_from_opfs: failed to open disk image for disk_id=0 base_image={base_image:?}: {e}"
                         ))
                     })?;
@@ -4942,7 +4961,7 @@ impl Machine {
                         self.inner
                             .set_disk_backend(Box::new(base_disk))
                             .map_err(|e| {
-                                JsValue::from_str(&format!(
+                                js_error(format!(
                                     "reattach_restored_disks_from_opfs: attach failed for disk_id=0 base_image={base_image:?}: {e}"
                                 ))
                             })?;
@@ -4954,12 +4973,12 @@ impl Machine {
                         .map_err(|e| opfs_error(disk_id, "overlay_image", &overlay_image, e))?;
                     let cow =
                         aero_storage::AeroCowDisk::open(base_disk, overlay_backend).map_err(|e| {
-                            JsValue::from_str(&format!(
+                            js_error(format!(
                                 "reattach_restored_disks_from_opfs: failed to open COW disk for disk_id=0 base_image={base_image:?} overlay_image={overlay_image:?}: {e}"
                             ))
                         })?;
                     self.inner.set_disk_backend(Box::new(cow)).map_err(|e| {
-                        JsValue::from_str(&format!(
+                        js_error(format!(
                             "reattach_restored_disks_from_opfs: attach failed for disk_id=0 base_image={base_image:?} overlay_image={overlay_image:?}: {e}"
                         ))
                     })?;
@@ -4967,7 +4986,7 @@ impl Machine {
 
                 aero_machine::Machine::DISK_ID_INSTALL_MEDIA => {
                     if !overlay_image.is_empty() {
-                        return Err(JsValue::from_str(&format!(
+                        return Err(js_error(format!(
                             "reattach_restored_disks_from_opfs: disk_id=1 (install media) does not support overlay_image (got {overlay_image:?})"
                         )));
                     }
@@ -4978,7 +4997,7 @@ impl Machine {
                     self.inner
                         .attach_ide_secondary_master_iso_for_restore(Box::new(disk))
                         .map_err(|e| {
-                            JsValue::from_str(&format!(
+                            js_error(format!(
                                 "reattach_restored_disks_from_opfs: attach failed for disk_id=1 base_image={base_image:?}: {e}"
                             ))
                         })?;
@@ -4990,7 +5009,7 @@ impl Machine {
                             .await
                             .map_err(|e| opfs_error(disk_id, "base_image", &base_image, e))?;
                     let base_disk = aero_storage::DiskImage::open_auto(base_backend).map_err(|e| {
-                        JsValue::from_str(&format!(
+                        js_error(format!(
                             "reattach_restored_disks_from_opfs: failed to open disk image for disk_id=2 base_image={base_image:?}: {e}"
                         ))
                     })?;
@@ -4999,7 +5018,7 @@ impl Machine {
                         self.inner
                             .attach_ide_primary_master_disk(Box::new(base_disk))
                             .map_err(|e| {
-                                JsValue::from_str(&format!(
+                                js_error(format!(
                                     "reattach_restored_disks_from_opfs: attach failed for disk_id=2 base_image={base_image:?}: {e}"
                                 ))
                             })?;
@@ -5011,21 +5030,21 @@ impl Machine {
                         .map_err(|e| opfs_error(disk_id, "overlay_image", &overlay_image, e))?;
                     let cow =
                         aero_storage::AeroCowDisk::open(base_disk, overlay_backend).map_err(|e| {
-                            JsValue::from_str(&format!(
+                            js_error(format!(
                                 "reattach_restored_disks_from_opfs: failed to open COW disk for disk_id=2 base_image={base_image:?} overlay_image={overlay_image:?}: {e}"
                             ))
                         })?;
                     self.inner
                         .attach_ide_primary_master_disk(Box::new(cow))
                         .map_err(|e| {
-                            JsValue::from_str(&format!(
+                            js_error(format!(
                                 "reattach_restored_disks_from_opfs: attach failed for disk_id=2 base_image={base_image:?} overlay_image={overlay_image:?}: {e}"
                             ))
                         })?;
                 }
 
                 other => {
-                    return Err(JsValue::from_str(&format!(
+                    return Err(js_error(format!(
                         "reattach_restored_disks_from_opfs: unknown disk_id {other} (base_image={base_image:?}, overlay_image={overlay_image:?})"
                     )));
                 }
