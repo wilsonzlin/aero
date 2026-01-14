@@ -251,6 +251,34 @@ fn xhci_controller_tick_dma_dword_is_snapshotted() {
 }
 
 #[test]
+fn xhci_controller_tick_dma_dword_is_gated_by_dma_enabled() {
+    // Snapshot tags for controller-local time and last tick DMA dword.
+    const TAG_TIME_MS: u16 = 27;
+    const TAG_LAST_TICK_DMA_DWORD: u16 = 28;
+
+    let mut ctrl = XhciController::new();
+    let mut mem = CountingMem::new(0x4000);
+
+    mem.data[0x1000..0x1004].copy_from_slice(&0xdead_beefu32.to_le_bytes());
+    ctrl.mmio_write(&mut mem, regs::REG_CRCR_LO, 4, 0x1000);
+    ctrl.mmio_write(&mut mem, regs::REG_CRCR_HI, 4, 0);
+    ctrl.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
+    ctrl.tick_1ms_with_dma(&mut mem);
+
+    // Now tick with a DMA-disabled bus; the controller should still advance time, but should not
+    // touch the memory bus or mutate the last_tick_dma_dword value.
+    let mut nodma = NoDmaCountingMem::default();
+    ctrl.tick_1ms_with_dma(&mut nodma);
+    assert_eq!(nodma.reads, 0);
+    assert_eq!(nodma.writes, 0);
+
+    let bytes = ctrl.save_state();
+    let r = SnapshotReader::parse(&bytes, *b"XHCI").expect("parse snapshot");
+    assert_eq!(r.u64(TAG_TIME_MS).unwrap().unwrap_or(0), 2);
+    assert_eq!(r.u32(TAG_LAST_TICK_DMA_DWORD).unwrap().unwrap_or(0), 0xdead_beef);
+}
+
+#[test]
 fn xhci_mfindex_advances_on_tick_1ms_and_wraps() {
     let mut ctrl = XhciController::new();
     let mut mem = PanicMem;

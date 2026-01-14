@@ -749,7 +749,10 @@ impl XhciController {
         // Gate this on `dma_enabled()` so wrappers can pass an open-bus/no-DMA `MemoryBus` without
         // the controller interpreting those reads as real guest memory.
         if (self.usbcmd & regs::USBCMD_RUN) != 0 && mem.dma_enabled() {
-            self.last_tick_dma_dword = mem.read_u32(self.crcr);
+            // CRCR stores flags in the low bits; mask them away before using the pointer as a guest
+            // physical address.
+            let paddr = self.crcr & regs::CRCR_PTR_MASK;
+            self.last_tick_dma_dword = mem.read_u32(paddr);
         }
     }
 
