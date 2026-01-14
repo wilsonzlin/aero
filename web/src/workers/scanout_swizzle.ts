@@ -52,7 +52,15 @@ export function convertScanoutToRgba8(opts: ConvertScanoutOptions): boolean {
   const dstStrideBytes = opts.dstStrideBytes | 0;
 
   if (width <= 0 || height <= 0) return false;
-  if (srcStrideBytes < width * 4 || dstStrideBytes < width * 4) return false;
+  const rowBytes = width * 4;
+  if (srcStrideBytes < rowBytes || dstStrideBytes < rowBytes) return false;
+
+  // Validate that the provided views actually cover the bytes we will read/write.
+  // Note: the last row only needs `rowBytes` bytes, even when strideBytes is larger.
+  const requiredSrcBytes = (height - 1) * srcStrideBytes + rowBytes;
+  const requiredDstBytes = (height - 1) * dstStrideBytes + rowBytes;
+  if (requiredSrcBytes < rowBytes || requiredDstBytes < rowBytes) return false;
+  if (opts.src.byteLength < requiredSrcBytes || opts.dst.byteLength < requiredDstBytes) return false;
 
   const src = opts.src;
   const dst = opts.dst;
@@ -69,8 +77,13 @@ export function convertScanoutToRgba8(opts: ConvertScanoutOptions): boolean {
     const srcWordsPerRow = srcStrideBytes >>> 2;
     const dstWordsPerRow = dstStrideBytes >>> 2;
 
-    const srcU32 = new Uint32Array(src.buffer, src.byteOffset, srcWordsPerRow * height);
-    const dstU32 = new Uint32Array(dst.buffer, dst.byteOffset, dstWordsPerRow * height);
+    // The u32 fast path only needs `rowBytes` bytes from the last row; it does not require
+    // trailing pitch padding to be present. Use a minimal u32 view length so callers can pass
+    // slice views that omit the last-row padding bytes (common for VRAM-backed cursors/scanout).
+    const requiredSrcWords = ((height - 1) * srcWordsPerRow + width) >>> 0;
+    const requiredDstWords = ((height - 1) * dstWordsPerRow + width) >>> 0;
+    const srcU32 = new Uint32Array(src.buffer, src.byteOffset, requiredSrcWords);
+    const dstU32 = new Uint32Array(dst.buffer, dst.byteOffset, requiredDstWords);
 
     switch (opts.kind) {
       case "rgba":

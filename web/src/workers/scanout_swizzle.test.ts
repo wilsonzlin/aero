@@ -49,6 +49,35 @@ describe("workers/scanout_swizzle", () => {
     ]);
   });
 
+  it("converts using the u32 fast path even when the last-row pitch padding is omitted", () => {
+    const width = 1;
+    const height = 2;
+    const srcStrideBytes = 16; // padded
+    const dstStrideBytes = width * 4; // tightly packed
+
+    // Allocate only the minimal required source bytes:
+    // (height-1)*pitch + rowBytes = 16 + 4 = 20 (no trailing padding for the last row).
+    const src = new Uint8Array(20);
+    src.fill(0);
+    // Row0 pixel: BGRX = [1,2,3,0]
+    src.set([1, 2, 3, 0], 0);
+    // Row1 pixel at offset + pitch: BGRX = [4,5,6,0]
+    src.set([4, 5, 6, 0], srcStrideBytes);
+
+    const dst = new Uint8Array(width * height * 4);
+    const usedFast = convertScanoutToRgba8({
+      src,
+      srcStrideBytes,
+      dst,
+      dstStrideBytes,
+      width,
+      height,
+      kind: "bgrx",
+    });
+    expect(usedFast).toBe(true);
+    expect(Array.from(dst)).toEqual([3, 2, 1, 255, 6, 5, 4, 255]);
+  });
+
   it("converts BGRA using the u32 fast path when aligned (preserves alpha)", () => {
     const width = 2;
     const height = 1;
