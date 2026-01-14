@@ -1433,8 +1433,8 @@ std::array<uint64_t, 4> d3d9_stub_trace_args(const Args&... args) {
 // UMD without crashing. See `drivers/aerogpu/umd/d3d9/README.md`.
 // (Legacy fixed-function Set*/Get* state is cached and implemented elsewhere.)
 
-// Shader constant paths (int/bool) are not emitted yet, but some apps query
-// them during initialization. Cache them so Set*/Get* round-trips.
+// Shader constant paths (int/bool) are emitted and cached so Set*/Get*
+// round-trips and state blocks are deterministic.
 
 // D3D9Ex image processing API. Treat as a no-op until the fixed-function path is
 // fully implemented (DWM should not rely on it).
