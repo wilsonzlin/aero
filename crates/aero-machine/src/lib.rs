@@ -6073,6 +6073,32 @@ impl Machine {
         self.vga.clone()
     }
 
+    /// Returns the AeroGPU BAR0 MMIO device model (register block), if present.
+    pub fn aerogpu_mmio(&self) -> Option<Rc<RefCell<AeroGpuMmioDevice>>> {
+        self.aerogpu_mmio.clone()
+    }
+
+    /// Returns the AeroGPU BAR0 MMIO base (register block), if present.
+    ///
+    /// This consults the machine's canonical PCI config space (the same one exposed to the guest)
+    /// and therefore reflects BIOS POST / resource allocation.
+    pub fn aerogpu_bar0_base(&self) -> Option<u64> {
+        let bdf = self.aerogpu()?;
+        let base = self.pci_bar_base(bdf, aero_devices::pci::profile::AEROGPU_BAR0_INDEX)?;
+        (base != 0).then_some(base)
+    }
+
+    /// Returns the AeroGPU VRAM BAR base (BAR1) if present in the active PCI profile.
+    ///
+    /// Note: BAR1 is not currently used by the `aero-machine` AeroGPU stub, but exposing it allows
+    /// integration tests and runtimes to discover the configured VRAM aperture once the profile is
+    /// extended.
+    pub fn aerogpu_vram_bar_base(&self) -> Option<u64> {
+        let bdf = self.aerogpu()?;
+        let base = self.pci_bar_base(bdf, aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX)?;
+        (base != 0).then_some(base)
+    }
+
     /// Returns the PIIX3-compatible IDE controller, if present.
     pub fn ide(&self) -> Option<Rc<RefCell<Piix3IdePciDevice>>> {
         self.ide.clone()
