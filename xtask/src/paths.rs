@@ -84,10 +84,9 @@ pub fn resolve_node_dir(repo_root: &Path, cli_override: Option<&str>) -> Result<
         return normalize_and_validate_node_dir(repo_root, dir);
     }
 
-    if let Some(dir) =
-        env_var_nonempty("AERO_NODE_DIR")
-            .or_else(|| env_var_nonempty("AERO_WEB_DIR"))
-            .or_else(|| env_var_nonempty("WEB_DIR"))
+    if let Some(dir) = env_var_nonempty("AERO_NODE_DIR")
+        .or_else(|| env_var_nonempty("AERO_WEB_DIR"))
+        .or_else(|| env_var_nonempty("WEB_DIR"))
     {
         return normalize_and_validate_node_dir(repo_root, &dir);
     }
