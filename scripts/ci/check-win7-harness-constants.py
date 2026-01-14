@@ -26,6 +26,7 @@ What is validated:
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import re
 import sys
@@ -140,14 +141,17 @@ def _parse_guest_udp_default(text: str) -> int:
 
 
 def _parse_python_udp_default(text: str) -> int:
-    port_m = _re_search(
-        r'"\-\-udp-port".*?^\s*default\s*=\s*(?P<port>\d+)\s*,',
-        text,
+    port = _parse_python_add_argument_default(
+        text=text,
+        option="--udp-port",
         file=PY_HARNESS,
         desc="argparse default for --udp-port",
-        flags=re.M | re.S,
     )
-    return int(port_m.group("port"), 10)
+    if not isinstance(port, int):
+        _fail(
+            f"{PY_HARNESS.as_posix()}: argparse default for --udp-port expected int, got {type(port).__name__}: {port!r}"
+        )
+    return int(port)
 
 
 def _parse_ps_udp_default(text: str) -> int:
@@ -185,21 +189,105 @@ def _parse_guest_http_defaults(text: str) -> _HttpDefaults:
 
 
 def _parse_python_http_defaults(text: str) -> _HttpDefaults:
-    port_m = _re_search(
-        r'"\-\-http-port".*?^\s*default\s*=\s*(?P<port>\d+)\s*,',
-        text,
+    port = _parse_python_add_argument_default(
+        text=text,
+        option="--http-port",
         file=PY_HARNESS,
         desc="argparse default for --http-port",
-        flags=re.M | re.S,
     )
-    path_m = _re_search(
-        r'"\-\-http-path".*?^\s*default\s*=\s*(?P<quote>[\'"])(?P<path>.+?)(?P=quote)\s*,',
-        text,
+    if not isinstance(port, int):
+        _fail(
+            f"{PY_HARNESS.as_posix()}: argparse default for --http-port expected int, got {type(port).__name__}: {port!r}"
+        )
+    path = _parse_python_add_argument_default(
+        text=text,
+        option="--http-path",
         file=PY_HARNESS,
         desc="argparse default for --http-path",
-        flags=re.M | re.S,
     )
-    return _HttpDefaults(port=int(port_m.group("port"), 10), path=str(path_m.group("path")))
+    if not isinstance(path, str):
+        _fail(
+            f"{PY_HARNESS.as_posix()}: argparse default for --http-path expected str, got {type(path).__name__}: {path!r}"
+        )
+    if not path:
+        _fail(f"{PY_HARNESS.as_posix()}: argparse default for --http-path must be non-empty")
+    return _HttpDefaults(port=int(port), path=str(path))
+
+
+def _parse_python_add_argument_default(*, text: str, option: str, file: Path, desc: str) -> object:
+    """
+    Extract a `default=...` value from a `*.add_argument(...)` call in the Python harness.
+
+    This intentionally uses `ast` parsing instead of regex so refactors (quote style, line wrapping,
+    or `black` formatting) do not break the CI guardrail.
+    """
+
+    def eval_simple(node: ast.AST, constants: dict[str, object]) -> object | None:
+        if isinstance(node, ast.Constant):
+            return node.value
+        if isinstance(node, ast.Name):
+            return constants.get(node.id)
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+            val = eval_simple(node.operand, constants)
+            if isinstance(val, int):
+                return -val
+        return None
+
+    try:
+        tree = ast.parse(text, filename=file.as_posix())
+    except SyntaxError as e:
+        _fail(f"{file.as_posix()}: failed to parse Python source: {e}")
+
+    # Collect simple module-level constants so add_argument defaults can reference them.
+    constants: dict[str, object] = {}
+    for stmt in tree.body:
+        if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name):
+            val = eval_simple(stmt.value, constants)
+            if val is not None:
+                constants[stmt.targets[0].id] = val
+        elif isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name) and stmt.value is not None:
+            val = eval_simple(stmt.value, constants)
+            if val is not None:
+                constants[stmt.target.id] = val
+
+    defaults: list[object] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if not (isinstance(node.func, ast.Attribute) and node.func.attr == "add_argument"):
+            continue
+
+        option_strings = [
+            arg.value for arg in node.args if isinstance(arg, ast.Constant) and isinstance(arg.value, str)
+        ]
+        if option not in option_strings:
+            continue
+
+        default_expr: ast.AST | None = None
+        for kw in node.keywords:
+            if kw.arg == "default":
+                default_expr = kw.value
+                break
+
+        if default_expr is None:
+            continue
+
+        default_val = eval_simple(default_expr, constants)
+        if default_val is None:
+            _fail(
+                f"{file.as_posix()}: unsupported Python expression for {desc} (option={option!r}); "
+                "use a literal default or a simple module-level constant"
+            )
+        defaults.append(default_val)
+
+    if not defaults:
+        _fail(f"{file.as_posix()}: failed to parse {desc} (missing add_argument default for {option!r})")
+
+    first = defaults[0]
+    if any(d != first for d in defaults[1:]):
+        _fail(f"{file.as_posix()}: multiple conflicting defaults for {desc} ({option!r}): {defaults!r}")
+
+    return first
 
 
 def _parse_ps_http_defaults(text: str) -> _HttpDefaults:
