@@ -37,9 +37,9 @@ use aero_protocol::aerogpu::aerogpu_ring::{AerogpuAllocEntry, AEROGPU_ALLOC_FLAG
 use anyhow::{anyhow, bail, Context, Result};
 
 use crate::binding_model::{
-    BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE, BINDING_BASE_UAV,
-    BINDING_INTERNAL_EXPANDED_VERTICES, BIND_GROUP_INTERNAL_EMULATION,
-    D3D11_MAX_CONSTANT_BUFFER_SLOTS, MAX_SAMPLER_SLOTS, MAX_TEXTURE_SLOTS, MAX_UAV_SLOTS,
+    BIND_GROUP_INTERNAL_EMULATION, BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE, BINDING_BASE_UAV,
+    BINDING_INTERNAL_EXPANDED_VERTICES, D3D11_MAX_CONSTANT_BUFFER_SLOTS,
+    EXPANDED_VERTEX_MAX_VARYINGS, MAX_SAMPLER_SLOTS, MAX_TEXTURE_SLOTS, MAX_UAV_SLOTS,
 };
 use crate::input_layout::{
     fnv1a_32, map_layout_to_shader_locations_compact, InputLayoutBinding, InputLayoutDesc,
@@ -175,9 +175,10 @@ const DEFAULT_BIND_GROUP_CACHE_CAPACITY: usize = 4096;
 // This prepass is scaffolding for GS/HS/DS compute-based emulation. In particular:
 // - `@builtin(global_invocation_id).x` is treated as the GS `SV_PrimitiveID`
 // - `@builtin(global_invocation_id).y` is treated as the GS `SV_GSInstanceID`
-const GEOMETRY_PREPASS_EXPANDED_VERTEX_REG_COUNT: u32 = 2;
+// Expanded vertex record used by the emulation passthrough VS: clip-space position + 32 `vec4<f32>`
+// varying slots.
 const GEOMETRY_PREPASS_EXPANDED_VERTEX_STRIDE_BYTES: u64 =
-    GEOMETRY_PREPASS_EXPANDED_VERTEX_REG_COUNT as u64 * 16;
+    (1u64 + EXPANDED_VERTEX_MAX_VARYINGS as u64) * 16;
 // Use the indexed-indirect layout size since it is a strict superset of `DrawIndirectArgs`.
 const GEOMETRY_PREPASS_INDIRECT_ARGS_SIZE_BYTES: u64 = DrawIndexedIndirectArgs::SIZE_BYTES;
 const GEOMETRY_PREPASS_COUNTER_SIZE_BYTES: u64 = 4; // 1x u32
@@ -200,7 +201,7 @@ fn compute_prepass_vertex_pulling_binding_numbers(slot_count: u32) -> Vec<u32> {
 const GEOMETRY_PREPASS_CS_WGSL: &str = r#"
 struct ExpandedVertex {
     pos: vec4<f32>,
-    o1: vec4<f32>,
+    varyings: array<vec4<f32>, 32>,
 };
 
 struct Params {
@@ -258,9 +259,9 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
             out_vertices[2].pos = vec4<f32>(3.0, -1.0, z, 1.0);
         }
 
-        out_vertices[0].o1 = c;
-        out_vertices[1].o1 = c;
-        out_vertices[2].o1 = c;
+        out_vertices[0].varyings[1u] = c;
+        out_vertices[1].varyings[1u] = c;
+        out_vertices[2].varyings[1u] = c;
 
         // Indices for indexed draws.
         out_indices[0] = 0u;
@@ -284,9 +285,9 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
         out_vertices[base + 1u].pos = vec4<f32>(x0, 3.0, z, 1.0);
         out_vertices[base + 2u].pos = vec4<f32>(x1, -1.0, z, 1.0);
 
-        out_vertices[base + 0u].o1 = c;
-        out_vertices[base + 1u].o1 = c;
-        out_vertices[base + 2u].o1 = c;
+        out_vertices[base + 0u].varyings[1u] = c;
+        out_vertices[base + 1u].varyings[1u] = c;
+        out_vertices[base + 2u].varyings[1u] = c;
 
         out_indices[base + 0u] = base + 0u;
         out_indices[base + 1u] = base + 1u;
@@ -323,7 +324,7 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
 const GEOMETRY_PREPASS_CS_VERTEX_PULLING_WGSL: &str = r#"
 struct ExpandedVertex {
     pos: vec4<f32>,
-    o1: vec4<f32>,
+    varyings: array<vec4<f32>, 32>,
 };
 
 struct Params {
@@ -379,9 +380,9 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
             out_vertices[2].pos = vec4<f32>(3.0, -1.0, z, 1.0);
         }
 
-        out_vertices[0].o1 = c;
-        out_vertices[1].o1 = c;
-        out_vertices[2].o1 = c;
+        out_vertices[0].varyings[1u] = c;
+        out_vertices[1].varyings[1u] = c;
+        out_vertices[2].varyings[1u] = c;
 
         // Indices for indexed draws.
         out_indices[0] = 0u;
@@ -405,9 +406,9 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
         out_vertices[base + 1u].pos = vec4<f32>(x0, 3.0, z, 1.0);
         out_vertices[base + 2u].pos = vec4<f32>(x1, -1.0, z, 1.0);
 
-        out_vertices[base + 0u].o1 = c;
-        out_vertices[base + 1u].o1 = c;
-        out_vertices[base + 2u].o1 = c;
+        out_vertices[base + 0u].varyings[1u] = c;
+        out_vertices[base + 1u].varyings[1u] = c;
+        out_vertices[base + 2u].varyings[1u] = c;
 
         out_indices[base + 0u] = base + 0u;
         out_indices[base + 1u] = base + 1u;
@@ -3891,8 +3892,9 @@ impl AerogpuD3d11Executor {
             bail!("shader {ps_handle} is not a pixel shader");
         }
 
-        // Build render-pipeline bindings using the pixel shader only (the expanded-vertex
-        // passthrough VS has no resource bindings).
+        // Build render-pipeline bindings using the pixel shader only. The expanded-geometry
+        // passthrough VS only consumes internal emulation resources (expanded vertex buffer), so
+        // it does not need the translated D3D vertex-stage binding table.
         let mut pipeline_bindings = reflection_bindings::build_pipeline_bindings_info(
             &self.device,
             &mut self.bind_group_layout_cache,
@@ -3900,6 +3902,11 @@ impl AerogpuD3d11Executor {
                 ps.reflection.bindings.as_slice(),
             )],
             reflection_bindings::BindGroupIndexValidation::GuestShaders,
+        )?;
+        extend_pipeline_bindings_for_passthrough_vs(
+            &self.device,
+            &mut self.bind_group_layout_cache,
+            &mut pipeline_bindings,
         )?;
         let layout_key = std::mem::replace(
             &mut pipeline_bindings.layout_key,
@@ -4001,6 +4008,7 @@ impl AerogpuD3d11Executor {
         }
 
         // Prepare compute prepass output buffers.
+        let uniform_align = (self.device.limits().min_uniform_buffer_offset_alignment as u64).max(1);
         let patchlist_only_emulation = matches!(
             self.state.primitive_topology,
             CmdPrimitiveTopology::PatchList { .. }
@@ -4726,8 +4734,27 @@ impl AerogpuD3d11Executor {
 
         // Build bind groups for the render pass (before starting the pass so we can freely mutate
         // executor caches).
-        let render_bind_groups =
+        let mut render_bind_groups =
             self.build_stage_bind_groups(ShaderStage::Geometry, &pipeline_bindings)?;
+        // Bind the expanded-geometry vertex buffer for the autogenerated passthrough VS.
+        let internal_index = BIND_GROUP_INTERNAL_EMULATION as usize;
+        if internal_index < render_bind_groups.len() {
+            let size = wgpu::BufferSize::new(expanded_vertex_alloc.size)
+                .expect("expanded vertex allocation must be non-empty");
+            render_bind_groups[internal_index] =
+                Arc::new(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("aerogpu_cmd expanded draw emulation bind group"),
+                    layout: pipeline_bindings.group_layouts[internal_index].layout.as_ref(),
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: BINDING_INTERNAL_EXPANDED_VERTICES,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: expanded_vertex_alloc.buffer.as_ref(),
+                            offset: expanded_vertex_alloc.offset,
+                            size: Some(size),
+                        }),
+                    }],
+                }));
+        }
 
         // `PipelineCache` returns a reference tied to the mutable borrow. Convert it to a raw
         // pointer so we can keep using executor state while the render pass is alive.
@@ -4738,17 +4765,21 @@ impl AerogpuD3d11Executor {
             // points.
             //
             // Future GS/HS/DS emulation will supply the correct post-expansion topology here.
-            let expanded_topology = wgpu::PrimitiveTopology::TriangleList;
-            let (_key, pipeline) = get_or_create_render_pipeline_for_expanded_draw(
+            let prev_emulated = self.state.emulated_expanded_vertex_buffer;
+            let prev_topology = self.state.primitive_topology;
+            self.state.emulated_expanded_vertex_buffer = Some(0);
+            self.state.primitive_topology = CmdPrimitiveTopology::TriangleList;
+            let pipeline_res = get_or_create_render_pipeline_for_state(
                 &self.device,
                 &mut self.pipeline_cache,
                 pipeline_layout.as_ref(),
-                &self.resources,
+                &mut self.resources,
                 &self.state,
                 layout_key,
-                GEOMETRY_PREPASS_EXPANDED_VERTEX_REG_COUNT,
-                expanded_topology,
-            )?;
+            );
+            self.state.emulated_expanded_vertex_buffer = prev_emulated;
+            self.state.primitive_topology = prev_topology;
+            let (_key, pipeline, _slots) = pipeline_res?;
             pipeline as *const wgpu::RenderPipeline
         };
         let render_pipeline = unsafe { &*render_pipeline_ptr };
@@ -4904,16 +4935,6 @@ impl AerogpuD3d11Executor {
             });
 
             pass.set_pipeline(render_pipeline);
-            let vb_end = expanded_vertex_alloc
-                .offset
-                .checked_add(expanded_vertex_alloc.size)
-                .ok_or_else(|| anyhow!("geometry prepass expanded vertex slice overflows u64"))?;
-            pass.set_vertex_buffer(
-                0,
-                expanded_vertex_alloc
-                    .buffer
-                    .slice(expanded_vertex_alloc.offset..vb_end),
-            );
 
             for (group_index, bg) in render_bind_groups.iter().enumerate() {
                 pass.set_bind_group(group_index as u32, bg.as_ref(), &[]);
@@ -16372,7 +16393,7 @@ mod tests {
                 &exec.resources,
                 &exec.state,
                 layout_key,
-                GEOMETRY_PREPASS_EXPANDED_VERTEX_REG_COUNT,
+                1,
                 wgpu::PrimitiveTopology::TriangleList,
             );
             exec.device.poll(wgpu::Maintain::Wait);
