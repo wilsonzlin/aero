@@ -1791,8 +1791,11 @@ impl AerogpuD3d11Executor {
         self.gs_scratch.clear();
         self.expansion_scratch.reset();
         self.tessellation.reset();
+        self.encoder_has_commands = false;
         self.encoder_used_buffers.clear();
         self.encoder_used_textures.clear();
+        self.destroyed_buffers.clear();
+        self.destroyed_textures.clear();
         self.next_scratch_buffer_id = 1u64 << 32;
         self.bindings = BindingState::default();
         for stage in [
@@ -2438,6 +2441,10 @@ impl AerogpuD3d11Executor {
         pending_writebacks: &mut Vec<PendingWriteback>,
     ) -> Result<ExecuteReport> {
         self.encoder_has_commands = false;
+        self.encoder_used_buffers.clear();
+        self.encoder_used_textures.clear();
+        self.destroyed_buffers.clear();
+        self.destroyed_textures.clear();
         // Scratch allocations are per-command-stream; reset the bump cursor so new work can reuse
         // existing backing buffers.
         self.gpu_scratch.reset();
@@ -2537,6 +2544,8 @@ impl AerogpuD3d11Executor {
                 self.encoder_has_commands = false;
                 self.encoder_used_buffers.clear();
                 self.encoder_used_textures.clear();
+                self.destroyed_buffers.clear();
+                self.destroyed_textures.clear();
                 Ok(report)
             }
             Err(err) => {
@@ -2546,6 +2555,8 @@ impl AerogpuD3d11Executor {
                 self.encoder_used_buffers.clear();
                 self.encoder_used_textures.clear();
                 self.queue.submit([]);
+                self.destroyed_buffers.clear();
+                self.destroyed_textures.clear();
                 Err(err)
             }
         }
@@ -2560,6 +2571,10 @@ impl AerogpuD3d11Executor {
         pending_writebacks: &mut Vec<PendingWriteback>,
     ) -> Result<ExecuteReport> {
         self.encoder_has_commands = false;
+        self.encoder_used_buffers.clear();
+        self.encoder_used_textures.clear();
+        self.destroyed_buffers.clear();
+        self.destroyed_textures.clear();
         let iter = AerogpuCmdStreamIter::new(stream_bytes)
             .map_err(|e| anyhow!("aerogpu_cmd: invalid cmd stream: {e:?}"))?;
         let stream_size = iter.header().size_bytes as usize;
@@ -2651,6 +2666,8 @@ impl AerogpuD3d11Executor {
                 self.encoder_has_commands = false;
                 self.encoder_used_buffers.clear();
                 self.encoder_used_textures.clear();
+                self.destroyed_buffers.clear();
+                self.destroyed_textures.clear();
                 Ok(report)
             }
             Err(err) => {
@@ -2660,6 +2677,8 @@ impl AerogpuD3d11Executor {
                 self.encoder_used_buffers.clear();
                 self.encoder_used_textures.clear();
                 self.queue.submit([]);
+                self.destroyed_buffers.clear();
+                self.destroyed_textures.clear();
                 Err(err)
             }
         }
