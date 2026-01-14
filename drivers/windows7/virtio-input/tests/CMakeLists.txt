@@ -30,6 +30,7 @@ function(vioinput_list_append_unique list_var)
 endfunction()
 
 file(GLOB VIOINPUT_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_LIST_DIR}/*_test.c")
+list(SORT VIOINPUT_TEST_SOURCES)
 
 foreach(test_src IN LISTS VIOINPUT_TEST_SOURCES)
     get_filename_component(test_name "${test_src}" NAME_WE)
