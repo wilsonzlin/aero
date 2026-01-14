@@ -4502,7 +4502,7 @@ static VOID AerovNetProcessSgList(_In_ PDEVICE_OBJECT DeviceObject, _In_opt_ PVO
   if (TxReq->Cancelled) {
     AerovNetCompleteTxRequest(Adapter, TxReq, NDIS_STATUS_REQUEST_ABORTED, &CompleteHead, &CompleteTail);
     CompleteNow = TRUE;
-  } else if (Adapter->State == AerovNetAdapterStopped) {
+  } else if (Adapter->State == AerovNetAdapterStopped || Adapter->SurpriseRemoved) {
     AerovNetCompleteTxRequest(Adapter, TxReq, NDIS_STATUS_RESET_IN_PROGRESS, &CompleteHead, &CompleteTail);
     CompleteNow = TRUE;
   } else if (ScatterGatherList == NULL) {
