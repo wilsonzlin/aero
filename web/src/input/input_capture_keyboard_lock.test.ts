@@ -18,6 +18,15 @@ async function withFakeNavigatorKeyboard<T>(keyboard: unknown, run: () => Promis
   }
 }
 
+type InputCaptureKeyboardLockHarness = {
+  hasFocus: boolean;
+  pointerLock: { locked: boolean };
+  handleClick(event: MouseEvent): void;
+  handlePointerLockChange(locked: boolean): void;
+  handleBlur(): void;
+  handlePointerLockError(): void;
+};
+
 describe("InputCapture Keyboard Lock integration", () => {
   it("attempts navigator.keyboard.lock() only when enabled and available", async () => {
     await withStubbedDocument(async () => {
@@ -30,11 +39,11 @@ describe("InputCapture Keyboard Lock integration", () => {
         const ioWorker = { postMessage: () => {} };
         const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, enableKeyboardLock: true });
 
-        (capture as any).hasFocus = true;
-        (capture as any).handleClick({ preventDefault: () => {}, stopPropagation: () => {} } as unknown as MouseEvent);
+        (capture as unknown as InputCaptureKeyboardLockHarness).hasFocus = true;
+        (capture as unknown as InputCaptureKeyboardLockHarness).handleClick({ preventDefault: () => {}, stopPropagation: () => {} } as unknown as MouseEvent);
 
-        (capture as any).pointerLock.locked = true;
-        (capture as any).handlePointerLockChange(true);
+        (capture as unknown as InputCaptureKeyboardLockHarness).pointerLock.locked = true;
+        (capture as unknown as InputCaptureKeyboardLockHarness).handlePointerLockChange(true);
 
         expect(lock).toHaveBeenCalledTimes(1);
         // Prefer an explicit key list so we can reliably capture keys like Escape + function keys.
@@ -42,10 +51,10 @@ describe("InputCapture Keyboard Lock integration", () => {
 
         // Disable the feature: lock should not be attempted.
         const captureDisabled = new InputCapture(canvas, ioWorker, { enableGamepad: false, enableKeyboardLock: false });
-        (captureDisabled as any).hasFocus = true;
-        (captureDisabled as any).handleClick({ preventDefault: () => {}, stopPropagation: () => {} } as unknown as MouseEvent);
-        (captureDisabled as any).pointerLock.locked = true;
-        (captureDisabled as any).handlePointerLockChange(true);
+        (captureDisabled as unknown as InputCaptureKeyboardLockHarness).hasFocus = true;
+        (captureDisabled as unknown as InputCaptureKeyboardLockHarness).handleClick({ preventDefault: () => {}, stopPropagation: () => {} } as unknown as MouseEvent);
+        (captureDisabled as unknown as InputCaptureKeyboardLockHarness).pointerLock.locked = true;
+        (captureDisabled as unknown as InputCaptureKeyboardLockHarness).handlePointerLockChange(true);
         expect(lock).toHaveBeenCalledTimes(1);
       });
     });
@@ -58,12 +67,12 @@ describe("InputCapture Keyboard Lock integration", () => {
       const ioWorker = { postMessage: () => {} };
       const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, enableKeyboardLock: true });
 
-      (capture as any).hasFocus = true;
-      (capture as any).handleClick({ preventDefault: () => {}, stopPropagation: () => {} } as unknown as MouseEvent);
+      (capture as unknown as InputCaptureKeyboardLockHarness).hasFocus = true;
+      (capture as unknown as InputCaptureKeyboardLockHarness).handleClick({ preventDefault: () => {}, stopPropagation: () => {} } as unknown as MouseEvent);
 
-      (capture as any).pointerLock.locked = true;
+      (capture as unknown as InputCaptureKeyboardLockHarness).pointerLock.locked = true;
       // No navigator.keyboard => should be a no-op.
-      (capture as any).handlePointerLockChange(true);
+      (capture as unknown as InputCaptureKeyboardLockHarness).handlePointerLockChange(true);
     });
   });
 
@@ -78,24 +87,24 @@ describe("InputCapture Keyboard Lock integration", () => {
         const ioWorker = { postMessage: () => {} };
         const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, enableKeyboardLock: true, recycleBuffers: false });
 
-        (capture as any).hasFocus = true;
-        (capture as any).handleClick({ preventDefault: () => {}, stopPropagation: () => {} } as unknown as MouseEvent);
-        (capture as any).pointerLock.locked = true;
-        (capture as any).handlePointerLockChange(true);
+        (capture as unknown as InputCaptureKeyboardLockHarness).hasFocus = true;
+        (capture as unknown as InputCaptureKeyboardLockHarness).handleClick({ preventDefault: () => {}, stopPropagation: () => {} } as unknown as MouseEvent);
+        (capture as unknown as InputCaptureKeyboardLockHarness).pointerLock.locked = true;
+        (capture as unknown as InputCaptureKeyboardLockHarness).handlePointerLockChange(true);
         expect(lock).toHaveBeenCalledTimes(1);
 
         // Leaving capture via canvas blur should release the lock.
-        (capture as any).handleBlur();
+        (capture as unknown as InputCaptureKeyboardLockHarness).handleBlur();
         expect(unlock).toHaveBeenCalledTimes(1);
 
         // Re-enter capture and ensure pointer lock exit also unlocks.
-        (capture as any).hasFocus = true;
-        (capture as any).handleClick({ preventDefault: () => {}, stopPropagation: () => {} } as unknown as MouseEvent);
-        (capture as any).pointerLock.locked = true;
-        (capture as any).handlePointerLockChange(true);
+        (capture as unknown as InputCaptureKeyboardLockHarness).hasFocus = true;
+        (capture as unknown as InputCaptureKeyboardLockHarness).handleClick({ preventDefault: () => {}, stopPropagation: () => {} } as unknown as MouseEvent);
+        (capture as unknown as InputCaptureKeyboardLockHarness).pointerLock.locked = true;
+        (capture as unknown as InputCaptureKeyboardLockHarness).handlePointerLockChange(true);
 
-        (capture as any).pointerLock.locked = false;
-        (capture as any).handlePointerLockChange(false);
+        (capture as unknown as InputCaptureKeyboardLockHarness).pointerLock.locked = false;
+        (capture as unknown as InputCaptureKeyboardLockHarness).handlePointerLockChange(false);
         expect(unlock).toHaveBeenCalledTimes(2);
       });
     });
@@ -117,8 +126,8 @@ describe("InputCapture Keyboard Lock integration", () => {
         const ioWorker = { postMessage: () => {} };
         const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, enableKeyboardLock: true });
 
-        (capture as any).hasFocus = true;
-        (capture as any).handleClick({ preventDefault: () => {}, stopPropagation: () => {} } as unknown as MouseEvent);
+        (capture as unknown as InputCaptureKeyboardLockHarness).hasFocus = true;
+        (capture as unknown as InputCaptureKeyboardLockHarness).handleClick({ preventDefault: () => {}, stopPropagation: () => {} } as unknown as MouseEvent);
 
         // Let the TypeError rejection be handled and the fallback call occur.
         await new Promise((resolve) => setTimeout(resolve, 0));
@@ -143,11 +152,11 @@ describe("InputCapture Keyboard Lock integration", () => {
           const ioWorker = { postMessage: () => {} };
           const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, enableKeyboardLock: true });
 
-          (capture as any).hasFocus = true;
-          (capture as any).handleClick({ preventDefault: () => {}, stopPropagation: () => {} } as unknown as MouseEvent);
+          (capture as unknown as InputCaptureKeyboardLockHarness).hasFocus = true;
+          (capture as unknown as InputCaptureKeyboardLockHarness).handleClick({ preventDefault: () => {}, stopPropagation: () => {} } as unknown as MouseEvent);
 
-          (capture as any).pointerLock.locked = true;
-          (capture as any).handlePointerLockChange(true);
+          (capture as unknown as InputCaptureKeyboardLockHarness).pointerLock.locked = true;
+          (capture as unknown as InputCaptureKeyboardLockHarness).handlePointerLockChange(true);
 
           // Give the promise rejection a chance to be observed by our catch handler.
           await new Promise((resolve) => setTimeout(resolve, 0));
@@ -172,13 +181,13 @@ describe("InputCapture Keyboard Lock integration", () => {
         const ioWorker = { postMessage: () => {} };
         const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, enableKeyboardLock: true });
 
-        (capture as any).hasFocus = true;
-        (capture as any).handleClick({ preventDefault: () => {}, stopPropagation: () => {} } as unknown as MouseEvent);
+        (capture as unknown as InputCaptureKeyboardLockHarness).hasFocus = true;
+        (capture as unknown as InputCaptureKeyboardLockHarness).handleClick({ preventDefault: () => {}, stopPropagation: () => {} } as unknown as MouseEvent);
 
         // Let the lock promise resolve so we don't race the in-flight `.then()` handler.
         await Promise.resolve();
 
-        (capture as any).handlePointerLockError();
+        (capture as unknown as InputCaptureKeyboardLockHarness).handlePointerLockError();
         expect(unlock).toHaveBeenCalled();
       });
     });

@@ -3,6 +3,18 @@ import { describe, expect, it, vi } from "vitest";
 import { InputCapture } from "./input_capture";
 import { makeCanvasStub, withStubbedDocument } from "./test_utils";
 
+type InputCaptureHarness = {
+  hasFocus: boolean;
+  mouseButtons: number;
+  pointerLock: { locked: boolean };
+  queue: { size: number };
+  handleKeyDown(event: KeyboardEvent): void;
+  handleKeyUp(event: KeyboardEvent): void;
+  handleMouseDown(event: MouseEvent): void;
+  handleMouseUp(event: MouseEvent): void;
+  handleMouseMove(event: MouseEvent): void;
+};
+
 describe("InputCapture preventDefault policy", () => {
   it("prevents default for browser navigation keys", () => {
     withStubbedDocument(() => {
@@ -11,7 +23,7 @@ describe("InputCapture preventDefault policy", () => {
       const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false });
 
       // Simulate the canvas being focused.
-      (capture as any).hasFocus = true;
+      (capture as unknown as InputCaptureHarness).hasFocus = true;
 
       for (const code of ["BrowserBack", "BrowserSearch"]) {
         const preventDefault = vi.fn();
@@ -28,11 +40,11 @@ describe("InputCapture preventDefault policy", () => {
           stopPropagation,
         } as unknown as KeyboardEvent;
 
-        (capture as any).handleKeyDown(event);
+        (capture as unknown as InputCaptureHarness).handleKeyDown(event);
         expect(preventDefault).toHaveBeenCalledTimes(1);
         expect(stopPropagation).toHaveBeenCalledTimes(1);
 
-        (capture as any).handleKeyUp(event);
+        (capture as unknown as InputCaptureHarness).handleKeyUp(event);
         expect(preventDefault).toHaveBeenCalledTimes(2);
         expect(stopPropagation).toHaveBeenCalledTimes(2);
       }
@@ -46,7 +58,7 @@ describe("InputCapture preventDefault policy", () => {
       const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false });
 
       // Simulate the canvas being focused.
-      (capture as any).hasFocus = true;
+      (capture as unknown as InputCaptureHarness).hasFocus = true;
 
       const preventDefault = vi.fn();
       const stopPropagation = vi.fn();
@@ -62,15 +74,15 @@ describe("InputCapture preventDefault policy", () => {
         stopPropagation,
       } as unknown as KeyboardEvent;
 
-      (capture as any).handleKeyDown(event);
+      (capture as unknown as InputCaptureHarness).handleKeyDown(event);
       expect(preventDefault).toHaveBeenCalledTimes(0);
       expect(stopPropagation).toHaveBeenCalledTimes(0);
-      expect((capture as any).queue.size).toBe(2);
+      expect((capture as unknown as InputCaptureHarness).queue.size).toBe(2);
 
-      (capture as any).handleKeyUp({ ...event, timeStamp: 1 } as KeyboardEvent);
+      (capture as unknown as InputCaptureHarness).handleKeyUp({ ...event, timeStamp: 1 } as KeyboardEvent);
       expect(preventDefault).toHaveBeenCalledTimes(0);
       expect(stopPropagation).toHaveBeenCalledTimes(0);
-      expect((capture as any).queue.size).toBe(4);
+      expect((capture as unknown as InputCaptureHarness).queue.size).toBe(4);
     });
   });
 
@@ -81,7 +93,7 @@ describe("InputCapture preventDefault policy", () => {
       const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false });
 
       // Simulate the canvas being focused.
-      (capture as any).hasFocus = true;
+      (capture as unknown as InputCaptureHarness).hasFocus = true;
 
       const preventDefault = vi.fn();
       const stopPropagation = vi.fn();
@@ -97,15 +109,15 @@ describe("InputCapture preventDefault policy", () => {
         stopPropagation,
       } as unknown as KeyboardEvent;
 
-      (capture as any).handleKeyDown(event);
+      (capture as unknown as InputCaptureHarness).handleKeyDown(event);
       expect(preventDefault).toHaveBeenCalledTimes(1);
       expect(stopPropagation).toHaveBeenCalledTimes(1);
-      expect((capture as any).queue.size).toBe(2);
+      expect((capture as unknown as InputCaptureHarness).queue.size).toBe(2);
 
-      (capture as any).handleKeyUp({ ...event, timeStamp: 1 } as KeyboardEvent);
+      (capture as unknown as InputCaptureHarness).handleKeyUp({ ...event, timeStamp: 1 } as KeyboardEvent);
       expect(preventDefault).toHaveBeenCalledTimes(2);
       expect(stopPropagation).toHaveBeenCalledTimes(2);
-      expect((capture as any).queue.size).toBe(4);
+      expect((capture as unknown as InputCaptureHarness).queue.size).toBe(4);
     });
   });
 
@@ -116,7 +128,7 @@ describe("InputCapture preventDefault policy", () => {
       const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false });
 
       // Simulate the canvas being focused.
-      (capture as any).hasFocus = true;
+      (capture as unknown as InputCaptureHarness).hasFocus = true;
 
       const preventDefault = vi.fn();
       const stopPropagation = vi.fn();
@@ -132,15 +144,15 @@ describe("InputCapture preventDefault policy", () => {
         stopPropagation,
       } as unknown as KeyboardEvent;
 
-      (capture as any).handleKeyDown(event);
+      (capture as unknown as InputCaptureHarness).handleKeyDown(event);
       expect(preventDefault).toHaveBeenCalledTimes(0);
       expect(stopPropagation).toHaveBeenCalledTimes(0);
-      expect((capture as any).queue.size).toBe(2);
+      expect((capture as unknown as InputCaptureHarness).queue.size).toBe(2);
 
-      (capture as any).handleKeyUp({ ...event, timeStamp: 1 } as KeyboardEvent);
+      (capture as unknown as InputCaptureHarness).handleKeyUp({ ...event, timeStamp: 1 } as KeyboardEvent);
       expect(preventDefault).toHaveBeenCalledTimes(0);
       expect(stopPropagation).toHaveBeenCalledTimes(0);
-      expect((capture as any).queue.size).toBe(4);
+      expect((capture as unknown as InputCaptureHarness).queue.size).toBe(4);
     });
   });
 
@@ -151,16 +163,16 @@ describe("InputCapture preventDefault policy", () => {
       const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false });
 
       // Simulate the canvas being focused.
-      (capture as any).hasFocus = true;
+      (capture as unknown as InputCaptureHarness).hasFocus = true;
 
       const preventDefault = vi.fn();
       const stopPropagation = vi.fn();
       const ev = { button: 3, preventDefault, stopPropagation, timeStamp: 0, target: canvas } as unknown as MouseEvent;
-      (capture as any).handleMouseDown(ev);
+      (capture as unknown as InputCaptureHarness).handleMouseDown(ev);
       expect(preventDefault).toHaveBeenCalledTimes(1);
       expect(stopPropagation).toHaveBeenCalledTimes(1);
 
-      (capture as any).handleMouseUp(ev);
+      (capture as unknown as InputCaptureHarness).handleMouseUp(ev);
       expect(preventDefault).toHaveBeenCalledTimes(2);
       expect(stopPropagation).toHaveBeenCalledTimes(2);
     });
@@ -173,7 +185,7 @@ describe("InputCapture preventDefault policy", () => {
       const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false });
 
       // Simulate pointer lock (the mousemove listener is attached to `document`).
-      (capture as any).pointerLock.locked = true;
+      (capture as unknown as InputCaptureHarness).pointerLock.locked = true;
 
       const preventDefault = vi.fn();
       const stopPropagation = vi.fn();
@@ -184,7 +196,7 @@ describe("InputCapture preventDefault policy", () => {
         stopPropagation,
         timeStamp: 0,
       } as unknown as MouseEvent;
-      (capture as any).handleMouseMove(ev);
+      (capture as unknown as InputCaptureHarness).handleMouseMove(ev);
       expect(preventDefault).toHaveBeenCalledTimes(1);
       expect(stopPropagation).toHaveBeenCalledTimes(1);
     });
@@ -197,11 +209,11 @@ describe("InputCapture preventDefault policy", () => {
       const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: false });
 
       // Simulate the canvas being focused (capture active).
-      (capture as any).hasFocus = true;
+      (capture as unknown as InputCaptureHarness).hasFocus = true;
 
       const downPreventDefault = vi.fn();
       const downStopPropagation = vi.fn();
-      (capture as any).handleMouseDown({
+      (capture as unknown as InputCaptureHarness).handleMouseDown({
         button: 0,
         preventDefault: downPreventDefault,
         stopPropagation: downStopPropagation,
@@ -211,12 +223,12 @@ describe("InputCapture preventDefault policy", () => {
 
       expect(downPreventDefault).toHaveBeenCalledTimes(1);
       expect(downStopPropagation).toHaveBeenCalledTimes(1);
-      expect((capture as any).mouseButtons).toBe(1);
-      expect((capture as any).queue.size).toBe(1);
+      expect((capture as unknown as InputCaptureHarness).mouseButtons).toBe(1);
+      expect((capture as unknown as InputCaptureHarness).queue.size).toBe(1);
 
       const upPreventDefault = vi.fn();
       const upStopPropagation = vi.fn();
-      (capture as any).handleMouseUp({
+      (capture as unknown as InputCaptureHarness).handleMouseUp({
         button: 0,
         preventDefault: upPreventDefault,
         stopPropagation: upStopPropagation,
@@ -227,8 +239,8 @@ describe("InputCapture preventDefault policy", () => {
 
       expect(upPreventDefault).toHaveBeenCalledTimes(1);
       expect(upStopPropagation).toHaveBeenCalledTimes(1);
-      expect((capture as any).mouseButtons).toBe(0);
-      expect((capture as any).queue.size).toBe(2);
+      expect((capture as unknown as InputCaptureHarness).mouseButtons).toBe(0);
+      expect((capture as unknown as InputCaptureHarness).queue.size).toBe(2);
     });
   });
 
@@ -238,11 +250,11 @@ describe("InputCapture preventDefault policy", () => {
       const ioWorker = { postMessage: () => {} };
       const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: false });
 
-      (capture as any).hasFocus = true;
+      (capture as unknown as InputCaptureHarness).hasFocus = true;
 
       const upPreventDefault = vi.fn();
       const upStopPropagation = vi.fn();
-      (capture as any).handleMouseUp({
+      (capture as unknown as InputCaptureHarness).handleMouseUp({
         button: 0,
         preventDefault: upPreventDefault,
         stopPropagation: upStopPropagation,
@@ -252,7 +264,7 @@ describe("InputCapture preventDefault policy", () => {
 
       expect(upPreventDefault).toHaveBeenCalledTimes(0);
       expect(upStopPropagation).toHaveBeenCalledTimes(0);
-      expect((capture as any).queue.size).toBe(0);
+      expect((capture as unknown as InputCaptureHarness).queue.size).toBe(0);
     });
   });
 
@@ -262,11 +274,11 @@ describe("InputCapture preventDefault policy", () => {
       const ioWorker = { postMessage: () => {} };
       const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: false });
 
-      (capture as any).hasFocus = true;
+      (capture as unknown as InputCaptureHarness).hasFocus = true;
 
       const downPreventDefault = vi.fn();
       const downStopPropagation = vi.fn();
-      (capture as any).handleMouseDown({
+      (capture as unknown as InputCaptureHarness).handleMouseDown({
         // Not in our supported 0..7 range.
         button: 8,
         preventDefault: downPreventDefault,
@@ -277,12 +289,12 @@ describe("InputCapture preventDefault policy", () => {
 
       expect(downPreventDefault).toHaveBeenCalledTimes(1);
       expect(downStopPropagation).toHaveBeenCalledTimes(1);
-      expect((capture as any).mouseButtons).toBe(0);
-      expect((capture as any).queue.size).toBe(0);
+      expect((capture as unknown as InputCaptureHarness).mouseButtons).toBe(0);
+      expect((capture as unknown as InputCaptureHarness).queue.size).toBe(0);
 
       const upPreventDefault = vi.fn();
       const upStopPropagation = vi.fn();
-      (capture as any).handleMouseUp({
+      (capture as unknown as InputCaptureHarness).handleMouseUp({
         button: 8,
         preventDefault: upPreventDefault,
         stopPropagation: upStopPropagation,
@@ -292,8 +304,8 @@ describe("InputCapture preventDefault policy", () => {
 
       expect(upPreventDefault).toHaveBeenCalledTimes(1);
       expect(upStopPropagation).toHaveBeenCalledTimes(1);
-      expect((capture as any).mouseButtons).toBe(0);
-      expect((capture as any).queue.size).toBe(0);
+      expect((capture as unknown as InputCaptureHarness).mouseButtons).toBe(0);
+      expect((capture as unknown as InputCaptureHarness).queue.size).toBe(0);
     });
   });
 
@@ -303,9 +315,9 @@ describe("InputCapture preventDefault policy", () => {
       const ioWorker = { postMessage: () => {} };
       const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: false });
 
-      (capture as any).hasFocus = true;
+      (capture as unknown as InputCaptureHarness).hasFocus = true;
 
-      (capture as any).handleMouseDown({
+      (capture as unknown as InputCaptureHarness).handleMouseDown({
         button: 5,
         preventDefault: vi.fn(),
         stopPropagation: vi.fn(),
@@ -313,10 +325,10 @@ describe("InputCapture preventDefault policy", () => {
         target: canvas,
       } as unknown as MouseEvent);
 
-      expect((capture as any).mouseButtons).toBe(0x20);
-      expect((capture as any).queue.size).toBe(1);
+      expect((capture as unknown as InputCaptureHarness).mouseButtons).toBe(0x20);
+      expect((capture as unknown as InputCaptureHarness).queue.size).toBe(1);
 
-      (capture as any).handleMouseUp({
+      (capture as unknown as InputCaptureHarness).handleMouseUp({
         button: 5,
         preventDefault: vi.fn(),
         stopPropagation: vi.fn(),
@@ -324,8 +336,8 @@ describe("InputCapture preventDefault policy", () => {
         target: canvas,
       } as unknown as MouseEvent);
 
-      expect((capture as any).mouseButtons).toBe(0);
-      expect((capture as any).queue.size).toBe(2);
+      expect((capture as unknown as InputCaptureHarness).mouseButtons).toBe(0);
+      expect((capture as unknown as InputCaptureHarness).queue.size).toBe(2);
     });
   });
 });

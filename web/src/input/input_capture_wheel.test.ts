@@ -8,6 +8,18 @@ function decodeFirstEventWords(buffer: ArrayBuffer): Int32Array {
   return new Int32Array(buffer);
 }
 
+type InputCaptureHarness = {
+  hasFocus: boolean;
+  wheelFrac: number;
+  wheelFracX: number;
+  pointerLock: { locked: boolean };
+  handleWheel(event: WheelEvent): void;
+  handleBlur(): void;
+  handleMouseMove(event: MouseEvent): void;
+  handlePointerLockChange(locked: boolean): void;
+  queue: { size: number; flush: (target: { postMessage: (msg: unknown) => void }) => void };
+};
+
 describe("InputCapture wheel handling", () => {
   it("scales wheel delta based on WheelEvent.deltaMode (pixel/line/page)", () => {
     withStubbedDocument(() => {
@@ -21,7 +33,7 @@ describe("InputCapture wheel handling", () => {
       const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: false });
 
       // Simulate the canvas being focused.
-      (capture as any).hasFocus = true;
+      (capture as unknown as InputCaptureHarness).hasFocus = true;
 
       const preventDefault = vi.fn();
       const stopPropagation = vi.fn();
@@ -29,7 +41,7 @@ describe("InputCapture wheel handling", () => {
       // Use the same raw delta across modes so we can compare scaling directly.
       const deltaY = 100;
 
-      (capture as any).handleWheel({
+      (capture as unknown as InputCaptureHarness).handleWheel({
         deltaY,
         deltaMode: 0, // DOM_DELTA_PIXEL => scaled down by /100
         preventDefault,
@@ -38,7 +50,7 @@ describe("InputCapture wheel handling", () => {
       } as unknown as WheelEvent);
       capture.flushNow();
 
-      (capture as any).handleWheel({
+      (capture as unknown as InputCaptureHarness).handleWheel({
         deltaY,
         deltaMode: 1, // DOM_DELTA_LINE => as-is
         preventDefault,
@@ -47,7 +59,7 @@ describe("InputCapture wheel handling", () => {
       } as unknown as WheelEvent);
       capture.flushNow();
 
-      (capture as any).handleWheel({
+      (capture as unknown as InputCaptureHarness).handleWheel({
         deltaY,
         deltaMode: 2, // DOM_DELTA_PAGE => scaled up by *3
         preventDefault,
@@ -106,7 +118,7 @@ describe("InputCapture wheel handling", () => {
       const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: false });
 
       // Simulate the canvas being focused.
-      (capture as any).hasFocus = true;
+      (capture as unknown as InputCaptureHarness).hasFocus = true;
 
       const preventDefault = vi.fn();
       const stopPropagation = vi.fn();
@@ -115,13 +127,13 @@ describe("InputCapture wheel handling", () => {
       // Ensure we don't lose small deltas entirely.
       for (let i = 0; i < 4; i++) {
         const ev = { deltaY: 20, deltaMode: 0, preventDefault, stopPropagation, timeStamp: i } as unknown as WheelEvent;
-        (capture as any).handleWheel(ev);
-        expect((capture as any).queue.size).toBe(0);
+        (capture as unknown as InputCaptureHarness).handleWheel(ev);
+        expect((capture as unknown as InputCaptureHarness).queue.size).toBe(0);
       }
 
       const ev = { deltaY: 20, deltaMode: 0, preventDefault, stopPropagation, timeStamp: 5 } as unknown as WheelEvent;
-      (capture as any).handleWheel(ev);
-      expect((capture as any).queue.size).toBe(1);
+      (capture as unknown as InputCaptureHarness).handleWheel(ev);
+      expect((capture as unknown as InputCaptureHarness).queue.size).toBe(1);
 
       capture.flushNow();
 
@@ -150,7 +162,7 @@ describe("InputCapture wheel handling", () => {
       const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: false });
 
       // Simulate the canvas being focused.
-      (capture as any).hasFocus = true;
+      (capture as unknown as InputCaptureHarness).hasFocus = true;
 
       const preventDefault = vi.fn();
       const stopPropagation = vi.fn();
@@ -165,8 +177,8 @@ describe("InputCapture wheel handling", () => {
           stopPropagation,
           timeStamp: i,
         } as unknown as WheelEvent;
-        (capture as any).handleWheel(ev);
-        expect((capture as any).queue.size).toBe(0);
+        (capture as unknown as InputCaptureHarness).handleWheel(ev);
+        expect((capture as unknown as InputCaptureHarness).queue.size).toBe(0);
       }
 
       const ev = {
@@ -177,8 +189,8 @@ describe("InputCapture wheel handling", () => {
         stopPropagation,
         timeStamp: 5,
       } as unknown as WheelEvent;
-      (capture as any).handleWheel(ev);
-      expect((capture as any).queue.size).toBe(1);
+      (capture as unknown as InputCaptureHarness).handleWheel(ev);
+      expect((capture as unknown as InputCaptureHarness).queue.size).toBe(1);
 
       capture.flushNow();
 
@@ -207,12 +219,12 @@ describe("InputCapture wheel handling", () => {
       const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: false });
 
       // Simulate the canvas being focused.
-      (capture as any).hasFocus = true;
+      (capture as unknown as InputCaptureHarness).hasFocus = true;
 
       const preventDefault = vi.fn();
       const stopPropagation = vi.fn();
 
-      (capture as any).handleWheel({
+      (capture as unknown as InputCaptureHarness).handleWheel({
         deltaY: Number.POSITIVE_INFINITY,
         deltaX: Number.NaN,
         deltaMode: 0,
@@ -222,7 +234,7 @@ describe("InputCapture wheel handling", () => {
       } as unknown as WheelEvent);
 
       // Non-finite deltas clamp to zero, so no wheel event should be queued.
-      expect((capture as any).queue.size).toBe(0);
+      expect((capture as unknown as InputCaptureHarness).queue.size).toBe(0);
 
       capture.flushNow();
 
@@ -243,20 +255,20 @@ describe("InputCapture wheel handling", () => {
 
       const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: false });
 
-      (capture as any).hasFocus = true;
+      (capture as unknown as InputCaptureHarness).hasFocus = true;
 
       const preventDefault = vi.fn();
       const stopPropagation = vi.fn();
       // 150px + 50px = 200px => 2 wheel "clicks" (100px/click). Old behavior would floor each event and
       // lose the final 0.5 click.
-      (capture as any).handleWheel({
+      (capture as unknown as InputCaptureHarness).handleWheel({
         deltaY: 150,
         deltaMode: 0,
         preventDefault,
         stopPropagation,
         timeStamp: 1,
       } as unknown as WheelEvent);
-      (capture as any).handleWheel({
+      (capture as unknown as InputCaptureHarness).handleWheel({
         deltaY: 50,
         deltaMode: 0,
         preventDefault,
@@ -289,13 +301,13 @@ describe("InputCapture wheel handling", () => {
       };
 
       const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: false });
-      (capture as any).hasFocus = true;
+      (capture as unknown as InputCaptureHarness).hasFocus = true;
 
       const preventDefault = vi.fn();
       const stopPropagation = vi.fn();
 
       // 100px in DOM_DELTA_PIXEL mode -> 1 horizontal "click".
-      (capture as any).handleWheel({
+      (capture as unknown as InputCaptureHarness).handleWheel({
         deltaX: 100,
         deltaY: 0,
         deltaMode: 0,
@@ -329,12 +341,12 @@ describe("InputCapture wheel handling", () => {
       };
 
       const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: false });
-      (capture as any).hasFocus = true;
+      (capture as unknown as InputCaptureHarness).hasFocus = true;
 
       const preventDefault = vi.fn();
       const stopPropagation = vi.fn();
 
-      (capture as any).handleWheel({
+      (capture as unknown as InputCaptureHarness).handleWheel({
         deltaX: 100,
         deltaY: 100,
         deltaMode: 0,
@@ -367,24 +379,24 @@ describe("InputCapture wheel handling", () => {
       };
 
       const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: false });
-      (capture as any).hasFocus = true;
+      (capture as unknown as InputCaptureHarness).hasFocus = true;
 
       const preventDefault = vi.fn();
       const stopPropagation = vi.fn();
 
       // 90px in pixel mode => 0.9 wheel steps; should not emit yet but leaves remainder.
-      (capture as any).handleWheel({ deltaY: 90, deltaMode: 0, preventDefault, stopPropagation, timeStamp: 0 } as unknown as WheelEvent);
-      expect((capture as any).queue.size).toBe(0);
+      (capture as unknown as InputCaptureHarness).handleWheel({ deltaY: 90, deltaMode: 0, preventDefault, stopPropagation, timeStamp: 0 } as unknown as WheelEvent);
+      expect((capture as unknown as InputCaptureHarness).queue.size).toBe(0);
 
       // Blur should reset remainder.
-      (capture as any).handleBlur();
-      expect((capture as any).wheelFrac).toBe(0);
-      expect((capture as any).wheelFracX).toBe(0);
+      (capture as unknown as InputCaptureHarness).handleBlur();
+      expect((capture as unknown as InputCaptureHarness).wheelFrac).toBe(0);
+      expect((capture as unknown as InputCaptureHarness).wheelFracX).toBe(0);
 
       // Resume capture and ensure the next small wheel delta does not immediately tick.
-      (capture as any).hasFocus = true;
-      (capture as any).handleWheel({ deltaY: 20, deltaMode: 0, preventDefault, stopPropagation, timeStamp: 1 } as unknown as WheelEvent);
-      expect((capture as any).queue.size).toBe(0);
+      (capture as unknown as InputCaptureHarness).hasFocus = true;
+      (capture as unknown as InputCaptureHarness).handleWheel({ deltaY: 20, deltaMode: 0, preventDefault, stopPropagation, timeStamp: 1 } as unknown as WheelEvent);
+      expect((capture as unknown as InputCaptureHarness).queue.size).toBe(0);
 
       capture.flushNow();
       expect(posted).toHaveLength(0);
@@ -402,29 +414,29 @@ describe("InputCapture wheel handling", () => {
         mouseSensitivity: 0.5,
       });
 
-      (capture as any).hasFocus = true;
-      (capture as any).pointerLock.locked = true;
+      (capture as unknown as InputCaptureHarness).hasFocus = true;
+      (capture as unknown as InputCaptureHarness).pointerLock.locked = true;
 
       const preventDefault = vi.fn();
       const stopPropagation = vi.fn();
 
       // movementX=1 with sensitivity 0.5 => 0.5px remainder, no whole-pixel event yet.
-      (capture as any).handleMouseMove({
+      (capture as unknown as InputCaptureHarness).handleMouseMove({
         movementX: 1,
         movementY: 0,
         preventDefault,
         stopPropagation,
         timeStamp: 0,
       } as unknown as MouseEvent);
-      expect((capture as any).queue.size).toBe(0);
+      expect((capture as unknown as InputCaptureHarness).queue.size).toBe(0);
 
       // Pointer lock exits; remainder should be dropped.
-      (capture as any).pointerLock.locked = false;
-      (capture as any).handlePointerLockChange(false);
+      (capture as unknown as InputCaptureHarness).pointerLock.locked = false;
+      (capture as unknown as InputCaptureHarness).handlePointerLockChange(false);
 
       // Re-enter pointer lock and move again. If remainder leaked, we'd get a full pixel event now.
-      (capture as any).pointerLock.locked = true;
-      (capture as any).handleMouseMove({
+      (capture as unknown as InputCaptureHarness).pointerLock.locked = true;
+      (capture as unknown as InputCaptureHarness).handleMouseMove({
         movementX: 1,
         movementY: 0,
         preventDefault,
@@ -432,7 +444,7 @@ describe("InputCapture wheel handling", () => {
         timeStamp: 1,
       } as unknown as MouseEvent);
 
-      expect((capture as any).queue.size).toBe(0);
+      expect((capture as unknown as InputCaptureHarness).queue.size).toBe(0);
     });
   });
 
@@ -447,44 +459,44 @@ describe("InputCapture wheel handling", () => {
         mouseSensitivity: 1.0,
       });
 
-      (capture as any).hasFocus = true;
-      (capture as any).pointerLock.locked = true;
+      (capture as unknown as InputCaptureHarness).hasFocus = true;
+      (capture as unknown as InputCaptureHarness).pointerLock.locked = true;
 
       const preventDefault = vi.fn();
       const stopPropagation = vi.fn();
 
       // A non-finite movement delta should be treated as 0 and must not permanently break
       // subsequent (finite) mouse movement.
-      (capture as any).handleMouseMove({
+      (capture as unknown as InputCaptureHarness).handleMouseMove({
         movementX: Number.NaN,
         movementY: 0,
         preventDefault,
         stopPropagation,
         timeStamp: 0,
       } as unknown as MouseEvent);
-      expect((capture as any).queue.size).toBe(0);
+      expect((capture as unknown as InputCaptureHarness).queue.size).toBe(0);
 
-      (capture as any).handleMouseMove({
+      (capture as unknown as InputCaptureHarness).handleMouseMove({
         movementX: Number.POSITIVE_INFINITY,
         movementY: 0,
         preventDefault,
         stopPropagation,
         timeStamp: 0.5,
       } as unknown as MouseEvent);
-      expect((capture as any).queue.size).toBe(0);
+      expect((capture as unknown as InputCaptureHarness).queue.size).toBe(0);
 
       // Finite movement should still work.
-      (capture as any).handleMouseMove({
+      (capture as unknown as InputCaptureHarness).handleMouseMove({
         movementX: 1,
         movementY: 0,
         preventDefault,
         stopPropagation,
         timeStamp: 1,
       } as unknown as MouseEvent);
-      expect((capture as any).queue.size).toBe(1);
+      expect((capture as unknown as InputCaptureHarness).queue.size).toBe(1);
 
       const posted: any[] = [];
-      (capture as any).queue.flush({
+      (capture as unknown as InputCaptureHarness).queue.flush({
         postMessage: (msg: unknown) => posted.push(msg),
       });
 

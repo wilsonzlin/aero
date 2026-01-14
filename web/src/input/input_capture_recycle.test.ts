@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import { InputCapture } from "./input_capture";
+import type { InputBatchTarget } from "./event_queue";
 import { makeCanvasStub, withStubbedDocument, withStubbedDom } from "./test_utils";
+
+type InputCaptureRecycleHarness = {
+  hasFocus: boolean;
+  handleKeyDown(event: KeyboardEvent): void;
+  handleWorkerMessage(event: { data: unknown }): void;
+  recycledBuffersBySize: Map<number, ArrayBuffer[]>;
+};
 
 function transferToWorker(buffer: ArrayBuffer): ArrayBuffer {
   return structuredClone(buffer, { transfer: [buffer] });
@@ -65,13 +73,13 @@ describe("InputCapture buffer recycling", () => {
         },
       };
 
-      const capture = new InputCapture(canvas, ioWorker as any, { enableGamepad: false, recycleBuffers: true });
+      const capture = new InputCapture(canvas, ioWorker as unknown as InputBatchTarget, { enableGamepad: false, recycleBuffers: true });
       capture.start();
 
-      (capture as any).handleKeyDown(keyDownEvent("KeyA", 0));
+      (capture as unknown as InputCaptureRecycleHarness).handleKeyDown(keyDownEvent("KeyA", 0));
       capture.flushNow();
 
-      (capture as any).handleKeyDown(keyDownEvent("KeyB", 1));
+      (capture as unknown as InputCaptureRecycleHarness).handleKeyDown(keyDownEvent("KeyB", 1));
       capture.flushNow();
 
       expect(posted).toHaveLength(2);
@@ -105,7 +113,7 @@ describe("InputCapture buffer recycling", () => {
         postMessage: () => {},
       };
 
-      const capture = new InputCapture(canvas, ioWorker as any, { enableGamepad: false, recycleBuffers: true });
+      const capture = new InputCapture(canvas, ioWorker as unknown as InputBatchTarget, { enableGamepad: false, recycleBuffers: true });
       capture.start();
       expect(added).not.toBeNull();
 
@@ -129,10 +137,10 @@ describe("InputCapture buffer recycling", () => {
         },
       };
 
-      const capture = new InputCapture(canvas, ioWorker as any, { enableGamepad: false, recycleBuffers: true });
+      const capture = new InputCapture(canvas, ioWorker as unknown as InputBatchTarget, { enableGamepad: false, recycleBuffers: true });
       capture.start();
 
-      (capture as any).handleKeyDown(keyDownEvent("KeyA", 0));
+      (capture as unknown as InputCaptureRecycleHarness).handleKeyDown(keyDownEvent("KeyA", 0));
 
       capture.stop();
 
@@ -164,11 +172,11 @@ describe("InputCapture buffer recycling", () => {
       };
 
       capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: true });
-      (capture as any).hasFocus = true;
+      (capture as unknown as InputCaptureRecycleHarness).hasFocus = true;
 
       // Flush #1: no recycled buffers exist yet, so the queue must allocate a new buffer after
       // transfer. The worker receives the transferred buffer (workerSideCopies[0]).
-      (capture as any).handleKeyDown(keyDownEvent("KeyA", 0));
+      (capture as unknown as InputCaptureRecycleHarness).handleKeyDown(keyDownEvent("KeyA", 0));
       capture.flushNow();
       expect(posted).toHaveLength(1);
       expect(workerSideCopies).toHaveLength(1);
@@ -176,19 +184,19 @@ describe("InputCapture buffer recycling", () => {
       // Deliver the recycle response *after* the flush (mimics real worker scheduling).
       const workerSide0 = workerSideCopies[0]!;
       const recycled0 = transferFromWorker(workerSide0);
-      (capture as any).handleWorkerMessage({
+      (capture as unknown as InputCaptureRecycleHarness).handleWorkerMessage({
         data: { type: "in:input-batch-recycle", buffer: recycled0 },
       } as unknown as MessageEvent<unknown>);
 
       // Flush #2: still uses the buffer allocated after flush #1, but should swap in `recycled0`
       // for subsequent batches.
-      (capture as any).handleKeyDown(keyDownEvent("KeyB", 1));
+      (capture as unknown as InputCaptureRecycleHarness).handleKeyDown(keyDownEvent("KeyB", 1));
       capture.flushNow();
       expect(posted).toHaveLength(2);
       expect(posted[1]).not.toBe(recycled0);
 
       // Flush #3: should now send the recycled buffer from flush #1.
-      (capture as any).handleKeyDown(keyDownEvent("KeyC", 2));
+      (capture as unknown as InputCaptureRecycleHarness).handleKeyDown(keyDownEvent("KeyC", 2));
       capture.flushNow();
       expect(posted).toHaveLength(3);
       expect(posted[2]).toBe(recycled0);
@@ -214,10 +222,10 @@ describe("InputCapture buffer recycling", () => {
       };
 
       capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: true });
-      (capture as any).hasFocus = true;
+      (capture as unknown as InputCaptureRecycleHarness).hasFocus = true;
 
       // Flush #1: default (smaller) buffer size.
-      (capture as any).handleKeyDown(keyDownEvent("KeyA", 0));
+      (capture as unknown as InputCaptureRecycleHarness).handleKeyDown(keyDownEvent("KeyA", 0));
       capture.flushNow();
       expect(postedByteLengths).toHaveLength(1);
       expect(workerSideCopies).toHaveLength(1);
@@ -226,16 +234,16 @@ describe("InputCapture buffer recycling", () => {
       // Recycle the small buffer after flush.
       const workerSide0 = workerSideCopies[0]!;
       const recycled0 = transferFromWorker(workerSide0);
-      (capture as any).handleWorkerMessage({
+      (capture as unknown as InputCaptureRecycleHarness).handleWorkerMessage({
         data: { type: "in:input-batch-recycle", buffer: recycled0 },
       } as unknown as MessageEvent<unknown>);
 
-      const buckets = (capture as any).recycledBuffersBySize as Map<number, ArrayBuffer[]>;
+      const buckets = (capture as unknown as InputCaptureRecycleHarness).recycledBuffersBySize as Map<number, ArrayBuffer[]>;
       expect(buckets.get(smallSize)).toHaveLength(1);
 
       // Push enough events to force `InputEventQueue.grow()` (larger buffer size), then flush.
       for (let i = 0; i < 65; i++) {
-        (capture as any).handleKeyDown(keyDownEvent("KeyA", 1 + i));
+        (capture as unknown as InputCaptureRecycleHarness).handleKeyDown(keyDownEvent("KeyA", 1 + i));
       }
       capture.flushNow();
       expect(postedByteLengths).toHaveLength(2);
@@ -247,7 +255,7 @@ describe("InputCapture buffer recycling", () => {
       expect(buckets.get(smallSize)?.[0]).toBe(recycled0);
 
       // The next flush should use the larger backing buffer size, not the smaller recycled one.
-      (capture as any).handleKeyDown(keyDownEvent("KeyB", 999));
+      (capture as unknown as InputCaptureRecycleHarness).handleKeyDown(keyDownEvent("KeyB", 999));
       capture.flushNow();
       expect(postedByteLengths).toHaveLength(3);
       expect(postedByteLengths[2]).toBe(largeSize);
@@ -285,7 +293,7 @@ describe("InputCapture buffer recycling", () => {
             if (postCount === 1) {
               recycledFromFirstFlush = recycled;
             }
-            (capture as any).handleWorkerMessage({
+            (capture as unknown as InputCaptureRecycleHarness).handleWorkerMessage({
               data: { type: "in:input-batch-recycle", buffer: recycled },
             } as unknown as MessageEvent<unknown>);
           }
@@ -293,12 +301,12 @@ describe("InputCapture buffer recycling", () => {
       };
 
       capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: true });
-      (capture as any).hasFocus = true;
+      (capture as unknown as InputCaptureRecycleHarness).hasFocus = true;
 
-      (capture as any).handleKeyDown(keyDownEvent("KeyA", 0));
+      (capture as unknown as InputCaptureRecycleHarness).handleKeyDown(keyDownEvent("KeyA", 0));
       capture.flushNow();
 
-      (capture as any).handleKeyDown(keyDownEvent("KeyB", 1));
+      (capture as unknown as InputCaptureRecycleHarness).handleKeyDown(keyDownEvent("KeyB", 1));
       capture.flushNow();
 
       expect(posted).toHaveLength(2);
@@ -337,7 +345,7 @@ describe("InputCapture buffer recycling", () => {
             if (postCount === 1) {
               recycledFromFirstFlush = recycled;
             }
-            (capture as any).handleWorkerMessage({
+            (capture as unknown as InputCaptureRecycleHarness).handleWorkerMessage({
               data: { type: "in:input-batch-recycle", buffer: recycled },
             } as unknown as MessageEvent<unknown>);
           }
@@ -345,15 +353,15 @@ describe("InputCapture buffer recycling", () => {
       };
 
       capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: true });
-      (capture as any).hasFocus = true;
+      (capture as unknown as InputCaptureRecycleHarness).hasFocus = true;
 
       // Push enough events to trigger `InputEventQueue.grow()` from 128 -> 256 capacity.
       for (let i = 0; i < 65; i++) {
-        (capture as any).handleKeyDown(keyDownEvent("KeyA", i));
+        (capture as unknown as InputCaptureRecycleHarness).handleKeyDown(keyDownEvent("KeyA", i));
       }
       capture.flushNow();
 
-      (capture as any).handleKeyDown(keyDownEvent("KeyB", 999));
+      (capture as unknown as InputCaptureRecycleHarness).handleKeyDown(keyDownEvent("KeyB", 999));
       capture.flushNow();
 
       expect(posted).toHaveLength(2);
@@ -387,25 +395,25 @@ describe("InputCapture buffer recycling", () => {
           // Detach the sender-side buffer to match real transfer semantics.
           const workerSide = transferToWorker(msg.buffer);
           // Even if the worker tries to recycle, InputCapture should ignore it when disabled.
-          (capture as any).handleWorkerMessage({
+          (capture as unknown as InputCaptureRecycleHarness).handleWorkerMessage({
             data: { type: "in:input-batch-recycle", buffer: transferFromWorker(workerSide) },
           } as unknown as MessageEvent<unknown>);
         },
       };
 
       capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: false });
-      (capture as any).hasFocus = true;
+      (capture as unknown as InputCaptureRecycleHarness).hasFocus = true;
 
-      (capture as any).handleKeyDown(keyDownEvent("KeyA", 0));
+      (capture as unknown as InputCaptureRecycleHarness).handleKeyDown(keyDownEvent("KeyA", 0));
       capture.flushNow();
-      expect(((capture as any).recycledBuffersBySize as Map<number, ArrayBuffer[]>).size).toBe(0);
+      expect(((capture as unknown as InputCaptureRecycleHarness).recycledBuffersBySize as Map<number, ArrayBuffer[]>).size).toBe(0);
 
-      (capture as any).handleKeyDown(keyDownEvent("KeyB", 1));
+      (capture as unknown as InputCaptureRecycleHarness).handleKeyDown(keyDownEvent("KeyB", 1));
       capture.flushNow();
 
       expect(posted).toHaveLength(2);
       expect(posted[1]).not.toBe(posted[0]);
-      expect(((capture as any).recycledBuffersBySize as Map<number, ArrayBuffer[]>).size).toBe(0);
+      expect(((capture as unknown as InputCaptureRecycleHarness).recycledBuffersBySize as Map<number, ArrayBuffer[]>).size).toBe(0);
     });
   });
   it("caps distinct recycled buffer sizes so buckets do not grow unbounded", () => {
@@ -414,14 +422,14 @@ describe("InputCapture buffer recycling", () => {
       const ioWorker = { postMessage: () => {} };
       const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: true });
 
-      const handleWorkerMessage = (capture as any).handleWorkerMessage as (ev: { data: unknown }) => void;
+      const handleWorkerMessage = (capture as unknown as InputCaptureRecycleHarness).handleWorkerMessage as (ev: { data: unknown }) => void;
       for (let i = 0; i < 100; i++) {
         handleWorkerMessage({
           data: { type: "in:input-batch-recycle", buffer: new ArrayBuffer(1024 + i) },
         });
       }
 
-      const buckets = (capture as any).recycledBuffersBySize as Map<number, ArrayBuffer[]>;
+      const buckets = (capture as unknown as InputCaptureRecycleHarness).recycledBuffersBySize as Map<number, ArrayBuffer[]>;
       // The exact constant is internal, but we want to ensure the map is bounded (not one bucket per
       // observed byteLength forever).
       expect(buckets.size).toBe(8);
@@ -439,7 +447,7 @@ describe("InputCapture buffer recycling", () => {
       const ioWorker = { postMessage: () => {} };
       const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: true });
 
-      const handleWorkerMessage = (capture as any).handleWorkerMessage as (ev: { data: unknown }) => void;
+      const handleWorkerMessage = (capture as unknown as InputCaptureRecycleHarness).handleWorkerMessage as (ev: { data: unknown }) => void;
       const size = 2048;
       for (let i = 0; i < 50; i++) {
         handleWorkerMessage({
@@ -447,7 +455,7 @@ describe("InputCapture buffer recycling", () => {
         });
       }
 
-      const buckets = (capture as any).recycledBuffersBySize as Map<number, ArrayBuffer[]>;
+      const buckets = (capture as unknown as InputCaptureRecycleHarness).recycledBuffersBySize as Map<number, ArrayBuffer[]>;
       const bucket = buckets.get(size);
       expect(bucket).toBeDefined();
       expect(bucket).toHaveLength(4);
@@ -460,7 +468,7 @@ describe("InputCapture buffer recycling", () => {
       const ioWorker = { postMessage: () => {} };
       const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: true });
 
-      const handleWorkerMessage = (capture as any).handleWorkerMessage as (ev: { data: unknown }) => void;
+      const handleWorkerMessage = (capture as unknown as InputCaptureRecycleHarness).handleWorkerMessage as (ev: { data: unknown }) => void;
       handleWorkerMessage({ data: null });
       handleWorkerMessage({ data: { type: "not-a-recycle", buffer: new ArrayBuffer(16) } });
       handleWorkerMessage({ data: { type: "in:input-batch-recycle" } });
@@ -472,7 +480,7 @@ describe("InputCapture buffer recycling", () => {
       // Detached / empty buffers should not be stored.
       handleWorkerMessage({ data: { type: "in:input-batch-recycle", buffer: new ArrayBuffer(0) } });
 
-      const buckets = (capture as any).recycledBuffersBySize as Map<number, ArrayBuffer[]>;
+      const buckets = (capture as unknown as InputCaptureRecycleHarness).recycledBuffersBySize as Map<number, ArrayBuffer[]>;
       expect(buckets.size).toBe(0);
     });
   });
