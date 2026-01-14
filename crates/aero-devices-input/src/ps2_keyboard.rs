@@ -276,8 +276,15 @@ impl IoSnapshot for Ps2Keyboard {
 
         if let Some(buf) = r.bytes(TAG_CONFIG) {
             let mut d = Decoder::new(buf);
-            self.scancode_set = d.u8()?;
-            self.leds = d.u8()?;
+            let scancode_set = d.u8()?;
+            // Snapshots may be untrusted/corrupt. Keep the scancode set within the range we
+            // actually accept (1..=3) so restore doesn't permanently break host-side injection.
+            self.scancode_set = if (1..=3).contains(&scancode_set) {
+                scancode_set
+            } else {
+                2
+            };
+            self.leds = d.u8()? & 0x07;
             self.typematic = d.u8()?;
             self.scanning_enabled = d.bool()?;
             d.finish()?;
@@ -358,6 +365,28 @@ mod tests {
         let drained: Vec<u8> = std::iter::from_fn(|| kb.pop_output()).collect();
         let drop = bytes.len() - MAX_OUTPUT_BYTES;
         assert_eq!(drained, bytes[drop..]);
+    }
+
+    #[test]
+    fn snapshot_restore_sanitizes_corrupt_config_fields() {
+        const TAG_CONFIG: u16 = 1;
+
+        let config = Encoder::new()
+            .u8(0xFF) // invalid scancode set
+            .u8(0xFF) // invalid LED bits
+            .u8(0x0B) // typematic
+            .bool(true) // scanning enabled
+            .finish();
+
+        let mut w = SnapshotWriter::new(Ps2Keyboard::DEVICE_ID, Ps2Keyboard::DEVICE_VERSION);
+        w.field_bytes(TAG_CONFIG, config);
+
+        let mut kb = Ps2Keyboard::new();
+        kb.load_state(&w.finish())
+            .expect("snapshot restore should succeed");
+
+        assert_eq!(kb.scancode_set, 2, "expected invalid scancode set to clamp");
+        assert_eq!(kb.leds, 0x07, "expected LED state to be masked");
     }
 
     #[test]
