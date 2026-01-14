@@ -142,7 +142,35 @@ impl AeroGpuPciDevice {
         #[cfg(not(target_arch = "wasm32"))]
         let vram_len = bar1_size_usize;
 
-        let vram = Rc::new(RefCell::new(vec![0u8; vram_len]));
+        // The default `vec![0; len]` allocation will abort the process on OOM. Since VRAM backing
+        // is an internal implementation detail (the guest-visible BAR size is fixed by the PCI
+        // profile), allocate fallibly and fall back to a smaller buffer instead of crashing.
+        let mut backing = Vec::new();
+        if backing.try_reserve_exact(vram_len).is_ok() {
+            backing.resize(vram_len, 0u8);
+        } else {
+            let vbe_lfb_offset = usize::try_from(VBE_LFB_OFFSET).unwrap_or(0);
+            let legacy_len = usize::try_from(LEGACY_VGA_VRAM_BYTES).unwrap_or(0);
+
+            // Try to preserve at least the VGA/VBE prefix for boot visuals if possible, but do not
+            // assume these allocations will succeed under memory pressure.
+            let candidates = [
+                vbe_lfb_offset.min(vram_len),
+                legacy_len.min(vram_len),
+                0usize,
+            ];
+            for &len in &candidates {
+                if len == 0 {
+                    break;
+                }
+                if backing.try_reserve_exact(len).is_ok() {
+                    backing.resize(len, 0u8);
+                    break;
+                }
+            }
+        }
+
+        let vram = Rc::new(RefCell::new(backing));
 
         let vblank_period_ns = period_ns_from_hz(cfg.vblank_hz);
 

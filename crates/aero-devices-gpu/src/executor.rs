@@ -745,7 +745,9 @@ impl AeroGpuExecutor {
                         }
                     }
 
-                    let alloc_table = if desc.alloc_table_gpa != 0
+                    let mut alloc_table = None;
+                    let mut submit_failed = false;
+                    if desc.alloc_table_gpa != 0
                         && desc.alloc_table_size_bytes != 0
                         && alloc_table_header.is_some()
                         && !decode_errors
@@ -757,18 +759,19 @@ impl AeroGpuExecutor {
                             .map(|h| h.size_bytes)
                             .unwrap_or(0);
                         let size = size_bytes as usize;
-                        if size == 0 {
-                            None
-                        } else {
-                            let mut bytes = vec![0u8; size];
-                            mem.read_physical(desc.alloc_table_gpa, &mut bytes);
-                            Some(bytes)
+                        if size != 0 {
+                            let mut bytes = Vec::new();
+                            if bytes.try_reserve_exact(size).is_err() {
+                                submit_failed = true;
+                            } else {
+                                bytes.resize(size, 0u8);
+                                mem.read_physical(desc.alloc_table_gpa, &mut bytes);
+                                alloc_table = Some(bytes);
+                            }
                         }
-                    } else {
-                        None
-                    };
+                    }
 
-                    if cmd_stream_ok {
+                    if cmd_stream_ok && !submit_failed {
                         let submit_cmd_stream = if cmd_stream.is_empty() {
                             // `decode_cmd_stream` may have only captured the header to avoid a
                             // potentially large copy. Backends require the full stream bytes, so
@@ -779,40 +782,66 @@ impl AeroGpuExecutor {
                                 .unwrap_or(desc.cmd_size_bytes)
                                 .min(desc.cmd_size_bytes)
                                 as usize;
-                            let mut bytes = vec![0u8; size];
-                            mem.read_physical(desc.cmd_gpa, &mut bytes);
-                            bytes
+                            let mut bytes = Vec::new();
+                            if bytes.try_reserve_exact(size).is_err() {
+                                submit_failed = true;
+                                Vec::new()
+                            } else {
+                                bytes.resize(size, 0u8);
+                                mem.read_physical(desc.cmd_gpa, &mut bytes);
+                                bytes
+                            }
                         } else {
-                            cmd_stream.clone()
+                            // If we are retaining decoded submissions for debugging, avoid panicking
+                            // on OOM when duplicating a potentially large stream. If the clone fails,
+                            // fall back to moving the captured bytes into the submission (dropping
+                            // the recorded copy).
+                            let mut bytes = Vec::new();
+                            if bytes.try_reserve_exact(cmd_stream.len()).is_err() {
+                                core::mem::take(&mut cmd_stream)
+                            } else {
+                                bytes.extend_from_slice(&cmd_stream);
+                                bytes
+                            }
                         };
 
-                        let submit = AeroGpuBackendSubmission {
-                            flags: desc.flags,
-                            context_id: desc.context_id,
-                            engine_id: desc.engine_id,
-                            signal_fence: desc.signal_fence,
-                            cmd_stream: submit_cmd_stream,
-                            alloc_table,
-                        };
+                        if !submit_failed {
+                            let submit = AeroGpuBackendSubmission {
+                                flags: desc.flags,
+                                context_id: desc.context_id,
+                                engine_id: desc.engine_id,
+                                signal_fence: desc.signal_fence,
+                                cmd_stream: submit_cmd_stream,
+                                alloc_table,
+                            };
 
-                        if self.backend.submit(mem, submit).is_err() {
-                            regs.stats.gpu_exec_errors =
-                                regs.stats.gpu_exec_errors.saturating_add(1);
-                            regs.record_error(AerogpuErrorCode::Backend, desc.signal_fence);
-                        }
+                            if self.backend.submit(mem, submit).is_err() {
+                                regs.stats.gpu_exec_errors =
+                                    regs.stats.gpu_exec_errors.saturating_add(1);
+                                regs.record_error(AerogpuErrorCode::Backend, desc.signal_fence);
+                            }
 
-                        if wants_present {
-                            if let Some(scanout) = self.backend.read_scanout_rgba8(0) {
-                                if let Err(err) = write_scanout0_rgba8(regs, mem, &scanout) {
-                                    if self.cfg.verbose {
-                                        eprintln!("aerogpu: scanout writeback failed: {err}");
+                            if wants_present {
+                                if let Some(scanout) = self.backend.read_scanout_rgba8(0) {
+                                    if let Err(err) = write_scanout0_rgba8(regs, mem, &scanout) {
+                                        if self.cfg.verbose {
+                                            eprintln!("aerogpu: scanout writeback failed: {err}");
+                                        }
+                                        regs.stats.gpu_exec_errors =
+                                            regs.stats.gpu_exec_errors.saturating_add(1);
+                                        regs.record_error(
+                                            AerogpuErrorCode::Backend,
+                                            desc.signal_fence,
+                                        );
                                     }
-                                    regs.stats.gpu_exec_errors =
-                                        regs.stats.gpu_exec_errors.saturating_add(1);
-                                    regs.record_error(AerogpuErrorCode::Backend, desc.signal_fence);
                                 }
                             }
                         }
+                    }
+
+                    if submit_failed {
+                        regs.stats.gpu_exec_errors = regs.stats.gpu_exec_errors.saturating_add(1);
+                        regs.record_error(AerogpuErrorCode::Backend, desc.signal_fence);
                     }
 
                     let can_pace_vsync = vsync_present
@@ -866,7 +895,9 @@ impl AeroGpuExecutor {
                             cmd_stream_has_vsync_present_bytes(&cmd_stream).unwrap_or(false);
                     }
 
-                    let alloc_table = if desc.alloc_table_gpa != 0
+                    let mut alloc_table = None;
+                    let mut alloc_table_alloc_failed = false;
+                    if desc.alloc_table_gpa != 0
                         && desc.alloc_table_size_bytes != 0
                         && alloc_table_header.is_some()
                         && !decode_errors
@@ -878,16 +909,17 @@ impl AeroGpuExecutor {
                             .map(|h| h.size_bytes)
                             .unwrap_or(0);
                         let size = size_bytes as usize;
-                        if size == 0 {
-                            None
-                        } else {
-                            let mut bytes = vec![0u8; size];
-                            mem.read_physical(desc.alloc_table_gpa, &mut bytes);
-                            Some(bytes)
+                        if size != 0 {
+                            let mut bytes = Vec::new();
+                            if bytes.try_reserve_exact(size).is_err() {
+                                alloc_table_alloc_failed = true;
+                            } else {
+                                bytes.resize(size, 0u8);
+                                mem.read_physical(desc.alloc_table_gpa, &mut bytes);
+                                alloc_table = Some(bytes);
+                            }
                         }
-                    } else {
-                        None
-                    };
+                    }
 
                     let can_pace_vsync = vsync_present
                         && (regs.features & FEATURE_VBLANK) != 0
@@ -898,7 +930,7 @@ impl AeroGpuExecutor {
                         PendingFenceKind::Immediate
                     };
 
-                    let submission_failed = !decode_errors.is_empty();
+                    let submission_failed = !decode_errors.is_empty() || alloc_table_alloc_failed;
                     let mut inserted_new_fence = false;
                     if desc.signal_fence > regs.completed_fence {
                         let already_completed =
@@ -943,29 +975,48 @@ impl AeroGpuExecutor {
                     // Note: only auto-complete on the first entry for a given fence. Duplicate
                     // fence values may accompany real work that must still wait for completion.
                     if submission_failed && inserted_new_fence {
+                        // If we are failing the submission (malformed decode, or host could not
+                        // stage required buffers), do not hold the fence behind a vblank gate.
+                        if let Some(entry) = self.in_flight.get_mut(&desc.signal_fence) {
+                            entry.vblank_ready = true;
+                        }
                         self.complete_fence(regs, mem, desc.signal_fence);
                     }
 
-                    // Avoid cloning potentially large command streams unless we are also retaining
-                    // a submission record for debugging (`keep_last_submissions`).
-                    let submit_cmd_stream = if self.cfg.keep_last_submissions > 0 {
-                        cmd_stream.clone()
-                    } else {
-                        core::mem::take(&mut cmd_stream)
-                    };
-
-                    let submit = AeroGpuBackendSubmission {
-                        flags: desc.flags,
-                        context_id: desc.context_id,
-                        engine_id: desc.engine_id,
-                        signal_fence: desc.signal_fence,
-                        cmd_stream: submit_cmd_stream,
-                        alloc_table,
-                    };
+                    if alloc_table_alloc_failed {
+                        regs.stats.gpu_exec_errors = regs.stats.gpu_exec_errors.saturating_add(1);
+                        regs.record_error(AerogpuErrorCode::Backend, desc.signal_fence);
+                    }
 
                     // Do not forward malformed submissions into backends: they cannot be executed
                     // reliably and have already been treated as failed above.
                     if !submission_failed {
+                        // Avoid cloning potentially large command streams unless we are also retaining
+                        // a submission record for debugging (`keep_last_submissions`).
+                        let submit_cmd_stream = if self.cfg.keep_last_submissions > 0 {
+                            // Avoid panicking on OOM when duplicating a potentially large command
+                            // stream. If the clone fails, move the captured bytes into the submission
+                            // (dropping the recorded copy).
+                            let mut bytes = Vec::new();
+                            if bytes.try_reserve_exact(cmd_stream.len()).is_err() {
+                                core::mem::take(&mut cmd_stream)
+                            } else {
+                                bytes.extend_from_slice(&cmd_stream);
+                                bytes
+                            }
+                        } else {
+                            core::mem::take(&mut cmd_stream)
+                        };
+
+                        let submit = AeroGpuBackendSubmission {
+                            flags: desc.flags,
+                            context_id: desc.context_id,
+                            engine_id: desc.engine_id,
+                            signal_fence: desc.signal_fence,
+                            cmd_stream: submit_cmd_stream,
+                            alloc_table,
+                        };
+
                         if self.backend_configured {
                             if self.backend.submit(mem, submit).is_err() {
                                 regs.stats.gpu_exec_errors =
