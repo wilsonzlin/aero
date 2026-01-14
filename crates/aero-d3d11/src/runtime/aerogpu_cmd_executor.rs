@@ -13788,15 +13788,32 @@ mod tests {
             exec.execute_cmd_stream(&stream, None, &mut guest_mem)
                 .expect("execute_cmd_stream should succeed");
 
-            // Use VERTEX stage visibility so this test remains valid on backends without compute
-            // (e.g. WebGL2). Vertex pulling uses storage buffers in the vertex stage.
+            // Vertex/index pulling compute prepasses require storage buffers. Some downlevel
+            // backends (e.g. WebGL2) do not support compute/storage buffers; in that case the
+            // executor must not request STORAGE usage, and this test should not attempt to bind the
+            // buffers as storage.
+            if !exec.caps.supports_compute {
+                for (label, handle) in [("vertex", VB), ("index", IB)] {
+                    let buf = exec
+                        .resources
+                        .buffers
+                        .get(&handle)
+                        .unwrap_or_else(|| panic!("{label} buffer should exist"));
+                    assert!(
+                        !buf.usage.contains(wgpu::BufferUsages::STORAGE),
+                        "{label} buffer must not request STORAGE usage when compute is unsupported"
+                    );
+                }
+                return;
+            }
+
             let bgl = exec
                 .device
                 .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                     label: Some("aerogpu_cmd ia buffer storage bind test bgl"),
                     entries: &[wgpu::BindGroupLayoutEntry {
                         binding: 0,
-                        visibility: wgpu::ShaderStages::VERTEX,
+                        visibility: wgpu::ShaderStages::COMPUTE,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Storage { read_only: true },
                             has_dynamic_offset: false,
