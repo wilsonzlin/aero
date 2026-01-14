@@ -26,10 +26,10 @@ fn criterion_config() -> Criterion {
         Ok("ci") => Criterion::default()
             // Keep PR runtime low.
             .warm_up_time(Duration::from_millis(150))
-            // Some frame sizes can take multiple milliseconds per iteration; keep enough budget to
-            // avoid Criterion extending the measurement window (which makes CI output noisier).
-            .measurement_time(Duration::from_millis(600))
-            .sample_size(20)
+            // This bench contains many parameter combinations; keep the per-benchmark timing
+            // budget tight so `cargo bench -p aero-gpu` stays reasonable in CI.
+            .measurement_time(Duration::from_millis(400))
+            .sample_size(10)
             .noise_threshold(0.05),
         _ => Criterion::default()
             .warm_up_time(Duration::from_secs(1))
