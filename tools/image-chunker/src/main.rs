@@ -3510,6 +3510,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn download_http_bytes_with_retry_retries_on_408() -> Result<()> {
+        let requests = Arc::new(AtomicU64::new(0));
+        let responder: Arc<
+            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>) + Send + Sync + 'static,
+        > = {
+            let requests = Arc::clone(&requests);
+            Arc::new(move |_req: TestHttpRequest| {
+                let n = requests.fetch_add(1, Ordering::SeqCst);
+                if n == 0 {
+                    (408, Vec::new(), b"timeout".to_vec())
+                } else {
+                    (200, Vec::new(), b"ok".to_vec())
+                }
+            })
+        };
+        let (base_url, shutdown_tx, handle) = start_test_http_server(responder).await?;
+
+        let url: reqwest::Url = format!("{base_url}/manifest.json").parse().unwrap();
+        let client = build_reqwest_client(&[])?;
+        let bytes = download_http_bytes_with_retry(&client, url, 2, 1024)
+            .await
+            .context("download with retry")?;
+        assert_eq!(bytes.as_slice(), b"ok");
+        assert!(
+            requests.load(Ordering::SeqCst) >= 2,
+            "expected at least one retry after HTTP 408"
+        );
+
+        let _ = shutdown_tx.send(());
+        let _ = handle.await;
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn download_http_bytes_with_retry_does_not_retry_on_404() -> Result<()> {
         let requests = Arc::new(AtomicU64::new(0));
         let responder: Arc<
@@ -3860,6 +3894,41 @@ mod tests {
         assert!(
             requests.load(Ordering::SeqCst) >= 2,
             "expected at least one retry after HTTP 429"
+        );
+
+        let _ = shutdown_tx.send(());
+        let _ = handle.await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn download_http_bytes_optional_with_retry_retries_on_408() -> Result<()> {
+        let requests = Arc::new(AtomicU64::new(0));
+        let responder: Arc<
+            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>) + Send + Sync + 'static,
+        > = {
+            let requests = Arc::clone(&requests);
+            Arc::new(move |_req: TestHttpRequest| {
+                let n = requests.fetch_add(1, Ordering::SeqCst);
+                if n == 0 {
+                    (408, Vec::new(), b"timeout".to_vec())
+                } else {
+                    (200, Vec::new(), b"ok".to_vec())
+                }
+            })
+        };
+
+        let (base_url, shutdown_tx, handle) = start_test_http_server(responder).await?;
+
+        let url: reqwest::Url = format!("{base_url}/meta.json").parse().unwrap();
+        let client = build_reqwest_client(&[])?;
+        let bytes = download_http_bytes_optional_with_retry(&client, url, 2, 1024)
+            .await
+            .context("download optional")?;
+        assert_eq!(bytes.as_deref(), Some(b"ok".as_ref()));
+        assert!(
+            requests.load(Ordering::SeqCst) >= 2,
+            "expected at least one retry after HTTP 408"
         );
 
         let _ = shutdown_tx.send(());
@@ -5877,6 +5946,18 @@ mod tests {
         let err = anyhow!(HttpStatusFailure {
             url,
             status: reqwest::StatusCode::TOO_MANY_REQUESTS,
+        })
+        .context("GET http://127.0.0.1/manifest.json");
+        assert!(is_retryable_http_error(&err));
+        Ok(())
+    }
+
+    #[test]
+    fn http_408_is_retryable() -> Result<()> {
+        let url: reqwest::Url = "http://127.0.0.1/manifest.json".parse()?;
+        let err = anyhow!(HttpStatusFailure {
+            url,
+            status: reqwest::StatusCode::REQUEST_TIMEOUT,
         })
         .context("GET http://127.0.0.1/manifest.json");
         assert!(is_retryable_http_error(&err));
