@@ -572,67 +572,43 @@ Storage snapshots must be **durable** and **deterministic**:
 
 ---
 
-## Sparse Disk Format
+## Aero sparse disk format (`AEROSPAR`)
 
-For efficient storage of mostly-empty disk images:
+Aero’s current sparse disk format (`AEROSPAR`) is implemented in the canonical Rust disk stack as
+`aero_storage::AeroSparseDisk`:
 
-```rust
-pub struct SparseDisk {
-    header: SparseHeader,
-    allocation_table: Vec<u64>,  // Logical block -> Physical offset (0 = not allocated)
-    data_file: OpfsBackend,
-    block_size: usize,           // e.g., 1MB
-}
+- Implementation: [`crates/aero-storage/src/sparse.rs`](../crates/aero-storage/src/sparse.rs)
+- Magic: ASCII `AEROSPAR` (8 bytes), version **1**, header size **64 bytes**
 
-#[repr(C)]
-pub struct SparseHeader {
-    magic: u32,                  // "Aero"
-    version: u32,
-    block_size: u32,
-    total_blocks: u64,
-    allocated_blocks: u64,
-    table_offset: u64,
-    data_offset: u64,
-}
+High-level layout:
 
-impl SparseDisk {
-    pub fn read_block(&self, block_num: u64, buffer: &mut [u8]) -> Result<()> {
-        let physical = self.allocation_table[block_num as usize];
-        
-        if physical == 0 {
-            // Block not allocated - return zeros
-            buffer.fill(0);
-        } else {
-            // Read from physical location
-            self.data_file.read_at(physical, buffer)?;
-        }
-        
-        Ok(())
-    }
-    
-    pub fn write_block(&mut self, block_num: u64, buffer: &[u8]) -> Result<()> {
-        let mut physical = self.allocation_table[block_num as usize];
-        
-        if physical == 0 {
-            // Allocate new block
-            physical = self.allocate_block()?;
-            self.allocation_table[block_num as usize] = physical;
-        }
-        
-        // Write to physical location
-        self.data_file.write_at(physical, buffer)?;
-        
-        Ok(())
-    }
-    
-    fn allocate_block(&mut self) -> Result<u64> {
-        let offset = self.header.data_offset + 
-                     self.header.allocated_blocks * self.block_size as u64;
-        self.header.allocated_blocks += 1;
-        Ok(offset)
-    }
-}
+- Header (64 bytes)
+- Allocation table: `table_entries` little-endian `u64` values
+  - each entry stores the **physical byte offset** of the corresponding data block, or `0` if the
+    logical block is unallocated (reads return zeros)
+- Data region: fixed-size blocks appended as they are allocated (`data_offset` is aligned to
+  `block_size_bytes`)
+
+On-disk header fields (offsets in bytes; all little-endian):
+
+```text
+0x00  8   magic = "AEROSPAR"
+0x08  4   version = 1
+0x0C  4   header_size = 64
+0x10  4   block_size_bytes
+0x14  4   reserved
+0x18  8   disk_size_bytes
+0x20  8   table_offset = 64
+0x28  8   table_entries = ceil(disk_size_bytes / block_size_bytes)
+0x30  8   data_offset = align_up(table_end, block_size_bytes)
+0x38  8   allocated_blocks (physical block slots in the data region; high-water mark)
 ```
+
+Notes:
+
+- `block_size_bytes` must be a power-of-two multiple of 512 (and is capped at 64 MiB); **1 MiB**
+  is a common default.
+- `AeroSparseDisk` supports best-effort deallocation (`discard_range`) for fully covered blocks.
 
 ---
 
