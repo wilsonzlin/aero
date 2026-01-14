@@ -110,6 +110,7 @@ fn malformed_total_size_exceeds_buffer_len_is_error() {
 
     let err = DxbcFile::parse(&bytes).unwrap_err();
     assert!(matches!(err, DxbcError::OutOfBounds { .. }));
+    assert!(err.context().contains("total_size"));
     assert!(err.context().contains("exceeds buffer length"));
 }
 
@@ -124,6 +125,8 @@ fn malformed_total_size_truncates_chunk_payload_is_error() {
 
     let err = DxbcFile::parse(&bytes).unwrap_err();
     assert!(matches!(err, DxbcError::OutOfBounds { .. }));
+    assert!(err.context().contains("chunk 0"));
+    assert!(err.context().contains("SHDR"));
     assert!(err.context().contains("outside total_size"));
 }
 
@@ -137,6 +140,7 @@ fn malformed_total_size_truncates_chunk_header_is_error() {
 
     let err = DxbcFile::parse(&bytes).unwrap_err();
     assert!(matches!(err, DxbcError::OutOfBounds { .. }));
+    assert!(err.context().contains("chunk 0"));
     assert!(err.context().contains("header"));
     assert!(err.context().contains("outside total_size"));
 }
@@ -240,6 +244,7 @@ fn malformed_second_chunk_offset_is_error_and_mentions_index() {
     assert!(matches!(err, DxbcError::MalformedOffsets { .. }));
     // Ensure the error context refers to chunk index 1 (the second entry).
     assert!(err.context().contains("chunk 1"));
+    assert!(err.context().contains("points into DXBC header"));
 }
 
 #[test]
@@ -303,6 +308,7 @@ fn malformed_second_chunk_size_out_of_bounds_mentions_index() {
         DxbcError::MalformedOffsets { .. } | DxbcError::OutOfBounds { .. }
     ));
     assert!(err.context().contains("chunk 1"));
+    assert!(err.context().contains("size") || err.context().contains("data"));
 }
 
 #[test]
@@ -330,6 +336,7 @@ fn malformed_chunk_offset_equal_to_total_size_is_error() {
 
     let err = DxbcFile::parse(&bytes).unwrap_err();
     assert!(matches!(err, DxbcError::OutOfBounds { .. }));
+    assert!(err.context().contains("chunk 0"));
     assert!(err.context().contains("header"));
 }
 
@@ -344,6 +351,7 @@ fn malformed_chunk_offset_truncates_chunk_header_is_error() {
 
     let err = DxbcFile::parse(&bytes).unwrap_err();
     assert!(matches!(err, DxbcError::OutOfBounds { .. }));
+    assert!(err.context().contains("chunk 0"));
     assert!(err.context().contains("header"));
     assert!(err.context().contains("outside total_size"));
 }
@@ -408,6 +416,8 @@ fn malformed_chunk_size_extends_past_file_is_error() {
 
     let err = DxbcFile::parse(&bytes).unwrap_err();
     assert!(matches!(err, DxbcError::OutOfBounds { .. }));
+    assert!(err.context().contains("chunk 0"));
+    assert!(err.context().contains("SHDR"));
     assert!(err.context().contains("data"));
     assert!(err.context().contains("outside total_size"));
 }
