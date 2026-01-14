@@ -433,6 +433,7 @@ bash ./scripts/safe-run.sh cargo test -p aero-usb --locked \
   --test usb2_port_mux_remote_wakeup \
   --test usb2_mux_non_owner_writes \
   --test hid_remote_wakeup \
+  --test hid_idle_rate \
   --test webusb_passthrough_uhci \
   --test hid_builtin_snapshot \
   --test hid_composite_mouse_snapshot_compat \

@@ -48,6 +48,7 @@ const AERO_USB_FOCUSED_TESTS: &[&str] = &[
     "usb2_port_mux_remote_wakeup",
     "usb2_mux_non_owner_writes",
     "hid_remote_wakeup",
+    "hid_idle_rate",
     "webusb_passthrough_uhci",
     "hid_builtin_snapshot",
     "hid_composite_mouse_snapshot_compat",

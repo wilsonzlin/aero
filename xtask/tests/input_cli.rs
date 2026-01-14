@@ -268,6 +268,7 @@ fn input_help_mentions_flags_and_steps() {
         .stdout(predicate::str::contains("usb2_port_mux_remote_wakeup"))
         .stdout(predicate::str::contains("usb2_mux_non_owner_writes"))
         .stdout(predicate::str::contains("hid_remote_wakeup"))
+        .stdout(predicate::str::contains("hid_idle_rate"))
         .stdout(predicate::str::contains("webusb_passthrough_uhci"))
         .stdout(predicate::str::contains("xhci_controller_webusb_ep0"))
         .stdout(predicate::str::contains("xhci_doorbell0"))
