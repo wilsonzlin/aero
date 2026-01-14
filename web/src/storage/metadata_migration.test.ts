@@ -51,6 +51,35 @@ describe("disk metadata schema migration", () => {
     expect(meta.checksum).toEqual({ algorithm: "crc32", value: "deadbeef" });
   });
 
+  it("does not allow __proto__ disk IDs to pollute the disks record prototype", () => {
+    const protoDisk = {
+      source: "local",
+      id: "__proto__",
+      name: "proto disk",
+      backend: "opfs",
+      kind: "hdd",
+      format: "raw",
+      fileName: "__proto__.img",
+      sizeBytes: 1024,
+      createdAtMs: 0,
+    };
+    const disks = {};
+    // Define as an own property without triggering the `__proto__` setter.
+    Object.defineProperty(disks, "__proto__", { value: protoDisk, enumerable: true, configurable: true, writable: true });
+    const v2 = {
+      version: METADATA_VERSION,
+      disks,
+      mounts: { hddId: "__proto__" },
+    };
+
+    const { state, migrated } = upgradeDiskManagerStateJson(JSON.stringify(v2));
+    expect(migrated).toBe(false);
+    // `__proto__` must be treated as a plain key, not a prototype setter.
+    expect(Object.getPrototypeOf(state.disks)).toBe(Object.prototype);
+    expect(Object.prototype.hasOwnProperty.call(state.disks, "__proto__")).toBe(true);
+    expect((state.disks as any)["__proto__"]?.id).toBe("__proto__");
+  });
+
   it("upgrades v1 disk records (IndexedDB) by adding the v2 discriminant", () => {
     const v1Disk = {
       id: "d2",

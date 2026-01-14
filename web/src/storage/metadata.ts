@@ -144,6 +144,43 @@ export type DiskManagerState = {
 type DiskImageMetadataV1 = Omit<LocalDiskImageMetadata, "source">;
 type DiskManagerStateV1 = { version: 1; disks: Record<string, DiskImageMetadataV1>; mounts: MountConfig };
 
+function hasOwnProp(obj: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(obj, key);
+}
+
+// Avoid prototype pollution when treating untrusted disk IDs as record keys.
+//
+// Setting `obj["__proto__"] = value` mutates the object's prototype; using `defineProperty` creates
+// an own data property instead.
+function safeRecordSet<T>(record: Record<string, T>, key: string, value: T): void {
+  Object.defineProperty(record, key, {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
+}
+
+function normalizeMountConfig(raw: unknown): MountConfig {
+  const mounts: MountConfig = {};
+  if (!raw || typeof raw !== "object") return mounts;
+  const rec = raw as Record<string, unknown>;
+  const sanitizeId = (value: unknown): string | undefined => {
+    if (typeof value !== "string") return undefined;
+    const trimmed = value.trim();
+    return trimmed ? trimmed : undefined;
+  };
+  if (hasOwnProp(rec, "hddId")) {
+    const hddId = sanitizeId(rec.hddId);
+    if (hddId) mounts.hddId = hddId;
+  }
+  if (hasOwnProp(rec, "cdId")) {
+    const cdId = sanitizeId(rec.cdId);
+    if (cdId) mounts.cdId = cdId;
+  }
+  return mounts;
+}
+
 export function isRemoteDisk(meta: DiskImageMetadata): meta is RemoteDiskImageMetadata {
   return meta.source === "remote";
 }
@@ -198,7 +235,7 @@ export function upgradeDiskManagerStateJson(text: string): { state: DiskManagerS
   const out: DiskManagerState = {
     version: METADATA_VERSION,
     disks: {},
-    mounts: raw.mounts || {},
+    mounts: normalizeMountConfig(raw.mounts),
   };
 
   const disks = raw.disks;
@@ -216,7 +253,7 @@ export function upgradeDiskManagerStateJson(text: string): { state: DiskManagerS
         }
       }
       const upgraded = upgradeDiskMetadata(value);
-      if (upgraded) out.disks[upgraded.id || key] = upgraded;
+      if (upgraded) safeRecordSet(out.disks, upgraded.id || key, upgraded);
     }
   }
 
@@ -491,11 +528,11 @@ export function createOpfsMetadataStore(): DiskMetadataStore {
     },
     async getDisk(id: string) {
       const state = await opfsReadState();
-      return state.disks[id];
+      return hasOwnProp(state.disks, id) ? state.disks[id] : undefined;
     },
     async putDisk(meta: DiskImageMetadata) {
       await opfsUpdateState((state) => {
-        state.disks[meta.id] = meta;
+        safeRecordSet(state.disks, meta.id, meta);
       });
     },
     async deleteDisk(id: string) {
