@@ -133,6 +133,42 @@ fn snapshot_restore_clears_uhci_webusb_bulk_in_host_state() {
 }
 
 #[test]
+fn snapshot_restore_clears_ehci_webusb_bulk_in_host_state() {
+    let mut vm = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_ehci: true,
+        enable_uhci: false,
+        // Keep this test minimal/deterministic.
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    let webusb = UsbWebUsbPassthroughDevice::new();
+    vm.usb_ehci_attach_root(1, Box::new(webusb.clone()))
+        .expect("attach WebUSB device behind EHCI");
+
+    queue_webusb_bulk_in_action(&webusb);
+    let before = webusb.pending_summary();
+    assert_eq!(before.queued_actions, 1);
+    assert_eq!(before.inflight_endpoints, 1);
+
+    let snapshot = vm.take_snapshot_full().unwrap();
+    vm.restore_snapshot_bytes(&snapshot).unwrap();
+
+    let after = webusb.pending_summary();
+    assert_eq!(after.queued_actions, 0);
+    assert_eq!(after.inflight_endpoints, 0);
+    assert_eq!(after.inflight_control, None);
+}
+
+#[test]
 fn snapshot_restore_clears_ehci_webusb_host_state() {
     let mut vm = Machine::new(MachineConfig {
         ram_size_bytes: 2 * 1024 * 1024,
