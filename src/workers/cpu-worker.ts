@@ -3,6 +3,7 @@
 import type { CompileBlockResponse, CpuToJitMessage, JitToCpuMessage } from './jit-protocol';
 import { asI64, asU64, u64ToNumber } from './bigint';
 import { JIT_BIGINT_ABI_WASM_BYTES, JIT_CODE_PAGE_VERSION_ABI_WASM_BYTES } from './wasm-bytes';
+import { HIGH_RAM_START as HIGH_RAM_START_U53, LOW_RAM_END as LOW_RAM_END_U32 } from '../../web/src/arch/guest_phys.ts';
 import { initWasmForContext, type WasmApi } from '../../web/src/runtime/wasm_context';
 
 declare global {
@@ -109,9 +110,9 @@ const X86_PAGE_BYTES = 4096;
 //
 // Keep these in sync with:
 // - `crates/aero-wasm/src/guest_phys.rs`
-// - `web/src/runtime/shared_layout.ts`
-const LOW_RAM_END = 0xb000_0000n;
-const HIGH_RAM_START = 0x1_0000_0000n;
+// - `web/src/arch/guest_phys.ts` / `web/src/arch/guest_ram_translate.ts`
+const LOW_RAM_END = BigInt(LOW_RAM_END_U32);
+const HIGH_RAM_START = BigInt(HIGH_RAM_START_U53);
 
 type JsPageVersionSnapshot = { page: number; version: number };
 type JsCompiledBlockMeta = { code_paddr: number; byte_len: number; page_versions: JsPageVersionSnapshot[] };
