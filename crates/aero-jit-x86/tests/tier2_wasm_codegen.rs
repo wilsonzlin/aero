@@ -1160,7 +1160,7 @@ mod random_traces {
         }
     }
 
-    fn gen_random_trace(rng: &mut ChaCha8Rng, instr_count: usize) -> TraceIr {
+    fn gen_random_trace(rng: &mut ChaCha8Rng, instr_count: usize, code_versions: &[u32]) -> TraceIr {
         let mut next_value: u32 = 0;
         let mut values: Vec<ValueId> = Vec::new();
         let mut body: Vec<Instr> = Vec::new();
@@ -1251,20 +1251,29 @@ mod random_traces {
                     values.push(dst);
                 }
                 85..=89 => {
-                    // Memory stores use constant, in-bounds addresses to keep the harness simple.
-                    if values.is_empty() {
-                        continue;
-                    }
-                    let width = *[Width::W8, Width::W16, Width::W32, Width::W64]
-                        .choose(rng)
-                        .unwrap();
-                    let bytes = width.bytes() as usize;
-                    let addr = rng.gen_range(0..(GUEST_MEM_SIZE - bytes)) as u64;
-                    let src = gen_operand(rng, &values);
-                    body.push(Instr::StoreMem {
-                        addr: Operand::Const(addr),
-                        src,
-                        width,
+                    // Code version guard. We avoid StoreMem in these random traces, because the
+                    // `tier2_wasm_codegen` wasmi harness bumps code versions on memory writes and
+                    // the Tier-2 interpreter does not currently do the same for `StoreMem`.
+                    let table_len = code_versions.len() as u64;
+                    let page = if table_len != 0 {
+                        rng.gen_range(0..table_len)
+                    } else {
+                        0
+                    };
+                    let expected = if table_len != 0 && rng.gen_bool(0.7) {
+                        code_versions[page as usize]
+                    } else if table_len != 0 {
+                        code_versions[page as usize].wrapping_add(1)
+                    } else if rng.gen_bool(0.7) {
+                        0
+                    } else {
+                        1
+                    };
+                    let exit_rip = 0x3000u64 + (rng.gen::<u16>() as u64);
+                    body.push(Instr::GuardCodeVersion {
+                        page,
+                        expected,
+                        exit_rip,
                     });
                 }
                 _ => {
@@ -1276,6 +1285,33 @@ mod random_traces {
                     body.push(Instr::StoreReg { reg, src });
                 }
             }
+        }
+
+        // Add an extra code-version guard near the end sometimes, so we cover both:
+        // - success path (fallthrough to return/side-exit)
+        // - invalidation path after executing non-trivial prefixes.
+        if rng.gen_bool(0.2) {
+            let table_len = code_versions.len() as u64;
+            let page = if table_len != 0 {
+                rng.gen_range(0..table_len)
+            } else {
+                0
+            };
+            let expected = if table_len != 0 && rng.gen_bool(0.7) {
+                code_versions[page as usize]
+            } else if table_len != 0 {
+                code_versions[page as usize].wrapping_add(1)
+            } else if rng.gen_bool(0.7) {
+                0
+            } else {
+                1
+            };
+            let exit_rip = 0x3000u64 + (rng.gen::<u16>() as u64);
+            body.push(Instr::GuardCodeVersion {
+                page,
+                expected,
+                exit_rip,
+            });
         }
 
         // Add occasional side exits; keep the exit RIP distinct from the trace's entry RIP so we
@@ -1308,14 +1344,25 @@ mod random_traces {
 
     #[test]
     fn tier2_trace_wasm_matches_interpreter_on_random_traces() {
-        let env = RuntimeEnv::default();
         let mut rng = ChaCha8Rng::seed_from_u64(0x5EED);
 
         // Tier-2 WASM compilation + instantiation is more expensive than pure interpreter checks, so
         // keep the iteration count modest while still providing broad coverage.
         for i in 0..75 {
+            let mut env = RuntimeEnv::default();
+            // Install a small code-version table so random traces can exercise
+            // `Instr::GuardCodeVersion` both in the interpreter and in WASM.
+            let mut code_versions: Vec<u32> = (0..8).map(|_| rng.gen()).collect();
+            // Ensure at least one entry is non-zero so "guard success on non-zero" is possible.
+            if code_versions.iter().all(|v| *v == 0) {
+                code_versions[0] = 1;
+            }
+            for (page, version) in code_versions.iter().copied().enumerate() {
+                env.page_versions.set_version(page as u64, version);
+            }
+
             let instr_count = rng.gen_range(20..=50);
-            let trace = gen_random_trace(&mut rng, instr_count);
+            let trace = gen_random_trace(&mut rng, instr_count, &code_versions);
 
             let mut guest_mem_init = vec![0u8; GUEST_MEM_SIZE];
             rng.fill_bytes(&mut guest_mem_init);
@@ -1344,7 +1391,7 @@ mod random_traces {
             memory
                 .write(&mut store, CPU_PTR as usize, &cpu_bytes)
                 .unwrap();
-            install_code_version_table(&memory, &mut store, &[]);
+            install_code_version_table(&memory, &mut store, &code_versions);
 
             let next_rip = func.call(&mut store, (CPU_PTR, JIT_CTX_PTR)).unwrap() as u64;
             let exit_reason = read_u32_from_memory(
