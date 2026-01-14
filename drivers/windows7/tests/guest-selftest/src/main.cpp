@@ -3433,7 +3433,12 @@ static VirtioInputPciBindingCheckResult CheckVirtioInputPciBinding(Logger& log) 
 
   out.ok = (out.devices > 0) && (out.wrong_service == 0) && (out.missing_service == 0) && (out.problem == 0);
   if (!out.ok) {
-    log.LogLine("virtio-input-bind: one or more virtio-input PCI devices are not healthy and bound to aero_virtio_input");
+    if (out.devices == 0) {
+      log.LogLine("virtio-input-bind: PCI\\VEN_1AF4&DEV_1052 device not detected");
+    } else {
+      log.LogLine(
+          "virtio-input-bind: one or more virtio-input PCI devices are not healthy and bound to aero_virtio_input");
+    }
   }
 
   return out;
@@ -3985,11 +3990,13 @@ static VirtioInputTestResult VirtioInputTest(Logger& log) {
   }
 
   out.ok = true;
-  if (!out.pci_binding_ok) {
+  // Only enforce contract-v1 PCI binding expectations when we actually found contract-v1 virtio-input PCI functions.
+  // In transitional environments (DEV_1011), there may be no DEV_1052 functions to validate, but the HID devices can
+  // still be functional; in that case we rely on the separate `virtio-input-bind` marker (and host harness strict
+  // mode) rather than failing the generic HID enumeration test.
+  if (!out.pci_binding_ok && out.pci_devices > 0) {
     out.ok = false;
-    if (out.pci_devices <= 0) {
-      out.reason = "pci_device_missing";
-    } else if (out.pci_wrong_service > 0) {
+    if (out.pci_wrong_service > 0) {
       out.reason = "wrong_service";
     } else if (out.pci_missing_service > 0) {
       out.reason = "driver_not_bound";
