@@ -41,7 +41,6 @@ fn aerogpu_cmd_depth_clip_toggle_clamps_z_when_disabled_with_gs_emulation() {
         const RT: u32 = 1;
         const VS: u32 = 10;
         const PS: u32 = 11;
-        const GS: u32 = 0xCAFE_BABE;
 
         let mut setup = AerogpuCmdWriter::new();
         setup.create_texture2d(
@@ -74,11 +73,15 @@ fn aerogpu_cmd_depth_clip_toggle_clamps_z_when_disabled_with_gs_emulation() {
             // renders when depth clip is disabled (z is clamped in the passthrough VS).
             writer.set_shader_constants_f(AerogpuShaderStage::Compute, 0, &[2.0, 0.0, 0.0, 0.0]);
 
-            writer.bind_shaders_ex(VS, PS, 0, GS, 0, 0);
+            // Force the GS emulation/compute-prepass path by using an adjacency topology (not
+            // supported by WebGPU render pipelines).
+            writer.bind_shaders(VS, PS, 0);
             writer.set_render_targets(&[RT], 0);
             writer.set_viewport(0.0, 0.0, 4.0, 4.0, 0.0, 1.0);
             writer.clear(AEROGPU_CLEAR_COLOR, [0.0, 0.0, 0.0, 1.0], 1.0, 0);
-            writer.set_primitive_topology(AerogpuPrimitiveTopology::TriangleList);
+            // Adjacency topologies consume 6 vertices per primitive; request a single primitive so
+            // the placeholder compute prepass emits its fullscreen triangle.
+            writer.set_primitive_topology(AerogpuPrimitiveTopology::TriangleListAdj);
             writer.set_rasterizer_state_ext(
                 AerogpuFillMode::Solid,
                 AerogpuCullMode::None,
@@ -87,7 +90,7 @@ fn aerogpu_cmd_depth_clip_toggle_clamps_z_when_disabled_with_gs_emulation() {
                 0,
                 depth_clip_disable,
             );
-            writer.draw(3, 1, 0, 0);
+            writer.draw(6, 1, 0, 0);
             writer.finish()
         };
 

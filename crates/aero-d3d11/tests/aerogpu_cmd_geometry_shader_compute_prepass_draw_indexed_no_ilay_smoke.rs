@@ -3,7 +3,7 @@ mod common;
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
 use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    AerogpuIndexFormat, AerogpuShaderStage, AerogpuShaderStageEx, AEROGPU_CLEAR_COLOR,
+    AerogpuIndexFormat, AerogpuPrimitiveTopology, AerogpuShaderStage, AEROGPU_CLEAR_COLOR,
     AEROGPU_RESOURCE_USAGE_INDEX_BUFFER, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
@@ -11,7 +11,6 @@ use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 
 const VS_PASSTHROUGH: &[u8] = include_bytes!("fixtures/vs_passthrough.dxbc");
 const PS_PASSTHROUGH: &[u8] = include_bytes!("fixtures/ps_passthrough.dxbc");
-const GS_POINT_TO_TRIANGLE: &[u8] = include_bytes!("fixtures/gs_point_to_triangle.dxbc");
 
 #[test]
 fn aerogpu_cmd_geometry_shader_compute_prepass_draw_indexed_no_ilay_smoke() {
@@ -36,7 +35,6 @@ fn aerogpu_cmd_geometry_shader_compute_prepass_draw_indexed_no_ilay_smoke() {
         const IB: u32 = 2;
         const VS: u32 = 3;
         const PS: u32 = 4;
-        const GS: u32 = 0xCAFE_BABE;
 
         // The placeholder compute prepass shader writes a fixed triangle and does not consume the
         // index buffer yet, but `DRAW_INDEXED` still requires one to be bound. This test ensures we
@@ -71,10 +69,12 @@ fn aerogpu_cmd_geometry_shader_compute_prepass_draw_indexed_no_ilay_smoke() {
         writer.set_index_buffer(IB, AerogpuIndexFormat::Uint32, 0);
 
         writer.create_shader_dxbc(VS, AerogpuShaderStage::Vertex, VS_PASSTHROUGH);
-        writer.create_shader_dxbc_ex(GS, AerogpuShaderStageEx::Geometry, GS_POINT_TO_TRIANGLE);
         writer.create_shader_dxbc(PS, AerogpuShaderStage::Pixel, PS_PASSTHROUGH);
 
-        writer.bind_shaders_ex(VS, PS, 0, GS, 0, 0);
+        // Force the GS/HS/DS compute-prepass path by using a topology that cannot be expressed in a
+        // WebGPU render pipeline (patchlists).
+        writer.bind_shaders(VS, PS, 0);
+        writer.set_primitive_topology(AerogpuPrimitiveTopology::PatchList3);
         writer.draw_indexed(3, 1, 0, 0, 0);
 
         let stream = writer.finish();

@@ -3,8 +3,7 @@ mod common;
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
 use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    AerogpuCullMode, AerogpuFillMode, AerogpuPrimitiveTopology, AerogpuShaderStage,
-    AerogpuShaderStageEx, AerogpuVertexBufferBinding, AEROGPU_CLEAR_COLOR,
+    AerogpuPrimitiveTopology, AerogpuShaderStage, AerogpuVertexBufferBinding, AEROGPU_CLEAR_COLOR,
     AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
@@ -12,7 +11,6 @@ use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 
 const VS_PASSTHROUGH: &[u8] = include_bytes!("fixtures/vs_passthrough.dxbc");
 const PS_PASSTHROUGH: &[u8] = include_bytes!("fixtures/ps_passthrough.dxbc");
-const GS_POINT_TO_TRIANGLE: &[u8] = include_bytes!("fixtures/gs_point_to_triangle.dxbc");
 const ILAY_POS3_COLOR: &[u8] = include_bytes!("fixtures/ilay_pos3_color.bin");
 
 #[repr(C)]
@@ -46,11 +44,24 @@ fn aerogpu_cmd_geometry_shader_compute_prepass_vertex_pulling_smoke() {
             return;
         }
 
+        let max_storage_buffers = exec.device().limits().max_storage_buffers_per_shader_stage;
+        // The placeholder vertex-pulling prepass binds:
+        // - 4 storage buffers for emulation outputs (expanded verts/indices/indirect/counter)
+        // - 1+ storage buffers for IA vertex pulling
+        if max_storage_buffers < 5 {
+            common::skip_or_panic(
+                test_name,
+                &format!(
+                    "requires >=5 storage buffers per shader stage for vertex pulling (got {max_storage_buffers})"
+                ),
+            );
+            return;
+        }
+
         const VB: u32 = 1;
         const RT: u32 = 2;
         const VS: u32 = 3;
         const PS: u32 = 4;
-        const GS: u32 = 5;
         const IL: u32 = 6;
 
         let verts = [
@@ -96,9 +107,6 @@ fn aerogpu_cmd_geometry_shader_compute_prepass_vertex_pulling_smoke() {
 
         writer.create_shader_dxbc(VS, AerogpuShaderStage::Vertex, VS_PASSTHROUGH);
         writer.create_shader_dxbc(PS, AerogpuShaderStage::Pixel, PS_PASSTHROUGH);
-        // Any supported GS will do; the placeholder compute prepass does not actually interpret
-        // the GS token stream for this test.
-        writer.create_shader_dxbc_ex(GS, AerogpuShaderStageEx::Geometry, GS_POINT_TO_TRIANGLE);
 
         writer.create_input_layout(IL, ILAY_POS3_COLOR);
         writer.set_input_layout(IL);
@@ -112,17 +120,12 @@ fn aerogpu_cmd_geometry_shader_compute_prepass_vertex_pulling_smoke() {
             }],
         );
 
-        writer.set_primitive_topology(AerogpuPrimitiveTopology::TriangleList);
-        writer.bind_shaders_ex(VS, PS, 0, GS, 0, 0);
-        writer.set_rasterizer_state(
-            AerogpuFillMode::Solid,
-            AerogpuCullMode::None,
-            false,
-            false,
-            0,
-            0,
-        );
-        writer.draw(3, 1, 0, 0);
+        // Force the compute-prepass path by using an adjacency topology (not supported by WebGPU
+        // render pipelines). Request a single primitive so the placeholder prepass emits its
+        // fullscreen triangle.
+        writer.set_primitive_topology(AerogpuPrimitiveTopology::LineListAdj);
+        writer.bind_shaders(VS, PS, 0);
+        writer.draw(4, 1, 0, 0);
 
         let stream = writer.finish();
         let mut guest_mem = VecGuestMemory::new(0);
